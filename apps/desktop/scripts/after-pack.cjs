@@ -24,7 +24,7 @@ exports.default = async function afterPack(context) {
 
 function launcher(name) {
   return `#!/bin/sh
-# Omni desktop launcher: see scripts/after-pack.cjs in apps/omni-desktop.
+# Omni desktop launcher: see scripts/after-pack.cjs in automagik-dev/omni-desktop.
 here=$(dirname "$(readlink -f "$0")")
 sandbox="$here/chrome-sandbox"
 restricted=$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)

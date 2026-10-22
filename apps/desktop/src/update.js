@@ -1,13 +1,13 @@
-// Updates: the app follows the Omni desktop releases, `omni-desktop-v<version>` on GitHub (the
-// ones `omni desktop` downloads). A newer one downloads in the background and installs when
+// Updates: the app follows its own releases, `v<version>` in automagik-dev/omni-desktop on
+// GitHub (the ones `omni desktop` downloads). A newer one downloads in the background and installs when
 // the app quits, or at once from the title bar's Restart button. electron-updater downloads
 // it, checks its sha512 and installs it (on macOS through Squirrel, which also requires the
-// update to carry the running app's signature). This module only picks the release, since
-// the repository's other releases (Omni's own v* tags) are not the app's.
+// update to carry the running app's signature). This module only picks the release: the
+// newest one above this version that carries this platform's feed.
 
-export const RELEASES_URL = 'https://api.github.com/repos/automagik-dev/omni/releases?per_page=50'
-export const DESKTOP_TAG_PREFIX = 'omni-desktop-v'
-const DOWNLOADS = 'https://github.com/automagik-dev/omni/releases/download/'
+export const RELEASES_URL = 'https://api.github.com/repos/automagik-dev/omni-desktop/releases?per_page=50'
+export const DESKTOP_TAG_PREFIX = 'v'
+const DOWNLOADS = 'https://github.com/automagik-dev/omni-desktop/releases/download/'
 export const FIRST_CHECK_MS = 20_000
 export const CHECK_EVERY_MS = 4 * 60 * 60 * 1000
 

@@ -16,20 +16,20 @@ test('versions compare by semver: a dev cut is newer than the labs build of the 
   assert.ok(Number.isNaN(compareVersions('v2', '2.0.0')))
 })
 
-test("the update is the newest desktop release above this one with this platform's feed; Omni's own releases are not", () => {
+test("the update is the newest release above this one with this platform's feed; drafts and other tags are not", () => {
   const releases = [
-    release('v2.261030.1'),
-    release('omni-desktop-v2.261025.1', ['latest-linux.yml']),
-    release('omni-desktop-v2.261024.2', ['latest-mac.yml', 'latest-linux.yml'], { draft: true }),
-    release('omni-desktop-v2.261023.1'),
-    release('omni-desktop-v2.261022.1'),
-    release('omni-desktop-v2.261019.1'),
+    release('nightly'),
+    release('v2.261025.1', ['latest-linux.yml']),
+    release('v2.261024.2', ['latest-mac.yml', 'latest-linux.yml'], { draft: true }),
+    release('v2.261023.1'),
+    release('v2.261022.1'),
+    release('v2.261019.1'),
     { tag_name: 7 },
     null,
   ]
   assert.deepEqual(pickUpdate(releases, { current: '2.261019.10-labs.14', platform: 'darwin' }), {
     version: '2.261023.1',
-    url: 'https://github.com/automagik-dev/omni/releases/download/omni-desktop-v2.261023.1/',
+    url: 'https://github.com/automagik-dev/omni-desktop/releases/download/v2.261023.1/',
   })
   assert.equal(pickUpdate(releases, { current: '2.261019.10-labs.14', platform: 'linux' }).version, '2.261025.1')
   assert.equal(pickUpdate(releases, { current: '2.261025.1', platform: 'linux' }), null)
@@ -75,14 +75,14 @@ test('a check points electron-updater at the chosen release, reports the downloa
   const updates = startUpdates({
     updater, current: '2.261019.10-labs.14', platform: 'darwin', env: {}, log: quiet, timers: noTimers,
     onState: state => states.push(state),
-    releases: async () => [release('omni-desktop-v2.261022.1')],
+    releases: async () => [release('v2.261022.1')],
   })
   assert.equal(updater.autoDownload, true)
   assert.equal(updater.allowDowngrade, false)
   updates.install()
   assert.deepEqual(updater.installs, [])
   assert.deepEqual(await updates.check(), { checked: true })
-  assert.deepEqual(updater.feeds, [{ provider: 'generic', url: 'https://github.com/automagik-dev/omni/releases/download/omni-desktop-v2.261022.1/' }])
+  assert.deepEqual(updater.feeds, [{ provider: 'generic', url: 'https://github.com/automagik-dev/omni-desktop/releases/download/v2.261022.1/' }])
   updater.emit('download-progress', { percent: 41.6 })
   updater.emit('update-downloaded', { version: '2.261022.1' })
   assert.deepEqual(states, [{ version: '2.261022.1', state: 'downloading', percent: 42 }, { version: '2.261022.1', state: 'ready' }])
@@ -99,7 +99,7 @@ test('on macOS the update is ready only once Squirrel has it, since quitting ear
   const updates = startUpdates({
     updater, current: '2.261019.10-labs.14', platform: 'darwin', env: {}, log: quiet, timers: noTimers,
     onState: state => states.push(state),
-    releases: async () => [release('omni-desktop-v2.261022.1')],
+    releases: async () => [release('v2.261022.1')],
   })
   await updates.check()
   updater.emit('update-downloaded', { version: '2.261022.1' })
@@ -116,7 +116,7 @@ test('no newer release, or GitHub failing, is a quiet no-op', async () => {
   const updater = fakeUpdater()
   const warnings = []
   const log = { ...quiet, warn: message => warnings.push(message) }
-  const none = startUpdates({ updater, current: '2.261022.1', platform: 'linux', env: {}, log, timers: noTimers, onState() {}, releases: async () => [release('omni-desktop-v2.261022.1')] })
+  const none = startUpdates({ updater, current: '2.261022.1', platform: 'linux', env: {}, log, timers: noTimers, onState() {}, releases: async () => [release('v2.261022.1')] })
   assert.equal(await none.check(), null)
   const down = startUpdates({ updater, current: '2.261022.1', platform: 'linux', env: {}, log, timers: noTimers, onState() {}, releases: async () => { throw new Error('offline') } })
   assert.equal(await down.check(), null)

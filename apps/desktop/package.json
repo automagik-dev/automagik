@@ -4,12 +4,11 @@
   "desktopName": "omni-desktop.desktop",
   "version": "2.261019.10",
   "private": true,
-  "description": "Omni on your desktop: the Omni UI on a DeepSeek Harness of its own, linked to your Omni by a code",
-  "homepage": "https://github.com/automagik-dev/omni/tree/labs/apps/omni-desktop#readme",
+  "description": "Omni on your desktop: omnipresent, event-driven assistance on a DeepSeek Harness of its own, linked to your Omni by a code",
+  "homepage": "https://github.com/automagik-dev/omni-desktop#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/automagik-dev/omni.git",
-    "directory": "apps/omni-desktop"
+    "url": "git+https://github.com/automagik-dev/omni-desktop.git"
   },
   "author": "Namastex Labs <dev@namastex.ai>",
   "license": "Apache-2.0",
@@ -28,5 +27,8 @@
   },
   "dependencies": {
     "electron-updater": "6.8.10"
+  },
+  "bugs": {
+    "url": "https://github.com/automagik-dev/omni-desktop/issues"
   }
 }
