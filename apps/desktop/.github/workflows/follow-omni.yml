@@ -50,7 +50,8 @@ jobs:
           fi
           # A release whose plugins are not at its version (or not there at all) is not one
           # the app can carry.
-          plugin=$(gh api "repos/${OMNI}/contents/apps/omni-ui-dsh/package.json?ref=v${newest}" --jq .content 2>/dev/null | base64 -d 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).version)}catch{console.log("")}})')
+          # (a release without the plugin is a 404: no version)
+          plugin=$(gh api "repos/${OMNI}/contents/apps/omni-ui-dsh/package.json?ref=v${newest}" --jq .content 2>/dev/null | base64 -d 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).version)}catch{console.log("")}})') || plugin=''
           if [[ "${plugin}" != "${newest}" ]]; then
             echo "::notice ::Omni ${newest} does not carry its plugins at its version (found '${plugin}'): not following it"
             exit 0
