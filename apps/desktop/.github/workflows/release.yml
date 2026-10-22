@@ -125,6 +125,8 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
           set -euo pipefail
+          # Signing opens the bundle's many files at once; the runner allows 256.
+          ulimit -n 65536
           if [[ -n "${MAC_CSC_LINK}" ]]; then
             export CSC_LINK="${MAC_CSC_LINK}" CSC_KEY_PASSWORD="${MAC_CSC_KEY_PASSWORD}"
             if [[ -n "${APPLE_API_KEY_CONTENT}" && -n "${APPLE_API_KEY_ID}" && -n "${APPLE_API_ISSUER}" ]]; then
