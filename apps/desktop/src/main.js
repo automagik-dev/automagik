@@ -10,6 +10,7 @@ import updaterModule from 'electron-updater'
 import { createWriteStream, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
 import { appHome, dshEnv, freePort, installProfile, navigationOf, resourcesOf, startDsh, stopDsh, writeTools } from './dsh.js'
 import { pageLayout, WINDOW_ACTIONS, windowChrome } from './frame.js'
 import { startUpdates, updatesEnabled } from './update.js'
@@ -27,15 +28,60 @@ let ready = false
 let update = null
 let updates = null
 
+// omni:// links (deeplink.js): the system hands them to the running app (macOS: open-url;
+// Linux: a second instance with the link as an argument), or starts the app with one.
+// A link that arrives before Omni's page is up waits for it.
+let pendingLink = linkInArgs(process.argv)
+if (process.defaultApp && process.argv.length >= 2) app.setAsDefaultProtocolClient(SCHEME, process.execPath, [process.argv[1]])
+else app.setAsDefaultProtocolClient(SCHEME)
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  receiveLink(url)
+})
+
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
-    if (!window) return
-    if (window.isMinimized()) window.restore()
-    window.focus()
+  app.on('second-instance', (_event, argv) => {
+    if (window) {
+      if (window.isMinimized()) window.restore()
+      window.focus()
+    }
+    const link = linkInArgs(argv)
+    if (link) receiveLink(link)
   })
   app.whenReady().then(launch).catch(fail)
+}
+
+function receiveLink(text) {
+  const link = parseDeepLink(text)
+  if (!link) return
+  if (window) {
+    if (window.isMinimized()) window.restore()
+    window.focus()
+  }
+  if (link.action !== 'connect') return
+  pendingLink = text
+  if (ready) void connectFromLink()
+}
+
+// Ask, then hand the address to Omni's page, which starts the sign-in on that Omni and opens
+// its approval page in the browser (apps/omni-channels-dsh, the omni-desktop:connect event).
+async function connectFromLink() {
+  const link = parseDeepLink(pendingLink)
+  pendingLink = null
+  if (!link || link.action !== 'connect' || !window || !page) return
+  const { response } = await dialog.showMessageBox(window, {
+    type: 'question',
+    buttons: ['Connect', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+    message: `Connect Omni to ${link.host}?`,
+    detail: `You'll sign in on ${link.host} with Face ID, Touch ID, your fingerprint or a code on WhatsApp.`
+      + (link.secure ? '' : '\n\nThis address is not encrypted (http). Connect only if it is your own network.'),
+  })
+  if (response !== 0) return
+  await page.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('omni-desktop:connect', { detail: ${JSON.stringify({ url: link.url })} }))`)
 }
 
 // app.exit skips before-quit, so dsh is stopped here: a start that fails after dsh came up
@@ -86,6 +132,7 @@ async function launch() {
     window.contentView.addChildView(page)
     ready = true
     layout()
+    if (pendingLink) void connectFromLink()
   })
   await page.webContents.loadURL(dsh.url)
   watchUpdates()
