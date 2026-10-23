@@ -13,6 +13,8 @@ name: Release
 # dsh-marketplace lists the plugins at the tag's commit. After the release, the market index
 # here lists it (scripts/marketplace.ts pin) and main moves to the tag.
 #
+# Dispatch: gh workflow run release.yml --ref dev [--field prerelease=true] [--field desktop=false]
+#
 # Nothing is published to npm: the plugins ship as git sources and release files only.
 # Pushes use the workflow's own token; CI already ran on the dev commit being released, and
 # this job runs the gates again before it tags.

@@ -8,7 +8,7 @@ name: Desktop build
 #
 # The version is Automagik's (package.json), which the app and every plugin here carry; the
 # release already holds the plugins (release.yml makes it and calls this). Dispatch it by hand
-# to rebuild a release's desktop files.
+# to rebuild a release's desktop files: gh workflow run desktop-build.yml --field ref=v<version>.
 #
 # macOS signing and notarization are optional: with the MAC_CSC_LINK and
 # MAC_CSC_KEY_PASSWORD secrets (the Developer ID Application certificate as a base64 .p12)

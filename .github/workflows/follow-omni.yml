@@ -6,8 +6,8 @@ name: Follow Omni
 # channels and canvas plugins carry its version and are tested on the DeepSeek Harness the
 # desktop runs (apps/desktop/runtime/package.json, the Bot team's harness), it moves omni.json
 # to it on dev and cuts an Automagik release with it (release.yml). A release tested on another
-# DSH is not followed until the Bot team moves to that DSH (scripts follow-dsh.mjs, by hand,
-# with its tests).
+# DSH is not followed until the Bot team moves to that DSH (apps/desktop/scripts/follow-dsh.mjs
+# and the harness pins, by hand, with their tests).
 
 on:
   schedule:
