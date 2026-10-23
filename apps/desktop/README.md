@@ -67,9 +67,13 @@ You can then eject the Omni disk in Finder's sidebar and delete the downloaded f
 
 ## Updates
 
-Omni updates itself. When a new version is ready, a **Restart to update** button appears at the top of the window. Click it when it suits you, or just quit Omni and the update is installed the next time you open it.
+Omni updates itself. It checks when it starts and every few hours, and downloads a new version in the background. When it's ready, the top of the window says **Omni X is ready** with **Restart now** and **Later**. After Later, a small **Restart to update** button stays there, and quitting Omni installs the update too.
 
-(On Linux, the .deb version updates when you install a newer .deb.)
+To check yourself, use **Omni → Check for Updates…** on macOS, or right-click the top bar on Linux.
+
+The .deb version on Linux doesn't replace itself, because your package manager owns it. Instead the top bar says **Omni X is out**, and **Download** opens the release page.
+
+A build follows its own channel: a stable release only moves to newer stable releases. `OMNI_DESKTOP_UPDATE_CHANNEL=prerelease` follows prereleases too, and `OMNI_DESKTOP_UPDATES=off` turns updates off. Each check is written to `logs/update.log` in the app's data folder.
 
 ## Your data
 

@@ -12,8 +12,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
 import { appHome, dshEnv, freePort, installProfile, navigationOf, resourcesOf, startDsh, stopDsh, writeTools } from './dsh.js'
-import { pageLayout, WINDOW_ACTIONS, windowChrome } from './frame.js'
-import { startUpdates, updatesEnabled } from './update.js'
+import { pageLayout, updateView, WINDOW_ACTIONS, windowChrome } from './frame.js'
+import { isReleasePage, startUpdates, updateMode } from './update.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const home = appHome()
@@ -27,6 +27,9 @@ let ready = false
 // The update the title bar shows ({ version, state, percent }), once there is one.
 let update = null
 let updates = null
+let updateDismissed = false
+let updateMessage = null
+let updateMessageTimer = null
 
 // omni:// links (deeplink.js): the system hands them to the running app (macOS: open-url;
 // Linux: a second instance with the link as an argument), or starts the app with one.
@@ -96,9 +99,32 @@ function fail(error) {
   void stopDsh(dshChild).finally(() => app.exit(1))
 }
 
+// macOS's app menu: the system's usual menus, with Check for Updates under the app's name.
+function appMenu() {
+  return Menu.buildFromTemplate([
+    { label: app.name, submenu: [
+      { role: 'about' },
+      { label: 'Check for Updates…', click: () => void checkForUpdates() },
+      { type: 'separator' },
+      { role: 'services' },
+      { type: 'separator' },
+      { role: 'hide' },
+      { role: 'hideOthers' },
+      { role: 'unhide' },
+      { type: 'separator' },
+      { role: 'quit' },
+    ] },
+    { role: 'fileMenu' },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+  ])
+}
+
 async function launch() {
   // No menu bar on Linux; macOS keeps its app menu for the usual shortcuts.
   if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
+  else Menu.setApplicationMenu(appMenu())
   openWindow()
   mkdirSync(join(home, 'logs'), { recursive: true })
   const resources = resourcesOf({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() })
@@ -137,24 +163,57 @@ async function launch() {
     layout()
     if (pendingLink) void connectFromLink()
   })
-  await page.webContents.loadURL(dsh.url)
+  // Before the page load: a page that fails to load must not stop the app from updating.
   watchUpdates()
+  await page.webContents.loadURL(dsh.url)
 }
 
 // See update.js. Its log is logs/update.log.
 function watchUpdates() {
-  if (!updatesEnabled({ packaged: app.isPackaged, platform: process.platform, env: process.env })) return
+  const mode = updateMode({ packaged: app.isPackaged, platform: process.platform, env: process.env })
+  if (!mode || updates) return
   const out = createWriteStream(join(home, 'logs', 'update.log'), { flags: 'a' })
   const line = level => message => out.write(`${new Date().toISOString()} ${level} ${message}\n`)
   const log = { info: line('info'), warn: line('warn'), error: line('error'), debug() {} }
+  log.info(`update: ${app.getVersion()} checks for updates (${mode})`)
   updates = startUpdates({
     updater: updaterModule.autoUpdater,
     current: app.getVersion(),
     platform: process.platform,
     env: process.env,
     log,
-    onState: (state) => { update = state; sendState() },
+    mode,
+    onState: (state) => {
+      if (state.state !== update?.state || state.version !== update?.version) updateDismissed = false
+      update = state
+      sendState()
+    },
   })
+}
+
+// The menu's Check for Updates: what it found shows in the title bar for a few seconds.
+async function checkForUpdates() {
+  if (!updates) return showUpdateMessage('Updates are off in this copy of Omni')
+  showUpdateMessage('Checking for updates…', 0)
+  const { result } = await updates.check()
+  if (result === 'latest') showUpdateMessage('Omni is up to date')
+  else if (result === 'error') showUpdateMessage('Could not check for updates')
+  else {
+    updateDismissed = false
+    showUpdateMessage(null)
+  }
+}
+
+function showUpdateMessage(text, ms = 4000) {
+  clearTimeout(updateMessageTimer)
+  updateMessage = text
+  sendState()
+  if (text && ms > 0) updateMessageTimer = setTimeout(() => { updateMessage = null; sendState() }, ms)
+}
+
+// The title bar's menu, on a right click; on macOS the app menu has the same entry.
+function barMenu() {
+  return Menu.buildFromTemplate([{ label: 'Check for Updates…', click: () => void checkForUpdates() }])
 }
 
 // Restart into the downloaded update: dsh is stopped first, as on any quit.
@@ -210,12 +269,15 @@ function layout() {
 function sendState(extra = {}) {
   if (!window || window.webContents.isLoading()) return
   const maximized = window.isMaximized() || window.isFullScreen()
-  window.webContents.send('omni-window-state', { maximized, ready, update, ...extra })
+  window.webContents.send('omni-window-state', { maximized, ready, update: updateView(update, { dismissed: updateDismissed, message: updateMessage }), ...extra })
 }
 
 ipcMain.on('omni-window', (event, action) => {
   if (!window || event.sender !== window.webContents || !WINDOW_ACTIONS.has(action)) return
   if (action === 'update') installUpdate()
+  else if (action === 'update-later') { updateDismissed = true; sendState() }
+  else if (action === 'update-page') { if (isReleasePage(update?.page)) void shell.openExternal(update.page) }
+  else if (action === 'menu') barMenu().popup({ window })
   else if (action === 'minimize') window.minimize()
   else if (action === 'maximize') window.isMaximized() ? window.unmaximize() : window.maximize()
   else window.close()

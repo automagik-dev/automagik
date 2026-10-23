@@ -2,7 +2,7 @@
 const { platform, act, onState } = window.omniWindow
 const body = document.body
 body.classList.add(platform === 'darwin' ? 'darwin' : 'linux')
-for (const button of document.querySelectorAll('[data-act]')) button.addEventListener('click', () => act(button.dataset.act))
+for (const button of document.querySelectorAll('.controls [data-act]')) button.addEventListener('click', () => act(button.dataset.act))
 onState((state) => {
   body.classList.toggle('max', state.maximized === true)
   body.classList.toggle('ready', state.ready === true)
@@ -14,15 +14,31 @@ onState((state) => {
   }
 })
 
-// A downloaded update offers a restart; one still downloading shows how far it is.
-function showUpdate(update) {
-  const button = document.getElementById('update')
-  const at = update?.version ? ` ${update.version}` : ''
-  button.hidden = !update
-  if (!update) return
-  const ready = update.state === 'ready'
-  button.disabled = !ready
-  button.classList.toggle('ready', ready)
-  button.textContent = ready ? 'Restart to update' : `Updating · ${update.percent ?? 0}%`
-  button.title = ready ? `Omni${at} is ready: restart to use it` : `Downloading Omni${at}`
+// The update area (frame.js updateView): a short line, and buttons that ask main.js to act.
+function showUpdate(view) {
+  const area = document.getElementById('update')
+  area.replaceChildren()
+  area.hidden = !view
+  if (!view) return
+  area.title = view.title ?? ''
+  if (view.text) {
+    const text = document.createElement('span')
+    text.className = 'update-text'
+    text.textContent = view.text
+    area.append(text)
+  }
+  for (const action of view.actions ?? []) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = action.primary ? 'primary' : ''
+    button.textContent = action.label
+    button.addEventListener('click', () => act(action.act))
+    area.append(button)
+  }
 }
+
+// A right click on the title bar opens its menu (Check for Updates).
+document.querySelector('.bar').addEventListener('contextmenu', (event) => {
+  event.preventDefault()
+  act('menu')
+})
