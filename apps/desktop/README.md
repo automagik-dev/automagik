@@ -1,96 +1,92 @@
-# Omni desktop
+<p align="center"><img src="assets/icon.png" width="112" alt="The Omni octopus"></p>
 
-**Omnipresent, event-driven assistance.** Omni desktop puts a team of AI Bots on top of every conversation you have: WhatsApp, Telegram, Slack and the other channels your [Omni](https://github.com/automagik-dev/omni) connects. They don't wait to be asked. A message arrives, a group gets busy, a customer writes at 3 AM: that is an event, and the Bot you put on it acts, in the open, where you can see it.
+<h1 align="center">Omni</h1>
 
-- **Everywhere you talk.** One window over all your channels and chats. Your Main Bot reads across them; a dedicated Bot lives in one group and does one job there.
-- **Driven by what happens.** Bots run on Omni's events, not on prompts: a new message, a mention, a schedule. Ask for "a digest of this group every morning at 8" and it simply happens.
-- **You stay in charge.** A Bot reaches only the chats you allowed. The first time it needs one, a card asks you, in its chat: *Once*, *Always* or *No*. Sending as you to a person, deleting and disconnecting ask every time, and show you the exact text and where it goes first.
-- **Live, not just text.** Bots answer with canvases: lists, boards and forms drawn from your Omni, updating as things change.
-- **No keys to copy.** Open the app, type your Omni's address, and send the code it shows to yourself on WhatsApp. Then pick your AI: sign in to DeepSeek, Codex, Claude or Kimi, or paste an API key.
-- **Always current.** The app updates itself in the background and asks for one restart.
+<p align="center"><b>A team of AI helpers that lives in your chats.</b><br>
+WhatsApp, Telegram, Slack and more, in one window, with helpers that act the moment something happens.</p>
 
-It is the Omni UI on a [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) of its own, with Omni's plugins already in it: the team, channels, canvases and the welcome. Each release carries one Omni release: the app's version is that Omni's version, and so is every plugin in it.
+<p align="center">
+  <a href="https://github.com/automagik-dev/omni-desktop/releases/latest/download/Omni-Mac.dmg"><b>⬇ Download for Mac</b></a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/automagik-dev/omni-desktop/releases/latest/download/Omni-Linux.deb"><b>⬇ Download for Linux (Ubuntu, Debian)</b></a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/automagik-dev/omni-desktop/releases/latest/download/Omni-Linux.AppImage">Linux (AppImage)</a>
+</p>
 
-> Labs: macOS (Apple silicon, signed and notarized) and Linux x64 (AppImage, deb; also WSL with WSLg). Windows itself is not supported.
+<p align="center"><sub>Mac with Apple silicon (M1 or newer), macOS 13 or newer · Linux on a 64-bit PC · Windows is not supported yet<br>
+Free and open source. <a href="https://github.com/automagik-dev/omni-desktop/releases/latest">All downloads and what's new</a></sub></p>
 
-## Install
+---
 
-```sh
-npx @automagik/omni desktop
-```
+## What it does
 
-downloads the build for this machine from this repository's releases, checks it against the release's `SHA256SUMS`, and opens it. Or download the dmg, AppImage or deb from [Releases](https://github.com/automagik-dev/omni-desktop/releases).
+Omni puts all your conversations in one place, and gives you **Bots**: AI helpers that work in your chats for you.
 
-## How it works
+- **One window for every chat.** Your WhatsApp, Telegram, Slack and other channels, side by side.
+- **Bots that don't wait to be asked.** A message arrives, a group gets busy, a customer writes at 3 AM: the Bot you put on it acts. Ask for *"a summary of this group every morning at 8"* and it simply happens.
+- **You stay in charge.** A Bot only reads the chats you allow. The first time it wants a new one, it asks you, and you answer **Once**, **Always** or **No**. Before it sends anything as you, deletes something or disconnects a channel, it shows you exactly what it will do and asks first, every time.
+- **Answers you can use.** Bots can reply with lists, boards and forms that keep themselves up to date.
 
-- Electron's main process starts dsh with Electron's own Node (`ELECTRON_RUN_AS_NODE`), on `127.0.0.1` and a free port, and opens the launch URL dsh prints with its per-launch token. Quitting stops dsh.
-- Everything the app keeps is in one folder, `~/.omni/desktop` (`OMNI_DESKTOP_HOME`, or `$OMNI_HOME/desktop`):
+## Before you start
 
-  | Folder | What |
-  |---|---|
-  | `dsh/` | dsh's home (`DSH_HOME`): its Sessions, settings, and the `omni` profile the app copies in from the build |
-  | `ui/` | the Omni UI plugin's home: the Bot team, and `omni.json`, the Omni this app is linked to (0600) |
-  | `bin/` | `node` and `pnpm` for dsh, written at each launch: both run on the app's own Electron as Node, so installing a plugin (Settings → Plugins, the market) needs nothing on the machine |
-  | `logs/dsh.log`, `logs/update.log` | dsh's output, and the update checks |
+You need two things. The app walks you through both, and you can skip either and come back later.
 
-  It is apart from a dsh you already run (`~/.dsh`) and from the Omni UI plugin installed into that dsh (`~/.omni/ui`).
-- The window is a plain page: context isolation and the renderer sandbox are on, there is no Node in it, it stays on dsh's origin, and web links (a `wa.me` link, docs) open in your browser. Other schemes are refused.
-- Linux sandbox: Chromium needs user namespaces or a setuid helper, and Ubuntu 24.04+ restricts user namespaces. The deb installs an AppArmor profile that allows them for the app, so the window is sandboxed. An AppImage cannot carry one; on such a system its launcher runs without the sandbox and says so on stderr. Prefer the deb there.
-- An AppImage opened directly is mounted with FUSE and needs `libfuse2` (`sudo apt install libfuse2t64` on Ubuntu 24.04+; WSL rarely has it). `omni desktop` needs none: it unpacks the AppImage once into `~/.omni/desktop/app/extracted/` and runs it from there. By hand: `./Omni-*.AppImage --appimage-extract`, then `squashfs-root/AppRun`.
-- Its profile switches DSH's own welcome notice and credential step off (`profile/cordis.patch.yml`), so the octopus opens the app.
-- The app updates itself from this repository's releases (`v<version>`, the same ones `omni desktop` downloads; `src/update.js`). It checks 20 seconds after start and then every 4 hours. A newer build downloads in the background, and its sha512 is checked. The title bar then shows **Restart to update**, and quitting installs it too. On macOS the update must carry the installed app's own signature, so only signed releases offer one. On Linux the AppImage updates itself when opened as an AppImage. A deb, or an AppImage unpacked by `omni desktop`, is updated by installing or opening a newer one. Set `OMNI_DESKTOP_UPDATES=off` to turn updates off, or `OMNI_DESKTOP_UPDATE_FEED` to take them from another feed folder (https, or http on loopback). The log is `logs/update.log`.
-- An update replaces the profile's packages and keeps everything you set: a setting a newer build ships is added to your `cordis.patch.yml` only when your file has no entry with its id, and `pnpm-workspace.yaml` is added when missing.
+1. **An Omni to connect to.** Omni is the service that links your chat apps. If your team or company runs one, ask for its address (it looks like a web address). You'll approve this computer from your phone; there are no passwords or keys to copy.
+2. **An AI account.** Any one of: DeepSeek, OpenAI (Codex), Anthropic (Claude), Kimi, Z.ai, OpenCode, or an API key from a provider you already use.
 
-## Which Omni it carries
+## Install on a Mac
 
-`omni.json` pins the Omni release the app is built from: its version and commit. The build takes Omni's plugins from that commit (`apps/*-dsh` in Omni), packs each with `npm pack`, and refuses one whose version is not that Omni's. It also refuses a dsh other than the one Omni tests its plugins on (`runtime/package.json` against Omni's `apps/omni-ui-dsh/dev/harness`).
+1. **[Download Omni for Mac](https://github.com/automagik-dev/omni-desktop/releases/latest/download/Omni-Mac.dmg)**. It's about 330 MB.
+2. Open the file you downloaded (**Omni-Mac.dmg**, in your Downloads folder).
+3. In the window that opens, **drag the Omni icon onto the Applications folder**.
+4. Open **Omni** from your Applications folder (or press ⌘ Space and type *Omni*).
+5. If your Mac asks *"Omni is an app downloaded from the Internet. Are you sure you want to open it?"*, click **Open**. Omni is signed and checked by Apple, so you only see this the first time.
 
-`follow-omni.yml` checks Omni's releases every 30 minutes. When Omni has cut a newer one, it moves `omni.json` and the app's version to it, commits that, and releases the app at the same version. Dispatch it to do so at once.
+You can then eject the Omni disk in Finder's sidebar and delete the downloaded file.
 
-## Build
+## Install on Linux
 
-```sh
-npm ci                  # Electron and electron-builder
-npm test                # the main-process logic, without Electron
-npm run dist:linux      # dist/Omni-<version>-linux-x86_64.AppImage and -amd64.deb
-npm run dist:mac        # on macOS: dist/Omni-<version>-mac-<arch>.dmg and .zip, signed and notarized (see macOS)
-```
+**Ubuntu or Debian (recommended):**
 
-`dist:*` first runs `scripts/prepare-runtime.mjs`: it fetches Omni at `omni.json`'s commit (only its plugin folders) into `build/omni`, installs the pinned dsh into `build/runtime`, and installs the packed plugins into `build/profile`, in one install. Set `OMNI_SOURCE` to a local Omni checkout to pack its plugins instead. Native packages are per platform, so build each target on its own platform. Builds run with `DO_NOT_TRACK=1`.
+1. **[Download Omni for Linux (.deb)](https://github.com/automagik-dev/omni-desktop/releases/latest/download/Omni-Linux.deb)**.
+2. Double-click the downloaded file and choose **Install**, or in a terminal run `sudo apt install ./Omni-Linux.deb` from your Downloads folder.
+3. Open **Omni** from your apps.
 
-To run from a checkout: `npm run prepare-runtime`, then `npx electron .` (add `--no-sandbox` on a system where Chromium's sandbox cannot start unpackaged).
+**Other Linux (AppImage):** [download the AppImage](https://github.com/automagik-dev/omni-desktop/releases/latest/download/Omni-Linux.AppImage), right-click it, open **Properties → Permissions**, tick **Allow executing file as program**, then double-click it. If it doesn't start, your system may need `libfuse2` (on Ubuntu: `sudo apt install libfuse2t64`), or use the .deb instead.
 
-### The icon
+## Your first five minutes
 
-`assets/icon.svg` is the icon's source: the Omni octopus on a night-sky tile. electron-builder makes every platform's icons from `assets/icon.png`, which is the SVG rendered by headless Chromium:
+1. **Say hi to the octopus.** Omni opens with a short welcome.
+2. **Connect your Omni.** Type your Omni's address and click **Get a code**. A QR code appears.
+   - Scan it with your phone's camera. WhatsApp opens your chat with yourself, with the code already typed. **Send it**, and the app connects.
+   - Or approve it on your phone with Face ID or your fingerprint, if your Omni offers that.
+3. **Connect your AI.** Pick the account you have: sign in to Codex, Claude or Kimi, or paste a DeepSeek or other API key.
+4. **Start talking.** Your **Main Bot** sees across your channels. Ask it something about your chats, or ask it to look after a group for you.
 
-```sh
-chrome-headless-shell --screenshot=assets/icon.png --window-size=1024,1024 \
-  --default-background-color=00000000 --hide-scrollbars "file://$PWD/assets/icon.svg"
-```
+> Signing in to Codex, Claude or Kimi uses your personal plan with that company. Check their terms before using a personal plan for work. API keys don't have that limit.
 
-## Measured (labs prototype, 2026-10-20, Linux x64)
+## Updates
 
-| | |
-|---|---|
-| AppImage | 251 MB |
-| deb | 208 MB |
-| dsh runtime, unpacked | 864 MB (145 MB of it is LibreOffice WASM for document previews) |
-| Memory after start, idle | about 1.0 GB RSS across Electron's processes and dsh (dsh itself about 290 MB) |
+Omni updates itself. When a new version is ready, a **Restart to update** button appears at the top of the window. Click it when it suits you, or just quit Omni and the update is installed the next time you open it.
 
-## macOS
+(On Linux, the .deb version updates when you install a newer .deb.)
 
-Releases are signed with the Developer ID Application certificate and notarized in CI (`release.yml`, with the `MAC_CSC_LINK`, `MAC_CSC_KEY_PASSWORD`, `APPLE_API_KEY`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER` secrets). Without them the dmg is unsigned and the release offers no macOS update.
+## Your data
 
-`npm run dist:mac` on a Mac signs with the certificate in its login keychain, under the hardened runtime (`assets/entitlements.mac.plist`), and notarizes when `APPLE_KEYCHAIN_PROFILE` names a `notarytool` profile:
+- Everything Omni keeps on your computer is in one folder: **`.omni/desktop`** in your home folder.
+- Your chats stay in your Omni. The app shows them and keeps what your Bots need to work.
+- What your Bots read and write goes to the AI account you connected, under that company's terms.
 
-```sh
-xcrun notarytool store-credentials omni-notary   # once
-APPLE_KEYCHAIN_PROFILE=omni-notary npm run dist:mac
-```
+## Uninstall
 
-Signing reads the login keychain, so run it from a Terminal in the Mac's own session (over ssh the keychain is locked).
+- **Mac:** quit Omni, then drag **Omni** from Applications to the Trash.
+- **Linux (.deb):** `sudo apt remove omni`. **AppImage:** delete the file.
+- To also remove everything it kept, delete the **`.omni/desktop`** folder in your home folder. (On a Mac, press ⌘ ⇧ . in Finder to show hidden folders.)
 
-## License
+## Help
 
-Apache-2.0, like Omni.
+Something not working, or an idea? [Open an issue](https://github.com/automagik-dev/omni-desktop/issues) and tell us what you did and what you saw.
+
+---
+
+<sub>For developers: Omni desktop is the [Omni](https://github.com/automagik-dev/omni) UI on a DeepSeek Harness of its own, and each release carries one Omni release at the same version. How it's built, released and updated: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Apache-2.0.</sub>
