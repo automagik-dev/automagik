@@ -80,7 +80,7 @@ test('the shipped profile bundles Omni\'s plugins, core first, and the plugin ma
   const omni = ['@automagik/omni-dsh', '@automagik/omni-channels-dsh', '@automagik/omni-canvas-dsh', '@automagik/omni-ai-dsh']
   // Omni's plugins first, then the add-ons that connect AI subscriptions, each at an exact
   // vetted version and bundled after Omni's.
-  const addons = { '@goodandready/dsh-subscriptions': '0.7.19', 'dsh-oh-my-claude': '1.5.5' }
+  const addons = { '@goodandready/dsh-subscriptions': '0.7.19', 'dsh-oh-my-claude': '1.5.6' }
   assert.deepEqual(Object.keys(profile.dependencies), [...omni, ...Object.keys(addons)])
   for (const [name, version] of Object.entries(addons)) assert.equal(profile.dependencies[name], version)
   assert.deepEqual(profile.dsh.profile.bundles.filter(name => name.startsWith('@automagik/')), omni)
