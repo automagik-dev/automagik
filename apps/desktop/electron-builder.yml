@@ -54,6 +54,9 @@ mac:
   artifactName: Omni-${version}-mac-${arch}.${ext}
 dmg:
   title: Omni ${version}
+  # The dmg is signed too (electron-builder signs only the app by default), and release.yml
+  # notarizes and staples it, so a downloaded dmg opens without a warning.
+  sign: true
 # Where the update feeds (latest-mac.yml, latest-linux.yml) say the builds are. The builds
 # never publish themselves (--publish never): release.yml uploads them to this repository's
 # release `v<version>`, and the app reads that release's feed (src/update.js).

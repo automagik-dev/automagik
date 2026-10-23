@@ -12,10 +12,10 @@ name: Release
 #
 # macOS signing and notarization are optional: with the MAC_CSC_LINK and
 # MAC_CSC_KEY_PASSWORD secrets (the Developer ID Application certificate as a base64 .p12)
-# the app is signed, and with APPLE_API_KEY (the App Store Connect .p8 contents),
-# APPLE_API_KEY_ID and APPLE_API_ISSUER it is notarized. Without them the dmg is unsigned,
-# and the release carries no macOS update: a signed app accepts only an update signed
-# like itself, and an unsigned one cannot update.
+# the app and the dmg are signed, and with APPLE_API_KEY (the App Store Connect .p8
+# contents), APPLE_API_KEY_ID and APPLE_API_ISSUER both are notarized and stapled.
+# Without them the dmg is unsigned, and the release carries no macOS update: a signed app
+# accepts only an update signed like itself, and an unsigned one cannot update.
 
 on:
   workflow_call:
@@ -154,6 +154,23 @@ jobs:
             unset APPLE_API_KEY_ID APPLE_API_ISSUER
           fi
           npx --no-install electron-builder --mac dmg zip --arm64 --publish never
+          if [[ -n "${MAC_CSC_LINK}" ]]; then
+            dmg=$(ls dist/*.dmg)
+            codesign --verify --strict "${dmg}"
+          fi
+          if [[ -n "${MAC_CSC_LINK}" && -n "${APPLE_API_KEY:-}" ]]; then
+            # electron-builder notarizes the app inside; the dmg someone downloads is a signed
+            # file of its own, so it goes to Apple too and carries its ticket. Stapling changes
+            # its bytes: the feed gets its new sha512 and size, and its blockmap (which no update
+            # reads: macOS updates from the zip) goes.
+            xcrun notarytool submit "${dmg}" --key "${APPLE_API_KEY}" --key-id "${APPLE_API_KEY_ID}" \
+              --issuer "${APPLE_API_ISSUER}" --wait --timeout 30m
+            xcrun stapler staple "${dmg}"
+            xcrun stapler validate "${dmg}"
+            spctl --assess --type open --context context:primary-signature -vv "${dmg}"
+            node scripts/restamp-feed.mjs dist/latest-mac.yml "${dmg}"
+            rm -f "${dmg}.blockmap"
+          fi
           if [[ -z "${MAC_CSC_LINK}" ]]; then
             echo "::warning ::Unsigned: no macOS update feed in this release"
             rm -f dist/latest-mac.yml dist/*.zip dist/*.zip.blockmap
@@ -204,6 +221,10 @@ jobs:
           set -euo pipefail
           TAG="v${VERSION}"
           if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            # A rebuild replaces the release's files: one this build did not make goes.
+            for name in $(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name'); do
+              [[ -e "assets/${name}" ]] || gh release delete-asset "${TAG}" "${name}" --yes --repo "${GITHUB_REPOSITORY}"
+            done
             gh release upload "${TAG}" assets/* --clobber --repo "${GITHUB_REPOSITORY}"
           else
             flags=()
