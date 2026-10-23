@@ -86,7 +86,7 @@ jobs:
           bun install --frozen-lockfile --ignore-scripts
           bun run check
           for app in bots-dsh welcome-dsh; do
-            (cd "apps/${app}" && node scripts/build-client.mjs --check)
+            (cd "apps/${app}" && bun install --frozen-lockfile --ignore-scripts && node scripts/build-client.mjs --check)
           done
 
       - name: Version, commit and tag
