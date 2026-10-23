@@ -16,7 +16,8 @@ test('the app keeps everything in one folder under ~/.omni, apart from a dsh you
   assert.equal(env.ELECTRON_RUN_AS_NODE, '1')
   assert.equal(env.DO_NOT_TRACK, '1')
   assert.equal(env.OMNI_CLIENT_ID, 'omni-desktop')
-  assert.equal(env.PATH, '/bin')
+  // The person's PATH comes first; the usual tool folders follow (see toolDirs below).
+  assert.ok(env.PATH.startsWith('/bin:'))
   assert.equal(dshEnv({ base: {}, home: '/a' }).ELECTRON_RUN_AS_NODE, undefined)
 })
 
@@ -147,8 +148,11 @@ test('dsh gets node and pnpm on its PATH, both on the app\'s own Node', (t) => {
   const dir = writeTools({ dir: join(root, 'bin'), node: process.execPath, pnpm: script })
   assert.deepEqual(JSON.parse(execFileSync(join(dir, 'pnpm'), ['add', 'a b'], { encoding: 'utf8' })), ['1', 'add', 'a b'])
   assert.equal(execFileSync(join(dir, 'node'), ['-p', '6*7'], { encoding: 'utf8' }).trim(), '42')
-  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', binDir: dir }).PATH, `/bin:${dir}`)
-  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a' }).PATH, '/bin')
+  const tools = '/u/.local/bin:/u/.claude/local:/opt/homebrew/bin:/usr/local/bin'
+  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', binDir: dir, userHome: '/u' }).PATH, `/bin:${tools}:${dir}`)
+  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', userHome: '/u' }).PATH, `/bin:${tools}`)
+  // A folder already on the person's PATH keeps its place and is not repeated.
+  assert.equal(dshEnv({ base: { PATH: '/usr/local/bin:/bin' }, home: '/a', userHome: '/u' }).PATH, '/usr/local/bin:/bin:/u/.local/bin:/u/.claude/local:/opt/homebrew/bin')
 })
 
 test('an update adds the settings a newer build ships and keeps every one the user has', () => {

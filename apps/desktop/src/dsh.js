@@ -194,11 +194,22 @@ export function launchUrlOf(text, port) {
 }
 
 /** The environment dsh runs with: its own home, Omni's, and nothing that phones home. */
-export function dshEnv({ base = process.env, home, electronAsNode = false, binDir }) {
+/**
+ * Where command-line tools that plugins drive install themselves. An app opened from the Dock
+ * or a desktop launcher gets a bare PATH without them, so dsh-oh-my-claude could not start
+ * Claude Code (which installs to ~/.local/bin) although it works in the person's terminal.
+ */
+export const toolDirs = (userHome = homedir()) => [join(userHome, '.local', 'bin'), join(userHome, '.claude', 'local'), '/opt/homebrew/bin', '/usr/local/bin']
+
+export function dshEnv({ base = process.env, home, electronAsNode = false, binDir, userHome = homedir() }) {
+  // After the machine's own: a project's commands keep the user's node and pnpm, and then the
+  // usual tool folders, then the app's own node and pnpm.
+  const PATH = [...String(base.PATH ?? '').split(delimiter), ...toolDirs(userHome), ...(binDir ? [binDir] : [])]
+    .filter((dir, index, all) => dir !== '' && all.indexOf(dir) === index)
+    .join(delimiter)
   return {
     ...base,
-    // After the machine's own: a project's commands keep the user's node and pnpm.
-    ...(binDir ? { PATH: [base.PATH, binDir].filter(Boolean).join(delimiter) } : {}),
+    PATH,
     DSH_HOME: join(home, 'dsh'),
     OMNI_HOME: home,
     // Signs in to an Omni as the desktop app (the Better Auth device-flow client id).
