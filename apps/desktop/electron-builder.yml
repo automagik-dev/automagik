@@ -20,6 +20,12 @@ extraResources:
   - from: build/versions.json
     to: versions.json
 asar: true
+# omni:// links (src/deeplink.js): an Omni's "Open in the Omni app" opens this app. macOS takes
+# the scheme from Info.plist (CFBundleURLTypes); Linux from the desktop entry's MimeType.
+protocols:
+  - name: Omni
+    schemes:
+      - omni
 # Chromium's sandbox on Linux needs either a setuid chrome-sandbox (the deb sets it on
 # install) or unprivileged user namespaces, which Ubuntu 24.04+ restricts. The launcher
 # the hook writes picks --no-sandbox only when neither is available (an AppImage there).
@@ -30,6 +36,8 @@ linux:
     - deb
   category: Network
   executableName: omni-desktop
+  mimeTypes:
+    - x-scheme-handler/omni
   icon: assets/icon.png
   syncDesktopName: true
   synopsis: Omni on your desktop
