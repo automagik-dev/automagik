@@ -78,8 +78,13 @@ test('the shipped profile seeds a new home, and a new build replaces only its pa
 test('the shipped profile bundles Omni\'s plugins, core first, and the plugin market, and switches DSH\'s own onboarding off', () => {
   const profile = JSON.parse(readFileSync(new URL('../profile/package.json', import.meta.url), 'utf8'))
   const omni = ['@automagik/omni-dsh', '@automagik/omni-channels-dsh', '@automagik/omni-canvas-dsh', '@automagik/omni-ai-dsh']
-  assert.deepEqual(Object.keys(profile.dependencies), omni)
+  // Omni's plugins first, then the add-ons that connect AI subscriptions, each at an exact
+  // vetted version and bundled after Omni's.
+  const addons = { '@goodandready/dsh-subscriptions': '0.7.19', 'dsh-oh-my-claude': '1.5.4' }
+  assert.deepEqual(Object.keys(profile.dependencies), [...omni, ...Object.keys(addons)])
+  for (const [name, version] of Object.entries(addons)) assert.equal(profile.dependencies[name], version)
   assert.deepEqual(profile.dsh.profile.bundles.filter(name => name.startsWith('@automagik/')), omni)
+  assert.deepEqual(profile.dsh.profile.bundles.slice(-2), Object.keys(addons))
   assert.ok(profile.dsh.profile.bundles.includes('@deepseek-ai/dsh-experimental-plugin-market-bundle'))
   const patch = readFileSync(new URL('../profile/cordis.patch.yml', import.meta.url), 'utf8')
   // DSH compares the notice version exactly, as a string.
@@ -87,6 +92,8 @@ test('the shipped profile bundles Omni\'s plugins, core first, and the plugin ma
   assert.match(patch, /^- id: ui-settings-models\n {2}config:\n {4}credentialOnboarding: false$/m)
   // Pairing adds the Omni's market here (apps/omni-channels-dsh omni-link.js).
   assert.match(patch, /^- id: plugin-market\n {2}config:\n {4}indexes: \[\]$/m)
+  // dsh-subscriptions never moves a chat to a local Ollama model on its own.
+  assert.match(patch, /^- id: dsh-subscriptions\n {2}config:\n {4}ollamaFallback: false$/m)
 })
 
 test('the launch URL is read from dsh\'s output, only for the port it was given', () => {
