@@ -11,7 +11,7 @@ import { createWriteStream, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
-import { appHome, dshEnv, freePort, installProfile, navigationOf, pinProfileStore, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
+import { appHome, dshEnv, freePort, installProfile, navigationOf, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
 import { pageLayout, updateView, WINDOW_ACTIONS, windowChrome } from './frame.js'
 import { isReleasePage, startUpdates, updateMode } from './update.js'
 
@@ -46,6 +46,8 @@ if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   app.on('second-instance', (_event, argv) => {
+    // `omni desktop` or `genie desktop` while the app runs: kept for the next start.
+    preloadOf({ home, argv, env: {} })
     if (window) {
       if (window.isMinimized()) window.restore()
       window.focus()
@@ -134,7 +136,9 @@ async function launch() {
   const log = createWriteStream(join(home, 'logs', 'dsh.log'), { flags: 'a' })
   // Electron's own binary runs dsh as Node, so the app ships one runtime.
   const binDir = writeTools({ dir: join(home, 'bin'), node: process.execPath, pnpm: resources.pnpm })
-  dsh = await startDsh({ node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir }), port, cwd: home, log, onSpawn: (child) => { dshChild = child } })
+  // `--preload=omni|genie` from `omni desktop` / `genie desktop`, kept in the app's home.
+  const preload = preloadOf({ home, argv: process.argv, env: process.env })
+  dsh = await startDsh({ node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload }), port, cwd: home, log, onSpawn: (child) => { dshChild = child } })
   dsh.child.once('exit', (code) => {
     if (!quitting) fail(new Error(`dsh stopped (${code}).`))
   })

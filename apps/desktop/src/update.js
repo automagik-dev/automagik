@@ -1,15 +1,16 @@
-// Updates: the app follows its own releases, `v<version>` in automagik-dev/omni-desktop on
-// GitHub (the ones `omni desktop` downloads). A newer one downloads in the background and installs when
+// Updates: the app follows its own releases, `v<version>` in automagik-dev/automagik on
+// GitHub (the ones `omni desktop` downloads). Builds released from automagik-dev/omni-desktop
+// (up to 2.261023.x) reach these through that repository's last release, which is this app. A newer one downloads in the background and installs when
 // the app quits, or at once from the title bar's Restart now. electron-updater downloads
 // it, checks its sha512 and installs it (on macOS through Squirrel, which also requires the
 // update to carry the running app's signature). This module picks the release: the newest
 // one above this version, on this build's channel, that carries this platform's feed.
 // A deb is the system package manager's to replace, so there the app only says a release is out.
 
-export const RELEASES_URL = 'https://api.github.com/repos/automagik-dev/omni-desktop/releases?per_page=50'
+export const RELEASES_URL = 'https://api.github.com/repos/automagik-dev/automagik/releases?per_page=50'
 export const DESKTOP_TAG_PREFIX = 'v'
-const DOWNLOADS = 'https://github.com/automagik-dev/omni-desktop/releases/download/'
-const RELEASE_PAGE = 'https://github.com/automagik-dev/omni-desktop/releases/tag/'
+const DOWNLOADS = 'https://github.com/automagik-dev/automagik/releases/download/'
+const RELEASE_PAGE = 'https://github.com/automagik-dev/automagik/releases/tag/'
 export const FIRST_CHECK_MS = 20_000
 export const CHECK_EVERY_MS = 4 * 60 * 60 * 1000
 export const RETRY_MS = 30 * 60 * 1000

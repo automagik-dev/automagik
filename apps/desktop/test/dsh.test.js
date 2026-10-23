@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { appHome, dshEnv, freePort, installProfile, launchUrlOf, mergeProfilePackage, mergeProfilePatch, navigationOf, pinProfileStore, resourcesOf, scrubBuildPaths, SHIPPED_STORE, startDsh, stopDsh, storeLayoutOf, writeTools } from '../src/dsh.js'
+import { appHome, dshEnv, freePort, installProfile, launchUrlOf, mergeProfilePackage, mergeProfilePatch, migrateRenamed, navigationOf, pinProfileStore, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, scrubBuildPaths, SHIPPED_STORE, startDsh, stopDsh, storeLayoutOf, writeTools } from '../src/dsh.js'
 
 test('the app keeps everything in one folder under ~/.omni, apart from a dsh you already run', () => {
   assert.equal(appHome({}), join(homedir(), '.omni', 'desktop'))
@@ -137,11 +137,11 @@ test('a profile without node_modules yet still gets the store, and the layout fo
   assert.equal(storeLayoutOf(join(pnpm, 'bin', 'pnpm.cjs')), 'v11')
 })
 
-// The app opens on the Omni octopus (@automagik/omni-ai-dsh), not on DSH's own welcome
+// The app opens on the Omni octopus (@automagik/welcome-dsh), not on DSH's own welcome
 // notice and credential step.
-test('the shipped profile bundles Omni\'s plugins, core first, and the plugin market, and switches DSH\'s own onboarding off', () => {
+test('the shipped profile bundles the Bot team first, Omni\'s plugins, the welcome and the plugin market, and switches DSH\'s own onboarding off', () => {
   const profile = JSON.parse(readFileSync(new URL('../profile/package.json', import.meta.url), 'utf8'))
-  const omni = ['@automagik/omni-dsh', '@automagik/omni-channels-dsh', '@automagik/omni-canvas-dsh', '@automagik/omni-ai-dsh']
+  const omni = ['@automagik/bots-dsh', '@automagik/omni-channels-dsh', '@automagik/omni-canvas-dsh', '@automagik/welcome-dsh']
   // Omni's plugins first, then the add-ons that connect AI subscriptions, each at an exact
   // vetted version or a reviewed fork's pinned commit, and bundled after Omni's.
   const addons = {
@@ -317,4 +317,99 @@ test('an update replaces the packages the app ships and keeps the plugins the us
   assert.deepEqual(merged.dsh.profile.bundles, ['@deepseek-ai/dsh-base', '@automagik/omni-dsh', 'dsh-kimi-subscription'])
   // Nothing added: the shipped package.json as it is.
   assert.deepEqual(JSON.parse(mergeProfilePackage(shippedPackage('2'), shippedPackage('3'))), shippedPackage('3'))
+})
+
+// Builds up to 2.261023.x (automagik-dev/omni-desktop) shipped the Bot team and the welcome
+// as @automagik/omni-dsh and @automagik/omni-ai-dsh. An update into this app finds such a
+// profile: it must end with the new packages only, the user's rows naming them, and the
+// team's home untouched.
+test('an update moves a profile from the renamed packages to the new ones and keeps everything else', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-rename-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const dshHome = join(root, 'dsh')
+  const target = join(dshHome, 'profiles', 'omni')
+  const old = ['@automagik/omni-dsh', '@automagik/omni-channels-dsh', '@automagik/omni-canvas-dsh', '@automagik/omni-ai-dsh']
+  for (const name of [...old, 'dsh-kimi-subscription']) {
+    mkdirSync(join(target, 'node_modules', ...name.split('/')), { recursive: true })
+    writeFileSync(join(target, 'node_modules', ...name.split('/'), 'index.js'), 'old')
+  }
+  writeFileSync(join(target, 'package.json'), JSON.stringify({
+    dependencies: { ...Object.fromEntries(old.map(name => [name, `file:vendor/${name.slice(11)}-2.261023.32.tgz`])), 'dsh-kimi-subscription': '1.3.10' },
+    dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', ...old, 'dsh-kimi-subscription'] } },
+  }))
+  // The user's settings: rows DSH's Settings wrote for the team (by package name), the web
+  // search the app inserted, and the user's own model setup.
+  writeFileSync(join(target, 'cordis.patch.yml'), [
+    '- insert:', '    - id: web-search-auto', "      name: '@automagik/omni-dsh/web-search'",
+    '- id: omni-ui', "  name: '@automagik/omni-dsh'", '  config:', '    checkRatio: 0.7', '    memoryReview: false',
+    '- id: omni-ai', "  name: '@automagik/omni-ai-dsh'", '  config:', '    welcomeDone: true',
+    '- id: llm-pi-ai', '  config:', '    routes: [juice]', '',
+  ].join('\n'))
+  writeFileSync(join(target, '.omni-desktop-profile'), 'old build')
+  writeFileSync(join(dshHome, 'cordis.patch.yml'), "- id: omni-ui\n  name: '@automagik/omni-dsh'\n  config:\n    browser: false\n")
+  // The team's home: Bots, chats, memory and the Omni link.
+  const team = join(root, 'ui')
+  mkdirSync(join(team, 'memory'), { recursive: true })
+  writeFileSync(join(team, 'state.json'), '{"version":1,"bots":[{"id":"omni"}]}')
+  writeFileSync(join(team, 'omni.json'), '{"url":"https://omni.example"}')
+
+  const source = join(root, 'shipped')
+  const fresh = ['@automagik/bots-dsh', '@automagik/omni-channels-dsh', '@automagik/omni-canvas-dsh', '@automagik/welcome-dsh']
+  for (const name of fresh) {
+    mkdirSync(join(source, 'node_modules', ...name.split('/')), { recursive: true })
+    writeFileSync(join(source, 'node_modules', ...name.split('/'), 'index.js'), 'new')
+  }
+  writeFileSync(join(source, 'package.json'), JSON.stringify({ dependencies: Object.fromEntries(fresh.map(name => [name, 'file:vendor/x.tgz'])), dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', ...fresh] } } }))
+  writeFileSync(join(source, 'cordis.patch.yml'), readFileSync(new URL('../profile/cordis.patch.yml', import.meta.url), 'utf8'))
+  writeFileSync(join(source, '.build-id'), 'new build')
+
+  assert.equal(installProfile({ dshHome, source }).installed, true)
+  const merged = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8'))
+  assert.deepEqual(Object.keys(merged.dependencies), [...fresh, 'dsh-kimi-subscription'])
+  assert.deepEqual(merged.dsh.profile.bundles, ['@deepseek-ai/dsh-base', ...fresh, 'dsh-kimi-subscription'])
+  assert.equal(existsSync(join(target, 'node_modules', '@automagik', 'omni-dsh')), false)
+  assert.equal(existsSync(join(target, 'node_modules', '@automagik', 'omni-ai-dsh')), false)
+  for (const name of fresh) assert.equal(readFileSync(join(target, 'node_modules', ...name.split('/'), 'index.js'), 'utf8'), 'new')
+  assert.equal(readFileSync(join(target, 'node_modules', 'dsh-kimi-subscription', 'index.js'), 'utf8'), 'old')
+  const patch = readFileSync(join(target, 'cordis.patch.yml'), 'utf8')
+  assert.doesNotMatch(patch, /omni-dsh|omni-ai-dsh/)
+  assert.match(patch, /^- id: omni-ui\n {2}name: '@automagik\/bots-dsh'\n {2}config:\n {4}checkRatio: 0\.7\n {4}memoryReview: false$/m)
+  assert.match(patch, /name: '@automagik\/bots-dsh\/web-search'/)
+  assert.match(patch, /^- id: omni-ai\n {2}name: '@automagik\/welcome-dsh'\n {2}config:\n {4}welcomeDone: true$/m)
+  assert.match(patch, /routes: \[juice\]/)
+  assert.equal(readFileSync(join(dshHome, 'cordis.patch.yml'), 'utf8'), "- id: omni-ui\n  name: '@automagik/bots-dsh'\n  config:\n    browser: false\n")
+  assert.equal(readFileSync(join(team, 'state.json'), 'utf8'), '{"version":1,"bots":[{"id":"omni"}]}')
+  assert.equal(readFileSync(join(team, 'omni.json'), 'utf8'), '{"url":"https://omni.example"}')
+  // Run again (the next launch of the same build): nothing left to move.
+  assert.deepEqual(migrateRenamed({ target, dshHome, shipped: JSON.parse(readFileSync(join(source, 'package.json'), 'utf8')) }), [])
+})
+
+test('the rename touches only the old names, whole', () => {
+  assert.deepEqual(RENAMED, { '@automagik/omni-dsh': '@automagik/bots-dsh', '@automagik/omni-ai-dsh': '@automagik/welcome-dsh' })
+  assert.equal(renamePatch("- id: x\n  name: '@automagik/omni-dsh-extra'\n- id: y\n  name: '@automagik/omni-channels-dsh'\n"), null)
+  assert.equal(renamePatch('name: @automagik/omni-dsh # the team\n'), 'name: @automagik/bots-dsh # the team\n')
+  assert.equal(renamePatch('name: "@automagik/omni-ai-dsh"'), 'name: "@automagik/welcome-dsh"')
+  // A build that does not ship the new name leaves the old one alone.
+  assert.deepEqual(JSON.parse(mergeProfilePackage({ dependencies: { '@automagik/omni-dsh': '1' } }, { dependencies: {} })).dependencies, { '@automagik/omni-dsh': '1' })
+})
+
+test('a preload comes from the launch and stays in the app\'s home; none is no preference', (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'omni-desktop-preload-'))
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  assert.equal(preloadAsked(['/opt/Omni/omni-desktop', '--preload=omni']), 'omni')
+  assert.equal(preloadAsked(['x', '--preload', 'Genie']), 'genie')
+  assert.equal(preloadAsked(['x'], { AUTOMAGIK_PRELOAD: 'omni' }), 'omni')
+  assert.equal(preloadAsked(['x', '--preload=other']), null)
+  assert.equal(preloadAsked(['x', '--preload']), null)
+  assert.equal(preloadOf({ home, argv: ['x'] }), null)
+  assert.equal(existsSync(join(home, 'preload')), false)
+  assert.equal(preloadOf({ home, argv: ['x', '--preload=genie'] }), 'genie')
+  // A later launch from the Dock or a desktop entry passes no flag.
+  assert.equal(preloadOf({ home, argv: ['x'] }), 'genie')
+  assert.equal(preloadOf({ home, argv: ['x', '--preload=omni'] }), 'omni')
+  assert.equal(preloadOf({ home, argv: ['x'] }), 'omni')
+  writeFileSync(join(home, 'preload'), 'nonsense\n')
+  assert.equal(preloadOf({ home, argv: ['x'] }), null)
+  assert.equal(dshEnv({ base: {}, home: '/a', preload: 'omni' }).AUTOMAGIK_PRELOAD, 'omni')
+  assert.equal('AUTOMAGIK_PRELOAD' in dshEnv({ base: {}, home: '/a' }), false)
 })

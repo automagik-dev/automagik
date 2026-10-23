@@ -2,7 +2,8 @@
 // app ships lands there, and the server process itself. Electron's main process
 // (main.js) uses this; tests use it without Electron.
 //
-// Everything the app keeps is under one folder, ~/.omni/desktop by default:
+// Everything the app keeps is under one folder, ~/.omni/desktop by default (the folder
+// omni-desktop's builds used, so an install that updates into this app keeps it):
 //   dsh/   DSH_HOME: dsh's own Sessions, settings and the `omni` profile
 //   ui/    the Omni UI plugin's home (OMNI_HOME is this folder, so the plugin uses ui/)
 //   bin/   `node` and `pnpm` for dsh, both on Electron's own Node (writeTools)
@@ -103,6 +104,66 @@ export function mergeProfilePatch(user, shipped) {
 }
 
 /**
+ * Packages earlier builds shipped under another name: the Bot team and the welcome were
+ * @automagik/omni-dsh and @automagik/omni-ai-dsh while they lived in Omni's repository. An
+ * update moves a profile it finds from the old names to the new ones (installProfile), so
+ * it does not run two copies of one plugin, and the user's settings rows keep applying:
+ * DSH applies a profile row only to the package its `name` names.
+ */
+export const RENAMED = Object.freeze({
+  '@automagik/omni-dsh': '@automagik/bots-dsh',
+  '@automagik/omni-ai-dsh': '@automagik/welcome-dsh',
+})
+
+const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
+
+/**
+ * A cordis patch file's text with each renamed package's name moved to its new one, its
+ * subpaths too (`@automagik/omni-dsh/web-search`); null when it names none of them.
+ */
+export function renamePatch(text, renamed = RENAMED) {
+  let next = String(text)
+  for (const [from, to] of Object.entries(renamed)) {
+    next = next.replace(new RegExp(`(?<![\\w@/.-])${escapeRegExp(from)}(?=['"/\\s]|$)`, 'gm'), to)
+  }
+  return next === String(text) ? null : next
+}
+
+/** The renamed packages whose new name `shipped` (a profile package.json) carries. */
+function renamedIn(shipped, renamed = RENAMED) {
+  return Object.entries(renamed).filter(([, to]) => Object.hasOwn(shipped?.dependencies ?? {}, to)).map(([from]) => from)
+}
+
+/**
+ * Move a profile from the renamed packages to their new names: the old packages leave
+ * node_modules (the new ones arrive with the shipped packages), and the profile's patch and
+ * DSH's own (DSH_HOME/cordis.patch.yml) name the new ones. Bots, chats, memory and the Omni
+ * link are in the team's home (OMNI_HOME/ui), which no name is part of: nothing there moves.
+ */
+export function migrateRenamed({ target, dshHome, shipped, renamed = RENAMED }) {
+  const moved = renamedIn(shipped, renamed)
+  if (moved.length === 0) return []
+  const changed = []
+  for (const name of moved) {
+    const dir = join(target, 'node_modules', ...name.split('/'))
+    if (existsSync(dir)) {
+      rmSync(dir, { recursive: true, force: true })
+      changed.push(dir)
+    }
+  }
+  const only = Object.fromEntries(moved.map(name => [name, renamed[name]]))
+  for (const file of [join(target, 'cordis.patch.yml'), join(dshHome, 'cordis.patch.yml')]) {
+    if (!existsSync(file)) continue
+    const next = renamePatch(readFileSync(file, 'utf8'), only)
+    if (next !== null) {
+      writeFileSync(file, next)
+      changed.push(file)
+    }
+  }
+  return changed
+}
+
+/**
  * Put the shipped profile in place under DSH_HOME/profiles/omni. It is copied, not
  * linked: dsh routes a plugin's imports to its own packages only for files inside the
  * profile. A profile already there from the same build (scripts/prepare-runtime.mjs stamps
@@ -121,6 +182,8 @@ export function installProfile({ dshHome, source }) {
     mkdirSync(join(dshHome, 'profiles'), { recursive: true })
     cpSync(source, target, { recursive: true })
   } else {
+    // A profile from a build that shipped the Bot team or the welcome under its old name.
+    migrateRenamed({ target, dshHome, shipped: readJson(join(source, 'package.json')) })
     // Only the packages the app ships are replaced: a plugin the user installed (the market,
     // Settings → Plugins) stays, with its dependencies, and in package.json.
     for (const name of packagesIn(join(source, 'node_modules'))) {
@@ -222,12 +285,53 @@ function packagesIn(dir) {
  */
 export function mergeProfilePackage(user, shipped) {
   const merged = structuredClone(shipped)
-  const extraDependencies = Object.entries(user?.dependencies ?? {}).filter(([name]) => !Object.hasOwn(shipped.dependencies ?? {}, name))
+  // A package the shipped one carries under its new name is not the user's own.
+  const replaced = new Set(renamedIn(shipped))
+  const extraDependencies = Object.entries(user?.dependencies ?? {}).filter(([name]) => !Object.hasOwn(shipped.dependencies ?? {}, name) && !replaced.has(name))
   if (extraDependencies.length > 0) merged.dependencies = { ...shipped.dependencies, ...Object.fromEntries(extraDependencies) }
   const shippedBundles = shipped.dsh?.profile?.bundles ?? []
-  const extraBundles = (user?.dsh?.profile?.bundles ?? []).filter(name => !shippedBundles.includes(name))
+  const extraBundles = (user?.dsh?.profile?.bundles ?? []).filter(name => !shippedBundles.includes(name) && !replaced.has(name))
   if (extraBundles.length > 0) merged.dsh.profile.bundles = [...shippedBundles, ...extraBundles]
   return `${JSON.stringify(merged, null, 2)}\n`
+}
+
+/**
+ * The products the app can be opened for: `omni desktop` opens it for Omni, `genie desktop`
+ * for Genie. A preload is a preference, not another build: the welcome (welcome-dsh) lists
+ * that one first in its team step and starts with it chosen; the other stays a click away.
+ */
+export const PRELOADS = Object.freeze(['omni', 'genie'])
+const PRELOAD_FILE = 'preload'
+
+/** The preload a launch asks for: `--preload=<id>` or `--preload <id>`, else AUTOMAGIK_PRELOAD; null for none. */
+export function preloadAsked(argv = [], env = {}) {
+  let asked = null
+  for (let i = 0; i < argv.length; i++) {
+    const arg = String(argv[i])
+    if (arg.startsWith('--preload=')) asked = arg.slice('--preload='.length)
+    else if (arg === '--preload' && i + 1 < argv.length) asked = String(argv[++i])
+  }
+  asked ??= env.AUTOMAGIK_PRELOAD ?? null
+  const id = typeof asked === 'string' ? asked.trim().toLowerCase() : ''
+  return PRELOADS.includes(id) ? id : null
+}
+
+/**
+ * The app's preload: the one this launch asks for, saved in the app's home so a later launch
+ * from the Dock or a desktop entry (which passes no flags) keeps it; else the saved one; else
+ * null, no preference. The installer never sees it: the launch that asks for it writes it.
+ */
+export function preloadOf({ home, argv = [], env = {} }) {
+  const file = join(home, PRELOAD_FILE)
+  const asked = preloadAsked(argv, env)
+  if (asked) {
+    mkdirSync(home, { recursive: true })
+    if (!existsSync(file) || readFileSync(file, 'utf8').trim() !== asked) writeFileSync(file, `${asked}\n`)
+    return asked
+  }
+  if (!existsSync(file)) return null
+  const saved = readFileSync(file, 'utf8').trim()
+  return PRELOADS.includes(saved) ? saved : null
 }
 
 /** A loopback port nobody listens on. */
@@ -257,7 +361,7 @@ export function launchUrlOf(text, port) {
  */
 export const toolDirs = (userHome = homedir()) => [join(userHome, '.local', 'bin'), join(userHome, '.claude', 'local'), '/opt/homebrew/bin', '/usr/local/bin']
 
-export function dshEnv({ base = process.env, home, electronAsNode = false, binDir, userHome = homedir() }) {
+export function dshEnv({ base = process.env, home, electronAsNode = false, binDir, userHome = homedir(), preload = null }) {
   // After the machine's own: a project's commands keep the user's node and pnpm, and then the
   // usual tool folders, then the app's own node and pnpm.
   const PATH = [...String(base.PATH ?? '').split(delimiter), ...toolDirs(userHome), ...(binDir ? [binDir] : [])]
@@ -271,6 +375,8 @@ export function dshEnv({ base = process.env, home, electronAsNode = false, binDi
     // Signs in to an Omni as the desktop app (the Better Auth device-flow client id).
     OMNI_CLIENT_ID: 'omni-desktop',
     DO_NOT_TRACK: '1',
+    // The welcome reads it (welcome-dsh src/host/preload.js); none is no preference.
+    ...(preload ? { AUTOMAGIK_PRELOAD: preload } : {}),
     ...(electronAsNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
   }
 }

@@ -29,8 +29,8 @@ test("the update is the newest release above this one with this platform's feed;
   ]
   assert.deepEqual(pickUpdate(releases, { current: '2.261019.10-labs.14', platform: 'darwin' }), {
     version: '2.261023.1',
-    url: 'https://github.com/automagik-dev/omni-desktop/releases/download/v2.261023.1/',
-    page: 'https://github.com/automagik-dev/omni-desktop/releases/tag/v2.261023.1',
+    url: 'https://github.com/automagik-dev/automagik/releases/download/v2.261023.1/',
+    page: 'https://github.com/automagik-dev/automagik/releases/tag/v2.261023.1',
   })
   assert.equal(pickUpdate(releases, { current: '2.261019.10-labs.14', platform: 'linux' }).version, '2.261025.1')
   assert.equal(pickUpdate(releases, { current: '2.261025.1', platform: 'linux' }), null)
@@ -83,7 +83,7 @@ test('a check points electron-updater at the chosen release, reports the downloa
   updates.install()
   assert.deepEqual(updater.installs, [])
   assert.deepEqual(await updates.check(), { result: 'found', version: '2.261022.1' })
-  assert.deepEqual(updater.feeds, [{ provider: 'generic', url: 'https://github.com/automagik-dev/omni-desktop/releases/download/v2.261022.1/' }])
+  assert.deepEqual(updater.feeds, [{ provider: 'generic', url: 'https://github.com/automagik-dev/automagik/releases/download/v2.261022.1/' }])
   updater.emit('download-progress', { percent: 41.6 })
   updater.emit('update-downloaded', { version: '2.261022.1' })
   assert.deepEqual(states, [{ version: '2.261022.1', state: 'downloading', percent: 42 }, { version: '2.261022.1', state: 'ready' }])
@@ -163,12 +163,12 @@ test('a deb build only says a release is out: no feed, no download, and its page
     releases: async () => [release('v2.261023.1')],
   })
   assert.deepEqual(await updates.check(), { result: 'found', version: '2.261023.1' })
-  assert.deepEqual(states, [{ version: '2.261023.1', state: 'available', page: 'https://github.com/automagik-dev/omni-desktop/releases/tag/v2.261023.1' }])
+  assert.deepEqual(states, [{ version: '2.261023.1', state: 'available', page: 'https://github.com/automagik-dev/automagik/releases/tag/v2.261023.1' }])
   assert.deepEqual(updater.feeds, [])
   assert.equal(updater.autoDownload, undefined)
   assert.equal(updater.listenerCount('update-downloaded'), 0)
   assert.equal(isReleasePage(states[0].page), true)
-  assert.equal(isReleasePage('https://github.com/automagik-dev/omni-desktop/releases/tag/v1/../../evil'), false)
+  assert.equal(isReleasePage('https://github.com/automagik-dev/automagik/releases/tag/v1/../../evil'), false)
   assert.equal(isReleasePage('https://evil.example/releases/tag/v1'), false)
 })
 

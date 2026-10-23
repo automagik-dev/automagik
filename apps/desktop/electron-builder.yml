@@ -1,4 +1,6 @@
-# Omni desktop packaging. Run `npm run prepare-runtime` first (the dist:* scripts do):
+# Automagik desktop packaging. The installed identity (appId, productName Omni, the
+# executable and artifact names) is the one omni-desktop shipped, so an installed app updates
+# in place and keeps its data. Run `npm run prepare-runtime` first (the dist:* scripts do):
 # it fills build/runtime and build/profile, which ship as resources beside the app.
 appId: ai.namastex.omni.desktop
 productName: Omni
@@ -66,10 +68,10 @@ dmg:
   # notarizes and staples it, so a downloaded dmg opens without a warning.
   sign: true
 # Where the update feeds (latest-mac.yml, latest-linux.yml) say the builds are. The builds
-# never publish themselves (--publish never): release.yml uploads them to this repository's
-# release `v<version>`, and the app reads that release's feed (src/update.js).
+# never publish themselves (--publish never): desktop-build.yml uploads them to this
+# repository's release `v<version>`, and the app reads that release's feed (src/update.js).
 publish:
   provider: github
   owner: automagik-dev
-  repo: omni-desktop
+  repo: automagik
   releaseType: prerelease

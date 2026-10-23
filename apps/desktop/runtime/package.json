@@ -1,7 +1,7 @@
 {
   "name": "omni-desktop-runtime",
   "private": true,
-  "description": "The DeepSeek Harness the Omni desktop app runs, pinned to the release Omni's plugins are tested against (apps/omni-ui-dsh/dev/harness in Omni; prepare-runtime checks they match), and the pnpm dsh installs plugins with.",
+  "description": "The DeepSeek Harness the Automagik desktop app runs, pinned to the release its plugins are tested against (apps/bots-dsh/dev/harness here, and Omni's apps/omni-channels-dsh/dev/harness at the release omni.json pins; prepare-runtime checks they match), and the pnpm dsh installs plugins with.",
   "dependencies": {
     "@deepseek-ai/dsh": "0.2.1-rc.3",
     "pnpm": "10.34.6"

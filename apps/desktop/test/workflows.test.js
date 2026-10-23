@@ -17,8 +17,8 @@ function inputsOf(text, trigger) {
   return block.names
 }
 
-test('release.yml declares every input it reads for follow-omni, which calls it', () => {
-  const text = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8')
+test('desktop-build.yml declares every input it reads for release.yml, which calls it', () => {
+  const text = readFileSync(new URL('../../../.github/workflows/desktop-build.yml', import.meta.url), 'utf8')
   const read = new Set([...text.matchAll(/inputs\.([A-Za-z_][\w-]*)/g)].map(match => match[1]))
   // An input a caller cannot see reads as '', which equals false: `publish != false` was
   // false for every release follow-omni made, and they were never published.
@@ -26,4 +26,18 @@ test('release.yml declares every input it reads for follow-omni, which calls it'
     const declared = inputsOf(text, trigger)
     assert.deepEqual([...read].filter(name => !declared.has(name)), [], `${trigger} lacks inputs the jobs read`)
   }
+})
+
+test('release.yml declares every input it reads for follow-omni, which calls it', () => {
+  const text = readFileSync(new URL('../../../.github/workflows/release.yml', import.meta.url), 'utf8')
+  const read = new Set([...text.matchAll(/inputs\.([A-Za-z_][\w-]*)/g)].map(match => match[1]))
+  for (const trigger of ['workflow_call', 'workflow_dispatch']) {
+    const declared = inputsOf(text, trigger)
+    assert.deepEqual([...read].filter(name => !declared.has(name)), [], `${trigger} lacks inputs the jobs read`)
+  }
+})
+
+test('a desktop rebuild keeps the plugins its release carries', () => {
+  const text = readFileSync(new URL('../../../.github/workflows/desktop-build.yml', import.meta.url), 'utf8')
+  assert.match(text, /case "\$\{name\}" in automagik-\*\.tgz\|plugins\.json\) continue ;; esac/)
 })

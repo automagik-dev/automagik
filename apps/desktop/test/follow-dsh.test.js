@@ -23,9 +23,9 @@ test('anything but an exact version is refused', () => {
   }
 })
 
-test('follow-omni moves the runtime with omni.json, from the release it carries', () => {
-  const text = readFileSync(new URL('../.github/workflows/follow-omni.yml', import.meta.url), 'utf8')
-  assert.match(text, /apps\/omni-ui-dsh\/dev\/harness\/package\.json\?ref=v\$\{VERSION\}/)
-  assert.match(text, /node scripts\/follow-dsh\.mjs "\$\{dsh\}"/)
-  assert.ok(text.indexOf('follow-dsh.mjs') < text.indexOf('git commit -qam'), 'the runtime moves in the same commit')
+test('follow-omni follows only an Omni release tested on the dsh the desktop runs', () => {
+  const text = readFileSync(new URL('../../../.github/workflows/follow-omni.yml', import.meta.url), 'utf8')
+  assert.match(text, /apps\/omni-channels-dsh\/dev\/harness\/package\.json/)
+  assert.match(text, /require\('\.\/apps\/desktop\/runtime\/package\.json'\)/)
+  assert.ok(text.indexOf('not following it until the Bot team moves') < text.indexOf('git commit -qam'), 'a mismatch stops before the commit')
 })

@@ -3,13 +3,15 @@
 //   build/runtime/node_modules   the pinned DeepSeek Harness (runtime/package.json + lock)
 //   build/profile/               the dsh profile the app starts: package.json, cordis.patch.yml,
 //                                pnpm-workspace.yaml,
-//                                and node_modules holding only Omni's plugins
+//                                and node_modules holding only the app's plugins
 //
-// The plugins are the @automagik packages profile/package.json depends on, taken from Omni
-// itself at the commit omni.json pins (the Omni release this app carries): its apps/*-dsh
-// folders, packed with `npm pack` so the app ships exactly what each package publishes, and
-// each at omni.json's version. Their @deepseek-ai peers are not installed again: dsh
-// supplies them. OMNI_SOURCE points at a local Omni checkout instead, for development.
+// The plugins are the @automagik packages profile/package.json depends on: Automagik's own
+// (this repository's apps/*-dsh, the Bot team and the welcome, at this app's version) and
+// Omni's (its channels and canvases, taken from Omni itself at the commit omni.json pins, the
+// Omni release this app carries, each at that release's version). Each is packed with
+// `npm pack`, so the app ships exactly what each package publishes. Their @deepseek-ai peers
+// are not installed again: dsh supplies them. OMNI_SOURCE points at a local Omni checkout
+// instead, for development.
 // Native packages are per platform, so run this on the platform you build for.
 // Usage: node scripts/prepare-runtime.mjs [--skip-runtime]
 import { execFileSync } from 'node:child_process'
@@ -19,6 +21,7 @@ import { fileURLToPath } from 'node:url'
 import { scrubBuildPaths } from '../src/dsh.js'
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const REPO = resolve(APP, '..', '..')
 const BUILD = join(APP, 'build')
 const VENDOR = 'vendor'
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
@@ -30,6 +33,9 @@ const say = message => console.log(`[prepare-runtime] ${message}`)
 const readJson = file => JSON.parse(readFileSync(file, 'utf8'))
 
 const OMNI = readJson(join(APP, 'omni.json'))
+// The app, and every plugin of this repository, carry Automagik's version.
+const VERSION = readJson(join(REPO, 'package.json')).version
+if (readJson(join(APP, 'package.json')).version !== VERSION) throw new Error(`apps/desktop is ${readJson(join(APP, 'package.json')).version}, not Automagik's ${VERSION}: run scripts/version.ts`)
 // Omni at the pinned commit: only its plugin folders and the harness they are tested on.
 function omniSource() {
   if (process.env.OMNI_SOURCE) return resolve(process.env.OMNI_SOURCE)
@@ -48,30 +54,38 @@ function omniSource() {
 }
 const OMNI_DIR = omniSource()
 
-// Each plugin the profile depends on: Omni's own (an apps/*-dsh folder, packed at this Omni's
-// version), an add-on from npm at the exact version the profile names (vetted there), or one
-// from a reviewed fork at a pinned commit (`github:owner/repo#<40-hex>`), whose version the
-// profile names under omni.addonVersions.
+// Each plugin the profile depends on: Automagik's own (an apps/*-dsh folder here, packed at
+// this app's version), Omni's (an apps/*-dsh folder of the pinned Omni, packed at its version),
+// an add-on from npm at the exact version the profile names (vetted there), or one from a
+// reviewed fork at a pinned commit (`github:owner/repo#<40-hex>`), whose version the profile
+// names under omni.addonVersions.
 const profileJson = readJson(join(APP, 'profile', 'package.json'))
 const profileDeps = profileJson.dependencies
 const PINNED_GIT = /^github:[\w.-]+\/[\w.-]+#[0-9a-f]{40}$/
-const apps = join(OMNI_DIR, 'apps')
-const folders = Object.fromEntries(readdirSync(apps)
+const pluginFolders = apps => Object.fromEntries(readdirSync(apps)
   .filter(name => name.endsWith('-dsh') && existsSync(join(apps, name, 'package.json')))
   .map(name => [readJson(join(apps, name, 'package.json')).name, join(apps, name)]))
+const own = pluginFolders(join(REPO, 'apps'))
+const apps = join(OMNI_DIR, 'apps')
+const omni = pluginFolders(apps)
 const PLUGINS = {}
 const ADDONS = {}
 for (const [name, spec] of Object.entries(profileDeps)) {
-  if (folders[name]) PLUGINS[name] = folders[name]
+  if (own[name]) PLUGINS[name] = { dir: own[name], version: VERSION }
+  else if (omni[name]) PLUGINS[name] = { dir: omni[name], version: OMNI.version }
   else if (/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(spec)) ADDONS[name] = spec
   else if (PINNED_GIT.test(spec) && profileJson.omni?.addonVersions?.[name]) ADDONS[name] = profileJson.omni.addonVersions[name]
-  else throw new Error(`profile/package.json depends on ${name}@${spec}: neither Omni's (apps/*-dsh) nor an add-on at an exact version or a pinned commit with its version in omni.addonVersions`)
+  else throw new Error(`profile/package.json depends on ${name}@${spec}: neither Automagik's nor Omni's (apps/*-dsh) nor an add-on at an exact version or a pinned commit with its version in omni.addonVersions`)
 }
 
-// The DeepSeek Harness the app runs is the one Omni's plugins are tested against.
-const tested = readJson(join(apps, 'omni-ui-dsh', 'dev', 'harness', 'package.json')).dependencies['@deepseek-ai/dsh']
+// The DeepSeek Harness the app runs is the one its plugins are tested against: the Bot
+// team's here, and Omni's channels at the pinned release.
+const harnessOf = dir => readJson(join(dir, 'dev', 'harness', 'package.json')).dependencies['@deepseek-ai/dsh']
 const pinned = readJson(join(APP, 'runtime', 'package.json')).dependencies['@deepseek-ai/dsh']
-if (tested !== pinned) throw new Error(`runtime/package.json pins dsh ${pinned}, but Omni ${OMNI.version} tests its plugins on ${tested}`)
+const tested = harnessOf(join(REPO, 'apps', 'bots-dsh'))
+if (tested !== pinned) throw new Error(`runtime/package.json pins dsh ${pinned}, but the Bot team is tested on ${tested}`)
+const omniTested = harnessOf(join(apps, 'omni-channels-dsh'))
+if (omniTested !== pinned) throw new Error(`runtime/package.json pins dsh ${pinned}, but Omni ${OMNI.version} tests its plugins on ${omniTested}`)
 
 const runtimeDir = join(BUILD, 'runtime')
 if (!process.argv.includes('--skip-runtime') || !existsSync(join(runtimeDir, 'node_modules'))) {
@@ -90,10 +104,10 @@ say(`packing ${Object.keys(PLUGINS).join(', ')}`)
 const packs = join(BUILD, 'packs')
 rmSync(packs, { recursive: true, force: true })
 mkdirSync(packs, { recursive: true })
-const packed = Object.entries(PLUGINS).map(([name, dir]) => {
+const packed = Object.entries(PLUGINS).map(([name, { dir, version }]) => {
   const [info] = JSON.parse(execFileSync(npm, ['pack', '--json', '--pack-destination', packs], { cwd: dir, env, encoding: 'utf8' }))
   if (info.name !== name) throw new Error(`${dir} packs ${info.name}, not ${name}`)
-  if (info.version !== OMNI.version) throw new Error(`${name} is ${info.version}, not Omni's ${OMNI.version}`)
+  if (info.version !== version) throw new Error(`${name} is ${info.version}, not ${version}`)
   return { name, version: info.version, tarball: join(packs, info.filename) }
 })
 
@@ -106,7 +120,7 @@ const installDir = join(dshHome, 'profiles', 'omni')
 rmSync(dshHome, { recursive: true, force: true })
 mkdirSync(join(installDir, VENDOR), { recursive: true })
 const profile = JSON.parse(readFileSync(join(APP, 'profile', 'package.json'), 'utf8'))
-// Omni's plugins ship as tarballs the package.json names by file: dsh's pnpm, installing a
+// The plugins ship as tarballs the package.json names by file: dsh's pnpm, installing a
 // market plugin later, resolves them there, offline (they are not on npm).
 for (const plugin of packed) {
   cpSync(plugin.tarball, join(installDir, VENDOR, basename(plugin.tarball)))
@@ -139,8 +153,9 @@ writeFileSync(join(profileDir, '.build-id'), `${packed.map(plugin => plugin.vers
 
 const versions = {
   dsh: JSON.parse(readFileSync(join(runtimeDir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'), 'utf8')).version,
+  automagik: VERSION,
   omni: OMNI.version,
-  plugin: packed[0].version,
+  plugin: VERSION,
   plugins: Object.fromEntries(packed.map(plugin => [plugin.name, plugin.version])),
   addons: ADDONS,
 }
