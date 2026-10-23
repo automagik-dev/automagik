@@ -81,13 +81,13 @@ test('the shipped profile bundles Omni\'s plugins, core first, and the plugin ma
   // Omni's plugins first, then the add-ons that connect AI subscriptions, each at an exact
   // vetted version or a reviewed fork's pinned commit, and bundled after Omni's.
   const addons = {
-    '@goodandready/dsh-subscriptions': '0.7.19',
+    '@goodandready/dsh-subscriptions': 'github:automagik-genie/dsh-subscriptions#2eff034ede95c9d06ecee290517101e6419c7fee',
     'dsh-oh-my-claude': 'github:automagik-genie/dsh-oh-my-claude#ccca7fe46871c0e188d2272d2aa92f2d7d4502c4',
   }
   assert.deepEqual(Object.keys(profile.dependencies), [...omni, ...Object.keys(addons)])
   for (const [name, spec] of Object.entries(addons)) assert.equal(profile.dependencies[name], spec)
   // A pinned commit names the version it holds, which the build checks after installing it.
-  assert.deepEqual(profile.omni.addonVersions, { 'dsh-oh-my-claude': '1.5.6-omni.1' })
+  assert.deepEqual(profile.omni.addonVersions, { '@goodandready/dsh-subscriptions': '0.7.21-omni.1', 'dsh-oh-my-claude': '1.5.6-omni.1' })
   assert.deepEqual(profile.dsh.profile.bundles.filter(name => name.startsWith('@automagik/')), omni)
   assert.deepEqual(profile.dsh.profile.bundles.slice(-2), Object.keys(addons))
   assert.ok(profile.dsh.profile.bundles.includes('@deepseek-ai/dsh-experimental-plugin-market-bundle'))
@@ -97,8 +97,8 @@ test('the shipped profile bundles Omni\'s plugins, core first, and the plugin ma
   assert.match(patch, /^- id: ui-settings-models\n {2}config:\n {4}credentialOnboarding: false$/m)
   // Pairing adds the Omni's market here (apps/omni-channels-dsh omni-link.js).
   assert.match(patch, /^- id: plugin-market\n {2}config:\n {4}indexes: \[\]$/m)
-  // dsh-subscriptions never moves a chat to a local Ollama model on its own.
-  assert.match(patch, /^- id: dsh-subscriptions\n {2}config:\n {4}ollamaFallback: false$/m)
+  // Omni's dsh-subscriptions has no local-Ollama fallback to switch off.
+  assert.doesNotMatch(patch, /ollamaFallback/)
 })
 
 test('the launch URL is read from dsh\'s output, only for the port it was given', () => {

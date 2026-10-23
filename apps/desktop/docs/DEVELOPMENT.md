@@ -49,7 +49,7 @@ npm run dist:linux      # dist/Omni-<version>-linux-x86_64.AppImage and -amd64.d
 npm run dist:mac        # on macOS: dist/Omni-<version>-mac-<arch>.dmg and .zip, signed and notarized (see macOS)
 ```
 
-The profile also ships add-ons from npm at the exact versions `profile/package.json` names: `@goodandready/dsh-subscriptions` (AI subscription sign-ins) and `dsh-oh-my-claude` (Claude through the person's own Claude Code). The profile is installed the way DSH installs any plugin, with the pinned dsh's own `dsh plugin --profile omni install` (pnpm, hoisted, no install scripts), so its pnpm lockfile ships with it.
+The profile also ships the add-ons that connect AI subscriptions, each from Omni's reviewed fork at the commit `profile/package.json` pins (the version it holds is under `omni.addonVersions`, and the build checks it): `@goodandready/dsh-subscriptions` ([automagik-genie/dsh-subscriptions](https://github.com/automagik-genie/dsh-subscriptions), the plans DSH doesn't sign in to itself, with no updater of its own) and `dsh-oh-my-claude` (Claude through the person's own Claude Code). The profile is installed the way DSH installs any plugin, with the pinned dsh's own `dsh plugin --profile omni install` (pnpm, hoisted, no install scripts), so its pnpm lockfile ships with it.
 
 `dist:*` first runs `scripts/prepare-runtime.mjs`: it fetches Omni at `omni.json`'s commit (only its plugin folders) into `build/omni`, installs the pinned dsh into `build/runtime`, and installs the packed plugins into `build/profile`, in one install. Set `OMNI_SOURCE` to a local Omni checkout to pack its plugins instead. Native packages are per platform, so build each target on its own platform. Builds run with `DO_NOT_TRACK=1`.
 
