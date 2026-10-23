@@ -1,14 +1,14 @@
-name: Release
+name: Desktop build
 
-# Builds the app at one commit of this repository and publishes it as the release
-# `v<version>`, where `omni desktop` (Omni's CLI) finds it: the Linux AppImage and deb, the
-# macOS arm64 dmg, and SHA256SUMS, which the CLI checks every download against. Installed
-# apps update from the same release (src/update.js): latest-linux.yml for the AppImage, and
-# latest-mac.yml with the zip for macOS.
+# Builds the Automagik desktop app (apps/desktop) at one commit of this repository and adds it
+# to the release `v<version>`, where `omni desktop` (Omni's CLI) and `genie desktop` find it:
+# the Linux AppImage and deb, the macOS arm64 dmg, and SHA256SUMS, which the CLIs check every
+# download against. Installed apps update from the same release (apps/desktop/src/update.js):
+# latest-linux.yml for the AppImage, and latest-mac.yml with the zip for macOS.
 #
-# The version is the Omni release the commit carries (omni.json), which is also the app's
-# and every plugin's. follow-omni.yml calls this after it moves omni.json to a new Omni
-# release; dispatch it by hand to rebuild.
+# The version is Automagik's (package.json), which the app and every plugin here carry; the
+# release already holds the plugins (release.yml makes it and calls this). Dispatch it by hand
+# to rebuild a release's desktop files.
 #
 # macOS signing and notarization are optional: with the MAC_CSC_LINK and
 # MAC_CSC_KEY_PASSWORD secrets (the Developer ID Application certificate as a base64 .p12)
@@ -38,7 +38,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: 'Commit or branch to build (default: main)'
+        description: 'Commit, tag or branch to build (default: main)'
         required: false
         type: string
       prerelease:
@@ -70,14 +70,14 @@ jobs:
           ref: ${{ inputs.ref || 'main' }}
           persist-credentials: false
 
-      - name: The app carries the Omni version it is built as
+      - name: The app carries Automagik's version
         id: read
         run: |
           set -euo pipefail
-          version=$(node -p "require('./omni.json').version")
-          actual=$(node -p "require('./package.json').version")
-          [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
-          [[ "${actual}" == "${version}" ]] || { echo "::error ::package.json is ${actual}, omni.json ${version}"; exit 1; }
+          version=$(node -p "require('./package.json').version")
+          actual=$(node -p "require('./apps/desktop/package.json').version")
+          [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "${actual}" == "${version}" ]] || { echo "::error ::apps/desktop is ${actual}, the repository ${version}"; exit 1; }
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
@@ -99,6 +99,9 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+    defaults:
+      run:
+        working-directory: apps/desktop
     env:
       DO_NOT_TRACK: '1'
     steps:
@@ -114,7 +117,7 @@ jobs:
       - name: Install build tools
         run: npm ci --no-audit --no-fund
 
-      - name: Prepare the runtime and Omni's plugins
+      - name: Prepare the runtime and the plugins
         run: node scripts/prepare-runtime.mjs
 
       - name: Build Linux AppImage and deb
@@ -180,12 +183,12 @@ jobs:
         with:
           name: desktop-${{ matrix.target }}
           path: |
-            dist/*.AppImage
-            dist/*.deb
-            dist/*.dmg
-            dist/*.zip
-            dist/*.blockmap
-            dist/latest-*.yml
+            apps/desktop/dist/*.AppImage
+            apps/desktop/dist/*.deb
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.zip
+            apps/desktop/dist/*.blockmap
+            apps/desktop/dist/latest-*.yml
           if-no-files-found: error
           retention-days: 7
 
@@ -229,13 +232,15 @@ jobs:
           sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
 
-      - name: Create the release
+      - name: Add the builds to the release
         run: |
           set -euo pipefail
           TAG="v${VERSION}"
           if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            # A rebuild replaces the release's files: one this build did not make goes.
+            # A rebuild replaces the release's desktop files: one this build did not make goes.
+            # The plugins (release.yml's automagik-*.tgz and plugins.json) stay.
             for name in $(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name'); do
+              case "${name}" in automagik-*.tgz|plugins.json) continue ;; esac
               [[ -e "assets/${name}" ]] || gh release delete-asset "${TAG}" "${name}" --yes --repo "${GITHUB_REPOSITORY}"
             done
             gh release upload "${TAG}" assets/* --clobber --repo "${GITHUB_REPOSITORY}"
@@ -250,6 +255,6 @@ jobs:
             gh release create "${TAG}" assets/* "${flags[@]}" \
               --repo "${GITHUB_REPOSITORY}" \
               --target "${SHA}" \
-              --title "Omni desktop ${VERSION}" \
-              --notes "**Download:** Mac (Apple silicon): **Omni-Mac.dmg** · Linux: **Omni-Linux.deb** (Ubuntu, Debian) or **Omni-Linux.AppImage**. Already installed? The app updates itself. This is Omni desktop for [Omni ${VERSION}](https://github.com/automagik-dev/omni/releases/tag/v${VERSION}). SHA256SUMS lists every file's checksum."
+              --title "Automagik ${VERSION}" \
+              --notes "**Download:** Mac (Apple silicon): **Omni-Mac.dmg** · Linux: **Omni-Linux.deb** (Ubuntu, Debian) or **Omni-Linux.AppImage**. Already installed? The app updates itself. SHA256SUMS lists every file's checksum."
           fi

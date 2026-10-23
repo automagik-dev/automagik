@@ -1,0 +1,97 @@
+{
+  "format": 1,
+  "title": {
+    "en": "Automagik"
+  },
+  "description": {
+    "en": "The Bot team every Automagik product builds on, and the welcome that connects your AI."
+  },
+  "metadata": {
+    "categories": {
+      "automagik": {
+        "title": {
+          "en": "Automagik"
+        }
+      }
+    },
+    "labels": {
+      "official": {
+        "title": {
+          "en": "Automagik"
+        }
+      }
+    }
+  },
+  "plugins": [
+    {
+      "name": "@automagik/bots-dsh",
+      "title": {
+        "en": "Bot team"
+      },
+      "description": {
+        "en": "A team of long-lived Bots in DSH: the Main Bot and its Bots, group chats, memory and settings. Omni's channels and canvases build on it. Keeps its files in ~/.omni/ui, never in your DSH profile. Formerly @automagik/omni-dsh (Omni team)."
+      },
+      "author": "Automagik",
+      "homepage": "https://github.com/automagik-dev/automagik/tree/dev/apps/bots-dsh#readme",
+      "repository": {
+        "url": "https://github.com/automagik-dev/automagik",
+        "directory": "apps/bots-dsh"
+      },
+      "metadata": {
+        "category": "automagik",
+        "keywords": ["bots", "agents", "memory", "omni", "genie"],
+        "labels": ["official"]
+      },
+      "versions": [
+        {
+          "version": "3.261023.0",
+          "publishTimestamp": 1792796484,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "121494c0e66e134e4bdb9df1b8fa5dd2fc97cd78",
+            "path": "apps/bots-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.2 <0.3.0"
+          }
+        }
+      ]
+    },
+    {
+      "name": "@automagik/welcome-dsh",
+      "title": {
+        "en": "Welcome & Connect AI"
+      },
+      "description": {
+        "en": "The octopus welcomes you, puts your team together and connects your AI: DeepSeek, an API key, Codex, Claude, Kimi or a CLIProxyAPI gateway, through DSH's own sign-ins. Formerly @automagik/omni-ai-dsh."
+      },
+      "author": "Automagik",
+      "homepage": "https://github.com/automagik-dev/automagik/tree/dev/apps/welcome-dsh#readme",
+      "repository": {
+        "url": "https://github.com/automagik-dev/automagik",
+        "directory": "apps/welcome-dsh"
+      },
+      "metadata": {
+        "category": "automagik",
+        "keywords": ["onboarding", "ai", "cliproxyapi"],
+        "labels": ["official"]
+      },
+      "versions": [
+        {
+          "version": "3.261023.0",
+          "publishTimestamp": 1792796484,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "121494c0e66e134e4bdb9df1b8fa5dd2fc97cd78",
+            "path": "apps/welcome-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.2 <0.3.0"
+          }
+        }
+      ]
+    }
+  ]
+}

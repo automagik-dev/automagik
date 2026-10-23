@@ -1,0 +1,184 @@
+name: Release
+
+# Cuts an Automagik release from dev: one version for the whole repository (3.YYMMDD.N,
+# scripts/version.ts), committed and tagged `v<version>` on dev, published as the GitHub
+# release `v<version>` with
+#
+#   automagik-bots-dsh-<version>.tgz      the Bot team (npm pack of apps/bots-dsh)
+#   automagik-welcome-dsh-<version>.tgz   the welcome and Connect AI (apps/welcome-dsh)
+#   plugins.json                          each tarball's name, version, file and integrity
+#
+# and then the desktop app's builds (desktop-build.yml). Omni pins a release's plugins.json
+# (its apps/automagik.json) to serve them from its own market and admin UI; the
+# dsh-marketplace lists the plugins at the tag's commit. After the release, the market index
+# here lists it (scripts/marketplace.ts pin) and main moves to the tag.
+#
+# Nothing is published to npm: the plugins ship as git sources and release files only.
+# Pushes use the workflow's own token; CI already ran on the dev commit being released, and
+# this job runs the gates again before it tags.
+
+on:
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: 'Publish as a prerelease (not shown as Latest)'
+        required: false
+        type: boolean
+        default: false
+      desktop:
+        description: 'Build and add the desktop app'
+        required: false
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      prerelease:
+        description: 'Publish as a prerelease (not shown as Latest)'
+        required: false
+        type: boolean
+        default: false
+      desktop:
+        description: 'Build and add the desktop app'
+        required: false
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  cut:
+    name: Cut v<version> on dev
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.cut.outputs.version }}
+      sha: ${{ steps.cut.outputs.sha }}
+    env:
+      DO_NOT_TRACK: '1'
+      GH_TOKEN: ${{ github.token }}
+      PRERELEASE: ${{ inputs.prerelease }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: dev
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+
+      - name: The gates the release stands on
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile --ignore-scripts
+          bun run check
+          for app in bots-dsh welcome-dsh; do
+            (cd "apps/${app}" && node scripts/build-client.mjs --check)
+          done
+
+      - name: Version, commit and tag
+        id: cut
+        run: |
+          set -euo pipefail
+          version=$(bun scripts/version.ts next)
+          bun scripts/version.ts set "${version}"
+          bun scripts/version.ts check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -qam "chore(release): v${version}"
+          git tag -a "v${version}" -m "Automagik ${version}"
+          git push -q origin HEAD:refs/heads/dev "refs/tags/v${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Pack the plugins
+        env:
+          VERSION: ${{ steps.cut.outputs.version }}
+          SHA: ${{ steps.cut.outputs.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          for app in bots-dsh welcome-dsh; do
+            (cd "apps/${app}" && npm pack --silent --ignore-scripts --pack-destination ../../release >/dev/null)
+          done
+          bun scripts/release-plugins.ts release "${VERSION}" "${SHA}" > release/plugins.json
+          cat release/plugins.json
+          (cd release && sha256sum -- * > PLUGINS.SHA256SUMS)
+
+      - name: Publish the release
+        env:
+          VERSION: ${{ steps.cut.outputs.version }}
+          SHA: ${{ steps.cut.outputs.sha }}
+        run: |
+          set -euo pipefail
+          flags=(--latest)
+          [[ "${PRERELEASE}" == "true" ]] && flags=(--prerelease)
+          gh release create "v${VERSION}" release/* "${flags[@]}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --title "Automagik ${VERSION}" \
+            --notes "The Bot team (\`@automagik/bots-dsh\`) and the welcome (\`@automagik/welcome-dsh\`) for DeepSeek Harness, and the Automagik desktop app. Install the plugins from the [Automagik market](https://github.com/automagik-dev/dsh-marketplace) or from an Omni's own market; \`plugins.json\` lists each tarball's integrity. The desktop builds follow when they are done."
+
+  desktop:
+    name: Desktop
+    needs: cut
+    if: inputs.desktop != false
+    uses: ./.github/workflows/desktop-build.yml
+    permissions:
+      contents: write
+    secrets: inherit
+    with:
+      ref: ${{ needs.cut.outputs.sha }}
+      prerelease: ${{ inputs.prerelease }}
+      publish: true
+
+  list:
+    name: List it in the market index; main follows
+    needs: cut
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.cut.outputs.version }}
+      SHA: ${{ needs.cut.outputs.sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: dev
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Pin the index to the release
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile --ignore-scripts
+          bun scripts/marketplace.ts pin "v${VERSION}"
+          bun scripts/marketplace.ts check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet -- marketplace/automagik.json; then
+            git commit -qm "chore(release): list v${VERSION} in the market index" -- marketplace/automagik.json
+            git push -q origin HEAD:refs/heads/dev
+          fi
+
+      - name: main moves to the release
+        run: |
+          set -euo pipefail
+          # Fast-forward only: main holds released commits and nothing else.
+          git push -q origin "${SHA}:refs/heads/main"

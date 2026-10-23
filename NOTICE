@@ -1,0 +1,15 @@
+Automagik
+Copyright 2026 Namastex Labs and the Automagik contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Each app in apps/ carries its own NOTICE with the third-party code it holds:
+
+  - apps/bots-dsh: the Bot team, built on DS Bot (https://github.com/Fei2411/DeepSeek-Bot,
+    Apache-2.0, see apps/bots-dsh/VENDORED.md), with a few lines that follow DeepSeek
+    Harness (MIT).
+  - apps/welcome-dsh: the welcome and Connect AI.
+  - apps/desktop: the Automagik desktop app (formerly automagik-dev/omni-desktop).
+
+The Bot team and the welcome were developed in automagik-dev/omni (apps/omni-ui-dsh and
+apps/omni-ai-dsh) and moved here with their history.
