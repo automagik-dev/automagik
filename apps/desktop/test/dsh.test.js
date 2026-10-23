@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { appHome, dshEnv, freePort, installProfile, launchUrlOf, mergeProfilePackage, mergeProfilePatch, navigationOf, resourcesOf, startDsh, stopDsh, writeTools } from '../src/dsh.js'
+import { appHome, dshEnv, freePort, installProfile, launchUrlOf, mergeProfilePackage, mergeProfilePatch, navigationOf, pinProfileStore, resourcesOf, scrubBuildPaths, SHIPPED_STORE, startDsh, stopDsh, storeLayoutOf, writeTools } from '../src/dsh.js'
 
 test('the app keeps everything in one folder under ~/.omni, apart from a dsh you already run', () => {
   assert.equal(appHome({}), join(homedir(), '.omni', 'desktop'))
@@ -71,6 +71,70 @@ test('the shipped profile seeds a new home, and a new build replaces only its pa
   assert.equal(readFileSync(join(first.target, 'node_modules', '@automagik', 'omni-dsh', 'index.js'), 'utf8'), 'v3')
   assert.equal(readFileSync(join(first.target, 'cordis.patch.yml'), 'utf8'), '- id: llm-pi-ai  # the user\'s models')
   assert.equal(readFileSync(join(first.target, '.plugin-manager', 'state.json'), 'utf8'), '{}')
+})
+
+// pnpm refuses to change node_modules linked from another store (ERR_PNPM_UNEXPECTED_STORE),
+// so a profile built on CI, or one a person's own pnpm config re-linked, could not take a
+// plugin from the market.
+const modulesYaml = storeDir => `${JSON.stringify({ layoutVersion: 5, nodeLinker: 'hoisted', storeDir, virtualStoreDir: '.pnpm' }, null, 2)}\n`
+const WORKSPACE = '# What dsh writes\npackages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n'
+
+test('a shipped profile carries no build machine paths', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-scrub-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  mkdirSync(join(root, 'node_modules'))
+  writeFileSync(join(root, 'node_modules', '.modules.yaml'), modulesYaml('/Users/runner/Library/pnpm/store/v10'))
+  writeFileSync(join(root, 'node_modules', '.pnpm-workspace-state-v1.json'), '{"projects":{"/Users/runner/work/omni-desktop/build/dsh-home/profiles/omni":{}}}')
+  scrubBuildPaths(root)
+  const modules = readFileSync(join(root, 'node_modules', '.modules.yaml'), 'utf8')
+  assert.equal(JSON.parse(modules).storeDir, SHIPPED_STORE)
+  assert.equal(JSON.parse(modules).nodeLinker, 'hoisted')
+  assert.doesNotMatch(modules, /runner/)
+  assert.equal(existsSync(join(root, 'node_modules', '.pnpm-workspace-state-v1.json')), false)
+})
+
+test('the profile names the app\'s own pnpm store, and a profile linked from another store is repaired', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-store-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const home = join(root, 'desktop')
+  const target = join(home, 'dsh', 'profiles', 'omni')
+  mkdirSync(join(target, 'node_modules'), { recursive: true })
+  writeFileSync(join(target, 'pnpm-workspace.yaml'), WORKSPACE)
+  // What a person's own pnpm config left behind on the owner's Mac.
+  writeFileSync(join(target, 'node_modules', '.modules.yaml'), modulesYaml('/tmp/khal-pnpm-store-repro/v10'))
+
+  const store = pinProfileStore({ target, home, layout: 'v10' })
+  assert.equal(store, join(home, 'pnpm-store'))
+  const workspace = readFileSync(join(target, 'pnpm-workspace.yaml'), 'utf8')
+  assert.ok(workspace.startsWith(WORKSPACE.trimEnd()), 'the shipped settings stay')
+  assert.match(workspace, new RegExp(`^storeDir: ${JSON.stringify(store).replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}$`, 'm'))
+  assert.equal(JSON.parse(readFileSync(join(target, 'node_modules', '.modules.yaml'), 'utf8')).storeDir, join(home, 'pnpm-store', 'v10'))
+
+  // Again at the next launch: nothing changes, and there is still one storeDir line.
+  const before = [readFileSync(join(target, 'pnpm-workspace.yaml'), 'utf8'), readFileSync(join(target, 'node_modules', '.modules.yaml'), 'utf8')]
+  pinProfileStore({ target, home, layout: 'v10' })
+  assert.deepEqual([readFileSync(join(target, 'pnpm-workspace.yaml'), 'utf8'), readFileSync(join(target, 'node_modules', '.modules.yaml'), 'utf8')], before)
+  assert.equal(workspace.match(/^storeDir:/gm).length, 1)
+
+  // A moved home (OMNI_DESKTOP_HOME) moves the store with it.
+  const moved = join(root, 'elsewhere')
+  pinProfileStore({ target, home: moved, layout: 'v10' })
+  assert.equal(readFileSync(join(target, 'pnpm-workspace.yaml'), 'utf8').match(/^storeDir:.*$/gm).join(), `storeDir: ${JSON.stringify(join(moved, 'pnpm-store'))}`)
+})
+
+test('a profile without node_modules yet still gets the store, and the layout follows the app\'s pnpm', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-layout-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const target = join(root, 'profile')
+  mkdirSync(target)
+  pinProfileStore({ target, home: root })
+  assert.equal(readFileSync(join(target, 'pnpm-workspace.yaml'), 'utf8'), `storeDir: ${JSON.stringify(join(root, 'pnpm-store'))}\n`)
+  const pnpm = join(root, 'runtime', 'node_modules', 'pnpm')
+  mkdirSync(join(pnpm, 'bin'), { recursive: true })
+  writeFileSync(join(pnpm, 'package.json'), '{"version":"10.34.6"}')
+  assert.equal(storeLayoutOf(join(pnpm, 'bin', 'pnpm.cjs')), 'v10')
+  writeFileSync(join(pnpm, 'package.json'), '{"version":"11.0.1"}')
+  assert.equal(storeLayoutOf(join(pnpm, 'bin', 'pnpm.cjs')), 'v11')
 })
 
 // The app opens on the Omni octopus (@automagik/omni-ai-dsh), not on DSH's own welcome

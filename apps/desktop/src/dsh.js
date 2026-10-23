@@ -144,6 +144,62 @@ export function installProfile({ dshHome, source }) {
   return { target, installed: true }
 }
 
+/**
+ * pnpm refuses to change a profile whose node_modules were linked from another store
+ * (ERR_PNPM_UNEXPECTED_STORE): the shipped profile was installed on the build machine, and a
+ * person's own pnpm config may name a store of its own. So the profile names the app's store
+ * in its pnpm-workspace.yaml, which wins over the person's config, and its node_modules record
+ * that store. Run at every launch: it also repairs a profile an earlier build left behind, and
+ * never touches the person's pnpm config. `layout` is the store's folder for the app's pnpm
+ * (v10 for pnpm 10, see storeLayoutOf). Returns the store path.
+ */
+export function pinProfileStore({ target, home, layout = 'v10' }) {
+  const store = join(home, 'pnpm-store')
+  const workspace = join(target, 'pnpm-workspace.yaml')
+  const text = existsSync(workspace) ? readFileSync(workspace, 'utf8') : ''
+  const line = `storeDir: ${JSON.stringify(store)}`
+  const next = /^storeDir:.*$/m.test(text) ? text.replace(/^storeDir:.*$/m, line) : `${text.replace(/\s*$/, '')}${text.trim() ? '\n' : ''}${line}\n`
+  if (next !== text) writeFileSync(workspace, next)
+  // pnpm writes .modules.yaml as JSON; a store recorded there must be the one in use.
+  const modules = join(target, 'node_modules', '.modules.yaml')
+  const recorded = join(store, layout)
+  if (existsSync(modules)) {
+    const raw = readFileSync(modules, 'utf8')
+    let fixed = raw
+    try {
+      const state = JSON.parse(raw)
+      if (state.storeDir !== recorded) fixed = `${JSON.stringify({ ...state, storeDir: recorded }, null, 2)}\n`
+    } catch {
+      fixed = raw.replace(/^(\s*storeDir:\s*).*$/m, `$1${JSON.stringify(recorded)}`)
+    }
+    if (fixed !== raw) writeFileSync(modules, fixed)
+  }
+  return store
+}
+
+/** What a shipped profile records as its store until the app records its own at launch. */
+export const SHIPPED_STORE = '<omni-desktop home>/pnpm-store'
+
+/**
+ * Take the build machine out of an installed profile before it ships: the store pnpm linked
+ * it from (node_modules/.modules.yaml) and pnpm's cache of that machine's paths
+ * (node_modules/.pnpm-workspace-state-v1.json, rebuilt on the next install).
+ */
+export function scrubBuildPaths(target) {
+  const modules = join(target, 'node_modules', '.modules.yaml')
+  if (existsSync(modules)) {
+    const state = JSON.parse(readFileSync(modules, 'utf8'))
+    writeFileSync(modules, `${JSON.stringify({ ...state, storeDir: SHIPPED_STORE }, null, 2)}\n`)
+  }
+  rmSync(join(target, 'node_modules', '.pnpm-workspace-state-v1.json'), { force: true })
+}
+
+/** The store folder pnpm uses for its major version: `v10` for pnpm 10.x. */
+export function storeLayoutOf(pnpmCli) {
+  const major = String(readJson(join(pnpmCli, '..', '..', 'package.json')).version ?? '').split('.')[0]
+  return /^\d+$/.test(major) ? `v${major}` : 'v10'
+}
+
 const readJson = (file) => {
   try {
     return JSON.parse(readFileSync(file, 'utf8'))

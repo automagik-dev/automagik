@@ -11,7 +11,7 @@ import { createWriteStream, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
-import { appHome, dshEnv, freePort, installProfile, navigationOf, resourcesOf, startDsh, stopDsh, writeTools } from './dsh.js'
+import { appHome, dshEnv, freePort, installProfile, navigationOf, pinProfileStore, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
 import { pageLayout, updateView, WINDOW_ACTIONS, windowChrome } from './frame.js'
 import { isReleasePage, startUpdates, updateMode } from './update.js'
 
@@ -128,7 +128,8 @@ async function launch() {
   openWindow()
   mkdirSync(join(home, 'logs'), { recursive: true })
   const resources = resourcesOf({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() })
-  installProfile({ dshHome: join(home, 'dsh'), source: resources.profile })
+  const { target } = installProfile({ dshHome: join(home, 'dsh'), source: resources.profile })
+  pinProfileStore({ target, home, layout: storeLayoutOf(resources.pnpm) })
   const port = await freePort()
   const log = createWriteStream(join(home, 'logs', 'dsh.log'), { flags: 'a' })
   // Electron's own binary runs dsh as Node, so the app ships one runtime.

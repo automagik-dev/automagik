@@ -16,6 +16,7 @@ import { execFileSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { scrubBuildPaths } from '../src/dsh.js'
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const BUILD = join(APP, 'build')
@@ -125,6 +126,9 @@ for (const [name, version] of Object.entries(ADDONS)) {
 }
 // DSH's own record of the build's install (.plugin-manager) is not part of what ships.
 rmSync(join(installDir, '.plugin-manager'), { recursive: true, force: true })
+// Nor is this machine's pnpm store, or pnpm's cache of this machine's paths: the app records
+// its own store at every launch (src/dsh.js pinProfileStore), and pnpm rebuilds the cache.
+scrubBuildPaths(installDir)
 const profileDir = join(BUILD, 'profile')
 rmSync(profileDir, { recursive: true, force: true })
 cpSync(installDir, profileDir, { recursive: true, verbatimSymlinks: true })
