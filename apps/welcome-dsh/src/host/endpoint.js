@@ -4,11 +4,13 @@ import { checkClaudeCode, createProviderActions, saveRoute, unsetRoute } from '.
 import { createTerminalActions } from './terminal.js'
 import { createCompanionActions } from './companion.js'
 import { createBotTypeActions } from './bot-types.js'
+import { preloadOf } from './preload.js'
 
 // The host endpoint the onboarding steps call: POST /api/omni-ai with
 // { endpoint, payload }, answered { ok: true, value } or { ok: false, error }.
 //
-//   state              the done flags, and whether an AI is already connected
+//   state              the done flags, whether an AI is already connected, and the
+//                      product the desktop app was opened for (preload, src/host/preload.js)
 //   done { stepId }    keeps a step finished, in this plugin's own settings entry
 //   cliproxy { baseURL, apiKey }
 //                      lists the gateway's models with the key, stores the key in DSH's
@@ -132,7 +134,7 @@ const isConfigured = async (read) => {
   }
 }
 
-export function createActions(ctx, { fetch: fetchImpl = globalThis.fetch, anyOn } = {}) {
+export function createActions(ctx, { fetch: fetchImpl = globalThis.fetch, anyOn, env = process.env } = {}) {
   return {
     async state() {
       const rows = describeAll(ctx)
@@ -156,6 +158,7 @@ export function createActions(ctx, { fetch: fetchImpl = globalThis.fetch, anyOn 
         piAiRoutes,
         // Really on: a route that is set up, Claude Code signed in, or a subscription account.
         aiConnected: anyOn ? await anyOn().catch(() => false) : deepseek || piAiRoutes.length > 0,
+        preload: preloadOf(env),
       }
     },
 

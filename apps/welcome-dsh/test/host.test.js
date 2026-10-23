@@ -170,7 +170,7 @@ test('state reports the flags and whether an AI is already connected', async () 
   const fresh = await host().handle('state')
   assert.deepEqual(JSON.parse(JSON.stringify(fresh.value)), {
     companionDone: false, teamDone: false, welcomeDone: false, connectAiDone: false, connectOmniSkipped: false,
-    companionImage: false, teamOmni: true, teamGenie: false, deepseek: false, piAiRoutes: [], aiConnected: false,
+    companionImage: false, teamOmni: true, teamGenie: false, deepseek: false, piAiRoutes: [], aiConnected: false, preload: null,
   })
 
   const fake = host({ entries: { 'omni-ai': { welcomeDone: true, connectAiDone: true }, 'llm-pi-ai': { providers: { zai: { apiKeyEnv: 'ZAI_API_KEY' } } } }, credentials: { ZAI_API_KEY: 'x' } })

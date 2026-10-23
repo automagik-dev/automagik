@@ -443,6 +443,23 @@ function usePower() {
   }
 }
 
+// The product the desktop app was opened for (state.preload: 'omni', 'genie' or null, from
+// AUTOMAGIK_PRELOAD): its card comes first and starts chosen, Omni's by powering on through
+// its box as a press would. The other card stays there to add, then or later.
+export function teamOrder(preload) {
+  return preload === 'genie' ? ['genie', 'omni'] : ['omni', 'genie']
+}
+export const preselected = preload => ({ omni: preload === 'omni', genie: preload === 'genie' })
+// Whether Omni powers on by itself now: preloaded, still asleep, and never switched off here.
+export const powersOnByItself = (preload, phase, detail, started) =>
+  preselected(preload).omni && !started && phase === 'asleep' && detail?.removed !== true
+
+// Who joins, in words, for the button.
+export function joinedLabel({ omni, genie }, name) {
+  const who = [omni && 'Omni', genie && 'Genie'].filter(Boolean)
+  return who.length === 0 ? `Continue with just ${name}` : `Continue with ${who.join(' and ')}`
+}
+
 // The speech bubble, by Omni's phase.
 const speechOf = (phase, name, origin) => ({
   asleep: `${name} here! Omni is asleep. Press its power button to bring it along.`,
@@ -468,6 +485,9 @@ export function TeamStep(props) {
   const [live, setLive] = useState(undefined)
   const [saving, setSaving] = useState(false)
   const [problem, setProblem] = useState(null)
+  // Genie on the team: the person's choice once made, else the preload's.
+  const [genieChoice, setGenieChoice] = useState(null)
+  const autoPowered = useRef(false)
 
   const { phase } = power
   // Read again once Omni is awake, when what it brings may have just been installed.
@@ -480,10 +500,16 @@ export function TeamStep(props) {
     glitch()
   }, [phase, glitch])
   useEffect(() => { if (state) glitch() }, [state, glitch])
+  useEffect(() => {
+    if (!state || !powersOnByItself(state.preload, power.phase, power.detail, autoPowered.current)) return
+    autoPowered.current = true
+    power.toggle()
+  }, [state])
   if (!state) return null
 
   const name = state.companionName ?? 'Your companion'
   const omni = phase !== 'asleep' && phase !== 'failed'
+  const genie = genieChoice ?? preselected(state.preload).genie
   const working = ['waking', 'installing', 'starting', 'looking'].includes(phase)
   const local = () => go({ omni: true })
 
@@ -491,7 +517,7 @@ export function TeamStep(props) {
     setSaving(true)
     setProblem(null)
     try {
-      await call('team-save', { omni: joined, genie: false, omniAbilities: { ...abilitiesOf(omniType), ...abilities } })
+      await call('team-save', { omni: joined, genie, omniAbilities: { ...abilitiesOf(omniType), ...abilities } })
       finish()
     } catch (error) {
       setProblem(error.message)
@@ -509,15 +535,20 @@ export function TeamStep(props) {
   },
   h('p', { className: 'oai-lede' }, `${name} leads. Who comes along?`),
   h('div', { className: 'oai-select' },
-    h(OmniCard, { power: omniPower, onPower: power.toggle, type: omniType, abilities, onToggle: (id, on) => setAbilities(rows => ({ ...rows, [id]: on })), live }),
-    h('article', { className: 'oai-fighter oai-genie oai-locked' },
-      h(Machine, { kind: 'genie', phase: 'asleep' },
-        h('div', { className: 'oai-genie-wrap', dangerouslySetInnerHTML: { __html: genieSvg(110, { uid: 'oaig' }) } })),
-      h('header', null, h('h2', null, 'Genie')),
-      h('p', { className: 'oai-about' }, 'Give it a wish, get one delivery.'),
-      h(StartsWith, { type: GENIE_TYPE }))),
+    ...teamOrder(state.preload).map(id => (id === 'omni'
+      ? h(OmniCard, { key: 'omni', power: omniPower, onPower: power.toggle, type: omniType, abilities, onToggle: (row, on) => setAbilities(rows => ({ ...rows, [row]: on })), live })
+      : h('article', { key: 'genie', className: `oai-fighter oai-genie oai-locked${genie ? ' oai-chosen' : ''}` },
+        h(Machine, { kind: 'genie', phase: 'asleep' },
+          h('div', { className: 'oai-genie-wrap', dangerouslySetInnerHTML: { __html: genieSvg(110, { uid: 'oaig' }) } })),
+        h('header', null,
+          h('h2', null, 'Genie'),
+          genie
+            ? h('span', { className: 'oai-team-line' }, h('span', { className: 'oai-on-team' }, h(Check), 'On your team'), h('button', { type: 'button', className: 'oai-remove', onClick: () => setGenieChoice(false) }, 'Remove'))
+            : h('button', { type: 'button', className: 'oai-remove', onClick: () => setGenieChoice(true) }, 'Add')),
+        h('p', { className: 'oai-about' }, 'Give it a wish, get one delivery.'),
+        h(StartsWith, { type: GENIE_TYPE }))))),
   problem ? h('p', { className: 'oai-error', role: 'alert' }, problem) : null,
   h('div', { className: 'oai-actions' },
     h('button', { type: 'button', className: 'oai-primary oai-big', disabled: saving || working, onClick: () => go() },
-      saving ? 'Bringing them in…' : working ? 'Omni is waking…' : omni ? 'Continue with Omni' : `Continue with just ${name}`)))
+      saving ? 'Bringing them in…' : working ? 'Omni is waking…' : joinedLabel({ omni, genie }, name))))
 }

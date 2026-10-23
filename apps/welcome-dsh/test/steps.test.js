@@ -200,12 +200,12 @@ test('power on, with the Omni plugins here: Omni wakes and looks, and offers wha
 })
 
 test('power on, in a plain DSH: the Omni plugins install, start, and then Omni looks', async () => {
-  const rows = [{ name: '@automagik/omni-dsh', title: 'Omni team', installed: false }]
-  const installing = { ready: false, plugins: rows, install: { phase: 'installing', current: '@automagik/omni-dsh', done: [] } }
+  const rows = [{ name: '@automagik/bots-dsh', title: 'Bot team', installed: false }]
+  const installing = { ready: false, plugins: rows, install: { phase: 'installing', current: '@automagik/bots-dsh', done: [] } }
   const fake = powerHost({
     plugins: { ready: false, plugins: rows, install: null },
     install: installing,
-    polls: [{ ready: false, plugins: rows, install: null }, installing, { ready: false, plugins: rows, install: { phase: 'done', done: ['@automagik/omni-dsh'] } }, { ready: true, plugins: rows, install: { phase: 'done', done: ['@automagik/omni-dsh'] } }],
+    polls: [{ ready: false, plugins: rows, install: null }, installing, { ready: false, plugins: rows, install: { phase: 'done', done: ['@automagik/bots-dsh'] } }, { ready: true, plugins: rows, install: { phase: 'done', done: ['@automagik/bots-dsh'] } }],
   })
   assert.equal(await fake.run(), 'none')
   assert.deepEqual(phases(fake.shown), ['waking', 'installing', 'installing', 'installing', 'starting', 'looking', 'none'])
@@ -223,9 +223,9 @@ test('power on ends at linked, restart or failed when that is where it stands', 
   assert.equal(await refused.run(), 'failed')
   assert.match(refused.shown.at(-1)[1].message, /no plugin manager/)
 
-  const failed = powerHost({ plugins: { ready: false }, install: { ready: false, install: { phase: 'failed', error: 'Omni team: offline' } } })
+  const failed = powerHost({ plugins: { ready: false }, install: { ready: false, install: { phase: 'failed', error: 'Bot team: offline' } } })
   assert.equal(await failed.run(), 'failed')
-  assert.equal(failed.shown.at(-1)[1].message, 'Omni team: offline')
+  assert.equal(failed.shown.at(-1)[1].message, 'Bot team: offline')
 
   // Installed and ready, yet the channels' route is not served yet.
   const omniUi = async () => { throw Object.assign(new Error('DSH answered HTTP 404'), { code: 'HTTP_404' }) }
@@ -262,7 +262,7 @@ const omniType = {
   type: 'omni',
   groups: [
     { id: 'model', label: 'Model', rows: [{ id: 'model', label: 'GPT-5.5', detail: 'juice/gpt-5.5' }, { id: 'thinking', label: 'Thinking', detail: 'Medium' }] },
-    { id: 'plugins', label: 'Plugins', rows: [{ id: '@automagik/omni-dsh', label: 'Omni team', version: '2.261023.28', installed: true }, { id: '@automagik/omni-canvas-dsh', label: 'Omni canvases', version: '2.261023.28', installed: false }] },
+    { id: 'plugins', label: 'Plugins', rows: [{ id: '@automagik/bots-dsh', label: 'Bot team', version: '2.261023.28', installed: true }, { id: '@automagik/omni-canvas-dsh', label: 'Omni canvases', version: '2.261023.28', installed: false }] },
     { id: 'tools', label: 'Tools', rows: [{ id: 'read', label: 'Read channels and chats', tools: ['omni_channels'], on: true, locked: true }, { id: 'send', label: 'Send, react and delete', tools: ['omni_send'], on: true }, { id: 'computer', label: 'Shell and files', tools: ['bash'], on: false }] },
     { id: 'skills', label: 'Skills', rows: [], empty: 'None preloaded.' },
     { id: 'setup', label: 'Setup', rows: [{ id: 'folder', label: 'Folder', detail: '~/.omni/team/omni' }] },
@@ -275,7 +275,7 @@ test('the capability list is the Bot type\'s groups, with a switch only where it
   assert.deepEqual(findAll(tree, node => node.type === 'h3').map(textOf), ['Model', 'Plugins', 'Tools', 'Skills', 'Setup'])
   const cap = id => findAll(tree, node => node.props['data-cap'] === id)[0]
   assert.match(textOf(cap('model')), /GPT-5\.5/)
-  assert.match(textOf(cap('@automagik/omni-dsh')), /v2\.261023\.28/)
+  assert.match(textOf(cap('@automagik/bots-dsh')), /v2\.261023\.28/)
   assert.match(textOf(cap('@automagik/omni-canvas-dsh')), /Installs when Omni powers on/)
   assert.match(textOf(cap('read')), /Always on/)
   const switches = findAll(tree, node => node.props.role === 'switch')
@@ -351,10 +351,10 @@ test('every phase happens inside the box: outside it, the card stays the same', 
     { id: 'cli:work', url: 'https://omni.example.com', local: false, pairing: 'on' },
     { id: 'cli:old', url: 'http://127.0.0.1:8882', local: true, reachable: false },
   ]
-  const plugins = { plugins: [{ name: 'a', title: 'Omni team' }, { name: 'b', title: 'Omni channels' }], install: { current: 'b', done: ['a'] } }
+  const plugins = { plugins: [{ name: 'a', title: 'Bot team' }, { name: 'b', title: 'Omni channels' }], install: { current: 'b', done: ['a'] } }
   const phases = {
     waking: null, installing: { plugins }, starting: { plugins }, looking: null, found: { omnis }, none: { sandbox: null },
-    pairing: { pairing: { code: 'K7Q2-9M', origin: 'omni.example.com', waLink: 'https://wa.me/x' } }, linked: { origin: 'omni.example.com' }, restart: null, failed: { message: 'Omni team: offline' },
+    pairing: { pairing: { code: 'K7Q2-9M', origin: 'omni.example.com', waLink: 'https://wa.me/x' } }, linked: { origin: 'omni.example.com' }, restart: null, failed: { message: 'Bot team: offline' },
   }
   const outside = tree => outsideBox(tree).filter(node => typeof node.type === 'string').map(node => `${node.type}.${node.props.className ?? ''}`).join(' ')
   const awakeShape = outside(card('waking'))
@@ -387,7 +387,7 @@ test('every phase happens inside the box: outside it, the card stays the same', 
   assert.equal(findAll(none, node => node.type === 'input' && node.props['aria-label'] === 'Omni address or link').length, 1)
   assert.match(textOf(none), /Or run Omni on this computer/)
   assert.match(textOf(card('pairing', phases.pairing)), /K7Q2-9M/)
-  assert.match(textOf(card('failed', phases.failed)), /Omni team: offline/)
+  assert.match(textOf(card('failed', phases.failed)), /Bot team: offline/)
 })
 
 test('the box lights wake one by one, then show what is true', () => {
@@ -410,4 +410,26 @@ test('a typed address or a link Omni sent reads the way the Connect Omni step re
   assert.equal(team.readRemote('  '), null)
   assert.equal(team.channelLabel({ type: 'whatsapp-baileys' }), 'WhatsApp')
   assert.equal(team.foundChoice({ id: 'x', url: 'http://127.0.0.1:1', local: true, updateTo: '2.3.0' }).action, null)
+})
+
+// The desktop app opened for one product (AUTOMAGIK_PRELOAD): that card comes first and
+// starts chosen; the other stays to add. No preload keeps Omni first and nothing chosen.
+test('the preload orders the team and starts its product chosen', () => {
+  assert.deepEqual(plain(team.teamOrder(null)), ['omni', 'genie'])
+  assert.deepEqual(plain(team.teamOrder('omni')), ['omni', 'genie'])
+  assert.deepEqual(plain(team.teamOrder('genie')), ['genie', 'omni'])
+  assert.deepEqual(plain(team.preselected(null)), { omni: false, genie: false })
+  assert.deepEqual(plain(team.preselected('omni')), { omni: true, genie: false })
+  assert.deepEqual(plain(team.preselected('genie')), { omni: false, genie: true })
+  // Omni powers on through its box, once, and never after the person switched it off.
+  assert.equal(team.powersOnByItself('omni', 'asleep', null, false), true)
+  assert.equal(team.powersOnByItself('omni', 'asleep', null, true), false)
+  assert.equal(team.powersOnByItself('omni', 'asleep', { removed: true }, false), false)
+  assert.equal(team.powersOnByItself('omni', 'looking', null, false), false)
+  assert.equal(team.powersOnByItself('genie', 'asleep', null, false), false)
+  assert.equal(team.powersOnByItself(null, 'asleep', null, false), false)
+  assert.equal(team.joinedLabel({ omni: true, genie: false }, 'Mochi'), 'Continue with Omni')
+  assert.equal(team.joinedLabel({ omni: true, genie: true }, 'Mochi'), 'Continue with Omni and Genie')
+  assert.equal(team.joinedLabel({ omni: false, genie: true }, 'Mochi'), 'Continue with Genie')
+  assert.equal(team.joinedLabel({ omni: false, genie: false }, 'Mochi'), 'Continue with just Mochi')
 })

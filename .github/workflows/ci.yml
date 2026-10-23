@@ -71,6 +71,21 @@ jobs:
           bun install --frozen-lockfile
           [ -d dev/harness/node_modules ] || bun run harness
 
+      - name: Omni's plugins at the pinned release
+        # The welcome lists the tools Omni's channels and canvases register; its test reads
+        # them from Omni at the release apps/desktop/omni.json pins.
+        if: matrix.app == 'welcome-dsh'
+        run: |
+          set -euo pipefail
+          dir="${RUNNER_TEMP}/omni"
+          commit=$(node -p "require('../desktop/omni.json').commit")
+          git init -q "${dir}"
+          git -C "${dir}" remote add origin https://github.com/automagik-dev/omni
+          git -C "${dir}" sparse-checkout set --no-cone /apps/omni-channels-dsh/ /apps/omni-canvas-dsh/
+          git -C "${dir}" fetch -q --depth 1 --filter=blob:none origin "${commit}"
+          git -C "${dir}" checkout -q FETCH_HEAD
+          echo "OMNI_CHECKOUT=${dir}" >> "$GITHUB_ENV"
+
       - name: Generated files are current
         run: node scripts/build-client.mjs --check
 

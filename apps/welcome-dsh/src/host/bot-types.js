@@ -8,13 +8,22 @@ import { BotTypePayload, parse } from './payloads.js'
 
 const PKG = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
 
+// The Omni release whose channels and canvases this welcome installs: the same one the
+// Automagik desktop app carries (apps/desktop/omni.json; follow-omni.yml moves both).
+export const OMNI_RELEASE = Object.freeze({ ...PKG.automagik.omni })
+
 // The Omni plugins, in install order: each one after the first needs the ones before it.
-// `dir` is each one's folder beside this plugin's own in the Omni repository.
+// The Bot team is Automagik's, beside this plugin (`dir` in this repository, this version);
+// it was @automagik/omni-dsh, and a DSH that has it under that name has the team. The
+// channels and canvases are Omni's, in its repository at OMNI_RELEASE.
 export const OMNI_PLUGINS = Object.freeze([
-  { name: '@automagik/omni-dsh', dir: 'omni-ui-dsh', title: 'Omni team', what: 'Bots, their chats, memory and settings' },
-  { name: '@automagik/omni-channels-dsh', dir: 'omni-channels-dsh', title: 'Omni channels', what: 'Your channels and the chats on them' },
-  { name: '@automagik/omni-canvas-dsh', dir: 'omni-canvas-dsh', title: 'Omni canvases', what: 'Live views drawn in the chat' },
+  { name: '@automagik/bots-dsh', formerly: '@automagik/omni-dsh', dir: 'bots-dsh', from: 'automagik', title: 'Bot team', what: 'Bots, their chats, memory and settings' },
+  { name: '@automagik/omni-channels-dsh', dir: 'omni-channels-dsh', from: 'omni', title: 'Omni channels', what: 'Your channels and the chats on them' },
+  { name: '@automagik/omni-canvas-dsh', dir: 'omni-canvas-dsh', from: 'omni', title: 'Omni canvases', what: 'Live views drawn in the chat' },
 ])
+
+/** The version an install of `plugin` brings. */
+export const versionOf = (plugin, version = PKG.version, omni = OMNI_RELEASE) => (plugin.from === 'omni' ? omni.version : version)
 
 // The tools the Omni plugins register (omni-channels-dsh src/host/omni-api.js, omni-canvas-dsh
 // src/host/canvas.js), grouped by what the person can switch. `read` is what Omni is for,
@@ -48,14 +57,21 @@ const quietly = async (read, fallback) => {
 }
 const tilde = path => path.replace(/^\/(?:home|Users)\/[^/]+(?=\/)/, '~')
 
-// What installs one Omni plugin: the source this plugin came from, pointed at its sibling
-// (a git commit's path, or a linked checkout), so all of them are one release; else that
-// release from the registry.
-export function installTargetOf(plugin, ownSource, version = PKG.version) {
-  const own = 'apps/omni-ai-dsh'
+// What installs one Omni plugin. The Bot team: the source this plugin came from, pointed at
+// its sibling (a git commit's path, or a linked checkout), so both are one release; else that
+// release from the registry. Omni's: its repository at the pinned release, as a DSH git spec.
+export function installTargetOf(plugin, ownSource, version = PKG.version, omni = OMNI_RELEASE) {
+  if (plugin.from === 'omni') {
+    return { spec: `git+${omni.repository.replace(/\.git$/, '')}.git#${omni.commit}&path:/apps/${plugin.dir}`, options: {} }
+  }
+  const own = 'apps/welcome-dsh'
   if (typeof ownSource === 'string' && ownSource.includes(own)) return { spec: ownSource.replace(own, `apps/${plugin.dir}`), options: {} }
   return { spec: `${plugin.name}@${version}`, options: { saveExact: true } }
 }
+
+// A plugin's row in the profile: under its name, else under its former one.
+const rowOf = (rows, plugin) => rows?.find(bundle => bundle.name === plugin.name)
+  ?? (plugin.formerly ? rows?.find(bundle => bundle.name === plugin.formerly && bundle.availability !== 'missing') : undefined)
 
 const resultProblem = (result) => {
   if (result?.error) return result.error.diagnostic ?? result.error.code
@@ -76,7 +92,7 @@ export function createBotTypeActions(ctx, { team, omniProjectOf }) {
   async function plugins() {
     const rows = await bundles()
     return OMNI_PLUGINS.map((plugin) => {
-      const row = rows?.find(bundle => bundle.name === plugin.name)
+      const row = rowOf(rows, plugin)
       return {
         name: plugin.name,
         title: plugin.title,
@@ -112,7 +128,7 @@ export function createBotTypeActions(ctx, { team, omniProjectOf }) {
     const rows = await bundles() ?? []
     const ownSource = rows.find(bundle => bundle.name === PKG.name)?.source
     for (const plugin of OMNI_PLUGINS) {
-      const row = rows.find(bundle => bundle.name === plugin.name)
+      const row = rowOf(rows, plugin)
       const present = row !== undefined && row.availability !== 'missing'
       if (present && row.enabled !== false) {
         job.done.push(plugin.name)
@@ -120,7 +136,7 @@ export function createBotTypeActions(ctx, { team, omniProjectOf }) {
       }
       job.current = plugin.name
       let result
-      if (present) result = await service.setBundleEnabled(plugin.name, true)
+      if (present) result = await service.setBundleEnabled(row.name, true)
       else {
         const target = installTargetOf(plugin, ownSource)
         result = await service.installBundle(target.spec, { enabled: true, ...target.options })
@@ -194,7 +210,7 @@ export function createBotTypeActions(ctx, { team, omniProjectOf }) {
         ] },
         { id: 'plugins', label: 'Plugins', rows: pluginRows.map(row => ({
           id: row.name, label: row.title, detail: row.what,
-          version: row.version ?? (row.installed === false ? PKG.version : null),
+          version: row.version ?? (row.installed === false ? versionOf(OMNI_PLUGINS.find(plugin => plugin.name === row.name)) : null),
           installed: row.installed,
         })) },
         { id: 'tools', label: 'Tools', rows: OMNI_TOOLS.map(group => ({

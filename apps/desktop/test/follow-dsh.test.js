@@ -28,4 +28,7 @@ test('follow-omni follows only an Omni release tested on the dsh the desktop run
   assert.match(text, /apps\/omni-channels-dsh\/dev\/harness\/package\.json/)
   assert.match(text, /require\('\.\/apps\/desktop\/runtime\/package\.json'\)/)
   assert.ok(text.indexOf('not following it until the Bot team moves') < text.indexOf('git commit -qam'), 'a mismatch stops before the commit')
+  // The welcome installs the same Omni release in a plain DSH: both pins move in one commit.
+  assert.ok(text.indexOf('apps/welcome-dsh/package.json') < text.indexOf('git commit -qam'))
+  assert.match(text, /pkg\.automagik\.omni = \{ \.\.\.pkg\.automagik\.omni, version, commit \}/)
 })
