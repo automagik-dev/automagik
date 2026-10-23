@@ -25,10 +25,10 @@ on:
         required: true
         type: string
       prerelease:
-        description: 'Publish as a prerelease'
+        description: 'Publish as a prerelease (not shown as Latest)'
         required: false
         type: boolean
-        default: true
+        default: false
       # Declared here too: an input a caller cannot see reads as '', which equals false.
       publish:
         description: 'Publish the release'
@@ -42,10 +42,10 @@ on:
         required: false
         type: string
       prerelease:
-        description: 'Publish as a prerelease'
+        description: 'Publish as a prerelease (not shown as Latest)'
         required: false
         type: boolean
-        default: true
+        default: false
       publish:
         description: 'Publish the release (off: build, sign and notarize only, keeping the builds as run artifacts)'
         required: false
@@ -209,6 +209,19 @@ jobs:
           path: assets
           merge-multiple: true
 
+      # Every release also carries its downloads under names without the version, so
+      # .../releases/latest/download/Omni-Mac.dmg (the README's buttons) is always the newest.
+      # `omni desktop` and the updater read the versioned names, which these never match.
+      - name: Stable download names
+        working-directory: assets
+        run: |
+          set -euo pipefail
+          for pair in "-mac-arm64.dmg:Omni-Mac.dmg" "-linux-x86_64.AppImage:Omni-Linux.AppImage" "-linux-amd64.deb:Omni-Linux.deb"; do
+            file=$(ls -- *"${pair%%:*}" 2>/dev/null | head -1 || true)
+            [[ -n "${file}" ]] && cp -- "${file}" "${pair##*:}"
+          done
+          ls -l
+
       - name: Checksums
         working-directory: assets
         run: |
@@ -226,12 +239,17 @@ jobs:
               [[ -e "assets/${name}" ]] || gh release delete-asset "${TAG}" "${name}" --yes --repo "${GITHUB_REPOSITORY}"
             done
             gh release upload "${TAG}" assets/* --clobber --repo "${GITHUB_REPOSITORY}"
+            if [[ "${PRERELEASE}" == "true" ]]; then
+              gh release edit "${TAG}" --prerelease --repo "${GITHUB_REPOSITORY}"
+            else
+              gh release edit "${TAG}" --prerelease=false --latest --repo "${GITHUB_REPOSITORY}"
+            fi
           else
-            flags=()
-            [[ "${PRERELEASE}" == "true" ]] && flags+=(--prerelease)
+            flags=(--latest)
+            [[ "${PRERELEASE}" == "true" ]] && flags=(--prerelease)
             gh release create "${TAG}" assets/* "${flags[@]}" \
               --repo "${GITHUB_REPOSITORY}" \
               --target "${SHA}" \
               --title "Omni desktop ${VERSION}" \
-              --notes "Omni desktop for [Omni ${VERSION}](https://github.com/automagik-dev/omni/releases/tag/v${VERSION}): run \`npx @automagik/omni desktop\` (macOS arm64, Linux x64, WSL), or download a build below. SHA256SUMS lists every file."
+              --notes "**Download:** Mac (Apple silicon): **Omni-Mac.dmg** · Linux: **Omni-Linux.deb** (Ubuntu, Debian) or **Omni-Linux.AppImage**. Already installed? The app updates itself. This is Omni desktop for [Omni ${VERSION}](https://github.com/automagik-dev/omni/releases/tag/v${VERSION}). SHA256SUMS lists every file's checksum."
           fi

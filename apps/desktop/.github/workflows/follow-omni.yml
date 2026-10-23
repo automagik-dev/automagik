@@ -4,7 +4,7 @@ name: Follow Omni
 # (or when dispatched) this looks for the newest Omni release (`v<version>`, prereleases
 # included: the npm `next` cuts) above the one omni.json pins. When there is one, and its
 # plugins carry its version, it moves omni.json, package.json and the lock to it, commits
-# that to main, and releases the app from that commit, a prerelease when Omni's is one.
+# that to main, and releases the app from that commit as its Latest release.
 
 on:
   schedule:
@@ -26,7 +26,6 @@ jobs:
       contents: write
     outputs:
       sha: ${{ steps.bump.outputs.sha }}
-      prerelease: ${{ steps.newest.outputs.prerelease }}
     env:
       GH_TOKEN: ${{ github.token }}
       OMNI: automagik-dev/omni
@@ -57,7 +56,6 @@ jobs:
             exit 0
           fi
           echo "version=${newest}" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$(grep "^${newest} " releases.txt | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
 
       - name: Move to it
         id: bump
@@ -91,4 +89,3 @@ jobs:
     secrets: inherit
     with:
       ref: ${{ needs.follow.outputs.sha }}
-      prerelease: ${{ needs.follow.outputs.prerelease == 'true' }}
