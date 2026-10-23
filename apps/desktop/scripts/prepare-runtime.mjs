@@ -48,8 +48,12 @@ function omniSource() {
 const OMNI_DIR = omniSource()
 
 // Each plugin the profile depends on: Omni's own (an apps/*-dsh folder, packed at this Omni's
-// version) or an add-on from npm at the exact version the profile names (vetted there).
-const profileDeps = readJson(join(APP, 'profile', 'package.json')).dependencies
+// version), an add-on from npm at the exact version the profile names (vetted there), or one
+// from a reviewed fork at a pinned commit (`github:owner/repo#<40-hex>`), whose version the
+// profile names under omni.addonVersions.
+const profileJson = readJson(join(APP, 'profile', 'package.json'))
+const profileDeps = profileJson.dependencies
+const PINNED_GIT = /^github:[\w.-]+\/[\w.-]+#[0-9a-f]{40}$/
 const apps = join(OMNI_DIR, 'apps')
 const folders = Object.fromEntries(readdirSync(apps)
   .filter(name => name.endsWith('-dsh') && existsSync(join(apps, name, 'package.json')))
@@ -59,7 +63,8 @@ const ADDONS = {}
 for (const [name, spec] of Object.entries(profileDeps)) {
   if (folders[name]) PLUGINS[name] = folders[name]
   else if (/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(spec)) ADDONS[name] = spec
-  else throw new Error(`profile/package.json depends on ${name}@${spec}: neither Omni's (apps/*-dsh) nor an add-on at an exact version`)
+  else if (PINNED_GIT.test(spec) && profileJson.omni?.addonVersions?.[name]) ADDONS[name] = profileJson.omni.addonVersions[name]
+  else throw new Error(`profile/package.json depends on ${name}@${spec}: neither Omni's (apps/*-dsh) nor an add-on at an exact version or a pinned commit with its version in omni.addonVersions`)
 }
 
 // The DeepSeek Harness the app runs is the one Omni's plugins are tested against.
