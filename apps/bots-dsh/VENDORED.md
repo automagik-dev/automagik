@@ -10,7 +10,7 @@
 ## How upstream comes in
 
 The directory was copied, not linked, so a merge is built: a commit with upstream's `ds-bot/` at the
-vendored commit placed at `apps/omni-ui-dsh` (the merge base), a commit on it with upstream's current
+vendored commit placed at `apps/bots-dsh` (the merge base), a commit on it with upstream's current
 `ds-bot/` there, and a real merge of that commit into Omni. Upstream's changes then merge as git
 merges them, and every conflict is resolved by hand in the merge commit.
 
@@ -24,7 +24,7 @@ time, phone and touch layouts, `show_view` views (charts, calculators, sandboxed
 files, inherited names such as `__proto__`, a stale `state.lock`, a Bot's photo path, and input
 kept through a handoff.
 
-Kept as Omni's: the package (`@automagik/omni-dsh`, Omni's version, Bun, the DSH pin), its home,
+Kept as Omni's: the package (`@automagik/bots-dsh`, Automagik's version, Bun, the DSH pin), its home,
 route and plugin ids (`$OMNI_HOME/ui`, `/api/omni-ui`, `omni-ui`), the brand (OmniMark, the
 octopus, the palette, every "Omni" in the copy and in the Bots' prompts), the extension registry
 other Omni plugins use (`extend.js`: tool cards, row badges, header buttons, endpoints), canvases,

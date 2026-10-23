@@ -8,4 +8,4 @@
 # DSH's own settings, and keys go to DSH's credential store.
 - insert:
     - id: omni-ai
-      name: '@automagik/omni-ai-dsh'
+      name: '@automagik/welcome-dsh'

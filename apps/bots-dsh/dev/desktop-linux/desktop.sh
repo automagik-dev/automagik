@@ -26,6 +26,9 @@ case "$NAME" in *[!a-z0-9-]*|'') echo "desktop name must match [a-z0-9-]+" >&2; 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PLUGIN="$(cd "$HERE/../.." && pwd)"
 ROOT="$(dirname "$PLUGIN")"
+# Omni's channels and canvas plugins live in Omni's repository: OMNI_CHECKOUT, else an
+# omni checkout beside this repository.
+OMNI_APPS="${OMNI_CHECKOUT:-$(dirname "$(dirname "$ROOT")")/omni}/apps"
 HOME_DIR="$ROOT/.dsh-test-desktop-$NAME"
 ENV_FILE="$HOME_DIR/desktop.env"
 if [ -z "${DSH_HARNESS:-}" ]; then
@@ -80,7 +83,7 @@ ensure_profile() {
 {
   "name": "dsh-profile-desktop",
   "private": true,
-  "dependencies": { "ds-bot": "link:$PLUGIN", "@automagik/omni-channels-dsh": "link:$ROOT/omni-channels-dsh", "@automagik/omni-canvas-dsh": "link:$ROOT/omni-canvas-dsh" },
+  "dependencies": { "ds-bot": "link:$PLUGIN", "@automagik/omni-channels-dsh": "link:$OMNI_APPS/omni-channels-dsh", "@automagik/omni-canvas-dsh": "link:$OMNI_APPS/omni-canvas-dsh" },
   "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "ds-bot", "@automagik/omni-channels-dsh", "@automagik/omni-canvas-dsh"] } }
 }
 EOF

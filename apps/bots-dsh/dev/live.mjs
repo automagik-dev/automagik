@@ -27,7 +27,11 @@ const DSH_BIN = join(PLUGIN, 'dev', 'harness', 'node_modules', '@deepseek-ai', '
 const PROFILE = 'omni'
 const LIVE_PATH = '/__omni-live'
 // The plugins the desktop app ships, by folder, in its bundle order.
-const FOLDERS = ['omni-ui-dsh', 'omni-channels-dsh', 'omni-canvas-dsh', 'omni-ai-dsh']
+const FOLDERS = ['bots-dsh', 'omni-channels-dsh', 'omni-canvas-dsh', 'welcome-dsh']
+// Omni's channels and canvas plugins come from an Omni checkout: OMNI_CHECKOUT, else ../omni
+// beside this repository.
+const OMNI_APPS = join(resolve(process.env.OMNI_CHECKOUT ?? join(dirname(dirname(APPS)), 'omni')), 'apps')
+const folderDir = folder => join(folder.startsWith('omni-') ? OMNI_APPS : APPS, folder)
 
 const options = { home: join(homedir(), '.omni-dev'), port: '3080', fresh: false }
 const args = process.argv.slice(2)
@@ -48,7 +52,7 @@ const say = message => console.log(`[omni-live] ${message}`)
 const readJson = file => JSON.parse(readFileSync(file, 'utf8'))
 
 if (!existsSync(DSH_BIN)) {
-  console.error('no DSH here: run `bun run harness` in apps/omni-ui-dsh first')
+  console.error('no DSH here: run `bun run harness` in apps/bots-dsh first')
   process.exit(2)
 }
 // A home this launcher made carries this marker, and --fresh empties no other: a mistyped
@@ -64,10 +68,10 @@ if (options.fresh && existsSync(home)) {
   say(`emptied ${home}`)
 }
 mkdirSync(home, { recursive: true })
-writeFileSync(MARKER, 'made by apps/omni-ui-dsh/dev/live.mjs; --fresh may empty this folder\n')
+writeFileSync(MARKER, 'made by apps/bots-dsh/dev/live.mjs; --fresh may empty this folder\n')
 
 // The profile: the desktop app's bundles and settings, with each plugin linked in place.
-const plugins = FOLDERS.map(folder => ({ folder, dir: join(APPS, folder), name: readJson(join(APPS, folder, 'package.json')).name }))
+const plugins = FOLDERS.map(folder => ({ folder, dir: folderDir(folder), name: readJson(join(folderDir(folder), 'package.json')).name }))
 const profileDir = join(dshHome, 'profiles', PROFILE)
 mkdirSync(join(profileDir, 'node_modules', '@automagik'), { recursive: true })
 for (const plugin of plugins) {

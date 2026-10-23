@@ -1,5 +1,5 @@
 {
-  "name": "@automagik/omni-dsh",
+  "name": "@automagik/bots-dsh",
   "version": "2.261023.32",
   "description": "Omni for DeepSeek Harness: a team of long-lived Bots with Omni as the Main Bot; its channels and canvases come with @automagik/omni-channels-dsh and @automagik/omni-canvas-dsh",
   "keywords": [
@@ -10,14 +10,14 @@
     "whatsapp",
     "agents"
   ],
-  "homepage": "https://github.com/automagik-dev/omni/tree/dev/apps/omni-ui-dsh#readme",
+  "homepage": "https://github.com/automagik-dev/automagik/tree/dev/apps/bots-dsh#readme",
   "bugs": {
-    "url": "https://github.com/automagik-dev/omni/issues"
+    "url": "https://github.com/automagik-dev/automagik/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/automagik-dev/omni.git",
-    "directory": "apps/omni-ui-dsh"
+    "url": "git+https://github.com/automagik-dev/automagik.git",
+    "directory": "apps/bots-dsh"
   },
   "license": "Apache-2.0",
   "type": "module",

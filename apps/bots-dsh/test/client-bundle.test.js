@@ -15,10 +15,15 @@ test('client.js is the build of src/client', async () => {
 test('client.js registers a factory that exports apply and inject', () => {
   const registrations = []
   runInNewContext(committed(), { window: { __ModuleLoader__: { load: registration => registrations.push(registration) } } })
-  assert.equal(registrations.length, 1)
-  const [{ id, factory, ...rest }] = registrations
-  assert.equal(id, '@automagik/omni-dsh')
+  assert.equal(registrations.length, 2)
+  const [{ id, factory, ...rest }, former] = registrations
+  assert.equal(id, '@automagik/bots-dsh')
   assert.deepEqual(Object.keys(rest), [])
+  // Plugins built before the rename import @automagik/omni-dsh/client: that name hands over
+  // this bundle's own module, through DSH's require.
+  assert.equal(former.id, '@automagik/omni-dsh')
+  const handed = {}
+  assert.equal(former.factory(spec => (spec === '@automagik/bots-dsh/client' ? handed : assert.fail(spec))), handed)
 
   const requested = []
   const platform = {
@@ -44,4 +49,17 @@ test('client.js registers a factory that exports apply and inject', () => {
   // No `configForms`: the client never writes the user's DSH settings, such as the
   // work-details mode it once held at `verbose`.
   assert.deepEqual(Array.from(exports.inject), ['sessions', 'uiWorkspace', 'uiConversation', 'slots', 'theme', 'layout'])
+})
+
+// Registered while DSH is live, a second registration under the former name is refused by
+// DSH (the bundle run again); that refusal must not stop the bundle.
+test('client.js survives a refused registration of its former name', () => {
+  const ids = []
+  const load = (registration) => {
+    if (ids.includes(registration.id)) throw new Error(`duplicate factory registration for "${registration.id}"`)
+    ids.push(registration.id)
+  }
+  runInNewContext(committed(), { window: { __ModuleLoader__: { load } } })
+  assert.doesNotThrow(() => runInNewContext(committed(), { window: { __ModuleLoader__: { load: registration => registration.id === '@automagik/omni-dsh' ? load(registration) : undefined } } }))
+  assert.deepEqual(ids, ['@automagik/bots-dsh', '@automagik/omni-dsh'])
 })

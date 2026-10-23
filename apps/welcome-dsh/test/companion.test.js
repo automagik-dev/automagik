@@ -12,7 +12,7 @@ const KEY = 'sk-openai-secret-0123456789'
 const PNG = Buffer.from('a tiny png').toString('base64')
 const noClaude = async () => ({ plugin: false, installed: false, loggedIn: false })
 
-// The Omni team service (@automagik/omni-dsh's omniTeam), as far as onboarding uses it.
+// The Omni team service (@automagik/bots-dsh's omniTeam), as far as onboarding uses it.
 function fakeTeam({ mainName = 'Omni', folder } = {}) {
   const calls = []
   const state = { mainBotIds: ['main'], bots: { main: { id: 'main', name: mainName } } }
@@ -54,8 +54,8 @@ const grant = (expires = 9_000_000) => ({ [CODEX_RECORD]: { kind: 'grant', paylo
 test('the vendored characters and inks are still the team plugin\'s own', () => {
   for (const name of ['characters.js', 'inks.js']) {
     const copy = readFileSync(new URL(`../src/client/vendor/${name}`, import.meta.url), 'utf8').split('\n').slice(2).join('\n')
-    const original = readFileSync(new URL(`../../omni-ui-dsh/src/client/${name}`, import.meta.url), 'utf8')
-    assert.equal(copy, original, `${name} drifted from omni-ui-dsh: copy it again`)
+    const original = readFileSync(new URL(`../../bots-dsh/src/client/${name}`, import.meta.url), 'utf8')
+    assert.equal(copy, original, `${name} drifted from bots-dsh: copy it again`)
   }
 })
 

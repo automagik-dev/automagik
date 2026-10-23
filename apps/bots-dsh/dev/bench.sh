@@ -1,7 +1,7 @@
 #!/bin/sh
 # Mock test bench: the scripted mock model (dev/mock-llm.mjs) plus a dsh web whose profile
-# links the plugin to this checkout, with the Omni channels and canvas plugins beside it
-# (../omni-channels-dsh, ../omni-canvas-dsh), so edits need no reinstall (host code needs a
+# links the plugin to this checkout, with the Omni channels and canvas plugins from an Omni
+# checkout ($OMNI_CHECKOUT/apps, default ../omni beside this repository), so edits need no reinstall (host code needs a
 # restart; src/client needs `npm run build` and a page reload).
 #
 #   dev/bench.sh <name> <web-port> <mock-port> [start|stop|reset|status]
@@ -22,6 +22,9 @@ if [ "$WEB_PORT" = 3080 ]; then echo "port 3080 belongs to the real service" >&2
 
 PLUGIN="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(dirname "$PLUGIN")"
+# Omni's channels and canvas plugins live in Omni's repository: OMNI_CHECKOUT, else an
+# omni checkout beside this repository.
+OMNI_APPS="${OMNI_CHECKOUT:-$(dirname "$(dirname "$ROOT")")/omni}/apps"
 HOME_DIR="$ROOT/.dsh-test-$NAME"
 if [ -z "${DSH_HARNESS:-}" ]; then
   DSH_HARNESS="$ROOT/deepseek-harness"
@@ -57,7 +60,7 @@ ensure_profile() {
 {
   "name": "dsh-profile-web",
   "private": true,
-  "dependencies": { "ds-bot": "link:$PLUGIN", "@automagik/omni-channels-dsh": "link:$ROOT/omni-channels-dsh", "@automagik/omni-canvas-dsh": "link:$ROOT/omni-canvas-dsh" },
+  "dependencies": { "ds-bot": "link:$PLUGIN", "@automagik/omni-channels-dsh": "link:$OMNI_APPS/omni-channels-dsh", "@automagik/omni-canvas-dsh": "link:$OMNI_APPS/omni-canvas-dsh" },
   "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "ds-bot", "@automagik/omni-channels-dsh", "@automagik/omni-canvas-dsh"] } }
 }
 EOF

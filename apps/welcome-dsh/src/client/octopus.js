@@ -1,4 +1,4 @@
-// The Omni octopus (apps/omni-ui-dsh/src/client/characters.js), as the claim page draws it
+// The Omni octopus (apps/bots-dsh/src/client/characters.js), as the claim page draws it
 // (packages/api/src/login/pages.ts), and the sci-fi stage it stands on. Copied, not
 // imported: this plugin installs on its own. Every class is prefixed oai- so nothing
 // here restyles DSH.

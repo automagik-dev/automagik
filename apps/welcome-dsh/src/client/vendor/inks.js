@@ -1,4 +1,4 @@
-// Copied from @automagik/omni-dsh (apps/omni-ui-dsh/src/client/inks.js), not imported:
+// Copied from @automagik/bots-dsh (apps/bots-dsh/src/client/inks.js), not imported:
 // this plugin installs on its own. test/companion.test.js checks it still matches.
 // Inks (light, dark) for characters, names, and mentions.
 export const INKS = {

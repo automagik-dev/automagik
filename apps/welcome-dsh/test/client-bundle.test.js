@@ -17,7 +17,7 @@ test('client.js registers its three onboarding steps on settings.onboarding, in 
   runInNewContext(committed(), { window: { __ModuleLoader__: { load: registration => registrations.push(registration) } } })
   assert.equal(registrations.length, 1)
   const [{ id, factory }] = registrations
-  assert.equal(id, '@automagik/omni-ai-dsh')
+  assert.equal(id, '@automagik/welcome-dsh')
 
   const platform = { react: { createElement: () => null }, 'react-dom': { createPortal: node => node } }
   const requested = new Set()

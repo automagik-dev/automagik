@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@automagik/omni-ai-dsh",
+      "name": "@automagik/welcome-dsh",
       "dependencies": {
         "zod": "4.6.5",
       },

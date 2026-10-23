@@ -1,6 +1,6 @@
 # Omni AI for DSH
 
-`@automagik/omni-ai-dsh` is the first thing a DeepSeek Harness (DSH) shows with Omni
+`@automagik/welcome-dsh` is the first thing a DeepSeek Harness (DSH) shows with Omni
 installed: the Omni octopus says hello, then helps you connect an AI. It adds no provider
 code. Every sign-in it offers is one DSH 0.2.1-rc.3 already ships, and every route it
 writes goes through DSH's own settings and credential store.
@@ -15,7 +15,7 @@ chat with nothing in it), ahead of DSH's own steps:
 | `omni-welcome` | −300 | The octopus, a typewriter speech bubble and a glitch, on a starfield. |
 | `omni-connect-ai` | −200 | Connect AI: one switch per AI, Continue and Skip. |
 
-The Omni plugin (`@automagik/omni-dsh`) adds `omni-connect` (−250) between them when it
+The Omni channels plugin (`@automagik/omni-channels-dsh`) adds `omni-connect` (−250) between them when it
 is installed. DSH's `welcome-notice` (−100) and `deepseek-official` (0) follow.
 
 Each step draws its own modal and makes `#root` inert while it shows. When you finish or
@@ -73,7 +73,7 @@ provider's terms before you use a personal plan for work.
 
 The plugin needs DSH `>=0.2.1-rc.2 <0.3.0`. Add the Automagik marketplace index to DSH's
 plugin market ([marketplace/README.md](../../marketplace/README.md) has the URL and the
-steps) and install `@automagik/omni-ai-dsh` from it. DSH asks before it installs, then
+steps) and install `@automagik/welcome-dsh` from it. DSH asks before it installs, then
 applies the bundle patch (`cordis.patch.yml`), which adds one row, `id: omni-ai`, and
 changes nothing else.
 

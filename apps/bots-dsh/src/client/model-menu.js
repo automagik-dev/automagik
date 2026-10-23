@@ -281,7 +281,7 @@ function ModelKeyCard({ model, actions }) {
 // Where the providers are set up: the window's own Models page, else DSH's settings.
 const manageModels = actions => actions.openModels ?? actions.openHarnessSettings
 
-// Ways to get a first model. Connect an AI is the welcome plugin's step (@automagik/omni-ai-dsh:
+// Ways to get a first model. Connect an AI is the welcome plugin's step (@automagik/welcome-dsh:
 // a subscription sign-in, an API key or a gateway); the DeepSeek sign-in exists only where
 // the shell carries its account plugin (the Desktop); the API key and custom models use the
 // shell's own editors.

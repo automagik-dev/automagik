@@ -20,6 +20,9 @@
 set -u
 PLUGIN="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(dirname "$PLUGIN")"
+# Omni's channels and canvas plugins live in Omni's repository: OMNI_CHECKOUT, else an
+# omni checkout beside this repository.
+OMNI_APPS="${OMNI_CHECKOUT:-$(dirname "$(dirname "$ROOT")")/omni}/apps"
 MAIN="$(dirname "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)")/$(git -C "$ROOT" rev-parse --show-prefix)"
 MAIN="${MAIN%/}"
 SLOT=${SLOT:-0}
@@ -87,7 +90,7 @@ need_ports() {
 
 # This plugin, then the Omni channels and canvas plugins that sit on it, where present.
 PLUGINS="$PLUGIN"
-for other in omni-channels-dsh omni-canvas-dsh; do [ -d "$ROOT/$other" ] && PLUGINS="$PLUGINS $ROOT/$other"; done
+for other in omni-channels-dsh omni-canvas-dsh; do [ -d "$OMNI_APPS/$other" ] && PLUGINS="$PLUGINS $OMNI_APPS/$other"; done
 each() {
   status=0
   for dir in $PLUGINS; do

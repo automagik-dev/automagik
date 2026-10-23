@@ -8,7 +8,7 @@ import { Hero, useCompanion } from './companion-art.js'
 // step, so the stage is the step's own modal, portaled to <body> with #root inert.
 
 // Every Omni onboarding step, in order. Each plugin that brings one announces it as it
-// applies (this one: Welcome and Connect AI; @automagik/omni-dsh's channels: Connect Omni),
+// applies (this one: Welcome and Connect AI; @automagik/omni-channels-dsh: Connect Omni),
 // so the rail names only the steps this DSH will show.
 export const RAIL = [['omni-companion', 'Your companion'], ['omni-team', 'Your team'], ['omni-connect', 'Connect Omni'], ['omni-connect-ai', 'Connect AI']]
 const ANNOUNCED = Symbol.for('automagik.omni.onboarding-steps')

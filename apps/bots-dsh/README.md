@@ -1,4 +1,4 @@
-# @automagik/omni-dsh
+# @automagik/bots-dsh
 
 Omni for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh): a team of long-lived Bots that talk to you, to each other and in group chats, with Omni as the Main Bot. With the Omni channels plugin, Omni also operates your Omni channels, chats and automations inside dsh; with the Omni canvas plugin, it shows what it found as live views in the chat (see [Three plugins](#three-plugins)). It is built on [DS Bot](https://github.com/Fei2411/DeepSeek-Bot) (Apache-2.0, see `VENDORED.md`).
 
@@ -14,14 +14,14 @@ Omni for dsh is three packages. This one is the team; the other two sit on it an
 
 | Package | Folder | Row id | What it adds |
 |---|---|---|---|
-| `@automagik/omni-dsh` (this one) | `apps/omni-ui-dsh` | `omni-ui` | The Bot team and its surface: Bots, group chats, settings, themes, interface copy, memory, secrets, usage, scheduled tasks, the Bot browser, updates, diagnostics, the `POST /api/omni-ui` route, and the `web-search` plugin |
-| `@automagik/omni-channels-dsh` | [`apps/omni-channels-dsh`](../omni-channels-dsh/README.md) | `omni-channels` | The link to an Omni (pairing, `omni.json`), the Channels page and chats, Omni's tools for the platform (and the shell and file tools a Main Bot loses for them), the events Omni listens to, automations and their board, Omni's operator rules, and the onboarding step Connect Omni (`omni-connect`) |
-| `@automagik/omni-canvas-dsh` | [`apps/omni-canvas-dsh`](../omni-canvas-dsh/README.md) | `omni-canvas` | `show_canvas`, the canvas check, the canvas language in Omni's rules, and the renderer that draws canvases in the chat (OpenUI and zod live only here) |
+| `@automagik/bots-dsh` (this one) | `apps/bots-dsh` | `omni-ui` | The Bot team and its surface: Bots, group chats, settings, themes, interface copy, memory, secrets, usage, scheduled tasks, the Bot browser, updates, diagnostics, the `POST /api/omni-ui` route, and the `web-search` plugin |
+| `@automagik/omni-channels-dsh` | [`apps/omni-channels-dsh` in Omni](https://github.com/automagik-dev/omni/tree/dev/apps/omni-channels-dsh#readme) | `omni-channels` | The link to an Omni (pairing, `omni.json`), the Channels page and chats, Omni's tools for the platform (and the shell and file tools a Main Bot loses for them), the events Omni listens to, automations and their board, Omni's operator rules, and the onboarding step Connect Omni (`omni-connect`) |
+| `@automagik/omni-canvas-dsh` | [`apps/omni-canvas-dsh` in Omni](https://github.com/automagik-dev/omni/tree/dev/apps/omni-canvas-dsh#readme) | `omni-canvas` | `show_canvas`, the canvas check, the canvas language in Omni's rules, and the renderer that draws canvases in the chat (OpenUI and zod live only here) |
 
 How they fit:
 
 - **Host**: this plugin provides its runtime as the `omniTeam` service. The channels plugin injects it, installs its modules on a runtime whose prototype is the team's, and provides that one as `omniChannels`; the canvas plugin injects both and sits on the channels runtime. Each plugin's tools, listeners and effects stay on its own fiber, and it adds to the team only through `rt.hooks` (`src/host/extend.js`): `endpoint(name, fn, { read })` for the `/api/omni-ui` route, `view(fn)` and `live(fn)` for the state answers, and `mainRules(fn, { order })` for a part of the Main Bot's rules, which stay inside the one `bot-identity` section. Each hook returns its disposer, so turning a plugin off takes what it added with it.
-- **Browser**: this plugin's `client.js` exports `omni`: the host call, the interface copy (`t`, `addStrings`), the Bot surface's registries (`toolCards`, `nav`, `badges`, `botChildren`, `headerButtons`, `botSettings`, `onShell`, `setCanvasRenderer`, `registerComposerPack`), the running surface (`face`) and a few UI pieces (`ui`). The other plugins name `@automagik/omni-dsh/client` in `dsh.client.external`, so dsh loads this bundle first and hands them the same module instance: one dictionary, one roster, one set of registries.
+- **Browser**: this plugin's `client.js` exports `omni`: the host call, the interface copy (`t`, `addStrings`), the Bot surface's registries (`toolCards`, `nav`, `badges`, `botChildren`, `headerButtons`, `botSettings`, `onShell`, `setCanvasRenderer`, `registerComposerPack`), the running surface (`face`) and a few UI pieces (`ui`). The other plugins name `@automagik/bots-dsh/client` in `dsh.client.external`, so dsh loads this bundle first and hands them the same module instance: one dictionary, one roster, one set of registries.
 - **Composer**: a Bot's composer changes with the model it runs on (`src/client/composer-packs.js`). On Claude Code, with `dsh-oh-my-claude` installed, Omni steps aside for its permission modes and shows its own model and thinking menu, which saves to the Bot. On any model with thinking levels, it shows that menu. On anything else the composer is unchanged. A Bot or group with its own permission preset keeps Omni's empty permission cell, because the plugin's mode picker would write past that preset. The plan cell and the activity and usage docks stay Omni's in every pack. Other plugins add a pack with `omni.registerComposerPack({ id, order, match(provider, target), available(env), cells: { permission, model }, hostFor })`.
 - **Data**: all three keep the team's one `state.json` and its lock (automations ride it); `omni.json` is the channels plugin's, in the same folder.
 - **Upgrading from one package**: a team linked to an Omni whose dsh has only this plugin shows a card in the sidebar footer that points to the plugin market for the channels plugin.
@@ -53,22 +53,22 @@ How they fit:
 
 ## Install
 
-The [project page](../README.md#install) has the full steps for dsh Desktop and dsh Web. In short:
+The [project page](../../README.md#install) has the full steps for dsh Desktop and dsh Web. In short:
 
 - dsh Desktop: Settings → Plugins → add a `.tgz` of this package (`npm pack` in this folder).
-- Command line: `dsh plugin --profile web add /path/to/automagik-omni-dsh-<version>.tgz`.
-- Or skip dsh setup entirely: the Omni desktop app ([automagik-dev/omni-desktop](https://github.com/automagik-dev/omni-desktop), `npx @automagik/omni desktop`) ships dsh with this plugin on a home of its own.
+- Command line: `dsh plugin --profile web add /path/to/automagik-bots-dsh-<version>.tgz`.
+- Or skip dsh setup entirely: the Automagik desktop app ([`apps/desktop`](../desktop/README.md), `omni desktop` from Omni's CLI) ships dsh with this plugin on a home of its own.
 
 To work on the plugins from a checkout, add them to a dsh profile as linked dependencies and bundles (the channels and canvas plugins are optional):
 
 ```json
 {
   "dependencies": {
-    "@automagik/omni-dsh": "link:/path/to/apps/omni-ui-dsh",
-    "@automagik/omni-channels-dsh": "link:/path/to/apps/omni-channels-dsh",
-    "@automagik/omni-canvas-dsh": "link:/path/to/apps/omni-canvas-dsh"
+    "@automagik/bots-dsh": "link:/path/to/apps/bots-dsh",
+    "@automagik/omni-channels-dsh": "link:/path/to/omni/apps/omni-channels-dsh",
+    "@automagik/omni-canvas-dsh": "link:/path/to/omni/apps/omni-canvas-dsh"
   },
-  "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "@automagik/omni-dsh", "@automagik/omni-channels-dsh", "@automagik/omni-canvas-dsh"] } }
+  "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "@automagik/bots-dsh", "@automagik/omni-channels-dsh", "@automagik/omni-canvas-dsh"] } }
 }
 ```
 
@@ -80,7 +80,7 @@ pnpm -s dsh --profile web --no-open
 
 The first time the team opens, the plugin creates a Main Bot called Omni.
 
-**Upgrading from the `ds-bot` builds of the Omni UI**: earlier builds were named `ds-bot` with the plugin id `bot` and kept the team in `~/.dsh/bot`. Replace `ds-bot` with `@automagik/omni-dsh` in the profile, and set `importHome: ~/.dsh/bot` once (see [Configuration](#configuration)) to copy that team into `~/.omni/ui`; the old folder is left as it was. Browser settings saved under `ds-bot:` are not carried over, because DS Bot uses the same names.
+**Upgrading from the `ds-bot` builds of the Omni UI**: earlier builds were named `ds-bot` with the plugin id `bot` and kept the team in `~/.dsh/bot`. Replace `ds-bot` with `@automagik/bots-dsh` in the profile, and set `importHome: ~/.dsh/bot` once (see [Configuration](#configuration)) to copy that team into `~/.omni/ui`; the old folder is left as it was. Browser settings saved under `ds-bot:` are not carried over, because DS Bot uses the same names.
 
 ## Connect to an Omni
 
@@ -94,7 +94,7 @@ Options go in the profile's `cordis.patch.yml`, under the `omni-ui` entry. All o
 
 ```yaml
 - id: omni-ui
-  name: '@automagik/omni-dsh'
+  name: '@automagik/bots-dsh'
   config:
     workspace: /path/to/workspace   # where the Bots work; default <home>/workspace
     home: /path/to/omni-ui-data     # where the team is saved; default $OMNI_HOME/ui (~/.omni/ui)
@@ -146,12 +146,12 @@ A read-only dsh (see [Data and backups](#data-and-backups)) shows memory but can
 
 ## Web search
 
-The package includes a second plugin, `@automagik/omni-dsh/web-search`. It registers the search provider `auto`. The package's own `cordis.patch.yml` does not insert it, so installing Omni leaves your dsh's search settings alone; the Omni desktop app's profile inserts it and makes it the default. To use it in your own dsh, add both rows to your profile patch:
+The package includes a second plugin, `@automagik/bots-dsh/web-search`. It registers the search provider `auto`. The package's own `cordis.patch.yml` does not insert it, so installing Omni leaves your dsh's search settings alone; the Omni desktop app's profile inserts it and makes it the default. To use it in your own dsh, add both rows to your profile patch:
 
 ```yaml
 - insert:
     - id: web-search-auto
-      name: '@automagik/omni-dsh/web-search'
+      name: '@automagik/bots-dsh/web-search'
 - id: web
   config:
     searchProvider: auto
@@ -171,7 +171,7 @@ Each result starts with a `Search backend: …` line that names the path it took
 
 ```yaml
 - id: web-search-auto
-  name: '@automagik/omni-dsh/web-search'
+  name: '@automagik/bots-dsh/web-search'
   disabled: true
 - id: web
   name: '@deepseek-ai/dsh-web'
@@ -273,7 +273,7 @@ dev/check.sh                             # all checks (see below)
 ```
 
 - `client.js` is built from `src/client/` and committed, so `link:` and Git installs need no build. Do not edit `client.js` by hand; `bun run test` checks that it matches the source. After a change in `src/client/`, run `bun run build` and reload the page. After a change in `index.js` or `src/host/`, restart dsh.
-- **Web test bench** `dev/bench.sh <name> <web port> <mock port> [start|stop|reset|status]`: the profile links this plugin and the channels and canvas plugins beside it (`../omni-channels-dsh`, `../omni-canvas-dsh`); a scripted mock model (`dev/mock-llm.mjs`, no real tokens; its commands are listed at the top of the file) and a dsh Web server. Data goes in `../.dsh-test-<name>/`; `reset` clears the team and Sessions first. The login address with its token is in `../.dsh-test-<name>/web.log`.
+- **Web test bench** `dev/bench.sh <name> <web port> <mock port> [start|stop|reset|status]`: the profile links this plugin and the channels and canvas plugins from an Omni checkout (`OMNI_CHECKOUT`, default `../../../omni`: its `apps/omni-channels-dsh` and `apps/omni-canvas-dsh`); a scripted mock model (`dev/mock-llm.mjs`, no real tokens; its commands are listed at the top of the file) and a dsh Web server. Data goes in `../.dsh-test-<name>/`; `reset` clears the team and Sessions first. The login address with its token is in `../.dsh-test-<name>/web.log`.
 - **Desktop test bench** `dev/desktop-linux/desktop.sh <name> [start|stop|reset|status]`: dsh does not run Desktop on Linux; `launch.mts` runs the unpackaged Desktop in Xvfb. The first start downloads Electron and a Linux runtime (a few minutes). `start` returns when the team shows in a 1400×860 window.
 - **All checks** `dev/check.sh [--skip steps] [--only steps] [--out dir]`: `unit`, `build`, `lint` (each in this plugin and in the channels and canvas plugins), `smoke`, `web` (screenshots of the sidebar, a chat, a group, Bot settings, the Bots page and group settings) and `desktop` (the same screenshots, then the Bot browser checks). It stops everything it started. On failure it names the step and its log and exits non-zero. A full run takes about 3 minutes after the first download.
 - **Ports**: every script takes `SLOT=n` (0-9, default 0) so that several people or sessions on one machine do not collide: Web bench `31n0` and mock `88n0`, smoke `31n1` and `88n1`, Desktop mock `88n2`, and so on. A Desktop uses about 1 GB of memory; stop it when you are done.

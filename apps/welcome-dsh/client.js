@@ -1,9 +1,8 @@
 // Generated from src/client by `npm run build` (scripts/build-client.mjs). Do not edit by hand.
 window.__ModuleLoader__.load({
-  id: '@automagik/omni-ai-dsh',
+  id: '@automagik/welcome-dsh',
   factory: (require) => {
 const module = { exports: {} }
-"use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;

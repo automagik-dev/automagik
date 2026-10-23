@@ -2,7 +2,7 @@
 // Main Bot (the orchestrator). Two ways to make one: describe it and have an image model draw
 // it, when ChatGPT (DSH's openai-codex sign-in) or an OpenAI API key is connected; or pick
 // one of Omni's characters. The look and name are applied to the Main Bot through
-// @automagik/omni-dsh's `omniTeam` service when that plugin is present. The team step then
+// @automagik/bots-dsh's `omniTeam` service when that plugin is present. The team step then
 // adds the Omni Bot, which keeps the person's channels.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'

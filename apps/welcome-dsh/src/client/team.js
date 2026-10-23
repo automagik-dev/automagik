@@ -7,7 +7,7 @@ import { Stage, useFinish, useGate, useGlitch } from './stage.js'
 // Step omni-team (order -270): a character select. Each Bot type shows what it can do, as
 // stats with the switches behind them, what it controls, its own project, and the menu
 // items it brings. Omni's channels come from the linked Omni (read through
-// @automagik/omni-dsh's omni-overview); Genie has no DSH plugin yet, and says so.
+// @automagik/bots-dsh's omni-overview); Genie has no DSH plugin yet, and says so.
 
 // The Omni plugins' endpoint, which the channels plugin extends with omni-overview.
 async function overview() {

@@ -1,0 +1,9 @@
+node_modules/
+.DS_Store
+*.log
+.env
+.env.*
+# Fetched or built, never committed
+.cache/
+apps/desktop/build/
+apps/desktop/dist/

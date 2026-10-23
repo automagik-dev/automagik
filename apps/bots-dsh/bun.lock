@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@automagik/omni-dsh",
+      "name": "@automagik/bots-dsh",
       "devDependencies": {
         "esbuild": "0.28.2",
       },

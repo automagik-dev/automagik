@@ -16,6 +16,12 @@ const PLUGIN = dirname(dirname(fileURLToPath(import.meta.url)))
 // DSH's client loader matches a bundle's id to the npm package that ships it.
 const PACKAGE_NAME = JSON.parse(readFileSync(join(PLUGIN, 'package.json'), 'utf8')).name
 const OUTPUT = join(PLUGIN, 'client.js')
+// The name this package had before it moved to Automagik. Plugins built before the rename
+// (Omni's channels and canvases up to 2.261023.x) import the team's client as
+// `@automagik/omni-dsh/client`, and DSH's module table is keyed by package name, so this
+// bundle also registers under that name a factory that hands over this very module: one
+// dictionary, one roster, one set of registries, whichever name a plugin imports.
+export const FORMER_NAME = '@automagik/omni-dsh'
 export const PLATFORM_MODULES = ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives']
 
 export async function bundleClient() {
@@ -48,6 +54,9 @@ export async function bundleClient() {
     'return Object.defineProperty({ ...module.exports }, Symbol.toStringTag, { value: \'Module\' })',
     '  },',
     '})',
+    // A second registration of the same name (the bundle run again, a reload) is DSH's to
+    // refuse; the first one stays and keeps answering.
+    `try { window.__ModuleLoader__.load({ id: '${FORMER_NAME}', factory: (require) => require('${PACKAGE_NAME}/client') }) } catch {}`,
     '',
   ].join('\n')
 }
@@ -58,7 +67,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     let current = null
     try { current = readFileSync(OUTPUT, 'utf8') } catch { /* missing counts as stale */ }
     if (current !== next) {
-      console.error('client.js is stale: run `npm run build` in apps/omni-ui-dsh and commit the result')
+      console.error('client.js is stale: run `npm run build` in apps/bots-dsh and commit the result')
       process.exit(1)
     }
   } else {
