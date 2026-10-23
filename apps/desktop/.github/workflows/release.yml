@@ -29,6 +29,12 @@ on:
         required: false
         type: boolean
         default: true
+      # Declared here too: an input a caller cannot see reads as '', which equals false.
+      publish:
+        description: 'Publish the release'
+        required: false
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
       ref:
