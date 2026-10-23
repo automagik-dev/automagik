@@ -1,15 +1,21 @@
 // omni:// links. The app registers the scheme with the system, so a link on an Omni's own
 // pages ("Open in the Omni app", /api/login/app) opens the app:
 //
-//   omni://connect?url=https://omni.example.com   connect to that Omni (the app asks first)
-//   omni://open                                    just bring the app to the front
+//   omni://connect?url=https://omni.example.com              connect to that Omni (the app asks first)
+//   omni://connect?url=https://omni.example.com&grant=<grant> the same, with a one-time grant
+//   omni://open                                               just bring the app to the front
 //
-// A link carries an address and nothing else: whoever made it, connecting still means
-// signing in on that Omni's own page (a passkey, or a code on WhatsApp), so the app shows
-// the address and asks before it starts.
+// A link without a grant carries an address and nothing else: whoever made it, connecting
+// still means signing in on that Omni's own page (a passkey, or a code on WhatsApp). A grant
+// comes from the link an Omni sends its owner who texted "connect" to themselves: it is the
+// owner's yes already, spent on first use. Either way the app shows the address and asks
+// before it starts, and a grant is passed on to Omni's page, never logged.
 export const SCHEME = 'omni'
 
-/** What a link asks for: { action: 'connect', url, host, secure } or { action: 'open' }, or null. */
+// A grant as an Omni mints it: 24 base64url characters.
+export const GRANT = /^[A-Za-z0-9_-]{24}$/
+
+/** What a link asks for: { action: 'connect', url, host, secure, grant? } or { action: 'open' }, or null. */
 export function parseDeepLink(text) {
   let link
   try {
@@ -31,7 +37,10 @@ export function parseDeepLink(text) {
   if (target.protocol !== 'https:' && target.protocol !== 'http:') return null
   if (target.username || target.password) return null
   const url = `${target.origin}${target.pathname.replace(/\/api\/v2\/?$/, '').replace(/\/+$/, '')}`
-  return { action: 'connect', url, host: target.host, secure: target.protocol === 'https:' }
+  // A grant that is not one an Omni mints makes the whole link suspect.
+  const grant = link.searchParams.get('grant')
+  if (grant !== null && !GRANT.test(grant)) return null
+  return { action: 'connect', url, host: target.host, secure: target.protocol === 'https:', ...(grant === null ? {} : { grant }) }
 }
 
 /** The first omni:// link in a command line (Linux and Windows pass the link as an argument). */

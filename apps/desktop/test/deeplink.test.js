@@ -11,6 +11,15 @@ test('a connect link gives the Omni\'s address, cleaned, and whether it is encry
   assert.deepEqual(parseDeepLink('omni://open'), { action: 'open' })
 })
 
+test('a connect link from the Omni carries its one-time grant on to the page', () => {
+  const grant = 'Zx81_kq-Pz0aBcD9eF12-_Qw'
+  assert.deepEqual(parseDeepLink(`omni://connect?url=${encodeURIComponent('https://omni.example.com')}&grant=${grant}`), { action: 'connect', url: 'https://omni.example.com', host: 'omni.example.com', secure: true, grant })
+  assert.equal('grant' in parseDeepLink('omni://connect?url=https://omni.example.com'), false)
+  for (const bad of ['', 'short', `${grant}x`, `${grant.slice(0, 23)}.`, `${grant.slice(0, 23)}%20`]) {
+    assert.equal(parseDeepLink(`omni://connect?url=https://omni.example.com&grant=${bad}`), null, bad)
+  }
+})
+
 test('anything else is refused: other schemes, other actions, odd or credentialed addresses', () => {
   for (const bad of [
     'https://omni.example.com',

@@ -65,8 +65,9 @@ function receiveLink(text) {
   if (ready) void connectFromLink()
 }
 
-// Ask, then hand the address to Omni's page, which starts the sign-in on that Omni and opens
-// its approval page in the browser (apps/omni-channels-dsh, the omni-desktop:connect event).
+// Ask, then hand the address to Omni's page (apps/omni-channels-dsh, the omni-desktop:connect
+// event). With a grant the page trades it for this device's key at once; without one it
+// starts the sign-in on that Omni and opens its approval page in the browser.
 async function connectFromLink() {
   const link = parseDeepLink(pendingLink)
   pendingLink = null
@@ -77,11 +78,13 @@ async function connectFromLink() {
     defaultId: 0,
     cancelId: 1,
     message: `Connect Omni to ${link.host}?`,
-    detail: `You'll sign in on ${link.host} with Face ID, Touch ID, your fingerprint or a code on WhatsApp.`
+    detail: (link.grant
+      ? `Your Omni sent you this link on WhatsApp. Connecting gives this computer its own key to ${link.host}.`
+      : `You'll sign in on ${link.host} with Face ID, Touch ID, your fingerprint or a code on WhatsApp.`)
       + (link.secure ? '' : '\n\nThis address is not encrypted (http). Connect only if it is your own network.'),
   })
   if (response !== 0) return
-  await page.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('omni-desktop:connect', { detail: ${JSON.stringify({ url: link.url })} }))`)
+  await page.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('omni-desktop:connect', { detail: ${JSON.stringify({ url: link.url, ...(link.grant ? { grant: link.grant } : {}) })} }))`)
 }
 
 // app.exit skips before-quit, so dsh is stopped here: a start that fails after dsh came up
