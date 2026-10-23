@@ -124,7 +124,7 @@ const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
 export function renamePatch(text, renamed = RENAMED) {
   let next = String(text)
   for (const [from, to] of Object.entries(renamed)) {
-    next = next.replace(new RegExp(`(?<![\\w@/.-])${escapeRegExp(from)}(?=['"/\\s]|$)`, 'gm'), to)
+    next = next.replace(new RegExp(`(?<![\\w@/.-])${escapeRegExp(from)}(?![\\w.-])`, 'gm'), to)
   }
   return next === String(text) ? null : next
 }

@@ -39,5 +39,5 @@ test('release.yml declares every input it reads for follow-omni, which calls it'
 
 test('a desktop rebuild keeps the plugins its release carries', () => {
   const text = readFileSync(new URL('../../../.github/workflows/desktop-build.yml', import.meta.url), 'utf8')
-  assert.match(text, /case "\$\{name\}" in automagik-\*\.tgz\|plugins\.json\) continue ;; esac/)
+  assert.match(text, /case "\$\{name\}" in automagik-\*\.tgz\|plugins\.json\|PLUGINS\.SHA256SUMS\) continue ;; esac/)
 })

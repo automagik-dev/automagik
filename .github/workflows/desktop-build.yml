@@ -238,9 +238,9 @@ jobs:
           TAG="v${VERSION}"
           if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             # A rebuild replaces the release's desktop files: one this build did not make goes.
-            # The plugins (release.yml's automagik-*.tgz and plugins.json) stay.
+            # The plugins (release.yml's automagik-*.tgz, plugins.json and PLUGINS.SHA256SUMS) stay.
             for name in $(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name'); do
-              case "${name}" in automagik-*.tgz|plugins.json) continue ;; esac
+              case "${name}" in automagik-*.tgz|plugins.json|PLUGINS.SHA256SUMS) continue ;; esac
               [[ -e "assets/${name}" ]] || gh release delete-asset "${TAG}" "${name}" --yes --repo "${GITHUB_REPOSITORY}"
             done
             gh release upload "${TAG}" assets/* --clobber --repo "${GITHUB_REPOSITORY}"
