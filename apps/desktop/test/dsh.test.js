@@ -79,10 +79,15 @@ test('the shipped profile bundles Omni\'s plugins, core first, and the plugin ma
   const profile = JSON.parse(readFileSync(new URL('../profile/package.json', import.meta.url), 'utf8'))
   const omni = ['@automagik/omni-dsh', '@automagik/omni-channels-dsh', '@automagik/omni-canvas-dsh', '@automagik/omni-ai-dsh']
   // Omni's plugins first, then the add-ons that connect AI subscriptions, each at an exact
-  // vetted version and bundled after Omni's.
-  const addons = { '@goodandready/dsh-subscriptions': '0.7.19', 'dsh-oh-my-claude': '1.5.6' }
+  // vetted version or a reviewed fork's pinned commit, and bundled after Omni's.
+  const addons = {
+    '@goodandready/dsh-subscriptions': '0.7.19',
+    'dsh-oh-my-claude': 'github:automagik-genie/dsh-oh-my-claude#ccca7fe46871c0e188d2272d2aa92f2d7d4502c4',
+  }
   assert.deepEqual(Object.keys(profile.dependencies), [...omni, ...Object.keys(addons)])
-  for (const [name, version] of Object.entries(addons)) assert.equal(profile.dependencies[name], version)
+  for (const [name, spec] of Object.entries(addons)) assert.equal(profile.dependencies[name], spec)
+  // A pinned commit names the version it holds, which the build checks after installing it.
+  assert.deepEqual(profile.omni.addonVersions, { 'dsh-oh-my-claude': '1.5.6-omni.1' })
   assert.deepEqual(profile.dsh.profile.bundles.filter(name => name.startsWith('@automagik/')), omni)
   assert.deepEqual(profile.dsh.profile.bundles.slice(-2), Object.keys(addons))
   assert.ok(profile.dsh.profile.bundles.includes('@deepseek-ai/dsh-experimental-plugin-market-bundle'))
