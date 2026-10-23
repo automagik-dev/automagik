@@ -47,16 +47,20 @@ function omniSource() {
 }
 const OMNI_DIR = omniSource()
 
-// Each plugin the profile depends on, by its package name, and its folder in Omni.
-const shipped = Object.keys(readJson(join(APP, 'profile', 'package.json')).dependencies)
+// Each plugin the profile depends on: Omni's own (an apps/*-dsh folder, packed at this Omni's
+// version) or an add-on from npm at the exact version the profile names (vetted there).
+const profileDeps = readJson(join(APP, 'profile', 'package.json')).dependencies
 const apps = join(OMNI_DIR, 'apps')
 const folders = Object.fromEntries(readdirSync(apps)
   .filter(name => name.endsWith('-dsh') && existsSync(join(apps, name, 'package.json')))
   .map(name => [readJson(join(apps, name, 'package.json')).name, join(apps, name)]))
-const PLUGINS = Object.fromEntries(shipped.map(name => {
-  if (!folders[name]) throw new Error(`profile/package.json depends on ${name}, which Omni's apps/*-dsh do not hold`)
-  return [name, folders[name]]
-}))
+const PLUGINS = {}
+const ADDONS = {}
+for (const [name, spec] of Object.entries(profileDeps)) {
+  if (folders[name]) PLUGINS[name] = folders[name]
+  else if (/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(spec)) ADDONS[name] = spec
+  else throw new Error(`profile/package.json depends on ${name}@${spec}: neither Omni's (apps/*-dsh) nor an add-on at an exact version`)
+}
 
 // The DeepSeek Harness the app runs is the one Omni's plugins are tested against.
 const tested = readJson(join(apps, 'omni-ui-dsh', 'dev', 'harness', 'package.json')).dependencies['@deepseek-ai/dsh']
@@ -87,22 +91,37 @@ const packed = Object.entries(PLUGINS).map(([name, dir]) => {
   return { name, version: info.version, tarball: join(packs, info.filename) }
 })
 
-const profileDir = join(BUILD, 'profile')
-rmSync(profileDir, { recursive: true, force: true })
-mkdirSync(profileDir, { recursive: true })
+// The profile is installed the way DSH installs any plugin: the pinned dsh's own
+// `dsh plugin --profile omni install` (pnpm, hoisted, no install scripts) in a scratch DSH
+// home, with the runtime's pinned pnpm first on PATH. The result, pnpm's lockfile with it,
+// is the profile the app ships, so a plugin added later from the market lands the same way.
+const dshHome = join(BUILD, 'dsh-home')
+const installDir = join(dshHome, 'profiles', 'omni')
+rmSync(dshHome, { recursive: true, force: true })
+mkdirSync(join(installDir, VENDOR), { recursive: true })
 const profile = JSON.parse(readFileSync(join(APP, 'profile', 'package.json'), 'utf8'))
-// The plugins' tarballs ship in the profile and its package.json names them by file: dsh's
-// pnpm, installing a market plugin later, resolves Omni's own there, offline, whatever
-// registry that install asks (they are not on npm).
-mkdirSync(join(profileDir, VENDOR), { recursive: true })
+// Omni's plugins ship as tarballs the package.json names by file: dsh's pnpm, installing a
+// market plugin later, resolves them there, offline (they are not on npm).
 for (const plugin of packed) {
-  cpSync(plugin.tarball, join(profileDir, VENDOR, basename(plugin.tarball)))
+  cpSync(plugin.tarball, join(installDir, VENDOR, basename(plugin.tarball)))
   profile.dependencies[plugin.name] = `file:${VENDOR}/${basename(plugin.tarball)}`
 }
-writeFileSync(join(profileDir, 'package.json'), `${JSON.stringify(profile, null, 2)}\n`)
-for (const file of ['cordis.patch.yml', 'pnpm-workspace.yaml']) cpSync(join(APP, 'profile', file), join(profileDir, file))
-// One install of every tarball: --no-save leaves the versions written above in place.
-run(['install', ...packed.map(plugin => plugin.tarball), '--omit=dev', '--legacy-peer-deps', '--no-save', '--no-package-lock', '--ignore-scripts'], profileDir)
+writeFileSync(join(installDir, 'package.json'), `${JSON.stringify(profile, null, 2)}\n`)
+for (const file of ['cordis.patch.yml', 'pnpm-workspace.yaml']) cpSync(join(APP, 'profile', file), join(installDir, file))
+say(`installing the profile with dsh plugin (${Object.keys(ADDONS).map(name => `${name}@${ADDONS[name]}`).join(', ') || 'no add-ons'})`)
+execFileSync(process.execPath, [join(runtimeDir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'), 'plugin', '--profile', 'omni', 'install', '--prod', '--ignore-scripts'], {
+  cwd: installDir,
+  env: { ...env, DSH_HOME: dshHome, PATH: [join(runtimeDir, 'node_modules', '.bin'), env.PATH].filter(Boolean).join(process.platform === 'win32' ? ';' : ':') },
+  stdio: ['ignore', 'inherit', 'inherit'],
+})
+for (const [name, version] of Object.entries(ADDONS)) {
+  const installed = readJson(join(installDir, 'node_modules', ...name.split('/'), 'package.json')).version
+  if (installed !== version) throw new Error(`${name} installed at ${installed}, not the vetted ${version}`)
+}
+const profileDir = join(BUILD, 'profile')
+rmSync(profileDir, { recursive: true, force: true })
+cpSync(installDir, profileDir, { recursive: true, verbatimSymlinks: true })
+rmSync(dshHome, { recursive: true, force: true })
 
 // The app copies the profile into its home again whenever this id changes (src/dsh.js).
 writeFileSync(join(profileDir, '.build-id'), `${packed.map(plugin => plugin.version).join('+')}+${new Date().toISOString()}\n`)
@@ -112,6 +131,7 @@ const versions = {
   omni: OMNI.version,
   plugin: packed[0].version,
   plugins: Object.fromEntries(packed.map(plugin => [plugin.name, plugin.version])),
+  addons: ADDONS,
 }
 writeFileSync(join(BUILD, 'versions.json'), `${JSON.stringify(versions, null, 2)}\n`)
 say(`ready: dsh ${versions.dsh}, ${packed.map(plugin => `${plugin.name} ${plugin.version}`).join(', ')}`)
