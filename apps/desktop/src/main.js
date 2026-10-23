@@ -1,0 +1,331 @@
+// Omni desktop: one window on a DeepSeek Harness of the app's own (see dsh.js for where it
+// keeps things). The window opens at once on its own frame (frame.js, shell.html) with the
+// octopus waking up; the main process starts dsh on a loopback port, waits for the launch
+// URL with dsh's per-launch token, and lays dsh's page into the frame; quitting stops dsh.
+// Both pages are plain browser pages with no Node in them: context isolation and the
+// renderer sandbox are on, dsh's page can navigate only within dsh's origin, web links open
+// in the system browser, and the frame page never navigates.
+import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, WebContentsView } from 'electron'
+import updaterModule from 'electron-updater'
+import { createWriteStream, mkdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
+import { appHome, dshEnv, freePort, installProfile, navigationOf, pinProfileStore, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
+import { pageLayout, updateView, WINDOW_ACTIONS, windowChrome } from './frame.js'
+import { isReleasePage, startUpdates, updateMode } from './update.js'
+
+const HERE = dirname(fileURLToPath(import.meta.url))
+const home = appHome()
+let dsh = null
+// dsh's process from the moment it is spawned: a quit before it is ready still stops it.
+let dshChild = null
+let window = null
+let page = null
+let quitting = false
+let ready = false
+// The update the title bar shows ({ version, state, percent }), once there is one.
+let update = null
+let updates = null
+let updateDismissed = false
+let updateMessage = null
+let updateMessageTimer = null
+
+// omni:// links (deeplink.js): the system hands them to the running app (macOS: open-url;
+// Linux: a second instance with the link as an argument), or starts the app with one.
+// A link that arrives before Omni's page is up waits for it.
+let pendingLink = linkInArgs(process.argv)
+if (process.defaultApp && process.argv.length >= 2) app.setAsDefaultProtocolClient(SCHEME, process.execPath, [process.argv[1]])
+else app.setAsDefaultProtocolClient(SCHEME)
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  receiveLink(url)
+})
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', (_event, argv) => {
+    if (window) {
+      if (window.isMinimized()) window.restore()
+      window.focus()
+    }
+    const link = linkInArgs(argv)
+    if (link) receiveLink(link)
+  })
+  app.whenReady().then(launch).catch(fail)
+}
+
+function receiveLink(text) {
+  const link = parseDeepLink(text)
+  if (!link) return
+  if (window) {
+    if (window.isMinimized()) window.restore()
+    window.focus()
+  }
+  if (link.action !== 'connect') return
+  pendingLink = text
+  if (ready) void connectFromLink()
+}
+
+// Ask, then hand the address to Omni's page (apps/omni-channels-dsh, the omni-desktop:connect
+// event). With a grant the page trades it for this device's key at once; without one it
+// starts the sign-in on that Omni and opens its approval page in the browser.
+async function connectFromLink() {
+  const link = parseDeepLink(pendingLink)
+  pendingLink = null
+  if (!link || link.action !== 'connect' || !window || !page) return
+  const { response } = await dialog.showMessageBox(window, {
+    type: 'question',
+    buttons: ['Connect', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+    message: `Connect Omni to ${link.host}?`,
+    detail: (link.grant
+      ? `Your Omni sent you this link on WhatsApp. Connecting gives this computer its own key to ${link.host}.`
+      : `You'll sign in on ${link.host} with Face ID, Touch ID, your fingerprint or a code on WhatsApp.`)
+      + (link.secure ? '' : '\n\nThis address is not encrypted (http). Connect only if it is your own network.'),
+  })
+  if (response !== 0) return
+  await page.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('omni-desktop:connect', { detail: ${JSON.stringify({ url: link.url, ...(link.grant ? { grant: link.grant } : {}) })} }))`)
+}
+
+// app.exit skips before-quit, so dsh is stopped here: a start that fails after dsh came up
+// must not leave it running on loopback with no window.
+function fail(error) {
+  quitting = true
+  sendState({ status: 'Omni could not start.', problem: true })
+  dialog.showErrorBox('Omni could not start', `${error?.message ?? error}\n\nLog: ${join(home, 'logs', 'dsh.log')}`)
+  void stopDsh(dshChild).finally(() => app.exit(1))
+}
+
+// macOS's app menu: the system's usual menus, with Check for Updates under the app's name.
+function appMenu() {
+  return Menu.buildFromTemplate([
+    { label: app.name, submenu: [
+      { role: 'about' },
+      { label: 'Check for Updates…', click: () => void checkForUpdates() },
+      { type: 'separator' },
+      { role: 'services' },
+      { type: 'separator' },
+      { role: 'hide' },
+      { role: 'hideOthers' },
+      { role: 'unhide' },
+      { type: 'separator' },
+      { role: 'quit' },
+    ] },
+    { role: 'fileMenu' },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+  ])
+}
+
+async function launch() {
+  // No menu bar on Linux; macOS keeps its app menu for the usual shortcuts.
+  if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
+  else Menu.setApplicationMenu(appMenu())
+  openWindow()
+  mkdirSync(join(home, 'logs'), { recursive: true })
+  const resources = resourcesOf({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() })
+  const { target } = installProfile({ dshHome: join(home, 'dsh'), source: resources.profile })
+  pinProfileStore({ target, home, layout: storeLayoutOf(resources.pnpm) })
+  const port = await freePort()
+  const log = createWriteStream(join(home, 'logs', 'dsh.log'), { flags: 'a' })
+  // Electron's own binary runs dsh as Node, so the app ships one runtime.
+  const binDir = writeTools({ dir: join(home, 'bin'), node: process.execPath, pnpm: resources.pnpm })
+  dsh = await startDsh({ node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir }), port, cwd: home, log, onSpawn: (child) => { dshChild = child } })
+  dsh.child.once('exit', (code) => {
+    if (!quitting) fail(new Error(`dsh stopped (${code}).`))
+  })
+  const origin = new URL(dsh.url).origin
+  harden(origin)
+  if (!window) return
+  page = new WebContentsView({
+    webPreferences: {
+      preload: join(HERE, 'preload.cjs'),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      webviewTag: false,
+      spellcheck: true,
+    },
+  })
+  page.setBackgroundColor('#060914')
+  page.webContents.on('before-input-event', (event, input) => shortcut(event, input))
+  page.webContents.on('did-fail-load', (_event, code, description, _url, mainFrame) => {
+    if (mainFrame && code !== -3) sendState({ status: `Omni could not load (${description}).`, problem: true })
+  })
+  // Laid in once painted, so the frame's octopus stays up until there is something to show.
+  page.webContents.once('did-finish-load', () => {
+    if (!window) return
+    window.contentView.addChildView(page)
+    ready = true
+    layout()
+    if (pendingLink) void connectFromLink()
+  })
+  // Before the page load: a page that fails to load must not stop the app from updating.
+  watchUpdates()
+  await page.webContents.loadURL(dsh.url)
+}
+
+// See update.js. Its log is logs/update.log.
+function watchUpdates() {
+  const mode = updateMode({ packaged: app.isPackaged, platform: process.platform, env: process.env })
+  if (!mode || updates) return
+  const out = createWriteStream(join(home, 'logs', 'update.log'), { flags: 'a' })
+  const line = level => message => out.write(`${new Date().toISOString()} ${level} ${message}\n`)
+  const log = { info: line('info'), warn: line('warn'), error: line('error'), debug() {} }
+  log.info(`update: ${app.getVersion()} checks for updates (${mode})`)
+  updates = startUpdates({
+    updater: updaterModule.autoUpdater,
+    current: app.getVersion(),
+    platform: process.platform,
+    env: process.env,
+    log,
+    mode,
+    onState: (state) => {
+      if (state.state !== update?.state || state.version !== update?.version) updateDismissed = false
+      update = state
+      sendState()
+    },
+  })
+}
+
+// The menu's Check for Updates: what it found shows in the title bar for a few seconds.
+async function checkForUpdates() {
+  if (!updates) return showUpdateMessage('Updates are off in this copy of Omni')
+  showUpdateMessage('Checking for updates…', 0)
+  const { result } = await updates.check()
+  if (result === 'latest') showUpdateMessage('Omni is up to date')
+  else if (result === 'error') showUpdateMessage('Could not check for updates')
+  else {
+    updateDismissed = false
+    showUpdateMessage(null)
+  }
+}
+
+function showUpdateMessage(text, ms = 4000) {
+  clearTimeout(updateMessageTimer)
+  updateMessage = text
+  sendState()
+  if (text && ms > 0) updateMessageTimer = setTimeout(() => { updateMessage = null; sendState() }, ms)
+}
+
+// The title bar's menu, on a right click; on macOS the app menu has the same entry.
+function barMenu() {
+  return Menu.buildFromTemplate([{ label: 'Check for Updates…', click: () => void checkForUpdates() }])
+}
+
+// Restart into the downloaded update: dsh is stopped first, as on any quit.
+function installUpdate() {
+  if (!updates?.ready || quitting) return
+  quitting = true
+  void stopDsh(dshChild).finally(() => updates.install())
+}
+
+const WINDOW_PREFERENCES = {
+  preload: join(HERE, 'shell-preload.cjs'),
+  contextIsolation: true,
+  sandbox: true,
+  nodeIntegration: false,
+  webviewTag: false,
+  spellcheck: false,
+}
+
+function openWindow() {
+  window = new BrowserWindow({
+    width: 1360,
+    height: 860,
+    minWidth: 720,
+    minHeight: 520,
+    title: 'Omni',
+    show: false,
+    ...windowChrome(process.platform),
+    webPreferences: WINDOW_PREFERENCES,
+  })
+  const frame = window.webContents
+  frame.setWindowOpenHandler(() => ({ action: 'deny' }))
+  frame.on('will-navigate', event => event.preventDefault())
+  frame.on('before-input-event', (event, input) => shortcut(event, input))
+  frame.once('did-finish-load', () => sendState())
+  window.once('ready-to-show', () => window.show())
+  for (const change of ['resize', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) window.on(change, layout)
+  window.on('closed', () => { window = null; page = null })
+  void window.loadFile(join(HERE, 'shell.html'))
+}
+
+// Omni's page goes below the frame's title bar; see frame.js.
+function layout() {
+  if (!window) return
+  const maximized = window.isMaximized() || window.isFullScreen()
+  if (page && ready) {
+    const { bounds, radius } = pageLayout(window.getContentBounds(), { platform: process.platform, maximized })
+    page.setBounds(bounds)
+    page.setBorderRadius(radius)
+  }
+  sendState()
+}
+
+function sendState(extra = {}) {
+  if (!window || window.webContents.isLoading()) return
+  const maximized = window.isMaximized() || window.isFullScreen()
+  window.webContents.send('omni-window-state', { maximized, ready, update: updateView(update, { dismissed: updateDismissed, message: updateMessage }), ...extra })
+}
+
+ipcMain.on('omni-window', (event, action) => {
+  if (!window || event.sender !== window.webContents || !WINDOW_ACTIONS.has(action)) return
+  if (action === 'update') installUpdate()
+  else if (action === 'update-later') { updateDismissed = true; sendState() }
+  else if (action === 'update-page') { if (isReleasePage(update?.page)) void shell.openExternal(update.page) }
+  else if (action === 'menu') barMenu().popup({ window })
+  else if (action === 'minimize') window.minimize()
+  else if (action === 'maximize') window.isMaximized() ? window.unmaximize() : window.maximize()
+  else window.close()
+})
+
+// Without a menu on Linux, the few shortcuts a window is expected to have.
+function shortcut(event, input) {
+  if (input.type !== 'keyDown' || process.platform === 'darwin') return
+  const key = input.key.toLowerCase()
+  const zoom = page?.webContents
+  if (input.control && key === 'q') app.quit()
+  else if (input.key === 'F11') window?.setFullScreen(!window.isFullScreen())
+  else if (input.control && (key === '=' || key === '+') && zoom) zoom.setZoomLevel(zoom.getZoomLevel() + 0.5)
+  else if (input.control && key === '-' && zoom) zoom.setZoomLevel(zoom.getZoomLevel() - 0.5)
+  else if (input.control && key === '0' && zoom) zoom.setZoomLevel(0)
+  else return
+  event.preventDefault()
+}
+
+function harden(origin) {
+  app.on('web-contents-created', (_event, contents) => {
+    contents.setWindowOpenHandler(({ url }) => {
+      if (navigationOf(url, origin) === 'external') void shell.openExternal(url)
+      return { action: 'deny' }
+    })
+    contents.on('will-navigate', (event, url) => {
+      const verdict = navigationOf(url, origin)
+      if (verdict === 'allow') return
+      event.preventDefault()
+      if (verdict === 'external') void shell.openExternal(url)
+    })
+    // A server redirect is a navigation too.
+    contents.on('will-redirect', (event, url) => {
+      if (navigationOf(url, origin) !== 'allow') event.preventDefault()
+    })
+    contents.on('will-attach-webview', event => event.preventDefault())
+  })
+  // The page asks for nothing beyond notifications and the clipboard.
+  session.defaultSession.setPermissionRequestHandler((contents, permission, callback) => {
+    callback(new URL(contents.getURL()).origin === origin && ['notifications', 'clipboard-sanitized-write', 'clipboard-read'].includes(permission))
+  })
+}
+
+app.on('window-all-closed', () => app.quit())
+app.on('before-quit', (event) => {
+  if (quitting || !dshChild) return
+  quitting = true
+  event.preventDefault()
+  void stopDsh(dshChild).finally(() => app.quit())
+})

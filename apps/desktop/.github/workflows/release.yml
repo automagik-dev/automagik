@@ -1,0 +1,255 @@
+name: Release
+
+# Builds the app at one commit of this repository and publishes it as the release
+# `v<version>`, where `omni desktop` (Omni's CLI) finds it: the Linux AppImage and deb, the
+# macOS arm64 dmg, and SHA256SUMS, which the CLI checks every download against. Installed
+# apps update from the same release (src/update.js): latest-linux.yml for the AppImage, and
+# latest-mac.yml with the zip for macOS.
+#
+# The version is the Omni release the commit carries (omni.json), which is also the app's
+# and every plugin's. follow-omni.yml calls this after it moves omni.json to a new Omni
+# release; dispatch it by hand to rebuild.
+#
+# macOS signing and notarization are optional: with the MAC_CSC_LINK and
+# MAC_CSC_KEY_PASSWORD secrets (the Developer ID Application certificate as a base64 .p12)
+# the app and the dmg are signed, and with APPLE_API_KEY (the App Store Connect .p8
+# contents), APPLE_API_KEY_ID and APPLE_API_ISSUER both are notarized and stapled.
+# Without them the dmg is unsigned, and the release carries no macOS update: a signed app
+# accepts only an update signed like itself, and an unsigned one cannot update.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Exact commit to build'
+        required: true
+        type: string
+      prerelease:
+        description: 'Publish as a prerelease (not shown as Latest)'
+        required: false
+        type: boolean
+        default: false
+      # Declared here too: an input a caller cannot see reads as '', which equals false.
+      publish:
+        description: 'Publish the release'
+        required: false
+        type: boolean
+        default: true
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Commit or branch to build (default: main)'
+        required: false
+        type: string
+      prerelease:
+        description: 'Publish as a prerelease (not shown as Latest)'
+        required: false
+        type: boolean
+        default: false
+      publish:
+        description: 'Publish the release (off: build, sign and notarize only, keeping the builds as run artifacts)'
+        required: false
+        type: boolean
+        default: true
+
+permissions: {}
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+      sha: ${{ steps.read.outputs.sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.ref || 'main' }}
+          persist-credentials: false
+
+      - name: The app carries the Omni version it is built as
+        id: read
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./omni.json').version")
+          actual=$(node -p "require('./package.json').version")
+          [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          [[ "${actual}" == "${version}" ]] || { echo "::error ::package.json is ${actual}, omni.json ${version}"; exit 1; }
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.target }})
+    needs: version
+    concurrency:
+      group: release-${{ needs.version.outputs.version }}-${{ matrix.target }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux
+            os: ubuntu-24.04
+          - target: mac
+            os: macos-14
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      DO_NOT_TRACK: '1'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24'
+
+      - name: Install build tools
+        run: npm ci --no-audit --no-fund
+
+      - name: Prepare the runtime and Omni's plugins
+        run: node scripts/prepare-runtime.mjs
+
+      - name: Build Linux AppImage and deb
+        if: matrix.target == 'linux'
+        run: npx --no-install electron-builder --linux AppImage deb --publish never
+
+      - name: Build macOS dmg
+        if: matrix.target == 'mac'
+        env:
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          # Signing opens the bundle's many files at once (the runtime's node_modules); the
+          # runner allows 256 per process, and the system caps what ulimit may raise it to.
+          sudo sysctl -w kern.maxfiles=524288 kern.maxfilesperproc=524288 >/dev/null
+          sudo launchctl limit maxfiles 524288 524288
+          ulimit -n 524288
+          echo "open files: $(ulimit -n)"
+          if [[ -n "${MAC_CSC_LINK}" ]]; then
+            export CSC_LINK="${MAC_CSC_LINK}" CSC_KEY_PASSWORD="${MAC_CSC_KEY_PASSWORD}"
+            if [[ -n "${APPLE_API_KEY_CONTENT}" && -n "${APPLE_API_KEY_ID}" && -n "${APPLE_API_ISSUER}" ]]; then
+              key="${RUNNER_TEMP}/AuthKey_${APPLE_API_KEY_ID}.p8"
+              trap 'rm -f "${key}"' EXIT
+              (umask 077 && printf '%s' "${APPLE_API_KEY_CONTENT}" > "${key}")
+              export APPLE_API_KEY="${key}"
+            else
+              echo "::warning ::No App Store Connect API key: the dmg is signed but not notarized"
+              unset APPLE_API_KEY_ID APPLE_API_ISSUER
+            fi
+          else
+            echo "::warning ::No signing certificate: the dmg is unsigned"
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            unset APPLE_API_KEY_ID APPLE_API_ISSUER
+          fi
+          npx --no-install electron-builder --mac dmg zip --arm64 --publish never
+          if [[ -n "${MAC_CSC_LINK}" ]]; then
+            dmg=$(ls dist/*.dmg)
+            codesign --verify --strict "${dmg}"
+          fi
+          if [[ -n "${MAC_CSC_LINK}" && -n "${APPLE_API_KEY:-}" ]]; then
+            # electron-builder notarizes the app inside; the dmg someone downloads is a signed
+            # file of its own, so it goes to Apple too and carries its ticket. Stapling changes
+            # its bytes: the feed gets its new sha512 and size, and its blockmap (which no update
+            # reads: macOS updates from the zip) goes.
+            xcrun notarytool submit "${dmg}" --key "${APPLE_API_KEY}" --key-id "${APPLE_API_KEY_ID}" \
+              --issuer "${APPLE_API_ISSUER}" --wait --timeout 30m
+            xcrun stapler staple "${dmg}"
+            xcrun stapler validate "${dmg}"
+            spctl --assess --type open --context context:primary-signature -vv "${dmg}"
+            node scripts/restamp-feed.mjs dist/latest-mac.yml "${dmg}"
+            rm -f "${dmg}.blockmap"
+          fi
+          if [[ -z "${MAC_CSC_LINK}" ]]; then
+            echo "::warning ::Unsigned: no macOS update feed in this release"
+            rm -f dist/latest-mac.yml dist/*.zip dist/*.zip.blockmap
+          fi
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: desktop-${{ matrix.target }}
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.dmg
+            dist/*.zip
+            dist/*.blockmap
+            dist/latest-*.yml
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish v${{ needs.version.outputs.version }}
+    needs: [version, build]
+    if: inputs.publish != false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.version.outputs.version }}
+      SHA: ${{ needs.version.outputs.sha }}
+      PRERELEASE: ${{ inputs.prerelease }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: desktop-*
+          path: assets
+          merge-multiple: true
+
+      # Every release also carries its downloads under names without the version, so
+      # .../releases/latest/download/Omni-Mac.dmg (the README's buttons) is always the newest.
+      # `omni desktop` and the updater read the versioned names, which these never match.
+      - name: Stable download names
+        working-directory: assets
+        run: |
+          set -euo pipefail
+          for pair in "-mac-arm64.dmg:Omni-Mac.dmg" "-linux-x86_64.AppImage:Omni-Linux.AppImage" "-linux-amd64.deb:Omni-Linux.deb"; do
+            file=$(ls -- *"${pair%%:*}" 2>/dev/null | head -1 || true)
+            [[ -n "${file}" ]] && cp -- "${file}" "${pair##*:}"
+          done
+          ls -l
+
+      - name: Checksums
+        working-directory: assets
+        run: |
+          set -euo pipefail
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create the release
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            # A rebuild replaces the release's files: one this build did not make goes.
+            for name in $(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name'); do
+              [[ -e "assets/${name}" ]] || gh release delete-asset "${TAG}" "${name}" --yes --repo "${GITHUB_REPOSITORY}"
+            done
+            gh release upload "${TAG}" assets/* --clobber --repo "${GITHUB_REPOSITORY}"
+            if [[ "${PRERELEASE}" == "true" ]]; then
+              gh release edit "${TAG}" --prerelease --repo "${GITHUB_REPOSITORY}"
+            else
+              gh release edit "${TAG}" --prerelease=false --latest --repo "${GITHUB_REPOSITORY}"
+            fi
+          else
+            flags=(--latest)
+            [[ "${PRERELEASE}" == "true" ]] && flags=(--prerelease)
+            gh release create "${TAG}" assets/* "${flags[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${SHA}" \
+              --title "Omni desktop ${VERSION}" \
+              --notes "**Download:** Mac (Apple silicon): **Omni-Mac.dmg** · Linux: **Omni-Linux.deb** (Ubuntu, Debian) or **Omni-Linux.AppImage**. Already installed? The app updates itself. This is Omni desktop for [Omni ${VERSION}](https://github.com/automagik-dev/omni/releases/tag/v${VERSION}). SHA256SUMS lists every file's checksum."
+          fi

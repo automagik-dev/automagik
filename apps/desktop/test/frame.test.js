@@ -1,0 +1,45 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import { BAR_HEIGHT, pageLayout, RADIUS, updateView, WINDOW_ACTIONS, windowChrome } from '../src/frame.js'
+
+test('no system frame on either platform: a transparent frameless window on Linux, a hidden title bar on macOS', () => {
+  assert.deepEqual(
+    { frame: windowChrome('linux').frame, transparent: windowChrome('linux').transparent, menu: windowChrome('linux').autoHideMenuBar },
+    { frame: false, transparent: true, menu: true },
+  )
+  assert.equal(windowChrome('darwin').titleBarStyle, 'hiddenInset')
+  assert.equal(windowChrome('darwin').frame, undefined)
+})
+
+test("Omni's page fills the window below the bar, with no border; its corners round with the window on Linux", () => {
+  const size = { width: 1360, height: 860 }
+  const page = { x: 0, y: BAR_HEIGHT, width: 1360, height: 860 - BAR_HEIGHT }
+  assert.deepEqual(pageLayout(size, { platform: 'linux', maximized: false }), { bounds: page, radius: RADIUS })
+  assert.deepEqual(pageLayout(size, { platform: 'linux', maximized: true }), { bounds: page, radius: 0 })
+  assert.equal(pageLayout(size, { platform: 'darwin', maximized: false }).radius, 0)
+  assert.equal(pageLayout({ width: 4, height: 10 }, { platform: 'linux', maximized: false }).bounds.height, 0)
+})
+
+test('the frame page can ask for the window buttons, the update notice and the bar menu, and nothing else', () => {
+  assert.deepEqual([...WINDOW_ACTIONS].sort(), ['close', 'maximize', 'menu', 'minimize', 'update', 'update-later', 'update-page'])
+})
+
+test('a ready update shows a notice with Restart now and Later; after Later a small Restart button stays', () => {
+  const ready = { version: '2.261024.1', state: 'ready' }
+  assert.deepEqual(updateView(ready), {
+    text: 'Omni 2.261024.1 is ready.',
+    actions: [{ act: 'update', label: 'Restart now', primary: true }, { act: 'update-later', label: 'Later' }],
+  })
+  assert.deepEqual(updateView(ready, { dismissed: true }).actions, [{ act: 'update', label: 'Restart to update', primary: true }])
+  assert.equal(updateView(ready, { dismissed: true }).text, undefined)
+})
+
+test('a download shows its progress with no button; a deb sees Download and Later; a check answers in a line', () => {
+  assert.deepEqual(updateView({ version: '2.261024.1', state: 'downloading', percent: 42 }), { text: 'Updating · 42%', title: 'Downloading Omni 2.261024.1', actions: [] })
+  const out = { version: '2.261024.1', state: 'available', page: 'https://github.com/automagik-dev/omni-desktop/releases/tag/v2.261024.1' }
+  assert.deepEqual(updateView(out).actions.map(a => a.act), ['update-page', 'update-later'])
+  assert.deepEqual(updateView(out, { dismissed: true }).actions, [{ act: 'update-page', label: 'Omni 2.261024.1 is out' }])
+  assert.deepEqual(updateView(null, { message: 'Omni is up to date' }), { text: 'Omni is up to date', actions: [] })
+  assert.equal(updateView(null), null)
+  assert.equal(updateView(out, { message: 'Omni is up to date' }).text, 'Omni 2.261024.1 is out.')
+})

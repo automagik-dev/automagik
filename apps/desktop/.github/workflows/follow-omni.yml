@@ -1,0 +1,96 @@
+name: Follow Omni
+
+# Every Omni release gets an Omni desktop release at the same version. Every 30 minutes
+# (or when dispatched) this looks for the newest Omni release (`v<version>`, prereleases
+# included: the npm `next` cuts) above the one omni.json pins. When there is one, and its
+# plugins carry its version, it moves omni.json, package.json and the lock to it (and the
+# runtime's DeepSeek Harness to the one that release tests on), commits that to main, and
+# releases the app from that commit as its Latest release.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: follow-omni
+  cancel-in-progress: false
+
+jobs:
+  follow:
+    name: Look for a newer Omni
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.bump.outputs.sha }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      OMNI: automagik-dev/omni
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: main
+
+      - name: The newest Omni release
+        id: newest
+        run: |
+          set -euo pipefail
+          current=$(node -p "require('./omni.json').version")
+          gh api "repos/${OMNI}/releases?per_page=30" \
+            --jq '.[] | select(.draft | not) | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) | "\(.tag_name | ltrimstr("v")) \(.prerelease)"' \
+            > releases.txt
+          newest=$(cut -d' ' -f1 releases.txt | sort -V | tail -1)
+          if [[ -z "${newest}" || "${newest}" == "${current}" || "$(printf '%s\n%s\n' "${current}" "${newest}" | sort -V | tail -1)" != "${newest}" ]]; then
+            echo "Omni ${newest:-none}: omni.json is at ${current}, nothing to follow"
+            exit 0
+          fi
+          # A release whose plugins are not at its version (or not there at all) is not one
+          # the app can carry.
+          # (a release without the plugin is a 404: no version)
+          plugin=$(gh api "repos/${OMNI}/contents/apps/omni-ui-dsh/package.json?ref=v${newest}" --jq .content 2>/dev/null | base64 -d 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).version)}catch{console.log("")}})') || plugin=''
+          if [[ "${plugin}" != "${newest}" ]]; then
+            echo "::notice ::Omni ${newest} does not carry its plugins at its version (found '${plugin}'): not following it"
+            exit 0
+          fi
+          echo "version=${newest}" >> "$GITHUB_OUTPUT"
+
+      - name: Move to it
+        id: bump
+        if: steps.newest.outputs.version != ''
+        env:
+          VERSION: ${{ steps.newest.outputs.version }}
+        run: |
+          set -euo pipefail
+          commit=$(gh api "repos/${OMNI}/commits/v${VERSION}" --jq .sha)
+          node -e '
+            const fs = require("node:fs")
+            const [version, commit] = process.argv.slice(1)
+            const edit = (file, change) => { const json = JSON.parse(fs.readFileSync(file, "utf8")); change(json); fs.writeFileSync(file, JSON.stringify(json, null, 2) + "\n") }
+            edit("omni.json", json => Object.assign(json, { version, commit }))
+            edit("package.json", json => { json.version = version })
+            edit("package-lock.json", json => { json.version = version; json.packages[""].version = version })
+          ' "${VERSION}" "${commit}"
+          # The DeepSeek Harness the app runs is the one that release tests its plugins on
+          # (prepare-runtime refuses a mismatch), so the runtime pin and lock move with it.
+          dsh=$(gh api "repos/${OMNI}/contents/apps/omni-ui-dsh/dev/harness/package.json?ref=v${VERSION}" --jq .content | base64 -d | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).dependencies["@deepseek-ai/dsh"]))')
+          echo "Omni ${VERSION} tests its plugins on dsh ${dsh}: runtime $(node scripts/follow-dsh.mjs "${dsh}")"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -qam "chore(release): carry Omni ${VERSION}"
+          git push -q origin HEAD:main
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Release
+    needs: follow
+    if: needs.follow.outputs.sha != ''
+    uses: ./.github/workflows/release.yml
+    permissions:
+      contents: write
+    secrets: inherit
+    with:
+      ref: ${{ needs.follow.outputs.sha }}
