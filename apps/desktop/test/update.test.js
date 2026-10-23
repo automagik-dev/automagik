@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { test } from 'node:test'
-import { compareVersions, feedFileOf, feedOverride, pickUpdate, startUpdates, updatesEnabled } from '../src/update.js'
+import { channelOf, compareVersions, feedFileOf, feedOverride, isReleasePage, pickUpdate, RETRY_MS, startUpdates, updateMode, updatesEnabled } from '../src/update.js'
 
 const release = (tag, assets = ['latest-mac.yml', 'latest-linux.yml'], extra = {}) => ({ tag_name: tag, draft: false, assets: assets.map(name => ({ name })), ...extra })
 
@@ -30,6 +30,7 @@ test("the update is the newest release above this one with this platform's feed;
   assert.deepEqual(pickUpdate(releases, { current: '2.261019.10-labs.14', platform: 'darwin' }), {
     version: '2.261023.1',
     url: 'https://github.com/automagik-dev/omni-desktop/releases/download/v2.261023.1/',
+    page: 'https://github.com/automagik-dev/omni-desktop/releases/tag/v2.261023.1',
   })
   assert.equal(pickUpdate(releases, { current: '2.261019.10-labs.14', platform: 'linux' }).version, '2.261025.1')
   assert.equal(pickUpdate(releases, { current: '2.261025.1', platform: 'linux' }), null)
@@ -81,13 +82,13 @@ test('a check points electron-updater at the chosen release, reports the downloa
   assert.equal(updater.allowDowngrade, false)
   updates.install()
   assert.deepEqual(updater.installs, [])
-  assert.deepEqual(await updates.check(), { checked: true })
+  assert.deepEqual(await updates.check(), { result: 'found', version: '2.261022.1' })
   assert.deepEqual(updater.feeds, [{ provider: 'generic', url: 'https://github.com/automagik-dev/omni-desktop/releases/download/v2.261022.1/' }])
   updater.emit('download-progress', { percent: 41.6 })
   updater.emit('update-downloaded', { version: '2.261022.1' })
   assert.deepEqual(states, [{ version: '2.261022.1', state: 'downloading', percent: 42 }, { version: '2.261022.1', state: 'ready' }])
   assert.equal(updates.ready, '2.261022.1')
-  assert.equal(await updates.check(), null)
+  assert.deepEqual(await updates.check(), { result: 'ready', version: '2.261022.1' })
   updates.install()
   assert.deepEqual(updater.installs, [[false, true]])
 })
@@ -112,14 +113,76 @@ test('on macOS the update is ready only once Squirrel has it, since quitting ear
   assert.deepEqual(states.at(-1), { version: '2.261022.1', state: 'ready' })
 })
 
-test('no newer release, or GitHub failing, is a quiet no-op', async () => {
+test('no newer release is logged as up to date; GitHub failing is a warning and a sooner retry', async () => {
   const updater = fakeUpdater()
+  const infos = []
   const warnings = []
-  const log = { ...quiet, warn: message => warnings.push(message) }
-  const none = startUpdates({ updater, current: '2.261022.1', platform: 'linux', env: {}, log, timers: noTimers, onState() {}, releases: async () => [release('v2.261022.1')] })
-  assert.equal(await none.check(), null)
-  const down = startUpdates({ updater, current: '2.261022.1', platform: 'linux', env: {}, log, timers: noTimers, onState() {}, releases: async () => { throw new Error('offline') } })
-  assert.equal(await down.check(), null)
+  const later = []
+  const log = { ...quiet, info: message => infos.push(message), warn: message => warnings.push(message) }
+  const timers = { ...noTimers, setTimeout: (fn, ms) => { later.push({ fn, ms }); return later.length } }
+  const none = startUpdates({ updater, current: '2.261022.1', platform: 'linux', env: {}, log, timers, onState() {}, releases: async () => [release('v2.261022.1')] })
+  assert.deepEqual(await none.check(), { result: 'latest' })
+  assert.deepEqual(infos, ['update check: 2.261022.1 is the newest stable release'])
+  later.length = 0
+  let calls = 0
+  const down = startUpdates({ updater, current: '2.261022.1', platform: 'linux', env: {}, log, timers, onState() {}, releases: async () => { calls++; throw new Error('offline') } })
+  assert.deepEqual(await down.check(), { result: 'error' })
   assert.deepEqual(updater.feeds, [])
   assert.deepEqual(warnings, ['update check: offline'])
+  const retry = later.filter(entry => entry.ms === RETRY_MS)
+  assert.equal(retry.length, 1)
+  await down.check()
+  assert.equal(later.filter(entry => entry.ms === RETRY_MS).length, 1, 'one pending retry at a time')
+  retry[0].fn()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(calls, 3)
+})
+
+test('an electron-updater error is logged and retried sooner', async () => {
+  const updater = fakeUpdater()
+  const later = []
+  const warnings = []
+  const timers = { ...noTimers, setTimeout: (fn, ms) => { later.push({ fn, ms }); return later.length } }
+  startUpdates({ updater, current: '2.261022.1', platform: 'darwin', env: {}, log: { ...quiet, warn: m => warnings.push(m) }, timers, onState() {}, releases: async () => [] })
+  updater.emit('error', new Error('sha512 checksum mismatch'))
+  assert.deepEqual(warnings, ['update: sha512 checksum mismatch'])
+  assert.equal(later.filter(entry => entry.ms === RETRY_MS).length, 1)
+})
+
+test('a deb build only says a release is out: no feed, no download, and its page to open', async () => {
+  assert.equal(updateMode({ packaged: true, platform: 'linux', env: {} }), 'notify')
+  assert.equal(updateMode({ packaged: true, platform: 'linux', env: { APPIMAGE: '/x' } }), 'auto')
+  assert.equal(updateMode({ packaged: true, platform: 'darwin', env: {} }), 'auto')
+  assert.equal(updateMode({ packaged: true, platform: 'linux', env: { OMNI_DESKTOP_UPDATES: 'off' } }), null)
+  assert.equal(updateMode({ packaged: false, platform: 'linux', env: {} }), null)
+  const updater = fakeUpdater()
+  const states = []
+  const updates = startUpdates({
+    updater, current: '2.261022.1', platform: 'linux', env: {}, log: quiet, timers: noTimers, mode: 'notify',
+    onState: state => states.push(state),
+    releases: async () => [release('v2.261023.1')],
+  })
+  assert.deepEqual(await updates.check(), { result: 'found', version: '2.261023.1' })
+  assert.deepEqual(states, [{ version: '2.261023.1', state: 'available', page: 'https://github.com/automagik-dev/omni-desktop/releases/tag/v2.261023.1' }])
+  assert.deepEqual(updater.feeds, [])
+  assert.equal(updater.autoDownload, undefined)
+  assert.equal(updater.listenerCount('update-downloaded'), 0)
+  assert.equal(isReleasePage(states[0].page), true)
+  assert.equal(isReleasePage('https://github.com/automagik-dev/omni-desktop/releases/tag/v1/../../evil'), false)
+  assert.equal(isReleasePage('https://evil.example/releases/tag/v1'), false)
+})
+
+test('a stable build never moves to a prerelease; a prerelease build follows both; the env can choose', () => {
+  const releases = [
+    release('v2.261024.1', undefined, { prerelease: true }),
+    release('v2.261023.5'),
+    release('v2.261023.3', undefined, { prerelease: true }),
+  ]
+  assert.equal(channelOf(releases, { current: '2.261023.5' }), 'stable')
+  assert.equal(channelOf(releases, { current: '2.261023.3' }), 'prerelease')
+  assert.equal(channelOf(releases, { current: '2.261023.4' }), 'stable')
+  assert.equal(channelOf(releases, { current: '2.261023.5', env: { OMNI_DESKTOP_UPDATE_CHANNEL: 'prerelease' } }), 'prerelease')
+  assert.equal(pickUpdate(releases, { current: '2.261023.5', platform: 'darwin', channel: 'stable' }), null)
+  assert.equal(pickUpdate(releases, { current: '2.261023.5', platform: 'darwin', channel: 'prerelease' }).version, '2.261024.1')
+  assert.equal(pickUpdate(releases, { current: '2.261023.3', platform: 'darwin', channel: 'stable' }).version, '2.261023.5')
 })

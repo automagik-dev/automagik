@@ -1,15 +1,18 @@
 // Updates: the app follows its own releases, `v<version>` in automagik-dev/omni-desktop on
 // GitHub (the ones `omni desktop` downloads). A newer one downloads in the background and installs when
-// the app quits, or at once from the title bar's Restart button. electron-updater downloads
+// the app quits, or at once from the title bar's Restart now. electron-updater downloads
 // it, checks its sha512 and installs it (on macOS through Squirrel, which also requires the
-// update to carry the running app's signature). This module only picks the release: the
-// newest one above this version that carries this platform's feed.
+// update to carry the running app's signature). This module picks the release: the newest
+// one above this version, on this build's channel, that carries this platform's feed.
+// A deb is the system package manager's to replace, so there the app only says a release is out.
 
 export const RELEASES_URL = 'https://api.github.com/repos/automagik-dev/omni-desktop/releases?per_page=50'
 export const DESKTOP_TAG_PREFIX = 'v'
 const DOWNLOADS = 'https://github.com/automagik-dev/omni-desktop/releases/download/'
+const RELEASE_PAGE = 'https://github.com/automagik-dev/omni-desktop/releases/tag/'
 export const FIRST_CHECK_MS = 20_000
 export const CHECK_EVERY_MS = 4 * 60 * 60 * 1000
+export const RETRY_MS = 30 * 60 * 1000
 
 /** The update feed electron-updater reads for `platform`, or null where the app does not update. */
 export function feedFileOf(platform) {
@@ -19,14 +22,32 @@ export function feedFileOf(platform) {
 }
 
 /**
- * Whether this copy of the app updates itself: a packaged build, on macOS or from an AppImage
- * (a deb belongs to the system's package manager, and an unpacked AppImage cannot be replaced),
- * unless OMNI_DESKTOP_UPDATES is `off`.
+ * How this copy of the app updates: `auto` (a packaged build on macOS, or run from an
+ * AppImage), `notify` (a packaged Linux build installed from the deb, which belongs to the
+ * system's package manager: the app only says a release is out), or null (a dev run, another
+ * platform, or OMNI_DESKTOP_UPDATES=off).
  */
-export function updatesEnabled({ packaged, platform, env }) {
-  if (!packaged || env.OMNI_DESKTOP_UPDATES === 'off') return false
-  if (platform === 'darwin') return true
-  return platform === 'linux' && Boolean(env.APPIMAGE)
+export function updateMode({ packaged, platform, env }) {
+  if (!packaged || env.OMNI_DESKTOP_UPDATES === 'off') return null
+  if (platform === 'darwin') return 'auto'
+  if (platform === 'linux') return env.APPIMAGE ? 'auto' : 'notify'
+  return null
+}
+
+/** Whether this copy of the app replaces itself (see updateMode). */
+export function updatesEnabled(options) {
+  return updateMode(options) === 'auto'
+}
+
+/**
+ * The channel this build follows: OMNI_DESKTOP_UPDATE_CHANNEL (`stable` or `prerelease`), else
+ * the channel of its own release, else stable. A stable build never moves to a prerelease.
+ */
+export function channelOf(releases, { current, env = {} }) {
+  const wanted = env.OMNI_DESKTOP_UPDATE_CHANNEL?.trim()
+  if (wanted === 'stable' || wanted === 'prerelease') return wanted
+  const own = (Array.isArray(releases) ? releases : []).find(release => release?.tag_name === `${DESKTOP_TAG_PREFIX}${current}`)
+  return own?.prerelease === true ? 'prerelease' : 'stable'
 }
 
 /** OMNI_DESKTOP_UPDATE_FEED: a feed folder to take updates from instead (https, or http on loopback). */
@@ -67,19 +88,24 @@ export function compareVersions(a, b) {
 }
 
 /**
- * The newest desktop release above `current` that carries `platform`'s update feed, as the
- * folder electron-updater reads it from; null when there is none.
+ * The newest desktop release above `current` on `channel` that carries `platform`'s update
+ * feed: `{ version, url, page }`, where `url` is the folder electron-updater reads the feed from
+ * and `page` the release's own page. Null when there is none. A prerelease is only offered on
+ * the prerelease channel.
  */
-export function pickUpdate(releases, { current, platform }) {
+export function pickUpdate(releases, { current, platform, channel = 'prerelease' }) {
   const feed = feedFileOf(platform)
   let best = null
   for (const release of Array.isArray(releases) ? releases : []) {
     const tag = release?.tag_name
     if (release?.draft || typeof tag !== 'string' || !tag.startsWith(DESKTOP_TAG_PREFIX)) continue
+    if (release.prerelease === true && channel !== 'prerelease') continue
     const version = tag.slice(DESKTOP_TAG_PREFIX.length)
     if (!(compareVersions(version, current) > 0)) continue
     if (!release.assets?.some(asset => asset?.name === feed)) continue
-    if (!best || compareVersions(version, best.version) > 0) best = { version, url: `${DOWNLOADS}${encodeURIComponent(tag)}/` }
+    if (!best || compareVersions(version, best.version) > 0) {
+      best = { version, url: `${DOWNLOADS}${encodeURIComponent(tag)}/`, page: `${RELEASE_PAGE}${encodeURIComponent(tag)}` }
+    }
   }
   return best
 }
@@ -94,51 +120,86 @@ export async function fetchReleases(fetchImpl = fetch) {
 }
 
 /**
- * Checks now (after FIRST_CHECK_MS) and every CHECK_EVERY_MS, and reports to `onState`:
- * `{ version, state: 'downloading', percent }`, then `{ version, state: 'ready' }`.
- * `install()` restarts into the downloaded update.
+ * Checks after FIRST_CHECK_MS and every CHECK_EVERY_MS (sooner, after RETRY_MS, when a check
+ * failed), and reports to `onState`:
+ * - `auto`: `{ version, state: 'downloading', percent }`, then `{ version, state: 'ready' }`;
+ *   `install()` restarts into the downloaded update, which otherwise installs on quit.
+ * - `notify`: `{ version, state: 'available', page }`; nothing is downloaded.
+ * `check()` also serves the menu's Check for Updates, and answers what it found:
+ * `{ result: 'latest' | 'found' | 'ready' | 'error' | 'busy', version? }`.
  */
-export function startUpdates({ updater, current, platform, env, log, onState, releases = fetchReleases, timers = globalThis }) {
+export function startUpdates({ updater, current, platform, env, log, onState, mode = 'auto', releases = fetchReleases, timers = globalThis }) {
   let busy = false
   let pending = null
   let ready = null
-  updater.autoDownload = true
-  updater.autoInstallOnAppQuit = true
-  updater.allowDowngrade = false
-  updater.logger = log
+  let retry = null
+  const auto = mode === 'auto'
+  if (auto) {
+    updater.autoDownload = true
+    updater.autoInstallOnAppQuit = true
+    updater.allowDowngrade = false
+    updater.logger = log
+  }
   // On macOS the download is handed to Squirrel, which swaps the app on quit only once it has
   // the update too: until Squirrel says so, the update is not ready.
-  const squirrel = platform === 'darwin' ? updater.nativeUpdater : null
+  const squirrel = auto && platform === 'darwin' ? updater.nativeUpdater : null
   const markReady = () => {
     if (ready) return
     ready = pending
     log.info(`update: ${ready} is ready and installs on quit`)
     onState({ version: ready, state: 'ready' })
   }
-  updater.on('download-progress', progress => onState({ version: pending, state: 'downloading', percent: Math.round(progress?.percent ?? 0) }))
-  updater.on('update-downloaded', info => {
-    pending = info?.version ?? pending
-    if (!squirrel) return markReady()
-    log.info(`update: ${pending} is downloaded; macOS is preparing it`)
-    onState({ version: pending, state: 'downloading', percent: 100 })
-  })
-  squirrel?.on('update-downloaded', markReady)
-  squirrel?.on('error', error => log.warn(`update (macOS): ${error?.message ?? error}`))
-  updater.on('error', error => log.warn(`update: ${error?.message ?? error}`))
+  if (auto) {
+    updater.on('download-progress', progress => onState({ version: pending, state: 'downloading', percent: Math.round(progress?.percent ?? 0) }))
+    updater.on('update-downloaded', info => {
+      pending = info?.version ?? pending
+      if (!squirrel) return markReady()
+      log.info(`update: ${pending} is downloaded; macOS is preparing it`)
+      onState({ version: pending, state: 'downloading', percent: 100 })
+    })
+    squirrel?.on('update-downloaded', markReady)
+    squirrel?.on('error', error => log.warn(`update (macOS): ${error?.message ?? error}`))
+    updater.on('error', (error) => {
+      log.warn(`update: ${error?.message ?? error}`)
+      retryLater()
+    })
+  }
+
+  function retryLater() {
+    if (retry !== null) return
+    retry = timers.setTimeout(() => { retry = null; void check() }, RETRY_MS)
+  }
 
   async function check() {
-    if (busy || ready) return null
+    if (ready) return { result: 'ready', version: ready }
+    if (busy) return { result: 'busy' }
     busy = true
     try {
-      const override = feedOverride(env)
-      const update = override ? { version: null, url: override } : pickUpdate(await releases(), { current, platform })
-      if (!update) return null
+      const override = auto ? feedOverride(env) : null
+      let update
+      if (override) update = { version: null, url: override }
+      else {
+        const list = await releases()
+        const channel = channelOf(list, { current, env })
+        update = pickUpdate(list, { current, platform, channel })
+        if (!update) {
+          log.info(`update check: ${current} is the newest ${channel} release`)
+          return { result: 'latest' }
+        }
+      }
+      log.info(`update check: ${update.version ?? 'a release from the feed override'} is out`)
+      if (!auto) {
+        onState({ version: update.version, state: 'available', page: update.page })
+        return { result: 'found', version: update.version }
+      }
       pending = update.version
       updater.setFeedURL({ provider: 'generic', url: update.url })
-      return await updater.checkForUpdates()
+      await updater.checkForUpdates()
+      return { result: 'found', version: update.version }
     } catch (error) {
       log.warn(`update check: ${error?.message ?? error}`)
-      return null
+      retryLater()
+      return { result: 'error' }
     } finally {
       busy = false
     }
@@ -150,6 +211,15 @@ export function startUpdates({ updater, current, platform, env, log, onState, re
     check,
     get ready() { return ready },
     install: () => { if (ready) updater.quitAndInstall(false, true) },
-    stop: () => { timers.clearTimeout(first); timers.clearInterval(every) },
+    stop: () => {
+      timers.clearTimeout(first)
+      timers.clearInterval(every)
+      if (retry !== null) timers.clearTimeout(retry)
+    },
   }
+}
+
+/** Whether `url` is a desktop release page, the only page the notice may open. */
+export function isReleasePage(url) {
+  return typeof url === 'string' && url.startsWith(RELEASE_PAGE) && !url.slice(RELEASE_PAGE.length).includes('/')
 }
