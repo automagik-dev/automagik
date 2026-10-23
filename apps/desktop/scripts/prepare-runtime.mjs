@@ -118,6 +118,8 @@ for (const [name, version] of Object.entries(ADDONS)) {
   const installed = readJson(join(installDir, 'node_modules', ...name.split('/'), 'package.json')).version
   if (installed !== version) throw new Error(`${name} installed at ${installed}, not the vetted ${version}`)
 }
+// DSH's own record of the build's install (.plugin-manager) is not part of what ships.
+rmSync(join(installDir, '.plugin-manager'), { recursive: true, force: true })
 const profileDir = join(BUILD, 'profile')
 rmSync(profileDir, { recursive: true, force: true })
 cpSync(installDir, profileDir, { recursive: true, verbatimSymlinks: true })
