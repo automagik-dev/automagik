@@ -62,5 +62,12 @@
   },
   "dependencies": {
     "zod": "4.6.5"
+  },
+  "automagik": {
+    "omni": {
+      "repository": "https://github.com/automagik-dev/omni",
+      "version": "2.261023.32",
+      "commit": "c2843aa369860074151f8946d95fd4b20cda3297"
+    }
   }
 }
