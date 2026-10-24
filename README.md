@@ -33,7 +33,7 @@ Nothing here is published to npm. The plugins install as git sources pinned to a
 
 ## Versions and releases
 
-One version for the whole repository, `3.YYMMDD.N` (`scripts/version.ts`): a line of its own, above the 2.x builds omni-desktop released. `release.yml` (dispatched on dev) tags `v<version>`, publishes the plugin tarballs and `plugins.json`, builds the desktop app into the same release (`desktop-build.yml`), lists the release in [`marketplace/automagik.json`](marketplace/automagik.json), and moves `main` to it. `follow-omni.yml` moves the desktop app to each newer Omni release and cuts a release with it.
+One version for the whole repository, `3.N` (semver `3.N.0`, N one above the last release: `scripts/version.ts`), above the 2.x builds omni-desktop released. Every merge into dev is a release: `release.yml` tags `v<version>`, publishes the plugin tarballs and `plugins.json`, builds the desktop app into the same release (`desktop-build.yml`), lists the release in [`marketplace/automagik.json`](marketplace/automagik.json), and moves `main` to it. `follow-omni.yml` moves the desktop app to each newer Omni release and cuts a release with it.
 
 | Branch | What |
 |---|---|

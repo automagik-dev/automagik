@@ -1,8 +1,8 @@
 name: Release
 
-# Cuts an Automagik release from dev: one version for the whole repository (3.YYMMDD.N,
-# scripts/version.ts), committed and tagged `v<version>` on dev, published as the GitHub
-# release `v<version>` with
+# Cuts an Automagik release from dev on every merge into it, as Tactu does: one version for the
+# whole repository (3.N, semver 3.N.0, N one above the last release: scripts/version.ts),
+# committed and tagged `v<version>` on dev, published as the GitHub release `v<version>` with
 #
 #   automagik-bots-dsh-<version>.tgz      the Bot team (npm pack of apps/bots-dsh)
 #   automagik-welcome-dsh-<version>.tgz   the welcome and Connect AI (apps/welcome-dsh)
@@ -13,13 +13,20 @@ name: Release
 # dsh-marketplace lists the plugins at the tag's commit. After the release, the market index
 # here lists it (scripts/marketplace.ts pin) and main moves to the tag.
 #
-# Dispatch: gh workflow run release.yml --ref dev [--field prerelease=true] [--field desktop=false]
+# A push to dev (a merged pull request) cuts one; so does follow-omni.yml (workflow_call), and a
+# dispatch: gh workflow run release.yml --ref dev [--field prerelease=true] [--field desktop=false]
+# The workflow's own pushes (the version commit, the index listing, follow-omni's pin) start no
+# run: GitHub starts none for a push made with the workflow token. A dev that has nothing since the
+# last release but those commits cuts nothing. Runs queue one at a time; a merge that lands while
+# one is running is released by the next run, with every merge after it that lands before it starts.
 #
 # Nothing is published to npm: the plugins ship as git sources and release files only.
 # Pushes use the workflow's own token; CI already ran on the dev commit being released, and
 # this job runs the gates again before it tags.
 
 on:
+  push:
+    branches: [dev]
   workflow_dispatch:
     inputs:
       prerelease:
@@ -80,7 +87,20 @@ jobs:
         with:
           bun-version: 1.4.2
 
+      - name: Anything new since the last release
+        id: new
+        run: |
+          set -euo pipefail
+          last=$(git tag --list 'v3.*.0' --sort=-v:refname | grep -E '^v3\.(0|[1-9][0-9]*)\.0$' | head -1 || true)
+          # Commits since it other than the release's own (its version commit and index listing).
+          if [[ -n "${last}" && -z "$(git log --format=%s "${last}..HEAD" | grep -v '^chore(release): ' || true)" ]]; then
+            echo "dev has nothing since ${last}: no release"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: The gates the release stands on
+        if: steps.new.outputs.release == 'true'
         run: |
           set -euo pipefail
           bun install --frozen-lockfile --ignore-scripts
@@ -91,6 +111,7 @@ jobs:
 
       - name: Version, commit and tag
         id: cut
+        if: steps.new.outputs.release == 'true'
         run: |
           set -euo pipefail
           version=$(bun scripts/version.ts next)
@@ -99,12 +120,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -qam "chore(release): v${version}"
-          git tag -a "v${version}" -m "Automagik ${version}"
+          git tag -a "v${version}" -m "Automagik ${version%.0}"
           git push -q origin HEAD:refs/heads/dev "refs/tags/v${version}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Pack the plugins
+        if: steps.new.outputs.release == 'true'
         env:
           VERSION: ${{ steps.cut.outputs.version }}
           SHA: ${{ steps.cut.outputs.sha }}
@@ -119,6 +141,7 @@ jobs:
           (cd release && sha256sum -- * > PLUGINS.SHA256SUMS)
 
       - name: Publish the release
+        if: steps.new.outputs.release == 'true'
         env:
           VERSION: ${{ steps.cut.outputs.version }}
           SHA: ${{ steps.cut.outputs.sha }}
@@ -129,25 +152,27 @@ jobs:
           gh release create "v${VERSION}" release/* "${flags[@]}" \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
-            --title "Automagik ${VERSION}" \
+            --title "Automagik ${VERSION%.0}" \
             --notes "The Bot team (\`@automagik/bots-dsh\`) and the welcome (\`@automagik/welcome-dsh\`) for DeepSeek Harness, and the Automagik desktop app. Install the plugins from the [Automagik market](https://github.com/automagik-dev/dsh-marketplace) or from an Omni's own market; \`plugins.json\` lists each tarball's integrity. The desktop builds follow when they are done."
 
   desktop:
     name: Desktop
     needs: cut
-    if: inputs.desktop != false
+    # A push carries no inputs, and a missing input compares equal to false.
+    if: needs.cut.outputs.version != '' && (github.event_name == 'push' || inputs.desktop != false)
     uses: ./.github/workflows/desktop-build.yml
     permissions:
       contents: write
     secrets: inherit
     with:
       ref: ${{ needs.cut.outputs.sha }}
-      prerelease: ${{ inputs.prerelease }}
+      prerelease: ${{ inputs.prerelease == true }}
       publish: true
 
   list:
     name: List it in the market index; main follows
     needs: cut
+    if: needs.cut.outputs.version != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

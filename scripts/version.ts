@@ -1,13 +1,15 @@
 #!/usr/bin/env bun
 /**
  * Automagik's one version: the repository, the Bot team, the welcome and the desktop app all
- * carry it. It is a calendar version on a line of its own, 3.YYMMDD.N: above every Omni
- * desktop build (2.YYMMDD.N, from automagik-dev/omni-desktop), so an installed app updates
- * into this one, and apart from Omni's own 2.x.
+ * carry it. Each release is 3.N (semver 3.N.0, tagged v3.N.0), N one above the highest release
+ * tag, numbers compared as numbers, as Tactu numbers its v1.N: above every Omni desktop build
+ * (2.YYMMDD.N, from automagik-dev/omni-desktop), so an installed app updates into this one.
+ * Until the first release the repository carries 3.0.0, which is never released. The calendar
+ * tags of the first releases (v3.YYMMDD.N, 2026-10-23 and 24) are not release tags.
  *
  *   bun scripts/version.ts check            every field carries the root version; exit 1 when not
  *   bun scripts/version.ts set <version>    write it everywhere
- *   bun scripts/version.ts next [YYYY-MM-DD] the next release: 3.YYMMDD.(tags that day + 1)
+ *   bun scripts/version.ts next             the next release: 3.(highest v3.N.0 + 1).0, 3.1.0 first
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -15,7 +17,9 @@ import { join } from 'node:path';
 
 export const ROOT = join(import.meta.dir, '..');
 export const MAJOR = 3;
-export const VERSION = /^\d+\.\d{6}\.\d+$/;
+export const VERSION = /^3\.(0|[1-9]\d*)\.0$/;
+/** A release tag: `v3.N.0`, N a whole number without leading zeros. */
+export const RELEASE_TAG = /^v3\.(0|[1-9]\d*)\.0$/;
 
 /** Every file and JSON path that carries the version. */
 export const FIELDS: { file: string; path: string[] }[] = [
@@ -40,7 +44,7 @@ export function drift(version: string, root = ROOT): string[] {
 }
 
 export function setVersion(version: string, root = ROOT): void {
-  if (!VERSION.test(version)) throw new Error(`not a version: ${version} (want ${MAJOR}.YYMMDD.N)`);
+  if (!VERSION.test(version)) throw new Error(`not a version: ${version} (want ${MAJOR}.N.0)`);
   for (const file of new Set(FIELDS.map((field) => field.file))) {
     const json = read(root, file);
     for (const field of FIELDS.filter((candidate) => candidate.file === file)) {
@@ -51,15 +55,10 @@ export function setVersion(version: string, root = ROOT): void {
   }
 }
 
-/** The next release on `date` (YYYY-MM-DD) given the repository's tags. */
-export function nextVersion(date: string, tags: string[]): string {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`not a date: ${date}`);
-  const day = date.slice(2).replaceAll('-', '');
-  const taken = tags
-    .map((tag) => new RegExp(`^v${MAJOR}\\.${day}\\.(\\d+)$`).exec(tag)?.[1])
-    .filter((n): n is string => n !== undefined)
-    .map(Number);
-  return `${MAJOR}.${day}.${Math.max(0, ...taken) + 1}`;
+/** The release after the highest `v3.N.0` in `tags` (3.1.0 when there is none); others are ignored. */
+export function nextVersion(tags: string[]): string {
+  const taken = tags.map((tag) => RELEASE_TAG.exec(tag)?.[1]).filter((n): n is string => n !== undefined).map(Number);
+  return `${MAJOR}.${Math.max(0, ...taken) + 1}.0`;
 }
 
 if (import.meta.main) {
@@ -75,9 +74,9 @@ if (import.meta.main) {
     console.log(`version: ${arg}`);
   } else if (command === 'next') {
     const tags = execFileSync('git', ['tag', '--list', `v${MAJOR}.*`], { cwd: ROOT, encoding: 'utf8' }).split('\n');
-    console.log(nextVersion(arg ?? new Date().toISOString().slice(0, 10), tags));
+    console.log(nextVersion(tags));
   } else {
-    console.error('usage: bun scripts/version.ts check | set <version> | next [YYYY-MM-DD]');
+    console.error('usage: bun scripts/version.ts check | set <version> | next');
     process.exit(2);
   }
 }

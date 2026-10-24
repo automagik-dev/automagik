@@ -2,7 +2,7 @@
 
 The [README](../README.md) is for people who use the app. This page is for people who build, release or change it.
 
-It is Automagik's Bot team on a [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) of its own, with the plugins already in it: the Bot team and the welcome from this repository (`apps/bots-dsh`, `apps/welcome-dsh`), and Omni's channels and canvases from one Omni release (`omni.json`). The app carries Automagik's version (`3.YYMMDD.N`, the repository's), like the plugins built beside it.
+It is Automagik's Bot team on a [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) of its own, with the plugins already in it: the Bot team and the welcome from this repository (`apps/bots-dsh`, `apps/welcome-dsh`), and Omni's channels and canvases from one Omni release (`omni.json`). The app carries Automagik's version (`3.N.0`, the repository's), like the plugins built beside it.
 
 Until 2.261023.x it was automagik-dev/omni-desktop, versioned as the Omni release it carried, and until 3.261023.x it was named Omni. Its last release there is this app, so an installed omni-desktop updates into it and then follows this repository's releases. On its first start an update moves the profile from the old plugin names (`@automagik/omni-dsh`, `@automagik/omni-ai-dsh`) to the new ones, keeping every setting row, and the Bot team's home is untouched (`src/dsh.js` `migrateRenamed`).
 
