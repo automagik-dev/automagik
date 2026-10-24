@@ -77,9 +77,9 @@ A build follows its own channel: a stable release only moves to newer stable rel
 
 ## Was it called Omni?
 
-Until October 2026 this app was called Omni. An installed Omni updates itself into Automagik like any other update, and keeps everything: your Bots, chats, memory, settings and the Omni you linked. Nothing to do.
+Until October 2026 this app was called Omni. An installed Omni updates itself into Automagik like any other update (the notice still says **Omni X is ready**: the old app shows it), and keeps everything: your Bots, chats, memory, settings and the Omni you linked. Nothing to do.
 
-- **Mac:** the app updates where it is, so its file in Applications stays **Omni**, and Finder, Launchpad and the Dock go on showing that name, while its window and menu bar say Automagik. You can rename it to Automagik in Finder (quit it first); it keeps updating either way. Don't also install Automagik-Mac.dmg next to it: that gives you two copies of one app.
+- **Mac:** the app updates where it is, so its file in Applications stays **Omni**, and Finder, Launchpad and the Dock may go on showing that name, while its window and menu bar say Automagik. You can rename it to Automagik in Finder (quit it first); it keeps updating either way. Don't also install Automagik-Mac.dmg next to it: that gives you two copies of one app.
 - **Linux AppImage:** the new AppImage takes the old one's place in the same folder, named `Automagik-<version>-linux-x86_64.AppImage`. One whose name has no version in it (say, one you renamed) is replaced under its own name.
 - **Linux .deb:** install the new .deb over the old one, as with any update. It is still the package `omni`, so it replaces the old one cleanly.
 

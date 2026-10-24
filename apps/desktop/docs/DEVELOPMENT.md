@@ -20,7 +20,7 @@ The app is **Automagik** wherever a person sees it: the bundle and its menu bar,
 
 There are no keychain items to carry: Electron keeps its cookies unencrypted (the cookie-encryption fuse is off), the app uses no `safeStorage`, and its credentials are the files above.
 
-What an updated install shows: the window, title bar, update notice and (macOS) menu bar say Automagik. On macOS the updater replaces the bundle where it is, so it stays `/Applications/Omni.app` and Finder, Launchpad and the Dock keep that name until the person renames it; a fresh install from the dmg is `Automagik.app`. A versioned AppImage is replaced by `Automagik-<version>-linux-x86_64.AppImage` in the same folder (electron-updater keeps a name without a version as it is).
+What an updated install shows: the update into the rename is announced by the installed app, so that one notice still reads "Omni <version> is ready"; after the restart the window, title bar, later notices and (macOS) menu bar and About say Automagik. On macOS the updater replaces the bundle where it is, so it stays `/Applications/Omni.app` (with `CFBundleName` and `CFBundleDisplayName` Automagik and the executable `Contents/MacOS/Automagik`), and Finder, Launchpad and the Dock may keep showing the file's name until the person renames it; a fresh install from the dmg is `Automagik.app`. A versioned AppImage is replaced by `Automagik-<version>-linux-x86_64.AppImage` in the same folder (electron-updater keeps a name without a version as it is).
 
 > Labs: macOS (Apple silicon, signed and notarized) and Linux x64 (AppImage, deb; also WSL with WSLg). Windows itself is not supported.
 
