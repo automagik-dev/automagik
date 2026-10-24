@@ -186,11 +186,11 @@ await page.getByRole('button', { name: 'Close details' }).first().click()
 await page.waitForTimeout(600)
 
 // A lasting preference said in passing is kept by the memory review in the
-// background, and the header pill stretches to say so; clicking it opens the memory.
+// background, and the header pill shows up to say so; clicking it opens the memory.
 await send('以后给我的文档都用 Markdown 表格总结要点')
 check(await waits(page.getByText('收到：以后', { exact: false }).last()), 'Writer answers again')
 const pill = page.locator('.bt-pill[data-memory=updated]')
-check(await waits(pill, 20_000), 'the header pill stretches to say memory was updated')
+check(await waits(pill, 20_000), 'the header pill says memory was updated')
 await shot('memory-pill')
 await pill.click()
 check(await waits(memory.locator('.bt-mem-summary')), 'the pill opens the memory dialog')

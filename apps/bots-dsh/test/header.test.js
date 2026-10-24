@@ -58,6 +58,16 @@ test('the Bot header has no right sidebar button', () => {
   assert.equal(sideButton(header({})), null)
 })
 
+const byClass = (node, className) => {
+  if (node === null || typeof node !== 'object') return null
+  if (node.props?.className === className) return node
+  for (const child of node.children ?? []) {
+    const found = byClass(child, className)
+    if (found) return found
+  }
+  return null
+}
+
 test('a Bot in another Conversation View can return to chat without changing its draft', () => {
   const state = { view: 'study-workspace', draft: 'Keep this draft', viewRequest: null }
   const views = [{ id: 'chat' }, { id: 'study-workspace' }]
@@ -67,27 +77,33 @@ test('a Bot in another Conversation View can return to chat without changing its
     selectView: view => { state.view = view },
   }
   const actions = { toggleDetails: () => { details += 1 } }
-  const pill = header(actions, navigation).children[0]
+  const away = header(actions, navigation)
+  const pill = byClass(away, 'bt-pill')
   assert.equal(pill.props['aria-label'], 'Back to chat')
   assert.equal(pill.props['aria-expanded'], undefined)
   assert.equal(pill.props.title, 'Omni')
+  assert.equal(byClass(away, 'bt-head-details'), null)
   pill.props.onClick()
   assert.equal(state.view, 'chat')
   assert.equal(state.draft, 'Keep this draft')
   assert.equal(details, 0)
-  const restored = header(actions, navigation).children[0]
-  assert.equal(restored.props['aria-label'], 'View conversation details')
-  restored.props.onClick()
+  const restored = header(actions, navigation)
+  assert.equal(byClass(restored, 'bt-pill'), null)
+  byClass(restored, 'bt-head-details').props.onClick()
   assert.equal(details, 1)
 })
 
-test('a missing View or navigation face keeps the ordinary Bot header', () => {
+test('the header does not repeat the open chat\'s name; a small button opens its details', () => {
   const views = [{ id: 'chat' }, { id: 'trajectory' }]
   for (const view of [null, 'chat', 'uninstalled-plugin']) {
-    const pill = header({}, { useStore: hook({ view }), useConversationViews: hook(views), selectView() {} }).children[0]
-    assert.equal(pill.props['aria-label'], 'View conversation details')
+    const head = header({}, { useStore: hook({ view }), useConversationViews: hook(views), selectView() {} })
+    assert.equal(byClass(head, 'bt-pill'), null)
+    assert.equal(byClass(head, 'bt-head-details').props['aria-label'], 'View conversation details')
   }
-  assert.equal(header({}).children[0].props['aria-label'], 'View conversation details')
+  const plain = header({})
+  assert.equal(byClass(plain, 'bt-pill'), null)
+  assert.equal(byClass(plain, 'bt-pill-name'), null)
+  assert.equal(byClass(plain, 'bt-head-details').props['aria-expanded'], false)
 })
 
 test('the replacement header shares DSH\'s store and navigation injection without declaring its children again', () => {
