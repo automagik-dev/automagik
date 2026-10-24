@@ -54,7 +54,7 @@ export function writeTools({ dir, node, pnpm }) {
   }
   for (const [name, line] of Object.entries(tools)) {
     const file = join(dir, name)
-    writeFileSync(file, `#!/bin/sh\n# Written by the Omni desktop app at launch (src/dsh.js writeTools).\n${line}\n`)
+    writeFileSync(file, `#!/bin/sh\n# Written by the Automagik desktop app at launch (src/dsh.js writeTools).\n${line}\n`)
     chmodSync(file, 0o755)
   }
   return dir
