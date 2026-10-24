@@ -9,36 +9,13 @@
 </head>
 <!-- The app window's frame (src/frame.js): the title bar, and the Automagik mark waking up
      while the app starts. dsh's page itself is a view main.js lays over the area below the bar.
-     The mark is the triskelion the clay theme draws as the logo (apps/bots-dsh
-     src/client/logo.js MARK): a cyan piece nudged left and a magenta one right under the
-     shape itself, which takes the ink. -->
+     The mark is the owner's clay triskelion (shell.css --mark, the same picture as apps/bots-dsh
+     src/client/art/mark.webp). -->
 <body>
-<svg class="defs" aria-hidden="true" focusable="false">
-  <defs>
-    <path id="mark" d="M61.6 6.7L118.4 103.6L98.6 103.6L61.6 41.8L24.6 103.6L4.4 103.6ZM137.9 55.1L188.2 145.3L84.9 145.3L94.8 127.8L158.1 127.8L127.6 72.7ZM65 93.6L75 111.9L43.7 167.8L107.7 167.8L117.7 185.5L13.6 185.5Z"/>
-    <!-- A piece of clay lit from the upper left: a highlight bevel on its upper left, a shade
-         bevel on its lower right, and its ledge (its own side, seen under it). -->
-    <filter id="clay" x="-15%" y="-15%" width="130%" height="140%" color-interpolation-filters="sRGB">
-      <feGaussianBlur in="SourceAlpha" stdDeviation="3.2" result="soft"/>
-      <feOffset in="soft" dx="4" dy="5" result="down"/>
-      <feComposite in="SourceAlpha" in2="down" operator="out" result="rimHi"/>
-      <feFlood class="shine"/>
-      <feComposite in2="rimHi" operator="in" result="hi"/>
-      <feOffset in="soft" dx="-4" dy="-5" result="up"/>
-      <feComposite in="SourceAlpha" in2="up" operator="out" result="rimLo"/>
-      <feFlood class="shade"/>
-      <feComposite in2="rimLo" operator="in" result="lo"/>
-      <feOffset in="SourceAlpha" dy="7" result="side"/>
-      <feFlood class="ledge"/>
-      <feComposite in2="side" operator="in" result="ledge"/>
-      <feMerge><feMergeNode in="ledge"/><feMergeNode in="SourceGraphic"/><feMergeNode in="hi"/><feMergeNode in="lo"/></feMerge>
-    </filter>
-  </defs>
-</svg>
 <div class="frame">
   <header class="bar">
     <div class="brand">
-      <svg viewBox="-10.7 0 214 192.6" aria-hidden="true" focusable="false"><use href="#mark" class="cyan" transform="translate(-10.7 0)"/><use href="#mark" class="magenta" transform="translate(10.7 0)"/><use href="#mark" class="ink"/></svg>
+      <i class="brand-mark" aria-hidden="true"></i>
       <b>Automagik</b><span class="chip">labs</span>
     </div>
     <div class="spacer"></div>
@@ -51,9 +28,7 @@
   </header>
   <main class="splash" aria-live="polite">
     <div class="waking">
-      <svg class="mark" viewBox="-12 0 216.6 192.6" aria-hidden="true" focusable="false">
-        <g filter="url(#clay)"><use href="#mark" class="cyan" transform="translate(-4.3 0)"/><use href="#mark" class="magenta" transform="translate(4.3 0)"/><use href="#mark" class="ink"/></g>
-      </svg>
+      <i class="mark" aria-hidden="true"></i>
       <div class="floor"></div>
     </div>
     <p id="status">Waking up…</p>
