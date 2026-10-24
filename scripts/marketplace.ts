@@ -15,6 +15,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseMarketIndex } from '@deepseek-ai/dsh-plugin-market-index';
+import { VERSION } from './version';
 
 export const REPO_URL = 'https://github.com/automagik-dev/automagik';
 export const INDEX_PATH = join(import.meta.dir, '..', 'marketplace', 'automagik.json');
@@ -97,13 +98,14 @@ export function checkIndex(value: unknown, repoDir: string): string[] {
  * List every plugin at `ref`, at the version its package.json carries there. A version already
  * listed is re-pointed only when its folder is byte-identical at `ref`: what a listed version
  * installs never changes. Versions whose commit is not a release (`v<version>` tag) are
- * dropped: the index lists releases only.
+ * dropped: the index lists releases only, and only 3.N.0 ones: the first releases' calendar
+ * versions (3.YYMMDD.N) sort above every 3.N, so a market would take one for the newest.
  */
 export function pinIndex(value: Index, repoDir: string, ref: string): Index {
   const commit = git(repoDir, ['rev-parse', `${ref}^{commit}`]);
   const publishTimestamp = Number(git(repoDir, ['show', '-s', '--format=%ct', commit]));
   const released = (entry: IndexVersion) =>
-    isOurs(entry.source) && gitOk(repoDir, ['rev-parse', '--verify', '--quiet', `refs/tags/v${entry.version}`]) &&
+    VERSION.test(entry.version) && isOurs(entry.source) && gitOk(repoDir, ['rev-parse', '--verify', '--quiet', `refs/tags/v${entry.version}`]) &&
     git(repoDir, ['rev-parse', `v${entry.version}^{commit}`]) === entry.source.commit;
   for (const plugin of value.plugins) {
     const latest = plugin.versions.find((entry) => isOurs(entry.source));

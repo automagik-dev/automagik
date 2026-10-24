@@ -55,6 +55,9 @@ export const ONBOARD_CSS = `
 .oai-fighter h2{margin:0;font:800 21px/1.2 var(--oai-head);letter-spacing:-.02em}
 .oai-fighter p{margin:0;color:var(--oai-ink2);font-size:14px}
 .oai-about{font-size:13.5px!important}
+/* A wish is the clay lamp it comes out of. */
+.oai-wish{display:flex;align-items:center;gap:10px}
+.oai-wish-lamp{flex:none;width:46px;height:auto;filter:drop-shadow(0 3px 2px rgba(91,59,34,.18));-webkit-user-drag:none;user-select:none}
 /* The niche: a hollow in the card where the character rests. Asleep, the light leaves it. */
 .oai-box{position:relative;height:340px;display:grid;grid-template-rows:32px 136px 24px 1fr;padding:12px 14px 14px;border-radius:20px 23px 19px 22px;overflow:hidden;
   ${recessed('color-mix(in srgb,var(--oai-cyan) 9%,var(--oai-card))')};transition:background-color .6s ease}

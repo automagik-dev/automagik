@@ -1,7 +1,7 @@
 import { createElement as h, useEffect, useRef, useState } from 'react'
 import { call, callOmniUi } from './api.js'
 import { OCTOPUS_SVG, omniFace } from './octopus.js'
-import { CLAY_OMNI, faceAt } from './vendor/clay-art.js'
+import { CLAY_OMNI, LAMP, faceAt } from './vendor/clay-art.js'
 import { Stage, reducedMotion, useFinish, useGate, useGlitch } from './stage.js'
 
 // Step omni-team (order -270): who joins the companion's team. Each Bot type is a card with
@@ -567,7 +567,9 @@ export function TeamStep(props) {
           genie
             ? h('span', { className: 'oai-team-line' }, h('span', { className: 'oai-on-team' }, h(Check), 'On your team'), h('button', { type: 'button', className: 'oai-remove', onClick: () => setGenieChoice(false) }, 'Remove'))
             : h('button', { type: 'button', className: 'oai-remove', onClick: () => setGenieChoice(true) }, 'Add')),
-        h('p', { className: 'oai-about' }, 'Give it a wish, get one delivery.'),
+        h('p', { className: 'oai-about oai-wish' },
+          h('img', { className: 'oai-wish-lamp', src: LAMP, alt: '', draggable: false }),
+          'Give it a wish, get one delivery.'),
         h(StartsWith, { type: GENIE_TYPE }))))),
   problem ? h('p', { className: 'oai-error', role: 'alert' }, problem) : null,
   h('div', { className: 'oai-actions' },

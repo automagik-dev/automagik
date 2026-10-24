@@ -6,7 +6,7 @@ const read = file => JSON.parse(readFileSync(new URL(`../${file}`, import.meta.u
 
 test("the app carries Automagik's version, the same as every package in this repository", () => {
   const version = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')).version
-  assert.match(version, /^\d+\.\d{6}\.\d+$/)
+  assert.match(version, /^3\.\d+\.0$/)
   assert.equal(read('package.json').version, version)
   const lock = read('package-lock.json')
   assert.equal(lock.version, version)

@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/icon.png" width="112" alt="The octopus"></p>
+<p align="center"><img src="assets/icon.png" width="112" alt="The Automagik mark"></p>
 
 <h1 align="center">Automagik</h1>
 
