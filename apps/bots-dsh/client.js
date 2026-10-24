@@ -3816,12 +3816,15 @@ var duration = (ms) => {
 };
 var runningTasksOf = (roster, botId) => Object.entries(roster.tasks ?? {}).filter(([, task]) => task.from === botId && task.status === "working").map(([sessionId, task]) => ({ sessionId, ...task })).sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
 var waitsForUser = (status, sessionId) => status?.get(sessionId)?.pendingInteraction !== void 0;
+var approvalFor = (work, sessionId) => (work?.approvals ?? []).some((entry) => entry.taskId === sessionId);
 var taskState = (task, waiting) => {
   const status = task?.status ?? "working";
   return status === "working" && waiting ? "waiting" : status;
 };
-function TaskCard({ sessionId, title, task, onOpen, useSessionStatus }) {
-  const waiting = useSessionStatus && sessionId ? useSessionStatus((map) => waitsForUser(map, sessionId)) : false;
+function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, useWork }) {
+  const asked = useSessionStatus && sessionId ? useSessionStatus((map) => waitsForUser(map, sessionId)) : false;
+  const approval = useWork && sessionId ? useWork((work) => approvalFor(work, sessionId)) : false;
+  const waiting = asked || approval;
   const status = taskState(task, waiting);
   const working = status === "working" || status === "waiting";
   const now = useNow(working);
@@ -9287,7 +9290,7 @@ function renderCall(call2, { sessionId, roster, actions, useUi, useWork, useSess
     case "start_task": {
       const started = done ? /\((session-[^)]+)\) under Tasks/.exec(contentText(call2.content))?.[1] : void 0;
       if (done && !started) return (0, import_react19.createElement)("div", { className: "bt-event" }, contentText(call2.content).slice(0, 160));
-      return (0, import_react19.createElement)(TaskCard, { sessionId: started, title: arg("title") ?? t("a task"), task: started ? roster.tasks?.[started] : void 0, onOpen: () => started && actions.openSession(started), useSessionStatus });
+      return (0, import_react19.createElement)(TaskCard, { sessionId: started, title: arg("title") ?? t("a task"), task: started ? roster.tasks?.[started] : void 0, onOpen: () => started && actions.openSession(started), useSessionStatus, useWork });
     }
     case "message_bot": {
       const target = findBot(arg("to")) ?? { name: arg("to") ?? "…", color: "gray" };
@@ -9664,10 +9667,12 @@ function useMinute(on) {
   return now;
 }
 var THREADS_SHOWN = 3;
-function BotThreads({ bot, roster, actions, useSessions, useSessionStatus, wide }) {
+function BotThreads({ bot, roster, actions, useSessions, useSessionStatus, useWork, wide }) {
   const tasks = runningTasksOf(roster, bot.id);
   const ids = tasks.map((task) => task.sessionId);
-  const waitingKey = useSessionStatus((map) => ids.filter((id) => waitsForUser(map, id)).join(","));
+  const askedKey = useSessionStatus((map) => ids.filter((id) => waitsForUser(map, id)).join(","));
+  const approvalKey = useWork ? useWork((work) => ids.filter((id) => approvalFor(work, id)).join(",")) : "";
+  const waitingKey = `${askedKey},${approvalKey}`;
   const shownId = useSessions((list) => ids.find((id) => (list.byId[id]?.retainedBy?.mainView ?? 0) > 0) ?? "");
   const [open, setOpen] = (0, import_react21.useState)(false);
   const now = useMinute(wide && tasks.length > 0);
@@ -18997,7 +19002,7 @@ function noticeApprovals({ work, roster, shownSession, openSession, since = Date
       });
       note.onclick = () => {
         window.focus();
-        openSession(entry.roomId ?? entry.botId);
+        openSession(entry.taskId ?? entry.roomId ?? entry.botId);
         note.close();
       };
     }

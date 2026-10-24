@@ -26,7 +26,8 @@ export function noticeApprovals({ work, roster, shownSession, openSession, since
       })
       note.onclick = () => {
         window.focus()
-        openSession(entry.roomId ?? entry.botId)
+        // A task's approval is answered in the task itself.
+        openSession(entry.taskId ?? entry.roomId ?? entry.botId)
         note.close()
       }
     }

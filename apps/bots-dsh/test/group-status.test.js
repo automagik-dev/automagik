@@ -24,9 +24,9 @@ const seed = () => ({
   revision: 0,
 })
 
-async function start() {
+async function start(extra = {}) {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-status-'))
-  writeFileSync(join(home, 'state.json'), JSON.stringify(seed()))
+  writeFileSync(join(home, 'state.json'), JSON.stringify({ ...seed(), ...extra }))
   const ctx = fakeContext()
   const agents = new Map()
   const agentOf = (sessionId) => {
@@ -130,6 +130,28 @@ test('a group Session\'s approval waits in the team view, frees the round, and t
   const post = host.agentOf('r1').calls[0]
   assert.deepEqual([post.source.role, post.source.late, post.source.senderSessionId], ['post', true, 'b'])
   assert.equal(text(post), '[Group post from Writer]\nCopied the doc to E:/docs.')
+})
+
+test('a running task\'s approval stays with DSH and waits under the Bot that started it', async (t) => {
+  const host = await start({ tasks: {
+    t1: { title: 'Plan the launch week', from: 'a', at: 1, status: 'working' },
+    t2: { title: 'Old report', from: 'a', at: 1, status: 'done' },
+  } })
+  t.after(host.stop)
+  let release
+  const outcome = host.askApproval('t1', {}, () => new Promise((resolve) => { release = resolve }))
+  const { value } = await host.call('state', {})
+  const [approval] = value.work.approvals
+  assert.deepEqual([approval.botId, approval.taskId, approval.sessionId, approval.roomId, approval.answerable], ['a', 't1', 't1', undefined, false])
+  // The Bot shows it needs the user.
+  assert.equal(value.activity.a, 'alert')
+  release('allowed-once')
+  assert.equal(await outcome, 'allowed-once')
+  assert.deepEqual((await host.call('state', {})).value.work.approvals, [])
+  // A finished task, or a Session the team does not know, goes to DSH untracked.
+  assert.equal(await host.askApproval('t2'), 'from-dsh')
+  assert.equal(await host.askApproval('elsewhere'), 'from-dsh')
+  assert.deepEqual((await host.call('state', {})).value.work.approvals, [])
 })
 
 test('an own chat\'s approval stays with DSH and is listed while it waits', async (t) => {

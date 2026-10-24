@@ -51,7 +51,7 @@ const NOW = Date.now()
 const pip = { id: 'pip', name: 'Pip', role: 'Orchestrator', sessionId: 'pip', createdAt: 1 }
 const omni = { id: 'omni', name: 'Omni', kind: 'omni', sessionId: 'omni', createdAt: 2 }
 
-function sidebar({ tasks, waiting = [], wide = true }) {
+function sidebar({ tasks, waiting = [], approvals = [], wide = true }) {
   const roster = {
     bots: [pip, omni], rooms: [], agents: [], byId: { pip, omni }, roomsById: {}, agentOf: {},
     mainBotId: 'pip', mainBotIds: ['pip'], exchangeTurns: {}, questions: {}, ready: true, tasks,
@@ -65,7 +65,7 @@ function sidebar({ tasks, waiting = [], wide = true }) {
     useSessionStatus: pick => pick(status),
     useSessionRetainInfo: (_id, pick) => pick(undefined),
     useActivity: pick => pick({}),
-    useWork: pick => pick({ approvals: [], rooms: {}, waiting: {} }),
+    useWork: pick => pick({ approvals, rooms: {}, waiting: {} }),
   })
   const threadsOf = id => find(tree, named('BotThreads')).find(node => node.props.bot.id === id)
   const rowOf = id => find(tree, named('BotRow')).find(node => node.props.bot.id === id)
@@ -156,4 +156,16 @@ test('the task card in the chat shows the same state as the thread', () => {
   assert.match(textOf(working), /Task running/)
   // Without the shell's status hook the card still draws, as working.
   assert.equal(TaskCard({ sessionId: 'session-b', title: 'x', task: task('pip', 'x', 0) }).props['data-state'], 'working')
+})
+
+test('a task waiting on an approval the host noted for it is amber too, in the sidebar and its card', () => {
+  const approvals = [{ id: 'k1', sessionId: 'session-a', botId: 'pip', taskId: 'session-a', tool: 'bash' }]
+  const { threadsOf } = sidebar({ tasks: { 'session-a': task('pip', 'Deploy the site', 2) }, approvals })
+  const group = threadsOf('pip').type(threadsOf('pip').props)
+  assert.deepEqual(find(group, node => node.props?.className === 'bt-thread').map(row => row.props['data-state']), ['waiting'])
+  const card = TaskCard({
+    sessionId: 'session-a', title: 'Deploy the site', task: task('pip', 'Deploy the site', 2),
+    useSessionStatus: pick => pick(new Map()), useWork: pick => pick({ approvals }),
+  })
+  assert.equal(card.props['data-state'], 'waiting')
 })

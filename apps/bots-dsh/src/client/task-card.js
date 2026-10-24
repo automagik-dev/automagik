@@ -28,8 +28,10 @@ export const runningTasksOf = (roster, botId) => Object.entries(roster.tasks ?? 
   .map(([sessionId, task]) => ({ sessionId, ...task }))
   .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
 
-// Whether a task's Session waits for the user: DSH's approval or question card is up there.
+// Whether a task's Session waits for the user: DSH's approval or question card is up there,
+// or the team's host noted an approval the task waits on (approvals.js `taskId`).
 export const waitsForUser = (status, sessionId) => status?.get(sessionId)?.pendingInteraction !== undefined
+export const approvalFor = (work, sessionId) => (work?.approvals ?? []).some(entry => entry.taskId === sessionId)
 
 // A task's state for its card and its thread in the sidebar: working, waiting (for the
 // user), done or failed.
@@ -38,8 +40,10 @@ export const taskState = (task, waiting) => {
   return status === 'working' && waiting ? 'waiting' : status
 }
 
-export function TaskCard({ sessionId, title, task, onOpen, useSessionStatus }) {
-  const waiting = useSessionStatus && sessionId ? useSessionStatus(map => waitsForUser(map, sessionId)) : false
+export function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, useWork }) {
+  const asked = useSessionStatus && sessionId ? useSessionStatus(map => waitsForUser(map, sessionId)) : false
+  const approval = useWork && sessionId ? useWork(work => approvalFor(work, sessionId)) : false
+  const waiting = asked || approval
   const status = taskState(task, waiting)
   const working = status === 'working' || status === 'waiting'
   const now = useNow(working)

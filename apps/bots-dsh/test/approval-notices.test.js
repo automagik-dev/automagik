@@ -62,3 +62,12 @@ test('no notification for the conversation on screen, for approvals older than t
   denied.work.set({ bots: {}, approvals: [{ id: 'x1', botId: 'b', roomId: 'r1', tool: 'pwsh', at: 200 }] })
   assert.equal(denied.shown.length, 0)
 })
+
+test('a task\'s approval notification opens the task, where it is answered', () => {
+  const page = windowWith()
+  page.noticeApprovals({ work: page.work, roster: page.roster, shownSession: () => 'a', openSession: page.openSession, since: 100 })
+  page.work.set({ bots: {}, approvals: [{ id: 'x1', botId: 'b', taskId: 't1', sessionId: 't1', tool: 'bash', at: 200 }] })
+  assert.equal(page.shown.length, 1)
+  page.shown[0].onclick()
+  assert.deepEqual(page.opened, ['t1'])
+})

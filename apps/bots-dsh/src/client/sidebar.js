@@ -11,7 +11,7 @@ import { springEasing, SPRING_SHAPE, useViewport, viewBottom } from './motion.js
 import { hostText, t } from './i18n.js'
 import { showsDshRow } from './dsh-offer.js'
 import { badges, botChildren, nav, useEntries } from './extend.js'
-import { runningTasksOf, taskState, waitsForUser } from './task-card.js'
+import { approvalFor, runningTasksOf, taskState, waitsForUser } from './task-card.js'
 
 // -------------------------------------------------------------------------
 // Sidebar
@@ -134,12 +134,15 @@ export const THREADS_SHOWN = 3
 
 // The tasks a Bot started (start_task, agents.js) while they run, as threads under its row
 // in the wide sidebar: a spinner while one works, an amber dot while it waits for the user
-// (its Session holds DSH's approval or question card), with its title and age. Waiting ones
+// (its Session holds DSH's approval or question card, or an approval the host noted for
+// it), with its title and age. Waiting ones
 // come first; past THREADS_SHOWN the rest fold into a count. A thread opens its task.
-function BotThreads({ bot, roster, actions, useSessions, useSessionStatus, wide }) {
+function BotThreads({ bot, roster, actions, useSessions, useSessionStatus, useWork, wide }) {
   const tasks = runningTasksOf(roster, bot.id)
   const ids = tasks.map(task => task.sessionId)
-  const waitingKey = useSessionStatus(map => ids.filter(id => waitsForUser(map, id)).join(','))
+  const askedKey = useSessionStatus(map => ids.filter(id => waitsForUser(map, id)).join(','))
+  const approvalKey = useWork ? useWork(work => ids.filter(id => approvalFor(work, id)).join(',')) : ''
+  const waitingKey = `${askedKey},${approvalKey}`
   const shownId = useSessions(list => ids.find(id => (list.byId[id]?.retainedBy?.mainView ?? 0) > 0) ?? '')
   const [open, setOpen] = useState(false)
   const now = useMinute(wide && tasks.length > 0)
