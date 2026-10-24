@@ -81,7 +81,7 @@ jobs:
             const file = "apps/desktop/omni.json"
             const json = JSON.parse(fs.readFileSync(file, "utf8"))
             fs.writeFileSync(file, JSON.stringify({ ...json, version, commit }, null, 2) + "\n")
-            // The welcome installs the same release of Omni's plugins in a plain DSH.
+            // The welcome installs the same release of the Omni plugins in a plain DSH.
             const welcome = "apps/welcome-dsh/package.json"
             const pkg = JSON.parse(fs.readFileSync(welcome, "utf8"))
             pkg.automagik.omni = { ...pkg.automagik.omni, version, commit }
