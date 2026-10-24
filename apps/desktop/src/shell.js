@@ -30,7 +30,7 @@ function showUpdate(view) {
   for (const action of view.actions ?? []) {
     const button = document.createElement('button')
     button.type = 'button'
-    button.className = action.primary ? 'primary' : ''
+    button.className = action.primary ? 'piece primary' : 'piece'
     button.textContent = action.label
     button.addEventListener('click', () => act(action.act))
     area.append(button)

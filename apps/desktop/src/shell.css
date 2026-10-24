@@ -1,49 +1,109 @@
-/* The app window's frame: see shell.html and src/frame.js (BAR_HEIGHT, INSET, RADIUS). */
-:root{--bar:40px;--radius:14px;--ink:#eef3ff;--ink2:#9fb0cc;--accent:#22d3c5;--violet:#7c5cff}
-html,body{margin:0;height:100%;overflow:hidden;background:transparent;color:var(--ink);font:13px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;user-select:none}
-.frame{position:fixed;inset:0;border-radius:var(--radius);overflow:hidden;
-  background:
-    radial-gradient(90% 70% at 0% 0%,rgba(124,92,255,.26),transparent 62%),
-    radial-gradient(80% 60% at 100% 100%,rgba(34,211,197,.18),transparent 60%),
-    linear-gradient(180deg,#0c1330,#060914 55%,#04060e);
-  box-shadow:inset 0 0 0 1px rgba(160,190,255,.16),inset 0 1px 0 rgba(255,255,255,.08)}
-body.max .frame{border-radius:0;box-shadow:none}
-/* macOS rounds the window itself and blurs what is behind it (vibrancy). */
-body.darwin .frame{border-radius:0;box-shadow:none;background:linear-gradient(180deg,rgba(12,19,48,.72),rgba(4,6,14,.86))}
+/* The app window's frame: see shell.html and src/frame.js (BAR_HEIGHT, RADIUS, TABLE).
+   The clay theme of the app inside (apps/bots-dsh src/client/clay.js), restated here: a calm
+   cream table by day, the same clay at night, as the system is set. Every button is a piece
+   of clay lit from the upper left: a highlight bevel on its upper left, a shade bevel on its
+   lower right, a ledge (its own side, seen under it) and a soft contact shadow. At rest it
+   stands on its ledge, under the pointer it lifts, pressed it sinks onto the ledge. */
+@font-face{font-family:"DM Sans";font-style:normal;font-weight:100 1000;font-display:swap;src:url("fonts/dm-sans-latin.woff2") format("woff2")}
+@font-face{font-family:Manrope;font-style:normal;font-weight:200 800;font-display:swap;src:url("fonts/manrope-latin.woff2") format("woff2")}
+:root{
+  --bar:40px;--radius:14px;
+  --font:"DM Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --head:Manrope,"DM Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --table:#f6eee2;--card:#fbf5ec;--cream:#f2e6d5;--niche:#ebdecb;
+  --ink:#3c3049;--ink2:#6c5f71;--edge:rgba(91,59,34,.14);
+  --cyan:#8fdcec;--cyan-ink:#1d4753;--pink:#f0bddf;--lilac:#e0cff3;--lilac-ink:#45305e;
+  --logo-cyan:#2bc3b6;--logo-magenta:#d1376b;
+  --ember:#f1b2a7;--ember-ink:#7a2b23;--bad:#b93a32;
+  --shine:#fff;--umber:#5b3b22;--hi:42%;--lo:80%;--ledge:72%;
+  --cast:rgba(111,81,53,.2);--cast-far:rgba(121,91,53,.1);--ring:#b4498f;
+  --mark-shine:rgba(255,255,255,.42);--mark-shade:rgba(30,16,40,.38);--mark-ledge:#241a2e;
+  --r-sm:12px 14px 12px 13px;--r-lg:24px 28px 23px 27px;
+  color-scheme:light}
+@media (prefers-color-scheme:dark){:root{
+  --table:#1e1923;--card:#2a2330;--cream:#322a39;--niche:#16121a;
+  --ink:#f3e9dd;--ink2:#bcadb8;--edge:rgba(255,240,225,.10);
+  --cyan:#5cbdd1;--cyan-ink:#0d262c;--pink:#b76aa1;--lilac:#55456b;--lilac-ink:#f4ecff;
+  --ember:#b9554b;--ember-ink:#fff1ec;--bad:#ff9a8f;
+  --shine:#fff;--umber:#000;--hi:84%;--lo:62%;--ledge:50%;
+  --cast:rgba(0,0,0,.42);--cast-far:rgba(0,0,0,.28);--ring:#f2a6dc;
+  --mark-shine:rgba(255,255,255,.55);--mark-shade:rgba(60,40,30,.42);--mark-ledge:#a8988a;
+  color-scheme:dark}}
 
-.bar{height:var(--bar);display:flex;align-items:center;gap:10px;padding:0 7px 0 14px;-webkit-app-region:drag}
+html,body{margin:0;height:100%;overflow:hidden;background:transparent;color:var(--ink);font:13px/1.4 var(--font);-webkit-font-smoothing:antialiased;user-select:none}
+.defs{position:absolute;width:0;height:0;overflow:hidden}
+.frame{position:fixed;inset:0;border-radius:var(--radius);overflow:hidden;background:var(--table);box-shadow:inset 0 0 0 1px var(--edge)}
+body.max .frame{border-radius:0;box-shadow:none}
+/* macOS rounds the window itself, on the same solid table (no vibrancy: clay is matte). */
+body.darwin .frame{border-radius:0;box-shadow:none}
+
+/* A piece of clay of colour --fill standing --d on its ledge (clay.js `raised`, with a
+   shorter shadow: the bar is 40px and dsh's page covers what falls below it). */
+.piece{--d:2px;border:0;background:var(--fill);color:inherit;cursor:pointer;
+  box-shadow:inset 2px 3px 4px color-mix(in srgb,var(--fill) var(--hi),var(--shine)),inset -3px -4px 6px color-mix(in srgb,var(--fill) var(--lo),var(--umber)),0 var(--d) 0 color-mix(in srgb,var(--fill) var(--ledge),var(--umber)),0 calc(var(--d) + 2px) calc(var(--d) + 4px) var(--cast);
+  transition:transform .16s cubic-bezier(.3,1.4,.5,1),box-shadow .16s ease,background-color .16s ease,color .16s ease}
+.piece:hover{--d:3px;transform:translateY(-1px)}
+.piece:active{transform:translateY(1px);
+  box-shadow:inset 3px 4px 6px color-mix(in srgb,var(--fill) var(--lo),var(--umber)),inset -1px -2px 3px color-mix(in srgb,var(--fill) var(--hi),var(--shine)),0 1px 0 color-mix(in srgb,var(--fill) var(--ledge),var(--umber)),0 2px 3px var(--cast)}
+.piece:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
+
+.bar{height:var(--bar);display:flex;align-items:center;gap:10px;padding:0 9px 0 14px;-webkit-app-region:drag}
 body.darwin .bar{padding-left:84px}
 .brand{display:flex;align-items:center;gap:8px}
-.brand svg{width:20px;height:20px;filter:drop-shadow(0 0 6px rgba(34,211,197,.55))}
-.brand b{font-weight:650;letter-spacing:.02em}
-.chip{font:600 9px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.16em;text-transform:uppercase;color:#7ff7ea;border:1px solid rgba(127,247,234,.28);background:rgba(34,211,197,.08);border-radius:999px;padding:4px 7px 3px}
+.brand svg{width:20px;height:18px}
+.brand b{font:700 14px/1 var(--head);letter-spacing:-.005em}
+.cyan{fill:var(--logo-cyan)}
+.magenta{fill:var(--logo-magenta)}
+.ink{fill:var(--ink)}
+.chip{--fill:var(--lilac);font:700 9px/1 var(--head);letter-spacing:.14em;text-transform:uppercase;color:var(--lilac-ink);border-radius:999px;padding:4px 7px 3px;
+  background:var(--fill);box-shadow:inset 1px 2px 2px color-mix(in srgb,var(--fill) var(--hi),var(--shine)),inset -1px -2px 3px color-mix(in srgb,var(--fill) var(--lo),var(--umber)),0 1px 0 color-mix(in srgb,var(--fill) var(--ledge),var(--umber))}
 .spacer{flex:1}
 
 [hidden]{display:none!important}
-.update{-webkit-app-region:no-drag;display:flex;align-items:center;gap:8px;color:var(--ink2);font:600 11px/1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;letter-spacing:.02em}
+.update{-webkit-app-region:no-drag;display:flex;align-items:center;gap:8px;color:var(--ink2);font:500 12px/1 var(--font)}
 .update-text{white-space:nowrap}
-.update button{height:24px;padding:0 11px;border-radius:999px;border:1px solid rgba(127,247,234,.22);background:rgba(34,211,197,.06);color:var(--ink);font:inherit;cursor:pointer;transition:background .15s,color .15s,box-shadow .15s}
-.update button:hover{background:rgba(34,211,197,.14)}
-.update button.primary{color:#06121f;border-color:transparent;background:linear-gradient(90deg,var(--accent),#7ff7ea);box-shadow:0 0 14px rgba(34,211,197,.45)}
-.update button.primary:hover{box-shadow:0 0 20px rgba(34,211,197,.7)}
+.update button{--fill:var(--card);height:25px;padding:0 12px;border-radius:var(--r-sm);color:var(--ink);font:600 12px/1 var(--font)}
+.update button.primary{--fill:var(--cyan);color:var(--cyan-ink)}
 body.darwin .update{margin-right:7px}
-.controls{display:flex;gap:6px;-webkit-app-region:no-drag}
+.controls{display:flex;gap:8px;margin-bottom:2px;-webkit-app-region:no-drag}
 body.darwin .controls{display:none}
-.controls button{width:28px;height:28px;padding:0;border:0;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.05);color:var(--ink2);cursor:pointer;transition:background .15s,color .15s,box-shadow .15s}
-.controls button:hover{background:rgba(255,255,255,.12);color:var(--ink)}
-.controls button.close:hover{background:#ff4f7b;color:#fff;box-shadow:0 0 14px rgba(255,79,123,.55)}
-.controls svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round}
+.controls button{--fill:var(--cream);width:26px;height:26px;padding:0;border-radius:50%;display:grid;place-items:center;color:var(--ink2)}
+.controls button:hover{color:var(--ink)}
+.controls button.close:hover,.controls button.close:active{--fill:var(--ember);color:var(--ember-ink)}
+.controls svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round}
 .controls .shrink,body.max .controls .grow{display:none}
 body.max .controls .shrink{display:block}
 
-.splash{position:absolute;top:var(--bar);left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:rgba(3,5,13,.55);transition:opacity .35s}
+/* While dsh starts: one slab where its page will lie (the page's own slabs sit 8px in from
+   the table's edge), with the mark waking up on it. */
+.splash{position:absolute;top:calc(var(--bar) + 8px);left:8px;right:8px;bottom:8px;border-radius:var(--r-lg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;transition:opacity .35s;
+  background:var(--table);box-shadow:inset 3px 4px 7px color-mix(in srgb,var(--table) var(--hi),var(--shine)),inset -4px -5px 9px color-mix(in srgb,var(--table) var(--lo),var(--umber))}
 body.ready .splash{opacity:0}
-.octo{width:112px;height:112px;animation:bob 3.2s ease-in-out infinite;filter:drop-shadow(0 0 22px rgba(34,211,197,.45))}
-.octo .eyes{transform-origin:50% 37%;animation:blink 4.6s infinite}
-.splash p{margin:0;font:500 13px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;color:#9ff8ee}
-.splash p.bad{color:#ff8a9a}
-.scan{width:160px;height:2px;border-radius:2px;background:linear-gradient(90deg,transparent,var(--accent),var(--violet),transparent);background-size:200% 100%;animation:scan 1.4s linear infinite;opacity:.8}
-@keyframes bob{50%{transform:translateY(-8px)}}
-@keyframes blink{0%,94%,100%{transform:scaleY(1)}97%{transform:scaleY(.1)}}
-@keyframes scan{to{background-position:-200% 0}}
-@media (prefers-reduced-motion:reduce){.octo,.octo .eyes,.scan{animation:none}}
+.waking{position:relative;display:grid;justify-items:center}
+.mark{width:128px;height:114px;overflow:visible;position:relative;z-index:1;animation:bob 3.6s ease-in-out infinite}
+.mark .cyan{animation:part-left 3.6s ease-in-out infinite}
+.mark .magenta{animation:part-right 3.6s ease-in-out infinite}
+#clay .shine{flood-color:var(--mark-shine)}
+#clay .shade{flood-color:var(--mark-shade)}
+#clay .ledge{flood-color:var(--mark-ledge)}
+/* Its contact shadow on the slab: smaller and fainter while the piece is up. */
+.floor{width:104px;height:16px;margin-top:-4px;border-radius:50%;background:radial-gradient(closest-side,var(--cast),transparent);animation:floor 3.6s ease-in-out infinite}
+.splash p{margin:0;font:600 14px/1 var(--head);letter-spacing:.01em;color:var(--ink2)}
+.splash p.bad{color:var(--bad)}
+/* A groove pressed into the clay with a bead gliding along it. */
+.groove{position:relative;width:168px;height:10px;border-radius:999px;overflow:hidden;background:var(--niche);
+  box-shadow:inset 3px 4px 6px color-mix(in srgb,var(--niche) var(--lo),var(--umber)),inset -2px -2px 3px color-mix(in srgb,var(--niche) var(--hi),var(--shine)),0 1px 0 color-mix(in srgb,var(--table) var(--hi),var(--shine))}
+.groove i{position:absolute;top:2px;bottom:2px;left:2px;width:46px;border-radius:999px;background:linear-gradient(90deg,var(--cyan),var(--lilac),var(--pink));
+  box-shadow:inset 1px 1px 1px rgba(255,255,255,.5),inset -1px -1px 2px rgba(0,0,0,.15);animation:glide 1.8s ease-in-out infinite alternate}
+/* Could not start: the mark rests and the groove goes, the line says why. */
+.splash:has(p.bad) :is(.mark,.mark .cyan,.mark .magenta,.floor){animation:none}
+.splash:has(p.bad) .groove{visibility:hidden}
+@keyframes bob{50%{transform:translateY(-7px)}}
+@keyframes floor{50%{transform:scale(.84);opacity:.7}}
+@keyframes part-left{50%{translate:-4px 0}}
+@keyframes part-right{50%{translate:4px 0}}
+@keyframes glide{to{left:120px}}
+@media (prefers-reduced-motion:reduce){
+  .mark,.mark .cyan,.mark .magenta,.floor,.groove i,.piece{animation:none;transition:none}
+  .piece:hover,.piece:active{transform:none}
+  .groove i{left:61px}}
