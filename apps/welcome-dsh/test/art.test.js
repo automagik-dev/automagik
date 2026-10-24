@@ -10,7 +10,7 @@ test('vendor/art/inline.js holds the files beside it', () => {
 
 // The copies are the Bot team's own pictures, byte for byte.
 test('the vendored pictures are the Bot team\'s', () => {
-  for (const name of ['genie-expressions.webp', 'omni-expressions.webp']) {
+  for (const name of ['genie-expressions.webp', 'lamp.webp', 'omni-expressions.webp']) {
     assert.deepEqual(readFileSync(new URL(`../src/client/vendor/art/${name}`, import.meta.url)), readFileSync(new URL(`../../bots-dsh/src/client/art/${name}`, import.meta.url)), name)
   }
 })
