@@ -1,5 +1,5 @@
 # Automagik desktop packaging. The app is named Automagik wherever a person sees it (the
-# bundle, the menu bar and Dock, the desktop entry, the artifacts). Its installed identity is
+# bundle and its menu bar, the desktop entry, the artifacts). Its installed identity is
 # the one omni-desktop shipped as Omni, so an installed app updates in place and keeps its data:
 # the appId (macOS takes an update only for the same id and signer), the Linux executable,
 # desktop entry id (package.json desktopName) and deb package, and Electron's data folder
@@ -26,8 +26,8 @@ extraResources:
     to: versions.json
 asar: true
 # omni:// links (src/deeplink.js): an Omni's "Open in the app" links open this app; the scheme
-# is Omni's, and its pages make the links. macOS takes
-# the scheme from Info.plist (CFBundleURLTypes); Linux from the desktop entry's MimeType.
+# is Omni's, and its pages make the links. macOS takes the scheme from Info.plist
+# (CFBundleURLTypes); Linux from the desktop entry's MimeType.
 protocols:
   - name: Omni
     schemes:
