@@ -1,4 +1,4 @@
-/* The Omni window's frame: see shell.html and src/frame.js (BAR_HEIGHT, INSET, RADIUS). */
+/* The app window's frame: see shell.html and src/frame.js (BAR_HEIGHT, INSET, RADIUS). */
 :root{--bar:40px;--radius:14px;--ink:#eef3ff;--ink2:#9fb0cc;--accent:#22d3c5;--violet:#7c5cff}
 html,body{margin:0;height:100%;overflow:hidden;background:transparent;color:var(--ink);font:13px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;user-select:none}
 .frame{position:fixed;inset:0;border-radius:var(--radius);overflow:hidden;

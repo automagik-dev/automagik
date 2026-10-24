@@ -39,17 +39,38 @@
       },
       "metadata": {
         "category": "automagik",
-        "keywords": ["bots", "agents", "memory", "omni", "genie"],
-        "labels": ["official"]
+        "keywords": [
+          "bots",
+          "agents",
+          "memory",
+          "omni",
+          "genie"
+        ],
+        "labels": [
+          "official"
+        ]
       },
       "versions": [
         {
-          "version": "3.261023.0",
-          "publishTimestamp": 1792796484,
+          "version": "3.261023.2",
+          "publishTimestamp": 1792798536,
           "source": {
             "type": "git",
             "url": "https://github.com/automagik-dev/automagik",
-            "commit": "121494c0e66e134e4bdb9df1b8fa5dd2fc97cd78",
+            "commit": "13113fad132dd8a62fa011c65ac432e1260969ff",
+            "path": "apps/bots-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.2 <0.3.0"
+          }
+        },
+        {
+          "version": "3.261023.1",
+          "publishTimestamp": 1792796749,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "4d59014e49150f4a977244a1abd741f75d48e318",
             "path": "apps/bots-dsh"
           },
           "engines": {
@@ -74,17 +95,36 @@
       },
       "metadata": {
         "category": "automagik",
-        "keywords": ["onboarding", "ai", "cliproxyapi"],
-        "labels": ["official"]
+        "keywords": [
+          "onboarding",
+          "ai",
+          "cliproxyapi"
+        ],
+        "labels": [
+          "official"
+        ]
       },
       "versions": [
         {
-          "version": "3.261023.0",
-          "publishTimestamp": 1792796484,
+          "version": "3.261023.2",
+          "publishTimestamp": 1792798536,
           "source": {
             "type": "git",
             "url": "https://github.com/automagik-dev/automagik",
-            "commit": "121494c0e66e134e4bdb9df1b8fa5dd2fc97cd78",
+            "commit": "13113fad132dd8a62fa011c65ac432e1260969ff",
+            "path": "apps/welcome-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.2 <0.3.0"
+          }
+        },
+        {
+          "version": "3.261023.1",
+          "publishTimestamp": 1792796749,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "4d59014e49150f4a977244a1abd741f75d48e318",
             "path": "apps/welcome-dsh"
           },
           "engines": {

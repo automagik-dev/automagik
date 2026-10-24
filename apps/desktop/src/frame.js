@@ -1,8 +1,10 @@
-// How the Omni window looks. No system frame and no border anywhere: on Linux the window
+// How the app's window looks. No system frame and no border anywhere: on Linux the window
 // is transparent and the shell page (shell.html) draws its rounded shape, title bar and
 // window buttons; on macOS the title bar is hidden behind the system's own traffic lights.
-// Omni's page (dsh) is a view laid in edge to edge below the bar, its corners rounded with
+// dsh's page is a view laid in edge to edge below the bar, its corners rounded with
 // the window's. Chromium keeps a frameless window's resize edge over the view.
+
+import { PRODUCT } from './identity.js'
 
 export const BAR_HEIGHT = 40
 export const RADIUS = 14
@@ -16,7 +18,7 @@ export function windowChrome(platform) {
 }
 
 /**
- * Where Omni's page goes in a window whose content is `size`, and how round its corners
+ * Where dsh's page goes in a window whose content is `size`, and how round its corners
  * are: rounded with the window on Linux, square when maximized or on macOS (whose window
  * rounds itself).
  */
@@ -40,7 +42,7 @@ export const WINDOW_ACTIONS = new Set(['minimize', 'maximize', 'close', 'update'
  * (the menu's Check for Updates answering) shows while there is no update to show.
  */
 export function updateView(update, { dismissed = false, message = null } = {}) {
-  const version = update?.version ? `Omni ${update.version}` : 'An update'
+  const version = update?.version ? `${PRODUCT} ${update.version}` : 'An update'
   if (update?.state === 'downloading') {
     return { text: `Updating · ${update.percent ?? 0}%`, title: `Downloading ${version}`, actions: [] }
   }

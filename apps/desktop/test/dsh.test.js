@@ -389,6 +389,8 @@ test('the rename touches only the old names, whole', () => {
   assert.equal(renamePatch("- id: x\n  name: '@automagik/omni-dsh-extra'\n- id: y\n  name: '@automagik/omni-channels-dsh'\n"), null)
   assert.equal(renamePatch('name: @automagik/omni-dsh # the team\n'), 'name: @automagik/bots-dsh # the team\n')
   assert.equal(renamePatch('name: "@automagik/omni-ai-dsh"'), 'name: "@automagik/welcome-dsh"')
+  // Comments too, whatever follows the name.
+  assert.equal(renamePatch('# opens this app (@automagik/omni-ai-dsh: Welcome)'), '# opens this app (@automagik/welcome-dsh: Welcome)')
   // A build that does not ship the new name leaves the old one alone.
   assert.deepEqual(JSON.parse(mergeProfilePackage({ dependencies: { '@automagik/omni-dsh': '1' } }, { dependencies: {} })).dependencies, { '@automagik/omni-dsh': '1' })
 })
