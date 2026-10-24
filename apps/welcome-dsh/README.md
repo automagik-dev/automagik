@@ -46,6 +46,15 @@ DeepSeek is DSH's own route: its row turns on with a key or a DeepSeek account, 
 is removed in Settings → Models. Every other provider DSH knows stays one link away, in
 Settings → Models.
 
+On a fresh install (no step finished before), the first step finished also hides the hint
+above the composer, "Type a prompt to start. Save it here…": that is the starter card of
+the Claude Code plugin (`dsh-oh-my-claude`), and its `starterOff` hint hides it. The hint
+lives in the plugin's `hints.json` (`$DSH_OMC_STATE_DIR`, default
+`~/.local/state/dsh-oh-my-claude`), one file for every DSH profile on the computer, so the
+welcome adds `starterOff: true` only when the file has no `starterOff` yet, changes no key
+that is there, and does it once (`starterSeeded` in its own entry). The plugin's own
+setting turns the card back on.
+
 Continue gives the companion and the Omni Bot their model. Both are made without one, so
 joining the team sends nothing anywhere; once Connect AI finishes with an AI on, each gets
 the team's default model and its held greeting goes out, without a further click. With no

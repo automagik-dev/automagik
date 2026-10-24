@@ -24,6 +24,7 @@ export const Config = z.object({
   welcomeDone: z.boolean().volatile(),
   connectAiDone: z.boolean().volatile(),
   connectOmniSkipped: z.boolean().volatile(),
+  starterSeeded: z.boolean().volatile(),
 })
 
 export function apply(ctx) {

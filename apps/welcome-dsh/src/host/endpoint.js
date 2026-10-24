@@ -5,6 +5,7 @@ import { createTerminalActions } from './terminal.js'
 import { createCompanionActions } from './companion.js'
 import { createBotTypeActions } from './bot-types.js'
 import { preloadOf } from './preload.js'
+import { hintsFile, seedStarterOff } from './starter.js'
 
 // The host endpoint the onboarding steps call: POST /api/omni-ai with
 // { endpoint, payload }, answered { ok: true, value } or { ok: false, error }.
@@ -12,7 +13,9 @@ import { preloadOf } from './preload.js'
 //   state              the done flags, whether an AI is already connected, and the
 //                      product the desktop app was opened for (preload, src/host/preload.js)
 //   done { stepId, connected? }
-//                      keeps a step finished, in this plugin's own settings entry; Connect
+//                      keeps a step finished, in this plugin's own settings entry (the first
+//                      one on a fresh install also hides dsh-oh-my-claude's starter hint,
+//                      starter.js); Connect
 //                      AI finished with an AI on (`connected`) gives the companion and the
 //                      Omni Bot their model (companion.js assignModels)
 //   cliproxy { baseURL, apiKey }
@@ -217,9 +220,21 @@ export function install(ctx, deps = {}) {
   // their held greetings go out. The step waits for that a little (ASSIGN_HOLD_MS), so the
   // chat opens on the greeting rather than on the model card; a provider that registers
   // later is still waited for in the background, up to ASSIGN_WAIT_MS.
+  // On a fresh install (no step finished before), the first step finished hides
+  // dsh-oh-my-claude's starter hint, once (starter.js); `starterSeeded` keeps it from coming
+  // back after the person turns it on, and an install that finished a step before is left
+  // as it is.
+  const seedStarter = async (before) => {
+    if (before.starterSeeded === true || Object.values(FLAGS).some(flag => before[flag] === true)) return
+    await ctx.settings.update(ENTRY, { starterSeeded: true })
+    await seedStarterOff(deps.hintsFile ?? hintsFile(deps.env ?? process.env))
+      .catch(error => ctx.logger?.warn?.('omni-ai: the starter hint stays: %s', error?.message ?? error))
+  }
   const markDone = actions.done
   actions.done = async (payload, signal) => {
+    const before = entryOf(describeAll(ctx), ENTRY)?.value ?? {}
     const result = await markDone(payload, signal)
+    await seedStarter(before)
     const fields = parse(DonePayload, payload)
     const rt = team()
     if (fields?.stepId === 'omni-connect-ai' && fields.connected === true && rt !== undefined) {

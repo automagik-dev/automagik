@@ -22,7 +22,7 @@ test('the plugin declares its entry, its services, and its live onboarding field
   assert.deepEqual(plugin.inject, ['settings', 'credentials', 'connection'])
   const { uid, refs } = plugin.Config.toJSON()
   const fields = refs[uid].dict
-  const flags = ['companionDone', 'connectAiDone', 'connectOmniSkipped', 'teamDone', 'teamGenie', 'teamOmni', 'welcomeDone']
+  const flags = ['companionDone', 'connectAiDone', 'connectOmniSkipped', 'starterSeeded', 'teamDone', 'teamGenie', 'teamOmni', 'welcomeDone']
   const texts = ['companionColor', 'companionImage', 'companionName', 'companionShape', 'teamOmniAbilities']
   assert.deepEqual(Object.keys(fields).sort(), [...flags, ...texts].sort())
   for (const name of flags) assert.deepEqual(refs[fields[name]], { type: 'boolean', meta: { volatile: true } })
@@ -158,12 +158,13 @@ test('done writes the step flag in the plugin entry', async () => {
   const fake = host()
   assert.deepEqual(await fake.handle('done', { stepId: 'omni-companion' }), { ok: true, value: { companionDone: true } })
   assert.deepEqual((await fake.handle('done', { stepId: 'omni-connect' })).value, { connectOmniSkipped: true })
-  assert.deepEqual(fake.updates.map(update => [update.ns, update.patch]), [['omni-ai', { companionDone: true }], ['omni-ai', { connectOmniSkipped: true }]])
-  assert.deepEqual(fake.valueOf('omni-ai'), { companionDone: true, connectOmniSkipped: true })
+  // The first step finished on a fresh install also hides the starter hint, once (starter.test.js).
+  assert.deepEqual(fake.updates.map(update => [update.ns, update.patch]), [['omni-ai', { companionDone: true }], ['omni-ai', { starterSeeded: true }], ['omni-ai', { connectOmniSkipped: true }]])
+  assert.deepEqual(fake.valueOf('omni-ai'), { companionDone: true, starterSeeded: true, connectOmniSkipped: true })
   for (const stepId of ['toString', 'deepseek-official', undefined]) {
     assert.equal((await fake.handle('done', { stepId })).error.code, 'omni-ai/invalid')
   }
-  assert.equal(fake.updates.length, 2)
+  assert.equal(fake.updates.length, 3)
 })
 
 test('state reports the flags and whether an AI is already connected', async () => {

@@ -4,7 +4,8 @@
 // a folder above the plugin, else the same search from the plugin's place in the main
 // worktree (a git worktree has no checkout of its own).
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { registerHooks } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -44,3 +45,11 @@ registerHooks({
     return nextResolve(specifier, context)
   },
 })
+
+// dsh-oh-my-claude's hints are one file for the whole computer (src/host/starter.js); the
+// tests keep theirs in a folder of their own, never the real one.
+if (!process.env.DSH_OMC_STATE_DIR) {
+  const dir = mkdtempSync(join(tmpdir(), 'welcome-dsh-omc-'))
+  process.env.DSH_OMC_STATE_DIR = dir
+  process.on('exit', () => rmSync(dir, { recursive: true, force: true }))
+}
