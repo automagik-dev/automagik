@@ -1,18 +1,18 @@
 // Automagik desktop: one window on a DeepSeek Harness of the app's own (see dsh.js for where it
 // keeps things). The window opens at once on its own frame (frame.js, shell.html) with the
-// octopus waking up; the main process starts dsh on a loopback port, waits for the launch
+// Automagik mark waking up; the main process starts dsh on a loopback port, waits for the launch
 // URL with dsh's per-launch token, and lays dsh's page into the frame; quitting stops dsh.
 // Both pages are plain browser pages with no Node in them: context isolation and the
 // renderer sandbox are on, dsh's page can navigate only within dsh's origin, web links open
 // in the system browser, and the frame page never navigates.
-import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, WebContentsView } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, session, shell, WebContentsView } from 'electron'
 import updaterModule from 'electron-updater'
 import { createWriteStream, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
 import { appHome, dshEnv, freePort, installProfile, navigationOf, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
-import { pageLayout, updateView, WINDOW_ACTIONS, windowChrome } from './frame.js'
+import { pageLayout, tableColor, updateView, WINDOW_ACTIONS, windowChrome } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
 import { isReleasePage, startUpdates, updateMode } from './update.js'
 
@@ -135,6 +135,7 @@ async function launch() {
     Menu.setApplicationMenu(appMenu())
   }
   openWindow()
+  nativeTheme.on('updated', followTheme)
   mkdirSync(join(home, 'logs'), { recursive: true })
   const resources = resourcesOf({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() })
   const { target } = installProfile({ dshHome: join(home, 'dsh'), source: resources.profile })
@@ -162,12 +163,12 @@ async function launch() {
       spellcheck: true,
     },
   })
-  page.setBackgroundColor('#060914')
+  page.setBackgroundColor(tableColor(nativeTheme.shouldUseDarkColors))
   page.webContents.on('before-input-event', (event, input) => shortcut(event, input))
   page.webContents.on('did-fail-load', (_event, code, description, _url, mainFrame) => {
     if (mainFrame && code !== -3) sendState({ status: `${PRODUCT} could not load (${description}).`, problem: true })
   })
-  // Laid in once painted, so the frame's octopus stays up until there is something to show.
+  // Laid in once painted, so the frame's splash stays up until there is something to show.
   page.webContents.once('did-finish-load', () => {
     if (!window) return
     window.contentView.addChildView(page)
@@ -244,6 +245,14 @@ const WINDOW_PREFERENCES = {
   spellcheck: false,
 }
 
+// The system turned light or dark: the table under dsh's page (and macOS's solid window) turns
+// with it. The frame page follows on its own (prefers-color-scheme).
+function followTheme() {
+  const color = tableColor(nativeTheme.shouldUseDarkColors)
+  page?.setBackgroundColor(color)
+  if (process.platform === 'darwin') window?.setBackgroundColor(color)
+}
+
 function openWindow() {
   window = new BrowserWindow({
     width: 1360,
@@ -252,7 +261,7 @@ function openWindow() {
     minHeight: 520,
     title: PRODUCT,
     show: false,
-    ...windowChrome(process.platform),
+    ...windowChrome(process.platform, { dark: nativeTheme.shouldUseDarkColors }),
     webPreferences: WINDOW_PREFERENCES,
   })
   const frame = window.webContents

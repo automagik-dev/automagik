@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { BAR_HEIGHT, pageLayout, RADIUS, updateView, WINDOW_ACTIONS, windowChrome } from '../src/frame.js'
+import { readFileSync } from 'node:fs'
+import { BAR_HEIGHT, pageLayout, RADIUS, TABLE, tableColor, updateView, WINDOW_ACTIONS, windowChrome } from '../src/frame.js'
 
 test('no system frame on either platform: a transparent frameless window on Linux, a hidden title bar on macOS', () => {
   assert.deepEqual(
@@ -9,6 +10,22 @@ test('no system frame on either platform: a transparent frameless window on Linu
   )
   assert.equal(windowChrome('darwin').titleBarStyle, 'hiddenInset')
   assert.equal(windowChrome('darwin').frame, undefined)
+})
+
+test("the window is the clay table, light or dark as the system is: no dark flash before dsh's page paints", () => {
+  assert.deepEqual(TABLE, { light: '#f6eee2', dark: '#1e1923' })
+  assert.equal(tableColor(false), '#f6eee2')
+  assert.equal(tableColor(true), '#1e1923')
+  // macOS: the solid table, no vibrancy (clay is matte); Linux stays transparent for its corners.
+  assert.equal(windowChrome('darwin').vibrancy, undefined)
+  assert.equal(windowChrome('darwin').backgroundColor, TABLE.light)
+  assert.equal(windowChrome('darwin', { dark: true }).backgroundColor, TABLE.dark)
+  assert.equal(windowChrome('linux', { dark: true }).backgroundColor, '#00000000')
+  // The frame page draws the same table: its light tokens, and its prefers-color-scheme dark ones.
+  const css = readFileSync(new URL('../src/shell.css', import.meta.url), 'utf8')
+  const [light, dark] = [...css.matchAll(/--table:(#[0-9a-f]{6})/g)].map(match => match[1])
+  assert.deepEqual({ light, dark }, TABLE)
+  assert.match(css, /@media \(prefers-color-scheme:dark\)\{:root\{\s*--table:#1e1923/)
 })
 
 test("dsh's page fills the window below the bar, with no border; its corners round with the window on Linux", () => {
