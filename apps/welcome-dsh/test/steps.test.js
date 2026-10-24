@@ -321,7 +321,8 @@ test('the default card is the box, the name and one sentence; the capabilities w
   const [button] = findAll(box, byClass('oai-power'))
   assert.deepEqual([button.props['aria-pressed'], button.props['aria-label']], [false, 'Power Omni on'])
   assert.equal(findAll(box, byClass('oai-zzz')).length, 1)
-  assert.match(findAll(box, byClass('oai-octo-wrap'))[0].props.dangerouslySetInnerHTML.__html, /class="oai-closed"/)
+  // Omni in its box: its own asleep face, not its awake one dimmed.
+  assert.match(findAll(box, byClass('oai-octo-wrap'))[0].props.dangerouslySetInnerHTML.__html, /class="oai-octo oai-clay oai-clay-omni" data-face="asleep"/)
   assert.equal(textOf(findAll(box, byClass('oai-status'))[0]), 'Powered off')
   // One disclosure, closed, holding every capability row; no class title, no menu.
   const [starts] = findAll(asleep, node => node.type === 'details')
@@ -432,4 +433,15 @@ test('the preload orders the team and starts its product chosen', () => {
   assert.equal(team.joinedLabel({ omni: true, genie: true }, 'Mochi'), 'Continue with Omni and Genie')
   assert.equal(team.joinedLabel({ omni: false, genie: true }, 'Mochi'), 'Continue with Genie')
   assert.equal(team.joinedLabel({ omni: false, genie: false }, 'Mochi'), 'Continue with just Mochi')
+})
+
+test('Omni\'s face in its box follows the phase: asleep, working, waiting for you, linked, failed', () => {
+  const faces = Object.fromEntries(['asleep', 'waking', 'installing', 'starting', 'looking', 'found', 'none', 'pairing', 'restart', 'linked', 'failed'].map(phase => [phase, team.omniFaceOf(phase)]))
+  assert.deepEqual(faces, { asleep: 'asleep', waking: 'focused', installing: 'focused', starting: 'focused', looking: 'focused', found: 'curious', none: 'curious', pairing: 'curious', restart: 'curious', linked: 'delighted', failed: 'sad' })
+  assert.match(findAll(card('failed', { message: 'no network' }), byClass('oai-octo-wrap'))[0].props.dangerouslySetInnerHTML.__html, /data-face="sad"/)
+})
+
+test('Genie sleeps on its card until it is added, then is pleased to come along', () => {
+  assert.equal(team.genieExpressionOf(false), 'asleep')
+  assert.equal(team.genieExpressionOf(true), 'pleased')
 })
