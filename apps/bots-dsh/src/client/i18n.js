@@ -317,6 +317,8 @@ const ZH = {
   Profile: '资料',
   Label: '标签',
   'Optional. Shown under the name.': '可选，显示在名字下方。',
+  Role: '角色',
+  'A few words on what it does.': '用几个词说明它做什么。',
   'Research, admin…': '研究、行政…',
   'What this Bot does': '这个 Bot 做什么',
   "Its job on the team. Part of the Bot's system prompt.": '它在团队里的分工，会写进 Bot 的系统提示词。',

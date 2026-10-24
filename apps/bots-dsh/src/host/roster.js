@@ -5,6 +5,16 @@ import { MAX_AVATAR_IMAGE, ROOM_MAX_MEMBERS, ROOM_MODES, ROOM_NAME_MAX, ROOM_NOT
 import { currentColor, isColor, normalize, unquote } from './text.js'
 import { nameProblem } from '../shared/mentions.js'
 
+// A Bot's role: a few words of plain text on one line, shown beside the first Main Bot's
+// name in the sidebar and under a Bot's name elsewhere. Line breaks and control
+// characters become spaces.
+export const ROLE_MAX = 24
+export function cleanRole(value) {
+  if (value === undefined || value === null) return ''
+  if (typeof value !== 'string') throw new Error('A role is a few words of text')
+  return value.replace(/[\p{Cc}\u2028\u2029\u202a-\u202e\u2066-\u2069]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, ROLE_MAX)
+}
+
 // The kinds of Bot that other Omni plugins add to the team; the sidebar puts them first.
 export const BOT_KINDS = ['omni', 'genie']
 
@@ -109,6 +119,7 @@ export function install(rt) {
 
   async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, kind }) {
     const cleanAvatarValue = cleanAvatar(avatar)
+    const roleText = cleanRole(role)
     // The model is fixed at creation, so a later change of the DSH default leaves it alone.
     const modelRef = model ? await rt.resolveModel(model) : pickModel ? undefined : await rt.defaultModel()
     // A thinking level needs a model to resolve against; with none it would be dropped
@@ -121,7 +132,7 @@ export function install(rt) {
       state.bots[id] = {
         id,
         name: cleanName,
-        role: String(role).trim().slice(0, 24),
+        role: roleText,
         // A color is only stored when the user picks one; otherwise the id picks it.
         ...(isColor(currentColor(color)) ? { color: currentColor(color) } : {}),
         ...(cleanAvatarValue ? { avatar: cleanAvatarValue } : {}),
@@ -216,6 +227,7 @@ export function install(rt) {
     if (bot === undefined) throw new Error('Unknown Bot')
     // Checked first, so a folder, model or level that does not pass leaves the rest
     // unchanged too.
+    const role = patch.role === undefined ? undefined : cleanRole(patch.role)
     const moving = patch.workDir !== undefined
     const workDir = moving ? await rt.cleanWorkDir(patch.workDir ?? '') : undefined
     const modelRef = patch.model === undefined ? undefined
@@ -245,7 +257,7 @@ export function install(rt) {
       await ctx.sessionTitle.rename(agent.session, next)
       await followMemberNames(Object.values(state.rooms).filter(room => room.members.includes(id)))
     }
-    if (patch.role !== undefined) bot.role = String(patch.role).trim().slice(0, 24)
+    if (role !== undefined) bot.role = role
     if (patch.instructions !== undefined) bot.instructions = String(patch.instructions).trim()
     let modelChanged = false
     if (patch.color !== undefined) {

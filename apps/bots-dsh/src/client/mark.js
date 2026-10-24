@@ -118,12 +118,26 @@ function useSettled(state) {
   return settled
 }
 
-export function BotAvatar({ bot, size, state = 'idle', main, admin, badge = true, live = true, gaze = false, pokeable = false }) {
+// The crown the team's first Main Bot wears in the sidebar, in clay gold.
+function Crown() {
+  return h('span', { className: 'bt-crown', 'aria-hidden': true },
+    h('svg', { viewBox: '0 0 44 30' },
+      h('path', { className: 'bt-crown-body', d: 'M4 26 L2 8 L13 16 L22 2 L31 16 L42 8 L40 26 Z' }),
+      h('rect', { className: 'bt-crown-band', x: 4, y: 23, width: 36, height: 5, rx: 2.5 }),
+      h('circle', { className: 'bt-crown-gem', cx: 22, cy: 17, r: 3 }),
+      h('circle', { className: 'bt-crown-gem2', cx: 12, cy: 20, r: 2.2 }),
+      h('circle', { className: 'bt-crown-gem2', cx: 32, cy: 20, r: 2.2 }),
+      h('path', { className: 'bt-crown-shine', d: 'M8 11 L13 15' })))
+}
+
+// `crown`: the team's first Main Bot, which wears the crown in place of the Main Bot star.
+export function BotAvatar({ bot, size, state = 'idle', main, admin, crown = false, badge = true, live = true, gaze = false, pokeable = false }) {
   const settled = useSettled(state)
   if (bot === undefined) return h(BotMark, { size })
-  const badgeKind = !badge ? null : state === 'alert' ? 'alert' : state !== 'idle' && state !== 'waiting' ? 'working' : admin ? 'admin' : main ? 'main' : null
+  const badgeKind = !badge ? null : state === 'alert' ? 'alert' : state !== 'idle' && state !== 'waiting' ? 'working' : admin ? 'admin' : main && !crown ? 'main' : null
   return h('span', { className: 'bt-mark', style: { width: size, height: size, '--bt-size': `${size}px` } },
     h(BotMark, { bot, size, state: settled ? 'done' : state, live, gaze, pokeable }),
+    crown ? h(Crown) : null,
     badgeKind === 'working' ? h('span', { className: 'bt-badge bt-badge-working', 'aria-label': t('Working'), role: 'img' }) : null,
     badgeKind === 'alert' ? h('span', { className: 'bt-badge bt-badge-alert', 'aria-label': t('Waiting for your answer'), role: 'img' }, '?') : null,
     badgeKind === 'admin' ? h('span', { className: 'bt-badge bt-badge-admin', 'aria-label': t('Admin'), role: 'img' }, h(StarIcon)) : null,

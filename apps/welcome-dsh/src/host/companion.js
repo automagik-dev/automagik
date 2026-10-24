@@ -22,8 +22,12 @@ const JWT_CLAIM = 'https://api.openai.com/auth'
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024
 const ENTRY = 'omni-ai'
 
-// The Main Bot's role once it is the person's companion: it leads the team.
-export const COMPANION_ROLE = 'Your companion'
+// The Main Bot's role once it is the person's companion: it leads the team. The person can
+// rename it in the Bot's settings; a role they set is kept. Roles this plugin or the team
+// once set by themselves give way to it.
+export const COMPANION_ROLE = 'Orchestrator'
+const DEFAULT_ROLES = new Set(['', 'Your companion', 'Channel orchestrator', COMPANION_ROLE])
+const roleFor = bot => (DEFAULT_ROLES.has(bot?.role ?? '') ? { role: COMPANION_ROLE } : {})
 
 // The Omni Bot the team step adds: the octopus Omni always wore, keeping the person's channels.
 // Its project is a folder of the team workspace (Bots may not work in the Omni home).
@@ -139,10 +143,10 @@ export function createCompanionActions(ctx, { fetch: fetchImpl = globalThis.fetc
     const id = await mainBotOf(rt)
     if (id === undefined) return false
     const bot = rt.botOf?.(id)
-    if (bot?.name === entry.companionName && bot?.role === COMPANION_ROLE) return true
+    if (bot?.name === entry.companionName && (bot?.role === COMPANION_ROLE || !DEFAULT_ROLES.has(bot?.role ?? ''))) return true
     await rt.updateBot(id, {
       name: entry.companionName,
-      role: COMPANION_ROLE,
+      ...roleFor(bot),
       ...(entry.companionColor ? { color: entry.companionColor } : {}),
       ...(entry.companionShape ? { avatar: { shape: entry.companionShape } } : {}),
     })
@@ -220,7 +224,7 @@ export function createCompanionActions(ctx, { fetch: fetchImpl = globalThis.fetc
         if (id !== undefined) {
           await rt.updateBot(id, {
             name: fields.name,
-            role: COMPANION_ROLE,
+            ...roleFor(rt.botOf?.(id)),
             ...(fields.color ? { color: fields.color } : {}),
             ...(fields.shape ? { avatar: { shape: fields.shape } } : {}),
             ...(fields.avatar ? { avatar: { image: fields.avatar } } : {}),

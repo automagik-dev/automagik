@@ -349,6 +349,8 @@ var ZH = {
   Profile: "资料",
   Label: "标签",
   "Optional. Shown under the name.": "可选，显示在名字下方。",
+  Role: "角色",
+  "A few words on what it does.": "用几个词说明它做什么。",
   "Research, admin…": "研究、行政…",
   "What this Bot does": "这个 Bot 做什么",
   "Its job on the team. Part of the Bot's system prompt.": "它在团队里的分工，会写进 Bot 的系统提示词。",
@@ -2517,14 +2519,31 @@ function useSettled(state) {
   }, [state]);
   return settled;
 }
-function BotAvatar({ bot, size, state = "idle", main, admin, badge = true, live = true, gaze = false, pokeable = false }) {
+function Crown() {
+  return (0, import_react5.createElement)(
+    "span",
+    { className: "bt-crown", "aria-hidden": true },
+    (0, import_react5.createElement)(
+      "svg",
+      { viewBox: "0 0 44 30" },
+      (0, import_react5.createElement)("path", { className: "bt-crown-body", d: "M4 26 L2 8 L13 16 L22 2 L31 16 L42 8 L40 26 Z" }),
+      (0, import_react5.createElement)("rect", { className: "bt-crown-band", x: 4, y: 23, width: 36, height: 5, rx: 2.5 }),
+      (0, import_react5.createElement)("circle", { className: "bt-crown-gem", cx: 22, cy: 17, r: 3 }),
+      (0, import_react5.createElement)("circle", { className: "bt-crown-gem2", cx: 12, cy: 20, r: 2.2 }),
+      (0, import_react5.createElement)("circle", { className: "bt-crown-gem2", cx: 32, cy: 20, r: 2.2 }),
+      (0, import_react5.createElement)("path", { className: "bt-crown-shine", d: "M8 11 L13 15" })
+    )
+  );
+}
+function BotAvatar({ bot, size, state = "idle", main, admin, crown = false, badge = true, live = true, gaze = false, pokeable = false }) {
   const settled = useSettled(state);
   if (bot === void 0) return (0, import_react5.createElement)(BotMark, { size });
-  const badgeKind = !badge ? null : state === "alert" ? "alert" : state !== "idle" && state !== "waiting" ? "working" : admin ? "admin" : main ? "main" : null;
+  const badgeKind = !badge ? null : state === "alert" ? "alert" : state !== "idle" && state !== "waiting" ? "working" : admin ? "admin" : main && !crown ? "main" : null;
   return (0, import_react5.createElement)(
     "span",
     { className: "bt-mark", style: { width: size, height: size, "--bt-size": `${size}px` } },
     (0, import_react5.createElement)(BotMark, { bot, size, state: settled ? "done" : state, live, gaze, pokeable }),
+    crown ? (0, import_react5.createElement)(Crown) : null,
     badgeKind === "working" ? (0, import_react5.createElement)("span", { className: "bt-badge bt-badge-working", "aria-label": t("Working"), role: "img" }) : null,
     badgeKind === "alert" ? (0, import_react5.createElement)("span", { className: "bt-badge bt-badge-alert", "aria-label": t("Waiting for your answer"), role: "img" }, "?") : null,
     badgeKind === "admin" ? (0, import_react5.createElement)("span", { className: "bt-badge bt-badge-admin", "aria-label": t("Admin"), role: "img" }, (0, import_react5.createElement)(StarIcon)) : null,
@@ -4104,6 +4123,8 @@ body{--bt-ink:#141414;--bt-danger:#e02135;--bt-ink-2:rgba(20,20,20,.6);--bt-ink-
 /* iOS waits out a double-tap zoom on buttons; the plugin's own controls never zoom. */
 :is(.bt-tool,.bt-uaction,.bt-menu button,.bt-menu-item,.bt-icon-btn,.bt-round,.bt-pill,.bt-account,.bt-set-row,.bt-settings-item,.bt-react-strip button,.bt-palette-row,.bt-palette-clear,.bt-tab,.bt-ptab,.bt-ptab-x,.bt-bcard-x,.bt-plus,.bt-q-btn,.bt-q-x,.bt-x,.bt-nc-send,.bt-send,.bt-soft,.bt-mini,.bt-shape,.bt-swatch,.bt-color,.bt-newchat,.bt-task-day,.bt-task-remove,.bt-fb-btn){touch-action:manipulation}
 body[data-ds-dark-theme]{--bt-ink:#f2f2f2;--bt-ink-2:rgba(242,242,242,.6);--bt-ink-3:rgba(242,242,242,.36);--bt-bubble:#262626;--bt-sidebar:#1b1b1b;--bt-main:#141414;--bt-line:rgba(255,255,255,.08);--bt-line-2:rgba(255,255,255,.15);--bt-line-weak:rgba(255,255,255,.1);--bt-hover:rgba(160,160,160,.12);--bt-active:rgba(160,160,160,.2);--bt-card:#1f1f1f;--bt-user:#f2f2f2;--bt-user-ink:#141414;--bt-tag-bg:rgba(255,255,255,.09);--bt-tag-ink:rgba(242,242,242,.62)}
+body{--bt-gold:#f2b84b;--bt-gold-edge:#c98a1a;--bt-gold-band:#e9a636;--bt-gold-shine:#fff3d4;--bt-gem:#8fdcec;--bt-gem-2:#f0bddf;--bt-role-bg:#fbe7bf;--bt-role-ink:#8a5a12;--bt-role-edge:#e7c88a;--bt-role-shine:#fff6e2}
+body[data-ds-dark-theme]{--bt-role-bg:#4a3a1c;--bt-role-ink:#f6d48f;--bt-role-edge:#2a1f0c;--bt-role-shine:rgba(255,240,200,.12)}
 ${Object.entries(INKS).map(([name, [light]]) => `body{--bt-ink-${name}:${light}}`).join("")}
 ${Object.entries(INKS).map(([name, [, dark]]) => `body[data-ds-dark-theme]{--bt-ink-${name}:${dark}}`).join("")}
 .bt-mark{display:inline-block;flex:none;position:relative;line-height:0}
@@ -9445,7 +9466,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   const unread = useSessionStatus((map) => map.get(part)?.completionUnread === true || map.get(part)?.pendingInteraction !== void 0) || marked && !active;
   useMarkedUnread(id, active, marked, actions);
   const main = isMainOf(roster, id);
-  const tile = roster.mainBotId === id;
+  const crowned = roster.mainBotId === id;
   const approval = useApproval(useWork, (entry) => entry.botId === id);
   const alert = roster.questions?.[part] !== void 0 || approval;
   const doing = useActivity((map) => map[id]);
@@ -9461,31 +9482,14 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
     event.preventDefault();
     actions.openMenu({ kind: "bot", id, x: event.clientX, y: event.clientY });
   };
-  const pinned = bot.pinned === true && !tile;
-  const label = [bot.name, main ? t("Main Bot") : "", pinned ? t("Pinned") : "", running2 || away ? t("Working") : "", waitsFor, approval ? t("Waiting for your approval") : alert ? t("Waiting for your answer") : "", unread ? t("Unread activity") : ""].filter(Boolean).join(", ");
-  if (tile && wide) {
-    return (0, import_react21.createElement)("div", { className: "bt-tile-wrap" }, (0, import_react21.createElement)(
-      "button",
-      {
-        type: "button",
-        className: "bt-tile",
-        "aria-label": label,
-        "aria-current": active ? "page" : void 0,
-        "data-bot-id": id,
-        title: preview || bot.name,
-        onClick: () => actions.openSession(id),
-        onContextMenu
-      },
-      (0, import_react21.createElement)(BotAvatar, { bot, size: 60, state, main: true }),
-      (0, import_react21.createElement)("span", { className: "bt-tile-name" }, bot.name),
-      bot.role ? (0, import_react21.createElement)("span", { className: "bt-chip" }, bot.role) : null
-    ));
-  }
+  const pinned = bot.pinned === true && !crowned;
+  const role = crowned ? bot.role : "";
+  const label = [bot.name, role, main ? t("Main Bot") : "", pinned ? t("Pinned") : "", running2 || away ? t("Working") : "", waitsFor, approval ? t("Waiting for your approval") : alert ? t("Waiting for your answer") : "", unread ? t("Unread activity") : ""].filter(Boolean).join(", ");
   return (0, import_react21.createElement)(
     "button",
     {
       type: "button",
-      className: "bt-row",
+      className: crowned ? "bt-row bt-row-crowned" : "bt-row",
       "aria-label": label,
       "aria-current": active ? "page" : void 0,
       "data-bot-id": id,
@@ -9493,12 +9497,12 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
       onClick: () => actions.openSession(id),
       onContextMenu
     },
-    (0, import_react21.createElement)(BotAvatar, { bot, size: 36, state, main }),
+    (0, import_react21.createElement)(BotAvatar, { bot, size: crowned && wide ? 42 : 36, state, main, crown: crowned }),
     pinned && !wide ? (0, import_react21.createElement)(PinMark) : null,
     wide ? (0, import_react21.createElement)(
       "span",
       { className: "bt-row-body" },
-      (0, import_react21.createElement)("span", { className: "bt-row-name" }, (0, import_react21.createElement)("span", { className: "bt-row-title" }, bot.name), pinned ? (0, import_react21.createElement)(PinMark) : null),
+      (0, import_react21.createElement)("span", { className: "bt-row-name" }, (0, import_react21.createElement)("span", { className: "bt-row-title" }, bot.name), role ? (0, import_react21.createElement)("span", { className: "bt-role" }, role) : null, pinned ? (0, import_react21.createElement)(PinMark) : null),
       runningLine ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, runningLine) : awayLine ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, awayLine) : waitsFor ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, waitsFor) : preview ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, preview) : null
     ) : null,
     // Badges other Omni plugins add (extend.js): Omni's row counts the automation runs waiting for you.
@@ -9789,7 +9793,14 @@ function TeamSidebar(props) {
     (0, import_react21.createElement)(
       "div",
       { ref: listRef, className: "bt-list", role: "region", "aria-label": t("Bot list") },
-      main ? (0, import_react21.createElement)(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : (0, import_react21.createElement)("div", { className: "bt-hint" }, t("Setting up your Main Bot…")),
+      // The first Main Bot is a row like the others, pinned first (the tile's styles stay
+      // in styles.js, vendored from DS Bot, unused).
+      main ? (0, import_react21.createElement)(
+        import_react21.Fragment,
+        { key: main.id },
+        (0, import_react21.createElement)(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }),
+        (0, import_react21.createElement)(BotChildren, { bot: main, roster, actions, wide })
+      ) : roster.ready ? null : (0, import_react21.createElement)("div", { className: "bt-hint" }, t("Setting up your Main Bot…")),
       order.map((entry) => entry.kind === "bot" ? (0, import_react21.createElement)(
         import_react21.Fragment,
         { key: entry.item.id },
@@ -10207,6 +10218,15 @@ var SIDEBAR_CSS = `
 .bt-side-top .bt-brand:hover{background:none}
 .bt-brand .bt-mark{flex:none}
 .bt-pin{flex:none;display:inline-flex;color:var(--bt-ink-3)}
+.bt-row-crowned{margin-top:8px}
+/* The first Main Bot's crown (mark.js) and its role chip, in clay gold. */
+.bt-crown{position:absolute;left:50%;top:calc(var(--bt-size,36px) * -.27);width:calc(var(--bt-size,36px) * .52);height:calc(var(--bt-size,36px) * .36);transform:translateX(-50%) rotate(-8deg);filter:drop-shadow(0 1.5px 0 var(--bt-gold-edge)) drop-shadow(0 3px 3px color-mix(in srgb,var(--bt-gold-edge) 30%,transparent));pointer-events:none;z-index:1;line-height:0}
+.bt-crown-body{fill:var(--bt-gold);stroke:var(--bt-gold-edge);stroke-width:2;stroke-linejoin:round}
+.bt-crown-band{fill:var(--bt-gold-band)}
+.bt-crown-gem{fill:var(--bt-gem)}
+.bt-crown-gem2{fill:var(--bt-gem-2)}
+.bt-crown-shine{stroke:var(--bt-gold-shine);stroke-width:2;stroke-linecap:round;opacity:.8}
+.bt-role{flex:none;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 7px;border-radius:8px;background:var(--bt-role-bg);box-shadow:inset 0 1px var(--bt-role-shine),0 1px 0 var(--bt-role-edge);color:var(--bt-role-ink);font-size:10px;line-height:16px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
 .bt-rail .bt-row{position:relative}
 .bt-rail .bt-pin{position:absolute;top:3px;left:calc(50% + 12px)}
 .bt-side .bt-read-only{margin:4px 8px 6px;padding:8px 10px;border-radius:10px;background:var(--bt-hover);font-size:12px;line-height:1.45;text-align:left}
@@ -12762,7 +12782,7 @@ function BotSettingsForm({ bot, roster, actions, run: run2 }) {
       Card,
       { title: t("Profile") },
       (0, import_react30.createElement)(Row, { label: t("Name") }, (0, import_react30.createElement)(InlineText, { label: t("Name"), value: bot.name, placeholder: "Bob", required: true, maxLength: 40, onSave: (name) => save({ name }) })),
-      (0, import_react30.createElement)(Row, { label: t("Label"), hint: t("Optional. Shown under the name.") }, (0, import_react30.createElement)(InlineText, { label: t("Label"), value: bot.role, placeholder: t("Research, admin…"), maxLength: 24, onSave: (role) => save({ role }) }))
+      (0, import_react30.createElement)(Row, { label: t("Role"), hint: t("A few words on what it does.") }, (0, import_react30.createElement)(InlineText, { label: t("Role"), value: bot.role, placeholder: t("Research, admin…"), maxLength: 24, onSave: (role) => save({ role }) }))
     ),
     (0, import_react30.createElement)(
       Card,

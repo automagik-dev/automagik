@@ -120,6 +120,22 @@ test('saving the companion makes it the Main Bot, by look and name', async () =>
   assert.deepEqual((await host().handle('companion-save', { name: 'Pip', shape: 'star' })).value, { name: 'Pip', applied: false, image: false })
 })
 
+test('the companion is the Orchestrator, and keeps a role the person gave it', async () => {
+  assert.equal(COMPANION_ROLE, 'Orchestrator')
+  // The roles set before (this plugin's and the team's own default) give way to it.
+  for (const role of ['Your companion', 'Channel orchestrator']) {
+    const team = fakeTeam()
+    team.state.bots.main.role = role
+    await host({ team }).handle('companion-save', { name: 'Pip', shape: 'octopus' })
+    assert.equal(team.state.bots.main.role, 'Orchestrator')
+  }
+  const team = fakeTeam()
+  team.state.bots.main.role = 'Chief of staff'
+  await host({ team }).handle('companion-save', { name: 'Pip', shape: 'octopus' })
+  assert.deepEqual(team.calls, [['updateBot', 'main', { name: 'Pip', avatar: { shape: 'octopus' } }]])
+  assert.equal(team.state.bots.main.role, 'Chief of staff')
+})
+
 test('a drawn companion becomes the Main Bot\'s avatar, shrunk', async () => {
   const home = mkdtempSync(join(tmpdir(), 'omni-ai-companion-'))
   try {

@@ -52,7 +52,8 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   const unread = useSessionStatus(map => map.get(part)?.completionUnread === true || map.get(part)?.pendingInteraction !== undefined) || (marked && !active)
   useMarkedUnread(id, active, marked, actions)
   const main = isMainOf(roster, id)
-  const tile = roster.mainBotId === id
+  // The team's first Main Bot is pinned first and wears the crown, with its role beside its name.
+  const crowned = roster.mainBotId === id
   const approval = useApproval(useWork, entry => entry.botId === id)
   const alert = roster.questions?.[part] !== undefined || approval
   const doing = useActivity(map => map[id])
@@ -70,25 +71,17 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
     event.preventDefault()
     actions.openMenu({ kind: 'bot', id, x: event.clientX, y: event.clientY })
   }
-  const pinned = bot.pinned === true && !tile
-  const label = [bot.name, main ? t('Main Bot') : '', pinned ? t('Pinned') : '', running || away ? t('Working') : '', waitsFor, approval ? t('Waiting for your approval') : alert ? t('Waiting for your answer') : '', unread ? t('Unread activity') : ''].filter(Boolean).join(', ')
-  if (tile && wide) {
-    return h('div', { className: 'bt-tile-wrap' }, h('button', {
-      type: 'button', className: 'bt-tile', 'aria-label': label, 'aria-current': active ? 'page' : undefined,
-      'data-bot-id': id, title: preview || bot.name, onClick: () => actions.openSession(id), onContextMenu,
-    },
-    h(BotAvatar, { bot, size: 60, state, main: true }),
-    h('span', { className: 'bt-tile-name' }, bot.name),
-    bot.role ? h('span', { className: 'bt-chip' }, bot.role) : null))
-  }
+  const pinned = bot.pinned === true && !crowned
+  const role = crowned ? bot.role : ''
+  const label = [bot.name, role, main ? t('Main Bot') : '', pinned ? t('Pinned') : '', running || away ? t('Working') : '', waitsFor, approval ? t('Waiting for your approval') : alert ? t('Waiting for your answer') : '', unread ? t('Unread activity') : ''].filter(Boolean).join(', ')
   return h('button', {
-    type: 'button', className: 'bt-row', 'aria-label': label, 'aria-current': active ? 'page' : undefined,
+    type: 'button', className: crowned ? 'bt-row bt-row-crowned' : 'bt-row', 'aria-label': label, 'aria-current': active ? 'page' : undefined,
     'data-bot-id': id, title: wide ? undefined : bot.name, onClick: () => actions.openSession(id), onContextMenu,
   },
-  h(BotAvatar, { bot, size: 36, state, main }),
+  h(BotAvatar, { bot, size: crowned && wide ? 42 : 36, state, main, crown: crowned }),
   pinned && !wide ? h(PinMark) : null,
   wide ? h('span', { className: 'bt-row-body' },
-    h('span', { className: 'bt-row-name' }, h('span', { className: 'bt-row-title' }, bot.name), pinned ? h(PinMark) : null),
+    h('span', { className: 'bt-row-name' }, h('span', { className: 'bt-row-title' }, bot.name), role ? h('span', { className: 'bt-role' }, role) : null, pinned ? h(PinMark) : null),
     runningLine ? h('span', { className: 'bt-row-preview' }, runningLine)
       : awayLine ? h('span', { className: 'bt-row-preview' }, awayLine)
         : waitsFor ? h('span', { className: 'bt-row-preview' }, waitsFor)
@@ -331,7 +324,11 @@ export function TeamSidebar(props) {
           h('button', { type: 'button', className: 'bt-round', 'aria-label': t('New…'), title: t('New…'), onClick: () => actions.openNewChat('new') }, h(PlusIcon))),
     wide && roster.readOnly ? h('div', { className: 'bt-hint bt-read-only', role: 'status' }, hostText(roster.readOnly)) : null,
     h('div', { ref: listRef, className: 'bt-list', role: 'region', 'aria-label': t('Bot list') },
-      main ? h(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : h('div', { className: 'bt-hint' }, t('Setting up your Main Bot…')),
+      // The first Main Bot is a row like the others, pinned first (the tile's styles stay
+      // in styles.js, vendored from DS Bot, unused).
+      main ? h(Fragment, { key: main.id },
+        h(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }),
+        h(BotChildren, { bot: main, roster, actions, wide })) : roster.ready ? null : h('div', { className: 'bt-hint' }, t('Setting up your Main Bot…')),
       order.map(entry => (entry.kind === 'bot'
         ? h(Fragment, { key: entry.item.id },
             h(BotRow, { ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true }),
@@ -704,6 +701,15 @@ export const SIDEBAR_CSS = `
 .bt-side-top .bt-brand:hover{background:none}
 .bt-brand .bt-mark{flex:none}
 .bt-pin{flex:none;display:inline-flex;color:var(--bt-ink-3)}
+.bt-row-crowned{margin-top:8px}
+/* The first Main Bot's crown (mark.js) and its role chip, in clay gold. */
+.bt-crown{position:absolute;left:50%;top:calc(var(--bt-size,36px) * -.27);width:calc(var(--bt-size,36px) * .52);height:calc(var(--bt-size,36px) * .36);transform:translateX(-50%) rotate(-8deg);filter:drop-shadow(0 1.5px 0 var(--bt-gold-edge)) drop-shadow(0 3px 3px color-mix(in srgb,var(--bt-gold-edge) 30%,transparent));pointer-events:none;z-index:1;line-height:0}
+.bt-crown-body{fill:var(--bt-gold);stroke:var(--bt-gold-edge);stroke-width:2;stroke-linejoin:round}
+.bt-crown-band{fill:var(--bt-gold-band)}
+.bt-crown-gem{fill:var(--bt-gem)}
+.bt-crown-gem2{fill:var(--bt-gem-2)}
+.bt-crown-shine{stroke:var(--bt-gold-shine);stroke-width:2;stroke-linecap:round;opacity:.8}
+.bt-role{flex:none;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 7px;border-radius:8px;background:var(--bt-role-bg);box-shadow:inset 0 1px var(--bt-role-shine),0 1px 0 var(--bt-role-edge);color:var(--bt-role-ink);font-size:10px;line-height:16px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
 .bt-rail .bt-row{position:relative}
 .bt-rail .bt-pin{position:absolute;top:3px;left:calc(50% + 12px)}
 .bt-side .bt-read-only{margin:4px 8px 6px;padding:8px 10px;border-radius:10px;background:var(--bt-hover);font-size:12px;line-height:1.45;text-align:left}
