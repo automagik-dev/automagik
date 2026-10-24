@@ -6,6 +6,7 @@ import { badges, botChildren, botSettings, composerPacks, headerButtons, mountSh
 import { BUILTIN_PACKS, packCellSync, stepsAside } from './composer-packs.js'
 import { COMPOSER_PACK_CSS, packModelCell } from './composer-pack-cells.js'
 import { TASK_CSS } from './task-card.js'
+import { LAMP_CSS } from './lamp.js'
 import { isHex, inkText, paintCss } from './inks.js'
 import { CHARACTERS, DEFAULT_MASK, MAIN_LOOK, SHAPES, markupCache, maskOf } from './characters.js'
 import { createSource, EMPTY_ROSTER, indexRoster, isAgentSession } from './sources.js'
@@ -775,6 +776,7 @@ export function apply(ctx) {
     () => installCompiledStyles(MEMBER_CSS, 'members'),
     () => installCompiledStyles(USER_MESSAGE_CSS, 'user-messages'),
     () => installCompiledStyles(TASK_CSS, 'tasks'),
+    () => installCompiledStyles(LAMP_CSS, 'lamp'),
     // What other Omni plugins put on the surface (extend.js), where Omni's channels were.
     () => mountShellInstallers({ face, shadow, installStyles, installCompiledStyles }),
     () => installCompiledStyles(WIDGET_CSS, 'widgets'),

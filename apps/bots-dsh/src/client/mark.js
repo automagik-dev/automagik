@@ -1,6 +1,7 @@
 import { createElement as h, useEffect, useRef, useState } from 'react'
 import { fnv1a, lookOf, shapeId, shapeOf, MASK_ID, nextMarkSerial, characterMarkup } from './characters.js'
 import { t } from './i18n.js'
+import { clayArtOf, faceAt, faceOf } from './clay-art.js'
 
 export { colorOf, lookOf } from './characters.js'
 
@@ -75,6 +76,14 @@ export function BotMark({ bot, look: given, size = 36, state = 'idle', live = fa
     onAnimationEnd: poked ? (event) => { if (/^bt-poke/.test(event.animationName)) setPoked(false) } : undefined,
   }
   if (image) return h('span', common, h('img', { className: 'bt-mark-img', src: image, alt: '', draggable: false, onError: () => setBroken(image) }))
+  // A clay character is one picture: the body motions of its state move it whole (.bt-b),
+  // and its face follows the state. Small marks frame Genie's head, under the plume.
+  const art = clayArtOf(bot, look)
+  if (art) {
+    const face = faceOf(common['data-state'], poked)
+    return h('span', { ...common, 'data-shape': `clay-${art}`, 'data-face': face, 'data-frame': art === 'genie' && size <= 28 ? 'head' : undefined },
+      h('span', { className: `bt-b bt-clay bt-clay-${art}`, style: { '--bt-face-at': faceAt(face) } }))
+  }
   const box = shapeOf(look.shape).size
   return h('span', common, h('svg', { viewBox: `0 0 ${box} ${box}`, dangerouslySetInnerHTML: { __html: characterMarkup(look.shape, look.color).replaceAll(MASK_ID, maskId.current) } }))
 }

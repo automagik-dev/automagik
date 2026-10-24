@@ -1,0 +1,441 @@
+{
+  "kit": "kit",
+  "alphaMin": 100,
+  "stills": {
+    "genie/calm": {
+      "components": 2,
+      "droppedPixels": 3412
+    },
+    "genie/pleased": {
+      "components": 2,
+      "droppedPixels": 3375
+    },
+    "genie/delighted": {
+      "components": 2,
+      "droppedPixels": 798
+    },
+    "genie/focused": {
+      "components": 1,
+      "droppedPixels": 0
+    },
+    "genie/curious": {
+      "components": 1,
+      "droppedPixels": 0
+    },
+    "genie/asleep": {
+      "components": 1,
+      "droppedPixels": 0
+    },
+    "genie/sad": {
+      "components": 1,
+      "droppedPixels": 0
+    },
+    "omni/calm": {
+      "components": 1,
+      "droppedPixels": 0
+    },
+    "omni/pleased": {
+      "components": 1,
+      "droppedPixels": 0
+    },
+    "omni/delighted": {
+      "components": 1,
+      "droppedPixels": 0
+    },
+    "omni/focused": {
+      "components": 1,
+      "droppedPixels": 0
+    },
+    "omni/curious": {
+      "components": 1,
+      "droppedPixels": 0
+    },
+    "omni/asleep": {
+      "components": 1,
+      "droppedPixels": 0
+    },
+    "omni/sad": {
+      "components": 1,
+      "droppedPixels": 0
+    }
+  },
+  "genieExpressions": {
+    "faces": [
+      "calm",
+      "pleased",
+      "delighted",
+      "focused",
+      "curious",
+      "asleep",
+      "sad"
+    ],
+    "cell": [
+      192,
+      208
+    ],
+    "scale": 0.246,
+    "cells": [
+      {
+        "occupied": true,
+        "edgePixels": 0
+      },
+      {
+        "occupied": true,
+        "edgePixels": 0
+      },
+      {
+        "occupied": true,
+        "edgePixels": 0
+      },
+      {
+        "occupied": true,
+        "edgePixels": 0
+      },
+      {
+        "occupied": true,
+        "edgePixels": 0
+      },
+      {
+        "occupied": true,
+        "edgePixels": 0
+      },
+      {
+        "occupied": true,
+        "edgePixels": 0
+      }
+    ]
+  },
+  "omniExpressions": {
+    "faces": [
+      "calm",
+      "pleased",
+      "delighted",
+      "focused",
+      "curious",
+      "asleep",
+      "sad"
+    ],
+    "cell": [
+      192,
+      192
+    ],
+    "scale": 0.22632,
+    "cells": [
+      {
+        "occupied": true,
+        "edgePixels": 0
+      },
+      {
+        "occupied": true,
+        "edgePixels": 0
+      },
+      {
+        "occupied": true,
+        "edgePixels": 0
+      },
+      {
+        "occupied": true,
+        "edgePixels": 0
+      },
+      {
+        "occupied": true,
+        "edgePixels": 0
+      },
+      {
+        "occupied": true,
+        "edgePixels": 0
+      },
+      {
+        "occupied": true,
+        "edgePixels": 0
+      }
+    ]
+  },
+  "petV1": {
+    "size": [
+      1536,
+      1872
+    ],
+    "mode": "RGBA",
+    "transparent": true,
+    "rows": {
+      "idle": {
+        "frames": 6,
+        "from": [
+          "idle/01.png",
+          "idle/02.png",
+          "idle/06.png",
+          "idle/06.png",
+          "idle/02.png",
+          "idle/01.png"
+        ],
+        "scale": 0.188,
+        "lift": [
+          0.2,
+          0.2,
+          0.4,
+          0.4,
+          0.2,
+          0.2
+        ],
+        "liftPressedToFit": []
+      },
+      "running-right": {
+        "frames": 8,
+        "from": [
+          "running-right/01.png",
+          "running-right/02.png",
+          "running-right/03.png",
+          "running-right/03.png",
+          "running-right/04.png",
+          "running-right/04.png",
+          "running-right/01.png",
+          "running-right/01.png"
+        ],
+        "scale": 0.2431,
+        "lift": [
+          0.0,
+          16.3,
+          44.3,
+          44.3,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "liftPressedToFit": []
+      },
+      "running-left": {
+        "frames": 8,
+        "from": [
+          "running-left/01.png",
+          "running-left/02.png",
+          "running-left/03.png",
+          "running-left/03.png",
+          "running-left/04.png",
+          "running-left/04.png",
+          "running-left/01.png",
+          "running-left/01.png"
+        ],
+        "scale": 0.2436,
+        "lift": [
+          2.2,
+          17.1,
+          46.0,
+          46.0,
+          0.0,
+          0.0,
+          2.2,
+          2.2
+        ],
+        "liftPressedToFit": []
+      },
+      "waving": {
+        "frames": 4,
+        "from": [
+          "waving/01.png",
+          "waving/02.png",
+          "waving/03.png",
+          "waving/04.png"
+        ],
+        "scale": 0.1963,
+        "lift": [
+          0.0,
+          0.2,
+          0.2,
+          0.2
+        ],
+        "liftPressedToFit": []
+      },
+      "jumping": {
+        "frames": 5,
+        "from": [
+          "jumping/01.png",
+          "jumping/02.png",
+          "jumping/03.png",
+          "jumping/04.png",
+          "jumping/05.png"
+        ],
+        "scale": 0.264,
+        "lift": [
+          0.3,
+          23.8,
+          51.0,
+          26.1,
+          0.0
+        ],
+        "liftPressedToFit": [
+          2
+        ]
+      },
+      "failed": {
+        "frames": 8,
+        "from": [
+          "failed/03.png",
+          "failed/04.png",
+          "failed/04.png",
+          "stills/sad.png",
+          "stills/sad.png",
+          "stills/sad.png",
+          "failed/04.png",
+          "failed/04.png"
+        ],
+        "scale": 0.1785,
+        "lift": [
+          0.2,
+          0.0,
+          0.0,
+          0,
+          0,
+          0,
+          0.0,
+          0.0
+        ],
+        "liftPressedToFit": []
+      },
+      "waiting": {
+        "frames": 6,
+        "from": [
+          "waiting/01.png",
+          "waiting/02.png",
+          "waiting/03.png",
+          "waiting/04.png",
+          "waiting/03.png",
+          "waiting/02.png"
+        ],
+        "scale": 0.1871,
+        "lift": [
+          0.0,
+          0.0,
+          0.0,
+          0.2,
+          0.0,
+          0.0
+        ],
+        "liftPressedToFit": []
+      },
+      "running": {
+        "frames": 6,
+        "from": [
+          "running/01.png",
+          "running/02.png",
+          "running/03.png",
+          "running/04.png",
+          "running/03.png",
+          "running/02.png"
+        ],
+        "scale": 0.1919,
+        "lift": [
+          0.2,
+          0.2,
+          0.0,
+          0.2,
+          0.0,
+          0.2
+        ],
+        "liftPressedToFit": []
+      },
+      "review": {
+        "frames": 6,
+        "from": [
+          "review/01.png",
+          "review/02.png",
+          "review/03.png",
+          "review/04.png",
+          "review/03.png",
+          "review/02.png"
+        ],
+        "scale": 0.1825,
+        "lift": [
+          0.2,
+          0.2,
+          0.0,
+          0.0,
+          0.0,
+          0.2
+        ],
+        "liftPressedToFit": []
+      }
+    },
+    "cells": {
+      "0:0": "used",
+      "0:1": "used",
+      "0:2": "used",
+      "0:3": "used",
+      "0:4": "used",
+      "0:5": "used",
+      "0:6": "empty",
+      "0:7": "empty",
+      "1:0": "used",
+      "1:1": "used",
+      "1:2": "used",
+      "1:3": "used",
+      "1:4": "used",
+      "1:5": "used",
+      "1:6": "used",
+      "1:7": "used",
+      "2:0": "used",
+      "2:1": "used",
+      "2:2": "used",
+      "2:3": "used",
+      "2:4": "used",
+      "2:5": "used",
+      "2:6": "used",
+      "2:7": "used",
+      "3:0": "used",
+      "3:1": "used",
+      "3:2": "used",
+      "3:3": "used",
+      "3:4": "empty",
+      "3:5": "empty",
+      "3:6": "empty",
+      "3:7": "empty",
+      "4:0": "used",
+      "4:1": "used",
+      "4:2": "used",
+      "4:3": "used",
+      "4:4": "used",
+      "4:5": "empty",
+      "4:6": "empty",
+      "4:7": "empty",
+      "5:0": "used",
+      "5:1": "used",
+      "5:2": "used",
+      "5:3": "used",
+      "5:4": "used",
+      "5:5": "used",
+      "5:6": "used",
+      "5:7": "used",
+      "6:0": "used",
+      "6:1": "used",
+      "6:2": "used",
+      "6:3": "used",
+      "6:4": "used",
+      "6:5": "used",
+      "6:6": "empty",
+      "6:7": "empty",
+      "7:0": "used",
+      "7:1": "used",
+      "7:2": "used",
+      "7:3": "used",
+      "7:4": "used",
+      "7:5": "used",
+      "7:6": "empty",
+      "7:7": "empty",
+      "8:0": "used",
+      "8:1": "used",
+      "8:2": "used",
+      "8:3": "used",
+      "8:4": "used",
+      "8:5": "used",
+      "8:6": "empty",
+      "8:7": "empty"
+    },
+    "usedCells": 57,
+    "emptyCells": 15
+  },
+  "lamp": [
+    256,
+    122
+  ]
+}

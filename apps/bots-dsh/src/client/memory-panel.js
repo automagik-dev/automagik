@@ -8,6 +8,7 @@ import { ArrowUpIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, D
 import { dateLocale, hostText, t } from './i18n.js'
 import { summaryBlocks } from './text.js'
 import { useLinger } from './motion.js'
+import { Lamp } from './lamp.js'
 
 const POLL_MS = 1500
 const MENU_EXIT_MS = 120
@@ -68,7 +69,7 @@ function Skeleton({ label }) {
 function Summary({ owner, view, regenerate }) {
   if (view.entries.length === 0) {
     return h('div', { className: 'bt-mem-empty' },
-      h('div', { className: 'bt-mem-empty-mark' }, h(MemoryIcon)),
+      h(Lamp, { width: 132 }),
       h('div', { className: 'bt-mem-empty-title' }, owner.group ? t('Nothing is saved for this group yet') : t('{name} has not saved anything yet', { name: owner.name })),
       h('div', { className: 'bt-mem-empty-text' }, owner.group
         ? t('A group keeps the decisions, rules, and facts its work needs, for its members to read here. Tell it below, or in the group.')

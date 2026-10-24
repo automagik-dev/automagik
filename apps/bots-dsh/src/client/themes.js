@@ -1,6 +1,7 @@
 import { ACCENT_INKS, INKS, isHex, luminance } from './inks.js'
 import { SHAPES, markupCache, maskCache } from './characters.js'
 import { createSource } from './sources.js'
+import { CLAY_CSS, CLAY_DARK, CLAY_LIGHT, clayShellTokens } from './clay.js'
 
 // -------------------------------------------------------------------------
 // Themes. A theme names eight colors per mode; every `--bt-*` variable and the shell
@@ -8,13 +9,11 @@ import { createSource } from './sources.js'
 
 const THEME_KEYS = ['bg', 'sidebar', 'bubble', 'card', 'text', 'user', 'userText', 'accent']
 const THEMES = {
-  // Automagik's duality: cyan is Omni (its ink, the accent, actions), magenta is you (your
-  // messages), on a deep-ink night sky. The id stays `deepseek` so saved choices keep it.
-  deepseek: {
-    label: 'Omni',
-    light: { bg: '#f7f8fc', sidebar: '#eef0f8', bubble: '#e7eaf5', card: '#ffffff', text: '#12152b', user: '#c21fb4', userText: '#ffffff', accent: '#0891b2' },
-    dark: { bg: '#090c18', sidebar: '#0d1122', bubble: '#171c35', card: '#11162c', text: '#e9ecff', user: '#cc22c0', userText: '#ffffff', accent: '#22d3ee' },
-  },
+  // Automagik's clay (clay.js): cyan is Omni and the Bots, magenta is you, both softened
+  // toward white, on a cream table; at night the same clay. Its construction (bevels, ledges,
+  // contact shadows) is the theme's own sheet, so the flat themes below stay flat. The id
+  // stays `deepseek` so saved choices keep it.
+  deepseek: { label: 'Automagik', light: CLAY_LIGHT, dark: CLAY_DARK, css: CLAY_CSS, shell: clayShellTokens },
   mono: {
     label: 'Mono',
     light: { bg: '#ffffff', sidebar: '#f9f9f9', bubble: '#f0f0f0', card: '#ffffff', text: '#0d0d0d', user: '#0d0d0d', userText: '#ffffff', accent: '#0d0d0d' },
@@ -57,9 +56,13 @@ const darkAccent = (accent) => {
   return ink === undefined ? accent : INKS[ink][1]
 }
 // `html body` outranks the base sheet's `body` rules without !important.
+// A theme with its own sheet (the clay) takes a chosen accent as its cyan piece too.
+const accentPieces = (theme, accent) => (theme.css && accent ? `
+html body{--clay-cyan:color-mix(in srgb,${accent} 50%,#fff);--clay-cyan-ink:color-mix(in srgb,${accent} 35%,#000)}
+html body[data-ds-dark-theme]{--clay-cyan:color-mix(in srgb,${darkAccent(accent)} 70%,#000);--clay-cyan-ink:color-mix(in srgb,${darkAccent(accent)} 20%,#fff)}` : '')
 export const themeCss = (theme, accent) => `html body{${declarations(themeVars(theme.light, false, accent ?? theme.light.accent))}}
 html body[data-ds-dark-theme]{${declarations(themeVars(theme.dark, true, darkAccent(accent) ?? theme.dark.accent))}}
-${theme.css ?? ''}`
+${theme.css ?? ''}${accentPieces(theme, accent)}`
 // DSH paints its own surfaces (the running "Deep diving" line, the stop and send buttons,
 // its pages) from one blue scale; each step is drawn from the theme's accent instead, the
 // light steps toward white and the dark ones toward black.
@@ -67,7 +70,8 @@ const SCALE = [[50, 8], [100, 14], [200, 22], [300, 36], [400, 62], [450, 82], [
 const step = (accent, amount) => (amount === 100 ? accent : amount > 0 ? `color-mix(in srgb, ${accent} ${amount}%, white)` : `color-mix(in srgb, ${accent} ${100 + amount}%, black)`)
 const accentScale = (lightAccent, darkAccent) => Object.fromEntries(SCALE.map(([name, amount]) => [`--dsw-static-deepseek-${name}`, { light: step(lightAccent, amount), dark: step(darkAccent, amount) }]))
 
-export const shellTokens = ({ light, dark }, accent) => ({
+export const shellTokens = ({ light, dark, shell }, accent) => ({
+  ...(typeof shell === 'function' ? shell({ light, dark }) : {}),
   ...accentScale(accent ?? light.accent, darkAccent(accent) ?? dark.accent),
   '--dsw-alias-label-deep-diving': { light: `color-mix(in srgb, ${accent ?? light.accent} 78%, ${light.text})`, dark: `color-mix(in srgb, ${darkAccent(accent) ?? dark.accent} 82%, ${dark.text})` },
   '--dsw-alias-label-deep-diving-shimmer': { light: `color-mix(in srgb, ${accent ?? light.accent} 35%, ${light.bg})`, dark: `color-mix(in srgb, ${darkAccent(accent) ?? dark.accent} 45%, ${dark.bg})` },
