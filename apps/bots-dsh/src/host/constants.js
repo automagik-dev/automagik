@@ -20,7 +20,7 @@ export const OCR_RETRY_MS = 120_000
 export const OCR_CACHE_MAX = 500
 export const MAX_AVATAR_IMAGE = 160_000
 export const ROUTE = '/api/omni-ui'
-// The Omni desktop app (OMNI_CLIENT_ID) updates as a whole and carries the Bot browser;
+// The Automagik desktop app (OMNI_CLIENT_ID) updates as a whole and carries the Bot browser;
 // upstream's own app says so with DS_BOT_APP.
 export const inDesktopApp = () => process.env.OMNI_CLIENT_ID === 'omni-desktop' || process.env.DS_BOT_APP === '1'
 export const MAX_EXCHANGES = 600

@@ -1,9 +1,12 @@
-# Automagik desktop packaging. The installed identity (appId, productName Omni, the
-# executable and artifact names) is the one omni-desktop shipped, so an installed app updates
-# in place and keeps its data. Run `npm run prepare-runtime` first (the dist:* scripts do):
-# it fills build/runtime and build/profile, which ship as resources beside the app.
+# Automagik desktop packaging. The app is named Automagik wherever a person sees it (the
+# bundle and its menu bar, the desktop entry, the artifacts). Its installed identity is
+# the one omni-desktop shipped as Omni, so an installed app updates in place and keeps its data:
+# the appId (macOS takes an update only for the same id and signer), the Linux executable,
+# desktop entry id (package.json desktopName) and deb package, and Electron's data folder
+# (src/identity.js). Run `npm run prepare-runtime` first (the dist:* scripts do): it fills
+# build/runtime and build/profile, which ship as resources beside the app.
 appId: ai.namastex.omni.desktop
-productName: Omni
+productName: Automagik
 copyright: Copyright © 2026 Namastex Labs
 directories:
   output: dist
@@ -22,8 +25,9 @@ extraResources:
   - from: build/versions.json
     to: versions.json
 asar: true
-# omni:// links (src/deeplink.js): an Omni's "Open in the Omni app" opens this app. macOS takes
-# the scheme from Info.plist (CFBundleURLTypes); Linux from the desktop entry's MimeType.
+# omni:// links (src/deeplink.js): an Omni's "Open in the app" links open this app; the scheme
+# is Omni's, and its pages make the links. macOS takes the scheme from Info.plist
+# (CFBundleURLTypes); Linux from the desktop entry's MimeType.
 protocols:
   - name: Omni
     schemes:
@@ -42,11 +46,17 @@ linux:
     - x-scheme-handler/omni
   icon: assets/icon.png
   syncDesktopName: true
-  synopsis: Omni on your desktop
-  description: The Omni UI on a DeepSeek Harness of its own, linked to your Omni by a code sent over WhatsApp.
+  synopsis: Automagik on your desktop
+  description: Automagik's Bot team and Omni's channels on a DeepSeek Harness of its own, linked to your Omni by a code sent over WhatsApp.
   maintainer: Namastex Labs <dev@namastex.ai>
-  artifactName: Omni-${version}-linux-${arch}.${ext}
+  # `omni desktop`, `genie desktop` and the update feeds find a build by what follows the
+  # version (-linux-x86_64.AppImage, -mac-arm64.dmg, the zip), not by the name in front.
+  artifactName: Automagik-${version}-linux-${arch}.${ext}
 deb:
+  # The package installed copies have: a deb of the same package upgrades it in place, from
+  # apt, dpkg or a software center alike. It installs to /opt/Automagik, and the postinst
+  # points /usr/bin/omni-desktop there.
+  packageName: omni
   packageCategory: net
   appArmorProfile: scripts/apparmor-profile.tpl
 mac:
@@ -61,9 +71,9 @@ mac:
   hardenedRuntime: true
   entitlements: assets/entitlements.mac.plist
   entitlementsInherit: assets/entitlements.mac.plist
-  artifactName: Omni-${version}-mac-${arch}.${ext}
+  artifactName: Automagik-${version}-mac-${arch}.${ext}
 dmg:
-  title: Omni ${version}
+  title: Automagik ${version}
   # The dmg is signed too (electron-builder signs only the app by default), and release.yml
   # notarizes and staples it, so a downloaded dmg opens without a warning.
   sign: true

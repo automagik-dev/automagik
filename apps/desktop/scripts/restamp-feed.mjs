@@ -1,7 +1,7 @@
 // After the dmg is notarized, its ticket is stapled into it, which changes its bytes: the
 // sha512 and size electron-builder wrote for it into latest-mac.yml no longer match. This
 // writes the new ones for that file (the zip's entry, which updates read, stays as it was).
-// Usage: node scripts/restamp-feed.mjs dist/latest-mac.yml dist/Omni-<version>-mac-arm64.dmg
+// Usage: node scripts/restamp-feed.mjs dist/latest-mac.yml dist/Automagik-<version>-mac-arm64.dmg
 import { createHash } from 'node:crypto'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { basename } from 'node:path'

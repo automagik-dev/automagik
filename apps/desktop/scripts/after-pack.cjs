@@ -24,7 +24,7 @@ exports.default = async function afterPack(context) {
 
 function launcher(name) {
   return `#!/bin/sh
-# Omni desktop launcher: see scripts/after-pack.cjs in automagik-dev/omni-desktop.
+# Automagik desktop launcher: see apps/desktop/scripts/after-pack.cjs in automagik-dev/automagik.
 here=$(dirname "$(readlink -f "$0")")
 sandbox="$here/chrome-sandbox"
 restricted=$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)
@@ -35,7 +35,7 @@ elif [ "$restricted" != 1 ]; then
 elif [ -f "/etc/apparmor.d/${name}" ] && grep -qF "\\"$here/${name}" "/etc/apparmor.d/${name}"; then
   exec "$here/${name}.bin" "$@"
 else
-  echo "omni-desktop: this system blocks the namespaces Chromium sandboxes with, and this copy has no setuid helper; running without the sandbox. Install the .deb for a sandboxed window." >&2
+  echo "Automagik: this system blocks the namespaces Chromium sandboxes with, and this copy has no setuid helper; running without the sandbox. Install the .deb for a sandboxed window." >&2
   exec "$here/${name}.bin" --no-sandbox "$@"
 fi
 `

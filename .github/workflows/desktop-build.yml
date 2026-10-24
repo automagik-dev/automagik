@@ -8,7 +8,7 @@ name: Desktop build
 #
 # The version is Automagik's (package.json), which the app and every plugin here carry; the
 # release already holds the plugins (release.yml makes it and calls this). Dispatch it by hand
-# to rebuild a release's desktop files.
+# to rebuild a release's desktop files: gh workflow run desktop-build.yml --field ref=v<version>.
 #
 # macOS signing and notarization are optional: with the MAC_CSC_LINK and
 # MAC_CSC_KEY_PASSWORD secrets (the Developer ID Application certificate as a base64 .p12)
@@ -213,15 +213,18 @@ jobs:
           merge-multiple: true
 
       # Every release also carries its downloads under names without the version, so
-      # .../releases/latest/download/Omni-Mac.dmg (the README's buttons) is always the newest.
-      # `omni desktop` and the updater read the versioned names, which these never match.
+      # .../releases/latest/download/Automagik-Mac.dmg (the README's buttons) is always the
+      # newest. The Omni-* names are the ones the app had before it was Automagik: links to
+      # them keep fetching the newest too. `omni desktop`, `genie desktop` and the updater read
+      # the versioned names, which these never match.
       - name: Stable download names
         working-directory: assets
         run: |
           set -euo pipefail
-          for pair in "-mac-arm64.dmg:Omni-Mac.dmg" "-linux-x86_64.AppImage:Omni-Linux.AppImage" "-linux-amd64.deb:Omni-Linux.deb"; do
+          for pair in "-mac-arm64.dmg:Mac.dmg" "-linux-x86_64.AppImage:Linux.AppImage" "-linux-amd64.deb:Linux.deb"; do
             file=$(ls -- *"${pair%%:*}" 2>/dev/null | head -1 || true)
-            [[ -n "${file}" ]] && cp -- "${file}" "${pair##*:}"
+            [[ -z "${file}" ]] && continue
+            for name in Automagik Omni; do cp -- "${file}" "${name}-${pair##*:}"; done
           done
           ls -l
 
@@ -238,9 +241,9 @@ jobs:
           TAG="v${VERSION}"
           if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             # A rebuild replaces the release's desktop files: one this build did not make goes.
-            # The plugins (release.yml's automagik-*.tgz and plugins.json) stay.
+            # The plugins (release.yml's automagik-*.tgz, plugins.json and PLUGINS.SHA256SUMS) stay.
             for name in $(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name'); do
-              case "${name}" in automagik-*.tgz|plugins.json) continue ;; esac
+              case "${name}" in automagik-*.tgz|plugins.json|PLUGINS.SHA256SUMS) continue ;; esac
               [[ -e "assets/${name}" ]] || gh release delete-asset "${TAG}" "${name}" --yes --repo "${GITHUB_REPOSITORY}"
             done
             gh release upload "${TAG}" assets/* --clobber --repo "${GITHUB_REPOSITORY}"
@@ -256,5 +259,5 @@ jobs:
               --repo "${GITHUB_REPOSITORY}" \
               --target "${SHA}" \
               --title "Automagik ${VERSION}" \
-              --notes "**Download:** Mac (Apple silicon): **Omni-Mac.dmg** · Linux: **Omni-Linux.deb** (Ubuntu, Debian) or **Omni-Linux.AppImage**. Already installed? The app updates itself. SHA256SUMS lists every file's checksum."
+              --notes "**Download:** Mac (Apple silicon): **Automagik-Mac.dmg** · Linux: **Automagik-Linux.deb** (Ubuntu, Debian) or **Automagik-Linux.AppImage**. Already installed (as Omni too)? The app updates itself. SHA256SUMS lists every file's checksum."
           fi

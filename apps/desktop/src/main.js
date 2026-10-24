@@ -1,4 +1,4 @@
-// Omni desktop: one window on a DeepSeek Harness of the app's own (see dsh.js for where it
+// Automagik desktop: one window on a DeepSeek Harness of the app's own (see dsh.js for where it
 // keeps things). The window opens at once on its own frame (frame.js, shell.html) with the
 // octopus waking up; the main process starts dsh on a loopback port, waits for the launch
 // URL with dsh's per-launch token, and lays dsh's page into the frame; quitting stops dsh.
@@ -13,9 +13,13 @@ import { fileURLToPath } from 'node:url'
 import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
 import { appHome, dshEnv, freePort, installProfile, navigationOf, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
 import { pageLayout, updateView, WINDOW_ACTIONS, windowChrome } from './frame.js'
+import { dataPathsOf, PRODUCT } from './identity.js'
 import { isReleasePage, startUpdates, updateMode } from './update.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
+// Before anything reads it (the single-instance lock does): the window's data stays in the
+// folder the app kept as Omni (identity.js), so an install that updates into this name keeps it.
+for (const [name, path] of Object.entries(dataPathsOf(app.getPath('appData')))) app.setPath(name, path)
 const home = appHome()
 let dsh = null
 // dsh's process from the moment it is spawned: a quit before it is ready still stops it.
@@ -33,7 +37,7 @@ let updateMessageTimer = null
 
 // omni:// links (deeplink.js): the system hands them to the running app (macOS: open-url;
 // Linux: a second instance with the link as an argument), or starts the app with one.
-// A link that arrives before Omni's page is up waits for it.
+// A link that arrives before the app's page is up waits for it.
 let pendingLink = linkInArgs(process.argv)
 if (process.defaultApp && process.argv.length >= 2) app.setAsDefaultProtocolClient(SCHEME, process.execPath, [process.argv[1]])
 else app.setAsDefaultProtocolClient(SCHEME)
@@ -82,7 +86,7 @@ async function connectFromLink() {
     buttons: ['Connect', 'Cancel'],
     defaultId: 0,
     cancelId: 1,
-    message: `Connect Omni to ${link.host}?`,
+    message: `Connect ${PRODUCT} to ${link.host}?`,
     detail: (link.grant
       ? `Your Omni sent you this link on WhatsApp. Connecting gives this computer its own key to ${link.host}.`
       : `You'll sign in on ${link.host} with Face ID, Touch ID, your fingerprint or a code on WhatsApp.`)
@@ -96,15 +100,15 @@ async function connectFromLink() {
 // must not leave it running on loopback with no window.
 function fail(error) {
   quitting = true
-  sendState({ status: 'Omni could not start.', problem: true })
-  dialog.showErrorBox('Omni could not start', `${error?.message ?? error}\n\nLog: ${join(home, 'logs', 'dsh.log')}`)
+  sendState({ status: `${PRODUCT} could not start.`, problem: true })
+  dialog.showErrorBox(`${PRODUCT} could not start`, `${error?.message ?? error}\n\nLog: ${join(home, 'logs', 'dsh.log')}`)
   void stopDsh(dshChild).finally(() => app.exit(1))
 }
 
 // macOS's app menu: the system's usual menus, with Check for Updates under the app's name.
 function appMenu() {
   return Menu.buildFromTemplate([
-    { label: app.name, submenu: [
+    { label: PRODUCT, submenu: [
       { role: 'about' },
       { label: 'Check for Updates…', click: () => void checkForUpdates() },
       { type: 'separator' },
@@ -126,7 +130,10 @@ function appMenu() {
 async function launch() {
   // No menu bar on Linux; macOS keeps its app menu for the usual shortcuts.
   if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
-  else Menu.setApplicationMenu(appMenu())
+  else {
+    app.setAboutPanelOptions({ applicationName: PRODUCT })
+    Menu.setApplicationMenu(appMenu())
+  }
   openWindow()
   mkdirSync(join(home, 'logs'), { recursive: true })
   const resources = resourcesOf({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() })
@@ -158,7 +165,7 @@ async function launch() {
   page.setBackgroundColor('#060914')
   page.webContents.on('before-input-event', (event, input) => shortcut(event, input))
   page.webContents.on('did-fail-load', (_event, code, description, _url, mainFrame) => {
-    if (mainFrame && code !== -3) sendState({ status: `Omni could not load (${description}).`, problem: true })
+    if (mainFrame && code !== -3) sendState({ status: `${PRODUCT} could not load (${description}).`, problem: true })
   })
   // Laid in once painted, so the frame's octopus stays up until there is something to show.
   page.webContents.once('did-finish-load', () => {
@@ -198,10 +205,10 @@ function watchUpdates() {
 
 // The menu's Check for Updates: what it found shows in the title bar for a few seconds.
 async function checkForUpdates() {
-  if (!updates) return showUpdateMessage('Updates are off in this copy of Omni')
+  if (!updates) return showUpdateMessage(`Updates are off in this copy of ${PRODUCT}`)
   showUpdateMessage('Checking for updates…', 0)
   const { result } = await updates.check()
-  if (result === 'latest') showUpdateMessage('Omni is up to date')
+  if (result === 'latest') showUpdateMessage(`${PRODUCT} is up to date`)
   else if (result === 'error') showUpdateMessage('Could not check for updates')
   else {
     updateDismissed = false
@@ -243,7 +250,7 @@ function openWindow() {
     height: 860,
     minWidth: 720,
     minHeight: 520,
-    title: 'Omni',
+    title: PRODUCT,
     show: false,
     ...windowChrome(process.platform),
     webPreferences: WINDOW_PREFERENCES,
@@ -259,7 +266,7 @@ function openWindow() {
   void window.loadFile(join(HERE, 'shell.html'))
 }
 
-// Omni's page goes below the frame's title bar; see frame.js.
+// dsh's page goes below the frame's title bar; see frame.js.
 function layout() {
   if (!window) return
   const maximized = window.isMaximized() || window.isFullScreen()

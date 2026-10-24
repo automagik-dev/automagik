@@ -11,7 +11,7 @@ test('no system frame on either platform: a transparent frameless window on Linu
   assert.equal(windowChrome('darwin').frame, undefined)
 })
 
-test("Omni's page fills the window below the bar, with no border; its corners round with the window on Linux", () => {
+test("dsh's page fills the window below the bar, with no border; its corners round with the window on Linux", () => {
   const size = { width: 1360, height: 860 }
   const page = { x: 0, y: BAR_HEIGHT, width: 1360, height: 860 - BAR_HEIGHT }
   assert.deepEqual(pageLayout(size, { platform: 'linux', maximized: false }), { bounds: page, radius: RADIUS })
@@ -27,7 +27,7 @@ test('the frame page can ask for the window buttons, the update notice and the b
 test('a ready update shows a notice with Restart now and Later; after Later a small Restart button stays', () => {
   const ready = { version: '2.261024.1', state: 'ready' }
   assert.deepEqual(updateView(ready), {
-    text: 'Omni 2.261024.1 is ready.',
+    text: 'Automagik 2.261024.1 is ready.',
     actions: [{ act: 'update', label: 'Restart now', primary: true }, { act: 'update-later', label: 'Later' }],
   })
   assert.deepEqual(updateView(ready, { dismissed: true }).actions, [{ act: 'update', label: 'Restart to update', primary: true }])
@@ -35,11 +35,11 @@ test('a ready update shows a notice with Restart now and Later; after Later a sm
 })
 
 test('a download shows its progress with no button; a deb sees Download and Later; a check answers in a line', () => {
-  assert.deepEqual(updateView({ version: '2.261024.1', state: 'downloading', percent: 42 }), { text: 'Updating · 42%', title: 'Downloading Omni 2.261024.1', actions: [] })
+  assert.deepEqual(updateView({ version: '2.261024.1', state: 'downloading', percent: 42 }), { text: 'Updating · 42%', title: 'Downloading Automagik 2.261024.1', actions: [] })
   const out = { version: '2.261024.1', state: 'available', page: 'https://github.com/automagik-dev/omni-desktop/releases/tag/v2.261024.1' }
   assert.deepEqual(updateView(out).actions.map(a => a.act), ['update-page', 'update-later'])
-  assert.deepEqual(updateView(out, { dismissed: true }).actions, [{ act: 'update-page', label: 'Omni 2.261024.1 is out' }])
-  assert.deepEqual(updateView(null, { message: 'Omni is up to date' }), { text: 'Omni is up to date', actions: [] })
+  assert.deepEqual(updateView(out, { dismissed: true }).actions, [{ act: 'update-page', label: 'Automagik 2.261024.1 is out' }])
+  assert.deepEqual(updateView(null, { message: 'Automagik is up to date' }), { text: 'Automagik is up to date', actions: [] })
   assert.equal(updateView(null), null)
-  assert.equal(updateView(out, { message: 'Omni is up to date' }).text, 'Omni 2.261024.1 is out.')
+  assert.equal(updateView(out, { message: 'Automagik is up to date' }).text, 'Automagik 2.261024.1 is out.')
 })
