@@ -171,7 +171,11 @@ var ZH = {
   "Switch to classic Agent mode": "切换经典 Agent 模式",
   "{model} is not available anymore. Pick another model for me.": "{model} 已经不可用了。给我换一个模型吧。",
   "Hi, I'm {name}. I don't have a model yet. How do you want to set one up?": "你好，我是 {name}。我还没有可用的模型。你想怎么配置？",
-  "Hi, I'm {name}. Pick a model for me first. You can change it later in my details.": "你好，我是 {name}。先给我选一个模型吧，以后可以在我的详情里换。",
+  "Hi, I'm {name}. Say when, and I'll start.": "你好，我是 {name}。你说开始，我就开始。",
+  "Using {model} · {provider}": "使用 {model} · {provider}",
+  change: "更换",
+  Start: "开始",
+  "Change the model of {name}": "更换 {name} 的模型",
   "Hi, I'm {name}. I need a {provider} API key before I can start.": "你好，我是 {name}。开始之前，我需要一个 {provider} API key。",
   "{provider} API key": "{provider} API key",
   "Enter the API key": "请填入 API key",
@@ -3441,7 +3445,7 @@ function useAnchoredMenu() {
   }, [anchor, tick]);
   return { isOpen: place !== null, shownPlace, leaving, button, menu, open, close };
 }
-function ModelMenu({ bot, roster, actions, run: run2, wide = false, onPick, onPickEffort }) {
+function ModelMenu({ bot, roster, actions, run: run2, wide = false, link = false, onPick, onPickEffort }) {
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu();
   const shown = modelOf(bot, roster);
   const current = bot.model ?? bot.appliedModel;
@@ -3473,7 +3477,15 @@ function ModelMenu({ bot, roster, actions, run: run2, wide = false, onPick, onPi
   return (0, import_react9.createElement)(
     import_react9.Fragment,
     null,
-    (0, import_react9.createElement)(
+    link ? (0, import_react9.createElement)("button", {
+      ref: button,
+      type: "button",
+      className: "bt-model-change",
+      "aria-haspopup": "menu",
+      "aria-expanded": isOpen,
+      "aria-label": t("Change the model of {name}", { name: bot.name }),
+      onClick: toggle
+    }, t("change")) : (0, import_react9.createElement)(
       "button",
       {
         ref: button,
@@ -3507,6 +3519,45 @@ function ModelMenu({ bot, roster, actions, run: run2, wide = false, onPick, onPi
     ), document.body) : null
   );
 }
+var KICKOFF = /^\[Bot team setup\]/;
+var greetingOnly = (outline) => Array.isArray(outline) && outline.length === 1 && (!outline[0]?.prompt || KICKOFF.test(outline[0].prompt));
+function modelWords(roster, ref) {
+  const served = servedOf(roster, ref);
+  const [provider, ...rest] = String(ref ?? "").split("/");
+  return { model: served?.name ?? rest.join("/"), provider: served?.providerName ?? served?.provider ?? provider };
+}
+function ModelLine({ bot, roster, actions, run: run2, ref, onPick }) {
+  const words = modelWords(roster, ref ?? bot.model ?? bot.appliedModel);
+  return (0, import_react9.createElement)(
+    "div",
+    { className: "bt-model-line" },
+    (0, import_react9.createElement)("span", { className: "bt-model-line-text" }, t("Using {model} · {provider}", words)),
+    (0, import_react9.createElement)("span", { className: "bt-model-line-sep", "aria-hidden": true }, "·"),
+    (0, import_react9.createElement)(ModelMenu, { bot: ref ? { ...bot, model: ref } : bot, roster, actions, run: run2, link: true, onPick })
+  );
+}
+var outlineOf = (list, sessionId) => list.projectionsBySession?.[sessionId]?.values?.turnOutline ?? list.byId?.[sessionId]?.projectionValues?.turnOutline;
+function ModelLineTail({ turn, sessionId, useRoster, useSessions, actions }) {
+  const roster = useRoster((value) => value);
+  const first = useSessions((list) => greetingOnly(outlineOf(list, sessionId)) ? outlineOf(list, sessionId)[0].turn : null);
+  const [error, setError] = (0, import_react9.useState)("");
+  const bot = roster.byId[sessionId];
+  if (!bot || currentPart(bot) !== sessionId || first === null || first !== turn?.turn) return null;
+  if (!bot.model || !(roster.models ?? []).some((model) => model.ref === bot.model)) return null;
+  const run2 = (promise) => Promise.resolve(promise).then(() => {
+    setError("");
+    return true;
+  }, (failure) => {
+    setError(failure?.message ?? String(failure));
+    return false;
+  });
+  return (0, import_react9.createElement)(
+    "div",
+    { className: "bt-model-tail" },
+    (0, import_react9.createElement)(ModelLine, { bot, roster, actions, run: run2 }),
+    error ? (0, import_react9.createElement)("div", { className: "bt-secret-error", role: "alert" }, error) : null
+  );
+}
 function ModelChoiceDock({ sessionId, useRoster, actions }) {
   const roster = useRoster((value) => value);
   const bot = roster.byId[sessionId];
@@ -3520,6 +3571,13 @@ function ModelChoiceDock({ sessionId, useRoster, actions }) {
   const models = roster.models ?? [];
   const usable = models.filter((model) => !model.needsKey);
   const lost = bot.model ? !models.some((model) => model.ref === bot.model) : false;
+  const run2 = (promise) => Promise.resolve(promise).then(() => {
+    setError("");
+    return true;
+  }, (failure) => {
+    setError(failure?.message ?? String(failure));
+    return false;
+  });
   if (bot.model && (!lost || models.length === 0)) return null;
   const keyFor = usable.length === 0 && actions.setProviderKey ? models.find((model) => model.needsKey) : void 0;
   const manage = manageModels(actions);
@@ -3531,8 +3589,42 @@ function ModelChoiceDock({ sessionId, useRoster, actions }) {
       void actions.refreshModels?.();
     }).finally(() => setBusy(""));
   };
-  const text = lost ? t("{model} is not available anymore. Pick another model for me.", { model: bot.model.split("/").slice(1).join("/") }) : keyFor ? t("Hi, I'm {name}. I need a {provider} API key before I can start.", { name: bot.name, provider: keyFor.providerName ?? keyFor.provider }) : usable.length === 0 ? t("Hi, I'm {name}. I don't have a model yet. How do you want to set one up?", { name: bot.name }) : t("Hi, I'm {name}. Pick a model for me first. You can change it later in my details.", { name: bot.name });
-  const choices = usable.length === 0 ? setupChoices(actions).map(([label, run2]) => (0, import_react9.createElement)("button", { key: label, type: "button", className: "bt-model-chip", onClick: run2 }, label)) : [
+  if (!lost && usable.length > 0) {
+    const suggested = usable.find((model) => model.ref === roster.defaultModel)?.ref ?? (usable.find((model) => model.id !== "default") ?? usable[0]).ref;
+    return (0, import_react9.createElement)(
+      "div",
+      { className: "bt-model-dock" },
+      (0, import_react9.createElement)(
+        "div",
+        { className: "bt-astack", "data-lead": "" },
+        (0, import_react9.createElement)(
+          "div",
+          { className: "bt-msg" },
+          (0, import_react9.createElement)(
+            "div",
+            { className: "bt-msg-line" },
+            (0, import_react9.createElement)(BotMark, { bot, size: 22 }),
+            (0, import_react9.createElement)("div", { className: "bt-bubble" }, t("Hi, I'm {name}. Say when, and I'll start.", { name: bot.name }))
+          )
+        )
+      ),
+      (0, import_react9.createElement)(
+        "div",
+        { className: "bt-model-offer" },
+        (0, import_react9.createElement)("button", {
+          type: "button",
+          className: "bt-model-chip bt-model-start",
+          disabled: busy !== "",
+          "aria-busy": busy === suggested || void 0,
+          onClick: () => pick2(suggested)
+        }, t("Start"), busy === suggested ? (0, import_react9.createElement)("span", { className: "bt-model-spin", "aria-label": t("Saving…") }) : null),
+        (0, import_react9.createElement)(ModelLine, { bot, roster, actions, run: run2, ref: suggested, onPick: pick2 })
+      ),
+      error ? (0, import_react9.createElement)("div", { className: "bt-secret-error bt-model-error", role: "alert" }, error) : null
+    );
+  }
+  const text = lost ? t("{model} is not available anymore. Pick another model for me.", { model: bot.model.split("/").slice(1).join("/") }) : keyFor ? t("Hi, I'm {name}. I need a {provider} API key before I can start.", { name: bot.name, provider: keyFor.providerName ?? keyFor.provider }) : t("Hi, I'm {name}. I don't have a model yet. How do you want to set one up?", { name: bot.name });
+  const choices = usable.length === 0 ? setupChoices(actions).map(([label, run3]) => (0, import_react9.createElement)("button", { key: label, type: "button", className: "bt-model-chip", onClick: run3 }, label)) : [
     ...groupModels(usable).map(([provider, list]) => (0, import_react9.createElement)(
       "div",
       { key: list[0].provider ?? provider, className: "bt-model-choice-group", role: "group", "aria-label": provider },
@@ -3659,6 +3751,15 @@ var MODEL_CSS = `
 .bt-model-chip:disabled{cursor:default}
 .bt-model-chip:disabled:not([aria-busy]){opacity:.5}
 .bt-model-error{margin-left:30px}
+.bt-model-tail{margin:2px 0 6px 6px}
+.bt-model-line{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 6px;font-size:12px;line-height:18px;color:var(--bt-ink-2)}
+.bt-model-line-text{min-width:0;overflow-wrap:anywhere}
+.bt-model-line-sep{color:var(--bt-ink-3)}
+.bt-model-change{padding:0;border:0;background:none;color:var(--bt-accent);font:inherit;font-weight:600;cursor:pointer}
+.bt-model-change:hover,.bt-model-change[aria-expanded=true]{text-decoration:underline;text-underline-offset:3px}
+.bt-model-change:focus-visible{outline:2px solid var(--bt-accent);outline-offset:2px;border-radius:4px}
+.bt-model-offer{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;margin-left:30px}
+.bt-model-offer .bt-model-line{margin-left:0}
 .bt-q.bt-model-key{margin:0 0 0 30px;width:min(480px,calc(100% - 30px));gap:10px}
 .bt-model-key-title{display:flex;align-items:center;gap:6px;font-size:13px;line-height:18px;font-weight:500;color:var(--bt-ink-2)}
 .bt-model-key-title svg{flex:none;width:16px;height:16px}
@@ -19735,6 +19836,8 @@ function apply(ctx) {
     // A side question is not a transcript row. After its snapshot turn closes it
     // sits on that turn's tail, ahead of the time separator.
     () => shadow("conversation.chat.turnTail", { id: "bot-btw", order: 800, priority: BOT_PRIORITY, inject: face }, BtwTurnTail),
+    // While a Bot's chat holds only its greeting, the line under it names its model.
+    () => shadow("conversation.chat.turnTail", { id: "bot-model-line", order: 900, priority: BOT_PRIORITY, inject: face }, ModelLineTail),
     // A Bot condenses its conversation without telling anyone; the chat keeps showing
     // every message.
     () => shadow("conversation.chat.node", { key: "question-reply", priority: BOT_PRIORITY, locale: "chat" }, AnsweredReply),

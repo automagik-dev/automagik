@@ -144,7 +144,8 @@ export function useAnchoredMenu() {
 // The trigger shows the model name over its provider. A Thinking section lists the
 // levels of the shown model when it has them.
 // `onPick`/`onPickEffort` replace saving to the Bot, for a Bot that does not exist yet.
-export function ModelMenu({ bot, roster, actions, run, wide = false, onPick, onPickEffort }) {
+// `link`: the trigger is a small "change" link, as in the line under a Bot's greeting.
+export function ModelMenu({ bot, roster, actions, run, wide = false, link = false, onPick, onPickEffort }) {
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu()
   const shown = modelOf(bot, roster)
   const current = bot.model ?? bot.appliedModel
@@ -175,7 +176,10 @@ export function ModelMenu({ bot, roster, actions, run, wide = false, onPick, onP
   const models = roster.models ?? []
   const manage = manageModels(actions)
   return h(Fragment, null,
-    h('button', {
+    link ? h('button', {
+      ref: button, type: 'button', className: 'bt-model-change', 'aria-haspopup': 'menu', 'aria-expanded': isOpen,
+      'aria-label': t('Change the model of {name}', { name: bot.name }), onClick: toggle,
+    }, t('change')) : h('button', {
       ref: button, type: 'button', className: 'bt-model-trigger', 'data-wide': wide || undefined,
       'aria-haspopup': 'menu', 'aria-expanded': isOpen, 'aria-label': t('Model: {model}', { model: shown?.name ?? t('none') }),
       'data-missing': shown !== undefined && !shown.served && models.length > 0 ? '' : undefined, onClick: toggle,
@@ -194,8 +198,51 @@ export function ModelMenu({ bot, roster, actions, run, wide = false, onPick, onP
       manage ? h('button', { type: 'button', role: 'menuitem', onClick: () => { close(); manage() } }, h(SlidersIcon), h('span', { className: 'bt-menu-label' }, t('Models and providers…'))) : null), document.body) : null)
 }
 
+// True while a chat holds only the Bot's greeting: its one turn is the one the team started
+// (the held kickoff, delivery.js), which DSH's turn outline lists with no prompt of the
+// user's, and no one has written in it yet.
+const KICKOFF = /^\[Bot team setup\]/
+export const greetingOnly = outline => Array.isArray(outline) && outline.length === 1 && (!outline[0]?.prompt || KICKOFF.test(outline[0].prompt))
+
+// What a model is called in a line: its name, and its provider's.
+function modelWords(roster, ref) {
+  const served = servedOf(roster, ref)
+  const [provider, ...rest] = String(ref ?? '').split('/')
+  return { model: served?.name ?? rest.join('/'), provider: served?.providerName ?? served?.provider ?? provider }
+}
+
+// One line naming the model a Bot runs on and its provider, with "change" opening the
+// model menu (which also leads to the providers): "Using Claude Opus 5.5 · Oh My Claude ·
+// change". `ref` and `onPick` stand in for a model the Bot does not have yet.
+export function ModelLine({ bot, roster, actions, run, ref, onPick }) {
+  const words = modelWords(roster, ref ?? bot.model ?? bot.appliedModel)
+  return h('div', { className: 'bt-model-line' },
+    h('span', { className: 'bt-model-line-text' }, t('Using {model} · {provider}', words)),
+    h('span', { className: 'bt-model-line-sep', 'aria-hidden': true }, '·'),
+    h(ModelMenu, { bot: ref ? { ...bot, model: ref } : bot, roster, actions, run, link: true, onPick }))
+}
+
+const outlineOf = (list, sessionId) => list.projectionsBySession?.[sessionId]?.values?.turnOutline ?? list.byId?.[sessionId]?.projectionValues?.turnOutline
+
+// Under the Bot's greeting, on its turn's tail, while the chat holds only that greeting:
+// the line naming the model the Bot runs on. It goes once anyone writes.
+export function ModelLineTail({ turn, sessionId, useRoster, useSessions, actions }) {
+  const roster = useRoster(value => value)
+  const first = useSessions(list => (greetingOnly(outlineOf(list, sessionId)) ? outlineOf(list, sessionId)[0].turn : null))
+  const [error, setError] = useState('')
+  const bot = roster.byId[sessionId]
+  if (!bot || currentPart(bot) !== sessionId || first === null || first !== turn?.turn) return null
+  if (!bot.model || !(roster.models ?? []).some(model => model.ref === bot.model)) return null
+  const run = promise => Promise.resolve(promise).then(() => { setError(''); return true }, (failure) => { setError(failure?.message ?? String(failure)); return false })
+  return h('div', { className: 'bt-model-tail' },
+    h(ModelLine, { bot, roster, actions, run }),
+    error ? h('div', { className: 'bt-secret-error', role: 'alert' }, error) : null)
+}
+
 // The card a Bot's chat opens on while the Bot has no model, or has one that is no
-// longer served. The first Main Bot greets the user only after a pick.
+// longer served. A Bot made without a model holds its greeting until it has one: the
+// welcome (@automagik/welcome-dsh) gives the companion and the Omni Bot one once Connect AI
+// succeeds, and here one press starts it on the model it would get.
 export function ModelChoiceDock({ sessionId, useRoster, actions }) {
   const roster = useRoster(value => value)
   const bot = roster.byId[sessionId]
@@ -208,6 +255,7 @@ export function ModelChoiceDock({ sessionId, useRoster, actions }) {
   // A model whose provider has no API key fails every turn, so it is no choice.
   const usable = models.filter(model => !model.needsKey)
   const lost = bot.model ? !models.some(model => model.ref === bot.model) : false
+  const run = promise => Promise.resolve(promise).then(() => { setError(''); return true }, (failure) => { setError(failure?.message ?? String(failure)); return false })
   // An unknown catalog (none listed) cannot tell a lost model from a slow provider.
   if (bot.model && (!lost || models.length === 0)) return null
   // A window without DSH's own settings takes the missing key here.
@@ -220,14 +268,32 @@ export function ModelChoiceDock({ sessionId, useRoster, actions }) {
       .catch((failure) => { setError(failure?.message ?? String(failure)); void actions.refreshModels?.() })
       .finally(() => setBusy(''))
   }
-  // The pick reads as the Bot's own first message, with the choices as replies under it.
+  // Models that can run and none chosen yet: no grid of choices. The Bot offers the model
+  // it would get (DSH's default when it can run, else the first that can), one press
+  // starts it, and "change" picks another.
+  if (!lost && usable.length > 0) {
+    const suggested = usable.find(model => model.ref === roster.defaultModel)?.ref ?? (usable.find(model => model.id !== 'default') ?? usable[0]).ref
+    return h('div', { className: 'bt-model-dock' },
+      h('div', { className: 'bt-astack', 'data-lead': '' },
+        h('div', { className: 'bt-msg' },
+          h('div', { className: 'bt-msg-line' },
+            h(BotMark, { bot, size: 22 }),
+            h('div', { className: 'bt-bubble' }, t("Hi, I'm {name}. Say when, and I'll start.", { name: bot.name }))))),
+      h('div', { className: 'bt-model-offer' },
+        h('button', {
+          type: 'button', className: 'bt-model-chip bt-model-start', disabled: busy !== '', 'aria-busy': busy === suggested || undefined,
+          onClick: () => pick(suggested),
+        }, t('Start'), busy === suggested ? h('span', { className: 'bt-model-spin', 'aria-label': t('Saving…') }) : null),
+        h(ModelLine, { bot, roster, actions, run, ref: suggested, onPick: pick })),
+      error ? h('div', { className: 'bt-secret-error bt-model-error', role: 'alert' }, error) : null)
+  }
+  // The recovery cases: the model went away, a key is missing, or nothing is set up. The
+  // pick reads as the Bot's own first message, with the choices as replies under it.
   const text = lost
     ? t('{model} is not available anymore. Pick another model for me.', { model: bot.model.split('/').slice(1).join('/') })
     : keyFor
       ? t("Hi, I'm {name}. I need a {provider} API key before I can start.", { name: bot.name, provider: keyFor.providerName ?? keyFor.provider })
-      : usable.length === 0
-        ? t("Hi, I'm {name}. I don't have a model yet. How do you want to set one up?", { name: bot.name })
-        : t("Hi, I'm {name}. Pick a model for me first. You can change it later in my details.", { name: bot.name })
+      : t("Hi, I'm {name}. I don't have a model yet. How do you want to set one up?", { name: bot.name })
   const choices = usable.length === 0
     ? setupChoices(actions).map(([label, run]) => h('button', { key: label, type: 'button', className: 'bt-model-chip', onClick: run }, label))
     : [
@@ -348,6 +414,15 @@ export const MODEL_CSS = `
 .bt-model-chip:disabled{cursor:default}
 .bt-model-chip:disabled:not([aria-busy]){opacity:.5}
 .bt-model-error{margin-left:30px}
+.bt-model-tail{margin:2px 0 6px 6px}
+.bt-model-line{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 6px;font-size:12px;line-height:18px;color:var(--bt-ink-2)}
+.bt-model-line-text{min-width:0;overflow-wrap:anywhere}
+.bt-model-line-sep{color:var(--bt-ink-3)}
+.bt-model-change{padding:0;border:0;background:none;color:var(--bt-accent);font:inherit;font-weight:600;cursor:pointer}
+.bt-model-change:hover,.bt-model-change[aria-expanded=true]{text-decoration:underline;text-underline-offset:3px}
+.bt-model-change:focus-visible{outline:2px solid var(--bt-accent);outline-offset:2px;border-radius:4px}
+.bt-model-offer{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;margin-left:30px}
+.bt-model-offer .bt-model-line{margin-left:0}
 .bt-q.bt-model-key{margin:0 0 0 30px;width:min(480px,calc(100% - 30px));gap:10px}
 .bt-model-key-title{display:flex;align-items:center;gap:6px;font-size:13px;line-height:18px;font-weight:500;color:var(--bt-ink-2)}
 .bt-model-key-title svg{flex:none;width:16px;height:16px}

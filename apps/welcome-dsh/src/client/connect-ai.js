@@ -1,4 +1,4 @@
-import { createElement as h, useCallback, useEffect, useState } from 'react'
+import { createElement as h, useCallback, useEffect, useMemo, useState } from 'react'
 import { call } from './api.js'
 import { Stage, useFinish, useGate, useGlitch } from './stage.js'
 import { SUBSCRIPTION_TILES, SubscriptionSignIn, signedInCount } from './subscriptions.js'
@@ -229,6 +229,8 @@ function Row({ row, open, busy, problem, onFlip, onSaved, onClose, onDedupe }) {
 export function ConnectAiStep(props) {
   const state = useGate(props)
   const finish = useFinish(props)
+  // Continue with an AI on: the host gives the companions their model (endpoint.js).
+  const proceed = useFinish(useMemo(() => ({ ...props, connected: true }), [props]))
   const [glitching, glitch] = useGlitch()
   const [rows, setRows] = useState(null)
   const [subs, setSubs] = useState(null)
@@ -309,5 +311,5 @@ export function ConnectAiStep(props) {
   h('div', { className: 'oai-actions' },
     h('button', { type: 'button', className: 'oai-quiet', onClick: () => finish() }, 'Skip for now'),
     h('span', { className: 'oai-count' }, count > 0 ? `${count} on` : 'Turn on at least one'),
-    h('button', { type: 'button', className: 'oai-primary', disabled: count === 0, onClick: () => finish() }, count > 0 ? 'Continue →' : 'Continue')))
+    h('button', { type: 'button', className: 'oai-primary', disabled: count === 0, onClick: () => proceed() }, count > 0 ? 'Continue →' : 'Continue')))
 }

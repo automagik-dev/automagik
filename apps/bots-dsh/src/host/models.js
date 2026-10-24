@@ -102,10 +102,14 @@ export function install(rt) {
     const selection = ctx.get?.('agentDefaultModel')?.currentSelection?.()
     return selection?.provider && selection?.model ? `${selection.provider}/${selection.model}` : undefined
   }
-  // The profile default model of DSH, when it is served; else the first served model.
+  // The profile default model of DSH, when it is served and can run (its provider has its
+  // key); else the first model that can run, a provider's `default` alias (Claude Code's
+  // "Default (recommended)") after the models it names; else none, and a Bot made then
+  // waits for the user to set one up.
   function pickDefault(entries) {
+    const usable = entries.filter(entry => !entry.needsKey)
     const ref = defaultRef()
-    return entries.find(entry => entry.ref === ref)?.ref ?? entries[0]?.ref
+    return usable.find(entry => entry.ref === ref)?.ref ?? (usable.find(entry => entry.id !== 'default') ?? usable[0])?.ref
   }
   const defaultModel = async () => pickDefault(await catalog())
 

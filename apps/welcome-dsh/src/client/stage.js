@@ -44,10 +44,11 @@ export async function gate({ stepId, explicit, complete }, request = call) {
   return state
 }
 
-// Keeps the step finished, then hands the shell to the next step.
-export async function finish({ stepId, complete }, request = call) {
+// Keeps the step finished, then hands the shell to the next step. `connected`: Connect AI
+// finished with an AI on.
+export async function finish({ stepId, complete, connected }, request = call) {
   try {
-    await request('done', { stepId })
+    await request('done', connected === true ? { stepId, connected } : { stepId })
   } catch {}
   complete()
 }

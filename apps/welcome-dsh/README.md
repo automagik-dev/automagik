@@ -46,6 +46,12 @@ DeepSeek is DSH's own route: its row turns on with a key or a DeepSeek account, 
 is removed in Settings → Models. Every other provider DSH knows stays one link away, in
 Settings → Models.
 
+Continue gives the companion and the Omni Bot their model. Both are made without one, so
+joining the team sends nothing anywhere; once Connect AI finishes with an AI on, each gets
+the team's default model and its held greeting goes out, without a further click. With no
+model that can run (Skip, or only a provider that still needs its key), they keep waiting
+and their chats offer the ways to set one up.
+
 ### The team step and the preload
 
 The team step (`omni-team`) asks who joins the companion's team: Omni and Genie, each a card
@@ -154,7 +160,7 @@ The shape was read from DSH 0.2.1-rc.2:
 | Endpoint | Payload | Does |
 |---|---|---|
 | `state` | none | The flags; `deepseek` (a `DEEPSEEK_API_KEY` or a DeepSeek account sign-in is stored); `piAiRoutes`; `aiConnected`; `preload` (`omni`, `genie` or null). |
-| `done` | `{ stepId }` | Sets the flag for `omni-welcome`, `omni-connect-ai` or `omni-connect`. |
+| `done` | `{ stepId, connected? }` | Sets the flag for `omni-welcome`, `omni-connect-ai` or `omni-connect`. Connect AI's Continue sends `connected: true`: the companion and the Omni Bot, made without a model, then get the team's default model (DSH's default model when it is served and has its key, else the first model that can run), and their held greetings go out. Skip sets nothing. |
 | `cliproxy` | `{ baseURL, apiKey }` | The route above; answers `{ route, baseURL, models }`. |
 | `ais` | none | Every row: `{ id, name, via, kind, ready, on, found, needs?, detail?, duplicates? }`, and dsh-subscriptions' accounts and hidden vendors. Names and states only. |
 | `ai-switch` | `{ id, on }` | Turns a row that is set up on or off (table above). |

@@ -11,7 +11,10 @@ import { preloadOf } from './preload.js'
 //
 //   state              the done flags, whether an AI is already connected, and the
 //                      product the desktop app was opened for (preload, src/host/preload.js)
-//   done { stepId }    keeps a step finished, in this plugin's own settings entry
+//   done { stepId, connected? }
+//                      keeps a step finished, in this plugin's own settings entry; Connect
+//                      AI finished with an AI on (`connected`) gives the companion and the
+//                      Omni Bot their model (companion.js assignModels)
 //   cliproxy { baseURL, apiKey }
 //                      lists the gateway's models with the key, stores the key in DSH's
 //                      credential store and writes a pi-ai route that references it
@@ -41,6 +44,10 @@ export const FLAGS = { 'omni-companion': 'companionDone', 'omni-team': 'teamDone
 const DEEPSEEK_REF = 'DEEPSEEK_API_KEY'
 const DEEPSEEK_ACCOUNT = 'deepseek-account-platform/default'
 const TIMEOUT_MS = 15_000
+// How long finishing Connect AI waits for the companions' model, and how long that keeps
+// being tried for a provider that registers late.
+const ASSIGN_HOLD_MS = 5_000
+const ASSIGN_WAIT_MS = 30_000
 const MAX_MODELS = 500
 const MAX_ID = 200
 // A model listing is small; a gateway that sends more is not read past this.
@@ -204,8 +211,24 @@ export function install(ctx, deps = {}) {
   const terminal = createTerminalActions(ctx, { checkClaude, ...deps.terminal })
   const { anyOn, ...aiEndpoints } = ai
   const { closeAll, ...terminalEndpoints } = terminal
-  const { team, omniProjectOf, ...companion } = createCompanionActions(ctx, deps.companion)
+  const { team, omniProjectOf, assignModels, ...companion } = createCompanionActions(ctx, deps.companion)
   const actions = { ...createActions(ctx, { ...deps, anyOn }), ...createProviderActions(ctx), ...aiEndpoints, ...terminalEndpoints, ...companion, ...createBotTypeActions(ctx, { team, omniProjectOf }) }
+  // Connect AI finished with an AI on: the companion and the Omni Bot get their model, and
+  // their held greetings go out. The step waits for that a little (ASSIGN_HOLD_MS), so the
+  // chat opens on the greeting rather than on the model card; a provider that registers
+  // later is still waited for in the background, up to ASSIGN_WAIT_MS.
+  const markDone = actions.done
+  actions.done = async (payload, signal) => {
+    const result = await markDone(payload, signal)
+    const fields = parse(DonePayload, payload)
+    const rt = team()
+    if (fields?.stepId === 'omni-connect-ai' && fields.connected === true && rt !== undefined) {
+      const assigning = assignModels(rt, { waitMs: deps.assignWaitMs ?? ASSIGN_WAIT_MS })
+        .catch(error => ctx.logger?.warn?.('omni-ai: the companions got no model: %s', error?.message ?? error))
+      await Promise.race([assigning, new Promise(resolve => setTimeout(resolve, deps.assignHoldMs ?? ASSIGN_HOLD_MS))])
+    }
+    return result
+  }
   if (deps.checkClaude) actions['claude-code'] = () => checkClaude()
   const handle = async (endpoint, payload, signal) => {
     if (!Object.hasOwn(actions, endpoint)) return { ok: false, error: { code: 'omni-ai/not-found', message: `Unknown endpoint ${endpoint.slice(0, 40)}` } }
