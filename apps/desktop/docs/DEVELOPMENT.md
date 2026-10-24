@@ -81,7 +81,7 @@ To run from a checkout: `npm run prepare-runtime`, then `npx electron .` (add `-
 
 ### The icon
 
-`assets/icon.svg` is the icon's source: the octopus Omni shipped with, on a night-sky tile. There is no Automagik icon yet; a new one replaces both files. electron-builder makes every platform's icons from `assets/icon.png`, which is the SVG rendered by headless Chromium:
+`assets/icon.svg` is the icon's source: the owner's clay triskelion (`assets/mark.png`, the kit-v4 source, kept as delivered) on a cream clay tile. electron-builder makes every platform's icons from `assets/icon.png`, which is the SVG rendered by headless Chromium (`--no-sandbox` where its sandbox cannot start; the SVG loads `mark.png` beside it):
 
 ```sh
 chrome-headless-shell --screenshot=assets/icon.png --window-size=1024,1024 \
