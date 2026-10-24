@@ -901,7 +901,7 @@ function useShownCards(actions, sessionId, callIds) {
   }, [sessionId, key])
 }
 
-function renderCall(call, { sessionId, roster, actions, useUi, useWork, findBot, heldCards }) {
+function renderCall(call, { sessionId, roster, actions, useUi, useWork, useSessionStatus, findBot, heldCards }) {
   const tool = toolName(call)
   const done = call.kind === 'tool-result'
   const { text: arg, value: argValue } = toolArgs(call)
@@ -914,7 +914,7 @@ function renderCall(call, { sessionId, roster, actions, useUi, useWork, findBot,
       // The task's own card: it works where the user can watch, then says what it found.
       const started = done ? /\((session-[^)]+)\) under Tasks/.exec(contentText(call.content))?.[1] : undefined
       if (done && !started) return h('div', { className: 'bt-event' }, contentText(call.content).slice(0, 160))
-      return h(TaskCard, { sessionId: started, title: arg('title') ?? t('a task'), task: started ? roster.tasks?.[started] : undefined, onOpen: () => started && actions.openSession(started) })
+      return h(TaskCard, { sessionId: started, title: arg('title') ?? t('a task'), task: started ? roster.tasks?.[started] : undefined, onOpen: () => started && actions.openSession(started), useSessionStatus })
     }
     case 'message_bot': {
       const target = findBot(arg('to')) ?? { name: arg('to') ?? '…', color: 'gray' }
@@ -989,7 +989,7 @@ function renderCall(call, { sessionId, roster, actions, useUi, useWork, findBot,
   }
 }
 
-export function ToolCell({ node, sessionId, useRoster, useUi, useWork, useHeldCards, actions }) {
+export function ToolCell({ node, sessionId, useRoster, useUi, useWork, useSessionStatus, useHeldCards, actions }) {
   const roster = useRoster(value => value)
   const heldCards = useHeldCards?.(state => state[sessionId])
   const root = node.data.root
@@ -1007,6 +1007,6 @@ export function ToolCell({ node, sessionId, useRoster, useUi, useWork, useHeldCa
   useLiveNote(actions, sessionId, `tool:${root.callId ?? node.key}`, note)
   useShownCards(actions, sessionId, drawn.filter(call => (CARDS.has(toolName(call)) || toolCards.asks(toolName(call))) && call.callId).map(call => call.callId))
   if (drawn.length === 0) return null
-  const env = { sessionId, roster, actions, useUi, useWork, findBot, heldCards }
+  const env = { sessionId, roster, actions, useUi, useWork, useSessionStatus, findBot, heldCards }
   return h(Fragment, null, drawn.map((call, index) => h(Fragment, { key: call.callId ?? index }, renderCall(call, env))))
 }

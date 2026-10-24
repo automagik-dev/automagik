@@ -1069,6 +1069,17 @@ var ZH = {
   "Open task": "打开任务",
   "step {count}": "第 {count} 步",
   "Task running": "任务进行中",
+  "Waiting for you": "等你处理",
+  "It asks for your OK. Open it to answer.": "它在等你同意，打开它来回答。",
+  "Answer it": "去回答",
+  "Working on 1 thing": "正在做 1 件事",
+  "Working on {n} things": "正在做 {n} 件事",
+  "Tasks {name} started": "{name} 开始的任务",
+  "+{n} more": "还有 {n} 个",
+  now: "刚刚",
+  "{n}m": "{n} 分钟",
+  "{n}h": "{n} 小时",
+  "{n}d": "{n} 天",
   "Task stopped": "任务已停止",
   "Watch it work": "查看进度",
   "status": "状态",
@@ -3702,9 +3713,16 @@ var duration = (ms) => {
   const minutes = Math.floor(seconds / 60);
   return minutes < 60 ? `${minutes}:${String(seconds % 60).padStart(2, "0")}` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 };
-function TaskCard({ sessionId, title, task, onOpen }) {
+var runningTasksOf = (roster, botId) => Object.entries(roster.tasks ?? {}).filter(([, task]) => task.from === botId && task.status === "working").map(([sessionId, task]) => ({ sessionId, ...task })).sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+var waitsForUser = (status, sessionId) => status?.get(sessionId)?.pendingInteraction !== void 0;
+var taskState = (task, waiting) => {
   const status = task?.status ?? "working";
-  const working = status === "working";
+  return status === "working" && waiting ? "waiting" : status;
+};
+function TaskCard({ sessionId, title, task, onOpen, useSessionStatus }) {
+  const waiting = useSessionStatus && sessionId ? useSessionStatus((map) => waitsForUser(map, sessionId)) : false;
+  const status = taskState(task, waiting);
+  const working = status === "working" || status === "waiting";
   const now = useNow(working);
   const started = task?.at ?? now;
   const elapsed = (task?.endedAt ?? now) - started;
@@ -3720,17 +3738,17 @@ function TaskCard({ sessionId, title, task, onOpen }) {
         (0, import_react11.createElement)(
           "span",
           { className: "op-task-mark", "aria-hidden": true },
-          working ? (0, import_react11.createElement)("span", { className: "op-orbit" }, (0, import_react11.createElement)("i"), (0, import_react11.createElement)("i"), (0, import_react11.createElement)("i")) : status === "done" ? (0, import_react11.createElement)("svg", { viewBox: "0 0 20 20", width: 18, height: 18 }, (0, import_react11.createElement)("path", { d: "M5 10.5l3.2 3L15 6.5", fill: "none", stroke: "currentColor", strokeWidth: 2.2, strokeLinecap: "round", strokeLinejoin: "round" })) : (0, import_react11.createElement)("svg", { viewBox: "0 0 20 20", width: 16, height: 16 }, (0, import_react11.createElement)("path", { d: "M6 6l8 8M14 6l-8 8", stroke: "currentColor", strokeWidth: 2.2, strokeLinecap: "round" }))
+          status === "waiting" ? (0, import_react11.createElement)("span", { className: "op-task-wait" }) : working ? (0, import_react11.createElement)("span", { className: "op-orbit" }, (0, import_react11.createElement)("i"), (0, import_react11.createElement)("i"), (0, import_react11.createElement)("i")) : status === "done" ? (0, import_react11.createElement)("svg", { viewBox: "0 0 20 20", width: 18, height: 18 }, (0, import_react11.createElement)("path", { d: "M5 10.5l3.2 3L15 6.5", fill: "none", stroke: "currentColor", strokeWidth: 2.2, strokeLinecap: "round", strokeLinejoin: "round" })) : (0, import_react11.createElement)("svg", { viewBox: "0 0 20 20", width: 16, height: 16 }, (0, import_react11.createElement)("path", { d: "M6 6l8 8M14 6l-8 8", stroke: "currentColor", strokeWidth: 2.2, strokeLinecap: "round" }))
         ),
         (0, import_react11.createElement)(
           "div",
           { className: "op-task-titles" },
-          (0, import_react11.createElement)("span", { className: "op-task-kicker" }, working ? t("Task running") : status === "done" ? t("Task finished") : t("Task stopped")),
+          (0, import_react11.createElement)("span", { className: "op-task-kicker" }, status === "waiting" ? t("Waiting for you") : working ? t("Task running") : status === "done" ? t("Task finished") : t("Task stopped")),
           (0, import_react11.createElement)("strong", { className: "op-task-title" }, title)
         ),
         (0, import_react11.createElement)("span", { className: "op-task-time" }, duration(elapsed))
       ),
-      working ? (0, import_react11.createElement)(
+      status === "waiting" ? (0, import_react11.createElement)("div", { className: "op-task-live" }, (0, import_react11.createElement)("span", { className: "op-task-said" }, t("It asks for your OK. Open it to answer."))) : working ? (0, import_react11.createElement)(
         import_react11.Fragment,
         null,
         (0, import_react11.createElement)(
@@ -3741,7 +3759,7 @@ function TaskCard({ sessionId, title, task, onOpen }) {
         ),
         (0, import_react11.createElement)("div", { className: "op-task-bar", "aria-hidden": true }, (0, import_react11.createElement)("i"))
       ) : task?.summary ? (0, import_react11.createElement)("p", { className: "op-task-summary" }, task.summary) : null,
-      sessionId ? (0, import_react11.createElement)("button", { type: "button", className: "op-task-open", onClick: onOpen }, working ? t("Watch it work") : t("Open task"), " →") : null
+      sessionId ? (0, import_react11.createElement)("button", { type: "button", className: "op-task-open", onClick: onOpen }, status === "waiting" ? t("Answer it") : working ? t("Watch it work") : t("Open task"), " →") : null
     )
   );
 }
@@ -3754,6 +3772,9 @@ var TASK_CSS = `
 .op-task{position:relative;max-width:640px;padding:1.5px;border-radius:20px;background:conic-gradient(from var(--op-angle),color-mix(in srgb,var(--bt-accent) 30%,transparent),var(--bt-accent),#a78bfa,#f472b6,color-mix(in srgb,var(--bt-accent) 30%,transparent));animation:op-card-in .45s cubic-bezier(.2,.8,.2,1),op-spin 3s linear infinite}
 .op-task[data-state=done]{background:linear-gradient(135deg,#00c972,color-mix(in srgb,#00c972 30%,var(--bt-line)));animation:op-card-in .45s cubic-bezier(.2,.8,.2,1)}
 .op-task[data-state=failed]{background:color-mix(in srgb,#e5484d 50%,var(--bt-line));animation:none}
+.op-task[data-state=waiting]{background:linear-gradient(135deg,var(--bt-gold),color-mix(in srgb,var(--bt-gold) 30%,var(--bt-line)));animation:op-card-in .45s cubic-bezier(.2,.8,.2,1)}
+.op-task[data-state=waiting] .op-task-mark{background:color-mix(in srgb,var(--bt-gold) 18%,transparent)}
+.op-task-wait{width:12px;height:12px;border-radius:50%;corner-shape:round;background:var(--bt-gold);box-shadow:0 0 0 3px color-mix(in srgb,var(--bt-gold) 22%,transparent)}
 .op-task-in{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:18.5px;background:var(--bt-card)}
 .op-task-head{display:flex;align-items:center;gap:12px;min-width:0}
 .op-task-mark{flex:none;display:grid;place-items:center;width:36px;height:36px;border-radius:12px;background:color-mix(in srgb,var(--bt-accent) 12%,transparent);color:var(--bt-accent)}
@@ -9150,7 +9171,7 @@ function useShownCards(actions, sessionId, callIds) {
     return () => actions.noteCards(sessionId, ids, -1);
   }, [sessionId, key]);
 }
-function renderCall(call2, { sessionId, roster, actions, useUi, useWork, findBot, heldCards }) {
+function renderCall(call2, { sessionId, roster, actions, useUi, useWork, useSessionStatus, findBot, heldCards }) {
   const tool = toolName(call2);
   const done = call2.kind === "tool-result";
   const { text: arg, value: argValue } = toolArgs(call2);
@@ -9161,7 +9182,7 @@ function renderCall(call2, { sessionId, roster, actions, useUi, useWork, findBot
     case "start_task": {
       const started = done ? /\((session-[^)]+)\) under Tasks/.exec(contentText(call2.content))?.[1] : void 0;
       if (done && !started) return (0, import_react19.createElement)("div", { className: "bt-event" }, contentText(call2.content).slice(0, 160));
-      return (0, import_react19.createElement)(TaskCard, { sessionId: started, title: arg("title") ?? t("a task"), task: started ? roster.tasks?.[started] : void 0, onOpen: () => started && actions.openSession(started) });
+      return (0, import_react19.createElement)(TaskCard, { sessionId: started, title: arg("title") ?? t("a task"), task: started ? roster.tasks?.[started] : void 0, onOpen: () => started && actions.openSession(started), useSessionStatus });
     }
     case "message_bot": {
       const target = findBot(arg("to")) ?? { name: arg("to") ?? "…", color: "gray" };
@@ -9237,7 +9258,7 @@ function renderCall(call2, { sessionId, roster, actions, useUi, useWork, findBot
       return null;
   }
 }
-function ToolCell({ node, sessionId, useRoster, useUi, useWork, useHeldCards, actions }) {
+function ToolCell({ node, sessionId, useRoster, useUi, useWork, useSessionStatus, useHeldCards, actions }) {
   const roster = useRoster((value) => value);
   const heldCards = useHeldCards?.((state) => state[sessionId]);
   const root = node.data.root;
@@ -9252,7 +9273,7 @@ function ToolCell({ node, sessionId, useRoster, useUi, useWork, useHeldCards, ac
   useLiveNote(actions, sessionId, `tool:${root.callId ?? node.key}`, note);
   useShownCards(actions, sessionId, drawn.filter((call2) => (CARDS.has(toolName(call2)) || toolCards.asks(toolName(call2))) && call2.callId).map((call2) => call2.callId));
   if (drawn.length === 0) return null;
-  const env = { sessionId, roster, actions, useUi, useWork, findBot, heldCards };
+  const env = { sessionId, roster, actions, useUi, useWork, useSessionStatus, findBot, heldCards };
   return (0, import_react19.createElement)(import_react19.Fragment, null, drawn.map((call2, index) => (0, import_react19.createElement)(import_react19.Fragment, { key: call2.callId ?? index }, renderCall(call2, env))));
 }
 
@@ -9477,6 +9498,8 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   const awayLine = away ? workLine(roster.roomsById[groups[0].id]?.name ?? t("a group chat"), groups[0], groups.length - 1) : null;
   const waits = workKeys(useWork ? useWork((work) => JSON.stringify(work.waiting?.[id] ?? null)) : "null");
   const waitsFor = state === "waiting" ? waitingFor(roster, waits) : "";
+  const threads = runningTasksOf(roster, id).length;
+  const threadsLine = threads === 0 ? "" : threads === 1 ? t("Working on 1 thing") : t("Working on {n} things", { n: threads });
   if (bot.hidden && !active && !main) return null;
   const onContextMenu = (event) => {
     event.preventDefault();
@@ -9503,7 +9526,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
       "span",
       { className: "bt-row-body" },
       (0, import_react21.createElement)("span", { className: "bt-row-name" }, (0, import_react21.createElement)("span", { className: "bt-row-title" }, bot.name), role ? (0, import_react21.createElement)("span", { className: "bt-role" }, role) : null, pinned ? (0, import_react21.createElement)(PinMark) : null),
-      runningLine ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, runningLine) : awayLine ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, awayLine) : waitsFor ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, waitsFor) : preview ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, preview) : null
+      runningLine ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, runningLine) : awayLine ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, awayLine) : waitsFor ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, waitsFor) : threadsLine ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, threadsLine) : preview ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, preview) : null
     ) : null,
     // Badges other Omni plugins add (extend.js): Omni's row counts the automation runs waiting for you.
     wide ? (0, import_react21.createElement)(RowBadges, { bot, roster, useWork }) : null,
@@ -9518,6 +9541,61 @@ function BotChildren({ bot, roster, actions, wide }) {
   const entries2 = useEntries(botChildren);
   if (!wide || entries2.length === 0) return null;
   return entries2.map((entry) => (0, import_react21.createElement)(entry.Component, { key: entry.id, bot, roster, actions }));
+}
+function threadAge(ms, now = Date.now()) {
+  const minutes = Math.floor(Math.max(0, now - ms) / 6e4);
+  if (minutes < 1) return t("now");
+  if (minutes < 60) return t("{n}m", { n: minutes });
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? t("{n}h", { n: hours }) : t("{n}d", { n: Math.floor(hours / 24) });
+}
+function useMinute(on) {
+  const [now, setNow] = (0, import_react21.useState)(() => Date.now());
+  (0, import_react21.useEffect)(() => {
+    if (!on) return void 0;
+    const timer = setInterval(() => setNow(Date.now()), 3e4);
+    return () => clearInterval(timer);
+  }, [on]);
+  return now;
+}
+var THREADS_SHOWN = 3;
+function BotThreads({ bot, roster, actions, useSessions, useSessionStatus, wide }) {
+  const tasks = runningTasksOf(roster, bot.id);
+  const ids = tasks.map((task) => task.sessionId);
+  const waitingKey = useSessionStatus((map) => ids.filter((id) => waitsForUser(map, id)).join(","));
+  const shownId = useSessions((list) => ids.find((id) => (list.byId[id]?.retainedBy?.mainView ?? 0) > 0) ?? "");
+  const [open, setOpen] = (0, import_react21.useState)(false);
+  const now = useMinute(wide && tasks.length > 0);
+  if (!wide || tasks.length === 0) return null;
+  const waiting = new Set(waitingKey.split(",").filter(Boolean));
+  const sorted = [...tasks].sort((a, b) => Number(waiting.has(b.sessionId)) - Number(waiting.has(a.sessionId)));
+  const shown = open || sorted.length <= THREADS_SHOWN + 1 ? sorted : sorted.slice(0, THREADS_SHOWN);
+  const more = sorted.length - shown.length;
+  return (0, import_react21.createElement)(
+    "div",
+    { className: "bt-threads", role: "group", "aria-label": t("Tasks {name} started", { name: bot.name }) },
+    shown.map((task) => {
+      const state = taskState(task, waiting.has(task.sessionId));
+      const label = [task.title, state === "waiting" ? t("Waiting for you") : t("Working")].join(", ");
+      return (0, import_react21.createElement)(
+        "button",
+        {
+          key: task.sessionId,
+          type: "button",
+          className: "bt-thread",
+          "data-state": state,
+          "aria-label": label,
+          title: task.title,
+          "aria-current": shownId === task.sessionId ? "page" : void 0,
+          onClick: () => actions.openSession(task.sessionId)
+        },
+        (0, import_react21.createElement)("span", { className: state === "waiting" ? "bt-thread-wait" : "bt-thread-spin", "aria-hidden": true }),
+        (0, import_react21.createElement)("span", { className: "bt-thread-title" }, task.title),
+        (0, import_react21.createElement)("span", { className: "bt-thread-age", "aria-hidden": true }, threadAge(task.at ?? now, now))
+      );
+    }),
+    more > 0 ? (0, import_react21.createElement)("button", { type: "button", className: "bt-thread bt-thread-more", onClick: () => setOpen(true) }, t("+{n} more", { n: more })) : null
+  );
 }
 function RoomRow({ room: room2, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useWork, wide, marked }) {
   const id = room2.id;
@@ -9799,12 +9877,14 @@ function TeamSidebar(props) {
         import_react21.Fragment,
         { key: main.id },
         (0, import_react21.createElement)(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }),
+        (0, import_react21.createElement)(BotThreads, { ...rowProps, bot: main }),
         (0, import_react21.createElement)(BotChildren, { bot: main, roster, actions, wide })
       ) : roster.ready ? null : (0, import_react21.createElement)("div", { className: "bt-hint" }, t("Setting up your Main Bot…")),
       order.map((entry) => entry.kind === "bot" ? (0, import_react21.createElement)(
         import_react21.Fragment,
         { key: entry.item.id },
         (0, import_react21.createElement)(BotRow, { ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true }),
+        (0, import_react21.createElement)(BotThreads, { ...rowProps, bot: entry.item }),
         (0, import_react21.createElement)(BotChildren, { bot: entry.item, roster, actions, wide })
       ) : entry.kind === "room" ? (0, import_react21.createElement)(RoomRow, { key: entry.item.id, ...rowProps, room: entry.item, marked: markedUnread[entry.item.id] === true }) : (0, import_react21.createElement)(AgentRow, { key: entry.item.id, ...rowProps, agent: entry.item, marked: markedUnread[entry.item.id] === true }))
     )
@@ -10219,6 +10299,20 @@ var SIDEBAR_CSS = `
 .bt-brand .bt-mark{flex:none}
 .bt-pin{flex:none;display:inline-flex;color:var(--bt-ink-3)}
 .bt-row-crowned{margin-top:8px}
+/* A Bot's running tasks, as threads under its row. */
+.bt-threads{display:flex;flex-direction:column;gap:2px;margin:0 0 4px 26px;padding-left:10px;border-left:2px solid var(--bt-line-2)}
+.bt-thread{display:flex;align-items:center;gap:8px;width:100%;min-height:28px;padding:4px 8px;border:0;border-radius:10px;background:none;color:var(--bt-ink);font:inherit;font-size:12.5px;line-height:18px;text-align:left;cursor:pointer;box-sizing:border-box;transition:background-color .12s ease}
+.bt-thread:hover,.bt-thread[aria-current=page]{background:var(--bt-hover)}
+.bt-thread:focus-visible{outline:2px solid var(--bt-accent);outline-offset:-2px}
+.bt-thread[data-state=waiting] .bt-thread-title{font-weight:600}
+.bt-thread-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bt-thread-age{flex:none;font-size:11px;color:var(--bt-ink-3);font-variant-numeric:tabular-nums}
+.bt-thread-spin{flex:none;width:12px;height:12px;box-sizing:border-box;border-radius:50%;corner-shape:round;border:2px solid color-mix(in srgb,var(--bt-accent) 25%,transparent);border-top-color:var(--bt-accent);animation:bt-thread-spin .9s linear infinite}
+.bt-thread-wait{flex:none;width:12px;height:12px;border-radius:50%;corner-shape:round;background:var(--bt-gold);box-shadow:0 0 0 3px color-mix(in srgb,var(--bt-gold) 22%,transparent)}
+.bt-thread-more{color:var(--bt-ink-2);padding-left:28px}
+@keyframes bt-thread-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.bt-thread-spin{animation-duration:3s}}
+body[data-bt-motion=quiet] .bt-thread-spin{animation-duration:3s}
 /* The first Main Bot's crown (mark.js) and its role chip, in clay gold. */
 .bt-crown{position:absolute;left:50%;top:calc(var(--bt-size,36px) * -.27);width:calc(var(--bt-size,36px) * .52);height:calc(var(--bt-size,36px) * .36);transform:translateX(-50%) rotate(-8deg);filter:drop-shadow(0 1.5px 0 var(--bt-gold-edge)) drop-shadow(0 3px 3px color-mix(in srgb,var(--bt-gold-edge) 30%,transparent));pointer-events:none;z-index:1;line-height:0}
 .bt-crown-body{fill:var(--bt-gold);stroke:var(--bt-gold-edge);stroke-width:2;stroke-linejoin:round}
