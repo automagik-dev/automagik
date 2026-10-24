@@ -120,6 +120,22 @@ test('saving the companion makes it the Main Bot, by look and name', async () =>
   assert.deepEqual((await host().handle('companion-save', { name: 'Pip', shape: 'star' })).value, { name: 'Pip', applied: false, image: false })
 })
 
+test('the companion is the Orchestrator, and keeps a role the person gave it', async () => {
+  assert.equal(COMPANION_ROLE, 'Orchestrator')
+  // The roles set before (this plugin's and the team's own default) give way to it.
+  for (const role of ['Your companion', 'Channel orchestrator']) {
+    const team = fakeTeam()
+    team.state.bots.main.role = role
+    await host({ team }).handle('companion-save', { name: 'Pip', shape: 'octopus' })
+    assert.equal(team.state.bots.main.role, 'Orchestrator')
+  }
+  const team = fakeTeam()
+  team.state.bots.main.role = 'Chief of staff'
+  await host({ team }).handle('companion-save', { name: 'Pip', shape: 'octopus' })
+  assert.deepEqual(team.calls, [['updateBot', 'main', { name: 'Pip', avatar: { shape: 'octopus' } }]])
+  assert.equal(team.state.bots.main.role, 'Chief of staff')
+})
+
 test('a drawn companion becomes the Main Bot\'s avatar, shrunk', async () => {
   const home = mkdtempSync(join(tmpdir(), 'omni-ai-companion-'))
   try {
@@ -197,4 +213,52 @@ test('Omni left out adds no Bot and skips its connect step; a bad choice changes
     assert.equal((await strict.handle('team-save', payload)).error.code, 'omni-ai/invalid', JSON.stringify(payload))
   }
   assert.deepEqual(strict.updates, [])
+})
+
+// The team service's model side, as assignModels uses it: `served` lists what can run,
+// in turn, one read per entry (a provider that registers late).
+function withModels(team, served) {
+  let reads = 0
+  team.catalog = async () => { reads += 1 }
+  team.defaultModel = async () => served[Math.min(reads, served.length) - 1]
+  return team
+}
+
+test('Connect AI finished with an AI on gives the companion and the Omni Bot a model', async () => {
+  const team = withModels(fakeTeam({ mainName: 'Pip' }), ['claude-code/opus'])
+  team.state.bots.omni = { id: 'omni', name: 'Omni', kind: 'omni' }
+  team.state.bots.other = { id: 'other', name: 'Writer' }
+  const fake = host({ team })
+  const reply = await fake.handle('done', { stepId: 'omni-connect-ai', connected: true })
+  assert.deepEqual(reply.value, { connectAiDone: true })
+  assert.deepEqual(team.calls, [['updateBot', 'main', { model: 'claude-code/opus' }], ['updateBot', 'omni', { model: 'claude-code/opus' }]])
+  assert.equal(team.state.bots.other.model, undefined)
+})
+
+test('a skipped Connect AI, a Bot with a model, or no model that can run sets nothing', async () => {
+  const skipped = withModels(fakeTeam(), ['claude-code/opus'])
+  await host({ team: skipped }).handle('done', { stepId: 'omni-connect-ai' })
+  assert.deepEqual(skipped.calls, [])
+  const chosen = withModels(fakeTeam(), ['claude-code/opus'])
+  chosen.state.bots.main.model = 'deepseek/deepseek-v4-pro'
+  await host({ team: chosen }).handle('done', { stepId: 'omni-connect-ai', connected: true })
+  assert.deepEqual(chosen.calls, [])
+  const none = withModels(fakeTeam(), [undefined])
+  const fake = host({ team: none })
+  const { install: installAgain } = await import('../src/host/endpoint.js')
+  const quick = installAgain(fake.ctx, { checkClaude: noClaude, assignWaitMs: 0 })
+  assert.equal((await quick.handle('done', { stepId: 'omni-connect-ai', connected: true })).ok, true)
+  assert.deepEqual(none.calls, [])
+  // Another step's done never assigns.
+  const other = withModels(fakeTeam(), ['claude-code/opus'])
+  await host({ team: other }).handle('done', { stepId: 'omni-team', connected: true })
+  assert.deepEqual(other.calls, [])
+})
+
+test('a provider Connect AI just turned on is waited for', async () => {
+  const team = withModels(fakeTeam(), [undefined, undefined, 'claude-code/opus'])
+  const fake = host({ team })
+  const { assignModels } = await import('../src/host/companion.js').then(({ createCompanionActions }) => createCompanionActions(fake.ctx))
+  assert.deepEqual(await assignModels(team, { waitMs: 5_000, pauseMs: 1 }), ['Omni'])
+  assert.deepEqual(team.calls, [['updateBot', 'main', { model: 'claude-code/opus' }]])
 })

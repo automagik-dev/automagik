@@ -14,7 +14,8 @@ export const RequestBody = z.object({ endpoint: name, payload: z.unknown() })
 export const Secret = z.string().trim().min(1).max(MAX_KEY).regex(/^\S+$/)
 export const Answer = z.string().trim().min(1).max(MAX_ANSWER)
 
-export const DonePayload = z.object({ stepId: name })
+// `connected`: Connect AI finished with an AI on (its Continue), not skipped.
+export const DonePayload = z.object({ stepId: name, connected: z.boolean().optional() })
 export const CliproxyPayload = z.object({ baseURL: text.optional(), apiKey: text.optional() })
 export const ProviderPayload = z.object({ provider: name })
 export const KeyPayload = ProviderPayload.extend({ apiKey: text.optional() })

@@ -22,9 +22,30 @@ const duration = (ms) => {
   return minutes < 60 ? `${minutes}:${String(seconds % 60).padStart(2, '0')}` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`
 }
 
-export function TaskCard({ sessionId, title, task, onOpen }) {
+// Running tasks a Bot started, from the team view (`roster.tasks`, agents.js), newest first.
+export const runningTasksOf = (roster, botId) => Object.entries(roster.tasks ?? {})
+  .filter(([, task]) => task.from === botId && task.status === 'working')
+  .map(([sessionId, task]) => ({ sessionId, ...task }))
+  .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
+
+// Whether a task's Session waits for the user: DSH's approval or question card is up there,
+// or the team's host noted an approval the task waits on (approvals.js `taskId`).
+export const waitsForUser = (status, sessionId) => status?.get(sessionId)?.pendingInteraction !== undefined
+export const approvalFor = (work, sessionId) => (work?.approvals ?? []).some(entry => entry.taskId === sessionId)
+
+// A task's state for its card and its thread in the sidebar: working, waiting (for the
+// user), done or failed.
+export const taskState = (task, waiting) => {
   const status = task?.status ?? 'working'
-  const working = status === 'working'
+  return status === 'working' && waiting ? 'waiting' : status
+}
+
+export function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, useWork }) {
+  const asked = useSessionStatus && sessionId ? useSessionStatus(map => waitsForUser(map, sessionId)) : false
+  const approval = useWork && sessionId ? useWork(work => approvalFor(work, sessionId)) : false
+  const waiting = asked || approval
+  const status = taskState(task, waiting)
+  const working = status === 'working' || status === 'waiting'
   const now = useNow(working)
   const started = task?.at ?? now
   const elapsed = (task?.endedAt ?? now) - started
@@ -32,21 +53,23 @@ export function TaskCard({ sessionId, title, task, onOpen }) {
     h('div', { className: 'op-task-in' },
       h('div', { className: 'op-task-head' },
         h('span', { className: 'op-task-mark', 'aria-hidden': true },
-          working ? h('span', { className: 'op-orbit' }, h('i'), h('i'), h('i'))
+          status === 'waiting' ? h('span', { className: 'op-task-wait' })
+            : working ? h('span', { className: 'op-orbit' }, h('i'), h('i'), h('i'))
             : status === 'done' ? h('svg', { viewBox: '0 0 20 20', width: 18, height: 18 }, h('path', { d: 'M5 10.5l3.2 3L15 6.5', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round', strokeLinejoin: 'round' }))
               : h('svg', { viewBox: '0 0 20 20', width: 16, height: 16 }, h('path', { d: 'M6 6l8 8M14 6l-8 8', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' }))),
         h('div', { className: 'op-task-titles' },
-          h('span', { className: 'op-task-kicker' }, working ? t('Task running') : status === 'done' ? t('Task finished') : t('Task stopped')),
+          h('span', { className: 'op-task-kicker' }, status === 'waiting' ? t('Waiting for you') : working ? t('Task running') : status === 'done' ? t('Task finished') : t('Task stopped')),
           h('strong', { className: 'op-task-title' }, title)),
         h('span', { className: 'op-task-time' }, duration(elapsed))),
-      working ? h(Fragment, null,
+      status === 'waiting' ? h('div', { className: 'op-task-live' }, h('span', { className: 'op-task-said' }, t('It asks for your OK. Open it to answer.')))
+      : working ? h(Fragment, null,
         h('div', { className: 'op-task-live' },
           task?.said ? h('span', { key: task.said, className: 'op-task-said' }, task.said)
             : h('span', { className: 'op-task-said op-task-quiet' }, t('Getting started…')),
           task?.steps ? h('span', { className: 'op-task-steps' }, t('step {count}', { count: task.steps })) : null),
         h('div', { className: 'op-task-bar', 'aria-hidden': true }, h('i')))
         : task?.summary ? h('p', { className: 'op-task-summary' }, task.summary) : null,
-      sessionId ? h('button', { type: 'button', className: 'op-task-open', onClick: onOpen }, working ? t('Watch it work') : t('Open task'), ' →') : null))
+      sessionId ? h('button', { type: 'button', className: 'op-task-open', onClick: onOpen }, status === 'waiting' ? t('Answer it') : working ? t('Watch it work') : t('Open task'), ' →') : null))
 }
 
 export const TASK_CSS = `
@@ -58,6 +81,9 @@ export const TASK_CSS = `
 .op-task{position:relative;max-width:640px;padding:1.5px;border-radius:20px;background:conic-gradient(from var(--op-angle),color-mix(in srgb,var(--bt-accent) 30%,transparent),var(--bt-accent),#a78bfa,#f472b6,color-mix(in srgb,var(--bt-accent) 30%,transparent));animation:op-card-in .45s cubic-bezier(.2,.8,.2,1),op-spin 3s linear infinite}
 .op-task[data-state=done]{background:linear-gradient(135deg,#00c972,color-mix(in srgb,#00c972 30%,var(--bt-line)));animation:op-card-in .45s cubic-bezier(.2,.8,.2,1)}
 .op-task[data-state=failed]{background:color-mix(in srgb,#e5484d 50%,var(--bt-line));animation:none}
+.op-task[data-state=waiting]{background:linear-gradient(135deg,var(--bt-gold),color-mix(in srgb,var(--bt-gold) 30%,var(--bt-line)));animation:op-card-in .45s cubic-bezier(.2,.8,.2,1)}
+.op-task[data-state=waiting] .op-task-mark{background:color-mix(in srgb,var(--bt-gold) 18%,transparent)}
+.op-task-wait{width:12px;height:12px;border-radius:50%;corner-shape:round;background:var(--bt-gold);box-shadow:0 0 0 3px color-mix(in srgb,var(--bt-gold) 22%,transparent)}
 .op-task-in{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:18.5px;background:var(--bt-card)}
 .op-task-head{display:flex;align-items:center;gap:12px;min-width:0}
 .op-task-mark{flex:none;display:grid;place-items:center;width:36px;height:36px;border-radius:12px;background:color-mix(in srgb,var(--bt-accent) 12%,transparent);color:var(--bt-accent)}

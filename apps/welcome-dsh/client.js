@@ -9368,9 +9368,9 @@ async function gate({ stepId, explicit, complete }, request2 = call) {
   }
   return state;
 }
-async function finish({ stepId, complete }, request2 = call) {
+async function finish({ stepId, complete, connected }, request2 = call) {
   try {
-    await request2("done", { stepId });
+    await request2("done", connected === true ? { stepId, connected } : { stepId });
   } catch {
   }
   complete();
@@ -11188,6 +11188,7 @@ function Row({ row, open, busy, problem, onFlip, onSaved, onClose, onDedupe }) {
 function ConnectAiStep(props) {
   const state = useGate(props);
   const finish2 = useFinish(props);
+  const proceed = useFinish((0, import_react7.useMemo)(() => ({ ...props, connected: true }), [props]));
   const [glitching, glitch] = useGlitch();
   const [rows, setRows] = (0, import_react7.useState)(null);
   const [subs, setSubs] = (0, import_react7.useState)(null);
@@ -11281,7 +11282,7 @@ function ConnectAiStep(props) {
       { className: "oai-actions" },
       (0, import_react7.createElement)("button", { type: "button", className: "oai-quiet", onClick: () => finish2() }, "Skip for now"),
       (0, import_react7.createElement)("span", { className: "oai-count" }, count > 0 ? `${count} on` : "Turn on at least one"),
-      (0, import_react7.createElement)("button", { type: "button", className: "oai-primary", disabled: count === 0, onClick: () => finish2() }, count > 0 ? "Continue →" : "Continue")
+      (0, import_react7.createElement)("button", { type: "button", className: "oai-primary", disabled: count === 0, onClick: () => proceed() }, count > 0 ? "Continue →" : "Continue")
     )
   );
 }

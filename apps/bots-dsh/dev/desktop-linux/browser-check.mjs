@@ -77,7 +77,7 @@ await page.waitForTimeout(1500)
 
 await openChat('Writer')
 // The browser lives in the Bot's panel now: details first, then the globe up top.
-await page.locator('.bt-pill').click()
+await page.locator('.bt-head-details').click()
 await page.waitForTimeout(700)
 check(await page.locator('.bt-panel button[aria-label="Open browser"]').count() === 1, 'the Writer details panel has a browser button')
 await page.locator('.bt-panel button[aria-label="Open browser"]').click()
@@ -130,10 +130,10 @@ await simulateWindowsCaption(page)
 await capture('windows-caption-browser')
 const top = await page.evaluate(() => document.querySelector('.bt-panel')?.getBoundingClientRect().top)
 check(top >= 40, `the browser panel starts below the Windows caption (top ${top})`)
-// The pill folds the browser back into the details view of the same panel.
-await page.locator('.bt-pill').click()
+// The details button folds the browser back into the details view of the same panel.
+await page.locator('.bt-head-details').click()
 await page.waitForTimeout(700)
-check(await page.locator('.bt-panel[data-view="browser"]:not([data-leaving])').count() === 0, 'the pill folds the browser into the details view')
+check(await page.locator('.bt-panel[data-view="browser"]:not([data-leaving])').count() === 0, 'the details button folds the browser into the details view')
 const drawerTop = await page.evaluate(() => document.querySelector('.bt-panel')?.getBoundingClientRect().top)
 check(drawerTop >= 40, `the details view starts below the Windows caption (top ${drawerTop})`)
 await capture('windows-caption-details')

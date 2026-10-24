@@ -92,7 +92,7 @@ await page.locator([`.bt-row`, `.bt-tile`].flatMap(kind => [`${kind}[aria-label=
 await page.waitForTimeout(900)
 // The browser is a view of the Bot's panel now: details first, then the globe up top.
 if (await page.locator('.bt-panel').count() === 0) {
-  await page.locator('.bt-pill').click()
+  await page.locator('.bt-head-details').click()
   await page.waitForTimeout(700)
 }
 if (await page.locator('.bt-panel[data-view="browser"]').count() === 0) await page.locator('.bt-panel button[aria-label="Open browser"]').click()

@@ -95,3 +95,16 @@ test('every Bot sees the update_bot rule in its identity section', async (t) => 
   assert.match(text, /update_bot changes your own settings/)
   assert.match(ctx.sections.get('bot-identity').text({ agent: { id: 'm1' } }), /update_bot changes your own settings/)
 })
+
+test('a role is one short line of plain text', async (t) => {
+  const { cleanRole, ROLE_MAX } = await import('../src/host/roster.js')
+  assert.equal(cleanRole('  Orchestrator '), 'Orchestrator')
+  assert.equal(cleanRole('Chief\nof\tstaff‮'), 'Chief of staff')
+  assert.equal(cleanRole(undefined), '')
+  assert.equal(cleanRole('x'.repeat(40)).length, ROLE_MAX)
+  assert.throws(() => cleanRole(42), /a few words of text/)
+  const { tool, state, stop } = start()
+  t.after(stop)
+  assert.equal(await tool('update_bot', { role: 'Lead\nwriter' }, 'b2'), 'Updated Writer.')
+  assert.equal(state().bots.b2.role, 'Lead writer')
+})

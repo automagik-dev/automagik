@@ -142,7 +142,8 @@ export function install(rt) {
     const sessions = [...new Set([chat, ...(rt.groupSessionsOf?.(botId) ?? [])])]
     const place = sessionId => {
       const room = rt.roomOf(rt.groupOwners.get(sessionId)?.roomId)
-      return room ? `in group "${room.name}"` : 'in its own chat'
+      const task = room ? undefined : state.tasks?.[sessionId]
+      return room ? `in group "${room.name}"` : task ? `in its task "${task.title}"` : 'in its own chat'
     }
     const forWhom = (sessionId, info) => {
       if (rt.groupOwners.has(sessionId)) return info?.askedBy && nameOf(info.askedBy) ? `, for ${nameOf(info.askedBy)}` : ''

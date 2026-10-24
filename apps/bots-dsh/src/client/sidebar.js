@@ -11,6 +11,7 @@ import { springEasing, SPRING_SHAPE, useViewport, viewBottom } from './motion.js
 import { hostText, t } from './i18n.js'
 import { showsDshRow } from './dsh-offer.js'
 import { badges, botChildren, nav, useEntries } from './extend.js'
+import { approvalFor, runningTasksOf, taskState, waitsForUser } from './task-card.js'
 
 // -------------------------------------------------------------------------
 // Sidebar
@@ -52,7 +53,8 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   const unread = useSessionStatus(map => map.get(part)?.completionUnread === true || map.get(part)?.pendingInteraction !== undefined) || (marked && !active)
   useMarkedUnread(id, active, marked, actions)
   const main = isMainOf(roster, id)
-  const tile = roster.mainBotId === id
+  // The team's first Main Bot is pinned first and wears the crown, with its role beside its name.
+  const crowned = roster.mainBotId === id
   const approval = useApproval(useWork, entry => entry.botId === id)
   const alert = roster.questions?.[part] !== undefined || approval
   const doing = useActivity(map => map[id])
@@ -65,34 +67,30 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   const awayLine = away ? workLine(roster.roomsById[groups[0].id]?.name ?? t('a group chat'), groups[0], groups.length - 1) : null
   const waits = workKeys(useWork ? useWork(work => JSON.stringify(work.waiting?.[id] ?? null)) : 'null')
   const waitsFor = state === 'waiting' ? waitingFor(roster, waits) : ''
+  // Tasks it started that still run hang under the row (BotThreads); the row says how many.
+  const threads = runningTasksOf(roster, id).length
+  const threadsLine = threads === 0 ? '' : threads === 1 ? t('Working on 1 thing') : t('Working on {n} things', { n: threads })
   if (bot.hidden && !active && !main) return null
   const onContextMenu = (event) => {
     event.preventDefault()
     actions.openMenu({ kind: 'bot', id, x: event.clientX, y: event.clientY })
   }
-  const pinned = bot.pinned === true && !tile
-  const label = [bot.name, main ? t('Main Bot') : '', pinned ? t('Pinned') : '', running || away ? t('Working') : '', waitsFor, approval ? t('Waiting for your approval') : alert ? t('Waiting for your answer') : '', unread ? t('Unread activity') : ''].filter(Boolean).join(', ')
-  if (tile && wide) {
-    return h('div', { className: 'bt-tile-wrap' }, h('button', {
-      type: 'button', className: 'bt-tile', 'aria-label': label, 'aria-current': active ? 'page' : undefined,
-      'data-bot-id': id, title: preview || bot.name, onClick: () => actions.openSession(id), onContextMenu,
-    },
-    h(BotAvatar, { bot, size: 60, state, main: true }),
-    h('span', { className: 'bt-tile-name' }, bot.name),
-    bot.role ? h('span', { className: 'bt-chip' }, bot.role) : null))
-  }
+  const pinned = bot.pinned === true && !crowned
+  const role = crowned ? bot.role : ''
+  const label = [bot.name, role, main ? t('Main Bot') : '', pinned ? t('Pinned') : '', running || away ? t('Working') : '', waitsFor, approval ? t('Waiting for your approval') : alert ? t('Waiting for your answer') : '', unread ? t('Unread activity') : ''].filter(Boolean).join(', ')
   return h('button', {
-    type: 'button', className: 'bt-row', 'aria-label': label, 'aria-current': active ? 'page' : undefined,
+    type: 'button', className: crowned ? 'bt-row bt-row-crowned' : 'bt-row', 'aria-label': label, 'aria-current': active ? 'page' : undefined,
     'data-bot-id': id, title: wide ? undefined : bot.name, onClick: () => actions.openSession(id), onContextMenu,
   },
-  h(BotAvatar, { bot, size: 36, state, main }),
+  h(BotAvatar, { bot, size: crowned && wide ? 42 : 36, state, main, crown: crowned }),
   pinned && !wide ? h(PinMark) : null,
   wide ? h('span', { className: 'bt-row-body' },
-    h('span', { className: 'bt-row-name' }, h('span', { className: 'bt-row-title' }, bot.name), pinned ? h(PinMark) : null),
+    h('span', { className: 'bt-row-name' }, h('span', { className: 'bt-row-title' }, bot.name), role ? h('span', { className: 'bt-role' }, role) : null, pinned ? h(PinMark) : null),
     runningLine ? h('span', { className: 'bt-row-preview' }, runningLine)
       : awayLine ? h('span', { className: 'bt-row-preview' }, awayLine)
         : waitsFor ? h('span', { className: 'bt-row-preview' }, waitsFor)
-          : preview ? h('span', { className: 'bt-row-preview' }, preview) : null) : null,
+          : threadsLine ? h('span', { className: 'bt-row-preview' }, threadsLine)
+            : preview ? h('span', { className: 'bt-row-preview' }, preview) : null) : null,
   // Badges other Omni plugins add (extend.js): Omni's row counts the automation runs waiting for you.
   wide ? h(RowBadges, { bot, roster, useWork }) : null,
   wide && unread && !active ? h('span', { className: 'bt-unread', 'aria-hidden': true }) : null)
@@ -109,6 +107,64 @@ function BotChildren({ bot, roster, actions, wide }) {
   const entries = useEntries(botChildren)
   if (!wide || entries.length === 0) return null
   return entries.map(entry => h(entry.Component, { key: entry.id, bot, roster, actions }))
+}
+
+// A short age for a thread: now, 4m, 2h, 3d.
+export function threadAge(ms, now = Date.now()) {
+  const minutes = Math.floor(Math.max(0, now - ms) / 60_000)
+  if (minutes < 1) return t('now')
+  if (minutes < 60) return t('{n}m', { n: minutes })
+  const hours = Math.floor(minutes / 60)
+  return hours < 24 ? t('{n}h', { n: hours }) : t('{n}d', { n: Math.floor(hours / 24) })
+}
+
+// Ticks once a minute while `on`, for the threads' ages.
+function useMinute(on) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!on) return undefined
+    const timer = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(timer)
+  }, [on])
+  return now
+}
+
+// Past this many, a Bot's threads fold into a count.
+export const THREADS_SHOWN = 3
+
+// The tasks a Bot started (start_task, agents.js) while they run, as threads under its row
+// in the wide sidebar: a spinner while one works, an amber dot while it waits for the user
+// (its Session holds DSH's approval or question card, or an approval the host noted for
+// it), with its title and age. Waiting ones
+// come first; past THREADS_SHOWN the rest fold into a count. A thread opens its task.
+function BotThreads({ bot, roster, actions, useSessions, useSessionStatus, useWork, wide }) {
+  const tasks = runningTasksOf(roster, bot.id)
+  const ids = tasks.map(task => task.sessionId)
+  const askedKey = useSessionStatus(map => ids.filter(id => waitsForUser(map, id)).join(','))
+  const approvalKey = useWork ? useWork(work => ids.filter(id => approvalFor(work, id)).join(',')) : ''
+  const waitingKey = `${askedKey},${approvalKey}`
+  const shownId = useSessions(list => ids.find(id => (list.byId[id]?.retainedBy?.mainView ?? 0) > 0) ?? '')
+  const [open, setOpen] = useState(false)
+  const now = useMinute(wide && tasks.length > 0)
+  if (!wide || tasks.length === 0) return null
+  const waiting = new Set(waitingKey.split(',').filter(Boolean))
+  const sorted = [...tasks].sort((a, b) => Number(waiting.has(b.sessionId)) - Number(waiting.has(a.sessionId)))
+  const shown = open || sorted.length <= THREADS_SHOWN + 1 ? sorted : sorted.slice(0, THREADS_SHOWN)
+  const more = sorted.length - shown.length
+  return h('div', { className: 'bt-threads', role: 'group', 'aria-label': t('Tasks {name} started', { name: bot.name }) },
+    shown.map((task) => {
+      const state = taskState(task, waiting.has(task.sessionId))
+      const label = [task.title, state === 'waiting' ? t('Waiting for you') : t('Working')].join(', ')
+      return h('button', {
+        key: task.sessionId, type: 'button', className: 'bt-thread', 'data-state': state, 'aria-label': label, title: task.title,
+        'aria-current': shownId === task.sessionId ? 'page' : undefined,
+        onClick: () => actions.openSession(task.sessionId),
+      },
+      h('span', { className: state === 'waiting' ? 'bt-thread-wait' : 'bt-thread-spin', 'aria-hidden': true }),
+      h('span', { className: 'bt-thread-title' }, task.title),
+      h('span', { className: 'bt-thread-age', 'aria-hidden': true }, threadAge(task.at ?? now, now)))
+    }),
+    more > 0 ? h('button', { type: 'button', className: 'bt-thread bt-thread-more', onClick: () => setOpen(true) }, t('+{n} more', { n: more })) : null)
 }
 
 function RoomRow({ room, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useWork, wide, marked }) {
@@ -331,10 +387,16 @@ export function TeamSidebar(props) {
           h('button', { type: 'button', className: 'bt-round', 'aria-label': t('New…'), title: t('New…'), onClick: () => actions.openNewChat('new') }, h(PlusIcon))),
     wide && roster.readOnly ? h('div', { className: 'bt-hint bt-read-only', role: 'status' }, hostText(roster.readOnly)) : null,
     h('div', { ref: listRef, className: 'bt-list', role: 'region', 'aria-label': t('Bot list') },
-      main ? h(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : h('div', { className: 'bt-hint' }, t('Setting up your Main Bot…')),
+      // The first Main Bot is a row like the others, pinned first (the tile's styles stay
+      // in styles.js, vendored from DS Bot, unused).
+      main ? h(Fragment, { key: main.id },
+        h(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }),
+        h(BotThreads, { ...rowProps, bot: main }),
+        h(BotChildren, { bot: main, roster, actions, wide })) : roster.ready ? null : h('div', { className: 'bt-hint' }, t('Setting up your Main Bot…')),
       order.map(entry => (entry.kind === 'bot'
         ? h(Fragment, { key: entry.item.id },
             h(BotRow, { ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true }),
+            h(BotThreads, { ...rowProps, bot: entry.item }),
             h(BotChildren, { bot: entry.item, roster, actions, wide }))
         : entry.kind === 'room'
           ? h(RoomRow, { key: entry.item.id, ...rowProps, room: entry.item, marked: markedUnread[entry.item.id] === true })
@@ -704,6 +766,29 @@ export const SIDEBAR_CSS = `
 .bt-side-top .bt-brand:hover{background:none}
 .bt-brand .bt-mark{flex:none}
 .bt-pin{flex:none;display:inline-flex;color:var(--bt-ink-3)}
+.bt-row-crowned{margin-top:8px}
+/* A Bot's running tasks, as threads under its row. */
+.bt-threads{display:flex;flex-direction:column;gap:2px;margin:0 0 4px 26px;padding-left:10px;border-left:2px solid var(--bt-line-2)}
+.bt-thread{display:flex;align-items:center;gap:8px;width:100%;min-height:28px;padding:4px 8px;border:0;border-radius:10px;background:none;color:var(--bt-ink);font:inherit;font-size:12.5px;line-height:18px;text-align:left;cursor:pointer;box-sizing:border-box;transition:background-color .12s ease}
+.bt-thread:hover,.bt-thread[aria-current=page]{background:var(--bt-hover)}
+.bt-thread:focus-visible{outline:2px solid var(--bt-accent);outline-offset:-2px}
+.bt-thread[data-state=waiting] .bt-thread-title{font-weight:600}
+.bt-thread-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bt-thread-age{flex:none;font-size:11px;color:var(--bt-ink-3);font-variant-numeric:tabular-nums}
+.bt-thread-spin{flex:none;width:12px;height:12px;box-sizing:border-box;border-radius:50%;corner-shape:round;border:2px solid color-mix(in srgb,var(--bt-accent) 25%,transparent);border-top-color:var(--bt-accent);animation:bt-thread-spin .9s linear infinite}
+.bt-thread-wait{flex:none;width:12px;height:12px;border-radius:50%;corner-shape:round;background:var(--bt-gold);box-shadow:0 0 0 3px color-mix(in srgb,var(--bt-gold) 22%,transparent)}
+.bt-thread-more{color:var(--bt-ink-2);padding-left:28px}
+@keyframes bt-thread-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.bt-thread-spin{animation-duration:3s}}
+body[data-bt-motion=quiet] .bt-thread-spin{animation-duration:3s}
+/* The first Main Bot's crown (mark.js) and its role chip, in clay gold. */
+.bt-crown{position:absolute;left:50%;top:calc(var(--bt-size,36px) * -.27);width:calc(var(--bt-size,36px) * .52);height:calc(var(--bt-size,36px) * .36);transform:translateX(-50%) rotate(-8deg);filter:drop-shadow(0 1.5px 0 var(--bt-gold-edge)) drop-shadow(0 3px 3px color-mix(in srgb,var(--bt-gold-edge) 30%,transparent));pointer-events:none;z-index:1;line-height:0}
+.bt-crown-body{fill:var(--bt-gold);stroke:var(--bt-gold-edge);stroke-width:2;stroke-linejoin:round}
+.bt-crown-band{fill:var(--bt-gold-band)}
+.bt-crown-gem{fill:var(--bt-gem)}
+.bt-crown-gem2{fill:var(--bt-gem-2)}
+.bt-crown-shine{stroke:var(--bt-gold-shine);stroke-width:2;stroke-linecap:round;opacity:.8}
+.bt-role{flex:none;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 7px;border-radius:8px;background:var(--bt-role-bg);box-shadow:inset 0 1px var(--bt-role-shine),0 1px 0 var(--bt-role-edge);color:var(--bt-role-ink);font-size:10px;line-height:16px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
 .bt-rail .bt-row{position:relative}
 .bt-rail .bt-pin{position:absolute;top:3px;left:calc(50% + 12px)}
 .bt-side .bt-read-only{margin:4px 8px 6px;padding:8px 10px;border-radius:10px;background:var(--bt-hover);font-size:12px;line-height:1.45;text-align:left}

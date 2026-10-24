@@ -26,6 +26,32 @@ test('the default model is the DSH default when served, else the first served mo
   assert.equal(await runtime(undefined).defaultModel(), 'deepseek/deepseek-v4.1-flash')
 })
 
+test('the default model can run: a provider without its key is passed over, and an alias comes last', async () => {
+  const rt = (selection, missing, providers) => {
+    const ctx = {
+      llm: { listProviders: () => Object.keys(providers).map(id => ({ id })), listModels: async id => providers[id] },
+      get: name => (name === 'agentDefaultModel' && selection ? { currentSelection: () => selection } : undefined),
+    }
+    const runtime = { ctx, state: { bots: {} }, missingKeys: async () => new Set(missing) }
+    install(runtime)
+    return runtime
+  }
+  const lineup = { deepseek: [{ id: 'deepseek-v4-pro' }], 'claude-code': [{ id: 'default', name: 'Default (recommended)' }, { id: 'opus', name: 'Claude Opus 5.5' }] }
+  // DSH's default needs a key nobody set: the first model that can run, not the alias.
+  assert.equal(await rt({ provider: 'deepseek', model: 'deepseek-v4-pro' }, ['deepseek'], lineup).defaultModel(), 'claude-code/opus')
+  // DSH's default can run: it is the one, even an alias the user chose there.
+  assert.equal(await rt({ provider: 'deepseek', model: 'deepseek-v4-pro' }, [], lineup).defaultModel(), 'deepseek/deepseek-v4-pro')
+  assert.equal(await rt({ provider: 'claude-code', model: 'default' }, ['deepseek'], lineup).defaultModel(), 'claude-code/default')
+  // Only the alias can run: it is used.
+  assert.equal(await rt(undefined, ['deepseek'], { deepseek: [{ id: 'v4' }], 'claude-code': [{ id: 'default' }] }).defaultModel(), 'claude-code/default')
+  // Nothing can run: no default, so a Bot made now waits for one.
+  const none = rt({ provider: 'deepseek', model: 'deepseek-v4-pro' }, ['deepseek'], { deepseek: [{ id: 'deepseek-v4-pro' }] })
+  assert.equal(await none.defaultModel(), undefined)
+  assert.equal(none.cachedDefault(), undefined)
+  // A Bot whose model went away falls back to one that can run.
+  assert.equal(await rt(undefined, ['deepseek'], lineup).desiredModel({ model: 'gone/model' }), 'claude-code/opus')
+})
+
 test('a model is named by its ref, or by an id or name only one provider serves', async () => {
   const rt = runtime(undefined)
   assert.equal(await rt.resolveModel('ollama/kimi-k3'), 'ollama/kimi-k3')

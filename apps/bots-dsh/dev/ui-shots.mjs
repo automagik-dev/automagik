@@ -90,7 +90,7 @@ let state = await api('state', {})
 // A fresh team's Main Bot opens on the model card and greets once a model is picked.
 const main = state.bots.find(bot => bot.id === state.mainBotId)
 if (main && !main.model) {
-  await openRow(`.bt-tile[data-bot-id="${main.id}"]`)
+  await openRow(`.bt-row[data-bot-id="${main.id}"]`)
   const card = page.locator('.bt-model-card')
   check(await card.waitFor({ timeout: 30_000 }).then(() => true, () => false), `${main.name} opens on a model card`)
   await page.waitForTimeout(600)
@@ -150,7 +150,7 @@ await send('团队记住 周报在周五下午五点前交')
 check(await waits(page.getByText('没记成：Only Main Bots and group admins write the team memory', { exact: false }).last()), 'a Bot that is neither a Main Bot nor a group admin cannot write the team memory')
 await page.waitForTimeout(1200)
 await shot('memory-saved')
-await openRow(`.bt-tile[data-bot-id="${state.mainBotId}"]`)
+await openRow(`.bt-row[data-bot-id="${state.mainBotId}"]`)
 await send('团队记住 周报在周五下午五点前交')
 check(await waits(page.locator('.bt-event button', { hasText: 'Team memory updated' }).last()), 'the Main Bot writes the team memory, and the chat says so')
 await page.waitForTimeout(1200)
@@ -186,11 +186,11 @@ await page.getByRole('button', { name: 'Close details' }).first().click()
 await page.waitForTimeout(600)
 
 // A lasting preference said in passing is kept by the memory review in the
-// background, and the header pill stretches to say so; clicking it opens the memory.
+// background, and the header pill shows up to say so; clicking it opens the memory.
 await send('以后给我的文档都用 Markdown 表格总结要点')
 check(await waits(page.getByText('收到：以后', { exact: false }).last()), 'Writer answers again')
 const pill = page.locator('.bt-pill[data-memory=updated]')
-check(await waits(pill, 20_000), 'the header pill stretches to say memory was updated')
+check(await waits(pill, 20_000), 'the header pill says memory was updated')
 await shot('memory-pill')
 await pill.click()
 check(await waits(memory.locator('.bt-mem-summary')), 'the pill opens the memory dialog')

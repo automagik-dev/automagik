@@ -22,8 +22,12 @@ const JWT_CLAIM = 'https://api.openai.com/auth'
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024
 const ENTRY = 'omni-ai'
 
-// The Main Bot's role once it is the person's companion: it leads the team.
-export const COMPANION_ROLE = 'Your companion'
+// The Main Bot's role once it is the person's companion: it leads the team. The person can
+// rename it in the Bot's settings; a role they set is kept. Roles this plugin or the team
+// once set by themselves give way to it.
+export const COMPANION_ROLE = 'Orchestrator'
+const DEFAULT_ROLES = new Set(['', 'Your companion', 'Channel orchestrator', COMPANION_ROLE])
+const roleFor = bot => (DEFAULT_ROLES.has(bot?.role ?? '') ? { role: COMPANION_ROLE } : {})
 
 // The Omni Bot the team step adds: the octopus Omni always wore, keeping the person's channels.
 // Its project is a folder of the team workspace (Bots may not work in the Omni home).
@@ -120,8 +124,10 @@ export function createCompanionActions(ctx, { fetch: fetchImpl = globalThis.fetc
     return typeof workspace === 'string' ? join(workspace, OMNI_PROJECT) : undefined
   }
 
-  // Made once, the first time Omni joins the team. Its greeting waits for the user to pick
-  // its model, so joining sends nothing anywhere.
+  // Made once, the first time Omni joins the team, without a model: its greeting waits
+  // until it has one, so joining sends nothing anywhere. Once Connect AI succeeds,
+  // assignModels gives it and the companion a model, and the held greetings go out then,
+  // without a click.
   async function joinOmni(rt) {
     await mainBotOf(rt)
     const existing = Object.values(rt.state?.bots ?? {}).find(bot => bot.kind === OMNI_BOT.kind)
@@ -139,20 +145,52 @@ export function createCompanionActions(ctx, { fetch: fetchImpl = globalThis.fetc
     const id = await mainBotOf(rt)
     if (id === undefined) return false
     const bot = rt.botOf?.(id)
-    if (bot?.name === entry.companionName && bot?.role === COMPANION_ROLE) return true
+    if (bot?.name === entry.companionName && (bot?.role === COMPANION_ROLE || !DEFAULT_ROLES.has(bot?.role ?? ''))) return true
     await rt.updateBot(id, {
       name: entry.companionName,
-      role: COMPANION_ROLE,
+      ...roleFor(bot),
       ...(entry.companionColor ? { color: entry.companionColor } : {}),
       ...(entry.companionShape ? { avatar: { shape: entry.companionShape } } : {}),
     })
     return true
   }
 
+  // After Connect AI succeeds: the companion (the first Main Bot) and the Omni Bot were made
+  // without a model and hold their greetings until they have one. Each gets the team's
+  // default model (bots-dsh models.js: DSH's default model when it is served and its
+  // provider has its key, else the first model that can run); a Bot that has one keeps it.
+  // A provider that Connect AI just turned on may register a moment later, so the models
+  // are read again until one can run or `waitMs` passes. With none, the Bots keep waiting
+  // and their chats offer the ways to set one up. Returns the names of the Bots it set.
+  async function assignModels(rt, { waitMs = 0, pauseMs = 1500 } = {}) {
+    await rt.load?.()
+    const main = (rt.state?.mainBotIds ?? []).find(id => rt.botOf?.(id))
+    const omni = Object.values(rt.state?.bots ?? {}).find(bot => bot.kind === OMNI_BOT.kind)
+    const waiting = () => [main, omni?.id].filter(Boolean).map(id => rt.botOf?.(id)).filter(bot => bot !== undefined && !bot.model)
+    if (waiting().length === 0) return []
+    const deadline = Date.now() + waitMs
+    let ref
+    for (;;) {
+      await rt.catalog?.({ fresh: true })
+      ref = await rt.defaultModel?.()
+      if (ref !== undefined || Date.now() >= deadline) break
+      await new Promise(resolve => setTimeout(resolve, pauseMs))
+    }
+    if (ref === undefined) return []
+    const set = []
+    for (const bot of waiting()) {
+      await rt.updateBot(bot.id, { model: ref })
+      set.push(bot.name)
+    }
+    return set
+  }
+
   return {
-    // Not endpoints: the Bot types (bot-types.js) read the team through these.
+    // Not endpoints: the Bot types (bot-types.js) read the team through these, and the
+    // finished Connect AI step gives the companions their model (endpoint.js).
     team,
     omniProjectOf,
+    assignModels,
 
     // What the companion step needs: can it generate, and is a companion already made.
     async companion() {
@@ -220,7 +258,7 @@ export function createCompanionActions(ctx, { fetch: fetchImpl = globalThis.fetc
         if (id !== undefined) {
           await rt.updateBot(id, {
             name: fields.name,
-            role: COMPANION_ROLE,
+            ...roleFor(rt.botOf?.(id)),
             ...(fields.color ? { color: fields.color } : {}),
             ...(fields.shape ? { avatar: { shape: fields.shape } } : {}),
             ...(fields.avatar ? { avatar: { image: fields.avatar } } : {}),

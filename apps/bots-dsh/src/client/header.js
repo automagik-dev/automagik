@@ -2,7 +2,7 @@ import { createElement as h, Fragment, useEffect, useLayoutEffect, useRef, useSt
 import { headerButtons, useEntries } from './extend.js'
 import { createPortal } from 'react-dom'
 import { currentPart, latestMemoryChange } from './text.js'
-import { ArrowUpIcon, CloseIcon, ArrowDownIcon, MemoryIcon } from './icons.js'
+import { ArrowUpIcon, CloseIcon, ArrowDownIcon, InfoIcon, MemoryIcon } from './icons.js'
 import { botState, BotAvatar, RoomAvatar } from './mark.js'
 import { ActivityIndicator } from './activity-row.js'
 import { clockLabel, openingTurn, unseenSince } from './cells.js'
@@ -100,8 +100,12 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
     return () => { delete document.body.dataset.btRoom }
   }, [Boolean(room)])
   const memoryNotice = !away && notice && changed !== null && roster.memory !== false
+  // The sidebar already names the open chat, so the pill shows only when it says something
+  // more: the way back from another view, or a memory that just changed. The details open
+  // from a small button beside the header's other buttons.
+  const pill = away || memoryNotice
   return h('div', { className: 'bt-head' },
-    h('button', {
+    pill ? h('button', {
       type: 'button', className: 'bt-pill', 'aria-expanded': away ? undefined : detailsOpen, 'data-memory': memoryNotice ? 'updated' : undefined,
       'aria-label': away ? t('Back to chat') : memoryNotice ? t('Memory updated. Open {name}\'s memory', { name: roster.byId[changed]?.name ?? name }) : t('View conversation details'),
       title: away ? name : undefined,
@@ -111,9 +115,13 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
       : room ? h(RoomAvatar, { room, roster, size: 24 }) : null,
     h('span', { className: 'bt-pill-name' }, away ? t('Back to chat') : bot?.name ?? room?.name ?? (title || t('New chat'))),
     h(MemoryNotice, { shown: memoryNotice }),
-    h('span', { className: 'bt-pill-go', 'aria-hidden': true }, h(GoArrow))),
+    h('span', { className: 'bt-pill-go', 'aria-hidden': true }, h(GoArrow))) : null,
     h('span', { className: 'bt-sr', role: 'status' }, memoryNotice ? t('Memory updated') : ''),
     bot ? h(HeaderButtons, { bot, roster, actions, useWork }) : null,
+    !away && (bot || room) ? h('button', {
+      type: 'button', className: 'bt-head-details', 'aria-label': t('View conversation details'), title: t('Details'),
+      'aria-expanded': detailsOpen, onClick: () => actions.toggleDetails(sessionId),
+    }, h(InfoIcon)) : null,
     h(NewMessagePills, { key: sessionId, sessionId, useSessions, useUi, useTurnClock }),
     h(ActivityIndicator, { key: `activity:${sessionId}`, sessionId, useRoster, useSessionStatus, useSession, useLive, useWork, actions }))
 }

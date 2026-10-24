@@ -171,7 +171,11 @@ var ZH = {
   "Switch to classic Agent mode": "切换经典 Agent 模式",
   "{model} is not available anymore. Pick another model for me.": "{model} 已经不可用了。给我换一个模型吧。",
   "Hi, I'm {name}. I don't have a model yet. How do you want to set one up?": "你好，我是 {name}。我还没有可用的模型。你想怎么配置？",
-  "Hi, I'm {name}. Pick a model for me first. You can change it later in my details.": "你好，我是 {name}。先给我选一个模型吧，以后可以在我的详情里换。",
+  "Hi, I'm {name}. Say when, and I'll start.": "你好，我是 {name}。你说开始，我就开始。",
+  "Using {model} · {provider}": "使用 {model} · {provider}",
+  change: "更换",
+  Start: "开始",
+  "Change the model of {name}": "更换 {name} 的模型",
   "Hi, I'm {name}. I need a {provider} API key before I can start.": "你好，我是 {name}。开始之前，我需要一个 {provider} API key。",
   "{provider} API key": "{provider} API key",
   "Enter the API key": "请填入 API key",
@@ -349,6 +353,8 @@ var ZH = {
   Profile: "资料",
   Label: "标签",
   "Optional. Shown under the name.": "可选，显示在名字下方。",
+  Role: "角色",
+  "A few words on what it does.": "用几个词说明它做什么。",
   "Research, admin…": "研究、行政…",
   "What this Bot does": "这个 Bot 做什么",
   "Its job on the team. Part of the Bot's system prompt.": "它在团队里的分工，会写进 Bot 的系统提示词。",
@@ -1067,6 +1073,17 @@ var ZH = {
   "Open task": "打开任务",
   "step {count}": "第 {count} 步",
   "Task running": "任务进行中",
+  "Waiting for you": "等你处理",
+  "It asks for your OK. Open it to answer.": "它在等你同意，打开它来回答。",
+  "Answer it": "去回答",
+  "Working on 1 thing": "正在做 1 件事",
+  "Working on {n} things": "正在做 {n} 件事",
+  "Tasks {name} started": "{name} 开始的任务",
+  "+{n} more": "还有 {n} 个",
+  now: "刚刚",
+  "{n}m": "{n} 分钟",
+  "{n}h": "{n} 小时",
+  "{n}d": "{n} 天",
   "Task stopped": "任务已停止",
   "Watch it work": "查看进度",
   "status": "状态",
@@ -2517,14 +2534,31 @@ function useSettled(state) {
   }, [state]);
   return settled;
 }
-function BotAvatar({ bot, size, state = "idle", main, admin, badge = true, live = true, gaze = false, pokeable = false }) {
+function Crown() {
+  return (0, import_react5.createElement)(
+    "span",
+    { className: "bt-crown", "aria-hidden": true },
+    (0, import_react5.createElement)(
+      "svg",
+      { viewBox: "0 0 44 30" },
+      (0, import_react5.createElement)("path", { className: "bt-crown-body", d: "M4 26 L2 8 L13 16 L22 2 L31 16 L42 8 L40 26 Z" }),
+      (0, import_react5.createElement)("rect", { className: "bt-crown-band", x: 4, y: 23, width: 36, height: 5, rx: 2.5 }),
+      (0, import_react5.createElement)("circle", { className: "bt-crown-gem", cx: 22, cy: 17, r: 3 }),
+      (0, import_react5.createElement)("circle", { className: "bt-crown-gem2", cx: 12, cy: 20, r: 2.2 }),
+      (0, import_react5.createElement)("circle", { className: "bt-crown-gem2", cx: 32, cy: 20, r: 2.2 }),
+      (0, import_react5.createElement)("path", { className: "bt-crown-shine", d: "M8 11 L13 15" })
+    )
+  );
+}
+function BotAvatar({ bot, size, state = "idle", main, admin, crown = false, badge = true, live = true, gaze = false, pokeable = false }) {
   const settled = useSettled(state);
   if (bot === void 0) return (0, import_react5.createElement)(BotMark, { size });
-  const badgeKind = !badge ? null : state === "alert" ? "alert" : state !== "idle" && state !== "waiting" ? "working" : admin ? "admin" : main ? "main" : null;
+  const badgeKind = !badge ? null : state === "alert" ? "alert" : state !== "idle" && state !== "waiting" ? "working" : admin ? "admin" : main && !crown ? "main" : null;
   return (0, import_react5.createElement)(
     "span",
     { className: "bt-mark", style: { width: size, height: size, "--bt-size": `${size}px` } },
     (0, import_react5.createElement)(BotMark, { bot, size, state: settled ? "done" : state, live, gaze, pokeable }),
+    crown ? (0, import_react5.createElement)(Crown) : null,
     badgeKind === "working" ? (0, import_react5.createElement)("span", { className: "bt-badge bt-badge-working", "aria-label": t("Working"), role: "img" }) : null,
     badgeKind === "alert" ? (0, import_react5.createElement)("span", { className: "bt-badge bt-badge-alert", "aria-label": t("Waiting for your answer"), role: "img" }, "?") : null,
     badgeKind === "admin" ? (0, import_react5.createElement)("span", { className: "bt-badge bt-badge-admin", "aria-label": t("Admin"), role: "img" }, (0, import_react5.createElement)(StarIcon)) : null,
@@ -3411,7 +3445,7 @@ function useAnchoredMenu() {
   }, [anchor, tick]);
   return { isOpen: place !== null, shownPlace, leaving, button, menu, open, close };
 }
-function ModelMenu({ bot, roster, actions, run: run2, wide = false, onPick, onPickEffort }) {
+function ModelMenu({ bot, roster, actions, run: run2, wide = false, link = false, onPick, onPickEffort }) {
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu();
   const shown = modelOf(bot, roster);
   const current = bot.model ?? bot.appliedModel;
@@ -3443,7 +3477,15 @@ function ModelMenu({ bot, roster, actions, run: run2, wide = false, onPick, onPi
   return (0, import_react9.createElement)(
     import_react9.Fragment,
     null,
-    (0, import_react9.createElement)(
+    link ? (0, import_react9.createElement)("button", {
+      ref: button,
+      type: "button",
+      className: "bt-model-change",
+      "aria-haspopup": "menu",
+      "aria-expanded": isOpen,
+      "aria-label": t("Change the model of {name}", { name: bot.name }),
+      onClick: toggle
+    }, t("change")) : (0, import_react9.createElement)(
       "button",
       {
         ref: button,
@@ -3477,6 +3519,45 @@ function ModelMenu({ bot, roster, actions, run: run2, wide = false, onPick, onPi
     ), document.body) : null
   );
 }
+var KICKOFF = /^\[Bot team setup\]/;
+var greetingOnly = (outline) => Array.isArray(outline) && outline.length === 1 && (!outline[0]?.prompt || KICKOFF.test(outline[0].prompt));
+function modelWords(roster, ref) {
+  const served = servedOf(roster, ref);
+  const [provider, ...rest] = String(ref ?? "").split("/");
+  return { model: served?.name ?? rest.join("/"), provider: served?.providerName ?? served?.provider ?? provider };
+}
+function ModelLine({ bot, roster, actions, run: run2, ref, onPick }) {
+  const words = modelWords(roster, ref ?? bot.model ?? bot.appliedModel);
+  return (0, import_react9.createElement)(
+    "div",
+    { className: "bt-model-line" },
+    (0, import_react9.createElement)("span", { className: "bt-model-line-text" }, t("Using {model} · {provider}", words)),
+    (0, import_react9.createElement)("span", { className: "bt-model-line-sep", "aria-hidden": true }, "·"),
+    (0, import_react9.createElement)(ModelMenu, { bot: ref ? { ...bot, model: ref } : bot, roster, actions, run: run2, link: true, onPick })
+  );
+}
+var outlineOf = (list, sessionId) => list.projectionsBySession?.[sessionId]?.values?.turnOutline ?? list.byId?.[sessionId]?.projectionValues?.turnOutline;
+function ModelLineTail({ turn, sessionId, useRoster, useSessions, actions }) {
+  const roster = useRoster((value) => value);
+  const first = useSessions((list) => greetingOnly(outlineOf(list, sessionId)) ? outlineOf(list, sessionId)[0].turn : null);
+  const [error, setError] = (0, import_react9.useState)("");
+  const bot = roster.byId[sessionId];
+  if (!bot || currentPart(bot) !== sessionId || first === null || first !== turn?.turn) return null;
+  if (!bot.model || !(roster.models ?? []).some((model) => model.ref === bot.model)) return null;
+  const run2 = (promise) => Promise.resolve(promise).then(() => {
+    setError("");
+    return true;
+  }, (failure) => {
+    setError(failure?.message ?? String(failure));
+    return false;
+  });
+  return (0, import_react9.createElement)(
+    "div",
+    { className: "bt-model-tail" },
+    (0, import_react9.createElement)(ModelLine, { bot, roster, actions, run: run2 }),
+    error ? (0, import_react9.createElement)("div", { className: "bt-secret-error", role: "alert" }, error) : null
+  );
+}
 function ModelChoiceDock({ sessionId, useRoster, actions }) {
   const roster = useRoster((value) => value);
   const bot = roster.byId[sessionId];
@@ -3490,6 +3571,13 @@ function ModelChoiceDock({ sessionId, useRoster, actions }) {
   const models = roster.models ?? [];
   const usable = models.filter((model) => !model.needsKey);
   const lost = bot.model ? !models.some((model) => model.ref === bot.model) : false;
+  const run2 = (promise) => Promise.resolve(promise).then(() => {
+    setError("");
+    return true;
+  }, (failure) => {
+    setError(failure?.message ?? String(failure));
+    return false;
+  });
   if (bot.model && (!lost || models.length === 0)) return null;
   const keyFor = usable.length === 0 && actions.setProviderKey ? models.find((model) => model.needsKey) : void 0;
   const manage = manageModels(actions);
@@ -3501,8 +3589,42 @@ function ModelChoiceDock({ sessionId, useRoster, actions }) {
       void actions.refreshModels?.();
     }).finally(() => setBusy(""));
   };
-  const text = lost ? t("{model} is not available anymore. Pick another model for me.", { model: bot.model.split("/").slice(1).join("/") }) : keyFor ? t("Hi, I'm {name}. I need a {provider} API key before I can start.", { name: bot.name, provider: keyFor.providerName ?? keyFor.provider }) : usable.length === 0 ? t("Hi, I'm {name}. I don't have a model yet. How do you want to set one up?", { name: bot.name }) : t("Hi, I'm {name}. Pick a model for me first. You can change it later in my details.", { name: bot.name });
-  const choices = usable.length === 0 ? setupChoices(actions).map(([label, run2]) => (0, import_react9.createElement)("button", { key: label, type: "button", className: "bt-model-chip", onClick: run2 }, label)) : [
+  if (!lost && usable.length > 0) {
+    const suggested = usable.find((model) => model.ref === roster.defaultModel)?.ref ?? (usable.find((model) => model.id !== "default") ?? usable[0]).ref;
+    return (0, import_react9.createElement)(
+      "div",
+      { className: "bt-model-dock" },
+      (0, import_react9.createElement)(
+        "div",
+        { className: "bt-astack", "data-lead": "" },
+        (0, import_react9.createElement)(
+          "div",
+          { className: "bt-msg" },
+          (0, import_react9.createElement)(
+            "div",
+            { className: "bt-msg-line" },
+            (0, import_react9.createElement)(BotMark, { bot, size: 22 }),
+            (0, import_react9.createElement)("div", { className: "bt-bubble" }, t("Hi, I'm {name}. Say when, and I'll start.", { name: bot.name }))
+          )
+        )
+      ),
+      (0, import_react9.createElement)(
+        "div",
+        { className: "bt-model-offer" },
+        (0, import_react9.createElement)("button", {
+          type: "button",
+          className: "bt-model-chip bt-model-start",
+          disabled: busy !== "",
+          "aria-busy": busy === suggested || void 0,
+          onClick: () => pick2(suggested)
+        }, t("Start"), busy === suggested ? (0, import_react9.createElement)("span", { className: "bt-model-spin", "aria-label": t("Saving…") }) : null),
+        (0, import_react9.createElement)(ModelLine, { bot, roster, actions, run: run2, ref: suggested, onPick: pick2 })
+      ),
+      error ? (0, import_react9.createElement)("div", { className: "bt-secret-error bt-model-error", role: "alert" }, error) : null
+    );
+  }
+  const text = lost ? t("{model} is not available anymore. Pick another model for me.", { model: bot.model.split("/").slice(1).join("/") }) : keyFor ? t("Hi, I'm {name}. I need a {provider} API key before I can start.", { name: bot.name, provider: keyFor.providerName ?? keyFor.provider }) : t("Hi, I'm {name}. I don't have a model yet. How do you want to set one up?", { name: bot.name });
+  const choices = usable.length === 0 ? setupChoices(actions).map(([label, run3]) => (0, import_react9.createElement)("button", { key: label, type: "button", className: "bt-model-chip", onClick: run3 }, label)) : [
     ...groupModels(usable).map(([provider, list]) => (0, import_react9.createElement)(
       "div",
       { key: list[0].provider ?? provider, className: "bt-model-choice-group", role: "group", "aria-label": provider },
@@ -3629,6 +3751,15 @@ var MODEL_CSS = `
 .bt-model-chip:disabled{cursor:default}
 .bt-model-chip:disabled:not([aria-busy]){opacity:.5}
 .bt-model-error{margin-left:30px}
+.bt-model-tail{margin:2px 0 6px 6px}
+.bt-model-line{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 6px;font-size:12px;line-height:18px;color:var(--bt-ink-2)}
+.bt-model-line-text{min-width:0;overflow-wrap:anywhere}
+.bt-model-line-sep{color:var(--bt-ink-3)}
+.bt-model-change{padding:0;border:0;background:none;color:var(--bt-accent);font:inherit;font-weight:600;cursor:pointer}
+.bt-model-change:hover,.bt-model-change[aria-expanded=true]{text-decoration:underline;text-underline-offset:3px}
+.bt-model-change:focus-visible{outline:2px solid var(--bt-accent);outline-offset:2px;border-radius:4px}
+.bt-model-offer{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;margin-left:30px}
+.bt-model-offer .bt-model-line{margin-left:0}
 .bt-q.bt-model-key{margin:0 0 0 30px;width:min(480px,calc(100% - 30px));gap:10px}
 .bt-model-key-title{display:flex;align-items:center;gap:6px;font-size:13px;line-height:18px;font-weight:500;color:var(--bt-ink-2)}
 .bt-model-key-title svg{flex:none;width:16px;height:16px}
@@ -3683,9 +3814,19 @@ var duration = (ms) => {
   const minutes = Math.floor(seconds / 60);
   return minutes < 60 ? `${minutes}:${String(seconds % 60).padStart(2, "0")}` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 };
-function TaskCard({ sessionId, title, task, onOpen }) {
+var runningTasksOf = (roster, botId) => Object.entries(roster.tasks ?? {}).filter(([, task]) => task.from === botId && task.status === "working").map(([sessionId, task]) => ({ sessionId, ...task })).sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+var waitsForUser = (status, sessionId) => status?.get(sessionId)?.pendingInteraction !== void 0;
+var approvalFor = (work, sessionId) => (work?.approvals ?? []).some((entry) => entry.taskId === sessionId);
+var taskState = (task, waiting) => {
   const status = task?.status ?? "working";
-  const working = status === "working";
+  return status === "working" && waiting ? "waiting" : status;
+};
+function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, useWork }) {
+  const asked = useSessionStatus && sessionId ? useSessionStatus((map) => waitsForUser(map, sessionId)) : false;
+  const approval = useWork && sessionId ? useWork((work) => approvalFor(work, sessionId)) : false;
+  const waiting = asked || approval;
+  const status = taskState(task, waiting);
+  const working = status === "working" || status === "waiting";
   const now = useNow(working);
   const started = task?.at ?? now;
   const elapsed = (task?.endedAt ?? now) - started;
@@ -3701,17 +3842,17 @@ function TaskCard({ sessionId, title, task, onOpen }) {
         (0, import_react11.createElement)(
           "span",
           { className: "op-task-mark", "aria-hidden": true },
-          working ? (0, import_react11.createElement)("span", { className: "op-orbit" }, (0, import_react11.createElement)("i"), (0, import_react11.createElement)("i"), (0, import_react11.createElement)("i")) : status === "done" ? (0, import_react11.createElement)("svg", { viewBox: "0 0 20 20", width: 18, height: 18 }, (0, import_react11.createElement)("path", { d: "M5 10.5l3.2 3L15 6.5", fill: "none", stroke: "currentColor", strokeWidth: 2.2, strokeLinecap: "round", strokeLinejoin: "round" })) : (0, import_react11.createElement)("svg", { viewBox: "0 0 20 20", width: 16, height: 16 }, (0, import_react11.createElement)("path", { d: "M6 6l8 8M14 6l-8 8", stroke: "currentColor", strokeWidth: 2.2, strokeLinecap: "round" }))
+          status === "waiting" ? (0, import_react11.createElement)("span", { className: "op-task-wait" }) : working ? (0, import_react11.createElement)("span", { className: "op-orbit" }, (0, import_react11.createElement)("i"), (0, import_react11.createElement)("i"), (0, import_react11.createElement)("i")) : status === "done" ? (0, import_react11.createElement)("svg", { viewBox: "0 0 20 20", width: 18, height: 18 }, (0, import_react11.createElement)("path", { d: "M5 10.5l3.2 3L15 6.5", fill: "none", stroke: "currentColor", strokeWidth: 2.2, strokeLinecap: "round", strokeLinejoin: "round" })) : (0, import_react11.createElement)("svg", { viewBox: "0 0 20 20", width: 16, height: 16 }, (0, import_react11.createElement)("path", { d: "M6 6l8 8M14 6l-8 8", stroke: "currentColor", strokeWidth: 2.2, strokeLinecap: "round" }))
         ),
         (0, import_react11.createElement)(
           "div",
           { className: "op-task-titles" },
-          (0, import_react11.createElement)("span", { className: "op-task-kicker" }, working ? t("Task running") : status === "done" ? t("Task finished") : t("Task stopped")),
+          (0, import_react11.createElement)("span", { className: "op-task-kicker" }, status === "waiting" ? t("Waiting for you") : working ? t("Task running") : status === "done" ? t("Task finished") : t("Task stopped")),
           (0, import_react11.createElement)("strong", { className: "op-task-title" }, title)
         ),
         (0, import_react11.createElement)("span", { className: "op-task-time" }, duration(elapsed))
       ),
-      working ? (0, import_react11.createElement)(
+      status === "waiting" ? (0, import_react11.createElement)("div", { className: "op-task-live" }, (0, import_react11.createElement)("span", { className: "op-task-said" }, t("It asks for your OK. Open it to answer."))) : working ? (0, import_react11.createElement)(
         import_react11.Fragment,
         null,
         (0, import_react11.createElement)(
@@ -3722,7 +3863,7 @@ function TaskCard({ sessionId, title, task, onOpen }) {
         ),
         (0, import_react11.createElement)("div", { className: "op-task-bar", "aria-hidden": true }, (0, import_react11.createElement)("i"))
       ) : task?.summary ? (0, import_react11.createElement)("p", { className: "op-task-summary" }, task.summary) : null,
-      sessionId ? (0, import_react11.createElement)("button", { type: "button", className: "op-task-open", onClick: onOpen }, working ? t("Watch it work") : t("Open task"), " →") : null
+      sessionId ? (0, import_react11.createElement)("button", { type: "button", className: "op-task-open", onClick: onOpen }, status === "waiting" ? t("Answer it") : working ? t("Watch it work") : t("Open task"), " →") : null
     )
   );
 }
@@ -3735,6 +3876,9 @@ var TASK_CSS = `
 .op-task{position:relative;max-width:640px;padding:1.5px;border-radius:20px;background:conic-gradient(from var(--op-angle),color-mix(in srgb,var(--bt-accent) 30%,transparent),var(--bt-accent),#a78bfa,#f472b6,color-mix(in srgb,var(--bt-accent) 30%,transparent));animation:op-card-in .45s cubic-bezier(.2,.8,.2,1),op-spin 3s linear infinite}
 .op-task[data-state=done]{background:linear-gradient(135deg,#00c972,color-mix(in srgb,#00c972 30%,var(--bt-line)));animation:op-card-in .45s cubic-bezier(.2,.8,.2,1)}
 .op-task[data-state=failed]{background:color-mix(in srgb,#e5484d 50%,var(--bt-line));animation:none}
+.op-task[data-state=waiting]{background:linear-gradient(135deg,var(--bt-gold),color-mix(in srgb,var(--bt-gold) 30%,var(--bt-line)));animation:op-card-in .45s cubic-bezier(.2,.8,.2,1)}
+.op-task[data-state=waiting] .op-task-mark{background:color-mix(in srgb,var(--bt-gold) 18%,transparent)}
+.op-task-wait{width:12px;height:12px;border-radius:50%;corner-shape:round;background:var(--bt-gold);box-shadow:0 0 0 3px color-mix(in srgb,var(--bt-gold) 22%,transparent)}
 .op-task-in{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:18.5px;background:var(--bt-card)}
 .op-task-head{display:flex;align-items:center;gap:12px;min-width:0}
 .op-task-mark{flex:none;display:grid;place-items:center;width:36px;height:36px;border-radius:12px;background:color-mix(in srgb,var(--bt-accent) 12%,transparent);color:var(--bt-accent)}
@@ -4104,6 +4248,8 @@ body{--bt-ink:#141414;--bt-danger:#e02135;--bt-ink-2:rgba(20,20,20,.6);--bt-ink-
 /* iOS waits out a double-tap zoom on buttons; the plugin's own controls never zoom. */
 :is(.bt-tool,.bt-uaction,.bt-menu button,.bt-menu-item,.bt-icon-btn,.bt-round,.bt-pill,.bt-account,.bt-set-row,.bt-settings-item,.bt-react-strip button,.bt-palette-row,.bt-palette-clear,.bt-tab,.bt-ptab,.bt-ptab-x,.bt-bcard-x,.bt-plus,.bt-q-btn,.bt-q-x,.bt-x,.bt-nc-send,.bt-send,.bt-soft,.bt-mini,.bt-shape,.bt-swatch,.bt-color,.bt-newchat,.bt-task-day,.bt-task-remove,.bt-fb-btn){touch-action:manipulation}
 body[data-ds-dark-theme]{--bt-ink:#f2f2f2;--bt-ink-2:rgba(242,242,242,.6);--bt-ink-3:rgba(242,242,242,.36);--bt-bubble:#262626;--bt-sidebar:#1b1b1b;--bt-main:#141414;--bt-line:rgba(255,255,255,.08);--bt-line-2:rgba(255,255,255,.15);--bt-line-weak:rgba(255,255,255,.1);--bt-hover:rgba(160,160,160,.12);--bt-active:rgba(160,160,160,.2);--bt-card:#1f1f1f;--bt-user:#f2f2f2;--bt-user-ink:#141414;--bt-tag-bg:rgba(255,255,255,.09);--bt-tag-ink:rgba(242,242,242,.62)}
+body{--bt-gold:#f2b84b;--bt-gold-edge:#c98a1a;--bt-gold-band:#e9a636;--bt-gold-shine:#fff3d4;--bt-gem:#8fdcec;--bt-gem-2:#f0bddf;--bt-role-bg:#fbe7bf;--bt-role-ink:#8a5a12;--bt-role-edge:#e7c88a;--bt-role-shine:#fff6e2}
+body[data-ds-dark-theme]{--bt-role-bg:#4a3a1c;--bt-role-ink:#f6d48f;--bt-role-edge:#2a1f0c;--bt-role-shine:rgba(255,240,200,.12)}
 ${Object.entries(INKS).map(([name, [light]]) => `body{--bt-ink-${name}:${light}}`).join("")}
 ${Object.entries(INKS).map(([name, [, dark]]) => `body[data-ds-dark-theme]{--bt-ink-${name}:${dark}}`).join("")}
 .bt-mark{display:inline-block;flex:none;position:relative;line-height:0}
@@ -4245,7 +4391,11 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 .bt-connect svg{flex:none;width:15px;height:15px}
 .bt-connect-wrap{position:relative;display:flex;flex:1 1 auto;min-width:0}
 
-.bt-head{position:relative;display:flex;justify-content:center;align-items:center;height:40px;flex:none;pointer-events:none}
+.bt-head{position:relative;display:flex;justify-content:flex-end;align-items:center;gap:8px;height:40px;padding:0 16px;box-sizing:border-box;flex:none;pointer-events:none}
+.bt-head-details{pointer-events:auto;flex:none;display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;padding:0;border-radius:999px;background:var(--bt-main);border:.5px solid var(--bt-line-2);box-shadow:0 2px 8px -1px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);color:var(--bt-ink-2);cursor:pointer;transition:background-color .12s ease,color .12s ease}
+.bt-head-details:hover,.bt-head-details[aria-expanded=true]{color:var(--bt-ink);background:color-mix(in srgb,var(--bt-main),var(--bt-ink) 6%)}
+.bt-head-details svg{width:18px;height:18px}
+.bt-head-details:focus-visible{outline:2px solid var(--bt-accent);outline-offset:2px}
 .bt-pill{pointer-events:auto;display:inline-flex;align-items:center;gap:8px;height:40px;padding:7.5px 13.5px 7.5px 7.5px;border-radius:999px;background:var(--bt-main);border:.5px solid var(--bt-line-2);box-shadow:0 2px 8px -1px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);color:var(--bt-ink);font-family:inherit;font-size:14px;line-height:20px;cursor:pointer;max-width:70%;box-sizing:border-box;transition:background-color .12s ease,transform ${SPRING_TAP.duration}ms ${SPRING_TAP.easing}}
 .bt-pill:hover{background:color-mix(in srgb,var(--bt-main),#777 9%)}
 .bt-pill:active{transform:scale(.965)}
@@ -9129,7 +9279,7 @@ function useShownCards(actions, sessionId, callIds) {
     return () => actions.noteCards(sessionId, ids, -1);
   }, [sessionId, key]);
 }
-function renderCall(call2, { sessionId, roster, actions, useUi, useWork, findBot, heldCards }) {
+function renderCall(call2, { sessionId, roster, actions, useUi, useWork, useSessionStatus, findBot, heldCards }) {
   const tool = toolName(call2);
   const done = call2.kind === "tool-result";
   const { text: arg, value: argValue } = toolArgs(call2);
@@ -9140,7 +9290,7 @@ function renderCall(call2, { sessionId, roster, actions, useUi, useWork, findBot
     case "start_task": {
       const started = done ? /\((session-[^)]+)\) under Tasks/.exec(contentText(call2.content))?.[1] : void 0;
       if (done && !started) return (0, import_react19.createElement)("div", { className: "bt-event" }, contentText(call2.content).slice(0, 160));
-      return (0, import_react19.createElement)(TaskCard, { sessionId: started, title: arg("title") ?? t("a task"), task: started ? roster.tasks?.[started] : void 0, onOpen: () => started && actions.openSession(started) });
+      return (0, import_react19.createElement)(TaskCard, { sessionId: started, title: arg("title") ?? t("a task"), task: started ? roster.tasks?.[started] : void 0, onOpen: () => started && actions.openSession(started), useSessionStatus, useWork });
     }
     case "message_bot": {
       const target = findBot(arg("to")) ?? { name: arg("to") ?? "…", color: "gray" };
@@ -9216,7 +9366,7 @@ function renderCall(call2, { sessionId, roster, actions, useUi, useWork, findBot
       return null;
   }
 }
-function ToolCell({ node, sessionId, useRoster, useUi, useWork, useHeldCards, actions }) {
+function ToolCell({ node, sessionId, useRoster, useUi, useWork, useSessionStatus, useHeldCards, actions }) {
   const roster = useRoster((value) => value);
   const heldCards = useHeldCards?.((state) => state[sessionId]);
   const root = node.data.root;
@@ -9231,7 +9381,7 @@ function ToolCell({ node, sessionId, useRoster, useUi, useWork, useHeldCards, ac
   useLiveNote(actions, sessionId, `tool:${root.callId ?? node.key}`, note);
   useShownCards(actions, sessionId, drawn.filter((call2) => (CARDS.has(toolName(call2)) || toolCards.asks(toolName(call2))) && call2.callId).map((call2) => call2.callId));
   if (drawn.length === 0) return null;
-  const env = { sessionId, roster, actions, useUi, useWork, findBot, heldCards };
+  const env = { sessionId, roster, actions, useUi, useWork, useSessionStatus, findBot, heldCards };
   return (0, import_react19.createElement)(import_react19.Fragment, null, drawn.map((call2, index) => (0, import_react19.createElement)(import_react19.Fragment, { key: call2.callId ?? index }, renderCall(call2, env))));
 }
 
@@ -9445,7 +9595,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   const unread = useSessionStatus((map) => map.get(part)?.completionUnread === true || map.get(part)?.pendingInteraction !== void 0) || marked && !active;
   useMarkedUnread(id, active, marked, actions);
   const main = isMainOf(roster, id);
-  const tile = roster.mainBotId === id;
+  const crowned = roster.mainBotId === id;
   const approval = useApproval(useWork, (entry) => entry.botId === id);
   const alert = roster.questions?.[part] !== void 0 || approval;
   const doing = useActivity((map) => map[id]);
@@ -9456,36 +9606,21 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   const awayLine = away ? workLine(roster.roomsById[groups[0].id]?.name ?? t("a group chat"), groups[0], groups.length - 1) : null;
   const waits = workKeys(useWork ? useWork((work) => JSON.stringify(work.waiting?.[id] ?? null)) : "null");
   const waitsFor = state === "waiting" ? waitingFor(roster, waits) : "";
+  const threads = runningTasksOf(roster, id).length;
+  const threadsLine = threads === 0 ? "" : threads === 1 ? t("Working on 1 thing") : t("Working on {n} things", { n: threads });
   if (bot.hidden && !active && !main) return null;
   const onContextMenu = (event) => {
     event.preventDefault();
     actions.openMenu({ kind: "bot", id, x: event.clientX, y: event.clientY });
   };
-  const pinned = bot.pinned === true && !tile;
-  const label = [bot.name, main ? t("Main Bot") : "", pinned ? t("Pinned") : "", running2 || away ? t("Working") : "", waitsFor, approval ? t("Waiting for your approval") : alert ? t("Waiting for your answer") : "", unread ? t("Unread activity") : ""].filter(Boolean).join(", ");
-  if (tile && wide) {
-    return (0, import_react21.createElement)("div", { className: "bt-tile-wrap" }, (0, import_react21.createElement)(
-      "button",
-      {
-        type: "button",
-        className: "bt-tile",
-        "aria-label": label,
-        "aria-current": active ? "page" : void 0,
-        "data-bot-id": id,
-        title: preview || bot.name,
-        onClick: () => actions.openSession(id),
-        onContextMenu
-      },
-      (0, import_react21.createElement)(BotAvatar, { bot, size: 60, state, main: true }),
-      (0, import_react21.createElement)("span", { className: "bt-tile-name" }, bot.name),
-      bot.role ? (0, import_react21.createElement)("span", { className: "bt-chip" }, bot.role) : null
-    ));
-  }
+  const pinned = bot.pinned === true && !crowned;
+  const role = crowned ? bot.role : "";
+  const label = [bot.name, role, main ? t("Main Bot") : "", pinned ? t("Pinned") : "", running2 || away ? t("Working") : "", waitsFor, approval ? t("Waiting for your approval") : alert ? t("Waiting for your answer") : "", unread ? t("Unread activity") : ""].filter(Boolean).join(", ");
   return (0, import_react21.createElement)(
     "button",
     {
       type: "button",
-      className: "bt-row",
+      className: crowned ? "bt-row bt-row-crowned" : "bt-row",
       "aria-label": label,
       "aria-current": active ? "page" : void 0,
       "data-bot-id": id,
@@ -9493,13 +9628,13 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
       onClick: () => actions.openSession(id),
       onContextMenu
     },
-    (0, import_react21.createElement)(BotAvatar, { bot, size: 36, state, main }),
+    (0, import_react21.createElement)(BotAvatar, { bot, size: crowned && wide ? 42 : 36, state, main, crown: crowned }),
     pinned && !wide ? (0, import_react21.createElement)(PinMark) : null,
     wide ? (0, import_react21.createElement)(
       "span",
       { className: "bt-row-body" },
-      (0, import_react21.createElement)("span", { className: "bt-row-name" }, (0, import_react21.createElement)("span", { className: "bt-row-title" }, bot.name), pinned ? (0, import_react21.createElement)(PinMark) : null),
-      runningLine ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, runningLine) : awayLine ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, awayLine) : waitsFor ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, waitsFor) : preview ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, preview) : null
+      (0, import_react21.createElement)("span", { className: "bt-row-name" }, (0, import_react21.createElement)("span", { className: "bt-row-title" }, bot.name), role ? (0, import_react21.createElement)("span", { className: "bt-role" }, role) : null, pinned ? (0, import_react21.createElement)(PinMark) : null),
+      runningLine ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, runningLine) : awayLine ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, awayLine) : waitsFor ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, waitsFor) : threadsLine ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, threadsLine) : preview ? (0, import_react21.createElement)("span", { className: "bt-row-preview" }, preview) : null
     ) : null,
     // Badges other Omni plugins add (extend.js): Omni's row counts the automation runs waiting for you.
     wide ? (0, import_react21.createElement)(RowBadges, { bot, roster, useWork }) : null,
@@ -9514,6 +9649,63 @@ function BotChildren({ bot, roster, actions, wide }) {
   const entries2 = useEntries(botChildren);
   if (!wide || entries2.length === 0) return null;
   return entries2.map((entry) => (0, import_react21.createElement)(entry.Component, { key: entry.id, bot, roster, actions }));
+}
+function threadAge(ms, now = Date.now()) {
+  const minutes = Math.floor(Math.max(0, now - ms) / 6e4);
+  if (minutes < 1) return t("now");
+  if (minutes < 60) return t("{n}m", { n: minutes });
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? t("{n}h", { n: hours }) : t("{n}d", { n: Math.floor(hours / 24) });
+}
+function useMinute(on) {
+  const [now, setNow] = (0, import_react21.useState)(() => Date.now());
+  (0, import_react21.useEffect)(() => {
+    if (!on) return void 0;
+    const timer = setInterval(() => setNow(Date.now()), 3e4);
+    return () => clearInterval(timer);
+  }, [on]);
+  return now;
+}
+var THREADS_SHOWN = 3;
+function BotThreads({ bot, roster, actions, useSessions, useSessionStatus, useWork, wide }) {
+  const tasks = runningTasksOf(roster, bot.id);
+  const ids = tasks.map((task) => task.sessionId);
+  const askedKey = useSessionStatus((map) => ids.filter((id) => waitsForUser(map, id)).join(","));
+  const approvalKey = useWork ? useWork((work) => ids.filter((id) => approvalFor(work, id)).join(",")) : "";
+  const waitingKey = `${askedKey},${approvalKey}`;
+  const shownId = useSessions((list) => ids.find((id) => (list.byId[id]?.retainedBy?.mainView ?? 0) > 0) ?? "");
+  const [open, setOpen] = (0, import_react21.useState)(false);
+  const now = useMinute(wide && tasks.length > 0);
+  if (!wide || tasks.length === 0) return null;
+  const waiting = new Set(waitingKey.split(",").filter(Boolean));
+  const sorted = [...tasks].sort((a, b) => Number(waiting.has(b.sessionId)) - Number(waiting.has(a.sessionId)));
+  const shown = open || sorted.length <= THREADS_SHOWN + 1 ? sorted : sorted.slice(0, THREADS_SHOWN);
+  const more = sorted.length - shown.length;
+  return (0, import_react21.createElement)(
+    "div",
+    { className: "bt-threads", role: "group", "aria-label": t("Tasks {name} started", { name: bot.name }) },
+    shown.map((task) => {
+      const state = taskState(task, waiting.has(task.sessionId));
+      const label = [task.title, state === "waiting" ? t("Waiting for you") : t("Working")].join(", ");
+      return (0, import_react21.createElement)(
+        "button",
+        {
+          key: task.sessionId,
+          type: "button",
+          className: "bt-thread",
+          "data-state": state,
+          "aria-label": label,
+          title: task.title,
+          "aria-current": shownId === task.sessionId ? "page" : void 0,
+          onClick: () => actions.openSession(task.sessionId)
+        },
+        (0, import_react21.createElement)("span", { className: state === "waiting" ? "bt-thread-wait" : "bt-thread-spin", "aria-hidden": true }),
+        (0, import_react21.createElement)("span", { className: "bt-thread-title" }, task.title),
+        (0, import_react21.createElement)("span", { className: "bt-thread-age", "aria-hidden": true }, threadAge(task.at ?? now, now))
+      );
+    }),
+    more > 0 ? (0, import_react21.createElement)("button", { type: "button", className: "bt-thread bt-thread-more", onClick: () => setOpen(true) }, t("+{n} more", { n: more })) : null
+  );
 }
 function RoomRow({ room: room2, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useWork, wide, marked }) {
   const id = room2.id;
@@ -9789,11 +9981,20 @@ function TeamSidebar(props) {
     (0, import_react21.createElement)(
       "div",
       { ref: listRef, className: "bt-list", role: "region", "aria-label": t("Bot list") },
-      main ? (0, import_react21.createElement)(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : (0, import_react21.createElement)("div", { className: "bt-hint" }, t("Setting up your Main Bot…")),
+      // The first Main Bot is a row like the others, pinned first (the tile's styles stay
+      // in styles.js, vendored from DS Bot, unused).
+      main ? (0, import_react21.createElement)(
+        import_react21.Fragment,
+        { key: main.id },
+        (0, import_react21.createElement)(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }),
+        (0, import_react21.createElement)(BotThreads, { ...rowProps, bot: main }),
+        (0, import_react21.createElement)(BotChildren, { bot: main, roster, actions, wide })
+      ) : roster.ready ? null : (0, import_react21.createElement)("div", { className: "bt-hint" }, t("Setting up your Main Bot…")),
       order.map((entry) => entry.kind === "bot" ? (0, import_react21.createElement)(
         import_react21.Fragment,
         { key: entry.item.id },
         (0, import_react21.createElement)(BotRow, { ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true }),
+        (0, import_react21.createElement)(BotThreads, { ...rowProps, bot: entry.item }),
         (0, import_react21.createElement)(BotChildren, { bot: entry.item, roster, actions, wide })
       ) : entry.kind === "room" ? (0, import_react21.createElement)(RoomRow, { key: entry.item.id, ...rowProps, room: entry.item, marked: markedUnread[entry.item.id] === true }) : (0, import_react21.createElement)(AgentRow, { key: entry.item.id, ...rowProps, agent: entry.item, marked: markedUnread[entry.item.id] === true }))
     )
@@ -10207,6 +10408,29 @@ var SIDEBAR_CSS = `
 .bt-side-top .bt-brand:hover{background:none}
 .bt-brand .bt-mark{flex:none}
 .bt-pin{flex:none;display:inline-flex;color:var(--bt-ink-3)}
+.bt-row-crowned{margin-top:8px}
+/* A Bot's running tasks, as threads under its row. */
+.bt-threads{display:flex;flex-direction:column;gap:2px;margin:0 0 4px 26px;padding-left:10px;border-left:2px solid var(--bt-line-2)}
+.bt-thread{display:flex;align-items:center;gap:8px;width:100%;min-height:28px;padding:4px 8px;border:0;border-radius:10px;background:none;color:var(--bt-ink);font:inherit;font-size:12.5px;line-height:18px;text-align:left;cursor:pointer;box-sizing:border-box;transition:background-color .12s ease}
+.bt-thread:hover,.bt-thread[aria-current=page]{background:var(--bt-hover)}
+.bt-thread:focus-visible{outline:2px solid var(--bt-accent);outline-offset:-2px}
+.bt-thread[data-state=waiting] .bt-thread-title{font-weight:600}
+.bt-thread-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bt-thread-age{flex:none;font-size:11px;color:var(--bt-ink-3);font-variant-numeric:tabular-nums}
+.bt-thread-spin{flex:none;width:12px;height:12px;box-sizing:border-box;border-radius:50%;corner-shape:round;border:2px solid color-mix(in srgb,var(--bt-accent) 25%,transparent);border-top-color:var(--bt-accent);animation:bt-thread-spin .9s linear infinite}
+.bt-thread-wait{flex:none;width:12px;height:12px;border-radius:50%;corner-shape:round;background:var(--bt-gold);box-shadow:0 0 0 3px color-mix(in srgb,var(--bt-gold) 22%,transparent)}
+.bt-thread-more{color:var(--bt-ink-2);padding-left:28px}
+@keyframes bt-thread-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.bt-thread-spin{animation-duration:3s}}
+body[data-bt-motion=quiet] .bt-thread-spin{animation-duration:3s}
+/* The first Main Bot's crown (mark.js) and its role chip, in clay gold. */
+.bt-crown{position:absolute;left:50%;top:calc(var(--bt-size,36px) * -.27);width:calc(var(--bt-size,36px) * .52);height:calc(var(--bt-size,36px) * .36);transform:translateX(-50%) rotate(-8deg);filter:drop-shadow(0 1.5px 0 var(--bt-gold-edge)) drop-shadow(0 3px 3px color-mix(in srgb,var(--bt-gold-edge) 30%,transparent));pointer-events:none;z-index:1;line-height:0}
+.bt-crown-body{fill:var(--bt-gold);stroke:var(--bt-gold-edge);stroke-width:2;stroke-linejoin:round}
+.bt-crown-band{fill:var(--bt-gold-band)}
+.bt-crown-gem{fill:var(--bt-gem)}
+.bt-crown-gem2{fill:var(--bt-gem-2)}
+.bt-crown-shine{stroke:var(--bt-gold-shine);stroke-width:2;stroke-linecap:round;opacity:.8}
+.bt-role{flex:none;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 7px;border-radius:8px;background:var(--bt-role-bg);box-shadow:inset 0 1px var(--bt-role-shine),0 1px 0 var(--bt-role-edge);color:var(--bt-role-ink);font-size:10px;line-height:16px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
 .bt-rail .bt-row{position:relative}
 .bt-rail .bt-pin{position:absolute;top:3px;left:calc(50% + 12px)}
 .bt-side .bt-read-only{margin:4px 8px 6px;padding:8px 10px;border-radius:10px;background:var(--bt-hover);font-size:12px;line-height:1.45;text-align:left}
@@ -10345,10 +10569,11 @@ function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSe
     };
   }, [Boolean(room2)]);
   const memoryNotice = !away && notice && changed !== null && roster.memory !== false;
+  const pill = away || memoryNotice;
   return (0, import_react22.createElement)(
     "div",
     { className: "bt-head" },
-    (0, import_react22.createElement)(
+    pill ? (0, import_react22.createElement)(
       "button",
       {
         type: "button",
@@ -10363,9 +10588,17 @@ function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSe
       (0, import_react22.createElement)("span", { className: "bt-pill-name" }, away ? t("Back to chat") : bot?.name ?? room2?.name ?? (title || t("New chat"))),
       (0, import_react22.createElement)(MemoryNotice, { shown: memoryNotice }),
       (0, import_react22.createElement)("span", { className: "bt-pill-go", "aria-hidden": true }, (0, import_react22.createElement)(GoArrow))
-    ),
+    ) : null,
     (0, import_react22.createElement)("span", { className: "bt-sr", role: "status" }, memoryNotice ? t("Memory updated") : ""),
     bot ? (0, import_react22.createElement)(HeaderButtons, { bot, roster, actions, useWork }) : null,
+    !away && (bot || room2) ? (0, import_react22.createElement)("button", {
+      type: "button",
+      className: "bt-head-details",
+      "aria-label": t("View conversation details"),
+      title: t("Details"),
+      "aria-expanded": detailsOpen,
+      onClick: () => actions.toggleDetails(sessionId)
+    }, (0, import_react22.createElement)(InfoIcon)) : null,
     (0, import_react22.createElement)(NewMessagePills, { key: sessionId, sessionId, useSessions, useUi, useTurnClock }),
     (0, import_react22.createElement)(ActivityIndicator, { key: `activity:${sessionId}`, sessionId, useRoster, useSessionStatus, useSession, useLive, useWork, actions })
   );
@@ -12762,7 +12995,7 @@ function BotSettingsForm({ bot, roster, actions, run: run2 }) {
       Card,
       { title: t("Profile") },
       (0, import_react30.createElement)(Row, { label: t("Name") }, (0, import_react30.createElement)(InlineText, { label: t("Name"), value: bot.name, placeholder: "Bob", required: true, maxLength: 40, onSave: (name) => save({ name }) })),
-      (0, import_react30.createElement)(Row, { label: t("Label"), hint: t("Optional. Shown under the name.") }, (0, import_react30.createElement)(InlineText, { label: t("Label"), value: bot.role, placeholder: t("Research, admin…"), maxLength: 24, onSave: (role) => save({ role }) }))
+      (0, import_react30.createElement)(Row, { label: t("Role"), hint: t("A few words on what it does.") }, (0, import_react30.createElement)(InlineText, { label: t("Role"), value: bot.role, placeholder: t("Research, admin…"), maxLength: 24, onSave: (role) => save({ role }) }))
     ),
     (0, import_react30.createElement)(
       Card,
@@ -18769,7 +19002,7 @@ function noticeApprovals({ work, roster, shownSession, openSession, since = Date
       });
       note.onclick = () => {
         window.focus();
-        openSession(entry.roomId ?? entry.botId);
+        openSession(entry.taskId ?? entry.roomId ?? entry.botId);
         note.close();
       };
     }
@@ -19621,6 +19854,8 @@ function apply(ctx) {
     // A side question is not a transcript row. After its snapshot turn closes it
     // sits on that turn's tail, ahead of the time separator.
     () => shadow("conversation.chat.turnTail", { id: "bot-btw", order: 800, priority: BOT_PRIORITY, inject: face }, BtwTurnTail),
+    // While a Bot's chat holds only its greeting, the line under it names its model.
+    () => shadow("conversation.chat.turnTail", { id: "bot-model-line", order: 900, priority: BOT_PRIORITY, inject: face }, ModelLineTail),
     // A Bot condenses its conversation without telling anyone; the chat keeps showing
     // every message.
     () => shadow("conversation.chat.node", { key: "question-reply", priority: BOT_PRIORITY, locale: "chat" }, AnsweredReply),

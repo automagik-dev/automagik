@@ -78,7 +78,7 @@ export function createRuntime(ctx, config = {}) {
     statePath: join(home, 'state.json'),
     defaults: {
       mainName: config.mainName ?? 'Omni',
-      mainRole: config.mainRole ?? 'Channel orchestrator',
+      mainRole: config.mainRole ?? 'Orchestrator',
     },
   }
   for (const module of MODULES) module.install(rt)
