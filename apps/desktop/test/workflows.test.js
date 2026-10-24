@@ -41,3 +41,9 @@ test('a desktop rebuild keeps the plugins its release carries', () => {
   const text = readFileSync(new URL('../../../.github/workflows/desktop-build.yml', import.meta.url), 'utf8')
   assert.match(text, /case "\$\{name\}" in automagik-\*\.tgz\|plugins\.json\|PLUGINS\.SHA256SUMS\) continue ;; esac/)
 })
+
+test('every release carries the stable download names under Automagik and under Omni, the old name', () => {
+  const text = readFileSync(new URL('../../../.github/workflows/desktop-build.yml', import.meta.url), 'utf8')
+  assert.match(text, /for pair in "-mac-arm64\.dmg:Mac\.dmg" "-linux-x86_64\.AppImage:Linux\.AppImage" "-linux-amd64\.deb:Linux\.deb"; do/)
+  assert.match(text, /for name in Automagik Omni; do cp -- "\$\{file\}" "\$\{name\}-\$\{pair##\*:\}"; done/)
+})

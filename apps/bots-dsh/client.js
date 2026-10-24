@@ -289,7 +289,7 @@ var ZH = {
   Rename: "重命名",
   "Add instructions in Bot settings": "在 Bot 设置里添加说明",
   "No scheduled tasks yet. To add one, tell the Bot in its chat what to do and when.": "还没有定时任务。要添加，在对话里告诉 Bot 做什么、什么时候做。",
-  "The browser is in DSH Desktop and the Omni app.": "浏览器在 DSH 桌面版和 Omni 应用里。",
+  "The browser is in DSH Desktop and the Automagik app.": "浏览器在 DSH 桌面版和 Automagik 应用里。",
   "New tab": "新标签页",
   "Close tab": "关闭标签页",
   "Open {title}": "打开 {title}",
@@ -911,7 +911,7 @@ var ZH = {
   "Update checks are off.": "已关闭更新检查。",
   "Installed from a local folder; update it there.": "从本地文件夹安装，请在那里更新。",
   "Updates are not offered for this install.": "这种安装方式不提供更新。",
-  "Updates come with the Omni app.": "随 Omni 应用一起更新。",
+  "Updates come with the Automagik app.": "随 Automagik 应用一起更新。",
   Links: "链接",
   "Source code": "源代码",
   "Release notes": "发布说明",
@@ -16267,7 +16267,7 @@ function BrowserCards({ bot, sessionId, roster, actions, useBrowserTabs, useBrow
     actions.browserEnsure?.(bot.id);
   }, [bot.id]);
   if (roster.browser !== true || !actions.browserShow) {
-    return (0, import_react44.createElement)("div", { className: "bt-muted" }, t("The browser is in DSH Desktop and the Omni app."));
+    return (0, import_react44.createElement)("div", { className: "bt-muted" }, t("The browser is in DSH Desktop and the Automagik app."));
   }
   if (state.ids.length === 0) {
     return (0, import_react44.createElement)(

@@ -4,7 +4,23 @@ The [README](../README.md) is for people who use the app. This page is for peopl
 
 It is Automagik's Bot team on a [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) of its own, with the plugins already in it: the Bot team and the welcome from this repository (`apps/bots-dsh`, `apps/welcome-dsh`), and Omni's channels and canvases from one Omni release (`omni.json`). The app carries Automagik's version (`3.YYMMDD.N`, the repository's), like the plugins built beside it.
 
-Until 2.261023.x it was automagik-dev/omni-desktop, versioned as the Omni release it carried. Its installed identity is unchanged (appId `ai.namastex.omni.desktop`, the name Omni, `~/.omni/desktop`), and its last release there is this app, so an installed omni-desktop updates into it and then follows this repository's releases. On its first start an update moves the profile from the old plugin names (`@automagik/omni-dsh`, `@automagik/omni-ai-dsh`) to the new ones, keeping every setting row, and the Bot team's home is untouched (`src/dsh.js` `migrateRenamed`).
+Until 2.261023.x it was automagik-dev/omni-desktop, versioned as the Omni release it carried, and until 3.261023.x it was named Omni. Its last release there is this app, so an installed omni-desktop updates into it and then follows this repository's releases. On its first start an update moves the profile from the old plugin names (`@automagik/omni-dsh`, `@automagik/omni-ai-dsh`) to the new ones, keeping every setting row, and the Bot team's home is untouched (`src/dsh.js` `migrateRenamed`).
+
+### The name, and the identity that stays
+
+The app is **Automagik** wherever a person sees it: the bundle and its menu bar, the window, the update notice (`src/identity.js` `PRODUCT`), the desktop entry's Name, the dmg and the artifacts (`Automagik-<version>-…`). What an installed copy is known by stays as Omni shipped it, so it updates in place and keeps its data:
+
+| Kept | Why |
+|---|---|
+| appId `ai.namastex.omni.desktop` | macOS (Squirrel) installs an update only for the same bundle id and signer; TCC permissions and preferences are filed under it. |
+| `~/.omni/desktop` (`src/dsh.js` `appHome`) | the profile, the Bots, chats, memory, the Omni link (`ui/omni.json`), credentials (`dsh/.credentials.yaml`), logs and `preload`. No name is part of it. |
+| Electron's userData `…/Omni` (`src/identity.js` `dataPathsOf`) | Electron names it after the app; `main.js` pins it before anything reads it, so the page's storage, each Bot browser's partition and the single-instance lock stay put. |
+| Linux: executable `omni-desktop`, desktop entry id `omni-desktop.desktop` (`desktopName`), deb package `omni` | the window's app id and WM class, `/usr/bin/omni-desktop` and the AppArmor profile keep matching, and a new deb upgrades the installed package. It installs to `/opt/Automagik`. |
+| the `omni://` scheme, `OMNI_DESKTOP_*` variables, `window.omniDesktop` | what Omni's pages, the CLIs and the plugins already use. |
+
+There are no keychain items to carry: Electron keeps its cookies unencrypted (the cookie-encryption fuse is off), the app uses no `safeStorage`, and its credentials are the files above.
+
+What an updated install shows: the window, title bar, update notice and (macOS) menu bar say Automagik. On macOS the updater replaces the bundle where it is, so it stays `/Applications/Omni.app` and Finder, Launchpad and the Dock keep that name until the person renames it; a fresh install from the dmg is `Automagik.app`. A versioned AppImage is replaced by `Automagik-<version>-linux-x86_64.AppImage` in the same folder (electron-updater keeps a name without a version as it is).
 
 > Labs: macOS (Apple silicon, signed and notarized) and Linux x64 (AppImage, deb; also WSL with WSLg). Windows itself is not supported.
 
@@ -36,7 +52,7 @@ downloads the build for this machine from this repository's releases, checks it 
   It is apart from a dsh you already run (`~/.dsh`) and from the Omni UI plugin installed into that dsh (`~/.omni/ui`).
 - The window is a plain page: context isolation and the renderer sandbox are on, there is no Node in it, it stays on dsh's origin, and web links (a `wa.me` link, docs) open in your browser. Other schemes are refused.
 - Linux sandbox: Chromium needs user namespaces or a setuid helper, and Ubuntu 24.04+ restricts user namespaces. The deb installs an AppArmor profile that allows them for the app, so the window is sandboxed. An AppImage cannot carry one; on such a system its launcher runs without the sandbox and says so on stderr. Prefer the deb there.
-- An AppImage opened directly is mounted with FUSE and needs `libfuse2` (`sudo apt install libfuse2t64` on Ubuntu 24.04+; WSL rarely has it). `omni desktop` needs none: it unpacks the AppImage once into `~/.omni/desktop/app/extracted/` and runs it from there. By hand: `./Omni-*.AppImage --appimage-extract`, then `squashfs-root/AppRun`.
+- An AppImage opened directly is mounted with FUSE and needs `libfuse2` (`sudo apt install libfuse2t64` on Ubuntu 24.04+; WSL rarely has it). `omni desktop` needs none: it unpacks the AppImage once into `~/.omni/desktop/app/extracted/` and runs it from there. By hand: `./Automagik-*.AppImage --appimage-extract`, then `squashfs-root/AppRun`.
 - Its profile switches DSH's own welcome notice and credential step off (`profile/cordis.patch.yml`), so the octopus opens the app.
 - The app updates itself from this repository's releases (`v<version>`, the same ones `omni desktop` downloads; `src/update.js`). A release without desktop files (no update feed) is skipped. It checks 20 seconds after start, every 4 hours, 30 minutes after a failed check, and from **Check for Updates…** (the macOS app menu, or a right click on the title bar). A build follows its own release's channel: stable builds skip prereleases, and prerelease builds take both (`OMNI_DESKTOP_UPDATE_CHANNEL=stable|prerelease` overrides it). A newer build downloads in the background, and its sha512 is checked. The title bar then shows a notice with **Restart now** and **Later** (`frame.js` `updateView`, drawn by `shell.js`), and quitting installs it too. On macOS the update must carry the installed app's own signature, so only signed releases offer one. On Linux the AppImage updates itself when opened as an AppImage. A deb only says a newer release is out, and **Download** opens its release page. An AppImage unpacked by `omni desktop` updates by opening a newer one. Set `OMNI_DESKTOP_UPDATES=off` to turn updates off, or `OMNI_DESKTOP_UPDATE_FEED` to take them from another feed folder (https, or http on loopback). Every check is logged in `logs/update.log`, including "up to date".
 - An update replaces the profile's packages and keeps everything you set: a setting a newer build ships is added to your `cordis.patch.yml` only when your file has no entry with its id, and `pnpm-workspace.yaml` is added when missing.
@@ -52,8 +68,8 @@ The Bot team and the welcome come from this repository at the same commit (`apps
 ```sh
 npm ci                  # Electron and electron-builder
 npm test                # the main-process logic, without Electron
-npm run dist:linux      # dist/Omni-<version>-linux-x86_64.AppImage and -amd64.deb
-npm run dist:mac        # on macOS: dist/Omni-<version>-mac-<arch>.dmg and .zip, signed and notarized (see macOS)
+npm run dist:linux      # dist/Automagik-<version>-linux-x86_64.AppImage and -amd64.deb
+npm run dist:mac        # on macOS: dist/Automagik-<version>-mac-<arch>.dmg and .zip, signed and notarized (see macOS)
 ```
 
 The profile also ships the add-ons that connect AI subscriptions, each from Omni's reviewed fork at the commit `profile/package.json` pins (the version it holds is under `omni.addonVersions`, and the build checks it): `@goodandready/dsh-subscriptions` ([automagik-genie/dsh-subscriptions](https://github.com/automagik-genie/dsh-subscriptions), the plans DSH doesn't sign in to itself, with no updater of its own) and `dsh-oh-my-claude` (Claude through the person's own Claude Code). The profile is installed the way DSH installs any plugin, with the pinned dsh's own `dsh plugin --profile omni install` (pnpm, hoisted, no install scripts), so its pnpm lockfile ships with it.
@@ -64,7 +80,7 @@ To run from a checkout: `npm run prepare-runtime`, then `npx electron .` (add `-
 
 ### The icon
 
-`assets/icon.svg` is the icon's source: the Omni octopus on a night-sky tile. electron-builder makes every platform's icons from `assets/icon.png`, which is the SVG rendered by headless Chromium:
+`assets/icon.svg` is the icon's source: the octopus Omni shipped with, on a night-sky tile. There is no Automagik icon yet; a new one replaces both files. electron-builder makes every platform's icons from `assets/icon.png`, which is the SVG rendered by headless Chromium:
 
 ```sh
 chrome-headless-shell --screenshot=assets/icon.png --window-size=1024,1024 \
@@ -93,4 +109,4 @@ APPLE_KEYCHAIN_PROFILE=omni-notary npm run dist:mac
 
 Signing reads the login keychain, so run it from a Terminal in the Mac's own session (over ssh the keychain is locked).
 
-The dmg is signed, notarized and stapled too (`electron-builder.yml` `dmg.sign`, and `desktop-build.yml` sends it to Apple's notary and writes its new checksum into `latest-mac.yml` with `scripts/restamp-feed.mjs`). Every release is the repository's Latest and also carries `Omni-Mac.dmg`, `Omni-Linux.AppImage` and `Omni-Linux.deb`, so `releases/latest/download/<name>` always fetches the newest; `omni desktop` and the updater read only the versioned names.
+The dmg is signed, notarized and stapled too (`electron-builder.yml` `dmg.sign`, and `desktop-build.yml` sends it to Apple's notary and writes its new checksum into `latest-mac.yml` with `scripts/restamp-feed.mjs`). Every release is the repository's Latest and also carries `Automagik-Mac.dmg`, `Automagik-Linux.AppImage` and `Automagik-Linux.deb`, and the same files as `Omni-Mac.dmg`, `Omni-Linux.AppImage` and `Omni-Linux.deb` for links made before the rename, so `releases/latest/download/<name>` always fetches the newest. `omni desktop`, `genie desktop` and the updater read only the versioned names, and match them by what follows the version (`-linux-x86_64.AppImage`, `-mac-arm64.dmg`), so the name in front can change.
