@@ -1,7 +1,7 @@
 import { createElement as h, useEffect, useRef, useState } from 'react'
 import { call, callOmniUi } from './api.js'
-import { genieSvg } from './genie.js'
-import { OCTOPUS_SVG } from './octopus.js'
+import { OCTOPUS_SVG, omniFace } from './octopus.js'
+import { CLAY_OMNI, faceAt } from './vendor/clay-art.js'
 import { Stage, reducedMotion, useFinish, useGate, useGlitch } from './stage.js'
 
 // Step omni-team (order -270): who joins the companion's team. Each Bot type is a card with
@@ -201,6 +201,28 @@ export function Capabilities({ type, abilities = {}, onToggle, disabled = false 
 const CLOSED_EYES = '<g class="oai-closed" fill="none" stroke="#06121f" stroke-width="3" stroke-linecap="round"><path d="M33 37Q40 42 47 37"/><path d="M53 37Q60 42 67 37"/></g>'
 const PORTRAIT_SVG = OCTOPUS_SVG.replace('</svg>', `${CLOSED_EYES}</svg>`)
 
+/**
+ * Omni's face in its box, by the box's phase: asleep while powered off, focused while it
+ * wakes, installs and looks, curious when it waits for the person (found, none, pairing,
+ * restart), delighted once linked, sad when the install failed.
+ */
+export function omniFaceOf(phase) {
+  if (phase === 'asleep') return 'asleep'
+  if (phase === 'failed') return 'sad'
+  if (phase === 'linked') return 'delighted'
+  if (['waking', 'installing', 'starting', 'looking'].includes(phase)) return 'focused'
+  return 'curious'
+}
+// The clay face, or the vector octopus (its eyes closed while asleep) with CLAY_OMNI off.
+const portraitOf = phase => (CLAY_OMNI ? omniFace(omniFaceOf(phase)) : PORTRAIT_SVG)
+
+/**
+ * Genie's face on its card. Genie has no DSH plugin yet, so it never works here: asleep
+ * until the person adds it, then pleased to be asked along.
+ */
+export const genieExpressionOf = chosen => (chosen ? 'pleased' : 'asleep')
+const GeniePet = ({ expression }) => h('div', { className: 'oai-genie-pet oai-clay oai-clay-genie', 'data-face': expression, style: { '--oai-face-at': faceAt(expression) } })
+
 const PowerIcon = () => h('svg', { viewBox: '0 0 24 24', width: 18, height: 18, 'aria-hidden': true },
   h('path', { d: 'M12 3v8', fill: 'none', stroke: 'currentColor', strokeWidth: 2.4, strokeLinecap: 'round' }),
   h('path', { d: 'M6.4 6.6a8 8 0 1 0 11.2 0', fill: 'none', stroke: 'currentColor', strokeWidth: 2.4, strokeLinecap: 'round' }))
@@ -342,7 +364,7 @@ export function OmniCard({ power, onPower, type, abilities, onToggle, live }) {
   const awake = phase !== 'asleep'
   return h('article', { className: `oai-fighter oai-omni${awake ? ' oai-chosen' : ''}`, 'data-phase': phase },
     h(Machine, { phase, detail, power, live, onPower },
-      h('div', { className: 'oai-octo-wrap', dangerouslySetInnerHTML: { __html: PORTRAIT_SVG } })),
+      h('div', { className: 'oai-octo-wrap', dangerouslySetInnerHTML: { __html: portraitOf(phase) } })),
     h('header', null,
       h('h2', null, 'Omni'),
       awake && phase !== 'failed'
@@ -539,7 +561,7 @@ export function TeamStep(props) {
       ? h(OmniCard, { key: 'omni', power: omniPower, onPower: power.toggle, type: omniType, abilities, onToggle: (row, on) => setAbilities(rows => ({ ...rows, [row]: on })), live })
       : h('article', { key: 'genie', className: `oai-fighter oai-genie oai-locked${genie ? ' oai-chosen' : ''}` },
         h(Machine, { kind: 'genie', phase: 'asleep' },
-          h('div', { className: 'oai-genie-wrap', dangerouslySetInnerHTML: { __html: genieSvg(110, { uid: 'oaig' }) } })),
+          h('div', { className: 'oai-genie-wrap' }, h(GeniePet, { expression: genieExpressionOf(genie) }))),
         h('header', null,
           h('h2', null, 'Genie'),
           genie

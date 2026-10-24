@@ -55,3 +55,38 @@ test('a photo that does not load shows the Bot\'s character instead', () => {
   states.push(false, photo)
   assert.equal(BotMark({ bot: { ...bot, avatar: { ...bot.avatar, image: `${photo}AA` } } }).children[0].type, 'img')
 })
+
+// Clay characters (clay-art.js): Omni's own look and a Genie Bot draw as their clay art, and
+// their face follows the state the mark already shows.
+test('Omni\'s own look draws as clay Omni; a recoloured octopus and a photo stay what was chosen', () => {
+  const omni = BotMark({ bot: { id: 'o', name: 'Omni', kind: 'omni', color: 'deepseek', avatar: { shape: 'octopus' } }, state: 'working' })
+  assert.equal(omni.props['data-shape'], 'clay-omni')
+  assert.equal(omni.props['data-face'], 'focused')
+  const [art] = omni.children
+  assert.match(art.props.className, /\bbt-b\b/, 'the state motions move the clay art whole')
+  assert.equal(art.props.style['--bt-face-at'], 3)
+  // The plugin's own mark (MAIN_LOOK) is Omni too.
+  assert.equal(BotMark({ look: { shape: 'octopus', color: 'deepseek' } }).props['data-shape'], 'clay-omni')
+  assert.equal(BotMark({ bot: { id: 'r', name: 'Red', color: 'red', avatar: { shape: 'octopus' } } }).props['data-shape'], 'octopus')
+  const photo = 'data:image/png;base64,iVBORw0KGgo='
+  assert.equal(BotMark({ bot: { id: 'p', name: 'Omni', kind: 'omni', color: 'deepseek', avatar: { shape: 'octopus', image: photo } } }).props['data-shape'], 'image')
+  assert.match(SHELL_CSS, /\.bt-clay-omni\{[^}]*url\("data:image\/webp;base64,/)
+})
+
+test('a Genie Bot wears the face of what it is doing', () => {
+  const face = (state, extra = {}) => BotMark({ bot: { id: 'g', name: 'Genie', kind: 'genie', ...extra }, state, size: 36 })
+  const faces = Object.fromEntries(['idle', 'thinking', 'searching', 'working', 'sending', 'orbit', 'waiting', 'alert', 'done'].map(state => [state, face(state).props['data-face']]))
+  assert.deepEqual(faces, { idle: 'calm', thinking: 'focused', searching: 'focused', working: 'focused', sending: 'focused', orbit: 'focused', waiting: 'calm', alert: 'curious', done: 'delighted' })
+  const mark = face('alert')
+  assert.equal(mark.props['data-shape'], 'clay-genie')
+  // One cell of the row per face, in its order: calm, pleased, delighted, focused, curious, asleep, sad.
+  assert.equal(mark.children[0].props.style['--bt-face-at'], 4)
+  // A poke is a greeting.
+  states.push(true)
+  assert.equal(face('idle').props['data-face'], 'pleased')
+  // Small marks frame its head; a photo still wins.
+  assert.equal(BotMark({ bot: { id: 'g', kind: 'genie' }, size: 24 }).props['data-frame'], 'head')
+  assert.equal(face('idle').props['data-frame'], undefined)
+  assert.equal(face('idle', { avatar: { image: 'data:image/png;base64,iVBORw0KGgo=' } }).props['data-shape'], 'image')
+  assert.match(SHELL_CSS, /\.bt-clay-genie\{[^}]*url\("data:image\/webp;base64,/)
+})

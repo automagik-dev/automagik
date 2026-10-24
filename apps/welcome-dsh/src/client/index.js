@@ -6,6 +6,7 @@ import { ConnectAiStep } from './connect-ai.js'
 import { STAGE_CSS } from './octopus.js'
 import { announceStep } from './stage.js'
 import { TERMINAL_CSS } from './terminal.js'
+import { CLAY_ART_CSS } from './vendor/clay-art.js'
 
 // Automagik's onboarding on DSH's settings.onboarding slot. The shell mounts one step at a
 // time, in order; these come ahead of DSH's own welcome-notice (-100) and deepseek-official
@@ -22,7 +23,7 @@ export const inject = ['slots']
 function installStyles() {
   const style = document.createElement('style')
   style.dataset.omniAi = ''
-  style.textContent = STAGE_CSS + ONBOARD_CSS + INK_CSS + TERMINAL_CSS
+  style.textContent = STAGE_CSS + ONBOARD_CSS + INK_CSS + CLAY_ART_CSS + TERMINAL_CSS
   document.head.append(style)
   return () => style.remove()
 }

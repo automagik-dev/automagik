@@ -1,7 +1,7 @@
 import { createElement as h, useEffect, useState } from 'react'
 import { characterMarkup, PICKER_SHAPES, CHARACTER_COLORS } from './vendor/characters.js'
 import { INKS, GRADIENTS } from './vendor/inks.js'
-import { OCTOPUS_SVG } from './octopus.js'
+import { omniHero } from './octopus.js'
 import { call } from './api.js'
 
 // The companion's picture: one of Omni's characters (shape and color, drawn the way the app
@@ -17,9 +17,11 @@ export function characterSvg(shape, color, size = 120) {
   return `<svg viewBox="0 0 100 100" width="${size}" height="${size}" aria-hidden="true">${characterMarkup(shape, color).replaceAll('%MASK%', `oaic${serial}`)}</svg>`
 }
 
-// The app paints characters from CSS variables; the overlay is dark, so the dark inks.
-export const INK_CSS = `.oai-overlay{${Object.entries(INKS).map(([name, [, dark]]) => `--bt-ink-${name}:${dark}`).join(';')}}`
-export const swatchOf = color => (GRADIENTS[color] ? `linear-gradient(135deg,${GRADIENTS[color].map(([at, value]) => `${value} ${at * 100}%`).join(',')})` : INKS[color]?.[1] ?? color)
+// The app paints characters from CSS variables: the light inks on the light clay, the dark
+// ones when DSH's palette is dark, as the app does.
+export const INK_CSS = `.oai-overlay{${Object.entries(INKS).map(([name, [light]]) => `--bt-ink-${name}:${light}`).join(';')}}
+body[data-ds-dark-theme] .oai-overlay{${Object.entries(INKS).map(([name, [, dark]]) => `--bt-ink-${name}:${dark}`).join(';')}}`
+export const swatchOf = color => (GRADIENTS[color] ? `linear-gradient(135deg,${GRADIENTS[color].map(([at, value]) => `${value} ${at * 100}%`).join(',')})` : `var(--bt-ink-${color},${INKS[color]?.[0] ?? color})`)
 
 // What the stage shows: the companion once made, the octopus before.
 let cached
@@ -52,7 +54,7 @@ export function Hero({ look, hatching }) {
   const cls = `oai-hero${hatching ? ' oai-hatch' : ''}`
   if (look?.src) return h('div', { className: cls }, h('img', { className: 'oai-hero-img', src: look.src, alt: look.name ? `${look.name}, your companion` : 'Your companion' }))
   if (look?.shape) return h('div', { className: cls, dangerouslySetInnerHTML: { __html: characterSvg(look.shape, look.color, 132) } })
-  return h('div', { className: cls, dangerouslySetInnerHTML: { __html: OCTOPUS_SVG } })
+  return h('div', { className: cls, dangerouslySetInnerHTML: { __html: omniHero() } })
 }
 
 // Before a look is chosen: a glowing egg with sparks around it.
