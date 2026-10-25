@@ -5,7 +5,7 @@
 // Both pages are plain browser pages with no Node in them: context isolation and the
 // renderer sandbox are on, dsh's page can navigate only within dsh's origin, web links open
 // in the system browser, and the frame page never navigates.
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, session, shell, WebContentsView } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, session, shell, WebContentsView } from 'electron'
 import updaterModule from 'electron-updater'
 import { createWriteStream, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -229,11 +229,20 @@ function barMenu() {
   return Menu.buildFromTemplate([{ label: 'Check for Updates…', click: () => void checkForUpdates() }])
 }
 
-// Restart into the downloaded update: dsh is stopped first, as on any quit.
+// Restart into the downloaded update: dsh is stopped first, as on any quit. macOS then checks
+// the new app for up to a minute before it opens it, with nothing on screen, and the app opened
+// again meanwhile cancels the install. So the title bar says so before the window goes, and on
+// macOS a notification goes on saying it.
+const RESTART_NOTICE_MS = 2500
 function installUpdate() {
   if (!updates?.ready || quitting) return
   quitting = true
-  void stopDsh(dshChild).finally(() => updates.install())
+  update = { ...update, state: 'restarting' }
+  sendState()
+  if (process.platform === 'darwin' && Notification.isSupported()) {
+    new Notification({ title: `Updating ${PRODUCT}`, body: `${PRODUCT} reopens by itself in about a minute. Leave it closed until then.`, silent: true }).show()
+  }
+  setTimeout(() => { void stopDsh(dshChild).finally(() => updates.install()) }, RESTART_NOTICE_MS)
 }
 
 const WINDOW_PREFERENCES = {
