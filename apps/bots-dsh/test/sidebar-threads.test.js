@@ -184,3 +184,12 @@ test('a task a Bot started is listed under that Bot, not again under Tasks', () 
   const listed = find(row.type(row.props), named('AgentSessionRow')).map(node => node.props.session.id)
   assert.deepEqual(listed.sort(), ['from-gone', 'own'])
 })
+
+test('an ended task card says how it ended: a failed one names why, a stopped one is not finished', () => {
+  const kicker = task => textOf(find(TaskCard({ sessionId: 's', title: 'Wish', task }), node => node.props?.className === 'op-task-kicker')[0])
+  const ended = (status, summary) => ({ from: 'pip', title: 'Wish', at: NOW - 1000, endedAt: NOW, status, summary })
+  assert.equal(kicker(ended('failed', 'the provider refused the key\nat step 3')), 'Failed: the provider refused the key')
+  assert.equal(kicker(ended('failed', '')), 'Failed')
+  assert.equal(kicker(ended('stopped', 'half done')), 'Stopped')
+  assert.equal(kicker(ended('done', 'all done')), 'Task finished')
+})

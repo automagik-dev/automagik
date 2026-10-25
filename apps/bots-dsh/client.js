@@ -1065,6 +1065,8 @@ var ZH = {
   "Started task": "已开始任务",
   "Starting a task": "正在开始任务",
   "Task finished": "任务完成",
+  "Failed: {reason}": "失败：{reason}",
+  Failed: "失败",
   "Tasks": "任务",
   "{count} chats": "{count} 个聊天",
   "New conversation": "新对话",
@@ -1084,7 +1086,6 @@ var ZH = {
   "{n}m": "{n} 分钟",
   "{n}h": "{n} 小时",
   "{n}d": "{n} 天",
-  "Task stopped": "任务已停止",
   "Watch it work": "查看进度",
   "status": "状态",
   "broadcast": "广播",
@@ -3821,6 +3822,13 @@ var taskState = (task, waiting) => {
   const status = task?.status ?? "working";
   return status === "working" && waiting ? "waiting" : status;
 };
+var endLabel = (task) => {
+  if (task?.status === "failed") {
+    const reason = String(task.summary ?? "").split("\n")[0].trim();
+    return reason ? t("Failed: {reason}", { reason }) : t("Failed");
+  }
+  return task?.status === "stopped" ? t("Stopped") : t("Task finished");
+};
 function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, useWork }) {
   const asked = useSessionStatus && sessionId ? useSessionStatus((map) => waitsForUser(map, sessionId)) : false;
   const approval = useWork && sessionId ? useWork((work) => approvalFor(work, sessionId)) : false;
@@ -3847,7 +3855,7 @@ function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, useWork })
         (0, import_react11.createElement)(
           "div",
           { className: "op-task-titles" },
-          (0, import_react11.createElement)("span", { className: "op-task-kicker" }, status === "waiting" ? t("Waiting for you") : working ? t("Task running") : status === "done" ? t("Task finished") : t("Task stopped")),
+          (0, import_react11.createElement)("span", { className: "op-task-kicker" }, status === "waiting" ? t("Waiting for you") : working ? t("Task running") : endLabel(task)),
           (0, import_react11.createElement)("strong", { className: "op-task-title" }, title)
         ),
         (0, import_react11.createElement)("span", { className: "op-task-time" }, duration(elapsed))
@@ -3876,6 +3884,7 @@ var TASK_CSS = `
 .op-task{position:relative;max-width:640px;padding:1.5px;border-radius:20px;background:conic-gradient(from var(--op-angle),color-mix(in srgb,var(--bt-accent) 30%,transparent),var(--bt-accent),#a78bfa,#f472b6,color-mix(in srgb,var(--bt-accent) 30%,transparent));animation:op-card-in .45s cubic-bezier(.2,.8,.2,1),op-spin 3s linear infinite}
 .op-task[data-state=done]{background:linear-gradient(135deg,#00c972,color-mix(in srgb,#00c972 30%,var(--bt-line)));animation:op-card-in .45s cubic-bezier(.2,.8,.2,1)}
 .op-task[data-state=failed]{background:color-mix(in srgb,#e5484d 50%,var(--bt-line));animation:none}
+.op-task[data-state=stopped]{background:var(--bt-line);animation:none}
 .op-task[data-state=waiting]{background:linear-gradient(135deg,var(--bt-gold),color-mix(in srgb,var(--bt-gold) 30%,var(--bt-line)));animation:op-card-in .45s cubic-bezier(.2,.8,.2,1)}
 .op-task[data-state=waiting] .op-task-mark{background:color-mix(in srgb,var(--bt-gold) 18%,transparent)}
 .op-task-wait{width:12px;height:12px;border-radius:50%;corner-shape:round;background:var(--bt-gold);box-shadow:0 0 0 3px color-mix(in srgb,var(--bt-gold) 22%,transparent)}
@@ -3891,7 +3900,7 @@ var TASK_CSS = `
 .op-orbit i:nth-child(3){bottom:2px;right:1px;opacity:.3}
 @keyframes op-turn{to{transform:rotate(360deg)}}
 .op-task-titles{display:flex;flex-direction:column;flex:1;min-width:0}
-.op-task-kicker{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--bt-ink-3)}
+.op-task-kicker{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--bt-ink-3);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .op-task-title{font-size:14.5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .op-task-time{flex:none;font-size:13px;font-variant-numeric:tabular-nums;color:var(--bt-ink-2)}
 .op-task-live{display:flex;align-items:baseline;gap:10px;min-width:0;font-size:13px}
@@ -8946,7 +8955,7 @@ function TriggerCell({ node, sessionId, useRoster, useSessions, useTurnClock, us
           "div",
           { className: "bt-event bt-task-done" },
           (0, import_react19.createElement)(TasksIcon, { size: 15 }),
-          (0, import_react19.createElement)("span", null, t("Task finished")),
+          (0, import_react19.createElement)("span", null, endLabel(roster.tasks?.[source.taskSessionId])),
           source.taskSessionId ? (0, import_react19.createElement)("button", { type: "button", className: "bt-task-link", onClick: () => actions.openSession(source.taskSessionId) }, title) : (0, import_react19.createElement)("span", null, title)
         );
       }

@@ -320,3 +320,27 @@ test('a task thinks with the model of the Bot that asked, chosen before its firs
   const plain = await rt.startTask({ title: 'Chore', text: 'Do it' })
   assert.deepEqual(steps.filter(step => step[1] === plain), [['message', plain]])
 })
+
+test('a task that ends on an error is failed with its reason; one stopped is stopped, not done', async (t) => {
+  const { call, stop, ctx } = start(TEAM)
+  t.after(stop)
+  await call('state', {})
+  const rt = ctx.provided.get('omniTeam')
+  const reports = []
+  rt.deliver = async message => { reports.push(message) }
+  const end = (sessionId, reason) => {
+    for (const listener of ctx.listeners.get('session/event') ?? []) listener({ id: sessionId }, { type: 'turn/end', data: { turn: 1, reason } })
+  }
+  const failed = await rt.startTask({ title: 'Wish', text: 'Do it', from: 'm1' })
+  end(failed, { kind: 'error', error: { message: 'the provider refused the key', code: 'AUTH' } })
+  const stopped = await rt.startTask({ title: 'Wish 2', text: 'Do it', from: 'm1' })
+  end(stopped, { kind: 'aborted', reason: { kind: 'user' } })
+  await flush()
+  const { tasks } = (await call('state', {})).value
+  assert.deepEqual([tasks[failed].status, tasks[failed].summary], ['failed', 'the provider refused the key'])
+  assert.equal(tasks[stopped].status, 'stopped')
+  assert.deepEqual(reports.map(report => [report.taskSessionId, report.text]), [
+    [failed, 'It failed: the provider refused the key'],
+    [stopped, 'It was stopped before it finished.'],
+  ])
+})

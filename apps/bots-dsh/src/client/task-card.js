@@ -40,6 +40,15 @@ export const taskState = (task, waiting) => {
   return status === 'working' && waiting ? 'waiting' : status
 }
 
+// What an ended task says on its card and in its Bot's chat: a failed one names why.
+export const endLabel = (task) => {
+  if (task?.status === 'failed') {
+    const reason = String(task.summary ?? '').split('\n')[0].trim()
+    return reason ? t('Failed: {reason}', { reason }) : t('Failed')
+  }
+  return task?.status === 'stopped' ? t('Stopped') : t('Task finished')
+}
+
 export function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, useWork }) {
   const asked = useSessionStatus && sessionId ? useSessionStatus(map => waitsForUser(map, sessionId)) : false
   const approval = useWork && sessionId ? useWork(work => approvalFor(work, sessionId)) : false
@@ -58,7 +67,7 @@ export function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, use
             : status === 'done' ? h('svg', { viewBox: '0 0 20 20', width: 18, height: 18 }, h('path', { d: 'M5 10.5l3.2 3L15 6.5', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round', strokeLinejoin: 'round' }))
               : h('svg', { viewBox: '0 0 20 20', width: 16, height: 16 }, h('path', { d: 'M6 6l8 8M14 6l-8 8', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' }))),
         h('div', { className: 'op-task-titles' },
-          h('span', { className: 'op-task-kicker' }, status === 'waiting' ? t('Waiting for you') : working ? t('Task running') : status === 'done' ? t('Task finished') : t('Task stopped')),
+          h('span', { className: 'op-task-kicker' }, status === 'waiting' ? t('Waiting for you') : working ? t('Task running') : endLabel(task)),
           h('strong', { className: 'op-task-title' }, title)),
         h('span', { className: 'op-task-time' }, duration(elapsed))),
       status === 'waiting' ? h('div', { className: 'op-task-live' }, h('span', { className: 'op-task-said' }, t('It asks for your OK. Open it to answer.')))
@@ -81,6 +90,7 @@ export const TASK_CSS = `
 .op-task{position:relative;max-width:640px;padding:1.5px;border-radius:20px;background:conic-gradient(from var(--op-angle),color-mix(in srgb,var(--bt-accent) 30%,transparent),var(--bt-accent),#a78bfa,#f472b6,color-mix(in srgb,var(--bt-accent) 30%,transparent));animation:op-card-in .45s cubic-bezier(.2,.8,.2,1),op-spin 3s linear infinite}
 .op-task[data-state=done]{background:linear-gradient(135deg,#00c972,color-mix(in srgb,#00c972 30%,var(--bt-line)));animation:op-card-in .45s cubic-bezier(.2,.8,.2,1)}
 .op-task[data-state=failed]{background:color-mix(in srgb,#e5484d 50%,var(--bt-line));animation:none}
+.op-task[data-state=stopped]{background:var(--bt-line);animation:none}
 .op-task[data-state=waiting]{background:linear-gradient(135deg,var(--bt-gold),color-mix(in srgb,var(--bt-gold) 30%,var(--bt-line)));animation:op-card-in .45s cubic-bezier(.2,.8,.2,1)}
 .op-task[data-state=waiting] .op-task-mark{background:color-mix(in srgb,var(--bt-gold) 18%,transparent)}
 .op-task-wait{width:12px;height:12px;border-radius:50%;corner-shape:round;background:var(--bt-gold);box-shadow:0 0 0 3px color-mix(in srgb,var(--bt-gold) 22%,transparent)}
@@ -96,7 +106,7 @@ export const TASK_CSS = `
 .op-orbit i:nth-child(3){bottom:2px;right:1px;opacity:.3}
 @keyframes op-turn{to{transform:rotate(360deg)}}
 .op-task-titles{display:flex;flex-direction:column;flex:1;min-width:0}
-.op-task-kicker{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--bt-ink-3)}
+.op-task-kicker{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--bt-ink-3);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .op-task-title{font-size:14.5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .op-task-time{flex:none;font-size:13px;font-variant-numeric:tabular-nums;color:var(--bt-ink-2)}
 .op-task-live{display:flex;align-items:baseline;gap:10px;min-width:0;font-size:13px}

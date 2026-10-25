@@ -286,15 +286,21 @@ export function install(rt) {
     } else if (event?.type === 'turn/end') {
       // A restart cut the turn: the task is not done, and resume.js sets it going again.
       if (rt.cutByRestart?.(event.data?.reason)) return
-      const failed = event.data?.reason?.kind === 'error'
-      task.status = failed ? 'failed' : 'done'
+      // An error fails the task; the user or a Bot stopping it (an abort) only stops it.
+      const kind = event.data?.reason?.kind
+      const failed = kind === 'error'
+      const stopped = kind === 'aborted'
+      task.status = failed ? 'failed' : stopped ? 'stopped' : 'done'
       task.endedAt = Date.now()
       const words = lastWords.get(id) ?? ''
       lastWords.delete(id)
-      task.summary = (failed ? event.data.reason.error?.message ?? 'It stopped with an error.' : words).slice(0, TASK_SUMMARY_MAX)
+      const problem = event.data?.reason?.error?.message || 'unknown error'
+      task.summary = (failed ? problem : words).slice(0, TASK_SUMMARY_MAX)
       void rt.save().catch(error => rt.warn('ds-bot: saving a task failed: %s', error))
       if (rt.botOf(task.from) === undefined) return
-      const said = failed ? `It stopped with an error: ${event.data.reason.error?.message ?? 'unknown'}` : words || 'It ended without a reply.'
+      const said = failed ? `It failed: ${problem}`
+        : stopped ? `It was stopped before it finished.${words ? ` Its last words: ${words}` : ''}`
+        : words || 'It ended without a reply.'
       void rt.deliver({ toId: task.from, text: said.slice(0, TASK_REPORT_MAX), role: 'task-done', note: task.title, taskSessionId: id })
         .catch(error => rt.warn('ds-bot: the report of task %s did not reach its Bot: %s', task.title, error?.message ?? error))
     }
