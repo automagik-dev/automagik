@@ -5,12 +5,13 @@
 // Both pages are plain browser pages with no Node in them: context isolation and the
 // renderer sandbox are on, dsh's page can navigate only within dsh's origin, web links open
 // in the system browser, and the frame page never navigates.
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, session, shell, WebContentsView } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, session, shell, systemPreferences, WebContentsView } from 'electron'
 import updaterModule from 'electron-updater'
 import { createWriteStream, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
+import { fade, PAGE_IN_CSS } from './motion.js'
 import { appHome, automagikHome, dshEnv, freePort, installProfile, navigationOf, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
 import { pageLayout, tableColor, updateView, WINDOW_ACTIONS, windowChrome } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
@@ -28,6 +29,10 @@ let dshChild = null
 let window = null
 let page = null
 let quitting = false
+// The window is fading out on its way to close.
+let closing = false
+// The system's "reduce motion" (macOS accessibility, Windows animation settings).
+const lessMotion = () => systemPreferences.getAnimationSettings?.().prefersReducedMotion === true
 let ready = false
 // The update the title bar shows ({ version, state, percent }), once there is one.
 let update = null
@@ -170,7 +175,9 @@ async function launch() {
     if (mainFrame && code !== -3) sendState({ status: `${PRODUCT} could not load (${description}).`, problem: true })
   })
   // Laid in once painted, so the frame's splash stays up until there is something to show.
-  page.webContents.once('did-finish-load', () => {
+  page.webContents.once('did-finish-load', async () => {
+    if (!window) return
+    await page.webContents.insertCSS(PAGE_IN_CSS).catch(() => {})
     if (!window) return
     window.contentView.addChildView(page)
     ready = true
@@ -234,7 +241,9 @@ function barMenu() {
 // the new app for up to a minute before it opens it, with nothing on screen, and the app opened
 // again meanwhile cancels the install. So the title bar says so before the window goes, and on
 // macOS a notification goes on saying it.
-const RESTART_NOTICE_MS = 2500
+// Long enough to read "Installing… it reopens by itself" in the title bar; then the window goes
+// and the notification keeps saying it while macOS swaps the app.
+const RESTART_NOTICE_MS = 1200
 function installUpdate() {
   if (!updates?.ready || quitting) return
   quitting = true
@@ -243,7 +252,7 @@ function installUpdate() {
   if (process.platform === 'darwin' && Notification.isSupported()) {
     new Notification({ title: `Updating ${PRODUCT}`, body: `${PRODUCT} reopens by itself in about a minute. Leave it closed until then.`, silent: true }).show()
   }
-  setTimeout(() => { void stopDsh(dshChild).finally(() => updates.install()) }, RESTART_NOTICE_MS)
+  setTimeout(() => { void fade(window, { to: 0, reduced: lessMotion() }).then(() => stopDsh(dshChild)).finally(() => updates.install()) }, RESTART_NOTICE_MS)
 }
 
 const WINDOW_PREFERENCES = {
@@ -279,7 +288,14 @@ function openWindow() {
   frame.on('will-navigate', event => event.preventDefault())
   frame.on('before-input-event', (event, input) => shortcut(event, input))
   frame.once('did-finish-load', () => sendState())
-  window.once('ready-to-show', () => window.show())
+  window.once('ready-to-show', () => { void fade(window, { to: 1, reduced: lessMotion() }) })
+  // Closing fades the window out first; 'closed' and quitting follow.
+  window.on('close', (event) => {
+    if (closing || quitting || process.platform === 'linux') return
+    event.preventDefault()
+    closing = true
+    void fade(window, { to: 0, reduced: lessMotion() }).finally(() => window?.destroy())
+  })
   for (const change of ['resize', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) window.on(change, layout)
   window.on('closed', () => { window = null; page = null })
   void window.loadFile(join(HERE, 'shell.html'))
@@ -357,5 +373,6 @@ app.on('before-quit', (event) => {
   if (quitting || !dshChild) return
   quitting = true
   event.preventDefault()
-  void stopDsh(dshChild).finally(() => app.quit())
+  // The window goes at once; dsh stops behind it, so a quit never looks stuck.
+  void fade(window, { to: 0, reduced: lessMotion() }).then(() => stopDsh(dshChild)).finally(() => app.quit())
 })
