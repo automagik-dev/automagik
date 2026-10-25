@@ -1,6 +1,18 @@
-// The window runs dsh's web app as a plain page; it needs nothing from Electron. This
-// preload only tells the page it is inside the desktop app; `omniDesktop` and its `app` value
-// are what the page's plugins look for, so they keep the name the app shipped under.
-const { contextBridge } = require('electron')
+// The window runs dsh's web app as a plain page. This preload tells the page it is inside the
+// desktop app (`omniDesktop` and its `app` value are what the page's plugins look for, so they
+// keep the name the app shipped under) and hands it the app's update, for the Bot team's
+// sidebar to show: `updates` has DSH's desktop shape (status, open, subscribe), under our own
+// name, since a page that finds `dshDesktop` takes itself for DSH's own app.
+const { contextBridge, ipcRenderer } = require('electron')
 
-contextBridge.exposeInMainWorld('omniDesktop', Object.freeze({ app: 'omni-desktop', platform: process.platform }))
+const updates = Object.freeze({
+  status: () => ipcRenderer.invoke('automagik-updates-status'),
+  open: () => ipcRenderer.invoke('automagik-updates-open'),
+  subscribe(listener) {
+    const handle = (_event, presentation) => listener(presentation)
+    ipcRenderer.on('automagik-updates', handle)
+    return () => ipcRenderer.off('automagik-updates', handle)
+  },
+})
+
+contextBridge.exposeInMainWorld('omniDesktop', Object.freeze({ app: 'omni-desktop', platform: process.platform, updates }))
