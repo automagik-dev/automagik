@@ -1,6 +1,6 @@
 # Automagik market index
 
-`automagik.json` is this repository's [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin market index (format 1): the Bot team and the welcome, each a git source pinned to a release commit with the plugin's folder. Each release lists itself here (`release.yml` runs `bun scripts/marketplace.ts pin v<version>`), and `bun scripts/marketplace.ts check` proves every entry: DSH's own parser, and each commit holds the package and version it lists.
+`automagik.json` is this repository's [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin market index (format 1): the Bot team and the welcome, each a git source pinned to a release commit with the plugin's folder, and the outside plugins Automagik vetted (`VETTED` in `scripts/marketplace.ts`: the Claude Code provider and the AI subscriptions, reviewed forks under automagik-genie), each pinned to the commit that was reviewed. Each release lists itself here (`release.yml` runs `bun scripts/marketplace.ts pin v<version>`), and `bun scripts/marketplace.ts check` proves every entry: DSH's own parser, and each of this repository's commits holds the package and version it lists (dsh-marketplace's check proves the vetted forks' commits).
 
 Most people add the Automagik market, which lists these plugins with every other Automagik product's, at each release ([automagik-dev/dsh-marketplace](https://github.com/automagik-dev/dsh-marketplace)):
 
