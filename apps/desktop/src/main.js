@@ -5,7 +5,7 @@
 // Both pages are plain browser pages with no Node in them: context isolation and the
 // renderer sandbox are on, dsh's page can navigate only within dsh's origin, web links open
 // in the system browser, and the frame page never navigates.
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, session, shell, systemPreferences, WebContentsView } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, powerMonitor, session, shell, systemPreferences, WebContentsView } from 'electron'
 import updaterModule from 'electron-updater'
 import { appendFileSync, createWriteStream, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -13,9 +13,10 @@ import { fileURLToPath } from 'node:url'
 import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
 import { fade, PAGE_IN_CSS } from './motion.js'
 import { noteRestart, restartLine, steps } from './timeline.js'
-import { appHome, automagikHome, dshEnv, freePort, installProfile, navigationOf, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
+import { appHome, automagikHome, busyFileOf, dshEnv, freePort, installProfile, navigationOf, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
 import { pageLayout, tableColor, updateView, WINDOW_ACTIONS, windowChrome } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
+import { awayInstall, LOOK_EVERY_MS, readBusy } from './idle.js'
 import { isReleasePage, startUpdates, updateMode } from './update.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -223,6 +224,20 @@ function watchUpdates() {
       sendState()
     },
   })
+  if (mode !== 'auto') return
+  // A downloaded update goes in while the person is away (idle.js); else at a quit or Restart.
+  const away = setInterval(() => {
+    const why = awayInstall({
+      ready: updates.ready,
+      idleMs: powerMonitor.getSystemIdleTime() * 1000,
+      focused: window?.isFocused() === true,
+      busy: readBusy(busyFileOf(home)),
+    })
+    if (why !== 'install') return
+    clearInterval(away)
+    log.info(`update: ${updates.ready} installs now, while the computer is not in use`)
+    installUpdate({ away: true })
+  }, LOOK_EVERY_MS)
 }
 
 // The menu's Check for Updates: what it found shows in the title bar for a few seconds.
@@ -257,10 +272,10 @@ function barMenu() {
 // Long enough to read "Installing… it reopens by itself" in the title bar; then the window goes
 // and the notification keeps saying it while macOS swaps the app.
 const RESTART_NOTICE_MS = 1200
-function installUpdate() {
+function installUpdate({ away = false } = {}) {
   if (!updates?.ready || quitting) return
   quitting = true
-  const out = leave('update restart')
+  const out = leave(away ? 'update while away' : 'update restart')
   update = { ...update, state: 'restarting' }
   sendState()
   if (process.platform === 'darwin' && Notification.isSupported()) {

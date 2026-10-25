@@ -19,6 +19,8 @@ test('the app keeps everything in one folder under ~/.automagik, apart from a ds
   assert.equal(env.ELECTRON_RUN_AS_NODE, '1')
   assert.equal(env.DO_NOT_TRACK, '1')
   assert.equal(env.OMNI_CLIENT_ID, 'omni-desktop')
+  // The welcome counts the agents at work there, for an update while the person is away.
+  assert.equal(env.AUTOMAGIK_BUSY_FILE, '/a/desktop/busy.json')
   // The person's PATH comes first; the usual tool folders follow (see toolDirs below).
   assert.ok(env.PATH.startsWith('/bin:'))
   assert.equal(dshEnv({ base: {}, home: '/a' }).ELECTRON_RUN_AS_NODE, undefined)
