@@ -10593,11 +10593,30 @@ function Machine({ kind = "omni", phase, detail, power, live, onPower, children 
 }
 var genieLogOf = (phase, detail) => ["installing", "starting", "restart", "failed"].includes(phase) ? detail?.genie?.install?.log || null : null;
 function GenieInside({ phase, detail }) {
+  if (phase === "ready" && detail?.genie?.skills === false && detail.genie.cli) return (0, import_react5.createElement)(GenieSkillsOffer, { line: detail.genie.cli });
   const log = genieLogOf(phase, detail);
   const terminal = log === null ? null : (0, import_react5.createElement)(InstallLog, { text: log, label: "What the Genie install printed" });
   if (phase === "restart") return (0, import_react5.createElement)("div", null, terminal, (0, import_react5.createElement)("p", { className: "oai-inside-note" }, "Restart DSH, then power Genie on again."));
   if (phase === "failed") return (0, import_react5.createElement)("div", null, terminal, (0, import_react5.createElement)("p", { className: "oai-inside-note oai-bad", title: detail?.message }, terminal === null ? detail?.message ?? "Add @automagik/genie-dsh on DSH's Plugins page." : "What went wrong is above. Power Genie on to try again."));
   return terminal;
+}
+function GenieSkillsOffer({ line }) {
+  const [copied, setCopied] = (0, import_react5.useState)(false);
+  const copy = () => {
+    void navigator.clipboard?.writeText(line).then(() => setCopied(true), () => {
+    });
+  };
+  return (0, import_react5.createElement)(
+    "div",
+    { className: "oai-genie-skills" },
+    (0, import_react5.createElement)("p", { className: "oai-inside-note" }, "Genie is ready for wishes. For its skills too, like /wish, install its command line once, in a terminal:"),
+    (0, import_react5.createElement)(
+      "div",
+      { className: "oai-cli-line" },
+      (0, import_react5.createElement)("code", null, line),
+      (0, import_react5.createElement)("button", { type: "button", className: "oai-copy", onClick: copy }, copied ? "Copied" : "Copy")
+    )
+  );
 }
 var StartsWith = (props) => (0, import_react5.createElement)("details", { className: "oai-starts" }, (0, import_react5.createElement)("summary", null, "What it starts with"), (0, import_react5.createElement)(Capabilities, props));
 function OmniCard({ power, onPower, type, abilities, onToggle, live }) {
@@ -11011,6 +11030,11 @@ body[data-ds-dark-theme] .oai-box.oai-is-asleep{${recessed("var(--oai-niche)")}}
 .oai-is-asleep .oai-status,.oai-working::after{content:"";display:inline-block;width:7px;height:7px;margin-left:8px;vertical-align:1px;border-radius:50%;background:var(--oai-accent-2);animation:oai-caret 1s steps(1) infinite}
 .oai-inside{min-height:0;overflow:auto;display:grid;align-content:center;gap:6px;padding-top:4px}
 .oai-inside-note{margin:0!important;text-align:center;font-size:12.5px!important;color:var(--oai-ink2)!important;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.oai-genie-skills{display:flex;flex-direction:column;gap:6px}
+.oai-genie-skills .oai-inside-note{-webkit-line-clamp:3}
+.oai-cli-line{display:flex;align-items:center;gap:6px;min-width:0}
+.oai-cli-line code{flex:1;min-width:0;overflow-x:auto;white-space:nowrap;padding:5px 8px;border-radius:8px;background:color-mix(in srgb,var(--oai-ink) 6%,transparent);font:11px/16px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--oai-ink)}
+.oai-copy{flex:none;padding:4px 10px;border:1px solid color-mix(in srgb,var(--oai-ink) 20%,transparent);border-radius:8px;background:none;color:var(--oai-ink);font:600 12px/16px inherit;cursor:pointer}
 .oai-inside-note.oai-bad{color:var(--oai-bad)!important}
 .oai-install{list-style:none;margin:0;padding:0;display:flex;justify-content:center;gap:14px;font-size:12.5px;color:var(--oai-ink2)}
 .oai-install li{display:flex;align-items:center;gap:6px}

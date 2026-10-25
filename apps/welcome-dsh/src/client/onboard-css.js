@@ -109,6 +109,11 @@ body[data-ds-dark-theme] .oai-box.oai-is-asleep{${recessed('var(--oai-niche)')}}
 .oai-is-asleep .oai-status,.oai-working::after{content:"";display:inline-block;width:7px;height:7px;margin-left:8px;vertical-align:1px;border-radius:50%;background:var(--oai-accent-2);animation:oai-caret 1s steps(1) infinite}
 .oai-inside{min-height:0;overflow:auto;display:grid;align-content:center;gap:6px;padding-top:4px}
 .oai-inside-note{margin:0!important;text-align:center;font-size:12.5px!important;color:var(--oai-ink2)!important;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.oai-genie-skills{display:flex;flex-direction:column;gap:6px}
+.oai-genie-skills .oai-inside-note{-webkit-line-clamp:3}
+.oai-cli-line{display:flex;align-items:center;gap:6px;min-width:0}
+.oai-cli-line code{flex:1;min-width:0;overflow-x:auto;white-space:nowrap;padding:5px 8px;border-radius:8px;background:color-mix(in srgb,var(--oai-ink) 6%,transparent);font:11px/16px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--oai-ink)}
+.oai-copy{flex:none;padding:4px 10px;border:1px solid color-mix(in srgb,var(--oai-ink) 20%,transparent);border-radius:8px;background:none;color:var(--oai-ink);font:600 12px/16px inherit;cursor:pointer}
 .oai-inside-note.oai-bad{color:var(--oai-bad)!important}
 .oai-install{list-style:none;margin:0;padding:0;display:flex;justify-content:center;gap:14px;font-size:12.5px;color:var(--oai-ink2)}
 .oai-install li{display:flex;align-items:center;gap:6px}
