@@ -5,6 +5,9 @@ import { pressed, raised, recessed } from './clay.js'
 // pressed into it, where its character sits: lit when it is awake, in shadow asleep.
 export const ONBOARD_CSS = `
 .oai-stage.oai-wide{width:min(980px,100%)}
+/* veil.js: the table alone, over DSH's first frame until the welcome is up. */
+.oai-veil{transition:opacity .2s ease}.oai-veil-out{opacity:0;pointer-events:none}
+@media (prefers-reduced-motion:reduce){.oai-veil{transition:none}}
 .oai-hero{width:132px;height:132px;display:grid;place-items:center;animation:oai-float 4.5s ease-in-out infinite}
 .oai-hero svg{width:132px;height:132px;filter:drop-shadow(0 10px 8px var(--oai-cast)) drop-shadow(0 22px 22px var(--oai-cast-far))}
 .oai-hero .oai-octo{width:126px;height:126px;animation:none}
@@ -115,6 +118,28 @@ body[data-ds-dark-theme] .oai-box.oai-is-asleep{${recessed('var(--oai-niche)')}}
 .oai-install-next{opacity:.6}
 @keyframes oai-spin{to{transform:rotate(360deg)}}
 .oai-found-box{display:grid;gap:6px;justify-items:center}
+/* Omni's choices ("choose your destiny"): one clay tile each, the icon a pressed-in coin. */
+.oai-destiny-box{display:grid;gap:8px;width:100%}
+.oai-destiny{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:10px;width:100%}
+.oai-card button.oai-destiny-tile{display:grid;justify-items:center;align-content:start;gap:3px;width:auto;min-height:92px;margin:0;padding:10px 8px 9px;border-radius:var(--oai-r-sm);${raised('var(--oai-card)', 3)};color:var(--oai-ink);text-align:center;font-weight:400;line-height:1.3}
+.oai-card button.oai-destiny-tile:hover:not(:disabled){transform:translateY(-2px)}
+.oai-card button.oai-destiny-tile:focus-visible{outline:2px solid var(--oai-ring);outline-offset:2px}
+.oai-card button.oai-destiny-tile:disabled{opacity:.55;cursor:default}
+.oai-destiny-tile strong{font:700 13.5px/1.25 var(--oai-head)}
+.oai-destiny-tile small{font-size:11.5px;color:var(--oai-ink2)}
+.oai-destiny-icon{width:32px;height:32px;margin-bottom:3px;display:grid;place-items:center;border-radius:12px;${raised('var(--oai-cyan)', 2)};color:var(--oai-cyan-ink)}
+.oai-destiny-sandbox .oai-destiny-icon{${raised('var(--oai-pink)', 2)};color:var(--oai-pink-ink)}
+.oai-destiny-remote .oai-destiny-icon{${raised('var(--oai-lilac)', 2)};color:var(--oai-lilac-ink)}
+.oai-destiny-icon svg{width:18px;height:18px}
+.oai-destiny-waiting{list-style:none;margin:0;padding:0;font-size:12px;color:var(--oai-ink2);text-align:center}
+.oai-remote{display:grid;gap:6px;width:100%;text-align:left}
+.oai-remote label{font:700 13.5px/1.3 var(--oai-head)}
+.oai-remote-row{display:flex;gap:8px}
+.oai-remote input{flex:1;min-width:0;height:42px;padding:0 14px;border:1px solid var(--oai-line);border-radius:var(--oai-r-sm);background:var(--oai-card);color:var(--oai-ink);font:15px var(--oai-font);outline:none}
+.oai-remote input:focus{border-color:var(--oai-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--oai-accent) 22%,transparent)}
+.oai-card .oai-remote-row button{width:auto;margin:0;min-height:42px;white-space:nowrap}
+.oai-remote small{font-size:12px;color:var(--oai-ink2)}
+.oai-remote .oai-textlink{justify-self:start!important}
 .oai-found-list{list-style:none;margin:0;padding:0;display:grid;gap:8px;width:100%}
 .oai-found-row{display:flex;align-items:center;gap:10px;padding:7px 7px 7px 12px;border-radius:14px 16px 13px 15px;${raised('var(--oai-card)', 3)}}
 .oai-found-row.oai-quiet{box-shadow:none;background:none;opacity:.65}

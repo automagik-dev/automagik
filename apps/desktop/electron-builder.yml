@@ -74,6 +74,20 @@ mac:
   artifactName: Automagik-${version}-mac-${arch}.${ext}
 dmg:
   title: Automagik ${version}
+  # The install window: assets/background.png (and @2x, which dmg-builder combines into one
+  # TIFF) sets its size, 680x440. The app and the Applications link sit on the background's
+  # two clear spots, at 128 px, with the arrow between them. The background's source is
+  # assets/dmg-source (background.svg under page.html, rendered at 1x and 2x).
+  iconSize: 128
+  iconTextSize: 13
+  contents:
+    - x: 190
+      y: 205
+      type: file
+    - x: 490
+      y: 205
+      type: link
+      path: /Applications
   # The dmg is signed too (electron-builder signs only the app by default), and release.yml
   # notarizes and staples it, so a downloaded dmg opens without a warning.
   sign: true

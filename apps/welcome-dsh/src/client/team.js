@@ -3,6 +3,7 @@ import { call, callOmniUi } from './api.js'
 import { OCTOPUS_SVG, omniFace } from './octopus.js'
 import { CLAY_OMNI, LAMP, faceAt } from './vendor/clay-art.js'
 import { Stage, reducedMotion, useFinish, useGate, useGlitch } from './stage.js'
+import { InstallLog } from './terminal.js'
 
 // Step omni-team (order -270): who joins the companion's team. Each Bot type is a card with
 // what it starts with (its model, plugins, tools, skills, folder and permissions), read from
@@ -130,8 +131,48 @@ export async function geniePowerOn({ show, signal, genieAi = call, wait = sleep,
     if (genie.install?.phase !== 'installing') polls += 1
   }
   if (genie.ready) return end('ready', { bot: genie.bot })
-  if (genie.install?.phase === 'failed') return end('failed', { message: genie.install.error })
+  if (genie.install?.phase === 'failed') return end('failed', { message: genie.install.error, genie })
   return end('restart', { genie })
+}
+
+/**
+ * A new Omni of its own on this computer, from Omni's card: Omni's installer
+ * (`omni install --sandbox --at-login`) runs in a terminal the Omni channels plugin owns
+ * (omni-terminal-*), started at once since choosing the tile is the go-ahead, and what it
+ * prints shows in the card ({ terminal, log, step }). It ends linked (exit 0 links the Bot
+ * team to the new Omni), pairing, or failed ({ message, log }). Returns the last phase.
+ */
+export const SANDBOX_LOG_MAX = 48_000
+const TERMINAL_ENDED = new Set(['done', 'exited', 'failed', 'cancelled', 'closed'])
+export async function sandboxInstall({ show, signal, omniUi = callOmniUi, wait = sleep, poll = 400 }) {
+  const check = () => { if (signal?.aborted) throw abortError() }
+  const opened = await omniUi('omni-terminal-open', { kind: 'install', cols: 72, rows: 8 })
+  check()
+  const { terminal } = opened
+  let log = ''
+  let from = 0
+  show('sandbox', { terminal, log, step: null })
+  await omniUi('omni-terminal-write', { terminal, data: '\r' })
+  const end = (phase, detail) => {
+    void omniUi('omni-terminal-close', { terminal }).catch(() => {})
+    check()
+    show(phase, detail)
+    return phase
+  }
+  for (;;) {
+    check()
+    const read = await omniUi('omni-terminal-read', { terminal, from })
+    check()
+    log = `${log}${read.data ?? ''}`.slice(-SANDBOX_LOG_MAX)
+    from = read.next ?? from
+    if (read.result?.status === 'paired') return end('linked', { origin: read.result.origin ?? null })
+    if (read.result?.status === 'pairing') return end('pairing', { pairing: read.result.pairing })
+    const exited = typeof read.exitCode === 'number' || TERMINAL_ENDED.has(read.state)
+    if (exited && read.exitCode === 0) return end('linked', { origin: null })
+    if (exited) return end('failed', { message: read.error ?? (read.exitCode === 130 ? 'The install was cancelled.' : `Omni's installer stopped (exit code ${read.exitCode ?? '?'}). What it printed is above.`), log })
+    show('sandbox', { terminal, log, step: read.step ?? null })
+    await wait(poll, signal)
+  }
 }
 
 const onMac = (scope = globalThis) => /Mac/i.test(scope.navigator?.platform ?? '') || /Mac OS X/.test(scope.navigator?.userAgent ?? '')
@@ -294,8 +335,9 @@ export function statusOf(phase, detail) {
     waking: 'Waking up…',
     starting: 'Starting Omni in this DSH…',
     looking: 'Looking for a connection…',
-    none: 'No Omni found nearby',
+    none: 'Where should Omni live?',
     pairing: 'Approve this device on your phone',
+    sandbox: detail?.step === 'download-bun' ? 'Downloading Bun for Omni…' : 'Setting up your Omni…',
     restart: 'Installed · restart DSH to start it',
     failed: 'Could not install Omni',
   }[phase] ?? ''
@@ -325,11 +367,11 @@ export function genieLightsOf(phase) {
 // The box's three lights: power, its plugins, its connection. Waking lights them one by one;
 // then each shows what is true: on, working (a blink), or off.
 export function lightsOf(phase) {
-  const ready = ['looking', 'found', 'none', 'pairing', 'linked'].includes(phase)
+  const ready = ['looking', 'found', 'none', 'pairing', 'linked', 'sandbox'].includes(phase)
   return [
     ['power', phase === 'asleep' ? 'off' : 'on'],
     ['plugins', ready ? 'on' : ['installing', 'starting'].includes(phase) ? 'busy' : phase === 'failed' || phase === 'restart' ? 'warn' : 'off'],
-    ['link', phase === 'linked' ? 'on' : ['looking', 'pairing'].includes(phase) ? 'busy' : phase === 'found' ? 'warn' : 'off'],
+    ['link', phase === 'linked' ? 'on' : ['looking', 'pairing', 'sandbox'].includes(phase) ? 'busy' : phase === 'found' ? 'warn' : 'off'],
   ]
 }
 
@@ -353,41 +395,75 @@ function Pairing({ pairing, onCancel }) {
       h('button', { type: 'button', className: 'oai-pill', onClick: onCancel }, 'Cancel')))
 }
 
-function Found({ omnis, busy, onUse }) {
-  const mac = onMac()
-  return h('ul', { className: 'oai-found-list' }, omnis.map((omni) => {
-    const choice = foundChoice(omni, { mac })
-    return h('li', { key: omni.id, className: `oai-found-row${choice.action ? '' : ' oai-quiet'}`, title: choice.note ?? undefined },
-      h('span', { className: 'oai-found-what' }, h('strong', null, choice.title), h('small', null, choice.note ?? choice.sub)),
-      choice.action ? h('button', { type: 'button', className: 'oai-pill oai-pill-primary', disabled: busy !== null, onClick: () => onUse(omni) }, busy === omni.id ? 'Connecting…' : choice.action === 'use' ? 'Use it' : 'Connect') : null)
+const ICONS = {
+  // A laptop: an Omni already on this computer.
+  here: 'M4 6.5A1.5 1.5 0 0 1 5.5 5h13A1.5 1.5 0 0 1 20 6.5V15H4zM2 17h20l-1 2H3z',
+  // A box with a spark: a new Omni of its own, in a sandbox.
+  sandbox: 'M12 2l1.6 3.4L17 7l-3.4 1.6L12 12l-1.6-3.4L7 7l3.4-1.6zM4 13h16v7a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z',
+  // A globe: an Omni somewhere else.
+  remote: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m0 2c1.1 1.4 2 3.8 2.2 7H9.8c.2-3.2 1.1-5.6 2.2-7M4.1 13h3.7c.1 2.4.7 4.6 1.6 6.1A8 8 0 0 1 4.1 13m12.1 0h3.7a8 8 0 0 1-5.3 6.1c.9-1.5 1.5-3.7 1.6-6.1M4.1 11a8 8 0 0 1 5.3-6.1C8.5 6.4 7.9 8.6 7.8 11zm12.1 0c-.1-2.4-.7-4.6-1.6-6.1a8 8 0 0 1 5.3 6.1zM9.8 13h4.4c-.2 3.2-1.1 5.6-2.2 7-1.1-1.4-2-3.8-2.2-7',
+}
+const Icon = ({ name }) => h('svg', { viewBox: '0 0 24 24', 'aria-hidden': true }, h('path', { d: ICONS[name], fill: 'currentColor' }))
+
+/**
+ * Where Omni comes from, as choices, the first time and every time nothing is linked yet:
+ * each Omni found here or saved in the Omni CLI (use or connect it), a new Omni of its own on
+ * this computer, or one somewhere else (only that one asks for an address). Found Omnis that
+ * cannot be used yet stay listed, with why.
+ */
+export function destinyOf(omnis = [], { mac = false } = {}) {
+  const here = mac ? 'this Mac' : 'this computer'
+  const rows = omnis.map(omni => ({ omni, choice: foundChoice(omni, { mac }) }))
+  const tiles = rows.filter(row => row.choice.action).map(({ omni, choice }) => ({
+    id: omni.id, icon: omni.local ? 'here' : 'remote', omni,
+    title: `${choice.action === 'use' ? 'Use' : 'Connect'} ${choice.title.replace(/^Your /, 'your ')}`,
+    sub: choice.sub || (omni.local ? `Already on ${here}` : 'Saved in your Omni CLI'),
   }))
+  if (!rows.some(row => row.omni.source === 'sandbox')) tiles.push({ id: 'local', icon: 'sandbox', title: `Run Omni on ${here}`, sub: 'A private Omni of its own, set up for you' })
+  tiles.push({ id: 'remote', icon: 'remote', title: 'An Omni somewhere else', sub: 'On a server, or the link Omni sent you' })
+  return { tiles, waiting: rows.filter(row => !row.choice.action).map(row => row.choice) }
 }
 
-function Elsewhere({ busy, onRemote, onLocal }) {
+function Destiny({ omnis, busy, onUse, onLocal, onRemote }) {
+  const [remote, setRemote] = useState(false)
+  if (remote) return h(Remote, { busy, onRemote, onBack: () => setRemote(false) })
+  const { tiles, waiting } = destinyOf(omnis, { mac: onMac() })
+  const pick = tile => (tile.id === 'remote' ? setRemote(true) : tile.id === 'local' ? onLocal() : onUse(tile.omni))
+  return h('div', { className: 'oai-destiny-box' },
+    h('div', { className: 'oai-destiny', role: 'group', 'aria-label': 'Where your Omni is' }, tiles.map(tile => h('button', {
+      key: tile.id, type: 'button', className: `oai-destiny-tile oai-destiny-${tile.icon}`, disabled: busy !== null, onClick: () => pick(tile),
+    },
+    h('span', { className: 'oai-destiny-icon' }, h(Icon, { name: tile.icon })),
+    h('strong', null, busy === tile.id ? 'Connecting…' : tile.title),
+    h('small', null, tile.sub)))),
+    waiting.length > 0 ? h('ul', { className: 'oai-destiny-waiting' }, waiting.map(row => h('li', { key: row.id }, h('strong', null, row.title), ` · ${row.note}`))) : null)
+}
+
+// An Omni somewhere else: its address, or the link it sent its owner.
+function Remote({ busy, onRemote, onBack }) {
   const [text, setText] = useState('')
   const wanted = readRemote(text)
   const submit = (event) => {
     event.preventDefault()
-    if (wanted !== null) onRemote(wanted)
+    if (wanted !== null && wanted.kind !== 'bad-link') onRemote(wanted)
   }
-  return h('div', { className: 'oai-elsewhere' },
-    h('form', { className: 'oai-field', onSubmit: submit },
-      h('input', { type: 'text', inputMode: 'url', autoComplete: 'off', spellCheck: false, value: text, placeholder: 'Its address, or the link Omni sent you', 'aria-label': 'Omni address or link', onChange: event => setText(event.target.value) }),
-      h('button', { type: 'submit', className: 'oai-pill oai-pill-primary', disabled: busy !== null || wanted === null }, busy === 'remote' ? 'Connecting…' : 'Connect')),
-    h('button', { type: 'button', className: 'oai-textlink', onClick: onLocal }, onMac() ? 'Or run Omni on this Mac' : 'Or run Omni on this computer'))
+  return h('form', { className: 'oai-remote', onSubmit: submit },
+    h('label', { htmlFor: 'oai-remote-url' }, 'Where is your Omni?'),
+    h('div', { className: 'oai-remote-row' },
+      h('input', { id: 'oai-remote-url', type: 'text', inputMode: 'url', autoComplete: 'off', spellCheck: false, autoFocus: true, value: text, placeholder: 'omni.example.com', onChange: event => setText(event.target.value) }),
+      h('button', { type: 'submit', className: 'oai-pill oai-pill-primary', disabled: busy !== null || wanted === null || wanted.kind === 'bad-link' }, busy === 'remote' ? 'Connecting…' : 'Connect')),
+    h('small', null, wanted?.kind === 'bad-link' ? 'That link is cut short. Copy the whole link Omni sent you.' : 'Its address, or paste the link Omni sent you on WhatsApp.'),
+    h('button', { type: 'button', className: 'oai-textlink', onClick: onBack }, 'Back to the choices'))
 }
 
 // What the box shows under the status line: one thing at a time, in the same place.
-function Inside({ phase, detail, power, live, elsewhere, setElsewhere }) {
+function Inside({ phase, detail, power, live }) {
   const channels = live?.configured ? live.channels ?? [] : []
   if (phase === 'installing') return h(InstallProgress, { plugins: detail?.plugins })
   if (phase === 'pairing') return h(Pairing, { pairing: detail.pairing, onCancel: power.cancelPairing })
-  if (phase === 'none' || (phase === 'found' && elsewhere)) return h(Elsewhere, { busy: power.busy, onRemote: power.remote, onLocal: power.local })
-  if (phase === 'found') {
-    return h('div', { className: 'oai-found-box' },
-      h(Found, { omnis: detail?.omnis ?? [], busy: power.busy, onUse: power.use }),
-      h('button', { type: 'button', className: 'oai-textlink', onClick: () => setElsewhere(true) }, 'Somewhere else?'))
-  }
+  if (phase === 'sandbox') return h(InstallLog, { text: detail?.log ?? '', label: "What Omni's installer printed" })
+  if (phase === 'failed' && detail?.log) return h('div', null, h(InstallLog, { text: detail.log, label: "What Omni's installer printed" }), h('p', { className: 'oai-inside-note oai-bad', title: detail.message }, 'What went wrong is above. Power Omni on to try again.'))
+  if (phase === 'none' || phase === 'found') return h(Destiny, { omnis: detail?.omnis ?? [], busy: power.busy, onUse: power.use, onLocal: power.local, onRemote: power.remote })
   // Once connected, its real channels, as they will sit in the menu.
   if (phase === 'linked' && channels.length > 0) {
     return h('div', { className: 'oai-menu' },
@@ -404,12 +480,12 @@ function Inside({ phase, detail, power, live, elsewhere, setElsewhere }) {
  * lights. Asleep it is a powered-down screen; everything after happens inside, in place.
  */
 export function Machine({ kind = 'omni', phase, detail, power, live, onPower, children }) {
-  const [elsewhere, setElsewhere] = useState(false)
   const awake = phase !== 'asleep'
   const omni = kind === 'omni'
   const title = omni ? 'Omni' : 'Genie'
   // Genie, once on the team, stays: its plugin made the Genie Bot.
   const locked = phase === 'installing' || phase === 'starting' || (!omni && phase === 'ready')
+  // An Omni being set up can still be stopped (its installer gets Ctrl-C).
   return h('div', { className: `oai-box oai-box-${kind} oai-is-${phase}`, 'data-phase': phase },
     h('div', { className: 'oai-box-top' },
       h('span', { className: 'oai-lights', 'aria-hidden': true }, (omni ? lightsOf(phase) : genieLightsOf(phase)).map(([id, state]) => h('i', { key: id, className: `oai-light oai-light-${state}`, title: id }))),
@@ -418,17 +494,21 @@ export function Machine({ kind = 'omni', phase, detail, power, live, onPower, ch
       phase === 'looking' ? h('div', { className: 'oai-scan' }, h('i'), h('i'), h('i')) : null,
       phase === 'asleep' ? h('div', { className: 'oai-zzz' }, h('i', null, 'z'), h('i', null, 'z'), h('i', null, 'z')) : null,
       children),
-    h('p', { className: `oai-status${['waking', 'installing', 'starting', 'looking'].includes(phase) ? ' oai-working' : ''}`, role: 'status', 'aria-live': 'polite' }, omni ? statusOf(phase, detail) : genieStatusOf(phase, detail)),
+    h('p', { className: `oai-status${['waking', 'installing', 'starting', 'looking', 'sandbox'].includes(phase) ? ' oai-working' : ''}`, role: 'status', 'aria-live': 'polite' }, omni ? statusOf(phase, detail) : genieStatusOf(phase, detail)),
     h('div', { className: 'oai-inside' },
-      omni ? h(Inside, { phase, detail, power, live, elsewhere, setElsewhere }) : h(GenieInside, { phase, detail }),
+      omni ? h(Inside, { phase, detail, power, live }) : h(GenieInside, { phase, detail }),
       omni && power?.problem ? h('p', { className: 'oai-inside-note oai-bad', role: 'alert' }, power.problem) : null))
 }
 
-// Under Genie's status line: what to do when it could not start.
+// Under Genie's status line: what its install is doing, as it prints it, and what to do when
+// it could not start. The log stays on screen after a failure.
+export const genieLogOf = (phase, detail) => (['installing', 'starting', 'restart', 'failed'].includes(phase) ? detail?.genie?.install?.log || null : null)
 function GenieInside({ phase, detail }) {
-  if (phase === 'restart') return h('p', { className: 'oai-inside-note' }, 'Restart DSH, then power Genie on again.')
-  if (phase === 'failed') return h('p', { className: 'oai-inside-note oai-bad', title: detail?.message }, detail?.message ?? 'Add @automagik/genie-dsh on DSH\'s Plugins page.')
-  return null
+  const log = genieLogOf(phase, detail)
+  const terminal = log === null ? null : h(InstallLog, { text: log, label: 'What the Genie install printed' })
+  if (phase === 'restart') return h('div', null, terminal, h('p', { className: 'oai-inside-note' }, 'Restart DSH, then power Genie on again.'))
+  if (phase === 'failed') return h('div', null, terminal, h('p', { className: 'oai-inside-note oai-bad', title: detail?.message }, terminal === null ? detail?.message ?? 'Add @automagik/genie-dsh on DSH\'s Plugins page.' : 'What went wrong is above. Power Genie on to try again.'))
+  return terminal
 }
 
 // What a Bot type starts with, behind one disclosure, closed until asked.
@@ -527,6 +607,7 @@ function usePower() {
   const off = () => {
     run.current?.abort()
     if (phase === 'pairing') void callOmniUi('omni-pair-cancel').catch(() => {})
+    if (phase === 'sandbox' && detail?.terminal) void callOmniUi('omni-terminal-write', { terminal: detail.terminal, data: '\x03' }).catch(() => {})
     setProblem(null)
     setBusy(null)
     show('asleep', { removed: true })
@@ -581,6 +662,16 @@ function usePower() {
     phase, detail, busy, problem,
     toggle: () => (phase === 'asleep' ? on() : off()),
     use: omni => connect(omni.id, 'omni-discover-use', { id: omni.id }),
+    sandbox: () => {
+      run.current?.abort()
+      const controller = new AbortController()
+      run.current = controller
+      setProblem(null)
+      back.current = { phase, detail }
+      sandboxInstall({ show, signal: controller.signal }).catch((error) => {
+        if (error?.name !== 'AbortError') show('failed', { message: error.message })
+      })
+    },
     remote: wanted => (wanted.kind === 'bad-link'
       ? setProblem('That is not a link your Omni sends. It looks like https://your-omni/api/login/app?grant=…')
       : wanted.kind === 'grant' ? connect('remote', 'omni-connect-grant', { url: wanted.url, grant: wanted.grant }) : connect('remote', 'omni-pair-start', { url: wanted.url })),
@@ -618,6 +709,7 @@ const speechOf = (phase, name, origin) => ({
   found: 'Omni found where your channels live!',
   none: 'No Omni here yet. Tell Omni where yours lives.',
   pairing: 'Approve this device, and Omni connects.',
+  sandbox: 'Omni is moving in. This takes a few minutes the first time.',
   linked: origin ? `Omni is connected to ${origin}!` : 'Omni is connected!',
   restart: 'Omni is installed. Restart DSH to wake it.',
   failed: 'Omni could not be installed here.',
@@ -675,21 +767,23 @@ export function TeamStep(props) {
   const omni = phase !== 'asleep' && phase !== 'failed'
   const genie = geniePower.phase === 'ready' || geniePower.phase === 'restart'
   const genieWorking = ['waking', 'installing', 'starting'].includes(geniePower.phase)
-  const working = ['waking', 'installing', 'starting', 'looking'].includes(phase)
-  const local = () => go({ omni: true })
+  const working = ['waking', 'installing', 'starting', 'looking', 'sandbox'].includes(phase)
 
   async function go({ omni: joined = omni } = {}) {
     setSaving(true)
     setProblem(null)
     try {
       await call('team-save', { omni: joined, genie, omniAbilities: { ...abilitiesOf(omniType), ...abilities } })
+      // Omni's card is where Omni connects: Omni's own Connect step (omni-channels-dsh) does not
+      // follow it. Unlinked, Omni connects later from Channels.
+      if (joined) await call('done', { stepId: 'omni-connect' }).catch(() => {})
       finish()
     } catch (error) {
       setProblem(error.message)
       setSaving(false)
     }
   }
-  const omniPower = { ...power, local }
+  const omniPower = { ...power, local: power.sandbox }
 
   return h(Stage, {
     title: 'Grow your team',
@@ -706,5 +800,5 @@ export function TeamStep(props) {
   problem ? h('p', { className: 'oai-error', role: 'alert' }, problem) : null,
   h('div', { className: 'oai-actions' },
     h('button', { type: 'button', className: 'oai-primary oai-big', disabled: saving || working || genieWorking, onClick: () => go() },
-      saving ? 'Bringing them in…' : working ? 'Omni is waking…' : genieWorking ? 'Genie is waking…' : joinedLabel({ omni, genie }, name))))
+      saving ? 'Bringing them in…' : phase === 'sandbox' ? 'Omni is moving in…' : working ? 'Omni is waking…' : genieWorking ? 'Genie is waking…' : joinedLabel({ omni, genie }, name))))
 }

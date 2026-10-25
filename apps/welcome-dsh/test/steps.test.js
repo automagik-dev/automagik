@@ -377,16 +377,22 @@ test('every phase happens inside the box: outside it, the card stays the same', 
   const used = []
   const found = card('found', { omnis }, { use: omni => used.push(omni.id) })
   assert.equal(textOf(findAll(found, byClass('oai-status'))[0]), 'Found 2 Omnis')
-  const buttons = findAll(found, byClass('oai-pill-primary')).filter(node => node.type === 'button')
-  assert.deepEqual(buttons.map(textOf), ['Use it', 'Connect'])
-  buttons[1].props.onClick()
+  // Choices, not a form: each ready Omni, a new one here, one somewhere else.
+  const tiles = tree => findAll(tree, byClass('oai-destiny-tile')).filter(node => node.type === 'button')
+  const titles = tree => tiles(tree).map(node => textOf(findAll(node, node => node.type === 'strong')[0]))
+  assert.deepEqual(titles(found), ['Use your Omni on this computer', 'Connect omni.example.com', 'An Omni somewhere else'])
+  tiles(found)[1].props.onClick()
   assert.deepEqual(used, ['cli:work'])
   assert.match(textOf(found), /Not answering right now/)
-  assert.match(textOf(found), /Somewhere else\?/)
+  assert.equal(findAll(found, node => node.type === 'input').length, 0)
 
-  const none = card('none', { sandbox: null })
-  assert.equal(findAll(none, node => node.type === 'input' && node.props['aria-label'] === 'Omni address or link').length, 1)
-  assert.match(textOf(none), /Or run Omni on this computer/)
+  let local = 0
+  const none = card('none', { sandbox: null }, { local: () => { local += 1 } })
+  assert.equal(textOf(findAll(none, byClass('oai-status'))[0]), 'Where should Omni live?')
+  assert.deepEqual(titles(none), ['Run Omni on this computer', 'An Omni somewhere else'])
+  assert.equal(findAll(none, node => node.type === 'input').length, 0, 'no address until "somewhere else" is chosen')
+  tiles(none)[0].props.onClick()
+  assert.equal(local, 1)
   assert.match(textOf(card('pairing', phases.pairing)), /K7Q2-9M/)
   assert.match(textOf(card('failed', phases.failed)), /Bot team: offline/)
 })
@@ -505,4 +511,35 @@ test('Genie\'s box says where it stands, and lights its plugin and its place on 
   assert.deepEqual(plain(team.genieLightsOf('ready')), [['power', 'on'], ['plugins', 'on'], ['team', 'on']])
   assert.deepEqual(plain(team.genieLightsOf('installing')), [['power', 'on'], ['plugins', 'busy'], ['team', 'off']])
   assert.deepEqual(plain(team.genieLightsOf('failed')), [['power', 'on'], ['plugins', 'warn'], ['team', 'off']])
+})
+
+test("'Run Omni on this Mac' runs Omni's installer in the card and shows what it prints, until it is linked", async () => {
+  const calls = []
+  const reads = [
+    { state: 'running', step: 'download-bun', data: 'Downloading Bun…\r\n', next: 1 },
+    { state: 'running', step: null, data: 'Installing @automagik/omni…\r\n', next: 2 },
+    { state: 'exited', exitCode: 0, data: 'Linked.\r\n', next: 3, result: { status: 'paired', origin: 'http://127.0.0.1:8882', version: '2.261025.16' } },
+  ]
+  const omniUi = async (endpoint, payload) => {
+    calls.push([endpoint, payload])
+    if (endpoint === 'omni-terminal-open') return { terminal: 't1', state: 'ready', command: 'bun x --bun @automagik/omni install --sandbox --at-login' }
+    if (endpoint === 'omni-terminal-read') return reads.shift()
+    return {}
+  }
+  const shown = []
+  const last = await team.sandboxInstall({ show: (phase, detail) => shown.push([phase, plain(detail)]), omniUi, wait: async () => {} })
+  assert.equal(last, 'linked')
+  assert.deepEqual(calls.map(([endpoint]) => endpoint), ['omni-terminal-open', 'omni-terminal-write', 'omni-terminal-read', 'omni-terminal-read', 'omni-terminal-read', 'omni-terminal-close'])
+  assert.deepEqual(plain(calls[1][1]), { terminal: 't1', data: '\r' })
+  assert.deepEqual(calls.filter(([endpoint]) => endpoint === 'omni-terminal-read').map(([, payload]) => payload.from), [0, 1, 2])
+  assert.deepEqual(shown.at(-2), ['sandbox', { terminal: 't1', log: 'Downloading Bun…\r\nInstalling @automagik/omni…\r\n', step: null }])
+  assert.deepEqual(shown.at(-1), ['linked', { origin: 'http://127.0.0.1:8882' }])
+  assert.equal(team.statusOf('sandbox', { step: 'download-bun' }), 'Downloading Bun for Omni…')
+})
+
+test("a failed install keeps what Omni's installer printed on the card", async () => {
+  const omniUi = async (endpoint) => (endpoint === 'omni-terminal-open' ? { terminal: 't2' } : endpoint === 'omni-terminal-read' ? { state: 'exited', exitCode: 1, data: 'error: no space left\r\n', next: 1 } : {})
+  const shown = []
+  assert.equal(await team.sandboxInstall({ show: (phase, detail) => shown.push([phase, plain(detail)]), omniUi, wait: async () => {} }), 'failed')
+  assert.deepEqual(shown.at(-1), ['failed', { message: "Omni's installer stopped (exit code 1). What it printed is above.", log: 'error: no space left\r\n' }])
 })

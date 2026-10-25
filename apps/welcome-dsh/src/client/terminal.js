@@ -139,6 +139,43 @@ export function ClaudeLoginTerminal({ onEnded, onClose }) {
     h('div', { className: 'oai-term-foot', role: 'status' }, footFor(status)))
 }
 
+// A read-only terminal that shows what an install printed (Genie's card): `text` is the whole
+// log so far, kept as a tail by the host; each new render writes only what was added.
+const LOG_ROWS = 7
+export function InstallLog({ text, label }) {
+  const box = useRef(null)
+  const terminal = useRef(null)
+  const written = useRef('')
+  useEffect(() => {
+    let alive = true
+    let term
+    void (async () => {
+      const { Terminal } = await import('@xterm/xterm')
+      if (!alive || box.current === null) return
+      term = new Terminal({ rows: LOG_ROWS, cols: columnsFor(box.current.clientWidth, charWidth() * 11.5 / 13), fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11.5, lineHeight: 1.15, disableStdin: true, cursorBlink: false, convertEol: true, scrollback: 4000, theme: { ...THEME, cursor: THEME.background } })
+      term.open(box.current)
+      terminal.current = term
+      written.current = ''
+      write(text)
+    })()
+    return () => { alive = false; term?.dispose(); terminal.current = null }
+  }, [])
+  const write = (next = '') => {
+    const term = terminal.current
+    if (term === null) return
+    // The host keeps a tail: when the start moved, the screen starts over.
+    if (!next.startsWith(written.current)) {
+      term.reset()
+      written.current = ''
+    }
+    term.write(next.slice(written.current.length))
+    written.current = next
+  }
+  useEffect(() => { write(text) }, [text])
+  return h('div', { className: 'oai-term oai-mini-term', role: 'log', 'aria-label': label },
+    h('div', { className: 'oai-term-screen', ref: box }))
+}
+
 export const TERMINAL_CSS = XTERM_CSS + `
 .oai-term{margin-top:10px;border:1px solid var(--oai-line);border-radius:12px;overflow:hidden;background:#05080e}
 .oai-term.oai-term-stopped{border-color:color-mix(in srgb,var(--oai-bad) 55%,transparent)}
@@ -149,4 +186,6 @@ export const TERMINAL_CSS = XTERM_CSS + `
 .oai-term-screen{padding:10px 12px;min-height:150px}
 .oai-term-screen .xterm-viewport{background:#05080e!important}
 .oai-term-foot{padding:8px 14px;border-top:1px solid var(--oai-line);color:var(--oai-ink2);font-size:12.5px}
+.oai-mini-term{margin:8px 0 0;width:100%;text-align:left}
+.oai-mini-term .oai-term-screen{min-height:0;padding:8px 10px}
 `
