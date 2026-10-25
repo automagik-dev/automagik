@@ -121,7 +121,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -qam "chore(release): v${version}"
           git tag -a "v${version}" -m "Automagik ${version%.0}"
-          git push -q origin HEAD:refs/heads/dev "refs/tags/v${version}"
+          # Atomic: when dev moved meanwhile (a second merge), neither lands, so no tag names a
+          # release commit dev never got (v3.5.0 did, on 2026-10-25).
+          git push -q --atomic origin HEAD:refs/heads/dev "refs/tags/v${version}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
