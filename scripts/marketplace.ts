@@ -69,7 +69,7 @@ function gitOk(cwd: string, args: string[], timeout?: number): boolean {
     return false;
   }
 }
-function packageAt(cwd: string, commit: string, path: string): { name?: string; version?: string } | null {
+function packageAt(cwd: string, commit: string, path: string): { name?: string; version?: string; engines?: { dsh?: string } } | null {
   try {
     return JSON.parse(git(cwd, ['show', `${commit}:${path === '.' ? '' : `${path}/`}package.json`]));
   } catch {
@@ -104,6 +104,9 @@ export function checkIndex(value: unknown, repoDir: string): string[] {
       if (!manifest) problems.push(`${at}: ${commit} has no ${path}/package.json`);
       else if (manifest.name !== plugin.name || manifest.version !== entry.version)
         problems.push(`${at}: ${commit.slice(0, 9)}:${path}/package.json is ${manifest.name}@${manifest.version}`);
+      // A market admits what the entry says; DSH admits what the manifest says. They agree.
+      else if (manifest.engines?.dsh !== undefined && entry.engines?.dsh !== manifest.engines.dsh)
+        problems.push(`${at}: lists dsh ${entry.engines?.dsh ?? '(none)'} but its package.json declares ${manifest.engines.dsh}`);
     }
   }
   return problems;
@@ -135,7 +138,9 @@ export function pinIndex(value: Index, repoDir: string, ref: string): Index {
         throw new Error(`${plugin.name}@${same.version} changed since ${same.source.commit.slice(0, 9)}: bump the version first`);
     }
     const kept = plugin.versions.filter((entry) => entry !== same && released(entry));
-    plugin.versions = [{ ...latest, version: manifest.version, publishTimestamp, source }, ...kept];
+    // The DSH range is the release's own (package.json engines.dsh), as DSH reads it at startup.
+    const engines = manifest.engines?.dsh ? { engines: { ...latest.engines, dsh: manifest.engines.dsh } } : {};
+    plugin.versions = [{ ...latest, version: manifest.version, publishTimestamp, source, ...engines }, ...kept];
   }
   return value;
 }
