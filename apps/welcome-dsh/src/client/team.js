@@ -476,6 +476,15 @@ function useGeniePower() {
     setPhase(next)
     setDetail(value)
   }
+  // Genie may already be on the team (installed before a restart or an update): its card
+  // says so from the start, rather than asleep.
+  useEffect(() => {
+    let alive = true
+    call('genie-plugin').then((genie) => {
+      if (alive && genie?.ready && run.current === null) show('ready', { bot: genie.bot })
+    }, () => {})
+    return () => { alive = false }
+  }, [])
   const on = () => {
     run.current?.abort()
     const controller = new AbortController()

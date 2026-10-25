@@ -10097,6 +10097,16 @@ function useGeniePower() {
     setPhase(next);
     setDetail(value);
   };
+  (0, import_react4.useEffect)(() => {
+    let alive = true;
+    call("genie-plugin").then((genie) => {
+      if (alive && genie?.ready && run.current === null) show("ready", { bot: genie.bot });
+    }, () => {
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
   const on2 = () => {
     run.current?.abort();
     const controller = new AbortController();
