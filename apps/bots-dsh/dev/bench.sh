@@ -11,7 +11,8 @@
 # Environment: CONTEXT_WINDOW (the mock models' context window, in tokens, with an 8,000
 # token reply; default: the adapter's own), CHECK_RATIO (the plugin's checkRatio), MOCK_DELAY_MS,
 # DSH_HARNESS (the deepseek-harness checkout; default: beside this checkout, else at the
-# same place in the main worktree).
+# same place in the main worktree), AUTOMAGIK_BOTS_HOME (the team's home; default: bots/ in
+# the bench home, so a bench never writes to ~/.automagik, and `reset` clears it).
 set -eu
 NAME=${1:?usage: bench.sh <name> <web-port> <mock-port> [start|stop|reset|status]}
 WEB_PORT=${2:?usage: bench.sh <name> <web-port> <mock-port> [start|stop|reset|status]}
@@ -26,6 +27,8 @@ ROOT="$(dirname "$PLUGIN")"
 # omni checkout beside this repository.
 OMNI_APPS="${OMNI_CHECKOUT:-$(dirname "$(dirname "$ROOT")")/omni}/apps"
 HOME_DIR="$ROOT/.dsh-test-$NAME"
+# The plugin keeps the team outside DSH_HOME (~/.automagik/bots unless this is set).
+export AUTOMAGIK_BOTS_HOME="${AUTOMAGIK_BOTS_HOME:-$HOME_DIR/bots}"
 if [ -z "${DSH_HARNESS:-}" ]; then
   DSH_HARNESS="$ROOT/deepseek-harness"
   if [ ! -d "$DSH_HARNESS" ]; then
@@ -60,8 +63,8 @@ ensure_profile() {
 {
   "name": "dsh-profile-web",
   "private": true,
-  "dependencies": { "ds-bot": "link:$PLUGIN", "@automagik/omni-channels-dsh": "link:$OMNI_APPS/omni-channels-dsh", "@automagik/omni-canvas-dsh": "link:$OMNI_APPS/omni-canvas-dsh" },
-  "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "ds-bot", "@automagik/omni-channels-dsh", "@automagik/omni-canvas-dsh"] } }
+  "dependencies": { "@automagik/bots-dsh": "link:$PLUGIN", "@automagik/omni-channels-dsh": "link:$OMNI_APPS/omni-channels-dsh", "@automagik/omni-canvas-dsh": "link:$OMNI_APPS/omni-canvas-dsh" },
+  "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "@automagik/bots-dsh", "@automagik/omni-channels-dsh", "@automagik/omni-canvas-dsh"] } }
 }
 EOF
   printf 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n' > "$profile/pnpm-workspace.yaml"
@@ -87,6 +90,9 @@ write_overlay() {
 
 start() {
   mkdir -p "$HOME_DIR"
+  # The bench home sits in this checkout; ignored, it stays out of git status and out of the
+  # "Edited files" cards DSH draws from the workspace's repository.
+  [ -f "$HOME_DIR/.gitignore" ] || printf '*\n' > "$HOME_DIR/.gitignore"
   ensure_profile
   write_overlay
   if ! alive mock; then
@@ -135,6 +141,14 @@ case "$ACTION" in
     stop_one mock
     rm -f "$HOME_DIR/mock.jsonl" "$HOME_DIR/cookies.txt"
     rm -rf "$HOME_DIR/bot" "$HOME_DIR"/sessions/*workspace*/session-*
+    # Only a team home inside the bench home is the bench's to clear (compared as real paths,
+    # so a home given as .../bots-dsh/../.dsh-test-<name>/bots still counts).
+    bench_real=$(cd "$HOME_DIR" && pwd -P)
+    team_real=$(cd "$AUTOMAGIK_BOTS_HOME" 2>/dev/null && pwd -P || echo "$AUTOMAGIK_BOTS_HOME")
+    case "$team_real" in
+      "$bench_real"/*) rm -rf "$team_real" ;;
+      *) echo "reset: leaving the team in $AUTOMAGIK_BOTS_HOME, outside $HOME_DIR" >&2 ;;
+    esac
     start
     ;;
   status) status ;;
