@@ -504,11 +504,24 @@ export function Machine({ kind = 'omni', phase, detail, power, live, onPower, ch
 // it could not start. The log stays on screen after a failure.
 export const genieLogOf = (phase, detail) => (['installing', 'starting', 'restart', 'failed'].includes(phase) ? detail?.genie?.install?.log || null : null)
 function GenieInside({ phase, detail }) {
+  if (phase === 'ready' && detail?.genie?.skills === false && detail.genie.cli) return h(GenieSkillsOffer, { line: detail.genie.cli })
   const log = genieLogOf(phase, detail)
   const terminal = log === null ? null : h(InstallLog, { text: log, label: 'What the Genie install printed' })
   if (phase === 'restart') return h('div', null, terminal, h('p', { className: 'oai-inside-note' }, 'Restart DSH, then power Genie on again.'))
   if (phase === 'failed') return h('div', null, terminal, h('p', { className: 'oai-inside-note oai-bad', title: detail?.message }, terminal === null ? detail?.message ?? 'Add @automagik/genie-dsh on DSH\'s Plugins page.' : 'What went wrong is above. Power Genie on to try again.'))
   return terminal
+}
+
+// Genie is on the team, but its skills (/wish and the rest) come with its command line: the
+// one line that installs it, to run once in a terminal.
+function GenieSkillsOffer({ line }) {
+  const [copied, setCopied] = useState(false)
+  const copy = () => { void navigator.clipboard?.writeText(line).then(() => setCopied(true), () => {}) }
+  return h('div', { className: 'oai-genie-skills' },
+    h('p', { className: 'oai-inside-note' }, 'Genie is ready for wishes. For its skills too, like /wish, install its command line once, in a terminal:'),
+    h('div', { className: 'oai-cli-line' },
+      h('code', null, line),
+      h('button', { type: 'button', className: 'oai-copy', onClick: copy }, copied ? 'Copied' : 'Copy')))
 }
 
 // What a Bot type starts with, behind one disclosure, closed until asked.
