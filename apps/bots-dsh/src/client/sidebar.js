@@ -750,7 +750,7 @@ export function BrandMark({ size = 24 }) {
   return h('span', { className: 'bt-brand-mark' }, h(OmniMark, { size }))
 }
 export function BrandName() {
-  return h('span', { className: 'bt-brand-name' }, h(Wordmark, { height: 12 }))
+  return h('span', { className: 'bt-brand-name' }, h(Wordmark, { height: 16 }))
 }
 
 // With the whale holding the settings seat, the Bot row is just the account menu

@@ -379,11 +379,17 @@ export function dshEnv({ base = process.env, home, electronAsNode = false, binDi
     // Signs in to an Omni as the desktop app (the Better Auth device-flow client id).
     OMNI_CLIENT_ID: 'omni-desktop',
     DO_NOT_TRACK: '1',
+    // The welcome keeps in it whether any agent is at work (welcome-dsh src/host/busy.js), so
+    // an update installs while the person is away only when none is (idle.js).
+    AUTOMAGIK_BUSY_FILE: busyFileOf(home),
     // The welcome reads it (welcome-dsh src/host/preload.js); none is no preference.
     ...(preload ? { AUTOMAGIK_PRELOAD: preload } : {}),
     ...(electronAsNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
   }
 }
+
+/** The file dsh's welcome keeps the count of running agents in (see dshEnv). */
+export const busyFileOf = home => join(home, 'busy.json')
 
 /**
  * Start dsh on 127.0.0.1:`port` and resolve with { child, url } once it prints its launch

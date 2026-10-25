@@ -5,16 +5,18 @@
 // Both pages are plain browser pages with no Node in them: context isolation and the
 // renderer sandbox are on, dsh's page can navigate only within dsh's origin, web links open
 // in the system browser, and the frame page never navigates.
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, session, shell, systemPreferences, WebContentsView } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, powerMonitor, session, shell, systemPreferences, WebContentsView } from 'electron'
 import updaterModule from 'electron-updater'
-import { createWriteStream, mkdirSync } from 'node:fs'
+import { appendFileSync, createWriteStream, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
 import { fade, PAGE_IN_CSS } from './motion.js'
-import { appHome, automagikHome, dshEnv, freePort, installProfile, navigationOf, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
+import { noteRestart, restartLine, steps } from './timeline.js'
+import { appHome, automagikHome, busyFileOf, dshEnv, freePort, installProfile, navigationOf, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
 import { pageLayout, tableColor, updateView, WINDOW_ACTIONS, windowChrome } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
+import { awayInstall, LOOK_EVERY_MS, readBusy } from './idle.js'
 import { isReleasePage, startUpdates, updateMode } from './update.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -40,6 +42,13 @@ let updates = null
 let updateDismissed = false
 let updateMessage = null
 let updateMessageTimer = null
+// logs/start.log (timeline.js): a start's steps from the process's own start, and the way out
+// (a quit, or a restart into an update) from the moment it was asked for.
+const startLog = (line) => { try { appendFileSync(join(home, 'logs', 'start.log'), line) } catch {} }
+const RESTART_NOTE = () => join(home, 'logs', 'restart.json')
+const started = steps('start', { write: startLog, since: Date.now() - process.uptime() * 1000 })
+let leaving = null
+const leave = (kind) => (leaving ??= steps(kind, { write: startLog, since: Date.now() }))
 
 // omni:// links (deeplink.js): the system hands them to the running app (macOS: open-url;
 // Linux: a second instance with the link as an argument), or starts the app with one.
@@ -140,9 +149,10 @@ async function launch() {
     app.setAboutPanelOptions({ applicationName: PRODUCT })
     Menu.setApplicationMenu(appMenu())
   }
+  mkdirSync(join(home, 'logs'), { recursive: true })
+  started.mark(`${app.getVersion()} ready`)
   openWindow()
   nativeTheme.on('updated', followTheme)
-  mkdirSync(join(home, 'logs'), { recursive: true })
   const resources = resourcesOf({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() })
   const { target } = installProfile({ dshHome: join(home, 'dsh'), source: resources.profile })
   pinProfileStore({ target, home, layout: storeLayoutOf(resources.pnpm) })
@@ -152,7 +162,8 @@ async function launch() {
   const binDir = writeTools({ dir: join(home, 'bin'), node: process.execPath, pnpm: resources.pnpm })
   // `--preload=omni|genie` from `omni desktop` / `genie desktop`, kept in Automagik's home.
   const preload = preloadOf({ home: root, argv: process.argv, env: process.env })
-  dsh = await startDsh({ node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload }), port, cwd: home, log, onSpawn: (child) => { dshChild = child } })
+  dsh = await startDsh({ node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload }), port, cwd: home, log, onSpawn: (child) => { dshChild = child; started.mark('dsh spawned') } })
+  started.mark('dsh ready')
   dsh.child.once('exit', (code) => {
     if (!quitting) fail(new Error(`dsh stopped (${code}).`))
   })
@@ -182,6 +193,9 @@ async function launch() {
     window.contentView.addChildView(page)
     ready = true
     layout()
+    started.mark('page in')
+    const back = restartLine(RESTART_NOTE(), { version: app.getVersion() })
+    if (back) startLog(back)
     if (pendingLink) void connectFromLink()
   })
   // Before the page load: a page that fails to load must not stop the app from updating.
@@ -210,6 +224,20 @@ function watchUpdates() {
       sendState()
     },
   })
+  if (mode !== 'auto') return
+  // A downloaded update goes in while the person is away (idle.js); else at a quit or Restart.
+  const away = setInterval(() => {
+    const why = awayInstall({
+      ready: updates.ready,
+      idleMs: powerMonitor.getSystemIdleTime() * 1000,
+      focused: window?.isFocused() === true,
+      busy: readBusy(busyFileOf(home)),
+    })
+    if (why !== 'install') return
+    clearInterval(away)
+    log.info(`update: ${updates.ready} installs now, while the computer is not in use`)
+    installUpdate({ away: true })
+  }, LOOK_EVERY_MS)
 }
 
 // The menu's Check for Updates: what it found shows in the title bar for a few seconds.
@@ -244,15 +272,24 @@ function barMenu() {
 // Long enough to read "Installing… it reopens by itself" in the title bar; then the window goes
 // and the notification keeps saying it while macOS swaps the app.
 const RESTART_NOTICE_MS = 1200
-function installUpdate() {
+function installUpdate({ away = false } = {}) {
   if (!updates?.ready || quitting) return
   quitting = true
+  const out = leave(away ? 'update while away' : 'update restart')
   update = { ...update, state: 'restarting' }
   sendState()
   if (process.platform === 'darwin' && Notification.isSupported()) {
     new Notification({ title: `Updating ${PRODUCT}`, body: `${PRODUCT} reopens by itself in about a minute. Leave it closed until then.`, silent: true }).show()
   }
-  setTimeout(() => { void fade(window, { to: 0, reduced: lessMotion() }).then(() => stopDsh(dshChild)).finally(() => updates.install()) }, RESTART_NOTICE_MS)
+  setTimeout(() => {
+    void fade(window, { to: 0, reduced: lessMotion() })
+      .then(() => { out.mark('window gone'); return stopDsh(dshChild) })
+      .finally(() => {
+        out.mark('dsh stopped')
+        noteRestart(RESTART_NOTE(), { from: app.getVersion(), to: update?.version })
+        updates.install()
+      })
+  }, RESTART_NOTICE_MS)
 }
 
 const WINDOW_PREFERENCES = {
@@ -288,13 +325,17 @@ function openWindow() {
   frame.on('will-navigate', event => event.preventDefault())
   frame.on('before-input-event', (event, input) => shortcut(event, input))
   frame.once('did-finish-load', () => sendState())
-  window.once('ready-to-show', () => { void fade(window, { to: 1, reduced: lessMotion() }) })
+  window.once('ready-to-show', () => {
+    started.mark('window shown')
+    void fade(window, { to: 1, reduced: lessMotion() })
+  })
   // Closing fades the window out first; 'closed' and quitting follow.
   window.on('close', (event) => {
     if (closing || quitting || process.platform === 'linux') return
     event.preventDefault()
     closing = true
-    void fade(window, { to: 0, reduced: lessMotion() }).finally(() => window?.destroy())
+    const out = leave('quit')
+    void fade(window, { to: 0, reduced: lessMotion() }).finally(() => { out.mark('window gone'); window?.destroy() })
   })
   for (const change of ['resize', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) window.on(change, layout)
   window.on('closed', () => { window = null; page = null })
@@ -373,6 +414,9 @@ app.on('before-quit', (event) => {
   if (quitting || !dshChild) return
   quitting = true
   event.preventDefault()
+  const out = leave('quit')
   // The window goes at once; dsh stops behind it, so a quit never looks stuck.
-  void fade(window, { to: 0, reduced: lessMotion() }).then(() => stopDsh(dshChild)).finally(() => app.quit())
+  void fade(window, { to: 0, reduced: lessMotion() })
+    .then(() => { out.mark('window gone'); return stopDsh(dshChild) })
+    .finally(() => { out.mark('dsh stopped'); app.quit() })
 })

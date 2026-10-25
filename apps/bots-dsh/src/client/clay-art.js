@@ -1,4 +1,4 @@
-import { genieExpressions, lamp, mark, omniExpressions } from './art/inline.js'
+import { genieExpressions, lamp, mark, omniExpressions, wordmark } from './art/inline.js'
 
 // -------------------------------------------------------------------------
 // Clay characters: Omni and Genie as the Automagik clay universe draws them, in place of the
@@ -11,6 +11,10 @@ export const OMNI_ATLAS = omniExpressions
 export const LAMP = lamp
 // The Automagik mark: the owner's clay triskelion (logo.js OmniMark, the tab icon).
 export const MARK_ART = mark
+// The AUTOMAGIK wordmark in the same clay: its letters from the owner's lockup (art kit v4,
+// brand/lockup.png), cyan to magenta, the open A and the dotted O and i.
+export const WORDMARK_ART = wordmark
+export const WORDMARK_RATIO = 471 / 96
 export const FACES = Object.freeze(['calm', 'pleased', 'delighted', 'focused', 'curious', 'asleep', 'sad'])
 
 // A mark's state (mark.js STATES: what the Bot is doing, from its Session and its work) as a

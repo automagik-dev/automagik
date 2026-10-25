@@ -2,6 +2,7 @@ import { ACCENT_INKS, INKS, isHex, luminance } from './inks.js'
 import { SHAPES, markupCache, maskCache } from './characters.js'
 import { createSource } from './sources.js'
 import { CLAY_CSS, CLAY_DARK, CLAY_LIGHT, clayShellTokens } from './clay.js'
+import { STAGE_CSS, STAGE_DARK, STAGE_LIGHT, stageShellTokens } from './stage.js'
 
 // -------------------------------------------------------------------------
 // Themes. A theme names eight colors per mode; every `--bt-*` variable and the shell
@@ -9,11 +10,12 @@ import { CLAY_CSS, CLAY_DARK, CLAY_LIGHT, clayShellTokens } from './clay.js'
 
 const THEME_KEYS = ['bg', 'sidebar', 'bubble', 'card', 'text', 'user', 'userText', 'accent']
 const THEMES = {
-  // Automagik's clay (clay.js): cyan is Omni and the Bots, magenta is you, both softened
-  // toward white, on a cream table; at night the same clay. Its construction (bevels, ledges,
-  // contact shadows) is the theme's own sheet, so the flat themes below stay flat. The id
-  // stays `deepseek` so saved choices keep it.
-  deepseek: { label: 'Automagik', light: CLAY_LIGHT, dark: CLAY_DARK, css: CLAY_CSS, shell: clayShellTokens },
+  // Automagik's look, direction C (stage.js): the team on a coloured stage, a flat cream
+  // bench, hairlines and one lift; cyan is Omni and the Bots, magenta is you. The id stays
+  // `deepseek` so saved choices keep it.
+  deepseek: { label: 'Automagik', light: STAGE_LIGHT, dark: STAGE_DARK, css: STAGE_CSS, shell: stageShellTokens },
+  // The earlier clay (clay.js): everything a bevelled piece of modelling clay.
+  clay: { label: 'Clay', light: CLAY_LIGHT, dark: CLAY_DARK, css: CLAY_CSS, shell: clayShellTokens },
   mono: {
     label: 'Mono',
     light: { bg: '#ffffff', sidebar: '#f9f9f9', bubble: '#f0f0f0', card: '#ffffff', text: '#0d0d0d', user: '#0d0d0d', userText: '#ffffff', accent: '#0d0d0d' },
@@ -58,8 +60,8 @@ const darkAccent = (accent) => {
 // `html body` outranks the base sheet's `body` rules without !important.
 // A theme with its own sheet (the clay) takes a chosen accent as its cyan piece too.
 const accentPieces = (theme, accent) => (theme.css && accent ? `
-html body{--clay-cyan:color-mix(in srgb,${accent} 50%,#fff);--clay-cyan-ink:color-mix(in srgb,${accent} 35%,#000)}
-html body[data-ds-dark-theme]{--clay-cyan:color-mix(in srgb,${darkAccent(accent)} 70%,#000);--clay-cyan-ink:color-mix(in srgb,${darkAccent(accent)} 20%,#fff)}` : '')
+html body{--clay-cyan:color-mix(in srgb,${accent} 50%,#fff);--clay-cyan-ink:color-mix(in srgb,${accent} 35%,#000);--st-cyan:var(--clay-cyan);--st-cyan-ink:var(--clay-cyan-ink)}
+html body[data-ds-dark-theme]{--clay-cyan:color-mix(in srgb,${darkAccent(accent)} 70%,#000);--clay-cyan-ink:color-mix(in srgb,${darkAccent(accent)} 20%,#fff);--st-cyan:var(--clay-cyan);--st-cyan-ink:var(--clay-cyan-ink)}` : '')
 export const themeCss = (theme, accent) => `html body{${declarations(themeVars(theme.light, false, accent ?? theme.light.accent))}}
 html body[data-ds-dark-theme]{${declarations(themeVars(theme.dark, true, darkAccent(accent) ?? theme.dark.accent))}}
 ${theme.css ?? ''}${accentPieces(theme, accent)}`

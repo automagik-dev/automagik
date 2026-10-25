@@ -8,6 +8,13 @@ import { randomUUID } from 'node:crypto'
 
 const OUTCOMES = { allow: 'allowed-once', reject: 'rejected' }
 
+// The team's own lookups only read the team: who is on it, their models and capabilities, a
+// chat's or a group's transcript, a memory. A Claude Code session reaches them through its MCP
+// bridge (`mcp__dsh__<name>`), which asks for every call; those asks are answered here, so the
+// person is asked only about what changes something.
+export const TEAM_LOOKUPS = new Set(['list_bots', 'list_models', 'list_capabilities', 'read_own_chat', 'read_group_chat', 'recall'])
+export const teamToolOf = name => String(name ?? '').replace(/^mcp__dsh__/, '')
+
 export function install(rt) {
   const { ctx } = rt
   /** @type {Map<string, {id:string, sessionId:string, botId:string, roomId?:string, tool:string, reason:string, detail:{text?:string, code?:string}, at:number, answer?:(outcome:string)=>void}>} */
@@ -20,6 +27,7 @@ export function install(rt) {
 
   // Ahead of DSH's own answerer, which would hold a hidden Session's request unseen.
   ctx.on('approval/request', (request, next) => {
+    if (TEAM_LOOKUPS.has(teamToolOf(request.toolName))) return 'allowed-once'
     const sessionId = request.agent?.session?.id ?? request.agent?.id
     const owner = sessionId === undefined ? undefined : rt.groupOwners.get(sessionId)
     const task = sessionId === undefined ? undefined : runningTask(sessionId)

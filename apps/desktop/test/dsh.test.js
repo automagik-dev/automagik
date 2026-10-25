@@ -19,6 +19,8 @@ test('the app keeps everything in one folder under ~/.automagik, apart from a ds
   assert.equal(env.ELECTRON_RUN_AS_NODE, '1')
   assert.equal(env.DO_NOT_TRACK, '1')
   assert.equal(env.OMNI_CLIENT_ID, 'omni-desktop')
+  // The welcome counts the agents at work there, for an update while the person is away.
+  assert.equal(env.AUTOMAGIK_BUSY_FILE, '/a/desktop/busy.json')
   // The person's PATH comes first; the usual tool folders follow (see toolDirs below).
   assert.ok(env.PATH.startsWith('/bin:'))
   assert.equal(dshEnv({ base: {}, home: '/a' }).ELECTRON_RUN_AS_NODE, undefined)
@@ -149,12 +151,12 @@ test('the shipped profile bundles the Bot team first, Omni\'s plugins, the welco
   // vetted version or a reviewed fork's pinned commit, and bundled after Omni's.
   const addons = {
     '@goodandready/dsh-subscriptions': 'github:automagik-genie/dsh-subscriptions#2eff034ede95c9d06ecee290517101e6419c7fee',
-    'dsh-oh-my-claude': 'github:automagik-genie/dsh-oh-my-claude#ccca7fe46871c0e188d2272d2aa92f2d7d4502c4',
+    'dsh-oh-my-claude': 'github:automagik-genie/dsh-oh-my-claude#efe7afc13a0f327f14454a8d6730eb30a351ab0b',
   }
   assert.deepEqual(Object.keys(profile.dependencies), [...omni, ...Object.keys(addons)])
   for (const [name, spec] of Object.entries(addons)) assert.equal(profile.dependencies[name], spec)
   // A pinned commit names the version it holds, which the build checks after installing it.
-  assert.deepEqual(profile.omni.addonVersions, { '@goodandready/dsh-subscriptions': '0.7.21-omni.1', 'dsh-oh-my-claude': '1.5.6-omni.1' })
+  assert.deepEqual(profile.omni.addonVersions, { '@goodandready/dsh-subscriptions': '0.7.21-omni.1', 'dsh-oh-my-claude': '1.5.6-omni.2' })
   assert.deepEqual(profile.dsh.profile.bundles.filter(name => name.startsWith('@automagik/')), omni)
   assert.deepEqual(profile.dsh.profile.bundles.slice(-2), Object.keys(addons))
   assert.ok(profile.dsh.profile.bundles.includes('@deepseek-ai/dsh-experimental-plugin-market-bundle'))

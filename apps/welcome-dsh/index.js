@@ -4,6 +4,7 @@
 // DSH's settings, credentials and plugin manager. It adds no provider code: every sign-in
 // is DSH's own, and Claude Code signs itself in.
 import z from '@deepseek-ai/schemastery'
+import { watchBusy } from './src/host/busy.js'
 import { install } from './src/host/endpoint.js'
 
 export const name = 'omni-ai'
@@ -29,4 +30,6 @@ export const Config = z.object({
 
 export function apply(ctx) {
   install(ctx)
+  // For the desktop app's update while the person is away (src/host/busy.js).
+  watchBusy(ctx)
 }

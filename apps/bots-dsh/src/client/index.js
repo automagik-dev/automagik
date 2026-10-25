@@ -6,6 +6,7 @@ import { badges, botChildren, botSettings, composerPacks, headerButtons, mountSh
 import { BUILTIN_PACKS, packCellSync, stepsAside } from './composer-packs.js'
 import { COMPOSER_PACK_CSS, packModelCell } from './composer-pack-cells.js'
 import { TASK_CSS } from './task-card.js'
+import { LIVE_CSS } from './live-rail.js'
 import { LAMP_CSS } from './lamp.js'
 import { isHex, inkText, paintCss } from './inks.js'
 import { CHARACTERS, DEFAULT_MASK, MAIN_LOOK, SHAPES, markupCache, maskOf } from './characters.js'
@@ -23,6 +24,7 @@ import { BtwDock, BtwTurnTail, btwSource } from './btw.js'
 import { VOICE_BUNDLE } from './speech.js'
 import { sameVersion } from './dsh-offer.js'
 import { QuestionCard, QuestionDock } from './questions.js'
+import { TeamApproval, TEAM_APPROVAL_CSS, isTeamApproval } from './team-approval.js'
 import { AnsweredReply, WidgetDock, WIDGET_CSS } from './widget-cell.js'
 import { installHeaderNavigation } from './header-navigation.js'
 import { AssistantCell, TriggerCell, TurnProcessCell, Nothing, TurnTailCell, ToolCell } from './cells.js'
@@ -776,6 +778,8 @@ export function apply(ctx) {
     () => installCompiledStyles(MEMBER_CSS, 'members'),
     () => installCompiledStyles(USER_MESSAGE_CSS, 'user-messages'),
     () => installCompiledStyles(TASK_CSS, 'tasks'),
+    () => installCompiledStyles(LIVE_CSS, 'live'),
+    () => installCompiledStyles(TEAM_APPROVAL_CSS, 'team-approval'),
     () => installCompiledStyles(LAMP_CSS, 'lamp'),
     // What other Omni plugins put on the surface (extend.js), where Omni's channels were.
     () => mountShellInstallers({ face, shadow, installStyles, installCompiledStyles }),
@@ -890,6 +894,12 @@ export function apply(ctx) {
       priority: BOT_PRIORITY,
       select: owner => (owner.pendingInteraction?.kind === 'question' ? owner.pendingInteraction : null),
     }, QuestionCard),
+    // The team's own tools ask in the team's words (team-approval.js); other tools keep DSH's card.
+    () => shadow('conversation.composer', {
+      priority: BOT_PRIORITY,
+      inject: face,
+      select: owner => (isTeamApproval(owner.pendingInteraction) ? owner.pendingInteraction : null),
+    }, TeamApproval),
     () => shadow('conversation.input.dock', { id: 'bot-members', order: -120, inject: face }, MemberDock),
     () => shadow('conversation.input.dock', { id: 'bot-model', order: -110, inject: face }, ModelChoiceDock),
     () => shadow('conversation.input.dock', { id: 'bot-question', order: -100, inject: face }, QuestionDock),

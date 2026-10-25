@@ -91,7 +91,7 @@ const roomRule = () => {
   return room.rule
 }
 let roomHold = 0
-const chatRoom = {
+export const chatRoom = {
   /** The column's right margin in px, or null for the shell's own. */
   set(width) {
     const { style } = roomRule()
