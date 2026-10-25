@@ -1,7 +1,9 @@
 // The DeepSeek Harness the app runs is the one its plugins are tested on: the Bot team's
 // (apps/bots-dsh/dev/harness) and the carried Omni release's (apps/omni-channels-dsh/dev/harness
 // in Omni). prepare-runtime refuses a build where they differ. When the Bot team moves to a
-// new DSH, this moves runtime/package.json and its lock with it.
+// new DSH, this moves runtime/package.json and its lock with it. The runtime also pins the zod
+// DSH's packages pin exactly (one copy instead of one per package): when the new DSH pins
+// another, move that pin too (test/prune-runtime.test.js fails until it matches).
 //
 // Usage: node scripts/follow-dsh.mjs <dsh version>
 //   prints `same` when the runtime already pins it, else rewrites the pin, refreshes
