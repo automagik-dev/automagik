@@ -56,6 +56,10 @@ export const WINDOW_ACTIONS = new Set(['minimize', 'maximize', 'close', 'update'
  */
 export function updateView(update, { dismissed = false, message = null } = {}) {
   const version = update?.version ? `${PRODUCT} ${update.version}` : 'An update'
+  // Restart pressed: the app quits, and on macOS the new one takes up to a minute to open.
+  if (update?.state === 'restarting') {
+    return { text: `Installing ${version}… it reopens by itself`, title: 'This takes up to a minute: leave it closed until it reopens', actions: [] }
+  }
   if (update?.state === 'downloading') {
     return { text: `Updating · ${update.percent ?? 0}%`, title: `Downloading ${version}`, actions: [] }
   }

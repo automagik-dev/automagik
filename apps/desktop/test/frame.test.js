@@ -52,6 +52,9 @@ test('a ready update shows a notice with Restart now and Later; after Later a sm
 })
 
 test('a download shows its progress with no button; a deb sees Download and Later; a check answers in a line', () => {
+  // Restart pressed: what it is doing, and that it reopens by itself, with nothing to press.
+  assert.deepEqual(updateView({ version: '3.11.0', state: 'restarting' }), { text: 'Installing Automagik 3.11.0… it reopens by itself', title: 'This takes up to a minute: leave it closed until it reopens', actions: [] })
+  assert.equal(updateView({ version: '3.11.0', state: 'restarting' }, { dismissed: true }).actions.length, 0)
   assert.deepEqual(updateView({ version: '2.261024.1', state: 'downloading', percent: 42 }), { text: 'Updating · 42%', title: 'Downloading Automagik 2.261024.1', actions: [] })
   const out = { version: '2.261024.1', state: 'available', page: 'https://github.com/automagik-dev/omni-desktop/releases/tag/v2.261024.1' }
   assert.deepEqual(updateView(out).actions.map(a => a.act), ['update-page', 'update-later'])

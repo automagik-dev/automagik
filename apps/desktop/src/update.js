@@ -14,6 +14,11 @@ const RELEASE_PAGE = 'https://github.com/automagik-dev/automagik/releases/tag/'
 export const FIRST_CHECK_MS = 20_000
 export const CHECK_EVERY_MS = 4 * 60 * 60 * 1000
 export const RETRY_MS = 30 * 60 * 1000
+// A network that changed or dropped during a check (Wi-Fi, a VPN, waking from sleep) is usually
+// back within a minute: such a failure is retried that soon, a few times, before RETRY_MS.
+export const QUICK_RETRY_MS = 60 * 1000
+export const QUICK_RETRIES = 3
+export const isTransient = error => /net::ERR_|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ENETUNREACH/.test(String(error?.message ?? error ?? ''))
 
 /** The update feed electron-updater reads for `platform`, or null where the app does not update. */
 export function feedFileOf(platform) {
@@ -134,6 +139,7 @@ export function startUpdates({ updater, current, platform, env, log, onState, mo
   let pending = null
   let ready = null
   let retry = null
+  let quickRetries = 0
   const auto = mode === 'auto'
   if (auto) {
     updater.autoDownload = true
@@ -162,13 +168,15 @@ export function startUpdates({ updater, current, platform, env, log, onState, mo
     squirrel?.on('error', error => log.warn(`update (macOS): ${error?.message ?? error}`))
     updater.on('error', (error) => {
       log.warn(`update: ${error?.message ?? error}`)
-      retryLater()
+      retryLater(error)
     })
   }
 
-  function retryLater() {
+  function retryLater(error) {
     if (retry !== null) return
-    retry = timers.setTimeout(() => { retry = null; void check() }, RETRY_MS)
+    const soon = isTransient(error) && quickRetries < QUICK_RETRIES
+    if (soon) quickRetries += 1
+    retry = timers.setTimeout(() => { retry = null; void check() }, soon ? QUICK_RETRY_MS : RETRY_MS)
   }
 
   async function check() {
@@ -185,6 +193,7 @@ export function startUpdates({ updater, current, platform, env, log, onState, mo
         update = pickUpdate(list, { current, platform, channel })
         if (!update) {
           log.info(`update check: ${current} is the newest ${channel} release`)
+          quickRetries = 0
           return { result: 'latest' }
         }
       }
@@ -196,10 +205,11 @@ export function startUpdates({ updater, current, platform, env, log, onState, mo
       pending = update.version
       updater.setFeedURL({ provider: 'generic', url: update.url })
       await updater.checkForUpdates()
+      quickRetries = 0
       return { result: 'found', version: update.version }
     } catch (error) {
       log.warn(`update check: ${error?.message ?? error}`)
-      retryLater()
+      retryLater(error)
       return { result: 'error' }
     } finally {
       busy = false

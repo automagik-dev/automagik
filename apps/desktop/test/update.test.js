@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { test } from 'node:test'
-import { channelOf, compareVersions, feedFileOf, feedOverride, isReleasePage, pickUpdate, RETRY_MS, startUpdates, updateMode, updatesEnabled } from '../src/update.js'
+import { channelOf, compareVersions, feedFileOf, feedOverride, isReleasePage, isTransient, pickUpdate, QUICK_RETRIES, QUICK_RETRY_MS, RETRY_MS, startUpdates, updateMode, updatesEnabled } from '../src/update.js'
 
 const release = (tag, assets = ['latest-mac.yml', 'latest-linux.yml'], extra = {}) => ({ tag_name: tag, draft: false, assets: assets.map(name => ({ name })), ...extra })
 
@@ -147,6 +147,29 @@ test('an electron-updater error is logged and retried sooner', async () => {
   updater.emit('error', new Error('sha512 checksum mismatch'))
   assert.deepEqual(warnings, ['update: sha512 checksum mismatch'])
   assert.equal(later.filter(entry => entry.ms === RETRY_MS).length, 1)
+})
+
+test('a network that changed mid-check is retried within a minute, a few times, then after RETRY_MS', async () => {
+  assert.equal(isTransient(new Error('net::ERR_NETWORK_CHANGED')), true)
+  assert.equal(isTransient(new Error('getaddrinfo ENOTFOUND api.github.com')), true)
+  assert.equal(isTransient(new Error('sha512 checksum mismatch')), false)
+  const later = []
+  const timers = { ...noTimers, setTimeout: (fn, ms) => { later.push({ fn, ms }); return later.length } }
+  let fail = true
+  const updates = startUpdates({ updater: fakeUpdater(), current: '2.261022.1', platform: 'linux', env: {}, log: quiet, timers, onState() {}, releases: async () => { if (fail) throw new Error('net::ERR_NETWORK_CHANGED'); return [release('v2.261022.1')] } })
+  // Each retry's own check fails again and schedules the next one.
+  await updates.check()
+  for (let i = 0; i < QUICK_RETRIES + 1; i++) {
+    const next = later.pop()
+    assert.equal(next.ms, i < QUICK_RETRIES ? QUICK_RETRY_MS : RETRY_MS, `retry ${i + 1}`)
+    if (i === QUICK_RETRIES) fail = false
+    next.fn()
+    await new Promise(resolve => setImmediate(resolve))
+  }
+  // That last retry got through, which gives the next failure its quick retries back.
+  fail = true
+  await updates.check()
+  assert.equal(later.pop().ms, QUICK_RETRY_MS)
 })
 
 test('a deb build only says a release is out: no feed, no download, and its page to open', async () => {
