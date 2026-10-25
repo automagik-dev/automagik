@@ -54,8 +54,6 @@ body.darwin .bar{padding-left:84px}
 /* The clay triskelion, once for the bar and the waking mark. */
 .brand-mark,.mark{display:block;background:var(--mark) center/contain no-repeat}
 .brand b{font:700 14px/1 var(--head);letter-spacing:-.005em}
-.chip{--fill:var(--lilac);font:700 9px/1 var(--head);letter-spacing:.14em;text-transform:uppercase;color:var(--lilac-ink);border-radius:999px;padding:4px 7px 3px;
-  background:var(--fill);box-shadow:inset 1px 2px 2px color-mix(in srgb,var(--fill) var(--hi),var(--shine)),inset -1px -2px 3px color-mix(in srgb,var(--fill) var(--lo),var(--umber)),0 1px 0 color-mix(in srgb,var(--fill) var(--ledge),var(--umber))}
 .spacer{flex:1}
 
 [hidden]{display:none!important}
