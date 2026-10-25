@@ -25,6 +25,7 @@ import { VOICE_BUNDLE } from './speech.js'
 import { sameVersion } from './dsh-offer.js'
 import { QuestionCard, QuestionDock } from './questions.js'
 import { DesktopUpdate, DESKTOP_UPDATE_CSS } from './desktop-update.js'
+import { PRIVACY_CSS } from './privacy.js'
 import { TeamApproval, TEAM_APPROVAL_CSS, isTeamApproval } from './team-approval.js'
 import { AnsweredReply, WidgetDock, WIDGET_CSS } from './widget-cell.js'
 import { installHeaderNavigation } from './header-navigation.js'
@@ -780,6 +781,7 @@ export function apply(ctx) {
     () => installCompiledStyles(USER_MESSAGE_CSS, 'user-messages'),
     () => installCompiledStyles(TASK_CSS, 'tasks'),
     () => installCompiledStyles(DESKTOP_UPDATE_CSS, 'desktop-update'),
+    () => installCompiledStyles(PRIVACY_CSS, 'privacy'),
     () => installCompiledStyles(LIVE_CSS, 'live'),
     () => installCompiledStyles(TEAM_APPROVAL_CSS, 'team-approval'),
     () => installCompiledStyles(LAMP_CSS, 'lamp'),

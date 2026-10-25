@@ -16,6 +16,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rm
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
+import { privacyEnv } from './privacy.js'
 
 export const PROFILE = 'omni'
 const READY_TIMEOUT_MS = 120_000
@@ -30,6 +31,13 @@ export function automagikHome(env = process.env) {
 
 /** The app's own folder: desktop/ in Automagik's home. */
 export const appHome = (env = process.env) => join(automagikHome(env), 'desktop')
+
+// What the person chose to share (privacy.js), and the dsh overlay made from it at each launch.
+export const privacyFileOf = home => join(home, 'privacy.json')
+export const privacyPatchOf = home => join(home, 'privacy.patch.yml')
+// DSH's anonymous id, sent with every DeepSeek request, kept in the DSH home; no setting
+// stops it, so the app starts each launch without one and DSH makes a new one.
+export const ANONYMOUS_ID = '.anonymous-user-id'
 
 /** Where the runtime and the profile are: inside the app when packaged, build/ in a checkout. */
 export function resourcesOf({ packaged, resourcesPath, appPath }) {
@@ -364,7 +372,7 @@ export function launchUrlOf(text, port) {
  */
 export const toolDirs = (userHome = homedir()) => [join(userHome, '.local', 'bin'), join(userHome, '.claude', 'local'), '/opt/homebrew/bin', '/usr/local/bin']
 
-export function dshEnv({ base = process.env, home, electronAsNode = false, binDir, userHome = homedir(), preload = null }) {
+export function dshEnv({ base = process.env, home, electronAsNode = false, binDir, userHome = homedir(), preload = null, privacy = {} }) {
   // After the machine's own: a project's commands keep the user's node and pnpm, and then the
   // usual tool folders, then the app's own node and pnpm.
   const PATH = [...String(base.PATH ?? '').split(delimiter), ...toolDirs(userHome), ...(binDir ? [binDir] : [])]
@@ -378,7 +386,11 @@ export function dshEnv({ base = process.env, home, electronAsNode = false, binDi
     AUTOMAGIK_BOTS_HOME: join(home, 'bots'),
     // Signs in to an Omni as the desktop app (the Better Auth device-flow client id).
     OMNI_CLIENT_ID: 'omni-desktop',
-    DO_NOT_TRACK: '1',
+    // Nothing is reported unless the person chose to share it (privacy.js): DSH's own opt-out
+    // and the CLIs' (Claude Code's error reports, npm's notice, OpenUI's analytics).
+    ...privacyEnv(privacy),
+    // The Bot team's Privacy page saves the choices here; the app applies them at launch.
+    AUTOMAGIK_PRIVACY_FILE: privacyFileOf(home),
     // The welcome keeps in it whether any agent is at work (welcome-dsh src/host/busy.js), so
     // an update installs while the person is away only when none is (idle.js).
     AUTOMAGIK_BUSY_FILE: busyFileOf(home),
@@ -397,8 +409,8 @@ export const busyFileOf = home => join(home, 'busy.json')
  * or a Node in tests. Output goes to `log` (a writable stream) when given. `onSpawn` gets
  * the process at once, so a quit while dsh starts can stop it.
  */
-export function startDsh({ node, bin, env, port, cwd, log, timeoutMs = READY_TIMEOUT_MS, onSpawn }) {
-  const child = spawn(node, [bin, '--profile', PROFILE, '--no-open', '--host', '127.0.0.1', '--port', String(port)], {
+export function startDsh({ node, bin, env, port, cwd, log, privacy, timeoutMs = READY_TIMEOUT_MS, onSpawn }) {
+  const child = spawn(node, [bin, '--profile', PROFILE, ...(privacy ? ['--patch', privacy] : []), '--no-open', '--host', '127.0.0.1', '--port', String(port)], {
     cwd, env, stdio: ['ignore', 'pipe', 'pipe'],
   })
   onSpawn?.(child)

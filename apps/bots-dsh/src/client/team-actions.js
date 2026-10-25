@@ -102,6 +102,8 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     memoryAsk: (id, text) => call('memory-ask', { ...memoryOf(id), text }),
     memoryForget: (id, entry) => call('memory-forget', { ...memoryOf(id), scope: entry.scope, topic: entry.topic, text: entry.text }),
     diagnostics: payload => call('diagnostics', payload),
+    privacy: () => call('privacy'),
+    privacySet: (share, on) => call('privacy-set', { share, on }),
     diagnosticsLog: () => call('diagnostics-log'),
     diagnosticsClear: () => call('diagnostics-clear'),
     repoStars: () => call('repo-stars'),
