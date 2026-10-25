@@ -51,9 +51,9 @@ const NOW = Date.now()
 const pip = { id: 'pip', name: 'Pip', role: 'Orchestrator', sessionId: 'pip', createdAt: 1 }
 const omni = { id: 'omni', name: 'Omni', kind: 'omni', sessionId: 'omni', createdAt: 2 }
 
-function sidebar({ tasks, waiting = [], approvals = [], wide = true }) {
+function sidebar({ tasks, waiting = [], approvals = [], wide = true, agents = [] }) {
   const roster = {
-    bots: [pip, omni], rooms: [], agents: [], byId: { pip, omni }, roomsById: {}, agentOf: {},
+    bots: [pip, omni], rooms: [], agents, byId: { pip, omni }, roomsById: {}, agentOf: {},
     mainBotId: 'pip', mainBotIds: ['pip'], exchangeTurns: {}, questions: {}, ready: true, tasks,
   }
   const opened = []
@@ -168,4 +168,19 @@ test('a task waiting on an approval the host noted for it is amber too, in the s
     useSessionStatus: pick => pick(new Map()), useWork: pick => pick({ approvals }),
   })
   assert.equal(card.props['data-state'], 'waiting')
+})
+
+test('a task a Bot started is listed under that Bot, not again under Tasks', () => {
+  const agent = { id: 'tasks', name: 'Tasks', sessions: ['own', 'from-pip', 'from-gone'], createdAt: 3 }
+  const { tree } = sidebar({
+    agents: [agent],
+    tasks: {
+      'from-pip': task('pip', 'Wish: hello', 2, 'done'),
+      // Its Bot was deleted: the task stays findable under Tasks.
+      'from-gone': task('gone', 'Old chore', 5, 'done'),
+    },
+  })
+  const [row] = find(tree, named('AgentRow'))
+  const listed = find(row.type(row.props), named('AgentSessionRow')).map(node => node.props.session.id)
+  assert.deepEqual(listed.sort(), ['from-gone', 'own'])
 })

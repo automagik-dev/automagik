@@ -8,6 +8,7 @@ import { isAbsolute } from 'node:path'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { AGENT_NAME, AGENT_SESSION_TITLE_MAX, TEAM_TOOLS } from './constants.js'
+import { splitRef } from './text.js'
 import { output } from './tools.js'
 
 const TASK_REPORT_MAX = 1500
@@ -233,6 +234,21 @@ export function install(rt) {
     return sessionId
   }
 
+  // A task thinks with the model of the Bot that asked, as that Bot's own chat does, not
+  // with DSH's default: the default may be a route this machine has no key for. Before the
+  // first message, so the first turn already runs on it.
+  async function askersModel(sessionId, bot) {
+    if (bot === undefined) return
+    try {
+      const ref = await rt.desiredModel(bot)
+      if (ref === undefined) return
+      const effort = await rt.desiredEffort(bot, ref)
+      await rt.selectSessionModel(sessionId, { ...splitRef(ref), ...(effort === undefined ? {} : { reasoningEffort: effort }) })
+    } catch (error) {
+      rt.warn('ds-bot: the task keeps the default model, %s\'s was not applied: %s', bot.name, error?.message ?? error)
+    }
+  }
+
   const tasks = () => (state.tasks ??= {})
   async function startTask({ title, text, from, cwd, agentPreset }) {
     const sessionId = await createTaskSession(title, { cwd, agentPreset })
@@ -241,6 +257,7 @@ export function install(rt) {
     const kept = Object.entries(tasks()).sort(([, a], [, b]) => b.at - a.at)
     for (const [id] of kept.slice(TASKS_KEPT)) delete tasks()[id]
     await rt.save()
+    await askersModel(sessionId, state.bots?.[from])
     const live = await rt.resolveAgent(sessionId)
     // DSH's turn loop reads every input's source: the instructions arrive as the user's.
     live.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))

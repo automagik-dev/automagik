@@ -244,8 +244,11 @@ function AgentSessionRow({ session, agent, actions, renaming, index }) {
 
 // The DSH Agent row: a plain dsh Session list lives in the Bot workspace, so it
 // sits among the Bots with the harness's own whale mark.
-function AgentRow({ agent, actions, useSessions, useSessionStatus, useUi, wide, marked }) {
-  const info = useSessions(list => JSON.stringify(agent.sessions.map((id) => {
+function AgentRow({ agent, roster, actions, useSessions, useSessionStatus, useUi, wide, marked }) {
+  // A task a Bot started is that Bot's (its threads, its chat), so it is not listed here
+  // again; one whose Bot is gone stays here, where it can still be found.
+  const own = agent.sessions.filter(id => roster?.byId?.[roster.tasks?.[id]?.from] === undefined)
+  const info = useSessions(list => JSON.stringify(own.map((id) => {
     const row = list.byId[id]
     return {
       id,
@@ -256,7 +259,7 @@ function AgentRow({ agent, actions, useSessions, useSessionStatus, useUi, wide, 
       active: (row?.retainedBy?.mainView ?? 0) > 0,
     }
   }).sort((a, b) => b.at - a.at)))
-  const statusInfo = useSessionStatus(map => JSON.stringify(agent.sessions.map(id => ({
+  const statusInfo = useSessionStatus(map => JSON.stringify(own.map(id => ({
     id, running: map.get(id)?.running === true, unread: map.get(id)?.completionUnread === true,
   }))))
   const statuses = Object.fromEntries(JSON.parse(statusInfo).map(entry => [entry.id, entry]))
