@@ -97,6 +97,12 @@ export function installTargetOf(plugin, ownSource, version = PKG.version, omni =
 const rowOf = (rows, plugin) => rows?.find(bundle => bundle.name === plugin.name)
   ?? (plugin.formerly ? rows?.find(bundle => bundle.name === plugin.formerly && bundle.availability !== 'missing') : undefined)
 
+// The Genie install's own lines in its terminal, between pnpm's (ANSI: cyan, green, red).
+export const GENIE_LOG_MAX = 48_000
+const step = text => `\x1b[36m›\x1b[0m ${text}…\n`
+const ok = text => `\x1b[32m✓\x1b[0m ${text}\n`
+const failedLine = text => `\x1b[31m✗\x1b[0m ${text}\n`
+
 const resultProblem = (result) => {
   if (result?.error) return result.error.diagnostic ?? result.error.code
   if (!['applied', 'restart-required'].includes(result?.application)) return `install ${result?.application ?? 'failed'}`
@@ -107,8 +113,17 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, checkGit = gitP
   const manager = () => service(ctx, 'pluginManager')
   // `{ phase, current, done, error, restart }` once an install started.
   let job = null
-  // Genie's own: `{ phase, error, restart }`.
+  // Genie's own: `{ phase, error, restart, requestId, log }`.
   let genieJob = null
+  // What the Genie install printed, for the terminal on Genie's card: its own steps, then
+  // pnpm's output for the installs it asked for (the plugin manager streams each run's
+  // output as install-log, by the request id the install passed). The tail is kept.
+  const say = (text) => {
+    if (genieJob !== null) genieJob.log = `${genieJob.log}${text}`.slice(-GENIE_LOG_MAX)
+  }
+  ctx.on?.('plugin-manager/install-log', (chunk) => {
+    if (genieJob !== null && chunk?.requestId === genieJob.requestId && typeof chunk.text === 'string') say(chunk.text)
+  })
 
   async function bundles() {
     const rows = await quietly(() => manager()?.listBundles?.(), null)
@@ -156,6 +171,7 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, checkGit = gitP
     const present = row !== undefined && row.availability !== 'missing'
     if (present && row.enabled !== false) return { there: true, restart: false }
     const service = manager()
+    target.onStart?.(present ? 'enable' : 'install')
     const result = present ? await service.setBundleEnabled(row.name, true) : await service.installBundle(target.spec, { enabled: true, ...target.options })
     const problem = resultProblem(result)
     if (problem !== null) throw new Error(`${plugin.title}: ${problem}`)
@@ -214,24 +230,31 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, checkGit = gitP
   // Genie runs on the Bot team, so a plain DSH that lacks it gets it first, from where the
   // Omni install would take it (a peer pnpm could not find on npm otherwise).
   async function runGenieInstall() {
+    say(step('Checking git'))
     const problem = await checkGit()
     if (problem !== null) throw new Error(problem)
+    say(ok('git is here'))
     const rows = await bundles() ?? []
     const ownSource = rows.find(bundle => bundle.name === PKG.name)?.source
     const [botTeam] = OMNI_PLUGINS
-    const teamStep = await ensure(botTeam, rows, installTargetOf(botTeam, ownSource))
-    const genieStep = await ensure(GENIE_PLUGIN, rows, { spec: genieSpec(), options: {} })
+    const { requestId } = genieJob
+    const teamTarget = installTargetOf(botTeam, ownSource)
+    const teamStep = await ensure(botTeam, rows, { ...teamTarget, options: { ...teamTarget.options, requestId }, onStart: what => say(step(`${what === 'install' ? 'Installing' : 'Switching on'} the Bot team (${botTeam.name})`)) })
+    if (teamStep.there) say(ok('The Bot team is here'))
+    const genieStep = await ensure(GENIE_PLUGIN, rows, { spec: genieSpec(), options: { requestId }, onStart: what => say(step(what === 'install' ? `Installing Genie (${GENIE_PLUGIN.name} ${GENIE_RELEASE.version}, ${GENIE_RELEASE.repository.replace(/^https:\/\/github\.com\//, '')}@${GENIE_RELEASE.commit.slice(0, 7)})` : 'Switching Genie on')) })
     genieJob.restart = teamStep.restart || genieStep.restart
+    say(ok(genieJob.restart ? 'Genie is installed: DSH starts it after a restart' : 'Genie is installed'))
     genieJob.phase = genieJob.restart ? 'restart' : 'done'
   }
 
   function startGenieInstall() {
     if (genieJob?.phase === 'installing') return
     if (typeof manager()?.installBundle !== 'function') throw refused('This DSH has no plugin manager to install Genie with. Add @automagik/genie-dsh on its Plugins page, then come back.')
-    genieJob = { phase: 'installing', error: null, restart: false }
+    genieJob = { phase: 'installing', error: null, restart: false, requestId: `genie-${Date.now()}`, log: '' }
     const running = genieJob
     void runGenieInstall().catch((error) => {
       ctx.logger?.warn?.('omni-ai: installing Genie failed: %s', error?.message ?? error)
+      if (genieJob === running) say(failedLine(String(error?.message ?? error)))
       Object.assign(running, { phase: 'failed', error: String(error?.message ?? error) })
     })
   }

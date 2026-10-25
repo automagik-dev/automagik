@@ -242,9 +242,36 @@ test('Genie installs from the pinned genie commit, after the Bot team when a pla
   await value(fake, 'genie-plugin-install')
   const after = await settleGenie(fake)
   assert.equal(after.install.phase, 'done')
+  const requestId = manager.calls[0][2].requestId
+  assert.match(requestId, /^genie-\d+$/)
   assert.deepEqual(manager.calls, [
-    ['install', 'link:/home/someone/automagik/apps/bots-dsh', { enabled: true }],
-    ['install', genieSpec(), { enabled: true }],
+    ['install', 'link:/home/someone/automagik/apps/bots-dsh', { enabled: true, requestId }],
+    ['install', genieSpec(), { enabled: true, requestId }],
+  ])
+})
+
+test('Genie\'s install keeps what it did and what pnpm printed, for the terminal on its card', async () => {
+  const manager = fakeManager()
+  const fake = host({ manager })
+  const install = manager.installBundle
+  manager.installBundle = async (spec, options) => {
+    fake.ctx.emit('plugin-manager/install-log', { requestId: options.requestId, jobId: 'j1', argv: ['add'], cwd: '/p', stream: 'stdout', text: `Progress: resolved 1, added 1 (${spec.includes('genie') ? 'genie' : 'team'})\n` })
+    // Another install's output is not Genie's.
+    fake.ctx.emit('plugin-manager/install-log', { requestId: 'someone-else', jobId: 'j2', argv: ['add'], cwd: '/p', stream: 'stdout', text: 'not this\n' })
+    return install.call(manager, spec, options)
+  }
+  await value(fake, 'genie-plugin-install')
+  const { install: done } = await settleGenie(fake)
+  assert.equal(done.phase, 'done')
+  const lines = done.log.replace(/\x1b\[\d+m/g, '').trim().split('\n')
+  assert.deepEqual(lines, [
+    '› Checking git…',
+    '✓ git is here',
+    '› Installing the Bot team (@automagik/bots-dsh)…',
+    'Progress: resolved 1, added 1 (team)',
+    `› Installing Genie (@automagik/genie-dsh ${GENIE_RELEASE.version}, automagik-dev/genie@${GENIE_RELEASE.commit.slice(0, 7)})…`,
+    'Progress: resolved 1, added 1 (genie)',
+    '✓ Genie is installed',
   ])
 })
 
@@ -258,7 +285,7 @@ test('Genie is ready once its Bot is on the team; a team already here is left al
   const fake = host({ manager, team })
   await value(fake, 'genie-plugin-install')
   await settleGenie(fake)
-  assert.deepEqual(manager.calls, [['install', genieSpec(), { enabled: true }]])
+  assert.deepEqual(manager.calls, [['install', genieSpec(), { enabled: true, requestId: manager.calls[0][2].requestId }]])
   assert.equal((await value(fake, 'genie-plugin')).ready, false)
   team.state.bots.g1 = { id: 'g1', name: 'Genie', kind: 'genie' }
   const ready = await value(fake, 'genie-plugin')
@@ -274,6 +301,7 @@ test('without git, Genie\'s install fails with what to run, before anything is i
   assert.equal(status.install.phase, 'failed')
   assert.match(status.install.error, /xcode-select --install/)
   assert.deepEqual(manager.calls, [])
+  assert.match(status.install.log, /Checking git…\n.*✗.*xcode-select --install/s)
   assert.match(await gitProblem({ platform: 'linux', run: async () => false }), /needs git/)
   assert.equal(await gitProblem({ platform: 'darwin', run: async () => true }), null)
   // On macOS git itself is never run without the command line tools.

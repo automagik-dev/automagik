@@ -7,6 +7,7 @@ import { STAGE_CSS } from './octopus.js'
 import { announceStep } from './stage.js'
 import { TERMINAL_CSS } from './terminal.js'
 import { CLAY_ART_CSS } from './vendor/clay-art.js'
+import { installVeil } from './veil.js'
 
 // Automagik's onboarding on DSH's settings.onboarding slot. The shell mounts one step at a
 // time, in order; these come ahead of DSH's own welcome-notice (-100) and deepseek-official
@@ -30,6 +31,7 @@ function installStyles() {
 
 export function apply(ctx) {
   ctx.effect(installStyles, 'omni-ai: stage styles')
+  ctx.effect(() => installVeil(), 'omni-ai: the table over DSH\'s first frame')
   // ui-settings declares the slot in its own apply, which may run after this one.
   for (const step of STEPS) {
     ctx.effect(() => announceStep(step.id), `omni-ai: ${step.id} on the rail`)

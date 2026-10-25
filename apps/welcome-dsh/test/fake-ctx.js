@@ -22,8 +22,14 @@ export function fakeContext({ entries = {}, credentials = {}, records = [], reco
   const effects = []
   const logs = []
   const presentations = []
+  const listeners = new Map()
   const ctx = {
     fiber: { uid: 'omni-ai' },
+    on(name, listener) {
+      listeners.set(name, [...(listeners.get(name) ?? []), listener])
+      return () => listeners.set(name, listeners.get(name).filter(entry => entry !== listener))
+    },
+    emit(name, ...args) { for (const listener of listeners.get(name) ?? []) listener(...args) },
     // Services looked up rather than injected (ctx.get), such as authorization.
     get: name => services[name],
     logger: { warn: (...args) => logs.push(args), info: (...args) => logs.push(args) },
