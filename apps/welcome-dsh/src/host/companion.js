@@ -92,8 +92,11 @@ async function imageSource(ctx, now = Date.now()) {
   return undefined
 }
 
-/** Where companion images are kept: the Omni home, never DSH's own. */
-export const companionDir = (env = process.env) => join(env.OMNI_HOME || join(homedir(), '.omni'), 'ai')
+/**
+ * Where companion images are kept: companion/ in the Bot team's home (bots-dsh folders.js
+ * teamHomeOf: $AUTOMAGIK_BOTS_HOME, else $AUTOMAGIK_HOME/bots), never DSH's own.
+ */
+export const companionDir = (env = process.env) => join(env.AUTOMAGIK_BOTS_HOME?.trim() || join(env.AUTOMAGIK_HOME?.trim() || join(homedir(), '.automagik'), 'bots'), 'companion')
 
 function firstImage(body) {
   const item = Array.isArray(body?.data) ? body.data[0] : undefined

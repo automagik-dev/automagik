@@ -6,17 +6,17 @@ It is Automagik's Bot team on a [DeepSeek Harness](https://github.com/deepseek-a
 
 Until 2.261023.x it was automagik-dev/omni-desktop, versioned as the Omni release it carried, and until 3.261023.x it was named Omni. Its last release there is this app, so an installed omni-desktop updates into it and then follows this repository's releases. On its first start an update moves the profile from the old plugin names (`@automagik/omni-dsh`, `@automagik/omni-ai-dsh`) to the new ones, keeping every setting row, and the Bot team's home is untouched (`src/dsh.js` `migrateRenamed`).
 
-### The name, and the identity that stays
+### The name and the installed identity
 
-The app is **Automagik** wherever a person sees it: the bundle and its menu bar, the window, the update notice (`src/identity.js` `PRODUCT`), the desktop entry's Name, the dmg and the artifacts (`Automagik-<version>-…`). What an installed copy is known by stays as Omni shipped it, so it updates in place and keeps its data:
+The app is **Automagik** wherever a person sees it: the bundle and its menu bar, the window, the update notice (`src/identity.js` `PRODUCT`), the desktop entry's Name, the dmg and the artifacts (`Automagik-<version>-…`), and in what an installed copy is known by. Builds up to 3.11.x kept the identity Omni shipped; one of those does not update into this one, it is installed afresh.
 
-| Kept | Why |
+| Identity | Why it matters |
 |---|---|
-| appId `ai.namastex.omni.desktop` | macOS (Squirrel) installs an update only for the same bundle id and signer; TCC permissions and preferences are filed under it. |
-| `~/.omni/desktop` (`src/dsh.js` `appHome`) | the profile, the Bots, chats, memory, the Omni link (`ui/omni.json`), credentials (`dsh/.credentials.yaml`), logs and `preload`. No name is part of it. |
-| Electron's userData `…/Omni` (`src/identity.js` `dataPathsOf`) | Electron names it after the app; `main.js` pins it before anything reads it, so the page's storage, each Bot browser's partition and the single-instance lock stay put. |
-| Linux: executable `omni-desktop`, desktop entry id `omni-desktop.desktop` (`desktopName`), deb package `omni` | the window's app id and WM class, `/usr/bin/omni-desktop` and the AppArmor profile keep matching, and a new deb upgrades the installed package. It installs to `/opt/Automagik`. |
-| the `omni://` scheme, `OMNI_DESKTOP_*` variables, `window.omniDesktop` | what Omni's pages, the CLIs and the plugins already use. |
+| appId `ai.namastex.automagik` | macOS (Squirrel) installs an update only for the same bundle id and signer; TCC permissions and preferences are filed under it. |
+| `~/.automagik` (`src/dsh.js` `automagikHome`, `$AUTOMAGIK_HOME`) | the preload, the builds the CLIs download, and the app's own `desktop/` folder (below). |
+| Electron's userData `…/Automagik` (`src/identity.js` `dataPathsOf`) | `main.js` pins it before anything reads it: the page's storage, each Bot browser's partition and the single-instance lock. |
+| Linux: executable `automagik`, desktop entry id `automagik.desktop` (`desktopName`), deb package `automagik` | the window's app id and WM class, `/usr/bin/automagik` and the AppArmor profile match, and a new deb upgrades the installed package. It installs to `/opt/Automagik`. |
+| the `omni://` scheme, the `omni-desktop` client id, `window.omniDesktop` | Omni's protocol names: what Omni's pages, its API and the plugins use. |
 
 There are no keychain items to carry: Electron keeps its cookies unencrypted (the cookie-encryption fuse is off), the app uses no `safeStorage`, and its credentials are the files above.
 
@@ -40,16 +40,16 @@ downloads the build for this machine from this repository's releases, checks it 
 ## How it works
 
 - Electron's main process starts dsh with Electron's own Node (`ELECTRON_RUN_AS_NODE`), on `127.0.0.1` and a free port, and opens the launch URL dsh prints with its per-launch token. Quitting stops dsh.
-- Everything the app keeps is in one folder, `~/.omni/desktop` (`OMNI_DESKTOP_HOME`, or `$OMNI_HOME/desktop`):
+- Everything the app keeps is in one folder, `~/.automagik/desktop` (`$AUTOMAGIK_HOME/desktop`):
 
   | Folder | What |
   |---|---|
   | `dsh/` | dsh's home (`DSH_HOME`): its Sessions, settings, and the `omni` profile the app copies in from the build |
-  | `ui/` | the Omni UI plugin's home: the Bot team, and `omni.json`, the Omni this app is linked to (0600) |
+  | `bots/` | the Bot team's home (`AUTOMAGIK_BOTS_HOME`): the team, the companion's picture, and `omni.json`, the Omni this app is linked to (0600) |
   | `bin/` | `node` and `pnpm` for dsh, written at each launch: both run on the app's own Electron as Node, so installing a plugin (Settings → Plugins, the market) needs nothing on the machine |
   | `logs/dsh.log`, `logs/update.log` | dsh's output, and the update checks |
 
-  It is apart from a dsh you already run (`~/.dsh`) and from the Omni UI plugin installed into that dsh (`~/.omni/ui`).
+  It is apart from a dsh you already run (`~/.dsh`) and from the Bot team installed into that dsh (`~/.automagik/bots`). The app sets no `OMNI_HOME`: an Omni sandbox and the Bun Omni's channels download are in Omni's own `~/.omni`.
 - The window is a plain page: context isolation and the renderer sandbox are on, there is no Node in it, it stays on dsh's origin, and web links (a `wa.me` link, docs) open in your browser. Other schemes are refused.
 - The window's own frame (`src/shell.html`, `shell.css`: the title bar, the update notice and the splash while dsh starts) wears the clay theme of the app inside, light or dark as the system is set (`prefers-color-scheme`). Before dsh's page paints, it and macOS's window show the clay table (`frame.js` `TABLE`, from Electron's `nativeTheme`), so a light system sees no dark flash. macOS has no vibrancy: clay is matte. Manrope and DM Sans are bundled in `src/fonts` with their licences (SIL OFL 1.1).
 - Linux sandbox: Chromium needs user namespaces or a setuid helper, and Ubuntu 24.04+ restricts user namespaces. The deb installs an AppArmor profile that allows them for the app, so the window is sandboxed. An AppImage cannot carry one; on such a system its launcher runs without the sandbox and says so on stderr. Prefer the deb there.

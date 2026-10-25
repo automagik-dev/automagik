@@ -1,7 +1,7 @@
 {
   "name": "@automagik/omni-desktop",
   "productName": "Automagik",
-  "desktopName": "omni-desktop.desktop",
+  "desktopName": "automagik.desktop",
   "version": "3.11.0",
   "private": true,
   "description": "The Automagik desktop app: Automagik's Bot team and Omni's channels on a DeepSeek Harness of its own, with Omni or Genie preloaded",

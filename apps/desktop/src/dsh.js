@@ -2,13 +2,15 @@
 // app ships lands there, and the server process itself. Electron's main process
 // (main.js) uses this; tests use it without Electron.
 //
-// Everything the app keeps is under one folder, ~/.omni/desktop by default (the folder
-// omni-desktop's builds used, so an install that updates into this app keeps it):
+// Automagik's home is $AUTOMAGIK_HOME, else ~/.automagik (automagikHome). It holds the
+// preload `omni desktop` and `genie desktop` write (preload), the builds they download
+// (app/<tag>/), and everything the app keeps, under desktop/ (appHome):
 //   dsh/   DSH_HOME: dsh's own Sessions, settings and the `omni` profile
-//   ui/    the Omni UI plugin's home (OMNI_HOME is this folder, so the plugin uses ui/)
+//   bots/  the Bot team's home (AUTOMAGIK_BOTS_HOME), with the Omni link (bots/omni.json)
 //   bin/   `node` and `pnpm` for dsh, both on Electron's own Node (writeTools)
-// It is apart from a dsh you already run (~/.dsh) and from the Omni UI plugin installed
-// into that one (~/.omni/ui), so neither sees the other's Bots or Sessions.
+// It is apart from a dsh you already run (~/.dsh) and from the Bot team installed into that
+// one (~/.automagik/bots), so neither sees the other's Bots or Sessions. Omni's own folder
+// (~/.omni: its sandbox, the Bun its channels download) is Omni's.
 import { spawn } from 'node:child_process'
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
@@ -21,12 +23,13 @@ const STOP_GRACE_MS = 8_000
 
 const expandHome = text => (text === '~' ? homedir() : /^~[\\/]/.test(text) ? join(homedir(), text.slice(2)) : text)
 
-/** The app's own folder: OMNI_DESKTOP_HOME, else $OMNI_HOME/desktop, else ~/.omni/desktop. */
-export function appHome(env = process.env) {
-  if (env.OMNI_DESKTOP_HOME?.trim()) return resolve(expandHome(env.OMNI_DESKTOP_HOME.trim()))
-  const omni = env.OMNI_HOME?.trim() ? resolve(expandHome(env.OMNI_HOME.trim())) : join(homedir(), '.omni')
-  return join(omni, 'desktop')
+/** Automagik's home: $AUTOMAGIK_HOME, else ~/.automagik. A blank value counts as unset. */
+export function automagikHome(env = process.env) {
+  return env.AUTOMAGIK_HOME?.trim() ? resolve(expandHome(env.AUTOMAGIK_HOME.trim())) : join(homedir(), '.automagik')
 }
+
+/** The app's own folder: desktop/ in Automagik's home. */
+export const appHome = (env = process.env) => join(automagikHome(env), 'desktop')
 
 /** Where the runtime and the profile are: inside the app when packaged, build/ in a checkout. */
 export function resourcesOf({ packaged, resourcesPath, appPath }) {
@@ -138,7 +141,7 @@ function renamedIn(shipped, renamed = RENAMED) {
  * Move a profile from the renamed packages to their new names: the old packages leave
  * node_modules (the new ones arrive with the shipped packages), and the profile's patch and
  * DSH's own (DSH_HOME/cordis.patch.yml) name the new ones. Bots, chats, memory and the Omni
- * link are in the team's home (OMNI_HOME/ui), which no name is part of: nothing there moves.
+ * link are in the team's home, which no name is part of: nothing there moves.
  */
 export function migrateRenamed({ target, dshHome, shipped, renamed = RENAMED }) {
   const moved = renamedIn(shipped, renamed)
@@ -371,7 +374,8 @@ export function dshEnv({ base = process.env, home, electronAsNode = false, binDi
     ...base,
     PATH,
     DSH_HOME: join(home, 'dsh'),
-    OMNI_HOME: home,
+    // The app's own team, apart from one in a dsh the person runs (bots-dsh folders.js).
+    AUTOMAGIK_BOTS_HOME: join(home, 'bots'),
     // Signs in to an Omni as the desktop app (the Better Auth device-flow client id).
     OMNI_CLIENT_ID: 'omni-desktop',
     DO_NOT_TRACK: '1',

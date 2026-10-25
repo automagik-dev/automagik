@@ -85,15 +85,15 @@ Until October 2026 this app was called Omni. An installed Omni updates itself in
 
 ## Your data
 
-- What Automagik keeps on your computer is in one folder: **`.omni/desktop`** in your home folder. Only the window keeps a little of its own (sign-ins in a Bot's browser, the page's storage) in **`Omni`**, in `~/Library/Application Support` on a Mac and `~/.config` on Linux: the app's old name, so an update finds it.
+- What Automagik keeps on your computer is in one folder: **`.automagik`** in your home folder. Only the window keeps a little of its own (sign-ins in a Bot's browser, the page's storage) in **`Automagik`**, in `~/Library/Application Support` on a Mac and `~/.config` on Linux. An Omni you run on this computer keeps its own files in **`.omni`**.
 - Your chats stay in your Omni. The app shows them and keeps what your Bots need to work.
 - What your Bots read and write goes to the AI account you connected, under that company's terms.
 
 ## Uninstall
 
-- **Mac:** quit Automagik, then drag it from Applications to the Trash (an install that updated from Omni is still called **Omni** there).
-- **Linux (.deb):** `sudo apt remove omni`. **AppImage:** delete the file.
-- To also remove everything it kept, delete the **`.omni/desktop`** folder in your home folder, and the **`Omni`** folder in `~/Library/Application Support` (Mac) or `~/.config` (Linux). (On a Mac, press ⌘ ⇧ . in Finder to show hidden folders.)
+- **Mac:** quit Automagik, then drag it from Applications to the Trash.
+- **Linux (.deb):** `sudo apt remove automagik`. **AppImage:** delete the file.
+- To also remove everything it kept, delete the **`.automagik`** folder in your home folder, and the **`Automagik`** folder in `~/Library/Application Support` (Mac) or `~/.config` (Linux). (On a Mac, press ⌘ ⇧ . in Finder to show hidden folders.)
 
 ## Help
 

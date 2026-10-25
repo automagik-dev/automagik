@@ -43,6 +43,16 @@ describe('market index', () => {
     expect(checkIndex(indexWith({ type: 'git', url: REPO_URL, commit: 'f'.repeat(40), path: 'apps/bots-dsh' }), repoDir)[0]).toMatch(/not reachable/);
   });
 
+  test('lists Genie at the commit the welcome installs it from', () => {
+    const index = JSON.parse(readFileSync(INDEX_PATH, 'utf8'));
+    const genie = JSON.parse(readFileSync(join(repoDir, 'apps/welcome-dsh/package.json'), 'utf8')).automagik.genie;
+    const listed = index.plugins.find((plugin: IndexPlugin) => plugin.name === '@automagik/genie-dsh');
+    expect(listed.versions[0]).toMatchObject({
+      version: genie.version,
+      source: { type: 'git', url: genie.repository.replace(/\.git$/, ''), commit: genie.commit, path: genie.path },
+    });
+  });
+
   test('a vetted fork passes at its commit, proven by dsh-marketplace', () => {
     expect(checkIndex(indexWith({ type: 'git', url: VETTED[0], commit: 'a'.repeat(40) }, '1.0.0'), repoDir)).toEqual([]);
   });

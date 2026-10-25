@@ -16,9 +16,11 @@
 - id: ui-settings-models
   config:
     credentialOnboarding: false
-# DSH's plugin market. Pairing with an Omni adds that Omni's own market
-# (<omni>/api/market/index.json): the Omni plugins of its version and the add-ons
-# Automagik vetted.
+# DSH's plugin market: Automagik's (automagik-dev/dsh-marketplace), with the Bot team, the
+# welcome, Genie, Omni's plugins and the add-ons Automagik vetted, so Genie can be added on
+# the Plugins page at any time. Pairing with an Omni adds that Omni's own market
+# (<omni>/api/market/index.json) beside it.
 - id: plugin-market
   config:
-    indexes: []
+    indexes:
+      - https://raw.githubusercontent.com/automagik-dev/dsh-marketplace/main/index.json

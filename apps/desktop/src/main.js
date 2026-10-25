@@ -11,15 +11,16 @@ import { createWriteStream, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
-import { appHome, dshEnv, freePort, installProfile, navigationOf, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
+import { appHome, automagikHome, dshEnv, freePort, installProfile, navigationOf, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
 import { pageLayout, tableColor, updateView, WINDOW_ACTIONS, windowChrome } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
 import { isReleasePage, startUpdates, updateMode } from './update.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-// Before anything reads it (the single-instance lock does): the window's data stays in the
-// folder the app kept as Omni (identity.js), so an install that updates into this name keeps it.
+// Before anything reads it (the single-instance lock does): the window's data is filed under
+// the app's own name (identity.js), whatever Electron derives from the running binary.
 for (const [name, path] of Object.entries(dataPathsOf(app.getPath('appData')))) app.setPath(name, path)
+const root = automagikHome()
 const home = appHome()
 let dsh = null
 // dsh's process from the moment it is spawned: a quit before it is ready still stops it.
@@ -51,7 +52,7 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on('second-instance', (_event, argv) => {
     // `omni desktop` or `genie desktop` while the app runs: kept for the next start.
-    preloadOf({ home, argv, env: {} })
+    preloadOf({ home: root, argv, env: {} })
     if (window) {
       if (window.isMinimized()) window.restore()
       window.focus()
@@ -144,8 +145,8 @@ async function launch() {
   const log = createWriteStream(join(home, 'logs', 'dsh.log'), { flags: 'a' })
   // Electron's own binary runs dsh as Node, so the app ships one runtime.
   const binDir = writeTools({ dir: join(home, 'bin'), node: process.execPath, pnpm: resources.pnpm })
-  // `--preload=omni|genie` from `omni desktop` / `genie desktop`, kept in the app's home.
-  const preload = preloadOf({ home, argv: process.argv, env: process.env })
+  // `--preload=omni|genie` from `omni desktop` / `genie desktop`, kept in Automagik's home.
+  const preload = preloadOf({ home: root, argv: process.argv, env: process.env })
   dsh = await startDsh({ node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload }), port, cwd: home, log, onSpawn: (child) => { dshChild = child } })
   dsh.child.once('exit', (code) => {
     if (!quitting) fail(new Error(`dsh stopped (${code}).`))

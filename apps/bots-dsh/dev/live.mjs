@@ -4,8 +4,8 @@
 //
 //   node dev/live.mjs [--home ~/.omni-dev] [--port 3080] [--fresh] [--plain]
 //
-// The DSH and its profile live under --home (DSH_HOME is <home>/dsh, the plugins' home is
-// <home>/ui), apart from any DSH or Omni desktop app you already run. --fresh empties it
+// The DSH and its profile live under --home (DSH_HOME is <home>/dsh, the Bot team's home is
+// <home>/bots), apart from any DSH or Omni desktop app you already run. --fresh empties it
 // first, so the welcome and the connect steps show again. The profile links the plugins'
 // folders in place (apps/*-dsh beside this one). A change under a plugin's src/client
 // rebuilds its bundle (its build script); that, or a change to host code (index.js, src/host,
@@ -185,7 +185,7 @@ function startDsh() {
   // A plain DSH installs the Omni plugins with its plugin manager, which runs the pinned pnpm.
   const shims = options.plain ? [pnpmShim()] : []
   const PATH = [...shims, ...String(process.env.PATH ?? '').split(':').filter(Boolean), ...tools].filter((dir, index, all) => all.indexOf(dir) === index).join(':')
-  const env = { ...process.env, PATH, DSH_HOME: dshHome, OMNI_HOME: home, OMNI_CLIENT_ID: 'omni-desktop', DO_NOT_TRACK: '1' }
+  const env = { ...process.env, PATH, DSH_HOME: dshHome, AUTOMAGIK_BOTS_HOME: join(home, 'bots'), OMNI_HOME: home, OMNI_CLIENT_ID: 'omni-desktop', DO_NOT_TRACK: '1' }
   dsh = spawn(process.execPath, [DSH_BIN, '--profile', PROFILE, '--no-open', '--host', '127.0.0.1', '--port', String(dshPort)], { cwd: home, env, stdio: ['ignore', 'pipe', 'pipe'] })
   const relay = (chunk) => {
     process.stdout.write(chunk)

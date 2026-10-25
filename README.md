@@ -25,10 +25,9 @@ Nothing here is published to npm. The plugins install as git sources pinned to a
 
 ## History
 
-`@automagik/bots-dsh` and `@automagik/welcome-dsh` were `@automagik/omni-dsh` and `@automagik/omni-ai-dsh` in automagik-dev/omni (`apps/omni-ui-dsh`, `apps/omni-ai-dsh`), and the desktop app was automagik-dev/omni-desktop. They moved here with their history. What does not change with the names: plugin ids (`omni-ui`, `omni-ai`), routes, browser-storage prefixes, and the team's home (`~/.omni/ui`, or `~/.omni/desktop/ui` in the app), so Bots, chats, memory and the Omni link stay where they are.
+`@automagik/bots-dsh` and `@automagik/welcome-dsh` were `@automagik/omni-dsh` and `@automagik/omni-ai-dsh` in automagik-dev/omni (`apps/omni-ui-dsh`, `apps/omni-ai-dsh`), and the desktop app was automagik-dev/omni-desktop. They moved here with their history. What did not change with the names: plugin ids (`omni-ui`, `omni-ai`), routes and browser-storage prefixes. From 3.12 the team's home is Automagik's own (`~/.automagik/bots`, or `~/.automagik/desktop/bots` in the app), and the app's identity is Automagik's (`ai.namastex.automagik`): an app from 3.11.x or before is installed afresh, not updated.
 
 - The Bot team's client bundle also answers to its former name, so channels and canvas plugins built before the rename keep working on it.
-- An installed omni-desktop updates into this app (its last release there is this app), which moves its profile to the new names and keeps every setting.
 - In your own DSH: install `@automagik/bots-dsh` from the market. With both installed, the newer one runs (they share the plugin id); remove `@automagik/omni-dsh` when you like. A settings row in your profile's `cordis.patch.yml` that names `@automagik/omni-dsh` needs its `name:` changed to `@automagik/bots-dsh` to keep applying.
 
 ## Versions and releases

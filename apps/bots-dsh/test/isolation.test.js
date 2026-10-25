@@ -1,4 +1,4 @@
-// Installed into someone's own DSH, Omni keeps its files in $OMNI_HOME/ui and writes
+// Installed into someone's own DSH, the team keeps its files in $AUTOMAGIK_HOME/bots and writes
 // nothing under DSH_HOME (DSH's own Sessions and workspaces are DSH's business, and the
 // fake context keeps those in memory).
 import assert from 'node:assert/strict'
@@ -22,14 +22,17 @@ const filesUnder = (dir) => {
   return out.sort()
 }
 
-function start(config = {}) {
+function start(config = {}, env = {}) {
   const root = mkdtempSync(join(tmpdir(), 'omni-isolation-'))
   const dshHome = join(root, 'dsh')
-  const omniHome = join(root, 'omni')
+  const automagikHome = join(root, 'automagik')
   mkdirSync(dshHome)
-  const saved = { DSH_HOME: process.env.DSH_HOME, OMNI_HOME: process.env.OMNI_HOME }
+  const saved = { DSH_HOME: process.env.DSH_HOME, AUTOMAGIK_HOME: process.env.AUTOMAGIK_HOME, AUTOMAGIK_BOTS_HOME: process.env.AUTOMAGIK_BOTS_HOME, ...env }
+  for (const key of Object.keys(saved)) saved[key] = process.env[key]
   process.env.DSH_HOME = dshHome
-  process.env.OMNI_HOME = omniHome
+  process.env.AUTOMAGIK_HOME = automagikHome
+  delete process.env.AUTOMAGIK_BOTS_HOME
+  Object.assign(process.env, env)
   const ctx = fakeContext()
   const rt = createRuntime(ctx, config)
   const stop = async () => {
@@ -40,18 +43,25 @@ function start(config = {}) {
     }
     rmSync(root, { recursive: true, force: true, maxRetries: 5 })
   }
-  return { root, dshHome, omniHome, rt, stop }
+  return { root, dshHome, automagikHome, rt, stop }
 }
 
-test('with no home configured, the team lives in $OMNI_HOME/ui and nothing lands under DSH_HOME', async (t) => {
-  const { dshHome, omniHome, rt, stop } = start()
+test('with no home configured, the team lives in $AUTOMAGIK_HOME/bots and nothing lands under DSH_HOME', async (t) => {
+  const { dshHome, automagikHome, rt, stop } = start()
   t.after(stop)
-  assert.equal(rt.home, join(omniHome, 'ui'))
+  assert.equal(rt.home, join(automagikHome, 'bots'))
   await rt.load()
   rt.state.prefs.quiet = true
   await rt.save()
-  assert.deepEqual(filesUnder(join(omniHome, 'ui')).filter(name => name.startsWith('state.')), ['state.json', 'state.lock'])
+  assert.deepEqual(filesUnder(join(automagikHome, 'bots')).filter(name => name.startsWith('state.')), ['state.json', 'state.lock'])
   assert.deepEqual(filesUnder(dshHome), [])
+})
+
+test('AUTOMAGIK_BOTS_HOME names the team\'s home (the desktop app keeps its own team)', async (t) => {
+  const own = join(tmpdir(), `automagik-bots-${process.pid}`)
+  const { rt, stop } = start({}, { AUTOMAGIK_BOTS_HOME: own })
+  t.after(stop)
+  assert.equal(rt.home, own)
 })
 
 test('a team kept under ~/.dsh/bot before is copied in only when asked, and left where it was', async (t) => {
@@ -65,10 +75,10 @@ test('a team kept under ~/.dsh/bot before is copied in only when asked, and left
 
   const plain = start()
   t.after(plain.stop)
-  assert.equal(existsSync(join(plain.omniHome, 'ui', 'state.json')), false)
+  assert.equal(existsSync(join(plain.automagikHome, 'bots', 'state.json')), false)
 
   const asked = start({ importHome: old })
   t.after(asked.stop)
-  assert.equal(existsSync(join(asked.omniHome, 'ui', 'state.json')), true)
+  assert.equal(existsSync(join(asked.automagikHome, 'bots', 'state.json')), true)
   assert.equal(filesUnder(old).join(','), 'state.json,state.lock')
 })
