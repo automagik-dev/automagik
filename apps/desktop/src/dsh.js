@@ -31,6 +31,12 @@ export function automagikHome(env = process.env) {
 /** The app's own folder: desktop/ in Automagik's home. */
 export const appHome = (env = process.env) => join(automagikHome(env), 'desktop')
 
+// The overlay that keeps DSH from reporting anything (profile/privacy.patch.yml).
+export const PRIVACY_PATCH = 'privacy.patch.yml'
+// DSH's anonymous id, sent with every DeepSeek request, kept in the DSH home; no setting
+// stops it, so the app starts each launch without one and DSH makes a new one.
+export const ANONYMOUS_ID = '.anonymous-user-id'
+
 /** Where the runtime and the profile are: inside the app when packaged, build/ in a checkout. */
 export function resourcesOf({ packaged, resourcesPath, appPath }) {
   const root = packaged ? resourcesPath : join(appPath, 'build')
@@ -38,6 +44,7 @@ export function resourcesOf({ packaged, resourcesPath, appPath }) {
     bin: join(root, 'runtime', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
     pnpm: join(root, 'runtime', 'node_modules', 'pnpm', 'bin', 'pnpm.cjs'),
     profile: join(root, 'profile'),
+    privacy: join(root, 'profile', PRIVACY_PATCH),
   }
 }
 
@@ -378,7 +385,16 @@ export function dshEnv({ base = process.env, home, electronAsNode = false, binDi
     AUTOMAGIK_BOTS_HOME: join(home, 'bots'),
     // Signs in to an Omni as the desktop app (the Better Auth device-flow client id).
     OMNI_CLIENT_ID: 'omni-desktop',
+    // Nothing is reported anywhere (profile/privacy.patch.yml has the rest): DSH's own opt-out,
+    // and the CLIs it runs (Claude Code's error reports and other optional traffic, npm's
+    // update notice, OpenUI's analytics).
     DO_NOT_TRACK: '1',
+    DSH_TELEMETRY_DISABLED: '1',
+    DISABLE_TELEMETRY: '1',
+    DISABLE_ERROR_REPORTING: '1',
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    OPENUI_TELEMETRY_DISABLED: '1',
+    npm_config_update_notifier: 'false',
     // The welcome keeps in it whether any agent is at work (welcome-dsh src/host/busy.js), so
     // an update installs while the person is away only when none is (idle.js).
     AUTOMAGIK_BUSY_FILE: busyFileOf(home),
@@ -397,8 +413,8 @@ export const busyFileOf = home => join(home, 'busy.json')
  * or a Node in tests. Output goes to `log` (a writable stream) when given. `onSpawn` gets
  * the process at once, so a quit while dsh starts can stop it.
  */
-export function startDsh({ node, bin, env, port, cwd, log, timeoutMs = READY_TIMEOUT_MS, onSpawn }) {
-  const child = spawn(node, [bin, '--profile', PROFILE, '--no-open', '--host', '127.0.0.1', '--port', String(port)], {
+export function startDsh({ node, bin, env, port, cwd, log, privacy, timeoutMs = READY_TIMEOUT_MS, onSpawn }) {
+  const child = spawn(node, [bin, '--profile', PROFILE, ...(privacy ? ['--patch', privacy] : []), '--no-open', '--host', '127.0.0.1', '--port', String(port)], {
     cwd, env, stdio: ['ignore', 'pipe', 'pipe'],
   })
   onSpawn?.(child)

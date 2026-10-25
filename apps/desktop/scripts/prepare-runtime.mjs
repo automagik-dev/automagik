@@ -137,7 +137,8 @@ for (const plugin of packed) {
   profile.dependencies[plugin.name] = `file:${VENDOR}/${basename(plugin.tarball)}`
 }
 writeFileSync(join(installDir, 'package.json'), `${JSON.stringify(profile, null, 2)}\n`)
-for (const file of ['cordis.patch.yml', 'pnpm-workspace.yaml']) cpSync(join(APP, 'profile', file), join(installDir, file))
+// privacy.patch.yml stays in the app's own profile copy: dsh.js starts dsh with it as a --patch.
+for (const file of ['cordis.patch.yml', 'pnpm-workspace.yaml', 'privacy.patch.yml']) cpSync(join(APP, 'profile', file), join(installDir, file))
 say(`installing the profile with dsh plugin (${Object.keys(ADDONS).map(name => `${name}@${ADDONS[name]}`).join(', ') || 'no add-ons'})`)
 execFileSync(process.execPath, [join(runtimeDir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'), 'plugin', '--profile', 'omni', 'install', '--prod', '--ignore-scripts'], {
   cwd: installDir,

@@ -19,6 +19,8 @@ test('the app keeps everything in one folder under ~/.automagik, apart from a ds
   assert.equal(env.ELECTRON_RUN_AS_NODE, '1')
   assert.equal(env.DO_NOT_TRACK, '1')
   assert.equal(env.OMNI_CLIENT_ID, 'omni-desktop')
+  // Nothing is reported: DSH's own opt-out (it does not read DO_NOT_TRACK), and the CLIs it runs.
+  for (const name of ['DO_NOT_TRACK', 'DSH_TELEMETRY_DISABLED', 'DISABLE_TELEMETRY', 'DISABLE_ERROR_REPORTING', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'OPENUI_TELEMETRY_DISABLED']) assert.equal(env[name], '1', name)
   // The welcome counts the agents at work there, for an update while the person is away.
   assert.equal(env.AUTOMAGIK_BUSY_FILE, '/a/desktop/busy.json')
   // The person's PATH comes first; the usual tool folders follow (see toolDirs below).
@@ -31,6 +33,7 @@ test('resources come from the app when packaged and from build/ in a checkout', 
     bin: '/opt/Omni/resources/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js',
     pnpm: '/opt/Omni/resources/runtime/node_modules/pnpm/bin/pnpm.cjs',
     profile: '/opt/Omni/resources/profile',
+    privacy: '/opt/Omni/resources/profile/privacy.patch.yml',
   })
   assert.equal(resourcesOf({ packaged: false, resourcesPath: '/x', appPath: '/src/apps/omni-desktop' }).profile, '/src/apps/omni-desktop/build/profile')
 })
@@ -198,15 +201,17 @@ const args = process.argv.slice(2)
 const port = args[args.indexOf('--port') + 1]
 const profile = args[args.indexOf('--profile') + 1]
 const host = args[args.indexOf('--host') + 1]
-console.log('booting ' + profile + ' on ' + host)
+const patch = args.includes('--patch') ? args[args.indexOf('--patch') + 1] : 'none'
+console.log('booting ' + profile + ' on ' + host + ' with ' + patch)
 setTimeout(() => console.log('dsh web: http://127.0.0.1:' + port + '/?token=t0k3n'), 50)
 setInterval(() => {}, 1000)
 `)
   const port = await freePort()
   const lines = []
-  const { child, url } = await startDsh({ node: process.execPath, bin, env: process.env, port, cwd: root, log: { write: chunk => lines.push(String(chunk)) } })
+  const { child, url } = await startDsh({ node: process.execPath, bin, env: process.env, port, cwd: root, privacy: '/app/profile/privacy.patch.yml', log: { write: chunk => lines.push(String(chunk)) } })
   assert.equal(url, `http://127.0.0.1:${port}/?token=t0k3n`)
-  assert.match(lines.join(''), /booting omni on 127\.0\.0\.1/)
+  // The privacy overlay goes on every launch, after the person's own profile patch.
+  assert.match(lines.join(''), /booting omni on 127\.0\.0\.1 with \/app\/profile\/privacy\.patch\.yml/)
   await stopDsh(child)
   assert.notEqual(child.exitCode ?? child.signalCode, null)
 })
@@ -420,4 +425,11 @@ test('a preload comes from the launch and stays in the app\'s home; none is no p
   assert.equal(preloadOf({ home, argv: ['x'] }), null)
   assert.equal(dshEnv({ base: {}, home: '/a', preload: 'omni' }).AUTOMAGIK_PRELOAD, 'omni')
   assert.equal('AUTOMAGIK_PRELOAD' in dshEnv({ base: {}, home: '/a' }), false)
+})
+
+test('the shipped privacy overlay switches off everything DSH reports', () => {
+  const text = readFileSync(new URL('../profile/privacy.patch.yml', import.meta.url), 'utf8')
+  // Each row: the id, then disabled: true.
+  const off = [...text.matchAll(/^- id: (\S+)\n  disabled: true$/gm)].map(match => match[1]).sort()
+  assert.deepEqual(off, ['desktop-product-telemetry', 'plugin-package-inventory-deepseek', 'product-analytics', 'session-log-deepseek', 'session-telemetry-otel'])
 })

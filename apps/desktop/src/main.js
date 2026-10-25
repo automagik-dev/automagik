@@ -7,13 +7,13 @@
 // in the system browser, and the frame page never navigates.
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, powerMonitor, session, shell, systemPreferences, WebContentsView } from 'electron'
 import updaterModule from 'electron-updater'
-import { appendFileSync, createWriteStream, mkdirSync } from 'node:fs'
+import { appendFileSync, createWriteStream, mkdirSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
 import { fade, PAGE_IN_CSS } from './motion.js'
 import { noteRestart, restartLine, steps } from './timeline.js'
-import { appHome, automagikHome, busyFileOf, dshEnv, freePort, installProfile, navigationOf, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
+import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, freePort, installProfile, navigationOf, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
 import { pageLayout, tableColor, updateView, WINDOW_ACTIONS, windowChrome } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
 import { awayInstall, LOOK_EVERY_MS, readBusy } from './idle.js'
@@ -162,7 +162,9 @@ async function launch() {
   const binDir = writeTools({ dir: join(home, 'bin'), node: process.execPath, pnpm: resources.pnpm })
   // `--preload=omni|genie` from `omni desktop` / `genie desktop`, kept in Automagik's home.
   const preload = preloadOf({ home: root, argv: process.argv, env: process.env })
-  dsh = await startDsh({ node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload }), port, cwd: home, log, onSpawn: (child) => { dshChild = child; started.mark('dsh spawned') } })
+  // A new anonymous id every launch (dsh.js ANONYMOUS_ID); the privacy overlay always applies.
+  rmSync(join(home, 'dsh', ANONYMOUS_ID), { force: true })
+  dsh = await startDsh({ node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload }), port, cwd: home, log, privacy: resources.privacy, onSpawn: (child) => { dshChild = child; started.mark('dsh spawned') } })
   started.mark('dsh ready')
   dsh.child.once('exit', (code) => {
     if (!quitting) fail(new Error(`dsh stopped (${code}).`))
@@ -177,7 +179,8 @@ async function launch() {
       sandbox: true,
       nodeIntegration: false,
       webviewTag: false,
-      spellcheck: true,
+      // Chromium fetches dictionaries from Google on Linux and Windows; macOS checks spelling itself.
+      spellcheck: process.platform === 'darwin',
     },
   })
   page.setBackgroundColor(tableColor(nativeTheme.shouldUseDarkColors))

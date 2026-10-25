@@ -1,0 +1,17 @@
+# Nothing leaves this computer that the person did not send themselves (the owner: "don't send
+# anything to anyone, even us"). DSH ships these on: the Session log and the plugin list ride
+# along on every DeepSeek request, a rated message uploads its whole Session, and DSH's own
+# desktop analytics. The app starts dsh with this file as a --patch overlay (dsh.js
+# startDsh), which applies after the person's own profile patch, so a switch flipped there
+# cannot turn them back on. DSH's own opt-out is DSH_TELEMETRY_DISABLED (dshEnv), not
+# DO_NOT_TRACK, which no DSH package reads.
+- id: session-log-deepseek
+  disabled: true
+- id: plugin-package-inventory-deepseek
+  disabled: true
+- id: session-telemetry-otel
+  disabled: true
+- id: product-analytics
+  disabled: true
+- id: desktop-product-telemetry
+  disabled: true
