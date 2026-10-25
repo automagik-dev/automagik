@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync } from 'node:fs'
-import { BAR_HEIGHT, pageLayout, RADIUS, TABLE, tableColor, updateView, WINDOW_ACTIONS, windowChrome } from '../src/frame.js'
+import { BAR_HEIGHT, pageLayout, RADIUS, TABLE, tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome } from '../src/frame.js'
 
 test('no system frame on either platform: a transparent frameless window on Linux, a hidden title bar on macOS', () => {
   assert.deepEqual(
@@ -37,29 +37,17 @@ test("dsh's page fills the window below the bar, with no border; its corners rou
   assert.equal(pageLayout({ width: 4, height: 10 }, { platform: 'linux', maximized: false }).bounds.height, 0)
 })
 
-test('the frame page can ask for the window buttons, the update notice and the bar menu, and nothing else', () => {
-  assert.deepEqual([...WINDOW_ACTIONS].sort(), ['close', 'maximize', 'menu', 'minimize', 'update', 'update-later', 'update-page'])
+test('the frame page can ask for the window buttons and the bar menu, and nothing else', () => {
+  assert.deepEqual([...WINDOW_ACTIONS].sort(), ['close', 'maximize', 'menu', 'minimize'])
 })
 
-test('a ready update shows a notice with Restart now and Later; after Later a small Restart button stays', () => {
-  const ready = { version: '2.261024.1', state: 'ready' }
-  assert.deepEqual(updateView(ready), {
-    text: 'Automagik 2.261024.1 is ready.',
-    actions: [{ act: 'update', label: 'Restart now', primary: true }, { act: 'update-later', label: 'Later' }],
-  })
-  assert.deepEqual(updateView(ready, { dismissed: true }).actions, [{ act: 'update', label: 'Restart to update', primary: true }])
-  assert.equal(updateView(ready, { dismissed: true }).text, undefined)
-})
-
-test('a download shows its progress with no button; a deb sees Download and Later; a check answers in a line', () => {
-  // Restart pressed: what it is doing, and that it reopens by itself, with nothing to press.
-  assert.deepEqual(updateView({ version: '3.11.0', state: 'restarting' }), { text: 'Installing Automagik 3.11.0… it reopens by itself', title: 'This takes up to a minute: leave it closed until it reopens', actions: [] })
-  assert.equal(updateView({ version: '3.11.0', state: 'restarting' }, { dismissed: true }).actions.length, 0)
-  assert.deepEqual(updateView({ version: '2.261024.1', state: 'downloading', percent: 42 }), { text: 'Updating · 42%', title: 'Downloading Automagik 2.261024.1', actions: [] })
-  const out = { version: '2.261024.1', state: 'available', page: 'https://github.com/automagik-dev/omni-desktop/releases/tag/v2.261024.1' }
-  assert.deepEqual(updateView(out).actions.map(a => a.act), ['update-page', 'update-later'])
-  assert.deepEqual(updateView(out, { dismissed: true }).actions, [{ act: 'update-page', label: 'Automagik 2.261024.1 is out' }])
-  assert.deepEqual(updateView(null, { message: 'Automagik is up to date' }), { text: 'Automagik is up to date', actions: [] })
-  assert.equal(updateView(null), null)
-  assert.equal(updateView(out, { message: 'Automagik is up to date' }).text, 'Automagik 2.261024.1 is out.')
+test('the update reaches the sidebar in DSH desktop\'s phases, with its version and progress', () => {
+  assert.deepEqual(updatePresentation(null), { phase: 'idle' })
+  assert.deepEqual(updatePresentation(null, { checking: true }), { phase: 'checking' })
+  assert.deepEqual(updatePresentation(null, { failed: true }), { phase: 'error', failure: 'check' })
+  assert.deepEqual(updatePresentation({ version: '3.17.0', state: 'downloading', percent: 41.6 }), { phase: 'downloading', version: '3.17.0', percent: 41 })
+  assert.deepEqual(updatePresentation({ version: '3.17.0', state: 'ready' }, { checking: true }), { phase: 'ready', version: '3.17.0' })
+  assert.deepEqual(updatePresentation({ version: '3.17.0', state: 'available', page: 'https://x' }), { phase: 'available', version: '3.17.0' })
+  // Restart pressed: the sidebar says it installs while the window goes.
+  assert.deepEqual(updatePresentation({ version: '3.17.0', state: 'restarting' }), { phase: 'installing', version: '3.17.0' })
 })

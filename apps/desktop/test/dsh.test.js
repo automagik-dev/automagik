@@ -19,6 +19,13 @@ test('the app keeps everything in one folder under ~/.automagik, apart from a ds
   assert.equal(env.ELECTRON_RUN_AS_NODE, '1')
   assert.equal(env.DO_NOT_TRACK, '1')
   assert.equal(env.OMNI_CLIENT_ID, 'omni-desktop')
+  // Nothing is reported: DSH's own opt-out (it does not read DO_NOT_TRACK), and the CLIs it runs.
+  for (const name of ['DO_NOT_TRACK', 'DSH_TELEMETRY_DISABLED', 'DISABLE_TELEMETRY', 'DISABLE_ERROR_REPORTING', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'OPENUI_TELEMETRY_DISABLED']) assert.equal(env[name], '1', name)
+  assert.equal(env.AUTOMAGIK_PRIVACY_FILE, '/a/desktop/privacy.json')
+  // A share the person switched on drops its own opt-out, and only its own.
+  const sharing = dshEnv({ base: {}, home: '/a', privacy: { 'deepseek-feedback': true } })
+  assert.equal(sharing.DSH_TELEMETRY_DISABLED, undefined)
+  assert.equal(sharing.DISABLE_ERROR_REPORTING, '1')
   // The welcome counts the agents at work there, for an update while the person is away.
   assert.equal(env.AUTOMAGIK_BUSY_FILE, '/a/desktop/busy.json')
   // The person's PATH comes first; the usual tool folders follow (see toolDirs below).
@@ -151,12 +158,12 @@ test('the shipped profile bundles the Bot team first, Omni\'s plugins, the welco
   // vetted version or a reviewed fork's pinned commit, and bundled after Omni's.
   const addons = {
     '@goodandready/dsh-subscriptions': 'github:automagik-genie/dsh-subscriptions#2eff034ede95c9d06ecee290517101e6419c7fee',
-    'dsh-oh-my-claude': 'github:automagik-genie/dsh-oh-my-claude#efe7afc13a0f327f14454a8d6730eb30a351ab0b',
+    'dsh-oh-my-claude': 'github:automagik-genie/dsh-oh-my-claude#c47df2b54a538dcd18dbbca0956a2dcc8ffcdc32',
   }
   assert.deepEqual(Object.keys(profile.dependencies), [...omni, ...Object.keys(addons)])
   for (const [name, spec] of Object.entries(addons)) assert.equal(profile.dependencies[name], spec)
   // A pinned commit names the version it holds, which the build checks after installing it.
-  assert.deepEqual(profile.omni.addonVersions, { '@goodandready/dsh-subscriptions': '0.7.21-omni.1', 'dsh-oh-my-claude': '1.5.6-omni.2' })
+  assert.deepEqual(profile.omni.addonVersions, { '@goodandready/dsh-subscriptions': '0.7.21-omni.1', 'dsh-oh-my-claude': '1.5.6-omni.4' })
   assert.deepEqual(profile.dsh.profile.bundles.filter(name => name.startsWith('@automagik/')), omni)
   assert.deepEqual(profile.dsh.profile.bundles.slice(-2), Object.keys(addons))
   assert.ok(profile.dsh.profile.bundles.includes('@deepseek-ai/dsh-experimental-plugin-market-bundle'))
@@ -198,15 +205,17 @@ const args = process.argv.slice(2)
 const port = args[args.indexOf('--port') + 1]
 const profile = args[args.indexOf('--profile') + 1]
 const host = args[args.indexOf('--host') + 1]
-console.log('booting ' + profile + ' on ' + host)
+const patch = args.includes('--patch') ? args[args.indexOf('--patch') + 1] : 'none'
+console.log('booting ' + profile + ' on ' + host + ' with ' + patch)
 setTimeout(() => console.log('dsh web: http://127.0.0.1:' + port + '/?token=t0k3n'), 50)
 setInterval(() => {}, 1000)
 `)
   const port = await freePort()
   const lines = []
-  const { child, url } = await startDsh({ node: process.execPath, bin, env: process.env, port, cwd: root, log: { write: chunk => lines.push(String(chunk)) } })
+  const { child, url } = await startDsh({ node: process.execPath, bin, env: process.env, port, cwd: root, privacy: '/app/profile/privacy.patch.yml', log: { write: chunk => lines.push(String(chunk)) } })
   assert.equal(url, `http://127.0.0.1:${port}/?token=t0k3n`)
-  assert.match(lines.join(''), /booting omni on 127\.0\.0\.1/)
+  // The privacy overlay goes on every launch, after the person's own profile patch.
+  assert.match(lines.join(''), /booting omni on 127\.0\.0\.1 with \/app\/profile\/privacy\.patch\.yml/)
   await stopDsh(child)
   assert.notEqual(child.exitCode ?? child.signalCode, null)
 })
@@ -421,3 +430,4 @@ test('a preload comes from the launch and stays in the app\'s home; none is no p
   assert.equal(dshEnv({ base: {}, home: '/a', preload: 'omni' }).AUTOMAGIK_PRELOAD, 'omni')
   assert.equal('AUTOMAGIK_PRELOAD' in dshEnv({ base: {}, home: '/a' }), false)
 })
+
