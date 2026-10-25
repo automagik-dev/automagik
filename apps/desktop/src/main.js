@@ -14,7 +14,7 @@ import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
 import { fade, PAGE_IN_CSS } from './motion.js'
 import { noteRestart, restartLine, steps } from './timeline.js'
 import { appHome, automagikHome, busyFileOf, dshEnv, freePort, installProfile, navigationOf, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
-import { pageLayout, tableColor, updateView, WINDOW_ACTIONS, windowChrome } from './frame.js'
+import { pageLayout, tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
 import { awayInstall, LOOK_EVERY_MS, readBusy } from './idle.js'
 import { isReleasePage, startUpdates, updateMode } from './update.js'
@@ -39,9 +39,9 @@ let ready = false
 // The update the title bar shows ({ version, state, percent }), once there is one.
 let update = null
 let updates = null
-let updateDismissed = false
-let updateMessage = null
-let updateMessageTimer = null
+// Check for Updates is under way, or its last check failed (frame.js updatePresentation).
+let checking = false
+let checkFailed = false
 // logs/start.log (timeline.js): a start's steps from the process's own start, and the way out
 // (a quit, or a restart into an update) from the moment it was asked for.
 const startLog = (line) => { try { appendFileSync(join(home, 'logs', 'start.log'), line) } catch {} }
@@ -219,9 +219,9 @@ function watchUpdates() {
     log,
     mode,
     onState: (state) => {
-      if (state.state !== update?.state || state.version !== update?.version) updateDismissed = false
       update = state
-      sendState()
+      checkFailed = false
+      publishUpdate()
     },
   })
   if (mode !== 'auto') return
@@ -240,24 +240,40 @@ function watchUpdates() {
   }, LOOK_EVERY_MS)
 }
 
-// The menu's Check for Updates: what it found shows in the title bar for a few seconds.
-async function checkForUpdates() {
-  if (!updates) return showUpdateMessage(`Updates are off in this copy of ${PRODUCT}`)
-  showUpdateMessage('Checking for updates…', 0)
-  const { result } = await updates.check()
-  if (result === 'latest') showUpdateMessage(`${PRODUCT} is up to date`)
-  else if (result === 'error') showUpdateMessage('Could not check for updates')
-  else {
-    updateDismissed = false
-    showUpdateMessage(null)
-  }
+// The update shows in the page's sidebar (the Bot team's, bottom left, as in DSH's own app),
+// through the page's preload (preload.cjs `omniDesktop.updates`).
+const presentUpdate = () => updatePresentation(update, { checking, failed: checkFailed })
+function publishUpdate() {
+  if (page && !page.webContents.isDestroyed()) page.webContents.send('automagik-updates', presentUpdate())
 }
+const fromPage = event => page !== null && event.sender === page.webContents
+ipcMain.handle('automagik-updates-status', event => (fromPage(event) ? presentUpdate() : null))
+// The sidebar's update button: restart into a downloaded update, open the release page of one
+// this copy cannot install itself (a deb), or check.
+ipcMain.handle('automagik-updates-open', async (event) => {
+  if (!fromPage(event)) return
+  if (updates?.ready) return installUpdate()
+  if (update?.state === 'available' && isReleasePage(update.page)) return void shell.openExternal(update.page)
+  await checkForUpdates({ quiet: true })
+})
 
-function showUpdateMessage(text, ms = 4000) {
-  clearTimeout(updateMessageTimer)
-  updateMessage = text
-  sendState()
-  if (text && ms > 0) updateMessageTimer = setTimeout(() => { updateMessage = null; sendState() }, ms)
+// Check for Updates (the app menu, the title bar's menu, the sidebar): the sidebar shows the
+// check and what it found; asked from a menu, a check that finds nothing says so in a dialog.
+async function checkForUpdates({ quiet = false } = {}) {
+  if (!updates) {
+    if (!quiet) void dialog.showMessageBox(window ?? undefined, { type: 'info', message: `Updates are off in this copy of ${PRODUCT}` })
+    return
+  }
+  checking = true
+  checkFailed = false
+  publishUpdate()
+  const { result } = await updates.check()
+  checking = false
+  checkFailed = result === 'error'
+  publishUpdate()
+  if (quiet) return
+  if (result === 'latest') void dialog.showMessageBox(window ?? undefined, { type: 'info', message: `${PRODUCT} is up to date`, detail: `Version ${app.getVersion()}` })
+  else if (result === 'error') void dialog.showMessageBox(window ?? undefined, { type: 'warning', message: 'Could not check for updates', detail: 'Check your connection and try again.' })
 }
 
 // The title bar's menu, on a right click; on macOS the app menu has the same entry.
@@ -267,17 +283,15 @@ function barMenu() {
 
 // Restart into the downloaded update: dsh is stopped first, as on any quit. macOS then checks
 // the new app for up to a minute before it opens it, with nothing on screen, and the app opened
-// again meanwhile cancels the install. So the title bar says so before the window goes, and on
-// macOS a notification goes on saying it.
-// Long enough to read "Installing… it reopens by itself" in the title bar; then the window goes
-// and the notification keeps saying it while macOS swaps the app.
-const RESTART_NOTICE_MS = 1200
+// again meanwhile cancels the install. So the sidebar says "Installing" before the window goes,
+// and on macOS a notification goes on saying it while macOS swaps the app.
+const RESTART_NOTICE_MS = 600
 function installUpdate({ away = false } = {}) {
   if (!updates?.ready || quitting) return
   quitting = true
   const out = leave(away ? 'update while away' : 'update restart')
   update = { ...update, state: 'restarting' }
-  sendState()
+  publishUpdate()
   if (process.platform === 'darwin' && Notification.isSupported()) {
     new Notification({ title: `Updating ${PRODUCT}`, body: `${PRODUCT} reopens by itself in about a minute. Leave it closed until then.`, silent: true }).show()
   }
@@ -357,15 +371,12 @@ function layout() {
 function sendState(extra = {}) {
   if (!window || window.webContents.isLoading()) return
   const maximized = window.isMaximized() || window.isFullScreen()
-  window.webContents.send('omni-window-state', { maximized, ready, update: updateView(update, { dismissed: updateDismissed, message: updateMessage }), ...extra })
+  window.webContents.send('omni-window-state', { maximized, ready, ...extra })
 }
 
 ipcMain.on('omni-window', (event, action) => {
   if (!window || event.sender !== window.webContents || !WINDOW_ACTIONS.has(action)) return
-  if (action === 'update') installUpdate()
-  else if (action === 'update-later') { updateDismissed = true; sendState() }
-  else if (action === 'update-page') { if (isReleasePage(update?.page)) void shell.openExternal(update.page) }
-  else if (action === 'menu') barMenu().popup({ window })
+  if (action === 'menu') barMenu().popup({ window })
   else if (action === 'minimize') window.minimize()
   else if (action === 'maximize') window.isMaximized() ? window.unmaximize() : window.maximize()
   else window.close()
