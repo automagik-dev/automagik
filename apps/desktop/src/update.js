@@ -203,7 +203,9 @@ export function startUpdates({ updater, current, platform, env, log, onState, mo
         return { result: 'found', version: update.version }
       }
       pending = update.version
-      updater.setFeedURL({ provider: 'generic', url: update.url })
+      // GitHub's download host answers a request for several ranges at once with 501, which
+      // costs the whole app instead of the blocks that changed: ask for them one range at a time.
+      updater.setFeedURL({ provider: 'generic', url: update.url, useMultipleRangeRequest: false })
       await updater.checkForUpdates()
       quickRetries = 0
       return { result: 'found', version: update.version }

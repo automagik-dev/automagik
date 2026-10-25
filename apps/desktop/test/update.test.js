@@ -83,7 +83,8 @@ test('a check points electron-updater at the chosen release, reports the downloa
   updates.install()
   assert.deepEqual(updater.installs, [])
   assert.deepEqual(await updates.check(), { result: 'found', version: '2.261022.1' })
-  assert.deepEqual(updater.feeds, [{ provider: 'generic', url: 'https://github.com/automagik-dev/automagik/releases/download/v2.261022.1/' }])
+  // One range per request: GitHub answers several at once with 501, and the update would come whole.
+  assert.deepEqual(updater.feeds, [{ provider: 'generic', url: 'https://github.com/automagik-dev/automagik/releases/download/v2.261022.1/', useMultipleRangeRequest: false }])
   updater.emit('download-progress', { percent: 41.6 })
   updater.emit('update-downloaded', { version: '2.261022.1' })
   assert.deepEqual(states, [{ version: '2.261022.1', state: 'downloading', percent: 42 }, { version: '2.261022.1', state: 'ready' }])
