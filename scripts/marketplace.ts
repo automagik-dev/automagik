@@ -1,13 +1,15 @@
 #!/usr/bin/env bun
 /**
  * Automagik's DSH plugin market index (marketplace/automagik.json, format 1): this repository's
- * plugins, each a git source pinned to a release commit with the plugin's folder.
+ * plugins, each a git source pinned to a release commit with the plugin's folder, and the outside
+ * plugins Automagik vetted (VETTED), each pinned to the commit that was reviewed.
  *
  *   bun scripts/marketplace.ts check        DSH's own parser, then every entry proven against this repository
  *   bun scripts/marketplace.ts pin <ref>    list the plugins at <ref> (a release tag), at its version
  *
- * `check` proves that each pinned commit is reachable from HEAD and holds, at the entry's path,
- * a package.json with the entry's name and version: a market installs exactly that commit.
+ * `check` proves that each pinned commit of this repository is reachable from HEAD and holds, at
+ * the entry's path, a package.json with the entry's name and version: a market installs exactly
+ * that commit. A vetted plugin's commit is proven against its fork by dsh-marketplace's check.
  * automagik-dev/dsh-marketplace reads this file at each release (`v<version>`) for the titles,
  * categories and paths, and lists the plugins at that release's commit.
  */
@@ -20,6 +22,11 @@ import { VERSION } from './version';
 export const REPO_URL = 'https://github.com/automagik-dev/automagik';
 export const INDEX_PATH = join(import.meta.dir, '..', 'marketplace', 'automagik.json');
 export const INDEX_URL = 'https://raw.githubusercontent.com/automagik-dev/automagik/main/marketplace/automagik.json';
+/** The outside plugins' repositories this index may list: forks Automagik reviewed. */
+export const VETTED = [
+  'https://github.com/automagik-genie/dsh-oh-my-claude',
+  'https://github.com/automagik-genie/dsh-subscriptions',
+];
 
 interface GitSource {
   type: 'git';
@@ -43,6 +50,8 @@ interface Index {
 
 const isOurs = (source: IndexVersion['source']): source is GitSource =>
   source.type === 'git' && source.url.replace(/\.git$/, '') === REPO_URL;
+const isVetted = (source: IndexVersion['source']): source is GitSource =>
+  source.type === 'git' && VETTED.includes(source.url.replace(/\.git$/, ''));
 
 function git(cwd: string, args: string[], timeout?: number): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout }).trim();
@@ -75,8 +84,9 @@ export function checkIndex(value: unknown, repoDir: string): string[] {
     if (plugin.versions.length === 0) problems.push(`${plugin.name}: lists no version`);
     for (const entry of plugin.versions) {
       const at = `${plugin.name}@${entry.version}`;
+      if (isVetted(entry.source)) continue;
       if (!isOurs(entry.source)) {
-        problems.push(`${at}: every source is a commit of ${REPO_URL}`);
+        problems.push(`${at}: every source is a commit of ${REPO_URL} or of a vetted fork`);
         continue;
       }
       const { commit, path = '.' } = entry.source;
