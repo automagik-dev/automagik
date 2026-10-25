@@ -169,6 +169,16 @@ test('an own chat\'s approval stays with DSH and is listed while it waits', asyn
   assert.equal(await host.askApproval('elsewhere'), 'from-dsh')
 })
 
+test('the team\'s own lookups are not asked about; a message to another Bot still is', async (t) => {
+  const host = await start()
+  t.after(host.stop)
+  // A Claude Code chat reaches the team tools through its MCP bridge, which asks for each call.
+  assert.equal(await host.askApproval('a', { toolName: 'mcp__dsh__list_bots', reason: '{}' }), 'allowed-once')
+  assert.equal(await host.askApproval('a', { toolName: 'read_group_chat' }), 'allowed-once')
+  assert.deepEqual((await host.call('state', {})).value.work.approvals, [])
+  assert.equal(await host.askApproval('a', { toolName: 'mcp__dsh__message_bot', reason: '{"to":"Genie"}' }), 'from-dsh')
+})
+
 test('a member still going keeps its turn; one quiet for the whole wait is missed, and a later [PASS] stays out of the group', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const host = await start()
