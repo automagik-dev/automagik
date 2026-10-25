@@ -162,7 +162,10 @@ export function install(rt) {
   // DSH's selectModel also saves the selection as the profile default model, in the
   // background. A Bot's model is its own, so the user's default is written back after
   // it. Selections run one at a time and wait for the write-back: profile writes land in
-  // submission order, so the next one reads the user's default, not a Bot's.
+  // submission order, so the next one reads the user's default, not a Bot's. A write-back
+  // that fails while the default still reads as the user's lost nothing: inside DSH's
+  // plugin reload every profile write is refused ("HMR transactions cannot be nested"),
+  // DSH's own save of the selection included, so the default never moved.
   let selecting = Promise.resolve()
   function selectSessionModel(sessionId, { provider, model, reasoningEffort }) {
     const run = selecting.then(async () => {
@@ -174,7 +177,9 @@ export function install(rt) {
       })
       const saved = result?.selected ?? { provider, model, ...(reasoningEffort === undefined ? {} : { reasoningEffort }) }
       if (before?.provider && before?.model && !sameSelection(before, saved)) {
-        await defaults.saveSelection(before).catch(error => rt.warn('ds-bot: the default model was not restored: %s', error))
+        await defaults.saveSelection(before).catch((error) => {
+          if (!sameSelection(defaults.currentSelection(), before)) rt.warn('ds-bot: the default model was not restored: %s', error)
+        })
       }
       return result
     })

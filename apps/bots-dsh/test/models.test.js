@@ -92,6 +92,42 @@ test('choosing a Bot model leaves the user\'s DSH default model as it was', asyn
   assert.deepEqual(writes, ['deepseek/deepseek-v4-pro', 'ollama/kimi-k3', 'deepseek/deepseek-v4.1-flash', 'ollama/kimi-k3', 'ollama/kimi-k3'])
 })
 
+test('a selection during DSH\'s plugin reload, where every profile write is refused, warns only when the default moved', async () => {
+  // Inside the reload, DSH's own save of the selection is refused as the write-back is.
+  const nested = () => Promise.reject(new Error('HMR transactions cannot be nested'))
+  const setup = (save) => {
+    const warnings = []
+    let current = { provider: 'ollama', model: 'kimi-k3' }
+    const defaults = { currentSelection: () => ({ ...current }), saveSelection: next => save(next, value => { current = value }) }
+    const ctx = {
+      llm: { listProviders: () => [], listModels: async () => [] },
+      get: name => (name === 'agentDefaultModel' ? defaults : undefined),
+      sessionController: { selectModel: async ({ provider, model }) => { void defaults.saveSelection({ provider, model }).catch(() => {}) } },
+    }
+    const rt = { ctx, state: { bots: {} }, warn: (...args) => warnings.push(args) }
+    install(rt)
+    return { rt, warnings, current: () => current }
+  }
+
+  const refused = setup(nested)
+  await refused.rt.selectSessionModel('s1', { provider: 'deepseek', model: 'deepseek-v4-pro' })
+  assert.deepEqual(refused.current(), { provider: 'ollama', model: 'kimi-k3' })
+  assert.deepEqual(refused.warnings, [])
+
+  // DSH's save landed and only the write-back was refused: the user's default is lost.
+  let first = true
+  const moved = setup((next, set) => {
+    if (!first) return nested()
+    first = false
+    set(next)
+    return Promise.resolve()
+  })
+  await moved.rt.selectSessionModel('s1', { provider: 'deepseek', model: 'deepseek-v4-pro' })
+  assert.deepEqual(moved.current(), { provider: 'deepseek', model: 'deepseek-v4-pro' })
+  assert.equal(moved.warnings.length, 1)
+  assert.match(moved.warnings[0][0], /default model was not restored/)
+})
+
 test('a Bot with no model yet changes nothing until the user picks one', async () => {
   const rt = runtime({ provider: 'ollama', model: 'kimi-k3' })
   assert.equal(await rt.desiredModel({ appliedModel: 'deepseek/deepseek-v4-pro' }), undefined)

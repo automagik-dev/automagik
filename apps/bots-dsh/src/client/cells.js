@@ -20,7 +20,7 @@ import { partIndexOf, withBtwRows } from './btw-model.js'
 import { layoutOf, thinkingShown } from './themes.js'
 import { hasCanvas, splitCanvases } from './canvas-text.js'
 import { CanvasSlot } from './canvas-slot.js'
-import { TaskCard } from './task-card.js'
+import { TaskCard, endLabel } from './task-card.js'
 import { toolCards } from './extend.js'
 
 export { clockLabel }
@@ -570,11 +570,11 @@ export function TriggerCell({ node, sessionId, useRoster, useSessions, useTurnCl
       if (source.role === 'report') {
         return h(GroupEvent, { prefix: t('Replies from'), room: roster.roomsById[source.roomId], name: t('a group chat'), roster, actions })
       }
-      // A task this Bot started under Tasks came back: the line opens it.
+      // A task this Bot started under Tasks came back: the line says how it ended and opens it.
       if (source.role === 'task-done') {
         const title = /^\[Task "(.*)" finished/.exec(contentText(data.content))?.[1] ?? t('a task')
         return h('div', { className: 'bt-event bt-task-done' },
-          h(TasksIcon, { size: 15 }), h('span', null, t('Task finished')),
+          h(TasksIcon, { size: 15 }), h('span', null, endLabel(roster.tasks?.[source.taskSessionId])),
           source.taskSessionId ? h('button', { type: 'button', className: 'bt-task-link', onClick: () => actions.openSession(source.taskSessionId) }, title) : h('span', null, title))
       }
       // A request carried on keeps its role, but its message line was shown already.
