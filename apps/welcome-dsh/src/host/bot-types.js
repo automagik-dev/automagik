@@ -1,8 +1,11 @@
 // The Bot types the team step offers, as this DSH has them. Omni comes as three DSH
 // plugins: the desktop app ships them, a plain DSH installs them when Omni is switched on,
-// through DSH's own plugin manager (the same installBundle its Plugins page runs). What a
-// type starts with (its model, plugins, tools, skills, folder and permissions) is read
-// from the live services where they run, and from this list where they do not yet.
+// through DSH's own plugin manager (the same installBundle its Plugins page runs). Genie
+// is one plugin (@automagik/genie-dsh), installed the same way when Genie is switched on,
+// in the desktop app too. What a type starts with (its model, plugins, tools, skills,
+// folder and permissions) is read from the live services where they run, and from this
+// list where they do not yet.
+import { execFile } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { BotTypePayload, parse } from './payloads.js'
 
@@ -21,6 +24,27 @@ export const OMNI_PLUGINS = Object.freeze([
   { name: '@automagik/omni-channels-dsh', dir: 'omni-channels-dsh', from: 'omni', title: 'Omni channels', what: 'Your channels and the chats on them' },
   { name: '@automagik/omni-canvas-dsh', dir: 'omni-canvas-dsh', from: 'omni', title: 'Omni canvases', what: 'Live views drawn in the chat' },
 ])
+
+// The Genie plugin this welcome installs: the genie repository at a pinned commit, by hand
+// in package.json (automagik.genie). It makes the Genie Bot itself, the first time it runs.
+export const GENIE_RELEASE = Object.freeze({ ...PKG.automagik.genie })
+export const GENIE_PLUGIN = Object.freeze({ name: '@automagik/genie-dsh', title: 'Genie', what: 'Genie, and a Task for each wish' })
+export const GENIE_KIND = 'genie'
+export const genieSpec = (genie = GENIE_RELEASE) => `git+${genie.repository.replace(/\.git$/, '')}.git#${genie.commit}&path:/${genie.path}`
+
+const succeeds = (command, args) => new Promise((resolve) => {
+  execFile(command, args, { timeout: 5000 }, error => resolve(error === null))
+})
+/**
+ * Why this machine cannot take Genie, or null. Genie comes from a git source and works in
+ * git, so it needs git. On macOS /usr/bin/git only opens Apple's installer until the command
+ * line tools are there, so those are asked for before git is ever run.
+ */
+export async function gitProblem({ platform = process.platform, run = succeeds } = {}) {
+  if (platform === 'darwin' && !(await run('xcode-select', ['-p']))) return 'Genie needs Apple\'s command line tools. Open Terminal and run this one line: xcode-select --install. Then power Genie on again.'
+  if (!(await run('git', ['--version']))) return 'Genie needs git. Install git, then power Genie on again.'
+  return null
+}
 
 /** The version an install of `plugin` brings. */
 export const versionOf = (plugin, version = PKG.version, omni = OMNI_RELEASE) => (plugin.from === 'omni' ? omni.version : version)
@@ -79,10 +103,12 @@ const resultProblem = (result) => {
   return null
 }
 
-export function createBotTypeActions(ctx, { team, omniProjectOf }) {
+export function createBotTypeActions(ctx, { team, omniProjectOf, checkGit = gitProblem }) {
   const manager = () => service(ctx, 'pluginManager')
   // `{ phase, current, done, error, restart }` once an install started.
   let job = null
+  // Genie's own: `{ phase, error, restart }`.
+  let genieJob = null
 
   async function bundles() {
     const rows = await quietly(() => manager()?.listBundles?.(), null)
@@ -123,27 +149,27 @@ export function createBotTypeActions(ctx, { team, omniProjectOf }) {
     }
   }
 
-  async function runInstall() {
+  // One plugin in place and on: left alone when it is, switched on when it is off, else
+  // installed from `target`. Says whether it was already there, and whether DSH must restart.
+  async function ensure(plugin, rows, target) {
+    const row = rowOf(rows, plugin)
+    const present = row !== undefined && row.availability !== 'missing'
+    if (present && row.enabled !== false) return { there: true, restart: false }
     const service = manager()
+    const result = present ? await service.setBundleEnabled(row.name, true) : await service.installBundle(target.spec, { enabled: true, ...target.options })
+    const problem = resultProblem(result)
+    if (problem !== null) throw new Error(`${plugin.title}: ${problem}`)
+    return { there: false, restart: result.application === 'restart-required' }
+  }
+
+  async function runInstall() {
     const rows = await bundles() ?? []
     const ownSource = rows.find(bundle => bundle.name === PKG.name)?.source
     for (const plugin of OMNI_PLUGINS) {
       const row = rowOf(rows, plugin)
-      const present = row !== undefined && row.availability !== 'missing'
-      if (present && row.enabled !== false) {
-        job.done.push(plugin.name)
-        continue
-      }
-      job.current = plugin.name
-      let result
-      if (present) result = await service.setBundleEnabled(row.name, true)
-      else {
-        const target = installTargetOf(plugin, ownSource)
-        result = await service.installBundle(target.spec, { enabled: true, ...target.options })
-      }
-      const problem = resultProblem(result)
-      if (problem !== null) throw new Error(`${plugin.title}: ${problem}`)
-      if (result.application === 'restart-required') job.restart = true
+      if (row === undefined || row.availability === 'missing' || row.enabled === false) job.current = plugin.name
+      const { restart } = await ensure(plugin, rows, installTargetOf(plugin, ownSource))
+      if (restart) job.restart = true
       job.done.push(plugin.name)
     }
     job.current = null
@@ -158,6 +184,55 @@ export function createBotTypeActions(ctx, { team, omniProjectOf }) {
     void runInstall().catch((error) => {
       ctx.logger?.warn?.('omni-ai: installing the Omni plugins failed: %s', error?.message ?? error)
       Object.assign(running, { phase: 'failed', current: null, error: String(error?.message ?? error) })
+    })
+  }
+
+  // Ready: the Genie Bot is on the team, which the plugin makes once it runs here.
+  async function genieStatus() {
+    const install = genieJob === null ? null : { ...genieJob }
+    const rows = await bundles()
+    const row = rows?.find(bundle => bundle.name === GENIE_PLUGIN.name)
+    const rt = team()
+    if (rt !== undefined) await quietly(() => rt.load?.(), undefined)
+    const bot = rt === undefined ? undefined : Object.values(rt.state?.bots ?? {}).find(entry => entry.kind === GENIE_KIND)
+    return {
+      plugin: {
+        name: GENIE_PLUGIN.name,
+        title: GENIE_PLUGIN.title,
+        what: GENIE_PLUGIN.what,
+        version: row?.version ?? GENIE_RELEASE.version,
+        installed: rows === null ? null : row !== undefined && row.availability !== 'missing',
+        enabled: row?.enabled ?? null,
+      },
+      ready: bot !== undefined,
+      bot: bot === undefined ? null : { id: bot.id, name: bot.name },
+      canInstall: typeof manager()?.installBundle === 'function',
+      install,
+    }
+  }
+
+  // Genie runs on the Bot team, so a plain DSH that lacks it gets it first, from where the
+  // Omni install would take it (a peer pnpm could not find on npm otherwise).
+  async function runGenieInstall() {
+    const problem = await checkGit()
+    if (problem !== null) throw new Error(problem)
+    const rows = await bundles() ?? []
+    const ownSource = rows.find(bundle => bundle.name === PKG.name)?.source
+    const [botTeam] = OMNI_PLUGINS
+    const teamStep = await ensure(botTeam, rows, installTargetOf(botTeam, ownSource))
+    const genieStep = await ensure(GENIE_PLUGIN, rows, { spec: genieSpec(), options: {} })
+    genieJob.restart = teamStep.restart || genieStep.restart
+    genieJob.phase = genieJob.restart ? 'restart' : 'done'
+  }
+
+  function startGenieInstall() {
+    if (genieJob?.phase === 'installing') return
+    if (typeof manager()?.installBundle !== 'function') throw refused('This DSH has no plugin manager to install Genie with. Add @automagik/genie-dsh on its Plugins page, then come back.')
+    genieJob = { phase: 'installing', error: null, restart: false }
+    const running = genieJob
+    void runGenieInstall().catch((error) => {
+      ctx.logger?.warn?.('omni-ai: installing Genie failed: %s', error?.message ?? error)
+      Object.assign(running, { phase: 'failed', error: String(error?.message ?? error) })
     })
   }
 
@@ -232,6 +307,11 @@ export function createBotTypeActions(ctx, { team, omniProjectOf }) {
     async 'omni-plugins-install'() {
       startInstall()
       return status()
+    },
+    'genie-plugin': () => genieStatus(),
+    async 'genie-plugin-install'() {
+      startGenieInstall()
+      return genieStatus()
     },
     async 'bot-type'(payload) {
       const fields = parse(BotTypePayload, payload)

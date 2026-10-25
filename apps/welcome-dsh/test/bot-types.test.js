@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { install } from '../src/host/endpoint.js'
-import { OMNI_PLUGINS, OMNI_RELEASE, OMNI_TOOLS, installTargetOf, versionOf } from '../src/host/bot-types.js'
+import { GENIE_PLUGIN, GENIE_RELEASE, OMNI_PLUGINS, OMNI_RELEASE, OMNI_TOOLS, genieSpec, gitProblem, installTargetOf, versionOf } from '../src/host/bot-types.js'
 import { fakeContext } from './fake-ctx.js'
 
 const PKG = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
@@ -28,7 +28,7 @@ function fakeManager({ bundles = [{ name: PKG.name, availability: 'profile', ena
     async installBundle(spec, options) {
       calls.push(['install', spec, options])
       if (gate.held) await new Promise((resolve) => { release = resolve })
-      const plugin = OMNI_PLUGINS.find(row => spec.includes(row.dir) || spec.startsWith(row.name))
+      const plugin = spec.includes('genie-dsh') ? GENIE_PLUGIN : OMNI_PLUGINS.find(row => spec.includes(row.dir) || spec.startsWith(row.name))
       const result = answer(plugin)
       if (result.application === 'applied' || result.application === 'restart-required') bundles.push({ name: plugin.name, availability: 'profile', enabled: true, version: PKG.version })
       return result
@@ -42,9 +42,9 @@ function fakeManager({ bundles = [{ name: PKG.name, availability: 'profile', ena
   return manager
 }
 
-function host({ manager, team, services = {} } = {}) {
+function host({ manager, team, services = {}, checkGit = async () => null } = {}) {
   const fake = fakeContext({ entries: { 'omni-ai': {} }, services: { ...(manager ? { pluginManager: manager } : {}), ...(team ? { omniTeam: team } : {}), ...services } })
-  const { handle } = install(fake.ctx, { checkClaude: noClaude })
+  const { handle } = install(fake.ctx, { checkClaude: noClaude, checkGit })
   return { ...fake, handle }
 }
 const value = async (fake, endpoint, payload) => {
@@ -219,4 +219,65 @@ test('the tools Omni lists are the ones its plugins register', { skip: omniCheck
   for (const plugin of OMNI_PLUGINS.filter(row => row.from === 'omni')) {
     assert.equal(JSON.parse(readFileSync(new URL(`${plugin.dir}/package.json`, apps), 'utf8')).version, OMNI_RELEASE.version)
   }
+})
+
+const settleGenie = async (fake) => {
+  for (let i = 0; i < 50; i++) {
+    const status = await value(fake, 'genie-plugin')
+    if (status.install?.phase !== 'installing') return status
+    await new Promise(resolve => setTimeout(resolve, 1))
+  }
+  throw new Error('the Genie install never finished')
+}
+
+test('Genie installs from the pinned genie commit, after the Bot team when a plain DSH lacks it', async () => {
+  assert.equal(genieSpec(), `git+https://github.com/automagik-dev/genie.git#${GENIE_RELEASE.commit}&path:/plugins/genie-dsh`)
+  assert.match(GENIE_RELEASE.commit, /^[0-9a-f]{40}$/)
+  const manager = fakeManager()
+  const fake = host({ manager })
+  const before = await value(fake, 'genie-plugin')
+  assert.equal(before.ready, false)
+  assert.equal(before.plugin.installed, false)
+  assert.equal(before.plugin.version, GENIE_RELEASE.version)
+  await value(fake, 'genie-plugin-install')
+  const after = await settleGenie(fake)
+  assert.equal(after.install.phase, 'done')
+  assert.deepEqual(manager.calls, [
+    ['install', 'link:/home/someone/automagik/apps/bots-dsh', { enabled: true }],
+    ['install', genieSpec(), { enabled: true }],
+  ])
+})
+
+test('Genie is ready once its Bot is on the team; a team already here is left alone', async () => {
+  const bundles = [
+    { name: PKG.name, availability: 'profile', enabled: true, source: OWN_LINK, version: PKG.version },
+    { name: '@automagik/bots-dsh', availability: 'profile', enabled: true, version: PKG.version },
+  ]
+  const manager = fakeManager({ bundles })
+  const team = { state: { bots: {} }, async load() {} }
+  const fake = host({ manager, team })
+  await value(fake, 'genie-plugin-install')
+  await settleGenie(fake)
+  assert.deepEqual(manager.calls, [['install', genieSpec(), { enabled: true }]])
+  assert.equal((await value(fake, 'genie-plugin')).ready, false)
+  team.state.bots.g1 = { id: 'g1', name: 'Genie', kind: 'genie' }
+  const ready = await value(fake, 'genie-plugin')
+  assert.equal(ready.ready, true)
+  assert.deepEqual(ready.bot, { id: 'g1', name: 'Genie' })
+})
+
+test('without git, Genie\'s install fails with what to run, before anything is installed', async () => {
+  const manager = fakeManager()
+  const fake = host({ manager, checkGit: () => gitProblem({ platform: 'darwin', run: async () => false }) })
+  await value(fake, 'genie-plugin-install')
+  const status = await settleGenie(fake)
+  assert.equal(status.install.phase, 'failed')
+  assert.match(status.install.error, /xcode-select --install/)
+  assert.deepEqual(manager.calls, [])
+  assert.match(await gitProblem({ platform: 'linux', run: async () => false }), /needs git/)
+  assert.equal(await gitProblem({ platform: 'darwin', run: async () => true }), null)
+  // On macOS git itself is never run without the command line tools.
+  const ran = []
+  await gitProblem({ platform: 'darwin', run: async (command) => { ran.push(command); return false } })
+  assert.deepEqual(ran, ['xcode-select'])
 })

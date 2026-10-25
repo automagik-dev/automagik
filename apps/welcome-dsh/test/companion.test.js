@@ -224,14 +224,15 @@ function withModels(team, served) {
   return team
 }
 
-test('Connect AI finished with an AI on gives the companion and the Omni Bot a model', async () => {
+test('Connect AI finished with an AI on gives the companion, the Omni Bot and the Genie Bot a model', async () => {
   const team = withModels(fakeTeam({ mainName: 'Pip' }), ['claude-code/opus'])
   team.state.bots.omni = { id: 'omni', name: 'Omni', kind: 'omni' }
+  team.state.bots.genie = { id: 'genie', name: 'Genie', kind: 'genie' }
   team.state.bots.other = { id: 'other', name: 'Writer' }
   const fake = host({ team })
   const reply = await fake.handle('done', { stepId: 'omni-connect-ai', connected: true })
   assert.deepEqual(reply.value, { connectAiDone: true })
-  assert.deepEqual(team.calls, [['updateBot', 'main', { model: 'claude-code/opus' }], ['updateBot', 'omni', { model: 'claude-code/opus' }]])
+  assert.deepEqual(team.calls, [['updateBot', 'main', { model: 'claude-code/opus' }], ['updateBot', 'omni', { model: 'claude-code/opus' }], ['updateBot', 'genie', { model: 'claude-code/opus' }]])
   assert.equal(team.state.bots.other.model, undefined)
 })
 

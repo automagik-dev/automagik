@@ -12,8 +12,9 @@ import { Stage, reducedMotion, useFinish, useGate, useGlitch } from './stage.js'
 // (a plain DSH; the desktop app ships them) it installs them through DSH's plugin manager,
 // then it looks for an Omni to connect (the channels plugin's omni-discover) and offers
 // what it found, or the ways to reach one. A link made here completes the Connect Omni step
-// by itself; anything the card cannot finish waits for that step. Genie has no DSH plugin
-// yet, and says so.
+// by itself; anything the card cannot finish waits for that step. Genie's power button
+// installs its plugin (@automagik/genie-dsh, with the Bot team under it in a plain DSH), which
+// puts the Genie Bot on the team.
 
 export const WAKE_MS = 1100
 export const LOOK_MS = 1800
@@ -94,6 +95,45 @@ export async function powerOn({ show, signal, omniAi = call, omniUi = callOmniUi
   return end(omnis.length > 0 ? 'found' : 'none', { omnis, sandbox: found?.sandbox ?? null })
 }
 
+/**
+ * Pressing Genie's power button: waking, installing ({ genie }), starting ({ genie }:
+ * installed, coming up), then ready ({ bot }) once the Genie Bot is on the team, restart
+ * ({ genie }) or failed ({ message }). Returns the last phase.
+ */
+export async function geniePowerOn({ show, signal, genieAi = call, wait = sleep, quick = reducedMotion() }) {
+  const check = () => { if (signal?.aborted) throw abortError() }
+  const end = (phase, detail) => {
+    check()
+    show(phase, detail)
+    return phase
+  }
+  show('waking')
+  await wait(quick ? 0 : WAKE_MS, signal)
+  check()
+  let genie = await genieAi('genie-plugin')
+  check()
+  if (genie.ready) return end('ready', { bot: genie.bot })
+  show('installing', { genie })
+  if (genie.install?.phase !== 'installing') {
+    try {
+      genie = await genieAi('genie-plugin-install')
+    } catch (error) {
+      return end('failed', { message: error.message })
+    }
+  }
+  let polls = 0
+  while (!genie.ready && (genie.install?.phase === 'installing' || (genie.install?.phase === 'done' && polls < READY_POLLS))) {
+    check()
+    show(genie.install?.phase === 'installing' ? 'installing' : 'starting', { genie })
+    await wait(POLL_MS, signal)
+    genie = await genieAi('genie-plugin')
+    if (genie.install?.phase !== 'installing') polls += 1
+  }
+  if (genie.ready) return end('ready', { bot: genie.bot })
+  if (genie.install?.phase === 'failed') return end('failed', { message: genie.install.error })
+  return end('restart', { genie })
+}
+
 const onMac = (scope = globalThis) => /Mac/i.test(scope.navigator?.platform ?? '') || /Mac OS X/.test(scope.navigator?.userAgent ?? '')
 const hostOf = (url) => {
   try {
@@ -152,13 +192,13 @@ export function readRemote(text) {
 const TYPE_LABEL = { 'whatsapp-baileys': 'WhatsApp', 'whatsapp-cloud': 'WhatsApp Business', slack: 'Slack', telegram: 'Telegram', discord: 'Discord', gupshup: 'Gupshup' }
 export const channelLabel = channel => TYPE_LABEL[channel.type] ?? channel.type ?? 'Channel'
 
-// Genie's setup, until it has a DSH plugin to read it from.
+// Genie's setup (genie-dsh in the genie repository).
 export const GENIE_TYPE = {
   type: 'genie',
   groups: [
-    { id: 'plugins', label: 'Plugins', rows: [{ id: 'genie', label: 'Genie', detail: 'Not released for DSH yet' }] },
-    { id: 'tools', label: 'Tools', rows: [{ id: 'threads', label: 'Threads of itself', detail: 'One per wish, under Genie' }, { id: 'computer', label: 'Shell and files', detail: 'In its project' }] },
-    { id: 'setup', label: 'Setup', rows: [{ id: 'folder', label: 'Folder', detail: 'Its own, per wish' }] },
+    { id: 'plugins', label: 'Plugins', rows: [{ id: 'genie', label: 'Genie', detail: 'Installs when Genie powers on' }] },
+    { id: 'tools', label: 'Tools', rows: [{ id: 'threads', label: 'A Task per wish', detail: 'Under Genie, with its report in Genie\'s chat' }, { id: 'computer', label: 'Shell, files and git', detail: 'In the wish\'s own copy of the project' }] },
+    { id: 'setup', label: 'Setup', rows: [{ id: 'folder', label: 'Folder', detail: 'Its own, in your team workspace' }] },
   ],
 }
 
@@ -217,10 +257,17 @@ export function omniFaceOf(phase) {
 const portraitOf = phase => (CLAY_OMNI ? omniFace(omniFaceOf(phase)) : PORTRAIT_SVG)
 
 /**
- * Genie's face on its card. Genie has no DSH plugin yet, so it never works here: asleep
- * until the person adds it, then pleased to be asked along.
+ * Genie's face on its card, by its box's phase: asleep while powered off, focused while it
+ * wakes and installs, delighted once on the team, curious when a restart waits, sad when
+ * the install failed.
  */
-export const genieExpressionOf = chosen => (chosen ? 'pleased' : 'asleep')
+export function genieExpressionOf(phase) {
+  if (phase === 'asleep') return 'asleep'
+  if (phase === 'failed') return 'sad'
+  if (phase === 'ready') return 'delighted'
+  if (['waking', 'installing', 'starting'].includes(phase)) return 'focused'
+  return 'curious'
+}
 const GeniePet = ({ expression }) => h('div', { className: 'oai-genie-pet oai-clay oai-clay-genie', 'data-face': expression, style: { '--oai-face-at': faceAt(expression) } })
 
 const PowerIcon = () => h('svg', { viewBox: '0 0 24 24', width: 18, height: 18, 'aria-hidden': true },
@@ -252,6 +299,27 @@ export function statusOf(phase, detail) {
     restart: 'Installed · restart DSH to start it',
     failed: 'Could not install Omni',
   }[phase] ?? ''
+}
+
+// Genie's status line, inside its box.
+export function genieStatusOf(phase, detail) {
+  if (phase === 'asleep') return detail?.removed ? 'Powered off · not on your team' : 'Powered off'
+  return {
+    waking: 'Waking up…',
+    installing: 'Installing Genie…',
+    starting: 'Starting Genie in this DSH…',
+    ready: 'Ready for a wish',
+    restart: 'Installed · restart DSH to start it',
+    failed: 'Could not install Genie',
+  }[phase] ?? ''
+}
+// Genie's lights: power, its plugin, and the Genie Bot on the team.
+export function genieLightsOf(phase) {
+  return [
+    ['power', phase === 'asleep' ? 'off' : 'on'],
+    ['plugins', phase === 'ready' ? 'on' : ['installing', 'starting'].includes(phase) ? 'busy' : phase === 'failed' || phase === 'restart' ? 'warn' : 'off'],
+    ['team', phase === 'ready' ? 'on' : 'off'],
+  ]
 }
 
 // The box's three lights: power, its plugins, its connection. Waking lights them one by one;
@@ -339,20 +407,28 @@ export function Machine({ kind = 'omni', phase, detail, power, live, onPower, ch
   const [elsewhere, setElsewhere] = useState(false)
   const awake = phase !== 'asleep'
   const omni = kind === 'omni'
+  const title = omni ? 'Omni' : 'Genie'
+  // Genie, once on the team, stays: its plugin made the Genie Bot.
+  const locked = phase === 'installing' || phase === 'starting' || (!omni && phase === 'ready')
   return h('div', { className: `oai-box oai-box-${kind} oai-is-${phase}`, 'data-phase': phase },
     h('div', { className: 'oai-box-top' },
-      h('span', { className: 'oai-lights', 'aria-hidden': true }, (omni ? lightsOf(phase) : [['power', 'off'], ['plugins', 'off'], ['link', 'off']]).map(([id, state]) => h('i', { key: id, className: `oai-light oai-light-${state}`, title: id }))),
-      omni
-        ? h('button', { type: 'button', className: `oai-power${awake ? ' on' : ''}`, 'aria-pressed': awake, 'aria-label': awake ? 'Power Omni off' : 'Power Omni on', onClick: onPower, disabled: phase === 'installing' || phase === 'starting' }, h(PowerIcon))
-        : null),
+      h('span', { className: 'oai-lights', 'aria-hidden': true }, (omni ? lightsOf(phase) : genieLightsOf(phase)).map(([id, state]) => h('i', { key: id, className: `oai-light oai-light-${state}`, title: id }))),
+      h('button', { type: 'button', className: `oai-power${awake ? ' on' : ''}`, 'aria-pressed': awake, 'aria-label': awake ? `Power ${title} off` : `Power ${title} on`, onClick: onPower, disabled: locked }, h(PowerIcon))),
     h('div', { className: 'oai-screen', 'aria-hidden': 'true' },
       phase === 'looking' ? h('div', { className: 'oai-scan' }, h('i'), h('i'), h('i')) : null,
-      phase === 'asleep' && omni ? h('div', { className: 'oai-zzz' }, h('i', null, 'z'), h('i', null, 'z'), h('i', null, 'z')) : null,
+      phase === 'asleep' ? h('div', { className: 'oai-zzz' }, h('i', null, 'z'), h('i', null, 'z'), h('i', null, 'z')) : null,
       children),
-    h('p', { className: `oai-status${['waking', 'installing', 'starting', 'looking'].includes(phase) ? ' oai-working' : ''}`, role: 'status', 'aria-live': 'polite' }, omni ? statusOf(phase, detail) : 'Coming soon'),
+    h('p', { className: `oai-status${['waking', 'installing', 'starting', 'looking'].includes(phase) ? ' oai-working' : ''}`, role: 'status', 'aria-live': 'polite' }, omni ? statusOf(phase, detail) : genieStatusOf(phase, detail)),
     h('div', { className: 'oai-inside' },
-      omni ? h(Inside, { phase, detail, power, live, elsewhere, setElsewhere }) : null,
+      omni ? h(Inside, { phase, detail, power, live, elsewhere, setElsewhere }) : h(GenieInside, { phase, detail }),
       omni && power?.problem ? h('p', { className: 'oai-inside-note oai-bad', role: 'alert' }, power.problem) : null))
+}
+
+// Under Genie's status line: what to do when it could not start.
+function GenieInside({ phase, detail }) {
+  if (phase === 'restart') return h('p', { className: 'oai-inside-note' }, 'Restart DSH, then power Genie on again.')
+  if (phase === 'failed') return h('p', { className: 'oai-inside-note oai-bad', title: detail?.message }, detail?.message ?? 'Add @automagik/genie-dsh on DSH\'s Plugins page.')
+  return null
 }
 
 // What a Bot type starts with, behind one disclosure, closed until asked.
@@ -372,6 +448,47 @@ export function OmniCard({ power, onPower, type, abilities, onToggle, live }) {
         : null),
     h('p', { className: 'oai-about' }, 'Every chat on every channel, answered by your team.'),
     h(StartsWith, { type, abilities, onToggle, disabled: !awake }))
+}
+
+// Genie's card: its box, its name, the wish it grants. Joined once its Bot is on the team.
+export function GenieCard({ power }) {
+  const { phase, detail } = power
+  const joined = phase === 'ready' || phase === 'restart'
+  return h('article', { className: `oai-fighter oai-genie${joined ? ' oai-chosen' : ''}`, 'data-phase': phase },
+    h(Machine, { kind: 'genie', phase, detail, onPower: power.toggle },
+      h('div', { className: 'oai-genie-wrap' }, h(GeniePet, { expression: genieExpressionOf(phase) }))),
+    h('header', null,
+      h('h2', null, 'Genie'),
+      joined ? h('span', { className: 'oai-team-line' }, h('span', { className: 'oai-on-team' }, h(Check), 'On your team')) : null),
+    h('p', { className: 'oai-about oai-wish' },
+      h('img', { className: 'oai-wish-lamp', src: LAMP, alt: '', draggable: false }),
+      'Give it a wish, get one delivery.'),
+    h(StartsWith, { type: GENIE_TYPE }))
+}
+
+// Genie's power button: on installs and starts it; off, before it joined, leaves it out.
+function useGeniePower() {
+  const [phase, setPhase] = useState('asleep')
+  const [detail, setDetail] = useState(null)
+  const run = useRef(null)
+  useEffect(() => () => run.current?.abort(), [])
+  const show = (next, value = null) => {
+    setPhase(next)
+    setDetail(value)
+  }
+  const on = () => {
+    run.current?.abort()
+    const controller = new AbortController()
+    run.current = controller
+    geniePowerOn({ show, signal: controller.signal }).catch((error) => {
+      if (error?.name !== 'AbortError') show('failed', { message: error.message })
+    })
+  }
+  const off = () => {
+    run.current?.abort()
+    show('asleep', { removed: true })
+  }
+  return { phase, detail, toggle: () => (phase === 'asleep' ? on() : off()) }
 }
 
 // The power button's state, and the connecting a found Omni or a typed address does.
@@ -473,8 +590,8 @@ export function teamOrder(preload) {
 }
 export const preselected = preload => ({ omni: preload === 'omni', genie: preload === 'genie' })
 // Whether Omni powers on by itself now: preloaded, still asleep, and never switched off here.
-export const powersOnByItself = (preload, phase, detail, started) =>
-  preselected(preload).omni && !started && phase === 'asleep' && detail?.removed !== true
+export const powersOnByItself = (preload, phase, detail, started, kind = 'omni') =>
+  preselected(preload)[kind] === true && !started && phase === 'asleep' && detail?.removed !== true
 
 // Who joins, in words, for the button.
 export function joinedLabel({ omni, genie }, name) {
@@ -496,20 +613,30 @@ const speechOf = (phase, name, origin) => ({
   restart: 'Omni is installed. Restart DSH to wake it.',
   failed: 'Omni could not be installed here.',
 })[phase]
+const genieSpeechOf = phase => ({
+  waking: 'Genie is waking up…',
+  installing: 'Bringing Genie into this DSH. One moment.',
+  starting: 'Genie is starting up…',
+  ready: 'Genie is on your team. Give it a wish once you are in!',
+  restart: 'Genie is installed. Restart DSH to wake it.',
+  failed: 'Genie could not be installed here.',
+})[phase]
 
 export function TeamStep(props) {
   const state = useGate(props)
   const finish = useFinish(props)
   const [glitching, glitch] = useGlitch()
   const power = usePower()
+  const geniePower = useGeniePower()
+  // The speech follows whichever box was pressed last.
+  const [lastPressed, setLastPressed] = useState('omni')
   const [omniType, setOmniType] = useState(null)
   const [abilities, setAbilities] = useState({})
   const [live, setLive] = useState(undefined)
   const [saving, setSaving] = useState(false)
   const [problem, setProblem] = useState(null)
-  // Genie on the team: the person's choice once made, else the preload's.
-  const [genieChoice, setGenieChoice] = useState(null)
   const autoPowered = useRef(false)
+  const genieAutoPowered = useRef(false)
 
   const { phase } = power
   // Read again once Omni is awake, when what it brings may have just been installed.
@@ -527,11 +654,18 @@ export function TeamStep(props) {
     autoPowered.current = true
     power.toggle()
   }, [state])
+  useEffect(() => {
+    if (!state || !powersOnByItself(state.preload, geniePower.phase, geniePower.detail, genieAutoPowered.current, 'genie')) return
+    genieAutoPowered.current = true
+    setLastPressed('genie')
+    geniePower.toggle()
+  }, [state])
   if (!state) return null
 
   const name = state.companionName ?? 'Your companion'
   const omni = phase !== 'asleep' && phase !== 'failed'
-  const genie = genieChoice ?? preselected(state.preload).genie
+  const genie = geniePower.phase === 'ready' || geniePower.phase === 'restart'
+  const genieWorking = ['waking', 'installing', 'starting'].includes(geniePower.phase)
   const working = ['waking', 'installing', 'starting', 'looking'].includes(phase)
   const local = () => go({ omni: true })
 
@@ -550,7 +684,7 @@ export function TeamStep(props) {
 
   return h(Stage, {
     title: 'Grow your team',
-    speech: speechOf(phase, name, power.detail?.origin),
+    speech: (lastPressed === 'genie' && genieSpeechOf(geniePower.phase)) || speechOf(phase, name, power.detail?.origin),
     at: 'omni-team',
     glitching,
     wide: true,
@@ -558,21 +692,10 @@ export function TeamStep(props) {
   h('p', { className: 'oai-lede' }, `${name} leads. Who comes along?`),
   h('div', { className: 'oai-select' },
     ...teamOrder(state.preload).map(id => (id === 'omni'
-      ? h(OmniCard, { key: 'omni', power: omniPower, onPower: power.toggle, type: omniType, abilities, onToggle: (row, on) => setAbilities(rows => ({ ...rows, [row]: on })), live })
-      : h('article', { key: 'genie', className: `oai-fighter oai-genie oai-locked${genie ? ' oai-chosen' : ''}` },
-        h(Machine, { kind: 'genie', phase: 'asleep' },
-          h('div', { className: 'oai-genie-wrap' }, h(GeniePet, { expression: genieExpressionOf(genie) }))),
-        h('header', null,
-          h('h2', null, 'Genie'),
-          genie
-            ? h('span', { className: 'oai-team-line' }, h('span', { className: 'oai-on-team' }, h(Check), 'On your team'), h('button', { type: 'button', className: 'oai-remove', onClick: () => setGenieChoice(false) }, 'Remove'))
-            : h('button', { type: 'button', className: 'oai-remove', onClick: () => setGenieChoice(true) }, 'Add')),
-        h('p', { className: 'oai-about oai-wish' },
-          h('img', { className: 'oai-wish-lamp', src: LAMP, alt: '', draggable: false }),
-          'Give it a wish, get one delivery.'),
-        h(StartsWith, { type: GENIE_TYPE }))))),
+      ? h(OmniCard, { key: 'omni', power: omniPower, onPower: () => { setLastPressed('omni'); power.toggle() }, type: omniType, abilities, onToggle: (row, on) => setAbilities(rows => ({ ...rows, [row]: on })), live })
+      : h(GenieCard, { key: 'genie', power: { ...geniePower, toggle: () => { setLastPressed('genie'); geniePower.toggle() } } })))),
   problem ? h('p', { className: 'oai-error', role: 'alert' }, problem) : null,
   h('div', { className: 'oai-actions' },
-    h('button', { type: 'button', className: 'oai-primary oai-big', disabled: saving || working, onClick: () => go() },
-      saving ? 'Bringing them in…' : working ? 'Omni is waking…' : joinedLabel({ omni, genie }, name))))
+    h('button', { type: 'button', className: 'oai-primary oai-big', disabled: saving || working || genieWorking, onClick: () => go() },
+      saving ? 'Bringing them in…' : working ? 'Omni is waking…' : genieWorking ? 'Genie is waking…' : joinedLabel({ omni, genie }, name))))
 }

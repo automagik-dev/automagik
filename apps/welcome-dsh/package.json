@@ -68,6 +68,12 @@
       "repository": "https://github.com/automagik-dev/omni",
       "version": "2.261025.2",
       "commit": "4165c853f956b0364566bbb1e4ff8bafcaf98f30"
+    },
+    "genie": {
+      "repository": "https://github.com/automagik-dev/genie",
+      "path": "plugins/genie-dsh",
+      "version": "0.1.0",
+      "commit": "79492685ebc9477c2d78658b38ebaf44941da7ff"
     }
   }
 }

@@ -428,6 +428,10 @@ test('the preload orders the team and starts its product chosen', () => {
   assert.equal(team.powersOnByItself('omni', 'asleep', { removed: true }, false), false)
   assert.equal(team.powersOnByItself('omni', 'looking', null, false), false)
   assert.equal(team.powersOnByItself('genie', 'asleep', null, false), false)
+  // `genie desktop` powers Genie on the same way.
+  assert.equal(team.powersOnByItself('genie', 'asleep', null, false, 'genie'), true)
+  assert.equal(team.powersOnByItself('genie', 'asleep', { removed: true }, false, 'genie'), false)
+  assert.equal(team.powersOnByItself('omni', 'asleep', null, false, 'genie'), false)
   assert.equal(team.powersOnByItself(null, 'asleep', null, false), false)
   assert.equal(team.joinedLabel({ omni: true, genie: false }, 'Mochi'), 'Continue with Omni')
   assert.equal(team.joinedLabel({ omni: true, genie: true }, 'Mochi'), 'Continue with Omni and Genie')
@@ -441,7 +445,64 @@ test('Omni\'s face in its box follows the phase: asleep, working, waiting for yo
   assert.match(findAll(card('failed', { message: 'no network' }), byClass('oai-octo-wrap'))[0].props.dangerouslySetInnerHTML.__html, /data-face="sad"/)
 })
 
-test('Genie sleeps on its card until it is added, then is pleased to come along', () => {
-  assert.equal(team.genieExpressionOf(false), 'asleep')
-  assert.equal(team.genieExpressionOf(true), 'pleased')
+test('Genie\'s face in its box follows the phase: asleep, working, on the team, waiting, failed', () => {
+  const faces = Object.fromEntries(['asleep', 'waking', 'installing', 'starting', 'ready', 'restart', 'failed'].map(phase => [phase, team.genieExpressionOf(phase)]))
+  assert.deepEqual(faces, { asleep: 'asleep', waking: 'focused', installing: 'focused', starting: 'focused', ready: 'delighted', restart: 'curious', failed: 'sad' })
+})
+
+// The welcome's genie-plugin answers, one per call, then the last again.
+function genieHost(answers) {
+  const calls = []
+  const shown = []
+  let at = 0
+  const genieAi = async (endpoint) => {
+    calls.push(endpoint)
+    const answer = answers[Math.min(at++, answers.length - 1)]
+    if (answer instanceof Error) throw answer
+    return answer
+  }
+  const show = (phase, detail) => shown.push(detail === undefined || detail === null ? phase : [phase, detail])
+  return { calls, shown, run: () => team.geniePowerOn({ show, genieAi, wait: async () => {}, quick: true }) }
+}
+
+test('Genie powers on: already here it is ready at once; else its plugin installs and starts, then it is ready', async () => {
+  const bot = { id: 'g1', name: 'Genie' }
+  const here = genieHost([{ ready: true, bot }])
+  assert.equal(await here.run(), 'ready')
+  assert.deepEqual(plain(here.shown), ['waking', ['ready', { bot }]])
+
+  const fresh = genieHost([
+    { ready: false, install: null },
+    { ready: false, install: { phase: 'installing' } },
+    { ready: false, install: { phase: 'installing' } },
+    { ready: false, install: { phase: 'done' } },
+    { ready: true, bot, install: { phase: 'done' } },
+  ])
+  assert.equal(await fresh.run(), 'ready')
+  assert.deepEqual(plain(phases(fresh.shown)), ['waking', 'installing', 'installing', 'installing', 'starting', 'ready'])
+  assert.deepEqual(plain(fresh.calls), ['genie-plugin', 'genie-plugin-install', 'genie-plugin', 'genie-plugin', 'genie-plugin'])
+})
+
+test('Genie\'s power on ends at failed with the reason, or at restart when its Bot never comes', async () => {
+  const noGit = genieHost([{ ready: false, install: null }, { ready: false, install: { phase: 'failed', error: 'Genie needs Apple\'s command line tools. Open Terminal and run this one line: xcode-select --install. Then power Genie on again.' } }])
+  assert.equal(await noGit.run(), 'failed')
+  assert.match(noGit.shown.at(-1)[1].message, /xcode-select --install/)
+
+  const refused = genieHost([{ ready: false, install: null }, new Error('This DSH has no plugin manager to install Genie with.')])
+  assert.equal(await refused.run(), 'failed')
+
+  const restart = genieHost([{ ready: false, install: null }, { ready: false, install: { phase: 'restart' } }])
+  assert.equal(await restart.run(), 'restart')
+  const never = genieHost([{ ready: false, install: null }, { ready: false, install: { phase: 'done' } }])
+  assert.equal(await never.run(), 'restart')
+  assert.equal(never.calls.length, 2 + team.READY_POLLS)
+})
+
+test('Genie\'s box says where it stands, and lights its plugin and its place on the team', () => {
+  assert.equal(team.genieStatusOf('asleep'), 'Powered off')
+  assert.equal(team.genieStatusOf('asleep', { removed: true }), 'Powered off · not on your team')
+  assert.equal(team.genieStatusOf('ready'), 'Ready for a wish')
+  assert.deepEqual(plain(team.genieLightsOf('ready')), [['power', 'on'], ['plugins', 'on'], ['team', 'on']])
+  assert.deepEqual(plain(team.genieLightsOf('installing')), [['power', 'on'], ['plugins', 'busy'], ['team', 'off']])
+  assert.deepEqual(plain(team.genieLightsOf('failed')), [['power', 'on'], ['plugins', 'warn'], ['team', 'off']])
 })
