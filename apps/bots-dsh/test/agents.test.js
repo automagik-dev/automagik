@@ -298,3 +298,25 @@ test('a task started with a folder of its own runs there, with a preset this DSH
   const view = (await call('state', {})).value
   assert.equal(Object.values(view.tasks).filter(task => task.status === 'working').length, 3)
 })
+
+test('a task thinks with the model of the Bot that asked, chosen before its first message', async (t) => {
+  const team = { ...TEAM, bots: { m1: { ...TEAM.bots.m1, model: 'keyed/flash' } } }
+  const { call, stop, ctx } = start(team)
+  t.after(stop)
+  // Only the Bot's own provider is served: DSH's default route would have no key here.
+  ctx.llm = { listProviders: () => [{ id: 'keyed' }], listModels: async () => [{ id: 'flash' }] }
+  await call('state', {})
+  const steps = []
+  ctx.sessionController.selectModel = async ({ sessionId, provider, model }) => { steps.push(['model', sessionId, `${provider}/${model}`]) }
+  const resolve = ctx.sessionController.resolveAgent
+  ctx.sessionController.resolveAgent = async (sessionId) => {
+    const { agent } = await resolve(sessionId)
+    return { agent: { ...agent, followup: () => steps.push(['message', sessionId]) } }
+  }
+  const rt = ctx.provided.get('omniTeam')
+  const sessionId = await rt.startTask({ title: 'Wish', text: 'Do it', from: 'm1' })
+  assert.deepEqual(steps.filter(step => step[1] === sessionId), [['model', sessionId, 'keyed/flash'], ['message', sessionId]])
+  // A task no Bot asked for keeps DSH's default.
+  const plain = await rt.startTask({ title: 'Chore', text: 'Do it' })
+  assert.deepEqual(steps.filter(step => step[1] === plain), [['message', plain]])
+})

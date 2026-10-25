@@ -9804,8 +9804,9 @@ function AgentSessionRow({ session, agent, actions, renaming, index }) {
     (0, import_react21.createElement)("span", { className: "bt-agent-sub-time" }, session.at > 0 ? relativeShort(session.at) : "")
   );
 }
-function AgentRow({ agent, actions, useSessions, useSessionStatus, useUi, wide, marked }) {
-  const info = useSessions((list) => JSON.stringify(agent.sessions.map((id) => {
+function AgentRow({ agent, roster, actions, useSessions, useSessionStatus, useUi, wide, marked }) {
+  const own = agent.sessions.filter((id) => roster?.byId?.[roster.tasks?.[id]?.from] === void 0);
+  const info = useSessions((list) => JSON.stringify(own.map((id) => {
     const row = list.byId[id];
     return {
       id,
@@ -9816,7 +9817,7 @@ function AgentRow({ agent, actions, useSessions, useSessionStatus, useUi, wide, 
       active: (row?.retainedBy?.mainView ?? 0) > 0
     };
   }).sort((a, b) => b.at - a.at)));
-  const statusInfo = useSessionStatus((map) => JSON.stringify(agent.sessions.map((id) => ({
+  const statusInfo = useSessionStatus((map) => JSON.stringify(own.map((id) => ({
     id,
     running: map.get(id)?.running === true,
     unread: map.get(id)?.completionUnread === true
