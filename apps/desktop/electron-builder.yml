@@ -1,11 +1,11 @@
 # Automagik desktop packaging. The app is named Automagik wherever a person sees it (the
-# bundle and its menu bar, the desktop entry, the artifacts). Its installed identity is
-# the one omni-desktop shipped as Omni, so an installed app updates in place and keeps its data:
+# bundle and its menu bar, the desktop entry, the artifacts) and in its installed identity:
 # the appId (macOS takes an update only for the same id and signer), the Linux executable,
 # desktop entry id (package.json desktopName) and deb package, and Electron's data folder
-# (src/identity.js). Run `npm run prepare-runtime` first (the dist:* scripts do): it fills
+# (src/identity.js). Builds up to 3.11.x kept Omni's identity; one of those does not update
+# into this one, it is installed afresh. Run `npm run prepare-runtime` first (the dist:* scripts do): it fills
 # build/runtime and build/profile, which ship as resources beside the app.
-appId: ai.namastex.omni.desktop
+appId: ai.namastex.automagik
 productName: Automagik
 copyright: Copyright © 2026 Namastex Labs
 directories:
@@ -41,7 +41,7 @@ linux:
     - AppImage
     - deb
   category: Network
-  executableName: omni-desktop
+  executableName: automagik
   mimeTypes:
     - x-scheme-handler/omni
   icon: assets/icon.png
@@ -55,8 +55,8 @@ linux:
 deb:
   # The package installed copies have: a deb of the same package upgrades it in place, from
   # apt, dpkg or a software center alike. It installs to /opt/Automagik, and the postinst
-  # points /usr/bin/omni-desktop there.
-  packageName: omni
+  # points /usr/bin/automagik there.
+  packageName: automagik
   packageCategory: net
   appArmorProfile: scripts/apparmor-profile.tpl
 mac:

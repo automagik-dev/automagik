@@ -1,8 +1,9 @@
 // Omni: a team of long-lived Bots on top of ordinary dsh root Sessions.
 // Every Bot is one root Session; the roster, rooms, and the bot-to-bot exchange log live
 // in one JSON file in Omni's own home so they survive restarts without new Session event
-// types. That home is $OMNI_HOME/ui (~/.omni/ui), never under DSH_HOME: installed into
-// someone's own DSH, Omni keeps its files apart from DSH's and from other plugins'.
+// types. That home is $AUTOMAGIK_BOTS_HOME, else $AUTOMAGIK_HOME/bots (~/.automagik/bots),
+// never under DSH_HOME: installed into someone's own DSH, the team keeps its files apart from
+// DSH's and from other plugins'.
 import { cpSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import * as diagnostics from './src/host/diagnostics.js'
@@ -68,7 +69,7 @@ function importTeam(home, from) {
 
 export function createRuntime(ctx, config = {}) {
   const dshHome = folders.dshHomeOf(process.env.DSH_HOME)
-  const home = folders.expandPath(config.home ?? join(folders.omniHomeOf(process.env.OMNI_HOME), 'ui'))
+  const home = folders.expandPath(config.home ?? folders.teamHomeOf(process.env))
   const imported = importTeam(home, config.importHome && folders.expandPath(config.importHome))
   const rt = {
     ctx,

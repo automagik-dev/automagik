@@ -66,7 +66,7 @@ cpSync(join(ROOT, 'apps', 'desktop', 'profile', 'pnpm-workspace.yaml'), join(pro
 const shims = join(work, 'bin')
 mkdirSync(shims, { recursive: true })
 writeFileSync(join(shims, 'pnpm'), '#!/bin/sh\nexec npx --yes pnpm@10.34.6 "$@"\n', { mode: 0o755 })
-const dshEnv = { ...env, DSH_HOME: dshHome, OMNI_HOME: join(work, 'omni-home'), PATH: `${shims}:${env.PATH}` }
+const dshEnv = { ...env, DSH_HOME: dshHome, AUTOMAGIK_HOME: join(work, 'automagik-home'), OMNI_HOME: join(work, 'omni-home'), PATH: `${shims}:${env.PATH}` }
 execFileSync(process.execPath, [DSH_BIN, 'plugin', '--profile', 'boot', 'install', '--prod', '--ignore-scripts'], { cwd: profileDir, env: dshEnv, stdio: ['ignore', 'inherit', 'inherit'] })
 
 function chrome() {

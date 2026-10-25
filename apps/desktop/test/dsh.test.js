@@ -6,13 +6,16 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { appHome, dshEnv, freePort, installProfile, launchUrlOf, mergeProfilePackage, mergeProfilePatch, migrateRenamed, navigationOf, pinProfileStore, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, scrubBuildPaths, SHIPPED_STORE, startDsh, stopDsh, storeLayoutOf, writeTools } from '../src/dsh.js'
 
-test('the app keeps everything in one folder under ~/.omni, apart from a dsh you already run', () => {
-  assert.equal(appHome({}), join(homedir(), '.omni', 'desktop'))
-  assert.equal(appHome({ OMNI_HOME: '/srv/omni' }), '/srv/omni/desktop')
-  assert.equal(appHome({ OMNI_HOME: '/srv/omni', OMNI_DESKTOP_HOME: '~/apps/omni' }), join(homedir(), 'apps', 'omni'))
-  const env = dshEnv({ base: { PATH: '/bin', DSH_HOME: '/home/me/.dsh', OMNI_HOME: '/home/me/.omni' }, home: '/a/desktop', electronAsNode: true })
+test('the app keeps everything in one folder under ~/.automagik, apart from a dsh you already run', () => {
+  assert.equal(appHome({}), join(homedir(), '.automagik', 'desktop'))
+  assert.equal(appHome({ AUTOMAGIK_HOME: '/srv/automagik' }), '/srv/automagik/desktop')
+  assert.equal(appHome({ AUTOMAGIK_HOME: '~/apps/automagik' }), join(homedir(), 'apps', 'automagik', 'desktop'))
+  assert.equal(appHome({ AUTOMAGIK_HOME: ' ', OMNI_HOME: '/srv/omni', OMNI_DESKTOP_HOME: '/srv/old' }), join(homedir(), '.automagik', 'desktop'))
+  const env = dshEnv({ base: { PATH: '/bin', DSH_HOME: '/home/me/.dsh' }, home: '/a/desktop', electronAsNode: true })
   assert.equal(env.DSH_HOME, '/a/desktop/dsh')
-  assert.equal(env.OMNI_HOME, '/a/desktop')
+  assert.equal(env.AUTOMAGIK_BOTS_HOME, '/a/desktop/bots')
+  // Omni's own folder is Omni's: the app names none, so its sandbox and downloads land in ~/.omni.
+  assert.equal(env.OMNI_HOME, undefined)
   assert.equal(env.ELECTRON_RUN_AS_NODE, '1')
   assert.equal(env.DO_NOT_TRACK, '1')
   assert.equal(env.OMNI_CLIENT_ID, 'omni-desktop')
@@ -116,7 +119,7 @@ test('the profile names the app\'s own pnpm store, and a profile linked from ano
   assert.deepEqual([readFileSync(join(target, 'pnpm-workspace.yaml'), 'utf8'), readFileSync(join(target, 'node_modules', '.modules.yaml'), 'utf8')], before)
   assert.equal(workspace.match(/^storeDir:/gm).length, 1)
 
-  // A moved home (OMNI_DESKTOP_HOME) moves the store with it.
+  // A moved home (AUTOMAGIK_HOME) moves the store with it.
   const moved = join(root, 'elsewhere')
   pinProfileStore({ target, home: moved, layout: 'v10' })
   assert.equal(readFileSync(join(target, 'pnpm-workspace.yaml'), 'utf8').match(/^storeDir:.*$/gm).join(), `storeDir: ${JSON.stringify(join(moved, 'pnpm-store'))}`)
@@ -159,8 +162,9 @@ test('the shipped profile bundles the Bot team first, Omni\'s plugins, the welco
   // DSH compares the notice version exactly, as a string.
   assert.match(patch, /^- id: ui-settings-general\n {2}config:\n {4}welcomeNoticeVersion: '2026-09-28\.1'$/m)
   assert.match(patch, /^- id: ui-settings-models\n {2}config:\n {4}credentialOnboarding: false$/m)
-  // Pairing adds the Omni's market here (apps/omni-channels-dsh omni-link.js).
-  assert.match(patch, /^- id: plugin-market\n {2}config:\n {4}indexes: \[\]$/m)
+  // Automagik's market, where Genie is; pairing adds the Omni's market beside it
+  // (apps/omni-channels-dsh omni-link.js).
+  assert.match(patch, /^- id: plugin-market\n {2}config:\n {4}indexes:\n {6}- https:\/\/raw\.githubusercontent\.com\/automagik-dev\/dsh-marketplace\/main\/index\.json$/m)
   // Omni's dsh-subscriptions has no local-Ollama fallback to switch off.
   assert.doesNotMatch(patch, /ollamaFallback/)
 })

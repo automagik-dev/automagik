@@ -25,7 +25,7 @@ files, inherited names such as `__proto__`, a stale `state.lock`, a Bot's photo 
 kept through a handoff.
 
 Kept as Omni's: the package (`@automagik/bots-dsh`, Automagik's version, Bun, the DSH pin), its home,
-route and plugin ids (`$OMNI_HOME/ui`, `/api/omni-ui`, `omni-ui`), the brand (OmniMark, the
+route and plugin ids (`/api/omni-ui`, `omni-ui`; its home is now `$AUTOMAGIK_HOME/bots`), the brand (OmniMark, the
 octopus, the palette, every "Omni" in the copy and in the Bots' prompts), the extension registry
 other Omni plugins use (`extend.js`: tool cards, row badges, header buttons, endpoints), canvases,
 the Tasks agent, "New conversation", Connect AI in the model menu, and the channels footer seat.

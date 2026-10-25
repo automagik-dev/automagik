@@ -6,7 +6,7 @@ Omni for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (ds
 
 Tested with dsh `0.2.1-rc.3` (Web) on Linux.
 
-**Your own dsh stays yours.** Installed into an existing dsh, Omni keeps its files in `$OMNI_HOME/ui` (`~/.omni/ui`), keeps the key of the Omni it is linked to in its own file there, uses its own route (`/api/omni-ui`), plugin id (`omni-ui`) and browser-storage prefix (`omni-ui:`), overrides no other plugin's configuration, and checks for no updates. It can run beside upstream DS Bot.
+**Your own dsh stays yours.** Installed into an existing dsh, the team keeps its files in `$AUTOMAGIK_HOME/bots` (`~/.automagik/bots`), keeps the key of the Omni it is linked to in its own file there, uses its own route (`/api/omni-ui`), plugin id (`omni-ui`) and browser-storage prefix (`omni-ui:`), overrides no other plugin's configuration, and checks for no updates. It can run beside upstream DS Bot.
 
 ## Three plugins
 
@@ -86,7 +86,7 @@ The first time the team opens, the plugin creates a Main Bot called Omni.
 
 This needs the Omni channels plugin. On the Channels page, type the address of an Omni (for example `omni.example.com`) and choose **Get a code**. Omni answers with a short code and the WhatsApp number of its pairing channel; send the code to yourself from that WhatsApp ("Message yourself"; **Open WhatsApp** or the QR opens the chat with the code typed). The page goes live as soon as the code arrives. The Omni must have pairing turned on (`OMNI_PAIRING_ENABLED=true` and a pairing instance on the server).
 
-The key Omni mints is saved in `~/.omni/ui/omni.json` (readable by you only), with the scopes the server gives paired keys and an expiry; it never reaches the browser. Delete that file to disconnect; revoke the key in Omni to cut it off from the server side. A profile can still name an Omni the older way, with `omni.url` in this plugin's config (or the channels plugin's) and the `OMNI_API_KEY` credential in dsh's store; a saved link wins over both.
+The key Omni mints is saved in `~/.automagik/bots/omni.json` (readable by you only), with the scopes the server gives paired keys and an expiry; it never reaches the browser. Delete that file to disconnect; revoke the key in Omni to cut it off from the server side. A profile can still name an Omni the older way, with `omni.url` in this plugin's config (or the channels plugin's) and the `OMNI_API_KEY` credential in dsh's store; a saved link wins over both.
 
 ## Configuration
 
@@ -97,7 +97,7 @@ Options go in the profile's `cordis.patch.yml`, under the `omni-ui` entry. All o
   name: '@automagik/bots-dsh'
   config:
     workspace: /path/to/workspace   # where the Bots work; default <home>/workspace
-    home: /path/to/omni-ui-data     # where the team is saved; default $OMNI_HOME/ui (~/.omni/ui)
+    home: /path/to/team-data       # where the team is saved; default $AUTOMAGIK_BOTS_HOME, else $AUTOMAGIK_HOME/bots (~/.automagik/bots)
     importHome: ~/.dsh/bot          # copy a team saved there into home once, when home has none
     checkRatio: 0.8                 # share of the model's usable window where the steward decides
     browser: true                   # force the Bot browser on or off; default on in Desktop and the desktop app only
@@ -220,14 +220,14 @@ Limits:
 
 ## Data and backups
 
-The plugin saves its data in `config.home`. Without it, the folder is `$OMNI_HOME/ui`, or `~/.omni/ui` when `OMNI_HOME` is not set. It writes nothing of its own under `DSH_HOME`; the Bots' Sessions are dsh Sessions, and dsh keeps those.
+The plugin saves its data in `config.home`. Without it, the folder is `$AUTOMAGIK_BOTS_HOME`, else `bots` in `$AUTOMAGIK_HOME`, which is `~/.automagik` when not set. It writes nothing of its own under `DSH_HOME`; the Bots' Sessions are dsh Sessions, and dsh keeps those.
 
 | System | Default folder |
 |---|---|
-| Linux, macOS | `~/.omni/ui/` |
-| Windows (WSL) | `~/.omni/ui/` inside the WSL distribution |
+| Linux, macOS | `~/.automagik/bots/` |
+| Windows (WSL) | `~/.automagik/bots/` inside the WSL distribution |
 
-- To move Omni's data, set `OMNI_HOME`, or `home` in the configuration (see [Configuration](#configuration)).
+- To move the team's data, set `AUTOMAGIK_HOME` or `AUTOMAGIK_BOTS_HOME`, or `home` in the configuration (see [Configuration](#configuration)).
 
 Files in `ui/`:
 

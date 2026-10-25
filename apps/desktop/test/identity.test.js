@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { appHome, preloadOf } from '../src/dsh.js'
+import { appHome, automagikHome, preloadOf } from '../src/dsh.js'
 import { DATA_NAME, dataPathsOf, PRODUCT } from '../src/identity.js'
 
 const read = file => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
@@ -31,26 +31,26 @@ test('the app is called Automagik where a person sees it', () => {
   assert.match(read('src/shell.html'), /<b>Automagik<\/b>/)
 })
 
-test('the installed identity stays the one Omni shipped, so an install updates in place', () => {
+test('the installed identity is Automagik\'s', () => {
   // macOS takes an update only for the same bundle id (and signer).
-  assert.equal(setting('appId'), 'ai.namastex.omni.desktop')
-  // Linux: the window's app id, the desktop entry, /usr/bin/omni-desktop and the AppArmor
+  assert.equal(setting('appId'), 'ai.namastex.automagik')
+  // Linux: the window's app id, the desktop entry, /usr/bin/automagik and the AppArmor
   // profile follow these; the same deb package upgrades the installed one.
-  assert.equal(JSON.parse(read('package.json')).desktopName, 'omni-desktop.desktop')
-  assert.equal(setting('executableName', 'linux'), 'omni-desktop')
-  assert.equal(setting('packageName', 'deb'), 'omni')
+  assert.equal(JSON.parse(read('package.json')).desktopName, 'automagik.desktop')
+  assert.equal(setting('executableName', 'linux'), 'automagik')
+  assert.equal(setting('packageName', 'deb'), 'automagik')
   assert.equal(setting('syncDesktopName', 'linux'), 'true')
   // omni:// is Omni's scheme: its pages make the links.
   assert.match(builder, /schemes:\n\s+- omni\n/)
 })
 
-test("Electron's data stays in the folder the app kept as Omni, on every platform", () => {
-  assert.equal(DATA_NAME, 'Omni')
+test("Electron's data is filed under Automagik, on every platform", () => {
+  assert.equal(DATA_NAME, 'Automagik')
   assert.deepEqual(dataPathsOf('/Users/me/Library/Application Support'), {
-    userData: '/Users/me/Library/Application Support/Omni',
-    sessionData: '/Users/me/Library/Application Support/Omni',
+    userData: '/Users/me/Library/Application Support/Automagik',
+    sessionData: '/Users/me/Library/Application Support/Automagik',
   })
-  assert.deepEqual(dataPathsOf('/home/me/.config'), { userData: '/home/me/.config/Omni', sessionData: '/home/me/.config/Omni' })
+  assert.deepEqual(dataPathsOf('/home/me/.config'), { userData: '/home/me/.config/Automagik', sessionData: '/home/me/.config/Automagik' })
 })
 
 test('main.js pins that folder before anything reads it', () => {
@@ -64,15 +64,15 @@ test('main.js pins that folder before anything reads it', () => {
   assert.doesNotMatch(main.slice(0, pin), /app\.getPath\('(userData|sessionData)'\)/)
 })
 
-test("the app's own home and the preload the CLIs write keep their place", (t) => {
-  assert.equal(appHome({}), join(homedir(), '.omni', 'desktop'))
-  const omni = mkdtempSync(join(tmpdir(), 'automagik-identity-'))
-  t.after(() => rmSync(omni, { recursive: true, force: true }))
-  const home = appHome({ OMNI_HOME: omni })
-  // `omni desktop` and `genie desktop` write <OMNI_HOME>/desktop/preload before opening the app.
-  mkdirSync(home, { recursive: true })
-  writeFileSync(join(home, 'preload'), 'genie\n')
-  assert.equal(preloadOf({ home, argv: ['/opt/Automagik/omni-desktop'] }), 'genie')
+test("the app's own home and the preload the CLIs write are in Automagik's home", (t) => {
+  assert.equal(automagikHome({}), join(homedir(), '.automagik'))
+  assert.equal(appHome({}), join(homedir(), '.automagik', 'desktop'))
+  const root = mkdtempSync(join(tmpdir(), 'automagik-identity-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  assert.equal(appHome({ AUTOMAGIK_HOME: root }), join(root, 'desktop'))
+  // `omni desktop` and `genie desktop` write $AUTOMAGIK_HOME/preload before opening the app.
+  writeFileSync(join(root, 'preload'), 'genie\n')
+  assert.equal(preloadOf({ home: automagikHome({ AUTOMAGIK_HOME: root }), argv: ['/opt/Automagik/automagik'] }), 'genie')
 })
 
 test('the artifacts are named Automagik, and the CLIs and the update feeds still find them', () => {

@@ -16,8 +16,13 @@ const expandHome = text => (text === '~' ? homedir() : /^~[\\/]/.test(text) ? jo
 // Read as DSH reads it, so the team's data and the guarded folder are where DSH keeps
 // its own: a blank value counts as unset.
 export const dshHomeOf = value => resolve(expandHome(value?.trim() ? value : join(homedir(), '.dsh')))
-// Omni's own home ($OMNI_HOME, default ~/.omni); the plugin keeps its files in ui/ there.
-export const omniHomeOf = value => resolve(expandHome(value?.trim() ? value : join(homedir(), '.omni')))
+// Automagik's own home ($AUTOMAGIK_HOME, default ~/.automagik).
+export const automagikHomeOf = value => resolve(expandHome(value?.trim() ? value : join(homedir(), '.automagik')))
+// The team's home: $AUTOMAGIK_BOTS_HOME (the desktop app names its own), else bots/ in
+// Automagik's home. A blank value counts as unset.
+export const teamHomeOf = (env = process.env) => env.AUTOMAGIK_BOTS_HOME?.trim()
+  ? resolve(expandHome(env.AUTOMAGIK_BOTS_HOME.trim()))
+  : join(automagikHomeOf(env.AUTOMAGIK_HOME), 'bots')
 export const expandPath = value => resolve(expandHome(String(value)))
 
 export function install(rt) {

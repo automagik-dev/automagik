@@ -44,7 +44,7 @@
         "en": "Bot team"
       },
       "description": {
-        "en": "A team of long-lived Bots in DSH: the Main Bot and its Bots, group chats, memory and settings. Omni's channels and canvases build on it. Keeps its files in ~/.omni/ui, never in your DSH profile. Formerly @automagik/omni-dsh (Omni team)."
+        "en": "A team of long-lived Bots in DSH: the Main Bot and its Bots, group chats, memory and settings. Omni's channels and canvases build on it. Keeps its files in ~/.automagik/bots, never in your DSH profile. Formerly @automagik/omni-dsh (Omni team)."
       },
       "author": "Automagik",
       "homepage": "https://github.com/automagik-dev/automagik/tree/dev/apps/bots-dsh#readme",
@@ -349,6 +349,48 @@
             "url": "https://github.com/automagik-dev/automagik",
             "commit": "8464655f17072500e5eb41b891f1722f9a1d2ce0",
             "path": "apps/welcome-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.2 <0.3.0"
+          }
+        }
+      ]
+    },
+    {
+      "name": "@automagik/genie-dsh",
+      "title": {
+        "en": "Genie"
+      },
+      "description": {
+        "en": "Genie joins your Bot team and grants wishes: each wish is a Task that works in its own git worktree of your project and commits the result on a wish/… branch. Needs the Bot team and git."
+      },
+      "author": "Automagik",
+      "homepage": "https://github.com/automagik-dev/genie/tree/dev/plugins/genie-dsh#readme",
+      "repository": {
+        "url": "https://github.com/automagik-dev/genie",
+        "directory": "plugins/genie-dsh"
+      },
+      "metadata": {
+        "category": "automagik",
+        "keywords": [
+          "genie",
+          "wishes",
+          "coding",
+          "agents"
+        ],
+        "labels": [
+          "official"
+        ]
+      },
+      "versions": [
+        {
+          "version": "0.1.0",
+          "publishTimestamp": 1792901264,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/genie",
+            "commit": "31fa665173ecb1f4b8afc84c7353c84b59a72871",
+            "path": "plugins/genie-dsh"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.2 <0.3.0"

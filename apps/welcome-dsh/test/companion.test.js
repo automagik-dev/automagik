@@ -140,7 +140,7 @@ test('a drawn companion becomes the Main Bot\'s avatar, shrunk', async () => {
   const home = mkdtempSync(join(tmpdir(), 'omni-ai-companion-'))
   try {
     const team = fakeTeam()
-    const fake = host({ team, env: { OMNI_HOME: home } })
+    const fake = host({ team, env: { AUTOMAGIK_BOTS_HOME: home } })
     const avatar = `data:image/webp;base64,${PNG}`
     const reply = await fake.handle('companion-save', { name: 'Nova', image: `data:image/png;base64,${PNG}`, avatar })
     assert.deepEqual(reply.value, { name: 'Nova', applied: true, image: true })
@@ -153,13 +153,13 @@ test('a drawn companion becomes the Main Bot\'s avatar, shrunk', async () => {
   }
 })
 
-test('a drawn companion is kept as a private file in the Omni home', async () => {
+test('a drawn companion is kept as a private file in the Bot team\'s home', async () => {
   const home = mkdtempSync(join(tmpdir(), 'omni-ai-companion-'))
   try {
-    const fake = host({ env: { OMNI_HOME: home } })
+    const fake = host({ env: { AUTOMAGIK_BOTS_HOME: home } })
     const reply = await fake.handle('companion-save', { name: 'Nova', image: `data:image/png;base64,${PNG}` })
     assert.deepEqual(reply.value, { name: 'Nova', applied: false, image: true })
-    const file = join(home, 'ai', 'companion.png')
+    const file = join(home, 'companion', 'companion.png')
     assert.equal(statSync(file).mode & 0o777, 0o600)
     assert.equal(readFileSync(file).toString('base64'), PNG)
     assert.deepEqual((await fake.handle('companion-image')).value, { image: `data:image/png;base64,${PNG}` })

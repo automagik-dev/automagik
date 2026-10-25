@@ -22,8 +22,13 @@ import { VERSION } from './version';
 export const REPO_URL = 'https://github.com/automagik-dev/automagik';
 export const INDEX_PATH = join(import.meta.dir, '..', 'marketplace', 'automagik.json');
 export const INDEX_URL = 'https://raw.githubusercontent.com/automagik-dev/automagik/main/marketplace/automagik.json';
-/** The outside plugins' repositories this index may list: forks Automagik reviewed. */
+/**
+ * The other repositories this index may list: Genie's (its DSH plugin, pinned where the
+ * welcome installs it from, apps/welcome-dsh package.json automagik.genie) and the forks
+ * Automagik reviewed.
+ */
 export const VETTED = [
+  'https://github.com/automagik-dev/genie',
   'https://github.com/automagik-genie/dsh-oh-my-claude',
   'https://github.com/automagik-genie/dsh-subscriptions',
 ];
