@@ -1,9 +1,10 @@
 {
   "name": "omni-desktop-runtime",
   "private": true,
-  "description": "The DeepSeek Harness the Automagik desktop app runs, pinned to the release its plugins are tested against (apps/bots-dsh/dev/harness here, and Omni's apps/omni-channels-dsh/dev/harness at the release omni.json pins; prepare-runtime checks they match), and the pnpm dsh installs plugins with.",
+  "description": "The DeepSeek Harness the Automagik desktop app runs, pinned to the release its plugins are tested against (apps/bots-dsh/dev/harness here, and Omni's apps/omni-channels-dsh/dev/harness at the release omni.json pins; prepare-runtime checks they match), and the pnpm dsh installs plugins with. zod is pinned to the version DSH's packages pin exactly, so npm installs one copy for all of them instead of one inside each: move it with DSH (test/prune-runtime.test.js checks it).",
   "dependencies": {
     "@deepseek-ai/dsh": "0.2.1-rc.3",
-    "pnpm": "10.34.6"
+    "pnpm": "10.34.6",
+    "zod": "4.4.3"
   }
 }

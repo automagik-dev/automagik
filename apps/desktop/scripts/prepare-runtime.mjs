@@ -5,6 +5,9 @@
 //                                pnpm-workspace.yaml,
 //                                and node_modules holding only the app's plugins
 //
+// Both leave out what nothing reads at runtime (source maps, typings, TypeScript sources,
+// package docs: scripts/prune-runtime.mjs), since every shipped file slows an update.
+//
 // The plugins are the @automagik packages profile/package.json depends on: Automagik's own
 // (this repository's apps/*-dsh, the Bot team and the welcome, at this app's version) and
 // Omni's (its channels and canvases, taken from Omni itself at the commit omni.json pins, the
@@ -19,6 +22,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, write
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { scrubBuildPaths } from '../src/dsh.js'
+import { pruneNodeModules } from './prune-runtime.mjs'
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = resolve(APP, '..', '..')
@@ -100,6 +104,12 @@ if (!process.argv.includes('--skip-runtime') || !existsSync(join(runtimeDir, 'no
   if (!existsSync(join(APP, 'runtime', 'package-lock.json'))) cpSync(join(runtimeDir, 'package-lock.json'), join(APP, 'runtime', 'package-lock.json'))
 }
 
+// DSH's own packages keep their typings and READMEs: its plugin-development skill reads them.
+const ownDocs = name => name.startsWith('@deepseek-ai/')
+const mib = bytes => `${(bytes / 1048576).toFixed(1)} MiB`
+const runtimePruned = pruneNodeModules(join(runtimeDir, 'node_modules'), { keepDocsOf: ownDocs })
+say(`left out of the runtime: ${runtimePruned.files} files, ${mib(runtimePruned.bytes)}`)
+
 say(`packing ${Object.keys(PLUGINS).join(', ')}`)
 const packs = join(BUILD, 'packs')
 rmSync(packs, { recursive: true, force: true })
@@ -146,6 +156,9 @@ scrubBuildPaths(installDir)
 const profileDir = join(BUILD, 'profile')
 rmSync(profileDir, { recursive: true, force: true })
 cpSync(installDir, profileDir, { recursive: true, verbatimSymlinks: true })
+// The plugins keep their typings and every .md: a plugin may read its own (a Changelog card).
+const profilePruned = pruneNodeModules(join(profileDir, 'node_modules'), { keepDocsOf: name => ownDocs(name) || Object.hasOwn(profileDeps, name), docs: false })
+say(`left out of the profile: ${profilePruned.files} files, ${mib(profilePruned.bytes)}`)
 rmSync(dshHome, { recursive: true, force: true })
 
 // The app copies the profile into its home again whenever this id changes (src/dsh.js).
