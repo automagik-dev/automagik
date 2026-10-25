@@ -462,6 +462,19 @@
       },
       "versions": [
         {
+          "version": "0.1.1",
+          "publishTimestamp": 1792951169,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/genie",
+            "commit": "fcf1419c1fc06120ad7fb982d91af74cecc2ae7b",
+            "path": "plugins/genie-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.2 <0.3.0"
+          }
+        },
+        {
           "version": "0.1.0",
           "publishTimestamp": 1792901264,
           "source": {
