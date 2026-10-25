@@ -21,6 +21,11 @@ test('the app keeps everything in one folder under ~/.automagik, apart from a ds
   assert.equal(env.OMNI_CLIENT_ID, 'omni-desktop')
   // Nothing is reported: DSH's own opt-out (it does not read DO_NOT_TRACK), and the CLIs it runs.
   for (const name of ['DO_NOT_TRACK', 'DSH_TELEMETRY_DISABLED', 'DISABLE_TELEMETRY', 'DISABLE_ERROR_REPORTING', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'OPENUI_TELEMETRY_DISABLED']) assert.equal(env[name], '1', name)
+  assert.equal(env.AUTOMAGIK_PRIVACY_FILE, '/a/desktop/privacy.json')
+  // A share the person switched on drops its own opt-out, and only its own.
+  const sharing = dshEnv({ base: {}, home: '/a', privacy: { 'deepseek-feedback': true } })
+  assert.equal(sharing.DSH_TELEMETRY_DISABLED, undefined)
+  assert.equal(sharing.DISABLE_ERROR_REPORTING, '1')
   // The welcome counts the agents at work there, for an update while the person is away.
   assert.equal(env.AUTOMAGIK_BUSY_FILE, '/a/desktop/busy.json')
   // The person's PATH comes first; the usual tool folders follow (see toolDirs below).
@@ -33,7 +38,6 @@ test('resources come from the app when packaged and from build/ in a checkout', 
     bin: '/opt/Omni/resources/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js',
     pnpm: '/opt/Omni/resources/runtime/node_modules/pnpm/bin/pnpm.cjs',
     profile: '/opt/Omni/resources/profile',
-    privacy: '/opt/Omni/resources/profile/privacy.patch.yml',
   })
   assert.equal(resourcesOf({ packaged: false, resourcesPath: '/x', appPath: '/src/apps/omni-desktop' }).profile, '/src/apps/omni-desktop/build/profile')
 })
@@ -154,12 +158,12 @@ test('the shipped profile bundles the Bot team first, Omni\'s plugins, the welco
   // vetted version or a reviewed fork's pinned commit, and bundled after Omni's.
   const addons = {
     '@goodandready/dsh-subscriptions': 'github:automagik-genie/dsh-subscriptions#2eff034ede95c9d06ecee290517101e6419c7fee',
-    'dsh-oh-my-claude': 'github:automagik-genie/dsh-oh-my-claude#7ef69be069fae9c372ebcd14e3eb19332a12ae27',
+    'dsh-oh-my-claude': 'github:automagik-genie/dsh-oh-my-claude#c47df2b54a538dcd18dbbca0956a2dcc8ffcdc32',
   }
   assert.deepEqual(Object.keys(profile.dependencies), [...omni, ...Object.keys(addons)])
   for (const [name, spec] of Object.entries(addons)) assert.equal(profile.dependencies[name], spec)
   // A pinned commit names the version it holds, which the build checks after installing it.
-  assert.deepEqual(profile.omni.addonVersions, { '@goodandready/dsh-subscriptions': '0.7.21-omni.1', 'dsh-oh-my-claude': '1.5.6-omni.3' })
+  assert.deepEqual(profile.omni.addonVersions, { '@goodandready/dsh-subscriptions': '0.7.21-omni.1', 'dsh-oh-my-claude': '1.5.6-omni.4' })
   assert.deepEqual(profile.dsh.profile.bundles.filter(name => name.startsWith('@automagik/')), omni)
   assert.deepEqual(profile.dsh.profile.bundles.slice(-2), Object.keys(addons))
   assert.ok(profile.dsh.profile.bundles.includes('@deepseek-ai/dsh-experimental-plugin-market-bundle'))
@@ -427,9 +431,3 @@ test('a preload comes from the launch and stays in the app\'s home; none is no p
   assert.equal('AUTOMAGIK_PRELOAD' in dshEnv({ base: {}, home: '/a' }), false)
 })
 
-test('the shipped privacy overlay switches off everything DSH reports', () => {
-  const text = readFileSync(new URL('../profile/privacy.patch.yml', import.meta.url), 'utf8')
-  // Each row: the id, then disabled: true.
-  const off = [...text.matchAll(/^- id: (\S+)\n  disabled: true$/gm)].map(match => match[1]).sort()
-  assert.deepEqual(off, ['desktop-product-telemetry', 'plugin-package-inventory-deepseek', 'product-analytics', 'session-log-deepseek', 'session-telemetry-otel'])
-})

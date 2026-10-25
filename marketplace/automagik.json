@@ -604,6 +604,18 @@
       },
       "versions": [
         {
+          "version": "1.5.6-omni.4",
+          "publishTimestamp": 1792971117,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-genie/dsh-oh-my-claude",
+            "commit": "c47df2b54a538dcd18dbbca0956a2dcc8ffcdc32"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.2 <0.3.0"
+          }
+        },
+        {
           "version": "1.5.6-omni.3",
           "publishTimestamp": 1792970304,
           "source": {

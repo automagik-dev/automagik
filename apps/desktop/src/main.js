@@ -13,10 +13,11 @@ import { fileURLToPath } from 'node:url'
 import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
 import { fade, PAGE_IN_CSS } from './motion.js'
 import { noteRestart, restartLine, steps } from './timeline.js'
-import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, freePort, installProfile, navigationOf, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
+import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, privacyFileOf, privacyPatchOf, freePort, installProfile, navigationOf, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
 import { pageLayout, tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
 import { awayInstall, LOOK_EVERY_MS, readBusy } from './idle.js'
+import { readChoices, writeOverlay } from './privacy.js'
 import { isReleasePage, startUpdates, updateMode } from './update.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -162,9 +163,12 @@ async function launch() {
   const binDir = writeTools({ dir: join(home, 'bin'), node: process.execPath, pnpm: resources.pnpm })
   // `--preload=omni|genie` from `omni desktop` / `genie desktop`, kept in Automagik's home.
   const preload = preloadOf({ home: root, argv: process.argv, env: process.env })
-  // A new anonymous id every launch (dsh.js ANONYMOUS_ID); the privacy overlay always applies.
-  rmSync(join(home, 'dsh', ANONYMOUS_ID), { force: true })
-  dsh = await startDsh({ node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload }), port, cwd: home, log, privacy: resources.privacy, onSpawn: (child) => { dshChild = child; started.mark('dsh spawned') } })
+  // What the person chose to share on the Privacy page (privacy.js): nothing, unless they did.
+  const privacy = readChoices(privacyFileOf(home))
+  // A new anonymous id every launch (dsh.js ANONYMOUS_ID), unless they chose to keep one.
+  if (privacy['stable-id'] !== true) rmSync(join(home, 'dsh', ANONYMOUS_ID), { force: true })
+  const overlay = writeOverlay(privacyPatchOf(home), privacy)
+  dsh = await startDsh({ node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload, privacy }), port, cwd: home, log, privacy: overlay, onSpawn: (child) => { dshChild = child; started.mark('dsh spawned') } })
   started.mark('dsh ready')
   dsh.child.once('exit', (code) => {
     if (!quitting) fail(new Error(`dsh stopped (${code}).`))
@@ -179,8 +183,9 @@ async function launch() {
       sandbox: true,
       nodeIntegration: false,
       webviewTag: false,
-      // Chromium fetches dictionaries from Google on Linux and Windows; macOS checks spelling itself.
-      spellcheck: process.platform === 'darwin',
+      // Chromium fetches dictionaries from Google on Linux and Windows (a share on the Privacy
+      // page); macOS checks spelling itself.
+      spellcheck: process.platform === 'darwin' || readChoices(privacyFileOf(home)).spellcheck === true,
     },
   })
   page.setBackgroundColor(tableColor(nativeTheme.shouldUseDarkColors))
