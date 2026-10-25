@@ -4,6 +4,7 @@
 // one-off work there (start_task); when a task's first turn ends, its last words go back
 // to the Bot that started it.
 import { randomUUID } from 'node:crypto'
+import { isAbsolute } from 'node:path'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { AGENT_NAME, AGENT_SESSION_TITLE_MAX, TEAM_TOOLS } from './constants.js'
@@ -93,15 +94,20 @@ export function install(rt) {
     return agent
   }
 
-  async function createAgentSession(agentId, workspaceId) {
+  async function createAgentSession(agentId, workspaceId, { cwd, agentPreset } = {}) {
     writeCheck()
     const agent = record(agentId)
-    // A known workspace id wins (the Agent's latest Session may live outside the
-    // team workspace after a workspace switch); anything else gets the team's own.
-    const target = typeof workspaceId === 'string' && ctx.workspaceRegistry.get(workspaceId)
-      ? workspaceId
-      : await rt.ensureWorkspace()
-    const { sessionId } = await ctx.sessionController.create({ workspaceId: target })
+    // A folder of its own (a task's `cwd`) makes the Session by cwd alone, outside every
+    // DSH workspace, as a Bot's working folder does. Otherwise a known workspace id wins
+    // (the Agent's latest Session may live outside the team workspace after a workspace
+    // switch); anything else gets the team's own.
+    const own = typeof cwd === 'string' && isAbsolute(cwd) && await rt.isFolder(cwd)
+    if (cwd !== undefined && !own) rt.warn('ds-bot: the task folder %s is not an absolute path to a folder; the task starts in the team workspace', cwd)
+    const place = own
+      ? { cwd }
+      : { workspaceId: typeof workspaceId === 'string' && ctx.workspaceRegistry.get(workspaceId) ? workspaceId : await rt.ensureWorkspace() }
+    const preset = await servedPreset(agentPreset)
+    const { sessionId } = await ctx.sessionController.create({ ...place, ...(preset ? { agentPreset: preset } : {}) })
     agent.sessions.push(sessionId)
     await rt.save()
     // agent/created fired before the session joined the index, so restrict again now.
@@ -203,18 +209,33 @@ export function install(rt) {
     return agent
   }
 
+  // A DSH agent preset by id, when this DSH serves it unbroken; anything else is DSH's default.
+  async function servedPreset(id) {
+    if (typeof id !== 'string' || id === '') return undefined
+    let presets
+    try {
+      presets = await ctx.get?.('agentPresets')?.list?.()
+    } catch {
+      presets = undefined
+    }
+    if ((presets ?? []).some(preset => preset.id === id && preset.broken === undefined)) return id
+    rt.warn('ds-bot: the agent preset %s is not served here; the task takes DSH\'s default', id)
+    return undefined
+  }
+
   // A fresh Tasks Session with a title; automations that run "a new DSH session" use it too.
-  async function createTaskSession(title) {
+  // Another plugin may give it a folder (`cwd`) and a DSH agent preset of its own.
+  async function createTaskSession(title, { cwd, agentPreset } = {}) {
     const agent = await ensureTasks()
-    const sessionId = await createAgentSession(agent.id)
+    const sessionId = await createAgentSession(agent.id, undefined, { cwd, agentPreset })
     const clean = String(title ?? '').trim().slice(0, AGENT_SESSION_TITLE_MAX)
     if (clean !== '') await renameAgentSession(agent.id, sessionId, clean).catch(error => rt.warn('ds-bot: task title not set: %s', error?.message ?? error))
     return sessionId
   }
 
   const tasks = () => (state.tasks ??= {})
-  async function startTask({ title, text, from }) {
-    const sessionId = await createTaskSession(title)
+  async function startTask({ title, text, from, cwd, agentPreset }) {
+    const sessionId = await createTaskSession(title, { cwd, agentPreset })
     tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working' }
     // Only the newest tasks are remembered for their reports.
     const kept = Object.entries(tasks()).sort(([, a], [, b]) => b.at - a.at)

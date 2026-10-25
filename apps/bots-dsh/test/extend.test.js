@@ -31,7 +31,7 @@ test('apply provides the runtime as omniTeam, with the hooks other Omni plugins 
   const { rt, stop } = start()
   t.after(stop)
   assert.deepEqual(Object.keys(rt.hooks).sort(), ['endpoint', 'live', 'mainRules', 'view'])
-  for (const name of ['load', 'save', 'botOf', 'isMain', 'selfOf', 'createTaskSession', 'deliver', 'resolveAgent', 'home']) assert.ok(name in rt, name)
+  for (const name of ['load', 'save', 'botOf', 'isMain', 'selfOf', 'createBot', 'createTaskSession', 'startTask', 'deliver', 'resolveAgent', 'readOnly', 'home']) assert.ok(name in rt, name)
 })
 
 test('an added endpoint is served until its disposer runs, and the view and live answers carry added fields', async (t) => {

@@ -281,3 +281,20 @@ test('team tools are restricted on DSH Agent Sessions but not on Bot Sessions', 
   // object, so the event does restrict — but still only for the agent session.
   assert.equal(restricted.every(entry => entry.sessionId === agent.sessions[0]), true)
 })
+
+test('a task started with a folder of its own runs there, with a preset this DSH serves', async (t) => {
+  const { call, stop, created, home, ctx } = start(TEAM)
+  t.after(stop)
+  await call('state', {})
+  ctx.provided.set('agentPresets', { list: async () => [{ id: 'standard' }, { id: 'broken', broken: 'no tools' }] })
+  const rt = ctx.provided.get('omniTeam')
+  await rt.startTask({ title: 'Wish', text: 'Do it', from: 'm1', cwd: home, agentPreset: 'standard' })
+  assert.deepEqual(created.at(-1), { cwd: home, agentPreset: 'standard' })
+  // A path that is not a folder, or a preset DSH does not serve unbroken, falls back.
+  await rt.startTask({ title: 'Wish 2', text: 'Do it', from: 'm1', cwd: join(home, 'missing'), agentPreset: 'broken' })
+  assert.deepEqual(Object.keys(created.at(-1)), ['workspaceId'])
+  await rt.startTask({ title: 'Wish 3', text: 'Do it', from: 'm1', cwd: 'relative/path' })
+  assert.deepEqual(Object.keys(created.at(-1)), ['workspaceId'])
+  const view = (await call('state', {})).value
+  assert.equal(Object.values(view.tasks).filter(task => task.status === 'working').length, 3)
+})
