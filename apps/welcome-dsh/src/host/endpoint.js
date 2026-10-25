@@ -16,8 +16,8 @@ import { hintsFile, seedStarterOff } from './starter.js'
 //                      keeps a step finished, in this plugin's own settings entry (the first
 //                      one on a fresh install also hides dsh-oh-my-claude's starter hint,
 //                      starter.js); Connect
-//                      AI finished with an AI on (`connected`) gives the companion and the
-//                      Omni Bot their model (companion.js assignModels)
+//                      AI finished with an AI on (`connected`) gives the companion, the Omni
+//                      Bot and the Genie Bot their model (companion.js assignModels)
 //   cliproxy { baseURL, apiKey }
 //                      lists the gateway's models with the key, stores the key in DSH's
 //                      credential store and writes a pi-ai route that references it
@@ -28,9 +28,9 @@ import { hintsFile, seedStarterOff } from './starter.js'
 //   ai-terminal-*      the terminal that signs Claude Code in (src/host/terminal.js)
 //   companion, companion-generate, companion-save, companion-image, team-save
 //                      the person's own companion and team (src/host/companion.js)
-//   omni-plugins, omni-plugins-install, bot-type
-//                      the Omni plugins, installed through DSH's plugin manager, and what
-//                      a Bot type starts with (src/host/bot-types.js)
+//   omni-plugins, omni-plugins-install, genie-plugin, genie-plugin-install, bot-type
+//                      the Omni plugins and Genie's, installed through DSH's plugin manager,
+//                      and what a Bot type starts with (src/host/bot-types.js)
 //
 // The key never enters settings, a reply or a log line: the route names it by the
 // env-shaped reference OMNI_AI_CLIPROXY_API_KEY, which DSH resolves per request.
@@ -215,8 +215,8 @@ export function install(ctx, deps = {}) {
   const { anyOn, ...aiEndpoints } = ai
   const { closeAll, ...terminalEndpoints } = terminal
   const { team, omniProjectOf, assignModels, ...companion } = createCompanionActions(ctx, deps.companion)
-  const actions = { ...createActions(ctx, { ...deps, anyOn }), ...createProviderActions(ctx), ...aiEndpoints, ...terminalEndpoints, ...companion, ...createBotTypeActions(ctx, { team, omniProjectOf }) }
-  // Connect AI finished with an AI on: the companion and the Omni Bot get their model, and
+  const actions = { ...createActions(ctx, { ...deps, anyOn }), ...createProviderActions(ctx), ...aiEndpoints, ...terminalEndpoints, ...companion, ...createBotTypeActions(ctx, { team, omniProjectOf, ...(deps.checkGit ? { checkGit: deps.checkGit } : {}) }) }
+  // Connect AI finished with an AI on: the companion, the Omni Bot and the Genie Bot get their model, and
   // their held greetings go out. The step waits for that a little (ASSIGN_HOLD_MS), so the
   // chat opens on the greeting rather than on the model card; a provider that registers
   // later is still waited for in the background, up to ASSIGN_WAIT_MS.

@@ -155,8 +155,8 @@ export function createCompanionActions(ctx, { fetch: fetchImpl = globalThis.fetc
     return true
   }
 
-  // After Connect AI succeeds: the companion (the first Main Bot) and the Omni Bot were made
-  // without a model and hold their greetings until they have one. Each gets the team's
+  // After Connect AI succeeds: the companion (the first Main Bot), the Omni Bot and the Genie
+  // Bot were made without a model and hold their greetings until they have one. Each gets the team's
   // default model (bots-dsh models.js: DSH's default model when it is served and its
   // provider has its key, else the first model that can run); a Bot that has one keeps it.
   // A provider that Connect AI just turned on may register a moment later, so the models
@@ -165,8 +165,9 @@ export function createCompanionActions(ctx, { fetch: fetchImpl = globalThis.fetc
   async function assignModels(rt, { waitMs = 0, pauseMs = 1500 } = {}) {
     await rt.load?.()
     const main = (rt.state?.mainBotIds ?? []).find(id => rt.botOf?.(id))
-    const omni = Object.values(rt.state?.bots ?? {}).find(bot => bot.kind === OMNI_BOT.kind)
-    const waiting = () => [main, omni?.id].filter(Boolean).map(id => rt.botOf?.(id)).filter(bot => bot !== undefined && !bot.model)
+    // Omni's Bot, and Genie's (which the Genie plugin makes before Connect AI if it ran first).
+    const joined = Object.values(rt.state?.bots ?? {}).filter(bot => bot.kind === OMNI_BOT.kind || bot.kind === 'genie').map(bot => bot.id)
+    const waiting = () => [main, ...joined].filter(Boolean).map(id => rt.botOf?.(id)).filter(bot => bot !== undefined && !bot.model)
     if (waiting().length === 0) return []
     const deadline = Date.now() + waitMs
     let ref
