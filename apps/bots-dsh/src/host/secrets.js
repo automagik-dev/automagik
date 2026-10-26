@@ -114,16 +114,23 @@ export function install(rt) {
   // would lose every key in it. While `blocked` holds the reason nothing is written,
   // and each load reads the file again (a busy file may only be briefly unreadable).
   let blocked
+  // Reads may overlap (each load of an unreadable file starts one). Only the newest may change
+  // the store: an older one that lands late (it opened what was there before) would undo it,
+  // clearing a key just saved or blocking a file just fixed; it waits for the newest instead.
+  let readGen = 0
   const loadSecrets = () => {
     if (loaded !== null && (loadedReadOnly || rt.readOnly() !== undefined || blocked !== undefined)) loaded = null
     return loaded ??= readSecrets()
   }
   const readSecrets = async () => {
+    const gen = ++readGen
+    const superseded = () => gen !== readGen
     loadedReadOnly = rt.readOnly() !== undefined
     let contents
     try {
       contents = await readFile(path, 'utf8')
     } catch (error) {
+      if (superseded()) return loaded
       if (error?.code === 'ENOENT') {
         blocked = undefined
         secrets.clear()
@@ -134,6 +141,7 @@ export function install(rt) {
       changed()
       return
     }
+    if (superseded()) return loaded
     let parsed
     try {
       parsed = JSON.parse(contents)

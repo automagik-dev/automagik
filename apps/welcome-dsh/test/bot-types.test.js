@@ -42,9 +42,9 @@ function fakeManager({ bundles = [{ name: PKG.name, availability: 'profile', ena
   return manager
 }
 
-function host({ manager, team, services = {}, checkGit = async () => null } = {}) {
+function host({ manager, team, services = {}, checkGit = async () => null, genieSkills = () => true } = {}) {
   const fake = fakeContext({ entries: { 'omni-ai': {} }, services: { ...(manager ? { pluginManager: manager } : {}), ...(team ? { omniTeam: team } : {}), ...services } })
-  const { handle } = install(fake.ctx, { checkClaude: noClaude, checkGit })
+  const { handle } = install(fake.ctx, { checkClaude: noClaude, checkGit, genieSkills })
   return { ...fake, handle }
 }
 const value = async (fake, endpoint, payload) => {
@@ -308,4 +308,13 @@ test('without git, Genie\'s install fails with what to run, before anything is i
   const ran = []
   await gitProblem({ platform: 'darwin', run: async (command) => { ran.push(command); return false } })
   assert.deepEqual(ran, ['xcode-select'])
+})
+
+test('Genie\'s card says whether its skills are installed, and the one line that installs them', async () => {
+  const missing = await value(host({ manager: fakeManager(), genieSkills: () => false }), 'genie-plugin')
+  assert.equal(missing.skills, false)
+  assert.equal(missing.cli, 'curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | GENIE_CHANNEL=dev bash')
+  // The environment goes on bash, which runs the script; on curl it would not reach it.
+  assert.match(missing.cli, /\| GENIE_CHANNEL=dev bash$/)
+  assert.equal((await value(host({ manager: fakeManager(), genieSkills: () => true }), 'genie-plugin')).skills, true)
 })

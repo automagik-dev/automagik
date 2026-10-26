@@ -8,10 +8,10 @@ import { pluginNames } from './release-plugins';
 const repoDir = join(import.meta.dir, '..');
 const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoDir, encoding: 'utf8' }).trim();
 const team = JSON.parse(readFileSync(join(repoDir, 'apps/bots-dsh/package.json'), 'utf8'));
-const indexWith = (source: Record<string, unknown>, version = team.version) => ({
+const indexWith = (source: Record<string, unknown>, version = team.version, engines = team.engines) => ({
   format: 1,
   title: { en: 'Test' },
-  plugins: [{ name: team.name, versions: [{ version, publishTimestamp: 1, source }] }],
+  plugins: [{ name: team.name, versions: [{ version, publishTimestamp: 1, source, ...(engines ? { engines } : {}) }] }],
 });
 
 type IndexPlugin = { name: string; versions: { source: { url: string; path?: string } }[] };
@@ -34,6 +34,20 @@ describe('market index', () => {
 
   test('a commit that holds the package passes', () => {
     expect(checkIndex(indexWith({ type: 'git', url: REPO_URL, commit: head, path: 'apps/bots-dsh' }), repoDir)).toEqual([]);
+  });
+
+  test('an entry lists the DSH range its package.json declares, which covers the DSH its tests run on', () => {
+    const source = { type: 'git', url: REPO_URL, commit: head, path: 'apps/bots-dsh' };
+    expect(checkIndex(indexWith(source, team.version, { dsh: '>=0.2.1-rc.2 <0.3.0' }), repoDir)[0]).toMatch(/lists dsh >=0\.2\.1-rc\.2 <0\.3\.0 but its package\.json declares/);
+    expect(checkIndex(indexWith(source, team.version, null), repoDir)[0]).toMatch(/lists dsh \(none\)/);
+    // Each plugin of ours declares a tested range, and the DSH its tests run on is in it.
+    for (const name of pluginNames()) {
+      const folder = join(repoDir, 'apps', name.replace('@automagik/', ''));
+      const range = JSON.parse(readFileSync(join(folder, 'package.json'), 'utf8')).engines?.dsh;
+      const tested = JSON.parse(readFileSync(join(folder, 'dev/harness/package.json'), 'utf8')).dependencies['@deepseek-ai/dsh'];
+      expect(typeof range).toBe('string');
+      expect(Bun.semver.satisfies(tested, range)).toBe(true);
+    }
   });
 
   test('a wrong version, a missing folder, another repository or an unknown commit fail', () => {

@@ -6,7 +6,9 @@
 // folder and permissions) is read from the live services where they run, and from this
 // list where they do not yet.
 import { execFile } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { BotTypePayload, parse } from './payloads.js'
 
 const PKG = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
@@ -109,7 +111,13 @@ const resultProblem = (result) => {
   return null
 }
 
-export function createBotTypeActions(ctx, { team, omniProjectOf, checkGit = gitProblem }) {
+// Genie's skills (/wish and the rest) come with its command line: its installer writes them to
+// ~/.agents/skills, which DSH reads, once it finds DSH (genie#3173). The card offers the one
+// line that installs it while they are missing.
+export const GENIE_CLI_INSTALL = 'curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | GENIE_CHANNEL=dev bash'
+export const hasGenieSkills = (home = homedir()) => existsSync(join(home, '.agents', 'skills', 'wish', 'SKILL.md'))
+
+export function createBotTypeActions(ctx, { team, omniProjectOf, checkGit = gitProblem, genieSkills = hasGenieSkills }) {
   const manager = () => service(ctx, 'pluginManager')
   // `{ phase, current, done, error, restart }` once an install started.
   let job = null
@@ -224,6 +232,8 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, checkGit = gitP
       bot: bot === undefined ? null : { id: bot.id, name: bot.name },
       canInstall: typeof manager()?.installBundle === 'function',
       install,
+      skills: genieSkills(),
+      cli: GENIE_CLI_INSTALL,
     }
   }
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { pinRuntime } from '../scripts/follow-dsh.mjs'
+import { PLUGINS, pinRange, pinRuntime, rangeFor } from '../scripts/follow-dsh.mjs'
 
 const runtime = { name: 'omni-desktop-runtime', private: true, dependencies: { '@deepseek-ai/dsh': '0.2.1-rc.2', pnpm: '10.34.6' } }
 
@@ -20,6 +20,23 @@ test('a runtime already on that dsh is left alone', () => {
 test('anything but an exact version is refused', () => {
   for (const bad of ['', undefined, 'latest', '^0.2.1', '0.2.1-rc.3; rm -rf /', '>=0.2.1']) {
     assert.throws(() => pinRuntime(runtime, bad), /not a dsh version/)
+  }
+})
+
+test('a plugin tested on a dsh declares it up to the next patch, previews included', () => {
+  assert.equal(rangeFor('0.2.1-rc.3'), '>=0.2.1-rc.3 <0.2.2-0')
+  assert.equal(rangeFor('0.2.1'), '>=0.2.1 <0.2.2-0')
+  assert.equal(rangeFor('0.3.0-alpha.1'), '>=0.3.0-alpha.1 <0.3.1-0')
+  assert.throws(() => rangeFor('^0.2.1'), /not a dsh version/)
+  assert.deepEqual(pinRange({ name: 'p', engines: { dsh: '>=0.2.1-rc.3 <0.2.2-0' } }, '0.2.2-rc.1'), { name: 'p', engines: { dsh: '>=0.2.2-rc.1 <0.2.3-0' } })
+  assert.equal(pinRange({ engines: { dsh: '>=0.2.1-rc.3 <0.2.2-0' } }, '0.2.1-rc.3'), null)
+})
+
+test('the plugins it moves are the ones that declare the range, and their range is the one it writes', () => {
+  for (const name of PLUGINS) {
+    const manifest = JSON.parse(readFileSync(new URL(`../../${name}/package.json`, import.meta.url), 'utf8'))
+    const tested = JSON.parse(readFileSync(new URL(`../../${name}/dev/harness/package.json`, import.meta.url), 'utf8')).dependencies['@deepseek-ai/dsh']
+    assert.equal(manifest.engines?.dsh, rangeFor(tested), name)
   }
 })
 
