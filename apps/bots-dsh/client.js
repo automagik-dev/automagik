@@ -19537,10 +19537,13 @@ function SettingsDialog({ page, id, roster, actions, useUpdate, leaving = false 
   });
   const bot = page === "bots" && id ? roster.byId[id] : void 0;
   const room2 = page === "groups" && id ? roster.roomsById[id] : void 0;
-  const pages = SETTINGS_PAGES.filter(([key]) => key !== "models" || actions.providers !== void 0);
+  const extra = actions.pluginSettings?.() ?? [];
+  const own = SETTINGS_PAGES.filter(([key]) => key !== "models" || actions.providers !== void 0);
+  const pages = [...own.filter(([key]) => key !== "about"), ...extra.map((section) => [`plugin:${section.id}`, section.label]), ...own.filter(([key]) => key === "about")];
+  const pluginPage = extra.find((section) => `plugin:${section.id}` === page);
   const shown = pages.some(([key]) => key === page) ? page : "general";
   const usageFocus = shown === "usage" && id ? id : null;
-  const label = t(pages.find(([key]) => key === shown)[1]);
+  const label = pluginPage ? pluginPage.label : t(pages.find(([key]) => key === shown)[1]);
   const back = bot ? t("Back to Bots") : room2 ? t("Back to group chats") : usageFocus ? t("All usage") : null;
   const nav2 = useGlide(shown, { axis: "y" });
   const pageKey = `${shown}:${bot?.id ?? room2?.id ?? ""}`;
@@ -19569,7 +19572,7 @@ function SettingsDialog({ page, id, roster, actions, useUpdate, leaving = false 
           className: "bt-settings-item",
           "aria-current": shown === key ? "page" : void 0,
           onClick: () => actions.openSettings(key)
-        }, (0, import_react54.createElement)(PAGE_ICONS[key]), t(text2))),
+        }, (0, import_react54.createElement)(PAGE_ICONS[key] ?? PlugIcon), key.startsWith("plugin:") ? text2 : t(text2))),
         actions.openHarnessSettings ? (0, import_react54.createElement)("button", {
           type: "button",
           className: "bt-settings-item bt-settings-shell",
@@ -19587,7 +19590,8 @@ function SettingsDialog({ page, id, roster, actions, useUpdate, leaving = false 
           "div",
           { className: "bt-settings-head" },
           back ? (0, import_react54.createElement)("button", { type: "button", className: "bt-icon-btn", "aria-label": back, title: back, onClick: () => actions.openSettings(shown) }, (0, import_react54.createElement)(ChevronLeftIcon)) : null,
-          (0, import_react54.createElement)("h2", { key: bot?.id ?? room2?.id ?? shown }, bot?.name ?? room2?.name ?? label)
+          // A plugin's page draws its own title, as in DSH's settings.
+          pluginPage ? null : (0, import_react54.createElement)("h2", { key: bot?.id ?? room2?.id ?? shown }, bot?.name ?? room2?.name ?? label)
         ),
         shown === "usage" ? null : (0, import_react54.createElement)(
           "div",
@@ -19605,7 +19609,9 @@ function SettingsDialog({ page, id, roster, actions, useUpdate, leaving = false 
           shown === "secrets" ? (0, import_react54.createElement)(SecretsPage, { roster, actions, run: run2, Section: SetSection }) : null,
           shown === "privacy" ? (0, import_react54.createElement)(PrivacyPage, { actions, run: run2, Section: SetSection, Row: SetRow }) : null,
           shown === "feedback" ? (0, import_react54.createElement)(FeedbackPage, { actions, run: run2, Section: SetSection, Row: SetRow }) : null,
-          shown === "about" ? (0, import_react54.createElement)(AboutPage, { useUpdate, actions, run: run2, Section: SetSection, Row: SetRow }) : null
+          shown === "about" ? (0, import_react54.createElement)(AboutPage, { useUpdate, actions, run: run2, Section: SetSection, Row: SetRow }) : null,
+          // A page another plugin added, drawn as DSH's settings draws it (with `close`).
+          pluginPage ? (0, import_react54.createElement)("div", { className: "bt-settings-plugin" }, (0, import_react54.createElement)(pluginPage.Component, { close })) : null
         ),
         usageOpened ? (0, import_react54.createElement)(
           "div",
@@ -20984,6 +20990,7 @@ var omni = Object.freeze({
   // The roster and actions of the running surface, or null before it runs.
   face: () => currentFace?.() ?? null
 });
+var DSH_SETTINGS = /* @__PURE__ */ new Set(["general", "account", "models", "agent-presets", "plugins"]);
 function apply(ctx) {
   ctx.effect(() => installLocale(ctx.get("locale")), "ds-bot: interface copy");
   const roster = createSource(EMPTY_ROSTER);
@@ -21504,6 +21511,7 @@ function apply(ctx) {
   actions.accountT = () => ctx.get("locale").bind("settings.account");
   actions.speech = () => ctx.get("remote.speech") ?? void 0;
   actions.openHarnessSettings = openHarnessSettings;
+  actions.pluginSettings = () => (ctx.slots.entries?.("settings.section") ?? []).filter(({ component, options = {}, registrant }) => component && options.inject === void 0 && !DSH_SETTINGS.has(options.id) && !/^@deepseek-ai\//.test(registrant ?? "")).map(({ component, options }) => ({ id: options.id, order: options.order ?? 0, label: typeof options.label === "function" ? options.label() : String(options.label ?? options.id), Component: component })).sort((a, b) => a.order - b.order);
   actions.openHarnessOnboarding = openHarnessOnboarding;
   actions.voiceSetup = () => {
     const navigation = ctx.get("pluginNavigation");
