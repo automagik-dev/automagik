@@ -111,6 +111,10 @@ jobs:
           # and those that ship nothing (CI, docs, tests).
           if [[ -n "${last}" && -z "$(git log --no-merges --format=%s "${last}..HEAD" | grep -vE '^(chore\(release\)|ci|docs|test)(\([^)]*\))?!?: ' || true)" ]]; then
             echo "dev has nothing since ${last}: no release"
+          # Nor a change no install sees, whatever its commit says (a plugin's dev tools, its lint
+          # script: not in its package's files). A release of it would only ask every app to restart.
+          elif [[ -n "${last}" && "$(bun scripts/lane.ts ships "${last}")" == "no" ]]; then
+            echo "nothing since ${last} reaches an install: no release"
           else
             echo "release=true" >> "$GITHUB_OUTPUT"
           fi
