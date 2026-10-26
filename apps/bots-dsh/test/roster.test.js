@@ -929,3 +929,20 @@ test('a group\'s relay limit is a user setting the state view shows, and old lat
     assert.match(result.error.message, /Relay limit must be a whole number from 1 to 200/)
   }
 })
+
+test('a Bot wears a pet Genie ships with; a photo set after it wins, and a pet from anywhere else is refused', async (t) => {
+  const { call, stop } = start()
+  t.after(stop)
+  await call('state', {})
+  const writer = (await call('create-bot', { name: 'Writer', role: 'Writes' })).value
+  const worn = (await call('pet-use', { botId: writer.id, source: 'builtin', id: 'genie-cosmic' })).value
+  assert.deepEqual(worn.avatar, { pet: { source: 'builtin', id: 'genie-cosmic', version: 2, sleep: true } })
+  // A photo, uploaded over it, replaces it; a pet named outside what the team keeps is dropped.
+  const photo = 'data:image/png;base64,iVBORw0KGgo='
+  const pictured = (await call('update-bot', { id: writer.id, avatar: { ...worn.avatar, image: photo } })).value
+  assert.deepEqual(pictured.avatar, { image: photo })
+  const odd = (await call('update-bot', { id: writer.id, avatar: { pet: { source: 'codex', id: 'fox', version: 2 } } })).value
+  assert.equal(odd.avatar, undefined)
+  const missing = await call('pet-use', { botId: writer.id, source: 'team', id: 'nobody' })
+  assert.equal(missing.ok, false)
+})

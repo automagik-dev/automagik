@@ -4,6 +4,7 @@ import { mkdir } from 'node:fs/promises'
 import { MAX_AVATAR_IMAGE, ROOM_MAX_MEMBERS, ROOM_MODES, ROOM_NAME_MAX, ROOM_NOTICE_MAX } from './constants.js'
 import { currentColor, isColor, normalize, unquote } from './text.js'
 import { nameProblem } from '../shared/mentions.js'
+import { cleanPetId } from './pets.js'
 
 // A Bot's role: a few words of plain text on one line, shown beside the first Main Bot's
 // name in the sidebar and under a Bot's name elsewhere. Line breaks and control
@@ -78,6 +79,11 @@ export function install(rt) {
       if (!/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(input.image)) throw new Error('Avatar images must be PNG, JPEG, WebP, or GIF')
       if (input.image.length > MAX_AVATAR_IMAGE) throw new Error('Avatar image is too large')
       avatar.image = input.image
+    }
+    // A pet (pets.js) the team keeps or ships; a photo, set after it, wins.
+    const pet = input.pet
+    if (avatar.image === undefined && pet !== null && typeof pet === 'object' && ['builtin', 'team'].includes(pet.source) && cleanPetId(pet.id) && [1, 2].includes(pet.version)) {
+      avatar.pet = { source: pet.source, id: pet.id, version: pet.version, ...(pet.sleep === true ? { sleep: true } : {}) }
     }
     return Object.keys(avatar).length > 0 ? avatar : undefined
   }
