@@ -26,7 +26,7 @@ export const LANE_URL = 'https://github.com/automagik-dev/automagik/releases/dow
 // versions, and its base is the oldest app it runs on.
 export const PUBLISHERS = Object.freeze([
   { publisher: 'automagik', url: LANE_URL, keys: LANE_KEYS.automagik, sameLine: true, plugins: ['@automagik/bots-dsh', '@automagik/welcome-dsh'] },
-  { publisher: 'genie', url: 'https://github.com/automagik-dev/genie/releases/download/plugin-lane/lane.json', keys: LANE_KEYS.genie, sameLine: false, plugins: ['@automagik/genie-dsh'] },
+  { publisher: 'genie', url: 'https://raw.githubusercontent.com/automagik-dev/genie/lane/lane.json', keys: LANE_KEYS.genie, sameLine: false, plugins: ['@automagik/genie-dsh'] },
 ])
 const SCHEMA_VERSION = 1
 const MAX_TARBALL = 64 * 1024 * 1024
