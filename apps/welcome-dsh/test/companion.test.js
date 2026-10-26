@@ -195,6 +195,30 @@ test('Omni joining the team adds the Omni Bot once, in its own project, with its
   }
 })
 
+test('a deleted Omni Bot comes back from the Bot team\'s Add Omni, made as the team step makes it', async () => {
+  const folder = mkdtempSync(join(tmpdir(), 'omni-ai-add-'))
+  try {
+    const team = fakeTeam({ mainName: 'Mochi', folder })
+    const views = []
+    const endpoints = new Map()
+    team.hooks = { view: (fn) => { views.push(fn); return () => {} }, endpoint: (name, fn) => { endpoints.set(name, fn); return () => {} } }
+    const fake = fakeContext({ entries: { 'omni-ai': {} }, services: { omniTeam: team } })
+    // While the Bot team and Omni's channels run (cordis ctx.inject).
+    fake.ctx.inject = (names, callback) => callback({ omniTeam: team, omniChannels: {}, effect: fn => fn() })
+    install(fake.ctx, { checkClaude: noClaude })
+    const addable = () => Object.assign({}, ...views.map(fn => fn())).omniAddable
+    assert.equal(addable(), true)
+    const bot = await endpoints.get('omni-add')()
+    assert.equal(bot.name, 'Omni')
+    const [, options] = team.calls.find(call => call[0] === 'createBot')
+    assert.equal(options.kind, OMNI_BOT.kind)
+    assert.equal(options.workDir, join(folder, 'omni'))
+    assert.equal(addable(), false)
+  } finally {
+    rmSync(folder, { recursive: true, force: true })
+  }
+})
+
 test('the Omni Bot takes another name when the companion is called Omni', async () => {
   const team = fakeTeam({ mainName: 'Omni' })
   const reply = await host({ team }).handle('team-save', { omni: true })

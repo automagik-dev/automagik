@@ -301,35 +301,18 @@ test('a team from before the octopus was stored gets it once, on its first Main 
   assert.equal(team.w2.color, undefined)
 })
 
-test('another Bot takes the Main Bot place in one step', async (t) => {
-  const { call, stop } = start()
+test('the Omni Bot is always a Main Bot (only a Main Bot operates Omni), and can still be deleted', async (t) => {
+  // A team whose Omni Bot was added before it was a Main Bot: it becomes one, after the companion.
+  const omni = { id: 'o3', sessionId: 'o3', name: 'Omni', kind: 'omni', role: 'Channel keeper', instructions: '', createdAt: 3, hidden: true }
+  const { call, stop } = start({ ...OLD_TEAM, mainBotIds: ['m1'], bots: { ...OLD_TEAM.bots, o3: omni } })
   t.after(stop)
-  const chief = (await call('state', {})).value.mainBotId
-  const writer = (await call('create-bot', { name: 'Writer' })).value
-  const team = (await call('set-main', { id: writer.id, main: true, replace: chief })).value
-  assert.deepEqual(team.mainBotIds, [writer.id])
-  assert.equal(team.mainBotId, writer.id)
-  // The octopus stays with the Bot it was given to.
-  assert.deepEqual(team.bots.find(bot => bot.id === chief).avatar, { shape: 'octopus' })
-  // The old Main Bot can now be deleted, and no new Omni is made in its place.
-  assert.equal((await call('delete-bot', { id: chief })).ok, true)
-  const after = (await call('state', {})).value
-  assert.deepEqual(after.mainBotIds, [writer.id])
-  assert.deepEqual(after.bots.map(bot => bot.id), [writer.id])
-})
-
-test('a Main Bot moves to the front and the others keep their order', async (t) => {
-  const { call, stop } = start()
-  t.after(stop)
-  const chief = (await call('state', {})).value.mainBotId
-  const writer = (await call('create-bot', { name: 'Writer' })).value
-  const reader = (await call('create-bot', { name: 'Reader' })).value
-  assert.deepEqual((await call('set-main', { id: writer.id, main: true })).value.mainBotIds, [chief, writer.id])
-  assert.deepEqual((await call('set-main', { id: writer.id, main: true, primary: true })).value.mainBotIds, [writer.id, chief])
-  assert.deepEqual((await call('set-main', { id: reader.id, main: true })).value.mainBotIds, [writer.id, chief, reader.id])
-  // Replacing a Main Bot that is not first keeps its place; one already a Main Bot moves into it.
-  assert.deepEqual((await call('set-main', { id: reader.id, main: true, replace: chief })).value.mainBotIds, [writer.id, reader.id])
-  assert.deepEqual((await call('set-main', { id: writer.id, main: false })).value.mainBotIds, [reader.id])
+  const team = (await call('state', {})).value
+  assert.deepEqual(team.mainBotIds, ['m1', 'o3'])
+  assert.equal(team.bots.find(bot => bot.id === 'o3').hidden, undefined)
+  for (const refused of [{ id: 'o3', main: false }, { id: 'w2', main: true, replace: 'o3' }]) assert.match((await call('set-main', refused)).error.message, /only a Main Bot operates Omni/)
+  // The companion keeps the crown; Omni can still go, and the companion stays the Main Bot.
+  assert.equal((await call('delete-bot', { id: 'o3' })).ok, true)
+  assert.deepEqual((await call('state', {})).value.mainBotIds, ['m1'])
 })
 
 test('set-main keeps one Main Bot and replaces only a Main Bot', async (t) => {
@@ -338,7 +321,6 @@ test('set-main keeps one Main Bot and replaces only a Main Bot', async (t) => {
   const chief = (await call('state', {})).value.mainBotId
   const writer = (await call('create-bot', { name: 'Writer' })).value
   const reader = (await call('create-bot', { name: 'Reader' })).value
-  assert.equal((await call('set-main', { id: chief, main: false })).ok, false)
   assert.equal((await call('set-main', { id: writer.id, main: true, replace: reader.id })).ok, false)
   assert.equal((await call('set-main', { id: 'nope', main: true })).ok, false)
   assert.equal((await call('set-main', { id: reader.id, main: false })).ok, true)
@@ -399,22 +381,13 @@ test('an archive failure on delete is warned instead of passing silently', async
   assert.equal(warnings.filter(text => text.includes('not archived')).length, 1)
 })
 
-test('a hidden Bot made Main Bot shows again, and a replaced Omni drops its held greeting', async (t) => {
-  const { call, stop, sent } = start(undefined, { models: ['deepseek-v4-flash'] })
+test('a hidden Bot made Main Bot shows again', async (t) => {
+  const { call, stop } = start()
   t.after(stop)
-  const chief = (await call('state', {})).value.mainBotId
   const writer = (await call('create-bot', { name: 'Writer' })).value
   await call('set-flags', { id: writer.id, hidden: true })
-  await settle()
-  // Only Omni's messages count: Writer's own greeting can go out late on a busy machine.
-  const toOmni = () => sent.filter(item => item.sessionId === chief).length
-  const greeted = toOmni()
-  const team = (await call('set-main', { id: writer.id, main: true, replace: chief })).value
+  const team = (await call('set-main', { id: writer.id, main: true })).value
   assert.equal(team.bots.find(bot => bot.id === writer.id).hidden, undefined)
-  assert.equal(team.bots.find(bot => bot.id === chief).waiting, undefined)
-  await call('update-bot', { id: chief, model: 'deepseek/deepseek-v4-flash' })
-  await settle()
-  assert.equal(toOmni(), greeted)
 })
 
 const takeover = (home, team) => {

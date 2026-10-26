@@ -41,7 +41,8 @@ export function ContextMenu({ menu, roster, actions, leaving = false }) {
       room ? [t('Rename group'), PencilIcon, () => actions.renameBot(room.id)] : null,
       bot ? [t('Duplicate'), DuplicateIcon, async () => { const copy = await actions.duplicateBot(bot.id); actions.openSession(copy.id) }] : null,
       bot && !isMainBot ? [t('Make Main Bot'), StarLineIcon, () => actions.setMain(bot.id, true)] : null,
-      bot && isMainBot && mainCount > 1 ? [t('Remove Main Bot role'), StarLineIcon, () => actions.setMain(bot.id, false)] : null,
+      // The Omni Bot stays a Main Bot (roster.js OMNI_KIND).
+      bot && isMainBot && mainCount > 1 && bot.kind !== 'omni' ? [t('Remove Main Bot role'), StarLineIcon, () => actions.setMain(bot.id, false)] : null,
     ],
     [
       // The Bot goes on in a fresh conversation; earlier parts stay readable.
@@ -50,7 +51,7 @@ export function ContextMenu({ menu, roster, actions, leaving = false }) {
     ],
     [
       isMainBot ? null : [t('Hide from sidebar'), HideIcon, () => actions.setFlags(menu.id, { hidden: true })],
-      isMainBot ? null : [room ? t('Delete group') : t('Delete'), TrashIcon, () => (bot ? actions.deleteBot(bot.id) : actions.deleteRoom(menu.id)), true],
+      isMainBot && bot?.kind !== 'omni' ? null : [room ? t('Delete group') : t('Delete'), TrashIcon, () => (bot ? actions.deleteBot(bot.id) : actions.deleteRoom(menu.id)), true],
     ],
   ].map(group => group.filter(Boolean)).filter(group => group.length > 0)
   return h('div', { ref, className: 'bt-menu', role: 'menu', 'aria-label': t('{name} actions', { name: bot?.name ?? room.name }), style: place, 'data-leaving': leaving || undefined },
