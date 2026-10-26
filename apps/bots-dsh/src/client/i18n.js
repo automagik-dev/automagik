@@ -203,6 +203,11 @@ const ZH = {
 
   // New chat
   'Create new Bot': '新建 Bot',
+  'New Genie': '新建 Genie',
+  'One per repository': '每个仓库一个',
+  'Repository': '仓库',
+  'Every Genie color is taken. Remove a Genie to add another.': '所有 Genie 颜色都已被使用。移除一个 Genie 后才能再添加。',
+  'Each repository has one Genie, in its own color. A repository that has one opens it.': '每个仓库有一个 Genie，颜色各不相同。已有 Genie 的仓库会直接打开它。',
   'Create new Bot “{name}”': '新建 Bot「{name}」',
   'Add to group chat': '加入群聊',
   'Message Bot': '给 Bot 发消息',

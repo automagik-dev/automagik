@@ -4,6 +4,7 @@ import { t } from './i18n.js'
 import { clayArtOf, faceAt, faceOf } from './clay-art.js'
 import { PetSprite, useDrowsy } from './pet.js'
 import { bakedPet, canBake } from './pet-bake.js'
+import { GENIE_AURORA, genieTint } from './genie-tint.js'
 
 export { colorOf, lookOf } from './characters.js'
 
@@ -88,11 +89,13 @@ export function BotMark(props) {
   const wants = petOf(props.bot, look, { live: props.live === true, size })
   const baked = useBaked(wants?.bake)
   const pet = wants?.served ? servedPet(wants.served) : baked
-  return pet ? h(PetMark, { ...props, look, size, pet }) : h(DrawnMark, { ...props, look, size })
+  // A Genie wears its own color: its art turned from violet (genie-tint.js).
+  const tint = props.bot?.kind === 'genie' && !look.image && !look.pet ? genieTint(props.bot.color) : undefined
+  return pet ? h(PetMark, { ...props, look, size, pet, tint }) : h(DrawnMark, { ...props, look, size, tint })
 }
 
 // A mark that wears a pet: the pet plays the Bot's state; a poke waves, then it goes back.
-function PetMark({ size, state = 'idle', live = false, gaze = false, pokeable = false, label, pet }) {
+function PetMark({ size, state = 'idle', live = false, gaze = false, pokeable = false, label, pet, tint }) {
   const [poked, setPoked] = useState(false)
   const drowsy = useDrowsy(live)
   const shown = poked ? 'poked' : drowsy && state === 'idle' ? 'sleeping' : STATES.includes(state) ? state : 'idle'
@@ -101,7 +104,8 @@ function PetMark({ size, state = 'idle', live = false, gaze = false, pokeable = 
     'data-shape': 'pet',
     'data-state': shown,
     'data-live': live ? '' : undefined,
-    style: { width: size, height: size },
+    'data-tint': tint === GENIE_AURORA ? GENIE_AURORA : undefined,
+    style: { width: size, height: size, ...(tint && tint !== GENIE_AURORA ? { filter: tint } : {}) },
     role: label ? 'img' : undefined,
     'aria-label': label,
     'aria-hidden': label ? undefined : true,
@@ -109,7 +113,7 @@ function PetMark({ size, state = 'idle', live = false, gaze = false, pokeable = 
   }, h(PetSprite, { pet, size, state: shown, live, gaze, onOnce: () => setPoked(false) }))
 }
 
-function DrawnMark({ bot, look, size = 36, state = 'idle', live = false, gaze = false, pokeable = false, label }) {
+function DrawnMark({ bot, look, size = 36, state = 'idle', live = false, gaze = false, pokeable = false, label, tint }) {
   const ref = useRef(null)
   const maskId = useRef('')
   if (maskId.current === '') maskId.current = `bt-mark-${nextMarkSerial()}`
@@ -141,7 +145,7 @@ function DrawnMark({ bot, look, size = 36, state = 'idle', live = false, gaze = 
   if (art) {
     const face = faceOf(common['data-state'], poked)
     return h('span', { ...common, 'data-shape': `clay-${art}`, 'data-face': face, 'data-frame': art === 'genie' && size <= 28 ? 'head' : undefined },
-      h('span', { className: `bt-b bt-clay bt-clay-${art}`, style: { '--bt-face-at': faceAt(face) } }))
+      h('span', { className: `bt-b bt-clay bt-clay-${art}`, 'data-tint': tint === GENIE_AURORA ? GENIE_AURORA : undefined, style: { '--bt-face-at': faceAt(face), ...(tint && tint !== GENIE_AURORA ? { filter: tint } : {}) } }))
   }
   const box = shapeOf(look.shape).size
   return h('span', common, h('svg', { viewBox: `0 0 ${box} ${box}`, dangerouslySetInnerHTML: { __html: characterMarkup(look.shape, look.color).replaceAll(MASK_ID, maskId.current) } }))
