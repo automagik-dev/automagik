@@ -67,6 +67,19 @@
       },
       "versions": [
         {
+          "version": "3.23.0",
+          "publishTimestamp": 1792983830,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "2dfd1b140d405b8ebf7a34216f78489e660efc52",
+            "path": "apps/bots-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.3 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.22.0",
           "publishTimestamp": 1792982897,
           "source": {
@@ -367,6 +380,19 @@
         ]
       },
       "versions": [
+        {
+          "version": "3.23.0",
+          "publishTimestamp": 1792983830,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "2dfd1b140d405b8ebf7a34216f78489e660efc52",
+            "path": "apps/welcome-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.3 <0.2.2-0"
+          }
+        },
         {
           "version": "3.22.0",
           "publishTimestamp": 1792982897,
