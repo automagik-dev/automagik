@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { LANE_KEYS } from '../src/lane-keys.js'
-import { PUBLISHERS, beforeStart, confirm, laneMemory, laneUpdate, satisfies, stage, stagedOf, trialFailed, verifyLane } from '../src/lane.js'
+import { PUBLISHERS, beforeStart, confirm, laneMemory, laneUpdate, satisfies, stage, stagedOf, stagedVersion, trialFailed, verifyLane } from '../src/lane.js'
 import { updatePresentation } from '../src/frame.js'
 
 const temp = (t) => { const dir = mkdtempSync(join(tmpdir(), 'lane-')); t.after(() => rmSync(dir, { recursive: true, force: true })); return dir }
@@ -138,4 +138,68 @@ test('a newer app\'s own plugins win over what was staged for the old one', asyn
 test('the sidebar offers a start into staged plugins when the app has no update of its own', () => {
   assert.deepEqual(updatePresentation(null, { plugins: '3.22.1' }), { phase: 'ready', version: '3.22.1', kind: 'plugins' })
   assert.deepEqual(updatePresentation({ state: 'ready', version: '3.23.0' }, { plugins: '3.22.1' }), { phase: 'ready', version: '3.23.0' })
+})
+
+test('each lane keeps its own sequence, failures and staging: Genie\'s still goes in after an Automagik patch', async (t) => {
+  const root = temp(t)
+  const home = join(root, 'home')
+  const target = join(root, 'profile')
+  const install = (name, version) => {
+    const real = join(target, 'node_modules', '.pnpm', `${name.replace('/', '+')}@${version}`, 'node_modules', name)
+    mkdirSync(real, { recursive: true })
+    writeFileSync(join(real, 'package.json'), JSON.stringify({ name, version }))
+    mkdirSync(join(target, 'node_modules', '@automagik'), { recursive: true })
+    symlinkSync(real, join(target, 'node_modules', name))
+  }
+  const pack = (name, version) => {
+    const dir = join(root, 'pack', name, version, 'package')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version }))
+    const file = join(root, 'pack', `${name.replace('/', '+')}-${version}.tgz`)
+    execFileSync('tar', ['-czf', file, '-C', join(dir, '..'), 'package'])
+    const bytes = readFileSync(file)
+    return { bytes, plugin: { name, version, url: `https://github.com/x/${version}.tgz`, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}` } }
+  }
+  install('@automagik/bots-dsh', '3.22.0')
+  install('@automagik/genie-dsh', '0.1.3')
+  const ours = pack('@automagik/bots-dsh', '3.22.1')
+  const genie = pack('@automagik/genie-dsh', '0.1.4')
+  const fetchOf = bytes => async () => new Response(bytes)
+  // Both lanes have something in one look: neither's staging replaces the other's.
+  await stage({ publisher: 'automagik', version: '3.22.1', sequence: 220001, plugins: [ours.plugin] }, { home, fetch: fetchOf(ours.bytes) })
+  await stage({ publisher: 'genie', version: '0.1.4', sequence: 10004, plugins: [genie.plugin] }, { home, fetch: fetchOf(genie.bytes) })
+  assert.deepEqual(stagedOf(home).plugins.map(plugin => `${plugin.publisher} ${plugin.name}@${plugin.version}`).sort(), ['automagik @automagik/bots-dsh@3.22.1', 'genie @automagik/genie-dsh@0.1.4'])
+  assert.equal(stagedOf(home).version, '3.22.1')
+  assert.equal(stagedVersion(home, 'genie'), '0.1.4')
+  // Staged again by the same lane: its earlier staging goes, the other lane's stays.
+  await stage({ publisher: 'genie', version: '0.1.4', sequence: 10004, plugins: [genie.plugin] }, { home, fetch: fetchOf(genie.bytes) })
+  assert.equal(stagedOf(home).plugins.length, 2)
+  assert.equal(beforeStart({ home, target }), 'applied')
+  assert.equal(confirm(home), true)
+  assert.equal(JSON.parse(readFileSync(join(target, 'node_modules', '@automagik/genie-dsh', 'package.json'), 'utf8')).version, '0.1.4')
+  // Each lane's own sequence: Genie's numbers are not measured against Automagik's.
+  assert.equal(laneMemory(home, 'automagik').last, 220001)
+  assert.equal(laneMemory(home, 'genie').last, 10004)
+  const genieLane = { schemaVersion: 1, publisher: 'genie', keyId: 'genie-2026-10', sequence: 10005, version: '0.1.5', base: '3.3.0', plugins: [{ ...genie.plugin, version: '0.1.5', url: 'https://github.com/automagik-dev/genie/releases/download/v0.1.5/genie-dsh-0.1.5.tgz', engines: { dsh: '>=0.2.1-rc.3 <0.2.2-0' } }] }
+  const geniePublisher = PUBLISHERS.find(entry => entry.publisher === 'genie')
+  assert.equal(laneUpdate(genieLane, { publisher: geniePublisher, appVersion: '3.22.0', dshVersion: '0.2.1-rc.3', installed: { '@automagik/genie-dsh': '0.1.4' }, ...laneMemory(home, 'genie') })?.version, '0.1.5')
+  // A Genie trial that fails marks Genie's version bad, not Automagik's.
+  const next = pack('@automagik/genie-dsh', '0.1.5')
+  await stage({ publisher: 'genie', version: '0.1.5', sequence: 10005, plugins: [next.plugin] }, { home, fetch: fetchOf(next.bytes) })
+  assert.equal(beforeStart({ home, target }), 'applied')
+  trialFailed(home)
+  assert.equal(beforeStart({ home, target }), 'restored')
+  assert.deepEqual(laneMemory(home, 'genie').bad, ['0.1.5'])
+  assert.deepEqual(laneMemory(home, 'automagik').bad, [])
+  // Taken stays per lane after another lane's trial: Automagik's sequence is still remembered.
+  assert.equal(laneMemory(home, 'automagik').last, 220001)
+})
+
+test('a lane record from before each lane kept its own still reads', (t) => {
+  const home = join(temp(t), 'home')
+  mkdirSync(join(home, 'lane'), { recursive: true })
+  writeFileSync(join(home, 'lane', 'applied.json'), JSON.stringify({ version: '3.26.1', sequence: 260001, plugins: [{ name: '@automagik/bots-dsh' }], pending: false }))
+  writeFileSync(join(home, 'lane', 'bad.json'), JSON.stringify(['3.25.9']))
+  assert.deepEqual(laneMemory(home, 'automagik'), { last: 260001, bad: ['3.25.9'] })
+  assert.deepEqual(laneMemory(home, 'genie'), { last: 0, bad: [] })
 })
