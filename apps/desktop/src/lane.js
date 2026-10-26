@@ -88,11 +88,17 @@ export function installedVersions(target, names) {
 
 const integrityOf = bytes => `sha512-${createHash('sha512').update(bytes).digest('base64')}`
 
-/** Downloads, checks and unpacks `update`'s plugins under <home>/lane/staged, then records it waits. */
-export async function stage(update, { home, fetch = globalThis.fetch, tar = 'tar' }) {
+/**
+ * Downloads, checks and unpacks `update`'s plugins under <home>/lane/staged, then records it
+ * waits. `onProgress(percent)` follows the download, by bytes when the lane names sizes.
+ */
+export async function stage(update, { home, fetch = globalThis.fetch, tar = 'tar', onProgress = () => {} }) {
   const { dir, staged } = files(home)
   const ready = []
-  for (const plugin of update.plugins) {
+  const total = update.plugins.reduce((sum, plugin) => sum + (plugin.size || 0), 0)
+  let done = 0
+  onProgress(0)
+  for (const [index, plugin] of update.plugins.entries()) {
     const response = await fetch(plugin.url, { signal: AbortSignal.timeout(TIMEOUT_MS) })
     if (!response.ok) throw fail(`${plugin.name} ${plugin.version}: HTTP ${response.status}`)
     const bytes = Buffer.from(await response.arrayBuffer())
@@ -108,6 +114,8 @@ export async function stage(update, { home, fetch = globalThis.fetch, tar = 'tar
     rmSync(archive, { force: true })
     if (readJson(join(into, 'package.json'), {})?.version !== plugin.version) throw fail(`${plugin.name}: the tarball holds another version`)
     ready.push({ name: plugin.name, version: plugin.version, dir: into })
+    done += plugin.size || 0
+    onProgress(Math.floor(total > 0 ? (done / total) * 100 : ((index + 1) / update.plugins.length) * 100))
   }
   writeJson(staged, { version: update.version, sequence: update.sequence, plugins: ready, at: new Date().toISOString() })
   return ready
