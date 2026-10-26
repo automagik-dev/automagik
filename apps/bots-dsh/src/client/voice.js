@@ -6,6 +6,7 @@ import { speechApi, useDictation } from './composer.js'
 import { Shimmer } from './cells.js'
 import { useEscape, usePaneLeft } from './overlay-hooks.js'
 import { t } from './i18n.js'
+import { speakWith } from './voice-settings.js'
 import { openCapture, speechCatalog, transcribeWave, turnDetector } from './speech.js'
 
 // Voice chat: listen, send what the user said, read the Bot's answer aloud, listen
@@ -188,8 +189,8 @@ export function VoiceMode({ sessionId, roster, actions, useSessions, useSessionS
     setSaid(spoken)
     setHeard('')
     if (!window.speechSynthesis || !spoken) { setPhase('listening'); return }
-    const utterance = new SpeechSynthesisUtterance(spoken)
-    utterance.lang = /[\u3400-\u9fff]/.test(spoken) ? 'zh-CN' : 'en-US'
+    // The voice and speed chosen in Settings → General → Voice chat (voice-settings.js).
+    const utterance = speakWith(spoken, /[\u3400-\u9fff]/.test(spoken) ? 'zh-CN' : 'en-US')
     utterance.onend = () => setPhase(current => (current === 'speaking' ? 'listening' : current))
     utterance.onerror = utterance.onend
     setPhase('speaking')

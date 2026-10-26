@@ -70,6 +70,9 @@ mac:
   # the hardened runtime. Notarized when APPLE_KEYCHAIN_PROFILE names a notarytool profile.
   hardenedRuntime: true
   entitlements: assets/entitlements.mac.plist
+  # Voice chat: macOS asks once, with this line, the first time a chat listens.
+  extendInfo:
+    NSMicrophoneUsageDescription: Automagik listens to you only while voice chat is on, to hear what you say to your Bots.
   entitlementsInherit: assets/entitlements.mac.plist
   artifactName: Automagik-${version}-mac-${arch}.${ext}
 dmg:

@@ -16,6 +16,7 @@ import { CapabilitiesPage } from './capability-settings.js'
 import { SchedulesPage } from './schedules.js'
 import { FeedbackIcon, FeedbackPage } from './feedback.js'
 import { PrivacyPage } from './privacy.js'
+import { VoiceSection } from './voice-settings.js'
 import { AboutPage } from './about.js'
 import { ProvidersPage } from './providers-page.js'
 import { FolderMenu } from './folder-menu.js'
@@ -186,6 +187,7 @@ function BotsPage({ roster, actions, run }) {
   return [
     h(MainBotsSection, { key: 'main', roster, actions, run }),
     h(MotionSection, { key: 'motion', roster, actions, run }),
+    h(VoiceSection, { key: 'voice', actions, Section: SetSection, Row: SetRow }),
     creating
       ? h(CreateBot, { key: 'create', roster, actions, inline: true, onBack: () => setCreating(false), onCreated: bot => actions.openSettings('bots', bot.id) })
       : h('div', { key: 'new', className: 'bt-actions' },
