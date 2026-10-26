@@ -39,6 +39,9 @@ test('the default model can run: a provider without its key is passed over, and 
   const lineup = { deepseek: [{ id: 'deepseek-v4-pro' }], 'claude-code': [{ id: 'default', name: 'Default (recommended)' }, { id: 'opus', name: 'Claude Opus 5.5' }] }
   // DSH's default needs a key nobody set: the first model that can run, not the alias.
   assert.equal(await rt({ provider: 'deepseek', model: 'deepseek-v4-pro' }, ['deepseek'], lineup).defaultModel(), 'claude-code/opus')
+  // Claude Code runs on a Claude Code already on this computer: any account connected here comes first.
+  const three = { 'claude-code': [{ id: 'opus' }], deepseek: [{ id: 'deepseek-v4-pro' }], openai: [{ id: 'gpt-5.5' }] }
+  assert.equal(await rt({ provider: 'deepseek', model: 'deepseek-v4-pro' }, ['deepseek'], three).defaultModel(), 'openai/gpt-5.5')
   // DSH's default can run: it is the one, even an alias the user chose there.
   assert.equal(await rt({ provider: 'deepseek', model: 'deepseek-v4-pro' }, [], lineup).defaultModel(), 'deepseek/deepseek-v4-pro')
   assert.equal(await rt({ provider: 'claude-code', model: 'default' }, ['deepseek'], lineup).defaultModel(), 'claude-code/default')
@@ -277,4 +280,35 @@ test('the catalog leaves out superseded Claude models but keeps one a Bot runs o
   const rt = { ctx, state: { bots: { a: { model: 'claude-code/claude-sonnet-4-6' } } } }
   install(rt)
   assert.deepEqual((await rt.catalog({ fresh: true })).map(entry => entry.ref), ['claude-code/opus', 'claude-code/sonnet', 'claude-code/claude-sonnet-4-6'])
+})
+
+test('without DeepSeek, the default is the first account connected here, and it stays so', async () => {
+  const providers = { 'claude-code': [{ id: 'opus' }], kimi: [{ id: 'k3' }], openai: [{ id: 'gpt-5.5' }] }
+  let missing = new Set(['deepseek', 'kimi', 'openai'])
+  const state = { bots: {} }
+  let saves = 0
+  const runtime = {
+    ctx: {
+      llm: { listProviders: () => [{ id: 'deepseek' }, ...Object.keys(providers).map(id => ({ id }))], listModels: async id => (id === 'deepseek' ? [{ id: 'deepseek-flash' }] : providers[id]) },
+      get: name => (name === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'deepseek', model: 'deepseek-flash' }) } : undefined),
+      on: () => {},
+    },
+    state,
+    save: async () => { saves += 1 },
+    missingKeys: async () => missing,
+  }
+  install(runtime)
+  const fresh = async () => { await runtime.catalog({ fresh: true }); return runtime.defaultModel() }
+  // Only Claude Code can run, on the credentials it found: it is the default until something else can.
+  assert.equal(await fresh(), 'claude-code/opus')
+  // The person connects OpenAI, then Kimi: OpenAI, the first, is the default.
+  missing = new Set(['deepseek', 'kimi'])
+  assert.equal(await fresh(), 'openai/gpt-5.5')
+  missing = new Set(['deepseek'])
+  assert.equal(await fresh(), 'openai/gpt-5.5')
+  assert.deepEqual([...state.providersSeen], ['claude-code', 'openai', 'kimi'])
+  assert.ok(saves >= 3)
+  // DeepSeek signed in: DSH's default, DeepSeek, wins.
+  missing = new Set()
+  assert.equal(await fresh(), 'deepseek/deepseek-flash')
 })
