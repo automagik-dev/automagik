@@ -210,7 +210,9 @@ export function foundChoice(omni, { mac = false } = {}) {
 }
 
 // The link an Omni sends its owner (https://<omni>/api/login/app?grant=…, or the
-// omni://connect?url=…&grant=… it opens), or an address to sign in to.
+// omni://connect?url=…&grant=… it opens), the claim link an Omni nobody owns prints in its
+// server log (https://<omni>/api/login/claim?token=…: opened on Omni's own page, never
+// spent here), or an address to sign in to.
 export function readRemote(text) {
   const value = String(text ?? '').trim()
   if (value === '') return null
@@ -226,9 +228,16 @@ export function readRemote(text) {
     }
     if (/\/api\/login\/app\/?$/.test(link.pathname)) return { kind: 'grant', url: `${link.origin}${link.pathname.replace(/\/api\/login\/app\/?$/, '')}`, grant }
   }
+  if (link && /^https?:$/.test(link.protocol) && /\/api\/login\/claim\/?$/.test(link.pathname) && link.searchParams.get('token')) {
+    return { kind: 'claim', url: `${link.origin}${link.pathname.replace(/\/api\/login\/claim\/?$/, '')}`, claimUrl: link.href }
+  }
   if (/^omni:/i.test(value) || /[?&]grant=/.test(value)) return { kind: 'bad-link' }
   return { kind: 'address', url: value }
 }
+
+// Omni channels refuses to sign in to an Omni nobody owns yet (omni-link.js start(), in
+// the omni repository): "<host> has no owner yet. Claim it first…".
+export const isUnowned = message => /has no owner yet/i.test(String(message ?? ''))
 
 const TYPE_LABEL = { 'whatsapp-baileys': 'WhatsApp', 'whatsapp-cloud': 'WhatsApp Business', slack: 'Slack', telegram: 'Telegram', discord: 'Discord', gupshup: 'Gupshup' }
 export const channelLabel = channel => TYPE_LABEL[channel.type] ?? channel.type ?? 'Channel'
@@ -392,7 +401,32 @@ function Pairing({ pairing, onCancel }) {
     h('div', { className: 'oai-row' },
       pairing.waLink ? h('a', { className: 'oai-pill oai-pill-primary', href: pairing.waLink, target: '_blank', rel: 'noreferrer' }, 'Open WhatsApp') : null,
       pairing.approveUrl ? h('a', { className: `oai-pill${pairing.waLink ? '' : ' oai-pill-primary'}`, href: pairing.approveUrl, target: '_blank', rel: 'noreferrer' }, 'Approve') : null,
-      h('button', { type: 'button', className: 'oai-pill', onClick: onCancel }, 'Cancel')))
+      h('button', { type: 'button', className: 'oai-pill', onClick: onCancel }, 'Cancel')),
+    pairing.waLink ? null : h('small', { className: 'oai-pair-hint' }, 'No WhatsApp on that Omni? Run ', h('code', null, `omni approve ${pairing.code}`), ' on its server.'))
+}
+
+// The command that makes an Omni nobody owns yet the operator's and prints a one-time
+// link that connects this app (`omni connect` in Omni's CLI, which holds its primary key).
+export const connectCommand = url => `omni connect --url ${url}`
+
+// An Omni nobody owns yet: this app does not claim it (the claim token stays on Omni's own
+// page). Its owner makes it theirs on the server, or opens the claim link from its log;
+// the link `omni connect` prints connects here with no second sign-in.
+function Unowned({ url, claimUrl, busy, onRemote, onBack }) {
+  const [copied, setCopied] = useState(false)
+  const command = connectCommand(url)
+  let host = url
+  try { host = new URL(url).host } catch { /* shown as typed */ }
+  return h('div', { className: 'oai-remote oai-unowned' },
+    h('strong', null, `${host} has no owner yet`),
+    h('small', null, 'Make it yours on its server, then paste the link it prints below:'),
+    h('div', { className: 'oai-cmd' },
+      h('code', null, command),
+      h('button', { type: 'button', className: 'oai-copy', onClick: () => navigator.clipboard?.writeText(command).then(() => setCopied(true), () => {}) }, copied ? 'Copied' : 'Copy')),
+    claimUrl
+      ? h('small', null, 'Or ', h('a', { className: 'oai-link', href: claimUrl, target: '_blank', rel: 'noreferrer' }, 'open its claim page'), ', tap Claim this Omni, then connect its address again.')
+      : h('small', null, 'Or open the claim link from its server log in your browser, then connect its address again.'),
+    h(Remote, { busy, onRemote, onBack, label: 'The link it printed' }))
 }
 
 const ICONS = {
@@ -440,7 +474,7 @@ function Destiny({ omnis, busy, onUse, onLocal, onRemote }) {
 }
 
 // An Omni somewhere else: its address, or the link it sent its owner.
-function Remote({ busy, onRemote, onBack }) {
+function Remote({ busy, onRemote, onBack, label = 'Where is your Omni?' }) {
   const [text, setText] = useState('')
   const wanted = readRemote(text)
   const submit = (event) => {
@@ -448,11 +482,11 @@ function Remote({ busy, onRemote, onBack }) {
     if (wanted !== null && wanted.kind !== 'bad-link') onRemote(wanted)
   }
   return h('form', { className: 'oai-remote', onSubmit: submit },
-    h('label', { htmlFor: 'oai-remote-url' }, 'Where is your Omni?'),
+    h('label', { htmlFor: 'oai-remote-url' }, label),
     h('div', { className: 'oai-remote-row' },
       h('input', { id: 'oai-remote-url', type: 'text', inputMode: 'url', autoComplete: 'off', spellCheck: false, autoFocus: true, value: text, placeholder: 'omni.example.com', onChange: event => setText(event.target.value) }),
       h('button', { type: 'submit', className: 'oai-pill oai-pill-primary', disabled: busy !== null || wanted === null || wanted.kind === 'bad-link' }, busy === 'remote' ? 'Connecting…' : 'Connect')),
-    h('small', null, wanted?.kind === 'bad-link' ? 'That link is cut short. Copy the whole link Omni sent you.' : 'Its address, or paste the link Omni sent you on WhatsApp.'),
+    h('small', null, wanted?.kind === 'bad-link' ? 'That link is cut short. Copy the whole link Omni sent you.' : wanted?.kind === 'claim' ? 'Its claim link: Omni opens it in your browser to make it yours.' : 'Its address, or paste the link Omni sent you on WhatsApp.'),
     h('button', { type: 'button', className: 'oai-textlink', onClick: onBack }, 'Back to the choices'))
 }
 
@@ -463,6 +497,7 @@ function Inside({ phase, detail, power, live }) {
   if (phase === 'pairing') return h(Pairing, { pairing: detail.pairing, onCancel: power.cancelPairing })
   if (phase === 'sandbox') return h(InstallLog, { text: detail?.log ?? '', label: "What Omni's installer printed" })
   if (phase === 'failed' && detail?.log) return h('div', null, h(InstallLog, { text: detail.log, label: "What Omni's installer printed" }), h('p', { className: 'oai-inside-note oai-bad', title: detail.message }, 'What went wrong is above. Power Omni on to try again.'))
+  if ((phase === 'none' || phase === 'found') && power.unowned) return h(Unowned, { ...power.unowned, busy: power.busy, onRemote: power.remote, onBack: power.forgetUnowned })
   if (phase === 'none' || phase === 'found') return h(Destiny, { omnis: detail?.omnis ?? [], busy: power.busy, onUse: power.use, onLocal: power.local, onRemote: power.remote })
   // Once connected, its real channels, as they will sit in the menu.
   if (phase === 'linked' && channels.length > 0) {
@@ -599,6 +634,8 @@ function usePower() {
   const [detail, setDetail] = useState(null)
   const [busy, setBusy] = useState(null)
   const [problem, setProblem] = useState(null)
+  // An Omni nobody owns yet, { url, claimUrl? }: how to make it yours comes first.
+  const [unowned, setUnowned] = useState(null)
   const run = useRef(null)
   const back = useRef(null)
   useEffect(() => () => run.current?.abort(), [])
@@ -633,13 +670,15 @@ function usePower() {
     try {
       const reply = await callOmniUi(endpoint, payload)
       if (run.current?.signal.aborted) return
+      if (reply.status === 'paired' || reply.pairing) setUnowned(null)
       if (reply.status === 'paired') show('linked', { origin: reply.origin ?? null })
       else if (reply.pairing) {
         back.current = { phase, detail }
         show('pairing', { pairing: reply.pairing })
       } else setProblem(reply.message ?? 'That Omni cannot approve this app from here. Connect Omni, next, can use its API key.')
     } catch (error) {
-      setProblem(error.message)
+      if (endpoint === 'omni-pair-start' && isUnowned(error.message)) setUnowned(current => ({ url: payload.url, claimUrl: current?.claimUrl ?? null }))
+      else setProblem(error.message)
     } finally {
       setBusy(null)
     }
@@ -672,7 +711,8 @@ function usePower() {
   }, [phase])
 
   return {
-    phase, detail, busy, problem,
+    phase, detail, busy, problem, unowned,
+    forgetUnowned: () => setUnowned(null),
     toggle: () => (phase === 'asleep' ? on() : off()),
     use: omni => connect(omni.id, 'omni-discover-use', { id: omni.id }),
     sandbox: () => {
@@ -687,6 +727,8 @@ function usePower() {
     },
     remote: wanted => (wanted.kind === 'bad-link'
       ? setProblem('That is not a link your Omni sends. It looks like https://your-omni/api/login/app?grant=…')
+      : wanted.kind === 'claim'
+        ? (setProblem(null), setUnowned({ url: wanted.url, claimUrl: wanted.claimUrl }), window.open(wanted.claimUrl, '_blank', 'noreferrer'))
       : wanted.kind === 'grant' ? connect('remote', 'omni-connect-grant', { url: wanted.url, grant: wanted.grant }) : connect('remote', 'omni-pair-start', { url: wanted.url })),
     cancelPairing: () => {
       void callOmniUi('omni-pair-cancel').catch(() => {})

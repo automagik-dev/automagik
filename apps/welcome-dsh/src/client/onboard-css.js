@@ -144,6 +144,13 @@ body[data-ds-dark-theme] .oai-box.oai-is-asleep{${recessed('var(--oai-niche)')}}
 .oai-remote input:focus{border-color:var(--oai-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--oai-accent) 22%,transparent)}
 .oai-card .oai-remote-row button{width:auto;margin:0;min-height:42px;white-space:nowrap}
 .oai-remote small{font-size:12px;color:var(--oai-ink2)}
+.oai-unowned{gap:8px}
+.oai-unowned>strong{font:700 14px/1.3 var(--oai-head);color:var(--oai-ink)}
+.oai-unowned .oai-remote{gap:6px}
+.oai-cmd{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--oai-line);border-radius:var(--oai-r-sm);background:var(--oai-card)}
+.oai-cmd code{flex:1;min-width:0;overflow-wrap:anywhere;font:600 12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--oai-ink);user-select:all}
+.oai-pair-hint{font-size:12px;color:var(--oai-ink2);text-align:center}
+.oai-pair-hint code{font:600 12px ui-monospace,SFMono-Regular,Menlo,monospace;user-select:all}
 .oai-remote .oai-textlink{justify-self:start!important}
 .oai-found-list{list-style:none;margin:0;padding:0;display:grid;gap:8px;width:100%}
 .oai-found-row{display:flex;align-items:center;gap:10px;padding:7px 7px 7px 12px;border-radius:14px 16px 13px 15px;${raised('var(--oai-card)', 3)}}
