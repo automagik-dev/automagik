@@ -2370,7 +2370,7 @@ function bakeMarkup(shape, color) {
   const faces = {
     open: eyesAs(def, (w, eyeHeight) => pupil(w, eyeHeight)),
     focused: eyesAs(def, (w, eyeHeight) => pupil(w, eyeHeight, 0.55)),
-    closed: eyesAs(def, (w, eyeHeight) => `<rect x="${-w * 0.62}" y="${-w * 0.22}" width="${w * 1.24}" height="${w * 0.44}" rx="${w * 0.22}" fill="${PUPIL}"/>`),
+    closed: eyesAs(def, (w) => `<rect x="${-w * 0.62}" y="${-w * 0.22}" width="${w * 1.24}" height="${w * 0.44}" rx="${w * 0.22}" fill="${PUPIL}"/>`),
     happy: eyesAs(def, (w, eyeHeight) => arc(w, eyeHeight, true)),
     asleep: eyesAs(def, (w, eyeHeight) => arc(w, eyeHeight, false)),
     sad: eyesAs(def, (w, eyeHeight, index) => `${pupil(w, eyeHeight, 0.7, eyeHeight * 0.12)}${index === 0 ? `<path d="M0 ${eyeHeight * 0.55}q${w * 0.5} ${w * 0.9} 0 ${w * 1.3}q${-w * 0.5} ${-w * 0.4} 0 ${-w * 1.3}z" fill="#5bb7ff"/>` : ""}`)
