@@ -1,6 +1,6 @@
 {
   "name": "@automagik/unfold-bridge-dsh",
-  "version": "3.29.0",
+  "version": "3.30.0",
   "description": "Your DSH's models for Unfold: serves the model routes of your own DeepSeek Harness on loopback as an OpenAI chat-completions endpoint, behind a key made at each start",
   "keywords": [
     "dsh-plugin",
