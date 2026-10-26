@@ -51,6 +51,13 @@ export const headerButtons = registry()
 // `Component({ bot, roster, actions, run, Card, Row, SwitchRow })`.
 export const botSettings = registry()
 
+// Chat suggestions: what an empty chat offers above its composer, chips that fill it with a
+// start the person finishes. `{ id, order, when?({ bot, roster }), items({ bot, roster }) }`:
+// `when` picks the Bots it is for (a kind, one Bot), `items` returns `{ id, label, text,
+// icon? }` with `icon` one of icons.js's names. Up to three show, lowest `order` first, so a
+// plugin's own (order below 0) go before the team's (suggestions.js).
+export const chatSuggestions = registry()
+
 // Composer packs: what a Bot's composer offers for the AI the Bot runs on. The first pack
 // (lowest `order`) that matches the Bot's provider and is available wins; none means
 // Omni's own composer, which shows no permission, plan or model control. See
