@@ -143,7 +143,8 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
   }, [confirming])
   const isMainBot = isMainOf(roster, bot.id)
   const onlyMain = isMainBot && (roster.mainBotIds ?? []).length === 1
-  // The Omni Bot is always the first Main Bot: only a Main Bot operates Omni.
+  // The Omni Bot is always a Main Bot (only a Main Bot operates Omni), and can still go:
+  // the New menu's Add Omni brings it back (roster.js OMNI_KIND).
   const omni = bot.kind === 'omni'
   const isTile = roster.mainBotId === bot.id
   const save = patch => run(actions.updateBot(bot.id, patch))
@@ -186,7 +187,7 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
         ? h('div', { className: 'bt-set-row bt-bs-row' },
             h('span', { className: 'bt-set-copy' },
               h('span', { className: 'bt-bs-label' }, t('Main Bot')),
-              h('span', { className: 'bt-set-hint' }, t('Always the first Main Bot: it runs your Omni. Other Bots can be Main Bots beside it.'))))
+              h('span', { className: 'bt-set-hint' }, t('Always a Main Bot: only a Main Bot runs your Omni.'))))
         : onlyMain
         ? h('div', { className: 'bt-set-row bt-bs-row' },
             h('span', { className: 'bt-set-copy' },
@@ -202,7 +203,7 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
       h('button', { type: 'button', className: 'bt-set-row bt-bs-row', onClick: duplicate },
         h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Duplicate')), h('span', { className: 'bt-set-hint' }, t('A copy with the same job and model, and fresh memory.'))),
         h('span', { className: 'bt-chevron' }, h(ChevronRightIcon))),
-      isMainBot ? null : h('button', { type: 'button', className: 'bt-set-row bt-bs-row bt-bs-danger', 'data-confirm': confirming || undefined, onClick: remove },
+      isMainBot && !omni ? null : h('button', { type: 'button', className: 'bt-set-row bt-bs-row bt-bs-danger', 'data-confirm': confirming || undefined, onClick: remove },
         h('span', { className: 'bt-set-copy' },
           h('span', { className: 'bt-bs-label' }, confirming ? t('Delete {name}?', { name: bot.name }) : t('Delete Bot')),
           h('span', { className: 'bt-set-hint' }, confirming ? t('Click again to delete. Its chats are archived.') : t('Removes the Bot from the team.'))),

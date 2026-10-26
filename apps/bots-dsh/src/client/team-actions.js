@@ -55,6 +55,8 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     createBot: payload => after(call('create-bot', payload)),
     // genie-dsh's: the folder's repository's Genie, made in a free color when it has none.
     createGenie: folder => after(call('genie-create', { folder })),
+    // welcome-dsh's: the Omni Bot again, after it was deleted (the team view's omniAddable).
+    addOmni: () => after(call('omni-add')),
     createRoom: (members, options = {}) => after(call('create-room', { members, ...options })),
     updateBot: (id, patch) => after(call('update-bot', { id, ...patch })),
     refreshModels: () => after(call('models')).catch(() => {}),

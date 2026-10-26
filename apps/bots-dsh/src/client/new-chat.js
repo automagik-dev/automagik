@@ -107,6 +107,9 @@ export function NewChat({ mode, roster, actions }) {
   // genie-dsh that lists its colors (0.1.3, genie#3176) is one that answers genie-create.
   const newGenie = Array.isArray(roster.genie?.colors) && !group && picked.length === 0 && mode !== 'search' && (wanted === '' || 'genie'.startsWith(wanted) || wanted.includes('genie'))
   if (newGenie) options.push({ key: 'genie', icon: h(SparkIcon), label: t('New Genie'), hint: t('One per repository'), run: () => { setError(''); setGenieDraft(true) } })
+  // A deleted Omni Bot comes back the way the team step made it (welcome-dsh's omni-add).
+  const addOmni = roster.omniAddable === true && actions.addOmni && !group && picked.length === 0 && mode !== 'search' && (wanted === '' || 'omni'.startsWith(wanted) || wanted.includes('omni'))
+  if (addOmni) options.push({ key: 'omni', icon: h(PlusIcon), label: t('Add Omni'), hint: t('Your channels and their chats'), run: () => run(async () => { const bot = await actions.addOmni(); close(); if (bot?.id) actions.openSession(bot.id) }) })
   for (const bot of matches) {
     options.push({ key: bot.id, bot, label: bot.name, hint: choosingAdmin ? t('Make admin') : group || picked.length > 0 ? t('Add to group chat') : undefined, run: () => openBot(bot) })
   }

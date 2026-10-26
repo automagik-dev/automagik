@@ -190,11 +190,13 @@ export function createCompanionActions(ctx, { fetch: fetchImpl = globalThis.fetc
   }
 
   return {
-    // Not endpoints: the Bot types (bot-types.js) read the team through these, and the
-    // finished Connect AI step gives the companions their model (endpoint.js).
+    // Not endpoints: the Bot types (bot-types.js) read the team through these, the
+    // finished Connect AI step gives the companions their model, and Add Omni brings a
+    // deleted Omni Bot back (endpoint.js).
     team,
     omniProjectOf,
     assignModels,
+    joinOmni,
 
     // What the companion step needs: can it generate, and is a companion already made.
     async companion() {

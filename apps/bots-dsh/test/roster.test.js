@@ -293,44 +293,26 @@ test('a team from before the octopus was stored gets it once, on its first Main 
   assert.equal(team.w2.avatar, undefined)
   assert.equal(JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).whaleStored, true)
 
-  // Named Omni, it is the team's Omni Bot now, which stays.
-  assert.equal(team.m1.kind, 'omni')
-  assert.equal((await call('delete-bot', { id: 'm1' })).ok, false)
+  // The octopus is now an ordinary look: it does not pass on when its Bot is deleted.
+  assert.equal((await call('set-main', { id: 'm1', main: false })).ok, true)
+  assert.equal((await call('delete-bot', { id: 'm1' })).ok, true)
+  team = await bots()
   assert.equal(team.w2.avatar, undefined)
+  assert.equal(team.w2.color, undefined)
 })
 
-test('the Omni Bot stays the first Main Bot: never replaced, put behind, demoted or deleted', async (t) => {
-  const { call, stop } = start()
+test('the Omni Bot is always a Main Bot (only a Main Bot operates Omni), and can still be deleted', async (t) => {
+  // A team whose Omni Bot was added before it was a Main Bot: it becomes one, after the companion.
+  const omni = { id: 'o3', sessionId: 'o3', name: 'Omni', kind: 'omni', role: 'Channel keeper', instructions: '', createdAt: 3, hidden: true }
+  const { call, stop } = start({ ...OLD_TEAM, mainBotIds: ['m1'], bots: { ...OLD_TEAM.bots, o3: omni } })
   t.after(stop)
-  const chief = (await call('state', {})).value.mainBotId
-  const writer = (await call('create-bot', { name: 'Writer' })).value
-  const reader = (await call('create-bot', { name: 'Reader' })).value
-  for (const refused of [{ id: writer.id, main: true, replace: chief }, { id: chief, main: false }]) assert.match((await call('set-main', refused)).error.message, /only a Main Bot operates Omni/)
-  assert.match((await call('delete-bot', { id: chief })).error.message, /only a Main Bot operates Omni/)
-  // Others are Main Bots beside it, in their order, and one moved to the front goes after it.
-  assert.deepEqual((await call('set-main', { id: writer.id, main: true })).value.mainBotIds, [chief, writer.id])
-  assert.deepEqual((await call('set-main', { id: reader.id, main: true, primary: true })).value.mainBotIds, [chief, reader.id, writer.id])
-  // Another Main Bot can still be replaced, demoted and deleted.
-  assert.deepEqual((await call('set-main', { id: writer.id, main: false })).value.mainBotIds, [chief, reader.id])
-  assert.equal((await call('set-main', { id: reader.id, main: false })).ok, true)
-  assert.equal((await call('delete-bot', { id: reader.id })).ok, true)
-})
-
-test('a team that lost its Omni Bot gets it back; a renamed setup Bot is it', async (t) => {
-  const lost = { ...OLD_TEAM, mainBotIds: ['w2'], bots: { w2: OLD_TEAM.bots.w2 } }
-  const first = start(lost)
-  t.after(first.stop)
-  const team = (await first.call('state', {})).value
-  const omni = team.bots.find(bot => bot.kind === 'omni')
-  assert.equal(omni.name, 'Omni')
-  assert.deepEqual(team.mainBotIds, [omni.id, 'w2'])
-  // Setup's octopus in DeepSeek colour, renamed: marked, not doubled.
-  const renamed = { ...OLD_TEAM, bots: { ...OLD_TEAM.bots, m1: { ...OLD_TEAM.bots.m1, name: 'Echo', color: 'deepseek', avatar: { shape: 'octopus' }, createdBy: null } } }
-  const second = start(renamed)
-  t.after(second.stop)
-  const kept = (await second.call('state', {})).value
-  assert.deepEqual(kept.bots.filter(bot => bot.kind === 'omni').map(bot => bot.id), ['m1'])
-  assert.equal(kept.bots.length, 2)
+  const team = (await call('state', {})).value
+  assert.deepEqual(team.mainBotIds, ['m1', 'o3'])
+  assert.equal(team.bots.find(bot => bot.id === 'o3').hidden, undefined)
+  for (const refused of [{ id: 'o3', main: false }, { id: 'w2', main: true, replace: 'o3' }]) assert.match((await call('set-main', refused)).error.message, /only a Main Bot operates Omni/)
+  // The companion keeps the crown; Omni can still go, and the companion stays the Main Bot.
+  assert.equal((await call('delete-bot', { id: 'o3' })).ok, true)
+  assert.deepEqual((await call('state', {})).value.mainBotIds, ['m1'])
 })
 
 test('set-main keeps one Main Bot and replaces only a Main Bot', async (t) => {

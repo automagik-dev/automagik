@@ -17,11 +17,12 @@ export function cleanRole(value) {
 }
 
 // The kinds of Bot that other Omni plugins add to the team; the sidebar puts them first.
-// 'omni' is the team's own Omni Bot, made at setup: Omni's plugin lets only a Main Bot
-// operate Omni, so it is always the first Main Bot (the crown), and it is never deleted.
+// 'omni' is the Omni Bot the welcome's team step adds: Omni's plugin lets only a Main Bot
+// operate Omni, so it is always a Main Bot (beside the companion, who keeps the crown).
+// It can be deleted; the New menu's Add Omni (welcome-dsh) brings it back.
 export const BOT_KINDS = ['omni', 'genie']
 export const OMNI_KIND = 'omni'
-const OMNI_STAYS = 'Omni is always the first Main Bot: only a Main Bot operates Omni.'
+const OMNI_STAYS = 'Omni stays a Main Bot: only a Main Bot operates Omni.'
 
 
 export function install(rt) {
@@ -156,7 +157,7 @@ export function install(rt) {
         createdBy: createdBy ?? null,
         capabilities: [],
       }
-      if (main) state.mainBotIds.push(id)
+      if (main || kind === OMNI_KIND) state.mainBotIds.push(id)
       const creator = rt.botOf(createdBy)
       const original = rt.botOf(copyOf)
       const language = rt.uiLanguage?.()
@@ -543,8 +544,7 @@ export function install(rt) {
   async function setMain(id, main, { primary = false, replace } = {}) {
     const bot = rt.botOf(id)
     if (bot === undefined) throw new Error('Unknown Bot')
-    const omni = omniBot()
-    if (omni !== undefined && (main ? replace === omni.id : id === omni.id)) throw new Error(OMNI_STAYS)
+    if (rt.botOf(main ? replace : id)?.kind === OMNI_KIND) throw new Error(OMNI_STAYS)
     const others = state.mainBotIds.filter(other => other !== id)
     let next
     if (!main) {
@@ -566,15 +566,15 @@ export function install(rt) {
     for (const other of state.mainBotIds.filter(other => !next.includes(other))) {
       if (rt.botOf(other)?.kickoff?.main) delete rt.botOf(other).kickoff
     }
-    // Omni keeps the first place: a Bot moved to the front goes right after it.
-    state.mainBotIds = omni === undefined ? next : [omni.id, ...next.filter(other => other !== omni.id)]
+    state.mainBotIds = next
     await rt.save()
   }
 
   async function deleteBot(id) {
     const bot = rt.botOf(id)
     if (bot === undefined) throw new Error('Unknown Bot')
-    if (bot.kind === OMNI_KIND) throw new Error(OMNI_STAYS)
+    // The Omni Bot is a Main Bot it cannot shed, so it goes as it is, while another Main Bot stays.
+    if (bot.kind === OMNI_KIND && state.mainBotIds.some(other => other !== id && rt.botOf(other))) state.mainBotIds = state.mainBotIds.filter(other => other !== id)
     if (rt.isMain(id)) throw new Error('A Main Bot cannot be deleted; remove its Main Bot role first')
     // Before the Bot and its group Sessions leave the state, which the archive reads.
     const archived = rt.archiveBotMemory(id)
@@ -626,36 +626,21 @@ export function install(rt) {
   }
 
   const omniBot = () => Object.values(state.bots).find(bot => bot.kind === OMNI_KIND)
-  // A team from before the Omni Bot was marked: the Bot setup made, by its look (the octopus
-  // in DeepSeek colour, made by no other Bot), the oldest if several, whatever it is called now.
-  const setupBot = () => Object.values(state.bots)
-    .filter(bot => bot.createdBy === null && bot.avatar?.shape === 'octopus' && bot.color === 'deepseek' && bot.kind === undefined)
-    .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))[0]
 
-  // The team always has its Omni Bot, first among the Main Bots. A team that lost it (deleted
-  // before it was kept) gets it back: a Bot already named Omni becomes it, else a new one.
   async function bootstrap() {
     await rt.load()
     void rt.syncModels()
-    const omni = omniBot() ?? setupBot() ?? Object.values(state.bots).find(bot => bot.name.toLowerCase() === String(defaults.mainName).toLowerCase())
-    if (omni !== undefined) {
-      if (omni.kind === OMNI_KIND && state.mainBotIds[0] === omni.id && !omni.hidden) return
-      if (rt.readOnly() !== undefined) return
-      omni.kind = OMNI_KIND
+    // An Omni Bot added before it was a Main Bot becomes one, after the others.
+    const omni = omniBot()
+    if (omni !== undefined && !rt.isMain(omni.id) && rt.readOnly() === undefined) {
+      state.mainBotIds.push(omni.id)
       delete omni.hidden
-      state.mainBotIds = [omni.id, ...state.mainBotIds.filter(id => id !== omni.id)]
       await rt.save()
-      return
     }
-    if (rt.readOnly() !== undefined) return
+    if (state.mainBotIds.some(id => rt.botOf(id))) return
     // Only the team's first Main Bot is stored as the DeepSeek whale; other Bots get a
     // look from their id, and a Bot made Main Bot later keeps its own.
-    bootstrapping ??= createBot({ name: defaults.mainName, role: defaults.mainRole, main: true, color: 'deepseek', avatar: { shape: 'octopus' }, pickModel: true, kind: OMNI_KIND })
-      .then(async (bot) => {
-        state.mainBotIds = [bot.id, ...state.mainBotIds.filter(id => id !== bot.id)]
-        await rt.save()
-        return bot
-      })
+    bootstrapping ??= createBot({ name: defaults.mainName, role: defaults.mainRole, main: true, color: 'deepseek', avatar: { shape: 'octopus' }, pickModel: true })
       .finally(() => { bootstrapping = null })
     await bootstrapping
   }

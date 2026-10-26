@@ -375,7 +375,9 @@ var ZH = {
   "Full access": "完全权限",
   "Same for every member": "全员统一",
   "Replaces each member's own permissions in this group.": "在这个群里代替各成员自己的权限。",
-  "Always the first Main Bot: it runs your Omni. Other Bots can be Main Bots beside it.": "始终是第一个主 Bot：由它操作你的 Omni。其他 Bot 可以和它一起做主 Bot。",
+  "Add Omni": "添加 Omni",
+  "Your channels and their chats": "你的频道和其中的聊天",
+  "Always a Main Bot: only a Main Bot runs your Omni.": "始终是主 Bot：只有主 Bot 能操作你的 Omni。",
   "The only Main Bot. To hand the role to another Bot, use Main Bot on the Bots page.": "这是唯一的主 Bot。要把主 Bot 交给别的 Bot，请到「Bot」页的主 Bot 里换。",
   Change: "更换",
   "Can create and change Bots, and runs every group chat.": "可以创建和修改 Bot，并管理所有群聊。",
@@ -11904,7 +11906,7 @@ function BotSettingsForm({ bot, roster, actions, run: run2 }) {
           "span",
           { className: "bt-set-copy" },
           (0, import_react28.createElement)("span", { className: "bt-bs-label" }, t("Main Bot")),
-          (0, import_react28.createElement)("span", { className: "bt-set-hint" }, t("Always the first Main Bot: it runs your Omni. Other Bots can be Main Bots beside it."))
+          (0, import_react28.createElement)("span", { className: "bt-set-hint" }, t("Always a Main Bot: only a Main Bot runs your Omni."))
         )
       ) : onlyMain ? (0, import_react28.createElement)(
         "div",
@@ -11934,7 +11936,7 @@ function BotSettingsForm({ bot, roster, actions, run: run2 }) {
         (0, import_react28.createElement)("span", { className: "bt-set-copy" }, (0, import_react28.createElement)("span", { className: "bt-bs-label" }, t("Duplicate")), (0, import_react28.createElement)("span", { className: "bt-set-hint" }, t("A copy with the same job and model, and fresh memory."))),
         (0, import_react28.createElement)("span", { className: "bt-chevron" }, (0, import_react28.createElement)(ChevronRightIcon))
       ),
-      isMainBot ? null : (0, import_react28.createElement)(
+      isMainBot && !omni2 ? null : (0, import_react28.createElement)(
         "button",
         { type: "button", className: "bt-set-row bt-bs-row bt-bs-danger", "data-confirm": confirming || void 0, onClick: remove },
         (0, import_react28.createElement)(
@@ -14053,6 +14055,8 @@ function teamActions({ call: call2, after, partFor, roster, ui: ui2, live, cards
     createBot: (payload) => after(call2("create-bot", payload)),
     // genie-dsh's: the folder's repository's Genie, made in a free color when it has none.
     createGenie: (folder) => after(call2("genie-create", { folder })),
+    // welcome-dsh's: the Omni Bot again, after it was deleted (the team view's omniAddable).
+    addOmni: () => after(call2("omni-add")),
     createRoom: (members, options = {}) => after(call2("create-room", { members, ...options })),
     updateBot: (id, patch) => after(call2("update-bot", { id, ...patch })),
     refreshModels: () => after(call2("models")).catch(() => {
@@ -17003,6 +17007,12 @@ function NewChat({ mode, roster, actions }) {
     setError("");
     setGenieDraft(true);
   } });
+  const addOmni = roster.omniAddable === true && actions.addOmni && !group && picked.length === 0 && mode !== "search" && (wanted === "" || "omni".startsWith(wanted) || wanted.includes("omni"));
+  if (addOmni) options.push({ key: "omni", icon: (0, import_react46.createElement)(PlusIcon), label: t("Add Omni"), hint: t("Your channels and their chats"), run: () => run2(async () => {
+    const bot = await actions.addOmni();
+    close();
+    if (bot?.id) actions.openSession(bot.id);
+  }) });
   for (const bot of matches) {
     options.push({ key: bot.id, bot, label: bot.name, hint: choosingAdmin ? t("Make admin") : group || picked.length > 0 ? t("Add to group chat") : void 0, run: () => openBot(bot) });
   }
@@ -19394,11 +19404,10 @@ function MainBotsSection({ roster, actions, run: run2 }) {
   const mains = (roster.mainBotIds ?? []).map((id) => roster.byId[id]).filter(Boolean);
   const [first, ...others] = mains;
   const candidates = roster.bots.filter((bot) => !isMainOf(roster, bot.id));
-  const omniFirst = first?.kind === "omni";
   return (0, import_react54.createElement)(
     SetSection,
     { title: t("Main Bot") },
-    omniFirst ? (0, import_react54.createElement)(SetRow, { label: first.name, hint: t("Always the first Main Bot: it runs your Omni. Other Bots can be Main Bots beside it.") }) : (0, import_react54.createElement)(
+    (0, import_react54.createElement)(
       SetRow,
       {
         label: t("Main Bot"),
@@ -19414,8 +19423,9 @@ function MainBotsSection({ roster, actions, run: run2 }) {
     others.map((bot) => (0, import_react54.createElement)(
       SetRow,
       { key: bot.id, label: bot.name, hint: t("Also a Main Bot.") },
-      omniFirst ? null : (0, import_react54.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => run2(actions.setMain(bot.id, true, { primary: true })) }, t("Move to first")),
-      (0, import_react54.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => run2(actions.setMain(bot.id, false)) }, t("Remove Main Bot role"))
+      (0, import_react54.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => run2(actions.setMain(bot.id, true, { primary: true })) }, t("Move to first")),
+      // The Omni Bot stays a Main Bot (roster.js OMNI_KIND).
+      bot.kind === "omni" ? null : (0, import_react54.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => run2(actions.setMain(bot.id, false)) }, t("Remove Main Bot role"))
     )),
     candidates.length > 0 ? (0, import_react54.createElement)(
       SetRow,
@@ -19661,7 +19671,7 @@ function ContextMenu({ menu, roster, actions, leaving = false }) {
     ],
     [
       isMainBot ? null : [t("Hide from sidebar"), HideIcon, () => actions.setFlags(menu.id, { hidden: true })],
-      isMainBot ? null : [room2 ? t("Delete group") : t("Delete"), TrashIcon, () => bot ? actions.deleteBot(bot.id) : actions.deleteRoom(menu.id), true]
+      isMainBot && bot?.kind !== "omni" ? null : [room2 ? t("Delete group") : t("Delete"), TrashIcon, () => bot ? actions.deleteBot(bot.id) : actions.deleteRoom(menu.id), true]
     ]
   ].map((group) => group.filter(Boolean)).filter((group) => group.length > 0);
   return (0, import_react55.createElement)(

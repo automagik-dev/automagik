@@ -214,7 +214,22 @@ export function install(ctx, deps = {}) {
   const terminal = createTerminalActions(ctx, { checkClaude, ...deps.terminal })
   const { anyOn, ...aiEndpoints } = ai
   const { closeAll, ...terminalEndpoints } = terminal
-  const { team, omniProjectOf, assignModels, ...companion } = createCompanionActions(ctx, deps.companion)
+  const { team, omniProjectOf, assignModels, joinOmni, ...companion } = createCompanionActions(ctx, deps.companion)
+  // A deleted Omni Bot comes back from the Bot team's New menu (Add Omni), made the way the
+  // team step makes it: while the Bot team and Omni's channels run, the team view says
+  // whether it is missing, and the omni-add endpoint makes it.
+  if (typeof ctx.inject === 'function') {
+    ctx.inject(['omniTeam', 'omniChannels'], (sub) => {
+      const rt = sub.omniTeam
+      if (typeof rt?.hooks?.view !== 'function' || typeof rt.hooks.endpoint !== 'function') return
+      sub.effect(() => rt.hooks.view(() => ({ omniAddable: !Object.values(rt.state?.bots ?? {}).some(bot => bot.kind === 'omni') })), 'omni-ai: Add Omni')
+      sub.effect(() => rt.hooks.endpoint('omni-add', async () => {
+        await ctx.settings.update('omni-ai', { teamOmni: true })
+        const bot = await joinOmni(rt)
+        return { id: bot.id, name: bot.name }
+      }), 'omni-ai: Add Omni')
+    })
+  }
   const actions = { ...createActions(ctx, { ...deps, anyOn }), ...createProviderActions(ctx), ...aiEndpoints, ...terminalEndpoints, ...companion, ...createBotTypeActions(ctx, { team, omniProjectOf, ...(deps.checkGit ? { checkGit: deps.checkGit } : {}), ...(deps.genieSkills ? { genieSkills: deps.genieSkills } : {}) }) }
   // Connect AI finished with an AI on: the companion, the Omni Bot and the Genie Bot get their model, and
   // their held greetings go out. The step waits for that a little (ASSIGN_HOLD_MS), so the
