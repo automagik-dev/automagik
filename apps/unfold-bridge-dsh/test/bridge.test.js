@@ -48,7 +48,7 @@ const chat = (extra = {}) => ({
     { role: 'system', content: 'You are Unfold.' },
     { role: 'user', content: 'Oi' },
     { role: 'assistant', content: 'Oi! Tudo bem?' },
-    { role: 'user', content: [{ type: 'text', text: 'Diga olá ao Felix.' }] },
+    { role: 'user', content: [{ type: 'text', text: 'Diga olá ao Ana.' }] },
   ],
   ...extra,
 })
@@ -130,7 +130,7 @@ test('a chat streams as OpenAI chunks: the role, the text deltas, the finish, th
     }
     assert.deepEqual(chunks.map(c => c.choices), [
       [{ index: 0, delta: { role: 'assistant', content: 'Olá' }, finish_reason: null }],
-      [{ index: 0, delta: { content: ', Felix.' }, finish_reason: null }],
+      [{ index: 0, delta: { content: ', Ana.' }, finish_reason: null }],
       [{ index: 0, delta: {}, finish_reason: 'stop' }],
       [],
     ])
@@ -162,7 +162,7 @@ test('the request becomes one llm.stream call: system text, user inputs, assista
     assert.deepEqual(options.messages, [
       { role: 'user', content: [{ type: 'text', text: 'Oi' }] },
       { id: 'm-Oi! Tudo bem?', role: 'assistant', content: [{ type: 'text', text: 'Oi! Tudo bem?' }], source: { kind: 'model', provider: 'deepseek-official', model: 'deepseek-v4-flash' } },
-      { role: 'user', content: [{ type: 'text', text: 'Diga olá ao Felix.' }] },
+      { role: 'user', content: [{ type: 'text', text: 'Diga olá ao Ana.' }] },
     ])
     assert.equal(options.temperature, 0.7)
     assert.equal(options.maxTokens, 300)
@@ -248,7 +248,7 @@ test('a request without stream gets one chat.completion', async () => {
     assert.equal(res.status, 200)
     const body = JSON.parse(res.text)
     assert.equal(body.object, 'chat.completion')
-    assert.deepEqual(body.choices, [{ index: 0, message: { role: 'assistant', content: 'Olá, Felix.' }, finish_reason: 'stop' }])
+    assert.deepEqual(body.choices, [{ index: 0, message: { role: 'assistant', content: 'Olá, Ana.' }, finish_reason: 'stop' }])
     assert.deepEqual(body.usage, { prompt_tokens: 15, completion_tokens: 4, total_tokens: 19 })
   } finally { await b.close() }
 })
@@ -281,7 +281,7 @@ test('the log names method, path, status and time, and never the key, a prompt o
     const all = b.logs.join('\n')
     assert.match(all, /POST \/v1\/chat\/completions 200 \d+ ms/)
     assert.match(all, /GET \/v1\/models 401 \d+ ms/)
-    for (const secret of [KEY, 'wrong-key-0123456789abcdef', 'You are Unfold', 'Felix', 'Olá', 'Tudo bem']) assert.ok(!all.includes(secret), secret)
+    for (const secret of [KEY, 'wrong-key-0123456789abcdef', 'You are Unfold', 'Ana', 'Olá', 'Tudo bem']) assert.ok(!all.includes(secret), secret)
   } finally { await b.close() }
 })
 

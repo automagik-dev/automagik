@@ -4,8 +4,8 @@
 export const TEXT = [
   { type: 'block-start', index: 0, blockType: 'text' },
   { type: 'text-delta', index: 0, text: 'Olá' },
-  { type: 'text-delta', index: 0, text: ', Felix.' },
-  { type: 'block-end', index: 0, block: { type: 'text', text: 'Olá, Felix.' } },
+  { type: 'text-delta', index: 0, text: ', Ana.' },
+  { type: 'block-end', index: 0, block: { type: 'text', text: 'Olá, Ana.' } },
   { type: 'usage', usage: { inputTokens: 12, outputTokens: 4, cacheReadTokens: 3 } },
   { type: 'finish', reason: { kind: 'stop' } },
 ]

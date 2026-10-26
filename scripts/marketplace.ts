@@ -48,6 +48,14 @@ interface IndexVersion {
 interface IndexPlugin {
   name: string;
   versions: IndexVersion[];
+  [field: string]: unknown;
+}
+/** What a plugin's package.json gives the market for its first listing (`automagik.market`). */
+interface MarketBlock {
+  title: Record<string, string>;
+  description: Record<string, string>;
+  category: string;
+  keywords?: string[];
 }
 interface Index {
   plugins: IndexPlugin[];
@@ -69,7 +77,7 @@ function gitOk(cwd: string, args: string[], timeout?: number): boolean {
     return false;
   }
 }
-function packageAt(cwd: string, commit: string, path: string): { name?: string; version?: string; engines?: { dsh?: string } } | null {
+function packageAt(cwd: string, commit: string, path: string): { name?: string; version?: string; engines?: { dsh?: string }; automagik?: { market?: MarketBlock } } | null {
   try {
     return JSON.parse(git(cwd, ['show', `${commit}:${path === '.' ? '' : `${path}/`}package.json`]));
   } catch {
@@ -141,6 +149,30 @@ export function pinIndex(value: Index, repoDir: string, ref: string): Index {
     // The DSH range is the release's own (package.json engines.dsh), as DSH reads it at startup.
     const engines = manifest.engines?.dsh ? { engines: { ...latest.engines, dsh: manifest.engines.dsh } } : {};
     plugin.versions = [{ ...latest, version: manifest.version, publishTimestamp, source, ...engines }, ...kept];
+  }
+  // A plugin of ours that is not listed yet joins at its first release, with the title,
+  // description and category its package.json gives the market. One without that block is
+  // listed by hand.
+  const folders = git(repoDir, ['ls-tree', '--name-only', commit, 'apps/']).split('\n').filter((path) => path.endsWith('-dsh'));
+  for (const path of folders) {
+    const manifest = packageAt(repoDir, commit, path);
+    const market = manifest?.automagik?.market;
+    if (!manifest?.name || !manifest.version || !market || value.plugins.some((plugin) => plugin.name === manifest.name)) continue;
+    value.plugins.push({
+      name: manifest.name,
+      title: market.title,
+      description: market.description,
+      author: 'Automagik',
+      homepage: `${REPO_URL}/tree/dev/${path}#readme`,
+      repository: { url: REPO_URL, directory: path },
+      metadata: { category: market.category, keywords: market.keywords ?? [], labels: ['official'] },
+      versions: [{
+        version: manifest.version,
+        publishTimestamp,
+        source: { type: 'git', url: REPO_URL, commit, path },
+        ...(manifest.engines?.dsh ? { engines: { dsh: manifest.engines.dsh } } : {}),
+      }],
+    });
   }
   return value;
 }
