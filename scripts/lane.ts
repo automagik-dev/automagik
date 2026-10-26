@@ -25,7 +25,7 @@ import { createHash, createPrivateKey, createPublicKey, sign as signBytes, verif
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { ReleasePlugins } from './release-plugins';
 import { FIELDS } from './version';
 
@@ -140,7 +140,9 @@ export function addonPinsOnly(before: string, after: string): boolean {
  * dir/addons.json. Refuses one that has dependencies or no engines.dsh: swapping its folder
  * alone would not install it.
  */
-export function packAddons(dir: string, profile = JSON.parse(readFileSync(join(ROOT, PROFILE), 'utf8'))): Record<string, LaneAddon> {
+export function packAddons(into: string, profile = JSON.parse(readFileSync(join(ROOT, PROFILE), 'utf8'))): Record<string, LaneAddon> {
+  // npm pack runs in the add-on's checkout: the destination must not be relative to it.
+  const dir = resolve(into);
   mkdirSync(dir, { recursive: true });
   const addons: Record<string, LaneAddon> = {};
   for (const name of LANE_ADDONS) {
