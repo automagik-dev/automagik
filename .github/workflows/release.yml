@@ -104,8 +104,9 @@ jobs:
           set -euo pipefail
           # The newest release, a full one or a plugin patch (calendar tags have six-digit minors).
           last=$(git tag --list 'v3.*' --sort=-v:refname | grep -E '^v3\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})$' | head -1 || true)
-          # Commits since it other than the release's own (its version commit and index listing).
-          if [[ -n "${last}" && -z "$(git log --format=%s "${last}..HEAD" | grep -v '^chore(release): ' || true)" ]]; then
+          # Commits since it other than the release's own (its version commit and index listing)
+          # and those that ship nothing (CI, docs, tests).
+          if [[ -n "${last}" && -z "$(git log --format=%s "${last}..HEAD" | grep -vE '^(chore\(release\)|ci|docs|test)(\([^)]*\))?!?: ' || true)" ]]; then
             echo "dev has nothing since ${last}: no release"
           else
             echo "release=true" >> "$GITHUB_OUTPUT"
@@ -147,13 +148,22 @@ jobs:
           git commit -qam "chore(release): v${version}"
           git tag -a "v${version}" -m "Automagik ${version%.0}"
           # Atomic: when dev moved meanwhile (a second merge), neither lands, so no tag names a
-          # release commit dev never got (v3.5.0 did, on 2026-10-25).
-          git push -q --atomic origin HEAD:refs/heads/dev "refs/tags/v${version}"
+          # release commit dev never got (v3.5.0 did, on 2026-10-25). The newer merge's own run
+          # (queued behind this one) then releases these changes with it, so this run stops
+          # here, cleanly: no version, and the steps and jobs after it skip.
+          if ! git push -q --atomic origin HEAD:refs/heads/dev "refs/tags/v${version}"; then
+            git fetch -q origin dev
+            if [[ "$(git rev-parse origin/dev)" != "$(git rev-parse HEAD~1)" ]]; then
+              echo "::notice::dev moved on while this run cut v${version}; the run for the newer merge releases these changes too"
+              exit 0
+            fi
+            exit 1
+          fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Pack the plugins
-        if: steps.new.outputs.release == 'true'
+        if: steps.cut.outputs.version != ''
         env:
           VERSION: ${{ steps.cut.outputs.version }}
           SHA: ${{ steps.cut.outputs.sha }}
@@ -168,7 +178,7 @@ jobs:
           (cd release && sha256sum -- * > PLUGINS.SHA256SUMS)
 
       - name: Publish the release
-        if: steps.new.outputs.release == 'true'
+        if: steps.cut.outputs.version != ''
         env:
           VERSION: ${{ steps.cut.outputs.version }}
           SHA: ${{ steps.cut.outputs.sha }}
@@ -186,7 +196,7 @@ jobs:
             --notes "The Bot team (\`@automagik/bots-dsh\`) and the welcome (\`@automagik/welcome-dsh\`) for DeepSeek Harness, and the Automagik desktop app. Install the plugins from the [Automagik market](https://github.com/automagik-dev/dsh-marketplace) or from an Omni's own market; \`plugins.json\` lists each tarball's integrity. The desktop builds follow when they are done."
 
       - name: Sign and post the plugin lane
-        if: steps.new.outputs.release == 'true'
+        if: steps.cut.outputs.version != ''
         env:
           VERSION: ${{ steps.cut.outputs.version }}
           KIND: ${{ steps.lane.outputs.kind }}
