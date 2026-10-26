@@ -1,4 +1,4 @@
-import { genieExpressions, lamp, mark, omniExpressions, wordmark } from './art/inline.js'
+import { genieExpressions, lamp, lockup, mark, omniExpressions, wordmark } from './art/inline.js'
 
 // -------------------------------------------------------------------------
 // Clay characters: Omni and Genie as the Automagik clay universe draws them, in place of the
@@ -15,6 +15,10 @@ export const MARK_ART = mark
 // brand/lockup.png), cyan to magenta, the open A and the dotted O and i.
 export const WORDMARK_ART = wordmark
 export const WORDMARK_RATIO = 471 / 96
+// The whole lockup as the owner drew it, the mark beside the letters at their own sizes
+// (brand/lockup.png cropped to its art): the mark stands about 1.4 times the letters' height.
+export const LOCKUP_ART = lockup
+export const LOCKUP_RATIO = 1630 / 347
 export const FACES = Object.freeze(['calm', 'pleased', 'delighted', 'focused', 'curious', 'asleep', 'sad'])
 
 // A mark's state (mark.js STATES: what the Bot is doing, from its Session and its work) as a

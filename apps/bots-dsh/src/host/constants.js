@@ -20,6 +20,11 @@ export const OCR_RETRY_MS = 120_000
 export const OCR_CACHE_MAX = 500
 export const MAX_AVATAR_IMAGE = 160_000
 export const ROUTE = '/api/omni-ui'
+// Pet sheets (pets.js), as bytes beside the JSON endpoints.
+export const PET_ROUTE = `${ROUTE}/pet`
+export const PET_CODEX_ROUTE = `${ROUTE}/pet-codex`
+// Generated images (imagegen.js), by id.
+export const IMAGE_ROUTE = `${ROUTE}/image`
 // The Automagik desktop app (OMNI_CLIENT_ID) updates as a whole and carries the Bot browser;
 // upstream's own app says so with DS_BOT_APP.
 export const inDesktopApp = () => process.env.OMNI_CLIENT_ID === 'omni-desktop' || process.env.DS_BOT_APP === '1'
@@ -72,8 +77,12 @@ export const TEAM_TOOLS = [
   'list_capabilities', 'save_capability', 'delete_capability',
   'attach_capability', 'detach_capability',
   'find_chats', 'list_automations', 'save_automation', 'pause_automation', 'delete_automation',
+  'generate_image',
   'omni_endpoints', 'omni_call', 'omni_channels', 'omni_chats', 'omni_messages', 'omni_send', 'omni_react', 'omni_media', 'omni_delete', 'omni_connect', 'show_canvas', 'start_task',
 ]
+// Team tools that take a while (an image takes up to two minutes): in a group they are work,
+// not a quick call.
+export const SLOW_TEAM_TOOLS = Object.freeze(['generate_image'])
 // A member still at work this long after its first tool call lets the round go on; it
 // posts its reply when the work is done.
 export const ROOM_WORK_GRACE_MS = 15_000

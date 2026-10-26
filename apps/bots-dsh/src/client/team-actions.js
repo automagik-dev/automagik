@@ -102,6 +102,10 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     memoryAsk: (id, text) => call('memory-ask', { ...memoryOf(id), text }),
     memoryForget: (id, entry) => call('memory-forget', { ...memoryOf(id), scope: entry.scope, topic: entry.topic, text: entry.text }),
     diagnostics: payload => call('diagnostics', payload),
+    // Pets (pets.js): those on this computer, a page of codex-pets.net, and one put on a Bot.
+    pets: () => call('pets'),
+    petsBrowse: (query, page, sort) => call('pets-browse', { query, page, sort }),
+    petUse: (botId, source, id) => after(call('pet-use', { botId, source, id })),
     privacy: () => call('privacy'),
     privacySet: (share, on) => call('privacy-set', { share, on }),
     diagnosticsLog: () => call('diagnostics-log'),

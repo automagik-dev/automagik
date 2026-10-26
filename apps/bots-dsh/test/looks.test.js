@@ -20,10 +20,10 @@ const roster = (bots, mainBotIds) => indexRoster({ bots, rooms: [], mainBotIds, 
 test('the octopus is only a stored look: the browser gives no Bot a look by its place in the team', () => {
   const chief = { id: 'chief', name: 'Omni', createdAt: 1, color: 'deepseek', avatar: { shape: 'octopus' } }
   const writer = { id: 'writer', name: 'Writer', createdAt: 2 }
-  assert.deepEqual(lookOf(roster([writer, chief], ['chief']).byId.chief), { ...MAIN_LOOK, image: undefined })
+  assert.deepEqual(lookOf(roster([writer, chief], ['chief']).byId.chief), { ...MAIN_LOOK, image: undefined, pet: undefined })
   // The first Main Bot left, with no stored look, keeps the look its id gives it.
   const left = roster([writer], ['writer']).byId.writer
-  assert.deepEqual(lookOf(left), { shape: defaultShape('writer'), color: defaultColor('writer'), image: undefined })
+  assert.deepEqual(lookOf(left), { shape: defaultShape('writer'), color: defaultColor('writer'), image: undefined, pet: undefined })
   const photo = lookOf({ id: 'chief', avatar: { image: 'data:image/png;base64,AA==' } })
   assert.equal(photo.image, 'data:image/png;base64,AA==')
   assert.equal(photo.shape, defaultShape('chief'))

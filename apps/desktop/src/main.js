@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url'
 import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
 import { fade, PAGE_IN_CSS } from './motion.js'
 import { noteRestart, restartLine, steps } from './timeline.js'
+import { dismissSplash, showUpdateSplash } from './splash.js'
 import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, privacyFileOf, privacyPatchOf, freePort, installProfile, navigationOf, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
 import { pageLayout, tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
@@ -202,6 +203,8 @@ async function launch() {
     ready = true
     layout()
     started.mark('page in')
+    // An update's splash (splash.js) stays up until this copy has something to show.
+    dismissSplash(home)
     const back = restartLine(RESTART_NOTE(), { version: app.getVersion() })
     if (back) startLog(back)
     if (pendingLink) void connectFromLink()
@@ -290,9 +293,10 @@ function barMenu() {
 }
 
 // Restart into the downloaded update: dsh is stopped first, as on any quit. macOS then checks
-// the new app for up to a minute before it opens it, with nothing on screen, and the app opened
-// again meanwhile cancels the install. So the sidebar says "Installing" before the window goes,
-// and on macOS a notification goes on saying it while macOS swaps the app.
+// the new app before it opens it, and the app opened again meanwhile cancels the install. So
+// the sidebar says "Installing" before the window goes, and on macOS a splash (splash.js)
+// stays on screen while macOS swaps the app, until the new copy's page is in; where the
+// splash cannot go up, a notification says it instead.
 const RESTART_NOTICE_MS = 600
 function installUpdate({ away = false } = {}) {
   if (!updates?.ready || quitting) return
@@ -300,7 +304,8 @@ function installUpdate({ away = false } = {}) {
   const out = leave(away ? 'update while away' : 'update restart')
   update = { ...update, state: 'restarting' }
   publishUpdate()
-  if (process.platform === 'darwin' && Notification.isSupported()) {
+  const splash = showUpdateSplash({ home, product: PRODUCT, version: update?.version })
+  if (!splash && process.platform === 'darwin' && Notification.isSupported()) {
     new Notification({ title: `Updating ${PRODUCT}`, body: `${PRODUCT} reopens by itself in about a minute. Leave it closed until then.`, silent: true }).show()
   }
   setTimeout(() => {

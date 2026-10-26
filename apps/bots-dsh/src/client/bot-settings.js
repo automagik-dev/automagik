@@ -4,6 +4,7 @@ import { CHARACTERS, PICKER_SHAPES, PICKER_COLUMNS, CHARACTER_COLORS, SHAPES, ha
 import { isMainOf } from './sources.js'
 import { PencilIcon, ChevronRightIcon } from './icons.js'
 import { lookOf, BotMark } from './mark.js'
+import { PetsTab } from './pets-tab.js'
 import { ModelMenu, modelOf } from './model-menu.js'
 import { FolderMenu } from './folder-menu.js'
 import { BotSchedules } from './schedules.js'
@@ -119,11 +120,12 @@ export function CharacterGrid({ look, hasPhoto = false, onShape, onColor }) {
     }, h('span', { style: { background: paintCss(color) } })))))
 }
 
-// The avatar editor: the Bot tab picks a character (every click saves), the
-// Upload tab takes a photo, and Reset returns to the look the Bot id gives.
+// The avatar editor: the Pets tab (where it opens) picks a pet in the Codex format, from
+// this computer or codex-pets.net (pets-tab.js); the Bot tab picks a character (every click
+// saves), the Upload tab takes a photo, and Reset returns to the look the Bot id gives.
 function AvatarEditor({ bot, actions, run, onClose }) {
   const look = lookOf(bot)
-  const [tab, setTab] = useState(look.image ? 'upload' : 'bot')
+  const [tab, setTab] = useState(look.image ? 'upload' : 'pets')
   const [over, setOver] = useState(false)
   const ref = useRef(null)
   const fileRef = useRef(null)
@@ -155,13 +157,14 @@ function AvatarEditor({ bot, actions, run, onClose }) {
     h('div', { className: 'bt-avedit-top' },
       h('div', { ref: glide.box, role: 'tablist', 'aria-label': t('Avatar source'), className: 'bt-avedit-tabs' },
         h('span', { ref: glide.thumb, className: 'bt-thumb', 'aria-hidden': true }),
-        [['bot', 'Bot'], ['upload', 'Upload']].map(([id, label]) => h('button', { key: id, type: 'button', role: 'tab', className: 'bt-avedit-tab', 'aria-selected': tab === id, onClick: () => setTab(id) }, t(label)))),
+        [['pets', 'Pets'], ['bot', 'Bot'], ['upload', 'Upload']].map(([id, label]) => h('button', { key: id, type: 'button', role: 'tab', className: 'bt-avedit-tab', 'aria-selected': tab === id, onClick: () => setTab(id) }, t(label)))),
       h('button', {
         type: 'button', className: 'bt-avedit-tab bt-avedit-reset', title: t('Reset character to default'),
         onClick: () => run(actions.updateBot(bot.id, { avatar: null, color: null })),
       }, t('Reset'))),
+    tab === 'pets' ? h(PetsTab, { bot, look, actions, run }) : null,
     tab === 'bot' ? h(CharacterGrid, {
-      look, hasPhoto,
+      look, hasPhoto: hasPhoto || Boolean(look.pet),
       onShape: shape => run(actions.updateBot(bot.id, { avatar: { shape } })),
       onColor: color => run(actions.updateBot(bot.id, { color })),
     }) : null,

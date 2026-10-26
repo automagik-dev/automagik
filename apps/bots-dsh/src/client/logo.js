@@ -1,5 +1,5 @@
 import { createElement as h } from 'react'
-import { MARK_ART, WORDMARK_ART, WORDMARK_RATIO } from './clay-art.js'
+import { LOCKUP_ART, LOCKUP_RATIO, MARK_ART, WORDMARK_ART, WORDMARK_RATIO } from './clay-art.js'
 
 // The Automagik logo, both halves in the owner's modelling clay: the mark is the triskelion
 // (art/mark.webp, the three bent arms, the same picture as the desktop app's icon), and the
@@ -13,6 +13,11 @@ export function OmniMark({ size = 16 }) {
 
 export function Wordmark({ height = 14 }) {
   return h('img', { className: 'omni-logo omni-wordmark', src: WORDMARK_ART, height, width: Math.round(height * WORDMARK_RATIO), alt: 'Automagik', draggable: false })
+}
+
+// The mark and the name together, in the lockup's own proportions, `height` tall.
+export function Lockup({ height = 28 }) {
+  return h('img', { className: 'omni-logo omni-lockup', src: LOCKUP_ART, height, width: Math.round(height * LOCKUP_RATIO), alt: 'Automagik', draggable: false })
 }
 
 // The browser tab's icon: DSH sets one per color scheme; the app swaps in its clay mark for both

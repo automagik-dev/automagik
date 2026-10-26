@@ -333,6 +333,21 @@ export function install(rt) {
     return { ...(text ? { text: text.trim().slice(0, 300) } : {}), ...(code ? { code: code.trim().slice(0, 400) } : {}) }
   }
 
+  // The Bots whose last turn failed, for their pets (a sad face until their next turn starts):
+  // per Bot, when it failed and the short reason. Process-local, like activity.
+  /** @type {Record<string, { at: number, text: string }>} */
+  let failedBots = {}
+  const ownerOf = id => rt.groupOwners.get(id)?.botId ?? rt.chatOwners.get(id)
+  const setFailed = (id, failure) => {
+    const botId = ownerOf(id)
+    if (botId === undefined || (failure === undefined && failedBots[botId] === undefined)) return
+    const next = { ...failedBots }
+    if (failure === undefined) delete next[botId]
+    else next[botId] = { at: Date.now(), text: String(failure.message || 'the model call failed').slice(0, 200) }
+    failedBots = next
+  }
+  const failedView = () => failedBots
+
   // Where a Session speaks, for the diagnostics log.
   const placeOf = (id) => {
     const room = rt.roomOf(rt.groupOwners.get(id)?.roomId) ?? rt.roomOf(id)
@@ -383,6 +398,7 @@ export function install(rt) {
         break
       case 'turn/start':
         setActivity(id, 'thinking')
+        setFailed(id, undefined)
         entry.turn = event.data.turn
         entry.since = event.time ?? Date.now()
         entry.texts = []
@@ -555,6 +571,7 @@ export function install(rt) {
         const reason = event.data?.reason
         const failure = reason?.kind === 'error' && !switched ? turnFailure(reason.error) : undefined
         if (failure !== undefined) noteTurnFailure(id, failure)
+        if (failure !== undefined) setFailed(id, failure)
         const held = rt.groupOwners.has(id) ? rt.takeRoomSteps?.(id) ?? '' : ''
         if (switched) break
         // A model that writes its tool call as text ends the turn as if it were done,
@@ -644,5 +661,5 @@ export function install(rt) {
     }
   })
 
-  Object.assign(rt, { live, liveOf, roomWaiters, roomProgress, roomInbox, activityView, workView, roomWorkView, turnsView, callDetail, doingOf, stopRoomTurn, releaseBot })
+  Object.assign(rt, { live, liveOf, roomWaiters, roomProgress, roomInbox, activityView, failedView, workView, roomWorkView, turnsView, callDetail, doingOf, stopRoomTurn, releaseBot })
 }

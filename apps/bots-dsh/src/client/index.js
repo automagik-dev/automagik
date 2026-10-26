@@ -26,7 +26,10 @@ import { sameVersion } from './dsh-offer.js'
 import { QuestionCard, QuestionDock } from './questions.js'
 import { DesktopUpdate, DESKTOP_UPDATE_CSS } from './desktop-update.js'
 import { PRIVACY_CSS } from './privacy.js'
+import { PET_CSS } from './pet.js'
+import { PETS_CSS } from './pets-tab.js'
 import { VOICE_SETTINGS_CSS } from './voice-settings.js'
+import { IMAGE_CELL_CSS } from './image-cell.js'
 import { TeamApproval, TEAM_APPROVAL_CSS, isTeamApproval } from './team-approval.js'
 import { AnsweredReply, WidgetDock, WIDGET_CSS } from './widget-cell.js'
 import { installHeaderNavigation } from './header-navigation.js'
@@ -783,7 +786,10 @@ export function apply(ctx) {
     () => installCompiledStyles(TASK_CSS, 'tasks'),
     () => installCompiledStyles(DESKTOP_UPDATE_CSS, 'desktop-update'),
     () => installCompiledStyles(PRIVACY_CSS, 'privacy'),
+    () => installCompiledStyles(PET_CSS, 'pet'),
+    () => installCompiledStyles(PETS_CSS, 'pets'),
     () => installCompiledStyles(VOICE_SETTINGS_CSS, 'voice-settings'),
+    () => installCompiledStyles(IMAGE_CELL_CSS, 'image-cell'),
     () => installCompiledStyles(LIVE_CSS, 'live'),
     () => installCompiledStyles(TEAM_APPROVAL_CSS, 'team-approval'),
     () => installCompiledStyles(LAMP_CSS, 'lamp'),
