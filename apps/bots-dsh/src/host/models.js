@@ -89,6 +89,7 @@ export function install(rt) {
     // turn on them fails.
     const missing = await rt.missingKeys?.([...new Set(entries.map(entry => entry.provider))]) ?? new Set()
     for (const entry of entries) if (missing.has(entry.provider)) entry.needsKey = true
+    noteConnected(entries)
     await Promise.all(entries.filter(entry => used.has(entry.ref)).map(async (entry) => {
       const reasoning = await reasoningOf(entry.ref)
       if (reasoning !== undefined) entry.reasoning = reasoning
@@ -102,14 +103,33 @@ export function install(rt) {
     const selection = ctx.get?.('agentDefaultModel')?.currentSelection?.()
     return selection?.provider && selection?.model ? `${selection.provider}/${selection.model}` : undefined
   }
-  // The profile default model of DSH, when it is served and can run (its provider has its
-  // key); else the first model that can run, a provider's `default` alias (Claude Code's
-  // "Default (recommended)") after the models it names; else none, and a Bot made then
-  // waits for the user to set one up.
+  // The providers in the order they could first run here (a key set, an account signed
+  // in), kept with the team: "the first account you connected".
+  function noteConnected(entries) {
+    if (!Array.isArray(state.providersSeen)) state.providersSeen = []
+    const seen = state.providersSeen
+    const fresh = [...new Set(entries.filter(entry => !entry.needsKey).map(entry => entry.provider))].filter(provider => !seen.includes(provider))
+    if (fresh.length === 0) return
+    seen.push(...fresh)
+    void rt.save?.()?.catch?.(() => {})
+  }
+  // The profile default model of DSH (DeepSeek, unless the user chose another there), when
+  // it is served and can run (its provider has its key); else a model of the first account
+  // connected here; Claude Code last, since it can run from the start on the credentials of
+  // a Claude Code already on this computer, not an account connected here. Within a
+  // provider, its `default` alias (Claude Code's "Default (recommended)") comes after the
+  // models it names. Nothing can run: none, and a Bot made then waits for one.
   function pickDefault(entries) {
     const usable = entries.filter(entry => !entry.needsKey)
     const ref = defaultRef()
-    return usable.find(entry => entry.ref === ref)?.ref ?? (usable.find(entry => entry.id !== 'default') ?? usable[0])?.ref
+    const chosen = usable.find(entry => entry.ref === ref)
+    if (chosen) return chosen.ref
+    const seen = Array.isArray(state.providersSeen) ? state.providersSeen : []
+    const rank = entry => (isClaudeCode(entry.provider) ? 1 : 0) * 1e6 + (seen.includes(entry.provider) ? seen.indexOf(entry.provider) : seen.length)
+    const ordered = usable.map((entry, index) => ({ entry, index })).sort((a, b) => rank(a.entry) - rank(b.entry) || a.index - b.index).map(({ entry }) => entry)
+    const first = ordered[0]?.provider
+    const own = ordered.filter(entry => entry.provider === first)
+    return (own.find(entry => entry.id !== 'default') ?? own[0])?.ref
   }
   const defaultModel = async () => pickDefault(await catalog())
 
