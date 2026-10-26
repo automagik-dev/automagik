@@ -9,9 +9,11 @@
 // draw the Bot team within a while, or the previous plugins come back and that version is
 // marked bad. Restart (the sidebar), a quit, or a start while away is that start.
 //
-// What it keeps, in <home>/lane: staged.json (what waits), applied.json (the trial or the last
-// good one), bad.json (versions never to take again), and the folders: staged/<name>@<version>,
-// and each replaced plugin as <its folder>.lane-prev until the trial passes.
+// What it keeps, in <home>/lane: staged.json (what waits, from every lane that has something),
+// applied.json (the trial or the last good one), taken.json (the newest sequence taken from each
+// lane), bad.json (versions never to take again, as <publisher>@<version>), and the folders:
+// staged/<name>@<version>, and each replaced plugin as <its folder>.lane-prev until the trial
+// passes. Each lane keeps its own sequence and failures: Genie's numbers are not Automagik's.
 import { createHash, createPublicKey, verify } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
@@ -37,7 +39,18 @@ const fail = message => Object.assign(new Error(`lane: ${message}`), { code: 'la
 const readJson = (file, fallback) => { try { return JSON.parse(readFileSync(file, 'utf8')) } catch { return fallback } }
 const writeJson = (file, value) => { mkdirSync(dirname(file), { recursive: true }); writeFileSync(`${file}.tmp`, `${JSON.stringify(value, null, 2)}\n`); renameSync(`${file}.tmp`, file) }
 export const laneDir = home => join(home, 'lane')
-const files = home => ({ staged: join(laneDir(home), 'staged.json'), applied: join(laneDir(home), 'applied.json'), bad: join(laneDir(home), 'bad.json'), dir: join(laneDir(home), 'staged') })
+const files = home => ({ staged: join(laneDir(home), 'staged.json'), applied: join(laneDir(home), 'applied.json'), taken: join(laneDir(home), 'taken.json'), bad: join(laneDir(home), 'bad.json'), dir: join(laneDir(home), 'staged') })
+
+// The lanes a staged or applied record carries, { publisher: { version, sequence } }. A record
+// from before each lane had its own holds one lane, named by its plugins.
+function lanesOf(record) {
+  if (!record) return {}
+  if (record.lanes) return record.lanes
+  const owner = PUBLISHERS.find(entry => (record.plugins ?? []).some(plugin => entry.plugins.includes(plugin.name)))?.publisher ?? 'automagik'
+  return { [owner]: { version: record.version, sequence: record.sequence } }
+}
+// What a record is called: Automagik's version when it has one.
+const labelOf = lanes => (lanes.automagik ?? Object.values(lanes)[0])?.version
 
 /** The lane in `bytes`, when `signature` (base64, detached ed25519) is one of `keys`'. */
 export function verifyLane(bytes, signature, keys) {
@@ -78,7 +91,7 @@ export function laneUpdate(lane, { publisher, appVersion, dshVersion, installed,
     && typeof plugin.url === 'string' && plugin.url.startsWith('https://github.com/')
     && typeof installed[plugin.name] === 'string' && compareVersions(plugin.version, installed[plugin.name]) > 0
     && satisfies(dshVersion, plugin.engines?.dsh))
-  return plugins.length > 0 ? { version: lane.version, sequence: lane.sequence, plugins } : null
+  return plugins.length > 0 ? { publisher: publisher.publisher, version: lane.version, sequence: lane.sequence, plugins } : null
 }
 
 /** The version each plugin of `names` has in the profile at `target`. */
@@ -90,10 +103,12 @@ const integrityOf = bytes => `sha512-${createHash('sha512').update(bytes).digest
 
 /**
  * Downloads, checks and unpacks `update`'s plugins under <home>/lane/staged, then records it
- * waits. `onProgress(percent)` follows the download, by bytes when the lane names sizes.
+ * waits, beside what another lane staged. `onProgress(percent)` follows the download, by bytes
+ * when the lane names sizes.
  */
 export async function stage(update, { home, fetch = globalThis.fetch, tar = 'tar', onProgress = () => {} }) {
   const { dir, staged } = files(home)
+  const publisher = update.publisher ?? 'automagik'
   const ready = []
   const total = update.plugins.reduce((sum, plugin) => sum + (plugin.size || 0), 0)
   let done = 0
@@ -113,11 +128,18 @@ export async function stage(update, { home, fetch = globalThis.fetch, tar = 'tar
     execFileSync(tar, ['-xzf', archive, '-C', into, '--strip-components=1'], { stdio: 'ignore' })
     rmSync(archive, { force: true })
     if (readJson(join(into, 'package.json'), {})?.version !== plugin.version) throw fail(`${plugin.name}: the tarball holds another version`)
-    ready.push({ name: plugin.name, version: plugin.version, dir: into })
+    ready.push({ publisher, name: plugin.name, version: plugin.version, dir: into })
     done += plugin.size || 0
     onProgress(Math.floor(total > 0 ? (done / total) * 100 : ((index + 1) / update.plugins.length) * 100))
   }
-  writeJson(staged, { version: update.version, sequence: update.sequence, plugins: ready, at: new Date().toISOString() })
+  // What this lane staged before goes; another lane's stays.
+  const before = readJson(staged, null)
+  const earlier = (before?.plugins ?? []).map(plugin => ({ publisher: Object.keys(lanesOf(before))[0], ...plugin }))
+  for (const plugin of earlier) if (plugin.publisher === publisher && !ready.some(entry => entry.dir === plugin.dir)) rmSync(plugin.dir, { recursive: true, force: true })
+  const kept = earlier.filter(plugin => plugin.publisher !== publisher && existsSync(plugin.dir))
+  const lanes = Object.fromEntries(Object.entries(lanesOf(before)).filter(([name]) => kept.some(plugin => plugin.publisher === name)))
+  lanes[publisher] = { version: update.version, sequence: update.sequence }
+  writeJson(staged, { version: labelOf(lanes), lanes, plugins: [...kept, ...ready], at: new Date().toISOString() })
   return ready
 }
 
@@ -137,7 +159,8 @@ export function beforeStart({ home, target, log = () => {} }) {
     // The start after a trial began is its second chance at most.
     if ((applied.starts ?? 0) >= 1) {
       restore(applied, log)
-      writeJson(badFile, [...new Set([...readJson(badFile, []), applied.version])])
+      const failed = Object.entries(lanesOf(applied)).map(([publisher, { version }]) => `${publisher}@${version}`)
+      writeJson(badFile, [...new Set([...readJson(badFile, []), ...failed])])
       writeJson(appliedFile, { ...applied, pending: false, restored: true })
       log(`lane: ${applied.version} did not come up; the previous plugins are back`)
       return 'restored'
@@ -167,7 +190,12 @@ export function beforeStart({ home, target, log = () => {} }) {
     log(`lane: ${staged.version} could not be put in place (${error.message}); nothing changed`)
     return null
   }
-  writeJson(appliedFile, { version: staged.version, sequence: staged.sequence, plugins: moved, pending: true, starts: 0, at: new Date().toISOString() })
+  const lanes = lanesOf(staged)
+  writeJson(appliedFile, { version: labelOf(lanes), lanes, plugins: moved, pending: true, starts: 0, at: new Date().toISOString() })
+  const { taken: takenFile } = files(home)
+  const taken = readJson(takenFile, {})
+  for (const [publisher, { sequence }] of Object.entries(lanes)) taken[publisher] = Math.max(taken[publisher] ?? 0, sequence ?? 0)
+  writeJson(takenFile, taken)
   log(`lane: ${staged.version} is in place; this start is its trial`)
   return 'applied'
 }
@@ -201,8 +229,20 @@ export function trialFailed(home) {
   if (applied?.pending) writeJson(files(home).applied, { ...applied, starts: 1 })
 }
 
-/** The last lane this app took (a later one must not be older), and the versions found bad. */
-export const laneMemory = home => ({ last: readJson(files(home).applied, null)?.sequence ?? 0, bad: readJson(files(home).bad, []) })
+/**
+ * What this app remembers of `publisher`'s lane: the sequence it took last (a later one must not
+ * be older) and the versions found bad.
+ */
+export function laneMemory(home, publisher = 'automagik') {
+  const { applied, taken, bad } = files(home)
+  const last = Math.max(readJson(taken, {})[publisher] ?? 0, lanesOf(readJson(applied, null))[publisher]?.sequence ?? 0)
+  // A bare version is from before each lane kept its own: it was Automagik's.
+  const versions = readJson(bad, []).map(entry => (/^\d/.test(entry) ? `automagik@${entry}` : entry))
+  return { last, bad: versions.filter(entry => entry.startsWith(`${publisher}@`)).map(entry => entry.slice(publisher.length + 1)) }
+}
+
+/** The version `publisher`'s lane has waiting, if any. */
+export const stagedVersion = (home, publisher) => lanesOf(stagedOf(home))[publisher]?.version
 
 /** One look at a publisher's lane: fetch, verify, decide. */
 export async function checkLane({ publisher, fetch = globalThis.fetch, ...context }) {

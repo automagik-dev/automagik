@@ -14,7 +14,7 @@ import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
 import { fade, PAGE_IN_CSS } from './motion.js'
 import { noteRestart, restartLine, steps } from './timeline.js'
 import { dismissSplash, showUpdateSplash } from './splash.js'
-import { PUBLISHERS, TRIAL_MS, beforeStart, checkLane, confirm as confirmLane, installedVersions, laneMemory, stage as stageLane, stagedOf, trialFailed } from './lane.js'
+import { PUBLISHERS, TRIAL_MS, beforeStart, checkLane, confirm as confirmLane, installedVersions, laneMemory, stage as stageLane, stagedOf, stagedVersion, trialFailed } from './lane.js'
 import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, privacyFileOf, privacyPatchOf, freePort, installProfile, navigationOf, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
 import { pageLayout, tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
@@ -277,11 +277,10 @@ let looking = null
 const lookAtLanes = () => (looking ??= lookOnce().finally(() => { looking = null }))
 async function lookOnce() {
   if (!app.isPackaged || !laneProfile || !laneDsh || laneTrial === 'applied' || laneTrial === 'trial') return Boolean(laneReady)
-  const { last, bad } = laneMemory(home)
   for (const publisher of PUBLISHERS) {
     try {
-      const found = await checkLane({ publisher, appVersion: app.getVersion(), dshVersion: laneDsh, installed: installedVersions(laneProfile, publisher.plugins), last, bad })
-      if (!found || stagedOf(home)?.version === found.version) continue
+      const found = await checkLane({ publisher, appVersion: app.getVersion(), dshVersion: laneDsh, installed: installedVersions(laneProfile, publisher.plugins), ...laneMemory(home, publisher.publisher) })
+      if (!found || stagedVersion(home, publisher.publisher) === found.version) continue
       laneLog(`lane: ${publisher.publisher} ${found.version} is out; downloading ${found.plugins.map(plugin => `${plugin.name} ${plugin.version}`).join(', ')}`)
       laneFetching = { version: found.version, percent: 0 }
       publishUpdate()
