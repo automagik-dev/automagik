@@ -14,8 +14,18 @@ import { t } from './i18n.js'
 
 export const MAX_SUGGESTIONS = 3
 
+// Whether something draws images here, asked again after a minute: a ChatGPT sign-in or an
+// OpenAI key added meanwhile shows the chip without a restart.
+const IMAGE_ACCESS_TTL_MS = 60_000
 let imagesReady
-const imageAccess = () => (imagesReady ??= call('image-access').then(access => access !== null, () => false))
+let imagesAsked = 0
+export function imageAccess(now = Date.now()) {
+  if (!imagesReady || now - imagesAsked > IMAGE_ACCESS_TTL_MS) {
+    imagesAsked = now
+    imagesReady = call('image-access').then(access => access !== null, () => false)
+  }
+  return imagesReady
+}
 
 // The team's own, for every Bot.
 const teamItems = ({ images }) => [
@@ -66,7 +76,8 @@ export function SuggestionDock({ sessionId, input, session, useRoster, useSessio
   const wrote = useSessions ? useSessions(list => personWrote(outline(list), roster.exchangeTurns?.[part] ?? [])) : true
   const entries = useEntries(chatSuggestions)
   const [images, setImages] = useState(false)
-  useEffect(() => { void imageAccess().then(setImages) }, [])
+  // Asked when the chat opens, so a chat opened after signing in offers drawing.
+  useEffect(() => { void imageAccess().then(setImages) }, [sessionId])
   if (!bot || wrote || session?.running || (input?.draft ?? '').trim() !== '') return null
   const items = suggestionsFor(entries, { bot, roster, images })
   if (items.length === 0) return null
