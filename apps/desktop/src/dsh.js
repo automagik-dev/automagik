@@ -16,7 +16,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rm
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
-import { privacyEnv } from './privacy.js'
+import { DEFAULTS as PRIVACY_DEFAULTS, privacyEnv } from './privacy.js'
 
 export const PROFILE = 'omni'
 const READY_TIMEOUT_MS = 120_000
@@ -372,7 +372,7 @@ export function launchUrlOf(text, port) {
  */
 export const toolDirs = (userHome = homedir()) => [join(userHome, '.local', 'bin'), join(userHome, '.claude', 'local'), '/opt/homebrew/bin', '/usr/local/bin']
 
-export function dshEnv({ base = process.env, home, electronAsNode = false, binDir, userHome = homedir(), preload = null, privacy = {} }) {
+export function dshEnv({ base = process.env, home, electronAsNode = false, binDir, userHome = homedir(), preload = null, privacy = PRIVACY_DEFAULTS }) {
   // After the machine's own: a project's commands keep the user's node and pnpm, and then the
   // usual tool folders, then the app's own node and pnpm.
   const PATH = [...String(base.PATH ?? '').split(delimiter), ...toolDirs(userHome), ...(binDir ? [binDir] : [])]
@@ -386,8 +386,8 @@ export function dshEnv({ base = process.env, home, electronAsNode = false, binDi
     AUTOMAGIK_BOTS_HOME: join(home, 'bots'),
     // Signs in to an Omni as the desktop app (the Better Auth device-flow client id).
     OMNI_CLIENT_ID: 'omni-desktop',
-    // Nothing is reported unless the person chose to share it (privacy.js): DSH's own opt-out
-    // and the CLIs' (Claude Code's error reports, npm's notice, OpenUI's analytics).
+    // Nothing usable for training is reported unless the person chose to share it (privacy.js):
+    // DSH's own opt-out, and the CLIs' analytics (npm's notice, OpenUI's).
     ...privacyEnv(privacy),
     // The Bot team's Privacy page saves the choices here; the app applies them at launch.
     AUTOMAGIK_PRIVACY_FILE: privacyFileOf(home),

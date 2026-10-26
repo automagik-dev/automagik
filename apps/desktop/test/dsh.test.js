@@ -20,12 +20,14 @@ test('the app keeps everything in one folder under ~/.automagik, apart from a ds
   assert.equal(env.DO_NOT_TRACK, '1')
   assert.equal(env.OMNI_CLIENT_ID, 'omni-desktop')
   // Nothing is reported: DSH's own opt-out (it does not read DO_NOT_TRACK), and the CLIs it runs.
-  for (const name of ['DO_NOT_TRACK', 'DSH_TELEMETRY_DISABLED', 'DISABLE_TELEMETRY', 'DISABLE_ERROR_REPORTING', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'OPENUI_TELEMETRY_DISABLED']) assert.equal(env[name], '1', name)
+  for (const name of ['DO_NOT_TRACK', 'DSH_TELEMETRY_DISABLED', 'DISABLE_TELEMETRY', 'OPENUI_TELEMETRY_DISABLED']) assert.equal(env[name], '1', name)
   assert.equal(env.AUTOMAGIK_PRIVACY_FILE, '/a/desktop/privacy.json')
   // A share the person switched on drops its own opt-out, and only its own.
   const sharing = dshEnv({ base: {}, home: '/a', privacy: { 'deepseek-feedback': true } })
   assert.equal(sharing.DSH_TELEMETRY_DISABLED, undefined)
   assert.equal(sharing.DISABLE_ERROR_REPORTING, '1')
+  // Chosen nothing: Claude Code's own error reports work (not training data).
+  assert.equal(env.DISABLE_ERROR_REPORTING, undefined)
   // The welcome counts the agents at work there, for an update while the person is away.
   assert.equal(env.AUTOMAGIK_BUSY_FILE, '/a/desktop/busy.json')
   // The person's PATH comes first; the usual tool folders follow (see toolDirs below).

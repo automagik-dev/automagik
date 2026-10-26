@@ -3,9 +3,10 @@ import { Switch } from './bot-settings.js'
 import { t } from './i18n.js'
 
 // -------------------------------------------------------------------------
-// The Privacy page: Automagik is local first and a friend of privacy, so nothing leaves this
-// computer that the person did not send themselves, not even to Namastex. Each share below is
-// one switch, off until switched on, saying who would receive what (the desktop app applies
+// The Privacy page: Automagik is local first and a friend of privacy, so nothing that could
+// train a model leaves this computer unless the person switches it on, and nothing goes to
+// Namastex. Each share below is one switch saying who receives what; the two that are training
+// data start off, the rest work as their makers ship them (the desktop app applies
 // the choices at its next launch: apps/desktop src/privacy.js). The AI a chat runs on still
 // gets that chat, the way any message reaches the one it is sent to; that is not a share.
 
@@ -38,7 +39,7 @@ export const SHARES = Object.freeze([
     key: 'stable-id',
     title: 'Keep the same anonymous id for DeepSeek',
     to: 'DeepSeek',
-    data: 'DeepSeek requests always carry an anonymous id, which no setting removes. Automagik makes a new one every time it starts, so your requests cannot be linked across launches. Switched on, the id stays the same.',
+    data: 'DeepSeek requests always carry an anonymous id, which no setting removes. It stays the same across launches, as in DSH. Switched off, Automagik makes a new one every time it starts; DeepSeek still knows your account from your key or sign-in.',
   },
 ])
 
@@ -51,8 +52,8 @@ export function PrivacyPage({ actions, run, Section, Row }) {
   return h('div', { className: 'bt-privacy' },
     h(Section, { title: t('Local first') },
       h('div', { className: 'bt-privacy-intro' },
-        h('p', null, t('Your Bots, chats, memory and files stay on this computer. Automagik sends nothing to anyone, not even to us at Namastex: no analytics, no usage counts, no crash reports.')),
-        h('p', null, t('The AI a chat runs on receives that chat, the way any message reaches the one it is sent to. Everything else below is off, and stays off unless you switch it on here.')))),
+        h('p', null, t('Your Bots, chats, memory and files stay on this computer. Nothing that could train a model leaves it unless you switch it on below, and nothing at all goes to us at Namastex: no analytics, no usage counts, no crash reports.')),
+        h('p', null, t('The AI a chat runs on receives that chat, the way any message reaches the one it is sent to. Sharing your chats for training is off. The tools you use keep their own features, like Claude Code\'s error reports and updates; you can switch those off here too.')))),
     h(Section, { title: t('What you can choose to share') },
       !view ? h(Row, { label: t('Loading…') })
         : !managed ? h(Row, { label: t('Privacy is set by the Automagik desktop app'), hint: t('Open these settings in the Automagik app to change what it shares.') })

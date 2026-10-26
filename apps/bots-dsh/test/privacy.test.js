@@ -3,25 +3,27 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { createPrivacy, SHARES } from '../src/host/privacy.js'
+import { createPrivacy, DEFAULTS } from '../src/host/privacy.js'
 
 const fileIn = () => join(mkdtempSync(join(tmpdir(), 'bots-privacy-')), 'privacy.json')
 
-test('everything starts off, and a switch writes only the shares the desktop app knows', () => {
+test('training shares start off and the rest on, and a switch writes only the shares the desktop app knows', () => {
   const file = fileIn()
   const privacy = createPrivacy({ env: { AUTOMAGIK_PRIVACY_FILE: file } })
-  assert.deepEqual(privacy.view(), { managed: true, share: Object.fromEntries(SHARES.map(key => [key, false])) })
+  assert.deepEqual(privacy.view(), { managed: true, share: { ...DEFAULTS } })
+  assert.equal(privacy.view().share['deepseek-session-log'], false)
+  assert.equal(privacy.view().share['claude-errors'], true)
   assert.equal(privacy.set('deepseek-feedback', true).share['deepseek-feedback'], true)
   assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).share['deepseek-feedback'], true)
   assert.equal(privacy.set('deepseek-feedback', false).share['deepseek-feedback'], false)
   assert.throws(() => privacy.set('everything', true), /Unknown share/)
 })
 
-test('a file that is not the app\'s own shares nothing', () => {
+test('values that are not booleans fall back to the defaults', () => {
   const file = fileIn()
-  writeFileSync(file, JSON.stringify({ share: { spellcheck: 'yes', 'stable-id': 1 } }))
+  writeFileSync(file, JSON.stringify({ share: { spellcheck: 'no', 'deepseek-session-log': 1, 'stable-id': false } }))
   const share = createPrivacy({ env: { AUTOMAGIK_PRIVACY_FILE: file } }).view().share
-  assert.equal(Object.values(share).some(Boolean), false)
+  assert.deepEqual(share, { ...DEFAULTS, 'stable-id': false })
 })
 
 test('outside the desktop app the page says so, and nothing can be switched on', () => {
