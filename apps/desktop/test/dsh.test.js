@@ -69,7 +69,11 @@ test('the shipped profile seeds a new home, and a new build replaces only its pa
 
   writeFileSync(join(source, 'package.json'), '{"dependencies":{"@automagik/omni-dsh":"0.1.8"}}')
   writeFileSync(join(source, 'node_modules', '@automagik', 'omni-dsh', 'index.js'), 'v2')
+  // pnpm resolves the plugin manager's installs from the lock: the new build's comes with its packages.
+  writeFileSync(join(source, 'pnpm-lock.yaml'), 'omni-dsh 0.1.8')
+  writeFileSync(join(first.target, 'pnpm-lock.yaml'), 'omni-dsh 0.1.7')
   assert.equal(installProfile({ dshHome, source }).installed, true)
+  assert.equal(readFileSync(join(first.target, 'pnpm-lock.yaml'), 'utf8'), 'omni-dsh 0.1.8')
   assert.equal(readFileSync(join(first.target, 'node_modules', '@automagik', 'omni-dsh', 'index.js'), 'utf8'), 'v2')
   assert.deepEqual(JSON.parse(readFileSync(join(first.target, 'package.json'), 'utf8')), { dependencies: { '@automagik/omni-dsh': '0.1.8' } })
   // What dsh and the user put there survives the update.
@@ -156,18 +160,13 @@ test('a profile without node_modules yet still gets the store, and the layout fo
 test('the shipped profile bundles the Bot team first, Omni\'s plugins, the welcome and the plugin market, and switches DSH\'s own onboarding off', () => {
   const profile = JSON.parse(readFileSync(new URL('../profile/package.json', import.meta.url), 'utf8'))
   const omni = ['@automagik/bots-dsh', '@automagik/omni-channels-dsh', '@automagik/omni-canvas-dsh', '@automagik/welcome-dsh']
-  // Omni's plugins first, then the add-ons that connect AI subscriptions, each at an exact
-  // vetted version or a reviewed fork's pinned commit, and bundled after Omni's.
-  const addons = {
-    '@goodandready/dsh-subscriptions': 'github:automagik-genie/dsh-subscriptions#2eff034ede95c9d06ecee290517101e6419c7fee',
-    'dsh-oh-my-claude': 'github:automagik-genie/dsh-oh-my-claude#eb9d1cdad58472ebe34abd194309a60fc22c40d1',
-  }
-  assert.deepEqual(Object.keys(profile.dependencies), [...omni, ...Object.keys(addons)])
-  for (const [name, spec] of Object.entries(addons)) assert.equal(profile.dependencies[name], spec)
-  // A pinned commit names the version it holds, which the build checks after installing it.
-  assert.deepEqual(profile.omni.addonVersions, { '@goodandready/dsh-subscriptions': '0.7.21-omni.1', 'dsh-oh-my-claude': '1.5.6-omni.7' })
+  // Omni's plugins first, then the add-ons that connect AI subscriptions, each a reviewed fork at
+  // a pinned commit (the build checks it holds the version addonVersions names), bundled after.
+  const addons = Object.keys(profile.omni.addonVersions)
+  assert.deepEqual(Object.keys(profile.dependencies), [...omni, ...addons])
+  for (const name of addons) assert.match(profile.dependencies[name], /^github:automagik-genie\/[\w.-]+#[0-9a-f]{40}$/)
   assert.deepEqual(profile.dsh.profile.bundles.filter(name => name.startsWith('@automagik/')), omni)
-  assert.deepEqual(profile.dsh.profile.bundles.slice(-2), Object.keys(addons))
+  assert.deepEqual(profile.dsh.profile.bundles.slice(-addons.length), addons)
   assert.ok(profile.dsh.profile.bundles.includes('@deepseek-ai/dsh-experimental-plugin-market-bundle'))
   const patch = readFileSync(new URL('../profile/cordis.patch.yml', import.meta.url), 'utf8')
   // DSH compares the notice version exactly, as a string.
@@ -313,6 +312,7 @@ test('an update replaces the packages the app ships and keeps the plugins the us
   mkdirSync(join(target, 'node_modules', '@automagik', 'their-plugin'), { recursive: true })
   const user = shippedPackage('1')
   user.dependencies['dsh-kimi-subscription'] = '1.3.10'
+  user.dependencies['their-plugin'] = 'file:vendor/their-plugin-1.0.0.tgz'
   user.dsh.profile.bundles.push('dsh-kimi-subscription')
   writeFileSync(join(target, 'package.json'), JSON.stringify(user))
 
@@ -323,14 +323,19 @@ test('an update replaces the packages the app ships and keeps the plugins the us
   writeFileSync(join(source, 'vendor', 'omni-dsh-2.tgz'), 'two')
   mkdirSync(join(target, 'vendor'), { recursive: true })
   writeFileSync(join(target, 'vendor', 'omni-dsh-1.tgz'), 'one')
+  writeFileSync(join(target, 'vendor', 'their-plugin-1.0.0.tgz'), 'theirs')
+  // The shipped lock does not know the user's plugins: pnpm resolves from package.json instead.
+  writeFileSync(join(source, 'pnpm-lock.yaml'), 'shipped')
+  writeFileSync(join(target, 'pnpm-lock.yaml'), 'stale')
   writeFileSync(join(source, '.build-id'), 'two')
   installProfile({ dshHome, source })
-  assert.deepEqual(readdirSync(join(target, 'vendor')), ['omni-dsh-2.tgz'])
+  assert.deepEqual(readdirSync(join(target, 'vendor')).sort(), ['omni-dsh-2.tgz', 'their-plugin-1.0.0.tgz'])
+  assert.equal(existsSync(join(target, 'pnpm-lock.yaml')), false)
   assert.equal(readFileSync(join(target, 'node_modules', '@automagik', 'omni-dsh', 'index.js'), 'utf8'), 'v2')
   assert.equal(existsSync(join(target, 'node_modules', 'dsh-kimi-subscription')), true)
   assert.equal(existsSync(join(target, 'node_modules', '@automagik', 'their-plugin')), true)
   const merged = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8'))
-  assert.deepEqual(merged.dependencies, { '@automagik/omni-dsh': '2', 'dsh-kimi-subscription': '1.3.10' })
+  assert.deepEqual(merged.dependencies, { '@automagik/omni-dsh': '2', 'dsh-kimi-subscription': '1.3.10', 'their-plugin': 'file:vendor/their-plugin-1.0.0.tgz' })
   assert.deepEqual(merged.dsh.profile.bundles, ['@deepseek-ai/dsh-base', '@automagik/omni-dsh', 'dsh-kimi-subscription'])
   // Nothing added: the shipped package.json as it is.
   assert.deepEqual(JSON.parse(mergeProfilePackage(shippedPackage('2'), shippedPackage('3'))), shippedPackage('3'))

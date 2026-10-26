@@ -201,10 +201,18 @@ export function installProfile({ dshHome, source }) {
       rmSync(join(target, 'node_modules', name), { recursive: true, force: true })
       cpSync(join(source, 'node_modules', name), join(target, 'node_modules', name), { recursive: true })
     }
-    // The plugins' tarballs the package.json names (file:vendor/…) are the app's own.
-    rmSync(join(target, 'vendor'), { recursive: true, force: true })
+    // The tarballs in vendor/ are the app's (file:vendor/… in the shipped package.json), except
+    // those a plugin the person installed names.
+    const user = readJson(join(target, 'package.json'))
+    const shipped = readJson(join(source, 'package.json'))
+    const own = ownDependencies(user, shipped)
+    const kept = new Set(own.map(([, spec]) => /^file:(?:\.\/)?vendor\/([^/]+)$/.exec(String(spec))?.[1]))
+    for (const file of existsSync(join(target, 'vendor')) ? readdirSync(join(target, 'vendor')) : []) {
+      if (!kept.has(file)) rmSync(join(target, 'vendor', file), { recursive: true, force: true })
+    }
     if (existsSync(join(source, 'vendor'))) cpSync(join(source, 'vendor'), join(target, 'vendor'), { recursive: true })
-    writeFileSync(join(target, 'package.json'), mergeProfilePackage(readJson(join(target, 'package.json')), readJson(join(source, 'package.json'))))
+    writeFileSync(join(target, 'package.json'), mergeProfilePackage(user, shipped))
+    replaceLocks({ target, source, ownPlugins: own.length > 0 })
     if (existsSync(join(source, '.build-id'))) cpSync(join(source, '.build-id'), join(target, '.build-id'))
     for (const file of ['cordis.patch.yml', 'pnpm-workspace.yaml']) {
       if (!existsSync(join(target, file)) && existsSync(join(source, file))) cpSync(join(source, file), join(target, file))
@@ -216,6 +224,25 @@ export function installProfile({ dshHome, source }) {
   }
   writeFileSync(marker, stamp)
   return { target, installed: true }
+}
+
+/**
+ * The lock and pnpm's records of node_modules must say what is installed, or the plugin
+ * manager's next pnpm run in the profile fails on them or puts other versions back (pnpm add
+ * re-resolves from them; its repair is pnpm install --frozen-lockfile). The app just put the
+ * shipped packages in place, so the shipped build's own records come with them. When the person
+ * installed plugins of their own, those records do not know them: the lock goes instead, and pnpm
+ * resolves from package.json at its next run (node_modules/.modules.yaml stays, for its layout).
+ */
+function replaceLocks({ target, source, ownPlugins }) {
+  const locks = ['pnpm-lock.yaml', join('node_modules', '.pnpm', 'lock.yaml')]
+  if (ownPlugins) {
+    for (const name of locks) rmSync(join(target, name), { force: true })
+    return
+  }
+  for (const name of [...locks, join('node_modules', '.modules.yaml')]) {
+    if (existsSync(join(source, name))) cpSync(join(source, name), join(target, name))
+  }
 }
 
 /**
@@ -290,15 +317,20 @@ function packagesIn(dir) {
     name.startsWith('@') ? readdirSync(join(dir, name)).map(inner => `${name}/${inner}`) : [name])
 }
 
+// The dependencies the person added: neither shipped nor a shipped package under its old name.
+function ownDependencies(user, shipped) {
+  const replaced = new Set(renamedIn(shipped))
+  return Object.entries(user?.dependencies ?? {}).filter(([name]) => !Object.hasOwn(shipped?.dependencies ?? {}, name) && !replaced.has(name))
+}
+
 /**
  * The shipped profile package.json with what the user added on top: dependencies and
  * bundles the shipped one does not name keep their place after the shipped ones.
  */
 export function mergeProfilePackage(user, shipped) {
   const merged = structuredClone(shipped)
-  // A package the shipped one carries under its new name is not the user's own.
   const replaced = new Set(renamedIn(shipped))
-  const extraDependencies = Object.entries(user?.dependencies ?? {}).filter(([name]) => !Object.hasOwn(shipped.dependencies ?? {}, name) && !replaced.has(name))
+  const extraDependencies = ownDependencies(user, shipped)
   if (extraDependencies.length > 0) merged.dependencies = { ...shipped.dependencies, ...Object.fromEntries(extraDependencies) }
   const shippedBundles = shipped.dsh?.profile?.bundles ?? []
   const extraBundles = (user?.dsh?.profile?.bundles ?? []).filter(name => !shippedBundles.includes(name) && !replaced.has(name))
