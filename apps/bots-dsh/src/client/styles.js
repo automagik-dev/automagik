@@ -112,6 +112,9 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 .bt-clay{display:block;flex:none;height:100%;background:var(--bt-clay-atlas) calc(var(--bt-face-at,0) * 100% / 6) 0/700% 100% no-repeat}
 .bt-clay-omni{aspect-ratio:1;--bt-clay-atlas:url("${OMNI_ATLAS}")}
 .bt-clay-genie{aspect-ratio:192/208;--bt-clay-atlas:url("${GENIE_ATLAS}")}
+[data-tint=aurora]{animation:bt-genie-aurora 9s ease-in-out infinite}
+@keyframes bt-genie-aurora{0%,100%{filter:hue-rotate(-190deg) saturate(1.2)}50%{filter:hue-rotate(-110deg) saturate(1.3) brightness(1.1)}}
+@media (prefers-reduced-motion:reduce){[data-tint=aurora]{animation:none;filter:hue-rotate(-150deg) saturate(1.25)}}
 /* A small mark frames Genie's head and cap; the plume rises out of the frame. */
 .bt-mark[data-frame=head]{clip-path:inset(-4px -30% -4px -30%)}
 .bt-mark[data-frame=head] .bt-clay{position:absolute;left:50%;bottom:-4%;height:135%;margin-left:-62.3%}

@@ -53,6 +53,8 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     closeMenu: () => { ui.set(state => (state.menu ? { ...state, menu: null } : state)) },
     closeOverlay: () => { ui.set(state => ({ ...state, newChat: null, exchange: null, details: state.newChat || state.exchange ? state.details : null })) },
     createBot: payload => after(call('create-bot', payload)),
+    // genie-dsh's: the folder's repository's Genie, made in a free color when it has none.
+    createGenie: folder => after(call('genie-create', { folder })),
     createRoom: (members, options = {}) => after(call('create-room', { members, ...options })),
     updateBot: (id, patch) => after(call('update-bot', { id, ...patch })),
     refreshModels: () => after(call('models')).catch(() => {}),

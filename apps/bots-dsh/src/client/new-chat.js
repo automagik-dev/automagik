@@ -1,8 +1,9 @@
 import { createElement as h, useRef, useState } from 'react'
-import { PlusIcon, PeopleIcon, ArrowUpIcon, TasksIcon } from './icons.js'
+import { PlusIcon, PeopleIcon, ArrowUpIcon, TasksIcon, SparkIcon } from './icons.js'
 import { AdminStar, BotMark } from './mark.js'
 import { useEscape, usePaneLeft } from './overlay-hooks.js'
 import { CreateBot } from './create-bot.js'
+import { NewGenie } from './genie-new.js'
 import { QUICK_EDGES, useFlip, useGlide, useMorph } from './motion.js'
 import { t } from './i18n.js'
 
@@ -18,6 +19,8 @@ export function NewChat({ mode, roster, actions }) {
   const [cursor, setCursor] = useState(0)
   // The Create Bot form, opened straight from 'create' mode or from the list.
   const [draft, setDraft] = useState(mode === 'create' ? { name: '', fromList: false } : null)
+  // A new Genie, while Genie runs here (genie-dsh adds genie to the team view).
+  const [genieDraft, setGenieDraft] = useState(false)
   const inputRef = useRef(null)
   const close = () => actions.closeOverlay()
   useEscape(close)
@@ -100,6 +103,10 @@ export function NewChat({ mode, roster, actions }) {
       options.push({ key: 'agent', icon: h(TasksIcon, { size: 16 }), label: t('Add Tasks'), run: () => run(async () => { await actions.addAgent(); close() }) })
     }
   }
+  // Genie is one per repository: "New Genie" asks which, beside the Genies there are. A
+  // genie-dsh that lists its colors (0.1.3, genie#3176) is one that answers genie-create.
+  const newGenie = Array.isArray(roster.genie?.colors) && !group && picked.length === 0 && mode !== 'search' && (wanted === '' || 'genie'.startsWith(wanted) || wanted.includes('genie'))
+  if (newGenie) options.push({ key: 'genie', icon: h(SparkIcon), label: t('New Genie'), hint: t('One per repository'), run: () => { setError(''); setGenieDraft(true) } })
   for (const bot of matches) {
     options.push({ key: bot.id, bot, label: bot.name, hint: choosingAdmin ? t('Make admin') : group || picked.length > 0 ? t('Add to group chat') : undefined, run: () => openBot(bot) })
   }
@@ -110,6 +117,10 @@ export function NewChat({ mode, roster, actions }) {
   useFlip(glide.box, listed, '[data-flip]')
   const drop = useRef(null)
   useMorph(drop, listed)
+  if (genieDraft) {
+    return h('div', { className: 'bt-pane', style: { left: paneLeft } },
+      h(NewGenie, { roster, actions, onBack: () => { setGenieDraft(false); setTimeout(() => inputRef.current?.focus()) }, onCreated: (bot) => { close(); actions.openSession(bot.id) } }))
+  }
   if (draft) {
     return h('div', { className: 'bt-pane', style: { left: paneLeft } },
       h(CreateBot, {
