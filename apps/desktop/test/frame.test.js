@@ -28,12 +28,12 @@ test("the window is the clay table, light or dark as the system is: no dark flas
   assert.match(css, /@media \(prefers-color-scheme:dark\)\{:root\{\s*--table:#1e1923/)
 })
 
-test("dsh's page fills the window below the bar, with no border; its corners round with the window on Linux", () => {
+test("dsh's page fills the window below the bar, with no border; its corners round with the window on Linux; on macOS it is the whole window", () => {
   const size = { width: 1360, height: 860 }
   const page = { x: 0, y: BAR_HEIGHT, width: 1360, height: 860 - BAR_HEIGHT }
   assert.deepEqual(pageLayout(size, { platform: 'linux', maximized: false }), { bounds: page, radius: RADIUS })
   assert.deepEqual(pageLayout(size, { platform: 'linux', maximized: true }), { bounds: page, radius: 0 })
-  assert.equal(pageLayout(size, { platform: 'darwin', maximized: false }).radius, 0)
+  assert.deepEqual(pageLayout(size, { platform: 'darwin', maximized: false }), { bounds: { x: 0, y: 0, ...size }, radius: 0 })
   assert.equal(pageLayout({ width: 4, height: 10 }, { platform: 'linux', maximized: false }).bounds.height, 0)
 })
 

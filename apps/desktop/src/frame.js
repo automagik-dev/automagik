@@ -1,6 +1,8 @@
 // How the app's window looks. No system frame and no border anywhere: on Linux the window
 // is transparent and the shell page (shell.html) draws its rounded shape, title bar and
-// window buttons; on macOS the title bar is hidden behind the system's own traffic lights.
+// window buttons; on macOS there is no bar: dsh's page fills the window, and the system's
+// traffic lights sit in the sidebar's top row, beside its buttons (bots-dsh sidebar.js), as
+// in Claude, Codex or DSH's own app.
 // The frame is the clay theme's table (apps/bots-dsh src/client/clay.js), light or dark as
 // the system is: cream by day, the same clay at night.
 // dsh's page is a view laid in edge to edge below the bar, its corners rounded with
@@ -10,6 +12,9 @@ import { PRODUCT } from './identity.js'
 
 export const BAR_HEIGHT = 40
 export const RADIUS = 14
+// The traffic lights' top left on macOS: centred on the sidebar's top row (its 30px buttons,
+// 18px down the page), inside the sidebar's card.
+export const TRAFFIC_LIGHTS = Object.freeze({ x: 26, y: 32 })
 
 // The clay table (CLAY_LIGHT.bg and CLAY_DARK.bg in the clay theme): what a window or page
 // shows before its page paints, so a light system never sees a dark flash.
@@ -25,19 +30,20 @@ export const tableColor = dark => (dark ? TABLE.dark : TABLE.light)
  */
 export function windowChrome(platform, { dark = false } = {}) {
   if (platform === 'darwin') {
-    return { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 13 }, backgroundColor: tableColor(dark) }
+    return { titleBarStyle: 'hiddenInset', trafficLightPosition: { ...TRAFFIC_LIGHTS }, backgroundColor: tableColor(dark) }
   }
   return { frame: false, transparent: true, backgroundColor: '#00000000', autoHideMenuBar: true }
 }
 
 /**
  * Where dsh's page goes in a window whose content is `size`, and how round its corners
- * are: rounded with the window on Linux, square when maximized or on macOS (whose window
- * rounds itself).
+ * are: below the bar and rounded with the window on Linux; the whole window on macOS (whose
+ * window rounds itself), and square when maximized.
  */
 export function pageLayout(size, { platform, maximized }) {
+  const top = platform === 'darwin' ? 0 : BAR_HEIGHT
   return {
-    bounds: { x: 0, y: BAR_HEIGHT, width: size.width, height: Math.max(0, size.height - BAR_HEIGHT) },
+    bounds: { x: 0, y: top, width: size.width, height: Math.max(0, size.height - top) },
     radius: platform === 'darwin' || maximized ? 0 : RADIUS,
   }
 }
