@@ -242,10 +242,14 @@ export function SettingsDialog({ page, id, roster, actions, useUpdate, leaving =
   // A Bot or group deleted while its form is open leaves its page on the list.
   const bot = page === 'bots' && id ? roster.byId[id] : undefined
   const room = page === 'groups' && id ? roster.roomsById[id] : undefined
-  const pages = SETTINGS_PAGES.filter(([key]) => key !== 'models' || actions.providers !== undefined)
+  const extra = actions.pluginSettings?.() ?? []
+  // Before About: what the plugins add sits with the team's pages, not after the app's.
+  const own = SETTINGS_PAGES.filter(([key]) => key !== 'models' || actions.providers !== undefined)
+  const pages = [...own.filter(([key]) => key !== 'about'), ...extra.map(section => [`plugin:${section.id}`, section.label]), ...own.filter(([key]) => key === 'about')]
+  const pluginPage = extra.find(section => `plugin:${section.id}` === page)
   const shown = pages.some(([key]) => key === page) ? page : 'general'
   const usageFocus = shown === 'usage' && id ? id : null
-  const label = t(pages.find(([key]) => key === shown)[1])
+  const label = pluginPage ? pluginPage.label : t(pages.find(([key]) => key === shown)[1])
   const back = bot ? t('Back to Bots') : room ? t('Back to group chats') : usageFocus ? t('All usage') : null
   const nav = useGlide(shown, { axis: 'y' })
   // A page enters from the right when it is one level in, from the left when it comes
@@ -270,7 +274,7 @@ export function SettingsDialog({ page, id, roster, actions, useUpdate, leaving =
         h('span', { ref: nav.thumb, className: 'bt-thumb', 'aria-hidden': true }),
         pages.map(([key, text]) => h('button', {
           key, type: 'button', className: 'bt-settings-item', 'aria-current': shown === key ? 'page' : undefined, onClick: () => actions.openSettings(key),
-        }, h(PAGE_ICONS[key]), t(text))),
+        }, h(PAGE_ICONS[key] ?? PlugIcon), key.startsWith('plugin:') ? text : t(text))),
         actions.openHarnessSettings ? h('button', {
           type: 'button', className: 'bt-settings-item bt-settings-shell', title: t('Models, providers, and the rest of DeepSeek Harness'),
           onClick: () => { close(); actions.openHarnessSettings() },
@@ -278,7 +282,8 @@ export function SettingsDialog({ page, id, roster, actions, useUpdate, leaving =
       h('div', { className: 'bt-settings-main' },
         h('div', { className: 'bt-settings-head' },
           back ? h('button', { type: 'button', className: 'bt-icon-btn', 'aria-label': back, title: back, onClick: () => actions.openSettings(shown) }, h(ChevronLeftIcon)) : null,
-          h('h2', { key: bot?.id ?? room?.id ?? shown }, bot?.name ?? room?.name ?? label)),
+          // A plugin's page draws its own title, as in DSH's settings.
+          pluginPage ? null : h('h2', { key: bot?.id ?? room?.id ?? shown }, bot?.name ?? room?.name ?? label)),
         shown === 'usage' ? null : h('div', { key: pageKey, className: 'bt-settings-scroll bt-settings-page', 'data-move': last.current.move },
           errorLine,
           shown === 'general' ? h(GeneralPage, { roster, actions, run }) : null,
@@ -293,7 +298,9 @@ export function SettingsDialog({ page, id, roster, actions, useUpdate, leaving =
           shown === 'secrets' ? h(SecretsPage, { roster, actions, run, Section: SetSection }) : null,
           shown === 'privacy' ? h(PrivacyPage, { actions, run, Section: SetSection, Row: SetRow }) : null,
           shown === 'feedback' ? h(FeedbackPage, { actions, run, Section: SetSection, Row: SetRow }) : null,
-          shown === 'about' ? h(AboutPage, { useUpdate, actions, run, Section: SetSection, Row: SetRow }) : null),
+          shown === 'about' ? h(AboutPage, { useUpdate, actions, run, Section: SetSection, Row: SetRow }) : null,
+          // A page another plugin added, drawn as DSH's settings draws it (with `close`).
+          pluginPage ? h('div', { className: 'bt-settings-plugin' }, h(pluginPage.Component, { close })) : null),
         usageOpened ? h('div', { key: 'usage', className: 'bt-settings-scroll bt-settings-usage', 'data-off': shown === 'usage' ? undefined : '', 'aria-hidden': shown === 'usage' ? undefined : true },
           shown === 'usage' ? errorLine : null,
           h(UsagePage, { roster, actions, focusId: usageFocus })) : null),

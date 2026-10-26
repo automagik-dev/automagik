@@ -79,6 +79,9 @@ export const omni = Object.freeze({
   face: () => currentFace?.() ?? null,
 })
 
+// DSH's own settings pages (its ui-settings plugins), which Harness settings already lists.
+const DSH_SETTINGS = new Set(['general', 'account', 'models', 'agent-presets', 'plugins'])
+
 export function apply(ctx) {
   ctx.effect(() => installLocale(ctx.get('locale')), 'ds-bot: interface copy')
   const roster = createSource(EMPTY_ROSTER)
@@ -591,6 +594,13 @@ export function apply(ctx) {
   actions.speech = () => ctx.get('remote.speech') ?? undefined
   // DSH's own settings: models, providers, keys and its plugins.
   actions.openHarnessSettings = openHarnessSettings
+  // Pages other plugins add to DSH's settings (its settings.section slot), such as Omni's link:
+  // Omni's settings list them too. DSH's own stay in Harness settings; a page that needs
+  // DSH's injected props can only be drawn there.
+  actions.pluginSettings = () => (ctx.slots.entries?.('settings.section') ?? [])
+    .filter(({ component, options = {}, registrant }) => component && options.inject === undefined && !DSH_SETTINGS.has(options.id) && !/^@deepseek-ai\//.test(registrant ?? ''))
+    .map(({ component, options }) => ({ id: options.id, order: options.order ?? 0, label: typeof options.label === 'function' ? options.label() : String(options.label ?? options.id), Component: component }))
+    .sort((a, b) => a.order - b.order)
   actions.openHarnessOnboarding = openHarnessOnboarding
   actions.voiceSetup = () => {
     const navigation = ctx.get('pluginNavigation')
