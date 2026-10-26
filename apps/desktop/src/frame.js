@@ -51,10 +51,12 @@ export const WINDOW_ACTIONS = new Set(['minimize', 'maximize', 'close', 'menu'])
  * phase one of idle, checking, available, downloading, installing, ready, error. `update` is
  * update.js's state; `checking` and `failed` (a check that failed) come from Check for Updates.
  */
-export function updatePresentation(update, { checking = false, failed = false } = {}) {
+export function updatePresentation(update, { checking = false, failed = false, plugins } = {}) {
   const version = update?.version ? { version: update.version } : {}
   if (update?.state === 'restarting') return { phase: 'installing', ...version }
   if (update?.state === 'ready') return { phase: 'ready', ...version }
+  // Plugins the lane staged (lane.js) are ready too: a start puts them in, in a few seconds.
+  if (plugins && update?.state !== 'downloading' && update?.state !== 'available') return { phase: 'ready', version: plugins, kind: 'plugins' }
   if (update?.state === 'downloading') return { phase: 'downloading', ...version, percent: Math.floor(update.percent ?? 0) }
   if (update?.state === 'available') return { phase: 'available', ...version }
   if (checking) return { phase: 'checking' }

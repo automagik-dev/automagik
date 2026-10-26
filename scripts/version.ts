@@ -10,6 +10,8 @@
  *   bun scripts/version.ts check            every field carries the root version; exit 1 when not
  *   bun scripts/version.ts set <version>    write it everywhere
  *   bun scripts/version.ts next             the next release: 3.(highest v3.N.0 + 1).0, 3.1.0 first
+ *
+ * A plugin-only merge is released as a patch on the newest 3.N instead (scripts/lane.ts next-patch).
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -17,7 +19,9 @@ import { join } from 'node:path';
 
 export const ROOT = join(import.meta.dir, '..');
 export const MAJOR = 3;
-export const VERSION = /^3\.(0|[1-9]\d*)\.0$/;
+// A release: 3.N.0, or a plugin-only patch on it, 3.N.P (scripts/lane.ts). N and P are at most
+// four digits, so a calendar tag's 3.YYMMDD.N is never taken for one.
+export const VERSION = /^3\.(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,3})$/;
 /** A release tag: `v3.N.0`, N a whole number without leading zeros. */
 export const RELEASE_TAG = /^v3\.(0|[1-9]\d*)\.0$/;
 
@@ -44,7 +48,7 @@ export function drift(version: string, root = ROOT): string[] {
 }
 
 export function setVersion(version: string, root = ROOT): void {
-  if (!VERSION.test(version)) throw new Error(`not a version: ${version} (want ${MAJOR}.N.0)`);
+  if (!VERSION.test(version)) throw new Error(`not a version: ${version} (want ${MAJOR}.N.P)`);
   for (const file of new Set(FIELDS.map((field) => field.file))) {
     const json = read(root, file);
     for (const field of FIELDS.filter((candidate) => candidate.file === file)) {

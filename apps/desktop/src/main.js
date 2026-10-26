@@ -7,13 +7,14 @@
 // in the system browser, and the frame page never navigates.
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, powerMonitor, session, shell, systemPreferences, WebContentsView } from 'electron'
 import updaterModule from 'electron-updater'
-import { appendFileSync, createWriteStream, mkdirSync, rmSync } from 'node:fs'
+import { appendFileSync, createWriteStream, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
 import { fade, PAGE_IN_CSS } from './motion.js'
 import { noteRestart, restartLine, steps } from './timeline.js'
 import { dismissSplash, showUpdateSplash } from './splash.js'
+import { PUBLISHERS, TRIAL_MS, beforeStart, checkLane, confirm as confirmLane, installedVersions, laneMemory, stage as stageLane, stagedOf, trialFailed } from './lane.js'
 import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, privacyFileOf, privacyPatchOf, freePort, installProfile, navigationOf, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
 import { pageLayout, tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
@@ -41,6 +42,12 @@ let ready = false
 // The update the title bar shows ({ version, state, percent }), once there is one.
 let update = null
 let updates = null
+// The plugin lane (lane.js): plugins staged for the next start, this start's trial, and where
+// the profile and DSH's own version are.
+let laneReady = null
+let laneTrial = null
+let laneProfile = null
+let laneDsh = null
 // Check for Updates is under way, or its last check failed (frame.js updatePresentation).
 let checking = false
 let checkFailed = false
@@ -48,6 +55,7 @@ let checkFailed = false
 // (a quit, or a restart into an update) from the moment it was asked for.
 const startLog = (line) => { try { appendFileSync(join(home, 'logs', 'start.log'), line) } catch {} }
 const RESTART_NOTE = () => join(home, 'logs', 'restart.json')
+const LANE_EVERY_MS = 60 * 60_000
 const started = steps('start', { write: startLog, since: Date.now() - process.uptime() * 1000 })
 let leaving = null
 const leave = (kind) => (leaving ??= steps(kind, { write: startLog, since: Date.now() }))
@@ -158,6 +166,13 @@ async function launch() {
   const resources = resourcesOf({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() })
   const { target } = installProfile({ dshHome: join(home, 'dsh'), source: resources.profile })
   pinProfileStore({ target, home, layout: storeLayoutOf(resources.pnpm) })
+  // Plugins the lane staged go in before DSH starts, and this start is their trial (lane.js).
+  laneProfile = target
+  laneDsh = readVersion(join(dirname(resources.bin), '..', 'package.json'))
+  if (app.isPackaged) {
+    laneTrial = beforeStart({ home, target, log: laneLog })
+    laneReady = stagedOf(home)
+  }
   const port = await freePort()
   const log = createWriteStream(join(home, 'logs', 'dsh.log'), { flags: 'a' })
   // Electron's own binary runs dsh as Node, so the app ships one runtime.
@@ -205,6 +220,7 @@ async function launch() {
     started.mark('page in')
     // An update's splash (splash.js) stays up until this copy has something to show.
     dismissSplash(home)
+    if (laneTrial === 'applied' || laneTrial === 'trial') void judgeLane()
     const back = restartLine(RESTART_NOTE(), { version: app.getVersion() })
     if (back) startLog(back)
     if (pendingLink) void connectFromLink()
@@ -212,6 +228,67 @@ async function launch() {
   // Before the page load: a page that fails to load must not stop the app from updating.
   watchUpdates()
   await page.webContents.loadURL(dsh.url)
+}
+
+// The lane's lines go to the update log, with the app's own update.
+function laneLog(message) {
+  try { appendFileSync(join(home, 'logs', 'update.log'), `${new Date().toISOString()} info ${message}\n`) } catch {}
+}
+const readVersion = (file) => { try { return JSON.parse(readFileSync(file, 'utf8')).version } catch { return undefined } }
+
+// This start is a lane trial: the page must draw the Bot team within TRIAL_MS, or the app starts
+// again and the previous plugins come back (lane.js beforeStart).
+async function judgeLane() {
+  const deadline = Date.now() + TRIAL_MS
+  while (Date.now() < deadline && page && !page.webContents.isDestroyed()) {
+    const drawn = await page.webContents.executeJavaScript("Boolean(document.querySelector('.bt-side, .bt-rail, .bt-list'))").catch(() => false)
+    if (drawn) {
+      confirmLane(home)
+      laneLog('lane: the trial passed; the Bot team is drawn')
+      laneTrial = 'good'
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000))
+  }
+  if (quitting) return
+  laneLog('lane: the Bot team never drew; starting again with the previous plugins')
+  trialFailed(home)
+  restartForLane({ why: 'lane rollback' })
+}
+
+// One look at every lane: what it has for this app is downloaded and staged for the next start.
+async function lookAtLanes() {
+  if (!app.isPackaged || !laneProfile || !laneDsh || laneTrial === 'applied' || laneTrial === 'trial') return
+  const { last, bad } = laneMemory(home)
+  for (const publisher of PUBLISHERS) {
+    try {
+      const found = await checkLane({ publisher, appVersion: app.getVersion(), dshVersion: laneDsh, installed: installedVersions(laneProfile, publisher.plugins), last, bad })
+      if (!found || stagedOf(home)?.version === found.version) continue
+      laneLog(`lane: ${publisher.publisher} ${found.version} is out; downloading ${found.plugins.map(plugin => `${plugin.name} ${plugin.version}`).join(', ')}`)
+      await stageLane(found, { home })
+      laneReady = stagedOf(home)
+      laneLog(`lane: ${found.version} is ready and goes in at the next start`)
+      publishUpdate()
+    } catch (error) {
+      laneLog(`lane: ${publisher.publisher}: ${error.message}`)
+    }
+  }
+}
+
+// Start again into the staged plugins: the window goes, DSH stops, and the app opens again.
+function restartForLane({ away = false, why } = {}) {
+  if (quitting) return
+  quitting = true
+  const out = leave(why ?? (away ? 'lane while away' : 'lane restart'))
+  update = { ...update, state: 'restarting', version: laneReady?.version ?? update?.version }
+  publishUpdate()
+  void fade(window, { to: 0, reduced: lessMotion() })
+    .then(() => { out.mark('window gone'); return stopDsh(dshChild) })
+    .finally(() => {
+      out.mark('dsh stopped')
+      app.relaunch()
+      app.exit(0)
+    })
 }
 
 // See update.js. Its log is logs/update.log.
@@ -235,25 +312,29 @@ function watchUpdates() {
       publishUpdate()
     },
   })
+  // The lanes are looked at a minute after the start and then hourly, with the app's own checks.
+  setTimeout(() => void lookAtLanes(), 60_000).unref?.()
+  setInterval(() => void lookAtLanes(), LANE_EVERY_MS).unref?.()
   if (mode !== 'auto') return
   // A downloaded update goes in while the person is away (idle.js); else at a quit or Restart.
+  // Plugins the lane staged go in the same way, by a start of their own.
   const away = setInterval(() => {
-    const why = awayInstall({
-      ready: updates.ready,
-      idleMs: powerMonitor.getSystemIdleTime() * 1000,
-      focused: window?.isFocused() === true,
-      busy: readBusy(busyFileOf(home)),
-    })
-    if (why !== 'install') return
-    clearInterval(away)
-    log.info(`update: ${updates.ready} installs now, while the computer is not in use`)
-    installUpdate({ away: true })
+    const state = { idleMs: powerMonitor.getSystemIdleTime() * 1000, focused: window?.isFocused() === true, busy: readBusy(busyFileOf(home)) }
+    if (awayInstall({ ready: updates.ready, ...state }) === 'install') {
+      clearInterval(away)
+      log.info(`update: ${updates.ready} installs now, while the computer is not in use`)
+      installUpdate({ away: true })
+    } else if (!updates.ready && laneReady && awayInstall({ ready: laneReady.version, ...state }) === 'install') {
+      clearInterval(away)
+      laneLog(`lane: ${laneReady.version} goes in now, while the computer is not in use`)
+      restartForLane({ away: true })
+    }
   }, LOOK_EVERY_MS)
 }
 
 // The update shows in the page's sidebar (the Bot team's, bottom left, as in DSH's own app),
 // through the page's preload (preload.cjs `omniDesktop.updates`).
-const presentUpdate = () => updatePresentation(update, { checking, failed: checkFailed })
+const presentUpdate = () => updatePresentation(update, { checking, failed: checkFailed, plugins: laneReady?.version })
 function publishUpdate() {
   if (page && !page.webContents.isDestroyed()) page.webContents.send('automagik-updates', presentUpdate())
 }
@@ -264,6 +345,7 @@ ipcMain.handle('automagik-updates-status', event => (fromPage(event) ? presentUp
 ipcMain.handle('automagik-updates-open', async (event) => {
   if (!fromPage(event)) return
   if (updates?.ready) return installUpdate()
+  if (laneReady && update?.state !== 'available') return restartForLane()
   if (update?.state === 'available' && isReleasePage(update.page)) return void shell.openExternal(update.page)
   await checkForUpdates({ quiet: true })
 })
