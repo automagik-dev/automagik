@@ -416,9 +416,9 @@ test('a typed address or a link Omni sent reads the way the Connect Omni step re
   assert.equal(team.readRemote('https://omni.example.com/?grant=short').kind, 'bad-link')
   assert.equal(team.readRemote('  '), null)
   // The claim link an Omni nobody owns prints in its log: its address, and the page to open.
-  assert.deepEqual(plain(team.readRemote('http://100.109.86.60:8882/api/login/claim?token=8cBpKq2PLcBTSXy_R7aVsGN-')), { kind: 'claim', url: 'http://100.109.86.60:8882', claimUrl: 'http://100.109.86.60:8882/api/login/claim?token=8cBpKq2PLcBTSXy_R7aVsGN-' })
-  assert.equal(team.readRemote('http://100.109.86.60:8882/api/login/claim').kind, 'address')
-  assert.deepEqual(plain(team.readRemote('http://100.109.86.60:8882')), { kind: 'address', url: 'http://100.109.86.60:8882' })
+  assert.deepEqual(plain(team.readRemote('http://100.64.0.10:8882/api/login/claim?token=example-claim-token')), { kind: 'claim', url: 'http://100.64.0.10:8882', claimUrl: 'http://100.64.0.10:8882/api/login/claim?token=example-claim-token' })
+  assert.equal(team.readRemote('http://100.64.0.10:8882/api/login/claim').kind, 'address')
+  assert.deepEqual(plain(team.readRemote('http://100.64.0.10:8882')), { kind: 'address', url: 'http://100.64.0.10:8882' })
   assert.equal(team.channelLabel({ type: 'whatsapp-baileys' }), 'WhatsApp')
   assert.equal(team.foundChoice({ id: 'x', url: 'http://127.0.0.1:1', local: true, updateTo: '2.3.0' }).action, null)
 })
@@ -549,8 +549,8 @@ test("a failed install keeps what Omni's installer printed on the card", async (
 })
 
 test('an Omni nobody owns yet is told apart, with the command that connects it', () => {
-  assert.equal(team.isUnowned('100.109.86.60:8882 has no owner yet. Claim it first with the link in its server log.'), true)
+  assert.equal(team.isUnowned('100.64.0.10:8882 has no owner yet. Claim it first with the link in its server log.'), true)
   assert.equal(team.isUnowned('Omni answered 500 at omni.example.com'), false)
   assert.equal(team.isUnowned(undefined), false)
-  assert.equal(team.connectCommand('http://100.109.86.60:8882'), 'omni connect --url http://100.109.86.60:8882')
+  assert.equal(team.connectCommand('http://100.64.0.10:8882'), 'omni connect --url http://100.64.0.10:8882')
 })
