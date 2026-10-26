@@ -20,9 +20,13 @@ import { compareVersions } from './update.js'
 import { LANE_KEYS } from './lane-keys.js'
 
 export const LANE_URL = 'https://github.com/automagik-dev/automagik/releases/download/plugin-lane/lane.json'
-// Each publisher's lane and the plugins it may replace: a lane never touches another's.
+// Each publisher's lane, the keys it is signed with, and the plugins it may replace: a lane never
+// touches another's. `sameLine`: its base is an app release, and the app takes it only on that
+// 3.N line (Automagik's plugins are built against one app). Genie's plugin follows its own
+// versions, and its base is the oldest app it runs on.
 export const PUBLISHERS = Object.freeze([
-  { publisher: 'automagik', url: LANE_URL, plugins: ['@automagik/bots-dsh', '@automagik/welcome-dsh'] },
+  { publisher: 'automagik', url: LANE_URL, keys: LANE_KEYS.automagik, sameLine: true, plugins: ['@automagik/bots-dsh', '@automagik/welcome-dsh'] },
+  { publisher: 'genie', url: 'https://github.com/automagik-dev/genie/releases/download/plugin-lane/lane.json', keys: LANE_KEYS.genie, sameLine: false, plugins: ['@automagik/genie-dsh'] },
 ])
 const SCHEMA_VERSION = 1
 const MAX_TARBALL = 64 * 1024 * 1024
@@ -36,7 +40,7 @@ export const laneDir = home => join(home, 'lane')
 const files = home => ({ staged: join(laneDir(home), 'staged.json'), applied: join(laneDir(home), 'applied.json'), bad: join(laneDir(home), 'bad.json'), dir: join(laneDir(home), 'staged') })
 
 /** The lane in `bytes`, when `signature` (base64, detached ed25519) is one of `keys`'. */
-export function verifyLane(bytes, signature, keys = LANE_KEYS) {
+export function verifyLane(bytes, signature, keys) {
   let lane
   try { lane = JSON.parse(Buffer.from(bytes).toString('utf8')) } catch { throw fail('lane.json is not JSON') }
   const key = keys.find(entry => entry.keyId === lane?.keyId)
@@ -68,7 +72,7 @@ const line = version => /^(\d+)\.(\d+)\./.exec(String(version))?.slice(1, 3).joi
  */
 export function laneUpdate(lane, { publisher, appVersion, dshVersion, installed, last = 0, bad = [] }) {
   if (!lane || lane.publisher !== publisher.publisher || !Number.isInteger(lane.sequence) || lane.sequence < last) return null
-  if (line(lane.base) !== line(appVersion) || !(compareVersions(appVersion, lane.base) >= 0)) return null
+  if ((publisher.sameLine !== false && line(lane.base) !== line(appVersion)) || !(compareVersions(appVersion, lane.base) >= 0)) return null
   if (bad.includes(lane.version)) return null
   const plugins = (Array.isArray(lane.plugins) ? lane.plugins : []).filter(plugin => publisher.plugins.includes(plugin?.name)
     && typeof plugin.url === 'string' && plugin.url.startsWith('https://github.com/')
@@ -200,5 +204,5 @@ export async function checkLane({ publisher, fetch = globalThis.fetch, ...contex
     return Buffer.from(await response.arrayBuffer())
   }
   const [bytes, signature] = await Promise.all([get(publisher.url), get(`${publisher.url}.sig`)])
-  return laneUpdate(verifyLane(bytes, signature.toString('utf8')), { publisher, ...context })
+  return laneUpdate(verifyLane(bytes, signature.toString('utf8'), publisher.keys), { publisher, ...context })
 }

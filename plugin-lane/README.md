@@ -58,8 +58,12 @@ while one is rotated.
 - `integrity` is the npm and pnpm SRI (sha512). `sha256` and `size` describe the same bytes.
   A consumer checks them before it unpacks anything.
 - `engines.dsh` is the plugin's own range. A consumer skips a plugin its DSH is outside of.
-- A consumer takes from a publisher's lane only the plugins that publisher owns. Automagik's
-  lane names `@automagik/*` and nothing else.
+- A consumer takes from a publisher's lane only the plugins that publisher owns, and trusts
+  only that publisher's keys for it. Automagik's lane names `@automagik/bots-dsh` and
+  `@automagik/welcome-dsh`. Genie's lane (automagik-dev/genie, keyId `genie-2026-10`) names
+  `@automagik/genie-dsh`.
+- Genie's `base` is the oldest app its plugin runs on, not an app release line. The app
+  takes Genie's lane on any version at or past that base.
 
 ## Publishing (Automagik)
 
