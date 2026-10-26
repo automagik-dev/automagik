@@ -20,6 +20,13 @@ name: Release
 # last release but those commits cuts nothing. Runs queue one at a time; a merge that lands while
 # one is running is released by the next run, with every merge after it that lands before it starts.
 #
+# The plugin lane (scripts/lane.ts): when everything since the last full release (v3.N.0) is the
+# plugins' alone, the release is a patch, v3.N.P, with the plugin tarballs and no desktop build.
+# Every release, full or patch, then signs lane.json (ed25519, the PLUGIN_LANE_KEY secret; the
+# public keys are plugin-lane/keys.json) and puts it on the rolling `plugin-lane` release, which
+# holds nothing else. The desktop app and Omni's market install the plugins from it, without a
+# release of their own.
+#
 # Nothing is published to npm: the plugins ship as git sources and release files only.
 # Pushes use the workflow's own token; CI already ran on the dev commit being released, and
 # this job runs the gates again before it tags.
@@ -68,6 +75,7 @@ jobs:
     outputs:
       version: ${{ steps.cut.outputs.version }}
       sha: ${{ steps.cut.outputs.sha }}
+      lane: ${{ steps.lane.outputs.kind }}
     env:
       DO_NOT_TRACK: '1'
       GH_TOKEN: ${{ github.token }}
@@ -91,7 +99,8 @@ jobs:
         id: new
         run: |
           set -euo pipefail
-          last=$(git tag --list 'v3.*.0' --sort=-v:refname | grep -E '^v3\.(0|[1-9][0-9]*)\.0$' | head -1 || true)
+          # The newest release, a full one or a plugin patch (calendar tags have six-digit minors).
+          last=$(git tag --list 'v3.*' --sort=-v:refname | grep -E '^v3\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})$' | head -1 || true)
           # Commits since it other than the release's own (its version commit and index listing).
           if [[ -n "${last}" && -z "$(git log --format=%s "${last}..HEAD" | grep -v '^chore(release): ' || true)" ]]; then
             echo "dev has nothing since ${last}: no release"
@@ -109,12 +118,25 @@ jobs:
             (cd "apps/${app}" && bun install --frozen-lockfile --ignore-scripts && node scripts/build-client.mjs --check)
           done
 
-      - name: Version, commit and tag
-        id: cut
+      - name: Which lane
+        id: lane
         if: steps.new.outputs.release == 'true'
         run: |
           set -euo pipefail
-          version=$(bun scripts/version.ts next)
+          full=$(git tag --list 'v3.*.0' --sort=-v:refname | grep -E '^v3\.(0|[1-9][0-9]{0,3})\.0$' | head -1 || true)
+          kind=$(bun scripts/lane.ts kind "${full}")
+          echo "kind=${kind}" >> "$GITHUB_OUTPUT"
+          echo "base=${full#v}" >> "$GITHUB_OUTPUT"
+          echo "since ${full:-the start}: ${kind} release"
+
+      - name: Version, commit and tag
+        id: cut
+        if: steps.new.outputs.release == 'true'
+        env:
+          KIND: ${{ steps.lane.outputs.kind }}
+        run: |
+          set -euo pipefail
+          if [[ "${KIND}" == "plugins" ]]; then version=$(bun scripts/lane.ts next-patch); else version=$(bun scripts/version.ts next); fi
           bun scripts/version.ts set "${version}"
           bun scripts/version.ts check
           git config user.name "github-actions[bot]"
@@ -147,21 +169,47 @@ jobs:
         env:
           VERSION: ${{ steps.cut.outputs.version }}
           SHA: ${{ steps.cut.outputs.sha }}
+          KIND: ${{ steps.lane.outputs.kind }}
         run: |
           set -euo pipefail
           flags=(--latest)
           [[ "${PRERELEASE}" == "true" ]] && flags=(--prerelease)
+          # A plugin patch is not the Latest release: the desktop app's builds stay on the full one.
+          [[ "${KIND}" == "plugins" ]] && flags=(--latest=false)
           gh release create "v${VERSION}" release/* "${flags[@]}" \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
             --title "Automagik ${VERSION%.0}" \
             --notes "The Bot team (\`@automagik/bots-dsh\`) and the welcome (\`@automagik/welcome-dsh\`) for DeepSeek Harness, and the Automagik desktop app. Install the plugins from the [Automagik market](https://github.com/automagik-dev/dsh-marketplace) or from an Omni's own market; \`plugins.json\` lists each tarball's integrity. The desktop builds follow when they are done."
 
+      - name: Sign and post the plugin lane
+        if: steps.new.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.cut.outputs.version }}
+          KIND: ${{ steps.lane.outputs.kind }}
+          BASE: ${{ steps.lane.outputs.base }}
+          PLUGIN_LANE_KEY: ${{ secrets.PLUGIN_LANE_KEY }}
+        run: |
+          set -euo pipefail
+          # A full release is its own base: apps of this 3.N take patches on it from now on.
+          base="${BASE}"
+          [[ "${KIND}" != "plugins" ]] && base="${VERSION}"
+          mkdir -p lane
+          bun scripts/lane.ts manifest release/plugins.json "${base}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > lane/lane.json
+          bun scripts/lane.ts sign lane/lane.json > lane/lane.json.sig
+          bun scripts/lane.ts verify lane/lane.json lane/lane.json.sig
+          if ! gh release view plugin-lane --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create plugin-lane --repo "${GITHUB_REPOSITORY}" --target dev --prerelease --latest=false \
+              --title "Automagik plugin lane" \
+              --notes "lane.json lists the newest Automagik plugins (their tarballs are on their own versioned releases); lane.json.sig is its ed25519 signature, checked against plugin-lane/keys.json. See scripts/lane.ts."
+          fi
+          gh release upload plugin-lane lane/lane.json lane/lane.json.sig --clobber --repo "${GITHUB_REPOSITORY}"
+
   desktop:
     name: Desktop
     needs: cut
-    # A push carries no inputs, and a missing input compares equal to false.
-    if: needs.cut.outputs.version != '' && (github.event_name == 'push' || inputs.desktop != false)
+    # A push carries no inputs, and a missing input compares equal to false. A plugin patch has no app.
+    if: needs.cut.outputs.version != '' && needs.cut.outputs.lane != 'plugins' && (github.event_name == 'push' || inputs.desktop != false)
     uses: ./.github/workflows/desktop-build.yml
     permissions:
       contents: write
