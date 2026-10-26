@@ -94,6 +94,8 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     'effect ds-bot: hand on input kept in earlier parts',
     'on agent/status',
     'on llm/stream',
+    'on agent/request-error',
+    'on agent/request (prepend)',
     'on llm/stream',
     'on agent/status',
     'tool generate_image',
