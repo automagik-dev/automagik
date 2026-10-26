@@ -3,7 +3,7 @@ import { createHash, generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addonPinsOnly, kindOf, manifest, nextPatch, sequenceOf, signLane, verifyLane } from './lane';
+import { addonPinsOnly, kindOf, manifest, nextPatch, sequenceOf, ships, signLane, unpackedIn, verifyLane } from './lane';
 
 describe('the plugin lane', () => {
   test('only changes inside the plugins ride the lane; anything the app or an install sees is a full release', () => {
@@ -18,6 +18,15 @@ describe('the plugin lane', () => {
     expect(kindOf(['apps/desktop/electron-builder.yml', 'apps/welcome-dsh/client.js'], none, () => false)).toBe('full');
     expect(kindOf(['apps/bots-dsh/package.json'], plugin => plugin === 'bots-dsh')).toBe('full');
     expect(kindOf([], none)).toBe('full');
+  });
+
+  test('a change no install sees is no release: a plugin file its package does not carry', () => {
+    const unpacked = unpackedIn({ 'bots-dsh': ['index.js', 'src/host/', 'client.js'], 'welcome-dsh': ['src/*.js'] });
+    expect(ships(['apps/bots-dsh/scripts/lint.mjs', 'apps/bots-dsh/dev/bench.sh', 'apps/bots-dsh/test/x.test.js', '.github/workflows/ci.yml'], unpacked)).toBe(false);
+    expect(ships(['apps/bots-dsh/scripts/lint.mjs', 'apps/bots-dsh/src/host/turns.js'], unpacked)).toBe(true);
+    // What the app's build reads, and a plugin whose files has a glob, still count.
+    for (const path of ['apps/bots-dsh/dev/harness/package.json', 'apps/bots-dsh/bun.lock', 'apps/bots-dsh/package.json', 'apps/welcome-dsh/scripts/lint.mjs']) expect(ships([path], unpacked)).toBe(true);
+    expect(kindOf(['apps/bots-dsh/dev/harness/package.json'], () => false, unpacked)).toBe('full');
   });
 
   test('moving only the pins of the add-ons the lane carries keeps a release on the lane', () => {

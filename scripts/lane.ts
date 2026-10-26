@@ -15,6 +15,7 @@
  * bytes of lane.json, detached, base64; the public keys are plugin-lane/keys.json.
  *
  *   bun scripts/lane.ts kind <last-full-tag>                    plugins | full: what the commits since it need
+ *   bun scripts/lane.ts ships <last-tag>                         yes | no: whether anything since it reaches an install
  *   bun scripts/lane.ts next-patch                               the next patch release: 3.N.(P+1) on the newest 3.N
  *   bun scripts/lane.ts pack-addons <dir>                          pack the add-ons the lane carries into dir, with addons.json
  *   bun scripts/lane.ts manifest <plugins.json> <base> <issuedAt> [addons.json]  print lane.json for a release's plugins.json
@@ -90,20 +91,42 @@ export function sequenceOf(version: string): number {
   return Number(match[1]) * 10_000 + Number(match[2]);
 }
 
+const LOCKFILE = /(^|\/)(bun\.lock|package-lock\.json|pnpm-lock\.yaml)$/;
+const neverShipped = (path: string) => path === 'marketplace/automagik.json' || NEVER_SHIPPED.some(pattern => pattern.test(path));
+
+/**
+ * A file inside a plugin that its package does not carry (not in its package.json `files`), such
+ * as its dev tools and lint script: no install sees it. A plugin's dev/harness and lockfile still
+ * count (the app's build reads them), and so does any file of a plugin whose `files` has a glob.
+ */
+export function unpackedIn(files: Record<string, string[]>) {
+  return (path: string) => {
+    const plugin = PLUGINS.find(name => path.startsWith(`apps/${name}/`));
+    const carried = plugin ? files[plugin] : undefined;
+    if (!plugin || !carried || carried.some(entry => /[*?![{]/.test(entry))) return false;
+    const inside = path.slice(`apps/${plugin}/`.length);
+    if (inside === 'package.json' || inside.startsWith('dev/harness/') || LOCKFILE.test(inside)) return false;
+    return !carried.some(entry => (entry.endsWith('/') ? inside.startsWith(entry) : inside === entry || inside.startsWith(`${entry}/`)));
+  };
+}
+
+/** Whether any of `changed` reaches an install: one that is neither never shipped nor `inert`. */
+export const ships = (changed: string[], inert: (path: string) => boolean) => changed.some(path => !neverShipped(path) && !inert(path));
+
 /**
  * Whether the changes since the last full release are the plugins' alone: every changed path
  * inside a plugin, or one no app build reads (the market index and the version bumps the
- * releases themselves write, the release tooling, tests), none in a plugin's dev/harness
- * (that moves DSH), no lockfile, and no field a plugin is installed or admitted by.
+ * releases themselves write, the release tooling, tests, `inert` ones), none in a plugin's
+ * dev/harness (that moves DSH), no lockfile, and no field a plugin is installed or admitted by.
  */
-export function kindOf(changed: string[], installChanged: (plugin: string) => boolean, versionOnly: (path: string) => boolean = () => false): 'plugins' | 'full' {
+export function kindOf(changed: string[], installChanged: (plugin: string) => boolean, inert: (path: string) => boolean = () => false): 'plugins' | 'full' {
   if (changed.length === 0) return 'full';
   for (const path of changed) {
-    if (path === 'marketplace/automagik.json' || NEVER_SHIPPED.some(pattern => pattern.test(path)) || versionOnly(path)) continue;
+    if (neverShipped(path) || inert(path)) continue;
     const plugin = PLUGINS.find(name => path.startsWith(`apps/${name}/`));
     if (!plugin) return 'full';
     const inside = path.slice(`apps/${plugin}/`.length);
-    if (inside.startsWith('dev/harness/') || /(^|\/)(bun\.lock|package-lock\.json|pnpm-lock\.yaml)$/.test(inside)) return 'full';
+    if (inside.startsWith('dev/harness/') || LOCKFILE.test(inside)) return 'full';
   }
   return PLUGINS.some(installChanged) ? 'full' : 'plugins';
 }
@@ -219,22 +242,14 @@ const git = (...args: string[]) => execFileSync('git', args, { cwd: ROOT, encodi
 
 if (import.meta.main) {
   const [command, ...args] = process.argv.slice(2);
-  if (command === 'kind') {
+  if (command === 'kind' || command === 'ships') {
     const last = args[0];
-    if (!last) { console.log('full'); process.exit(0); }
+    if (!last) { console.log(command === 'kind' ? 'full' : 'yes'); process.exit(0); }
     const changed = git('diff', '--name-only', `${last}..HEAD`).split('\n').filter(Boolean);
-    const installChanged = (plugin: string) => {
-      const path = `apps/${plugin}/package.json`;
-      let before: Record<string, unknown>;
-      try { before = JSON.parse(git('show', `${last}:${path}`)); } catch { return true; }
-      return pick(before) !== pick(JSON.parse(readFileSync(join(ROOT, path), 'utf8')));
-    };
-    // A file only the version fields of changed in (a patch release's own bump), or the profile
-    // with only the lane's add-on pins moved.
+    const before = (path: string) => git('show', `${last}:${path}`);
+    const unpacked = unpackedIn(Object.fromEntries(PLUGINS.map(plugin => [plugin, JSON.parse(readFileSync(join(ROOT, 'apps', plugin, 'package.json'), 'utf8')).files ?? []])));
+    // A file only the version fields of changed in (a release's own bump).
     const versionOnly = (path: string) => {
-      if (path === PROFILE) {
-        try { return addonPinsOnly(git('show', `${last}:${path}`), readFileSync(join(ROOT, path), 'utf8')); } catch { return false; }
-      }
       const fields = FIELDS.filter(field => field.file === path);
       if (fields.length === 0) return false;
       const blank = (text: string) => {
@@ -245,9 +260,23 @@ if (import.meta.main) {
         }
         return JSON.stringify(json);
       };
-      try { return blank(git('show', `${last}:${path}`)) === blank(readFileSync(join(ROOT, path), 'utf8')); } catch { return false; }
+      try { return blank(before(path)) === blank(readFileSync(join(ROOT, path), 'utf8')); } catch { return false; }
     };
-    console.log(kindOf(changed, installChanged, versionOnly));
+    if (command === 'ships') {
+      console.log(ships(changed, path => versionOnly(path) || unpacked(path)) ? 'yes' : 'no');
+    } else {
+      const installChanged = (plugin: string) => {
+        const path = `apps/${plugin}/package.json`;
+        let was: Record<string, unknown>;
+        try { was = JSON.parse(before(path)); } catch { return true; }
+        return pick(was) !== pick(JSON.parse(readFileSync(join(ROOT, path), 'utf8')));
+      };
+      // The profile with only the lane's add-on pins moved needs no app: the lane carries them.
+      const addonPins = (path: string) => {
+        try { return path === PROFILE && addonPinsOnly(before(path), readFileSync(join(ROOT, path), 'utf8')); } catch { return false; }
+      };
+      console.log(kindOf(changed, installChanged, path => versionOnly(path) || addonPins(path) || unpacked(path)));
+    }
   } else if (command === 'next-patch') {
     console.log(nextPatch(git('tag', '--list', 'v3.*').split('\n').filter(Boolean)));
   } else if (command === 'pack-addons' && args.length === 1) {
@@ -272,7 +301,7 @@ if (import.meta.main) {
     const lane = verifyLane(readFileSync(args[0]), readFileSync(args[1], 'utf8'), keys);
     console.log(`lane ${lane.version} (sequence ${lane.sequence}) is signed by ${lane.keyId}`);
   } else {
-    console.error('usage: bun scripts/lane.ts kind <last-full-tag> | next-patch | pack-addons <dir> | manifest <plugins.json> <base> <issuedAt> [addons.json] | sign <lane.json> | verify <lane.json> <sig>');
+    console.error('usage: bun scripts/lane.ts kind <last-full-tag> | ships <last-tag> | next-patch | pack-addons <dir> | manifest <plugins.json> <base> <issuedAt> [addons.json] | sign <lane.json> | verify <lane.json> <sig>');
     process.exit(2);
   }
 }
