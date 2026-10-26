@@ -13,12 +13,16 @@ name: Release
 # dsh-marketplace lists the plugins at the tag's commit. After the release, the market index
 # here lists it (scripts/marketplace.ts pin) and main moves to the tag.
 #
+# Only the jobs that write dev (the cut, the index listing) take turns; a release's desktop
+# builds run on their own (desktop-build.yml locks per version), so a plugin patch merged during
+# a full release's Mac build is out in minutes instead of after it.
+#
 # A push to dev (a merged pull request) cuts one; so does follow-omni.yml (workflow_call), and a
 # dispatch: gh workflow run release.yml --ref dev [--field prerelease=true] [--field desktop=false]
 # The workflow's own pushes (the version commit, the index listing, follow-omni's pin) start no
 # run: GitHub starts none for a push made with the workflow token. A dev that has nothing since the
-# last release but those commits cuts nothing. Runs queue one at a time; a merge that lands while
-# one is running is released by the next run, with every merge after it that lands before it starts.
+# last release but those commits cuts nothing. Cuts queue one at a time; a merge that lands while
+# one is cutting is released by the next run, with every merge after it that lands before it starts.
 #
 # The plugin lane (scripts/lane.ts): when everything since the last full release (v3.N.0) is the
 # plugins' alone, the release is a patch, v3.N.P, with the plugin tarballs and no desktop build.
@@ -61,15 +65,14 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: release
-  cancel-in-progress: false
-
 jobs:
   cut:
     name: Cut v<version> on dev
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    concurrency:
+      group: release-cut
+      cancel-in-progress: false
     permissions:
       contents: write
     outputs:
@@ -225,6 +228,9 @@ jobs:
     if: needs.cut.outputs.version != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    concurrency:
+      group: release-list
+      cancel-in-progress: false
     permissions:
       contents: write
     env:
@@ -251,11 +257,21 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if ! git diff --quiet -- marketplace/automagik.json; then
             git commit -qm "chore(release): list v${VERSION} in the market index" -- marketplace/automagik.json
-            git push -q origin HEAD:refs/heads/dev
+            # A cut that landed meanwhile moved dev: list on top of it.
+            for attempt in 1 2 3; do
+              git push -q origin HEAD:refs/heads/dev && break
+              git pull -q --rebase origin dev
+            done
           fi
 
       - name: main moves to the release
         run: |
           set -euo pipefail
-          # Fast-forward only: main holds released commits and nothing else.
-          git push -q origin "${SHA}:refs/heads/main"
+          # Fast-forward only: main holds released commits and nothing else. A release listed after a
+          # newer one (they run side by side now) leaves main where the newer one put it.
+          git fetch -q origin main
+          if git merge-base --is-ancestor origin/main "${SHA}"; then
+            git push -q origin "${SHA}:refs/heads/main"
+          else
+            echo "main is already past ${SHA}"
+          fi
