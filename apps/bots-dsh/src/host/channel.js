@@ -9,7 +9,7 @@ import { createPets } from './pets.js'
 import { questionReply, viewReply } from './parts.js'
 import { defaultRelayLimit } from './groups.js'
 import { validateViewAnswer } from '../shared/views.js'
-import { COLORS, EXTRA_COLORS, PET_CODEX_ROUTE, PET_ROUTE, ROUTE } from './constants.js'
+import { COLORS, EXTRA_COLORS, IMAGE_ROUTE, PET_CODEX_ROUTE, PET_ROUTE, ROUTE } from './constants.js'
 
 const LANGUAGES = { zh: 'Chinese (简体中文)', en: 'English' }
 const RUN_STATS = ['sessionStats', 'tokenUsage', 'contextPressure']
@@ -105,7 +105,7 @@ export function install(rt) {
   // Updates change the dsh profile, not the team, so a reading host may run them too.
   const privacy = createPrivacy()
   const pets = createPets({ home: () => rt.home, warn: (...args) => rt.warn?.(...args) })
-  const READS = new Set(['privacy', 'pets', 'pets-browse', 'state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking'])
+  const READS = new Set(['privacy', 'pets', 'pets-browse', 'image-access', 'image-progress', 'state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking'])
 
   function setPrefs(body) {
     if (body.theme !== undefined) {
@@ -467,6 +467,11 @@ export function install(rt) {
           if (rt.browserChannel === undefined) return fail('Bot browsers are off on this host', 'bot/browser-off')
           return ok(rt.browserChannel.result(body))
         // The Privacy page (privacy.js): what the desktop app may share, all off until switched on.
+        // Images (imagegen.js): how they are made here, and a generation's progress for its card.
+        case 'image-access':
+          return ok(await rt.images.access())
+        case 'image-progress':
+          return ok(rt.images.progress(String(body.callId ?? ''), body.seen))
         // Pets (pets.js): the Codex-format avatars on this computer, and codex-pets.net's.
         case 'pets':
           return ok(await pets.list())
@@ -522,6 +527,17 @@ export function install(rt) {
       }
     },
   }), 'ds-bot: pet route')
+  // A generated image (imagegen.js) for its card, by its id.
+  ctx.effect(() => ctx.connection.fetch.register({
+    path: IMAGE_ROUTE,
+    methods: ['GET'],
+    requestBody: 'buffered',
+    fetch: async (request) => {
+      const bytes = await rt.images.imageFile(new URL(request.url).searchParams.get('id') ?? '').catch(() => undefined)
+      if (!bytes) return new Response('Not found', { status: 404 })
+      return new Response(bytes, { status: 200, headers: { 'content-type': 'image/png', 'cache-control': 'private, max-age=86400' } })
+    },
+  }), 'ds-bot: image route')
   ctx.effect(() => ctx.connection.fetch.register({
     path: PET_CODEX_ROUTE,
     methods: ['PUT'],

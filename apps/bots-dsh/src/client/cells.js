@@ -8,6 +8,7 @@ import { colorOf, toolState, BotMark, RoomAvatar } from './mark.js'
 import { SettledQuestion, PendingQuestion } from './questions.js'
 import { AnsweredReply, WidgetCell } from './widget-cell.js'
 import { SecretToolCell } from './secret-card.js'
+import { ImageCell } from './image-cell.js'
 import { dateLocale, t } from './i18n.js'
 import { call } from './api.js'
 import { failureLabel } from './diagnostics.js'
@@ -870,7 +871,7 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
 // The calls ToolCell draws. A PTC program (`run_code`) dispatches the real tools as
 // its sub-calls, so a call draws by its own name wherever it sits in the tree.
 // Another Omni plugin's tools draw when they register a card (extend.js).
-const DRAWN = new Set(['start_task', 'message_bot', 'stop_bot', 'create_bot', 'update_bot', 'group_relay', 'create_group', 'update_group', 'delete_group', 'post_to_group', 'ask_user', 'request_secret', 'ask_user_question', 'read_group_chat', 'remember', 'forget', 'show_view'])
+const DRAWN = new Set(['start_task', 'message_bot', 'stop_bot', 'create_bot', 'update_bot', 'group_relay', 'create_group', 'update_group', 'delete_group', 'post_to_group', 'ask_user', 'request_secret', 'ask_user_question', 'read_group_chat', 'remember', 'forget', 'show_view', 'generate_image'])
 // Calls whose card a dock above the composer carries when the call is not drawn.
 const CARDS = new Set(['ask_user', 'request_secret', 'show_view'])
 
@@ -965,6 +966,8 @@ function renderCall(call, { sessionId, roster, actions, useUi, useWork, useSessi
     }
     case 'show_view':
       return h(WidgetCell, { sessionId, callId: call.callId, args: { text: arg, value: argValue }, done, isError: call.isError, roster, actions, heldCards })
+    case 'generate_image':
+      return h(ImageCell, { callId: call.callId, prompt: arg('prompt'), size: arg('size'), done, content: done ? contentText(call.content) : '', isError: call.isError })
     case 'request_secret':
       return h(SecretToolCell, { sessionId, callId: call.callId, name: arg('name'), done, content: call.content, roster, actions, heldCards })
     case 'ask_user_question': {
