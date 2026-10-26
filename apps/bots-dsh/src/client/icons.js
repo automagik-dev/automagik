@@ -109,3 +109,11 @@ export function TasksIcon({ size = 20 }) {
   return h('svg', { width: size, height: size, viewBox: '0 0 20 20', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
     h('path', { d: 'M3.5 5.5l1.5 1.5 2.5-3' }), h('path', { d: 'M3.5 11.5l1.5 1.5 2.5-3' }), h('path', { d: 'M10 5.5h6.5M10 11.5h6.5M4 16.5h12.5' }))
 }
+export function ImageIcon() {
+  return h('svg', { width: 16, height: 16, viewBox: '0 0 20 20', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinejoin: 'round', 'aria-hidden': true },
+    h('rect', { x: 3, y: 4, width: 14, height: 12, rx: 2.5 }), h('circle', { cx: 7.5, cy: 8.5, r: 1.4 }), h('path', { d: 'M3.5 14l4-3.6 3 2.6 2.5-2 3.5 3' }))
+}
+export function SparkIcon() {
+  return h('svg', { width: 16, height: 16, viewBox: '0 0 20 20', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinejoin: 'round', 'aria-hidden': true },
+    h('path', { d: 'M10 3l1.6 4.4L16 9l-4.4 1.6L10 15l-1.6-4.4L4 9l4.4-1.6z' }))
+}

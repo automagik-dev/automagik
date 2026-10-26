@@ -1073,6 +1073,13 @@ var ZH = {
   "Allow Automagik in your system settings (Privacy & Security → Microphone), then try again.": "请在系统设置（隐私与安全性 → 麦克风）中允许 Automagik，然后再试一次。",
   "Used only while a voice chat listens.": "只在语音对话聆听时使用。",
   "Allow microphone": "允许麦克风",
+  "Draw an image": "画一张图",
+  "Draw an image of ": "画一张图：",
+  "Search the web": "搜索网页",
+  "Search the web for ": "在网上搜索：",
+  "Set a reminder": "设置提醒",
+  "Every weekday at 9am, remind me to ": "每个工作日上午 9 点提醒我",
+  "Suggestions": "建议",
   "Photo": "照片",
   "Uploaded": "已上传",
   "Choose {name}'s character": "选择 {name} 的角色",
@@ -1572,6 +1579,7 @@ __export(icons_exports, {
   GaugeIcon: () => GaugeIcon,
   GearIcon: () => GearIcon,
   HideIcon: () => HideIcon,
+  ImageIcon: () => ImageIcon,
   InfoIcon: () => InfoIcon,
   KeywordIcon: () => KeywordIcon,
   MemoryIcon: () => MemoryIcon,
@@ -1593,6 +1601,7 @@ __export(icons_exports, {
   SignOutIcon: () => SignOutIcon,
   SlidersIcon: () => SlidersIcon,
   SmileIcon: () => SmileIcon,
+  SparkIcon: () => SparkIcon,
   StarLineIcon: () => StarLineIcon,
   SwitchIcon: () => SwitchIcon,
   TasksIcon: () => TasksIcon,
@@ -1732,6 +1741,22 @@ function TasksIcon({ size = 20 }) {
     (0, import_react2.createElement)("path", { d: "M10 5.5h6.5M10 11.5h6.5M4 16.5h12.5" })
   );
 }
+function ImageIcon() {
+  return (0, import_react2.createElement)(
+    "svg",
+    { width: 16, height: 16, viewBox: "0 0 20 20", fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinejoin: "round", "aria-hidden": true },
+    (0, import_react2.createElement)("rect", { x: 3, y: 4, width: 14, height: 12, rx: 2.5 }),
+    (0, import_react2.createElement)("circle", { cx: 7.5, cy: 8.5, r: 1.4 }),
+    (0, import_react2.createElement)("path", { d: "M3.5 14l4-3.6 3 2.6 2.5-2 3.5 3" })
+  );
+}
+function SparkIcon() {
+  return (0, import_react2.createElement)(
+    "svg",
+    { width: 16, height: 16, viewBox: "0 0 20 20", fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinejoin: "round", "aria-hidden": true },
+    (0, import_react2.createElement)("path", { d: "M10 3l1.6 4.4L16 9l-4.4 1.6L10 15l-1.6-4.4L4 9l4.4-1.6z" })
+  );
+}
 
 // src/client/canvas-slot.js
 var import_react3 = require("react");
@@ -1827,6 +1852,7 @@ var badges = registry();
 var botChildren = registry();
 var headerButtons = registry();
 var botSettings = registry();
+var chatSuggestions = registry();
 var composerPacks = registry();
 var registerComposerPack = (pack) => composerPacks.register(pack);
 var installers = /* @__PURE__ */ new Set();
@@ -2353,10 +2379,10 @@ function bodyOf(def, paint, flat = false) {
   }
 }
 var PUPIL = "#0a0f1f";
-var pupilMarkup = ([cx, cy, w, h54, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><g class="bt-eye"><rect x="${-w / 2}" y="${-h54 / 2}" width="${w}" height="${h54}" rx="${w / 2}" fill="${PUPIL}"/><circle cx="${w * 0.12}" cy="${-h54 * 0.24}" r="${w * 0.3}" fill="#fff"/><circle cx="${-w * 0.16}" cy="${h54 * 0.22}" r="${w * 0.12}" fill="#fff" fill-opacity=".7"/></g></g>`;
-var blushMarkup = ([cx, cy, w, h54, tilt]) => `<ellipse cx="${cx}" cy="${cy + h54 * 0.56}" rx="${w * 0.78}" ry="${w * 0.4}" transform="rotate(${tilt} ${cx} ${cy})" fill="#ff5fb8" fill-opacity=".42"/>`;
-var eyeMarkup = ([cx, cy, w, h54, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><rect class="bt-eye" x="${-w / 2}" y="${-h54 / 2}" width="${w}" height="${h54}" rx="${w / 2}"/></g>`;
-var happyEyeMarkup = ([cx, cy, w, h54, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><path class="bt-eye-happy" opacity="0" d="M${-w * 0.62} ${h54 * 0.14}Q0 ${-h54 * 0.42} ${w * 0.62} ${h54 * 0.14}" fill="none" stroke="#000" stroke-width="${w * 0.5}" stroke-linecap="round"/></g>`;
+var pupilMarkup = ([cx, cy, w, h55, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><g class="bt-eye"><rect x="${-w / 2}" y="${-h55 / 2}" width="${w}" height="${h55}" rx="${w / 2}" fill="${PUPIL}"/><circle cx="${w * 0.12}" cy="${-h55 * 0.24}" r="${w * 0.3}" fill="#fff"/><circle cx="${-w * 0.16}" cy="${h55 * 0.22}" r="${w * 0.12}" fill="#fff" fill-opacity=".7"/></g></g>`;
+var blushMarkup = ([cx, cy, w, h55, tilt]) => `<ellipse cx="${cx}" cy="${cy + h55 * 0.56}" rx="${w * 0.78}" ry="${w * 0.4}" transform="rotate(${tilt} ${cx} ${cy})" fill="#ff5fb8" fill-opacity=".42"/>`;
+var eyeMarkup = ([cx, cy, w, h55, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><rect class="bt-eye" x="${-w / 2}" y="${-h55 / 2}" width="${w}" height="${h55}" rx="${w / 2}"/></g>`;
+var happyEyeMarkup = ([cx, cy, w, h55, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><path class="bt-eye-happy" opacity="0" d="M${-w * 0.62} ${h55 * 0.14}Q0 ${-h55 * 0.42} ${w * 0.62} ${h55 * 0.14}" fill="none" stroke="#000" stroke-width="${w * 0.5}" stroke-linecap="round"/></g>`;
 var maskBox = (size) => `maskUnits="userSpaceOnUse" x="${-size}" y="${-size}" width="${size * 3}" height="${size * 3}"`;
 var holes = (def, eyes) => `<rect x="${-def.size}" y="${-def.size}" width="${def.size * 3}" height="${def.size * 3}" fill="#fff"/>${eyes}`;
 var MASK_ID = "%MASK%";
@@ -2977,12 +3003,12 @@ function liveSprings(apply2) {
     const dt = Math.min(0.5, Math.max(1e-3, (now - last) / 1e3));
     last = now;
     const steps = Math.ceil(dt * 240);
-    const h54 = dt / steps;
+    const h55 = dt / steps;
     let moving = false;
     for (const value of values.values()) {
       for (let index = 0; index < steps; index += 1) {
-        value.v += (-value.k * (value.x - value.to) - value.c * value.v) * h54;
-        value.x += value.v * h54;
+        value.v += (-value.k * (value.x - value.to) - value.c * value.v) * h55;
+        value.x += value.v * h55;
       }
       if (Math.abs(value.x - value.to) < 0.05 && Math.abs(value.v) < 1) {
         value.x = value.to;
@@ -20482,8 +20508,78 @@ function createSwitchWindow(settle) {
   };
 }
 
-// src/client/user-message.js
+// src/client/suggestions.js
 var import_react56 = require("react");
+var MAX_SUGGESTIONS = 3;
+var imagesReady;
+var imageAccess = () => imagesReady ??= call("image-access").then((access) => access !== null, () => false);
+var teamItems = ({ images }) => [
+  ...images ? [{ id: "image", label: t("Draw an image"), text: t("Draw an image of "), icon: "ImageIcon" }] : [],
+  { id: "search", label: t("Search the web"), text: t("Search the web for "), icon: "SearchIcon" },
+  { id: "remind", label: t("Set a reminder"), text: t("Every weekday at 9am, remind me to "), icon: "ClockIcon" }
+];
+function personWrote(outline, hiddenTurns = []) {
+  if (!Array.isArray(outline)) return false;
+  return outline.some((entry) => !hiddenTurns.includes(entry.turn) && typeof entry.prompt === "string" && entry.prompt.trim() !== "" && !HEADER.test(entry.prompt));
+}
+function suggestionsFor(entries2, context) {
+  const items = [];
+  for (const entry of entries2) {
+    try {
+      if (entry.when && !entry.when(context)) continue;
+      for (const item of entry.items(context) ?? []) if (item?.label && item?.text) items.push({ ...item, key: `${entry.id}:${item.id ?? item.label}` });
+    } catch {
+    }
+  }
+  return [...items, ...teamItems(context).map((item) => ({ ...item, key: `team:${item.id}` }))].slice(0, MAX_SUGGESTIONS);
+}
+function fillComposer(text2) {
+  const box = document.querySelector('[class*="_centerCol"] [role=textbox][contenteditable=true]');
+  if (!(box instanceof HTMLElement)) return;
+  box.focus();
+  const selection = window.getSelection();
+  selection?.selectAllChildren(box);
+  document.execCommand("insertText", false, text2);
+  selection?.collapseToEnd();
+}
+function SuggestionDock({ sessionId, input, session, useRoster, useSessions }) {
+  const roster = useRoster((value) => value);
+  const bot = roster.byId[sessionId];
+  const part = sessionId;
+  const outline = (list) => list.projectionsBySession?.[part]?.values?.turnOutline ?? list.byId?.[part]?.projectionValues?.turnOutline;
+  const wrote = useSessions ? useSessions((list) => personWrote(outline(list), roster.exchangeTurns?.[part] ?? [])) : true;
+  const entries2 = useEntries(chatSuggestions);
+  const [images, setImages] = (0, import_react56.useState)(false);
+  (0, import_react56.useEffect)(() => {
+    void imageAccess().then(setImages);
+  }, []);
+  if (!bot || wrote || session?.running || (input?.draft ?? "").trim() !== "") return null;
+  const items = suggestionsFor(entries2, { bot, roster, images });
+  if (items.length === 0) return null;
+  return (0, import_react56.createElement)(
+    "div",
+    { className: "bt-suggest", role: "group", "aria-label": t("Suggestions") },
+    items.map((item) => (0, import_react56.createElement)(
+      "button",
+      { key: item.key, type: "button", className: "bt-suggest-chip", onClick: () => fillComposer(item.text) },
+      icons_exports[item.icon] ? (0, import_react56.createElement)("span", { className: "bt-suggest-icon", "aria-hidden": true }, (0, import_react56.createElement)(icons_exports[item.icon])) : null,
+      (0, import_react56.createElement)("span", null, item.label)
+    ))
+  );
+}
+var SUGGEST_CSS = `
+.bt-suggest{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;padding:0 4px 10px}
+.bt-suggest-chip{display:inline-flex;align-items:center;gap:7px;min-height:34px;padding:6px 14px 6px 11px;border:1px solid var(--bt-line-2);border-radius:999px;background:var(--bt-card);color:var(--bt-ink);font:500 13px/18px var(--bt-font);cursor:pointer;box-shadow:0 1px 0 var(--bt-line);transition:background .12s ease,border-color .12s ease,transform .12s ease;animation:bt-suggest-in .28s ease both}
+.bt-suggest-chip:nth-child(2){animation-delay:.05s}
+.bt-suggest-chip:nth-child(3){animation-delay:.1s}
+.bt-suggest-chip:hover{border-color:color-mix(in srgb,var(--bt-accent) 45%,var(--bt-line-2));background:color-mix(in srgb,var(--bt-accent) 6%,var(--bt-card));transform:translateY(-1px)}
+.bt-suggest-icon{display:inline-flex;color:var(--bt-accent)}
+@keyframes bt-suggest-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.bt-suggest-chip{animation:none}}
+`;
+
+// src/client/user-message.js
+var import_react57 = require("react");
 var ui = __toESM(require("@deepseek-ai/dsh-client-ui-primitives"), 1);
 var canDrawUserMessages = () => typeof ui.projectUserText === "function";
 function contentParts(content) {
@@ -20515,38 +20611,38 @@ function userTextParts(text2, bots, referenceLabels = []) {
   return parts;
 }
 function UserText({ text: text2, bots, referenceLabels, skillNames, references, actions }) {
-  return userTextParts(text2, bots, referenceLabels).map((part, index) => part.bot ? (0, import_react56.createElement)(
+  return userTextParts(text2, bots, referenceLabels).map((part, index) => part.bot ? (0, import_react57.createElement)(
     "button",
     { key: index, type: "button", className: "bt-umention", title: `@${part.bot.name}`, onClick: () => actions.openSession(part.bot.id) },
-    (0, import_react56.createElement)(BotMark, { bot: part.bot, size: 16 }),
+    (0, import_react57.createElement)(BotMark, { bot: part.bot, size: 16 }),
     part.label
-  ) : (0, import_react56.createElement)(import_react56.Fragment, { key: index }, ui.projectUserText(part.text, referenceLabels, skillNames, "skill", references)));
+  ) : (0, import_react57.createElement)(import_react57.Fragment, { key: index }, ui.projectUserText(part.text, referenceLabels, skillNames, "skill", references)));
 }
 function Attachments({ attachments, renderMessageImages }) {
   const compact2 = attachments.length > 1;
-  return (0, import_react56.createElement)("div", { className: "bt-uattach" }, attachments.map((block, index) => {
+  return (0, import_react57.createElement)("div", { className: "bt-uattach" }, attachments.map((block, index) => {
     if (block.type === "image") {
-      return renderMessageImages ? (0, import_react56.createElement)(import_react56.Fragment, { key: index }, renderMessageImages({ images: [{ attachment: block.attachment }], align: "end", compact: compact2 })) : null;
+      return renderMessageImages ? (0, import_react57.createElement)(import_react57.Fragment, { key: index }, renderMessageImages({ images: [{ attachment: block.attachment }], align: "end", compact: compact2 })) : null;
     }
     const file = block.attachment;
     const meta = [ui.fileExtension?.(file.name)?.toUpperCase().slice(0, 8), ui.fileSizeText?.(file.bytes)].filter(Boolean).join(" · ");
-    return (0, import_react56.createElement)(
+    return (0, import_react57.createElement)(
       "span",
       { key: index, className: "bt-ufile", title: file.name },
-      ui.FileTypeIcon ? (0, import_react56.createElement)(ui.FileTypeIcon, { path: file.name, className: "bt-ufile-icon" }) : null,
-      (0, import_react56.createElement)("span", { className: "bt-ufile-text" }, (0, import_react56.createElement)("span", { className: "bt-ufile-name" }, file.name), meta ? (0, import_react56.createElement)("span", { className: "bt-ufile-meta" }, meta) : null)
+      ui.FileTypeIcon ? (0, import_react57.createElement)(ui.FileTypeIcon, { path: file.name, className: "bt-ufile-icon" }) : null,
+      (0, import_react57.createElement)("span", { className: "bt-ufile-text" }, (0, import_react57.createElement)("span", { className: "bt-ufile-name" }, file.name), meta ? (0, import_react57.createElement)("span", { className: "bt-ufile-meta" }, meta) : null)
     );
   }));
 }
 function CopyButton({ text: text2 }) {
-  const [copied, setCopied] = (0, import_react56.useState)(false);
+  const [copied, setCopied] = (0, import_react57.useState)(false);
   const copy2 = () => {
     void navigator.clipboard?.writeText(text2).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1e3);
     });
   };
-  return (0, import_react56.createElement)("button", { type: "button", className: "bt-tool", "aria-label": copied ? t("Copied") : t("Copy"), title: copied ? t("Copied") : t("Copy"), onClick: copy2 }, copied ? (0, import_react56.createElement)(CheckIcon) : (0, import_react56.createElement)(CopyIcon));
+  return (0, import_react57.createElement)("button", { type: "button", className: "bt-tool", "aria-label": copied ? t("Copied") : t("Copy"), title: copied ? t("Copied") : t("Copy"), onClick: copy2 }, copied ? (0, import_react57.createElement)(CheckIcon) : (0, import_react57.createElement)(CopyIcon));
 }
 var clock3 = (time) => typeof time === "number" ? new Date(time).toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" }) : void 0;
 function UserMessageCell({ node, sessionId, useRoster, actions, renderMessageImages, openFile, openSkill }) {
@@ -20558,10 +20654,10 @@ function UserMessageCell({ node, sessionId, useRoster, actions, renderMessageIma
   const steering = node.kind === "steering";
   const groupTime = roster.roomsById?.[sessionId] && Number.isFinite(data.time) ? messageClock(data.time) : void 0;
   const { shown, folded, control } = useFold(text2, { markdown: false });
-  const body = (0, import_react56.createElement)(UserText, { text: shown, bots: mentionableBots(roster, sessionId), referenceLabels, skillNames: data.skillNames ?? [], references, actions });
-  const row = (0, import_react56.useRef)(null);
-  const [toolsOpen, setToolsOpen] = (0, import_react56.useState)(false);
-  (0, import_react56.useEffect)(() => {
+  const body = (0, import_react57.createElement)(UserText, { text: shown, bots: mentionableBots(roster, sessionId), referenceLabels, skillNames: data.skillNames ?? [], references, actions });
+  const row = (0, import_react57.useRef)(null);
+  const [toolsOpen, setToolsOpen] = (0, import_react57.useState)(false);
+  (0, import_react57.useEffect)(() => {
     if (!toolsOpen) return void 0;
     const onDown = (event) => {
       if (!row.current?.contains(event.target)) setToolsOpen(false);
@@ -20577,24 +20673,24 @@ function UserMessageCell({ node, sessionId, useRoster, actions, renderMessageIma
     if (!noHover() || event.target instanceof Element && event.target.closest("a,button,input,textarea,select,pre,code,[role=button],[role=link]")) return;
     setToolsOpen((value) => !value);
   };
-  return (0, import_react56.createElement)(
+  return (0, import_react57.createElement)(
     "div",
     { ref: row, className: "bt-umsg", "data-steering": steering || void 0 },
-    (0, import_react56.createElement)(
+    (0, import_react57.createElement)(
       "div",
       { className: "bt-ustack" },
-      attachments.length > 0 ? (0, import_react56.createElement)(Attachments, { attachments, renderMessageImages }) : null,
-      text2 !== "" || rest2.length > 0 ? (0, import_react56.createElement)(
+      attachments.length > 0 ? (0, import_react57.createElement)(Attachments, { attachments, renderMessageImages }) : null,
+      text2 !== "" || rest2.length > 0 ? (0, import_react57.createElement)(
         "div",
         { className: "bt-ubody", title: clock3(data.time), "data-folded": folded || void 0, onClick: tapTools },
-        control ? (0, import_react56.createElement)("div", { className: "bt-fold-body" }, body) : body,
+        control ? (0, import_react57.createElement)("div", { className: "bt-fold-body" }, body) : body,
         control,
-        rest2.map((block, index) => ui.JsonBlock ? (0, import_react56.createElement)(ui.JsonBlock, { key: index, label: t("Content"), payload: block }) : null)
+        rest2.map((block, index) => ui.JsonBlock ? (0, import_react57.createElement)(ui.JsonBlock, { key: index, label: t("Content"), payload: block }) : null)
       ) : null,
-      referenceLabels.length > 0 ? (0, import_react56.createElement)("div", { className: "bt-urefs" }, t("Referenced {labels}", { labels: referenceLabels.join(t(", ")) })) : null,
-      typeof data.time === "number" ? (0, import_react56.createElement)("time", { className: "bt-utime", dateTime: new Date(data.time).toISOString(), title: clockLabel(data.time) }, groupTime ?? clock3(data.time)) : null
+      referenceLabels.length > 0 ? (0, import_react57.createElement)("div", { className: "bt-urefs" }, t("Referenced {labels}", { labels: referenceLabels.join(t(", ")) })) : null,
+      typeof data.time === "number" ? (0, import_react57.createElement)("time", { className: "bt-utime", dateTime: new Date(data.time).toISOString(), title: clockLabel(data.time) }, groupTime ?? clock3(data.time)) : null
     ),
-    text2 === "" ? null : (0, import_react56.createElement)("div", { className: "bt-utools", "data-open": toolsOpen || void 0 }, (0, import_react56.createElement)(CopyButton, { text: text2 }))
+    text2 === "" ? null : (0, import_react57.createElement)("div", { className: "bt-utools", "data-open": toolsOpen || void 0 }, (0, import_react57.createElement)(CopyButton, { text: text2 }))
   );
 }
 var USER_MESSAGE_CSS = `
@@ -20702,6 +20798,7 @@ var omni = Object.freeze({
   botChildren,
   headerButtons,
   botSettings,
+  chatSuggestions,
   registerComposerPack,
   setCanvasRenderer,
   // Parts of the Bot surface a plugin's own views are drawn with.
@@ -21412,6 +21509,7 @@ function apply(ctx) {
     () => installCompiledStyles(CHARACTER_SELECT_CSS, "character-select"),
     () => installCompiledStyles(VOICE_SETTINGS_CSS, "voice-settings"),
     () => installCompiledStyles(IMAGE_CELL_CSS, "image-cell"),
+    () => installCompiledStyles(SUGGEST_CSS, "suggestions"),
     () => installCompiledStyles(LIVE_CSS, "live"),
     () => installCompiledStyles(TEAM_APPROVAL_CSS, "team-approval"),
     () => installCompiledStyles(LAMP_CSS, "lamp"),
@@ -21536,7 +21634,8 @@ function apply(ctx) {
     () => shadow("conversation.input.dock", { id: "bot-model", order: -110, inject: face }, ModelChoiceDock),
     () => shadow("conversation.input.dock", { id: "bot-question", order: -100, inject: face }, QuestionDock),
     () => shadow("conversation.input.dock", { id: "bot-view", order: -95, inject: face }, WidgetDock),
-    () => shadow("conversation.input.dock", { id: "bot-secret", order: -90, inject: face }, SecretDock)
+    () => shadow("conversation.input.dock", { id: "bot-secret", order: -90, inject: face }, SecretDock),
+    () => shadow("conversation.input.dock", { id: "bot-suggest", order: -80, inject: face }, SuggestionDock)
   ];
   ctx.effect(() => installCompiledStyles(RETURN_CSS, "return"), "ds-bot: return styles");
   shadow("sidebar.footer.action", { id: "bot-return", order: -300, inject: face }, BotReturn);

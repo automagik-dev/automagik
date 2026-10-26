@@ -2,7 +2,7 @@ import { call } from './api.js'
 import { OmniMark, installFavicon } from './logo.js'
 import * as icons from './icons.js'
 import { setCanvasRenderer } from './canvas-slot.js'
-import { badges, botChildren, botSettings, composerPacks, headerButtons, mountShellInstallers, nav, onShell, registerComposerPack, toolCards } from './extend.js'
+import { badges, botChildren, botSettings, chatSuggestions, composerPacks, headerButtons, mountShellInstallers, nav, onShell, registerComposerPack, toolCards } from './extend.js'
 import { BUILTIN_PACKS, packCellSync, stepsAside } from './composer-packs.js'
 import { COMPOSER_PACK_CSS, packModelCell } from './composer-pack-cells.js'
 import { TASK_CSS } from './task-card.js'
@@ -53,6 +53,7 @@ import { RIGHTBAR_ATTRIBUTES, columnOpened, createSwitchWindow, drawerOpened, ri
 import { ErrorToast, FEEDBACK_CSS } from './feedback.js'
 import { ABOUT_CSS } from './about.js'
 import { MEMBER_CSS, MemberDock } from './member-status.js'
+import { SUGGEST_CSS, SuggestionDock } from './suggestions.js'
 import { USER_MESSAGE_CSS, UserMessageCell, canDrawUserMessages } from './user-message.js'
 import { noticeApprovals } from './approval-notices.js'
 import { listedOpener } from './open-listed.js'
@@ -71,7 +72,7 @@ export const omni = Object.freeze({
   // Copy in this plugin's namespace; addStrings brings a plugin's Chinese copy.
   t, addStrings, hostText, language, dateLocale,
   // The Bot surface: what runs while it is up, and what draws in its places.
-  onShell, toolCards, nav, badges, botChildren, headerButtons, botSettings, registerComposerPack, setCanvasRenderer,
+  onShell, toolCards, nav, badges, botChildren, headerButtons, botSettings, chatSuggestions, registerComposerPack, setCanvasRenderer,
   // Parts of the Bot surface a plugin's own views are drawn with.
   ui: Object.freeze({ icons, OmniMark, BotMark, MAIN_LOOK, CHARACTERS, relativeShort, createSource }),
   // The roster and actions of the running surface, or null before it runs.
@@ -790,6 +791,7 @@ export function apply(ctx) {
     () => installCompiledStyles(CHARACTER_SELECT_CSS, 'character-select'),
     () => installCompiledStyles(VOICE_SETTINGS_CSS, 'voice-settings'),
     () => installCompiledStyles(IMAGE_CELL_CSS, 'image-cell'),
+    () => installCompiledStyles(SUGGEST_CSS, 'suggestions'),
     () => installCompiledStyles(LIVE_CSS, 'live'),
     () => installCompiledStyles(TEAM_APPROVAL_CSS, 'team-approval'),
     () => installCompiledStyles(LAMP_CSS, 'lamp'),
@@ -919,6 +921,7 @@ export function apply(ctx) {
     () => shadow('conversation.input.dock', { id: 'bot-question', order: -100, inject: face }, QuestionDock),
     () => shadow('conversation.input.dock', { id: 'bot-view', order: -95, inject: face }, WidgetDock),
     () => shadow('conversation.input.dock', { id: 'bot-secret', order: -90, inject: face }, SecretDock),
+    () => shadow('conversation.input.dock', { id: 'bot-suggest', order: -80, inject: face }, SuggestionDock),
   ]
   // The return button belongs to neither group: it renders only in Agent mode.
   ctx.effect(() => installCompiledStyles(RETURN_CSS, 'return'), 'ds-bot: return styles')
