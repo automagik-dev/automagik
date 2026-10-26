@@ -351,6 +351,25 @@ test('a secrets file that cannot be read blocks every write instead of being ove
   assert.equal(saved.ok, true, JSON.stringify(saved.error))
 })
 
+test('loads racing a save after an unreadable file is gone do not clear the key it saved', async (t) => {
+  // Every load reads an unreadable file again; reads that overlapped could land after the
+  // save and empty the store (a gone file reads as empty), so the save answered with nothing.
+  for (let round = 0; round < 5; round++) {
+    const home = mkdtempSync(join(tmpdir(), 'ds-bot-secrets-'))
+    mkdirSync(join(home, 'secrets.json'))
+    const bench = start({ home })
+    t.after(bench.stop)
+    assert.equal((await bench.call('secret-set', { name: 'TEST_TOKEN', value: '12345678' })).ok, false)
+    rmSync(join(home, 'secrets.json'), { recursive: true })
+    const [saved] = await Promise.all([
+      bench.call('secret-set', { name: 'TEST_TOKEN', value: '12345678' }),
+      ...Array.from({ length: 8 }, () => bench.call('state', {})),
+    ])
+    assert.equal(saved.ok, true, JSON.stringify(saved.error))
+    assert.equal(saved.value.name, 'TEST_TOKEN')
+  }
+})
+
 test('a secrets file that is not JSON is kept aside, and the store goes on', async (t) => {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-secrets-'))
   writeFileSync(join(home, 'secrets.json'), 'not a secrets file\n')
