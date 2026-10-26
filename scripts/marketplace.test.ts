@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { INDEX_PATH, REPO_URL, VETTED, checkIndex } from './marketplace';
+import { INDEX_PATH, REPO_URL, VETTED, checkIndex, pinIndex } from './marketplace';
 import { pluginNames } from './release-plugins';
 
 const repoDir = join(import.meta.dir, '..');
@@ -20,7 +20,15 @@ describe('market index', () => {
   test('lists every plugin of this repository, by its folder, and otherwise only vetted forks', () => {
     const index = JSON.parse(readFileSync(INDEX_PATH, 'utf8'));
     const ours = index.plugins.filter((plugin: IndexPlugin) => plugin.versions[0]?.source.url === REPO_URL);
-    expect(ours.map((plugin: IndexPlugin) => plugin.name).sort()).toEqual(pluginNames());
+    const listed = ours.map((plugin: IndexPlugin) => plugin.name);
+    // A plugin not released yet is listed by its first release's pin, from its automagik.market.
+    for (const name of pluginNames().filter((name) => !listed.includes(name))) {
+      const market = JSON.parse(readFileSync(join(repoDir, 'apps', name.replace('@automagik/', ''), 'package.json'), 'utf8')).automagik?.market;
+      expect(typeof market?.title?.en).toBe('string');
+      expect(typeof market?.description?.en).toBe('string');
+      expect(Object.keys(index.metadata.categories)).toContain(market.category);
+    }
+    expect(listed.filter((name: string) => !pluginNames().includes(name))).toEqual([]);
     for (const plugin of ours) {
       for (const entry of plugin.versions) {
         expect(entry.source.url).toBe(REPO_URL);
@@ -65,6 +73,25 @@ describe('market index', () => {
       version: genie.version,
       source: { type: 'git', url: genie.repository.replace(/\.git$/, ''), commit: genie.commit, path: genie.path },
     });
+  });
+
+  test('a release lists a plugin of ours that is not listed yet, from its package.json automagik.market', () => {
+    const index = JSON.parse(readFileSync(INDEX_PATH, 'utf8'));
+    const pinned = pinIndex({ ...index, plugins: [] }, repoDir, 'HEAD');
+    const bridge = pinned.plugins.find((plugin) => plugin.name === '@automagik/unfold-bridge-dsh');
+    const manifest = JSON.parse(execFileSync('git', ['show', 'HEAD:apps/unfold-bridge-dsh/package.json'], { cwd: repoDir, encoding: 'utf8' }));
+    expect(bridge).toMatchObject({
+      title: manifest.automagik.market.title,
+      description: manifest.automagik.market.description,
+      author: 'Automagik',
+      homepage: `${REPO_URL}/tree/dev/apps/unfold-bridge-dsh#readme`,
+      repository: { url: REPO_URL, directory: 'apps/unfold-bridge-dsh' },
+      metadata: { category: manifest.automagik.market.category, keywords: manifest.automagik.market.keywords, labels: ['official'] },
+      versions: [{ version: manifest.version, source: { type: 'git', url: REPO_URL, commit: head, path: 'apps/unfold-bridge-dsh' }, engines: { dsh: manifest.engines.dsh } }],
+    });
+    // only plugins with a market block join; the Bot team and the welcome are listed by hand
+    expect(pinned.plugins.map((plugin) => plugin.name)).toEqual(['@automagik/unfold-bridge-dsh']);
+    expect(checkIndex(pinned, repoDir)).toEqual([]);
   });
 
   test('a vetted fork passes at its commit, proven by dsh-marketplace', () => {

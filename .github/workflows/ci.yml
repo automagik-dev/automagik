@@ -41,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [bots-dsh, welcome-dsh]
+        app: [bots-dsh, unfold-bridge-dsh, welcome-dsh]
     defaults:
       run:
         working-directory: apps/${{ matrix.app }}
@@ -87,6 +87,8 @@ jobs:
           echo "OMNI_CHECKOUT=${dir}" >> "$GITHUB_ENV"
 
       - name: Generated files are current
+        # the Unfold bridge is host code only: no client bundle
+        if: matrix.app != 'unfold-bridge-dsh'
         run: node scripts/build-client.mjs --check
 
       - name: Lint

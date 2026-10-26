@@ -6,6 +6,7 @@ name: Release
 #
 #   automagik-bots-dsh-<version>.tgz      the Bot team (npm pack of apps/bots-dsh)
 #   automagik-welcome-dsh-<version>.tgz   the welcome and Connect AI (apps/welcome-dsh)
+#   automagik-unfold-bridge-dsh-<version>.tgz  the Unfold bridge (apps/unfold-bridge-dsh)
 #   plugins.json                          each tarball's name, version, file and integrity
 #   dsh-oh-my-claude-<its version>.tgz    the add-ons the lane carries, at the profile's pins
 #   addons.json                           (scripts/lane.ts LANE_ADDONS), and what each one is
@@ -121,8 +122,9 @@ jobs:
           set -euo pipefail
           bun install --frozen-lockfile --ignore-scripts
           bun run check
-          for app in bots-dsh welcome-dsh; do
-            (cd "apps/${app}" && bun install --frozen-lockfile --ignore-scripts && node scripts/build-client.mjs --check)
+          for app in bots-dsh unfold-bridge-dsh welcome-dsh; do
+            # the Unfold bridge is host code only: no client bundle to compare
+            (cd "apps/${app}" && bun install --frozen-lockfile --ignore-scripts && { [ ! -f scripts/build-client.mjs ] || node scripts/build-client.mjs --check; })
           done
 
       - name: Which lane
@@ -180,7 +182,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          for app in bots-dsh welcome-dsh; do
+          for app in bots-dsh unfold-bridge-dsh welcome-dsh; do
             (cd "apps/${app}" && npm pack --silent --ignore-scripts --pack-destination ../../release >/dev/null)
           done
           bun scripts/release-plugins.ts release "${VERSION}" "${SHA}" > release/plugins.json
