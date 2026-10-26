@@ -18,7 +18,9 @@ describe('one version for the repository', () => {
     expect(drift('3.7.0', root)).toEqual([]);
     const desktop = JSON.parse(readFileSync(join(root, 'apps/desktop/package.json'), 'utf8'));
     expect(desktop.name).toBe('@automagik/omni-desktop');
-    for (const bad of ['3.261024.1', '3.7', '3.07.0', '4.1.0']) expect(() => setVersion(bad, root)).toThrow(/not a version/);
+    setVersion('3.7.2', root);
+    expect(drift('3.7.2', root)).toEqual([]);
+    for (const bad of ['3.261024.1', '3.7', '3.07.0', '3.7.01', '4.1.0']) expect(() => setVersion(bad, root)).toThrow(/not a version/);
   });
 
   test('the next release is one above the highest v3.N.0, numbers compared as numbers', () => {
