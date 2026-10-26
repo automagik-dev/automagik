@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { request } from 'node:http'
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { Server, request } from 'node:http'
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as plugin from '../index.js'
@@ -87,6 +87,34 @@ test('apply serves the bridge, writes its endpoint file with a fresh key, and un
     assert.equal((await get(again.port, endpoint.key)).status, 401, 'the old key no longer opens it')
     await second.unload()
   } finally {
+    if (was === undefined) delete process.env.XDG_STATE_HOME
+    else process.env.XDG_STATE_HOME = was
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('when the endpoint file cannot be written, the listener is closed and the failure is logged', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'unfold-bridge-host-'))
+  const was = process.env.XDG_STATE_HOME
+  // a file where the state folder should be: the folder cannot be made
+  writeFileSync(join(dir, 'unfold-bridge'), '')
+  process.env.XDG_STATE_HOME = dir
+  // the servers apply starts, seen through http.Server's listen
+  const started = []
+  const listen = Server.prototype.listen
+  Server.prototype.listen = function (...args) {
+    started.push(this)
+    return listen.apply(this, args)
+  }
+  try {
+    const ctx = fakeContext(fakeLlm())
+    plugin.apply(ctx)
+    await until(() => ctx.logs.some(([format]) => /not serving/.test(format)))
+    assert.equal(started.length, 1)
+    assert.equal(started[0].listening, false, 'the listener is closed')
+    await ctx.unload()
+  } finally {
+    Server.prototype.listen = listen
     if (was === undefined) delete process.env.XDG_STATE_HOME
     else process.env.XDG_STATE_HOME = was
     rmSync(dir, { recursive: true, force: true })

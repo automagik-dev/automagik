@@ -21,9 +21,15 @@ export function apply(ctx) {
       key,
       assistant: createAssistantMessage,
       log: line => ctx.logger?.info?.('unfold-bridge: %s', line),
-    }).then(bridge => {
+    }).then(async bridge => {
       if (stopped) return bridge.close().then(() => undefined)
-      writeEndpoint(file, { port: bridge.port, key, pid: process.pid, started: Date.now() })
+      try {
+        writeEndpoint(file, { port: bridge.port, key, pid: process.pid, started: Date.now() })
+      } catch (error) {
+        // a listener nobody can find serves no one: close it
+        await bridge.close()
+        throw error
+      }
       ctx.logger?.info?.('unfold-bridge: serving on 127.0.0.1:%d', bridge.port)
       return bridge
     }).catch(error => {
