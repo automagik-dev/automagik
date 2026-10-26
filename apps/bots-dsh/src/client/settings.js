@@ -153,8 +153,10 @@ function MainBotsSection({ roster, actions, run }) {
   const mains = (roster.mainBotIds ?? []).map(id => roster.byId[id]).filter(Boolean)
   const [first, ...others] = mains
   const candidates = roster.bots.filter(bot => !isMainOf(roster, bot.id))
+  // The Omni Bot keeps the first place (roster.js OMNI_KIND): others join it.
+  const omniFirst = first?.kind === 'omni'
   return h(SetSection, { title: t('Main Bot') },
-    h(SetRow, {
+    omniFirst ? h(SetRow, { label: first.name, hint: t('Always the first Main Bot: it runs your Omni. Other Bots can be Main Bots beside it.') }) : h(SetRow, {
       label: t('Main Bot'),
       hint: first ? t('First in the sidebar. Pick another Bot to hand it the role; {name} then stops being a Main Bot.', { name: first.name }) : undefined,
     },
@@ -163,7 +165,7 @@ function MainBotsSection({ roster, actions, run }) {
       onChange: event => run(actions.setMain(event.target.value, true, first ? { replace: first.id } : {})),
     }, first ? null : h('option', { value: '' }, t('Choose a Bot…')), roster.bots.map(bot => h('option', { key: bot.id, value: bot.id }, bot.name)))),
     others.map(bot => h(SetRow, { key: bot.id, label: bot.name, hint: t('Also a Main Bot.') },
-      h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => run(actions.setMain(bot.id, true, { primary: true })) }, t('Move to first')),
+      omniFirst ? null : h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => run(actions.setMain(bot.id, true, { primary: true })) }, t('Move to first')),
       h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => run(actions.setMain(bot.id, false)) }, t('Remove Main Bot role')))),
     candidates.length > 0 ? h(SetRow, { label: t('Add a Main Bot'), hint: t('Main Bots can create and change Bots, and run every group chat.') },
       h('select', {

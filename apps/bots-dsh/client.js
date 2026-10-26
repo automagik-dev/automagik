@@ -375,6 +375,7 @@ var ZH = {
   "Full access": "完全权限",
   "Same for every member": "全员统一",
   "Replaces each member's own permissions in this group.": "在这个群里代替各成员自己的权限。",
+  "Always the first Main Bot: it runs your Omni. Other Bots can be Main Bots beside it.": "始终是第一个主 Bot：由它操作你的 Omni。其他 Bot 可以和它一起做主 Bot。",
   "The only Main Bot. To hand the role to another Bot, use Main Bot on the Bots page.": "这是唯一的主 Bot。要把主 Bot 交给别的 Bot，请到「Bot」页的主 Bot 里换。",
   Change: "更换",
   "Can create and change Bots, and runs every group chat.": "可以创建和修改 Bot，并管理所有群聊。",
@@ -11818,6 +11819,7 @@ function BotSettingsForm({ bot, roster, actions, run: run2 }) {
   }, [confirming]);
   const isMainBot = isMainOf(roster, bot.id);
   const onlyMain = isMainBot && (roster.mainBotIds ?? []).length === 1;
+  const omni2 = bot.kind === "omni";
   const isTile = roster.mainBotId === bot.id;
   const save = (patch) => run2(actions.updateBot(bot.id, patch));
   const extraCards = useEntries(botSettings);
@@ -11895,7 +11897,16 @@ function BotSettingsForm({ bot, roster, actions, run: run2 }) {
     (0, import_react28.createElement)(
       Card,
       { title: t("Main Bot") },
-      onlyMain ? (0, import_react28.createElement)(
+      omni2 ? (0, import_react28.createElement)(
+        "div",
+        { className: "bt-set-row bt-bs-row" },
+        (0, import_react28.createElement)(
+          "span",
+          { className: "bt-set-copy" },
+          (0, import_react28.createElement)("span", { className: "bt-bs-label" }, t("Main Bot")),
+          (0, import_react28.createElement)("span", { className: "bt-set-hint" }, t("Always the first Main Bot: it runs your Omni. Other Bots can be Main Bots beside it."))
+        )
+      ) : onlyMain ? (0, import_react28.createElement)(
         "div",
         { className: "bt-set-row bt-bs-row" },
         (0, import_react28.createElement)(
@@ -19383,10 +19394,11 @@ function MainBotsSection({ roster, actions, run: run2 }) {
   const mains = (roster.mainBotIds ?? []).map((id) => roster.byId[id]).filter(Boolean);
   const [first, ...others] = mains;
   const candidates = roster.bots.filter((bot) => !isMainOf(roster, bot.id));
+  const omniFirst = first?.kind === "omni";
   return (0, import_react54.createElement)(
     SetSection,
     { title: t("Main Bot") },
-    (0, import_react54.createElement)(
+    omniFirst ? (0, import_react54.createElement)(SetRow, { label: first.name, hint: t("Always the first Main Bot: it runs your Omni. Other Bots can be Main Bots beside it.") }) : (0, import_react54.createElement)(
       SetRow,
       {
         label: t("Main Bot"),
@@ -19402,7 +19414,7 @@ function MainBotsSection({ roster, actions, run: run2 }) {
     others.map((bot) => (0, import_react54.createElement)(
       SetRow,
       { key: bot.id, label: bot.name, hint: t("Also a Main Bot.") },
-      (0, import_react54.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => run2(actions.setMain(bot.id, true, { primary: true })) }, t("Move to first")),
+      omniFirst ? null : (0, import_react54.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => run2(actions.setMain(bot.id, true, { primary: true })) }, t("Move to first")),
       (0, import_react54.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => run2(actions.setMain(bot.id, false)) }, t("Remove Main Bot role"))
     )),
     candidates.length > 0 ? (0, import_react54.createElement)(
@@ -19639,7 +19651,8 @@ function ContextMenu({ menu, roster, actions, leaving = false }) {
         actions.openSession(copy2.id);
       }] : null,
       bot && !isMainBot ? [t("Make Main Bot"), StarLineIcon, () => actions.setMain(bot.id, true)] : null,
-      bot && isMainBot && mainCount > 1 ? [t("Remove Main Bot role"), StarLineIcon, () => actions.setMain(bot.id, false)] : null
+      // The Omni Bot stays a Main Bot (roster.js OMNI_KIND).
+      bot && isMainBot && mainCount > 1 && bot.kind !== "omni" ? [t("Remove Main Bot role"), StarLineIcon, () => actions.setMain(bot.id, false)] : null
     ],
     [
       // The Bot goes on in a fresh conversation; earlier parts stay readable.

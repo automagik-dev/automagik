@@ -143,6 +143,8 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
   }, [confirming])
   const isMainBot = isMainOf(roster, bot.id)
   const onlyMain = isMainBot && (roster.mainBotIds ?? []).length === 1
+  // The Omni Bot is always the first Main Bot: only a Main Bot operates Omni.
+  const omni = bot.kind === 'omni'
   const isTile = roster.mainBotId === bot.id
   const save = patch => run(actions.updateBot(bot.id, patch))
   // Cards other Omni plugins add (extend.js), such as what the Bot may do on Omni.
@@ -180,7 +182,12 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
     roster.memory === false ? null : h(MemoryCard, { bot, actions }),
     h(BotSchedules, { bot, roster, actions }),
     h(Card, { title: t('Main Bot') },
-      onlyMain
+      omni
+        ? h('div', { className: 'bt-set-row bt-bs-row' },
+            h('span', { className: 'bt-set-copy' },
+              h('span', { className: 'bt-bs-label' }, t('Main Bot')),
+              h('span', { className: 'bt-set-hint' }, t('Always the first Main Bot: it runs your Omni. Other Bots can be Main Bots beside it.'))))
+        : onlyMain
         ? h('div', { className: 'bt-set-row bt-bs-row' },
             h('span', { className: 'bt-set-copy' },
               h('span', { className: 'bt-bs-label' }, t('Main Bot')),
