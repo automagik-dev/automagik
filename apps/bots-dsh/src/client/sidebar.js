@@ -61,7 +61,9 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   // Work in a group runs in a Session of its own, so the Bot's chat stays idle meanwhile.
   const groups = workKeys(useGroupWork(useWork, rooms => Object.entries(rooms).flatMap(([roomId, entries]) => entries.filter(entry => entry.botId === id).map(entry => ({ id: roomId, ...doingOf(entry) })))))
   const away = !running && groups.length > 0
-  const state = botState(running || away, doing, alert)
+  const failed = useWork ? useWork(work => work.failed?.[id] !== undefined) : false
+  const replied = useSessionStatus(map => map.get(part)?.completionUnread === true) && !active
+  const state = botState(running || away, doing, alert, { failed, unread: replied })
   // A Bot running in its own chat previews what it is doing, like a group's row.
   const runningLine = running && doing ? doingLine(doing) : null
   const awayLine = away ? workLine(roster.roomsById[groups[0].id]?.name ?? t('a group chat'), groups[0], groups.length - 1) : null

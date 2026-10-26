@@ -196,6 +196,7 @@ export function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, ro
   const bot = owner
   const running = useSessionStatus(map => map.get(part)?.running === true)
   const doing = useActivity(map => map[bot?.id ?? sessionId])
+  const failed = useWork ? useWork(work => work.failed?.[bot?.id ?? ''] !== undefined) : false
   const transcript = useSessions(list => transcriptOf(list, part, bot?.name ?? room?.name ?? t('Bot'), roster.exchangeTurns[part]))
   const usage = useSessions(list => usageOf(list, [part, ...(bot?.parts ?? room?.parts ?? [])]))
   const run = promise => Promise.resolve(promise)
@@ -246,7 +247,7 @@ export function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, ro
   const tabs = bot ? ['details', 'browser'] : ['details']
   return [h(Fragment, { key: 'top' }, top),
     h('div', { key: 'id', className: 'bt-drawer-id', 'data-move': side },
-      bot ? h(BotAvatar, { bot, size: 64, state: botState(running, doing, roster.questions?.[part] !== undefined), main: isMainBot, badge: false, gaze: true, pokeable: true })
+      bot ? h(BotAvatar, { bot, size: 64, state: botState(running, doing, roster.questions?.[part] !== undefined, { failed }), main: isMainBot, badge: false, gaze: true, pokeable: true })
         : h(MemberPile, { room, roster }),
       editing
         ? h('input', {

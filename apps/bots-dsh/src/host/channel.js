@@ -5,10 +5,11 @@ import { join } from 'node:path'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { install as installBtw } from './btw.js'
 import { createPrivacy } from './privacy.js'
+import { createPets } from './pets.js'
 import { questionReply, viewReply } from './parts.js'
 import { defaultRelayLimit } from './groups.js'
 import { validateViewAnswer } from '../shared/views.js'
-import { COLORS, EXTRA_COLORS, ROUTE } from './constants.js'
+import { COLORS, EXTRA_COLORS, PET_CODEX_ROUTE, PET_ROUTE, ROUTE } from './constants.js'
 
 const LANGUAGES = { zh: 'Chinese (简体中文)', en: 'English' }
 const RUN_STATS = ['sessionStats', 'tokenUsage', 'contextPressure']
@@ -89,7 +90,7 @@ export function install(rt) {
   // and per Session, when its running turn began.
   const live = () => ({
     activity: rt.activityView(),
-    work: { bots: rt.workView(), rooms: rt.roomWorkView(), approvals: rt.approvalsView(), waiting: rt.waitingView?.() ?? {}, turns: rt.turnsView?.() ?? {} },
+    work: { bots: rt.workView(), rooms: rt.roomWorkView(), approvals: rt.approvalsView(), waiting: rt.waitingView?.() ?? {}, turns: rt.turnsView?.() ?? {}, failed: rt.failedView?.() ?? {} },
     memoryNews: rt.memoryNews(),
     memoryReviews: rt.memoryReviews(),
     connectors: rt.connectorsView(),
@@ -103,7 +104,8 @@ export function install(rt) {
   // What a host that only reads the team may still answer.
   // Updates change the dsh profile, not the team, so a reading host may run them too.
   const privacy = createPrivacy()
-  const READS = new Set(['privacy', 'state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking'])
+  const pets = createPets({ home: () => rt.home, warn: (...args) => rt.warn?.(...args) })
+  const READS = new Set(['privacy', 'pets', 'pets-browse', 'state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking'])
 
   function setPrefs(body) {
     if (body.theme !== undefined) {
@@ -465,6 +467,18 @@ export function install(rt) {
           if (rt.browserChannel === undefined) return fail('Bot browsers are off on this host', 'bot/browser-off')
           return ok(rt.browserChannel.result(body))
         // The Privacy page (privacy.js): what the desktop app may share, all off until switched on.
+        // Pets (pets.js): the Codex-format avatars on this computer, and codex-pets.net's.
+        case 'pets':
+          return ok(await pets.list())
+        case 'pets-browse':
+          return ok(await pets.browse({ query: body.query, page: body.page, sort: body.sort }))
+        case 'pet-use': {
+          await rt.load()
+          const pet = await pets.adopt(String(body.source ?? ''), String(body.id ?? ''))
+          const bot = rt.botOf(body.botId)
+          if (!bot) return fail('Unknown Bot', 'bot/not-found')
+          return ok(await rt.updateBot(bot.id, { avatar: { ...(bot.avatar ?? {}), image: undefined, pet: { source: pet.source, id: pet.id, version: pet.version, ...(pet.sleep ? { sleep: true } : {}) } } }))
+        }
         case 'privacy':
           return ok(privacy.view())
         case 'privacy-set':
@@ -488,6 +502,41 @@ export function install(rt) {
       return fail(message, code)
     }
   }
+
+  // A pet's sheet for the marks that wear it, and a character's baked sheet written into
+  // Codex's own pets folder, as bytes rather than JSON. The write streams its body, which a
+  // GET cannot have, so it has a route of its own.
+  const petFailure = error => Response.json({ error: error?.message ?? String(error) }, { status: error?.code === 'bot/invalid' ? 400 : 500 })
+  ctx.effect(() => ctx.connection.fetch.register({
+    path: PET_ROUTE,
+    methods: ['GET'],
+    requestBody: 'buffered',
+    fetch: async (request) => {
+      const url = new URL(request.url)
+      try {
+        const bytes = await pets.file(url.searchParams.get('source') ?? '', url.searchParams.get('id') ?? '', url.searchParams.get('part') === 'sleep' ? 'sleep' : 'sheet')
+        if (!bytes) return new Response('Not found', { status: 404 })
+        return new Response(bytes, { status: 200, headers: { 'content-type': 'image/webp', 'cache-control': 'private, max-age=3600' } })
+      } catch (error) {
+        return petFailure(error)
+      }
+    },
+  }), 'ds-bot: pet route')
+  ctx.effect(() => ctx.connection.fetch.register({
+    path: PET_CODEX_ROUTE,
+    methods: ['PUT'],
+    requestBody: 'streaming',
+    fetch: async (request) => {
+      const url = new URL(request.url)
+      const id = url.searchParams.get('id') ?? ''
+      try {
+        const bytes = Buffer.from(await request.arrayBuffer())
+        return Response.json(await pets.toCodex(id, { name: url.searchParams.get('name') ?? id, description: url.searchParams.get('description') ?? '', bytes, part: url.searchParams.get('part') === 'sleep' ? 'sleep' : 'sheet' }))
+      } catch (error) {
+        return petFailure(error)
+      }
+    },
+  }), 'ds-bot: pet to Codex route')
 
   // An exact Fetch route on the shared /api channel; the browser authenticates with its session cookie.
   ctx.effect(() => ctx.connection.fetch.register({

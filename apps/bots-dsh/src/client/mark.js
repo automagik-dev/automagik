@@ -2,6 +2,8 @@ import { createElement as h, useEffect, useRef, useState } from 'react'
 import { fnv1a, lookOf, shapeId, shapeOf, MASK_ID, nextMarkSerial, characterMarkup } from './characters.js'
 import { t } from './i18n.js'
 import { clayArtOf, faceAt, faceOf } from './clay-art.js'
+import { PetSprite, useDrowsy } from './pet.js'
+import { bakedPet, canBake } from './pet-bake.js'
 
 export { colorOf, lookOf } from './characters.js'
 
@@ -11,9 +13,12 @@ export { colorOf, lookOf } from './characters.js'
 // Mascot states: what the Bot is doing picks the
 // motion. Uploaded images only bob or hop, since they have no parts to move. `waiting`:
 // no turn runs, but work it handed on has not come back yet.
-const STATES = ['idle', 'thinking', 'searching', 'working', 'sending', 'orbit', 'waiting', 'alert', 'done']
-export const botState = (running, activity, alert) => (running ? (STATES.includes(activity) && activity !== 'waiting' ? activity : 'working')
-  : alert ? 'alert' : activity === 'waiting' ? 'waiting' : 'idle')
+// Past the turn itself: `failed`, its last turn failed (until the next one starts);
+// `review`, a reply waits to be read; `sleeping`, nobody has touched the window a while.
+const STATES = ['idle', 'thinking', 'searching', 'working', 'sending', 'orbit', 'waiting', 'alert', 'done', 'failed', 'review', 'sleeping']
+const WORK = ['thinking', 'searching', 'working', 'sending', 'orbit']
+export const botState = (running, activity, alert, { failed = false, unread = false } = {}) => (running ? (WORK.includes(activity) ? activity : 'working')
+  : alert ? 'alert' : failed ? 'failed' : activity === 'waiting' ? 'waiting' : unread ? 'review' : 'idle')
 export const toolState = name => (/^(message_bot|stop_bot|create_bot|update_bot|create_group|update_group|delete_group|post_to_group)$/.test(name) ? 'sending'
   : /search|fetch|browse|read|grep|glob|list|recall/i.test(name) ? 'searching' : 'working')
 
@@ -49,8 +54,62 @@ function useGaze(ref, enabled) {
 // fidget and moment); transcript marks stay still so a long chat does not run dozens
 // of animations.
 const FIDGETS = ['hop', 'sway', 'stretch', 'look']
-export function BotMark({ bot, look: given, size = 36, state = 'idle', live = false, gaze = false, pokeable = false, label }) {
-  const look = given ?? lookOf(bot)
+
+// Pets (pet.js) in the Codex format: a pet the team installed or ships, served by the host
+// (pets.js), or a character baked into one (pet-bake.js) for the marks that move.
+export const GENIE_PET = Object.freeze({ source: 'builtin', id: 'genie-cosmic', version: 2, sleep: true })
+const petUrl = (pet, part) => `api/omni-ui/pet?${new URLSearchParams({ source: pet.source, id: pet.id, ...(part ? { part } : {}) })}`
+export const servedPet = pet => ({ sheet: petUrl(pet), sleep: pet.sleep ? petUrl(pet, 'sleep') : undefined, version: pet.version })
+/** The pet a mark wears: its own, Genie's, or (moving marks only) its character baked; else null. */
+export function petOf(bot, look, { live, size }) {
+  if (look.image) return null
+  if (look.pet) return { served: look.pet }
+  if (bot?.kind === 'genie' && size > 28) return { served: GENIE_PET }
+  if (!live || size <= 20) return null
+  const art = clayArtOf(bot, look)
+  if (art === 'genie') return null
+  return { bake: art === 'omni' ? { clay: 'omni' } : { shape: shapeId(look.shape), color: look.color } }
+}
+function useBaked(wanted) {
+  const key = wanted ? `${wanted.clay ?? ''}|${wanted.shape ?? ''}|${wanted.color ?? ''}` : ''
+  const [pet, setPet] = useState(null)
+  useEffect(() => {
+    if (!wanted || !canBake()) { setPet(null); return undefined }
+    let live = true
+    bakedPet(wanted).then((next) => { if (live) setPet(next) }, () => { if (live) setPet(null) })
+    return () => { live = false }
+  }, [key])
+  return pet
+}
+
+export function BotMark(props) {
+  const look = props.look ?? lookOf(props.bot)
+  const size = props.size ?? 36
+  const wants = petOf(props.bot, look, { live: props.live === true, size })
+  const baked = useBaked(wants?.bake)
+  const pet = wants?.served ? servedPet(wants.served) : baked
+  return pet ? h(PetMark, { ...props, look, size, pet }) : h(DrawnMark, { ...props, look, size })
+}
+
+// A mark that wears a pet: the pet plays the Bot's state; a poke waves, then it goes back.
+function PetMark({ size, state = 'idle', live = false, gaze = false, pokeable = false, label, pet }) {
+  const [poked, setPoked] = useState(false)
+  const drowsy = useDrowsy(live)
+  const shown = poked ? 'poked' : drowsy && state === 'idle' ? 'sleeping' : STATES.includes(state) ? state : 'idle'
+  return h('span', {
+    className: 'bt-mark',
+    'data-shape': 'pet',
+    'data-state': shown,
+    'data-live': live ? '' : undefined,
+    style: { width: size, height: size },
+    role: label ? 'img' : undefined,
+    'aria-label': label,
+    'aria-hidden': label ? undefined : true,
+    onClick: pokeable ? () => setPoked(true) : undefined,
+  }, h(PetSprite, { pet, size, state: shown, live, gaze, onOnce: () => setPoked(false) }))
+}
+
+function DrawnMark({ bot, look, size = 36, state = 'idle', live = false, gaze = false, pokeable = false, label }) {
   const ref = useRef(null)
   const maskId = useRef('')
   if (maskId.current === '') maskId.current = `bt-mark-${nextMarkSerial()}`
@@ -109,8 +168,9 @@ function useSettled(state) {
   useEffect(() => {
     const was = prev.current
     prev.current = state
-    if (state !== 'idle') { setSettled(false); return undefined }
-    if (was === 'idle' || was === 'alert') return undefined
+    // A run that ends settles into rest, or into a reply waiting to be read.
+    if (state !== 'idle' && state !== 'review') { setSettled(false); return undefined }
+    if (!WORK.includes(was) && was !== 'waiting') return undefined
     setSettled(true)
     const timer = setTimeout(() => setSettled(false), 1800)
     return () => clearTimeout(timer)
@@ -134,7 +194,7 @@ function Crown() {
 export function BotAvatar({ bot, size, state = 'idle', main, admin, crown = false, badge = true, live = true, gaze = false, pokeable = false }) {
   const settled = useSettled(state)
   if (bot === undefined) return h(BotMark, { size })
-  const badgeKind = !badge ? null : state === 'alert' ? 'alert' : state !== 'idle' && state !== 'waiting' ? 'working' : admin ? 'admin' : main && !crown ? 'main' : null
+  const badgeKind = !badge ? null : state === 'alert' ? 'alert' : WORK.includes(state) ? 'working' : admin ? 'admin' : main && !crown ? 'main' : null
   return h('span', { className: 'bt-mark', style: { width: size, height: size, '--bt-size': `${size}px` } },
     h(BotMark, { bot, size, state: settled ? 'done' : state, live, gaze, pokeable }),
     crown ? h(Crown) : null,

@@ -71,6 +71,8 @@ export function lookOf(bot) {
   return {
     shape: hasShape(avatar.shape) ? avatar.shape : bot?.id ? defaultShape(String(bot.id)) : FALLBACK_SHAPE,
     image: avatar.image,
+    // A pet (pets.js) the Bot wears; a photo wins.
+    pet: avatar.image || typeof avatar.pet?.id !== 'string' ? undefined : avatar.pet,
     color: colorOf(bot),
   }
 }
@@ -147,3 +149,32 @@ export function maskOf(shape) {
   return mask
 }
 export const DEFAULT_MASK = maskOf(FALLBACK_SHAPE)
+
+// A character's parts as separate pictures, for baking it into a pet's atlas (pet-bake.js):
+// the body without its eye holes, lit and blushing as a mark draws it, and the eyes in each
+// expression a pet's rows need, all in the character's 100-unit box.
+const svgDoc = (inner, size) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size * 4}" height="${size * 4}">${inner}</svg>`
+const eyesAs = (def, draw) => def.eyes.map(([cx, cy, w, eyeHeight, tilt], index) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})">${draw(w, eyeHeight, index)}</g>`).join('')
+export function bakeMarkup(shape, color) {
+  const def = shapeOf(shape)
+  const box = def.size
+  const ink = inkFill(color)
+  const stops = GRADIENTS[color] ?? [[0, `color-mix(in srgb, ${ink} 58%, #fff)`], [0.5, ink], [1, `color-mix(in srgb, ${ink} 72%, #000)`]]
+  const gradient = `<defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="${box * 0.18}" y1="${box * 0.08}" x2="${box * 0.8}" y2="${box * 0.95}">${stops.map(([offset, value]) => `<stop offset="${offset}" style="stop-color:${value}"/>`).join('')}</linearGradient></defs>`
+  const wrap = inner => (def.wrap ? `<g transform="${def.wrap}">${inner}</g>` : inner)
+  const pupil = (w, eyeHeight, squint = 1, drop = 0) => `<g transform="translate(0 ${drop}) scale(1 ${squint})"><rect x="${-w / 2}" y="${-eyeHeight / 2}" width="${w}" height="${eyeHeight}" rx="${w / 2}" fill="${PUPIL}"/><circle cx="${w * 0.12}" cy="${-eyeHeight * 0.24}" r="${w * 0.3}" fill="#fff"/><circle cx="${-w * 0.16}" cy="${eyeHeight * 0.22}" r="${w * 0.12}" fill="#fff" fill-opacity=".7"/></g>`
+  const arc = (w, eyeHeight, up) => `<path d="M${-w * 0.62} ${eyeHeight * (up ? 0.14 : -0.14)}Q0 ${eyeHeight * (up ? -0.42 : 0.42)} ${w * 0.62} ${eyeHeight * (up ? 0.14 : -0.14)}" fill="none" stroke="${PUPIL}" stroke-width="${w * 0.5}" stroke-linecap="round"/>`
+  const faces = {
+    open: eyesAs(def, (w, eyeHeight) => pupil(w, eyeHeight)),
+    focused: eyesAs(def, (w, eyeHeight) => pupil(w, eyeHeight, 0.55)),
+    closed: eyesAs(def, (w, eyeHeight) => `<rect x="${-w * 0.62}" y="${-w * 0.22}" width="${w * 1.24}" height="${w * 0.44}" rx="${w * 0.22}" fill="${PUPIL}"/>`),
+    happy: eyesAs(def, (w, eyeHeight) => arc(w, eyeHeight, true)),
+    asleep: eyesAs(def, (w, eyeHeight) => arc(w, eyeHeight, false)),
+    sad: eyesAs(def, (w, eyeHeight, index) => `${pupil(w, eyeHeight, 0.7, eyeHeight * 0.12)}${index === 0 ? `<path d="M0 ${eyeHeight * 0.55}q${w * 0.5} ${w * 0.9} 0 ${w * 1.3}q${-w * 0.5} ${-w * 0.4} 0 ${-w * 1.3}z" fill="#5bb7ff"/>` : ''}`),
+  }
+  return {
+    box,
+    body: svgDoc(`${gradient}${wrap(`${bodyOf(def, 'url(#g)')}${def.eyes.map(blushMarkup).join('')}`)}`, box),
+    faces: Object.fromEntries(Object.entries(faces).map(([name, inner]) => [name, svgDoc(wrap(inner), box)])),
+  }
+}
