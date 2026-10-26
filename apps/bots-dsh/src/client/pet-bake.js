@@ -1,4 +1,5 @@
 import { bakeMarkup } from './characters.js'
+import { inkFill } from './inks.js'
 import { OMNI_ATLAS, faceAt } from './clay-art.js'
 import { CELL, DIRECTIONS, LOOK_ROW, ROWS, SLEEP } from './pet.js'
 
@@ -66,9 +67,14 @@ const loadImage = src => new Promise((resolve, reject) => {
 })
 const svgSrc = svg => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
 
+// A picture drawn as an image sees none of the page's CSS variables, and the inks are
+// variables (inks.js inkFill): they are put in as the colors they are now, in this theme.
+const resolveVars = text => (typeof document === 'undefined' ? text
+  : text.replace(/var\((--[\w-]+)\)/g, (_, name) => getComputedStyle(document.body).getPropertyValue(name).trim() || '#888888'))
+
 async function charactersLayers(shape, color) {
   const parts = bakeMarkup(shape, color)
-  const [body, ...faces] = await Promise.all([parts.body, ...Object.values(parts.faces)].map(svg => loadImage(svgSrc(svg))))
+  const [body, ...faces] = await Promise.all([parts.body, ...Object.values(parts.faces)].map(svg => loadImage(svgSrc(resolveVars(svg)))))
   const byName = Object.fromEntries(Object.keys(parts.faces).map((name, index) => [name, faces[index]]))
   // The eyes move a few units of the character's 100-unit box when they look.
   return (context, p) => {
@@ -137,7 +143,8 @@ export async function bakeBlobs(look, scale = 1) {
 // look for the page's life.
 const baked = new Map()
 export const canBake = () => typeof document !== 'undefined' && typeof Image !== 'undefined' && typeof URL?.createObjectURL === 'function'
-export const bakeKey = look => (look.clay === 'omni' ? 'clay:omni' : `${look.shape}|${look.color}`)
+// The ink as it resolves now is in the key, so a theme that changes it bakes anew.
+export const bakeKey = look => (look.clay === 'omni' ? 'clay:omni' : `${look.shape}|${look.color}|${resolveVars(inkFill(look.color))}`)
 /** The pet for a look ({ sheet, sleep, version } with object URLs), baked once. */
 export function bakedPet(look) {
   const key = bakeKey(look)

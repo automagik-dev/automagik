@@ -27,7 +27,7 @@ import { QuestionCard, QuestionDock } from './questions.js'
 import { DesktopUpdate, DESKTOP_UPDATE_CSS } from './desktop-update.js'
 import { PRIVACY_CSS } from './privacy.js'
 import { PET_CSS } from './pet.js'
-import { PETS_CSS } from './pets-tab.js'
+import { CHARACTER_SELECT_CSS } from './character-select.js'
 import { VOICE_SETTINGS_CSS } from './voice-settings.js'
 import { IMAGE_CELL_CSS } from './image-cell.js'
 import { TeamApproval, TEAM_APPROVAL_CSS, isTeamApproval } from './team-approval.js'
@@ -787,7 +787,7 @@ export function apply(ctx) {
     () => installCompiledStyles(DESKTOP_UPDATE_CSS, 'desktop-update'),
     () => installCompiledStyles(PRIVACY_CSS, 'privacy'),
     () => installCompiledStyles(PET_CSS, 'pet'),
-    () => installCompiledStyles(PETS_CSS, 'pets'),
+    () => installCompiledStyles(CHARACTER_SELECT_CSS, 'character-select'),
     () => installCompiledStyles(VOICE_SETTINGS_CSS, 'voice-settings'),
     () => installCompiledStyles(IMAGE_CELL_CSS, 'image-cell'),
     () => installCompiledStyles(LIVE_CSS, 'live'),
