@@ -13627,7 +13627,7 @@ var BROWSER_CSS = `
 // src/client/live-rail.js
 var import_react34 = require("react");
 var RAIL_W = 320;
-var RAIL_MIN_WINDOW = 1180;
+var RAIL_MIN_ROOM = 880;
 var ENDED_SHOWN = 3;
 var ENDED_FOR_MS = 6 * 60 * 60 * 1e3;
 function liveOf(work, roster, now = Date.now()) {
@@ -19422,12 +19422,28 @@ var import_react55 = require("react");
 var import_react_dom9 = require("react-dom");
 var DIALOG_EXIT_MS = 160;
 var MENU_EXIT_MS3 = 120;
-function useWindowWidth() {
+function useChatCellWidth() {
   const [width, setWidth] = (0, import_react55.useState)(() => window.innerWidth);
   (0, import_react55.useEffect)(() => {
-    const onResize = () => setWidth(window.innerWidth);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    let watched = null;
+    const measure = () => {
+      const column = document.querySelector('[class*="_centerCol"]');
+      if (column !== watched) {
+        if (watched) observer.unobserve(watched);
+        if (column) observer.observe(column);
+        watched = column;
+      }
+      setWidth(column ? Math.round(column.getBoundingClientRect().width + (parseFloat(getComputedStyle(column).marginRight) || 0)) : window.innerWidth);
+    };
+    const observer = new ResizeObserver(measure);
+    measure();
+    window.addEventListener("resize", measure);
+    const timer = setInterval(measure, 1e3);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+      clearInterval(timer);
+    };
   }, []);
   return width;
 }
@@ -19463,9 +19479,9 @@ function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useActivity
   const [memory, memoryLeaving] = useLinger(ui2.memory && memoryOwner(ui2.memory) ? ui2.memory : null, DIALOG_EXIT_MS);
   const owner = memory ? memoryOwner(memory) : null;
   const [menu, menuLeaving] = useLinger(ui2.menu, MENU_EXIT_MS3);
-  const width = useWindowWidth();
+  const width = useChatCellWidth();
   const teamChat = current !== null && (roster.byId[current] || roster.roomsById[current] || roster.tasks?.[current]);
-  const rail = !pane && teamChat && width >= RAIL_MIN_WINDOW;
+  const rail = !pane && teamChat && width >= RAIL_MIN_ROOM;
   return (0, import_react55.createElement)(
     import_react55.Fragment,
     null,

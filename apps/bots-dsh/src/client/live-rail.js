@@ -13,7 +13,10 @@ import { t } from './i18n.js'
 
 export const RAIL_W = 320
 // Narrower than this, the conversation keeps the room and the rail stays away.
-export const RAIL_MIN_WINDOW = 1180
+// The rail shows while the conversation's own column (DSH's centre cell, between the sidebar and
+// DSH's right panel) is this wide: the chat keeps 560px beside it. A 1180px window with the
+// sidebar open has 900.
+export const RAIL_MIN_ROOM = 880
 const ENDED_SHOWN = 3
 const ENDED_FOR_MS = 6 * 60 * 60 * 1000
 
