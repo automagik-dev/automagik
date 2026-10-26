@@ -25,9 +25,11 @@ export const LANE_URL = 'https://github.com/automagik-dev/automagik/releases/dow
 // Each publisher's lane, the keys it is signed with, and the plugins it may replace: a lane never
 // touches another's. `sameLine`: its base is an app release, and the app takes it only on that
 // 3.N line (Automagik's plugins are built against one app). Genie's plugin follows its own
-// versions, and its base is the oldest app it runs on.
+// versions, and its base is the oldest app it runs on. Automagik's lane also carries the add-ons
+// the profile pins that have no dependencies of their own (its `addons`, scripts/lane.ts
+// LANE_ADDONS), so a pin move needs no new app either.
 export const PUBLISHERS = Object.freeze([
-  { publisher: 'automagik', url: LANE_URL, keys: LANE_KEYS.automagik, sameLine: true, plugins: ['@automagik/bots-dsh', '@automagik/welcome-dsh'] },
+  { publisher: 'automagik', url: LANE_URL, keys: LANE_KEYS.automagik, sameLine: true, plugins: ['@automagik/bots-dsh', '@automagik/welcome-dsh', 'dsh-oh-my-claude'] },
   { publisher: 'genie', url: 'https://raw.githubusercontent.com/automagik-dev/genie/lane/lane.json', keys: LANE_KEYS.genie, sameLine: false, plugins: ['@automagik/genie-dsh'] },
 ])
 const SCHEMA_VERSION = 1
@@ -87,7 +89,8 @@ export function laneUpdate(lane, { publisher, appVersion, dshVersion, installed,
   if (!lane || lane.publisher !== publisher.publisher || !Number.isInteger(lane.sequence) || lane.sequence < last) return null
   if ((publisher.sameLine !== false && line(lane.base) !== line(appVersion)) || !(compareVersions(appVersion, lane.base) >= 0)) return null
   if (bad.includes(lane.version)) return null
-  const plugins = (Array.isArray(lane.plugins) ? lane.plugins : []).filter(plugin => publisher.plugins.includes(plugin?.name)
+  const listed = [lane.plugins, lane.addons].flatMap(entries => (Array.isArray(entries) ? entries : []))
+  const plugins = listed.filter(plugin => publisher.plugins.includes(plugin?.name)
     && typeof plugin.url === 'string' && plugin.url.startsWith('https://github.com/')
     && typeof installed[plugin.name] === 'string' && compareVersions(plugin.version, installed[plugin.name]) > 0
     && satisfies(dshVersion, plugin.engines?.dsh))

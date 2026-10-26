@@ -16,13 +16,15 @@
  *
  *   bun scripts/lane.ts kind <last-full-tag>                    plugins | full: what the commits since it need
  *   bun scripts/lane.ts next-patch                               the next patch release: 3.N.(P+1) on the newest 3.N
- *   bun scripts/lane.ts manifest <plugins.json> <base> <issuedAt>  print lane.json for a release's plugins.json
+ *   bun scripts/lane.ts pack-addons <dir>                          pack the add-ons the lane carries into dir, with addons.json
+ *   bun scripts/lane.ts manifest <plugins.json> <base> <issuedAt> [addons.json]  print lane.json for a release's plugins.json
  *   bun scripts/lane.ts sign <lane.json>                         print its signature (the key in PLUGIN_LANE_KEY, PEM)
  *   bun scripts/lane.ts verify <lane.json> <lane.json.sig>       check it against plugin-lane/keys.json
  */
 import { createHash, createPrivateKey, createPublicKey, sign as signBytes, verify as verifyBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ReleasePlugins } from './release-plugins';
 import { FIELDS } from './version';
@@ -33,6 +35,11 @@ export const SCHEMA_VERSION = 1;
 export const KEY_ID = 'automagik-2026-10';
 const DOWNLOADS = 'https://github.com/automagik-dev/automagik/releases/download/';
 const PLUGINS = ['bots-dsh', 'welcome-dsh'];
+const PROFILE = 'apps/desktop/profile/package.json';
+// The add-ons the desktop profile pins that the lane carries too, so a pin move is a patch: each
+// a reviewed fork with no dependencies of its own (its folder alone is the add-on) that declares
+// engines.dsh. They go in lane.json's `addons`, apart from `plugins` (the ones Omni serves).
+export const LANE_ADDONS = ['dsh-oh-my-claude'];
 // What a plugin's own package.json may change in a plugin-only release: nothing it is
 // installed or admitted by.
 const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDependencies', 'bundleDependencies', 'engines', 'dsh', 'main', 'exports', 'files'];
@@ -63,6 +70,17 @@ export interface Lane {
   /** The desktop release line these plugins run on: an app of another 3.N waits for its own. */
   base: string;
   plugins: LanePlugin[];
+  /** The profile's add-ons at this release's pins (LANE_ADDONS), tarballs on the same release. */
+  addons?: LanePlugin[];
+}
+export interface LaneAddon {
+  version: string;
+  file: string;
+  integrity: string;
+  size: number;
+  engines: { dsh: string };
+  /** The fork and commit the profile pins, as `github:<owner>/<repo>#<commit>`. */
+  source: string;
 }
 
 /** A release's place in the lane's order: 3.N.P as N·10000 + P. */
@@ -101,8 +119,59 @@ export function nextPatch(tags: string[]): string {
   return `3.${minor}.${patch + 1}`;
 }
 
-/** lane.json for a release: its plugins.json, each tarball's sha256 and its engines. */
-export function manifest(plugins: ReleasePlugins, { base, issuedAt, dir, engines }: { base: string; issuedAt: string; dir: string; engines: (name: string) => string }): Lane {
+/**
+ * Whether a change to the desktop profile is only the pins of the add-ons the lane carries:
+ * their dependency lines and their omni.addonVersions entries.
+ */
+export function addonPinsOnly(before: string, after: string): boolean {
+  const blank = (text: string) => {
+    const json = JSON.parse(text);
+    for (const name of LANE_ADDONS) {
+      delete json.dependencies?.[name];
+      delete json.omni?.addonVersions?.[name];
+    }
+    return JSON.stringify(json);
+  };
+  return blank(before) === blank(after);
+}
+
+/**
+ * npm-packs each add-on the lane carries at the commit the profile pins, into `dir`, and writes
+ * dir/addons.json. Refuses one that has dependencies or no engines.dsh: swapping its folder
+ * alone would not install it.
+ */
+export function packAddons(dir: string, profile = JSON.parse(readFileSync(join(ROOT, PROFILE), 'utf8'))): Record<string, LaneAddon> {
+  mkdirSync(dir, { recursive: true });
+  const addons: Record<string, LaneAddon> = {};
+  for (const name of LANE_ADDONS) {
+    const source = profile.dependencies?.[name] as string | undefined;
+    const match = /^github:([\w.-]+\/[\w.-]+)#([0-9a-f]{40})$/.exec(source ?? '');
+    if (!match) throw new Error(`${name}: the profile pins ${source}, not github:<owner>/<repo>#<commit>`);
+    const checkout = mkdtempSync(join(tmpdir(), 'lane-addon-'));
+    try {
+      const run = (...args: string[]) => execFileSync(args[0], args.slice(1), { cwd: checkout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
+      run('git', 'init', '-q');
+      run('git', 'fetch', '-q', '--depth', '1', `https://github.com/${match[1]}.git`, match[2]);
+      run('git', 'checkout', '-q', 'FETCH_HEAD');
+      const json = JSON.parse(readFileSync(join(checkout, 'package.json'), 'utf8'));
+      if (json.name !== name) throw new Error(`${source} is ${json.name}, not ${name}`);
+      if (Object.keys(json.dependencies ?? {}).length > 0) throw new Error(`${name} has dependencies; it cannot ride the lane`);
+      const dsh = json.engines?.dsh as string | undefined;
+      if (!dsh) throw new Error(`${name} declares no engines.dsh`);
+      const file = run('npm', 'pack', '--silent', '--ignore-scripts', '--pack-destination', dir).trim().split('\n').at(-1)!;
+      const bytes = readFileSync(join(dir, file));
+      addons[name] = { version: json.version, file, integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}`, size: bytes.byteLength, engines: { dsh }, source };
+    } finally {
+      rmSync(checkout, { recursive: true, force: true });
+    }
+  }
+  writeFileSync(join(dir, 'addons.json'), `${JSON.stringify(addons, null, 2)}\n`);
+  return addons;
+}
+
+/** lane.json for a release: its plugins.json, each tarball's sha256 and its engines, and its add-ons. */
+export function manifest(plugins: ReleasePlugins, { base, issuedAt, dir, engines, addons = {} }: { base: string; issuedAt: string; dir: string; engines: (name: string) => string; addons?: Record<string, LaneAddon> }): Lane {
+  const sha256 = (file: string) => createHash('sha256').update(readFileSync(join(dir, file))).digest('hex');
   return {
     schemaVersion: SCHEMA_VERSION,
     publisher: 'automagik',
@@ -118,9 +187,18 @@ export function manifest(plugins: ReleasePlugins, { base, issuedAt, dir, engines
       version: entry.version,
       url: `${DOWNLOADS}v${plugins.version}/${entry.file}`,
       integrity: entry.integrity,
-      sha256: createHash('sha256').update(readFileSync(join(dir, entry.file))).digest('hex'),
+      sha256: sha256(entry.file),
       size: entry.size,
       engines: { dsh: engines(name) },
+    })),
+    addons: Object.entries(addons).map(([name, entry]) => ({
+      name,
+      version: entry.version,
+      url: `${DOWNLOADS}v${plugins.version}/${entry.file}`,
+      integrity: entry.integrity,
+      sha256: sha256(entry.file),
+      size: entry.size,
+      engines: entry.engines,
     })),
   };
 }
@@ -151,8 +229,12 @@ if (import.meta.main) {
       try { before = JSON.parse(git('show', `${last}:${path}`)); } catch { return true; }
       return pick(before) !== pick(JSON.parse(readFileSync(join(ROOT, path), 'utf8')));
     };
-    // A file only the version fields of changed in (a patch release's own bump).
+    // A file only the version fields of changed in (a patch release's own bump), or the profile
+    // with only the lane's add-on pins moved.
     const versionOnly = (path: string) => {
+      if (path === PROFILE) {
+        try { return addonPinsOnly(git('show', `${last}:${path}`), readFileSync(join(ROOT, path), 'utf8')); } catch { return false; }
+      }
       const fields = FIELDS.filter(field => field.file === path);
       if (fields.length === 0) return false;
       const blank = (text: string) => {
@@ -168,8 +250,11 @@ if (import.meta.main) {
     console.log(kindOf(changed, installChanged, versionOnly));
   } else if (command === 'next-patch') {
     console.log(nextPatch(git('tag', '--list', 'v3.*').split('\n').filter(Boolean)));
-  } else if (command === 'manifest' && args.length === 3) {
-    const [file, base, issuedAt] = args;
+  } else if (command === 'pack-addons' && args.length === 1) {
+    console.log(JSON.stringify(packAddons(args[0]), null, 2));
+  } else if (command === 'manifest' && (args.length === 3 || args.length === 4)) {
+    const [file, base, issuedAt, addonsFile] = args;
+    const addons = addonsFile ? (JSON.parse(readFileSync(addonsFile, 'utf8')) as Record<string, LaneAddon>) : {};
     const plugins = JSON.parse(readFileSync(file, 'utf8')) as ReleasePlugins;
     const engines = (name: string) => {
       const dir = PLUGINS.find(plugin => name === `@automagik/${plugin}`);
@@ -177,7 +262,7 @@ if (import.meta.main) {
       if (!range) throw new Error(`${name} declares no engines.dsh`);
       return range;
     };
-    console.log(JSON.stringify(manifest(plugins, { base, issuedAt, dir: join(file, '..'), engines }), null, 2));
+    console.log(JSON.stringify(manifest(plugins, { base, issuedAt, dir: join(file, '..'), engines, addons }), null, 2));
   } else if (command === 'sign' && args.length === 1) {
     const key = process.env.PLUGIN_LANE_KEY;
     if (!key) throw new Error('PLUGIN_LANE_KEY is not set');
@@ -187,7 +272,7 @@ if (import.meta.main) {
     const lane = verifyLane(readFileSync(args[0]), readFileSync(args[1], 'utf8'), keys);
     console.log(`lane ${lane.version} (sequence ${lane.sequence}) is signed by ${lane.keyId}`);
   } else {
-    console.error('usage: bun scripts/lane.ts kind <last-full-tag> | next-patch | manifest <plugins.json> <base> <issuedAt> | sign <lane.json> | verify <lane.json> <sig>');
+    console.error('usage: bun scripts/lane.ts kind <last-full-tag> | next-patch | pack-addons <dir> | manifest <plugins.json> <base> <issuedAt> [addons.json] | sign <lane.json> | verify <lane.json> <sig>');
     process.exit(2);
   }
 }

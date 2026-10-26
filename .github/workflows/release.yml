@@ -7,6 +7,8 @@ name: Release
 #   automagik-bots-dsh-<version>.tgz      the Bot team (npm pack of apps/bots-dsh)
 #   automagik-welcome-dsh-<version>.tgz   the welcome and Connect AI (apps/welcome-dsh)
 #   plugins.json                          each tarball's name, version, file and integrity
+#   dsh-oh-my-claude-<its version>.tgz    the add-ons the lane carries, at the profile's pins
+#   addons.json                           (scripts/lane.ts LANE_ADDONS), and what each one is
 #
 # and then the desktop app's builds (desktop-build.yml). Omni pins a release's plugins.json
 # (its apps/automagik.json) to serve them from its own market and admin UI; the
@@ -25,7 +27,8 @@ name: Release
 # one is cutting is released by the next run, with every merge after it that lands before it starts.
 #
 # The plugin lane (scripts/lane.ts): when everything since the last full release (v3.N.0) is the
-# plugins' alone, the release is a patch, v3.N.P, with the plugin tarballs and no desktop build.
+# plugins' alone (or moves only the pins of the add-ons the lane carries), the release is a patch,
+# v3.N.P, with the plugin tarballs and no desktop build.
 # Every release, full or patch, then signs lane.json (ed25519, the PLUGIN_LANE_KEY secret; the
 # public keys are plugin-lane/keys.json) and puts it on the rolling `plugin-lane` release, which
 # holds nothing else. The desktop app and Omni's market install the plugins from it, without a
@@ -133,6 +136,13 @@ jobs:
           echo "base=${full#v}" >> "$GITHUB_OUTPUT"
           echo "since ${full:-the start}: ${kind} release"
 
+      # Before the cut, so an add-on that cannot ride the lane stops the run before any tag.
+      - name: Pack the add-ons the lane carries
+        if: steps.new.outputs.release == 'true'
+        run: |
+          set -euo pipefail
+          bun scripts/lane.ts pack-addons release
+
       - name: Version, commit and tag
         id: cut
         if: steps.new.outputs.release == 'true'
@@ -208,7 +218,7 @@ jobs:
           base="${BASE}"
           [[ "${KIND}" != "plugins" ]] && base="${VERSION}"
           mkdir -p lane
-          bun scripts/lane.ts manifest release/plugins.json "${base}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > lane/lane.json
+          bun scripts/lane.ts manifest release/plugins.json "${base}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" release/addons.json > lane/lane.json
           bun scripts/lane.ts sign lane/lane.json > lane/lane.json.sig
           bun scripts/lane.ts verify lane/lane.json lane/lane.json.sig
           if ! gh release view plugin-lane --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
