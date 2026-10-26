@@ -422,10 +422,23 @@ function harden(origin) {
     })
     contents.on('will-attach-webview', event => event.preventDefault())
   })
-  // The page asks for nothing beyond notifications and the clipboard.
-  session.defaultSession.setPermissionRequestHandler((contents, permission, callback) => {
-    callback(new URL(contents.getURL()).origin === origin && ['notifications', 'clipboard-sanitized-write', 'clipboard-read'].includes(permission))
+  // The page asks for notifications, the clipboard, and the microphone for voice chat (audio
+  // only, never the camera); macOS asks the person once for the microphone, with the app's
+  // usage line (electron-builder.yml).
+  const allowed = (contents, permission, details = {}) => {
+    if (new URL(contents.getURL()).origin !== origin) return false
+    if (permission === 'media') return !(details.mediaTypes ?? []).includes('video') && details.mediaType !== 'video'
+    return ['notifications', 'clipboard-sanitized-write', 'clipboard-read'].includes(permission)
+  }
+  session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+    if (!allowed(contents, permission, details)) return callback(false)
+    if (permission !== 'media' || process.platform !== 'darwin') return callback(true)
+    void systemPreferences.askForMediaAccess('microphone').then(callback, () => callback(false))
   })
+  // What the page reads back about the microphone (navigator.permissions) follows the same
+  // rule; every other check keeps Electron's own answer.
+  session.defaultSession.setPermissionCheckHandler((contents, permission, _origin, details) =>
+    (permission === 'media' ? contents !== null && allowed(contents, permission, details) : true))
 }
 
 app.on('window-all-closed', () => app.quit())
