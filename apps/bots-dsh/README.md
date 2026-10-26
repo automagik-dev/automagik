@@ -103,6 +103,8 @@ Options go in the profile's `cordis.patch.yml`, under the `omni-ui` entry. All o
     browser: true                   # force the Bot browser on or off; default on in Desktop and the desktop app only
     memory: true                    # false turns memory off: no memory tools, section or panel
     memoryReview: true              # false leaves memory to the Bots' own remember calls
+    fallback: true                  # false lets a failed model end the turn instead of moving it to the fallback
+    fallbackModel: deepseek-official/deepseek-flash   # where a failed turn moves; default the team's default model
     diagnosticsFile: false          # keep the error log in memory only; default <home>/logs/diagnostics.jsonl
     updateCheck: false              # the package's own patch sets false: nothing is checked or installed
     updateRegistry: https://registry.example/   # ask only this npm registry for updates
@@ -116,6 +118,8 @@ The same card can carry DSH itself: a DS Bot release may name the DSH release it
 ## Models
 
 Model providers are set up with dsh's `llm-pi-ai` plugin in `cordis.patch.yml`. Every Bot runs on one model of its own, from the models DSH serves. A new team's first Main Bot has none, and holds its greeting until it has one. With `@automagik/welcome-dsh`, finishing Connect AI with an AI on gives it (and the Omni Bot) the team's default model, and the greeting goes out then. Otherwise its chat offers that model with one press to start and a "change" link to the model menu; with no model that can run, the card offers ways to set one up. The team's default model is DSH's default model when it is served and its provider has its key, else the first model that can run (a provider's `default` alias after the models it names). While a chat holds only the greeting, one line under it names the model and its provider, with "change". The Create Bot form starts on the DSH default model. The Bot's details panel and settings (or a Main Bot's `update_bot`) change it; a Bot whose model is no longer served shows the card again. A team saved by an older version keeps the model each Bot last ran on.
+
+**Fallback**: when a Bot's model fails a request and nothing earlier answers it (DSH's own retries of the same model, or a move to a fresh part for a full or stuck chat), the step runs again on the fallback model: `fallbackModel`, else the team's default model (DeepSeek's, out of the box). The rest of that turn stays there, and a notice in the chat says which model failed and why; the next turn is back on the Bot's own model. A full context, a stop, and a fallback that fails too end the turn as before. It covers every Session of the team: a Bot's chat, a group seat, a task.
 
 - Give every model a `contextWindow`. DS Bot takes its lines from it: the usable window is the window minus the reply reserve (`maxTokens`), the hard line is 95% of that, and the check line is `checkRatio` of it. A model without `contextWindow` gets the adapter's default (262,144 tokens for `llm-pi-ai`), which may be wrong for that model; a model that reports no window at all counts as 500,000.
 - To send images, the provider needs `defaultInput: [ text, image ]`.
