@@ -8,6 +8,7 @@ import { fakeContext } from './fake-ctx.js'
 const BOTS = [
   ['main', { name: 'Omni' }],
   ['worker', { name: 'Dev', instructions: 'Check files.' }],
+  ['keeper', { name: 'Omni', kind: 'omni' }],
 ]
 
 // The prompt section and the hooks other Omni plugins add the Main Bot's rules through.
@@ -38,7 +39,7 @@ test('a Main Bot\'s prompt is the text it was before the Omni parts moved out', 
   assert.equal(plain.prompt('main'), fixture('main-prompt.txt'))
 })
 
-test('the parts other Omni plugins add go between the Main Bot\'s rules and the team\'s, for Main Bots only', (t) => {
+test('the parts other Omni plugins add go between the Main Bot\'s rules and the team\'s, for Main Bots and the Omni Bot only', (t) => {
   const { ctx, rt, prompt } = start()
   t.after(() => ctx.dispose())
   const before = prompt('main')
@@ -47,6 +48,10 @@ test('the parts other Omni plugins add go between the Main Bot\'s rules and the 
   assert.ok(main.includes('\n\n## Part for main\n\n## How your Bot team works'))
   assert.ok(main.indexOf('## You are the Main Bot') < main.indexOf('## Part for main'))
   assert.ok(!prompt('worker').includes('## Part for'))
+  // The Omni Bot operates Omni without being a Main Bot: the parts, not the Main Bot's rules.
+  const keeper = prompt('keeper')
+  assert.ok(keeper.includes('\n\n## Part for keeper\n\n## How your Bot team works'))
+  assert.ok(!keeper.includes('## You are the Main Bot'))
   off()
   assert.equal(prompt('main'), before)
 })

@@ -17,12 +17,11 @@ export function cleanRole(value) {
 }
 
 // The kinds of Bot that other Omni plugins add to the team; the sidebar puts them first.
-// 'omni' is the Omni Bot the welcome's team step adds: Omni's plugin lets only a Main Bot
-// operate Omni, so it is always a Main Bot (beside the companion, who keeps the crown).
-// It can be deleted; the New menu's Add Omni (welcome-dsh) brings it back.
+// 'omni' is the Omni Bot the welcome's team step adds: it operates Omni without being a
+// Main Bot (Omni's plugin and prompt.js give it what it needs). Deleted, the New menu's Add
+// Omni (welcome-dsh) brings it back.
 export const BOT_KINDS = ['omni', 'genie']
 export const OMNI_KIND = 'omni'
-const OMNI_STAYS = 'Omni stays a Main Bot: only a Main Bot operates Omni.'
 
 
 export function install(rt) {
@@ -157,7 +156,7 @@ export function install(rt) {
         createdBy: createdBy ?? null,
         capabilities: [],
       }
-      if (main || kind === OMNI_KIND) state.mainBotIds.push(id)
+      if (main) state.mainBotIds.push(id)
       const creator = rt.botOf(createdBy)
       const original = rt.botOf(copyOf)
       const language = rt.uiLanguage?.()
@@ -544,7 +543,6 @@ export function install(rt) {
   async function setMain(id, main, { primary = false, replace } = {}) {
     const bot = rt.botOf(id)
     if (bot === undefined) throw new Error('Unknown Bot')
-    if (rt.botOf(main ? replace : id)?.kind === OMNI_KIND) throw new Error(OMNI_STAYS)
     const others = state.mainBotIds.filter(other => other !== id)
     let next
     if (!main) {
@@ -573,8 +571,6 @@ export function install(rt) {
   async function deleteBot(id) {
     const bot = rt.botOf(id)
     if (bot === undefined) throw new Error('Unknown Bot')
-    // The Omni Bot is a Main Bot it cannot shed, so it goes as it is, while another Main Bot stays.
-    if (bot.kind === OMNI_KIND && state.mainBotIds.some(other => other !== id && rt.botOf(other))) state.mainBotIds = state.mainBotIds.filter(other => other !== id)
     if (rt.isMain(id)) throw new Error('A Main Bot cannot be deleted; remove its Main Bot role first')
     // Before the Bot and its group Sessions leave the state, which the archive reads.
     const archived = rt.archiveBotMemory(id)
@@ -625,18 +621,9 @@ export function install(rt) {
     }
   }
 
-  const omniBot = () => Object.values(state.bots).find(bot => bot.kind === OMNI_KIND)
-
   async function bootstrap() {
     await rt.load()
     void rt.syncModels()
-    // An Omni Bot added before it was a Main Bot becomes one, after the others.
-    const omni = omniBot()
-    if (omni !== undefined && !rt.isMain(omni.id) && rt.readOnly() === undefined) {
-      state.mainBotIds.push(omni.id)
-      delete omni.hidden
-      await rt.save()
-    }
     if (state.mainBotIds.some(id => rt.botOf(id))) return
     // Only the team's first Main Bot is stored as the DeepSeek whale; other Bots get a
     // look from their id, and a Bot made Main Bot later keeps its own.
@@ -646,7 +633,7 @@ export function install(rt) {
   }
 
   Object.assign(rt, {
-    ensureWorkspace, keepTeamFolder, createSession, createBot, duplicateBot, updateBot, setFlags, omniBot,
+    ensureWorkspace, keepTeamFolder, createSession, createBot, duplicateBot, updateBot, setFlags,
     roomBusy, autoRoomName, retitleRoom, createRoom, updateRoom, deleteRoom,
     setMain, deleteBot, bootstrap, dropKickoff,
   })

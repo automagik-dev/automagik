@@ -1,5 +1,6 @@
 // Prompt: one section whose text depends only on the rendering Session's own Bot
 // record, so the prefix stays byte-stable across turns and roster changes.
+import { OMNI_KIND } from './roster.js'
 
 const TEAM_RULES = [
   '## How your Bot team works',
@@ -51,7 +52,9 @@ export function install(rt) {
         bot.instructions ? `\n${bot.instructions}` : '',
         '',
         // Other Omni plugins add their parts between these (extend.js), such as operating Omni.
-        rt.isMain(self) ? [MAIN_RULES, ...rt.extended.rules(self), TEAM_RULES].join('\n\n') : TEAM_RULES,
+        // The Omni Bot operates Omni without being a Main Bot, so it gets those parts too.
+        rt.isMain(self) ? [MAIN_RULES, ...rt.extended.rules(self), TEAM_RULES].join('\n\n')
+          : bot.kind === OMNI_KIND ? [...rt.extended.rules(self), TEAM_RULES].join('\n\n') : TEAM_RULES,
       ].join('\n')
     }
     const room = rt.roomOf(id)
