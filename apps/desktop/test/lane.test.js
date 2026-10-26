@@ -94,7 +94,9 @@ test('staged plugins go in at the next start, and stay once the page draws', asy
   const { target, real } = profileWith(root, '3.22.0')
   const bytes = tarball(root, '3.22.1')
   const plugin = { ...lane().plugins[0], size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}` }
-  await stage({ version: '3.22.1', sequence: 220001, plugins: [plugin] }, { home, fetch: async () => new Response(bytes) })
+  const seen = []
+  await stage({ version: '3.22.1', sequence: 220001, plugins: [plugin] }, { home, fetch: async () => new Response(bytes), onProgress: percent => seen.push(percent) })
+  assert.deepEqual(seen, [0, 100])
   assert.equal(stagedOf(home).version, '3.22.1')
   assert.equal(beforeStart({ home, target }), 'applied')
   // The store's folder now holds the new version; the one it replaced waits beside it.

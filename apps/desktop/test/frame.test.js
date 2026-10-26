@@ -46,6 +46,9 @@ test('the update reaches the sidebar in DSH desktop\'s phases, with its version 
   assert.deepEqual(updatePresentation(null, { checking: true }), { phase: 'checking' })
   assert.deepEqual(updatePresentation(null, { failed: true }), { phase: 'error', failure: 'check' })
   assert.deepEqual(updatePresentation({ version: '3.17.0', state: 'downloading', percent: 41.6 }), { phase: 'downloading', version: '3.17.0', percent: 41 })
+  // A lane patch shows up while it downloads, not only once it is staged.
+  assert.deepEqual(updatePresentation(null, { fetching: { version: '3.25.4', percent: 62.5 }, checking: true }), { phase: 'downloading', version: '3.25.4', percent: 62, kind: 'plugins' })
+  assert.deepEqual(updatePresentation({ version: '3.26.0', state: 'downloading', percent: 10 }, { fetching: { version: '3.25.4', percent: 50 } }), { phase: 'downloading', version: '3.26.0', percent: 10 })
   assert.deepEqual(updatePresentation({ version: '3.17.0', state: 'ready' }, { checking: true }), { phase: 'ready', version: '3.17.0' })
   assert.deepEqual(updatePresentation({ version: '3.17.0', state: 'available', page: 'https://x' }), { phase: 'available', version: '3.17.0' })
   // Restart pressed: the sidebar says it installs while the window goes.

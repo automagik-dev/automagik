@@ -20,7 +20,7 @@ import { pageLayout, tableColor, updatePresentation, WINDOW_ACTIONS, windowChrom
 import { dataPathsOf, PRODUCT } from './identity.js'
 import { awayInstall, LOOK_EVERY_MS, readBusy } from './idle.js'
 import { readChoices, writeOverlay } from './privacy.js'
-import { isReleasePage, startUpdates, updateMode } from './update.js'
+import { compareVersions, isReleasePage, startUpdates, updateMode } from './update.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 // Before anything reads it (the single-instance lock does): the window's data is filed under
@@ -48,6 +48,8 @@ let laneReady = null
 let laneTrial = null
 let laneProfile = null
 let laneDsh = null
+// The lane update being downloaded ({ version, percent }), while it is.
+let laneFetching = null
 // Check for Updates is under way, or its last check failed (frame.js updatePresentation).
 let checking = false
 let checkFailed = false
@@ -55,7 +57,7 @@ let checkFailed = false
 // (a quit, or a restart into an update) from the moment it was asked for.
 const startLog = (line) => { try { appendFileSync(join(home, 'logs', 'start.log'), line) } catch {} }
 const RESTART_NOTE = () => join(home, 'logs', 'restart.json')
-const LANE_EVERY_MS = 60 * 60_000
+const LANE_EVERY_MS = 15 * 60_000
 const started = steps('start', { write: startLog, since: Date.now() - process.uptime() * 1000 })
 let leaving = null
 const leave = (kind) => (leaving ??= steps(kind, { write: startLog, since: Date.now() }))
@@ -156,7 +158,6 @@ async function launch() {
   // No menu bar on Linux; macOS keeps its app menu for the usual shortcuts.
   if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
   else {
-    app.setAboutPanelOptions({ applicationName: PRODUCT })
     Menu.setApplicationMenu(appMenu())
   }
   mkdirSync(join(home, 'logs'), { recursive: true })
@@ -172,6 +173,11 @@ async function launch() {
   if (app.isPackaged) {
     laneTrial = beforeStart({ home, target, log: laneLog })
     laneReady = stagedOf(home)
+  }
+  // About names the version this copy runs: its plugins' (a lane patch, 3.N.P) beside the app's.
+  if (process.platform === 'darwin') {
+    const plugins = pluginsVersion()
+    app.setAboutPanelOptions({ applicationName: PRODUCT, applicationVersion: plugins ?? app.getVersion(), version: plugins ? `app ${app.getVersion()}` : app.getVersion() })
   }
   const port = await freePort()
   const log = createWriteStream(join(home, 'logs', 'dsh.log'), { flags: 'a' })
@@ -256,23 +262,43 @@ async function judgeLane() {
   restartForLane({ why: 'lane rollback' })
 }
 
-// One look at every lane: what it has for this app is downloaded and staged for the next start.
-async function lookAtLanes() {
-  if (!app.isPackaged || !laneProfile || !laneDsh || laneTrial === 'applied' || laneTrial === 'trial') return
+// The version this copy runs: Automagik's plugins' (3.N.P once a lane patch went in), and
+// the app's beside it when they differ.
+function pluginsVersion() {
+  const ours = Object.values(laneProfile ? installedVersions(laneProfile, PUBLISHERS[0].plugins) : {}).sort(compareVersions).at(-1)
+  return ours && ours !== app.getVersion() ? ours : null
+}
+const runningVersion = () => (pluginsVersion() ? `${pluginsVersion()} (app ${app.getVersion()})` : app.getVersion())
+
+// One look at every lane: what it has for this app is downloaded and staged for the next start,
+// with the download in the sidebar while it runs. Answers whether anything is staged now. A
+// check asked for during the quarter-hour look joins it.
+let looking = null
+const lookAtLanes = () => (looking ??= lookOnce().finally(() => { looking = null }))
+async function lookOnce() {
+  if (!app.isPackaged || !laneProfile || !laneDsh || laneTrial === 'applied' || laneTrial === 'trial') return Boolean(laneReady)
   const { last, bad } = laneMemory(home)
   for (const publisher of PUBLISHERS) {
     try {
       const found = await checkLane({ publisher, appVersion: app.getVersion(), dshVersion: laneDsh, installed: installedVersions(laneProfile, publisher.plugins), last, bad })
       if (!found || stagedOf(home)?.version === found.version) continue
       laneLog(`lane: ${publisher.publisher} ${found.version} is out; downloading ${found.plugins.map(plugin => `${plugin.name} ${plugin.version}`).join(', ')}`)
-      await stageLane(found, { home })
+      laneFetching = { version: found.version, percent: 0 }
+      publishUpdate()
+      try {
+        await stageLane(found, { home, onProgress: (percent) => { laneFetching = { version: found.version, percent }; publishUpdate() } })
+      } finally {
+        laneFetching = null
+      }
       laneReady = stagedOf(home)
       laneLog(`lane: ${found.version} is ready and goes in at the next start`)
       publishUpdate()
     } catch (error) {
       laneLog(`lane: ${publisher.publisher}: ${error.message}`)
+      publishUpdate()
     }
   }
+  return Boolean(laneReady)
 }
 
 // Start again into the staged plugins: the window goes, DSH stops, and the app opens again.
@@ -312,7 +338,8 @@ function watchUpdates() {
       publishUpdate()
     },
   })
-  // The lanes are looked at a minute after the start and then hourly, with the app's own checks.
+  // The lanes are looked at a minute after the start and then every quarter hour: a lane is
+  // two small files, and a patch should show up soon after it is out.
   setTimeout(() => void lookAtLanes(), 60_000).unref?.()
   setInterval(() => void lookAtLanes(), LANE_EVERY_MS).unref?.()
   if (mode !== 'auto') return
@@ -334,7 +361,7 @@ function watchUpdates() {
 
 // The update shows in the page's sidebar (the Bot team's, bottom left, as in DSH's own app),
 // through the page's preload (preload.cjs `omniDesktop.updates`).
-const presentUpdate = () => updatePresentation(update, { checking, failed: checkFailed, plugins: laneReady?.version })
+const presentUpdate = () => updatePresentation(update, { checking, failed: checkFailed, plugins: laneReady?.version, fetching: laneFetching })
 function publishUpdate() {
   if (page && !page.webContents.isDestroyed()) page.webContents.send('automagik-updates', presentUpdate())
 }
@@ -360,12 +387,16 @@ async function checkForUpdates({ quiet = false } = {}) {
   checking = true
   checkFailed = false
   publishUpdate()
-  const { result } = await updates.check()
+  // The app's own releases and the plugin lane, at once: a check finds either.
+  const [{ result }, staged] = await Promise.all([updates.check(), lookAtLanes().catch(() => false)])
   checking = false
   checkFailed = result === 'error'
   publishUpdate()
   if (quiet) return
-  if (result === 'latest') void dialog.showMessageBox(window ?? undefined, { type: 'info', message: `${PRODUCT} is up to date`, detail: `Version ${app.getVersion()}` })
+  if (result === 'latest' && staged && laneReady) {
+    const { response } = await dialog.showMessageBox(window ?? undefined, { type: 'info', buttons: ['Restart now', 'Later'], defaultId: 0, cancelId: 1, message: `${PRODUCT} ${laneReady.version} is ready`, detail: `It goes in when ${PRODUCT} restarts, in a few seconds. You have ${runningVersion()}.` })
+    if (response === 0) restartForLane()
+  } else if (result === 'latest') void dialog.showMessageBox(window ?? undefined, { type: 'info', message: `${PRODUCT} is up to date`, detail: `Version ${runningVersion()}` })
   else if (result === 'error') void dialog.showMessageBox(window ?? undefined, { type: 'warning', message: 'Could not check for updates', detail: 'Check your connection and try again.' })
 }
 
