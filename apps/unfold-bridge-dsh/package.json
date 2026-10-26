@@ -1,0 +1,70 @@
+{
+  "name": "@automagik/unfold-bridge-dsh",
+  "version": "3.29.0",
+  "description": "Your DSH's models for Unfold: serves the model routes of your own DeepSeek Harness on loopback as an OpenAI chat-completions endpoint, behind a key made at each start",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "unfold",
+    "openai-compatible"
+  ],
+  "homepage": "https://github.com/automagik-dev/automagik/tree/dev/apps/unfold-bridge-dsh#readme",
+  "bugs": {
+    "url": "https://github.com/automagik-dev/automagik/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/automagik-dev/automagik.git",
+    "directory": "apps/unfold-bridge-dsh"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "src/host/",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "test": "node --import ./test/harness-resolve.mjs --test \"test/*.test.js\"",
+    "lint": "node scripts/lint.mjs",
+    "harness": "bun install --cwd dev/harness --no-save --no-summary"
+  },
+  "engines": {
+    "dsh": ">=0.2.1-rc.3 <0.2.2-0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-llm": "*"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "automagik": {
+    "market": {
+      "title": {
+        "en": "Unfold bridge"
+      },
+      "description": {
+        "en": "Use the models of your own DSH in Unfold. Serves your DSH's model routes to apps on this computer as an OpenAI-compatible endpoint on 127.0.0.1, behind a key made at each start. Your sign-ins and their tokens stay in DSH; text only, no tools."
+      },
+      "category": "ai",
+      "keywords": [
+        "unfold",
+        "openai-compatible",
+        "bridge",
+        "models"
+      ]
+    }
+  }
+}

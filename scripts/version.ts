@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Automagik's one version: the repository, the Bot team, the welcome and the desktop app all
+ * Automagik's one version: the repository, the Bot team, the welcome, the Unfold bridge and the desktop app all
  * carry it. Each release is 3.N (semver 3.N.0, tagged v3.N.0), N one above the highest release
  * tag, numbers compared as numbers, as Tactu numbers its v1.N: above every Omni desktop build
  * (2.YYMMDD.N, from automagik-dev/omni-desktop), so an installed app updates into this one.
@@ -30,6 +30,7 @@ export const FIELDS: { file: string; path: string[] }[] = [
   { file: 'package.json', path: ['version'] },
   { file: 'apps/bots-dsh/package.json', path: ['version'] },
   { file: 'apps/welcome-dsh/package.json', path: ['version'] },
+  { file: 'apps/unfold-bridge-dsh/package.json', path: ['version'] },
   { file: 'apps/desktop/package.json', path: ['version'] },
   { file: 'apps/desktop/package-lock.json', path: ['version'] },
   { file: 'apps/desktop/package-lock.json', path: ['packages', '', 'version'] },
