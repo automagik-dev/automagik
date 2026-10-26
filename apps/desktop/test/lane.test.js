@@ -20,7 +20,9 @@ const context = { publisher: automagik, appVersion: '3.22.0', dshVersion: '0.2.1
 
 test('the app trusts the keys the repository publishes', () => {
   const published = JSON.parse(readFileSync(new URL('../../../plugin-lane/keys.json', import.meta.url), 'utf8')).keys
-  assert.deepEqual(LANE_KEYS.map(key => ({ ...key })), published)
+  assert.deepEqual(LANE_KEYS.automagik.map(key => ({ ...key })), published)
+  // Each publisher's keys are its own: Genie's never open Automagik's lane.
+  assert.ok(!LANE_KEYS.genie.some(key => published.some(own => own.publicKey === key.publicKey)))
 })
 
 test('a lane opens only with its signer\'s key, byte for byte', () => {
@@ -31,6 +33,19 @@ test('a lane opens only with its signer\'s key, byte for byte', () => {
   assert.equal(verifyLane(bytes, signature, keys).version, '3.22.1')
   assert.throws(() => verifyLane(Buffer.from(JSON.stringify(lane({ version: '3.99.0' }))), signature, keys), /signature/)
   assert.throws(() => verifyLane(bytes, signature, [{ keyId: 'other', publicKey: keys[0].publicKey }]), /no key/)
+})
+
+test('Genie\'s lane is taken on any app at or past its base, and only for its own plugin', () => {
+  const genie = PUBLISHERS.find(entry => entry.publisher === 'genie')
+  const own = { schemaVersion: 1, publisher: 'genie', keyId: 'genie-2026-10', sequence: 10002, version: '0.1.2', base: '3.3.0', plugins: [{ name: '@automagik/genie-dsh', version: '0.1.2', url: 'https://github.com/automagik-dev/genie/releases/download/v0.1.2/genie-dsh-0.1.2.tgz', engines: { dsh: '>=0.2.1-rc.3 <0.2.2-0' } }] }
+  const installed = { '@automagik/genie-dsh': '0.1.1' }
+  assert.deepEqual(laneUpdate(own, { publisher: genie, appVersion: '3.25.0', dshVersion: '0.2.1-rc.3', installed })?.plugins.map(plugin => plugin.name), ['@automagik/genie-dsh'])
+  assert.equal(laneUpdate(own, { publisher: genie, appVersion: '3.2.0', dshVersion: '0.2.1-rc.3', installed }), null)
+  // Not installed here (a team without Genie): nothing to update.
+  assert.equal(laneUpdate(own, { publisher: genie, appVersion: '3.25.0', dshVersion: '0.2.1-rc.3', installed: {} }), null)
+  // Genie's lane cannot name Automagik's plugins, nor Automagik's Genie's.
+  assert.equal(laneUpdate({ ...own, plugins: [{ ...own.plugins[0], name: '@automagik/bots-dsh', version: '9.0.0' }] }, { publisher: genie, appVersion: '3.25.0', dshVersion: '0.2.1-rc.3', installed: { '@automagik/bots-dsh': '3.25.0' } }), null)
+  assert.equal(laneUpdate({ ...own, publisher: 'automagik' }, { publisher: genie, appVersion: '3.25.0', dshVersion: '0.2.1-rc.3', installed }), null)
 })
 
 test('engines ranges read as DSH reads them, prereleases included', () => {
