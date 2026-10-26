@@ -265,7 +265,7 @@ async function judgeLane() {
 // The version this copy runs: Automagik's plugins' (3.N.P once a lane patch went in), and
 // the app's beside it when they differ.
 function pluginsVersion() {
-  const ours = Object.values(laneProfile ? installedVersions(laneProfile, PUBLISHERS[0].plugins) : {}).sort(compareVersions).at(-1)
+  const ours = Object.values(laneProfile ? installedVersions(laneProfile, PUBLISHERS[0].plugins.filter(name => name.startsWith('@automagik/'))) : {}).sort(compareVersions).at(-1)
   return ours && ours !== app.getVersion() ? ours : null
 }
 const runningVersion = () => (pluginsVersion() ? `${pluginsVersion()} (app ${app.getVersion()})` : app.getVersion())
