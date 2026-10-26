@@ -65,7 +65,7 @@ html body .bt-head :is(.bt-head-title,.bt-head-name){font:700 20px/26px var(--bt
 const STAGE = `
 html body .bt-side{font-family:var(--bt-font);color:var(--bt-ink)}
 html body .bt-brand-name,html body .bt-brand{font:700 16px/22px var(--bt-head-font)}
-html body .bt-brand .omni-mark{filter:drop-shadow(0 2px 3px rgba(91,59,34,.25))}
+html body .bt-brand :is(.omni-mark,.omni-lockup){filter:drop-shadow(0 2px 3px rgba(91,59,34,.25))}
 html body .bt-round{width:30px;height:30px;border:0;border-radius:10px;background:var(--st-tag);color:var(--bt-ink);box-shadow:none}
 html body .bt-round:hover{background:var(--st-paper)}
 html body .bt-side-top{margin-bottom:8px}
