@@ -12,7 +12,10 @@ describe('the plugin lane', () => {
     expect(kindOf(['apps/bots-dsh/src/client/mark.js', 'apps/desktop/src/main.js'], none)).toBe('full');
     expect(kindOf(['apps/bots-dsh/dev/harness/package.json'], none)).toBe('full');
     expect(kindOf(['apps/welcome-dsh/bun.lock'], none)).toBe('full');
-    expect(kindOf(['.github/workflows/release.yml'], none)).toBe('full');
+    expect(kindOf(['.github/workflows/release.yml', 'scripts/lane.ts', 'scripts/version.test.ts', 'apps/desktop/test/version.test.js', 'AGENTS.md', 'apps/welcome-dsh/client.js'], none)).toBe('plugins');
+    expect(kindOf(['apps/desktop/package.json', 'apps/welcome-dsh/client.js'], none)).toBe('full');
+    expect(kindOf(['apps/desktop/package.json', 'apps/desktop/package-lock.json', 'package.json', 'apps/welcome-dsh/client.js'], none, path => path !== 'apps/welcome-dsh/client.js')).toBe('plugins');
+    expect(kindOf(['apps/desktop/electron-builder.yml', 'apps/welcome-dsh/client.js'], none, () => false)).toBe('full');
     expect(kindOf(['apps/bots-dsh/package.json'], plugin => plugin === 'bots-dsh')).toBe('full');
     expect(kindOf([], none)).toBe('full');
   });

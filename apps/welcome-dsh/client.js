@@ -10352,9 +10352,13 @@ function readRemote(text) {
     }
     if (/\/api\/login\/app\/?$/.test(link.pathname)) return { kind: "grant", url: `${link.origin}${link.pathname.replace(/\/api\/login\/app\/?$/, "")}`, grant };
   }
+  if (link && /^https?:$/.test(link.protocol) && /\/api\/login\/claim\/?$/.test(link.pathname) && link.searchParams.get("token")) {
+    return { kind: "claim", url: `${link.origin}${link.pathname.replace(/\/api\/login\/claim\/?$/, "")}`, claimUrl: link.href };
+  }
   if (/^omni:/i.test(value) || /[?&]grant=/.test(value)) return { kind: "bad-link" };
   return { kind: "address", url: value };
 }
+var isUnowned = (message) => /has no owner yet/i.test(String(message ?? ""));
 var TYPE_LABEL = { "whatsapp-baileys": "WhatsApp", "whatsapp-cloud": "WhatsApp Business", slack: "Slack", telegram: "Telegram", discord: "Discord", gupshup: "Gupshup" };
 var channelLabel = (channel) => TYPE_LABEL[channel.type] ?? channel.type ?? "Channel";
 var GENIE_TYPE = {
@@ -10498,7 +10502,33 @@ function Pairing({ pairing, onCancel }) {
       pairing.waLink ? (0, import_react5.createElement)("a", { className: "oai-pill oai-pill-primary", href: pairing.waLink, target: "_blank", rel: "noreferrer" }, "Open WhatsApp") : null,
       pairing.approveUrl ? (0, import_react5.createElement)("a", { className: `oai-pill${pairing.waLink ? "" : " oai-pill-primary"}`, href: pairing.approveUrl, target: "_blank", rel: "noreferrer" }, "Approve") : null,
       (0, import_react5.createElement)("button", { type: "button", className: "oai-pill", onClick: onCancel }, "Cancel")
-    )
+    ),
+    pairing.waLink ? null : (0, import_react5.createElement)("small", { className: "oai-pair-hint" }, "No WhatsApp on that Omni? Run ", (0, import_react5.createElement)("code", null, `omni approve ${pairing.code}`), " on its server.")
+  );
+}
+var connectCommand = (url) => `omni connect --url ${url}`;
+function Unowned({ url, claimUrl, busy, onRemote, onBack }) {
+  const [copied, setCopied] = (0, import_react5.useState)(false);
+  const command = connectCommand(url);
+  let host = url;
+  try {
+    host = new URL(url).host;
+  } catch {
+  }
+  return (0, import_react5.createElement)(
+    "div",
+    { className: "oai-remote oai-unowned" },
+    (0, import_react5.createElement)("strong", null, `${host} has no owner yet`),
+    (0, import_react5.createElement)("small", null, "Make it yours on its server, then paste the link it prints below:"),
+    (0, import_react5.createElement)(
+      "div",
+      { className: "oai-cmd" },
+      (0, import_react5.createElement)("code", null, command),
+      (0, import_react5.createElement)("button", { type: "button", className: "oai-copy", onClick: () => navigator.clipboard?.writeText(command).then(() => setCopied(true), () => {
+      }) }, copied ? "Copied" : "Copy")
+    ),
+    claimUrl ? (0, import_react5.createElement)("small", null, "Or ", (0, import_react5.createElement)("a", { className: "oai-link", href: claimUrl, target: "_blank", rel: "noreferrer" }, "open its claim page"), ", tap Claim this Omni, then connect its address again.") : (0, import_react5.createElement)("small", null, "Or open the claim link from its server log in your browser, then connect its address again."),
+    (0, import_react5.createElement)(Remote, { busy, onRemote, onBack, label: "The link it printed" })
   );
 }
 var ICONS = {
@@ -10548,7 +10578,7 @@ function Destiny({ omnis, busy, onUse, onLocal, onRemote }) {
     waiting.length > 0 ? (0, import_react5.createElement)("ul", { className: "oai-destiny-waiting" }, waiting.map((row) => (0, import_react5.createElement)("li", { key: row.id }, (0, import_react5.createElement)("strong", null, row.title), ` · ${row.note}`))) : null
   );
 }
-function Remote({ busy, onRemote, onBack }) {
+function Remote({ busy, onRemote, onBack, label = "Where is your Omni?" }) {
   const [text, setText] = (0, import_react5.useState)("");
   const wanted = readRemote(text);
   const submit = (event) => {
@@ -10558,14 +10588,14 @@ function Remote({ busy, onRemote, onBack }) {
   return (0, import_react5.createElement)(
     "form",
     { className: "oai-remote", onSubmit: submit },
-    (0, import_react5.createElement)("label", { htmlFor: "oai-remote-url" }, "Where is your Omni?"),
+    (0, import_react5.createElement)("label", { htmlFor: "oai-remote-url" }, label),
     (0, import_react5.createElement)(
       "div",
       { className: "oai-remote-row" },
       (0, import_react5.createElement)("input", { id: "oai-remote-url", type: "text", inputMode: "url", autoComplete: "off", spellCheck: false, autoFocus: true, value: text, placeholder: "omni.example.com", onChange: (event) => setText(event.target.value) }),
       (0, import_react5.createElement)("button", { type: "submit", className: "oai-pill oai-pill-primary", disabled: busy !== null || wanted === null || wanted.kind === "bad-link" }, busy === "remote" ? "Connecting…" : "Connect")
     ),
-    (0, import_react5.createElement)("small", null, wanted?.kind === "bad-link" ? "That link is cut short. Copy the whole link Omni sent you." : "Its address, or paste the link Omni sent you on WhatsApp."),
+    (0, import_react5.createElement)("small", null, wanted?.kind === "bad-link" ? "That link is cut short. Copy the whole link Omni sent you." : wanted?.kind === "claim" ? "Its claim link: Omni opens it in your browser to make it yours." : "Its address, or paste the link Omni sent you on WhatsApp."),
     (0, import_react5.createElement)("button", { type: "button", className: "oai-textlink", onClick: onBack }, "Back to the choices")
   );
 }
@@ -10575,6 +10605,7 @@ function Inside({ phase, detail, power, live }) {
   if (phase === "pairing") return (0, import_react5.createElement)(Pairing, { pairing: detail.pairing, onCancel: power.cancelPairing });
   if (phase === "sandbox") return (0, import_react5.createElement)(InstallLog, { text: detail?.log ?? "", label: "What Omni's installer printed" });
   if (phase === "failed" && detail?.log) return (0, import_react5.createElement)("div", null, (0, import_react5.createElement)(InstallLog, { text: detail.log, label: "What Omni's installer printed" }), (0, import_react5.createElement)("p", { className: "oai-inside-note oai-bad", title: detail.message }, "What went wrong is above. Power Omni on to try again."));
+  if ((phase === "none" || phase === "found") && power.unowned) return (0, import_react5.createElement)(Unowned, { ...power.unowned, busy: power.busy, onRemote: power.remote, onBack: power.forgetUnowned });
   if (phase === "none" || phase === "found") return (0, import_react5.createElement)(Destiny, { omnis: detail?.omnis ?? [], busy: power.busy, onUse: power.use, onLocal: power.local, onRemote: power.remote });
   if (phase === "linked" && channels.length > 0) {
     return (0, import_react5.createElement)(
@@ -10731,6 +10762,7 @@ function usePower() {
   const [detail, setDetail] = (0, import_react5.useState)(null);
   const [busy, setBusy] = (0, import_react5.useState)(null);
   const [problem, setProblem] = (0, import_react5.useState)(null);
+  const [unowned, setUnowned] = (0, import_react5.useState)(null);
   const run = (0, import_react5.useRef)(null);
   const back = (0, import_react5.useRef)(null);
   (0, import_react5.useEffect)(() => () => run.current?.abort(), []);
@@ -10763,13 +10795,15 @@ function usePower() {
     try {
       const reply = await callOmniUi(endpoint, payload);
       if (run.current?.signal.aborted) return;
+      if (reply.status === "paired" || reply.pairing) setUnowned(null);
       if (reply.status === "paired") show("linked", { origin: reply.origin ?? null });
       else if (reply.pairing) {
         back.current = { phase, detail };
         show("pairing", { pairing: reply.pairing });
       } else setProblem(reply.message ?? "That Omni cannot approve this app from here. Connect Omni, next, can use its API key.");
     } catch (error) {
-      setProblem(error.message);
+      if (endpoint === "omni-pair-start" && isUnowned(error.message)) setUnowned((current) => ({ url: payload.url, claimUrl: current?.claimUrl ?? null }));
+      else setProblem(error.message);
     } finally {
       setBusy(null);
     }
@@ -10803,6 +10837,8 @@ function usePower() {
     detail,
     busy,
     problem,
+    unowned,
+    forgetUnowned: () => setUnowned(null),
     toggle: () => phase === "asleep" ? on2() : off(),
     use: (omni) => connect(omni.id, "omni-discover-use", { id: omni.id }),
     sandbox: () => {
@@ -10815,7 +10851,7 @@ function usePower() {
         if (error?.name !== "AbortError") show("failed", { message: error.message });
       });
     },
-    remote: (wanted) => wanted.kind === "bad-link" ? setProblem("That is not a link your Omni sends. It looks like https://your-omni/api/login/app?grant=…") : wanted.kind === "grant" ? connect("remote", "omni-connect-grant", { url: wanted.url, grant: wanted.grant }) : connect("remote", "omni-pair-start", { url: wanted.url }),
+    remote: (wanted) => wanted.kind === "bad-link" ? setProblem("That is not a link your Omni sends. It looks like https://your-omni/api/login/app?grant=…") : wanted.kind === "claim" ? (setProblem(null), setUnowned({ url: wanted.url, claimUrl: wanted.claimUrl }), window.open(wanted.claimUrl, "_blank", "noreferrer")) : wanted.kind === "grant" ? connect("remote", "omni-connect-grant", { url: wanted.url, grant: wanted.grant }) : connect("remote", "omni-pair-start", { url: wanted.url }),
     cancelPairing: () => {
       void callOmniUi("omni-pair-cancel").catch(() => {
       });
@@ -11092,6 +11128,13 @@ body[data-ds-dark-theme] .oai-box.oai-is-asleep{${recessed("var(--oai-niche)")}}
 .oai-remote input:focus{border-color:var(--oai-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--oai-accent) 22%,transparent)}
 .oai-card .oai-remote-row button{width:auto;margin:0;min-height:42px;white-space:nowrap}
 .oai-remote small{font-size:12px;color:var(--oai-ink2)}
+.oai-unowned{gap:8px}
+.oai-unowned>strong{font:700 14px/1.3 var(--oai-head);color:var(--oai-ink)}
+.oai-unowned .oai-remote{gap:6px}
+.oai-cmd{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--oai-line);border-radius:var(--oai-r-sm);background:var(--oai-card)}
+.oai-cmd code{flex:1;min-width:0;overflow-wrap:anywhere;font:600 12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--oai-ink);user-select:all}
+.oai-pair-hint{font-size:12px;color:var(--oai-ink2);text-align:center}
+.oai-pair-hint code{font:600 12px ui-monospace,SFMono-Regular,Menlo,monospace;user-select:all}
 .oai-remote .oai-textlink{justify-self:start!important}
 .oai-found-list{list-style:none;margin:0;padding:0;display:grid;gap:8px;width:100%}
 .oai-found-row{display:flex;align-items:center;gap:10px;padding:7px 7px 7px 12px;border-radius:14px 16px 13px 15px;${raised("var(--oai-card)", 3)}}

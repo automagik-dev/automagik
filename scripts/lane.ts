@@ -25,6 +25,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ReleasePlugins } from './release-plugins';
+import { FIELDS } from './version';
 
 export const ROOT = join(import.meta.dir, '..');
 export const LANE_RELEASE = 'plugin-lane';
@@ -35,6 +36,10 @@ const PLUGINS = ['bots-dsh', 'welcome-dsh'];
 // What a plugin's own package.json may change in a plugin-only release: nothing it is
 // installed or admitted by.
 const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDependencies', 'bundleDependencies', 'engines', 'dsh', 'main', 'exports', 'files'];
+// What no build of the desktop app reads (its build reads apps/desktop and the plugins
+// alone): the repository's release tooling and CI, the lane's own keys and notes, tests,
+// and the notes at the root. A change there ships nothing to an installed app.
+const NEVER_SHIPPED = [/^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/];
 
 export interface LanePlugin {
   name: string;
@@ -69,13 +74,14 @@ export function sequenceOf(version: string): number {
 
 /**
  * Whether the changes since the last full release are the plugins' alone: every changed path
- * inside a plugin (or the market index the releases themselves write), none in a plugin's
- * dev/harness (that moves DSH), no lockfile, and no field a plugin is installed or admitted by.
+ * inside a plugin, or one no app build reads (the market index and the version bumps the
+ * releases themselves write, the release tooling, tests), none in a plugin's dev/harness
+ * (that moves DSH), no lockfile, and no field a plugin is installed or admitted by.
  */
-export function kindOf(changed: string[], installChanged: (plugin: string) => boolean): 'plugins' | 'full' {
+export function kindOf(changed: string[], installChanged: (plugin: string) => boolean, versionOnly: (path: string) => boolean = () => false): 'plugins' | 'full' {
   if (changed.length === 0) return 'full';
   for (const path of changed) {
-    if (path === 'marketplace/automagik.json') continue;
+    if (path === 'marketplace/automagik.json' || NEVER_SHIPPED.some(pattern => pattern.test(path)) || versionOnly(path)) continue;
     const plugin = PLUGINS.find(name => path.startsWith(`apps/${name}/`));
     if (!plugin) return 'full';
     const inside = path.slice(`apps/${plugin}/`.length);
@@ -145,7 +151,21 @@ if (import.meta.main) {
       try { before = JSON.parse(git('show', `${last}:${path}`)); } catch { return true; }
       return pick(before) !== pick(JSON.parse(readFileSync(join(ROOT, path), 'utf8')));
     };
-    console.log(kindOf(changed, installChanged));
+    // A file only the version fields of changed in (a patch release's own bump).
+    const versionOnly = (path: string) => {
+      const fields = FIELDS.filter(field => field.file === path);
+      if (fields.length === 0) return false;
+      const blank = (text: string) => {
+        const json = JSON.parse(text);
+        for (const { path: at } of fields) {
+          const parent = at.slice(0, -1).reduce((node, key) => node?.[key], json);
+          if (parent) delete parent[at[at.length - 1]];
+        }
+        return JSON.stringify(json);
+      };
+      try { return blank(git('show', `${last}:${path}`)) === blank(readFileSync(join(ROOT, path), 'utf8')); } catch { return false; }
+    };
+    console.log(kindOf(changed, installChanged, versionOnly));
   } else if (command === 'next-patch') {
     console.log(nextPatch(git('tag', '--list', 'v3.*').split('\n').filter(Boolean)));
   } else if (command === 'manifest' && args.length === 3) {

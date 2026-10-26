@@ -8,7 +8,7 @@ describe('one version for the repository', () => {
   test('every field carries the root version now', () => {
     const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
     expect(drift(version)).toEqual([]);
-    expect(version).toMatch(/^3\.\d+\.0$/);
+    expect(version).toMatch(/^3\.\d+\.\d+$/);
   });
 
   test('set writes every field and nothing else', () => {
