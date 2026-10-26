@@ -205,7 +205,7 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
             --title "Automagik ${VERSION%.0}" \
-            --notes "The Bot team (\`@automagik/bots-dsh\`) and the welcome (\`@automagik/welcome-dsh\`) for DeepSeek Harness, and the Automagik desktop app. Install the plugins from the [Automagik market](https://github.com/automagik-dev/dsh-marketplace) or from an Omni's own market; \`plugins.json\` lists each tarball's integrity. The desktop builds follow when they are done."
+            --notes "The Bot team (\`@automagik/bots-dsh\`), the welcome (\`@automagik/welcome-dsh\`) and the Unfold bridge (\`@automagik/unfold-bridge-dsh\`) for DeepSeek Harness, and the Automagik desktop app. Install the plugins from the [Automagik market](https://github.com/automagik-dev/dsh-marketplace) or from an Omni's own market; \`plugins.json\` lists each tarball's integrity. The desktop builds follow when they are done."
 
       - name: Sign and post the plugin lane
         if: steps.cut.outputs.version != ''
