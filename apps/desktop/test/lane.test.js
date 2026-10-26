@@ -209,8 +209,7 @@ test('Automagik\'s lane carries the add-ons it names, beside its plugins, and no
   const carried = lane({ addons: [addon('dsh-oh-my-claude', '1.5.6-omni.8'), addon('@goodandready/dsh-subscriptions', '0.7.22-omni.1')] })
   const installed = { ...context.installed, 'dsh-oh-my-claude': '1.5.6-omni.7', '@goodandready/dsh-subscriptions': '0.7.21-omni.1' }
   assert.deepEqual(laneUpdate(carried, { ...context, installed })?.plugins.map(plugin => `${plugin.name}@${plugin.version}`), ['@automagik/bots-dsh@3.22.1', 'dsh-oh-my-claude@1.5.6-omni.8'])
-  // Prerelease numbers order as numbers: omni.10 is after omni.9.
-  assert.deepEqual(laneUpdate(lane({ plugins: [], addons: [addon('dsh-oh-my-claude', '1.5.6-omni.10')] }), { ...context, installed: { 'dsh-oh-my-claude': '1.5.6-omni.9' } })?.plugins.map(plugin => plugin.version), ['1.5.6-omni.10'])
+}), { ...context, installed: { 'dsh-oh-my-claude': '1.5.6-omni.9' } })?.plugins.map(plugin => plugin.version), ['1.5.6-omni.10'])
   assert.equal(laneUpdate(lane({ plugins: [], addons: [addon('dsh-oh-my-claude', '1.5.6-omni.7')] }), { ...context, installed }), null)
   // Genie's lane cannot carry it.
   const genie = PUBLISHERS.find(entry => entry.publisher === 'genie')
