@@ -20511,8 +20511,16 @@ function createSwitchWindow(settle) {
 // src/client/suggestions.js
 var import_react56 = require("react");
 var MAX_SUGGESTIONS = 3;
+var IMAGE_ACCESS_TTL_MS = 6e4;
 var imagesReady;
-var imageAccess = () => imagesReady ??= call("image-access").then((access) => access !== null, () => false);
+var imagesAsked = 0;
+function imageAccess(now = Date.now()) {
+  if (!imagesReady || now - imagesAsked > IMAGE_ACCESS_TTL_MS) {
+    imagesAsked = now;
+    imagesReady = call("image-access").then((access) => access !== null, () => false);
+  }
+  return imagesReady;
+}
 var teamItems = ({ images }) => [
   ...images ? [{ id: "image", label: t("Draw an image"), text: t("Draw an image of "), icon: "ImageIcon" }] : [],
   { id: "search", label: t("Search the web"), text: t("Search the web for "), icon: "SearchIcon" },
@@ -20552,7 +20560,7 @@ function SuggestionDock({ sessionId, input, session, useRoster, useSessions }) {
   const [images, setImages] = (0, import_react56.useState)(false);
   (0, import_react56.useEffect)(() => {
     void imageAccess().then(setImages);
-  }, []);
+  }, [sessionId]);
   if (!bot || wrote || session?.running || (input?.draft ?? "").trim() !== "") return null;
   const items = suggestionsFor(entries2, { bot, roster, images });
   if (items.length === 0) return null;
