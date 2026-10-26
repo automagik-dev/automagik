@@ -1067,8 +1067,8 @@ var ZH = {
   "Task finished": "任务完成",
   "Privacy": "隐私",
   "Local first": "本地优先",
-  "Your Bots, chats, memory and files stay on this computer. Automagik sends nothing to anyone, not even to us at Namastex: no analytics, no usage counts, no crash reports.": "你的 Bot、对话、记忆和文件都留在这台电脑上。Automagik 不会向任何人发送任何内容，包括我们 Namastex：没有分析、没有用量统计、没有崩溃报告。",
-  "The AI a chat runs on receives that chat, the way any message reaches the one it is sent to. Everything else below is off, and stays off unless you switch it on here.": "对话所用的 AI 会收到这段对话，就像消息会送到收件人那里一样。下面其余的一切都是关闭的，除非你在这里打开。",
+  "Your Bots, chats, memory and files stay on this computer. Nothing that could train a model leaves it unless you switch it on below, and nothing at all goes to us at Namastex: no analytics, no usage counts, no crash reports.": "你的 Bot、对话、记忆和文件都留在这台电脑上。除非你在下面打开，任何可用于训练模型的内容都不会离开它；我们 Namastex 什么都不会收到：没有分析、没有用量统计、没有崩溃报告。",
+  "The AI a chat runs on receives that chat, the way any message reaches the one it is sent to. Sharing your chats for training is off. The tools you use keep their own features, like Claude Code's error reports and updates; you can switch those off here too.": "对话所用的 AI 会收到这段对话，就像消息会送到收件人那里一样。用于训练的对话分享是关闭的。你使用的工具保留它们自己的功能，比如 Claude Code 的错误报告和更新；你也可以在这里关闭它们。",
   "What you can choose to share": "你可以选择分享的内容",
   "Privacy is set by the Automagik desktop app": "隐私由 Automagik 桌面应用设置",
   "Open these settings in the Automagik app to change what it shares.": "在 Automagik 应用中打开这些设置，即可更改它分享的内容。",
@@ -1088,7 +1088,7 @@ var ZH = {
   "Google": "Google",
   "On Linux and Windows: a request for your language's dictionary, which tells Google your language and network address, never your text. On a Mac spelling is checked locally, so this changes nothing there.": "在 Linux 和 Windows 上：请求你所用语言的词典，这会让 Google 知道你的语言和网络地址，但绝不会知道你的文字。在 Mac 上拼写检查在本地完成，所以这里没有变化。",
   "Keep the same anonymous id for DeepSeek": "对 DeepSeek 保持同一个匿名 id",
-  "DeepSeek requests always carry an anonymous id, which no setting removes. Automagik makes a new one every time it starts, so your requests cannot be linked across launches. Switched on, the id stays the same.": "DeepSeek 请求总会带一个匿名 id，没有设置可以去掉它。Automagik 每次启动都会换一个新的，所以你的请求无法跨启动关联。打开后，id 会保持不变。",
+  "DeepSeek requests always carry an anonymous id, which no setting removes. It stays the same across launches, as in DSH. Switched off, Automagik makes a new one every time it starts; DeepSeek still knows your account from your key or sign-in.": "DeepSeek 请求总会带一个匿名 id，没有设置可以去掉它。它在多次启动之间保持不变，和 DSH 一样。关闭后，Automagik 每次启动都会换一个新的；DeepSeek 仍然能从你的密钥或登录知道你的账号。",
   "Checking for updates…": "正在检查更新…",
   "Automagik {version} is out": "Automagik {version} 已发布",
   "An update is out": "有新的更新",
@@ -15132,7 +15132,7 @@ var SHARES = Object.freeze([
     key: "stable-id",
     title: "Keep the same anonymous id for DeepSeek",
     to: "DeepSeek",
-    data: "DeepSeek requests always carry an anonymous id, which no setting removes. Automagik makes a new one every time it starts, so your requests cannot be linked across launches. Switched on, the id stays the same."
+    data: "DeepSeek requests always carry an anonymous id, which no setting removes. It stays the same across launches, as in DSH. Switched off, Automagik makes a new one every time it starts; DeepSeek still knows your account from your key or sign-in."
   }
 ]);
 function PrivacyPage({ actions, run: run2, Section: Section2, Row: Row3 }) {
@@ -15155,8 +15155,8 @@ function PrivacyPage({ actions, run: run2, Section: Section2, Row: Row3 }) {
       (0, import_react37.createElement)(
         "div",
         { className: "bt-privacy-intro" },
-        (0, import_react37.createElement)("p", null, t("Your Bots, chats, memory and files stay on this computer. Automagik sends nothing to anyone, not even to us at Namastex: no analytics, no usage counts, no crash reports.")),
-        (0, import_react37.createElement)("p", null, t("The AI a chat runs on receives that chat, the way any message reaches the one it is sent to. Everything else below is off, and stays off unless you switch it on here."))
+        (0, import_react37.createElement)("p", null, t("Your Bots, chats, memory and files stay on this computer. Nothing that could train a model leaves it unless you switch it on below, and nothing at all goes to us at Namastex: no analytics, no usage counts, no crash reports.")),
+        (0, import_react37.createElement)("p", null, t("The AI a chat runs on receives that chat, the way any message reaches the one it is sent to. Sharing your chats for training is off. The tools you use keep their own features, like Claude Code's error reports and updates; you can switch those off here too."))
       )
     ),
     (0, import_react37.createElement)(
