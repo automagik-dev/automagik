@@ -301,20 +301,6 @@ test('a team from before the octopus was stored gets it once, on its first Main 
   assert.equal(team.w2.color, undefined)
 })
 
-test('the Omni Bot is always a Main Bot (only a Main Bot operates Omni), and can still be deleted', async (t) => {
-  // A team whose Omni Bot was added before it was a Main Bot: it becomes one, after the companion.
-  const omni = { id: 'o3', sessionId: 'o3', name: 'Omni', kind: 'omni', role: 'Channel keeper', instructions: '', createdAt: 3, hidden: true }
-  const { call, stop } = start({ ...OLD_TEAM, mainBotIds: ['m1'], bots: { ...OLD_TEAM.bots, o3: omni } })
-  t.after(stop)
-  const team = (await call('state', {})).value
-  assert.deepEqual(team.mainBotIds, ['m1', 'o3'])
-  assert.equal(team.bots.find(bot => bot.id === 'o3').hidden, undefined)
-  for (const refused of [{ id: 'o3', main: false }, { id: 'w2', main: true, replace: 'o3' }]) assert.match((await call('set-main', refused)).error.message, /only a Main Bot operates Omni/)
-  // The companion keeps the crown; Omni can still go, and the companion stays the Main Bot.
-  assert.equal((await call('delete-bot', { id: 'o3' })).ok, true)
-  assert.deepEqual((await call('state', {})).value.mainBotIds, ['m1'])
-})
-
 test('set-main keeps one Main Bot and replaces only a Main Bot', async (t) => {
   const { call, stop } = start()
   t.after(stop)

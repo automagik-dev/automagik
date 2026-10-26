@@ -10,6 +10,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { AGENT_NAME, AGENT_SESSION_TITLE_MAX, TEAM_TOOLS } from './constants.js'
 import { splitRef } from './text.js'
 import { output } from './tools.js'
+import { OMNI_KIND } from './roster.js'
 
 const TASK_REPORT_MAX = 1500
 const TASKS_KEPT = 60
@@ -317,7 +318,8 @@ export function install(rt) {
     async execute(args, exec) {
       await rt.load()
       const self = rt.selfOf(exec.agent?.id)
-      if (self === undefined || !rt.isMain(self)) return 'Only a Main Bot starts tasks. Ask it in its chat.'
+      // The Omni Bot too: Omni's rules send computer work to start_task.
+      if (self === undefined || (!rt.isMain(self) && rt.botOf(self)?.kind !== OMNI_KIND)) return 'Only a Main Bot or the Omni Bot starts tasks. Ask one of them in its chat.'
       const title = String(args.title ?? '').trim()
       const text = String(args.instructions ?? '').trim()
       if (title === '' || text === '') return 'A task needs a title and instructions.'

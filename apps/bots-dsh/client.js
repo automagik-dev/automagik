@@ -377,7 +377,6 @@ var ZH = {
   "Replaces each member's own permissions in this group.": "在这个群里代替各成员自己的权限。",
   "Add Omni": "添加 Omni",
   "Your channels and their chats": "你的频道和其中的聊天",
-  "Always a Main Bot: only a Main Bot runs your Omni.": "始终是主 Bot：只有主 Bot 能操作你的 Omni。",
   "The only Main Bot. To hand the role to another Bot, use Main Bot on the Bots page.": "这是唯一的主 Bot。要把主 Bot 交给别的 Bot，请到「Bot」页的主 Bot 里换。",
   Change: "更换",
   "Can create and change Bots, and runs every group chat.": "可以创建和修改 Bot，并管理所有群聊。",
@@ -11821,7 +11820,6 @@ function BotSettingsForm({ bot, roster, actions, run: run2 }) {
   }, [confirming]);
   const isMainBot = isMainOf(roster, bot.id);
   const onlyMain = isMainBot && (roster.mainBotIds ?? []).length === 1;
-  const omni2 = bot.kind === "omni";
   const isTile = roster.mainBotId === bot.id;
   const save = (patch) => run2(actions.updateBot(bot.id, patch));
   const extraCards = useEntries(botSettings);
@@ -11899,16 +11897,7 @@ function BotSettingsForm({ bot, roster, actions, run: run2 }) {
     (0, import_react28.createElement)(
       Card,
       { title: t("Main Bot") },
-      omni2 ? (0, import_react28.createElement)(
-        "div",
-        { className: "bt-set-row bt-bs-row" },
-        (0, import_react28.createElement)(
-          "span",
-          { className: "bt-set-copy" },
-          (0, import_react28.createElement)("span", { className: "bt-bs-label" }, t("Main Bot")),
-          (0, import_react28.createElement)("span", { className: "bt-set-hint" }, t("Always a Main Bot: only a Main Bot runs your Omni."))
-        )
-      ) : onlyMain ? (0, import_react28.createElement)(
+      onlyMain ? (0, import_react28.createElement)(
         "div",
         { className: "bt-set-row bt-bs-row" },
         (0, import_react28.createElement)(
@@ -11936,7 +11925,7 @@ function BotSettingsForm({ bot, roster, actions, run: run2 }) {
         (0, import_react28.createElement)("span", { className: "bt-set-copy" }, (0, import_react28.createElement)("span", { className: "bt-bs-label" }, t("Duplicate")), (0, import_react28.createElement)("span", { className: "bt-set-hint" }, t("A copy with the same job and model, and fresh memory."))),
         (0, import_react28.createElement)("span", { className: "bt-chevron" }, (0, import_react28.createElement)(ChevronRightIcon))
       ),
-      isMainBot && !omni2 ? null : (0, import_react28.createElement)(
+      isMainBot ? null : (0, import_react28.createElement)(
         "button",
         { type: "button", className: "bt-set-row bt-bs-row bt-bs-danger", "data-confirm": confirming || void 0, onClick: remove },
         (0, import_react28.createElement)(
@@ -19424,8 +19413,7 @@ function MainBotsSection({ roster, actions, run: run2 }) {
       SetRow,
       { key: bot.id, label: bot.name, hint: t("Also a Main Bot.") },
       (0, import_react54.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => run2(actions.setMain(bot.id, true, { primary: true })) }, t("Move to first")),
-      // The Omni Bot stays a Main Bot (roster.js OMNI_KIND).
-      bot.kind === "omni" ? null : (0, import_react54.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => run2(actions.setMain(bot.id, false)) }, t("Remove Main Bot role"))
+      (0, import_react54.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => run2(actions.setMain(bot.id, false)) }, t("Remove Main Bot role"))
     )),
     candidates.length > 0 ? (0, import_react54.createElement)(
       SetRow,
@@ -19667,8 +19655,7 @@ function ContextMenu({ menu, roster, actions, leaving = false }) {
         actions.openSession(copy2.id);
       }] : null,
       bot && !isMainBot ? [t("Make Main Bot"), StarLineIcon, () => actions.setMain(bot.id, true)] : null,
-      // The Omni Bot stays a Main Bot (roster.js OMNI_KIND).
-      bot && isMainBot && mainCount > 1 && bot.kind !== "omni" ? [t("Remove Main Bot role"), StarLineIcon, () => actions.setMain(bot.id, false)] : null
+      bot && isMainBot && mainCount > 1 ? [t("Remove Main Bot role"), StarLineIcon, () => actions.setMain(bot.id, false)] : null
     ],
     [
       // The Bot goes on in a fresh conversation; earlier parts stay readable.
@@ -19677,7 +19664,7 @@ function ContextMenu({ menu, roster, actions, leaving = false }) {
     ],
     [
       isMainBot ? null : [t("Hide from sidebar"), HideIcon, () => actions.setFlags(menu.id, { hidden: true })],
-      isMainBot && bot?.kind !== "omni" ? null : [room2 ? t("Delete group") : t("Delete"), TrashIcon, () => bot ? actions.deleteBot(bot.id) : actions.deleteRoom(menu.id), true]
+      isMainBot ? null : [room2 ? t("Delete group") : t("Delete"), TrashIcon, () => bot ? actions.deleteBot(bot.id) : actions.deleteRoom(menu.id), true]
     ]
   ].map((group) => group.filter(Boolean)).filter((group) => group.length > 0);
   return (0, import_react55.createElement)(

@@ -345,7 +345,6 @@ const ZH = {
   "Replaces each member's own permissions in this group.": '在这个群里代替各成员自己的权限。',
   'Add Omni': '添加 Omni',
   'Your channels and their chats': '你的频道和其中的聊天',
-  'Always a Main Bot: only a Main Bot runs your Omni.': '始终是主 Bot：只有主 Bot 能操作你的 Omni。',
   'The only Main Bot. To hand the role to another Bot, use Main Bot on the Bots page.': '这是唯一的主 Bot。要把主 Bot 交给别的 Bot，请到「Bot」页的主 Bot 里换。',
   Change: '更换',
   'Can create and change Bots, and runs every group chat.': '可以创建和修改 Bot，并管理所有群聊。',
