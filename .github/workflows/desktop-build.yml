@@ -241,9 +241,13 @@ jobs:
           TAG="v${VERSION}"
           if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             # A rebuild replaces the release's desktop files: one this build did not make goes.
-            # The plugins (release.yml's automagik-*.tgz, plugins.json and PLUGINS.SHA256SUMS) stay.
+            # The cut's own files stay: every one PLUGINS.SHA256SUMS lists (the plugins, the
+            # add-ons the lane carries, plugins.json, addons.json), and that list itself. A lane
+            # names those tarballs, so deleting one breaks every app's download of it.
+            cut=$(gh release download "${TAG}" --repo "${GITHUB_REPOSITORY}" -p PLUGINS.SHA256SUMS -O - 2>/dev/null | awk '{print $2}' || true)
             for name in $(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name'); do
               case "${name}" in automagik-*.tgz|plugins.json|PLUGINS.SHA256SUMS) continue ;; esac
+              grep -qxF -- "${name}" <<< "${cut}" && continue
               [[ -e "assets/${name}" ]] || gh release delete-asset "${TAG}" "${name}" --yes --repo "${GITHUB_REPOSITORY}"
             done
             gh release upload "${TAG}" assets/* --clobber --repo "${GITHUB_REPOSITORY}"
