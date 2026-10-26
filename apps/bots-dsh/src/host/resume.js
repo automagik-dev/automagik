@@ -33,6 +33,8 @@ export const resumeText = record => [
   'DeepSeek Harness restarted while you were working on this, so your last turn stopped before it finished.',
   record.approval ? `You were waiting for the user's approval to run ${record.approval.tool || 'a tool'}${record.approval.reason ? ` (${record.approval.reason})` : ''}; that request is gone, so ask again if you still need it.` : '',
   'Check what is already done (files, commands, messages) before you repeat anything, then finish the task and give your reply.',
+  // The end of a reply written while DSH shut down can be lost on the way (issue #62).
+  'If you had already finished and replied, give that reply again in full: it may not have reached the chat.',
 ].filter(Boolean).join(' ')
 
 // The trigger fields a resumed turn needs to answer the same sender.
