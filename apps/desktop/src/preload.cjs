@@ -16,3 +16,16 @@ const updates = Object.freeze({
 })
 
 contextBridge.exposeInMainWorld('omniDesktop', Object.freeze({ app: 'omni-desktop', platform: process.platform, updates }))
+
+// The page's styles know they are in the app, on which system, and whether it is full screen:
+// on macOS the sidebar's top row makes room for the traffic lights and drags the window
+// (bots-dsh sidebar.js), and the title bar's brand is the only one.
+const root = () => document.documentElement
+const mark = () => { if (root()) root().dataset.automagikDesktop = process.platform }
+mark()
+document.addEventListener('DOMContentLoaded', mark)
+ipcRenderer.on('automagik-window', (_event, state) => {
+  if (!root()) return
+  if (state?.fullScreen) root().dataset.automagikFullscreen = ''
+  else delete root().dataset.automagikFullscreen
+})

@@ -15178,6 +15178,30 @@ var SIDEBAR_CSS = `
 .bt-side-top .bt-brand{cursor:default;padding-left:6px}
 .bt-side-top .bt-brand:hover{background:none}
 .bt-brand .bt-mark{flex:none}
+/* In the app the window's title bar carries the brand (or the system's, on macOS): the
+   sidebar's top row is its buttons alone. */
+html[data-automagik-desktop] .bt-side-top .bt-brand{display:none}
+/* macOS: dsh's page fills the window, and the traffic lights sit at the start of this row
+   (apps/desktop frame.js TRAFFIC_LIGHTS), which also moves the window. */
+html[data-automagik-desktop=darwin]:not([data-automagik-fullscreen]) .bt-side-top{padding-left:64px}
+html[data-automagik-desktop=darwin] .bt-side-top{-webkit-app-region:drag}
+html[data-automagik-desktop=darwin] .bt-side-top>*{-webkit-app-region:no-drag}
+html[data-automagik-desktop=darwin] header[class*="_header"]{-webkit-app-region:drag}
+html[data-automagik-desktop=darwin] header[class*="_header"] :is(button,a,input,textarea,select,[role=button],[tabindex]){-webkit-app-region:no-drag}
+/* The collapsed sidebar is a 56px rail, and DSH's card around it left its content 12px: the
+   marks were cut. It keeps a 6px margin and no side padding, everything centred in it. */
+[class*="_root"][class*="_collapsed"]{margin:6px!important;padding-left:0!important;padding-right:0!important}
+[class*="_collapsed"]>:is([class*="_logoRow"],[class*="_regionArea"]){width:100%;display:flex;justify-content:center}
+[class*="_collapsed"]>[class*="_footArea"]{width:100%;justify-items:center;padding-left:0!important;padding-right:0!important}
+.bt-rail{width:100%}
+/* The rail's open button is the sidebar switch, as everywhere else: the brand already sits
+   at the rail's foot, in the settings seat. */
+[class*="_collapsed"] [class*="_toggle"] [class*="_railMark"]{display:none}
+[class*="_collapsed"] [class*="_toggle"]::before{content:"";width:18px;height:18px;background:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='1.6'%3E%3Crect x='3' y='4' width='14' height='12' rx='2.5'/%3E%3Cpath d='M8 4v12'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='1.6'%3E%3Crect x='3' y='4' width='14' height='12' rx='2.5'/%3E%3Cpath d='M8 4v12'/%3E%3C/svg%3E") center/contain no-repeat}
+/* macOS, collapsed: the rail starts below the traffic lights, and the chat's header leaves
+   them room where they reach past the rail. */
+html[data-automagik-desktop=darwin]:not([data-automagik-fullscreen]) [class*="_root"][class*="_collapsed"]{padding-top:52px!important}
+html[data-automagik-desktop=darwin]:not([data-automagik-fullscreen]) [class*="_frame"]:has([class*="_root"][class*="_collapsed"]) header[class*="_header"]>[class*="_headerLeading"]{margin-left:28px}
 .bt-pin{flex:none;display:inline-flex;color:var(--bt-ink-3)}
 .bt-row-crowned{margin-top:8px}
 /* A Bot's running tasks, as threads under its row. */

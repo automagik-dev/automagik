@@ -489,6 +489,8 @@ function layout() {
     const { bounds, radius } = pageLayout(window.getContentBounds(), { platform: process.platform, maximized })
     page.setBounds(bounds)
     page.setBorderRadius(radius)
+    // Full screen hides the traffic lights: the sidebar's top row takes their room back.
+    page.webContents.send('automagik-window', { fullScreen: window.isFullScreen() })
   }
   sendState()
 }
