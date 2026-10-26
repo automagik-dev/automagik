@@ -72,8 +72,8 @@
     "genie": {
       "repository": "https://github.com/automagik-dev/genie",
       "path": "plugins/genie-dsh",
-      "version": "0.1.1",
-      "commit": "fcf1419c1fc06120ad7fb982d91af74cecc2ae7b"
+      "version": "0.1.4",
+      "commit": "39402fb18dd29e33f7c18cb9eb7d5d757c3a7273"
     }
   }
 }
