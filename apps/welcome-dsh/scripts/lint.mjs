@@ -11,7 +11,7 @@ const plugin = resolve(import.meta.dirname, '..')
 const candidates = [process.env.DSH_HARNESS, join(plugin, 'dev', 'harness'), join(plugin, '..', 'deepseek-harness')]
 try {
   const common = execFileSync('git', ['-C', plugin, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' }).trim()
-  candidates.push(join(dirname(common), 'deepseek-harness'))
+  candidates.push(join(dirname(dirname(common)), 'deepseek-harness'))
 } catch {}
 // Node runs oxlint's own script: on Windows it cannot spawn the .cmd shim in node_modules/.bin
 // without a shell.
