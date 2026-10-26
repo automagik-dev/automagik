@@ -119,6 +119,8 @@ export function createPets({ home, codexHome = join(homedir(), '.codex'), builti
     by: typeof pet.ownerName === 'string' ? pet.ownerName.slice(0, 60) : undefined,
     version: pet.spriteVersionNumber === 2 ? 2 : 1,
     poster: assetUrl(pet.posterUrl),
+    // Its sheet, for the character select's preview before it is picked.
+    sheet: assetUrl(pet.spritesheetUrl),
     likes: Number(pet.likeCount) || 0,
   })
 

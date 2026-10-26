@@ -1,17 +1,17 @@
 import { createElement as h, Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { paintCss } from './inks.js'
-import { CHARACTERS, PICKER_SHAPES, PICKER_COLUMNS, CHARACTER_COLORS, SHAPES, hasShape, shapeOf, bodyOf, maskBox, holes, nextMarkSerial } from './characters.js'
+import { CHARACTERS, PICKER_SHAPES, PICKER_COLUMNS, CHARACTER_COLORS, SHAPES, shapeOf, bodyOf, maskBox, holes, nextMarkSerial } from './characters.js'
 import { isMainOf } from './sources.js'
 import { PencilIcon, ChevronRightIcon } from './icons.js'
-import { lookOf, BotMark } from './mark.js'
-import { PetsTab } from './pets-tab.js'
+import { BotMark } from './mark.js'
+import { CharacterSelect } from './character-select.js'
 import { ModelMenu, modelOf } from './model-menu.js'
 import { FolderMenu } from './folder-menu.js'
 import { BotSchedules } from './schedules.js'
 import { BotCapabilitiesCard } from './capability-settings.js'
 import { botSettings, useEntries } from './extend.js'
 import { useMemoryCount } from './memory-panel.js'
-import { SPRING_SHAPE, SPRING_TAP, spring, useGlide } from './motion.js'
+import { SPRING_SHAPE, SPRING_TAP, spring } from './motion.js'
 import { t } from './i18n.js'
 
 const capitalize = word => word[0].toUpperCase() + word.slice(1)
@@ -120,68 +120,6 @@ export function CharacterGrid({ look, hasPhoto = false, onShape, onColor }) {
     }, h('span', { style: { background: paintCss(color) } })))))
 }
 
-// The avatar editor: the Pets tab (where it opens) picks a pet in the Codex format, from
-// this computer or codex-pets.net (pets-tab.js); the Bot tab picks a character (every click
-// saves), the Upload tab takes a photo, and Reset returns to the look the Bot id gives.
-function AvatarEditor({ bot, actions, run, onClose }) {
-  const look = lookOf(bot)
-  const [tab, setTab] = useState(look.image ? 'upload' : 'pets')
-  const [over, setOver] = useState(false)
-  const ref = useRef(null)
-  const fileRef = useRef(null)
-  const upload = (file) => {
-    if (file) void run(avatarImage(file).then(image => actions.updateBot(bot.id, { avatar: { ...(bot.avatar ?? {}), image } })))
-  }
-  useEffect(() => {
-    const onDown = (event) => {
-      if (!(event.target instanceof Element) || ref.current?.contains(event.target) || event.target.closest('.bt-avatar-trigger')) return
-      onClose()
-    }
-    const onKey = (event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose() } }
-    window.addEventListener('mousedown', onDown)
-    window.addEventListener('keydown', onKey, true)
-    return () => { window.removeEventListener('mousedown', onDown); window.removeEventListener('keydown', onKey, true) }
-  }, [onClose])
-  useEffect(() => {
-    if (tab !== 'upload') return undefined
-    const onPaste = (event) => {
-      const file = [...(event.clipboardData?.files ?? [])].find(item => item.type.startsWith('image/'))
-      if (file) { event.preventDefault(); upload(file) }
-    }
-    window.addEventListener('paste', onPaste)
-    return () => window.removeEventListener('paste', onPaste)
-  }, [tab, bot])
-  const hasPhoto = Boolean(look.image)
-  const glide = useGlide(tab)
-  return h('div', { ref, className: 'bt-avedit', role: 'dialog', 'aria-label': t('Avatar editor') },
-    h('div', { className: 'bt-avedit-top' },
-      h('div', { ref: glide.box, role: 'tablist', 'aria-label': t('Avatar source'), className: 'bt-avedit-tabs' },
-        h('span', { ref: glide.thumb, className: 'bt-thumb', 'aria-hidden': true }),
-        [['pets', 'Pets'], ['bot', 'Bot'], ['upload', 'Upload']].map(([id, label]) => h('button', { key: id, type: 'button', role: 'tab', className: 'bt-avedit-tab', 'aria-selected': tab === id, onClick: () => setTab(id) }, t(label)))),
-      h('button', {
-        type: 'button', className: 'bt-avedit-tab bt-avedit-reset', title: t('Reset character to default'),
-        onClick: () => run(actions.updateBot(bot.id, { avatar: null, color: null })),
-      }, t('Reset'))),
-    tab === 'pets' ? h(PetsTab, { bot, look, actions, run }) : null,
-    tab === 'bot' ? h(CharacterGrid, {
-      look, hasPhoto: hasPhoto || Boolean(look.pet),
-      onShape: shape => run(actions.updateBot(bot.id, { avatar: { shape } })),
-      onColor: color => run(actions.updateBot(bot.id, { color })),
-    }) : null,
-    tab === 'upload' ? h('div', {
-      className: 'bt-dropzone', 'data-over': over || undefined,
-      onDragOver: (event) => { event.preventDefault(); setOver(true) },
-      onDragLeave: () => setOver(false),
-      onDrop: (event) => { event.preventDefault(); setOver(false); upload(event.dataTransfer.files?.[0]) },
-    },
-    hasPhoto ? h('img', { src: look.image, alt: '' }) : null,
-    h('div', null, t('Drag, drop, or paste an image')),
-    h('div', { className: 'bt-actions', style: { justifyContent: 'center' } },
-      h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => fileRef.current?.click() }, hasPhoto ? t('Replace') : t('Browse files')),
-      hasPhoto ? h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => run(actions.updateBot(bot.id, { avatar: hasShape(bot.avatar?.shape) ? { shape: bot.avatar.shape } : null })) }, t('Remove photo')) : null),
-    h('input', { ref: fileRef, type: 'file', accept: 'image/png,image/jpeg,image/webp,image/gif', hidden: true, onChange: (event) => { const file = event.target.files?.[0]; event.target.value = ''; upload(file) } })) : null)
-}
-
 function MemoryCard({ bot, actions }) {
   const count = useMemoryCount(bot.id, actions)
   const label = count === null ? t('Loading…') : count === 0 ? t('Nothing saved yet') : count === 1 ? t('1 entry') : t('{count} entries', { count })
@@ -216,10 +154,10 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
   return h('div', { className: 'bt-bs' },
     h('div', { className: 'bt-bs-hero' },
       h('div', { className: 'bt-avatar-anchor' },
-        h('button', { type: 'button', className: 'bt-avatar-trigger', 'aria-label': t('Edit Bot avatar'), 'aria-expanded': editing, onClick: () => setEditing(value => !value) },
+        h('button', { type: 'button', className: 'bt-avatar-trigger', 'aria-label': t('Choose a character'), 'aria-haspopup': 'dialog', 'aria-expanded': editing, onClick: () => setEditing(true) },
           h(BotMark, { bot, size: 64, live: true }),
           h('span', { className: 'bt-avatar-pencil', 'aria-hidden': true }, h(PencilIcon))),
-        editing ? h(AvatarEditor, { bot, actions, run, onClose: closeEditor }) : null),
+        editing ? h(CharacterSelect, { bot, actions, run, onClose: closeEditor, avatarImage }) : null),
       h('div', { className: 'bt-bs-who' },
         h('span', { className: 'bt-bs-name' }, bot.name),
         h('span', { className: 'bt-bs-sub' }, [bot.role, isMainBot ? t('Main Bot') : ''].filter(Boolean).join(' · ') || t('Bot')))),

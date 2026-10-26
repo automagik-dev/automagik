@@ -70,7 +70,7 @@ export function petOf(bot, look, { live, size }) {
   if (art === 'genie') return null
   return { bake: art === 'omni' ? { clay: 'omni' } : { shape: shapeId(look.shape), color: look.color } }
 }
-function useBaked(wanted) {
+export function useBaked(wanted) {
   const key = wanted ? `${wanted.clay ?? ''}|${wanted.shape ?? ''}|${wanted.color ?? ''}` : ''
   const [pet, setPet] = useState(null)
   useEffect(() => {
