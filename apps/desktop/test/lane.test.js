@@ -76,6 +76,16 @@ function profileWith(root, version) {
   writeFileSync(join(real, 'package.json'), JSON.stringify({ name: '@automagik/bots-dsh', version }))
   mkdirSync(join(root, 'profile', 'node_modules', '@automagik'), { recursive: true })
   symlinkSync(real, join(root, 'profile', 'node_modules', '@automagik', 'bots-dsh'))
+  // package.json and the lock as pnpm wrote them for the shipped tarball (pnpm 10, lockfile 9).
+  const id = `file:vendor/automagik-bots-dsh-${version}.tgz`
+  writeFileSync(join(root, 'profile', 'package.json'), JSON.stringify({ dependencies: { '@automagik/bots-dsh': id } }))
+  writeFileSync(join(root, 'profile', 'pnpm-lock.yaml'), [
+    "lockfileVersion: '9.0'", '', 'importers:', '', '  .:', '    dependencies:',
+    "      '@automagik/bots-dsh':", `        specifier: ${id}`, `        version: ${id}`,
+    "      '@automagik/omni-channels-dsh':", '        specifier: file:vendor/automagik-omni-channels-dsh-2.tgz', `        version: file:vendor/automagik-omni-channels-dsh-2.tgz(@automagik/bots-dsh@${id})`,
+    '', 'packages:', '', `  '@automagik/bots-dsh@${id}':`, `    resolution: {integrity: sha512-old, tarball: ${id}}`, `    version: ${version}`, '',
+    'snapshots:', '', `  '@automagik/bots-dsh@${id}': {}`, '',
+  ].join('\n'))
   return { target: join(root, 'profile'), real }
 }
 function tarball(root, version) {
@@ -102,6 +112,14 @@ test('staged plugins go in at the next start, and stay once the page draws', asy
   // The store's folder now holds the new version; the one it replaced waits beside it.
   assert.equal(JSON.parse(readFileSync(join(real, 'package.json'), 'utf8')).version, '3.22.1')
   assert.equal(JSON.parse(readFileSync(`${real}.lane-prev/package.json`, 'utf8')).version, '3.22.0')
+  // pnpm sees the lane's tarball: a plugin manager install keeps it instead of putting 3.22.0 back.
+  const id = 'file:vendor/automagik-bots-dsh-3.22.1.tgz'
+  assert.equal(JSON.parse(readFileSync(join(target, 'package.json'), 'utf8')).dependencies['@automagik/bots-dsh'], id)
+  assert.deepEqual(readFileSync(join(target, 'vendor', 'automagik-bots-dsh-3.22.1.tgz')), bytes)
+  const lock = readFileSync(join(target, 'pnpm-lock.yaml'), 'utf8')
+  assert.equal(lock.includes('3.22.0'), false)
+  assert.ok(lock.includes(`  '@automagik/bots-dsh@${id}':\n    resolution: {integrity: ${plugin.integrity}, tarball: ${id}}\n    version: 3.22.1\n`))
+  assert.ok(lock.includes(`(@automagik/bots-dsh@${id})`))
   assert.equal(confirm(home), true)
   assert.equal(existsSync(`${real}.lane-prev`), false)
   assert.equal(laneMemory(home).last, 220001)
@@ -116,10 +134,14 @@ test('a start whose page never draws the Bot team brings the previous plugins ba
   const bytes = tarball(root, '3.22.1')
   const plugin = { ...lane().plugins[0], size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}` }
   await stage({ version: '3.22.1', sequence: 220001, plugins: [plugin] }, { home, fetch: async () => new Response(bytes) })
+  const lockBefore = readFileSync(join(target, 'pnpm-lock.yaml'), 'utf8')
+  const manifestBefore = readFileSync(join(target, 'package.json'), 'utf8')
   assert.equal(beforeStart({ home, target }), 'applied')
   trialFailed(home)
   assert.equal(beforeStart({ home, target }), 'restored')
   assert.equal(JSON.parse(readFileSync(join(real, 'package.json'), 'utf8')).version, '3.22.0')
+  assert.equal(readFileSync(join(target, 'pnpm-lock.yaml'), 'utf8'), lockBefore)
+  assert.equal(readFileSync(join(target, 'package.json'), 'utf8'), manifestBefore)
   assert.deepEqual(laneMemory(home).bad, ['3.22.1'])
   assert.equal(laneUpdate(lane(), { ...context, bad: laneMemory(home).bad }), null)
 })
