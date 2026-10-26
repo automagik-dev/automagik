@@ -5,7 +5,7 @@
   "omni": {
     "addonVersions": {
       "@goodandready/dsh-subscriptions": "0.7.21-omni.1",
-      "dsh-oh-my-claude": "1.5.6-omni.6"
+      "dsh-oh-my-claude": "1.5.6-omni.7"
     }
   },
   "dependencies": {
@@ -14,7 +14,7 @@
     "@automagik/omni-canvas-dsh": "*",
     "@automagik/welcome-dsh": "*",
     "@goodandready/dsh-subscriptions": "github:automagik-genie/dsh-subscriptions#2eff034ede95c9d06ecee290517101e6419c7fee",
-    "dsh-oh-my-claude": "github:automagik-genie/dsh-oh-my-claude#5a2ca3b7258b92e262ea9059fcd035cf07a31776"
+    "dsh-oh-my-claude": "github:automagik-genie/dsh-oh-my-claude#eb9d1cdad58472ebe34abd194309a60fc22c40d1"
   },
   "dsh": {
     "profile": {
