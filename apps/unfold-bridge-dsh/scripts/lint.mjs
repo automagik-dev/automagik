@@ -20,6 +20,6 @@ if (!bin) {
   console.error('lint: no oxlint found; run bun run harness, or set DSH_HARNESS to a deepseek-harness checkout')
   process.exit(2)
 }
-const result = spawnSync(process.execPath, [bin, '-c', '.oxlintrc.json', ...process.argv.slice(2), 'index.js', 'src', 'scripts', 'test'], { cwd: plugin, stdio: 'inherit' })
+const result = spawnSync(process.execPath, [bin, '-c', '.oxlintrc.json', ...process.argv.slice(2), 'index.js', 'src', 'scripts', 'test', 'dev/renders.mjs'], { cwd: plugin, stdio: 'inherit' })
 if (result.error) console.error(`lint: ${result.error.message}`)
 process.exit(result.status ?? 1)
