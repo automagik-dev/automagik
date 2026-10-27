@@ -117,7 +117,9 @@ The client holds no key. It holds a draft's token only to send or cancel that dr
 
 DSH asks before it installs, and you switch the bridge on and off on its Plugins page. Switching it off stops the endpoint at once.
 
-The plugin declares `inject: ['llm']` and nothing else. It needs no settings.
+On the host the plugin declares `inject: ['llm']`, and the work view also uses DSH's session services (`sessionController`, `sessions`, `sessionTitle`, `workspaceRegistry`, `connection`) once they are up. Its client in the DSH page injects `@deepseek-ai/dsh-client-runtime`, `@deepseek-ai/dsh-client-ui-settings` and `@deepseek-ai/dsh-client-ui-slots`. It needs no settings.
+
+To move to a newer version, open Unfold bridge in the market, pick it under Versions and install it, then restart DSH: the host part switches at once, and the page loads the new client after the restart.
 
 ## Develop
 
