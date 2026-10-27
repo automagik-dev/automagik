@@ -62,15 +62,15 @@ At start, the bridge writes `endpoint.json` into `$XDG_STATE_HOME/unfold-bridge/
 
 ## The work view: Unfold watching your agents
 
-Once DSH's session services are up, the bridge also keeps a work view for Unfold. Unfold sees what your DSH agents are doing for the Sessions it subscribes to. It can propose a next message for an agent, and that message is sent only when you tap Send in DSH. Tested with DSH 0.2.1-rc.3.
+Once DSH's session services are up, the bridge also keeps a work view for Unfold. Unfold sees what your DSH agents are doing for the Sessions it subscribes to. It can propose a next message for an agent, and that message is sent only when you click Send in DSH. Tested with DSH 0.2.1-rc.3.
 
 **Unfold's routes** are on the same loopback server, behind the same key, Host and no-Origin checks:
 
 | Route | What |
 |---|---|
-| `POST /v1/dsh/events` | `{subscriptions}` → a Server-Sent Events stream. The first event is `hello {conn_id}`. Then come `event` frames that pass the subscriptions, `control` frames (your taps, below), and `: hb` every 15 s. A new stream replaces the old one. **Events in a gap between streams are lost** (no backfill): Unfold rebuilds its board from `POST /v1/dsh/agents` on every connect. Your taps are not lost: they wait for the next stream, in order. |
+| `POST /v1/dsh/events` | `{subscriptions}` → a Server-Sent Events stream. The first event is `hello {conn_id}`. Then come `event` frames that pass the subscriptions, `control` frames (your clicks, below), and `: hb` every 15 s. A new stream replaces the old one. **Events in a gap between streams are lost** (no backfill): Unfold rebuilds its board from `POST /v1/dsh/agents` on every connect. Your clicks are not lost: they wait for the next stream, in order. |
 | `POST /v1/dsh/agents` | `{subscriptions}` → `{agents, approvals}`. Every Session's name, workspace and status. The last turn's summary and the pending approvals are given only for subscribed Sessions. |
-| `POST /v1/dsh/drafts` | `{conn_id, generation, effect_id, token, session_id, text}`: a message for you to tap. The recipient's name and workspace come from DSH's own list. One draft per Session; a newer one replaces it. |
+| `POST /v1/dsh/drafts` | `{conn_id, generation, effect_id, token, session_id, text}`: a message for you to send with a click. The recipient's name and workspace come from DSH's own list. One draft per Session; a newer one replaces it. |
 | `DELETE /v1/dsh/drafts/{effect_id}` | Withdraw a draft. |
 | `PUT /v1/dsh/view` | `{conn_id, generation, subscriptions, log_tail, advice}`: what the DSH client shows for Unfold. Every write on a connection carries a generation at least the highest seen, and a view's must be strictly above the last view's, so an older view in flight never wins (409 `stale_generation` otherwise). |
 
@@ -91,7 +91,7 @@ Once DSH's session services are up, the bridge also keeps a work view for Unfold
 | `POST /api/unfold-bridge/subscriptions` · `DELETE …?id=` · `POST /api/unfold-bridge/undo?change_id=` | Tell Unfold to watch a Session, drop a subscription, or undo one of its own changes. |
 
 **What the work view doesn't do:**
-- **The key alone can't send.** No route the key reaches sends a prompt. Sending needs your tap in DSH, and it sends the text Unfold registered, never text from the request.
+- **The key alone can't send.** No route the key reaches sends a prompt. Sending needs you to click Send in DSH, and it sends the text Unfold registered, never text from the request.
 - **It never answers approvals.** An approval appears on DSH's `approval/asked` and clears on `approval/decided`, and you answer it on DSH's own card. The plugin registers no `approval/request` handler.
 - **The Bot team (`@automagik/bots-dsh`):** the two plugins share no state. The work view only observes, so it doesn't change the Bot team's routing, its approvals or its fallback.
 - **Permissions:** the work view injects `sessionController`, `sessions`, `sessionTitle`, `workspaceRegistry` and `connection`. We found no consent step in DSH 0.2.1-rc.3 for the services a plugin injects. The model routes don't wait for these services.
@@ -108,7 +108,7 @@ The client holds no key. It holds a draft's token only to send or cancel that dr
 
 **Labels:** a Session's name is its DSH title. A Session that isn't loaded in DSH has no title to read yet and shows as `session <first 8 characters of its id>`.
 
-**A disclosed limit:** a program running as you, such as an agent's shell, can read `endpoint.json` and DSH's own credentials file. It can then register a draft or a view that shows as Unfold's in DSH, but it can't send one without your tap. A program that can read DSH's credentials already controls DSH through its own API, so this adds no new reach.
+**A disclosed limit:** a program running as you, such as an agent's shell, can read `endpoint.json` and DSH's own credentials file. It can then register a draft or a view that shows as Unfold's in DSH, but it can't send one unless you click Send. A program that can read DSH's credentials already controls DSH through its own API, so this adds no new reach.
 
 ## Install
 

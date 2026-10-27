@@ -228,7 +228,7 @@ test('the link state reads Unfold connected, not connected, or the bridge not th
   assert.equal(link(fixtureView()), 'on')
   assert.equal(link(fixtureView({ connected: false })), 'off')
   assert.equal(link(null), 'down')
-  assert.equal(text(render(client.LinkState, { snap: fixtureView({ connected: false }), t: pt })), 'Conexão com Unfold: inativaSeus toques são entregues quando a conexão com Unfold voltar.')
+  assert.equal(text(render(client.LinkState, { snap: fixtureView({ connected: false }), t: pt })), 'Conexão com Unfold: inativaSeus cliques são entregues quando a conexão com Unfold voltar.')
 })
 
 test('the copy check passes over EN and pt-BR and catches a bad line', () => {
