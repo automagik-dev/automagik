@@ -1,13 +1,16 @@
-// The DSH Agent, shown as Tasks: a team's one plain dsh entry, listed under the Bots but
-// not one of them. Its Sessions are ordinary root Sessions in the DS Bot workspace, so
-// they get the whole dsh conversation surface and none of the team tools. A Main Bot hands
-// one-off work there (start_task); when a task's first turn ends, its last words go back
-// to the Bot that started it.
+// DSH bots: plain dsh entries listed under the Bots but not Bots. The user makes any number,
+// each with a name, a project folder (`workDir`, else the team workspace) and a DSH agent
+// preset (`profile`, else DSH's default). Their Sessions are ordinary root Sessions there,
+// so they get the whole dsh conversation surface and none of the team tools.
+//
+// The tasks record (`kind: 'tasks'`) is not one: it keeps the Sessions of the one-off work
+// a Bot hands off (start_task), which show under that Bot; when a task's first turn ends,
+// its last words go back to the Bot. Only a task whose Bot is gone shows under it.
 import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { AGENT_NAME, AGENT_SESSION_TITLE_MAX, TEAM_TOOLS } from './constants.js'
+import { AGENT_NAME, AGENT_SESSION_TITLE_MAX, DSH_BOT_NAME_MAX, TEAM_TOOLS } from './constants.js'
 import { splitRef } from './text.js'
 import { output } from './tools.js'
 import { OMNI_KIND } from './roster.js'
@@ -17,22 +20,69 @@ const TASKS_KEPT = 60
 const TASK_LINE_MAX = 160
 const TASK_SUMMARY_MAX = 600
 
+export const DSH_BOT = 'dsh'
+export const TASKS = 'tasks'
+
 export function install(rt) {
   const { ctx, state } = rt
 
-  /** @type {Map<string, string>} Session id -> DSH Agent record id. */
+  const dshBots = () => Object.values(state.agents).filter(agent => agent.kind === DSH_BOT)
+  const tasksRecord = () => Object.values(state.agents).find(agent => agent.kind === TASKS)
+  // What other plugins read of a DSH bot; null is the team workspace and DSH's default preset.
+  const listed = agent => ({ id: agent.id, name: agent.name, workDir: agent.workDir ?? null, profile: agent.profile ?? null })
+
+  // LEGACY: the single DSH Agent, shown as Tasks, held both the Sessions the user opened
+  // there and the ones Bots and automations started. The first become a DSH bot of that
+  // name in the team workspace, the others the tasks record. store.js calls this as it adopts.
+  rt.migrateAgents = () => {
+    let migrated = false
+    const started = new Set([...Object.keys(state.tasks ?? {}), ...(state.subscriptionRuns ?? []).map(run => run.sessionId)])
+    for (const agent of Object.values(state.agents)) {
+      if (agent.kind !== undefined) continue
+      migrated = true
+      const sessions = agent.sessions ?? []
+      const own = sessions.filter(id => !started.has(id))
+      if (own.length === 0) {
+        agent.kind = TASKS
+        continue
+      }
+      agent.kind = DSH_BOT
+      agent.sessions = own
+      const handed = sessions.filter(id => started.has(id))
+      if (handed.length === 0) continue
+      const tasks = tasksRecord() ?? (state.agents[`${agent.id}:tasks`] = { id: `${agent.id}:tasks`, kind: TASKS, name: AGENT_NAME, sessions: [], createdAt: agent.createdAt ?? Date.now() })
+      tasks.sessions.push(...handed)
+    }
+    return migrated
+  }
+
+  /** @type {Map<string, string>} Session id -> DSH bot or tasks record id. */
   const sessionIndex = new Map()
+  // Told when the DSH bots change (rt.dshBots.onChange), with the new list.
+  const listeners = new Set()
+  let listedKey = ''
   // store.js calls this from indexSessions after every adopt and save.
   rt.indexAgents = () => {
     sessionIndex.clear()
     for (const agent of Object.values(state.agents)) {
       for (const sessionId of agent.sessions ?? []) sessionIndex.set(sessionId, agent.id)
     }
+    const list = dshBots().map(listed)
+    const key = JSON.stringify(list)
+    if (key === listedKey) return
+    listedKey = key
+    for (const listener of listeners) {
+      try {
+        listener(list)
+      } catch (error) {
+        rt.warn('ds-bot: a DSH bot listener failed: %s', error?.message ?? error)
+      }
+    }
   }
-  // The DSH Agent a Session belongs to; Bot and group Sessions get undefined.
+  // The DSH bot or the tasks record a Session belongs to; Bot and group Sessions get undefined.
   const agentOf = sessionId => state.agents[sessionIndex.get(sessionId)]
 
-  // A DSH Agent Session must not offer the team tools: its agent sees only the
+  // A DSH bot or task Session must not offer the team tools: its agent sees only the
   // global dsh surface minus this plugin's registrations. A Session whose deny
   // has not landed yet (schemas not up, restrict hook missing, a transient
   // throw) stays on the retry list until it sticks or the Session leaves.
@@ -75,7 +125,7 @@ export function install(rt) {
       restricted.add(agent)
       pendingRestrict.delete(agent)
     } catch (error) {
-      rt.warn('ds-bot: team tools stay visible to DSH Agent %s: %s', agent.session?.id, error)
+      rt.warn('ds-bot: team tools stay visible to DSH bot Session %s: %s', agent.session?.id, error)
       scheduleRetry(agent)
     }
   }
@@ -92,13 +142,19 @@ export function install(rt) {
   }
   const record = (agentId) => {
     const agent = rt.own(state.agents, agentId)
-    if (agent === undefined) throw new Error('Unknown DSH Agent')
+    if (agent === undefined) throw new Error('Unknown DSH bot')
     return agent
   }
 
-  async function createAgentSession(agentId, workspaceId, { cwd, agentPreset } = {}) {
+  // A Session of a DSH bot starts in its folder with its preset; a task's comes from the caller.
+  async function createAgentSession(agentId, workspaceId, options = {}) {
     writeCheck()
     const agent = record(agentId)
+    if (agent.kind === DSH_BOT) {
+      if (agent.workDir !== undefined && !(await rt.isFolder(agent.workDir))) throw new Error(`The folder ${agent.workDir} of ${agent.name} is gone. Pick another in its settings.`)
+      options = { cwd: agent.workDir, agentPreset: agent.profile }
+    }
+    const { cwd, agentPreset } = options
     // A folder of its own (a task's `cwd`) makes the Session by cwd alone, outside every
     // DSH workspace, as a Bot's working folder does. Otherwise a known workspace id wins
     // (the Agent's latest Session may live outside the team workspace after a workspace
@@ -117,7 +173,7 @@ export function install(rt) {
     return sessionId
   }
 
-  // A root Session the user opened from a DSH Agent page (the hero's workspace
+  // A root Session the user opened from a DSH bot page (the hero's workspace
   // picker or a fork) is adopted into the same Agent: it keeps dsh's surface and
   // the team tools stay hidden.
   async function adoptAgentSession(agentId, sessionId) {
@@ -134,16 +190,35 @@ export function install(rt) {
     return sessionId
   }
 
-  async function addAgent() {
+  // A DSH bot's name, folder and preset, checked: a folder that exists outside DSH's data
+  // (undefined: the team workspace), and a preset this DSH serves (undefined: DSH's default).
+  async function dshBotFields({ name, workDir, profile } = {}, id) {
+    const clean = String(name ?? '').trim().slice(0, DSH_BOT_NAME_MAX)
+    if (clean === '') throw new Error('A DSH bot needs a name')
+    const taken = dshBots().some(agent => agent.id !== id && agent.name.toLowerCase() === clean.toLowerCase())
+    if (taken) throw new Error(`A DSH bot named ${clean} already exists`)
+    const folder = await rt.cleanWorkDir(String(workDir ?? ''))
+    const preset = typeof profile === 'string' && profile !== '' ? await servedPreset(profile, { strict: true }) : undefined
+    return { name: clean, workDir: folder, profile: preset }
+  }
+  const setFields = (agent, fields) => {
+    agent.name = fields.name
+    for (const key of ['workDir', 'profile']) {
+      if (fields[key] === undefined) delete agent[key]
+      else agent[key] = fields[key]
+    }
+  }
+
+  async function addAgent(fields) {
     writeCheck()
-    if (Object.keys(state.agents).length > 0) throw new Error('The team already has a DSH Agent')
-    const agent = { id: randomUUID(), name: AGENT_NAME, sessions: [], createdAt: Date.now() }
+    const agent = { id: randomUUID(), kind: DSH_BOT, sessions: [], createdAt: Date.now() }
+    setFields(agent, await dshBotFields(fields))
     state.agents[agent.id] = agent
     try {
       await createAgentSession(agent.id)
     } catch (error) {
       // The first Session may already be created and saved: archive it and
-      // persist the rollback, or the Agent returns on restart with its team
+      // persist the rollback, or the DSH bot returns on restart with its team
       // tools never denied.
       const createdSessions = [...agent.sessions]
       delete state.agents[agent.id]
@@ -154,10 +229,20 @@ export function install(rt) {
     return agent
   }
 
+  // A new name, folder or preset applies to the Sessions made after it; the others keep theirs.
+  async function updateAgent(agentId, fields) {
+    writeCheck()
+    const agent = record(agentId)
+    if (agent.kind !== DSH_BOT) throw new Error('Unknown DSH bot')
+    setFields(agent, await dshBotFields(fields, agent.id))
+    await rt.save()
+    return agent
+  }
+
   async function archiveAgentSession(agentId, sessionId) {
     writeCheck()
     const agent = record(agentId)
-    if (!agent.sessions.includes(sessionId)) throw new Error('Session does not belong to the DSH Agent')
+    if (!agent.sessions.includes(sessionId)) throw new Error('Session does not belong to the DSH bot')
     // Archive first: the Session leaves the Agent only once it is actually gone,
     // so a failed archive stays retryable and keeps its tool restriction.
     await ctx.workspaceRegistry.archiveSession(sessionId)
@@ -168,7 +253,7 @@ export function install(rt) {
   async function renameAgentSession(agentId, sessionId, title) {
     writeCheck()
     const agent = record(agentId)
-    if (!agent.sessions.includes(sessionId)) throw new Error('Session does not belong to the DSH Agent')
+    if (!agent.sessions.includes(sessionId)) throw new Error('Session does not belong to the DSH bot')
     const clean = String(title ?? '').trim()
     if (clean === '') throw new Error('A session needs a title')
     const agent_ = await rt.resolveAgent(sessionId)
@@ -189,7 +274,7 @@ export function install(rt) {
         kept.push(sessionId)
       }
     }
-    // What could not be archived stays with the Agent, so it keeps its tool
+    // What could not be archived stays with the DSH bot, so it keeps its tool
     // restriction and the removal can be retried from the same place.
     if (kept.length > 0) {
       agent.sessions = kept
@@ -200,32 +285,37 @@ export function install(rt) {
     await rt.save()
   }
 
-  // The team's Tasks entry, made without a first Session when work arrives before it exists.
+  // The tasks record, made when the first task starts.
   async function ensureTasks() {
-    const existing = Object.values(state.agents)[0]
+    const existing = tasksRecord()
     if (existing !== undefined) return existing
     writeCheck()
-    const agent = { id: randomUUID(), name: AGENT_NAME, sessions: [], createdAt: Date.now() }
+    const agent = { id: randomUUID(), kind: TASKS, name: AGENT_NAME, sessions: [], createdAt: Date.now() }
     state.agents[agent.id] = agent
     await rt.save()
     return agent
   }
 
-  // A DSH agent preset by id, when this DSH serves it unbroken; anything else is DSH's default.
-  async function servedPreset(id) {
-    if (typeof id !== 'string' || id === '') return undefined
-    let presets
+  // The DSH agent presets this DSH serves unbroken, for the DSH bot form.
+  async function presets() {
     try {
-      presets = await ctx.get?.('agentPresets')?.list?.()
+      return ((await ctx.get?.('agentPresets')?.list?.()) ?? []).filter(preset => preset.broken === undefined)
+        .map(preset => ({ id: preset.id, name: preset.name ?? preset.id, ...(preset.description ? { description: preset.description } : {}) }))
     } catch {
-      presets = undefined
+      return []
     }
-    if ((presets ?? []).some(preset => preset.id === id && preset.broken === undefined)) return id
+  }
+  // A DSH agent preset by id, when this DSH serves it unbroken; anything else is DSH's
+  // default, or refused when `strict`.
+  async function servedPreset(id, { strict = false } = {}) {
+    if (typeof id !== 'string' || id === '') return undefined
+    if ((await presets()).some(preset => preset.id === id)) return id
+    if (strict) throw new Error(`The preset ${id} is not available in this DSH`)
     rt.warn('ds-bot: the agent preset %s is not served here; the task takes DSH\'s default', id)
     return undefined
   }
 
-  // A fresh Tasks Session with a title; automations that run "a new DSH session" use it too.
+  // A fresh task Session with a title; automations that run "a new DSH session" use it too.
   // Another plugin may give it a folder (`cwd`) and a DSH agent preset of its own.
   async function createTaskSession(title, { cwd, agentPreset } = {}) {
     const agent = await ensureTasks()
@@ -307,11 +397,38 @@ export function install(rt) {
     }
   })
 
+  // A Session under a DSH bot for another plugin, with a title and, optionally, the
+  // user's first message, which starts its first turn.
+  async function createDshBotSession(botId, { title, firstMessage } = {}) {
+    await rt.load()
+    const agent = rt.own(state.agents, botId)
+    if (agent?.kind !== DSH_BOT) throw new Error('Unknown DSH bot')
+    const sessionId = await createAgentSession(agent.id)
+    const clean = String(title ?? '').trim().slice(0, AGENT_SESSION_TITLE_MAX)
+    if (clean !== '') await renameAgentSession(agent.id, sessionId, clean).catch(error => rt.warn('ds-bot: session title not set: %s', error?.message ?? error))
+    const text = String(firstMessage ?? '').trim()
+    if (text !== '') {
+      const live = await rt.resolveAgent(sessionId)
+      live.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))
+      await ctx.sessions.flush(live.session)
+    }
+    return { sessionId }
+  }
+  // For other plugins: the DSH bots, a Session under one, and word when the list changes.
+  rt.dshBots = {
+    list: () => dshBots().map(listed),
+    createSession: createDshBotSession,
+    onChange(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+  }
+
   ctx.tools.register(defineTool({
     name: 'start_task',
-    description: 'Main Bot only. Hands one-off work (code, files, a repo, research, a long investigation) to a new session under Tasks, which has a full computer. Write instructions that stand on their own: it cannot see this chat. Its result comes back to you as a message when its first turn ends.',
+    description: 'Main Bot only. Hands one-off work (code, files, a repo, research, a long investigation) to a new session under your row, which has a full computer. Write instructions that stand on their own: it cannot see this chat. Its result comes back to you as a message when its first turn ends.',
     parameters: {
-      title: { type: 'string', required: true, description: 'A few words the user will see in the Tasks list' },
+      title: { type: 'string', required: true, description: 'A few words the user will see under your row' },
       instructions: { type: 'string', required: true, description: 'Everything the task needs: the goal, where to work, what to return' },
     },
     output,
@@ -325,12 +442,12 @@ export function install(rt) {
       if (title === '' || text === '') return 'A task needs a title and instructions.'
       try {
         const sessionId = await startTask({ title, text, from: self })
-        return `Started task "${title.slice(0, AGENT_SESSION_TITLE_MAX)}" (${sessionId}) under Tasks. Its result comes back to you as a message; do not wait or poll.`
+        return `Started task "${title.slice(0, AGENT_SESSION_TITLE_MAX)}" (${sessionId}) under your row. Its result comes back to you as a message; do not wait or poll.`
       } catch (error) {
         return `The task did not start: ${error?.message ?? error}`
       }
     },
   }))
 
-  Object.assign(rt, { agentOf, addAgent, createAgentSession, adoptAgentSession, archiveAgentSession, renameAgentSession, removeAgent, createTaskSession, startTask })
+  Object.assign(rt, { agentOf, addAgent, updateAgent, presets, createAgentSession, adoptAgentSession, archiveAgentSession, renameAgentSession, removeAgent, createTaskSession, startTask })
 }

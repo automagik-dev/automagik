@@ -5,7 +5,7 @@ import { setCanvasRenderer } from './canvas-slot.js'
 import { badges, botChildren, botSettings, chatSuggestions, composerPacks, headerButtons, mountShellInstallers, nav, onShell, registerComposerPack, toolCards } from './extend.js'
 import { BUILTIN_PACKS, packCellSync, stepsAside } from './composer-packs.js'
 import { COMPOSER_PACK_CSS, packModelCell } from './composer-pack-cells.js'
-import { TASK_CSS } from './task-card.js'
+import { agentRowSessions, TASK_CSS } from './task-card.js'
 import { LIVE_CSS } from './live-rail.js'
 import { LAMP_CSS } from './lamp.js'
 import { isHex, inkText, paintCss } from './inks.js'
@@ -400,7 +400,9 @@ export function apply(ctx) {
   }
   // Sessions owned by an Agent, including ones adopted before the roster caught up.
   const agentSessions = (agentId) => {
-    const ids = [...(roster.getSnapshot().agentsById[agentId]?.sessions ?? [])]
+    const snapshot = roster.getSnapshot()
+    const agent = snapshot.agentsById[agentId]
+    const ids = agent === undefined ? [] : [...agentRowSessions(agent, snapshot)]
     for (const [id, owner] of pendingAdopt) if (owner === agentId && !ids.includes(id)) ids.push(id)
     return ids
   }
@@ -426,11 +428,14 @@ export function apply(ctx) {
       setPlain(true)
       show(sessionId)
     },
-    addAgent: async () => {
-      const agent = await after(call('add-agent'))
+    // A new DSH bot opens on its first Session.
+    addAgent: async (fields) => {
+      const agent = await after(call('add-agent', fields))
       if (agent?.sessions?.[0] !== undefined) actions.openAgentSession(agent.sessions[0])
       return agent
     },
+    updateAgent: (agentId, fields) => after(call('update-agent', { agentId, ...fields })),
+    agentPresets: () => call('agent-presets'),
     openAgent: (agentId) => {
       const agent = roster.getSnapshot().agentsById[agentId]
       if (agent === undefined) return
@@ -441,7 +446,8 @@ export function apply(ctx) {
     },
     newAgentSession: async (agentId) => {
       const agent = roster.getSnapshot().agentsById[agentId]
-      if (agent === undefined) return
+      // Tasks come from the Bots that start them, never from the row.
+      if (agent === undefined || agent.kind === 'tasks') return
       const list = ctx.sessions.list.getSnapshot()
       const recent = agentSessions(agentId).sort((a, b) => (list.byId[b]?.updatedAt ?? 0) - (list.byId[a]?.updatedAt ?? 0))
       // An untouched Session is already the new conversation the user wants.

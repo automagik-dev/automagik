@@ -1,9 +1,10 @@
 import { createElement as h, useRef, useState } from 'react'
-import { PlusIcon, PeopleIcon, ArrowUpIcon, TasksIcon, SparkIcon } from './icons.js'
+import { PlusIcon, PeopleIcon, ArrowUpIcon, TerminalIcon, SparkIcon } from './icons.js'
 import { AdminStar, BotMark } from './mark.js'
 import { useEscape, usePaneLeft } from './overlay-hooks.js'
 import { CreateBot } from './create-bot.js'
 import { NewGenie } from './genie-new.js'
+import { DshBotForm } from './dsh-bot-form.js'
 import { QUICK_EDGES, useFlip, useGlide, useMorph } from './motion.js'
 import { t } from './i18n.js'
 
@@ -21,6 +22,9 @@ export function NewChat({ mode, roster, actions }) {
   const [draft, setDraft] = useState(mode === 'create' ? { name: '', fromList: false } : null)
   // A new Genie, while Genie runs here (genie-dsh adds genie to the team view).
   const [genieDraft, setGenieDraft] = useState(false)
+  // A DSH bot: 'dsh-bot' makes one, 'dsh-bot:<id>' edits that one, and the list can open the form.
+  const editing = mode.startsWith('dsh-bot:') ? roster.agentsById?.[mode.slice('dsh-bot:'.length)] : undefined
+  const [dshDraft, setDshDraft] = useState(mode === 'dsh-bot' || editing !== undefined ? { fromList: false } : null)
   const inputRef = useRef(null)
   const close = () => actions.closeOverlay()
   useEscape(close)
@@ -98,10 +102,7 @@ export function NewChat({ mode, roster, actions }) {
   if (!group && picked.length === 0 && mode !== 'search' && wanted === '') {
     options.push({ key: 'new', icon: h(PlusIcon), label: t('Create new Bot'), run: createBot })
     options.push({ key: 'group', icon: h(PeopleIcon), label: t('Create group chat'), run: () => { setGroup(true); setCursor(0); inputRef.current?.focus() } })
-    // A team holds at most one DSH Agent; the entry exists only while there is none.
-    if ((roster.agents ?? []).length === 0 && actions.addAgent) {
-      options.push({ key: 'agent', icon: h(TasksIcon, { size: 16 }), label: t('Add Tasks'), run: () => run(async () => { await actions.addAgent(); close() }) })
-    }
+    options.push({ key: 'agent', icon: h(TerminalIcon), label: t('New DSH bot'), hint: t('A plain DSH session list, in a folder of its own'), run: () => { setError(''); setDshDraft({ fromList: true }) } })
   }
   // Genie is one per repository: "New Genie" asks which, beside the Genies there are. A
   // genie-dsh that lists its colors (0.1.3, genie#3176) is one that answers genie-create.
@@ -120,6 +121,14 @@ export function NewChat({ mode, roster, actions }) {
   useFlip(glide.box, listed, '[data-flip]')
   const drop = useRef(null)
   useMorph(drop, listed)
+  if (dshDraft) {
+    return h('div', { className: 'bt-pane', style: { left: paneLeft } },
+      h(DshBotForm, {
+        agent: editing, actions,
+        onBack: dshDraft.fromList ? () => { setDshDraft(null); setTimeout(() => inputRef.current?.focus()) } : undefined,
+        onDone: () => close(),
+      }))
+  }
   if (genieDraft) {
     return h('div', { className: 'bt-pane', style: { left: paneLeft } },
       h(NewGenie, { roster, actions, onBack: () => { setGenieDraft(false); setTimeout(() => inputRef.current?.focus()) }, onCreated: (bot) => { close(); actions.openSession(bot.id) } }))

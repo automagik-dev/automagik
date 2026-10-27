@@ -62,7 +62,7 @@ export function ContextMenu({ menu, roster, actions, leaving = false }) {
       }, h(Icon), label)))))
 }
 
-// Menus for the DSH Agent row and its Sessions; none of the Bot entries apply.
+// Menus for a DSH bot row (or the tasks row) and its Sessions; none of the Bot entries apply.
 function AgentMenu({ menu, roster, actions, leaving }) {
   const ref = useRef(null)
   const [place, setPlace] = useState({ left: menu.x, top: menu.y })
@@ -78,9 +78,10 @@ function AgentMenu({ menu, roster, actions, leaving }) {
     ? [
         [
           [agent.pinned ? t('Unpin') : t('Pin'), PinIcon, () => actions.setFlags(agent.id, { pinned: !agent.pinned })],
+          ...(agent.kind === 'tasks' ? [] : [[t('Edit'), PencilIcon, () => actions.openNewChat(`dsh-bot:${agent.id}`)]]),
         ],
         [
-          [t('Remove Tasks'), TrashIcon, () => actions.removeAgent(agent.id), true],
+          [agent.kind === 'tasks' ? t('Remove Tasks') : t('Remove {name}', { name: agent.name }), TrashIcon, () => actions.removeAgent(agent.id), true],
         ],
       ]
     : [
@@ -91,7 +92,7 @@ function AgentMenu({ menu, roster, actions, leaving }) {
           [t('Archive'), TrashIcon, () => actions.archiveAgentSession(agent.id, menu.id), true],
         ],
       ]
-  return h('div', { ref, className: 'bt-menu', role: 'menu', 'aria-label': menu.kind === 'agent' ? t('Tasks') : t('Session actions'), style: place, 'data-leaving': leaving || undefined },
+  return h('div', { ref, className: 'bt-menu', role: 'menu', 'aria-label': menu.kind === 'agent' ? (agent.kind === 'tasks' ? t('Tasks') : agent.name) : t('Session actions'), style: place, 'data-leaving': leaving || undefined },
     groups.map((group, index) => h(Fragment, { key: index },
       index > 0 ? h('div', { className: 'bt-menu-sep', role: 'separator' }) : null,
       group.map(([label, Icon, run, danger]) => h('button', {

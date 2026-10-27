@@ -913,7 +913,7 @@ function renderCall(call, { sessionId, roster, actions, useUi, useWork, useSessi
   switch (tool) {
     case 'start_task': {
       // The task's own card: it works where the user can watch, then says what it found.
-      const started = done ? /\((session-[^)]+)\) under Tasks/.exec(contentText(call.content))?.[1] : undefined
+      const started = done ? /\((session-[^)]+)\) under (?:Tasks|your row)/.exec(contentText(call.content))?.[1] : undefined
       if (done && !started) return h('div', { className: 'bt-event' }, contentText(call.content).slice(0, 160))
       return h(TaskCard, { sessionId: started, title: arg('title') ?? t('a task'), task: started ? roster.tasks?.[started] : undefined, onOpen: () => started && actions.openSession(started), useSessionStatus, useWork })
     }

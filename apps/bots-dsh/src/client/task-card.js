@@ -28,6 +28,11 @@ export const runningTasksOf = (roster, botId) => Object.entries(roster.tasks ?? 
   .map(([sessionId, task]) => ({ sessionId, ...task }))
   .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
 
+// The Sessions a DSH bot's row lists: all of a DSH bot's, and of the tasks record only the
+// tasks whose Bot is gone (a Bot's own tasks show under its row and in its chat).
+export const agentRowSessions = (agent, roster) => (agent.kind !== 'tasks' ? agent.sessions
+  : agent.sessions.filter(id => roster?.byId?.[roster.tasks?.[id]?.from] === undefined))
+
 // Whether a task's Session waits for the user: DSH's approval or question card is up there,
 // or the team's host noted an approval the task waits on (approvals.js `taskId`).
 export const waitsForUser = (status, sessionId) => status?.get(sessionId)?.pendingInteraction !== undefined

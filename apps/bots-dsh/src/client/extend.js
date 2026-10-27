@@ -42,8 +42,11 @@ export const toolCards = {
 export const nav = registry()
 // Row badges: drawn at the end of a Bot's sidebar row, `Component({ bot, roster, useWork })`.
 export const badges = registry()
-// Rows under a Bot's row in the wide sidebar, `Component({ bot, roster, actions })`: the
-// Omni channels plugin hangs the Omni Bot's channels and their chats there.
+// Rows under a Bot's row in the wide sidebar, `Component({ bot, roster, actions, wide,
+// useSessions, useUi, useSessionStatus, useSessionRetainInfo, useActivity, useWork })`, the
+// props of the Bot's own rows: a row drawn from them shows DSH's working, waiting and unread
+// state, and `actions.openSession` folds the sidebar below 1024 px. The Omni channels plugin
+// hangs the Omni Bot's channels and their chats there.
 export const botChildren = registry()
 // Header buttons: drawn in a Bot's chat header, `Component({ bot, roster, actions, useWork })`.
 export const headerButtons = registry()
