@@ -274,9 +274,11 @@ export function install(rt) {
   // A hard stop keeps the inbox, which the Session runs once it wakes; only what DSH
   // cancelled is sent again.
   async function resendQueued(sessionId, list) {
-    // A Session that moved on to a new part since is reached at its current one.
+    // A Session that moved on to a new part since is reached at its current one. One no
+    // Bot owns any more (a run whose record is gone) is dropped, not sent to the Bot's chat.
     const current = (args) => {
       if (rt.isBotSession(sessionId)) return sessionId
+      if (!rt.pastOwners.has(sessionId)) return undefined
       return args.roomId === undefined ? rt.chatOf(args.toId) : rt.roomOf(args.roomId)?.sessions?.[args.toId]
     }
     const fresh = list.filter(item => Date.now() - item.at < QUEUED_KEPT_MS && rt.botOf(item.args?.toId) !== undefined
