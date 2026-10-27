@@ -22,11 +22,12 @@ const capitalize = word => word[0].toUpperCase() + word.slice(1)
 const slug = text => String(text ?? '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'bot'
 const PICK_MS = 900
 
-/** The roster's Automagik section: Genie, Omni, then the characters. */
+/** The roster's Automagik section: Genie, Omni, the logo pet, then the characters. */
 export function automagikRoster() {
   return [
     { key: 'pet:builtin:genie-cosmic', kind: 'pet', pet: { ...GENIE_PET, name: 'Genie' }, name: 'Genie', line: 'Automagik' },
     { key: 'omni', kind: 'omni', name: 'Omni', line: 'Automagik' },
+    { key: 'pet:builtin:automagik', kind: 'pet', pet: { source: 'builtin', id: 'automagik', name: 'Automagik', version: 2, sleep: true }, name: 'Automagik', line: 'Automagik' },
     ...PICKER_SHAPES.filter(shape => shape !== 'octopus').map(shape => ({ key: `shape:${shape}`, kind: 'shape', shape, name: shapeOf(shape).label, line: 'Automagik character' })),
   ]
 }

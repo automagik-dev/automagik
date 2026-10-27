@@ -14,10 +14,15 @@ const react = { createElement: () => null, useEffect: () => {}, useLayoutEffect:
 runInNewContext(bundle.outputFiles[0].text, { module: select, exports: select.exports, URLSearchParams, require: name => (name === 'react' ? react : { createPortal: x => x }) })
 const { automagikRoster, currentKey, lookOf } = select.exports
 
-test('Automagik\'s own come first: Genie, Omni, then every character but the octopus Omni wears', () => {
+test('Automagik\'s own come first: Genie, Omni, the logo pet, then every character but the octopus Omni wears', () => {
   const roster = automagikRoster()
   assert.deepEqual([...roster.slice(0, 2).map(entry => entry.key)], ['pet:builtin:genie-cosmic', 'omni'])
-  assert.ok(roster.slice(2).every(entry => entry.kind === 'shape'))
+  assert.equal(roster[2].key, 'pet:builtin:automagik')
+  assert.equal(roster[2].name, 'Automagik')
+  assert.equal(roster[2].kind, 'pet')
+  assert.deepEqual(JSON.parse(JSON.stringify(roster[2].pet)), { source: 'builtin', id: 'automagik', name: 'Automagik', version: 2, sleep: true })
+  assert.equal(new Set(roster.map(entry => entry.key)).size, roster.length)
+  assert.ok(roster.slice(3).every(entry => entry.kind === 'shape'))
   assert.ok(!roster.some(entry => entry.key === 'shape:octopus'))
   assert.equal(roster.find(entry => entry.key === 'shape:gumdrop').name, 'Gumdrop')
 })
@@ -27,6 +32,8 @@ test('the cursor starts on what the Bot wears now', () => {
   assert.equal(key({ id: 'b', avatar: { shape: 'star' } }), 'shape:star')
   assert.equal(key({ id: 'b', color: 'deepseek', avatar: { shape: 'octopus' } }), 'omni')
   assert.equal(key({ id: 'g', kind: 'genie' }), 'pet:builtin:genie-cosmic')
+  const saved = JSON.parse(JSON.stringify({ id: 'g', kind: 'genie', avatar: { pet: automagikRoster()[2].pet } }))
+  assert.equal(key(saved), 'pet:builtin:automagik')
   assert.equal(key({ id: 'b', avatar: { pet: { source: 'team', id: 'sayo', version: 2 } } }), 'pet:team:sayo')
   assert.equal(key({ id: 'b', avatar: { image: 'data:image/png;base64,AA==' } }), 'photo')
 })
