@@ -170,19 +170,23 @@ test('a task waiting on an approval the host noted for it is amber too, in the s
   assert.equal(card.props['data-state'], 'waiting')
 })
 
-test('a task a Bot started is listed under that Bot, not again under Tasks', () => {
-  const agent = { id: 'tasks', name: 'Tasks', sessions: ['own', 'from-pip', 'from-gone'], createdAt: 3 }
-  const { tree } = sidebar({
-    agents: [agent],
+test('a task a Bot started is listed under that Bot, not under Tasks; a DSH bot lists all its Sessions', () => {
+  const tasks = { id: 'tasks', kind: 'tasks', name: 'Tasks', sessions: ['from-pip', 'from-gone'], createdAt: 3 }
+  const site = { id: 'site', kind: 'dsh', name: 'Site', sessions: ['one', 'two'], createdAt: 4 }
+  const team = agents => sidebar({
+    agents,
     tasks: {
       'from-pip': task('pip', 'Wish: hello', 2, 'done'),
       // Its Bot was deleted: the task stays findable under Tasks.
       'from-gone': task('gone', 'Old chore', 5, 'done'),
     },
   })
-  const [row] = find(tree, named('AgentRow'))
-  const listed = find(row.type(row.props), named('AgentSessionRow')).map(node => node.props.session.id)
-  assert.deepEqual(listed.sort(), ['from-gone', 'own'])
+  const rows = find(team([tasks, site]).tree, named('AgentRow')).map(row => row.type(row.props).props.children)
+  const listed = Object.fromEntries(rows.map(([head, list]) => [head.props['aria-label'], find(list, named('AgentSessionRow')).map(node => node.props.session.id).sort()]))
+  assert.deepEqual(listed, { Tasks: ['from-gone'], Site: ['one', 'two'] })
+  // Without a task whose Bot is gone, there is no Tasks row.
+  const [alone] = find(team([{ ...tasks, sessions: ['from-pip'] }]).tree, named('AgentRow'))
+  assert.equal(alone.type(alone.props), null)
 })
 
 test('an ended task card says how it ended: a failed one names why, a stopped one is not finished', () => {

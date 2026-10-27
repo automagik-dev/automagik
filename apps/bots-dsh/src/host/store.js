@@ -111,6 +111,8 @@ export function install(rt) {
     // Teams saved before the DSH Agent existed carry no `agents`; corrupt values reset.
     if (state.agents === null || typeof state.agents !== 'object' || Array.isArray(state.agents)) state.agents = {}
     let migrated = !hadCapabilities
+    // The single DSH Agent of older teams splits into a DSH bot and the tasks record (agents.js).
+    if (rt.migrateAgents?.()) migrated = true
     if (state.capabilities === null || typeof state.capabilities !== 'object' || Array.isArray(state.capabilities)) {
       state.capabilities = { items: {} }
       migrated = true

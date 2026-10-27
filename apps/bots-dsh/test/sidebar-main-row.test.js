@@ -12,7 +12,7 @@ import { build } from 'esbuild'
 const PLUGIN = dirname(dirname(fileURLToPath(import.meta.url)))
 const { outputFiles } = await build({
   stdin: {
-    contents: "export { TeamSidebar } from './src/client/sidebar.js'\nexport { badges } from './src/client/extend.js'",
+    contents: "export { TeamSidebar } from './src/client/sidebar.js'\nexport { badges, botChildren } from './src/client/extend.js'",
     resolveDir: PLUGIN,
   },
   bundle: true, format: 'cjs', platform: 'browser', write: false, logLevel: 'silent',
@@ -25,14 +25,15 @@ const react = {
   useSyncExternalStore: (_subscribe, snapshot) => snapshot(),
 }
 const module = { exports: {} }
+const window = { innerWidth: 1280, matchMedia: () => ({ matches: false }) }
 runInNewContext(outputFiles[0].text, {
   module, exports: module.exports,
   require: name => (name === 'react' ? react : {}),
-  window: { innerWidth: 1280, matchMedia: () => ({ matches: false }) },
+  window,
   document: { body: { dataset: {} } },
   matchMedia: () => ({ matches: false }),
 })
-const { TeamSidebar } = module.exports
+const { TeamSidebar, botChildren } = module.exports
 
 const pip = { id: 'pip', name: 'Pip', role: 'Orchestrator', sessionId: 'pip', createdAt: 1 }
 const omni = { id: 'omni', name: 'Omni', role: 'Channel keeper', kind: 'omni', sessionId: 'omni', createdAt: 2 }
@@ -51,9 +52,9 @@ const find = (node, match, found = []) => {
 const named = name => node => node.type?.name === name
 const textOf = node => (typeof node === 'string' ? node : Array.isArray(node) ? node.map(textOf).join('') : node?.props ? textOf(node.props.children) : '')
 
-function sidebar({ wide = true, unread = false } = {}) {
+function sidebar({ wide = true, unread = false, actions = {} } = {}) {
   const tree = TeamSidebar({
-    wide, actions: {},
+    wide, actions,
     useRoster: pick => pick(roster), useUi: pick => pick({ unread: {} }), useRegistry: pick => pick({}),
     useSessions: pick => pick({ ids: [], byId: {} }), useUpdate: () => ({}),
     useSessionStatus: pick => pick(new Map(unread ? [['pip', { completionUnread: true }]] : [])),
@@ -88,6 +89,20 @@ test('the first Main Bot is the first row, crowned, with its role and the Main B
   assert.equal(find(row, named('RowBadges')).length, 1)
   // Its children (what other plugins hang under a Bot) follow it too.
   assert.ok(find(tree, named('BotChildren')).some(node => node.props.bot.id === 'pip'))
+})
+
+test('rows other plugins hang under a Bot get the rows\' own props, and opening one folds the sidebar', (t) => {
+  const Thread = () => null
+  t.after(botChildren.register({ id: 'thread', Component: Thread }))
+  const calls = []
+  const { tree } = sidebar({ actions: { openSession: id => calls.push(['open', id]), toggleSidebar: () => calls.push(['fold']) } })
+  const children = find(tree, named('BotChildren')).find(node => node.props.bot.id === 'pip')
+  const [thread] = [children.type(children.props)].flat()
+  for (const key of ['bot', 'roster', 'actions', 'wide', 'useSessions', 'useUi', 'useSessionStatus', 'useSessionRetainInfo', 'useActivity', 'useWork']) assert.ok(thread.props[key] !== undefined, key)
+  window.innerWidth = 800
+  t.after(() => { window.innerWidth = 1280 })
+  thread.props.actions.openSession('thread-1')
+  assert.deepEqual(calls, [['open', 'thread-1'], ['fold']])
 })
 
 test('the crowned row shows unread, and only it wears the crown and the role', () => {

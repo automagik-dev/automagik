@@ -1,5 +1,6 @@
 // Resume: work that DeepSeek Harness dropped when it closed or restarted (Bot turns from
-// the notes below; Tasks and automation runs from their Sessions, healCutSessions). DSH closes
+// the notes below; tasks, DSH bots, automation runs and the Sessions other plugins register
+// from their Sessions, healCutSessions). DSH closes
 // a turn it never finished as interrupted when the Session next opens, and a clean
 // shutdown also cancels the messages still waiting in a Session's inbox; nothing would
 // ever run either again, and whoever waited for them was not told. DS Bot notes each
@@ -65,6 +66,66 @@ export function install(rt) {
 
   // What the last run left; read before this run notes anything.
   let interrupted = readNotes(file)
+
+  // Other plugins hand their plain Sessions to this one pass (rt.resumable.register) and
+  // learn when it is over (rt.resumesDone), so no Session has two resumers. `sessions()`
+  // names the Sessions the plugin owns when the pass runs; `onResume({ sessionId })` runs
+  // right before the team posts a resume to one of them, whoever found it.
+  /** @type {Map<string, {sessions:() => string[], onResume?:(info:{sessionId:string}) => void}>} */
+  const resumables = new Map()
+  rt.resumable = {
+    register({ id, sessions, onResume } = {}) {
+      if (typeof id !== 'string' || id === '' || typeof sessions !== 'function') throw new Error('ds-bot: a resumable needs an id and sessions()')
+      if (resumables.has(id)) throw new Error(`ds-bot: resumable ${id} is already registered`)
+      const entry = { sessions, onResume }
+      resumables.set(id, entry)
+      return () => { if (resumables.get(id) === entry) resumables.delete(id) }
+    },
+  }
+  // One per start, and it never rejects: { resumed, resent } after the pass,
+  // { readOnly, resumed: [], resent: [] } when this host only reads the team, and
+  // { failed, resumed, resent } with what was done before the pass threw or stopped.
+  let settle
+  rt.resumesDone = new Promise((resolve) => { settle = resolve })
+  // Every Session the pass posted a resume to, and every one it sent dropped messages again.
+  const resumed = []
+  const resent = new Set()
+  const finish = (outcome) => {
+    settle?.({ ...outcome, resumed: [...resumed], resent: [...resent] })
+    settle = undefined
+  }
+  // Each registered Session id with the registrations that own it.
+  const ownersOf = () => {
+    const owners = new Map()
+    for (const [id, entry] of resumables) {
+      let ids
+      try {
+        ids = entry.sessions()
+      } catch (error) {
+        rt.warn('ds-bot: the Sessions of resumable %s could not be read: %s', id, error?.message ?? error)
+        continue
+      }
+      for (const sessionId of Array.isArray(ids) ? ids : []) {
+        if (typeof sessionId !== 'string' || sessionId === '') continue
+        owners.set(sessionId, [...(owners.get(sessionId) ?? []), [id, entry]])
+      }
+    }
+    return owners
+  }
+  // Called right before each resume post, so the owners bind the turn first; `post` is
+  // that post, and the Session counts as resumed once it is sent.
+  let owners = new Map()
+  const resume = async (sessionId, post) => {
+    for (const [id, entry] of owners.get(sessionId) ?? []) {
+      try {
+        entry.onResume?.({ sessionId })
+      } catch (error) {
+        rt.warn('ds-bot: resumable %s failed on the resume of %s: %s', id, sessionId, error?.message ?? error)
+      }
+    }
+    await post()
+    resumed.push(sessionId)
+  }
 
   /** @type {Record<string, {botId:string, roomId?:string, since:number, trigger?:any, approval?:{tool:string, reason:string}, resumed?:boolean}>} */
   let turns = {}
@@ -153,7 +214,9 @@ export function install(rt) {
       taken?.add(event.data.source.exchangeId)
       forgetQueued(event.data.source.exchangeId)
     }
-    if (!rt.isBotSession(id)) return
+    // Only a Bot's chat and group Sessions are noted. An automation's run Session is
+    // read back from the Session itself (healCutSessions), which posts its resume there.
+    if (!rt.chatOwners.has(id) && !rt.groupOwners.has(id)) return
     switch (event.type) {
       case 'turn/start': {
         const owner = rt.groupOwners.get(id)
@@ -194,18 +257,18 @@ export function install(rt) {
       // A turn already picked up once and cut off again stays stopped: a restart loop
       // must not run it forever.
       if (record.resumed) return
-      await rt.deliver({ toId: bot.id, sessionId: room.sessions?.[bot.id] ?? sessionId, role: 'room', roomId: room.id, note: 'picking up after a restart', resumed: true, text, ...(record.trigger?.askedBy ? { askedBy: record.trigger.askedBy } : {}) })
+      await resume(sessionId, () => rt.deliver({ toId: bot.id, sessionId: room.sessions?.[bot.id] ?? sessionId, role: 'room', roomId: room.id, note: 'picking up after a restart', resumed: true, text, ...(record.trigger?.askedBy ? { askedBy: record.trigger.askedBy } : {}) }))
       return
     }
     if (record.resumed) return
     const trigger = record.trigger
     if ((trigger?.role === 'request' || trigger?.role === 'stopped') && trigger.senderSessionId && trigger.audience !== 'user' && rt.botOf(trigger.senderSessionId)) {
       // The sender still waits for this turn's answer, so it goes on under the same exchange.
-      await rt.deliver({ fromId: trigger.senderSessionId, toId: bot.id, role: trigger.role, ...(trigger.exchangeId ? { exchangeId: trigger.exchangeId } : {}), ...(trigger.senderRoomId ? { fromRoomId: trigger.senderRoomId } : {}), resumed: true, text })
+      await resume(sessionId, () => rt.deliver({ fromId: trigger.senderSessionId, toId: bot.id, role: trigger.role, ...(trigger.exchangeId ? { exchangeId: trigger.exchangeId } : {}), ...(trigger.senderRoomId ? { fromRoomId: trigger.senderRoomId } : {}), resumed: true, text }))
       return
     }
     // A turn that went on with work another Bot asked for still owes that Bot its answer.
-    await rt.deliver({ toId: bot.id, role: 'resume', resumed: true, text, ...(trigger?.work ? { work: trigger.work } : {}) })
+    await resume(sessionId, () => rt.deliver({ toId: bot.id, role: 'resume', resumed: true, text, ...(trigger?.work ? { work: trigger.work } : {}) }))
   }
 
   // A hard stop keeps the inbox, which the Session runs once it wakes; only what DSH
@@ -225,13 +288,15 @@ export function install(rt) {
     for (const { args } of fresh) {
       if (waiting.has(args.exchangeId) || taken?.has(args.exchangeId) === true) continue
       await rt.deliver({ ...args, sessionId: current(args), steer: false, resent: true })
+      resent.add(current(args))
     }
   }
 
-  // Tasks Sessions and the single-run Sessions of automations are not noted like Bot turns:
-  // a restart's cut is read from the Session itself. Its last turn ended as DSH ends a cut
-  // turn and nothing ran since, so it goes on, with DSH's own repair telling the model which
-  // tool calls have unknown outcomes. `skip`: Sessions already picked up from the notes.
+  // Tasks, DSH bot Sessions, the single-run Sessions of automations and the Sessions other
+  // plugins register are not noted like Bot turns: a restart's cut is read from the Session
+  // itself. Its last turn ended as DSH ends a cut turn and nothing ran since, so it goes on,
+  // with DSH's own repair telling the model which tool calls have unknown outcomes. `skip`:
+  // Sessions already picked up from the notes.
   function lastTurnOf(agent) {
     const latest = (agent.session?.seq ?? 0) - 1
     for (let seq = latest; seq >= Math.max(0, latest - EVENTS_SCANNED); seq -= 1) {
@@ -243,9 +308,12 @@ export function install(rt) {
   async function healCutSessions(skip) {
     const { state } = rt
     const candidates = new Map()
-    // The newest Tasks Sessions only: an old one was not running when DSH went down.
+    // The newest Sessions of each DSH bot and of the tasks only: an old one was not running
+    // when DSH went down.
     for (const agent of Object.values(state.agents ?? {})) for (const id of (agent.sessions ?? []).slice(-TASKS_CHECKED)) candidates.set(id, { kind: 'tasks' })
     for (const run of state.subscriptionRuns ?? []) if (run.task && run.sessionId && run.status === 'working') candidates.set(run.sessionId, { kind: run.botId ? 'run' : 'tasks', botId: run.botId })
+    // A registered Session the team finds on its own keeps the team's way of resuming it.
+    for (const id of owners.keys()) if (!candidates.has(id)) candidates.set(id, { kind: rt.agentOf?.(id) ? 'tasks' : 'plain' })
     const resumes = state.restartResumes ??= {}
     for (const [id, entry] of Object.entries(resumes)) if (Date.now() - entry.at > CUT_KEPT_MS) delete resumes[id]
     for (const [id, target] of candidates) {
@@ -258,23 +326,31 @@ export function install(rt) {
       await rt.save()
       const text = resumeText({})
       if (target.kind === 'run' && rt.botOf(target.botId) !== undefined) {
-        await rt.deliver({ toId: target.botId, sessionId: id, role: 'resume', resumed: true, text })
+        await resume(id, () => rt.deliver({ toId: target.botId, sessionId: id, role: 'resume', resumed: true, text }))
       } else {
-        // A Tasks Session is a plain DSH Session: the note arrives as the user's.
-        agent.followup(createUserMessage({ content: [{ type: 'text', text: `[DeepSeek Harness restarted]\n${text}` }], source: { kind: 'user' } }))
-        await ctx.sessions.flush(agent.session)
+        // A plain DSH Session: the note arrives as the user's, marked as the resume.
+        await resume(id, () => {
+          agent.followup(createUserMessage({ content: [{ type: 'text', text: `[DeepSeek Harness restarted]\n${text}` }], source: { kind: 'user', resumed: true } }))
+          return ctx.sessions.flush(agent.session)
+        })
       }
-      rt.warn('ds-bot: %s %s was cut off by a restart and goes on', target.kind === 'run' ? 'automation run' : 'task', id)
+      rt.warn('ds-bot: %s %s was cut off by a restart and goes on', target.kind === 'run' ? 'automation run' : target.kind === 'plain' ? 'Session' : 'task', id)
     }
   }
 
   async function resumeAll() {
     await rt.load()
-    if (rt.readOnly() !== undefined) return
+    const readOnly = rt.readOnly()
+    if (readOnly !== undefined) {
+      finish({ readOnly })
+      return
+    }
     const { turns: noted, queued: dropped } = interrupted
     interrupted = { turns: {}, queued: {} }
     // Taken up now, so another restart does not pick them up twice.
     persist()
+    // Read once, before any resume, so every post can tell its owners.
+    owners = ownersOf()
     // Agents and inboxes are read before anything wakes their Sessions.
     const cut = []
     for (const [sessionId, record] of Object.entries(noted)) {
@@ -293,17 +369,22 @@ export function install(rt) {
     for (const [sessionId, record] of cut) {
       await resumeTurn(sessionId, record).catch(error => rt.warn('ds-bot: picking up the turn of %s failed: %s', sessionId, error))
     }
-    await healCutSessions(new Set(Object.keys(noted))).catch(error => rt.warn('ds-bot: picking up cut-off tasks failed: %s', error))
+    await healCutSessions(new Set(Object.keys(noted)))
+    finish({})
   }
 
   ctx.effect(() => {
     // Every start looks: the Sessions a restart cut need no notes to be found.
-    const timer = setTimeout(() => void resumeAll().catch(error => rt.warn('ds-bot: picking up interrupted work failed: %s', error)), RESUME_DELAY_MS)
+    const timer = setTimeout(() => void resumeAll().catch((error) => {
+      rt.warn('ds-bot: picking up interrupted work failed: %s', error)
+      finish({ failed: error?.message ?? String(error) })
+    }), RESUME_DELAY_MS)
     timer?.unref?.()
     // What the turns stopped by this shutdown left stays as last noted.
     return () => {
       stopped = true
       clearTimeout(timer)
+      finish({ failed: 'DS Bot stopped before the restart pass ended' })
       return writing
     }
   }, 'ds-bot: resume interrupted turns')

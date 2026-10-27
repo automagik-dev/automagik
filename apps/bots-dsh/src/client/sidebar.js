@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { Lockup, OmniMark, Wordmark } from './logo.js'
 import { isMainOf } from './sources.js'
 import { currentPart, previewOf, relativeShort } from './text.js'
-import { PlusIcon, SearchIcon, SidebarIcon, GaugeIcon, PlugIcon, GearIcon, PinMarkIcon, ConnectorIcon, SwitchIcon, CloudDownloadIcon, TasksIcon, SignOutIcon } from './icons.js'
+import { PlusIcon, SearchIcon, SidebarIcon, GaugeIcon, PlugIcon, GearIcon, PinMarkIcon, ConnectorIcon, SwitchIcon, CloudDownloadIcon, TasksIcon, TerminalIcon, SignOutIcon } from './icons.js'
 import { botState, BotAvatar, RoomAvatar } from './mark.js'
 import { reducedMotion } from './activity-row.js'
 import { Shimmer, workPhrase } from './cells.js'
@@ -11,7 +11,7 @@ import { springEasing, SPRING_SHAPE, useViewport, viewBottom } from './motion.js
 import { hostText, t } from './i18n.js'
 import { showsDshRow } from './dsh-offer.js'
 import { badges, botChildren, nav, useEntries } from './extend.js'
-import { approvalFor, runningTasksOf, taskState, waitsForUser } from './task-card.js'
+import { agentRowSessions, approvalFor, runningTasksOf, taskState, waitsForUser } from './task-card.js'
 
 // -------------------------------------------------------------------------
 // Sidebar
@@ -105,10 +105,12 @@ function RowBadges(props) {
 }
 
 // What other Omni plugins hang under a Bot's row (extend.js), in the wide sidebar only.
-function BotChildren({ bot, roster, actions, wide }) {
+// They get the rows' own props: the session, status, activity and work stores, and the
+// actions that fold the sidebar below 1024 px when a row opens.
+function BotChildren({ wide, ...props }) {
   const entries = useEntries(botChildren)
   if (!wide || entries.length === 0) return null
-  return entries.map(entry => h(entry.Component, { key: entry.id, bot, roster, actions }))
+  return entries.map(entry => h(entry.Component, { key: entry.id, ...props, wide }))
 }
 
 // A short age for a thread: now, 4m, 2h, 3d.
@@ -197,7 +199,7 @@ function RoomRow({ room, roster, actions, useSessions, useSessionStatus, useSess
     : wide && unread && !active ? h('span', { className: 'bt-unread', 'aria-hidden': true }) : null)
 }
 
-// One expanded DSH Agent Session row: title, relative stamp, rename field, and a
+// One expanded DSH bot Session row: title, relative stamp, rename field, and a
 // context menu for rename/archive.
 function AgentSessionRow({ session, agent, actions, renaming, index }) {
   const input = useRef(null)
@@ -244,12 +246,12 @@ function AgentSessionRow({ session, agent, actions, renaming, index }) {
   h('span', { className: 'bt-agent-sub-time' }, session.at > 0 ? relativeShort(session.at) : ''))
 }
 
-// The DSH Agent row: a plain dsh Session list lives in the Bot workspace, so it
-// sits among the Bots with the harness's own whale mark.
+// A DSH bot's row: its plain dsh Sessions, under the Bots with a terminal mark. The tasks
+// record has a row only while it keeps a task whose Bot is gone (agentRowSessions).
 function AgentRow({ agent, roster, actions, useSessions, useSessionStatus, useUi, wide, marked }) {
-  // A task a Bot started is that Bot's (its threads, its chat), so it is not listed here
-  // again; one whose Bot is gone stays here, where it can still be found.
-  const own = agent.sessions.filter(id => roster?.byId?.[roster.tasks?.[id]?.from] === undefined)
+  const own = agentRowSessions(agent, roster)
+  const tasks = agent.kind === 'tasks'
+  const name = tasks ? t('Tasks') : agent.name
   const info = useSessions(list => JSON.stringify(own.map((id) => {
     const row = list.byId[id]
     return {
@@ -276,26 +278,29 @@ function AgentRow({ agent, roster, actions, useSessions, useSessionStatus, useUi
   const running = sessions.some(session => session.running)
   const unread = sessions.some(session => session.unread) || (marked && !active)
   useMarkedUnread(agent.id, active, marked, actions)
+  if (tasks && own.length === 0) return null
   const preview = sessions[0]?.title ?? t('New session')
-  const label = [t('Tasks'), running ? t('Working') : '', unread ? t('Unread activity') : ''].filter(Boolean).join(', ')
+  const label = [name, running ? t('Working') : '', unread ? t('Unread activity') : ''].filter(Boolean).join(', ')
   const open = active && wide
+  // Only a DSH bot makes new Sessions; tasks come from the Bots.
+  const first = tasks ? 0 : 1
   return h('div', { className: 'bt-agent' },
     h('button', {
       type: 'button', className: 'bt-row', 'aria-label': label, 'aria-current': active ? 'page' : undefined,
-      'data-agent-id': agent.id, title: wide ? undefined : t('Tasks'), onClick: () => actions.openAgent(agent.id),
+      'data-agent-id': agent.id, title: wide ? undefined : name, onClick: () => actions.openAgent(agent.id),
       onContextMenu: (event) => { event.preventDefault(); actions.openMenu({ kind: 'agent', id: agent.id, x: event.clientX, y: event.clientY }) },
     },
-    h('span', { className: `bt-agent-ava${running ? ' bt-run' : ''}` }, h(TasksIcon, { size: 20 })),
+    h('span', { className: `bt-agent-ava${running ? ' bt-run' : ''}` }, tasks ? h(TasksIcon, { size: 20 }) : h(TerminalIcon)),
     wide ? h('span', { className: 'bt-row-body' },
-      h('span', { className: 'bt-row-name' }, t('Tasks')),
+      h('span', { className: 'bt-row-name' }, h('span', { className: 'bt-row-title' }, name), agent.pinned ? h(PinMark) : null),
       preview ? h('span', { className: 'bt-row-preview' }, preview) : null) : null,
     wide && unread && !active ? h('span', { className: 'bt-unread', 'aria-hidden': true }) : null),
     h('div', { className: 'bt-agent-sub', 'data-open': open || undefined },
       h('div', { className: 'bt-agent-sub-in' },
-        h('button', { type: 'button', className: 'bt-agent-sub-row bt-agent-new', style: { '--i': 0 }, onClick: () => { void actions.newAgentSession(agent.id).catch(error => actions.reportError(error, 'agent-session')) } },
+        tasks ? null : h('button', { type: 'button', className: 'bt-agent-sub-row bt-agent-new', style: { '--i': 0 }, onClick: () => { void actions.newAgentSession(agent.id).catch(error => actions.reportError(error, 'agent-session')) } },
           h(PlusIcon), h('span', { className: 'bt-agent-sub-title' }, t('New session'))),
         sessions.map((session, index) => h(AgentSessionRow, {
-          key: session.id, session, agent, actions, index: index + 1,
+          key: session.id, session, agent, actions, index: index + first,
           renaming: renaming === session.id,
         })))))
 }
@@ -346,7 +351,7 @@ export function TeamSidebar(props) {
       ...(roster.agents ?? []).map(agent => ({ kind: 'agent', item: agent, at: Math.max(0, ...agent.sessions.map(id => stamps[id] ?? 0)) || agent.createdAt })),
     ]
     // The team members other plugins brought (the Omni Bot) sit right under the Main Bot;
-    // Tasks (the DSH Agent's one-off Sessions) stay at the bottom, under every Bot and group.
+    // the DSH bots, outside the Bot layer, stay at the bottom, under every Bot and group.
     const rank = entry => (entry.kind === 'agent' ? 2 : entry.kind === 'bot' && entry.item.kind !== undefined ? 0 : 1)
     return entries.sort((a, b) => rank(a) - rank(b) || Number(Boolean(b.item.pinned)) - Number(Boolean(a.item.pinned)) || b.at - a.at)
   }, [roster, updated])
@@ -397,12 +402,12 @@ export function TeamSidebar(props) {
       main ? h(Fragment, { key: main.id },
         h(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }),
         h(BotThreads, { ...rowProps, bot: main }),
-        h(BotChildren, { bot: main, roster, actions, wide })) : roster.ready ? null : h('div', { className: 'bt-hint' }, t('Setting up your Main Bot…')),
+        h(BotChildren, { ...rowProps, bot: main })) : roster.ready ? null : h('div', { className: 'bt-hint' }, t('Setting up your Main Bot…')),
       order.map(entry => (entry.kind === 'bot'
         ? h(Fragment, { key: entry.item.id },
             h(BotRow, { ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true }),
             h(BotThreads, { ...rowProps, bot: entry.item }),
-            h(BotChildren, { bot: entry.item, roster, actions, wide }))
+            h(BotChildren, { ...rowProps, bot: entry.item }))
         : entry.kind === 'room'
           ? h(RoomRow, { key: entry.item.id, ...rowProps, room: entry.item, marked: markedUnread[entry.item.id] === true })
           : h(AgentRow, { key: entry.item.id, ...rowProps, agent: entry.item, marked: markedUnread[entry.item.id] === true })))))
@@ -853,10 +858,13 @@ body[data-bt-motion=quiet] .bt-thread-spin{animation-duration:3s}
 .bt-update-dsh:not(:first-child){margin-top:12px;padding-top:12px;border-top:.5px solid var(--bt-line-2)}
 @media (prefers-reduced-motion:reduce){.bt-round.bt-update,.bt-update-pop,.bt-update .bt-cloud-arrow{animation:none}}
 
-/* The DSH Agent row and its expanding Session list. The black whale is the
-   harness's own mark, so the row reads as "plain dsh" next to the Bot marks. */
+/* A DSH bot's row and its expanding Session list. The terminal mark reads as
+   "plain dsh" next to the Bot marks. */
 .bt-agent-ava{flex:none;width:36px;height:36px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:var(--bt-hover);color:var(--bt-ink)}
 .bt-agent-ava.bt-run{animation:bt-agent-pulse 1.4s ease-in-out infinite}
+.bt-agent-ava svg{width:18px;height:18px}
+.bt-dsh-ava{width:72px;height:72px}
+.bt-dsh-ava svg{width:32px;height:32px}
 @keyframes bt-agent-pulse{0%,100%{opacity:1}50%{opacity:.55}}
 .bt-agent-sub{display:grid;grid-template-rows:0fr;transition:grid-template-rows ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing}}
 .bt-agent-sub[data-open]{grid-template-rows:1fr}

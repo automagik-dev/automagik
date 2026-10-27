@@ -30,7 +30,7 @@ export function indexRoster(value) {
   }
   const roomsById = {}
   for (const room of value.rooms) roomsById[room.id] = room
-  // The DSH Agent is not a Bot: it indexes by its own id and by each Session it owns.
+  // DSH bots are not Bots: each indexes by its own id and by each Session it owns.
   const agentsById = {}
   const agentOf = {}
   for (const agent of value.agents ?? []) {

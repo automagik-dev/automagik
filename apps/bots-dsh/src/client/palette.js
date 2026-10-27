@@ -1,7 +1,8 @@
 import { createElement as h, Fragment, useEffect, useState } from 'react'
 import { isMainOf } from './sources.js'
 import { currentPart, stripHeader } from './text.js'
-import { PlusIcon, SearchIcon, PeopleIcon, CloseIcon, GearIcon, TasksIcon } from './icons.js'
+import { PlusIcon, SearchIcon, PeopleIcon, CloseIcon, GearIcon, TasksIcon, TerminalIcon } from './icons.js'
+import { agentRowSessions } from './task-card.js'
 import { BotAvatar, RoomAvatar } from './mark.js'
 import { useEscape } from './overlay-hooks.js'
 import { QUICK_EDGES, useFlip, useGlide } from './motion.js'
@@ -60,12 +61,16 @@ export function CommandPalette({ start, token, roster, actions, useSessions }) {
     })),
   ]
   if (people.length) sections.push([t('Bots'), people])
-  const agents = (roster.agents ?? []).filter(() => matchesName(t('Tasks')) || matchesName('DSH Agent')).map(agent => ({
-    key: agent.id, avatar: h('span', { className: 'bt-palette-agent' }, h(TasksIcon, { size: 18 })), title: t('Tasks'),
+  // The DSH bots by name, and the tasks whose Bot is gone while there are any.
+  const agents = (roster.agents ?? []).filter(agent => (agent.kind === 'tasks'
+    ? agentRowSessions(agent, roster).length > 0 && matchesName(t('Tasks'))
+    : matchesName(agent.name) || matchesName('DSH bot'))).map(agent => ({
+    key: agent.id, avatar: h('span', { className: 'bt-palette-agent' }, agent.kind === 'tasks' ? h(TasksIcon, { size: 18 }) : h(TerminalIcon)),
+    title: agent.kind === 'tasks' ? t('Tasks') : agent.name,
     subtitle: t('Plain dsh session'),
     run: () => actions.openAgent(agent.id),
   }))
-  if (agents.length) sections.push([t('Tasks'), agents])
+  if (agents.length) sections.push([t('DSH bots'), agents])
   const messages = JSON.parse(found).map(([id, turn, snippet]) => {
     const bot = roster.byId[id]
     const room = roster.roomsById[id]
@@ -80,6 +85,7 @@ export function CommandPalette({ start, token, roster, actions, useSessions }) {
     { key: 'cmd:new', icon: h(PlusIcon), title: t('New chat'), run: () => actions.openNewChat('new') },
     { key: 'cmd:bot', icon: h(PlusIcon), title: t('Create Bot'), run: () => actions.openNewChat('create') },
     { key: 'cmd:group', icon: h(PeopleIcon), title: t('Create group chat'), run: () => actions.openNewChat('group') },
+    { key: 'cmd:dsh', icon: h(TerminalIcon), title: t('New DSH bot'), run: () => actions.openNewChat('dsh-bot') },
     { key: 'cmd:settings', icon: h(GearIcon), title: t('Bot settings'), run: () => actions.openSettings('general') },
   ].filter(command => matchesName(command.title))
   if (commands.length) sections.push([t('Commands'), commands])

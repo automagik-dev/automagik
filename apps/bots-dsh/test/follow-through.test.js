@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { apply } from '../index.js'
@@ -260,6 +260,58 @@ test('a restart heals the Tasks it cut off: each goes on once, finished and old 
     assert.equal(JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).restartResumes.cut.count, 2)
     await again.stop()
   }
+})
+
+test('the restart pass resumes registered and run Sessions once, telling their owners first', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const home = freshHome(t)
+  const state = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))
+  writeFileSync(join(home, 'state.json'), JSON.stringify({ ...state, subscriptionRuns: [{ id: 'r', sessionId: 'run', botId: 'a', task: 'Check the inbox', status: 'working' }] }))
+  // The run's turn starts and a restart cuts it, with a thread another plugin owns.
+  const first = await start(home)
+  first.emit('run', 'turn/start', { turn: 1 })
+  first.emit('run', 'turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'disposed' } } })
+  await new Promise(resolve => setImmediate(resolve))
+  await first.stop()
+
+  const second = await start(home)
+  const team = second.ctx.get('omniTeam')
+  const bound = []
+  team.resumable.register({ id: 'threads', sessions: () => ['thread', 'run'], onResume: ({ sessionId }) => bound.push([sessionId, second.agentOf(sessionId).calls.length]) })
+  const now = Date.now()
+  for (const id of ['thread', 'run']) withLog(second, id, [{ type: 'turn/start', time: now - 60_000 }, { type: 'turn/end', time: now - 1000, data: { reason: { kind: 'interrupted' } } }])
+  t.mock.timers.tick(3000)
+  const done = await team.resumesDone
+  assert.deepEqual(done, { resumed: ['run', 'thread'], resent: [] })
+  // Each owner heard before its post; the run went on as the Omni Bot's run, in its Session.
+  assert.deepEqual(bound, [['run', 0], ['thread', 0]])
+  const [run] = second.agentOf('run').calls
+  assert.deepEqual([second.agentOf('run').calls.length, run.source.role, run.source.resumed], [1, 'resume', true])
+  assert.equal(second.agentOf('a').calls.length, 0)
+  const [thread] = second.agentOf('thread').calls
+  assert.deepEqual([second.agentOf('thread').calls.length, thread.source], [1, { kind: 'user', resumed: true }])
+  // A plugin that registers late gets the pass's outcome as it is.
+  team.resumable.register({ id: 'late', sessions: () => ['thread'] })
+  assert.equal(await team.resumesDone, done)
+})
+
+test('the restart pass settles when it only reads the team and when it fails', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const home = freshHome(t)
+  writeFileSync(join(home, 'state.lock'), JSON.stringify({ pid: process.ppid, host: hostname(), token: 'other' }))
+  const reader = await start(home)
+  t.mock.timers.tick(3000)
+  const read = await reader.ctx.get('omniTeam').resumesDone
+  assert.match(read.readOnly, /open in another dsh/)
+  assert.deepEqual([read.resumed, read.resent], [[], []])
+  await reader.stop()
+
+  rmSync(join(home, 'state.lock'))
+  const host = await start(home)
+  const team = host.ctx.get('omniTeam')
+  team.load = async () => { throw new Error('disk gone') }
+  t.mock.timers.tick(3000)
+  assert.deepEqual(await team.resumesDone, { failed: 'disk gone', resumed: [], resent: [] })
 })
 
 test('a task a restart cut stays running and reports only when it really ends', async (t) => {

@@ -63,10 +63,12 @@ export const ROOM_NAME_MAX = 60
 export const ROOM_NOTICE_MAX = 2000
 export const ROOM_MAX_MEMBERS = 12
 
-// A team's one DSH Agent: a plain dsh entry in the sidebar, not a Bot. Its Sessions
-// are ordinary root Sessions, so the team tools must not be offered to them.
+// DSH bots: plain dsh entries in the sidebar, not Bots, and the one record that keeps the
+// Sessions of the tasks Bots start (agents.js). Their Sessions are ordinary root Sessions,
+// so the team tools must not be offered to them.
 export const AGENT_NAME = 'Tasks'
 export const AGENT_SESSION_TITLE_MAX = 80
+export const DSH_BOT_NAME_MAX = 40
 // Every tool this plugin registers for Bots. `read_browser` only exists in the
 // Desktop profile, so a restriction filters this list down to registered names.
 export const TEAM_TOOLS = [
