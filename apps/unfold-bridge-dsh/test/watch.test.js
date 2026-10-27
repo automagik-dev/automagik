@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Refusal, createWatch, parseSubscriptions } from '../src/host/watch.js'
+import { ALLOWED, REFUSED } from './hidden-vectors.js'
 
 // Two Sessions: X (watched) and Y (not), each with its own title and workspace.
 const X = { id: 'sess-x' }
@@ -224,4 +225,48 @@ test('a taken draft\'s outcome is recorded past a full control queue; a new tap 
   refusal(() => watch.control({ kind: 'sub_add', session_id: 'b' }), 503, 'agentd_unavailable')
   watch.control({ kind: 'sent', effect_id: 'e1' }, { outcome: true })
   assert.deepEqual(watch.connect([]).backlog.map(c => c.kind), ['sub_add', 'sent'])
+})
+
+
+// The bridge refuses only bidi controls and tags; the other Refused vectors are agentd's and the
+// client's to catch.
+const HOST_REFUSED = REFUSED.filter(text => /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]|[\u{E0000}-\u{E007F}]/u.test(text))
+
+test("the wish's hidden-character vectors at the bridge", () => {
+  const { watch } = setup()
+  const { conn_id } = watch.connect(subX)
+  watch.listed([{ sessionId: 'sess-x' }])
+  const base = { conn_id, generation: 1, token: TOKEN, session_id: 'sess-x' }
+  assert.deepEqual(HOST_REFUSED, ['file\u202Etxt.exe', 'run\u{E0074}', 'a\u061Cb'])
+  HOST_REFUSED.forEach((text, n) => refusal(() => watch.register({ ...base, effect_id: `r${n}`, text }), 400, 'body_refused'))
+  ALLOWED.forEach((text, n) => watch.register({ ...base, effect_id: `a${n}`, text }))
+  // One draft per Session: the last Allowed one is held, exactly as sent.
+  assert.deepEqual(watch.snapshot().drafts.map(d => d.text), [ALLOWED.at(-1)])
+})
+
+test('a draft holding bidi controls or tag characters is refused', () => {
+  const { watch } = setup()
+  const { conn_id } = watch.connect(subX)
+  watch.listed([{ sessionId: 'sess-x' }])
+  const base = { conn_id, generation: 1, token: TOKEN, session_id: 'sess-x' }
+  const hiding = ['\u061C', '\u202E', '\u202A', '\u2066', '\u2069', '\u200E', '\u200F', '\u{E0001}', '\u{E0074}', '\u{E007F}']
+  hiding.forEach((char, n) => refusal(() => watch.register({ ...base, effect_id: `h${n}`, text: `run the tests${char}` }), 400, 'body_refused'))
+  assert.deepEqual(watch.snapshot().drafts, [])
+  // An emoji with its joiner and variation selector is ordinary text.
+  watch.register({ ...base, effect_id: 'ok', text: 'done 👩\u200D💻 \u2764\uFE0F' })
+  assert.deepEqual(watch.snapshot().drafts.map(d => d.effect_id), ['ok'])
+})
+
+// The DSH client's badges and its first-run suggestion read these from the snapshot.
+test('the snapshot carries who added a subscription and each Session\'s last turn', () => {
+  const { watch } = setup()
+  const { conn_id } = watch.connect(subX)
+  watch.listed([{ sessionId: 'sess-x', updatedAt: 1234 }, { sessionId: 'sess-y' }])
+  watch.setView({ conn_id, generation: 1, subscriptions: [{ ...subX[0], added_by: 'unfold', at: 99 }, { id: 's2', match: { names: ['writer'] }, kinds: ['turn_done'], added_by: 'someone' }], log_tail: [], advice: [] })
+  const snap = watch.snapshot()
+  assert.deepEqual(snap.view.subscriptions.map(sub => [sub.id, sub.added_by, sub.at]), [['s1', 'unfold', 99], ['s2', undefined, undefined]])
+  assert.deepEqual(snap.agents.map(agent => [agent.session_id, agent.last_turn_at]), [['sess-x', 1234], ['sess-y', undefined]])
+  // An older list time never moves a newer turn back.
+  watch.listed([{ sessionId: 'sess-x', updatedAt: 1000 }])
+  assert.equal(watch.snapshot().agents[0].last_turn_at, 1234)
 })

@@ -15,6 +15,9 @@ const TEXT_MAX = 500
 const DRAFT_MAX = 16 * 1024
 const ID = /^[A-Za-z0-9_-]{1,128}$/
 const CONTROL_MAX = 64
+// Characters that reorder or hide text: bidi embeddings, overrides, isolates and marks (Unicode's
+// Bidi_Control set), and the tag block. A draft holding one would show the person something other than what Send delivers.
+const HIDING = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]|[\u{E0000}-\u{E007F}]/u
 
 export class Refusal extends Error {
   constructor(status, code, message = code) {
@@ -30,7 +33,8 @@ const cut = text => (text.length > TEXT_MAX ? `${text.slice(0, TEXT_MAX - 1)}…
 const exactKeys = (body, keys) => isObject(body) && Object.keys(body).length === keys.length && keys.every(key => Object.hasOwn(body, key))
 const strings = list => list === undefined || (Array.isArray(list) && list.every(item => typeof item === 'string' && item !== ''))
 
-// A subscription list as the wire carries it; an empty list is valid and matches nothing.
+// A subscription list as the wire carries it; an empty list is valid and matches nothing. Who
+// added one (`added_by`) and when (`at`) ride along for the DSH client's badges.
 export function parseSubscriptions(list) {
   if (!Array.isArray(list)) refuse(400, 'bad_subscription', 'subscriptions must be an array')
   return list.map(sub => {
@@ -39,7 +43,10 @@ export function parseSubscriptions(list) {
     if (![session_ids, names, workspaces].every(strings)) refuse(400, 'bad_subscription', 'match lists hold non-empty strings')
     if (![session_ids, names, workspaces].some(list => list?.length > 0)) refuse(400, 'bad_subscription', 'a subscription matches at least one session, name or workspace')
     if (!Array.isArray(sub.kinds) || sub.kinds.length === 0 || !sub.kinds.every(kind => KINDS.includes(kind))) refuse(400, 'bad_subscription', `kinds are some of ${KINDS.join(', ')}`)
-    return { id: sub.id, match: { session_ids: session_ids ?? [], names: names ?? [], workspaces: workspaces ?? [] }, kinds: [...sub.kinds] }
+    const out = { id: sub.id, match: { session_ids: session_ids ?? [], names: names ?? [], workspaces: workspaces ?? [] }, kinds: [...sub.kinds] }
+    if (sub.added_by === 'person' || sub.added_by === 'unfold') out.added_by = sub.added_by
+    if (Number.isFinite(sub.at)) out.at = sub.at
+    return out
   })
 }
 
@@ -169,6 +176,8 @@ export function createWatch({ names = {}, now = Date.now, newId, controlMax = CO
       for (const item of items ?? []) if (typeof item?.sessionId === 'string') {
         const r = row(item.sessionId, undefined, typeof item.cwd === 'string' ? item.cwd : undefined)
         if (item.running === true && r.status === 'idle') r.status = 'running'
+        // A Session quiet since this plugin started still has a last turn, for the first-run suggestion.
+        if (Number.isFinite(item.updatedAt) && !(r.last_turn_at >= item.updatedAt)) r.last_turn_at = item.updatedAt
       }
     },
 
@@ -215,6 +224,7 @@ export function createWatch({ names = {}, now = Date.now, newId, controlMax = CO
       if (typeof effect_id !== 'string' || !ID.test(effect_id)) refuse(400, 'body_refused', 'effect_id is 1-128 of A-Z a-z 0-9 _ -')
       if (typeof token !== 'string' || token.length < 16 || token.length > 256) refuse(400, 'body_refused', 'token is 16-256 characters')
       if (typeof text !== 'string' || text.trim() === '' || text.length > DRAFT_MAX) refuse(400, 'body_refused', `text is 1-${DRAFT_MAX} characters`)
+      if (HIDING.test(text)) refuse(400, 'body_refused', 'text holds bidi controls or tag characters')
       watch.current(body.conn_id, body.generation)
       if (spent.has(effect_id) || drafts.has(effect_id)) refuse(409, 'already_registered')
       const r = typeof session_id === 'string' ? rows.get(session_id) : undefined
@@ -281,7 +291,7 @@ export function createWatch({ names = {}, now = Date.now, newId, controlMax = CO
     snapshot() {
       return {
         connected,
-        agents: [...rows.values()].map(r => ({ session_id: r.session_id, name: r.name, workspace: r.workspace, status: r.status })),
+        agents: [...rows.values()].map(r => ({ session_id: r.session_id, name: r.name, workspace: r.workspace, status: r.status, ...(r.last_turn_at === undefined ? {} : { last_turn_at: r.last_turn_at }) })),
         approvals: [...approvals.values()].map(a => ({ call_id: a.call_id, session_id: a.session_id })),
         view,
         drafts: [...drafts.entries()].map(([effect_id, d]) => ({ effect_id, token: d.token, session_id: d.session_id, name: d.name, workspace: d.workspace, text: d.text, at: d.at })),

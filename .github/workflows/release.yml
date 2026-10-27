@@ -127,7 +127,6 @@ jobs:
           bun install --frozen-lockfile --ignore-scripts
           bun run check
           for app in bots-dsh unfold-bridge-dsh welcome-dsh; do
-            # the Unfold bridge is host code only: no client bundle to compare
             (cd "apps/${app}" && bun install --frozen-lockfile --ignore-scripts && { [ ! -f scripts/build-client.mjs ] || node scripts/build-client.mjs --check; })
           done
 

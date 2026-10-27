@@ -74,7 +74,7 @@ Once DSH's session services are up, the bridge also keeps a work view for Unfold
 | `DELETE /v1/dsh/drafts/{effect_id}` | Withdraw a draft. |
 | `PUT /v1/dsh/view` | `{conn_id, generation, subscriptions, log_tail, advice}`: what the DSH client shows for Unfold. Every write on a connection carries a generation at least the highest seen, and a view's must be strictly above the last view's, so an older view in flight never wins (409 `stale_generation` otherwise). |
 
-**Subscriptions** are `{id, match: {session_ids?, names?, workspaces?}, kinds}`. The kinds are `turn_done`, `error`, `approval_waiting`, `status` and `created`.
+**Subscriptions** are `{id, match: {session_ids?, names?, workspaces?}, kinds}`, and in Unfold's view also `added_by` (`person` or `unfold`) and `at`, which the DSH client shows. The kinds are `turn_done`, `error`, `approval_waiting`, `status` and `created`.
 - Names and workspaces match exactly, and the lists combine by OR.
 - An empty match is refused. `{subscriptions: []}` matches nothing.
 - An event outside the subscriptions never leaves DSH. A summary is at most 500 characters of the agent's own reply text, never tool output or file contents.
@@ -96,7 +96,15 @@ Once DSH's session services are up, the bridge also keeps a work view for Unfold
 - **The Bot team (`@automagik/bots-dsh`):** the two plugins share no state. The work view only observes, so it doesn't change the Bot team's routing, its approvals or its fallback.
 - **Permissions:** the work view injects `sessionController`, `sessions`, `sessionTitle`, `workspaceRegistry` and `connection`. We found no consent step in DSH 0.2.1-rc.3 for the services a plugin injects. The model routes don't wait for these services.
 
-**Drafts:** a draft id is used once. Sent, cancelled, superseded by a newer draft for the same Session, or withdrawn, it is never registered again. Drafts dropped because a new stream replaced the old one may be registered again. The bridge accepts drafts up to 16 KiB, with any characters. Unfold's agent refuses longer drafts and invisible characters itself, but a program holding the key skips that check.
+**The DSH client** (`client.js`, built from `src/client`) shows all of this inside DSH. The client follows DSH's own language: English today, Portuguese once DSH offers it.
+- **Each Session row** gets a watch toggle with the Session's status dot. On asks Unfold to watch that Session; off removes that row's own subscription and no other. An idle row Unfold watches also carries a small eye before its title.
+- **The sidebar foot** opens the board: agents and statuses, approvals waiting with Unfold's read, the drafts held, and the changes Unfold made itself, each with Undo. With nothing watched yet, it suggests the Session with the most recent turn.
+- **The composer of a Session** shows Unfold's read of that Session's pending approval, labelled "Unfold's read of this agent's messages", and "this agent's text contains instructions" when Unfold's checks marked it. You still answer on DSH's own approval card: the client registers nothing in `conversation.approval.detail`, so DSH's card and its command preview stay as they are. The same composer shows the draft held for that Session only, headed "To: name · workspace", in full and as registered, with Send and Cancel. Send posts `{token}` and nothing else. If the draft or its recipient line holds characters a person can't see (zero-width and other default-ignorable characters, bidi controls, tags, control characters), the client names them in a red line and keeps Send off; Cancel stays on. Inside an emoji sequence, the emoji selector (U+FE0F) right after an emoji and a joiner (U+200D) between two emoji don't count; the first emoji may carry its U+FE0F or a skin tone before the joiner. Some ordinary characters do count under that rule and hold Send: keycaps (a digit, U+FE0F, U+20E3) and the text selector U+FE0E.
+- **Settings › Unfold** lists the subscriptions, badged "by Unfold" or "by you" when Unfold's view says who added one (no badge otherwise), the change log with Undo on each change, and whether Unfold is connected.
+
+The client holds no key. It holds a draft's token only to send or cancel that draft, and never shows it.
+
+**Drafts:** a draft id is used once. Sent, cancelled, superseded by a newer draft for the same Session, or withdrawn, it is never registered again. Drafts dropped because a new stream replaced the old one may be registered again. The bridge accepts drafts up to 16 KiB. It refuses with 400 `body_refused` any draft that holds bidi controls (U+061C, U+202A–U+202E, U+2066–U+2069, U+200E/U+200F) or tag characters (U+E0000–U+E007F), which would make the text shown differ from the text sent. Unfold's agent refuses longer drafts and other invisible characters itself; a program holding the key skips that check, so the DSH client marks any other hidden character in a draft and disables its Send.
 
 **Labels:** a Session's name is its DSH title. A Session that isn't loaded in DSH has no title to read yet and shows as `session <first 8 characters of its id>`.
 
@@ -114,8 +122,11 @@ The plugin declares `inject: ['llm']` and nothing else. It needs no settings.
 ## Develop
 
 ```sh
-bun install          # nothing to build: host code only
+bun install          # esbuild, which builds the DSH client
 bun run harness      # the pinned DSH release the tests and the linter run against
+bun run build        # client.js from src/client; commit it with the sources
 bun run test         # on Node, as DSH runs; a fake llm service, no model is called
 bun run lint
+node scripts/copy-check.mjs              # the client's copy, EN and pt-BR, against the claims it must never make
+node dev/renders.mjs --out <dir>         # every slot as HTML, across Unfold's link, a draft and an approval
 ```
