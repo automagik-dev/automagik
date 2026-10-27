@@ -328,7 +328,7 @@ test('a task a restart cut stays running and reports only when it really ends', 
   assert.match(text(host.agentOf('a').calls[0]), /^\[Task "Ranking" finished/)
 })
 
-test('a message a shutdown cancelled is sent again once; one still waiting, taken up or withdrawn is not', async (t) => {
+test('a message a shutdown cancelled is sent again once; one still waiting, taken up, withdrawn or for a Session no Bot owns is not', async (t) => {
   const home = freshHome(t)
   const first = await start(home)
   const send = message => first.tool('message_bot', { to: 'Writer', message, when: 'queue' }, 'a')
@@ -340,7 +340,9 @@ test('a message a shutdown cancelled is sent again once; one still waiting, take
   // Taken up by a turn, or withdrawn while Omni runs (the user stopped the Bot).
   first.emit('b', 'user/message', { content: notesMessage.content, source: notesMessage.source })
   for (const listener of first.ctx.listeners.get('agent/inbox/discarded')) listener({ message: withdrawn })
-  await settle(() => (notes(home).queued.b ?? []).length === 2)
+  // A run's Session whose record is gone by the restart: no Bot owns it any more.
+  await first.ctx.get('omniTeam').deliver({ toId: 'b', sessionId: 'gone', role: 'task', note: 'Inbox', text: 'Check the inbox' })
+  await settle(() => (notes(home).queued.b ?? []).length === 2 && notes(home).queued.gone?.length === 1)
   await first.stop()
 
   t.mock.timers.enable({ apis: ['setTimeout'] })
@@ -348,8 +350,10 @@ test('a message a shutdown cancelled is sent again once; one still waiting, take
   // A hard stop keeps the inbox: that message runs when the Session wakes.
   second.agentOf('b').inbox.nextTurn.push(numbers)
   t.mock.timers.tick(3000)
-  await settle(() => second.agentOf('b').calls.length === 1)
-  const [again] = second.agentOf('b').calls
+  assert.deepEqual((await second.ctx.get('omniTeam').resumesDone).resent, ['b'])
+  assert.equal(second.agentOf('gone').calls.length, 0)
+  const [again, ...rest] = second.agentOf('b').calls
+  assert.equal(rest.length, 0)
   assert.deepEqual([again.source.exchangeId, again.source.role, text(again)], [plan.source.exchangeId, 'request', text(plan)])
   // The resend is the same exchange, not a new one.
   assert.equal((await second.call('exchange', { a: 'a', b: 'b' })).value.length, 4)
