@@ -1308,7 +1308,7 @@
         "en": "Unfold bridge"
       },
       "description": {
-        "en": "Use the models of your own DSH in Unfold. Serves your DSH's model routes to apps on this computer as an OpenAI-compatible endpoint on 127.0.0.1, behind a key made at each start. Your sign-ins and their tokens stay in DSH; text only, no tools."
+        "en": "Use the models of your own DSH in Unfold, and let Unfold follow the agents you pick. Serves your DSH's model routes to apps on this computer as an OpenAI-compatible endpoint on 127.0.0.1, behind a key made at each start. Unfold sees your sessions' names and status, and what your agents say only for the sessions you subscribe it to. It can draft a next message for an agent, which is sent only when you tap Send in DSH. Your sign-ins and their tokens stay in DSH. It never answers approvals and runs no tools."
       },
       "author": "Automagik",
       "homepage": "https://github.com/automagik-dev/automagik/tree/dev/apps/unfold-bridge-dsh#readme",

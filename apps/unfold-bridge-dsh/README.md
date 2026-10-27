@@ -60,6 +60,48 @@ At start, the bridge writes `endpoint.json` into `$XDG_STATE_HOME/unfold-bridge/
 
 **Reading it:** an app checks that the file is its user's, mode 0600, and that `pid` is alive. It then keeps the key in memory only.
 
+## The work view: Unfold watching your agents
+
+Once DSH's session services are up, the bridge also keeps a work view for Unfold. Unfold sees what your DSH agents are doing for the Sessions it subscribes to. It can propose a next message for an agent, and that message is sent only when you tap Send in DSH. Tested with DSH 0.2.1-rc.3.
+
+**Unfold's routes** are on the same loopback server, behind the same key, Host and no-Origin checks:
+
+| Route | What |
+|---|---|
+| `POST /v1/dsh/events` | `{subscriptions}` → a Server-Sent Events stream. The first event is `hello {conn_id}`. Then come `event` frames that pass the subscriptions, `control` frames (your taps, below), and `: hb` every 15 s. A new stream replaces the old one. **Events in a gap between streams are lost** (no backfill): Unfold rebuilds its board from `POST /v1/dsh/agents` on every connect. Your taps are not lost: they wait for the next stream, in order. |
+| `POST /v1/dsh/agents` | `{subscriptions}` → `{agents, approvals}`. Every Session's name, workspace and status. The last turn's summary and the pending approvals are given only for subscribed Sessions. |
+| `POST /v1/dsh/drafts` | `{conn_id, generation, effect_id, token, session_id, text}`: a message for you to tap. The recipient's name and workspace come from DSH's own list. One draft per Session; a newer one replaces it. |
+| `DELETE /v1/dsh/drafts/{effect_id}` | Withdraw a draft. |
+| `PUT /v1/dsh/view` | `{conn_id, generation, subscriptions, log_tail, advice}`: what the DSH client shows for Unfold. Every write on a connection carries a generation at least the highest seen, and a view's must be strictly above the last view's, so an older view in flight never wins (409 `stale_generation` otherwise). |
+
+**Subscriptions** are `{id, match: {session_ids?, names?, workspaces?}, kinds}`. The kinds are `turn_done`, `error`, `approval_waiting`, `status` and `created`.
+- Names and workspaces match exactly, and the lists combine by OR.
+- An empty match is refused. `{subscriptions: []}` matches nothing.
+- An event outside the subscriptions never leaves DSH. A summary is at most 500 characters of the agent's own reply text, never tool output or file contents.
+- An approval opens as `approval_waiting {approval: {call_id, tool, reason}}` and clears as `{kind: "status", status: "approval_decided", approval}`. The clear reaches every subscription that has `approval_waiting` or `status`.
+- `error` can come several times for one turn: DSH reports each failed request, retries included.
+
+**The DSH client's routes** are on DSH's own `/api` channel, so DSH admits each request the way it admits its own API: its browser session, a trusted Host and Origin. Bodies are JSON only (415 otherwise).
+
+| Route | What |
+|---|---|
+| `GET /api/unfold-bridge/view` | The view stream: agents and statuses, Unfold's view, and the drafts. |
+| `POST /api/unfold-bridge/drafts/send?effect_id=…` | Body exactly `{token}`. The bridge sends the draft's registered text to its Session, once, with DSH's own `sessionController.prompt`, and tells Unfold `control {kind: "sent"}`. If DSH refuses it: 502 `send_failed`. If DSH doesn't answer in 30 s: 504 `send_unknown`, since it may still have taken it. Either way the draft is spent, never sent again, and Unfold gets `control {kind: "cancelled", reason}` with that reason. |
+| `POST /api/unfold-bridge/drafts/cancel?effect_id=…` | Body `{token}`: drop the draft. Unfold gets `control {kind: "cancelled"}` with no reason. |
+| `POST /api/unfold-bridge/subscriptions` · `DELETE …?id=` · `POST /api/unfold-bridge/undo?change_id=` | Tell Unfold to watch a Session, drop a subscription, or undo one of its own changes. |
+
+**What the work view doesn't do:**
+- **The key alone can't send.** No route the key reaches sends a prompt. Sending needs your tap in DSH, and it sends the text Unfold registered, never text from the request.
+- **It never answers approvals.** An approval appears on DSH's `approval/asked` and clears on `approval/decided`, and you answer it on DSH's own card. The plugin registers no `approval/request` handler.
+- **The Bot team (`@automagik/bots-dsh`):** the two plugins share no state. The work view only observes, so it doesn't change the Bot team's routing, its approvals or its fallback.
+- **Permissions:** the work view injects `sessionController`, `sessions`, `sessionTitle`, `workspaceRegistry` and `connection`. We found no consent step in DSH 0.2.1-rc.3 for the services a plugin injects. The model routes don't wait for these services.
+
+**Drafts:** a draft id is used once. Sent, cancelled, superseded by a newer draft for the same Session, or withdrawn, it is never registered again. Drafts dropped because a new stream replaced the old one may be registered again. The bridge accepts drafts up to 16 KiB, with any characters. Unfold's agent refuses longer drafts and invisible characters itself, but a program holding the key skips that check.
+
+**Labels:** a Session's name is its DSH title. A Session that isn't loaded in DSH has no title to read yet and shows as `session <first 8 characters of its id>`.
+
+**A disclosed limit:** a program running as you, such as an agent's shell, can read `endpoint.json` and DSH's own credentials file. It can then register a draft or a view that shows as Unfold's in DSH, but it can't send one without your tap. A program that can read DSH's credentials already controls DSH through its own API, so this adds no new reach.
+
 ## Install
 
 1. Add the Automagik market to DSH's plugin market ([marketplace/README.md](../../marketplace/README.md) has the URL).

@@ -1,5 +1,7 @@
 // The bridge: DSH's own model routes, served on 127.0.0.1 as the OpenAI chat-completions
 // subset Unfold's agent speaks. Two routes: GET /v1/models and POST /v1/chat/completions.
+// Once DSH's session services are up, the same server also serves Unfold's work-view routes
+// under /v1/dsh/ (src/host/dsh-routes.js), behind the same checks.
 // Every request needs this start's key, the exact Host the bridge listens on, and no Origin,
 // so neither a web page nor another computer reaches it. It runs no tools and takes text only:
 // the caller's agent decides what is sent, and DSH's llm service sends it with the person's own
@@ -7,6 +9,7 @@
 // prompt or a reply.
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { createServer } from 'node:http'
+import { Refusal as ViewRefusal } from './watch.js'
 
 const MAX_BODY = 4 * 1024 * 1024
 const JSON_TYPE = 'application/json; charset=utf-8'
@@ -32,8 +35,9 @@ const invalid = message => new Refusal(400, 'invalid_request', message)
 const digest = text => createHash('sha256').update(text).digest()
 
 // `assistant` makes a durable assistant message for the history (dsh-llm's
-// createAssistantMessage); `log` gets one line per request.
-export async function startBridge({ llm, key, assistant, log = () => {}, maxBody = MAX_BODY, host = '127.0.0.1' }) {
+// createAssistantMessage); `log` gets one line per request; `dsh` returns the work-view routes
+// once they are up, else undefined.
+export async function startBridge({ llm, key, assistant, log = () => {}, maxBody = MAX_BODY, host = '127.0.0.1', dsh = () => undefined }) {
   const want = digest(`Bearer ${key}`)
   const authorized = header => typeof header === 'string' && timingSafeEqual(digest(header), want)
   let port = 0
@@ -47,9 +51,16 @@ export async function startBridge({ llm, key, assistant, log = () => {}, maxBody
       if (!authorized(req.headers.authorization)) throw new Refusal(401, 'unauthorized', 'a valid key is required', 'authentication_error')
       if (path === '/v1/models' && req.method === 'GET') return sendJson(res, 200, await models(llm))
       if (path === '/v1/chat/completions' && req.method === 'POST') return await complete(llm, assistant, parseChat(await readBody(req, maxBody)), req, res)
+      if (path.startsWith('/v1/dsh/')) {
+        const routes = dsh()
+        if (!routes) throw new Refusal(404, 'not_found', 'the work view is not up: DSH has no session services yet')
+        return await routes.serve(req, res, path, () => readJson(req, maxBody), sendJson)
+      }
       throw new Refusal(404, 'not_found', `${req.method} ${path} is not served`)
     } catch (error) {
-      const refusal = error instanceof Refusal ? error : new Refusal(500, 'bridge_error', 'the bridge failed', 'api_error')
+      const refusal = error instanceof Refusal ? error
+        : error instanceof ViewRefusal ? new Refusal(error.status, error.code, error.message)
+          : new Refusal(500, 'bridge_error', 'the bridge failed', 'api_error')
       // A body left unread is drained, and the connection closes after the answer.
       if (!req.complete) {
         req.resume()
@@ -96,6 +107,17 @@ function readBody(req, maxBody) {
     req.on('end', () => resolve(Buffer.concat(parts).toString('utf8')))
     req.on('error', reject)
   })
+}
+
+// A work-view body: one JSON object.
+async function readJson(req, maxBody) {
+  let body
+  try { body = JSON.parse(await readBody(req, maxBody)) } catch (error) {
+    if (error instanceof Refusal) throw error
+    throw new Refusal(400, 'body_refused', 'the body is not JSON')
+  }
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new Refusal(400, 'body_refused', 'the body is not a JSON object')
+  return body
 }
 
 // Every model of every provider route, as `provider/model`. A route whose catalog fails is
