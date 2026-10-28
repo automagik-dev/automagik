@@ -10758,6 +10758,7 @@ function automagikRoster() {
     { key: "omni", kind: "omni", name: "Omni", line: "Automagik" },
     { key: "pet:builtin:automagik", kind: "pet", pet: { source: "builtin", id: "automagik", name: "Automagik", version: 2, sleep: true }, name: "Automagik", line: "Automagik" },
     { key: "pet:builtin:unfold", kind: "pet", pet: { ...UNFOLD_PET, name: "Unfold" }, name: "Unfold", line: "Automagik" },
+    { key: "pet:builtin:wisp", kind: "pet", pet: { source: "builtin", id: "wisp", name: "Wisp", version: 2, sleep: false }, name: "Wisp", line: "Automagik" },
     ...PICKER_SHAPES.filter((shape) => shape !== "octopus").map((shape) => ({ key: `shape:${shape}`, kind: "shape", shape, name: shapeOf(shape).label, line: "Automagik character" }))
   ];
 }

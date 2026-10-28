@@ -14,7 +14,7 @@ const react = { createElement: () => null, useEffect: () => {}, useLayoutEffect:
 runInNewContext(bundle.outputFiles[0].text, { module: select, exports: select.exports, URLSearchParams, require: name => (name === 'react' ? react : { createPortal: x => x }) })
 const { automagikRoster, currentKey, lookOf } = select.exports
 
-test('Automagik\'s own come first: Genie, Omni, the logo pet, Unfold, then every character but the octopus Omni wears', () => {
+test('Automagik\'s own come first: Genie, Omni, the logo pet, Unfold, Wisp, then every character but the octopus Omni wears', () => {
   const roster = automagikRoster()
   assert.deepEqual([...roster.slice(0, 2).map(entry => entry.key)], ['pet:builtin:genie-cosmic', 'omni'])
   assert.equal(roster[2].key, 'pet:builtin:automagik')
@@ -23,7 +23,8 @@ test('Automagik\'s own come first: Genie, Omni, the logo pet, Unfold, then every
   assert.deepEqual(JSON.parse(JSON.stringify(roster[2].pet)), { source: 'builtin', id: 'automagik', name: 'Automagik', version: 2, sleep: true })
   assert.equal(new Set(roster.map(entry => entry.key)).size, roster.length)
   assert.equal(roster[3].key, 'pet:builtin:unfold')
-  assert.ok(roster.slice(4).every(entry => entry.kind === 'shape'))
+  assert.equal(roster[4].key, 'pet:builtin:wisp')
+  assert.ok(roster.slice(5).every(entry => entry.kind === 'shape'))
   assert.ok(!roster.some(entry => entry.key === 'shape:octopus'))
   assert.equal(roster.find(entry => entry.key === 'shape:gumdrop').name, 'Gumdrop')
 })

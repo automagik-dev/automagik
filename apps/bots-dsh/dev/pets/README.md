@@ -8,8 +8,9 @@ rows). New pets are v2 (1536×2288, eleven rows); v1 (1536×1872) still plays.
 
 Where pets come from in the app:
 
-- **Genie's own**, shipped with the plugin (`src/host/pets/genie-cosmic`, from the approved
-  Genie v5 delivery), with the sleep strip Automagik adds (`sleep.webp`, six cells).
+- **Automagik's own**, shipped with the plugin in `src/host/pets`: Genie (`genie-cosmic`, from
+  the approved Genie v5 delivery), the Automagik logo, Unfold and Wisp. All but Wisp carry the
+  sleep strip Automagik adds (`sleep.webp`, six cells); Wisp sleeps as a slow idle.
 - **The team's**, in `<team home>/pets`: picked from codex-pets.net in the avatar editor's
   Pets tab, or copied from Codex's own folder. A Bot never needs the network to wear one.
 - **The character catalogue**, baked in the browser from the same art the marks draw

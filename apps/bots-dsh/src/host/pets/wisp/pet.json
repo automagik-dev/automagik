@@ -1,0 +1,9 @@
+{
+  "id": "wisp",
+  "name": "Wisp",
+  "displayName": "Wisp",
+  "kind": "custom",
+  "description": "Blue spirit with a flame tuft, dark eyes and a luminous spiral within its body.",
+  "spriteVersionNumber": 2,
+  "spritesheetPath": "spritesheet.webp"
+}
