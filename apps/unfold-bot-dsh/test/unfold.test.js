@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'node:test'
 import { createRuntime, inject, name } from '../index.js'
-import { UNFOLD_BOT, UNFOLD_KIND, UNFOLD_NAME, UNFOLD_PLUGINS } from '../src/host/unfold.js'
+import { UNFOLD_BOT, UNFOLD_KIND, UNFOLD_NAME, UNFOLD_PLUGINS, unfoldLeads } from '../src/host/unfold.js'
 import { createWatch } from '../../unfold-bridge-dsh/src/host/watch.js'
 
 let dir
@@ -53,6 +53,10 @@ function fakeTeam({ bots = {}, mainBotIds = [], readOnly, model } = {}) {
   return team
 }
 
+// Unfold's own instance, where Unfold leads the team; elsewhere is no host kind and no preload.
+const LEADS = { AUTOMAGIK_HOST: 'unfold' }
+const ELSEWHERE = {}
+
 const ctx = () => {
   const disposers = []
   return { effect: (run) => { const off = run(); if (typeof off === 'function') disposers.push(off) }, dispose: () => disposers.splice(0).forEach(off => off()) }
@@ -63,9 +67,14 @@ test('the plugin waits for the Bot team and names itself', () => {
   assert.deepEqual(inject, ['omniTeam'])
 })
 
-test('in a team with no Main Bot, Unfold is the Main Bot and the only Bot', async () => {
+test('Unfold leads only in Unfold\'s own instance: host kind or preload unfold', () => {
+  for (const env of [LEADS, { AUTOMAGIK_PRELOAD: 'unfold' }, { AUTOMAGIK_HOST: ' Unfold ' }]) assert.equal(unfoldLeads(env), true, JSON.stringify(env))
+  for (const env of [ELSEWHERE, { AUTOMAGIK_PRELOAD: 'genie' }, { AUTOMAGIK_HOST: 'omni' }]) assert.equal(unfoldLeads(env), false, JSON.stringify(env))
+})
+
+test('in Unfold\'s instance, a team with no Main Bot gets Unfold as its Main Bot and only Bot', async () => {
   const team = fakeTeam()
-  const rt = createRuntime(ctx(), team)
+  const rt = createRuntime(ctx(), team, {}, LEADS)
   await rt.unfoldReady
   // The browser's first state read bootstraps the team too: it finds its Main Bot.
   await team.bootstrap()
@@ -78,16 +87,25 @@ test('in a team with no Main Bot, Unfold is the Main Bot and the only Bot', asyn
   assert.equal(bot.pickModel, true)
 })
 
-test('a browser bootstrap racing the plugin\'s start still makes one Bot, Unfold', async () => {
+test('in Unfold\'s instance, a browser bootstrap racing the plugin\'s start still makes one Bot, Unfold', async () => {
   const team = fakeTeam()
-  const rt = createRuntime(ctx(), team)
+  const rt = createRuntime(ctx(), team, {}, LEADS)
   await Promise.all([team.bootstrap(), rt.unfoldReady, team.bootstrap()])
   assert.deepEqual(team.record.created.map(bot => bot.name), [UNFOLD_NAME])
 })
 
+test('elsewhere, a team with no Main Bot gets its default Main Bot first, and Unfold beside it', async () => {
+  const team = fakeTeam()
+  const rt = createRuntime(ctx(), team, {}, ELSEWHERE)
+  assert.equal(team.mainBotMaker, undefined)
+  await rt.unfoldReady
+  await team.bootstrap()
+  assert.deepEqual(team.record.created.map(bot => [bot.name, bot.main]), [['Omni', true], [UNFOLD_NAME, false]])
+})
+
 test('beside a Main Bot already there, Unfold joins as one more Bot', async () => {
   const team = fakeTeam({ bots: { m: { id: 'm', name: 'Omni' } }, mainBotIds: ['m'], model: { provider: 'p', model: 'm' } })
-  const rt = createRuntime(ctx(), team)
+  const rt = createRuntime(ctx(), team, {}, ELSEWHERE)
   await rt.unfoldReady
   assert.equal(team.record.created.length, 1)
   assert.equal(team.record.created[0].main, false)
@@ -99,32 +117,32 @@ test('beside a Main Bot already there, Unfold joins as one more Bot', async () =
 
 test('Unfold is made once: kept when there, not made again once deleted', async () => {
   const team = fakeTeam()
-  await createRuntime(ctx(), team).unfoldReady
-  await createRuntime(ctx(), team).unfoldReady
+  await createRuntime(ctx(), team, {}, LEADS).unfoldReady
+  await createRuntime(ctx(), team, {}, LEADS).unfoldReady
   assert.equal(team.record.created.length, 1)
   assert.equal(JSON.parse(readFileSync(join(team.home, 'unfold.json'), 'utf8')).unfoldCreated, true)
   // The person deleted it (and made another Main Bot).
   team.state.bots = { x: { id: 'x', name: 'Mine' } }
   team.state.mainBotIds = ['x']
-  await createRuntime(ctx(), team).unfoldReady
+  await createRuntime(ctx(), team, {}, LEADS).unfoldReady
   assert.equal(team.record.created.length, 1)
   // With no Main Bot left either, the team's own default comes back, not Unfold.
   team.state.bots = {}
   team.state.mainBotIds = []
-  await createRuntime(ctx(), team).unfoldReady
+  await createRuntime(ctx(), team, {}, LEADS).unfoldReady
   assert.deepEqual(team.record.created.map(bot => bot.name), [UNFOLD_NAME, 'Omni'])
 })
 
 test('a read-only team (another DSH holds it) gets no Bot', async () => {
   const team = fakeTeam({ readOnly: 'held elsewhere' })
-  await createRuntime(ctx(), team).unfoldReady
+  await createRuntime(ctx(), team, {}, LEADS).unfoldReady
   assert.deepEqual(team.record.created, [])
 })
 
 test('the Main Bot maker goes when the plugin does', () => {
   const context = ctx()
   const team = fakeTeam({ bots: { m: { id: 'm', name: 'Omni' } }, mainBotIds: ['m'] })
-  createRuntime(context, team)
+  createRuntime(context, team, {}, LEADS)
   assert.equal(typeof team.mainBotMaker, 'function')
   context.dispose()
   assert.equal(team.mainBotMaker, undefined)
@@ -142,7 +160,7 @@ test('its defaults are the Unfold bridge and the seven Unfold plugins, all of th
 // before the Bot exists passes the Bot's Session from its creation and its first turn on.
 test('a fake Unfold watching by name sees the Unfold Bot\'s Session from its first turn', async () => {
   const team = fakeTeam()
-  await createRuntime(ctx(), team).unfoldReady
+  await createRuntime(ctx(), team, {}, LEADS).unfoldReady
   const watch = createWatch({ newId: () => 'c1', names: { title: session => team.record.sessions.find(entry => entry.id === session?.id)?.title } })
   const seen = []
   watch.on('event', event => seen.push([event.kind, event.agent_name]))

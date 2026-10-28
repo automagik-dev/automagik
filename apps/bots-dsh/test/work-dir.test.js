@@ -246,11 +246,11 @@ test('a plugin that brings the first Main Bot makes it in place of the default, 
   assert.deepEqual(state().mainBotIds, [bots[0].id])
 })
 
-test('with the Unfold plugin, a team with no Main Bot holds exactly the Unfold Bot, its Main Bot', async (t) => {
+test('in Unfold\'s own instance, a team with no Main Bot holds exactly the Unfold Bot, its Main Bot', async (t) => {
   const { ctx, call, state, stop } = await start({ team: { ...TEAM, mainBotIds: [], bots: {}, rooms: {} } })
   t.after(stop)
   const rt = ctx.provided.get('omniTeam')
-  const unfold = createUnfold(ctx, rt)
+  const unfold = createUnfold(ctx, rt, {}, { AUTOMAGIK_PRELOAD: 'unfold' })
   // The browser's first state read bootstraps the team while the plugin makes its Bot.
   await Promise.all([call('state', {}), unfold.unfoldReady])
   await call('state', {})

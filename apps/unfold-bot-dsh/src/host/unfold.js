@@ -1,7 +1,8 @@
-// The Unfold Bot: Unfold inside DSH, on the Bot team. In Unfold's own Automagik instance it is the
-// team's Main Bot, made in place of the default one (the team's rt.mainBotMaker), so the
-// instance starts with Unfold and nothing else. In a DSH that already has a Main Bot (the
-// Automagik app, where the welcome's Unfold card installs this plugin) it joins as one more Bot.
+// The Unfold Bot: Unfold inside DSH, on the Bot team. In Unfold's own Automagik instance
+// (AUTOMAGIK_HOST=unfold or AUTOMAGIK_PRELOAD=unfold) it is the team's Main Bot, made in place of
+// the default one (the team's rt.mainBotMaker), so the instance starts with Unfold and nothing
+// else. Anywhere else (the Automagik app, or a plain DSH where the welcome's Unfold card installs
+// this plugin) it joins as one more Bot, beside the Main Bot the person's companion becomes.
 // Either way it is made once: an Unfold Bot that is there is kept, and one the person deleted is
 // not made again.
 //
@@ -12,6 +13,8 @@ import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 export const UNFOLD_KIND = 'unfold'
+// Whether this DSH is Unfold's own instance, where Unfold leads the team.
+export const unfoldLeads = (env = process.env) => [env.AUTOMAGIK_HOST, env.AUTOMAGIK_PRELOAD].some(value => String(value ?? '').trim().toLowerCase() === UNFOLD_KIND)
 export const UNFOLD_NAME = 'Unfold'
 
 export const UNFOLD_INSTRUCTIONS = [
@@ -43,7 +46,7 @@ export const UNFOLD_PLUGINS = Object.freeze([
   { name: '@automagik/unfold-session-dsh', dir: 'unfold-session-dsh', title: 'Unfold session', what: 'Unfold\'s own session, in DSH' },
 ])
 
-export function install(rt, team) {
+export function install(rt, team, env = process.env) {
   const { ctx } = rt
   const file = () => join(rt.home, 'unfold.json')
 
@@ -96,10 +99,12 @@ export function install(rt, team) {
     return make({ main: false })
   }
 
-  ctx.effect(() => {
-    team.mainBotMaker = mainBot
-    return () => { if (team.mainBotMaker === mainBot) delete team.mainBotMaker }
-  }, 'unfold-bot: the first Main Bot')
+  if (unfoldLeads(env)) {
+    ctx.effect(() => {
+      team.mainBotMaker = mainBot
+      return () => { if (team.mainBotMaker === mainBot) delete team.mainBotMaker }
+    }, 'unfold-bot: the first Main Bot')
+  }
 
   const ready = (async () => {
     try {

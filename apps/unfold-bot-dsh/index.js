@@ -14,8 +14,8 @@ export function apply(ctx, config = {}) {
   createRuntime(ctx, ctx.omniTeam, config)
 }
 
-export function createRuntime(ctx, team, config = {}) {
+export function createRuntime(ctx, team, config = {}, env = process.env) {
   const rt = Object.assign(Object.create(team), { ctx, unfoldConfig: config })
-  unfold.install(rt, team)
+  unfold.install(rt, team, env)
   return rt
 }
