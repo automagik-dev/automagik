@@ -323,7 +323,12 @@ test('an oversize frame split across reads is refused before it is parsed', asyn
   const line = Buffer.from(`${helloOf(80_069)}\n`)
   const { got, rejected, states } = await feed([line.subarray(0, 45_000), line.subarray(45_000)])
   assert.deepEqual([got.length, rejected], [0, 1])
-  assert.ok(states.some(([s, d]) => s === 'error' && /80069 bytes exceeds 65536/.test(d)))
+  // The count is the bytes held when the cap was crossed, which depends on how the kernel splits
+  // the reads: past the cap, and never more than the whole frame.
+  const error = states.find(([s, d]) => s === 'error' && /bytes exceeds 65536/.test(d))
+  assert.ok(error, `states: ${JSON.stringify(states)}`)
+  const held = Number(/^frame of (\d+) bytes/.exec(error[1])?.[1])
+  assert.ok(held > MAX_FRAME && held <= 80_069, error[1])
 })
 
 test('multibyte text is measured in bytes and survives a split mid-character', async () => {
