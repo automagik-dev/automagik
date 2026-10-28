@@ -1,7 +1,7 @@
 // Roster: creating, changing, and deleting Bots and group chats, the Main Bot role, and
 // the first Main Bot of a new team.
 import { mkdir } from 'node:fs/promises'
-import { MAX_AVATAR_IMAGE, ROOM_MAX_MEMBERS, ROOM_MODES, ROOM_NAME_MAX, ROOM_NOTICE_MAX } from './constants.js'
+import { MAX_AVATAR_IMAGE, ROOM_MAX_MEMBERS, ROOM_MODES, ROOM_NAME_MAX, ROOM_NOTICE_MAX, inUnfoldHost } from './constants.js'
 import { currentColor, isColor, normalize, unquote } from './text.js'
 import { nameProblem } from '../shared/mentions.js'
 import { cleanPetId } from './pets.js'
@@ -699,6 +699,9 @@ export function install(rt) {
     // instead; one that brings none leaves the default to the team.
     const makeDefault = () => createBot({ name: defaults.mainName, role: defaults.mainRole, main: true, color: 'deepseek', avatar: { shape: 'octopus' }, pickModel: true })
     const maker = typeof rt.mainBotMaker === 'function' ? rt.mainBotMaker : undefined
+    // In Unfold's own instance Unfold leads: until its plugin applies, a state read makes no
+    // default Main Bot, and the plugin's own bootstrap makes Unfold the first one.
+    if (maker === undefined && bootstrapping === null && inUnfoldHost()) return
     bootstrapping ??= (maker ? Promise.resolve(maker()).then(bot => (state.mainBotIds.some(id => rt.botOf(id)) ? bot : makeDefault())) : makeDefault())
       .finally(() => { bootstrapping = null })
     await bootstrapping

@@ -259,6 +259,38 @@ test('with the Unfold plugin, a team with no Main Bot holds exactly the Unfold B
   assert.deepEqual(state().mainBotIds, [bots[0].id])
 })
 
+// A state read that ends before the Unfold plugin applies: in Unfold's own instance the team
+// waits for Unfold to lead; elsewhere the default Main Bot comes first, and Unfold joins it.
+async function earlyRead(host) {
+  const before = process.env.AUTOMAGIK_HOST
+  if (host === undefined) delete process.env.AUTOMAGIK_HOST
+  else process.env.AUTOMAGIK_HOST = host
+  try {
+    const { ctx, call, state, stop } = await start({ team: { ...TEAM, mainBotIds: [], bots: {}, rooms: {} } })
+    try {
+      await call('state', {})
+      const unfold = createUnfold(ctx, ctx.provided.get('omniTeam'))
+      await unfold.unfoldReady
+      await call('state', {})
+      const team = state()
+      return Object.values(team.bots).map(bot => [bot.name, bot.kind ?? null, team.mainBotIds.includes(bot.id)])
+    } finally {
+      await stop()
+    }
+  } finally {
+    if (before === undefined) delete process.env.AUTOMAGIK_HOST
+    else process.env.AUTOMAGIK_HOST = before
+  }
+}
+
+test('in Unfold\'s own instance, a state read before the Unfold plugin applies makes no default Main Bot', async () => {
+  assert.deepEqual(await earlyRead('unfold'), [['Unfold', 'unfold', true]])
+})
+
+test('elsewhere, a state read before the Unfold plugin applies makes the default Main Bot, as before', async () => {
+  assert.deepEqual(await earlyRead(undefined), [['Omni', null, true], ['Unfold', 'unfold', false]])
+})
+
 test('a Main Bot maker that brings none leaves the default Main Bot to the team', async (t) => {
   const { ctx, state, stop } = await start({ team: { ...TEAM, mainBotIds: [], bots: {}, rooms: {} } })
   t.after(stop)
