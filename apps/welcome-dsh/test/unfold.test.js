@@ -2,6 +2,7 @@
 // opens onboarding on Unfold, and AUTOMAGIK_HOST=unfold is the instance Unfold ships whole, with
 // Omni and Genie inside it.
 import { test } from 'node:test'
+import PluginMarket from '@deepseek-ai/dsh-plugin-market'
 import assert from 'node:assert/strict'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -186,4 +187,15 @@ test('Claude Code\'s install line comes with its row, never in the page; Unfold\
   const instance = await claude(UNFOLD)
   assert.equal(instance.needs, 'install')
   assert.equal('install' in instance, false)
+})
+
+// Unfold's product overlay sets DSH's plugin-market.indexes to [] (installs reach the instance only
+// through Unfold's pack). DSH's own market service lists what the Plugins page shows as sources.
+test('the overlay\'s empty plugin-market.indexes shows as no market source on the Plugins page', () => {
+  // The overlay's value goes through DSH's own config schema, as the profile's would.
+  const sourcesFor = indexes => PluginMarket.prototype.listIndexes.call({ sources: PluginMarket.prototype.sources, config: PluginMarket.Config({ indexes }), cache: new Map(), errors: new Map() })
+  assert.deepEqual(sourcesFor([]), [])
+  // The Automagik app's profile lists its own market: one source.
+  const automagik = 'https://raw.githubusercontent.com/automagik-dev/dsh-marketplace/main/index.json'
+  assert.deepEqual(sourcesFor([automagik]).map(source => source.url), [automagik])
 })
