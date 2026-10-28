@@ -37,6 +37,7 @@ export const FIELDS: { file: string; path: string[] }[] = [
   { file: 'apps/unfold-settings-dsh/package.json', path: ['version'] },
   { file: 'apps/unfold-events-dsh/package.json', path: ['version'] },
   { file: 'apps/unfold-sse-dsh/package.json', path: ['version'] },
+  { file: 'apps/unfold-trajectory-dsh/package.json', path: ['version'] },
   { file: 'apps/unfold-session-dsh/package.json', path: ['version'] },
   { file: 'apps/desktop/package.json', path: ['version'] },
   { file: 'apps/desktop/package-lock.json', path: ['version'] },
