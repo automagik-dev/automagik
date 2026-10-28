@@ -33,7 +33,7 @@ test('fetchStream: a consumer cancel removes the hub client and the abort listen
   const abort = new AbortController()
   const body = fetchStream(hub, new Request('http://h/s', { signal: abort.signal }), 'snapshot', {}).body
   assert.equal(hub.clients.size, 1)
-  await body.cancel()
+  await within(body.cancel(), 100, 'the cancel')
   assert.equal(hub.clients.size, 0)
   abort.abort() // a late abort after cancel is a no-op
 })

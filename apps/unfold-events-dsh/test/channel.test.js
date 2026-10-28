@@ -59,7 +59,8 @@ async function fakeAgentd({ grant } = {}) {
       }
     })
   })
-  await new Promise((r) => server.listen(0, '127.0.0.1', r))
+  server.listen(0, '127.0.0.1')
+  await until('the listening socket', () => server.listening, 2000)
   return {
     address: `127.0.0.1:${server.address().port}`,
     attaches,

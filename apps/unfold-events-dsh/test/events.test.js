@@ -368,7 +368,7 @@ test('the observer attaches read-only, receives pushed events, and reconnects', 
       if (attaches.length === 1) sock.end()
     })
   })
-  await new Promise((r) => server.listen(0, '127.0.0.1', r))
+  await within(new Promise((r) => server.listen(0, '127.0.0.1', r)), 2000, 'the listening socket')
   const got = []
   const states = []
   let observer
@@ -380,7 +380,7 @@ test('the observer attaches read-only, receives pushed events, and reconnects', 
     })
   })
   observer.start()
-  await second
+  await within(second, 8000, 'both attachments and their events')
   observer.stop()
   server.close()
   assert.equal(attaches[0].role, 'observer')
@@ -406,7 +406,7 @@ async function loaded(config = {}) {
     if (!route) return res.writeHead(404).end()
     route.handler(req, res)
   })
-  await new Promise((r) => server.listen(0, '127.0.0.1', r))
+  await within(new Promise((r) => server.listen(0, '127.0.0.1', r)), 2000, 'the listening socket')
   const service = ctx.get('unfoldEvents')
   return { ctx, fiber, registered, service, hub: service.streams, port: server.address().port, close: () => server.closeAllConnections() || server.close() }
 }
@@ -419,7 +419,7 @@ function reader(port, path = '/api/unfold-events/stream') {
   client.next = (pred, ms = 5000) => new Promise((resolve, reject) => {
     const hit = events.find(pred)
     if (hit) return resolve(hit)
-    const w = { pred, resolve, timer: setTimeout(() => (waiters.delete(w), reject(new Error('no matching event'))), ms) }
+    const w = { pred, resolve, timer: setTimeout(() => (waiters.delete(w), reject(new Error(`an event matching ${pred} within ${ms} ms`))), ms) }
     waiters.add(w)
   })
   client.req = http.get({ host: '127.0.0.1', port, path }, (res) => {
@@ -575,7 +575,7 @@ function fetchReader(response) {
       for (;;) {
         const hit = events.find(pred)
         if (hit) return hit
-        const { value, done } = await within(reader.read(), Math.max(0, end - Date.now()), 'a matching event')
+        const { value, done } = await within(reader.read(), Math.max(0, end - Date.now()), `an event matching ${pred}`)
         if (done) return undefined
         buf += decoder.decode(value, { stream: true })
         for (let i; (i = buf.indexOf('\n\n')) >= 0; buf = buf.slice(i + 2)) {
@@ -888,14 +888,14 @@ test('canary: a log secret appears nowhere in the /api/unfold-events snapshot ro
   service.ingest(e('agent_delta', { response_id: 'rC', text: `${CANARY.slice(6)}" ok` }))
   service.ingest(e('heartbeat', { uptime_ms: 1, attachments: 1, note: `Basic ${CANARY}` }))
   await pane.next((ev) => ev.event === 'status')
-  const route = await new Promise((resolve) => {
+  const route = await within(new Promise((resolve) => {
     http.get({ host: '127.0.0.1', port, path: '/api/unfold-events' }, (res) => {
       let body = ''
       res.setEncoding('utf8')
       res.on('data', (c) => (body += c))
       res.on('end', () => resolve(body))
     })
-  })
+  }), 5000, 'the /api/unfold-events snapshot route')
   const frames = pane.events.map((ev) => JSON.stringify(ev))
   assert.ok(pane.events.some((ev) => ev.event === 'added'), 'the stream carried the rows')
   assert.ok(!route.includes(CANARY), 'the snapshot route body')
@@ -964,14 +964,14 @@ test('the redaction canary on the real /api/unfold-events snapshot route and SSE
     service.ingest(e('some_future_kind', { nested: { api_key: NESTED } }))
     service.ingest(e('heartbeat', { uptime_ms: 1, attachments: 1, nested: { token: NESTED } }))
     await pane.next((ev) => ev.event === 'status')
-    const route = await new Promise((resolve) => {
+    const route = await within(new Promise((resolve) => {
       http.get({ host: '127.0.0.1', port, path: '/api/unfold-events' }, (res) => {
         let body = ''
         res.setEncoding('utf8')
         res.on('data', (c) => (body += c))
         res.on('end', () => resolve(body))
       })
-    })
+    }), 5000, 'the /api/unfold-events snapshot route')
     const frames = pane.events.map((ev) => JSON.stringify(ev)).join('\n')
     for (const [what, text] of [['snapshot route', route], ['serialized snapshot', JSON.stringify(service.snapshot())], ['SSE frames', frames]]) {
       assert.equal(fragmentIn(KEY, text), null, `${what}: key fragment`)
