@@ -182,6 +182,30 @@ test('a file withdrawn after an attach is never dialled again, not even at the l
   }
 })
 
+test('a file that turns unreadable after an attach is refused, and the last-known address is never dialled', async () => {
+  // A torn write or a bad value is not the address it replaced: refused, not a reason to fall back.
+  const squatter = await fakeAgentd()
+  const path = observerFile(squatter.address)
+  const states = []
+  const o = new AgentdObserver({ observerFile: path, onState: (s, d) => states.push([s, d]) }).start()
+  try {
+    await until('the attachment', () => squatter.attaches.length === 1 && states.some(([s]) => s === 'attached'))
+    writeFileSync(path, 'localhost:1234\n', { mode: 0o600 })
+    const from = dials.length
+    const seen = states.length
+    squatter.drop()
+    await new Promise((r) => setTimeout(r, 1000)) // past the first two retries
+    assert.equal(dials.length, from, 'nothing dialled once the file holds a bad value')
+    assert.equal(squatter.attaches.length, 1, 'the old address was never attached to again')
+    const later = states.slice(seen).map(([s]) => s)
+    assert.ok(!later.some((s) => s === 'connecting' || s === 'attached'), `states after the drop: ${later}`)
+    assert.equal(o.state, 'refused')
+  } finally {
+    o.stop()
+    await squatter.close()
+  }
+})
+
 test('a grant other than observer drops the link', async () => {
   const agentd = await fakeAgentd({ grant: 'controller' })
   const states = []
