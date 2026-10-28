@@ -1,7 +1,7 @@
 // Roster: creating, changing, and deleting Bots and group chats, the Main Bot role, and
 // the first Main Bot of a new team.
 import { mkdir } from 'node:fs/promises'
-import { MAX_AVATAR_IMAGE, ROOM_MAX_MEMBERS, ROOM_MODES, ROOM_NAME_MAX, ROOM_NOTICE_MAX } from './constants.js'
+import { MAX_AVATAR_IMAGE, ROOM_MAX_MEMBERS, ROOM_MODES, ROOM_NAME_MAX, ROOM_NOTICE_MAX, inUnfoldInstance } from './constants.js'
 import { currentColor, isColor, normalize, unquote } from './text.js'
 import { nameProblem } from '../shared/mentions.js'
 import { cleanPetId } from './pets.js'
@@ -19,8 +19,9 @@ export function cleanRole(value) {
 // The kinds of Bot that other Omni plugins add to the team; the sidebar puts them first.
 // 'omni' is the Omni Bot the welcome's team step adds: it operates Omni without being a
 // Main Bot (Omni's plugin and prompt.js give it what it needs). Deleted, the New menu's Add
-// Omni (welcome-dsh) brings it back.
-export const BOT_KINDS = ['omni', 'genie']
+// Omni (welcome-dsh) brings it back. 'unfold' is Unfold inside DSH (@automagik/unfold-bot-dsh),
+// the Main Bot of Unfold's own instance.
+export const BOT_KINDS = ['omni', 'genie', 'unfold']
 export const OMNI_KIND = 'omni'
 
 
@@ -57,6 +58,10 @@ function cleanBrowserGrants(input) {
   }
   return grants
 }
+
+// How long a plugin's Main Bot maker (rt.mainBotMaker) may take before the team goes on without it.
+export const MAIN_BOT_MAKER_MS = 10_000
+const NO_ANSWER = Symbol('no answer from the Main Bot maker')
 
 export function install(rt) {
   const { ctx, defaults, state } = rt
@@ -130,6 +135,7 @@ export function install(rt) {
   // its name was checked. The name is held from the check until the create ends, so a
   // create or rename that runs meanwhile cannot take it too.
   const held = { bot: new Set(), room: new Set() }
+  const heldSessions = new Set()
   const isHeld = (kind, name) => held[kind].has(normalize(name))
   async function holdName(kind, name, work) {
     const key = normalize(name)
@@ -158,10 +164,21 @@ export function install(rt) {
     const problem = nameProblem(cleanName)
     if (problem !== undefined) throw new Error(problem)
     if (botNameTaken(cleanName)) throw new Error(`A Bot named ${cleanName} already exists`)
-    return holdName('bot', cleanName, () => buildBot(cleanName, options))
+    const existing = options.existingSessionId
+    if (existing === undefined) return holdName('bot', cleanName, () => buildBot(cleanName, options))
+    if (typeof existing !== 'string' || !existing.trim()) throw new Error('An existing Session needs its id')
+    const readOnly = rt.readOnly()
+    if (readOnly !== undefined) throw new Error(readOnly)
+    if (heldSessions.has(existing) || rt.botOf(existing) || rt.roomOf(existing) || rt.selfOf(existing) || rt.agentOf?.(existing)) throw new Error('Session already belongs to the team')
+    heldSessions.add(existing)
+    try {
+      return await holdName('bot', cleanName, () => buildBot(cleanName, options))
+    } finally {
+      heldSessions.delete(existing)
+    }
   }
 
-  async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, kind }) {
+  async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, kind, existingSessionId }) {
     const cleanAvatarValue = cleanAvatar(avatar)
     const roleText = cleanRole(role)
     // The model is fixed at creation, so a later change of the DSH default leaves it alone.
@@ -175,7 +192,14 @@ export function install(rt) {
       : effort === null || effort === '' ? undefined
       : (await rt.resolveEffort(modelRef, effort)) ?? await rt.defaultEffort(modelRef)
     const dir = workDir === undefined || workDir === null ? undefined : await rt.cleanWorkDir(workDir)
-    const id = await createSession(cleanName, { dir })
+    // A host adapter may already own a configured root Session. Adopt it without creating
+    // another Session or moving its workspace; this option is internal, not a user payload.
+    const id = existingSessionId ?? await createSession(cleanName, { dir })
+    if (existingSessionId !== undefined) {
+      const agent = await rt.resolveAgent(id)
+      if (agent?.session?.id !== id) throw new Error('The existing Session could not be resolved')
+      await ctx.sessionTitle.rename(agent.session, cleanName)
+    }
     try {
       state.bots[id] = {
         id,
@@ -212,6 +236,12 @@ export function install(rt) {
       const opener = `${kickoff}\nWhere your instructions say otherwise, follow them.`
       const text = !main && language ? `${opener}\nWrite in ${language}.` : opener
       const bot = state.bots[id]
+      // A host-owned conversation already has its own history and turn source. Adoption
+      // adds only its team identity, never a greeting or a deferred model turn.
+      if (existingSessionId !== undefined) {
+        await rt.save()
+        return bot
+      }
       if (modelRef === undefined) {
         bot.kickoff = { text, from: createdBy ?? null, ...(main ? { main: true } : {}) }
         await rt.save()
@@ -231,7 +261,7 @@ export function install(rt) {
       // A save that another change queued meanwhile still carries this Bot; a later
       // one writes the team without it.
       void rt.save().catch(() => {})
-      await ctx.workspaceRegistry.archiveSession(id)
+      if (existingSessionId === undefined) await ctx.workspaceRegistry.archiveSession(id)
         .catch(archiveError => rt.warn('ds-bot: archiving the Session for %s failed: %s', cleanName, archiveError))
       throw error
     }
@@ -693,10 +723,43 @@ export function install(rt) {
     void rt.syncModels()
     if (state.mainBotIds.some(id => rt.botOf(id))) return
     // Only the team's first Main Bot is stored as the DeepSeek whale; other Bots get a
-    // look from their id, and a Bot made Main Bot later keeps its own.
-    bootstrapping ??= createBot({ name: defaults.mainName, role: defaults.mainRole, main: true, color: 'deepseek', avatar: { shape: 'octopus' }, pickModel: true })
+    // look from their id, and a Bot made Main Bot later keeps its own. A plugin that brings
+    // the team's first Main Bot (rt.mainBotMaker: Unfold in its own instance) makes it
+    // instead; one that brings none leaves the default to the team.
+    const makeDefault = () => createBot({ name: defaults.mainName, role: defaults.mainRole, main: true, color: 'deepseek', avatar: { shape: 'octopus' }, pickModel: true })
+    const maker = typeof rt.mainBotMaker === 'function' ? rt.mainBotMaker : undefined
+    // In Unfold's own instance Unfold leads: until its plugin applies, a state read makes no
+    // default Main Bot, and the plugin's own bootstrap makes Unfold the first one.
+    if (maker === undefined && bootstrapping === null && inUnfoldInstance()) return
+    // A maker that fails or gives no answer is dropped for this bootstrap, so a state read never
+    // fails or waits on it: the team goes on as with no maker (its default, or none in Unfold's
+    // instance).
+    const fromMaker = async () => {
+      const bot = await askMaker(maker)
+      if (bot === NO_ANSWER) return inUnfoldInstance() ? undefined : makeDefault()
+      return state.mainBotIds.some(id => rt.botOf(id)) ? bot : makeDefault()
+    }
+    bootstrapping ??= (maker ? fromMaker() : makeDefault())
       .finally(() => { bootstrapping = null })
     await bootstrapping
+  }
+
+  function askMaker(maker) {
+    const ms = rt.mainBotMakerMs ?? MAIN_BOT_MAKER_MS
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        rt.warn('ds-bot: the Main Bot maker gave no answer in %d ms; the team makes its own', ms)
+        resolve(NO_ANSWER)
+      }, ms)
+      Promise.resolve().then(maker).then((bot) => {
+        clearTimeout(timer)
+        resolve(bot)
+      }, (error) => {
+        clearTimeout(timer)
+        rt.warn('ds-bot: the Main Bot maker failed; the team makes its own: %s', error?.message ?? error)
+        resolve(NO_ANSWER)
+      })
+    })
   }
 
   Object.assign(rt, {

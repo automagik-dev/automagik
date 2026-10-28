@@ -49,7 +49,7 @@ export function pinRuntime(manifest, version) {
 }
 
 // The plugins whose tests pin a DSH and whose manifest declares the range.
-export const PLUGINS = Object.freeze(['bots-dsh', 'welcome-dsh', 'locale-pt-br-dsh', 'unfold-bridge-dsh'])
+export const PLUGINS = Object.freeze(['bots-dsh', 'welcome-dsh', 'locale-pt-br-dsh', 'unfold-bridge-dsh', 'unfold-bot-dsh', 'unfold-sse-dsh', 'unfold-events-dsh', 'unfold-capabilities-dsh', 'unfold-settings-dsh', 'unfold-mind-dsh', 'unfold-trajectory-dsh', 'unfold-session-dsh'])
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const all = process.argv[2] === '--all'
