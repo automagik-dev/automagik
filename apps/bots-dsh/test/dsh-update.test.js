@@ -99,7 +99,7 @@ test('a minBot newer than the running bot gates the DSH update until the bot goe
 })
 
 test('a git or local install asks the public repo\'s latest release for its declaration', async () => {
-  for (const source of ['github:Fei2411/DeepSeek-Bot#v0.1.0&path:/ds-bot', 'link:/work/ds-bot', undefined]) {
+  for (const source of ['github:Fei2411/DS-Bot#v0.1.0&path:/ds-bot', 'link:/work/ds-bot', undefined]) {
     const { rt, fetched } = start({ source, answers: githubLatest('v9.0.0', { dsBot: { verifiedDsh: '8.8.8' } }) })
     const view = await rt.dshUpdateCheck()
     assert.equal(view.verified, '8.8.8')

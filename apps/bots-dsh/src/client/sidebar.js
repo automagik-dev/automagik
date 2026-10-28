@@ -439,14 +439,16 @@ function UpdateButton({ useUpdate, actions }) {
   const dsh = update?.dsh
   const dshPhase = dsh?.phase ?? 'idle'
   const dshRow = showsDshRow(dsh, update?.app)
-  if (!update?.available && !dshRow && phase === 'idle' && dshPhase === 'idle') return null
-  const cloudPhase = phase === 'installing' || dshPhase === 'installing' ? 'installing' : phase !== 'idle' ? phase : dshPhase
+  // Hooks first: an update that turns visible after the sidebar mounted would
+  // otherwise add hooks on a later render and crash the slot.
   const tick = useViewport()
   useLayoutEffect(() => {
     if (!open) return
     const rect = button.current?.getBoundingClientRect()
     if (rect) setBox({ left: Math.max(8, Math.min(rect.left, window.innerWidth - 288)), top: rect.bottom + 6 })
   }, [open, tick])
+  if (!update?.available && !dshRow && phase === 'idle' && dshPhase === 'idle') return null
+  const cloudPhase = phase === 'installing' || dshPhase === 'installing' ? 'installing' : phase !== 'idle' ? phase : dshPhase
   const toggle = () => setOpen(value => !value)
   const start = () => {
     setError('')
@@ -459,6 +461,7 @@ function UpdateButton({ useUpdate, actions }) {
   const label = phase === 'installing' ? t('Updating Omni…')
     : dshPhase === 'installing' ? t('Updating DSH…')
       : phase === 'installed' ? t('Omni {version} is installed. Restart DSH to use it.', { version: update.installed ?? update.latest })
+        : phase === 'updated' ? t('Omni {version} is installed.', { version: update.installed ?? update.latest })
         : dshPhase === 'installed' ? t('Restart DSH to start using DSH {version}.', { version: dsh.installed ?? dsh.verified })
           : update?.available ? t('Omni {version} is available', { version: update.latest })
             : t('DSH {version} is available', { version: dsh?.verified })
@@ -473,17 +476,18 @@ function UpdateButton({ useUpdate, actions }) {
     h('button', {
       ref: button, type: 'button', className: 'bt-round bt-update', 'data-phase': cloudPhase, 'aria-label': label, title: label,
       'aria-haspopup': 'dialog', 'aria-expanded': open, onClick: toggle,
-    }, h(CloudDownloadIcon, { done: phase === 'installed' }), phase === 'failed' || dshPhase === 'failed' ? h('span', { className: 'bt-update-dot', 'aria-hidden': true }) : null),
+    }, h(CloudDownloadIcon, { done: phase === 'installed' || phase === 'updated' }), phase === 'failed' || dshPhase === 'failed' ? h('span', { className: 'bt-update-dot', 'aria-hidden': true }) : null),
     open && box ? createPortal(h('div', { className: 'bt-update-pop', role: 'dialog', 'aria-label': update?.available || phase !== 'idle' ? t('Omni update') : t('DSH update'), style: box },
       update?.available || phase !== 'idle' ? h(Fragment, null,
-        h('div', { className: 'bt-update-title' }, phase === 'installed' ? t('Update installed') : t('Omni {version}', { version: update.latest })),
+        h('div', { className: 'bt-update-title' }, phase === 'installed' || phase === 'updated' ? t('Update installed') : t('Omni {version}', { version: update.latest })),
         h('div', { className: 'bt-update-text' }, phase === 'installed'
           ? t('Restart DSH to start using Omni {version}.', { version: update.installed ?? update.latest })
-          : t('You have {version}.', { version: update.current })),
+          : phase === 'updated' ? t('Omni {version} is installed.', { version: update.installed ?? update.latest })
+            : t('You have {version}.', { version: update.current })),
         message ? h('div', { className: 'bt-update-error', role: 'alert' }, t('The update did not finish: {reason}', { reason: message })) : null,
         h('div', { className: 'bt-update-actions' },
           update.notesUrl ? h('a', { className: 'bt-update-notes', href: update.notesUrl, target: '_blank', rel: 'noopener noreferrer' }, t("What's new")) : null,
-          phase === 'installed' ? null : h('button', {
+          phase === 'installed' || phase === 'updated' ? null : h('button', {
             type: 'button', className: 'bt-update-go', disabled: phase === 'installing', onClick: start,
           }, phase === 'installing' ? t('Updating…') : phase === 'failed' ? t('Try again') : t('Update')))) : null,
       dshRow ? h('div', { className: 'bt-update-dsh' },
@@ -760,9 +764,9 @@ export function BrandName() {
   return h('span', { className: 'bt-brand-name' }, h(Wordmark, { height: 16 }))
 }
 
-// With the whale holding the settings seat, the Bot row is just the account menu
-// and Connect plugins; FooterAccount only shows when the seat went to no one. The
-// shell's footer classes are CSS-module names, so they match on their stems.
+// With the whale holding the settings seat, the Bot row is just the account menu;
+// FooterAccount only shows when the seat went to no one. The shell's footer classes
+// are CSS-module names, so they match on their stems.
 export const SIDEBAR_CSS = `
 .bt-confirm{width:260px;max-width:72vw;padding:10px 12px 12px;display:flex;flex-direction:column;gap:10px}
 .bt-confirm-text{margin:0;font-size:13px;line-height:19px;color:var(--bt-ink-2)}
@@ -843,7 +847,7 @@ body[data-bt-motion=quiet] .bt-thread-spin{animation-duration:3s}
 .bt-update[data-phase=installing] .bt-cloud-arrow{animation:bt-cloud-drop 1.1s cubic-bezier(.45,0,.55,1) infinite}
 @keyframes bt-cloud-drop{0%{transform:translateY(-3px);opacity:0}35%{opacity:1}70%{transform:translateY(1px);opacity:1}100%{transform:translateY(2px);opacity:0}}
 .bt-update-dot{position:absolute;top:6px;right:6px;width:7px;height:7px;border-radius:50%;background:#E5484D;box-shadow:0 0 0 1.5px var(--bt-sidebar)}
-.bt-update-pop{position:fixed;z-index:60;width:280px;padding:14px 14px 12px;border-radius:14px;background:var(--bt-main);border:.5px solid var(--bt-line-2);box-shadow:0 10px 20px -3px rgba(0,0,0,.1),0 4px 6px -4px rgba(0,0,0,.1);color:var(--bt-ink);box-sizing:border-box;transform-origin:top left;font-family:var(--bt-font,-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif);animation:bt-update-pop ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing}}
+.bt-update-pop{position:fixed;z-index:60;width:280px;padding:14px 14px 12px;border-radius:14px;background:var(--bt-main);border:.5px solid var(--bt-line-2);box-shadow:0 10px 20px -3px rgba(0,0,0,.1),0 4px 6px -4px rgba(0,0,0,.1);color:var(--bt-ink);box-sizing:border-box;transform-origin:top left;font-family:var(--bt-font);animation:bt-update-pop ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing}}
 @keyframes bt-update-pop{from{opacity:0;transform:scale(.96);filter:blur(4px)}}
 .bt-update-title{font-size:14px;line-height:20px;font-weight:600}
 .bt-update-text{margin-top:2px;font-size:12.5px;line-height:18px;color:var(--bt-ink-2)}
