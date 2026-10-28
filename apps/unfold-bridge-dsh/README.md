@@ -47,7 +47,7 @@ Every request needs all three of these:
 
 ## How an app finds it
 
-At start, the bridge writes `endpoint.json` into `$XDG_STATE_HOME/unfold-bridge/`, which defaults to `~/.local/state/unfold-bridge/`. The folder is 0700 and the file 0600:
+At start, the bridge writes `endpoint.json` into `$XDG_STATE_HOME/unfold-bridge/`, which defaults to `~/.local/state/unfold-bridge/`. It refuses to write the endpoint when that `unfold-bridge` folder is itself a symlink; a symlinked parent (`~/.local/state`, `$XDG_STATE_HOME`) still works. The folder is 0700 and the file 0600:
 
 ```json
 { "v": 1, "port": 51234, "key": "<32 random bytes, base64url>", "pid": 4242, "started": 1792997825000 }

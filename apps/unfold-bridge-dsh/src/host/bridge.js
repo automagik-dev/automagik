@@ -36,23 +36,24 @@ const digest = text => createHash('sha256').update(text).digest()
 
 // Unfold's own DSH names the port in UNFOLD_BRIDGE_PORT, from its port registry, and trusts an
 // endpoint file only on that port. It is taken out of the env at the read, like the state folder.
-// undefined when unset, else the number it holds: NaN when it is not one, an empty value and 0
-// too, since a named port is never a random one. startBridge refuses anything but 1024-65535.
+// undefined when unset, else the number it holds, or the text as given when it holds none: an
+// empty value and 0 are none, since a named port is never a random one. startBridge refuses
+// anything but 1024-65535, and its refusal shows the text.
 export function takePort(env = process.env) {
   if (!Object.hasOwn(env, 'UNFOLD_BRIDGE_PORT')) return undefined
   const text = env.UNFOLD_BRIDGE_PORT
   delete env.UNFOLD_BRIDGE_PORT
-  const port = /^\d+$/.test(text) ? Number(text) : NaN
-  return port === 0 ? NaN : port
+  return /^\d+$/.test(text) && Number(text) !== 0 ? Number(text) : text
 }
 const isPort = port => Number.isInteger(port) && port >= 1024 && port <= 65535
+const shown = port => (port === '' ? 'empty' : String(port))
 
 // `assistant` makes a durable assistant message for the history (dsh-llm's
 // createAssistantMessage); `log` gets one line per request; `dsh` returns the work-view routes
 // once they are up, else undefined. `port` 0 takes any free port; a named one is bound exactly or
 // the start is refused (EADDRINUSE when it is taken): no other port is tried.
 export async function startBridge({ llm, key, assistant, log = () => {}, maxBody = MAX_BODY, host = '127.0.0.1', dsh = () => undefined, port = 0 }) {
-  if (port !== 0 && !isPort(port)) throw Object.assign(new Error(`the port is not one from 1024 to 65535 (${port})`), { code: 'bad_port' })
+  if (port !== 0 && !isPort(port)) throw Object.assign(new Error(`the port is not one from 1024 to 65535 (${shown(port)})`), { code: 'bad_port' })
   const want = digest(`Bearer ${key}`)
   const authorized = header => typeof header === 'string' && timingSafeEqual(digest(header), want)
   let bound = 0

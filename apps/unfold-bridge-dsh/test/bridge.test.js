@@ -293,7 +293,7 @@ test('close stops listening', async () => {
 })
 
 
-test('UNFOLD_BRIDGE_PORT is read once and leaves the env: a port, or NaN when set to anything else', () => {
+test('UNFOLD_BRIDGE_PORT is read once and leaves the env: a port number, else the text as given', () => {
   const env = { UNFOLD_BRIDGE_PORT: '41712', HOME: '/home/x' }
   assert.equal(takePort(env), 41712)
   assert.deepEqual(env, { HOME: '/home/x' }, 'gone from the env after the read')
@@ -301,8 +301,17 @@ test('UNFOLD_BRIDGE_PORT is read once and leaves the env: a port, or NaN when se
   // set means named: an empty value is no port, never a random one
   for (const value of ['', '0', '00', 'abc', '4171x', '-1', '1.5', ' 41712']) {
     const named = { UNFOLD_BRIDGE_PORT: value }
-    assert.ok(Number.isNaN(takePort(named)), JSON.stringify(value))
+    assert.equal(takePort(named), value, JSON.stringify(value))
     assert.deepEqual(named, {}, JSON.stringify(value))
+  }
+})
+
+test('a refused named port is logged as it was given, never as NaN', async () => {
+  for (const [value, shown] of [['0', '(0)'], ['00', '(00)'], ['abc', '(abc)'], ['', '(empty)']]) {
+    const refusal = await bridge(fakeLlm(), { port: takePort({ UNFOLD_BRIDGE_PORT: value }) }).then(() => null, error => error)
+    assert.equal(refusal?.code, 'bad_port', JSON.stringify(value))
+    assert.ok(refusal.message.endsWith(shown), `${JSON.stringify(value)}: ${refusal.message}`)
+    assert.ok(!refusal.message.includes('NaN'), refusal.message)
   }
 })
 
