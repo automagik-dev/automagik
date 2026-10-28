@@ -67,6 +67,19 @@
       },
       "versions": [
         {
+          "version": "3.34.0",
+          "publishTimestamp": 1793163992,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "83581f78b7e367ec26a7fcfadc3f93d3037972e7",
+            "path": "apps/bots-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.3 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.33.1",
           "publishTimestamp": 1793163418,
           "source": {
@@ -692,6 +705,19 @@
         ]
       },
       "versions": [
+        {
+          "version": "3.34.0",
+          "publishTimestamp": 1793163992,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "83581f78b7e367ec26a7fcfadc3f93d3037972e7",
+            "path": "apps/welcome-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.3 <0.2.2-0"
+          }
+        },
         {
           "version": "3.33.1",
           "publishTimestamp": 1793163418,
@@ -1512,6 +1538,19 @@
       },
       "versions": [
         {
+          "version": "3.34.0",
+          "publishTimestamp": 1793163992,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "83581f78b7e367ec26a7fcfadc3f93d3037972e7",
+            "path": "apps/unfold-bridge-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.3 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.33.1",
           "publishTimestamp": 1793163418,
           "source": {
@@ -1662,6 +1701,48 @@
             "url": "https://github.com/automagik-dev/automagik",
             "commit": "900224a56374ff306b983187ae242c83bd5d94cd",
             "path": "apps/unfold-bridge-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.3 <0.2.2-0"
+          }
+        }
+      ]
+    },
+    {
+      "name": "@automagik/locale-pt-br-dsh",
+      "title": {
+        "en": "Português (Brasil)"
+      },
+      "description": {
+        "en": "Brazilian Portuguese for DSH. Adds Português (Brasil) to Settings › General › Language, and a browser set to Brazilian Portuguese opens DSH in it. Translates what a first session shows: the sidebar, the composer and messages, approvals and questions, the plugin pages and the general settings. Anything it doesn't translate yet stays in English."
+      },
+      "author": "Automagik",
+      "homepage": "https://github.com/automagik-dev/automagik/tree/dev/apps/locale-pt-br-dsh#readme",
+      "repository": {
+        "url": "https://github.com/automagik-dev/automagik",
+        "directory": "apps/locale-pt-br-dsh"
+      },
+      "metadata": {
+        "category": "automagik",
+        "keywords": [
+          "locale",
+          "language",
+          "portuguese",
+          "pt-BR"
+        ],
+        "labels": [
+          "official"
+        ]
+      },
+      "versions": [
+        {
+          "version": "3.34.0",
+          "publishTimestamp": 1793163992,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "83581f78b7e367ec26a7fcfadc3f93d3037972e7",
+            "path": "apps/locale-pt-br-dsh"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.3 <0.2.2-0"
