@@ -612,7 +612,11 @@ var CATS = {
   system: { icon: "🔧", label: "system" }
 };
 var inject = ["slots", "sidebarRightTabs", "sidebarRight"];
-function apply(ctx) {
+async function apply(ctx) {
+  const response = await fetch("api/unfold-mind/config", { cache: "no-store" });
+  if (!response.ok) throw new Error(`Mind configuration ${response.status}`);
+  const config = await response.json();
+  BASE = config.route.replace(/^\//, "").replace(/\/$/, "");
   ctx.effect(() => ctx.sidebarRightTabs.register({
     id: MIND_ID,
     kind: MIND_KIND,

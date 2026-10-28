@@ -583,7 +583,7 @@ test('the plugin reads the one unfold-events window, serves rows, audit records 
   const dir = mkdtempSync(join(tmpdir(), 'unfold-mind-p-'))
   try {
     const p = await loaded({ dataDir: dir }, { rows: [['hello', { protocol: 2, agent: 'agentd', version: 't', boot_id: BOOT, utc_ms_at_origin: 1, journal: '/state/journal.jsonl' }]] })
-    assert.deepEqual(p.routes.map((r) => r.path).sort(), ['/api/unfold-mind', '/api/unfold-mind/event', '/api/unfold-mind/stream', '/api/unfold-mind/suggestions'])
+    assert.deepEqual(p.routes.map((r) => r.path).sort(), ['/api/unfold-mind', '/api/unfold-mind/config', '/api/unfold-mind/event', '/api/unfold-mind/stream', '/api/unfold-mind/suggestions'])
     assert.ok(p.routes.every((r) => r.methods.every((m) => m === 'GET' || (m === 'POST' && r.path.endsWith('/suggestions')))), 'the only write is a suggestion')
     p.push('command_admitted', { command_id: 'cmd-7', generation: 1, status: 'admitted' })
     const d = p.push('decision', { decision_id: 'd1', trigger_event: 'host:cmd-7', candidates: ['respond'], selected: 'respond', policy: 'rule', latency_ns: 1e6, episode_id: 'x', training_eligibility: 'unknown' })

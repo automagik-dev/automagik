@@ -168,6 +168,8 @@ const json = (v, status = 200) => Response.json(redact(v), { status })
 /** DSH `connection.fetch` routes: exact paths below /api, behind its fence and auth. */
 export function fetchRoutes(service, base, hub) {
   return [
+    // Stable discovery stays behind connection.fetch's authentication fence.
+    { path: '/api/unfold-mind/config', methods: ['GET'], requestBody: 'buffered', fetch: async () => json({ route: base }) },
     { path: base, methods: ['GET'], requestBody: 'buffered', fetch: async () => json(service.snapshot()) },
     {
       path: `${base}/stream`,

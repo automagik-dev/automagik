@@ -18,7 +18,7 @@ import { fmtSec, modelFor, replyCaption, replyMetrics, sessionSummary, usageRepo
 
 export const MIND_ID = '@automagik/unfold-mind-dsh'
 export const MIND_KIND = 'unfold.mind'
-const BASE = 'api/unfold-mind'
+let BASE = 'api/unfold-mind'
 const SHOWN = 300
 
 const CATS = {
@@ -32,7 +32,12 @@ const CATS = {
 
 export const inject = ['slots', 'sidebarRightTabs', 'sidebarRight']
 
-export function apply(ctx) {
+export async function apply(ctx) {
+  const response = await fetch('api/unfold-mind/config', { cache: 'no-store' })
+  if (!response.ok) throw new Error(`Mind configuration ${response.status}`)
+  const config = await response.json()
+  BASE = config.route.replace(/^\//, '').replace(/\/$/, '')
+
   ctx.effect(() => ctx.sidebarRightTabs.register({
     id: MIND_ID,
     kind: MIND_KIND,
