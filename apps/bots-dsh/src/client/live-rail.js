@@ -27,7 +27,18 @@ export function liveOf(work, roster, now = Date.now()) {
   const tasks = roster?.tasks ?? {}
   const needs = (work?.approvals ?? [])
     .filter(entry => byId[entry.botId])
-    .map(entry => ({ key: `ask:${entry.id}`, bot: byId[entry.botId], place: entry.roomId ? roomsById[entry.roomId]?.name : undefined, tool: entry.tool, open: entry.taskId ?? entry.roomId ?? entry.botId }))
+    .map((entry) => {
+      // An approval a task raised names the task: the parent Bot alone would hide which
+      // of its tasks is blocked.
+      const task = entry.taskId === undefined ? undefined : tasks[entry.taskId]
+      return {
+        key: `ask:${entry.id}`,
+        bot: byId[entry.botId],
+        place: entry.roomId ? roomsById[entry.roomId]?.name : task?.title ?? entry.label,
+        tool: entry.tool,
+        open: entry.taskId ?? entry.roomId ?? entry.botId,
+      }
+    })
   const waitingTasks = new Set((work?.approvals ?? []).map(entry => entry.taskId).filter(Boolean))
   const working = []
   for (const [id, doing] of Object.entries(work?.bots ?? {})) {

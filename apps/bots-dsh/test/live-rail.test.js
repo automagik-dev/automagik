@@ -41,12 +41,18 @@ const roster = {
 
 test('the rail puts what needs you first, then what runs, then what just ended', () => {
   const work = {
-    approvals: [{ id: 'a1', botId: 'genie', taskId: 't3', tool: 'bash' }],
+    approvals: [
+      { id: 'a1', botId: 'genie', taskId: 't3', tool: 'bash' },
+      // A task gone from the roster still names itself from the approval's own label.
+      { id: 'a2', botId: 'writer', taskId: 'gone', label: 'A task that ended', tool: 'bash' },
+    ],
     bots: { omni: { tool: 'web_search' } },
     rooms: { room: [{ botId: 'writer' }, { botId: 'omni' }] },
   }
   const live = liveOf(work, roster, 6 * 60 * 60 * 1000 + 1_000)
-  assert.deepEqual(plain(live.needs.map(item => [item.bot.name, item.tool, item.open])), [['Genie', 'bash', 't3']])
+  assert.deepEqual(plain(live.needs.map(item => [item.bot.name, item.tool, item.open])), [['Genie', 'bash', 't3'], ['Writer', 'bash', 'gone']])
+  // The task that waits is named, not just its Bot.
+  assert.deepEqual(live.needs.map(item => item.place), ['Waits on you', 'A task that ended'])
   // A Bot at work in its own chat and in a group is listed once; a waiting task is under Needs you.
   assert.deepEqual(plain(live.working.map(item => [item.key, item.open])), [['bot:omni', 'omni'], ['room:room:writer', 'room'], ['task:t1', 't1']])
   assert.equal(live.working[1].place, 'You, Writer, Genie')
