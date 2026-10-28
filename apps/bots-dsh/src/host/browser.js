@@ -8,6 +8,7 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { output } from './tools.js'
 import { browserPluginOf } from './browser-default.js'
+import { inUnfoldHost } from './constants.js'
 
 // A waiting client counts as present; one that has not polled for this long is gone.
 const CLIENT_STALE_MS = 30_000
@@ -243,15 +244,17 @@ const OPEN_MAX = 64
 /**
  * The browser panel and `read_browser` are on where the window can show them: DSH Desktop's
  * profile and an app with the bridge (`DS_BOT_APP=1`; the Automagik app has none);
- * `config.browser` forces them on or off. The choice is fixed for the life of the process,
+ * `config.browser` forces them on or off; Unfold's own instance (AUTOMAGIK_HOST=unfold) has
+ * neither. The choice is fixed for the life of the process,
  * so the tool list, and with it the cached prompt prefix, never changes under a running
  * Session.
  */
 export function install(rt) {
   const { ctx, config } = rt
-  const panel = typeof config.browser === 'boolean' ? config.browser
-    : ctx.get?.('profileContext')?.name === 'desktop' || process.env.DS_BOT_APP === '1'
-  const driven = browserPluginOf(config) !== undefined || config.browserPluginApi !== undefined
+  const unfold = inUnfoldHost()
+  const panel = !unfold && (typeof config.browser === 'boolean' ? config.browser
+    : ctx.get?.('profileContext')?.name === 'desktop' || process.env.DS_BOT_APP === '1')
+  const driven = !unfold && (browserPluginOf(config) !== undefined || config.browserPluginApi !== undefined)
   if (!panel && !driven) {
     Object.assign(rt, { browserEnabled: false, browserChannel: undefined, browserOpen: () => ({}) })
     return

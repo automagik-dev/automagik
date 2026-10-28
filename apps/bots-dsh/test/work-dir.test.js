@@ -7,6 +7,7 @@ import { apply } from '../index.js'
 import { dshHomeOf } from '../src/host/folders.js'
 import { escapeRegExp } from '../src/host/text.js'
 import { fakeContext } from './fake-ctx.js'
+import { createRuntime as createUnfold } from '../../unfold-bot-dsh/index.js'
 
 // A Main Bot and a Bot, with the Bot in the group Ops through its group Session 'gb'.
 const TEAM = {
@@ -216,6 +217,55 @@ test('a Bot another Omni plugin adds keeps its kind; a model making a Bot cannot
   const sneaky = Object.values(state().bots).find(bot => bot.name === 'Sneaky')
   assert.ok(sneaky)
   assert.equal(sneaky.kind, undefined)
+})
+
+test('the Unfold Bot keeps its kind unfold; any other unknown kind is still dropped', async (t) => {
+  const { ctx, state, stop } = await start()
+  t.after(stop)
+  const rt = ctx.provided.get('omniTeam')
+  const unfold = await rt.createBot({ name: 'Unfold', kind: 'unfold', pickModel: true })
+  assert.equal(state().bots[unfold.id].kind, 'unfold')
+  const odd = await rt.createBot({ name: 'Odd', kind: 'unfolded', pickModel: true })
+  assert.equal(state().bots[odd.id].kind, undefined)
+})
+
+test('a plugin that brings the first Main Bot makes it in place of the default, once', async (t) => {
+  const { ctx, state, stop } = await start({ team: { ...TEAM, mainBotIds: [], bots: {}, rooms: {} } })
+  t.after(stop)
+  const rt = ctx.provided.get('omniTeam')
+  let made = 0
+  rt.mainBotMaker = () => {
+    made += 1
+    return rt.createBot({ name: 'Unfold', kind: 'unfold', main: true, pickModel: true })
+  }
+  await Promise.all([rt.bootstrap(), rt.bootstrap()])
+  await rt.bootstrap()
+  const bots = Object.values(state().bots)
+  assert.equal(made, 1)
+  assert.deepEqual(bots.map(bot => [bot.name, bot.kind]), [['Unfold', 'unfold']])
+  assert.deepEqual(state().mainBotIds, [bots[0].id])
+})
+
+test('with the Unfold plugin, a team with no Main Bot holds exactly the Unfold Bot, its Main Bot', async (t) => {
+  const { ctx, call, state, stop } = await start({ team: { ...TEAM, mainBotIds: [], bots: {}, rooms: {} } })
+  t.after(stop)
+  const rt = ctx.provided.get('omniTeam')
+  const unfold = createUnfold(ctx, rt)
+  // The browser's first state read bootstraps the team while the plugin makes its Bot.
+  await Promise.all([call('state', {}), unfold.unfoldReady])
+  await call('state', {})
+  const bots = Object.values(state().bots)
+  assert.deepEqual(bots.map(bot => [bot.name, bot.kind]), [['Unfold', 'unfold']])
+  assert.deepEqual(state().mainBotIds, [bots[0].id])
+})
+
+test('a Main Bot maker that brings none leaves the default Main Bot to the team', async (t) => {
+  const { ctx, state, stop } = await start({ team: { ...TEAM, mainBotIds: [], bots: {}, rooms: {} } })
+  t.after(stop)
+  const rt = ctx.provided.get('omniTeam')
+  rt.mainBotMaker = async () => undefined
+  await rt.bootstrap()
+  assert.deepEqual(Object.values(state().bots).map(bot => bot.name), ['Omni'])
 })
 
 test('an idle Bot\'s own chat moves to its new folder at once, and back', async (t) => {

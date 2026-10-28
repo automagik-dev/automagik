@@ -19,8 +19,9 @@ export function cleanRole(value) {
 // The kinds of Bot that other Omni plugins add to the team; the sidebar puts them first.
 // 'omni' is the Omni Bot the welcome's team step adds: it operates Omni without being a
 // Main Bot (Omni's plugin and prompt.js give it what it needs). Deleted, the New menu's Add
-// Omni (welcome-dsh) brings it back.
-export const BOT_KINDS = ['omni', 'genie']
+// Omni (welcome-dsh) brings it back. 'unfold' is Unfold inside DSH (@automagik/unfold-bot-dsh),
+// the Main Bot of Unfold's own instance.
+export const BOT_KINDS = ['omni', 'genie', 'unfold']
 export const OMNI_KIND = 'omni'
 
 
@@ -693,8 +694,12 @@ export function install(rt) {
     void rt.syncModels()
     if (state.mainBotIds.some(id => rt.botOf(id))) return
     // Only the team's first Main Bot is stored as the DeepSeek whale; other Bots get a
-    // look from their id, and a Bot made Main Bot later keeps its own.
-    bootstrapping ??= createBot({ name: defaults.mainName, role: defaults.mainRole, main: true, color: 'deepseek', avatar: { shape: 'octopus' }, pickModel: true })
+    // look from their id, and a Bot made Main Bot later keeps its own. A plugin that brings
+    // the team's first Main Bot (rt.mainBotMaker: Unfold in its own instance) makes it
+    // instead; one that brings none leaves the default to the team.
+    const makeDefault = () => createBot({ name: defaults.mainName, role: defaults.mainRole, main: true, color: 'deepseek', avatar: { shape: 'octopus' }, pickModel: true })
+    const maker = typeof rt.mainBotMaker === 'function' ? rt.mainBotMaker : undefined
+    bootstrapping ??= (maker ? Promise.resolve(maker()).then(bot => (state.mainBotIds.some(id => rt.botOf(id)) ? bot : makeDefault())) : makeDefault())
       .finally(() => { bootstrapping = null })
     await bootstrapping
   }

@@ -7,6 +7,7 @@ import { mountBrowserPlugin } from './browser/mount.js'
 import { openBotBrowser } from './browser/session.js'
 import { sessionComplete } from './browser/session-model.js'
 import { browserPluginOf, DEFAULT_PLAYWRIGHT, findBrowser, NO_BROWSER_FOUND } from './browser-default.js'
+import { inUnfoldHost } from './constants.js'
 import * as refs from './browser/refs.js'
 import * as script from './browser/script.js'
 import * as task from './browser/task.js'
@@ -116,7 +117,7 @@ async function authorizeBrowserAction(rt, exec, botId, action) {
 export function install(rt) {
   const name = browserPluginOf(rt.config)
   const injected = rt.config.browserPluginApi
-  if (!name && !injected) return
+  if ((!name && !injected) || inUnfoldHost()) return
   const plugin = injected ?? browserPlugins[name]
   if (!plugin) throw new Error(`Unknown browser plugin "${name}". Choose ${NAMES.join(', ')}.`)
   const playwrightUrl = optionalString(rt.config, 'playwrightUrl') ?? DEFAULT_PLAYWRIGHT

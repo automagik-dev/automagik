@@ -1233,6 +1233,11 @@ var ZH = {
   "What you can choose to share": "你可以选择分享的内容",
   "Privacy is set by the Automagik desktop app": "隐私由 Automagik 桌面应用设置",
   "Open these settings in the Automagik app to change what it shares.": "在 Automagik 应用中打开这些设置，即可更改它分享的内容。",
+  // Unfold's own instance (privacy.js)
+  "Your Bots, chats, memory and files stay on this computer. Uploads are off here, and nothing on this page can turn one on.": "你的 Bot、对话、记忆和文件都留在这台电脑上。这里的上传已关闭，本页面上的任何设置都无法开启上传。",
+  "What is shared": "分享的内容",
+  "Unfold's Privacy controls this": "由 Unfold 的隐私设置控制",
+  "To see or change what is shared, open Unfold's settings.": "要查看或更改分享的内容，请打开 Unfold 的设置。",
   "Goes to": "发送给",
   "What": "内容",
   "Applies the next time Automagik starts.": "下次启动 Automagik 时生效。",
@@ -17024,6 +17029,26 @@ function PrivacyPage({ actions, run: run2, Section: Section2, Row: Row3 }) {
     setChanged(true);
   }));
   const managed = view?.managed === true;
+  if (view?.host === "unfold") {
+    return (0, import_react43.createElement)(
+      "div",
+      { className: "bt-privacy" },
+      (0, import_react43.createElement)(
+        Section2,
+        { title: t("Local first") },
+        (0, import_react43.createElement)(
+          "div",
+          { className: "bt-privacy-intro" },
+          (0, import_react43.createElement)("p", null, t("Your Bots, chats, memory and files stay on this computer. Uploads are off here, and nothing on this page can turn one on."))
+        )
+      ),
+      (0, import_react43.createElement)(
+        Section2,
+        { title: t("What is shared") },
+        (0, import_react43.createElement)(Row3, { label: t("Unfold's Privacy controls this"), hint: t("To see or change what is shared, open Unfold's settings.") })
+      )
+    );
+  }
   return (0, import_react43.createElement)(
     "div",
     { className: "bt-privacy" },

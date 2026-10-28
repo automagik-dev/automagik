@@ -4,7 +4,7 @@
 // runs from the next DSH start. A linked or local checkout is never offered one.
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { inDesktopApp } from './constants.js'
+import { inDesktopApp, inUnfoldHost } from './constants.js'
 
 const PKG = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
 export const OFFICIAL_REGISTRY = 'https://registry.npmjs.org/'
@@ -113,7 +113,8 @@ export const STARS_TTL_MS = 60 * 60_000
 
 export function install(rt) {
   const { ctx, config } = rt
-  const enabled = config.updateCheck !== false
+  // Unfold's own instance updates with Unfold, so it never asks.
+  const enabled = config.updateCheck !== false && !inUnfoldHost()
   const manager = () => ctx.get?.('pluginManager')
 
   const status = {
@@ -155,13 +156,14 @@ export function install(rt) {
     available: status.phase !== 'installed' && status.phase !== 'updated' && target !== null && status.latest !== null && newer(status.latest, status.current),
   })
 
-  // Asked only while the About page is open, so a closed page never calls GitHub.
+  // Asked only while the About page is open, so a closed page never calls GitHub (and never
+  // in Unfold's own instance, which asks nothing of GitHub).
   // A failed answer keeps the last count and is asked again next time.
   let stars = { count: null, at: 0 }
   let starring = null
   async function repoStars() {
     const repo = repoSlug()
-    if (repo === null) return null
+    if (repo === null || inUnfoldHost()) return null
     if (Date.now() - stars.at < STARS_TTL_MS) return stars.count
     starring ??= fetchJson(`https://api.github.com/repos/${repo}`, { 'user-agent': `${PKG.name}/${PKG.version}` })
       .then((info) => { if (Number.isInteger(info?.stargazers_count)) stars = { count: info.stargazers_count, at: Date.now() } })
@@ -231,7 +233,7 @@ export function install(rt) {
   /** Start reinstalling the newest version; the answer comes back through `check`. */
   function start() {
     if (status.phase === 'installing') return view()
-    if (target === null) throw new Error('No Omni update is available')
+    if (!enabled || target === null) throw new Error('No Omni update is available')
     const service = manager()
     if (typeof service?.installBundle !== 'function') throw new Error('The DSH plugin manager is not available in this profile')
     const chosen = target

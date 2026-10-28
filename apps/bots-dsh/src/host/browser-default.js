@@ -1,16 +1,20 @@
-// The Bot browser is on unless the config turns it off (`browserPlugin: false`): each Bot
+// The Bot browser is on unless the config turns it off (`browserPlugin: false`) or the host is
+// Unfold's own instance (AUTOMAGIK_HOST=unfold): each Bot
 // drives the refs plugin (browser-plugins.js) in a profile of its own, through
 // playwright-core and a Chrome-family browser already on this computer, so nothing is
 // downloaded. `browserExecutablePath` names another; `playwrightUrl` another Playwright.
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { inUnfoldHost } from './constants.js'
 
 export const DEFAULT_BROWSER_PLUGIN = 'refs'
 export const DEFAULT_PLAYWRIGHT = 'playwright-core'
 
 /** The browser plugin this config runs, or undefined when the Bot browser is off. */
-export function browserPluginOf(config) {
+export function browserPluginOf(config, env = process.env) {
+  // Unfold's own instance has no Bot browser, whatever the config says.
+  if (inUnfoldHost(env)) return undefined
   const name = config.browserPlugin
   if (name === false || name === 'off' || name === '') return undefined
   return name ?? (config.browserPluginApi ? undefined : DEFAULT_BROWSER_PLUGIN)
