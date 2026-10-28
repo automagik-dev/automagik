@@ -199,7 +199,7 @@ test('the plugin redacts every SSE payload at the boundary', async () => {
       if (value) text += Buffer.from(value).toString('utf8')
     }
     ac.abort()
-    assert.match(text, /event: row-updated/)
+    assert.match(text, /event: row-updated/, 'no row-updated frame on the stream in 2000 ms')
     assert.ok(!text.includes(SECRET), 'no SSE frame carries the credential')
     await p.fiber.dispose()
   } finally {

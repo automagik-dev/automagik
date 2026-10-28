@@ -19,6 +19,13 @@ const catalog = loadCatalog()
 const BOOT = 'b0'
 const P = `guest-${BOOT}`
 const settle = () => new Promise((r) => setImmediate(r))
+// A bounded wait on a ref'd timer: a stream that never ends fails here with one line, rather than
+// leaving the run with nothing to wait on.
+const within = (promise, ms, what) => {
+  let timer
+  const limit = new Promise((_, reject) => (timer = setTimeout(() => reject(new Error(`${what}: not in ${ms} ms`)), ms)))
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer))
+}
 const CANARY = 'sk-proofCANARY0123456789abcdefABCDEF'
 // Other members of the family (synthetic): legacy, project, service-account, admin, Anthropic-style.
 const VARIANTS = [
@@ -270,7 +277,7 @@ test('canary on the real /api/unfold-mind snapshot route and SSE stream: no frag
     for (let i = 0; i < 5; i++) await settle()
     const snap = await (await routes.find((r) => r.path === '/api/unfold-mind').fetch(new Request('http://h/api/unfold-mind'))).text()
     abort.abort()
-    await pump.catch(() => {})
+    await within(pump.catch(() => {}), 2000, 'the stream ends on abort')
     assert.ok(frames.includes('event: '), 'the stream carried frames')
     for (const [what, text] of [['snapshot route', snap], ['SSE frames', frames]]) assert.equal(fragmentIn(CANARY, text), null, `${what}: ${fragmentIn(CANARY, text)}`)
   } finally {

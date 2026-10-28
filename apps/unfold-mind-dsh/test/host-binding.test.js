@@ -99,7 +99,11 @@ async function loaded(dir, config) {
   ctx.provide('unfoldEvents', { window: new EventWindow(catalog, { limit: 200 }), catalog, snapshot: () => ({ link: { state: 'attached', detail: 'observer' } }) })
   const fiber = ctx.plugin(plugin, { dataDir: join(dir, 'mind-data'), ...config })
   await fiber
-  await new Promise((r) => setTimeout(r, 50))
+  // Bounded, on a ref'd timer: the route is there, or the test fails with one line.
+  for (const end = Date.now() + 2000; !routes.some((r) => r.path === '/api/unfold-mind'); ) {
+    if (Date.now() > end) throw new Error('the snapshot route did not register in 2000 ms')
+    await new Promise((r) => setTimeout(r, 5))
+  }
   const snap = async () => (await (await routes.find((r) => r.path === '/api/unfold-mind').fetch(new Request('http://h/api/unfold-mind'))).json())
   return { fiber, snap }
 }

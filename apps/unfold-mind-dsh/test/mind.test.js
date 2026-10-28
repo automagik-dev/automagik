@@ -541,7 +541,7 @@ test('a journal is read read-only with byte offsets and line hashes anyone can r
     appendFileSync(file, ',"t_ms":9}\n')
     await waited
     tail.stop()
-    assert.equal(got.length, 3)
+    assert.equal(got.length, 3, 'the appended record did not arrive through the watch in 3000 ms')
     assert.equal(got[2].rec.kind, 'partial')
     assert.equal(got[2].at.history, false)
     assert.deepEqual(notes, [])
