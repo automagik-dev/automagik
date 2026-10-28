@@ -69,7 +69,7 @@
         "en": "Unfold capabilities"
       },
       "description": {
-        "en": "What Unfold can do, and how well. A read-only map of each capability, modality and benchmark row, computed only from bench scorecards joined to their manifests: a cell without evidence says so, and runs that are not comparable are listed apart with why. Shows the latest measured candidate as a measurement, never as proof of what is deployed. Writes nothing and opens no connection of its own."
+        "en": "Part of Unfold; works with the Unfold app. What Unfold can do, and how well. A read-only map of each capability, modality and benchmark row, computed only from bench scorecards joined to their manifests: a cell without evidence says so, and runs that are not comparable are listed apart with why. Shows the latest measured candidate as a measurement, never as proof of what is deployed. Writes nothing and opens no connection of its own."
       },
       "category": "ai",
       "keywords": [

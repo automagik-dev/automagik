@@ -72,7 +72,7 @@
         "en": "Unfold settings"
       },
       "description": {
-        "en": "How Unfold is set up right now, read-only: backend and model, the prompt revision (shown only when it is proven against what the agent sent), voice and device state and the model context, each with its source and how fresh it is. A value nobody reports says unknown, and a value past its lease says stale; nothing is assumed. Writes nothing and opens no connection of its own: it reads the Unfold session and event plugins."
+        "en": "Part of Unfold; works with the Unfold app. How Unfold is set up right now, read-only: backend and model, the prompt revision (shown only when it is proven against what the agent sent), voice and device state and the model context, each with its source and how fresh it is. A value nobody reports says unknown, and a value past its lease says stale; nothing is assumed. Writes nothing and opens no connection of its own: it reads the Unfold session and event plugins."
       },
       "category": "ai",
       "keywords": [
