@@ -11,7 +11,7 @@ import { test } from 'node:test'
 const PINNED = {
   'src/mind/metrics.js': ['src/metrics.js', 'da9cd2482d337613821df000dc23d52a5420a84db2d66d25893b8b0421e6c9cb'],
   'src/mind/moments.js': ['src/moments.js', '8cf3966723733950012457448fd9b8ce68f489236a949ee98d9d55c449d4f327'],
-  'test/support/mind.js': ['src/mind.js', '6645424c80973f7007eb705abb18a11ccef7e832b77a280b192ee1d13c8e7a71'],
+  'test/support/mind.js': ['src/mind.js', 'ffa374d6496a17dde5228a32bdcff4734965147dcf91547c6f74a975d3c747c0'],
   'test/support/redact.js': ['src/redact.js', '03c150bf684c6e608a2875cb87affa79831e19867c4d810f7e114b1aa1af3b02'],
   'test/support/sentences.js': ['src/sentences.js', '3602f811415cbb91f0795845d4fc9f86019977fa83f41cb4b7ec7a248e59410a'],
   'test/support/display.js': ['src/display.js', '41aa8e7d2def996f7a1ffa1e516c7ddf814379d83ee6138740cc1015abae5c13'],
