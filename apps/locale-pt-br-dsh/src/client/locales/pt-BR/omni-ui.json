@@ -425,5 +425,9 @@
   "Chat with {name}": "Chat com {name}",
   "Scheduled task": "Tarefa agendada",
   "Send to": "Enviar para",
-  "Scheduled task: {text}": "Tarefa agendada: {text}"
+  "Scheduled task: {text}": "Tarefa agendada: {text}",
+  "Your Bots, chats, memory and files stay on this computer. Uploads are off here, and nothing on this page can turn one on.": "Seus Bots, chats, memória e arquivos ficam neste computador. Os envios estão desligados aqui, e nada nesta página pode ligar um.",
+  "What is shared": "O que é compartilhado",
+  "Unfold's Privacy controls this": "A Privacidade de Unfold controla isto",
+  "To see or change what is shared, open Unfold's settings.": "Para ver ou mudar o que é compartilhado, abra as configurações de Unfold."
 }

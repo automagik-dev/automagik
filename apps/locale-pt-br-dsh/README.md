@@ -17,7 +17,7 @@ It uses the language-pack interface of DSH's locale service (`@deepseek-ai/dsh-c
 | Settings | `settings` (General), `settings.theme` |
 | The Bot team (`@automagik/bots-dsh`) | `omni-ui`: the sidebar, new chat, the transcript, questions, views, feedback and errors |
 
-That is 19 of DSH 0.2.1-rc.3's 65 namespaces (1268 of its 2915 strings) and 427 of the Bot team's 1230. Not translated yet: the rest of Settings (models, account, agent loop, shell, subagents, web search, session log), the right sidebar and its previews, the trajectory and inspector views, schedules and jobs, and the Bot team's connectors, memory, secrets, usage, voice and Bot settings. A plugin's title and description in the plugin pages come from that plugin's own package, not from a dictionary, so they stay in the languages the plugin ships.
+That is 19 of DSH 0.2.1-rc.3's 65 namespaces (1268 of its 2915 strings) and 431 of the Bot team's 1284. Not translated yet: the rest of Settings (models, account, agent loop, shell, subagents, web search, session log), the right sidebar and its previews, the trajectory and inspector views, schedules and jobs, and the Bot team's connectors, memory, secrets, usage, voice and Bot settings. A plugin's title and description in the plugin pages come from that plugin's own package, not from a dictionary, so they stay in the languages the plugin ships.
 
 The welcome (`@automagik/welcome-dsh`) has no namespace: its copy is written into its views, so this pack can't reach it.
 
