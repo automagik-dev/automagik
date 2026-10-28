@@ -10,7 +10,7 @@ test('fetchStream: an abort settles a pending read promptly and removes the hub 
   const hub = sseHub()
   const abort = new AbortController()
   const reader = fetchStream(hub, new Request('http://h/s', { signal: abort.signal }), 'snapshot', { n: 1 }, 1).body.getReader()
-  assert.match(new TextDecoder().decode((await reader.read()).value), /^id: 1\nevent: snapshot\n/)
+  assert.match(new TextDecoder().decode((await within(reader.read(), 100, 'the snapshot read')).value), /^id: 1\nevent: snapshot\n/)
   assert.equal(hub.clients.size, 1)
   const pending = reader.read()
   abort.abort()
@@ -41,7 +41,7 @@ test('fetchStream: a consumer cancel removes the hub client and the abort listen
 test('fetchStream: hub close (unload) ends the body after its goodbye frame', async () => {
   const hub = sseHub()
   const reader = fetchStream(hub, new Request('http://h/s'), 'snapshot', {}).body.getReader()
-  await reader.read()
+  await within(reader.read(), 100, 'the snapshot read')
   const pending = reader.read()
   hub.close('unloaded')
   assert.match(new TextDecoder().decode((await within(pending, 100, 'the goodbye read')).value), /event: resnapshot/)

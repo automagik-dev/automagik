@@ -199,7 +199,9 @@ test('plugin: the presence stream heartbeats while a reader is connected, so a r
   const sent = []
   const send = hub.send
   hub.send = (event, data, id) => (sent.push(event), send(event, data, id))
-  await new Promise((r) => setTimeout(r, 90))
+  // The heartbeat timer is unref'd, so this wait is the ref'd one: until two beats, bounded.
+  const end = Date.now() + 2000
+  while (sent.filter((e) => e === 'heartbeat').length < 2 && Date.now() < end) await new Promise((r) => setTimeout(r, 10))
   assert.ok(sent.filter((e) => e === 'heartbeat').length >= 2, `heartbeats: ${sent}`)
   assert.ok(!sent.includes('presence'), 'an unchanged view is not re-sent; the heartbeat carries liveness')
   await fiber.dispose()

@@ -16,6 +16,13 @@ import { EventWindow, patch, redactText } from '../src/window.js'
 const catalog = loadCatalog()
 const fixture = (name) => new URL(`./fixtures/${name}.jsonl`, import.meta.url)
 const settle = () => new Promise((r) => setImmediate(r))
+// A wait on a stream read holds nothing on the event loop, so an event that never comes would end
+// the run as cancelled. A ref'd deadline keeps the loop up and fails the test in one line instead.
+const within = (p, ms, what) => {
+  let timer
+  const deadline = new Promise((_, reject) => (timer = setTimeout(() => reject(new Error(`${what} within ${ms} ms`)), ms)))
+  return Promise.race([p, deadline]).finally(() => clearTimeout(timer))
+}
 // Unfold publishes agentd's address in a file; a stand-in's address is published the same way.
 const published = mkdtempSync(join(tmpdir(), 'unfold-events-observer-'))
 after(() => rmSync(published, { recursive: true, force: true }))
@@ -436,9 +443,14 @@ function stalled(port, path = '/api/unfold-events/stream') {
   return sock
 }
 
-/** Resolves once the hub holds `n` clients, re-checking on each new connection's first turn. */
-const clientsReach = (hub, n) => new Promise((resolve) => {
-  const check = () => (hub.clients.size >= n ? resolve() : setTimeout(check, 10))
+/** Resolves once the hub holds `n` clients, re-checking every 10 ms; rejects after `ms`. */
+const clientsReach = (hub, n, ms = 5000) => new Promise((resolve, reject) => {
+  const end = Date.now() + ms
+  const check = () => {
+    if (hub.clients.size >= n) resolve()
+    else if (Date.now() > end) reject(new Error(`${n} hub clients within ${ms} ms (${hub.clients.size})`))
+    else setTimeout(check, 10)
+  }
   check()
 })
 
@@ -553,11 +565,12 @@ function fetchReader(response) {
   let buf = ''
   return {
     events,
-    async next(pred) {
+    async next(pred, ms = 5000) {
+      const end = Date.now() + ms
       for (;;) {
         const hit = events.find(pred)
         if (hit) return hit
-        const { value, done } = await reader.read()
+        const { value, done } = await within(reader.read(), Math.max(0, end - Date.now()), 'a matching event')
         if (done) return undefined
         buf += decoder.decode(value, { stream: true })
         for (let i; (i = buf.indexOf('\n\n')) >= 0; buf = buf.slice(i + 2)) {
