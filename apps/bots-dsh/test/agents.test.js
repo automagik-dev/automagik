@@ -234,7 +234,8 @@ test('TEAM_TOOLS names exactly the tools ds-bot registers, and those of the othe
   // read_browser registers only in the Desktop profile; the flag stands in for it.
   const { stop, ctx } = start(TEAM, { config: { browser: true } })
   t.after(stop)
-  assert.deepEqual([...ctx.registeredTools.keys()].sort(), TEAM_TOOLS.filter(name => !CHANNEL_TOOLS.includes(name)).sort())
+  const browser = name => name.startsWith('browser_')
+  assert.deepEqual([...ctx.registeredTools.keys()].filter(name => !browser(name)).sort(), TEAM_TOOLS.filter(name => !CHANNEL_TOOLS.includes(name)).sort())
   for (const name of CHANNEL_TOOLS) assert.ok(TEAM_TOOLS.includes(name), name)
 })
 

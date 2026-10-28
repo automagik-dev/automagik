@@ -88,6 +88,8 @@ const DSH_SETTINGS = new Set(['general', 'account', 'models', 'agent-presets', '
 export function apply(ctx) {
   ctx.effect(() => installLocale(ctx.get('locale')), 'ds-bot: interface copy')
   const roster = createSource(EMPTY_ROSTER)
+  // A Bot's own browser hold, from the team view, where no browser bridge reports holds.
+  const hostHolds = createSource({})
   migrateStorage()
   const unreadStore = sharedMap(STORAGE.unread)
   const reactionStore = sharedMap(STORAGE.reactions)
@@ -207,6 +209,7 @@ export function apply(ctx) {
     }
     if (value.btwCards !== undefined && JSON.stringify(value.btwCards) !== JSON.stringify(current.btwCards ?? {})) live.btwCards = value.btwCards
     if (value.sideChats !== undefined && JSON.stringify(value.sideChats) !== JSON.stringify(current.sideChats ?? {})) live.sideChats = value.sideChats
+    if (value.browserHolds !== undefined && JSON.stringify(value.browserHolds) !== JSON.stringify(hostHolds.getSnapshot())) hostHolds.set(value.browserHolds)
     if (Object.keys(live).length > 0 && current.ready) roster.set({ ...current, ...live })
     if (value.unchanged || (value.revision === current.revision && value.modelsKey === current.modelsKey)) return
     // On a browser with no visit record yet, everything already there counts as seen.
@@ -617,6 +620,14 @@ export function apply(ctx) {
         cancel: (pending) => bridge.importCancel(pending),
       } : null,
     })
+  } else {
+    // Without the bridge a Bot's own browser is a window of the Chrome on this computer: it
+    // still hands over to the user, through the host alone, and the team view carries the hold.
+    Object.assign(actions, {
+      browserTakeover: botId => call('browser-takeover', { botId }),
+      browserStop: botId => call('browser-stop', { botId }),
+      browserGiveBack: (botId, answer = {}) => call('browser-give-back', { botId, ...answer }),
+    })
   }
   // Whether AccountLauncher holds the shell's settings seat; FooterAccount steps aside if so.
   actions.signInEntry = () => ctx.slots.entries?.('settings.models.sign-in')?.[0] ?? null
@@ -668,7 +679,7 @@ export function apply(ctx) {
   actions.freshConversation = botId => after(call('bot-fresh', { id: botId }))
   const browserPages = browsers?.pages ?? createSource({})
   const browserTabs = browsers?.tabs ?? createSource({})
-  const browserHolds = browsers?.holds ?? createSource({})
+  const browserHolds = browsers?.holds ?? hostHolds
   const face = () => ({ actions, hooks: { roster, ui, activity, work, memoryNews, registry, turnClock, live, cards, heldCards, browserPages, browserTabs, browserHolds, surface, update, panel: ctx.layout.panelInfo } })
   ctx.effect(() => noticeApprovals({
     work,

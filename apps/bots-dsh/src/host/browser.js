@@ -1,11 +1,13 @@
-// Bot browsers (DSH Desktop and the desktop app). Every Bot owns a browser panel there: an
-// Electron webview in its own storage partition, which the user steers. The page lives in
-// the app window, not here, so `read_browser` reaches it through the window: the client
-// holds a long poll open (`browser-wait`) that reports which Bots have a page open and
-// carries read requests back; the client answers with `browser-result`.
+// Bot browsers. Where a window has a webview bridge (DSH Desktop, or an app that sets
+// DS_BOT_APP), every Bot owns a browser panel there: an Electron webview in its own storage
+// partition, which the user steers. The page lives in the app window, not here, so
+// `read_browser` reaches it through the window: the client holds a long poll open
+// (`browser-wait`) that reports which Bots have a page open and carries read requests
+// back; the client answers with `browser-result`. The browser a Bot drives itself
+// (browser-plugins.js) keeps its holds here too, wherever it runs.
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { output } from './tools.js'
-import { inDesktopApp } from './constants.js'
+import { browserPluginOf } from './browser-default.js'
 
 // A waiting client counts as present; one that has not polled for this long is gone.
 const CLIENT_STALE_MS = 30_000
@@ -239,21 +241,29 @@ export const NO_PAGE = 'Your browser panel has no page open yet. Ask the user to
 const OPEN_MAX = 64
 
 /**
- * Bot browsers are on where the window can show them: DSH Desktop's profile and the desktop
- * app (`DS_BOT_APP=1`); `config.browser` forces them on or off. The choice is fixed for the
- * life of the process, so the tool list, and with it the cached prompt prefix, never changes
- * under a running Session.
+ * The browser panel and `read_browser` are on where the window can show them: DSH Desktop's
+ * profile and an app with the bridge (`DS_BOT_APP=1`; the Automagik app has none);
+ * `config.browser` forces them on or off. The choice is fixed for the life of the process,
+ * so the tool list, and with it the cached prompt prefix, never changes under a running
+ * Session.
  */
 export function install(rt) {
   const { ctx, config } = rt
-  const enabled = typeof config.browser === 'boolean' ? config.browser
-    : ctx.get?.('profileContext')?.name === 'desktop' || inDesktopApp()
-  if (!enabled) {
+  const panel = typeof config.browser === 'boolean' ? config.browser
+    : ctx.get?.('profileContext')?.name === 'desktop' || process.env.DS_BOT_APP === '1'
+  const driven = browserPluginOf(config) !== undefined || config.browserPluginApi !== undefined
+  if (!panel && !driven) {
     Object.assign(rt, { browserEnabled: false, browserChannel: undefined, browserOpen: () => ({}) })
     return
   }
   const channel = createBrowserChannel()
   ctx.effect(() => () => channel.dispose(), 'ds-bot: browser channel')
+  // A hold changes what every window shows (the handoff card, take over and give back). The
+  // team view carries the holds and a save bumps its revision, so a window without the
+  // panel's long poll sees them too.
+  ctx.effect(() => channel.subscribeHolds(() => { void rt.save().catch(() => {}) }), 'ds-bot: browser holds')
+  Object.assign(rt, { browserEnabled: panel, browserChannel: channel, browserOpen: () => ({}) })
+  if (!panel) return
 
   ctx.tools.register(defineTool({
     name: 'read_browser',

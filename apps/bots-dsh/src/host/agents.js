@@ -113,7 +113,8 @@ export function install(rt) {
     }
     // Unknown names make restrict() throw, so only deny what this profile serves.
     const known = new Set(ctx.tools.schemas(agent).map(schema => schema.name))
-    const deny = TEAM_TOOLS.filter(name => known.has(name))
+    // A Bot's own browser (browser-plugins.js) is the team's too: its tools answer Bots only.
+    const deny = [...TEAM_TOOLS, ...rt.browserToolNames ?? []].filter(name => known.has(name))
     // An empty list can mean the schemas are not up yet, and a missing restrict
     // hook means the Agent is still being put together; both retry.
     if (deny.length === 0 || typeof agent.ctx?.tools?.restrict !== 'function') {
