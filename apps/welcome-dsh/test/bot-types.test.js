@@ -216,8 +216,13 @@ test('the tools Omni lists are the ones its plugins register', { skip: omniCheck
   assert.deepEqual(listed.filter(name => !registered.has(name)), [], 'OMNI_TOOLS names a tool no Omni plugin registers')
   const names = OMNI_PLUGINS.map(plugin => JSON.parse(readFileSync(plugin.from === 'omni' ? new URL(`${plugin.dir}/package.json`, apps) : new URL(`../../${plugin.dir}/package.json`, import.meta.url), 'utf8')).name)
   assert.deepEqual(names, OMNI_PLUGINS.map(plugin => plugin.name))
+  // Each Omni plugin carries the Omni release of its own last change (omni#1356): at or below
+  // the pinned release, never above it.
+  const parts = version => version.split('.').map(Number)
+  const atOrBelow = (a, b) => { const d = parts(a).map((n, i) => n - parts(b)[i]).find(n => n !== 0); return d === undefined || d < 0 }
   for (const plugin of OMNI_PLUGINS.filter(row => row.from === 'omni')) {
-    assert.equal(JSON.parse(readFileSync(new URL(`${plugin.dir}/package.json`, apps), 'utf8')).version, OMNI_RELEASE.version)
+    const { version } = JSON.parse(readFileSync(new URL(`${plugin.dir}/package.json`, apps), 'utf8'))
+    assert.ok(atOrBelow(version, OMNI_RELEASE.version), `${plugin.name} ${version} is above Omni ${OMNI_RELEASE.version}`)
   }
 })
 

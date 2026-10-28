@@ -1,6 +1,7 @@
-// The in-app Bot browser, end to end: the app's own views and relay (src/bot-views.js,
-// src/bot-relay.js) in a real Electron, driven by the Playwright the Bot team uses, the way a
-// Bot drives them (`connectOverCDP`). Run it as Electron's main script from apps/desktop:
+// The in-app Bot browser, end to end: the app's own views, relay and cursor (src/bot-views.js,
+// src/bot-relay.js, src/bot-cursor.js) in a real Electron, driven by the Playwright the Bot
+// team uses, the way a Bot drives them (`connectOverCDP`). Run it as Electron's main script
+// from apps/desktop:
 //
 //   npx electron scripts/browser-smoke.mjs          (Linux without a display: xvfb-run -a …)
 //
@@ -14,11 +15,13 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocket } from 'ws'
+import { BotCursor } from '../src/bot-cursor.js'
 import { BotRelay } from '../src/bot-relay.js'
 import { BotViews } from '../src/bot-views.js'
 import { guardContents } from '../src/dsh.js'
 
 const BOT = 'session-1b4e28ba-2fa1-4d3b-a3f5-ef19f1a2b3c4'
+const OTHER = 'session-2b4e28ba-2fa1-4d3b-a3f5-ef19f1a2b3c4'
 const require = createRequire(new URL('../../bots-dsh/package.json', import.meta.url))
 const { chromium } = require('playwright-core')
 const scratch = mkdtempSync(join(tmpdir(), 'automagik-browser-smoke-'))
@@ -33,6 +36,7 @@ const server = createServer((request, response) => {
     return send(page('Home', `
       <p id="out">ready</p>
       <iframe src="http://localhost:${port}/frame" width="300" height="80"></iframe>
+      <button id="poke" onclick="out.textContent = 'poked'">Poke</button>
       <button id="alert" onclick="alert('hi'); out.textContent = 'after alert'">Alert</button>
       <button id="fetch" onclick="fetch('/api').then(() => out.textContent = 'fetched', () => out.textContent = 'fetch refused')">Fetch</button>
       <button id="popup" onclick="window.open('http://localhost:${port}/popup')">Popup</button>
@@ -82,6 +86,20 @@ app.whenReady().then(async () => {
   await stand.webContents.loadURL('data:text/html,<body style="background:%23eee">dsh</body>')
   const views = new BotViews({ window: () => window, WebContentsView, session, origin: () => dshOrigin, page: () => ({ ...stand.getBounds(), zoom: 1, radius: 10 }) })
   const relay = new BotRelay({ views })
+  const cursor = new BotCursor({ window: () => window, BrowserWindow, views })
+  const cursors = () => window.getChildWindows()
+  // The last check closes the window: the smoke goes on without it.
+  app.on('window-all-closed', () => {})
+  // Where the shown tab is on screen, which its cursor window must cover.
+  const onScreen = (view) => {
+    const content = window.getContentBounds()
+    const bounds = view.getBounds()
+    return { ...bounds, x: content.x + bounds.x, y: content.y + bounds.y }
+  }
+  const same = (a, b) => ['x', 'y', 'width', 'height'].every(key => a[key] === b[key])
+  // Where the cursor page draws the pointer, if it does.
+  const drawn = () => cursors()[0].webContents.executeJavaScript(
+    "(pointer => pointer.classList.contains('on') && ['--x', '--y'].map(name => parseFloat(pointer.style.getPropertyValue(name))))(document.querySelector('.pointer'))")
   // The app's own rules, as main.js harden() sets them, with Bot views left to theirs.
   app.on('web-contents-created', (_event, contents) => guardContents(contents, { origin: dshOrigin, openExternal: url => shell.openExternal(url), isBotView: view => views.owns(view) }))
 
@@ -182,16 +200,53 @@ app.whenReady().then(async () => {
     await tab.waitForURL('**/before-crash', { timeout: 10_000 })
     assert(await tab.title() === 'before-crash', 'the page did not load again')
   })
-  await check('a hold closes the Bot\'s connection and refuses a new one', async () => {
+  await check('the Bot\'s cursor covers the shown tab', async () => {
+    assert(cursors().length === 0, 'a cursor while no tab is shown')
+    const { tabId, view } = views.entriesOf(BOT)[0]
+    views.place(tabId, { left: 100, top: 20, width: 600, height: 500 }, true)
+    await until(() => cursors()[0]?.isVisible(), 'the cursor never showed')
+    const [shown] = cursors()
+    assert(same(shown.getBounds(), onScreen(view)), `${JSON.stringify(shown.getBounds())} over ${JSON.stringify(onScreen(view))}`)
+  })
+  await check('the cursor stays on the tab as the app window moves, and goes while it is hidden', async () => {
+    const [x, y] = window.getPosition()
+    window.setPosition(x + 40, y + 30)
+    const { view } = views.entriesOf(BOT)[0]
+    await until(() => window.getPosition()[0] === x + 40, 'the window never moved')
+    await until(() => same(cursors()[0].getBounds(), onScreen(view)), 'the cursor stayed behind')
+    window.hide()
+    await until(() => cursors().length === 0, 'the cursor outlived the hidden window')
+    window.show()
+    await until(() => cursors()[0]?.isVisible(), 'the cursor never came back')
+  })
+  await check('the cursor follows the Bot\'s click', async () => {
+    await tab.goto(home)
+    const box = await tab.locator('#poke').boundingBox()
+    await tab.click('#poke')
+    await tab.waitForFunction(() => document.querySelector('#out').textContent === 'poked', null, { timeout: 5_000 })
+    const at = [box.x + box.width / 2, box.y + box.height / 2]
+    const near = point => point && point.every((value, index) => Math.abs(value - at[index]) < 1)
+    let seen
+    for (const end = Date.now() + 5_000; Date.now() < end && !near(seen = await drawn());) await new Promise(done => setTimeout(done, 100))
+    assert(near(seen), `drawn at ${seen}, clicked at ${at}`)
+  })
+  await check('a hold closes the Bot\'s connection and refuses a new one, with its cursor hidden', async () => {
     const gone = new Promise(done => browser.once('disconnected', done))
     await views.hold(BOT, true)
     await within(gone, 5_000, 'the disconnect')
+    assert(cursors().length === 0, 'the cursor shows under the hold')
     const refused = await relay.endpoint(BOT).then(() => false, () => true)
     assert(refused, 'an endpoint was issued under the hold')
     await views.hold(BOT, false)
+    assert(cursors().length === 0, 'the cursor shows before the Bot is back')
+  })
+  await check('the cursor shows again for the Bot\'s next session', async () => {
+    browser = await chromium.connectOverCDP(await relay.endpoint(BOT))
+    await until(() => cursors()[0]?.isVisible(), 'the cursor stayed hidden')
+    await browser.close()
   })
   await check('another Bot cannot reach this Bot\'s tabs', async () => {
-    const other = await chromium.connectOverCDP(await relay.endpoint('session-2b4e28ba-2fa1-4d3b-a3f5-ef19f1a2b3c4'))
+    const other = await chromium.connectOverCDP(await relay.endpoint(OTHER))
     const urls = other.contexts()[0].pages().map(target => target.url())
     assert(!urls.some(url => url.includes(String(port))), urls.join(', '))
     await other.close()
@@ -221,7 +276,28 @@ app.whenReady().then(async () => {
     }
     socket.close()
   })
+  await check('closing the Bot\'s tabs closes its cursor', async () => {
+    browser = await chromium.connectOverCDP(await relay.endpoint(BOT))
+    await until(() => cursors().length === 1, 'no cursor to close')
+    const [shown] = cursors()
+    for (const { tabId } of views.entriesOf(BOT)) await views.close(BOT, tabId)
+    assert(shown.isDestroyed() && cursors().length === 0, 'the cursor outlived the tabs')
+    await browser.close()
+  })
+  await check('closing the app window as macOS and Windows do leaves no cursor behind', async () => {
+    const other = await chromium.connectOverCDP(await relay.endpoint(OTHER))
+    views.place(views.entriesOf(OTHER)[0].tabId, { left: 0, top: 0, width: 400, height: 300 }, true)
+    await until(() => cursors().length === 1, 'no cursor to leave behind')
+    // main.js: the close is held for the fade, then the window is destroyed.
+    window.once('close', (event) => { event.preventDefault(); window.destroy() })
+    const closed = new Promise(done => window.once('closed', done))
+    window.close()
+    await within(closed, 5_000, 'the window closing')
+    await until(() => BrowserWindow.getAllWindows().length === 0, `${BrowserWindow.getAllWindows().length} windows left`)
+    await other.close()
+  })
 
+  cursor.dispose()
   relay.dispose()
   views.dispose()
   server.close()
