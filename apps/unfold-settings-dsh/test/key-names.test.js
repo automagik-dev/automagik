@@ -10,16 +10,21 @@ import { redact, redactText } from '../src/redact.js'
 const WORDS = ['correct', 'horse', 'battery', 'staple']
 const PHRASE = WORDS.join(' ')
 const JOINED = WORDS.join('')
-const KEYS = ['password', 'PASSWD', 'pass', 'Secret', 'client_secret', 'passphrase', 'TOKEN', 'api_key', 'private_key', 'db_password', 'DB_PASS', 'x-api-key', 'secret_key', 'SECRET_KEY', 'aws_secret_access_key', 'AWS_SECRET_ACCESS_KEY', 'accessToken', 'clientSecret', 'dbPassword', 'apiKey', 'privateKey', 'authToken', 'dbPass', 'userPass', 'adminPass']
+const KEYS = ['password', 'PASSWD', 'pass', 'Secret', 'client_secret', 'passphrase', 'TOKEN', 'api_key', 'private_key', 'db_password', 'DB_PASS', 'x-api-key', 'secret_key', 'SECRET_KEY', 'aws_secret_access_key', 'AWS_SECRET_ACCESS_KEY', 'accessToken', 'clientSecret', 'dbPassword', 'apiKey', 'privateKey', 'authToken', 'dbPass', 'userPass', 'adminPass', 'ClientSecret', 'AccessToken', 'DbPassword', 'DbPass']
 const SCHEMES = [`authorization: bearer ${JOINED}`, `AUTHORIZATION: BEARER ${JOINED}`, `Authorization: basic ${JOINED}`, `{"authorization": "bearer ${PHRASE}"}`]
 // 80k characters of each input that could make a rule quadratic: a start after - or --, an open
 // quote, a camelCase run, a YAML block, an open escaped JSON value, a prefix run, many line starts,
-// many escaped JSON values, many YAML keys, many names mid-line and bearer runs.
+// many escaped JSON values, many YAML keys, many names mid-line, bearer runs, a word of upper-case names and long indents before a YAML key.
 // A scheme in any case with no key name before it, before a token-shaped word (16+ characters of the
 // token alphabet with a digit), built from words at run time.
 const SHAPED = WORDS.join('9')
 const ALONE = [`bearer ${SHAPED}`, `BEARER ${SHAPED}`, `basic ${SHAPED}`, `the header was bEaReR ${SHAPED}, then more`]
 const NOT_TOKENS = ['bearer bonds', 'basic steps', 'the bearer of bad news', 'bearer v2 of the api']
+// A token after a bare scheme whose digit comes last, and the same token in two deltas.
+const LATE = `use bearer ${JOINED}9 now`
+const LATE_SPLIT = [`use bearer ${WORDS.slice(0, 2).join('')}`, `${WORDS.slice(2).join('')}9 now`]
+// Spaces, tabs or both before a YAML block key: 80k of them, and 16k (the window's bound).
+const INDENTED = [80_000, 16_000].flatMap((n) => [' ', '\t', ' \t'].flatMap((run) => ['password', 'accessToken'].map((key) => [`${n} ${JSON.stringify(run)} before ${key}: |`, `${run.repeat(n / run.length)}${key}: |\n`])))
 const ADVERSARIAL = {
   'a- repeat': 'a-'.repeat(40_000),
   'open quote': `password: "${'x '.repeat(40_000)}`,
@@ -35,6 +40,8 @@ const ADVERSARIAL = {
   'camelCase names mid-line': 'x dbPassword: '.repeat(5_700),
   'bearer runs': 'bearer x '.repeat(9_000),
   'bearer long run': `bearer ${'a'.repeat(80_000)}`,
+  'upper names in one word': `${'TOKEN'.repeat(16_000)} =`,
+  ...Object.fromEntries(INDENTED),
 }
 const FORMS = [
   ['KEY=value', (k) => `${k}="${PHRASE}"`], ['JSON', (k) => `{"${k}": "${PHRASE}"}`], ['key: value', (k) => `${k}: '${PHRASE}'`],
@@ -72,7 +79,7 @@ test('a field named for a secret is hidden whatever its value', () => {
 })
 
 test('words that only contain a key name are not keys', () => {
-  const prose = 'bypass=open compass: north passenger: aboard tokenizer: fast a-bypass=1 -bypass=1 --bypass=open secret_sauce: butter basic steps first bearer bonds accessLevel: admin clientName: acme passRate: 0.9 maxTokens: 512 tokenCount: 12 primaryKey: id sortKey: name keyboardLayout: us passengerCount: 4 tokenizerName: bpe compassHeading: north my firstPass at it boardingPass alone the bearer of bad news'
+  const prose = 'bypass=open compass: north passenger: aboard tokenizer: fast a-bypass=1 -bypass=1 --bypass=open secret_sauce: butter basic steps first bearer bonds accessLevel: admin clientName: acme passRate: 0.9 maxTokens: 512 tokenCount: 12 primaryKey: id sortKey: name keyboardLayout: us passengerCount: 4 tokenizerName: bpe compassHeading: north my firstPass at it boardingPass alone AccessLevel: admin MaxTokens: 512 PassengerCount: 4 PassRate: 0.9 my FirstPass at it the bearer of bad news'
   assert.equal(redactText(prose), prose)
 })
 
@@ -89,5 +96,6 @@ test('80k characters of adversarial input stay fast', () => {
 
 test('a scheme in any case with no key name hides a token-shaped word', () => {
   for (const text of ALONE) assert.deepEqual(leaked(redactText(text)), [], text)
-  for (const text of NOT_TOKENS) assert.equal(redactText(text), text)
+  for (const text of NOT_TOKENS) assert.equal(redactText(`${text}, then more`), `${text}, then more`)
+  for (const text of [LATE, LATE_SPLIT[0]]) assert.deepEqual(leaked(redactText(text)), [], text)
 })
