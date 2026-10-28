@@ -6,7 +6,7 @@ import { omniKeys } from '../scripts/copy-check.mjs'
 import { loadDictionaries } from '../scripts/dictionaries.mjs'
 
 const UNFOLD_PRIVACY = [
-  'Your Bots, chats, memory and files stay on this computer. Uploads are off here, and nothing on this page can turn one on.',
+  'Your Bots, chats, memory and files stay on this computer.',
   'What is shared',
   "Unfold's Privacy controls this",
   "To see or change what is shared, open Unfold's settings.",

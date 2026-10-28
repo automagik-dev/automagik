@@ -55,7 +55,7 @@ export function PrivacyPage({ actions, run, Section, Row }) {
     return h('div', { className: 'bt-privacy' },
       h(Section, { title: t('Local first') },
         h('div', { className: 'bt-privacy-intro' },
-          h('p', null, t('Your Bots, chats, memory and files stay on this computer. Uploads are off here, and nothing on this page can turn one on.')))),
+          h('p', null, t('Your Bots, chats, memory and files stay on this computer.')))),
       h(Section, { title: t('What is shared') },
         h(Row, { label: t('Unfold\'s Privacy controls this'), hint: t('To see or change what is shared, open Unfold\'s settings.') })))
   }
