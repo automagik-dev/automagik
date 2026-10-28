@@ -56,7 +56,7 @@ const PRODUCERS_MAX = 256
 const ID_SAMPLE = 8 // chunk ids kept per coalesced row: the first ones and the latest
 const WINDOW_TAIL = 240 // unfold-events keeps this many characters of a reply's joined text (unfold-events-dsh window.js TEXT_TAIL)
 const SECRETS_KEPT = 16
-const CUT_FRAGMENT = /^\s*(?:["']?\s*[:=]\s*["']?)?\S+/
+const CUT_FRAGMENT = /^\s*(?:(?:["']\s*)?[:=]\s*["']?)?\S+/
 const CUT_HEAD_RUNS = 4 // after a cut, credential-shaped runs among this many leading runs are hidden too
 
 export class MindStream {
@@ -713,17 +713,38 @@ function keptTail(full) {
   const at = full.length - TEXT_KEEP
   const span = quotedSpans(full).find((sp) => sp.start < at && at < sp.end)
   if (!span) return full.slice(at)
-  return span.closed ? full.slice(span.end) : `${full.slice(span.start, span.open)}${span.escaped ? '\\' : ''}`
+  if (span.closed) return full.slice(span.end)
+  return span.keep ?? `${full.slice(span.start, span.open)}${span.escaped ? '\\' : ''}`
 }
 
 // Where a quoted credential value opens (the quoted forms of redact.js's text rules), as in
 // unfold-events-dsh's window.
 const QUOTED_SECRET = [
-  /\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=(["'])/g,
-  /\b(?:x-goog-api-key|authorization|api[_-]?key|token)["']?\s*[:=]\s*(["'])/gi,
+  /\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=(["'`])/g,
+  /(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization)["']?\s*[:=]\s*(["'`])/gi, // any prefix
+  /(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[a-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key)["']?\s*[:=]\s*(["'`])/g, // camelCase
 ]
 
-/** Quoted credential spans in `raw`: {start, open, end, closed, escaped}; an open one runs to the end. */
+// Where a YAML block scalar under a credential name opens (`password: |`, then its indented
+// lines), as in SECRET_TEXT: a cut lands before it or after it, never inside.
+const YAML_SECRET = [
+  /(^|\n)(?=[^\n]*:[ \t]*[>|][-+0-9]*[ \t]*(?:\n|$))([ \t]*)([^\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))([ \t]*:[ \t]*[>|][-+0-9]*[ \t]*)(?=\n|$)((?:\n(?:\2[ \t]+[^\n]*|[ \t]*(?=\n|$)))*)/gi,
+  /(^|\n)(?=[^\n]*:[ \t]*[>|][-+0-9]*[ \t]*(?:\n|$))([ \t]*)([^\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[a-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))([ \t]*:[ \t]*[>|][-+0-9]*[ \t]*)(?=\n|$)((?:\n(?:\2[ \t]+[^\n]*|[ \t]*(?=\n|$)))*)/g,
+]
+
+// Where JSON inside a JSON string opens a credential value (`{\"password\": \"`), as in SECRET_TEXT,
+// and where it ends: its escaped closing quote (its own escapes doubled), a bare quote that ends
+// the outer string, or the end of the text while it is open.
+const ESCAPED_SECRET = [
+  /(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization)\\"\s*:\s*\\"/gi,
+  /(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[a-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key)\\"\s*:\s*\\"/g,
+]
+const ESCAPED_END = /(?:[^\\"]|\\[^\\"]|\\\\(?:\\[\s\S]|\\$|[^\\]|$)|\\$)*(\\"|"|$)/y
+
+/**
+ * Quoted credential spans and YAML blocks in `raw`: {start, open, end, closed, escaped}, and for a
+ * block what to `keep` while it is open; an open one runs to the end.
+ */
 function quotedSpans(raw) {
   const spans = []
   for (const re of QUOTED_SECRET) {
@@ -731,6 +752,26 @@ function quotedSpans(raw) {
       const open = m.index + m[0].length
       const { close, escaped } = closingQuote(raw, open, m[1])
       spans.push({ start: m.index, open, end: close < 0 ? raw.length : close + 1, closed: close >= 0, escaped })
+    }
+  }
+  if (raw.includes('\\"')) for (const re of ESCAPED_SECRET) {
+    for (const m of raw.matchAll(re)) {
+      const open = m.index + m[0].length
+      ESCAPED_END.lastIndex = open
+      const closed = ESCAPED_END.exec(raw)[1] !== ''
+      // An open one keeps its key and opening quote, and the escape it ends inside.
+      let run = 0
+      while (!closed && raw.length - run > open && raw[raw.length - 1 - run] === '\\') run++
+      spans.push({ start: m.index, open, end: ESCAPED_END.lastIndex, closed, escaped: false, keep: closed ? undefined : `${raw.slice(m.index, open)}${'\\'.repeat(run % 4)}` })
+    }
+  }
+  if (/:[ \t]*[>|]/.test(raw)) for (const re of YAML_SECRET) {
+    for (const m of raw.matchAll(re)) {
+      const start = m.index + m[1].length
+      const end = m.index + m[0].length
+      // An open block keeps its key line and a fresh block line, so the rest arrives under its key.
+      const keep = `${raw.slice(start, end - m[6].length)}\n${raw.endsWith('\n') ? '' : `${m[2]} `}`
+      spans.push({ start, end, closed: end < raw.length, keep })
     }
   }
   return spans
@@ -805,10 +846,11 @@ export function fromWindowRow(d) {
   return redact({ ...env, ...stripMedia(d.fields ?? {}) })
 }
 
+/** The fields of `env`, which both callers have already redacted. */
 function fieldsOf(env) {
   const out = {}
   for (const [k, v] of Object.entries(env)) if (!ENVELOPE.includes(k)) out[k] = v
-  return stripMedia(redact(out))
+  return stripMedia(out)
 }
 
 function stripMedia(fields) {
