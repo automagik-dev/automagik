@@ -1,0 +1,35 @@
+# Unfold (`@automagik/unfold-bot-dsh`)
+
+Unfold for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH), on the Automagik Bot team (`@automagik/bots-dsh`). This host plugin adds the **Unfold Bot** (kind `unfold`): Unfold inside DSH. The Bot team draws it by its kind, with Unfold's own clay pet.
+
+## What it does
+
+- **In Unfold's own Automagik instance** (`AUTOMAGIK_PRELOAD=unfold`), the Unfold Bot is the team's Main Bot. The plugin hands the team a Main Bot maker (`mainBotMaker`), so the team's first Main Bot is Unfold and no default Bot is made beside it.
+- **In a DSH that already has a Main Bot** (the Automagik app, where the welcome's Unfold card installs this plugin), Unfold joins as one more Bot.
+- It makes the Bot once. An Unfold Bot that is there is kept, and one the person deleted isn't made again (`unfold.json` in the team's home).
+- The Bot's Session is titled with its name, so Unfold can watch it by that name through the Unfold bridge before it exists. Its greeting waits for a model, so Unfold sees it from its first turn.
+
+## Its defaults
+
+The Unfold Bot type starts with the Unfold bridge and the Unfold plugins, all in this repository and released with it (`UNFOLD_PLUGINS` in `src/host/unfold.js`):
+
+| Plugin | What it brings |
+|---|---|
+| `@automagik/unfold-bridge-dsh` | Unfold watches this DSH |
+| `@automagik/unfold-sse-dsh` | Unfold's events as they happen |
+| `@automagik/unfold-events-dsh` | What Unfold did, as a timeline |
+| `@automagik/unfold-capabilities-dsh` | What Unfold can do now |
+| `@automagik/unfold-settings-dsh` | Unfold's settings, to read |
+| `@automagik/unfold-mind-dsh` | What Unfold is thinking |
+| `@automagik/unfold-trajectory-dsh` | Each run, step by step |
+| `@automagik/unfold-session-dsh` | Unfold's own session, in DSH |
+
+The welcome (`@automagik/welcome-dsh`) installs them in that order, after the Bot team, when the person powers Unfold on in the team step. Unfold's own instance has them preinstalled, so choosing Unfold installs nothing and needs no git.
+
+## Develop
+
+```sh
+bun run harness      # the pinned DSH release the linter runs against
+bun run test         # on Node, against a stand-in team runtime and the Unfold bridge's work view
+bun run lint
+```
