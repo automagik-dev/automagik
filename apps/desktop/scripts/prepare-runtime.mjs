@@ -1,6 +1,7 @@
 // Assembles what the packaged app carries next to Electron, in build/:
 //
-//   build/runtime/node_modules   the pinned DeepSeek Harness (runtime/package.json + lock)
+//   build/runtime/node_modules   the pinned DeepSeek Harness (runtime/package.json + lock), with
+//                                the patches in runtime/patches applied (scripts/runtime-patches.mjs)
 //   build/profile/               the dsh profile the app starts: package.json, cordis.patch.yml,
 //                                pnpm-workspace.yaml,
 //                                and node_modules holding only the app's plugins
@@ -24,6 +25,7 @@ import { fileURLToPath } from 'node:url'
 import { scrubBuildPaths } from '../src/dsh.js'
 import { pruneNodeModules } from './prune-runtime.mjs'
 import { acceptsHarness } from './follow-dsh.mjs'
+import { patchRuntime } from './runtime-patches.mjs'
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = resolve(APP, '..', '..')
@@ -109,6 +111,8 @@ if (!process.argv.includes('--skip-runtime') || !existsSync(join(runtimeDir, 'no
   // A fresh lock is the one to commit (runtime/package-lock.json).
   if (!existsSync(join(APP, 'runtime', 'package-lock.json'))) cpSync(join(runtimeDir, 'package-lock.json'), join(APP, 'runtime', 'package-lock.json'))
 }
+// Until DSH has these changes itself; pinned to the exact files, so another dsh fails here.
+for (const { name, state } of patchRuntime(join(runtimeDir, 'node_modules'), join(APP, 'runtime', 'patches'))) say(`runtime patch: ${name} ${state}`)
 
 // DSH's own packages keep their typings and READMEs: its plugin-development skill reads them.
 const ownDocs = name => name.startsWith('@deepseek-ai/')
