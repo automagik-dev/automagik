@@ -79,7 +79,8 @@ and nothing is chosen.
 Unfold's card is the third. Its power button installs, after the Bot team, the Unfold bridge,
 the Unfold plugins and `@automagik/unfold-bot-dsh`, all from this repository at this plugin's
 version, as the Bot team is (no git source, so no git check); that plugin then makes the Unfold
-Bot. Unfold's own Automagik instance starts DSH with `AUTOMAGIK_HOST=unfold` or
+Bot. The seven `@automagik/unfold-*-dsh` plugins are not in this repository yet, and until
+they join it and its release, that install stops at the first of them. Unfold's own Automagik instance starts DSH with `AUTOMAGIK_HOST=unfold` or
 `AUTOMAGIK_PRELOAD=unfold` (either one names it: `src/host/host.js`, the same rule as the Bot
 team's and the Unfold Bot's). There Unfold's card comes first and is on the team from the start,
 because the Unfold Bot is the instance's Main Bot, so the companion step is done (Unfold leads)

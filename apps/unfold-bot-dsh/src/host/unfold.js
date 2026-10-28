@@ -32,7 +32,8 @@ export const UNFOLD_BOT = Object.freeze({
 })
 
 // What the Unfold Bot type starts with, besides this plugin: the Unfold bridge and the Unfold
-// plugins, all in this repository and released with it. The welcome's Unfold card installs them
+// plugins, released from this repository at its one version (the bridge is here; the seven
+// unfold-*-dsh plugins join it on their own). The welcome's Unfold card installs them
 // in this order (welcome-dsh src/host/bot-types.js keeps a copy); Unfold's own instance has
 // them preinstalled.
 export const UNFOLD_PLUGINS = Object.freeze([
