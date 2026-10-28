@@ -5,6 +5,13 @@ import { sceneFor } from '../src/avatar.js'
 
 const pv = (pose) => ({ pose, label: pose, because: '', layers: { link: { state: 'live' } }, faults: [] })
 const voice = { actual: 'off', desired: null, read: true, status: 'Voice asleep', mute: {} }
+const until = async (what, ok, ms = 2000) => {
+  const end = Date.now() + ms
+  while (!ok()) {
+    if (Date.now() > end) throw new Error(`${what} within ${ms} ms`)
+    await new Promise((r) => setTimeout(r, 5))
+  }
+}
 
 function stubCanvas() {
   const drawn = { grains: 0 } // grains painted in the last frame (2D path: one fillRect per visible grain, after the clear)
@@ -31,11 +38,17 @@ test('goodbye: the dust disperses and fades out over ms, then nothing draws agai
     assert.equal(r.goodbye(300), true, 'on screen: the goodbye is seen')
     assert.equal(canvas.dataset.goodbye, 'dissolving')
     assert.equal(r.goodbye(300), true, 'a second call changes nothing')
-    await new Promise((res) => setTimeout(res, 150))
-    const mid = drawn.grains
     assert.ok(r.stats().running, 'the goodbye animates even from a resting scene')
-    await new Promise((res) => setTimeout(res, 300))
-    assert.equal(canvas.dataset.goodbye, 'done')
+    // Half way is a goodbye frame drawn after 150 ms, not whatever was drawn when a 150 ms sleep
+    // ended: a busy loop can leave that at a frame from the start. Bounded, on ref'd timers.
+    const half = performance.now() + 150
+    let atHalf = null
+    await until('a goodbye frame half way through', () => {
+      if (atHalf === null && performance.now() >= half) atHalf = r.stats().frames
+      return atHalf !== null && (r.stats().frames > atHalf || canvas.dataset.goodbye === 'done')
+    })
+    const mid = drawn.grains
+    await until('the end of the goodbye', () => canvas.dataset.goodbye === 'done')
     assert.equal(r.stats().running, false, 'the loop ends with the goodbye')
     const frames = r.stats().frames - f0
     assert.ok(frames >= 8, `animated: ${frames} frames in 300 ms`)
@@ -57,8 +70,7 @@ test('goodbye: the dust disperses and fades out over ms, then nothing draws agai
   hidden.draw(sceneFor(pv('idle'), voice))
   hidden.setVisible(false)
   assert.equal(hidden.goodbye(300), true)
-  await new Promise((res) => setTimeout(res, 400))
-  assert.equal(h.canvas.dataset.goodbye, 'done')
+  await until('the end of the hidden goodbye', () => h.canvas.dataset.goodbye === 'done')
   hidden.dispose()
   const m = stubCanvas()
   const still = dustRenderer(m.canvas, { grains: 500, reducedMotion: true })
