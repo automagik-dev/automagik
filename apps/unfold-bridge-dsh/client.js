@@ -293,7 +293,8 @@ function createInstall(win) {
       listeners.add(fn);
       return () => listeners.delete(fn);
     },
-    // Listens until the returned stop; watching again while watching listens once.
+    // Listens until the returned stop; watching again while watching listens once, and any stop
+    // stops all (the bundle's own watch at load and apply's effect share the listeners).
     watch() {
       if (!watching && win?.addEventListener) {
         win.addEventListener("beforeinstallprompt", onPrompt);
@@ -591,7 +592,7 @@ function BoardButton({ snap, t, actions, wide }) {
 }
 var AppIcon = () => (0, import_react.createElement)(
   "svg",
-  { className: "ub-eye", viewBox: "0 0 16 16", width: 14, height: 14, "aria-hidden": "true" },
+  { className: "ub-icon", viewBox: "0 0 16 16", width: 14, height: 14, "aria-hidden": "true" },
   (0, import_react.createElement)("rect", { x: 2, y: 2.5, width: 12, height: 11, rx: 2, fill: "none", stroke: "currentColor", strokeWidth: 1.3 }),
   (0, import_react.createElement)("path", { d: "M8 5v5M5.8 7.8 8 10l2.2-2.2", fill: "none", stroke: "currentColor", strokeWidth: 1.3 })
 );
@@ -817,9 +818,9 @@ function apply(ctx) {
   ctx.effect(installStyles, "unfold-bridge: client styles");
   ctx.effect(() => openView((snap) => store.set(snap)), "unfold-bridge: the view stream");
   ctx.effect(() => install.watch(), "unfold-bridge: the install offer");
-  for (const [name2, options2, View] of SLOTS) ctx.slots.inject(name2, () => ctx.slots.register({ name: name2, ...options2 }, bind(View)));
-  const [name, options] = INSTALL_SLOT;
-  ctx.slots.inject(name, () => ctx.slots.register({ name, ...options }, function UnfoldInstall(props) {
+  for (const [name, options, View] of SLOTS) ctx.slots.inject(name, () => ctx.slots.register({ name, ...options }, bind(View)));
+  const [slot, slotOptions] = INSTALL_SLOT;
+  ctx.slots.inject(slot, () => ctx.slots.register({ name: slot, ...slotOptions }, function UnfoldInstall(props) {
     const offer = (0, import_react2.useSyncExternalStore)(install.subscribe, install.get);
     const t = translator((0, import_react2.useSyncExternalStore)(onLocale, language));
     return (0, import_react2.createElement)(InstallAction, { ...props, offer, t, onInstall: install.prompt });

@@ -1,8 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createServer, request } from 'node:http'
+import { request } from 'node:http'
 import { startBridge, takePort } from '../src/host/bridge.js'
 import { TEXT, assistant, failure, fakeLlm } from './fake-llm.js'
+import { hold, onFreePort } from './ports.js'
 
 const KEY = 'test-key-not-a-secret-0123456789abcdef'
 
@@ -291,16 +292,6 @@ test('close stops listening', async () => {
   await assert.rejects(call(b.port), { code: 'ECONNREFUSED' })
 })
 
-// A port that was free a moment ago, and a listener holding another.
-const freePort = () => new Promise(resolve => {
-  const probe = createServer().listen(0, '127.0.0.1', () => {
-    const { port } = probe.address()
-    probe.close(() => resolve(port))
-  })
-})
-const hold = () => new Promise(resolve => {
-  const holder = createServer().listen(0, '127.0.0.1', () => resolve({ port: holder.address().port, close: () => new Promise(done => holder.close(done)) }))
-})
 
 test('UNFOLD_BRIDGE_PORT is read once and leaves the env: a port, or NaN when set to anything else', () => {
   const env = { UNFOLD_BRIDGE_PORT: '41712', HOME: '/home/x' }
@@ -308,7 +299,7 @@ test('UNFOLD_BRIDGE_PORT is read once and leaves the env: a port, or NaN when se
   assert.deepEqual(env, { HOME: '/home/x' }, 'gone from the env after the read')
   assert.equal(takePort(env), undefined, 'a second read finds nothing')
   // set means named: an empty value is no port, never a random one
-  for (const value of ['', 'abc', '4171x', '-1', '1.5', ' 41712']) {
+  for (const value of ['', '0', '00', 'abc', '4171x', '-1', '1.5', ' 41712']) {
     const named = { UNFOLD_BRIDGE_PORT: value }
     assert.ok(Number.isNaN(takePort(named)), JSON.stringify(value))
     assert.deepEqual(named, {}, JSON.stringify(value))
@@ -316,8 +307,7 @@ test('UNFOLD_BRIDGE_PORT is read once and leaves the env: a port, or NaN when se
 })
 
 test('a named port is bound exactly, on 127.0.0.1', async () => {
-  const port = await freePort()
-  const b = await bridge(fakeLlm(), { port })
+  const { b, port } = await onFreePort(async port => ({ b: await bridge(fakeLlm(), { port }), port }))
   try {
     assert.equal(b.port, port)
     assert.equal(b.address, '127.0.0.1')

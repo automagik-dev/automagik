@@ -160,7 +160,7 @@ export function BoardButton({ snap, t, actions, wide }) {
     open ? h(BoardPanel, { snap, t, actions, onClose: () => setOpen(false) }) : null)
 }
 
-const AppIcon = () => h('svg', { className: 'ub-eye', viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': 'true' },
+const AppIcon = () => h('svg', { className: 'ub-icon', viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': 'true' },
   h('rect', { x: 2, y: 2.5, width: 12, height: 11, rx: 2, fill: 'none', stroke: 'currentColor', strokeWidth: 1.3 }),
   h('path', { d: 'M8 5v5M5.8 7.8 8 10l2.2-2.2', fill: 'none', stroke: 'currentColor', strokeWidth: 1.3 }))
 

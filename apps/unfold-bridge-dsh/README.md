@@ -61,8 +61,8 @@ At start, the bridge writes `endpoint.json` into `$XDG_STATE_HOME/unfold-bridge/
 **Reading it:** an app checks that the file is its user's, mode 0600, and that `pid` is alive. It then keeps the key in memory only.
 
 **In Unfold's own DSH**, Unfold names the folder and the port in the env DSH starts with. Without them the bridge works as above.
-- `UNFOLD_BRIDGE_STATE_DIR`: an absolute folder; the file is `<folder>/endpoint.json`, and the shared one above is never written, so another DSH on the same computer keeps its own. A relative or empty value is ignored.
-- `UNFOLD_BRIDGE_PORT`: a port from 1024 to 65535, bound exactly on 127.0.0.1. When it is taken or isn't a port, the bridge doesn't start: no other port is tried, no file is written, one log line says why, and DSH goes on without the bridge.
+- `UNFOLD_BRIDGE_STATE_DIR`: an absolute folder; the file is `<folder>/endpoint.json`, and the shared one above is never written, so another DSH on the same computer keeps its own. A relative or empty value is ignored. A folder that is a symlink is refused (in any DSH): the bridge doesn't serve, and the link's target is left as it was.
+- `UNFOLD_BRIDGE_PORT`: a port from 1024 to 65535, bound exactly on 127.0.0.1. When it is taken or isn't such a port (an empty value and 0 included), the bridge doesn't start: no other port is tried, no file is written, one log line says why, and DSH goes on without the bridge.
 - Both leave `process.env` when the plugin first applies, so tools DSH spawns later don't inherit them; a restart of the plugin keeps what was read. This hides the folder from those tools, but it isn't a boundary: DSH's own launch snapshot keeps the value, and a program running as you can read the file.
 
 ## The work view: Unfold watching your agents

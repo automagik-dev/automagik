@@ -36,7 +36,8 @@ export function createInstall(win) {
       listeners.add(fn)
       return () => listeners.delete(fn)
     },
-    // Listens until the returned stop; watching again while watching listens once.
+    // Listens until the returned stop; watching again while watching listens once, and any stop
+    // stops all (the bundle's own watch at load and apply's effect share the listeners).
     watch() {
       if (!watching && win?.addEventListener) {
         win.addEventListener('beforeinstallprompt', onPrompt)

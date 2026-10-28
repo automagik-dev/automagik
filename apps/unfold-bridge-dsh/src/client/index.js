@@ -63,8 +63,8 @@ export function apply(ctx) {
   ctx.effect(() => openView(snap => store.set(snap)), 'unfold-bridge: the view stream')
   ctx.effect(() => install.watch(), 'unfold-bridge: the install offer')
   for (const [name, options, View] of SLOTS) ctx.slots.inject(name, () => ctx.slots.register({ name, ...options }, bind(View)))
-  const [name, options] = INSTALL_SLOT
-  ctx.slots.inject(name, () => ctx.slots.register({ name, ...options }, function UnfoldInstall(props) {
+  const [slot, slotOptions] = INSTALL_SLOT
+  ctx.slots.inject(slot, () => ctx.slots.register({ name: slot, ...slotOptions }, function UnfoldInstall(props) {
     const offer = useSyncExternalStore(install.subscribe, install.get)
     const t = translator(useSyncExternalStore(onLocale, language))
     return h(InstallAction, { ...props, offer, t, onInstall: install.prompt })

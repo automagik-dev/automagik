@@ -2,8 +2,9 @@
 // on 127.0.0.1, as the OpenAI chat-completions subset Unfold's agent speaks (src/host/bridge.js),
 // behind a key made at each start. Unfold finds the port and the key in this plugin's state
 // file (src/host/endpoint-file.js). In Unfold's own DSH, Unfold names that file's folder and the
-// port (UNFOLD_BRIDGE_STATE_DIR, UNFOLD_BRIDGE_PORT); without them it is as in any DSH. Sign-ins and their tokens stay in DSH: the bridge sends
-// each request through DSH's llm service and returns text, usage and stable failure codes.
+// port (UNFOLD_BRIDGE_STATE_DIR, UNFOLD_BRIDGE_PORT); without them it is as in any DSH. Sign-ins
+// and their tokens stay in DSH: the bridge sends each request through DSH's llm service and
+// returns text, usage and stable failure codes.
 //
 // Once DSH's session services are up, the plugin also keeps a work view for Unfold
 // (src/host/watch.js): Unfold reads a subscription-filtered event stream and registers drafts
@@ -28,7 +29,8 @@ const LIST_TIMEOUT_MS = 10_000
 // What Unfold named, read when the plugin first applies: the variables leave the env then, so a
 // restart of the plugin in the same process keeps them here. They live on the process, not the
 // module, because hot reload or a live update makes a fresh module instance that finds the env
-// empty; without them it would write the shared file on a random port.
+// empty; without them it would write the shared file on a random port. Any code in the DSH
+// process can reach this symbol, as it can DSH's launch snapshot: it is no boundary either.
 const named = (globalThis[Symbol.for('unfold-bridge.named')] ??= { stateDir: null, port: 0 })
 function takeNamed() {
   const stateDir = takeStateDir()

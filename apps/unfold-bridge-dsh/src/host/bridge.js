@@ -36,32 +36,33 @@ const digest = text => createHash('sha256').update(text).digest()
 
 // Unfold's own DSH names the port in UNFOLD_BRIDGE_PORT, from its port registry, and trusts an
 // endpoint file only on that port. It is taken out of the env at the read, like the state folder.
-// undefined when unset, else the number it holds: NaN when it is not one, an empty value too,
-// since a named port is never a random one. startBridge refuses anything but 1024-65535.
+// undefined when unset, else the number it holds: NaN when it is not one, an empty value and 0
+// too, since a named port is never a random one. startBridge refuses anything but 1024-65535.
 export function takePort(env = process.env) {
   if (!Object.hasOwn(env, 'UNFOLD_BRIDGE_PORT')) return undefined
   const text = env.UNFOLD_BRIDGE_PORT
   delete env.UNFOLD_BRIDGE_PORT
-  return /^\d+$/.test(text) ? Number(text) : NaN
+  const port = /^\d+$/.test(text) ? Number(text) : NaN
+  return port === 0 ? NaN : port
 }
-const namedPort = port => Number.isInteger(port) && port >= 1024 && port <= 65535
+const isPort = port => Number.isInteger(port) && port >= 1024 && port <= 65535
 
 // `assistant` makes a durable assistant message for the history (dsh-llm's
 // createAssistantMessage); `log` gets one line per request; `dsh` returns the work-view routes
 // once they are up, else undefined. `port` 0 takes any free port; a named one is bound exactly or
 // the start is refused (EADDRINUSE when it is taken): no other port is tried.
-export async function startBridge({ llm, key, assistant, log = () => {}, maxBody = MAX_BODY, host = '127.0.0.1', dsh = () => undefined, port: named = 0 }) {
-  if (named !== 0 && !namedPort(named)) throw Object.assign(new Error(`UNFOLD_BRIDGE_PORT is not a port from 1024 to 65535 (${named})`), { code: 'bad_port' })
+export async function startBridge({ llm, key, assistant, log = () => {}, maxBody = MAX_BODY, host = '127.0.0.1', dsh = () => undefined, port = 0 }) {
+  if (port !== 0 && !isPort(port)) throw Object.assign(new Error(`the port is not one from 1024 to 65535 (${port})`), { code: 'bad_port' })
   const want = digest(`Bearer ${key}`)
   const authorized = header => typeof header === 'string' && timingSafeEqual(digest(header), want)
-  let port = 0
+  let bound = 0
 
   const server = createServer(async (req, res) => {
     const started = Date.now()
     const path = (req.url ?? '').split('?')[0]
     res.on('close', () => log(`${req.method} ${path} ${res.statusCode} ${Date.now() - started} ms`))
     try {
-      if (req.headers.host !== `${host}:${port}` || req.headers.origin !== undefined) throw new Refusal(403, 'forbidden', 'not served to this origin', 'permission_error')
+      if (req.headers.host !== `${host}:${bound}` || req.headers.origin !== undefined) throw new Refusal(403, 'forbidden', 'not served to this origin', 'permission_error')
       if (!authorized(req.headers.authorization)) throw new Refusal(401, 'unauthorized', 'a valid key is required', 'authentication_error')
       if (path === '/v1/models' && req.method === 'GET') return sendJson(res, 200, await models(llm))
       if (path === '/v1/chat/completions' && req.method === 'POST') return await complete(llm, assistant, parseChat(await readBody(req, maxBody)), req, res)
@@ -87,15 +88,15 @@ export async function startBridge({ llm, key, assistant, log = () => {}, maxBody
 
   await new Promise((resolve, reject) => {
     server.once('error', reject)
-    server.listen(named, host, () => {
+    server.listen(port, host, () => {
       server.off('error', reject)
       resolve()
     })
   })
-  port = server.address().port
+  bound = server.address().port
   return {
     address: server.address().address,
-    port,
+    port: bound,
     close: () => new Promise(resolve => {
       server.close(() => resolve())
       server.closeAllConnections()
