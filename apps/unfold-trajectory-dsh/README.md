@@ -3,7 +3,8 @@
 Unfold's real-time trajectory: what Unfold heard, thought, said and did, as one ledger with a
 timing overview and an inspector. It is a fork of DeepSeek's trajectory UI
 (`@deepseek-ai/dsh-client-ui-trajectory` 0.2.1-rc.3, MIT) that keeps upstream's toolbar, overview,
-ledger and inspector and reads Unfold's Mind stream instead of a DSH session's events.
+ledger and inspector and reads Unfold's Mind stream instead of a DSH session's events. Tested
+with DSH 0.2.1-rc.4, whose trajectory UI ships the same bundle bytes as rc.3.
 
 - **Where it shows.** In Unfold's own Session (`unfold-root`): as its own conversation view,
   "Unfold", next to Chat and DeepSeek's Trajectory, and as a "Trajectory" tab in the right
