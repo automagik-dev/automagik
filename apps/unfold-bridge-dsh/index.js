@@ -26,8 +26,10 @@ export const VIEW_INJECT = ['sessionController', 'sessions', 'sessionTitle', 'wo
 const LIST_TIMEOUT_MS = 10_000
 
 // What Unfold named, read when the plugin first applies: the variables leave the env then, so a
-// restart of the plugin in the same process keeps them here.
-const named = { stateDir: null, port: 0 }
+// restart of the plugin in the same process keeps them here. They live on the process, not the
+// module, because hot reload or a live update makes a fresh module instance that finds the env
+// empty; without them it would write the shared file on a random port.
+const named = (globalThis[Symbol.for('unfold-bridge.named')] ??= { stateDir: null, port: 0 })
 function takeNamed() {
   const stateDir = takeStateDir()
   if (stateDir !== undefined) named.stateDir = stateDir

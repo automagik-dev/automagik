@@ -271,7 +271,7 @@ var DISPLAY_MODES = ["(display-mode: standalone)", "(display-mode: fullscreen)"]
 var isInstalled = (win) => win?.navigator?.standalone === true || DISPLAY_MODES.some((query2) => win?.matchMedia?.(query2)?.matches === true);
 function createInstall(win) {
   let held = null;
-  let snap = { canPrompt: false, installed: isInstalled(win), opened: win?.location?.hash === INSTALL_HASH, prompted: false };
+  let snap = { canPrompt: false, installed: isInstalled(win), opened: win?.location?.hash === INSTALL_HASH, prompts: win !== void 0 && win !== null && "onbeforeinstallprompt" in win };
   const listeners = /* @__PURE__ */ new Set();
   const set = (next) => {
     snap = { ...snap, ...next };
@@ -280,7 +280,7 @@ function createInstall(win) {
   const onPrompt = (event) => {
     event.preventDefault?.();
     held = event;
-    set({ canPrompt: true, prompted: false });
+    set({ canPrompt: true });
   };
   const onInstalled = () => {
     held = null;
@@ -312,7 +312,7 @@ function createInstall(win) {
       const event = held;
       if (!event) return void 0;
       held = null;
-      set({ canPrompt: false, prompted: true });
+      set({ canPrompt: false });
       try {
         return Promise.resolve(event.prompt()).catch(() => void 0);
       } catch {
@@ -321,7 +321,7 @@ function createInstall(win) {
     }
   };
 }
-var offerShown = (offer) => !offer.installed && (offer.canPrompt || offer.opened && !offer.prompted);
+var offerShown = (offer) => !offer.installed && (offer.canPrompt || offer.opened && !offer.prompts);
 
 // src/client/hidden.js
 var RANGES = [

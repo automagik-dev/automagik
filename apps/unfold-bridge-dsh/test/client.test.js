@@ -243,6 +243,11 @@ test('the copy check passes over EN and pt-BR and catches a bad line', () => {
   assert.ok(findings.some(line => line.includes('offline')))
   assert.ok(findings.some(line => line.includes('article before Unfold')))
   assert.ok(findings.some(line => line.includes('gendered word')))
+  // the words the copy never uses: a click is a click, and Unfold's DSH is never a sandbox
+  writeFileSync(join(dir, 'en.json'), JSON.stringify({ a: 'Tap Send', b: 'It runs in a sandbox', c: 'After two taps' }))
+  writeFileSync(join(dir, 'pt.json'), JSON.stringify({ a: 'Toque em Enviar', b: 'quando você toca em Enviar', c: 'Roda numa sandbox' }))
+  const words = checkCopy({ en: join(dir, 'en.json'), 'pt-BR': join(dir, 'pt.json') })
+  for (const key of ['en a', 'en b', 'en c', 'pt-BR a', 'pt-BR b', 'pt-BR c']) assert.ok(words.some(line => line.startsWith(`${key}: `)), key)
 })
 
 test('the client holds no key', () => {
@@ -474,9 +479,11 @@ test('Escape closes the board', () => {
 })
 
 // A browser window as the install offer sees it: its events, its display mode and its address.
-function fakeWindow({ hash = '', standalone = false, fullscreen = false, iosStandalone } = {}) {
+// `prompts`: the browser has the install event (Chrome, Edge), whether or not it fired yet.
+function fakeWindow({ hash = '', standalone = false, fullscreen = false, iosStandalone, prompts = true } = {}) {
   const listeners = {}
   return {
+    ...(prompts ? { onbeforeinstallprompt: null } : {}),
     location: { hash },
     navigator: iosStandalone === undefined ? {} : { standalone: iosStandalone },
     matchMedia: query => ({ matches: (query === '(display-mode: standalone)' && standalone) || (query === '(display-mode: fullscreen)' && fullscreen) }),
@@ -514,7 +521,7 @@ test('a beforeinstallprompt shows Install, and a click calls prompt() once', () 
 })
 
 test('#install opens the offer at load: Install when the browser can, else the Safari line', () => {
-  const safari = client.createInstall(fakeWindow({ hash: '#install' }))
+  const safari = client.createInstall(fakeWindow({ hash: '#install', prompts: false }))
   safari.watch()
   const panel = find(installView(safari), byData('data-unfold-install-panel'))
   assert.ok(panel, 'open from the address')
@@ -534,11 +541,26 @@ test('#install opens the offer at load: Install when the browser can, else the S
   find(open, byData('data-unfold-install')).props.onClick()
   assert.equal(event.seen.prompts, 1)
 
-  assert.equal(installView(client.createInstall(fakeWindow({ hash: '#other' }))), null, 'another fragment opens nothing')
+  assert.equal(installView(client.createInstall(fakeWindow({ hash: '#other', prompts: false }))), null, 'another fragment opens nothing')
+})
+
+test('Chrome or Edge opened with #install never shows the Safari line, and opens on the event', () => {
+  const win = fakeWindow({ hash: '#install' })
+  const install = client.createInstall(win)
+  install.watch()
+  // not installable yet, or installed already from another tab: nothing to say
+  assert.equal(installView(install), null)
+  const event = promptEvent()
+  win.fire('beforeinstallprompt', event)
+  const open = find(installView(install), byData('data-unfold-install-panel'))
+  assert.ok(open, 'the address asked for it, so it opens when the browser can install')
+  assert.equal(find(open, byData('data-unfold-install-safari')), null)
+  find(open, byData('data-unfold-install')).props.onClick()
+  assert.equal(event.seen.prompts, 1)
 })
 
 test('an installed app never shows the offer', () => {
-  for (const options of [{ standalone: true }, { fullscreen: true }, { iosStandalone: true }]) {
+  for (const options of [{ standalone: true }, { fullscreen: true }, { iosStandalone: true, prompts: false }]) {
     const win = fakeWindow({ hash: '#install', ...options })
     const install = client.createInstall(win)
     install.watch()

@@ -36,13 +36,13 @@ const digest = text => createHash('sha256').update(text).digest()
 
 // Unfold's own DSH names the port in UNFOLD_BRIDGE_PORT, from its port registry, and trusts an
 // endpoint file only on that port. It is taken out of the env at the read, like the state folder.
-// undefined when unset, 0 (any free port) when empty, else the number it holds (NaN when it is
-// not one); startBridge refuses anything but 0 or 1024-65535.
+// undefined when unset, else the number it holds: NaN when it is not one, an empty value too,
+// since a named port is never a random one. startBridge refuses anything but 1024-65535.
 export function takePort(env = process.env) {
   if (!Object.hasOwn(env, 'UNFOLD_BRIDGE_PORT')) return undefined
   const text = env.UNFOLD_BRIDGE_PORT
   delete env.UNFOLD_BRIDGE_PORT
-  return text === '' ? 0 : /^\d+$/.test(text) ? Number(text) : NaN
+  return /^\d+$/.test(text) ? Number(text) : NaN
 }
 const namedPort = port => Number.isInteger(port) && port >= 1024 && port <= 65535
 

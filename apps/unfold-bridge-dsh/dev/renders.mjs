@@ -64,7 +64,7 @@ for (const language of ['en', 'pt-BR']) {
   write(`${language}_bridge-down_settings.html`, `${language} · view stream down · settings`, SLOTS.settings(null, t))
   // The install offer: the browser can prompt, or not (Safari), each closed and opened by #install.
   for (const canPrompt of [true, false]) for (const opened of [false, true]) {
-    const offer = { canPrompt, opened, installed: false, prompted: false }
+    const offer = { canPrompt, opened, installed: false, prompts: canPrompt }
     const state = `${language}_install_${canPrompt ? 'can-prompt' : 'safari'}_${opened ? 'opened-by-hash' : 'closed'}`
     write(`${state}.html`, `${state} · sidebar.footer.action`, frame('sidebar.footer.action · unfold-bridge.install', draw(client.InstallAction, { offer, t, onInstall() {}, wide: true })))
   }

@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createServer, request } from 'node:http'
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fakeLlm } from './fake-llm.js'
@@ -104,6 +104,18 @@ test('the folder and port Unfold names are used, leave the env at start, and sta
       assert.throws(() => statSync(join(xdg, 'unfold-bridge')), { code: 'ENOENT' }, 'and none in the shared place')
       await third.unload()
     } finally { await new Promise(resolve => holder.close(resolve)) }
+
+    // a fresh instance of the module in the same process (a re-import, as hot reload or a live
+    // update makes one) finds the env empty, and still keeps the folder and the port
+    const fresh = await import('../index.js?fresh-instance')
+    assert.notEqual(fresh.apply, plugin.apply, 'a second module instance')
+    const fourth = fakeContext(fakeLlm())
+    fresh.apply(fourth)
+    const shared = join(xdg, 'unfold-bridge', 'endpoint.json')
+    await until(() => existsSync(file) || existsSync(shared))
+    assert.equal(existsSync(shared), false, 'the shared file is never written')
+    assert.equal(JSON.parse(readFileSync(file, 'utf8')).port, port, 'the named port again')
+    await fourth.unload()
   } finally {
     delete process.env.UNFOLD_BRIDGE_STATE_DIR
     delete process.env.UNFOLD_BRIDGE_PORT

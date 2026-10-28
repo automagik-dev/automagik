@@ -1,18 +1,20 @@
 // The install offer: DSH's page as an app of its own. Chrome and Edge fire beforeinstallprompt
 // when the page can be installed; the event is held, and its prompt() runs only on the person's
-// click, once per event. Safari fires nothing, so there the offer is one line for its own menu.
-// An installed app never shows the offer. Unfold opens DSH's address with #install to open the
-// offer at load.
+// click, once per event. Safari has no such event, so there the offer is one line for its own
+// menu. An installed app never shows the offer. Unfold opens DSH's address with #install to open
+// the offer at load; a browser that has the event opens it when the event fires, and shows
+// nothing before (it may not be installable, or be installed already from another window).
 export const INSTALL_HASH = '#install'
 
 const DISPLAY_MODES = ['(display-mode: standalone)', '(display-mode: fullscreen)']
 const isInstalled = win => win?.navigator?.standalone === true || DISPLAY_MODES.some(query => win?.matchMedia?.(query)?.matches === true)
 
-// The offer's state for the slot: whether the browser can prompt, whether it is installed, and
-// whether the address asked for it. `win` is the page's window (undefined outside a browser).
+// The offer's state for the slot: whether the browser can prompt now, whether it has the event at
+// all, whether it is installed, and whether the address asked for it. `win` is the page's window
+// (undefined outside a browser).
 export function createInstall(win) {
   let held = null
-  let snap = { canPrompt: false, installed: isInstalled(win), opened: win?.location?.hash === INSTALL_HASH, prompted: false }
+  let snap = { canPrompt: false, installed: isInstalled(win), opened: win?.location?.hash === INSTALL_HASH, prompts: win !== undefined && win !== null && 'onbeforeinstallprompt' in win }
   const listeners = new Set()
   const set = next => {
     snap = { ...snap, ...next }
@@ -21,7 +23,7 @@ export function createInstall(win) {
   const onPrompt = event => {
     event.preventDefault?.()
     held = event
-    set({ canPrompt: true, prompted: false })
+    set({ canPrompt: true })
   }
   const onInstalled = () => {
     held = null
@@ -53,13 +55,13 @@ export function createInstall(win) {
       const event = held
       if (!event) return undefined
       held = null
-      set({ canPrompt: false, prompted: true })
+      set({ canPrompt: false })
       // A browser that refuses the prompt leaves nothing to show.
       try { return Promise.resolve(event.prompt()).catch(() => undefined) } catch { return undefined }
     },
   }
 }
 
-// Shown while the browser can prompt, or while the address asked for it, until a prompt was
-// made from this page or the app is installed.
-export const offerShown = offer => !offer.installed && (offer.canPrompt || (offer.opened && !offer.prompted))
+// Shown while the browser can prompt, or while the address asked for it in a browser without the
+// event (Safari's line), until the app is installed.
+export const offerShown = offer => !offer.installed && (offer.canPrompt || (offer.opened && !offer.prompts))

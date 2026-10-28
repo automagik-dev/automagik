@@ -302,13 +302,13 @@ const hold = () => new Promise(resolve => {
   const holder = createServer().listen(0, '127.0.0.1', () => resolve({ port: holder.address().port, close: () => new Promise(done => holder.close(done)) }))
 })
 
-test('UNFOLD_BRIDGE_PORT is read once and leaves the env: a port, 0 when unset or empty', () => {
+test('UNFOLD_BRIDGE_PORT is read once and leaves the env: a port, or NaN when set to anything else', () => {
   const env = { UNFOLD_BRIDGE_PORT: '41712', HOME: '/home/x' }
   assert.equal(takePort(env), 41712)
   assert.deepEqual(env, { HOME: '/home/x' }, 'gone from the env after the read')
   assert.equal(takePort(env), undefined, 'a second read finds nothing')
-  assert.equal(takePort({ UNFOLD_BRIDGE_PORT: '' }), 0)
-  for (const value of ['abc', '4171x', '-1', '1.5', ' 41712']) {
+  // set means named: an empty value is no port, never a random one
+  for (const value of ['', 'abc', '4171x', '-1', '1.5', ' 41712']) {
     const named = { UNFOLD_BRIDGE_PORT: value }
     assert.ok(Number.isNaN(takePort(named)), JSON.stringify(value))
     assert.deepEqual(named, {}, JSON.stringify(value))
