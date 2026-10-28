@@ -25,7 +25,7 @@
   "sourceUnavailable": "Não é possível salvar fontes de índice aqui.",
   "sourceFailed": "Não foi possível salvar as fontes de índice.",
   "readFailed": "Não foi possível ler este índice.",
-  "readInvalid": "Este índice não está num formato válido.",
+  "readInvalid": "Este índice não está em um formato válido.",
   "readChanged": "Este índice mudou enquanto carregava.",
   "search": "Buscar plugins",
   "filter": "Etiquetas",

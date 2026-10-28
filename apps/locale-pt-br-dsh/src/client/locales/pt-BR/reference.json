@@ -12,6 +12,6 @@
   "time.minutes": "{n} min",
   "time.hours": "{n} h",
   "time.days": "{n} d",
-  "time.months": "{n} m",
-  "time.years": "{n} a"
+  "time.months": "{n} meses",
+  "time.years": "{n} anos"
 }

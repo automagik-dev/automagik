@@ -149,7 +149,7 @@
   "message.turnProcess.thoughtForAWhile": "Raciocinou por um tempo",
   "message.turnProcess.separator": " · ",
   "message.stopped": "Parado",
-  "message.branch": "Ramificar numa nova conversa",
+  "message.branch": "Ramificar em uma nova conversa",
   "message.branchUnavailable": "Disponível só na última mensagem de uma rodada concluída",
   "message.retry.active": "Repetindo o pedido ao modelo",
   "message.retry.cancelled": "Nova tentativa do pedido ao modelo cancelada",

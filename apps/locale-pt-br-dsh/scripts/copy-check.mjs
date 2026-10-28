@@ -28,7 +28,17 @@ export const RULES = [
   ['uses a gendered word for the person', /(?<![\p{L}-])(?:bem-vind[oa]s?|obrigad[oa]s?|usuári[oa]s?)(?![\p{L}-])|(?<![\p{L}-])(?:você|vocês)\s+(?:está|estão|esteja|estejam|estiver|é|são|seja|sejam|foi|foram|fica|ficou|ficará|será)\s+(?:\p{L}+(?:ad|id)[oa]s?|pront[oa]s?|cert[oa]s?|segur[oa]s?|sozinh[oa]s?|atent[oa]s?)(?![\p{L}-])|\p{L}(?:o\(a\)|a\(o\)|os\(as\)|o\/a|a\/o)(?![\p{L}-])|(?<![\p{L}-])(?:tod[xe@]s|amig[xe@]s)(?![\p{L}-])/iu],
   ['says tap', /(?<![\p{L}-])(?:tap|taps|tapped|toque|toques|tocar|tocou)(?![\p{L}-])/iu],
   ['says sandbox', /sandbox/iu],
-  ['is European Portuguese', /(?<![\p{L}-])(?:ecrã|ecrãs|utilizador|utilizadores|ficheiro|ficheiros|telemóvel|registo|registos|equipa|equipas|palavra-passe|secção|contacto|contactos|facto|actual|actualizar|guardar)(?![\p{L}-])|(?<![\p{L}-])(?:está|estão|estou|estamos|esteja|estava|estavam)\s+a\s+\p{L}+(?:ar|er|ir)(?![\p{L}-])/iu],
+  ['is European Portuguese', new RegExp([
+    // words Brazil says otherwise: tela, usuário, arquivo, celular, registro, equipe, senha, seção,
+    // contato, fato, atual, acessar, compartilhar, gerenciar, pressionar, baixar, mouse
+    '(?<![\\p{L}-])(?:ecrã|ecrãs|utilizador|utilizadores|ficheiro|ficheiros|telemóvel|registo|registos|equipa|equipas|palavra-passe|secção|contacto|contactos|facto|actual|actualizar'
+      + '|aceder|acede|acedido|acedida|partilh\\p{L}*|gerir|premir|prima|transferir|transfira|rato|ratos)(?![\\p{L}-])',
+    // "click on" as Portugal says it
+    '(?<![\\p{L}-])carregu(?:e|em)\\s+(?:em|no|na|nos|nas)(?![\\p{L}-])',
+    // the progressive "está a fazer", or a status line "A carregar…"
+    '(?<![\\p{L}-])(?:está|estão|estou|estamos|esteja|estava|estavam)\\s+a\\s+\\p{L}+(?:ar|er|ir)(?![\\p{L}-])',
+    '^\\s*a\\s+(?!partir(?![\\p{L}-]))\\p{L}+(?:ar|er|ir)(?![\\p{L}-])',
+  ].join('|'), 'iu')],
 ]
 
 // The Bot team's omni-ui keys: its locale hook registers them as the zh dictionary's keys.

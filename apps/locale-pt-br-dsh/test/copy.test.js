@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { checkCopy, omniKeys } from '../scripts/copy-check.mjs'
+import { RULES, checkCopy, omniKeys } from '../scripts/copy-check.mjs'
 
 test('the copy check is green', async () => {
   assert.deepEqual(await checkCopy(), [])
@@ -33,4 +33,18 @@ test('the copy check finds each kind of fault', async () => {
   has(/sidebar:d: is European Portuguese/)
   has(/sidebar:d: says sandbox/)
   has(/sidebar:extra: not an en key/)
+})
+
+// European Portuguese forms are refused; their Brazilian counterparts, and words that only contain
+// one of them, pass.
+test('the copy check tells European from Brazilian Portuguese', () => {
+  const european = RULES.find(([rule]) => rule === 'is European Portuguese')[1]
+  for (const text of ['Não foi possível aceder à pasta', 'Partilhar o link', 'Partilhe esta sessão', 'Gerir plugins', 'Premir Enter para enviar',
+    'Carregue em Enviar', 'Transferir o arquivo', 'Rato e teclado', 'A carregar…', 'Está a carregar', 'O ecrã principal']) {
+    assert.match(text, european, `"${text}" should be refused`)
+  }
+  for (const text of ['Guardar uma cópia', 'Guarde as credenciais em ~/.npmrc', 'Comprima e tente de novo', 'Copiado para a área de transferência',
+    'Compartilhar o link', 'Carregando…', 'Clique em Enviar', 'Gerenciar plugins', 'A partir de hoje']) {
+    assert.doesNotMatch(text, european, `"${text}" is Brazilian Portuguese`)
+  }
 })
