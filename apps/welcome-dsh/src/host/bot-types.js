@@ -149,10 +149,13 @@ const resultProblem = (result) => {
 export const GENIE_CLI_INSTALL = 'curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | GENIE_CHANNEL=dev bash'
 export const hasGenieSkills = (home = homedir()) => existsSync(join(home, '.agents', 'skills', 'wish', 'SKILL.md'))
 
+// What an install in Unfold's instance says when a plugin its pack brings is not there.
+export const BUNDLED_MISSING = 'Unfold brings this plugin, and it is missing from this instance.'
+
 export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.env, checkGit = gitProblem, genieSkills = hasGenieSkills, genieCli = () => onPath('genie', env) }) {
   const manager = () => service(ctx, 'pluginManager')
-  // Unfold's own instance brings Genie's command line with it: the card names that one, never
-  // the line that installs it.
+  // Unfold's own instance brings its plugins and Genie's command line with it: the card names
+  // that command line, never the line that installs one, and nothing here installs a plugin.
   const bundled = hostOf(env) === 'unfold'
   // `{ phase, current, done, error, restart }` once an install started.
   let job = null
@@ -209,10 +212,13 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.e
 
   // One plugin in place and on: left alone when it is, switched on when it is off, else
   // installed from `target`. Says whether it was already there, and whether DSH must restart.
+  // In Unfold's instance a plugin comes only with Unfold's pack: one that is missing is an
+  // error, never an install from npm or git.
   async function ensure(plugin, rows, target) {
     const row = rowOf(rows, plugin)
     const present = row !== undefined && row.availability !== 'missing'
     if (present && row.enabled !== false) return { there: true, restart: false }
+    if (!present && bundled) throw new Error(`${plugin.title}: ${BUNDLED_MISSING}`)
     const service = manager()
     target.onStart?.(present ? 'enable' : 'install')
     const result = present ? await service.setBundleEnabled(row.name, true) : await service.installBundle(target.spec, { enabled: true, ...target.options })
@@ -276,10 +282,13 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.e
   // Genie runs on the Bot team, so a plain DSH that lacks it gets it first, from where the
   // Omni install would take it (a peer pnpm could not find on npm otherwise).
   async function runGenieInstall() {
-    say(step('Checking git'))
-    const problem = await checkGit()
-    if (problem !== null) throw new Error(problem)
-    say(ok('git is here'))
+    // In Unfold's instance nothing comes from git, so git is not asked for.
+    if (!bundled) {
+      say(step('Checking git'))
+      const problem = await checkGit()
+      if (problem !== null) throw new Error(problem)
+      say(ok('git is here'))
+    }
     const rows = await bundles() ?? []
     const ownSource = rows.find(bundle => bundle.name === PKG.name)?.source
     const [botTeam] = OMNI_PLUGINS

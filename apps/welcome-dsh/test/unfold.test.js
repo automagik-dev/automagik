@@ -157,6 +157,48 @@ test('in Unfold\'s own instance everything is preinstalled: choosing Unfold inst
   assert.equal(gitChecks, 0)
 })
 
+// Unfold's instance reaches its plugins only through Unfold's own pack: with a bundled plugin
+// missing or switched off, a power button (or any page script posting the install endpoints)
+// switches on what is there and installs nothing, from npm or git.
+test('in Unfold\'s instance a missing bundled plugin installs nothing: no npm, no git, a fixed error', async () => {
+  const settle = async (fake, endpoint, phaseOf) => {
+    for (let i = 0; i < 50; i++) {
+      const status = await value(fake, endpoint)
+      if (phaseOf(status) !== 'installing') return status
+      await new Promise(resolve => setTimeout(resolve, 1))
+    }
+    throw new Error(`${endpoint} never ended`)
+  }
+  const own = { name: PKG.name, availability: 'profile', enabled: true, source: OWN_LINK, version: PKG.version }
+  const row = (plugin, enabled = true) => ({ name: plugin.name, availability: 'profile', enabled, version: PKG.version })
+  const cases = [
+    // Genie's plugin missing from the pack.
+    ['genie-plugin', [row(OMNI_PLUGINS[0])], status => status.install?.phase],
+    // One Unfold plugin removed on the Plugins page; the Bot team switched off.
+    ['unfold-plugin', [row(OMNI_PLUGINS[0], false), ...UNFOLD_PLUGINS.slice(1).map(plugin => row(plugin)), row(UNFOLD_PLUGIN)], status => status.install?.phase],
+    // Omni's canvases missing.
+    ['omni-plugins', OMNI_PLUGINS.slice(0, 2).map(plugin => row(plugin)), status => status.install?.phase],
+  ]
+  for (const [endpoint, rows, phaseOf] of cases) {
+    // Every spec resolves: an install would succeed, so only the guard stops it.
+    const manager = fakeManager({ bundles: [own, ...rows], registry: new Set([...OMNI_PLUGINS, ...UNFOLD_PLUGINS, UNFOLD_PLUGIN].map(plugin => `${plugin.name}@${PKG.version}`)) })
+    let gitChecks = 0
+    const fake = host({ manager, team: { state: { bots: {} }, async load() {} }, env: UNFOLD, checkGit: async () => { gitChecks += 1; return null } })
+    await value(fake, `${endpoint}-install`)
+    const status = await settle(fake, endpoint, phaseOf)
+    assert.equal(status.install.phase, 'failed', endpoint)
+    assert.match(status.install.error, /Unfold brings this plugin, and it is missing from this instance\./, endpoint)
+    assert.deepEqual(manager.calls.filter(([kind]) => kind === 'install'), [], endpoint)
+    assert.equal(gitChecks, 0, endpoint)
+  }
+  // A bundled plugin that is only switched off is switched back on, and nothing installs.
+  const off = fakeManager({ bundles: [own, row(OMNI_PLUGINS[0], false), ...UNFOLD_PLUGINS.map(plugin => row(plugin)), row(UNFOLD_PLUGIN)] })
+  const fake = host({ manager: off, team: { state: { bots: {} }, async load() {} }, env: UNFOLD })
+  await value(fake, 'unfold-plugin-install')
+  assert.equal((await settleUnfold(fake)).install.phase, 'done')
+  assert.deepEqual(off.calls, [['enable', OMNI_PLUGINS[0].name, true]])
+})
+
 test('under AUTOMAGIK_HOST=unfold, Genie\'s card never carries the curl line: its CLI is the bundled one', async (t) => {
   const bin = join(folder(t), 'bin')
   mkdirSync(bin)
