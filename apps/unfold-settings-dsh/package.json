@@ -1,6 +1,6 @@
 {
   "name": "@automagik/unfold-settings-dsh",
-  "version": "3.34.0",
+  "version": "3.35.1",
   "description": "Unfold's settings for DSH, read-only: the effective runtime, prompt, voice and context settings, each with its source and how fresh it is, read from the Unfold session's host status and the agent's event window. A value nobody reports says unknown; nothing is assumed",
   "keywords": [
     "dsh-plugin",
@@ -45,7 +45,7 @@
     "harness": "bun install --cwd dev/harness --no-save --no-summary"
   },
   "engines": {
-    "dsh": ">=0.2.1-rc.3 <0.2.2-0"
+    "dsh": ">=0.2.1-rc.4 <0.2.2-0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",

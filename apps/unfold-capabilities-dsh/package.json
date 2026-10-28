@@ -1,6 +1,6 @@
 {
   "name": "@automagik/unfold-capabilities-dsh",
-  "version": "3.34.0",
+  "version": "3.35.1",
   "description": "What Unfold can do, and how well, for DSH: a read-only capability map per capability, modality and benchmark row, computed only from bench scorecards joined to their manifests. A run that lands pushes the new map; nothing polls",
   "keywords": [
     "dsh-plugin",
@@ -42,7 +42,7 @@
     "harness": "bun install --cwd dev/harness --no-save --no-summary"
   },
   "engines": {
-    "dsh": ">=0.2.1-rc.3 <0.2.2-0"
+    "dsh": ">=0.2.1-rc.4 <0.2.2-0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",

@@ -1,6 +1,6 @@
 # Unfold capabilities (`@automagik/unfold-capabilities-dsh`)
 
-"What I can do" for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH): how much Unfold can do now, and how well, per capability, modality and benchmark row. The map is computed only from bench scorecards joined to their manifests; this plugin judges nothing itself. It is read-only: it writes nothing and opens no connection of its own.
+"What I can do" for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH): how much Unfold can do now, and how well, per capability, modality and benchmark row. The map is computed only from bench scorecards joined to their manifests; this plugin judges nothing itself. It is read-only: it writes nothing and opens no connection of its own. Tested with DSH 0.2.1-rc.4.
 
 ## What the map says
 

@@ -1,6 +1,6 @@
 # Unfold settings (`@automagik/unfold-settings-dsh`)
 
-"Unfold settings" for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH), read-only: how Unfold is set up right now. Backend and model, the prompt and config revision, voice and device state and the model context, each with its source and how fresh it is. It has no write route and opens no connection of its own.
+"Unfold settings" for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH), read-only: how Unfold is set up right now. Backend and model, the prompt and config revision, voice and device state and the model context, each with its source and how fresh it is. It has no write route and opens no connection of its own. Tested with DSH 0.2.1-rc.4.
 
 ## Where the values come from
 
