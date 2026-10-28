@@ -27,9 +27,9 @@ const SECRET_TEXT = [
   // so the key rules run first and no inner pattern can split a value they recognise.
   // A quoted value runs to its UNESCAPED closing quote (JSON: `\"` and `\\` do not end it; a
   // trailing lone `\` is an escape still to come), or to the end while it is still open (a
-  // streamed `KEY="…` is hidden until its quote arrives). The name's run must reach its `=` before
-  // a name is looked for in it, so a long word of names is one pass.
-  [/\b(?=[A-Z0-9_]*=)([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*)=("(?:[^"\\]|\\[\s\S]|\\$)*(?:"|$)|'(?:[^'\\]|\\[\s\S]|\\$)*(?:'|$)|`(?:[^`\\]|\\[\s\S]|\\$)*(?:`|$)|\S+)/g, (_, name) => `${name}=${REDACTED}`, /=/],
+  // streamed `KEY="…` is hidden until its quote arrives). The `=` is found first and the name
+  // looked for behind it, so a long word of names is one pass, with or without a value after it.
+  [/\b([A-Z0-9_]+)=(?<=(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=)("(?:[^"\\]|\\[\s\S]|\\$)*(?:"|$)|'(?:[^'\\]|\\[\s\S]|\\$)*(?:'|$)|`(?:[^`\\]|\\[\s\S]|\\$)*(?:`|$)|\S+)/g, (_, name) => `${name}=${REDACTED}`, /=/],
   // A YAML block scalar under a name (`password: |` or `>`, then the lines indented under it) is
   // hidden whole, its key line kept, text before the name on that line too. These run first, so
   // the name rules leave its `|` or `>` alone. The indent is taken whole (a lookahead and its
@@ -94,7 +94,7 @@ const SECRET_VALUES = [
   /\b(?:bearer|basic)\s+((?=[A-Za-z0-9._~+/=-]*[0-9])[A-Za-z0-9._~+/=-]{16,})(?=[^A-Za-z0-9._~+/=-])/gi, // a whole, closed token-shaped word only
   /\b(AIza[0-9A-Za-z_-]{20,})/g,
   /(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt]))(sk-(?=[A-Za-z0-9_-]*[A-Z])(?=[A-Za-z0-9_-]*[a-z])(?=[A-Za-z0-9_-]*[0-9])[A-Za-z0-9_-]{20,})(?=[^A-Za-z0-9_-])/g, // a whole, CLOSED sk- key only: a run still open at the end of the text is never remembered, so a key streamed in parts cannot fill SECRETS_KEPT with its prefixes
-  [/\b(?=[A-Z0-9_]*=)[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=("(?:[^"\\]|\\[\s\S]|\\$)*(?:"|$)|'(?:[^'\\]|\\[\s\S]|\\$)*(?:'|$)|`(?:[^`\\]|\\[\s\S]|\\$)*(?:`|$)|\S+)/g, /=/],
+  [/\b[A-Z0-9_]+=(?<=(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=)("(?:[^"\\]|\\[\s\S]|\\$)*(?:"|$)|'(?:[^'\\]|\\[\s\S]|\\$)*(?:'|$)|`(?:[^`\\]|\\[\s\S]|\\$)*(?:`|$)|\S+)/g, /=/],
   [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization)["']?\s*[:=]\s*(?:"((?:[^"\\]|\\[\s\S]|\\$)+)|'((?:[^'\\]|\\[\s\S]|\\$)+)|`((?:[^`\\]|\\[\s\S]|\\$)+)|(?:Bearer|Basic)\s+([A-Za-z0-9._~+/=-]+)|(?!Bearer\b|Basic\b|\[redacted\])([^\s"',}]+))/gi, /[:=]/],
   [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key)["']?\s*[:=]\s*(?:"((?:[^"\\]|\\[\s\S]|\\$)+)|'((?:[^'\\]|\\[\s\S]|\\$)+)|`((?:[^`\\]|\\[\s\S]|\\$)+)|(?:Bearer|bearer|BEARER|Basic|basic|BASIC)\s+([A-Za-z0-9._~+/=-]+)|(?!(?:Bearer|bearer|BEARER|Basic|basic|BASIC)\b|\[redacted\])([^\s"',}]+))/g, /Token|Secret|Pass|Key|Authorization/],
   [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization)\\"\s*:\s*\\"((?:[^\\"]|\\[^\\"]|\\\\(?:\\[\s\S]|\\$|[^\\]|$)|\\$)+)/gi, /\\"/],

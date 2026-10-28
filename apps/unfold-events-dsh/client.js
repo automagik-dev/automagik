@@ -1372,9 +1372,9 @@ var SECRET_TEXT = [
   // so the key rules run first and no inner pattern can split a value they recognise.
   // A quoted value runs to its UNESCAPED closing quote (JSON: `\"` and `\\` do not end it; a
   // trailing lone `\` is an escape still to come), or to the end while it is still open (a
-  // streamed `KEY="…` is hidden until its quote arrives). The name's run must reach its `=` before
-  // a name is looked for in it, so a long word of names is one pass.
-  [/\b(?=[A-Z0-9_]*=)([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*)=("(?:[^"\\]|\\[\s\S]|\\$)*(?:"|$)|'(?:[^'\\]|\\[\s\S]|\\$)*(?:'|$)|`(?:[^`\\]|\\[\s\S]|\\$)*(?:`|$)|\S+)/g, (_, name) => `${name}=${REDACTED}`, /=/],
+  // streamed `KEY="…` is hidden until its quote arrives). The `=` is found first and the name
+  // looked for behind it, so a long word of names is one pass, with or without a value after it.
+  [/\b([A-Z0-9_]+)=(?<=(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=)("(?:[^"\\]|\\[\s\S]|\\$)*(?:"|$)|'(?:[^'\\]|\\[\s\S]|\\$)*(?:'|$)|`(?:[^`\\]|\\[\s\S]|\\$)*(?:`|$)|\S+)/g, (_, name) => `${name}=${REDACTED}`, /=/],
   // A YAML block scalar under a name (`password: |` or `>`, then the lines indented under it) is
   // hidden whole, its key line kept, text before the name on that line too. These run first, so
   // the name rules leave its `|` or `>` alone. The indent is taken whole (a lookahead and its
