@@ -156,12 +156,18 @@ test('app browser endpoint carries download roots for the Bot resolved from the 
 test('a Bot\'s tabs are saved as they change and come back in a browser that opens with none', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'ds-bot-tabs-'))
   t.after(() => rmSync(dir, { recursive: true, force: true }))
+  let down
   const pageOf = (url, title = '') => {
     const listeners = {}
     const page = {
       url: () => url, title: async () => title, isClosed: () => false, mainFrame: () => page,
       on: (name, listener) => { listeners[name] = listener },
-      goto: async (next) => { url = next; title = new URL(next).pathname.slice(1); listeners.framenavigated?.(page) },
+      goto: async (next) => {
+        if (next === down) throw new Error('net::ERR_CONNECTION_REFUSED')
+        url = next
+        title = new URL(next).pathname.slice(1)
+        listeners.framenavigated?.(page)
+      },
     }
     return page
   }
@@ -182,12 +188,23 @@ test('a Bot\'s tabs are saved as they change and come back in a browser that ope
   await settled()
   assert.deepEqual(JSON.parse(readFileSync(join(dir, TABS_FILE), 'utf8')), saved)
 
-  // After a crash or a restart the browser opens blank, and the saved tabs come back.
+  // After a crash or a restart the browser opens blank, and the saved tabs come back; one whose
+  // site does not answer keeps its place in the list.
+  down = 'https://b.example/two'
   const blank = [pageOf('about:blank')]
   const context = contextOf(blank)
   const active = await restoreTabs(context, dir, blank[0])
-  assert.deepEqual(context.pages().map(page => page.url()), ['https://a.example/one', 'https://b.example/two'])
+  assert.deepEqual(context.pages().map(page => page.url()), ['https://a.example/one', 'about:blank'])
   assert.equal(active, context.pages()[1])
+  const again = keepTabs({ context, dir, activePage: () => active, onSave() {} })
+  await settled()
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, TABS_FILE), 'utf8')), saved)
+  // Tabs closed while the browser is open leave the list, the last one too.
+  blank.length = 0
+  again.changed()
+  await settled()
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, TABS_FILE), 'utf8')).tabs, [])
+  again.stop()
   // A browser that already shows a web page keeps what it has.
   const open = contextOf([pageOf('https://c.example/')])
   await restoreTabs(open, dir, open.pages()[0])

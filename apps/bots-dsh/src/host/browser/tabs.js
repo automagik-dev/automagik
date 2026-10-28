@@ -12,6 +12,9 @@ const SAVE_DELAY_MS = 400
 const RESTORE_TIMEOUT_MS = 15_000
 
 const isWeb = url => typeof url === 'string' && /^https?:\/\//i.test(url) && url.length <= 4000
+// A restored tab whose page has not loaded (the site was down, the network away) keeps its
+// place in the list under its saved address until it loads something.
+const restoring = new WeakMap()
 
 /** `{ tabs: [{ url, title }], active }` from whatever was stored; nothing usable is no tabs. */
 export function cleanTabs(value) {
@@ -40,14 +43,16 @@ export async function restoreTabs(context, dir, page) {
   if (saved.tabs.length === 0 || context.pages().some(target => isWeb(target.url()))) return page
   const pages = [page]
   for (let index = 1; index < saved.tabs.length; index += 1) pages.push(await context.newPage())
+  saved.tabs.forEach((tab, index) => restoring.set(pages[index], tab))
   await Promise.all(saved.tabs.map((tab, index) => pages[index].goto(tab.url, { waitUntil: 'commit', timeout: RESTORE_TIMEOUT_MS }).catch(() => {})))
   return pages[saved.active] ?? page
 }
 
 /**
  * Save the browser's web tabs whenever they change, until `stop()`: a browser that is closing
- * or went away saves nothing more, so its closing tabs never replace the saved ones.
- * `onSave` hears each saved list.
+ * or went away saves nothing more, so its closing tabs never replace the saved ones. Tabs
+ * closed while it is open are gone from the list, all of them included. `onSave` hears each
+ * saved list.
  */
 export function keepTabs({ context, dir, activePage, onSave }) {
   let stopped = false
@@ -56,10 +61,18 @@ export function keepTabs({ context, dir, activePage, onSave }) {
   const save = async () => {
     timer = undefined
     if (stopped) return
-    const open = context.pages().filter(target => !target.isClosed() && isWeb(target.url()))
-    if (open.length === 0) return
-    const tabs = await Promise.all(open.map(async target => ({ url: target.url(), title: await target.title().catch(() => '') })))
-    const saved = cleanTabs({ tabs, active: open.indexOf(activePage()) })
+    const tabOf = async (target) => {
+      if (isWeb(target.url())) {
+        restoring.delete(target)
+        return { url: target.url(), title: await target.title().catch(() => '') }
+      }
+      return restoring.get(target)
+    }
+    const listed = await Promise.all(context.pages().filter(target => !target.isClosed()).map(async target => [target, await tabOf(target)]))
+    const open = listed.filter(([, tab]) => tab !== undefined)
+    const tabs = open.map(([, tab]) => tab)
+    const active = open.findIndex(([target]) => target === activePage())
+    const saved = cleanTabs({ tabs, active })
     const text = JSON.stringify(saved)
     if (stopped || text === written) return
     written = text
