@@ -1,8 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { request } from 'node:http'
-import { startBridge } from '../src/host/bridge.js'
+import { startBridge, takePort } from '../src/host/bridge.js'
 import { TEXT, assistant, failure, fakeLlm } from './fake-llm.js'
+import { hold, onFreePort } from './ports.js'
 
 const KEY = 'test-key-not-a-secret-0123456789abcdef'
 
@@ -289,4 +290,51 @@ test('close stops listening', async () => {
   const b = await bridge()
   await b.close()
   await assert.rejects(call(b.port), { code: 'ECONNREFUSED' })
+})
+
+
+test('UNFOLD_BRIDGE_PORT is read once and leaves the env: a port number, else the text as given', () => {
+  const env = { UNFOLD_BRIDGE_PORT: '41712', HOME: '/home/x' }
+  assert.equal(takePort(env), 41712)
+  assert.deepEqual(env, { HOME: '/home/x' }, 'gone from the env after the read')
+  assert.equal(takePort(env), undefined, 'a second read finds nothing')
+  // set means named: an empty value is no port, never a random one
+  for (const value of ['', '0', '00', 'abc', '4171x', '-1', '1.5', ' 41712']) {
+    const named = { UNFOLD_BRIDGE_PORT: value }
+    assert.equal(takePort(named), value, JSON.stringify(value))
+    assert.deepEqual(named, {}, JSON.stringify(value))
+  }
+})
+
+test('a refused named port is logged as it was given, never as NaN', async () => {
+  for (const [value, shown] of [['0', '(0)'], ['00', '(00)'], ['abc', '(abc)'], ['', '(empty)']]) {
+    const refusal = await bridge(fakeLlm(), { port: takePort({ UNFOLD_BRIDGE_PORT: value }) }).then(() => null, error => error)
+    assert.equal(refusal?.code, 'bad_port', JSON.stringify(value))
+    assert.ok(refusal.message.endsWith(shown), `${JSON.stringify(value)}: ${refusal.message}`)
+    assert.ok(!refusal.message.includes('NaN'), refusal.message)
+  }
+})
+
+test('a named port is bound exactly, on 127.0.0.1', async () => {
+  const { b, port } = await onFreePort(async port => ({ b: await bridge(fakeLlm(), { port }), port }))
+  try {
+    assert.equal(b.port, port)
+    assert.equal(b.address, '127.0.0.1')
+    assert.equal((await call(port)).status, 200)
+  } finally { await b.close() }
+})
+
+test('a named port that is taken refuses the start: no other port is tried', async () => {
+  const holder = await hold()
+  const started = []
+  try {
+    await assert.rejects(bridge(fakeLlm(), { port: holder.port }).then(b => { started.push(b); return b }), { code: 'EADDRINUSE' })
+    assert.deepEqual(started, [])
+  } finally { for (const b of started) await b.close(); await holder.close() }
+})
+
+test('a named port outside 1024-65535, or not a port at all, refuses the start', async () => {
+  for (const port of [NaN, 80, 1023, 65536, 41712.5, -1]) {
+    await assert.rejects(bridge(fakeLlm(), { port }), { code: 'bad_port' }, String(port))
+  }
 })

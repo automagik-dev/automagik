@@ -1,8 +1,9 @@
 // The copy check: every string the DSH client shows, in English and Brazilian Portuguese, is
 // read against the claims this plugin must never make. The models come from the person's own
 // DSH and the watch runs through it, so no line may promise local-only or offline work, or name
-// a model provider. Unfold has no gender: Portuguese copy never puts an article before it or
-// refers to it (or to the person) with a gendered word.
+// a model provider. No line calls DSH a sandbox, and a click is a click (never tap, toque or
+// toca). Unfold has no gender: Portuguese copy never puts an article before it or refers to it
+// (or to the person) with a gendered word.
 //
 //   node scripts/copy-check.mjs                  checks src/client/locales/{en,pt-BR}.json
 //   node scripts/copy-check.mjs <en> <pt-BR>     checks other locale files (a fixture)
@@ -17,6 +18,7 @@ export const LOCALE_FILES = { en: join(PLUGIN, 'src/client/locales/en.json'), 'p
 
 const BOTH = [
   ['names a model provider', /\b(DeepSeek|OpenAI|Anthropic|Claude|GPT|Gemini|Granite|Flash|Qwen|Llama)\b/i],
+  ['calls DSH a sandbox', /\bsandbox(es|ed)?\b/i],
 ]
 export const RULES = {
   en: [
@@ -25,6 +27,7 @@ export const RULES = {
     ['promises offline work', /\boffline\b|\bwithout (the )?internet\b/i],
     ['promises it stays on this machine', /\bon (your|this) (Mac|computer|machine|device)\b|\bnever leaves\b/i],
     ['genders Unfold', /\b(he|she|him|her|his|hers|himself|herself)\b/i],
+    ['says tap, not click', /\btap(s|ped|ping)?\b/i],
   ],
   'pt-BR': [
     ...BOTH,
@@ -35,6 +38,7 @@ export const RULES = {
     ['uses a gendered pronoun', /\b(ele|ela|eles|elas|dele|dela|deles|delas|nele|nela)\b/i],
     ['uses a gendered word for a person or for Unfold', /\b(conectad|desconectad|pront|ocupad|sozinh|obrigad|bem-vind|atent|cert|segur|parad|atualizad)[oa]s?\b/i],
     ['is European Portuguese', /\b(ecrã|utilizador|ficheiro|telemóvel|registo|equipa)\b/i],
+    ['says toque, not clique', /\b(toque|toques|toca|tocar|tocou|toque-se)\b/i],
   ],
 }
 

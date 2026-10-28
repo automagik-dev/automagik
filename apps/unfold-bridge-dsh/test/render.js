@@ -26,6 +26,7 @@ export async function loadClient() {
       contents: [
         "export * from './src/client/api.js'",
         "export * from './src/client/i18n.js'",
+        "export * from './src/client/install.js'",
         "export * from './src/client/hidden.js'",
         "export * from './src/client/slots.js'",
         "export * from './src/client/view.js'",

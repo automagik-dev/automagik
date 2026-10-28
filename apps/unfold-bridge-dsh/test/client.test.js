@@ -34,7 +34,7 @@ test('client.js is the build of src/client', async () => {
 })
 
 // DSH runs client.js as a classic script that hands a factory to its module loader.
-test('the client registers five slots and never conversation.approval.detail', () => {
+test('the client registers six slots and never conversation.approval.detail', () => {
   const loads = []
   runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), { window: { __ModuleLoader__: { load: entry => loads.push(entry) } } })
   assert.equal(loads.length, 1)
@@ -57,13 +57,14 @@ test('the client registers five slots and never conversation.approval.detail', (
       register: (options, component) => { registered.push({ ...options, component: typeof component }); return () => {} },
     },
   })
-  assert.deepEqual(effects, ['unfold-bridge: client styles', 'unfold-bridge: the view stream'])
+  assert.deepEqual(effects, ['unfold-bridge: client styles', 'unfold-bridge: the view stream', 'unfold-bridge: the install offer'])
   assert.deepEqual(registered, [
     { name: 'sidebar.workspaces.session.row.action', id: 'unfold-watch', order: 300, component: 'function' },
     { name: 'sidebar.session.row.leading', id: 'unfold-watched', order: 100, component: 'function' },
     { name: 'sidebar.footer.action', id: 'unfold-board', order: 100, component: 'function' },
     { name: 'conversation.input.dock', id: 'unfold-dock', order: 50, component: 'function' },
     { name: 'settings.section', id: 'unfold-bridge', order: 900, label: 'Unfold', component: 'function' },
+    { name: 'sidebar.footer.action', id: 'unfold-bridge.install', order: 110, component: 'function' },
   ])
   assert.ok(!registered.some(entry => entry.name === 'conversation.approval.detail'))
 })
@@ -242,6 +243,11 @@ test('the copy check passes over EN and pt-BR and catches a bad line', () => {
   assert.ok(findings.some(line => line.includes('offline')))
   assert.ok(findings.some(line => line.includes('article before Unfold')))
   assert.ok(findings.some(line => line.includes('gendered word')))
+  // the words the copy never uses: a click is a click, and Unfold's DSH is never a sandbox
+  writeFileSync(join(dir, 'en.json'), JSON.stringify({ a: 'Tap Send', b: 'It runs in a sandbox', c: 'After two taps' }))
+  writeFileSync(join(dir, 'pt.json'), JSON.stringify({ a: 'Toque em Enviar', b: 'quando você toca em Enviar', c: 'Roda numa sandbox' }))
+  const words = checkCopy({ en: join(dir, 'en.json'), 'pt-BR': join(dir, 'pt.json') })
+  for (const key of ['en a', 'en b', 'en c', 'pt-BR a', 'pt-BR b', 'pt-BR c']) assert.ok(words.some(line => line.startsWith(`${key}: `)), key)
 })
 
 test('the client holds no key', () => {
@@ -470,4 +476,116 @@ test('Escape closes the board', () => {
   assert.equal(closed, 0)
   board.props.onKeyDown({ key: 'Escape' })
   assert.equal(closed, 1)
+})
+
+// A browser window as the install offer sees it: its events, its display mode and its address.
+// `prompts`: the browser has the install event (Chrome, Edge), whether or not it fired yet.
+function fakeWindow({ hash = '', standalone = false, fullscreen = false, iosStandalone, prompts = true } = {}) {
+  const listeners = {}
+  return {
+    ...(prompts ? { onbeforeinstallprompt: null } : {}),
+    location: { hash },
+    navigator: iosStandalone === undefined ? {} : { standalone: iosStandalone },
+    matchMedia: query => ({ matches: (query === '(display-mode: standalone)' && standalone) || (query === '(display-mode: fullscreen)' && fullscreen) }),
+    addEventListener: (type, fn) => { (listeners[type] ??= new Set()).add(fn) },
+    removeEventListener: (type, fn) => { listeners[type]?.delete(fn) },
+    fire: (type, event = {}) => { for (const fn of Array.from(listeners[type] ?? [])) fn(event) },
+    count: type => listeners[type]?.size ?? 0,
+  }
+}
+const promptEvent = () => {
+  const seen = { prevented: 0, prompts: 0 }
+  return { seen, preventDefault: () => { seen.prevented++ }, prompt: async () => { seen.prompts++; return { outcome: 'accepted' } } }
+}
+const installView = (install, t = en) => render(client.InstallAction, { offer: install.get(), onInstall: install.prompt, t, wide: true })
+
+test('a beforeinstallprompt shows Install, and a click calls prompt() once', () => {
+  const win = fakeWindow()
+  const install = client.createInstall(win)
+  install.watch()
+  assert.equal(installView(install), null, 'nothing to offer before the event')
+  const event = promptEvent()
+  win.fire('beforeinstallprompt', event)
+  assert.equal(event.seen.prevented, 1, 'the browser keeps its own bar to itself')
+  const button = find(installView(install), byData('data-unfold-install-button'))
+  assert.equal(text(button), 'Install as app')
+  button.props.onClick()
+  button.props.onClick()
+  assert.equal(event.seen.prompts, 1, 'one prompt per event')
+  assert.equal(installView(install), null, 'spent: the offer goes')
+  // the browser may offer again later, after a dismissal
+  const again = promptEvent()
+  win.fire('beforeinstallprompt', again)
+  find(installView(install), byData('data-unfold-install-button')).props.onClick()
+  assert.equal(again.seen.prompts, 1)
+})
+
+test('#install opens the offer at load: Install when the browser can, else the Safari line', () => {
+  const safari = client.createInstall(fakeWindow({ hash: '#install', prompts: false }))
+  safari.watch()
+  const panel = find(installView(safari), byData('data-unfold-install-panel'))
+  assert.ok(panel, 'open from the address')
+  assert.equal(panel.props.role, 'dialog')
+  assert.equal(panel.props.tabIndex, -1, 'it takes the focus when it opens')
+  assert.equal(text(find(panel, byData('data-unfold-install-safari'))), 'In Safari, choose File › Add to Dock.')
+  assert.equal(find(panel, byData('data-unfold-install')), null, 'no Install button without the event')
+  assert.ok(text(find(render(client.InstallAction, { offer: safari.get(), onInstall: safari.prompt, t: pt }), byData('data-unfold-install-safari'))).includes('Arquivo › Adicionar ao Dock'))
+
+  const win = fakeWindow({ hash: '#install' })
+  const chrome = client.createInstall(win)
+  chrome.watch()
+  const event = promptEvent()
+  win.fire('beforeinstallprompt', event)
+  const open = find(installView(chrome), byData('data-unfold-install-panel'))
+  assert.equal(find(open, byData('data-unfold-install-safari')), null)
+  find(open, byData('data-unfold-install')).props.onClick()
+  assert.equal(event.seen.prompts, 1)
+
+  assert.equal(installView(client.createInstall(fakeWindow({ hash: '#other', prompts: false }))), null, 'another fragment opens nothing')
+})
+
+test('Chrome or Edge opened with #install never shows the Safari line, and opens on the event', () => {
+  const win = fakeWindow({ hash: '#install' })
+  const install = client.createInstall(win)
+  install.watch()
+  // not installable yet, or installed already from another tab: nothing to say
+  assert.equal(installView(install), null)
+  const event = promptEvent()
+  win.fire('beforeinstallprompt', event)
+  const open = find(installView(install), byData('data-unfold-install-panel'))
+  assert.ok(open, 'the address asked for it, so it opens when the browser can install')
+  assert.equal(find(open, byData('data-unfold-install-safari')), null)
+  find(open, byData('data-unfold-install')).props.onClick()
+  assert.equal(event.seen.prompts, 1)
+})
+
+test('an installed app never shows the offer', () => {
+  for (const options of [{ standalone: true }, { fullscreen: true }, { iosStandalone: true, prompts: false }]) {
+    const win = fakeWindow({ hash: '#install', ...options })
+    const install = client.createInstall(win)
+    install.watch()
+    win.fire('beforeinstallprompt', promptEvent())
+    assert.equal(installView(install), null, JSON.stringify(options))
+  }
+  // installed from this tab: the tab stops offering
+  const win = fakeWindow()
+  const install = client.createInstall(win)
+  install.watch()
+  win.fire('beforeinstallprompt', promptEvent())
+  win.fire('appinstalled')
+  assert.equal(installView(install), null)
+})
+
+test('the install offer listens only while watched, and works with no window at all', () => {
+  const win = fakeWindow()
+  const install = client.createInstall(win)
+  const stop = install.watch()
+  install.watch()
+  assert.equal(win.count('beforeinstallprompt'), 1, 'watching twice listens once')
+  stop()
+  assert.equal(win.count('beforeinstallprompt'), 0)
+  assert.equal(win.count('appinstalled'), 0)
+  const bare = client.createInstall(undefined)
+  bare.watch()()
+  assert.equal(installView(bare), null)
 })

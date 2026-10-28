@@ -1,9 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, readdirSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { endpointFile, removeEndpoint, writeEndpoint } from '../src/host/endpoint-file.js'
+import { endpointFile, removeEndpoint, takeStateDir, writeEndpoint } from '../src/host/endpoint-file.js'
 
 const KEY = 'test-key-not-a-secret-0123456789abcdef'
 const temp = () => mkdtempSync(join(tmpdir(), 'unfold-bridge-'))
@@ -14,6 +14,26 @@ test('the file is unfold-bridge/endpoint.json in XDG_STATE_HOME, else ~/.local/s
   assert.equal(endpointFile({}, '/home/x'), join('/home/x', '.local', 'state', 'unfold-bridge', 'endpoint.json'))
   // a relative XDG_STATE_HOME is invalid by the spec and ignored
   assert.equal(endpointFile({ XDG_STATE_HOME: 'rel' }, '/home/x'), join('/home/x', '.local', 'state', 'unfold-bridge', 'endpoint.json'))
+})
+
+test('Unfold names the folder in UNFOLD_BRIDGE_STATE_DIR: the file is <dir>/endpoint.json', () => {
+  assert.equal(endpointFile({ XDG_STATE_HOME: '/s' }, '/home/x', '/u/instances/one/dsh/bridge'), join('/u/instances/one/dsh/bridge', 'endpoint.json'))
+  assert.equal(endpointFile({}, '/home/x', null), join('/home/x', '.local', 'state', 'unfold-bridge', 'endpoint.json'), 'no folder named: the old rule')
+})
+
+test('UNFOLD_BRIDGE_STATE_DIR is read once and leaves the env; only an absolute one is used', () => {
+  const env = { UNFOLD_BRIDGE_STATE_DIR: '/u/instances/one/dsh/bridge', XDG_STATE_HOME: '/s' }
+  assert.equal(takeStateDir(env), '/u/instances/one/dsh/bridge')
+  assert.ok(!Object.hasOwn(env, 'UNFOLD_BRIDGE_STATE_DIR'), 'gone from the env after the read')
+  assert.equal(env.XDG_STATE_HOME, '/s', 'nothing else is touched')
+  assert.equal(takeStateDir(env), undefined, 'a second read finds nothing')
+  // a relative or empty one is ignored, and still taken out of the env
+  for (const value of ['rel/dir', '', './here']) {
+    const named = { UNFOLD_BRIDGE_STATE_DIR: value }
+    assert.equal(takeStateDir(named), null, JSON.stringify(value))
+    assert.deepEqual(named, {}, JSON.stringify(value))
+  }
+  assert.equal(takeStateDir({}), undefined, 'unset')
 })
 
 test('it is written 0600 in a 0700 folder with the port, the key, the pid and the start time', () => {
@@ -40,6 +60,19 @@ test('a folder that is already there is tightened to 0700, and an older file is 
     assert.equal(mode(folder), 0o700)
     assert.equal(mode(file), 0o600)
     assert.equal(JSON.parse(readFileSync(file, 'utf8')).key, KEY)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('a folder that is a symlink is refused, and its target is left as it was', () => {
+  const dir = temp()
+  try {
+    const target = join(dir, 'elsewhere')
+    mkdirSync(target, { mode: 0o755 })
+    chmodSync(target, 0o755)
+    symlinkSync(target, join(dir, 'bridge'))
+    assert.throws(() => writeEndpoint(join(dir, 'bridge', 'endpoint.json'), { port: 2, key: KEY, pid: 1, started: 1 }), { code: 'symlinked_state_dir' })
+    assert.equal(mode(target), 0o755, 'the target keeps its mode')
+    assert.deepEqual(readdirSync(target), [], 'and gets no file')
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 

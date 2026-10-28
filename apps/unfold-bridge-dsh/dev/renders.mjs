@@ -62,6 +62,12 @@ for (const language of ['en', 'pt-BR']) {
   write(`${language}_no-badges_settings.html`, `${language} · subscriptions without added_by · settings`, SLOTS.settings(fixtureView({ badges: false }), t))
   write(`${language}_first-run_board.html`, `${language} · first run · board`, SLOTS.board(fixtureView({ subscriptions: false, log: false }), t))
   write(`${language}_bridge-down_settings.html`, `${language} · view stream down · settings`, SLOTS.settings(null, t))
+  // The install offer: the browser can prompt, or not (Safari), each closed and opened by #install.
+  for (const canPrompt of [true, false]) for (const opened of [false, true]) {
+    const offer = { canPrompt, opened, installed: false, prompts: canPrompt }
+    const state = `${language}_install_${canPrompt ? 'can-prompt' : 'safari'}_${opened ? 'opened-by-hash' : 'closed'}`
+    write(`${state}.html`, `${state} · sidebar.footer.action`, frame('sidebar.footer.action · unfold-bridge.install', draw(client.InstallAction, { offer, t, onInstall() {}, wide: true })))
+  }
 }
 writeFileSync(join(out, 'index.html'), page('Unfold bridge client renders', `<ul>${written.map(name => `<li><a href="${name}">${name}</a></li>`).join('')}</ul>`))
 console.log(`renders: ${written.length} files in ${out}`)

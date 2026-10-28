@@ -1,8 +1,10 @@
 // Your DSH's models for Unfold. This host plugin serves the model routes of the DSH it runs in
 // on 127.0.0.1, as the OpenAI chat-completions subset Unfold's agent speaks (src/host/bridge.js),
 // behind a key made at each start. Unfold finds the port and the key in this plugin's state
-// file (src/host/endpoint-file.js). Sign-ins and their tokens stay in DSH: the bridge sends
-// each request through DSH's llm service and returns text, usage and stable failure codes.
+// file (src/host/endpoint-file.js). In Unfold's own DSH, Unfold names that file's folder and the
+// port (UNFOLD_BRIDGE_STATE_DIR, UNFOLD_BRIDGE_PORT); without them it is as in any DSH. Sign-ins
+// and their tokens stay in DSH: the bridge sends each request through DSH's llm service and
+// returns text, usage and stable failure codes.
 //
 // Once DSH's session services are up, the plugin also keeps a work view for Unfold
 // (src/host/watch.js): Unfold reads a subscription-filtered event stream and registers drafts
@@ -12,10 +14,10 @@
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
-import { startBridge } from './src/host/bridge.js'
+import { startBridge, takePort } from './src/host/bridge.js'
 import { clientRoutes, promptWith } from './src/host/client-routes.js'
 import { dshRoutes } from './src/host/dsh-routes.js'
-import { endpointFile, removeEndpoint, writeEndpoint } from './src/host/endpoint-file.js'
+import { endpointFile, removeEndpoint, takeStateDir, writeEndpoint } from './src/host/endpoint-file.js'
 import { createWatch } from './src/host/watch.js'
 
 export const name = 'unfold-bridge'
@@ -24,15 +26,31 @@ export const inject = ['llm']
 export const VIEW_INJECT = ['sessionController', 'sessions', 'sessionTitle', 'workspaceRegistry', 'connection']
 const LIST_TIMEOUT_MS = 10_000
 
+// What Unfold named, read when the plugin first applies: the variables leave the env then, so a
+// restart of the plugin in the same process keeps them here. They live on the process, not the
+// module, because hot reload or a live update makes a fresh module instance that finds the env
+// empty; without them it would write the shared file on a random port. Any code in the DSH
+// process can reach this symbol, as it can DSH's launch snapshot: it is no boundary either.
+const named = (globalThis[Symbol.for('unfold-bridge.named')] ??= { stateDir: null, port: 0 })
+function takeNamed() {
+  const stateDir = takeStateDir()
+  if (stateDir !== undefined) named.stateDir = stateDir
+  const port = takePort()
+  if (port !== undefined) named.port = port
+  return named
+}
+
 export function apply(ctx) {
   let routes
+  const { stateDir, port } = takeNamed()
   ctx.effect(() => {
     const key = randomBytes(32).toString('base64url')
-    const file = endpointFile()
+    const file = endpointFile(process.env, undefined, stateDir)
     let stopped = false
     const running = startBridge({
       llm: ctx.llm,
       key,
+      port,
       assistant: createAssistantMessage,
       log: line => ctx.logger?.info?.('unfold-bridge: %s', line),
       dsh: () => routes,
@@ -48,6 +66,7 @@ export function apply(ctx) {
       ctx.logger?.info?.('unfold-bridge: serving on 127.0.0.1:%d', bridge.port)
       return bridge
     }).catch(error => {
+      // A refused start leaves no endpoint file, and DSH goes on without the bridge.
       ctx.logger?.warn?.('unfold-bridge: not serving: %s', error?.message ?? error)
     })
     return async () => {
