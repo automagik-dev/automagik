@@ -79,11 +79,12 @@ and nothing is chosen.
 Unfold's card is the third. Its power button installs, after the Bot team, the Unfold bridge,
 the Unfold plugins and `@automagik/unfold-bot-dsh`, all from this repository at this plugin's
 version, as the Bot team is (no git source, so no git check); that plugin then makes the Unfold
-Bot. Unfold's own Automagik instance starts DSH with `AUTOMAGIK_PRELOAD=unfold`: Unfold's card
-comes first and is on the team from the start, because the Unfold Bot is the instance's Main
-Bot, so the companion step is done (Unfold leads) and no other Bot is made. With
-`AUTOMAGIK_HOST=unfold` (`state` reports it as `host`, `src/host/host.js`) Omni and Genie come
-with the instance: Omni's card offers no new Omni of its own, Genie's names the command line the
+Bot. Unfold's own Automagik instance starts DSH with `AUTOMAGIK_HOST=unfold` or
+`AUTOMAGIK_PRELOAD=unfold` (either one names it: `src/host/host.js`, the same rule as the Bot
+team's and the Unfold Bot's). There Unfold's card comes first and is on the team from the start,
+because the Unfold Bot is the instance's Main Bot, so the companion step is done (Unfold leads)
+and no other Bot is made. `state` reports it as `host`, and Omni and Genie come with the
+instance: Omni's card offers no new Omni of its own, Genie's names the command line the
 instance brought instead of the line that installs one, and no row carries Claude Code's install
 line.
 

@@ -156,11 +156,11 @@ export function createActions(ctx, { fetch: fetchImpl = globalThis.fetch, anyOn,
       const providers = entryOf(rows, PI_AI)?.value?.providers
       const piAiRoutes = providers && typeof providers === 'object' ? Object.keys(providers) : []
       const deepseek = await isConfigured(() => ctx.credentials.describe(DEEPSEEK_REF)) || await isConfigured(() => ctx.credentials.describeRecord(DEEPSEEK_ACCOUNT))
-      const preload = preloadOf(env)
       const host = hostOf(env)
-      // Opened for Unfold, Unfold is the Main Bot its plugin made: no companion to make, and
-      // Omni joins only when the person powers it on.
-      const unfold = preload === 'unfold'
+      // In Unfold's instance, Unfold is the Main Bot its plugin made: no companion to make, its
+      // card comes first, and Omni joins only when the person powers it on.
+      const unfold = host === 'unfold'
+      const preload = unfold ? 'unfold' : preloadOf(env)
       return {
         companionDone: unfold || own.companionDone === true,
         teamDone: own.teamDone === true,
@@ -224,7 +224,7 @@ export function install(ctx, deps = {}) {
   const terminal = createTerminalActions(ctx, { checkClaude, ...deps.terminal })
   const { anyOn, ...aiEndpoints } = ai
   const { closeAll, ...terminalEndpoints } = terminal
-  const { team, omniProjectOf, assignModels, joinOmni, ...companion } = createCompanionActions(ctx, deps.companion)
+  const { team, omniProjectOf, assignModels, joinOmni, ...companion } = createCompanionActions(ctx, { env: deps.env ?? process.env, ...deps.companion })
   // A deleted Omni Bot comes back from the Bot team's New menu (Add Omni), made the way the
   // team step makes it: while the Bot team and Omni's channels run, the team view says
   // whether it is missing, and the omni-add endpoint makes it.

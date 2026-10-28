@@ -7,6 +7,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { hostOf } from './host.js'
 import { CompanionPayload, GeneratePayload, TeamPayload, parse } from './payloads.js'
 
 // Where DSH keeps each sign-in (dsh-llm-pi-ai's recordKeyFor): a ChatGPT grant, or a key.
@@ -148,6 +149,8 @@ export function createCompanionActions(ctx, { fetch: fetchImpl = globalThis.fetc
   // The companion made before the Omni plugins ran here (installed by the team step) is
   // the Main Bot's look and name once they do.
   async function applyCompanion(rt, entry = ownEntry(ctx)) {
+    // In Unfold's instance the Main Bot is Unfold's own, and no companion renames it.
+    if (hostOf(env) === 'unfold') return false
     if (typeof entry.companionName !== 'string') return false
     const id = await mainBotOf(rt)
     if (id === undefined) return false

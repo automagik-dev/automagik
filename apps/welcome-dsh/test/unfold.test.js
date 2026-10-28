@@ -68,12 +68,26 @@ const settleUnfold = async (fake) => {
   throw new Error('the Unfold install never ended')
 }
 
-test('unfold is a preload, and AUTOMAGIK_HOST=unfold a host kind; nothing else is', () => {
+test('unfold is a preload, and Unfold\'s instance (host kind or preload unfold) a host kind; nothing else is', () => {
   assert.ok(PRELOADS.includes('unfold'))
   assert.equal(preloadOf({ AUTOMAGIK_PRELOAD: ' Unfold ' }), 'unfold')
   assert.equal(hostOf({ AUTOMAGIK_HOST: 'unfold' }), 'unfold')
+  assert.equal(hostOf({ AUTOMAGIK_PRELOAD: 'unfold' }), 'unfold')
   assert.equal(hostOf({ AUTOMAGIK_HOST: 'desktop' }), null)
+  assert.equal(hostOf({ AUTOMAGIK_PRELOAD: 'genie' }), null)
   assert.equal(hostOf({}), null)
+})
+
+// The three packages that tell Unfold's instance apart install on their own, so each keeps the
+// rule; this holds the three copies to one answer.
+test('the Bot team, the Unfold Bot and the welcome tell Unfold\'s instance by one rule', async () => {
+  const { inUnfoldInstance } = await import('../../bots-dsh/src/host/constants.js')
+  const { unfoldLeads } = await import('../../unfold-bot-dsh/src/host/unfold.js')
+  const envs = [{}, { AUTOMAGIK_HOST: 'unfold' }, { AUTOMAGIK_PRELOAD: 'unfold' }, UNFOLD, { AUTOMAGIK_HOST: ' Unfold ' }, { AUTOMAGIK_PRELOAD: 'genie' }, { AUTOMAGIK_HOST: 'desktop', AUTOMAGIK_PRELOAD: 'omni' }]
+  for (const env of envs) {
+    const want = env === envs[0] || env === envs[5] || env === envs[6] ? false : true
+    assert.deepEqual([inUnfoldInstance(env), unfoldLeads(env), hostOf(env) === 'unfold'], [want, want, want], JSON.stringify(env))
+  }
 })
 
 test('the Unfold Bot sits beside the Omni Bot: Unfold, of kind unfold', () => {
@@ -81,16 +95,13 @@ test('the Unfold Bot sits beside the Omni Bot: Unfold, of kind unfold', () => {
   assert.deepEqual({ name: UNFOLD_BOT.name, kind: UNFOLD_BOT.kind }, { name: 'Unfold', kind: 'unfold' })
 })
 
-test('with the Unfold preload, the companion step is done (Unfold leads) and Omni is not chosen', async () => {
-  const state = await value(host({ env: { AUTOMAGIK_PRELOAD: 'unfold' } }), 'state')
-  assert.equal(state.preload, 'unfold')
-  assert.equal(state.companionDone, true)
-  assert.equal(state.companionName, 'Unfold')
-  assert.equal(state.teamOmni, false)
-  assert.equal('host' in state, false)
-  const instance = await value(host({ env: UNFOLD }), 'state')
-  assert.equal(instance.host, 'unfold')
-  // Without the preload the companion step stays the person's.
+test('in Unfold\'s instance, the companion step is done (Unfold leads) and Omni is not chosen', async () => {
+  // Named by its host kind, its preload, or both.
+  for (const env of [{ AUTOMAGIK_PRELOAD: 'unfold' }, { AUTOMAGIK_HOST: 'unfold' }, UNFOLD]) {
+    const state = await value(host({ env }), 'state')
+    assert.deepEqual([state.preload, state.host, state.companionDone, state.companionName, state.teamOmni], ['unfold', 'unfold', true, 'Unfold', false], JSON.stringify(env))
+  }
+  // Elsewhere the companion step stays the person's.
   const plain = await value(host({ env: {} }), 'state')
   assert.equal(plain.companionDone, false)
   assert.equal(plain.teamOmni, true)

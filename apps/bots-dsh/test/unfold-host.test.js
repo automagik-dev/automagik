@@ -25,6 +25,7 @@ const HOST = 'AUTOMAGIK_HOST'
 afterEach(() => {
   globalThis.fetch = realFetch
   delete process.env[HOST]
+  delete process.env.AUTOMAGIK_PRELOAD
   mock.timers.reset()
 })
 const flush = async () => { for (let index = 0; index < 14; index += 1) await Promise.resolve() }
@@ -72,12 +73,14 @@ async function tenMinutesLater(rt) {
   return { update, dsh, stars }
 }
 
-test('the host kind is read from AUTOMAGIK_HOST, and only unfold names it', () => {
-  assert.equal(typeof constants.inUnfoldHost, 'function')
-  assert.equal(constants.inUnfoldHost({ AUTOMAGIK_HOST: 'unfold' }), true)
-  assert.equal(constants.inUnfoldHost({ AUTOMAGIK_HOST: ' Unfold ' }), true)
-  assert.equal(constants.inUnfoldHost({ AUTOMAGIK_HOST: 'desktop' }), false)
-  assert.equal(constants.inUnfoldHost({}), false)
+test('Unfold\'s instance is named by AUTOMAGIK_HOST or AUTOMAGIK_PRELOAD, and only unfold names it', () => {
+  assert.equal(typeof constants.inUnfoldInstance, 'function')
+  assert.equal(constants.inUnfoldInstance({ AUTOMAGIK_HOST: 'unfold' }), true)
+  assert.equal(constants.inUnfoldInstance({ AUTOMAGIK_HOST: ' Unfold ' }), true)
+  assert.equal(constants.inUnfoldInstance({ AUTOMAGIK_PRELOAD: 'unfold' }), true)
+  assert.equal(constants.inUnfoldInstance({ AUTOMAGIK_HOST: 'desktop' }), false)
+  assert.equal(constants.inUnfoldInstance({ AUTOMAGIK_PRELOAD: 'genie' }), false)
+  assert.equal(constants.inUnfoldInstance({}), false)
 })
 
 test('elsewhere the same setup asks the registry and GitHub, and offers the update', async () => {

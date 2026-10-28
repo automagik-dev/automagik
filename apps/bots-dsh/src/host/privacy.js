@@ -2,18 +2,18 @@
 // desktop app names in AUTOMAGIK_PRIVACY_FILE (apps/desktop src/privacy.js applies them at its
 // next launch). Elsewhere (a dsh in a terminal, a browser on a remote host) there is no such
 // file and the page says the app is not managing privacy here. In Unfold's own instance
-// (AUTOMAGIK_HOST=unfold) Unfold's Privacy settings decide, and the page has no switch. What
+// (inUnfoldInstance) Unfold's Privacy settings decide, and the page has no switch. What
 // could train a model starts off; the rest starts on (DEFAULTS, the same as the app's).
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { inUnfoldHost } from './constants.js'
+import { inUnfoldInstance } from './constants.js'
 
 // The desktop app's shares, by the keys it reads; a key it does not know is never written.
 export const SHARES = Object.freeze(['deepseek-session-log', 'deepseek-feedback', 'claude-errors', 'spellcheck', 'stable-id'])
 export const DEFAULTS = Object.freeze({ 'deepseek-session-log': false, 'deepseek-feedback': false, 'claude-errors': true, spellcheck: true, 'stable-id': true })
 
 export function createPrivacy({ env = process.env } = {}) {
-  const unfold = inUnfoldHost(env)
+  const unfold = inUnfoldInstance(env)
   const file = unfold ? null : env.AUTOMAGIK_PRIVACY_FILE?.trim() || null
   const read = () => {
     let share = {}

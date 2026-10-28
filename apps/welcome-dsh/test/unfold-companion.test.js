@@ -56,7 +56,7 @@ async function afterRestart(env, entry) {
     const team = fakeTeam(home)
     const ctx = ctxOf(team, entry)
     await createUnfold(ctx, team, {}, env).unfoldReady
-    await createCompanionActions(ctx, { env: {} })['team-save']({ omni: false })
+    await createCompanionActions(ctx, { env })['team-save']({ omni: false })
     return Object.values(team.state.bots).map(bot => [bot.name, bot.kind ?? null, team.state.mainBotIds.includes(bot.id)])
   } finally {
     rmSync(home, { recursive: true, force: true })
@@ -70,5 +70,13 @@ test('in a plain DSH, the companion made before Unfold powered on is the Main Bo
 test('in Unfold\'s own instance, Unfold leads the team and no companion is made', async () => {
   for (const env of [{ AUTOMAGIK_HOST: 'unfold' }, { AUTOMAGIK_PRELOAD: 'unfold' }]) {
     assert.deepEqual(await afterRestart(env, { companionDone: true }), [['Unfold', 'unfold', true]], JSON.stringify(env))
+  }
+})
+
+// Named by its host kind alone, the instance still shows no companion step, and a companion
+// saved before (a step shown by an older welcome) never renames the Unfold Bot.
+test('in Unfold\'s instance by host kind alone, a saved companion leaves the Unfold Bot as it is', async () => {
+  for (const env of [{ AUTOMAGIK_HOST: 'unfold' }, { AUTOMAGIK_PRELOAD: 'unfold' }]) {
+    assert.deepEqual(await afterRestart(env, { companionName: 'Pip', companionColor: 'teal' }), [['Unfold', 'unfold', true]], JSON.stringify(env))
   }
 })

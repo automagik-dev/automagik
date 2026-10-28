@@ -4,7 +4,7 @@
 // runs from the next DSH start. A linked or local checkout is never offered one.
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { inDesktopApp, inUnfoldHost } from './constants.js'
+import { inDesktopApp, inUnfoldInstance } from './constants.js'
 
 const PKG = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
 export const OFFICIAL_REGISTRY = 'https://registry.npmjs.org/'
@@ -114,7 +114,7 @@ export const STARS_TTL_MS = 60 * 60_000
 export function install(rt) {
   const { ctx, config } = rt
   // Unfold's own instance updates with Unfold, so it never asks.
-  const enabled = config.updateCheck !== false && !inUnfoldHost()
+  const enabled = config.updateCheck !== false && !inUnfoldInstance()
   const manager = () => ctx.get?.('pluginManager')
 
   const status = {
@@ -163,7 +163,7 @@ export function install(rt) {
   let starring = null
   async function repoStars() {
     const repo = repoSlug()
-    if (repo === null || inUnfoldHost()) return null
+    if (repo === null || inUnfoldInstance()) return null
     if (Date.now() - stars.at < STARS_TTL_MS) return stars.count
     starring ??= fetchJson(`https://api.github.com/repos/${repo}`, { 'user-agent': `${PKG.name}/${PKG.version}` })
       .then((info) => { if (Number.isInteger(info?.stargazers_count)) stars = { count: info.stargazers_count, at: Date.now() } })
