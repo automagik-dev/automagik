@@ -118,6 +118,11 @@ export function routes(service, base, hub = sseHub()) {
       path: `${base}/stream`,
       handler: async (req, res) => hub.open(req, res, 'map', service.map()),
     },
+    { kind: 'exact', path: '/api/unfold-capabilities/config', handler: async (req, res) => {
+      if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); return res.end() }
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+      res.end(JSON.stringify({ route: base }))
+    } },
   ]
 }
 
@@ -145,5 +150,6 @@ export function fetchRoutes(service, base, hub = sseHub()) {
       requestBody: 'buffered',
       fetch: async (request) => fetchStream(hub, request, 'map', service.map()),
     },
+    { path: '/api/unfold-capabilities/config', methods: ['GET'], requestBody: 'buffered', fetch: async () => Response.json({ route: base }) },
   ]
 }
