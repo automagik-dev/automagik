@@ -63,7 +63,7 @@
         "en": "Unfold Mind"
       },
       "description": {
-        "en": "See what Unfold's agent is doing, one plain sentence per event, grouped into episodes. Each row opens an audit panel with its ids, cause chain and source. It only shows: it sends nothing to the agent, and the suggestions you write stay in a local file."
+        "en": "Part of Unfold; works with the Unfold app. See what Unfold's agent is doing, one plain sentence per event, grouped into episodes. Each row opens an audit panel with its ids, cause chain and source. It only shows: it sends nothing to the agent, and the suggestions you write stay in a local file."
       },
       "category": "automagik",
       "keywords": [
