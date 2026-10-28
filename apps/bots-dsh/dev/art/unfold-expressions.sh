@@ -12,17 +12,16 @@ set -eu
 src=${1:?the folder of the seven stills}
 out=${2:?the strip to write}
 faces="calm pleased delighted focused curious asleep sad"
-inputs=""
+set --
 filter=""
 i=0
 for face in $faces; do
   [ -f "$src/$face.webp" ] || { echo "missing $src/$face.webp" >&2; exit 1; }
-  inputs="$inputs -i $src/$face.webp"
+  set -- "$@" -i "$src/$face.webp"
   filter="$filter[$i:v]format=rgba,scale=192:208:force_original_aspect_ratio=decrease:flags=lanczos,pad=192:208:(ow-iw)/2:(oh-ih)/2:color=0x00000000[c$i];"
   i=$((i + 1))
 done
 png="$(mktemp -d)/strip.png"
-# shellcheck disable=SC2086
-"$FFMPEG" -v error -y $inputs -filter_complex "${filter}[c0][c1][c2][c3][c4][c5][c6]hstack=inputs=7,format=rgba[out]" -map "[out]" -frames:v 1 -fflags +bitexact -flags +bitexact "$png"
+"$FFMPEG" -v error -y "$@" -filter_complex "${filter}[c0][c1][c2][c3][c4][c5][c6]hstack=inputs=7,format=rgba[out]" -map "[out]" -frames:v 1 -fflags +bitexact -flags +bitexact "$png"
 "$CWEBP" -quiet -lossless -exact "$png" -o "$out"
 rm -rf "$(dirname "$png")"

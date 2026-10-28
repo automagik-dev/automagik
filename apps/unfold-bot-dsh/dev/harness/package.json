@@ -3,7 +3,7 @@
   "private": true,
   "description": "The DeepSeek Harness packages that the linter runs against. Install with bun run harness in apps/unfold-bot-dsh.",
   "dependencies": {
-    "@deepseek-ai/dsh": "0.2.1-rc.3",
+    "@deepseek-ai/dsh": "0.2.1-rc.4",
     "oxlint": "1.76.0"
   },
   "overrides": {
