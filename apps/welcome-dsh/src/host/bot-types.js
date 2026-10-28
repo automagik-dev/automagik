@@ -13,6 +13,7 @@ import { homedir } from 'node:os'
 import { delimiter, isAbsolute, join } from 'node:path'
 import { hostOf } from './host.js'
 import { BotTypePayload, parse } from './payloads.js'
+import { RELEASES, checkedTarballs } from './release-lane.js'
 
 const PKG = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
 
@@ -152,7 +153,7 @@ export const hasGenieSkills = (home = homedir()) => existsSync(join(home, '.agen
 // What an install in Unfold's instance says when a plugin its pack brings is not there.
 export const BUNDLED_MISSING = 'Unfold brings this plugin, and it is missing from this instance.'
 
-export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.env, checkGit = gitProblem, genieSkills = hasGenieSkills, genieCli = () => onPath('genie', env) }) {
+export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.env, checkGit = gitProblem, genieSkills = hasGenieSkills, genieCli = () => onPath('genie', env), release = {} }) {
   const manager = () => service(ctx, 'pluginManager')
   // Unfold's own instance brings its plugins and Genie's command line with it: the card names
   // that command line, never the line that installs one, and nothing here installs a plugin.
@@ -227,13 +228,28 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.e
     return { there: false, restart: result.application === 'restart-required' }
   }
 
+  // Where each of `list` installs from. The ones about to be installed from this release's
+  // tarballs are first all checked against the release's signed lane, and then install from the
+  // checked copies (release-lane.js); one that fails stops the install before anything is installed.
+  async function targetsOf(list, rows, ownSource) {
+    const targets = list.map(plugin => installTargetOf(plugin, ownSource))
+    const missing = (plugin) => {
+      const row = rowOf(rows, plugin)
+      return row === undefined || row.availability === 'missing'
+    }
+    const wanted = list.flatMap((plugin, i) => (!bundled && missing(plugin) && targets[i].spec.startsWith(RELEASES) ? [{ name: plugin.name, url: targets[i].spec }] : []))
+    const paths = await checkedTarballs(wanted, { version: PKG.version, env, ...release })
+    return targets.map((target, i) => (paths[list[i].name] ? { ...target, spec: paths[list[i].name] } : target))
+  }
+
   async function runInstall() {
     const rows = await bundles() ?? []
     const ownSource = rows.find(bundle => bundle.name === PKG.name)?.source
-    for (const plugin of OMNI_PLUGINS) {
+    const targets = await targetsOf(OMNI_PLUGINS, rows, ownSource)
+    for (const [i, plugin] of OMNI_PLUGINS.entries()) {
       const row = rowOf(rows, plugin)
       if (row === undefined || row.availability === 'missing' || row.enabled === false) job.current = plugin.name
-      const { restart } = await ensure(plugin, rows, installTargetOf(plugin, ownSource))
+      const { restart } = await ensure(plugin, rows, targets[i])
       if (restart) job.restart = true
       job.done.push(plugin.name)
     }
@@ -293,7 +309,7 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.e
     const ownSource = rows.find(bundle => bundle.name === PKG.name)?.source
     const [botTeam] = OMNI_PLUGINS
     const { requestId } = genieJob
-    const teamTarget = installTargetOf(botTeam, ownSource)
+    const [teamTarget] = await targetsOf([botTeam], rows, ownSource)
     const teamStep = await ensure(botTeam, rows, { ...teamTarget, options: { ...teamTarget.options, requestId }, onStart: what => say(step(`${what === 'install' ? 'Installing' : 'Switching on'} the Bot team (${botTeam.name})`)) })
     if (teamStep.there) say(ok('The Bot team is here'))
     const genieStep = await ensure(GENIE_PLUGIN, rows, { spec: genieSpec(), options: { requestId }, onStart: what => say(step(what === 'install' ? `Installing Genie (${GENIE_PLUGIN.name} ${GENIE_RELEASE.version}, ${GENIE_RELEASE.repository.replace(/^https:\/\/github\.com\//, '')}@${GENIE_RELEASE.commit.slice(0, 7)})` : 'Switching Genie on')) })
@@ -348,9 +364,10 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.e
   async function runUnfoldInstall() {
     const rows = await bundles() ?? []
     const ownSource = rows.find(bundle => bundle.name === PKG.name)?.source
-    for (const plugin of UNFOLD_ALL) {
+    const targets = await targetsOf(UNFOLD_ALL, rows, ownSource)
+    for (const [i, plugin] of UNFOLD_ALL.entries()) {
       unfoldJob.current = plugin.name
-      const { restart } = await ensure(plugin, rows, installTargetOf(plugin, ownSource))
+      const { restart } = await ensure(plugin, rows, targets[i])
       if (restart) unfoldJob.restart = true
       unfoldJob.done.push(plugin.name)
     }

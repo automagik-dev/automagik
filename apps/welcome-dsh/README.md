@@ -101,7 +101,13 @@ own, since DSH takes one per namespace and language. The other steps are English
 
 The Bot team (`@automagik/bots-dsh`) is this repository's, at this plugin's version: from
 the source this plugin came from, pointed at `apps/bots-dsh` (the same commit, or a linked
-checkout), else that release's tarball. A DSH that has the team under its former name,
+checkout), else that release's tarball. A release tarball is installed only after every
+one about to be installed matches the `lane.json` on the same release, signed with a key
+the plugin carries (`src/host/lane-keys.json`, a copy of `plugin-lane/keys.json`): the lane
+for this version, each tarball's size, sha256 and sha512. One that does not match, or a
+release without a signed lane, stops the install before anything is installed; the checked
+tarballs are kept, 0600, under `<AUTOMAGIK_HOME>/welcome/tarballs`, where the profile
+installs them from. A DSH that has the team under its former name,
 `@automagik/omni-dsh`, has the team: it is switched on, not installed over. Omni's channels
 and canvases (`@automagik/omni-channels-dsh`, `@automagik/omni-canvas-dsh`) are Omni's, at
 Omni's version: they install as a git source from Omni's repository at the release
