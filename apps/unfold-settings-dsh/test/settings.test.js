@@ -355,6 +355,14 @@ test('src/sse.js is unfold-sse-dsh\'s index.js, byte for byte', () => {
   assert.equal(createHash('sha256').update(readFileSync(new URL('../src/sse.js', import.meta.url))).digest('hex'), SSE_SHA256)
 })
 
+// unfold-events-dsh's src/client/ui.jsx as released with the first Unfold plugins: the look every
+// Unfold sidebar tab shares. Change it there, then copy it here and update the hash.
+const UI_SHA256 = 'c9f820717b4b5d0b236dd32d4ce794b3fab29b4f86d2d2cf84483216677f4d21'
+
+test('src/client/ui.jsx is unfold-events-dsh\'s copy, byte for byte', () => {
+  assert.equal(createHash('sha256').update(readFileSync(new URL('../src/client/ui.jsx', import.meta.url))).digest('hex'), UI_SHA256)
+})
+
 // Secret scanners and push protection match a key's shape, not its intent, so a test that needs a
 // key-shaped value builds it at runtime and no file in the package spells one.
 const KEY_SHAPES = [

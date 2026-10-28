@@ -1,7 +1,5 @@
-// SPDX-License-Identifier: MIT
-//
-// The look shared by every Unfold sidebar tab (presence, Mind, settings, events). Each plugin carries
-// its own copy in its browser half; it is not a package and has no server half.
+// The look shared by every Unfold sidebar tab (presence, Mind, settings, events). Bundled into each
+// plugin's browser half by relative import; it is not a package and has no server half.
 //
 // One small vocabulary, so the tabs read as one product:
 // - tokens on `.unfold-ui` (light and dark through the page's own color-scheme, via light-dark());
