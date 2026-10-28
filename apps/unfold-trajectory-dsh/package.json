@@ -72,7 +72,7 @@
         "en": "Unfold's trajectory"
       },
       "description": {
-        "en": "What Unfold heard, thought, said and did, as one ledger with a timing overview and an inspector, in Unfold's own Session. A fork of DeepSeek's Trajectory view that reads Unfold's Mind stream (from Unfold's Mind plugin) and opens no other connection. It only reads, and DeepSeek's own Trajectory view stays as it is."
+        "en": "Part of Unfold; works with the Unfold app. What Unfold heard, thought, said and did, as one ledger with a timing overview and an inspector, in Unfold's own Session. A fork of DeepSeek's Trajectory view that reads Unfold's Mind stream (from Unfold's Mind plugin) and opens no other connection. It only reads, and DeepSeek's own Trajectory view stays as it is."
       },
       "category": "ai",
       "keywords": [
