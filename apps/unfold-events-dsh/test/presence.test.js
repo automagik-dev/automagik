@@ -312,3 +312,48 @@ test('call-aware mic: a stale host read is unknown, whatever the call said', () 
   assert.equal(gone.state, 'unknown')
   assert.equal(gone.call, null)
 })
+
+test('plugin: presence snapshots and SSE redact fault credentials before catalog clipping', async (t) => {
+  const { Context } = await import('@deepseek-ai/cordis')
+  const { SessionProjectionRegistry } = await import('@deepseek-ai/dsh-session-projection')
+  const plugin = await import('../index.js')
+  const ctx = new Context()
+  await ctx.plugin(SessionProjectionRegistry)
+  const fiber = ctx.plugin(plugin, { agentd: { enabled: false }, presence: { host: false } })
+  await fiber
+  t.after(() => fiber.dispose())
+  const service = ctx.get('unfoldEvents')
+  const [snapshot, stream] = plugin.presenceFetchRoutes(service, '/api/unfold-presence', service.presenceStreams)
+  const response = await stream.fetch(new Request('http://localhost/api/unfold-presence/stream'))
+  const reader = response.body.getReader()
+  t.after(() => reader.cancel())
+  const read = async () => {
+    const timeout = setTimeout(() => reader.cancel(), 2000)
+    try {
+      const { value, done } = await reader.read()
+      assert.equal(done, false, 'presence SSE frame arrives within 2 s')
+      return new TextDecoder().decode(value)
+    } finally { clearTimeout(timeout) }
+  }
+  await read()
+  service.setLink('attached', 'observer')
+  await read()
+  const canary = 'sk-proofCANARY0123456789abcdefABCDEF'
+  for (const detail of [
+    `connect with ${canary}`,
+    { api_key: 'synthetic-secret-value', nested: { note: canary } },
+    `${'x'.repeat(125)} ${canary} end`,
+  ]) {
+    service.ingest(env('journal_fault', { detail }))
+    const update = await read()
+    const json = await (await snapshot.fetch()).text()
+    const initial = await stream.fetch(new Request('http://localhost/api/unfold-presence/stream'))
+    const initialReader = initial.body.getReader()
+    const initialFrame = new TextDecoder().decode((await initialReader.read()).value)
+    await initialReader.cancel()
+    for (const text of [update, json, initialFrame]) {
+      assert.doesNotMatch(text, /proofCANARY|synthetic-secret-value/)
+      assert.match(text, /\[redacted\]/)
+    }
+  }
+})

@@ -331,7 +331,7 @@ const ENVELOPE = new Set(['v', 'id', 'producer', 'seq', 't_ns', 'source', 'cause
 
 /** An envelope with every payload field redacted (key-aware), its stamps kept. A media chunk's
  * base64 `data` is kept as it is: it is only counted (audioOf) and never held or emitted. */
-function redactEnvelope(env, entry) {
+export function redactEnvelope(env, entry) {
   const out = {}
   for (const [k, v] of Object.entries(env)) out[k] = ENVELOPE.has(k) || (entry?.media && k === 'data') ? v : redact(v, k)
   return out

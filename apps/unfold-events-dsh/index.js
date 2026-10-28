@@ -13,7 +13,7 @@ import { DEFAULT_CATALOG, loadCatalog } from './src/catalog.js'
 import { AgentdObserver } from './src/observer.js'
 import { HOST_READ_MS, STREAM_HEARTBEAT_MS, initialPresence, nextDeadline, presence, view } from './src/presence.js'
 import { fold, initialState, projectionDefinition } from './src/projection.js'
-import { EventWindow } from './src/window.js'
+import { EventWindow, redactEnvelope } from './src/window.js'
 
 export const name = 'unfold-events'
 
@@ -75,7 +75,8 @@ export function apply(ctx, config) {
     presenceStreams: presenceHub,
     ingest(env) {
       aggregates = fold(aggregates, env, catalog)
-      feed({ type: 'event', d: catalog.describe(env) })
+      // Mask payloads before summary rendering can clip a credential into a fragment.
+      feed({ type: 'event', d: catalog.describe(redactEnvelope(env, catalog.entry(env.kind))) })
       return window.push(env)
     },
     setLink(state, detail) {
