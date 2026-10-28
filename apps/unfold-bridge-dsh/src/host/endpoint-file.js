@@ -6,8 +6,22 @@ import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 
+// Unfold's own DSH names the folder in UNFOLD_BRIDGE_STATE_DIR, so its bridge never writes the
+// file another DSH on this computer uses. It is taken out of the env at the read: tools DSH
+// spawns later build their env from process.env and never see it. That hides the path; it is
+// no boundary, since DSH's launch snapshot keeps the value. Only an absolute folder is used:
+// undefined when unset, null when set but not absolute (an empty one too).
+export function takeStateDir(env = process.env) {
+  if (!Object.hasOwn(env, 'UNFOLD_BRIDGE_STATE_DIR')) return undefined
+  const dir = env.UNFOLD_BRIDGE_STATE_DIR
+  delete env.UNFOLD_BRIDGE_STATE_DIR
+  return dir && isAbsolute(dir) ? dir : null
+}
+
+// `<stateDir>/endpoint.json` when Unfold named a folder (writeEndpoint makes it 0700). Else
 // XDG_STATE_HOME when it is absolute (the spec ignores a relative one), else ~/.local/state.
-export function endpointFile(env = process.env, home = homedir()) {
+export function endpointFile(env = process.env, home = homedir(), stateDir = null) {
+  if (stateDir) return join(stateDir, 'endpoint.json')
   const state = env.XDG_STATE_HOME && isAbsolute(env.XDG_STATE_HOME) ? env.XDG_STATE_HOME : join(home, '.local', 'state')
   return join(state, 'unfold-bridge', 'endpoint.json')
 }

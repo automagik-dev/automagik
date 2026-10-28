@@ -34,7 +34,7 @@
   "dock.cancel": "Cancelar",
   "dock.sending": "Enviando…",
   "settings.title": "Acompanhamento de Unfold",
-  "settings.intro": "Unfold vê os nomes e o estado das suas sessões, e o que seus agentes dizem só nas sessões acompanhadas. Um rascunho só é enviado quando você toca em Enviar.",
+  "settings.intro": "Unfold vê os nomes e o estado das suas sessões, e o que seus agentes dizem só nas sessões acompanhadas. Um rascunho só é enviado quando você clica em Enviar.",
   "settings.link": "Conexão",
   "settings.subscriptions": "Inscrições",
   "settings.noSubscriptions": "Unfold ainda não acompanha nada.",
@@ -70,5 +70,10 @@
   "hidden.many": "{count} caracteres ocultos: {list}",
   "hidden.hold": "Enviar fica desativado enquanto um rascunho tiver caracteres que você não vê. Cancele ou peça um novo rascunho.",
   "log.byUnfoldAsked": "Unfold, a seu pedido",
-  "row.watchedMark": "Unfold acompanha esta sessão"
+  "row.watchedMark": "Unfold acompanha esta sessão",
+  "install.open": "Instalar como app",
+  "install.title": "DSH como app",
+  "install.hint": "O DSH abre em uma janela própria, como qualquer app.",
+  "install.button": "Instalar",
+  "install.safari": "No Safari, escolha Arquivo › Adicionar ao Dock."
 }

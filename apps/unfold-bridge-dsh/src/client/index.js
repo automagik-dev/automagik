@@ -1,7 +1,8 @@
 import { createElement as h, useSyncExternalStore } from 'react'
 import { cancelDraft, dropSubscription, openView, sendDraft, undoChange, watchSession } from './api.js'
 import { languageOf, translator } from './i18n.js'
-import { BoardButton, Dock, RowAction, SettingsSection, WatchedMark } from './slots.js'
+import { createInstall } from './install.js'
+import { BoardButton, Dock, InstallAction, RowAction, SettingsSection, WatchedMark } from './slots.js'
 import { installStyles } from './styles.js'
 
 // The DSH client half of the Unfold bridge: it renders what the bridge's view stream carries
@@ -20,7 +21,15 @@ export const SLOTS = [
   ['settings.section', { id: 'unfold-bridge', order: 900, label: 'Unfold' }, SettingsSection],
 ]
 
+// DSH's page as an app (src/client/install.js), beside the board button.
+export const INSTALL_SLOT = ['sidebar.footer.action', { id: 'unfold-bridge.install', order: 110 }]
+
 export const inject = ['slots']
+
+// Made when DSH loads this bundle, before apply, so a beforeinstallprompt the browser fires
+// early is still held.
+const install = createInstall(globalThis.window)
+install.watch()
 
 // The latest snapshot, for every slot at once.
 function createStore() {
@@ -52,5 +61,12 @@ export function apply(ctx) {
   }
   ctx.effect(installStyles, 'unfold-bridge: client styles')
   ctx.effect(() => openView(snap => store.set(snap)), 'unfold-bridge: the view stream')
+  ctx.effect(() => install.watch(), 'unfold-bridge: the install offer')
   for (const [name, options, View] of SLOTS) ctx.slots.inject(name, () => ctx.slots.register({ name, ...options }, bind(View)))
+  const [name, options] = INSTALL_SLOT
+  ctx.slots.inject(name, () => ctx.slots.register({ name, ...options }, function UnfoldInstall(props) {
+    const offer = useSyncExternalStore(install.subscribe, install.get)
+    const t = translator(useSyncExternalStore(onLocale, language))
+    return h(InstallAction, { ...props, offer, t, onInstall: install.prompt })
+  }))
 }

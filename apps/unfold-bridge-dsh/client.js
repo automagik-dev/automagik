@@ -24,6 +24,7 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // src/client/index.js
 var index_exports = {};
 __export(index_exports, {
+  INSTALL_SLOT: () => INSTALL_SLOT,
   SLOTS: () => SLOTS,
   apply: () => apply,
   inject: () => inject
@@ -163,7 +164,12 @@ var en_default = {
   "hidden.many": "{count} hidden characters: {list}",
   "hidden.hold": "Send stays off while a draft holds characters you can't see. Cancel it, or ask Unfold for a new one.",
   "log.byUnfoldAsked": "Unfold, at your request",
-  "row.watchedMark": "Unfold watches this session"
+  "row.watchedMark": "Unfold watches this session",
+  "install.open": "Install as app",
+  "install.title": "DSH as an app",
+  "install.hint": "DSH opens in a window of its own, like any app.",
+  "install.button": "Install",
+  "install.safari": "In Safari, choose File › Add to Dock."
 };
 
 // src/client/locales/pt-BR.json
@@ -203,7 +209,7 @@ var pt_BR_default = {
   "dock.cancel": "Cancelar",
   "dock.sending": "Enviando…",
   "settings.title": "Acompanhamento de Unfold",
-  "settings.intro": "Unfold vê os nomes e o estado das suas sessões, e o que seus agentes dizem só nas sessões acompanhadas. Um rascunho só é enviado quando você toca em Enviar.",
+  "settings.intro": "Unfold vê os nomes e o estado das suas sessões, e o que seus agentes dizem só nas sessões acompanhadas. Um rascunho só é enviado quando você clica em Enviar.",
   "settings.link": "Conexão",
   "settings.subscriptions": "Inscrições",
   "settings.noSubscriptions": "Unfold ainda não acompanha nada.",
@@ -239,7 +245,12 @@ var pt_BR_default = {
   "hidden.many": "{count} caracteres ocultos: {list}",
   "hidden.hold": "Enviar fica desativado enquanto um rascunho tiver caracteres que você não vê. Cancele ou peça um novo rascunho.",
   "log.byUnfoldAsked": "Unfold, a seu pedido",
-  "row.watchedMark": "Unfold acompanha esta sessão"
+  "row.watchedMark": "Unfold acompanha esta sessão",
+  "install.open": "Instalar como app",
+  "install.title": "DSH como app",
+  "install.hint": "O DSH abre em uma janela própria, como qualquer app.",
+  "install.button": "Instalar",
+  "install.safari": "No Safari, escolha Arquivo › Adicionar ao Dock."
 };
 
 // src/client/i18n.js
@@ -253,6 +264,64 @@ function translator(language) {
   return t;
 }
 var when = (at, t) => Number.isFinite(at) ? new Intl.DateTimeFormat(t.language === "pt-BR" ? "pt-BR" : "en-US", { dateStyle: "short", timeStyle: "short" }).format(at) : "";
+
+// src/client/install.js
+var INSTALL_HASH = "#install";
+var DISPLAY_MODES = ["(display-mode: standalone)", "(display-mode: fullscreen)"];
+var isInstalled = (win) => win?.navigator?.standalone === true || DISPLAY_MODES.some((query2) => win?.matchMedia?.(query2)?.matches === true);
+function createInstall(win) {
+  let held = null;
+  let snap = { canPrompt: false, installed: isInstalled(win), opened: win?.location?.hash === INSTALL_HASH, prompted: false };
+  const listeners = /* @__PURE__ */ new Set();
+  const set = (next) => {
+    snap = { ...snap, ...next };
+    for (const fn of Array.from(listeners)) fn();
+  };
+  const onPrompt = (event) => {
+    event.preventDefault?.();
+    held = event;
+    set({ canPrompt: true, prompted: false });
+  };
+  const onInstalled = () => {
+    held = null;
+    set({ canPrompt: false, installed: true });
+  };
+  let watching = false;
+  return {
+    get: () => snap,
+    subscribe(fn) {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+    // Listens until the returned stop; watching again while watching listens once.
+    watch() {
+      if (!watching && win?.addEventListener) {
+        win.addEventListener("beforeinstallprompt", onPrompt);
+        win.addEventListener("appinstalled", onInstalled);
+        watching = true;
+      }
+      return () => {
+        if (!watching) return;
+        win.removeEventListener?.("beforeinstallprompt", onPrompt);
+        win.removeEventListener?.("appinstalled", onInstalled);
+        watching = false;
+      };
+    },
+    // The person's click. The event is spent at once, so a second click prompts nothing.
+    prompt() {
+      const event = held;
+      if (!event) return void 0;
+      held = null;
+      set({ canPrompt: false, prompted: true });
+      try {
+        return Promise.resolve(event.prompt()).catch(() => void 0);
+      } catch {
+        return void 0;
+      }
+    }
+  };
+}
+var offerShown = (offer) => !offer.installed && (offer.canPrompt || offer.opened && !offer.prompted);
 
 // src/client/hidden.js
 var RANGES = [
@@ -520,6 +589,59 @@ function BoardButton({ snap, t, actions, wide }) {
     open ? (0, import_react.createElement)(BoardPanel, { snap, t, actions, onClose: () => setOpen(false) }) : null
   );
 }
+var AppIcon = () => (0, import_react.createElement)(
+  "svg",
+  { className: "ub-eye", viewBox: "0 0 16 16", width: 14, height: 14, "aria-hidden": "true" },
+  (0, import_react.createElement)("rect", { x: 2, y: 2.5, width: 12, height: 11, rx: 2, fill: "none", stroke: "currentColor", strokeWidth: 1.3 }),
+  (0, import_react.createElement)("path", { d: "M8 5v5M5.8 7.8 8 10l2.2-2.2", fill: "none", stroke: "currentColor", strokeWidth: 1.3 })
+);
+function InstallPanel({ offer, t, onInstall, onClose }) {
+  const panel = (0, import_react.useRef)(null);
+  (0, import_react.useEffect)(() => {
+    panel.current?.focus();
+  }, []);
+  return (0, import_react.createElement)(
+    "div",
+    {
+      ref: panel,
+      className: "ub-board",
+      role: "dialog",
+      tabIndex: -1,
+      "aria-label": t("install.title"),
+      "data-unfold-install-panel": "",
+      onKeyDown: (event) => {
+        if (event.key === "Escape") onClose();
+      }
+    },
+    (0, import_react.createElement)(
+      "header",
+      { className: "ub-board-head" },
+      (0, import_react.createElement)("h2", null, t("install.title")),
+      (0, import_react.createElement)("button", { type: "button", className: "ub-button ub-quiet", onClick: onClose }, t("board.close"))
+    ),
+    offer.canPrompt ? [
+      (0, import_react.createElement)("p", { key: "hint", className: "ub-hint" }, t("install.hint")),
+      (0, import_react.createElement)("button", { key: "install", type: "button", className: "ub-button ub-primary", "data-unfold-install": "", onClick: onInstall }, t("install.button"))
+    ] : (0, import_react.createElement)("p", { className: "ub-hint", "data-unfold-install-safari": "" }, t("install.safari"))
+  );
+}
+function InstallAction({ offer, t, onInstall, wide }) {
+  const [open, setOpen] = (0, import_react.useState)(offer.opened);
+  if (!offerShown(offer)) return null;
+  return (0, import_react.createElement)(
+    "div",
+    { className: "ub-footer" },
+    (0, import_react.createElement)("button", {
+      type: "button",
+      className: "ub-footer-button",
+      "aria-expanded": open ? "true" : "false",
+      "aria-label": t("install.open"),
+      "data-unfold-install-button": "",
+      onClick: () => offer.canPrompt ? onInstall() : setOpen(!open)
+    }, (0, import_react.createElement)(AppIcon), wide ? (0, import_react.createElement)("span", null, t("install.open")) : null),
+    open ? (0, import_react.createElement)(InstallPanel, { offer, t, onInstall, onClose: () => setOpen(false) }) : null
+  );
+}
 function DraftCard({ draft, t, actions }) {
   const [run, tap] = useTap();
   const to = t("dock.draftTo", { name: draft.name, workspace: draft.workspace });
@@ -661,7 +783,10 @@ var SLOTS = [
   // locale change.
   ["settings.section", { id: "unfold-bridge", order: 900, label: "Unfold" }, SettingsSection]
 ];
+var INSTALL_SLOT = ["sidebar.footer.action", { id: "unfold-bridge.install", order: 110 }];
 var inject = ["slots"];
+var install = createInstall(globalThis.window);
+install.watch();
 function createStore() {
   let snap = null;
   const listeners = /* @__PURE__ */ new Set();
@@ -691,7 +816,14 @@ function apply(ctx) {
   };
   ctx.effect(installStyles, "unfold-bridge: client styles");
   ctx.effect(() => openView((snap) => store.set(snap)), "unfold-bridge: the view stream");
-  for (const [name, options, View] of SLOTS) ctx.slots.inject(name, () => ctx.slots.register({ name, ...options }, bind(View)));
+  ctx.effect(() => install.watch(), "unfold-bridge: the install offer");
+  for (const [name2, options2, View] of SLOTS) ctx.slots.inject(name2, () => ctx.slots.register({ name: name2, ...options2 }, bind(View)));
+  const [name, options] = INSTALL_SLOT;
+  ctx.slots.inject(name, () => ctx.slots.register({ name, ...options }, function UnfoldInstall(props) {
+    const offer = (0, import_react2.useSyncExternalStore)(install.subscribe, install.get);
+    const t = translator((0, import_react2.useSyncExternalStore)(onLocale, language));
+    return (0, import_react2.createElement)(InstallAction, { ...props, offer, t, onInstall: install.prompt });
+  }));
 }
 return Object.defineProperty({ ...module.exports }, Symbol.toStringTag, { value: 'Module' })
   },

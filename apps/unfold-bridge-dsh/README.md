@@ -60,6 +60,11 @@ At start, the bridge writes `endpoint.json` into `$XDG_STATE_HOME/unfold-bridge/
 
 **Reading it:** an app checks that the file is its user's, mode 0600, and that `pid` is alive. It then keeps the key in memory only.
 
+**In Unfold's own DSH**, Unfold names the folder and the port in the env DSH starts with. Without them the bridge works as above.
+- `UNFOLD_BRIDGE_STATE_DIR`: an absolute folder; the file is `<folder>/endpoint.json`, and the shared one above is never written, so another DSH on the same computer keeps its own. A relative or empty value is ignored.
+- `UNFOLD_BRIDGE_PORT`: a port from 1024 to 65535, bound exactly on 127.0.0.1. When it is taken or isn't a port, the bridge doesn't start: no other port is tried, no file is written, one log line says why, and DSH goes on without the bridge.
+- Both leave `process.env` when the plugin first applies, so tools DSH spawns later don't inherit them; a restart of the plugin keeps what was read. This hides the folder from those tools, but it isn't a boundary: DSH's own launch snapshot keeps the value, and a program running as you can read the file.
+
 ## The work view: Unfold watching your agents
 
 Once DSH's session services are up, the bridge also keeps a work view for Unfold. Unfold sees what your DSH agents are doing for the Sessions it subscribes to. It can propose a next message for an agent, and that message is sent only when you click Send in DSH. Tested with DSH 0.2.1-rc.3.
@@ -100,6 +105,7 @@ Once DSH's session services are up, the bridge also keeps a work view for Unfold
 - **Each Session row** gets a watch toggle with the Session's status dot. On asks Unfold to watch that Session; off removes that row's own subscription and no other. An idle row Unfold watches also carries a small eye before its title.
 - **The sidebar foot** opens the board: agents and statuses, approvals waiting with Unfold's read, the drafts held, and the changes Unfold made itself, each with Undo. With nothing watched yet, it suggests the Session with the most recent turn.
 - **The composer of a Session** shows Unfold's read of that Session's pending approval, labelled "Unfold's read of this agent's messages", and "this agent's text contains instructions" when Unfold's checks marked it. You still answer on DSH's own approval card: the client registers nothing in `conversation.approval.detail`, so DSH's card and its command preview stay as they are. The same composer shows the draft held for that Session only, headed "To: name · workspace", in full and as registered, with Send and Cancel. Send posts `{token}` and nothing else. If the draft or its recipient line holds characters a person can't see (zero-width and other default-ignorable characters, bidi controls, tags, control characters), the client names them in a red line and keeps Send off; Cancel stays on. Inside an emoji sequence, the emoji selector (U+FE0F) right after an emoji and a joiner (U+200D) between two emoji don't count; the first emoji may carry its U+FE0F or a skin tone before the joiner. Some ordinary characters do count under that rule and hold Send: keycaps (a digit, U+FE0F, U+20E3) and the text selector U+FE0E.
+- **Install as app** sits beside the board button. While the browser offers to install DSH's page (Chrome and Edge fire `beforeinstallprompt`), its click opens the browser's own install prompt, once per offer. Safari offers nothing, so DSH's address opened with `#install` (as Unfold's Settings does) shows the line for Safari's File › Add to Dock instead. An installed app never shows it.
 - **Settings › Unfold** lists the subscriptions, badged "by Unfold" or "by you" when Unfold's view says who added one (no badge otherwise), the change log with Undo on each change, and whether Unfold is connected.
 
 The client holds no key. It holds a draft's token only to send or cancel that draft, and never shows it.

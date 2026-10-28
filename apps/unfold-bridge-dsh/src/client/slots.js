@@ -1,6 +1,7 @@
 import { createElement as h, useEffect, useRef, useState } from 'react'
 import { hiddenIn, hiddenWarning } from './hidden.js'
 import { when } from './i18n.js'
+import { offerShown } from './install.js'
 import { adviceFor, agentOf, changesOf, describeChange, describeSubscription, draftFor, noticesOf, pendingFor, rowSubscription, statusText, suggestion, watchedAgent } from './view.js'
 
 // The slot views. Each one is a function of the bridge's snapshot (`snap`, null while the view
@@ -157,6 +158,53 @@ export function BoardButton({ snap, t, actions, wide }) {
       onClick: () => setOpen(!open),
     }, h(Eye, { on: Boolean(snap?.connected) }), wide ? h('span', null, t('board.open')) : null, waiting > 0 ? h('span', { className: 'ub-count', 'aria-hidden': 'true' }, String(waiting)) : null),
     open ? h(BoardPanel, { snap, t, actions, onClose: () => setOpen(false) }) : null)
+}
+
+const AppIcon = () => h('svg', { className: 'ub-eye', viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': 'true' },
+  h('rect', { x: 2, y: 2.5, width: 12, height: 11, rx: 2, fill: 'none', stroke: 'currentColor', strokeWidth: 1.3 }),
+  h('path', { d: 'M8 5v5M5.8 7.8 8 10l2.2-2.2', fill: 'none', stroke: 'currentColor', strokeWidth: 1.3 }))
+
+// The install offer, opened: Install when the browser can prompt, else Safari's own menu line.
+function InstallPanel({ offer, t, onInstall, onClose }) {
+  const panel = useRef(null)
+  // Opening moves focus into the offer, and Escape closes it.
+  useEffect(() => { panel.current?.focus() }, [])
+  return h('div', {
+    ref: panel,
+    className: 'ub-board',
+    role: 'dialog',
+    tabIndex: -1,
+    'aria-label': t('install.title'),
+    'data-unfold-install-panel': '',
+    onKeyDown: event => { if (event.key === 'Escape') onClose() },
+  },
+    h('header', { className: 'ub-board-head' },
+      h('h2', null, t('install.title')),
+      h('button', { type: 'button', className: 'ub-button ub-quiet', onClick: onClose }, t('board.close'))),
+    offer.canPrompt
+      ? [
+        h('p', { key: 'hint', className: 'ub-hint' }, t('install.hint')),
+        h('button', { key: 'install', type: 'button', className: 'ub-button ub-primary', 'data-unfold-install': '', onClick: onInstall }, t('install.button')),
+      ]
+      : h('p', { className: 'ub-hint', 'data-unfold-install-safari': '' }, t('install.safari')))
+}
+
+// sidebar.footer.action: Install as app, beside the board button. While the browser can prompt,
+// the button prompts at once; opened from #install, the offer shows in full and takes the focus.
+// Never in an installed app.
+export function InstallAction({ offer, t, onInstall, wide }) {
+  const [open, setOpen] = useState(offer.opened)
+  if (!offerShown(offer)) return null
+  return h('div', { className: 'ub-footer' },
+    h('button', {
+      type: 'button',
+      className: 'ub-footer-button',
+      'aria-expanded': open ? 'true' : 'false',
+      'aria-label': t('install.open'),
+      'data-unfold-install-button': '',
+      onClick: () => (offer.canPrompt ? onInstall() : setOpen(!open)),
+    }, h(AppIcon), wide ? h('span', null, t('install.open')) : null),
+    open ? h(InstallPanel, { offer, t, onInstall, onClose: () => setOpen(false) }) : null)
 }
 
 // The held draft, in full: no clamp, no trim. Keyed by its effect id where it is used, so a

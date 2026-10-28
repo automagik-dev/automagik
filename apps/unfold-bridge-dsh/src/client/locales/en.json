@@ -70,5 +70,10 @@
   "hidden.many": "{count} hidden characters: {list}",
   "hidden.hold": "Send stays off while a draft holds characters you can't see. Cancel it, or ask Unfold for a new one.",
   "log.byUnfoldAsked": "Unfold, at your request",
-  "row.watchedMark": "Unfold watches this session"
+  "row.watchedMark": "Unfold watches this session",
+  "install.open": "Install as app",
+  "install.title": "DSH as an app",
+  "install.hint": "DSH opens in a window of its own, like any app.",
+  "install.button": "Install",
+  "install.safari": "In Safari, choose File › Add to Dock."
 }
