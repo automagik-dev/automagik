@@ -296,7 +296,7 @@ test('loads as a Cordis plugin on DSH connection routes, GET only, reads through
   const fiber = ctx.plugin(plugin, { sources: SOURCES })
   await fiber
   await new Promise((r) => setImmediate(r))
-  assert.deepEqual(routes.map((r) => [r.path, r.methods]), [['/api/unfold-settings', ['GET']], ['/api/unfold-settings/stream', ['GET']]])
+  assert.deepEqual(routes.map((r) => [r.path, r.methods]), [['/api/unfold-settings', ['GET']], ['/api/unfold-settings/stream', ['GET']], ['/api/unfold-settings/config', ['GET']]])
 
   const res = await routes[0].fetch(new Request('http://h/api/unfold-settings'))
   const body = await res.text()
@@ -411,7 +411,7 @@ test('no write route: GET only, and nothing in the package writes', async () => 
   const fiber = ctx.plugin(plugin, {})
   await fiber
   await new Promise((r) => setImmediate(r))
-  assert.deepEqual(routes.map((r) => [r.path, r.methods]), [['/api/unfold-settings', ['GET']], ['/api/unfold-settings/stream', ['GET']]])
+  assert.deepEqual(routes.map((r) => [r.path, r.methods]), [['/api/unfold-settings', ['GET']], ['/api/unfold-settings/stream', ['GET']], ['/api/unfold-settings/config', ['GET']]])
   const web = plugin.routes({ refresh: async () => ({}) }, '/api/unfold-settings')
   for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
     let head = null
