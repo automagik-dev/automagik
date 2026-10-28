@@ -269,3 +269,19 @@ test('unload during an in-flight submit ends the turn at once, as unknown', asyn
   assert.equal(final.status, 'unknown')
   assert.ok(Date.now() - t0 < 50)
 })
+
+for (const partial of [false, true]) test(`accepted typed turn settles after observer disconnect (partial=${partial})`, async () => {
+  const { b, host } = bridge([accepted()], { ...fast, typedIdleMs: 40 })
+  const run = collect(b.run('disconnect', 'hello'), 300)
+  later(5, () => {
+    if (partial) {
+      b.ingest({ kind: 'response_started', request_id: 'c1', response_id: 'r1' })
+      b.ingest({ kind: 'agent_delta', response_id: 'r1', text: 'partial' })
+    }
+    b.onLink('disconnected')
+  })
+  const final = (await run).at(-1)
+  assert.equal(final.status, partial ? 'incomplete' : 'not_seen')
+  assert.equal(submits(host).length, 1)
+  assert.equal(b.tracks.size, 0)
+})

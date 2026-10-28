@@ -21,9 +21,9 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 
 export const STATUS_ID = '@automagik/unfold-session-dsh'
 export const STATUS_KIND = 'unfold.status'
-export const ROOT_SESSION = 'unfold-root'
-const STATUS = 'api/unfold-session/status'
-const LIVE = 'api/unfold-session/live'
+export let ROOT_SESSION = 'unfold-root'
+let STATUS = 'api/unfold-session/status'
+let LIVE = 'api/unfold-session/live'
 
 export const inject = ['slots', 'sidebarRightTabs', 'sidebarRight']
 
@@ -226,7 +226,15 @@ export function ListeningDock({ sessionId }) {
   )
 }
 
-export function apply(ctx) {
+export async function apply(ctx) {
+  const response = await fetch('api/unfold-session/config', { cache: 'no-store' })
+  if (!response.ok) throw new Error(`Unfold configuration ${response.status}`)
+  const config = await response.json()
+  ROOT_SESSION = config.sessionId
+  const route = config.route.replace(/^\//, '').replace(/\/$/, '')
+  STATUS = `${route}/status`
+  LIVE = `${route}/live`
+
   ctx.effect(() => {
     const el = document.createElement('style')
     el.id = 'unfold-bot-overrides'

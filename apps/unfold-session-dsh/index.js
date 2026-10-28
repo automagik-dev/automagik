@@ -503,7 +503,7 @@ export function apply(ctx, config, deps = {}) {
 
   ctx.inject(['connection'], (sctx) => {
     sctx.effect(() => {
-      const disposers = fetchRoutes(service, config.route).map((route) => sctx.connection.fetch.register(route))
+      const disposers = fetchRoutes(service, config.route, ROOT).map((route) => sctx.connection.fetch.register(route))
       return () => Promise.all(disposers.map((dispose) => dispose()))
     }, 'unfold-session: routes')
   })
@@ -524,9 +524,11 @@ export function callStatus() {
 }
 
 /** Behind DSH's /api fence (Host/Origin check, browser auth): status, the live view, call and mute. */
-export function fetchRoutes(service, base) {
+export function fetchRoutes(service, base, sessionId = 'unfold-root') {
   const unavailable = () => Response.json({ error: CALL_UNAVAILABLE, unavailable: CALL_UNAVAILABLE }, { status: 503 })
   return [
+    // Stable discovery path, even when the configured API route changes.
+    { path: '/api/unfold-session/config', methods: ['GET'], requestBody: 'buffered', fetch: async () => Response.json({ sessionId, route: base }) },
     // The live listening view: a snapshot, then each change (src/live.js).
     ...(service.liveHub ? [{ path: `${base}/live`, methods: ['GET'], requestBody: 'buffered', fetch: async (request) => fetchStream(service.liveHub, request, 'snapshot', service.live.published(), service.live.rev) }] : []),
     { path: `${base}/status`, methods: ['GET'], requestBody: 'buffered', fetch: async () => Response.json(await service.status()) },

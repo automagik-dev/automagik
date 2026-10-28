@@ -215,7 +215,14 @@ function ListeningDock({ sessionId }) {
     shown.level && !shown.text ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "unfold-live-meter", "data-unfold": "listening-meter", "data-bars": bars, title: meterTitle, "aria-label": meterTitle, children: [1, 2, 3, 4, 5].map((n) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { "data-on": n <= bars || void 0, style: { height: 3 + n * 2 } }, n)) }) : null
   ] }) }) });
 }
-function apply(ctx) {
+async function apply(ctx) {
+  const response = await fetch("api/unfold-session/config", { cache: "no-store" });
+  if (!response.ok) throw new Error(`Unfold configuration ${response.status}`);
+  const config = await response.json();
+  ROOT_SESSION = config.sessionId;
+  const route = config.route.replace(/^\//, "").replace(/\/$/, "");
+  STATUS = `${route}/status`;
+  LIVE = `${route}/live`;
   ctx.effect(() => {
     const el = document.createElement("style");
     el.id = "unfold-bot-overrides";

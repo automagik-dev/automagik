@@ -549,7 +549,7 @@ export class SessionBridge {
         }
         // Taken by Unfold, then silent: a broadcast was missed or never came. It was sent; it is
         // never sent again, and the turn ends rather than holding the composer.
-        const idle = t.commandId && !t.gap && stopDeadline === null
+        const idle = t.commandId && (!t.gap || !attached) && stopDeadline === null
         if (idle && now - t.lastEventAt >= this.timing.typedIdleMs) {
           const quiet = `no event of its reply arrived for ${Math.round(this.timing.typedIdleMs / 1000)} s`
           if (t.text) t.finish({ status: 'incomplete', text: t.text, detail: `the reply stopped: ${quiet}; this reply may be incomplete`, responseId: t.responseId })
