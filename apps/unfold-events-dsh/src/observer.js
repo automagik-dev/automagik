@@ -122,7 +122,7 @@ export class AgentdObserver {
       this.rejected++
       return phase
     }
-    if (env.v !== PROTOCOL_VERSION || env.source !== 'guest') {
+    if (!env || typeof env !== 'object' || Array.isArray(env) || env.v !== PROTOCOL_VERSION || env.source !== 'guest') {
       this.rejected++
       return phase
     }
