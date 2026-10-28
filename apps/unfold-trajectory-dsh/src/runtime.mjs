@@ -75,6 +75,7 @@ function sharedStream() {
   let source = null
   let refs = 0
   let retry = null
+  let backoff = 1000
   let lease = null
   let pending = false
   const emit = () => {
@@ -100,9 +101,10 @@ function sharedStream() {
     for (const id of [...arrivals.keys()]) if (!live.has(id)) arrivals.delete(id)
   }
   const open = () => {
-    source = new EventSource(new URL(MIND_STREAM, document.baseURI))
+    const s = (source = new EventSource(new URL(MIND_STREAM, document.baseURI)))
     for (const name of EVENTS) {
       source.addEventListener(name, (e) => {
+        if (name === 'snapshot') backoff = 1000
         state = reduce(state, name, JSON.parse(e.data), Date.now())
         if (name === 'snapshot' || name === 'row' || name === 'row-updated' || name === 'evicted') track()
         arm()
@@ -110,7 +112,18 @@ function sharedStream() {
       })
     }
     source.addEventListener('resnapshot', () => { source.close(); state = { ...state, stream: 'opening' }; arm(); emit(); retry = setTimeout(open, 500) })
-    source.onerror = () => { state = { ...state, stream: 'lost' }; arm(); emit() }
+    source.onerror = () => {
+      state = { ...state, stream: 'lost' }
+      arm()
+      emit()
+      // A failure the browser does not retry (a 404 or 5xx while Mind reloads): reopen, backing
+      // off as Mind's own client does.
+      if (s.readyState === EventSource.CLOSED && refs > 0) {
+        clearTimeout(retry)
+        retry = setTimeout(open, backoff)
+        backoff = Math.min(backoff * 2, 8000)
+      }
+    }
   }
   shared = {
     getSnapshot() {
@@ -132,6 +145,7 @@ function sharedStream() {
           clearTimeout(retry)
           clearTimeout(lease)
           retry = null
+          backoff = 1000
           lease = null
           source?.close()
           source = null

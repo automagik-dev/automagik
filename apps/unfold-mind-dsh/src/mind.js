@@ -692,12 +692,59 @@ function setText(row, raw, { cut = false } = {}) {
   const full = String(raw ?? '')
   for (const v of secretsIn(full)) if (!row.secrets.includes(v)) row.secrets = [...row.secrets, v].slice(-SECRETS_KEPT)
   const truncated = cut || full.length > TEXT_KEEP
-  row.rawText = full.slice(-TEXT_KEEP)
-  let text = truncated ? hideAfterCut(row.rawText) : row.rawText
+  row.rawText = keptTail(full)
+  // Redacted whole, then cut: a value whose key falls before the cut is still recognised.
+  let text = redactText(full).slice(-TEXT_KEEP)
+  if (truncated) text = hideAfterCut(text)
   text = redactText(text)
   for (const v of row.secrets) text = text.split(v).join(REDACTED)
   row.textCut = row.textCut || truncated
   row.text = text
+}
+
+/**
+ * The private raw tail kept for the next delta to join: the last TEXT_KEEP characters, never
+ * starting inside a quoted credential value (whose spaces are not boundaries). A closed value the
+ * cut lands in is dropped with its key; an open one keeps only its key and opening quote, so the
+ * rest of the value is still hidden as it arrives.
+ */
+function keptTail(full) {
+  if (full.length <= TEXT_KEEP) return full
+  const at = full.length - TEXT_KEEP
+  const span = quotedSpans(full).find((sp) => sp.start < at && at < sp.end)
+  if (!span) return full.slice(at)
+  return span.closed ? full.slice(span.end) : `${full.slice(span.start, span.open)}${span.escaped ? '\\' : ''}`
+}
+
+// Where a quoted credential value opens (the quoted forms of redact.js's text rules), as in
+// unfold-events-dsh's window.
+const QUOTED_SECRET = [
+  /\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=(["'])/g,
+  /\b(?:x-goog-api-key|authorization|api[_-]?key|token)["']?\s*[:=]\s*(["'])/gi,
+]
+
+/** Quoted credential spans in `raw`: {start, open, end, closed, escaped}; an open one runs to the end. */
+function quotedSpans(raw) {
+  const spans = []
+  for (const re of QUOTED_SECRET) {
+    for (const m of raw.matchAll(re)) {
+      const open = m.index + m[0].length
+      const { close, escaped } = closingQuote(raw, open, m[1])
+      spans.push({ start: m.index, open, end: close < 0 ? raw.length : close + 1, closed: close >= 0, escaped })
+    }
+  }
+  return spans
+}
+
+/** The first UNESCAPED `quote` in `s` from `from` (JSON: `\"` and `\\` do not end a value). */
+function closingQuote(s, from, quote) {
+  let escaped = false
+  for (let i = from; i < s.length; i++) {
+    if (escaped) escaped = false
+    else if (s[i] === '\\') escaped = true
+    else if (s[i] === quote) return { close: i, escaped: false }
+  }
+  return { close: -1, escaped }
 }
 
 /**

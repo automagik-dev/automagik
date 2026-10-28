@@ -24,7 +24,7 @@ const REGISTRY = { registry_format: 'unfold.capabilities/v2', registry_version: 
 
 // unfold-sse-dsh's index.js as released with the first Unfold plugins: this package carries it as
 // src/sse.js, byte for byte. Change the hub there, then copy it here and update the hash.
-const SSE_SHA256 = 'c5758eb7c3767df42c976c5a6a5b212ebe514a6b51fbe4274c7259feed442500'
+const SSE_SHA256 = 'a969339dcce3085ea65242dda857c272a0cc3261dea7fadafd8331d07fce2ae2'
 
 const shipped = () => ['index.js', 'client.js', ...readdirSync(new URL('../src/', import.meta.url), { recursive: true })
   .filter((f) => /\.(js|jsx)$/.test(f)).map((f) => `src/${f}`)]

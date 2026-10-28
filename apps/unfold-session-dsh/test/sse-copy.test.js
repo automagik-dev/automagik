@@ -8,7 +8,7 @@ import { test } from 'node:test'
 
 const sha256 = (url) => createHash('sha256').update(readFileSync(url)).digest('hex')
 // The hub's index.js as it landed in apps/unfold-sse-dsh, and the call view in apps/unfold-events-dsh.
-const HUB_SHA256 = 'c5758eb7c3767df42c976c5a6a5b212ebe514a6b51fbe4274c7259feed442500'
+const HUB_SHA256 = 'a969339dcce3085ea65242dda857c272a0cc3261dea7fadafd8331d07fce2ae2'
 const CALL_VIEW_SHA256 = '9bce669cef0bcea3cc0dca3fb18b241942f07076c503ce407425fba501bd541a'
 
 test('src/sse.js is the unfold-sse-dsh hub, unchanged', () => {

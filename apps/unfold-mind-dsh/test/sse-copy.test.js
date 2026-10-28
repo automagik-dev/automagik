@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
-const PINNED = 'c5758eb7c3767df42c976c5a6a5b212ebe514a6b51fbe4274c7259feed442500'
+const PINNED = 'a969339dcce3085ea65242dda857c272a0cc3261dea7fadafd8331d07fce2ae2'
 const sha = (url) => createHash('sha256').update(readFileSync(url)).digest('hex')
 
 test('src/sse.js is the unfold-sse-dsh hub, byte for byte', () => {

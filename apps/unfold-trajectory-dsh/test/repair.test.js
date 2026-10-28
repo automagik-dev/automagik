@@ -276,7 +276,8 @@ function hub() {
   let nextTimer = 1
   const connections = []
   class Source {
-    constructor() { this.handlers = {}; connections.push(this) }
+    static CLOSED = 2
+    constructor() { this.handlers = {}; this.readyState = 0; connections.push(this) }
     addEventListener(k, f) { this.handlers[k] = f }
     close() { this.closed = true }
   }
@@ -349,6 +350,26 @@ test('the lease is Mind\'s rule (three beats), checked against the Mind display 
     h.send(0, 'heartbeat-mind', { at: h.now() })
   }
   off()
+})
+
+test('a stream that fails for good (a 404 while Mind reloads) reopens with backoff; a passing error is left to the browser', () => {
+  const h = hub()
+  const stop = h.source.subscribe(() => {})
+  h.connections[0].readyState = 1
+  h.connections[0].onerror() // the browser reconnects this one itself
+  h.advance(60_000)
+  assert.equal(h.connections.length, 1, 'no second stream next to one the browser is reconnecting')
+  const fail = (i) => { h.connections[i].readyState = 2; h.connections[i].onerror() } // CLOSED
+  fail(0)
+  assert.equal(h.source.getSnapshot().stream, 'lost')
+  h.advance(1000)
+  assert.equal(h.connections.length, 2, 'reopened after the first backoff')
+  for (let i = 1; i < 6; i++) { fail(i); h.advance(8000) }
+  assert.equal(h.connections.length, 7, 'each failure reopens, the wait capped at 8 s')
+  fail(6)
+  stop()
+  h.advance(60_000)
+  assert.equal(h.connections.length, 7, 'no reopen once nobody is subscribed')
 })
 
 test('arrivals are stable identities: append + evict at the window limit counts one new record', () => {
