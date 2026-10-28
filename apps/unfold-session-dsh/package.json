@@ -30,6 +30,7 @@
     "index.js",
     "src/",
     "client.js",
+    "cordis.patch.yml",
     "README.md",
     "LICENSE"
   ],
@@ -60,6 +61,9 @@
       "external": [
         "@automagik/bots-dsh/client"
       ]
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
     }
   },
   "automagik": {
