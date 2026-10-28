@@ -720,7 +720,7 @@ function keptTail(full) {
 // unfold-events-dsh's window.
 const QUOTED_SECRET = [
   /\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=(["'])/g,
-  /\b(?:x-goog-api-key|authorization|api[_-]?key|token)["']?\s*[:=]\s*(["'])/gi,
+  /(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt]))(?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret|token|api[_-]?key|private[_-]?key|authorization)["']?\s*[:=]\s*(["'])/gi, // any prefix
 ]
 
 /** Quoted credential spans in `raw`: {start, open, end, closed, escaped}; an open one runs to the end. */

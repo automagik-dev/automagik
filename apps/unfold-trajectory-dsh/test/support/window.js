@@ -292,10 +292,13 @@ const SECRET_TEXT = [
   // trailing lone `\` is an escape still to come), or to the end while it is still open (a
   // streamed `KEY="…` is hidden until its quote arrives).
   [/\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*)=("(?:[^"\\]|\\[\s\S]|\\$)*(?:"|$)|'(?:[^'\\]|\\[\s\S]|\\$)*(?:'|$)|\S+)/g, (_, name) => `${name}=${REDACTED}`],
-  // `name: value` / `name=value`. A quoted value (any prefix, spaces and escapes included) runs to
-  // its unescaped closing quote, or to the end while open. A bare value that is an authorization
-  // scheme (`Authorization: Bearer x`) is left to the scheme rule below.
-  [/\b(x-goog-api-key|authorization|api[_-]?key|token)(["']?\s*[:=]\s*)(?:(["'])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(?!Bearer\b|Basic\b|\[redacted\])[^\s"',}]+)/gi, (_, name, sep, q, close) => (q ? `${name}${sep}${q}${REDACTED}${close}` : `${name}${sep}${REDACTED}`)],
+  // `name: value` / `name=value`, in JSON too. A quoted value (any prefix, spaces and escapes
+  // included) runs to its unescaped closing quote, or to the end while open. A bare value that is
+  // an authorization scheme (`Authorization: Bearer x`) is left to the scheme rule below. A name is
+  // passphrase, password, passwd, pass, secret, token, api key, private key or authorization, in any
+  // case, as a whole token with any prefix joined by _ or - (db_password, x-api-key): `bypass` and
+  // `tokenizer` are words, not names.
+  [/(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt]))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret|token|api[_-]?key|private[_-]?key|authorization))(["']?\s*[:=]\s*)(?:(["'])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(?!Bearer\b|Basic\b|\[redacted\])[^\s"',}]+)/gi, (_, name, sep, q, close) => (q ? `${name}${sep}${q}${REDACTED}${close}` : `${name}${sep}${REDACTED}`)],
   [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/g, (_, scheme) => `${scheme} ${REDACTED}`],
   [/\bAIza[0-9A-Za-z_-]{20,}/g, () => REDACTED],
   // Standalone sk- credentials (the contract above): a whole key, then a still-open run at the end.
@@ -312,7 +315,7 @@ export function redactText(s) {
 // Key-aware masking: the same as src/client/redact.js `SECRET_KEY` and `redact`; keep them in step. A value under a
 // secret-looking key is replaced whatever it is; strings elsewhere get the text patterns; objects
 // and arrays are walked with their keys.
-const SECRET_KEY = /(token|secret|passw(or)?d|api[_-]?key|private[_-]?key|authorization|bearer|cookie|credential)/i
+const SECRET_KEY = /(token|secret|passw(or)?d|passphrase|(?:^|[_-])pass(?:$|[_-])|api[_-]?key|private[_-]?key|authorization|bearer|cookie|credential)/i
 
 export function redact(value, key = '') {
   if (key && SECRET_KEY.test(key) && value !== null && value !== undefined && typeof value !== 'boolean') return REDACTED
@@ -353,7 +356,7 @@ const contextBefore = (raw, cut) => CONTEXT_BEFORE.test(raw.slice(0, cut).trimEn
 // quote ends one.
 const QUOTED_SECRET = [
   /\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=(["'])/g,
-  /\b(?:x-goog-api-key|authorization|api[_-]?key|token)["']?\s*[:=]\s*(["'])/gi, // any prefix
+  /(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt]))(?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret|token|api[_-]?key|private[_-]?key|authorization)["']?\s*[:=]\s*(["'])/gi, // any prefix
 ]
 
 /**

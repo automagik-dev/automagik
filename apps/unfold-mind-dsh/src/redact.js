@@ -6,7 +6,7 @@
 // ids (artifact_id, *_sha256, boot ids) are not secrets and are kept: no length or hex rule.
 export const REDACTED = '[redacted]'
 
-const SECRET_KEY = /(token|secret|passw(or)?d|api[_-]?key|private[_-]?key|authorization|bearer|cookie|credential)/i
+const SECRET_KEY = /(token|secret|passw(or)?d|passphrase|(?:^|[_-])pass(?:$|[_-])|api[_-]?key|private[_-]?key|authorization|bearer|cookie|credential)/i
 // Standalone sk- credentials, with no key,
 // assignment or scheme around them. The family: sk-<body>, sk-proj-, sk-svcacct-, sk-admin-,
 // sk-ant-api03-, sk-ant-admin01-, sk-ant-oat01- (each sub-prefix is in the body alphabet, so one rule
@@ -27,10 +27,13 @@ const SECRET_TEXT = [
   // trailing lone `\` is an escape still to come), or to the end while it is still open (a
   // streamed `KEY="…` is hidden until its quote arrives).
   [/\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*)=("(?:[^"\\]|\\[\s\S]|\\$)*(?:"|$)|'(?:[^'\\]|\\[\s\S]|\\$)*(?:'|$)|\S+)/g, (_, name) => `${name}=${REDACTED}`],
-  // `name: value` / `name=value`. A quoted value (any prefix, spaces and escapes included) runs to
-  // its unescaped closing quote, or to the end while open. A bare value that is an authorization
-  // scheme (`Authorization: Bearer x`) is left to the scheme rule below.
-  [/\b(x-goog-api-key|authorization|api[_-]?key|token)(["']?\s*[:=]\s*)(?:(["'])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(?!Bearer\b|Basic\b|\[redacted\])[^\s"',}]+)/gi, (_, name, sep, q, close) => (q ? `${name}${sep}${q}${REDACTED}${close}` : `${name}${sep}${REDACTED}`)],
+  // `name: value` / `name=value`, in JSON too. A quoted value (any prefix, spaces and escapes
+  // included) runs to its unescaped closing quote, or to the end while open. A bare value that is
+  // an authorization scheme (`Authorization: Bearer x`) is left to the scheme rule below. A name is
+  // passphrase, password, passwd, pass, secret, token, api key, private key or authorization, in any
+  // case, as a whole token with any prefix joined by _ or - (db_password, x-api-key): `bypass` and
+  // `tokenizer` are words, not names.
+  [/(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt]))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret|token|api[_-]?key|private[_-]?key|authorization))(["']?\s*[:=]\s*)(?:(["'])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(?!Bearer\b|Basic\b|\[redacted\])[^\s"',}]+)/gi, (_, name, sep, q, close) => (q ? `${name}${sep}${q}${REDACTED}${close}` : `${name}${sep}${REDACTED}`)],
   [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/g, (_, scheme) => `${scheme} ${REDACTED}`],
   [/\bAIza[0-9A-Za-z_-]{20,}/g, () => REDACTED],
   // Standalone sk- credentials (the contract above): a whole key, then a still-open run at the end.
@@ -64,7 +67,7 @@ const SECRET_VALUES = [
   /\b(AIza[0-9A-Za-z_-]{20,})/g,
   /(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt]))(sk-(?=[A-Za-z0-9_-]*[A-Z])(?=[A-Za-z0-9_-]*[a-z])(?=[A-Za-z0-9_-]*[0-9])[A-Za-z0-9_-]{20,})(?=[^A-Za-z0-9_-])/g, // a whole, CLOSED sk- key only: a run still open at the end of the text is never remembered, so a key streamed in parts cannot fill SECRETS_KEPT with its prefixes
   /\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=("(?:[^"\\]|\\[\s\S]|\\$)*(?:"|$)|'(?:[^'\\]|\\[\s\S]|\\$)*(?:'|$)|\S+)/g,
-  /\b(?:x-goog-api-key|authorization|api[_-]?key|token)["']?\s*[:=]\s*(?:"((?:[^"\\]|\\[\s\S]|\\$)+)|'((?:[^'\\]|\\[\s\S]|\\$)+)|(?!Bearer\b|Basic\b|\[redacted\])([^\s"',}]+))/gi,
+  /(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt]))(?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret|token|api[_-]?key|private[_-]?key|authorization)["']?\s*[:=]\s*(?:"((?:[^"\\]|\\[\s\S]|\\$)+)|'((?:[^'\\]|\\[\s\S]|\\$)+)|(?!Bearer\b|Basic\b|\[redacted\])([^\s"',}]+))/gi,
 ]
 
 export function secretsIn(s) {
