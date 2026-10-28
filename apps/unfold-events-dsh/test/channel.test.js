@@ -3,7 +3,7 @@
 // launcher preload's registry (globalThis[Symbol.for('unfold.channel')]), never by env. The
 // file is read at every connect and never cached; with no channel, or no file, nothing is dialled.
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -154,6 +154,31 @@ test('the file is read again at every reconnect: a new agentd is followed, the o
     o.stop()
     await first.close()
     await second.close()
+  }
+})
+
+test('a file withdrawn after an attach is never dialled again, not even at the last-known address', async () => {
+  // The app withdraws the file before it lets agentd's lease go. The old port may then belong to
+  // any process of the same user, so the last address read is never reused.
+  const squatter = await fakeAgentd()
+  const path = observerFile(squatter.address)
+  const states = []
+  const o = new AgentdObserver({ observerFile: path, onState: (s, d) => states.push([s, d]) }).start()
+  try {
+    await until('the attachment', () => squatter.attaches.length === 1 && states.some(([s]) => s === 'attached'))
+    unlinkSync(path)
+    const from = dials.length
+    const seen = states.length
+    squatter.drop()
+    await new Promise((r) => setTimeout(r, 1000)) // past the first two retries
+    assert.equal(dials.length, from, 'nothing dialled once the file is withdrawn')
+    assert.equal(squatter.attaches.length, 1, 'the old address was never attached to again')
+    const later = states.slice(seen).map(([s]) => s)
+    assert.ok(!later.some((s) => s === 'connecting' || s === 'attached'), `states after the drop: ${later}`)
+    assert.equal(o.state, 'unpublished')
+  } finally {
+    o.stop()
+    await squatter.close()
   }
 })
 
