@@ -464,7 +464,7 @@ const tick = () => new Promise((r) => setTimeout(r, 1))
 
 test('loads as a Cordis plugin: routes, projection, link state, patches and unload', async () => {
   const { fiber, registered, service, hub, port, ctx, close } = await loaded()
-  assert.deepEqual(registered.map((r) => r.path), ['/api/unfold-events', '/api/unfold-events/stream', '/api/unfold-presence', '/api/unfold-presence/stream'])
+  assert.deepEqual(registered.map((r) => r.path), ['/api/unfold-events', '/api/unfold-events/stream', '/api/unfold-events/config', '/api/unfold-presence', '/api/unfold-presence/stream'])
   assert.ok(ctx.get('sessionProjections').registrations.has(PROJECTION_KEY), 'registered into the real registry')
   const pane = reader(port)
   const other = reader(port)
@@ -599,7 +599,7 @@ test('DSH transport: routes go to connection.fetch (behind its fence), not a bar
   const fiber = ctx.plugin(plugin, { agentd: { enabled: false } })
   await fiber
   await settle()
-  assert.deepEqual(fetchRoutes.map((r) => [r.path, r.methods]), [['/api/unfold-events', ['GET']], ['/api/unfold-events/stream', ['GET']], ['/api/unfold-presence', ['GET']], ['/api/unfold-presence/stream', ['GET']]])
+  assert.deepEqual(fetchRoutes.map((r) => [r.path, r.methods]), [['/api/unfold-events', ['GET']], ['/api/unfold-events/stream', ['GET']], ['/api/unfold-events/config', ['GET']], ['/api/unfold-presence', ['GET']], ['/api/unfold-presence/stream', ['GET']]])
   assert.equal(bare.length, 0, 'nothing bypasses Connection')
   const service = ctx.get('unfoldEvents')
   const abort = new AbortController()

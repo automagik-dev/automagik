@@ -253,7 +253,8 @@ const find = (node, key, out = []) => {
 test('bundle: the presence tab renders the avatar without a request', async () => {
   globalThis.document = { createElement: () => ({ dataset: {} }), head: { append() {} }, getElementById: () => null }
   const events = await bundle()
-  events.mod.exports.apply(events.ctx)
+  globalThis.fetch = async () => Response.json({ route: '/api/unfold-events', presenceRoute: '/api/unfold-presence' })
+  await events.mod.exports.apply(events.ctx)
   const body = events.regs.find((r) => r.opts.key === '@automagik/unfold-events-dsh/presence' && r.opts.name === 'sidebar.right.pane.tab')
   const calls = []
   globalThis.fetch = (...a) => { calls.push(a); return new Promise(() => {}) }

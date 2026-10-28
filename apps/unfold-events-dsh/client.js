@@ -1401,7 +1401,12 @@ var PRESENCE_STREAM = "api/unfold-presence/stream";
 var SHOWN = 200;
 var createRenderer = dustRenderer;
 var inject = ["slots", "sidebarRightTabs", "sidebarRight"];
-function apply(ctx) {
+async function apply(ctx) {
+  const response = await fetch("api/unfold-events/config", { cache: "no-store" });
+  if (!response.ok) throw new Error(`Unfold configuration ${response.status}`);
+  const config = await response.json();
+  STREAM = `${config.route.replace(/^\//, "").replace(/\/$/, "")}/stream`;
+  PRESENCE_STREAM = `${config.presenceRoute.replace(/^\//, "").replace(/\/$/, "")}/stream`;
   ctx.effect(() => ctx.sidebarRightTabs.register({
     id: UNFOLD_EVENTS_ID,
     kind: UNFOLD_EVENTS_KIND,

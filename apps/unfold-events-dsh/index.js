@@ -166,14 +166,14 @@ export function apply(ctx, config) {
   if (config.transport === 'connection') {
     ctx.inject(['connection'], (sctx) => {
       sctx.effect(() => {
-        const disposers = [...fetchRoutes(service, config.route, hub), ...presenceFetchRoutes(service, config.presence.route, presenceHub)].map((route) => sctx.connection.fetch.register(route))
+        const disposers = [...fetchRoutes(service, config.route, hub, config.presence.route), ...presenceFetchRoutes(service, config.presence.route, presenceHub)].map((route) => sctx.connection.fetch.register(route))
         return () => Promise.all(disposers.map((dispose) => dispose()))
       }, 'unfold-events: routes')
     })
   } else {
     ctx.inject(['webServer'], (sctx) => {
       sctx.effect(() => {
-        const disposers = [...routes(service, config.route, hub), ...presenceRoutes(service, config.presence.route, presenceHub)].map((route) => sctx.webServer.register(route))
+        const disposers = [...routes(service, config.route, hub, config.presence.route), ...presenceRoutes(service, config.presence.route, presenceHub)].map((route) => sctx.webServer.register(route))
         return () => disposers.forEach((dispose) => dispose())
       }, 'unfold-events: routes')
     })
@@ -198,7 +198,7 @@ export const SOURCE = {
 }
 
 /** `GET <route>` returns a snapshot; `GET <route>/stream` is a snapshot then every change, as SSE. */
-export function routes(service, base, hub = sseHub()) {
+export function routes(service, base, hub = sseHub(), presenceBase = '/api/unfold-presence') {
   return [
     {
       kind: 'exact',
@@ -216,11 +216,16 @@ export function routes(service, base, hub = sseHub()) {
         hub.open(req, res, 'snapshot', snapshot, snapshot.rev)
       },
     },
+    { kind: 'exact', path: '/api/unfold-events/config', handler: async (req, res) => {
+      if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); return res.end() }
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+      res.end(JSON.stringify({ route: base, presenceRoute: presenceBase }))
+    } },
   ]
 }
 
 /** The same two routes as DSH `connection.fetch` routes: exact paths below /api, owner peers only. */
-export function fetchRoutes(service, base, hub = sseHub()) {
+export function fetchRoutes(service, base, hub = sseHub(), presenceBase = '/api/unfold-presence') {
   return [
     {
       path: base,
@@ -237,6 +242,7 @@ export function fetchRoutes(service, base, hub = sseHub()) {
         return fetchStream(hub, request, 'snapshot', snapshot, snapshot.rev)
       },
     },
+    { path: '/api/unfold-events/config', methods: ['GET'], requestBody: 'buffered', fetch: async () => Response.json({ route: base, presenceRoute: presenceBase }) },
   ]
 }
 

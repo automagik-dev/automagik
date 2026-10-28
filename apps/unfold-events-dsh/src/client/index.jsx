@@ -23,15 +23,21 @@ export const UNFOLD_EVENTS_KIND = 'unfold.events'
 // a click wakes or sleeps voice (the host's mic and speaker) through unfold-session's call route.
 export const UNFOLD_PRESENCE_ID = '@automagik/unfold-events-dsh/presence'
 export const UNFOLD_PRESENCE_KIND = 'unfold.presence'
-const STREAM = 'api/unfold-events/stream'
-const PRESENCE_STREAM = 'api/unfold-presence/stream'
+let STREAM = 'api/unfold-events/stream'
+let PRESENCE_STREAM = 'api/unfold-presence/stream'
 const SHOWN = 200
 // The look is swappable behind this one factory (client/presence-renderer.js interface).
 const createRenderer = dustRenderer
 
 export const inject = ['slots', 'sidebarRightTabs', 'sidebarRight']
 
-export function apply(ctx) {
+export async function apply(ctx) {
+  const response = await fetch('api/unfold-events/config', { cache: 'no-store' })
+  if (!response.ok) throw new Error(`Unfold configuration ${response.status}`)
+  const config = await response.json()
+  STREAM = `${config.route.replace(/^\//, '').replace(/\/$/, '')}/stream`
+  PRESENCE_STREAM = `${config.presenceRoute.replace(/^\//, '').replace(/\/$/, '')}/stream`
+
   ctx.effect(() => ctx.sidebarRightTabs.register({
     id: UNFOLD_EVENTS_ID,
     kind: UNFOLD_EVENTS_KIND,
