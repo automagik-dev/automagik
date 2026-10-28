@@ -76,6 +76,8 @@ export class BotViews {
   #configured = new Set()
   /** The CDP relay (bot-relay.js), told about each view's life. */
   relay = null
+  /** The Bot's agent cursor (bot-cursor.js), told when a Bot's tabs move, show, attach or hold. */
+  cursor = null
 
   /**
    * @param {{ window: () => any, WebContentsView: any, session: any, origin: () => string | undefined, page?: () => ({ x: number, y: number, width: number, height: number, zoom: number, radius?: number } | null), devTools?: boolean, onChange?: (change: object) => void }} options
@@ -229,6 +231,7 @@ export class BotViews {
     entry.view.setBorderRadius(page?.radius ?? 0)
     if (entry.shown) this.#window()?.contentView.addChildView(entry.view)
     entry.view.setVisible(entry.shown)
+    this.cursor?.update(entry.botId)
   }
 
   async operate(botId, action, payload = {}) {
@@ -268,6 +271,7 @@ export class BotViews {
     this.relay?.closing(entry)
     this.#views.delete(entry.tabId)
     this.#window()?.contentView.removeChildView(entry.view)
+    this.cursor?.update(entry.botId)
     this.#onChange({ type: 'closed', botId: entry.botId, tabId: entry.tabId })
   }
 
@@ -284,15 +288,14 @@ export class BotViews {
   /**
    * The owner takes the Bot's browser (a takeover, a login handoff) or gives it back. While
    * held, the Bot's relay connection is closed and no new one is issued; the views stay and
-   * take the owner's input. (The Bot's cursor window, when there is one, hides here too.)
+   * take the owner's input, and the Bot's cursor hides until the Bot's next session.
    */
   async hold(botId, held) {
-    if (!held) {
-      this.#held.delete(botId)
-      return true
-    }
-    this.#held.add(botId)
-    this.relay?.drop(botId)
+    if (held) {
+      this.#held.add(botId)
+      this.relay?.drop(botId)
+    } else this.#held.delete(botId)
+    this.cursor?.update(botId)
     return true
   }
 
@@ -315,6 +318,7 @@ export class BotViews {
   /** The view's state changed (a Bot attached or left). */
   changed(entry) {
     this.#publish(entry)
+    this.cursor?.update(entry.botId)
   }
 
   dispose() {
