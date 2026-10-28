@@ -13,21 +13,28 @@ import { redact as clientRedact, redactText as clientRedactText, secretsIn as cl
 const WORDS = ['correct', 'horse', 'battery', 'staple']
 const PHRASE = WORDS.join(' ')
 const JOINED = WORDS.join('')
-const KEYS = ['password', 'PASSWD', 'pass', 'Secret', 'client_secret', 'passphrase', 'TOKEN', 'api_key', 'private_key', 'db_password', 'DB_PASS', 'x-api-key', 'secret_key', 'SECRET_KEY', 'aws_secret_access_key', 'AWS_SECRET_ACCESS_KEY', 'accessToken', 'clientSecret', 'dbPassword', 'apiKey', 'privateKey', 'authToken', 'dbPass', 'userPass', 'adminPass']
+const KEYS = ['password', 'PASSWD', 'pass', 'Secret', 'client_secret', 'passphrase', 'TOKEN', 'api_key', 'private_key', 'db_password', 'DB_PASS', 'x-api-key', 'secret_key', 'SECRET_KEY', 'aws_secret_access_key', 'AWS_SECRET_ACCESS_KEY', 'accessToken', 'clientSecret', 'dbPassword', 'apiKey', 'privateKey', 'authToken', 'dbPass', 'userPass', 'adminPass', 'ClientSecret', 'AccessToken', 'DbPassword', 'DbPass']
 const SCHEMES = [`authorization: bearer ${JOINED}`, `AUTHORIZATION: BEARER ${JOINED}`, `Authorization: basic ${JOINED}`, `{"authorization": "bearer ${PHRASE}"}`]
 // 80k characters of each input that could make a rule quadratic: a start after - or --, an open
 // quote, a camelCase run, a YAML block, an open escaped JSON value, a prefix run, many line starts,
-// many escaped JSON values, many YAML keys, many names mid-line and bearer runs.
+// many escaped JSON values, many YAML keys, many names mid-line, bearer runs, a word of upper-case names, long indents before a YAML key or
+// any key, repeated names, keys and flags, open quotes of each kind, and backslash and escaped
+// quote runs.
 // A scheme in any case with no key name before it, before a token-shaped word (16+ characters of the
 // token alphabet with a digit), built from words at run time.
 const SHAPED = WORDS.join('9')
 const ALONE = [`bearer ${SHAPED}`, `BEARER ${SHAPED}`, `basic ${SHAPED}`, `the header was bEaReR ${SHAPED}, then more`]
 const NOT_TOKENS = ['bearer bonds', 'basic steps', 'the bearer of bad news', 'bearer v2 of the api']
+// A token after a bare scheme whose digit comes last, and the same token in two deltas.
+const LATE = `use bearer ${JOINED}9 now`
+const LATE_SPLIT = [`use bearer ${WORDS.slice(0, 2).join('')}`, `${WORDS.slice(2).join('')}9 now`]
 const FILL = 17_000 // past the private 16 KiB bound
 // An escaped JSON value still open where the keep is cut, ending inside an escape: two backslashes
 // (an escape begun one level down) or three (and one begun here). The next delta must still be read
 // as part of the value, so the words after the escaped quote stay hidden.
 const MID_ESCAPE = [2, 3].map((run) => [`${run} backslashes`, `{\\"password\\": \\"${'x'.repeat(FILL)}${'\\'.repeat(run)}`, `${run === 2 ? '\\"' : '"'}${PHRASE}\\"} done`])
+// Spaces, tabs or both before a YAML block key: 80k of them, and 16k (the window's bound).
+const INDENTED = [80_000, 16_000].flatMap((n) => [' ', '\t', ' \t'].flatMap((run) => ['password', 'accessToken'].map((key) => [`${n} ${JSON.stringify(run)} before ${key}: |`, `${run.repeat(n / run.length)}${key}: |\n`])))
 const ADVERSARIAL = {
   'a- repeat': 'a-'.repeat(40_000),
   'open quote': `password: "${'x '.repeat(40_000)}`,
@@ -43,6 +50,24 @@ const ADVERSARIAL = {
   'camelCase names mid-line': 'x dbPassword: '.repeat(5_700),
   'bearer runs': 'bearer x '.repeat(9_000),
   'bearer long run': `bearer ${'a'.repeat(80_000)}`,
+  'upper names in one word': `${'TOKEN'.repeat(16_000)} =`,
+  'leading spaces, then a key': `${' '.repeat(80_000)}password: x`,
+  'leading tabs, then KEY=': `${'\t'.repeat(80_000)}API_TOKEN="x`,
+  'leading mixed runs, then a camelCase key': `${' \t'.repeat(40_000)}accessToken: x`,
+  'repeated names': 'password '.repeat(8_900),
+  'repeated camelCase keys': 'accessToken: '.repeat(6_200),
+  'repeated PascalCase keys': 'ClientSecret='.repeat(6_200),
+  'repeated flags': '--token='.repeat(10_000),
+  'repeated KEY=': 'API_TOKEN='.repeat(8_000),
+  'open single quote': `password: '${'x '.repeat(40_000)}`,
+  'open backtick': `password: \`${'x '.repeat(40_000)}`,
+  'quote runs': `${'"'.repeat(27_000)}${"'".repeat(27_000)}${'`'.repeat(26_000)}`,
+  'backslash run': '\\'.repeat(80_000),
+  'backslashes in an open value': `password: "${'\\'.repeat(80_000)}`,
+  'escaped quote pairs': '\\"'.repeat(40_000),
+  'escaped quote pairs in an open value': `password: "${'\\"'.repeat(40_000)}`,
+  'escaped quote pairs in an escaped value': `{\\"password\\": \\"${'\\"'.repeat(40_000)}`,
+  ...Object.fromEntries(INDENTED),
 }
 const YAML_LINES = Array.from({ length: 400 }, (_, i) => `    ${PHRASE} ${i}\n`) // more than either keep
 // A bare value is one unbroken run (only its first word would be hidden), so it never takes the
@@ -106,7 +131,7 @@ test('the browser copy and the window agree, and hide every key form', () => {
 })
 
 test('words that only contain a key name are not keys', () => {
-  const prose = 'bypass=open compass: north passenger: aboard tokenizer: fast a-bypass=1 -bypass=1 --bypass=open secret_sauce: butter basic steps first bearer bonds accessLevel: admin clientName: acme passRate: 0.9 maxTokens: 512 tokenCount: 12 primaryKey: id sortKey: name keyboardLayout: us passengerCount: 4 tokenizerName: bpe compassHeading: north my firstPass at it boardingPass alone the bearer of bad news'
+  const prose = 'bypass=open compass: north passenger: aboard tokenizer: fast a-bypass=1 -bypass=1 --bypass=open secret_sauce: butter basic steps first bearer bonds accessLevel: admin clientName: acme passRate: 0.9 maxTokens: 512 tokenCount: 12 primaryKey: id sortKey: name keyboardLayout: us passengerCount: 4 tokenizerName: bpe compassHeading: north my firstPass at it boardingPass alone AccessLevel: admin MaxTokens: 512 PassengerCount: 4 PassRate: 0.9 my FirstPass at it the bearer of bad news'
   assert.equal(redactText(prose), prose)
   assert.equal(clientRedactText(prose), prose)
 })
@@ -156,8 +181,8 @@ test('a scheme in any case with no key name hides a token-shaped word, in the wi
     assert.deepEqual(leaked(clientRedactText(text)), [], text)
   }
   for (const text of NOT_TOKENS) {
-    assert.equal(redactText(text), text)
-    assert.equal(clientRedactText(text), text)
+    assert.equal(redactText(`${text}, then more`), `${text}, then more`)
+    assert.equal(clientRedactText(`${text}, then more`), `${text}, then more`)
   }
 })
 
@@ -169,4 +194,23 @@ test('a bound inside an escaped value that ends mid-escape: the rest of the valu
     assert.deepEqual(leaked(r.served()), [], what)
     assert.match(r.served(), /done/, what)
   }
+})
+
+test('a token after a bare scheme, streamed a character at a time: no prefix of it is shown', () => {
+  const r = rig()
+  for (const ch of LATE) r.push(ch)
+  assert.deepEqual(leaked(r.served()), [], LATE)
+  const split = rig()
+  for (const text of LATE_SPLIT) split.push(text)
+  assert.deepEqual(leaked(split.served()), [], LATE_SPLIT.join(' + '))
+  assert.deepEqual(leaked(clientRedactText(LATE_SPLIT[0])), [], LATE_SPLIT[0])
+  for (const text of NOT_TOKENS) {
+    const p = rig()
+    for (const ch of `${text}, then more`) p.push(ch)
+    assert.ok(p.served().includes(`${text}, then more`), text)
+  }
+})
+
+test('one push of an 80k unbroken run past the 16 KiB bound, then a separator and whitespace, stays fast', () => {
+  assert.ok(timed(() => rig().push(`${'a'.repeat(80_000)}: = \t`)) < FAST_MS)
 })
