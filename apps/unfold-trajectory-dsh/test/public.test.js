@@ -55,13 +55,14 @@ test('no proof-of-concept name, plugin id or local path in any file of the packa
     `(?<![A-Za-z])[Rr]${old.slice(1)}`, old.toUpperCase(), `R${old.slice(1)}(?![a-z])`,
     // the proof-of-concept plugin ids (DeepSeek's own @deepseek-ai/dsh-session is not one)
     `(?<![\\w/-])dsh-(?:sse|events|capabilities|settings|mind|session|${old}-trajectory)\\b`,
-    // upstream's bundle names its own CI checkout (/home/runner/work/deepseek-harness/) in region
-    // comments; that public path is upstream's bytes, and every other home path is refused
-    `/${'Us'}ers/`, '/home/(?!runner/work/deepseek-harness/)', '[A-Z]:\\\\\\\\', `scratch${'pad'}`, `coun${'cil'}/`,
+    `/${'Us'}ers/`, '/home/', '[A-Z]:\\\\\\\\', `scratch${'pad'}`, `coun${'cil'}/`,
   ].join('|'))
+  // The pinned upstream bundle names upstream's own CI checkout in its region comments: those are
+  // upstream's bytes. The build drops that path, so client.js and every other file carry no home.
+  const checkout = /\/home\/runner\/work\/deepseek-harness\//g
   for (const file of TRACKED) {
     for (const [i, line] of read(file).split('\n').entries()) {
-      const hit = line.match(names)
+      const hit = (file === 'upstream/lib/client.js' ? line.replace(checkout, '') : line).match(names)
       assert.equal(hit, null, `${file}:${i + 1}: ${hit?.[0]}`)
     }
   }
