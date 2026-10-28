@@ -67,6 +67,19 @@
       },
       "versions": [
         {
+          "version": "3.35.0",
+          "publishTimestamp": 1793194303,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "01b558637ea4512d218ae2e8cbf6b216fbd10c9c",
+            "path": "apps/bots-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.34.0",
           "publishTimestamp": 1793163992,
           "source": {
@@ -705,6 +718,19 @@
         ]
       },
       "versions": [
+        {
+          "version": "3.35.0",
+          "publishTimestamp": 1793194303,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "01b558637ea4512d218ae2e8cbf6b216fbd10c9c",
+            "path": "apps/welcome-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
         {
           "version": "3.34.0",
           "publishTimestamp": 1793163992,
@@ -1538,6 +1564,19 @@
       },
       "versions": [
         {
+          "version": "3.35.0",
+          "publishTimestamp": 1793194303,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "01b558637ea4512d218ae2e8cbf6b216fbd10c9c",
+            "path": "apps/unfold-bridge-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.34.0",
           "publishTimestamp": 1793163992,
           "source": {
@@ -1735,6 +1774,19 @@
         ]
       },
       "versions": [
+        {
+          "version": "3.35.0",
+          "publishTimestamp": 1793194303,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "01b558637ea4512d218ae2e8cbf6b216fbd10c9c",
+            "path": "apps/locale-pt-br-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
         {
           "version": "3.34.0",
           "publishTimestamp": 1793163992,
