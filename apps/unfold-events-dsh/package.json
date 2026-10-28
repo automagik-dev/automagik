@@ -32,6 +32,7 @@
     "src/",
     "catalog/",
     "client.js",
+    "cordis.patch.yml",
     "README.md",
     "LICENSE"
   ],
@@ -60,6 +61,9 @@
       "inject": [
         "@deepseek-ai/dsh-client-ui-sidebar-right"
       ]
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
     }
   },
   "automagik": {
