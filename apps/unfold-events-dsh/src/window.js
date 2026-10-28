@@ -292,6 +292,11 @@ const SECRET_TEXT = [
   // trailing lone `\` is an escape still to come), or to the end while it is still open (a
   // streamed `KEY="…` is hidden until its quote arrives).
   [/\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*)=("(?:[^"\\]|\\[\s\S]|\\$)*(?:"|$)|'(?:[^'\\]|\\[\s\S]|\\$)*(?:'|$)|`(?:[^`\\]|\\[\s\S]|\\$)*(?:`|$)|\S+)/g, (_, name) => `${name}=${REDACTED}`],
+  // A YAML block scalar under a name (`password: |` or `>`, then the lines indented under it) is
+  // hidden whole, its key line kept, text before the name on that line too. These run first, so
+  // the name rules leave its `|` or `>` alone.
+  [/(^|\n)([ \t]*)([^\n]*?(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))([ \t]*:[ \t]*[>|][-+0-9]*[ \t]*)(?=\n|$)((?:\n(?:\2[ \t]+[^\n]*|[ \t]*(?=\n|$)))*)/gi, (_, nl, indent, before, name, sep, block) => `${nl}${indent}${before}${name}${sep}${/\S/.test(block) ? `\n${indent}  ${REDACTED}` : block}`],
+  [/(^|\n)([ \t]*)([^\n]*?(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))([ \t]*:[ \t]*[>|][-+0-9]*[ \t]*)(?=\n|$)((?:\n(?:\2[ \t]+[^\n]*|[ \t]*(?=\n|$)))*)/g, (_, nl, indent, before, name, sep, block) => `${nl}${indent}${before}${name}${sep}${/\S/.test(block) ? `\n${indent}  ${REDACTED}` : block}`],
   // `name: value` / `name=value`, in JSON too. A quoted value ("…", '…' or `…`; spaces and escapes
   // included) runs to its unescaped closing quote, or to the end while open. After a name, an
   // authorization scheme in any case (`authorization: bearer x`) keeps its word and hides what
@@ -300,7 +305,14 @@ const SECRET_TEXT = [
   // key, private key or authorization, in any case, as a whole token with any prefix joined by _ or
   // - (db_password, x-api-key, aws_secret_access_key), also right after a - or -- (--api-key=x):
   // `bypass` and `tokenizer` are words, not names.
-  [/(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))(["']?\s*[:=]\s*)(?:(["'`])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+|(?!Bearer\b|Basic\b|\[redacted\])[^\s"',}]+)/gi, (_, name, sep, q, close, scheme) => (q ? `${name}${sep}${q}${REDACTED}${close}` : scheme ? `${name}${sep}${scheme} ${REDACTED}` : `${name}${sep}${REDACTED}`)],
+  [/(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))(["']?\s*[:=]\s*)(?:(["'`])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+|(?![>|][-+0-9]*[ \t]*(?:\n|$))(?!Bearer\b|Basic\b|\[redacted\])[^\s"',}]+)/gi, (_, name, sep, q, close, scheme) => (q ? `${name}${sep}${q}${REDACTED}${close}` : scheme ? `${name}${sep}${scheme} ${REDACTED}` : `${name}${sep}${REDACTED}`)],
+  // The same names in camelCase (accessToken, clientSecret, dbPassword, apiKey, authToken), case
+  // sensitive and whole-token, so accessLevel, maxTokens and passRate stay words.
+  [/(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))(["']?\s*[:=]\s*)(?:(["'`])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(Bearer|bearer|BEARER|Basic|basic|BASIC)\s+[A-Za-z0-9._~+/=-]+|(?![>|][-+0-9]*[ \t]*(?:\n|$))(?!(?:Bearer|bearer|BEARER|Basic|basic|BASIC)\b|\[redacted\])[^\s"',}]+)/g, (_, name, sep, q, close, scheme) => (q ? `${name}${sep}${q}${REDACTED}${close}` : scheme ? `${name}${sep}${scheme} ${REDACTED}` : `${name}${sep}${REDACTED}`)],
+  // JSON inside a JSON string (`{\"password\": \"…\"}`): the value runs to its escaped closing
+  // quote, its own escapes doubled, or to a bare quote that ends the outer string.
+  [/(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))(\\"\s*:\s*)\\"((?:[^\\"]|\\[^\\"]|\\\\(?:[^\\"]|\\[^\\"]|\\\\|\\"|$)|\\$)*)(\\"|"|$)/gi, (_, name, sep, value, close) => `${name}${sep}\\"${REDACTED}${close}`],
+  [/(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))(\\"\s*:\s*)\\"((?:[^\\"]|\\[^\\"]|\\\\(?:[^\\"]|\\[^\\"]|\\\\|\\"|$)|\\$)*)(\\"|"|$)/g, (_, name, sep, value, close) => `${name}${sep}\\"${REDACTED}${close}`],
   [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/g, (_, scheme) => `${scheme} ${REDACTED}`],
   [/\bAIza[0-9A-Za-z_-]{20,}/g, () => REDACTED],
   // Standalone sk- credentials (the contract above): a whole key, then a still-open run at the end.
@@ -359,7 +371,24 @@ const contextBefore = (raw, cut) => CONTEXT_BEFORE.test(raw.slice(0, cut).trimEn
 const QUOTED_SECRET = [
   /\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=(["'`])/g,
   /(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization)["']?\s*[:=]\s*(["'`])/gi, // any prefix
+  /(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|ApiKey|PrivateKey|Authorization)|(?:api|private)Key)["']?\s*[:=]\s*(["'`])/g, // camelCase
 ]
+
+// Where a YAML block scalar under a credential name opens (`password: |`, then its indented
+// lines), as in SECRET_TEXT: a cut lands before it or after it, never inside.
+const YAML_SECRET = [
+  /(^|\n)([ \t]*)([^\n]*?(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))([ \t]*:[ \t]*[>|][-+0-9]*[ \t]*)(?=\n|$)((?:\n(?:\2[ \t]+[^\n]*|[ \t]*(?=\n|$)))*)/gi,
+  /(^|\n)([ \t]*)([^\n]*?(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))([ \t]*:[ \t]*[>|][-+0-9]*[ \t]*)(?=\n|$)((?:\n(?:\2[ \t]+[^\n]*|[ \t]*(?=\n|$)))*)/g,
+]
+
+// Where JSON inside a JSON string opens a credential value (`{\"password\": \"`), as in SECRET_TEXT,
+// and where it ends: its escaped closing quote (its own escapes doubled), a bare quote that ends
+// the outer string, or the end of the text while it is open.
+const ESCAPED_SECRET = [
+  /(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization)\\"\s*:\s*\\"/gi,
+  /(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|ApiKey|PrivateKey|Authorization)|(?:api|private)Key)\\"\s*:\s*\\"/g,
+]
+const ESCAPED_END = /(?:[^\\"]|\\[^\\"]|\\\\(?:[^\\"]|\\[^\\"]|\\\\|\\"|$)|\\$)*(\\"|"|$)/y
 
 /**
  * The first UNESCAPED `quote` in `s` from `from` (JSON escapes: `\"` and `\\` do not end a
@@ -375,7 +404,10 @@ function closingQuote(s, from, quote, escaped = false) {
   return { close: -1, escaped }
 }
 
-/** Quoted credential spans in `raw`: {start, end, closed, quote, escaped}; an open one runs to the end. */
+/**
+ * Quoted credential spans and YAML blocks in `raw`: {start, end, closed, quote, escaped}, and for a
+ * block what to `keep` while it is open; an open one runs to the end.
+ */
 function quotedSpans(raw) {
   const spans = []
   for (const re of QUOTED_SECRET) {
@@ -383,6 +415,26 @@ function quotedSpans(raw) {
       const quote = m[1]
       const { close, escaped } = closingQuote(raw, m.index + m[0].length, quote)
       spans.push({ start: m.index, end: close < 0 ? raw.length : close + 1, closed: close >= 0, quote, escaped })
+    }
+  }
+  for (const re of ESCAPED_SECRET) {
+    for (const m of raw.matchAll(re)) {
+      const open = m.index + m[0].length
+      ESCAPED_END.lastIndex = open
+      const closed = ESCAPED_END.exec(raw)[1] !== ''
+      // An open one keeps its key and opening quote, and the escape it ends inside.
+      let run = 0
+      while (!closed && raw.length - run > open && raw[raw.length - 1 - run] === '\\') run++
+      spans.push({ start: m.index, open, end: ESCAPED_END.lastIndex, closed, quote: '"', escaped: false, keep: closed ? undefined : `${raw.slice(m.index, open)}${'\\'.repeat(run % 4)}` })
+    }
+  }
+  for (const re of YAML_SECRET) {
+    for (const m of raw.matchAll(re)) {
+      const start = m.index + m[1].length
+      const end = m.index + m[0].length
+      // An open block keeps its key line and a fresh block line, so the rest arrives under its key.
+      const keep = `${raw.slice(start, end - m[6].length)}\n${raw.endsWith('\n') ? '' : `${m[2]} `}`
+      spans.push({ start, end, closed: end < raw.length, quote: null, escaped: false, keep })
     }
   }
   return spans
@@ -402,7 +454,7 @@ function boundRaw(raw) {
   let cut = raw.length - RAW_MAX
   for (let i = 0; i < 8; i++) {
     const inside = spans.find((sp) => sp.start < cut && cut < sp.end)
-    if (inside && !inside.closed) return { raw: '', orphan: { quote: inside.quote, escaped: inside.escaped } }
+    if (inside && !inside.closed) return inside.keep !== undefined ? { raw: inside.keep, orphan: null } : { raw: '', orphan: { quote: inside.quote, escaped: inside.escaped } }
     if (inside) cut = inside.end // past the closed value, whose key is dropped with it
     const ws = raw.slice(cut).search(/\s/)
     if (ws < 0) return { raw: '', orphan: { token: true } }

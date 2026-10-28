@@ -2,19 +2,37 @@
 // carries them (KEY=value, JSON, key: value), the value quoted with spaces: no word of the value
 // reaches the event window's rows or change payloads, whole or across its private 16 KiB bound,
 // and the browser's copy of the redaction hides it too. Words that only contain a key name are
-// not keys. The value is built from words at run time. Fields like pass_rate are not secrets.
+// not keys. The value is built from words at run time. Fields like pass_rate are not secrets, and
+// camelCase words with no key part are words.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { loadCatalog } from '../src/catalog.js'
 import { EventWindow, redact, redactText } from '../src/window.js'
-import { redact as clientRedact, redactText as clientRedactText } from '../src/client/redact.js'
+import { redact as clientRedact, redactText as clientRedactText, secretsIn as clientSecretsIn } from '../src/client/redact.js'
 
 const WORDS = ['correct', 'horse', 'battery', 'staple']
 const PHRASE = WORDS.join(' ')
 const JOINED = WORDS.join('')
-const KEYS = ['password', 'PASSWD', 'pass', 'Secret', 'client_secret', 'passphrase', 'TOKEN', 'api_key', 'private_key', 'db_password', 'DB_PASS', 'x-api-key', 'secret_key', 'SECRET_KEY', 'aws_secret_access_key', 'AWS_SECRET_ACCESS_KEY']
+const KEYS = ['password', 'PASSWD', 'pass', 'Secret', 'client_secret', 'passphrase', 'TOKEN', 'api_key', 'private_key', 'db_password', 'DB_PASS', 'x-api-key', 'secret_key', 'SECRET_KEY', 'aws_secret_access_key', 'AWS_SECRET_ACCESS_KEY', 'accessToken', 'clientSecret', 'dbPassword', 'apiKey', 'privateKey', 'authToken']
 const SCHEMES = [`authorization: bearer ${JOINED}`, `AUTHORIZATION: BEARER ${JOINED}`, `Authorization: basic ${JOINED}`, `{"authorization": "bearer ${PHRASE}"}`]
-const DASHES = 'a-'.repeat(40_000) // 80k characters: a start after - or -- must not make the rule quadratic
+// 80k characters of each input that could make a rule quadratic: a start after - or --, an open
+// quote, a camelCase run, a YAML block, an open escaped JSON value, a prefix run, many line starts,
+// many escaped JSON values, many YAML keys and many names mid-line.
+const ADVERSARIAL = {
+  'a- repeat': 'a-'.repeat(40_000),
+  'open quote': `password: "${'x '.repeat(40_000)}`,
+  'camelCase run': `a${'Bc'.repeat(40_000)}Token: x`,
+  'camelCase words': 'aBc '.repeat(20_000),
+  'YAML block': `password: |\n${'  a line of the block\n'.repeat(3_700)}`,
+  'escaped JSON': `{\\"password\\": \\"${'\\\\'.repeat(40_000)}`,
+  'prefix run': `${'a_'.repeat(40_000)}token: x`,
+  'line starts': '\n '.repeat(40_000),
+  'escaped JSON run': '\\"token\\": \\"x\\" '.repeat(5_000),
+  'YAML keys': '\npassword: |'.repeat(6_700),
+  'names mid-line': 'a password: '.repeat(6_700),
+  'camelCase names mid-line': 'x dbPassword: '.repeat(5_700),
+}
+const YAML_LINES = Array.from({ length: 400 }, (_, i) => `    ${PHRASE} ${i}\n`) // more than either keep
 // A bare value is one unbroken run (only its first word would be hidden), so it never takes the
 // spaced value the 16 KiB row sends.
 const FORMS = [
@@ -22,15 +40,23 @@ const FORMS = [
   ['key: `value`', (k, v) => `${k}: \`${v}\``], ['key=`value`', (k, v) => `${k}=\`${v}\``],
   ['--key=value', (k) => `tool --${k}=${JOINED}`, 'bare'], ['--key="value"', (k, v) => `tool --${k}="${v}"`],
   ['key: value, bare', (k) => `${k}: ${JOINED}`, 'bare'],
+  ['escaped JSON', (k, v) => `{\\"${k}\\": \\"${v}\\"}`],
+  ['YAML >', (k, v) => `\n${k}: >\n  ${v}\n  ${PHRASE}\nnext: shown`], ['YAML |', (k, v) => `\n  ${k}: |-\n    ${v}\n\n    ${PHRASE}\n  next: shown`],
   ['key = value', (k) => `${k} = ${JOINED}`, 'bare'], ['key : "value"', (k, v) => `${k} : "${v}"`], ['{"key" : "value"}', (k, v) => `{"${k}" : "${v}"}`],
 ]
 const CASES = KEYS.flatMap((k) => FORMS.map(([form, text, bare]) => [`${k} (${form})`, (v = PHRASE) => text(k, v), bare]))
 const leaked = (text) => [...new Set(text.match(/[a-z]{3,}/gi) ?? [])].filter((t) => WORDS.some((w) => w.includes(t.toLowerCase()) || t.toLowerCase().includes(w)))
+// The best of three runs: noise only slows a run, and a quadratic rule is slow every time.
 const timed = (fn) => {
-  const t0 = performance.now()
-  fn()
-  return performance.now() - t0
+  let best = Infinity
+  for (let i = 0; i < 3; i++) {
+    const t0 = performance.now()
+    fn()
+    best = Math.min(best, performance.now() - t0)
+  }
+  return best
 }
+const FAST_MS = 50
 
 const catalog = loadCatalog()
 let seq = 0
@@ -68,7 +94,7 @@ test('the browser copy and the window agree, and hide every key form', () => {
 })
 
 test('words that only contain a key name are not keys', () => {
-  const prose = 'bypass=open compass: north passenger: aboard tokenizer: fast a-bypass=1 -bypass=1 --bypass=open secret_sauce: butter basic steps first bearer bonds'
+  const prose = 'bypass=open compass: north passenger: aboard tokenizer: fast a-bypass=1 -bypass=1 --bypass=open secret_sauce: butter basic steps first bearer bonds accessLevel: admin clientName: acme passRate: 0.9 maxTokens: 512 tokenCount: 12 primaryKey: id sortKey: name firstPass: done keyboardLayout: us'
   assert.equal(redactText(prose), prose)
   assert.equal(clientRedactText(prose), prose)
 })
@@ -83,15 +109,29 @@ test('a scheme after a key name is hidden in any case, in the window and the bro
   }
 })
 
-test('80k characters of a- stay fast, in the window and the browser copy', () => {
-  assert.ok(timed(() => redactText(DASHES)) < 200, 'the window rules')
-  assert.ok(timed(() => clientRedactText(DASHES)) < 200, 'the browser copy')
-  assert.ok(timed(() => rig().push(DASHES)) < 200, 'the window')
+test('80k characters of adversarial input stay fast, in the window and the browser copy', () => {
+  for (const [what, text] of Object.entries(ADVERSARIAL)) {
+    assert.ok(timed(() => redactText(text)) < FAST_MS, `${what}: the window rules`)
+    assert.ok(timed(() => clientRedactText(text)) < FAST_MS, `${what}: the browser copy`)
+    assert.ok(timed(() => clientSecretsIn(text)) < FAST_MS, `${what}: the browser copy's values`)
+    assert.ok(timed(() => rig().push(text)) < FAST_MS, `${what}: the window`)
+  }
 })
 
 test('fields named for a pass count are kept; fields named for a pass are hidden', () => {
   for (const redactOf of [redact, clientRedact]) {
     assert.deepEqual(redactOf({ pass_rate: 0.9, pass_count: 3 }), { pass_rate: 0.9, pass_count: 3 })
     assert.deepEqual(redactOf({ pass: 'x1', db_pass: 'x2' }), { pass: '[redacted]', db_pass: '[redacted]' })
+  }
+})
+
+test('a YAML block longer than the 16 KiB bound, streamed a line at a time: no word of it is shown', () => {
+  for (const key of ['password', 'dbPassword']) {
+    const r = rig()
+    r.push(`config:\n  ${key}: |\n`)
+    for (const line of [...YAML_LINES, ...YAML_LINES]) r.push(line)
+    assert.deepEqual(leaked(r.served()), [], key)
+    r.push('next: shown')
+    assert.match(r.served(), /next: shown/, key)
   }
 })
