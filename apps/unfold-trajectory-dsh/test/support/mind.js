@@ -719,8 +719,8 @@ function keptTail(full) {
 // Where a quoted credential value opens (the quoted forms of redact.js's text rules), as in
 // unfold-events-dsh's window.
 const QUOTED_SECRET = [
-  /\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=(["'])/g,
-  /(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt]))(?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret|token|api[_-]?key|private[_-]?key|authorization)["']?\s*[:=]\s*(["'])/gi, // any prefix
+  /\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=(["'`])/g,
+  /(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization)["']?\s*[:=]\s*(["'`])/gi, // any prefix
 ]
 
 /** Quoted credential spans in `raw`: {start, open, end, closed, escaped}; an open one runs to the end. */

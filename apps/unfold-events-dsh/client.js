@@ -1373,14 +1373,16 @@ var SECRET_TEXT = [
   // A quoted value runs to its UNESCAPED closing quote (JSON: `\"` and `\\` do not end it; a
   // trailing lone `\` is an escape still to come), or to the end while it is still open (a
   // streamed `KEY="…` is hidden until its quote arrives).
-  [/\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*)=("(?:[^"\\]|\\[\s\S]|\\$)*(?:"|$)|'(?:[^'\\]|\\[\s\S]|\\$)*(?:'|$)|\S+)/g, (_, name) => `${name}=${REDACTED}`],
-  // `name: value` / `name=value`, in JSON too. A quoted value (any prefix, spaces and escapes
-  // included) runs to its unescaped closing quote, or to the end while open. A bare value that is
-  // an authorization scheme (`Authorization: Bearer x`) is left to the scheme rule below. A name is
-  // passphrase, password, passwd, pass, secret, token, api key, private key or authorization, in any
-  // case, as a whole token with any prefix joined by _ or - (db_password, x-api-key): `bypass` and
-  // `tokenizer` are words, not names.
-  [/(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt]))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret|token|api[_-]?key|private[_-]?key|authorization))(["']?\s*[:=]\s*)(?:(["'])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(?!Bearer\b|Basic\b|\[redacted\])[^\s"',}]+)/gi, (_, name, sep, q, close) => q ? `${name}${sep}${q}${REDACTED}${close}` : `${name}${sep}${REDACTED}`],
+  [/\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*)=("(?:[^"\\]|\\[\s\S]|\\$)*(?:"|$)|'(?:[^'\\]|\\[\s\S]|\\$)*(?:'|$)|`(?:[^`\\]|\\[\s\S]|\\$)*(?:`|$)|\S+)/g, (_, name) => `${name}=${REDACTED}`],
+  // `name: value` / `name=value`, in JSON too. A quoted value ("…", '…' or `…`; spaces and escapes
+  // included) runs to its unescaped closing quote, or to the end while open. After a name, an
+  // authorization scheme in any case (`authorization: bearer x`) keeps its word and hides what
+  // follows; a scheme with no name is the case-sensitive rule below, so "basic steps" stays prose.
+  // A name is passphrase, password, passwd, pass, secret, secret key, secret access key, token, api
+  // key, private key or authorization, in any case, as a whole token with any prefix joined by _ or
+  // - (db_password, x-api-key, aws_secret_access_key), also right after a - or -- (--api-key=x):
+  // `bypass` and `tokenizer` are words, not names.
+  [/(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))(["']?\s*[:=]\s*)(?:(["'`])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+|(?!Bearer\b|Basic\b|\[redacted\])[^\s"',}]+)/gi, (_, name, sep, q, close, scheme) => q ? `${name}${sep}${q}${REDACTED}${close}` : scheme ? `${name}${sep}${scheme} ${REDACTED}` : `${name}${sep}${REDACTED}`],
   [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/g, (_, scheme) => `${scheme} ${REDACTED}`],
   [/\bAIza[0-9A-Za-z_-]{20,}/g, () => REDACTED],
   // Standalone sk- credentials (the contract above): a whole key, then a still-open run at the end.

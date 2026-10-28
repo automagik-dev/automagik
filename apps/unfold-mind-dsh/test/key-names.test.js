@@ -2,19 +2,33 @@
 // carries them (KEY=value, JSON, key: value), the value quoted with spaces: no word of the value
 // reaches a Mind row, snapshot, audit record or change payload, inside the 4096-char keep or with
 // the cut sweeping through it. Words that only contain a key name are not keys. The value is
-// built from words at run time.
+// built from words at run time. Fields like pass_rate are not secrets.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { loadDefinitions } from '../src/definitions.js'
 import { MindStream } from '../src/mind.js'
-import { redactText } from '../src/redact.js'
+import { redact, redactText, secretsIn } from '../src/redact.js'
 
 const WORDS = ['correct', 'horse', 'battery', 'staple']
 const PHRASE = WORDS.join(' ')
-const KEYS = ['password', 'PASSWD', 'pass', 'Secret', 'client_secret', 'passphrase', 'TOKEN', 'api_key', 'private_key', 'db_password', 'DB_PASS', 'x-api-key']
-const FORMS = [['KEY=value', (k) => `${k}="${PHRASE}"`], ['JSON', (k) => `{"${k}": "${PHRASE}"}`], ['key: value', (k) => `${k}: '${PHRASE}'`]]
+const JOINED = WORDS.join('')
+const KEYS = ['password', 'PASSWD', 'pass', 'Secret', 'client_secret', 'passphrase', 'TOKEN', 'api_key', 'private_key', 'db_password', 'DB_PASS', 'x-api-key', 'secret_key', 'SECRET_KEY', 'aws_secret_access_key', 'AWS_SECRET_ACCESS_KEY']
+const SCHEMES = [`authorization: bearer ${JOINED}`, `AUTHORIZATION: BEARER ${JOINED}`, `Authorization: basic ${JOINED}`, `{"authorization": "bearer ${PHRASE}"}`]
+const DASHES = 'a-'.repeat(40_000) // 80k characters: a start after - or -- must not make the rule quadratic
+const FORMS = [
+  ['KEY=value', (k) => `${k}="${PHRASE}"`], ['JSON', (k) => `{"${k}": "${PHRASE}"}`], ['key: value', (k) => `${k}: '${PHRASE}'`],
+  ['key: `value`', (k) => `${k}: \`${PHRASE}\``], ['key=`value`', (k) => `${k}=\`${PHRASE}\``],
+  ['--key=value', (k) => `tool --${k}=${JOINED}`], ['--key="value"', (k) => `tool --${k}="${PHRASE}"`],
+  ['key: value, bare', (k) => `${k}: ${JOINED}`],
+  ['key = value', (k) => `${k} = ${JOINED}`], ['key : "value"', (k) => `${k} : "${PHRASE}"`], ['{"key" : "value"}', (k) => `{"${k}" : "${PHRASE}"}`],
+]
 const CASES = KEYS.flatMap((k) => FORMS.map(([form, text]) => [`${k} (${form})`, text(k)]))
-const leaked = (text) => [...new Set(text.match(/[a-z]{3,}/gi) ?? [])].filter((t) => WORDS.some((w) => w.includes(t.toLowerCase())))
+const leaked = (text) => [...new Set(text.match(/[a-z]{3,}/gi) ?? [])].filter((t) => WORDS.some((w) => w.includes(t.toLowerCase()) || t.toLowerCase().includes(w)))
+const timed = (fn) => {
+  const t0 = performance.now()
+  fn()
+  return performance.now() - t0
+}
 
 function journal() {
   const mind = new MindStream({ now: () => 1 })
@@ -52,6 +66,26 @@ test('every key form the 4096 cut sweeps through: no word of its value is served
 })
 
 test('words that only contain a key name are not keys', () => {
-  const prose = 'bypass=open compass: north passenger: aboard tokenizer: fast'
+  const prose = 'bypass=open compass: north passenger: aboard tokenizer: fast a-bypass=1 -bypass=1 --bypass=open secret_sauce: butter basic steps first bearer bonds'
   assert.equal(redactText(prose), prose)
+})
+
+test('a scheme after a key name is hidden in any case, and the scheme word stays', () => {
+  for (const text of SCHEMES) {
+    const r = journal()
+    r.send(`the config has ${text} and goes on`)
+    assert.deepEqual(leaked(r.served()), [], text)
+    if (!text.startsWith('{')) assert.match(redactText(text), /(bearer|BEARER|basic) \[redacted\]/, text)
+  }
+})
+
+test('80k characters of a- stay fast, in the rules and in the stream', () => {
+  assert.ok(timed(() => redactText(DASHES)) < 200, 'redactText')
+  assert.ok(timed(() => secretsIn(DASHES)) < 200, 'secretsIn')
+  assert.ok(timed(() => journal().send(DASHES)) < 200, 'the stream')
+})
+
+test('fields named for a pass count are kept; fields named for a pass are hidden', () => {
+  assert.deepEqual(redact({ pass_rate: 0.9, pass_count: 3 }), { pass_rate: 0.9, pass_count: 3 })
+  assert.deepEqual(redact({ pass: 'x1', db_pass: 'x2' }), { pass: '[redacted]', db_pass: '[redacted]' })
 })
