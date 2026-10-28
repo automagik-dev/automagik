@@ -442,6 +442,28 @@ test('an unfold-session with no host status (Unfold\'s own instance) leaves ever
   await p.fiber.dispose()
 })
 
+test('an owner the session reports unavailable is read once per serving: no heartbeat or GET reads it again', async () => {
+  const load = async () => {
+    const counter = { reads: 0 }
+    const session = { status: async () => (counter.reads++, { owner: { unavailable: 'x' } }) }
+    return { counter, p: await loadPlugin({ leaseMs: 10_000, heartbeatMs: 5 }, { session, rows: [['hello', helloFields()]] }) }
+  }
+  const { counter, p } = await load()
+  const { sse, close } = await p.open()
+  const first = (await sse.next('settings')).data
+  assert.equal(first.sources.host.error, 'x')
+  for (let i = 0; i < 5; i++) await sse.next('heartbeat')
+  const got = await p.get()
+  assert.equal(got.sources.host.error, 'x')
+  assert.equal(counter.reads, 1, 'one read, then neither 5 heartbeats nor a GET read again')
+  close()
+  await p.fiber.dispose()
+  const reloaded = await load()
+  await reloaded.p.get()
+  assert.equal(reloaded.counter.reads, 1, 'a reload reads once more')
+  await reloaded.p.fiber.dispose()
+})
+
 // ── Freshness: what the panel DISPLAYS as time passes and the stream fails ──
 
 const drawnLeaf = (drawn, id) => drawn.sections.flatMap((s) => s.leaves).find((d) => d.leaf.id === id) ?? assert.fail(`no leaf ${id}`)

@@ -8,7 +8,7 @@ It reads three services other plugins provide; a missing one makes its values un
 
 | Service | Plugin | What is read |
 |---|---|---|
-| `unfoldSession` | `@automagik/unfold-session-dsh` | `status().owner`, the host owner's status. Where the session plugin offers no `status()` (Unfold's own control endpoint carries only the person's submit), every host value is unknown and says why. |
+| `unfoldSession` | `@automagik/unfold-session-dsh` | `status().owner`, the host owner's status. Where the session plugin offers no `status()` (Unfold's own control endpoint carries only the person's submit), every host value is unknown and says why. An owner it reports unavailable is read once, and again only when unfold-session reloads. |
 | `unfoldEvents` | `@automagik/unfold-events-dsh` | The observer's event window: the Hello, the `gemini ready` log line and `context_restore`. No second observer attaches to the agent. |
 | `omniTeam` | the Bot team | `config.memoryReview` only. |
 

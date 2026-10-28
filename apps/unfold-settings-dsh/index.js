@@ -65,6 +65,9 @@ export function apply(ctx, config) {
   let bot = null
   let host = null // null until unfold-session is loaded
   let reading = null
+  // The session whose owner said it is unavailable: that answer never changes for the session, so
+  // it is read once and again only when unfold-session reloads.
+  let unavailableFrom = null
   let rev = 0
   let lastContent = null
   const serving = { serving: randomUUID(), serving_started_at: Date.now() }
@@ -72,6 +75,7 @@ export function apply(ctx, config) {
 
   const readHost = async () => {
     if (!session) return
+    if (unavailableFrom === session) return
     if (typeof session.status !== 'function') {
       host = { body: null, read_at: null, ok: false, error: 'unfold-session reports no host status' }
       return
@@ -93,6 +97,7 @@ export function apply(ctx, config) {
         const owner = st?.owner
         if (owner && typeof owner === 'object' && !('unavailable' in owner)) host = { body: owner, read_at: Date.now(), ok: true, error: null }
         else host = { ...(host ?? { body: null, read_at: null }), ok: false, error: String(owner?.unavailable ?? 'unfold-session returned no owner status') }
+        if (typeof owner?.unavailable === 'string' && owner.unavailable) unavailableFrom = s
       } catch (e) {
         if (session !== s) return
         host = { ...(host ?? { body: null, read_at: null }), ok: false, error: String(e?.message ?? e) }
@@ -177,6 +182,7 @@ export function apply(ctx, config) {
     sctx.effect(() => {
       session = sctx.unfoldSession
       host = null
+      unavailableFrom = null
       changed()
       return () => {
         session = null
