@@ -478,23 +478,39 @@ export function apply(ctx, config, deps = {}) {
   const ready = new Promise((resolve, reject) => { resolveRoot = resolve; rejectRoot = reject })
   // The Bot plugin observes this promise; a failed preparation is also logged below.
   void ready.catch(() => {})
+  let rootStopped = false
+  ctx.effect(() => () => {
+    rootStopped = true
+    rejectRoot(new Error('unfold-session: unloaded before root preparation completed'))
+  }, 'unfold-session: root readiness lifecycle')
   ctx.inject(['sessionController', 'workspaceRegistry'], (sctx) => {
     sctx.effect(() => {
+      let active = true
+      const stopped = () => rootStopped || !active
       void (async () => {
         try {
           const known = await sctx.get('sessionPersistence')?.stat?.(ROOT)
+          if (stopped()) return
           if (known) { resolveRoot(); return }
           const dir = config.workspaceDir || join(process.env.DSH_HOME || process.cwd(), 'unfold-workspace')
           const { mkdirSync } = await import('node:fs')
+          if (stopped()) return
           mkdirSync(dir, { recursive: true })
           const ws = await sctx.workspaceRegistry.create(dir, config.title)
+          if (stopped()) return
           await sctx.sessionController.create({ sessionId: ROOT, workspaceId: ws.id })
+          if (stopped()) return
           resolveRoot()
         } catch (e) {
+          if (stopped()) return
           ctx.logger?.warn?.(`unfold-session: could not prepare the root Session: ${e?.message ?? e}`)
           rejectRoot(e)
         }
       })()
+      return () => {
+        active = false
+        rejectRoot(new Error('unfold-session: root preparation dependencies unloaded'))
+      }
     }, 'unfold-session: root session')
   })
 
