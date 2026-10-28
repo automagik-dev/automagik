@@ -8,6 +8,7 @@ name: Release
 #   automagik-welcome-dsh-<version>.tgz   the welcome and Connect AI (apps/welcome-dsh)
 #   automagik-unfold-bridge-dsh-<version>.tgz  the Unfold bridge (apps/unfold-bridge-dsh)
 #   automagik-locale-pt-br-dsh-<version>.tgz   Brazilian Portuguese for DSH (apps/locale-pt-br-dsh)
+#   automagik-unfold-session-dsh-<version>.tgz Unfold's session as a DSH conversation (apps/unfold-session-dsh)
 #   plugins.json                          each tarball's name, version, file and integrity
 #   dsh-oh-my-claude-<its version>.tgz    the add-ons the lane carries, at the profile's pins
 #   addons.json                           (scripts/lane.ts LANE_ADDONS), and what each one is
@@ -127,7 +128,7 @@ jobs:
           set -euo pipefail
           bun install --frozen-lockfile --ignore-scripts
           bun run check
-          for app in bots-dsh locale-pt-br-dsh unfold-bridge-dsh welcome-dsh; do
+          for app in bots-dsh locale-pt-br-dsh unfold-bridge-dsh unfold-session-dsh welcome-dsh; do
             (cd "apps/${app}" && bun install --frozen-lockfile --ignore-scripts && { [ ! -f scripts/build-client.mjs ] || node scripts/build-client.mjs --check; })
           done
 
@@ -186,7 +187,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          for app in bots-dsh locale-pt-br-dsh unfold-bridge-dsh welcome-dsh; do
+          for app in bots-dsh locale-pt-br-dsh unfold-bridge-dsh unfold-session-dsh welcome-dsh; do
             (cd "apps/${app}" && npm pack --silent --ignore-scripts --pack-destination ../../release >/dev/null)
           done
           bun scripts/release-plugins.ts release "${VERSION}" "${SHA}" > release/plugins.json
@@ -209,7 +210,7 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
             --title "Automagik ${VERSION%.0}" \
-            --notes "The Bot team (\`@automagik/bots-dsh\`), the welcome (\`@automagik/welcome-dsh\`), the Unfold bridge (\`@automagik/unfold-bridge-dsh\`) and Brazilian Portuguese (\`@automagik/locale-pt-br-dsh\`) for DeepSeek Harness, and the Automagik desktop app. Install the plugins from the [Automagik market](https://github.com/automagik-dev/dsh-marketplace) or from an Omni's own market; \`plugins.json\` lists each tarball's integrity. The desktop builds follow when they are done."
+            --notes "The Bot team (\`@automagik/bots-dsh\`), the welcome (\`@automagik/welcome-dsh\`), the Unfold bridge (\`@automagik/unfold-bridge-dsh\`), the Unfold session (\`@automagik/unfold-session-dsh\`) and Brazilian Portuguese (\`@automagik/locale-pt-br-dsh\`) for DeepSeek Harness, and the Automagik desktop app. Install the plugins from the [Automagik market](https://github.com/automagik-dev/dsh-marketplace) or from an Omni's own market; \`plugins.json\` lists each tarball's integrity. The desktop builds follow when they are done."
 
       - name: Sign and post the plugin lane
         if: steps.cut.outputs.version != ''
