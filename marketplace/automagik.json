@@ -67,6 +67,19 @@
       },
       "versions": [
         {
+          "version": "3.40.0",
+          "publishTimestamp": 1793214323,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "ea0380eedbb1a0b1a5fe902827064401ee9581b2",
+            "path": "apps/bots-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.39.0",
           "publishTimestamp": 1793214098,
           "source": {
@@ -796,6 +809,19 @@
         ]
       },
       "versions": [
+        {
+          "version": "3.40.0",
+          "publishTimestamp": 1793214323,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "ea0380eedbb1a0b1a5fe902827064401ee9581b2",
+            "path": "apps/welcome-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
         {
           "version": "3.39.0",
           "publishTimestamp": 1793214098,
@@ -1720,6 +1746,19 @@
       },
       "versions": [
         {
+          "version": "3.40.0",
+          "publishTimestamp": 1793214323,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "ea0380eedbb1a0b1a5fe902827064401ee9581b2",
+            "path": "apps/unfold-bridge-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.39.0",
           "publishTimestamp": 1793214098,
           "source": {
@@ -2009,6 +2048,19 @@
       },
       "versions": [
         {
+          "version": "3.40.0",
+          "publishTimestamp": 1793214323,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "ea0380eedbb1a0b1a5fe902827064401ee9581b2",
+            "path": "apps/locale-pt-br-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.39.0",
           "publishTimestamp": 1793214098,
           "source": {
@@ -2141,6 +2193,19 @@
       },
       "versions": [
         {
+          "version": "3.40.0",
+          "publishTimestamp": 1793214323,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "ea0380eedbb1a0b1a5fe902827064401ee9581b2",
+            "path": "apps/unfold-capabilities-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.39.0",
           "publishTimestamp": 1793214098,
           "source": {
@@ -2220,6 +2285,19 @@
         ]
       },
       "versions": [
+        {
+          "version": "3.40.0",
+          "publishTimestamp": 1793214323,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "ea0380eedbb1a0b1a5fe902827064401ee9581b2",
+            "path": "apps/unfold-settings-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
         {
           "version": "3.39.0",
           "publishTimestamp": 1793214098,
@@ -2302,6 +2380,19 @@
       },
       "versions": [
         {
+          "version": "3.40.0",
+          "publishTimestamp": 1793214323,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "ea0380eedbb1a0b1a5fe902827064401ee9581b2",
+            "path": "apps/unfold-events-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.39.0",
           "publishTimestamp": 1793214098,
           "source": {
@@ -2370,6 +2461,19 @@
       },
       "versions": [
         {
+          "version": "3.40.0",
+          "publishTimestamp": 1793214323,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "ea0380eedbb1a0b1a5fe902827064401ee9581b2",
+            "path": "apps/unfold-mind-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.39.0",
           "publishTimestamp": 1793214098,
           "source": {
@@ -2424,6 +2528,19 @@
       },
       "versions": [
         {
+          "version": "3.40.0",
+          "publishTimestamp": 1793214323,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "ea0380eedbb1a0b1a5fe902827064401ee9581b2",
+            "path": "apps/unfold-trajectory-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.39.0",
           "publishTimestamp": 1793214098,
           "source": {
@@ -2431,6 +2548,48 @@
             "url": "https://github.com/automagik-dev/automagik",
             "commit": "e8f4313de34522e316546b6e5b858a3c3ad04547",
             "path": "apps/unfold-trajectory-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        }
+      ]
+    },
+    {
+      "name": "@automagik/unfold-session-dsh",
+      "title": {
+        "en": "Unfold session"
+      },
+      "description": {
+        "en": "Talk to Unfold from DSH, inside the Unfold instance's DSH. Unfold's rolling session is one DSH conversation: what you type and send in its composer goes to Unfold once, only through Unfold's own control endpoint, and Unfold's reply streams back as a chat bubble. DSH makes no model call for it. Spoken turns are shown as bubbles, never sent, and nothing an event says is ever sent for you. Outside an Unfold instance nothing is sent, and the chat says so. Part of Unfold; works with the Unfold app."
+      },
+      "author": "Automagik",
+      "homepage": "https://github.com/automagik-dev/automagik/tree/dev/apps/unfold-session-dsh#readme",
+      "repository": {
+        "url": "https://github.com/automagik-dev/automagik",
+        "directory": "apps/unfold-session-dsh"
+      },
+      "metadata": {
+        "category": "automagik",
+        "keywords": [
+          "unfold",
+          "session",
+          "chat",
+          "composer"
+        ],
+        "labels": [
+          "official"
+        ]
+      },
+      "versions": [
+        {
+          "version": "3.40.0",
+          "publishTimestamp": 1793214323,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "ea0380eedbb1a0b1a5fe902827064401ee9581b2",
+            "path": "apps/unfold-session-dsh"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.4 <0.2.2-0"
