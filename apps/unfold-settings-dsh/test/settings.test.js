@@ -61,14 +61,28 @@ function sseReader(response) {
     }
     return true
   }
+  const take = async (event) => {
+    for (;;) {
+      while (queue.length) {
+        const fr = queue.shift()
+        if (!event || fr.event === event) return fr
+      }
+      if (!(await pump())) return null
+    }
+  }
   return {
-    async next(event) {
-      for (;;) {
-        while (queue.length) {
-          const fr = queue.shift()
-          if (!event || fr.event === event) return fr
-        }
-        if (!(await pump())) return null
+    /**
+     * The next frame, failing after `ms`. The wait holds a ref'd timer: an in-memory stream holds
+     * no handle and the plugin's heartbeat timer is unref'd, so without it the loop could drain.
+     */
+    async next(event, ms = 2_000) {
+      if (ms === Infinity) return take(event)
+      let timer
+      const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no ${event ?? 'frame'} in ${ms} ms`)), ms) })
+      try {
+        return await Promise.race([take(event), late])
+      } finally {
+        clearTimeout(timer)
       }
     },
     /** Every frame that arrives within `ms`. */
@@ -76,7 +90,7 @@ function sseReader(response) {
       const out = []
       const until = Date.now() + ms
       while (Date.now() < until) {
-        const fr = await Promise.race([this.next(), sleep(Math.max(1, until - Date.now())).then(() => undefined)])
+        const fr = await Promise.race([this.next(undefined, Infinity), sleep(Math.max(1, until - Date.now())).then(() => undefined)])
         if (fr === undefined) break
         if (fr === null) break
         out.push(fr)
@@ -735,19 +749,22 @@ test('a delayed view keeps its real age (the clock offset never shrinks on a lat
 })
 
 test('GET and SSE share one rising revision; a change is pushed; each heartbeat names the current revision', async () => {
+  let owner = RUNNING
   const p = await loadPlugin({ leaseMs: 10_000, heartbeatMs: 20 }, {
-    session: { status: async () => ({ owner: RUNNING }) },
+    session: { status: async () => ({ owner }) },
     rows: [['hello', helloFields()], ['log', { level: 'info', msg: READY_SERVER }]],
   })
   const { sse, close } = await p.open()
   const first = (await sse.next('settings')).data
   assert.ok(first.serving && first.serving_started_at && Number.isInteger(first.rev))
-  await sleep(5) // so the GET's host read has a later read_at (same content would rightly share the revision)
-  const got = await p.get() // a GET reads the host: the content (read_at) changes
+  // The host's next read reports a new chunk size, so the content changes whatever the clock says.
+  owner = { ...RUNNING, host: { ...RUNNING.host, voice_policy: { ...RUNNING.host.voice_policy, chunk_ms: 60 } } }
+  const got = await p.get() // a GET reads the host
   assert.equal(got.serving, first.serving)
   assert.ok(got.rev > first.rev, `GET rev ${got.rev} > stream rev ${first.rev}`)
   const pushed = (await sse.next('settings')).data
   assert.equal(pushed.rev, got.rev, 'the GET\'s change reached the open stream')
+  assert.equal(leaf(pushed, 'chunk_ms').value, 60, 'the pushed view carries the new host value')
   const beat = (await sse.next('heartbeat')).data
   assert.deepEqual([beat.serving, beat.rev], [got.serving, got.rev], 'the beat confirms exactly that revision')
   const m = new PanelModel()
