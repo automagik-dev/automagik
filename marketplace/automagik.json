@@ -67,6 +67,19 @@
       },
       "versions": [
         {
+          "version": "3.33.1",
+          "publishTimestamp": 1793163418,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "eb56246d1fb15455737dadc3d88b3d7ae1e63149",
+            "path": "apps/bots-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.3 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.33.0",
           "publishTimestamp": 1793150938,
           "source": {
@@ -679,6 +692,19 @@
         ]
       },
       "versions": [
+        {
+          "version": "3.33.1",
+          "publishTimestamp": 1793163418,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "eb56246d1fb15455737dadc3d88b3d7ae1e63149",
+            "path": "apps/welcome-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.3 <0.2.2-0"
+          }
+        },
         {
           "version": "3.33.0",
           "publishTimestamp": 1793150938,
@@ -1485,6 +1511,19 @@
         ]
       },
       "versions": [
+        {
+          "version": "3.33.1",
+          "publishTimestamp": 1793163418,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "eb56246d1fb15455737dadc3d88b3d7ae1e63149",
+            "path": "apps/unfold-bridge-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.3 <0.2.2-0"
+          }
+        },
         {
           "version": "3.33.0",
           "publishTimestamp": 1793150938,
