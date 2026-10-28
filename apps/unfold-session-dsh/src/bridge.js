@@ -11,7 +11,7 @@
 // with a `provider:` policy, then `response_started`) is followed by its own ids; it is never
 // submitted or re-run, and its transcript is never sent anywhere. See runVoice() and ./voice.js.
 import { AgentdObserver, observerAddress } from './observer.js'
-import { readChannel, refusedText } from './host-client.js'
+import { readChannel, refusedText, validTurnId } from './host-client.js'
 import { Ring, VoiceLedger } from './voice.js'
 
 const TERMINAL = new Set(['completed', 'cancelled', 'failed', 'interrupted', 'rejected'])
@@ -504,7 +504,7 @@ export class SessionBridge {
         if (r === STOPPED) {
           this.sent.set(key, 'stopped while being sent')
           if (!t.final) unconfirmed()
-        } else if (r.status === 200 && r.body?.accepted === true && typeof r.body.turn_id === 'string') {
+        } else if (r.status === 200 && r.body?.accepted === true && validTurnId(r.body.turn_id)) {
           t.commandId = r.body.turn_id
           t.lastEventAt = Date.now()
           this.sent.set(key, `sent as ${t.commandId}`)
@@ -513,6 +513,10 @@ export class SessionBridge {
           this.stats.admissions++
           yield { type: 'admitted', command: { command_id: t.commandId, status: 'admitted' }, duplicate: false }
           this.adoptEarly(t)
+        } else if (r.status === 200) {
+          this.stats.unknown++
+          this.sent.set(key, 'accepted response had no usable command id')
+          t.finish({ status: 'unknown', text: '', detail: UNKNOWN.unreadable })
         } else if (r.body?.refused === 'command') {
           this.stats.rejected++
           this.sent.set(key, 'refused: an owner command')

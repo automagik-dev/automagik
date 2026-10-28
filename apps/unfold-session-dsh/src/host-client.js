@@ -20,6 +20,9 @@ export function readChannel() {
 /** A text the endpoint refuses as an owner command (check 6): its trimmed start is "/". */
 export const isOwnerCommand = (text) => String(text).trim().startsWith('/')
 
+// Validate without normalizing: command ids are opaque identities, never rewritten.
+export const validTurnId = (id) => typeof id === 'string' && id.trim().length > 0
+
 // The endpoint's refusal codes, as the person reads them. Never the text, never the token.
 const REFUSED = {
   request: 'the control endpoint could not read the request',
@@ -98,7 +101,7 @@ export class HostClient {
             // A 200 means the chat sent the turn: one that is not `{accepted: true, turn_id}` may
             // still have been sent, so it is unknown, never not sent.
             if (res.statusCode !== 200) body = { ...body, sent: false }
-            else if (body?.accepted !== true || typeof body.turn_id !== 'string') body = { ...body, error: 'unreadable', sent: 'unknown' }
+            else if (body?.accepted !== true || !validTurnId(body.turn_id)) body = { ...body, error: 'unreadable', sent: 'unknown' }
             finish({ status: res.statusCode, body })
           })
           res.on('error', () => finish({ status: 0, body: { error: 'transport', sent: 'unknown' } }))

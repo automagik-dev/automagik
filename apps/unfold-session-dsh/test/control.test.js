@@ -279,7 +279,7 @@ test('a 200 that is not exactly {accepted: true, turn_id} is unknown, never show
   t.after(() => within(fake.close(), 5000, 'the fake endpoint close'))
   preload(fake.channel())
   t.after(() => preload(null))
-  for (const body of ['not json', '{"accepted":true,"turn_id":7}', '{"accepted":false}', '{"turn_id":"app:b1:1"}']) {
+  for (const body of ['not json', JSON.stringify({accepted:true,turn_id:''}), JSON.stringify({accepted:true,turn_id:' \t\n '}), '{"accepted":true,"turn_id":7}', '{"accepted":false}', '{"turn_id":"app:b1:1"}']) {
     fake.answer = (conn) => conn.end(`HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`)
     const r = await new HostClient().submit(fake.session, 'a 200 the client cannot read')
     assert.deepEqual([r.status, r.body.sent], [200, 'unknown'], body)

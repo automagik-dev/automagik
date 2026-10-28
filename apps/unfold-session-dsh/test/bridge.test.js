@@ -285,3 +285,14 @@ for (const partial of [false, true]) test(`accepted typed turn settles after obs
   assert.equal(submits(host).length, 1)
   assert.equal(b.tracks.size, 0)
 })
+
+for (const id of ['', ' \t\n ']) test(`malformed accepted turn id ${JSON.stringify(id)} settles unknown without retry`, async () => {
+  const { b, host } = bridge([accepted(id)], { ...fast, typedIdleMs: 40 })
+  const events = await collect(b.run('invalid-id', 'hello'), 300)
+  assert.equal(events.some((e) => e.type === 'admitted'), false)
+  assert.equal(events.at(-1).status, 'unknown')
+  assert.match(events.at(-1).detail, /form this plugin cannot read/)
+  assert.equal((await collect(b.run('invalid-id', 'hello'), 300)).at(-1).status, 'unknown')
+  assert.equal(submits(host).length, 1)
+  assert.equal(b.tracks.size, 0)
+})
