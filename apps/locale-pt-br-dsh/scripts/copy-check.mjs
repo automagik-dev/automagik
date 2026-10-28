@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { FOLDER, PLUGIN, loadDictionaries } from './dictionaries.mjs'
 
-export const REFERENCE = join(PLUGIN, 'test/en/0.2.1-rc.3.json')
+export const REFERENCE = join(PLUGIN, 'test/en/0.2.1-rc.4.json')
 const OMNI_UI = 'omni-ui'
 const PLACEHOLDER = /\{(\w+)\}/g
 const ARTICLE = '(?:o|a|os|as|do|da|dos|das|no|na|nos|nas|ao|à|aos|às|pelo|pela|num|numa|dum|duma|um|uma)'

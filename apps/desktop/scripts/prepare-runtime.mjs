@@ -23,6 +23,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { scrubBuildPaths } from '../src/dsh.js'
 import { pruneNodeModules } from './prune-runtime.mjs'
+import { acceptsHarness } from './follow-dsh.mjs'
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = resolve(APP, '..', '..')
@@ -83,13 +84,18 @@ for (const [name, spec] of Object.entries(profileDeps)) {
 }
 
 // The DeepSeek Harness the app runs is the one its plugins are tested against: the Bot
-// team's here, and Omni's channels at the pinned release.
+// team's here. A carried Omni plugin may have tested an earlier compatible RC; CI boots
+// the combined profile on our exact runtime before a release.
 const harnessOf = dir => readJson(join(dir, 'dev', 'harness', 'package.json')).dependencies['@deepseek-ai/dsh']
 const pinned = readJson(join(APP, 'runtime', 'package.json')).dependencies['@deepseek-ai/dsh']
 const tested = harnessOf(join(REPO, 'apps', 'bots-dsh'))
 if (tested !== pinned) throw new Error(`runtime/package.json pins dsh ${pinned}, but the Bot team is tested on ${tested}`)
 const omniTested = harnessOf(join(apps, 'omni-channels-dsh'))
-if (omniTested !== pinned) throw new Error(`runtime/package.json pins dsh ${pinned}, but Omni ${OMNI.version} tests its plugins on ${omniTested}`)
+for (const [name, { dir }] of Object.entries(PLUGINS)) {
+  if (!omni[name]) continue
+  const range = readJson(join(dir, 'package.json')).engines?.dsh
+  if (!acceptsHarness(pinned, omniTested, range)) throw new Error(`runtime/package.json pins dsh ${pinned}, but ${name} from Omni ${OMNI.version} tests on ${omniTested} and declares ${range}`)
+}
 
 const runtimeDir = join(BUILD, 'runtime')
 if (!process.argv.includes('--skip-runtime') || !existsSync(join(runtimeDir, 'node_modules'))) {

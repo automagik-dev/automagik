@@ -360,7 +360,6 @@ const pack = createPack({
     "hero.chooseWorkspace": "Escolher espaço de trabalho",
     "session.hierarchy": "Hierarquia de sessões",
     "session.moreViews": "Mais visualizações da conversa",
-    "session.moreViewsCurrent": "Mais visualizações da conversa · {name}",
     "todo.title": "Tarefas",
     "todo.progress.done": "{done} concluídas",
     "todo.progress.active": "{active} em andamento",
