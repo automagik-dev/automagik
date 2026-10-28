@@ -7,7 +7,7 @@ import { pluginNames, releasePlugins, tarballOf } from './release-plugins';
 
 describe("a release's plugins.json", () => {
   test('lists this repository\'s plugins', () => {
-    expect(pluginNames()).toEqual(['@automagik/bots-dsh', '@automagik/locale-pt-br-dsh', '@automagik/unfold-bridge-dsh', '@automagik/unfold-capabilities-dsh', '@automagik/unfold-settings-dsh', '@automagik/welcome-dsh']);
+    expect(pluginNames()).toEqual(['@automagik/bots-dsh', '@automagik/locale-pt-br-dsh', '@automagik/unfold-bridge-dsh', '@automagik/unfold-capabilities-dsh', '@automagik/unfold-events-dsh', '@automagik/unfold-settings-dsh', '@automagik/unfold-sse-dsh', '@automagik/welcome-dsh']);
     expect(tarballOf('@automagik/bots-dsh', '3.261024.1')).toBe('automagik-bots-dsh-3.261024.1.tgz');
   });
 
