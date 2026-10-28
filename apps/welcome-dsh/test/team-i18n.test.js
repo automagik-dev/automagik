@@ -1,0 +1,264 @@
+// The team step in the DSH language: its copy is the welcome.team namespace, registered in English
+// and in Brazilian Portuguese, and it renders in Portuguese once pt-BR is the active language.
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { runInNewContext } from 'node:vm'
+import { build } from 'esbuild'
+import { OMNI_PLUGINS, OMNI_TOOLS } from '../src/host/bot-types.js'
+
+const PLUGIN = dirname(dirname(fileURLToPath(import.meta.url)))
+
+// team.js and i18n.js in one bundle, so the team step reads the locale installed here.
+const bundle = await build({
+  stdin: { contents: "export * from './src/client/team.js'\nexport { installLocale, NAMESPACE, PT_BR } from './src/client/i18n.js'", resolveDir: PLUGIN },
+  bundle: true, format: 'cjs', platform: 'node', write: false, logLevel: 'silent',
+  external: ['react', 'react-dom'],
+  loader: { '.css': 'text' },
+})
+const client = { exports: {} }
+const react = {
+  createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) }),
+  useState: initial => [typeof initial === 'function' ? initial() : initial, () => {}],
+  useEffect: () => {}, useRef: current => ({ current }), useCallback: fn => fn,
+}
+runInNewContext(bundle.outputFiles[0].text, { module: client, exports: client.exports, URL, setTimeout, clearTimeout, require: name => ({ react, 'react-dom': { createPortal: node => node } })[name] })
+const team = client.exports
+
+const plain = value => JSON.parse(JSON.stringify(value))
+function render(node) {
+  if (Array.isArray(node)) return node.map(render)
+  if (node === null || typeof node !== 'object') return node
+  if (typeof node.type === 'function') return render(node.type({ ...node.props, children: node.children }))
+  return { ...node, children: node.children.map(render) }
+}
+function findAll(node, match, out = []) {
+  if (Array.isArray(node)) node.forEach(child => findAll(child, match, out))
+  else if (node && typeof node === 'object') {
+    if (match(node)) out.push(node)
+    node.children.forEach(child => findAll(child, match, out))
+  }
+  return out
+}
+const textOf = node => (Array.isArray(node) ? node.map(textOf).join('') : node && typeof node === 'object' ? textOf(node.children) : node === null || node === undefined || node === false ? '' : String(node))
+const byClass = name => node => String(node?.props?.className ?? '').split(' ').includes(name)
+
+// DSH's locale service as a language pack meets it: en and zh, a language added with its
+// fallback, one dictionary per namespace and language, and a lookup that falls back to English,
+// then to the key.
+function fakeLocale() {
+  const catalog = new Map([['en', { id: 'en' }], ['zh', { id: 'zh', fallback: 'en' }]])
+  const dicts = new Map()
+  let active = 'en'
+  const calls = []
+  const chain = () => {
+    const out = []
+    for (let at = catalog.get(active.toLowerCase()); at; at = at.fallback ? catalog.get(at.fallback.toLowerCase()) : undefined) out.push(at.id)
+    return out
+  }
+  return {
+    calls,
+    getLocale: () => ({ active }),
+    addLanguage({ id, fallback }) { catalog.set(id.toLowerCase(), { id, fallback }) },
+    setLocale(id) { active = catalog.get(id.toLowerCase()).id },
+    register(ns, dictionaries) {
+      calls.push([ns, Object.keys(dictionaries)])
+      for (const locale of Object.keys(dictionaries)) {
+        const slot = `${ns}\u0000${locale.toLowerCase()}`
+        if (dicts.has(slot)) throw new Error(`locale namespace "${ns}" already has locale "${locale}"`)
+      }
+      for (const [locale, dict] of Object.entries(dictionaries)) dicts.set(`${ns}\u0000${locale.toLowerCase()}`, dict)
+      return () => { for (const locale of Object.keys(dictionaries)) dicts.delete(`${ns}\u0000${locale.toLowerCase()}`) }
+    },
+    bind: ns => (key, params) => {
+      let text = key
+      for (const id of chain()) {
+        const found = dicts.get(`${ns}\u0000${id.toLowerCase()}`)?.[key]
+        if (found !== undefined) { text = found; break }
+      }
+      return params ? text.replace(/\{(\w+)\}/g, (match, name) => (name in params ? String(params[name]) : match)) : text
+    },
+  }
+}
+
+// The team step's copy, rendered: Unfold's and Genie's cards, Omni's statuses and choices, the button.
+function sample() {
+  const unfold = render(team.UnfoldCard({ power: { phase: 'ready', detail: null, toggle: () => {} }, host: 'unfold' }))
+  const genie = render(team.GenieCard({ power: { phase: 'asleep', detail: null, toggle: () => {} } }))
+  const omniType = { type: 'omni', groups: [
+    { id: 'tools', label: 'Tools', rows: [{ id: 'read', label: 'Read channels and chats', on: true, locked: true }] },
+    { id: 'setup', label: 'Setup', rows: [{ id: 'permission', label: 'Permissions', detail: 'Ask first (DSH\'s default)' }] },
+  ] }
+  const caps = render(team.Capabilities({ type: omniType }))
+  return {
+    unfoldTeam: textOf(findAll(unfold, byClass('oai-team-line'))[0]),
+    unfoldAbout: textOf(findAll(unfold, byClass('oai-about'))[0]),
+    unfoldStarts: textOf(findAll(unfold, node => node.type === 'summary')[0]),
+    unfoldRow: textOf(findAll(unfold, node => node.type === 'li' && node.props['data-cap'] === 'bridge')[0]),
+    genieStatus: textOf(findAll(genie, byClass('oai-status'))[0]),
+    genieAbout: textOf(findAll(genie, byClass('oai-about'))[0]),
+    capsGroup: textOf(findAll(caps, node => node.type === 'h3')[0]),
+    capsLocked: textOf(findAll(caps, byClass('oai-core'))[0]),
+    capsRow: textOf(findAll(caps, node => node.type === 'strong')[0]),
+    capsDefault: textOf(findAll(caps, node => node.type === 'small')[0]),
+    omniStatus: team.statusOf('asleep', { removed: true }),
+    tiles: plain(team.destinyOf([]).tiles.map(tile => tile.title)),
+    joined: team.joinedLabel({ omni: true, genie: false, unfold: true }, 'Pip'),
+    alone: team.joinedLabel({ omni: false, genie: false }, 'Pip'),
+  }
+}
+
+const locale = fakeLocale()
+const uninstall = team.installLocale(locale)
+
+test('the team step registers its copy as welcome.team, in English and in Brazilian Portuguese', () => {
+  assert.equal(team.NAMESPACE, 'welcome.team')
+  assert.deepEqual(plain(locale.calls), [['welcome.team', ['en', 'pt-BR']]])
+  assert.ok(Object.keys(team.PT_BR).length > 150)
+})
+
+test('in English, the team step reads as before', () => {
+  locale.setLocale('en')
+  assert.deepEqual(sample(), {
+    unfoldTeam: 'On your team',
+    unfoldAbout: 'Unfold itself, working inside DSH.',
+    unfoldStarts: 'What it starts with',
+    unfoldRow: 'Unfold bridgeUnfold watches this DSH · Comes with this DSH',
+    genieStatus: 'Powered off',
+    genieAbout: 'Give it a wish, get one delivery.',
+    capsGroup: 'Tools',
+    capsLocked: 'Always on',
+    capsRow: 'Read channels and chats',
+    capsDefault: 'Ask first (DSH\'s default)',
+    omniStatus: 'Powered off · not on your team',
+    tiles: ['Run Omni on this computer', 'An Omni somewhere else'],
+    joined: 'Continue with Omni and Unfold',
+    alone: 'Continue with just Pip',
+  })
+})
+
+test('under a pt-BR locale, the team step renders in Brazilian Portuguese', () => {
+  locale.addLanguage({ id: 'pt-BR', label: 'Português (Brasil)', fallback: 'en' })
+  locale.setLocale('pt-BR')
+  try {
+    assert.deepEqual(sample(), {
+      unfoldTeam: 'Na sua equipe',
+      unfoldAbout: 'Unfold em pessoa, trabalhando dentro do DSH.',
+      unfoldStarts: 'Com o que começa',
+      unfoldRow: 'Ponte UnfoldUnfold acompanha este DSH · Vem com este DSH',
+      genieStatus: 'Energia desligada',
+      genieAbout: 'Faça um desejo, receba uma entrega.',
+      capsGroup: 'Ferramentas',
+      capsLocked: 'Sempre ligado',
+      capsRow: 'Ler canais e chats',
+      capsDefault: 'Ask first (padrão do DSH)',
+      omniStatus: 'Energia desligada · fora da sua equipe',
+      tiles: ['Rodar o Omni neste computador', 'Um Omni em outro lugar'],
+      joined: 'Continuar com Omni e Unfold',
+      alone: 'Continuar só com Pip',
+    })
+  } finally {
+    locale.setLocale('en')
+  }
+})
+
+// Every literal the team step passes to t() has its Portuguese text, with the same placeholders.
+const source = readFileSync(new URL('../src/client/team.js', import.meta.url), 'utf8')
+const keysOf = text => [...text.matchAll(/\bt\(\s*(['"`])((?:\\.|(?!\1).)*)\1/g)].map(match => match[2].replace(/\\(['"`\\])/g, '$1'))
+const placeholders = text => [...text.matchAll(/\{(\w+)\}/g)].map(match => match[1]).sort().join(',')
+
+test('every string the team step looks up has its pt-BR text, with the same placeholders', () => {
+  const keys = new Set(keysOf(source))
+  assert.ok(keys.size > 100, `only ${keys.size} t() keys found`)
+  const missing = [...keys].filter(key => !Object.hasOwn(team.PT_BR, key))
+  assert.deepEqual(missing, [])
+  const drift = Object.entries(team.PT_BR).filter(([key, text]) => placeholders(key) !== placeholders(text)).map(([key]) => key)
+  assert.deepEqual(drift, [])
+})
+
+// The rows a card shows are English keys too: Genie's and Unfold's, and what the host sends for
+// Omni (its plugins, its tools, and the fixed rows of omniType in src/host/bot-types.js).
+const hostSource = readFileSync(new URL('../src/host/bot-types.js', import.meta.url), 'utf8')
+const omniTypeSource = hostSource.slice(hostSource.indexOf('async function omniType()'), hostSource.indexOf("'omni-plugins': () =>"))
+// Its English literals: the quoted texts that start with a capital (ids and keys are lower case),
+// template literals set aside (their rows are the ones rowText reads around a value).
+const literalRows = text => [...text.replace(/`[^`]*`/g, '').matchAll(/'((?:\\'|[^'])*)'/g)].map(match => match[1].replace(/\\'/g, "'")).filter(text => /^[A-Z]/.test(text))
+
+test('every row a card shows has its pt-BR text', () => {
+  const rows = []
+  for (const type of [team.GENIE_TYPE, team.genieTypeOf('unfold'), team.unfoldTypeOf(null), team.unfoldTypeOf('unfold')]) {
+    for (const group of type.groups) {
+      rows.push(group.label)
+      for (const row of group.rows) rows.push(row.label, ...String(row.detail).split(' · '))
+    }
+  }
+  for (const plugin of OMNI_PLUGINS) rows.push(plugin.title, plugin.what, plugin.title.replace(/^Omni /, ''))
+  for (const tool of OMNI_TOOLS) rows.push(tool.label, ...(tool.detail ? [tool.detail] : []))
+  rows.push(...literalRows(omniTypeSource))
+  assert.ok(rows.length > 40)
+  const missing = [...new Set(rows)].filter(row => !Object.hasOwn(team.PT_BR, row))
+  assert.deepEqual(missing, [])
+})
+
+test('the host\'s rows with a value in them read in pt-BR around the value', () => {
+  locale.setLocale('pt-BR')
+  try {
+    assert.equal(team.rowText('deepseek/v4-flash · you confirm it in Omni\'s first chat'), 'deepseek/v4-flash · você confirma no primeiro chat do Omni')
+    assert.equal(team.rowText('~/work/omni'), '~/work/omni')
+  } finally {
+    locale.setLocale('en')
+  }
+})
+
+test('the pt-BR dictionary holds no key the team step no longer uses', () => {
+  const used = new Set(keysOf(source))
+  for (const type of [team.GENIE_TYPE, team.unfoldTypeOf(null), team.unfoldTypeOf('unfold')]) {
+    for (const group of type.groups) {
+      used.add(group.label)
+      for (const row of group.rows) { used.add(row.label); for (const part of String(row.detail).split(' · ')) used.add(part) }
+    }
+  }
+  for (const plugin of OMNI_PLUGINS) { used.add(plugin.title); used.add(plugin.what); used.add(plugin.title.replace(/^Omni /, '')) }
+  for (const tool of OMNI_TOOLS) { used.add(tool.label); if (tool.detail) used.add(tool.detail) }
+  for (const row of literalRows(omniTypeSource)) used.add(row)
+  for (const id of ['power', 'plugins', 'link', 'team']) used.add(id)
+  used.add('Comes with this DSH')
+  assert.deepEqual(Object.keys(team.PT_BR).filter(key => !used.has(key)), [])
+})
+
+test('placeholders stay the same in every pt-BR text', () => {
+  const drift = Object.entries(team.PT_BR).filter(([key, text]) => placeholders(key) !== placeholders(text)).map(([key]) => key)
+  assert.deepEqual(drift, [])
+})
+
+// The copy rules for pt-BR: no article before Unfold and no gendered word after it, no gendered
+// pronoun or word for the person, "clique" and never "toque", never "sandbox", no European Portuguese.
+const ARTICLE = '(?:o|a|os|as|do|da|dos|das|no|na|nos|nas|ao|à|aos|às|pelo|pela|num|numa|dum|duma|um|uma)'
+const RULES = [
+  ['puts an article before Unfold', new RegExp(`(?<![\\p{L}-])${ARTICLE}\\s+Unfold\\b`, 'iu')],
+  ['genders Unfold', /\bUnfold\s+(?:está|estava|esteve|ficou|fica|foi|é|era|será|estará)\s+(?:pront|conectad|desconectad|ocupad|sozinh|ligad|desligad|atualizad|parad|preparad|cansad|instalad|acordad)[oa]s?\b/iu],
+  ['uses a gendered pronoun', /(?<![\p{L}-])(?:ele|ela|eles|elas|dele|dela|deles|delas|nele|nela|neles|nelas)(?![\p{L}-])/iu],
+  ['uses a gendered word for the person', /(?<![\p{L}-])(?:bem-vind[oa]s?|obrigad[oa]s?|usuári[oa]s?|sozinh[oa]s?)(?![\p{L}-])|(?<![\p{L}-])(?:você|vocês)\s+(?:está|estão|esteja|estiver|é|seja|fica|ficou)\s+(?:\p{L}+(?:ad|id)[oa]s?|pront[oa]s?|cert[oa]s?)(?![\p{L}-])/iu],
+  ['says tap', /(?<![\p{L}-])(?:tap|taps|tapped|toque|toques|tocar|tocou)(?![\p{L}-])/iu],
+  ['says sandbox', /sandbox/iu],
+  ['is European Portuguese', /(?<![\p{L}-])(?:ecrã|ecrãs|utilizador|utilizadores|ficheiro|ficheiros|telemóvel|registo|equipa|equipas|palavra-passe|secção|contacto|facto|actual|aceder|partilh\p{L}*|premir)(?![\p{L}-])|(?<![\p{L}-])(?:está|estão|estou|estamos)\s+a\s+\p{L}+(?:ar|er|ir)(?![\p{L}-])/iu],
+]
+
+test('the pt-BR team copy keeps the copy rules', () => {
+  const findings = []
+  for (const [key, text] of Object.entries(team.PT_BR)) {
+    for (const [rule, pattern] of RULES) if (pattern.test(text)) findings.push(`${key}: ${rule}: ${text}`)
+  }
+  assert.deepEqual(findings, [])
+})
+
+test('the English team copy says click, never tap', () => {
+  assert.doesNotMatch(source, /\btap\b/i)
+})
+
+test('uninstalling the locale takes both dictionaries back', () => {
+  uninstall()
+  assert.equal(team.statusOf('asleep'), 'Powered off')
+})

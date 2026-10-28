@@ -87,6 +87,12 @@ with the instance: Omni's card offers no new Omni of its own, Genie's names the 
 instance brought instead of the line that installs one, and no row carries Claude Code's install
 line.
 
+The team step follows the DSH language. Its copy is the `welcome.team` namespace
+(`src/client/i18n.js`): the keys are the English text, registered in English and in Brazilian
+Portuguese (`pt-BR`), and the rows the host sends are read through it too. A language pack that
+adds `pt-BR` to DSH turns the step Portuguese; it registers no `welcome.team` dictionary of its
+own, since DSH takes one per namespace and language. The other steps are English only.
+
 ### What the power button installs
 
 The Bot team (`@automagik/bots-dsh`) is this repository's, at this plugin's version: from

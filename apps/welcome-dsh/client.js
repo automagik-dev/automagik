@@ -37,34 +37,34 @@ __export(xterm_exports, {
 function Al(s15) {
   return s15.replace(/\r?\n/g, "\r");
 }
-function kl(s15, t) {
-  return t ? "\x1B[200~" + s15 + "\x1B[201~" : s15;
+function kl(s15, t2) {
+  return t2 ? "\x1B[200~" + s15 + "\x1B[201~" : s15;
 }
-function Vs(s15, t) {
-  s15.clipboardData && s15.clipboardData.setData("text/plain", t.selectionText), s15.preventDefault();
+function Vs(s15, t2) {
+  s15.clipboardData && s15.clipboardData.setData("text/plain", t2.selectionText), s15.preventDefault();
 }
-function qs(s15, t, e, i) {
+function qs(s15, t2, e, i) {
   if (s15.stopPropagation(), s15.clipboardData) {
     let r = s15.clipboardData.getData("text/plain");
-    Cn(r, t, e, i);
+    Cn(r, t2, e, i);
   }
 }
-function Cn(s15, t, e, i) {
-  s15 = Al(s15), s15 = kl(s15, e.decPrivateModes.bracketedPasteMode && i.rawOptions.ignoreBracketedPasteMode !== true), e.triggerDataEvent(s15, true), t.value = "";
+function Cn(s15, t2, e, i) {
+  s15 = Al(s15), s15 = kl(s15, e.decPrivateModes.bracketedPasteMode && i.rawOptions.ignoreBracketedPasteMode !== true), e.triggerDataEvent(s15, true), t2.value = "";
 }
-function Mn(s15, t, e) {
+function Mn(s15, t2, e) {
   let i = e.getBoundingClientRect(), r = s15.clientX - i.left - 10, n = s15.clientY - i.top - 10;
-  t.style.width = "20px", t.style.height = "20px", t.style.left = `${r}px`, t.style.top = `${n}px`, t.style.zIndex = "1000", t.focus();
+  t2.style.width = "20px", t2.style.height = "20px", t2.style.left = `${r}px`, t2.style.top = `${n}px`, t2.style.zIndex = "1000", t2.focus();
 }
-function Pn(s15, t, e, i, r) {
-  Mn(s15, t, e), r && i.rightClickSelect(s15), t.value = i.selectionText, t.select();
+function Pn(s15, t2, e, i, r) {
+  Mn(s15, t2, e), r && i.rightClickSelect(s15), t2.value = i.selectionText, t2.select();
 }
 function Ce(s15) {
   return s15 > 65535 ? (s15 -= 65536, String.fromCharCode((s15 >> 10) + 55296) + String.fromCharCode(s15 % 1024 + 56320)) : String.fromCharCode(s15);
 }
-function It(s15, t = 0, e = s15.length) {
+function It(s15, t2 = 0, e = s15.length) {
   let i = "";
-  for (let r = t; r < e; ++r) {
+  for (let r = t2; r < e; ++r) {
     let n = s15[r];
     n > 65535 ? (n -= 65536, i += String.fromCharCode((n >> 10) + 55296) + String.fromCharCode(n % 1024 + 56320)) : i += String.fromCharCode(n);
   }
@@ -75,17 +75,17 @@ function Xs(s15) {
 }
 function ie(s15) {
   if (Fn.has(s15)) return Fn.get(s15);
-  let t = function(e, i, r) {
+  let t2 = function(e, i, r) {
     if (arguments.length !== 3) throw new Error("@IServiceName-decorator can only be used to decorate a parameter");
-    Pl(t, e, r);
+    Pl(t2, e, r);
   };
-  return t._id = s15, Fn.set(s15, t), t;
+  return t2._id = s15, Fn.set(s15, t2), t2;
 }
-function Pl(s15, t, e) {
-  t[js] === t ? t[Hn].push({ id: s15, index: e }) : (t[Hn] = [{ id: s15, index: e }], t[js] = t);
+function Pl(s15, t2, e) {
+  t2[js] === t2 ? t2[Hn].push({ id: s15, index: e }) : (t2[Hn] = [{ id: s15, index: e }], t2[js] = t2);
 }
-function Ol(s15, t) {
-  if (confirm(`Do you want to navigate to ${t}?
+function Ol(s15, t2) {
+  if (confirm(`Do you want to navigate to ${t2}?
 
 WARNING: This link could potentially be dangerous`)) {
     let i = window.open();
@@ -94,7 +94,7 @@ WARNING: This link could potentially be dangerous`)) {
         i.opener = null;
       } catch {
       }
-      i.location.href = t;
+      i.location.href = t2;
     } else console.warn("Opening link blocked as opener could not be cleared");
   }
 }
@@ -107,36 +107,36 @@ function Nl(s15) {
 function eo(s15) {
   return s15 ? new Error(`Illegal argument: ${s15}`) : new Error("Illegal argument");
 }
-function Fl(s15, t, e = 0, i = s15.length) {
+function Fl(s15, t2, e = 0, i = s15.length) {
   let r = e, n = i;
   for (; r < n; ) {
     let o = Math.floor((r + n) / 2);
-    t(s15[o]) ? r = o + 1 : n = o;
+    t2(s15[o]) ? r = o + 1 : n = o;
   }
   return r - 1;
 }
-function Se(s15, t = 0) {
-  return s15[s15.length - (1 + t)];
+function Se(s15, t2 = 0) {
+  return s15[s15.length - (1 + t2)];
 }
-function no(s15, t) {
-  return (e, i) => t(s15(e), s15(i));
+function no(s15, t2) {
+  return (e, i) => t2(s15(e), s15(i));
 }
-function co(s15, t) {
+function co(s15, t2) {
   let e = /* @__PURE__ */ Object.create(null);
   for (let i of s15) {
-    let r = t(i), n = e[r];
+    let r = t2(i), n = e[r];
     n || (n = e[r] = []), n.push(i);
   }
   return e;
 }
-function Kn(s15, t) {
+function Kn(s15, t2) {
   let e = this, i = false, r;
   return function() {
     if (i) return r;
-    if (i = true, t) try {
+    if (i = true, t2) try {
       r = s15.apply(e, arguments);
     } finally {
-      t();
+      t2();
     }
     else r = s15.apply(e, arguments);
     return r;
@@ -151,40 +151,40 @@ function fr(s15) {
 function pr(s15) {
   dt?.markAsDisposed(s15);
 }
-function vi(s15, t) {
-  dt?.setParent(s15, t);
+function vi(s15, t2) {
+  dt?.setParent(s15, t2);
 }
-function Kl(s15, t) {
-  if (dt) for (let e of s15) dt.setParent(e, t);
+function Kl(s15, t2) {
+  if (dt) for (let e of s15) dt.setParent(e, t2);
 }
 function Gn(s15) {
   return dt?.markAsSingleton(s15), s15;
 }
 function Ne(s15) {
   if (zn.is(s15)) {
-    let t = [];
+    let t2 = [];
     for (let e of s15) if (e) try {
       e.dispose();
     } catch (i) {
-      t.push(i);
+      t2.push(i);
     }
-    if (t.length === 1) throw t[0];
-    if (t.length > 1) throw new AggregateError(t, "Encountered errors while disposing of store");
+    if (t2.length === 1) throw t2[0];
+    if (t2.length > 1) throw new AggregateError(t2, "Encountered errors while disposing of store");
     return Array.isArray(s15) ? [] : s15;
   } else if (s15) return s15.dispose(), s15;
 }
 function ho(...s15) {
-  let t = C(() => Ne(s15));
-  return Kl(s15, t), t;
+  let t2 = C(() => Ne(s15));
+  return Kl(s15, t2), t2;
 }
 function C(s15) {
-  let t = fr({ dispose: Kn(() => {
-    pr(t), s15();
+  let t2 = fr({ dispose: Kn(() => {
+    pr(t2), s15();
   }) });
-  return t;
+  return t2;
 }
-function Xl(s15, t, e) {
-  typeof t == "string" && (t = s15.matchMedia(t)), t.addEventListener("change", e);
+function Xl(s15, t2, e) {
+  typeof t2 == "string" && (t2 = s15.matchMedia(t2)), t2.addEventListener("change", e);
 }
 function mo(s15) {
   return Si.INSTANCE.getZoomFactor(s15);
@@ -197,9 +197,9 @@ function ca(s15) {
     let e = String.fromCharCode(s15.charCode).toUpperCase();
     return Qn.fromString(e);
   }
-  let t = s15.keyCode;
-  if (t === 3) return 7;
-  if (Ei) switch (t) {
+  let t2 = s15.keyCode;
+  if (t2 === 3) return 7;
+  if (Ei) switch (t2) {
     case 59:
       return 85;
     case 60:
@@ -218,16 +218,16 @@ function ca(s15) {
       break;
   }
   else if (Bt) {
-    if (Te && t === 93) return 57;
-    if (!Te && t === 92) return 57;
+    if (Te && t2 === 93) return 57;
+    if (!Te && t2 === 92) return 57;
   }
-  return yo[t] || 0;
+  return yo[t2] || 0;
 }
 function pa(s15) {
   if (!s15.parent || s15.parent === s15) return null;
   try {
-    let t = s15.location, e = s15.parent.location;
-    if (t.origin !== "null" && e.origin !== "null" && t.origin !== e.origin) return null;
+    let t2 = s15.location, e = s15.parent.location;
+    if (t2.origin !== "null" && e.origin !== "null" && t2.origin !== e.origin) return null;
   } catch {
     return null;
   }
@@ -239,86 +239,86 @@ function Lo(s15) {
 function is(s15) {
   return 56320 <= s15 && s15 <= 57343;
 }
-function Ao(s15, t) {
-  return (s15 - 55296 << 10) + (t - 56320) + 65536;
+function Ao(s15, t2) {
+  return (s15 - 55296 << 10) + (t2 - 56320) + 65536;
 }
 function Mo(s15) {
   return ns(s15, 0);
 }
-function ns(s15, t) {
+function ns(s15, t2) {
   switch (typeof s15) {
     case "object":
-      return s15 === null ? je(349, t) : Array.isArray(s15) ? Ea(s15, t) : Ta(s15, t);
+      return s15 === null ? je(349, t2) : Array.isArray(s15) ? Ea(s15, t2) : Ta(s15, t2);
     case "string":
-      return Po(s15, t);
+      return Po(s15, t2);
     case "boolean":
-      return Sa(s15, t);
+      return Sa(s15, t2);
     case "number":
-      return je(s15, t);
+      return je(s15, t2);
     case "undefined":
-      return je(937, t);
+      return je(937, t2);
     default:
-      return je(617, t);
+      return je(617, t2);
   }
 }
-function je(s15, t) {
-  return (t << 5) - t + s15 | 0;
+function je(s15, t2) {
+  return (t2 << 5) - t2 + s15 | 0;
 }
-function Sa(s15, t) {
-  return je(s15 ? 433 : 863, t);
+function Sa(s15, t2) {
+  return je(s15 ? 433 : 863, t2);
 }
-function Po(s15, t) {
-  t = je(149417, t);
-  for (let e = 0, i = s15.length; e < i; e++) t = je(s15.charCodeAt(e), t);
-  return t;
+function Po(s15, t2) {
+  t2 = je(149417, t2);
+  for (let e = 0, i = s15.length; e < i; e++) t2 = je(s15.charCodeAt(e), t2);
+  return t2;
 }
-function Ea(s15, t) {
-  return t = je(104579, t), s15.reduce((e, i) => ns(i, e), t);
+function Ea(s15, t2) {
+  return t2 = je(104579, t2), s15.reduce((e, i) => ns(i, e), t2);
 }
-function Ta(s15, t) {
-  return t = je(181387, t), Object.keys(s15).sort().reduce((e, i) => (e = Po(i, e), ns(s15[i], e)), t);
+function Ta(s15, t2) {
+  return t2 = je(181387, t2), Object.keys(s15).sort().reduce((e, i) => (e = Po(i, e), ns(s15[i], e)), t2);
 }
-function rs(s15, t, e = 32) {
-  let i = e - t, r = ~((1 << i) - 1);
-  return (s15 << t | (r & s15) >>> i) >>> 0;
+function rs(s15, t2, e = 32) {
+  let i = e - t2, r = ~((1 << i) - 1);
+  return (s15 << t2 | (r & s15) >>> i) >>> 0;
 }
-function ko(s15, t = 0, e = s15.byteLength, i = 0) {
-  for (let r = 0; r < e; r++) s15[t + r] = i;
+function ko(s15, t2 = 0, e = s15.byteLength, i = 0) {
+  for (let r = 0; r < e; r++) s15[t2 + r] = i;
 }
-function Ia(s15, t, e = "0") {
-  for (; s15.length < t; ) s15 = e + s15;
+function Ia(s15, t2, e = "0") {
+  for (; s15.length < t2; ) s15 = e + s15;
   return s15;
 }
-function wi(s15, t = 32) {
-  return s15 instanceof ArrayBuffer ? Array.from(new Uint8Array(s15)).map((e) => e.toString(16).padStart(2, "0")).join("") : Ia((s15 >>> 0).toString(16), t / 4);
+function wi(s15, t2 = 32) {
+  return s15 instanceof ArrayBuffer ? Array.from(new Uint8Array(s15)).map((e) => e.toString(16).padStart(2, "0")).join("") : Ia((s15 >>> 0).toString(16), t2 / 4);
 }
-function L(s15, t, e, i) {
-  return new ss(s15, t, e, i);
+function L(s15, t2, e, i) {
+  return new ss(s15, t2, e, i);
 }
-function ya(s15, t) {
+function ya(s15, t2) {
   return function(e) {
-    return t(new qe(s15, e));
+    return t2(new qe(s15, e));
   };
 }
 function xa(s15) {
-  return function(t) {
-    return s15(new ft(t));
+  return function(t2) {
+    return s15(new ft(t2));
   };
 }
 function Fo(s15) {
-  let t = s15.getBoundingClientRect(), e = be(s15);
-  return { left: t.left + e.scrollX, top: t.top + e.scrollY, width: t.width, height: t.height };
+  let t2 = s15.getBoundingClientRect(), e = be(s15);
+  return { left: t2.left + e.scrollX, top: t2.top + e.scrollY, width: t2.width, height: t2.height };
 }
-function Ho(s15, t, e, ...i) {
-  let r = Da.exec(t);
+function Ho(s15, t2, e, ...i) {
+  let r = Da.exec(t2);
   if (!r) throw new Error("Bad use of emmet");
   let n = r[1] || "div", o;
   return s15 !== "http://www.w3.org/1999/xhtml" ? o = document.createElementNS(s15, n) : o = document.createElement(n), r[3] && (o.id = r[3]), r[4] && (o.className = r[4].replace(/\./g, " ").trim()), e && Object.entries(e).forEach(([l, a]) => {
     typeof a > "u" || (/^on\w+$/.test(l) ? o[l] = a : l === "selected" ? a && o.setAttribute(l, "true") : o.setAttribute(l, a));
   }), o.append(...i), o;
 }
-function Ra(s15, t, ...e) {
-  return Ho("http://www.w3.org/1999/xhtml", s15, t, ...e);
+function Ra(s15, t2, ...e) {
+  return Ho("http://www.w3.org/1999/xhtml", s15, t2, ...e);
 }
 function Ie(s15) {
   return typeof s15 == "number" ? `${s15}px` : s15;
@@ -326,23 +326,23 @@ function Ie(s15) {
 function _t(s15) {
   return new ls(s15);
 }
-function Wo(s15, t, e) {
+function Wo(s15, t2, e) {
   let i = null, r = null;
   if (typeof e.value == "function" ? (i = "value", r = e.value, r.length !== 0 && console.warn("Memoize should only be used in functions with zero parameters")) : typeof e.get == "function" && (i = "get", r = e.get), !r) throw new Error("not supported");
-  let n = `$memoize$${t}`;
+  let n = `$memoize$${t2}`;
   e[i] = function(...o) {
     return this.hasOwnProperty(n) || Object.defineProperty(this, n, { configurable: false, enumerable: false, writable: false, value: r.apply(this, o) }), this[n];
   };
 }
-function as(s15, t) {
-  let e = t - s15;
+function as(s15, t2) {
+  let e = t2 - s15;
   return function(i) {
     return s15 + e * ka(i);
   };
 }
-function La(s15, t, e) {
+function La(s15, t2, e) {
   return function(i) {
-    return i < e ? s15(i / e) : t((i - e) / (1 - e));
+    return i < e ? s15(i / e) : t2((i - e) / (1 - e));
   };
 }
 function Aa(s15) {
@@ -352,15 +352,15 @@ function ka(s15) {
   return 1 - Aa(1 - s15);
 }
 function Pa(s15) {
-  let t = { lazyRender: typeof s15.lazyRender < "u" ? s15.lazyRender : false, className: typeof s15.className < "u" ? s15.className : "", useShadows: typeof s15.useShadows < "u" ? s15.useShadows : true, handleMouseWheel: typeof s15.handleMouseWheel < "u" ? s15.handleMouseWheel : true, flipAxes: typeof s15.flipAxes < "u" ? s15.flipAxes : false, consumeMouseWheelIfScrollbarIsNeeded: typeof s15.consumeMouseWheelIfScrollbarIsNeeded < "u" ? s15.consumeMouseWheelIfScrollbarIsNeeded : false, alwaysConsumeMouseWheel: typeof s15.alwaysConsumeMouseWheel < "u" ? s15.alwaysConsumeMouseWheel : false, scrollYToX: typeof s15.scrollYToX < "u" ? s15.scrollYToX : false, mouseWheelScrollSensitivity: typeof s15.mouseWheelScrollSensitivity < "u" ? s15.mouseWheelScrollSensitivity : 1, fastScrollSensitivity: typeof s15.fastScrollSensitivity < "u" ? s15.fastScrollSensitivity : 5, scrollPredominantAxis: typeof s15.scrollPredominantAxis < "u" ? s15.scrollPredominantAxis : true, mouseWheelSmoothScroll: typeof s15.mouseWheelSmoothScroll < "u" ? s15.mouseWheelSmoothScroll : true, arrowSize: typeof s15.arrowSize < "u" ? s15.arrowSize : 11, listenOnDomNode: typeof s15.listenOnDomNode < "u" ? s15.listenOnDomNode : null, horizontal: typeof s15.horizontal < "u" ? s15.horizontal : 1, horizontalScrollbarSize: typeof s15.horizontalScrollbarSize < "u" ? s15.horizontalScrollbarSize : 10, horizontalSliderSize: typeof s15.horizontalSliderSize < "u" ? s15.horizontalSliderSize : 0, horizontalHasArrows: typeof s15.horizontalHasArrows < "u" ? s15.horizontalHasArrows : false, vertical: typeof s15.vertical < "u" ? s15.vertical : 1, verticalScrollbarSize: typeof s15.verticalScrollbarSize < "u" ? s15.verticalScrollbarSize : 10, verticalHasArrows: typeof s15.verticalHasArrows < "u" ? s15.verticalHasArrows : false, verticalSliderSize: typeof s15.verticalSliderSize < "u" ? s15.verticalSliderSize : 0, scrollByPage: typeof s15.scrollByPage < "u" ? s15.scrollByPage : false };
-  return t.horizontalSliderSize = typeof s15.horizontalSliderSize < "u" ? s15.horizontalSliderSize : t.horizontalScrollbarSize, t.verticalSliderSize = typeof s15.verticalSliderSize < "u" ? s15.verticalSliderSize : t.verticalScrollbarSize, Te && (t.className += " mac"), t;
+  let t2 = { lazyRender: typeof s15.lazyRender < "u" ? s15.lazyRender : false, className: typeof s15.className < "u" ? s15.className : "", useShadows: typeof s15.useShadows < "u" ? s15.useShadows : true, handleMouseWheel: typeof s15.handleMouseWheel < "u" ? s15.handleMouseWheel : true, flipAxes: typeof s15.flipAxes < "u" ? s15.flipAxes : false, consumeMouseWheelIfScrollbarIsNeeded: typeof s15.consumeMouseWheelIfScrollbarIsNeeded < "u" ? s15.consumeMouseWheelIfScrollbarIsNeeded : false, alwaysConsumeMouseWheel: typeof s15.alwaysConsumeMouseWheel < "u" ? s15.alwaysConsumeMouseWheel : false, scrollYToX: typeof s15.scrollYToX < "u" ? s15.scrollYToX : false, mouseWheelScrollSensitivity: typeof s15.mouseWheelScrollSensitivity < "u" ? s15.mouseWheelScrollSensitivity : 1, fastScrollSensitivity: typeof s15.fastScrollSensitivity < "u" ? s15.fastScrollSensitivity : 5, scrollPredominantAxis: typeof s15.scrollPredominantAxis < "u" ? s15.scrollPredominantAxis : true, mouseWheelSmoothScroll: typeof s15.mouseWheelSmoothScroll < "u" ? s15.mouseWheelSmoothScroll : true, arrowSize: typeof s15.arrowSize < "u" ? s15.arrowSize : 11, listenOnDomNode: typeof s15.listenOnDomNode < "u" ? s15.listenOnDomNode : null, horizontal: typeof s15.horizontal < "u" ? s15.horizontal : 1, horizontalScrollbarSize: typeof s15.horizontalScrollbarSize < "u" ? s15.horizontalScrollbarSize : 10, horizontalSliderSize: typeof s15.horizontalSliderSize < "u" ? s15.horizontalSliderSize : 0, horizontalHasArrows: typeof s15.horizontalHasArrows < "u" ? s15.horizontalHasArrows : false, vertical: typeof s15.vertical < "u" ? s15.vertical : 1, verticalScrollbarSize: typeof s15.verticalScrollbarSize < "u" ? s15.verticalScrollbarSize : 10, verticalHasArrows: typeof s15.verticalHasArrows < "u" ? s15.verticalHasArrows : false, verticalSliderSize: typeof s15.verticalSliderSize < "u" ? s15.verticalSliderSize : 0, scrollByPage: typeof s15.scrollByPage < "u" ? s15.scrollByPage : false };
+  return t2.horizontalSliderSize = typeof s15.horizontalSliderSize < "u" ? s15.horizontalSliderSize : t2.horizontalScrollbarSize, t2.verticalSliderSize = typeof s15.verticalSliderSize < "u" ? s15.verticalSliderSize : t2.verticalScrollbarSize, Te && (t2.className += " mac"), t2;
 }
 function vt(s15) {
-  let t = s15.toString(16);
-  return t.length < 2 ? "0" + t : t;
+  let t2 = s15.toString(16);
+  return t2.length < 2 ? "0" + t2 : t2;
 }
-function Xe(s15, t) {
-  return s15 < t ? (t + 0.05) / (s15 + 0.05) : (s15 + 0.05) / (t + 0.05);
+function Xe(s15, t2) {
+  return s15 < t2 ? (t2 + 0.05) / (s15 + 0.05) : (s15 + 0.05) / (t2 + 0.05);
 }
 function Oa(s15) {
   return 57508 <= s15 && s15 <= 57558;
@@ -377,20 +377,20 @@ function Vo() {
 function qr() {
   return { width: 0, height: 0 };
 }
-function qo(s15, t, e) {
-  for (; s15.length < e; ) s15 = t + s15;
+function qo(s15, t2, e) {
+  for (; s15.length < e; ) s15 = t2 + s15;
   return s15;
 }
 function Yo() {
   return new ms();
 }
-function Ci(s15, t, e) {
+function Ci(s15, t2, e) {
   let i = e.getBoundingClientRect(), r = s15.getComputedStyle(e), n = parseInt(r.getPropertyValue("padding-left")), o = parseInt(r.getPropertyValue("padding-top"));
-  return [t.clientX - i.left - n, t.clientY - i.top - o];
+  return [t2.clientX - i.left - n, t2.clientY - i.top - o];
 }
-function Xo(s15, t, e, i, r, n, o, l, a) {
+function Xo(s15, t2, e, i, r, n, o, l, a) {
   if (!n) return;
-  let u = Ci(s15, t, e);
+  let u = Ci(s15, t2, e);
   if (u) return u[0] = Math.ceil((u[0] + (a ? o / 2 : 0)) / o), u[1] = Math.ceil(u[1] / l), u[0] = Math.min(Math.max(u[0], 1), i + (a ? 1 : 0)), u[1] = Math.min(Math.max(u[1], 1), r), u;
 }
 function Ha() {
@@ -398,81 +398,81 @@ function Ha() {
   let s15 = Pi.match(/Version\/(\d+)/);
   return s15 === null || s15.length < 2 ? 0 : parseInt(s15[1]);
 }
-function Jo(s15, t, e, i) {
+function Jo(s15, t2, e, i) {
   let r = e.buffer.x, n = e.buffer.y;
-  if (!e.buffer.hasScrollback) return Ga(r, n, s15, t, e, i) + sn(n, t, e, i) + $a(r, n, s15, t, e, i);
+  if (!e.buffer.hasScrollback) return Ga(r, n, s15, t2, e, i) + sn(n, t2, e, i) + $a(r, n, s15, t2, e, i);
   let o;
-  if (n === t) return o = r > s15 ? "D" : "C", Fi(Math.abs(r - s15), Ni(o, i));
-  o = n > t ? "D" : "C";
-  let l = Math.abs(n - t), a = za(n > t ? s15 : r, e) + (l - 1) * e.cols + 1 + Ka(n > t ? r : s15, e);
+  if (n === t2) return o = r > s15 ? "D" : "C", Fi(Math.abs(r - s15), Ni(o, i));
+  o = n > t2 ? "D" : "C";
+  let l = Math.abs(n - t2), a = za(n > t2 ? s15 : r, e) + (l - 1) * e.cols + 1 + Ka(n > t2 ? r : s15, e);
   return Fi(a, Ni(o, i));
 }
-function Ka(s15, t) {
+function Ka(s15, t2) {
   return s15 - 1;
 }
-function za(s15, t) {
-  return t.cols - s15;
+function za(s15, t2) {
+  return t2.cols - s15;
 }
-function Ga(s15, t, e, i, r, n) {
-  return sn(t, i, r, n).length === 0 ? "" : Fi(el(s15, t, s15, t - gt(t, r), false, r).length, Ni("D", n));
+function Ga(s15, t2, e, i, r, n) {
+  return sn(t2, i, r, n).length === 0 ? "" : Fi(el(s15, t2, s15, t2 - gt(t2, r), false, r).length, Ni("D", n));
 }
-function sn(s15, t, e, i) {
-  let r = s15 - gt(s15, e), n = t - gt(t, e), o = Math.abs(r - n) - Va(s15, t, e);
-  return Fi(o, Ni(Qo(s15, t), i));
+function sn(s15, t2, e, i) {
+  let r = s15 - gt(s15, e), n = t2 - gt(t2, e), o = Math.abs(r - n) - Va(s15, t2, e);
+  return Fi(o, Ni(Qo(s15, t2), i));
 }
-function $a(s15, t, e, i, r, n) {
+function $a(s15, t2, e, i, r, n) {
   let o;
-  sn(t, i, r, n).length > 0 ? o = i - gt(i, r) : o = t;
-  let l = i, a = qa(s15, t, e, i, r, n);
+  sn(t2, i, r, n).length > 0 ? o = i - gt(i, r) : o = t2;
+  let l = i, a = qa(s15, t2, e, i, r, n);
   return Fi(el(s15, o, e, l, a === "C", r).length, Ni(a, n));
 }
-function Va(s15, t, e) {
-  let i = 0, r = s15 - gt(s15, e), n = t - gt(t, e);
+function Va(s15, t2, e) {
+  let i = 0, r = s15 - gt(s15, e), n = t2 - gt(t2, e);
   for (let o = 0; o < Math.abs(r - n); o++) {
-    let l = Qo(s15, t) === "A" ? -1 : 1;
+    let l = Qo(s15, t2) === "A" ? -1 : 1;
     e.buffer.lines.get(r + l * o)?.isWrapped && i++;
   }
   return i;
 }
-function gt(s15, t) {
-  let e = 0, i = t.buffer.lines.get(s15), r = i?.isWrapped;
-  for (; r && s15 >= 0 && s15 < t.rows; ) e++, i = t.buffer.lines.get(--s15), r = i?.isWrapped;
+function gt(s15, t2) {
+  let e = 0, i = t2.buffer.lines.get(s15), r = i?.isWrapped;
+  for (; r && s15 >= 0 && s15 < t2.rows; ) e++, i = t2.buffer.lines.get(--s15), r = i?.isWrapped;
   return e;
 }
-function qa(s15, t, e, i, r, n) {
+function qa(s15, t2, e, i, r, n) {
   let o;
-  return sn(e, i, r, n).length > 0 ? o = i - gt(i, r) : o = t, s15 < e && o <= i || s15 >= e && o < i ? "C" : "D";
+  return sn(e, i, r, n).length > 0 ? o = i - gt(i, r) : o = t2, s15 < e && o <= i || s15 >= e && o < i ? "C" : "D";
 }
-function Qo(s15, t) {
-  return s15 > t ? "A" : "B";
+function Qo(s15, t2) {
+  return s15 > t2 ? "A" : "B";
 }
-function el(s15, t, e, i, r, n) {
-  let o = s15, l = t, a = "";
+function el(s15, t2, e, i, r, n) {
+  let o = s15, l = t2, a = "";
   for (; (o !== e || l !== i) && l >= 0 && l < n.buffer.lines.length; ) o += r ? 1 : -1, r && o > n.cols - 1 ? (a += n.buffer.translateBufferLineToString(l, false, s15, o), o = 0, s15 = 0, l++) : !r && o < 0 && (a += n.buffer.translateBufferLineToString(l, false, 0, s15 + 1), o = n.cols - 1, s15 = o, l--);
   return a + n.buffer.translateBufferLineToString(l, false, s15, o);
 }
-function Ni(s15, t) {
-  let e = t ? "O" : "[";
+function Ni(s15, t2) {
+  let e = t2 ? "O" : "[";
   return b.ESC + e + s15;
 }
-function Fi(s15, t) {
+function Fi(s15, t2) {
   s15 = Math.floor(s15);
   let e = "";
-  for (let i = 0; i < s15; i++) e += t;
+  for (let i = 0; i < s15; i++) e += t2;
   return e;
 }
-function ws(s15, t) {
+function ws(s15, t2) {
   if (s15.start.y > s15.end.y) throw new Error(`Buffer range end (${s15.end.x}, ${s15.end.y}) cannot be before start (${s15.start.x}, ${s15.start.y})`);
-  return t * (s15.end.y - s15.start.y) + (s15.end.x - s15.start.x + 1);
+  return t2 * (s15.end.y - s15.start.y) + (s15.end.x - s15.start.x + 1);
 }
-function K(s15, t) {
+function K(s15, t2) {
   if (s15 !== void 0) try {
     return z.toColor(s15);
   } catch {
   }
-  return t;
+  return t2;
 }
-function sl(s15, t, e, i, r, n) {
+function sl(s15, t2, e, i, r, n) {
   let o = [];
   for (let l = 0; l < s15.length - 1; l++) {
     let a = l, u = s15.get(++a);
@@ -483,9 +483,9 @@ function sl(s15, t, e, i, r, n) {
       l += h8.length - 1;
       continue;
     }
-    let c = 0, d = ri(h8, c, t), _ = 1, p = 0;
+    let c = 0, d = ri(h8, c, t2), _ = 1, p = 0;
     for (; _ < h8.length; ) {
-      let f = ri(h8, _, t), A = f - p, R = e - d, O = Math.min(A, R);
+      let f = ri(h8, _, t2), A = f - p, R = e - d, O = Math.min(A, R);
       h8[c].copyCellsFrom(h8[_], p, d, O, false), d += O, d === e && (c++, d = 0), p += O, p === f && (_++, p = 0), d === 0 && c !== 0 && h8[c - 1].getWidth(e - 1) === 2 && (h8[c].copyCellsFrom(h8[c - 1], e - 1, d++, 1, false), h8[c - 1].setCell(e - 1, r));
     }
     h8[c].replaceCells(d, e, r);
@@ -495,29 +495,29 @@ function sl(s15, t, e, i, r, n) {
   }
   return o;
 }
-function ol(s15, t) {
-  let e = [], i = 0, r = t[i], n = 0;
+function ol(s15, t2) {
+  let e = [], i = 0, r = t2[i], n = 0;
   for (let o = 0; o < s15.length; o++) if (r === o) {
-    let l = t[++i];
-    s15.onDeleteEmitter.fire({ index: o - n, amount: l }), o += l - 1, n += l, r = t[++i];
+    let l = t2[++i];
+    s15.onDeleteEmitter.fire({ index: o - n, amount: l }), o += l - 1, n += l, r = t2[++i];
   } else e.push(o);
   return { layout: e, countRemoved: n };
 }
-function ll(s15, t) {
+function ll(s15, t2) {
   let e = [];
-  for (let i = 0; i < t.length; i++) e.push(s15.get(t[i]));
+  for (let i = 0; i < t2.length; i++) e.push(s15.get(t2[i]));
   for (let i = 0; i < e.length; i++) s15.set(i, e[i]);
-  s15.length = t.length;
+  s15.length = t2.length;
 }
-function al(s15, t, e) {
-  let i = [], r = s15.map((a, u) => ri(s15, u, t)).reduce((a, u) => a + u), n = 0, o = 0, l = 0;
+function al(s15, t2, e) {
+  let i = [], r = s15.map((a, u) => ri(s15, u, t2)).reduce((a, u) => a + u), n = 0, o = 0, l = 0;
   for (; l < r; ) {
     if (r - l < e) {
       i.push(r - l);
       break;
     }
     n += e;
-    let a = ri(s15, o, t);
+    let a = ri(s15, o, t2);
     n > a && (n -= a, o++);
     let u = s15[o].getWidth(n - 1) === 2;
     u && n--;
@@ -526,29 +526,29 @@ function al(s15, t, e) {
   }
   return i;
 }
-function ri(s15, t, e) {
-  if (t === s15.length - 1) return s15[t].getTrimmedLength();
-  let i = !s15[t].hasContent(e - 1) && s15[t].getWidth(e - 1) === 1, r = s15[t + 1].getWidth(0) === 2;
+function ri(s15, t2, e) {
+  if (t2 === s15.length - 1) return s15[t2].getTrimmedLength();
+  let i = !s15[t2].hasContent(e - 1) && s15[t2].getWidth(e - 1) === 1, r = s15[t2 + 1].getWidth(0) === 2;
   return i && r ? e - 1 : e;
 }
 function sc(s15) {
   return s15 === "block" || s15 === "underline" || s15 === "bar";
 }
-function oi(s15, t = 5) {
+function oi(s15, t2 = 5) {
   if (typeof s15 != "object") return s15;
   let e = Array.isArray(s15) ? [] : {};
-  for (let i in s15) e[i] = t <= 1 ? s15[i] : s15[i] && oi(s15[i], t - 1);
+  for (let i in s15) e[i] = t2 <= 1 ? s15[i] : s15[i] && oi(s15[i], t2 - 1);
   return e;
 }
-function Ms(s15, t) {
+function Ms(s15, t2) {
   let e = (s15.ctrl ? 16 : 0) | (s15.shift ? 4 : 0) | (s15.alt ? 8 : 0);
-  return s15.button === 4 ? (e |= 64, e |= s15.action) : (e |= s15.button & 3, s15.button & 4 && (e |= 64), s15.button & 8 && (e |= 128), s15.action === 32 ? e |= 32 : s15.action === 0 && !t && (e |= 3)), e;
+  return s15.button === 4 ? (e |= 64, e |= s15.action) : (e |= s15.button & 3, s15.button & 4 && (e |= 64), s15.button & 8 && (e |= 128), s15.action === 32 ? e |= 32 : s15.action === 0 && !t2 && (e |= 3)), e;
 }
-function cc(s15, t) {
-  let e = 0, i = t.length - 1, r;
-  if (s15 < t[0][0] || s15 > t[i][1]) return false;
-  for (; i >= e; ) if (r = e + i >> 1, s15 > t[r][1]) e = r + 1;
-  else if (s15 < t[r][0]) i = r - 1;
+function cc(s15, t2) {
+  let e = 0, i = t2.length - 1, r;
+  if (s15 < t2[0][0] || s15 > t2[i][1]) return false;
+  for (; i >= e; ) if (r = e + i >> 1, s15 > t2[r][1]) e = r + 1;
+  else if (s15 < t2[r][0]) i = r - 1;
   else return true;
   return false;
 }
@@ -558,26 +558,26 @@ function Bs(s15) {
 }
 function Ws(s15) {
   if (!s15) return;
-  let t = s15.toLowerCase();
-  if (t.indexOf("rgb:") === 0) {
-    t = t.slice(4);
-    let e = dc.exec(t);
+  let t2 = s15.toLowerCase();
+  if (t2.indexOf("rgb:") === 0) {
+    t2 = t2.slice(4);
+    let e = dc.exec(t2);
     if (e) {
       let i = e[1] ? 15 : e[4] ? 255 : e[7] ? 4095 : 65535;
       return [Math.round(parseInt(e[1] || e[4] || e[7] || e[10], 16) / i * 255), Math.round(parseInt(e[2] || e[5] || e[8] || e[11], 16) / i * 255), Math.round(parseInt(e[3] || e[6] || e[9] || e[12], 16) / i * 255)];
     }
-  } else if (t.indexOf("#") === 0 && (t = t.slice(1), fc.exec(t) && [3, 6, 9, 12].includes(t.length))) {
-    let e = t.length / 3, i = [0, 0, 0];
+  } else if (t2.indexOf("#") === 0 && (t2 = t2.slice(1), fc.exec(t2) && [3, 6, 9, 12].includes(t2.length))) {
+    let e = t2.length / 3, i = [0, 0, 0];
     for (let r = 0; r < 3; ++r) {
-      let n = parseInt(t.slice(e * r, e * r + e), 16);
+      let n = parseInt(t2.slice(e * r, e * r + e), 16);
       i[r] = e === 1 ? n << 4 : e === 2 ? n : e === 3 ? n >> 4 : n >> 8;
     }
     return i;
   }
 }
-function Hs(s15, t) {
+function Hs(s15, t2) {
   let e = s15.toString(16), i = e.length < 2 ? "0" + e : e;
-  switch (t) {
+  switch (t2) {
     case 4:
       return e[0];
     case 8:
@@ -588,68 +588,68 @@ function Hs(s15, t) {
       return i + i;
   }
 }
-function ml(s15, t = 16) {
+function ml(s15, t2 = 16) {
   let [e, i, r] = s15;
-  return `rgb:${Hs(e, t)}/${Hs(i, t)}/${Hs(r, t)}`;
+  return `rgb:${Hs(e, t2)}/${Hs(i, t2)}/${Hs(r, t2)}`;
 }
-function bl(s15, t) {
-  if (s15 > 24) return t.setWinLines || false;
+function bl(s15, t2) {
+  if (s15 > 24) return t2.setWinLines || false;
   switch (s15) {
     case 1:
-      return !!t.restoreWin;
+      return !!t2.restoreWin;
     case 2:
-      return !!t.minimizeWin;
+      return !!t2.minimizeWin;
     case 3:
-      return !!t.setWinPosition;
+      return !!t2.setWinPosition;
     case 4:
-      return !!t.setWinSizePixels;
+      return !!t2.setWinSizePixels;
     case 5:
-      return !!t.raiseWin;
+      return !!t2.raiseWin;
     case 6:
-      return !!t.lowerWin;
+      return !!t2.lowerWin;
     case 7:
-      return !!t.refreshWin;
+      return !!t2.refreshWin;
     case 8:
-      return !!t.setWinSizeChars;
+      return !!t2.setWinSizeChars;
     case 9:
-      return !!t.maximizeWin;
+      return !!t2.maximizeWin;
     case 10:
-      return !!t.fullscreenWin;
+      return !!t2.fullscreenWin;
     case 11:
-      return !!t.getWinState;
+      return !!t2.getWinState;
     case 13:
-      return !!t.getWinPosition;
+      return !!t2.getWinPosition;
     case 14:
-      return !!t.getWinSizePixels;
+      return !!t2.getWinSizePixels;
     case 15:
-      return !!t.getScreenSizePixels;
+      return !!t2.getScreenSizePixels;
     case 16:
-      return !!t.getCellSizePixels;
+      return !!t2.getCellSizePixels;
     case 18:
-      return !!t.getWinSizeChars;
+      return !!t2.getWinSizeChars;
     case 19:
-      return !!t.getScreenSizeChars;
+      return !!t2.getScreenSizeChars;
     case 20:
-      return !!t.getIconTitle;
+      return !!t2.getIconTitle;
     case 21:
-      return !!t.getWinTitle;
+      return !!t2.getWinTitle;
     case 22:
-      return !!t.pushTitle;
+      return !!t2.pushTitle;
     case 23:
-      return !!t.popTitle;
+      return !!t2.popTitle;
     case 24:
-      return !!t.setWinLines;
+      return !!t2.setWinLines;
   }
   return false;
 }
 function Sl(s15) {
   return 0 <= s15 && s15 < 256;
 }
-function Il(s15, t, e, i) {
+function Il(s15, t2, e, i) {
   let r = { type: 0, cancel: false, key: void 0 }, n = (s15.shiftKey ? 1 : 0) | (s15.altKey ? 2 : 0) | (s15.ctrlKey ? 4 : 0) | (s15.metaKey ? 8 : 0);
   switch (s15.keyCode) {
     case 0:
-      s15.key === "UIKeyInputUpArrow" ? t ? r.key = b.ESC + "OA" : r.key = b.ESC + "[A" : s15.key === "UIKeyInputLeftArrow" ? t ? r.key = b.ESC + "OD" : r.key = b.ESC + "[D" : s15.key === "UIKeyInputRightArrow" ? t ? r.key = b.ESC + "OC" : r.key = b.ESC + "[C" : s15.key === "UIKeyInputDownArrow" && (t ? r.key = b.ESC + "OB" : r.key = b.ESC + "[B");
+      s15.key === "UIKeyInputUpArrow" ? t2 ? r.key = b.ESC + "OA" : r.key = b.ESC + "[A" : s15.key === "UIKeyInputLeftArrow" ? t2 ? r.key = b.ESC + "OD" : r.key = b.ESC + "[D" : s15.key === "UIKeyInputRightArrow" ? t2 ? r.key = b.ESC + "OC" : r.key = b.ESC + "[C" : s15.key === "UIKeyInputDownArrow" && (t2 ? r.key = b.ESC + "OB" : r.key = b.ESC + "[B");
       break;
     case 8:
       r.key = s15.ctrlKey ? "\b" : b.DEL, s15.altKey && (r.key = b.ESC + r.key);
@@ -669,19 +669,19 @@ function Il(s15, t, e, i) {
       break;
     case 37:
       if (s15.metaKey) break;
-      n ? r.key = b.ESC + "[1;" + (n + 1) + "D" : t ? r.key = b.ESC + "OD" : r.key = b.ESC + "[D";
+      n ? r.key = b.ESC + "[1;" + (n + 1) + "D" : t2 ? r.key = b.ESC + "OD" : r.key = b.ESC + "[D";
       break;
     case 39:
       if (s15.metaKey) break;
-      n ? r.key = b.ESC + "[1;" + (n + 1) + "C" : t ? r.key = b.ESC + "OC" : r.key = b.ESC + "[C";
+      n ? r.key = b.ESC + "[1;" + (n + 1) + "C" : t2 ? r.key = b.ESC + "OC" : r.key = b.ESC + "[C";
       break;
     case 38:
       if (s15.metaKey) break;
-      n ? r.key = b.ESC + "[1;" + (n + 1) + "A" : t ? r.key = b.ESC + "OA" : r.key = b.ESC + "[A";
+      n ? r.key = b.ESC + "[1;" + (n + 1) + "A" : t2 ? r.key = b.ESC + "OA" : r.key = b.ESC + "[A";
       break;
     case 40:
       if (s15.metaKey) break;
-      n ? r.key = b.ESC + "[1;" + (n + 1) + "B" : t ? r.key = b.ESC + "OB" : r.key = b.ESC + "[B";
+      n ? r.key = b.ESC + "[1;" + (n + 1) + "B" : t2 ? r.key = b.ESC + "OB" : r.key = b.ESC + "[B";
       break;
     case 45:
       !s15.shiftKey && !s15.ctrlKey && (r.key = b.ESC + "[2~");
@@ -690,10 +690,10 @@ function Il(s15, t, e, i) {
       n ? r.key = b.ESC + "[3;" + (n + 1) + "~" : r.key = b.ESC + "[3~";
       break;
     case 36:
-      n ? r.key = b.ESC + "[1;" + (n + 1) + "H" : t ? r.key = b.ESC + "OH" : r.key = b.ESC + "[H";
+      n ? r.key = b.ESC + "[1;" + (n + 1) + "H" : t2 ? r.key = b.ESC + "OH" : r.key = b.ESC + "[H";
       break;
     case 35:
-      n ? r.key = b.ESC + "[1;" + (n + 1) + "F" : t ? r.key = b.ESC + "OF" : r.key = b.ESC + "[F";
+      n ? r.key = b.ESC + "[1;" + (n + 1) + "F" : t2 ? r.key = b.ESC + "OF" : r.key = b.ESC + "[F";
       break;
     case 33:
       s15.shiftKey ? r.type = 2 : s15.ctrlKey ? r.key = b.ESC + "[5;" + (n + 1) + "~" : r.key = b.ESC + "[5~";
@@ -755,8 +755,8 @@ function Il(s15, t, e, i) {
   }
   return r;
 }
-function Ec(s15, t) {
-  return s15.text === t.text && s15.range.start.x === t.range.start.x && s15.range.start.y === t.range.start.y && s15.range.end.x === t.range.end.x && s15.range.end.y === t.range.end.y;
+function Ec(s15, t2) {
+  return s15.text === t2.text && s15.range.start.x === t2.range.start.x && s15.range.start.y === t2.range.start.y && s15.range.end.x === t2.range.end.x && s15.range.end.y === t2.range.end.y;
 }
 function Tc(s15) {
   return s15.keyCode === 16 || s15.keyCode === 17 || s15.keyCode === 18;
@@ -766,13 +766,13 @@ var init_xterm = __esm({
   "node_modules/@xterm/xterm/lib/xterm.mjs"() {
     zs = Object.defineProperty;
     Rl = Object.getOwnPropertyDescriptor;
-    Ll = (s15, t) => {
-      for (var e in t) zs(s15, e, { get: t[e], enumerable: true });
+    Ll = (s15, t2) => {
+      for (var e in t2) zs(s15, e, { get: t2[e], enumerable: true });
     };
-    M = (s15, t, e, i) => {
-      for (var r = i > 1 ? void 0 : i ? Rl(t, e) : t, n = s15.length - 1, o; n >= 0; n--) (o = s15[n]) && (r = (i ? o(t, e, r) : o(r)) || r);
-      return i && r && zs(t, e, r), r;
-    }, S = (s15, t) => (e, i) => t(e, i, s15);
+    M = (s15, t2, e, i) => {
+      for (var r = i > 1 ? void 0 : i ? Rl(t2, e) : t2, n = s15.length - 1, o; n >= 0; n--) (o = s15[n]) && (r = (i ? o(t2, e, r) : o(r)) || r);
+      return i && r && zs(t2, e, r), r;
+    }, S = (s15, t2) => (e, i) => t2(e, i, s15);
     Gs = "Terminal input", mi = { get: () => Gs, set: (s15) => Gs = s15 }, $s = "Too much output to announce, navigate to rows manually to read", _i = { get: () => $s, set: (s15) => $s = s15 };
     er = class {
       constructor() {
@@ -781,19 +781,19 @@ var init_xterm = __esm({
       clear() {
         this._interim = 0;
       }
-      decode(t, e) {
-        let i = t.length;
+      decode(t2, e) {
+        let i = t2.length;
         if (!i) return 0;
         let r = 0, n = 0;
         if (this._interim) {
-          let o = t.charCodeAt(n++);
+          let o = t2.charCodeAt(n++);
           56320 <= o && o <= 57343 ? e[r++] = (this._interim - 55296) * 1024 + o - 56320 + 65536 : (e[r++] = this._interim, e[r++] = o), this._interim = 0;
         }
         for (let o = n; o < i; ++o) {
-          let l = t.charCodeAt(o);
+          let l = t2.charCodeAt(o);
           if (55296 <= l && l <= 56319) {
             if (++o >= i) return this._interim = l, r;
-            let a = t.charCodeAt(o);
+            let a = t2.charCodeAt(o);
             56320 <= a && a <= 57343 ? e[r++] = (l - 55296) * 1024 + a - 56320 + 65536 : (e[r++] = l, e[r++] = a);
             continue;
           }
@@ -808,8 +808,8 @@ var init_xterm = __esm({
       clear() {
         this.interim.fill(0);
       }
-      decode(t, e) {
-        let i = t.length;
+      decode(t2, e) {
+        let i = t2.length;
         if (!i) return 0;
         let r = 0, n, o, l, a, u = 0, h8 = 0;
         if (this.interim[0]) {
@@ -820,7 +820,7 @@ var init_xterm = __esm({
           let A = (this.interim[0] & 224) === 192 ? 2 : (this.interim[0] & 240) === 224 ? 3 : 4, R = A - m;
           for (; h8 < R; ) {
             if (h8 >= i) return 0;
-            if (f = t[h8++], (f & 192) !== 128) {
+            if (f = t2[h8++], (f & 192) !== 128) {
               h8--, _ = true;
               break;
             } else this.interim[m++] = f, p <<= 6, p |= f & 63;
@@ -829,11 +829,11 @@ var init_xterm = __esm({
         }
         let c = i - 4, d = h8;
         for (; d < i; ) {
-          for (; d < c && !((n = t[d]) & 128) && !((o = t[d + 1]) & 128) && !((l = t[d + 2]) & 128) && !((a = t[d + 3]) & 128); ) e[r++] = n, e[r++] = o, e[r++] = l, e[r++] = a, d += 4;
-          if (n = t[d++], n < 128) e[r++] = n;
+          for (; d < c && !((n = t2[d]) & 128) && !((o = t2[d + 1]) & 128) && !((l = t2[d + 2]) & 128) && !((a = t2[d + 3]) & 128); ) e[r++] = n, e[r++] = o, e[r++] = l, e[r++] = a, d += 4;
+          if (n = t2[d++], n < 128) e[r++] = n;
           else if ((n & 224) === 192) {
             if (d >= i) return this.interim[0] = n, r;
-            if (o = t[d++], (o & 192) !== 128) {
+            if (o = t2[d++], (o & 192) !== 128) {
               d--;
               continue;
             }
@@ -844,12 +844,12 @@ var init_xterm = __esm({
             e[r++] = u;
           } else if ((n & 240) === 224) {
             if (d >= i) return this.interim[0] = n, r;
-            if (o = t[d++], (o & 192) !== 128) {
+            if (o = t2[d++], (o & 192) !== 128) {
               d--;
               continue;
             }
             if (d >= i) return this.interim[0] = n, this.interim[1] = o, r;
-            if (l = t[d++], (l & 192) !== 128) {
+            if (l = t2[d++], (l & 192) !== 128) {
               d--;
               continue;
             }
@@ -857,17 +857,17 @@ var init_xterm = __esm({
             e[r++] = u;
           } else if ((n & 248) === 240) {
             if (d >= i) return this.interim[0] = n, r;
-            if (o = t[d++], (o & 192) !== 128) {
+            if (o = t2[d++], (o & 192) !== 128) {
               d--;
               continue;
             }
             if (d >= i) return this.interim[0] = n, this.interim[1] = o, r;
-            if (l = t[d++], (l & 192) !== 128) {
+            if (l = t2[d++], (l & 192) !== 128) {
               d--;
               continue;
             }
             if (d >= i) return this.interim[0] = n, this.interim[1] = o, this.interim[2] = l, r;
-            if (a = t[d++], (a & 192) !== 128) {
+            if (a = t2[d++], (a & 192) !== 128) {
               d--;
               continue;
             }
@@ -886,15 +886,15 @@ var init_xterm = __esm({
         this.bg = 0;
         this.extended = new rt();
       }
-      static toColorRGB(t) {
-        return [t >>> 16 & 255, t >>> 8 & 255, t & 255];
+      static toColorRGB(t2) {
+        return [t2 >>> 16 & 255, t2 >>> 8 & 255, t2 & 255];
       }
-      static fromColorRGB(t) {
-        return (t[0] & 255) << 16 | (t[1] & 255) << 8 | t[2] & 255;
+      static fromColorRGB(t2) {
+        return (t2[0] & 255) << 16 | (t2[1] & 255) << 8 | t2[2] & 255;
       }
       clone() {
-        let t = new s();
-        return t.fg = this.fg, t.bg = this.bg, t.extended = this.extended.clone(), t;
+        let t2 = new s();
+        return t2.fg = this.fg, t2.bg = this.bg, t2.extended = this.extended.clone(), t2;
       }
       isInverse() {
         return this.fg & 67108864;
@@ -1012,41 +1012,41 @@ var init_xterm = __esm({
         return this.extended.underlineVariantOffset;
       }
     }, rt = class s2 {
-      constructor(t = 0, e = 0) {
+      constructor(t2 = 0, e = 0) {
         this._ext = 0;
         this._urlId = 0;
-        this._ext = t, this._urlId = e;
+        this._ext = t2, this._urlId = e;
       }
       get ext() {
         return this._urlId ? this._ext & -469762049 | this.underlineStyle << 26 : this._ext;
       }
-      set ext(t) {
-        this._ext = t;
+      set ext(t2) {
+        this._ext = t2;
       }
       get underlineStyle() {
         return this._urlId ? 5 : (this._ext & 469762048) >> 26;
       }
-      set underlineStyle(t) {
-        this._ext &= -469762049, this._ext |= t << 26 & 469762048;
+      set underlineStyle(t2) {
+        this._ext &= -469762049, this._ext |= t2 << 26 & 469762048;
       }
       get underlineColor() {
         return this._ext & 67108863;
       }
-      set underlineColor(t) {
-        this._ext &= -67108864, this._ext |= t & 67108863;
+      set underlineColor(t2) {
+        this._ext &= -67108864, this._ext |= t2 & 67108863;
       }
       get urlId() {
         return this._urlId;
       }
-      set urlId(t) {
-        this._urlId = t;
+      set urlId(t2) {
+        this._urlId = t2;
       }
       get underlineVariantOffset() {
-        let t = (this._ext & 3758096384) >> 29;
-        return t < 0 ? t ^ 4294967288 : t;
+        let t2 = (this._ext & 3758096384) >> 29;
+        return t2 < 0 ? t2 ^ 4294967288 : t2;
       }
-      set underlineVariantOffset(t) {
-        this._ext &= 536870911, this._ext |= t << 29 & 3758096384;
+      set underlineVariantOffset(t2) {
+        this._ext &= 536870911, this._ext |= t2 << 29 & 3758096384;
       }
       clone() {
         return new s2(this._ext, this._urlId);
@@ -1101,13 +1101,13 @@ var init_xterm = __esm({
     F = ie("BufferService"), rr = ie("CoreMouseService"), ge = ie("CoreService"), Zs = ie("CharsetService"), xt = ie("InstantiationService");
     nr = ie("LogService"), H = ie("OptionsService"), sr = ie("OscLinkService"), Js = ie("UnicodeService"), Be = ie("DecorationService");
     wt = class {
-      constructor(t, e, i) {
-        this._bufferService = t;
+      constructor(t2, e, i) {
+        this._bufferService = t2;
         this._optionsService = e;
         this._oscLinkService = i;
       }
-      provideLinks(t, e) {
-        let i = this._bufferService.buffer.lines.get(t - 1);
+      provideLinks(t2, e) {
+        let i = this._bufferService.buffer.lines.get(t2 - 1);
         if (!i) {
           e(void 0);
           return;
@@ -1122,7 +1122,7 @@ var init_xterm = __esm({
           if (h8 || u !== -1 && c === l - 1) {
             let d = this._oscLinkService.getLinkData(a)?.uri;
             if (d) {
-              let _ = { start: { x: u + 1, y: t }, end: { x: c + (!h8 && c === l - 1 ? 1 : 0), y: t } }, p = false;
+              let _ = { start: { x: u + 1, y: t2 }, end: { x: c + (!h8 && c === l - 1 ? 1 : 0), y: t2 } }, p = false;
               if (!n?.allowNonHttpProtocols) try {
                 let m = new URL(d);
                 ["http:", "https:"].includes(m.protocol) || (p = true);
@@ -1141,40 +1141,40 @@ var init_xterm = __esm({
     nt = ie("CharSizeService"), ae = ie("CoreBrowserService"), Dt = ie("MouseService"), ce = ie("RenderService"), Qs = ie("SelectionService"), or = ie("CharacterJoinerService"), Re = ie("ThemeService"), lr = ie("LinkProviderService");
     Wn = class {
       constructor() {
-        this.listeners = [], this.unexpectedErrorHandler = function(t) {
+        this.listeners = [], this.unexpectedErrorHandler = function(t2) {
           setTimeout(() => {
-            throw t.stack ? ar.isErrorNoTelemetry(t) ? new ar(t.message + `
+            throw t2.stack ? ar.isErrorNoTelemetry(t2) ? new ar(t2.message + `
 
-` + t.stack) : new Error(t.message + `
+` + t2.stack) : new Error(t2.message + `
 
-` + t.stack) : t;
+` + t2.stack) : t2;
           }, 0);
         };
       }
-      addListener(t) {
-        return this.listeners.push(t), () => {
-          this._removeListener(t);
+      addListener(t2) {
+        return this.listeners.push(t2), () => {
+          this._removeListener(t2);
         };
       }
-      emit(t) {
+      emit(t2) {
         this.listeners.forEach((e) => {
-          e(t);
+          e(t2);
         });
       }
-      _removeListener(t) {
-        this.listeners.splice(this.listeners.indexOf(t), 1);
+      _removeListener(t2) {
+        this.listeners.splice(this.listeners.indexOf(t2), 1);
       }
-      setUnexpectedErrorHandler(t) {
-        this.unexpectedErrorHandler = t;
+      setUnexpectedErrorHandler(t2) {
+        this.unexpectedErrorHandler = t2;
       }
       getUnexpectedErrorHandler() {
         return this.unexpectedErrorHandler;
       }
-      onUnexpectedError(t) {
-        this.unexpectedErrorHandler(t), this.emit(t);
+      onUnexpectedError(t2) {
+        this.unexpectedErrorHandler(t2), this.emit(t2);
       }
-      onUnexpectedExternalError(t) {
-        this.unexpectedErrorHandler(t);
+      onUnexpectedExternalError(t2) {
+        this.unexpectedErrorHandler(t2);
       }
     }, Bl = new Wn();
     Un = "Canceled";
@@ -1184,35 +1184,35 @@ var init_xterm = __esm({
       }
     };
     ar = class s4 extends Error {
-      constructor(t) {
-        super(t), this.name = "CodeExpectedError";
+      constructor(t2) {
+        super(t2), this.name = "CodeExpectedError";
       }
-      static fromError(t) {
-        if (t instanceof s4) return t;
+      static fromError(t2) {
+        if (t2 instanceof s4) return t2;
         let e = new s4();
-        return e.message = t.message, e.stack = t.stack, e;
+        return e.message = t2.message, e.stack = t2.stack, e;
       }
-      static isErrorNoTelemetry(t) {
-        return t.name === "CodeExpectedError";
+      static isErrorNoTelemetry(t2) {
+        return t2.name === "CodeExpectedError";
       }
     }, Rt = class s5 extends Error {
-      constructor(t) {
-        super(t || "An unexpected bug occurred."), Object.setPrototypeOf(this, s5.prototype);
+      constructor(t2) {
+        super(t2 || "An unexpected bug occurred."), Object.setPrototypeOf(this, s5.prototype);
       }
     };
     cr = class cr2 {
-      constructor(t) {
-        this._array = t;
+      constructor(t2) {
+        this._array = t2;
         this._findLastMonotonousLastIdx = 0;
       }
-      findLastMonotonous(t) {
+      findLastMonotonous(t2) {
         if (cr2.assertInvariants) {
           if (this._prevFindLastPredicate) {
-            for (let i of this._array) if (this._prevFindLastPredicate(i) && !t(i)) throw new Error("MonotonousArray: current predicate must be weaker than (or equal to) the previous predicate.");
+            for (let i of this._array) if (this._prevFindLastPredicate(i) && !t2(i)) throw new Error("MonotonousArray: current predicate must be weaker than (or equal to) the previous predicate.");
           }
-          this._prevFindLastPredicate = t;
+          this._prevFindLastPredicate = t2;
         }
-        let e = Fl(this._array, t, this._findLastMonotonousLastIdx);
+        let e = Fl(this._array, t2, this._findLastMonotonousLastIdx);
         return this._findLastMonotonousLastIdx = e + 1, e === -1 ? void 0 : this._array[e];
       }
     };
@@ -1223,10 +1223,10 @@ var init_xterm = __esm({
         return a < 0;
       }
       l.isLessThan = s15;
-      function t(a) {
+      function t2(a) {
         return a <= 0;
       }
-      l.isLessThanOrEqual = t;
+      l.isLessThanOrEqual = t2;
       function e(a) {
         return a > 0;
       }
@@ -1236,78 +1236,78 @@ var init_xterm = __esm({
       }
       l.isNeitherLessOrGreaterThan = i, l.greaterThan = 1, l.lessThan = -1, l.neitherLessOrGreaterThan = 0;
     })(ro ||= {});
-    so = (s15, t) => s15 - t;
+    so = (s15, t2) => s15 - t2;
     At = class At2 {
-      constructor(t) {
-        this.iterate = t;
+      constructor(t2) {
+        this.iterate = t2;
       }
-      forEach(t) {
-        this.iterate((e) => (t(e), true));
+      forEach(t2) {
+        this.iterate((e) => (t2(e), true));
       }
       toArray() {
-        let t = [];
-        return this.iterate((e) => (t.push(e), true)), t;
+        let t2 = [];
+        return this.iterate((e) => (t2.push(e), true)), t2;
       }
-      filter(t) {
-        return new At2((e) => this.iterate((i) => t(i) ? e(i) : true));
+      filter(t2) {
+        return new At2((e) => this.iterate((i) => t2(i) ? e(i) : true));
       }
-      map(t) {
-        return new At2((e) => this.iterate((i) => e(t(i))));
+      map(t2) {
+        return new At2((e) => this.iterate((i) => e(t2(i))));
       }
-      some(t) {
+      some(t2) {
         let e = false;
-        return this.iterate((i) => (e = t(i), !e)), e;
+        return this.iterate((i) => (e = t2(i), !e)), e;
       }
-      findFirst(t) {
+      findFirst(t2) {
         let e;
-        return this.iterate((i) => t(i) ? (e = i, false) : true), e;
+        return this.iterate((i) => t2(i) ? (e = i, false) : true), e;
       }
-      findLast(t) {
+      findLast(t2) {
         let e;
-        return this.iterate((i) => (t(i) && (e = i), true)), e;
+        return this.iterate((i) => (t2(i) && (e = i), true)), e;
       }
-      findLastMaxBy(t) {
+      findLastMaxBy(t2) {
         let e, i = true;
-        return this.iterate((r) => ((i || ro.isGreaterThan(t(r, e))) && (i = false, e = r), true)), e;
+        return this.iterate((r) => ((i || ro.isGreaterThan(t2(r, e))) && (i = false, e = r), true)), e;
       }
     };
-    At.empty = new At((t) => {
+    At.empty = new At((t2) => {
     });
     io = At;
     oo = class {
-      constructor(t, e) {
+      constructor(t2, e) {
         this.toKey = e;
         this._map = /* @__PURE__ */ new Map();
         this[lo] = "SetWithKey";
-        for (let i of t) this.add(i);
+        for (let i of t2) this.add(i);
       }
       get size() {
         return this._map.size;
       }
-      add(t) {
-        let e = this.toKey(t);
-        return this._map.set(e, t), this;
+      add(t2) {
+        let e = this.toKey(t2);
+        return this._map.set(e, t2), this;
       }
-      delete(t) {
-        return this._map.delete(this.toKey(t));
+      delete(t2) {
+        return this._map.delete(this.toKey(t2));
       }
-      has(t) {
-        return this._map.has(this.toKey(t));
+      has(t2) {
+        return this._map.has(this.toKey(t2));
       }
       *entries() {
-        for (let t of this._map.values()) yield [t, t];
+        for (let t2 of this._map.values()) yield [t2, t2];
       }
       keys() {
         return this.values();
       }
       *values() {
-        for (let t of this._map.values()) yield t;
+        for (let t2 of this._map.values()) yield t2;
       }
       clear() {
         this._map.clear();
       }
-      forEach(t, e) {
-        this._map.forEach((i) => t.call(e, i, i, this));
+      forEach(t2, e) {
+        this._map.forEach((i) => t2.call(e, i, i, this));
       }
       [(ao = Symbol.iterator, lo = Symbol.toStringTag, ao)]() {
         return this.values();
@@ -1317,20 +1317,20 @@ var init_xterm = __esm({
       constructor() {
         this.map = /* @__PURE__ */ new Map();
       }
-      add(t, e) {
-        let i = this.map.get(t);
-        i || (i = /* @__PURE__ */ new Set(), this.map.set(t, i)), i.add(e);
+      add(t2, e) {
+        let i = this.map.get(t2);
+        i || (i = /* @__PURE__ */ new Set(), this.map.set(t2, i)), i.add(e);
       }
-      delete(t, e) {
-        let i = this.map.get(t);
-        i && (i.delete(e), i.size === 0 && this.map.delete(t));
+      delete(t2, e) {
+        let i = this.map.get(t2);
+        i && (i.delete(e), i.size === 0 && this.map.delete(t2));
       }
-      forEach(t, e) {
-        let i = this.map.get(t);
+      forEach(t2, e) {
+        let i = this.map.get(t2);
         i && i.forEach(e);
       }
-      get(t) {
-        let e = this.map.get(t);
+      get(t2) {
+        let e = this.map.get(t2);
         return e || /* @__PURE__ */ new Set();
       }
     };
@@ -1339,9 +1339,9 @@ var init_xterm = __esm({
         return I && typeof I == "object" && typeof I[Symbol.iterator] == "function";
       }
       O.is = s15;
-      let t = Object.freeze([]);
+      let t2 = Object.freeze([]);
       function e() {
-        return t;
+        return t2;
       }
       O.empty = e;
       function* i(I) {
@@ -1353,7 +1353,7 @@ var init_xterm = __esm({
       }
       O.wrap = r;
       function n(I) {
-        return I || t;
+        return I || t2;
       }
       O.from = n;
       function* o(I) {
@@ -1431,35 +1431,35 @@ var init_xterm = __esm({
       constructor() {
         this.livingDisposables = /* @__PURE__ */ new Map();
       }
-      getDisposableData(t) {
-        let e = this.livingDisposables.get(t);
-        return e || (e = { parent: null, source: null, isSingleton: false, value: t, idx: hr2.idx++ }, this.livingDisposables.set(t, e)), e;
+      getDisposableData(t2) {
+        let e = this.livingDisposables.get(t2);
+        return e || (e = { parent: null, source: null, isSingleton: false, value: t2, idx: hr2.idx++ }, this.livingDisposables.set(t2, e)), e;
       }
-      trackDisposable(t) {
-        let e = this.getDisposableData(t);
+      trackDisposable(t2) {
+        let e = this.getDisposableData(t2);
         e.source || (e.source = new Error().stack);
       }
-      setParent(t, e) {
-        let i = this.getDisposableData(t);
+      setParent(t2, e) {
+        let i = this.getDisposableData(t2);
         i.parent = e;
       }
-      markAsDisposed(t) {
-        this.livingDisposables.delete(t);
+      markAsDisposed(t2) {
+        this.livingDisposables.delete(t2);
       }
-      markAsSingleton(t) {
-        this.getDisposableData(t).isSingleton = true;
+      markAsSingleton(t2) {
+        this.getDisposableData(t2).isSingleton = true;
       }
-      getRootParent(t, e) {
-        let i = e.get(t);
+      getRootParent(t2, e) {
+        let i = e.get(t2);
         if (i) return i;
-        let r = t.parent ? this.getRootParent(this.getDisposableData(t.parent), e) : t;
-        return e.set(t, r), r;
+        let r = t2.parent ? this.getRootParent(this.getDisposableData(t2.parent), e) : t2;
+        return e.set(t2, r), r;
       }
       getTrackedDisposables() {
-        let t = /* @__PURE__ */ new Map();
-        return [...this.livingDisposables.entries()].filter(([, i]) => i.source !== null && !this.getRootParent(i, t).isSingleton).flatMap(([i]) => i);
+        let t2 = /* @__PURE__ */ new Map();
+        return [...this.livingDisposables.entries()].filter(([, i]) => i.source !== null && !this.getRootParent(i, t2).isSingleton).flatMap(([i]) => i);
       }
-      computeLeakingDisposables(t = 10, e) {
+      computeLeakingDisposables(t2 = 10, e) {
         let i;
         if (e) i = e;
         else {
@@ -1485,7 +1485,7 @@ var init_xterm = __esm({
         }
         i.sort(no((a) => a.idx, so));
         let o = "", l = 0;
-        for (let a of i.slice(0, t)) {
+        for (let a of i.slice(0, t2)) {
           l++;
           let u = r(a), h8 = [];
           for (let c = 0; c < u.length; c++) {
@@ -1508,10 +1508,10 @@ ${h8.join(`
 
 `;
         }
-        return i.length > t && (o += `
+        return i.length > t2 && (o += `
 
 
-... and ${i.length - t} more leaking disposables
+... and ${i.length - t2} more leaking disposables
 
 `), { leaks: i, details: o };
       }
@@ -1521,25 +1521,25 @@ ${h8.join(`
     if (Wl) {
       let s15 = "__is_disposable_tracked__";
       Ul(new class {
-        trackDisposable(t) {
+        trackDisposable(t2) {
           let e = new Error("Potentially leaked disposable").stack;
           setTimeout(() => {
-            t[s15] || console.log(e);
+            t2[s15] || console.log(e);
           }, 3e3);
         }
-        setParent(t, e) {
-          if (t && t !== D.None) try {
-            t[s15] = true;
+        setParent(t2, e) {
+          if (t2 && t2 !== D.None) try {
+            t2[s15] = true;
           } catch {
           }
         }
-        markAsDisposed(t) {
-          if (t && t !== D.None) try {
-            t[s15] = true;
+        markAsDisposed(t2) {
+          if (t2 && t2 !== D.None) try {
+            t2[s15] = true;
           } catch {
           }
         }
-        markAsSingleton(t) {
+        markAsSingleton(t2) {
         }
       }());
     }
@@ -1562,19 +1562,19 @@ ${h8.join(`
           this._toDispose.clear();
         }
       }
-      add(t) {
-        if (!t) return t;
-        if (t === this) throw new Error("Cannot register a disposable on itself!");
-        return vi(t, this), this._isDisposed ? dr2.DISABLE_DISPOSED_WARNING || console.warn(new Error("Trying to add a disposable to a DisposableStore that has already been disposed of. The added object will be leaked!").stack) : this._toDispose.add(t), t;
+      add(t2) {
+        if (!t2) return t2;
+        if (t2 === this) throw new Error("Cannot register a disposable on itself!");
+        return vi(t2, this), this._isDisposed ? dr2.DISABLE_DISPOSED_WARNING || console.warn(new Error("Trying to add a disposable to a DisposableStore that has already been disposed of. The added object will be leaked!").stack) : this._toDispose.add(t2), t2;
       }
-      delete(t) {
-        if (t) {
-          if (t === this) throw new Error("Cannot dispose a disposable on itself!");
-          this._toDispose.delete(t), t.dispose();
+      delete(t2) {
+        if (t2) {
+          if (t2 === this) throw new Error("Cannot dispose a disposable on itself!");
+          this._toDispose.delete(t2), t2.dispose();
         }
       }
-      deleteAndLeak(t) {
-        t && this._toDispose.has(t) && (this._toDispose.delete(t), vi(t, null));
+      deleteAndLeak(t2) {
+        t2 && this._toDispose.has(t2) && (this._toDispose.delete(t2), vi(t2, null));
       }
     };
     dr.DISABLE_DISPOSED_WARNING = false;
@@ -1586,9 +1586,9 @@ ${h8.join(`
       dispose() {
         pr(this), this._store.dispose();
       }
-      _register(t) {
-        if (t === this) throw new Error("Cannot register a disposable on itself!");
-        return this._store.add(t);
+      _register(t2) {
+        if (t2 === this) throw new Error("Cannot register a disposable on itself!");
+        return this._store.add(t2);
       }
     };
     D.None = Object.freeze({ dispose() {
@@ -1601,8 +1601,8 @@ ${h8.join(`
       get value() {
         return this._isDisposed ? void 0 : this._value;
       }
-      set value(t) {
-        this._isDisposed || t === this._value || (this._value?.dispose(), t && vi(t, this), this._value = t);
+      set value(t2) {
+        this._isDisposed || t2 === this._value || (this._value?.dispose(), t2 && vi(t2, this), this._value = t2);
       }
       clear() {
         this.value = void 0;
@@ -1611,14 +1611,14 @@ ${h8.join(`
         this._isDisposed = true, pr(this), this._value?.dispose(), this._value = void 0;
       }
       clearAndLeak() {
-        let t = this._value;
-        return this._value = void 0, t && vi(t, null), t;
+        let t2 = this._value;
+        return this._value = void 0, t2 && vi(t2, null), t2;
       }
     };
     fe = typeof window == "object" ? window : globalThis;
     kt = class kt2 {
-      constructor(t) {
-        this.element = t, this.next = kt2.Undefined, this.prev = kt2.Undefined;
+      constructor(t2) {
+        this.element = t2, this.next = kt2.Undefined, this.prev = kt2.Undefined;
       }
     };
     kt.Undefined = new kt(void 0);
@@ -1635,21 +1635,21 @@ ${h8.join(`
         return this._first === G.Undefined;
       }
       clear() {
-        let t = this._first;
-        for (; t !== G.Undefined; ) {
-          let e = t.next;
-          t.prev = G.Undefined, t.next = G.Undefined, t = e;
+        let t2 = this._first;
+        for (; t2 !== G.Undefined; ) {
+          let e = t2.next;
+          t2.prev = G.Undefined, t2.next = G.Undefined, t2 = e;
         }
         this._first = G.Undefined, this._last = G.Undefined, this._size = 0;
       }
-      unshift(t) {
-        return this._insert(t, false);
+      unshift(t2) {
+        return this._insert(t2, false);
       }
-      push(t) {
-        return this._insert(t, true);
+      push(t2) {
+        return this._insert(t2, true);
       }
-      _insert(t, e) {
-        let i = new G(t);
+      _insert(t2, e) {
+        let i = new G(t2);
         if (this._first === G.Undefined) this._first = i, this._last = i;
         else if (e) {
           let n = this._last;
@@ -1666,34 +1666,34 @@ ${h8.join(`
       }
       shift() {
         if (this._first !== G.Undefined) {
-          let t = this._first.element;
-          return this._remove(this._first), t;
+          let t2 = this._first.element;
+          return this._remove(this._first), t2;
         }
       }
       pop() {
         if (this._last !== G.Undefined) {
-          let t = this._last.element;
-          return this._remove(this._last), t;
+          let t2 = this._last.element;
+          return this._remove(this._last), t2;
         }
       }
-      _remove(t) {
-        if (t.prev !== G.Undefined && t.next !== G.Undefined) {
-          let e = t.prev;
-          e.next = t.next, t.next.prev = e;
-        } else t.prev === G.Undefined && t.next === G.Undefined ? (this._first = G.Undefined, this._last = G.Undefined) : t.next === G.Undefined ? (this._last = this._last.prev, this._last.next = G.Undefined) : t.prev === G.Undefined && (this._first = this._first.next, this._first.prev = G.Undefined);
+      _remove(t2) {
+        if (t2.prev !== G.Undefined && t2.next !== G.Undefined) {
+          let e = t2.prev;
+          e.next = t2.next, t2.next.prev = e;
+        } else t2.prev === G.Undefined && t2.next === G.Undefined ? (this._first = G.Undefined, this._last = G.Undefined) : t2.next === G.Undefined ? (this._last = this._last.prev, this._last.next = G.Undefined) : t2.prev === G.Undefined && (this._first = this._first.next, this._first.prev = G.Undefined);
         this._size -= 1;
       }
       *[Symbol.iterator]() {
-        let t = this._first;
-        for (; t !== G.Undefined; ) yield t.element, t = t.next;
+        let t2 = this._first;
+        for (; t2 !== G.Undefined; ) yield t2.element, t2 = t2.next;
       }
     };
     zl = globalThis.performance && typeof globalThis.performance.now == "function", mr = class s6 {
-      static create(t) {
-        return new s6(t);
+      static create(t2) {
+        return new s6(t2);
       }
-      constructor(t) {
-        this._now = zl && t === false ? Date.now : globalThis.performance.now.bind(globalThis.performance), this._startTime = this._now(), this._stopTime = -1;
+      constructor(t2) {
+        this._now = zl && t2 === false ? Date.now : globalThis.performance.now.bind(globalThis.performance), this._startTime = this._now(), this._stopTime = -1;
       }
       stop() {
         this._stopTime = this._now();
@@ -1708,7 +1708,7 @@ ${h8.join(`
     Gl = false, fo = false, $l = false;
     ((Qe) => {
       Qe.None = () => D.None;
-      function t(y) {
+      function t2(y) {
         if ($l) {
           let { onDidAddListener: T } = y, g = gi.create(), w = 0;
           y.onDidAddListener = () => {
@@ -1766,7 +1766,7 @@ ${h8.join(`
         }, onDidRemoveLastListener() {
           g?.dispose();
         } };
-        T || t(w);
+        T || t2(w);
         let E = new v(w);
         return T?.add(E), E.event;
       }
@@ -1786,7 +1786,7 @@ ${h8.join(`
         }, onDidRemoveLastListener() {
           le = void 0, Z.dispose();
         } };
-        N || t(et);
+        N || t2(et);
         let me = new v(et);
         return N?.add(me), me.event;
       }
@@ -1907,7 +1907,7 @@ ${h8.join(`
           }, onDidRemoveLastListener: () => {
             T.removeObserver(this);
           } };
-          g || t(w), this.emitter = new v(w), g && g.add(this.emitter);
+          g || t2(w), this.emitter = new v(w), g && g.add(this.emitter);
         }
         beginUpdate(T) {
           this._counter++;
@@ -1945,28 +1945,28 @@ ${h8.join(`
       Qe.fromObservableLight = V;
     })($ ||= {});
     Mt = class Mt2 {
-      constructor(t) {
+      constructor(t2) {
         this.listenerCount = 0;
         this.invocationCount = 0;
         this.elapsedOverall = 0;
         this.durations = [];
-        this.name = `${t}_${Mt2._idPool++}`, Mt2.all.add(this);
+        this.name = `${t2}_${Mt2._idPool++}`, Mt2.all.add(this);
       }
-      start(t) {
-        this._stopWatch = new mr(), this.listenerCount = t;
+      start(t2) {
+        this._stopWatch = new mr(), this.listenerCount = t2;
       }
       stop() {
         if (this._stopWatch) {
-          let t = this._stopWatch.elapsed();
-          this.durations.push(t), this.elapsedOverall += t, this.invocationCount += 1, this._stopWatch = void 0;
+          let t2 = this._stopWatch.elapsed();
+          this.durations.push(t2), this.elapsedOverall += t2, this.invocationCount += 1, this._stopWatch = void 0;
         }
       }
     };
     Mt.all = /* @__PURE__ */ new Set(), Mt._idPool = 0;
     $n = Mt, po = -1;
     br = class br2 {
-      constructor(t, e, i = (br2._idPool++).toString(16).padStart(3, "0")) {
-        this._errorHandler = t;
+      constructor(t2, e, i = (br2._idPool++).toString(16).padStart(3, "0")) {
+        this._errorHandler = t2;
         this.threshold = e;
         this.name = i;
         this._warnCountdown = 0;
@@ -1974,12 +1974,12 @@ ${h8.join(`
       dispose() {
         this._stacks?.clear();
       }
-      check(t, e) {
+      check(t2, e) {
         let i = this.threshold;
         if (i <= 0 || e < i) return;
         this._stacks || (this._stacks = /* @__PURE__ */ new Map());
-        let r = this._stacks.get(t.value) || 0;
-        if (this._stacks.set(t.value, r + 1), this._warnCountdown -= 1, this._warnCountdown <= 0) {
+        let r = this._stacks.get(t2.value) || 0;
+        if (this._stacks.set(t2.value, r + 1), this._warnCountdown -= 1, this._warnCountdown <= 0) {
           this._warnCountdown = i * 0.5;
           let [n, o] = this.getMostFrequentStack(), l = `[${this.name}] potential listener LEAK detected, having ${e} listeners already. MOST frequent listener (${o}):`;
           console.warn(l), console.warn(n);
@@ -1987,25 +1987,25 @@ ${h8.join(`
           this._errorHandler(a);
         }
         return () => {
-          let n = this._stacks.get(t.value) || 0;
-          this._stacks.set(t.value, n - 1);
+          let n = this._stacks.get(t2.value) || 0;
+          this._stacks.set(t2.value, n - 1);
         };
       }
       getMostFrequentStack() {
         if (!this._stacks) return;
-        let t, e = 0;
-        for (let [i, r] of this._stacks) (!t || e < r) && (t = [i, r], e = r);
-        return t;
+        let t2, e = 0;
+        for (let [i, r] of this._stacks) (!t2 || e < r) && (t2 = [i, r], e = r);
+        return t2;
       }
     };
     br._idPool = 1;
     Vn = br, gi = class s7 {
-      constructor(t) {
-        this.value = t;
+      constructor(t2) {
+        this.value = t2;
       }
       static create() {
-        let t = new Error();
-        return new s7(t.stack ?? "");
+        let t2 = new Error();
+        return new s7(t2.stack ?? "");
       }
       print() {
         console.warn(this.value.split(`
@@ -2013,23 +2013,23 @@ ${h8.join(`
 `));
       }
     }, qn = class extends Error {
-      constructor(t, e) {
-        super(t), this.name = "ListenerLeakError", this.stack = e;
+      constructor(t2, e) {
+        super(t2), this.name = "ListenerLeakError", this.stack = e;
       }
     }, Yn = class extends Error {
-      constructor(t, e) {
-        super(t), this.name = "ListenerRefusalError", this.stack = e;
+      constructor(t2, e) {
+        super(t2), this.name = "ListenerRefusalError", this.stack = e;
       }
     }, Vl = 0, Pt = class {
-      constructor(t) {
-        this.value = t;
+      constructor(t2) {
+        this.value = t2;
         this.id = Vl++;
       }
-    }, ql = 2, Yl = (s15, t) => {
-      if (s15 instanceof Pt) t(s15);
+    }, ql = 2, Yl = (s15, t2) => {
+      if (s15 instanceof Pt) t2(s15);
       else for (let e = 0; e < s15.length; e++) {
         let i = s15[e];
-        i && t(i);
+        i && t2(i);
       }
     };
     if (Gl) {
@@ -2037,22 +2037,22 @@ ${h8.join(`
       setInterval(() => {
         s15.length !== 0 && (console.warn("[LEAKING LISTENERS] GC'ed these listeners that were NOT yet disposed:"), console.warn(s15.join(`
 `)), s15.length = 0);
-      }, 3e3), _r = new FinalizationRegistry((t) => {
-        typeof t == "string" && s15.push(t);
+      }, 3e3), _r = new FinalizationRegistry((t2) => {
+        typeof t2 == "string" && s15.push(t2);
       });
     }
     v = class {
-      constructor(t) {
+      constructor(t2) {
         this._size = 0;
-        this._options = t, this._leakageMon = po > 0 || this._options?.leakWarningThreshold ? new Vn(t?.onListenerError ?? Lt, this._options?.leakWarningThreshold ?? po) : void 0, this._perfMon = this._options?._profName ? new $n(this._options._profName) : void 0, this._deliveryQueue = this._options?.deliveryQueue;
+        this._options = t2, this._leakageMon = po > 0 || this._options?.leakWarningThreshold ? new Vn(t2?.onListenerError ?? Lt, this._options?.leakWarningThreshold ?? po) : void 0, this._perfMon = this._options?._profName ? new $n(this._options._profName) : void 0, this._deliveryQueue = this._options?.deliveryQueue;
       }
       dispose() {
         if (!this._disposed) {
           if (this._disposed = true, this._deliveryQueue?.current === this && this._deliveryQueue.reset(), this._listeners) {
             if (fo) {
-              let t = this._listeners;
+              let t2 = this._listeners;
               queueMicrotask(() => {
-                Yl(t, (e) => e.stack?.print());
+                Yl(t2, (e) => e.stack?.print());
               });
             }
             this._listeners = void 0, this._size = 0;
@@ -2061,7 +2061,7 @@ ${h8.join(`
         }
       }
       get event() {
-        return this._event ??= (t, e, i) => {
+        return this._event ??= (t2, e, i) => {
           if (this._leakageMon && this._size > this._leakageMon.threshold ** 2) {
             let a = `[${this._leakageMon.name}] REFUSES to accept new listeners because it exceeded its threshold by far (${this._size} vs ${this._leakageMon.threshold})`;
             console.warn(a);
@@ -2069,8 +2069,8 @@ ${h8.join(`
             return (this._options?.onListenerError || Lt)(h8), D.None;
           }
           if (this._disposed) return D.None;
-          e && (t = t.bind(e));
-          let r = new Pt(t), n, o;
+          e && (t2 = t2.bind(e));
+          let r = new Pt(t2), n, o;
           this._leakageMon && this._size >= Math.ceil(this._leakageMon.threshold * 0.2) && (r.stack = gi.create(), n = this._leakageMon.check(r.stack, this._size + 1)), fo && (r.stack = o ?? gi.create()), this._listeners ? this._listeners instanceof Pt ? (this._deliveryQueue ??= new jn(), this._listeners = [this._listeners, r]) : this._listeners.push(r) : (this._options?.onWillAddFirstListener?.(this), this._listeners = r, this._options?.onDidAddFirstListener?.(this)), this._size++;
           let l = C(() => {
             _r?.unregister(l), n?.(), this._removeListener(r);
@@ -2084,13 +2084,13 @@ ${h8.join(`
           return l;
         }, this._event;
       }
-      _removeListener(t) {
+      _removeListener(t2) {
         if (this._options?.onWillRemoveListener?.(this), !this._listeners) return;
         if (this._size === 1) {
           this._listeners = void 0, this._options?.onDidRemoveLastListener?.(this), this._size = 0;
           return;
         }
-        let e = this._listeners, i = e.indexOf(t);
+        let e = this._listeners, i = e.indexOf(t2);
         if (i === -1) throw console.log("disposed?", this._disposed), console.log("size?", this._size), console.log("arr?", JSON.stringify(this._listeners)), new Error("Attempted to dispose unknown listener");
         this._size--, e[i] = void 0;
         let r = this._deliveryQueue.current === this;
@@ -2100,29 +2100,29 @@ ${h8.join(`
           e.length = n;
         }
       }
-      _deliver(t, e) {
-        if (!t) return;
+      _deliver(t2, e) {
+        if (!t2) return;
         let i = this._options?.onListenerError || Lt;
         if (!i) {
-          t.value(e);
+          t2.value(e);
           return;
         }
         try {
-          t.value(e);
+          t2.value(e);
         } catch (r) {
           i(r);
         }
       }
-      _deliverQueue(t) {
-        let e = t.current._listeners;
-        for (; t.i < t.end; ) this._deliver(e[t.i++], t.value);
-        t.reset();
+      _deliverQueue(t2) {
+        let e = t2.current._listeners;
+        for (; t2.i < t2.end; ) this._deliver(e[t2.i++], t2.value);
+        t2.reset();
       }
-      fire(t) {
-        if (this._deliveryQueue?.current && (this._deliverQueue(this._deliveryQueue), this._perfMon?.stop()), this._perfMon?.start(this._size), this._listeners) if (this._listeners instanceof Pt) this._deliver(this._listeners, t);
+      fire(t2) {
+        if (this._deliveryQueue?.current && (this._deliverQueue(this._deliveryQueue), this._perfMon?.stop()), this._perfMon?.start(this._size), this._listeners) if (this._listeners instanceof Pt) this._deliver(this._listeners, t2);
         else {
           let e = this._deliveryQueue;
-          e.enqueue(this, t, this._listeners.length), this._deliverQueue(e);
+          e.enqueue(this, t2, this._listeners.length), this._deliverQueue(e);
         }
         this._perfMon?.stop();
       }
@@ -2135,8 +2135,8 @@ ${h8.join(`
         this.i = -1;
         this.end = 0;
       }
-      enqueue(t, e, i) {
-        this.i = 0, this.end = i, this.current = t, this.value = e;
+      enqueue(t2, e, i) {
+        this.i = 0, this.end = i, this.current = t2, this.value = e;
       }
       reset() {
         this.i = this.end, this.current = void 0, this.value = void 0;
@@ -2152,30 +2152,30 @@ ${h8.join(`
         this.onDidChangeFullscreen = this._onDidChangeFullscreen.event;
         this.mapWindowIdToFullScreen = /* @__PURE__ */ new Map();
       }
-      getZoomLevel(t) {
-        return this.mapWindowIdToZoomLevel.get(this.getWindowId(t)) ?? 0;
+      getZoomLevel(t2) {
+        return this.mapWindowIdToZoomLevel.get(this.getWindowId(t2)) ?? 0;
       }
-      setZoomLevel(t, e) {
-        if (this.getZoomLevel(e) === t) return;
+      setZoomLevel(t2, e) {
+        if (this.getZoomLevel(e) === t2) return;
         let i = this.getWindowId(e);
-        this.mapWindowIdToZoomLevel.set(i, t), this._onDidChangeZoomLevel.fire(i);
+        this.mapWindowIdToZoomLevel.set(i, t2), this._onDidChangeZoomLevel.fire(i);
       }
-      getZoomFactor(t) {
-        return this.mapWindowIdToZoomFactor.get(this.getWindowId(t)) ?? 1;
+      getZoomFactor(t2) {
+        return this.mapWindowIdToZoomFactor.get(this.getWindowId(t2)) ?? 1;
       }
-      setZoomFactor(t, e) {
-        this.mapWindowIdToZoomFactor.set(this.getWindowId(e), t);
+      setZoomFactor(t2, e) {
+        this.mapWindowIdToZoomFactor.set(this.getWindowId(e), t2);
       }
-      setFullscreen(t, e) {
-        if (this.isFullscreen(e) === t) return;
+      setFullscreen(t2, e) {
+        if (this.isFullscreen(e) === t2) return;
         let i = this.getWindowId(e);
-        this.mapWindowIdToFullScreen.set(i, t), this._onDidChangeFullscreen.fire(i);
+        this.mapWindowIdToFullScreen.set(i, t2), this._onDidChangeFullscreen.fire(i);
       }
-      isFullscreen(t) {
-        return !!this.mapWindowIdToFullScreen.get(this.getWindowId(t));
+      isFullscreen(t2) {
+        return !!this.mapWindowIdToFullScreen.get(this.getWindowId(t2));
       }
-      getWindowId(t) {
-        return t.vscodeWindowId;
+      getWindowId(t2) {
+        return t2.vscodeWindowId;
       }
     };
     gr.INSTANCE = new gr();
@@ -2184,9 +2184,9 @@ ${h8.join(`
     Tu = Si.INSTANCE.onDidChangeFullscreen, Ot = typeof navigator == "object" ? navigator.userAgent : "", Ei = Ot.indexOf("Firefox") >= 0, Bt = Ot.indexOf("AppleWebKit") >= 0, Ti = Ot.indexOf("Chrome") >= 0, Sr = !Ti && Ot.indexOf("Safari") >= 0;
     Iu = Ot.indexOf("Electron/") >= 0, yu = Ot.indexOf("Android") >= 0, vr = false;
     if (typeof fe.matchMedia == "function") {
-      let s15 = fe.matchMedia("(display-mode: standalone) or (display-mode: window-controls-overlay)"), t = fe.matchMedia("(display-mode: fullscreen)");
+      let s15 = fe.matchMedia("(display-mode: standalone) or (display-mode: window-controls-overlay)"), t2 = fe.matchMedia("(display-mode: fullscreen)");
       vr = s15.matches, Xl(fe, s15, ({ matches: e }) => {
-        vr && t.matches || (vr = e);
+        vr && t2.matches || (vr = e);
       });
     }
     Nt = "en", yr = false, xr = false, Ii = false, Zl = false, vo = false, go = false, Jl = false, Ql = false, ea = false, ta = false, Ir = Nt, bo = Nt, Ve = globalThis;
@@ -2196,8 +2196,8 @@ ${h8.join(`
       yr = xe.platform === "win32", xr = xe.platform === "darwin", Ii = xe.platform === "linux", Zl = Ii && !!xe.env.SNAP && !!xe.env.SNAP_REVISION, Jl = So, ea = !!xe.env.CI || !!xe.env.BUILD_ARTIFACTSTAGINGDIRECTORY, Tr = Nt, Ir = Nt;
       let s15 = xe.env.VSCODE_NLS_CONFIG;
       if (s15) try {
-        let t = JSON.parse(s15);
-        Tr = t.userLocale, bo = t.osLocale, Ir = t.resolvedLanguage || Nt, ia = t.languagePack?.translationsConfigFile;
+        let t2 = JSON.parse(s15);
+        Tr = t2.userLocale, bo = t2.osLocale, Ir = t2.resolvedLanguage || Nt, ia = t2.languagePack?.translationsConfigFile;
       } catch {
       }
       vo = true;
@@ -2213,10 +2213,10 @@ ${h8.join(`
         return st;
       }
       i.value = s15;
-      function t() {
+      function t2() {
         return st.length === 2 ? st === "en" : st.length >= 3 ? st[0] === "e" && st[1] === "n" && st[2] === "-" : false;
       }
-      i.isDefaultVariant = t;
+      i.isDefaultVariant = t2;
       function e() {
         return st === "en";
       }
@@ -2234,9 +2234,9 @@ ${h8.join(`
             }
           }
         });
-        let t = 0;
+        let t2 = 0;
         return (e) => {
-          let i = ++t;
+          let i = ++t2;
           s15.push({ id: i, callback: e }), Ve.postMessage({ vscodeScheduleAsyncWork: i }, "*");
         };
       }
@@ -2248,14 +2248,14 @@ ${h8.join(`
       constructor() {
         this._keyCodeToStr = [], this._strToKeyCode = /* @__PURE__ */ Object.create(null);
       }
-      define(t, e) {
-        this._keyCodeToStr[t] = e, this._strToKeyCode[e.toLowerCase()] = t;
+      define(t2, e) {
+        this._keyCodeToStr[t2] = e, this._strToKeyCode[e.toLowerCase()] = t2;
       }
-      keyCodeToStr(t) {
-        return this._keyCodeToStr[t];
+      keyCodeToStr(t2) {
+        return this._keyCodeToStr[t2];
       }
-      strToKeyCode(t) {
-        return this._strToKeyCode[t.toLowerCase()] || 0;
+      strToKeyCode(t2) {
+        return this._strToKeyCode[t2.toLowerCase()] || 0;
       }
     }, Jn = new yi(), To = new yi(), Io = new yi(), yo = new Array(230);
     ((o) => {
@@ -2263,10 +2263,10 @@ ${h8.join(`
         return Jn.keyCodeToStr(l);
       }
       o.toString = s15;
-      function t(l) {
+      function t2(l) {
         return Jn.strToKeyCode(l);
       }
-      o.fromString = t;
+      o.fromString = t2;
       function e(l) {
         return To.keyCodeToStr(l);
       }
@@ -2296,19 +2296,19 @@ ${h8.join(`
       o.toElectronAccelerator = n;
     })(Qn ||= {});
     Rr = class s8 {
-      constructor(t, e, i, r, n) {
-        this.ctrlKey = t;
+      constructor(t2, e, i, r, n) {
+        this.ctrlKey = t2;
         this.shiftKey = e;
         this.altKey = i;
         this.metaKey = r;
         this.keyCode = n;
       }
-      equals(t) {
-        return t instanceof s8 && this.ctrlKey === t.ctrlKey && this.shiftKey === t.shiftKey && this.altKey === t.altKey && this.metaKey === t.metaKey && this.keyCode === t.keyCode;
+      equals(t2) {
+        return t2 instanceof s8 && this.ctrlKey === t2.ctrlKey && this.shiftKey === t2.shiftKey && this.altKey === t2.altKey && this.metaKey === t2.metaKey && this.keyCode === t2.keyCode;
       }
       getHashCode() {
-        let t = this.ctrlKey ? "1" : "0", e = this.shiftKey ? "1" : "0", i = this.altKey ? "1" : "0", r = this.metaKey ? "1" : "0";
-        return `K${t}${e}${i}${r}${this.keyCode}`;
+        let t2 = this.ctrlKey ? "1" : "0", e = this.shiftKey ? "1" : "0", i = this.altKey ? "1" : "0", r = this.metaKey ? "1" : "0";
+        return `K${t2}${e}${i}${r}${this.keyCode}`;
       }
       isModifierKey() {
         return this.keyCode === 0 || this.keyCode === 5 || this.keyCode === 57 || this.keyCode === 6 || this.keyCode === 4;
@@ -2321,26 +2321,26 @@ ${h8.join(`
       }
     };
     es = class {
-      constructor(t) {
-        if (t.length === 0) throw eo("chords");
-        this.chords = t;
+      constructor(t2) {
+        if (t2.length === 0) throw eo("chords");
+        this.chords = t2;
       }
       getHashCode() {
-        let t = "";
-        for (let e = 0, i = this.chords.length; e < i; e++) e !== 0 && (t += ";"), t += this.chords[e].getHashCode();
-        return t;
+        let t2 = "";
+        for (let e = 0, i = this.chords.length; e < i; e++) e !== 0 && (t2 += ";"), t2 += this.chords[e].getHashCode();
+        return t2;
       }
-      equals(t) {
-        if (t === null || this.chords.length !== t.chords.length) return false;
-        for (let e = 0; e < this.chords.length; e++) if (!this.chords[e].equals(t.chords[e])) return false;
+      equals(t2) {
+        if (t2 === null || this.chords.length !== t2.chords.length) return false;
+        for (let e = 0; e < this.chords.length; e++) if (!this.chords[e].equals(t2.chords[e])) return false;
         return true;
       }
     };
     ua = Te ? 256 : 2048, ha = 512, da = 1024, fa = Te ? 2048 : 256;
     ft = class {
-      constructor(t) {
+      constructor(t2) {
         this._standardKeyboardEventBrand = true;
-        let e = t;
+        let e = t2;
         this.browserEvent = e, this.target = e.target, this.ctrlKey = e.ctrlKey, this.shiftKey = e.shiftKey, this.altKey = e.altKey, this.metaKey = e.metaKey, this.altGraphKey = e.getModifierState?.("AltGraph"), this.keyCode = ca(e), this.code = e.code, this.ctrlKey = this.ctrlKey || this.keyCode === 5, this.altKey = this.altKey || this.keyCode === 6, this.shiftKey = this.shiftKey || this.keyCode === 4, this.metaKey = this.metaKey || this.keyCode === 57, this._asKeybinding = this._computeKeybinding(), this._asKeyCodeChord = this._computeKeyCodeChord();
       }
       preventDefault() {
@@ -2352,36 +2352,36 @@ ${h8.join(`
       toKeyCodeChord() {
         return this._asKeyCodeChord;
       }
-      equals(t) {
-        return this._asKeybinding === t;
+      equals(t2) {
+        return this._asKeybinding === t2;
       }
       _computeKeybinding() {
-        let t = 0;
-        this.keyCode !== 5 && this.keyCode !== 4 && this.keyCode !== 6 && this.keyCode !== 57 && (t = this.keyCode);
+        let t2 = 0;
+        this.keyCode !== 5 && this.keyCode !== 4 && this.keyCode !== 6 && this.keyCode !== 57 && (t2 = this.keyCode);
         let e = 0;
-        return this.ctrlKey && (e |= ua), this.altKey && (e |= ha), this.shiftKey && (e |= da), this.metaKey && (e |= fa), e |= t, e;
+        return this.ctrlKey && (e |= ua), this.altKey && (e |= ha), this.shiftKey && (e |= da), this.metaKey && (e |= fa), e |= t2, e;
       }
       _computeKeyCodeChord() {
-        let t = 0;
-        return this.keyCode !== 5 && this.keyCode !== 4 && this.keyCode !== 6 && this.keyCode !== 57 && (t = this.keyCode), new Rr(this.ctrlKey, this.shiftKey, this.altKey, this.metaKey, t);
+        let t2 = 0;
+        return this.keyCode !== 5 && this.keyCode !== 4 && this.keyCode !== 6 && this.keyCode !== 57 && (t2 = this.keyCode), new Rr(this.ctrlKey, this.shiftKey, this.altKey, this.metaKey, t2);
       }
     };
     wo = /* @__PURE__ */ new WeakMap();
     Lr = class {
-      static getSameOriginWindowChain(t) {
-        let e = wo.get(t);
+      static getSameOriginWindowChain(t2) {
+        let e = wo.get(t2);
         if (!e) {
-          e = [], wo.set(t, e);
-          let i = t, r;
+          e = [], wo.set(t2, e);
+          let i = t2, r;
           do
             r = pa(i), r ? e.push({ window: new WeakRef(i), iframeElement: i.frameElement || null }) : e.push({ window: new WeakRef(i), iframeElement: null }), i = r;
           while (i);
         }
         return e.slice(0);
       }
-      static getPositionOfChildWindowRelativeToAncestorWindow(t, e) {
-        if (!e || t === e) return { top: 0, left: 0 };
-        let i = 0, r = 0, n = this.getSameOriginWindowChain(t);
+      static getPositionOfChildWindowRelativeToAncestorWindow(t2, e) {
+        if (!e || t2 === e) return { top: 0, left: 0 };
+        let i = 0, r = 0, n = this.getSameOriginWindowChain(t2);
         for (let o of n) {
           let l = o.window.deref();
           if (i += l?.scrollY ?? 0, r += l?.scrollX ?? 0, l === e || !o.iframeElement) break;
@@ -2392,9 +2392,9 @@ ${h8.join(`
       }
     };
     qe = class {
-      constructor(t, e) {
+      constructor(t2, e) {
         this.timestamp = Date.now(), this.browserEvent = e, this.leftButton = e.button === 0, this.middleButton = e.button === 1, this.rightButton = e.button === 2, this.buttons = e.buttons, this.target = e.target, this.detail = e.detail || 1, e.type === "dblclick" && (this.detail = 2), this.ctrlKey = e.ctrlKey, this.shiftKey = e.shiftKey, this.altKey = e.altKey, this.metaKey = e.metaKey, typeof e.pageX == "number" ? (this.posx = e.pageX, this.posy = e.pageY) : (this.posx = e.clientX + this.target.ownerDocument.body.scrollLeft + this.target.ownerDocument.documentElement.scrollLeft, this.posy = e.clientY + this.target.ownerDocument.body.scrollTop + this.target.ownerDocument.documentElement.scrollTop);
-        let i = Lr.getPositionOfChildWindowRelativeToAncestorWindow(t, e.view);
+        let i = Lr.getPositionOfChildWindowRelativeToAncestorWindow(t2, e.view);
         this.posx -= i.left, this.posy -= i.top;
       }
       preventDefault() {
@@ -2405,28 +2405,28 @@ ${h8.join(`
       }
     };
     xi = class {
-      constructor(t, e = 0, i = 0) {
-        this.browserEvent = t || null, this.target = t ? t.target || t.targetNode || t.srcElement : null, this.deltaY = i, this.deltaX = e;
+      constructor(t2, e = 0, i = 0) {
+        this.browserEvent = t2 || null, this.target = t2 ? t2.target || t2.targetNode || t2.srcElement : null, this.deltaY = i, this.deltaX = e;
         let r = false;
         if (Ti) {
           let n = navigator.userAgent.match(/Chrome\/(\d+)/);
           r = (n ? parseInt(n[1]) : 123) <= 122;
         }
-        if (t) {
-          let n = t, o = t, l = t.view?.devicePixelRatio || 1;
+        if (t2) {
+          let n = t2, o = t2, l = t2.view?.devicePixelRatio || 1;
           if (typeof n.wheelDeltaY < "u") r ? this.deltaY = n.wheelDeltaY / (120 * l) : this.deltaY = n.wheelDeltaY / 120;
           else if (typeof o.VERTICAL_AXIS < "u" && o.axis === o.VERTICAL_AXIS) this.deltaY = -o.detail / 3;
-          else if (t.type === "wheel") {
-            let a = t;
-            a.deltaMode === a.DOM_DELTA_LINE ? Ei && !Te ? this.deltaY = -t.deltaY / 3 : this.deltaY = -t.deltaY : this.deltaY = -t.deltaY / 40;
+          else if (t2.type === "wheel") {
+            let a = t2;
+            a.deltaMode === a.DOM_DELTA_LINE ? Ei && !Te ? this.deltaY = -t2.deltaY / 3 : this.deltaY = -t2.deltaY : this.deltaY = -t2.deltaY / 40;
           }
           if (typeof n.wheelDeltaX < "u") Sr && wr ? this.deltaX = -(n.wheelDeltaX / 120) : r ? this.deltaX = n.wheelDeltaX / (120 * l) : this.deltaX = n.wheelDeltaX / 120;
-          else if (typeof o.HORIZONTAL_AXIS < "u" && o.axis === o.HORIZONTAL_AXIS) this.deltaX = -t.detail / 3;
-          else if (t.type === "wheel") {
-            let a = t;
-            a.deltaMode === a.DOM_DELTA_LINE ? Ei && !Te ? this.deltaX = -t.deltaX / 3 : this.deltaX = -t.deltaX : this.deltaX = -t.deltaX / 40;
+          else if (typeof o.HORIZONTAL_AXIS < "u" && o.axis === o.HORIZONTAL_AXIS) this.deltaX = -t2.detail / 3;
+          else if (t2.type === "wheel") {
+            let a = t2;
+            a.deltaMode === a.DOM_DELTA_LINE ? Ei && !Te ? this.deltaX = -t2.deltaX / 3 : this.deltaX = -t2.deltaX : this.deltaX = -t2.deltaX / 40;
           }
-          this.deltaY === 0 && this.deltaX === 0 && t.wheelDelta && (r ? this.deltaY = t.wheelDelta / (120 * l) : this.deltaY = t.wheelDelta / 120);
+          this.deltaY === 0 && this.deltaX === 0 && t2.wheelDelta && (r ? this.deltaY = t2.wheelDelta / (120 * l) : this.deltaY = t2.wheelDelta / 120);
         }
       }
       preventDefault() {
@@ -2436,8 +2436,8 @@ ${h8.join(`
         this.browserEvent?.stopPropagation();
       }
     };
-    Do = Object.freeze(function(s15, t) {
-      let e = setTimeout(s15.bind(t), 0);
+    Do = Object.freeze(function(s15, t2) {
+      let e = setTimeout(s15.bind(t2), 0);
       return { dispose() {
         clearTimeout(e);
       } };
@@ -2468,9 +2468,9 @@ ${h8.join(`
     };
     _a = /* @__PURE__ */ Symbol("MicrotaskDelay");
     Ye = class {
-      constructor(t, e) {
+      constructor(t2, e) {
         this._isDisposed = false;
-        this._token = -1, typeof t == "function" && typeof e == "number" && this.setIfNotSet(t, e);
+        this._token = -1, typeof t2 == "function" && typeof e == "number" && this.setIfNotSet(t2, e);
       }
       dispose() {
         this.cancel(), this._isDisposed = true;
@@ -2478,16 +2478,16 @@ ${h8.join(`
       cancel() {
         this._token !== -1 && (clearTimeout(this._token), this._token = -1);
       }
-      cancelAndSet(t, e) {
+      cancelAndSet(t2, e) {
         if (this._isDisposed) throw new Rt("Calling 'cancelAndSet' on a disposed TimeoutTimer");
         this.cancel(), this._token = setTimeout(() => {
-          this._token = -1, t();
+          this._token = -1, t2();
         }, e);
       }
-      setIfNotSet(t, e) {
+      setIfNotSet(t2, e) {
         if (this._isDisposed) throw new Rt("Calling 'setIfNotSet' on a disposed TimeoutTimer");
         this._token === -1 && (this._token = setTimeout(() => {
-          this._token = -1, t();
+          this._token = -1, t2();
         }, e));
       }
     }, kr = class {
@@ -2498,11 +2498,11 @@ ${h8.join(`
       cancel() {
         this.disposable?.dispose(), this.disposable = void 0;
       }
-      cancelAndSet(t, e, i = globalThis) {
+      cancelAndSet(t2, e, i = globalThis) {
         if (this.isDisposed) throw new Rt("Calling 'cancelAndSet' on a disposed IntervalTimer");
         this.cancel();
         let r = i.setInterval(() => {
-          t();
+          t2();
         }, e);
         this.disposable = C(() => {
           i.clearInterval(r), this.disposable = void 0;
@@ -2513,11 +2513,11 @@ ${h8.join(`
       }
     };
     (function() {
-      typeof globalThis.requestIdleCallback != "function" || typeof globalThis.cancelIdleCallback != "function" ? Ar = (s15, t) => {
+      typeof globalThis.requestIdleCallback != "function" || typeof globalThis.cancelIdleCallback != "function" ? Ar = (s15, t2) => {
         Eo(() => {
           if (e) return;
           let i = Date.now() + 15;
-          t(Object.freeze({ didTimeout: true, timeRemaining() {
+          t2(Object.freeze({ didTimeout: true, timeRemaining() {
             return Math.max(0, i - Date.now());
           } }));
         });
@@ -2525,8 +2525,8 @@ ${h8.join(`
         return { dispose() {
           e || (e = true);
         } };
-      } : Ar = (s15, t, e) => {
-        let i = s15.requestIdleCallback(t, typeof e == "number" ? { timeout: e } : void 0), r = false;
+      } : Ar = (s15, t2, e) => {
+        let i = s15.requestIdleCallback(t2, typeof e == "number" ? { timeout: e } : void 0), r = false;
         return { dispose() {
           r || (r = true, s15.cancelIdleCallback(i));
         } };
@@ -2541,7 +2541,7 @@ ${h8.join(`
         return n;
       }
       e.settled = s15;
-      function t(i) {
+      function t2(i) {
         return new Promise(async (r, n) => {
           try {
             await i(r, n);
@@ -2550,36 +2550,36 @@ ${h8.join(`
           }
         });
       }
-      e.withAsyncBody = t;
+      e.withAsyncBody = t2;
     })(va ||= {});
     _e = class _e2 {
-      static fromArray(t) {
+      static fromArray(t2) {
         return new _e2((e) => {
-          e.emitMany(t);
+          e.emitMany(t2);
         });
       }
-      static fromPromise(t) {
+      static fromPromise(t2) {
         return new _e2(async (e) => {
-          e.emitMany(await t);
+          e.emitMany(await t2);
         });
       }
-      static fromPromises(t) {
+      static fromPromises(t2) {
         return new _e2(async (e) => {
-          await Promise.all(t.map(async (i) => e.emitOne(await i)));
+          await Promise.all(t2.map(async (i) => e.emitOne(await i)));
         });
       }
-      static merge(t) {
+      static merge(t2) {
         return new _e2(async (e) => {
-          await Promise.all(t.map(async (i) => {
+          await Promise.all(t2.map(async (i) => {
             for await (let r of i) e.emitOne(r);
           }));
         });
       }
-      constructor(t, e) {
+      constructor(t2, e) {
         this._state = 0, this._results = [], this._error = null, this._onReturn = e, this._onStateChanged = new v(), queueMicrotask(async () => {
           let i = { emitOne: (r) => this.emitOne(r), emitMany: (r) => this.emitMany(r), reject: (r) => this.reject(r) };
           try {
-            await Promise.resolve(t(i)), this.resolve();
+            await Promise.resolve(t2(i)), this.resolve();
           } catch (r) {
             this.reject(r);
           } finally {
@@ -2588,57 +2588,57 @@ ${h8.join(`
         });
       }
       [Symbol.asyncIterator]() {
-        let t = 0;
+        let t2 = 0;
         return { next: async () => {
           do {
             if (this._state === 2) throw this._error;
-            if (t < this._results.length) return { done: false, value: this._results[t++] };
+            if (t2 < this._results.length) return { done: false, value: this._results[t2++] };
             if (this._state === 1) return { done: true, value: void 0 };
             await $.toPromise(this._onStateChanged.event);
           } while (true);
         }, return: async () => (this._onReturn?.(), { done: true, value: void 0 }) };
       }
-      static map(t, e) {
+      static map(t2, e) {
         return new _e2(async (i) => {
-          for await (let r of t) i.emitOne(e(r));
+          for await (let r of t2) i.emitOne(e(r));
         });
       }
-      map(t) {
-        return _e2.map(this, t);
+      map(t2) {
+        return _e2.map(this, t2);
       }
-      static filter(t, e) {
+      static filter(t2, e) {
         return new _e2(async (i) => {
-          for await (let r of t) e(r) && i.emitOne(r);
+          for await (let r of t2) e(r) && i.emitOne(r);
         });
       }
-      filter(t) {
-        return _e2.filter(this, t);
+      filter(t2) {
+        return _e2.filter(this, t2);
       }
-      static coalesce(t) {
-        return _e2.filter(t, (e) => !!e);
+      static coalesce(t2) {
+        return _e2.filter(t2, (e) => !!e);
       }
       coalesce() {
         return _e2.coalesce(this);
       }
-      static async toPromise(t) {
+      static async toPromise(t2) {
         let e = [];
-        for await (let i of t) e.push(i);
+        for await (let i of t2) e.push(i);
         return e;
       }
       toPromise() {
         return _e2.toPromise(this);
       }
-      emitOne(t) {
-        this._state === 0 && (this._results.push(t), this._onStateChanged.fire());
+      emitOne(t2) {
+        this._state === 0 && (this._results.push(t2), this._onStateChanged.fire());
       }
-      emitMany(t) {
-        this._state === 0 && (this._results = this._results.concat(t), this._onStateChanged.fire());
+      emitMany(t2) {
+        this._state === 0 && (this._results = this._results.concat(t2), this._onStateChanged.fire());
       }
       resolve() {
         this._state === 0 && (this._state = 1, this._onStateChanged.fire());
       }
-      reject(t) {
-        this._state === 0 && (this._state = 2, this._error = t, this._onStateChanged.fire());
+      reject(t2) {
+        this._state === 0 && (this._state = 2, this._error = t2, this._onStateChanged.fire());
       }
     };
     _e.EMPTY = _e.fromArray([]);
@@ -2652,42 +2652,42 @@ ${h8.join(`
         this._h4 = 3285377520;
         this._buff = new Uint8Array(67), this._buffDV = new DataView(this._buff.buffer), this._buffLen = 0, this._totalLen = 0, this._leftoverHighSurrogate = 0, this._finished = false;
       }
-      update(t) {
-        let e = t.length;
+      update(t2) {
+        let e = t2.length;
         if (e === 0) return;
         let i = this._buff, r = this._buffLen, n = this._leftoverHighSurrogate, o, l;
-        for (n !== 0 ? (o = n, l = -1, n = 0) : (o = t.charCodeAt(0), l = 0); ; ) {
+        for (n !== 0 ? (o = n, l = -1, n = 0) : (o = t2.charCodeAt(0), l = 0); ; ) {
           let a = o;
           if (Lo(o)) if (l + 1 < e) {
-            let u = t.charCodeAt(l + 1);
+            let u = t2.charCodeAt(l + 1);
             is(u) ? (l++, a = Ao(o, u)) : a = 65533;
           } else {
             n = o;
             break;
           }
           else is(o) && (a = 65533);
-          if (r = this._push(i, r, a), l++, l < e) o = t.charCodeAt(l);
+          if (r = this._push(i, r, a), l++, l < e) o = t2.charCodeAt(l);
           else break;
         }
         this._buffLen = r, this._leftoverHighSurrogate = n;
       }
-      _push(t, e, i) {
-        return i < 128 ? t[e++] = i : i < 2048 ? (t[e++] = 192 | (i & 1984) >>> 6, t[e++] = 128 | (i & 63) >>> 0) : i < 65536 ? (t[e++] = 224 | (i & 61440) >>> 12, t[e++] = 128 | (i & 4032) >>> 6, t[e++] = 128 | (i & 63) >>> 0) : (t[e++] = 240 | (i & 1835008) >>> 18, t[e++] = 128 | (i & 258048) >>> 12, t[e++] = 128 | (i & 4032) >>> 6, t[e++] = 128 | (i & 63) >>> 0), e >= 64 && (this._step(), e -= 64, this._totalLen += 64, t[0] = t[64], t[1] = t[65], t[2] = t[66]), e;
+      _push(t2, e, i) {
+        return i < 128 ? t2[e++] = i : i < 2048 ? (t2[e++] = 192 | (i & 1984) >>> 6, t2[e++] = 128 | (i & 63) >>> 0) : i < 65536 ? (t2[e++] = 224 | (i & 61440) >>> 12, t2[e++] = 128 | (i & 4032) >>> 6, t2[e++] = 128 | (i & 63) >>> 0) : (t2[e++] = 240 | (i & 1835008) >>> 18, t2[e++] = 128 | (i & 258048) >>> 12, t2[e++] = 128 | (i & 4032) >>> 6, t2[e++] = 128 | (i & 63) >>> 0), e >= 64 && (this._step(), e -= 64, this._totalLen += 64, t2[0] = t2[64], t2[1] = t2[65], t2[2] = t2[66]), e;
       }
       digest() {
         return this._finished || (this._finished = true, this._leftoverHighSurrogate && (this._leftoverHighSurrogate = 0, this._buffLen = this._push(this._buff, this._buffLen, 65533)), this._totalLen += this._buffLen, this._wrapUp()), wi(this._h0) + wi(this._h1) + wi(this._h2) + wi(this._h3) + wi(this._h4);
       }
       _wrapUp() {
         this._buff[this._buffLen++] = 128, ko(this._buff, this._buffLen), this._buffLen > 56 && (this._step(), ko(this._buff));
-        let t = 8 * this._totalLen;
-        this._buffDV.setUint32(56, Math.floor(t / 4294967296), false), this._buffDV.setUint32(60, t % 4294967296, false), this._step();
+        let t2 = 8 * this._totalLen;
+        this._buffDV.setUint32(56, Math.floor(t2 / 4294967296), false), this._buffDV.setUint32(60, t2 % 4294967296, false), this._step();
       }
       _step() {
-        let t = Cr2._bigBlock32, e = this._buffDV;
-        for (let c = 0; c < 64; c += 4) t.setUint32(c, e.getUint32(c, false), false);
-        for (let c = 64; c < 320; c += 4) t.setUint32(c, rs(t.getUint32(c - 12, false) ^ t.getUint32(c - 32, false) ^ t.getUint32(c - 56, false) ^ t.getUint32(c - 64, false), 1), false);
+        let t2 = Cr2._bigBlock32, e = this._buffDV;
+        for (let c = 0; c < 64; c += 4) t2.setUint32(c, e.getUint32(c, false), false);
+        for (let c = 64; c < 320; c += 4) t2.setUint32(c, rs(t2.getUint32(c - 12, false) ^ t2.getUint32(c - 32, false) ^ t2.getUint32(c - 56, false) ^ t2.getUint32(c - 64, false), 1), false);
         let i = this._h0, r = this._h1, n = this._h2, o = this._h3, l = this._h4, a, u, h8;
-        for (let c = 0; c < 80; c++) c < 20 ? (a = r & n | ~r & o, u = 1518500249) : c < 40 ? (a = r ^ n ^ o, u = 1859775393) : c < 60 ? (a = r & n | r & o | n & o, u = 2400959708) : (a = r ^ n ^ o, u = 3395469782), h8 = rs(i, 5) + a + l + u + t.getUint32(c * 4, false) & 4294967295, l = o, o = n, n = rs(r, 30), r = i, i = h8;
+        for (let c = 0; c < 80; c++) c < 20 ? (a = r & n | ~r & o, u = 1518500249) : c < 40 ? (a = r ^ n ^ o, u = 1859775393) : c < 60 ? (a = r & n | r & o | n & o, u = 2400959708) : (a = r ^ n ^ o, u = 3395469782), h8 = rs(i, 5) + a + l + u + t2.getUint32(c * 4, false) & 4294967295, l = o, o = n, n = rs(r, 30), r = i, i = h8;
         this._h0 = this._h0 + i & 4294967295, this._h1 = this._h1 + r & 4294967295, this._h2 = this._h2 + n & 4294967295, this._h3 = this._h3 + o & 4294967295, this._h4 = this._h4 + l & 4294967295;
       }
     };
@@ -2696,11 +2696,11 @@ ${h8.join(`
     ({ registerWindow: Bh, getWindow: be, getDocument: Nh, getWindows: Fh, getWindowsCount: Hh, getWindowId: Oo, getWindowById: Wh, hasWindow: Uh, onDidRegisterWindow: No, onWillUnregisterWindow: Kh, onDidUnregisterWindow: zh } = (function() {
       let s15 = /* @__PURE__ */ new Map();
       fe;
-      let t = { window: fe, disposables: new Ee() };
-      s15.set(fe.vscodeWindowId, t);
+      let t2 = { window: fe, disposables: new Ee() };
+      s15.set(fe.vscodeWindowId, t2);
       let e = new v(), i = new v(), r = new v();
       function n(o, l) {
-        return (typeof o == "number" ? s15.get(o) : void 0) ?? (l ? t : void 0);
+        return (typeof o == "number" ? s15.get(o) : void 0) ?? (l ? t2 : void 0);
       }
       return { onDidRegisterWindow: e.event, onWillUnregisterWindow: r.event, onDidUnregisterWindow: i.event, registerWindow(o) {
         if (s15.has(o.vscodeWindowId)) return D.None;
@@ -2728,27 +2728,27 @@ ${h8.join(`
       } };
     })());
     ss = class {
-      constructor(t, e, i, r) {
-        this._node = t, this._type = e, this._handler = i, this._options = r || false, this._node.addEventListener(this._type, this._handler, this._options);
+      constructor(t2, e, i, r) {
+        this._node = t2, this._type = e, this._handler = i, this._options = r || false, this._node.addEventListener(this._type, this._handler, this._options);
       }
       dispose() {
         this._handler && (this._node.removeEventListener(this._type, this._handler, this._options), this._node = null, this._handler = null);
       }
     };
-    os = function(t, e, i, r) {
+    os = function(t2, e, i, r) {
       let n = i;
-      return e === "click" || e === "mousedown" || e === "contextmenu" ? n = ya(be(t), i) : (e === "keydown" || e === "keypress" || e === "keyup") && (n = xa(i)), L(t, e, n, r);
+      return e === "click" || e === "mousedown" || e === "contextmenu" ? n = ya(be(t2), i) : (e === "keydown" || e === "keypress" || e === "keyup") && (n = xa(i)), L(t2, e, n, r);
     };
     Mr = class extends kr {
-      constructor(t) {
-        super(), this.defaultTarget = t && be(t);
+      constructor(t2) {
+        super(), this.defaultTarget = t2 && be(t2);
       }
-      cancelAndSet(t, e, i) {
-        return super.cancelAndSet(t, e, i ?? this.defaultTarget);
+      cancelAndSet(t2, e, i) {
+        return super.cancelAndSet(t2, e, i ?? this.defaultTarget);
       }
     }, Di = class {
-      constructor(t, e = 0) {
-        this._runner = t, this.priority = e, this._canceled = false;
+      constructor(t2, e = 0) {
+        this._runner = t2, this.priority = e, this._canceled = false;
       }
       dispose() {
         this._canceled = true;
@@ -2756,19 +2756,19 @@ ${h8.join(`
       execute() {
         if (!this._canceled) try {
           this._runner();
-        } catch (t) {
-          Lt(t);
+        } catch (t2) {
+          Lt(t2);
         }
       }
-      static sort(t, e) {
-        return e.priority - t.priority;
+      static sort(t2, e) {
+        return e.priority - t2.priority;
       }
     };
     (function() {
-      let s15 = /* @__PURE__ */ new Map(), t = /* @__PURE__ */ new Map(), e = /* @__PURE__ */ new Map(), i = /* @__PURE__ */ new Map(), r = (n) => {
+      let s15 = /* @__PURE__ */ new Map(), t2 = /* @__PURE__ */ new Map(), e = /* @__PURE__ */ new Map(), i = /* @__PURE__ */ new Map(), r = (n) => {
         e.set(n, false);
         let o = s15.get(n) ?? [];
-        for (t.set(n, o), s15.set(n, []), i.set(n, true); o.length > 0; ) o.sort(Di.sort), o.shift().execute();
+        for (t2.set(n, o), s15.set(n, []), i.set(n, true); o.length > 0; ) o.sort(Di.sort), o.shift().execute();
         i.set(n, false);
       };
       mt = (n, o, l = 0) => {
@@ -2777,27 +2777,27 @@ ${h8.join(`
       }, wa = (n, o, l) => {
         let a = Oo(n);
         if (i.get(a)) {
-          let u = new Di(o, l), h8 = t.get(a);
-          return h8 || (h8 = [], t.set(a, h8)), h8.push(u), u;
+          let u = new Di(o, l), h8 = t2.get(a);
+          return h8 || (h8 = [], t2.set(a, h8)), h8.push(u), u;
         } else return mt(n, o, l);
       };
     })();
     pt = class pt2 {
-      constructor(t, e) {
-        this.width = t;
+      constructor(t2, e) {
+        this.width = t2;
         this.height = e;
       }
-      with(t = this.width, e = this.height) {
-        return t !== this.width || e !== this.height ? new pt2(t, e) : this;
+      with(t2 = this.width, e = this.height) {
+        return t2 !== this.width || e !== this.height ? new pt2(t2, e) : this;
       }
-      static is(t) {
-        return typeof t == "object" && typeof t.height == "number" && typeof t.width == "number";
+      static is(t2) {
+        return typeof t2 == "object" && typeof t2.height == "number" && typeof t2.width == "number";
       }
-      static lift(t) {
-        return t instanceof pt2 ? t : new pt2(t.width, t.height);
+      static lift(t2) {
+        return t2 instanceof pt2 ? t2 : new pt2(t2.width, t2.height);
       }
-      static equals(t, e) {
-        return t === e ? true : !t || !e ? false : t.width === e.width && t.height === e.height;
+      static equals(t2, e) {
+        return t2 === e ? true : !t2 || !e ? false : t2.width === e.width && t2.height === e.height;
       }
     };
     pt.None = new pt(0, 0);
@@ -2806,7 +2806,7 @@ ${h8.join(`
       constructor() {
         this.mutationObservers = /* @__PURE__ */ new Map();
       }
-      observe(s15, t, e) {
+      observe(s15, t2, e) {
         let i = this.mutationObservers.get(s15);
         i || (i = /* @__PURE__ */ new Map(), this.mutationObservers.set(s15, i));
         let r = Mo(e), n = i.get(r);
@@ -2815,7 +2815,7 @@ ${h8.join(`
           let o = new v(), l = new MutationObserver((u) => o.fire(u));
           l.observe(s15, e);
           let a = n = { users: 1, observer: l, onDidMutate: o.event };
-          t.add(C(() => {
+          t2.add(C(() => {
             a.users -= 1, a.users === 0 && (o.dispose(), l.disconnect(), i?.delete(r), i?.size === 0 && this.mutationObservers.delete(s15));
           })), i.set(r, n);
         }
@@ -2824,12 +2824,12 @@ ${h8.join(`
     }();
     Y = { CLICK: "click", AUXCLICK: "auxclick", DBLCLICK: "dblclick", MOUSE_UP: "mouseup", MOUSE_DOWN: "mousedown", MOUSE_OVER: "mouseover", MOUSE_MOVE: "mousemove", MOUSE_OUT: "mouseout", MOUSE_ENTER: "mouseenter", MOUSE_LEAVE: "mouseleave", MOUSE_WHEEL: "wheel", POINTER_UP: "pointerup", POINTER_DOWN: "pointerdown", POINTER_MOVE: "pointermove", POINTER_LEAVE: "pointerleave", CONTEXT_MENU: "contextmenu", WHEEL: "wheel", KEY_DOWN: "keydown", KEY_PRESS: "keypress", KEY_UP: "keyup", LOAD: "load", BEFORE_UNLOAD: "beforeunload", UNLOAD: "unload", PAGE_SHOW: "pageshow", PAGE_HIDE: "pagehide", PASTE: "paste", ABORT: "abort", ERROR: "error", RESIZE: "resize", SCROLL: "scroll", FULLSCREEN_CHANGE: "fullscreenchange", WK_FULLSCREEN_CHANGE: "webkitfullscreenchange", SELECT: "select", CHANGE: "change", SUBMIT: "submit", RESET: "reset", FOCUS: "focus", FOCUS_IN: "focusin", FOCUS_OUT: "focusout", BLUR: "blur", INPUT: "input", STORAGE: "storage", DRAG_START: "dragstart", DRAG: "drag", DRAG_ENTER: "dragenter", DRAG_LEAVE: "dragleave", DRAG_OVER: "dragover", DROP: "drop", DRAG_END: "dragend", ANIMATION_START: Bt ? "webkitAnimationStart" : "animationstart", ANIMATION_END: Bt ? "webkitAnimationEnd" : "animationend", ANIMATION_ITERATION: Bt ? "webkitAnimationIteration" : "animationiteration" };
     Da = /([\w\-]+)?(#([\w\-]+))?((\.([\w\-]+))*)/;
-    Ra.SVG = function(s15, t, ...e) {
-      return Ho("http://www.w3.org/2000/svg", s15, t, ...e);
+    Ra.SVG = function(s15, t2, ...e) {
+      return Ho("http://www.w3.org/2000/svg", s15, t2, ...e);
     };
     ls = class {
-      constructor(t) {
-        this.domNode = t;
+      constructor(t2) {
+        this.domNode = t2;
         this._maxWidth = "";
         this._width = "";
         this._height = "";
@@ -2860,121 +2860,121 @@ ${h8.join(`
         this._contain = "none";
         this._boxShadow = "";
       }
-      setMaxWidth(t) {
-        let e = Ie(t);
+      setMaxWidth(t2) {
+        let e = Ie(t2);
         this._maxWidth !== e && (this._maxWidth = e, this.domNode.style.maxWidth = this._maxWidth);
       }
-      setWidth(t) {
-        let e = Ie(t);
+      setWidth(t2) {
+        let e = Ie(t2);
         this._width !== e && (this._width = e, this.domNode.style.width = this._width);
       }
-      setHeight(t) {
-        let e = Ie(t);
+      setHeight(t2) {
+        let e = Ie(t2);
         this._height !== e && (this._height = e, this.domNode.style.height = this._height);
       }
-      setTop(t) {
-        let e = Ie(t);
+      setTop(t2) {
+        let e = Ie(t2);
         this._top !== e && (this._top = e, this.domNode.style.top = this._top);
       }
-      setLeft(t) {
-        let e = Ie(t);
+      setLeft(t2) {
+        let e = Ie(t2);
         this._left !== e && (this._left = e, this.domNode.style.left = this._left);
       }
-      setBottom(t) {
-        let e = Ie(t);
+      setBottom(t2) {
+        let e = Ie(t2);
         this._bottom !== e && (this._bottom = e, this.domNode.style.bottom = this._bottom);
       }
-      setRight(t) {
-        let e = Ie(t);
+      setRight(t2) {
+        let e = Ie(t2);
         this._right !== e && (this._right = e, this.domNode.style.right = this._right);
       }
-      setPaddingTop(t) {
-        let e = Ie(t);
+      setPaddingTop(t2) {
+        let e = Ie(t2);
         this._paddingTop !== e && (this._paddingTop = e, this.domNode.style.paddingTop = this._paddingTop);
       }
-      setPaddingLeft(t) {
-        let e = Ie(t);
+      setPaddingLeft(t2) {
+        let e = Ie(t2);
         this._paddingLeft !== e && (this._paddingLeft = e, this.domNode.style.paddingLeft = this._paddingLeft);
       }
-      setPaddingBottom(t) {
-        let e = Ie(t);
+      setPaddingBottom(t2) {
+        let e = Ie(t2);
         this._paddingBottom !== e && (this._paddingBottom = e, this.domNode.style.paddingBottom = this._paddingBottom);
       }
-      setPaddingRight(t) {
-        let e = Ie(t);
+      setPaddingRight(t2) {
+        let e = Ie(t2);
         this._paddingRight !== e && (this._paddingRight = e, this.domNode.style.paddingRight = this._paddingRight);
       }
-      setFontFamily(t) {
-        this._fontFamily !== t && (this._fontFamily = t, this.domNode.style.fontFamily = this._fontFamily);
+      setFontFamily(t2) {
+        this._fontFamily !== t2 && (this._fontFamily = t2, this.domNode.style.fontFamily = this._fontFamily);
       }
-      setFontWeight(t) {
-        this._fontWeight !== t && (this._fontWeight = t, this.domNode.style.fontWeight = this._fontWeight);
+      setFontWeight(t2) {
+        this._fontWeight !== t2 && (this._fontWeight = t2, this.domNode.style.fontWeight = this._fontWeight);
       }
-      setFontSize(t) {
-        let e = Ie(t);
+      setFontSize(t2) {
+        let e = Ie(t2);
         this._fontSize !== e && (this._fontSize = e, this.domNode.style.fontSize = this._fontSize);
       }
-      setFontStyle(t) {
-        this._fontStyle !== t && (this._fontStyle = t, this.domNode.style.fontStyle = this._fontStyle);
+      setFontStyle(t2) {
+        this._fontStyle !== t2 && (this._fontStyle = t2, this.domNode.style.fontStyle = this._fontStyle);
       }
-      setFontFeatureSettings(t) {
-        this._fontFeatureSettings !== t && (this._fontFeatureSettings = t, this.domNode.style.fontFeatureSettings = this._fontFeatureSettings);
+      setFontFeatureSettings(t2) {
+        this._fontFeatureSettings !== t2 && (this._fontFeatureSettings = t2, this.domNode.style.fontFeatureSettings = this._fontFeatureSettings);
       }
-      setFontVariationSettings(t) {
-        this._fontVariationSettings !== t && (this._fontVariationSettings = t, this.domNode.style.fontVariationSettings = this._fontVariationSettings);
+      setFontVariationSettings(t2) {
+        this._fontVariationSettings !== t2 && (this._fontVariationSettings = t2, this.domNode.style.fontVariationSettings = this._fontVariationSettings);
       }
-      setTextDecoration(t) {
-        this._textDecoration !== t && (this._textDecoration = t, this.domNode.style.textDecoration = this._textDecoration);
+      setTextDecoration(t2) {
+        this._textDecoration !== t2 && (this._textDecoration = t2, this.domNode.style.textDecoration = this._textDecoration);
       }
-      setLineHeight(t) {
-        let e = Ie(t);
+      setLineHeight(t2) {
+        let e = Ie(t2);
         this._lineHeight !== e && (this._lineHeight = e, this.domNode.style.lineHeight = this._lineHeight);
       }
-      setLetterSpacing(t) {
-        let e = Ie(t);
+      setLetterSpacing(t2) {
+        let e = Ie(t2);
         this._letterSpacing !== e && (this._letterSpacing = e, this.domNode.style.letterSpacing = this._letterSpacing);
       }
-      setClassName(t) {
-        this._className !== t && (this._className = t, this.domNode.className = this._className);
+      setClassName(t2) {
+        this._className !== t2 && (this._className = t2, this.domNode.className = this._className);
       }
-      toggleClassName(t, e) {
-        this.domNode.classList.toggle(t, e), this._className = this.domNode.className;
+      toggleClassName(t2, e) {
+        this.domNode.classList.toggle(t2, e), this._className = this.domNode.className;
       }
-      setDisplay(t) {
-        this._display !== t && (this._display = t, this.domNode.style.display = this._display);
+      setDisplay(t2) {
+        this._display !== t2 && (this._display = t2, this.domNode.style.display = this._display);
       }
-      setPosition(t) {
-        this._position !== t && (this._position = t, this.domNode.style.position = this._position);
+      setPosition(t2) {
+        this._position !== t2 && (this._position = t2, this.domNode.style.position = this._position);
       }
-      setVisibility(t) {
-        this._visibility !== t && (this._visibility = t, this.domNode.style.visibility = this._visibility);
+      setVisibility(t2) {
+        this._visibility !== t2 && (this._visibility = t2, this.domNode.style.visibility = this._visibility);
       }
-      setColor(t) {
-        this._color !== t && (this._color = t, this.domNode.style.color = this._color);
+      setColor(t2) {
+        this._color !== t2 && (this._color = t2, this.domNode.style.color = this._color);
       }
-      setBackgroundColor(t) {
-        this._backgroundColor !== t && (this._backgroundColor = t, this.domNode.style.backgroundColor = this._backgroundColor);
+      setBackgroundColor(t2) {
+        this._backgroundColor !== t2 && (this._backgroundColor = t2, this.domNode.style.backgroundColor = this._backgroundColor);
       }
-      setLayerHinting(t) {
-        this._layerHint !== t && (this._layerHint = t, this.domNode.style.transform = this._layerHint ? "translate3d(0px, 0px, 0px)" : "");
+      setLayerHinting(t2) {
+        this._layerHint !== t2 && (this._layerHint = t2, this.domNode.style.transform = this._layerHint ? "translate3d(0px, 0px, 0px)" : "");
       }
-      setBoxShadow(t) {
-        this._boxShadow !== t && (this._boxShadow = t, this.domNode.style.boxShadow = t);
+      setBoxShadow(t2) {
+        this._boxShadow !== t2 && (this._boxShadow = t2, this.domNode.style.boxShadow = t2);
       }
-      setContain(t) {
-        this._contain !== t && (this._contain = t, this.domNode.style.contain = this._contain);
+      setContain(t2) {
+        this._contain !== t2 && (this._contain = t2, this.domNode.style.contain = this._contain);
       }
-      setAttribute(t, e) {
-        this.domNode.setAttribute(t, e);
+      setAttribute(t2, e) {
+        this.domNode.setAttribute(t2, e);
       }
-      removeAttribute(t) {
-        this.domNode.removeAttribute(t);
+      removeAttribute(t2) {
+        this.domNode.removeAttribute(t2);
       }
-      appendChild(t) {
-        this.domNode.appendChild(t.domNode);
+      appendChild(t2) {
+        this.domNode.appendChild(t2.domNode);
       }
-      removeChild(t) {
-        this.domNode.removeChild(t.domNode);
+      removeChild(t2) {
+        this.domNode.removeChild(t2.domNode);
       }
     };
     Wt = class {
@@ -2986,27 +2986,27 @@ ${h8.join(`
       dispose() {
         this.stopMonitoring(false), this._hooks.dispose();
       }
-      stopMonitoring(t, e) {
+      stopMonitoring(t2, e) {
         if (!this.isMonitoring()) return;
         this._hooks.clear(), this._pointerMoveCallback = null;
         let i = this._onStopCallback;
-        this._onStopCallback = null, t && i && i(e);
+        this._onStopCallback = null, t2 && i && i(e);
       }
       isMonitoring() {
         return !!this._pointerMoveCallback;
       }
-      startMonitoring(t, e, i, r, n) {
+      startMonitoring(t2, e, i, r, n) {
         this.isMonitoring() && this.stopMonitoring(false), this._pointerMoveCallback = r, this._onStopCallback = n;
-        let o = t;
+        let o = t2;
         try {
-          t.setPointerCapture(e), this._hooks.add(C(() => {
+          t2.setPointerCapture(e), this._hooks.add(C(() => {
             try {
-              t.releasePointerCapture(e);
+              t2.releasePointerCapture(e);
             } catch {
             }
           }));
         } catch {
-          o = be(t);
+          o = be(t2);
         }
         this._hooks.add(L(o, Y.POINTER_MOVE, (l) => {
           if (l.buttons !== i) {
@@ -3126,73 +3126,73 @@ ${h8.join(`
     Q.SCROLL_FRICTION = -5e-3, Q.HOLD_DELAY = 700, Q.CLEAR_TAP_COUNT_TIME = 400, M([Wo], Q, "isTouchDevice", 1);
     Pr = Q;
     lt = class extends D {
-      onclick(t, e) {
-        this._register(L(t, Y.CLICK, (i) => e(new qe(be(t), i))));
+      onclick(t2, e) {
+        this._register(L(t2, Y.CLICK, (i) => e(new qe(be(t2), i))));
       }
-      onmousedown(t, e) {
-        this._register(L(t, Y.MOUSE_DOWN, (i) => e(new qe(be(t), i))));
+      onmousedown(t2, e) {
+        this._register(L(t2, Y.MOUSE_DOWN, (i) => e(new qe(be(t2), i))));
       }
-      onmouseover(t, e) {
-        this._register(L(t, Y.MOUSE_OVER, (i) => e(new qe(be(t), i))));
+      onmouseover(t2, e) {
+        this._register(L(t2, Y.MOUSE_OVER, (i) => e(new qe(be(t2), i))));
       }
-      onmouseleave(t, e) {
-        this._register(L(t, Y.MOUSE_LEAVE, (i) => e(new qe(be(t), i))));
+      onmouseleave(t2, e) {
+        this._register(L(t2, Y.MOUSE_LEAVE, (i) => e(new qe(be(t2), i))));
       }
-      onkeydown(t, e) {
-        this._register(L(t, Y.KEY_DOWN, (i) => e(new ft(i))));
+      onkeydown(t2, e) {
+        this._register(L(t2, Y.KEY_DOWN, (i) => e(new ft(i))));
       }
-      onkeyup(t, e) {
-        this._register(L(t, Y.KEY_UP, (i) => e(new ft(i))));
+      onkeyup(t2, e) {
+        this._register(L(t2, Y.KEY_UP, (i) => e(new ft(i))));
       }
-      oninput(t, e) {
-        this._register(L(t, Y.INPUT, e));
+      oninput(t2, e) {
+        this._register(L(t2, Y.INPUT, e));
       }
-      onblur(t, e) {
-        this._register(L(t, Y.BLUR, e));
+      onblur(t2, e) {
+        this._register(L(t2, Y.BLUR, e));
       }
-      onfocus(t, e) {
-        this._register(L(t, Y.FOCUS, e));
+      onfocus(t2, e) {
+        this._register(L(t2, Y.FOCUS, e));
       }
-      onchange(t, e) {
-        this._register(L(t, Y.CHANGE, e));
+      onchange(t2, e) {
+        this._register(L(t2, Y.CHANGE, e));
       }
-      ignoreGesture(t) {
-        return Pr.ignoreTarget(t);
+      ignoreGesture(t2) {
+        return Pr.ignoreTarget(t2);
       }
     };
     Uo = 11, Or = class extends lt {
-      constructor(t) {
-        super(), this._onActivate = t.onActivate, this.bgDomNode = document.createElement("div"), this.bgDomNode.className = "arrow-background", this.bgDomNode.style.position = "absolute", this.bgDomNode.style.width = t.bgWidth + "px", this.bgDomNode.style.height = t.bgHeight + "px", typeof t.top < "u" && (this.bgDomNode.style.top = "0px"), typeof t.left < "u" && (this.bgDomNode.style.left = "0px"), typeof t.bottom < "u" && (this.bgDomNode.style.bottom = "0px"), typeof t.right < "u" && (this.bgDomNode.style.right = "0px"), this.domNode = document.createElement("div"), this.domNode.className = t.className, this.domNode.style.position = "absolute", this.domNode.style.width = Uo + "px", this.domNode.style.height = Uo + "px", typeof t.top < "u" && (this.domNode.style.top = t.top + "px"), typeof t.left < "u" && (this.domNode.style.left = t.left + "px"), typeof t.bottom < "u" && (this.domNode.style.bottom = t.bottom + "px"), typeof t.right < "u" && (this.domNode.style.right = t.right + "px"), this._pointerMoveMonitor = this._register(new Wt()), this._register(os(this.bgDomNode, Y.POINTER_DOWN, (e) => this._arrowPointerDown(e))), this._register(os(this.domNode, Y.POINTER_DOWN, (e) => this._arrowPointerDown(e))), this._pointerdownRepeatTimer = this._register(new Mr()), this._pointerdownScheduleRepeatTimer = this._register(new Ye());
+      constructor(t2) {
+        super(), this._onActivate = t2.onActivate, this.bgDomNode = document.createElement("div"), this.bgDomNode.className = "arrow-background", this.bgDomNode.style.position = "absolute", this.bgDomNode.style.width = t2.bgWidth + "px", this.bgDomNode.style.height = t2.bgHeight + "px", typeof t2.top < "u" && (this.bgDomNode.style.top = "0px"), typeof t2.left < "u" && (this.bgDomNode.style.left = "0px"), typeof t2.bottom < "u" && (this.bgDomNode.style.bottom = "0px"), typeof t2.right < "u" && (this.bgDomNode.style.right = "0px"), this.domNode = document.createElement("div"), this.domNode.className = t2.className, this.domNode.style.position = "absolute", this.domNode.style.width = Uo + "px", this.domNode.style.height = Uo + "px", typeof t2.top < "u" && (this.domNode.style.top = t2.top + "px"), typeof t2.left < "u" && (this.domNode.style.left = t2.left + "px"), typeof t2.bottom < "u" && (this.domNode.style.bottom = t2.bottom + "px"), typeof t2.right < "u" && (this.domNode.style.right = t2.right + "px"), this._pointerMoveMonitor = this._register(new Wt()), this._register(os(this.bgDomNode, Y.POINTER_DOWN, (e) => this._arrowPointerDown(e))), this._register(os(this.domNode, Y.POINTER_DOWN, (e) => this._arrowPointerDown(e))), this._pointerdownRepeatTimer = this._register(new Mr()), this._pointerdownScheduleRepeatTimer = this._register(new Ye());
       }
-      _arrowPointerDown(t) {
-        if (!t.target || !(t.target instanceof Element)) return;
+      _arrowPointerDown(t2) {
+        if (!t2.target || !(t2.target instanceof Element)) return;
         let e = () => {
-          this._pointerdownRepeatTimer.cancelAndSet(() => this._onActivate(), 1e3 / 24, be(t));
+          this._pointerdownRepeatTimer.cancelAndSet(() => this._onActivate(), 1e3 / 24, be(t2));
         };
-        this._onActivate(), this._pointerdownRepeatTimer.cancel(), this._pointerdownScheduleRepeatTimer.cancelAndSet(e, 200), this._pointerMoveMonitor.startMonitoring(t.target, t.pointerId, t.buttons, (i) => {
+        this._onActivate(), this._pointerdownRepeatTimer.cancel(), this._pointerdownScheduleRepeatTimer.cancelAndSet(e, 200), this._pointerMoveMonitor.startMonitoring(t2.target, t2.pointerId, t2.buttons, (i) => {
         }, () => {
           this._pointerdownRepeatTimer.cancel(), this._pointerdownScheduleRepeatTimer.cancel();
-        }), t.preventDefault();
+        }), t2.preventDefault();
       }
     };
     cs = class s9 {
-      constructor(t, e, i, r, n, o, l) {
-        this._forceIntegerValues = t;
+      constructor(t2, e, i, r, n, o, l) {
+        this._forceIntegerValues = t2;
         this._scrollStateBrand = void 0;
         this._forceIntegerValues && (e = e | 0, i = i | 0, r = r | 0, n = n | 0, o = o | 0, l = l | 0), this.rawScrollLeft = r, this.rawScrollTop = l, e < 0 && (e = 0), r + e > i && (r = i - e), r < 0 && (r = 0), n < 0 && (n = 0), l + n > o && (l = o - n), l < 0 && (l = 0), this.width = e, this.scrollWidth = i, this.scrollLeft = r, this.height = n, this.scrollHeight = o, this.scrollTop = l;
       }
-      equals(t) {
-        return this.rawScrollLeft === t.rawScrollLeft && this.rawScrollTop === t.rawScrollTop && this.width === t.width && this.scrollWidth === t.scrollWidth && this.scrollLeft === t.scrollLeft && this.height === t.height && this.scrollHeight === t.scrollHeight && this.scrollTop === t.scrollTop;
+      equals(t2) {
+        return this.rawScrollLeft === t2.rawScrollLeft && this.rawScrollTop === t2.rawScrollTop && this.width === t2.width && this.scrollWidth === t2.scrollWidth && this.scrollLeft === t2.scrollLeft && this.height === t2.height && this.scrollHeight === t2.scrollHeight && this.scrollTop === t2.scrollTop;
       }
-      withScrollDimensions(t, e) {
-        return new s9(this._forceIntegerValues, typeof t.width < "u" ? t.width : this.width, typeof t.scrollWidth < "u" ? t.scrollWidth : this.scrollWidth, e ? this.rawScrollLeft : this.scrollLeft, typeof t.height < "u" ? t.height : this.height, typeof t.scrollHeight < "u" ? t.scrollHeight : this.scrollHeight, e ? this.rawScrollTop : this.scrollTop);
+      withScrollDimensions(t2, e) {
+        return new s9(this._forceIntegerValues, typeof t2.width < "u" ? t2.width : this.width, typeof t2.scrollWidth < "u" ? t2.scrollWidth : this.scrollWidth, e ? this.rawScrollLeft : this.scrollLeft, typeof t2.height < "u" ? t2.height : this.height, typeof t2.scrollHeight < "u" ? t2.scrollHeight : this.scrollHeight, e ? this.rawScrollTop : this.scrollTop);
       }
-      withScrollPosition(t) {
-        return new s9(this._forceIntegerValues, this.width, this.scrollWidth, typeof t.scrollLeft < "u" ? t.scrollLeft : this.rawScrollLeft, this.height, this.scrollHeight, typeof t.scrollTop < "u" ? t.scrollTop : this.rawScrollTop);
+      withScrollPosition(t2) {
+        return new s9(this._forceIntegerValues, this.width, this.scrollWidth, typeof t2.scrollLeft < "u" ? t2.scrollLeft : this.rawScrollLeft, this.height, this.scrollHeight, typeof t2.scrollTop < "u" ? t2.scrollTop : this.rawScrollTop);
       }
-      createScrollEvent(t, e) {
-        let i = this.width !== t.width, r = this.scrollWidth !== t.scrollWidth, n = this.scrollLeft !== t.scrollLeft, o = this.height !== t.height, l = this.scrollHeight !== t.scrollHeight, a = this.scrollTop !== t.scrollTop;
-        return { inSmoothScrolling: e, oldWidth: t.width, oldScrollWidth: t.scrollWidth, oldScrollLeft: t.scrollLeft, width: this.width, scrollWidth: this.scrollWidth, scrollLeft: this.scrollLeft, oldHeight: t.height, oldScrollHeight: t.scrollHeight, oldScrollTop: t.scrollTop, height: this.height, scrollHeight: this.scrollHeight, scrollTop: this.scrollTop, widthChanged: i, scrollWidthChanged: r, scrollLeftChanged: n, heightChanged: o, scrollHeightChanged: l, scrollTopChanged: a };
+      createScrollEvent(t2, e) {
+        let i = this.width !== t2.width, r = this.scrollWidth !== t2.scrollWidth, n = this.scrollLeft !== t2.scrollLeft, o = this.height !== t2.height, l = this.scrollHeight !== t2.scrollHeight, a = this.scrollTop !== t2.scrollTop;
+        return { inSmoothScrolling: e, oldWidth: t2.width, oldScrollWidth: t2.scrollWidth, oldScrollLeft: t2.scrollLeft, width: this.width, scrollWidth: this.scrollWidth, scrollLeft: this.scrollLeft, oldHeight: t2.height, oldScrollHeight: t2.scrollHeight, oldScrollTop: t2.scrollTop, height: this.height, scrollHeight: this.scrollHeight, scrollTop: this.scrollTop, widthChanged: i, scrollWidthChanged: r, scrollLeftChanged: n, heightChanged: o, scrollHeightChanged: l, scrollTopChanged: a };
       }
     }, Ri = class extends D {
       constructor(e) {
@@ -3265,72 +3265,72 @@ ${h8.join(`
         r.equals(e) || (this._state = e, this._onScroll.fire(this._state.createScrollEvent(r, i)));
       }
     }, Br = class {
-      constructor(t, e, i) {
-        this.scrollLeft = t, this.scrollTop = e, this.isDone = i;
+      constructor(t2, e, i) {
+        this.scrollLeft = t2, this.scrollTop = e, this.isDone = i;
       }
     };
     Nr = class s10 {
-      constructor(t, e, i, r) {
-        this.from = t, this.to = e, this.duration = r, this.startTime = i, this.animationFrameDisposable = null, this._initAnimations();
+      constructor(t2, e, i, r) {
+        this.from = t2, this.to = e, this.duration = r, this.startTime = i, this.animationFrameDisposable = null, this._initAnimations();
       }
       _initAnimations() {
         this.scrollLeft = this._initAnimation(this.from.scrollLeft, this.to.scrollLeft, this.to.width), this.scrollTop = this._initAnimation(this.from.scrollTop, this.to.scrollTop, this.to.height);
       }
-      _initAnimation(t, e, i) {
-        if (Math.abs(t - e) > 2.5 * i) {
+      _initAnimation(t2, e, i) {
+        if (Math.abs(t2 - e) > 2.5 * i) {
           let n, o;
-          return t < e ? (n = t + 0.75 * i, o = e - 0.75 * i) : (n = t - 0.75 * i, o = e + 0.75 * i), La(as(t, n), as(o, e), 0.33);
+          return t2 < e ? (n = t2 + 0.75 * i, o = e - 0.75 * i) : (n = t2 - 0.75 * i, o = e + 0.75 * i), La(as(t2, n), as(o, e), 0.33);
         }
-        return as(t, e);
+        return as(t2, e);
       }
       dispose() {
         this.animationFrameDisposable !== null && (this.animationFrameDisposable.dispose(), this.animationFrameDisposable = null);
       }
-      acceptScrollDimensions(t) {
-        this.to = t.withScrollPosition(this.to), this._initAnimations();
+      acceptScrollDimensions(t2) {
+        this.to = t2.withScrollPosition(this.to), this._initAnimations();
       }
       tick() {
         return this._tick(Date.now());
       }
-      _tick(t) {
-        let e = (t - this.startTime) / this.duration;
+      _tick(t2) {
+        let e = (t2 - this.startTime) / this.duration;
         if (e < 1) {
           let i = this.scrollLeft(e), r = this.scrollTop(e);
           return new Br(i, r, false);
         }
         return new Br(this.to.scrollLeft, this.to.scrollTop, true);
       }
-      combine(t, e, i) {
-        return s10.start(t, e, i);
+      combine(t2, e, i) {
+        return s10.start(t2, e, i);
       }
-      static start(t, e, i) {
+      static start(t2, e, i) {
         i = i + 10;
         let r = Date.now() - 10;
-        return new s10(t, e, r, i);
+        return new s10(t2, e, r, i);
       }
     };
     Fr = class extends D {
-      constructor(t, e, i) {
-        super(), this._visibility = t, this._visibleClassName = e, this._invisibleClassName = i, this._domNode = null, this._isVisible = false, this._isNeeded = false, this._rawShouldBeVisible = false, this._shouldBeVisible = false, this._revealTimer = this._register(new Ye());
+      constructor(t2, e, i) {
+        super(), this._visibility = t2, this._visibleClassName = e, this._invisibleClassName = i, this._domNode = null, this._isVisible = false, this._isNeeded = false, this._rawShouldBeVisible = false, this._shouldBeVisible = false, this._revealTimer = this._register(new Ye());
       }
-      setVisibility(t) {
-        this._visibility !== t && (this._visibility = t, this._updateShouldBeVisible());
+      setVisibility(t2) {
+        this._visibility !== t2 && (this._visibility = t2, this._updateShouldBeVisible());
       }
-      setShouldBeVisible(t) {
-        this._rawShouldBeVisible = t, this._updateShouldBeVisible();
+      setShouldBeVisible(t2) {
+        this._rawShouldBeVisible = t2, this._updateShouldBeVisible();
       }
       _applyVisibilitySetting() {
         return this._visibility === 2 ? false : this._visibility === 3 ? true : this._rawShouldBeVisible;
       }
       _updateShouldBeVisible() {
-        let t = this._applyVisibilitySetting();
-        this._shouldBeVisible !== t && (this._shouldBeVisible = t, this.ensureVisibility());
+        let t2 = this._applyVisibilitySetting();
+        this._shouldBeVisible !== t2 && (this._shouldBeVisible = t2, this.ensureVisibility());
       }
-      setIsNeeded(t) {
-        this._isNeeded !== t && (this._isNeeded = t, this.ensureVisibility());
+      setIsNeeded(t2) {
+        this._isNeeded !== t2 && (this._isNeeded = t2, this.ensureVisibility());
       }
-      setDomNode(t) {
-        this._domNode = t, this._domNode.setClassName(this._invisibleClassName), this.setShouldBeVisible(false);
+      setDomNode(t2) {
+        this._domNode = t2, this._domNode.setClassName(this._invisibleClassName), this.setShouldBeVisible(false);
       }
       ensureVisibility() {
         if (!this._isNeeded) {
@@ -3344,33 +3344,33 @@ ${h8.join(`
           this._domNode?.setClassName(this._visibleClassName);
         }, 0));
       }
-      _hide(t) {
-        this._revealTimer.cancel(), this._isVisible && (this._isVisible = false, this._domNode?.setClassName(this._invisibleClassName + (t ? " fade" : "")));
+      _hide(t2) {
+        this._revealTimer.cancel(), this._isVisible && (this._isVisible = false, this._domNode?.setClassName(this._invisibleClassName + (t2 ? " fade" : "")));
       }
     };
     Ca = 140, Ut = class extends lt {
-      constructor(t) {
-        super(), this._lazyRender = t.lazyRender, this._host = t.host, this._scrollable = t.scrollable, this._scrollByPage = t.scrollByPage, this._scrollbarState = t.scrollbarState, this._visibilityController = this._register(new Fr(t.visibility, "visible scrollbar " + t.extraScrollbarClassName, "invisible scrollbar " + t.extraScrollbarClassName)), this._visibilityController.setIsNeeded(this._scrollbarState.isNeeded()), this._pointerMoveMonitor = this._register(new Wt()), this._shouldRender = true, this.domNode = _t(document.createElement("div")), this.domNode.setAttribute("role", "presentation"), this.domNode.setAttribute("aria-hidden", "true"), this._visibilityController.setDomNode(this.domNode), this.domNode.setPosition("absolute"), this._register(L(this.domNode.domNode, Y.POINTER_DOWN, (e) => this._domNodePointerDown(e)));
+      constructor(t2) {
+        super(), this._lazyRender = t2.lazyRender, this._host = t2.host, this._scrollable = t2.scrollable, this._scrollByPage = t2.scrollByPage, this._scrollbarState = t2.scrollbarState, this._visibilityController = this._register(new Fr(t2.visibility, "visible scrollbar " + t2.extraScrollbarClassName, "invisible scrollbar " + t2.extraScrollbarClassName)), this._visibilityController.setIsNeeded(this._scrollbarState.isNeeded()), this._pointerMoveMonitor = this._register(new Wt()), this._shouldRender = true, this.domNode = _t(document.createElement("div")), this.domNode.setAttribute("role", "presentation"), this.domNode.setAttribute("aria-hidden", "true"), this._visibilityController.setDomNode(this.domNode), this.domNode.setPosition("absolute"), this._register(L(this.domNode.domNode, Y.POINTER_DOWN, (e) => this._domNodePointerDown(e)));
       }
-      _createArrow(t) {
-        let e = this._register(new Or(t));
+      _createArrow(t2) {
+        let e = this._register(new Or(t2));
         this.domNode.domNode.appendChild(e.bgDomNode), this.domNode.domNode.appendChild(e.domNode);
       }
-      _createSlider(t, e, i, r) {
-        this.slider = _t(document.createElement("div")), this.slider.setClassName("slider"), this.slider.setPosition("absolute"), this.slider.setTop(t), this.slider.setLeft(e), typeof i == "number" && this.slider.setWidth(i), typeof r == "number" && this.slider.setHeight(r), this.slider.setLayerHinting(true), this.slider.setContain("strict"), this.domNode.domNode.appendChild(this.slider.domNode), this._register(L(this.slider.domNode, Y.POINTER_DOWN, (n) => {
+      _createSlider(t2, e, i, r) {
+        this.slider = _t(document.createElement("div")), this.slider.setClassName("slider"), this.slider.setPosition("absolute"), this.slider.setTop(t2), this.slider.setLeft(e), typeof i == "number" && this.slider.setWidth(i), typeof r == "number" && this.slider.setHeight(r), this.slider.setLayerHinting(true), this.slider.setContain("strict"), this.domNode.domNode.appendChild(this.slider.domNode), this._register(L(this.slider.domNode, Y.POINTER_DOWN, (n) => {
           n.button === 0 && (n.preventDefault(), this._sliderPointerDown(n));
         })), this.onclick(this.slider.domNode, (n) => {
           n.leftButton && n.stopPropagation();
         });
       }
-      _onElementSize(t) {
-        return this._scrollbarState.setVisibleSize(t) && (this._visibilityController.setIsNeeded(this._scrollbarState.isNeeded()), this._shouldRender = true, this._lazyRender || this.render()), this._shouldRender;
+      _onElementSize(t2) {
+        return this._scrollbarState.setVisibleSize(t2) && (this._visibilityController.setIsNeeded(this._scrollbarState.isNeeded()), this._shouldRender = true, this._lazyRender || this.render()), this._shouldRender;
       }
-      _onElementScrollSize(t) {
-        return this._scrollbarState.setScrollSize(t) && (this._visibilityController.setIsNeeded(this._scrollbarState.isNeeded()), this._shouldRender = true, this._lazyRender || this.render()), this._shouldRender;
+      _onElementScrollSize(t2) {
+        return this._scrollbarState.setScrollSize(t2) && (this._visibilityController.setIsNeeded(this._scrollbarState.isNeeded()), this._shouldRender = true, this._lazyRender || this.render()), this._shouldRender;
       }
-      _onElementScrollPosition(t) {
-        return this._scrollbarState.setScrollPosition(t) && (this._visibilityController.setIsNeeded(this._scrollbarState.isNeeded()), this._shouldRender = true, this._lazyRender || this.render()), this._shouldRender;
+      _onElementScrollPosition(t2) {
+        return this._scrollbarState.setScrollPosition(t2) && (this._visibilityController.setIsNeeded(this._scrollbarState.isNeeded()), this._shouldRender = true, this._lazyRender || this.render()), this._shouldRender;
       }
       beginReveal() {
         this._visibilityController.setShouldBeVisible(true);
@@ -3381,27 +3381,27 @@ ${h8.join(`
       render() {
         this._shouldRender && (this._shouldRender = false, this._renderDomNode(this._scrollbarState.getRectangleLargeSize(), this._scrollbarState.getRectangleSmallSize()), this._updateSlider(this._scrollbarState.getSliderSize(), this._scrollbarState.getArrowSize() + this._scrollbarState.getSliderPosition()));
       }
-      _domNodePointerDown(t) {
-        t.target === this.domNode.domNode && this._onPointerDown(t);
+      _domNodePointerDown(t2) {
+        t2.target === this.domNode.domNode && this._onPointerDown(t2);
       }
-      delegatePointerDown(t) {
-        let e = this.domNode.domNode.getClientRects()[0].top, i = e + this._scrollbarState.getSliderPosition(), r = e + this._scrollbarState.getSliderPosition() + this._scrollbarState.getSliderSize(), n = this._sliderPointerPosition(t);
-        i <= n && n <= r ? t.button === 0 && (t.preventDefault(), this._sliderPointerDown(t)) : this._onPointerDown(t);
+      delegatePointerDown(t2) {
+        let e = this.domNode.domNode.getClientRects()[0].top, i = e + this._scrollbarState.getSliderPosition(), r = e + this._scrollbarState.getSliderPosition() + this._scrollbarState.getSliderSize(), n = this._sliderPointerPosition(t2);
+        i <= n && n <= r ? t2.button === 0 && (t2.preventDefault(), this._sliderPointerDown(t2)) : this._onPointerDown(t2);
       }
-      _onPointerDown(t) {
+      _onPointerDown(t2) {
         let e, i;
-        if (t.target === this.domNode.domNode && typeof t.offsetX == "number" && typeof t.offsetY == "number") e = t.offsetX, i = t.offsetY;
+        if (t2.target === this.domNode.domNode && typeof t2.offsetX == "number" && typeof t2.offsetY == "number") e = t2.offsetX, i = t2.offsetY;
         else {
           let n = Fo(this.domNode.domNode);
-          e = t.pageX - n.left, i = t.pageY - n.top;
+          e = t2.pageX - n.left, i = t2.pageY - n.top;
         }
         let r = this._pointerDownRelativePosition(e, i);
-        this._setDesiredScrollPositionNow(this._scrollByPage ? this._scrollbarState.getDesiredScrollPositionFromOffsetPaged(r) : this._scrollbarState.getDesiredScrollPositionFromOffset(r)), t.button === 0 && (t.preventDefault(), this._sliderPointerDown(t));
+        this._setDesiredScrollPositionNow(this._scrollByPage ? this._scrollbarState.getDesiredScrollPositionFromOffsetPaged(r) : this._scrollbarState.getDesiredScrollPositionFromOffset(r)), t2.button === 0 && (t2.preventDefault(), this._sliderPointerDown(t2));
       }
-      _sliderPointerDown(t) {
-        if (!t.target || !(t.target instanceof Element)) return;
-        let e = this._sliderPointerPosition(t), i = this._sliderOrthogonalPointerPosition(t), r = this._scrollbarState.clone();
-        this.slider.toggleClassName("active", true), this._pointerMoveMonitor.startMonitoring(t.target, t.pointerId, t.buttons, (n) => {
+      _sliderPointerDown(t2) {
+        if (!t2.target || !(t2.target instanceof Element)) return;
+        let e = this._sliderPointerPosition(t2), i = this._sliderOrthogonalPointerPosition(t2), r = this._scrollbarState.clone();
+        this.slider.toggleClassName("active", true), this._pointerMoveMonitor.startMonitoring(t2.target, t2.pointerId, t2.buttons, (n) => {
           let o = this._sliderOrthogonalPointerPosition(n), l = Math.abs(o - i);
           if (wr && l > Ca) {
             this._setDesiredScrollPositionNow(r.getScrollPosition());
@@ -3413,51 +3413,51 @@ ${h8.join(`
           this.slider.toggleClassName("active", false), this._host.onDragEnd();
         }), this._host.onDragStart();
       }
-      _setDesiredScrollPositionNow(t) {
+      _setDesiredScrollPositionNow(t2) {
         let e = {};
-        this.writeScrollPosition(e, t), this._scrollable.setScrollPositionNow(e);
+        this.writeScrollPosition(e, t2), this._scrollable.setScrollPositionNow(e);
       }
-      updateScrollbarSize(t) {
-        this._updateScrollbarSize(t), this._scrollbarState.setScrollbarSize(t), this._shouldRender = true, this._lazyRender || this.render();
+      updateScrollbarSize(t2) {
+        this._updateScrollbarSize(t2), this._scrollbarState.setScrollbarSize(t2), this._shouldRender = true, this._lazyRender || this.render();
       }
       isNeeded() {
         return this._scrollbarState.isNeeded();
       }
     };
     Kt = class s11 {
-      constructor(t, e, i, r, n, o) {
-        this._scrollbarSize = Math.round(e), this._oppositeScrollbarSize = Math.round(i), this._arrowSize = Math.round(t), this._visibleSize = r, this._scrollSize = n, this._scrollPosition = o, this._computedAvailableSize = 0, this._computedIsNeeded = false, this._computedSliderSize = 0, this._computedSliderRatio = 0, this._computedSliderPosition = 0, this._refreshComputedValues();
+      constructor(t2, e, i, r, n, o) {
+        this._scrollbarSize = Math.round(e), this._oppositeScrollbarSize = Math.round(i), this._arrowSize = Math.round(t2), this._visibleSize = r, this._scrollSize = n, this._scrollPosition = o, this._computedAvailableSize = 0, this._computedIsNeeded = false, this._computedSliderSize = 0, this._computedSliderRatio = 0, this._computedSliderPosition = 0, this._refreshComputedValues();
       }
       clone() {
         return new s11(this._arrowSize, this._scrollbarSize, this._oppositeScrollbarSize, this._visibleSize, this._scrollSize, this._scrollPosition);
       }
-      setVisibleSize(t) {
-        let e = Math.round(t);
+      setVisibleSize(t2) {
+        let e = Math.round(t2);
         return this._visibleSize !== e ? (this._visibleSize = e, this._refreshComputedValues(), true) : false;
       }
-      setScrollSize(t) {
-        let e = Math.round(t);
+      setScrollSize(t2) {
+        let e = Math.round(t2);
         return this._scrollSize !== e ? (this._scrollSize = e, this._refreshComputedValues(), true) : false;
       }
-      setScrollPosition(t) {
-        let e = Math.round(t);
+      setScrollPosition(t2) {
+        let e = Math.round(t2);
         return this._scrollPosition !== e ? (this._scrollPosition = e, this._refreshComputedValues(), true) : false;
       }
-      setScrollbarSize(t) {
-        this._scrollbarSize = Math.round(t);
+      setScrollbarSize(t2) {
+        this._scrollbarSize = Math.round(t2);
       }
-      setOppositeScrollbarSize(t) {
-        this._oppositeScrollbarSize = Math.round(t);
+      setOppositeScrollbarSize(t2) {
+        this._oppositeScrollbarSize = Math.round(t2);
       }
-      static _computeValues(t, e, i, r, n) {
-        let o = Math.max(0, i - t), l = Math.max(0, o - 2 * e), a = r > 0 && r > i;
+      static _computeValues(t2, e, i, r, n) {
+        let o = Math.max(0, i - t2), l = Math.max(0, o - 2 * e), a = r > 0 && r > i;
         if (!a) return { computedAvailableSize: Math.round(o), computedIsNeeded: a, computedSliderSize: Math.round(l), computedSliderRatio: 0, computedSliderPosition: 0 };
         let u = Math.round(Math.max(20, Math.floor(i * l / r))), h8 = (l - u) / (r - i), c = n * h8;
         return { computedAvailableSize: Math.round(o), computedIsNeeded: a, computedSliderSize: Math.round(u), computedSliderRatio: h8, computedSliderPosition: Math.round(c) };
       }
       _refreshComputedValues() {
-        let t = s11._computeValues(this._oppositeScrollbarSize, this._arrowSize, this._visibleSize, this._scrollSize, this._scrollPosition);
-        this._computedAvailableSize = t.computedAvailableSize, this._computedIsNeeded = t.computedIsNeeded, this._computedSliderSize = t.computedSliderSize, this._computedSliderRatio = t.computedSliderRatio, this._computedSliderPosition = t.computedSliderPosition;
+        let t2 = s11._computeValues(this._oppositeScrollbarSize, this._arrowSize, this._visibleSize, this._scrollSize, this._scrollPosition);
+        this._computedAvailableSize = t2.computedAvailableSize, this._computedIsNeeded = t2.computedIsNeeded, this._computedSliderSize = t2.computedSliderSize, this._computedSliderRatio = t2.computedSliderRatio, this._computedSliderPosition = t2.computedSliderPosition;
       }
       getArrowSize() {
         return this._arrowSize;
@@ -3480,93 +3480,93 @@ ${h8.join(`
       getSliderPosition() {
         return this._computedSliderPosition;
       }
-      getDesiredScrollPositionFromOffset(t) {
+      getDesiredScrollPositionFromOffset(t2) {
         if (!this._computedIsNeeded) return 0;
-        let e = t - this._arrowSize - this._computedSliderSize / 2;
+        let e = t2 - this._arrowSize - this._computedSliderSize / 2;
         return Math.round(e / this._computedSliderRatio);
       }
-      getDesiredScrollPositionFromOffsetPaged(t) {
+      getDesiredScrollPositionFromOffsetPaged(t2) {
         if (!this._computedIsNeeded) return 0;
-        let e = t - this._arrowSize, i = this._scrollPosition;
+        let e = t2 - this._arrowSize, i = this._scrollPosition;
         return e < this._computedSliderPosition ? i -= this._visibleSize : i += this._visibleSize, i;
       }
-      getDesiredScrollPositionFromDelta(t) {
+      getDesiredScrollPositionFromDelta(t2) {
         if (!this._computedIsNeeded) return 0;
-        let e = this._computedSliderPosition + t;
+        let e = this._computedSliderPosition + t2;
         return Math.round(e / this._computedSliderRatio);
       }
     };
     Wr = class extends Ut {
-      constructor(t, e, i) {
-        let r = t.getScrollDimensions(), n = t.getCurrentScrollPosition();
-        if (super({ lazyRender: e.lazyRender, host: i, scrollbarState: new Kt(e.horizontalHasArrows ? e.arrowSize : 0, e.horizontal === 2 ? 0 : e.horizontalScrollbarSize, e.vertical === 2 ? 0 : e.verticalScrollbarSize, r.width, r.scrollWidth, n.scrollLeft), visibility: e.horizontal, extraScrollbarClassName: "horizontal", scrollable: t, scrollByPage: e.scrollByPage }), e.horizontalHasArrows) throw new Error("horizontalHasArrows is not supported in xterm.js");
+      constructor(t2, e, i) {
+        let r = t2.getScrollDimensions(), n = t2.getCurrentScrollPosition();
+        if (super({ lazyRender: e.lazyRender, host: i, scrollbarState: new Kt(e.horizontalHasArrows ? e.arrowSize : 0, e.horizontal === 2 ? 0 : e.horizontalScrollbarSize, e.vertical === 2 ? 0 : e.verticalScrollbarSize, r.width, r.scrollWidth, n.scrollLeft), visibility: e.horizontal, extraScrollbarClassName: "horizontal", scrollable: t2, scrollByPage: e.scrollByPage }), e.horizontalHasArrows) throw new Error("horizontalHasArrows is not supported in xterm.js");
         this._createSlider(Math.floor((e.horizontalScrollbarSize - e.horizontalSliderSize) / 2), 0, void 0, e.horizontalSliderSize);
       }
-      _updateSlider(t, e) {
-        this.slider.setWidth(t), this.slider.setLeft(e);
+      _updateSlider(t2, e) {
+        this.slider.setWidth(t2), this.slider.setLeft(e);
       }
-      _renderDomNode(t, e) {
-        this.domNode.setWidth(t), this.domNode.setHeight(e), this.domNode.setLeft(0), this.domNode.setBottom(0);
+      _renderDomNode(t2, e) {
+        this.domNode.setWidth(t2), this.domNode.setHeight(e), this.domNode.setLeft(0), this.domNode.setBottom(0);
       }
-      onDidScroll(t) {
-        return this._shouldRender = this._onElementScrollSize(t.scrollWidth) || this._shouldRender, this._shouldRender = this._onElementScrollPosition(t.scrollLeft) || this._shouldRender, this._shouldRender = this._onElementSize(t.width) || this._shouldRender, this._shouldRender;
+      onDidScroll(t2) {
+        return this._shouldRender = this._onElementScrollSize(t2.scrollWidth) || this._shouldRender, this._shouldRender = this._onElementScrollPosition(t2.scrollLeft) || this._shouldRender, this._shouldRender = this._onElementSize(t2.width) || this._shouldRender, this._shouldRender;
       }
-      _pointerDownRelativePosition(t, e) {
-        return t;
+      _pointerDownRelativePosition(t2, e) {
+        return t2;
       }
-      _sliderPointerPosition(t) {
-        return t.pageX;
+      _sliderPointerPosition(t2) {
+        return t2.pageX;
       }
-      _sliderOrthogonalPointerPosition(t) {
-        return t.pageY;
+      _sliderOrthogonalPointerPosition(t2) {
+        return t2.pageY;
       }
-      _updateScrollbarSize(t) {
-        this.slider.setHeight(t);
+      _updateScrollbarSize(t2) {
+        this.slider.setHeight(t2);
       }
-      writeScrollPosition(t, e) {
-        t.scrollLeft = e;
+      writeScrollPosition(t2, e) {
+        t2.scrollLeft = e;
       }
-      updateOptions(t) {
-        this.updateScrollbarSize(t.horizontal === 2 ? 0 : t.horizontalScrollbarSize), this._scrollbarState.setOppositeScrollbarSize(t.vertical === 2 ? 0 : t.verticalScrollbarSize), this._visibilityController.setVisibility(t.horizontal), this._scrollByPage = t.scrollByPage;
+      updateOptions(t2) {
+        this.updateScrollbarSize(t2.horizontal === 2 ? 0 : t2.horizontalScrollbarSize), this._scrollbarState.setOppositeScrollbarSize(t2.vertical === 2 ? 0 : t2.verticalScrollbarSize), this._visibilityController.setVisibility(t2.horizontal), this._scrollByPage = t2.scrollByPage;
       }
     };
     Ur = class extends Ut {
-      constructor(t, e, i) {
-        let r = t.getScrollDimensions(), n = t.getCurrentScrollPosition();
-        if (super({ lazyRender: e.lazyRender, host: i, scrollbarState: new Kt(e.verticalHasArrows ? e.arrowSize : 0, e.vertical === 2 ? 0 : e.verticalScrollbarSize, 0, r.height, r.scrollHeight, n.scrollTop), visibility: e.vertical, extraScrollbarClassName: "vertical", scrollable: t, scrollByPage: e.scrollByPage }), e.verticalHasArrows) throw new Error("horizontalHasArrows is not supported in xterm.js");
+      constructor(t2, e, i) {
+        let r = t2.getScrollDimensions(), n = t2.getCurrentScrollPosition();
+        if (super({ lazyRender: e.lazyRender, host: i, scrollbarState: new Kt(e.verticalHasArrows ? e.arrowSize : 0, e.vertical === 2 ? 0 : e.verticalScrollbarSize, 0, r.height, r.scrollHeight, n.scrollTop), visibility: e.vertical, extraScrollbarClassName: "vertical", scrollable: t2, scrollByPage: e.scrollByPage }), e.verticalHasArrows) throw new Error("horizontalHasArrows is not supported in xterm.js");
         this._createSlider(0, Math.floor((e.verticalScrollbarSize - e.verticalSliderSize) / 2), e.verticalSliderSize, void 0);
       }
-      _updateSlider(t, e) {
-        this.slider.setHeight(t), this.slider.setTop(e);
+      _updateSlider(t2, e) {
+        this.slider.setHeight(t2), this.slider.setTop(e);
       }
-      _renderDomNode(t, e) {
-        this.domNode.setWidth(e), this.domNode.setHeight(t), this.domNode.setRight(0), this.domNode.setTop(0);
+      _renderDomNode(t2, e) {
+        this.domNode.setWidth(e), this.domNode.setHeight(t2), this.domNode.setRight(0), this.domNode.setTop(0);
       }
-      onDidScroll(t) {
-        return this._shouldRender = this._onElementScrollSize(t.scrollHeight) || this._shouldRender, this._shouldRender = this._onElementScrollPosition(t.scrollTop) || this._shouldRender, this._shouldRender = this._onElementSize(t.height) || this._shouldRender, this._shouldRender;
+      onDidScroll(t2) {
+        return this._shouldRender = this._onElementScrollSize(t2.scrollHeight) || this._shouldRender, this._shouldRender = this._onElementScrollPosition(t2.scrollTop) || this._shouldRender, this._shouldRender = this._onElementSize(t2.height) || this._shouldRender, this._shouldRender;
       }
-      _pointerDownRelativePosition(t, e) {
+      _pointerDownRelativePosition(t2, e) {
         return e;
       }
-      _sliderPointerPosition(t) {
-        return t.pageY;
+      _sliderPointerPosition(t2) {
+        return t2.pageY;
       }
-      _sliderOrthogonalPointerPosition(t) {
-        return t.pageX;
+      _sliderOrthogonalPointerPosition(t2) {
+        return t2.pageX;
       }
-      _updateScrollbarSize(t) {
-        this.slider.setWidth(t);
+      _updateScrollbarSize(t2) {
+        this.slider.setWidth(t2);
       }
-      writeScrollPosition(t, e) {
-        t.scrollTop = e;
+      writeScrollPosition(t2, e) {
+        t2.scrollTop = e;
       }
-      updateOptions(t) {
-        this.updateScrollbarSize(t.vertical === 2 ? 0 : t.verticalScrollbarSize), this._scrollbarState.setOppositeScrollbarSize(0), this._visibilityController.setVisibility(t.vertical), this._scrollByPage = t.scrollByPage;
+      updateOptions(t2) {
+        this.updateScrollbarSize(t2.vertical === 2 ? 0 : t2.verticalScrollbarSize), this._scrollbarState.setOppositeScrollbarSize(0), this._visibilityController.setVisibility(t2.vertical), this._scrollByPage = t2.scrollByPage;
       }
     };
     Ma = 500, Ko = 50, zo = true, us = class {
-      constructor(t, e, i) {
-        this.timestamp = t, this.deltaX = e, this.deltaY = i, this.score = 0;
+      constructor(t2, e, i) {
+        this.timestamp = t2, this.deltaX = e, this.deltaY = i, this.score = 0;
       }
     }, zr = class zr2 {
       constructor() {
@@ -3574,35 +3574,35 @@ ${h8.join(`
       }
       isPhysicalMouseWheel() {
         if (this._front === -1 && this._rear === -1) return false;
-        let t = 1, e = 0, i = 1, r = this._rear;
+        let t2 = 1, e = 0, i = 1, r = this._rear;
         do {
-          let n = r === this._front ? t : Math.pow(2, -i);
-          if (t -= n, e += this._memory[r].score * n, r === this._front) break;
+          let n = r === this._front ? t2 : Math.pow(2, -i);
+          if (t2 -= n, e += this._memory[r].score * n, r === this._front) break;
           r = (this._capacity + r - 1) % this._capacity, i++;
         } while (true);
         return e <= 0.5;
       }
-      acceptStandardWheelEvent(t) {
+      acceptStandardWheelEvent(t2) {
         if (Ti) {
-          let e = be(t.browserEvent), i = mo(e);
-          this.accept(Date.now(), t.deltaX * i, t.deltaY * i);
-        } else this.accept(Date.now(), t.deltaX, t.deltaY);
+          let e = be(t2.browserEvent), i = mo(e);
+          this.accept(Date.now(), t2.deltaX * i, t2.deltaY * i);
+        } else this.accept(Date.now(), t2.deltaX, t2.deltaY);
       }
-      accept(t, e, i) {
-        let r = null, n = new us(t, e, i);
+      accept(t2, e, i) {
+        let r = null, n = new us(t2, e, i);
         this._front === -1 && this._rear === -1 ? (this._memory[0] = n, this._front = 0, this._rear = 0) : (r = this._memory[this._rear], this._rear = (this._rear + 1) % this._capacity, this._rear === this._front && (this._front = (this._front + 1) % this._capacity), this._memory[this._rear] = n), n.score = this._computeScore(n, r);
       }
-      _computeScore(t, e) {
-        if (Math.abs(t.deltaX) > 0 && Math.abs(t.deltaY) > 0) return 1;
+      _computeScore(t2, e) {
+        if (Math.abs(t2.deltaX) > 0 && Math.abs(t2.deltaY) > 0) return 1;
         let i = 0.5;
-        if ((!this._isAlmostInt(t.deltaX) || !this._isAlmostInt(t.deltaY)) && (i += 0.25), e) {
-          let r = Math.abs(t.deltaX), n = Math.abs(t.deltaY), o = Math.abs(e.deltaX), l = Math.abs(e.deltaY), a = Math.max(Math.min(r, o), 1), u = Math.max(Math.min(n, l), 1), h8 = Math.max(r, o), c = Math.max(n, l);
+        if ((!this._isAlmostInt(t2.deltaX) || !this._isAlmostInt(t2.deltaY)) && (i += 0.25), e) {
+          let r = Math.abs(t2.deltaX), n = Math.abs(t2.deltaY), o = Math.abs(e.deltaX), l = Math.abs(e.deltaY), a = Math.max(Math.min(r, o), 1), u = Math.max(Math.min(n, l), 1), h8 = Math.max(r, o), c = Math.max(n, l);
           h8 % a === 0 && c % u === 0 && (i -= 0.5);
         }
         return Math.min(Math.max(i, 0), 1);
       }
-      _isAlmostInt(t) {
-        return Math.abs(Math.round(t) - t) < 0.01;
+      _isAlmostInt(t2) {
+        return Math.abs(Math.round(t2) - t2) < 0.01;
       }
     };
     zr.INSTANCE = new zr();
@@ -3720,11 +3720,11 @@ ${h8.join(`
       }
     };
     Kr = class extends ds {
-      constructor(t, e, i) {
-        super(t, e, i);
+      constructor(t2, e, i) {
+        super(t2, e, i);
       }
-      setScrollPosition(t) {
-        t.reuseAnimation ? this._scrollable.setScrollPositionSmooth(t, t.reuseAnimation) : this._scrollable.setScrollPositionNow(t);
+      setScrollPosition(t2) {
+        t2.reuseAnimation ? this._scrollable.setScrollPositionSmooth(t2, t2.reuseAnimation) : this._scrollable.setScrollPositionNow(t2);
       }
       getScrollPosition() {
         return this._scrollable.getCurrentScrollPosition();
@@ -3851,33 +3851,33 @@ ${h8.join(`
       clear() {
         this._zones.length = 0, this._zonePoolIndex = 0;
       }
-      addDecoration(t) {
-        if (t.options.overviewRulerOptions) {
-          for (let e of this._zones) if (e.color === t.options.overviewRulerOptions.color && e.position === t.options.overviewRulerOptions.position) {
-            if (this._lineIntersectsZone(e, t.marker.line)) return;
-            if (this._lineAdjacentToZone(e, t.marker.line, t.options.overviewRulerOptions.position)) {
-              this._addLineToZone(e, t.marker.line);
+      addDecoration(t2) {
+        if (t2.options.overviewRulerOptions) {
+          for (let e of this._zones) if (e.color === t2.options.overviewRulerOptions.color && e.position === t2.options.overviewRulerOptions.position) {
+            if (this._lineIntersectsZone(e, t2.marker.line)) return;
+            if (this._lineAdjacentToZone(e, t2.marker.line, t2.options.overviewRulerOptions.position)) {
+              this._addLineToZone(e, t2.marker.line);
               return;
             }
           }
           if (this._zonePoolIndex < this._zonePool.length) {
-            this._zonePool[this._zonePoolIndex].color = t.options.overviewRulerOptions.color, this._zonePool[this._zonePoolIndex].position = t.options.overviewRulerOptions.position, this._zonePool[this._zonePoolIndex].startBufferLine = t.marker.line, this._zonePool[this._zonePoolIndex].endBufferLine = t.marker.line, this._zones.push(this._zonePool[this._zonePoolIndex++]);
+            this._zonePool[this._zonePoolIndex].color = t2.options.overviewRulerOptions.color, this._zonePool[this._zonePoolIndex].position = t2.options.overviewRulerOptions.position, this._zonePool[this._zonePoolIndex].startBufferLine = t2.marker.line, this._zonePool[this._zonePoolIndex].endBufferLine = t2.marker.line, this._zones.push(this._zonePool[this._zonePoolIndex++]);
             return;
           }
-          this._zones.push({ color: t.options.overviewRulerOptions.color, position: t.options.overviewRulerOptions.position, startBufferLine: t.marker.line, endBufferLine: t.marker.line }), this._zonePool.push(this._zones[this._zones.length - 1]), this._zonePoolIndex++;
+          this._zones.push({ color: t2.options.overviewRulerOptions.color, position: t2.options.overviewRulerOptions.position, startBufferLine: t2.marker.line, endBufferLine: t2.marker.line }), this._zonePool.push(this._zones[this._zones.length - 1]), this._zonePoolIndex++;
         }
       }
-      setPadding(t) {
-        this._linePadding = t;
+      setPadding(t2) {
+        this._linePadding = t2;
       }
-      _lineIntersectsZone(t, e) {
-        return e >= t.startBufferLine && e <= t.endBufferLine;
+      _lineIntersectsZone(t2, e) {
+        return e >= t2.startBufferLine && e <= t2.endBufferLine;
       }
-      _lineAdjacentToZone(t, e, i) {
-        return e >= t.startBufferLine - this._linePadding[i || "full"] && e <= t.endBufferLine + this._linePadding[i || "full"];
+      _lineAdjacentToZone(t2, e, i) {
+        return e >= t2.startBufferLine - this._linePadding[i || "full"] && e <= t2.endBufferLine + this._linePadding[i || "full"];
       }
-      _addLineToZone(t, e) {
-        t.startBufferLine = Math.min(t.startBufferLine, e), t.endBufferLine = Math.max(t.endBufferLine, e);
+      _addLineToZone(t2, e) {
+        t2.startBufferLine = Math.min(t2.startBufferLine, e), t2.endBufferLine = Math.max(t2.endBufferLine, e);
       }
     };
     We = { full: 0, left: 0, center: 0, right: 0 }, at = { full: 0, left: 0, center: 0, right: 0 }, Li = { full: 0, left: 0, center: 0, right: 0 }, bt = class extends D {
@@ -3950,10 +3950,10 @@ ${h8.join(`
     ((E) => (E.NUL = "\0", E.SOH = "", E.STX = "", E.ETX = "", E.EOT = "", E.ENQ = "", E.ACK = "", E.BEL = "\x07", E.BS = "\b", E.HT = "	", E.LF = `
 `, E.VT = "\v", E.FF = "\f", E.CR = "\r", E.SO = "", E.SI = "", E.DLE = "", E.DC1 = "", E.DC2 = "", E.DC3 = "", E.DC4 = "", E.NAK = "", E.SYN = "", E.ETB = "", E.CAN = "", E.EM = "", E.SUB = "", E.ESC = "\x1B", E.FS = "", E.GS = "", E.RS = "", E.US = "", E.SP = " ", E.DEL = ""))(b ||= {});
     ((g) => (g.PAD = "", g.HOP = "", g.BPH = "", g.NBH = "", g.IND = "", g.NEL = "", g.SSA = "", g.ESA = "", g.HTS = "", g.HTJ = "", g.VTS = "", g.PLD = "", g.PLU = "", g.RI = "", g.SS2 = "", g.SS3 = "", g.DCS = "", g.PU1 = "", g.PU2 = "", g.STS = "", g.CCH = "", g.MW = "", g.SPA = "", g.EPA = "", g.SOS = "", g.SGCI = "", g.SCI = "", g.CSI = "", g.ST = "", g.OSC = "", g.PM = "", g.APC = ""))(Ai ||= {});
-    ((t) => t.ST = `${b.ESC}\\`)(fs ||= {});
+    ((t2) => t2.ST = `${b.ESC}\\`)(fs ||= {});
     $t = class {
-      constructor(t, e, i, r, n, o) {
-        this._textarea = t;
+      constructor(t2, e, i, r, n, o) {
+        this._textarea = t2;
         this._compositionView = e;
         this._bufferService = i;
         this._optionsService = r;
@@ -3967,23 +3967,23 @@ ${h8.join(`
       compositionstart() {
         this._isComposing = true, this._compositionPosition.start = this._textarea.value.length, this._compositionView.textContent = "", this._dataAlreadySent = "", this._compositionView.classList.add("active");
       }
-      compositionupdate(t) {
-        this._compositionView.textContent = t.data, this.updateCompositionElements(), setTimeout(() => {
+      compositionupdate(t2) {
+        this._compositionView.textContent = t2.data, this.updateCompositionElements(), setTimeout(() => {
           this._compositionPosition.end = this._textarea.value.length;
         }, 0);
       }
       compositionend() {
         this._finalizeComposition(true);
       }
-      keydown(t) {
+      keydown(t2) {
         if (this._isComposing || this._isSendingComposition) {
-          if (t.keyCode === 20 || t.keyCode === 229 || t.keyCode === 16 || t.keyCode === 17 || t.keyCode === 18) return false;
+          if (t2.keyCode === 20 || t2.keyCode === 229 || t2.keyCode === 16 || t2.keyCode === 17 || t2.keyCode === 18) return false;
           this._finalizeComposition(false);
         }
-        return t.keyCode === 229 ? (this._handleAnyTextareaChanges(), false) : true;
+        return t2.keyCode === 229 ? (this._handleAnyTextareaChanges(), false) : true;
       }
-      _finalizeComposition(t) {
-        if (this._compositionView.classList.remove("active"), this._isComposing = false, t) {
+      _finalizeComposition(t2) {
+        if (this._compositionView.classList.remove("active"), this._isComposing = false, t2) {
           let e = { start: this._compositionPosition.start, end: this._compositionPosition.end };
           this._isSendingComposition = true, setTimeout(() => {
             if (this._isSendingComposition) {
@@ -3999,15 +3999,15 @@ ${h8.join(`
         }
       }
       _handleAnyTextareaChanges() {
-        let t = this._textarea.value;
+        let t2 = this._textarea.value;
         setTimeout(() => {
           if (!this._isComposing) {
-            let e = this._textarea.value, i = e.replace(t, "");
-            this._dataAlreadySent = i, e.length > t.length ? this._coreService.triggerDataEvent(i, true) : e.length < t.length ? this._coreService.triggerDataEvent(`${b.DEL}`, true) : e.length === t.length && e !== t && this._coreService.triggerDataEvent(e, true);
+            let e = this._textarea.value, i = e.replace(t2, "");
+            this._dataAlreadySent = i, e.length > t2.length ? this._coreService.triggerDataEvent(i, true) : e.length < t2.length ? this._coreService.triggerDataEvent(`${b.DEL}`, true) : e.length === t2.length && e !== t2 && this._coreService.triggerDataEvent(e, true);
           }
         }, 0);
       }
-      updateCompositionElements(t) {
+      updateCompositionElements(t2) {
         if (this._isComposing) {
           if (this._bufferService.buffer.isCursorInViewport) {
             let e = Math.min(this._bufferService.buffer.x, this._bufferService.cols - 1), i = this._renderService.dimensions.css.cell.height, r = this._bufferService.buffer.y * this._renderService.dimensions.css.cell.height, n = e * this._renderService.dimensions.css.cell.width;
@@ -4015,7 +4015,7 @@ ${h8.join(`
             let o = this._compositionView.getBoundingClientRect();
             this._textarea.style.left = n + "px", this._textarea.style.top = r + "px", this._textarea.style.width = Math.max(o.width, 1) + "px", this._textarea.style.height = Math.max(o.height, 1) + "px", this._textarea.style.lineHeight = o.height + "px";
           }
-          t || setTimeout(() => this.updateCompositionElements(true), 0);
+          t2 || setTimeout(() => this.updateCompositionElements(true), 0);
         }
       }
     };
@@ -4026,10 +4026,10 @@ ${h8.join(`
         return l !== void 0 ? `#${vt(r)}${vt(n)}${vt(o)}${vt(l)}` : `#${vt(r)}${vt(n)}${vt(o)}`;
       }
       i.toCss = s15;
-      function t(r, n, o, l = 255) {
+      function t2(r, n, o, l = 255) {
         return (r << 24 | n << 16 | o << 8 | l) >>> 0;
       }
-      i.toRgba = t;
+      i.toRgba = t2;
       function e(r, n, o, l) {
         return { css: i.toCss(r, n, o, l), rgba: i.toRgba(r, n, o, l) };
       }
@@ -4044,10 +4044,10 @@ ${h8.join(`
         return { css: f, rgba: A };
       }
       l.blend = s15;
-      function t(a) {
+      function t2(a) {
         return (a.rgba & 255) === 255;
       }
-      l.isOpaque = t;
+      l.isOpaque = t2;
       function e(a, u, h8) {
         let c = $r.ensureContrastRatio(a.rgba, u.rgba, h8);
         if (c) return j.toColor(c >> 24 & 255, c >> 16 & 255, c >> 8 & 255);
@@ -4072,12 +4072,12 @@ ${h8.join(`
       l.toColorRGB = o;
     })(U ||= {});
     ((i) => {
-      let s15, t;
+      let s15, t2;
       try {
         let r = document.createElement("canvas");
         r.width = 1, r.height = 1;
         let n = r.getContext("2d", { willReadFrequently: true });
-        n && (s15 = n, s15.globalCompositeOperation = "copy", t = s15.createLinearGradient(0, 0, 1, 1));
+        n && (s15 = n, s15.globalCompositeOperation = "copy", t2 = s15.createLinearGradient(0, 0, 1, 1));
       } catch {
       }
       function e(r) {
@@ -4093,8 +4093,8 @@ ${h8.join(`
         }
         let n = r.match(/rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(,\s*(0|1|\d?\.(\d+))\s*)?\)/);
         if (n) return ue = parseInt(n[1]), he = parseInt(n[2]), de = parseInt(n[3]), J = Math.round((n[5] === void 0 ? 1 : parseFloat(n[5])) * 255), j.toColor(ue, he, de, J);
-        if (!s15 || !t) throw new Error("css.toColor: Unsupported css format");
-        if (s15.fillStyle = t, s15.fillStyle = r, typeof s15.fillStyle != "string") throw new Error("css.toColor: Unsupported css format");
+        if (!s15 || !t2) throw new Error("css.toColor: Unsupported css format");
+        if (s15.fillStyle = t2, s15.fillStyle = r, typeof s15.fillStyle != "string") throw new Error("css.toColor: Unsupported css format");
         if (s15.fillRect(0, 0, 1, 1), [ue, he, de, J] = s15.getImageData(0, 0, 1, 1).data, J !== 255) throw new Error("css.toColor: Unsupported css format");
         return { rgba: j.toRgba(ue, he, de, J), css: r };
       }
@@ -4102,14 +4102,14 @@ ${h8.join(`
     })(z ||= {});
     ((e) => {
       function s15(i) {
-        return t(i >> 16 & 255, i >> 8 & 255, i & 255);
+        return t2(i >> 16 & 255, i >> 8 & 255, i & 255);
       }
       e.relativeLuminance = s15;
-      function t(i, r, n) {
+      function t2(i, r, n) {
         let o = i / 255, l = r / 255, a = n / 255, u = o <= 0.03928 ? o / 12.92 : Math.pow((o + 0.055) / 1.055, 2.4), h8 = l <= 0.03928 ? l / 12.92 : Math.pow((l + 0.055) / 1.055, 2.4), c = a <= 0.03928 ? a / 12.92 : Math.pow((a + 0.055) / 1.055, 2.4);
         return u * 0.2126 + h8 * 0.7152 + c * 0.0722;
       }
-      e.relativeLuminance2 = t;
+      e.relativeLuminance2 = t2;
     })(ve ||= {});
     ((n) => {
       function s15(o, l) {
@@ -4118,7 +4118,7 @@ ${h8.join(`
         return ue = c + Math.round((a - c) * J), he = d + Math.round((u - d) * J), de = _ + Math.round((h8 - _) * J), j.toRgba(ue, he, de);
       }
       n.blend = s15;
-      function t(o, l, a) {
+      function t2(o, l, a) {
         let u = ve.relativeLuminance(o >> 8), h8 = ve.relativeLuminance(l >> 8);
         if (Xe(u, h8) < a) {
           if (h8 < u) {
@@ -4137,7 +4137,7 @@ ${h8.join(`
           return d;
         }
       }
-      n.ensureContrastRatio = t;
+      n.ensureContrastRatio = t2;
       function e(o, l, a) {
         let u = o >> 24 & 255, h8 = o >> 16 & 255, c = o >> 8 & 255, d = l >> 24 & 255, _ = l >> 16 & 255, p = l >> 8 & 255, m = Xe(ve.relativeLuminance2(d, _, p), ve.relativeLuminance2(u, h8, c));
         for (; m < a && (d > 0 || _ > 0 || p > 0); ) d -= Math.max(0, Math.ceil(d * 0.1)), _ -= Math.max(0, Math.ceil(_ * 0.1)), p -= Math.max(0, Math.ceil(p * 0.1)), m = Xe(ve.relativeLuminance2(d, _, p), ve.relativeLuminance2(u, h8, c));
@@ -4181,23 +4181,23 @@ ${h8.join(`
         return [this.fg, this.getChars(), this.getWidth(), this.getCode()];
       }
     }, ct = class {
-      constructor(t) {
-        this._bufferService = t;
+      constructor(t2) {
+        this._bufferService = t2;
         this._characterJoiners = [];
         this._nextCharacterJoinerId = 0;
         this._workCell = new q();
       }
-      register(t) {
-        let e = { id: this._nextCharacterJoinerId++, handler: t };
+      register(t2) {
+        let e = { id: this._nextCharacterJoinerId++, handler: t2 };
         return this._characterJoiners.push(e), e.id;
       }
-      deregister(t) {
-        for (let e = 0; e < this._characterJoiners.length; e++) if (this._characterJoiners[e].id === t) return this._characterJoiners.splice(e, 1), true;
+      deregister(t2) {
+        for (let e = 0; e < this._characterJoiners.length; e++) if (this._characterJoiners[e].id === t2) return this._characterJoiners.splice(e, 1), true;
         return false;
       }
-      getJoinedCharacters(t) {
+      getJoinedCharacters(t2) {
         if (this._characterJoiners.length === 0) return [];
-        let e = this._bufferService.buffer.lines.get(t);
+        let e = this._bufferService.buffer.lines.get(t2);
         if (!e || e.length === 0) return [];
         let i = [], r = e.translateToString(true), n = 0, o = 0, l = 0, a = e.getFg(0), u = e.getBg(0);
         for (let h8 = 0; h8 < e.getTrimmedLength(); h8++) if (e.loadCell(h8, this._workCell), this._workCell.getWidth() !== 0) {
@@ -4216,8 +4216,8 @@ ${h8.join(`
         }
         return i;
       }
-      _getJoinedRanges(t, e, i, r, n) {
-        let o = t.substring(e, i), l = [];
+      _getJoinedRanges(t2, e, i, r, n) {
+        let o = t2.substring(e, i), l = [];
         try {
           l = this._characterJoiners[0].handler(o);
         } catch (a) {
@@ -4231,14 +4231,14 @@ ${h8.join(`
         }
         return this._stringRangesToCellRanges(l, r, n), l;
       }
-      _stringRangesToCellRanges(t, e, i) {
-        let r = 0, n = false, o = 0, l = t[r];
+      _stringRangesToCellRanges(t2, e, i) {
+        let r = 0, n = false, o = 0, l = t2[r];
         if (l) {
           for (let a = i; a < this._bufferService.cols; a++) {
             let u = e.getWidth(a), h8 = e.getString(a).length || we.length;
             if (u !== 0) {
               if (!n && l[0] <= o && (l[0] = a, n = true), l[1] <= o) {
-                if (l[1] = a, l = t[++r], !l) break;
+                if (l[1] = a, l = t2[++r], !l) break;
                 l[0] <= o ? (l[0] = a, n = true) : n = false;
               }
               o += h8;
@@ -4247,28 +4247,28 @@ ${h8.join(`
           l && (l[1] = this._bufferService.cols);
         }
       }
-      static _mergeRanges(t, e) {
+      static _mergeRanges(t2, e) {
         let i = false;
-        for (let r = 0; r < t.length; r++) {
-          let n = t[r];
+        for (let r = 0; r < t2.length; r++) {
+          let n = t2[r];
           if (i) {
-            if (e[1] <= n[0]) return t[r - 1][1] = e[1], t;
-            if (e[1] <= n[1]) return t[r - 1][1] = Math.max(e[1], n[1]), t.splice(r, 1), t;
-            t.splice(r, 1), r--;
+            if (e[1] <= n[0]) return t2[r - 1][1] = e[1], t2;
+            if (e[1] <= n[1]) return t2[r - 1][1] = Math.max(e[1], n[1]), t2.splice(r, 1), t2;
+            t2.splice(r, 1), r--;
           } else {
-            if (e[1] <= n[0]) return t.splice(r, 0, e), t;
-            if (e[1] <= n[1]) return n[0] = Math.min(e[0], n[0]), t;
+            if (e[1] <= n[0]) return t2.splice(r, 0, e), t2;
+            if (e[1] <= n[1]) return n[0] = Math.min(e[0], n[0]), t2;
             e[0] < n[1] && (n[0] = Math.min(e[0], n[0]), i = true);
             continue;
           }
         }
-        return i ? t[t.length - 1][1] = e[1] : t.push(e), t;
+        return i ? t2[t2.length - 1][1] = e[1] : t2.push(e), t2;
       }
     };
     ct = M([S(0, F)], ct);
     Vt = class {
-      constructor(t, e, i, r, n, o, l) {
-        this._document = t;
+      constructor(t2, e, i, r, n, o, l) {
+        this._document = t2;
         this._characterJoinerService = e;
         this._optionsService = i;
         this._coreBrowserService = r;
@@ -4279,22 +4279,22 @@ ${h8.join(`
         this._columnSelectMode = false;
         this.defaultSpacing = 0;
       }
-      handleSelectionChanged(t, e, i) {
-        this._selectionStart = t, this._selectionEnd = e, this._columnSelectMode = i;
+      handleSelectionChanged(t2, e, i) {
+        this._selectionStart = t2, this._selectionEnd = e, this._columnSelectMode = i;
       }
-      createRow(t, e, i, r, n, o, l, a, u, h8, c) {
-        let d = [], _ = this._characterJoinerService.getJoinedCharacters(e), p = this._themeService.colors, m = t.getNoBgTrimmedLength();
+      createRow(t2, e, i, r, n, o, l, a, u, h8, c) {
+        let d = [], _ = this._characterJoinerService.getJoinedCharacters(e), p = this._themeService.colors, m = t2.getNoBgTrimmedLength();
         i && m < o + 1 && (m = o + 1);
         let f, A = 0, R = "", O = 0, I = 0, k = 0, P = 0, oe = false, Me = 0, Pe = false, Ke = 0, di = 0, V = [], Qe = h8 !== -1 && c !== -1;
         for (let y = 0; y < m; y++) {
-          t.loadCell(y, this._workCell);
+          t2.loadCell(y, this._workCell);
           let T = this._workCell.getWidth();
           if (T === 0) continue;
           let g = false, w = y >= di, E = y, x = this._workCell;
           if (_.length > 0 && y === _[0][0] && w) {
             let W = _.shift(), An = this._isCellInSelection(W[0], e);
             for (O = W[0] + 1; O < W[1]; O++) w &&= An === this._isCellInSelection(O, e);
-            w &&= !i || o < W[0] || o >= W[1], w ? (g = true, x = new Vr(this._workCell, t.translateToString(true, W[0], W[1]), W[1] - W[0]), E = W[1] - 1, T = x.getWidth()) : di = W[1];
+            w &&= !i || o < W[0] || o >= W[1], w ? (g = true, x = new Vr(this._workCell, t2.translateToString(true, W[0], W[1]), W[1] - W[0]), E = W[1] - 1, T = x.getWidth()) : di = W[1];
           }
           let N = this._isCellInSelection(y, e), Z = i && y === o, te = Qe && y >= h8 && y <= c, Oe = false;
           this._decorationService.forEachDecorationAtCell(y, e, void 0, (W) => {
@@ -4372,43 +4372,43 @@ ${h8.join(`
         }
         return f && A && (f.textContent = R), d;
       }
-      _applyMinimumContrast(t, e, i, r, n, o) {
+      _applyMinimumContrast(t2, e, i, r, n, o) {
         if (this._optionsService.rawOptions.minimumContrastRatio === 1 || $o(r.getCode())) return false;
         let l = this._getContrastCache(r), a;
         if (!n && !o && (a = l.getColor(e.rgba, i.rgba)), a === void 0) {
           let u = this._optionsService.rawOptions.minimumContrastRatio / (r.isDim() ? 2 : 1);
           a = U.ensureContrastRatio(n || e, o || i, u), l.setColor((n || e).rgba, (o || i).rgba, a ?? null);
         }
-        return a ? (this._addStyle(t, `color:${a.css}`), true) : false;
+        return a ? (this._addStyle(t2, `color:${a.css}`), true) : false;
       }
-      _getContrastCache(t) {
-        return t.isDim() ? this._themeService.colors.halfContrastCache : this._themeService.colors.contrastCache;
+      _getContrastCache(t2) {
+        return t2.isDim() ? this._themeService.colors.halfContrastCache : this._themeService.colors.contrastCache;
       }
-      _addStyle(t, e) {
-        t.setAttribute("style", `${t.getAttribute("style") || ""}${e};`);
+      _addStyle(t2, e) {
+        t2.setAttribute("style", `${t2.getAttribute("style") || ""}${e};`);
       }
-      _isCellInSelection(t, e) {
+      _isCellInSelection(t2, e) {
         let i = this._selectionStart, r = this._selectionEnd;
-        return !i || !r ? false : this._columnSelectMode ? i[0] <= r[0] ? t >= i[0] && e >= i[1] && t < r[0] && e <= r[1] : t < i[0] && e >= i[1] && t >= r[0] && e <= r[1] : e > i[1] && e < r[1] || i[1] === r[1] && e === i[1] && t >= i[0] && t < r[0] || i[1] < r[1] && e === r[1] && t < r[0] || i[1] < r[1] && e === i[1] && t >= i[0];
+        return !i || !r ? false : this._columnSelectMode ? i[0] <= r[0] ? t2 >= i[0] && e >= i[1] && t2 < r[0] && e <= r[1] : t2 < i[0] && e >= i[1] && t2 >= r[0] && e <= r[1] : e > i[1] && e < r[1] || i[1] === r[1] && e === i[1] && t2 >= i[0] && t2 < r[0] || i[1] < r[1] && e === r[1] && t2 < r[0] || i[1] < r[1] && e === i[1] && t2 >= i[0];
       }
     };
     Vt = M([S(1, or), S(2, H), S(3, ae), S(4, ge), S(5, Be), S(6, Re)], Vt);
     Yr = class {
-      constructor(t, e) {
+      constructor(t2, e) {
         this._flat = new Float32Array(256);
         this._font = "";
         this._fontSize = 0;
         this._weight = "normal";
         this._weightBold = "bold";
         this._measureElements = [];
-        this._container = t.createElement("div"), this._container.classList.add("xterm-width-cache-measure-container"), this._container.setAttribute("aria-hidden", "true"), this._container.style.whiteSpace = "pre", this._container.style.fontKerning = "none";
-        let i = t.createElement("span");
+        this._container = t2.createElement("div"), this._container.classList.add("xterm-width-cache-measure-container"), this._container.setAttribute("aria-hidden", "true"), this._container.style.whiteSpace = "pre", this._container.style.fontKerning = "none";
+        let i = t2.createElement("span");
         i.classList.add("xterm-char-measure-element");
-        let r = t.createElement("span");
+        let r = t2.createElement("span");
         r.classList.add("xterm-char-measure-element"), r.style.fontWeight = "bold";
-        let n = t.createElement("span");
+        let n = t2.createElement("span");
         n.classList.add("xterm-char-measure-element"), n.style.fontStyle = "italic";
-        let o = t.createElement("span");
+        let o = t2.createElement("span");
         o.classList.add("xterm-char-measure-element"), o.style.fontWeight = "bold", o.style.fontStyle = "italic", this._measureElements = [i, r, n, o], this._container.appendChild(i), this._container.appendChild(r), this._container.appendChild(n), this._container.appendChild(o), e.appendChild(this._container), this.clear();
       }
       dispose() {
@@ -4417,28 +4417,28 @@ ${h8.join(`
       clear() {
         this._flat.fill(-9999), this._holey = /* @__PURE__ */ new Map();
       }
-      setFont(t, e, i, r) {
-        t === this._font && e === this._fontSize && i === this._weight && r === this._weightBold || (this._font = t, this._fontSize = e, this._weight = i, this._weightBold = r, this._container.style.fontFamily = this._font, this._container.style.fontSize = `${this._fontSize}px`, this._measureElements[0].style.fontWeight = `${i}`, this._measureElements[1].style.fontWeight = `${r}`, this._measureElements[2].style.fontWeight = `${i}`, this._measureElements[3].style.fontWeight = `${r}`, this.clear());
+      setFont(t2, e, i, r) {
+        t2 === this._font && e === this._fontSize && i === this._weight && r === this._weightBold || (this._font = t2, this._fontSize = e, this._weight = i, this._weightBold = r, this._container.style.fontFamily = this._font, this._container.style.fontSize = `${this._fontSize}px`, this._measureElements[0].style.fontWeight = `${i}`, this._measureElements[1].style.fontWeight = `${r}`, this._measureElements[2].style.fontWeight = `${i}`, this._measureElements[3].style.fontWeight = `${r}`, this.clear());
       }
-      get(t, e, i) {
+      get(t2, e, i) {
         let r = 0;
-        if (!e && !i && t.length === 1 && (r = t.charCodeAt(0)) < 256) {
+        if (!e && !i && t2.length === 1 && (r = t2.charCodeAt(0)) < 256) {
           if (this._flat[r] !== -9999) return this._flat[r];
-          let l = this._measure(t, 0);
+          let l = this._measure(t2, 0);
           return l > 0 && (this._flat[r] = l), l;
         }
-        let n = t;
+        let n = t2;
         e && (n += "B"), i && (n += "I");
         let o = this._holey.get(n);
         if (o === void 0) {
           let l = 0;
-          e && (l |= 1), i && (l |= 2), o = this._measure(t, l), o > 0 && this._holey.set(n, o);
+          e && (l |= 1), i && (l |= 2), o = this._measure(t2, l), o > 0 && this._holey.set(n, o);
         }
         return o;
       }
-      _measure(t, e) {
+      _measure(t2, e) {
         let i = this._measureElements[e];
-        return i.textContent = t.repeat(32), i.offsetWidth / 32;
+        return i.textContent = t2.repeat(32), i.offsetWidth / 32;
       }
     };
     ms = class {
@@ -4448,20 +4448,20 @@ ${h8.join(`
       clear() {
         this.hasSelection = false, this.columnSelectMode = false, this.viewportStartRow = 0, this.viewportEndRow = 0, this.viewportCappedStartRow = 0, this.viewportCappedEndRow = 0, this.startCol = 0, this.endCol = 0, this.selectionStart = void 0, this.selectionEnd = void 0;
       }
-      update(t, e, i, r = false) {
+      update(t2, e, i, r = false) {
         if (this.selectionStart = e, this.selectionEnd = i, !e || !i || e[0] === i[0] && e[1] === i[1]) {
           this.clear();
           return;
         }
-        let n = t.buffers.active.ydisp, o = e[1] - n, l = i[1] - n, a = Math.max(o, 0), u = Math.min(l, t.rows - 1);
-        if (a >= t.rows || u < 0) {
+        let n = t2.buffers.active.ydisp, o = e[1] - n, l = i[1] - n, a = Math.max(o, 0), u = Math.min(l, t2.rows - 1);
+        if (a >= t2.rows || u < 0) {
           this.clear();
           return;
         }
         this.hasSelection = true, this.columnSelectMode = r, this.viewportStartRow = o, this.viewportEndRow = l, this.viewportCappedStartRow = a, this.viewportCappedEndRow = u, this.startCol = e[0], this.endCol = i[0];
       }
-      isCellSelected(t, e, i) {
-        return this.hasSelection ? (i -= t.buffer.active.viewportY, this.columnSelectMode ? this.startCol <= this.endCol ? e >= this.startCol && i >= this.viewportCappedStartRow && e < this.endCol && i <= this.viewportCappedEndRow : e < this.startCol && i >= this.viewportCappedStartRow && e >= this.endCol && i <= this.viewportCappedEndRow : i > this.viewportStartRow && i < this.viewportEndRow || this.viewportStartRow === this.viewportEndRow && i === this.viewportStartRow && e >= this.startCol && e < this.endCol || this.viewportStartRow < this.viewportEndRow && i === this.viewportEndRow && e < this.endCol || this.viewportStartRow < this.viewportEndRow && i === this.viewportStartRow && e >= this.startCol) : false;
+      isCellSelected(t2, e, i) {
+        return this.hasSelection ? (i -= t2.buffer.active.viewportY, this.columnSelectMode ? this.startCol <= this.endCol ? e >= this.startCol && i >= this.viewportCappedStartRow && e < this.endCol && i <= this.viewportCappedEndRow : e < this.startCol && i >= this.viewportCappedStartRow && e >= this.endCol && i <= this.viewportCappedEndRow : i > this.viewportStartRow && i < this.viewportEndRow || this.viewportStartRow === this.viewportEndRow && i === this.viewportStartRow && e >= this.startCol && e < this.endCol || this.viewportStartRow < this.viewportEndRow && i === this.viewportEndRow && e < this.endCol || this.viewportStartRow < this.viewportEndRow && i === this.viewportStartRow && e >= this.startCol) : false;
       }
     };
     _s = "xterm-dom-renderer-owner-", Le = "xterm-rows", jr = "xterm-fg-", jo = "xterm-bg-", ki = "xterm-focus", Xr = "xterm-selection", Na = 1, Yt = class extends D {
@@ -4713,44 +4713,44 @@ ${h8.join(`
       }
     };
     Xt = class {
-      constructor(t, e) {
-        this._renderService = t;
+      constructor(t2, e) {
+        this._renderService = t2;
         this._charSizeService = e;
       }
-      getCoords(t, e, i, r, n) {
-        return Xo(window, t, e, i, r, this._charSizeService.hasValidSize, this._renderService.dimensions.css.cell.width, this._renderService.dimensions.css.cell.height, n);
+      getCoords(t2, e, i, r, n) {
+        return Xo(window, t2, e, i, r, this._charSizeService.hasValidSize, this._renderService.dimensions.css.cell.width, this._renderService.dimensions.css.cell.height, n);
       }
-      getMouseReportCoords(t, e) {
-        let i = Ci(window, t, e);
+      getMouseReportCoords(t2, e) {
+        let i = Ci(window, t2, e);
         if (this._charSizeService.hasValidSize) return i[0] = Math.min(Math.max(i[0], 0), this._renderService.dimensions.css.canvas.width - 1), i[1] = Math.min(Math.max(i[1], 0), this._renderService.dimensions.css.canvas.height - 1), { col: Math.floor(i[0] / this._renderService.dimensions.css.cell.width), row: Math.floor(i[1] / this._renderService.dimensions.css.cell.height), x: Math.floor(i[0]), y: Math.floor(i[1]) };
       }
     };
     Xt = M([S(0, ce), S(1, nt)], Xt);
     en = class {
-      constructor(t, e) {
-        this._renderCallback = t;
+      constructor(t2, e) {
+        this._renderCallback = t2;
         this._coreBrowserService = e;
         this._refreshCallbacks = [];
       }
       dispose() {
         this._animationFrame && (this._coreBrowserService.window.cancelAnimationFrame(this._animationFrame), this._animationFrame = void 0);
       }
-      addRefreshCallback(t) {
-        return this._refreshCallbacks.push(t), this._animationFrame || (this._animationFrame = this._coreBrowserService.window.requestAnimationFrame(() => this._innerRefresh())), this._animationFrame;
+      addRefreshCallback(t2) {
+        return this._refreshCallbacks.push(t2), this._animationFrame || (this._animationFrame = this._coreBrowserService.window.requestAnimationFrame(() => this._innerRefresh())), this._animationFrame;
       }
-      refresh(t, e, i) {
-        this._rowCount = i, t = t !== void 0 ? t : 0, e = e !== void 0 ? e : this._rowCount - 1, this._rowStart = this._rowStart !== void 0 ? Math.min(this._rowStart, t) : t, this._rowEnd = this._rowEnd !== void 0 ? Math.max(this._rowEnd, e) : e, !this._animationFrame && (this._animationFrame = this._coreBrowserService.window.requestAnimationFrame(() => this._innerRefresh()));
+      refresh(t2, e, i) {
+        this._rowCount = i, t2 = t2 !== void 0 ? t2 : 0, e = e !== void 0 ? e : this._rowCount - 1, this._rowStart = this._rowStart !== void 0 ? Math.min(this._rowStart, t2) : t2, this._rowEnd = this._rowEnd !== void 0 ? Math.max(this._rowEnd, e) : e, !this._animationFrame && (this._animationFrame = this._coreBrowserService.window.requestAnimationFrame(() => this._innerRefresh()));
       }
       _innerRefresh() {
         if (this._animationFrame = void 0, this._rowStart === void 0 || this._rowEnd === void 0 || this._rowCount === void 0) {
           this._runRefreshCallbacks();
           return;
         }
-        let t = Math.max(this._rowStart, 0), e = Math.min(this._rowEnd, this._rowCount - 1);
-        this._rowStart = void 0, this._rowEnd = void 0, this._renderCallback(t, e), this._runRefreshCallbacks();
+        let t2 = Math.max(this._rowStart, 0), e = Math.min(this._rowEnd, this._rowCount - 1);
+        this._rowStart = void 0, this._rowEnd = void 0, this._renderCallback(t2, e), this._runRefreshCallbacks();
       }
       _runRefreshCallbacks() {
-        for (let t of this._refreshCallbacks) t(0);
+        for (let t2 of this._refreshCallbacks) t2(0);
         this._refreshCallbacks = [];
       }
     };
@@ -4763,8 +4763,8 @@ ${h8.join(`
         this._tasks = [];
         this._i = 0;
       }
-      enqueue(t) {
-        this._tasks.push(t), this._start();
+      enqueue(t2) {
+        this._tasks.push(t2), this._start();
       }
       flush() {
         for (; this._i < this._tasks.length; ) this._tasks[this._i]() || this._i++;
@@ -4776,11 +4776,11 @@ ${h8.join(`
       _start() {
         this._idleCallback || (this._idleCallback = this._requestCallback(this._process.bind(this)));
       }
-      _process(t) {
+      _process(t2) {
         this._idleCallback = void 0;
-        let e = 0, i = 0, r = t.timeRemaining(), n = 0;
+        let e = 0, i = 0, r = t2.timeRemaining(), n = 0;
         for (; this._i < this._tasks.length; ) {
-          if (e = performance.now(), this._tasks[this._i]() || this._i++, e = Math.max(1, performance.now() - e), i = Math.max(e, i), n = t.timeRemaining(), i * 1.5 > n) {
+          if (e = performance.now(), this._tasks[this._i]() || this._i++, e = Math.max(1, performance.now() - e), i = Math.max(e, i), n = t2.timeRemaining(), i * 1.5 > n) {
             r - e < -20 && console.warn(`task queue exceeded allotted deadline by ${Math.abs(Math.round(r - e))}ms`), this._start();
             return;
           }
@@ -4789,29 +4789,29 @@ ${h8.join(`
         this.clear();
       }
     }, Is = class extends rn {
-      _requestCallback(t) {
-        return setTimeout(() => t(this._createDeadline(16)));
+      _requestCallback(t2) {
+        return setTimeout(() => t2(this._createDeadline(16)));
       }
-      _cancelCallback(t) {
-        clearTimeout(t);
+      _cancelCallback(t2) {
+        clearTimeout(t2);
       }
-      _createDeadline(t) {
-        let e = performance.now() + t;
+      _createDeadline(t2) {
+        let e = performance.now() + t2;
         return { timeRemaining: () => Math.max(0, e - performance.now()) };
       }
     }, ys = class extends rn {
-      _requestCallback(t) {
-        return requestIdleCallback(t);
+      _requestCallback(t2) {
+        return requestIdleCallback(t2);
       }
-      _cancelCallback(t) {
-        cancelIdleCallback(t);
+      _cancelCallback(t2) {
+        cancelIdleCallback(t2);
       }
     }, Jt = !Mi && "requestIdleCallback" in window ? ys : Is, nn = class {
       constructor() {
         this._queue = new Jt();
       }
-      set(t) {
-        this._queue.clear(), this._queue.enqueue(t);
+      set(t2) {
+        this._queue.clear(), this._queue.enqueue(t2);
       }
       flush() {
         this._queue.flush();
@@ -4931,31 +4931,31 @@ ${h8.join(`
     };
     Qt = M([S(2, H), S(3, nt), S(4, ge), S(5, Be), S(6, F), S(7, ae), S(8, Re)], Qt);
     xs = class {
-      constructor(t, e, i) {
-        this._coreBrowserService = t;
+      constructor(t2, e, i) {
+        this._coreBrowserService = t2;
         this._coreService = e;
         this._onTimeout = i;
         this._start = 0;
         this._end = 0;
         this._isBuffering = false;
       }
-      bufferRows(t, e) {
-        this._isBuffering ? (this._start = Math.min(this._start, t), this._end = Math.max(this._end, e)) : (this._start = t, this._end = e, this._isBuffering = true), this._timeout === void 0 && (this._timeout = this._coreBrowserService.window.setTimeout(() => {
+      bufferRows(t2, e) {
+        this._isBuffering ? (this._start = Math.min(this._start, t2), this._end = Math.max(this._end, e)) : (this._start = t2, this._end = e, this._isBuffering = true), this._timeout === void 0 && (this._timeout = this._coreBrowserService.window.setTimeout(() => {
           this._timeout = void 0, this._coreService.decPrivateModes.synchronizedOutput = false, this._onTimeout();
         }, 1e3));
       }
       flush() {
         if (this._timeout !== void 0 && (this._coreBrowserService.window.clearTimeout(this._timeout), this._timeout = void 0), !this._isBuffering) return;
-        let t = { start: this._start, end: this._end };
-        return this._isBuffering = false, t;
+        let t2 = { start: this._start, end: this._end };
+        return this._isBuffering = false, t2;
       }
       dispose() {
         this._timeout !== void 0 && (this._coreBrowserService.window.clearTimeout(this._timeout), this._timeout = void 0);
       }
     };
     on = class {
-      constructor(t) {
-        this._bufferService = t;
+      constructor(t2) {
+        this._bufferService = t2;
         this.isSelectAllActive = false;
         this.selectionStartLength = 0;
       }
@@ -4969,22 +4969,22 @@ ${h8.join(`
         if (this.isSelectAllActive) return [this._bufferService.cols, this._bufferService.buffer.ybase + this._bufferService.rows - 1];
         if (this.selectionStart) {
           if (!this.selectionEnd || this.areSelectionValuesReversed()) {
-            let t = this.selectionStart[0] + this.selectionStartLength;
-            return t > this._bufferService.cols ? t % this._bufferService.cols === 0 ? [this._bufferService.cols, this.selectionStart[1] + Math.floor(t / this._bufferService.cols) - 1] : [t % this._bufferService.cols, this.selectionStart[1] + Math.floor(t / this._bufferService.cols)] : [t, this.selectionStart[1]];
+            let t2 = this.selectionStart[0] + this.selectionStartLength;
+            return t2 > this._bufferService.cols ? t2 % this._bufferService.cols === 0 ? [this._bufferService.cols, this.selectionStart[1] + Math.floor(t2 / this._bufferService.cols) - 1] : [t2 % this._bufferService.cols, this.selectionStart[1] + Math.floor(t2 / this._bufferService.cols)] : [t2, this.selectionStart[1]];
           }
           if (this.selectionStartLength && this.selectionEnd[1] === this.selectionStart[1]) {
-            let t = this.selectionStart[0] + this.selectionStartLength;
-            return t > this._bufferService.cols ? [t % this._bufferService.cols, this.selectionStart[1] + Math.floor(t / this._bufferService.cols)] : [Math.max(t, this.selectionEnd[0]), this.selectionEnd[1]];
+            let t2 = this.selectionStart[0] + this.selectionStartLength;
+            return t2 > this._bufferService.cols ? [t2 % this._bufferService.cols, this.selectionStart[1] + Math.floor(t2 / this._bufferService.cols)] : [Math.max(t2, this.selectionEnd[0]), this.selectionEnd[1]];
           }
           return this.selectionEnd;
         }
       }
       areSelectionValuesReversed() {
-        let t = this.selectionStart, e = this.selectionEnd;
-        return !t || !e ? false : t[1] > e[1] || t[1] === e[1] && t[0] > e[0];
+        let t2 = this.selectionStart, e = this.selectionEnd;
+        return !t2 || !e ? false : t2[1] > e[1] || t2[1] === e[1] && t2[0] > e[0];
       }
-      handleTrim(t) {
-        return this.selectionStart && (this.selectionStart[1] -= t), this.selectionEnd && (this.selectionEnd[1] -= t), this.selectionEnd && this.selectionEnd[1] < 0 ? (this.clearSelection(), true) : (this.selectionStart && this.selectionStart[1] < 0 && (this.selectionStart[1] = 0), false);
+      handleTrim(t2) {
+        return this.selectionStart && (this.selectionStart[1] -= t2), this.selectionEnd && (this.selectionEnd[1] -= t2), this.selectionEnd && this.selectionEnd[1] < 0 ? (this.clearSelection(), true) : (this.selectionStart && this.selectionStart[1] < 0 && (this.selectionStart[1] = 0), false);
       }
     };
     Ds = 50, Ya = 15, ja = 50, Xa = 500, Za = " ", Ja = new RegExp(Za, "g");
@@ -5286,11 +5286,11 @@ ${h8.join(`
       constructor() {
         this._data = {};
       }
-      set(t, e, i) {
-        this._data[t] || (this._data[t] = {}), this._data[t][e] = i;
+      set(t2, e, i) {
+        this._data[t2] || (this._data[t2] = {}), this._data[t2][e] = i;
       }
-      get(t, e) {
-        return this._data[t] ? this._data[t][e] : void 0;
+      get(t2, e) {
+        return this._data[t2] ? this._data[t2][e] : void 0;
       }
       clear() {
         this._data = {};
@@ -5301,26 +5301,26 @@ ${h8.join(`
         this._color = new Hi();
         this._css = new Hi();
       }
-      setCss(t, e, i) {
-        this._css.set(t, e, i);
+      setCss(t2, e, i) {
+        this._css.set(t2, e, i);
       }
-      getCss(t, e) {
-        return this._css.get(t, e);
+      getCss(t2, e) {
+        return this._css.get(t2, e);
       }
-      setColor(t, e, i) {
-        this._color.set(t, e, i);
+      setColor(t2, e, i) {
+        this._color.set(t2, e, i);
       }
-      getColor(t, e) {
-        return this._color.get(t, e);
+      getColor(t2, e) {
+        return this._color.get(t2, e);
       }
       clear() {
         this._color.clear(), this._css.clear();
       }
     };
     re = Object.freeze((() => {
-      let s15 = [z.toColor("#2e3436"), z.toColor("#cc0000"), z.toColor("#4e9a06"), z.toColor("#c4a000"), z.toColor("#3465a4"), z.toColor("#75507b"), z.toColor("#06989a"), z.toColor("#d3d7cf"), z.toColor("#555753"), z.toColor("#ef2929"), z.toColor("#8ae234"), z.toColor("#fce94f"), z.toColor("#729fcf"), z.toColor("#ad7fa8"), z.toColor("#34e2e2"), z.toColor("#eeeeec")], t = [0, 95, 135, 175, 215, 255];
+      let s15 = [z.toColor("#2e3436"), z.toColor("#cc0000"), z.toColor("#4e9a06"), z.toColor("#c4a000"), z.toColor("#3465a4"), z.toColor("#75507b"), z.toColor("#06989a"), z.toColor("#d3d7cf"), z.toColor("#555753"), z.toColor("#ef2929"), z.toColor("#8ae234"), z.toColor("#fce94f"), z.toColor("#729fcf"), z.toColor("#ad7fa8"), z.toColor("#34e2e2"), z.toColor("#eeeeec")], t2 = [0, 95, 135, 175, 215, 255];
       for (let e = 0; e < 216; e++) {
-        let i = t[e / 36 % 6 | 0], r = t[e / 6 % 6 | 0], n = t[e % 6];
+        let i = t2[e / 36 % 6 | 0], r = t2[e / 6 % 6 | 0], n = t2[e % 6];
         s15.push({ css: j.toCss(i, r, n), rgba: j.toRgba(i, r, n) });
       }
       for (let e = 0; e < 24; e++) {
@@ -5381,44 +5381,44 @@ ${h8.join(`
     };
     ti = M([S(0, H)], ti);
     Rs = class {
-      constructor(...t) {
+      constructor(...t2) {
         this._entries = /* @__PURE__ */ new Map();
-        for (let [e, i] of t) this.set(e, i);
+        for (let [e, i] of t2) this.set(e, i);
       }
-      set(t, e) {
-        let i = this._entries.get(t);
-        return this._entries.set(t, e), i;
+      set(t2, e) {
+        let i = this._entries.get(t2);
+        return this._entries.set(t2, e), i;
       }
-      forEach(t) {
-        for (let [e, i] of this._entries.entries()) t(e, i);
+      forEach(t2) {
+        for (let [e, i] of this._entries.entries()) t2(e, i);
       }
-      has(t) {
-        return this._entries.has(t);
+      has(t2) {
+        return this._entries.has(t2);
       }
-      get(t) {
-        return this._entries.get(t);
+      get(t2) {
+        return this._entries.get(t2);
       }
     }, ln = class {
       constructor() {
         this._services = new Rs();
         this._services.set(xt, this);
       }
-      setService(t, e) {
-        this._services.set(t, e);
+      setService(t2, e) {
+        this._services.set(t2, e);
       }
-      getService(t) {
-        return this._services.get(t);
+      getService(t2) {
+        return this._services.get(t2);
       }
-      createInstance(t, ...e) {
-        let i = Xs(t).sort((o, l) => o.index - l.index), r = [];
+      createInstance(t2, ...e) {
+        let i = Xs(t2).sort((o, l) => o.index - l.index), r = [];
         for (let o of i) {
           let l = this._services.get(o.id);
-          if (!l) throw new Error(`[createInstance] ${t.name} depends on UNKNOWN service ${o.id._id}.`);
+          if (!l) throw new Error(`[createInstance] ${t2.name} depends on UNKNOWN service ${o.id._id}.`);
           r.push(l);
         }
         let n = i.length > 0 ? i[0].index : e.length;
-        if (e.length !== n) throw new Error(`[createInstance] First service dependency of ${t.name} at position ${n + 1} conflicts with ${e.length} static arguments`);
-        return new t(...e, ...r);
+        if (e.length !== n) throw new Error(`[createInstance] First service dependency of ${t2.name} at position ${n + 1} conflicts with ${e.length} static arguments`);
+        return new t2(...e, ...r);
       }
     };
     ec = { trace: 0, debug: 1, info: 2, warn: 3, error: 4, off: 5 }, tc = "xterm.js: ", ii = class extends D {
@@ -5536,167 +5536,167 @@ ${h8.join(`
     };
     B = 3;
     X = Object.freeze(new De()), an = 0, Ls = 2, Ze = class s12 {
-      constructor(t, e, i = false) {
+      constructor(t2, e, i = false) {
         this.isWrapped = i;
         this._combined = {};
         this._extendedAttrs = {};
-        this._data = new Uint32Array(t * B);
+        this._data = new Uint32Array(t2 * B);
         let r = e || q.fromCharData([0, ir, 1, 0]);
-        for (let n = 0; n < t; ++n) this.setCell(n, r);
-        this.length = t;
+        for (let n = 0; n < t2; ++n) this.setCell(n, r);
+        this.length = t2;
       }
-      get(t) {
-        let e = this._data[t * B + 0], i = e & 2097151;
-        return [this._data[t * B + 1], e & 2097152 ? this._combined[t] : i ? Ce(i) : "", e >> 22, e & 2097152 ? this._combined[t].charCodeAt(this._combined[t].length - 1) : i];
+      get(t2) {
+        let e = this._data[t2 * B + 0], i = e & 2097151;
+        return [this._data[t2 * B + 1], e & 2097152 ? this._combined[t2] : i ? Ce(i) : "", e >> 22, e & 2097152 ? this._combined[t2].charCodeAt(this._combined[t2].length - 1) : i];
       }
-      set(t, e) {
-        this._data[t * B + 1] = e[0], e[1].length > 1 ? (this._combined[t] = e[1], this._data[t * B + 0] = t | 2097152 | e[2] << 22) : this._data[t * B + 0] = e[1].charCodeAt(0) | e[2] << 22;
+      set(t2, e) {
+        this._data[t2 * B + 1] = e[0], e[1].length > 1 ? (this._combined[t2] = e[1], this._data[t2 * B + 0] = t2 | 2097152 | e[2] << 22) : this._data[t2 * B + 0] = e[1].charCodeAt(0) | e[2] << 22;
       }
-      getWidth(t) {
-        return this._data[t * B + 0] >> 22;
+      getWidth(t2) {
+        return this._data[t2 * B + 0] >> 22;
       }
-      hasWidth(t) {
-        return this._data[t * B + 0] & 12582912;
+      hasWidth(t2) {
+        return this._data[t2 * B + 0] & 12582912;
       }
-      getFg(t) {
-        return this._data[t * B + 1];
+      getFg(t2) {
+        return this._data[t2 * B + 1];
       }
-      getBg(t) {
-        return this._data[t * B + 2];
+      getBg(t2) {
+        return this._data[t2 * B + 2];
       }
-      hasContent(t) {
-        return this._data[t * B + 0] & 4194303;
+      hasContent(t2) {
+        return this._data[t2 * B + 0] & 4194303;
       }
-      getCodePoint(t) {
-        let e = this._data[t * B + 0];
-        return e & 2097152 ? this._combined[t].charCodeAt(this._combined[t].length - 1) : e & 2097151;
+      getCodePoint(t2) {
+        let e = this._data[t2 * B + 0];
+        return e & 2097152 ? this._combined[t2].charCodeAt(this._combined[t2].length - 1) : e & 2097151;
       }
-      isCombined(t) {
-        return this._data[t * B + 0] & 2097152;
+      isCombined(t2) {
+        return this._data[t2 * B + 0] & 2097152;
       }
-      getString(t) {
-        let e = this._data[t * B + 0];
-        return e & 2097152 ? this._combined[t] : e & 2097151 ? Ce(e & 2097151) : "";
+      getString(t2) {
+        let e = this._data[t2 * B + 0];
+        return e & 2097152 ? this._combined[t2] : e & 2097151 ? Ce(e & 2097151) : "";
       }
-      isProtected(t) {
-        return this._data[t * B + 2] & 536870912;
+      isProtected(t2) {
+        return this._data[t2 * B + 2] & 536870912;
       }
-      loadCell(t, e) {
-        return an = t * B, e.content = this._data[an + 0], e.fg = this._data[an + 1], e.bg = this._data[an + 2], e.content & 2097152 && (e.combinedData = this._combined[t]), e.bg & 268435456 && (e.extended = this._extendedAttrs[t]), e;
+      loadCell(t2, e) {
+        return an = t2 * B, e.content = this._data[an + 0], e.fg = this._data[an + 1], e.bg = this._data[an + 2], e.content & 2097152 && (e.combinedData = this._combined[t2]), e.bg & 268435456 && (e.extended = this._extendedAttrs[t2]), e;
       }
-      setCell(t, e) {
-        e.content & 2097152 && (this._combined[t] = e.combinedData), e.bg & 268435456 && (this._extendedAttrs[t] = e.extended), this._data[t * B + 0] = e.content, this._data[t * B + 1] = e.fg, this._data[t * B + 2] = e.bg;
+      setCell(t2, e) {
+        e.content & 2097152 && (this._combined[t2] = e.combinedData), e.bg & 268435456 && (this._extendedAttrs[t2] = e.extended), this._data[t2 * B + 0] = e.content, this._data[t2 * B + 1] = e.fg, this._data[t2 * B + 2] = e.bg;
       }
-      setCellFromCodepoint(t, e, i, r) {
-        r.bg & 268435456 && (this._extendedAttrs[t] = r.extended), this._data[t * B + 0] = e | i << 22, this._data[t * B + 1] = r.fg, this._data[t * B + 2] = r.bg;
+      setCellFromCodepoint(t2, e, i, r) {
+        r.bg & 268435456 && (this._extendedAttrs[t2] = r.extended), this._data[t2 * B + 0] = e | i << 22, this._data[t2 * B + 1] = r.fg, this._data[t2 * B + 2] = r.bg;
       }
-      addCodepointToCell(t, e, i) {
-        let r = this._data[t * B + 0];
-        r & 2097152 ? this._combined[t] += Ce(e) : r & 2097151 ? (this._combined[t] = Ce(r & 2097151) + Ce(e), r &= -2097152, r |= 2097152) : r = e | 1 << 22, i && (r &= -12582913, r |= i << 22), this._data[t * B + 0] = r;
+      addCodepointToCell(t2, e, i) {
+        let r = this._data[t2 * B + 0];
+        r & 2097152 ? this._combined[t2] += Ce(e) : r & 2097151 ? (this._combined[t2] = Ce(r & 2097151) + Ce(e), r &= -2097152, r |= 2097152) : r = e | 1 << 22, i && (r &= -12582913, r |= i << 22), this._data[t2 * B + 0] = r;
       }
-      insertCells(t, e, i) {
-        if (t %= this.length, t && this.getWidth(t - 1) === 2 && this.setCellFromCodepoint(t - 1, 0, 1, i), e < this.length - t) {
+      insertCells(t2, e, i) {
+        if (t2 %= this.length, t2 && this.getWidth(t2 - 1) === 2 && this.setCellFromCodepoint(t2 - 1, 0, 1, i), e < this.length - t2) {
           let r = new q();
-          for (let n = this.length - t - e - 1; n >= 0; --n) this.setCell(t + e + n, this.loadCell(t + n, r));
-          for (let n = 0; n < e; ++n) this.setCell(t + n, i);
-        } else for (let r = t; r < this.length; ++r) this.setCell(r, i);
+          for (let n = this.length - t2 - e - 1; n >= 0; --n) this.setCell(t2 + e + n, this.loadCell(t2 + n, r));
+          for (let n = 0; n < e; ++n) this.setCell(t2 + n, i);
+        } else for (let r = t2; r < this.length; ++r) this.setCell(r, i);
         this.getWidth(this.length - 1) === 2 && this.setCellFromCodepoint(this.length - 1, 0, 1, i);
       }
-      deleteCells(t, e, i) {
-        if (t %= this.length, e < this.length - t) {
+      deleteCells(t2, e, i) {
+        if (t2 %= this.length, e < this.length - t2) {
           let r = new q();
-          for (let n = 0; n < this.length - t - e; ++n) this.setCell(t + n, this.loadCell(t + e + n, r));
+          for (let n = 0; n < this.length - t2 - e; ++n) this.setCell(t2 + n, this.loadCell(t2 + e + n, r));
           for (let n = this.length - e; n < this.length; ++n) this.setCell(n, i);
-        } else for (let r = t; r < this.length; ++r) this.setCell(r, i);
-        t && this.getWidth(t - 1) === 2 && this.setCellFromCodepoint(t - 1, 0, 1, i), this.getWidth(t) === 0 && !this.hasContent(t) && this.setCellFromCodepoint(t, 0, 1, i);
+        } else for (let r = t2; r < this.length; ++r) this.setCell(r, i);
+        t2 && this.getWidth(t2 - 1) === 2 && this.setCellFromCodepoint(t2 - 1, 0, 1, i), this.getWidth(t2) === 0 && !this.hasContent(t2) && this.setCellFromCodepoint(t2, 0, 1, i);
       }
-      replaceCells(t, e, i, r = false) {
+      replaceCells(t2, e, i, r = false) {
         if (r) {
-          for (t && this.getWidth(t - 1) === 2 && !this.isProtected(t - 1) && this.setCellFromCodepoint(t - 1, 0, 1, i), e < this.length && this.getWidth(e - 1) === 2 && !this.isProtected(e) && this.setCellFromCodepoint(e, 0, 1, i); t < e && t < this.length; ) this.isProtected(t) || this.setCell(t, i), t++;
+          for (t2 && this.getWidth(t2 - 1) === 2 && !this.isProtected(t2 - 1) && this.setCellFromCodepoint(t2 - 1, 0, 1, i), e < this.length && this.getWidth(e - 1) === 2 && !this.isProtected(e) && this.setCellFromCodepoint(e, 0, 1, i); t2 < e && t2 < this.length; ) this.isProtected(t2) || this.setCell(t2, i), t2++;
           return;
         }
-        for (t && this.getWidth(t - 1) === 2 && this.setCellFromCodepoint(t - 1, 0, 1, i), e < this.length && this.getWidth(e - 1) === 2 && this.setCellFromCodepoint(e, 0, 1, i); t < e && t < this.length; ) this.setCell(t++, i);
+        for (t2 && this.getWidth(t2 - 1) === 2 && this.setCellFromCodepoint(t2 - 1, 0, 1, i), e < this.length && this.getWidth(e - 1) === 2 && this.setCellFromCodepoint(e, 0, 1, i); t2 < e && t2 < this.length; ) this.setCell(t2++, i);
       }
-      resize(t, e) {
-        if (t === this.length) return this._data.length * 4 * Ls < this._data.buffer.byteLength;
-        let i = t * B;
-        if (t > this.length) {
+      resize(t2, e) {
+        if (t2 === this.length) return this._data.length * 4 * Ls < this._data.buffer.byteLength;
+        let i = t2 * B;
+        if (t2 > this.length) {
           if (this._data.buffer.byteLength >= i * 4) this._data = new Uint32Array(this._data.buffer, 0, i);
           else {
             let r = new Uint32Array(i);
             r.set(this._data), this._data = r;
           }
-          for (let r = this.length; r < t; ++r) this.setCell(r, e);
+          for (let r = this.length; r < t2; ++r) this.setCell(r, e);
         } else {
           this._data = this._data.subarray(0, i);
           let r = Object.keys(this._combined);
           for (let o = 0; o < r.length; o++) {
             let l = parseInt(r[o], 10);
-            l >= t && delete this._combined[l];
+            l >= t2 && delete this._combined[l];
           }
           let n = Object.keys(this._extendedAttrs);
           for (let o = 0; o < n.length; o++) {
             let l = parseInt(n[o], 10);
-            l >= t && delete this._extendedAttrs[l];
+            l >= t2 && delete this._extendedAttrs[l];
           }
         }
-        return this.length = t, i * 4 * Ls < this._data.buffer.byteLength;
+        return this.length = t2, i * 4 * Ls < this._data.buffer.byteLength;
       }
       cleanupMemory() {
         if (this._data.length * 4 * Ls < this._data.buffer.byteLength) {
-          let t = new Uint32Array(this._data.length);
-          return t.set(this._data), this._data = t, 1;
+          let t2 = new Uint32Array(this._data.length);
+          return t2.set(this._data), this._data = t2, 1;
         }
         return 0;
       }
-      fill(t, e = false) {
+      fill(t2, e = false) {
         if (e) {
-          for (let i = 0; i < this.length; ++i) this.isProtected(i) || this.setCell(i, t);
+          for (let i = 0; i < this.length; ++i) this.isProtected(i) || this.setCell(i, t2);
           return;
         }
         this._combined = {}, this._extendedAttrs = {};
-        for (let i = 0; i < this.length; ++i) this.setCell(i, t);
+        for (let i = 0; i < this.length; ++i) this.setCell(i, t2);
       }
-      copyFrom(t) {
-        this.length !== t.length ? this._data = new Uint32Array(t._data) : this._data.set(t._data), this.length = t.length, this._combined = {};
-        for (let e in t._combined) this._combined[e] = t._combined[e];
+      copyFrom(t2) {
+        this.length !== t2.length ? this._data = new Uint32Array(t2._data) : this._data.set(t2._data), this.length = t2.length, this._combined = {};
+        for (let e in t2._combined) this._combined[e] = t2._combined[e];
         this._extendedAttrs = {};
-        for (let e in t._extendedAttrs) this._extendedAttrs[e] = t._extendedAttrs[e];
-        this.isWrapped = t.isWrapped;
+        for (let e in t2._extendedAttrs) this._extendedAttrs[e] = t2._extendedAttrs[e];
+        this.isWrapped = t2.isWrapped;
       }
       clone() {
-        let t = new s12(0);
-        t._data = new Uint32Array(this._data), t.length = this.length;
-        for (let e in this._combined) t._combined[e] = this._combined[e];
-        for (let e in this._extendedAttrs) t._extendedAttrs[e] = this._extendedAttrs[e];
-        return t.isWrapped = this.isWrapped, t;
+        let t2 = new s12(0);
+        t2._data = new Uint32Array(this._data), t2.length = this.length;
+        for (let e in this._combined) t2._combined[e] = this._combined[e];
+        for (let e in this._extendedAttrs) t2._extendedAttrs[e] = this._extendedAttrs[e];
+        return t2.isWrapped = this.isWrapped, t2;
       }
       getTrimmedLength() {
-        for (let t = this.length - 1; t >= 0; --t) if (this._data[t * B + 0] & 4194303) return t + (this._data[t * B + 0] >> 22);
+        for (let t2 = this.length - 1; t2 >= 0; --t2) if (this._data[t2 * B + 0] & 4194303) return t2 + (this._data[t2 * B + 0] >> 22);
         return 0;
       }
       getNoBgTrimmedLength() {
-        for (let t = this.length - 1; t >= 0; --t) if (this._data[t * B + 0] & 4194303 || this._data[t * B + 2] & 50331648) return t + (this._data[t * B + 0] >> 22);
+        for (let t2 = this.length - 1; t2 >= 0; --t2) if (this._data[t2 * B + 0] & 4194303 || this._data[t2 * B + 2] & 50331648) return t2 + (this._data[t2 * B + 0] >> 22);
         return 0;
       }
-      copyCellsFrom(t, e, i, r, n) {
-        let o = t._data;
+      copyCellsFrom(t2, e, i, r, n) {
+        let o = t2._data;
         if (n) for (let a = r - 1; a >= 0; a--) {
           for (let u = 0; u < B; u++) this._data[(i + a) * B + u] = o[(e + a) * B + u];
-          o[(e + a) * B + 2] & 268435456 && (this._extendedAttrs[i + a] = t._extendedAttrs[e + a]);
+          o[(e + a) * B + 2] & 268435456 && (this._extendedAttrs[i + a] = t2._extendedAttrs[e + a]);
         }
         else for (let a = 0; a < r; a++) {
           for (let u = 0; u < B; u++) this._data[(i + a) * B + u] = o[(e + a) * B + u];
-          o[(e + a) * B + 2] & 268435456 && (this._extendedAttrs[i + a] = t._extendedAttrs[e + a]);
+          o[(e + a) * B + 2] & 268435456 && (this._extendedAttrs[i + a] = t2._extendedAttrs[e + a]);
         }
-        let l = Object.keys(t._combined);
+        let l = Object.keys(t2._combined);
         for (let a = 0; a < l.length; a++) {
           let u = parseInt(l[a], 10);
-          u >= e && (this._combined[u - e + i] = t._combined[u]);
+          u >= e && (this._combined[u - e + i] = t2._combined[u]);
         }
       }
-      translateToString(t, e, i, r) {
-        e = e ?? 0, i = i ?? this.length, t && (i = Math.min(i, this.getTrimmedLength())), r && (r.length = 0);
+      translateToString(t2, e, i, r) {
+        e = e ?? 0, i = i ?? this.length, t2 && (i = Math.min(i, this.getTrimmedLength())), r && (r.length = 0);
         let n = "";
         for (; e < i; ) {
           let o = this._data[e * B + 0], l = o & 2097151, a = o & 2097152 ? this._combined[e] : l ? Ce(l) : we;
@@ -5707,8 +5707,8 @@ ${h8.join(`
       }
     };
     un = class un2 {
-      constructor(t) {
-        this.line = t;
+      constructor(t2) {
+        this.line = t2;
         this.isDisposed = false;
         this._disposables = [];
         this._id = un2._nextId++;
@@ -5721,8 +5721,8 @@ ${h8.join(`
       dispose() {
         this.isDisposed || (this.isDisposed = true, this.line = -1, this._onDispose.fire(), Ne(this._disposables), this._disposables.length = 0);
       }
-      register(t) {
-        return this._disposables.push(t), t;
+      register(t2) {
+        return this._disposables.push(t2), t2;
       }
     };
     un._nextId = 1;
@@ -5742,8 +5742,8 @@ ${h8.join(`
     ne.H = ne[7] = { "@": "É", "[": "Ä", "\\": "Ö", "]": "Å", "^": "Ü", "`": "é", "{": "ä", "|": "ö", "}": "å", "~": "ü" };
     ne["="] = { "#": "ù", "@": "à", "[": "é", "\\": "ç", "]": "ê", "^": "î", _: "è", "`": "ô", "{": "ä", "|": "ö", "}": "ü", "~": "û" };
     cl = 4294967295, $i = class {
-      constructor(t, e, i) {
-        this._hasScrollback = t;
+      constructor(t2, e, i) {
+        this._hasScrollback = t2;
         this._optionsService = e;
         this._bufferService = i;
         this.ydisp = 0;
@@ -5763,14 +5763,14 @@ ${h8.join(`
         this._memoryCleanupPosition = 0;
         this._cols = this._bufferService.cols, this._rows = this._bufferService.rows, this.lines = new zi(this._getCorrectBufferLength(this._rows)), this.scrollTop = 0, this.scrollBottom = this._rows - 1, this.setupTabStops();
       }
-      getNullCell(t) {
-        return t ? (this._nullCell.fg = t.fg, this._nullCell.bg = t.bg, this._nullCell.extended = t.extended) : (this._nullCell.fg = 0, this._nullCell.bg = 0, this._nullCell.extended = new rt()), this._nullCell;
+      getNullCell(t2) {
+        return t2 ? (this._nullCell.fg = t2.fg, this._nullCell.bg = t2.bg, this._nullCell.extended = t2.extended) : (this._nullCell.fg = 0, this._nullCell.bg = 0, this._nullCell.extended = new rt()), this._nullCell;
       }
-      getWhitespaceCell(t) {
-        return t ? (this._whitespaceCell.fg = t.fg, this._whitespaceCell.bg = t.bg, this._whitespaceCell.extended = t.extended) : (this._whitespaceCell.fg = 0, this._whitespaceCell.bg = 0, this._whitespaceCell.extended = new rt()), this._whitespaceCell;
+      getWhitespaceCell(t2) {
+        return t2 ? (this._whitespaceCell.fg = t2.fg, this._whitespaceCell.bg = t2.bg, this._whitespaceCell.extended = t2.extended) : (this._whitespaceCell.fg = 0, this._whitespaceCell.bg = 0, this._whitespaceCell.extended = new rt()), this._whitespaceCell;
       }
-      getBlankLine(t, e) {
-        return new Ze(this._bufferService.cols, this.getNullCell(t), e);
+      getBlankLine(t2, e) {
+        return new Ze(this._bufferService.cols, this.getNullCell(t2), e);
       }
       get hasScrollback() {
         return this._hasScrollback && this.lines.maxLength > this._rows;
@@ -5779,75 +5779,75 @@ ${h8.join(`
         let e = this.ybase + this.y - this.ydisp;
         return e >= 0 && e < this._rows;
       }
-      _getCorrectBufferLength(t) {
-        if (!this._hasScrollback) return t;
-        let e = t + this._optionsService.rawOptions.scrollback;
+      _getCorrectBufferLength(t2) {
+        if (!this._hasScrollback) return t2;
+        let e = t2 + this._optionsService.rawOptions.scrollback;
         return e > cl ? cl : e;
       }
-      fillViewportRows(t) {
+      fillViewportRows(t2) {
         if (this.lines.length === 0) {
-          t === void 0 && (t = X);
+          t2 === void 0 && (t2 = X);
           let e = this._rows;
-          for (; e--; ) this.lines.push(this.getBlankLine(t));
+          for (; e--; ) this.lines.push(this.getBlankLine(t2));
         }
       }
       clear() {
         this.ydisp = 0, this.ybase = 0, this.y = 0, this.x = 0, this.lines = new zi(this._getCorrectBufferLength(this._rows)), this.scrollTop = 0, this.scrollBottom = this._rows - 1, this.setupTabStops();
       }
-      resize(t, e) {
+      resize(t2, e) {
         let i = this.getNullCell(X), r = 0, n = this._getCorrectBufferLength(e);
         if (n > this.lines.maxLength && (this.lines.maxLength = n), this.lines.length > 0) {
-          if (this._cols < t) for (let l = 0; l < this.lines.length; l++) r += +this.lines.get(l).resize(t, i);
+          if (this._cols < t2) for (let l = 0; l < this.lines.length; l++) r += +this.lines.get(l).resize(t2, i);
           let o = 0;
-          if (this._rows < e) for (let l = this._rows; l < e; l++) this.lines.length < e + this.ybase && (this._optionsService.rawOptions.windowsMode || this._optionsService.rawOptions.windowsPty.backend !== void 0 || this._optionsService.rawOptions.windowsPty.buildNumber !== void 0 ? this.lines.push(new Ze(t, i)) : this.ybase > 0 && this.lines.length <= this.ybase + this.y + o + 1 ? (this.ybase--, o++, this.ydisp > 0 && this.ydisp--) : this.lines.push(new Ze(t, i)));
+          if (this._rows < e) for (let l = this._rows; l < e; l++) this.lines.length < e + this.ybase && (this._optionsService.rawOptions.windowsMode || this._optionsService.rawOptions.windowsPty.backend !== void 0 || this._optionsService.rawOptions.windowsPty.buildNumber !== void 0 ? this.lines.push(new Ze(t2, i)) : this.ybase > 0 && this.lines.length <= this.ybase + this.y + o + 1 ? (this.ybase--, o++, this.ydisp > 0 && this.ydisp--) : this.lines.push(new Ze(t2, i)));
           else for (let l = this._rows; l > e; l--) this.lines.length > e + this.ybase && (this.lines.length > this.ybase + this.y + 1 ? this.lines.pop() : (this.ybase++, this.ydisp++));
           if (n < this.lines.maxLength) {
             let l = this.lines.length - n;
             l > 0 && (this.lines.trimStart(l), this.ybase = Math.max(this.ybase - l, 0), this.ydisp = Math.max(this.ydisp - l, 0), this.savedY = Math.max(this.savedY - l, 0)), this.lines.maxLength = n;
           }
-          this.x = Math.min(this.x, t - 1), this.y = Math.min(this.y, e - 1), o && (this.y += o), this.savedX = Math.min(this.savedX, t - 1), this.scrollTop = 0;
+          this.x = Math.min(this.x, t2 - 1), this.y = Math.min(this.y, e - 1), o && (this.y += o), this.savedX = Math.min(this.savedX, t2 - 1), this.scrollTop = 0;
         }
-        if (this.scrollBottom = e - 1, this._isReflowEnabled && (this._reflow(t, e), this._cols > t)) for (let o = 0; o < this.lines.length; o++) r += +this.lines.get(o).resize(t, i);
-        this._cols = t, this._rows = e, this._memoryCleanupQueue.clear(), r > 0.1 * this.lines.length && (this._memoryCleanupPosition = 0, this._memoryCleanupQueue.enqueue(() => this._batchedMemoryCleanup()));
+        if (this.scrollBottom = e - 1, this._isReflowEnabled && (this._reflow(t2, e), this._cols > t2)) for (let o = 0; o < this.lines.length; o++) r += +this.lines.get(o).resize(t2, i);
+        this._cols = t2, this._rows = e, this._memoryCleanupQueue.clear(), r > 0.1 * this.lines.length && (this._memoryCleanupPosition = 0, this._memoryCleanupQueue.enqueue(() => this._batchedMemoryCleanup()));
       }
       _batchedMemoryCleanup() {
-        let t = true;
-        this._memoryCleanupPosition >= this.lines.length && (this._memoryCleanupPosition = 0, t = false);
+        let t2 = true;
+        this._memoryCleanupPosition >= this.lines.length && (this._memoryCleanupPosition = 0, t2 = false);
         let e = 0;
         for (; this._memoryCleanupPosition < this.lines.length; ) if (e += this.lines.get(this._memoryCleanupPosition++).cleanupMemory(), e > 100) return true;
-        return t;
+        return t2;
       }
       get _isReflowEnabled() {
-        let t = this._optionsService.rawOptions.windowsPty;
-        return t && t.buildNumber ? this._hasScrollback && t.backend === "conpty" && t.buildNumber >= 21376 : this._hasScrollback && !this._optionsService.rawOptions.windowsMode;
+        let t2 = this._optionsService.rawOptions.windowsPty;
+        return t2 && t2.buildNumber ? this._hasScrollback && t2.backend === "conpty" && t2.buildNumber >= 21376 : this._hasScrollback && !this._optionsService.rawOptions.windowsMode;
       }
-      _reflow(t, e) {
-        this._cols !== t && (t > this._cols ? this._reflowLarger(t, e) : this._reflowSmaller(t, e));
+      _reflow(t2, e) {
+        this._cols !== t2 && (t2 > this._cols ? this._reflowLarger(t2, e) : this._reflowSmaller(t2, e));
       }
-      _reflowLarger(t, e) {
-        let i = this._optionsService.rawOptions.reflowCursorLine, r = sl(this.lines, this._cols, t, this.ybase + this.y, this.getNullCell(X), i);
+      _reflowLarger(t2, e) {
+        let i = this._optionsService.rawOptions.reflowCursorLine, r = sl(this.lines, this._cols, t2, this.ybase + this.y, this.getNullCell(X), i);
         if (r.length > 0) {
           let n = ol(this.lines, r);
-          ll(this.lines, n.layout), this._reflowLargerAdjustViewport(t, e, n.countRemoved);
+          ll(this.lines, n.layout), this._reflowLargerAdjustViewport(t2, e, n.countRemoved);
         }
       }
-      _reflowLargerAdjustViewport(t, e, i) {
+      _reflowLargerAdjustViewport(t2, e, i) {
         let r = this.getNullCell(X), n = i;
-        for (; n-- > 0; ) this.ybase === 0 ? (this.y > 0 && this.y--, this.lines.length < e && this.lines.push(new Ze(t, r))) : (this.ydisp === this.ybase && this.ydisp--, this.ybase--);
+        for (; n-- > 0; ) this.ybase === 0 ? (this.y > 0 && this.y--, this.lines.length < e && this.lines.push(new Ze(t2, r))) : (this.ydisp === this.ybase && this.ydisp--, this.ybase--);
         this.savedY = Math.max(this.savedY - i, 0);
       }
-      _reflowSmaller(t, e) {
+      _reflowSmaller(t2, e) {
         let i = this._optionsService.rawOptions.reflowCursorLine, r = this.getNullCell(X), n = [], o = 0;
         for (let l = this.lines.length - 1; l >= 0; l--) {
           let a = this.lines.get(l);
-          if (!a || !a.isWrapped && a.getTrimmedLength() <= t) continue;
+          if (!a || !a.isWrapped && a.getTrimmedLength() <= t2) continue;
           let u = [a];
           for (; a.isWrapped && l > 0; ) a = this.lines.get(--l), u.unshift(a);
           if (!i) {
             let I = this.ybase + this.y;
             if (I >= l && I < l + u.length) continue;
           }
-          let h8 = u[u.length - 1].getTrimmedLength(), c = al(u, this._cols, t), d = c.length - u.length, _;
+          let h8 = u[u.length - 1].getTrimmedLength(), c = al(u, this._cols, t2), d = c.length - u.length, _;
           this.ybase === 0 && this.y !== this.lines.length - 1 ? _ = Math.max(0, this.y - this.lines.maxLength + d) : _ = Math.max(0, this.lines.length - this.lines.maxLength + d);
           let p = [];
           for (let I = 0; I < d; I++) {
@@ -5867,7 +5867,7 @@ ${h8.join(`
               R = ri(u, k, this._cols);
             }
           }
-          for (let I = 0; I < u.length; I++) c[I] < t && u[I].setCell(c[I], r);
+          for (let I = 0; I < u.length; I++) c[I] < t2 && u[I].setCell(c[I], r);
           let O = d - _;
           for (; O-- > 0; ) this.ybase === 0 ? this.y < e - 1 ? (this.y++, this.lines.pop()) : (this.ybase++, this.ydisp++) : this.ybase < Math.min(this.lines.maxLength, this.lines.length + o) - e && (this.ybase === this.ydisp && this.ydisp++, this.ybase++);
           this.savedY = Math.min(this.savedY + d, this.ybase + e - 1);
@@ -5888,39 +5888,39 @@ ${h8.join(`
           m > 0 && this.lines.onTrimEmitter.fire(m);
         }
       }
-      translateBufferLineToString(t, e, i = 0, r) {
-        let n = this.lines.get(t);
+      translateBufferLineToString(t2, e, i = 0, r) {
+        let n = this.lines.get(t2);
         return n ? n.translateToString(e, i, r) : "";
       }
-      getWrappedRangeForLine(t) {
-        let e = t, i = t;
+      getWrappedRangeForLine(t2) {
+        let e = t2, i = t2;
         for (; e > 0 && this.lines.get(e).isWrapped; ) e--;
         for (; i + 1 < this.lines.length && this.lines.get(i + 1).isWrapped; ) i++;
         return { first: e, last: i };
       }
-      setupTabStops(t) {
-        for (t != null ? this.tabs[t] || (t = this.prevStop(t)) : (this.tabs = {}, t = 0); t < this._cols; t += this._optionsService.rawOptions.tabStopWidth) this.tabs[t] = true;
+      setupTabStops(t2) {
+        for (t2 != null ? this.tabs[t2] || (t2 = this.prevStop(t2)) : (this.tabs = {}, t2 = 0); t2 < this._cols; t2 += this._optionsService.rawOptions.tabStopWidth) this.tabs[t2] = true;
       }
-      prevStop(t) {
-        for (t == null && (t = this.x); !this.tabs[--t] && t > 0; ) ;
-        return t >= this._cols ? this._cols - 1 : t < 0 ? 0 : t;
+      prevStop(t2) {
+        for (t2 == null && (t2 = this.x); !this.tabs[--t2] && t2 > 0; ) ;
+        return t2 >= this._cols ? this._cols - 1 : t2 < 0 ? 0 : t2;
       }
-      nextStop(t) {
-        for (t == null && (t = this.x); !this.tabs[++t] && t < this._cols; ) ;
-        return t >= this._cols ? this._cols - 1 : t < 0 ? 0 : t;
+      nextStop(t2) {
+        for (t2 == null && (t2 = this.x); !this.tabs[++t2] && t2 < this._cols; ) ;
+        return t2 >= this._cols ? this._cols - 1 : t2 < 0 ? 0 : t2;
       }
-      clearMarkers(t) {
+      clearMarkers(t2) {
         this._isClearing = true;
-        for (let e = 0; e < this.markers.length; e++) this.markers[e].line === t && (this.markers[e].dispose(), this.markers.splice(e--, 1));
+        for (let e = 0; e < this.markers.length; e++) this.markers[e].line === t2 && (this.markers[e].dispose(), this.markers.splice(e--, 1));
         this._isClearing = false;
       }
       clearAllMarkers() {
         this._isClearing = true;
-        for (let t = 0; t < this.markers.length; t++) this.markers[t].dispose();
+        for (let t2 = 0; t2 < this.markers.length; t2++) this.markers[t2].dispose();
         this.markers.length = 0, this._isClearing = false;
       }
-      addMarker(t) {
-        let e = new cn(t);
+      addMarker(t2) {
+        let e = new cn(t2);
         return this.markers.push(e), e.register(this.lines.onTrim((i) => {
           e.line -= i, e.line < 0 && e.dispose();
         })), e.register(this.lines.onInsert((i) => {
@@ -5929,8 +5929,8 @@ ${h8.join(`
           e.line >= i.index && e.line < i.index + i.amount && e.dispose(), e.line > i.index && (e.line -= i.amount);
         })), e.register(e.onDispose(() => this._removeMarker(e))), e;
       }
-      _removeMarker(t) {
-        this._isClearing || this.markers.splice(this.markers.indexOf(t), 1);
+      _removeMarker(t2) {
+        this._isClearing || this.markers.splice(this.markers.indexOf(t2), 1);
       }
     };
     hn = class extends D {
@@ -6125,14 +6125,14 @@ ${h8.join(`
     li = M([S(0, F), S(1, nr), S(2, H)], li);
     dl = { NONE: { events: 0, restrict: () => false }, X10: { events: 1, restrict: (s15) => s15.button === 4 || s15.action !== 1 ? false : (s15.ctrl = false, s15.alt = false, s15.shift = false, true) }, VT200: { events: 19, restrict: (s15) => s15.action !== 32 }, DRAG: { events: 23, restrict: (s15) => !(s15.action === 32 && s15.button === 3) }, ANY: { events: 31, restrict: (s15) => true } };
     Ps = String.fromCharCode, fl = { DEFAULT: (s15) => {
-      let t = [Ms(s15, false) + 32, s15.col + 32, s15.row + 32];
-      return t[0] > 255 || t[1] > 255 || t[2] > 255 ? "" : `\x1B[M${Ps(t[0])}${Ps(t[1])}${Ps(t[2])}`;
+      let t2 = [Ms(s15, false) + 32, s15.col + 32, s15.row + 32];
+      return t2[0] > 255 || t2[1] > 255 || t2[2] > 255 ? "" : `\x1B[M${Ps(t2[0])}${Ps(t2[1])}${Ps(t2[2])}`;
     }, SGR: (s15) => {
-      let t = s15.action === 0 && s15.button !== 4 ? "m" : "M";
-      return `\x1B[<${Ms(s15, true)};${s15.col};${s15.row}${t}`;
+      let t2 = s15.action === 0 && s15.button !== 4 ? "m" : "M";
+      return `\x1B[<${Ms(s15, true)};${s15.col};${s15.row}${t2}`;
     }, SGR_PIXELS: (s15) => {
-      let t = s15.action === 0 && s15.button !== 4 ? "m" : "M";
-      return `\x1B[<${Ms(s15, true)};${s15.x};${s15.y}${t}`;
+      let t2 = s15.action === 0 && s15.button !== 4 ? "m" : "M";
+      return `\x1B[<${Ms(s15, true)};${s15.x};${s15.y}${t2}`;
     } }, ai = class extends D {
       constructor(e, i, r) {
         super();
@@ -6207,14 +6207,14 @@ ${h8.join(`
         this.version = "6";
         if (!se) {
           se = new Uint8Array(65536), se.fill(1), se[0] = 0, se.fill(0, 1, 32), se.fill(0, 127, 160), se.fill(2, 4352, 4448), se[9001] = 2, se[9002] = 2, se.fill(2, 11904, 42192), se[12351] = 1, se.fill(2, 44032, 55204), se.fill(2, 63744, 64256), se.fill(2, 65040, 65050), se.fill(2, 65072, 65136), se.fill(2, 65280, 65377), se.fill(2, 65504, 65511);
-          for (let t = 0; t < Os.length; ++t) se.fill(0, Os[t][0], Os[t][1] + 1);
+          for (let t2 = 0; t2 < Os.length; ++t2) se.fill(0, Os[t2][0], Os[t2][1] + 1);
         }
       }
-      wcwidth(t) {
-        return t < 32 ? 0 : t < 127 ? 1 : t < 65536 ? se[t] : cc(t, ac) ? 0 : t >= 131072 && t <= 196605 || t >= 196608 && t <= 262141 ? 2 : 1;
+      wcwidth(t2) {
+        return t2 < 32 ? 0 : t2 < 127 ? 1 : t2 < 65536 ? se[t2] : cc(t2, ac) ? 0 : t2 >= 131072 && t2 <= 196605 || t2 >= 196608 && t2 <= 262141 ? 2 : 1;
       }
-      charProperties(t, e) {
-        let i = this.wcwidth(t), r = i === 0 && e !== 0;
+      charProperties(t2, e) {
+        let i = this.wcwidth(t2), r = i === 0 && e !== 0;
         if (r) {
           let n = Ae.extractWidth(e);
           n === 0 ? r = false : n > i && (i = n);
@@ -6228,20 +6228,20 @@ ${h8.join(`
         this._active = "";
         this._onChange = new v();
         this.onChange = this._onChange.event;
-        let t = new fn();
-        this.register(t), this._active = t.version, this._activeProvider = t;
+        let t2 = new fn();
+        this.register(t2), this._active = t2.version, this._activeProvider = t2;
       }
-      static extractShouldJoin(t) {
-        return (t & 1) !== 0;
+      static extractShouldJoin(t2) {
+        return (t2 & 1) !== 0;
       }
-      static extractWidth(t) {
-        return t >> 1 & 3;
+      static extractWidth(t2) {
+        return t2 >> 1 & 3;
       }
-      static extractCharKind(t) {
-        return t >> 3;
+      static extractCharKind(t2) {
+        return t2 >> 3;
       }
-      static createPropertyValue(t, e, i = false) {
-        return (t & 16777215) << 3 | (e & 3) << 1 | (i ? 1 : 0);
+      static createPropertyValue(t2, e, i = false) {
+        return (t2 & 16777215) << 3 | (e & 3) << 1 | (i ? 1 : 0);
       }
       dispose() {
         this._onChange.dispose();
@@ -6252,23 +6252,23 @@ ${h8.join(`
       get activeVersion() {
         return this._active;
       }
-      set activeVersion(t) {
-        if (!this._providers[t]) throw new Error(`unknown Unicode version "${t}"`);
-        this._active = t, this._activeProvider = this._providers[t], this._onChange.fire(t);
+      set activeVersion(t2) {
+        if (!this._providers[t2]) throw new Error(`unknown Unicode version "${t2}"`);
+        this._active = t2, this._activeProvider = this._providers[t2], this._onChange.fire(t2);
       }
-      register(t) {
-        this._providers[t.version] = t;
+      register(t2) {
+        this._providers[t2.version] = t2;
       }
-      wcwidth(t) {
-        return this._activeProvider.wcwidth(t);
+      wcwidth(t2) {
+        return this._activeProvider.wcwidth(t2);
       }
-      getStringCellWidth(t) {
-        let e = 0, i = 0, r = t.length;
+      getStringCellWidth(t2) {
+        let e = 0, i = 0, r = t2.length;
         for (let n = 0; n < r; ++n) {
-          let o = t.charCodeAt(n);
+          let o = t2.charCodeAt(n);
           if (55296 <= o && o <= 56319) {
             if (++n >= r) return e + this.wcwidth(o);
-            let u = t.charCodeAt(n);
+            let u = t2.charCodeAt(n);
             56320 <= u && u <= 57343 ? o = (o - 55296) * 1024 + u - 56320 + 65536 : e += this.wcwidth(u);
           }
           let l = this.charProperties(o, i), a = s13.extractWidth(l);
@@ -6276,8 +6276,8 @@ ${h8.join(`
         }
         return e;
       }
-      charProperties(t, e) {
-        return this._activeProvider.charProperties(t, e);
+      charProperties(t2, e) {
+        return this._activeProvider.charProperties(t2, e);
       }
     };
     pn = class {
@@ -6288,84 +6288,84 @@ ${h8.join(`
       reset() {
         this.charset = void 0, this._charsets = [], this.glevel = 0;
       }
-      setgLevel(t) {
-        this.glevel = t, this.charset = this._charsets[t];
+      setgLevel(t2) {
+        this.glevel = t2, this.charset = this._charsets[t2];
       }
-      setgCharset(t, e) {
-        this._charsets[t] = e, this.glevel === t && (this.charset = e);
+      setgCharset(t2, e) {
+        this._charsets[t2] = e, this.glevel === t2 && (this.charset = e);
       }
     };
     Vi = 2147483647, uc = 256, ci = class s14 {
-      constructor(t = 32, e = 32) {
-        this.maxLength = t;
+      constructor(t2 = 32, e = 32) {
+        this.maxLength = t2;
         this.maxSubParamsLength = e;
         if (e > uc) throw new Error("maxSubParamsLength must not be greater than 256");
-        this.params = new Int32Array(t), this.length = 0, this._subParams = new Int32Array(e), this._subParamsLength = 0, this._subParamsIdx = new Uint16Array(t), this._rejectDigits = false, this._rejectSubDigits = false, this._digitIsSub = false;
+        this.params = new Int32Array(t2), this.length = 0, this._subParams = new Int32Array(e), this._subParamsLength = 0, this._subParamsIdx = new Uint16Array(t2), this._rejectDigits = false, this._rejectSubDigits = false, this._digitIsSub = false;
       }
-      static fromArray(t) {
+      static fromArray(t2) {
         let e = new s14();
-        if (!t.length) return e;
-        for (let i = Array.isArray(t[0]) ? 1 : 0; i < t.length; ++i) {
-          let r = t[i];
+        if (!t2.length) return e;
+        for (let i = Array.isArray(t2[0]) ? 1 : 0; i < t2.length; ++i) {
+          let r = t2[i];
           if (Array.isArray(r)) for (let n = 0; n < r.length; ++n) e.addSubParam(r[n]);
           else e.addParam(r);
         }
         return e;
       }
       clone() {
-        let t = new s14(this.maxLength, this.maxSubParamsLength);
-        return t.params.set(this.params), t.length = this.length, t._subParams.set(this._subParams), t._subParamsLength = this._subParamsLength, t._subParamsIdx.set(this._subParamsIdx), t._rejectDigits = this._rejectDigits, t._rejectSubDigits = this._rejectSubDigits, t._digitIsSub = this._digitIsSub, t;
+        let t2 = new s14(this.maxLength, this.maxSubParamsLength);
+        return t2.params.set(this.params), t2.length = this.length, t2._subParams.set(this._subParams), t2._subParamsLength = this._subParamsLength, t2._subParamsIdx.set(this._subParamsIdx), t2._rejectDigits = this._rejectDigits, t2._rejectSubDigits = this._rejectSubDigits, t2._digitIsSub = this._digitIsSub, t2;
       }
       toArray() {
-        let t = [];
+        let t2 = [];
         for (let e = 0; e < this.length; ++e) {
-          t.push(this.params[e]);
+          t2.push(this.params[e]);
           let i = this._subParamsIdx[e] >> 8, r = this._subParamsIdx[e] & 255;
-          r - i > 0 && t.push(Array.prototype.slice.call(this._subParams, i, r));
+          r - i > 0 && t2.push(Array.prototype.slice.call(this._subParams, i, r));
         }
-        return t;
+        return t2;
       }
       reset() {
         this.length = 0, this._subParamsLength = 0, this._rejectDigits = false, this._rejectSubDigits = false, this._digitIsSub = false;
       }
-      addParam(t) {
+      addParam(t2) {
         if (this._digitIsSub = false, this.length >= this.maxLength) {
           this._rejectDigits = true;
           return;
         }
-        if (t < -1) throw new Error("values lesser than -1 are not allowed");
-        this._subParamsIdx[this.length] = this._subParamsLength << 8 | this._subParamsLength, this.params[this.length++] = t > Vi ? Vi : t;
+        if (t2 < -1) throw new Error("values lesser than -1 are not allowed");
+        this._subParamsIdx[this.length] = this._subParamsLength << 8 | this._subParamsLength, this.params[this.length++] = t2 > Vi ? Vi : t2;
       }
-      addSubParam(t) {
+      addSubParam(t2) {
         if (this._digitIsSub = true, !!this.length) {
           if (this._rejectDigits || this._subParamsLength >= this.maxSubParamsLength) {
             this._rejectSubDigits = true;
             return;
           }
-          if (t < -1) throw new Error("values lesser than -1 are not allowed");
-          this._subParams[this._subParamsLength++] = t > Vi ? Vi : t, this._subParamsIdx[this.length - 1]++;
+          if (t2 < -1) throw new Error("values lesser than -1 are not allowed");
+          this._subParams[this._subParamsLength++] = t2 > Vi ? Vi : t2, this._subParamsIdx[this.length - 1]++;
         }
       }
-      hasSubParams(t) {
-        return (this._subParamsIdx[t] & 255) - (this._subParamsIdx[t] >> 8) > 0;
+      hasSubParams(t2) {
+        return (this._subParamsIdx[t2] & 255) - (this._subParamsIdx[t2] >> 8) > 0;
       }
-      getSubParams(t) {
-        let e = this._subParamsIdx[t] >> 8, i = this._subParamsIdx[t] & 255;
+      getSubParams(t2) {
+        let e = this._subParamsIdx[t2] >> 8, i = this._subParamsIdx[t2] & 255;
         return i - e > 0 ? this._subParams.subarray(e, i) : null;
       }
       getSubParamsAll() {
-        let t = {};
+        let t2 = {};
         for (let e = 0; e < this.length; ++e) {
           let i = this._subParamsIdx[e] >> 8, r = this._subParamsIdx[e] & 255;
-          r - i > 0 && (t[e] = this._subParams.slice(i, r));
+          r - i > 0 && (t2[e] = this._subParams.slice(i, r));
         }
-        return t;
+        return t2;
       }
-      addDigit(t) {
+      addDigit(t2) {
         let e;
         if (this._rejectDigits || !(e = this._digitIsSub ? this._subParamsLength : this.length) || this._digitIsSub && this._rejectSubDigits) return;
         let i = this._digitIsSub ? this._subParams : this.params, r = i[e - 1];
-        i[e - 1] = ~r ? Math.min(r * 10 + t, Vi) : t;
+        i[e - 1] = ~r ? Math.min(r * 10 + t2, Vi) : t2;
       }
     };
     qi = [], mn = class {
@@ -6378,43 +6378,43 @@ ${h8.join(`
         };
         this._stack = { paused: false, loopPosition: 0, fallThrough: false };
       }
-      registerHandler(t, e) {
-        this._handlers[t] === void 0 && (this._handlers[t] = []);
-        let i = this._handlers[t];
+      registerHandler(t2, e) {
+        this._handlers[t2] === void 0 && (this._handlers[t2] = []);
+        let i = this._handlers[t2];
         return i.push(e), { dispose: () => {
           let r = i.indexOf(e);
           r !== -1 && i.splice(r, 1);
         } };
       }
-      clearHandler(t) {
-        this._handlers[t] && delete this._handlers[t];
+      clearHandler(t2) {
+        this._handlers[t2] && delete this._handlers[t2];
       }
-      setHandlerFallback(t) {
-        this._handlerFb = t;
+      setHandlerFallback(t2) {
+        this._handlerFb = t2;
       }
       dispose() {
         this._handlers = /* @__PURE__ */ Object.create(null), this._handlerFb = () => {
         }, this._active = qi;
       }
       reset() {
-        if (this._state === 2) for (let t = this._stack.paused ? this._stack.loopPosition - 1 : this._active.length - 1; t >= 0; --t) this._active[t].end(false);
+        if (this._state === 2) for (let t2 = this._stack.paused ? this._stack.loopPosition - 1 : this._active.length - 1; t2 >= 0; --t2) this._active[t2].end(false);
         this._stack.paused = false, this._active = qi, this._id = -1, this._state = 0;
       }
       _start() {
         if (this._active = this._handlers[this._id] || qi, !this._active.length) this._handlerFb(this._id, "START");
-        else for (let t = this._active.length - 1; t >= 0; t--) this._active[t].start();
+        else for (let t2 = this._active.length - 1; t2 >= 0; t2--) this._active[t2].start();
       }
-      _put(t, e, i) {
-        if (!this._active.length) this._handlerFb(this._id, "PUT", It(t, e, i));
-        else for (let r = this._active.length - 1; r >= 0; r--) this._active[r].put(t, e, i);
+      _put(t2, e, i) {
+        if (!this._active.length) this._handlerFb(this._id, "PUT", It(t2, e, i));
+        else for (let r = this._active.length - 1; r >= 0; r--) this._active[r].put(t2, e, i);
       }
       start() {
         this.reset(), this._state = 1;
       }
-      put(t, e, i) {
+      put(t2, e, i) {
         if (this._state !== 3) {
           if (this._state === 1) for (; e < i; ) {
-            let r = t[e++];
+            let r = t2[e++];
             if (r === 59) {
               this._state = 2, this._start();
               break;
@@ -6425,16 +6425,16 @@ ${h8.join(`
             }
             this._id === -1 && (this._id = 0), this._id = this._id * 10 + r - 48;
           }
-          this._state === 2 && i - e > 0 && this._put(t, e, i);
+          this._state === 2 && i - e > 0 && this._put(t2, e, i);
         }
       }
-      end(t, e = true) {
+      end(t2, e = true) {
         if (this._state !== 0) {
-          if (this._state !== 3) if (this._state === 1 && this._start(), !this._active.length) this._handlerFb(this._id, "END", t);
+          if (this._state !== 3) if (this._state === 1 && this._start(), !this._active.length) this._handlerFb(this._id, "END", t2);
           else {
             let i = false, r = this._active.length - 1, n = false;
             if (this._stack.paused && (r = this._stack.loopPosition - 1, i = e, n = this._stack.fallThrough, this._stack.paused = false), !n && i === false) {
-              for (; r >= 0 && (i = this._active[r].end(t), i !== true); r--) if (i instanceof Promise) return this._stack.paused = true, this._stack.loopPosition = r, this._stack.fallThrough = false, i;
+              for (; r >= 0 && (i = this._active[r].end(t2), i !== true); r--) if (i instanceof Promise) return this._stack.paused = true, this._stack.loopPosition = r, this._stack.fallThrough = false, i;
               r--;
             }
             for (; r >= 0; r--) if (i = this._active[r].end(false), i instanceof Promise) return this._stack.paused = true, this._stack.loopPosition = r, this._stack.fallThrough = true, i;
@@ -6443,21 +6443,21 @@ ${h8.join(`
         }
       }
     }, pe = class {
-      constructor(t) {
-        this._handler = t;
+      constructor(t2) {
+        this._handler = t2;
         this._data = "";
         this._hitLimit = false;
       }
       start() {
         this._data = "", this._hitLimit = false;
       }
-      put(t, e, i) {
-        this._hitLimit || (this._data += It(t, e, i), this._data.length > 1e7 && (this._data = "", this._hitLimit = true));
+      put(t2, e, i) {
+        this._hitLimit || (this._data += It(t2, e, i), this._data.length > 1e7 && (this._data = "", this._hitLimit = true));
       }
-      end(t) {
+      end(t2) {
         let e = false;
         if (this._hitLimit) e = false;
-        else if (t && (e = this._handler(this._data), e instanceof Promise)) return e.then((i) => (this._data = "", this._hitLimit = false, i));
+        else if (t2 && (e = this._handler(this._data), e instanceof Promise)) return e.then((i) => (this._data = "", this._hitLimit = false, i));
         return this._data = "", this._hitLimit = false, e;
       }
     };
@@ -6474,38 +6474,38 @@ ${h8.join(`
         this._handlers = /* @__PURE__ */ Object.create(null), this._handlerFb = () => {
         }, this._active = Yi;
       }
-      registerHandler(t, e) {
-        this._handlers[t] === void 0 && (this._handlers[t] = []);
-        let i = this._handlers[t];
+      registerHandler(t2, e) {
+        this._handlers[t2] === void 0 && (this._handlers[t2] = []);
+        let i = this._handlers[t2];
         return i.push(e), { dispose: () => {
           let r = i.indexOf(e);
           r !== -1 && i.splice(r, 1);
         } };
       }
-      clearHandler(t) {
-        this._handlers[t] && delete this._handlers[t];
+      clearHandler(t2) {
+        this._handlers[t2] && delete this._handlers[t2];
       }
-      setHandlerFallback(t) {
-        this._handlerFb = t;
+      setHandlerFallback(t2) {
+        this._handlerFb = t2;
       }
       reset() {
-        if (this._active.length) for (let t = this._stack.paused ? this._stack.loopPosition - 1 : this._active.length - 1; t >= 0; --t) this._active[t].unhook(false);
+        if (this._active.length) for (let t2 = this._stack.paused ? this._stack.loopPosition - 1 : this._active.length - 1; t2 >= 0; --t2) this._active[t2].unhook(false);
         this._stack.paused = false, this._active = Yi, this._ident = 0;
       }
-      hook(t, e) {
-        if (this.reset(), this._ident = t, this._active = this._handlers[t] || Yi, !this._active.length) this._handlerFb(this._ident, "HOOK", e);
+      hook(t2, e) {
+        if (this.reset(), this._ident = t2, this._active = this._handlers[t2] || Yi, !this._active.length) this._handlerFb(this._ident, "HOOK", e);
         else for (let i = this._active.length - 1; i >= 0; i--) this._active[i].hook(e);
       }
-      put(t, e, i) {
-        if (!this._active.length) this._handlerFb(this._ident, "PUT", It(t, e, i));
-        else for (let r = this._active.length - 1; r >= 0; r--) this._active[r].put(t, e, i);
+      put(t2, e, i) {
+        if (!this._active.length) this._handlerFb(this._ident, "PUT", It(t2, e, i));
+        else for (let r = this._active.length - 1; r >= 0; r--) this._active[r].put(t2, e, i);
       }
-      unhook(t, e = true) {
-        if (!this._active.length) this._handlerFb(this._ident, "UNHOOK", t);
+      unhook(t2, e = true) {
+        if (!this._active.length) this._handlerFb(this._ident, "UNHOOK", t2);
         else {
           let i = false, r = this._active.length - 1, n = false;
           if (this._stack.paused && (r = this._stack.loopPosition - 1, i = e, n = this._stack.fallThrough, this._stack.paused = false), !n && i === false) {
-            for (; r >= 0 && (i = this._active[r].unhook(t), i !== true); r--) if (i instanceof Promise) return this._stack.paused = true, this._stack.loopPosition = r, this._stack.fallThrough = false, i;
+            for (; r >= 0 && (i = this._active[r].unhook(t2), i !== true); r--) if (i instanceof Promise) return this._stack.paused = true, this._stack.loopPosition = r, this._stack.fallThrough = false, i;
             r--;
           }
           for (; r >= 0; r--) if (i = this._active[r].unhook(false), i instanceof Promise) return this._stack.paused = true, this._stack.loopPosition = r, this._stack.fallThrough = true, i;
@@ -6515,37 +6515,37 @@ ${h8.join(`
     }, ji = new ci();
     ji.addParam(0);
     Xi = class {
-      constructor(t) {
-        this._handler = t;
+      constructor(t2) {
+        this._handler = t2;
         this._data = "";
         this._params = ji;
         this._hitLimit = false;
       }
-      hook(t) {
-        this._params = t.length > 1 || t.params[0] ? t.clone() : ji, this._data = "", this._hitLimit = false;
+      hook(t2) {
+        this._params = t2.length > 1 || t2.params[0] ? t2.clone() : ji, this._data = "", this._hitLimit = false;
       }
-      put(t, e, i) {
-        this._hitLimit || (this._data += It(t, e, i), this._data.length > 1e7 && (this._data = "", this._hitLimit = true));
+      put(t2, e, i) {
+        this._hitLimit || (this._data += It(t2, e, i), this._data.length > 1e7 && (this._data = "", this._hitLimit = true));
       }
-      unhook(t) {
+      unhook(t2) {
         let e = false;
         if (this._hitLimit) e = false;
-        else if (t && (e = this._handler(this._data, this._params), e instanceof Promise)) return e.then((i) => (this._params = ji, this._data = "", this._hitLimit = false, i));
+        else if (t2 && (e = this._handler(this._data, this._params), e instanceof Promise)) return e.then((i) => (this._params = ji, this._data = "", this._hitLimit = false, i));
         return this._params = ji, this._data = "", this._hitLimit = false, e;
       }
     };
     Fs = class {
-      constructor(t) {
-        this.table = new Uint8Array(t);
+      constructor(t2) {
+        this.table = new Uint8Array(t2);
       }
-      setDefault(t, e) {
-        this.table.fill(t << 4 | e);
+      setDefault(t2, e) {
+        this.table.fill(t2 << 4 | e);
       }
-      add(t, e, i, r) {
-        this.table[e << 8 | t] = i << 4 | r;
+      add(t2, e, i, r) {
+        this.table[e << 8 | t2] = i << 4 | r;
       }
-      addMany(t, e, i, r) {
-        for (let n = 0; n < t.length; n++) this.table[e << 8 | t[n]] = i << 4 | r;
+      addMany(t2, e, i, r) {
+        for (let n = 0; n < t2.length; n++) this.table[e << 8 | t2[n]] = i << 4 | r;
       }
     }, ke = 160, hc = (function() {
       let s15 = new Fs(4095), e = Array.apply(null, Array(256)).map((a, u) => u), i = (a, u) => e.slice(a, u), r = i(32, 127), n = i(0, 24);
@@ -7596,18 +7596,18 @@ ${h8.join(`
         this._dirtyRowTracker.markRangeDirty(e, i);
       }
     }, Zi = class {
-      constructor(t) {
-        this._bufferService = t;
+      constructor(t2) {
+        this._bufferService = t2;
         this.clearRange();
       }
       clearRange() {
         this.start = this._bufferService.buffer.y, this.end = this._bufferService.buffer.y;
       }
-      markDirty(t) {
-        t < this.start ? this.start = t : t > this.end && (this.end = t);
+      markDirty(t2) {
+        t2 < this.start ? this.start = t2 : t2 > this.end && (this.end = t2);
       }
-      markRangeDirty(t, e) {
-        t > e && (gl = t, t = e, e = gl), t < this.start && (this.start = t), e > this.end && (this.end = e);
+      markRangeDirty(t2, e) {
+        t2 > e && (gl = t2, t2 = e, e = gl), t2 < this.start && (this.start = t2), e > this.end && (this.end = e);
       }
       markAllDirty() {
         this.markRangeDirty(0, this._bufferService.rows - 1);
@@ -7675,39 +7675,39 @@ ${h8.join(`
       }
     };
     ui = class {
-      constructor(t) {
-        this._bufferService = t;
+      constructor(t2) {
+        this._bufferService = t2;
         this._nextId = 1;
         this._entriesWithId = /* @__PURE__ */ new Map();
         this._dataByLinkId = /* @__PURE__ */ new Map();
       }
-      registerLink(t) {
+      registerLink(t2) {
         let e = this._bufferService.buffer;
-        if (t.id === void 0) {
-          let a = e.addMarker(e.ybase + e.y), u = { data: t, id: this._nextId++, lines: [a] };
+        if (t2.id === void 0) {
+          let a = e.addMarker(e.ybase + e.y), u = { data: t2, id: this._nextId++, lines: [a] };
           return a.onDispose(() => this._removeMarkerFromLink(u, a)), this._dataByLinkId.set(u.id, u), u.id;
         }
-        let i = t, r = this._getEntryIdKey(i), n = this._entriesWithId.get(r);
+        let i = t2, r = this._getEntryIdKey(i), n = this._entriesWithId.get(r);
         if (n) return this.addLineToLink(n.id, e.ybase + e.y), n.id;
         let o = e.addMarker(e.ybase + e.y), l = { id: this._nextId++, key: this._getEntryIdKey(i), data: i, lines: [o] };
         return o.onDispose(() => this._removeMarkerFromLink(l, o)), this._entriesWithId.set(l.key, l), this._dataByLinkId.set(l.id, l), l.id;
       }
-      addLineToLink(t, e) {
-        let i = this._dataByLinkId.get(t);
+      addLineToLink(t2, e) {
+        let i = this._dataByLinkId.get(t2);
         if (i && i.lines.every((r) => r.line !== e)) {
           let r = this._bufferService.buffer.addMarker(e);
           i.lines.push(r), r.onDispose(() => this._removeMarkerFromLink(i, r));
         }
       }
-      getLinkData(t) {
-        return this._dataByLinkId.get(t)?.data;
+      getLinkData(t2) {
+        return this._dataByLinkId.get(t2)?.data;
       }
-      _getEntryIdKey(t) {
-        return `${t.id};;${t.uri}`;
+      _getEntryIdKey(t2) {
+        return `${t2.id};;${t2.uri}`;
       }
-      _removeMarkerFromLink(t, e) {
-        let i = t.lines.indexOf(e);
-        i !== -1 && (t.lines.splice(i, 1), t.lines.length === 0 && (t.data.id !== void 0 && this._entriesWithId.delete(t.key), this._dataByLinkId.delete(t.id)));
+      _removeMarkerFromLink(t2, e) {
+        let i = t2.lines.indexOf(e);
+        i !== -1 && (t2.lines.splice(i, 1), t2.lines.length === 0 && (t2.data.id !== void 0 && this._entriesWithId.delete(t2.key), this._dataByLinkId.delete(t2.id)));
       }
     };
     ui = M([S(0, F)], ui);
@@ -7814,8 +7814,8 @@ ${h8.join(`
     };
     gc = { 48: ["0", ")"], 49: ["1", "!"], 50: ["2", "@"], 51: ["3", "#"], 52: ["4", "$"], 53: ["5", "%"], 54: ["6", "^"], 55: ["7", "&"], 56: ["8", "*"], 57: ["9", "("], 186: [";", ":"], 187: ["=", "+"], 188: [",", "<"], 189: ["-", "_"], 190: [".", ">"], 191: ["/", "?"], 192: ["`", "~"], 219: ["[", "{"], 220: ["\\", "|"], 221: ["]", "}"], 222: ["'", '"'] };
     ee = 0, En = class {
-      constructor(t) {
-        this._getKey = t;
+      constructor(t2) {
+        this._getKey = t2;
         this._array = [];
         this._insertedValues = [];
         this._flushInsertedTask = new Jt();
@@ -7827,56 +7827,56 @@ ${h8.join(`
       clear() {
         this._array.length = 0, this._insertedValues.length = 0, this._flushInsertedTask.clear(), this._isFlushingInserted = false, this._deletedIndices.length = 0, this._flushDeletedTask.clear(), this._isFlushingDeleted = false;
       }
-      insert(t) {
-        this._flushCleanupDeleted(), this._insertedValues.length === 0 && this._flushInsertedTask.enqueue(() => this._flushInserted()), this._insertedValues.push(t);
+      insert(t2) {
+        this._flushCleanupDeleted(), this._insertedValues.length === 0 && this._flushInsertedTask.enqueue(() => this._flushInserted()), this._insertedValues.push(t2);
       }
       _flushInserted() {
-        let t = this._insertedValues.sort((n, o) => this._getKey(n) - this._getKey(o)), e = 0, i = 0, r = new Array(this._array.length + this._insertedValues.length);
-        for (let n = 0; n < r.length; n++) i >= this._array.length || this._getKey(t[e]) <= this._getKey(this._array[i]) ? (r[n] = t[e], e++) : r[n] = this._array[i++];
+        let t2 = this._insertedValues.sort((n, o) => this._getKey(n) - this._getKey(o)), e = 0, i = 0, r = new Array(this._array.length + this._insertedValues.length);
+        for (let n = 0; n < r.length; n++) i >= this._array.length || this._getKey(t2[e]) <= this._getKey(this._array[i]) ? (r[n] = t2[e], e++) : r[n] = this._array[i++];
         this._array = r, this._insertedValues.length = 0;
       }
       _flushCleanupInserted() {
         !this._isFlushingInserted && this._insertedValues.length > 0 && this._flushInsertedTask.flush();
       }
-      delete(t) {
+      delete(t2) {
         if (this._flushCleanupInserted(), this._array.length === 0) return false;
-        let e = this._getKey(t);
+        let e = this._getKey(t2);
         if (e === void 0 || (ee = this._search(e), ee === -1) || this._getKey(this._array[ee]) !== e) return false;
         do
-          if (this._array[ee] === t) return this._deletedIndices.length === 0 && this._flushDeletedTask.enqueue(() => this._flushDeleted()), this._deletedIndices.push(ee), true;
+          if (this._array[ee] === t2) return this._deletedIndices.length === 0 && this._flushDeletedTask.enqueue(() => this._flushDeleted()), this._deletedIndices.push(ee), true;
         while (++ee < this._array.length && this._getKey(this._array[ee]) === e);
         return false;
       }
       _flushDeleted() {
         this._isFlushingDeleted = true;
-        let t = this._deletedIndices.sort((n, o) => n - o), e = 0, i = new Array(this._array.length - t.length), r = 0;
-        for (let n = 0; n < this._array.length; n++) t[e] === n ? e++ : i[r++] = this._array[n];
+        let t2 = this._deletedIndices.sort((n, o) => n - o), e = 0, i = new Array(this._array.length - t2.length), r = 0;
+        for (let n = 0; n < this._array.length; n++) t2[e] === n ? e++ : i[r++] = this._array[n];
         this._array = i, this._deletedIndices.length = 0, this._isFlushingDeleted = false;
       }
       _flushCleanupDeleted() {
         !this._isFlushingDeleted && this._deletedIndices.length > 0 && this._flushDeletedTask.flush();
       }
-      *getKeyIterator(t) {
-        if (this._flushCleanupInserted(), this._flushCleanupDeleted(), this._array.length !== 0 && (ee = this._search(t), !(ee < 0 || ee >= this._array.length) && this._getKey(this._array[ee]) === t)) do
+      *getKeyIterator(t2) {
+        if (this._flushCleanupInserted(), this._flushCleanupDeleted(), this._array.length !== 0 && (ee = this._search(t2), !(ee < 0 || ee >= this._array.length) && this._getKey(this._array[ee]) === t2)) do
           yield this._array[ee];
-        while (++ee < this._array.length && this._getKey(this._array[ee]) === t);
+        while (++ee < this._array.length && this._getKey(this._array[ee]) === t2);
       }
-      forEachByKey(t, e) {
-        if (this._flushCleanupInserted(), this._flushCleanupDeleted(), this._array.length !== 0 && (ee = this._search(t), !(ee < 0 || ee >= this._array.length) && this._getKey(this._array[ee]) === t)) do
+      forEachByKey(t2, e) {
+        if (this._flushCleanupInserted(), this._flushCleanupDeleted(), this._array.length !== 0 && (ee = this._search(t2), !(ee < 0 || ee >= this._array.length) && this._getKey(this._array[ee]) === t2)) do
           e(this._array[ee]);
-        while (++ee < this._array.length && this._getKey(this._array[ee]) === t);
+        while (++ee < this._array.length && this._getKey(this._array[ee]) === t2);
       }
       values() {
         return this._flushCleanupInserted(), this._flushCleanupDeleted(), [...this._array].values();
       }
-      _search(t) {
+      _search(t2) {
         let e = 0, i = this._array.length - 1;
         for (; i >= e; ) {
           let r = e + i >> 1, n = this._getKey(this._array[r]);
-          if (n > t) i = r - 1;
-          else if (n < t) e = r + 1;
+          if (n > t2) i = r - 1;
+          else if (n < t2) e = r + 1;
           else {
-            for (; r > 0 && this._getKey(this._array[r - 1]) === t; ) r--;
+            for (; r > 0 && this._getKey(this._array[r - 1]) === t2; ) r--;
             return r;
           }
         }
@@ -7943,8 +7943,8 @@ ${h8.join(`
       }
     };
     Sc = 1e3, In = class {
-      constructor(t, e = Sc) {
-        this._renderCallback = t;
+      constructor(t2, e = Sc) {
+        this._renderCallback = t2;
         this._debounceThresholdMS = e;
         this._lastRefreshMs = 0;
         this._additionalRefreshRequested = false;
@@ -7952,8 +7952,8 @@ ${h8.join(`
       dispose() {
         this._refreshTimeoutID && clearTimeout(this._refreshTimeoutID);
       }
-      refresh(t, e, i) {
-        this._rowCount = i, t = t !== void 0 ? t : 0, e = e !== void 0 ? e : this._rowCount - 1, this._rowStart = this._rowStart !== void 0 ? Math.min(this._rowStart, t) : t, this._rowEnd = this._rowEnd !== void 0 ? Math.max(this._rowEnd, e) : e;
+      refresh(t2, e, i) {
+        this._rowCount = i, t2 = t2 !== void 0 ? t2 : 0, e = e !== void 0 ? e : this._rowCount - 1, this._rowStart = this._rowStart !== void 0 ? Math.min(this._rowStart, t2) : t2, this._rowEnd = this._rowEnd !== void 0 ? Math.max(this._rowEnd, e) : e;
         let r = performance.now();
         if (r - this._lastRefreshMs >= this._debounceThresholdMS) this._lastRefreshMs = r, this._innerRefresh();
         else if (!this._additionalRefreshRequested) {
@@ -7965,8 +7965,8 @@ ${h8.join(`
       }
       _innerRefresh() {
         if (this._rowStart === void 0 || this._rowEnd === void 0 || this._rowCount === void 0) return;
-        let t = Math.max(this._rowStart, 0), e = Math.min(this._rowEnd, this._rowCount - 1);
-        this._rowStart = void 0, this._rowEnd = void 0, this._renderCallback(t, e);
+        let t2 = Math.max(this._rowStart, 0), e = Math.min(this._rowEnd, this._rowCount - 1);
+        this._rowStart = void 0, this._rowEnd = void 0, this._renderCallback(t2, e);
       }
     };
     xl = 20;
@@ -8601,26 +8601,26 @@ ${h8.join(`
         this._addons = [];
       }
       dispose() {
-        for (let t = this._addons.length - 1; t >= 0; t--) this._addons[t].instance.dispose();
+        for (let t2 = this._addons.length - 1; t2 >= 0; t2--) this._addons[t2].instance.dispose();
       }
-      loadAddon(t, e) {
+      loadAddon(t2, e) {
         let i = { instance: e, dispose: e.dispose, isDisposed: false };
-        this._addons.push(i), e.dispose = () => this._wrappedAddonDispose(i), e.activate(t);
+        this._addons.push(i), e.dispose = () => this._wrappedAddonDispose(i), e.activate(t2);
       }
-      _wrappedAddonDispose(t) {
-        if (t.isDisposed) return;
+      _wrappedAddonDispose(t2) {
+        if (t2.isDisposed) return;
         let e = -1;
-        for (let i = 0; i < this._addons.length; i++) if (this._addons[i] === t) {
+        for (let i = 0; i < this._addons.length; i++) if (this._addons[i] === t2) {
           e = i;
           break;
         }
         if (e === -1) throw new Error("Could not dispose an addon that has not been loaded");
-        t.isDisposed = true, t.dispose.apply(t.instance), this._addons.splice(e, 1);
+        t2.isDisposed = true, t2.dispose.apply(t2.instance), this._addons.splice(e, 1);
       }
     };
     wn = class {
-      constructor(t) {
-        this._line = t;
+      constructor(t2) {
+        this._line = t2;
       }
       get isWrapped() {
         return this._line.isWrapped;
@@ -8628,20 +8628,20 @@ ${h8.join(`
       get length() {
         return this._line.length;
       }
-      getCell(t, e) {
-        if (!(t < 0 || t >= this._line.length)) return e ? (this._line.loadCell(t, e), e) : this._line.loadCell(t, new q());
+      getCell(t2, e) {
+        if (!(t2 < 0 || t2 >= this._line.length)) return e ? (this._line.loadCell(t2, e), e) : this._line.loadCell(t2, new q());
       }
-      translateToString(t, e, i) {
-        return this._line.translateToString(t, e, i);
+      translateToString(t2, e, i) {
+        return this._line.translateToString(t2, e, i);
       }
     };
     Ji = class {
-      constructor(t, e) {
-        this._buffer = t;
+      constructor(t2, e) {
+        this._buffer = t2;
         this.type = e;
       }
-      init(t) {
-        return this._buffer = t, this;
+      init(t2) {
+        return this._buffer = t2, this;
       }
       get cursorY() {
         return this._buffer.y;
@@ -8658,8 +8658,8 @@ ${h8.join(`
       get length() {
         return this._buffer.lines.length;
       }
-      getLine(t) {
-        let e = this._buffer.lines.get(t);
+      getLine(t2) {
+        let e = this._buffer.lines.get(t2);
         if (e) return new wn(e);
       }
       getNullCell() {
@@ -8687,40 +8687,40 @@ ${h8.join(`
       }
     };
     Rn = class {
-      constructor(t) {
-        this._core = t;
+      constructor(t2) {
+        this._core = t2;
       }
-      registerCsiHandler(t, e) {
-        return this._core.registerCsiHandler(t, (i) => e(i.toArray()));
+      registerCsiHandler(t2, e) {
+        return this._core.registerCsiHandler(t2, (i) => e(i.toArray()));
       }
-      addCsiHandler(t, e) {
-        return this.registerCsiHandler(t, e);
+      addCsiHandler(t2, e) {
+        return this.registerCsiHandler(t2, e);
       }
-      registerDcsHandler(t, e) {
-        return this._core.registerDcsHandler(t, (i, r) => e(i, r.toArray()));
+      registerDcsHandler(t2, e) {
+        return this._core.registerDcsHandler(t2, (i, r) => e(i, r.toArray()));
       }
-      addDcsHandler(t, e) {
-        return this.registerDcsHandler(t, e);
+      addDcsHandler(t2, e) {
+        return this.registerDcsHandler(t2, e);
       }
-      registerEscHandler(t, e) {
-        return this._core.registerEscHandler(t, e);
+      registerEscHandler(t2, e) {
+        return this._core.registerEscHandler(t2, e);
       }
-      addEscHandler(t, e) {
-        return this.registerEscHandler(t, e);
+      addEscHandler(t2, e) {
+        return this.registerEscHandler(t2, e);
       }
-      registerOscHandler(t, e) {
-        return this._core.registerOscHandler(t, e);
+      registerOscHandler(t2, e) {
+        return this._core.registerOscHandler(t2, e);
       }
-      addOscHandler(t, e) {
-        return this.registerOscHandler(t, e);
+      addOscHandler(t2, e) {
+        return this.registerOscHandler(t2, e);
       }
     };
     Ln = class {
-      constructor(t) {
-        this._core = t;
+      constructor(t2) {
+        this._core = t2;
       }
-      register(t) {
-        this._core.unicodeService.register(t);
+      register(t2) {
+        this._core.unicodeService.register(t2);
       }
       get versions() {
         return this._core.unicodeService.versions;
@@ -8728,13 +8728,13 @@ ${h8.join(`
       get activeVersion() {
         return this._core.unicodeService.activeVersion;
       }
-      set activeVersion(t) {
-        this._core.unicodeService.activeVersion = t;
+      set activeVersion(t2) {
+        this._core.unicodeService.activeVersion = t2;
       }
     };
     Ic = ["cols", "rows"], Ue = 0, Dl = class extends D {
-      constructor(t) {
-        super(), this._core = this._register(new yn(t)), this._addonManager = this._register(new xn()), this._publicOptions = { ...this._core.options };
+      constructor(t2) {
+        super(), this._core = this._register(new yn(t2)), this._addonManager = this._register(new xn()), this._publicOptions = { ...this._core.options };
         let e = (r) => this._core.options[r], i = (r, n) => {
           this._checkReadonlyOptions(r), this._core.options[r] = n;
         };
@@ -8743,8 +8743,8 @@ ${h8.join(`
           Object.defineProperty(this._publicOptions, r, n);
         }
       }
-      _checkReadonlyOptions(t) {
-        if (Ic.includes(t)) throw new Error(`Option "${t}" can only be set in the constructor`);
+      _checkReadonlyOptions(t2) {
+        if (Ic.includes(t2)) throw new Error(`Option "${t2}" can only be set in the constructor`);
       }
       _checkProposedApi() {
         if (!this._core.optionsService.rawOptions.allowProposedApi) throw new Error("You must set the allowProposedApi option to true to use proposed API");
@@ -8810,7 +8810,7 @@ ${h8.join(`
         return this._checkProposedApi(), this._core.markers;
       }
       get modes() {
-        let t = this._core.coreService.decPrivateModes, e = "none";
+        let t2 = this._core.coreService.decPrivateModes, e = "none";
         switch (this._core.coreMouseService.activeProtocol) {
           case "X10":
             e = "x10";
@@ -8825,13 +8825,13 @@ ${h8.join(`
             e = "any";
             break;
         }
-        return { applicationCursorKeysMode: t.applicationCursorKeys, applicationKeypadMode: t.applicationKeypad, bracketedPasteMode: t.bracketedPasteMode, insertMode: this._core.coreService.modes.insertMode, mouseTrackingMode: e, originMode: t.origin, reverseWraparoundMode: t.reverseWraparound, sendFocusMode: t.sendFocus, synchronizedOutputMode: t.synchronizedOutput, wraparoundMode: t.wraparound };
+        return { applicationCursorKeysMode: t2.applicationCursorKeys, applicationKeypadMode: t2.applicationKeypad, bracketedPasteMode: t2.bracketedPasteMode, insertMode: this._core.coreService.modes.insertMode, mouseTrackingMode: e, originMode: t2.origin, reverseWraparoundMode: t2.reverseWraparound, sendFocusMode: t2.sendFocus, synchronizedOutputMode: t2.synchronizedOutput, wraparoundMode: t2.wraparound };
       }
       get options() {
         return this._publicOptions;
       }
-      set options(t) {
-        for (let e in t) this._publicOptions[e] = t[e];
+      set options(t2) {
+        for (let e in t2) this._publicOptions[e] = t2[e];
       }
       blur() {
         this._core.blur();
@@ -8839,41 +8839,41 @@ ${h8.join(`
       focus() {
         this._core.focus();
       }
-      input(t, e = true) {
-        this._core.input(t, e);
+      input(t2, e = true) {
+        this._core.input(t2, e);
       }
-      resize(t, e) {
-        this._verifyIntegers(t, e), this._core.resize(t, e);
+      resize(t2, e) {
+        this._verifyIntegers(t2, e), this._core.resize(t2, e);
       }
-      open(t) {
-        this._core.open(t);
+      open(t2) {
+        this._core.open(t2);
       }
-      attachCustomKeyEventHandler(t) {
-        this._core.attachCustomKeyEventHandler(t);
+      attachCustomKeyEventHandler(t2) {
+        this._core.attachCustomKeyEventHandler(t2);
       }
-      attachCustomWheelEventHandler(t) {
-        this._core.attachCustomWheelEventHandler(t);
+      attachCustomWheelEventHandler(t2) {
+        this._core.attachCustomWheelEventHandler(t2);
       }
-      registerLinkProvider(t) {
-        return this._core.registerLinkProvider(t);
+      registerLinkProvider(t2) {
+        return this._core.registerLinkProvider(t2);
       }
-      registerCharacterJoiner(t) {
-        return this._checkProposedApi(), this._core.registerCharacterJoiner(t);
+      registerCharacterJoiner(t2) {
+        return this._checkProposedApi(), this._core.registerCharacterJoiner(t2);
       }
-      deregisterCharacterJoiner(t) {
-        this._checkProposedApi(), this._core.deregisterCharacterJoiner(t);
+      deregisterCharacterJoiner(t2) {
+        this._checkProposedApi(), this._core.deregisterCharacterJoiner(t2);
       }
-      registerMarker(t = 0) {
-        return this._verifyIntegers(t), this._core.registerMarker(t);
+      registerMarker(t2 = 0) {
+        return this._verifyIntegers(t2), this._core.registerMarker(t2);
       }
-      registerDecoration(t) {
-        return this._checkProposedApi(), this._verifyPositiveIntegers(t.x ?? 0, t.width ?? 0, t.height ?? 0), this._core.registerDecoration(t);
+      registerDecoration(t2) {
+        return this._checkProposedApi(), this._verifyPositiveIntegers(t2.x ?? 0, t2.width ?? 0, t2.height ?? 0), this._core.registerDecoration(t2);
       }
       hasSelection() {
         return this._core.hasSelection();
       }
-      select(t, e, i) {
-        this._verifyIntegers(t, e, i), this._core.select(t, e, i);
+      select(t2, e, i) {
+        this._verifyIntegers(t2, e, i), this._core.select(t2, e, i);
       }
       getSelection() {
         return this._core.getSelection();
@@ -8887,17 +8887,17 @@ ${h8.join(`
       selectAll() {
         this._core.selectAll();
       }
-      selectLines(t, e) {
-        this._verifyIntegers(t, e), this._core.selectLines(t, e);
+      selectLines(t2, e) {
+        this._verifyIntegers(t2, e), this._core.selectLines(t2, e);
       }
       dispose() {
         super.dispose();
       }
-      scrollLines(t) {
-        this._verifyIntegers(t), this._core.scrollLines(t);
+      scrollLines(t2) {
+        this._verifyIntegers(t2), this._core.scrollLines(t2);
       }
-      scrollPages(t) {
-        this._verifyIntegers(t), this._core.scrollPages(t);
+      scrollPages(t2) {
+        this._verifyIntegers(t2), this._core.scrollPages(t2);
       }
       scrollToTop() {
         this._core.scrollToTop();
@@ -8905,24 +8905,24 @@ ${h8.join(`
       scrollToBottom() {
         this._core.scrollToBottom();
       }
-      scrollToLine(t) {
-        this._verifyIntegers(t), this._core.scrollToLine(t);
+      scrollToLine(t2) {
+        this._verifyIntegers(t2), this._core.scrollToLine(t2);
       }
       clear() {
         this._core.clear();
       }
-      write(t, e) {
-        this._core.write(t, e);
+      write(t2, e) {
+        this._core.write(t2, e);
       }
-      writeln(t, e) {
-        this._core.write(t), this._core.write(`\r
+      writeln(t2, e) {
+        this._core.write(t2), this._core.write(`\r
 `, e);
       }
-      paste(t) {
-        this._core.paste(t);
+      paste(t2) {
+        this._core.paste(t2);
       }
-      refresh(t, e) {
-        this._verifyIntegers(t, e), this._core.refresh(t, e);
+      refresh(t2, e) {
+        this._verifyIntegers(t2, e), this._core.refresh(t2, e);
       }
       reset() {
         this._core.reset();
@@ -8930,25 +8930,25 @@ ${h8.join(`
       clearTextureAtlas() {
         this._core.clearTextureAtlas();
       }
-      loadAddon(t) {
-        this._addonManager.loadAddon(this, t);
+      loadAddon(t2) {
+        this._addonManager.loadAddon(this, t2);
       }
       static get strings() {
         return { get promptLabel() {
           return mi.get();
-        }, set promptLabel(t) {
-          mi.set(t);
+        }, set promptLabel(t2) {
+          mi.set(t2);
         }, get tooMuchOutput() {
           return _i.get();
-        }, set tooMuchOutput(t) {
-          _i.set(t);
+        }, set tooMuchOutput(t2) {
+          _i.set(t2);
         } };
       }
-      _verifyIntegers(...t) {
-        for (Ue of t) if (Ue === 1 / 0 || isNaN(Ue) || Ue % 1 !== 0) throw new Error("This API only accepts integers");
+      _verifyIntegers(...t2) {
+        for (Ue of t2) if (Ue === 1 / 0 || isNaN(Ue) || Ue % 1 !== 0) throw new Error("This API only accepts integers");
       }
-      _verifyPositiveIntegers(...t) {
-        for (Ue of t) if (Ue && (Ue === 1 / 0 || isNaN(Ue) || Ue % 1 !== 0 || Ue < 0)) throw new Error("This API only accepts positive integers");
+      _verifyPositiveIntegers(...t2) {
+        for (Ue of t2) if (Ue && (Ue === 1 / 0 || isNaN(Ue) || Ue % 1 !== 0 || Ue < 0)) throw new Error("This API only accepts positive integers");
       }
     };
   }
@@ -9055,8 +9055,8 @@ function fnv1a(text) {
   return value >>> 0;
 }
 function defaultColor(id) {
-  const t = fnv1a(id) + 1831565813 | 0;
-  let n = Math.imul(t ^ t >>> 15, 1 | t);
+  const t2 = fnv1a(id) + 1831565813 | 0;
+  let n = Math.imul(t2 ^ t2 >>> 15, 1 | t2);
   n = n + Math.imul(n ^ n >>> 7, 61 | n) ^ n;
   return DEFAULT_COLORS[Math.floor(((n ^ n >>> 14) >>> 0) / 4294967296 * DEFAULT_COLORS.length)];
 }
@@ -9080,7 +9080,7 @@ function lookOf(bot) {
 var SHAPES = {};
 for (const [id, character] of Object.entries(CHARACTERS)) {
   const layers = [
-    ...(character.paints ?? []).map(([d, fill, opacity]) => `<path d="${d}" fill="${fill}" fill-opacity="${opacity}"/>`),
+    ...(character.paints ?? []).map(([d, fill2, opacity]) => `<path d="${d}" fill="${fill2}" fill-opacity="${opacity}"/>`),
     `<path d="${character.shade}" fill="#000" fill-opacity=".14"/>`,
     `<path d="${character.light}" fill="#fff" fill-opacity=".16"/>`
   ].join("");
@@ -9186,9 +9186,9 @@ body[data-ds-dark-theme] .oai-overlay{
   --oai-cast:rgba(0,0,0,.42);--oai-cast-far:rgba(0,0,0,.28);--oai-ring:#f2a6dc;
   color-scheme:dark}
 `;
-var raised = (fill, depth = 4) => `background:${fill};box-shadow:inset 2px 3px 4px color-mix(in srgb,${fill} var(--oai-hi),var(--oai-shine)),inset -3px -4px 6px color-mix(in srgb,${fill} var(--oai-lo),var(--oai-umber)),0 ${depth}px 0 color-mix(in srgb,${fill} var(--oai-ledge),var(--oai-umber)),0 ${depth + 3}px ${depth + 5}px var(--oai-cast),0 ${depth * 3 + 4}px ${depth * 5 + 8}px var(--oai-cast-far)`;
-var pressed = (fill, depth = 4) => `transform:translateY(${depth - 1}px);box-shadow:inset 3px 4px 6px color-mix(in srgb,${fill} var(--oai-lo),var(--oai-umber)),inset -1px -2px 3px color-mix(in srgb,${fill} var(--oai-hi),var(--oai-shine)),0 1px 0 color-mix(in srgb,${fill} var(--oai-ledge),var(--oai-umber)),0 2px 3px var(--oai-cast)`;
-var recessed = (fill) => `background:${fill};box-shadow:inset 3px 4px 6px color-mix(in srgb,${fill} var(--oai-lo),var(--oai-umber)),inset -2px -2px 3px color-mix(in srgb,${fill} var(--oai-hi),var(--oai-shine)),0 1px 0 color-mix(in srgb,var(--oai-bg) var(--oai-hi),var(--oai-shine))`;
+var raised = (fill2, depth = 4) => `background:${fill2};box-shadow:inset 2px 3px 4px color-mix(in srgb,${fill2} var(--oai-hi),var(--oai-shine)),inset -3px -4px 6px color-mix(in srgb,${fill2} var(--oai-lo),var(--oai-umber)),0 ${depth}px 0 color-mix(in srgb,${fill2} var(--oai-ledge),var(--oai-umber)),0 ${depth + 3}px ${depth + 5}px var(--oai-cast),0 ${depth * 3 + 4}px ${depth * 5 + 8}px var(--oai-cast-far)`;
+var pressed = (fill2, depth = 4) => `transform:translateY(${depth - 1}px);box-shadow:inset 3px 4px 6px color-mix(in srgb,${fill2} var(--oai-lo),var(--oai-umber)),inset -1px -2px 3px color-mix(in srgb,${fill2} var(--oai-hi),var(--oai-shine)),0 1px 0 color-mix(in srgb,${fill2} var(--oai-ledge),var(--oai-umber)),0 2px 3px var(--oai-cast)`;
+var recessed = (fill2) => `background:${fill2};box-shadow:inset 3px 4px 6px color-mix(in srgb,${fill2} var(--oai-lo),var(--oai-umber)),inset -2px -2px 3px color-mix(in srgb,${fill2} var(--oai-hi),var(--oai-shine)),0 1px 0 color-mix(in srgb,var(--oai-bg) var(--oai-hi),var(--oai-shine))`;
 
 // src/client/vendor/art/inline.js
 var genieExpressions = "data:image/webp;base64,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";
@@ -10171,6 +10171,232 @@ var TERMINAL_CSS = xterm_default + `
 .oai-mini-term .oai-term-screen{min-height:0;padding:8px 10px}
 `;
 
+// src/client/i18n.js
+var NAMESPACE = "welcome.team";
+var PT_BR = {
+  // Installs and their errors
+  "The install was cancelled.": "A instalação foi cancelada.",
+  "Omni's installer stopped (exit code {code}). What it printed is above.": "O instalador do Omni parou (código de saída {code}). A saída está acima.",
+  // A found Omni, and where Omni comes from
+  "Your Omni on this Mac": "Seu Omni neste Mac",
+  "Your Omni on this computer": "Seu Omni neste computador",
+  "Omni on this Mac": "Omni neste Mac",
+  "Omni on this computer": "Omni neste computador",
+  "port {port}": "porta {port}",
+  "saved in your Omni CLI": "salvo na sua CLI do Omni",
+  "Not answering right now.": "Não está respondendo agora.",
+  "Needs an update first; Connect Omni, next, does it.": "Precisa de uma atualização antes; Connect Omni, o próximo passo, cuida disso.",
+  "Sign-in from devices is off on it.": "O login por dispositivos está desligado nesse Omni.",
+  "Channel": "Canal",
+  "Use {omni}": "Usar {omni}",
+  "Connect {omni}": "Conectar {omni}",
+  "Already on this Mac": "Já está neste Mac",
+  "Already on this computer": "Já está neste computador",
+  "Saved in your Omni CLI": "Salvo na sua CLI do Omni",
+  "Run Omni on this Mac": "Rodar o Omni neste Mac",
+  "Run Omni on this computer": "Rodar o Omni neste computador",
+  "A private Omni of its own, set up for you": "Um Omni privado, só seu, configurado para você",
+  "An Omni somewhere else": "Um Omni em outro lugar",
+  "On a server, or the link Omni sent you": "Em um servidor, ou o link que o Omni enviou para você",
+  "Where your Omni is": "Onde está seu Omni",
+  "Connecting…": "Conectando…",
+  "Where is your Omni?": "Onde está seu Omni?",
+  "Connect": "Conectar",
+  "That link is cut short. Copy the whole link Omni sent you.": "Esse link está cortado. Copie o link inteiro que o Omni enviou.",
+  "Its claim link: Omni opens it in your browser to make it yours.": "É o link de reivindicação: o Omni abre no seu navegador para que passe a ser seu.",
+  "Its address, or paste the link Omni sent you on WhatsApp.": "O endereço, ou cole o link que o Omni enviou no WhatsApp.",
+  "Back to the choices": "Voltar às opções",
+  // An Omni nobody owns yet, and a sign-in from the phone
+  "{host} has no owner yet": "{host} ainda não pertence a ninguém",
+  "Make it yours on its server, then paste the link it prints below:": "Torne esse Omni seu no servidor e cole abaixo o link que aparecer:",
+  "Copied": "Copiado",
+  "Copy": "Copiar",
+  "Or {link}, click Claim this Omni, then connect its address again.": "Ou {link}, clique em Claim this Omni e conecte o endereço de novo.",
+  "open its claim page": "abra a página de reivindicação",
+  "Or open the claim link from its server log in your browser, then connect its address again.": "Ou abra no navegador o link de reivindicação do log do servidor e conecte o endereço de novo.",
+  "The link it printed": "O link que apareceu",
+  "Open WhatsApp": "Abrir o WhatsApp",
+  "Approve": "Aprovar",
+  "Cancel": "Cancelar",
+  "No WhatsApp on that Omni? Run {command} on its server.": "Sem WhatsApp nesse Omni? Rode {command} no servidor desse Omni.",
+  "That Omni cannot approve this app from here. Connect Omni, next, can use its API key.": "Esse Omni não consegue aprovar este app daqui. Connect Omni, o próximo passo, pode usar a chave de API.",
+  "The sign-in was denied.": "O login foi negado.",
+  "The code expired. Try again for a new one.": "O código expirou. Tente de novo para receber outro.",
+  "That is not a link your Omni sends. It looks like https://your-omni/api/login/app?grant=…": "Esse não é um link que seu Omni envia. O formato é https://your-omni/api/login/app?grant=…",
+  // What a Bot type starts with: the welcome's rows and the host's
+  "Reading what it starts with…": "Lendo com o que começa…",
+  "None": "Nenhum",
+  "Installs when Omni powers on": "Instala quando você liga o Omni",
+  "Installed": "Instalado",
+  "What this Bot is for: always on": "É para isso que este Bot existe: sempre ligado",
+  "Always on": "Sempre ligado",
+  "{label} for this Bot": "{label} para este Bot",
+  "What it starts with": "Com o que começa",
+  "Model": "Modelo",
+  "Your DSH default": "O padrão do seu DSH",
+  "You pick it in Omni's first chat": "Você escolhe no primeiro chat do Omni",
+  "{ref} · you confirm it in Omni's first chat": "{ref} · você confirma no primeiro chat do Omni",
+  "Thinking": "Raciocínio",
+  "The model's default": "O padrão do modelo",
+  "Plugins": "Plugins",
+  "Bot team": "Equipe de Bots",
+  "Bots, their chats, memory and settings": "Bots, com chats, memória e configurações",
+  "Omni channels": "Canais do Omni",
+  "Your channels and the chats on them": "Seus canais e os chats de cada um",
+  "Omni canvases": "Canvases do Omni",
+  "Live views drawn in the chat": "Visualizações ao vivo desenhadas no chat",
+  "channels": "canais",
+  "canvases": "canvases",
+  "Tools": "Ferramentas",
+  "Read channels and chats": "Ler canais e chats",
+  "Send, react and delete": "Enviar, reagir e apagar",
+  "Asks you before it writes to a person": "Pergunta a você antes de escrever para uma pessoa",
+  "Connect a channel": "Conectar um canal",
+  "Shows the QR code to scan": "Mostra o QR code para escanear",
+  "Any Omni operation": "Qualquer operação do Omni",
+  "Finds and runs the rest of Omni's API": "Encontra e executa o resto da API do Omni",
+  "Live canvases": "Canvases ao vivo",
+  "Shell and files": "Shell e arquivos",
+  "DSH's own tools; one-off work goes to Tasks": "As ferramentas do próprio DSH; trabalho avulso vai para Tasks",
+  "Skills": "Skills",
+  "None preloaded. Skills you add to DSH, or teach Omni later, show here.": "Nenhuma pré-carregada. As skills que você adicionar ao DSH, ou ensinar ao Omni depois, aparecem aqui.",
+  "Setup": "Configuração",
+  "Folder": "Pasta",
+  "Its own, in your team workspace": "Própria, no espaço de trabalho da sua equipe",
+  "Permissions": "Permissões",
+  "DSH's default": "Padrão do DSH",
+  "{preset} (DSH's default)": "{preset} (padrão do DSH)",
+  "Genie": "Genie",
+  "Installs when Genie powers on": "Instala quando você liga o Genie",
+  "A Task per wish": "Uma Task por desejo",
+  "Under Genie, with its report in Genie's chat": "Sob o Genie, com o relatório no chat do Genie",
+  "Shell, files and git": "Shell, arquivos e git",
+  "In the wish's own copy of the project": "Na cópia do projeto só desse desejo",
+  "Unfold": "Unfold",
+  "The Unfold Bot, Unfold inside DSH": "O Bot Unfold, Unfold dentro do DSH",
+  "Unfold bridge": "Ponte Unfold",
+  "Unfold watches this DSH": "Unfold acompanha este DSH",
+  "Unfold session": "Sessão Unfold",
+  "Unfold's own session, in DSH": "A sessão própria de Unfold, no DSH",
+  "Unfold events and stream": "Eventos e fluxo de Unfold",
+  "What Unfold did, as it happens": "O que Unfold fez, enquanto acontece",
+  "Unfold Mind": "Unfold Mind",
+  "What Unfold is thinking": "O que Unfold está pensando",
+  "Unfold capabilities, settings and trajectory": "Capacidades, configurações e trajetória de Unfold",
+  "What Unfold can do, its settings, each run step by step": "O que Unfold sabe fazer, as configurações e cada execução passo a passo",
+  "Comes with this DSH": "Vem com este DSH",
+  "Installs when Unfold powers on": "Instala quando você liga Unfold",
+  "Leads": "Lidera",
+  "Your Main Bot here": "Seu Bot principal aqui",
+  "Joins your team beside your Main Bot": "Entra na sua equipe ao lado do seu Bot principal",
+  // The boxes: status lines, lights, what shows inside
+  "Powered off": "Energia desligada",
+  "Powered off · not on your team": "Energia desligada · fora da sua equipe",
+  "Installing {title} · {at} of {count}": "Instalando {title} · {at} de {count}",
+  "Installing Omni…": "Instalando o Omni…",
+  "Found an Omni": "Um Omni encontrado",
+  "Found {count} Omnis": "{count} Omnis encontrados",
+  "Found Omnis, none ready to connect": "Omnis encontrados, nenhum pronto para conectar",
+  "Connected to {origin}": "Conectado a {origin}",
+  "Connected": "Conectado",
+  "Waking up…": "Acordando…",
+  "Starting Omni in this DSH…": "Iniciando o Omni neste DSH…",
+  "Looking for a connection…": "Procurando uma conexão…",
+  "Where should Omni live?": "Onde o Omni deve morar?",
+  "Approve this device on your phone": "Aprove este dispositivo no seu celular",
+  "Downloading Bun for Omni…": "Baixando o Bun para o Omni…",
+  "Setting up your Omni…": "Configurando seu Omni…",
+  "Installed · restart DSH to start it": "Instalação concluída · reinicie o DSH para começar",
+  "Could not install Omni": "Não foi possível instalar o Omni",
+  "Installing Genie…": "Instalando o Genie…",
+  "Starting Genie in this DSH…": "Iniciando o Genie neste DSH…",
+  "Ready for a wish": "À espera de um desejo",
+  "Could not install Genie": "Não foi possível instalar o Genie",
+  "Installing Unfold…": "Instalando Unfold…",
+  "Starting Unfold in this DSH…": "Iniciando Unfold neste DSH…",
+  "On your team": "Na sua equipe",
+  "Could not install Unfold": "Não foi possível instalar Unfold",
+  "power": "energia",
+  "plugins": "plugins",
+  "link": "conexão",
+  "team": "equipe",
+  "The Omni plugins": "Os plugins do Omni",
+  "Power {name} off": "Desligar {name}",
+  "Power {name} on": "Ligar {name}",
+  "What Omni's installer printed": "A saída do instalador do Omni",
+  "What went wrong is above. Power Omni on to try again.": "O que deu errado está acima. Ligue o Omni para tentar de novo.",
+  "In your menu": "No seu menu",
+  "Restart DSH, then power Omni on again.": "Reinicie o DSH e ligue o Omni de novo.",
+  "Add the Omni plugins on DSH's Plugins page.": "Adicione os plugins do Omni na página Plugins do DSH.",
+  "What the Genie install printed": "A saída da instalação do Genie",
+  "Restart DSH, then power Genie on again.": "Reinicie o DSH e ligue o Genie de novo.",
+  "Add @automagik/genie-dsh on DSH's Plugins page.": "Adicione @automagik/genie-dsh na página Plugins do DSH.",
+  "What went wrong is above. Power Genie on to try again.": "O que deu errado está acima. Ligue o Genie para tentar de novo.",
+  "Restart DSH, then power Unfold on again.": "Reinicie o DSH e ligue Unfold de novo.",
+  "Add @automagik/unfold-bot-dsh on DSH's Plugins page.": "Adicione @automagik/unfold-bot-dsh na página Plugins do DSH.",
+  "Genie is ready for wishes. For its skills too, like /wish, install its command line once, in a terminal:": "Genie já recebe desejos. Para ter também as skills, como /wish, instale a linha de comando do Genie uma vez, num terminal:",
+  // The cards
+  "Remove": "Remover",
+  "Every chat on every channel, answered by your team.": "Cada chat em cada canal, respondido pela sua equipe.",
+  "Give it a wish, get one delivery.": "Faça um desejo, receba uma entrega.",
+  "Unfold itself, working inside DSH.": "Unfold em pessoa, trabalhando dentro do DSH.",
+  // The speech bubble
+  "{name} here! Omni is asleep. Click its power button to bring it along.": "{name} aqui! O Omni está dormindo. Clique no botão de energia para trazer o Omni junto.",
+  "Omni is waking up…": "O Omni está acordando…",
+  "Bringing Omni into this DSH. One moment.": "Trazendo o Omni para este DSH. Um momento.",
+  "Omni is starting up…": "O Omni está iniciando…",
+  "Omni is looking for a connection…": "O Omni está procurando uma conexão…",
+  "Omni found where your channels live!": "O Omni encontrou onde seus canais moram!",
+  "No Omni here yet. Tell Omni where yours lives.": "Ainda não tem Omni aqui. Diga ao Omni onde o seu mora.",
+  "Approve this device, and Omni connects.": "Aprove este dispositivo e o Omni se conecta.",
+  "Omni is moving in. This takes a few minutes the first time.": "O Omni está se mudando. Da primeira vez, isso leva alguns minutos.",
+  "Omni is connected to {origin}!": "O Omni está conectado a {origin}!",
+  "Omni is connected!": "O Omni está conectado!",
+  "Omni is installed. Restart DSH to wake it.": "O Omni está instalado. Reinicie o DSH para acordar o Omni.",
+  "Omni could not be installed here.": "Não foi possível instalar o Omni aqui.",
+  "Unfold is waking up…": "Unfold está acordando…",
+  "Bringing Unfold into this DSH. One moment.": "Trazendo Unfold para este DSH. Um momento.",
+  "Unfold is starting up…": "Unfold está iniciando…",
+  "Unfold is on your team.": "Unfold está na sua equipe.",
+  "Unfold is installed. Restart DSH to wake it.": "A instalação de Unfold terminou. Reinicie o DSH para acordar Unfold.",
+  "Unfold could not be installed here.": "Não foi possível instalar Unfold aqui.",
+  "Genie is waking up…": "O Genie está acordando…",
+  "Bringing Genie into this DSH. One moment.": "Trazendo o Genie para este DSH. Um momento.",
+  "Genie is starting up…": "O Genie está iniciando…",
+  "Genie is on your team. Give it a wish once you are in!": "O Genie está na sua equipe. Faça um desejo assim que entrar!",
+  "Genie is installed. Restart DSH to wake it.": "A instalação do Genie terminou. Reinicie o DSH para acordar o Genie.",
+  "Genie could not be installed here.": "Não foi possível instalar o Genie aqui.",
+  // The step itself
+  "Your companion": "Sua companhia",
+  "Grow your team": "Aumente sua equipe",
+  "{name} leads. Who comes along?": "{name} lidera. Quem vem junto?",
+  "Bringing them in…": "Trazendo a equipe…",
+  "Omni is moving in…": "O Omni está se mudando…",
+  "Omni is waking…": "O Omni está acordando…",
+  "Genie is waking…": "O Genie está acordando…",
+  "Unfold is waking…": "Unfold está acordando…",
+  "Continue with just {name}": "Continuar só com {name}",
+  "Continue with {who}": "Continuar com {who}",
+  " and ": " e "
+};
+var EN = Object.fromEntries(Object.keys(PT_BR).map((key) => [key, key]));
+var fill = (text, params) => params ? text.replace(/\{(\w+)\}/g, (match, name) => name in params ? String(params[name]) : match) : text;
+var bound = null;
+function installLocale(locale) {
+  if (!locale || typeof locale.register !== "function" || typeof locale.bind !== "function") return () => {
+  };
+  const off = locale.register(NAMESPACE, { en: EN, "pt-BR": PT_BR });
+  const mine = locale.bind(NAMESPACE);
+  bound = mine;
+  return () => {
+    if (bound === mine) bound = null;
+    if (typeof off === "function") off();
+  };
+}
+function t(key, params) {
+  return bound ? bound(key, params) : fill(key, params);
+}
+
 // src/client/team.js
 var import_react5 = require("react");
 var WAKE_MS = 1100;
@@ -10308,11 +10534,16 @@ async function sandboxInstall({ show, signal, omniUi = callOmniUi, wait = sleep,
     if (read.result?.status === "pairing") return end("pairing", { pairing: read.result.pairing });
     const exited = typeof read.exitCode === "number" || TERMINAL_ENDED.has(read.state);
     if (exited && read.exitCode === 0) return end("linked", { origin: null });
-    if (exited) return end("failed", { message: read.error ?? (read.exitCode === 130 ? "The install was cancelled." : `Omni's installer stopped (exit code ${read.exitCode ?? "?"}). What it printed is above.`), log });
+    if (exited) return end("failed", { message: read.error ?? (read.exitCode === 130 ? t("The install was cancelled.") : t("Omni's installer stopped (exit code {code}). What it printed is above.", { code: read.exitCode ?? "?" })), log });
     show("sandbox", { terminal, log, step: read.step ?? null });
     await wait(poll, signal);
   }
 }
+var around = (text, name, node) => {
+  const [before, after = ""] = text.split(`{${name}}`);
+  return [before, node, after];
+};
+var titleIn = (omni, choice) => omni.source === "sandbox" ? choice.title.charAt(0).toLowerCase() + choice.title.slice(1) : choice.title;
 var onMac = (scope = globalThis) => /Mac/i.test(scope.navigator?.platform ?? "") || /Mac OS X/.test(scope.navigator?.userAgent ?? "");
 var hostOf = (url) => {
   try {
@@ -10329,15 +10560,14 @@ var portOf = (url) => {
   }
 };
 function foundChoice(omni, { mac = false } = {}) {
-  const here = mac ? "this Mac" : "this computer";
-  const title = omni.source === "sandbox" ? `Your Omni on ${here}` : omni.local ? `Omni on ${here}` : hostOf(omni.url);
+  const title = omni.source === "sandbox" ? mac ? t("Your Omni on this Mac") : t("Your Omni on this computer") : omni.local ? mac ? t("Omni on this Mac") : t("Omni on this computer") : hostOf(omni.url);
   const port = omni.local ? portOf(omni.url) : "";
-  const sub = [omni.version ? `v${omni.version}` : null, port ? `port ${port}` : null, !omni.local ? "saved in your Omni CLI" : null].filter(Boolean).join(" · ");
+  const sub = [omni.version ? `v${omni.version}` : null, port ? t("port {port}", { port }) : null, !omni.local ? t("saved in your Omni CLI") : null].filter(Boolean).join(" · ");
   const row = (action, note = null) => ({ id: omni.id, title, sub, action, note });
-  if (omni.local && omni.reachable === false) return row(null, "Not answering right now.");
-  if (omni.updateTo || omni.pairing === "too-old" && !omni.hasKey) return row(null, "Needs an update first; Connect Omni, next, does it.");
+  if (omni.local && omni.reachable === false) return row(null, t("Not answering right now."));
+  if (omni.updateTo || omni.pairing === "too-old" && !omni.hasKey) return row(null, t("Needs an update first; Connect Omni, next, does it."));
   if (omni.hasKey) return row("use");
-  if (omni.pairing === "off") return row(null, "Sign-in from devices is off on it.");
+  if (omni.pairing === "off") return row(null, t("Sign-in from devices is off on it."));
   return row("connect");
 }
 function readRemote(text) {
@@ -10364,7 +10594,7 @@ function readRemote(text) {
 }
 var isUnowned = (message) => /has no owner yet/i.test(String(message ?? ""));
 var TYPE_LABEL = { "whatsapp-baileys": "WhatsApp", "whatsapp-cloud": "WhatsApp Business", slack: "Slack", telegram: "Telegram", discord: "Discord", gupshup: "Gupshup" };
-var channelLabel = (channel) => TYPE_LABEL[channel.type] ?? channel.type ?? "Channel";
+var channelLabel = (channel) => TYPE_LABEL[channel.type] ?? channel.type ?? t("Channel");
 var GENIE_TYPE = {
   type: "genie",
   groups: [
@@ -10386,7 +10616,7 @@ function unfoldTypeOf(host) {
   return {
     type: "unfold",
     groups: [
-      { id: "plugins", label: "Plugins", rows: UNFOLD_ROWS.map(([id, label, what]) => ({ id, label, detail: host === "unfold" ? `${what} · ${BUNDLED}` : `${what} · Installs when Unfold powers on` })) },
+      { id: "plugins", label: "Plugins", rows: UNFOLD_ROWS.map(([id, label, what]) => ({ id, label, detail: `${t(what)} · ${host === "unfold" ? t(BUNDLED) : t("Installs when Unfold powers on")}` })) },
       { id: "setup", label: "Setup", rows: [{ id: "lead", label: "Leads", detail: host === "unfold" ? "Your Main Bot here" : "Joins your team beside your Main Bot" }] }
     ]
   };
@@ -10400,13 +10630,25 @@ function shortPath(path, keep = 2) {
   return parts.length - (head ? 1 : 0) > keep + 1 ? `${head}/…/${tail.join("/")}` : path;
 }
 var Check = () => (0, import_react5.createElement)("svg", { viewBox: "0 0 16 16", width: 12, height: 12, "aria-hidden": true }, (0, import_react5.createElement)("path", { d: "M3 8.5l3 3 7-7", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }));
+var HOST_ROWS = [
+  [/^(.+) · you confirm it in Omni's first chat$/, (ref) => t("{ref} · you confirm it in Omni's first chat", { ref })],
+  [/^(.+) \(DSH's default\)$/, (preset) => t("{preset} (DSH's default)", { preset })]
+];
+function rowText(text) {
+  if (typeof text !== "string") return text;
+  for (const [pattern, of] of HOST_ROWS) {
+    const match = pattern.exec(text);
+    if (match) return of(match[1]);
+  }
+  return t(text);
+}
 function Capabilities({ type, abilities = {}, onToggle, disabled = false }) {
-  if (!type) return (0, import_react5.createElement)("p", { className: "oai-muted oai-caps-wait" }, "Reading what it starts with…");
+  if (!type) return (0, import_react5.createElement)("p", { className: "oai-muted oai-caps-wait" }, t("Reading what it starts with…"));
   return (0, import_react5.createElement)("div", { className: "oai-caps" }, type.groups.map((group) => (0, import_react5.createElement)(
     "section",
-    { key: group.id, className: "oai-cap-group", "aria-label": group.label },
-    (0, import_react5.createElement)("h3", null, group.label),
-    group.rows.length === 0 ? (0, import_react5.createElement)("p", { className: "oai-muted oai-cap-empty" }, group.empty ?? "None") : (0, import_react5.createElement)("ul", null, group.rows.map((row) => {
+    { key: group.id, className: "oai-cap-group", "aria-label": rowText(group.label) },
+    (0, import_react5.createElement)("h3", null, rowText(group.label)),
+    group.rows.length === 0 ? (0, import_react5.createElement)("p", { className: "oai-muted oai-cap-empty" }, group.empty ? rowText(group.empty) : t("None")) : (0, import_react5.createElement)("ul", null, group.rows.map((row) => {
       const on2 = typeof row.on === "boolean" ? abilities[row.id] ?? row.on : null;
       return (0, import_react5.createElement)(
         "li",
@@ -10414,14 +10656,14 @@ function Capabilities({ type, abilities = {}, onToggle, disabled = false }) {
         (0, import_react5.createElement)(
           "span",
           { className: "oai-cap-what" },
-          (0, import_react5.createElement)("strong", null, row.label),
-          row.detail ? (0, import_react5.createElement)("small", row.path ? { title: row.detail } : null, row.path ? shortPath(row.detail) : row.detail) : null,
-          row.installed === false ? (0, import_react5.createElement)("small", null, "Installs when Omni powers on") : null,
+          (0, import_react5.createElement)("strong", null, rowText(row.label)),
+          row.detail ? (0, import_react5.createElement)("small", row.path ? { title: row.detail } : null, row.path ? shortPath(row.detail) : rowText(row.detail)) : null,
+          row.installed === false ? (0, import_react5.createElement)("small", null, t("Installs when Omni powers on")) : null,
           row.tools ? (0, import_react5.createElement)("code", null, row.tools.join(" · ")) : null
         ),
         row.version ? (0, import_react5.createElement)("span", { className: `oai-version${row.installed === false ? " oai-pending" : ""}` }, `v${row.version}`) : null,
-        row.installed === true ? (0, import_react5.createElement)("span", { className: "oai-tick", title: "Installed" }, (0, import_react5.createElement)(Check)) : null,
-        row.locked ? (0, import_react5.createElement)("span", { className: "oai-core", title: "What this Bot is for: always on" }, "Always on") : on2 !== null && onToggle ? (0, import_react5.createElement)("button", { type: "button", role: "switch", className: "oai-switch", "aria-checked": on2, "aria-label": `${row.label} for this Bot`, disabled, onClick: () => onToggle(row.id, !on2) }) : null
+        row.installed === true ? (0, import_react5.createElement)("span", { className: "oai-tick", title: t("Installed") }, (0, import_react5.createElement)(Check)) : null,
+        row.locked ? (0, import_react5.createElement)("span", { className: "oai-core", title: t("What this Bot is for: always on") }, t("Always on")) : on2 !== null && onToggle ? (0, import_react5.createElement)("button", { type: "button", role: "switch", className: "oai-switch", "aria-checked": on2, "aria-label": t("{label} for this Bot", { label: rowText(row.label) }), disabled, onClick: () => onToggle(row.id, !on2) }) : null
       );
     }))
   )));
@@ -10451,51 +10693,51 @@ var PowerIcon = () => (0, import_react5.createElement)(
   (0, import_react5.createElement)("path", { d: "M12 3v8", fill: "none", stroke: "currentColor", strokeWidth: 2.4, strokeLinecap: "round" }),
   (0, import_react5.createElement)("path", { d: "M6.4 6.6a8 8 0 1 0 11.2 0", fill: "none", stroke: "currentColor", strokeWidth: 2.4, strokeLinecap: "round" })
 );
-var titleOf = (plugins, name) => plugins?.plugins?.find((row) => row.name === name)?.title ?? "Omni";
+var titleOf = (plugins, name) => rowText(plugins?.plugins?.find((row) => row.name === name)?.title ?? "Omni");
 function statusOf(phase, detail) {
-  if (phase === "asleep") return detail?.removed ? "Powered off · not on your team" : "Powered off";
+  if (phase === "asleep") return detail?.removed ? t("Powered off · not on your team") : t("Powered off");
   if (phase === "installing") {
     const rows = detail?.plugins?.plugins ?? [];
     const install = detail?.plugins?.install;
     const at2 = Math.min(rows.length, (install?.done?.length ?? 0) + 1);
-    return install?.current ? `Installing ${titleOf(detail.plugins, install.current)} · ${at2} of ${rows.length}` : "Installing Omni…";
+    return install?.current ? t("Installing {title} · {at} of {count}", { title: titleOf(detail.plugins, install.current), at: at2, count: rows.length }) : t("Installing Omni…");
   }
   if (phase === "found") {
     const count = (detail?.omnis ?? []).filter((omni) => foundChoice(omni).action).length;
-    return count === 1 ? "Found an Omni" : count > 1 ? `Found ${count} Omnis` : "Found Omnis, none ready to connect";
+    return count === 1 ? t("Found an Omni") : count > 1 ? t("Found {count} Omnis", { count }) : t("Found Omnis, none ready to connect");
   }
-  if (phase === "linked") return detail?.origin ? `Connected to ${detail.origin}` : "Connected";
+  if (phase === "linked") return detail?.origin ? t("Connected to {origin}", { origin: detail.origin }) : t("Connected");
   return {
-    waking: "Waking up…",
-    starting: "Starting Omni in this DSH…",
-    looking: "Looking for a connection…",
-    none: "Where should Omni live?",
-    pairing: "Approve this device on your phone",
-    sandbox: detail?.step === "download-bun" ? "Downloading Bun for Omni…" : "Setting up your Omni…",
-    restart: "Installed · restart DSH to start it",
-    failed: "Could not install Omni"
+    waking: t("Waking up…"),
+    starting: t("Starting Omni in this DSH…"),
+    looking: t("Looking for a connection…"),
+    none: t("Where should Omni live?"),
+    pairing: t("Approve this device on your phone"),
+    sandbox: detail?.step === "download-bun" ? t("Downloading Bun for Omni…") : t("Setting up your Omni…"),
+    restart: t("Installed · restart DSH to start it"),
+    failed: t("Could not install Omni")
   }[phase] ?? "";
 }
 function genieStatusOf(phase, detail) {
-  if (phase === "asleep") return detail?.removed ? "Powered off · not on your team" : "Powered off";
+  if (phase === "asleep") return detail?.removed ? t("Powered off · not on your team") : t("Powered off");
   return {
-    waking: "Waking up…",
-    installing: "Installing Genie…",
-    starting: "Starting Genie in this DSH…",
-    ready: "Ready for a wish",
-    restart: "Installed · restart DSH to start it",
-    failed: "Could not install Genie"
+    waking: t("Waking up…"),
+    installing: t("Installing Genie…"),
+    starting: t("Starting Genie in this DSH…"),
+    ready: t("Ready for a wish"),
+    restart: t("Installed · restart DSH to start it"),
+    failed: t("Could not install Genie")
   }[phase] ?? "";
 }
 function unfoldStatusOf(phase, detail) {
-  if (phase === "asleep") return detail?.removed ? "Powered off · not on your team" : "Powered off";
+  if (phase === "asleep") return detail?.removed ? t("Powered off · not on your team") : t("Powered off");
   return {
-    waking: "Waking up…",
-    installing: "Installing Unfold…",
-    starting: "Starting Unfold in this DSH…",
-    ready: "On your team",
-    restart: "Installed · restart DSH to start it",
-    failed: "Could not install Unfold"
+    waking: t("Waking up…"),
+    installing: t("Installing Unfold…"),
+    starting: t("Starting Unfold in this DSH…"),
+    ready: t("On your team"),
+    restart: t("Installed · restart DSH to start it"),
+    failed: t("Could not install Unfold")
   }[phase] ?? "";
 }
 function genieLightsOf(phase) {
@@ -10516,13 +10758,13 @@ function lightsOf(phase) {
 function InstallProgress({ plugins }) {
   const install = plugins?.install;
   const done = new Set(install?.done ?? []);
-  return (0, import_react5.createElement)("ol", { className: "oai-install", "aria-label": "The Omni plugins" }, (plugins?.plugins ?? []).map((row) => {
+  return (0, import_react5.createElement)("ol", { className: "oai-install", "aria-label": t("The Omni plugins") }, (plugins?.plugins ?? []).map((row) => {
     const state = done.has(row.name) || row.installed && row.enabled !== false ? "done" : install?.current === row.name ? "now" : "next";
     return (0, import_react5.createElement)(
       "li",
       { key: row.name, className: `oai-install-${state}` },
       (0, import_react5.createElement)("span", { className: "oai-install-dot", "aria-hidden": true }, state === "done" ? (0, import_react5.createElement)(Check) : null),
-      row.title.replace(/^Omni /, "")
+      t(row.title.replace(/^Omni /, ""))
     );
   }));
 }
@@ -10534,11 +10776,11 @@ function Pairing({ pairing, onCancel }) {
     (0, import_react5.createElement)(
       "div",
       { className: "oai-row" },
-      pairing.waLink ? (0, import_react5.createElement)("a", { className: "oai-pill oai-pill-primary", href: pairing.waLink, target: "_blank", rel: "noreferrer" }, "Open WhatsApp") : null,
-      pairing.approveUrl ? (0, import_react5.createElement)("a", { className: `oai-pill${pairing.waLink ? "" : " oai-pill-primary"}`, href: pairing.approveUrl, target: "_blank", rel: "noreferrer" }, "Approve") : null,
-      (0, import_react5.createElement)("button", { type: "button", className: "oai-pill", onClick: onCancel }, "Cancel")
+      pairing.waLink ? (0, import_react5.createElement)("a", { className: "oai-pill oai-pill-primary", href: pairing.waLink, target: "_blank", rel: "noreferrer" }, t("Open WhatsApp")) : null,
+      pairing.approveUrl ? (0, import_react5.createElement)("a", { className: `oai-pill${pairing.waLink ? "" : " oai-pill-primary"}`, href: pairing.approveUrl, target: "_blank", rel: "noreferrer" }, t("Approve")) : null,
+      (0, import_react5.createElement)("button", { type: "button", className: "oai-pill", onClick: onCancel }, t("Cancel"))
     ),
-    pairing.waLink ? null : (0, import_react5.createElement)("small", { className: "oai-pair-hint" }, "No WhatsApp on that Omni? Run ", (0, import_react5.createElement)("code", null, `omni approve ${pairing.code}`), " on its server.")
+    pairing.waLink ? null : (0, import_react5.createElement)("small", { className: "oai-pair-hint" }, ...around(t("No WhatsApp on that Omni? Run {command} on its server."), "command", (0, import_react5.createElement)("code", null, `omni approve ${pairing.code}`)))
   );
 }
 var connectCommand = (url) => `omni connect --url ${url}`;
@@ -10553,40 +10795,39 @@ function Unowned({ url, claimUrl, busy, onRemote, onBack }) {
   return (0, import_react5.createElement)(
     "div",
     { className: "oai-remote oai-unowned" },
-    (0, import_react5.createElement)("strong", null, `${host} has no owner yet`),
-    (0, import_react5.createElement)("small", null, "Make it yours on its server, then paste the link it prints below:"),
+    (0, import_react5.createElement)("strong", null, t("{host} has no owner yet", { host })),
+    (0, import_react5.createElement)("small", null, t("Make it yours on its server, then paste the link it prints below:")),
     (0, import_react5.createElement)(
       "div",
       { className: "oai-cmd" },
       (0, import_react5.createElement)("code", null, command),
       (0, import_react5.createElement)("button", { type: "button", className: "oai-copy", onClick: () => navigator.clipboard?.writeText(command).then(() => setCopied(true), () => {
-      }) }, copied ? "Copied" : "Copy")
+      }) }, copied ? t("Copied") : t("Copy"))
     ),
-    claimUrl ? (0, import_react5.createElement)("small", null, "Or ", (0, import_react5.createElement)("a", { className: "oai-link", href: claimUrl, target: "_blank", rel: "noreferrer" }, "open its claim page"), ", tap Claim this Omni, then connect its address again.") : (0, import_react5.createElement)("small", null, "Or open the claim link from its server log in your browser, then connect its address again."),
-    (0, import_react5.createElement)(Remote, { busy, onRemote, onBack, label: "The link it printed" })
+    claimUrl ? (0, import_react5.createElement)("small", null, ...around(t("Or {link}, click Claim this Omni, then connect its address again."), "link", (0, import_react5.createElement)("a", { className: "oai-link", href: claimUrl, target: "_blank", rel: "noreferrer" }, t("open its claim page")))) : (0, import_react5.createElement)("small", null, t("Or open the claim link from its server log in your browser, then connect its address again.")),
+    (0, import_react5.createElement)(Remote, { busy, onRemote, onBack, label: t("The link it printed") })
   );
 }
 var ICONS = {
   // A laptop: an Omni already on this computer.
   here: "M4 6.5A1.5 1.5 0 0 1 5.5 5h13A1.5 1.5 0 0 1 20 6.5V15H4zM2 17h20l-1 2H3z",
-  // A box with a spark: a new Omni of its own, in a sandbox.
+  // A box with a spark: a new Omni of its own, set apart on this computer.
   sandbox: "M12 2l1.6 3.4L17 7l-3.4 1.6L12 12l-1.6-3.4L7 7l3.4-1.6zM4 13h16v7a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z",
   // A globe: an Omni somewhere else.
   remote: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m0 2c1.1 1.4 2 3.8 2.2 7H9.8c.2-3.2 1.1-5.6 2.2-7M4.1 13h3.7c.1 2.4.7 4.6 1.6 6.1A8 8 0 0 1 4.1 13m12.1 0h3.7a8 8 0 0 1-5.3 6.1c.9-1.5 1.5-3.7 1.6-6.1M4.1 11a8 8 0 0 1 5.3-6.1C8.5 6.4 7.9 8.6 7.8 11zm12.1 0c-.1-2.4-.7-4.6-1.6-6.1a8 8 0 0 1 5.3 6.1zM9.8 13h4.4c-.2 3.2-1.1 5.6-2.2 7-1.1-1.4-2-3.8-2.2-7"
 };
 var Icon = ({ name }) => (0, import_react5.createElement)("svg", { viewBox: "0 0 24 24", "aria-hidden": true }, (0, import_react5.createElement)("path", { d: ICONS[name], fill: "currentColor" }));
 function destinyOf(omnis = [], { mac = false, newOmni = true } = {}) {
-  const here = mac ? "this Mac" : "this computer";
   const rows = omnis.map((omni) => ({ omni, choice: foundChoice(omni, { mac }) }));
   const tiles = rows.filter((row) => row.choice.action).map(({ omni, choice }) => ({
     id: omni.id,
     icon: omni.local ? "here" : "remote",
     omni,
-    title: `${choice.action === "use" ? "Use" : "Connect"} ${choice.title.replace(/^Your /, "your ")}`,
-    sub: choice.sub || (omni.local ? `Already on ${here}` : "Saved in your Omni CLI")
+    title: choice.action === "use" ? t("Use {omni}", { omni: titleIn(omni, choice) }) : t("Connect {omni}", { omni: titleIn(omni, choice) }),
+    sub: choice.sub || (omni.local ? mac ? t("Already on this Mac") : t("Already on this computer") : t("Saved in your Omni CLI"))
   }));
-  if (newOmni && !rows.some((row) => row.omni.source === "sandbox")) tiles.push({ id: "local", icon: "sandbox", title: `Run Omni on ${here}`, sub: "A private Omni of its own, set up for you" });
-  tiles.push({ id: "remote", icon: "remote", title: "An Omni somewhere else", sub: "On a server, or the link Omni sent you" });
+  if (newOmni && !rows.some((row) => row.omni.source === "sandbox")) tiles.push({ id: "local", icon: "sandbox", title: mac ? t("Run Omni on this Mac") : t("Run Omni on this computer"), sub: t("A private Omni of its own, set up for you") });
+  tiles.push({ id: "remote", icon: "remote", title: t("An Omni somewhere else"), sub: t("On a server, or the link Omni sent you") });
   return { tiles, waiting: rows.filter((row) => !row.choice.action).map((row) => row.choice) };
 }
 function Destiny({ omnis, busy, onUse, onLocal, onRemote }) {
@@ -10597,7 +10838,7 @@ function Destiny({ omnis, busy, onUse, onLocal, onRemote }) {
   return (0, import_react5.createElement)(
     "div",
     { className: "oai-destiny-box" },
-    (0, import_react5.createElement)("div", { className: "oai-destiny", role: "group", "aria-label": "Where your Omni is" }, tiles.map((tile) => (0, import_react5.createElement)(
+    (0, import_react5.createElement)("div", { className: "oai-destiny", role: "group", "aria-label": t("Where your Omni is") }, tiles.map((tile) => (0, import_react5.createElement)(
       "button",
       {
         key: tile.id,
@@ -10607,13 +10848,13 @@ function Destiny({ omnis, busy, onUse, onLocal, onRemote }) {
         onClick: () => pick(tile)
       },
       (0, import_react5.createElement)("span", { className: "oai-destiny-icon" }, (0, import_react5.createElement)(Icon, { name: tile.icon })),
-      (0, import_react5.createElement)("strong", null, busy === tile.id ? "Connecting…" : tile.title),
+      (0, import_react5.createElement)("strong", null, busy === tile.id ? t("Connecting…") : tile.title),
       (0, import_react5.createElement)("small", null, tile.sub)
     ))),
     waiting.length > 0 ? (0, import_react5.createElement)("ul", { className: "oai-destiny-waiting" }, waiting.map((row) => (0, import_react5.createElement)("li", { key: row.id }, (0, import_react5.createElement)("strong", null, row.title), ` · ${row.note}`))) : null
   );
 }
-function Remote({ busy, onRemote, onBack, label = "Where is your Omni?" }) {
+function Remote({ busy, onRemote, onBack, label = t("Where is your Omni?") }) {
   const [text, setText] = (0, import_react5.useState)("");
   const wanted = readRemote(text);
   const submit = (event) => {
@@ -10628,30 +10869,30 @@ function Remote({ busy, onRemote, onBack, label = "Where is your Omni?" }) {
       "div",
       { className: "oai-remote-row" },
       (0, import_react5.createElement)("input", { id: "oai-remote-url", type: "text", inputMode: "url", autoComplete: "off", spellCheck: false, autoFocus: true, value: text, placeholder: "omni.example.com", onChange: (event) => setText(event.target.value) }),
-      (0, import_react5.createElement)("button", { type: "submit", className: "oai-pill oai-pill-primary", disabled: busy !== null || wanted === null || wanted.kind === "bad-link" }, busy === "remote" ? "Connecting…" : "Connect")
+      (0, import_react5.createElement)("button", { type: "submit", className: "oai-pill oai-pill-primary", disabled: busy !== null || wanted === null || wanted.kind === "bad-link" }, busy === "remote" ? t("Connecting…") : t("Connect"))
     ),
-    (0, import_react5.createElement)("small", null, wanted?.kind === "bad-link" ? "That link is cut short. Copy the whole link Omni sent you." : wanted?.kind === "claim" ? "Its claim link: Omni opens it in your browser to make it yours." : "Its address, or paste the link Omni sent you on WhatsApp."),
-    (0, import_react5.createElement)("button", { type: "button", className: "oai-textlink", onClick: onBack }, "Back to the choices")
+    (0, import_react5.createElement)("small", null, wanted?.kind === "bad-link" ? t("That link is cut short. Copy the whole link Omni sent you.") : wanted?.kind === "claim" ? t("Its claim link: Omni opens it in your browser to make it yours.") : t("Its address, or paste the link Omni sent you on WhatsApp.")),
+    (0, import_react5.createElement)("button", { type: "button", className: "oai-textlink", onClick: onBack }, t("Back to the choices"))
   );
 }
 function Inside({ phase, detail, power, live }) {
   const channels = live?.configured ? live.channels ?? [] : [];
   if (phase === "installing") return (0, import_react5.createElement)(InstallProgress, { plugins: detail?.plugins });
   if (phase === "pairing") return (0, import_react5.createElement)(Pairing, { pairing: detail.pairing, onCancel: power.cancelPairing });
-  if (phase === "sandbox") return (0, import_react5.createElement)(InstallLog, { text: detail?.log ?? "", label: "What Omni's installer printed" });
-  if (phase === "failed" && detail?.log) return (0, import_react5.createElement)("div", null, (0, import_react5.createElement)(InstallLog, { text: detail.log, label: "What Omni's installer printed" }), (0, import_react5.createElement)("p", { className: "oai-inside-note oai-bad", title: detail.message }, "What went wrong is above. Power Omni on to try again."));
+  if (phase === "sandbox") return (0, import_react5.createElement)(InstallLog, { text: detail?.log ?? "", label: t("What Omni's installer printed") });
+  if (phase === "failed" && detail?.log) return (0, import_react5.createElement)("div", null, (0, import_react5.createElement)(InstallLog, { text: detail.log, label: t("What Omni's installer printed") }), (0, import_react5.createElement)("p", { className: "oai-inside-note oai-bad", title: detail.message }, t("What went wrong is above. Power Omni on to try again.")));
   if ((phase === "none" || phase === "found") && power.unowned) return (0, import_react5.createElement)(Unowned, { ...power.unowned, busy: power.busy, onRemote: power.remote, onBack: power.forgetUnowned });
   if (phase === "none" || phase === "found") return (0, import_react5.createElement)(Destiny, { omnis: detail?.omnis ?? [], busy: power.busy, onUse: power.use, onLocal: power.local, onRemote: power.remote });
   if (phase === "linked" && channels.length > 0) {
     return (0, import_react5.createElement)(
       "div",
       { className: "oai-menu" },
-      (0, import_react5.createElement)("span", { className: "oai-menu-label" }, "In your menu"),
+      (0, import_react5.createElement)("span", { className: "oai-menu-label" }, t("In your menu")),
       (0, import_react5.createElement)("ul", { className: "oai-menu-preview" }, channels.slice(0, 3).map((channel) => (0, import_react5.createElement)("li", { key: channel.id }, (0, import_react5.createElement)("span", { className: `oai-dot ${channel.status === "connected" ? "ok" : "warn"}` }), `${channelLabel(channel)} · ${channel.name}`)))
     );
   }
-  if (phase === "restart") return (0, import_react5.createElement)("p", { className: "oai-inside-note" }, "Restart DSH, then power Omni on again.");
-  if (phase === "failed") return (0, import_react5.createElement)("p", { className: "oai-inside-note oai-bad", title: detail?.message }, detail?.message ?? "Add the Omni plugins on DSH's Plugins page.");
+  if (phase === "restart") return (0, import_react5.createElement)("p", { className: "oai-inside-note" }, t("Restart DSH, then power Omni on again."));
+  if (phase === "failed") return (0, import_react5.createElement)("p", { className: "oai-inside-note oai-bad", title: detail?.message }, detail?.message ?? t("Add the Omni plugins on DSH's Plugins page."));
   return null;
 }
 function Machine({ kind = "omni", phase, detail, power, live, onPower, children }) {
@@ -10666,8 +10907,8 @@ function Machine({ kind = "omni", phase, detail, power, live, onPower, children 
     (0, import_react5.createElement)(
       "div",
       { className: "oai-box-top" },
-      (0, import_react5.createElement)("span", { className: "oai-lights", "aria-hidden": true }, (omni ? lightsOf(phase) : genieLightsOf(phase)).map(([id, state]) => (0, import_react5.createElement)("i", { key: id, className: `oai-light oai-light-${state}`, title: id }))),
-      (0, import_react5.createElement)("button", { type: "button", className: `oai-power${awake ? " on" : ""}`, "aria-pressed": awake, "aria-label": awake ? `Power ${title} off` : `Power ${title} on`, onClick: onPower, disabled: locked }, (0, import_react5.createElement)(PowerIcon))
+      (0, import_react5.createElement)("span", { className: "oai-lights", "aria-hidden": true }, (omni ? lightsOf(phase) : genieLightsOf(phase)).map(([id, state]) => (0, import_react5.createElement)("i", { key: id, className: `oai-light oai-light-${state}`, title: t(id) }))),
+      (0, import_react5.createElement)("button", { type: "button", className: `oai-power${awake ? " on" : ""}`, "aria-pressed": awake, "aria-label": awake ? t("Power {name} off", { name: title }) : t("Power {name} on", { name: title }), onClick: onPower, disabled: locked }, (0, import_react5.createElement)(PowerIcon))
     ),
     (0, import_react5.createElement)(
       "div",
@@ -10689,14 +10930,14 @@ var genieLogOf = (phase, detail) => ["installing", "starting", "restart", "faile
 function GenieInside({ phase, detail }) {
   if (phase === "ready" && detail?.genie?.skills === false && detail.genie.cli && detail.genie.cliBundled !== true) return (0, import_react5.createElement)(GenieSkillsOffer, { line: detail.genie.cli });
   const log = genieLogOf(phase, detail);
-  const terminal = log === null ? null : (0, import_react5.createElement)(InstallLog, { text: log, label: "What the Genie install printed" });
-  if (phase === "restart") return (0, import_react5.createElement)("div", null, terminal, (0, import_react5.createElement)("p", { className: "oai-inside-note" }, "Restart DSH, then power Genie on again."));
-  if (phase === "failed") return (0, import_react5.createElement)("div", null, terminal, (0, import_react5.createElement)("p", { className: "oai-inside-note oai-bad", title: detail?.message }, terminal === null ? detail?.message ?? "Add @automagik/genie-dsh on DSH's Plugins page." : "What went wrong is above. Power Genie on to try again."));
+  const terminal = log === null ? null : (0, import_react5.createElement)(InstallLog, { text: log, label: t("What the Genie install printed") });
+  if (phase === "restart") return (0, import_react5.createElement)("div", null, terminal, (0, import_react5.createElement)("p", { className: "oai-inside-note" }, t("Restart DSH, then power Genie on again.")));
+  if (phase === "failed") return (0, import_react5.createElement)("div", null, terminal, (0, import_react5.createElement)("p", { className: "oai-inside-note oai-bad", title: detail?.message }, terminal === null ? detail?.message ?? t("Add @automagik/genie-dsh on DSH's Plugins page.") : t("What went wrong is above. Power Genie on to try again.")));
   return terminal;
 }
 function UnfoldInside({ phase, detail }) {
-  if (phase === "restart") return (0, import_react5.createElement)("p", { className: "oai-inside-note" }, "Restart DSH, then power Unfold on again.");
-  if (phase === "failed") return (0, import_react5.createElement)("p", { className: "oai-inside-note oai-bad", title: detail?.message }, detail?.message ?? "Add @automagik/unfold-bot-dsh on DSH's Plugins page.");
+  if (phase === "restart") return (0, import_react5.createElement)("p", { className: "oai-inside-note" }, t("Restart DSH, then power Unfold on again."));
+  if (phase === "failed") return (0, import_react5.createElement)("p", { className: "oai-inside-note oai-bad", title: detail?.message }, detail?.message ?? t("Add @automagik/unfold-bot-dsh on DSH's Plugins page."));
   return null;
 }
 function GenieSkillsOffer({ line }) {
@@ -10708,16 +10949,16 @@ function GenieSkillsOffer({ line }) {
   return (0, import_react5.createElement)(
     "div",
     { className: "oai-genie-skills" },
-    (0, import_react5.createElement)("p", { className: "oai-inside-note" }, "Genie is ready for wishes. For its skills too, like /wish, install its command line once, in a terminal:"),
+    (0, import_react5.createElement)("p", { className: "oai-inside-note" }, t("Genie is ready for wishes. For its skills too, like /wish, install its command line once, in a terminal:")),
     (0, import_react5.createElement)(
       "div",
       { className: "oai-cli-line" },
       (0, import_react5.createElement)("code", null, line),
-      (0, import_react5.createElement)("button", { type: "button", className: "oai-copy", onClick: copy }, copied ? "Copied" : "Copy")
+      (0, import_react5.createElement)("button", { type: "button", className: "oai-copy", onClick: copy }, copied ? t("Copied") : t("Copy"))
     )
   );
 }
-var StartsWith = (props) => (0, import_react5.createElement)("details", { className: "oai-starts" }, (0, import_react5.createElement)("summary", null, "What it starts with"), (0, import_react5.createElement)(Capabilities, props));
+var StartsWith = (props) => (0, import_react5.createElement)("details", { className: "oai-starts" }, (0, import_react5.createElement)("summary", null, t("What it starts with")), (0, import_react5.createElement)(Capabilities, props));
 function OmniCard({ power, onPower, type, abilities, onToggle, live }) {
   const { phase, detail } = power;
   const awake = phase !== "asleep";
@@ -10733,9 +10974,9 @@ function OmniCard({ power, onPower, type, abilities, onToggle, live }) {
       "header",
       null,
       (0, import_react5.createElement)("h2", null, "Omni"),
-      awake && phase !== "failed" ? (0, import_react5.createElement)("span", { className: "oai-team-line" }, (0, import_react5.createElement)("span", { className: "oai-on-team" }, (0, import_react5.createElement)(Check), "On your team"), (0, import_react5.createElement)("button", { type: "button", className: "oai-remove", onClick: onPower, disabled: phase === "installing" || phase === "starting" }, "Remove")) : null
+      awake && phase !== "failed" ? (0, import_react5.createElement)("span", { className: "oai-team-line" }, (0, import_react5.createElement)("span", { className: "oai-on-team" }, (0, import_react5.createElement)(Check), t("On your team")), (0, import_react5.createElement)("button", { type: "button", className: "oai-remove", onClick: onPower, disabled: phase === "installing" || phase === "starting" }, t("Remove"))) : null
     ),
-    (0, import_react5.createElement)("p", { className: "oai-about" }, "Every chat on every channel, answered by your team."),
+    (0, import_react5.createElement)("p", { className: "oai-about" }, t("Every chat on every channel, answered by your team.")),
     (0, import_react5.createElement)(StartsWith, { type, abilities, onToggle, disabled: !awake })
   );
 }
@@ -10754,13 +10995,13 @@ function GenieCard({ power, host = null }) {
       "header",
       null,
       (0, import_react5.createElement)("h2", null, "Genie"),
-      joined ? (0, import_react5.createElement)("span", { className: "oai-team-line" }, (0, import_react5.createElement)("span", { className: "oai-on-team" }, (0, import_react5.createElement)(Check), "On your team")) : null
+      joined ? (0, import_react5.createElement)("span", { className: "oai-team-line" }, (0, import_react5.createElement)("span", { className: "oai-on-team" }, (0, import_react5.createElement)(Check), t("On your team"))) : null
     ),
     (0, import_react5.createElement)(
       "p",
       { className: "oai-about oai-wish" },
       (0, import_react5.createElement)("img", { className: "oai-wish-lamp", src: LAMP, alt: "", draggable: false }),
-      "Give it a wish, get one delivery."
+      t("Give it a wish, get one delivery.")
     ),
     (0, import_react5.createElement)(StartsWith, { type: genieTypeOf(host) })
   );
@@ -10780,9 +11021,9 @@ function UnfoldCard({ power, host = null }) {
       "header",
       null,
       (0, import_react5.createElement)("h2", null, "Unfold"),
-      joined ? (0, import_react5.createElement)("span", { className: "oai-team-line" }, (0, import_react5.createElement)("span", { className: "oai-on-team" }, (0, import_react5.createElement)(Check), "On your team")) : null
+      joined ? (0, import_react5.createElement)("span", { className: "oai-team-line" }, (0, import_react5.createElement)("span", { className: "oai-on-team" }, (0, import_react5.createElement)(Check), t("On your team"))) : null
     ),
-    (0, import_react5.createElement)("p", { className: "oai-about" }, "Unfold itself, working inside DSH."),
+    (0, import_react5.createElement)("p", { className: "oai-about" }, t("Unfold itself, working inside DSH.")),
     (0, import_react5.createElement)(StartsWith, { type: unfoldTypeOf(host) })
   );
 }
@@ -10864,7 +11105,7 @@ function usePower() {
       else if (reply.pairing) {
         back.current = { phase, detail };
         show("pairing", { pairing: reply.pairing });
-      } else setProblem(reply.message ?? "That Omni cannot approve this app from here. Connect Omni, next, can use its API key.");
+      } else setProblem(reply.message ?? t("That Omni cannot approve this app from here. Connect Omni, next, can use its API key."));
     } catch (error) {
       if (endpoint === "omni-pair-start" && isUnowned(error.message)) setUnowned((current) => ({ url: payload.url, claimUrl: current?.claimUrl ?? null }));
       else setProblem(error.message);
@@ -10882,7 +11123,7 @@ function usePower() {
         if (!alive) return;
         if (reply.status === "paired") return show("linked", { origin: reply.origin ?? null });
         if (reply.status !== "pending") {
-          setProblem(reply.status === "denied" ? "The sign-in was denied." : "The code expired. Try again for a new one.");
+          setProblem(reply.status === "denied" ? t("The sign-in was denied.") : t("The code expired. Try again for a new one."));
           return show(back.current?.phase ?? "none", back.current?.detail ?? null);
         }
       } catch (error) {
@@ -10915,7 +11156,7 @@ function usePower() {
         if (error?.name !== "AbortError") show("failed", { message: error.message });
       });
     },
-    remote: (wanted) => wanted.kind === "bad-link" ? setProblem("That is not a link your Omni sends. It looks like https://your-omni/api/login/app?grant=…") : wanted.kind === "claim" ? (setProblem(null), setUnowned({ url: wanted.url, claimUrl: wanted.claimUrl }), window.open(wanted.claimUrl, "_blank", "noreferrer")) : wanted.kind === "grant" ? connect("remote", "omni-connect-grant", { url: wanted.url, grant: wanted.grant }) : connect("remote", "omni-pair-start", { url: wanted.url }),
+    remote: (wanted) => wanted.kind === "bad-link" ? setProblem(t("That is not a link your Omni sends. It looks like https://your-omni/api/login/app?grant=…")) : wanted.kind === "claim" ? (setProblem(null), setUnowned({ url: wanted.url, claimUrl: wanted.claimUrl }), window.open(wanted.claimUrl, "_blank", "noreferrer")) : wanted.kind === "grant" ? connect("remote", "omni-connect-grant", { url: wanted.url, grant: wanted.grant }) : connect("remote", "omni-pair-start", { url: wanted.url }),
     cancelPairing: () => {
       void callOmniUi("omni-pair-cancel").catch(() => {
       });
@@ -10932,37 +11173,37 @@ var preselected = (preload) => ({ omni: preload === "omni", genie: preload === "
 var powersOnByItself = (preload, phase, detail, started, kind = "omni") => preselected(preload)[kind] === true && !started && phase === "asleep" && detail?.removed !== true;
 function joinedLabel({ omni, genie, unfold = false }, name) {
   const who = [omni && "Omni", genie && "Genie", unfold && "Unfold"].filter(Boolean);
-  return who.length === 0 ? `Continue with just ${name}` : `Continue with ${who.join(" and ")}`;
+  return who.length === 0 ? t("Continue with just {name}", { name }) : t("Continue with {who}", { who: who.join(t(" and ")) });
 }
 var speechOf = (phase, name, origin) => ({
-  asleep: `${name} here! Omni is asleep. Press its power button to bring it along.`,
-  waking: "Omni is waking up…",
-  installing: "Bringing Omni into this DSH. One moment.",
-  starting: "Omni is starting up…",
-  looking: "Omni is looking for a connection…",
-  found: "Omni found where your channels live!",
-  none: "No Omni here yet. Tell Omni where yours lives.",
-  pairing: "Approve this device, and Omni connects.",
-  sandbox: "Omni is moving in. This takes a few minutes the first time.",
-  linked: origin ? `Omni is connected to ${origin}!` : "Omni is connected!",
-  restart: "Omni is installed. Restart DSH to wake it.",
-  failed: "Omni could not be installed here."
+  asleep: t("{name} here! Omni is asleep. Click its power button to bring it along.", { name }),
+  waking: t("Omni is waking up…"),
+  installing: t("Bringing Omni into this DSH. One moment."),
+  starting: t("Omni is starting up…"),
+  looking: t("Omni is looking for a connection…"),
+  found: t("Omni found where your channels live!"),
+  none: t("No Omni here yet. Tell Omni where yours lives."),
+  pairing: t("Approve this device, and Omni connects."),
+  sandbox: t("Omni is moving in. This takes a few minutes the first time."),
+  linked: origin ? t("Omni is connected to {origin}!", { origin }) : t("Omni is connected!"),
+  restart: t("Omni is installed. Restart DSH to wake it."),
+  failed: t("Omni could not be installed here.")
 })[phase];
 var unfoldSpeechOf = (phase) => ({
-  waking: "Unfold is waking up…",
-  installing: "Bringing Unfold into this DSH. One moment.",
-  starting: "Unfold is starting up…",
-  ready: "Unfold is on your team.",
-  restart: "Unfold is installed. Restart DSH to wake it.",
-  failed: "Unfold could not be installed here."
+  waking: t("Unfold is waking up…"),
+  installing: t("Bringing Unfold into this DSH. One moment."),
+  starting: t("Unfold is starting up…"),
+  ready: t("Unfold is on your team."),
+  restart: t("Unfold is installed. Restart DSH to wake it."),
+  failed: t("Unfold could not be installed here.")
 })[phase];
 var genieSpeechOf = (phase) => ({
-  waking: "Genie is waking up…",
-  installing: "Bringing Genie into this DSH. One moment.",
-  starting: "Genie is starting up…",
-  ready: "Genie is on your team. Give it a wish once you are in!",
-  restart: "Genie is installed. Restart DSH to wake it.",
-  failed: "Genie could not be installed here."
+  waking: t("Genie is waking up…"),
+  installing: t("Bringing Genie into this DSH. One moment."),
+  starting: t("Genie is starting up…"),
+  ready: t("Genie is on your team. Give it a wish once you are in!"),
+  restart: t("Genie is installed. Restart DSH to wake it."),
+  failed: t("Genie could not be installed here.")
 })[phase];
 function TeamStep(props) {
   const state = useGate(props);
@@ -11015,7 +11256,7 @@ function TeamStep(props) {
     unfoldPower.toggle();
   }, [state]);
   if (!state) return null;
-  const name = state.companionName ?? "Your companion";
+  const name = state.companionName ?? t("Your companion");
   const omni = phase !== "asleep" && phase !== "failed";
   const genie = geniePower.phase === "ready" || geniePower.phase === "restart";
   const genieWorking = ["waking", "installing", "starting"].includes(geniePower.phase);
@@ -11040,13 +11281,13 @@ function TeamStep(props) {
   return (0, import_react5.createElement)(
     Stage,
     {
-      title: "Grow your team",
+      title: t("Grow your team"),
       speech,
       at: "omni-team",
       glitching,
       wide: true
     },
-    (0, import_react5.createElement)("p", { className: "oai-lede" }, `${name} leads. Who comes along?`),
+    (0, import_react5.createElement)("p", { className: "oai-lede" }, t("{name} leads. Who comes along?", { name })),
     (0, import_react5.createElement)(
       "div",
       { className: "oai-select" },
@@ -11068,7 +11309,7 @@ function TeamStep(props) {
       (0, import_react5.createElement)(
         "button",
         { type: "button", className: "oai-primary oai-big", disabled: saving || working || genieWorking || unfoldWorking, onClick: () => go2() },
-        saving ? "Bringing them in…" : phase === "sandbox" ? "Omni is moving in…" : working ? "Omni is waking…" : genieWorking ? "Genie is waking…" : unfoldWorking ? "Unfold is waking…" : joinedLabel({ omni, genie, unfold }, name)
+        saving ? t("Bringing them in…") : phase === "sandbox" ? t("Omni is moving in…") : working ? t("Omni is waking…") : genieWorking ? t("Genie is waking…") : unfoldWorking ? t("Unfold is waking…") : joinedLabel({ omni, genie, unfold }, name)
       )
     )
   );
@@ -11816,6 +12057,7 @@ function installStyles() {
 }
 function apply(ctx) {
   ctx.effect(installStyles, "omni-ai: stage styles");
+  ctx.effect(() => installLocale(ctx.get("locale")), "omni-ai: team step copy");
   ctx.effect(() => installVeil(), "omni-ai: the table over DSH's first frame");
   for (const step of STEPS) {
     ctx.effect(() => announceStep(step.id), `omni-ai: ${step.id} on the rail`);
