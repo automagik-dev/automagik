@@ -16919,7 +16919,7 @@ function updatePill(state) {
       return null;
   }
 }
-function DesktopUpdate() {
+function useDesktopUpdate() {
   const bridge = globalThis.omniDesktop?.updates;
   const [state, setState] = (0, import_react42.useState)(null);
   (0, import_react42.useEffect)(() => {
@@ -16939,6 +16939,10 @@ function DesktopUpdate() {
       off?.();
     };
   }, [bridge]);
+  return { bridge, state };
+}
+function DesktopUpdate() {
+  const { bridge, state } = useDesktopUpdate();
   const pill = updatePill(state);
   if (!bridge || !pill) return null;
   const busy = BUSY.has(state.phase);
@@ -20121,7 +20125,8 @@ var FEEDBACK_CSS = `
 var import_react57 = require("react");
 var CHEER_MS = 1800;
 var starCount = (count) => new Intl.NumberFormat(dateLocale(), { notation: "compact", maximumFractionDigits: 1 }).format(count);
-function botHint(update) {
+function botHint(update, app) {
+  if (update.source === "app" && app.bridge) return updatePill(app.state)?.label ?? t("Updates come with the Automagik app.");
   if (update.phase === "installing") return t("Updating Omni…");
   if (update.phase === "installed") return t("Restart DSH to start using Omni {version}.", { version: update.installed ?? update.latest });
   if (update.phase === "updated") return t("Omni {version} is installed.", { version: update.installed ?? update.latest });
@@ -20145,6 +20150,7 @@ function dshHint(dsh, shown) {
 var linkProps = (href) => ({ className: "bt-soft bt-soft-sm bt-about-link", href, target: "_blank", rel: "noopener noreferrer" });
 function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row3 }) {
   const update = useUpdate((value) => value) ?? {};
+  const app = useDesktopUpdate();
   const [checking, setChecking] = (0, import_react57.useState)(false);
   const [stars, setStars] = (0, import_react57.useState)(null);
   (0, import_react57.useEffect)(() => {
@@ -20179,7 +20185,16 @@ function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row3
   const markState = checking ? "searching" : phase === "installing" || dshPhase === "installing" ? "working" : cheer ? "done" : "idle";
   const dshNew = showsDshRow(dsh, update.app);
   const dshShown = dshNew && dsh.available;
-  const botControl = phase === "installed" || phase === "updated" || update.source === "app" ? null : update.available || phase === "installing" ? (0, import_react57.createElement)(
+  const appPill = updatePill(app.state);
+  const appBusy = ["checking", "downloading", "installing"].includes(app.state?.phase);
+  const botControl = update.source === "app" ? app.bridge ? (0, import_react57.createElement)(
+    "button",
+    { type: "button", className: appPill?.primary ? "bt-fb-primary" : "bt-soft bt-soft-sm", disabled: appBusy, onClick: () => {
+      void app.bridge.open().catch(() => {
+      });
+    } },
+    appPill?.primary ? appPill.label : appBusy ? t("Checking…") : t("Check for updates")
+  ) : null : phase === "installed" || phase === "updated" ? null : update.available || phase === "installing" ? (0, import_react57.createElement)(
     "button",
     { type: "button", className: "bt-fb-primary", disabled: phase === "installing", onClick: () => run2(actions.installUpdate()) },
     phase === "installing" ? t("Updating…") : phase === "failed" ? t("Try again") : t("Update")
@@ -20219,7 +20234,7 @@ function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row3
     (0, import_react57.createElement)(
       Section2,
       { key: "updates", title: t("Updates") },
-      (0, import_react57.createElement)(Row3, { label: "Omni", hint: botHint(update) }, botControl, update.available && update.notesUrl ? (0, import_react57.createElement)("a", linkProps(update.notesUrl), t("What's new")) : null),
+      (0, import_react57.createElement)(Row3, { label: "Omni", hint: botHint(update, app) }, botControl, update.available && update.notesUrl ? (0, import_react57.createElement)("a", linkProps(update.notesUrl), t("What's new")) : null),
       dsh?.current ? (0, import_react57.createElement)(Row3, { label: "DeepSeek Harness", hint: dshHint(dsh, dshShown) }, dshControl) : null
     ),
     (0, import_react57.createElement)(

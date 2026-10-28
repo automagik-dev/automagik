@@ -212,6 +212,23 @@ jobs:
           path: assets
           merge-multiple: true
 
+      # A build that finished without one of its files must not publish: a release without
+      # latest-linux.yml or latest-mac.yml leaves every installed app without its update. The
+      # macOS zip and feed are only made when the app is signed.
+      - name: Every download is there
+        working-directory: assets
+        env:
+          SIGNED: ${{ secrets.MAC_CSC_LINK != '' }}
+        run: |
+          set -euo pipefail
+          need=("Automagik-${VERSION}-linux-x86_64.AppImage" "Automagik-${VERSION}-linux-amd64.deb" latest-linux.yml "Automagik-${VERSION}-mac-arm64.dmg")
+          [[ "${SIGNED}" == true ]] && need+=("Automagik-${VERSION}-mac-arm64.zip" latest-mac.yml)
+          missing=0
+          for file in "${need[@]}"; do
+            [[ -s "${file}" ]] || { echo "::error ::${file} is missing"; missing=1; }
+          done
+          exit "${missing}"
+
       # Every release also carries its downloads under names without the version, so
       # .../releases/latest/download/Automagik-Mac.dmg (the README's buttons) is always the
       # newest. The Omni-* names are the ones the app had before it was Automagik: links to

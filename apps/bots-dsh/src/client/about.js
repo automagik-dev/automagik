@@ -9,13 +9,16 @@ import { SPRING_POP } from './motion.js'
 import { BotMark } from './mark.js'
 import { MAIN_LOOK } from './characters.js'
 import { showsDshRow } from './dsh-offer.js'
+import { updatePill, useDesktopUpdate } from './desktop-update.js'
 
 // The length of the mark's `done` hop (bt-done in styles.js).
 const CHEER_MS = 1800
 
 const starCount = count => new Intl.NumberFormat(dateLocale(), { notation: 'compact', maximumFractionDigits: 1 }).format(count)
 
-function botHint(update) {
+function botHint(update, app) {
+  // In the Automagik app, Omni updates with the app: its row follows the app's update.
+  if (update.source === 'app' && app.bridge) return updatePill(app.state)?.label ?? t('Updates come with the Automagik app.')
   if (update.phase === 'installing') return t('Updating Omni…')
   if (update.phase === 'installed') return t('Restart DSH to start using Omni {version}.', { version: update.installed ?? update.latest })
   if (update.phase === 'updated') return t('Omni {version} is installed.', { version: update.installed ?? update.latest })
@@ -42,6 +45,7 @@ const linkProps = href => ({ className: 'bt-soft bt-soft-sm bt-about-link', href
 
 export function AboutPage({ useUpdate, actions, run, Section, Row }) {
   const update = useUpdate(value => value) ?? {}
+  const app = useDesktopUpdate()
   const [checking, setChecking] = useState(false)
   const [stars, setStars] = useState(null)
   useEffect(() => {
@@ -68,7 +72,15 @@ export function AboutPage({ useUpdate, actions, run, Section, Row }) {
   // Same rule as the sidebar card.
   const dshNew = showsDshRow(dsh, update.app)
   const dshShown = dshNew && dsh.available
-  const botControl = phase === 'installed' || phase === 'updated' || update.source === 'app' ? null
+  const appPill = updatePill(app.state)
+  const appBusy = ['checking', 'downloading', 'installing'].includes(app.state?.phase)
+  const botControl = update.source === 'app'
+    ? app.bridge
+      // The app's own button: restart into a downloaded update, open its release, or check.
+      ? h('button', { type: 'button', className: appPill?.primary ? 'bt-fb-primary' : 'bt-soft bt-soft-sm', disabled: appBusy, onClick: () => { void app.bridge.open().catch(() => {}) } },
+          appPill?.primary ? appPill.label : appBusy ? t('Checking…') : t('Check for updates'))
+      : null
+    : phase === 'installed' || phase === 'updated' ? null
     : update.available || phase === 'installing'
       ? h('button', { type: 'button', className: 'bt-fb-primary', disabled: phase === 'installing', onClick: () => run(actions.installUpdate()) },
           phase === 'installing' ? t('Updating…') : phase === 'failed' ? t('Try again') : t('Update'))
@@ -95,7 +107,7 @@ export function AboutPage({ useUpdate, actions, run, Section, Row }) {
       stars === null ? null : h('span', { className: 'bt-star-count' }, starCount(stars))) : null),
     repo ? h('p', { key: 'ask', className: 'bt-about-ask' }, t('If Omni helps you, a star on GitHub helps more people find it.')) : null,
     h(Section, { key: 'updates', title: t('Updates') },
-      h(Row, { label: 'Omni', hint: botHint(update) }, botControl, update.available && update.notesUrl ? h('a', linkProps(update.notesUrl), t("What's new")) : null),
+      h(Row, { label: 'Omni', hint: botHint(update, app) }, botControl, update.available && update.notesUrl ? h('a', linkProps(update.notesUrl), t("What's new")) : null),
       dsh?.current ? h(Row, { label: 'DeepSeek Harness', hint: dshHint(dsh, dshShown) }, dshControl) : null),
     h(Section, { key: 'links', title: t('Links') },
       repo ? h(Row, { label: t('Source code'), hint: repo.replace(/^https:\/\//, '') }, h('a', linkProps(repo), h(GitHubMark), t('Open'))) : null,
