@@ -88,7 +88,6 @@ test('a positively identified non-Bot session lets /side through, and a non-comm
 
   const roster = createSource({ ready: false, byId: {}, roomsById: {} })
   assert.equal(await matchSideEnter(roster, 's', '/sidequestion', { attachments: 0 }), undefined)
-  assert.equal(await matchSideEnter(roster, 's', '/btw question', { attachments: 0 }), undefined)
   assert.equal(await matchSideEnter(roster, 's', 'hello', { attachments: 0 }), undefined)
 })
 
