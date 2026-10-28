@@ -1,0 +1,6 @@
+# Mounts the pt-BR language pack; the browser half is discovered through the package's dsh.client
+# manifest and ./client export. Installed into someone's own DSH, this patch adds that row and
+# changes nothing of theirs: the language is one more choice in Settings › General › Language.
+- insert:
+    - id: locale-pt-br
+      name: '@automagik/locale-pt-br-dsh'
