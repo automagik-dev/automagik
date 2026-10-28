@@ -67,7 +67,7 @@ At start, the bridge writes `endpoint.json` into `$XDG_STATE_HOME/unfold-bridge/
 
 ## The work view: Unfold watching your agents
 
-Once DSH's session services are up, the bridge also keeps a work view for Unfold. Unfold sees what your DSH agents are doing for the Sessions it subscribes to. It can propose a next message for an agent, and that message is sent only when you click Send in DSH. Tested with DSH 0.2.1-rc.3.
+Once DSH's session services are up, the bridge also keeps a work view for Unfold. Unfold sees what your DSH agents are doing for the Sessions it subscribes to. It can propose a next message for an agent, and that message is sent only when you click Send in DSH. Tested with DSH 0.2.1-rc.4.
 
 **Unfold's routes** are on the same loopback server, behind the same key, Host and no-Origin checks:
 

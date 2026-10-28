@@ -16,10 +16,12 @@ export { colorOf, lookOf } from './characters.js'
 // no turn runs, but work it handed on has not come back yet.
 // Past the turn itself: `failed`, its last turn failed (until the next one starts);
 // `review`, a reply waits to be read; `sleeping`, nobody has touched the window a while.
+// A pending approval (`alert`) outranks a running turn: the Bot cannot go on until the
+// user answers, whatever its last tool was doing.
 const STATES = ['idle', 'thinking', 'searching', 'working', 'sending', 'orbit', 'waiting', 'alert', 'done', 'failed', 'review', 'sleeping']
 const WORK = ['thinking', 'searching', 'working', 'sending', 'orbit']
-export const botState = (running, activity, alert, { failed = false, unread = false } = {}) => (running ? (WORK.includes(activity) ? activity : 'working')
-  : alert ? 'alert' : failed ? 'failed' : activity === 'waiting' ? 'waiting' : unread ? 'review' : 'idle')
+export const botState = (running, activity, alert, { failed = false, unread = false } = {}) => (alert ? 'alert'
+  : running ? (WORK.includes(activity) ? activity : 'working') : failed ? 'failed' : activity === 'waiting' ? 'waiting' : unread ? 'review' : 'idle')
 export const toolState = name => (/^(message_bot|stop_bot|create_bot|update_bot|create_group|update_group|delete_group|post_to_group)$/.test(name) ? 'sending'
   : /search|fetch|browse|read|grep|glob|list|recall/i.test(name) ? 'searching' : 'working')
 

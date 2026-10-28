@@ -4,11 +4,9 @@ name: Follow Omni
 # (apps/desktop/omni.json). Every 30 minutes (or when dispatched) this looks for the newest
 # Omni release (`v<version>`, prereleases included) above the one omni.json pins (and the
 # welcome's package.json, which installs the same release in a plain DSH). When its
-# channels and canvas plugins carry its version and are tested on the DeepSeek Harness the
-# desktop runs (apps/desktop/runtime/package.json, the Bot team's harness), it moves omni.json
-# to it on dev and cuts an Automagik release with it (release.yml). A release tested on another
-# DSH is not followed until the Bot team moves to that DSH (apps/desktop/scripts/follow-dsh.mjs
-# and the harness pins, by hand, with their tests).
+# channels and canvas plugins carry its version and admit the desktop runtime in the same
+# DSH patch series as their harness, it moves omni.json on dev and cuts an Automagik release
+# (release.yml). Downgrades and a different patch series wait for a coordinated harness move.
 
 on:
   schedule:
@@ -61,10 +59,13 @@ jobs:
           done
           tested=$(read_json "apps/omni-channels-dsh/dev/harness/package.json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).dependencies["@deepseek-ai/dsh"])}catch{console.log("")}})')
           pinned=$(node -p "require('./apps/desktop/runtime/package.json').dependencies['@deepseek-ai/dsh']")
-          if [[ "${tested}" != "${pinned}" ]]; then
-            echo "::notice ::Omni ${newest} tests its plugins on dsh '${tested}', the desktop runs ${pinned}: not following it until the Bot team moves"
-            exit 0
-          fi
+          for app in omni-channels-dsh omni-canvas-dsh; do
+            range=$(read_json "apps/${app}/package.json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).engines.dsh)}catch{console.log("")}})')
+            if ! node --input-type=module -e 'import { acceptsHarness } from "./apps/desktop/scripts/follow-dsh.mjs"; process.exit(acceptsHarness(...process.argv.slice(1)) ? 0 : 1)' "${pinned}" "${tested}" "${range}"; then
+              echo "::notice ::Omni ${newest} ${app} tests on dsh '${tested}' and declares '${range}', the desktop runs ${pinned}: not following it until the Bot team moves"
+              exit 0
+            fi
+          done
           echo "version=${newest}" >> "$GITHUB_OUTPUT"
 
       - name: Move to it

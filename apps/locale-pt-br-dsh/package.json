@@ -1,6 +1,6 @@
 {
   "name": "@automagik/locale-pt-br-dsh",
-  "version": "3.34.0",
+  "version": "3.35.2",
   "description": "Brazilian Portuguese for DeepSeek Harness: adds Português (Brasil) to DSH's languages and translates what a first session shows, from the sidebar and the composer to approvals, plugins and settings. Anything it doesn't translate stays in English",
   "keywords": [
     "dsh-plugin",
@@ -43,7 +43,7 @@
     "harness": "bun install --cwd dev/harness --no-save --no-summary"
   },
   "engines": {
-    "dsh": ">=0.2.1-rc.3 <0.2.2-0"
+    "dsh": ">=0.2.1-rc.4 <0.2.2-0"
   },
   "dsh": {
     "client": {

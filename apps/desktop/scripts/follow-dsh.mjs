@@ -1,6 +1,7 @@
 // The DeepSeek Harness the app runs is the one its plugins are tested on: the Bot team's
 // (apps/bots-dsh/dev/harness) and the carried Omni release's (apps/omni-channels-dsh/dev/harness
-// in Omni). prepare-runtime refuses a build where they differ. When the Bot team moves to a
+// in Omni). Omni may have tested an earlier RC in the same patch series when its engines
+// admit the runtime; the combined boot check validates that combination. When the Bot team moves to a
 // new DSH, this moves runtime/package.json and its lock with it. The runtime also pins the zod
 // DSH's packages pin exactly (one copy instead of one per package): when the new DSH pins
 // another, move that pin too (test/prune-runtime.test.js fails until it matches).
@@ -17,6 +18,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { satisfies } from '../src/lane.js'
 
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/
 
@@ -25,6 +27,12 @@ export function rangeFor(version) {
   const match = VERSION.exec(String(version ?? '')) && /^(\d+)\.(\d+)\.(\d+)/.exec(version)
   if (!match) throw new Error(`not a dsh version: '${version}'`)
   return `>=${version} <${match[1]}.${match[2]}.${Number(match[3]) + 1}-0`
+}
+
+/** A carried plugin may use a newer compatible RC in the same patch series, never a downgrade. */
+export function acceptsHarness(runtime, tested, engines) {
+  if (!VERSION.test(String(runtime ?? '')) || !VERSION.test(String(tested ?? ''))) return false
+  return satisfies(runtime, rangeFor(tested)) && satisfies(runtime, engines)
 }
 
 /** A plugin's manifest declaring the range for `version`, or null when it already does. */
@@ -41,7 +49,7 @@ export function pinRuntime(manifest, version) {
 }
 
 // The plugins whose tests pin a DSH and whose manifest declares the range.
-export const PLUGINS = Object.freeze(['bots-dsh', 'welcome-dsh'])
+export const PLUGINS = Object.freeze(['bots-dsh', 'welcome-dsh', 'locale-pt-br-dsh', 'unfold-bridge-dsh'])
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const all = process.argv[2] === '--all'

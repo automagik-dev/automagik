@@ -3,7 +3,8 @@
 // the group chat. A Bot's own chat keeps DSH's card; its requests are only noted, so
 // the team view can say who is waiting. So does a running task a Bot started
 // (start_task, agents.js): its approval is noted under that Bot with the task's id
-// (`taskId`), so the Bot shows it needs the user and the task's thread waits in amber.
+// (`taskId`) and title (`label`), so the Bot shows it needs the user, the parent's chat
+// can say which task waits, and the task's thread waits in amber.
 import { randomUUID } from 'node:crypto'
 
 const OUTCOMES = { allow: 'allowed-once', reject: 'rejected' }
@@ -17,7 +18,7 @@ export const teamToolOf = name => String(name ?? '').replace(/^mcp__dsh__/, '')
 
 export function install(rt) {
   const { ctx } = rt
-  /** @type {Map<string, {id:string, sessionId:string, botId:string, roomId?:string, tool:string, reason:string, detail:{text?:string, code?:string}, at:number, answer?:(outcome:string)=>void}>} */
+  /** @type {Map<string, {id:string, sessionId:string, botId:string, roomId?:string, taskId?:string, label?:string, tool:string, reason:string, detail:{text?:string, code?:string}, at:number, answer?:(outcome:string)=>void}>} */
   const pending = new Map()
   // A task a Bot of the team started that still runs, by its Session.
   const runningTask = (sessionId) => {
@@ -39,7 +40,7 @@ export function install(rt) {
       sessionId,
       botId,
       ...(owner ? { roomId: owner.roomId } : {}),
-      ...(owner === undefined && task !== undefined ? { taskId: sessionId } : {}),
+      ...(owner === undefined && task !== undefined ? { taskId: sessionId, label: String(task.title ?? '').trim() } : {}),
       tool: String(request.toolName ?? ''),
       reason: String(request.reason ?? '').slice(0, 500),
       detail: rt.callDetail?.(sessionId, request.callId) ?? {},

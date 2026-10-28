@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { PLUGINS, pinRange, pinRuntime, rangeFor } from '../scripts/follow-dsh.mjs'
+import { PLUGINS, acceptsHarness, pinRange, pinRuntime, rangeFor } from '../scripts/follow-dsh.mjs'
 
 const runtime = { name: 'omni-desktop-runtime', private: true, dependencies: { '@deepseek-ai/dsh': '0.2.1-rc.2', pnpm: '10.34.6' } }
 
@@ -48,4 +48,28 @@ test('follow-omni follows only an Omni release tested on the dsh the desktop run
   // The welcome installs the same Omni release in a plain DSH: both pins move in one commit.
   assert.ok(text.indexOf('apps/welcome-dsh/package.json') < text.indexOf('git commit -qam'))
   assert.match(text, /pkg\.automagik\.omni = \{ \.\.\.pkg\.automagik\.omni, version, commit \}/)
+})
+
+
+test('a carried Omni harness admits only newer compatible releases in the same patch series', () => {
+  const range = '>=0.2.1-rc.3 <0.2.2-0'
+  for (const version of ['0.2.1-rc.3', '0.2.1-rc.4', '0.2.1']) {
+    assert.equal(acceptsHarness(version, '0.2.1-rc.3', range), true, version)
+  }
+  for (const version of ['0.2.1-rc.2', '0.2.2-alpha.1', '0.2.2', '0.3.0', 'latest', undefined]) {
+    assert.equal(acceptsHarness(version, '0.2.1-rc.3', range), false, version)
+  }
+  assert.equal(acceptsHarness('0.2.1-rc.4', '0.2.1-rc.3', '>=0.2.1-rc.3 <0.2.1-rc.4'), false)
+  assert.equal(acceptsHarness('0.2.1-rc.4', '0.2.1-rc.3', undefined), false)
+  assert.equal(acceptsHarness('0.2.1-rc.4', undefined, range), false)
+  assert.equal(acceptsHarness('0.2.2', '0.2.1-rc.3', '>=0.2.1-rc.2 <0.3.0'), false)
+})
+
+test('all shipped plugin harnesses track the exact desktop DSH pin', () => {
+  assert.deepEqual([...PLUGINS].sort(), ['bots-dsh', 'locale-pt-br-dsh', 'unfold-bridge-dsh', 'welcome-dsh'])
+  const pinned = JSON.parse(readFileSync(new URL('../runtime/package.json', import.meta.url), 'utf8')).dependencies['@deepseek-ai/dsh']
+  for (const name of PLUGINS) {
+    const tested = JSON.parse(readFileSync(new URL(`../../${name}/dev/harness/package.json`, import.meta.url), 'utf8')).dependencies['@deepseek-ai/dsh']
+    assert.equal(tested, pinned, name)
+  }
 })

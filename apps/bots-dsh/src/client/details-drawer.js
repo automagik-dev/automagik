@@ -3,6 +3,7 @@ import { isMainOf } from './sources.js'
 import { HEADER, currentPart, runStatsOf, stripHeader, usageOf } from './text.js'
 import { PlusIcon, ShareIcon, CloseIcon, ChevronLeftIcon, GearIcon } from './icons.js'
 import { botState, BotMark, BotAvatar } from './mark.js'
+import { useApproval } from './approvals.js'
 import { GlobeIcon, Favicon, PanelMenu, menuItemFor } from './browser-pane.js'
 import { drawerMenuKeys } from './side-model.js'
 import { useEscape } from './overlay-hooks.js'
@@ -198,6 +199,7 @@ export function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, ro
   const running = useSessionStatus(map => map.get(part)?.running === true)
   const doing = useActivity(map => map[bot?.id ?? sessionId])
   const failed = useWork ? useWork(work => work.failed?.[bot?.id ?? ''] !== undefined) : false
+  const approval = useApproval(useWork, entry => entry.botId !== undefined && entry.botId === bot?.id)
   const transcript = useSessions(list => transcriptOf(list, part, bot?.name ?? room?.name ?? t('Bot'), roster.exchangeTurns[part]))
   const usage = useSessions(list => usageOf(list, [part, ...(bot?.parts ?? room?.parts ?? [])]))
   const run = promise => Promise.resolve(promise)
@@ -252,7 +254,7 @@ export function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, ro
   const tabs = bot ? ['details', 'browser'] : ['details']
   return [h(Fragment, { key: 'top' }, top),
     h('div', { key: 'id', className: 'bt-drawer-id', 'data-move': side },
-      bot ? h(BotAvatar, { bot, size: 64, state: botState(running, doing, roster.questions?.[part] !== undefined, { failed }), main: isMainBot, badge: false, gaze: true, pokeable: true })
+      bot ? h(BotAvatar, { bot, size: 64, state: botState(running, doing, roster.questions?.[part] !== undefined || approval, { failed }), main: isMainBot, badge: false, gaze: true, pokeable: true })
         : h(MemberPile, { room, roster }),
       editing
         ? h('input', {

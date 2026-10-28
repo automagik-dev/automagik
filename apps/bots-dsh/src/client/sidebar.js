@@ -12,6 +12,7 @@ import { hostText, t } from './i18n.js'
 import { showsDshRow } from './dsh-offer.js'
 import { badges, botChildren, nav, useEntries } from './extend.js'
 import { agentRowSessions, approvalFor, runningTasksOf, taskState, waitsForUser } from './task-card.js'
+import { useApproval } from './approvals.js'
 
 // -------------------------------------------------------------------------
 // Sidebar
@@ -24,10 +25,6 @@ function useMarkedUnread(id, active, marked, actions) {
 }
 
 const PinMark = () => h('span', { className: 'bt-pin', 'aria-hidden': true }, h(PinMarkIcon))
-
-// Whether an approval waits for the user: for a Bot, in any of its Sessions; for a group,
-// from any of its members there.
-const useApproval = (useWork, match) => (useWork ? useWork(work => (work.approvals ?? []).some(match)) : false)
 
 // Work running in group Sessions, as "botId|tool" keys so a row redraws only when it
 // changes: the groups one Bot works in, or the members at work in one group.
@@ -56,6 +53,10 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   // The team's first Main Bot is pinned first and wears the crown, with its role beside its name.
   const crowned = roster.mainBotId === id
   const approval = useApproval(useWork, entry => entry.botId === id)
+  // A task this Bot started waits on the user: the row says so from the top level, even
+  // while the Bot itself runs and would otherwise only preview its own turn.
+  const blockedTask = useWork ? useWork(work => (work.approvals ?? []).some(entry => entry.taskId !== undefined && entry.botId === id)) : false
+  const blockedLine = blockedTask ? t('A task needs your approval') : ''
   const alert = roster.questions?.[part] !== undefined || approval
   const doing = useActivity(map => map[id])
   // Work in a group runs in a Session of its own, so the Bot's chat stays idle meanwhile.
@@ -88,11 +89,12 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   pinned && !wide ? h(PinMark) : null,
   wide ? h('span', { className: 'bt-row-body' },
     h('span', { className: 'bt-row-name' }, h('span', { className: 'bt-row-title' }, bot.name), role ? h('span', { className: 'bt-role' }, role) : null, pinned ? h(PinMark) : null),
-    runningLine ? h('span', { className: 'bt-row-preview' }, runningLine)
-      : awayLine ? h('span', { className: 'bt-row-preview' }, awayLine)
-        : waitsFor ? h('span', { className: 'bt-row-preview' }, waitsFor)
-          : threadsLine ? h('span', { className: 'bt-row-preview' }, threadsLine)
-            : preview ? h('span', { className: 'bt-row-preview' }, preview) : null) : null,
+    blockedLine ? h('span', { className: 'bt-row-preview bt-row-preview-ask' }, blockedLine)
+      : runningLine ? h('span', { className: 'bt-row-preview' }, runningLine)
+        : awayLine ? h('span', { className: 'bt-row-preview' }, awayLine)
+          : waitsFor ? h('span', { className: 'bt-row-preview' }, waitsFor)
+            : threadsLine ? h('span', { className: 'bt-row-preview' }, threadsLine)
+              : preview ? h('span', { className: 'bt-row-preview' }, preview) : null) : null,
   // Badges other Omni plugins add (extend.js): Omni's row counts the automation runs waiting for you.
   wide ? h(RowBadges, { bot, roster, useWork }) : null,
   wide && unread && !active ? h('span', { className: 'bt-unread', 'aria-hidden': true }) : null)
