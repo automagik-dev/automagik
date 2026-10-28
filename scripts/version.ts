@@ -31,6 +31,7 @@ export const FIELDS: { file: string; path: string[] }[] = [
   { file: 'apps/bots-dsh/package.json', path: ['version'] },
   { file: 'apps/welcome-dsh/package.json', path: ['version'] },
   { file: 'apps/unfold-bridge-dsh/package.json', path: ['version'] },
+  { file: 'apps/locale-pt-br-dsh/package.json', path: ['version'] },
   { file: 'apps/desktop/package.json', path: ['version'] },
   { file: 'apps/desktop/package-lock.json', path: ['version'] },
   { file: 'apps/desktop/package-lock.json', path: ['packages', '', 'version'] },

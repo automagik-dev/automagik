@@ -1,0 +1,7 @@
+{
+  "waiting": "Aguardando aprovação",
+  "detail.aria": "Detalhes da aprovação",
+  "escalation": "A ferramenta {toolName} pede para rodar com privilégios elevados",
+  "reject": "Recusar",
+  "allowOnce": "Permitir uma vez"
+}

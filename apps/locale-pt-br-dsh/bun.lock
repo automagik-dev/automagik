@@ -1,0 +1,10 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "@automagik/locale-pt-br-dsh",
+    },
+  },
+  "packages": {}
+}
