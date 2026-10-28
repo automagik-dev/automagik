@@ -11,8 +11,9 @@
 // The plugins are the @automagik packages profile/package.json depends on: Automagik's own
 // (this repository's apps/*-dsh, the Bot team and the welcome, at this app's version) and
 // Omni's (its channels and canvases, taken from Omni itself at the commit omni.json pins, the
-// Omni release this app carries, each at that release's version). Each is packed with
-// `npm pack`, so the app ships exactly what each package publishes. Their @deepseek-ai peers
+// Omni release this app carries, each at the release of its own last change, never above the
+// pinned one). Each is packed with `npm pack`, so the app ships exactly what each package
+// publishes. Their @deepseek-ai peers
 // are not installed again: dsh supplies them. OMNI_SOURCE points at a local Omni checkout
 // instead, for development.
 // Native packages are per platform, so run this on the platform you build for.
@@ -24,6 +25,7 @@ import { fileURLToPath } from 'node:url'
 import { scrubBuildPaths } from '../src/dsh.js'
 import { pruneNodeModules } from './prune-runtime.mjs'
 import { acceptsHarness } from './follow-dsh.mjs'
+import { compareVersions } from '../src/update.js'
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = resolve(APP, '..', '..')
@@ -77,7 +79,9 @@ const PLUGINS = {}
 const ADDONS = {}
 for (const [name, spec] of Object.entries(profileDeps)) {
   if (own[name]) PLUGINS[name] = { dir: own[name], version: VERSION }
-  else if (omni[name]) PLUGINS[name] = { dir: omni[name], version: OMNI.version }
+  // Each Omni plugin carries the Omni release of its own last change (omni#1356): at or below
+  // the pinned release, never above it.
+  else if (omni[name]) PLUGINS[name] = { dir: omni[name], version: OMNI.version, upTo: true }
   else if (/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(spec)) ADDONS[name] = spec
   else if (PINNED_GIT.test(spec) && profileJson.omni?.addonVersions?.[name]) ADDONS[name] = profileJson.omni.addonVersions[name]
   else throw new Error(`profile/package.json depends on ${name}@${spec}: neither Automagik's nor Omni's (apps/*-dsh) nor an add-on at an exact version or a pinned commit with its version in omni.addonVersions`)
@@ -120,10 +124,12 @@ say(`packing ${Object.keys(PLUGINS).join(', ')}`)
 const packs = join(BUILD, 'packs')
 rmSync(packs, { recursive: true, force: true })
 mkdirSync(packs, { recursive: true })
-const packed = Object.entries(PLUGINS).map(([name, { dir, version }]) => {
+const packed = Object.entries(PLUGINS).map(([name, { dir, version, upTo }]) => {
   const [info] = JSON.parse(execFileSync(npm, ['pack', '--json', '--pack-destination', packs], { cwd: dir, env, encoding: 'utf8' }))
   if (info.name !== name) throw new Error(`${dir} packs ${info.name}, not ${name}`)
-  if (info.version !== version) throw new Error(`${name} is ${info.version}, not ${version}`)
+  if (upTo ? !(compareVersions(info.version, version) <= 0) : info.version !== version) {
+    throw new Error(`${name} is ${info.version}, not ${upTo ? 'at or below ' : ''}${version}`)
+  }
   return { name, version: info.version, tarball: join(packs, info.filename) }
 })
 
