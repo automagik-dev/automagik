@@ -41,18 +41,19 @@
  				diagnostics: member.error === void 0 ? [] : [member.error]
  			});
  		}
-@@ -1004,6 +1005,10 @@
+@@ -1004,6 +1005,11 @@
  	async spawnAdmitted(caller, request) {
  		const membership = this.membership(caller);
  		if (membership.role !== "lead") throw new TeamError("only the Team Lead can create teammates", "TEAM_LEAD_REQUIRED");
 +		if (request.agentOptions !== void 0) {
-+			if (request.context === "fork") throw new TeamError("a fork teammate keeps the Team Lead's LLM route; choose a provider, model, or reasoning effort only for a fresh teammate", "TEAM_INVALID_ARGUMENT");
-+			if (this.ctx.subagents.getProvider(request.provider)?.capabilities.agentOptions !== true) throw new TeamError(`subagent provider "${request.provider}" cannot give a teammate its own LLM route`, "TEAM_INVALID_ARGUMENT");
++			const backend = this.ctx.subagents.getProvider(request.provider);
++			if (request.context === "fork" || backend?.inheritsParentContext !== false) throw new TeamError("a fork teammate keeps the Team Lead's LLM route; choose a provider, model, or reasoning effort only for a fresh teammate on a backend that does not inherit the Lead's history", "TEAM_INVALID_ARGUMENT");
++			if (backend.capabilities.agentOptions !== true) throw new TeamError(`subagent provider "${request.provider}" cannot give a teammate its own LLM route`, "TEAM_INVALID_ARGUMENT");
 +		}
  		const signal = AbortSignal.any([request.signal, this.lifecycle.signal]);
  		signal.throwIfAborted();
  		const root = membership.root;
-@@ -1036,7 +1041,8 @@
+@@ -1036,7 +1042,8 @@
  				label: description,
  				request: {
  					prompt: request.prompt,
@@ -62,7 +63,7 @@
  				},
  				signal
  			});
-@@ -1155,10 +1161,35 @@
+@@ -1155,10 +1162,35 @@
  			description: member.description,
  			provider: member.provider,
  			context: member.context,
@@ -99,7 +100,7 @@
  	/** Validate a never-reused model-facing teammate name. */
  	memberName(value) {
  		if (!MEMBER_NAME.test(value) || value.length > 64 || value === "lead") throw new TeamError("teammate name must be lower-kebab-case, at most 64 characters, and not \"lead\"", "TEAM_INVALID_MEMBER_NAME");
-@@ -1184,6 +1215,15 @@
+@@ -1184,6 +1216,15 @@
  		return foldSubagentDescriptor(agent.session.snapshotEvents(agent.session.inheritedEventCount)) !== void 0;
  	}
  };
@@ -115,7 +116,7 @@
  /** Turn availability is independent of whether the Agent is loaded. */
  function availability(agent) {
  	return agent?.status === "running" ? "running" : "inactive";
-@@ -1499,6 +1539,16 @@
+@@ -1499,6 +1540,16 @@
  		return this.roster.list(this.roster.membership(agent));
  	}
  	/**

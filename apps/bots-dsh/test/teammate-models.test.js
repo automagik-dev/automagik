@@ -154,7 +154,9 @@ test('fresh teammates keep their own LLM route through follow-ups and a cold res
   const only = member => { assert.equal(sent[member].size, 1, `${member} sent on ${[...sent[member]].join(' and ')}`); return JSON.parse([...sent[member]][0]) }
   const [lead, alpha, bravo, heir] = ['lead', 'alpha', 'bravo', 'heir'].map(only)
   assert.deepEqual([lead[0], lead[1], alpha[0], alpha[1], bravo[0], bravo[1], bravo[2]], ['/a/v1/messages', 'alpha', '/b/v1/messages', 'beta', '/a/v1/messages', 'gamma', null])
-  assert.notDeepEqual(alpha[2], lead[2])
+  // pi-ai's thinking budgets for the anthropic-messages wire: low on the Lead's route, max on alpha's.
+  assert.deepEqual(lead[2], { type: 'enabled', budget_tokens: 2048, display: 'summarized' })
+  assert.deepEqual(alpha[2], { type: 'enabled', budget_tokens: 16384, display: 'summarized' })
   assert.deepEqual(heir, lead)
   const count = (entries, member) => entries.filter(entry => entry.team === member).length
   for (const member of ['alpha', 'bravo', 'heir']) assert.ok(count(log.slice(0, before), member) >= 2, `${member} answered its prompt and the follow-up`)
