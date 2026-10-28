@@ -211,6 +211,8 @@ export function install(rt) {
         ...(modelRef ? { model: modelRef } : {}),
         ...(effortId ? { effort: effortId } : {}),
         ...(dir ? { workDir: dir } : {}),
+        // The team default; a Session adopted from a host keeps its own.
+        ...(state.prefs.permission && existingSessionId === undefined ? { permission: state.prefs.permission } : {}),
         // What a team member brought in by its own plugin is for (omni: Omni's channels).
         ...(BOT_KINDS.includes(kind) ? { kind } : {}),
         instructions: String(instructions).trim(),
@@ -242,6 +244,8 @@ export function install(rt) {
         await rt.save()
         return bot
       }
+      await rt.applyPermission(bot, id)
+        .catch(error => rt.warn('ds-bot: permission for %s not applied: %s', cleanName, error))
       if (modelRef === undefined) {
         bot.kickoff = { text, from: createdBy ?? null, ...(main ? { main: true } : {}) }
         await rt.save()

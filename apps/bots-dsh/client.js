@@ -2007,6 +2007,37 @@ function mountShellInstallers(tools) {
   };
 }
 
+// src/shared/permission-levels.js
+var AUTO = "auto";
+var AUTO_FALLBACK = "workspace-write";
+var LEVELS = Object.freeze(["read-only", "workspace-write", "danger-full-access", AUTO]);
+var isClaudeCode = (provider) => provider === "claude-code" || String(provider).startsWith("claude-code-");
+var ADAPTERS = /* @__PURE__ */ Symbol.for("dsh-oh-my-claude.adapter");
+var claudeAdapters = () => [...globalThis[ADAPTERS]?.values() ?? []];
+async function pinClaudeMode(sessionId, mode) {
+  const adapters = claudeAdapters();
+  try {
+    if (mode === AUTO) {
+      if (adapters.some((adapter) => typeof adapter.restorePermissionMode !== "function" || typeof adapter.getPermissionMode !== "function")) return false;
+      for (const adapter of adapters) await adapter.restorePermissionMode(sessionId, AUTO);
+      return adapters.every((adapter) => adapter.getPermissionMode(sessionId, "danger-full-access") === AUTO);
+    }
+    let cleared = true;
+    for (const adapter of adapters) {
+      if (typeof adapter.permissionModeInfo !== "function" || adapter.permissionModeInfo(sessionId).override !== AUTO) continue;
+      if (typeof adapter.setPermissionMode !== "function") {
+        cleared = false;
+        continue;
+      }
+      await adapter.setPermissionMode(sessionId, null);
+      if (adapter.permissionModeInfo(sessionId).override !== null) cleared = false;
+    }
+    return cleared;
+  } catch {
+    return false;
+  }
+}
+
 // src/client/composer-packs.js
 var PACK_CELLS = ["permission", "model"];
 var DEFAULT_PACK = Object.freeze({ id: "omni", cells: Object.freeze({ permission: "hidden", model: "hidden" }) });
@@ -2044,7 +2075,6 @@ function cellChoice(pack, cell, target) {
   }
   return choice === "host" || choice === "model" ? choice : "hidden";
 }
-var isClaudeCode = (provider) => provider === "claude-code" || String(provider).startsWith("claude-code-");
 var OH_MY_CLAUDE = /oh-my-claude/i;
 var CLAUDE_KEYS = ["conversation.input.permission", "conversation.input.left", "conversation.input.dock", "conversation.composer.dock"];
 var hasOhMyClaude = (env) => CLAUDE_KEYS.some((key) => (env.registrants?.(key) ?? []).some((name) => OH_MY_CLAUDE.test(name ?? "")));
