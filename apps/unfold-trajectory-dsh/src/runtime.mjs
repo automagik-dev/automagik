@@ -11,8 +11,20 @@ import { layoutClockOverview } from './clock-layout.mjs'
 export { DEFAULT_GROUPS, GROUPS, KINDS, LANES, buildUnfoldTrajectory, filterTurns, layoutClockOverview, newSince, stateOf, timelineDetail }
 // Unfold's own Session in DSH, and the Mind stream route, relative to the DSH page (the plugin
 // opens no other connection, and names no host or port).
-export const UNFOLD_SESSION = 'unfold-root'
-export const MIND_STREAM = 'api/unfold-mind/stream'
+export let UNFOLD_SESSION = 'unfold-root'
+export let MIND_STREAM = 'api/unfold-mind/stream'
+
+/** Resolve the configured peers before any view or Bot button registers. */
+export async function discover() {
+  const read = async (path) => {
+    const response = await fetch(new URL(path, document.baseURI), { cache: 'no-store' })
+    if (!response.ok) throw new Error(`Unfold configuration ${response.status}`)
+    return response.json()
+  }
+  const [session, mind] = await Promise.all([read('api/unfold-session/config'), read('api/unfold-mind/config')])
+  UNFOLD_SESSION = session.sessionId
+  MIND_STREAM = `${mind.route.replace(/^\//, '').replace(/\/$/, '')}/stream`
+}
 
 // ---------------------------------------------------------------- the shared subscription
 // One EventSource on /api/unfold-mind/stream for every Unfold trajectory view in this page (ref-counted),

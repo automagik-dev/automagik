@@ -6,12 +6,13 @@ timing overview and an inspector. It is a fork of DeepSeek's trajectory UI
 ledger and inspector and reads Unfold's Mind stream instead of a DSH session's events. Tested
 with DSH 0.2.1-rc.4, whose trajectory UI ships the same bundle bytes as rc.3.
 
-- **Where it shows.** In Unfold's own Session (`unfold-root`): as its own conversation view,
+- **Where it shows.** In Unfold's configured Session (`unfold-root` by default): as its own conversation view,
   "Unfold", next to Chat and DeepSeek's Trajectory, and as a "Trajectory" tab in the right
   sidebar. With the Bot team installed, the Bot's header gets a Trajectory button that opens the
   tab. Any other session shows a short note that the view is Unfold's.
-- **Where its data comes from.** One `EventSource` on `api/unfold-mind/stream`, relative to the DSH
-  page, which `@automagik/unfold-mind-dsh` serves. The plugin opens no other connection, names no
+- **Where its data comes from.** The configured session and Mind route are discovered through the read-only
+  `api/unfold-session/config` and `api/unfold-mind/config` endpoints on the DSH page. One
+  `EventSource` reads that Mind route's `/stream`, which `@automagik/unfold-mind-dsh` serves. The plugin opens no other connection, names no
   host or port and reads no environment. It only reads.
 - **What it claims.** Only what the Mind rows show: a reply is cancelled only when its own host
   process says so, a duration is shown only when both ends were measured on one clock, and

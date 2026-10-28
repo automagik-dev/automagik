@@ -16,7 +16,8 @@
 		* The registration rides the slot service's effect wrapper, so plugin unload removes the tab.
 		* @param ctx - client root context.
 		*/
-		function apply(ctx) {
+		async function apply(ctx) {
+			await UNFOLD.discover();
 			ctx.effect(() => ctx.locale.register(NS, {
 				zh,
 				en

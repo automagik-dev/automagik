@@ -27,7 +27,8 @@ function load({ bots = null } = {}) {
   const context = vm.createContext({
     window: { __ModuleLoader__: { load: (registration) => registrations.push(registration) } },
     EventSource: class { constructor(url) { sources.push(url) } addEventListener() {} close() {} },
-    URL, console,
+    URL, console, setTimeout, clearTimeout,
+    fetch: async (url) => ({ ok: true, json: async () => url.pathname.endsWith("/unfold-session/config") ? { sessionId: "custom-root" } : { route: "/api/custom-mind" } }),
   })
   vm.runInContext(readFileSync(join(ROOT, 'client.js'), 'utf8'), context, { filename: 'client.js' })
   const requested = []
@@ -41,7 +42,9 @@ function load({ bots = null } = {}) {
   }
   assert.equal(registrations.length, 1)
   const [{ id, factory }] = registrations
-  return { id, exports: factory(require), requested, sources }
+  const exports = factory(require)
+  context.document = { baseURI: "https://dsh.example/" }
+  return { id, exports, requested, sources }
 }
 
 function clientContext() {
@@ -64,10 +67,10 @@ test('the bundle registers under the package name and its factory defines every 
   assert.ok(!requested.includes('@automagik/bots-dsh/client'), 'the Bot team is looked up only when the plugin applies')
 })
 
-test('apply registers its own view, tab and dictionary, and opens no stream on its own', () => {
+test('apply registers its own view, tab and dictionary, and opens no stream on its own', async () => {
   const { exports, sources } = load()
   const { ctx, calls } = clientContext()
-  exports.apply(ctx)
+  await exports.apply(ctx)
   const [, ns, dicts] = calls.find(([kind]) => kind === 'locale')
   assert.equal(ns, 'unfold-trajectory')
   assert.equal(dicts.en['unfold.view'], 'Unfold')
@@ -76,17 +79,23 @@ test('apply registers its own view, tab and dictionary, and opens no stream on i
   const view = calls.find(([kind, entry]) => kind === 'register' && entry.name === 'conversation.view')[1]
   assert.equal(view.id, 'unfold-trajectory')
   assert.equal(view.label(), 'unfold.view')
+  const custom = view.inject('custom-root').hooks.unfold
+  assert.notEqual(custom.getSnapshot().notUnfold, true, 'configured session reads the trajectory')
+  assert.equal(view.inject('unfold-root').hooks.unfold.getSnapshot().notUnfold, true, 'default session does not receive another session feed')
   assert.deepEqual(sources, [], 'the Mind stream opens only when a view subscribes')
+  const stop = custom.subscribe(() => {})
+  assert.equal(sources[0].pathname, '/api/custom-mind/stream', 'stream uses discovered Mind route')
+  stop()
 })
 
-test('with the Bot team, the Bot header gets a Trajectory button; without it, nothing fails', () => {
+test('with the Bot team, the Bot header gets a Trajectory button; without it, nothing fails', async () => {
   const buttons = []
   const bots = { omni: { headerButtons: { register: (button) => { buttons.push(button); return () => {} } } } }
   const withBots = load({ bots })
-  withBots.exports.apply(clientContext().ctx)
+  await withBots.exports.apply(clientContext().ctx)
   assert.equal(buttons.length, 1)
   assert.equal(buttons[0].id, 'unfold-trajectory')
   assert.equal(typeof buttons[0].Component, 'function')
   const alone = load()
-  assert.doesNotThrow(() => alone.exports.apply(clientContext().ctx))
+  await assert.doesNotReject(() => alone.exports.apply(clientContext().ctx))
 })

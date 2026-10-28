@@ -37,13 +37,13 @@ test('no fixed port and no default address in what ships', () => {
   // The one connection the bundle opens, and nothing else: no fetch, socket or absolute URL.
   const client = read('client.js')
   const calls = [...client.matchAll(/new (?:EventSource|WebSocket|XMLHttpRequest)\(([^)]*\)?)|\bfetch\(([^)]*)/g)].map((m) => m[0])
-  assert.deepEqual(calls, ['new EventSource(new URL(MIND_STREAM, document.baseURI)'])
+  assert.deepEqual(calls, ['fetch(new URL(path, document.baseURI', 'new EventSource(new URL(MIND_STREAM, document.baseURI)'])
 })
 
 test('the stream is the Mind route on the page\'s own origin, and no environment is read', () => {
   const runtime = read('src/runtime.mjs')
   assert.match(runtime, /new EventSource\(new URL\(MIND_STREAM, document\.baseURI\)\)/)
-  assert.match(runtime, /export const MIND_STREAM = 'api\/unfold-mind\/stream'/)
+  assert.match(runtime, /read\('api\/unfold-mind\/config'\)/)
   for (const file of SHIPPED) assert.doesNotMatch(read(file), /process\.env|import\.meta\.env/, file)
 })
 

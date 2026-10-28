@@ -153,6 +153,7 @@ __export(runtime_exports, {
   buildUnfoldTrajectory: () => buildUnfoldTrajectory,
   cardChips: () => cardChips,
   cardLabel: () => cardLabel,
+  discover: () => discover,
   ensureStyle: () => ensureStyle,
   filterTurns: () => filterTurns,
   inspectorRows: () => inspectorRows,
@@ -939,6 +940,16 @@ function layoutClockOverview(turns) {
 // src/runtime.mjs
 var UNFOLD_SESSION = "unfold-root";
 var MIND_STREAM = "api/unfold-mind/stream";
+async function discover() {
+  const read = async (path) => {
+    const response = await fetch(new URL(path, document.baseURI), { cache: "no-store" });
+    if (!response.ok) throw new Error(`Unfold configuration ${response.status}`);
+    return response.json();
+  };
+  const [session, mind] = await Promise.all([read("api/unfold-session/config"), read("api/unfold-mind/config")]);
+  UNFOLD_SESSION = session.sessionId;
+  MIND_STREAM = `${mind.route.replace(/^\//, "").replace(/\/$/, "")}/stream`;
+}
 var initial = { rows: [], episodes: {}, link: null, sources: null, heartbeatMs: 5e3, stream: "opening", lastStreamAt: null };
 function reduce(s, event, data, at2) {
   switch (event) {
@@ -9837,7 +9848,8 @@ function makeHeaderButton(activate) {
 		* The registration rides the slot service's effect wrapper, so plugin unload removes the tab.
 		* @param ctx - client root context.
 		*/
-		function apply(ctx) {
+		async function apply(ctx) {
+			await UNFOLD.discover();
 			ctx.effect(() => ctx.locale.register(NS, {
 				zh,
 				en
