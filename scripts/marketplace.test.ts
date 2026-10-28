@@ -46,6 +46,19 @@ describe('market index', () => {
     }
   });
 
+  test('an Unfold plugin is listed as part of Unfold, in the words its package.json gives the market', () => {
+    // A release adds a plugin's description once, at its first listing: a later change to the
+    // package.json is made in the index too.
+    const index = JSON.parse(readFileSync(INDEX_PATH, 'utf8'));
+    const unfold = index.plugins.filter((plugin: { name: string }) => plugin.name.startsWith('@automagik/unfold-'));
+    expect(unfold.length).toBeGreaterThan(0);
+    for (const plugin of unfold) {
+      const manifest = JSON.parse(readFileSync(join(repoDir, 'apps', plugin.name.replace('@automagik/', ''), 'package.json'), 'utf8'));
+      expect(plugin.description.en).toBe(manifest.automagik.market.description.en);
+      expect(plugin.description.en).toContain('Part of Unfold; works with the Unfold app.');
+    }
+  });
+
   test('a commit that holds the package passes', () => {
     expect(checkIndex(indexWith({ type: 'git', url: REPO_URL, commit: head, path: 'apps/bots-dsh' }), repoDir)).toEqual([]);
   });
