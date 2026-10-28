@@ -12,6 +12,7 @@ import { hostText, t } from './i18n.js'
 import { showsDshRow } from './dsh-offer.js'
 import { badges, botChildren, nav, useEntries } from './extend.js'
 import { agentRowSessions, approvalFor, runningTasksOf, taskState, waitsForUser } from './task-card.js'
+import { useApproval } from './approvals.js'
 
 // -------------------------------------------------------------------------
 // Sidebar
@@ -24,10 +25,6 @@ function useMarkedUnread(id, active, marked, actions) {
 }
 
 const PinMark = () => h('span', { className: 'bt-pin', 'aria-hidden': true }, h(PinMarkIcon))
-
-// Whether an approval waits for the user: for a Bot, in any of its Sessions; for a group,
-// from any of its members there.
-const useApproval = (useWork, match) => (useWork ? useWork(work => (work.approvals ?? []).some(match)) : false)
 
 // Work running in group Sessions, as "botId|tool" keys so a row redraws only when it
 // changes: the groups one Bot works in, or the members at work in one group.

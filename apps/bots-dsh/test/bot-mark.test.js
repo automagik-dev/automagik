@@ -27,11 +27,15 @@ const BotMark = (props) => {
   return element
 }
 
-test('a Bot that waits for work it handed on has a mark of its own, behind a running turn and a question', () => {
+test('a Bot that waits for work it handed on has a mark of its own, behind an approval', () => {
   assert.equal(botState(false, 'waiting', false), 'waiting')
-  // A turn of its own runs: the turn shows, not the wait.
+  // A turn of its own runs, and no approval waits: the turn shows, not the wait.
   assert.equal(botState(true, 'waiting', false), 'working')
   assert.equal(botState(true, 'searching', false), 'searching')
+  // An approval waits: the Bot is blocked on the user, so it shows the alert even while a
+  // turn of it is still marked running.
+  assert.equal(botState(true, undefined, true), 'alert')
+  assert.equal(botState(true, 'searching', true), 'alert')
   assert.equal(botState(false, 'waiting', true), 'alert')
   assert.equal(botState(false, undefined, false), 'idle')
   // It moves like a Bot coordinating its teammates.
@@ -42,6 +46,8 @@ test('a waiting Bot does not wear the working badge, since no turn of it runs', 
   const badges = state => BotAvatar({ bot: { id: 'b', name: 'Writer' }, size: 36, state }).children.slice(1).filter(Boolean).map(child => child.props.className)
   assert.deepEqual(badges('waiting'), [])
   assert.deepEqual(badges('working'), ['bt-badge bt-badge-working'])
+  // An approval is the one thing the user must act on: it takes the alert badge.
+  assert.deepEqual(badges('alert'), ['bt-badge bt-badge-alert'])
 })
 
 test('a photo that does not load shows the Bot\'s character instead', () => {
@@ -106,8 +112,11 @@ test('a Genie Bot wears its pet, and its clay face where a mark is too small for
 test('a Bot whose last turn failed looks sad, and one whose reply waits to be read looks it over', () => {
   assert.equal(botState(false, undefined, false, { failed: true }), 'failed')
   assert.equal(botState(false, undefined, false, { unread: true }), 'review')
-  // A question outranks both, and a turn running again outranks everything.
+  // An approval outranks everything, also the turn that waits on it: nothing can go on
+  // until the user answers.
   assert.equal(botState(false, undefined, true, { failed: true, unread: true }), 'alert')
+  assert.equal(botState(true, 'searching', true, { failed: true, unread: true }), 'alert')
+  // Without one, a turn running again outranks a failed turn.
   assert.equal(botState(true, 'searching', false, { failed: true }), 'searching')
   const badges = state => BotAvatar({ bot: { id: 'b', name: 'Writer' }, size: 36, state }).children.slice(1).filter(Boolean).map(child => child.props.className)
   assert.deepEqual(badges('failed'), [])
