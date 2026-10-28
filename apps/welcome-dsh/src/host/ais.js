@@ -132,7 +132,11 @@ async function ollamaRunning(fetchImpl) {
   }
 }
 
-export function createAiActions(ctx, { fetch: fetchImpl = globalThis.fetch, claudeCode, saveRoute, unsetRoute } = {}) {
+// The one line that installs Claude Code, which the Claude row offers while it is missing. It is
+// sent with the row, never built into the page; Unfold's own instance (host unfold) sends none.
+export const CLAUDE_INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash'
+
+export function createAiActions(ctx, { fetch: fetchImpl = globalThis.fetch, claudeCode, saveRoute, unsetRoute, host = null } = {}) {
   const llm = () => service(ctx, 'llm')
   const authorization = () => service(ctx, 'authorization')
 
@@ -149,7 +153,7 @@ export function createAiActions(ctx, { fetch: fetchImpl = globalThis.fetch, clau
       const ready = check.installed === true && check.loggedIn === true && hasPlugin
       const found = check.loggedIn ? 'Signed in to Claude Code' : check.installed ? 'Claude Code found, not signed in' : null
       const needs = !hasPlugin ? 'plugin' : !check.installed ? 'install' : !check.loggedIn ? 'login' : check.reachable === false ? 'restart' : null
-      return { ...base, ready, on: ready && pluginOn && check.reachable !== false, found, needs, ...(check.email ? { detail: check.email } : {}), ...(check.plan ? { plan: check.plan } : {}) }
+      return { ...base, ready, on: ready && pluginOn && check.reachable !== false, found, needs, ...(needs === 'install' && host !== 'unfold' ? { install: CLAUDE_INSTALL } : {}), ...(check.email ? { detail: check.email } : {}), ...(check.plan ? { plan: check.plan } : {}) }
     }
     if (vendor.kind === 'key') {
       const key = await keyOf(ctx, vendor)

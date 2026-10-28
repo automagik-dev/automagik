@@ -70,11 +70,22 @@ says so; it can still be added to the team.
 
 The Automagik desktop app passes the product it was opened for (`omni desktop` →
 `--preload=omni`, `genie desktop` → `--preload=genie`) to DSH as `AUTOMAGIK_PRELOAD`, which
-`state` reports as `preload` (`src/host/preload.js`; anything but `omni` or `genie` is
-none). That card comes first and starts chosen: Omni's powers on by itself, through the
+`state` reports as `preload` (`src/host/preload.js`; anything but `omni`, `genie` or
+`unfold` is none). That card comes first and starts chosen: Omni's powers on by itself, through the
 same box and steps as a press, and Remove still sends it back to sleep; Genie's starts on
 the team. The other card stays to add, then or later. Without a preload Omni comes first
 and nothing is chosen.
+
+Unfold's card is the third. Its power button installs, after the Bot team, the Unfold bridge,
+the Unfold plugins and `@automagik/unfold-bot-dsh`, all from this repository at this plugin's
+version, as the Bot team is (no git source, so no git check); that plugin then makes the Unfold
+Bot. Unfold's own Automagik instance starts DSH with `AUTOMAGIK_PRELOAD=unfold`: Unfold's card
+comes first and is on the team from the start, because the Unfold Bot is the instance's Main
+Bot, so the companion step is done (Unfold leads) and no other Bot is made. With
+`AUTOMAGIK_HOST=unfold` (`state` reports it as `host`, `src/host/host.js`) Omni and Genie come
+with the instance: Omni's card offers no new Omni of its own, Genie's names the command line the
+instance brought instead of the line that installs one, and no row carries Claude Code's install
+line.
 
 ### What the power button installs
 
@@ -168,7 +179,7 @@ The shape was read from DSH 0.2.1-rc.2:
 
 | Endpoint | Payload | Does |
 |---|---|---|
-| `state` | none | The flags; `deepseek` (a `DEEPSEEK_API_KEY` or a DeepSeek account sign-in is stored); `piAiRoutes`; `aiConnected`; `preload` (`omni`, `genie` or null). |
+| `state` | none | The flags; `deepseek` (a `DEEPSEEK_API_KEY` or a DeepSeek account sign-in is stored); `piAiRoutes`; `aiConnected`; `preload` (`omni`, `genie`, `unfold` or null); `host` (`unfold`, only when set). |
 | `done` | `{ stepId, connected? }` | Sets the flag for `omni-welcome`, `omni-connect-ai` or `omni-connect`. Connect AI's Continue sends `connected: true`: the companion and the Omni Bot, made without a model, then get the team's default model (DSH's default model when it is served and has its key, else the first model that can run), and their held greetings go out. Skip sets nothing. |
 | `cliproxy` | `{ baseURL, apiKey }` | The route above; answers `{ route, baseURL, models }`. |
 | `ais` | none | Every row: `{ id, name, via, kind, ready, on, found, needs?, detail?, duplicates? }`, and dsh-subscriptions' accounts and hidden vendors. Names and states only. |

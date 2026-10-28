@@ -98,6 +98,9 @@ body[data-ds-dark-theme] .oai-box.oai-is-asleep{${recessed('var(--oai-niche)')}}
 .oai-genie-wrap{align-self:center;justify-self:center;width:118px;height:128px}
 .oai-genie-pet{width:100%;height:100%;animation:oai-float 5s ease-in-out infinite}
 .oai-genie-pet[data-face=asleep]{animation-duration:6.5s}
+.oai-unfold-wrap{align-self:center;justify-self:center;width:118px;height:128px}
+.oai-unfold-pet{width:100%;height:100%;animation:oai-float 5s ease-in-out infinite}
+.oai-unfold-pet[data-face=asleep]{animation-duration:6.5s}
 .oai-zzz i{position:absolute;left:57%;top:46%;font:800 15px/1 var(--oai-head);font-style:normal;color:var(--oai-ink2);opacity:0;animation:oai-z 3.6s ease-in infinite}
 .oai-zzz i:nth-child(2){animation-delay:1.2s;font-size:12px}.oai-zzz i:nth-child(3){animation-delay:2.4s;font-size:10px}
 @keyframes oai-z{0%{transform:translate(0,0);opacity:0}20%{opacity:.85}100%{transform:translate(24px,-54px);opacity:0}}

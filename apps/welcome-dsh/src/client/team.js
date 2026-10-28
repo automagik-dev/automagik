@@ -15,7 +15,10 @@ import { InstallLog } from './terminal.js'
 // what it found, or the ways to reach one. A link made here completes the Connect Omni step
 // by itself; anything the card cannot finish waits for that step. Genie's power button
 // installs its plugin (@automagik/genie-dsh, with the Bot team under it in a plain DSH), which
-// puts the Genie Bot on the team.
+// puts the Genie Bot on the team. Unfold's does the same with its plugin and defaults
+// (@automagik/unfold-bot-dsh), which put the Unfold Bot on the team. In Unfold's own instance
+// (state.host 'unfold') Omni and Genie come bundled: Omni's card offers no new Omni of its own
+// and Genie's no line to paste into a terminal.
 
 export const WAKE_MS = 1100
 export const LOOK_MS = 1800
@@ -101,7 +104,13 @@ export async function powerOn({ show, signal, omniAi = call, omniUi = callOmniUi
  * installed, coming up), then ready ({ bot }) once the Genie Bot is on the team, restart
  * ({ genie }) or failed ({ message }). Returns the last phase.
  */
-export async function geniePowerOn({ show, signal, genieAi = call, wait = sleep, quick = reducedMotion() }) {
+export const geniePowerOn = ({ genieAi = call, ...options }) => botPowerOn('genie', { ...options, ai: genieAi })
+// Unfold's power button, as Genie's: its plugin and defaults install, then the Unfold Bot is ready.
+export const unfoldPowerOn = ({ unfoldAi = call, ...options }) => botPowerOn('unfold', { ...options, ai: unfoldAi })
+
+// A Bot type that is one plugin making its own Bot (Genie, Unfold): ready at once when the Bot
+// is there, else its install, a few polls while DSH starts it, then ready or a restart.
+async function botPowerOn(kind, { show, signal, ai, wait = sleep, quick = reducedMotion() }) {
   const check = () => { if (signal?.aborted) throw abortError() }
   const end = (phase, detail) => {
     check()
@@ -111,28 +120,28 @@ export async function geniePowerOn({ show, signal, genieAi = call, wait = sleep,
   show('waking')
   await wait(quick ? 0 : WAKE_MS, signal)
   check()
-  let genie = await genieAi('genie-plugin')
+  let reply = await ai(`${kind}-plugin`)
   check()
-  if (genie.ready) return end('ready', { bot: genie.bot })
-  show('installing', { genie })
-  if (genie.install?.phase !== 'installing') {
+  if (reply.ready) return end('ready', { bot: reply.bot })
+  show('installing', { [kind]: reply })
+  if (reply.install?.phase !== 'installing') {
     try {
-      genie = await genieAi('genie-plugin-install')
+      reply = await ai(`${kind}-plugin-install`)
     } catch (error) {
       return end('failed', { message: error.message })
     }
   }
   let polls = 0
-  while (!genie.ready && (genie.install?.phase === 'installing' || (genie.install?.phase === 'done' && polls < READY_POLLS))) {
+  while (!reply.ready && (reply.install?.phase === 'installing' || (reply.install?.phase === 'done' && polls < READY_POLLS))) {
     check()
-    show(genie.install?.phase === 'installing' ? 'installing' : 'starting', { genie })
+    show(reply.install?.phase === 'installing' ? 'installing' : 'starting', { [kind]: reply })
     await wait(POLL_MS, signal)
-    genie = await genieAi('genie-plugin')
-    if (genie.install?.phase !== 'installing') polls += 1
+    reply = await ai(`${kind}-plugin`)
+    if (reply.install?.phase !== 'installing') polls += 1
   }
-  if (genie.ready) return end('ready', { bot: genie.bot })
-  if (genie.install?.phase === 'failed') return end('failed', { message: genie.install.error, genie })
-  return end('restart', { genie })
+  if (reply.ready) return end('ready', { bot: reply.bot })
+  if (reply.install?.phase === 'failed') return end('failed', { message: reply.install.error, [kind]: reply })
+  return end('restart', { [kind]: reply })
 }
 
 /**
@@ -252,6 +261,30 @@ export const GENIE_TYPE = {
   ],
 }
 
+// Unfold's setup (unfold-bot-dsh): its plugin and defaults, in the order they install.
+const UNFOLD_ROWS = [
+  ['unfold', 'Unfold', 'The Unfold Bot, Unfold inside DSH'],
+  ['bridge', 'Unfold bridge', 'Unfold watches this DSH'],
+  ['session', 'Unfold session', 'Unfold\'s own session, in DSH'],
+  ['events', 'Unfold events and stream', 'What Unfold did, as it happens'],
+  ['mind', 'Unfold Mind', 'What Unfold is thinking'],
+  ['more', 'Unfold capabilities, settings and trajectory', 'What Unfold can do, its settings, each run step by step'],
+]
+// In Unfold's own instance a plugin is already here; elsewhere it installs when its Bot powers on.
+const BUNDLED = 'Comes with this DSH'
+export function unfoldTypeOf(host) {
+  return {
+    type: 'unfold',
+    groups: [
+      { id: 'plugins', label: 'Plugins', rows: UNFOLD_ROWS.map(([id, label, what]) => ({ id, label, detail: host === 'unfold' ? `${what} · ${BUNDLED}` : `${what} · Installs when Unfold powers on` })) },
+      { id: 'setup', label: 'Setup', rows: [{ id: 'lead', label: 'Leads', detail: host === 'unfold' ? 'Your Main Bot here' : 'Joins your team beside your Main Bot' }] },
+    ],
+  }
+}
+export const genieTypeOf = host => (host === 'unfold'
+  ? { ...GENIE_TYPE, groups: GENIE_TYPE.groups.map(group => (group.id === 'plugins' ? { ...group, rows: [{ id: 'genie', label: 'Genie', detail: BUNDLED }] } : group)) }
+  : GENIE_TYPE)
+
 // The switches the person sets: the tool groups that are not locked, as `{ id: on }`.
 export const abilitiesOf = type => Object.fromEntries((type?.groups ?? []).find(group => group.id === 'tools')?.rows.filter(row => typeof row.on === 'boolean').map(row => [row.id, row.on]) ?? [])
 
@@ -319,6 +352,8 @@ export function genieExpressionOf(phase) {
   return 'curious'
 }
 const GeniePet = ({ expression }) => h('div', { className: 'oai-genie-pet oai-clay oai-clay-genie', 'data-face': expression, style: { '--oai-face-at': faceAt(expression) } })
+// Unfold's face follows its box as Genie's does.
+const UnfoldPet = ({ expression }) => h('div', { className: 'oai-unfold-pet oai-clay oai-clay-unfold', 'data-face': expression, style: { '--oai-face-at': faceAt(expression) } })
 
 const PowerIcon = () => h('svg', { viewBox: '0 0 24 24', width: 18, height: 18, 'aria-hidden': true },
   h('path', { d: 'M12 3v8', fill: 'none', stroke: 'currentColor', strokeWidth: 2.4, strokeLinecap: 'round' }),
@@ -364,7 +399,19 @@ export function genieStatusOf(phase, detail) {
     failed: 'Could not install Genie',
   }[phase] ?? ''
 }
-// Genie's lights: power, its plugin, and the Genie Bot on the team.
+// Unfold's status line, inside its box.
+export function unfoldStatusOf(phase, detail) {
+  if (phase === 'asleep') return detail?.removed ? 'Powered off · not on your team' : 'Powered off'
+  return {
+    waking: 'Waking up…',
+    installing: 'Installing Unfold…',
+    starting: 'Starting Unfold in this DSH…',
+    ready: 'On your team',
+    restart: 'Installed · restart DSH to start it',
+    failed: 'Could not install Unfold',
+  }[phase] ?? ''
+}
+// Genie's lights: power, its plugin, and the Genie Bot on the team (Unfold's are the same).
 export function genieLightsOf(phase) {
   return [
     ['power', phase === 'asleep' ? 'off' : 'on'],
@@ -445,7 +492,7 @@ const Icon = ({ name }) => h('svg', { viewBox: '0 0 24 24', 'aria-hidden': true 
  * this computer, or one somewhere else (only that one asks for an address). Found Omnis that
  * cannot be used yet stay listed, with why.
  */
-export function destinyOf(omnis = [], { mac = false } = {}) {
+export function destinyOf(omnis = [], { mac = false, newOmni = true } = {}) {
   const here = mac ? 'this Mac' : 'this computer'
   const rows = omnis.map(omni => ({ omni, choice: foundChoice(omni, { mac }) }))
   const tiles = rows.filter(row => row.choice.action).map(({ omni, choice }) => ({
@@ -453,7 +500,7 @@ export function destinyOf(omnis = [], { mac = false } = {}) {
     title: `${choice.action === 'use' ? 'Use' : 'Connect'} ${choice.title.replace(/^Your /, 'your ')}`,
     sub: choice.sub || (omni.local ? `Already on ${here}` : 'Saved in your Omni CLI'),
   }))
-  if (!rows.some(row => row.omni.source === 'sandbox')) tiles.push({ id: 'local', icon: 'sandbox', title: `Run Omni on ${here}`, sub: 'A private Omni of its own, set up for you' })
+  if (newOmni && !rows.some(row => row.omni.source === 'sandbox')) tiles.push({ id: 'local', icon: 'sandbox', title: `Run Omni on ${here}`, sub: 'A private Omni of its own, set up for you' })
   tiles.push({ id: 'remote', icon: 'remote', title: 'An Omni somewhere else', sub: 'On a server, or the link Omni sent you' })
   return { tiles, waiting: rows.filter(row => !row.choice.action).map(row => row.choice) }
 }
@@ -461,7 +508,8 @@ export function destinyOf(omnis = [], { mac = false } = {}) {
 function Destiny({ omnis, busy, onUse, onLocal, onRemote }) {
   const [remote, setRemote] = useState(false)
   if (remote) return h(Remote, { busy, onRemote, onBack: () => setRemote(false) })
-  const { tiles, waiting } = destinyOf(omnis, { mac: onMac() })
+  // Without a way to set one up (Unfold's own instance bundles its Omni), no new Omni is offered.
+  const { tiles, waiting } = destinyOf(omnis, { mac: onMac(), newOmni: typeof onLocal === 'function' })
   const pick = tile => (tile.id === 'remote' ? setRemote(true) : tile.id === 'local' ? onLocal() : onUse(tile.omni))
   return h('div', { className: 'oai-destiny-box' },
     h('div', { className: 'oai-destiny', role: 'group', 'aria-label': 'Where your Omni is' }, tiles.map(tile => h('button', {
@@ -517,8 +565,9 @@ function Inside({ phase, detail, power, live }) {
 export function Machine({ kind = 'omni', phase, detail, power, live, onPower, children }) {
   const awake = phase !== 'asleep'
   const omni = kind === 'omni'
-  const title = omni ? 'Omni' : 'Genie'
-  // Genie, once on the team, stays: its plugin made the Genie Bot.
+  const unfold = kind === 'unfold'
+  const title = omni ? 'Omni' : unfold ? 'Unfold' : 'Genie'
+  // Genie and Unfold, once on the team, stay: their plugins made their Bots.
   const locked = phase === 'installing' || phase === 'starting' || (!omni && phase === 'ready')
   // An Omni being set up can still be stopped (its installer gets Ctrl-C).
   return h('div', { className: `oai-box oai-box-${kind} oai-is-${phase}`, 'data-phase': phase },
@@ -529,9 +578,9 @@ export function Machine({ kind = 'omni', phase, detail, power, live, onPower, ch
       phase === 'looking' ? h('div', { className: 'oai-scan' }, h('i'), h('i'), h('i')) : null,
       phase === 'asleep' ? h('div', { className: 'oai-zzz' }, h('i', null, 'z'), h('i', null, 'z'), h('i', null, 'z')) : null,
       children),
-    h('p', { className: `oai-status${['waking', 'installing', 'starting', 'looking', 'sandbox'].includes(phase) ? ' oai-working' : ''}`, role: 'status', 'aria-live': 'polite' }, omni ? statusOf(phase, detail) : genieStatusOf(phase, detail)),
+    h('p', { className: `oai-status${['waking', 'installing', 'starting', 'looking', 'sandbox'].includes(phase) ? ' oai-working' : ''}`, role: 'status', 'aria-live': 'polite' }, omni ? statusOf(phase, detail) : unfold ? unfoldStatusOf(phase, detail) : genieStatusOf(phase, detail)),
     h('div', { className: 'oai-inside' },
-      omni ? h(Inside, { phase, detail, power, live }) : h(GenieInside, { phase, detail }),
+      omni ? h(Inside, { phase, detail, power, live }) : unfold ? h(UnfoldInside, { phase, detail }) : h(GenieInside, { phase, detail }),
       omni && power?.problem ? h('p', { className: 'oai-inside-note oai-bad', role: 'alert' }, power.problem) : null))
 }
 
@@ -539,12 +588,20 @@ export function Machine({ kind = 'omni', phase, detail, power, live, onPower, ch
 // it could not start. The log stays on screen after a failure.
 export const genieLogOf = (phase, detail) => (['installing', 'starting', 'restart', 'failed'].includes(phase) ? detail?.genie?.install?.log || null : null)
 function GenieInside({ phase, detail }) {
-  if (phase === 'ready' && detail?.genie?.skills === false && detail.genie.cli) return h(GenieSkillsOffer, { line: detail.genie.cli })
+  // A command line the instance bundled is there already: nothing to install by hand.
+  if (phase === 'ready' && detail?.genie?.skills === false && detail.genie.cli && detail.genie.cliBundled !== true) return h(GenieSkillsOffer, { line: detail.genie.cli })
   const log = genieLogOf(phase, detail)
   const terminal = log === null ? null : h(InstallLog, { text: log, label: 'What the Genie install printed' })
   if (phase === 'restart') return h('div', null, terminal, h('p', { className: 'oai-inside-note' }, 'Restart DSH, then power Genie on again.'))
   if (phase === 'failed') return h('div', null, terminal, h('p', { className: 'oai-inside-note oai-bad', title: detail?.message }, terminal === null ? detail?.message ?? 'Add @automagik/genie-dsh on DSH\'s Plugins page.' : 'What went wrong is above. Power Genie on to try again.'))
   return terminal
+}
+
+// Under Unfold's status line: what to do when it could not start.
+function UnfoldInside({ phase, detail }) {
+  if (phase === 'restart') return h('p', { className: 'oai-inside-note' }, 'Restart DSH, then power Unfold on again.')
+  if (phase === 'failed') return h('p', { className: 'oai-inside-note oai-bad', title: detail?.message }, detail?.message ?? 'Add @automagik/unfold-bot-dsh on DSH\'s Plugins page.')
+  return null
 }
 
 // Genie is on the team, but its skills (/wish and the rest) come with its command line: the
@@ -579,7 +636,7 @@ export function OmniCard({ power, onPower, type, abilities, onToggle, live }) {
 }
 
 // Genie's card: its box, its name, the wish it grants. Joined once its Bot is on the team.
-export function GenieCard({ power }) {
+export function GenieCard({ power, host = null }) {
   const { phase, detail } = power
   const joined = phase === 'ready' || phase === 'restart'
   return h('article', { className: `oai-fighter oai-genie${joined ? ' oai-chosen' : ''}`, 'data-phase': phase },
@@ -591,11 +648,28 @@ export function GenieCard({ power }) {
     h('p', { className: 'oai-about oai-wish' },
       h('img', { className: 'oai-wish-lamp', src: LAMP, alt: '', draggable: false }),
       'Give it a wish, get one delivery.'),
-    h(StartsWith, { type: GENIE_TYPE }))
+    h(StartsWith, { type: genieTypeOf(host) }))
+}
+
+// Unfold's card: its box, its name, what it is. Joined once its Bot is on the team.
+export function UnfoldCard({ power, host = null }) {
+  const { phase, detail } = power
+  const joined = phase === 'ready' || phase === 'restart'
+  return h('article', { className: `oai-fighter oai-unfold${joined ? ' oai-chosen' : ''}`, 'data-phase': phase },
+    h(Machine, { kind: 'unfold', phase, detail, onPower: power.toggle },
+      h('div', { className: 'oai-unfold-wrap' }, h(UnfoldPet, { expression: genieExpressionOf(phase) }))),
+    h('header', null,
+      h('h2', null, 'Unfold'),
+      joined ? h('span', { className: 'oai-team-line' }, h('span', { className: 'oai-on-team' }, h(Check), 'On your team')) : null),
+    h('p', { className: 'oai-about' }, 'Unfold itself, working inside DSH.'),
+    h(StartsWith, { type: unfoldTypeOf(host) }))
 }
 
 // Genie's power button: on installs and starts it; off, before it joined, leaves it out.
-function useGeniePower() {
+const useGeniePower = () => useBotPower('genie', geniePowerOn)
+// Unfold's, the same way.
+const useUnfoldPower = () => useBotPower('unfold', unfoldPowerOn)
+function useBotPower(kind, powerOnOf) {
   const [phase, setPhase] = useState('asleep')
   const [detail, setDetail] = useState(null)
   const run = useRef(null)
@@ -604,12 +678,12 @@ function useGeniePower() {
     setPhase(next)
     setDetail(value)
   }
-  // Genie may already be on the team (installed before a restart or an update): its card
-  // says so from the start, rather than asleep.
+  // The Bot may already be on the team (installed before a restart or an update, or made by
+  // its plugin in Unfold's own instance): its card says so from the start, rather than asleep.
   useEffect(() => {
     let alive = true
-    call('genie-plugin').then((genie) => {
-      if (alive && genie?.ready && run.current === null) show('ready', { bot: genie.bot })
+    call(`${kind}-plugin`).then((reply) => {
+      if (alive && reply?.ready && run.current === null) show('ready', { bot: reply.bot })
     }, () => {})
     return () => { alive = false }
   }, [])
@@ -617,7 +691,7 @@ function useGeniePower() {
     run.current?.abort()
     const controller = new AbortController()
     run.current = controller
-    geniePowerOn({ show, signal: controller.signal }).catch((error) => {
+    powerOnOf({ show, signal: controller.signal }).catch((error) => {
       if (error?.name !== 'AbortError') show('failed', { message: error.message })
     })
   }
@@ -737,20 +811,23 @@ function usePower() {
   }
 }
 
-// The product the desktop app was opened for (state.preload: 'omni', 'genie' or null, from
-// AUTOMAGIK_PRELOAD): its card comes first and starts chosen, Omni's by powering on through
-// its box as a press would. The other card stays there to add, then or later.
+// The product the desktop app was opened for (state.preload: 'omni', 'genie', 'unfold' or null,
+// from AUTOMAGIK_PRELOAD): its card comes first and starts chosen, Omni's by powering on through
+// its box as a press would. The other cards stay there to add, then or later; Unfold's is the
+// third, unless the instance was opened for Unfold.
 export function teamOrder(preload) {
+  if (preload === 'unfold') return ['unfold', 'omni', 'genie']
   return preload === 'genie' ? ['genie', 'omni'] : ['omni', 'genie']
 }
-export const preselected = preload => ({ omni: preload === 'omni', genie: preload === 'genie' })
+export const cardsOf = preload => (preload === 'unfold' ? teamOrder(preload) : [...teamOrder(preload), 'unfold'])
+export const preselected = preload => ({ omni: preload === 'omni', genie: preload === 'genie', ...(preload === 'unfold' ? { unfold: true } : {}) })
 // Whether Omni powers on by itself now: preloaded, still asleep, and never switched off here.
 export const powersOnByItself = (preload, phase, detail, started, kind = 'omni') =>
   preselected(preload)[kind] === true && !started && phase === 'asleep' && detail?.removed !== true
 
 // Who joins, in words, for the button.
-export function joinedLabel({ omni, genie }, name) {
-  const who = [omni && 'Omni', genie && 'Genie'].filter(Boolean)
+export function joinedLabel({ omni, genie, unfold = false }, name) {
+  const who = [omni && 'Omni', genie && 'Genie', unfold && 'Unfold'].filter(Boolean)
   return who.length === 0 ? `Continue with just ${name}` : `Continue with ${who.join(' and ')}`
 }
 
@@ -769,6 +846,14 @@ const speechOf = (phase, name, origin) => ({
   restart: 'Omni is installed. Restart DSH to wake it.',
   failed: 'Omni could not be installed here.',
 })[phase]
+const unfoldSpeechOf = phase => ({
+  waking: 'Unfold is waking up…',
+  installing: 'Bringing Unfold into this DSH. One moment.',
+  starting: 'Unfold is starting up…',
+  ready: 'Unfold is on your team.',
+  restart: 'Unfold is installed. Restart DSH to wake it.',
+  failed: 'Unfold could not be installed here.',
+})[phase]
 const genieSpeechOf = phase => ({
   waking: 'Genie is waking up…',
   installing: 'Bringing Genie into this DSH. One moment.',
@@ -784,6 +869,7 @@ export function TeamStep(props) {
   const [glitching, glitch] = useGlitch()
   const power = usePower()
   const geniePower = useGeniePower()
+  const unfoldPower = useUnfoldPower()
   // The speech follows whichever box was pressed last.
   const [lastPressed, setLastPressed] = useState('omni')
   const [omniType, setOmniType] = useState(null)
@@ -793,6 +879,7 @@ export function TeamStep(props) {
   const [problem, setProblem] = useState(null)
   const autoPowered = useRef(false)
   const genieAutoPowered = useRef(false)
+  const unfoldAutoPowered = useRef(false)
 
   const { phase } = power
   // Read again once Omni is awake, when what it brings may have just been installed.
@@ -816,12 +903,21 @@ export function TeamStep(props) {
     setLastPressed('genie')
     geniePower.toggle()
   }, [state])
+  useEffect(() => {
+    if (!state || !powersOnByItself(state.preload, unfoldPower.phase, unfoldPower.detail, unfoldAutoPowered.current, 'unfold')) return
+    unfoldAutoPowered.current = true
+    setLastPressed('unfold')
+    unfoldPower.toggle()
+  }, [state])
   if (!state) return null
 
   const name = state.companionName ?? 'Your companion'
   const omni = phase !== 'asleep' && phase !== 'failed'
   const genie = geniePower.phase === 'ready' || geniePower.phase === 'restart'
   const genieWorking = ['waking', 'installing', 'starting'].includes(geniePower.phase)
+  // Opened for Unfold, Unfold leads (it is the Main Bot); elsewhere it joins beside the others.
+  const unfold = state.preload !== 'unfold' && (unfoldPower.phase === 'ready' || unfoldPower.phase === 'restart')
+  const unfoldWorking = ['waking', 'installing', 'starting'].includes(unfoldPower.phase)
   const working = ['waking', 'installing', 'starting', 'looking', 'sandbox'].includes(phase)
 
   async function go({ omni: joined = omni } = {}) {
@@ -838,22 +934,26 @@ export function TeamStep(props) {
       setSaving(false)
     }
   }
-  const omniPower = { ...power, local: power.sandbox }
+  // Unfold's own instance bundles its Omni: no new Omni of its own is offered there.
+  const omniPower = { ...power, local: state.host === 'unfold' ? undefined : power.sandbox }
+  const speech = (lastPressed === 'genie' && genieSpeechOf(geniePower.phase)) || (lastPressed === 'unfold' && unfoldSpeechOf(unfoldPower.phase)) || speechOf(phase, name, power.detail?.origin)
 
   return h(Stage, {
     title: 'Grow your team',
-    speech: (lastPressed === 'genie' && genieSpeechOf(geniePower.phase)) || speechOf(phase, name, power.detail?.origin),
+    speech,
     at: 'omni-team',
     glitching,
     wide: true,
   },
   h('p', { className: 'oai-lede' }, `${name} leads. Who comes along?`),
   h('div', { className: 'oai-select' },
-    ...teamOrder(state.preload).map(id => (id === 'omni'
+    ...cardsOf(state.preload).map(id => (id === 'omni'
       ? h(OmniCard, { key: 'omni', power: omniPower, onPower: () => { setLastPressed('omni'); power.toggle() }, type: omniType, abilities, onToggle: (row, on) => setAbilities(rows => ({ ...rows, [row]: on })), live })
-      : h(GenieCard, { key: 'genie', power: { ...geniePower, toggle: () => { setLastPressed('genie'); geniePower.toggle() } } })))),
+      : id === 'genie'
+        ? h(GenieCard, { key: 'genie', host: state.host ?? null, power: { ...geniePower, toggle: () => { setLastPressed('genie'); geniePower.toggle() } } })
+        : h(UnfoldCard, { key: 'unfold', host: state.host ?? null, power: { ...unfoldPower, toggle: () => { setLastPressed('unfold'); unfoldPower.toggle() } } })))),
   problem ? h('p', { className: 'oai-error', role: 'alert' }, problem) : null,
   h('div', { className: 'oai-actions' },
-    h('button', { type: 'button', className: 'oai-primary oai-big', disabled: saving || working || genieWorking, onClick: () => go() },
-      saving ? 'Bringing them in…' : phase === 'sandbox' ? 'Omni is moving in…' : working ? 'Omni is waking…' : genieWorking ? 'Genie is waking…' : joinedLabel({ omni, genie }, name))))
+    h('button', { type: 'button', className: 'oai-primary oai-big', disabled: saving || working || genieWorking || unfoldWorking, onClick: () => go() },
+      saving ? 'Bringing them in…' : phase === 'sandbox' ? 'Omni is moving in…' : working ? 'Omni is waking…' : genieWorking ? 'Genie is waking…' : unfoldWorking ? 'Unfold is waking…' : joinedLabel({ omni, genie, unfold }, name))))
 }

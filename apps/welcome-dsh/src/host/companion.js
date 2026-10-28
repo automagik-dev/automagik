@@ -42,6 +42,10 @@ export const OMNI_BOT = Object.freeze({
 })
 // The Omni Bot's name when the companion already took "Omni".
 export const OMNI_BOT_FALLBACK = 'Omni Channels'
+// The Unfold Bot: Unfold inside DSH. Its own plugin (@automagik/unfold-bot-dsh) makes it, with
+// its persona; in Unfold's own instance (AUTOMAGIK_PRELOAD=unfold) it is the Main Bot, so there
+// is no companion to make and Unfold leads the team.
+export const UNFOLD_BOT = Object.freeze({ name: 'Unfold', kind: 'unfold' })
 
 // The plugin's own settings entry (DSH's settings.describe rows carry `ns` and `value`).
 const ownEntry = (ctx) => {
@@ -168,8 +172,8 @@ export function createCompanionActions(ctx, { fetch: fetchImpl = globalThis.fetc
   async function assignModels(rt, { waitMs = 0, pauseMs = 1500 } = {}) {
     await rt.load?.()
     const main = (rt.state?.mainBotIds ?? []).find(id => rt.botOf?.(id))
-    // Omni's Bot, and Genie's (which the Genie plugin makes before Connect AI if it ran first).
-    const joined = Object.values(rt.state?.bots ?? {}).filter(bot => bot.kind === OMNI_BOT.kind || bot.kind === 'genie').map(bot => bot.id)
+    // Omni's Bot, and Genie's and Unfold's (which their plugins make before Connect AI if they ran first).
+    const joined = Object.values(rt.state?.bots ?? {}).filter(bot => [OMNI_BOT.kind, 'genie', UNFOLD_BOT.kind].includes(bot.kind)).map(bot => bot.id)
     const waiting = () => [main, ...joined].filter(Boolean).map(id => rt.botOf?.(id)).filter(bot => bot !== undefined && !bot.model)
     if (waiting().length === 0) return []
     const deadline = Date.now() + waitMs
