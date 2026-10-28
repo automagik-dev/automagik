@@ -13,11 +13,16 @@ import { redact, redactText, secretsIn } from '../src/redact.js'
 const WORDS = ['correct', 'horse', 'battery', 'staple']
 const PHRASE = WORDS.join(' ')
 const JOINED = WORDS.join('')
-const KEYS = ['password', 'PASSWD', 'pass', 'Secret', 'client_secret', 'passphrase', 'TOKEN', 'api_key', 'private_key', 'db_password', 'DB_PASS', 'x-api-key', 'secret_key', 'SECRET_KEY', 'aws_secret_access_key', 'AWS_SECRET_ACCESS_KEY', 'accessToken', 'clientSecret', 'dbPassword', 'apiKey', 'privateKey', 'authToken']
+const KEYS = ['password', 'PASSWD', 'pass', 'Secret', 'client_secret', 'passphrase', 'TOKEN', 'api_key', 'private_key', 'db_password', 'DB_PASS', 'x-api-key', 'secret_key', 'SECRET_KEY', 'aws_secret_access_key', 'AWS_SECRET_ACCESS_KEY', 'accessToken', 'clientSecret', 'dbPassword', 'apiKey', 'privateKey', 'authToken', 'dbPass']
 const SCHEMES = [`authorization: bearer ${JOINED}`, `AUTHORIZATION: BEARER ${JOINED}`, `Authorization: basic ${JOINED}`, `{"authorization": "bearer ${PHRASE}"}`]
 // 80k characters of each input that could make a rule quadratic: a start after - or --, an open
 // quote, a camelCase run, a YAML block, an open escaped JSON value, a prefix run, many line starts,
-// many escaped JSON values, many YAML keys and many names mid-line.
+// many escaped JSON values, many YAML keys, many names mid-line and bearer runs.
+// A scheme in any case with no key name before it, before a token-shaped word (16+ characters of the
+// token alphabet with a digit), built from words at run time.
+const SHAPED = WORDS.join('9')
+const ALONE = [`bearer ${SHAPED}`, `BEARER ${SHAPED}`, `basic ${SHAPED}`, `the header was bEaReR ${SHAPED}, then more`]
+const NOT_TOKENS = ['bearer bonds', 'basic steps', 'the bearer of bad news', 'bearer v2 of the api']
 const ADVERSARIAL = {
   'a- repeat': 'a-'.repeat(40_000),
   'open quote': `password: "${'x '.repeat(40_000)}`,
@@ -31,6 +36,8 @@ const ADVERSARIAL = {
   'YAML keys': '\npassword: |'.repeat(6_700),
   'names mid-line': 'a password: '.repeat(6_700),
   'camelCase names mid-line': 'x dbPassword: '.repeat(5_700),
+  'bearer runs': 'bearer x '.repeat(9_000),
+  'bearer long run': `bearer ${'a'.repeat(80_000)}`,
 }
 const YAML_LINES = Array.from({ length: 400 }, (_, i) => `    ${PHRASE} ${i}\n`) // more than either keep
 const FORMS = [
@@ -92,7 +99,7 @@ test('every key form the 4096 cut sweeps through: no word of its value is served
 })
 
 test('words that only contain a key name are not keys', () => {
-  const prose = 'bypass=open compass: north passenger: aboard tokenizer: fast a-bypass=1 -bypass=1 --bypass=open secret_sauce: butter basic steps first bearer bonds accessLevel: admin clientName: acme passRate: 0.9 maxTokens: 512 tokenCount: 12 primaryKey: id sortKey: name firstPass: done keyboardLayout: us'
+  const prose = 'bypass=open compass: north passenger: aboard tokenizer: fast a-bypass=1 -bypass=1 --bypass=open secret_sauce: butter basic steps first bearer bonds accessLevel: admin clientName: acme passRate: 0.9 maxTokens: 512 tokenCount: 12 primaryKey: id sortKey: name keyboardLayout: us passengerCount: 4 tokenizerName: bpe compassHeading: north the bearer of bad news'
   assert.equal(redactText(prose), prose)
 })
 
@@ -127,4 +134,20 @@ test('a YAML block longer than the keep, streamed a line at a time: no word of i
     r.send('next: shown')
     assert.match(r.served(), /next: shown/, key)
   }
+})
+
+test('a scheme in any case with no key name hides a token-shaped word, in the keep and across the cut', () => {
+  for (const text of ALONE) {
+    const r = journal()
+    r.send(text)
+    assert.deepEqual(leaked(r.served()), [], text)
+    for (const lead of [0, 2]) {
+      const c = journal()
+      c.send(`${text} `)
+      c.send('w'.repeat(4096 - text.length - 8 + lead))
+      for (let i = 0; i < text.length + 16; i++) c.send('z')
+      assert.deepEqual(leaked(c.served()), [], `${text}, lead ${lead}`)
+    }
+  }
+  for (const text of NOT_TOKENS) assert.equal(redactText(text), text)
 })
