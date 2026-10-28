@@ -23,14 +23,14 @@ export function install(rt) {
   const roomOfSession = sessionId => rt.roomOf(rt.groupOwners.get(sessionId)?.roomId)
 
   // Bots (`bot:<id>`) and groups (`room:<id>`) whose saved Auto last ran as
-  // workspace-write. A change gives the team a new revision, so windows show it.
+  // workspace-write. Windows learn of a change, or of a new catalog, through
+  // permissionKey in the team view's modelsKey, without a new revision.
   const fellBack = new Set()
   function markFallback(key, on) {
-    if (on === fellBack.has(key)) return
     if (on) fellBack.add(key)
     else fellBack.delete(key)
-    void rt.save?.().catch(() => {})
   }
+  const permissionKey = () => `${presets()?.catalog().options.map(option => option.value).join(',') ?? ''}:${[...fellBack].sort().join(',')}`
   // `{ permissionFallback }` for a Bot's or group's view when its Auto runs as workspace-write.
   function permissionFallbackOf(kind, owner) {
     if (owner.permission !== AUTO) return {}
@@ -39,19 +39,40 @@ export function install(rt) {
     return fallback ? { permissionFallback: AUTO_FALLBACK } : {}
   }
 
+  // Applies run one at a time per Session, in call order; one with nothing before it
+  // starts at once, so a listener's first preset lands inside DSH's announce. The chain
+  // is in place before the job starts: a resolve inside it that opens the Session queues
+  // the session/created re-apply behind it.
+  const chains = new Map()
+  function serial(sessionId, job) {
+    const before = chains.get(sessionId)
+    let release
+    const tail = new Promise((resolve) => { release = resolve })
+    chains.set(sessionId, tail)
+    const run = before === undefined ? job() : before.then(job)
+    void run.then(release, release)
+    void tail.then(() => { if (chains.get(sessionId) === tail) chains.delete(sessionId) })
+    return run
+  }
+
   // Sets a level on one Session; `session` spares the resolve where the caller holds it.
   // Auto is set only once every dsh-oh-my-claude adapter has read back Claude Code's
-  // `auto` for the Session; else it runs as workspace-write. Any other level is set
-  // first, then an `auto` override is cleared. Resolves whether the level holds.
+  // `auto` for the Session; until then, and when it cannot, it runs as workspace-write,
+  // never on what an earlier stop left (DSH moves Auto to full access when its layer
+  // closes). Any other level is set first, then an `auto` override is cleared.
+  // Resolves whether the level holds.
   async function applyLevel(sessionId, level, session) {
     const service = presets()
     const target = session ?? (await rt.resolveAgent(sessionId)).session
-    if (level === AUTO && autoOffered(service) && await pinClaudeMode(sessionId, AUTO)) {
-      try {
-        service.set(target, AUTO)
-        return true
-      } catch (error) {
-        rt.warn('ds-bot: Auto for %s not set: %s', sessionId, error)
+    if (level === AUTO) {
+      if (service.current(target) !== AUTO) service.set(target, AUTO_FALLBACK)
+      if (autoOffered(service) && await pinClaudeMode(sessionId, AUTO)) {
+        try {
+          service.set(target, AUTO)
+          return true
+        } catch (error) {
+          rt.warn('ds-bot: Auto for %s not set: %s', sessionId, error)
+        }
       }
     }
     service.set(target, level === AUTO ? AUTO_FALLBACK : level)
@@ -60,12 +81,16 @@ export function install(rt) {
   }
 
   // Sets the level on one of the Bot's Sessions: its group's there, else its own; a Bot
-  // without one keeps DSH's default. `room` is for a group Session not indexed yet.
+  // without one keeps DSH's default. `room` is for a group Session not indexed yet. The
+  // level is read when the apply runs, not when it is queued.
   async function applyPermission(bot, sessionId, room = roomOfSession(sessionId), session) {
-    const name = room?.permission ?? bot.permission
-    if (presets() === undefined || !name) return
-    const held = await applyLevel(sessionId, name, session)
-    markFallback(room?.permission ? `room:${room.id}` : `bot:${bot.id}`, !held)
+    if (presets() === undefined) return
+    return serial(sessionId, async () => {
+      const name = room?.permission ?? bot.permission
+      if (!name) return
+      const held = await applyLevel(sessionId, name, session)
+      markFallback(room?.permission ? `room:${room.id}` : `bot:${bot.id}`, !held)
+    })
   }
 
   // A Session of a Bot's own chat or of a group, as DSH opens it or as the presets change.
@@ -78,21 +103,21 @@ export function install(rt) {
   }
   const warnNotApplied = sessionId => error => rt.warn('ds-bot: permission for %s not applied: %s', sessionId, error)
 
-  // A Session DSH opens, after a restart too, gets its level. Async: DSH only logs a rejection.
-  ctx.on('session/created', async (session) => {
-    if (presets() === undefined) return
-    await rt.load()
-    await reapply(session).catch(warnNotApplied(session.id))
+  // A Session DSH opens, after a restart too, gets its level. Once the team is loaded the
+  // first preset is set within DSH's announce, before the Session is published; the
+  // rest is async, and DSH only logs a rejection.
+  ctx.on('session/created', (session) => {
+    if (presets() === undefined) return undefined
+    const run = () => reapply(session).catch(warnNotApplied(session.id))
+    return rt.chatOwners.has(session.id) || rt.groupOwners.has(session.id) ? run() : rt.load().then(run)
   })
-  // Auto review's layer loaded or unloaded: the loaded Sessions get their level again, so
-  // one DSH moved off Auto runs as workspace-write, not full access. An idle Session is
-  // left closed.
+  // Auto review's layer loaded or unloaded: the loaded Sessions get their level again, all
+  // in one tick, so one DSH moved off Auto runs as workspace-write, not full access. An
+  // idle Session is left closed.
   ctx.on('permission-presets/catalog-changed', async () => {
     if (presets() === undefined) return
     await rt.load()
-    for (const session of ctx.sessions.list()) await reapply(session).catch(warnNotApplied(session.id))
-    // The catalog is in the team view; a new revision shows it.
-    void rt.save?.().catch(() => {})
+    await Promise.all(ctx.sessions.list().map(session => reapply(session).catch(warnNotApplied(session.id))))
   })
 
   // DSH will not reopen a Session whose log holds Auto while Auto review's layer is off
@@ -105,7 +130,7 @@ export function install(rt) {
     const botId = group?.botId ?? rt.chatOwners.get(sessionId)
     if (room?.permission) markFallback(`room:${room.id}`, true)
     else if (botId !== undefined) markFallback(`bot:${botId}`, true)
-    return Object.assign(new Error('Turn Auto review back on in Plugins to open this chat.', { cause: error }), { code: error.code })
+    return Object.assign(new Error('Turn Auto review back on in Plugins to open this chat.', { cause: error }), { code: error.code, autoClosed: true })
   }
 
   function checkPreset(name) {
@@ -116,10 +141,22 @@ export function install(rt) {
     return wanted
   }
 
+  // The level is kept before the apply: the resolve may open the Session, and the
+  // session/created re-apply must find the new one. A chat DSH will not open while Auto
+  // review is off keeps the new level and takes it when it opens again.
   async function setPermission(bot, name) {
     const wanted = checkPreset(name)
-    await applyPermission({ ...bot, permission: wanted }, rt.chatOf(bot.id))
+    const before = bot.permission
     bot.permission = wanted
+    try {
+      await applyPermission(bot, rt.chatOf(bot.id))
+    } catch (error) {
+      if (error?.autoClosed !== true) {
+        if (before === undefined) delete bot.permission
+        else bot.permission = before
+        throw error
+      }
+    }
     for (const sessionId of rt.groupSessionsOf(bot.id)) {
       if (roomOfSession(sessionId)?.permission) continue
       await applyPermission(bot, sessionId)
@@ -150,5 +187,5 @@ export function install(rt) {
     return true
   }
 
-  Object.assign(rt, { permissionCatalog, permissionFallbackOf, autoClosed, applyLevel, applyPermission, checkPreset, setPermission, cleanRoomPermission, setRoomPermission })
+  Object.assign(rt, { permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyLevel, applyPermission, checkPreset, setPermission, cleanRoomPermission, setRoomPermission })
 }

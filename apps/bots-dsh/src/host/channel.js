@@ -37,8 +37,9 @@ export function install(rt) {
   const ok = value => ({ ok: true, value })
   const fail = (message, code = 'bot/error') => ({ ok: false, error: { code, message, details: {} } })
   // Models come from DSH, not state.json, so a provider added in Harness settings
-  // changes the view without a new revision.
-  const modelsKey = () => `${rt.cachedCatalog().map(entry => `${entry.ref}${entry.needsKey ? '!' : ''}${entry.reasoning ? `:${JSON.stringify(entry.reasoning)}` : ''}`).join(',')}|${rt.cachedDefault() ?? ''}`
+  // changes the view without a new revision. So do the permission presets DSH offers and
+  // the Bots and groups whose Auto runs as workspace-write (permissions.js).
+  const modelsKey = () => `${rt.cachedCatalog().map(entry => `${entry.ref}${entry.needsKey ? '!' : ''}${entry.reasoning ? `:${JSON.stringify(entry.reasoning)}` : ''}`).join(',')}|${rt.cachedDefault() ?? ''}|${rt.permissionKey?.() ?? ''}`
   const view = () => ({
     revision: state.revision,
     workspaceId: state.workspaceId ?? null,

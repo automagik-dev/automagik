@@ -7,7 +7,6 @@
 export const AUTO = 'auto'
 // The level a saved Auto runs as where it cannot be applied: never a looser one.
 export const AUTO_FALLBACK = 'workspace-write'
-export const LEVELS = Object.freeze(['read-only', 'workspace-write', 'danger-full-access', AUTO])
 
 export const isClaudeCode = provider => provider === 'claude-code' || String(provider).startsWith('claude-code-')
 
@@ -19,8 +18,9 @@ export const claudeAdapters = () => [...(globalThis[ADAPTERS]?.values() ?? [])]
 // Pins Claude Code's mode for a Session on every adapter. `auto`: the override is written
 // with restorePermissionMode, which saves it past the ceiling check, and read back through
 // getPermissionMode at DSH's full access, as a spawn under Auto computes it. `null`: an
-// `auto` override is cleared; a mode the user picked in dsh-oh-my-claude is left alone.
-// Resolves whether every adapter holds the result.
+// `auto` override is cleared on every adapter, so each one's saved file drops it too (the
+// adapters share one override Map); a mode the user picked in dsh-oh-my-claude is left
+// alone. Resolves whether every adapter holds the result.
 export async function pinClaudeMode(sessionId, mode) {
   const adapters = claudeAdapters()
   try {
@@ -29,14 +29,11 @@ export async function pinClaudeMode(sessionId, mode) {
       for (const adapter of adapters) await adapter.restorePermissionMode(sessionId, AUTO)
       return adapters.every(adapter => adapter.getPermissionMode(sessionId, 'danger-full-access') === AUTO)
     }
-    let cleared = true
-    for (const adapter of adapters) {
-      if (typeof adapter.permissionModeInfo !== 'function' || adapter.permissionModeInfo(sessionId).override !== AUTO) continue
-      if (typeof adapter.setPermissionMode !== 'function') { cleared = false; continue }
-      await adapter.setPermissionMode(sessionId, null)
-      if (adapter.permissionModeInfo(sessionId).override !== null) cleared = false
-    }
-    return cleared
+    const readable = adapters.filter(adapter => typeof adapter.permissionModeInfo === 'function')
+    if (!readable.some(adapter => adapter.permissionModeInfo(sessionId).override === AUTO)) return true
+    const writable = adapters.filter(adapter => typeof adapter.setPermissionMode === 'function')
+    for (const adapter of writable) await adapter.setPermissionMode(sessionId, null)
+    return writable.length === adapters.length && readable.every(adapter => adapter.permissionModeInfo(sessionId).override === null)
   } catch {
     return false
   }

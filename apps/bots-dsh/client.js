@@ -409,7 +409,7 @@ var ZH = {
   Experimental: "实验性",
   "Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.": "自动审查不使用沙箱：每次工具调用前先由模型审查，被拦下的调用由你决定。此功能仍属实验性，可能误放行或误拦截，并会消耗更多 token。",
   "Use Auto review": "启用自动审查",
-  "Runs as Workspace Write here": "这里按“工作区内修改”运行",
+  "Runs as Workspace here": "这里按“工作区内修改”运行",
   "New Bots start with": "新 Bot 的初始权限",
   "Bots you already have keep their own.": "已有的 Bot 保留各自的权限。",
   "Same for every member": "全员统一",
@@ -2018,7 +2018,6 @@ function mountShellInstallers(tools) {
 // src/shared/permission-levels.js
 var AUTO = "auto";
 var AUTO_FALLBACK = "workspace-write";
-var LEVELS = Object.freeze(["read-only", "workspace-write", "danger-full-access", AUTO]);
 var isClaudeCode = (provider) => provider === "claude-code" || String(provider).startsWith("claude-code-");
 var ADAPTERS = /* @__PURE__ */ Symbol.for("dsh-oh-my-claude.adapter");
 var claudeAdapters = () => [...globalThis[ADAPTERS]?.values() ?? []];
@@ -2030,17 +2029,11 @@ async function pinClaudeMode(sessionId, mode) {
       for (const adapter of adapters) await adapter.restorePermissionMode(sessionId, AUTO);
       return adapters.every((adapter) => adapter.getPermissionMode(sessionId, "danger-full-access") === AUTO);
     }
-    let cleared = true;
-    for (const adapter of adapters) {
-      if (typeof adapter.permissionModeInfo !== "function" || adapter.permissionModeInfo(sessionId).override !== AUTO) continue;
-      if (typeof adapter.setPermissionMode !== "function") {
-        cleared = false;
-        continue;
-      }
-      await adapter.setPermissionMode(sessionId, null);
-      if (adapter.permissionModeInfo(sessionId).override !== null) cleared = false;
-    }
-    return cleared;
+    const readable = adapters.filter((adapter) => typeof adapter.permissionModeInfo === "function");
+    if (!readable.some((adapter) => adapter.permissionModeInfo(sessionId).override === AUTO)) return true;
+    const writable = adapters.filter((adapter) => typeof adapter.setPermissionMode === "function");
+    for (const adapter of writable) await adapter.setPermissionMode(sessionId, null);
+    return writable.length === adapters.length && readable.every((adapter) => adapter.permissionModeInfo(sessionId).override === null);
   } catch {
     return false;
   }
@@ -12642,7 +12635,7 @@ var LABELS = { "read-only": "Read only", "workspace-write": "Workspace", "danger
 var DANGER = /* @__PURE__ */ new Set(["danger-full-access"]);
 var presetDanger = (value) => DANGER.has(value);
 var presetName = (value, catalog) => LABELS[value] ? t(LABELS[value]) : catalog?.options?.find((option) => option.value === value)?.name ?? value;
-var PermissionFallback = ({ fallback }) => fallback ? (0, import_react31.createElement)("div", { className: "bt-note" }, t("Runs as Workspace Write here")) : null;
+var PermissionFallback = ({ fallback }) => fallback ? (0, import_react31.createElement)("div", { className: "bt-note" }, t("Runs as Workspace here")) : null;
 function PermissionPicker({ catalog, saved, onPick, repick = false }) {
   const [pending, setPending] = (0, import_react31.useState)(null);
   const [confirming, setConfirming] = (0, import_react31.useState)(false);

@@ -10,7 +10,7 @@ export const presetDanger = value => DANGER.has(value)
 export const presetName = (value, catalog) => (LABELS[value] ? t(LABELS[value]) : catalog?.options?.find(option => option.value === value)?.name ?? value)
 
 // A saved Auto that runs as workspace-write where Auto cannot hold (`permissionFallback`).
-export const PermissionFallback = ({ fallback }) => (fallback ? h('div', { className: 'bt-note' }, t('Runs as Workspace Write here')) : null)
+export const PermissionFallback = ({ fallback }) => (fallback ? h('div', { className: 'bt-note' }, t('Runs as Workspace here')) : null)
 
 // The presets DeepSeek Harness offers, as one segmented choice; Auto review only while
 // DSH offers it. A pick shows at once and holds until the saved value catches up, or

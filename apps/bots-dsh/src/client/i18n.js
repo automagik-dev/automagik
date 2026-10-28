@@ -377,7 +377,7 @@ const ZH = {
   Experimental: '实验性',
   'Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.': '自动审查不使用沙箱：每次工具调用前先由模型审查，被拦下的调用由你决定。此功能仍属实验性，可能误放行或误拦截，并会消耗更多 token。',
   'Use Auto review': '启用自动审查',
-  'Runs as Workspace Write here': '这里按“工作区内修改”运行',
+  'Runs as Workspace here': '这里按“工作区内修改”运行',
   'New Bots start with': '新 Bot 的初始权限',
   'Bots you already have keep their own.': '已有的 Bot 保留各自的权限。',
   'Same for every member': '全员统一',
