@@ -4,7 +4,9 @@
 // URL with dsh's per-launch token, and lays dsh's page into the frame; quitting stops dsh.
 // Both pages are plain browser pages with no Node in them: context isolation and the
 // renderer sandbox are on, dsh's page can navigate only within dsh's origin, web links open
-// in the system browser, and the frame page never navigates.
+// in the system browser, and the frame page never navigates. Each Bot's browser is in the
+// window too (bot-views.js), over the Bot browser panel, and the Bot drives it through a
+// loopback CDP relay (bot-relay.js) that dsh asks for over its IPC channel.
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, powerMonitor, session, shell, systemPreferences, WebContentsView } from 'electron'
 import updaterModule from 'electron-updater'
 import { appendFileSync, createWriteStream, mkdirSync, readFileSync, rmSync } from 'node:fs'
@@ -15,7 +17,9 @@ import { fade, PAGE_IN_CSS } from './motion.js'
 import { noteRestart, restartLine, steps } from './timeline.js'
 import { dismissSplash, showUpdateSplash } from './splash.js'
 import { PUBLISHERS, TRIAL_MS, beforeStart, checkLane, confirm as confirmLane, installedVersions, laneMemory, stage as stageLane, stagedOf, stagedVersion, trialFailed } from './lane.js'
-import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, privacyFileOf, privacyPatchOf, freePort, installProfile, navigationOf, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
+import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, privacyFileOf, privacyPatchOf, freePort, guardContents, installProfile, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
+import { BotRelay } from './bot-relay.js'
+import { BotViews, isBotId, isTabId } from './bot-views.js'
 import { pageLayout, tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
 import { awayInstall, LOOK_EVERY_MS, readBusy } from './idle.js'
@@ -61,6 +65,22 @@ const LANE_EVERY_MS = 15 * 60_000
 const started = steps('start', { write: startLog, since: Date.now() - process.uptime() * 1000 })
 let leaving = null
 const leave = (kind) => (leaving ??= steps(kind, { write: startLog, since: Date.now() }))
+// dsh's origin, from the port it is started on; Bot pages never reach it.
+let dshOrigin
+// The corner radius of dsh's page (frame.js pageLayout), which the Bot views take too.
+let pageRadius = 0
+// The Bot browsers: their views over the panel's rectangle in dsh's page, which tells them
+// what changed, and the relay each Bot drives them through.
+const botViews = new BotViews({
+  window: () => window,
+  WebContentsView,
+  session,
+  origin: () => dshOrigin,
+  page: () => (page && ready ? { ...page.getBounds(), zoom: page.webContents.getZoomFactor(), radius: pageRadius } : null),
+  devTools: !app.isPackaged,
+  onChange: (change) => { if (page && !page.webContents.isDestroyed()) page.webContents.send('automagik-browser-view', change) },
+})
+const botRelay = new BotRelay({ views: botViews })
 
 // omni:// links (deeplink.js): the system hands them to the running app (macOS: open-url;
 // Linux: a second instance with the link as an argument), or starts the app with one.
@@ -180,6 +200,7 @@ async function launch() {
     app.setAboutPanelOptions({ applicationName: PRODUCT, applicationVersion: plugins ?? app.getVersion(), version: plugins ? `app ${app.getVersion()}` : app.getVersion() })
   }
   const port = await freePort()
+  dshOrigin = `http://127.0.0.1:${port}`
   const log = createWriteStream(join(home, 'logs', 'dsh.log'), { flags: 'a' })
   // Electron's own binary runs dsh as Node, so the app ships one runtime.
   const binDir = writeTools({ dir: join(home, 'bin'), node: process.execPath, pnpm: resources.pnpm })
@@ -190,7 +211,7 @@ async function launch() {
   // A new anonymous id every launch (dsh.js ANONYMOUS_ID), unless they chose to keep one.
   if (privacy['stable-id'] !== true) rmSync(join(home, 'dsh', ANONYMOUS_ID), { force: true })
   const overlay = writeOverlay(privacyPatchOf(home), privacy)
-  dsh = await startDsh({ node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload, privacy }), port, cwd: home, log, privacy: overlay, onSpawn: (child) => { dshChild = child; started.mark('dsh spawned') } })
+  dsh = await startDsh({ node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload, privacy }), port, cwd: home, log, privacy: overlay, onSpawn: (child) => { dshChild = child; child.on('message', message => answerDsh(child, message)); started.mark('dsh spawned') } })
   started.mark('dsh ready')
   dsh.child.once('exit', (code) => {
     if (!quitting) fail(new Error(`dsh stopped (${code}).`))
@@ -212,6 +233,8 @@ async function launch() {
   })
   page.setBackgroundColor(tableColor(nativeTheme.shouldUseDarkColors))
   page.webContents.on('before-input-event', (event, input) => shortcut(event, input))
+  // dsh's page loads again: its browser panel is gone until it draws again.
+  page.webContents.on('did-start-navigation', (event) => { if (event.isMainFrame && !event.isSameDocument) botViews.hideAll() })
   page.webContents.on('did-fail-load', (_event, code, description, _url, mainFrame) => {
     if (mainFrame && code !== -3) sendState({ status: `${PRODUCT} could not load (${description}).`, problem: true })
   })
@@ -235,6 +258,40 @@ async function launch() {
   watchUpdates()
   await page.webContents.loadURL(dsh.url)
 }
+
+// dsh asks over its IPC channel for a Bot's browser endpoint (bots-dsh browser-plugins.js
+// appBrowserEndpoint): the relay's address with a fresh token for that Bot.
+function answerDsh(child, message) {
+  if (message?.type !== 'ds-bot:browser-endpoint' || typeof message.id !== 'string') return
+  const reply = (answer) => { if (child.connected) child.send({ type: 'ds-bot:browser-endpoint-response', id: message.id, ...answer }) }
+  if (!isBotId(message.botId)) return reply({ error: 'Unknown Bot.' })
+  botRelay.endpoint(message.botId, { downloadRoots: message.downloadRoots })
+    .then(url => reply({ url }), error => reply({ error: String(error?.message ?? 'The app browser relay is unavailable.') }))
+}
+
+// The Bot browser panel's bridge (preload.cjs `dsBotApp.browser`), for dsh's page only.
+function browserCall(channel, handle) {
+  ipcMain.handle(`automagik-browser-${channel}`, (event, botId, ...rest) => {
+    if (!fromPage(event)) throw new Error('Not the app page')
+    return handle(botId, ...rest)
+  })
+}
+const botOf = (botId) => {
+  if (!isBotId(botId)) throw new Error('Unknown Bot')
+  return botId
+}
+const tabOf = (tabId) => {
+  if (!isTabId(tabId)) throw new Error('Unknown browser tab')
+  return tabId
+}
+browserCall('create', (botId, tabId, url) => botViews.create(botOf(botId), { tabId: tabOf(tabId), ...(typeof url === 'string' && url !== '' ? { url } : {}) }).tabId)
+browserCall('sync', botId => botViews.sync(botOf(botId)))
+browserCall('place', (tabId, rect, visible) => botViews.place(tabOf(tabId), rect && typeof rect === 'object' ? rect : null, visible === true))
+for (const operation of ['navigate', 'command', 'focus', 'read', 'close']) {
+  browserCall(operation, (botId, tabId, value) => botViews.operate(botOf(botId), operation, { tabId: tabOf(tabId), url: value, command: value, script: value }))
+}
+browserCall('hold', (botId, held) => botViews.hold(botOf(botId), held === true))
+browserCall('forget', key => botViews.forget(botOf(typeof key === 'string' && key.startsWith('bot:') ? key.slice(4) : '')))
 
 // The lane's lines go to the update log, with the app's own update.
 function laneLog(message) {
@@ -489,6 +546,8 @@ function layout() {
     const { bounds, radius } = pageLayout(window.getContentBounds(), { platform: process.platform, maximized })
     page.setBounds(bounds)
     page.setBorderRadius(radius)
+    pageRadius = radius
+    botViews.relayout()
     // Full screen hides the traffic lights: the sidebar's top row takes their room back.
     page.webContents.send('automagik-window', { fullScreen: window.isFullScreen() })
   }
@@ -524,22 +583,9 @@ function shortcut(event, input) {
 }
 
 function harden(origin) {
+  // Every webContents but a Bot view's, which bot-views.js gives rules of its own.
   app.on('web-contents-created', (_event, contents) => {
-    contents.setWindowOpenHandler(({ url }) => {
-      if (navigationOf(url, origin) === 'external') void shell.openExternal(url)
-      return { action: 'deny' }
-    })
-    contents.on('will-navigate', (event, url) => {
-      const verdict = navigationOf(url, origin)
-      if (verdict === 'allow') return
-      event.preventDefault()
-      if (verdict === 'external') void shell.openExternal(url)
-    })
-    // A server redirect is a navigation too.
-    contents.on('will-redirect', (event, url) => {
-      if (navigationOf(url, origin) !== 'allow') event.preventDefault()
-    })
-    contents.on('will-attach-webview', event => event.preventDefault())
+    guardContents(contents, { origin, openExternal: url => shell.openExternal(url), isBotView: view => botViews.owns(view) })
   })
   // The page asks for notifications, the clipboard, and the microphone for voice chat (audio
   // only, never the camera); macOS asks the person once for the microphone, with the app's
@@ -561,6 +607,7 @@ function harden(origin) {
 }
 
 app.on('window-all-closed', () => app.quit())
+app.once('will-quit', () => { botRelay.dispose(); botViews.dispose() })
 app.on('before-quit', (event) => {
   if (quitting || !dshChild) return
   quitting = true

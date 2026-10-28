@@ -4,6 +4,7 @@ import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { openBotBrowser } from './session.js'
 import { gateScope } from './gate.js'
+import { readSavedTabs } from './tabs.js'
 
 export const browserOutput = {
   schema: {
@@ -69,6 +70,12 @@ async function saveShot(ctx, value) {
  */
 export function mountBrowserPlugin(ctx, { toolDefs, defineTool, keyOf, profileRoot, downloadRoot, downloadRoots, uploadRoots, headless, playwrightUrl, executablePath, actionTimeout, authorize, completeFor, connect, getHold, onHold, subscribeHolds, openSession = openBotBrowser, api }) {
   const sessions = new Map()
+  // Each Bot's saved tabs (tabs.js), read once and then kept as its sessions save them.
+  const savedTabs = new Map()
+  const savedTabsOf = (botId) => {
+    if (!savedTabs.has(botId)) savedTabs.set(botId, readSavedTabs(join(profileRoot, botId)))
+    return savedTabs.get(botId)
+  }
   const names = new Set(toolDefs.map(tool => tool.name))
   // Tool results persist their rendered blocks, so changing render() cannot fix
   // old screenshots. Replace only this plugin's malformed image blocks through
@@ -117,6 +124,7 @@ export function mountBrowserPlugin(ctx, { toolDefs, defineTool, keyOf, profileRo
   async function drop(botId) {
     const session = sessions.get(botId)
     sessions.delete(botId)
+    savedTabs.delete(botId)
     if (session !== undefined) await Promise.resolve(session).then(opened => opened.close(), () => {})
     await rm(join(profileRoot, botId), { recursive: true, force: true }).catch(() => {})
   }
@@ -150,12 +158,15 @@ export function mountBrowserPlugin(ctx, { toolDefs, defineTool, keyOf, profileRo
               getHold: () => getHold?.(botId),
               onHold: hold => onHold?.(botId, hold),
               uploadRoots: uploadRoots ? () => uploadRoots(botId) : undefined,
+              onTabs: tabs => savedTabs.set(botId, tabs),
             })
           })
           sessions.set(botId, opening)
-          opening.catch(() => {
+          const forget = () => {
             if (sessions.get(botId) === opening) sessions.delete(botId)
-          })
+          }
+          // A browser that went away is opened again at the Bot's next call.
+          opening.then(opened => opened.onClosed?.(forget), forget)
           session = opening
         }
         session = await session
@@ -172,5 +183,8 @@ export function mountBrowserPlugin(ctx, { toolDefs, defineTool, keyOf, profileRo
   }
 
   // An object return would be collected as an effect by cordis, so the api is an out-param.
-  if (api) api.drop = drop
+  if (api) {
+    api.drop = drop
+    api.savedTabs = savedTabsOf
+  }
 }

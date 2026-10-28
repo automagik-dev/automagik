@@ -418,6 +418,9 @@ export function dshEnv({ base = process.env, home, electronAsNode = false, binDi
     AUTOMAGIK_BOTS_HOME: join(home, 'bots'),
     // Signs in to an Omni as the desktop app (the Better Auth device-flow client id).
     OMNI_CLIENT_ID: 'omni-desktop',
+    // The app answers the Bot team's browser bridge over dsh's IPC channel (startDsh): each Bot's
+    // browser is in the window (bot-views.js), and the Bot drives it through bot-relay.js.
+    AUTOMAGIK_APP_BROWSER: '1',
     // Nothing usable for training is reported unless the person chose to share it (privacy.js):
     // DSH's own opt-out, and the CLIs' analytics (npm's notice, OpenUI's).
     ...privacyEnv(privacy),
@@ -439,11 +442,12 @@ export const busyFileOf = home => join(home, 'busy.json')
  * Start dsh on 127.0.0.1:`port` and resolve with { child, url } once it prints its launch
  * URL. `node` is the executable that runs dsh: Electron itself (with ELECTRON_RUN_AS_NODE),
  * or a Node in tests. Output goes to `log` (a writable stream) when given. `onSpawn` gets
- * the process at once, so a quit while dsh starts can stop it.
+ * the process at once, so a quit while dsh starts can stop it, and the app can answer its
+ * messages (the Bot browser bridge, main.js) from the start.
  */
 export function startDsh({ node, bin, env, port, cwd, log, privacy, timeoutMs = READY_TIMEOUT_MS, onSpawn }) {
   const child = spawn(node, [bin, '--profile', PROFILE, ...(privacy ? ['--patch', privacy] : []), '--no-open', '--host', '127.0.0.1', '--port', String(port)], {
-    cwd, env, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd, env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   })
   onSpawn?.(child)
   const ready = new Promise((done, fail) => {
@@ -486,6 +490,32 @@ export function stopDsh(child, graceMs = STOP_GRACE_MS) {
     })
     try { child.kill('SIGTERM') } catch { done() }
   })
+}
+
+/**
+ * The app's rules for every webContents it makes (main.js harden, on 'web-contents-created'):
+ * window.open and off-origin links go to the system browser (`openExternal`), and a navigation
+ * or a redirect off dsh's origin is refused. A Bot view (`isBotView`, bot-views.js) is left to
+ * its own rules: its pages browse the web, and their new windows are the Bot's tabs.
+ */
+export function guardContents(contents, { origin, openExternal, isBotView = () => false }) {
+  if (isBotView(contents)) return false
+  contents.setWindowOpenHandler(({ url }) => {
+    if (navigationOf(url, origin) === 'external') void openExternal(url)
+    return { action: 'deny' }
+  })
+  contents.on('will-navigate', (event, url) => {
+    const verdict = navigationOf(url, origin)
+    if (verdict === 'allow') return
+    event.preventDefault()
+    if (verdict === 'external') void openExternal(url)
+  })
+  // A server redirect is a navigation too.
+  contents.on('will-redirect', (event, url) => {
+    if (navigationOf(url, origin) !== 'allow') event.preventDefault()
+  })
+  contents.on('will-attach-webview', event => event.preventDefault())
+  return true
 }
 
 /**

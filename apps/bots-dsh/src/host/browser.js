@@ -1,14 +1,15 @@
 // Bot browsers. Where a window has a webview bridge (DSH Desktop, or an app that sets
 // DS_BOT_APP), every Bot owns a browser panel there: an Electron webview in its own storage
-// partition, which the user steers. The page lives in the app window, not here, so
-// `read_browser` reaches it through the window: the client holds a long poll open
-// (`browser-wait`) that reports which Bots have a page open and carries read requests
-// back; the client answers with `browser-result`. The browser a Bot drives itself
+// partition, which the user steers. (In the Automagik app the panel shows the Bot's own
+// browser instead, the one its browser tools drive: browser-plugins.js.) The page lives in
+// the app window, not here, so `read_browser` reaches it through the window: the client holds
+// a long poll open (`browser-wait`) that reports which Bots have a page open and carries read
+// requests back; the client answers with `browser-result`. The browser a Bot drives itself
 // (browser-plugins.js) keeps its holds here too, wherever it runs.
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { output } from './tools.js'
 import { browserPluginOf } from './browser-default.js'
-import { inUnfoldInstance } from './constants.js'
+import { appBrowserBridge, inUnfoldInstance } from './constants.js'
 
 // A waiting client counts as present; one that has not polled for this long is gone.
 const CLIENT_STALE_MS = 30_000
@@ -243,17 +244,18 @@ const OPEN_MAX = 64
 
 /**
  * The browser panel and `read_browser` are on where the window can show them: DSH Desktop's
- * profile and an app with the bridge (`DS_BOT_APP=1`; the Automagik app has none);
- * `config.browser` forces them on or off; Unfold's own instance (inUnfoldInstance) has
- * neither. The choice is fixed for the life of the process,
- * so the tool list, and with it the cached prompt prefix, never changes under a running
- * Session.
+ * profile and DS Bot's app (`DS_BOT_APP=1`). The Automagik app (`appBrowserBridge`) shows the
+ * panel only: there it is the Bot's own browser, which the Bot drives with its browser tools,
+ * so `read_browser` stays off. `config.browser` forces both on or off; Unfold's own instance
+ * (inUnfoldInstance) has neither. The choice is fixed for the life of the process, so the tool
+ * list, and with it the cached prompt prefix, never changes under a running Session.
  */
 export function install(rt) {
   const { ctx, config } = rt
   const unfold = inUnfoldInstance()
-  const panel = !unfold && (typeof config.browser === 'boolean' ? config.browser
-    : ctx.get?.('profileContext')?.name === 'desktop' || process.env.DS_BOT_APP === '1')
+  const desktop = ctx.get?.('profileContext')?.name === 'desktop' || process.env.DS_BOT_APP === '1'
+  const reads = !unfold && (typeof config.browser === 'boolean' ? config.browser : desktop)
+  const panel = !unfold && (typeof config.browser === 'boolean' ? config.browser : desktop || appBrowserBridge())
   const driven = !unfold && (browserPluginOf(config) !== undefined || config.browserPluginApi !== undefined)
   if (!panel && !driven) {
     Object.assign(rt, { browserEnabled: false, browserChannel: undefined, browserOpen: () => ({}) })
@@ -265,8 +267,18 @@ export function install(rt) {
   // team view carries the holds and a save bumps its revision, so a window without the
   // panel's long poll sees them too.
   ctx.effect(() => channel.subscribeHolds(() => { void rt.save().catch(() => {}) }), 'ds-bot: browser holds')
-  Object.assign(rt, { browserEnabled: panel, browserChannel: channel, browserOpen: () => ({}) })
-  if (!panel) return
+  // What a window reports as open: Bot ids on the team, each with a short address and title.
+  const openOf = (value) => {
+    const open = {}
+    if (value === null || typeof value !== 'object') return open
+    for (const [botId, page] of Object.entries(value).slice(0, OPEN_MAX)) {
+      if (rt.botOf(botId) === undefined || typeof page?.url !== 'string') continue
+      open[botId] = { url: page.url.slice(0, 2000), title: String(page.title ?? '').slice(0, 300) }
+    }
+    return open
+  }
+  Object.assign(rt, { browserEnabled: panel, browserChannel: channel, browserOpen: panel ? openOf : () => ({}) })
+  if (!reads) return
 
   ctx.tools.register(defineTool({
     name: 'read_browser',
@@ -286,16 +298,4 @@ export function install(rt) {
       return pageText(result.page, { from: Number.isInteger(args.from) ? args.from : 0 })
     },
   }))
-
-  // What a window reports as open: Bot ids on the team, each with a short address and title.
-  const openOf = (value) => {
-    const open = {}
-    if (value === null || typeof value !== 'object') return open
-    for (const [botId, page] of Object.entries(value).slice(0, OPEN_MAX)) {
-      if (rt.botOf(botId) === undefined || typeof page?.url !== 'string') continue
-      open[botId] = { url: page.url.slice(0, 2000), title: String(page.title ?? '').slice(0, 300) }
-    }
-    return open
-  }
-  Object.assign(rt, { browserEnabled: true, browserChannel: channel, browserOpen: openOf })
 }

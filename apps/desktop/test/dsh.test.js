@@ -3,8 +3,9 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { EventEmitter } from 'node:events'
 import { test } from 'node:test'
-import { appHome, dshEnv, freePort, installProfile, launchUrlOf, mergeProfilePackage, mergeProfilePatch, migrateRenamed, navigationOf, pinProfileStore, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, scrubBuildPaths, SHIPPED_STORE, startDsh, stopDsh, storeLayoutOf, writeTools } from '../src/dsh.js'
+import { appHome, dshEnv, freePort, guardContents, installProfile, launchUrlOf, mergeProfilePackage, mergeProfilePatch, migrateRenamed, navigationOf, pinProfileStore, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, scrubBuildPaths, SHIPPED_STORE, startDsh, stopDsh, storeLayoutOf, writeTools } from '../src/dsh.js'
 
 test('the app keeps everything in one folder under ~/.automagik, apart from a dsh you already run', () => {
   assert.equal(appHome({}), join(homedir(), '.automagik', 'desktop'))
@@ -194,6 +195,38 @@ test('the window stays on dsh\'s origin; web links go to the system browser; the
   assert.equal(navigationOf('https://wa.me/5511999990000?text=Omni%207KQ4-9XZP', origin), 'external')
   assert.equal(navigationOf('mailto:dev@namastex.ai', origin), 'external')
   for (const url of ['file:///etc/passwd', 'javascript:alert(1)', 'whatsapp://send?text=x', 'not a url']) assert.equal(navigationOf(url, origin), 'deny', url)
+})
+
+test('the app\'s pages send web links to the system browser; a Bot view keeps its own pages and tabs', () => {
+  const origin = 'http://127.0.0.1:41149'
+  const opened = []
+  const contentsOf = (session) => {
+    const contents = new EventEmitter()
+    contents.session = session
+    contents.setWindowOpenHandler = (handler) => { contents.openHandler = handler }
+    return contents
+  }
+  const botSession = {}
+  const guard = contents => guardContents(contents, { origin, openExternal: url => opened.push(url), isBotView: view => view.session === botSession })
+  const navigate = (contents, url) => {
+    let refused = false
+    contents.emit('will-navigate', { preventDefault: () => { refused = true } }, url)
+    return refused
+  }
+
+  const page = contentsOf({})
+  assert.equal(guard(page), true)
+  assert.deepEqual(page.openHandler({ url: 'https://example.com/' }), { action: 'deny' })
+  assert.equal(navigate(page, 'https://example.com/next'), true)
+  assert.equal(navigate(page, `${origin}/session/1`), false)
+  assert.deepEqual(opened, ['https://example.com/', 'https://example.com/next'])
+
+  // A Bot view gets none of it: its links and redirects stay in the view, nothing opens outside.
+  const bot = contentsOf(botSession)
+  assert.equal(guard(bot), false)
+  assert.equal(bot.openHandler, undefined)
+  assert.equal(bot.listenerCount('will-navigate') + bot.listenerCount('will-redirect'), 0)
+  assert.equal(opened.length, 2)
 })
 
 test('dsh starts on the given loopback port, its URL resolves, and stopping ends it', async (t) => {
