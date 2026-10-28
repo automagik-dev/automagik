@@ -194,3 +194,8 @@ test('a fake Unfold watching by name sees the Unfold Bot\'s Session from its fir
   watch.agentCreated(other.id, other)
   assert.deepEqual(seen, [['created', UNFOLD_NAME], ['turn_done', UNFOLD_NAME]])
 })
+
+test('its market listing says it is part of Unfold and works with the Unfold app', () => {
+  const market = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).automagik.market
+  assert.ok(market.description.en.includes('Part of Unfold; works with the Unfold app.'), market.description.en)
+})
