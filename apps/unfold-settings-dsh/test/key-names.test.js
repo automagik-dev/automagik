@@ -14,7 +14,9 @@ const KEYS = ['password', 'PASSWD', 'pass', 'Secret', 'client_secret', 'passphra
 const SCHEMES = [`authorization: bearer ${JOINED}`, `AUTHORIZATION: BEARER ${JOINED}`, `Authorization: basic ${JOINED}`, `{"authorization": "bearer ${PHRASE}"}`]
 // 80k characters of each input that could make a rule quadratic: a start after - or --, an open
 // quote, a camelCase run, a YAML block, an open escaped JSON value, a prefix run, many line starts,
-// many escaped JSON values, many YAML keys, many names mid-line, bearer runs, a word of upper-case names and long indents before a YAML key.
+// many escaped JSON values, many YAML keys, many names mid-line, bearer runs, a word of upper-case names, long indents before a YAML key or
+// any key, repeated names, keys and flags, open quotes of each kind, and backslash and escaped
+// quote runs.
 // A scheme in any case with no key name before it, before a token-shaped word (16+ characters of the
 // token alphabet with a digit), built from words at run time.
 const SHAPED = WORDS.join('9')
@@ -41,6 +43,22 @@ const ADVERSARIAL = {
   'bearer runs': 'bearer x '.repeat(9_000),
   'bearer long run': `bearer ${'a'.repeat(80_000)}`,
   'upper names in one word': `${'TOKEN'.repeat(16_000)} =`,
+  'leading spaces, then a key': `${' '.repeat(80_000)}password: x`,
+  'leading tabs, then KEY=': `${'\t'.repeat(80_000)}API_TOKEN="x`,
+  'leading mixed runs, then a camelCase key': `${' \t'.repeat(40_000)}accessToken: x`,
+  'repeated names': 'password '.repeat(8_900),
+  'repeated camelCase keys': 'accessToken: '.repeat(6_200),
+  'repeated PascalCase keys': 'ClientSecret='.repeat(6_200),
+  'repeated flags': '--token='.repeat(10_000),
+  'repeated KEY=': 'API_TOKEN='.repeat(8_000),
+  'open single quote': `password: '${'x '.repeat(40_000)}`,
+  'open backtick': `password: \`${'x '.repeat(40_000)}`,
+  'quote runs': `${'"'.repeat(27_000)}${"'".repeat(27_000)}${'`'.repeat(26_000)}`,
+  'backslash run': '\\'.repeat(80_000),
+  'backslashes in an open value': `password: "${'\\'.repeat(80_000)}`,
+  'escaped quote pairs': '\\"'.repeat(40_000),
+  'escaped quote pairs in an open value': `password: "${'\\"'.repeat(40_000)}`,
+  'escaped quote pairs in an escaped value': `{\\"password\\": \\"${'\\"'.repeat(40_000)}`,
   ...Object.fromEntries(INDENTED),
 }
 const FORMS = [
