@@ -1,0 +1,337 @@
+--- a/@deepseek-ai/dsh-experimental-agent-team/lib/index.js
++++ b/@deepseek-ai/dsh-experimental-agent-team/lib/index.js
+@@ -6,7 +6,7 @@
+ import { z as z$1 } from "zod";
+ import { brandString } from "@deepseek-ai/dsh-brand";
+ import { randomUUID } from "node:crypto";
+-import { foldSubagentDescriptor } from "@deepseek-ai/dsh-subagent";
++import { foldSubagentDescriptor, parentAgentOptionsForDelegation } from "@deepseek-ai/dsh-subagent";
+ //#region lib/types/error.js
+ /** Typed Agent Teams failures. */
+ /** Stable failure raised by the Team domain. */
+@@ -840,6 +840,8 @@
+ 	journal;
+ 	lifecycle;
+ 	maxMembers;
++	/** Each teammate's LLM route, as last seen live or read from its child Session descriptor. */
++	routes = /* @__PURE__ */ new Map();
+ 	/**
+ 	* @param ctx - Team service context with Agent, Session, persistence, and subagent services.
+ 	* @param journal - authoritative Lead-log transaction owner.
+@@ -914,12 +916,11 @@
+ 			name: "lead",
+ 			role: "lead",
+ 			status: availability(root),
+-			...root.options.model === void 0 ? {} : { model: root.options.model },
++			...llmRoute(root),
+ 			diagnostics: []
+ 		}];
+ 		for (const member of state.members) {
+ 			const live = this.ctx.agents.get(member.id);
+-			const model = live?.options.model ?? root.options.model;
+ 			result.push({
+ 				id: member.id,
+ 				name: member.name,
+@@ -928,7 +929,7 @@
+ 				description: member.description,
+ 				provider: member.provider,
+ 				context: member.context,
+-				...model === void 0 ? {} : { model },
++				...this.memberRoute(member.id, live),
+ 				diagnostics: member.error === void 0 ? [] : [member.error]
+ 			});
+ 		}
+@@ -1004,6 +1005,11 @@
+ 	async spawnAdmitted(caller, request) {
+ 		const membership = this.membership(caller);
+ 		if (membership.role !== "lead") throw new TeamError("only the Team Lead can create teammates", "TEAM_LEAD_REQUIRED");
++		if (request.agentOptions !== void 0) {
++			const backend = this.ctx.subagents.getProvider(request.provider);
++			if (request.context === "fork" || backend?.inheritsParentContext !== false) throw new TeamError("a fork teammate keeps the Team Lead's LLM route; choose a provider, model, or reasoning effort only for a fresh teammate on a backend that does not inherit the Lead's history", "TEAM_INVALID_ARGUMENT");
++			if (backend.capabilities.agentOptions !== true) throw new TeamError(`subagent provider "${request.provider}" cannot give a teammate its own LLM route`, "TEAM_INVALID_ARGUMENT");
++		}
+ 		const signal = AbortSignal.any([request.signal, this.lifecycle.signal]);
+ 		signal.throwIfAborted();
+ 		const root = membership.root;
+@@ -1036,7 +1042,8 @@
+ 				label: description,
+ 				request: {
+ 					prompt: request.prompt,
+-					parent: root
++					parent: root,
++					...request.agentOptions === void 0 ? {} : { agentOptions: request.agentOptions }
+ 				},
+ 				signal
+ 			});
+@@ -1155,10 +1162,35 @@
+ 			description: member.description,
+ 			provider: member.provider,
+ 			context: member.context,
+-			...live?.options.model === void 0 ? {} : { model: live.options.model },
++			...this.memberRoute(member.id, live),
+ 			diagnostics: []
+ 		};
+ 	}
++	/** One teammate's LLM route: live when loaded (and remembered), else the last one seen or read. */
++	memberRoute(id, live) {
++		if (live === void 0) return this.routes.get(id) ?? {};
++		const route = llmRoute(live);
++		this.routes.set(id, route);
++		return route;
++	}
++	/** Read the LLM route of each teammate not loaded in this process from its child Session descriptor. */
++	async loadRoutes(root, signal) {
++		for (const member of this.journal.state(root).members) {
++			if (member.phase === "failed" || this.routes.has(member.id) || this.ctx.agents.get(member.id) !== void 0) continue;
++			signal.throwIfAborted();
++			try {
++				const loaded = await readPersistedSession(this.ctx.sessionPersistence, member.id, signal);
++				const descriptor = foldSubagentDescriptor(loaded.events.slice(loaded.inheritedEventCount));
++				if (descriptor !== void 0) this.routes.set(member.id, {
++					...descriptor.agentProvider === void 0 ? {} : { llmProvider: descriptor.agentProvider },
++					...descriptor.agentModel === void 0 ? {} : { model: descriptor.agentModel },
++					...descriptor.agentReasoningEffort === void 0 ? {} : { reasoningEffort: descriptor.agentReasoningEffort }
++				});
++			} catch {
++				signal.throwIfAborted();
++			}
++		}
++	}
+ 	/** Validate a never-reused model-facing teammate name. */
+ 	memberName(value) {
+ 		if (!MEMBER_NAME.test(value) || value.length > 64 || value === "lead") throw new TeamError("teammate name must be lower-kebab-case, at most 64 characters, and not \"lead\"", "TEAM_INVALID_MEMBER_NAME");
+@@ -1184,6 +1216,15 @@
+ 		return foldSubagentDescriptor(agent.session.snapshotEvents(agent.session.inheritedEventCount)) !== void 0;
+ 	}
+ };
++/** The LLM route a live Agent runs on: its latest request, else its creation options. */
++function llmRoute(agent) {
++	const options = parentAgentOptionsForDelegation(agent);
++	return {
++		...options.provider === void 0 ? {} : { llmProvider: options.provider },
++		...options.model === void 0 ? {} : { model: options.model },
++		...options.reasoningEffort === void 0 ? {} : { reasoningEffort: options.reasoningEffort }
++	};
++}
+ /** Turn availability is independent of whether the Agent is loaded. */
+ function availability(agent) {
+ 	return agent?.status === "running" ? "running" : "inactive";
+@@ -1499,6 +1540,16 @@
+ 		return this.roster.list(this.roster.membership(agent));
+ 	}
+ 	/**
++	* List the roster with each teammate's LLM route, read from its child Session when it is not loaded.
++	* @param agent - exact live Team member.
++	* @param signal - caller cancellation.
++	* @returns Lead and teammate rows in creation order.
++	*/
++	async describeMembers(agent, signal) {
++		await this.roster.loadRoutes(this.roster.membership(agent).root, signal);
++		return this.roster.list(this.roster.membership(agent));
++	}
++	/**
+ 	* Create one named, continuable direct child of the Team Lead.
+ 	* @param caller - exact live Lead Agent.
+ 	* @param request - immutable name, description, prompt, context mode, provider, and cancellation.
+--- a/@deepseek-ai/dsh-experimental-tool-agent-team/lib/index.js
++++ b/@deepseek-ai/dsh-experimental-tool-agent-team/lib/index.js
+@@ -64,7 +64,9 @@
+ 			type: "string",
+ 			enum: ["fresh", "fork"]
+ 		},
++		llmProvider: { type: "string" },
+ 		model: { type: "string" },
++		reasoningEffort: { type: "string" },
+ 		diagnostics: {
+ 			type: "array",
+ 			required: true,
+@@ -217,6 +219,106 @@
+ 		}]
+ 	};
+ }
++/**
++* The exact routes DSH's subagent model-selection setting allows, the one policy that also
++* governs the subagent tool's provider, model, and reasoning_effort fields.
++*/
++function teammateModelRoutes(ctx) {
++	const settings = ctx.get("subagentModelSelection");
++	const current = settings?.current();
++	if (current === void 0 || !current.enabled) throw new Error("teammate LLM selection is off: allow routes under subagent model selection in the Plugins settings, or omit llm_provider, model, and reasoning_effort to inherit the Team Lead's route");
++	return current.allowedModels;
++}
++/** The live `llm` runtime that resolves providers, models, and reasoning efforts. */
++function liveLlm(agent, ctx) {
++	const llm = agent.ctx.get("llm") ?? ctx.get("llm");
++	if (llm === void 0) throw new Error("cannot resolve teammate LLM routes because the `llm` service is unavailable");
++	return llm;
++}
++/** The Lead's current route: its latest request, else its creation options. */
++function leadRoute(agent) {
++	const config = agent.session.requestHeader()?.config;
++	if (config === void 0) return {
++		provider: agent.options.provider,
++		model: agent.options.model,
++		reasoningEffort: agent.options.reasoningEffort
++	};
++	return {
++		provider: config.provider,
++		model: config.model,
++		reasoningEffort: config.reasoningEffort
++	};
++}
++/**
++* Validate a spawn's optional LLM selection before any member is recorded and return the child
++* Agent options it asks for. Omitting every field returns undefined, so the teammate inherits the
++* Lead's route as before. The exact provider/model pair must be allowed, and the effort must
++* resolve for that exact model; changing the route without an effort takes the model's default.
++*/
++async function teammateAgentOptions(ctx, agent, args, context, signal) {
++	const request = {
++		provider: args.llm_provider,
++		model: args.model,
++		reasoningEffort: args.reasoning_effort
++	};
++	if (request.provider === void 0 && request.model === void 0 && request.reasoningEffort === void 0) return void 0;
++	if (context === "fork") throw new Error("a fork teammate keeps the Team Lead's LLM route: omit llm_provider, model, and reasoning_effort, or use context \"fresh\"");
++	for (const [field, value] of [
++		["llm_provider", request.provider],
++		["model", request.model],
++		["reasoning_effort", request.reasoningEffort]
++	]) if (value !== void 0 && value.length === 0) throw new Error(`teammate \`${field}\` must be non-empty`);
++	if (request.provider === void 0 !== (request.model === void 0)) throw new Error("teammate `llm_provider` and `model` must be supplied together");
++	const routes = teammateModelRoutes(ctx);
++	const lead = leadRoute(agent);
++	const provider = request.provider ?? lead.provider;
++	const model = request.model ?? lead.model;
++	if (provider === void 0 || model === void 0) throw new Error("cannot select a teammate reasoning effort without the Team Lead's provider and model");
++	if (!routes.some((route) => route.provider === provider && route.model === model)) throw new Error(`teammate LLM route "${provider}/${model}" is not allowed; list_teammate_models shows the allowed routes`);
++	const routeChanged = provider !== lead.provider || model !== lead.model;
++	const reasoningEffort = request.reasoningEffort ?? (routeChanged ? void 0 : lead.reasoningEffort);
++	const resolved = await liveLlm(agent, ctx).resolveCallConfig({
++		provider,
++		model,
++		...reasoningEffort === void 0 ? {} : { reasoningEffort }
++	}, signal);
++	const effort = request.reasoningEffort ?? (routeChanged ? resolved.reasoningEffort : void 0);
++	return {
++		...request.provider === void 0 ? {} : {
++			provider,
++			model
++		},
++		...effort === void 0 ? {} : { reasoningEffort: effort }
++	};
++}
++/** Render one advertised or resolved model. */
++function modelLine(provider, model) {
++	return `${provider}/${model.id} — ${model.name}${model.description === void 0 ? "" : `: ${model.description}`}`;
++}
++/** The allowed providers, one provider's allowed models, or one exact model's reasoning efforts. */
++async function listTeammateModels(ctx, agent, request, signal) {
++	const routes = teammateModelRoutes(ctx);
++	const llm = liveLlm(agent, ctx);
++	if (request.model !== void 0 && request.provider === void 0) throw new Error("`model` requires `provider`");
++	if (request.provider === void 0) {
++		const providers = llm.listProviders().filter((provider) => routes.some((route) => route.provider === provider.id));
++		return providers.length === 0 ? "(no LLM providers)" : providers.map((provider) => `${provider.id} — ${provider.name}`).join("\n");
++	}
++	if (request.provider.length === 0) throw new Error("`provider` must be non-empty");
++	const allowed = routes.filter((route) => route.provider === request.provider);
++	if (allowed.length === 0) throw new Error(`LLM provider "${request.provider}" is not allowed for teammates`);
++	const provider = llm.listProviders().find((candidate) => candidate.id === request.provider);
++	if (provider === void 0) throw new Error(`LLM provider "${request.provider}" is not registered`);
++	if (request.model === void 0) {
++		const models = (await llm.listModels(provider.id)).filter((model) => allowed.some((route) => route.model === model.id));
++		return models.length === 0 ? `(no advertised models for ${provider.id})` : models.map((model) => modelLine(provider.id, model)).join("\n");
++	}
++	if (request.model.length === 0) throw new Error("`model` must be non-empty");
++	if (!allowed.some((route) => route.model === request.model)) throw new Error(`teammate LLM route "${provider.id}/${request.model}" is not allowed`);
++	const model = await llm.resolveModelInfo(provider.id, request.model, signal);
++	const efforts = model.reasoning?.efforts.map((effort) => `${effort.id}${model.reasoning?.defaultEffort === effort.id ? " (default)" : ""} — ${effort.name}` + (effort.description === void 0 ? "" : `: ${effort.description}`)).join("\n") || "(no advertised reasoning efforts)";
++	return `${modelLine(provider.id, model)}\nReasoning efforts:\n${efforts}`;
++}
+ /** Recover the exact caller guaranteed by Agent-scoped tool discovery. */
+ function callingAgent(agent, toolName) {
+ 	/* v8 ignore next 2 -- Team tools are registered only in an exact Agent scope, so discovery supplies this carrier. */
+@@ -249,7 +351,7 @@
+ 		}));
+ 		register(scoped.tools.register(defineTool({
+ 			name: "spawn_teammate",
+-			description: "Create one named, durable teammate. Only the Team Lead may call this tool.",
++			description: "Create one named, durable teammate. Only the Team Lead may call this tool. A fresh teammate may run on its own LLM route: pass llm_provider and model together, and optionally reasoning_effort, from list_teammate_models; omit all three to inherit the Lead's route. A fork teammate always keeps the Lead's route.",
+ 			parameters: {
+ 				name: {
+ 					type: "string",
+@@ -270,12 +372,25 @@
+ 					type: "string",
+ 					enum: ["fresh", "fork"],
+ 					description: "fresh starts without Lead history; fork inherits completed Lead turns. Defaults to fresh."
++				},
++				llm_provider: {
++					type: "string",
++					description: "LLM provider id for a fresh teammate (not the execution backend). Supply together with model; omit both to inherit the Lead's route."
++				},
++				model: {
++					type: "string",
++					description: "Model id interpreted by llm_provider. Supply together with llm_provider."
++				},
++				reasoning_effort: {
++					type: "string",
++					description: "Reasoning effort for the teammate's route. Omit to keep the Lead's effort on the Lead's route, or to use a newly selected model's default."
+ 				}
+ 			},
+ 			output: jsonOutput(SPAWN_VALUE_SCHEMA),
+ 			async execute(args, exec) {
+ 				const agent = callingAgent(exec.agent, "spawn_teammate");
+ 				const context = args.context ?? "fresh";
++				const agentOptions = await teammateAgentOptions(ctx, agent, args, context, exec.signal);
+ 				return { member: modelMember((await ctx.agentTeams.spawnTeammate(agent, {
+ 					name: args.name,
+ 					description: args.description,
+@@ -285,11 +400,36 @@
+ 					}],
+ 					context,
+ 					provider: context === "fork" ? config.forkProvider : config.freshProvider,
++					...agentOptions === void 0 ? {} : { agentOptions },
+ 					signal: exec.signal
+ 				})).member) };
+ 			}
+ 		})));
+ 		register(scoped.tools.register(defineTool({
++			name: "list_teammate_models",
++			description: "Discover the LLM routes a fresh teammate may run on, without changing any Agent. Call with no arguments to list allowed providers, with `provider` to list its allowed models, or with `provider` and `model` to inspect that model's reasoning efforts. Use the returned ids with spawn_teammate's `llm_provider`, `model`, and `reasoning_effort`.",
++			parameters: {
++				provider: {
++					type: "string",
++					description: "LLM provider id. Omit to list providers."
++				},
++				model: {
++					type: "string",
++					description: "Exact model id to inspect. Requires provider; omit to list that provider's allowed models."
++				}
++			},
++			output: {
++				schema: { type: "string" },
++				render: (_args, result) => [{
++					type: "text",
++					text: result
++				}]
++			},
++			execute(args, exec) {
++				return listTeammateModels(ctx, callingAgent(exec.agent, "list_teammate_models"), args, exec.signal);
++			}
++		})));
++		register(scoped.tools.register(defineTool({
+ 			name: "send_message",
+ 			description: "Send one message to another Team member. A running target receives it at the nearest step boundary; an inactive target starts or resumes a turn.",
+ 			parameters: {
+@@ -322,8 +462,8 @@
+ 			description: "List the Lead and every durable teammate with an addressable target and current availability. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.",
+ 			parameters: {},
+ 			output: jsonOutput(MEMBER_LIST_VALUE_SCHEMA),
+-			execute(_args, exec) {
+-				return Promise.resolve(ctx.agentTeams.listMembers(callingAgent(exec.agent, "list_agents")).map(modelMember));
++			async execute(_args, exec) {
++				return (await ctx.agentTeams.describeMembers(callingAgent(exec.agent, "list_agents"), exec.signal)).map(modelMember);
+ 			}
+ 		})));
+ 		register(scoped.tools.register(defineTool({
