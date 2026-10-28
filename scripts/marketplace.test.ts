@@ -22,8 +22,14 @@ describe('market index', () => {
     const ours = index.plugins.filter((plugin: IndexPlugin) => plugin.versions[0]?.source.url === REPO_URL);
     const listed = ours.map((plugin: IndexPlugin) => plugin.name);
     // A plugin not released yet is listed by its first release's pin, from its automagik.market.
+    // A library the plugins carry (no dsh block: unfold-sse-dsh) is not a plugin and is never listed.
     for (const name of pluginNames().filter((name) => !listed.includes(name))) {
-      const market = JSON.parse(readFileSync(join(repoDir, 'apps', name.replace('@automagik/', ''), 'package.json'), 'utf8')).automagik?.market;
+      const manifest = JSON.parse(readFileSync(join(repoDir, 'apps', name.replace('@automagik/', ''), 'package.json'), 'utf8'));
+      if (!manifest.dsh) {
+        expect(manifest.automagik?.market).toBeUndefined();
+        continue;
+      }
+      const market = manifest.automagik?.market;
       expect(typeof market?.title?.en).toBe('string');
       expect(typeof market?.description?.en).toBe('string');
       expect(Object.keys(index.metadata.categories)).toContain(market.category);
