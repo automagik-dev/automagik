@@ -84,6 +84,8 @@ export function install(rt) {
     prefs: state.prefs,
     // Whether a Desktop window should serve Bot browser reads (see browser.js).
     browser: rt.browserEnabled,
+    // Who holds each Bot's own browser (browser-plugins.js), for windows without the panel.
+    browserHolds: rt.browserChannel?.holdSnapshot() ?? {},
     // False when config.memory turns memory off: no Memory row or panel.
     memory: rt.memoryEnabled !== false,
     // Set while another dsh host holds the team (store.js): why this one cannot change it.
@@ -494,8 +496,9 @@ export function install(rt) {
         case 'repo-stars':
           return ok(await rt.repoStars())
         // The Desktop window's long poll for read_browser, and its answers.
+        // The panel's long poll: only where a window has the panel (browser.js).
         case 'browser-wait': {
-          if (rt.browserChannel === undefined) return fail('Bot browsers are off on this host', 'bot/browser-off')
+          if (!rt.browserEnabled) return fail('Bot browsers are off on this host', 'bot/browser-off')
           const clientId = typeof body.clientId === 'string' ? body.clientId.slice(0, 100) : ''
           if (clientId === '') return fail('A browser poll needs a clientId', 'bot/invalid')
           await rt.load()
@@ -503,7 +506,7 @@ export function install(rt) {
           return ok({ requests, holds: rt.browserChannel.holdSnapshot() })
         }
         case 'browser-result':
-          if (rt.browserChannel === undefined) return fail('Bot browsers are off on this host', 'bot/browser-off')
+          if (!rt.browserEnabled) return fail('Bot browsers are off on this host', 'bot/browser-off')
           return ok(rt.browserChannel.result(body))
         // The Privacy page (privacy.js): what the desktop app may share, all off until switched on.
         // Images (imagegen.js): how they are made here, and a generation's progress for its card.

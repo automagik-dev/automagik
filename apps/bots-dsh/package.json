@@ -47,6 +47,9 @@
     "check": "sh dev/check.sh",
     "dev:client": "node scripts/watch-client.mjs"
   },
+  "dependencies": {
+    "playwright-core": "1.61.1"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
     "@deepseek-ai/dsh-llm": "*",

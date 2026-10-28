@@ -108,6 +108,22 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     'effect ds-bot: connectors',
     'on agent/created',
     'effect ds-bot: capabilities',
+    'effect ds-bot: browser channel',
+    'effect ds-bot: browser holds',
+    'on agent/pre-step (prepend)',
+    'effect ds-bot: browser plugin',
+    'tool browser_open',
+    'tool browser_snapshot',
+    'tool browser_click',
+    'tool browser_upload',
+    'tool browser_type',
+    'tool browser_select',
+    'tool browser_press',
+    'tool browser_tabs',
+    'tool browser_back',
+    'tool browser_screenshot',
+    'tool browser_handoff',
+    'tool browser_resume',
     'effect ds-bot: usage ledger',
     'on llm/stream',
     'effect ds-bot: update check',
@@ -209,7 +225,8 @@ test('in the Desktop profile read_browser is the last tool and reads through the
   const { ctx, call, stop } = start(TEAM, { services: { profileContext: { name: 'desktop' } } })
   t.after(stop)
   const tools = ctx.calls.filter(entry => entry.startsWith('tool '))
-  assert.equal(tools.at(-1), 'tool read_browser')
+  // The Bot's own browser tools (browser-plugins.js) come after it.
+  assert.equal(tools.filter(entry => !entry.startsWith('tool browser_')).at(-1), 'tool read_browser')
   assert.ok(ctx.calls.indexOf('effect ds-bot: browser channel') < ctx.calls.indexOf('effect ds-bot: api route'))
   const read = args => ctx.registeredTools.get('read_browser').execute(args, { agent: { id: 'b2' } })
 
