@@ -4,14 +4,17 @@ import { checkClaudeCode, createProviderActions, saveRoute, unsetRoute } from '.
 import { createTerminalActions } from './terminal.js'
 import { createCompanionActions } from './companion.js'
 import { createBotTypeActions } from './bot-types.js'
+import { hostOf } from './host.js'
 import { preloadOf } from './preload.js'
+import { UNFOLD_BOT } from './companion.js'
 import { hintsFile, seedStarterOff } from './starter.js'
 
 // The host endpoint the onboarding steps call: POST /api/omni-ai with
 // { endpoint, payload }, answered { ok: true, value } or { ok: false, error }.
 //
-//   state              the done flags, whether an AI is already connected, and the
-//                      product the desktop app was opened for (preload, src/host/preload.js)
+//   state              the done flags, whether an AI is already connected, the product
+//                      the desktop app was opened for (preload, src/host/preload.js) and the
+//                      host kind, when there is one (host, src/host/host.js)
 //   done { stepId, connected? }
 //                      keeps a step finished, in this plugin's own settings entry (the first
 //                      one on a fresh install also hides dsh-oh-my-claude's starter hint,
@@ -28,9 +31,10 @@ import { hintsFile, seedStarterOff } from './starter.js'
 //   ai-terminal-*      the terminal that signs Claude Code in (src/host/terminal.js)
 //   companion, companion-generate, companion-save, companion-image, team-save
 //                      the person's own companion and team (src/host/companion.js)
-//   omni-plugins, omni-plugins-install, genie-plugin, genie-plugin-install, bot-type
-//                      the Omni plugins and Genie's, installed through DSH's plugin manager,
-//                      and what a Bot type starts with (src/host/bot-types.js)
+//   omni-plugins, omni-plugins-install, genie-plugin, genie-plugin-install,
+//   unfold-plugin, unfold-plugin-install, bot-type
+//                      the Omni plugins, Genie's and Unfold's, installed through DSH's plugin
+//                      manager, and what a Bot type starts with (src/host/bot-types.js)
 //
 // The key never enters settings, a reply or a log line: the route names it by the
 // env-shaped reference OMNI_AI_CLIPROXY_API_KEY, which DSH resolves per request.
@@ -152,15 +156,20 @@ export function createActions(ctx, { fetch: fetchImpl = globalThis.fetch, anyOn,
       const providers = entryOf(rows, PI_AI)?.value?.providers
       const piAiRoutes = providers && typeof providers === 'object' ? Object.keys(providers) : []
       const deepseek = await isConfigured(() => ctx.credentials.describe(DEEPSEEK_REF)) || await isConfigured(() => ctx.credentials.describeRecord(DEEPSEEK_ACCOUNT))
+      const host = hostOf(env)
+      // In Unfold's instance, Unfold is the Main Bot its plugin made: no companion to make, its
+      // card comes first, and Omni joins only when the person powers it on.
+      const unfold = host === 'unfold'
+      const preload = unfold ? 'unfold' : preloadOf(env)
       return {
-        companionDone: own.companionDone === true,
+        companionDone: unfold || own.companionDone === true,
         teamDone: own.teamDone === true,
         welcomeDone: own.welcomeDone === true,
-        companionName: typeof own.companionName === 'string' ? own.companionName : undefined,
+        companionName: unfold ? UNFOLD_BOT.name : typeof own.companionName === 'string' ? own.companionName : undefined,
         companionShape: typeof own.companionShape === 'string' ? own.companionShape : undefined,
         companionColor: typeof own.companionColor === 'string' ? own.companionColor : undefined,
         companionImage: typeof own.companionImage === 'string',
-        teamOmni: own.teamOmni !== false,
+        teamOmni: unfold ? own.teamOmni === true : own.teamOmni !== false,
         teamGenie: own.teamGenie === true,
         connectAiDone: own.connectAiDone === true,
         connectOmniSkipped: own.connectOmniSkipped === true,
@@ -168,7 +177,8 @@ export function createActions(ctx, { fetch: fetchImpl = globalThis.fetch, anyOn,
         piAiRoutes,
         // Really on: a route that is set up, Claude Code signed in, or a subscription account.
         aiConnected: anyOn ? await anyOn().catch(() => false) : deepseek || piAiRoutes.length > 0,
-        preload: preloadOf(env),
+        preload,
+        ...(host ? { host } : {}),
       }
     },
 
@@ -210,11 +220,11 @@ export function createActions(ctx, { fetch: fetchImpl = globalThis.fetch, anyOn,
 
 export function install(ctx, deps = {}) {
   const checkClaude = deps.checkClaude ?? (() => checkClaudeCode(ctx))
-  const ai = createAiActions(ctx, { fetch: deps.fetch, claudeCode: checkClaude, saveRoute: (provider, patch) => saveRoute(ctx, provider, patch), unsetRoute: provider => unsetRoute(ctx, provider) })
+  const ai = createAiActions(ctx, { fetch: deps.fetch, host: hostOf(deps.env ?? process.env), claudeCode: checkClaude, saveRoute: (provider, patch) => saveRoute(ctx, provider, patch), unsetRoute: provider => unsetRoute(ctx, provider) })
   const terminal = createTerminalActions(ctx, { checkClaude, ...deps.terminal })
   const { anyOn, ...aiEndpoints } = ai
   const { closeAll, ...terminalEndpoints } = terminal
-  const { team, omniProjectOf, assignModels, joinOmni, ...companion } = createCompanionActions(ctx, deps.companion)
+  const { team, omniProjectOf, assignModels, joinOmni, ...companion } = createCompanionActions(ctx, { env: deps.env ?? process.env, ...deps.companion })
   // A deleted Omni Bot comes back from the Bot team's New menu (Add Omni), made the way the
   // team step makes it: while the Bot team and Omni's channels run, the team view says
   // whether it is missing, and the omni-add endpoint makes it.
@@ -230,7 +240,7 @@ export function install(ctx, deps = {}) {
       }), 'omni-ai: Add Omni')
     })
   }
-  const actions = { ...createActions(ctx, { ...deps, anyOn }), ...createProviderActions(ctx), ...aiEndpoints, ...terminalEndpoints, ...companion, ...createBotTypeActions(ctx, { team, omniProjectOf, ...(deps.checkGit ? { checkGit: deps.checkGit } : {}), ...(deps.genieSkills ? { genieSkills: deps.genieSkills } : {}) }) }
+  const actions = { ...createActions(ctx, { ...deps, anyOn }), ...createProviderActions(ctx), ...aiEndpoints, ...terminalEndpoints, ...companion, ...createBotTypeActions(ctx, { team, omniProjectOf, env: deps.env ?? process.env, ...(deps.checkGit ? { checkGit: deps.checkGit } : {}), ...(deps.genieSkills ? { genieSkills: deps.genieSkills } : {}), ...(deps.genieCli ? { genieCli: deps.genieCli } : {}) }) }
   // Connect AI finished with an AI on: the companion, the Omni Bot and the Genie Bot get their model, and
   // their held greetings go out. The step waits for that a little (ASSIGN_HOLD_MS), so the
   // chat opens on the greeting rather than on the model card; a provider that registers

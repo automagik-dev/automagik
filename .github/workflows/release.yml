@@ -15,6 +15,7 @@ name: Release
 #   automagik-unfold-sse-dsh-<version>.tgz     server-sent events for the Unfold plugins (apps/unfold-sse-dsh)
 #   automagik-unfold-trajectory-dsh-<version>.tgz  Unfold's trajectory (apps/unfold-trajectory-dsh)
 #   automagik-unfold-session-dsh-<version>.tgz Unfold's session as a DSH conversation (apps/unfold-session-dsh)
+#   automagik-unfold-bot-dsh-<version>.tgz     the Unfold Bot (apps/unfold-bot-dsh)
 #   plugins.json                          each tarball's name, version, file and integrity
 #   dsh-oh-my-claude-<its version>.tgz    the add-ons the lane carries, at the profile's pins
 #   addons.json                           (scripts/lane.ts LANE_ADDONS), and what each one is
@@ -134,7 +135,7 @@ jobs:
           set -euo pipefail
           bun install --frozen-lockfile --ignore-scripts
           bun run check
-          for app in bots-dsh locale-pt-br-dsh unfold-bridge-dsh unfold-capabilities-dsh unfold-events-dsh unfold-mind-dsh unfold-session-dsh unfold-settings-dsh unfold-sse-dsh unfold-trajectory-dsh welcome-dsh; do
+          for app in bots-dsh locale-pt-br-dsh unfold-bot-dsh unfold-bridge-dsh unfold-capabilities-dsh unfold-events-dsh unfold-mind-dsh unfold-session-dsh unfold-settings-dsh unfold-sse-dsh unfold-trajectory-dsh welcome-dsh; do
             (cd "apps/${app}" && bun install --frozen-lockfile --ignore-scripts && { [ ! -f scripts/build-client.mjs ] || node scripts/build-client.mjs --check; })
           done
 
@@ -193,7 +194,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          for app in bots-dsh locale-pt-br-dsh unfold-bridge-dsh unfold-capabilities-dsh unfold-events-dsh unfold-mind-dsh unfold-session-dsh unfold-settings-dsh unfold-sse-dsh unfold-trajectory-dsh welcome-dsh; do
+          for app in bots-dsh locale-pt-br-dsh unfold-bot-dsh unfold-bridge-dsh unfold-capabilities-dsh unfold-events-dsh unfold-mind-dsh unfold-session-dsh unfold-settings-dsh unfold-sse-dsh unfold-trajectory-dsh welcome-dsh; do
             (cd "apps/${app}" && npm pack --silent --ignore-scripts --pack-destination ../../release >/dev/null)
           done
           bun scripts/release-plugins.ts release "${VERSION}" "${SHA}" > release/plugins.json
@@ -216,7 +217,7 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
             --title "Automagik ${VERSION%.0}" \
-            --notes "\`@automagik/bots-dsh\`, \`@automagik/locale-pt-br-dsh\`, \`@automagik/unfold-bridge-dsh\`, \`@automagik/unfold-capabilities-dsh\`, \`@automagik/unfold-events-dsh\`, \`@automagik/unfold-mind-dsh\`, \`@automagik/unfold-session-dsh\`, \`@automagik/unfold-settings-dsh\`, \`@automagik/unfold-sse-dsh\`, \`@automagik/unfold-trajectory-dsh\`, \`@automagik/welcome-dsh\` for DeepSeek Harness, and the Automagik desktop app. Install the plugins from the [Automagik market](https://github.com/automagik-dev/dsh-marketplace) or from an Omni's own market; \`plugins.json\` lists each tarball's integrity. The desktop builds follow when they are done."
+            --notes "\`@automagik/bots-dsh\`, \`@automagik/locale-pt-br-dsh\`, \`@automagik/unfold-bot-dsh\`, \`@automagik/unfold-bridge-dsh\`, \`@automagik/unfold-capabilities-dsh\`, \`@automagik/unfold-events-dsh\`, \`@automagik/unfold-mind-dsh\`, \`@automagik/unfold-session-dsh\`, \`@automagik/unfold-settings-dsh\`, \`@automagik/unfold-sse-dsh\`, \`@automagik/unfold-trajectory-dsh\`, \`@automagik/welcome-dsh\` for DeepSeek Harness, and the Automagik desktop app. Install the plugins from the [Automagik market](https://github.com/automagik-dev/dsh-marketplace) or from an Omni's own market; \`plugins.json\` lists each tarball's integrity. The desktop builds follow when they are done."
 
       - name: Sign and post the plugin lane
         if: steps.cut.outputs.version != ''

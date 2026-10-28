@@ -66,7 +66,7 @@ test('a carried Omni harness admits only newer compatible releases in the same p
 })
 
 test('all shipped plugin harnesses track the exact desktop DSH pin', () => {
-  assert.deepEqual([...PLUGINS].sort(), ['bots-dsh', 'locale-pt-br-dsh', 'unfold-bridge-dsh', 'welcome-dsh'])
+  assert.deepEqual([...PLUGINS].sort(), ['bots-dsh', 'locale-pt-br-dsh', 'unfold-bot-dsh', 'unfold-bridge-dsh', 'unfold-capabilities-dsh', 'unfold-events-dsh', 'unfold-mind-dsh', 'unfold-session-dsh', 'unfold-settings-dsh', 'unfold-sse-dsh', 'unfold-trajectory-dsh', 'welcome-dsh'])
   const pinned = JSON.parse(readFileSync(new URL('../runtime/package.json', import.meta.url), 'utf8')).dependencies['@deepseek-ai/dsh']
   for (const name of PLUGINS) {
     const tested = JSON.parse(readFileSync(new URL(`../../${name}/dev/harness/package.json`, import.meta.url), 'utf8')).dependencies['@deepseek-ai/dsh']

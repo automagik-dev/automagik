@@ -2,13 +2,16 @@
 // plugins: the desktop app ships them, a plain DSH installs them when Omni is switched on,
 // through DSH's own plugin manager (the same installBundle its Plugins page runs). Genie
 // is one plugin (@automagik/genie-dsh), installed the same way when Genie is switched on,
-// in the desktop app too. What a type starts with (its model, plugins, tools, skills,
-// folder and permissions) is read from the live services where they run, and from this
-// list where they do not yet.
+// in the desktop app too. Unfold is its plugin (@automagik/unfold-bot-dsh) with its defaults,
+// released together from this repository and
+// installed the same way; Unfold's own instance has them all. What a type starts with (its
+// model, plugins, tools, skills, folder and permissions) is read from the live services where
+// they run, and from this list where they do not yet.
 import { execFile } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { accessSync, constants as fsConstants, existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, isAbsolute, join } from 'node:path'
+import { hostOf } from './host.js'
 import { BotTypePayload, parse } from './payloads.js'
 
 const PKG = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
@@ -33,6 +36,35 @@ export const GENIE_RELEASE = Object.freeze({ ...PKG.automagik.genie })
 export const GENIE_PLUGIN = Object.freeze({ name: '@automagik/genie-dsh', title: 'Genie', what: 'Genie, and a Task for each wish' })
 export const GENIE_KIND = 'genie'
 export const genieSpec = (genie = GENIE_RELEASE) => `git+${genie.repository.replace(/\.git$/, '')}.git#${genie.commit}&path:/${genie.path}`
+
+// The Unfold Bot type: its plugin, which makes the Unfold Bot, and its defaults, in install
+// order after the Bot team. Copied from apps/unfold-bot-dsh src/host/unfold.js (UNFOLD_PLUGINS),
+// not imported: this plugin installs on its own. A test keeps the two lists the same.
+export const UNFOLD_PLUGINS = Object.freeze([
+  { name: '@automagik/unfold-bridge-dsh', dir: 'unfold-bridge-dsh', title: 'Unfold bridge', what: 'Unfold watches this DSH' },
+  { name: '@automagik/unfold-events-dsh', dir: 'unfold-events-dsh', title: 'Unfold events', what: 'What Unfold did, as a timeline' },
+  { name: '@automagik/unfold-capabilities-dsh', dir: 'unfold-capabilities-dsh', title: 'Unfold capabilities', what: 'What Unfold can do now' },
+  { name: '@automagik/unfold-settings-dsh', dir: 'unfold-settings-dsh', title: 'Unfold settings', what: 'Unfold\'s settings, to read' },
+  { name: '@automagik/unfold-mind-dsh', dir: 'unfold-mind-dsh', title: 'Unfold Mind', what: 'What Unfold is thinking' },
+  { name: '@automagik/unfold-trajectory-dsh', dir: 'unfold-trajectory-dsh', title: 'Unfold trajectory', what: 'Each run, step by step' },
+  { name: '@automagik/unfold-session-dsh', dir: 'unfold-session-dsh', title: 'Unfold session', what: 'Unfold\'s own session, in DSH' },
+])
+export const UNFOLD_PLUGIN = Object.freeze({ name: '@automagik/unfold-bot-dsh', dir: 'unfold-bot-dsh', title: 'Unfold', what: 'The Unfold Bot, Unfold inside DSH' })
+export const UNFOLD_KIND = 'unfold'
+
+/** The first executable `name` on the PATH in `env`, or null: a command line a pack brought. */
+export function onPath(name, env = process.env) {
+  for (const dir of String(env?.PATH ?? '').split(delimiter)) {
+    if (!isAbsolute(dir)) continue
+    const file = join(dir, name)
+    try {
+      if (!statSync(file).isFile()) continue
+      accessSync(file, fsConstants.X_OK)
+      return file
+    } catch { /* not here */ }
+  }
+  return null
+}
 
 const succeeds = (command, args) => new Promise((resolve) => {
   execFile(command, args, { timeout: 5000 }, error => resolve(error === null))
@@ -85,14 +117,14 @@ const tilde = path => path.replace(/^\/(?:home|Users)\/[^/]+(?=\/)/, '~')
 
 // What installs one Omni plugin. The Bot team: the source this plugin came from, pointed at
 // its sibling (a git commit's path, or a linked checkout), so both are one release; else that
-// release from the registry. Omni's: its repository at the pinned release, as a DSH git spec.
+// release tarball. Omni's: its repository at the pinned release, as a DSH git spec.
 export function installTargetOf(plugin, ownSource, version = PKG.version, omni = OMNI_RELEASE) {
   if (plugin.from === 'omni') {
     return { spec: `git+${omni.repository.replace(/\.git$/, '')}.git#${omni.commit}&path:/apps/${plugin.dir}`, options: {} }
   }
   const own = 'apps/welcome-dsh'
   if (typeof ownSource === 'string' && ownSource.includes(own)) return { spec: ownSource.replace(own, `apps/${plugin.dir}`), options: {} }
-  return { spec: `${plugin.name}@${version}`, options: { saveExact: true } }
+  return { spec: `https://github.com/automagik-dev/automagik/releases/download/v${version}/automagik-${plugin.dir}-${version}.tgz`, options: {} }
 }
 
 // A plugin's row in the profile: under its name, else under its former one.
@@ -117,8 +149,14 @@ const resultProblem = (result) => {
 export const GENIE_CLI_INSTALL = 'curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | GENIE_CHANNEL=dev bash'
 export const hasGenieSkills = (home = homedir()) => existsSync(join(home, '.agents', 'skills', 'wish', 'SKILL.md'))
 
-export function createBotTypeActions(ctx, { team, omniProjectOf, checkGit = gitProblem, genieSkills = hasGenieSkills }) {
+// What an install in Unfold's instance says when a plugin its pack brings is not there.
+export const BUNDLED_MISSING = 'Unfold brings this plugin, and it is missing from this instance.'
+
+export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.env, checkGit = gitProblem, genieSkills = hasGenieSkills, genieCli = () => onPath('genie', env) }) {
   const manager = () => service(ctx, 'pluginManager')
+  // Unfold's own instance brings its plugins and Genie's command line with it: the card names
+  // that command line, never the line that installs one, and nothing here installs a plugin.
+  const bundled = hostOf(env) === 'unfold'
   // `{ phase, current, done, error, restart }` once an install started.
   let job = null
   // Genie's own: `{ phase, error, restart, requestId, log }`.
@@ -174,10 +212,13 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, checkGit = gitP
 
   // One plugin in place and on: left alone when it is, switched on when it is off, else
   // installed from `target`. Says whether it was already there, and whether DSH must restart.
+  // In Unfold's instance a plugin comes only with Unfold's pack: one that is missing is an
+  // error, never an install from npm or git.
   async function ensure(plugin, rows, target) {
     const row = rowOf(rows, plugin)
     const present = row !== undefined && row.availability !== 'missing'
     if (present && row.enabled !== false) return { there: true, restart: false }
+    if (!present && bundled) throw new Error(`${plugin.title}: ${BUNDLED_MISSING}`)
     const service = manager()
     target.onStart?.(present ? 'enable' : 'install')
     const result = present ? await service.setBundleEnabled(row.name, true) : await service.installBundle(target.spec, { enabled: true, ...target.options })
@@ -233,17 +274,21 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, checkGit = gitP
       canInstall: typeof manager()?.installBundle === 'function',
       install,
       skills: genieSkills(),
-      cli: GENIE_CLI_INSTALL,
+      cli: bundled ? genieCli() : GENIE_CLI_INSTALL,
+      ...(bundled ? { cliBundled: true } : {}),
     }
   }
 
   // Genie runs on the Bot team, so a plain DSH that lacks it gets it first, from where the
   // Omni install would take it (a peer pnpm could not find on npm otherwise).
   async function runGenieInstall() {
-    say(step('Checking git'))
-    const problem = await checkGit()
-    if (problem !== null) throw new Error(problem)
-    say(ok('git is here'))
+    // In Unfold's instance nothing comes from git, so git is not asked for.
+    if (!bundled) {
+      say(step('Checking git'))
+      const problem = await checkGit()
+      if (problem !== null) throw new Error(problem)
+      say(ok('git is here'))
+    }
     const rows = await bundles() ?? []
     const ownSource = rows.find(bundle => bundle.name === PKG.name)?.source
     const [botTeam] = OMNI_PLUGINS
@@ -266,6 +311,61 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, checkGit = gitP
       ctx.logger?.warn?.('omni-ai: installing Genie failed: %s', error?.message ?? error)
       if (genieJob === running) say(failedLine(String(error?.message ?? error)))
       Object.assign(running, { phase: 'failed', error: String(error?.message ?? error) })
+    })
+  }
+
+  // Unfold's: the Bot team, Unfold's defaults and its own plugin, in that order, each from the
+  // source this plugin came from (else this release), as the Bot team is. None comes from git,
+  // so nothing asks for git. Ready once the plugin has made the Unfold Bot.
+  const UNFOLD_ALL = [OMNI_PLUGINS[0], ...UNFOLD_PLUGINS, UNFOLD_PLUGIN]
+  let unfoldJob = null
+
+  async function unfoldStatus() {
+    const install = unfoldJob === null ? null : { ...unfoldJob, done: [...unfoldJob.done] }
+    const rows = await bundles()
+    const rt = team()
+    if (rt !== undefined) await quietly(() => rt.load?.(), undefined)
+    const bot = rt === undefined ? undefined : Object.values(rt.state?.bots ?? {}).find(entry => entry.kind === UNFOLD_KIND)
+    return {
+      plugins: UNFOLD_ALL.map((plugin) => {
+        const row = rowOf(rows, plugin)
+        return {
+          name: plugin.name,
+          title: plugin.title,
+          what: plugin.what,
+          version: row?.version ?? versionOf(plugin),
+          installed: rows === null ? null : row !== undefined && row.availability !== 'missing',
+          enabled: row?.enabled ?? null,
+        }
+      }),
+      ready: bot !== undefined,
+      bot: bot === undefined ? null : { id: bot.id, name: bot.name },
+      canInstall: typeof manager()?.installBundle === 'function',
+      install,
+    }
+  }
+
+  async function runUnfoldInstall() {
+    const rows = await bundles() ?? []
+    const ownSource = rows.find(bundle => bundle.name === PKG.name)?.source
+    for (const plugin of UNFOLD_ALL) {
+      unfoldJob.current = plugin.name
+      const { restart } = await ensure(plugin, rows, installTargetOf(plugin, ownSource))
+      if (restart) unfoldJob.restart = true
+      unfoldJob.done.push(plugin.name)
+    }
+    unfoldJob.current = null
+    unfoldJob.phase = unfoldJob.restart ? 'restart' : 'done'
+  }
+
+  function startUnfoldInstall() {
+    if (unfoldJob?.phase === 'installing') return
+    if (typeof manager()?.installBundle !== 'function') throw refused('This DSH has no plugin manager to install Unfold with. Add @automagik/unfold-bot-dsh on its Plugins page, then come back.')
+    unfoldJob = { phase: 'installing', current: null, done: [], error: null, restart: false }
+    const running = unfoldJob
+    void runUnfoldInstall().catch((error) => {
+      ctx.logger?.warn?.('omni-ai: installing Unfold failed: %s', error?.message ?? error)
+      Object.assign(running, { phase: 'failed', current: null, error: String(error?.message ?? error) })
     })
   }
 
@@ -345,6 +445,11 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, checkGit = gitP
     async 'genie-plugin-install'() {
       startGenieInstall()
       return genieStatus()
+    },
+    'unfold-plugin': () => unfoldStatus(),
+    async 'unfold-plugin-install'() {
+      startUnfoldInstall()
+      return unfoldStatus()
     },
     async 'bot-type'(payload) {
       const fields = parse(BotTypePayload, payload)

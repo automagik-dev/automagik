@@ -26,6 +26,8 @@ export const OCTOPUS_SVG = `<svg class="oai-octo" viewBox="0 0 100 100" aria-hid
 // One of Omni's clay faces (vendor/clay-art.js), drawn from its row of faces.
 export const omniFace = (face, className = 'oai-octo') => `<span class="${className} oai-clay oai-clay-omni" data-face="${face}" style="--oai-face-at:${faceAt(face)}"></span>`
 export const omniHero = () => (CLAY_OMNI ? omniFace('calm') : OCTOPUS_SVG)
+// Unfold's clay face (its row of faces, 192x208 cells), for the stage in Unfold's instance.
+export const unfoldHero = (face = 'calm') => `<span class="oai-unfold-hero oai-clay oai-clay-unfold" data-face="${face}" style="--oai-face-at:${faceAt(face)}"></span>`
 
 export const STAGE_CSS = `${CLAY_TOKENS}
 .oai-overlay{position:fixed;inset:0;z-index:2000;overflow:auto;display:grid;place-items:center;padding:24px 16px;box-sizing:border-box;color:var(--oai-ink);
@@ -40,6 +42,7 @@ body[data-ds-dark-theme] .oai-overlay::before{background:radial-gradient(1100px 
 .oai-clay{display:block;background:var(--oai-clay-atlas) calc(var(--oai-face-at,0) * 100% / 6) 0/700% 100% no-repeat;filter:drop-shadow(0 10px 8px var(--oai-cast)) drop-shadow(0 22px 22px var(--oai-cast-far))}
 .oai-clay-omni{--oai-clay-atlas:var(--oai-omni)}
 .oai-clay-genie{--oai-clay-atlas:var(--oai-genie)}
+.oai-clay-unfold{--oai-clay-atlas:var(--oai-unfold)}
 .oai-ghost{opacity:0}.oai-cyan{fill:#00f0ff}.oai-magenta{fill:#ff2bd6}
 .oai-octo:hover .oai-cyan,.oai-glitch .oai-cyan{opacity:.55;transform:translate(-2.5px,0);animation:oai-glitch 2.4s steps(1) infinite}
 .oai-octo:hover .oai-magenta,.oai-glitch .oai-magenta{opacity:.55;transform:translate(2.5px,0);animation:oai-glitch 2.4s steps(1) infinite reverse}

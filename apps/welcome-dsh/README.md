@@ -70,17 +70,38 @@ says so; it can still be added to the team.
 
 The Automagik desktop app passes the product it was opened for (`omni desktop` →
 `--preload=omni`, `genie desktop` → `--preload=genie`) to DSH as `AUTOMAGIK_PRELOAD`, which
-`state` reports as `preload` (`src/host/preload.js`; anything but `omni` or `genie` is
-none). That card comes first and starts chosen: Omni's powers on by itself, through the
+`state` reports as `preload` (`src/host/preload.js`; anything but `omni`, `genie` or
+`unfold` is none). That card comes first and starts chosen: Omni's powers on by itself, through the
 same box and steps as a press, and Remove still sends it back to sleep; Genie's starts on
 the team. The other card stays to add, then or later. Without a preload Omni comes first
 and nothing is chosen.
+
+Unfold's card is the third. Its power button installs, after the Bot team, the Unfold bridge,
+the Unfold plugins and `@automagik/unfold-bot-dsh`, all from this repository at this plugin's
+version, as the Bot team is (no git source, so no git check); that plugin then makes the Unfold
+Bot. All six companion bundles are released together from this repository; missing plugins
+come from that version's GitHub release tarballs, or the welcome's linked or pinned git source.
+The shared SSE library is carried by the streaming bundles and is not installed separately.
+Unfold's own Automagik instance starts DSH with `AUTOMAGIK_HOST=unfold` or
+`AUTOMAGIK_PRELOAD=unfold` (either one names it: `src/host/host.js`, the same rule as the Bot
+team's and the Unfold Bot's). There Unfold's card comes first and is on the team from the start,
+because the Unfold Bot is the instance's Main Bot, so the companion step is done (Unfold leads)
+and no other Bot is made. `state` reports it as `host`, and Omni and Genie come with the
+instance: Omni's card offers no new Omni of its own, Genie's names the command line the
+instance brought instead of the line that installs one, and no row carries Claude Code's install
+line.
+
+The team step follows the DSH language. Its copy is the `welcome.team` namespace
+(`src/client/i18n.js`): the keys are the English text, registered in English and in Brazilian
+Portuguese (`pt-BR`), and the rows the host sends are read through it too. A language pack that
+adds `pt-BR` to DSH turns the step Portuguese; it registers no `welcome.team` dictionary of its
+own, since DSH takes one per namespace and language. The other steps are English only.
 
 ### What the power button installs
 
 The Bot team (`@automagik/bots-dsh`) is this repository's, at this plugin's version: from
 the source this plugin came from, pointed at `apps/bots-dsh` (the same commit, or a linked
-checkout), else that release by name. A DSH that has the team under its former name,
+checkout), else that release's tarball. A DSH that has the team under its former name,
 `@automagik/omni-dsh`, has the team: it is switched on, not installed over. Omni's channels
 and canvases (`@automagik/omni-channels-dsh`, `@automagik/omni-canvas-dsh`) are Omni's, at
 Omni's version: they install as a git source from Omni's repository at the release
@@ -168,7 +189,7 @@ The shape was read from DSH 0.2.1-rc.2:
 
 | Endpoint | Payload | Does |
 |---|---|---|
-| `state` | none | The flags; `deepseek` (a `DEEPSEEK_API_KEY` or a DeepSeek account sign-in is stored); `piAiRoutes`; `aiConnected`; `preload` (`omni`, `genie` or null). |
+| `state` | none | The flags; `deepseek` (a `DEEPSEEK_API_KEY` or a DeepSeek account sign-in is stored); `piAiRoutes`; `aiConnected`; `preload` (`omni`, `genie`, `unfold` or null); `host` (`unfold`, only when set). |
 | `done` | `{ stepId, connected? }` | Sets the flag for `omni-welcome`, `omni-connect-ai` or `omni-connect`. Connect AI's Continue sends `connected: true`: the companion and the Omni Bot, made without a model, then get the team's default model (DSH's default model when it is served and has its key, else the first model that can run), and their held greetings go out. Skip sets nothing. |
 | `cliproxy` | `{ baseURL, apiKey }` | The route above; answers `{ route, baseURL, models }`. |
 | `ais` | none | Every row: `{ id, name, via, kind, ready, on, found, needs?, detail?, duplicates? }`, and dsh-subscriptions' accounts and hidden vendors. Names and states only. |
@@ -178,7 +199,7 @@ The shape was read from DSH 0.2.1-rc.2:
 | `provider-key`, `signin-*` | see `src/host/providers.js` | A key, or a sign-in run through DSH's authorization service. |
 | `ai-terminal-open`, `-read`, `-write`, `-resize`, `-close` | `{ kind: 'claude-login' }`, then the terminal id | The terminal that runs `claude auth login`, typed at a prompt and run with Enter. |
 | `omni-plugins` | none | The Omni plugins (`@automagik/bots-dsh`, `@automagik/omni-channels-dsh`, `-canvas-dsh`): each one's version and whether it is installed, `ready` once they run here, and the install in progress. |
-| `omni-plugins-install` | none | Installs the missing ones in order through DSH's plugin manager (`installBundle`: the Bot team from this plugin's own source pointed at its sibling, else this release by name; Omni's from Omni's repository at the pinned release), switching on any that are off. Pressing Omni's power button in the team step calls it. |
+| `omni-plugins-install` | none | Installs the missing ones in order through DSH's plugin manager (`installBundle`: the Bot team from this plugin's own source pointed at its sibling, else this release's tarball; Omni's from Omni's repository at the pinned release), switching on any that are off. Pressing Omni's power button in the team step calls it. |
 | `bot-type` | `{ type: 'omni' }` | What the Omni Bot starts with, as groups: model and thinking (DSH's default), plugins with versions, tool groups with their switches, skills, folder and permissions. |
 
 The host declares `inject: ['settings', 'credentials', 'connection']`; `connection` serves

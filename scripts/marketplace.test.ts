@@ -97,7 +97,7 @@ describe('market index', () => {
     });
     // only plugins with a market block join (the bridge, the pt-BR pack and the Unfold session); the
     // Bot team and the welcome are listed by hand
-    expect(pinned.plugins.map((plugin) => plugin.name)).toEqual(['@automagik/locale-pt-br-dsh', '@automagik/unfold-bridge-dsh', '@automagik/unfold-capabilities-dsh', '@automagik/unfold-events-dsh', '@automagik/unfold-mind-dsh', '@automagik/unfold-session-dsh', '@automagik/unfold-settings-dsh', '@automagik/unfold-trajectory-dsh']);
+    expect(pinned.plugins.map((plugin) => plugin.name)).toEqual(['@automagik/locale-pt-br-dsh', '@automagik/unfold-bot-dsh', '@automagik/unfold-bridge-dsh', '@automagik/unfold-capabilities-dsh', '@automagik/unfold-events-dsh', '@automagik/unfold-mind-dsh', '@automagik/unfold-session-dsh', '@automagik/unfold-settings-dsh', '@automagik/unfold-trajectory-dsh']);
     expect(checkIndex(pinned, repoDir)).toEqual([]);
   });
 

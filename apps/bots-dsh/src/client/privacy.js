@@ -49,6 +49,16 @@ export function PrivacyPage({ actions, run, Section, Row }) {
   useEffect(() => { void run(actions.privacy().then(setView)) }, [])
   const set = (key, on) => run(actions.privacySet(key, on).then((next) => { setView(next); setChanged(true) }))
   const managed = view?.managed === true
+  // Unfold's own instance: Unfold's Privacy settings decide what is shared, so nothing here can
+  // turn a share on.
+  if (view?.host === 'unfold') {
+    return h('div', { className: 'bt-privacy' },
+      h(Section, { title: t('Local first') },
+        h('div', { className: 'bt-privacy-intro' },
+          h('p', null, t('Your Bots, chats, memory and files stay on this computer.')))),
+      h(Section, { title: t('What is shared') },
+        h(Row, { label: t('Unfold\'s Privacy controls this'), hint: t('To see or change what is shared, open Unfold\'s settings.') })))
+  }
   return h('div', { className: 'bt-privacy' },
     h(Section, { title: t('Local first') },
       h('div', { className: 'bt-privacy-intro' },

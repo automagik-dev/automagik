@@ -7,6 +7,7 @@ import { apply } from '../index.js'
 import { dshHomeOf } from '../src/host/folders.js'
 import { escapeRegExp } from '../src/host/text.js'
 import { fakeContext } from './fake-ctx.js'
+import { createRuntime as createUnfold } from '../../unfold-bot-dsh/index.js'
 
 // A Main Bot and a Bot, with the Bot in the group Ops through its group Session 'gb'.
 const TEAM = {
@@ -43,7 +44,7 @@ async function start({ services = {}, workspaces = [], llm, team: saved = TEAM, 
   const previousHome = process.env.DSH_HOME
   process.env.DSH_HOME = dsh
 
-  const ctx = fakeContext({ services })
+  const ctx = fakeContext({ services: { unfoldSession: { sessionId: 'configured-unfold', ready: Promise.resolve() }, ...services } })
   const created = []
   const cwds = new Map()
   const agents = new Map()
@@ -216,6 +217,111 @@ test('a Bot another Omni plugin adds keeps its kind; a model making a Bot cannot
   const sneaky = Object.values(state().bots).find(bot => bot.name === 'Sneaky')
   assert.ok(sneaky)
   assert.equal(sneaky.kind, undefined)
+})
+
+test('the Unfold Bot keeps its kind unfold; any other unknown kind is still dropped', async (t) => {
+  const { ctx, state, stop } = await start()
+  t.after(stop)
+  const rt = ctx.provided.get('omniTeam')
+  const unfold = await rt.createBot({ name: 'Unfold', kind: 'unfold', pickModel: true })
+  assert.equal(state().bots[unfold.id].kind, 'unfold')
+  const odd = await rt.createBot({ name: 'Odd', kind: 'unfolded', pickModel: true })
+  assert.equal(state().bots[odd.id].kind, undefined)
+})
+
+test('a plugin that brings the first Main Bot makes it in place of the default, once', async (t) => {
+  const { ctx, state, stop } = await start({ team: { ...TEAM, mainBotIds: [], bots: {}, rooms: {} } })
+  t.after(stop)
+  const rt = ctx.provided.get('omniTeam')
+  let made = 0
+  rt.mainBotMaker = () => {
+    made += 1
+    return rt.createBot({ name: 'Unfold', kind: 'unfold', main: true, pickModel: true })
+  }
+  await Promise.all([rt.bootstrap(), rt.bootstrap()])
+  await rt.bootstrap()
+  const bots = Object.values(state().bots)
+  assert.equal(made, 1)
+  assert.deepEqual(bots.map(bot => [bot.name, bot.kind]), [['Unfold', 'unfold']])
+  assert.deepEqual(state().mainBotIds, [bots[0].id])
+})
+
+test('in Unfold\'s own instance, a team with no Main Bot holds exactly the Unfold Bot, its Main Bot', async (t) => {
+  const { ctx, call, state, stop } = await start({ team: { ...TEAM, mainBotIds: [], bots: {}, rooms: {} } })
+  t.after(stop)
+  const rt = ctx.provided.get('omniTeam')
+  const unfold = createUnfold(ctx, rt, {}, { AUTOMAGIK_PRELOAD: 'unfold' })
+  // The browser's first state read bootstraps the team while the plugin makes its Bot.
+  await Promise.all([call('state', {}), unfold.unfoldReady])
+  await call('state', {})
+  const bots = Object.values(state().bots)
+  assert.deepEqual(bots.map(bot => [bot.name, bot.kind]), [['Unfold', 'unfold']])
+  assert.deepEqual(state().mainBotIds, [bots[0].id])
+})
+
+// A state read that ends before the Unfold plugin applies: in Unfold's own instance the team
+// waits for Unfold to lead; elsewhere the default Main Bot comes first, and Unfold joins it.
+async function earlyRead(host, preload) {
+  const before = { AUTOMAGIK_HOST: process.env.AUTOMAGIK_HOST, AUTOMAGIK_PRELOAD: process.env.AUTOMAGIK_PRELOAD }
+  for (const [name, value] of [['AUTOMAGIK_HOST', host], ['AUTOMAGIK_PRELOAD', preload]]) {
+    if (value === undefined) delete process.env[name]
+    else process.env[name] = value
+  }
+  try {
+    const { ctx, call, state, stop } = await start({ team: { ...TEAM, mainBotIds: [], bots: {}, rooms: {} } })
+    try {
+      await call('state', {})
+      const unfold = createUnfold(ctx, ctx.provided.get('omniTeam'))
+      await unfold.unfoldReady
+      await call('state', {})
+      const team = state()
+      return Object.values(team.bots).map(bot => [bot.name, bot.kind ?? null, team.mainBotIds.includes(bot.id)])
+    } finally {
+      await stop()
+    }
+  } finally {
+    for (const [name, value] of Object.entries(before)) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+  }
+}
+
+test('in Unfold\'s own instance, a state read before the Unfold plugin applies makes no default Main Bot', async () => {
+  assert.deepEqual(await earlyRead('unfold'), [['Unfold', 'unfold', true]])
+  // The instance is named by its host kind or by its preload, either one alone.
+  assert.deepEqual(await earlyRead(undefined, 'unfold'), [['Unfold', 'unfold', true]])
+})
+
+test('elsewhere, a state read before the Unfold plugin applies makes the default Main Bot, as before', async () => {
+  assert.deepEqual(await earlyRead(undefined), [['Omni', null, true], ['Unfold', 'unfold', false]])
+})
+
+test('a Main Bot maker that fails or never answers is dropped with one warning, and the team goes on', async (t) => {
+  for (const [maker, warning] of [
+    [async () => { throw new Error('the disk is full') }, 'ds-bot: the Main Bot maker failed; the team makes its own: %s'],
+    [() => new Promise(() => {}), 'ds-bot: the Main Bot maker gave no answer in %d ms; the team makes its own'],
+  ]) {
+    const { ctx, state, stop } = await start({ team: { ...TEAM, mainBotIds: [], bots: {}, rooms: {} } })
+    t.after(stop)
+    const rt = ctx.provided.get('omniTeam')
+    const warnings = []
+    rt.warn = (...args) => warnings.push(args[0])
+    rt.mainBotMakerMs = 30
+    rt.mainBotMaker = maker
+    await rt.bootstrap()
+    assert.deepEqual(Object.values(state().bots).map(bot => bot.name), ['Omni'], warning)
+    assert.deepEqual(warnings.filter(line => line.startsWith('ds-bot: the Main Bot maker')), [warning])
+  }
+})
+
+test('a Main Bot maker that brings none leaves the default Main Bot to the team', async (t) => {
+  const { ctx, state, stop } = await start({ team: { ...TEAM, mainBotIds: [], bots: {}, rooms: {} } })
+  t.after(stop)
+  const rt = ctx.provided.get('omniTeam')
+  rt.mainBotMaker = async () => undefined
+  await rt.bootstrap()
+  assert.deepEqual(Object.values(state().bots).map(bot => bot.name), ['Omni'])
 })
 
 test('an idle Bot\'s own chat moves to its new folder at once, and back', async (t) => {
@@ -867,4 +973,93 @@ test('a Bot changes back to the team workspace when the team workspace is known 
   assert.equal(back.ran, true)
   assert.equal(state().bots.b.workDir, undefined)
   assert.equal(requests.length, 0)
+})
+
+test('Unfold Main Bot adopts the configured adapter root in either startup order', async () => {
+  const before = process.env.AUTOMAGIK_HOST
+  process.env.AUTOMAGIK_HOST = 'unfold'
+  try {
+    for (const delayed of [false, true]) {
+      let release
+      const session = { sessionId: `custom-unfold-${delayed}`, ready: delayed ? new Promise(resolve => { release = resolve }) : Promise.resolve() }
+      const env = await start({ team: { ...TEAM, mainBotIds: [], bots: {}, rooms: {} }, services: { unfoldSession: session } })
+      try {
+        const rootSession = env.agentOf(session.sessionId).session
+        rootSession.header.cwd = env.project
+        const history = [{ role: 'user', content: 'An existing Unfold conversation' }]
+        rootSession.deriveMessages = () => history
+        await env.call('state', {}) // the browser may arrive before either plugin
+        assert.deepEqual(env.state().bots, {})
+        const rt = env.ctx.provided.get('omniTeam')
+        rt.mainBotMakerMs = 10
+        const unfold = createUnfold(env.ctx, rt)
+        const reading = env.call('state', {})
+        if (delayed) {
+          await settle() // beyond the team's maker deadline; it must still create no default
+          assert.equal(env.created.length, 0)
+          assert.deepEqual(env.state().bots, {}, 'no default Bot while the adapter prepares its root')
+          release()
+        }
+        await Promise.all([reading, unfold.unfoldReady])
+        const bots = Object.values(env.state().bots)
+        assert.deepEqual(bots.map(bot => [bot.id, bot.kind]), [[session.sessionId, 'unfold']])
+        assert.deepEqual(env.state().mainBotIds, [session.sessionId])
+        assert.equal(bots[0].kickoff, undefined, 'adoption queues no greeting')
+        assert.deepEqual(env.agentOf(session.sessionId).calls, [], 'adoption starts no turn')
+        assert.equal(env.created.length, 0, 'adopting the adapter root creates no random Session')
+        assert.equal(env.agentOf(session.sessionId).session, rootSession)
+        assert.equal(rootSession.header.cwd, env.project, 'the host workspace placement stays intact')
+        assert.deepEqual(rootSession.deriveMessages(), history, 'the host conversation history stays intact')
+        await createUnfold(env.ctx, rt).unfoldReady
+        assert.equal(Object.keys(env.state().bots).length, 1, 'a repeated startup retains the same Bot')
+        await rt.createBot({ name: 'My Main Bot', main: true, pickModel: true })
+        await rt.setMain(session.sessionId, false)
+        await rt.deleteBot(session.sessionId)
+        await createUnfold(env.ctx, rt).unfoldReady
+        assert.ok(Object.values(env.state().bots).every(bot => bot.kind !== 'unfold'), 'a deleted Unfold Bot is not recreated')
+      } finally { await env.stop() }
+    }
+  } finally {
+    if (before === undefined) delete process.env.AUTOMAGIK_HOST
+    else process.env.AUTOMAGIK_HOST = before
+  }
+})
+
+test('adopting an existing Session refuses Bot and room ownership without making another Session', async (t) => {
+  const env = await start()
+  t.after(env.stop)
+  const rt = env.ctx.provided.get('omniTeam')
+  for (const existingSessionId of ['a', 'r1', 'gb']) {
+    await assert.rejects(rt.createBot({ name: 'Adopted', existingSessionId, pickModel: true }), /already belongs to the team/)
+  }
+  assert.equal(env.created.length, 0)
+})
+
+
+test('failed Bot adoption preserves the existing root Session instead of archiving it', async (t) => {
+  const env = await start()
+  t.after(env.stop)
+  const rt = env.ctx.provided.get('omniTeam')
+  const archived = []
+  env.ctx.workspaceRegistry.archiveSession = async id => archived.push(id)
+  const save = rt.save
+  rt.save = async () => { throw new Error('disk full') }
+  await assert.rejects(rt.createBot({ name: 'Unfold', existingSessionId: 'configured-root', pickModel: true }), /disk full/)
+  rt.save = save
+  assert.deepEqual(archived, [])
+  assert.equal(rt.botOf('configured-root'), undefined)
+})
+
+test('adopting a host root with a model starts no model setup or greeting', async (t) => {
+  const env = await start()
+  t.after(env.stop)
+  const rt = env.ctx.provided.get('omniTeam')
+  rt.defaultModel = async () => 'provider:model'
+  rt.defaultEffort = async () => undefined
+  rt.waitForModel = () => { throw new Error('adoption must not start model setup') }
+  const bot = await rt.createBot({ name: 'Unfold', existingSessionId: 'adapter-root' })
+  assert.equal(bot.model, 'provider:model')
+  assert.equal(bot.kickoff, undefined)
+  assert.deepEqual(env.agentOf(bot.id).calls, [])
+  assert.equal(env.created.length, 0)
 })
