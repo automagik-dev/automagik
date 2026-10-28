@@ -235,6 +235,7 @@ jobs:
           bun scripts/lane.ts manifest release/plugins.json "${base}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" release/addons.json > lane/lane.json
           bun scripts/lane.ts sign lane/lane.json > lane/lane.json.sig
           bun scripts/lane.ts verify lane/lane.json lane/lane.json.sig
+          gh release upload "v${VERSION}" lane/lane.json lane/lane.json.sig --repo "${GITHUB_REPOSITORY}"
           if ! gh release view plugin-lane --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release create plugin-lane --repo "${GITHUB_REPOSITORY}" --target dev --prerelease --latest=false \
               --title "Automagik plugin lane" \
