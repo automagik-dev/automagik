@@ -113,6 +113,51 @@ test('sseHub: a client over its pending bound is cut, counted as stalled, and th
   assert.deepEqual(hub.drops, { stalled: 1, unloaded: 1 })
 })
 
+test('sseHub: a stalled client is cut once its queued bytes pass maxPendingBytes, far below the event bound', () => {
+  const hub = sseHub({ maxPendingBytes: 4096 })
+  const slow = slowRes(1) // the baseline write already reports backpressure
+  hub.open({}, slow, 'snapshot', {}, 0)
+  const kib = 'x'.repeat(1000)
+  assert.ok(frame('added', { kib }, 4).length * 4 > 4096 && frame('added', { kib }, 3).length * 3 < 4096)
+  for (let n = 1; n <= 3; n++) hub.send('added', { kib }, n)
+  assert.equal(hub.clients.size, 1, 'three queued frames are under the bound')
+  assert.equal(slow.destroyed, false)
+  hub.send('added', { kib }, 4)
+  assert.equal(slow.destroyed, true, 'the fourth frame takes the queue past 4096 bytes, with 4 events queued')
+  assert.deepEqual(hub.drops, { stalled: 1 })
+  assert.equal(hub.clients.size, 0)
+})
+
+test('sseHub: with the default bounds, 1 KiB events stall a client out on bytes before the 10,000-event bound', () => {
+  const hub = sseHub()
+  const slow = slowRes(1)
+  hub.open({}, slow, 'snapshot', {}, 0)
+  const kib = 'x'.repeat(1000)
+  let n = 0
+  while (hub.clients.size && n < 2_000) hub.send('added', { kib }, ++n)
+  assert.equal(hub.clients.size, 0)
+  assert.ok(n > 900 && n < 1_100, `dropped after ${n} events, near 1 MiB`)
+  assert.deepEqual(hub.drops, { stalled: 1 })
+})
+
+test('sseHub: a client that never drains is cut as stalled at drainTimeoutMs; one that drains in time stays', async () => {
+  const hub = sseHub({ drainTimeoutMs: 40 })
+  const stuck = slowRes(1)
+  const drains = slowRes(1)
+  hub.open({}, stuck, 'snapshot', {}, 0)
+  hub.open({}, drains, 'snapshot', {}, 0)
+  await new Promise((r) => setTimeout(r, 10))
+  assert.equal(stuck.destroyed, false, 'not cut before the deadline')
+  drains.room = Infinity
+  drains.emit('drain')
+  await new Promise((r) => setTimeout(r, 90))
+  assert.equal(stuck.destroyed, true, 'no drain within the deadline cuts the client')
+  assert.equal(drains.destroyed, false)
+  assert.deepEqual(hub.drops, { stalled: 1 })
+  assert.equal(hub.clients.size, 1)
+  hub.close()
+})
+
 test('frame: an id line only when an id is given', () => {
   assert.equal(frame('e', { a: 1 }), 'event: e\ndata: {"a":1}\n\n')
   assert.equal(frame('e', null, 0), 'id: 0\nevent: e\ndata: null\n\n')
