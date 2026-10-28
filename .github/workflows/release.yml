@@ -235,6 +235,17 @@ jobs:
           bun scripts/lane.ts manifest release/plugins.json "${base}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" release/addons.json > lane/lane.json
           bun scripts/lane.ts sign lane/lane.json > lane/lane.json.sig
           bun scripts/lane.ts verify lane/lane.json lane/lane.json.sig
+          # A welcome of this version installs nothing without this lane: a transient error gets
+          # two more tries, 10 s and then 20 s later, before the cut fails.
+          tries=0
+          until gh release upload "v${VERSION}" lane/lane.json lane/lane.json.sig --repo "${GITHUB_REPOSITORY}"; do
+            tries=$((tries + 1))
+            if (( tries == 3 )); then
+              echo "::error::lane/lane.json and lane/lane.json.sig did not reach v${VERSION} after 3 tries"
+              exit 1
+            fi
+            sleep $((tries * 10))
+          done
           if ! gh release view plugin-lane --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release create plugin-lane --repo "${GITHUB_REPOSITORY}" --target dev --prerelease --latest=false \
               --title "Automagik plugin lane" \

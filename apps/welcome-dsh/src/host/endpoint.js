@@ -240,7 +240,7 @@ export function install(ctx, deps = {}) {
       }), 'omni-ai: Add Omni')
     })
   }
-  const actions = { ...createActions(ctx, { ...deps, anyOn }), ...createProviderActions(ctx), ...aiEndpoints, ...terminalEndpoints, ...companion, ...createBotTypeActions(ctx, { team, omniProjectOf, env: deps.env ?? process.env, ...(deps.checkGit ? { checkGit: deps.checkGit } : {}), ...(deps.genieSkills ? { genieSkills: deps.genieSkills } : {}), ...(deps.genieCli ? { genieCli: deps.genieCli } : {}) }) }
+  const actions = { ...createActions(ctx, { ...deps, anyOn }), ...createProviderActions(ctx), ...aiEndpoints, ...terminalEndpoints, ...companion, ...createBotTypeActions(ctx, { team, omniProjectOf, env: deps.env ?? process.env, ...(deps.checkGit ? { checkGit: deps.checkGit } : {}), ...(deps.genieSkills ? { genieSkills: deps.genieSkills } : {}), ...(deps.genieCli ? { genieCli: deps.genieCli } : {}), ...(deps.release ? { release: deps.release } : {}) }) }
   // Connect AI finished with an AI on: the companion, the Omni Bot and the Genie Bot get their model, and
   // their held greetings go out. The step waits for that a little (ASSIGN_HOLD_MS), so the
   // chat opens on the greeting rather than on the model card; a provider that registers

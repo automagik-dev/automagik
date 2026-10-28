@@ -14,6 +14,7 @@ import { OMNI_BOT, UNFOLD_BOT } from '../src/host/companion.js'
 import { hostOf } from '../src/host/host.js'
 import { PRELOADS, preloadOf } from '../src/host/preload.js'
 import { fakeContext } from './fake-ctx.js'
+import { KEYS, filesOf, release } from './lane-fixture.js'
 
 const PKG = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 const noClaude = async () => ({ plugin: false, installed: false, loggedIn: false })
@@ -36,7 +37,9 @@ function fakeManager({ bundles = [{ name: PKG.name, availability: 'profile', ena
       calls.push(['install', spec, options])
       const linked = /^link:.*\/apps\/([\w-]+)$/.exec(spec)?.[1]
       const released = /\/automagik-([\w-]+)-[0-9][^/]*\.tgz$/.exec(spec)?.[1]
-      const name = linked ? `@automagik/${linked}` : registry.has(spec) && released ? `@automagik/${released}` : undefined
+      // A release tarball welcome checked against the release's lane and kept.
+      const checked = /\/@automagik\+([\w-]+)-[0-9][^/]*-[0-9a-f]{64}\.tgz$/.exec(spec)?.[1]
+      const name = linked ? `@automagik/${linked}` : registry.has(spec) && released ? `@automagik/${released}` : checked ? `@automagik/${checked}` : undefined
       if (name === undefined) return { application: 'failed', error: { code: 'not-found', diagnostic: `${spec} is not in the registry` } }
       bundles.push({ name, availability: 'profile', enabled: true, version: PKG.version })
       return { application: 'restart-required', changed: true }
@@ -49,9 +52,9 @@ function fakeManager({ bundles = [{ name: PKG.name, availability: 'profile', ena
   }
 }
 
-function host({ manager, team, env = {}, entries = { 'omni-ai': {} }, checkGit, genieSkills = () => false, genieCli } = {}) {
+function host({ manager, team, env = {}, entries = { 'omni-ai': {} }, checkGit, genieSkills = () => false, genieCli, release } = {}) {
   const fake = fakeContext({ entries, services: { ...(manager ? { pluginManager: manager } : {}), ...(team ? { omniTeam: team } : {}) } })
-  const { handle } = install(fake.ctx, { env, checkClaude: noClaude, ...(checkGit ? { checkGit } : {}), genieSkills, ...(genieCli ? { genieCli } : {}) })
+  const { handle } = install(fake.ctx, { env, checkClaude: noClaude, ...(checkGit ? { checkGit } : {}), genieSkills, ...(genieCli ? { genieCli } : {}), ...(release ? { release } : {}) })
   return { ...fake, handle }
 }
 const value = async (fake, endpoint, payload) => {
@@ -131,14 +134,17 @@ test('release and absent welcome sources resolve every Automagik plugin to a rel
   }
 })
 
-test('in the Automagik app, powering Unfold on installs the Bot team, its defaults and Unfold, with no git', async () => {
-  // The app's own welcome came from a release tarball; every sibling uses that release.
+test('in the Automagik app, powering Unfold on installs the Bot team, its defaults and Unfold, with no git', async (t) => {
+  // The app's own welcome came from a release tarball; every sibling uses that release, each
+  // checked against its signed lane and installed from the kept copy.
   const bundles = [{ name: PKG.name, availability: 'profile', enabled: true, source: `https://github.com/automagik-dev/automagik/releases/download/v${PKG.version}/automagik-welcome-dsh-${PKG.version}.tgz`, version: PKG.version }]
   const everything = [OMNI_PLUGINS[0], ...UNFOLD_PLUGINS, UNFOLD_PLUGIN]
   const manager = fakeManager({ bundles, registry: new Set(everything.map(plugin => `https://github.com/automagik-dev/automagik/releases/download/v${PKG.version}/automagik-${plugin.dir}-${PKG.version}.tgz`)) })
   let gitChecks = 0
   const team = { state: { bots: {} }, async load() {} }
-  const fake = host({ manager, team, checkGit: async () => { gitChecks += 1; return null } })
+  const home = folder(t)
+  const net = release(filesOf())
+  const fake = host({ manager, team, env: { AUTOMAGIK_HOME: home }, release: { fetch: net.fetch, keys: KEYS }, checkGit: async () => { gitChecks += 1; return null } })
   const before = await value(fake, 'unfold-plugin')
   assert.equal(before.ready, false)
   assert.equal(before.canInstall, true)
@@ -146,7 +152,7 @@ test('in the Automagik app, powering Unfold on installs the Bot team, its defaul
   await value(fake, 'unfold-plugin-install')
   const after = await settleUnfold(fake)
   assert.equal(after.install.phase, 'restart', after.install.error)
-  assert.deepEqual(manager.calls.map(([, spec]) => spec), everything.map(plugin => `https://github.com/automagik-dev/automagik/releases/download/v${PKG.version}/automagik-${plugin.dir}-${PKG.version}.tgz`))
+  assert.deepEqual(manager.calls.map(([, spec]) => spec.replace(/-[0-9a-f]{64}\.tgz$/, '')), everything.map(plugin => join(home, 'welcome', 'tarballs', `${plugin.name.replace('/', '+')}-${PKG.version}`)))
   assert.equal(gitChecks, 0)
   // Ready once the plugin has made its Bot.
   team.state.bots.u = { id: 'u', name: 'Unfold', kind: 'unfold' }
