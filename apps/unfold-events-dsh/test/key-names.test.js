@@ -210,3 +210,7 @@ test('a token after a bare scheme, streamed a character at a time: no prefix of 
     assert.ok(p.served().includes(`${text}, then more`), text)
   }
 })
+
+test('one push of an 80k unbroken run past the 16 KiB bound, then a separator and whitespace, stays fast', () => {
+  assert.ok(timed(() => rig().push(`${'a'.repeat(80_000)}: = \t`)) < FAST_MS)
+})
