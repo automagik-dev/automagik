@@ -253,7 +253,8 @@ export function apply(ctx, config, deps = {}) {
   const LIVE_BEAT_MS = 5000
   const beat = setInterval(() => { if (liveHub.clients.size) liveHub.send('beat', { at: Date.now() }, live.rev) }, LIVE_BEAT_MS)
   beat.unref?.()
-  ctx.effect(() => () => { clearInterval(beat); live.stop() }, 'unfold-session: live view')
+  // Unload ends every live stream with the goodbye frame, and any opened after it at once.
+  ctx.effect(() => () => { clearInterval(beat); live.stop(); liveHub.close('unloaded') }, 'unfold-session: live view')
   // Listening starts on the provider's voice_activity_start. The native host's earlier local
   // onset is not shown: its admission (call input open, mic unmuted) is a fact only the native
   // host holds, and the control endpoint has no verb that reads it.
