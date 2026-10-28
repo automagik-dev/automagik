@@ -170,6 +170,8 @@ html body .bt-mem-row{border:0;border-radius:var(--clay-r-sm);${raised('var(--bt
 html body :is(.bt-input,.bt-textarea,.bt-q-field,.bt-drawer-name-input,.bt-mem-ask){border:0;border-radius:var(--clay-r-sm);${recessed('var(--clay-niche)')}}
 html body .bt-mem-ask{border-radius:999px}
 html body :is(.bt-input,.bt-textarea,.bt-drawer-name-input):focus,html body :is(.bt-q-field,.bt-mem-ask):focus-within{outline:2px solid var(--clay-ring);outline-offset:2px}
+html body :is(.bt-q-submit,.bt-q-btn,.bt-q-opt):focus-visible{outline-color:var(--clay-ring)}
+html body .bt-browser-action-choice input{accent-color:var(--bt-accent)}
 html body .bt-swatch{box-shadow:inset 2px 2px 3px rgba(255,255,255,.4),inset -2px -2px 3px rgba(0,0,0,.2),0 2px 0 rgba(0,0,0,.16)}
 html body .bt-swatch[aria-pressed=true]{border-color:var(--bt-ink);transform:translateY(-1px)}
 html body .bt-range input::-webkit-slider-runnable-track{height:8px;${recessed('var(--clay-niche)')};background:linear-gradient(to right,var(--clay-cyan) var(--bt-fill),var(--clay-niche) var(--bt-fill))}

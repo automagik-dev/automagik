@@ -20,7 +20,8 @@ import { TeamSidebar, ChannelsMoved, YouAvatar, AccountLauncher, FooterAccount, 
 import { HeaderPill } from './header.js'
 import { ComposerPlus, ComposerVoice, menuIcons } from './composer.js'
 import { CHATS_SOURCE, atSources } from './at-menu.js'
-import { BtwDock, BtwTurnTail, btwSource } from './btw.js'
+import { BtwDock, BtwTurnTail } from './btw.js'
+import { SIDE_CSS, sideSource } from './side-chat.js'
 import { VOICE_BUNDLE } from './speech.js'
 import { sameVersion } from './dsh-offer.js'
 import { QuestionCard, QuestionDock } from './questions.js'
@@ -32,6 +33,7 @@ import { VOICE_SETTINGS_CSS } from './voice-settings.js'
 import { IMAGE_CELL_CSS } from './image-cell.js'
 import { TeamApproval, TEAM_APPROVAL_CSS, isTeamApproval } from './team-approval.js'
 import { AnsweredReply, WidgetDock, WIDGET_CSS } from './widget-cell.js'
+import { HandoffDock, HANDOFF_CSS } from './handoff-card.js'
 import { installHeaderNavigation } from './header-navigation.js'
 import { AssistantCell, TriggerCell, TurnProcessCell, Nothing, TurnTailCell, ToolCell } from './cells.js'
 import { Overlays } from './overlays.js'
@@ -40,6 +42,7 @@ import { BROWSER_CSS } from './browser-pane.js'
 import { SECRET_CSS, SecretDock } from './secret-card.js'
 import { MODEL_CSS, ModelChoiceDock, ModelLineTail, DeepSeekSignIn } from './model-menu.js'
 import { BOT_SETTINGS_CSS } from './bot-settings.js'
+import { AVATAR_LIBRARY_CSS } from './avatar-library.js'
 import { GROUP_SETTINGS_CSS } from './group-settings.js'
 import { FOLDER_CSS } from './folder-menu.js'
 import { USAGE_CSS } from './usage-page.js'
@@ -85,6 +88,8 @@ const DSH_SETTINGS = new Set(['general', 'account', 'models', 'agent-presets', '
 export function apply(ctx) {
   ctx.effect(() => installLocale(ctx.get('locale')), 'ds-bot: interface copy')
   const roster = createSource(EMPTY_ROSTER)
+  // A Bot's own browser hold, from the team view, where no browser bridge reports holds.
+  const hostHolds = createSource({})
   migrateStorage()
   const unreadStore = sharedMap(STORAGE.unread)
   const reactionStore = sharedMap(STORAGE.reactions)
@@ -93,7 +98,7 @@ export function apply(ctx) {
   let seenAt = seenStore.read()
   // `details` is the panel's subject (a Session id); `view` picks details or the
   // subject Bot's browser inside it.
-  const ui = createSource({ details: null, view: 'details', renaming: false, tab: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, memory: null, toast: null, signIn: null, renameAgent: null, unread: unreadStore.read(), reactions: reactionStore.read(), visits: {} })
+  const ui = createSource({ details: null, view: 'details', renaming: false, tab: null, side: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, memory: null, toast: null, signIn: null, renameAgent: null, unread: unreadStore.read(), reactions: reactionStore.read(), visits: {} })
   // Bot mode paints the whole team surface; Agent mode withdraws every slot and
   // style so the shell's own interface returns. `plain` stays false until a Bot-mode
   // view hosts a plain session, which drops only the conversation replacements.
@@ -203,6 +208,8 @@ export function apply(ctx) {
       }
     }
     if (value.btwCards !== undefined && JSON.stringify(value.btwCards) !== JSON.stringify(current.btwCards ?? {})) live.btwCards = value.btwCards
+    if (value.sideChats !== undefined && JSON.stringify(value.sideChats) !== JSON.stringify(current.sideChats ?? {})) live.sideChats = value.sideChats
+    if (value.browserHolds !== undefined && JSON.stringify(value.browserHolds) !== JSON.stringify(hostHolds.getSnapshot())) hostHolds.set(value.browserHolds)
     if (Object.keys(live).length > 0 && current.ready) roster.set({ ...current, ...live })
     if (value.unchanged || (value.revision === current.revision && value.modelsKey === current.modelsKey)) return
     // On a browser with no visit record yet, everything already there counts as seen.
@@ -408,6 +415,27 @@ export function apply(ctx) {
   }
   const mainView = () => Object.values(ctx.sessions.list.getSnapshot().byId ?? {}).find(session => (session?.retainedBy?.mainView ?? 0) > 0)?.id
   const show = listedOpener({ list: ctx.sessions.list, refresh: () => Promise.resolve(ctx.sessions.refresh?.()).catch(quietly('refresh sessions')), open: (target) => { expected = target; ctx.uiWorkspace.openSession(target) }, current: mainView })
+  // Bot mode's view must hold a team conversation; an outside Session wears the
+  // Bot skin without one. Runs whenever the surface is (or stays) Bot mode —
+  // including a cold start, where no setSurface call ever fires.
+  const homeToMainBot = () => {
+    const snapshot = roster.getSnapshot()
+    if (!snapshot.ready || !snapshot.mainBotId) return
+    const main = mainView()
+    if (main !== undefined && snapshot.byId[main] === undefined && snapshot.roomsById[main] === undefined) {
+      actions.openSession(snapshot.mainBotId)
+    }
+  }
+  const ensureBotHome = () => {
+    if (roster.getSnapshot().ready) homeToMainBot()
+    else {
+      const off = roster.subscribe(() => {
+        if (!roster.getSnapshot().ready) return
+        off()
+        homeToMainBot()
+      })
+    }
+  }
   const actions = {
     ...teamActions({ call, after, partFor, roster, ui, live, cards, heldCards, turnClock }),
     // The full-pane overlays sit above the conversation, so opening one must dismiss them
@@ -496,32 +524,19 @@ export function apply(ctx) {
     // surface closes first so nothing stale reopens on the way back.
     setSurface: (mode) => {
       if (mode !== 'bot' && mode !== 'agent') return
-      if (surface.getSnapshot().mode === mode) return
+      // Already there: still worth the landing check — a cold start never calls
+      // setSurface, so this is also how a stuck Bot surface recovers itself.
+      if (surface.getSnapshot().mode === mode) {
+        if (mode === 'bot') ensureBotHome()
+        return
+      }
       if (mode === 'agent') {
         ui.set(state => ({ ...state, details: null, view: 'details', settings: null, palette: null, newChat: null, menu: null, voice: null, exchange: null, memory: null, toast: null }))
       }
       writeMode(mode)
       surface.set(state => ({ ...state, mode }))
       if (mode !== 'bot') return
-      // Back in Bot mode the view must hold a team conversation; an outside
-      // Session left over from Agent mode would wear the Bot skin without one.
-      const home = () => {
-        const snapshot = roster.getSnapshot()
-        if (!snapshot.ready || !snapshot.mainBotId) return
-        const list = ctx.sessions.list.getSnapshot()
-        const main = Object.values(list.byId ?? {}).find(session => (session?.retainedBy?.mainView ?? 0) > 0)?.id
-        if (main !== undefined && snapshot.byId[main] === undefined && snapshot.roomsById[main] === undefined) {
-          actions.openSession(snapshot.mainBotId)
-        }
-      }
-      if (roster.getSnapshot().ready) home()
-      else {
-        const off = roster.subscribe(() => {
-          if (!roster.getSnapshot().ready) return
-          off()
-          home()
-        })
-      }
+      ensureBotHome()
     },
     markUnread: id => writeUnread(id, true),
     beginVisit: (id) => {
@@ -579,6 +594,22 @@ export function apply(ctx) {
       browserNavigate: (tabId, input) => browsers.navigate(tabId, input),
       browserCommand: (tabId, name) => browsers.command(tabId, name),
       browserFocus: (tabId) => browsers.focus(tabId),
+      browserTakeover: bridge.views ? async botId => {
+        const result = await call('browser-takeover', { botId })
+        await bridge.views.hold(botId, true)
+        return result
+      } : undefined,
+      browserStop: bridge.views ? async botId => {
+        const result = await call('browser-stop', { botId })
+        await bridge.views.hold(botId, true)
+        return result
+      } : undefined,
+      // `answer` is a handoff card's { callId, outcome }; the panel's Give back sends none.
+      browserGiveBack: bridge.views ? async (botId, answer = {}) => {
+        const result = await call('browser-give-back', { botId, ...answer })
+        await bridge.views.hold(botId, false)
+        return result
+      } : undefined,
       // Cookie imports, only where the bridge offers them (the desktop app): a file or an
       // installed browser's profile is previewed, then applied into the Bot's storage key.
       browserImport: typeof bridge.importSources === 'function' ? {
@@ -588,6 +619,14 @@ export function apply(ctx) {
         apply: (botId, pending) => bridge.importApply(`bot:${botId}`, pending),
         cancel: (pending) => bridge.importCancel(pending),
       } : null,
+    })
+  } else {
+    // Without the bridge a Bot's own browser is a window of the Chrome on this computer: it
+    // still hands over to the user, through the host alone, and the team view carries the hold.
+    Object.assign(actions, {
+      browserTakeover: botId => call('browser-takeover', { botId }),
+      browserStop: botId => call('browser-stop', { botId }),
+      browserGiveBack: (botId, answer = {}) => call('browser-give-back', { botId, ...answer }),
     })
   }
   // Whether AccountLauncher holds the shell's settings seat; FooterAccount steps aside if so.
@@ -640,7 +679,8 @@ export function apply(ctx) {
   actions.freshConversation = botId => after(call('bot-fresh', { id: botId }))
   const browserPages = browsers?.pages ?? createSource({})
   const browserTabs = browsers?.tabs ?? createSource({})
-  const face = () => ({ actions, hooks: { roster, ui, activity, work, memoryNews, registry, turnClock, live, cards, heldCards, browserPages, browserTabs, surface, update, panel: ctx.layout.panelInfo } })
+  const browserHolds = browsers?.holds ?? hostHolds
+  const face = () => ({ actions, hooks: { roster, ui, activity, work, memoryNews, registry, turnClock, live, cards, heldCards, browserPages, browserTabs, browserHolds, surface, update, panel: ctx.layout.panelInfo } })
   ctx.effect(() => noticeApprovals({
     work,
     roster,
@@ -665,7 +705,6 @@ export function apply(ctx) {
     } }
   }
 
-  actions.cancelBtw = card => call('btw-cancel', { sessionId: card.partId, id: card.id })
   // The dock lives outside the chat snapshot, so it subscribes for the turn that
   // owns a card. Until that turn closes, the card stays by the composer.
   actions.turnFacts = (sessionId) => {
@@ -699,6 +738,16 @@ export function apply(ctx) {
     actions.closePanel()
     try {
       ctx.get('sidebarRight')?.openTab('terminal')
+    } catch (error) {
+      actions.reportError(error, 'right-sidebar')
+    }
+  }
+  // The same hand-off for DSH's files tab, where that plugin registered it.
+  actions.canOpenFiles = () => ctx.get('sidebarRight') !== undefined && ctx.get('sidebarRightTabs')?.get('files') !== undefined
+  actions.openFiles = () => {
+    actions.closePanel()
+    try {
+      ctx.get('sidebarRight')?.openTab('files')
     } catch (error) {
       actions.reportError(error, 'right-sidebar')
     }
@@ -768,7 +817,7 @@ export function apply(ctx) {
         const launched = sessionId => controllerOf(sessionId)?.launcher.getSnapshot() === CHATS_SOURCE
         const offs = [
           ...atSources({ roster, sessions: ctx.sessions, launched, iconFor: menuIcons(roster) }).map(source => triggers.registerSource(source)),
-          triggers.registerSource(btwSource({ roster })),
+          triggers.registerSource(sideSource({ roster, actions })),
         ]
         atMenu = { controllerOf }
         return () => {
@@ -793,7 +842,7 @@ export function apply(ctx) {
     () => installCompiledStyles(SHELL_CSS, 'shell'),
     () => installCompiledStyles(SIDEBAR_CSS, 'sidebar'),
     () => installCompiledStyles(SECRET_CSS, 'secrets'),
-    () => installCompiledStyles(MODEL_CSS + FOLDER_CSS + BOT_SETTINGS_CSS + GROUP_SETTINGS_CSS, 'models'),
+    () => installCompiledStyles(MODEL_CSS + FOLDER_CSS + BOT_SETTINGS_CSS + GROUP_SETTINGS_CSS + AVATAR_LIBRARY_CSS, 'models'),
     () => installCompiledStyles(USAGE_CSS, 'usage'),
     () => installCompiledStyles(SCHEDULE_CSS, 'schedules'),
     () => installCompiledStyles(FEEDBACK_CSS, 'feedback'),
@@ -814,7 +863,10 @@ export function apply(ctx) {
     // What other Omni plugins put on the surface (extend.js), where Omni's channels were.
     () => mountShellInstallers({ face, shadow, installStyles, installCompiledStyles }),
     () => installCompiledStyles(WIDGET_CSS, 'widgets'),
-    browsers ? () => installCompiledStyles(BROWSER_CSS, 'browser') : null,
+    () => installCompiledStyles(HANDOFF_CSS, 'handoff'),
+    () => installCompiledStyles(SIDE_CSS, 'side'),
+    // Strip and panel styles also serve the side-chat tabs, which need no bridge.
+    () => installCompiledStyles(BROWSER_CSS, 'browser'),
     () => installTheme(),
     () => shadow('sidebar.workspaces', { priority: BOT_PRIORITY, inject: face }, TeamSidebar),
     () => shadow('sidebar.brand.mark', { priority: BOT_PRIORITY }, BrandMark),
@@ -938,6 +990,7 @@ export function apply(ctx) {
     () => shadow('conversation.input.dock', { id: 'bot-view', order: -95, inject: face }, WidgetDock),
     () => shadow('conversation.input.dock', { id: 'bot-secret', order: -90, inject: face }, SecretDock),
     () => shadow('conversation.input.dock', { id: 'bot-suggest', order: -80, inject: face }, SuggestionDock),
+    () => shadow('conversation.input.dock', { id: 'bot-handoff', order: -85, inject: face }, HandoffDock),
   ]
   // The return button belongs to neither group: it renders only in Agent mode.
   ctx.effect(() => installCompiledStyles(RETURN_CSS, 'return'), 'ds-bot: return styles')
@@ -979,6 +1032,9 @@ export function apply(ctx) {
       // workspace picker, or a fork of a Session the same Agent owns. An existing
       // Session the user opened from the sidebar keeps its team tools and stays out.
       const row = list.byId[main]
+      // A subagent child reports the Agent Session as its parent, but adopting it
+      // would steal it from subagent routing — the Host refuses anyway, so skip.
+      if (row?.origin === 'subagent') return
       // The client list maps the fork's parent to `parentId`; the raw field is
       // the fallback for shapes that skip the mapping.
       const parent = row?.parentId ?? row?.parentSessionId
@@ -1011,11 +1067,50 @@ export function apply(ctx) {
     const groups = surfaceGroups({ shell: installShell, conversation: installConversation }, {
       onError: (_group, error) => actions.reportError(new Error(t('Bot mode could not be set up here: {error}', { error: error?.message ?? String(error) })), 'surface'),
     })
-    const reconcile = () => groups.reconcile(groupsFor(surface.getSnapshot()))
+    // A shadow step can mount "successfully" with nothing registered: when a
+    // slot's inject callback throws inside the host, the host cancels the
+    // declaration's subscription but the step's disposer still counts the group
+    // as mounted. After the shell goes on, check that its sidebar entry really
+    // landed; remount a few times when it did not (cold start race).
+    let verifyTimer = 0
+    let verifyAttempts = 0
+    const verifySidebar = () => {
+      if (!groupsFor(surface.getSnapshot()).shell) return
+      let landed = false
+      let declared = true
+      try {
+        landed = ctx.slots.entries('sidebar.workspaces').some(entry => entry.component === TeamSidebar)
+        declared = ctx.slots.spec?.('sidebar.workspaces') !== undefined
+      } catch {
+        declared = false
+      }
+      if (landed) return
+      if (!declared) {
+        // The slot itself is not declared yet; keep watching for a while.
+        if (verifyAttempts < 20) {
+          verifyAttempts += 1
+          verifyTimer = setTimeout(verifySidebar, 250)
+        }
+        return
+      }
+      if (verifyAttempts >= 3) return
+      verifyAttempts += 1
+      console.warn('[ds-bot] sidebar entry missing after shell mount; remounting')
+      groups.remount('shell')
+      verifyTimer = setTimeout(verifySidebar, 250)
+    }
+    const reconcile = () => {
+      groups.reconcile(groupsFor(surface.getSnapshot()))
+      clearTimeout(verifyTimer)
+      verifyAttempts = 0
+      verifyTimer = setTimeout(verifySidebar, 250)
+    }
     reconcile()
+    if (surface.getSnapshot().mode === 'bot') ensureBotHome()
     const unsub = surface.subscribe(reconcile)
     return () => {
       unsub()
+      clearTimeout(verifyTimer)
       groups.dispose()
     }
   }, 'ds-bot: surface')

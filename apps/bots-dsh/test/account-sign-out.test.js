@@ -54,7 +54,7 @@ const textOf = (node) => {
 
 // `status` is what the account plugin's snapshot reports; `running` is what its
 // hasRunningAccountTasks answers (or throws); `fail` makes signOut reject.
-function launcher({ status = 'credential-stored', running = false, runningError = false, fail = '', withEntry = true } = {}) {
+function launcher({ status = 'credential-stored', running = false, runningError = false, fail = '', withEntry = true, actions = {} } = {}) {
   const calls = []
   slots.length = 0
   const ops = {
@@ -68,6 +68,7 @@ function launcher({ status = 'credential-stored', running = false, runningError 
       signInEntry: () => ((typeof withEntry === 'function' ? withEntry() : withEntry) ? { inject: () => ops } : null),
       accountT: () => key => `acc:${key}`,
       reportError: () => {},
+      ...actions,
     },
   }
   const render = () => { cursor = 0; return AccountLauncher(props) }
@@ -157,3 +158,6 @@ test('cancel closes the confirm without signing out', async () => {
   assert.equal(walk(tree, node => node.props?.className === 'bt-confirm').length, 0)
   assert.deepEqual(side.calls, ['hasRunningAccountTasks'])
 })
+
+// #452: the Connect plugins button left the Bot footer; the account menu that
+// stays keeps the way into the connectors and the automation panel.

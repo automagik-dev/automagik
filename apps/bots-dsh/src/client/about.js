@@ -21,6 +21,7 @@ function botHint(update, app) {
   if (update.source === 'app' && app.bridge) return updatePill(app.state)?.label ?? t('Updates come with the Automagik app.')
   if (update.phase === 'installing') return t('Updating Omni…')
   if (update.phase === 'installed') return t('Restart DSH to start using Omni {version}.', { version: update.installed ?? update.latest })
+  if (update.phase === 'updated') return t('Omni {version} is installed.', { version: update.installed ?? update.latest })
   if (update.phase === 'failed') return t('The update did not finish: {reason}', { reason: hostText(update.error ?? '') })
   if (update.available) return t('Omni {version} is available', { version: update.latest })
   if (update.enabled === false) return t('Update checks are off.')
@@ -66,7 +67,7 @@ export function AboutPage({ useUpdate, actions, run, Section, Row }) {
   const phase = update.phase ?? 'idle'
   const dsh = update.dsh
   const dshPhase = dsh?.phase ?? 'idle'
-  useEffect(() => { if (phase === 'installed' || dshPhase === 'installed') setCheer(true) }, [phase, dshPhase])
+  useEffect(() => { if (phase === 'installed' || phase === 'updated' || dshPhase === 'installed') setCheer(true) }, [phase, dshPhase])
   const markState = checking ? 'searching' : phase === 'installing' || dshPhase === 'installing' ? 'working' : cheer ? 'done' : 'idle'
   // Same rule as the sidebar card.
   const dshNew = showsDshRow(dsh, update.app)
@@ -79,7 +80,7 @@ export function AboutPage({ useUpdate, actions, run, Section, Row }) {
       ? h('button', { type: 'button', className: appPill?.primary ? 'bt-fb-primary' : 'bt-soft bt-soft-sm', disabled: appBusy, onClick: () => { void app.bridge.open().catch(() => {}) } },
           appPill?.primary ? appPill.label : appBusy ? t('Checking…') : t('Check for updates'))
       : null
-    : phase === 'installed' ? null
+    : phase === 'installed' || phase === 'updated' ? null
     : update.available || phase === 'installing'
       ? h('button', { type: 'button', className: 'bt-fb-primary', disabled: phase === 'installing', onClick: () => run(actions.installUpdate()) },
           phase === 'installing' ? t('Updating…') : phase === 'failed' ? t('Try again') : t('Update'))

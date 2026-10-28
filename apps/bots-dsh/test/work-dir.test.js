@@ -100,7 +100,7 @@ async function start({ services = {}, workspaces = [], llm, team: saved = TEAM, 
     route = options
     return register(options)
   }
-  apply(ctx, { home })
+  apply(ctx, { home, browserPlugin: false })
   const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', {
     method: 'POST', body: JSON.stringify({ endpoint, payload }),
   }))).json()
@@ -534,6 +534,22 @@ test('a Bot without a model of its own goes on with the earlier part\'s route', 
   await until(() => env.state().bots.b.sessionId === 's1')
   await until(() => handoffOf(env.agentOf('s1')) !== undefined)
   assert.deepEqual(selected.filter(([sessionId]) => sessionId === 's1'), [['s1', 'flash']])
+})
+
+test('a folder-triggered part switch is flagged in the work view while it runs', async (t) => {
+  const env = await start()
+  t.after(env.stop)
+  let seen
+  const archive = env.ctx.workspaceRegistry.archiveSession
+  env.ctx.workspaceRegistry.archiveSession = async (...args) => {
+    if (seen === undefined) seen = (await env.call('state', {})).value.work.bots.b ?? null
+    return archive(...args)
+  }
+  assert.equal((await env.call('update-bot', { id: 'b', workDir: env.project })).ok, true)
+  await until(() => env.state().bots.b.sessionId === 's1')
+  await until(() => handoffOf(env.agentOf('s1')) !== undefined)
+  assert.equal(seen?.switching, true)
+  assert.equal(seen?.folder, true)
 })
 
 // #209: DSH 0.2.1 checks a Session's folder as it puts a model request together, before
