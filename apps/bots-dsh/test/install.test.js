@@ -273,6 +273,24 @@ test('the desktop app has read_browser too; DSH Web does not', (t) => {
   assert.ok(!web.ctx.calls.includes('tool read_browser'))
 })
 
+test('the Automagik app shows the Bot browser panel but leaves read_browser off', async (t) => {
+  const { AUTOMAGIK_APP_BROWSER: flag } = process.env
+  const send = process.send
+  process.env.AUTOMAGIK_APP_BROWSER = '1'
+  // The flag counts only with the app's IPC channel there.
+  process.send = () => true
+  t.after(() => {
+    if (flag === undefined) delete process.env.AUTOMAGIK_APP_BROWSER
+    else process.env.AUTOMAGIK_APP_BROWSER = flag
+    if (send === undefined) delete process.send
+    else process.send = send
+  })
+  const { ctx, call, stop } = start(TEAM, { services: { profileContext: { name: 'omni' } } })
+  t.after(stop)
+  assert.ok(!ctx.calls.includes('tool read_browser'))
+  assert.equal((await call('state', {})).value.browser, true)
+})
+
 test('config.browser turns Bot browsers off even in the Desktop profile', (t) => {
   const { ctx, stop } = start(TEAM, { config: { browser: false }, services: { profileContext: { name: 'desktop' } } })
   t.after(stop)

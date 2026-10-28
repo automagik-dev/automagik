@@ -40,6 +40,22 @@ inside it; a turn DSH closes as interrupted while reopening is still resumed), t
 channels footer seat (upstream removed its Connect button there), and the About row of the Automagik app
 (upstream's own app bridge, `dsBotApp` updates, is not taken).
 
+## The in-app Bot browser (2026-10-28)
+
+Ported, not merged: upstream app's Bot views and CDP relay (`app/src/bot-views.mjs`, `app/src/bot-browser.mjs`
+at 4a7b550) became the Automagik app's `apps/desktop/src/bot-views.js` and `bot-relay.js` (see the root
+`NOTICE`). Of upstream's app bridge, only `dsBotApp.browser` (`views`, `forget`) is taken; its updates, data
+location and cookie imports still are not.
+
+Changed here: `browser.js` turns the panel on for the Automagik app (`AUTOMAGIK_APP_BROWSER`, constants.js)
+without `read_browser`, and `browser-plugins.js` connects there through the app's relay as it does in
+upstream's app (`DS_BOT_APP`). `session.js` and `mount.js` keep each Bot's tabs in its
+`browser-profiles/<botId>` (`browser/tabs.js`, ours), bring them back when the browser opens with none, and
+open a browser again after it went away (a killed Chrome, a dropped relay, a crashed page). In the app,
+`bot-browsers.js` lists those tabs (`browserTabs` in the team view, channel.js) instead of saving tabs to or
+restoring them from its own store, and `settings.js` calls `dsBotApp`'s data location and team workspace
+only where the app offers them.
+
 ## Merged from upstream on 2026-10-23
 
 Taken: side questions (`/btw`), group memory, the message layout settings (bubble width, flat

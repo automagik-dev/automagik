@@ -86,6 +86,8 @@ export function install(rt) {
     browser: rt.browserEnabled,
     // Who holds each Bot's own browser (browser-plugins.js), for windows without the panel.
     browserHolds: rt.browserChannel?.holdSnapshot() ?? {},
+    // Each Bot's saved tabs (browser/tabs.js): the panel lists them in the Automagik app.
+    browserTabs: rt.browserTabsView?.() ?? {},
     // False when config.memory turns memory off: no Memory row or panel.
     memory: rt.memoryEnabled !== false,
     // Set while another dsh host holds the team (store.js): why this one cannot change it.

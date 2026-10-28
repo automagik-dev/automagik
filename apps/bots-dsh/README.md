@@ -105,7 +105,7 @@ Options go in the profile's `cordis.patch.yml`, under the `omni-ui` entry. All o
     home: /path/to/team-data       # where the team is saved; default $AUTOMAGIK_BOTS_HOME, else $AUTOMAGIK_HOME/bots (~/.automagik/bots)
     importHome: ~/.dsh/bot          # copy a team saved there into home once, when home has none
     checkRatio: 0.8                 # share of the model's usable window where the steward decides
-    browser: true                   # force the browser panel and read_browser on or off; default on in dsh Desktop only
+    browser: true                   # force the browser panel and read_browser on or off; default both in dsh Desktop, the panel alone in the Automagik app
     browserPlugin: refs             # the browser each Bot drives: refs (default), script or task; false turns it off
     browserExecutablePath: /usr/bin/google-chrome   # the browser it launches; default the first Chrome, Edge, Chromium or Brave found
     browserHeadless: false          # default: headless only on Linux without a display
@@ -199,11 +199,13 @@ Another plugin can also set the search provider while dsh runs, after the profil
 Every Bot has a browser of its own, on by default (`browserPlugin: false` turns it off). It is the Chrome, Edge, Chromium or Brave already on this computer, driven through `playwright-core`: nothing is downloaded. Without one, a Bot that needs a browser says so and asks you to install Chrome.
 
 - **A profile per Bot**, in `browser-profiles/<id>/`: its sign-ins and cookies stay between runs and belong to that Bot only. Deleting a Bot deletes its profile.
+- **Tabs come back**: the Bot's open tabs (address and title) are saved there as they change and reopen at its next browser call after a crash or a restart. A browser that went away (closed, crashed) opens again at that call.
 - **What a Bot does**: `browser_open`, `browser_snapshot` (the page as an accessibility tree, each element with a ref), `browser_click`, `browser_type`, `browser_select`, `browser_press`, `browser_upload`, `browser_tabs`, `browser_back` and `browser_screenshot`. Page content is treated as data, never as instructions.
 - **What asks you first**: posting, uploading, downloading and deleting, each through dsh's approval. A delete needs a second, confirmed click. Settings → Browser lets a Bot do some of these on a site for an hour, until the end of the day, for 7 days or for good. Card fields are never typed, and a payment always goes back to you.
 - **Files**: downloads go to the Bot's working folder or the team folder; uploads come only from those.
 - **Handing over**: for a sign-in, a payment or a check, the Bot calls `browser_handoff` and a card in its chat asks you to take over, skip, or say you are done. While you hold the browser, its tools refuse; the window is a normal browser window on your screen.
 - **The window**: on macOS and Windows, and on Linux with a display, the browser opens as a window you can watch. On Linux without a display it runs headless (`browserHeadless`).
+- **In the Automagik app** the Bot's browser is inside the app instead: the globe button in its chat header opens the same tabs the Bot drives, in a panel you can watch and take over. Its sign-ins stay in the app's own storage for that Bot; `read_browser` is not offered there, since the Bot reads its pages with its own browser tools.
 
 ### Browser panel (dsh Desktop)
 

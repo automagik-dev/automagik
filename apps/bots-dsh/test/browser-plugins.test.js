@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -9,6 +9,7 @@ import { gateScope } from '../src/host/browser/gate.js'
 import { appBrowserEndpoint } from '../src/host/browser-plugins.js'
 import { mountBrowserPlugin } from '../src/host/browser/mount.js'
 import { systemPrompt as refsPrompt, toolDefs as refsTools } from '../src/host/browser/refs.js'
+import { keepTabs, restoreTabs, TABS_FILE } from '../src/host/browser/tabs.js'
 import { fakeApproval, fakeContext } from './fake-ctx.js'
 
 const TEAM = {
@@ -150,6 +151,76 @@ test('app browser endpoint carries download roots for the Bot resolved from the 
     await cleanup?.()
     process.send = originalSend
   }
+})
+
+test('a Bot\'s tabs are saved as they change and come back in a browser that opens with none', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ds-bot-tabs-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const pageOf = (url, title = '') => {
+    const listeners = {}
+    const page = {
+      url: () => url, title: async () => title, isClosed: () => false, mainFrame: () => page,
+      on: (name, listener) => { listeners[name] = listener },
+      goto: async (next) => { url = next; title = new URL(next).pathname.slice(1); listeners.framenavigated?.(page) },
+    }
+    return page
+  }
+  const contextOf = (pages) => {
+    const listeners = {}
+    return { pages: () => pages, on: (name, listener) => { listeners[name] = listener }, newPage: async () => { const page = pageOf('about:blank'); pages.push(page); listeners.page?.(page); return page } }
+  }
+  const settled = () => new Promise(resolve => setTimeout(resolve, 600))
+
+  const first = [pageOf('https://a.example/one', 'one'), pageOf('https://b.example/two', 'two')]
+  const keeper = keepTabs({ context: contextOf(first), dir, activePage: () => first[1], onSave() {} })
+  await settled()
+  const saved = { tabs: [{ url: 'https://a.example/one', title: 'one' }, { url: 'https://b.example/two', title: 'two' }], active: 1 }
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, TABS_FILE), 'utf8')), saved)
+  // A browser on its way out saves nothing more: its closing tabs do not replace the list.
+  keeper.stop()
+  first.length = 0
+  await settled()
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, TABS_FILE), 'utf8')), saved)
+
+  // After a crash or a restart the browser opens blank, and the saved tabs come back.
+  const blank = [pageOf('about:blank')]
+  const context = contextOf(blank)
+  const active = await restoreTabs(context, dir, blank[0])
+  assert.deepEqual(context.pages().map(page => page.url()), ['https://a.example/one', 'https://b.example/two'])
+  assert.equal(active, context.pages()[1])
+  // A browser that already shows a web page keeps what it has.
+  const open = contextOf([pageOf('https://c.example/')])
+  await restoreTabs(open, dir, open.pages()[0])
+  assert.deepEqual(open.pages().map(page => page.url()), ['https://c.example/'])
+})
+
+test('a Bot browser that went away opens again at the Bot\'s next call', async () => {
+  const tools = new Map()
+  let cleanup
+  const opened = []
+  mountBrowserPlugin({
+    on() {},
+    effect(create) { cleanup = create() },
+    tools: { register(tool) { tools.set(tool.name, tool) } },
+  }, {
+    toolDefs: [{ name: 'browser_open', needsBrowser: true, execute: (_args, { session }) => session.id }],
+    defineTool: value => value,
+    keyOf: async () => 'b2',
+    profileRoot: '/profiles',
+    headless: true,
+    openSession: async () => {
+      const listeners = []
+      const session = { id: opened.length + 1, close: async () => {}, onClosed: listener => listeners.push(listener), lose: () => { for (const listener of listeners) listener() } }
+      opened.push(session)
+      return session
+    },
+  })
+  const call = () => tools.get('browser_open').execute({}, { agent: { id: 'b2' } })
+  assert.equal(await call(), 1)
+  assert.equal(await call(), 1)
+  opened[0].lose()
+  assert.equal(await call(), 2)
+  await cleanup?.()
 })
 
 test('concurrent first browser calls share opening and relay connection', async () => {
