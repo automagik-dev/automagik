@@ -76,6 +76,15 @@ test('the browser bundle is built in DSH client format and names the panel', () 
   assert.match(text, /map\.unconfigured/, 'an empty map shows why it is empty')
 })
 
+test('the panel titles its groups in plain words, with no unexplained acronym', () => {
+  for (const file of ['src/client/index.jsx', 'client.js']) {
+    const text = read(file)
+    assert.doesNotMatch(text, /\bTML\b/, file)
+    assert.match(text, /\[["']moment["'], ["']Moments["']\]/, file)
+    assert.match(text, /\[["']benchmark["'], ["']Benchmark rows["']\]/, file)
+  }
+})
+
 const SUITE = { id: 'synthetic', sha256: 'a'.repeat(64), epoch: 1 }
 const SCORER = { id: 'unfold-bench.synthetic', version: '1.0.0' }
 const COHORT = { suite_id: SUITE.id, suite_sha256: SUITE.sha256, suite_epoch: SUITE.epoch, scorer_id: SCORER.id, scorer_version: SCORER.version, selection_split: 'promotion' }

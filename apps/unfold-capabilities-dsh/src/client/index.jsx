@@ -57,8 +57,8 @@ function useMapStream() {
 const GROUPS = [
   ['capability', 'What I can do'],
   ['runtime', 'How I run'],
-  ['moment', 'TML moments'],
-  ['benchmark', 'TML benchmark rows'],
+  ['moment', 'Moments'],
+  ['benchmark', 'Benchmark rows'],
 ]
 const STATUS_TEXT = {
   supported: 'supported',
