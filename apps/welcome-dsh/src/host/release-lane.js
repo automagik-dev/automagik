@@ -4,12 +4,13 @@
 // plugin-lane/keys.json. The lane must be for this release's version and list every sibling,
 // and each tarball must have the lane's size, sha256 and sha512 integrity. Nothing is written
 // until every tarball about to be installed matches; then each is kept 0600 under
-// <AUTOMAGIK_HOME>/welcome/tarballs, a path the profile records, so it stays after the install.
+// <AUTOMAGIK_HOME>/welcome/tarballs, a path the profile records, so it stays after the install;
+// an AUTOMAGIK_HOME that is not an absolute path is refused before anything is fetched.
 // A release without a lane is refused: there is no other source of the expected hashes.
 import { createHash, createPublicKey, verify } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 
 export const LANE_KEYS = Object.freeze(JSON.parse(readFileSync(new URL('./lane-keys.json', import.meta.url), 'utf8')).keys)
 export const RELEASES = 'https://github.com/automagik-dev/automagik/releases/download/'
@@ -21,7 +22,11 @@ const fail = message => Object.assign(new Error(message), { code: 'omni-ai/refus
 const sha256Of = bytes => createHash('sha256').update(bytes).digest('hex')
 const integrityOf = bytes => `sha512-${createHash('sha512').update(bytes).digest('base64')}`
 
-export const tarballDir = (env = process.env) => join(env.AUTOMAGIK_HOME?.trim() || join(homedir(), '.automagik'), 'welcome', 'tarballs')
+export function tarballDir(env = process.env) {
+  const home = env.AUTOMAGIK_HOME?.trim() || join(homedir(), '.automagik')
+  if (!isAbsolute(home)) throw fail(`AUTOMAGIK_HOME is not an absolute path: ${home}`)
+  return join(home, 'welcome', 'tarballs')
+}
 
 /** The lane in `bytes`, when `signature` (base64, detached ed25519) is one of `keys`'. */
 export function verifyLane(bytes, signature, keys = LANE_KEYS) {
@@ -43,6 +48,7 @@ export function verifyLane(bytes, signature, keys = LANE_KEYS) {
  */
 export async function checkedTarballs(wanted, { version, env = process.env, fetch = globalThis.fetch, keys = LANE_KEYS }) {
   if (wanted.length === 0) return {}
+  const dir = tarballDir(env)
   const get = async (url, what) => {
     const response = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) })
     if (!response.ok) throw fail(`${what}: HTTP ${response.status}`)
@@ -63,7 +69,6 @@ export async function checkedTarballs(wanted, { version, env = process.env, fetc
     checked.push({ name, path: `${name.replace('/', '+')}-${version}-${entry.sha256}.tgz`, tarball })
   }
   // Every one matched: only now is anything written, each through a temporary name.
-  const dir = tarballDir(env)
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   const made = []
   try {

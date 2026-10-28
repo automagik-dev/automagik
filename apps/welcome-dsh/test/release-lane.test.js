@@ -2,20 +2,21 @@
 // only after checking every one against the lane.json signed for that release: a tarball that
 // does not match, a sibling the lane does not list, a bad or missing signature, a lane for
 // another version, or no lane at all is refused, nothing is installed and no file is written.
+// The same holds for each flow that installs siblings: Unfold, Omni and the Genie team step.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { install } from '../src/host/endpoint.js'
-import { UNFOLD_PLUGIN, UNFOLD_PLUGINS } from '../src/host/bot-types.js'
+import { OMNI_PLUGINS, UNFOLD_PLUGIN, UNFOLD_PLUGINS } from '../src/host/bot-types.js'
 import { fakeContext } from './fake-ctx.js'
 import { EVERYTHING, KEYS, RELEASE, V, entryOf, filesOf, laneOf, release, signatureOf, tarballOf, urlOf } from './lane-fixture.js'
 
 const PKG = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 const noClaude = async () => ({ plugin: false, installed: false, loggedIn: false })
 
-function rig(t, files) {
+function rig(t, files, { homeAs } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'welcome-lane-'))
   t.after(() => rmSync(home, { recursive: true, force: true }))
   const bundles = [{ name: PKG.name, availability: 'profile', enabled: true, source: urlOf({ dir: 'welcome-dsh' }), version: V }]
@@ -34,18 +35,18 @@ function rig(t, files) {
   const net = release(files)
   const team = { state: { bots: {} }, async load() {} }
   const fake = fakeContext({ entries: { 'omni-ai': {} }, services: { pluginManager: manager, omniTeam: team } })
-  const env = { AUTOMAGIK_HOME: home }
+  const env = { AUTOMAGIK_HOME: homeAs ?? home }
   const { handle } = install(fake.ctx, { env, checkClaude: noClaude, checkGit: async () => null, genieSkills: () => false, release: { fetch: net.fetch, keys: KEYS } })
   const dir = join(home, 'welcome', 'tarballs')
-  const run = async () => {
-    const started = await handle('unfold-plugin-install', {})
+  const run = async (flow = 'unfold-plugin') => {
+    const started = await handle(`${flow}-install`, {})
     assert.equal(started.ok, true, JSON.stringify(started.error))
     for (let i = 0; i < 200; i++) {
-      const status = (await handle('unfold-plugin', {})).value
+      const status = (await handle(flow, {})).value
       if (status.install?.phase !== 'installing') return status.install
       await new Promise(resolve => setTimeout(resolve, 1))
     }
-    throw new Error('the Unfold install never ended')
+    throw new Error(`the ${flow} install never ended`)
   }
   return { run, calls, dir, asked: net.asked }
 }
@@ -97,5 +98,39 @@ for (const [what, files, reason] of refused) {
     assert.match(done.error, reason)
     assert.deepEqual(r.calls, [], 'installBundle is never called')
     assert.deepEqual(filesIn(r.dir), [], 'no file under the tarball dir')
+  })
+}
+
+const botTeamFlipped = () => {
+  const bad = Buffer.from(tarballOf(OMNI_PLUGINS[0]))
+  bad[3] ^= 1
+  return filesOf({ tarballs: { [OMNI_PLUGINS[0].name]: bad } })
+}
+for (const [what, flow] of [['the Omni install', 'omni-plugins'], ['the Genie install\'s Bot team step', 'genie-plugin']]) {
+  test(`refused, nothing installed and no file written: ${what}, with a flipped Bot team tarball`, async (t) => {
+    const r = rig(t, botTeamFlipped())
+    const done = await r.run(flow)
+    assert.equal(done.phase, 'failed')
+    assert.match(done.error, /does not match the lane/)
+    assert.deepEqual(r.calls, [], 'installBundle is never called')
+    assert.deepEqual(filesIn(r.dir), [], 'no file under the tarball dir')
+  })
+}
+
+// The profile records the tarball's path, so it must not hang on the working directory.
+for (const [what, homeAs] of [['a relative AUTOMAGIK_HOME', `welcome-home-${process.pid}`], ['a ~ AUTOMAGIK_HOME', `~/welcome-home-${process.pid}`]]) {
+  test(`refused before anything is fetched or written: ${what}`, async (t) => {
+    const where = join(process.cwd(), homeAs)
+    t.after(() => {
+      rmSync(where, { recursive: true, force: true })
+      if (homeAs.startsWith('~/')) try { rmdirSync(join(process.cwd(), '~')) } catch {}
+    })
+    const r = rig(t, filesOf(), { homeAs })
+    const done = await r.run()
+    assert.equal(done.phase, 'failed')
+    assert.match(done.error, /AUTOMAGIK_HOME is not an absolute path/)
+    assert.deepEqual(r.calls, [], 'installBundle is never called')
+    assert.deepEqual(r.asked, [], 'nothing is fetched')
+    assert.equal(existsSync(where), false, 'nothing is written under the working directory')
   })
 }
