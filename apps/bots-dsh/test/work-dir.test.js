@@ -297,6 +297,24 @@ test('elsewhere, a state read before the Unfold plugin applies makes the default
   assert.deepEqual(await earlyRead(undefined), [['Omni', null, true], ['Unfold', 'unfold', false]])
 })
 
+test('a Main Bot maker that fails or never answers is dropped with one warning, and the team goes on', async (t) => {
+  for (const [maker, warning] of [
+    [async () => { throw new Error('the disk is full') }, 'ds-bot: the Main Bot maker failed; the team makes its own: %s'],
+    [() => new Promise(() => {}), 'ds-bot: the Main Bot maker gave no answer in %d ms; the team makes its own'],
+  ]) {
+    const { ctx, state, stop } = await start({ team: { ...TEAM, mainBotIds: [], bots: {}, rooms: {} } })
+    t.after(stop)
+    const rt = ctx.provided.get('omniTeam')
+    const warnings = []
+    rt.warn = (...args) => warnings.push(args[0])
+    rt.mainBotMakerMs = 30
+    rt.mainBotMaker = maker
+    await rt.bootstrap()
+    assert.deepEqual(Object.values(state().bots).map(bot => bot.name), ['Omni'], warning)
+    assert.deepEqual(warnings.filter(line => line.startsWith('ds-bot: the Main Bot maker')), [warning])
+  }
+})
+
 test('a Main Bot maker that brings none leaves the default Main Bot to the team', async (t) => {
   const { ctx, state, stop } = await start({ team: { ...TEAM, mainBotIds: [], bots: {}, rooms: {} } })
   t.after(stop)

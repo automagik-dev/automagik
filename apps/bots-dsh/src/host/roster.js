@@ -59,6 +59,10 @@ function cleanBrowserGrants(input) {
   return grants
 }
 
+// How long a plugin's Main Bot maker (rt.mainBotMaker) may take before the team goes on without it.
+export const MAIN_BOT_MAKER_MS = 10_000
+const NO_ANSWER = Symbol('no answer from the Main Bot maker')
+
 export function install(rt) {
   const { ctx, defaults, state } = rt
 
@@ -702,9 +706,35 @@ export function install(rt) {
     // In Unfold's own instance Unfold leads: until its plugin applies, a state read makes no
     // default Main Bot, and the plugin's own bootstrap makes Unfold the first one.
     if (maker === undefined && bootstrapping === null && inUnfoldInstance()) return
-    bootstrapping ??= (maker ? Promise.resolve(maker()).then(bot => (state.mainBotIds.some(id => rt.botOf(id)) ? bot : makeDefault())) : makeDefault())
+    // A maker that fails or gives no answer is dropped for this bootstrap, so a state read never
+    // fails or waits on it: the team goes on as with no maker (its default, or none in Unfold's
+    // instance).
+    const fromMaker = async () => {
+      const bot = await askMaker(maker)
+      if (bot === NO_ANSWER) return inUnfoldInstance() ? undefined : makeDefault()
+      return state.mainBotIds.some(id => rt.botOf(id)) ? bot : makeDefault()
+    }
+    bootstrapping ??= (maker ? fromMaker() : makeDefault())
       .finally(() => { bootstrapping = null })
     await bootstrapping
+  }
+
+  function askMaker(maker) {
+    const ms = rt.mainBotMakerMs ?? MAIN_BOT_MAKER_MS
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        rt.warn('ds-bot: the Main Bot maker gave no answer in %d ms; the team makes its own', ms)
+        resolve(NO_ANSWER)
+      }, ms)
+      Promise.resolve().then(maker).then((bot) => {
+        clearTimeout(timer)
+        resolve(bot)
+      }, (error) => {
+        clearTimeout(timer)
+        rt.warn('ds-bot: the Main Bot maker failed; the team makes its own: %s', error?.message ?? error)
+        resolve(NO_ANSWER)
+      })
+    })
   }
 
   Object.assign(rt, {
