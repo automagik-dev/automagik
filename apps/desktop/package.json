@@ -27,7 +27,8 @@
     "electron-builder": "26.16.1"
   },
   "dependencies": {
-    "electron-updater": "6.8.10"
+    "electron-updater": "6.8.10",
+    "ws": "8.18.3"
   },
   "bugs": {
     "url": "https://github.com/automagik-dev/automagik/issues"
