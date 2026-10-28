@@ -181,7 +181,18 @@ test('every string the team step looks up has its pt-BR text, with the same plac
 // The rows a card shows are English keys too: Genie's and Unfold's, and what the host sends for
 // Omni (its plugins, its tools, and the fixed rows of omniType in src/host/bot-types.js).
 const hostSource = readFileSync(new URL('../src/host/bot-types.js', import.meta.url), 'utf8')
-const omniTypeSource = hostSource.slice(hostSource.indexOf('async function omniType()'), hostSource.indexOf("'omni-plugins': () =>"))
+// omniType's body, between its two markers; a marker that moved fails the test rather than
+// leaving it nothing to check.
+function omniTypeRows() {
+  const from = 'async function omniType()'
+  const to = "'omni-plugins': () =>"
+  const start = hostSource.indexOf(from)
+  const end = hostSource.indexOf(to, start)
+  assert.ok(start >= 0 && end > start, `src/host/bot-types.js has no ${from} before ${to}`)
+  const rows = literalRows(hostSource.slice(start, end))
+  assert.ok(rows.length >= 10, `only ${rows.length} rows found in omniType`)
+  return rows
+}
 // Its English literals: the quoted texts that start with a capital (ids and keys are lower case),
 // template literals set aside (their rows are the ones rowText reads around a value).
 const literalRows = text => [...text.replace(/`[^`]*`/g, '').matchAll(/'((?:\\'|[^'])*)'/g)].map(match => match[1].replace(/\\'/g, "'")).filter(text => /^[A-Z]/.test(text))
@@ -196,7 +207,7 @@ test('every row a card shows has its pt-BR text', () => {
   }
   for (const plugin of OMNI_PLUGINS) rows.push(plugin.title, plugin.what, plugin.title.replace(/^Omni /, ''))
   for (const tool of OMNI_TOOLS) rows.push(tool.label, ...(tool.detail ? [tool.detail] : []))
-  rows.push(...literalRows(omniTypeSource))
+  rows.push(...omniTypeRows())
   assert.ok(rows.length > 40)
   const missing = [...new Set(rows)].filter(row => !Object.hasOwn(team.PT_BR, row))
   assert.deepEqual(missing, [])
@@ -222,7 +233,7 @@ test('the pt-BR dictionary holds no key the team step no longer uses', () => {
   }
   for (const plugin of OMNI_PLUGINS) { used.add(plugin.title); used.add(plugin.what); used.add(plugin.title.replace(/^Omni /, '')) }
   for (const tool of OMNI_TOOLS) { used.add(tool.label); if (tool.detail) used.add(tool.detail) }
-  for (const row of literalRows(omniTypeSource)) used.add(row)
+  for (const row of omniTypeRows()) used.add(row)
   for (const id of ['power', 'plugins', 'link', 'team']) used.add(id)
   used.add('Comes with this DSH')
   assert.deepEqual(Object.keys(team.PT_BR).filter(key => !used.has(key)), [])
