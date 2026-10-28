@@ -1,6 +1,6 @@
 # Unfold Mind (`@automagik/unfold-mind-dsh`)
 
-The Mind stream for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH): every event Unfold's agent and host emit, as far as its sources carry them, becomes one plain sentence, grouped into episodes through explicit ids only. Each row opens an audit record (ids, cause chain, source, integrity, catalog definition, redacted envelope), and gap markers show wherever the evidence is incomplete. It shows and never commands: the only write is a suggestion, appended to a local log that goes nowhere.
+The Mind stream for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH): every event Unfold's agent and host emit, as far as its sources carry them, becomes one plain sentence, grouped into episodes through explicit ids only. Each row opens an audit record (ids, cause chain, source, integrity, catalog definition, redacted envelope), and gap markers show wherever the evidence is incomplete. It shows and never commands: the only write is a suggestion, appended to a local log that goes nowhere. Tested with DSH 0.2.1-rc.4.
 
 ## Sources
 
