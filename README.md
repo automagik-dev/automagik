@@ -12,6 +12,7 @@ Automagik's plugins for [DeepSeek Harness](https://github.com/deepseek-ai/deepse
 | [`apps/unfold-settings-dsh`](apps/unfold-settings-dsh/README.md) | `@automagik/unfold-settings-dsh` | How Unfold is set up right now, read-only: each value with its source and how fresh it is, and unknown when nothing reports it. |
 | [`apps/unfold-events-dsh`](apps/unfold-events-dsh/README.md) | `@automagik/unfold-events-dsh` | Unfold events: what the Unfold agent is doing, in the DSH of Unfold's own instance, as an event tab and a presence tab. It only watches, read-only, and opens no port. |
 | [`apps/unfold-sse-dsh`](apps/unfold-sse-dsh/README.md) | `@automagik/unfold-sse-dsh` | Server-sent events for the Unfold plugins: a snapshot, then increments, with backpressure and per-client bounds. A library the plugins carry. |
+| [`apps/unfold-mind-dsh`](apps/unfold-mind-dsh/README.md) | `@automagik/unfold-mind-dsh` | The Unfold Mind stream: every event of Unfold's agent and host as one plain sentence, grouped into episodes, with an audit panel per event. Read-only. |
 | [`apps/desktop`](apps/desktop/README.md) | (the app) | The Automagik desktop app: DSH of its own with the Bot team, the welcome and Omni's channels and canvases. `omni desktop` opens it with Omni preloaded, `genie desktop` with Genie. |
 
 Omni's own plugins (its channels and canvases) live with Omni, in [automagik-dev/omni](https://github.com/automagik-dev/omni) (`apps/omni-channels-dsh`, `apps/omni-canvas-dsh`), and carry Omni's version.

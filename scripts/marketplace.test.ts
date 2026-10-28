@@ -95,9 +95,9 @@ describe('market index', () => {
       metadata: { category: manifest.automagik.market.category, keywords: manifest.automagik.market.keywords, labels: ['official'] },
       versions: [{ version: manifest.version, source: { type: 'git', url: REPO_URL, commit: head, path: 'apps/unfold-bridge-dsh' }, engines: { dsh: manifest.engines.dsh } }],
     });
-    // only plugins with a market block join (the bridge, the pt-BR pack and Unfold events); the Bot
-    // team and the welcome are listed by hand
-    expect(pinned.plugins.map((plugin) => plugin.name)).toEqual(['@automagik/locale-pt-br-dsh', '@automagik/unfold-bridge-dsh', '@automagik/unfold-capabilities-dsh', '@automagik/unfold-events-dsh', '@automagik/unfold-settings-dsh']);
+    // only plugins with a market block join (the bridge, the pt-BR pack and the Unfold plugins); the
+    // Bot team and the welcome are listed by hand
+    expect(pinned.plugins.map((plugin) => plugin.name)).toEqual(['@automagik/locale-pt-br-dsh', '@automagik/unfold-bridge-dsh', '@automagik/unfold-capabilities-dsh', '@automagik/unfold-events-dsh', '@automagik/unfold-mind-dsh', '@automagik/unfold-settings-dsh']);
     expect(checkIndex(pinned, repoDir)).toEqual([]);
   });
 
