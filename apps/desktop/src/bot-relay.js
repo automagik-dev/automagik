@@ -6,7 +6,8 @@
 // tabs are page targets, and every page command goes to that view's own debugger, child
 // sessions too (cross-origin iframes, workers). A Bot view takes a debugger only while a Bot is
 // attached to it; when the last one leaves, the debugger lets go, and with it every override
-// and interception the Bot left behind, so the owner browses a plain page.
+// and interception the Bot left behind, so the owner browses a plain page. The Bot's mouse and
+// navigation commands are also drawn by its cursor (bot-cursor.js) as they pass.
 //
 // Ported from DS Bot's app, app/src/bot-views.mjs at 4a7b55069ad300eae8be42a74f31bc170b40ead7
 // (https://github.com/Fei2411/DS-Bot, Apache-2.0; see NOTICE). Changed here: commands are not
@@ -338,6 +339,9 @@ export class BotRelay {
       if (nativeParams.frameId === route.entry.tabId) nativeParams.frameId = route.entry.mainFrameId
       const contents = route.entry.contents
       const sent = contents.debugger.sendCommand(method, nativeParams, route.nativeId)
+      // The Bot's pointer and navigations, for its cursor (bot-cursor.js): the page session's
+      // only, since input goes there in the page's own coordinates.
+      if (route.nativeId === undefined) this.#views.cursor?.forwarded(route.entry, method, params)
       // A hidden tab draws no frame to copy: it is captured, kept hidden, until the shot is in.
       if (method === 'Page.captureScreenshot' && !route.entry.shown) {
         let done = false

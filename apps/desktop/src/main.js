@@ -6,7 +6,8 @@
 // renderer sandbox are on, dsh's page can navigate only within dsh's origin, web links open
 // in the system browser, and the frame page never navigates. Each Bot's browser is in the
 // window too (bot-views.js), over the Bot browser panel, and the Bot drives it through a
-// loopback CDP relay (bot-relay.js) that dsh asks for over its IPC channel.
+// loopback CDP relay (bot-relay.js) that dsh asks for over its IPC channel, with its cursor
+// drawn in a click-through window over the tab (bot-cursor.js).
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, powerMonitor, session, shell, systemPreferences, WebContentsView } from 'electron'
 import updaterModule from 'electron-updater'
 import { appendFileSync, createWriteStream, mkdirSync, readFileSync, rmSync } from 'node:fs'
@@ -18,6 +19,7 @@ import { noteRestart, restartLine, steps } from './timeline.js'
 import { dismissSplash, showUpdateSplash } from './splash.js'
 import { PUBLISHERS, TRIAL_MS, beforeStart, checkLane, confirm as confirmLane, installedVersions, laneMemory, stage as stageLane, stagedOf, stagedVersion, trialFailed } from './lane.js'
 import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, privacyFileOf, privacyPatchOf, freePort, guardContents, installProfile, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
+import { BotCursor } from './bot-cursor.js'
 import { BotRelay } from './bot-relay.js'
 import { BotViews, isBotId, isTabId } from './bot-views.js'
 import { pageLayout, tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome } from './frame.js'
@@ -70,7 +72,7 @@ let dshOrigin
 // The corner radius of dsh's page (frame.js pageLayout), which the Bot views take too.
 let pageRadius = 0
 // The Bot browsers: their views over the panel's rectangle in dsh's page, which tells them
-// what changed, and the relay each Bot drives them through.
+// what changed, the relay each Bot drives them through, and the Bot's cursor over them.
 const botViews = new BotViews({
   window: () => window,
   WebContentsView,
@@ -81,6 +83,11 @@ const botViews = new BotViews({
   onChange: (change) => { if (page && !page.webContents.isDestroyed()) page.webContents.send('automagik-browser-view', change) },
 })
 const botRelay = new BotRelay({ views: botViews })
+// On Wayland no window can place itself, so the Bot's cursor is not drawn there, unless
+// Electron runs through XWayland (`--ozone-platform=x11`).
+const wayland = process.platform === 'linux' && process.env.XDG_SESSION_TYPE === 'wayland' &&
+  !['ozone-platform', 'ozone-platform-hint'].some(name => app.commandLine.getSwitchValue(name) === 'x11')
+const botCursor = new BotCursor({ window: () => window, BrowserWindow, views: botViews, placeable: !wayland })
 
 // omni:// links (deeplink.js): the system hands them to the running app (macOS: open-url;
 // Linux: a second instance with the link as an argument), or starts the app with one.
@@ -607,7 +614,7 @@ function harden(origin) {
 }
 
 app.on('window-all-closed', () => app.quit())
-app.once('will-quit', () => { botRelay.dispose(); botViews.dispose() })
+app.once('will-quit', () => { botRelay.dispose(); botViews.dispose(); botCursor.dispose() })
 app.on('before-quit', (event) => {
   if (quitting || !dshChild) return
   quitting = true
