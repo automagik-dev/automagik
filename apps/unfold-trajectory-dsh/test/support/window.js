@@ -475,7 +475,7 @@ function boundRaw(raw) {
     if (next < 0) {
       // Only whitespace is left after the cut: keep the last word, so a keyword such as
       // "Bearer" still precedes the value that the next delta brings.
-      const last = raw.match(/\S+\s*$/)?.[0] ?? ''
+      const last = raw.match(/(?<!\S)\S+\s*$/)?.[0] ?? ''
       return last.length <= RAW_MAX ? { raw: last, orphan: null } : { raw: '', orphan: { token: true } }
     }
     cut += next
