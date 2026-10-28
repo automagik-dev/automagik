@@ -56,6 +56,11 @@ export const endLabel = (task) => {
 
 export function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, useWork }) {
   const asked = useSessionStatus && sessionId ? useSessionStatus(map => waitsForUser(map, sessionId)) : false
+  // The approval itself, not just whether one waits: its `answer` settles the one request
+  // DSH holds for the task, so this card and the task's own prompt are two views of one
+  // decision, never two decisions.
+  const pending = useSessionStatus && sessionId ? useSessionStatus(map => map.get(sessionId)?.pendingInteraction) : undefined
+  const ask = pending?.kind === 'approval' && typeof pending.answer === 'function' ? pending : undefined
   const approval = useWork && sessionId ? useWork(work => approvalFor(work, sessionId)) : false
   const waiting = asked || approval
   const status = taskState(task, waiting)
@@ -63,7 +68,13 @@ export function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, use
   const now = useNow(working)
   const started = task?.at ?? now
   const elapsed = (task?.endedAt ?? now) - started
-  return h('section', { className: 'op-task', 'data-state': status },
+  const [answering, setAnswering] = useState(false)
+  const answer = (choice) => {
+    if (answering || ask?.answerable === false) return
+    setAnswering(true)
+    void Promise.resolve(ask.answer(choice)).catch(() => {}).finally(() => setAnswering(false))
+  }
+  return h('section', { className: 'op-task', 'data-state': status, 'aria-busy': answering || undefined },
     h('div', { className: 'op-task-in' },
       h('div', { className: 'op-task-head' },
         h('span', { className: 'op-task-mark', 'aria-hidden': true },
@@ -75,15 +86,22 @@ export function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, use
           h('span', { className: 'op-task-kicker' }, status === 'waiting' ? t('Waiting for you') : working ? t('Task running') : endLabel(task)),
           h('strong', { className: 'op-task-title' }, title)),
         h('span', { className: 'op-task-time' }, duration(elapsed))),
-      status === 'waiting' ? h('div', { className: 'op-task-live' }, h('span', { className: 'op-task-said' }, t('It asks for your OK. Open it to answer.')))
-      : working ? h(Fragment, null,
-        h('div', { className: 'op-task-live' },
-          task?.said ? h('span', { key: task.said, className: 'op-task-said' }, task.said)
-            : h('span', { className: 'op-task-said op-task-quiet' }, t('Getting started…')),
-          task?.steps ? h('span', { className: 'op-task-steps' }, t('step {count}', { count: task.steps })) : null),
-        h('div', { className: 'op-task-bar', 'aria-hidden': true }, h('i')))
-        : task?.summary ? h('p', { className: 'op-task-summary' }, task.summary) : null,
-      sessionId ? h('button', { type: 'button', className: 'op-task-open', onClick: onOpen }, status === 'waiting' ? t('Answer it') : working ? t('Watch it work') : t('Open task'), ' →') : null))
+      status === 'waiting'
+        ? ask
+          ? h('div', { className: 'op-task-ask' },
+              h('span', { className: 'op-task-ask-text' }, t('Task {title} is waiting for approval: {tool}', { title, tool: ask.toolName || t('a tool') })),
+              h('span', { className: 'op-task-ask-actions' },
+                h('button', { type: 'button', className: 'op-task-ask-btn', disabled: answering || ask.answerable === false, onClick: () => answer('rejected') }, t('Reject')),
+                h('button', { type: 'button', className: 'op-task-ask-allow', disabled: answering || ask.answerable === false, onClick: () => answer('allowed-once') }, t('Allow once'))))
+          : h('div', { className: 'op-task-live' }, h('span', { className: 'op-task-said' }, t('It asks for your OK. Open it to answer.')))
+        : working ? h(Fragment, null,
+          h('div', { className: 'op-task-live' },
+            task?.said ? h('span', { key: task.said, className: 'op-task-said' }, task.said)
+              : h('span', { className: 'op-task-said op-task-quiet' }, t('Getting started…')),
+            task?.steps ? h('span', { className: 'op-task-steps' }, t('step {count}', { count: task.steps })) : null),
+          h('div', { className: 'op-task-bar', 'aria-hidden': true }, h('i')))
+          : task?.summary ? h('p', { className: 'op-task-summary' }, task.summary) : null,
+      sessionId ? h('button', { type: 'button', className: 'op-task-open', onClick: onOpen }, ask ? t('Open task') : status === 'waiting' ? t('Answer it') : working ? t('Watch it work') : t('Open task'), ' →') : null))
 }
 
 export const TASK_CSS = `
@@ -115,6 +133,12 @@ export const TASK_CSS = `
 .op-task-title{font-size:14.5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .op-task-time{flex:none;font-size:13px;font-variant-numeric:tabular-nums;color:var(--bt-ink-2)}
 .op-task-live{display:flex;align-items:baseline;gap:10px;min-width:0;font-size:13px}
+.op-task-ask{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0;font-size:13px;line-height:18px;color:var(--bt-ink-2)}
+.op-task-ask-text{flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.op-task-ask-actions{flex:none;display:flex;gap:8px}
+.op-task-ask-btn,.op-task-ask-allow{height:28px;padding:0 12px;border:1px solid var(--bt-line-2);border-radius:999px;background:var(--bt-main);color:var(--bt-ink);font:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
+.op-task-ask-allow{border-color:transparent;background:var(--bt-accent);color:var(--bt-accent-ink)}
+.op-task-ask :is(button:disabled){opacity:.6;cursor:default}
 .op-task-said{flex:1;min-width:0;color:var(--bt-ink-2);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;animation:op-row-in .4s ease both}
 .op-task-quiet{color:var(--bt-ink-3)}
 .op-task-steps{flex:none;font-size:11.5px;color:var(--bt-ink-3)}

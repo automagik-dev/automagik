@@ -695,6 +695,9 @@ var ZH = {
   "{first} and {second} are waiting for your approval": "{first}、{second} 等你批准",
   "{first}, {second} and {count} more are waiting for your approval": "{first}、{second} 等 {total} 个等你批准",
   "Waiting for your approval": "等你批准",
+  "A task needs your approval": "有任务等你批准",
+  "Task {title} is waiting for approval: {tool}": "任务 {title} 等你批准：{tool}",
+  "a tool": "一个工具",
   "in its own chat": "在自己的对话里",
   Reject: "拒绝",
   "Allow once": "允许一次",
@@ -4302,6 +4305,8 @@ var endLabel = (task) => {
 };
 function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, useWork }) {
   const asked = useSessionStatus && sessionId ? useSessionStatus((map) => waitsForUser(map, sessionId)) : false;
+  const pending = useSessionStatus && sessionId ? useSessionStatus((map) => map.get(sessionId)?.pendingInteraction) : void 0;
+  const ask = pending?.kind === "approval" && typeof pending.answer === "function" ? pending : void 0;
   const approval = useWork && sessionId ? useWork((work) => approvalFor(work, sessionId)) : false;
   const waiting = asked || approval;
   const status = taskState(task, waiting);
@@ -4309,9 +4314,16 @@ function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, useWork })
   const now = useNow(working);
   const started = task?.at ?? now;
   const elapsed = (task?.endedAt ?? now) - started;
+  const [answering, setAnswering] = (0, import_react12.useState)(false);
+  const answer = (choice) => {
+    if (answering || ask?.answerable === false) return;
+    setAnswering(true);
+    void Promise.resolve(ask.answer(choice)).catch(() => {
+    }).finally(() => setAnswering(false));
+  };
   return (0, import_react12.createElement)(
     "section",
-    { className: "op-task", "data-state": status },
+    { className: "op-task", "data-state": status, "aria-busy": answering || void 0 },
     (0, import_react12.createElement)(
       "div",
       { className: "op-task-in" },
@@ -4331,7 +4343,17 @@ function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, useWork })
         ),
         (0, import_react12.createElement)("span", { className: "op-task-time" }, duration(elapsed))
       ),
-      status === "waiting" ? (0, import_react12.createElement)("div", { className: "op-task-live" }, (0, import_react12.createElement)("span", { className: "op-task-said" }, t("It asks for your OK. Open it to answer."))) : working ? (0, import_react12.createElement)(
+      status === "waiting" ? ask ? (0, import_react12.createElement)(
+        "div",
+        { className: "op-task-ask" },
+        (0, import_react12.createElement)("span", { className: "op-task-ask-text" }, t("Task {title} is waiting for approval: {tool}", { title, tool: ask.toolName || t("a tool") })),
+        (0, import_react12.createElement)(
+          "span",
+          { className: "op-task-ask-actions" },
+          (0, import_react12.createElement)("button", { type: "button", className: "op-task-ask-btn", disabled: answering || ask.answerable === false, onClick: () => answer("rejected") }, t("Reject")),
+          (0, import_react12.createElement)("button", { type: "button", className: "op-task-ask-allow", disabled: answering || ask.answerable === false, onClick: () => answer("allowed-once") }, t("Allow once"))
+        )
+      ) : (0, import_react12.createElement)("div", { className: "op-task-live" }, (0, import_react12.createElement)("span", { className: "op-task-said" }, t("It asks for your OK. Open it to answer."))) : working ? (0, import_react12.createElement)(
         import_react12.Fragment,
         null,
         (0, import_react12.createElement)(
@@ -4342,7 +4364,7 @@ function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, useWork })
         ),
         (0, import_react12.createElement)("div", { className: "op-task-bar", "aria-hidden": true }, (0, import_react12.createElement)("i"))
       ) : task?.summary ? (0, import_react12.createElement)("p", { className: "op-task-summary" }, task.summary) : null,
-      sessionId ? (0, import_react12.createElement)("button", { type: "button", className: "op-task-open", onClick: onOpen }, status === "waiting" ? t("Answer it") : working ? t("Watch it work") : t("Open task"), " →") : null
+      sessionId ? (0, import_react12.createElement)("button", { type: "button", className: "op-task-open", onClick: onOpen }, ask ? t("Open task") : status === "waiting" ? t("Answer it") : working ? t("Watch it work") : t("Open task"), " →") : null
     )
   );
 }
@@ -4375,6 +4397,12 @@ var TASK_CSS = `
 .op-task-title{font-size:14.5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .op-task-time{flex:none;font-size:13px;font-variant-numeric:tabular-nums;color:var(--bt-ink-2)}
 .op-task-live{display:flex;align-items:baseline;gap:10px;min-width:0;font-size:13px}
+.op-task-ask{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0;font-size:13px;line-height:18px;color:var(--bt-ink-2)}
+.op-task-ask-text{flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.op-task-ask-actions{flex:none;display:flex;gap:8px}
+.op-task-ask-btn,.op-task-ask-allow{height:28px;padding:0 12px;border:1px solid var(--bt-line-2);border-radius:999px;background:var(--bt-main);color:var(--bt-ink);font:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
+.op-task-ask-allow{border-color:transparent;background:var(--bt-accent);color:var(--bt-accent-ink)}
+.op-task-ask :is(button:disabled){opacity:.6;cursor:default}
 .op-task-said{flex:1;min-width:0;color:var(--bt-ink-2);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;animation:op-row-in .4s ease both}
 .op-task-quiet{color:var(--bt-ink-3)}
 .op-task-steps{flex:none;font-size:11.5px;color:var(--bt-ink-3)}
@@ -9277,6 +9305,7 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 .bt-row-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-tag{flex:none;max-width:96px;font-size:12px;line-height:16px;font-weight:400;padding:1px 6px;border-radius:4px;background:var(--bt-tag-bg);color:var(--bt-tag-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-row-preview{font-size:13px;line-height:18px;color:var(--bt-ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bt-row-preview-ask{color:var(--st-warn,var(--bt-ink-2));font-weight:500}
 .bt-unread{width:8px;height:8px;border-radius:50%;background:var(--bt-accent);flex:none;margin-right:2px;animation:bt-fade .13s cubic-bezier(.22,1,.36,1)}
 .bt-unread-wait{background:var(--bt-star)}
 .bt-rail{align-items:center;padding:0 0 8px}
@@ -14733,7 +14762,16 @@ function liveOf(work, roster, now = Date.now()) {
   const byId = roster?.byId ?? {};
   const roomsById = roster?.roomsById ?? {};
   const tasks = roster?.tasks ?? {};
-  const needs = (work?.approvals ?? []).filter((entry) => byId[entry.botId]).map((entry) => ({ key: `ask:${entry.id}`, bot: byId[entry.botId], place: entry.roomId ? roomsById[entry.roomId]?.name : void 0, tool: entry.tool, open: entry.taskId ?? entry.roomId ?? entry.botId }));
+  const needs = (work?.approvals ?? []).filter((entry) => byId[entry.botId]).map((entry) => {
+    const task = entry.taskId === void 0 ? void 0 : tasks[entry.taskId];
+    return {
+      key: `ask:${entry.id}`,
+      bot: byId[entry.botId],
+      place: entry.roomId ? roomsById[entry.roomId]?.name : task?.title ?? entry.label,
+      tool: entry.tool,
+      open: entry.taskId ?? entry.roomId ?? entry.botId
+    };
+  });
   const waitingTasks = new Set((work?.approvals ?? []).map((entry) => entry.taskId).filter(Boolean));
   const working = [];
   for (const [id, doing] of Object.entries(work?.bots ?? {})) {
@@ -15314,6 +15352,8 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   const main = isMainOf(roster, id);
   const crowned = roster.mainBotId === id;
   const approval = useApproval(useWork, (entry) => entry.botId === id);
+  const blockedTask = useWork ? useWork((work) => (work.approvals ?? []).some((entry) => entry.taskId !== void 0 && entry.botId === id)) : false;
+  const blockedLine = blockedTask ? t("A task needs your approval") : "";
   const alert = roster.questions?.[part] !== void 0 || approval;
   const doing = useActivity((map) => map[id]);
   const groups = workKeys(useGroupWork(useWork, (rooms) => Object.entries(rooms).flatMap(([roomId, entries2]) => entries2.filter((entry) => entry.botId === id).map((entry) => ({ id: roomId, ...doingOf(entry) })))));
@@ -15353,7 +15393,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
       "span",
       { className: "bt-row-body" },
       (0, import_react39.createElement)("span", { className: "bt-row-name" }, (0, import_react39.createElement)("span", { className: "bt-row-title" }, bot.name), role ? (0, import_react39.createElement)("span", { className: "bt-role" }, role) : null, pinned ? (0, import_react39.createElement)(PinMark) : null),
-      runningLine ? (0, import_react39.createElement)("span", { className: "bt-row-preview" }, runningLine) : awayLine ? (0, import_react39.createElement)("span", { className: "bt-row-preview" }, awayLine) : waitsFor ? (0, import_react39.createElement)("span", { className: "bt-row-preview" }, waitsFor) : threadsLine ? (0, import_react39.createElement)("span", { className: "bt-row-preview" }, threadsLine) : preview ? (0, import_react39.createElement)("span", { className: "bt-row-preview" }, preview) : null
+      blockedLine ? (0, import_react39.createElement)("span", { className: "bt-row-preview bt-row-preview-ask" }, blockedLine) : runningLine ? (0, import_react39.createElement)("span", { className: "bt-row-preview" }, runningLine) : awayLine ? (0, import_react39.createElement)("span", { className: "bt-row-preview" }, awayLine) : waitsFor ? (0, import_react39.createElement)("span", { className: "bt-row-preview" }, waitsFor) : threadsLine ? (0, import_react39.createElement)("span", { className: "bt-row-preview" }, threadsLine) : preview ? (0, import_react39.createElement)("span", { className: "bt-row-preview" }, preview) : null
     ) : null,
     // Badges other Omni plugins add (extend.js): Omni's row counts the automation runs waiting for you.
     wide ? (0, import_react39.createElement)(RowBadges, { bot, roster, useWork }) : null,

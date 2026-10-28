@@ -142,15 +142,21 @@ test('the task card in the chat shows the same state as the thread', () => {
   assert.equal(taskState({ status: 'working' }, true), 'waiting')
   assert.equal(taskState({ status: 'working' }, false), 'working')
   assert.equal(taskState({ status: 'done' }, true), 'done')
+  // The approval DSH holds for the task's Session: the card answers that one request.
+  const answers = []
+  const pending = { kind: 'approval', toolName: 'bash', answerable: true, answer: outcome => answers.push(outcome) }
   const card = (waiting) => TaskCard({
     sessionId: 'session-b', title: 'Send summary to Ana?', task: task('pip', 'Send summary to Ana?', 0), onOpen() {},
-    useSessionStatus: pick => pick(new Map(waiting ? [['session-b', { pendingInteraction: { kind: 'approval' } }]] : [])),
+    useSessionStatus: pick => pick(new Map(waiting ? [['session-b', { pendingInteraction: pending }]] : [])),
   })
   const waiting = card(true)
   assert.equal(waiting.props['data-state'], 'waiting')
   assert.match(textOf(waiting), /Waiting for you/)
   assert.equal(find(waiting, node => node.props?.className === 'op-task-wait').length, 1)
-  assert.match(textOf(waiting), /Answer it/)
+  // The parent chat names the task and the tool, and offers both decisions inline.
+  assert.match(textOf(waiting), /Task Send summary to Ana\? is waiting for approval: bash/)
+  find(waiting, node => node.props?.className === 'op-task-ask-allow')[0].props.onClick()
+  assert.deepEqual(answers, ['allowed-once'])
   const working = card(false)
   assert.equal(working.props['data-state'], 'working')
   assert.match(textOf(working), /Task running/)
