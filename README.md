@@ -8,6 +8,8 @@ Automagik's plugins for [DeepSeek Harness](https://github.com/deepseek-ai/deepse
 | [`apps/welcome-dsh`](apps/welcome-dsh/README.md) | `@automagik/welcome-dsh` | The welcome: the octopus, the team step, and Connect AI through DSH's own sign-ins. |
 | [`apps/unfold-bridge-dsh`](apps/unfold-bridge-dsh/README.md) | `@automagik/unfold-bridge-dsh` | The Unfold bridge: your DSH's model routes for Unfold, as an OpenAI-compatible endpoint on 127.0.0.1 behind a key made at each start. |
 | [`apps/locale-pt-br-dsh`](apps/locale-pt-br-dsh/README.md) | `@automagik/locale-pt-br-dsh` | Português (Brasil): adds Brazilian Portuguese to DSH's languages and translates what a first session shows, the Bot team's main screens included; the rest stays in English. |
+| [`apps/unfold-capabilities-dsh`](apps/unfold-capabilities-dsh/README.md) | `@automagik/unfold-capabilities-dsh` | What Unfold can do, and how well: a read-only capability map computed only from bench scorecards, pushed when a run lands. |
+| [`apps/unfold-settings-dsh`](apps/unfold-settings-dsh/README.md) | `@automagik/unfold-settings-dsh` | How Unfold is set up right now, read-only: each value with its source and how fresh it is, and unknown when nothing reports it. |
 | [`apps/unfold-session-dsh`](apps/unfold-session-dsh/README.md) | `@automagik/unfold-session-dsh` | The Unfold session: Unfold's rolling session as one DSH conversation in the DSH of Unfold's own instance. What you send in its composer reaches Unfold once, only through Unfold's own control endpoint; DSH makes no model call for it. |
 | [`apps/desktop`](apps/desktop/README.md) | (the app) | The Automagik desktop app: DSH of its own with the Bot team, the welcome and Omni's channels and canvases. `omni desktop` opens it with Omni preloaded, `genie desktop` with Genie. |
 
@@ -51,6 +53,8 @@ bun install && bun run check                    # versions, release tooling, mar
 cd apps/bots-dsh && bun install && bun run harness && bun run test
 cd apps/welcome-dsh && bun install && bun run harness && bun run test
 cd apps/unfold-bridge-dsh && bun install && bun run harness && bun run test
+cd apps/unfold-capabilities-dsh && bun install && bun run harness && bun run test
+cd apps/unfold-settings-dsh && bun install && bun run harness && bun run test
 cd apps/desktop && npm ci && npm test
 node scripts/boot-check.mjs                     # boot the plugins with Omni's in headless Chromium
 ```
