@@ -41,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [bots-dsh, locale-pt-br-dsh, unfold-bridge-dsh, welcome-dsh]
+        app: [bots-dsh, locale-pt-br-dsh, unfold-bridge-dsh, unfold-mind-dsh, welcome-dsh]
     defaults:
       run:
         working-directory: apps/${{ matrix.app }}
