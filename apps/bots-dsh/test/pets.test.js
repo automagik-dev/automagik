@@ -61,14 +61,32 @@ test('the plugin ships Genie as a v2 pet with its sleep strip, and lists Codex\'
   await writeFile(join(codexHome, 'pets', 'broken', 'spritesheet.webp'), vp8x(512, 512))
   const pets = createPets({ home, codexHome, fetch: () => { throw new Error('no network') } })
   const list = await pets.list()
-  assert.deepEqual(list.map(pet => [pet.source, pet.id, pet.version, pet.sleep]), [['builtin', 'genie-cosmic', 2, true], ['codex', 'fox', 1, false]])
+  // Directory order is filesystem-dependent: compare by identity, not by readdir order.
+  const shapes = list.map(pet => [pet.source, pet.id, pet.version, pet.sleep]).sort((a, b) => `${a[0]}:${a[1]}`.localeCompare(`${b[0]}:${b[1]}`))
+  assert.deepEqual(shapes, [['builtin', 'automagik', 2, true], ['builtin', 'genie-cosmic', 2, true], ['codex', 'fox', 1, false]])
   assert.equal(sheetVersion(await pets.file('builtin', 'genie-cosmic')), 2)
   assert.ok((await pets.file('builtin', 'genie-cosmic', 'sleep')).length > 0)
   assert.equal(await pets.file('builtin', '../etc'), undefined)
   // Picked from Codex, a pet is copied to the team, which then lists it as its own.
   const kept = await pets.adopt('codex', 'fox')
   assert.deepEqual([kept.source, kept.id, kept.version], ['team', 'fox', 1])
-  assert.deepEqual((await pets.list()).map(pet => `${pet.source}:${pet.id}`), ['builtin:genie-cosmic', 'team:fox'])
+  assert.deepEqual((await pets.list()).map(pet => `${pet.source}:${pet.id}`).sort(), ['builtin:automagik', 'builtin:genie-cosmic', 'team:fox'])
+})
+
+test('Automagik ships its original v2 atlas and sleep strip without network adoption', async () => {
+  const pets = createPets({ ...await homes(), fetch: () => { throw new Error('no network') } })
+  const pet = await pets.adopt('builtin', 'automagik')
+  assert.deepEqual([pet.id, pet.name, pet.source, pet.version, pet.sleep], ['automagik', 'Automagik', 'builtin', 2, true])
+  const sheet = await pets.file('builtin', pet.id)
+  const sleep = await pets.file('builtin', pet.id, 'sleep')
+  assert.equal(sheetVersion(sheet), 2)
+  assert.deepEqual(webpSize(sleep), [1152, 208])
+  assert.deepEqual(sheet, await readFile(new URL('../src/host/pets/automagik/spritesheet.webp', import.meta.url)))
+  assert.deepEqual(sleep, await readFile(new URL('../src/host/pets/automagik/sleep.webp', import.meta.url)))
+  for (const bytes of [sheet, sleep]) {
+    assert.equal(bytes.toString('latin1', 12, 16), 'VP8L')
+    assert.ok(bytes.readUInt32LE(21) & (1 << 28), 'the lossless WebP retains its alpha channel')
+  }
 })
 
 test('a pet from codex-pets.net is checked and kept with the team; nothing else is fetched', async () => {

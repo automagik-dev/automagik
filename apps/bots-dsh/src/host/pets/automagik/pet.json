@@ -1,0 +1,9 @@
+{
+  "id": "automagik",
+  "name": "Automagik",
+  "displayName": "Automagik",
+  "kind": "custom",
+  "description": "Automagik triskelion brought to life in cyan, magenta and lavender clay.",
+  "spriteVersionNumber": 2,
+  "spritesheetPath": "spritesheet.webp"
+}
