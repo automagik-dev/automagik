@@ -11,7 +11,7 @@ Unfold for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (
 
 ## Its defaults
 
-The Unfold Bot type starts with the Unfold bridge and the seven Unfold plugins (`UNFOLD_PLUGINS` in `src/host/unfold.js`). The bridge and all seven `@automagik/unfold-*-dsh` plugins are in this repository and released together at its one version. The welcome installs their release tarballs, or their sibling paths when the welcome comes from a linked checkout or a pinned git source.
+The Unfold Bot type starts with the Unfold bridge and the six Unfold companion bundles (`UNFOLD_PLUGINS` in `src/host/unfold.js`). The bridge and all six companion bundles are in this repository and released together at its one version. The welcome installs their release tarballs, or their sibling paths when the welcome comes from a linked checkout or a pinned git source. The SSE library is shipped in the streaming bundles; it is released separately for reuse and is not installed as a DSH bundle.
 
 | Plugin | What it brings |
 |---|---|

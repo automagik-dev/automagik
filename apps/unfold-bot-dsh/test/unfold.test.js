@@ -167,10 +167,10 @@ test('the Main Bot maker goes when the plugin does', () => {
   assert.equal(team.mainBotMaker, undefined)
 })
 
-test('its defaults are the Unfold bridge and the seven Unfold plugins, all of this repository', () => {
+test('its defaults are the Unfold bridge and the six Unfold companion bundles, all of this repository', () => {
   assert.deepEqual(UNFOLD_PLUGINS.map(plugin => plugin.name), [
     '@automagik/unfold-bridge-dsh',
-    ...['sse', 'events', 'capabilities', 'settings', 'mind', 'trajectory', 'session'].map(part => `@automagik/unfold-${part}-dsh`),
+    ...['events', 'capabilities', 'settings', 'mind', 'trajectory', 'session'].map(part => `@automagik/unfold-${part}-dsh`),
   ])
   for (const plugin of UNFOLD_PLUGINS) assert.equal(`@automagik/${plugin.dir}`, plugin.name)
 })

@@ -37,7 +37,6 @@ export const UNFOLD_BOT = Object.freeze({
 // them preinstalled.
 export const UNFOLD_PLUGINS = Object.freeze([
   { name: '@automagik/unfold-bridge-dsh', dir: 'unfold-bridge-dsh', title: 'Unfold bridge', what: 'Unfold watches this DSH' },
-  { name: '@automagik/unfold-sse-dsh', dir: 'unfold-sse-dsh', title: 'Unfold stream', what: 'Unfold\'s events as they happen' },
   { name: '@automagik/unfold-events-dsh', dir: 'unfold-events-dsh', title: 'Unfold events', what: 'What Unfold did, as a timeline' },
   { name: '@automagik/unfold-capabilities-dsh', dir: 'unfold-capabilities-dsh', title: 'Unfold capabilities', what: 'What Unfold can do now' },
   { name: '@automagik/unfold-settings-dsh', dir: 'unfold-settings-dsh', title: 'Unfold settings', what: 'Unfold\'s settings, to read' },

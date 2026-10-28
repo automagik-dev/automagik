@@ -265,3 +265,11 @@ test('the overlay\'s empty plugin-market.indexes shows as no market source on th
   const automagik = 'https://raw.githubusercontent.com/automagik-dev/dsh-marketplace/main/index.json'
   assert.deepEqual(sourcesFor([automagik]).map(source => source.url), [automagik])
 })
+
+test('Unfold installs bundles, leaving its carried SSE library out of the plugin manager', () => {
+  assert.ok(!UNFOLD_PLUGINS.some(plugin => plugin.name === '@automagik/unfold-sse-dsh'))
+  for (const plugin of [OMNI_PLUGINS[0], ...UNFOLD_PLUGINS, UNFOLD_PLUGIN]) {
+    const manifest = JSON.parse(readFileSync(new URL(`../../${plugin.dir}/package.json`, import.meta.url), 'utf8'))
+    assert.equal(typeof manifest.dsh?.bundle?.patch, 'string', `${plugin.name} must be installable by DSH installBundle`)
+  }
+})
