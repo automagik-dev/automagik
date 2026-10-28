@@ -4,6 +4,7 @@ import vm from 'node:vm'
 import { readFileSync } from 'node:fs'
 import { apply } from '../index.js'
 import { fakeDsh } from './fake-dsh.js'
+import { within } from './wait.js'
 
 const discovery = (dsh) => dsh.routes.find((r) => r.path === '/api/unfold-session/config')
 
@@ -87,11 +88,13 @@ test('Bot binding waits until the configured root Session has been created', asy
   let finishCreate
   const creation = new Promise((resolve) => { finishCreate = resolve })
   const created = []
+  let seenCreate
+  const createStarted = new Promise((resolve) => { seenCreate = resolve })
   dsh.ctx.inject = (names, callback) => inject(names, (ctx) => callback({
     ...ctx,
     get: () => ({ stat: async () => false }),
     workspaceRegistry: { create: async () => ({ id: 'workspace' }) },
-    sessionController: { ...ctx.sessionController, create: async (options) => { created.push(options); await creation } },
+    sessionController: { ...ctx.sessionController, create: async (options) => { created.push(options); seenCreate(); await creation } },
   }))
   const { mkdtempSync, rmSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
@@ -102,7 +105,7 @@ test('Bot binding waits until the configured root Session has been created', asy
     const service = dsh.provided.unfoldSession
     let ready = false
     service.ready.then(() => { ready = true })
-    while (!created.length) await new Promise((resolve) => setImmediate(resolve))
+    await within(createStarted, 2000, 'configured root creation starts')
     assert.equal(ready, false, 'service is not ready while root creation waits')
     assert.equal(service.sessionId, 'custom-root')
     assert.equal(created[0].sessionId, service.sessionId)
