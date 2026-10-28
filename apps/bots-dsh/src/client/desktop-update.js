@@ -25,7 +25,8 @@ export function updatePill(state) {
   }
 }
 
-export function DesktopUpdate() {
+/** The app's update bridge and its latest presentation; no bridge outside the app. */
+export function useDesktopUpdate() {
   const bridge = globalThis.omniDesktop?.updates
   const [state, setState] = useState(null)
   useEffect(() => {
@@ -36,6 +37,11 @@ export function DesktopUpdate() {
     bridge.status().then((next) => { if (live && !heard) setState(next) }, () => {})
     return () => { live = false; off?.() }
   }, [bridge])
+  return { bridge, state }
+}
+
+export function DesktopUpdate() {
+  const { bridge, state } = useDesktopUpdate()
   const pill = updatePill(state)
   if (!bridge || !pill) return null
   const busy = BUSY.has(state.phase)
