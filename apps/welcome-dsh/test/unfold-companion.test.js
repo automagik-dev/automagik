@@ -26,7 +26,7 @@ function fakeTeam(home) {
     botOf: id => state.bots[id],
     createBot: async (options) => {
       made += 1
-      const bot = { id: `bot-${made}`, ...options }
+      const bot = { id: options.existingSessionId ?? `bot-${made}`, ...options }
       state.bots[bot.id] = bot
       if (options.main) state.mainBotIds.push(bot.id)
       return bot
@@ -44,7 +44,7 @@ function fakeTeam(home) {
 }
 
 const ctxOf = (team, entry) => ({
-  get: name => (name === 'omniTeam' ? team : undefined),
+  get: name => (name === 'omniTeam' ? team : name === 'unfoldSession' ? { sessionId: 'configured-root', ready: Promise.resolve() } : undefined),
   settings: { describe: () => [{ ns: 'omni-ai', value: entry }], update: async () => {} },
   effect: (run) => { run() },
   logger: { warn: () => {} },
