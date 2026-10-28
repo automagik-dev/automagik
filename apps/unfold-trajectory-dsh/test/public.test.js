@@ -29,7 +29,9 @@ const SHIPPED = ['index.js', 'client.js', ...walk(ROOT, 'src')]
 const TRACKED = walk(ROOT).filter((file) => join(ROOT, file) !== HERE)
 
 test('no fixed port and no default address in what ships', () => {
-  const address = /\b(?:7700|7781)\b|127\.0\.0\.1|\blocalhost\b|0\.0\.0\.0|\[::1?\]|:\/\/[^/\s"'`]*:\d+/i
+  // The fixed ports of the first Unfold plugins, spelled so that a scan for them finds only shipped code.
+  const ports = [77_00, 77_81].join('|')
+  const address = new RegExp(`\\b(?:${ports})\\b|127\\.0\\.0\\.1|\\blocalhost\\b|0\\.0\\.0\\.0|\\[::1?\\]|:\\/\\/[^/\\s"'\`]*:\\d+`, 'i')
   for (const file of SHIPPED) {
     const hit = read(file).match(address)
     assert.equal(hit, null, `${file}: ${hit?.[0]}`)
