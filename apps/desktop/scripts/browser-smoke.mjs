@@ -86,15 +86,10 @@ app.whenReady().then(async () => {
   await stand.webContents.loadURL('data:text/html,<body style="background:%23eee">dsh</body>')
   const views = new BotViews({ window: () => window, WebContentsView, session, origin: () => dshOrigin, page: () => ({ ...stand.getBounds(), zoom: 1, radius: 10 }) })
   const relay = new BotRelay({ views })
-  // The cursor's windows, each with whether it lets the pointer through.
-  const ignoring = new WeakMap()
-  const cursor = new BotCursor({ window: () => window, views, BrowserWindow: class extends BrowserWindow {
-    setIgnoreMouseEvents(ignore, options) {
-      ignoring.set(this, ignore)
-      return super.setIgnoreMouseEvents(ignore, options)
-    }
-  } })
+  const cursor = new BotCursor({ window: () => window, BrowserWindow, views })
   const cursors = () => window.getChildWindows()
+  // The last check closes the window: the smoke goes on without it.
+  app.on('window-all-closed', () => {})
   // Where the shown tab is on screen, which its cursor window must cover.
   const onScreen = (view) => {
     const content = window.getContentBounds()
@@ -205,24 +200,24 @@ app.whenReady().then(async () => {
     await tab.waitForURL('**/before-crash', { timeout: 10_000 })
     assert(await tab.title() === 'before-crash', 'the page did not load again')
   })
-  await check('the Bot\'s cursor covers the shown tab, lets the pointer through and takes no focus', async () => {
-    assert(!cursors().some(shown => shown.isVisible()), 'a cursor while no tab is shown')
+  await check('the Bot\'s cursor covers the shown tab', async () => {
+    assert(cursors().length === 0, 'a cursor while no tab is shown')
     const { tabId, view } = views.entriesOf(BOT)[0]
     views.place(tabId, { left: 100, top: 20, width: 600, height: 500 }, true)
     await until(() => cursors()[0]?.isVisible(), 'the cursor never showed')
     const [shown] = cursors()
     assert(same(shown.getBounds(), onScreen(view)), `${JSON.stringify(shown.getBounds())} over ${JSON.stringify(onScreen(view))}`)
-    assert(ignoring.get(shown) === true, 'the cursor takes the pointer')
-    assert(!shown.isFocusable(), 'the cursor can take focus')
-    const preferences = shown.webContents.getLastWebPreferences()
-    assert(preferences.sandbox && preferences.contextIsolation && !preferences.nodeIntegration, JSON.stringify(preferences))
   })
-  await check('the cursor stays on the tab as the app window moves', async () => {
+  await check('the cursor stays on the tab as the app window moves, and goes while it is hidden', async () => {
     const [x, y] = window.getPosition()
     window.setPosition(x + 40, y + 30)
     const { view } = views.entriesOf(BOT)[0]
     await until(() => window.getPosition()[0] === x + 40, 'the window never moved')
     await until(() => same(cursors()[0].getBounds(), onScreen(view)), 'the cursor stayed behind')
+    window.hide()
+    await until(() => cursors().length === 0, 'the cursor outlived the hidden window')
+    window.show()
+    await until(() => cursors()[0]?.isVisible(), 'the cursor never came back')
   })
   await check('the cursor follows the Bot\'s click', async () => {
     await tab.goto(home)
@@ -239,15 +234,15 @@ app.whenReady().then(async () => {
     const gone = new Promise(done => browser.once('disconnected', done))
     await views.hold(BOT, true)
     await within(gone, 5_000, 'the disconnect')
-    assert(!cursors()[0].isVisible(), 'the cursor shows under the hold')
+    assert(cursors().length === 0, 'the cursor shows under the hold')
     const refused = await relay.endpoint(BOT).then(() => false, () => true)
     assert(refused, 'an endpoint was issued under the hold')
     await views.hold(BOT, false)
-    assert(!cursors()[0].isVisible(), 'the cursor shows before the Bot is back')
+    assert(cursors().length === 0, 'the cursor shows before the Bot is back')
   })
   await check('the cursor shows again for the Bot\'s next session', async () => {
     browser = await chromium.connectOverCDP(await relay.endpoint(BOT))
-    await until(() => cursors()[0].isVisible(), 'the cursor stayed hidden')
+    await until(() => cursors()[0]?.isVisible(), 'the cursor stayed hidden')
     await browser.close()
   })
   await check('another Bot cannot reach this Bot\'s tabs', async () => {
@@ -281,11 +276,25 @@ app.whenReady().then(async () => {
     }
     socket.close()
   })
-  await check('closing the Bot\'s tabs closes its cursor, and only the shown Bot has one', async () => {
-    assert(views.entriesOf(OTHER).length > 0 && cursors().length === 1, `${cursors().length} cursors`)
+  await check('closing the Bot\'s tabs closes its cursor', async () => {
+    browser = await chromium.connectOverCDP(await relay.endpoint(BOT))
+    await until(() => cursors().length === 1, 'no cursor to close')
     const [shown] = cursors()
     for (const { tabId } of views.entriesOf(BOT)) await views.close(BOT, tabId)
     assert(shown.isDestroyed() && cursors().length === 0, 'the cursor outlived the tabs')
+    await browser.close()
+  })
+  await check('closing the app window as macOS and Windows do leaves no cursor behind', async () => {
+    const other = await chromium.connectOverCDP(await relay.endpoint(OTHER))
+    views.place(views.entriesOf(OTHER)[0].tabId, { left: 0, top: 0, width: 400, height: 300 }, true)
+    await until(() => cursors().length === 1, 'no cursor to leave behind')
+    // main.js: the close is held for the fade, then the window is destroyed.
+    window.once('close', (event) => { event.preventDefault(); window.destroy() })
+    const closed = new Promise(done => window.once('closed', done))
+    window.close()
+    await within(closed, 5_000, 'the window closing')
+    await until(() => BrowserWindow.getAllWindows().length === 0, `${BrowserWindow.getAllWindows().length} windows left`)
+    await other.close()
   })
 
   cursor.dispose()

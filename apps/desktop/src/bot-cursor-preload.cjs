@@ -8,10 +8,12 @@ const at = (element, { x, y }) => {
   element.style.setProperty('--y', `${y}px`)
 }
 
-ipcRenderer.on('automagik-cursor', (_event, { pointer, effect, instant }) => {
+ipcRenderer.on('automagik-cursor', (_event, { pointer, effect, instant, radius }) => {
   const arrow = document.querySelector('.pointer')
   const glow = document.querySelector('.glow')
   if (!arrow || !glow) return
+  // The glow takes the tab's corners.
+  glow.style.setProperty('--radius', `${radius}px`)
   arrow.classList.toggle('instant', instant === true)
   arrow.classList.toggle('on', pointer !== null)
   if (pointer) at(arrow, pointer)

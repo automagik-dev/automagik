@@ -22,7 +22,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:transparent;pointer-ev
   border-radius:50%;box-shadow:0 0 0 2px var(--ring),inset 0 0 8px var(--ring);animation:ripple .45s ease-out forwards}
 @keyframes ripple{from{opacity:.75;scale:.3}to{opacity:0;scale:1.2}}
 
-.glow{position:absolute;inset:0;border-radius:10px;opacity:0;
+.glow{position:absolute;inset:0;border-radius:var(--radius,0);opacity:0;
   box-shadow:inset 0 0 0 2px var(--glow),inset 0 0 22px color-mix(in srgb,var(--glow) 70%,transparent)}
 .glow.flash{animation:glow .7s ease-out}
 @keyframes glow{20%{opacity:1}to{opacity:0}}

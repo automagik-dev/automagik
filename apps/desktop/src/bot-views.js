@@ -228,10 +228,11 @@ export class BotViews {
       width: Math.max(1, Math.round(box.width * scale)),
       height: Math.max(1, Math.round(box.height * scale)),
     })
-    entry.view.setBorderRadius(page?.radius ?? 0)
+    entry.radius = page?.radius ?? 0
+    entry.view.setBorderRadius(entry.radius)
     if (entry.shown) this.#window()?.contentView.addChildView(entry.view)
     entry.view.setVisible(entry.shown)
-    this.cursor?.update(entry.botId)
+    this.cursor?.update()
   }
 
   async operate(botId, action, payload = {}) {
@@ -271,7 +272,7 @@ export class BotViews {
     this.relay?.closing(entry)
     this.#views.delete(entry.tabId)
     this.#window()?.contentView.removeChildView(entry.view)
-    this.cursor?.update(entry.botId)
+    this.cursor?.update()
     this.#onChange({ type: 'closed', botId: entry.botId, tabId: entry.tabId })
   }
 
@@ -295,7 +296,7 @@ export class BotViews {
       this.#held.add(botId)
       this.relay?.drop(botId)
     } else this.#held.delete(botId)
-    this.cursor?.update(botId)
+    this.cursor?.update()
     return true
   }
 
@@ -311,6 +312,11 @@ export class BotViews {
     return [...this.#views.values()].filter(entry => entry.botId === botId)
   }
 
+  /** The tabs on screen, over the panel. */
+  shown() {
+    return [...this.#views.values()].filter(entry => entry.shown)
+  }
+
   entry(tabId) {
     return this.#views.get(tabId)
   }
@@ -318,7 +324,7 @@ export class BotViews {
   /** The view's state changed (a Bot attached or left). */
   changed(entry) {
     this.#publish(entry)
-    this.cursor?.update(entry.botId)
+    this.cursor?.update()
   }
 
   dispose() {

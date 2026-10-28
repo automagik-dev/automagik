@@ -83,7 +83,11 @@ const botViews = new BotViews({
   onChange: (change) => { if (page && !page.webContents.isDestroyed()) page.webContents.send('automagik-browser-view', change) },
 })
 const botRelay = new BotRelay({ views: botViews })
-const botCursor = new BotCursor({ window: () => window, BrowserWindow, views: botViews })
+// On Wayland no window can place itself, so the Bot's cursor is not drawn there, unless
+// Electron runs through XWayland (`--ozone-platform=x11`).
+const wayland = process.platform === 'linux' && process.env.XDG_SESSION_TYPE === 'wayland' &&
+  !['ozone-platform', 'ozone-platform-hint'].some(name => app.commandLine.getSwitchValue(name) === 'x11')
+const botCursor = new BotCursor({ window: () => window, BrowserWindow, views: botViews, placeable: !wayland })
 
 // omni:// links (deeplink.js): the system hands them to the running app (macOS: open-url;
 // Linux: a second instance with the link as an argument), or starts the app with one.
