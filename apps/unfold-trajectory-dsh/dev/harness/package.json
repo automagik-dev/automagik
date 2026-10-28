@@ -1,0 +1,12 @@
+{
+  "name": "unfold-trajectory-dsh-test-harness",
+  "private": true,
+  "description": "The DeepSeek Harness packages that the linter runs against. Install with bun run harness in apps/unfold-trajectory-dsh.",
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.2.1-rc.3",
+    "oxlint": "1.76.0"
+  },
+  "overrides": {
+    "@opentelemetry/api": "1.9.1"
+  }
+}
