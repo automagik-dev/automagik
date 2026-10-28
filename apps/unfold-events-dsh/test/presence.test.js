@@ -342,7 +342,7 @@ test('plugin: presence snapshots and SSE redact fault credentials before catalog
   for (const detail of [
     `connect with ${canary}`,
     { api_key: 'synthetic-secret-value', nested: { note: canary } },
-    `${'x'.repeat(125)} ${canary} end`,
+    `${'x'.repeat(110)} ${canary} end`,
   ]) {
     service.ingest(env('journal_fault', { detail }))
     const update = await read()
