@@ -82,10 +82,14 @@ export function install(rt, team, env = process.env) {
   }
 
   // The team's first Main Bot, when the team has none yet: Unfold, unless an Unfold Bot was
-  // made before (then the team makes its default one).
+  // made before (then the team makes its default one). The team may ask again while the first
+  // one is on its way (it stops waiting after a while); that ask gets the same Bot.
+  let making = null
   async function mainBot() {
+    if (making !== null) return making
     if (unfoldBot() !== undefined || load().unfoldCreated) return undefined
-    return make({ main: true })
+    making = make({ main: true }).finally(() => { making = null })
+    return making
   }
 
   // Once per start: through the team's own bootstrap when it has no Main Bot (one at a time

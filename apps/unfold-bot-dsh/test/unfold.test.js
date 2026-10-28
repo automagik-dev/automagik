@@ -139,6 +139,25 @@ test('a read-only team (another DSH holds it) gets no Bot', async () => {
   assert.deepEqual(team.record.created, [])
 })
 
+// The team drops a maker that gives no answer in time (bots-dsh MAIN_BOT_MAKER_MS) and asks it
+// again on a later state read, while the first Bot may still be on its way.
+test('in Unfold\'s instance, a maker asked again while its Bot is on its way makes one Bot', async () => {
+  const team = fakeTeam()
+  const create = team.createBot
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  let asked = 0
+  team.createBot = async (options) => { asked += 1; await gate; return create(options) }
+  const rt = createRuntime(ctx(), team, {}, LEADS)
+  const first = team.mainBotMaker()
+  const second = team.mainBotMaker()
+  release()
+  const [a, b] = await Promise.allSettled([first, second, rt.unfoldReady])
+  assert.equal(asked, 1)
+  assert.deepEqual(team.record.created.map(bot => [bot.name, bot.main]), [[UNFOLD_NAME, true]])
+  assert.equal(a.value.id, b.value.id)
+})
+
 test('the Main Bot maker goes when the plugin does', () => {
   const context = ctx()
   const team = fakeTeam({ bots: { m: { id: 'm', name: 'Omni' } }, mainBotIds: ['m'] })
