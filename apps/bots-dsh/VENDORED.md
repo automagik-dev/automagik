@@ -1,8 +1,9 @@
 # Vendored from DeepSeek-Bot
 
-- Upstream: https://github.com/Fei2411/DeepSeek-Bot (`ds-bot/` directory)
-- Upstream commit: 1bebe826f74e9a72cabafd3b80602b05af867b38 (main on 2026-10-23: 0.2.1 and the 0.3.0 preparation),
-  merged over e13bc3419d2695a509520d850a07e63f05c34e07, the commit first vendored (0.1.7)
+- Upstream: https://github.com/Fei2411/DS-Bot (`ds-bot/` directory; it was DeepSeek-Bot)
+- Upstream commit: 4a7b55069ad300eae8be42a74f31bc170b40ead7 (main on 2026-10-27: release 0.2.3), merged over
+  1bebe826f74e9a72cabafd3b80602b05af867b38 (0.2.1, merged 2026-10-23), itself over
+  e13bc3419d2695a509520d850a07e63f05c34e07, the commit first vendored (0.1.7)
 - License: Apache-2.0 (see `LICENSE`; upstream `NOTICE` kept alongside)
 - Modified: this directory is the Omni UI for DeepSeek Harness, rebranded and reshaped from DS Bot.
   Upstream names, logos and palette are replaced.
@@ -13,6 +14,31 @@ The directory was copied, not linked, so a merge is built: a commit with upstrea
 vendored commit placed at `apps/bots-dsh` (the merge base), a commit on it with upstream's current
 `ds-bot/` there, and a real merge of that commit into Omni. Upstream's changes then merge as git
 merges them, and every conflict is resolved by hand in the merge commit.
+
+## Merged from upstream on 2026-10-28 (0.2.2 and 0.2.3)
+
+Built as before: bdb66d6 puts upstream's `ds-bot/` at 4a7b550 at `apps/bots-dsh` over a08fb11, whose
+`apps/bots-dsh` is 1bebe826f's `ds-bot/` tree for tree.
+
+Taken: Side chat (asides with follow-ups in the side panel; `/btw` stays a way in), the Bot browser plugins
+(refs, script, task) with their approvals, site grants, holds, handoff card and screenshot repair, the avatar
+library's store, memory saves that recover and failures that show, parts archived after their schedules move,
+earlier parts readable without their agent, role and instruction change notices, the DSH default thinking level
+for a new Bot, `list_bot_models`, `request_id` on `message_bot`, whole handoff results across restarts, replies
+settled from the Session log after a reload, the group fixes (missed lines after a failed delivery, corrections
+steered to busy members, the admin-passed notice, replies kept through compaction), "Not read yet" on steered
+messages, the reinstall over an already-installed bundle, and the fold, composer, typography, focus and
+scrollbar fixes.
+
+Changed here: the browser is on by default, driven through `playwright-core` and the Chrome-family browser
+already installed (`browser-default.js`), with its holds in the team view for windows without the panel; the
+panel and `read_browser` are on only where a window has the bridge (dsh Desktop). The avatar library is the
+"Yours" section of the character select, not upstream's tabbed editor.
+
+Kept as ours: the restart pass in `resume.js` and its contract for other plugins (upstream's reconcile runs
+inside it; a turn DSH closes as interrupted while reopening is still resumed), the account menu and the
+channels footer seat (upstream removed its Connect button there), and the About row of the Automagik app
+(upstream's own app bridge, `dsBotApp` updates, is not taken).
 
 ## Merged from upstream on 2026-10-23
 

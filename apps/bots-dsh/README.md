@@ -48,12 +48,13 @@ How they fit:
 - **Long chats stay inside the model's window**: dsh's own compaction never runs on a Bot's Session. When a turn ends past the check line (a share of the model's context window), a small separate model call, the context steward, reads the latest messages of the chat and decides once. If the work is still under way, the chat is condensed in place into a checkpoint: a handoff summary plus your recent messages word for word. If the work has reached a stopping point, the Bot writes a handoff note and continues in a new part. Either way you still see one chat, with no marker. Earlier parts and condensed messages stay searchable in a full-text index (`node:sqlite` FTS5) through `read_own_chat`.
 - **Memory**: each Bot keeps notes across all its conversations, each group chat keeps its own for its members, and the team shares one more. See [Memory](#memory).
 - **Web search**: see [Web search](#web-search).
-- **Bot browser (dsh Desktop and the desktop app)**: see [Bot browser](#bot-browser).
+- **Bot browser**: each Bot drives a browser of its own: it opens pages, clicks, types, uploads and downloads. Posting, uploading, downloading and deleting ask you first, and payments always come back to you. See [Bot browser](#bot-browser).
+- **Side chat**: ask a Bot about its work while it runs, in the side panel (`/side`, or `/btw` as before), without stopping its turn or adding to its chat. Nothing runs to answer.
 - **Images**: for a model that cannot read images, a vision model first turns the image into text.
 - **Secrets**: a Bot asks for an API key or token with a card in its own chat and never sees the value. See [Secrets](#secrets).
 - **Usage**: Settings → Usage shows token usage by time (24 hours to 12 months, or days picked on a calendar), by Bot and by model, with a page for each Bot and each model. Calls that a Session logs are read from the logs, so older chats count too. Calls that leave no log (checkpoints, handoff notes, the steward, image readings, dsh titles and compaction) are counted while they stream, from the time the plugin runs. Tokens only, no cost.
 - **DSH bots**: New… → New DSH bot makes a plain DSH entry with a name, a project folder and a DSH preset of its own. Its row lists its Sessions, which have the whole DSH surface and none of the team tools. A Bot's one-off work (`start_task`) runs in a Session under that Bot and reports back when its first turn ends.
-- **Make it yours**: name, role, instructions, model and look (20 characters and 12 colors, or your own photo) for each Bot; a theme, an accent color and an avatar animation level (quiet, normal or lively) for the team. A pinned Bot or group chat shows a small pushpin in the sidebar. Settings has these pages: General (look), Bots (Main Bots and each Bot's settings), Group chats (each group's settings), Connectors, Capabilities, Scheduled tasks, Usage, Secrets, Feedback and About DS Bot (versions, updates and links).
+- **Make it yours**: name, role, instructions, model and look (20 characters and 12 colors, or a photo from the ones you added) for each Bot; a theme, an accent color and an avatar animation level (quiet, normal or lively) for the team. A pinned Bot or group chat shows a small pushpin in the sidebar. Settings has these pages: General (look), Bots (Main Bots and each Bot's settings), Group chats (each group's settings), Connectors, Capabilities, Scheduled tasks, Usage, Secrets, Feedback and About DS Bot (versions, updates and links).
 
 ## Install
 
@@ -104,7 +105,10 @@ Options go in the profile's `cordis.patch.yml`, under the `omni-ui` entry. All o
     home: /path/to/team-data       # where the team is saved; default $AUTOMAGIK_BOTS_HOME, else $AUTOMAGIK_HOME/bots (~/.automagik/bots)
     importHome: ~/.dsh/bot          # copy a team saved there into home once, when home has none
     checkRatio: 0.8                 # share of the model's usable window where the steward decides
-    browser: true                   # force the Bot browser on or off; default on in Desktop and the desktop app only
+    browser: true                   # force the browser panel and read_browser on or off; default on in dsh Desktop only
+    browserPlugin: refs             # the browser each Bot drives: refs (default), script or task; false turns it off
+    browserExecutablePath: /usr/bin/google-chrome   # the browser it launches; default the first Chrome, Edge, Chromium or Brave found
+    browserHeadless: false          # default: headless only on Linux without a display
     memory: true                    # false turns memory off: no memory tools, section or panel
     memoryReview: true              # false leaves memory to the Bots' own remember calls
     fallback: true                  # false lets a failed model end the turn instead of moving it to the fallback
@@ -192,21 +196,30 @@ Another plugin can also set the search provider while dsh runs, after the profil
 
 ## Bot browser
 
-In dsh Desktop and the desktop app, a Bot's chat header has a globe button. It opens that Bot's own browser panel.
+Every Bot has a browser of its own, on by default (`browserPlugin: false` turns it off). It is the Chrome, Edge, Chromium or Brave already on this computer, driven through `playwright-core`: nothing is downloaded. Without one, a Bot that needs a browser says so and asks you to install Chrome.
 
-- **One partition per Bot** (`bot:<id>`): logins and cookies belong to that Bot only. The desktop app keeps them on disk, so a Bot stays signed in after a restart; dsh Desktop keeps them in memory only.
-- **The Bot can read the page**: the `read_browser` tool reads the page's DOM, not a screenshot. The text becomes Markdown with headings, nested lists, tables, code blocks and quotes. Links and form controls are marked `[#n]` in place and listed below with their targets and values. The tool also reads the text you selected. Long pages are read in parts (`from`). Page content is treated as data, never as instructions.
+- **A profile per Bot**, in `browser-profiles/<id>/`: its sign-ins and cookies stay between runs and belong to that Bot only. Deleting a Bot deletes its profile.
+- **What a Bot does**: `browser_open`, `browser_snapshot` (the page as an accessibility tree, each element with a ref), `browser_click`, `browser_type`, `browser_select`, `browser_press`, `browser_upload`, `browser_tabs`, `browser_back` and `browser_screenshot`. Page content is treated as data, never as instructions.
+- **What asks you first**: posting, uploading, downloading and deleting, each through dsh's approval. A delete needs a second, confirmed click. Settings → Browser lets a Bot do some of these on a site for an hour, until the end of the day, for 7 days or for good. Card fields are never typed, and a payment always goes back to you.
+- **Files**: downloads go to the Bot's working folder or the team folder; uploads come only from those.
+- **Handing over**: for a sign-in, a payment or a check, the Bot calls `browser_handoff` and a card in its chat asks you to take over, skip, or say you are done. While you hold the browser, its tools refuse; the window is a normal browser window on your screen.
+- **The window**: on macOS and Windows, and on Linux with a display, the browser opens as a window you can watch. On Linux without a display it runs headless (`browserHeadless`).
+
+### Browser panel (dsh Desktop)
+
+In dsh Desktop, a Bot's chat header also has a globe button. It opens that Bot's browser panel, a page you steer, and the `read_browser` tool reads it.
+
+- **One partition per Bot** (`bot:<id>`), kept in memory by dsh Desktop.
+- **The Bot can read the page**: `read_browser` reads the page's DOM, not a screenshot. The text becomes Markdown with headings, nested lists, tables, code blocks and quotes. Links and form controls are marked `[#n]` in place and listed below with their targets and values. The tool also reads the text you selected. Long pages are read in parts (`from`).
   - It reads open Shadow DOM (with `<slot>`) and same-origin iframes up to 3 levels deep.
   - It reads only what is visible: `display:none`, `visibility:hidden`, zero-height and closed `<details>` content is skipped.
   - It never reads the values of password, credit card (`autocomplete="cc-*"`) or one-time code fields.
   - Limits: 400,000 characters, 150,000 nodes, 5,000 rows per table, 3,000 links and controls, 1.5 seconds. A cut result says so.
   - It cannot read cross-origin iframes (one line with the address), closed shadow roots, canvas content (online editors, maps), or text in CSS `::before` / `::after`. On pages that render on demand, only the rendered part is read.
-  - Read only: the Bot cannot click, type, scroll or open addresses yet.
 - **Addresses**: http and https only. localhost and LAN addresses are allowed; cloud metadata addresses (such as `169.254.x.x`) and dsh's own ports are not.
-- The browser panel and the details drawer share the right column; opening one closes the other. Switching chats switches the panel to that Bot. Deleting a Bot clears its browser and saved address.
-- **Cookie import (desktop app only)**: the import button in the browser bar previews the cookies of a file (Cookie-Editor JSON, Netscape `cookies.txt`, Playwright `storageState`) or of an installed Chromium/Firefox profile, then writes them into the Bot's partition. A source browser closes for a moment so its cookie store can be copied, and it reopens with its tabs. Sign-in that lives outside cookies (localStorage, passkeys) does not come along.
+- The browser panel and the details drawer share the right column; opening one closes the other. Switching chats switches the panel to that Bot.
 
-dsh Web has no browser panel and no `read_browser` tool.
+The Automagik desktop app and dsh Web have no browser panel and no `read_browser`; their Bots use the browser above.
 
 ## Secrets
 
@@ -246,8 +259,14 @@ Files in `ui/`:
 | `state.lock` | The dsh that is using this data (pid and host), its mtime bumped as a heartbeat. It is removed when that dsh exits; a leftover whose heartbeat has stopped is taken over by the next dsh to load. |
 | `chat-index.sqlite` | Full-text index of older chat parts (`read_own_chat`); rebuilt if deleted |
 | `usage.sqlite` | Token counts for the Usage page; rebuilt from the Session logs if deleted, losing only the calls outside the logs and the names of deleted Bots |
-| `memory/` | Memory (see [Memory](#memory)): `bots/<id>/`, `groups/<id>/` and `team/` (`MEMORY.md` and topics), `journal.jsonl` (every change), `snapshots/` (the section each Session froze), `summaries/` (the panel's summary; safe to delete), `reviewed.json` (how far the memory review has read) and `archive/` (deleted Bots and group chats) |
+| `memory/` | Memory (see [Memory](#memory)): `pending.json` holds a save in progress, so an interrupted one is finished at the next start; `bots/<id>/`, `groups/<id>/` and `team/` (`MEMORY.md` and topics), `journal.jsonl` (every change), `snapshots/` (the section each Session froze), `summaries/` (the panel's summary; safe to delete), `reviewed.json` (how far the memory review has read) and `archive/` (deleted Bots and group chats) |
 | `ocr.json` | Cache of image text; safe to delete |
+| `side/` | Side chats, one file per Bot; `btw/` keeps the asides of earlier versions, read only |
+| `avatars/` | The photos added for Bots to wear (up to 500), with `index.json` |
+| `handoff-results/` | Whole results of delegated work longer than `state.json` keeps, until the work is answered |
+| `browser-profiles/` | Each Bot's browser profile: its sign-ins and cookies. Treat backups of it like passwords. |
+| `browser-downloads/` | A folder per Bot that its browser may also upload from |
+| `update.json` | Left by an update that reinstalled the plugin, for the start that follows it |
 | `workspace` | The team workspace: the working folder of every Bot without one of its own (`config.workspace` changes it) |
 | `secrets.json` | Saved secrets. Treat backups of it like passwords. |
 | `omni.json` | The Omni this UI is linked to (kept by the channels plugin): its URL and the key pairing minted (0600). Treat backups of it like passwords. |
