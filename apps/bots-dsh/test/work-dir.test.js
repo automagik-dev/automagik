@@ -984,6 +984,10 @@ test('Unfold Main Bot adopts the configured adapter root in either startup order
       const session = { sessionId: `custom-unfold-${delayed}`, ready: delayed ? new Promise(resolve => { release = resolve }) : Promise.resolve() }
       const env = await start({ team: { ...TEAM, mainBotIds: [], bots: {}, rooms: {} }, services: { unfoldSession: session } })
       try {
+        const rootSession = env.agentOf(session.sessionId).session
+        rootSession.header.cwd = env.project
+        const history = [{ role: 'user', content: 'An existing Unfold conversation' }]
+        rootSession.deriveMessages = () => history
         await env.call('state', {}) // the browser may arrive before either plugin
         assert.deepEqual(env.state().bots, {})
         const rt = env.ctx.provided.get('omniTeam')
@@ -1003,6 +1007,9 @@ test('Unfold Main Bot adopts the configured adapter root in either startup order
         assert.equal(bots[0].kickoff, undefined, 'adoption queues no greeting')
         assert.deepEqual(env.agentOf(session.sessionId).calls, [], 'adoption starts no turn')
         assert.equal(env.created.length, 0, 'adopting the adapter root creates no random Session')
+        assert.equal(env.agentOf(session.sessionId).session, rootSession)
+        assert.equal(rootSession.header.cwd, env.project, 'the host workspace placement stays intact')
+        assert.deepEqual(rootSession.deriveMessages(), history, 'the host conversation history stays intact')
         await createUnfold(env.ctx, rt).unfoldReady
         assert.equal(Object.keys(env.state().bots).length, 1, 'a repeated startup retains the same Bot')
         await rt.createBot({ name: 'My Main Bot', main: true, pickModel: true })
