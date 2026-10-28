@@ -2839,7 +2839,7 @@ function genieTint(color) {
 var import_react6 = require("react");
 var STATES = ["idle", "thinking", "searching", "working", "sending", "orbit", "waiting", "alert", "done", "failed", "review", "sleeping"];
 var WORK = ["thinking", "searching", "working", "sending", "orbit"];
-var botState = (running2, activity, alert, { failed = false, unread = false } = {}) => running2 ? WORK.includes(activity) ? activity : "working" : alert ? "alert" : failed ? "failed" : activity === "waiting" ? "waiting" : unread ? "review" : "idle";
+var botState = (running2, activity, alert, { failed = false, unread = false } = {}) => alert ? "alert" : running2 ? WORK.includes(activity) ? activity : "working" : failed ? "failed" : activity === "waiting" ? "waiting" : unread ? "review" : "idle";
 var toolState = (name) => /^(message_bot|stop_bot|create_bot|update_bot|create_group|update_group|delete_group|post_to_group)$/.test(name) ? "sending" : /search|fetch|browse|read|grep|glob|list|recall/i.test(name) ? "searching" : "working";
 function useGaze(ref, enabled) {
   (0, import_react6.useEffect)(() => {
@@ -10366,6 +10366,9 @@ function installCompiledStyles(text2, tag) {
   };
 }
 
+// src/client/approvals.js
+var useApproval = (useWork, match) => useWork ? useWork((work) => (work.approvals ?? []).some(match)) : false;
+
 // src/client/side-model.js
 var SIDE_SOURCE = "ds-bot-side";
 var SIDE_TOKEN = "/side ";
@@ -13356,6 +13359,7 @@ function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, roster, a
   const running2 = useSessionStatus((map) => map.get(part)?.running === true);
   const doing = useActivity((map) => map[bot?.id ?? sessionId]);
   const failed = useWork ? useWork((work) => work.failed?.[bot?.id ?? ""] !== void 0) : false;
+  const approval = useApproval(useWork, (entry) => entry.botId !== void 0 && entry.botId === bot?.id);
   const transcript = useSessions((list) => transcriptOf(list, part, bot?.name ?? room2?.name ?? t("Bot"), roster.exchangeTurns[part]));
   const usage = useSessions((list) => usageOf(list, [part, ...bot?.parts ?? room2?.parts ?? []]));
   const run2 = (promise) => Promise.resolve(promise).then(() => {
@@ -13425,7 +13429,7 @@ function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, roster, a
     (0, import_react34.createElement)(
       "div",
       { key: "id", className: "bt-drawer-id", "data-move": side },
-      bot ? (0, import_react34.createElement)(BotAvatar, { bot, size: 64, state: botState(running2, doing, roster.questions?.[part] !== void 0, { failed }), main: isMainBot, badge: false, gaze: true, pokeable: true }) : (0, import_react34.createElement)(MemberPile, { room: room2, roster }),
+      bot ? (0, import_react34.createElement)(BotAvatar, { bot, size: 64, state: botState(running2, doing, roster.questions?.[part] !== void 0 || approval, { failed }), main: isMainBot, badge: false, gaze: true, pokeable: true }) : (0, import_react34.createElement)(MemberPile, { room: room2, roster }),
       editing ? (0, import_react34.createElement)("input", {
         className: "bt-drawer-name-input",
         autoFocus: true,
@@ -15293,7 +15297,6 @@ function useMarkedUnread(id, active, marked, actions) {
   }, [active, marked]);
 }
 var PinMark = () => (0, import_react39.createElement)("span", { className: "bt-pin", "aria-hidden": true }, (0, import_react39.createElement)(PinMarkIcon));
-var useApproval = (useWork, match) => useWork ? useWork((work) => (work.approvals ?? []).some(match)) : false;
 var useGroupWork = (useWork, pick2) => useWork ? useWork((work) => JSON.stringify(pick2(work.rooms ?? {}))) : "[]";
 var workKeys = (text2) => JSON.parse(text2);
 var doingOf = ({ tool, said, note, target, switching }) => ({ tool, said, note, target, switching });
@@ -16299,6 +16302,7 @@ function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSe
   const doing = useActivity((map) => map[owner]);
   const bot = roster.byId[sessionId];
   const room2 = roster.roomsById[sessionId];
+  const approval = useApproval(useWork, (entry) => bot !== void 0 && entry.botId === bot.id);
   const detailsOpen = useUi((state) => state.details === sessionId);
   const name = bot?.name ?? room2?.name ?? "";
   const useNews = useMemoryNews ?? noNews;
@@ -16338,7 +16342,7 @@ function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSe
         title: away ? name : void 0,
         onClick: () => away ? selectView("chat") : memoryNotice ? actions.openMemory(changed) : actions.toggleDetails(sessionId)
       },
-      bot ? (0, import_react40.createElement)(BotAvatar, { bot, size: 24, state: botState(running2, doing, roster.questions?.[currentPart(bot)] !== void 0), badge: false }) : room2 ? (0, import_react40.createElement)(RoomAvatar, { room: room2, roster, size: 24 }) : null,
+      bot ? (0, import_react40.createElement)(BotAvatar, { bot, size: 24, state: botState(running2, doing, roster.questions?.[currentPart(bot)] !== void 0 || approval), badge: false }) : room2 ? (0, import_react40.createElement)(RoomAvatar, { room: room2, roster, size: 24 }) : null,
       (0, import_react40.createElement)("span", { className: "bt-pill-name" }, away ? t("Back to chat") : bot?.name ?? room2?.name ?? (title || t("New chat"))),
       (0, import_react40.createElement)(MemoryNotice, { shown: memoryNotice }),
       (0, import_react40.createElement)("span", { className: "bt-pill-go", "aria-hidden": true }, (0, import_react40.createElement)(GoArrow))
