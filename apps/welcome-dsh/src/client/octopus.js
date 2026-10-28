@@ -26,6 +26,8 @@ export const OCTOPUS_SVG = `<svg class="oai-octo" viewBox="0 0 100 100" aria-hid
 // One of Omni's clay faces (vendor/clay-art.js), drawn from its row of faces.
 export const omniFace = (face, className = 'oai-octo') => `<span class="${className} oai-clay oai-clay-omni" data-face="${face}" style="--oai-face-at:${faceAt(face)}"></span>`
 export const omniHero = () => (CLAY_OMNI ? omniFace('calm') : OCTOPUS_SVG)
+// Unfold's clay face (its row of faces, 192x208 cells), for the stage in Unfold's instance.
+export const unfoldHero = (face = 'calm') => `<span class="oai-unfold-hero oai-clay oai-clay-unfold" data-face="${face}" style="--oai-face-at:${faceAt(face)}"></span>`
 
 export const STAGE_CSS = `${CLAY_TOKENS}
 .oai-overlay{position:fixed;inset:0;z-index:2000;overflow:auto;display:grid;place-items:center;padding:24px 16px;box-sizing:border-box;color:var(--oai-ink);

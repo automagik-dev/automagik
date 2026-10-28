@@ -7,6 +7,8 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import { build } from 'esbuild'
+import { install } from '../src/host/endpoint.js'
+import { fakeContext } from './fake-ctx.js'
 
 // The client modules, with a React that records elements instead of rendering them.
 async function load(file) {
@@ -44,6 +46,7 @@ const textOf = node => (Array.isArray(node) ? node.map(textOf).join('') : node &
 const byClass = name => node => String(node?.props?.className ?? '').split(' ').includes(name)
 
 const team = await load('team.js')
+const art = await load('companion-art.js')
 
 test('opened for Unfold, Unfold\'s card comes first and starts chosen; elsewhere it is the third', () => {
   assert.deepEqual(plain(team.teamOrder('unfold')), ['unfold', 'omni', 'genie'])
@@ -105,6 +108,26 @@ test('Unfold\'s card: its box, its name, and what it starts with; on the team on
   assert.match(textOf(card('ready', 'unfold')), /Comes with this DSH/)
   assert.doesNotMatch(textOf(card('ready', 'unfold')), /Installs when/)
   assert.match(textOf(card('asleep')), /Installs when Unfold powers on/)
+})
+
+test('the stage mascot above every step is Unfold in its instance (host or preload unfold), else the octopus', async () => {
+  // The look the stage draws, from the state the host serves the steps.
+  const mascot = async (env) => {
+    const { handle } = install(fakeContext({ entries: { 'omni-ai': {} } }).ctx, { env, checkClaude: async () => ({ plugin: false, installed: false, loggedIn: false }) })
+    const state = (await handle('state')).value
+    return JSON.stringify(render(art.Hero({ look: art.companionLook(state) })))
+  }
+  for (const env of [{ AUTOMAGIK_PRELOAD: 'unfold' }, { AUTOMAGIK_HOST: 'unfold' }, { AUTOMAGIK_PRELOAD: 'unfold', AUTOMAGIK_HOST: 'unfold' }]) {
+    const drawn = await mascot(env)
+    assert.match(drawn, /oai-clay-unfold/, JSON.stringify(env))
+    assert.doesNotMatch(drawn, /oai-clay-omni/, JSON.stringify(env))
+  }
+  // A plain DSH before its companion exists: the octopus, as before.
+  for (const env of [{}, { AUTOMAGIK_PRELOAD: 'omni' }]) {
+    const drawn = await mascot(env)
+    assert.match(drawn, /oai-clay-omni/, JSON.stringify(env))
+    assert.doesNotMatch(drawn, /oai-clay-unfold/, JSON.stringify(env))
+  }
 })
 
 test('under host unfold, Omni\'s choices hold no new Omni of its own', () => {

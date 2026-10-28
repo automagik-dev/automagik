@@ -11,6 +11,7 @@ export const ONBOARD_CSS = `
 .oai-hero{width:132px;height:132px;display:grid;place-items:center;animation:oai-float 4.5s ease-in-out infinite}
 .oai-hero svg{width:132px;height:132px;filter:drop-shadow(0 10px 8px var(--oai-cast)) drop-shadow(0 22px 22px var(--oai-cast-far))}
 .oai-hero .oai-octo{width:126px;height:126px;animation:none}
+.oai-hero .oai-unfold-hero{width:120px;height:130px}
 .oai-hero-img{width:132px;height:132px;object-fit:cover;border-radius:30px 34px 29px 33px;box-shadow:0 5px 0 color-mix(in srgb,var(--oai-clay) var(--oai-ledge),var(--oai-umber)),0 12px 16px var(--oai-cast)}
 .oai-hatch{animation:oai-hatch 1s cubic-bezier(.2,1.4,.4,1) both}
 @keyframes oai-hatch{0%{transform:scale(.6) rotate(-8deg)}60%{transform:scale(1.18) rotate(3deg)}100%{transform:scale(1)}}

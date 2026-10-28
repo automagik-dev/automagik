@@ -9219,6 +9219,7 @@ var OCTOPUS_SVG = `<svg class="oai-octo" viewBox="0 0 100 100" aria-hidden="true
 </svg>`;
 var omniFace = (face, className = "oai-octo") => `<span class="${className} oai-clay oai-clay-omni" data-face="${face}" style="--oai-face-at:${faceAt(face)}"></span>`;
 var omniHero = () => CLAY_OMNI ? omniFace("calm") : OCTOPUS_SVG;
+var unfoldHero = (face = "calm") => `<span class="oai-unfold-hero oai-clay oai-clay-unfold" data-face="${face}" style="--oai-face-at:${faceAt(face)}"></span>`;
 var STAGE_CSS = `${CLAY_TOKENS}
 .oai-overlay{position:fixed;inset:0;z-index:2000;overflow:auto;display:grid;place-items:center;padding:24px 16px;box-sizing:border-box;color:var(--oai-ink);
   font:15px/1.55 var(--oai-font);background:var(--oai-bg)}
@@ -9329,6 +9330,7 @@ var swatchOf = (color) => GRADIENTS[color] ? `linear-gradient(135deg,${GRADIENTS
 var cached;
 function companionLook(state) {
   if (!state) return void 0;
+  if (state.host === "unfold") return { unfold: true, name: state.companionName };
   if (state.companionImage) return { image: true, name: state.companionName };
   if (state.companionShape) return { shape: state.companionShape, color: state.companionColor ?? "cyan", name: state.companionName };
   return void 0;
@@ -9360,6 +9362,7 @@ function Hero({ look, hatching }) {
   const cls = `oai-hero${hatching ? " oai-hatch" : ""}`;
   if (look?.src) return (0, import_react.createElement)("div", { className: cls }, (0, import_react.createElement)("img", { className: "oai-hero-img", src: look.src, alt: look.name ? `${look.name}, your companion` : "Your companion" }));
   if (look?.shape) return (0, import_react.createElement)("div", { className: cls, dangerouslySetInnerHTML: { __html: characterSvg(look.shape, look.color, 132) } });
+  if (look?.unfold) return (0, import_react.createElement)("div", { className: cls, dangerouslySetInnerHTML: { __html: unfoldHero() } });
   return (0, import_react.createElement)("div", { className: cls, dangerouslySetInnerHTML: { __html: omniHero() } });
 }
 function Egg() {
@@ -11324,6 +11327,7 @@ var ONBOARD_CSS = `
 .oai-hero{width:132px;height:132px;display:grid;place-items:center;animation:oai-float 4.5s ease-in-out infinite}
 .oai-hero svg{width:132px;height:132px;filter:drop-shadow(0 10px 8px var(--oai-cast)) drop-shadow(0 22px 22px var(--oai-cast-far))}
 .oai-hero .oai-octo{width:126px;height:126px;animation:none}
+.oai-hero .oai-unfold-hero{width:120px;height:130px}
 .oai-hero-img{width:132px;height:132px;object-fit:cover;border-radius:30px 34px 29px 33px;box-shadow:0 5px 0 color-mix(in srgb,var(--oai-clay) var(--oai-ledge),var(--oai-umber)),0 12px 16px var(--oai-cast)}
 .oai-hatch{animation:oai-hatch 1s cubic-bezier(.2,1.4,.4,1) both}
 @keyframes oai-hatch{0%{transform:scale(.6) rotate(-8deg)}60%{transform:scale(1.18) rotate(3deg)}100%{transform:scale(1)}}
