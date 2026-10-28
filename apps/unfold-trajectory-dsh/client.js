@@ -1000,6 +1000,7 @@ function sharedStream() {
   let source = null;
   let refs = 0;
   let retry = null;
+  let backoff = 1e3;
   let lease = null;
   let pending = false;
   const emit = () => {
@@ -1031,9 +1032,10 @@ function sharedStream() {
     for (const id of [...arrivals.keys()]) if (!live.has(id)) arrivals.delete(id);
   };
   const open = () => {
-    source = new EventSource(new URL(MIND_STREAM, document.baseURI));
+    const s = source = new EventSource(new URL(MIND_STREAM, document.baseURI));
     for (const name of EVENTS) {
       source.addEventListener(name, (e) => {
+        if (name === "snapshot") backoff = 1e3;
         state = reduce(state, name, JSON.parse(e.data), Date.now());
         if (name === "snapshot" || name === "row" || name === "row-updated" || name === "evicted") track();
         arm();
@@ -1051,6 +1053,11 @@ function sharedStream() {
       state = { ...state, stream: "lost" };
       arm();
       emit();
+      if (s.readyState === EventSource.CLOSED && refs > 0) {
+        clearTimeout(retry);
+        retry = setTimeout(open, backoff);
+        backoff = Math.min(backoff * 2, 8e3);
+      }
     };
   };
   shared = {
@@ -1073,6 +1080,7 @@ function sharedStream() {
           clearTimeout(retry);
           clearTimeout(lease);
           retry = null;
+          backoff = 1e3;
           lease = null;
           source?.close();
           source = null;
