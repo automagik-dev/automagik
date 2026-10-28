@@ -13,6 +13,7 @@ import { createRequire } from 'node:module'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { WebSocket } from 'ws'
 import { BotRelay } from '../src/bot-relay.js'
 import { BotViews } from '../src/bot-views.js'
 import { guardContents } from '../src/dsh.js'
@@ -35,8 +36,11 @@ const server = createServer((request, response) => {
       <button id="alert" onclick="alert('hi'); out.textContent = 'after alert'">Alert</button>
       <button id="fetch" onclick="fetch('/api').then(() => out.textContent = 'fetched', () => out.textContent = 'fetch refused')">Fetch</button>
       <button id="popup" onclick="window.open('http://localhost:${port}/popup')">Popup</button>
+      <button id="closer" onclick="window.open('http://localhost:${port}/closer')">Closer</button>
       <a id="away" href="http://localhost:${port}/away">Away</a>`))
   }
+  if (request.url === '/closer') return send(page('Closer', '<script>setTimeout(() => window.close(), 300)</script>'))
+  if (request.url === '/fav') return send(page('Fav', `<link rel="icon" href="http://localhost:${port}/icon.png">`))
   if (request.url === '/frame') return send(page('Frame', '<button onclick="this.textContent = \'clicked inside\'">Inside</button>'))
   if (request.url === '/redirect') return send('', 302, { location: `http://localhost:${port}/landed` })
   if (request.url === '/api') return send('{}', 200, { 'content-type': 'application/json' })
@@ -54,6 +58,10 @@ async function check(name, run) {
   }
 }
 const assert = (value, message) => { if (!value) throw new Error(message) }
+const until = async (test, what, ms = 5_000) => {
+  for (const end = Date.now() + ms; Date.now() < end; await new Promise(done => setTimeout(done, 100))) if (test()) return
+  throw new Error(`${what} within ${ms} ms`)
+}
 const within = (promise, ms, what) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(`${what} took over ${ms} ms`)), ms))])
 
 app.whenReady().then(async () => {
@@ -82,7 +90,7 @@ app.whenReady().then(async () => {
   let tab = context.pages()[0]
 
   await check('a Bot view is recognised as one, the app\'s window is not', () => {
-    assert(views.owns(views.entriesOf(BOT)[0].view.webContents), 'the Bot view is not recognised')
+    assert(views.owns(views.entriesOf(BOT)[0].contents), 'the Bot view is not recognised')
     assert(!views.owns(window.webContents), 'the window counts as a Bot view')
   })
   await check('the page loads through the relay', async () => {
@@ -90,7 +98,7 @@ app.whenReady().then(async () => {
     assert(await tab.title() === 'Home', `title ${await tab.title()}`)
   })
   await check('a cross-site iframe is read and clicked', async () => {
-    const main = views.entriesOf(BOT)[0].view.webContents.mainFrame
+    const main = views.entriesOf(BOT)[0].contents.mainFrame
     assert(main.framesInSubtree.some(frame => frame.osProcessId !== main.osProcessId), 'the iframe shares the page\'s process')
     const button = tab.frameLocator('iframe').getByRole('button', { name: 'Inside' })
     await within(button.click(), 10_000, 'the click in the iframe')
@@ -130,6 +138,23 @@ app.whenReady().then(async () => {
     assert(views.sync(BOT).length === 2, `${views.sync(BOT).length} tabs`)
     await popup.close()
   })
+  await check('a tab that closes itself goes, and the Bot keeps working', async () => {
+    const [closer] = await within(Promise.all([context.waitForEvent('page', { timeout: 10_000 }), tab.click('#closer')]), 10_000, 'the tab opening')
+    await within(closer.waitForEvent('close'), 10_000, 'the tab closing itself')
+    await until(() => views.entriesOf(BOT).length === 1, 'the closed tab never left')
+    assert(views.sync(BOT).length === 1, 'the panel cannot list the tabs')
+    assert(await within(tab.evaluate(() => 1 + 1), 5_000, 'the Bot\'s next call') === 2, 'the Bot\'s connection broke')
+    const again = await within(chromium.connectOverCDP(await relay.endpoint(BOT)), 10_000, 'a new connection')
+    assert(again.contexts()[0].pages().length === 1, 'a new connection failed')
+    await again.close()
+  })
+  await check('a page\'s favicon from the web never reaches dsh\'s page', async () => {
+    await tab.goto(`${home}fav`)
+    await new Promise(done => setTimeout(done, 1000))
+    const favicon = views.sync(BOT)[0].favicon
+    assert(favicon === null || favicon.startsWith('data:'), `favicon ${favicon}`)
+    await tab.goto(home)
+  })
   await check('a link to another origin stays in the view', async () => {
     await Promise.all([tab.waitForURL('**/away', { timeout: 10_000 }), tab.click('#away')])
   })
@@ -149,7 +174,7 @@ app.whenReady().then(async () => {
   await check('a crashed page drops the connection and loads again', async () => {
     await tab.goto(`${home}before-crash`)
     const gone = new Promise(done => browser.once('disconnected', done))
-    views.entriesOf(BOT)[0].view.webContents.forcefullyCrashRenderer()
+    views.entriesOf(BOT)[0].contents.forcefullyCrashRenderer()
     await within(gone, 10_000, 'the disconnect')
     browser = await chromium.connectOverCDP(await relay.endpoint(BOT))
     context = browser.contexts()[0]
@@ -170,6 +195,31 @@ app.whenReady().then(async () => {
     const urls = other.contexts()[0].pages().map(target => target.url())
     assert(!urls.some(url => url.includes(String(port))), urls.join(', '))
     await other.close()
+  })
+  await check('a page session reaches only its own tab', async () => {
+    const socket = new WebSocket(await relay.endpoint(BOT))
+    await within(new Promise((done, fail) => { socket.once('open', done); socket.once('error', fail) }), 5_000, 'the connection')
+    const answers = new Map()
+    let sessionId
+    socket.on('message', (raw) => {
+      const message = JSON.parse(raw.toString())
+      if (message.method === 'Target.attachedToTarget') sessionId ??= message.params.sessionId
+      if (message.id) answers.set(message.id, message)
+    })
+    let id = 0
+    const ask = async (method, params = {}, session) => {
+      const asked = ++id
+      socket.send(JSON.stringify({ id: asked, method, params, ...(session ? { sessionId: session } : {}) }))
+      await until(() => answers.has(asked), `${method} answered`)
+      return answers.get(asked)
+    }
+    await ask('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true })
+    await until(() => sessionId !== undefined, 'the tab attached')
+    for (const method of ['Target.getTargets', 'Target.attachToBrowserTarget', 'Target.createTarget']) {
+      const answer = await ask(method, method === 'Target.createTarget' ? { url: 'about:blank' } : {}, sessionId)
+      if (!answer.error) throw new Error(`${method} on a page session answered ${JSON.stringify(answer.result)?.slice(0, 200)}`)
+    }
+    socket.close()
   })
 
   relay.dispose()

@@ -4,9 +4,11 @@
 // there, and the Bot drives the same views through the loopback CDP relay (bot-relay.js).
 // Bot views are not the app's pages: harden() in main.js leaves them alone (`owns`), and they
 // get the policy below instead. A page's new window becomes a new tab of the same Bot, nothing
-// goes to the system browser, and a page reaches neither dsh's own port nor a non-web scheme
-// (the Bot team's executor decides the rest). Saved tabs are dsh's (browser-profiles/<botId>);
-// these views only reopen what dsh or the panel asks for.
+// goes to the system browser, and a page gets no non-web scheme and not dsh's own port at a
+// loopback address or name (localhost, *.localhost, 127.x, [::1]); a public name that resolves
+// to loopback is not caught here, since the Bot team's executor resolves hosts and decides
+// the rest. Saved tabs are dsh's (browser-profiles/<botId>); these views only reopen what dsh
+// or the panel asks for.
 //
 // Ported from DS Bot's app, app/src/bot-views.mjs and app/src/bot-browser.mjs at
 // 4a7b55069ad300eae8be42a74f31bc170b40ead7 (https://github.com/Fei2411/DS-Bot, Apache-2.0;
@@ -67,7 +69,6 @@ export class BotViews {
   #page
   #devTools
   #onChange
-  #onInput
   #views = new Map()
   #held = new Set()
   // The Bot partitions' sessions opened here: a webContents in one of them is a Bot view.
@@ -77,11 +78,11 @@ export class BotViews {
   relay = null
 
   /**
-   * @param {{ window: () => any, WebContentsView: any, session: any, origin: () => string | undefined, page?: () => ({ x: number, y: number, width: number, height: number, zoom: number, radius?: number } | null), devTools?: boolean, onChange?: (change: object) => void, onInput?: (event: any, input: any) => void }} options
+   * @param {{ window: () => any, WebContentsView: any, session: any, origin: () => string | undefined, page?: () => ({ x: number, y: number, width: number, height: number, zoom: number, radius?: number } | null), devTools?: boolean, onChange?: (change: object) => void }} options
    * `page` is where dsh's page sits in the window (null until it is laid in), since the panel
    * reports its rectangle in that page; a tab takes the page's corner radius.
    */
-  constructor({ window, WebContentsView, session, origin, page = () => null, devTools = false, onChange = () => {}, onInput }) {
+  constructor({ window, WebContentsView, session, origin, page = () => null, devTools = false, onChange = () => {} }) {
     this.#window = window
     this.#WebContentsView = WebContentsView
     this.#session = session
@@ -89,7 +90,6 @@ export class BotViews {
     this.#page = page
     this.#devTools = devTools
     this.#onChange = onChange
-    this.#onInput = onInput
   }
 
   /** Whether a webContents is a Bot view's: its session is a Bot partition opened here. */
@@ -114,7 +114,7 @@ export class BotViews {
       storage.setDevicePermissionHandler(() => false)
       storage.setDisplayMediaRequestHandler((_request, callback) => { callback({}) })
       storage.on('will-download', (event, item, source) => {
-        const entry = [...this.#views.values()].find(value => value.botId === botId && value.view.webContents === source)
+        const entry = [...this.#views.values()].find(value => value.botId === botId && value.contents === source)
         if (entry && this.relay) this.relay.download(entry, event, item)
         else event.preventDefault()
       })
@@ -140,14 +140,20 @@ export class BotViews {
         backgroundThrottling: false, devTools: this.#devTools,
       },
     })
-    const entry = { tabId, botId, view, createdByBot, openerId, requestedUrl: url, favicon: null, error: null, rect: null, shown: false }
+    // The tab's contents, kept: once they are destroyed, `view.webContents` answers with others.
+    const entry = { tabId, botId, view, contents: view.webContents, createdByBot, openerId, requestedUrl: url, favicon: null, error: null, rect: null, shown: false }
     this.#views.set(tabId, entry)
     this.#window()?.contentView.addChildView(view)
     this.#lay(entry)
-    const contents = view.webContents
+    const contents = entry.contents
     const publish = () => this.#publish(entry)
     for (const name of ['did-navigate', 'did-navigate-in-page', 'page-title-updated', 'did-start-loading', 'did-stop-loading']) contents.on(name, publish)
-    contents.on('page-favicon-updated', (_event, favicons) => { entry.favicon = favicons?.[0] ?? null; publish() })
+    // dsh's page draws the tab's icon: only a self-contained one, never an address it would fetch.
+    contents.on('page-favicon-updated', (_event, favicons) => {
+      const favicon = favicons?.find(icon => typeof icon === 'string' && icon.startsWith('data:'))
+      entry.favicon = favicon ?? null
+      publish()
+    })
     contents.on('did-fail-load', (_event, code, description, _url, isMainFrame) => {
       if (isMainFrame && code !== -3) { entry.error = description; publish() }
     })
@@ -168,7 +174,8 @@ export class BotViews {
     contents.on('will-attach-webview', event => event.preventDefault())
     // HTTP authentication is refused: the Bot signs in through the page, the owner through a handoff.
     contents.on('login', (event, _details, _auth, callback) => { event.preventDefault(); callback() })
-    if (this.#onInput) contents.on('before-input-event', this.#onInput)
+    // A page that closes itself (a sign-in popup, say) is gone like a tab closed from the panel.
+    contents.once('destroyed', () => this.#gone(entry))
     // A crashed page drops the Bot's connection (dsh opens a new one at its next call) and loads again.
     contents.on('render-process-gone', (_event, details) => {
       if (this.#views.get(tabId) !== entry || details?.reason === 'clean-exit') return
@@ -226,7 +233,7 @@ export class BotViews {
 
   async operate(botId, action, payload = {}) {
     const entry = this.#owned(botId, payload.tabId)
-    const contents = entry.view.webContents
+    const contents = entry.contents
     const history = contents.navigationHistory
     switch (action) {
       case 'navigate': {
@@ -249,13 +256,19 @@ export class BotViews {
 
   async close(botId, tabId) {
     const entry = this.#owned(botId, tabId)
-    this.relay?.closing(entry)
-    this.#views.delete(tabId)
-    // The view leaves the window too: closing only its contents would keep the child view.
-    this.#window()?.contentView.removeChildView(entry.view)
-    if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close()
-    this.#onChange({ type: 'closed', botId, tabId })
+    this.#gone(entry)
+    if (!entry.contents.isDestroyed()) entry.contents.close()
     return true
+  }
+
+  // A tab leaves: its Bot sessions end, and the view leaves the window too (closing only its
+  // contents would keep the child view).
+  #gone(entry) {
+    if (this.#views.get(entry.tabId) !== entry) return
+    this.relay?.closing(entry)
+    this.#views.delete(entry.tabId)
+    this.#window()?.contentView.removeChildView(entry.view)
+    this.#onChange({ type: 'closed', botId: entry.botId, tabId: entry.tabId })
   }
 
   /** A deleted Bot: its tabs close and its partition's storage (its sign-ins) is cleared. */
@@ -305,7 +318,7 @@ export class BotViews {
   }
 
   dispose() {
-    for (const entry of this.#views.values()) if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close()
+    for (const entry of this.#views.values()) if (!entry.contents.isDestroyed()) entry.contents.close()
     this.#views.clear()
   }
 
@@ -316,7 +329,7 @@ export class BotViews {
   }
 
   #state(entry) {
-    const contents = entry.view.webContents
+    const contents = entry.contents
     const history = contents.navigationHistory
     return {
       botId: entry.botId, tabId: entry.tabId, createdByBot: entry.createdByBot,
@@ -329,6 +342,6 @@ export class BotViews {
   }
 
   #publish(entry) {
-    if (this.#views.get(entry.tabId) === entry && !entry.view.webContents.isDestroyed()) this.#onChange({ type: 'changed', ...this.#state(entry) })
+    if (this.#views.get(entry.tabId) === entry && !entry.contents.isDestroyed()) this.#onChange({ type: 'changed', ...this.#state(entry) })
   }
 }

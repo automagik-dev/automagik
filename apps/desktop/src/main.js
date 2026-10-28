@@ -79,7 +79,6 @@ const botViews = new BotViews({
   page: () => (page && ready ? { ...page.getBounds(), zoom: page.webContents.getZoomFactor(), radius: pageRadius } : null),
   devTools: !app.isPackaged,
   onChange: (change) => { if (page && !page.webContents.isDestroyed()) page.webContents.send('automagik-browser-view', change) },
-  onInput: (event, input) => shortcut(event, input),
 })
 const botRelay = new BotRelay({ views: botViews })
 

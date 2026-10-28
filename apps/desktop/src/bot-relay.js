@@ -25,6 +25,10 @@ import { WebSocketServer } from 'ws'
 const LOOPBACK_PEERS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
 const PLAYWRIGHT_ARTIFACT_PREFIX = 'playwright-artifacts-'
 const ROOTS_MAX = 4
+// Of the Target domain, a page session gets only what Playwright uses there: auto-attaching
+// the page's own children (iframes in another process, workers) and detaching from them.
+// The rest would reach the debugger's view of every target: other Bots' tabs, dsh's page.
+const PAGE_TARGET_METHODS = new Set(['Target.setAutoAttach', 'Target.detachFromTarget'])
 
 function containsPath(root, target) {
   const relative = relativePath(resolve(root), resolve(target))
@@ -102,9 +106,12 @@ export class BotRelay {
 
   /** A new view of the Bot: connections that discover or auto-attach learn of it. */
   created(entry) {
-    entry.view.webContents.debugger.on('message', (_event, method, params, sessionId) => this.#native(entry, method, params, sessionId))
-    // Something else took the debugger (DevTools, the page going away): the Bot connects again.
-    entry.view.webContents.debugger.on('detach', () => { if (!entry.releasing) this.drop(entry.botId) })
+    entry.contents.debugger.on('message', (_event, method, params, sessionId) => this.#native(entry, method, params, sessionId))
+    // Something else took the debugger (DevTools, say): the Bot connects again. A tab that
+    // closed is not that: bot-views.js lets it go, and the Bot keeps its connection.
+    entry.contents.debugger.on('detach', (_event, reason) => {
+      if (!entry.releasing && reason !== 'target closed') this.drop(entry.botId)
+    })
     for (const client of this.#clients.get(entry.botId) ?? []) {
       if (client.discover) this.#send(client.socket, { method: 'Target.targetCreated', params: { targetInfo: this.#targetInfo(entry) } })
       if (client.autoAttach) client.attach(entry)
@@ -190,12 +197,12 @@ export class BotRelay {
 
   // The view's debugger, taken when the first Bot session attaches.
   #hold(entry) {
-    const contents = entry.view.webContents
+    const contents = entry.contents
     if (!contents.debugger.isAttached()) contents.debugger.attach('1.3')
   }
 
   #release(entry) {
-    const contents = entry.view.webContents
+    const contents = entry.contents
     if (contents.isDestroyed()) return
     if (contents.debugger.isAttached()) {
       entry.releasing = true
@@ -324,9 +331,12 @@ export class BotRelay {
     if (sessionId) {
       const route = sessions.get(sessionId)
       if (!route) throw new Error('Unknown target session')
+      if (method.startsWith('Target.') && !PAGE_TARGET_METHODS.has(method)) {
+        throw new Error(`${method} is not available here`)
+      }
       const nativeParams = { ...params }
       if (nativeParams.frameId === route.entry.tabId) nativeParams.frameId = route.entry.mainFrameId
-      const contents = route.entry.view.webContents
+      const contents = route.entry.contents
       const sent = contents.debugger.sendCommand(method, nativeParams, route.nativeId)
       // A hidden tab draws no frame to copy: it is captured, kept hidden, until the shot is in.
       if (method === 'Page.captureScreenshot' && !route.entry.shown) {
@@ -381,7 +391,7 @@ export class BotRelay {
       case 'Target.detachFromTarget': {
         const route = sessions.get(params.sessionId)
         if (route?.nativeId) {
-          await route.entry.view.webContents.debugger.sendCommand('Target.detachFromTarget', { sessionId: route.nativeId }).catch(() => {})
+          await route.entry.contents.debugger.sendCommand('Target.detachFromTarget', { sessionId: route.nativeId }).catch(() => {})
           sessions.delete(params.sessionId)
         } else if (route) leave(route.entry)
         return {}
@@ -400,7 +410,7 @@ export class BotRelay {
   }
 
   #targetInfo(entry) {
-    const contents = entry.view.webContents
+    const contents = entry.contents
     return {
       targetId: entry.tabId, type: 'page', title: contents.getTitle(),
       url: contents.getURL() || entry.requestedUrl, attached: this.attached(entry), canAccessOpener: true,
