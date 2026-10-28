@@ -1977,7 +1977,15 @@ const pack = createPack({
     "Your Bots, chats, memory and files stay on this computer.": "Seus Bots, chats, memória e arquivos ficam neste computador.",
     "What is shared": "O que é compartilhado",
     "Unfold's Privacy controls this": "A Privacidade de Unfold controla isto",
-    "To see or change what is shared, open Unfold's settings.": "Para ver ou mudar o que é compartilhado, abra as configurações de Unfold."
+    "To see or change what is shared, open Unfold's settings.": "Para ver ou mudar o que é compartilhado, abra as configurações de Unfold.",
+    "Auto review": "Revisão automática",
+    "Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.": "A revisão automática roda as ferramentas fora do ambiente isolado: um modelo revisa cada chamada antes, e você decide sobre as chamadas barradas na revisão. É experimental, pode deixar passar ou barrar a chamada errada e usa mais tokens.",
+    "Bots you already have keep their own.": "Os Bots que você já tem mantêm as próprias permissões.",
+    "Experimental": "Experimental",
+    "New Bots start with": "Novos Bots começam com",
+    "Runs as Workspace here": "Aqui roda como Área de trabalho",
+    "Turn Auto review back on in Plugins to open this chat.": "Ative de novo a revisão automática em Plugins para abrir este chat.",
+    "Use Auto review": "Usar revisão automática"
   },
   "permission.access": {
     "mode": "Modo de acesso, atual: {name}",

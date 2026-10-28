@@ -37,8 +37,9 @@ export function install(rt) {
   const ok = value => ({ ok: true, value })
   const fail = (message, code = 'bot/error') => ({ ok: false, error: { code, message, details: {} } })
   // Models come from DSH, not state.json, so a provider added in Harness settings
-  // changes the view without a new revision.
-  const modelsKey = () => `${rt.cachedCatalog().map(entry => `${entry.ref}${entry.needsKey ? '!' : ''}${entry.reasoning ? `:${JSON.stringify(entry.reasoning)}` : ''}`).join(',')}|${rt.cachedDefault() ?? ''}`
+  // changes the view without a new revision. So do the permission presets DSH offers and
+  // the Bots and groups whose Auto runs as workspace-write (permissions.js).
+  const modelsKey = () => `${rt.cachedCatalog().map(entry => `${entry.ref}${entry.needsKey ? '!' : ''}${entry.reasoning ? `:${JSON.stringify(entry.reasoning)}` : ''}`).join(',')}|${rt.cachedDefault() ?? ''}|${rt.permissionKey?.() ?? ''}`
   const view = () => ({
     revision: state.revision,
     workspaceId: state.workspaceId ?? null,
@@ -53,12 +54,13 @@ export function install(rt) {
     // `waiting`: the Bot holds its greeting until the user picks its model.
     bots: Object.values(state.bots).map(({ segments, kickoff, ...bot }) => ({
       ...bot, sessionId: rt.chatOf(bot.id), parts: (segments ?? []).map(segment => segment.sessionId), ...(kickoff ? { waiting: true } : {}),
+      ...rt.permissionFallbackOf('bot', bot),
     })),
     // `parts`: the members' hidden group Sessions and their earlier segments, for usage.
     rooms: Object.values(state.rooms).map(({ log, seen, lateRounds, relays, sessions, segments, ...room }) => {
       const parts = [...Object.values(sessions ?? {}), ...Object.values(segments ?? {}).flat().map(segment => segment.sessionId)]
       const last = (log ?? []).filter(line => line.kind === undefined).at(-1)
-      return { ...room, relayLimitDefault: defaultRelayLimit(room), parts, ...(last ? { preview: last.who === 'User' ? last.text : `${last.who}：${last.text}` } : {}) }
+      return { ...room, relayLimitDefault: defaultRelayLimit(room), parts, ...rt.permissionFallbackOf('room', room), ...(last ? { preview: last.who === 'User' ? last.text : `${last.who}：${last.text}` } : {}) }
     }),
     exchangeTurns: state.exchangeTurns,
     questions: state.questions,
@@ -152,6 +154,11 @@ export function install(rt) {
       // may grow more states later.
       if (body.thinking === true) state.prefs.thinking = true
       else if (body.thinking === false || body.thinking === null) delete state.prefs.thinking
+    }
+    // The team default: the permission level a new Bot starts with.
+    if (body.permission !== undefined) {
+      if (body.permission === null || body.permission === '') delete state.prefs.permission
+      else state.prefs.permission = rt.checkPreset(body.permission)
     }
     return rt.save()
   }

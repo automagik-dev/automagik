@@ -5,7 +5,7 @@ import { AdminStar, BotAvatar, BotMark, RoomAvatar } from './mark.js'
 import { Card, Row, InlineText, SwitchRow } from './bot-settings.js'
 import { Segmented } from './motion.js'
 import { FolderMenu } from './folder-menu.js'
-import { PermissionPicker } from './permission-picker.js'
+import { PermissionFallback, PermissionPicker } from './permission-picker.js'
 import { t } from './i18n.js'
 
 export const ROOM_MODES = [
@@ -59,7 +59,8 @@ function GroupPermission({ room, catalog, update }) {
       onChange: on => update({ permission: on ? catalog.defaultPreset ?? catalog.options[0].value : null }),
     }),
     shared ? h('div', { className: 'bt-set-row bt-bs-row bt-bs-stack bt-gs-perm bt-veil' },
-      h(PermissionPicker, { catalog, saved: room.permission, onPick: permission => update({ permission }) })) : null)
+      h(PermissionPicker, { catalog, saved: room.permission, onPick: permission => update({ permission }) }),
+      h(PermissionFallback, { fallback: room.permissionFallback })) : null)
 }
 
 // A group chat's settings as grouped cards: its name and notice, who answers, its

@@ -1,6 +1,7 @@
 // Models. Every Bot runs on one model of its own, fixed when it is created and changed
 // only in its settings or by a Main Bot. The team's first Main Bot has none until the
 // user picks one in its chat. The Session keeps the selection durably.
+import { isClaudeCode } from '../shared/permission-levels.js'
 import { normalize, splitRef } from './text.js'
 
 const CATALOG_TTL_MS = 10_000
@@ -11,7 +12,6 @@ const ROUTE_WAIT_MS = 30_000
 // on an older id still resolves. Omni offers the newest of each family: a model that a newer
 // one of its family, or the CLI's alias for the family (opus, sonnet, haiku), supersedes is
 // left out, and the 1M variant stands in for its plain twin. A model a Bot runs on stays.
-const isClaudeCode = provider => provider === 'claude-code' || String(provider).startsWith('claude-code-')
 const VERSIONED = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?(\[1m\])?$/
 const versionOf = (id) => {
   const match = VERSIONED.exec(id)

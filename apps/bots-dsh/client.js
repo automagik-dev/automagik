@@ -405,6 +405,13 @@ var ZH = {
   "Read only": "仅可查看",
   "Workspace": "工作区内修改",
   "Full access": "完全权限",
+  "Auto review": "自动审查",
+  Experimental: "实验性",
+  "Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.": "自动审查不使用沙箱：每次工具调用前先由模型审查，被拦下的调用由你决定。此功能仍属实验性，可能误放行或误拦截，并会消耗更多 token。",
+  "Use Auto review": "启用自动审查",
+  "Runs as Workspace here": "这里按“工作区内修改”运行",
+  "New Bots start with": "新 Bot 的初始权限",
+  "Bots you already have keep their own.": "已有的 Bot 保留各自的权限。",
   "Same for every member": "全员统一",
   "Replaces each member's own permissions in this group.": "在这个群里代替各成员自己的权限。",
   "Add Omni": "添加 Omni",
@@ -1368,6 +1375,7 @@ var HOST_ERRORS = [
 var HOST_ZH = {
   "Request failed": "请求失败",
   "Permissions are not available in this DeepSeek Harness": "这个 DeepSeek Harness 不支持权限设置",
+  "Turn Auto review back on in Plugins to open this chat.": "请在插件中重新开启自动审查，才能打开这个对话。",
   "Avatar images must be PNG, JPEG, WebP, or GIF": "头像图片必须是 PNG、JPEG、WebP 或 GIF",
   "Avatar image is too large": "头像图片太大了",
   "A Bot needs a name": "Bot 需要一个名字",
@@ -2007,6 +2015,30 @@ function mountShellInstallers(tools) {
   };
 }
 
+// src/shared/permission-levels.js
+var AUTO = "auto";
+var AUTO_FALLBACK = "workspace-write";
+var isClaudeCode = (provider) => provider === "claude-code" || String(provider).startsWith("claude-code-");
+var ADAPTERS = /* @__PURE__ */ Symbol.for("dsh-oh-my-claude.adapter");
+var claudeAdapters = () => [...globalThis[ADAPTERS]?.values() ?? []];
+async function pinClaudeMode(sessionId, mode) {
+  const adapters = claudeAdapters();
+  try {
+    if (mode === AUTO) {
+      if (adapters.some((adapter) => typeof adapter.restorePermissionMode !== "function" || typeof adapter.getPermissionMode !== "function")) return false;
+      for (const adapter of adapters) await adapter.restorePermissionMode(sessionId, AUTO);
+      return adapters.every((adapter) => adapter.getPermissionMode(sessionId, "danger-full-access") === AUTO);
+    }
+    const readable = adapters.filter((adapter) => typeof adapter.permissionModeInfo === "function");
+    if (!readable.some((adapter) => adapter.permissionModeInfo(sessionId).override === AUTO)) return true;
+    const writable = adapters.filter((adapter) => typeof adapter.setPermissionMode === "function");
+    for (const adapter of writable) await adapter.setPermissionMode(sessionId, null);
+    return writable.length === adapters.length && readable.every((adapter) => adapter.permissionModeInfo(sessionId).override === null);
+  } catch {
+    return false;
+  }
+}
+
 // src/client/composer-packs.js
 var PACK_CELLS = ["permission", "model"];
 var DEFAULT_PACK = Object.freeze({ id: "omni", cells: Object.freeze({ permission: "hidden", model: "hidden" }) });
@@ -2044,7 +2076,6 @@ function cellChoice(pack, cell, target) {
   }
   return choice === "host" || choice === "model" ? choice : "hidden";
 }
-var isClaudeCode = (provider) => provider === "claude-code" || String(provider).startsWith("claude-code-");
 var OH_MY_CLAUDE = /oh-my-claude/i;
 var CLAUDE_KEYS = ["conversation.input.permission", "conversation.input.left", "conversation.input.dock", "conversation.composer.dock"];
 var hasOhMyClaude = (env) => CLAUDE_KEYS.some((key) => (env.registrants?.(key) ?? []).some((name) => OH_MY_CLAUDE.test(name ?? "")));
@@ -9633,6 +9664,9 @@ html[data-windows-titlebar]:not([data-fullscreen]) :is(.bt-pane,.bt-panel)::befo
 .bt-drawer-model .bt-note{margin-top:6px}
 .bt-drawer-permission{display:flex;flex-direction:column}
 .bt-seg button.bt-perm-danger,.bt-seg button.bt-perm-danger[aria-pressed=true],.bt-kv span.bt-perm-danger{color:var(--bt-danger)}
+.bt-perm-exp{margin-left:6px;padding:0 5px;border-radius:999px;font-size:10px;line-height:15px;background:var(--bt-hover);color:var(--bt-ink-3)}
+.bt-perm-confirm{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin-top:8px}
+.bt-perm-confirm .bt-note{flex-basis:100%;margin-top:0}
 
 /* Settings dialog: a 198px page list beside the page. */
 .bt-settings-layer{position:fixed;inset:var(--dsh-frame-chrome-top,0px) 0 0;z-index:60;display:flex;align-items:center;justify-content:center;font-family:var(--bt-font)}
@@ -12597,12 +12631,14 @@ label.bt-bs-row{cursor:text}
 
 // src/client/permission-picker.js
 var import_react31 = require("react");
-var LABELS = { "read-only": "Read only", "workspace-write": "Workspace", "danger-full-access": "Full access" };
+var LABELS = { "read-only": "Read only", "workspace-write": "Workspace", "danger-full-access": "Full access", [AUTO]: "Auto review" };
 var DANGER = /* @__PURE__ */ new Set(["danger-full-access"]);
 var presetDanger = (value) => DANGER.has(value);
 var presetName = (value, catalog) => LABELS[value] ? t(LABELS[value]) : catalog?.options?.find((option) => option.value === value)?.name ?? value;
+var PermissionFallback = ({ fallback }) => fallback ? (0, import_react31.createElement)("div", { className: "bt-note" }, t("Runs as Workspace here")) : null;
 function PermissionPicker({ catalog, saved, onPick, repick = false }) {
   const [pending, setPending] = (0, import_react31.useState)(null);
+  const [confirming, setConfirming] = (0, import_react31.useState)(false);
   const flight = (0, import_react31.useRef)({ value: void 0, latest: void 0 });
   (0, import_react31.useEffect)(() => {
     const flying = flight.current.value;
@@ -12622,8 +12658,13 @@ function PermissionPicker({ catalog, saved, onPick, repick = false }) {
     });
   };
   const current = pending ?? saved;
-  const pick2 = (value) => {
+  const pick2 = (value, confirmed = false) => {
     if (value === current && !repick) return;
+    if (value === AUTO && !confirmed) {
+      setConfirming(true);
+      return;
+    }
+    setConfirming(false);
     setPending(value);
     if (flight.current.value !== void 0) {
       flight.current.latest = value;
@@ -12631,7 +12672,7 @@ function PermissionPicker({ catalog, saved, onPick, repick = false }) {
     }
     send(value);
   };
-  return (0, import_react31.createElement)(
+  const choice = (0, import_react31.createElement)(
     Segmented,
     { label: t("Permissions"), value: current },
     catalog.options.map((option) => (0, import_react31.createElement)("button", {
@@ -12641,7 +12682,20 @@ function PermissionPicker({ catalog, saved, onPick, repick = false }) {
       title: option.description,
       onClick: () => pick2(option.value),
       className: presetDanger(option.value) ? "bt-perm-danger" : void 0
-    }, presetName(option.value, catalog)))
+    }, presetName(option.value, catalog), option.value === AUTO ? (0, import_react31.createElement)("span", { className: "bt-perm-exp" }, t("Experimental")) : null))
+  );
+  if (!confirming) return choice;
+  return (0, import_react31.createElement)(
+    import_react31.Fragment,
+    null,
+    choice,
+    (0, import_react31.createElement)(
+      "div",
+      { className: "bt-perm-confirm", role: "alert" },
+      (0, import_react31.createElement)("span", { className: "bt-note" }, t("Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.")),
+      (0, import_react31.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => pick2(AUTO, true) }, t("Use Auto review")),
+      (0, import_react31.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => setConfirming(false) }, t("Cancel"))
+    )
   );
 }
 
@@ -12709,7 +12763,8 @@ function GroupPermission({ room: room2, catalog, update }) {
     shared2 ? (0, import_react32.createElement)(
       "div",
       { className: "bt-set-row bt-bs-row bt-bs-stack bt-gs-perm bt-veil" },
-      (0, import_react32.createElement)(PermissionPicker, { catalog, saved: room2.permission, onPick: (permission) => update({ permission }) })
+      (0, import_react32.createElement)(PermissionPicker, { catalog, saved: room2.permission, onPick: (permission) => update({ permission }) }),
+      (0, import_react32.createElement)(PermissionFallback, { fallback: room2.permissionFallback })
     ) : null
   );
 }
@@ -13194,7 +13249,8 @@ function PermissionRow({ bot, roster, actions, run: run2 }) {
     { className: "bt-drawer-permission" },
     (0, import_react34.createElement)("div", { className: "bt-section-title" }, t("Permissions")),
     // A Bot without its own preset may run on another one set in DSH, so its first pick always applies.
-    (0, import_react34.createElement)(PermissionPicker, { catalog, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === void 0, onPick: (permission) => run2(actions.updateBot(bot.id, { permission })) })
+    (0, import_react34.createElement)(PermissionPicker, { catalog, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === void 0, onPick: (permission) => run2(actions.updateBot(bot.id, { permission })) }),
+    (0, import_react34.createElement)(PermissionFallback, { fallback: bot.permissionFallback })
   );
 }
 function RunStats({ bot, part, running: running2, actions }) {
@@ -13368,7 +13424,8 @@ function GroupOverview({ room: room2, roster, actions, usage, useWork, openSetti
       "div",
       { key: "permission" },
       (0, import_react34.createElement)("div", { className: "bt-section-title" }, t("Permissions")),
-      (0, import_react34.createElement)("div", { className: "bt-kv" }, (0, import_react34.createElement)("span", { className: presetDanger(room2.permission) ? "bt-perm-danger" : void 0 }, presetName(room2.permission, roster.permissions)))
+      (0, import_react34.createElement)("div", { className: "bt-kv" }, (0, import_react34.createElement)("span", { className: presetDanger(room2.permission) ? "bt-perm-danger" : void 0 }, presetName(room2.permission, roster.permissions))),
+      (0, import_react34.createElement)(PermissionFallback, { fallback: room2.permissionFallback })
     ) : null,
     roster.memory === false ? null : (0, import_react34.createElement)(MemoryRow, { key: "memory", owner: { id: room2.id, name: room2.name, group: true }, actions }),
     usage ? (0, import_react34.createElement)(
@@ -20836,6 +20893,26 @@ function MainBotsSection({ roster, actions, run: run2 }) {
     ) : null
   );
 }
+function PermissionsSection({ roster, actions, run: run2 }) {
+  const catalog = roster.permissions;
+  if (!catalog?.options?.length) return null;
+  const saved = roster.prefs?.permission;
+  const offered = catalog.options.some((option) => option.value === AUTO);
+  return (0, import_react59.createElement)(
+    SetSection,
+    { title: t("Permissions") },
+    (0, import_react59.createElement)(
+      SetRow,
+      { label: t("New Bots start with"), hint: t("Bots you already have keep their own.") },
+      (0, import_react59.createElement)(
+        "div",
+        { className: "bt-drawer-permission" },
+        (0, import_react59.createElement)(PermissionPicker, { catalog, saved: saved ?? catalog.defaultPreset, repick: saved === void 0, onPick: (permission) => run2(actions.setPrefs({ permission })) }),
+        (0, import_react59.createElement)(PermissionFallback, { fallback: saved === AUTO && !offered ? AUTO_FALLBACK : void 0 })
+      )
+    )
+  );
+}
 var MOTIONS = [["quiet", "Quiet"], ["normal", "Normal"], ["lively", "Lively"]];
 function MotionSection({ roster, actions, run: run2 }) {
   const motion = roster.prefs?.motion === "quiet" || roster.prefs?.motion === "lively" ? roster.prefs.motion : "normal";
@@ -20860,6 +20937,7 @@ function BotsPage({ roster, actions, run: run2 }) {
   const [creating, setCreating] = (0, import_react59.useState)(false);
   return [
     (0, import_react59.createElement)(MainBotsSection, { key: "main", roster, actions, run: run2 }),
+    (0, import_react59.createElement)(PermissionsSection, { key: "permissions", roster, actions, run: run2 }),
     (0, import_react59.createElement)(MotionSection, { key: "motion", roster, actions, run: run2 }),
     (0, import_react59.createElement)(VoiceSection, { key: "voice", actions, Section: SetSection, Row: SetRow }),
     (0, import_react59.createElement)(ImagesSection, { key: "images", Section: SetSection, Row: SetRow }),

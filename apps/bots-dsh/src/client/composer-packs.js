@@ -29,6 +29,7 @@
 //
 // The plan cell and the activity and usage docks are not pack cells: they stay Omni's in
 // every pack (Claude Code's plan mode is one of its permission modes).
+import { isClaudeCode } from '../shared/permission-levels.js'
 import { composerPacks } from './extend.js'
 
 export const PACK_CELLS = ['permission', 'model']
@@ -74,7 +75,6 @@ export function cellChoice(pack, cell, target) {
 // -------------------------------------------------------------------------
 // The packs Omni brings.
 
-const isClaudeCode = provider => provider === 'claude-code' || String(provider).startsWith('claude-code-')
 // dsh-oh-my-claude (upstream or a fork of it) registers composer pieces under its own
 // fiber, so its name shows in the registrant of what it put in the composer.
 const OH_MY_CLAUDE = /oh-my-claude/i

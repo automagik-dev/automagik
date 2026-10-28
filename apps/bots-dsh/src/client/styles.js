@@ -479,6 +479,9 @@ html[data-windows-titlebar]:not([data-fullscreen]) :is(.bt-pane,.bt-panel)::befo
 .bt-drawer-model .bt-note{margin-top:6px}
 .bt-drawer-permission{display:flex;flex-direction:column}
 .bt-seg button.bt-perm-danger,.bt-seg button.bt-perm-danger[aria-pressed=true],.bt-kv span.bt-perm-danger{color:var(--bt-danger)}
+.bt-perm-exp{margin-left:6px;padding:0 5px;border-radius:999px;font-size:10px;line-height:15px;background:var(--bt-hover);color:var(--bt-ink-3)}
+.bt-perm-confirm{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin-top:8px}
+.bt-perm-confirm .bt-note{flex-basis:100%;margin-top:0}
 
 /* Settings dialog: a 198px page list beside the page. */
 .bt-settings-layer{position:fixed;inset:var(--dsh-frame-chrome-top,0px) 0 0;z-index:60;display:flex;align-items:center;justify-content:center;font-family:var(--bt-font)}
