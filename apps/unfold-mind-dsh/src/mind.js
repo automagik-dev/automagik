@@ -720,7 +720,7 @@ function keptTail(full) {
 // Where a quoted credential value opens (the quoted forms of redact.js's text rules), as in
 // unfold-events-dsh's window.
 const QUOTED_SECRET = [
-  /\b(?=[A-Z0-9_]*=)[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=(["'`])/g,
+  /\b[A-Z0-9_]+=(?<=(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=)(["'`])/g,
   /(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization)["']?\s*[:=]\s*(["'`])/gi, // any prefix
   /(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key)["']?\s*[:=]\s*(["'`])/g, // camelCase
 ]
