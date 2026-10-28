@@ -43,6 +43,9 @@ const BLOCKS: [string, string, string[]][] = [
   ['const SECRET_TEXT = [', 'unfold-mind-dsh/src/redact.js', ['unfold-events-dsh/src/client/redact.js', 'unfold-events-dsh/src/window.js', 'unfold-settings-dsh/src/redact.js']],
   ['const SECRET_VALUES = [', 'unfold-mind-dsh/src/redact.js', ['unfold-events-dsh/src/client/redact.js']],
   ['const QUOTED_SECRET = [', 'unfold-events-dsh/src/window.js', ['unfold-mind-dsh/src/mind.js']],
+  ['const YAML_SECRET = [', 'unfold-events-dsh/src/window.js', ['unfold-mind-dsh/src/mind.js']],
+  ['const ESCAPED_SECRET = [', 'unfold-events-dsh/src/window.js', ['unfold-mind-dsh/src/mind.js']],
+  ['const ESCAPED_END =', 'unfold-events-dsh/src/window.js', ['unfold-mind-dsh/src/mind.js']],
 ];
 
 /** The block `declaration` opens in `file`: one line, or through the `]` that closes its list. */
