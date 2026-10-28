@@ -8,6 +8,7 @@ Automagik's plugins for [DeepSeek Harness](https://github.com/deepseek-ai/deepse
 | [`apps/welcome-dsh`](apps/welcome-dsh/README.md) | `@automagik/welcome-dsh` | The welcome: the octopus, the team step, and Connect AI through DSH's own sign-ins. |
 | [`apps/unfold-bridge-dsh`](apps/unfold-bridge-dsh/README.md) | `@automagik/unfold-bridge-dsh` | The Unfold bridge: your DSH's model routes for Unfold, as an OpenAI-compatible endpoint on 127.0.0.1 behind a key made at each start. |
 | [`apps/locale-pt-br-dsh`](apps/locale-pt-br-dsh/README.md) | `@automagik/locale-pt-br-dsh` | Português (Brasil): adds Brazilian Portuguese to DSH's languages and translates what a first session shows, the Bot team's main screens included; the rest stays in English. |
+| [`apps/unfold-trajectory-dsh`](apps/unfold-trajectory-dsh/README.md) | `@automagik/unfold-trajectory-dsh` | Unfold's trajectory: a fork of DeepSeek's trajectory UI that shows what Unfold heard, said and did, read from Unfold's Mind stream. |
 | [`apps/desktop`](apps/desktop/README.md) | (the app) | The Automagik desktop app: DSH of its own with the Bot team, the welcome and Omni's channels and canvases. `omni desktop` opens it with Omni preloaded, `genie desktop` with Genie. |
 
 Omni's own plugins (its channels and canvases) live with Omni, in [automagik-dev/omni](https://github.com/automagik-dev/omni) (`apps/omni-channels-dsh`, `apps/omni-canvas-dsh`), and carry Omni's version.
