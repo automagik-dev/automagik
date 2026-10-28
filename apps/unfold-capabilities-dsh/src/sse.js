@@ -13,6 +13,7 @@ export function sseHub(options = {}) {
   const { maxPendingBytes, maxPendingEvents, drainTimeoutMs } = { ...DEFAULTS, ...options }
   const clients = new Set()
   const drops = {} // reason -> clients dropped for it
+  let closed = null // close()'s reason: a stream opened after it ends at once
 
   const drop = (c, reason) => {
     if (!clients.delete(c)) return
@@ -46,6 +47,8 @@ export function sseHub(options = {}) {
     /** Start one stream with its baseline; closing it removes only this client. */
     open(req, res, event, data, id) {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
+      // The plugin unloaded and its route is not unregistered yet: nothing will write here again.
+      if (closed) return res.end(frame('resnapshot', { reason: closed }))
       const c = { res, queue: [], queued: 0, waiting: false, timer: null }
       c.onDrain = () => {
         clearTimeout(c.timer)
@@ -72,6 +75,7 @@ export function sseHub(options = {}) {
     },
     /** End every stream and cancel every pending drain wait (plugin unload). */
     close(reason = 'unloaded') {
+      closed = reason
       for (const c of [...clients]) drop(c, reason)
     },
   }

@@ -49,6 +49,15 @@ test('fetchStream: hub close (unload) ends the body after its goodbye frame', as
   assert.equal(hub.clients.size, 0)
 })
 
+test('fetchStream: a stream opened after hub close (a route not yet unregistered) gets the goodbye and ends', async () => {
+  const hub = sseHub()
+  hub.close('unloaded')
+  const reader = fetchStream(hub, new Request('http://h/s'), 'snapshot', {}).body.getReader()
+  assert.match(new TextDecoder().decode((await within(reader.read(), 100, 'the goodbye read')).value), /event: resnapshot\ndata: {"reason":"unloaded"}/)
+  assert.deepEqual(await within(reader.read(), 100, 'the end'), { value: undefined, done: true })
+  assert.equal(hub.clients.size, 0)
+})
+
 test('the package names no port and no address: a stream is only ever served on a route its host gives it', () => {
   const src = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
   // The two fixed ports the first Unfold plugins used (agentd observer, host owner), spelled so
