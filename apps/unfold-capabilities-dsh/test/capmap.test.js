@@ -9,6 +9,16 @@ import { Context } from '@deepseek-ai/cordis'
 import * as plugin from '../index.js'
 import { computeMap, loadRuns } from '../src/capmap.js'
 
+/**
+ * `promise`, or a failure naming `what` after `ms`. The timer is ref'd: an in-memory stream holds
+ * no handle, so a frame that never comes fails by name instead of draining the event loop.
+ */
+const within = (ms, what, promise) => {
+  let timer
+  const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no ${what} in ${ms} ms`)), ms) })
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer))
+}
+
 // The smallest registry the map accepts; each test adds its own cells.
 const REGISTRY = { registry_format: 'unfold.capabilities/v2', registry_version: 1, groups: { capability: { title: 'What I can do' } }, cells: [] }
 
@@ -228,7 +238,7 @@ test('loads as a Cordis plugin, streams the map over HTTP, recomputes on notify,
       }
     })
   }).on('error', () => {})
-  const frame = (n) => new Promise((resolve) => (frames.length >= n ? resolve(frames[n - 1]) : (onFrame = () => frames.length >= n && resolve(frames[n - 1]))))
+  const frame = (n) => within(2_000, `stream frame ${n}`, new Promise((resolve) => (frames.length >= n ? resolve(frames[n - 1]) : (onFrame = () => frames.length >= n && resolve(frames[n - 1])))))
   assert.equal((await frame(1)).data.cells[0].status, 'supported')
 
   mkdirSync(join(dir, 'r2'))
@@ -270,7 +280,7 @@ test('DSH transport: the map, refresh and stream are connection.fetch routes', a
   ])
   const abort = new AbortController()
   const body = (await routes[2].fetch(new Request('http://h/api/unfold-capabilities/stream', { signal: abort.signal }))).body.getReader()
-  const read = async () => new TextDecoder().decode((await body.read()).value)
+  const read = async () => new TextDecoder().decode((await within(2_000, 'stream chunk', body.read())).value)
   assert.match(await read(), /^event: map\n/)
   const refreshed = await (await routes[1].fetch(new Request('http://h/api/unfold-capabilities/refresh', { method: 'POST' }))).json()
   assert.equal(refreshed.runs, 1)

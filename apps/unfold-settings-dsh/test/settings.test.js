@@ -442,26 +442,28 @@ test('an unfold-session with no host status (Unfold\'s own instance) leaves ever
   await p.fiber.dispose()
 })
 
-test('an owner the session reports unavailable is read once per serving: no heartbeat or GET reads it again', async () => {
-  const load = async () => {
-    const counter = { reads: 0 }
-    const session = { status: async () => (counter.reads++, { owner: { unavailable: 'x' } }) }
-    return { counter, p: await loadPlugin({ leaseMs: 10_000, heartbeatMs: 5 }, { session, rows: [['hello', helloFields()]] }) }
-  }
-  const { counter, p } = await load()
+test('an owner the session reports unavailable is read once per load of unfold-session: no heartbeat or GET reads it again', async () => {
+  let reads = 0
+  const session = { status: async () => (reads++, { owner: { unavailable: 'x' } }) }
+  const p = await loadPlugin({ leaseMs: 10_000, heartbeatMs: 5 }, { rows: [['hello', helloFields()]] })
+  const off = p.ctx.provide('unfoldSession', session)
+  await new Promise((r) => setImmediate(r))
   const { sse, close } = await p.open()
   const first = (await sse.next('settings')).data
   assert.equal(first.sources.host.error, 'x')
   for (let i = 0; i < 5; i++) await sse.next('heartbeat')
   const got = await p.get()
   assert.equal(got.sources.host.error, 'x')
-  assert.equal(counter.reads, 1, 'one read, then neither 5 heartbeats nor a GET read again')
+  assert.equal(reads, 1, 'one read, then neither 5 heartbeats nor a GET read again')
   close()
+  // unfold-session reloads on the same ctx, with the same service object: it is read once more.
+  await off()
+  p.ctx.provide('unfoldSession', session)
+  await new Promise((r) => setImmediate(r))
+  assert.equal((await p.get()).sources.host.error, 'x')
+  await p.get()
+  assert.equal(reads, 2, 'a reload of unfold-session reads once more, and only once')
   await p.fiber.dispose()
-  const reloaded = await load()
-  await reloaded.p.get()
-  assert.equal(reloaded.counter.reads, 1, 'a reload reads once more')
-  await reloaded.p.fiber.dispose()
 })
 
 // ── Freshness: what the panel DISPLAYS as time passes and the stream fails ──
