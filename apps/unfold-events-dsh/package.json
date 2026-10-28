@@ -68,7 +68,7 @@
         "en": "Unfold events"
       },
       "description": {
-        "en": "See what Unfold's agent is doing, inside the Unfold instance's DSH. Adds two right-sidebar tabs: Unfold events, every event the agent sends in plain words, newest first; and Unfold, its presence, which says what it is doing right now. It only watches: it attaches to the agent read-only, through the address Unfold publishes for its own instance, and opens no port. Outside an Unfold instance it has nothing to show."
+        "en": "See what Unfold's agent is doing, inside the Unfold instance's DSH. Adds two right-sidebar tabs: Unfold events, every event the agent sends in plain words, newest first; and Unfold, its presence, which says what it is doing right now. It only watches: it attaches to the agent read-only, through the address Unfold publishes for its own instance, and opens no port. Outside an Unfold instance it has nothing to show. Part of Unfold; works with the Unfold app."
       },
       "category": "automagik",
       "keywords": [
