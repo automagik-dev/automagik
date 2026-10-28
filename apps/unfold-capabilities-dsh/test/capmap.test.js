@@ -55,7 +55,7 @@ test('no write route: the map, its stream and refresh, which recomputes from dis
   await fiber
   await new Promise((r) => setImmediate(r))
   assert.deepEqual(routes.map((r) => [r.path, r.methods]), [
-    ['/api/unfold-capabilities', ['GET']], ['/api/unfold-capabilities/refresh', ['POST']], ['/api/unfold-capabilities/stream', ['GET']],
+    ['/api/unfold-capabilities', ['GET']], ['/api/unfold-capabilities/refresh', ['POST']], ['/api/unfold-capabilities/stream', ['GET']], ['/api/unfold-capabilities/config', ['GET']],
   ])
   await fiber.dispose()
 })
@@ -220,7 +220,7 @@ test('loads as a Cordis plugin, streams the map over HTTP, recomputes on notify,
   await new Promise((r) => setImmediate(r))
   const service = ctx.get('unfoldCapabilities')
   assert.equal(service.map().cells[0].status, 'supported')
-  assert.deepEqual(registered.map((r) => r.path), ['/api/unfold-capabilities', '/api/unfold-capabilities/refresh', '/api/unfold-capabilities/stream'])
+  assert.deepEqual(registered.map((r) => r.path), ['/api/unfold-capabilities', '/api/unfold-capabilities/refresh', '/api/unfold-capabilities/stream', '/api/unfold-capabilities/config'])
   const server = http.createServer((req, res) => registered.find((r) => r.path === req.url)?.handler(req, res) ?? res.writeHead(404).end())
   await new Promise((r) => server.listen(0, '127.0.0.1', r))
   const { port } = server.address()
@@ -276,7 +276,7 @@ test('DSH transport: the map, refresh and stream are connection.fetch routes', a
   await fiber
   await new Promise((r) => setImmediate(r))
   assert.deepEqual(routes.map((r) => [r.path, r.methods]), [
-    ['/api/unfold-capabilities', ['GET']], ['/api/unfold-capabilities/refresh', ['POST']], ['/api/unfold-capabilities/stream', ['GET']],
+    ['/api/unfold-capabilities', ['GET']], ['/api/unfold-capabilities/refresh', ['POST']], ['/api/unfold-capabilities/stream', ['GET']], ['/api/unfold-capabilities/config', ['GET']],
   ])
   const abort = new AbortController()
   const body = (await routes[2].fetch(new Request('http://h/api/unfold-capabilities/stream', { signal: abort.signal }))).body.getReader()

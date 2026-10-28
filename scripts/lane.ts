@@ -35,7 +35,7 @@ export const LANE_RELEASE = 'plugin-lane';
 export const SCHEMA_VERSION = 1;
 export const KEY_ID = 'automagik-2026-10';
 const DOWNLOADS = 'https://github.com/automagik-dev/automagik/releases/download/';
-const PLUGINS = ['bots-dsh', 'locale-pt-br-dsh', 'unfold-bridge-dsh', 'unfold-capabilities-dsh', 'unfold-mind-dsh', 'unfold-settings-dsh', 'welcome-dsh'];
+const PLUGINS = ['bots-dsh', 'locale-pt-br-dsh', 'unfold-bridge-dsh', 'unfold-capabilities-dsh', 'unfold-events-dsh', 'unfold-mind-dsh', 'unfold-settings-dsh', 'unfold-sse-dsh', 'welcome-dsh'];
 const PROFILE = 'apps/desktop/profile/package.json';
 // The add-ons the desktop profile pins that the lane carries too, so a pin move is a patch: each
 // a reviewed fork with no dependencies of its own (its folder alone is the add-on) that declares

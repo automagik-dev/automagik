@@ -34,7 +34,11 @@ var import_react = require("react");
 var PANEL_ID = "unfold.capabilities";
 var STREAM = "api/unfold-capabilities/stream";
 var inject = ["slots"];
-function apply(ctx) {
+async function apply(ctx) {
+  const response = await fetch("api/unfold-capabilities/config", { cache: "no-store" });
+  if (!response.ok) throw new Error(`Unfold configuration ${response.status}`);
+  const config = await response.json();
+  STREAM = `${config.route.replace(/^\//, "").replace(/\/$/, "")}/stream`;
   ctx.effect(() => ctx.slots.inject("main", () => ctx.slots.register(
     { name: "main", key: PANEL_ID },
     CapabilitiesPanel

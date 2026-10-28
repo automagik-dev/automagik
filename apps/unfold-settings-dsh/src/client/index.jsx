@@ -26,11 +26,16 @@ import { PanelModel } from '../display.js'
 export const PANEL_ID = 'unfold.settings'
 export const UNFOLD_SETTINGS_TAB_ID = '@automagik/unfold-settings-dsh'
 export const UNFOLD_SETTINGS_TAB_KIND = 'unfold.settings'
-const ROUTE = 'api/unfold-settings'
+let ROUTE = 'api/unfold-settings'
 
 export const inject = ['slots']
 
-export function apply(ctx) {
+export async function apply(ctx) {
+  const response = await fetch('api/unfold-settings/config', { cache: 'no-store' })
+  if (!response.ok) throw new Error(`Unfold configuration ${response.status}`)
+  const config = await response.json()
+  ROUTE = config.route.replace(/^\//, '').replace(/\/$/, '')
+
   ctx.effect(() => ctx.slots.inject('main', () => ctx.slots.register(
     { name: 'main', key: PANEL_ID },
     guarded('unfold-settings', SettingsPanel),

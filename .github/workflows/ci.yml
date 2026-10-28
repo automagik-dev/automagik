@@ -41,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [bots-dsh, locale-pt-br-dsh, unfold-bridge-dsh, unfold-capabilities-dsh, unfold-mind-dsh, unfold-settings-dsh, welcome-dsh]
+        app: [bots-dsh, locale-pt-br-dsh, unfold-bridge-dsh, unfold-capabilities-dsh, unfold-events-dsh, unfold-mind-dsh, unfold-settings-dsh, unfold-sse-dsh, welcome-dsh]
     defaults:
       run:
         working-directory: apps/${{ matrix.app }}
@@ -87,7 +87,8 @@ jobs:
           echo "OMNI_CHECKOUT=${dir}" >> "$GITHUB_ENV"
 
       - name: Generated files are current
-        run: node scripts/build-client.mjs --check
+        # A package with no browser half has no client to build.
+        run: '[ ! -f scripts/build-client.mjs ] || node scripts/build-client.mjs --check'
 
       - name: Lint
         run: bun run lint
