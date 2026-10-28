@@ -99,7 +99,7 @@ own, since DSH takes one per namespace and language. The other steps are English
 
 The Bot team (`@automagik/bots-dsh`) is this repository's, at this plugin's version: from
 the source this plugin came from, pointed at `apps/bots-dsh` (the same commit, or a linked
-checkout), else that release by name. A DSH that has the team under its former name,
+checkout), else that release's tarball. A DSH that has the team under its former name,
 `@automagik/omni-dsh`, has the team: it is switched on, not installed over. Omni's channels
 and canvases (`@automagik/omni-channels-dsh`, `@automagik/omni-canvas-dsh`) are Omni's, at
 Omni's version: they install as a git source from Omni's repository at the release
@@ -197,7 +197,7 @@ The shape was read from DSH 0.2.1-rc.2:
 | `provider-key`, `signin-*` | see `src/host/providers.js` | A key, or a sign-in run through DSH's authorization service. |
 | `ai-terminal-open`, `-read`, `-write`, `-resize`, `-close` | `{ kind: 'claude-login' }`, then the terminal id | The terminal that runs `claude auth login`, typed at a prompt and run with Enter. |
 | `omni-plugins` | none | The Omni plugins (`@automagik/bots-dsh`, `@automagik/omni-channels-dsh`, `-canvas-dsh`): each one's version and whether it is installed, `ready` once they run here, and the install in progress. |
-| `omni-plugins-install` | none | Installs the missing ones in order through DSH's plugin manager (`installBundle`: the Bot team from this plugin's own source pointed at its sibling, else this release by name; Omni's from Omni's repository at the pinned release), switching on any that are off. Pressing Omni's power button in the team step calls it. |
+| `omni-plugins-install` | none | Installs the missing ones in order through DSH's plugin manager (`installBundle`: the Bot team from this plugin's own source pointed at its sibling, else this release's tarball; Omni's from Omni's repository at the pinned release), switching on any that are off. Pressing Omni's power button in the team step calls it. |
 | `bot-type` | `{ type: 'omni' }` | What the Omni Bot starts with, as groups: model and thinking (DSH's default), plugins with versions, tool groups with their switches, skills, folder and permissions. |
 
 The host declares `inject: ['settings', 'credentials', 'connection']`; `connection` serves

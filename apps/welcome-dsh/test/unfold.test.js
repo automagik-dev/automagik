@@ -25,8 +25,7 @@ const folder = (t) => {
   return dir
 }
 
-// DSH's plugin manager over a fake registry: an install resolves only a spec the registry
-// holds (this repository's release, or a link to one of its apps), as pnpm would.
+// DSH's plugin manager over allowed release tarballs or linked apps; no npm package is published.
 function fakeManager({ bundles = [{ name: PKG.name, availability: 'profile', enabled: true, source: OWN_LINK, version: PKG.version }], registry = new Set() } = {}) {
   const calls = []
   return {
@@ -36,7 +35,8 @@ function fakeManager({ bundles = [{ name: PKG.name, availability: 'profile', ena
     async installBundle(spec, options) {
       calls.push(['install', spec, options])
       const linked = /^link:.*\/apps\/([\w-]+)$/.exec(spec)?.[1]
-      const name = linked ? `@automagik/${linked}` : registry.has(spec) ? spec.slice(0, spec.lastIndexOf('@')) : undefined
+      const released = /\/automagik-([\w-]+)-[0-9][^/]*\.tgz$/.exec(spec)?.[1]
+      const name = linked ? `@automagik/${linked}` : registry.has(spec) && released ? `@automagik/${released}` : undefined
       if (name === undefined) return { application: 'failed', error: { code: 'not-found', diagnostic: `${spec} is not in the registry` } }
       bundles.push({ name, availability: 'profile', enabled: true, version: PKG.version })
       return { application: 'restart-required', changed: true }
@@ -114,15 +114,28 @@ test('the Unfold type\'s plugins are the Bot type plugin\'s own defaults, then t
   assert.equal(UNFOLD_PLUGIN.name, '@automagik/unfold-bot-dsh')
   for (const plugin of [...UNFOLD_PLUGINS, UNFOLD_PLUGIN]) {
     assert.deepEqual(installTargetOf(plugin, OWN_LINK), { spec: `link:/home/someone/automagik/apps/${plugin.dir}`, options: {} })
-    assert.deepEqual(installTargetOf(plugin, undefined), { spec: `${plugin.name}@${PKG.version}`, options: { saveExact: true } })
+    assert.deepEqual(installTargetOf(plugin, undefined), { spec: `https://github.com/automagik-dev/automagik/releases/download/v${PKG.version}/automagik-${plugin.dir}-${PKG.version}.tgz`, options: {} })
+  }
+})
+
+test('release and absent welcome sources resolve every Automagik plugin to a release tarball', () => {
+  const version = '3.35.2'
+  const ownRelease = `https://github.com/automagik-dev/automagik/releases/download/v${version}/automagik-welcome-dsh-${version}.tgz`
+  for (const source of [ownRelease, undefined]) {
+    for (const plugin of [OMNI_PLUGINS[0], ...UNFOLD_PLUGINS, UNFOLD_PLUGIN]) {
+      assert.deepEqual(installTargetOf(plugin, source, version), {
+        spec: `https://github.com/automagik-dev/automagik/releases/download/v${version}/automagik-${plugin.dir}-${version}.tgz`,
+        options: {},
+      })
+    }
   }
 })
 
 test('in the Automagik app, powering Unfold on installs the Bot team, its defaults and Unfold, with no git', async () => {
-  // The app's own welcome came from a release: every spec is that release, from the registry.
-  const bundles = [{ name: PKG.name, availability: 'profile', enabled: true, source: `${PKG.name}@${PKG.version}`, version: PKG.version }]
+  // The app's own welcome came from a release tarball; every sibling uses that release.
+  const bundles = [{ name: PKG.name, availability: 'profile', enabled: true, source: `https://github.com/automagik-dev/automagik/releases/download/v${PKG.version}/automagik-welcome-dsh-${PKG.version}.tgz`, version: PKG.version }]
   const everything = [OMNI_PLUGINS[0], ...UNFOLD_PLUGINS, UNFOLD_PLUGIN]
-  const manager = fakeManager({ bundles, registry: new Set(everything.map(plugin => `${plugin.name}@${PKG.version}`)) })
+  const manager = fakeManager({ bundles, registry: new Set(everything.map(plugin => `https://github.com/automagik-dev/automagik/releases/download/v${PKG.version}/automagik-${plugin.dir}-${PKG.version}.tgz`)) })
   let gitChecks = 0
   const team = { state: { bots: {} }, async load() {} }
   const fake = host({ manager, team, checkGit: async () => { gitChecks += 1; return null } })
@@ -133,7 +146,7 @@ test('in the Automagik app, powering Unfold on installs the Bot team, its defaul
   await value(fake, 'unfold-plugin-install')
   const after = await settleUnfold(fake)
   assert.equal(after.install.phase, 'restart', after.install.error)
-  assert.deepEqual(manager.calls.map(([, spec]) => spec), everything.map(plugin => `${plugin.name}@${PKG.version}`))
+  assert.deepEqual(manager.calls.map(([, spec]) => spec), everything.map(plugin => `https://github.com/automagik-dev/automagik/releases/download/v${PKG.version}/automagik-${plugin.dir}-${PKG.version}.tgz`))
   assert.equal(gitChecks, 0)
   // Ready once the plugin has made its Bot.
   team.state.bots.u = { id: 'u', name: 'Unfold', kind: 'unfold' }
@@ -181,7 +194,7 @@ test('in Unfold\'s instance a missing bundled plugin installs nothing: no npm, n
   ]
   for (const [endpoint, rows, phaseOf] of cases) {
     // Every spec resolves: an install would succeed, so only the guard stops it.
-    const manager = fakeManager({ bundles: [own, ...rows], registry: new Set([...OMNI_PLUGINS, ...UNFOLD_PLUGINS, UNFOLD_PLUGIN].map(plugin => `${plugin.name}@${PKG.version}`)) })
+    const manager = fakeManager({ bundles: [own, ...rows], registry: new Set([...OMNI_PLUGINS, ...UNFOLD_PLUGINS, UNFOLD_PLUGIN].map(plugin => `https://github.com/automagik-dev/automagik/releases/download/v${PKG.version}/automagik-${plugin.dir}-${PKG.version}.tgz`)) })
     let gitChecks = 0
     const fake = host({ manager, team: { state: { bots: {} }, async load() {} }, env: UNFOLD, checkGit: async () => { gitChecks += 1; return null } })
     await value(fake, `${endpoint}-install`)

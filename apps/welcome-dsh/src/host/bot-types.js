@@ -118,14 +118,14 @@ const tilde = path => path.replace(/^\/(?:home|Users)\/[^/]+(?=\/)/, '~')
 
 // What installs one Omni plugin. The Bot team: the source this plugin came from, pointed at
 // its sibling (a git commit's path, or a linked checkout), so both are one release; else that
-// release from the registry. Omni's: its repository at the pinned release, as a DSH git spec.
+// release tarball. Omni's: its repository at the pinned release, as a DSH git spec.
 export function installTargetOf(plugin, ownSource, version = PKG.version, omni = OMNI_RELEASE) {
   if (plugin.from === 'omni') {
     return { spec: `git+${omni.repository.replace(/\.git$/, '')}.git#${omni.commit}&path:/apps/${plugin.dir}`, options: {} }
   }
   const own = 'apps/welcome-dsh'
   if (typeof ownSource === 'string' && ownSource.includes(own)) return { spec: ownSource.replace(own, `apps/${plugin.dir}`), options: {} }
-  return { spec: `${plugin.name}@${version}`, options: { saveExact: true } }
+  return { spec: `https://github.com/automagik-dev/automagik/releases/download/v${version}/automagik-${plugin.dir}-${version}.tgz`, options: {} }
 }
 
 // A plugin's row in the profile: under its name, else under its former one.

@@ -66,8 +66,8 @@ test('the Bot team installs from the source this plugin came from, else its rele
   assert.deepEqual(installTargetOf(team, OWN_LINK), { spec: 'link:/home/someone/automagik/apps/bots-dsh', options: {} })
   const git = 'git+https://github.com/automagik-dev/automagik.git#21bcd8f&path:/apps/welcome-dsh'
   assert.equal(installTargetOf(team, git).spec, 'git+https://github.com/automagik-dev/automagik.git#21bcd8f&path:/apps/bots-dsh')
-  assert.deepEqual(installTargetOf(team, '3.261024.1', '3.261024.1'), { spec: '@automagik/bots-dsh@3.261024.1', options: { saveExact: true } })
-  assert.deepEqual(installTargetOf(team, undefined, '3.1.0'), { spec: '@automagik/bots-dsh@3.1.0', options: { saveExact: true } })
+  assert.deepEqual(installTargetOf(team, '3.261024.1', '3.261024.1'), { spec: 'https://github.com/automagik-dev/automagik/releases/download/v3.261024.1/automagik-bots-dsh-3.261024.1.tgz', options: {} })
+  assert.deepEqual(installTargetOf(team, undefined, '3.1.0'), { spec: 'https://github.com/automagik-dev/automagik/releases/download/v3.1.0/automagik-bots-dsh-3.1.0.tgz', options: {} })
   // Omni's channels and canvases live in Omni's repository, at Omni's version, whatever this
   // plugin came from.
   const omni = { repository: 'https://github.com/automagik-dev/omni', version: '2.261023.32', commit: 'c'.repeat(40) }
