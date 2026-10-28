@@ -219,6 +219,7 @@ async function apply(ctx) {
   const response = await fetch("api/unfold-session/config", { cache: "no-store" });
   if (!response.ok) throw new Error(`Unfold configuration ${response.status}`);
   const config = await response.json();
+  if (config.enabled === false) return;
   ROOT_SESSION = config.sessionId;
   const route = config.route.replace(/^\//, "").replace(/\/$/, "");
   STATUS = `${route}/status`;
@@ -268,7 +269,7 @@ ${LIVE_CSS}`;
   ctx.effect(() => ctx.slots.inject("conversation.input.dock", () => ctx.slots.register({ name: "conversation.input.dock", id: "unfold-listening", order: -200 }, ListeningDock)), "unfold-session: listening bubble");
   let omni = null;
   try {
-    const id = ["@automagik", "omni-dsh", "client"].join("/");
+    const id = ["@automagik", "bots-dsh", "client"].join("/");
     omni = (typeof require === "function" ? require(id) : null)?.omni ?? null;
   } catch {
   }

@@ -7,7 +7,7 @@ Unfold's rolling session as one root Session of the [DeepSeek Harness](https://g
 - **Live listening**: a "listening…" bubble above the composer from the moment speech starts until its words land in a chat bubble.
 - **Unfold status**: a right-sidebar tab with the link to the agent and the latest measured candidate.
 
-Every other root Session is refused: DSH runs no root loop anywhere.
+The takeover is enabled only when `AUTOMAGIK_HOST=unfold` or `AUTOMAGIK_PRELOAD=unfold`, matching the Bot team and welcome. In that instance every other root Session is refused: DSH runs no root loop anywhere. On ordinary hosts this plugin leaves Sessions, agent hooks and the browser UI untouched; its stable configuration endpoint reports `enabled: false`.
 
 ## What is sent, and how
 

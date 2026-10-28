@@ -230,6 +230,7 @@ export async function apply(ctx) {
   const response = await fetch('api/unfold-session/config', { cache: 'no-store' })
   if (!response.ok) throw new Error(`Unfold configuration ${response.status}`)
   const config = await response.json()
+  if (config.enabled === false) return
   ROOT_SESSION = config.sessionId
   const route = config.route.replace(/^\//, '').replace(/\/$/, '')
   STATUS = `${route}/status`
@@ -285,7 +286,7 @@ export async function apply(ctx) {
   let omni = null
   try {
     // Resolved at run time through the shell's module table (package.json dsh.client.external).
-    const id = ['@automagik', 'omni-dsh', 'client'].join('/') // not a literal: esbuild leaves it to the factory's require
+    const id = ['@automagik', 'bots-dsh', 'client'].join('/') // not a literal: esbuild leaves it to the factory's require
     omni = (typeof require === 'function' ? require(id) : null)?.omni ?? null
   } catch {}
   if (omni?.headerButtons !== undefined) ctx.effect(() => omni.headerButtons.register({

@@ -58,7 +58,7 @@
         "@deepseek-ai/dsh-client-ui-sidebar-right"
       ],
       "external": [
-        "@automagik/omni-dsh/client"
+        "@automagik/bots-dsh/client"
       ]
     }
   },

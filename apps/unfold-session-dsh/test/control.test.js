@@ -50,7 +50,7 @@ async function session(t, { channel = (fake) => fake.channel(), sessionId, hello
   const lines = []
   const logger = { info: (m) => lines.push(String(m)), warn: (m) => lines.push(String(m)) }
   const dsh = fakeDsh({ root: ROOT, logger })
-  apply(dsh.ctx, { sessionId: ROOT }, { observer: quiet })
+  apply(dsh.ctx, { sessionId: ROOT }, { env: { AUTOMAGIK_HOST: 'unfold' }, observer: quiet })
   t.after(() => dsh.dispose())
   const service = dsh.provided.unfoldSession
   const g = guest()
@@ -385,7 +385,7 @@ test('a tool the instance spawns sees neither control variable', async (t) => {
   preload(kept)
   t.after(() => preload(null))
   const dsh = fakeDsh({ root: ROOT })
-  apply(dsh.ctx, { sessionId: ROOT }, { observer: quiet })
+  apply(dsh.ctx, { sessionId: ROOT }, { env: { AUTOMAGIK_HOST: 'unfold' }, observer: quiet })
   t.after(() => dsh.dispose())
   await new HostClient().submit(fake.session, 'hello')
   const child = spawnSync(process.execPath, ['-e', 'process.stdout.write(JSON.stringify(Object.keys(process.env).filter((k) => k.startsWith("UNFOLD_"))))'], { env: process.env, encoding: 'utf8' })
@@ -427,7 +427,7 @@ test('the observer reads its address from the observer file at every connect, an
   t.after(() => preload(null))
   const states = []
   const dsh = fakeDsh({ root: ROOT })
-  apply(dsh.ctx, { sessionId: ROOT }, {})
+  apply(dsh.ctx, { sessionId: ROOT }, { env: { AUTOMAGIK_HOST: 'unfold' } })
   t.after(() => dsh.dispose())
   const bridge = dsh.provided.unfoldSession.bridge
   bridge.onChange((kind, link) => { if (kind === 'link') states.push(link.state) })

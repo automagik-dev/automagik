@@ -48,6 +48,14 @@ export const Config = Schema.object({
 
 export const inject = ['agents', 'sessions']
 
+/** Match the Bot team and welcome's own-instance rule; channel secrets stay in the preload. */
+export const inUnfoldInstance = (env = process.env) => [env.AUTOMAGIK_HOST, env.AUTOMAGIK_PRELOAD].some(value => String(value ?? '').trim().toLowerCase() === 'unfold')
+
+const configRoute = (base, sessionId, enabled) => ({
+  path: '/api/unfold-session/config', methods: ['GET'], requestBody: 'buffered',
+  fetch: async () => Response.json({ enabled, sessionId, route: base }),
+})
+
 function textOf(messages) {
   return messages
     .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
@@ -138,6 +146,13 @@ export function heardNoteText(n) {
 export function apply(ctx, config, deps = {}) {
   config = Config(config ?? {})
   const ROOT = config.sessionId
+  // Installing the Unfold card beside ordinary Bots must not take over this DSH.
+  if (!inUnfoldInstance(deps.env ?? process.env)) {
+    ctx.inject(['connection'], (sctx) => {
+      sctx.effect(() => sctx.connection.fetch.register(configRoute(config.route, ROOT, false)), 'unfold-session: disabled discovery')
+    })
+    return
+  }
   // `deps` is for tests only (a scripted host, bridge or observer); DSH calls apply(ctx, config).
   // The control endpoint and agentd's address come from the launcher preload's registry only.
   const host = deps.host ?? new HostClient()
@@ -459,25 +474,33 @@ export function apply(ctx, config, deps = {}) {
     }, 'unfold-session: spoken turns through the Session API')
   })
 
+  let resolveRoot, rejectRoot
+  const ready = new Promise((resolve, reject) => { resolveRoot = resolve; rejectRoot = reject })
+  // The Bot plugin observes this promise; a failed preparation is also logged below.
+  void ready.catch(() => {})
   ctx.inject(['sessionController', 'workspaceRegistry'], (sctx) => {
     sctx.effect(() => {
       void (async () => {
         try {
           const known = await sctx.get('sessionPersistence')?.stat?.(ROOT)
-          if (known) return
+          if (known) { resolveRoot(); return }
           const dir = config.workspaceDir || join(process.env.DSH_HOME || process.cwd(), 'unfold-workspace')
           const { mkdirSync } = await import('node:fs')
           mkdirSync(dir, { recursive: true })
           const ws = await sctx.workspaceRegistry.create(dir, config.title)
           await sctx.sessionController.create({ sessionId: ROOT, workspaceId: ws.id })
+          resolveRoot()
         } catch (e) {
           ctx.logger?.warn?.(`unfold-session: could not prepare the root Session: ${e?.message ?? e}`)
+          rejectRoot(e)
         }
       })()
     }, 'unfold-session: root session')
   })
 
   const service = {
+    sessionId: ROOT,
+    ready,
     bridge,
     counters,
     turns,
@@ -528,7 +551,7 @@ export function fetchRoutes(service, base, sessionId = 'unfold-root') {
   const unavailable = () => Response.json({ error: CALL_UNAVAILABLE, unavailable: CALL_UNAVAILABLE }, { status: 503 })
   return [
     // Stable discovery path, even when the configured API route changes.
-    { path: '/api/unfold-session/config', methods: ['GET'], requestBody: 'buffered', fetch: async () => Response.json({ sessionId, route: base }) },
+    configRoute(base, sessionId, true),
     // The live listening view: a snapshot, then each change (src/live.js).
     ...(service.liveHub ? [{ path: `${base}/live`, methods: ['GET'], requestBody: 'buffered', fetch: async (request) => fetchStream(service.liveHub, request, 'snapshot', service.live.published(), service.live.rev) }] : []),
     { path: `${base}/status`, methods: ['GET'], requestBody: 'buffered', fetch: async () => Response.json(await service.status()) },

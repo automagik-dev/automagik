@@ -28,7 +28,7 @@ function harness(opts, deps = {}) {
   const host = fakeHost()
   const bridge = new SessionBridge({ host, observer: { start() {}, stop() {} }, timing: { stopMs: 200, gapWaitMs: 100, voiceGapWaitMs: 50, voiceIdleMs: 2000 } })
   const dsh = fakeDsh(opts)
-  apply(dsh.ctx, {}, { host, bridge, ...deps })
+  apply(dsh.ctx, {}, { env: { AUTOMAGIK_HOST: 'unfold' }, host, bridge, ...deps })
   bridge.link.session_id = SESSION
   bridge.onLink('attached')
   return { host, bridge, dsh }
@@ -169,7 +169,7 @@ test('a cold unfold-root: spoken items wait (bounded) and are delivered when the
   const host = fakeHost()
   const bridge = new SessionBridge({ host, observer: { start() {}, stop() {} }, timing: { voiceIdleMs: 2000 } })
   const dsh = fakeDsh({ live: false, sessionApi: false })
-  apply(dsh.ctx, {}, { host, bridge })
+  apply(dsh.ctx, {}, { env: { AUTOMAGIK_HOST: 'unfold' }, host, bridge })
   bridge.onLink('attached')
   const g = guest()
   spoken(g, 6, ['Later.']).forEach((e) => bridge.ingest(e))
@@ -215,7 +215,7 @@ test('through the projection (id contract): a shown partial note gets an update 
   const host = fakeHost()
   const bridge = new SessionBridge({ host, observer: { start() {}, stop() {} }, timing: { voiceIdleMs: 2000, voice: { holdMs: 30, retainMs: 60 } } })
   const dsh = fakeDsh()
-  apply(dsh.ctx, {}, { host, bridge })
+  apply(dsh.ctx, {}, { env: { AUTOMAGIK_HOST: 'unfold' }, host, bridge })
   bridge.onLink('attached')
   const g = guest()
   bridge.ledger.adjacency = false // the id contract , adjacency off
@@ -408,7 +408,7 @@ test('adjacency edges: an unanswered utterance is its own plain bubble; one tran
   const host = fakeHost()
   const bridge = new SessionBridge({ host, observer: { start() {}, stop() {} }, timing: { voiceIdleMs: 2000, voice: { adjacentHoldMs: 40 } } })
   const dsh = fakeDsh()
-  apply(dsh.ctx, {}, { host, bridge })
+  apply(dsh.ctx, {}, { env: { AUTOMAGIK_HOST: 'unfold' }, host, bridge })
   bridge.onLink('attached')
   const g = guest()
   // 1. heard, no reply: shown on its own after the hold, plain
@@ -435,7 +435,7 @@ test('the live listening view: the provider\'s speech start starts it, the words
   const host = fakeHost()
   const bridge = new SessionBridge({ host, observer: { start() {}, stop() {} }, timing: { voiceIdleMs: 2000 } })
   const dsh = fakeDsh()
-  apply(dsh.ctx, {}, { host, bridge })
+  apply(dsh.ctx, {}, { env: { AUTOMAGIK_HOST: 'unfold' }, host, bridge })
   bridge.onLink('attached')
   const svc = dsh.provided.unfoldSession
   assert.ok(dsh.routes.some((r) => r.path === '/api/unfold-session/live'), 'the live route is registered')
