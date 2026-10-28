@@ -6,6 +6,8 @@ import { t } from './i18n.js'
 
 export const SIDE_SOURCE = 'ds-bot-side'
 export const SIDE_TOKEN = '/side '
+// `/btw` asked a side question before Side chat; it stays a way in.
+const SIDE_COMMANDS = new Set(['/side', '/btw'])
 
 const GROUP_REFUSAL = "Side chat is only available in a Bot's private chat."
 const ATTACHMENT_REFUSAL = '/side does not take attachments.'
@@ -32,7 +34,7 @@ export function parseSideLine(line) {
   if (!trimmed.startsWith('/')) return null
   const gap = trimmed.search(/\s/)
   const token = gap === -1 ? trimmed : trimmed.slice(0, gap)
-  if (token !== '/side') return null
+  if (!SIDE_COMMANDS.has(token)) return null
   const args = gap === -1 ? '' : trimmed.slice(gap + 1)
   return { args, bare: args.trim() === '' }
 }
@@ -45,12 +47,12 @@ export function sideQueryMatches(query) {
 // A claim, or undefined when this surface does not offer the command.
 // Groups are refused on Enter, not here: Space must not turn the line into a chip.
 export function matchSideSpace(roster, sessionId, token) {
-  if (token !== '/side' || sideSurface(roster, sessionId) !== 'bot') return undefined
+  if (!SIDE_COMMANDS.has(token) || sideSurface(roster, sessionId) !== 'bot') return undefined
   return { claim: true }
 }
 
 export function matchSideClaim(roster, sessionId, token) {
-  if (token !== '/side' || sideSurface(roster, sessionId) !== 'bot') return undefined
+  if (!SIDE_COMMANDS.has(token) || sideSurface(roster, sessionId) !== 'bot') return undefined
   return true
 }
 

@@ -7,6 +7,7 @@ import { PetSprite } from './pet.js'
 import { bakeBlobs, canBake } from './pet-bake.js'
 import { CloseIcon } from './icons.js'
 import { t } from './i18n.js'
+import { importPhotos, loadLibrary } from './avatar-library.js'
 
 // -------------------------------------------------------------------------
 // The character select: where a Bot's look is chosen, as a fighting game's select screen. The
@@ -70,6 +71,7 @@ export async function toCodex(bot, look) {
 
 // A roster entry's small portrait: still, as every portrait on a select screen is until chosen.
 function Portrait({ item, color }) {
+  if (item.image) return h('img', { className: 'bt-cs-poster', src: item.image, alt: '', draggable: false })
   if (item.kind === 'market') return item.pet.poster ? h('img', { className: 'bt-cs-poster', src: item.pet.poster, alt: '', loading: 'lazy', referrerPolicy: 'no-referrer', draggable: false }) : h('span', { className: 'bt-cs-poster' })
   if (item.kind === 'pet') return h(PetSprite, { pet: servedPet(item.pet), size: 58 })
   if (item.kind === 'omni') return h(BotMark, { look: MAIN_LOOK, size: 54 })
@@ -83,7 +85,7 @@ function Fighter({ item, color, state, onOnce }) {
   const baked = useBaked(bake)
   const size = 256
   if (!item) return null
-  if (item.kind === 'photo') return h('img', { className: 'bt-cs-photo', src: item.image, alt: '' })
+  if (item.image) return h('img', { className: 'bt-cs-photo', src: item.image, alt: '' })
   const pet = item.kind === 'pet' ? servedPet(item.pet)
     : item.kind === 'market' ? (item.pet.sheet ? { sheet: item.pet.sheet, version: item.pet.version } : null)
       : baked
@@ -123,15 +125,20 @@ export function CharacterSelect({ bot, actions, run, onClose, avatarImage }) {
   const [stage, setStage] = useState('idle')
   const [picking, setPicking] = useState(false)
   const [note, setNote] = useState('')
+  // The photos imported once (the avatar library), any of which a Bot can wear.
+  const [library, setLibrary] = useState([])
   const fileRef = useRef(null)
   const gridRef = useRef(null)
   useEffect(() => { void actions.pets().then(list => setLocal(list.filter(pet => pet.source !== 'builtin')), () => setLocal([])) }, [])
+  const loadPhotos = () => loadLibrary(actions).then(page => setLibrary(page.items), () => setLibrary([]))
+  useEffect(() => { void loadPhotos() }, [])
 
   const ours = useMemo(automagikRoster, [])
   const yours = local.map(pet => ({ key: `pet:${pet.source}:${pet.id}`, kind: 'pet', pet, name: pet.name, line: sourceLine[pet.source] ?? pet.source }))
   const theirs = market.market.pets.map(pet => ({ key: `market:${pet.id}`, kind: 'market', pet, name: pet.name, line: pet.by ? t('by {name}', { name: pet.by }) : 'codex-pets.net' }))
   const photo = look.image ? [{ key: 'photo', kind: 'photo', image: look.image, name: t('Photo'), line: t('Uploaded') }] : []
-  const all = [...photo, ...ours, ...yours, ...theirs]
+  const photos = library.filter(entry => entry.image !== look.image).map(entry => ({ key: `library:${entry.id}`, kind: 'library', image: entry.image, name: entry.name || t('Photo'), line: t('Your photos') }))
+  const all = [...photo, ...photos, ...ours, ...yours, ...theirs]
   const item = all.find(entry => entry.key === focus) ?? ours[0]
   const worn = currentKey(bot, look)
 
@@ -146,12 +153,29 @@ export function CharacterSelect({ bot, actions, run, onClose, avatarImage }) {
       : entry.kind === 'omni' ? actions.updateBot(bot.id, { avatar: { shape: 'octopus' }, color: 'deepseek' })
         : entry.kind === 'pet' ? actions.petUse(bot.id, entry.pet.source, entry.pet.id)
           : entry.kind === 'market' ? actions.petUse(bot.id, 'market', entry.pet.id)
-            : Promise.resolve()
+            : entry.kind === 'library' ? actions.updateBot(bot.id, { avatar: { ...(bot.avatar ?? {}), image: entry.image } })
+              : Promise.resolve()
     const wait = new Promise(resolve => setTimeout(resolve, PICK_MS))
     void run(Promise.all([save, wait]).then(() => onClose(), (error) => { setPicking(false); setStage('idle'); throw error }))
   }
-  const upload = (file) => {
-    if (file) void run(avatarImage(file).then(image => actions.updateBot(bot.id, { avatar: { ...(bot.avatar ?? {}), image } })).then(() => onClose()))
+  // One photo is worn at once, as before; every photo also goes into the library, so a
+  // later character does not lose it, and several at once only fill the library.
+  const upload = async (files) => {
+    if (files.length === 0) return
+    const read = await Promise.all(files.map(file => avatarImage(file).then(image => ({ name: file.name, image }), failure => ({ name: file.name, failure }))))
+    const unread = read.filter(photo => photo.failure)
+    const result = await importPhotos(read.filter(photo => !photo.failure), actions)
+    const failed = [...unread.map(photo => photo.name), ...result.failed.map(photo => photo.name)]
+    if (files.length === 1 && unread.length === 0) {
+      await actions.updateBot(bot.id, { avatar: { ...(bot.avatar ?? {}), image: read[0].image } })
+      onClose()
+      return
+    }
+    await loadPhotos()
+    setNote([
+      result.imported.length > 0 ? t('{count} photos added to Yours.', { count: result.imported.length }) : '',
+      failed.length > 0 ? t('Not added: {names}', { names: failed.join(', ') }) : '',
+    ].filter(Boolean).join(' '))
   }
 
   // The cursor moves through the tiles in their grid: across a row, and a row up or down.
@@ -203,11 +227,11 @@ export function CharacterSelect({ bot, actions, run, onClose, avatarImage }) {
         }, h('span', { style: { background: paintCss(ink) } })))) : null,
         h('button', { type: 'button', className: 'bt-cs-go', disabled: picking || item?.kind === 'photo', onClick: () => pick() }, picking ? t('Chosen!') : t('Choose')),
         h('div', { className: 'bt-cs-links' },
-          h('button', { type: 'button', className: 'bt-cs-link', onClick: () => fileRef.current?.click() }, t('Upload a photo')),
+          h('button', { type: 'button', className: 'bt-cs-link', onClick: () => fileRef.current?.click() }, t('Add photos')),
           canBake() ? h('button', { type: 'button', className: 'bt-cs-link', onClick: () => { setNote('…'); toCodex(bot, look).then(id => setNote(t('In Codex as {id}. Pick it in Codex\'s pet menu.', { id })), error => setNote(error?.message ?? String(error))) } }, t('Use in Codex')) : null,
           h('button', { type: 'button', className: 'bt-cs-link', onClick: () => run(actions.updateBot(bot.id, { avatar: null, color: null }).then(() => onClose())) }, t('Default look'))),
         note ? h('p', { className: 'bt-cs-note', role: 'status' }, note) : null,
-        h('input', { ref: fileRef, type: 'file', accept: 'image/png,image/jpeg,image/webp,image/gif', hidden: true, onChange: (event) => { const file = event.target.files?.[0]; event.target.value = ''; upload(file) } })),
+        h('input', { ref: fileRef, type: 'file', multiple: true, accept: 'image/png,image/jpeg,image/webp,image/gif', hidden: true, onChange: (event) => { const files = [...(event.target.files ?? [])]; event.target.value = ''; void run(upload(files)) } })),
       h('div', { className: 'bt-cs-roster' },
         h('div', { className: 'bt-cs-head' },
           h('div', null,
@@ -215,7 +239,7 @@ export function CharacterSelect({ bot, actions, run, onClose, avatarImage }) {
             h('p', { className: 'bt-cs-sub' }, t('For {name}. Arrow keys move, Enter picks.', { name: bot.name }))),
           h('button', { type: 'button', className: 'bt-icon-btn', 'aria-label': t('Close'), onClick: onClose }, h(CloseIcon))),
         h('div', { ref: gridRef, className: 'bt-cs-scroll' },
-          photo.length > 0 ? section(t('Yours'), photo) : null,
+          photo.length + photos.length > 0 ? section(t('Yours'), [...photo, ...photos]) : null,
           section('Automagik', ours),
           yours.length > 0 ? section(t('Your pets'), yours) : null,
           h('section', { className: 'bt-cs-sec' },
