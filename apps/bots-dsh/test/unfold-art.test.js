@@ -1,6 +1,7 @@
 // The Unfold Bot (kind unfold, @automagik/unfold-bot-dsh) in its own clay: the expression strip
 // for its marks, and the Unfold pet for the ones that move and for the character picker.
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -64,6 +65,8 @@ test('the Unfold pet ships as a v2 Codex pet with its sleep strip, at their exac
 test('the expression strip is one row of seven 192x208 faces, and reaches the bundle', async () => {
   const strip = readFileSync(new URL('../src/client/art/unfold-expressions.webp', import.meta.url))
   assert.deepEqual(webpSize(strip), [1344, 208])
+  // The approved strip, byte for byte: lossless, never re-encoded (dev/art/unfold-expressions.sh).
+  assert.equal(createHash('sha256').update(strip).digest('hex'), '081a3d3677e78c5b3b15db45dfeb2aed67b5a49b69f4eb16e6d225950155dbb0')
   const { unfoldExpressions } = await import('../src/client/art/inline.js')
   assert.equal(unfoldExpressions, `data:image/webp;base64,${strip.toString('base64')}`)
 })
