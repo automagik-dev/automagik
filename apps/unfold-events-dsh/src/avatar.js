@@ -85,11 +85,11 @@ export function muteGlyph(read, now) {
 }
 
 /** The request a click makes, or null (nothing is sent while a request waits or the state forbids it). */
-export function toggleRequest(voice) {
-  return voice.action ? { url: CALL_ROUTE, body: { call: voice.action } } : null
+export function toggleRequest(voice, url = CALL_ROUTE) {
+  return voice.action ? { url, body: { call: voice.action } } : null
 }
-export function muteRequest(voice) {
-  return voice.mute.action === null ? null : { url: MUTE_ROUTE, body: { muted: voice.mute.action } }
+export function muteRequest(voice, url = MUTE_ROUTE) {
+  return voice.mute.action === null ? null : { url, body: { muted: voice.mute.action } }
 }
 export const readDelay = (voice) => pollMs(voice.call)
 
@@ -176,12 +176,12 @@ export function grainBudget(cssWidth, cssHeight, cp = CP_PREVIEW.cp) {
  * The voice half of the tab without React: bounded, ordered reads; a click or the mute glyph is the
  * ONLY thing that sends a request. Mounting, reading, re-rendering and receiving events never do.
  */
-export function createVoiceController({ fetch: f, now = () => performance.now(), onChange = () => {} } = {}) {
+export function createVoiceController({ fetch: f, now = () => performance.now(), onChange = () => {}, callUrl = CALL_ROUTE, muteUrl = MUTE_ROUTE } = {}) {
   let read = null
   let pending = null
   let note = null
   let alive = true
-  const reader = createCallReader({ fetch: f, url: CALL_ROUTE, now, onRead: (got) => { read = nextRead(read, got); settle(); if (alive) onChange() } })
+  const reader = createCallReader({ fetch: f, url: callUrl, now, onRead: (got) => { read = nextRead(read, got); settle(); if (alive) onChange() } })
   const settle = () => {
     if (pending && read?.call?.desired === (pending.want === 'start' ? 'on' : 'off')) pending = null
   }
@@ -206,7 +206,7 @@ export function createVoiceController({ fetch: f, now = () => performance.now(),
     view: () => ({ ...voiceControl(read, pending, now()), note }),
     load: () => reader.load(),
     async toggle() {
-      const req = toggleRequest(voiceControl(read, pending, now()))
+      const req = toggleRequest(voiceControl(read, pending, now()), callUrl)
       if (!req) return null
       pending = { want: req.body.call, at: now() }
       onChange()
@@ -215,7 +215,7 @@ export function createVoiceController({ fetch: f, now = () => performance.now(),
       return req
     },
     async mute() {
-      const req = muteRequest(voiceControl(read, pending, now()))
+      const req = muteRequest(voiceControl(read, pending, now()), muteUrl)
       if (!req) return null
       await post(req, req.body.muted ? 'Mute' : 'Unmute')
       return req

@@ -253,7 +253,7 @@ const find = (node, key, out = []) => {
 test('bundle: the presence tab renders the avatar without a request', async () => {
   globalThis.document = { createElement: () => ({ dataset: {} }), head: { append() {} }, getElementById: () => null }
   const events = await bundle()
-  globalThis.fetch = async () => Response.json({ route: '/api/unfold-events', presenceRoute: '/api/unfold-presence' })
+  globalThis.fetch = async (path) => path === 'api/unfold-session/config' ? new Response('', {status:404}) : Response.json({ route: '/api/unfold-events', presenceRoute: '/api/unfold-presence' })
   await events.mod.exports.apply(events.ctx)
   const body = events.regs.find((r) => r.opts.key === '@automagik/unfold-events-dsh/presence' && r.opts.name === 'sidebar.right.pane.tab')
   const calls = []
@@ -392,4 +392,19 @@ test('no phone: the creature floats in a capsule in the tab', () => {
   assert.doesNotMatch(src, /unfold-phone|unfold-notch|unfold-home|bezel/, 'no device frame, notch, home bar or bezel')
   assert.match(src, /className="unfold-stage" data-unfold="avatar-frame"/)
   assert.match(src, /className="unfold-tube"[\s\S]{0,200}data-unfold="avatar"/, 'the capsule is still the one click control')
+})
+
+test('configured session routes carry voice reads, toggles and mute requests', async () => {
+  const r = fakeRoutes('off')
+  const calls = []
+  const c = createVoiceController({ fetch: (url, init) => { calls.push([url, init?.method ?? 'GET']); return r.fetch(url, init) }, now: () => r.now.t, callUrl: 'api/custom-session/call', muteUrl: 'api/custom-session/mute' })
+  await c.load()
+  await c.toggle()
+  r.set('active')
+  await c.load()
+  await c.mute()
+  assert.ok(calls.some(([url, method]) => url === 'api/custom-session/call' && method === 'GET'))
+  assert.deepEqual(r.posts, [{ url: 'api/custom-session/call', body: { call: 'start' } }, { url: 'api/custom-session/mute', body: { muted: true } }])
+  assert.ok(calls.every(([url]) => url.startsWith('api/custom-session/')))
+  c.dispose()
 })

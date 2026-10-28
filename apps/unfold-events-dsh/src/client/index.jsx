@@ -25,6 +25,7 @@ export const UNFOLD_PRESENCE_ID = '@automagik/unfold-events-dsh/presence'
 export const UNFOLD_PRESENCE_KIND = 'unfold.presence'
 let STREAM = 'api/unfold-events/stream'
 let PRESENCE_STREAM = 'api/unfold-presence/stream'
+let SESSION_ROUTE = 'api/unfold-session'
 const SHOWN = 200
 // The look is swappable behind this one factory (client/presence-renderer.js interface).
 const createRenderer = dustRenderer
@@ -37,6 +38,14 @@ export async function apply(ctx) {
   const config = await response.json()
   STREAM = `${config.route.replace(/^\//, '').replace(/\/$/, '')}/stream`
   PRESENCE_STREAM = `${config.presenceRoute.replace(/^\//, '').replace(/\/$/, '')}/stream`
+  // Events can be installed without the session adapter. Its absence leaves voice unavailable.
+  try {
+    const sessionResponse = await fetch('api/unfold-session/config', { cache: 'no-store' })
+    if (sessionResponse.ok) {
+      const session = await sessionResponse.json()
+      SESSION_ROUTE = session.route.replace(/^\//, '').replace(/\/$/, '')
+    }
+  } catch {}
 
   ctx.effect(() => ctx.sidebarRightTabs.register({
     id: UNFOLD_EVENTS_ID,
@@ -338,7 +347,7 @@ function useReducedMotion() {
 function useVoice() {
   const [, force] = useReducer((n) => n + 1, 0)
   const ctl = useRef(null)
-  const make = () => createVoiceController({ fetch: (...a) => fetch(...a), onChange: force })
+  const make = () => createVoiceController({ fetch: (...a) => fetch(...a), onChange: force, callUrl: `${SESSION_ROUTE}/call`, muteUrl: `${SESSION_ROUTE}/mute` })
   if (!ctl.current) ctl.current = make()
   useEffect(() => {
     if (ctl.current.disposed) ctl.current = make()

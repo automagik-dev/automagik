@@ -19,8 +19,8 @@ test('configured events routes reach the browser through stable discovery', asyn
   const start = source.indexOf('export async function apply(ctx) {')
   const end = source.indexOf('  ctx.effect(', start)
   assert.ok(start >= 0, 'UI awaits configuration before registering')
-  const scope = {fetch:async(path)=>{assert.equal(path,'api/unfold-events/config');return Response.json(config)}}
+  const scope = {fetch:async(path)=>{if(path==='api/unfold-session/config') return Response.json({route:'/api/custom-session'}); assert.equal(path,'api/unfold-events/config');return Response.json(config)}}
   vm.createContext(scope)
-  const actual = await vm.runInContext(`let STREAM, PRESENCE_STREAM; ${source.slice(start,end).replace('export ','')} return {stream:STREAM,presence:PRESENCE_STREAM} }; apply({})`,scope)
-  assert.deepEqual(JSON.parse(JSON.stringify(actual)), {stream:'api/custom-events/stream',presence:'api/custom-presence/stream'})
+  const actual = await vm.runInContext(`let STREAM, PRESENCE_STREAM, SESSION_ROUTE; ${source.slice(start,end).replace('export ','')} return {stream:STREAM,presence:PRESENCE_STREAM,session:SESSION_ROUTE} }; apply({})`,scope)
+  assert.deepEqual(JSON.parse(JSON.stringify(actual)), {stream:'api/custom-events/stream',presence:'api/custom-presence/stream',session:'api/custom-session'})
 })

@@ -337,11 +337,11 @@ function muteGlyph(read, now) {
   const label = m.action === true ? "Mute microphone" : m.action === false ? "Unmute microphone" : m.label;
   return { state, muted: m.muted, action: m.action, label, title: m.title };
 }
-function toggleRequest(voice) {
-  return voice.action ? { url: CALL_ROUTE, body: { call: voice.action } } : null;
+function toggleRequest(voice, url = CALL_ROUTE) {
+  return voice.action ? { url, body: { call: voice.action } } : null;
 }
-function muteRequest(voice) {
-  return voice.mute.action === null ? null : { url: MUTE_ROUTE, body: { muted: voice.mute.action } };
+function muteRequest(voice, url = MUTE_ROUTE) {
+  return voice.mute.action === null ? null : { url, body: { muted: voice.mute.action } };
 }
 var readDelay = (voice) => pollMs(voice.call);
 var HIDDEN_READ_MS = LEASE_MS - 2e3;
@@ -386,12 +386,12 @@ function grainBudget(cssWidth, cssHeight, cp = CP_PREVIEW.cp) {
   return { cap, grains: Math.min(cp * GRAINS_PER_CP, cap) };
 }
 function createVoiceController({ fetch: f, now = () => performance.now(), onChange = () => {
-} } = {}) {
+}, callUrl = CALL_ROUTE, muteUrl = MUTE_ROUTE } = {}) {
   let read = null;
   let pending = null;
   let note = null;
   let alive = true;
-  const reader = createCallReader({ fetch: f, url: CALL_ROUTE, now, onRead: (got) => {
+  const reader = createCallReader({ fetch: f, url: callUrl, now, onRead: (got) => {
     read = nextRead(read, got);
     settle();
     if (alive) onChange();
@@ -420,7 +420,7 @@ function createVoiceController({ fetch: f, now = () => performance.now(), onChan
     view: () => ({ ...voiceControl(read, pending, now()), note }),
     load: () => reader.load(),
     async toggle() {
-      const req = toggleRequest(voiceControl(read, pending, now()));
+      const req = toggleRequest(voiceControl(read, pending, now()), callUrl);
       if (!req) return null;
       pending = { want: req.body.call, at: now() };
       onChange();
@@ -429,7 +429,7 @@ function createVoiceController({ fetch: f, now = () => performance.now(), onChan
       return req;
     },
     async mute() {
-      const req = muteRequest(voiceControl(read, pending, now()));
+      const req = muteRequest(voiceControl(read, pending, now()), muteUrl);
       if (!req) return null;
       await post(req, req.body.muted ? "Mute" : "Unmute");
       return req;
@@ -1398,6 +1398,7 @@ var UNFOLD_PRESENCE_ID = "@automagik/unfold-events-dsh/presence";
 var UNFOLD_PRESENCE_KIND = "unfold.presence";
 var STREAM = "api/unfold-events/stream";
 var PRESENCE_STREAM = "api/unfold-presence/stream";
+var SESSION_ROUTE = "api/unfold-session";
 var SHOWN = 200;
 var createRenderer = dustRenderer;
 var inject = ["slots", "sidebarRightTabs", "sidebarRight"];
@@ -1407,6 +1408,14 @@ async function apply(ctx) {
   const config = await response.json();
   STREAM = `${config.route.replace(/^\//, "").replace(/\/$/, "")}/stream`;
   PRESENCE_STREAM = `${config.presenceRoute.replace(/^\//, "").replace(/\/$/, "")}/stream`;
+  try {
+    const sessionResponse = await fetch("api/unfold-session/config", { cache: "no-store" });
+    if (sessionResponse.ok) {
+      const session = await sessionResponse.json();
+      SESSION_ROUTE = session.route.replace(/^\//, "").replace(/\/$/, "");
+    }
+  } catch {
+  }
   ctx.effect(() => ctx.sidebarRightTabs.register({
     id: UNFOLD_EVENTS_ID,
     kind: UNFOLD_EVENTS_KIND,
@@ -1689,7 +1698,7 @@ function useReducedMotion() {
 function useVoice() {
   const [, force] = (0, import_react2.useReducer)((n) => n + 1, 0);
   const ctl = (0, import_react2.useRef)(null);
-  const make = () => createVoiceController({ fetch: (...a) => fetch(...a), onChange: force });
+  const make = () => createVoiceController({ fetch: (...a) => fetch(...a), onChange: force, callUrl: `${SESSION_ROUTE}/call`, muteUrl: `${SESSION_ROUTE}/mute` });
   if (!ctl.current) ctl.current = make();
   (0, import_react2.useEffect)(() => {
     if (ctl.current.disposed) ctl.current = make();
