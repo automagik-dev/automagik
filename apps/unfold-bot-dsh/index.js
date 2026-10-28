@@ -11,7 +11,10 @@ export const name = 'unfold-bot'
 export const inject = ['omniTeam']
 
 export function apply(ctx, config = {}) {
-  createRuntime(ctx, ctx.omniTeam, config)
+  if (unfold.unfoldLeads()) {
+    // The team waits for its host-owned root; an early browser read makes no default Bot.
+    ctx.inject(['unfoldSession'], (sctx) => { createRuntime(sctx, ctx.omniTeam, config) })
+  } else createRuntime(ctx, ctx.omniTeam, config)
 }
 
 export function createRuntime(ctx, team, config = {}, env = process.env) {

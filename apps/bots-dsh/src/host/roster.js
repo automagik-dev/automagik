@@ -135,6 +135,7 @@ export function install(rt) {
   // its name was checked. The name is held from the check until the create ends, so a
   // create or rename that runs meanwhile cannot take it too.
   const held = { bot: new Set(), room: new Set() }
+  const heldSessions = new Set()
   const isHeld = (kind, name) => held[kind].has(normalize(name))
   async function holdName(kind, name, work) {
     const key = normalize(name)
@@ -163,10 +164,21 @@ export function install(rt) {
     const problem = nameProblem(cleanName)
     if (problem !== undefined) throw new Error(problem)
     if (botNameTaken(cleanName)) throw new Error(`A Bot named ${cleanName} already exists`)
-    return holdName('bot', cleanName, () => buildBot(cleanName, options))
+    const existing = options.existingSessionId
+    if (existing === undefined) return holdName('bot', cleanName, () => buildBot(cleanName, options))
+    if (typeof existing !== 'string' || !existing.trim()) throw new Error('An existing Session needs its id')
+    const readOnly = rt.readOnly()
+    if (readOnly !== undefined) throw new Error(readOnly)
+    if (heldSessions.has(existing) || rt.botOf(existing) || rt.roomOf(existing) || rt.selfOf(existing) || rt.agentOf?.(existing)) throw new Error('Session already belongs to the team')
+    heldSessions.add(existing)
+    try {
+      return await holdName('bot', cleanName, () => buildBot(cleanName, options))
+    } finally {
+      heldSessions.delete(existing)
+    }
   }
 
-  async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, kind }) {
+  async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, kind, existingSessionId }) {
     const cleanAvatarValue = cleanAvatar(avatar)
     const roleText = cleanRole(role)
     // The model is fixed at creation, so a later change of the DSH default leaves it alone.
@@ -180,7 +192,14 @@ export function install(rt) {
       : effort === null || effort === '' ? undefined
       : (await rt.resolveEffort(modelRef, effort)) ?? await rt.defaultEffort(modelRef)
     const dir = workDir === undefined || workDir === null ? undefined : await rt.cleanWorkDir(workDir)
-    const id = await createSession(cleanName, { dir })
+    // A host adapter may already own a configured root Session. Adopt it without creating
+    // another Session or moving its workspace; this option is internal, not a user payload.
+    const id = existingSessionId ?? await createSession(cleanName, { dir })
+    if (existingSessionId !== undefined) {
+      const agent = await rt.resolveAgent(id)
+      if (agent?.session?.id !== id) throw new Error('The existing Session could not be resolved')
+      await ctx.sessionTitle.rename(agent.session, cleanName)
+    }
     try {
       state.bots[id] = {
         id,
@@ -217,6 +236,12 @@ export function install(rt) {
       const opener = `${kickoff}\nWhere your instructions say otherwise, follow them.`
       const text = !main && language ? `${opener}\nWrite in ${language}.` : opener
       const bot = state.bots[id]
+      // A host-owned conversation already has its own history and turn source. Adoption
+      // adds only its team identity, never a greeting or a deferred model turn.
+      if (existingSessionId !== undefined) {
+        await rt.save()
+        return bot
+      }
       if (modelRef === undefined) {
         bot.kickoff = { text, from: createdBy ?? null, ...(main ? { main: true } : {}) }
         await rt.save()
@@ -236,7 +261,7 @@ export function install(rt) {
       // A save that another change queued meanwhile still carries this Bot; a later
       // one writes the team without it.
       void rt.save().catch(() => {})
-      await ctx.workspaceRegistry.archiveSession(id)
+      if (existingSessionId === undefined) await ctx.workspaceRegistry.archiveSession(id)
         .catch(archiveError => rt.warn('ds-bot: archiving the Session for %s failed: %s', cleanName, archiveError))
       throw error
     }

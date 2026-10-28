@@ -32,8 +32,7 @@ export const UNFOLD_BOT = Object.freeze({
 })
 
 // What the Unfold Bot type starts with, besides this plugin: the Unfold bridge and the Unfold
-// plugins, released from this repository at its one version (the bridge is here; the seven
-// unfold-*-dsh plugins join it on their own). The welcome's Unfold card installs them
+// plugins, released together from this repository at its one version. The welcome's Unfold card installs them
 // in this order (welcome-dsh src/host/bot-types.js keeps a copy); Unfold's own instance has
 // them preinstalled.
 export const UNFOLD_PLUGINS = Object.freeze([
@@ -75,7 +74,14 @@ export function install(rt, team, env = process.env) {
 
   async function make({ main }) {
     const name = rt.findBot?.(UNFOLD_NAME) === undefined ? UNFOLD_NAME : `${UNFOLD_NAME} ${Date.now()}`
-    const bot = await rt.createBot({ ...UNFOLD_BOT, name, main, pickModel: await noModel() })
+    let existingSessionId
+    if (unfoldLeads(env)) {
+      const session = ctx.get?.('unfoldSession')
+      if (!session?.sessionId || !session.ready) throw new Error('Unfold session is not ready')
+      await session.ready
+      existingSessionId = session.sessionId
+    }
+    const bot = await rt.createBot({ ...UNFOLD_BOT, name, main, pickModel: await noModel(), ...(existingSessionId === undefined ? {} : { existingSessionId }) })
     load().unfoldCreated = true
     save()
     return bot
@@ -101,7 +107,9 @@ export function install(rt, team, env = process.env) {
     const existing = unfoldBot()
     if (existing !== undefined) return existing
     if (load().unfoldCreated) return undefined
-    return make({ main: false })
+    // A timed-out bootstrap may still be waiting for the adapter root. Reuse that
+    // creation instead of starting a second Bot when readiness eventually arrives.
+    return unfoldLeads(env) && !hasMain() ? mainBot() : make({ main: false })
   }
 
   if (unfoldLeads(env)) {

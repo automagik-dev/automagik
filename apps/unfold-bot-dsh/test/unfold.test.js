@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'node:test'
-import { createRuntime, inject, name } from '../index.js'
+import { apply, createRuntime, inject, name } from '../index.js'
 import { UNFOLD_BOT, UNFOLD_KIND, UNFOLD_NAME, UNFOLD_PLUGINS, unfoldLeads } from '../src/host/unfold.js'
 import { createWatch } from '../../unfold-bridge-dsh/src/host/watch.js'
 
@@ -59,7 +59,7 @@ const ELSEWHERE = {}
 
 const ctx = () => {
   const disposers = []
-  return { effect: (run) => { const off = run(); if (typeof off === 'function') disposers.push(off) }, dispose: () => disposers.splice(0).forEach(off => off()) }
+  return { get: name => name === 'unfoldSession' ? { sessionId: 'configured-unfold', ready: Promise.resolve() } : undefined, effect: (run) => { const off = run(); if (typeof off === 'function') disposers.push(off) }, dispose: () => disposers.splice(0).forEach(off => off()) }
 }
 
 test('the plugin waits for the Bot team and names itself', () => {
@@ -198,4 +198,28 @@ test('a fake Unfold watching by name sees the Unfold Bot\'s Session from its fir
 test('its market listing says it is part of Unfold and works with the Unfold app', () => {
   const market = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).automagik.market
   assert.ok(market.description.en.includes('Part of Unfold; works with the Unfold app.'), market.description.en)
+})
+
+
+test('own-instance startup waits for the session service before installing its Main Bot maker', async () => {
+  const before = process.env.AUTOMAGIK_HOST
+  process.env.AUTOMAGIK_HOST = 'unfold'
+  try {
+    const team = fakeTeam()
+    const context = ctx()
+    context.omniTeam = team
+    let bind
+    context.inject = (names, callback) => { assert.deepEqual(names, ['unfoldSession']); bind = callback }
+    apply(context)
+    assert.equal(team.mainBotMaker, undefined)
+    assert.deepEqual(team.record.created, [])
+    bind(context)
+    for (let i = 0; i < 50 && !team.record.created.length; i++) await new Promise(resolve => setImmediate(resolve))
+    assert.equal(team.record.created.length, 1)
+    assert.equal(team.record.created[0].existingSessionId, 'configured-unfold')
+    context.dispose()
+  } finally {
+    if (before === undefined) delete process.env.AUTOMAGIK_HOST
+    else process.env.AUTOMAGIK_HOST = before
+  }
 })
