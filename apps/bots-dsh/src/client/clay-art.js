@@ -1,13 +1,15 @@
-import { genieExpressions, lamp, lockup, mark, omniExpressions, wordmark } from './art/inline.js'
+import { genieExpressions, lamp, lockup, mark, omniExpressions, unfoldExpressions, wordmark } from './art/inline.js'
 
 // -------------------------------------------------------------------------
 // Clay characters: Omni and Genie as the Automagik clay universe draws them, in place of the
 // vector characters (characters.js) where the team shows them. Each is one row of seven
 // faces from the owner's clay kit (dev/art/clay-kit.py): Genie in 192x208 cells, Omni in
-// 192x192. CLAY_OMNI false puts the vector octopus back everywhere.
+// 192x192. Unfold's row is made from its pet's stills (dev/art/unfold-expressions.sh), in
+// 192x208 cells. CLAY_OMNI false puts the vector octopus back everywhere.
 export const CLAY_OMNI = true
 export const GENIE_ATLAS = genieExpressions
 export const OMNI_ATLAS = omniExpressions
+export const UNFOLD_ATLAS = unfoldExpressions
 export const LAMP = lamp
 // The Automagik mark: the owner's clay triskelion (logo.js OmniMark, the tab icon).
 export const MARK_ART = mark
@@ -45,13 +47,15 @@ export const faceAt = face => Math.max(0, FACES.indexOf(face))
 
 /**
  * Which clay character draws a Bot, or null for its own look. A photo always wins. Genie is
- * the Bot of kind `genie` (a team member its own plugin adds); Omni is Omni's own look, the
+ * the Bot of kind `genie` (a team member its own plugin adds), Unfold the Bot of kind `unfold`;
+ * Omni is Omni's own look, the
  * octopus in Omni's colour (MAIN_LOOK, and the Omni Bot the welcome adds), so an octopus
  * someone recoloured stays the vector one they chose.
  */
 export function clayArtOf(bot, look) {
   if (look?.image) return null
   if (bot?.kind === 'genie') return 'genie'
+  if (bot?.kind === 'unfold') return 'unfold'
   if (CLAY_OMNI && look?.shape === 'octopus' && look?.color === 'deepseek') return 'omni'
   return null
 }

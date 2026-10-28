@@ -1,7 +1,7 @@
 import { INKS } from './inks.js'
 import { DEFAULT_MASK } from './characters.js'
 import { MENTION_ORIGIN } from './text.js'
-import { GENIE_ATLAS, OMNI_ATLAS } from './clay-art.js'
+import { GENIE_ATLAS, OMNI_ATLAS, UNFOLD_ATLAS } from './clay-art.js'
 import { SPRING_SHAPE, SPRING_TAP, SPRING_STRETCH, SPRING_POP, spring } from './motion.js'
 
 // The pill stretches for "Memory updated" on SPRING_STRETCH, and its icon pops on
@@ -107,6 +107,7 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 .bt-clay{display:block;flex:none;height:100%;background:var(--bt-clay-atlas) calc(var(--bt-face-at,0) * 100% / 6) 0/700% 100% no-repeat}
 .bt-clay-omni{aspect-ratio:1;--bt-clay-atlas:url("${OMNI_ATLAS}")}
 .bt-clay-genie{aspect-ratio:192/208;--bt-clay-atlas:url("${GENIE_ATLAS}")}
+.bt-clay-unfold{aspect-ratio:192/208;--bt-clay-atlas:url("${UNFOLD_ATLAS}")}
 [data-tint=aurora]{animation:bt-genie-aurora 9s ease-in-out infinite}
 @keyframes bt-genie-aurora{0%,100%{filter:hue-rotate(-190deg) saturate(1.2)}50%{filter:hue-rotate(-110deg) saturate(1.3) brightness(1.1)}}
 @media (prefers-reduced-motion:reduce){[data-tint=aurora]{animation:none;filter:hue-rotate(-150deg) saturate(1.25)}}

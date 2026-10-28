@@ -2,7 +2,7 @@ import { createElement as h, Fragment, useEffect, useLayoutEffect, useMemo, useR
 import { createPortal } from 'react-dom'
 import { CHARACTER_COLORS, MAIN_LOOK, PICKER_SHAPES, shapeOf } from './characters.js'
 import { paintCss } from './inks.js'
-import { BotMark, GENIE_PET, lookOf, petOf, servedPet, useBaked } from './mark.js'
+import { BotMark, GENIE_PET, lookOf, petOf, servedPet, UNFOLD_PET, useBaked } from './mark.js'
 import { PetSprite } from './pet.js'
 import { bakeBlobs, canBake } from './pet-bake.js'
 import { CloseIcon } from './icons.js'
@@ -23,12 +23,13 @@ const capitalize = word => word[0].toUpperCase() + word.slice(1)
 const slug = text => String(text ?? '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'bot'
 const PICK_MS = 900
 
-/** The roster's Automagik section: Genie, Omni, the logo pet, then the characters. */
+/** The roster's Automagik section: Genie, Omni, the logo pet, Unfold, then the characters. */
 export function automagikRoster() {
   return [
     { key: 'pet:builtin:genie-cosmic', kind: 'pet', pet: { ...GENIE_PET, name: 'Genie' }, name: 'Genie', line: 'Automagik' },
     { key: 'omni', kind: 'omni', name: 'Omni', line: 'Automagik' },
     { key: 'pet:builtin:automagik', kind: 'pet', pet: { source: 'builtin', id: 'automagik', name: 'Automagik', version: 2, sleep: true }, name: 'Automagik', line: 'Automagik' },
+    { key: 'pet:builtin:unfold', kind: 'pet', pet: { ...UNFOLD_PET, name: 'Unfold' }, name: 'Unfold', line: 'Automagik' },
     ...PICKER_SHAPES.filter(shape => shape !== 'octopus').map(shape => ({ key: `shape:${shape}`, kind: 'shape', shape, name: shapeOf(shape).label, line: 'Automagik character' })),
   ]
 }
@@ -38,6 +39,7 @@ export function currentKey(bot, look) {
   if (look.image) return 'photo'
   if (look.pet) return `pet:${look.pet.source}:${look.pet.id}`
   if (bot?.kind === 'genie') return 'pet:builtin:genie-cosmic'
+  if (bot?.kind === 'unfold') return 'pet:builtin:unfold'
   if (look.shape === 'octopus' && look.color === 'deepseek') return 'omni'
   return `shape:${look.shape}`
 }
