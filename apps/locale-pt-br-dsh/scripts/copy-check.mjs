@@ -29,16 +29,17 @@ export const RULES = [
   ['says tap', /(?<![\p{L}-])(?:tap|taps|tapped|toque|toques|tocar|tocou)(?![\p{L}-])/iu],
   ['says sandbox', /sandbox/iu],
   ['is European Portuguese', new RegExp([
-    // words Brazil says otherwise: tela, usuário, arquivo, celular, registro, equipe, senha, seção,
-    // contato, fato, atual, acessar, compartilhar, gerenciar, pressionar, baixar, mouse
+    // words only Portugal uses: Brazil says tela, usuário, arquivo, celular, registro, equipe, senha,
+    // seção, contato, fato, atual, acessar, compartilhar, pressionar
     '(?<![\\p{L}-])(?:ecrã|ecrãs|utilizador|utilizadores|ficheiro|ficheiros|telemóvel|registo|registos|equipa|equipas|palavra-passe|secção|contacto|contactos|facto|actual|actualizar'
-      + '|aceder|acede|acedido|acedida|partilh\\p{L}*|gerir|premir|prima|transferir|transfira|rato|ratos)(?![\\p{L}-])',
-    // "click on" as Portugal says it
-    '(?<![\\p{L}-])carregu(?:e|em)\\s+(?:em|no|na|nos|nas)(?![\\p{L}-])',
-    // the progressive "está a fazer", or a status line "A carregar…"
+      + '|aceder|acede|acedido|acedida|partilh\\p{L}*|premir)(?![\\p{L}-])',
+    // the progressive "está a fazer", and a status line "A carregar…" ("A seguir…", "A partir…" are Brazilian)
     '(?<![\\p{L}-])(?:está|estão|estou|estamos|esteja|estava|estavam)\\s+a\\s+\\p{L}+(?:ar|er|ir)(?![\\p{L}-])',
-    '^\\s*a\\s+(?!partir(?![\\p{L}-]))\\p{L}+(?:ar|er|ir)(?![\\p{L}-])',
+    '^\\s*a\\s+(?!(?:partir|seguir)(?![\\p{L}-]))\\p{L}+(?:ar|er|ir)\\s*(?:…|\\.\\.\\.)',
   ].join('|'), 'iu')],
+  // "click on" as Portugal says it: "carregue em/no" followed by what is clicked (a name or a control);
+  // "carregue em segundo plano" is Brazilian. Case matters here, so it is a rule of its own.
+  ['is European Portuguese', /(?<![\p{L}-])[Cc]arregu(?:e|em)\s+(?:em|no|na|nos|nas)\s+(?:[\p{Lu}"“«]|(?:botão|botões|ícone|tecla|link|menu|opção)(?![\p{L}-]))/u],
 ]
 
 // The Bot team's omni-ui keys: its locale hook registers them as the zh dictionary's keys.

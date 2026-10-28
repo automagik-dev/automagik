@@ -38,13 +38,16 @@ test('the copy check finds each kind of fault', async () => {
 // European Portuguese forms are refused; their Brazilian counterparts, and words that only contain
 // one of them, pass.
 test('the copy check tells European from Brazilian Portuguese', () => {
-  const european = RULES.find(([rule]) => rule === 'is European Portuguese')[1]
-  for (const text of ['Não foi possível aceder à pasta', 'Partilhar o link', 'Partilhe esta sessão', 'Gerir plugins', 'Premir Enter para enviar',
-    'Carregue em Enviar', 'Transferir o arquivo', 'Rato e teclado', 'A carregar…', 'Está a carregar', 'O ecrã principal']) {
-    assert.match(text, european, `"${text}" should be refused`)
+  const european = RULES.filter(([rule]) => rule === 'is European Portuguese').map(([, pattern]) => pattern)
+  const refused = (text) => european.some((pattern) => pattern.test(text))
+  for (const text of ['Não foi possível aceder à pasta', 'Partilhar o link', 'Partilhe esta sessão', 'Premir Enter para enviar',
+    'Carregue em Enviar', 'Carregue no botão Enviar', 'A carregar…', 'Está a carregar', 'O ecrã principal']) {
+    assert.ok(refused(text), `"${text}" should be refused`)
   }
   for (const text of ['Guardar uma cópia', 'Guarde as credenciais em ~/.npmrc', 'Comprima e tente de novo', 'Copiado para a área de transferência',
-    'Compartilhar o link', 'Carregando…', 'Clique em Enviar', 'Gerenciar plugins', 'A partir de hoje']) {
-    assert.doesNotMatch(text, european, `"${text}" is Brazilian Portuguese`)
+    'Compartilhar o link', 'Carregando…', 'Clique em Enviar', 'Gerenciar plugins', 'A partir de hoje', 'A seguir, escolha um modelo', 'A seguir…',
+    'A mulher', 'A colher', 'Carregue em segundo plano', 'Transferir a sessão para outro espaço de trabalho', 'Gerir', 'Rato', 'A prima dela',
+    'Matéria-prima']) {
+    assert.ok(!refused(text), `"${text}" is Brazilian Portuguese`)
   }
 })
