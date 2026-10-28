@@ -47,6 +47,8 @@ bun run lint
 node scripts/build-client.mjs   # after a change in src/client; commit client.js
 ```
 
+Tested with DSH 0.2.1-rc.4.
+
 `src/sse.js` is a copy of [`@automagik/unfold-sse-dsh`](../unfold-sse-dsh/README.md), held byte for byte by `test/sse-copy.test.js`. `src/client/redact.js` and the patterns in `src/window.js` are the credential masking the Unfold plugins share; a test holds the copies to one answer.
 
 ## Licence

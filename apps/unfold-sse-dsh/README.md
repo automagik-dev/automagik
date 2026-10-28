@@ -27,6 +27,8 @@ bun run test
 bun run lint   # oxlint from dev/harness (bun run harness), or DSH_HARNESS
 ```
 
+Tested with DSH 0.2.1-rc.4.
+
 ## Licence
 
 MIT (see LICENSE).

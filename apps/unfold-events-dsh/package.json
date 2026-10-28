@@ -1,6 +1,6 @@
 {
   "name": "@automagik/unfold-events-dsh",
-  "version": "3.34.0",
+  "version": "3.35.1",
   "description": "What Unfold's agent is doing, inside DSH: a right-sidebar tab with every event the agent sends, named in plain words and newest first, and Unfold's presence tab. It only watches: it attaches to the agent as a read-only observer through the address Unfold publishes for its own instance, and opens no port",
   "keywords": [
     "dsh-plugin",
@@ -42,7 +42,7 @@
     "harness": "bun install --cwd dev/harness --no-save --no-summary"
   },
   "engines": {
-    "dsh": ">=0.2.1-rc.3 <0.2.2-0"
+    "dsh": ">=0.2.1-rc.4 <0.2.2-0"
   },
   "dependencies": {
     "zod": "4.6.5"
