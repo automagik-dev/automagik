@@ -11,12 +11,12 @@ import { test } from 'node:test'
 const PINNED = {
   'src/mind/metrics.js': ['src/metrics.js', 'da9cd2482d337613821df000dc23d52a5420a84db2d66d25893b8b0421e6c9cb'],
   'src/mind/moments.js': ['src/moments.js', '8cf3966723733950012457448fd9b8ce68f489236a949ee98d9d55c449d4f327'],
-  'test/support/mind.js': ['src/mind.js', '4ada0d0f26f7f816334b3cdec8df5c3285296a68222893821efac9a243b41105'],
-  'test/support/redact.js': ['src/redact.js', 'cbf467f48468e81141ae472fe9495a72473272171779250c333c39c6a0b3a3cc'],
+  'test/support/mind.js': ['src/mind.js', 'a320995ceea90b9f9b5cd65c3265352eb7455ab0fe57ea6529200729d9149555'],
+  'test/support/redact.js': ['src/redact.js', 'c6741f78e63ea5812fc6246b058d5bbbd1e04fbd878d80f3f266b3696ccfce81'],
   'test/support/sentences.js': ['src/sentences.js', '3602f811415cbb91f0795845d4fc9f86019977fa83f41cb4b7ec7a248e59410a'],
   'test/support/display.js': ['src/display.js', '41aa8e7d2def996f7a1ffa1e516c7ddf814379d83ee6138740cc1015abae5c13'],
   'test/support/catalog.js': ['test/support/catalog.js', 'c3e93d3df9136234fff3649243cd5157d5731e7663f1030ce9bc0c29cdd4912e'],
-  'test/support/window.js': ['test/support/window.js', 'fd5233f99b2b952c4ae5fe79c60cf34146ec36e54c0d033bbbdf692cd17d1183'],
+  'test/support/window.js': ['test/support/window.js', '0a9b3540e5cc805a2105ebcb3e4a07a69a089a59aed6807411da821e641f6d20'],
   'catalog/events.v3.json': ['catalog/events.v3.json', '386f87aa7e0124ef16fac7dd9ecff2e3bb2cd3139a10f0f1a5ac7da1364e0647'],
 }
 const sha = (url) => createHash('sha256').update(readFileSync(url)).digest('hex')

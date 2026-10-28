@@ -13,7 +13,7 @@ import { redact, redactText, secretsIn } from '../src/redact.js'
 const WORDS = ['correct', 'horse', 'battery', 'staple']
 const PHRASE = WORDS.join(' ')
 const JOINED = WORDS.join('')
-const KEYS = ['password', 'PASSWD', 'pass', 'Secret', 'client_secret', 'passphrase', 'TOKEN', 'api_key', 'private_key', 'db_password', 'DB_PASS', 'x-api-key', 'secret_key', 'SECRET_KEY', 'aws_secret_access_key', 'AWS_SECRET_ACCESS_KEY', 'accessToken', 'clientSecret', 'dbPassword', 'apiKey', 'privateKey', 'authToken', 'dbPass']
+const KEYS = ['password', 'PASSWD', 'pass', 'Secret', 'client_secret', 'passphrase', 'TOKEN', 'api_key', 'private_key', 'db_password', 'DB_PASS', 'x-api-key', 'secret_key', 'SECRET_KEY', 'aws_secret_access_key', 'AWS_SECRET_ACCESS_KEY', 'accessToken', 'clientSecret', 'dbPassword', 'apiKey', 'privateKey', 'authToken']
 const SCHEMES = [`authorization: bearer ${JOINED}`, `AUTHORIZATION: BEARER ${JOINED}`, `Authorization: basic ${JOINED}`, `{"authorization": "bearer ${PHRASE}"}`]
 // 80k characters of each input that could make a rule quadratic: a start after - or --, an open
 // quote, a camelCase run, a YAML block, an open escaped JSON value, a prefix run, many line starts,
@@ -23,6 +23,11 @@ const SCHEMES = [`authorization: bearer ${JOINED}`, `AUTHORIZATION: BEARER ${JOI
 const SHAPED = WORDS.join('9')
 const ALONE = [`bearer ${SHAPED}`, `BEARER ${SHAPED}`, `basic ${SHAPED}`, `the header was bEaReR ${SHAPED}, then more`]
 const NOT_TOKENS = ['bearer bonds', 'basic steps', 'the bearer of bad news', 'bearer v2 of the api']
+const FILL = 5000 // past the 4096-character keep
+// An escaped JSON value still open where the keep is cut, ending inside an escape: two backslashes
+// (an escape begun one level down) or three (and one begun here). The next delta must still be read
+// as part of the value, so the words after the escaped quote stay hidden.
+const MID_ESCAPE = [2, 3].map((run) => [`${run} backslashes`, `{\\"password\\": \\"${'x'.repeat(FILL)}${'\\'.repeat(run)}`, `${run === 2 ? '\\"' : '"'}${PHRASE}\\"} done`])
 const ADVERSARIAL = {
   'a- repeat': 'a-'.repeat(40_000),
   'open quote': `password: "${'x '.repeat(40_000)}`,
@@ -99,7 +104,7 @@ test('every key form the 4096 cut sweeps through: no word of its value is served
 })
 
 test('words that only contain a key name are not keys', () => {
-  const prose = 'bypass=open compass: north passenger: aboard tokenizer: fast a-bypass=1 -bypass=1 --bypass=open secret_sauce: butter basic steps first bearer bonds accessLevel: admin clientName: acme passRate: 0.9 maxTokens: 512 tokenCount: 12 primaryKey: id sortKey: name keyboardLayout: us passengerCount: 4 tokenizerName: bpe compassHeading: north the bearer of bad news'
+  const prose = 'bypass=open compass: north passenger: aboard tokenizer: fast a-bypass=1 -bypass=1 --bypass=open secret_sauce: butter basic steps first bearer bonds accessLevel: admin clientName: acme passRate: 0.9 maxTokens: 512 tokenCount: 12 primaryKey: id sortKey: name keyboardLayout: us passengerCount: 4 tokenizerName: bpe compassHeading: north firstPass: done boardingPass: gate4 the bearer of bad news'
   assert.equal(redactText(prose), prose)
 })
 
@@ -150,4 +155,14 @@ test('a scheme in any case with no key name hides a token-shaped word, in the ke
     }
   }
   for (const text of NOT_TOKENS) assert.equal(redactText(text), text)
+})
+
+test('a cut inside an escaped value that ends mid-escape: the rest of the value stays hidden', () => {
+  for (const [what, head, rest] of MID_ESCAPE) {
+    const r = journal()
+    r.send(head)
+    r.send(rest)
+    assert.deepEqual(leaked(r.served()), [], what)
+    assert.match(r.served(), /done/, what)
+  }
 })
