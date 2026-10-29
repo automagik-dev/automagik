@@ -4,7 +4,9 @@
 import { createElement as h, Fragment, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { FolderMenu } from './folder-menu.js'
-import { CheckIcon, ChevronLeftIcon, CloseIcon, TerminalIcon } from './icons.js'
+import { CheckIcon, ChevronLeftIcon, CloseIcon } from './icons.js'
+import { BotMark } from './mark.js'
+import { DSH_LOOK } from './characters.js'
 import { Caret, useAnchoredMenu } from './model-menu.js'
 import { hostText, t } from './i18n.js'
 
@@ -66,7 +68,7 @@ export function DshBotForm({ agent, actions, onBack, onDone }) {
     h('div', { className: 'bt-create-body' },
       h('div', { className: 'bt-create-card' },
         h('div', { className: 'bt-create-preview' },
-          h('span', { className: 'bt-agent-ava bt-dsh-ava', 'aria-hidden': true }, h(TerminalIcon))),
+          h('span', { className: 'bt-agent-ava bt-dsh-ava', 'aria-hidden': true }, h(BotMark, { bot: { id: agent?.id ?? 'new-dsh-bot' }, look: DSH_LOOK, size: 32 }))),
         h('label', { className: 'bt-field' },
           h('span', { className: 'bt-field-label' }, t('Name')),
           h('input', {

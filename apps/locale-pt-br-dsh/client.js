@@ -837,6 +837,7 @@ const pack = createPack({
     "Message Bot": "Mensagem para o Bot",
     "To:": "Para:",
     "Remove {name}": "Remover {name}",
+    "Adopt as Bot": "Adotar como Bot",
     "Recipient": "Destinatário",
     "Recipients": "Destinatários",
     "Search Bots…": "Buscar Bots…",

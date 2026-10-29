@@ -1,7 +1,10 @@
 // DSH bots: plain dsh entries listed under the Bots but not Bots. The user makes any number,
 // each with a name, a project folder (`workDir`, else the team workspace) and a DSH agent
 // preset (`profile`, else DSH's default). Their Sessions are ordinary root Sessions there,
-// so they get the whole dsh conversation surface and none of the team tools.
+// so they get the whole dsh conversation surface and none of the team tools. One that the
+// user wants on the team is adopted instead: its newest Session becomes a Bot's own chat and
+// the earlier ones its earlier parts (adoptAsBot), so the conversation, folder and name
+// carry over and the Bot gets the team tools, messages, groups, capabilities and tasks.
 //
 // The tasks record (`kind: 'tasks'`) is not one: it keeps the Sessions of the one-off work
 // a Bot hands off (start_task), which show under that Bot; when a task's first turn ends,
@@ -11,6 +14,7 @@ import { isAbsolute } from 'node:path'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { AGENT_NAME, AGENT_SESSION_TITLE_MAX, DSH_BOT_NAME_MAX, TEAM_TOOLS } from './constants.js'
+import { nameProblem } from '../shared/mentions.js'
 import { splitRef } from './text.js'
 import { output } from './tools.js'
 import { OMNI_KIND } from './roster.js'
@@ -87,6 +91,10 @@ export function install(rt) {
   // has not landed yet (schemas not up, restrict hook missing, a transient
   // throw) stays on the retry list until it sticks or the Session leaves.
   const restricted = new WeakSet()
+  // Per Session, the disposer of its team-tools restriction: adopting the DSH bot gives
+  // those tools back to the Session that becomes a Bot, without a restart.
+  /** @type {Map<string, () => void>} */
+  const restrictionLifts = new Map()
   const RETRY_MS = 5_000
   const pendingRestrict = new Set()
   let retryTimer
@@ -122,12 +130,26 @@ export function install(rt) {
       return
     }
     try {
-      agent.ctx.tools.restrict({ deny })
+      const lift = agent.ctx.tools.restrict({ deny })
       restricted.add(agent)
       pendingRestrict.delete(agent)
+      if (typeof lift === 'function' && agent.session?.id !== undefined) restrictionLifts.set(agent.session.id, lift)
     } catch (error) {
       rt.warn('ds-bot: team tools stay visible to DSH bot Session %s: %s', agent.session?.id, error)
       scheduleRetry(agent)
+    }
+  }
+  // The team tools a DSH bot Session had denied become available again when it is adopted
+  // into a Bot. A Session with no live agent has no restriction to lift.
+  const liftRestriction = (sessionId, agent) => {
+    const lift = restrictionLifts.get(sessionId)
+    restrictionLifts.delete(sessionId)
+    if (agent !== undefined) restricted.delete(agent)
+    if (lift === undefined) return
+    try {
+      lift()
+    } catch (error) {
+      rt.warn('ds-bot: the team tools of the adopted Session %s stay hidden until DSH restarts: %s', sessionId, error)
     }
   }
   // Fires when a root Session resolves its agent, including sessions saved earlier.
@@ -248,6 +270,7 @@ export function install(rt) {
     // so a failed archive stays retryable and keeps its tool restriction.
     await ctx.workspaceRegistry.archiveSession(sessionId)
     agent.sessions = agent.sessions.filter(id => id !== sessionId)
+    restrictionLifts.delete(sessionId)
     await rt.save()
   }
 
@@ -270,6 +293,7 @@ export function install(rt) {
     for (const sessionId of sessions) {
       try {
         await ctx.workspaceRegistry.archiveSession(sessionId)
+        restrictionLifts.delete(sessionId)
       } catch (error) {
         failure ??= error
         kept.push(sessionId)
@@ -284,6 +308,48 @@ export function install(rt) {
     }
     delete state.agents[agentId]
     await rt.save()
+  }
+
+  // A DSH bot the user wants on the team becomes a Bot: its newest Session is the Bot's
+  // own chat and the earlier ones its earlier parts, so the conversation, folder and name
+  // carry over untouched, and nothing is renamed. From then on the team treats it as every
+  // other Bot: `list_bots` and the sidebar show it, `message_bot` reaches it, it can join a
+  // group, take capabilities and start tasks, and its Session gets the team tools back.
+  async function adoptAsBot(agentId) {
+    writeCheck()
+    const agent = record(agentId)
+    if (agent.kind !== DSH_BOT) throw new Error('Only a DSH bot can become a Bot')
+    const sessions = [...(agent.sessions ?? [])]
+    if (sessions.length === 0) throw new Error('The DSH bot has no Session to adopt first')
+    const name = String(agent.name ?? '').trim().slice(0, DSH_BOT_NAME_MAX)
+    const problem = nameProblem(name)
+    if (problem !== undefined) throw new Error(problem)
+    // No Bot takes another Bot's name: the user renames the DSH bot first.
+    if (rt.findBot(name) !== undefined) throw new Error(`A Bot named ${name} already exists`)
+    const chatId = sessions.at(-1)
+    // A Session DSH can no longer open is refused before anything moves; the resolved
+    // agent is the one whose team-tools restriction adoption lifts below.
+    const live = await rt.resolveAgent(chatId)
+    const earlier = sessions.slice(0, -1)
+    const now = Date.now()
+    state.bots[chatId] = {
+      id: chatId,
+      name,
+      role: '',
+      instructions: '',
+      ...(typeof agent.workDir === 'string' && agent.workDir !== '' ? { workDir: agent.workDir } : {}),
+      ...(agent.pinned === true ? { pinned: true } : {}),
+      createdAt: agent.createdAt ?? now,
+      createdBy: null,
+      capabilities: [],
+      // The DSH bot's other Sessions stay readable as the Bot's earlier parts.
+      ...(earlier.length === 0 ? {} : { segments: earlier.map(sessionId => ({ sessionId, endedAt: now })) }),
+    }
+    delete state.agents[agentId]
+    for (const sessionId of earlier) restrictionLifts.delete(sessionId)
+    await rt.save()
+    liftRestriction(chatId, live)
+    return { botId: chatId }
   }
 
   // The tasks record, made when the first task starts.
@@ -459,5 +525,5 @@ export function install(rt) {
     },
   }))
 
-  Object.assign(rt, { agentOf, addAgent, updateAgent, presets, createAgentSession, adoptAgentSession, archiveAgentSession, renameAgentSession, removeAgent, createTaskSession, startTask })
+  Object.assign(rt, { agentOf, addAgent, updateAgent, presets, createAgentSession, adoptAgentSession, adoptAsBot, archiveAgentSession, renameAgentSession, removeAgent, createTaskSession, startTask })
 }

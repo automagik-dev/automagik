@@ -3,8 +3,9 @@ import { createPortal } from 'react-dom'
 import { Lockup, OmniMark, Wordmark } from './logo.js'
 import { isMainOf } from './sources.js'
 import { currentPart, previewOf, relativeShort } from './text.js'
-import { PlusIcon, SearchIcon, SidebarIcon, GaugeIcon, PlugIcon, GearIcon, PinMarkIcon, ConnectorIcon, SwitchIcon, CloudDownloadIcon, TasksIcon, TerminalIcon, SignOutIcon } from './icons.js'
-import { botState, BotAvatar, RoomAvatar } from './mark.js'
+import { PlusIcon, SearchIcon, SidebarIcon, GaugeIcon, PlugIcon, GearIcon, PinMarkIcon, ConnectorIcon, SwitchIcon, CloudDownloadIcon, TasksIcon, SignOutIcon } from './icons.js'
+import { botState, BotAvatar, BotMark, RoomAvatar } from './mark.js'
+import { DSH_LOOK } from './characters.js'
 import { reducedMotion } from './activity-row.js'
 import { Shimmer, workPhrase } from './cells.js'
 import { springEasing, SPRING_SHAPE, useViewport, viewBottom } from './motion.js'
@@ -292,7 +293,7 @@ function AgentRow({ agent, roster, actions, useSessions, useSessionStatus, useUi
       'data-agent-id': agent.id, title: wide ? undefined : name, onClick: () => actions.openAgent(agent.id),
       onContextMenu: (event) => { event.preventDefault(); actions.openMenu({ kind: 'agent', id: agent.id, x: event.clientX, y: event.clientY }) },
     },
-    h('span', { className: `bt-agent-ava${running ? ' bt-run' : ''}` }, tasks ? h(TasksIcon, { size: 20 }) : h(TerminalIcon)),
+    h('span', { className: `bt-agent-ava${running ? ' bt-run' : ''}` }, tasks ? h(TasksIcon, { size: 20 }) : h(BotMark, { bot: { id: agent.id }, look: DSH_LOOK, size: 26 })),
     wide ? h('span', { className: 'bt-row-body' },
       h('span', { className: 'bt-row-name' }, h('span', { className: 'bt-row-title' }, name), agent.pinned ? h(PinMark) : null),
       preview ? h('span', { className: 'bt-row-preview' }, preview) : null) : null,
@@ -864,13 +865,15 @@ body[data-bt-motion=quiet] .bt-thread-spin{animation-duration:3s}
 .bt-update-dsh:not(:first-child){margin-top:12px;padding-top:12px;border-top:.5px solid var(--bt-line-2)}
 @media (prefers-reduced-motion:reduce){.bt-round.bt-update,.bt-update-pop,.bt-update .bt-cloud-arrow{animation:none}}
 
-/* A DSH bot's row and its expanding Session list. The terminal mark reads as
-   "plain dsh" next to the Bot marks. */
+/* A DSH bot's row and its expanding Session list. It wears DSH's own whale, the mark a
+   Bot with no look of its own wears too. */
 .bt-agent-ava{flex:none;width:36px;height:36px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:var(--bt-hover);color:var(--bt-ink)}
 .bt-agent-ava.bt-run{animation:bt-agent-pulse 1.4s ease-in-out infinite}
 .bt-agent-ava svg{width:18px;height:18px}
+.bt-agent-ava .bt-mark svg{width:100%;height:100%}
 .bt-dsh-ava{width:72px;height:72px}
 .bt-dsh-ava svg{width:32px;height:32px}
+.bt-dsh-ava .bt-mark svg{width:100%;height:100%}
 @keyframes bt-agent-pulse{0%,100%{opacity:1}50%{opacity:.55}}
 .bt-agent-sub{display:grid;grid-template-rows:0fr;transition:grid-template-rows ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing}}
 .bt-agent-sub[data-open]{grid-template-rows:1fr}

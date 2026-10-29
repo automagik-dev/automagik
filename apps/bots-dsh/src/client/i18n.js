@@ -213,6 +213,7 @@ const ZH = {
   'Message Bot': '给 Bot 发消息',
   'To:': '发给：',
   'Remove {name}': '移除 {name}',
+  'Adopt as Bot': '转为团队 Bot',
   Recipient: '收件人',
   Recipients: '收件人',
   'Search Bots…': '搜索 Bot…',

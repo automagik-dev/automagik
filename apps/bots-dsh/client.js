@@ -248,6 +248,7 @@ var ZH = {
   "Message Bot": "给 Bot 发消息",
   "To:": "发给：",
   "Remove {name}": "移除 {name}",
+  "Adopt as Bot": "转为团队 Bot",
   Recipient: "收件人",
   Recipients: "收件人",
   "Search Bots…": "搜索 Bot…",
@@ -2474,6 +2475,7 @@ var PICKER_COLUMNS = 6;
 var DEFAULT_SHAPES = ["star", "moon", "gumdrop", "peanut", "bunny", "kitty", "acorn"];
 var FALLBACK_SHAPE = "gumdrop";
 var MAIN_LOOK = Object.freeze({ shape: "octopus", color: "deepseek" });
+var DSH_LOOK = Object.freeze({ shape: "whale", color: "blue" });
 var CHARACTER_COLORS = ["black", "brown", "red", "orange", "yellow", "green", "cyan", "blue", "violet", "magenta", "gray", "aurora"];
 var DEFAULT_COLORS = CHARACTER_COLORS.filter((color) => !["black", "gray", "brown"].includes(color) && !GRADIENTS[color]);
 var isColor = (color) => isHex(color) || Object.hasOwn(INKS, color);
@@ -2494,11 +2496,13 @@ function defaultShape(id) {
   value = Math.imul(value ^ value >>> 13, 3266489909);
   return DEFAULT_SHAPES[((value ^ value >>> 16) >>> 0) % DEFAULT_SHAPES.length];
 }
-var colorOf = (bot) => isColor(bot?.color) ? bot.color : bot?.id ? defaultColor(String(bot.id)) : "black";
+var keepsIdLook = (bot) => bot?.kind === "genie";
+var colorOf = (bot) => isColor(bot?.color) ? bot.color : bot?.id ? keepsIdLook(bot) ? defaultColor(String(bot.id)) : DSH_LOOK.color : "black";
 function lookOf(bot) {
   const avatar = bot?.avatar ?? {};
   return {
-    shape: hasShape(avatar.shape) ? avatar.shape : bot?.id ? defaultShape(String(bot.id)) : FALLBACK_SHAPE,
+    // A stored shape wins; a Bot with none wears DSH's whale, a Genie the id's character.
+    shape: hasShape(avatar.shape) ? avatar.shape : bot?.id ? keepsIdLook(bot) ? defaultShape(String(bot.id)) : DSH_LOOK.shape : FALLBACK_SHAPE,
     image: avatar.image,
     // A pet (pets.js) the Bot wears; a photo wins.
     pet: avatar.image || typeof avatar.pet?.id !== "string" ? void 0 : avatar.pet,
@@ -15696,7 +15700,7 @@ function AgentRow({ agent, roster, actions, useSessions, useSessionStatus, useUi
           actions.openMenu({ kind: "agent", id: agent.id, x: event.clientX, y: event.clientY });
         }
       },
-      (0, import_react39.createElement)("span", { className: `bt-agent-ava${running2 ? " bt-run" : ""}` }, tasks ? (0, import_react39.createElement)(TasksIcon, { size: 20 }) : (0, import_react39.createElement)(TerminalIcon)),
+      (0, import_react39.createElement)("span", { className: `bt-agent-ava${running2 ? " bt-run" : ""}` }, tasks ? (0, import_react39.createElement)(TasksIcon, { size: 20 }) : (0, import_react39.createElement)(BotMark, { bot: { id: agent.id }, look: DSH_LOOK, size: 26 })),
       wide ? (0, import_react39.createElement)(
         "span",
         { className: "bt-row-body" },
@@ -16333,13 +16337,15 @@ body[data-bt-motion=quiet] .bt-thread-spin{animation-duration:3s}
 .bt-update-dsh:not(:first-child){margin-top:12px;padding-top:12px;border-top:.5px solid var(--bt-line-2)}
 @media (prefers-reduced-motion:reduce){.bt-round.bt-update,.bt-update-pop,.bt-update .bt-cloud-arrow{animation:none}}
 
-/* A DSH bot's row and its expanding Session list. The terminal mark reads as
-   "plain dsh" next to the Bot marks. */
+/* A DSH bot's row and its expanding Session list. It wears DSH's own whale, the mark a
+   Bot with no look of its own wears too. */
 .bt-agent-ava{flex:none;width:36px;height:36px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:var(--bt-hover);color:var(--bt-ink)}
 .bt-agent-ava.bt-run{animation:bt-agent-pulse 1.4s ease-in-out infinite}
 .bt-agent-ava svg{width:18px;height:18px}
+.bt-agent-ava .bt-mark svg{width:100%;height:100%}
 .bt-dsh-ava{width:72px;height:72px}
 .bt-dsh-ava svg{width:32px;height:32px}
+.bt-dsh-ava .bt-mark svg{width:100%;height:100%}
 @keyframes bt-agent-pulse{0%,100%{opacity:1}50%{opacity:.55}}
 .bt-agent-sub{display:grid;grid-template-rows:0fr;transition:grid-template-rows ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing}}
 .bt-agent-sub[data-open]{grid-template-rows:1fr}
@@ -18101,7 +18107,7 @@ function DshBotForm({ agent, actions, onBack, onDone }) {
         (0, import_react49.createElement)(
           "div",
           { className: "bt-create-preview" },
-          (0, import_react49.createElement)("span", { className: "bt-agent-ava bt-dsh-ava", "aria-hidden": true }, (0, import_react49.createElement)(TerminalIcon))
+          (0, import_react49.createElement)("span", { className: "bt-agent-ava bt-dsh-ava", "aria-hidden": true }, (0, import_react49.createElement)(BotMark, { bot: { id: agent?.id ?? "new-dsh-bot" }, look: DSH_LOOK, size: 32 }))
         ),
         (0, import_react49.createElement)(
           "label",
@@ -21192,7 +21198,9 @@ function AgentMenu({ menu, roster, actions, leaving }) {
   const groups = menu.kind === "agent" ? [
     [
       [agent.pinned ? t("Unpin") : t("Pin"), PinIcon, () => actions.setFlags(agent.id, { pinned: !agent.pinned })],
-      ...agent.kind === "tasks" ? [] : [[t("Edit"), PencilIcon, () => actions.openNewChat(`dsh-bot:${agent.id}`)]]
+      ...agent.kind === "tasks" ? [] : [[t("Edit"), PencilIcon, () => actions.openNewChat(`dsh-bot:${agent.id}`)]],
+      // Its Session, folder and name carry over into a Bot with the team tools.
+      ...agent.kind === "tasks" ? [] : [[t("Adopt as Bot"), PeopleIcon, () => actions.adoptAgentAsBot(agent.id)]]
     ],
     [
       [agent.kind === "tasks" ? t("Remove Tasks") : t("Remove {name}", { name: agent.name }), TrashIcon, () => actions.removeAgent(agent.id), true]
@@ -23058,6 +23066,13 @@ function apply(ctx) {
       return agent;
     },
     updateAgent: (agentId, fields) => after(call("update-agent", { agentId, ...fields })),
+    // A DSH bot the user wants on the team becomes a Bot: same Session, folder and name,
+    // now with the team tools, messages, groups, capabilities and tasks.
+    adoptAgentAsBot: async (agentId) => {
+      const { botId } = await after(call("agent-bot-adopt", { agentId }));
+      actions.openSession(botId);
+      return botId;
+    },
     agentPresets: () => call("agent-presets"),
     openAgent: (agentId) => {
       const agent = roster.getSnapshot().agentsById[agentId];

@@ -9046,6 +9046,7 @@ var PICKER_COLUMNS = 6;
 var DEFAULT_SHAPES = ["star", "moon", "gumdrop", "peanut", "bunny", "kitty", "acorn"];
 var FALLBACK_SHAPE = "gumdrop";
 var MAIN_LOOK = Object.freeze({ shape: "octopus", color: "deepseek" });
+var DSH_LOOK = Object.freeze({ shape: "whale", color: "blue" });
 var CHARACTER_COLORS = ["black", "brown", "red", "orange", "yellow", "green", "cyan", "blue", "violet", "magenta", "gray", "aurora"];
 var DEFAULT_COLORS = CHARACTER_COLORS.filter((color) => !["black", "gray", "brown"].includes(color) && !GRADIENTS[color]);
 var isColor = (color) => isHex(color) || Object.hasOwn(INKS, color);
@@ -9066,11 +9067,13 @@ function defaultShape(id) {
   value = Math.imul(value ^ value >>> 13, 3266489909);
   return DEFAULT_SHAPES[((value ^ value >>> 16) >>> 0) % DEFAULT_SHAPES.length];
 }
-var colorOf = (bot) => isColor(bot?.color) ? bot.color : bot?.id ? defaultColor(String(bot.id)) : "black";
+var keepsIdLook = (bot) => bot?.kind === "genie";
+var colorOf = (bot) => isColor(bot?.color) ? bot.color : bot?.id ? keepsIdLook(bot) ? defaultColor(String(bot.id)) : DSH_LOOK.color : "black";
 function lookOf(bot) {
   const avatar = bot?.avatar ?? {};
   return {
-    shape: hasShape(avatar.shape) ? avatar.shape : bot?.id ? defaultShape(String(bot.id)) : FALLBACK_SHAPE,
+    // A stored shape wins; a Bot with none wears DSH's whale, a Genie the id's character.
+    shape: hasShape(avatar.shape) ? avatar.shape : bot?.id ? keepsIdLook(bot) ? defaultShape(String(bot.id)) : DSH_LOOK.shape : FALLBACK_SHAPE,
     image: avatar.image,
     // A pet (pets.js) the Bot wears; a photo wins.
     pet: avatar.image || typeof avatar.pet?.id !== "string" ? void 0 : avatar.pet,
