@@ -7,7 +7,7 @@
 // installed the same way; Unfold's own instance has them all. What a type starts with (its
 // model, plugins, tools, skills, folder and permissions) is read from the live services where
 // they run, and from this list where they do not yet.
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { accessSync, constants as fsConstants, existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, isAbsolute, join } from 'node:path'
@@ -65,6 +65,35 @@ export function onPath(name, env = process.env) {
     } catch { /* not here */ }
   }
   return null
+}
+
+// How long Genie's command line has to answer `--version` before the card counts it as missing.
+export const GENIE_VERSION_TIMEOUT_MS = 2000
+let genieChecked = null // { key, answer } for the last file asked, until that file changes
+
+/**
+ * Genie's command line on the PATH in `env`, or null: the first `genie` there, kept only if
+ * `genie --version` exits 0 within GENIE_VERSION_TIMEOUT_MS. An app that embeds DSH may put a
+ * stand-in named genie on the PATH that refuses to run; its path is not Genie's command line. No
+ * shell, no output kept, and the answer stands until the file changes.
+ */
+export async function genieOnPath(env = process.env, { timeout = GENIE_VERSION_TIMEOUT_MS } = {}) {
+  const file = onPath('genie', env)
+  if (file === null) return null
+  let key
+  try {
+    const { mtimeMs, size } = statSync(file)
+    key = `${file}:${mtimeMs}:${size}`
+  } catch { return null }
+  if (genieChecked?.key !== key) {
+    const answers = await new Promise((resolve) => {
+      const child = spawn(file, ['--version'], { env, stdio: 'ignore', timeout, killSignal: 'SIGKILL' })
+      child.once('error', () => resolve(false))
+      child.once('exit', code => resolve(code === 0))
+    })
+    genieChecked = { key, answer: answers ? file : null }
+  }
+  return genieChecked.answer
 }
 
 const succeeds = (command, args) => new Promise((resolve) => {
@@ -153,10 +182,11 @@ export const hasGenieSkills = (home = homedir()) => existsSync(join(home, '.agen
 // What an install in Unfold's instance says when a plugin its pack brings is not there.
 export const BUNDLED_MISSING = 'Unfold brings this plugin, and it is missing from this instance.'
 
-export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.env, checkGit = gitProblem, genieSkills = hasGenieSkills, genieCli = () => onPath('genie', env), release = {} }) {
+export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.env, checkGit = gitProblem, genieSkills = hasGenieSkills, genieCli = () => genieOnPath(env), release = {} }) {
   const manager = () => service(ctx, 'pluginManager')
   // Unfold's own instance brings its plugins and Genie's command line with it: the card names
   // that command line, never the line that installs one, and nothing here installs a plugin.
+  // A genie on the PATH that does not answer --version is no command line: the card says none.
   const bundled = hostOf(env) === 'unfold'
   // `{ phase, current, done, error, restart }` once an install started.
   let job = null
@@ -290,7 +320,7 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.e
       canInstall: typeof manager()?.installBundle === 'function',
       install,
       skills: genieSkills(),
-      cli: bundled ? genieCli() : GENIE_CLI_INSTALL,
+      cli: bundled ? await genieCli() : GENIE_CLI_INSTALL,
       ...(bundled ? { cliBundled: true } : {}),
     }
   }

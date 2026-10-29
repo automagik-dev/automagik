@@ -236,6 +236,35 @@ test('under AUTOMAGIK_HOST=unfold, Genie\'s card never carries the curl line: it
   assert.match((await value(host({ manager: fakeManager(), env: {} }), 'genie-plugin')).cli, /^curl /)
 })
 
+// A command named genie on the PATH that is not Genie's command line: an app that embeds DSH may
+// put a stand-in there that refuses to run (exit 127, one line on stderr), or one that never
+// answers. The script answers only `--version`, so the card must ask with exactly that.
+const genieOn = (t, script) => {
+  const bin = join(folder(t), 'bin')
+  mkdirSync(bin)
+  writeFileSync(join(bin, 'genie'), `#!/bin/sh\n${script}\n`)
+  chmodSync(join(bin, 'genie'), 0o755)
+  return bin
+}
+
+test('under AUTOMAGIK_HOST=unfold, a genie that fails --version is not installed: the card never shows its path', async (t) => {
+  const standIn = genieOn(t, 'echo "genie: this app does not include Genie" >&2\nexit 127')
+  const refused = await value(host({ manager: fakeManager(), env: { ...UNFOLD, PATH: standIn } }), 'genie-plugin')
+  assert.equal(refused.cli, null)
+  assert.equal(refused.cliBundled, true)
+  const working = genieOn(t, '[ "$1" = --version ] || exit 2\necho "genie 1.0.0"')
+  assert.equal((await value(host({ manager: fakeManager(), env: { ...UNFOLD, PATH: working } }), 'genie-plugin')).cli, join(working, 'genie'))
+  assert.equal((await value(host({ manager: fakeManager(), env: { ...UNFOLD, PATH: '/nowhere' } }), 'genie-plugin')).cli, null)
+})
+
+test('under AUTOMAGIK_HOST=unfold, a genie that never answers --version is not installed, and the card does not wait for it', async (t) => {
+  const silent = genieOn(t, 'while :; do sleep 1; done')
+  const t0 = performance.now()
+  const hung = await value(host({ manager: fakeManager(), env: { ...UNFOLD, PATH: silent } }), 'genie-plugin')
+  assert.equal(hung.cli, null)
+  assert.ok(performance.now() - t0 < 4000, `the card answered after ${Math.round(performance.now() - t0)} ms`)
+})
+
 test('without dsh-oh-my-claude, the first step finished still finishes', async (t) => {
   // Its state folder cannot be made: a file stands where it would go.
   const dir = folder(t)
