@@ -444,7 +444,7 @@ export function apply(ctx) {
     isAgentSession: id => isAgentSessionId(id),
     openSession: (id) => {
       // A DSH Agent Session id lands on the plain surface, not the Bot skin.
-      if (isAgentSessionId(id)) return actions.openAgentSession(id)
+      if (isAgentSessionId(id)) return actions.openAgentSession(partFor(id))
       ui.set(state => (state.newChat || state.exchange || state.menu || state.palette ? { ...state, newChat: null, exchange: null, menu: null, palette: null } : state))
       setPlain(false)
       const target = partFor(id)
@@ -457,10 +457,11 @@ export function apply(ctx) {
       setPlain(true)
       show(sessionId)
     },
-    // A new DSH bot opens on its first Session.
+    // UI-created DSH bots join the team without replacing the native conversation.
     addAgent: async (fields) => {
-      const agent = await after(call('add-agent', fields))
-      if (agent?.sessions?.[0] !== undefined) actions.openAgentSession(agent.sessions[0])
+      const agent = await after(call('add-agent', { ...fields, teamMember: true }))
+      if (agent?.adoptedBotId !== undefined) actions.openSession(agent.adoptedBotId)
+      else if (agent?.sessions?.[0] !== undefined) actions.openAgentSession(agent.sessions[0])
       return agent
     },
     updateAgent: (agentId, fields) => after(call('update-agent', { agentId, ...fields })),

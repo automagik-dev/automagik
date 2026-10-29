@@ -712,9 +712,10 @@ export function install(rt) {
   // message from another Bot or a group round queues behind it. Bot Sessions ask
   // through ask_user instead, so the tool is taken out of their tool list, as are the
   // goal tools.
+  const nativeDshSession = id => rt.botOf(rt.selfOf(id))?.kind === 'dsh'
   const hiddenTools = new WeakSet()
   const hideBotUnusedTools = (agent) => {
-    if (agent === undefined || hiddenTools.has(agent) || !rt.isBotSession(agent.session?.id)) return
+    if (agent === undefined || hiddenTools.has(agent) || nativeDshSession(agent.session?.id) || !rt.isBotSession(agent.session?.id)) return
     if (typeof agent.ctx?.tools?.restrict !== 'function') return
     try {
       // restrict() throws on a name this profile does not serve.
@@ -730,7 +731,7 @@ export function install(rt) {
   // A new Bot, part, or group Session gets its Agent before ds-bot records it, so the
   // list is only trimmed once ds-bot resolves that Agent again; meanwhile the guard
   // refuses the question tool in any Bot Session, and a goal made there is blocked.
-  ctx.tools.guard(exec => (exec.name === BLOCKING_QUESTION_TOOL && rt.isBotSession(exec.agent?.id)
+  ctx.tools.guard(exec => (exec.name === BLOCKING_QUESTION_TOOL && !nativeDshSession(exec.agent?.id) && rt.isBotSession(exec.agent?.id)
     ? `Bots cannot use ${BLOCKING_QUESTION_TOOL}. Ask with ask_user in your own chat, or ask in your reply.`
     : undefined))
   // Creation waits for this listener, so the Agent's first step already lacks the tool.
@@ -768,7 +769,7 @@ export function install(rt) {
   ctx.on('session/event', (session, event) => {
     if (event.type !== 'goal/change' || event.data?.goal?.phase !== 'active') return
     const id = session?.id
-    if (!rt.isBotSession(id) && rt.roomOf(id) === undefined) return
+    if (nativeDshSession(id) || (!rt.isBotSession(id) && rt.roomOf(id) === undefined)) return
     // block() appends to the same log, so it waits until every listener has seen this change.
     setTimeout(() => void blockGoal(id), 0)
   })

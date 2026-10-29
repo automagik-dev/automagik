@@ -41,9 +41,9 @@ async function drain(stream) {
 // `ctx.llm.stream` runs the plugin's `llm/stream` listeners in order, as DSH does,
 // and then a route that turns down a request without a Session. `respond` gives the
 // text of each answer the route lets through.
-function start() {
+function start(team = TEAM) {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-session-identity-'))
-  writeFileSync(join(home, 'state.json'), JSON.stringify(TEAM))
+  writeFileSync(join(home, 'state.json'), JSON.stringify(team))
   const bench = { tokens: 0, compacted: 0, respond: () => '', requests: [] }
   const compaction = {
     summarize() {},
@@ -121,6 +121,26 @@ for (const sessionId of ['b2', 'g3']) {
     assert.equal(result, next)
     assert.equal(bench.compacted, 1)
     assert.deepEqual(bench.requests.map(request => [request.sessionId, request.purpose]), [[sessionId, 'compaction']])
+  })
+}
+
+for (const sessionId of ['b3', 'g3']) {
+  test(`an adopted DSH keeps its native compaction and skips the Bot steward (${sessionId})`, async (t) => {
+    const team = structuredClone(TEAM)
+    team.bots.b3.kind = 'dsh'
+    const { ctx, rt, bench, stop } = start(team)
+    t.after(stop)
+    await rt.load()
+    bench.tokens = 95_000
+    const session = { id: sessionId, seq: 2, requestHeader: () => ({ config: { provider: 'deepseek', model: 'v4' } }), deriveMessages: () => [], toolHistory: () => [] }
+    const preStep = ctx.listeners.get('agent/pre-step').find(listener => /adoptCompaction/.test(String(listener)))
+    const next = { kind: 'continue' }
+    const agent = { id: sessionId, session }
+    assert.equal(await preStep({ agent, messages: [], step: 2, signal: new AbortController().signal }, () => next), next)
+    assert.equal(bench.compacted, 0)
+    assert.deepEqual(bench.requests, [])
+    await ctx.get('compaction').compactIfNeeded(agent)
+    assert.equal(bench.compacted, 1)
   })
 }
 

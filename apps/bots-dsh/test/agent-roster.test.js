@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { readFileSync } from 'node:fs'
 import { EMPTY_ROSTER, indexRoster, isAgentSession } from '../src/client/sources.js'
 import { groupsFor } from '../src/client/surface.js'
 
@@ -45,6 +46,23 @@ test('isAgentSession follows the roster first, the cache before it is ready', ()
   assert.equal(isAgentSession(roster, new Set(['m1']), 'm1'), false)
   assert.equal(isAgentSession(EMPTY_ROSTER, new Set(), ''), false)
   assert.equal(isAgentSession(EMPTY_ROSTER, new Set(), undefined), false)
+})
+
+test('adopted DSH chats keep native rendering while remaining team Bots; groups keep relay rendering', () => {
+  const dsh = { id: 'adopted', sessionId: 'current', parts: ['original'], kind: 'dsh', name: 'Brain' }
+  const roster = indexRoster({ ...ROSTER_VALUE, bots: [...ROSTER_VALUE.bots, dsh] })
+  for (const id of ['adopted', 'current', 'original']) {
+    assert.equal(roster.byId[id], dsh)
+    assert.equal(isAgentSession(roster, new Set(), id), true)
+    assert.deepEqual(groupsFor({ mode: 'bot', plain: isAgentSession(roster, new Set(), id) }), { shell: true, conversation: false })
+  }
+  assert.equal(isAgentSession(roster, new Set(['g1']), 'g1'), false)
+})
+
+test('the New DSH bot UI requests team membership and opens the native member session', () => {
+  const source = readFileSync(new URL('../src/client/index.js', import.meta.url), 'utf8')
+  assert.match(source, /call\('add-agent', \{ \.\.\.fields, teamMember: true \}\)/)
+  assert.match(source, /agent\?\.adoptedBotId !== undefined\) actions\.openSession\(agent\.adoptedBotId\)/)
 })
 
 test('the plain flag maps to the mounted groups', () => {
