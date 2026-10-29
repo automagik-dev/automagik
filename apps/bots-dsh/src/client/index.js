@@ -463,6 +463,13 @@ export function apply(ctx) {
       return agent
     },
     updateAgent: (agentId, fields) => after(call('update-agent', { agentId, ...fields })),
+    // A DSH bot the user wants on the team becomes a Bot: same Session, folder and name,
+    // now with the team tools, messages, groups, capabilities and tasks.
+    adoptAgentAsBot: async (agentId) => {
+      const { botId } = await after(call('agent-bot-adopt', { agentId }))
+      actions.openSession(botId)
+      return botId
+    },
     agentPresets: () => call('agent-presets'),
     openAgent: (agentId) => {
       const agent = roster.getSnapshot().agentsById[agentId]

@@ -1,7 +1,7 @@
 import { createElement as h, Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { isMainOf } from './sources.js'
 import { currentPart } from './text.js'
-import { GearIcon, PinIcon, UnreadIcon, PencilIcon, StarLineIcon, CopyIcon, HideIcon, TrashIcon, DuplicateIcon, PlusIcon } from './icons.js'
+import { GearIcon, PinIcon, UnreadIcon, PencilIcon, StarLineIcon, CopyIcon, HideIcon, TrashIcon, DuplicateIcon, PlusIcon, PeopleIcon } from './icons.js'
 import { useEscape } from './overlay-hooks.js'
 import { useViewport, viewBottom } from './motion.js'
 import { t } from './i18n.js'
@@ -79,6 +79,8 @@ function AgentMenu({ menu, roster, actions, leaving }) {
         [
           [agent.pinned ? t('Unpin') : t('Pin'), PinIcon, () => actions.setFlags(agent.id, { pinned: !agent.pinned })],
           ...(agent.kind === 'tasks' ? [] : [[t('Edit'), PencilIcon, () => actions.openNewChat(`dsh-bot:${agent.id}`)]]),
+          // Its Session, folder and name carry over into a Bot with the team tools.
+          ...(agent.kind === 'tasks' ? [] : [[t('Adopt as Bot'), PeopleIcon, () => actions.adoptAgentAsBot(agent.id)]]),
         ],
         [
           [agent.kind === 'tasks' ? t('Remove Tasks') : t('Remove {name}', { name: agent.name }), TrashIcon, () => actions.removeAgent(agent.id), true],

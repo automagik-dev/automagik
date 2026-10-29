@@ -1117,7 +1117,8 @@ const pack = createPack({
     "Chat with {name}": "Chat com {name}",
     "Scheduled task": "Tarefa agendada",
     "Send to": "Enviar para",
-    "Scheduled task: {text}": "Tarefa agendada: {text}"
+    "Scheduled task: {text}": "Tarefa agendada: {text}",
+    "Adopt as Bot": "Adotar como Bot"
   },
   "permission.access": {
     "mode": "Modo de acesso, atual: {name}",

@@ -52,10 +52,10 @@ const find = (node, match, found = []) => {
 const named = name => node => node.type?.name === name
 const textOf = node => (typeof node === 'string' ? node : Array.isArray(node) ? node.map(textOf).join('') : node?.props ? textOf(node.props.children) : '')
 
-function sidebar({ wide = true, unread = false, actions = {} } = {}) {
+function sidebar({ wide = true, unread = false, actions = {}, team = roster } = {}) {
   const tree = TeamSidebar({
     wide, actions,
-    useRoster: pick => pick(roster), useUi: pick => pick({ unread: {} }), useRegistry: pick => pick({}),
+    useRoster: pick => pick(team), useUi: pick => pick({ unread: {} }), useRegistry: pick => pick({}),
     useSessions: pick => pick({ ids: [], byId: {} }), useUpdate: () => ({}),
     useSessionStatus: pick => pick(new Map(unread ? [['pip', { completionUnread: true }]] : [])),
     useSessionRetainInfo: (_id, pick) => pick(undefined),
@@ -123,4 +123,18 @@ test('in the narrow rail the crowned row keeps the crown at the rail size', () =
   assert.equal(avatar.props.size, 36)
   assert.equal(avatar.props.crown, true)
   assert.equal(row.props.title, 'Pip')
+})
+
+test('a DSH bot row wears DSH\'s blue whale, not a generic terminal mark', () => {
+  const brain = { id: 'brain', kind: 'dsh', name: 'Cogna Brain', sessions: ['session-brain'], createdAt: 3 }
+  const team = { ...roster, agents: [brain], agentsById: { brain } }
+  const { tree } = sidebar({ team })
+  const [row] = find(tree, named('AgentRow'))
+  assert.equal(row.props.agent.name, 'Cogna Brain')
+  const rendered = row.type(row.props)
+  const [mark] = find(rendered, named('BotMark'))
+  assert.equal(mark.props.look.shape, 'whale')
+  assert.equal(mark.props.look.color, 'blue')
+  // The tasks row keeps its own mark; only a DSH bot wears the whale.
+  assert.equal(find(rendered, named('TerminalIcon')).length, 0)
 })
