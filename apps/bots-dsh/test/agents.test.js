@@ -152,6 +152,52 @@ test('adoption and rollback save failures restore both records without archiving
   assert.deepEqual(archived, [])
 })
 
+test('adoption rejects a host shutdown during Session resolution and retains the original registration', async (t) => {
+  const { call, stop, ctx, home } = start(TEAM)
+  t.after(stop)
+  await call('state', {})
+  const entry = (await call('add-agent', { name: 'Native' })).value
+  const rt = ctx.provided.get('omniTeam')
+  const original = structuredClone(rt.state.agents[entry.id])
+  const resolve = rt.resolveAgent
+  rt.resolveAgent = async id => {
+    const live = await resolve(id)
+    await ctx.dispose()
+    return live
+  }
+  await assert.rejects(rt.adoptAsBot(entry.id), /host stopped/)
+  assert.deepEqual(rt.state.agents[entry.id], original)
+  assert.equal(rt.state.bots[entry.sessions[0]], undefined)
+  assert.equal(rt.agentOf(entry.sessions[0]), rt.state.agents[entry.id])
+  const saved = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))
+  assert.deepEqual(saved.agents[entry.id], original)
+  assert.equal(saved.bots[entry.sessions[0]], undefined)
+})
+
+test('rollback rejects skipped persistence after shutdown and restores adopted records and indexes', async (t) => {
+  const { call, stop, ctx, home } = start(TEAM)
+  t.after(stop)
+  await call('state', {})
+  const entry = (await call('add-agent', { name: 'Native' })).value
+  const rt = ctx.provided.get('omniTeam')
+  await rt.adoptAsBot(entry.id)
+  const original = structuredClone(rt.state.agents[entry.id])
+  const bot = rt.state.bots[entry.sessions[0]]
+  const save = rt.save
+  rt.save = async options => {
+    await ctx.dispose()
+    return save(options)
+  }
+  await assert.rejects(rt.rollbackAdoption(entry.id), /host stopped/)
+  assert.deepEqual(rt.state.agents[entry.id], original)
+  assert.equal(rt.state.bots[bot.id], bot)
+  assert.equal(rt.agentOf(bot.id), undefined)
+  assert.equal(rt.selfOf(bot.id), bot.id)
+  const saved = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))
+  assert.deepEqual(saved.agents[entry.id], original)
+  assert.deepEqual(saved.bots[bot.id], bot)
+})
+
 test('adoption refuses an original registration changed while its Session resolves', async (t) => {
   const { call, stop, ctx } = start(TEAM)
   t.after(stop)
@@ -183,6 +229,58 @@ test('adopted preset backs new group/fresh Sessions and tasks; rollback refuses 
   assert.equal(created.at(-1).agentPreset, 'cordis')
   assert.match((await call('agent-bot-rollback', { agentId: entry.id })).error.message, /new team history/)
   assert.equal(rt.state.agents[entry.id].adoptedBotId, bot.id)
+})
+
+test('UI DSH creation adds native team membership usable by roster, messages, groups and browser', async (t) => {
+  const { call, stop, ctx, created } = start(TEAM, { config: {
+    browserPlugin: 'refs',
+    browserPluginApi: { id: 'refs', tools: [{ name: 'browser_native_test', needsBrowser: false, execute: async () => 'native browser ready' }] },
+  } })
+  t.after(stop)
+  await call('state', {})
+  const rt = ctx.provided.get('omniTeam')
+  const entry = (await call('add-agent', { name: 'Native newcomer', teamMember: true })).value
+  const bot = rt.findBot('Native newcomer')
+  assert.ok(bot)
+  assert.equal(bot.kind, 'dsh')
+  assert.equal(entry.adoptedBotId, bot.id)
+  assert.equal(rt.selfOf(entry.sessions[0]), bot.id)
+  assert.equal(created.length, 1)
+  assert.deepEqual((await call('state', {})).value.agents, [])
+  assert.match(await ctx.registeredTools.get('list_bots').execute({}, { agent: { id: 'm1' } }), /Native newcomer/)
+  const delivered = []
+  rt.deliver = async message => { delivered.push(message) }
+  await ctx.registeredTools.get('message_bot').execute({ to: bot.name, message: 'Welcome' }, { agent: { id: 'm1' } })
+  assert.equal(delivered[0].toId, bot.id)
+  const room = await rt.createRoom({ members: ['m1', bot.id], name: 'Native team' })
+  assert.ok(room.members.includes(bot.id))
+  assert.equal(await ctx.registeredTools.get('browser_native_test').execute({}, { agent: { id: bot.id }, signal: new AbortController().signal }), 'native browser ready')
+})
+
+test('UI DSH creation fails without leaving a plain orphan if membership cannot be saved', async (t) => {
+  const { call, stop, ctx, archived, home } = start(TEAM)
+  t.after(stop)
+  await call('state', {})
+  const rt = ctx.provided.get('omniTeam')
+  const save = rt.save
+  let failed = false
+  rt.save = async options => {
+    if (!failed && Object.values(rt.state.bots).some(bot => bot.kind === 'dsh')) {
+      failed = true
+      throw new Error('membership disk failure')
+    }
+    return save(options)
+  }
+  const result = await call('add-agent', { name: 'Native newcomer', teamMember: true })
+  assert.equal(result.ok, false)
+  assert.match(result.error.message, /membership disk failure/)
+  assert.equal(failed, true)
+  assert.deepEqual(rt.state.agents, {})
+  assert.equal(rt.findBot('Native newcomer'), undefined)
+  assert.deepEqual(archived, ['s1'])
+  const saved = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))
+  assert.deepEqual(saved.agents, {})
+  assert.equal(Object.values(saved.bots).some(bot => bot.name === 'Native newcomer'), false)
 })
 
 const TEAM = {

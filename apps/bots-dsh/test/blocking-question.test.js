@@ -150,13 +150,17 @@ test('an adopted DSH Bot retains native question and goal tools alongside team t
   const { rt, ctx, agentFor, hidden, guard, stop } = await setup({ served: ['read', 'ask_user', QUESTION, 'create_goal', 'update_goal', 'get_goal'], goals })
   t.after(stop)
   rt.state.bots.writer.kind = 'dsh'
-  await agentFor('writer')
-  assert.deepEqual(hidden.filter(([id]) => id === 'writer'), [])
-  assert.equal(guard(QUESTION, 'writer'), undefined)
-  startGoal(ctx, goals, 'writer')
+  rt.state.bots.writer.sessionId = 'fresh-writer'
+  rt.indexSessions()
+  for (const id of ['writer', 'fresh-writer', 'room-writer']) {
+    await agentFor(id)
+    assert.deepEqual(hidden.filter(([sessionId]) => sessionId === id), [])
+    assert.equal(guard(QUESTION, id), undefined)
+    startGoal(ctx, goals, id)
+  }
   // Event listeners schedule ordinary Bot goal blocking on the next timer turn.
   await new Promise(resolve => setTimeout(resolve, 20))
-  assert.equal(goals.current.get('writer').phase, 'active')
+  for (const id of ['writer', 'fresh-writer', 'room-writer']) assert.equal(goals.current.get(id).phase, 'active')
   assert.deepEqual(goals.blocked, [])
   assert.ok(ctx.registeredTools.has('message_bot'))
   assert.ok(ctx.registeredTools.has('list_bots'))

@@ -712,7 +712,7 @@ export function install(rt) {
   // message from another Bot or a group round queues behind it. Bot Sessions ask
   // through ask_user instead, so the tool is taken out of their tool list, as are the
   // goal tools.
-  const nativeDshSession = id => rt.botOf(id)?.kind === 'dsh'
+  const nativeDshSession = id => rt.botOf(rt.selfOf(id))?.kind === 'dsh'
   const hiddenTools = new WeakSet()
   const hideBotUnusedTools = (agent) => {
     if (agent === undefined || hiddenTools.has(agent) || nativeDshSession(agent.session?.id) || !rt.isBotSession(agent.session?.id)) return

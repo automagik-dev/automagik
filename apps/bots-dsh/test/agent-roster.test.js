@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { readFileSync } from 'node:fs'
 import { EMPTY_ROSTER, indexRoster, isAgentSession } from '../src/client/sources.js'
 import { groupsFor } from '../src/client/surface.js'
 
@@ -56,6 +57,12 @@ test('adopted DSH chats keep native rendering while remaining team Bots; groups 
     assert.deepEqual(groupsFor({ mode: 'bot', plain: isAgentSession(roster, new Set(), id) }), { shell: true, conversation: false })
   }
   assert.equal(isAgentSession(roster, new Set(['g1']), 'g1'), false)
+})
+
+test('the New DSH bot UI requests team membership and opens the native member session', () => {
+  const source = readFileSync(new URL('../src/client/index.js', import.meta.url), 'utf8')
+  assert.match(source, /call\('add-agent', \{ \.\.\.fields, teamMember: true \}\)/)
+  assert.match(source, /agent\?\.adoptedBotId !== undefined\) actions\.openSession\(agent\.adoptedBotId\)/)
 })
 
 test('the plain flag maps to the mounted groups', () => {

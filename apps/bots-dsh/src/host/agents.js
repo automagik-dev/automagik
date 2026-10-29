@@ -241,14 +241,18 @@ export function install(rt) {
     state.agents[agent.id] = agent
     try {
       await createAgentSession(agent.id)
+      // The UI creates a native DSH team member immediately. Legacy plugin callers
+      // keep the standalone DSH registration/session API unless they opt in.
+      if (fields?.teamMember === true) await adoptAsBot(agent.id)
     } catch (error) {
       // The first Session may already be created and saved: archive it and
       // persist the rollback, or the DSH bot returns on restart with its team
       // tools never denied.
       const createdSessions = [...agent.sessions]
       delete state.agents[agent.id]
+      rt.indexSessions()
       for (const sessionId of createdSessions) await ctx.workspaceRegistry.archiveSession(sessionId).catch(() => {})
-      await rt.save().catch(() => {})
+      await rt.save({ required: true }).catch(() => {})
       throw error
     }
     return agent
@@ -361,11 +365,12 @@ export function install(rt) {
     delete state.bots[chatId].sessions
     agent.adoptedBotId = chatId
     try {
-      await rt.save()
+      await rt.save({ required: true })
     } catch (error) {
       delete state.bots[chatId]
       delete agent.adoptedBotId
-      await rt.save().catch(() => {})
+      rt.indexSessions()
+      await rt.save({ required: true }).catch(() => {})
       throw error
     }
     for (const sessionId of sessions) {
@@ -391,11 +396,12 @@ export function install(rt) {
     delete state.bots[bot.id]
     delete original.adoptedBotId
     try {
-      await rt.save()
+      await rt.save({ required: true })
     } catch (error) {
       state.bots[bot.id] = bot
       original.adoptedBotId = bot.id
-      await rt.save().catch(() => {})
+      rt.indexSessions()
+      await rt.save({ required: true }).catch(() => {})
       throw error
     }
     for (const sessionId of original.sessions) await restrictTeamTools(await rt.resolveAgent(sessionId))

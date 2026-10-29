@@ -23061,10 +23061,11 @@ function apply(ctx) {
       setPlain(true);
       show2(sessionId);
     },
-    // A new DSH bot opens on its first Session.
+    // UI-created DSH bots join the team without replacing the native conversation.
     addAgent: async (fields) => {
-      const agent = await after(call("add-agent", fields));
-      if (agent?.sessions?.[0] !== void 0) actions.openAgentSession(agent.sessions[0]);
+      const agent = await after(call("add-agent", { ...fields, teamMember: true }));
+      if (agent?.adoptedBotId !== void 0) actions.openSession(agent.adoptedBotId);
+      else if (agent?.sessions?.[0] !== void 0) actions.openAgentSession(agent.sessions[0]);
       return agent;
     },
     updateAgent: (agentId, fields) => after(call("update-agent", { agentId, ...fields })),
