@@ -330,7 +330,9 @@ export function stackReplies(replies) {
   const items = []
   replies.forEach((reply, index) => {
     const last = items.at(-1)
-    if (reply.kind === undefined && last?.reply.kind === undefined && last?.reply.botId === reply.botId) {
+    // Only two neighbouring replies of one Bot stack; a malformed reply without an
+    // author (the relay parses model output) starts its own block instead of throwing.
+    if (last !== undefined && reply.kind === undefined && last.reply.kind === undefined && last.reply.botId === reply.botId) {
       last.texts.push(reply.text)
       last.time = reply.time
       last.duration = reply.duration
@@ -897,6 +899,13 @@ function scanReplies(text, start, replies) {
   }
 }
 
+// A relay result is JSON a model produced, so a reply can be malformed. Skip what is
+// not an object and read an absent text as empty: a throw here would abdicate the team
+// cell and DSH would draw its own raw tool card in the group screen (#139).
+const cleanReplies = value => (Array.isArray(value) ? value : [])
+  .filter(reply => reply !== null && typeof reply === 'object')
+  .map(reply => (typeof reply.text === 'string' ? reply : { ...reply, text: String(reply.text ?? '') }))
+
 function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi, useWork }) {
   const [live, setLive] = useState({ replies: [], speaking: null })
   useEffect(() => {
@@ -915,11 +924,11 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
     void tick()
     return () => { stop = true; clearTimeout(timer) }
   }, [done, sessionId, callId])
-  let replies = live.replies
+  let replies = cleanReplies(live.replies)
   let broken = false
   if (done) {
     const parsed = parseReplies(contentText(content))
-    replies = parsed.replies.length ? parsed.replies : live.replies
+    replies = parsed.replies.length ? cleanReplies(parsed.replies) : cleanReplies(live.replies)
     broken = parsed.broken
   }
   // Members speak one at a time, so only the current speaker is typing.

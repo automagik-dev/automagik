@@ -1930,6 +1930,7 @@ function indexRoster(value) {
 }
 function isAgentSession(roster, cache, sessionId) {
   if (sessionId === void 0 || sessionId === null || sessionId === "") return false;
+  if (roster.byId?.[sessionId] !== void 0 || roster.roomsById?.[sessionId] !== void 0) return false;
   if (roster.ready) return roster.agentOf[sessionId] !== void 0;
   return cache.has(sessionId);
 }
@@ -2235,7 +2236,10 @@ function elapsedLabel(ms) {
   const hours = Math.floor(total / 3600);
   return `${hours > 0 ? `${hours}h ` : ""}${total >= 60 ? `${Math.floor(total / 60) % 60}m ` : ""}${total % 60}s`;
 }
-var contentText = (content) => (content ?? []).filter((block) => block?.type === "text").map((block) => block.text).join("\n");
+var contentText = (content) => {
+  const blocks = Array.isArray(content) ? content : typeof content === "string" ? [{ type: "text", text: content }] : [];
+  return blocks.filter((block) => block?.type === "text").map((block) => block.text).join("\n");
+};
 var HEADER = /^\[(Message from|Reply from|Group chat|Group post from|Bot team setup|Handoff · part|Secret card)(?:[^\r\n]*\]\r?\n|[^\]\r\n]*\])/;
 var currentPart = (bot) => bot.sessionId ?? bot.id;
 function reminderPrompts(text2) {
@@ -8352,7 +8356,7 @@ function stackReplies(replies) {
   const items = [];
   replies.forEach((reply, index) => {
     const last = items.at(-1);
-    if (reply.kind === void 0 && last?.reply.kind === void 0 && last?.reply.botId === reply.botId) {
+    if (last !== void 0 && reply.kind === void 0 && last.reply.kind === void 0 && last.reply.botId === reply.botId) {
       last.texts.push(reply.text);
       last.time = reply.time;
       last.duration = reply.duration;
@@ -8877,6 +8881,7 @@ function scanReplies(text2, start2, replies) {
     } else if (ch === "]" && depth === 0) break;
   }
 }
+var cleanReplies = (value) => (Array.isArray(value) ? value : []).filter((reply) => reply !== null && typeof reply === "object").map((reply) => typeof reply.text === "string" ? reply : { ...reply, text: String(reply.text ?? "") });
 function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi, useWork }) {
   const [live, setLive] = (0, import_react21.useState)({ replies: [], speaking: null });
   (0, import_react21.useEffect)(() => {
@@ -8901,11 +8906,11 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
       clearTimeout(timer);
     };
   }, [done, sessionId, callId]);
-  let replies = live.replies;
+  let replies = cleanReplies(live.replies);
   let broken = false;
   if (done) {
     const parsed = parseReplies(contentText(content));
-    replies = parsed.replies.length ? parsed.replies : live.replies;
+    replies = parsed.replies.length ? cleanReplies(parsed.replies) : cleanReplies(live.replies);
     broken = parsed.broken;
   }
   const pending = done || !live.speaking ? [] : [live.speaking];
