@@ -61,16 +61,18 @@ const FIDGETS = ['hop', 'sway', 'stretch', 'look']
 // Pets (pet.js) in the Codex format: a pet the team installed or ships, served by the host
 // (pets.js), or a character baked into one (pet-bake.js) for the marks that move.
 export const GENIE_PET = Object.freeze({ source: 'builtin', id: 'genie-cosmic', version: 2, sleep: true })
+export const UNFOLD_PET = Object.freeze({ source: 'builtin', id: 'unfold', version: 2, sleep: true })
 const petUrl = (pet, part) => `api/omni-ui/pet?${new URLSearchParams({ source: pet.source, id: pet.id, ...(part ? { part } : {}) })}`
 export const servedPet = pet => ({ sheet: petUrl(pet), sleep: pet.sleep ? petUrl(pet, 'sleep') : undefined, version: pet.version })
-/** The pet a mark wears: its own, Genie's, or (moving marks only) its character baked; else null. */
+/** The pet a mark wears: its own, Genie's or Unfold's, or (moving marks only) its character baked; else null. */
 export function petOf(bot, look, { live, size }) {
   if (look.image) return null
   if (look.pet) return { served: look.pet }
   if (bot?.kind === 'genie' && size > 28) return { served: GENIE_PET }
+  if (bot?.kind === 'unfold' && size > 28) return { served: UNFOLD_PET }
   if (!live || size <= 20) return null
   const art = clayArtOf(bot, look)
-  if (art === 'genie') return null
+  if (art === 'genie' || art === 'unfold') return null
   return { bake: art === 'omni' ? { clay: 'omni' } : { shape: shapeId(look.shape), color: look.color } }
 }
 export function useBaked(wanted) {

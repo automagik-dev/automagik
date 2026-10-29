@@ -16,7 +16,6 @@ export const VENDOR_TERMS = 'Personal use under the vendor\'s terms'
 // How many "Add another" rows show before "Show N more".
 export const FIRST_OTHERS = 4
 export const LOGOS = { claude: 'C', chatgpt: 'G', deepseek: 'D', kimi: 'K', copilot: 'P', grok: 'X', openai: 'O', anthropic: 'A', openrouter: 'R', zai: 'Z', moonshot: 'M', opencode: 'OC', cliproxy: '⇄', ollama: 'L' }
-export const CLAUDE_INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash'
 
 // dsh-subscriptions' vendors as rows, when that plugin is here.
 export function subscriptionRows(subscriptions) {
@@ -173,8 +172,9 @@ function ClaudeSetup({ row, onSaved, onClose }) {
   if (row.needs === 'plugin') return h('p', null, 'Claude runs through the Oh My Claude plugin, which this DSH does not have. Add it from Settings → Plugins.')
   if (row.needs === 'install') {
     return h('div', null,
-      h('p', null, 'Install Claude Code, Anthropic\'s own app. In a terminal:'),
-      h(Copyable, { text: CLAUDE_INSTALL }),
+      // The line comes with the row (src/host/ais.js), so the page itself carries none.
+      row.install ? h('p', null, 'Install Claude Code, Anthropic\'s own app. In a terminal:') : h('p', null, 'Install Claude Code, Anthropic\'s own app.'),
+      row.install ? h(Copyable, { text: row.install }) : null,
       h('p', { className: 'oai-muted' }, 'Or follow ', h('a', { className: 'oai-link', href: 'https://code.claude.com/docs/en/setup', target: '_blank', rel: 'noreferrer' }, 'Anthropic\'s setup guide'), '. Then flip this again.'))
   }
   if (row.needs === 'restart') return h('p', { className: 'oai-error' }, 'Claude Code is signed in, but this app cannot start it from where it is installed. Restart the app to pick it up.')

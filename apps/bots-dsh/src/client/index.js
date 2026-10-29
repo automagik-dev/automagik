@@ -282,10 +282,11 @@ export function apply(ctx) {
     }, 'ds-bot: app update status')
   }
 
-  // Bot browsers need a webview bridge: DSH Desktop's, or the desktop app's of the
-  // same shape. The host serves read_browser only in those two (`browser` in the state).
+  // Bot browsers need a webview bridge: DSH Desktop's, or a desktop app's of the same shape
+  // (`views`: the Automagik app's, whose views are the Bot's own browser). The host turns the
+  // panel on there (`browser` in the state).
   const bridge = (window.dshDesktop?.protocolVersion === 1 ? window.dshDesktop.browser : globalThis.dsBotApp?.browser) ?? null
-  const browsers = bridge ? createBotBrowsers({ bridge, createSource }) : null
+  const browsers = bridge ? createBotBrowsers({ bridge, createSource, savedTabs: () => roster.getSnapshot().browserTabs }) : null
   if (browsers) {
     ctx.effect(() => {
       let stopReads = null

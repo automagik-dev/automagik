@@ -1,0 +1,84 @@
+// Secret values never leave this plugin. Everything served passes through `redact`: a value
+// under a secret-looking key is replaced, whatever it is, and a string that carries a bearer
+// credential, a Google API key, a standalone sk- key or a KEY=value assignment has that part replaced. Hashes and
+// ids (artifact_id, *_sha256, boot ids) are not secrets and are kept: no length or hex rule.
+export const REDACTED = '[redacted]'
+
+const SECRET_KEY = /(token|secret|passw(or)?d|passphrase|(?:^|[_-])pass$|api[_-]?key|private[_-]?key|authorization|bearer|cookie|credential)/i
+// Standalone sk- credentials, with no key,
+// assignment or scheme around them. The family: sk-<body>, sk-proj-, sk-svcacct-, sk-admin-,
+// sk-ant-api03-, sk-ant-admin01-, sk-ant-oat01- (each sub-prefix is in the body alphabet, so one rule
+// covers them all). A START is a lower-case "sk-" not preceded by a letter, digit, "_" or "-" ("risk-",
+// "desk-", "task-sk-" are not starts), or preceded by a serialized JSON escape \n \r \t. A KEY is a
+// start then 20+ characters of [A-Za-z0-9_-] mixing upper case, lower case AND digits; the whole run
+// is replaced. Kept (not credentials to this rule): runs without all three classes ("sk-learn",
+// "sk-learn-pipeline-v2"), runs under 20, other families (sk_live_, rk_, ...). There is no length or
+// entropy rule anywhere else, so hashes, ids and prose keep. STREAMING: a text that ENDS inside a run
+// after a start (1+ body characters) is hidden whole, since the next delta may complete a key. The
+// cost: a benign run at the very end of a text ("...uses sk-learn") is hidden until text follows it,
+// and in a static string for good.
+// Each rule is [pattern, replacement, gate]: a rule with a gate runs only on a text the gate finds
+// something in, a literal its pattern cannot match without, so a text skips the rules it cannot meet.
+const SECRET_TEXT = [
+  // Whole-value priority: a credential key's value is secret as ONE unit, whatever it
+  // starts with ("Bearer ", "Basic ", even an already-redacted marker, which is untrusted input),
+  // so the key rules run first and no inner pattern can split a value they recognise.
+  // A quoted value runs to its UNESCAPED closing quote (JSON: `\"` and `\\` do not end it; a
+  // trailing lone `\` is an escape still to come), or to the end while it is still open (a
+  // streamed `KEY="…` is hidden until its quote arrives). The `=` is found first and the name
+  // looked for behind it, so a long word of names is one pass, with or without a value after it.
+  [/\b([A-Z0-9_]+)=(?<=(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=)("(?:[^"\\]|\\[\s\S]|\\$)*(?:"|$)|'(?:[^'\\]|\\[\s\S]|\\$)*(?:'|$)|`(?:[^`\\]|\\[\s\S]|\\$)*(?:`|$)|\S+)/g, (_, name) => `${name}=${REDACTED}`, /=/],
+  // A YAML block scalar under a name (`password: |` or `>`, then the lines indented under it) is
+  // hidden whole, its key line kept, text before the name on that line too. These run first, so
+  // the name rules leave its `|` or `>` alone. The indent is taken whole (a lookahead and its
+  // backreference), so a long one is one pass.
+  [/(^|\n)(?=[^\n]*:[ \t]*[>|][-+0-9]*[ \t]*(?:\n|$))(?=([ \t]*))\2([^\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))([ \t]*:[ \t]*[>|][-+0-9]*[ \t]*)(?=\n|$)((?:\n(?:\2[ \t]+[^\n]*|[ \t]*(?=\n|$)))*)/gi, (_, nl, indent, before, name, sep, block) => `${nl}${indent}${before}${name}${sep}${/\S/.test(block) ? `\n${indent}  ${REDACTED}` : block}`, /:[ \t]*[>|]/],
+  [/(^|\n)(?=[^\n]*:[ \t]*[>|][-+0-9]*[ \t]*(?:\n|$))(?=([ \t]*))\2([^\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))([ \t]*:[ \t]*[>|][-+0-9]*[ \t]*)(?=\n|$)((?:\n(?:\2[ \t]+[^\n]*|[ \t]*(?=\n|$)))*)/g, (_, nl, indent, before, name, sep, block) => `${nl}${indent}${before}${name}${sep}${/\S/.test(block) ? `\n${indent}  ${REDACTED}` : block}`, /:[ \t]*[>|]/],
+  // `name: value` / `name=value`, in JSON too. A quoted value ("…", '…' or `…`; spaces and escapes
+  // included) runs to its unescaped closing quote, or to the end while open. After a name, an
+  // authorization scheme in any case (`authorization: bearer x`) keeps its word and hides what
+  // follows; a scheme with no name is the case-sensitive rule below, so "basic steps" stays prose.
+  // A name is passphrase, password, passwd, pass, secret, secret key, secret access key, token, api
+  // key, private key or authorization, in any case, as a whole token with any prefix joined by _ or
+  // - (db_password, x-api-key, aws_secret_access_key), also right after a - or -- (--api-key=x):
+  // `bypass` and `tokenizer` are words, not names.
+  [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))(["']?\s*[:=]\s*)(?:(["'`])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+|(?![>|][-+0-9]*[ \t]*(?:\n|$))(?!Bearer\b|Basic\b|\[redacted\])[^\s"',}]+)/gi, (_, name, sep, q, close, scheme) => (q ? `${name}${sep}${q}${REDACTED}${close}` : scheme ? `${name}${sep}${scheme} ${REDACTED}` : `${name}${sep}${REDACTED}`), /[:=]/],
+  // The same names in camelCase or PascalCase (accessToken, ClientSecret, dbPassword, DbPass,
+  // apiKey, authToken), case sensitive and whole-token, so accessLevel, MaxTokens, passRate and
+  // PassengerCount stay words.
+  // A name is a key only with its value, so a firstPass in prose stays a word.
+  [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))(["']?\s*[:=]\s*)(?:(["'`])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(Bearer|bearer|BEARER|Basic|basic|BASIC)\s+[A-Za-z0-9._~+/=-]+|(?![>|][-+0-9]*[ \t]*(?:\n|$))(?!(?:Bearer|bearer|BEARER|Basic|basic|BASIC)\b|\[redacted\])[^\s"',}]+)/g, (_, name, sep, q, close, scheme) => (q ? `${name}${sep}${q}${REDACTED}${close}` : scheme ? `${name}${sep}${scheme} ${REDACTED}` : `${name}${sep}${REDACTED}`), /Token|Secret|Pass|Key|Authorization/],
+  // JSON inside a JSON string (`{\"password\": \"…\"}`): the value runs to its escaped closing
+  // quote, its own escapes doubled, or to a bare quote that ends the outer string.
+  [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))(\\"\s*:\s*)\\"((?:[^\\"]|\\[^\\"]|\\\\(?:\\[\s\S]|\\$|[^\\]|$)|\\$)*)(\\"|"|$)/gi, (_, name, sep, value, close) => `${name}${sep}\\"${REDACTED}${close}`, /\\"/],
+  [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))(\\"\s*:\s*)\\"((?:[^\\"]|\\[^\\"]|\\\\(?:\\[\s\S]|\\$|[^\\]|$)|\\$)*)(\\"|"|$)/g, (_, name, sep, value, close) => `${name}${sep}\\"${REDACTED}${close}`, /\\"/],
+  [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/g, (_, scheme) => `${scheme} ${REDACTED}`],
+  // A scheme in another case with no name before it ("bearer x9…") hides only a token-shaped word:
+  // 16+ characters of the token alphabet with a digit, so "bearer bonds" and "basic steps" stay
+  // prose. A run still open at the end of the text is hidden until it closes, so a token streamed
+  // in parts shows no prefix.
+  [/\b(bearer|basic)\s+(?=[A-Za-z0-9._~+/=-]*[0-9])[A-Za-z0-9._~+/=-]{16,}/gi, (_, scheme) => `${scheme} ${REDACTED}`],
+  [/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+$/i, (_, scheme) => `${scheme} ${REDACTED}`],
+  [/\bAIza[0-9A-Za-z_-]{20,}/g, () => REDACTED],
+  // Standalone sk- credentials (the contract above): a whole key, then a still-open run at the end.
+  [/(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt]))sk-(?=[A-Za-z0-9_-]*[A-Z])(?=[A-Za-z0-9_-]*[a-z])(?=[A-Za-z0-9_-]*[0-9])[A-Za-z0-9_-]{20,}/g, () => REDACTED],
+  [/(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt]))sk-[A-Za-z0-9_-]+$/, () => REDACTED],
+]
+
+export function redactText(s) {
+  let out = s
+  for (const [re, fn, gate] of SECRET_TEXT) if (!gate || gate.test(out)) out = out.replace(re, fn)
+  return out
+}
+
+export function redact(value, key = '') {
+  if (key && SECRET_KEY.test(key) && value !== null && value !== undefined && typeof value !== 'boolean') return REDACTED
+  if (typeof value === 'string') return redactText(value)
+  if (Array.isArray(value)) return value.map((v) => redact(v))
+  if (value && typeof value === 'object') {
+    const out = {}
+    for (const [k, v] of Object.entries(value)) out[k] = redact(v, k)
+    return out
+  }
+  return value
+}

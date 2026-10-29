@@ -34,14 +34,21 @@ test('client.js registers its three onboarding steps on settings.onboarding, in 
   const injected = []
   const registered = []
   const effects = []
+  const runs = new Map()
+  const registers = []
+  const locale = { register: (ns, dicts) => { registers.push([ns, Object.keys(dicts)]); return () => {} }, bind: () => key => key }
   exports.apply({
-    effect: (_run, label) => effects.push(label),
+    effect: (run, label) => { effects.push(label); runs.set(label, run) },
+    get: name => (name === 'locale' ? locale : undefined),
     slots: {
       inject: (name, register) => { injected.push(name); register() },
       register: (options, component) => { registered.push({ ...options, component: typeof component }); return () => {} },
     },
   })
-  assert.deepEqual(effects, ['omni-ai: stage styles', "omni-ai: the table over DSH's first frame", 'omni-ai: omni-companion on the rail', 'omni-ai: omni-team on the rail', 'omni-ai: omni-connect-ai on the rail'])
+  assert.deepEqual(effects, ['omni-ai: stage styles', 'omni-ai: team step copy', "omni-ai: the table over DSH's first frame", 'omni-ai: omni-companion on the rail', 'omni-ai: omni-team on the rail', 'omni-ai: omni-connect-ai on the rail'])
+  // The team step's copy goes to DSH's locale service as welcome.team.
+  runs.get('omni-ai: team step copy')()
+  assert.deepEqual(registers, [['welcome.team', ['en', 'pt-BR']]])
   assert.deepEqual(injected, ['settings.onboarding', 'settings.onboarding', 'settings.onboarding'])
   assert.deepEqual(registered, [
     { name: 'settings.onboarding', id: 'omni-companion', order: -300, component: 'function' },

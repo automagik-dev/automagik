@@ -7,6 +7,7 @@ import { mountBrowserPlugin } from './browser/mount.js'
 import { openBotBrowser } from './browser/session.js'
 import { sessionComplete } from './browser/session-model.js'
 import { browserPluginOf, DEFAULT_PLAYWRIGHT, findBrowser, NO_BROWSER_FOUND } from './browser-default.js'
+import { appBrowserBridge, inUnfoldInstance } from './constants.js'
 import * as refs from './browser/refs.js'
 import * as script from './browser/script.js'
 import * as task from './browser/task.js'
@@ -116,7 +117,7 @@ async function authorizeBrowserAction(rt, exec, botId, action) {
 export function install(rt) {
   const name = browserPluginOf(rt.config)
   const injected = rt.config.browserPluginApi
-  if (!name && !injected) return
+  if ((!name && !injected) || inUnfoldInstance()) return
   const plugin = injected ?? browserPlugins[name]
   if (!plugin) throw new Error(`Unknown browser plugin "${name}". Choose ${NAMES.join(', ')}.`)
   const playwrightUrl = optionalString(rt.config, 'playwrightUrl') ?? DEFAULT_PLAYWRIGHT
@@ -147,7 +148,8 @@ export function install(rt) {
     headless,
     playwrightUrl,
     executablePath,
-    connect: process.env.DS_BOT_APP === '1' && typeof process.send === 'function' ? appBrowserEndpoint : undefined,
+    // DS Bot's app, or the Automagik app: the Bot's browser is the app's views, through its relay.
+    connect: (process.env.DS_BOT_APP === '1' && typeof process.send === 'function') || appBrowserBridge() ? appBrowserEndpoint : undefined,
     // Without a browser to launch or an app to connect to, the Bot is told plainly.
     openSession: options => (options.executablePath || options.connect ? openBotBrowser(options) : Promise.reject(new Error(NO_BROWSER_FOUND))),
     getHold: botId => rt.browserChannel?.holdOf(botId) ?? null,
@@ -175,4 +177,13 @@ export function install(rt) {
   }
   rt.browserPlugin = plugin.id ?? name
   rt.browserToolNames = (plugin.tools ?? plugin.toolDefs).map(tool => tool.name)
+  // Each Bot's saved tabs, for the panel to list in the app (channel.js `browserTabs`).
+  rt.browserTabsView = () => {
+    const view = {}
+    for (const botId of Object.keys(rt.state?.bots ?? {})) {
+      const saved = mounted.savedTabs(botId)
+      if (saved.tabs.length > 0) view[botId] = saved
+    }
+    return view
+  }
 }

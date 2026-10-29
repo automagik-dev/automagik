@@ -28,6 +28,15 @@ export const IMAGE_ROUTE = `${ROUTE}/image`
 // The Automagik desktop app (OMNI_CLIENT_ID) updates as a whole and carries the Bot browser;
 // upstream's own app says so with DS_BOT_APP.
 export const inDesktopApp = () => process.env.OMNI_CLIENT_ID === 'omni-desktop' || process.env.DS_BOT_APP === '1'
+// The Automagik desktop app keeps each Bot's browser in its window and answers the browser
+// bridge (browser-plugins.js appBrowserEndpoint) over dsh's IPC channel. Unlike DS_BOT_APP, it
+// turns on the Bot browser panel alone, not read_browser (browser.js).
+export const appBrowserBridge = () => process.env.AUTOMAGIK_APP_BROWSER === '1' && typeof process.send === 'function'
+// Unfold's own Automagik instance (AUTOMAGIK_HOST=unfold or AUTOMAGIK_PRELOAD=unfold, either one):
+// Unfold ships the instance whole and keeps its privacy, so the team there checks for no update,
+// drives no browser, leaves the Privacy page to Unfold and waits for Unfold to lead. The same
+// rule is unfold-bot-dsh's unfoldLeads and welcome-dsh's hostOf.
+export const inUnfoldInstance = (env = process.env) => [env.AUTOMAGIK_HOST, env.AUTOMAGIK_PRELOAD].some(value => String(value ?? '').trim().toLowerCase() === 'unfold')
 export const MAX_EXCHANGES = 600
 // state.json is written whole on every save, so a long message between Bots or a long
 // group line keeps only its start there. The rest stays where it already is (a message

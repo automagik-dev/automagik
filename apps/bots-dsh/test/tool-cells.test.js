@@ -600,6 +600,22 @@ test('a secret in a hidden turn shows in the dock instead of nowhere', () => {
   unmount()
 })
 
+// #139: the group screen showed DSH's raw `group_relay` tool card instead of the reply
+// bubbles. A result projected as a bare string (the relay's output schema is a string)
+// and a malformed replies array must not throw in the team cell: DSH abdicates a
+// throwing shadow entry and draws its own tool card in its place.
+test('a group relay from a bare string and malformed replies never falls back', () => {
+  const bare = {
+    kind: 'tool-result', name: 'group_relay', callId: 'bare', call: { name: 'group_relay' },
+    content: JSON.stringify({ replies: [{ botId: 'writer', text: 'From a bare string.' }] }),
+  }
+  assert.match(shown(bare, { sessionId: 'room' }), /Writer.*From a bare string\./)
+  const junk = call('group_relay', 'junk', { content: { replies: 'not a list' } })
+  assert.doesNotThrow(() => show(junk, { sessionId: 'room' }))
+  const mixed = call('group_relay', 'mixed', { content: { replies: [null, 42, { text: 'Kept as a reply.' }] } })
+  assert.match(shown(mixed, { sessionId: 'room' }), /Kept as a reply\./)
+})
+
 // 公开#557: compaction prunes the middle of a long relay result, leaving invalid
 // JSON — draw the replies that survived, or a marker row, never a blank turn.
 test('a pruned group relay still draws the replies that survived', () => {

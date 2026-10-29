@@ -1,0 +1,9 @@
+{
+  "id": "unfold",
+  "name": "Unfold",
+  "displayName": "Unfold",
+  "kind": "custom",
+  "description": "Unfold seed companion in cyan, coral and lavender clay.",
+  "spriteVersionNumber": 2,
+  "spritesheetPath": "spritesheet.webp"
+}

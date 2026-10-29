@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'">
+<meta name="color-scheme" content="light dark">
+<title>Bot cursor</title>
+<link rel="stylesheet" href="bot-cursor.css">
+</head>
+<!-- The Bot's agent cursor (src/bot-cursor.js), in a click-through window over the Bot's tab.
+     The page runs no script: its preload (bot-cursor-preload.cjs) draws what main.js sends. -->
+<body>
+<i class="glow" aria-hidden="true"></i>
+<svg class="pointer" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 2.5 19.5 10l-7 2.2-3.2 6.8z"/></svg>
+</body>
+</html>

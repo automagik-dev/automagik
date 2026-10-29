@@ -3,10 +3,12 @@ name: Follow Omni
 # The desktop app carries Omni's channels and canvases from one Omni release
 # (apps/desktop/omni.json). Every 30 minutes (or when dispatched) this looks for the newest
 # Omni release (`v<version>`, prereleases included) above the one omni.json pins (and the
-# welcome's package.json, which installs the same release in a plain DSH). When its
-# channels and canvas plugins carry its version and admit the desktop runtime in the same
-# DSH patch series as their harness, it moves omni.json on dev and cuts an Automagik release
-# (release.yml). Downgrades and a different patch series wait for a coordinated harness move.
+# welcome's package.json, which installs the same release in a plain DSH). Each of Omni's
+# plugins carries the Omni release of its own last change (omni#1356), so a plugin may be
+# behind the release but never ahead of it. When the channels and canvas plugins are at or
+# below its version and admit the desktop runtime in the same DSH patch series as their
+# harness, it moves omni.json on dev and cuts an Automagik release (release.yml). Downgrades
+# and a different patch series wait for a coordinated harness move.
 
 on:
   schedule:
@@ -52,8 +54,8 @@ jobs:
           read_json() { gh api "repos/${OMNI}/contents/$1?ref=v${newest}" --jq .content 2>/dev/null | base64 -d 2>/dev/null || true; }
           for app in omni-channels-dsh omni-canvas-dsh; do
             version=$(read_json "apps/${app}/package.json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).version)}catch{console.log("")}})')
-            if [[ "${version}" != "${newest}" ]]; then
-              echo "::notice ::Omni ${newest}: ${app} is at '${version}', not its version: not following it"
+            if [[ -z "${version}" || "$(printf '%s\n%s\n' "${version}" "${newest}" | sort -V | tail -1)" != "${newest}" ]]; then
+              echo "::notice ::Omni ${newest}: ${app} is at '${version}', ahead of its release or unreadable: not following it"
               exit 0
             fi
           done

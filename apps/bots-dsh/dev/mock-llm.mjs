@@ -52,6 +52,12 @@
 // saved or allowed the Bot echoes it in its shell and quotes what the output showed it.
 // MOCK_WATCH=<value> adds "watchHit" to each log entry: whether that value is anywhere
 // in the model input. MOCK_LOG_TOOLS=1 records each request's tool names as toolNames.
+// Agent Teams (test/teammate-models.test.js): a Team Lead told "组队 {spawn, followUp}" calls
+// spawn_teammate with each entry of spawn in one message; told "唤醒 名" it calls nothing first.
+// Either way it then lists the roster, waits while a teammate runs, sends each followUp name one
+// message (唤醒: just 名) and waits again, and answers "组队完成" with the roster it listed last.
+// A teammate answers every message with "收到". Each log entry names its member (team) and
+// the request's model, path and thinking.
 // Non-streaming requests with web_search_* tools are treated as native search, and
 // POST /api/web_search is an Ollama-shaped search API for the searchApis config.
 import { createServer } from 'node:http'
@@ -111,6 +117,34 @@ function isSummary(body) {
   return last === undefined ? undefined : summaryKind(last)
 }
 
+// The Team member a request belongs to, from the identity in its runtime context.
+const teamMember = messages => {
+  const identity = messages.flatMap(message => textBlocks(message.content)).join('\n')
+  return /You are teammate "([^"]+)"/.exec(identity)?.[1] ?? (identity.includes('You are the Team Lead named "lead"') ? 'lead' : undefined)
+}
+function teamTurn(messages) {
+  const member = teamMember(messages)
+  if (member === undefined) return undefined
+  if (member !== 'lead') return [text('收到')]
+  const at = messages.findLastIndex(message => message.role === 'user' && textBlocks(message.content).some(value => /^(组队|唤醒) /.test(value)))
+  if (at === -1) return undefined
+  const [, verb, rest] = /^(组队|唤醒) ([\s\S]*)$/.exec(textBlocks(messages[at].content).find(value => /^(组队|唤醒) /.test(value)))
+  const plan = verb === '组队' ? JSON.parse(rest) : { spawn: [], followUp: [rest.trim()] }
+  const calls = messages.slice(at + 1).filter(message => message.role === 'assistant')
+    .flatMap(message => (Array.isArray(message.content) ? message.content : []).filter(block => block.type === 'tool_use'))
+  if (calls.length === 0 && plan.spawn.length > 0) return plan.spawn.map(args => tool('spawn_teammate', args))
+  const last = calls.at(-1)
+  if (last?.name !== 'list_agents') return [tool('list_agents', {})]
+  const listed = messages.slice(at + 1).flatMap(message => (Array.isArray(message.content) ? message.content : []))
+    .find(block => block.type === 'tool_result' && block.tool_use_id === last.id)
+  const roster = JSON.parse(typeof listed.content === 'string' ? listed.content : textOf(listed.content))
+  if (roster.some(row => row.role === 'teammate' && (row.status === 'running' || row.status === 'provisioning'))) return [tool('wait_agent', { timeout_ms: 10000 })]
+  const sent = calls.filter(call => call.name === 'send_message').map(call => call.input.target)
+  const next = (plan.followUp ?? []).filter(name => !sent.includes(name))
+  if (next.length > 0) return next.map(name => tool('send_message', { target: name, message: `再说一次，${name}` }))
+  return [text(`组队完成 ${JSON.stringify(roster)}`)]
+}
+
 function decide(body) {
   const system = systemText(body.system) + '\n' + (body.messages ?? []).filter(m => m.role === 'system').map(m => textOf(m.content)).join('\n')
   const tools = new Set((body.tools ?? []).map(entry => entry.name))
@@ -132,6 +166,8 @@ function decide(body) {
       && textBlocks(message.content).some(value => value.startsWith('Side note:'))).length
     return [text(`Side note: ${pairs} earlier pair(s) seen.`)]
   }
+  const team = teamTurn(messages)
+  if (team) return team
   const me = /You are (.+?), a Bot on the user's team/.exec(system)?.[1] ?? 'Bot'
   const isMain = system.includes('You are the Main Bot')
   const isRelay = system.includes('# Group chat relay')
@@ -733,7 +769,9 @@ const server = createServer((req, res) => {
     // Hashes of the system prompt and tools show whether two Sessions share a cacheable prefix.
     const digest = value => createHash('sha256').update(JSON.stringify(value ?? null)).digest('hex').slice(0, 12)
     const watch = WATCH ? { watchHit: JSON.stringify([body.system, body.tools, body.messages]).includes(WATCH) } : {}
-    appendFileSync(LOG, JSON.stringify({ t: new Date().toISOString(), id, tokens, images, session: req.headers['x-deepseek-harness-session-id'] ?? null, ...watch, ...LOG_TOOLS ? { toolNames: (body.tools ?? []).map(entry => entry.name ?? entry.type) } : {}, ...search ? { nativeSearch: { model: body.model, tools: body.tools, auth: [req.headers['x-api-key'] ? 'x-api-key' : '', req.headers.authorization ? 'bearer' : ''].filter(Boolean) } } : {}, system: digest(body.system), tools: digest(body.tools), messages: body.messages?.length ?? 0, first: textOf(body.messages?.[0]?.content).slice(0, 60), last: textOf(body.messages?.at(-1)?.content).slice(0, LOG_CHARS), out: out.map(block => (block.type === 'text' && block.text.length > 200 ? { ...block, text: `${block.text.slice(0, 200)}…(${block.text.length})` } : block)) }) + '\n')
+    const member = teamMember(body.messages ?? [])
+    const team = member === undefined ? {} : { team: member, model: body.model, path, ...body.thinking === undefined ? {} : { thinking: body.thinking } }
+    appendFileSync(LOG, JSON.stringify({ t: new Date().toISOString(), id, tokens, images, session: req.headers['x-deepseek-harness-session-id'] ?? null, ...watch, ...team, ...LOG_TOOLS ? { toolNames: (body.tools ?? []).map(entry => entry.name ?? entry.type) } : {}, ...search ? { nativeSearch: { model: body.model, tools: body.tools, auth: [req.headers['x-api-key'] ? 'x-api-key' : '', req.headers.authorization ? 'bearer' : ''].filter(Boolean) } } : {}, system: digest(body.system), tools: digest(body.tools), messages: body.messages?.length ?? 0, first: textOf(body.messages?.[0]?.content).slice(0, 60), last: textOf(body.messages?.at(-1)?.content).slice(0, LOG_CHARS), out: out.map(block => (block.type === 'text' && block.text.length > 200 ? { ...block, text: `${block.text.slice(0, 200)}…(${block.text.length})` } : block)) }) + '\n')
     if (search) {
       setTimeout(() => {
         res.writeHead(200, { 'content-type': 'application/json' })

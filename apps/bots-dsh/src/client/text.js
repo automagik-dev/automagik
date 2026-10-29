@@ -70,7 +70,12 @@ export function elapsedLabel(ms) {
   return `${hours > 0 ? `${hours}h ` : ''}${total >= 60 ? `${Math.floor(total / 60) % 60}m ` : ''}${total % 60}s`
 }
 
-export const contentText = content => (content ?? []).filter(block => block?.type === 'text').map(block => block.text).join('\n')
+// Tool results arrive as text blocks; a tool whose output schema is a string (the group
+// relay is one) can arrive as the string itself, which a card must still read as text.
+export const contentText = (content) => {
+  const blocks = Array.isArray(content) ? content : typeof content === 'string' ? [{ type: 'text', text: content }] : []
+  return blocks.filter(block => block?.type === 'text').map(block => block.text).join('\n')
+}
 // A name can contain brackets. Generated headers end at the newline; without a
 // newline, a legacy inline header still stops at its first closing bracket.
 export const HEADER = /^\[(Message from|Reply from|Group chat|Group post from|Bot team setup|Handoff · part|Secret card)(?:[^\r\n]*\]\r?\n|[^\]\r\n]*\])/

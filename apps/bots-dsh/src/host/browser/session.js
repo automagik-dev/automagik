@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, realpath, stat, unlink, writeFile } from 'node:fs/promises'
 import { basename, extname, isAbsolute, join, relative as relativePath } from 'node:path'
 import { gateScope } from './gate.js'
+import { keepTabs, restoreTabs } from './tabs.js'
 
 const ACTION_TIMEOUT = 5_000
 const SNAPSHOT_LIMIT = 40_000
@@ -86,16 +87,18 @@ async function loadChromium(playwrightUrl) {
 }
 
 /**
- * @param {{ botId: string, profileRoot: string, headless?: boolean, playwrightUrl?: string, executablePath?: string, actionTimeout?: number, downloadDir?: string | (() => Promise<string | undefined>), uploadRoots?: () => Promise<string[]>, connect?: (botId: string) => Promise<string>, getHold?: () => any, onHold?: (hold: any) => void }} options
+ * The Bot's tabs come back when its browser opens with none (tabs.js), and are saved as they
+ * change; `onTabs` hears each saved list.
+ * @param {{ botId: string, profileRoot: string, headless?: boolean, playwrightUrl?: string, executablePath?: string, actionTimeout?: number, downloadDir?: string | (() => Promise<string | undefined>), uploadRoots?: () => Promise<string[]>, connect?: (botId: string) => Promise<string>, getHold?: () => any, onHold?: (hold: any) => void, onTabs?: (tabs: any) => void }} options
  */
-export async function openBotBrowser({ botId, profileRoot, downloadDir, headless = true, playwrightUrl, executablePath, actionTimeout = ACTION_TIMEOUT, connect, getHold, onHold, uploadRoots }) {
+export async function openBotBrowser({ botId, profileRoot, downloadDir, headless = true, playwrightUrl, executablePath, actionTimeout = ACTION_TIMEOUT, connect, getHold, onHold, uploadRoots, onTabs }) {
   const getDownloadDir = typeof downloadDir === 'function' ? downloadDir : async () => downloadDir
   const userDataDir = join(profileRoot, botId)
   const chromium = await loadChromium(playwrightUrl)
   const browser = connect
     ? await chromium.connectOverCDP(await connect(botId))
     : undefined
-  if (!connect) await mkdir(userDataDir, { recursive: true })
+  await mkdir(userDataDir, { recursive: true })
   const context = browser
     ? browser.contexts()[0]
     : await chromium.launchPersistentContext(userDataDir, {
@@ -106,7 +109,7 @@ export async function openBotBrowser({ botId, profileRoot, downloadDir, headless
       args: ['--disable-dev-shm-usage'],
     })
   if (!context) throw new Error('The app browser relay has no browser context.')
-  const page = context.pages()[0] ?? await context.newPage()
+  const page = await restoreTabs(context, userDataDir, context.pages()[0] ?? await context.newPage())
   const cookieFile = join(userDataDir, 'cookies.json')
   if (!browser) {
     try {
@@ -114,10 +117,10 @@ export async function openBotBrowser({ botId, profileRoot, downloadDir, headless
       if (Array.isArray(saved) && saved.length > 0) await context.addCookies(saved)
     } catch { /* no cookies yet */ }
   }
-  return createSession({ context, browser, page, botId, userDataDir, cookieFile, downloadDir: getDownloadDir, actionTimeout, getHold, onHold, uploadRoots })
+  return createSession({ context, browser, page, botId, userDataDir, cookieFile, downloadDir: getDownloadDir, actionTimeout, getHold, onHold, uploadRoots, onTabs: onTabs ?? (() => {}) })
 }
 
-export function createSession({ context, browser, page, botId, userDataDir, cookieFile, downloadDir, actionTimeout, getHold, onHold, uploadRoots }) {
+export function createSession({ context, browser, page, botId, userDataDir, cookieFile, downloadDir, actionTimeout, getHold, onHold, uploadRoots, onTabs }) {
   const pages = new Set()
   const unknownByOrigin = new Map()
   const unknownPageOrigins = new WeakMap()
@@ -168,6 +171,19 @@ export function createSession({ context, browser, page, botId, userDataDir, cook
 
   for (const target of context.pages()) trackPage(target)
   context.on('page', target => trackPage(target, true))
+  const keeper = onTabs !== undefined ? keepTabs({ context, dir: userDataDir, activePage: () => activePage(), onSave: onTabs }) : undefined
+  // A browser that goes away (a killed Chrome, a dropped app relay, a crashed app page) ends
+  // the session; the Bot's next call opens a new one.
+  let closed = false
+  const closedListeners = new Set()
+  const end = () => {
+    if (closed) return
+    closed = true
+    keeper?.stop()
+    for (const listener of closedListeners) listener()
+  }
+  if (typeof browser?.on === 'function') browser.on('disconnected', end)
+  else context.on('close', end)
 
   function openPages() {
     return context.pages().filter(target => !target.isClosed())
@@ -540,6 +556,7 @@ export function createSession({ context, browser, page, botId, userDataDir, cook
       }
       await clearPendingDelete()
       current = open[index]
+      keeper?.changed()
       await settle()
       return snapshotText()
     },
@@ -754,7 +771,13 @@ export function createSession({ context, browser, page, botId, userDataDir, cook
       const finalAnswer = answer ?? value
       return finalAnswer === undefined ? 'Script finished without done().' : String(finalAnswer)
     },
+    get closed() { return closed },
+    onClosed(listener) {
+      if (closed) listener()
+      else closedListeners.add(listener)
+    },
     async close() {
+      keeper?.stop()
       if (browser) { await browser.close().catch(() => {}); return }
       const cookies = await context.cookies().catch(() => [])
       const kept = cookies.map(cookie => cookie.expires > 0 ? cookie : { ...cookie, expires: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60 })

@@ -408,9 +408,11 @@ export function install(rt) {
   }
 
   const tasks = () => (state.tasks ??= {})
-  async function startTask({ title, text, from, cwd, agentPreset }) {
+  // `roomId`: the group whose Session asked for the task. Its result goes back to that
+  // group, where the user saw the request, not to the Bot's own chat.
+  async function startTask({ title, text, from, cwd, agentPreset, roomId }) {
     const sessionId = await createTaskSession(title, { cwd, agentPreset })
-    tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working' }
+    tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}) }
     // Only the newest tasks are remembered for their reports.
     const kept = Object.entries(tasks()).sort(([, a], [, b]) => b.at - a.at)
     for (const [id] of kept.slice(TASKS_KEPT)) delete tasks()[id]
@@ -459,7 +461,12 @@ export function install(rt) {
       const said = failed ? `It failed: ${problem}`
         : stopped ? `It was stopped before it finished.${words ? ` Its last words: ${words}` : ''}`
         : words || 'It ended without a reply.'
-      void rt.deliver({ toId: task.from, text: said.slice(0, TASK_REPORT_MAX), role: 'task-done', note: task.title, taskSessionId: id })
+      // A task a group Session asked for reports into that group, where the user saw the
+      // request: the report arrives as a group post, not as an orphan in the Bot's own
+      // chat. A group or Session that is gone falls back to the Bot's own chat.
+      const room = task.roomId === undefined ? undefined : rt.roomOf(task.roomId)
+      const inRoom = room !== undefined && room.members?.includes(task.from) ? room.sessions?.[task.from] : undefined
+      void rt.deliver({ toId: task.from, ...(inRoom !== undefined ? { sessionId: inRoom, roomId: room.id } : {}), text: said.slice(0, TASK_REPORT_MAX), role: 'task-done', note: task.title, taskSessionId: id })
         .catch(error => rt.warn('ds-bot: the report of task %s did not reach its Bot: %s', task.title, error?.message ?? error))
     }
   })
@@ -507,8 +514,10 @@ export function install(rt) {
       const title = String(args.title ?? '').trim()
       const text = String(args.instructions ?? '').trim()
       if (title === '' || text === '') return 'A task needs a title and instructions.'
+      // Called in a group, the task belongs to that group: its report goes back there.
+      const roomId = rt.groupOwners.get(exec.agent?.id)?.roomId
       try {
-        const sessionId = await startTask({ title, text, from: self })
+        const sessionId = await startTask({ title, text, from: self, roomId })
         return `Started task "${title.slice(0, AGENT_SESSION_TITLE_MAX)}" (${sessionId}) under your row. Its result comes back to you as a message; do not wait or poll.`
       } catch (error) {
         return `The task did not start: ${error?.message ?? error}`

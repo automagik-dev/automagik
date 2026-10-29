@@ -11,7 +11,10 @@ Each app in apps/ carries its own NOTICE with the third-party code it holds:
   - apps/welcome-dsh: the welcome and Connect AI.
   - apps/desktop: the Automagik desktop app (formerly automagik-dev/omni-desktop). Its
     window frame bundles the Manrope and DM Sans fonts (SIL Open Font License 1.1; each
-    file and its licence in apps/desktop/src/fonts).
+    file and its licence in apps/desktop/src/fonts). Its Bot browser views and CDP relay
+    (src/bot-views.js, src/bot-relay.js) are ported from DS Bot's app, app/src/bot-views.mjs
+    and app/src/bot-browser.mjs at commit 4a7b55069ad300eae8be42a74f31bc170b40ead7
+    (https://github.com/Fei2411/DS-Bot, Apache-2.0).
 
 The Bot team and the welcome were developed in automagik-dev/omni (apps/omni-ui-dsh and
 apps/omni-ai-dsh) and moved here with their history.

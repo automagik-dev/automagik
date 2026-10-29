@@ -17,6 +17,37 @@ const updates = Object.freeze({
 
 contextBridge.exposeInMainWorld('omniDesktop', Object.freeze({ app: 'omni-desktop', platform: process.platform, updates }))
 
+// The Bot browsers (main.js, bot-views.js), in the shape the Bot team's panel drives
+// (bots-dsh src/client/bot-browsers.js `bridge.views`): each tab is a view the app lays over
+// the panel's rectangle. `forget` closes a deleted Bot's tabs and clears its sign-ins.
+// `dsBotApp` carries only this; the rest of DS Bot's app bridge is not the app's.
+const viewListeners = new Set()
+ipcRenderer.on('automagik-browser-view', (_event, change) => {
+  for (const listener of [...viewListeners]) {
+    try { listener(change) } catch (error) { console.error('Automagik: a browser view listener failed', error) }
+  }
+})
+const call = (channel, ...args) => ipcRenderer.invoke(`automagik-browser-${channel}`, ...args)
+const browser = Object.freeze({
+  forget: key => call('forget', String(key)),
+  views: Object.freeze({
+    create: (botId, tabId, url) => call('create', String(botId), String(tabId), typeof url === 'string' ? url : undefined),
+    sync: botId => call('sync', String(botId)),
+    place: (tabId, rect, visible) => call('place', String(tabId), rect ?? null, visible === true),
+    navigate: (botId, tabId, url) => call('navigate', String(botId), String(tabId), String(url)),
+    command: (botId, tabId, command) => call('command', String(botId), String(tabId), String(command)),
+    focus: (botId, tabId) => call('focus', String(botId), String(tabId)),
+    read: (botId, tabId, script) => call('read', String(botId), String(tabId), String(script)),
+    close: (botId, tabId) => call('close', String(botId), String(tabId)),
+    hold: (botId, held) => call('hold', String(botId), held === true),
+    subscribe(listener) {
+      viewListeners.add(listener)
+      return () => viewListeners.delete(listener)
+    },
+  }),
+})
+contextBridge.exposeInMainWorld('dsBotApp', Object.freeze({ browser }))
+
 // The page's styles know they are in the app, on which system, and whether it is full screen:
 // on macOS the sidebar's top row makes room for the traffic lights and drags the window
 // (bots-dsh sidebar.js), and the title bar's brand is the only one.

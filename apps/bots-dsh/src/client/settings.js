@@ -22,6 +22,8 @@ import { ImagesSection } from './image-cell.js'
 import { AboutPage } from './about.js'
 import { ProvidersPage } from './providers-page.js'
 import { FolderMenu } from './folder-menu.js'
+import { PermissionFallback, PermissionPicker } from './permission-picker.js'
+import { AUTO, AUTO_FALLBACK } from '../shared/permission-levels.js'
 import { t } from './i18n.js'
 
 const capitalize = word => word[0].toUpperCase() + word.slice(1)
@@ -115,8 +117,9 @@ function GeneralPage({ roster, actions, run }) {
   ]
 }
 
-// The desktop app's preload hands its window `dsBotApp`; only there does the data location
-// show, since DSH keeps the plugin's data where it runs.
+// DS Bot's app hands its window `dsBotApp` with the data location; only there does it show,
+// since DSH keeps the plugin's data where it runs. The Automagik app's `dsBotApp` carries only
+// the Bot browsers, so each call is made only when the app offers it.
 function LocationsSection({ actions, run }) {
   const app = globalThis.dsBotApp
   const [team, setTeam] = useState(null)
@@ -127,7 +130,7 @@ function LocationsSection({ actions, run }) {
   const busy = useRef(false)
   useEffect(() => {
     void Promise.resolve(actions.folders()).then(info => setTeam(info?.team ?? null)).catch(() => {})
-    if (app !== undefined) void Promise.resolve(app.dataLocation()).then(setData).catch(() => {})
+    if (typeof app?.dataLocation === 'function') void Promise.resolve(app.dataLocation()).then(setData).catch(() => {})
   }, [])
   const pickTeam = (path) => {
     if (busy.current) return undefined
@@ -135,7 +138,7 @@ function LocationsSection({ actions, run }) {
     setMoving(true)
     return run(Promise.resolve(actions.setTeamWorkspace(path)).then((answer) => {
       setTeam(answer.team)
-      app?.teamWorkspaceChanged(answer.team)
+      if (typeof app?.teamWorkspaceChanged === 'function') app.teamWorkspaceChanged(answer.team)
     }).finally(() => {
       busy.current = false
       setMoving(false)
@@ -173,6 +176,19 @@ function MainBotsSection({ roster, actions, run }) {
       }, h('option', { value: '' }, t('Choose a Bot…')), candidates.map(bot => h('option', { key: bot.id, value: bot.id }, bot.name)))) : null)
 }
 
+// The team default: the permissions a new Bot starts with. Existing Bots keep theirs.
+function PermissionsSection({ roster, actions, run }) {
+  const catalog = roster.permissions
+  if (!catalog?.options?.length) return null
+  const saved = roster.prefs?.permission
+  const offered = catalog.options.some(option => option.value === AUTO)
+  return h(SetSection, { title: t('Permissions') },
+    h(SetRow, { label: t('New Bots start with'), hint: t('Bots you already have keep their own.') },
+      h('div', { className: 'bt-drawer-permission' },
+        h(PermissionPicker, { catalog, saved: saved ?? catalog.defaultPreset, repick: saved === undefined, onPick: permission => run(actions.setPrefs({ permission })) }),
+        h(PermissionFallback, { fallback: saved === AUTO && !offered ? AUTO_FALLBACK : undefined }))))
+}
+
 const MOTIONS = [['quiet', 'Quiet'], ['normal', 'Normal'], ['lively', 'Lively']]
 function MotionSection({ roster, actions, run }) {
   const motion = roster.prefs?.motion === 'quiet' || roster.prefs?.motion === 'lively' ? roster.prefs.motion : 'normal'
@@ -188,6 +204,7 @@ function BotsPage({ roster, actions, run }) {
   const [creating, setCreating] = useState(false)
   return [
     h(MainBotsSection, { key: 'main', roster, actions, run }),
+    h(PermissionsSection, { key: 'permissions', roster, actions, run }),
     h(MotionSection, { key: 'motion', roster, actions, run }),
     h(VoiceSection, { key: 'voice', actions, Section: SetSection, Row: SetRow }),
     h(ImagesSection, { key: 'images', Section: SetSection, Row: SetRow }),
