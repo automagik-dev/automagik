@@ -47,6 +47,17 @@ test('isAgentSession follows the roster first, the cache before it is ready', ()
   assert.equal(isAgentSession(EMPTY_ROSTER, new Set(), undefined), false)
 })
 
+test('adopted DSH chats keep native rendering while remaining team Bots; groups keep relay rendering', () => {
+  const dsh = { id: 'adopted', sessionId: 'current', parts: ['original'], kind: 'dsh', name: 'Brain' }
+  const roster = indexRoster({ ...ROSTER_VALUE, bots: [...ROSTER_VALUE.bots, dsh] })
+  for (const id of ['adopted', 'current', 'original']) {
+    assert.equal(roster.byId[id], dsh)
+    assert.equal(isAgentSession(roster, new Set(), id), true)
+    assert.deepEqual(groupsFor({ mode: 'bot', plain: isAgentSession(roster, new Set(), id) }), { shell: true, conversation: false })
+  }
+  assert.equal(isAgentSession(roster, new Set(['g1']), 'g1'), false)
+})
+
 test('the plain flag maps to the mounted groups', () => {
   assert.deepEqual(groupsFor({ mode: 'bot', plain: isAgentSession(indexRoster(ROSTER_VALUE), new Set(), 's1') }), { shell: true, conversation: false })
   assert.deepEqual(groupsFor({ mode: 'bot', plain: isAgentSession(indexRoster(ROSTER_VALUE), new Set(), 'm1') }), { shell: true, conversation: true })

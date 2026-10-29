@@ -145,6 +145,23 @@ test('a profile without the tool gets no mask, which restrict() would refuse', a
   assert.match(guard(QUESTION, 'writer'), /Bots cannot use ask_user_question/)
 })
 
+test('an adopted DSH Bot retains native question and goal tools alongside team tools', async (t) => {
+  const goals = goalService()
+  const { rt, ctx, agentFor, hidden, guard, stop } = await setup({ served: ['read', 'ask_user', QUESTION, 'create_goal', 'update_goal', 'get_goal'], goals })
+  t.after(stop)
+  rt.state.bots.writer.kind = 'dsh'
+  await agentFor('writer')
+  assert.deepEqual(hidden.filter(([id]) => id === 'writer'), [])
+  assert.equal(guard(QUESTION, 'writer'), undefined)
+  startGoal(ctx, goals, 'writer')
+  // Event listeners schedule ordinary Bot goal blocking on the next timer turn.
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(goals.current.get('writer').phase, 'active')
+  assert.deepEqual(goals.blocked, [])
+  assert.ok(ctx.registeredTools.has('message_bot'))
+  assert.ok(ctx.registeredTools.has('list_bots'))
+})
+
 test('the guard refuses the blocking question tool in Bot Sessions only', async (t) => {
   const { guard, stop } = await setup()
   t.after(stop)

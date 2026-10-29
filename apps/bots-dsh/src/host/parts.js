@@ -285,9 +285,10 @@ export function install(rt) {
   const condensing = new Set()
   const refuseCompaction = () => Promise.reject(new Error(
     'A Bot conversation makes room on its own, and read_own_chat searches all of it.'))
+  const nativeDshSession = id => rt.botOf(rt.selfOf(id))?.kind === 'dsh'
   const isBotTarget = (target) => {
     const id = target?.session?.id
-    return id !== undefined && (rt.selfOf(id) !== undefined || rt.roomOf(id) !== undefined)
+    return id !== undefined && !nativeDshSession(id) && (rt.selfOf(id) !== undefined || rt.roomOf(id) !== undefined)
   }
   const ownedByBot = target => isBotTarget(target) && !condensing.has(target.session.id)
   // The engine that serves this agent, when DS Bot can condense through it.
@@ -996,7 +997,7 @@ export function install(rt) {
     if (signal.aborted) throw signal.reason
     const dir = rt.workDirOf(job)
     const intended = dir !== undefined && await rt.isFolder(dir) ? dir : rt.teamFolder()
-    const freshId = await rt.createSession(room ? `${bot.name} · ${room.name}` : bot.name, { dir })
+    const freshId = await rt.createSession(room ? `${bot.name} · ${room.name}` : bot.name, { dir, ...(bot.kind === 'dsh' ? { profile: bot.profile ?? null } : {}) })
     const picked = await freshRoute(bot, session)
     if (picked !== undefined) await selectRoute(bot, freshId, picked)
     await rt.applyPermission(bot, freshId, room)
@@ -1103,6 +1104,7 @@ export function install(rt) {
       partBase.set(agent.id, (tokensOf(agent.session) ?? 0) + fresh)
     }
     if (!readOnly() && await folderMove(agent, { midTurn: payload.step > 1 }) !== undefined) return switchBeforeStep(agent, payload, { folder: true })
+    if (nativeDshSession(agent.id)) return next()
     const lines = await contextLines(agent.session).catch(() => undefined)
     const tokens = tokensOf(agent.session)
     if (lines === undefined || tokens === undefined || tokens < lines.hard || !grown(agent.id, tokens, lines) || readOnly()) return next()
@@ -1187,7 +1189,7 @@ export function install(rt) {
     if (decided !== undefined || payload.signal?.aborted) return decided
     await rt.load()
     const { agent } = payload
-    if (!rt.isBotSession(agent.id) || switches.has(agent.id) || readOnly() || rescued.get(agent.id) === 'bare') return decided
+    if (nativeDshSession(agent.id) || !rt.isBotSession(agent.id) || switches.has(agent.id) || readOnly() || rescued.get(agent.id) === 'bare') return decided
     // A provider may turn down one request for reasons of its own; a history that
     // breaks every request fails the next turn as well.
     if (failure.code === 'INVALID_REQUEST' && !STUCK_CODES.includes(lastTurnEnd(agent)?.data?.reason?.error?.code)) return decided
@@ -1202,7 +1204,7 @@ export function install(rt) {
     if (payload.failure?.code !== OVERFLOW || payload.signal?.aborted) return next()
     await rt.load()
     const { agent } = payload
-    if (!rt.isBotSession(agent.id) || switches.has(agent.id) || readOnly()) return next()
+    if (nativeDshSession(agent.id) || !rt.isBotSession(agent.id) || switches.has(agent.id) || readOnly()) return next()
     const entry = rt.liveOf(agent.id)
     entry.switched = true
     startSwitch(agent, { resume: true, info: entry.info, joined: [...(entry.joined ?? [])], overflow: true })
@@ -1255,7 +1257,7 @@ export function install(rt) {
   }, 'ds-bot: hand on input kept in earlier parts')
 
   ctx.on('agent/status', ({ agent, status }) => {
-    if (status === 'idle' && rt.isBotSession(agent.id)) {
+    if (status === 'idle' && rt.isBotSession(agent.id) && !nativeDshSession(agent.id)) {
       releaseRescued(agent)
       void checkContext(agent).catch(error => rt.warn('ds-bot: context check for %s failed: %s', agent.id, error))
     }

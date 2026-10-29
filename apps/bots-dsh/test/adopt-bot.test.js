@@ -117,12 +117,15 @@ test('adopting a DSH bot makes it a Bot of the team, keeping its Session, folder
   assert.equal(rt.selfOf(second.sessionId), second.sessionId)
   assert.equal(rt.selfOf(agent.sessions[0]), second.sessionId)
   // The team tools it had denied are back on that Session, without a restart.
-  assert.deepEqual(lifted, [second.sessionId])
+  assert.deepEqual(lifted.sort(), [agent.sessions[0], second.sessionId].sort())
   assert.deepEqual(rt.dshBots.list(), [])
   // The record is written, so a restart reads the Bot and not the DSH bot.
   const saved = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))
   assert.equal(saved.bots[second.sessionId].name, 'Cogna Brain')
-  assert.equal(saved.agents[agent.id], undefined)
+  assert.equal(saved.agents[agent.id].adoptedBotId, second.sessionId)
+  assert.equal(saved.bots[second.sessionId].dshAgentId, agent.id)
+  assert.equal(saved.bots[second.sessionId].kind, 'dsh')
+  assert.deepEqual(saved.agents[agent.id].sessions, [agent.sessions[0], second.sessionId])
 })
 
 test('adopting refuses a name a Bot already has, a tasks record, a missing Session and an unknown id', async (t) => {

@@ -1931,7 +1931,9 @@ function indexRoster(value) {
 }
 function isAgentSession(roster, cache, sessionId) {
   if (sessionId === void 0 || sessionId === null || sessionId === "") return false;
-  if (roster.byId?.[sessionId] !== void 0 || roster.roomsById?.[sessionId] !== void 0) return false;
+  if (roster.roomsById?.[sessionId] !== void 0) return false;
+  const bot = roster.byId?.[sessionId];
+  if (bot !== void 0) return bot.kind === "dsh";
   if (roster.ready) return roster.agentOf[sessionId] !== void 0;
   return cache.has(sessionId);
 }
@@ -2496,12 +2498,12 @@ function defaultShape(id) {
   value = Math.imul(value ^ value >>> 13, 3266489909);
   return DEFAULT_SHAPES[((value ^ value >>> 16) >>> 0) % DEFAULT_SHAPES.length];
 }
-var keepsIdLook = (bot) => bot?.kind === "genie";
+var keepsIdLook = (bot) => bot?.kind !== "dsh";
 var colorOf = (bot) => isColor(bot?.color) ? bot.color : bot?.id ? keepsIdLook(bot) ? defaultColor(String(bot.id)) : DSH_LOOK.color : "black";
 function lookOf(bot) {
   const avatar = bot?.avatar ?? {};
   return {
-    // A stored shape wins; a Bot with none wears DSH's whale, a Genie the id's character.
+    // A stored shape wins; only a DSH identity defaults to the whale.
     shape: hasShape(avatar.shape) ? avatar.shape : bot?.id ? keepsIdLook(bot) ? defaultShape(String(bot.id)) : DSH_LOOK.shape : FALLBACK_SHAPE,
     image: avatar.image,
     // A pet (pets.js) the Bot wears; a photo wins.
@@ -23046,7 +23048,7 @@ function apply(ctx) {
     // or the click appears to do nothing.
     isAgentSession: (id) => isAgentSessionId(id),
     openSession: (id) => {
-      if (isAgentSessionId(id)) return actions.openAgentSession(id);
+      if (isAgentSessionId(id)) return actions.openAgentSession(partFor(id));
       ui2.set((state) => state.newChat || state.exchange || state.menu || state.palette ? { ...state, newChat: null, exchange: null, menu: null, palette: null } : state);
       setPlain(false);
       const target = partFor(id);

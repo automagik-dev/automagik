@@ -17,9 +17,9 @@ test('the id look a Genie still wears never gets the octopus, gray, brown, or bl
 
 const roster = (bots, mainBotIds) => indexRoster({ bots, rooms: [], mainBotIds, mainBotId: mainBotIds[0] ?? null })
 
-test('a Bot with no look of its own wears DSH\'s blue whale, and a stored look wins', () => {
+test('only a DSH identity defaults to the blue whale, and a stored look wins', () => {
   const chief = { id: 'chief', name: 'Omni', createdAt: 1, color: 'deepseek', avatar: { shape: 'octopus' } }
-  const writer = { id: 'writer', name: 'Writer', createdAt: 2 }
+  const writer = { id: 'writer', kind: 'dsh', name: 'Writer', createdAt: 2 }
   // Stored looks stay as they are: the team's first Main Bot keeps its octopus.
   assert.deepEqual(lookOf(roster([writer, chief], ['chief']).byId.chief), { ...MAIN_LOOK, image: undefined, pet: undefined })
   // A Bot backed by DSH with no look of its own wears DSH's mark, wherever it sits in
@@ -27,9 +27,11 @@ test('a Bot with no look of its own wears DSH\'s blue whale, and a stored look w
   assert.deepEqual(lookOf(roster([writer], ['writer']).byId.writer), { ...DSH_LOOK, image: undefined, pet: undefined })
   assert.deepEqual(lookOf({ id: 'kept', avatar: { shape: 'star' } }).shape, 'star')
   assert.equal(lookOf({ id: 'kept', color: 'magenta', avatar: { shape: 'star' } }).color, 'magenta')
-  const photo = lookOf({ id: 'chief', avatar: { image: 'data:image/png;base64,AA==' } })
+  const photo = lookOf({ id: 'chief', kind: 'dsh', avatar: { image: 'data:image/png;base64,AA==' } })
   assert.equal(photo.image, 'data:image/png;base64,AA==')
   assert.equal(photo.shape, 'whale')
+  assert.deepEqual(lookOf({ id: 'ordinary' }), { shape: defaultShape('ordinary'), color: defaultColor('ordinary'), image: undefined, pet: undefined })
+  assert.equal(lookOf({ ...writer, color: 'magenta', avatar: { shape: 'star' } }).shape, 'star')
 })
 
 test('a Genie keeps its own art: the genie-cosmic pet, and the id look under it', () => {

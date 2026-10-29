@@ -77,6 +77,114 @@ function start(team, { config = {} } = {}) {
   return { call, stop, home, created, archived, failArchive, restricted, renamed, createdAgents, ctx }
 }
 
+test('adoption is additive, retains registration, and rollback restores the original', async (t) => {
+  const { call, stop, ctx, created, archived, createdAgents, restricted } = start(TEAM)
+  t.after(stop)
+  await call('state', {})
+  ctx.provided.set('agentPresets', { serviceFor: () => undefined, list: async () => [{ id: 'standard' }, { id: 'cordis' }] })
+  const rt = ctx.provided.get('omniTeam')
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'ds-bot-adoption-project-')))
+  t.after(() => rmSync(project, { recursive: true, force: true }))
+  const entry = (await call('add-agent', { name: 'Native', profile: 'cordis', workDir: project })).value
+  const original = rt.state.agents[entry.id]
+  Object.assign(original, { avatar: { shape: 'kitty' }, color: 'red', capabilities: ['native-skill'] })
+  const snapshot = structuredClone(original)
+  const second = (await call('agent-session', { agentId: entry.id })).value.sessionId
+  snapshot.sessions.push(second)
+  const resolve = rt.resolveAgent
+  rt.resolveAgent = async id => {
+    const live = await resolve(id)
+    live.session.requestHeader = () => ({ config: { provider: 'native', model: 'chosen', reasoningEffort: 'high' } })
+    return live
+  }
+  const before = created.length
+  assert.equal((await call('agent-bot-adopt', { agentId: entry.id })).value.botId, second)
+  const bot = rt.state.bots[second]
+  assert.equal(created.length, before)
+  assert.equal(rt.state.agents[entry.id], original)
+  assert.equal(original.adoptedBotId, second)
+  assert.equal(bot.kind, 'dsh')
+  assert.equal(bot.model, 'native/chosen')
+  assert.equal(bot.effort, 'high')
+  assert.equal(bot.profile, 'cordis')
+  assert.deepEqual(bot.avatar, snapshot.avatar)
+  assert.deepEqual(bot.capabilities, snapshot.capabilities)
+  assert.equal(rt.agentOf(second), undefined)
+  assert.deepEqual(rt.dshBots.list(), [])
+  assert.deepEqual((await call('state', {})).value.agents, [])
+  const count = restricted.length
+  createdAgents({ agent: { session: { id: second }, ctx: { effect: execute => execute(), tools: { restrict: () => { throw new Error('adopted session restricted') } } } } })
+  await flush()
+  assert.equal(restricted.length, count)
+  assert.equal((await call('agent-bot-rollback', { agentId: entry.id })).ok, true)
+  assert.deepEqual(original, snapshot)
+  assert.equal(rt.state.bots[second], undefined)
+  assert.equal(rt.agentOf(second), original)
+  assert.equal(rt.dshBots.list()[0].id, entry.id)
+  assert.deepEqual(archived, [])
+  assert.equal(restricted.length, count + 2)
+})
+
+test('adoption and rollback save failures restore both records without archiving', async (t) => {
+  const { call, stop, ctx, archived } = start(TEAM)
+  t.after(stop)
+  await call('state', {})
+  const entry = (await call('add-agent', { name: 'Native' })).value
+  const rt = ctx.provided.get('omniTeam')
+  const original = rt.state.agents[entry.id]
+  const save = rt.save
+  let fail = true
+  rt.save = async () => { if (fail) { fail = false; throw new Error('disk full') } return save() }
+  assert.match((await call('agent-bot-adopt', { agentId: entry.id })).error.message, /disk full/)
+  assert.equal(rt.state.agents[entry.id], original)
+  assert.equal(original.adoptedBotId, undefined)
+  assert.equal(rt.state.bots[entry.sessions[0]], undefined)
+  assert.equal(rt.agentOf(entry.sessions[0]), original)
+  assert.equal((await call('agent-bot-adopt', { agentId: entry.id })).ok, true)
+  const bot = rt.state.bots[entry.sessions[0]]
+  fail = true
+  assert.match((await call('agent-bot-rollback', { agentId: entry.id })).error.message, /disk full/)
+  assert.equal(original.adoptedBotId, bot.id)
+  assert.equal(rt.state.bots[bot.id], bot)
+  assert.equal(rt.agentOf(bot.id), undefined)
+  rt.save = save
+  assert.equal((await call('agent-bot-rollback', { agentId: entry.id })).ok, true)
+  assert.deepEqual(archived, [])
+})
+
+test('adoption refuses an original registration changed while its Session resolves', async (t) => {
+  const { call, stop, ctx } = start(TEAM)
+  t.after(stop)
+  await call('state', {})
+  const entry = (await call('add-agent', { name: 'Native' })).value
+  const rt = ctx.provided.get('omniTeam')
+  const resolve = rt.resolveAgent
+  rt.resolveAgent = async id => {
+    const live = await resolve(id)
+    delete rt.state.agents[entry.id]
+    return live
+  }
+  assert.match((await call('agent-bot-adopt', { agentId: entry.id })).error.message, /changed during adoption/)
+  assert.equal(rt.state.bots[entry.sessions[0]], undefined)
+})
+
+test('adopted preset backs new group/fresh Sessions and tasks; rollback refuses new team history', async (t) => {
+  const { call, stop, ctx, created } = start(TEAM)
+  t.after(stop)
+  await call('state', {})
+  ctx.provided.set('agentPresets', { serviceFor: () => undefined, list: async () => [{ id: 'standard' }, { id: 'cordis' }] })
+  const rt = ctx.provided.get('omniTeam')
+  const entry = (await call('add-agent', { name: 'Native', profile: 'cordis' })).value
+  await call('agent-bot-adopt', { agentId: entry.id })
+  const bot = rt.state.bots[entry.sessions[0]]
+  await rt.createSession('Native · group', { profile: bot.profile })
+  assert.equal(created.at(-1).agentPreset, 'cordis')
+  await rt.startTask({ title: 'Native task', text: 'Do it', from: bot.id })
+  assert.equal(created.at(-1).agentPreset, 'cordis')
+  assert.match((await call('agent-bot-rollback', { agentId: entry.id })).error.message, /new team history/)
+  assert.equal(rt.state.agents[entry.id].adoptedBotId, bot.id)
+})
+
 const TEAM = {
   version: 1,
   mainBotIds: ['m1'],

@@ -30,7 +30,7 @@ export const TASKS = 'tasks'
 export function install(rt) {
   const { ctx, state } = rt
 
-  const dshBots = () => Object.values(state.agents).filter(agent => agent.kind === DSH_BOT)
+  const dshBots = () => Object.values(state.agents).filter(agent => agent.kind === DSH_BOT && agent.adoptedBotId === undefined)
   const tasksRecord = () => Object.values(state.agents).find(agent => agent.kind === TASKS)
   // What other plugins read of a DSH bot; null is the team workspace and DSH's default preset.
   const listed = agent => ({ id: agent.id, name: agent.name, workDir: agent.workDir ?? null, profile: agent.profile ?? null })
@@ -69,6 +69,7 @@ export function install(rt) {
   rt.indexAgents = () => {
     sessionIndex.clear()
     for (const agent of Object.values(state.agents)) {
+      if (agent.adoptedBotId !== undefined) continue
       for (const sessionId of agent.sessions ?? []) sessionIndex.set(sessionId, agent.id)
     }
     const list = dshBots().map(listed)
@@ -166,6 +167,7 @@ export function install(rt) {
   const record = (agentId) => {
     const agent = rt.own(state.agents, agentId)
     if (agent === undefined) throw new Error('Unknown DSH bot')
+    if (agent.adoptedBotId !== undefined) throw new Error('This DSH bot is adopted; use its Bot chat or roll back adoption first')
     return agent
   }
 
@@ -310,11 +312,10 @@ export function install(rt) {
     await rt.save()
   }
 
-  // A DSH bot the user wants on the team becomes a Bot: its newest Session is the Bot's
-  // own chat and the earlier ones its earlier parts, so the conversation, folder and name
-  // carry over untouched, and nothing is renamed. From then on the team treats it as every
-  // other Bot: `list_bots` and the sidebar show it, `message_bot` reaches it, it can join a
-  // group, take capabilities and start tasks, and its Session gets the team tools back.
+  // Adoption adds a team membership to the DSH identity, not a replacement identity.
+  // Its newest Session is the own chat and earlier ones remain readable parts. Keep
+  // the original registration for undo, preserve native preset/appearance/capabilities,
+  // and lift only our team-tool restrictions after the membership is safely saved.
   async function adoptAsBot(agentId) {
     writeCheck()
     const agent = record(agentId)
@@ -329,11 +330,21 @@ export function install(rt) {
     const chatId = sessions.at(-1)
     // A Session DSH can no longer open is refused before anything moves; the resolved
     // agent is the one whose team-tools restriction adoption lifts below.
+    const before = JSON.stringify(agent)
     const live = await rt.resolveAgent(chatId)
+    if (state.agents[agentId] !== agent || JSON.stringify(agent) !== before) throw new Error('The DSH bot changed during adoption; try again')
+    if (agent.adoptedBotId !== undefined || rt.findBot(name) !== undefined || rt.botOf(chatId) !== undefined) throw new Error('The DSH bot or name is already adopted')
     const earlier = sessions.slice(0, -1)
+    // DSH's persisted request header is also the fresh-part route source (parts.js).
+    const route = live.session?.requestHeader?.()?.config
     const now = Date.now()
     state.bots[chatId] = {
+      ...(route?.provider && route?.model ? { model: `${route.provider}/${route.model}` } : {}),
+      ...(route?.reasoningEffort ? { effort: route.reasoningEffort } : {}),
+      ...agent,
       id: chatId,
+      dshAgentId: agentId,
+      kind: DSH_BOT,
       name,
       role: '',
       instructions: '',
@@ -341,15 +352,54 @@ export function install(rt) {
       ...(agent.pinned === true ? { pinned: true } : {}),
       createdAt: agent.createdAt ?? now,
       createdBy: null,
-      capabilities: [],
+      capabilities: [...(agent.capabilities ?? [])],
       // The DSH bot's other Sessions stay readable as the Bot's earlier parts.
       ...(earlier.length === 0 ? {} : { segments: earlier.map(sessionId => ({ sessionId, endedAt: now })) }),
     }
-    delete state.agents[agentId]
-    for (const sessionId of earlier) restrictionLifts.delete(sessionId)
-    await rt.save()
-    liftRestriction(chatId, live)
+    // Keep the original registration intact for rollback, but out of the standalone
+    // roster and restriction index. Only persist before changing live tool access.
+    delete state.bots[chatId].sessions
+    agent.adoptedBotId = chatId
+    try {
+      await rt.save()
+    } catch (error) {
+      delete state.bots[chatId]
+      delete agent.adoptedBotId
+      await rt.save().catch(() => {})
+      throw error
+    }
+    for (const sessionId of sessions) {
+      const resolved = sessionId === chatId ? live : await rt.resolveAgent(sessionId).catch(() => undefined)
+      liftRestriction(sessionId, resolved)
+    }
     return { botId: chatId }
+  }
+
+  // An explicit, non-destructive undo, not deleteBot (which archives conversations).
+  // Refuse after new team history is created rather than silently discarding it.
+  async function rollbackAdoption(agentId) {
+    writeCheck()
+    const original = rt.own(state.agents, agentId)
+    const bot = state.bots[original?.adoptedBotId]
+    if (bot?.dshAgentId !== agentId) throw new Error('No adoption to roll back')
+    const parts = [ ...(bot.segments ?? []).map(part => part.sessionId), rt.chatOf(bot.id) ]
+    if (rt.isMain(bot.id) || Object.values(state.rooms).some(room => room.members.includes(bot.id))
+      || JSON.stringify(parts) !== JSON.stringify(original.sessions)
+      || Object.values(state.tasks ?? {}).some(task => task.from === bot.id)) {
+      throw new Error('Remove Main Bot/group roles and resolve new team history before rolling back adoption')
+    }
+    delete state.bots[bot.id]
+    delete original.adoptedBotId
+    try {
+      await rt.save()
+    } catch (error) {
+      state.bots[bot.id] = bot
+      original.adoptedBotId = bot.id
+      await rt.save().catch(() => {})
+      throw error
+    }
+    for (const sessionId of original.sessions) await restrictTeamTools(await rt.resolveAgent(sessionId))
+    return { agentId }
   }
 
   // The tasks record, made when the first task starts.
@@ -411,7 +461,8 @@ export function install(rt) {
   // `roomId`: the group whose Session asked for the task. Its result goes back to that
   // group, where the user saw the request, not to the Bot's own chat.
   async function startTask({ title, text, from, cwd, agentPreset, roomId }) {
-    const sessionId = await createTaskSession(title, { cwd, agentPreset })
+    const caller = state.bots?.[from]
+    const sessionId = await createTaskSession(title, { cwd: cwd ?? caller?.workDir, agentPreset: agentPreset ?? caller?.profile })
     tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}) }
     // Only the newest tasks are remembered for their reports.
     const kept = Object.entries(tasks()).sort(([, a], [, b]) => b.at - a.at)
@@ -525,5 +576,5 @@ export function install(rt) {
     },
   }))
 
-  Object.assign(rt, { agentOf, addAgent, updateAgent, presets, createAgentSession, adoptAgentSession, adoptAsBot, archiveAgentSession, renameAgentSession, removeAgent, createTaskSession, startTask })
+  Object.assign(rt, { agentOf, addAgent, updateAgent, presets, createAgentSession, adoptAgentSession, adoptAsBot, rollbackAdoption, archiveAgentSession, renameAgentSession, removeAgent, createTaskSession, startTask })
 }

@@ -444,7 +444,7 @@ export function apply(ctx) {
     isAgentSession: id => isAgentSessionId(id),
     openSession: (id) => {
       // A DSH Agent Session id lands on the plain surface, not the Bot skin.
-      if (isAgentSessionId(id)) return actions.openAgentSession(id)
+      if (isAgentSessionId(id)) return actions.openAgentSession(partFor(id))
       ui.set(state => (state.newChat || state.exchange || state.menu || state.palette ? { ...state, newChat: null, exchange: null, menu: null, palette: null } : state))
       setPlain(false)
       const target = partFor(id)
