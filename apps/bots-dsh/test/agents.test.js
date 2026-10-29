@@ -369,3 +369,33 @@ test('a task that ends on an error is failed with its reason; one stopped is sto
     [stopped, 'It was stopped before it finished.'],
   ])
 })
+
+test('a task started in a group reports back to that group, not the Bot\'s own chat', async (t) => {
+  const team = {
+    ...TEAM,
+    rooms: { r1: { id: 'r1', name: 'Demo', members: ['m1'], admin: 'm1', mode: 'admin', notice: '', createdAt: 2, createdBy: null, sessions: { m1: 'g1' } } },
+  }
+  const { call, stop, ctx } = start(team)
+  t.after(stop)
+  await call('state', {})
+  const rt = ctx.provided.get('omniTeam')
+  const reports = []
+  rt.deliver = async message => { reports.push(message) }
+  const end = (sessionId) => {
+    for (const listener of ctx.listeners.get('session/event') ?? []) listener({ id: sessionId }, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
+  }
+  // The tool is called from the Bot's Session in the group, which is what start_task sees.
+  const said = await ctx.registeredTools.get('start_task').execute({ title: 'Clone it', instructions: 'Clone the repo' }, { agent: { id: 'g1' } })
+  assert.match(said, /^Started task "Clone it"/)
+  const [inGroup] = Object.keys((await call('state', {})).value.tasks)
+  end(inGroup)
+  // A task from the Bot's own chat keeps going to its own chat.
+  await ctx.registeredTools.get('start_task').execute({ title: 'Private', instructions: 'Do it' }, { agent: { id: 'm1' } })
+  const own = Object.keys((await call('state', {})).value.tasks).find(id => id !== inGroup)
+  end(own)
+  await flush()
+  assert.deepEqual(reports.map(report => [report.taskSessionId, report.sessionId, report.roomId]), [
+    [inGroup, 'g1', 'r1'],
+    [own, undefined, undefined],
+  ])
+})
