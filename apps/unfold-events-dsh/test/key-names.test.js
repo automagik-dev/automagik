@@ -19,7 +19,7 @@ const SCHEMES = [`authorization: bearer ${JOINED}`, `AUTHORIZATION: BEARER ${JOI
 // quote, a camelCase run, a YAML block, an open escaped JSON value, a prefix run, many line starts,
 // many escaped JSON values, many YAML keys, many names mid-line, bearer runs, a word of upper-case names, long indents before a YAML key or
 // any key, repeated names, keys and flags, open quotes of each kind, and backslash and escaped
-// quote runs.
+// quote runs, and a word of upper-case names then `=` and a failing value, at 80k and 160k.
 // A scheme in any case with no key name before it, before a token-shaped word (16+ characters of the
 // token alphabet with a digit), built from words at run time.
 const SHAPED = WORDS.join('9')
@@ -51,6 +51,14 @@ const ADVERSARIAL = {
   'bearer runs': 'bearer x '.repeat(9_000),
   'bearer long run': `bearer ${'a'.repeat(80_000)}`,
   'upper names in one word': `${'TOKEN'.repeat(16_000)} =`,
+  'upper names then =': `${'TOKEN'.repeat(16_000)}=`,
+  'upper names then = and a space': `${'TOKEN'.repeat(16_000)}= x`,
+  'upper names then = and an open quote': `${'TOKEN'.repeat(16_000)}="`,
+  'upper names then = and no quote': `${'TOKEN'.repeat(16_000)}=x`,
+  'upper names then =, 160k': `${'TOKEN'.repeat(32_000)}=`,
+  'upper names then = and a space, 160k': `${'TOKEN'.repeat(32_000)}= x`,
+  'upper names then = and an open quote, 160k': `${'TOKEN'.repeat(32_000)}="`,
+  'upper names then = and no quote, 160k': `${'TOKEN'.repeat(32_000)}=x`,
   'leading spaces, then a key': `${' '.repeat(80_000)}password: x`,
   'leading tabs, then KEY=': `${'\t'.repeat(80_000)}API_TOKEN="x`,
   'leading mixed runs, then a camelCase key': `${' \t'.repeat(40_000)}accessToken: x`,

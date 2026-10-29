@@ -7,10 +7,19 @@ import { redact, redactText } from '../src/redact.js'
 // A seeded fuzz: 200 texts of up to 80k characters, each a random mix of the pieces a rule could
 // backtrack on (whitespace runs, key names in each case and form, separators, open and closed
 // quotes, backslashes, escaped quotes, newlines, schemes), most with a run repeated to fill the
-// size. The same seed gives the same texts, and each text comes with a short shape that names it.
+// size. A third are the shapes a rule once backtracked on, with random runs, keys and tails:
+// whitespace before a YAML block key, a word of upper-case names then `=` and a failing value, an
+// unbroken run then a separator and whitespace, and a key name run then a failing value. The same
+// seed gives the same texts, and each text comes with a short shape that names it.
 const SEED = 0x5eed124
 const PIECES = [' ', '\t', ' \t', '\n', '\n  ', 'password', 'db_password', 'DB_PASS', 'accessToken', 'ClientSecret', 'DbPass', 'API_TOKEN', '--token', '-pass', 'token', '=', ': ', ' = ', '":', '\\":', ': |\n', ': >-\n', '"', "'", '`', '\\', '\\\\', '\\"', '\\"\\"', 'bearer ', 'basic ', 'Bearer ', 'x9', 'a', 'word ', '{"', '{\\"', '_', '-']
 const SIZES = [1_000, 4_000, 16_000, 40_000, 80_000]
+const SHAPES = [
+  [[' ', '\t', ' \t', '\t '], ['password', 'accessToken', 'db_password', 'ClientSecret'], [': |\n', ': >-\n', ': |', ':  >']],
+  [['TOKEN', 'API_KEY_', 'SECRET', 'PASSWORD_', 'X9_', 'APIKEY'], [''], ['=', '= x', '="', "='", '=`', '=x', ' =', '']],
+  [['a', 'DB_PASSaClientSecret', 'x9-', 'word'], [''], [': = \t', ': =\\": \t', ' \t', ':\n ']],
+  [['password', 'accessToken', 'db_pass ', '--token'], [''], ['=', ': ', '\\": \\"', '="', ' = ']],
+]
 function fuzzCases(seed = SEED, count = 200) {
   let state = seed >>> 0
   const rand = () => {
@@ -24,6 +33,11 @@ function fuzzCases(seed = SEED, count = 200) {
   const fill = (piece, size) => piece.repeat(Math.max(1, Math.floor(size / piece.length)))
   return Array.from({ length: count }, (_, i) => {
     const size = pick(SIZES)
+    if (i % 3 === 2) {
+      const [runs, keys, tails] = pick(SHAPES)
+      const [run, key, tail] = [pick(runs), pick(keys), pick(tails)]
+      return [`#${i} ${JSON.stringify(run)} to ${size}, then ${JSON.stringify(key + tail)}`, `${fill(run, size)}${key}${tail}`]
+    }
     if (i % 3 === 0) {
       const parts = []
       for (let n = 0; n < size; ) {
