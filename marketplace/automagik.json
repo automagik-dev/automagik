@@ -67,6 +67,19 @@
       },
       "versions": [
         {
+          "version": "3.46.2",
+          "publishTimestamp": 1793301402,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "4468659424db1ad005361e9910ab5a57923eb4fe",
+            "path": "apps/bots-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.46.1",
           "publishTimestamp": 1793291925,
           "source": {
@@ -926,6 +939,19 @@
         ]
       },
       "versions": [
+        {
+          "version": "3.46.2",
+          "publishTimestamp": 1793301402,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "4468659424db1ad005361e9910ab5a57923eb4fe",
+            "path": "apps/welcome-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
         {
           "version": "3.46.1",
           "publishTimestamp": 1793291925,
@@ -1980,6 +2006,19 @@
       },
       "versions": [
         {
+          "version": "3.46.2",
+          "publishTimestamp": 1793301402,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "4468659424db1ad005361e9910ab5a57923eb4fe",
+            "path": "apps/unfold-bridge-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.46.1",
           "publishTimestamp": 1793291925,
           "source": {
@@ -2399,6 +2438,19 @@
       },
       "versions": [
         {
+          "version": "3.46.2",
+          "publishTimestamp": 1793301402,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "4468659424db1ad005361e9910ab5a57923eb4fe",
+            "path": "apps/locale-pt-br-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.46.1",
           "publishTimestamp": 1793291925,
           "source": {
@@ -2661,6 +2713,19 @@
       },
       "versions": [
         {
+          "version": "3.46.2",
+          "publishTimestamp": 1793301402,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "4468659424db1ad005361e9910ab5a57923eb4fe",
+            "path": "apps/unfold-capabilities-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.46.1",
           "publishTimestamp": 1793291925,
           "source": {
@@ -2870,6 +2935,19 @@
         ]
       },
       "versions": [
+        {
+          "version": "3.46.2",
+          "publishTimestamp": 1793301402,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "4468659424db1ad005361e9910ab5a57923eb4fe",
+            "path": "apps/unfold-settings-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
         {
           "version": "3.46.1",
           "publishTimestamp": 1793291925,
@@ -3082,6 +3160,19 @@
       },
       "versions": [
         {
+          "version": "3.46.2",
+          "publishTimestamp": 1793301402,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "4468659424db1ad005361e9910ab5a57923eb4fe",
+            "path": "apps/unfold-events-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.46.1",
           "publishTimestamp": 1793291925,
           "source": {
@@ -3280,6 +3371,19 @@
       },
       "versions": [
         {
+          "version": "3.46.2",
+          "publishTimestamp": 1793301402,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "4468659424db1ad005361e9910ab5a57923eb4fe",
+            "path": "apps/unfold-mind-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.46.1",
           "publishTimestamp": 1793291925,
           "source": {
@@ -3464,6 +3568,19 @@
       },
       "versions": [
         {
+          "version": "3.46.2",
+          "publishTimestamp": 1793301402,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "4468659424db1ad005361e9910ab5a57923eb4fe",
+            "path": "apps/unfold-trajectory-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.46.1",
           "publishTimestamp": 1793291925,
           "source": {
@@ -3636,6 +3753,19 @@
       },
       "versions": [
         {
+          "version": "3.46.2",
+          "publishTimestamp": 1793301402,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "4468659424db1ad005361e9910ab5a57923eb4fe",
+            "path": "apps/unfold-session-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.46.1",
           "publishTimestamp": 1793291925,
           "source": {
@@ -3793,6 +3923,19 @@
         ]
       },
       "versions": [
+        {
+          "version": "3.46.2",
+          "publishTimestamp": 1793301402,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "4468659424db1ad005361e9910ab5a57923eb4fe",
+            "path": "apps/unfold-bot-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.4 <0.2.2-0"
+          }
+        },
         {
           "version": "3.46.1",
           "publishTimestamp": 1793291925,
