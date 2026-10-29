@@ -77,6 +77,7 @@ files as the bundle's `//#region` comments name them.
 | TrajectoryTimeline.js | tooltip detail: a measured duration only, never observed_at -> observed_at + duration | 1 |
 | timeline.js | timed ranges: an Unfold record is an instant at its observation time, never observed_at + a producer duration | 1 |
 | TrajectoryToolbar.js | duration toggle hook (unfoldSequenceOnly): keeps the toggle and maps Duration to the producer-clock overview; the time toggle stays hidden upstream | 2 (signature, button) |
+| CSS-module regions | region comments name each CSS module by its path in the upstream repository, never the machine that built it | 4 |
 
 After the patches, the build also:
 

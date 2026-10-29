@@ -53,6 +53,7 @@ export const PATCHES = [
   ['timeline.js', 'timed ranges: an Unfold record is an instant at its observation time, never observed_at + a producer duration', 'function cellRange(cell) {\n\t\t\tif (!finite(cell.startedAt)) return null;\n', 'function cellRange(cell) {\n\t\t\tif (!finite(cell.startedAt)) return null;\n\t\t\tif (cell.unfoldKind !== void 0) return {\n\t\t\t\tstart: cell.startedAt,\n\t\t\t\tend: cell.startedAt\n\t\t\t};\n', 1],
   ['TrajectoryToolbar.js', 'duration toggle hook (unfoldSequenceOnly): keeps the toggle and maps Duration to the producer-clock overview; the time toggle stays hidden upstream', 'function TrajectoryToolbar({ actualDuration,', 'function TrajectoryToolbar({ unfoldSequenceOnly, actualDuration,', 1],
   ['TrajectoryToolbar.js', 'duration toggle hook (unfoldSequenceOnly): keeps the toggle and maps Duration to the producer-clock overview; the time toggle stays hidden upstream', '"aria-pressed": actualDuration,', 'hidden: unfoldSequenceOnly === true,\n\t\t\t\t\t\t\t\t"aria-pressed": actualDuration,', 1],
+  ['CSS-module regions', 'region comments name each CSS module by its path in the upstream repository, never the machine that built it', /(\/\/#region \\0dsh-css:)\/[^\n]*?\/(?=packages\/client\/)/g, '$1', 4],
 ]
 
 function apply(text, [region, why, find, replace, expected]) {
