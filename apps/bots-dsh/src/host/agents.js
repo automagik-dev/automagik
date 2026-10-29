@@ -30,7 +30,7 @@ export const TASKS = 'tasks'
 export function install(rt) {
   const { ctx, state } = rt
 
-  const dshBots = () => Object.values(state.agents).filter(agent => agent.kind === DSH_BOT && agent.adoptedBotId === undefined)
+  const dshBots = () => Object.values(state.agents).filter(agent => agent.kind === DSH_BOT && agent.adoptedBotId === undefined && agent.pendingCreation !== true)
   const tasksRecord = () => Object.values(state.agents).find(agent => agent.kind === TASKS)
   // What other plugins read of a DSH bot; null is the team workspace and DSH's default preset.
   const listed = agent => ({ id: agent.id, name: agent.name, workDir: agent.workDir ?? null, profile: agent.profile ?? null })
@@ -167,12 +167,13 @@ export function install(rt) {
   const record = (agentId) => {
     const agent = rt.own(state.agents, agentId)
     if (agent === undefined) throw new Error('Unknown DSH bot')
+    if (agent.pendingCreation === true && !activeCreations.has(agent.id)) throw new Error('DSH team member creation failed; cleanup is pending')
     if (agent.adoptedBotId !== undefined) throw new Error('This DSH bot is adopted; use its Bot chat or roll back adoption first')
     return agent
   }
 
   // A Session of a DSH bot starts in its folder with its preset; a task's comes from the caller.
-  async function createAgentSession(agentId, workspaceId, options = {}) {
+  async function createAgentSession(agentId, workspaceId, options = {}, reservedSessionId) {
     writeCheck()
     const agent = record(agentId)
     if (agent.kind === DSH_BOT) {
@@ -190,9 +191,10 @@ export function install(rt) {
       ? { cwd }
       : { workspaceId: typeof workspaceId === 'string' && ctx.workspaceRegistry.get(workspaceId) ? workspaceId : await rt.ensureWorkspace() }
     const preset = await servedPreset(agentPreset)
-    const { sessionId } = await ctx.sessionController.create({ ...place, ...(preset ? { agentPreset: preset } : {}) })
-    agent.sessions.push(sessionId)
-    await rt.save()
+    const { sessionId } = await ctx.sessionController.create({ ...place, ...(preset ? { agentPreset: preset } : {}), ...(reservedSessionId ? { sessionId: reservedSessionId } : {}) })
+    if (reservedSessionId === undefined) agent.sessions.push(sessionId)
+    else agent.sessions = [sessionId]
+    await rt.save({ required: reservedSessionId !== undefined })
     // agent/created fired before the session joined the index, so restrict again now.
     await restrictTeamTools(await rt.resolveAgent(sessionId))
     return sessionId
@@ -234,26 +236,94 @@ export function install(rt) {
     }
   }
 
+  // A failed opt-in creation remains owned but is never advertised as a usable
+  // standalone bot. Reserve its Session identity durably before asking DSH to
+  // allocate it, so even disposal during create leaves a discoverable retry.
+  const activeCreations = new Set()
+  async function cleanupCreation(agent) {
+    // This is a permission/durability check, not an atomicity guarantee across
+    // DSH archival and our file. Never archive after a skipped/failed save.
+    await rt.save({ required: true })
+    for (const sessionId of agent.sessions) {
+      try {
+        await ctx.workspaceRegistry.archiveSession(sessionId)
+      } catch (error) {
+        // The reserved identity may never have been allocated. Already archived
+        // identities are idempotent in DSH; unknown ones need no external cleanup.
+        if (error?.name !== 'WorkspaceUnknownSessionError' || error.sessionId !== sessionId) throw error
+      }
+    }
+    delete state.agents[agent.id]
+    try {
+      await rt.save({ required: true })
+    } catch (error) {
+      // Archive and this file cannot commit atomically. Keep the durable intent
+      // retryable; re-archiving on the next load is safe even after success.
+      state.agents[agent.id] = agent
+      rt.indexSessions()
+      throw error
+    }
+  }
+  const load = rt.load
+  const refresh = rt.refresh
+  let recovering
+  const recoverCreations = async () => {
+    if (recovering !== undefined) return recovering
+    const pending = Object.values(state.agents).filter(agent => agent.pendingCreation === true && !activeCreations.has(agent.id))
+    if (pending.length === 0) return
+    recovering = (async () => {
+      for (const agent of pending) {
+        try {
+          await cleanupCreation(agent)
+        } catch (error) {
+          rt.warn('ds-bot: creation cleanup pending for %s: %s', agent.id, error)
+        }
+      }
+    })()
+    try { await recovering } finally { recovering = undefined }
+  }
+  rt.load = async () => { await load(); await recoverCreations() }
+  // Some later modules memoize load for their own startup. Refresh remains the
+  // request lifecycle retry point after writer authority or archival recovers.
+  rt.refresh = async () => { await refresh(); await recoverCreations() }
+
   async function addAgent(fields) {
     writeCheck()
     const agent = { id: randomUUID(), kind: DSH_BOT, sessions: [], createdAt: Date.now() }
     setFields(agent, await dshBotFields(fields))
+    const teamMember = fields?.teamMember === true
+    const reservedSessionId = teamMember ? `session-${randomUUID()}` : undefined
+    if (teamMember) {
+      agent.pendingCreation = true
+      agent.sessions = [reservedSessionId]
+    }
     state.agents[agent.id] = agent
+    activeCreations.add(agent.id)
     try {
-      await createAgentSession(agent.id)
+      if (teamMember) await rt.save({ required: true })
+      await createAgentSession(agent.id, undefined, {}, reservedSessionId)
       // The UI creates a native DSH team member immediately. Legacy plugin callers
       // keep the standalone DSH registration/session API unless they opt in.
       if (fields?.teamMember === true) await adoptAsBot(agent.id)
     } catch (error) {
-      // The first Session may already be created and saved: archive it and
-      // persist the rollback, or the DSH bot returns on restart with its team
-      // tools never denied.
-      const createdSessions = [...agent.sessions]
-      delete state.agents[agent.id]
-      rt.indexSessions()
-      for (const sessionId of createdSessions) await ctx.workspaceRegistry.archiveSession(sessionId).catch(() => {})
-      await rt.save({ required: true }).catch(() => {})
+      if (teamMember) {
+        try {
+          await cleanupCreation(agent)
+        } catch (cleanupError) {
+          rt.indexSessions()
+          throw new Error(`DSH team member creation failed: ${error?.message ?? error}. Cleanup pending for ${agent.id}: ${cleanupError?.message ?? cleanupError}; it will retry on the next load.`, { cause: error })
+        }
+      } else {
+        // Preserve the legacy standalone creation contract.
+        const createdSessions = [...agent.sessions]
+        delete state.agents[agent.id]
+        rt.indexSessions()
+        for (const sessionId of createdSessions) await ctx.workspaceRegistry.archiveSession(sessionId).catch(() => {})
+        await rt.save({ required: true }).catch(() => {})
+      }
       throw error
+    } finally {
+      activeCreations.delete(agent.id)
     }
     return agent
   }
@@ -363,12 +433,16 @@ export function install(rt) {
     // Keep the original registration intact for rollback, but out of the standalone
     // roster and restriction index. Only persist before changing live tool access.
     delete state.bots[chatId].sessions
+    delete state.bots[chatId].pendingCreation
+    const pendingCreation = agent.pendingCreation
+    delete agent.pendingCreation
     agent.adoptedBotId = chatId
     try {
       await rt.save({ required: true })
     } catch (error) {
       delete state.bots[chatId]
       delete agent.adoptedBotId
+      if (pendingCreation !== undefined) agent.pendingCreation = pendingCreation
       rt.indexSessions()
       await rt.save({ required: true }).catch(() => {})
       throw error
