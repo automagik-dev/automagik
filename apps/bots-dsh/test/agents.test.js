@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -11,8 +11,7 @@ const flush = async () => { for (let index = 0; index < 8; index += 1) await Pro
 
 // Enough of the dsh services for the roster and the agents module; tool restrict
 // calls and archived Sessions are recorded for the assertions.
-function start(team, { config = {} } = {}) {
-  const home = mkdtempSync(join(tmpdir(), 'ds-bot-agents-'))
+function start(team, { config = {}, home = mkdtempSync(join(tmpdir(), 'ds-bot-agents-')) } = {}) {
   if (team !== undefined) writeFileSync(join(home, 'state.json'), JSON.stringify(team))
   const ctx = fakeContext()
   const workspaces = new Map()
@@ -40,7 +39,7 @@ function start(team, { config = {} } = {}) {
     sessionController: {
       create: async (options) => {
         created.push(options)
-        return { sessionId: `s${++sessions}` }
+        return { sessionId: options.sessionId ?? `s${++sessions}` }
       },
       resolveAgent: async (sessionId) => {
         const agent = {
@@ -76,6 +75,600 @@ function start(team, { config = {} } = {}) {
   }
   return { call, stop, home, created, archived, failArchive, restricted, renamed, createdAgents, ctx }
 }
+
+test('adoption is additive, retains registration, and rollback restores the original', async (t) => {
+  const { call, stop, ctx, created, archived, createdAgents, restricted } = start(TEAM)
+  t.after(stop)
+  await call('state', {})
+  ctx.provided.set('agentPresets', { serviceFor: () => undefined, list: async () => [{ id: 'standard' }, { id: 'cordis' }] })
+  const rt = ctx.provided.get('omniTeam')
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'ds-bot-adoption-project-')))
+  t.after(() => rmSync(project, { recursive: true, force: true }))
+  const entry = (await call('add-agent', { name: 'Native', profile: 'cordis', workDir: project })).value
+  const original = rt.state.agents[entry.id]
+  Object.assign(original, { avatar: { shape: 'kitty' }, color: 'red', capabilities: ['native-skill'] })
+  const snapshot = structuredClone(original)
+  const second = (await call('agent-session', { agentId: entry.id })).value.sessionId
+  snapshot.sessions.push(second)
+  const resolve = rt.resolveAgent
+  rt.resolveAgent = async id => {
+    const live = await resolve(id)
+    live.session.requestHeader = () => ({ config: { provider: 'native', model: 'chosen', reasoningEffort: 'high' } })
+    return live
+  }
+  const before = created.length
+  assert.equal((await call('agent-bot-adopt', { agentId: entry.id })).value.botId, second)
+  const bot = rt.state.bots[second]
+  assert.equal(created.length, before)
+  assert.equal(rt.state.agents[entry.id], original)
+  assert.equal(original.adoptedBotId, second)
+  assert.equal(bot.kind, 'dsh')
+  assert.equal(bot.model, 'native/chosen')
+  assert.equal(bot.effort, 'high')
+  assert.equal(bot.profile, 'cordis')
+  assert.deepEqual(bot.avatar, snapshot.avatar)
+  assert.deepEqual(bot.capabilities, snapshot.capabilities)
+  assert.equal(rt.agentOf(second), undefined)
+  assert.deepEqual(rt.dshBots.list(), [])
+  assert.deepEqual((await call('state', {})).value.agents, [])
+  const count = restricted.length
+  createdAgents({ agent: { session: { id: second }, ctx: { effect: execute => execute(), tools: { restrict: () => { throw new Error('adopted session restricted') } } } } })
+  await flush()
+  assert.equal(restricted.length, count)
+  assert.equal((await call('agent-bot-rollback', { agentId: entry.id })).ok, true)
+  assert.deepEqual(original, snapshot)
+  assert.equal(rt.state.bots[second], undefined)
+  assert.equal(rt.agentOf(second), original)
+  assert.equal(rt.dshBots.list()[0].id, entry.id)
+  assert.deepEqual(archived, [])
+  assert.equal(restricted.length, count + 2)
+})
+
+test('adoption and rollback save failures restore both records without archiving', async (t) => {
+  const { call, stop, ctx, archived } = start(TEAM)
+  t.after(stop)
+  await call('state', {})
+  const entry = (await call('add-agent', { name: 'Native' })).value
+  const rt = ctx.provided.get('omniTeam')
+  const original = rt.state.agents[entry.id]
+  const save = rt.save
+  let fail = true
+  rt.save = async () => { if (fail) { fail = false; throw new Error('disk full') } return save() }
+  assert.match((await call('agent-bot-adopt', { agentId: entry.id })).error.message, /disk full/)
+  assert.equal(rt.state.agents[entry.id], original)
+  assert.equal(original.adoptedBotId, undefined)
+  assert.equal(rt.state.bots[entry.sessions[0]], undefined)
+  assert.equal(rt.agentOf(entry.sessions[0]), original)
+  assert.equal((await call('agent-bot-adopt', { agentId: entry.id })).ok, true)
+  const bot = rt.state.bots[entry.sessions[0]]
+  fail = true
+  assert.match((await call('agent-bot-rollback', { agentId: entry.id })).error.message, /disk full/)
+  assert.equal(original.adoptedBotId, bot.id)
+  assert.equal(rt.state.bots[bot.id], bot)
+  assert.equal(rt.agentOf(bot.id), undefined)
+  rt.save = save
+  assert.equal((await call('agent-bot-rollback', { agentId: entry.id })).ok, true)
+  assert.deepEqual(archived, [])
+})
+
+test('adoption rejects a host shutdown during Session resolution and retains the original registration', async (t) => {
+  const { call, stop, ctx, home } = start(TEAM)
+  t.after(stop)
+  await call('state', {})
+  const entry = (await call('add-agent', { name: 'Native' })).value
+  const rt = ctx.provided.get('omniTeam')
+  const original = structuredClone(rt.state.agents[entry.id])
+  const resolve = rt.resolveAgent
+  rt.resolveAgent = async id => {
+    const live = await resolve(id)
+    await ctx.dispose()
+    return live
+  }
+  await assert.rejects(rt.adoptAsBot(entry.id), /host stopped/)
+  assert.deepEqual(rt.state.agents[entry.id], original)
+  assert.equal(rt.state.bots[entry.sessions[0]], undefined)
+  assert.equal(rt.agentOf(entry.sessions[0]), rt.state.agents[entry.id])
+  const saved = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))
+  assert.deepEqual(saved.agents[entry.id], original)
+  assert.equal(saved.bots[entry.sessions[0]], undefined)
+})
+
+test('rollback rejects skipped persistence after shutdown and restores adopted records and indexes', async (t) => {
+  const { call, stop, ctx, home } = start(TEAM)
+  t.after(stop)
+  await call('state', {})
+  const entry = (await call('add-agent', { name: 'Native' })).value
+  const rt = ctx.provided.get('omniTeam')
+  await rt.adoptAsBot(entry.id)
+  const original = structuredClone(rt.state.agents[entry.id])
+  const bot = rt.state.bots[entry.sessions[0]]
+  const save = rt.save
+  rt.save = async options => {
+    await ctx.dispose()
+    return save(options)
+  }
+  await assert.rejects(rt.rollbackAdoption(entry.id), /host stopped/)
+  assert.deepEqual(rt.state.agents[entry.id], original)
+  assert.equal(rt.state.bots[bot.id], bot)
+  assert.equal(rt.agentOf(bot.id), undefined)
+  assert.equal(rt.selfOf(bot.id), bot.id)
+  const saved = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))
+  assert.deepEqual(saved.agents[entry.id], original)
+  assert.deepEqual(saved.bots[bot.id], bot)
+})
+
+test('adoption refuses an original registration changed while its Session resolves', async (t) => {
+  const { call, stop, ctx } = start(TEAM)
+  t.after(stop)
+  await call('state', {})
+  const entry = (await call('add-agent', { name: 'Native' })).value
+  const rt = ctx.provided.get('omniTeam')
+  const resolve = rt.resolveAgent
+  rt.resolveAgent = async id => {
+    const live = await resolve(id)
+    delete rt.state.agents[entry.id]
+    return live
+  }
+  assert.match((await call('agent-bot-adopt', { agentId: entry.id })).error.message, /changed during adoption/)
+  assert.equal(rt.state.bots[entry.sessions[0]], undefined)
+})
+
+test('adopted preset backs new group/fresh Sessions and tasks; rollback refuses new team history', async (t) => {
+  const { call, stop, ctx, created } = start(TEAM)
+  t.after(stop)
+  await call('state', {})
+  ctx.provided.set('agentPresets', { serviceFor: () => undefined, list: async () => [{ id: 'standard' }, { id: 'cordis' }] })
+  const rt = ctx.provided.get('omniTeam')
+  const entry = (await call('add-agent', { name: 'Native', profile: 'cordis' })).value
+  await call('agent-bot-adopt', { agentId: entry.id })
+  const bot = rt.state.bots[entry.sessions[0]]
+  await rt.createSession('Native · group', { profile: bot.profile })
+  assert.equal(created.at(-1).agentPreset, 'cordis')
+  await rt.startTask({ title: 'Native task', text: 'Do it', from: bot.id })
+  assert.equal(created.at(-1).agentPreset, 'cordis')
+  assert.match((await call('agent-bot-rollback', { agentId: entry.id })).error.message, /new team history/)
+  assert.equal(rt.state.agents[entry.id].adoptedBotId, bot.id)
+})
+
+test('UI DSH creation adds native team membership usable by roster, messages, groups and browser', async (t) => {
+  const { call, stop, ctx, created } = start(TEAM, { config: {
+    browserPlugin: 'refs',
+    browserPluginApi: { id: 'refs', tools: [{ name: 'browser_native_test', needsBrowser: false, execute: async () => 'native browser ready' }] },
+  } })
+  t.after(stop)
+  await call('state', {})
+  const rt = ctx.provided.get('omniTeam')
+  const entry = (await call('add-agent', { name: 'Native newcomer', teamMember: true })).value
+  const bot = rt.findBot('Native newcomer')
+  assert.ok(bot)
+  assert.equal(bot.kind, 'dsh')
+  assert.equal(bot.pendingCreation, undefined)
+  assert.equal(entry.pendingCreation, undefined)
+  assert.equal(entry.adoptedBotId, bot.id)
+  assert.equal(rt.selfOf(entry.sessions[0]), bot.id)
+  assert.equal(created.length, 1)
+  assert.deepEqual((await call('state', {})).value.agents, [])
+  assert.match(await ctx.registeredTools.get('list_bots').execute({}, { agent: { id: 'm1' } }), /Native newcomer/)
+  const delivered = []
+  rt.deliver = async message => { delivered.push(message) }
+  await ctx.registeredTools.get('message_bot').execute({ to: bot.name, message: 'Welcome' }, { agent: { id: 'm1' } })
+  assert.equal(delivered[0].toId, bot.id)
+  const room = await rt.createRoom({ members: ['m1', bot.id], name: 'Native team' })
+  assert.ok(room.members.includes(bot.id))
+  assert.equal(await ctx.registeredTools.get('browser_native_test').execute({}, { agent: { id: bot.id }, signal: new AbortController().signal }), 'native browser ready')
+})
+
+test('UI DSH creation fails without leaving a plain orphan if membership cannot be saved', async (t) => {
+  const { call, stop, ctx, archived, home } = start(TEAM)
+  t.after(stop)
+  await call('state', {})
+  const rt = ctx.provided.get('omniTeam')
+  const save = rt.save
+  let failed = false
+  rt.save = async options => {
+    if (!failed && Object.values(rt.state.bots).some(bot => bot.kind === 'dsh')) {
+      failed = true
+      throw new Error('membership disk failure')
+    }
+    return save(options)
+  }
+  const result = await call('add-agent', { name: 'Native newcomer', teamMember: true })
+  assert.equal(result.ok, false)
+  assert.match(result.error.message, /membership disk failure/)
+  assert.equal(failed, true)
+  assert.deepEqual(rt.state.agents, {})
+  assert.equal(rt.findBot('Native newcomer'), undefined)
+  assert.equal(archived.length, 1)
+  assert.match(archived[0], /^session-/)
+  const saved = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))
+  assert.deepEqual(saved.agents, {})
+  assert.equal(Object.values(saved.bots).some(bot => bot.name === 'Native newcomer'), false)
+})
+
+test('failed membership archive retains a pending owned Session and restart cleans it up', async (t) => {
+  const first = start(TEAM)
+  t.after(first.stop)
+  await first.call('state', {})
+  const rt = first.ctx.provided.get('omniTeam')
+  const save = rt.save
+  let failed = false
+  rt.save = async options => {
+    if (!failed && Object.values(rt.state.bots).some(bot => bot.kind === 'dsh')) {
+      failed = true
+      throw new Error('membership disk failure')
+    }
+    return save(options)
+  }
+  first.failArchive.on = true
+  const result = await first.call('add-agent', { name: 'Pending newcomer', teamMember: true })
+  assert.equal(result.ok, false)
+  assert.match(result.error.message, /membership disk failure/)
+  assert.match(result.error.message, /session is running/)
+  const [pending] = Object.values(rt.state.agents)
+  assert.ok(pending)
+  assert.equal(pending.pendingCreation, true)
+  assert.equal(rt.agentOf(pending.sessions[0]), pending)
+  assert.equal(rt.findBot('Pending newcomer'), undefined)
+  assert.deepEqual(first.archived, [])
+  const disk = JSON.parse(readFileSync(join(first.home, 'state.json'), 'utf8'))
+  assert.deepEqual(disk.agents[pending.id], pending)
+  // A later agent resolution must still receive the standalone restriction.
+  const before = first.restricted.length
+  first.createdAgents({ agent: { session: { id: pending.sessions[0] }, ctx: { effect: execute => execute(), tools: { restrict: filter => { first.restricted.push({ sessionId: pending.sessions[0], filter }); return () => {} } } } } })
+  await rt.load()
+  await flush()
+  assert.ok(first.restricted.length > before)
+  await first.ctx.dispose()
+  const restarted = start(undefined, { home: first.home })
+  t.after(restarted.stop)
+  await restarted.call('state', {})
+  const recovered = restarted.ctx.provided.get('omniTeam')
+  assert.deepEqual(restarted.archived, [pending.sessions[0]])
+  assert.deepEqual(recovered.state.agents, {})
+  assert.deepEqual(JSON.parse(readFileSync(join(first.home, 'state.json'), 'utf8')).agents, {})
+})
+
+test('failed membership after real disposal keeps durable pending ownership until restart cleanup', async (t) => {
+  const first = start(TEAM)
+  t.after(first.stop)
+  await first.call('state', {})
+  const rt = first.ctx.provided.get('omniTeam')
+  const resolve = rt.resolveAgent
+  let resolutions = 0
+  rt.resolveAgent = async id => {
+    const live = await resolve(id)
+    if (++resolutions === 2) await first.ctx.dispose()
+    return live
+  }
+  const result = await first.call('add-agent', { name: 'Stopped newcomer', teamMember: true })
+  assert.equal(result.ok, false)
+  assert.match(result.error.message, /host stopped/)
+  const [pending] = Object.values(rt.state.agents)
+  assert.ok(pending)
+  assert.equal(pending.pendingCreation, true)
+  assert.equal(rt.agentOf(pending.sessions[0]), pending)
+  assert.deepEqual(first.archived, [])
+  const disk = JSON.parse(readFileSync(join(first.home, 'state.json'), 'utf8'))
+  assert.deepEqual(disk.agents[pending.id], pending)
+  assert.equal(Object.values(disk.bots).some(bot => bot.kind === 'dsh'), false)
+  const restarted = start(undefined, { home: first.home })
+  t.after(restarted.stop)
+  await restarted.call('state', {})
+  assert.deepEqual(restarted.archived, [pending.sessions[0]])
+  assert.deepEqual(restarted.ctx.provided.get('omniTeam').state.agents, {})
+  assert.deepEqual(JSON.parse(readFileSync(join(first.home, 'state.json'), 'utf8')).agents, {})
+})
+
+test('disposal during allocation preserves the reserved Session for restart cleanup', async (t) => {
+  const first = start(TEAM)
+  t.after(first.stop)
+  await first.call('state', {})
+  const rt = first.ctx.provided.get('omniTeam')
+  const create = first.ctx.sessionController.create
+  first.ctx.sessionController.create = async options => {
+    const created = await create(options)
+    await first.ctx.dispose()
+    return created
+  }
+  const result = await first.call('add-agent', { name: 'Allocation stop', teamMember: true })
+  assert.equal(result.ok, false)
+  assert.match(result.error.message, /Cleanup pending.*host stopped/)
+  const [pending] = Object.values(rt.state.agents)
+  assert.equal(pending.pendingCreation, true)
+  assert.equal(rt.agentOf(pending.sessions[0]), pending)
+  assert.deepEqual(first.archived, [])
+  assert.deepEqual(JSON.parse(readFileSync(join(first.home, 'state.json'), 'utf8')).agents[pending.id], pending)
+  const restarted = start(undefined, { home: first.home })
+  t.after(restarted.stop)
+  await restarted.call('state', {})
+  assert.deepEqual(restarted.archived, pending.sessions)
+  assert.deepEqual(restarted.ctx.provided.get('omniTeam').state.agents, {})
+})
+
+test('writer loss preserves pending ownership and writer restoration retries cleanup', async (t) => {
+  const first = start(TEAM)
+  t.after(first.stop)
+  await first.call('state', {})
+  const rt = first.ctx.provided.get('omniTeam')
+  const resolve = rt.resolveAgent
+  let resolutions = 0
+  rt.resolveAgent = async id => {
+    const live = await resolve(id)
+    if (++resolutions === 2) writeFileSync(join(first.home, 'state.lock'), JSON.stringify({ pid: process.pid, host: 'other-test-host', token: 'other-test-writer' }))
+    return live
+  }
+  const result = await first.call('add-agent', { name: 'Lost writer', teamMember: true })
+  assert.equal(result.ok, false)
+  assert.match(result.error.message, /Cleanup pending.*cannot save/)
+  const [pending] = Object.values(rt.state.agents)
+  assert.equal(pending.pendingCreation, true)
+  assert.equal(rt.agentOf(pending.sessions[0]), pending)
+  assert.deepEqual(first.archived, [])
+  assert.deepEqual(rt.dshBots.list(), [])
+  assert.deepEqual((await first.call('state', {})).value.agents, [])
+  await assert.rejects(rt.adoptAsBot(pending.id), /another dsh|cleanup is pending/)
+  // Only the test's own temporary foreign lock is removed to restore authority.
+  rmSync(join(first.home, 'state.lock'))
+  await rt.refresh()
+  await rt.load()
+  assert.deepEqual(first.archived, pending.sessions)
+  assert.deepEqual(rt.state.agents, {})
+  assert.deepEqual(JSON.parse(readFileSync(join(first.home, 'state.json'), 'utf8')).agents, {})
+})
+
+test('post-archive persistence failure retains intent and restart retries idempotently', async (t) => {
+  const first = start(TEAM)
+  t.after(first.stop)
+  await first.call('state', {})
+  const rt = first.ctx.provided.get('omniTeam')
+  const save = rt.save
+  let failed = false
+  rt.save = async options => {
+    if (!failed && Object.values(rt.state.bots).some(bot => bot.kind === 'dsh')) {
+      failed = true
+      throw new Error('membership disk failure')
+    }
+    if (first.archived.length > 0) throw new Error('cleanup disk failure')
+    return save(options)
+  }
+  const result = await first.call('add-agent', { name: 'Archive saved first', teamMember: true })
+  assert.equal(result.ok, false)
+  assert.match(result.error.message, /membership disk failure.*Cleanup pending.*cleanup disk failure/)
+  const [pending] = Object.values(rt.state.agents)
+  assert.equal(pending.pendingCreation, true)
+  assert.deepEqual(first.archived, pending.sessions)
+  assert.deepEqual(JSON.parse(readFileSync(join(first.home, 'state.json'), 'utf8')).agents[pending.id], pending)
+  await first.ctx.dispose()
+  const restarted = start(undefined, { home: first.home })
+  t.after(restarted.stop)
+  // Match DSH's real archive contract: an already archived identity succeeds.
+  restarted.ctx.workspaceRegistry.archiveSession = async id => { assert.ok(first.archived.includes(id)) }
+  await restarted.call('state', {})
+  assert.deepEqual(restarted.ctx.provided.get('omniTeam').state.agents, {})
+  assert.deepEqual(JSON.parse(readFileSync(join(first.home, 'state.json'), 'utf8')).agents, {})
+})
+
+test('unallocated reservation cleanup accepts only a matching native unknown-session error', async (t) => {
+  for (const matching of [true, false]) {
+    const first = start(TEAM)
+    t.after(first.stop)
+    await first.call('state', {})
+    const rt = first.ctx.provided.get('omniTeam')
+    first.ctx.sessionController.create = async () => { throw new Error('allocation refused') }
+    first.ctx.workspaceRegistry.archiveSession = async sessionId => {
+      const error = new Error('session is unknown')
+      error.name = 'WorkspaceUnknownSessionError'
+      error.sessionId = matching ? sessionId : 'unrelated'
+      throw error
+    }
+    const result = await first.call('add-agent', { name: 'Never allocated', teamMember: true })
+    assert.equal(result.ok, false)
+    assert.match(result.error.message, /allocation refused/)
+    if (matching) {
+      assert.doesNotMatch(result.error.message, /Cleanup pending/)
+      assert.deepEqual(rt.state.agents, {})
+      assert.deepEqual(JSON.parse(readFileSync(join(first.home, 'state.json'), 'utf8')).agents, {})
+    } else {
+      assert.match(result.error.message, /Cleanup pending.*session is unknown/)
+      assert.equal(Object.values(rt.state.agents)[0].pendingCreation, true)
+    }
+  }
+})
+
+// Native allocation is shared by both temporary runtimes, but its promise may
+// remain pending after the Session becomes known. No real service is started.
+async function overlapCreation(t, { disposed = false, reject = false, known = false, different = false, stale = false, claimed = false } = {}) {
+  const first = start(TEAM)
+  let next, release, operation
+  t.after(async () => { release?.(); await operation; if (next) await next.stop(); await first.stop() })
+  await first.call('state', {})
+  const rt = first.ctx.provided.get('omniTeam')
+  let enter
+  const entered = new Promise(resolve => { enter = resolve })
+  const gate = new Promise(resolve => { release = resolve })
+  t.after(() => release())
+  let allocated = false, reserved, actual
+  first.ctx.sessionController.create = async options => {
+    reserved = options.sessionId
+    actual = different ? 'native-different-session' : reserved
+    allocated = known
+    enter()
+    await gate
+    if (reject) throw new Error('native allocation rejected')
+    allocated = true
+    return { sessionId: actual }
+  }
+  operation = first.call('add-agent', { name: 'Overlapping newcomer', teamMember: true })
+  await entered
+  if (disposed) await first.ctx.dispose()
+  else rmSync(join(first.home, 'state.lock'))
+  next = start(undefined, { home: first.home })
+  next.ctx.workspaceRegistry.archiveSession = async id => {
+    if (!allocated || id !== actual) {
+      const error = new Error('native Session is absent')
+      error.name = 'WorkspaceUnknownSessionError'
+      error.sessionId = id
+      throw error
+    }
+    next.archived.push(id)
+  }
+  await next.call('state', {})
+  const successor = next.ctx.provided.get('omniTeam')
+  assert.equal(Object.values(successor.state.agents)[0]?.pendingCreation, true, 'an unfinished producer must retain durable ownership even when absent')
+  assert.deepEqual(next.archived, [], 'known Session must not archive before native create fully settles')
+  const lock = JSON.parse(readFileSync(join(first.home, 'state.lock'), 'utf8'))
+  writeFileSync(join(first.home, 'state.lock'), JSON.stringify({ ...lock, host: 'other-test-host' }))
+  if (claimed) {
+    const save = successor.save
+    let failed = false
+    successor.save = async options => {
+      if (!failed && next.archived.length > 0 && Object.keys(successor.state.agents).length === 0) {
+        failed = true
+        throw new Error('successor post-archive save failed')
+      }
+      return save(options)
+    }
+  }
+  if (stale) {
+    // The successor consumes the terminal receipt while the old producer enters
+    // its canonical refresh, then releases authority. The old producer must not
+    // resurrect or adopt the now-cleaned operation after reclaiming the lock.
+    const refresh = rt.refresh
+    rt.refresh = async () => {
+      await successor.refresh()
+      await next.ctx.dispose()
+      return refresh()
+    }
+  }
+  release()
+  const result = await operation
+  assert.equal(result.ok, false)
+  if (!stale) await successor.refresh()
+  if (claimed) {
+    assert.equal(Object.values(successor.state.agents)[0]?.creationCleanup, true)
+    assert.deepEqual(rt.state.agents, {})
+    assert.deepEqual(first.archived, [actual])
+  } else assert.deepEqual(successor.state.agents, {})
+  assert.deepEqual(next.archived, reject ? [] : [actual])
+  const saved = JSON.parse(readFileSync(join(first.home, 'state.json'), 'utf8'))
+  assert.deepEqual(saved.agents, {})
+  assert.equal(Object.values(saved.bots).some(bot => bot.name === 'Overlapping newcomer'), false)
+}
+
+test('terminal receipt protects takeover before late native allocation succeeds', async t => overlapCreation(t))
+test('terminal receipt protects takeover before late native allocation rejects', async t => overlapCreation(t, { reject: true }))
+test('terminal receipt protects real disposal overlapping late allocation', async t => overlapCreation(t, { disposed: true }))
+test('terminal receipt waits for known Session native creation tail', async t => overlapCreation(t, { known: true }))
+test('terminal receipt recovers a returned identity different from its reservation', async t => overlapCreation(t, { different: true }))
+test('terminal receipt prevents a stale producer from resurrecting consumed creation', async t => overlapCreation(t, { stale: true }))
+test('terminal receipt cleanup claim prevents readoption after successor post-archive save failure', async t => overlapCreation(t, { stale: true, claimed: true }))
+
+test('terminal receipt publication failure fails closed and remains explicitly pending', async (t) => {
+  const first = start(TEAM)
+  t.after(first.stop)
+  await first.call('state', {})
+  writeFileSync(join(first.home, 'agent-creations'), 'not a directory')
+  const result = await first.call('add-agent', { name: 'Receipt unavailable', teamMember: true })
+  assert.equal(result.ok, false)
+  assert.match(result.error.message, /receipt|ENOTDIR|EEXIST/)
+  assert.match(result.error.message, /Cleanup pending/)
+  assert.equal(Object.values(first.ctx.provided.get('omniTeam').state.agents)[0]?.pendingCreation, true)
+  assert.deepEqual(first.archived, [])
+})
+
+test('terminal receipt mismatch or malformed data cannot authorize cleanup', async (t) => {
+  for (const contents of ['{', JSON.stringify({ version: 1, token: 'unrelated', agentId: 'unrelated', reservedSessionId: 'unrelated', outcome: 'created', sessionId: 'm1' })]) {
+    const first = start(TEAM)
+    t.after(first.stop)
+    await first.call('state', {})
+    first.failArchive.on = true
+    const rt = first.ctx.provided.get('omniTeam')
+    const save = rt.save
+    let failed = false
+    rt.save = async options => {
+      if (!failed && Object.values(rt.state.bots).some(bot => bot.kind === 'dsh')) {
+        failed = true
+        throw new Error('membership refused')
+      }
+      return save(options)
+    }
+    await first.call('add-agent', { name: 'Invalid receipt', teamMember: true })
+    const [pending] = Object.values(rt.state.agents)
+    assert.ok(pending.creationToken)
+    const path = join(first.home, 'agent-creations', `${pending.creationToken}.json`)
+    const valid = readFileSync(path, 'utf8')
+    writeFileSync(path, contents)
+    first.failArchive.on = false
+    await rt.refresh()
+    assert.equal(rt.state.agents[pending.id], pending)
+    assert.deepEqual(first.archived, [])
+    writeFileSync(path, valid)
+    await rt.refresh()
+    assert.deepEqual(rt.state.agents, {})
+    assert.deepEqual(first.archived, pending.sessions)
+  }
+})
+
+test('terminal receipt unlink failure cannot turn durable membership into failed creation', async (t) => {
+  const first = start(TEAM)
+  t.after(first.stop)
+  await first.call('state', {})
+  const rt = first.ctx.provided.get('omniTeam')
+  const save = rt.save
+  let receiptPath, replaced = false
+  rt.save = async options => {
+    const pending = Object.values(rt.state.agents).find(agent => agent.pendingCreation === true)
+    if (typeof pending?.creationToken === 'string') receiptPath = join(first.home, 'agent-creations', `${pending.creationToken}.json`)
+    const result = await save(options)
+    if (!replaced && receiptPath !== undefined && rt.findBot('Durable member') !== undefined) {
+      replaced = true
+      assert.ok(receiptPath.startsWith(`${first.home}/agent-creations/`))
+      rmSync(receiptPath)
+      mkdirSync(receiptPath)
+    }
+    return result
+  }
+  const result = await first.call('add-agent', { name: 'Durable member', teamMember: true })
+  assert.equal(result.ok, true)
+  assert.equal(replaced, true)
+  assert.ok(rt.findBot('Durable member'))
+  for (const key of ['pendingCreation', 'creationToken', 'creationSessionId', 'creationCleanup']) {
+    assert.equal(result.value[key], undefined)
+    assert.equal(rt.findBot('Durable member')[key], undefined)
+  }
+  assert.deepEqual(first.archived, [])
+})
+
+test('terminal receipt cannot associate or archive another team identity', async (t) => {
+  const first = start(TEAM)
+  t.after(first.stop)
+  await first.call('state', {})
+  first.ctx.sessionController.create = async () => ({ sessionId: 'm1' })
+  const result = await first.call('add-agent', { name: 'Identity collision', teamMember: true })
+  assert.equal(result.ok, false)
+  assert.match(result.error.message, /already belongs to another team identity/)
+  assert.deepEqual(first.archived, [])
+  const rt = first.ctx.provided.get('omniTeam')
+  assert.equal(rt.state.bots.m1.name, 'Omni')
+  assert.equal(Object.values(rt.state.agents)[0].pendingCreation, true)
+})
+
+test('terminal failed receipt preserves structured native allocated identity', async (t) => {
+  const first = start(TEAM)
+  t.after(first.stop)
+  await first.call('state', {})
+  first.ctx.sessionController.create = async () => {
+    const error = new Error('workspace attach failed')
+    error.code = 'session/workspace-attach-failed'
+    error.details = { sessionId: 'native-allocated-before-attach-failed' }
+    throw error
+  }
+  const result = await first.call('add-agent', { name: 'Native attach failure', teamMember: true })
+  assert.equal(result.ok, false)
+  assert.match(result.error.message, /workspace attach failed/)
+  assert.deepEqual(first.archived, ['native-allocated-before-attach-failed'])
+  assert.deepEqual(first.ctx.provided.get('omniTeam').state.agents, {})
+})
 
 const TEAM = {
   version: 1,

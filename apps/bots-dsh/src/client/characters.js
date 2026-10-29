@@ -30,17 +30,15 @@ export const CHARACTERS = {
   ring: {body:'M48.1 4.3l8-.1 7.8 1.8 7.3 3.5 6.7 5.4 5.2 6.7 4.1 8.3 2.3 8.9 .7 9-1 9.5-2.5 8.9-4.1 8.3-5.3 7.3-6.6 6.1-7.3 4.5-7.8 2.7-8.4 .9-7.2-.8-7.3-2.5-6.7-4.1-5.6-5.3-4.5-6.5-3.5-7.8-2-8.4-.6-8.4 .9-8.9 2.2-8.4 3.5-7.8 4.9-7.2 5.8-6.1 6.3-4.5 7.1-3.3zM50.5 33.8l2.3-.3 1.7 .4 1.6 1.1 2 2.2 1.3 2.8 .8 2.7 .4 3.4-.1 3.3-1.4 6.2-3 5.6-2.2 2.4-2.2 1.6-2.3 1-2.2 .3-1.7-.4-1.6-1.1-2.8-3.7-1.5-5.2-.1-5.5 1.2-5.6 2.4-5 3.6-4z',shade:'M76.2 14.9l1.1-.5 3.4 3.8 2.8 3.9 2.3 4.5 1.6 3.9 1.6 5.6 1.1 8.3-.4 10.1-1.3 6.1-2.6 7.8-4.6 8.3-4.4 5.6-6.2 5.7-6.1 3.8-7.2 2.9-6.2 1.1-7.8-.1-7.2-1.7-3.9-1.6-4-2.2-5.5-4.5-2.8-3.4 1.7-.6 2.4-2.1 2-2.8 1.2-2.8 1.2-5 1.1-13.4 1.4-7.8 2.5-7.8 3.8-7.3 3.3-4.5 3.4-3.4 3.9-3.1 4.4-2.6 3.9-1.5 4.5-1.1 12.3-.9zM50.5 33.8l.6-.3 2.8 0 1.6 .9 2.7 2.8 3 1.4 3.3 .5 6.1 .2 3.9 .9 1.7 1 1.7 1.6 2.1 4.4 .7 4.5-.3 5-1.2 5-1.9 4.5-2.8 4.2-3.3 3.6-3.9 2.8-3.9 1.7-3.4 .6-3.3-.1-3.4-1.1-2.5-1.7-2.5-3-3.6-7-2.9-3.4-2.1-5-.6-5.6 .6-4.4 1-3.4 2.3-4.4 1.4-2.1 2.3-2.2 2.7-1.7z',light:'M41.1 5.9l.5 .1 .2 .5-.3 .6-12.4 13.3-13.1 18.1-2.3 2.1-1.1 0-.2-1.2 .2-2.8 1.6-5 4.6-8.3 3.9-5.1 4.4-4.4 4.5-3.4 5-2.8zM60.5 53.3l1.2-.3 1.1 .6 1.1 1.3 .8 1.8-.2 3.3-1.5 2.8-2 1.7-2.6 1-7.3 .2 2.2-1.4 2.6-2.6z',eyes:[[56.2,84.6,5.3,13.3,-6.8],[71.7,78.8,5.1,13.4,-6.5]]},
   gem: {body:'M57 9.3l2.9-.4 14.9 3.5 19.6 14.1 1 1.4 .6 1.6-.5 2.6-27.1 56.5-1.6 1.8-2.1 .7-15.9-3.4-42.9-30.7-1.3-1.6-.6-1.6 .5-2.6 12-25.2 1.1-1.5 1.5-1z',shade:'M75.7 14.6l.1-.4 .6 .2 16.9 12.3 1.1 .7 .5-.2 .5 .7 .6 2.6-.5 1.6-26.4 55.1-1.2 2.1-1.1 1.1-1.6 .6-2.1 0-14.3-3.3-42.8-30.7 1.5-.2 11.6 2.5 2.2-.7 2.8-2.6 11.9-24.9 .6-.8 38.2-14.2z',light:'M19.1 23.6l1.1-.4 .5 .5 11.7 2.2 1 .9-.2 .5-1.8 2.7-11.7 24.4-1.6 .6-13.3-2.8-.5-.5 12.1-25.4 1.2-1.7z',eyes:[[51.4,42.9,6.7,17.7,-10],[66.1,37.4,6.7,17.7,-10]]},
 }
-// The picker shows every character at once, six to a row. A Genie with no choice gets
-// one of the friendliest seven; DSH's own blue whale is the default of every other Bot
-// (DSH_LOOK below), so it wears its id's character instead of crowding that mark.
+// The picker shows every character at once, six to a row. Ordinary Bots keep their
+// id-based character; only DSH identities default to the blue whale (DSH_LOOK).
 export const PICKER_SHAPES = Object.keys(CHARACTERS)
 export const PICKER_COLUMNS = 6
 export const DEFAULT_SHAPES = ['star', 'moon', 'gumdrop', 'peanut', 'bunny', 'kitty', 'acorn']
 export const FALLBACK_SHAPE = 'gumdrop'
 // The team's first Main Bot, and the plugin's own mark in the sidebar.
 export const MAIN_LOOK = Object.freeze({ shape: 'octopus', color: 'deepseek' })
-// DSH's mark, and the default of a Bot with no look of its own: DSH backs every Bot, so
-// it wears DSH's blue whale until the user picks a character or a photo.
+// Existing whale asset, used only for DSH identities without a custom look.
 export const DSH_LOOK = Object.freeze({ shape: 'whale', color: 'blue' })
 // Character colors in picker order. Black, the gradients, and the dull gray and brown
 // are never defaults; the user must pick them.
@@ -68,16 +66,16 @@ export function defaultShape(id) {
   return DEFAULT_SHAPES[((value ^ (value >>> 16)) >>> 0) % DEFAULT_SHAPES.length]
 }
 
-// A Genie keeps its own art (the genie-cosmic pet) and the tinted look its id gives it.
-const keepsIdLook = bot => bot?.kind === 'genie'
+// Ordinary Bots (including Genie) retain the look their id gives them.
+const keepsIdLook = bot => bot?.kind !== 'dsh'
 
-// A stored color wins; then the DSH whale's blue, or, for a Genie, the id. With no Bot
+// A stored color wins; then the DSH whale's blue, or the ordinary Bot's id. With no Bot
 // it is a black gumdrop.
 export const colorOf = bot => (isColor(bot?.color) ? bot.color : bot?.id ? (keepsIdLook(bot) ? defaultColor(String(bot.id)) : DSH_LOOK.color) : 'black')
 export function lookOf(bot) {
   const avatar = bot?.avatar ?? {}
   return {
-    // A stored shape wins; a Bot with none wears DSH's whale, a Genie the id's character.
+    // A stored shape wins; only a DSH identity defaults to the whale.
     shape: hasShape(avatar.shape) ? avatar.shape : bot?.id ? (keepsIdLook(bot) ? defaultShape(String(bot.id)) : DSH_LOOK.shape) : FALLBACK_SHAPE,
     image: avatar.image,
     // A pet (pets.js) the Bot wears; a photo wins.

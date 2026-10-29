@@ -45,10 +45,11 @@ export function indexRoster(value) {
 // arrives, the ids cached from the last pull answer.
 export function isAgentSession(roster, cache, sessionId) {
   if (sessionId === undefined || sessionId === null || sessionId === '') return false
-  // A Bot's chat or a group chat is a team conversation, never a plain DSH Session,
-  // whatever an agent's session list once said: its conversation cells must stay the
-  // team's, or the group relay's replies fall back to DSH's own raw tool card.
-  if (roster.byId?.[sessionId] !== undefined || roster.roomsById?.[sessionId] !== undefined) return false
+  // Groups keep the team relay renderer. An adopted DSH Bot keeps DSH's native
+  // conversation surface; team membership does not replace its session identity.
+  if (roster.roomsById?.[sessionId] !== undefined) return false
+  const bot = roster.byId?.[sessionId]
+  if (bot !== undefined) return bot.kind === 'dsh'
   if (roster.ready) return roster.agentOf[sessionId] !== undefined
   return cache.has(sessionId)
 }

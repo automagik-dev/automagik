@@ -9067,12 +9067,12 @@ function defaultShape(id) {
   value = Math.imul(value ^ value >>> 13, 3266489909);
   return DEFAULT_SHAPES[((value ^ value >>> 16) >>> 0) % DEFAULT_SHAPES.length];
 }
-var keepsIdLook = (bot) => bot?.kind === "genie";
+var keepsIdLook = (bot) => bot?.kind !== "dsh";
 var colorOf = (bot) => isColor(bot?.color) ? bot.color : bot?.id ? keepsIdLook(bot) ? defaultColor(String(bot.id)) : DSH_LOOK.color : "black";
 function lookOf(bot) {
   const avatar = bot?.avatar ?? {};
   return {
-    // A stored shape wins; a Bot with none wears DSH's whale, a Genie the id's character.
+    // A stored shape wins; only a DSH identity defaults to the whale.
     shape: hasShape(avatar.shape) ? avatar.shape : bot?.id ? keepsIdLook(bot) ? defaultShape(String(bot.id)) : DSH_LOOK.shape : FALLBACK_SHAPE,
     image: avatar.image,
     // A pet (pets.js) the Bot wears; a photo wins.

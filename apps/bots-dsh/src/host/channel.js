@@ -73,7 +73,7 @@ export function install(rt) {
     sideChats: rt.sideView?.() ?? {},
     // The DSH bots (`kind: 'dsh'`) and the tasks record (`kind: 'tasks'`): plain dsh
     // Sessions, not Bots.
-    agents: Object.values(state.agents),
+    agents: Object.values(state.agents).filter(agent => agent.adoptedBotId === undefined && agent.pendingCreation !== true),
     // Key names and who may use them; values never leave the host.
     secrets: rt.secretsView(),
     capabilities: rt.capabilityLibraryView(),
@@ -335,6 +335,9 @@ export function install(rt) {
         case 'agent-bot-adopt':
           await rt.load()
           return ok(await rt.adoptAsBot(body.agentId))
+        case 'agent-bot-rollback':
+          await rt.load()
+          return ok(await rt.rollbackAdoption(body.agentId))
         case 'agent-archive':
           await rt.load()
           await rt.archiveAgentSession(body.agentId, body.sessionId)

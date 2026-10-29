@@ -10,7 +10,8 @@
 // a Bot hands off (start_task), which show under that Bot; when a task's first turn ends,
 // its last words go back to the Bot. Only a task whose Bot is gone shows under it.
 import { randomUUID } from 'node:crypto'
-import { isAbsolute } from 'node:path'
+import { link, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
+import { isAbsolute, join } from 'node:path'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { AGENT_NAME, AGENT_SESSION_TITLE_MAX, DSH_BOT_NAME_MAX, TEAM_TOOLS } from './constants.js'
@@ -30,7 +31,7 @@ export const TASKS = 'tasks'
 export function install(rt) {
   const { ctx, state } = rt
 
-  const dshBots = () => Object.values(state.agents).filter(agent => agent.kind === DSH_BOT)
+  const dshBots = () => Object.values(state.agents).filter(agent => agent.kind === DSH_BOT && agent.adoptedBotId === undefined && agent.pendingCreation !== true)
   const tasksRecord = () => Object.values(state.agents).find(agent => agent.kind === TASKS)
   // What other plugins read of a DSH bot; null is the team workspace and DSH's default preset.
   const listed = agent => ({ id: agent.id, name: agent.name, workDir: agent.workDir ?? null, profile: agent.profile ?? null })
@@ -69,6 +70,7 @@ export function install(rt) {
   rt.indexAgents = () => {
     sessionIndex.clear()
     for (const agent of Object.values(state.agents)) {
+      if (agent.adoptedBotId !== undefined) continue
       for (const sessionId of agent.sessions ?? []) sessionIndex.set(sessionId, agent.id)
     }
     const list = dshBots().map(listed)
@@ -166,13 +168,15 @@ export function install(rt) {
   const record = (agentId) => {
     const agent = rt.own(state.agents, agentId)
     if (agent === undefined) throw new Error('Unknown DSH bot')
+    if (agent.pendingCreation === true && !activeCreations.has(agent.id)) throw new Error('DSH team member creation failed; cleanup is pending')
+    if (agent.adoptedBotId !== undefined) throw new Error('This DSH bot is adopted; use its Bot chat or roll back adoption first')
     return agent
   }
 
   // A Session of a DSH bot starts in its folder with its preset; a task's comes from the caller.
-  async function createAgentSession(agentId, workspaceId, options = {}) {
+  async function createAgentSession(agentId, workspaceId, options = {}, creation) {
     writeCheck()
-    const agent = record(agentId)
+    let agent = record(agentId)
     if (agent.kind === DSH_BOT) {
       if (agent.workDir !== undefined && !(await rt.isFolder(agent.workDir))) throw new Error(`The folder ${agent.workDir} of ${agent.name} is gone. Pick another in its settings.`)
       options = { cwd: agent.workDir, agentPreset: agent.profile }
@@ -188,9 +192,32 @@ export function install(rt) {
       ? { cwd }
       : { workspaceId: typeof workspaceId === 'string' && ctx.workspaceRegistry.get(workspaceId) ? workspaceId : await rt.ensureWorkspace() }
     const preset = await servedPreset(agentPreset)
-    const { sessionId } = await ctx.sessionController.create({ ...place, ...(preset ? { agentPreset: preset } : {}) })
-    agent.sessions.push(sessionId)
-    await rt.save()
+    let sessionId
+    try {
+      if (creation !== undefined) creation.started = true
+      const created = await ctx.sessionController.create({ ...place, ...(preset ? { agentPreset: preset } : {}), ...(creation ? { sessionId: creation.reservedSessionId } : {}) })
+      sessionId = created.sessionId
+    } catch (error) {
+      if (creation !== undefined) {
+        // Native creation can allocate and then fail workspace attachment.
+        const actual = error?.code === 'session/workspace-attach-failed' ? error.details?.sessionId : undefined
+        await publishCreation(creation, 'failed', actual)
+      }
+      throw error
+    }
+    if (creation === undefined) agent.sessions.push(sessionId)
+    else {
+      await publishCreation(creation, 'created', sessionId)
+      // A terminal allocation is not permission to finish adoption. A successor
+      // may already have consumed this operation or durably claimed its cleanup.
+      await rt.refresh()
+      agent = currentCreation(creation)
+      await rt.save({ required: true })
+      agent = currentCreation(creation)
+      checkCreationSession(creation, sessionId)
+      agent.sessions = [sessionId]
+    }
+    await rt.save({ required: creation !== undefined })
     // agent/created fired before the session joined the index, so restrict again now.
     await restrictTeamTools(await rt.resolveAgent(sessionId))
     return sessionId
@@ -232,22 +259,170 @@ export function install(rt) {
     }
   }
 
+  // A failed opt-in creation remains owned but is never advertised as a usable
+  // standalone bot. Reserve its Session identity durably before asking DSH to
+  // allocate it, so even disposal during create leaves a discoverable retry.
+  const activeCreations = new Set()
+  const creationOf = agent => ({ token: agent.creationToken, agentId: agent.id, reservedSessionId: agent.creationSessionId })
+  const creationPath = (creation) => {
+    if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(creation.token ?? '')) throw new Error('Missing or invalid creation receipt token')
+    return join(rt.home, 'agent-creations', `${creation.token}.json`)
+  }
+  const validReceipt = (receipt, creation) => typeof creation.agentId === 'string' && creation.agentId.length > 0
+    && typeof creation.reservedSessionId === 'string' && creation.reservedSessionId.length > 0
+    && receipt?.version === 1 && receipt.token === creation.token
+    && receipt.agentId === creation.agentId && receipt.reservedSessionId === creation.reservedSessionId
+    && (receipt.outcome === 'created' || receipt.outcome === 'failed')
+    && (receipt.sessionId === undefined ? receipt.outcome === 'failed' : typeof receipt.sessionId === 'string' && receipt.sessionId.length > 0)
+  const readCreation = async (creation) => {
+    const receipt = JSON.parse(await readFile(creationPath(creation), 'utf8'))
+    if (!validReceipt(receipt, creation)) throw new Error('Creation receipt does not match this operation')
+    return receipt
+  }
+  async function publishCreation(creation, outcome, sessionId) {
+    creation.publishAttempted = true
+    const receipt = { version: 1, token: creation.token, agentId: creation.agentId, reservedSessionId: creation.reservedSessionId, outcome, ...(sessionId === undefined ? {} : { sessionId }) }
+    if (!validReceipt(receipt, creation)) throw new Error('Invalid terminal creation receipt')
+    const path = creationPath(creation)
+    const temp = `${path}.${randomUUID()}.tmp`
+    try {
+      await mkdir(join(rt.home, 'agent-creations'), { recursive: true, mode: 0o700 })
+      await writeFile(temp, JSON.stringify(receipt), { flag: 'wx', mode: 0o600 })
+      try {
+        // Publish a complete immutable fact, never overwrite another receipt.
+        // This operation alone is producer-owned even after team writer loss.
+        await link(temp, path)
+      } catch (error) {
+        if (error?.code !== 'EEXIST') throw error
+        const existing = await readCreation(creation)
+        if (existing.outcome !== outcome || existing.sessionId !== sessionId) throw new Error('Conflicting terminal creation receipt')
+      }
+    } catch (error) {
+      throw new Error(`Terminal creation receipt could not be published: ${error?.message ?? error}`, { cause: error })
+    } finally {
+      await unlink(temp).catch(error => { if (error?.code !== 'ENOENT') rt.warn('ds-bot: creation receipt temp cleanup failed: %s', error) })
+    }
+  }
+  const discardCreation = async (creation) => {
+    await unlink(creationPath(creation)).catch(error => { if (error?.code !== 'ENOENT') rt.warn('ds-bot: creation receipt cleanup failed: %s', error) })
+  }
+  const currentCreation = (creation, { cleanup = false } = {}) => {
+    const agent = state.agents[creation.agentId]
+    if (agent?.pendingCreation !== true || agent.creationToken !== creation.token || agent.creationSessionId !== creation.reservedSessionId
+      || (!cleanup && agent.creationCleanup === true)) throw new Error('This creation operation is no longer current or its cleanup was claimed')
+    return agent
+  }
+  const checkCreationSession = (creation, sessionId) => {
+    const owner = agentOf(sessionId)
+    if ((owner !== undefined && owner.id !== creation.agentId) || rt.botOf(sessionId) !== undefined || rt.selfOf(sessionId) !== undefined || rt.roomOf(sessionId) !== undefined) throw new Error('The allocated Session already belongs to another team identity')
+  }
+  async function cleanupCreation(original) {
+    const creation = creationOf(original)
+    // Re-read canonical state before saving anything: the producer may have lost
+    // and regained the lock after a successor already consumed this operation.
+    await refresh()
+    let agent = currentCreation(creation, { cleanup: true })
+    const receipt = await readCreation(creation)
+    await rt.save({ required: true })
+    agent = currentCreation(creation, { cleanup: true })
+    const sessionId = receipt.sessionId ?? creation.reservedSessionId
+    checkCreationSession(creation, sessionId)
+    agent.sessions = [sessionId]
+    agent.creationCleanup = true
+    // Claim cleanup durably before external archival; an old producer must never
+    // adopt this Session even if the post-archive deletion save later fails.
+    await rt.save({ required: true })
+    try {
+      await ctx.workspaceRegistry.archiveSession(sessionId)
+    } catch (error) {
+      // A matching terminal receipt proves absence is no longer a producer race.
+      if (error?.name !== 'WorkspaceUnknownSessionError' || error.sessionId !== sessionId) throw error
+    }
+    agent = currentCreation(creation, { cleanup: true })
+    const agents = state.agents
+    delete agents[agent.id]
+    try {
+      await rt.save({ required: true })
+    } catch (error) {
+      if (state.agents === agents && agents[agent.id] === undefined) agents[agent.id] = agent
+      rt.indexSessions()
+      throw error
+    }
+    await discardCreation(creation)
+  }
+  const load = rt.load
+  const refresh = rt.refresh
+  let recovering
+  const recoverCreations = async () => {
+    if (recovering !== undefined) return recovering
+    const pending = Object.values(state.agents).filter(agent => agent.pendingCreation === true && !activeCreations.has(agent.id))
+    if (pending.length === 0) return
+    recovering = (async () => {
+      for (const agent of pending) {
+        try {
+          await cleanupCreation(agent)
+        } catch (error) {
+          rt.warn('ds-bot: creation cleanup pending for %s: %s', agent.id, error)
+        }
+      }
+    })()
+    try { await recovering } finally { recovering = undefined }
+  }
+  rt.load = async () => { await load(); await recoverCreations() }
+  // Some later modules memoize load for their own startup. Refresh remains the
+  // request lifecycle retry point after writer authority or archival recovers.
+  rt.refresh = async () => { await refresh(); await recoverCreations() }
+
   async function addAgent(fields) {
     writeCheck()
-    const agent = { id: randomUUID(), kind: DSH_BOT, sessions: [], createdAt: Date.now() }
+    let agent = { id: randomUUID(), kind: DSH_BOT, sessions: [], createdAt: Date.now() }
     setFields(agent, await dshBotFields(fields))
+    const teamMember = fields?.teamMember === true
+    const creation = teamMember ? { token: randomUUID(), agentId: agent.id, reservedSessionId: `session-${randomUUID()}` } : undefined
+    if (teamMember) {
+      agent.pendingCreation = true
+      agent.creationToken = creation.token
+      agent.creationSessionId = creation.reservedSessionId
+      agent.sessions = [creation.reservedSessionId]
+    }
     state.agents[agent.id] = agent
+    activeCreations.add(agent.id)
     try {
-      await createAgentSession(agent.id)
-    } catch (error) {
-      // The first Session may already be created and saved: archive it and
-      // persist the rollback, or the DSH bot returns on restart with its team
-      // tools never denied.
-      const createdSessions = [...agent.sessions]
-      delete state.agents[agent.id]
-      for (const sessionId of createdSessions) await ctx.workspaceRegistry.archiveSession(sessionId).catch(() => {})
-      await rt.save().catch(() => {})
+      if (teamMember) await rt.save({ required: true })
+      await createAgentSession(agent.id, undefined, {}, creation)
+      if (teamMember) agent = currentCreation(creation)
+      // The UI creates a native DSH team member immediately. Legacy plugin callers
+      // keep the standalone DSH registration/session API unless they opt in.
+      if (teamMember) {
+        await adoptAsBot(agent.id)
+        await discardCreation(creation)
+      }
+    } catch (caught) {
+      let error = caught
+      if (teamMember) {
+        // No external invocation began, so this producer can attest no allocation.
+        // Never retry publication after a failed attempt or after consumption.
+        if (!creation.started && !creation.publishAttempted) {
+          try { await publishCreation(creation, 'failed') } catch (receiptError) { error = new Error(`${error?.message ?? error}; ${receiptError.message}`, { cause: error }) }
+        }
+        if (state.agents[agent.id]?.creationToken !== creation.token) throw error
+        try {
+          await cleanupCreation(agent)
+        } catch (cleanupError) {
+          rt.indexSessions()
+          throw new Error(`DSH team member creation failed: ${error?.message ?? error}. Cleanup pending for ${agent.id}: ${cleanupError?.message ?? cleanupError}; it will retry on the next load.`, { cause: error })
+        }
+      } else {
+        // Preserve the legacy standalone creation contract.
+        const createdSessions = [...agent.sessions]
+        delete state.agents[agent.id]
+        rt.indexSessions()
+        for (const sessionId of createdSessions) await ctx.workspaceRegistry.archiveSession(sessionId).catch(() => {})
+        await rt.save({ required: true }).catch(() => {})
+      }
       throw error
+    } finally {
+      activeCreations.delete(agent.id)
     }
     return agent
   }
@@ -310,11 +485,10 @@ export function install(rt) {
     await rt.save()
   }
 
-  // A DSH bot the user wants on the team becomes a Bot: its newest Session is the Bot's
-  // own chat and the earlier ones its earlier parts, so the conversation, folder and name
-  // carry over untouched, and nothing is renamed. From then on the team treats it as every
-  // other Bot: `list_bots` and the sidebar show it, `message_bot` reaches it, it can join a
-  // group, take capabilities and start tasks, and its Session gets the team tools back.
+  // Adoption adds a team membership to the DSH identity, not a replacement identity.
+  // Its newest Session is the own chat and earlier ones remain readable parts. Keep
+  // the original registration for undo, preserve native preset/appearance/capabilities,
+  // and lift only our team-tool restrictions after the membership is safely saved.
   async function adoptAsBot(agentId) {
     writeCheck()
     const agent = record(agentId)
@@ -329,11 +503,29 @@ export function install(rt) {
     const chatId = sessions.at(-1)
     // A Session DSH can no longer open is refused before anything moves; the resolved
     // agent is the one whose team-tools restriction adoption lifts below.
+    const before = JSON.stringify(agent)
     const live = await rt.resolveAgent(chatId)
+    if (agent.pendingCreation === true) {
+      const creation = creationOf(agent)
+      await readCreation(creation)
+      await rt.refresh()
+      if (currentCreation(creation) !== agent) throw new Error('The creation operation changed during membership resolution')
+      await rt.save({ required: true })
+      if (currentCreation(creation) !== agent) throw new Error('The creation operation changed before membership persistence')
+    }
+    if (state.agents[agentId] !== agent || JSON.stringify(agent) !== before) throw new Error('The DSH bot changed during adoption; try again')
+    if (agent.adoptedBotId !== undefined || rt.findBot(name) !== undefined || rt.botOf(chatId) !== undefined) throw new Error('The DSH bot or name is already adopted')
     const earlier = sessions.slice(0, -1)
+    // DSH's persisted request header is also the fresh-part route source (parts.js).
+    const route = live.session?.requestHeader?.()?.config
     const now = Date.now()
     state.bots[chatId] = {
+      ...(route?.provider && route?.model ? { model: `${route.provider}/${route.model}` } : {}),
+      ...(route?.reasoningEffort ? { effort: route.reasoningEffort } : {}),
+      ...agent,
       id: chatId,
+      dshAgentId: agentId,
+      kind: DSH_BOT,
       name,
       role: '',
       instructions: '',
@@ -341,15 +533,63 @@ export function install(rt) {
       ...(agent.pinned === true ? { pinned: true } : {}),
       createdAt: agent.createdAt ?? now,
       createdBy: null,
-      capabilities: [],
+      capabilities: [...(agent.capabilities ?? [])],
       // The DSH bot's other Sessions stay readable as the Bot's earlier parts.
       ...(earlier.length === 0 ? {} : { segments: earlier.map(sessionId => ({ sessionId, endedAt: now })) }),
     }
-    delete state.agents[agentId]
-    for (const sessionId of earlier) restrictionLifts.delete(sessionId)
-    await rt.save()
-    liftRestriction(chatId, live)
+    // Keep the original registration intact for rollback, but out of the standalone
+    // roster and restriction index. Only persist before changing live tool access.
+    delete state.bots[chatId].sessions
+    const creationFields = {}
+    for (const key of ['pendingCreation', 'creationToken', 'creationSessionId', 'creationCleanup']) {
+      delete state.bots[chatId][key]
+      if (agent[key] !== undefined) creationFields[key] = agent[key]
+      delete agent[key]
+    }
+    agent.adoptedBotId = chatId
+    try {
+      await rt.save({ required: true })
+    } catch (error) {
+      delete state.bots[chatId]
+      delete agent.adoptedBotId
+      Object.assign(agent, creationFields)
+      rt.indexSessions()
+      await rt.save({ required: true }).catch(() => {})
+      throw error
+    }
+    for (const sessionId of sessions) {
+      const resolved = sessionId === chatId ? live : await rt.resolveAgent(sessionId).catch(() => undefined)
+      liftRestriction(sessionId, resolved)
+    }
     return { botId: chatId }
+  }
+
+  // An explicit, non-destructive undo, not deleteBot (which archives conversations).
+  // Refuse after new team history is created rather than silently discarding it.
+  async function rollbackAdoption(agentId) {
+    writeCheck()
+    const original = rt.own(state.agents, agentId)
+    const bot = state.bots[original?.adoptedBotId]
+    if (bot?.dshAgentId !== agentId) throw new Error('No adoption to roll back')
+    const parts = [ ...(bot.segments ?? []).map(part => part.sessionId), rt.chatOf(bot.id) ]
+    if (rt.isMain(bot.id) || Object.values(state.rooms).some(room => room.members.includes(bot.id))
+      || JSON.stringify(parts) !== JSON.stringify(original.sessions)
+      || Object.values(state.tasks ?? {}).some(task => task.from === bot.id)) {
+      throw new Error('Remove Main Bot/group roles and resolve new team history before rolling back adoption')
+    }
+    delete state.bots[bot.id]
+    delete original.adoptedBotId
+    try {
+      await rt.save({ required: true })
+    } catch (error) {
+      state.bots[bot.id] = bot
+      original.adoptedBotId = bot.id
+      rt.indexSessions()
+      await rt.save({ required: true }).catch(() => {})
+      throw error
+    }
+    for (const sessionId of original.sessions) await restrictTeamTools(await rt.resolveAgent(sessionId))
+    return { agentId }
   }
 
   // The tasks record, made when the first task starts.
@@ -411,7 +651,8 @@ export function install(rt) {
   // `roomId`: the group whose Session asked for the task. Its result goes back to that
   // group, where the user saw the request, not to the Bot's own chat.
   async function startTask({ title, text, from, cwd, agentPreset, roomId }) {
-    const sessionId = await createTaskSession(title, { cwd, agentPreset })
+    const caller = state.bots?.[from]
+    const sessionId = await createTaskSession(title, { cwd: cwd ?? caller?.workDir, agentPreset: agentPreset ?? caller?.profile })
     tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}) }
     // Only the newest tasks are remembered for their reports.
     const kept = Object.entries(tasks()).sort(([, a], [, b]) => b.at - a.at)
@@ -525,5 +766,5 @@ export function install(rt) {
     },
   }))
 
-  Object.assign(rt, { agentOf, addAgent, updateAgent, presets, createAgentSession, adoptAgentSession, adoptAsBot, archiveAgentSession, renameAgentSession, removeAgent, createTaskSession, startTask })
+  Object.assign(rt, { agentOf, addAgent, updateAgent, presets, createAgentSession, adoptAgentSession, adoptAsBot, rollbackAdoption, archiveAgentSession, renameAgentSession, removeAgent, createTaskSession, startTask })
 }
