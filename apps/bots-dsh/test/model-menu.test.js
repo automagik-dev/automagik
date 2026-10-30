@@ -37,6 +37,12 @@ runInNewContext(bundle.outputFiles[0].text, {
 })
 const { groupModels, greetingOnly, ModelChoiceDock, ModelLine, ModelLineTail, ModelMenu, effortRows } = module.exports
 
+// ModelMenu picks the menu a Bot gets (DSH's models, or its plugin's): draw the one it picked.
+const drawMenu = (props) => {
+  const picked = ModelMenu(props)
+  return picked.type(picked.props)
+}
+
 function nodes(tree, match) {
   if (!tree || typeof tree !== 'object') return []
   return [...(match(tree) ? [tree] : []), ...(tree.children ?? []).flatMap(child => nodes(child, match))]
@@ -85,14 +91,14 @@ test('the model line names the model and its provider, and "change" opens the mo
   const [menu] = nodes(line, node => node.type === ModelMenu)
   assert.equal(menu.props.link, true)
   // Closed, the trigger is the "change" link.
-  const closed = ModelMenu(menu.props)
+  const closed = drawMenu(menu.props)
   const [trigger] = nodes(closed, node => node.type === 'button')
   assert.equal(trigger.children[0], 'change')
   assert.equal(trigger.props['aria-haspopup'], 'menu')
   // Open, the menu lists the models and leads to the providers.
   menuOpen = true
   try {
-    const open = ModelMenu({ ...menu.props, actions: { openHarnessSettings: () => {} } })
+    const open = drawMenu({ ...menu.props, actions: { openHarnessSettings: () => {} } })
     const items = nodes(open, node => node.type === 'button').map(button => button.children.map(child => (typeof child === 'string' ? child : nodes(child, n => n.props.className === 'bt-menu-label')[0]?.children[0] ?? '')).join(''))
     assert.equal(nodes(open, node => node.type?.name === 'ModelRows')[0].props.current, 'claude-code/opus')
     assert.ok(items.includes('Models and providers…'))
@@ -206,4 +212,76 @@ test('a window without DSH settings asks for the missing API key in the first ch
   const [card] = nodes(tree, node => node.props.model !== undefined)
   assert.equal(card.props.model.provider, 'official')
   assert.equal(nodes(tree, node => node.props.className === 'bt-model-chips').length, 0)
+})
+
+// A Bot whose model menu its plugin owns: rows come only from the state's `hostModels`.
+const HOST = {
+  entries: [
+    { id: 'granite', label: 'Granite 4.1 3B', group: 'Unfold', privacy: { kind: 'local', device: 'Mac' }, answering: true },
+    { id: 'deepseek', label: 'DeepSeek V4.1 Flash', group: 'Unfold', current: true, privacy: { kind: 'direct', provider: 'DeepSeek', memories: true }, levels: [{ id: 'auto', name: 'Auto' }, { id: 'off', name: 'Off' }, { id: 'high', name: 'High' }] },
+    { id: 'openai-codex/gpt-5.5', label: 'GPT-5.5', group: 'Unfold Automagik', privacy: { kind: 'relay', provider: 'ChatGPT', via: 'Unfold Automagik', device: 'Mac' }, confirm: true },
+  ],
+  level: 'auto',
+  status: { kind: 'after-reply' },
+}
+const hostBot = { id: 'unfold', name: 'Unfold', kind: 'unfold', model: 'luna/gpt-5.6' }
+const hostRoster = (menu = HOST) => ({ ready: true, byId: { unfold: hostBot }, models, hostModels: { unfold: menu } })
+// ModelMenu hands a host-owned Bot to the host menu: draw that one.
+const drawHost = drawMenu
+
+test('a host-owned Bot\'s menu lists only the plugin\'s entries, says where each goes, and its levels as given', () => {
+  const picked = []
+  menuOpen = true
+  try {
+    const tree = drawHost({ bot: hostBot, roster: hostRoster(), actions: { updateBot: (id, patch) => { picked.push([id, patch]); return Promise.resolve() } }, run: promise => promise })
+    const rows = nodes(tree, node => node.type === 'button' && node.props.role === 'menuitemradio')
+    const labels = rows.map(row => nodes(row, node => node.props.className === 'bt-menu-label')[0].children[0])
+    // No DSH catalog model, no Default row: the plugin's entries, then its levels.
+    assert.deepEqual(labels, ['Granite 4.1 3B', 'DeepSeek V4.1 Flash', 'GPT-5.5', 'Auto', 'Off', 'High'])
+    const details = nodes(tree, node => node.props.className === 'bt-host-model-detail').map(node => node.children[0])
+    assert.deepEqual(details, [
+      'Stays on this Mac.',
+      'Your message and the memories recalled for it go to DeepSeek.',
+      'Your message goes to ChatGPT through Unfold Automagik; memories stay on this Mac.',
+    ])
+    assert.deepEqual(rows.map(row => row.props['aria-checked']), [false, true, false, true, false, false])
+    // The tick is the pick; the row that still answers says so.
+    assert.equal(nodes(rows[0], node => node.props.className === 'bt-menu-hint')[0].children[0], 'Answering now')
+    assert.equal(nodes(tree, node => node.props.role === 'status')[0].children[0], 'Switching after this reply…')
+    assert.equal(nodes(tree, node => node.props.className === 'bt-model-provider')[0].children[0], 'Switching after this reply…')
+    rows[0].props.onClick()
+    rows[5].props.onClick()
+    // The current entry and the current level change nothing.
+    rows[1].props.onClick()
+    rows[3].props.onClick()
+    assert.equal(JSON.stringify(picked), JSON.stringify([['unfold', { model: 'granite' }], ['unfold', { effort: 'high' }]]))
+  } finally {
+    menuOpen = false
+  }
+})
+
+test('a host-owned Bot never gets the DSH model dock or the greeting\'s model line', () => {
+  const tree = ModelChoiceDock({ sessionId: 'unfold', useRoster: select => select(hostRoster()), actions: { updateBot: () => Promise.resolve() } })
+  assert.equal(tree, null)
+  const line = ModelLineTail({
+    turn: { turn: 1 }, sessionId: 'unfold', actions: {},
+    useRoster: select => select(hostRoster()),
+    useSessions: select => select({ byId: { unfold: { projectionValues: { turnOutline: [{ turn: 1, prompt: '' }] } } } }),
+  })
+  assert.equal(line, null)
+  // Without the plugin's menu the same Bot is an ordinary one again.
+  const props = { bot: hostBot, actions: {}, run: p => p }
+  assert.equal(ModelMenu({ ...props, roster: { ready: true, byId: { unfold: hostBot }, models } }).type.name, 'DshModelMenu')
+  assert.equal(ModelMenu({ ...props, roster: hostRoster() }).type.name, 'HostModelMenu')
+})
+
+test('the trigger names the picked entry, its group and level, and a fallback says who answers', () => {
+  const trigger = (menu) => {
+    const tree = drawHost({ bot: hostBot, roster: hostRoster(menu), actions: {}, run: p => p })
+    const copy = nodes(tree, node => node.props.className === 'bt-model-copy')[0]
+    return copy.children.filter(Boolean).map(node => node.children[0])
+  }
+  assert.deepEqual(trigger({ ...HOST, status: undefined }), ['DeepSeek V4.1 Flash', 'Unfold · Auto'])
+  assert.deepEqual(trigger({ ...HOST, status: { kind: 'fallback', answering: 'Granite 4.1 3B' } }), ['DeepSeek V4.1 Flash', 'Granite 4.1 3B answers for now'])
+  assert.deepEqual(trigger({ entries: [], loading: true }), ['Choose a model'])
 })

@@ -3,6 +3,7 @@
 // user picks one in its chat. The Session keeps the selection durably.
 import { isClaudeCode } from '../shared/permission-levels.js'
 import { normalize, splitRef } from './text.js'
+import { install as installHostModels } from './host-models.js'
 
 const CATALOG_TTL_MS = 10_000
 const ROUTE_WAIT_MS = 30_000
@@ -39,6 +40,9 @@ export function currentClaudeModels(entries, keep = new Set()) {
 
 export function install(rt) {
   const { ctx, state } = rt
+  // Bots a plugin answers for on its own engine (host-models.js) never run on a DSH model.
+  installHostModels(rt)
+  const onDsh = bot => !rt.hostOwned(bot)
 
   let modelsSynced = null
   let catalogCache = { at: 0, value: [] }
@@ -83,7 +87,7 @@ export function install(rt) {
         })
       }
     }
-    const used = new Set(Object.values(state.bots ?? {}).flatMap(bot => [bot.model, bot.appliedModel].filter(Boolean)))
+    const used = new Set(Object.values(state.bots ?? {}).filter(onDsh).flatMap(bot => [bot.model, bot.appliedModel].filter(Boolean)))
     const entries = currentClaudeModels(listed, used)
     // DSH serves a provider's models whether or not its key is set; without one, every
     // turn on them fails.
@@ -151,7 +155,7 @@ export function install(rt) {
   // A Bot with no model yet waits for the user to pick one and changes nothing. A
   // model that is no longer served falls back to the last one it ran on, then the default.
   async function desiredModel(bot) {
-    if (!bot.model) return undefined
+    if (!bot.model || !onDsh(bot)) return undefined
     const entries = await catalog()
     const served = new Set(entries.map(entry => entry.ref))
     return [bot.model, bot.appliedModel].find(ref => ref && served.has(ref)) ?? pickDefault(entries)
@@ -243,7 +247,7 @@ export function install(rt) {
   async function waitForModel(bot, ms = ROUTE_WAIT_MS) {
     const deadline = Date.now() + ms
     for (;;) {
-      if (!bot.model) return undefined
+      if (!bot.model || !onDsh(bot)) return undefined
       catalogCache = { at: 0, value: [] }
       const served = new Set((await catalog()).map(entry => entry.ref))
       if (served.has(bot.model) || Date.now() >= deadline) return desiredModel(bot)

@@ -318,6 +318,14 @@ export function install(rt) {
   async function updateBot(id, patch, actorId, fromSessionId) {
     const bot = rt.botOf(id)
     if (bot === undefined) throw new Error('Unknown Bot')
+    // A Bot whose model menu its plugin owns (host-models.js): the model and level are the
+    // plugin's, picked by the person only; the rest of the patch goes on as for any Bot.
+    if (rt.hostOwned?.(bot) && (patch.model !== undefined || patch.effort !== undefined)) {
+      await rt.pickHostModel(bot, { id: patch.model, effort: patch.effort, ack: patch.ack }, actorId)
+      const { model: _model, effort: _effort, ack: _ack, ...rest } = patch
+      if (Object.keys(rest).every(key => key === 'id')) return bot
+      patch = rest
+    }
     const policyPatch = contextPatch(patch)
     const policyOnly = Object.keys(patch).every(key => key === 'id' || Object.hasOwn(policyPatch, key))
     if (patch.browserGrants !== undefined && actorId !== undefined) {

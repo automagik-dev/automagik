@@ -6,6 +6,7 @@ import { BotMark } from './mark.js'
 import { KeyIcon, MaskedInput } from './secret-card.js'
 import { SPRING_POP, SPRING_SHAPE, spring, useLinger, useViewport, viewBottom } from './motion.js'
 import { hostText, t } from './i18n.js'
+import { HostModelMenu } from './host-model-menu.js'
 
 const MENU_EXIT_MS = 120
 
@@ -145,7 +146,12 @@ export function useAnchoredMenu() {
 // levels of the shown model when it has them.
 // `onPick`/`onPickEffort` replace saving to the Bot, for a Bot that does not exist yet.
 // `link`: the trigger is a small "change" link, as in the line under a Bot's greeting.
-export function ModelMenu({ bot, roster, actions, run, wide = false, link = false, onPick, onPickEffort }) {
+// A Bot whose model menu its plugin owns gets that menu instead (host-model-menu.js).
+export function ModelMenu(props) {
+  return h(props.roster?.hostModels?.[props.bot?.id] === undefined ? DshModelMenu : HostModelMenu, props)
+}
+
+function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, onPick, onPickEffort }) {
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu()
   const shown = modelOf(bot, roster)
   const current = bot.model ?? bot.appliedModel
@@ -232,6 +238,7 @@ export function ModelLineTail({ turn, sessionId, useRoster, useSessions, actions
   const [error, setError] = useState('')
   const bot = roster.byId[sessionId]
   if (!bot || currentPart(bot) !== sessionId || first === null || first !== turn?.turn) return null
+  if (roster.hostModels?.[bot.id] !== undefined) return null
   if (!bot.model || !(roster.models ?? []).some(model => model.ref === bot.model)) return null
   const run = promise => Promise.resolve(promise).then(() => { setError(''); return true }, (failure) => { setError(failure?.message ?? String(failure)); return false })
   return h('div', { className: 'bt-model-tail' },
@@ -248,9 +255,11 @@ export function ModelChoiceDock({ sessionId, useRoster, actions }) {
   const bot = roster.byId[sessionId]
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
-  const shown = Boolean(bot) && currentPart(bot) === sessionId && roster.ready
+  // A Bot whose model its plugin picks never waits for a DSH model.
+  const hosted = roster.hostModels?.[bot?.id] !== undefined
+  const shown = Boolean(bot) && currentPart(bot) === sessionId && roster.ready && !hosted
   useEffect(() => { if (shown) void actions.refreshModels?.() }, [shown, sessionId])
-  if (!bot || currentPart(bot) !== sessionId || !roster.ready) return null
+  if (!shown) return null
   const models = roster.models ?? []
   // A model whose provider has no API key fails every turn, so it is no choice.
   const usable = models.filter(model => !model.needsKey)
@@ -401,6 +410,10 @@ export const MODEL_CSS = `
 .bt-model-tick{flex:none;width:16px;height:16px;display:inline-flex;color:var(--bt-ink-2)}
 .bt-model-tick svg{animation:bt-check-pop ${SPRING_POP.duration}ms ${SPRING_POP.easing} 60ms backwards}
 .bt-model-none{padding:8px;font-size:13px;line-height:18px;color:var(--bt-ink-2)}
+.bt-host-model-copy{display:flex;flex-direction:column;flex:1;min-width:0}
+.bt-host-model-detail{font-size:11px;line-height:14px;color:var(--bt-ink-3);white-space:normal}
+.bt-host-model-status{padding:2px 8px 6px;font-size:12px;line-height:16px;color:var(--bt-ink-2)}
+.bt-host-model-confirm{flex:none;color:var(--bt-accent);font-size:12px;font-weight:600}
 .bt-model-dock{width:100%;max-width:var(--dsh-chat-content-width,748px);margin:0 auto;display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:0 0 10px;box-sizing:border-box;animation:bt-model-in ${SPRING_POP.duration}ms ${SPRING_POP.easing} backwards}
 .bt-model-chips{display:flex;flex-wrap:wrap;gap:6px;margin-left:30px;max-width:min(560px,calc(100% - 30px));max-height:min(240px,36vh);max-height:min(240px,36dvh);overflow-y:auto;scrollbar-width:thin}
 .bt-model-choice-group{display:flex;flex-direction:column;gap:6px;width:100%;min-width:0}

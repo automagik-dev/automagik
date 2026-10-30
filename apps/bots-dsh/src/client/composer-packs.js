@@ -21,6 +21,8 @@
 //
 // ComposerTarget: { provider, model, ref, bot, reasoning } for the Bot the Session
 // belongs to; `reasoning` is `{ efforts, defaultEffort? }` when the model serves levels.
+// A Bot whose model menu its plugin owns (the state's `hostModels`) is `{ bot, host }`
+// instead, with no provider: `host` is that menu.
 //
 // CellChoice, or a function `(target) => CellChoice`:
 //   'hidden'  Omni keeps the cell empty (its default for every cell);
@@ -45,6 +47,8 @@ export const providerOfRef = ref => (typeof ref === 'string' && ref.includes('/'
 export function targetOf(roster, sessionId) {
   const bot = sessionId === undefined ? undefined : roster?.byId?.[sessionId]
   if (bot === undefined) return undefined
+  const host = roster.hostModels?.[bot.id]
+  if (host !== undefined) return { provider: undefined, bot, host }
   const ref = bot.model ?? bot.appliedModel
   const provider = providerOfRef(ref)
   if (provider === undefined) return undefined
@@ -108,7 +112,15 @@ export const THINKING_PACK = Object.freeze({
   cells: Object.freeze({ model: 'model' }),
 })
 
-export const BUILTIN_PACKS = [CLAUDE_CODE_PACK, THINKING_PACK]
+// A Bot whose model menu its plugin owns: that menu, whatever DSH model it was saved with.
+export const HOST_MODEL_PACK = Object.freeze({
+  id: 'host-model',
+  order: -1000,
+  match: (_provider, target) => target?.host !== undefined,
+  cells: Object.freeze({ model: 'model' }),
+})
+
+export const BUILTIN_PACKS = [HOST_MODEL_PACK, CLAUDE_CODE_PACK, THINKING_PACK]
 
 // Whether Omni steps aside from a cell of the Session in the main view: its pack says
 // 'host', and the control the pack steps aside for is registered there.

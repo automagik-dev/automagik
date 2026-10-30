@@ -108,6 +108,8 @@ export function install(rt) {
     connectors: rt.connectorsView(),
     capabilityStatuses: rt.capabilityStatusesView(),
     ...rt.extended.live(),
+    // Per Bot whose model menu a plugin owns, that menu (host-models.js); absent otherwise.
+    ...rt.hostModelsView?.(),
     // Channels moved to their own plugin: a team linked to an Omni (omni.json, which that
     // plugin keeps, or the older omni.url on this row) whose DSH has only this plugin
     // learns where they went.
@@ -180,6 +182,7 @@ export function install(rt) {
           if (body.since === state.revision && (body.models === undefined || body.models === modelsKey())) return ok({ revision: state.revision, unchanged: true, ...live() })
           return ok({ ...view(), ...live() })
         case 'models':
+          await rt.refreshHostModels?.()
           await rt.catalog({ fresh: true })
           return ok({ modelsKey: modelsKey() })
         case 'efforts':

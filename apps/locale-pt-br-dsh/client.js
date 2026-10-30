@@ -2059,7 +2059,21 @@ const pack = createPack({
     "Context controls": "Controles de contexto",
     "Open Live": "Abrir Ao vivo",
     "Right sidebar": "Barra lateral direita",
-    "Toggle right sidebar": "Alternar barra lateral direita"
+    "Toggle right sidebar": "Alternar barra lateral direita",
+    "computer": "computador",
+    "Stays on this {device}.": "Fica neste {device}.",
+    "Your message and the memories recalled for it go to {provider}.": "Sua mensagem e as memórias recuperadas para responder vão para {provider}.",
+    "Your message goes to {provider}.": "Sua mensagem vai para {provider}.",
+    "Your message goes to {provider} through {via}; memories stay on this {device}.": "Sua mensagem vai para {provider} por meio de {via}; as memórias ficam neste {device}.",
+    "Switching after this reply…": "Troca depois desta resposta…",
+    "Switching…": "Trocando…",
+    "{model} answers for now": "{model} responde por enquanto",
+    "Answering now": "Respondendo agora",
+    "Auto": "Automático",
+    "Off": "Desligado",
+    "Low": "Baixo",
+    "High": "Alto",
+    "Max": "Máximo"
   },
   "permission.access": {
     "mode": "Modo de acesso, atual: {name}",
