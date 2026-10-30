@@ -79,22 +79,28 @@ export function manifestOf(app) {
 }
 
 // GET and HEAD, as DSH's static files answer.
-function answer(type, body) {
+function answer(type, body, headers = {}) {
   return async (req, res) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405, { allow: 'GET, HEAD' })
       return res.end()
     }
-    res.writeHead(200, { 'content-type': type })
+    res.writeHead(200, { 'content-type': type, ...headers })
     res.end(req.method === 'HEAD' ? undefined : body)
   }
+}
+
+// The icon is served as the type its extension names, never sniffed; an SVG opened on its own
+// runs no script and loads nothing.
+function iconHeaders(type) {
+  return { 'x-content-type-options': 'nosniff', ...(type === ICON_TYPES['.svg'] ? { 'content-security-policy': "default-src 'none'" } : {}) }
 }
 
 /** Exact webServer routes: the manifest and its icon. */
 export function appRoutes(app) {
   return [
     { kind: 'exact', path: MANIFEST_PATH, handler: answer(MANIFEST_TYPE, Buffer.from(JSON.stringify(manifestOf(app), null, 2))) },
-    { kind: 'exact', path: app.icon.path, handler: answer(app.icon.type, app.icon.body) },
+    { kind: 'exact', path: app.icon.path, handler: answer(app.icon.type, app.icon.body, iconHeaders(app.icon.type)) },
   ]
 }
 
@@ -112,9 +118,19 @@ export function install(rt) {
   const app = appOf(rt.config, { warn: (line) => rt.warn?.('omni-ui: %s', line) })
   if (!app) return
   ctx.inject(['webServer'], (web) => {
+    if (web.webServer === undefined) return
     web.effect(() => {
-      const disposers = [...appRoutes(app).map((route) => web.webServer.register(route)), web.webServer.tapIndex(titleTap(app.name))]
-      return () => disposers.forEach((dispose) => dispose())
+      // All or nothing: a route that fails to register (a duplicate path) releases the ones before it.
+      const disposers = []
+      const release = () => disposers.splice(0).reverse().forEach((dispose) => dispose())
+      try {
+        for (const route of appRoutes(app)) disposers.push(web.webServer.register(route))
+        disposers.push(web.webServer.tapIndex(titleTap(app.name)))
+      } catch (error) {
+        release()
+        throw error
+      }
+      return release
     }, 'omni-ui: the web app name')
   })
 }

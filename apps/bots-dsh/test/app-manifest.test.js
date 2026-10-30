@@ -36,9 +36,10 @@ function fakeWebServer() {
   }
 }
 
-async function withRuntime(config, run) {
+// `server` is the webServer handed to the plugin: a fake by default, `null` for a host without one.
+async function withRuntime(config, run, { server = fakeWebServer() } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'omni-app-manifest-'))
-  const web = fakeWebServer()
+  const web = server ?? undefined
   const ctx = fakeContext()
   const warnings = []
   ctx.logger = { info() {}, warn: (...args) => warnings.push(args.slice(1).join(' ')) }
@@ -148,4 +149,30 @@ test('appManifest false keeps DSH\'s own name, where unset names the page "Autom
     assert.equal(web.renderIndex(DSH_INDEX), DSH_INDEX)
     assert.deepEqual(warnings, [])
   })
+})
+
+test('the icon is never sniffed, and an SVG icon runs no script and loads nothing', async () => {
+  await withRuntime({}, async ({ web }) => {
+    const png = await call(web.exact.get('/omni-ui/app-icon.png'))
+    assert.deepEqual(png.headers, { 'content-type': 'image/png', 'x-content-type-options': 'nosniff' })
+  })
+  await withRuntime((home) => {
+    writeFileSync(join(home, 'mark.svg'), SVG)
+    return { appManifest: { name: 'Unfold Automagik', short_name: 'Unfold', icon: join(home, 'mark.svg') } }
+  }, async ({ web }) => {
+    const svg = await call(web.exact.get('/omni-ui/app-icon.svg'))
+    assert.deepEqual(svg.headers, { 'content-type': 'image/svg+xml', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'" })
+  })
+})
+
+test('registration is all or nothing, and a host without webServer gets nothing and no error', async () => {
+  // Another plugin already holds the icon's path: the manifest route registered before it is released.
+  const web = fakeWebServer()
+  const other = { kind: 'exact', path: '/omni-ui/app-icon.png', handler: async () => {} }
+  web.register(other)
+  await assert.rejects(withRuntime({}, async () => {}, { server: web }), /duplicate exact route "\/omni-ui\/app-icon.png"/)
+  assert.deepEqual([...web.exact.keys()], ['/omni-ui/app-icon.png'])
+  assert.equal(web.exact.get('/omni-ui/app-icon.png'), other)
+  assert.equal(web.taps.length, 0)
+  await withRuntime({}, async ({ warnings }) => assert.deepEqual(warnings, []), { server: null })
 })
