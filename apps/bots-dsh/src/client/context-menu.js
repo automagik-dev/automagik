@@ -29,6 +29,17 @@ export function ContextMenu({ menu, roster, actions, leaving = false }) {
   const isMainBot = isMainOf(roster, menu.id)
   const isTile = roster.mainBotId === menu.id
   const mainCount = (roster.mainBotIds ?? []).length
+  // An adopted original is still a Bot record, but the host refuses deleting it until
+  // adoption is rolled back. Offer that supported undo instead of an action that fails.
+  const adopted = bot?.dshAgentId !== undefined
+  // The host also refuses rollback while the Bot is Main, remains a member of any group,
+  // or owns tasks/new team history. Do not offer an action that is guaranteed to fail.
+  const adoptedRoom = adopted
+    ? Object.values(roster.roomsById ?? {}).find(room => (room.members ?? []).includes(bot.id))
+    : undefined
+  const adoptedTask = adopted ? Object.values(roster.tasks ?? {}).some(task => task.from === bot.id) : false
+  const rollbackBlocked = isMainBot ? 'main' : adoptedRoom !== undefined ? 'groups' : adoptedTask ? 'tasks' : undefined
+  const canRollback = adopted && rollbackBlocked === undefined
   const groups = [
     [
       isTile ? null : [entry.pinned ? t('Unpin') : t('Pin'), PinIcon, () => actions.setFlags(menu.id, { pinned: !entry.pinned })],
@@ -50,16 +61,27 @@ export function ContextMenu({ menu, roster, actions, leaving = false }) {
     ],
     [
       isMainBot ? null : [t('Hide from sidebar'), HideIcon, () => actions.setFlags(menu.id, { hidden: true })],
-      isMainBot ? null : [room ? t('Delete group') : t('Delete'), TrashIcon, () => (bot ? actions.deleteBot(bot.id) : actions.deleteRoom(menu.id)), true],
+      isMainBot || adopted ? null : [room ? t('Delete group') : t('Delete'), TrashIcon, () => (bot ? actions.deleteBot(bot.id) : actions.deleteRoom(menu.id)), true],
+      // Only a confirmed rollback whose host preconditions are visible as met is offered.
+      canRollback ? [t('Roll back DSH adoption…'), TrashIcon, () => {
+        const warning = t('Roll back this adoption? This deletes the Bot record and any settings changed after adoption; the original DSH bot and its session return.')
+        if (typeof window.confirm !== 'function' || !window.confirm(warning)) return
+        return actions.rollbackAdoption(bot.dshAgentId)
+      }, false, 'bt-menu-note'] : null,
     ],
   ].map(group => group.filter(Boolean)).filter(group => group.length > 0)
   return h('div', { ref, className: 'bt-menu', role: 'menu', 'aria-label': t('{name} actions', { name: bot?.name ?? room.name }), style: place, 'data-leaving': leaving || undefined },
     groups.map((group, index) => h(Fragment, { key: index },
       index > 0 ? h('div', { className: 'bt-menu-sep', role: 'separator' }) : null,
-      group.map(([label, Icon, run, danger]) => h('button', {
+      group.map(([label, Icon, run, danger, describedBy]) => h('button', {
         key: label, type: 'button', role: 'menuitem', className: danger ? 'bt-danger' : undefined,
+        'aria-describedby': describedBy,
         onClick: () => { actions.closeMenu(); void Promise.resolve(run()).catch(error => actions.reportError(error, 'menu')) },
-      }, h(Icon), label)))))
+      }, h(Icon), label)))),
+    adopted ? h('div', { className: 'bt-menu-note', id: 'bt-menu-note', role: 'presentation' },
+      rollbackBlocked !== undefined
+        ? t('Rollback is unavailable until this Bot leaves all groups, is not a Main Bot, and has no tasks or new team history. Delete is also unavailable for an adopted original.')
+        : t('Rolling back removes this Bot and any settings changed after adoption; the original DSH bot and its session return. A confirmation is required.')) : null)
 }
 
 // Menus for a DSH bot row (or the tasks row) and its Sessions; none of the Bot entries apply.

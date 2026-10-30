@@ -100,6 +100,7 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     folderList: path => call('folder-list', { path: path ?? '' }),
     setTeamWorkspace: path => after(call('team-workspace', { path })),
     deleteBot: id => after(call('delete-bot', { id })),
+    rollbackAdoption: agentId => after(call('agent-bot-rollback', { agentId })),
     duplicateBot: id => after(call('duplicate-bot', { id })),
     setPrefs: prefs => after(call('set-prefs', prefs)),
     setMain: (id, main = true, options = {}) => after(call('set-main', { id, main, ...options })),

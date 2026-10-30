@@ -467,6 +467,12 @@ var ZH = {
   "A copy with the same job and model, and fresh memory.": "复制分工和模型，记忆从零开始。",
   "Delete {name}?": "删除 {name}？",
   "Delete Bot": "删除 Bot",
+  "Roll back DSH adoption…": "回滚 DSH 领养…",
+  "Delete is unavailable for an adopted original. Rolling back restores the original DSH bot and its session; remove group roles and resolve new team history first.": "已领养的原 Bot 不能直接删除。回滚后会恢复原 DSH Bot 及其会话；请先移除群组角色并处理新的团队历史。",
+  "Remove the Main Bot role before rolling back this adoption.": "回滚此领养前，请先移除主 Bot 角色。",
+  "Roll back this adoption? This deletes the Bot record and any settings changed after adoption; the original DSH bot and its session return.": "回滚此领养？这会删除该 Bot 记录及其领养后修改的设置；原 DSH Bot 及其会话将恢复。",
+  "Rollback is unavailable until this Bot leaves all groups, is not a Main Bot, and has no tasks or new team history. Delete is also unavailable for an adopted original.": "此 Bot 退出所有群组、不再是主 Bot，且没有任务或新的团队历史之前，无法回滚。已领养的原 Bot 也不能直接删除。",
+  "Rolling back removes this Bot and any settings changed after adoption; the original DSH bot and its session return. A confirmation is required.": "回滚会移除该 Bot 及领养后修改的设置；原 DSH Bot 及其会话将恢复。需要确认。",
   "Click again to delete. Its chats are archived.": "再点一次删除，它的对话会归档。",
   "Removes the Bot from the team.": "把这个 Bot 从团队里移除。",
   "Pick a model and {name} can start.": "选好模型，{name} 就能开始工作。",
@@ -9578,6 +9584,7 @@ function teamActions({ call: call2, after, partFor, roster, ui: ui2, live, cards
     folderList: (path) => call2("folder-list", { path: path ?? "" }),
     setTeamWorkspace: (path) => after(call2("team-workspace", { path })),
     deleteBot: (id) => after(call2("delete-bot", { id })),
+    rollbackAdoption: (agentId) => after(call2("agent-bot-rollback", { agentId })),
     duplicateBot: (id) => after(call2("duplicate-bot", { id })),
     setPrefs: (prefs) => after(call2("set-prefs", prefs)),
     setMain: (id, main = true, options = {}) => after(call2("set-main", { id, main, ...options })),
@@ -10346,6 +10353,7 @@ button:hover .bt-you{background:color-mix(in srgb,var(--bt-ink) 9%,var(--bt-side
 .bt-menu[data-leaving]{pointer-events:none;animation:bt-pop-out .12s cubic-bezier(.4,0,1,1) forwards}
 .bt-menu-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bt-menu-hint{flex:none;color:var(--bt-ink-3);font-size:12px;font-variant-numeric:tabular-nums}
+.bt-menu-note{max-width:260px;padding:4px 8px 6px;color:var(--bt-ink-2);font-size:12px;line-height:16px;white-space:normal;box-sizing:border-box}
 .bt-palette-layer{position:fixed;inset:var(--dsh-frame-chrome-top,0px) 0 0;z-index:70;pointer-events:auto;font-family:var(--bt-font)}
 .bt-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.46);animation:bt-fade .22s ease-out}
 .bt-palette{position:absolute;top:50%;left:50%;width:min(560px,92vw);transform:translate(-50%,-50%);display:flex;flex-direction:column;border-radius:12px;background:var(--bt-main);border:1px solid var(--bt-line-2);box-shadow:0 24px 48px -12px rgba(0,0,0,.25);overflow:hidden;color:var(--bt-ink);animation:bt-palette-in ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing},bt-veil-in .2s ease-out}
@@ -19864,6 +19872,11 @@ function ContextMenu({ menu, roster, actions, leaving = false }) {
   const isMainBot = isMainOf(roster, menu.id);
   const isTile = roster.mainBotId === menu.id;
   const mainCount = (roster.mainBotIds ?? []).length;
+  const adopted = bot?.dshAgentId !== void 0;
+  const adoptedRoom = adopted ? Object.values(roster.roomsById ?? {}).find((room3) => (room3.members ?? []).includes(bot.id)) : void 0;
+  const adoptedTask = adopted ? Object.values(roster.tasks ?? {}).some((task) => task.from === bot.id) : false;
+  const rollbackBlocked = isMainBot ? "main" : adoptedRoom !== void 0 ? "groups" : adoptedTask ? "tasks" : void 0;
+  const canRollback = adopted && rollbackBlocked === void 0;
   const groups = [
     [
       isTile ? null : [entry.pinned ? t("Unpin") : t("Pin"), PinIcon, () => actions.setFlags(menu.id, { pinned: !entry.pinned })],
@@ -19888,7 +19901,13 @@ function ContextMenu({ menu, roster, actions, leaving = false }) {
     ],
     [
       isMainBot ? null : [t("Hide from sidebar"), HideIcon, () => actions.setFlags(menu.id, { hidden: true })],
-      isMainBot ? null : [room2 ? t("Delete group") : t("Delete"), TrashIcon, () => bot ? actions.deleteBot(bot.id) : actions.deleteRoom(menu.id), true]
+      isMainBot || adopted ? null : [room2 ? t("Delete group") : t("Delete"), TrashIcon, () => bot ? actions.deleteBot(bot.id) : actions.deleteRoom(menu.id), true],
+      // Only a confirmed rollback whose host preconditions are visible as met is offered.
+      canRollback ? [t("Roll back DSH adoption…"), TrashIcon, () => {
+        const warning = t("Roll back this adoption? This deletes the Bot record and any settings changed after adoption; the original DSH bot and its session return.");
+        if (typeof window.confirm !== "function" || !window.confirm(warning)) return;
+        return actions.rollbackAdoption(bot.dshAgentId);
+      }, false, "bt-menu-note"] : null
     ]
   ].map((group) => group.filter(Boolean)).filter((group) => group.length > 0);
   return (0, import_react58.createElement)(
@@ -19898,17 +19917,23 @@ function ContextMenu({ menu, roster, actions, leaving = false }) {
       import_react58.Fragment,
       { key: index },
       index > 0 ? (0, import_react58.createElement)("div", { className: "bt-menu-sep", role: "separator" }) : null,
-      group.map(([label, Icon, run2, danger]) => (0, import_react58.createElement)("button", {
+      group.map(([label, Icon, run2, danger, describedBy]) => (0, import_react58.createElement)("button", {
         key: label,
         type: "button",
         role: "menuitem",
         className: danger ? "bt-danger" : void 0,
+        "aria-describedby": describedBy,
         onClick: () => {
           actions.closeMenu();
           void Promise.resolve(run2()).catch((error) => actions.reportError(error, "menu"));
         }
       }, (0, import_react58.createElement)(Icon), label))
-    ))
+    )),
+    adopted ? (0, import_react58.createElement)(
+      "div",
+      { className: "bt-menu-note", id: "bt-menu-note", role: "presentation" },
+      rollbackBlocked !== void 0 ? t("Rollback is unavailable until this Bot leaves all groups, is not a Main Bot, and has no tasks or new team history. Delete is also unavailable for an adopted original.") : t("Rolling back removes this Bot and any settings changed after adoption; the original DSH bot and its session return. A confirmation is required.")
+    ) : null
   );
 }
 function AgentMenu({ menu, roster, actions, leaving }) {
