@@ -2,21 +2,14 @@ import { createElement as h, useEffect, useState } from 'react'
 import { BotMark } from './mark.js'
 import { workPhrase } from './cells.js'
 import { endLabel } from './task-card.js'
-import { chatRoom } from './browser-pane.js'
 import { t } from './i18n.js'
 
 // -------------------------------------------------------------------------
-// The Live rail (direction C): the right of the bench, whenever a team chat is open and the
-// details panel is not. What needs you first (approvals, and tasks waiting on you), then what
-// runs (Bots at work, their tasks), then the tasks that just ended with what they came to,
-// then the way to the scheduled tasks. Each entry opens where it is answered or watched.
-
-export const RAIL_W = 320
-// Narrower than this, the conversation keeps the room and the rail stays away.
-// The rail shows while the conversation's own column (DSH's centre cell, between the sidebar and
-// DSH's right panel) is this wide: the chat keeps 560px beside it. A 1180px window with the
-// sidebar open has 900.
-export const RAIL_MIN_ROOM = 880
+// Live content belongs to the native tab: the sidebar owns all geometry and focus.
+export function LiveTab({ useRoster, ...props }) {
+  const roster = useRoster(value => value)
+  return h(LiveRail, { ...props, roster })
+}
 const ENDED_SHOWN = 3
 const ENDED_FOR_MS = 6 * 60 * 60 * 1000
 
@@ -99,11 +92,6 @@ export function LiveRail({ roster, actions, useWork }) {
     const timer = setInterval(() => setNow(Date.now()), 30_000)
     return () => clearInterval(timer)
   }, [])
-  // The conversation makes room for the rail while it is up (see browser-pane.js chatRoom).
-  useEffect(() => {
-    chatRoom.set(RAIL_W)
-    return () => chatRoom.set(null)
-  }, [])
   const live = liveOf(work, roster, now)
   return h('aside', { className: 'bt-live', 'aria-label': t('Live') },
     h('div', { className: 'bt-live-top' },
@@ -127,7 +115,7 @@ export function LiveRail({ roster, actions, useWork }) {
 }
 
 export const LIVE_CSS = `
-.bt-live{box-sizing:border-box;position:fixed;top:0;right:0;bottom:0;width:${RAIL_W}px;z-index:5;display:flex;flex-direction:column;gap:6px;padding:20px 20px;overflow-y:auto;background:var(--bt-main);border-left:1px solid var(--bt-line-2);font-family:var(--bt-font);color:var(--bt-ink)}
+.bt-live{box-sizing:border-box;width:100%;height:100%;min-width:0;display:flex;flex-direction:column;gap:6px;padding:20px;overflow-y:auto;background:var(--bt-main);font-family:var(--bt-font);color:var(--bt-ink)}
 .bt-live-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:8px}
 .bt-live-title{font:700 20px/26px var(--bt-head-font,var(--bt-font));letter-spacing:-.01em;margin:0}
 .bt-live-sum{font-size:12px;line-height:16px;color:var(--bt-ink-2);text-align:right}

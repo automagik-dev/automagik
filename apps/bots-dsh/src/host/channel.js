@@ -117,7 +117,7 @@ export function install(rt) {
   // Updates change the dsh profile, not the team, so a reading host may run them too.
   const privacy = createPrivacy()
   const pets = createPets({ home: () => rt.home, warn: (...args) => rt.warn?.(...args) })
-  const READS = new Set(['privacy', 'pets', 'pets-browse', 'image-access', 'image-progress', 'state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'agent-presets', 'avatar-library'])
+  const READS = new Set(['privacy', 'pets', 'pets-browse', 'image-access', 'image-progress', 'state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'context-status', 'usage-stats', 'memory-review-status', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'agent-presets', 'avatar-library'])
 
   function setPrefs(body) {
     if (body.theme !== undefined) {
@@ -237,6 +237,22 @@ export function install(rt) {
         case 'chat':
           await rt.load()
           return ok(await rt.chatPage(String(body.botId ?? ''), body.cursor ?? undefined))
+        // Advanced queries never activate a Session or run a model. The usage query
+        // may refresh its own derived ledger; checkpoint is deliberately NOT a read.
+        case 'context-status':
+          await rt.load()
+          return ok(await rt.contextStatus(body.botId))
+        case 'usage-stats':
+          await rt.load()
+          return ok(await rt.usageStats(body.botId, { sessionId: body.sessionId }))
+        case 'memory-review-status':
+          await rt.load()
+          if (typeof body.botId !== 'string' || body.botId === '') return fail('A Bot id is required', 'bot/invalid')
+          if (rt.botOf(body.botId) === undefined) return fail('Unknown Bot', 'bot/not-found')
+          return ok(rt.memoryReviewStatus(body.botId))
+        case 'checkpoint-bot':
+          await rt.load()
+          return ok(await rt.checkpointBot(body.botId, { sessionId: body.sessionId }))
         // DSH's own whole-log figures for the current part of a Bot's chat, the ones its
         // status bar shows; a window without that bar shows them in the Bot's details.
         case 'run-stats': {

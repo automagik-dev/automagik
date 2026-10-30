@@ -18,8 +18,10 @@ test('a model without a window counts as the default, and odd settings fall back
   for (const checkRatio of [0, 1, 1.5, -1, 'x', undefined]) {
     assert.equal(linesFor({ window: 100_000, reserve: 0, checkRatio }).check, 80_000, String(checkRatio))
   }
-  // The check line never passes the hard line.
-  assert.equal(linesFor({ window: 100_000, reserve: 0, checkRatio: 0.99 }).check, 95_000)
+  // A soft setting cannot reach the protected hard line; invalid legacy
+  // settings fall back rather than becoming a second hard-line control.
+  assert.equal(linesFor({ window: 100_000, reserve: 0, checkRatio: 0.99 }).check, 80_000)
+  assert.equal(linesFor({ window: 100_000, reserve: 0, checkRatio: 0.95 }).hard, 95_000)
 })
 
 test('the steward\'s answer is read from its JSON, and nothing else counts', () => {

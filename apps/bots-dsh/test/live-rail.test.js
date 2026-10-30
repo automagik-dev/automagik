@@ -11,11 +11,13 @@ const bundle = await build({
   external: ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives'],
 })
 const module = { exports: {} }
+const effects = []
+const timers = []
 runInNewContext(bundle.outputFiles[0].text, {
   module, exports: module.exports,
   require: (name) => {
     const platform = {
-      react: { createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) }), useState: initial => [initial, () => {}], useEffect: () => {}, useRef: initial => ({ current: initial }), useLayoutEffect: () => {}, useMemo: fn => fn(), useCallback: fn => fn, useSyncExternalStore: () => undefined, Fragment: 'fragment', forwardRef: fn => fn, memo: fn => fn, createContext: () => ({}), useContext: () => undefined },
+      react: { createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) }), useState: initial => [initial, () => {}], useEffect: effect => effects.push(effect), useRef: initial => ({ current: initial }), useLayoutEffect: () => {}, useMemo: fn => fn(), useCallback: fn => fn, useSyncExternalStore: () => undefined, Fragment: 'fragment', forwardRef: fn => fn, memo: fn => fn, createContext: () => ({}), useContext: () => undefined },
       'react-dom': { createPortal: node => node },
       '@deepseek-ai/dsh-client-ui-primitives': {},
     }
@@ -23,8 +25,24 @@ runInNewContext(bundle.outputFiles[0].text, {
     return platform[name]
   },
   document: undefined, window: undefined, Date, Math, JSON, Intl, setTimeout, clearTimeout,
+  setInterval: (_tick, ms) => { timers.push(ms); return 'live-timer' }, clearInterval: id => timers.push(id),
 })
-const { liveOf, liveSummary } = module.exports
+const { liveOf, liveSummary, LiveRail, LiveTab, LIVE_CSS } = module.exports
+
+test('native Live body takes its container room with no fixed rail or width reservation', () => {
+  const roster = { byId: {}, tasks: {} }
+  const body = LiveRail({ roster, actions: {}, useWork: select => select({}) })
+  assert.equal(body.type, 'aside')
+  assert.equal(body.props['aria-label'], 'Live')
+  assert.equal(effects.length, 1, 'only the relative-time timer, no chatRoom geometry effect')
+  const release = effects[0](); release()
+  assert.deepEqual(timers, [30000, 'live-timer'])
+  assert.doesNotMatch(LIVE_CSS, /position:fixed|width:320px|right:0/)
+  assert.match(LIVE_CSS, /width:100%;height:100%;min-width:0/)
+  const tab = LiveTab({ useRoster: select => select(roster), actions: {} })
+  assert.equal(tab.type, LiveRail)
+  assert.equal(tab.props.roster, roster)
+})
 // Cross-realm values compare by their plain JSON.
 const plain = value => JSON.parse(JSON.stringify(value))
 

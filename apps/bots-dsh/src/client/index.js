@@ -6,7 +6,8 @@ import { badges, botChildren, botSettings, chatSuggestions, composerPacks, heade
 import { BUILTIN_PACKS, packCellSync, stepsAside } from './composer-packs.js'
 import { COMPOSER_PACK_CSS, packModelCell } from './composer-pack-cells.js'
 import { agentRowSessions, TASK_CSS } from './task-card.js'
-import { LIVE_CSS } from './live-rail.js'
+import { LIVE_CSS, LiveTab } from './live-rail.js'
+import { advancedBot, installLiveTab, installSimpleControls, sidebarActions } from './native-sidebar.js'
 import { LAMP_CSS } from './lamp.js'
 import { isHex, inkText, paintCss } from './inks.js'
 import { CHARACTERS, DEFAULT_MASK, MAIN_LOOK, SHAPES, markupCache, maskOf } from './characters.js'
@@ -17,7 +18,7 @@ import { MENTION_ORIGIN, currentPart, relativeShort } from './text.js'
 import { SHELL_CSS, CONVERSATION_CSS, installStyles, installCompiledStyles } from './styles.js'
 import { BotMark, lookOf } from './mark.js'
 import { TeamSidebar, ChannelsMoved, YouAvatar, AccountLauncher, FooterAccount, BrandMark, BrandName, BotReturn, SIDEBAR_CSS, RETURN_CSS, holdShellShortcuts, openHarnessOnboarding, openHarnessSettings } from './sidebar.js'
-import { HeaderPill } from './header.js'
+import { HeaderPill, NativeBotHeader, NativeControlsNote } from './header.js'
 import { ComposerPlus, ComposerVoice, menuIcons } from './composer.js'
 import { CHATS_SOURCE, atSources } from './at-menu.js'
 import { BtwDock, BtwTurnTail } from './btw.js'
@@ -34,7 +35,7 @@ import { IMAGE_CELL_CSS } from './image-cell.js'
 import { TeamApproval, TEAM_APPROVAL_CSS, isTeamApproval } from './team-approval.js'
 import { AnsweredReply, WidgetDock, WIDGET_CSS } from './widget-cell.js'
 import { HandoffDock, HANDOFF_CSS } from './handoff-card.js'
-import { installHeaderNavigation } from './header-navigation.js'
+import { headerNavigation, installHeaderNavigation } from './header-navigation.js'
 import { AssistantCell, TriggerCell, TurnProcessCell, Nothing, TurnTailCell, ToolCell } from './cells.js'
 import { Overlays } from './overlays.js'
 import { createBotBrowsers, serveBrowserReads } from './bot-browsers.js'
@@ -815,7 +816,30 @@ export function apply(ctx) {
   const shadow = (name, options, component) => ctx.slots.inject(name, () => ctx.slots.register({
     name, ...options, ...(options.priority === undefined ? {} : { priority: freePriority(ctx.slots.entries(name), options) }),
   }, component))
-  const installHeader = () => ctx.slots.inject('conversation.session.header', () => installHeaderNavigation(ctx.slots, face, HeaderPill, BOT_PRIORITY))
+  const controlSession = () => {
+    const sidebar = ctx.get('sidebarRight')
+    return sidebar ? sidebar.mounted.getSnapshot() : mainView()
+  }
+  const controlSources = () => [ctx.sessions.list, ctx.get('sidebarRight')?.mounted]
+  const simpleOnly = install => installSimpleControls({ roster, sources: controlSources(), sessionId: controlSession, install })
+  const installHeader = () => simpleOnly(() => ctx.slots.inject('conversation.session.header', () => installHeaderNavigation(ctx.slots, face, HeaderPill, BOT_PRIORITY)))
+  Object.assign(actions, sidebarActions({ sidebar: () => ctx.get('sidebarRight'), shown: mainView,
+    teamSession: id => { const state = roster.getSnapshot(); return Boolean(state.byId[id] || state.roomsById[id] || state.tasks?.[id]) },
+    closePanel: () => actions.closePanel(), reportError: (...args) => actions.reportError(...args) }))
+  // These annotations only affect this plugin's scoped styles, never execution policy.
+  const installAdvancedStyle = () => {
+    const sync = () => {
+      document.body.toggleAttribute('data-bt-advanced', advancedBot(roster.getSnapshot(), controlSession()) !== null)
+    }
+    const offs = [roster, ...controlSources()].filter(Boolean).map(source => source.subscribe(sync))
+    sync()
+    return () => { for (const off of offs) off(); document.body.removeAttribute('data-bt-advanced') }
+  }
+  const installNativeBotHeader = () => ctx.slots.inject('conversation.session.header.actions', () => {
+    // Share only navigation injection/store. Native header retains exclusive children ownership.
+    const navigation = headerNavigation(ctx.slots.entries('conversation.session.header').filter(entry => entry.component !== HeaderPill), face)
+    return ctx.slots.register({ name: 'conversation.session.header.actions', id: 'bot-native-header', order: -100, ...navigation }, NativeBotHeader)
+  })
 
   // The "@" menu's Bot group and the chats "+" references. The composer's controller
   // for a Session is the shell's own, so the chats open at its caret.
@@ -872,6 +896,12 @@ export function apply(ctx) {
     () => installCompiledStyles(IMAGE_CELL_CSS, 'image-cell'),
     () => installCompiledStyles(SUGGEST_CSS, 'suggestions'),
     () => installCompiledStyles(LIVE_CSS, 'live'),
+    () => {
+      const fiber = ctx.inject(['sidebarRightTabs', 'sidebarRight'], scope => {
+        scope.effect(() => installLiveTab({ tabs: scope.sidebarRightTabs, slots: scope.slots, sidebar: scope.sidebarRight, face, Body: LiveTab }), 'ds-bot: native Live tab')
+      })
+      return () => fiber.dispose()
+    },
     () => installCompiledStyles(TEAM_APPROVAL_CSS, 'team-approval'),
     () => installCompiledStyles(LAMP_CSS, 'lamp'),
     // What other Omni plugins put on the surface (extend.js), where Omni's channels were.
@@ -957,11 +987,14 @@ export function apply(ctx) {
     () => installCompiledStyles(CONVERSATION_CSS, 'conversation'),
     () => installMentions(),
     () => installAtMenu(),
+    () => installAdvancedStyle(),
     installHeader,
+    installNativeBotHeader,
+    () => shadow('conversation.composer.dock', { id: 'bot-native-note', order: 20, inject: face }, NativeControlsNote),
     () => shadow('conversation.chat.node', { key: 'assistant-step', priority: BOT_PRIORITY, locale: 'chat', inject: assistantFace }, AssistantCell),
     () => shadow('conversation.chat.node', { key: 'turn-trigger', priority: BOT_PRIORITY, locale: 'chat', inject: face }, TriggerCell),
     () => shadow('conversation.chat.node', { key: 'tool-call', priority: BOT_PRIORITY, locale: 'chat', inject: face }, ToolCell),
-    () => shadow('conversation.chat.node', { key: 'turn-process', priority: BOT_PRIORITY, locale: 'chat', inject: face }, TurnProcessCell),
+    () => simpleOnly(() => shadow('conversation.chat.node', { key: 'turn-process', priority: BOT_PRIORITY, locale: 'chat', inject: face }, TurnProcessCell)),
     // DSH's own turn tail stays, so what other plugins add there shows, such as the
     // cards of the files a turn delivered; its copy and branch row is hidden.
     () => shadow('conversation.chat.turnTail', { id: 'bot-turn-separators', order: 1000, inject: face }, TurnTailCell),
@@ -973,18 +1006,18 @@ export function apply(ctx) {
     // A Bot condenses its conversation without telling anyone; the chat keeps showing
     // every message.
     () => shadow('conversation.chat.node', { key: 'question-reply', priority: BOT_PRIORITY, locale: 'chat' }, AnsweredReply),
-    () => shadow('conversation.chat.node', { key: 'compaction', priority: BOT_PRIORITY, locale: 'chat' }, Nothing),
+    () => simpleOnly(() => shadow('conversation.chat.node', { key: 'compaction', priority: BOT_PRIORITY, locale: 'chat' }, Nothing)),
     // A Bot chat leaves DSH's context lines (tool updates, injected context) out; a Bot
     // message spliced in mid-turn gets an event line from the step that reads it instead.
-    () => shadow('conversation.chat.node', { key: 'context', priority: BOT_PRIORITY, locale: 'chat' }, Nothing),
+    () => simpleOnly(() => shadow('conversation.chat.node', { key: 'context', priority: BOT_PRIORITY, locale: 'chat' }, Nothing)),
     ...(canDrawUserMessages() ? ['user', 'steering'].map(key => () => shadow('conversation.chat.node', { key, priority: BOT_PRIORITY, locale: 'chat', inject: face }, UserMessageCell)) : []),
     () => installPackCell('conversation.input.permission', 'permission'),
-    () => shadow('conversation.input.plan', { priority: BOT_PRIORITY }, Nothing),
+    () => simpleOnly(() => shadow('conversation.input.plan', { priority: BOT_PRIORITY }, Nothing)),
     // The composer carries no run statistics, and DSH's model picker stays out: a Bot's
     // model lives on the Bot. A pack that offers it draws Omni's own model menu here.
     () => shadow('conversation.input.model', { priority: BOT_PRIORITY, inject: face }, PackModelCell),
-    () => shadow('conversation.composer.dock', { id: 'activity', order: 0, priority: BOT_PRIORITY }, Nothing),
-    () => shadow('conversation.composer.dock', { id: 'usage', order: 1, priority: BOT_PRIORITY }, Nothing),
+    () => simpleOnly(() => shadow('conversation.composer.dock', { id: 'activity', order: 0, priority: BOT_PRIORITY }, Nothing)),
+    () => simpleOnly(() => shadow('conversation.composer.dock', { id: 'usage', order: 1, priority: BOT_PRIORITY }, Nothing)),
     () => shadow('conversation.composer.dock', { id: 'btw', order: 2, priority: BOT_PRIORITY, inject: face }, BtwDock),
     () => shadow('conversation.input.left', { id: 'bot-plus', order: -100, inject: face }, ComposerPlus),
     () => shadow('conversation.input.right', { id: 'bot-voice', order: 100, inject: face }, ComposerVoice),

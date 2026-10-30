@@ -2,8 +2,17 @@
 
 ## Status
 
-Simmering — source-base adoption blocked before design crystallization or implementation.
-This document freezes the owner's supplied scope, not a SHIP design. No design-review digest or saved workflow run ID exists.
+Resumed 2026-10-29 under the owner's scoped follow-up. Historical blocker observations below are preserved as provenance, not current authority. The owner explicitly authorized repairing/rebasing the unpushed named branch and publishing it non-forcing to `publish`, PR base `dev`; no merge, deploy, installed-runtime change or restart. Current authenticated dev is `7b85d098d1719ebe5ca503ab7d74edf5097e7472`. Only planning commit `85fdd2e` was replayed onto it, excluding the eight unrelated wake-log commits. No existing remote wish head or PR was found.
+
+### Canonical follow-up contract
+
+- Preserve the three recorded UX choices: native right sidebar, Live as one tab, full supported native controls behind host-persisted per-Bot Advanced initially off. Advanced changes presentation only; never identity, authorization, permissions, model access or context policy. Ordinary DSH remains unchanged. Browser/phone/plugin views remain reachable; no brainstorm-exclusive panel.
+- The owner explicitly settled the native-compaction exception: unsupported Bot native compaction may be disabled with a source-grounded explanation. Bot-owned Context settings must still work: measured/estimated current usage, effective soft/hard thresholds, checkpoint count/current part, per-Bot check ratio and recent-message carry budget, safe idle Checkpoint now, distinct Start new part, and separate memory-review controls/status. Hard safety stays protected at 95%; default soft is 80% of usable window. Memory review is a separate idle hook, not a guaranteed compaction sequence.
+- Advanced Stats must expose genuinely supported last-request/turn/session/Bot read-only accounting and current context/cache coverage. Preserve missing versus known zero, legacy unknown provenance, per-attempt retry accounting, foreground versus memory/steward/checkpoint/handoff/child overhead, and nonduplicated all-in totals. Cache efficiency is token-weighted only within compatible provider/model normalization, with an explicit denominator; unknown is not 0%. No invented timing/cost or success/parity claim.
+- Validation includes matched-provider/model/effort/tools synthetic fixtures, no live model calls, independent design/implementation reviews, required root/plugin/client/build/lint gates, isolated responsive/keyboard/native interaction checks and plain DSH regression checks. Disposable loopback fixtures only; never access real profiles, Sessions, secrets or installed app state.
+- Group repair budget is configured 2, starting implementation attempts 0/2 per group. Native execution accounting only; no invented task/run IDs or token/time accounting. Goal is a verified scoped PR, not merely source-ready or a parked plan.
+
+WRS follow-up: Problem 20, Scope 20, Decisions 20, Risks 20, Criteria 20 = 100/100. Size G: four bounded dependent execution groups plus integrated verification. Product decisions are settled; code/API facts are verified against pinned rc.4 dependencies in this disposable checkout. Design evidence and execution results live in DESIGN.md and the linked WISH.md; neither this imported approval record nor the historical assessment is independently reviewed implementation evidence.
 
 ## Owner decisions (verbatim, imported from the wish)
 

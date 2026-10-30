@@ -10,10 +10,8 @@ import { estimateTokens } from './text.js'
 
 // For a model that declares no window.
 export const DEFAULT_WINDOW = 500_000
-export const DEFAULT_CHECK_RATIO = 0.8
-// Context sizes between requests are estimates, so the hard line stays a little
-// below what the model can actually take.
-const HARD_SHARE = 0.95
+export { DEFAULT_CHECK_RATIO } from '../shared/context-policy.js'
+import { contextPolicy, HARD_CONTEXT_RATIO } from '../shared/context-policy.js'
 const STEWARD_TOKENS = 6_000
 const STEWARD_LINE_MAX = 1_500
 
@@ -21,8 +19,8 @@ export function linesFor({ window, reserve, checkRatio }) {
   const declared = Number.isInteger(window) && window > 0 ? window : DEFAULT_WINDOW
   const room = Number.isInteger(reserve) && reserve > 0 ? reserve : 0
   const usable = Math.max(declared - room, Math.floor(declared / 2))
-  const hard = Math.floor(usable * HARD_SHARE)
-  const ratio = typeof checkRatio === 'number' && checkRatio > 0 && checkRatio < 1 ? checkRatio : DEFAULT_CHECK_RATIO
+  const hard = Math.floor(usable * HARD_CONTEXT_RATIO)
+  const ratio = contextPolicy({}, { checkRatio }).checkRatio
   return { window: declared, usable, hard, check: Math.min(Math.floor(usable * ratio), hard) }
 }
 

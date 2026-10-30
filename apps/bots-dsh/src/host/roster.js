@@ -4,6 +4,7 @@ import { mkdir } from 'node:fs/promises'
 import { MAX_AVATAR_IMAGE, ROOM_MAX_MEMBERS, ROOM_MODES, ROOM_NAME_MAX, ROOM_NOTICE_MAX, inUnfoldInstance } from './constants.js'
 import { currentColor, isColor, normalize, unquote } from './text.js'
 import { nameProblem } from '../shared/mentions.js'
+import { contextPatch } from '../shared/context-policy.js'
 import { cleanPetId } from './pets.js'
 
 // A Bot's role: a few words of plain text on one line, shown beside the first Main Bot's
@@ -210,6 +211,7 @@ export function install(rt) {
         id,
         name: cleanName,
         role: roleText,
+        advanced: false,
         // A color is only stored when the user picks one; otherwise the id picks it.
         ...(isColor(currentColor(color)) ? { color: currentColor(color) } : {}),
         ...(cleanAvatarValue ? { avatar: cleanAvatarValue } : {}),
@@ -314,6 +316,8 @@ export function install(rt) {
   async function updateBot(id, patch, actorId, fromSessionId) {
     const bot = rt.botOf(id)
     if (bot === undefined) throw new Error('Unknown Bot')
+    const policyPatch = contextPatch(patch)
+    const policyOnly = Object.keys(patch).every(key => key === 'id' || Object.hasOwn(policyPatch, key))
     if (patch.browserGrants !== undefined && actorId !== undefined) {
       throw new Error(`Only the user can set what ${bot.name} may do in the browser`)
     }
@@ -384,6 +388,10 @@ export function install(rt) {
       if (workDir === undefined) delete bot.workDir
       else bot.workDir = workDir
     }
+    for (const [key, value] of Object.entries(policyPatch)) {
+      if (value === null) delete bot[key]
+      else bot[key] = value
+    }
     await rt.save()
     // The system prompt reads the live profile every turn, but a Session with
     // several rounds behind it follows the old kickoff's pull until a message
@@ -404,7 +412,7 @@ export function install(rt) {
     }
     if (modelChanged) await rt.applyModel(bot, { force: true })
     if (moved) void rt.followFolder(bot.id)
-    if (bot.model && bot.kickoff !== undefined) {
+    if (!policyOnly && bot.model && bot.kickoff !== undefined) {
       const held = bot.kickoff
       delete bot.kickoff
       await rt.save()

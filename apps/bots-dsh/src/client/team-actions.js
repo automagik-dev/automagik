@@ -88,6 +88,11 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     deleteAvatar: id => call('avatar-delete', { id }),
     createRoom: (members, options = {}) => after(call('create-room', { members, ...options })),
     updateBot: (id, patch) => after(call('update-bot', { id, ...patch })),
+    contextStatus: botId => call('context-status', { botId }),
+    usageStats: (botId, sessionId) => call('usage-stats', { botId, sessionId }),
+    memoryReviewStatus: botId => call('memory-review-status', { botId }),
+    // Do not remap the expected Session: the backend must reject a stale snapshot.
+    checkpointBot: (botId, sessionId) => after(call('checkpoint-bot', { botId, sessionId })),
     refreshModels: () => after(call('models')).catch(() => {}),
     efforts: ref => call('efforts', { ref }),
     folders: () => call('folders'),

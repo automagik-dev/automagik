@@ -245,36 +245,24 @@ const formatTokens = count => (count >= 1e6 ? `${(count / 1e6).toFixed(1)}M` : c
 // Same buckets as the shell's usage pill: every prompt-side billing bucket plus output.
 export function usageOf(list, ids) {
   let input = 0
-  let cacheRead = 0
   let output = 0
   for (const id of ids) {
     const usage = list.projectionsBySession?.[id]?.values?.tokenUsage
     if (!usage) continue
     input += (usage.uncachedInputTokens ?? 0) + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)
-    cacheRead += usage.cacheReadTokens ?? 0
     output += usage.outputTokens ?? 0
   }
   if (input + output === 0) return ''
-  const hit = input > 0 ? Math.round((cacheRead / input) * 100) : 0
-  return t('{tokens} tok · Cache hit {hit}%', { tokens: formatTokens(input + output), hit })
+  // The legacy projection has no provider/knownness provenance and may mix
+  // Sessions. Detailed Advanced Stats owns compatible per-provider cache ratios.
+  return t('{tokens} tok · Cache reporting unavailable', { tokens: formatTokens(input + output) })
 }
 
-// A share that is not whole never reads as 100%: it gets decimals until it does not.
-function percentText(part, whole) {
-  if (part >= whole) return '100'
-  for (let places = 0; places < 3; places += 1) {
-    const text = ((part / whole) * 100).toFixed(places)
-    if (Number(text) < 100) return text
-  }
-  return '99.99'
-}
-
-// One Session's figures from DSH's sessionStats, tokenUsage and contextPressure views, as
-// its status bar counts them: turns, output tokens over decode time, cache reads over
-// every prompt-side token, and the context in use. Figures with nothing to count yet are left out.
+// One Session's measured sessionStats and contextPressure figures. Legacy tokenUsage
+// lost per-provider knownness, so its cache efficiency is deliberately not inferred.
+// Figures with nothing to count yet are left out; detailed accounting is in Advanced.
 export function runStatsOf(values) {
   const stats = values?.sessionStats
-  const usage = values?.tokenUsage
   const pressure = values?.contextPressure
   const shown = []
   if (stats?.turns > 0) shown.push({ key: 'turns', text: stats.turns === 1 ? t('1 turn') : t('{count} turns', { count: stats.turns }) })
@@ -282,8 +270,7 @@ export function runStatsOf(values) {
     const speed = stats.decodeTokens / (stats.decodeMs / 1000)
     shown.push({ key: 'speed', text: t('{speed} tok/s', { speed: speed >= 10 ? Math.round(speed) : Math.round(speed * 10) / 10 }) })
   }
-  const prompt = (usage?.uncachedInputTokens ?? 0) + (usage?.cacheReadTokens ?? 0) + (usage?.cacheWriteTokens ?? 0)
-  if (prompt > 0) shown.push({ key: 'cache', text: t('Cache hit {hit}%', { hit: percentText(usage.cacheReadTokens ?? 0, prompt) }) })
+  // tokenUsage's old counters erased missingness; never infer a cache ratio here.
   const used = pressure?.projectedTokens ?? pressure?.pressureTokens
   if (Number.isFinite(used) && pressure.contextWindow > 0) {
     shown.push({

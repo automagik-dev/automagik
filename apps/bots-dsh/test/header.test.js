@@ -23,7 +23,7 @@ runInNewContext(bundle.outputFiles[0].text, {
     return platform[name]
   },
 })
-const { HeaderPill } = module.exports
+const { HeaderPill, NativeBotHeader, NativeControlsNote } = module.exports
 
 const roster = { byId: { a: { id: 'a', name: 'Omni', sessionId: 'a' } }, roomsById: {}, bots: [], exchangeTurns: {}, questions: {} }
 const hook = value => select => select(value)
@@ -51,11 +51,45 @@ const sideButton = (node) => {
   return null
 }
 
-// 公开#456: the Bot header carries no right-sidebar toggle — the drawer and the
-// column never share the window, and the way in sits in the drawer instead.
-test('the Bot header has no right sidebar button', () => {
-  assert.equal(sideButton(header({ hasRightSidebar: () => true, toggleRightSidebar: () => {} })), null)
+test('the simple Bot header exposes a real native sidebar action, omitted without service', () => {
+  let toggles = 0
+  const button = sideButton(header({ hasRightSidebar: () => true, toggleRightSidebar: () => { toggles++ } }))
+  assert.equal(button.props['aria-label'], 'Toggle right sidebar')
+  button.props.onClick(); assert.equal(toggles, 1)
   assert.equal(sideButton(header({})), null)
+  assert.equal(sideButton(header({ hasRightSidebar: () => true }, { native: true })), null)
+})
+
+test('native header contribution is opt-in per Bot and owns no native child slots', () => {
+  const props = { sessionId: 'a', useRoster: hook(roster) }
+  assert.equal(NativeBotHeader(props), null)
+  const enabled = { ...roster, byId: { a: { id: 'canonical', advanced: true } } }
+  const node = NativeBotHeader({ ...props, useRoster: hook(enabled) })
+  assert.equal(node.type, HeaderPill)
+  assert.equal(node.props.native, true)
+  assert.equal(NativeBotHeader({ ...props, sessionId: 'plain', useRoster: hook(enabled) }), null)
+})
+
+test('Advanced native action contribution opens Live and canonical Bot settings without replacing native corner', () => {
+  const calls = []
+  const enabled = { ...roster, byId: { a: { id: 'canonical', name: 'Bot', advanced: true } } }
+  const node = header({ hasRightSidebar: () => true, openLive: () => calls.push('live'), openSettings: (...args) => calls.push(args) }, { native: true, useRoster: hook(enabled) })
+  const find = (node, label) => node?.props?.['aria-label'] === label ? node : (node?.children ?? []).map(child => find(child, label)).find(Boolean)
+  find(node, 'Open Live').props.onClick()
+  find(node, 'Bot settings').props.onClick()
+  assert.deepEqual(calls, ['live', ['bots', 'canonical']])
+  assert.equal(sideButton(node), null)
+  assert.equal(node.props.className, 'bt-native-head', 'native header never gains the floating replacement marker')
+})
+
+test('Advanced explains model permission ownership and guarded compaction with actual settings actions', () => {
+  const calls = []
+  const node = NativeControlsNote({ sessionId: 'old', useRoster: hook({ byId: { old: { id: 'a', advanced: true } } }), actions: { openSettings: (...args) => calls.push(args) } })
+  const buttons = node.children.flatMap(paragraph => paragraph.children.filter(child => child?.type === 'button'))
+  assert.equal(buttons.length, 2)
+  for (const button of buttons) button.props.onClick()
+  assert.deepEqual(calls, [['bots', 'a'], ['bots', 'a']])
+  assert.equal(NativeControlsNote({ sessionId: 'b', useRoster: hook(roster) }), null)
 })
 
 const byClass = (node, className) => {

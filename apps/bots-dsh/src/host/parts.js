@@ -15,11 +15,13 @@
 // word, and where the rest is. Input that arrives meanwhile waits and moves along.
 // read_own_chat searches every part, the condensed messages included.
 import { randomUUID } from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { openTurnAt } from './btw.js'
 import { HANDOFF_ACK, HISTORY_TIMEOUT_MS, REPLY_KIND, SOURCE_KIND } from './constants.js'
 import { CHECKPOINT_PROMPT, STEWARD_SYSTEM, checkpointCount, checkpointTail, checkpointTailNote, checkpointText, linesFor, parseDecision, stewardRequest } from './steward.js'
 import { RESUME_DELAY_MS } from './resume.js'
+import { contextPolicy } from '../shared/context-policy.js'
 import { clip, createClock, escapeRegExp, estimateTokens, splitRef, textOf } from './text.js'
 import { checkShownView, inputsSummary, normalizeView, validateViewAnswer, viewSummary } from '../shared/views.js'
 
@@ -222,8 +224,14 @@ export function canonicalHeadings(note, names) {
 
 export function install(rt) {
   const { ctx, config, state } = rt
+  const agents = new Map()
+  // The engine owns maintenance and durable compaction markers. This reservation
+  // additionally guards Bot-level switching and input admission while it resolves.
+  const checkpoints = new Map()
+  const refused = (code, message) => Object.assign(new Error(message), { code: `bot/${code}` })
+  let disposed = false
 
-  const RECENT_TOKENS = config.handoffRecentTokens ?? 16_384
+  const policyOf = sessionId => contextPolicy(rt.botOf(rt.selfOf(sessionId)), config)
   const RECENT_LINE_MAX = 4_000
   const LIST_TOKENS = config.handoffListTokens ?? 4_096
   const LIST_LINE_MAX = 400
@@ -248,21 +256,32 @@ export function install(rt) {
   // A broken provider adapter must not crash every turn; estimate from the
   // derived messages instead, with one warning.
   let measureWarned = false
-  const tokensOf = (session) => {
+  const tokenUsage = (session, { quiet = false } = {}) => {
     try {
-      return ctx.get('tokenMeter')?.measure(session).totalTokens
+      const measurement = ctx.get('tokenMeter')?.measure(session)
+      const tokens = measurement?.totalTokens
+      if (typeof tokens === 'number' && Number.isFinite(tokens) && tokens >= 0) {
+        // The native meter also returns heuristics and repriced provider anchors.
+        // Keep its better total, but only an unchanged usage anchor is measured.
+        const baseline = measurement.baseline
+        const measured = baseline?.kind === 'usage' && Number.isFinite(baseline.tokens)
+          && baseline.tokens >= 0 && baseline.tokens === tokens && measurement.surfaceDeltaTokens === 0
+        return { tokens, source: measured ? 'measured' : 'estimated' }
+      }
     } catch (error) {
-      if (!measureWarned) {
+      if (!quiet && !measureWarned) {
         measureWarned = true
         rt.warn('ds-bot: token measure failed; context sizes are estimated: %s', error)
       }
     }
     try {
-      return estimateTokens(session.deriveMessages().map(message => textOf(message.content)).join('\n'))
+      const tokens = estimateTokens(session.deriveMessages().map(message => textOf(message.content)).join('\n'))
+      return { tokens, source: 'estimated' }
     } catch {
-      return undefined
+      return { tokens: null, source: 'unavailable' }
     }
   }
+  const tokensOf = session => tokenUsage(session).tokens ?? undefined
   const clock = createClock(config.timeZone)
 
   // Lines for the model the Session last routed to; undefined while it has not
@@ -271,7 +290,7 @@ export function install(rt) {
     const route = session.requestHeader()?.config
     if (!route?.provider || !route?.model) return undefined
     const info = await ctx.llm.resolveModelInfo(route.provider, route.model)
-    return linesFor({ window: info.context?.contextWindow, reserve: route.maxTokens ?? info.defaultMaxTokens, checkRatio: config.checkRatio })
+    return linesFor({ window: info.context?.contextWindow, reserve: route.maxTokens ?? info.defaultMaxTokens, checkRatio: policyOf(session.id).checkRatio })
   }
 
   // The backend's own entry points leave Bot Sessions alone, earlier parts and group
@@ -283,6 +302,15 @@ export function install(rt) {
   const adoptedEngines = new Set()
   // Sessions DS Bot itself is condensing right now.
   const condensing = new Set()
+  // Only this async call chain may cross the native guard. A public /compact
+  // request must still be refused while another chain is making a checkpoint.
+  const internalCompaction = new AsyncLocalStorage()
+  async function runInternalCompaction(sessionId, run) {
+    // Maintenance may wake a driver inside this async context. Descendants keep
+    // the object, not authority: every outcome revokes this operation's permit.
+    const permit = { sessionId, active: true }
+    try { return await internalCompaction.run(permit, run) } finally { permit.active = false }
+  }
   const refuseCompaction = () => Promise.reject(new Error(
     'A Bot conversation makes room on its own, and read_own_chat searches all of it.'))
   const nativeDshSession = id => rt.botOf(rt.selfOf(id))?.kind === 'dsh'
@@ -290,7 +318,10 @@ export function install(rt) {
     const id = target?.session?.id
     return id !== undefined && !nativeDshSession(id) && (rt.selfOf(id) !== undefined || rt.roomOf(id) !== undefined)
   }
-  const ownedByBot = target => isBotTarget(target) && !condensing.has(target.session.id)
+  const ownedByBot = target => {
+    const permit = internalCompaction.getStore()
+    return isBotTarget(target) && !(permit?.active === true && permit.sessionId === target.session.id)
+  }
   // The engine that serves this agent, when DS Bot can condense through it.
   const engineOf = agent => [ctx.get('agentPresets')?.serviceFor(agent, 'compaction'), ctx.get('compaction')]
     .find(engine => typeof engine?.[ORIGINAL_COMPACT]?.summarize === 'function')
@@ -339,7 +370,16 @@ export function install(rt) {
     }
     adoptedEngines.clear()
   }, 'ds-bot: Bot compaction')
-  ctx.on('agent/created', ({ agent }) => { adoptCompaction(agent) })
+  ctx.on('agent/created', ({ agent }) => { agents.set(agent.id, agent); adoptCompaction(agent) })
+  ctx.on('agent/disposed', ({ agent }) => {
+    agents.delete(agent.id)
+    checkpoints.get(agent.id)?.controller.abort(refused('cancelled', 'The checkpoint was cancelled because its conversation closed.'))
+  })
+  ctx.effect(() => () => {
+    disposed = true
+    for (const job of checkpoints.values()) job.controller.abort(refused('cancelled', 'The checkpoint was cancelled because the plugin closed.'))
+    agents.clear()
+  }, 'ds-bot: cancel explicit checkpoints')
 
   // A Bot's own chat, or its Session in one group, as numbered parts, oldest first;
   // the last one is current.
@@ -470,7 +510,7 @@ export function install(rt) {
         provider: route.provider,
         model: route.model,
         ...(route.reasoningEffort ? { reasoningEffort: route.reasoningEffort } : {}),
-        messages: [...messages, { role: 'user', content: [{ type: 'text', text: prompt }] }],
+        messages: rt.tagUsage([...messages, { role: 'user', content: [{ type: 'text', text: prompt }] }], { sessionId: session.id, kind: 'handoff' }),
         toolHistory: session.toolHistory(),
         ...(header.tools ? { tools: [...header.tools] } : {}),
         maxTokens: Math.min(NOTE_MAX_TOKENS, route.maxTokens ?? NOTE_MAX_TOKENS),
@@ -526,6 +566,9 @@ export function install(rt) {
   // that from cache.
   async function writeCheckpoint(input, agent, signal) {
     const session = agent.session
+    const job = checkpoints.get(session.id)
+    if (job !== undefined) assertCheckpoint(job)
+    signal?.throwIfAborted()
     const route = session.requestHeader()?.config
     if (!route?.provider || !route?.model) throw new Error('the Session has not called a model yet')
     // The results list grows with the work, so the checkpoint may write as much as one
@@ -539,14 +582,18 @@ export function install(rt) {
       provider: route.provider,
       model: route.model,
       ...(route.reasoningEffort ? { reasoningEffort: route.reasoningEffort } : {}),
-      messages: [...head, ...tail, { role: 'user', content: [{ type: 'text', text: prompt }] }],
+      messages: rt.tagUsage([...head, ...tail, { role: 'user', content: [{ type: 'text', text: prompt }] }], { sessionId: session.id, kind: 'checkpoint' }),
       toolHistory: session.toolHistory(),
       ...(input.tools ? { tools: [...input.tools] } : {}),
       ...(maxTokens !== undefined ? { maxTokens } : {}),
       sessionId: session.id,
       purpose: 'compaction',
       signal,
-    })) assembler.push(chunk)
+    })) {
+      signal?.throwIfAborted()
+      if (job !== undefined) assertCheckpoint(job)
+      assembler.push(chunk)
+    }
     const finish = assembler.finish
     if (finish.kind === 'error' || finish.kind === 'aborted') throw new Error(finish.failure?.message ?? finish.kind)
     if (finish.kind === 'max-tokens') throw new Error('the checkpoint was cut off at the output limit')
@@ -555,12 +602,15 @@ export function install(rt) {
     if (summary === '') throw new Error('the checkpoint was empty')
     const place = placeOf(session.id)
     const lines = await contextLines(session).catch(() => undefined)
+    const recentTokens = policyOf(session.id).recentTokens
     const { kept, more } = await keptMessages(session.id, {
-      budget: Math.min(RECENT_TOKENS, Math.floor((lines?.check ?? 4 * RECENT_TOKENS) / 4)),
+      budget: Math.min(recentTokens, Math.floor((lines?.check ?? 4 * recentTokens) / 4)),
       group: place?.roomId !== undefined,
       number: place === undefined ? 1 : partsOf(place.botId, place.roomId).length,
     })
     const text = checkpointText({ number: checkpointCount(input.messages) + 1, summary, kept, more })
+    signal?.throwIfAborted()
+    if (job !== undefined) assertCheckpoint(job)
     return {
       summary: [{ type: 'text', text }],
       rawOutput,
@@ -593,7 +643,7 @@ export function install(rt) {
       model: route.model,
       ...(off ? { reasoningEffort: 'off' } : {}),
       system: STEWARD_SYSTEM,
-      messages: rt.tagUsage([{ role: 'user', content: [{ type: 'text', text: stewardRequest({ lines, midTurn, checkpoints: checkpointCount(session.deriveMessages()), group }) }] }], { sessionId: agent.id, kind: 'compaction' }),
+      messages: rt.tagUsage([{ role: 'user', content: [{ type: 'text', text: stewardRequest({ lines, midTurn, checkpoints: checkpointCount(session.deriveMessages()), group }) }] }], { sessionId: agent.id, kind: 'steward' }),
       maxTokens: STEWARD_MAX_TOKENS,
       sessionId: session.id,
       purpose: 'compaction',
@@ -631,9 +681,9 @@ export function install(rt) {
     try {
       // Through the service itself, past DS Bot's own wrapper: only a call on the
       // service gives the engine its own context, with the services it injects.
-      const result = inTurn
-        ? await engine.compactIfNeeded(agent, 'context-overflow', signal)
-        : await engine.compactNow(agent, AbortSignal.timeout(NOTE_TIMEOUT_MS))
+      const result = await runInternalCompaction(sessionId, () => inTurn
+        ? engine.compactIfNeeded(agent, 'context-overflow', signal)
+        : engine.compactNow(agent, AbortSignal.timeout(NOTE_TIMEOUT_MS)))
       if (result === null) return false
     } catch (error) {
       if (!inTurn && (error?.code === 'busy' || error?.code === 'cancelled')) return undefined
@@ -857,7 +907,7 @@ export function install(rt) {
   // even a note: earlier parts stay readable through read_own_chat.
   function startSwitch(agent, { resume = false, carry = [], info, joined, overflow = false, failed, bare = false, folder = false, fresh = false, hard = overflow || folder || fresh } = {}) {
     const place = placeOf(agent.id)
-    if (place === undefined || switches.has(agent.id) || readOnly()) return false
+    if (place === undefined || switches.has(agent.id) || checkpoints.has(agent.id) || readOnly()) return false
     const job = { ...place, carry: [...carry], info, joined, resume, overflow, failed, bare: bare || fresh, folder, fresh, hard, since: Date.now() }
     switches.set(agent.id, job)
     void runSwitch(agent, job)
@@ -963,7 +1013,8 @@ export function install(rt) {
     const lines = await contextLines(session).catch(() => undefined)
     const parts = partsOf(bot.id, room?.id)
     const number = parts.length
-    const budget = Math.min(RECENT_TOKENS, Math.floor((lines?.check ?? 4 * RECENT_TOKENS) / 4))
+    const recentTokens = policyOf(session.id).recentTokens
+    const budget = Math.min(recentTokens, Math.floor((lines?.check ?? 4 * recentTokens) / 4))
     const readLines = () => (job.bare ? { recent: [], earlier: [], unlisted: 0, complete: true } : handoffLines(agent.id, { budget, group: room !== undefined, number }))
     let carried = job.folder ? await readLines() : undefined
     // A short part with no tool work goes over word for word, so it needs no note.
@@ -1086,6 +1137,12 @@ export function install(rt) {
   ctx.on('agent/pre-step', async (payload, next) => {
     await rt.load()
     const { agent } = payload
+    agents.set(agent.id, agent)
+    const checkpoint = checkpoints.get(agent.id)
+    if (checkpoint !== undefined) {
+      checkpoint.carry.push(...payload.messages)
+      return { kind: 'reject' }
+    }
     const past = rt.pastOwners.get(agent.id)
     if (past !== undefined && !rt.isBotSession(agent.id)) {
       await forward(past, payload.messages).catch(error => rt.warn('ds-bot: input for %s was not handed on: %s', agent.id, error))
@@ -1215,12 +1272,13 @@ export function install(rt) {
   // the part ends up below the line, and nothing is decided again until it grows
   // past it.
   async function checkContext(agent) {
-    if (switches.has(agent.id) || freshParts.has(agent.id) || checking.has(agent.id) || readOnly()) return
+    if (switches.has(agent.id) || checkpoints.has(agent.id) || freshParts.has(agent.id) || checking.has(agent.id) || readOnly()) return
     const lines = await contextLines(agent.session)
     const tokens = tokensOf(agent.session)
     if (lines === undefined || tokens === undefined || tokens < lines.check || !grown(agent.id, tokens, lines)) return
     const hard = tokens >= lines.hard
     if (!hard && Date.now() < (noteFailures.get(agent.id)?.until ?? 0)) return
+    if (checkpoints.has(agent.id) || checking.has(agent.id) || switches.has(agent.id) || readOnly()) return
     checking.add(agent.id)
     try {
       if (await decide(agent, { midTurn: false }) === 'compact') {
@@ -1257,6 +1315,7 @@ export function install(rt) {
   }, 'ds-bot: hand on input kept in earlier parts')
 
   ctx.on('agent/status', ({ agent, status }) => {
+    agents.set(agent.id, agent)
     if (status === 'idle' && rt.isBotSession(agent.id) && !nativeDshSession(agent.id)) {
       releaseRescued(agent)
       void checkContext(agent).catch(error => rt.warn('ds-bot: context check for %s failed: %s', agent.id, error))
@@ -1385,6 +1444,123 @@ export function install(rt) {
     return { items, cursor: more ? { part: index, beforeSeq: events[0].seq } : index > 0 ? { part: index - 1 } : null }
   }
 
+  function assertCheckpoint(job) {
+    job.signal.throwIfAborted()
+    if (disposed) throw refused('cancelled', 'The checkpoint was cancelled because the plugin closed.')
+    if (rt.botOf(job.botId) === undefined) throw refused('not-found', 'Unknown Bot')
+    if (rt.chatOf(job.botId) !== job.sessionId) throw refused('stale', 'This conversation has moved to another part. Refresh before checkpointing.')
+    if (readOnly()) throw refused('read-only', rt.readOnly())
+  }
+
+  const queued = agent => (agent?.inbox?.nextStep?.length ?? 0) + (agent?.inbox?.nextTurn?.length ?? 0) > 0
+  const loadedSession = sessionId => ctx.sessions?.list?.().find(session => session.id === sessionId)
+  const loadedAgent = sessionId => {
+    const registry = ctx.get('agents')
+    return typeof registry?.get === 'function' ? registry.get(sessionId) : agents.get(sessionId)
+  }
+  function checkpointRefusal(bot, session, agent, lines) {
+    if (readOnly()) return 'bot/read-only'
+    if (disposed || session === undefined || agent === undefined) return 'bot/unavailable'
+    if (bot.kind === 'dsh' || lines === undefined || engineOf(agent) === undefined) return 'bot/refused'
+    if (agent.status !== 'idle' || queued(agent) || switches.has(session.id) || checking.has(session.id) || checkpoints.has(session.id) || condensing.has(session.id)) return 'bot/busy'
+    return null
+  }
+
+  // Read only what DSH already has loaded. Resolving an Agent here would reopen an
+  // idle Session and change its tools; a status poll must do neither.
+  async function contextStatus(botId) {
+    const bot = rt.botOf(botId)
+    if (bot === undefined) throw refused('not-found', 'Unknown Bot')
+    const sessionId = rt.chatOf(botId)
+    const session = loadedSession(sessionId)
+    const agent = session === undefined ? undefined : loadedAgent(sessionId)
+    const lines = session === undefined ? undefined : await contextLines(session).catch(() => undefined)
+    if (rt.botOf(botId) === undefined) throw refused('not-found', 'Unknown Bot')
+    if (rt.chatOf(botId) !== sessionId) throw refused('stale', 'This conversation has moved to another part. Refresh its status.')
+    let messages
+    try { messages = session?.deriveMessages() } catch {}
+    const checkpointReason = checkpointRefusal(bot, session, agent, lines)
+    return {
+      id: botId, sessionId, status: agent?.status ?? 'unavailable', readOnly: readOnly(),
+      policy: contextPolicy(bot, config), usage: session === undefined ? { tokens: null, source: 'unavailable' } : tokenUsage(session, { quiet: true }),
+      lines: lines ?? null,
+      counts: {
+        messages: messages?.length ?? null,
+        user: messages?.filter(message => message.role === 'user').length ?? null,
+        assistant: messages?.filter(message => message.role === 'assistant').length ?? null,
+        tool: messages?.filter(message => message.role === 'tool').length ?? null,
+        checkpoints: messages === undefined ? null : checkpointCount(messages), parts: partsOf(botId).length,
+      },
+      markers: { checking: checking.has(sessionId) || checkpoints.has(sessionId), condensing: condensing.has(sessionId), switching: switches.has(sessionId) },
+      canCheckpoint: checkpointReason === null, checkpointReason,
+    }
+  }
+
+  // Force one useful checkpoint in the current own-chat Session, never a steward
+  // decision or a new part. compactNow itself atomically reserves runMaintenance,
+  // combines cancellation, and persists the backend's standalone marker pair.
+  async function checkpointBot(botId, { sessionId } = {}) {
+    if (typeof sessionId !== 'string' || sessionId.trim() === '') throw refused('invalid', 'A checkpoint needs the current Session id.')
+    const controller = new AbortController()
+    const job = { botId, sessionId, controller, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(NOTE_TIMEOUT_MS)]), carry: [] }
+    assertCheckpoint(job)
+    if (checkpoints.has(sessionId) || switches.has(sessionId) || checking.has(sessionId) || condensing.has(sessionId)) throw refused('busy', 'This conversation is already making room.')
+    const bot = rt.botOf(botId)
+    if (bot.kind === 'dsh') throw refused('refused', 'Native DSH conversations keep their own compaction controls.')
+    if (loadedSession(sessionId) === undefined) throw refused('refused', 'Open this conversation before checkpointing it.')
+    checkpoints.set(sessionId, job)
+    let agent
+    try {
+      agent = loadedAgent(sessionId) ?? await rt.resolveAgent(sessionId)
+      agents.set(sessionId, agent)
+      assertCheckpoint(job)
+      if (agent.id !== sessionId || agent.session?.id !== sessionId) throw refused('stale', 'The current Session is unavailable.')
+      if (agent.status !== 'idle' || queued(agent)) throw refused('busy', 'A checkpoint requires an idle conversation with no queued input.')
+      const lines = await contextLines(agent.session)
+      assertCheckpoint(job)
+      if (agent.status !== 'idle' || queued(agent)) throw refused('busy', 'This conversation started work before its checkpoint.')
+      adoptCompaction(agent)
+      const engine = engineOf(agent)
+      if (lines === undefined || engine === undefined) throw refused('refused', 'This conversation has no usable checkpoint backend or model route yet.')
+      condensing.add(sessionId)
+      const result = await runInternalCompaction(sessionId, () => engine.compactNow(agent, job.signal))
+      assertCheckpoint(job)
+      if (result === null) throw refused('refused', 'There are not enough older messages for a useful checkpoint yet.')
+      await ctx.sessions.flush(agent.session)
+      assertCheckpoint(job)
+      rt.renewMemory(sessionId)
+      partBase.set(sessionId, tokensOf(agent.session) ?? 0)
+    } catch (error) {
+      // The native backend classifies summary failures, preserving the cause.
+      // Keep our actionable stale/deleted/read-only refusal through that wrapper.
+      let cause = error
+      for (let depth = 0; cause !== undefined && depth < 8; depth += 1, cause = cause?.cause) {
+        if (cause?.code?.startsWith('bot/')) throw cause
+      }
+      if (error?.code === 'busy') throw refused('busy', 'A checkpoint requires an idle conversation with no queued input.')
+      if (error?.code === 'cancelled' || job.signal.aborted || error?.name === 'AbortError') throw refused('cancelled', 'The checkpoint was cancelled.')
+      throw error
+    } finally {
+      condensing.delete(sessionId)
+      // A pre-step that raced the reservation claimed its messages already. Put
+      // them back durably before releasing admission, on every outcome alike.
+      let wakeInput = false
+      try {
+        if (agent !== undefined && job.carry.length > 0) {
+          restore(agent, job.carry)
+          if (!disposed) {
+            await ctx.sessions.flush(agent.session)
+            wakeInput = true
+          }
+        }
+      } finally {
+        checkpoints.delete(sessionId)
+      }
+      if (wakeInput && !disposed && !readOnly() && rt.chatOf(botId) === sessionId) wake(agent)
+    }
+    return { id: botId, sessionId, status: 'checkpointed', context: await contextStatus(botId) }
+  }
+
   // The user's "New conversation" for a Bot's own chat: once the Bot is idle, it goes on in
   // a fresh part.
   async function startFresh(botId) {
@@ -1419,5 +1595,5 @@ export function install(rt) {
     return { sessionId: parts.at(-1).sessionId, ...(await partPage(parts, index, cursor)) }
   }
 
-  Object.assign(rt, { clock, partsOf, historyEntry, partLines, noteText, earlierPage, chatPage, displayItems, followFolder, heldBack, startFresh, switchJobs: () => switches.values() })
+  Object.assign(rt, { clock, partsOf, historyEntry, partLines, noteText, earlierPage, chatPage, displayItems, followFolder, heldBack, startFresh, contextStatus, checkpointBot, switchJobs: () => switches.values() })
 }

@@ -25,10 +25,10 @@ test('each billed attempt is one row, on the model its request named', () => {
     message(1, 1, usage(30, 4, 2)),
     header('deepseek', 'v4-pro'),
     streamed('assistant/message', 2, 0, usage(7, 7)),
-    // No usage reported: nothing billed to count.
+    // A settled attempt without usage is counted, with unknown billed tokens.
     message(2, 1, undefined),
   ])
-  assert.deepEqual(rows.map(tokens), [['v4-flash', 10, 0, 0], ['v4-flash', 20, 5, 3], ['v4-flash', 30, 2, 4], ['v4-pro', 7, 0, 7]])
+  assert.deepEqual(rows.map(tokens), [['v4-flash', 10, 0, 0], ['v4-flash', 20, 5, 3], ['v4-flash', 30, 2, 4], ['v4-pro', 7, 0, 7], ['v4-pro', null, null, null]])
   assert.deepEqual(state, { provider: 'deepseek', model: 'v4-pro', retry: { turn: 1, step: 0, count: 1 } })
 })
 
