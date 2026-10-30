@@ -470,6 +470,9 @@ var ZH = {
   "Roll back DSH adoption…": "回滚 DSH 领养…",
   "Delete is unavailable for an adopted original. Rolling back restores the original DSH bot and its session; remove group roles and resolve new team history first.": "已领养的原 Bot 不能直接删除。回滚后会恢复原 DSH Bot 及其会话；请先移除群组角色并处理新的团队历史。",
   "Remove the Main Bot role before rolling back this adoption.": "回滚此领养前，请先移除主 Bot 角色。",
+  "Roll back this adoption? This deletes the Bot record and any settings changed after adoption; the original DSH bot and its session return.": "回滚此领养？这会删除该 Bot 记录及其领养后修改的设置；原 DSH Bot 及其会话将恢复。",
+  "Rollback is unavailable until this Bot leaves all groups, is not a Main Bot, and has no tasks or new team history. Delete is also unavailable for an adopted original.": "此 Bot 退出所有群组、不再是主 Bot，且没有任务或新的团队历史之前，无法回滚。已领养的原 Bot 也不能直接删除。",
+  "Rolling back removes this Bot and any settings changed after adoption; the original DSH bot and its session return. A confirmation is required.": "回滚会移除该 Bot 及领养后修改的设置；原 DSH Bot 及其会话将恢复。需要确认。",
   "Click again to delete. Its chats are archived.": "再点一次删除，它的对话会归档。",
   "Removes the Bot from the team.": "把这个 Bot 从团队里移除。",
   "Pick a model and {name} can start.": "选好模型，{name} 就能开始工作。",
@@ -19866,6 +19869,10 @@ function ContextMenu({ menu, roster, actions, leaving = false }) {
   const isTile = roster.mainBotId === menu.id;
   const mainCount = (roster.mainBotIds ?? []).length;
   const adopted = bot?.dshAgentId !== void 0;
+  const adoptedRoom = adopted ? Object.values(roster.roomsById ?? {}).find((room3) => (room3.members ?? []).includes(bot.id)) : void 0;
+  const adoptedTask = adopted ? Object.values(roster.tasks ?? {}).some((task) => task.from === bot.id) : false;
+  const rollbackBlocked = isMainBot ? "main" : adoptedRoom !== void 0 ? "groups" : adoptedTask ? "tasks" : void 0;
+  const canRollback = adopted && rollbackBlocked === void 0;
   const groups = [
     [
       isTile ? null : [entry.pinned ? t("Unpin") : t("Pin"), PinIcon, () => actions.setFlags(menu.id, { pinned: !entry.pinned })],
@@ -19891,9 +19898,12 @@ function ContextMenu({ menu, roster, actions, leaving = false }) {
     [
       isMainBot ? null : [t("Hide from sidebar"), HideIcon, () => actions.setFlags(menu.id, { hidden: true })],
       isMainBot || adopted ? null : [room2 ? t("Delete group") : t("Delete"), TrashIcon, () => bot ? actions.deleteBot(bot.id) : actions.deleteRoom(menu.id), true],
-      // A Main Bot rollback is always refused by the host, so it is not offered; the note
-      // says what to do first. Other adopted originals get the supported undo.
-      adopted && !isMainBot ? [t("Roll back DSH adoption…"), TrashIcon, () => actions.rollbackAdoption(bot.dshAgentId), false, "bt-menu-note"] : null
+      // Only a confirmed rollback whose host preconditions are visible as met is offered.
+      canRollback ? [t("Roll back DSH adoption…"), TrashIcon, () => {
+        const warning = t("Roll back this adoption? This deletes the Bot record and any settings changed after adoption; the original DSH bot and its session return.");
+        if (typeof window.confirm !== "function" || !window.confirm(warning)) return;
+        return actions.rollbackAdoption(bot.dshAgentId);
+      }, false, "bt-menu-note"] : null
     ]
   ].map((group) => group.filter(Boolean)).filter((group) => group.length > 0);
   return (0, import_react58.createElement)(
@@ -19918,7 +19928,7 @@ function ContextMenu({ menu, roster, actions, leaving = false }) {
     adopted ? (0, import_react58.createElement)(
       "div",
       { className: "bt-menu-note", id: "bt-menu-note", role: "presentation" },
-      isMainBot ? t("Remove the Main Bot role before rolling back this adoption.") : t("Delete is unavailable for an adopted original. Rolling back restores the original DSH bot and its session; remove group roles and resolve new team history first.")
+      rollbackBlocked !== void 0 ? t("Rollback is unavailable until this Bot leaves all groups, is not a Main Bot, and has no tasks or new team history. Delete is also unavailable for an adopted original.") : t("Rolling back removes this Bot and any settings changed after adoption; the original DSH bot and its session return. A confirmation is required.")
     ) : null
   );
 }

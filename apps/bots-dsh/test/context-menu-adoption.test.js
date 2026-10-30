@@ -10,10 +10,12 @@ const bundle = await build({
   external: ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives'],
 })
 const module = { exports: {} }
+let confirmResult = false
+const windowState = { innerWidth: 1280, innerHeight: 800, confirm: () => confirmResult }
 runInNewContext(bundle.outputFiles[0].text, {
   module, exports: module.exports,
   document: { body: {} },
-  window: { innerWidth: 1280, innerHeight: 800 },
+  window: windowState,
   navigator: { clipboard: { writeText: () => {} } },
   require: name => {
     const platform = {
@@ -61,7 +63,7 @@ test('an adopted original offers rollback with an explanation instead of the ref
   assert.equal(labels.includes('Delete'), false)
   assert.equal(labels.includes('Roll back DSH adoption…'), true)
   const note = walk(menuFor(roster, 'adopted')).filter(node => node.props?.className === 'bt-menu-note').map(node => node.children.join(''))
-  assert.equal(note.some(text => /Delete is unavailable for an adopted original/.test(text)), true)
+  assert.equal(note.some(text => /A confirmation is required/.test(text)), true)
 })
 
 test('the rollback item describes itself and clicking it calls rollbackAdoption with the adopted agent id', async () => {
@@ -76,12 +78,32 @@ test('the rollback item describes itself and clicking it calls rollbackAdoption 
   const tree = menuFor(roster, 'adopted', actions)
   const rollback = walk(tree).find(node => node.props?.role === 'menuitem' && node.children.includes('Roll back DSH adoption…'))
   assert.equal(rollback.props['aria-describedby'], 'bt-menu-note')
+  confirmResult = false
   rollback.props.onClick()
   await new Promise(resolve => setTimeout(resolve, 0))
-  assert.deepEqual(calls, ['close', 'agent-1'])
+  assert.deepEqual(calls, ['close'])
+  confirmResult = true
+  rollback.props.onClick()
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.deepEqual(calls, ['close', 'close', 'agent-1'])
   assert.equal(reported.length, 1)
   assert.equal(reported[0][0], 'Remove Main Bot/group roles and resolve new team history before rolling back adoption')
   assert.equal(reported[0][1], 'menu')
+})
+
+test('an adopted original in a group or with tasks is not offered rollback and says to leave all groups', () => {
+  const blocked = {
+    ...roster,
+    roomsById: { room: { id: 'room', members: ['adopted'] } },
+    tasks: { task: { from: 'adopted', title: 'Synthetic task' } },
+  }
+  const tree = menuFor(blocked, 'adopted')
+  const labels = walk(tree).filter(node => node.props?.role === 'menuitem')
+    .map(node => node.children.filter(child => typeof child === 'string').at(-1))
+  assert.equal(labels.includes('Roll back DSH adoption…'), false)
+  const note = walk(tree).filter(node => node.props?.className === 'bt-menu-note').map(node => node.children.join('')).join('')
+  assert.match(note, /leaves all groups/)
+  assert.match(note, /tasks or new team history/)
 })
 
 test('an ordinary Bot still offers the plain delete and no rollback', () => {

@@ -178,6 +178,13 @@ test('an adopted original refuses delete until adoption is rolled back; rollback
   assert.match(mainRefused.error.message, /Remove Main Bot\/group roles and resolve new team history/)
   assert.equal((await call('set-main', { id: botId, main: false })).ok, true)
 
+  // Membership in any group also blocks rollback, even without an admin role.
+  rt.state.rooms.synthetic = { id: 'synthetic', name: 'Synthetic group', members: [botId], admin: null, mode: 'chat', sessions: {}, log: [], seq: 0 }
+  const groupRefused = await call('agent-bot-rollback', { agentId: agent.id })
+  assert.equal(groupRefused.ok, false)
+  assert.match(groupRefused.error.message, /Remove Main Bot\/group roles and resolve new team history/)
+  delete rt.state.rooms.synthetic
+
   // A task from the adopted Bot is new team history too.
   await rt.startTask({ title: 'Synthetic task', text: 'Synthetic instructions', from: botId })
   const taskRefused = await call('agent-bot-rollback', { agentId: agent.id })
