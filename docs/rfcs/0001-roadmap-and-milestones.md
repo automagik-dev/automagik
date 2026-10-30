@@ -43,8 +43,9 @@ these RFCs merges.
 | 4 | Projects in one place | RFC 0005 repos base and picker, then Genie Simple |
 | 5 | The app opens fast | RFC 0007, measured first |
 
-Herdr (0006), Genie Publish (0005) and Platform (0008) stay at the RFC stage, with no
-milestone, until their open questions are answered.
+Personal customization (0009) is Draft and comes after milestone 2; its milestone is created
+when it is scheduled. Herdr (0006), Genie Publish (0005) and Platform (0008) stay at the RFC
+stage, with no milestone, until their open questions are answered.
 
 ### Deliveries
 
