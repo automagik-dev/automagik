@@ -43,6 +43,10 @@ test('copy follows the DSH language and stays English without a locale service',
     assert.equal(hostText('An entry holds at most 300 characters; this one has 301. Keep one fact per entry, or save the details as several entries in a topic.'), '一条记忆最多 300 个字符，这条有 301 个')
     assert.equal(hostText("Writer's memory's MEMORY.md would have 4100 of its 4000 characters. Make room first: move details into a topic."), '主记忆会超过 4000 个字符的上限，请先删掉一些')
     assert.equal(hostText('There is no entry 9.'), '没有第 9 条')
+    // A Bot on a Session its host runs (parts.js `pinned`).
+    assert.equal(hostText('Unfold works in the folder its host gave its conversation, so its folder cannot change here'), 'Unfold 在宿主为它的对话指定的文件夹里工作，这里不能更改它的文件夹')
+    assert.equal(hostText('Unfold speaks in the conversation its host runs, so it cannot start a new one here.'), 'Unfold 在宿主运行的对话里说话，这里不能开始新对话')
+    assert.equal(hostText('Unfold speaks in the conversation its host runs; that conversation keeps its own compaction controls.'), 'Unfold 在宿主运行的对话里说话，那个对话由宿主自己压缩')
   } finally {
     off()
   }

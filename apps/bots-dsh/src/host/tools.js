@@ -388,6 +388,9 @@ export function install(rt) {
     await rt.load()
     const bot = callerBot(exec)
     if (bot === undefined) return next()
+    // A Session its host runs changes folder as that host's own does; the Bot's working
+    // folder stays as it is (parts.js `pinned`).
+    if (bot.sessionPinned === true && rt.chatOf(bot.id) === exec.agent.id) return next()
     const room = rt.roomOf(rt.groupOwners.get(exec.agent.id)?.roomId)
     const home = rt.workDirOf({ botId: bot.id, roomId: room?.id }) ?? rt.teamFolder()
     const target = await rt.folderAt(rt.sessionFolder(session), cd)

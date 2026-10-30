@@ -104,7 +104,15 @@ export function install(rt, team, env = process.env) {
     if (rt.readOnly() !== undefined) return undefined
     if (!hasMain()) await team.bootstrap()
     const existing = unfoldBot()
-    if (existing !== undefined) return existing
+    if (existing !== undefined) {
+      // Made on the host's root Session: it stays there, and goes back if an earlier
+      // version moved it to a fresh part.
+      if (unfoldLeads(env) && existing.id === ctx.get?.('unfoldSession')?.sessionId) {
+        await Promise.resolve(rt.keepAdoptedSession?.(existing.id))
+          .catch(error => rt.warn?.('unfold-bot: the Unfold Bot was not put back on its Session: %s', error?.message ?? error))
+      }
+      return existing
+    }
     if (load().unfoldCreated) return undefined
     // A timed-out bootstrap may still be waiting for the adapter root. Reuse that
     // creation instead of starting a second Bot when readiness eventually arrives.
