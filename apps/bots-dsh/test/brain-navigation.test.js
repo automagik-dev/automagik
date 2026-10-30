@@ -300,6 +300,34 @@ test('three rapid native picks carry the last registered source past a supersede
   assert.deepEqual(bench.opened, [])
 })
 
+test('rapid native fork descendants associate their required queued ancestry in order', async t => {
+  const bench = await start(t, { delay: true })
+  await bench.pick('first')
+  await bench.fork('fork-b', 'first')
+  await bench.fork('fork-c', 'fork-b')
+  // Native attachment can clear the retained view without changing its source.
+  flushSync(() => bench.retain(undefined))
+  flushSync(() => bench.retain('fork-c'))
+  assert.equal(bench.registrations.length, 1)
+  await act(async () => {
+    bench.registrations[0].resolve()
+    await tick()
+    bench.registrations[1]?.resolve()
+    await tick()
+    bench.registrations[2]?.resolve()
+    await tick()
+  })
+  const requests = bench.calls.filter(call => call.endpoint === 'bot-session-adopt')
+  assert.deepEqual(requests.map(call => [call.payload.sourceSessionId, call.payload.sessionId]), [
+    ['brain', 'first'], ['first', 'fork-b'], ['fork-b', 'fork-c'],
+  ], 'selected native fork must retain the actual parent association, not bypass its queued ancestor')
+  assert.equal(bench.current(), 'fork-c')
+  assert.equal(bench.hooks.roster.getSnapshot().byId['fork-c']?.id, 'brain')
+  assert.equal(bench.brain.profile, 'cordis')
+  assert.equal(bench.brain.dshAgentId, 'native')
+  assert.deepEqual(bench.opened, [])
+})
+
 test('an awaited fallback is canceled by an away/back navigation to the same source id', async t => {
   const bench = await start(t)
   bench.pauseState()

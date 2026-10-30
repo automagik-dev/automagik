@@ -24012,13 +24012,16 @@ function apply(ctx) {
       if (surface.getSnapshot().mode !== "bot") return;
       if (pendingBot.has(main)) return;
       if (nativeCandidate) {
-        const operation = { botId };
+        const operation = { botId, forkSource: destination?.blank !== true && parentId === before ? pendingSource : void 0 };
         pendingBot.set(main, operation);
         nativeDestination = main;
         setPlain(true);
         dropPanels();
         operation.done = Promise.resolve(pendingSource?.done ?? before).then(async (sourceSessionId) => {
-          if (mainView() !== main || surface.getSnapshot().mode !== "bot") return sourceSessionId;
+          const current = mainView();
+          let required = pendingBot.get(current);
+          while (required !== void 0 && required !== operation) required = required.forkSource;
+          if (current !== void 0 && current !== main && required !== operation || surface.getSnapshot().mode !== "bot") return sourceSessionId;
           await call("bot-session-adopt", { botId, sessionId: main, sourceSessionId });
           await pull();
           return main;

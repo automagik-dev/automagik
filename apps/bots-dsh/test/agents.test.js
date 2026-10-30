@@ -160,6 +160,31 @@ test('a native current-part fork retains its existing preset without replacing t
   assert.equal(bench.rt.chatOf(bench.botId), 'picked')
 })
 
+test('native chained nonblank forks require each actual parent to become the current part', async t => {
+  const bench = await nativeTransition(t)
+  assert.equal((await bench.adopt()).ok, true)
+  const original = structuredClone(bench.rt.state.agents[bench.entry.id])
+  const forks = new Map(['fork-b', 'fork-c'].map((id, index) => [id, {
+    id, preset: 'cordis', boundary: { openTurnStartSeq: null, lastTurn: 3 },
+    session: { id, header: { id, cwd: '/selected', parentSession: index === 0 ? 'picked' : 'fork-b', isSeeded: true } },
+  }]))
+  const resolve = bench.rt.resolveAgent
+  bench.rt.resolveAgent = async id => forks.get(id) ?? resolve(id)
+  bench.ctx.sessionProjections.stateOf = (session, key) => {
+    const live = forks.get(session.id) ?? bench.target
+    return key === 'agentPreset' ? live.preset : key === 'turnBoundary' ? live.boundary : undefined
+  }
+  const associate = (sessionId, sourceSessionId) => bench.call('bot-session-adopt', { botId: bench.botId, sessionId, sourceSessionId })
+  assert.equal((await associate('fork-c', 'picked')).ok, false, 'a skipped parent must never be accepted as a direct descendant')
+  assert.equal((await associate('fork-b', 'picked')).ok, true)
+  assert.equal((await associate('fork-c', 'fork-b')).ok, true)
+  assert.equal(bench.rt.chatOf(bench.botId), 'fork-c')
+  assert.equal(bench.rt.selfOf('fork-c'), bench.botId)
+  assert.equal(bench.bot.profile, 'cordis')
+  assert.deepEqual(bench.rt.state.agents[bench.entry.id], original)
+  assert.deepEqual(bench.archived, [])
+})
+
 for (const phase of ['resolve', 'preset-list', 'preset-select']) {
   for (const change of ['source', 'registration']) test(`native association revalidates ${change} after ${phase}`, async t => {
     const bench = await nativeTransition(t)

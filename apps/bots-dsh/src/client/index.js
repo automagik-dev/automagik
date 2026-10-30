@@ -1096,7 +1096,7 @@ export function apply(ctx) {
       if (surface.getSnapshot().mode !== 'bot') return
       if (pendingBot.has(main)) return
       if (nativeCandidate) {
-        const operation = { botId }
+        const operation = { botId, forkSource: destination?.blank !== true && parentId === before ? pendingSource : undefined }
         pendingBot.set(main, operation)
         nativeDestination = main
         setPlain(true)
@@ -1104,7 +1104,12 @@ export function apply(ctx) {
         // A skipped queued pick carries the last registered source forward; it
         // must not poison the next pick or pretend its own Session was associated.
         operation.done = Promise.resolve(pendingSource?.done ?? before).then(async sourceSessionId => {
-          if (mainView() !== main || surface.getSnapshot().mode !== 'bot') return sourceSessionId
+          // A selected nonblank fork needs its actual pending parents associated.
+          // Follow only this operation chain; unrelated navigation still skips it.
+          const current = mainView()
+          let required = pendingBot.get(current)
+          while (required !== undefined && required !== operation) required = required.forkSource
+          if ((current !== undefined && current !== main && required !== operation) || surface.getSnapshot().mode !== 'bot') return sourceSessionId
           await call('bot-session-adopt', { botId, sessionId: main, sourceSessionId })
           await pull()
           return main
