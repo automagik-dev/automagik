@@ -43,8 +43,7 @@ function walk(tree, found = []) {
   return found
 }
 
-function menuFor(roster, id) {
-  const actions = new Proxy({}, { get: () => () => {} })
+function menuFor(roster, id, actions = new Proxy({}, { get: () => () => {} })) {
   return ContextMenu({ menu: { kind: 'bot', id, x: 10, y: 10 }, roster, actions })
 }
 
@@ -63,6 +62,26 @@ test('an adopted original offers rollback with an explanation instead of the ref
   assert.equal(labels.includes('Roll back DSH adoption…'), true)
   const note = walk(menuFor(roster, 'adopted')).filter(node => node.props?.className === 'bt-menu-note').map(node => node.children.join(''))
   assert.equal(note.some(text => /Delete is unavailable for an adopted original/.test(text)), true)
+})
+
+test('the rollback item describes itself and clicking it calls rollbackAdoption with the adopted agent id', async () => {
+  const actions = new Proxy({ get: () => () => {} }, {
+    get: (target, name) => name in target ? target[name] : () => {},
+  })
+  const calls = []
+  const reported = []
+  actions.closeMenu = () => calls.push('close')
+  actions.rollbackAdoption = agentId => { calls.push(agentId); return Promise.reject(new Error('Remove Main Bot/group roles and resolve new team history before rolling back adoption')) }
+  actions.reportError = (error, where) => reported.push([error.message, where])
+  const tree = menuFor(roster, 'adopted', actions)
+  const rollback = walk(tree).find(node => node.props?.role === 'menuitem' && node.children.includes('Roll back DSH adoption…'))
+  assert.equal(rollback.props['aria-describedby'], 'bt-menu-note')
+  rollback.props.onClick()
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.deepEqual(calls, ['close', 'agent-1'])
+  assert.equal(reported.length, 1)
+  assert.equal(reported[0][0], 'Remove Main Bot/group roles and resolve new team history before rolling back adoption')
+  assert.equal(reported[0][1], 'menu')
 })
 
 test('an ordinary Bot still offers the plain delete and no rollback', () => {
