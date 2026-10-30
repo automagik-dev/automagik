@@ -396,6 +396,20 @@ export function launchUrlOf(text, port) {
   return match[1]
 }
 
+/**
+ * Drops every dsh login cookie the app's session kept for dsh's host. dsh names one per
+ * host:port and keeps it for days, but cookies ignore the port, so each start on a new port added
+ * one more to every request until dsh refused them all (431 Request Header Fields Too Large) and
+ * the page stayed blank. The launch URL's token signs the page in again. `cookies` is a session's
+ * cookies (get, remove); answers how many went.
+ */
+export async function forgetDshLogins(cookies, origin) {
+  const { hostname } = new URL(origin)
+  const logins = (await cookies.get({ domain: hostname })).filter(cookie => cookie.name.startsWith('dsh-auth-'))
+  await Promise.all(logins.map(cookie => cookies.remove(`http://${hostname}${cookie.path ?? '/'}`, cookie.name)))
+  return logins.length
+}
+
 /** The environment dsh runs with: its own home, Omni's, and nothing that phones home. */
 /**
  * Where command-line tools that plugins drive install themselves. An app opened from the Dock
