@@ -14,7 +14,7 @@
     "@automagik/omni-canvas-dsh": "*",
     "@automagik/welcome-dsh": "*",
     "@goodandready/dsh-subscriptions": "github:automagik-genie/dsh-subscriptions#2eff034ede95c9d06ecee290517101e6419c7fee",
-    "dsh-oh-my-claude": "github:automagik-genie/dsh-oh-my-claude#eb9d1cdad58472ebe34abd194309a60fc22c40d1"
+    "dsh-oh-my-claude": "github:automagik-genie/dsh-oh-my-claude#f6e9158f71031cf3a3abbf9c805263792cad7d11"
   },
   "dsh": {
     "profile": {
