@@ -5,6 +5,21 @@
 export const NAMESPACE = 'omni-ui'
 
 const ZH = {
+  // The model menu of a Bot its plugin answers for (host-model-menu.js).
+  'computer': '电脑',
+  'Stays on this {device}.': '只留在这台{device}上。',
+  'Your message and the memories recalled for it go to {provider}.': '你的消息和为它调取的记忆会发送给 {provider}。',
+  'Your message goes to {provider}.': '你的消息会发送给 {provider}。',
+  'Your message goes to {provider} through {via}; memories stay on this {device}.': '你的消息经由 {via} 发送给 {provider}；记忆留在这台{device}上。',
+  'Switching after this reply…': '这条回复结束后切换…',
+  'Switching…': '正在切换…',
+  '{model} answers for now': '暂由 {model} 回答',
+  'Answering now': '正在回答',
+  'Auto': '自动',
+  'Off': '关闭',
+  'Low': '低',
+  'High': '高',
+  'Max': '最高',
   // Per-Bot Advanced, native sidebar and honest accounting.
   '{tokens} tok · Cache reporting unavailable': '{tokens} token · 缓存统计不可用',
   'Cache reporting': '缓存统计',

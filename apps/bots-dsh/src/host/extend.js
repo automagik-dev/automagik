@@ -9,6 +9,8 @@
 //   live(fn)                       fields merged into every state answer (no revision)
 //   mainRules(fn, { order })       a part of the Main Bot's rules, text or nothing, inside
 //                                  the bot-identity section (prompt.js)
+//   botModels(kind, source)        the model menu of the Bots of one kind, owned by the
+//                                  plugin that hosts them (host-models.js has the shape)
 //
 // Each returns its disposer, so a plugin that stops takes what it added with it. Hooks
 // are read at run time, never during install.
@@ -17,6 +19,7 @@ export function install(rt) {
   const views = []
   const lives = []
   const rules = []
+  const botModels = new Map()
   const add = (list, item) => {
     list.push(item)
     return () => {
@@ -49,6 +52,13 @@ export function install(rt) {
       rules.sort((a, b) => a.order - b.order)
       return dispose
     },
+    botModels(kind, source) {
+      if (typeof kind !== 'string' || kind === '') throw new Error('ds-bot: a model menu needs a Bot kind')
+      if (botModels.has(kind)) throw new Error(`ds-bot: the model menu of ${kind} Bots is already served`)
+      if (typeof source?.snapshot !== 'function' || typeof source.pick !== 'function') throw new Error('ds-bot: a model menu needs snapshot() and pick()')
+      botModels.set(kind, source)
+      return () => { if (botModels.get(kind) === source) botModels.delete(kind) }
+    },
   }
 
   // What channel.js and prompt.js read.
@@ -56,6 +66,8 @@ export function install(rt) {
     endpointOf: name => (endpoints.has(name) ? endpoints.get(name) : undefined),
     view: () => merged(views),
     live: () => merged(lives),
+    // The plugin that owns the model menu of a Bot kind, if one does.
+    botModelsOf: kind => (typeof kind === 'string' ? botModels.get(kind) : undefined),
     // The parts for one Main Bot, in order; empty ones are left out.
     // One plugin's failing rule leaves the others, and the prompt, standing.
     rules: self => rules.map((rule) => {

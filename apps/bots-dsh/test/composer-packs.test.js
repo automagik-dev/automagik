@@ -165,3 +165,21 @@ test('the thinking pack matches only models that serve levels', () => {
   assert.equal(THINKING_PACK.match('deepseek-official', { reasoning: { efforts: [] } }), false)
   assert.equal(THINKING_PACK.match('deepseek-official', {}), false)
 })
+
+test('a Bot whose model menu its plugin owns gets that menu in the composer, whatever DSH model it was saved with', () => {
+  const host = { entries: [{ id: 'granite', label: 'Granite 4.1 3B', current: true }] }
+  for (const bot of [claudeBot({ kind: 'unfold' }), deepseekBot({ kind: 'unfold', model: undefined })]) {
+    const roster = { ...rosterWith(bot, [{ ref: 'deepseek-official/deepseek-v4', reasoning: EFFORTS }]), hostModels: { 'bot-1': host } }
+    const target = targetOf(roster, 'session-1')
+    assert.equal(target.host, host)
+    assert.equal(target.provider, undefined)
+    assert.equal(packFor(target, { packs, env: OMC }).id, 'host-model')
+    // DSH's permission control never shows for it, and the model cell draws Omni's menu.
+    assert.equal(stepsAside({ roster, sessionId: 'session-1', cell: 'permission', key: 'conversation.input.permission', env: OMC, packs }), false)
+    const drawn = packModelCell(OMC)({ sessionId: 'session-1', useRoster: pick => pick(roster), actions: {} })
+    assert.equal(drawn.props['data-pack'], 'host-model')
+    assert.equal(drawn.children[0].type, ModelMenu)
+  }
+  // Without the plugin's menu the Bot gets its ordinary pack.
+  assert.equal(packFor(targetOf(rosterWith(claudeBot({ kind: 'unfold' })), 'session-1'), { packs, env: OMC }).id, 'claude-code')
+})

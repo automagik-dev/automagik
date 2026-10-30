@@ -412,7 +412,10 @@ export function install(rt) {
     description: 'List the models a Bot can run on, as provider/model refs for create_bot and update_bot. A model in use also lists the thinking levels it serves.',
     parameters: {},
     output,
-    async execute() {
+    async execute(_args, exec) {
+      await rt.load()
+      const caller = rt.botOf(rt.selfOf(exec?.agent?.id))
+      if (caller !== undefined && rt.hostOwned?.(caller)) return `Your model is not a DSH model: the user picks it in your chat's model menu.`
       const models = await rt.catalog({ fresh: true })
       if (models.length === 0) return 'No models are configured. Ask the user to add one in Settings → Models.'
       const fallback = rt.defaultRef()
