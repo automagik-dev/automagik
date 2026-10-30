@@ -220,6 +220,8 @@ export function install(rt) {
         ...(dir ? { workDir: dir } : {}),
         // The team default; a Session adopted from a host keeps its own.
         ...(state.prefs.permission && existingSessionId === undefined ? { permission: state.prefs.permission } : {}),
+        // The host runs an adopted Session, so the Bot never moves to a fresh part (parts.js).
+        ...(existingSessionId !== undefined ? { sessionPinned: true } : {}),
         // What a team member brought in by its own plugin is for (omni: Omni's channels).
         ...(BOT_KINDS.includes(kind) ? { kind } : {}),
         instructions: String(instructions).trim(),

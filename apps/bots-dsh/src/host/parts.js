@@ -814,6 +814,13 @@ export function install(rt) {
   const grown = (sessionId, tokens, lines) => tokens >= (partBase.get(sessionId) ?? 0) + lines.check / 4
   // A read-only process (another dsh holds the team) neither condenses nor switches.
   const readOnly = () => rt.readOnly() !== undefined
+  // A Bot made on a Session a host already owned (roster.js `existingSessionId`) stays
+  // on it: that host runs the conversation, so its own chat never moves to a fresh part,
+  // for a folder, a context line or a failed request. Its group Sessions still do.
+  const pinned = (sessionId) => {
+    const place = placeOf(sessionId)
+    return place !== undefined && place.roomId === undefined && rt.botOf(place.botId)?.sessionPinned === true
+  }
 
   // Input for an earlier part goes on in the current one: a browser may still show the
   // old part, and a turn stopped for a switch hands on what it claimed.
@@ -907,7 +914,7 @@ export function install(rt) {
   // even a note: earlier parts stay readable through read_own_chat.
   function startSwitch(agent, { resume = false, carry = [], info, joined, overflow = false, failed, bare = false, folder = false, fresh = false, hard = overflow || folder || fresh } = {}) {
     const place = placeOf(agent.id)
-    if (place === undefined || switches.has(agent.id) || checkpoints.has(agent.id) || readOnly()) return false
+    if (place === undefined || switches.has(agent.id) || checkpoints.has(agent.id) || readOnly() || pinned(agent.id)) return false
     const job = { ...place, carry: [...carry], info, joined, resume, overflow, failed, bare: bare || fresh, folder, fresh, hard, since: Date.now() }
     switches.set(agent.id, job)
     void runSwitch(agent, job)
@@ -1161,7 +1168,7 @@ export function install(rt) {
       partBase.set(agent.id, (tokensOf(agent.session) ?? 0) + fresh)
     }
     if (!readOnly() && await folderMove(agent, { midTurn: payload.step > 1 }) !== undefined) return switchBeforeStep(agent, payload, { folder: true })
-    if (nativeDshSession(agent.id)) return next()
+    if (nativeDshSession(agent.id) || pinned(agent.id)) return next()
     const lines = await contextLines(agent.session).catch(() => undefined)
     const tokens = tokensOf(agent.session)
     if (lines === undefined || tokens === undefined || tokens < lines.hard || !grown(agent.id, tokens, lines) || readOnly()) return next()
@@ -1194,6 +1201,8 @@ export function install(rt) {
     // A native own chat keeps the project selected through DSH's workspace picker;
     // the Bot's durable default folder is not a command to move that Session back.
     if (place !== undefined && place.roomId === undefined && nativeDshSession(agent.id) && rt.chatOf(place.botId) === agent.id) return undefined
+    // A host-owned Session keeps the folder its host gave it.
+    if (pinned(agent.id)) return undefined
     if (place === undefined || cwd === undefined || (midTurn && place.roomId !== undefined) || Date.now() < (folderRetry.get(agent.id) ?? 0)) return undefined
     const wanted = rt.workDirOf(place)
     const usable = wanted !== undefined && await rt.isFolder(wanted)
@@ -1249,7 +1258,7 @@ export function install(rt) {
     if (decided !== undefined || payload.signal?.aborted) return decided
     await rt.load()
     const { agent } = payload
-    if (nativeDshSession(agent.id) || !rt.isBotSession(agent.id) || switches.has(agent.id) || readOnly() || rescued.get(agent.id) === 'bare') return decided
+    if (nativeDshSession(agent.id) || pinned(agent.id) || !rt.isBotSession(agent.id) || switches.has(agent.id) || readOnly() || rescued.get(agent.id) === 'bare') return decided
     // A provider may turn down one request for reasons of its own; a history that
     // breaks every request fails the next turn as well.
     if (failure.code === 'INVALID_REQUEST' && !STUCK_CODES.includes(lastTurnEnd(agent)?.data?.reason?.error?.code)) return decided
@@ -1264,7 +1273,7 @@ export function install(rt) {
     if (payload.failure?.code !== OVERFLOW || payload.signal?.aborted) return next()
     await rt.load()
     const { agent } = payload
-    if (nativeDshSession(agent.id) || !rt.isBotSession(agent.id) || switches.has(agent.id) || readOnly()) return next()
+    if (nativeDshSession(agent.id) || pinned(agent.id) || !rt.isBotSession(agent.id) || switches.has(agent.id) || readOnly()) return next()
     const entry = rt.liveOf(agent.id)
     entry.switched = true
     startSwitch(agent, { resume: true, info: entry.info, joined: [...(entry.joined ?? [])], overflow: true })
@@ -1275,7 +1284,7 @@ export function install(rt) {
   // the part ends up below the line, and nothing is decided again until it grows
   // past it.
   async function checkContext(agent) {
-    if (switches.has(agent.id) || checkpoints.has(agent.id) || freshParts.has(agent.id) || checking.has(agent.id) || readOnly()) return
+    if (switches.has(agent.id) || checkpoints.has(agent.id) || freshParts.has(agent.id) || checking.has(agent.id) || readOnly() || pinned(agent.id)) return
     const lines = await contextLines(agent.session)
     const tokens = tokensOf(agent.session)
     if (lines === undefined || tokens === undefined || tokens < lines.check || !grown(agent.id, tokens, lines)) return
@@ -1570,9 +1579,54 @@ export function install(rt) {
     const bot = rt.botOf(botId)
     if (bot === undefined) throw Object.assign(new Error('Unknown Bot'), { code: 'bot/not-found' })
     if (readOnly()) throw Object.assign(new Error(rt.readOnly()), { code: 'bot/read-only' })
+    if (bot.sessionPinned === true) throw Object.assign(new Error(`${bot.name} keeps the conversation its host runs.`), { code: 'bot/refused' })
     const agent = await rt.resolveAgent(rt.chatOf(botId))
     if (!startSwitch(agent, { fresh: true })) throw Object.assign(new Error(`${bot.name} is already moving to a new conversation.`), { code: 'bot/refused' })
     return { id: botId }
+  }
+
+  // A Bot a host made on a Session it owns stays on that Session. A team saved before the
+  // pin may have moved it to a fresh part, where the host turns every message away: it
+  // goes back to the Session it was made on, and the parts made since are archived.
+  async function keepAdoptedSession(botId) {
+    await rt.load()
+    const bot = rt.botOf(botId)
+    if (bot === undefined || readOnly()) return false
+    const current = rt.chatOf(botId)
+    if ([...switches.values()].some(job => job.botId === botId && job.roomId === undefined)) return false
+    const segments = bot.segments ?? []
+    const moved = current !== bot.id && segments[0]?.sessionId === bot.id
+    if (bot.sessionPinned === true && !moved) return false
+    if (moved) {
+      try {
+        await ctx.workspaceRegistry.unarchiveSession(bot.id)
+      } catch (error) {
+        rt.warn('ds-bot: %s stays on part %s; its first Session was not restored: %s', bot.name, current, error)
+        return false
+      }
+    }
+    const parts = moved ? [current, ...segments.slice(1).map(segment => segment.sessionId)] : []
+    bot.sessionPinned = true
+    if (moved) {
+      delete bot.sessionId
+      delete bot.segments
+      for (const part of parts) {
+        delete state.switching[part]
+        if (state.questions[part] !== undefined && state.questions[bot.id] === undefined) state.questions[bot.id] = state.questions[part]
+        delete state.questions[part]
+        if (state.views?.[part] !== undefined && state.views[bot.id] === undefined) state.views[bot.id] = state.views[part]
+        if (state.views !== undefined) delete state.views[part]
+      }
+    }
+    await rt.save()
+    for (const part of parts) {
+      await rt.moveSchedules?.(part, bot.id)
+        .catch(error => rt.warn('ds-bot: tasks of part %s not moved back: %s', part, error))
+      await ctx.workspaceRegistry.archiveSession(part, { stopActivity: true })
+        .catch(error => rt.warn('ds-bot: part %s not archived: %s', part, error))
+    }
+    if (moved) ctx.logger?.info?.('ds-bot: %s is back on its first Session; %d later part(s) archived', bot.name, parts.length)
+    return moved
   }
 
   async function earlierPage(sessionId, cursor) {
@@ -1598,5 +1652,5 @@ export function install(rt) {
     return { sessionId: parts.at(-1).sessionId, ...(await partPage(parts, index, cursor)) }
   }
 
-  Object.assign(rt, { clock, partsOf, historyEntry, partLines, noteText, earlierPage, chatPage, displayItems, followFolder, heldBack, startFresh, contextStatus, checkpointBot, switchJobs: () => switches.values() })
+  Object.assign(rt, { clock, partsOf, historyEntry, partLines, noteText, earlierPage, chatPage, displayItems, followFolder, heldBack, startFresh, keepAdoptedSession, contextStatus, checkpointBot, switchJobs: () => switches.values() })
 }
