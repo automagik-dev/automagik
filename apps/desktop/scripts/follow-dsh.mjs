@@ -48,6 +48,19 @@ export function pinRuntime(manifest, version) {
   return { ...manifest, dependencies: { ...manifest.dependencies, '@deepseek-ai/dsh': version } }
 }
 
+/** Retarget patch version guards without changing their exact-byte applicability guards.
+ * A changed upstream file still fails runtime-patches; this is not a patch port.
+ */
+export function pinPatchVersions(patches, version) {
+  if (!VERSION.test(String(version ?? ''))) throw new Error(`not a dsh version: '${version}'`)
+  if (patches.every(entry => entry.dsh === version && entry.files.every(file => file.version === version))) return null
+  return patches.map(entry => ({
+    ...entry,
+    dsh: version,
+    files: entry.files.map(file => ({ ...file, version })),
+  }))
+}
+
 // The plugins whose tests pin a DSH and whose manifest declares the range.
 export const PLUGINS = Object.freeze(['bots-dsh', 'welcome-dsh', 'locale-pt-br-dsh', 'unfold-bridge-dsh', 'unfold-bot-dsh', 'unfold-sse-dsh', 'unfold-events-dsh', 'unfold-capabilities-dsh', 'unfold-settings-dsh', 'unfold-mind-dsh', 'unfold-trajectory-dsh', 'unfold-session-dsh'])
 
@@ -65,6 +78,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     execFileSync('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: runtime, stdio: 'inherit' })
     changed = true
   }
+  const patchFile = join(runtime, 'patches', 'patches.json')
+  const patches = pinPatchVersions(readJson(patchFile), version)
+  if (patches !== null) { writeJson(patchFile, patches); changed = true }
   if (all) {
     for (const name of PLUGINS) {
       const plugin = join(desktop, '..', name)

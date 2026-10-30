@@ -2,18 +2,18 @@
   {
     "patch": "teammate-models.patch",
     "about": "Agent Teams: spawn_teammate takes llm_provider, model and reasoning_effort for a fresh teammate (checked against DSH's subagent model selection), list_teammate_models, and each teammate's own route in the roster. Delete it in the release whose dsh has the change upstream.",
-    "dsh": "0.2.1-rc.4",
+    "dsh": "0.2.1-rc.5",
     "files": [
       {
         "package": "@deepseek-ai/dsh-experimental-agent-team",
-        "version": "0.2.1-rc.4",
+        "version": "0.2.1-rc.5",
         "file": "lib/index.js",
         "before": "b2d337d10c841773e4e69836475f5c21dce8cd87beb70d73413a7868e9403322",
         "after": "ec016afcfcb73dfacf6a12964286e57c56aa58ec59e7e048dc6b2f1d09955fa1"
       },
       {
         "package": "@deepseek-ai/dsh-experimental-tool-agent-team",
-        "version": "0.2.1-rc.4",
+        "version": "0.2.1-rc.5",
         "file": "lib/index.js",
         "before": "cac22fe5f83a179056469cf329def58393c7620eae23b018c66f42c37d849f63",
         "after": "f7f2c992e0c55a701b6cb90edb74f0fcb8e45ae53e271159e1731c7a422643a6"
