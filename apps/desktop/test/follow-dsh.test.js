@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { PLUGINS, acceptsHarness, pinRange, pinRuntime, rangeFor } from '../scripts/follow-dsh.mjs'
+import { PLUGINS, acceptsHarness, pinPatchVersions, pinRange, pinRuntime, rangeFor } from '../scripts/follow-dsh.mjs'
 
 const runtime = { name: 'omni-desktop-runtime', private: true, dependencies: { '@deepseek-ai/dsh': '0.2.1-rc.2', pnpm: '10.34.6' } }
 
@@ -63,6 +63,26 @@ test('a carried Omni harness admits only newer compatible releases in the same p
   assert.equal(acceptsHarness('0.2.1-rc.4', '0.2.1-rc.3', undefined), false)
   assert.equal(acceptsHarness('0.2.1-rc.4', undefined, range), false)
   assert.equal(acceptsHarness('0.2.2', '0.2.1-rc.3', '>=0.2.1-rc.2 <0.3.0'), false)
+})
+
+test('patch version tooling preserves exact-byte guards and does not mutate its input', () => {
+  const patches = [{ patch: 'route.patch', about: 'keep routing', dsh: '0.2.1-rc.4', files: [
+    { package: '@deepseek-ai/dsh-experimental-agent-team', version: '0.2.1-rc.4', file: 'lib/index.js', before: 'before-hash', after: 'after-hash' },
+  ] }]
+  const original = structuredClone(patches)
+  const next = pinPatchVersions(patches, '0.2.1-rc.5')
+  assert.equal(next[0].dsh, '0.2.1-rc.5')
+  assert.equal(next[0].files[0].version, '0.2.1-rc.5')
+  assert.deepEqual({ ...next[0], dsh: original[0].dsh, files: next[0].files.map((file, i) => ({ ...file, version: original[0].files[i].version })) }, original[0])
+  assert.deepEqual(patches, original)
+  assert.equal(pinPatchVersions(next, '0.2.1-rc.5'), null)
+  assert.throws(() => pinPatchVersions(patches, '^0.2.1'), /not a dsh version/)
+})
+
+test('all runtime patch version guards track the desktop DSH pin', () => {
+  const pinned = JSON.parse(readFileSync(new URL('../runtime/package.json', import.meta.url), 'utf8')).dependencies['@deepseek-ai/dsh']
+  const patches = JSON.parse(readFileSync(new URL('../runtime/patches/patches.json', import.meta.url), 'utf8'))
+  assert.equal(pinPatchVersions(patches, pinned), null)
 })
 
 test('all shipped plugin harnesses track the exact desktop DSH pin', () => {

@@ -15,7 +15,7 @@
     "version:next": "bun scripts/version.ts next"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-plugin-market-index": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-plugin-market-index": "0.2.1-rc.5",
     "playwright-core": "1.58.2"
   }
 }
