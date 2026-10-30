@@ -59,7 +59,7 @@ test('the plugin ships Genie as a v2 pet with its sleep strip, and lists Codex\'
   await mkdir(join(codexHome, 'pets', 'broken'), { recursive: true })
   await writeFile(join(codexHome, 'pets', 'broken', 'pet.json'), JSON.stringify({ id: 'broken' }))
   await writeFile(join(codexHome, 'pets', 'broken', 'spritesheet.webp'), vp8x(512, 512))
-  const pets = createPets({ home, codexHome, fetch: () => { throw new Error('no network') } })
+  const pets = createPets({ home, codexHome, fetch: () => { throw new Error('no network') }, unfold: () => true })
   const list = await pets.list()
   // Directory order is filesystem-dependent: compare by identity, not by readdir order.
   const shapes = list.map(pet => [pet.source, pet.id, pet.version, pet.sleep]).sort((a, b) => `${a[0]}:${a[1]}`.localeCompare(`${b[0]}:${b[1]}`))
@@ -71,6 +71,29 @@ test('the plugin ships Genie as a v2 pet with its sleep strip, and lists Codex\'
   const kept = await pets.adopt('codex', 'fox')
   assert.deepEqual([kept.source, kept.id, kept.version], ['team', 'fox', 1])
   assert.deepEqual((await pets.list()).map(pet => `${pet.source}:${pet.id}`).sort(), ['builtin:automagik', 'builtin:genie-cosmic', 'builtin:unfold', 'builtin:wisp', 'team:fox'])
+})
+
+test('Unfold\'s pet is listed only in Unfold\'s own instance', async () => {
+  const ids = async options => (await createPets({ ...await homes(), fetch: () => { throw new Error('no network') }, ...options }).list()).filter(pet => pet.source === 'builtin').map(pet => pet.id).sort()
+  assert.deepEqual(await ids({ unfold: () => false }), ['automagik', 'genie-cosmic', 'wisp'])
+  assert.deepEqual(await ids({ unfold: () => true }), ['automagik', 'genie-cosmic', 'unfold', 'wisp'])
+  // By default the host decides, from AUTOMAGIK_HOST or AUTOMAGIK_PRELOAD.
+  const before = { AUTOMAGIK_HOST: process.env.AUTOMAGIK_HOST, AUTOMAGIK_PRELOAD: process.env.AUTOMAGIK_PRELOAD }
+  try {
+    delete process.env.AUTOMAGIK_HOST
+    delete process.env.AUTOMAGIK_PRELOAD
+    assert.ok(!(await ids({})).includes('unfold'))
+    process.env.AUTOMAGIK_HOST = 'unfold'
+    assert.ok((await ids({})).includes('unfold'))
+    delete process.env.AUTOMAGIK_HOST
+    process.env.AUTOMAGIK_PRELOAD = 'unfold'
+    assert.ok((await ids({})).includes('unfold'))
+  } finally {
+    for (const [name, value] of Object.entries(before)) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+  }
 })
 
 test('Automagik ships its original v2 atlas and sleep strip without network adoption', async () => {

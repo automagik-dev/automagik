@@ -13336,12 +13336,12 @@ var sourceLine = { builtin: "Automagik", team: "Kept by this team", codex: "From
 var capitalize = (word) => word[0].toUpperCase() + word.slice(1);
 var slug = (text2) => String(text2 ?? "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "bot";
 var PICK_MS = 900;
-function automagikRoster() {
+function automagikRoster({ unfold = false } = {}) {
   return [
     { key: "pet:builtin:genie-cosmic", kind: "pet", pet: { ...GENIE_PET, name: "Genie" }, name: "Genie", line: "Automagik" },
     { key: "omni", kind: "omni", name: "Omni", line: "Automagik" },
     { key: "pet:builtin:automagik", kind: "pet", pet: { source: "builtin", id: "automagik", name: "Automagik", version: 2, sleep: true }, name: "Automagik", line: "Automagik" },
-    { key: "pet:builtin:unfold", kind: "pet", pet: { ...UNFOLD_PET, name: "Unfold" }, name: "Unfold", line: "Automagik" },
+    ...unfold ? [{ key: "pet:builtin:unfold", kind: "pet", pet: { ...UNFOLD_PET, name: "Unfold" }, name: "Unfold", line: "Automagik" }] : [],
     { key: "pet:builtin:wisp", kind: "pet", pet: { source: "builtin", id: "wisp", name: "Wisp", version: 2, sleep: false }, name: "Wisp", line: "Automagik" },
     ...PICKER_SHAPES.filter((shape) => shape !== "octopus").map((shape) => ({ key: `shape:${shape}`, kind: "shape", shape, name: shapeOf(shape).label, line: "Automagik character" }))
   ];
@@ -13423,6 +13423,7 @@ function CharacterSelect({ bot, actions, run: run2, onClose, avatarImage: avatar
   const look = lookOf(bot);
   const [color, setColor] = (0, import_react31.useState)(look.color);
   const [local, setLocal] = (0, import_react31.useState)([]);
+  const [unfold, setUnfold] = (0, import_react31.useState)(false);
   const [browse, setBrowse] = (0, import_react31.useState)(false);
   const market = useMarket(actions, browse);
   const [focus, setFocus] = (0, import_react31.useState)(() => currentKey(bot, look));
@@ -13433,13 +13434,16 @@ function CharacterSelect({ bot, actions, run: run2, onClose, avatarImage: avatar
   const fileRef = (0, import_react31.useRef)(null);
   const gridRef = (0, import_react31.useRef)(null);
   (0, import_react31.useEffect)(() => {
-    void actions.pets().then((list) => setLocal(list.filter((pet) => pet.source !== "builtin")), () => setLocal([]));
+    void actions.pets().then((list) => {
+      setLocal(list.filter((pet) => pet.source !== "builtin"));
+      setUnfold(list.some((pet) => pet.source === "builtin" && pet.id === "unfold"));
+    }, () => setLocal([]));
   }, []);
   const loadPhotos = () => loadLibrary(actions).then((page) => setLibrary(page.items), () => setLibrary([]));
   (0, import_react31.useEffect)(() => {
     void loadPhotos();
   }, []);
-  const ours = (0, import_react31.useMemo)(automagikRoster, []);
+  const ours = (0, import_react31.useMemo)(() => automagikRoster({ unfold }), [unfold]);
   const yours = local.map((pet) => ({ key: `pet:${pet.source}:${pet.id}`, kind: "pet", pet, name: pet.name, line: sourceLine[pet.source] ?? pet.source }));
   const theirs = market.market.pets.map((pet) => ({ key: `market:${pet.id}`, kind: "market", pet, name: pet.name, line: pet.by ? t("by {name}", { name: pet.by }) : "codex-pets.net" }));
   const photo = look.image ? [{ key: "photo", kind: "photo", image: look.image, name: t("Photo"), line: t("Uploaded") }] : [];

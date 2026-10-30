@@ -9,6 +9,7 @@ import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/p
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { inUnfoldInstance } from './constants.js'
 
 export const MARKET = 'https://codex-pets.net'
 const MARKET_ASSETS = `${MARKET}/assets/`
@@ -57,7 +58,7 @@ function manifestOf(raw, fallbackId) {
   return { id, name, description: String(raw?.description ?? '').trim().slice(0, 240), sheet, from: typeof raw?.from === 'string' ? raw.from : undefined }
 }
 
-export function createPets({ home, codexHome = join(homedir(), '.codex'), builtinDir = BUILTIN, fetch: get = globalThis.fetch, warn = () => {} }) {
+export function createPets({ home, codexHome = join(homedir(), '.codex'), builtinDir = BUILTIN, fetch: get = globalThis.fetch, warn = () => {}, unfold = inUnfoldInstance }) {
   // The team's home may be settled after the channel is made, so it is read on use.
   const teamDirOf = () => join(typeof home === 'function' ? home() : home, 'pets')
   const dirOf = source => (source === 'builtin' ? builtinDir : source === 'team' ? teamDirOf() : join(codexHome, 'pets'))
@@ -93,7 +94,9 @@ export function createPets({ home, codexHome = join(homedir(), '.codex'), builti
   async function list() {
     const [builtin, team, codex] = await Promise.all(SOURCES.map(listIn))
     const kept = new Set(team.map(pet => pet.id))
-    return [...builtin, ...team, ...codex.filter(pet => !kept.has(pet.id))].map(view)
+    // Unfold's pet is listed only in Unfold's own instance; the character select follows this list.
+    const ours = unfold() ? builtin : builtin.filter(pet => pet.id !== 'unfold')
+    return [...ours, ...team, ...codex.filter(pet => !kept.has(pet.id))].map(view)
   }
 
   /** A pet's sheet (or `part: 'sleep'`, its sleep strip) for the route, or undefined. */

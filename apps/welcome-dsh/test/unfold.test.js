@@ -134,9 +134,8 @@ test('release and absent welcome sources resolve every Automagik plugin to a rel
   }
 })
 
-test('in the Automagik app, powering Unfold on installs the Bot team, its defaults and Unfold, with no git', async (t) => {
-  // The app's own welcome came from a release tarball; every sibling uses that release, each
-  // checked against its signed lane and installed from the kept copy.
+test('outside Unfold\'s own instance nothing of Unfold\'s installs: no unfold-* plugin, no git', async (t) => {
+  // Even where every release tarball would resolve, the install is refused before any of it runs.
   const bundles = [{ name: PKG.name, availability: 'profile', enabled: true, source: `https://github.com/automagik-dev/automagik/releases/download/v${PKG.version}/automagik-welcome-dsh-${PKG.version}.tgz`, version: PKG.version }]
   const everything = [OMNI_PLUGINS[0], ...UNFOLD_PLUGINS, UNFOLD_PLUGIN]
   const manager = fakeManager({ bundles, registry: new Set(everything.map(plugin => `https://github.com/automagik-dev/automagik/releases/download/v${PKG.version}/automagik-${plugin.dir}-${PKG.version}.tgz`)) })
@@ -144,21 +143,15 @@ test('in the Automagik app, powering Unfold on installs the Bot team, its defaul
   const team = { state: { bots: {} }, async load() {} }
   const home = folder(t)
   const net = release(filesOf())
-  const fake = host({ manager, team, env: { AUTOMAGIK_HOME: home }, release: { fetch: net.fetch, keys: KEYS }, checkGit: async () => { gitChecks += 1; return null } })
-  const before = await value(fake, 'unfold-plugin')
-  assert.equal(before.ready, false)
-  assert.equal(before.canInstall, true)
-  assert.deepEqual(before.plugins.map(row => [row.name, row.installed]), everything.map(plugin => [plugin.name, false]))
-  await value(fake, 'unfold-plugin-install')
-  const after = await settleUnfold(fake)
-  assert.equal(after.install.phase, 'restart', after.install.error)
-  assert.deepEqual(manager.calls.map(([, spec]) => spec.replace(/-[0-9a-f]{64}\.tgz$/, '')), everything.map(plugin => join(home, 'welcome', 'tarballs', `${plugin.name.replace('/', '+')}-${PKG.version}`)))
+  for (const env of [{ AUTOMAGIK_HOME: home }, { AUTOMAGIK_HOME: home, AUTOMAGIK_PRELOAD: 'omni' }, { AUTOMAGIK_HOME: home, AUTOMAGIK_HOST: 'desktop' }]) {
+    const fake = host({ manager, team, env, release: { fetch: net.fetch, keys: KEYS }, checkGit: async () => { gitChecks += 1; return null } })
+    const reply = await fake.handle('unfold-plugin-install')
+    assert.equal(reply.ok, false, JSON.stringify(env))
+    assert.equal(reply.error.code, 'omni-ai/refused')
+    assert.equal((await value(fake, 'unfold-plugin')).install, null)
+  }
+  assert.deepEqual(manager.calls, [])
   assert.equal(gitChecks, 0)
-  // Ready once the plugin has made its Bot.
-  team.state.bots.u = { id: 'u', name: 'Unfold', kind: 'unfold' }
-  const ready = await value(fake, 'unfold-plugin')
-  assert.equal(ready.ready, true)
-  assert.deepEqual(ready.bot, { id: 'u', name: 'Unfold' })
 })
 
 test('in Unfold\'s own instance everything is preinstalled: choosing Unfold installs nothing and checks no git', async () => {
