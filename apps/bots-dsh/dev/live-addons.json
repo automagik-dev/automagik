@@ -5,6 +5,6 @@
   },
   "dsh-oh-my-claude": {
     "version": "1.5.6-omni.7",
-    "from": "github:automagik-genie/dsh-oh-my-claude#eb9d1cdad58472ebe34abd194309a60fc22c40d1"
+    "from": "github:automagik-genie/dsh-oh-my-claude#f6e9158f71031cf3a3abbf9c805263792cad7d11"
   }
 }
