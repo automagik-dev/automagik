@@ -76,13 +76,9 @@ same box and steps as a press, and Remove still sends it back to sleep; Genie's 
 the team. The other card stays to add, then or later. Without a preload Omni comes first
 and nothing is chosen.
 
-Unfold's card is the third. Its power button installs, after the Bot team, the Unfold bridge,
-the Unfold plugins and `@automagik/unfold-bot-dsh`, all from this repository at this plugin's
-version, as the Bot team is (no git source, so no git check); that plugin then makes the Unfold
-Bot. All six companion bundles are released together from this repository; missing plugins
-come from that version's GitHub release tarballs, or the welcome's linked or pinned git source.
-The shared SSE library is carried by the streaming bundles and is not installed separately.
-Unfold's own Automagik instance starts DSH with `AUTOMAGIK_HOST=unfold` or
+Unfold's card is shown only in Unfold's own Automagik instance. Anywhere else the team step has
+no Unfold card and `unfold-plugin-install` is refused, so the welcome installs no `unfold-*`
+plugin. Unfold's own Automagik instance starts DSH with `AUTOMAGIK_HOST=unfold` or
 `AUTOMAGIK_PRELOAD=unfold` (either one names it: `src/host/host.js`, the same rule as the Bot
 team's and the Unfold Bot's). There Unfold's card comes first and is on the team from the start,
 because the Unfold Bot is the instance's Main Bot, so the companion step is done (Unfold leads)

@@ -35,9 +35,12 @@ test('a large Unfold mark wears the Unfold pet the plugin ships; a small one sta
   assert.equal(petOf(UNFOLD, lookOf(UNFOLD), { live: true, size: 24 }), null)
 })
 
-test('the character picker has the Unfold pet, and starts on it for the Unfold Bot', () => {
-  const entry = automagikRoster().find(item => item.key === 'pet:builtin:unfold')
+test('the character picker has the Unfold pet in Unfold\'s own instance only, and starts on it for the Unfold Bot', () => {
+  assert.equal(automagikRoster().find(item => item.key === 'pet:builtin:unfold'), undefined)
+  const roster = automagikRoster({ unfold: true })
+  const entry = roster.find(item => item.key === 'pet:builtin:unfold')
   assert.ok(entry)
+  assert.deepEqual(plain(roster.slice(2, 5).map(item => item.key)), ['pet:builtin:automagik', 'pet:builtin:unfold', 'pet:builtin:wisp'])
   assert.deepEqual([entry.kind, entry.name], ['pet', 'Unfold'])
   assert.deepEqual(plain(entry.pet), { source: 'builtin', id: 'unfold', name: 'Unfold', version: 2, sleep: true })
   assert.equal(currentKey(UNFOLD, lookOf(UNFOLD)), 'pet:builtin:unfold')
@@ -46,7 +49,7 @@ test('the character picker has the Unfold pet, and starts on it for the Unfold B
 test('the Unfold pet ships as a v2 Codex pet with its sleep strip, at their exact sizes', async () => {
   const root = mkdtempSync(join(tmpdir(), 'bots-unfold-pet-'))
   try {
-    const pets = createPets({ home: join(root, 'team'), codexHome: join(root, 'codex'), fetch: () => { throw new Error('no network') } })
+    const pets = createPets({ home: join(root, 'team'), codexHome: join(root, 'codex'), fetch: () => { throw new Error('no network') }, unfold: () => true })
     const pet = (await pets.list()).find(item => item.source === 'builtin' && item.id === 'unfold')
     assert.deepEqual([pet.name, pet.version, pet.sleep], ['Unfold', 2, true])
     const sheet = await pets.file('builtin', 'unfold')

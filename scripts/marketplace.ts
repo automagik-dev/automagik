@@ -2,7 +2,9 @@
 /**
  * Automagik's DSH plugin market index (marketplace/automagik.json, format 1): this repository's
  * plugins, each a git source pinned to a release commit with the plugin's folder, and the outside
- * plugins Automagik vetted (VETTED), each pinned to the commit that was reviewed.
+ * plugins Automagik vetted (VETTED), each pinned to the commit that was reviewed. Unfold's
+ * plugins are built and released here but never listed (`unlisted`): they come with Unfold's
+ * own instance, not from a market.
  *
  *   bun scripts/marketplace.ts check        DSH's own parser, then every entry proven against this repository
  *   bun scripts/marketplace.ts pin <ref>    list the plugins at <ref> (a release tag), at its version
@@ -32,6 +34,9 @@ export const VETTED = [
   'https://github.com/automagik-genie/dsh-oh-my-claude',
   'https://github.com/automagik-genie/dsh-subscriptions',
 ];
+
+/** A plugin of ours the index never lists: Unfold's, which only Unfold's own instance carries. */
+export const unlisted = (name: string) => name.startsWith('@automagik/unfold-');
 
 interface GitSource {
   type: 'git';
@@ -94,6 +99,7 @@ export function checkIndex(value: unknown, repoDir: string): string[] {
   }
   const problems: string[] = [];
   for (const plugin of (value as Index).plugins) {
+    if (unlisted(plugin.name)) problems.push(`${plugin.name}: is unlisted, so the index must not carry it`);
     if (plugin.versions.length === 0) problems.push(`${plugin.name}: lists no version`);
     for (const entry of plugin.versions) {
       const at = `${plugin.name}@${entry.version}`;
@@ -133,6 +139,7 @@ export function pinIndex(value: Index, repoDir: string, ref: string): Index {
   const released = (entry: IndexVersion) =>
     VERSION.test(entry.version) && isOurs(entry.source) && gitOk(repoDir, ['rev-parse', '--verify', '--quiet', `refs/tags/v${entry.version}`]) &&
     git(repoDir, ['rev-parse', `v${entry.version}^{commit}`]) === entry.source.commit;
+  value.plugins = value.plugins.filter((plugin) => !unlisted(plugin.name));
   for (const plugin of value.plugins) {
     const latest = plugin.versions.find((entry) => isOurs(entry.source));
     if (!latest || !isOurs(latest.source)) continue;
@@ -157,7 +164,7 @@ export function pinIndex(value: Index, repoDir: string, ref: string): Index {
   for (const path of folders) {
     const manifest = packageAt(repoDir, commit, path);
     const market = manifest?.automagik?.market;
-    if (!manifest?.name || !manifest.version || !market || value.plugins.some((plugin) => plugin.name === manifest.name)) continue;
+    if (!manifest?.name || !manifest.version || !market || unlisted(manifest.name) || value.plugins.some((plugin) => plugin.name === manifest.name)) continue;
     value.plugins.push({
       name: manifest.name,
       title: market.title,
