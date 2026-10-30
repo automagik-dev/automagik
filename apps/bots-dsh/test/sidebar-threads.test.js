@@ -215,4 +215,11 @@ test('a blank Session opened on purpose stays on screen; a blank one nobody open
   assert.equal(staysInView('room', true, roster, actions), true)
   assert.equal(staysInView('agent', true, roster, actions), true)
   assert.equal(staysInView('', true, roster, actions), false)
+  // Registration is an observable guard, not fake standalone Agent ownership.
+  const pending = new Set(['picked'])
+  const transitioning = { ...actions, ownershipPending: id => pending.has(id) }
+  assert.equal(staysInView('picked', true, roster, transitioning), true)
+  assert.equal(staysInView('unrelated', true, roster, transitioning), false)
+  pending.delete('picked')
+  assert.equal(staysInView('picked', true, roster, transitioning), false)
 })

@@ -11902,7 +11902,7 @@ function AccountLauncher({ seat = true, settingsOpen, openSettings, openOnboardi
 }
 function staysInView(id, blank3, roster, actions) {
   if (id === "") return false;
-  return Boolean(roster.roomsById[id]) || (actions.isAgentSession?.(id) ?? roster.agentOf[id] !== void 0) || !blank3 || actions.openedOnPurpose?.(id) === true;
+  return Boolean(roster.roomsById[id]) || actions.ownershipPending?.(id) === true || (actions.isAgentSession?.(id) ?? roster.agentOf[id] !== void 0) || !blank3 || actions.openedOnPurpose?.(id) === true;
 }
 function useLandOnMainBot(roster, useSessions, actions) {
   const mainView = useSessions((list) => {
@@ -11916,7 +11916,7 @@ function useLandOnMainBot(roster, useSessions, actions) {
     const bot = id === "" ? void 0 : roster.byId[id];
     if (bot !== void 0) {
       lastBot.current = { botId: bot.id, sessionId: id };
-      if (currentPart(bot) !== id) actions.landOn(bot.id);
+      if (currentPart(bot) !== id && actions.ownershipPending?.(id) !== true) actions.landOn(bot.id, void 0, id);
       return void 0;
     }
     if (staysInView(id, blank3 === "1", roster, actions)) {
@@ -11924,7 +11924,9 @@ function useLandOnMainBot(roster, useSessions, actions) {
       return void 0;
     }
     const last = lastBot.current;
-    const timer = setTimeout(() => actions.landOn(roster.mainBotId, last), last ? 0 : 400);
+    const timer = setTimeout(() => {
+      if (!staysInView(id, blank3 === "1", roster, actions)) void actions.landOn(roster.mainBotId, last, id || null);
+    }, last ? 0 : 400);
     return () => clearTimeout(timer);
   }, [mainView, roster]);
 }
@@ -23047,7 +23049,9 @@ function apply(ctx) {
     agentSessionCache = /* @__PURE__ */ new Set();
   }
   const pendingAdopt = /* @__PURE__ */ new Map();
-  const isAgentSessionId = (id) => isAgentSession(roster.getSnapshot(), agentSessionCache, id) || pendingAdopt.has(id);
+  const pendingBot = /* @__PURE__ */ new Map();
+  let nativeDestination;
+  const isAgentSessionId = (id) => isAgentSession(roster.getSnapshot(), agentSessionCache, id) || pendingAdopt.has(id) || pendingBot.has(id) || id !== void 0 && id === nativeDestination;
   const agentOfSession = (id) => roster.getSnapshot().agentOf[id] ?? pendingAdopt.get(id);
   const workspaces = ctx.get("workspaces");
   const workspaceOf = (sessionId) => {
@@ -23055,6 +23059,7 @@ function apply(ctx) {
     return items.find((item) => item.sessionIds?.includes(sessionId))?.workspaceId;
   };
   let expected2 = null;
+  let navigationRevision = 0;
   let chosen = null;
   const setPlain = (plain) => surface.set((state) => state.plain === plain ? state : { ...state, plain });
   const dropPanels = () => ui2.set((state) => state.details || state.renaming ? { ...state, details: null, view: "details", renaming: false, tab: null } : state);
@@ -23395,6 +23400,7 @@ function apply(ctx) {
     // or the click appears to do nothing.
     isAgentSession: (id) => isAgentSessionId(id),
     openedOnPurpose: (id) => id === chosen,
+    ownershipPending: (id) => pendingBot.has(id),
     openSession: (id) => {
       if (isAgentSessionId(id)) return actions.openAgentSession(partFor(id));
       ui2.set((state) => state.newChat || state.exchange || state.menu || state.palette ? { ...state, newChat: null, exchange: null, menu: null, palette: null } : state);
@@ -23471,9 +23477,12 @@ function apply(ctx) {
     },
     // `last` is the Bot conversation the view held before it cleared: when that part
     // was archived for a fresh one, the view goes on in the fresh one.
-    landOn: async (id, last) => {
+    landOn: async (id, last, from = mainView() ?? null) => {
+      if ((mainView() ?? null) !== from || pendingBot.has(from)) return;
+      const revision = navigationRevision;
       if (last) await pull().catch(() => {
       });
+      if ((mainView() ?? null) !== from || navigationRevision !== revision || pendingBot.has(from)) return;
       const bot = last ? roster.getSnapshot().byId[last.botId] : void 0;
       setPlain(false);
       const target = bot && currentPart(bot) !== last.sessionId ? currentPart(bot) : partFor(id);
@@ -23975,22 +23984,58 @@ function apply(ctx) {
   }, "ds-bot: face for other Omni plugins");
   ctx.effect(() => {
     let previous;
+    let observed;
     const sync = () => {
       const list = ctx.sessions.list.getSnapshot();
       const main = Object.values(list.byId ?? {}).find((session) => (session?.retainedBy?.mainView ?? 0) > 0)?.id;
-      const plain = isAgentSessionId(main);
+      if (main !== nativeDestination) nativeDestination = void 0;
+      const snapshot = roster.getSnapshot();
+      const bot = snapshot.byId[previous];
+      const pendingSource = pendingBot.get(previous);
+      const botId = bot?.kind === "dsh" && currentPart(bot) === previous ? bot.id : pendingSource?.botId;
+      const destination = list.byId[main];
+      const parentId = destination?.parentId ?? destination?.parentSessionId;
+      const nativeCandidate = main !== void 0 && main !== expected2 && surface.getSnapshot().mode === "bot" && botId !== void 0 && snapshot.byId[main] === void 0 && snapshot.roomsById[main] === void 0 && agentOfSession(main) === void 0 && destination?.origin !== "subagent" && (destination?.blank === true || parentId === previous);
+      const plain = isAgentSessionId(main) || nativeCandidate;
       setPlain(plain);
       if (plain) dropPanels();
+      if (main !== observed) {
+        navigationRevision += 1;
+        observed = main;
+      }
       if (main === previous) return;
       const before = previous;
-      previous = main;
+      if (main !== void 0) previous = main;
       const ours = expected2 !== null && main === expected2;
       expected2 = null;
       if (ours || main === void 0) return;
       if (surface.getSnapshot().mode !== "bot") return;
+      if (pendingBot.has(main)) return;
+      if (nativeCandidate) {
+        const operation = { botId };
+        pendingBot.set(main, operation);
+        nativeDestination = main;
+        setPlain(true);
+        dropPanels();
+        operation.done = Promise.resolve(pendingSource?.done).then(() => {
+          if (mainView() !== main || surface.getSnapshot().mode !== "bot") throw new Error("Session selection changed before registration");
+          return call("bot-session-adopt", { botId, sessionId: main, sourceSessionId: before });
+        }).then(() => pull()).catch((error) => {
+          console.warn("[ds-bot] bot-session-adopt", error);
+          if (mainView() === main) {
+            chosen = main;
+            actions.reportError(error, "bot-session-adopt");
+          }
+          throw error;
+        }).finally(() => {
+          if (pendingBot.get(main) === operation) pendingBot.delete(main);
+        });
+        void operation.done.catch(() => {
+        });
+        return;
+      }
       const agentId = before !== void 0 ? agentOfSession(before) : void 0;
       if (agentId === void 0) return;
-      const snapshot = roster.getSnapshot();
       if (snapshot.byId[main] !== void 0 || snapshot.roomsById[main] !== void 0 || agentOfSession(main) !== void 0) return;
       const row = list.byId[main];
       if (row?.origin === "subagent") return;
@@ -23999,17 +24044,19 @@ function apply(ctx) {
       if (row?.blank !== true && !forkedFromAgent) return;
       pendingAdopt.set(main, agentId);
       setPlain(true);
-      void call("agent-adopt", { agentId, sessionId: main }).then(() => pull()).catch((error) => {
+      void call("agent-adopt", { agentId, sessionId: main }).then(async () => {
+        await pull();
+        const next = workspaceOf(main);
+        if (list.byId[before]?.blank === true && next !== void 0 && workspaceOf(before) !== next) {
+          await call("agent-archive", { agentId, sessionId: before }).then(() => pull()).catch(() => {
+          });
+        }
+      }).catch((error) => {
         pendingAdopt.delete(main);
         console.warn("[ds-bot] agent-adopt", error);
         sync();
         actions.reportError(error, "agent-adopt");
       });
-      const next = workspaceOf(main);
-      if (list.byId[before]?.blank === true && next !== void 0 && workspaceOf(before) !== next) {
-        void call("agent-archive", { agentId, sessionId: before }).then(() => pull()).catch(() => {
-        });
-      }
     };
     const offList = ctx.sessions.list.subscribe(sync);
     const offRoster = roster.subscribe(sync);

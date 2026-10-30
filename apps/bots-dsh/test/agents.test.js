@@ -76,6 +76,166 @@ function start(team, { config = {}, home = mkdtempSync(join(tmpdir(), 'ds-bot-ag
   return { call, stop, home, created, archived, failArchive, restricted, renamed, createdAgents, ctx }
 }
 
+async function nativeTransition(t) {
+  const bench = start(TEAM)
+  t.after(bench.stop)
+  await bench.call('state', {})
+  const rt = bench.ctx.provided.get('omniTeam')
+  bench.ctx.provided.set('agentPresets', { list: async () => [{ id: 'cordis' }] })
+  const entry = (await bench.call('add-agent', { name: 'Brain', profile: 'cordis' })).value
+  const botId = (await bench.call('agent-bot-adopt', { agentId: entry.id })).value.botId
+  const bot = rt.state.bots[botId]
+  Object.assign(bot, { workDir: '/original', model: 'native/chosen', effort: 'high', permissions: { mode: 'ask' } })
+  await rt.save({ required: true })
+  const target = { id: 'picked', session: { id: 'picked', header: { id: 'picked', cwd: '/selected', isSeeded: false } }, preset: 'standard', boundary: { openTurnStartSeq: null, lastTurn: 0 } }
+  const resolve = rt.resolveAgent
+  rt.resolveAgent = async id => id === 'picked' ? target : resolve(id)
+  bench.ctx.sessionProjections = { stateOf: (session, key) => key === 'agentPreset' ? target.preset : key === 'turnBoundary' ? target.boundary : undefined }
+  const selected = []
+  const presets = { list: async () => [{ id: 'cordis' }], select: async (live, preset) => { selected.push([live.session.id, preset]); live.preset = preset } }
+  bench.ctx.provided.set('agentPresets', presets)
+  return { ...bench, rt, bot, botId, entry, target, presets, selected, adopt: () => bench.call('bot-session-adopt', { botId, sessionId: 'picked', sourceSessionId: botId }) }
+}
+
+test('native project association persists the exact selected root and stable adopted identity', async t => {
+  const bench = await nativeTransition(t)
+  const { rt, bot, botId, entry, home, created, archived, target } = bench
+  const original = structuredClone(rt.state.agents[entry.id])
+  const count = created.length
+  assert.equal((await bench.adopt()).ok, true)
+  assert.equal(rt.chatOf(botId), 'picked')
+  assert.equal(rt.selfOf('picked'), botId)
+  assert.equal(rt.agentOf('picked'), undefined)
+  assert.equal(bot.id, botId)
+  assert.equal(bot.dshAgentId, entry.id)
+  assert.equal(bot.kind, 'dsh')
+  assert.equal(bot.profile, 'cordis')
+  assert.equal(bot.workDir, '/original')
+  assert.equal(target.session.header.cwd, '/selected')
+  assert.equal(bot.model, 'native/chosen')
+  assert.equal(bot.effort, 'high')
+  assert.deepEqual(bot.permissions, { mode: 'ask' })
+  assert.deepEqual(bench.selected, [['picked', 'cordis']])
+  assert.deepEqual(rt.state.agents[entry.id], original)
+  assert.equal((await bench.adopt()).ok, true)
+  assert.equal(bot.segments.filter(part => part.sessionId === botId).length, 1)
+  assert.equal(created.length, count)
+  assert.deepEqual(archived, [])
+  const stored = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))
+  assert.equal(stored.bots[botId].sessionId, 'picked')
+  const reload = start(undefined, { home })
+  await reload.call('state', {})
+  assert.equal(reload.ctx.provided.get('omniTeam').selfOf('picked'), botId)
+  await reload.ctx.dispose()
+})
+
+for (const invalid of ['nonblank', 'subagent', 'depth', 'task', 'other-owner', 'group', 'wrong-source', 'registration', 'ordinary']) {
+  test(`native project association refuses ${invalid}`, async t => {
+    const bench = await nativeTransition(t)
+    const { target, rt, bot, botId, entry } = bench
+    if (invalid === 'nonblank') target.boundary.lastTurn = 1
+    if (invalid === 'subagent') target.session.header.origin = 'subagent'
+    if (invalid === 'depth') target.session.header.delegationDepth = 1
+    if (invalid === 'task') rt.state.tasks = { ...rt.state.tasks, picked: { from: botId } }
+    if (invalid === 'other-owner') rt.state.bots.other = { id: 'other', sessionId: 'picked', name: 'Other' }
+    if (invalid === 'group') rt.state.rooms.room = { id: 'room', members: [botId], sessions: { [botId]: 'picked' } }
+    if (invalid === 'wrong-source') bot.sessionId = 'newer'
+    if (invalid === 'registration') rt.state.agents[entry.id].adoptedBotId = 'other'
+    if (invalid === 'ordinary') delete bot.kind
+    rt.indexSessions()
+    const result = await bench.adopt()
+    assert.equal(result.ok, false)
+    assert.notEqual(rt.chatOf(botId), 'picked')
+    assert.deepEqual(bench.selected, [])
+  })
+}
+
+test('a native current-part fork retains its existing preset without replacing the selected Session', async t => {
+  const bench = await nativeTransition(t)
+  Object.assign(bench.target.session.header, { parentSession: bench.botId, isSeeded: true })
+  bench.target.boundary.lastTurn = 3
+  bench.target.preset = 'cordis'
+  assert.equal((await bench.adopt()).ok, true)
+  assert.deepEqual(bench.selected, [])
+  assert.equal(bench.rt.chatOf(bench.botId), 'picked')
+})
+
+for (const phase of ['resolve', 'preset-list', 'preset-select']) {
+  for (const change of ['source', 'registration']) test(`native association revalidates ${change} after ${phase}`, async t => {
+    const bench = await nativeTransition(t)
+    const mutate = () => change === 'source' ? bench.bot.sessionId = 'newer' : bench.rt.state.agents[bench.entry.id].profile = 'changed'
+    if (phase === 'resolve') {
+      const resolve = bench.rt.resolveAgent
+      bench.rt.resolveAgent = async id => { const live = await resolve(id); mutate(); return live }
+    } else if (phase === 'preset-list') bench.presets.list = async () => { mutate(); return [{ id: 'cordis' }] }
+    else bench.presets.select = async live => { mutate(); live.preset = 'cordis' }
+    assert.equal((await bench.adopt()).ok, false)
+    assert.notEqual(bench.rt.chatOf(bench.botId), 'picked')
+    assert.deepEqual(bench.archived, [])
+  })
+}
+
+test('native association requires a durable save and rolls back ownership on disk failure', async t => {
+  const bench = await nativeTransition(t)
+  const save = bench.rt.save
+  let failed = false
+  bench.rt.save = async options => {
+    assert.equal(options.required, true)
+    if (!failed) { failed = true; throw new Error('disk full') }
+    return save(options)
+  }
+  assert.match((await bench.adopt()).error.message, /disk full/)
+  assert.equal(bench.rt.selfOf('picked'), undefined)
+  assert.equal(bench.rt.chatOf(bench.botId), bench.botId)
+  assert.deepEqual(bench.archived, [])
+  assert.equal((await bench.adopt()).ok, true)
+})
+
+test('a native target reservation prevents another Bot changing its preset during association', async t => {
+  const bench = await nativeTransition(t)
+  const other = { ...bench.bot, id: 'other', sessionId: 'other', dshAgentId: 'other-native', profile: 'standard' }
+  bench.rt.state.bots.other = other
+  bench.rt.state.agents['other-native'] = { ...bench.rt.state.agents[bench.entry.id], id: 'other-native', adoptedBotId: 'other', sessions: ['other'] }
+  await bench.rt.save({ required: true })
+  let release
+  bench.presets.list = () => new Promise(resolve => { release = () => resolve([{ id: 'cordis' }, { id: 'standard' }]) })
+  const first = bench.rt.adoptBotSession(bench.botId, 'picked', bench.botId)
+  await flush()
+  assert.equal(typeof release, 'function')
+  await assert.rejects(bench.rt.adoptBotSession('other', 'picked', 'other'), /transition is already pending/)
+  release()
+  assert.equal(await first, 'picked')
+  assert.equal(bench.target.preset, 'cordis')
+  assert.equal(bench.rt.chatOf('other'), 'other')
+})
+
+test('native preset flush failure leaves the source and target ownership intact', async t => {
+  const bench = await nativeTransition(t)
+  bench.ctx.sessions.flush = async session => {
+    assert.equal(session.id, 'picked')
+    assert.equal(bench.target.preset, 'cordis')
+    throw new Error('preset disk failure')
+  }
+  assert.match((await bench.adopt()).error.message, /preset disk failure/)
+  assert.equal(bench.rt.selfOf('picked'), undefined)
+  assert.equal(bench.rt.chatOf(bench.botId), bench.botId)
+  assert.deepEqual(bench.archived, [])
+})
+
+test('native eligibility and registration are revalidated after preset flush', async t => {
+  const bench = await nativeTransition(t)
+  bench.ctx.sessions.flush = async () => { bench.target.boundary.lastTurn = 1 }
+  assert.equal((await bench.adopt()).ok, false)
+  assert.equal(bench.rt.selfOf('picked'), undefined)
+})
+
+test('native association refuses missing presets instead of downgrading silently', async t => {
+  const bench = await nativeTransition(t)
+  bench.presets.list = async () => []
+  assert.match((await bench.adopt()).error.message, /preset cordis is not available/)
+  assert.equal(bench.rt.selfOf('picked'), undefined)
+})
+
 test('adoption is additive, retains registration, and rollback restores the original', async (t) => {
   const { call, stop, ctx, created, archived, createdAgents, restricted } = start(TEAM)
   t.after(stop)

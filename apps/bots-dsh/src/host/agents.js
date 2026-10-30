@@ -564,6 +564,85 @@ export function install(rt) {
     return { botId: chatId }
   }
 
+  // The native workspace picker creates/reuses a root Session without a preset.
+  // Associate that exact destination with an adopted Bot, never allocate a replacement.
+  const associations = new Set()
+  const associationTargets = new Set()
+  async function adoptBotSession(botId, sessionId, sourceSessionId) {
+    writeCheck()
+    const bot = rt.own(state.bots, botId)
+    const original = rt.own(state.agents, bot?.dshAgentId)
+    if (bot?.kind !== DSH_BOT || original?.kind !== DSH_BOT || original.adoptedBotId !== botId) throw new Error('Unknown adopted DSH Bot')
+    if (typeof sessionId !== 'string' || sessionId === '' || typeof sourceSessionId !== 'string') throw new Error('Invalid Session transition')
+    if (rt.chatOf(botId) === sessionId && (bot.segments ?? []).some(part => part.sessionId === sourceSessionId)) return sessionId
+    if (associations.has(botId) || associationTargets.has(sessionId)) throw new Error('A Bot Session transition is already pending')
+    const before = JSON.stringify(bot)
+    const registration = JSON.stringify(original)
+    const validate = () => {
+      writeCheck()
+      if (state.bots[botId] !== bot || state.agents[bot.dshAgentId] !== original
+        || JSON.stringify(bot) !== before || JSON.stringify(original) !== registration
+        || rt.chatOf(botId) !== sourceSessionId) throw new Error('The Bot changed during Session transition')
+      if (rt.selfOf(sessionId) !== undefined || rt.botOf(sessionId) !== undefined
+        || rt.roomOf(sessionId) !== undefined || agentOf(sessionId) !== undefined
+        || state.tasks?.[sessionId] !== undefined) throw new Error('Session already belongs to the team')
+    }
+    associations.add(botId)
+    associationTargets.add(sessionId)
+    try {
+      validate()
+      const live = await rt.resolveAgent(sessionId)
+      validate()
+      const session = live.session
+      const eligible = () => {
+        const header = session?.header
+        const parent = header?.parentSession === undefined ? undefined : ctx.agents?.get?.(header.parentSession)
+        if (session?.id !== sessionId || header === undefined || header.origin === 'subagent'
+          || (header.delegationDepth ?? 0) > 0 || (parent !== undefined && ctx.agents.isOwnedBy?.(sessionId, parent))) throw new Error('Only a root Session can join a Bot')
+        const boundary = ctx.sessionProjections.stateOf(session, 'turnBoundary')
+        const blank = boundary !== undefined && boundary.openTurnStartSeq === null && boundary.lastTurn === 0
+        const fork = header.parentSession === sourceSessionId && header.isSeeded === true
+        if (!blank && !fork) throw new Error('Only a blank Session or a fork of the current Bot can join')
+      }
+      eligible()
+      const preset = await servedPreset(bot.profile, { strict: true })
+      validate()
+      eligible()
+      if (preset !== undefined && ctx.sessionProjections.stateOf(session, 'agentPreset') !== preset) {
+        const presets = ctx.get('agentPresets')
+        if (typeof presets?.select !== 'function') throw new Error('Native preset selection is unavailable')
+        await presets.select(live, preset)
+        await ctx.sessions.flush(session)
+      }
+      validate()
+      eligible()
+      if (preset !== undefined && ctx.sessionProjections.stateOf(session, 'agentPreset') !== preset) throw new Error('Native preset selection did not persist')
+      const previous = { sessionId: bot.sessionId, segments: bot.segments }
+      bot.segments = [...(bot.segments ?? []), { sessionId: sourceSessionId, endedAt: Date.now() }]
+      bot.sessionId = sessionId
+      try {
+        await rt.save({ required: true })
+        if (state.bots[botId] !== bot || bot.sessionId !== sessionId || state.agents[bot.dshAgentId] !== original
+          || JSON.stringify(original) !== registration) throw new Error('The Bot changed during Session persistence')
+      } catch (error) {
+        // Undo only this operation's tentative ownership; do not erase a successor.
+        if (state.bots[botId] === bot && bot.sessionId === sessionId) {
+          if (previous.sessionId === undefined) delete bot.sessionId
+          else bot.sessionId = previous.sessionId
+          if (previous.segments === undefined) delete bot.segments
+          else bot.segments = previous.segments
+          rt.indexSessions()
+          await rt.save({ required: true }).catch(() => {})
+        }
+        throw error
+      }
+      return sessionId
+    } finally {
+      associations.delete(botId)
+      associationTargets.delete(sessionId)
+    }
+  }
+
   // An explicit, non-destructive undo, not deleteBot (which archives conversations).
   // Refuse after new team history is created rather than silently discarding it.
   async function rollbackAdoption(agentId) {
@@ -766,5 +845,5 @@ export function install(rt) {
     },
   }))
 
-  Object.assign(rt, { agentOf, addAgent, updateAgent, presets, createAgentSession, adoptAgentSession, adoptAsBot, rollbackAdoption, archiveAgentSession, renameAgentSession, removeAgent, createTaskSession, startTask })
+  Object.assign(rt, { agentOf, addAgent, updateAgent, presets, createAgentSession, adoptAgentSession, adoptBotSession, adoptAsBot, rollbackAdoption, archiveAgentSession, renameAgentSession, removeAgent, createTaskSession, startTask })
 }

@@ -144,6 +144,27 @@ for (const sessionId of ['b3', 'g3']) {
   })
 }
 
+for (const sessionId of ['b3', 'g3', 'b2']) {
+  test(`first pre-step preserves native selected cwd without changing group/ordinary folder policy (${sessionId})`, async t => {
+    const team = structuredClone(TEAM)
+    Object.assign(team.bots.b3, { kind: 'dsh', workDir: '/original' })
+    const { ctx, rt, stop } = start(team)
+    t.after(stop)
+    await rt.load()
+    let folderPolicyReads = 0
+    rt.workDirOf = () => { folderPolicyReads++; return '/selected' }
+    rt.isFolder = async () => true
+    const session = { id: sessionId, header: { cwd: '/selected' }, seq: 2, requestHeader: () => ({ config: {} }), deriveMessages: () => [], toolHistory: () => [] }
+    const agent = { id: sessionId, session }
+    const preStep = ctx.listeners.get('agent/pre-step').find(listener => /adoptCompaction/.test(String(listener)))
+    const next = { kind: 'continue' }
+    assert.equal(await preStep({ agent, messages: [], step: 1, signal: new AbortController().signal }, () => next), next)
+    assert.equal(session.header.cwd, '/selected')
+    assert.equal(rt.state.bots.b3.workDir, '/original')
+    assert.equal(folderPolicyReads, sessionId === 'b3' ? 0 : 1)
+  })
+}
+
 test('an image in a Bot chat is read for that chat, and the chat gets the reading', async (t) => {
   const { ctx, bench, stop } = start()
   t.after(stop)
