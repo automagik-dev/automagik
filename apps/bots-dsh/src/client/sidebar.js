@@ -706,6 +706,17 @@ export function AccountLauncher({ seat = true, settingsOpen, openSettings, openO
 // The view always lands on a Bot rather than an empty New Session page.
 // When a Bot's chat moves on to a fresh part, the shell clears the view of the part
 // it archived; the chat then goes on in the Bot's current part instead.
+/**
+ * Whether a main view that holds no Bot stays put: a group, a DSH Agent Session (blank or
+ * not), a Session with a turn, or a Session opened on purpose through `actions.openSession`.
+ * A plugin's Session can be blank until its first turn (an Omni chat thread), and a click
+ * that opens it must not bounce back to the Main Bot.
+ */
+export function staysInView(id, blank, roster, actions) {
+  if (id === '') return false
+  return Boolean(roster.roomsById[id]) || (actions.isAgentSession?.(id) ?? roster.agentOf[id] !== undefined) || !blank || actions.openedOnPurpose?.(id) === true
+}
+
 function useLandOnMainBot(roster, useSessions, actions) {
   const mainView = useSessions((list) => {
     const row = Object.values(list.byId).find(session => (session?.retainedBy?.mainView ?? 0) > 0)
@@ -721,8 +732,7 @@ function useLandOnMainBot(roster, useSessions, actions) {
       if (currentPart(bot) !== id) actions.landOn(bot.id)
       return undefined
     }
-    // A DSH Agent Session, blank or not, is a real destination: it stays.
-    if (id !== '' && (roster.roomsById[id] || (actions.isAgentSession?.(id) ?? roster.agentOf[id] !== undefined) || blank !== '1')) {
+    if (staysInView(id, blank === '1', roster, actions)) {
       lastBot.current = null
       return undefined
     }

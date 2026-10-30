@@ -119,6 +119,9 @@ export function apply(ctx) {
   }
   // A navigation this plugin started: the surface effect trusts the id it lands on.
   let expected = null
+  // The last Session opened through actions.openSession (a plugin's included): it stays on
+  // screen while blank, where a blank DSH Session would land on the Main Bot.
+  let chosen = null
   const setPlain = (plain) => surface.set(state => (state.plain === plain ? state : { ...state, plain }))
   // A DSH Agent Session shows the plain conversation: the Bot details and browser
   // panels would follow it and report it is not on the team, so they close.
@@ -442,12 +445,14 @@ export function apply(ctx) {
     // The full-pane overlays sit above the conversation, so opening one must dismiss them
     // or the click appears to do nothing.
     isAgentSession: id => isAgentSessionId(id),
+    openedOnPurpose: id => id === chosen,
     openSession: (id) => {
       // A DSH Agent Session id lands on the plain surface, not the Bot skin.
       if (isAgentSessionId(id)) return actions.openAgentSession(partFor(id))
       ui.set(state => (state.newChat || state.exchange || state.menu || state.palette ? { ...state, newChat: null, exchange: null, menu: null, palette: null } : state))
       setPlain(false)
       const target = partFor(id)
+      chosen = target
       show(target)
     },
     // The conversation replacements withdraw for a plain Session; set the surface

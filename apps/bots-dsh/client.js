@@ -16189,6 +16189,10 @@ function AccountLauncher({ seat = true, settingsOpen, openSettings, openOnboardi
     ), document.body) : null
   );
 }
+function staysInView(id, blank3, roster, actions) {
+  if (id === "") return false;
+  return Boolean(roster.roomsById[id]) || (actions.isAgentSession?.(id) ?? roster.agentOf[id] !== void 0) || !blank3 || actions.openedOnPurpose?.(id) === true;
+}
 function useLandOnMainBot(roster, useSessions, actions) {
   const mainView = useSessions((list) => {
     const row = Object.values(list.byId).find((session) => (session?.retainedBy?.mainView ?? 0) > 0);
@@ -16204,7 +16208,7 @@ function useLandOnMainBot(roster, useSessions, actions) {
       if (currentPart(bot) !== id) actions.landOn(bot.id);
       return void 0;
     }
-    if (id !== "" && (roster.roomsById[id] || (actions.isAgentSession?.(id) ?? roster.agentOf[id] !== void 0) || blank3 !== "1")) {
+    if (staysInView(id, blank3 === "1", roster, actions)) {
       lastBot.current = null;
       return void 0;
     }
@@ -22709,6 +22713,7 @@ function apply(ctx) {
     return items.find((item) => item.sessionIds?.includes(sessionId))?.workspaceId;
   };
   let expected2 = null;
+  let chosen = null;
   const setPlain = (plain) => surface.set((state) => state.plain === plain ? state : { ...state, plain });
   const dropPanels = () => ui2.set((state) => state.details || state.renaming ? { ...state, details: null, view: "details", renaming: false, tab: null } : state);
   const seenKey = (id) => roster.getSnapshot().byId?.[id]?.id ?? id;
@@ -23047,11 +23052,13 @@ function apply(ctx) {
     // The full-pane overlays sit above the conversation, so opening one must dismiss them
     // or the click appears to do nothing.
     isAgentSession: (id) => isAgentSessionId(id),
+    openedOnPurpose: (id) => id === chosen,
     openSession: (id) => {
       if (isAgentSessionId(id)) return actions.openAgentSession(partFor(id));
       ui2.set((state) => state.newChat || state.exchange || state.menu || state.palette ? { ...state, newChat: null, exchange: null, menu: null, palette: null } : state);
       setPlain(false);
       const target = partFor(id);
+      chosen = target;
       show2(target);
     },
     // The conversation replacements withdraw for a plain Session; set the surface

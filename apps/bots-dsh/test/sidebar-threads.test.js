@@ -12,7 +12,7 @@ import { build } from 'esbuild'
 const PLUGIN = dirname(dirname(fileURLToPath(import.meta.url)))
 const { outputFiles } = await build({
   stdin: {
-    contents: "export { TeamSidebar, threadAge, THREADS_SHOWN } from './src/client/sidebar.js'\nexport { TaskCard, taskState } from './src/client/task-card.js'",
+    contents: "export { TeamSidebar, threadAge, THREADS_SHOWN, staysInView } from './src/client/sidebar.js'\nexport { TaskCard, taskState } from './src/client/task-card.js'",
     resolveDir: PLUGIN,
   },
   bundle: true, format: 'cjs', platform: 'browser', write: false, logLevel: 'silent',
@@ -35,7 +35,7 @@ runInNewContext(outputFiles[0].text, {
   window: { innerWidth: 1280, matchMedia: () => ({ matches: false }) },
   matchMedia: () => ({ matches: false }),
 })
-const { TeamSidebar, TaskCard, taskState, threadAge, THREADS_SHOWN } = module.exports
+const { TeamSidebar, TaskCard, taskState, threadAge, THREADS_SHOWN, staysInView } = module.exports
 
 const find = (node, match, found = []) => {
   if (Array.isArray(node)) { node.forEach(child => find(child, match, found)); return found }
@@ -202,4 +202,17 @@ test('an ended task card says how it ended: a failed one names why, a stopped on
   assert.equal(kicker(ended('failed', '')), 'Failed')
   assert.equal(kicker(ended('stopped', 'half done')), 'Stopped')
   assert.equal(kicker(ended('done', 'all done')), 'Task finished')
+})
+
+test('a blank Session opened on purpose stays on screen; a blank one nobody opened lands on the Main Bot', () => {
+
+  const roster = { roomsById: { room: {} }, agentOf: {} }
+  const actions = { isAgentSession: id => id === 'agent', openedOnPurpose: id => id === 'thread' }
+  // An Omni chat thread is blank until its first turn, and its row opens it through actions.openSession.
+  assert.equal(staysInView('thread', true, roster, actions), true)
+  assert.equal(staysInView('new-chat', true, roster, actions), false)
+  assert.equal(staysInView('new-chat', false, roster, actions), true)
+  assert.equal(staysInView('room', true, roster, actions), true)
+  assert.equal(staysInView('agent', true, roster, actions), true)
+  assert.equal(staysInView('', true, roster, actions), false)
 })
