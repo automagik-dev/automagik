@@ -11,10 +11,15 @@
 // over the bridge's key (src/host/dsh-routes.js), and the DSH client shows them and sends a
 // draft only on the person's tap, over DSH's own admitted /api channel (src/host/client-routes.js).
 // The plugin answers no approval.
+//
+// With `appManifest` in its config (Unfold's own instance sets it), the plugin also names the web
+// app: the page's manifest, its icon and its <title> (src/host/app-manifest.js). Without it, DSH's
+// own name stays.
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
 import { startBridge, takePort } from './src/host/bridge.js'
+import { appManifestOf, appManifestRoutes, titleTap } from './src/host/app-manifest.js'
 import { clientRoutes, promptWith } from './src/host/client-routes.js'
 import { dshRoutes } from './src/host/dsh-routes.js'
 import { endpointFile, removeEndpoint, takeStateDir, writeEndpoint } from './src/host/endpoint-file.js'
@@ -40,9 +45,18 @@ function takeNamed() {
   return named
 }
 
-export function apply(ctx) {
+export function apply(ctx, config) {
   let routes
   const { stateDir, port } = takeNamed()
+  const app = appManifestOf(config, { warn: line => ctx.logger?.warn?.('unfold-bridge: %s', line) })
+  if (app) {
+    ctx.inject?.(['webServer'], web => {
+      web.effect(() => {
+        const disposers = [...appManifestRoutes(app).map(route => web.webServer.register(route)), web.webServer.tapIndex(titleTap(app.name))]
+        return () => disposers.forEach(dispose => dispose())
+      }, 'unfold-bridge: the web app name')
+    })
+  }
   ctx.effect(() => {
     const key = randomBytes(32).toString('base64url')
     const file = endpointFile(process.env, undefined, stateDir)

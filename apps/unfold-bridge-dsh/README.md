@@ -123,7 +123,24 @@ The client holds no key. It holds a draft's token only to send or cancel that dr
 
 DSH asks before it installs, and you switch the bridge on and off on its Plugins page. Switching it off stops the endpoint at once.
 
-On the host the plugin declares `inject: ['llm']`, and the work view also uses DSH's session services (`sessionController`, `sessions`, `sessionTitle`, `workspaceRegistry`, `connection`) once they are up. Its client in the DSH page injects `@deepseek-ai/dsh-client-runtime`, `@deepseek-ai/dsh-client-ui-settings` and `@deepseek-ai/dsh-client-ui-slots`. It needs no settings.
+On the host the plugin declares `inject: ['llm']`, and the work view also uses DSH's session services (`sessionController`, `sessions`, `sessionTitle`, `workspaceRegistry`, `connection`) once they are up, and DSH's `webServer` only when `appManifest` is set (below). Its client in the DSH page injects `@deepseek-ai/dsh-client-runtime`, `@deepseek-ai/dsh-client-ui-settings` and `@deepseek-ai/dsh-client-ui-slots`. In your own DSH it needs no settings.
+
+### The web app's name (`appManifest`, off by default)
+
+DSH's page calls itself "DeepSeek Harness": in its manifest (what a browser shows when you install the page as an app) and in its `<title>`. An instance that is Unfold's own can name it with a profile row for this plugin; installed in your own DSH, the bridge leaves the name alone.
+
+```yaml
+- id: unfold-bridge
+  config:
+    appManifest:
+      name: Unfold Automagik
+      short_name: Unfold
+      theme_color: '#1a1a2e'         # optional, a #hex color
+      background_color: '#fbf5ec'    # optional, a #hex color
+      icon: /absolute/path/icon.svg  # optional, an .svg or .png file
+```
+
+With it, the plugin serves `/manifest.webmanifest` (`application/manifest+json`, DSH's own fields with these names) ahead of DSH's static file, the icon at `/unfold-bridge/app-icon.svg` (or `.png`), and puts `name` in the page's `<title>`. Without an icon the manifest keeps DSH's. A row without both names, or with a value it can't use, is refused with a line in DSH's log, and the page keeps DSH's name.
 
 To move to a newer version, open Unfold bridge in the market, pick it under Versions and install it, then restart DSH: the host part switches at once, and the page loads the new client after the restart.
 
