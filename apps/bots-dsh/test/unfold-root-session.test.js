@@ -43,7 +43,7 @@ const until = async (check, ms = 3000) => {
 // earlier) and end at once on `reject`, as the DSH loop does; `enter` would be a model step,
 // which is only counted. The session plugin applies first and the team after it, so the
 // team's prepended pre-step runs before the session's, the order the bug needs.
-async function instance(t, { team = EMPTY } = {}) {
+async function instance(t, { team = EMPTY, services = {} } = {}) {
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'ds-bot-unfold-root-')))
   const dsh = join(root, 'dsh')
   const home = join(dsh, 'bot')
@@ -65,7 +65,7 @@ async function instance(t, { team = EMPTY } = {}) {
     compactNow: async () => 'native',
     compactRegion: async () => 'native',
   }
-  const ctx = fakeContext({ services: { sessionPersistence: { stat: async id => id === ROOT }, compaction } })
+  const ctx = fakeContext({ services: { sessionPersistence: { stat: async id => id === ROOT }, compaction, ...services } })
   const steps = {}
   const on = ctx.on
   ctx.on = (name, listener, options) => {
@@ -333,4 +333,37 @@ test('the Unfold Bot\'s group Session is not pinned: it still moves to a fresh p
   assert.equal(rt.roomOf('r1').segments[ROOT][0].sessionId, 'gu')
   assert.equal(rt.chatOf(ROOT), ROOT, 'the own chat stays')
   assert.deepEqual(env.unarchived, [], 'nothing to put back')
+})
+
+test('working_directory in the Unfold root Session is DSH\'s own: no folder approval, no Bot folder', async (t) => {
+  const dirs = new Map()
+  const workingDirectory = {
+    get: session => dirs.get(session.id) ?? session.header.cwd,
+    set: async (agent, path) => { dirs.set(agent.session.id, path) },
+  }
+  const requests = []
+  const services = {
+    workingDirectory,
+    sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) },
+    approval: { request: async (request) => { requests.push(request); return 'allowed-once' } },
+  }
+  const env = await instance(t, { services })
+  const sub = join(env.project, 'sub')
+  mkdirSync(sub)
+  // DSH's working_directory, through the team's tools/execute listeners as DSH runs it.
+  const agent = env.agentOf(ROOT)
+  let ran = false
+  const tool = async () => {
+    ran = true
+    await workingDirectory.set(agent, sub)
+    return { isError: false, value: { cwd: sub } }
+  }
+  const exec = { name: 'working_directory', arguments: { cd: sub }, agent, callId: 'c1', signal: AbortSignal.timeout(10_000) }
+  const run = env.ctx.listeners.get('tools/execute').reduceRight((next, listener) => () => listener(exec, next), tool)
+  assert.deepEqual(await run(), { isError: false, value: { cwd: sub } })
+  assert.equal(ran, true)
+  assert.equal(workingDirectory.get(agent.session), sub)
+  assert.deepEqual(requests, [], 'no folder approval was asked for')
+  assert.equal(env.state().bots[ROOT].workDir, undefined)
+  assert.equal(env.rt.chatOf(ROOT), ROOT)
 })
