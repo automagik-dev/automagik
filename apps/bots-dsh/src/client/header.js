@@ -51,7 +51,22 @@ function HeaderButtons(props) {
   return entries.map(entry => h(entry.Component, { key: entry.id, ...props }))
 }
 
-export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSession, useActivity, useMemoryNews, useTurnClock, useUi, useLive, useWork, useStore, useConversationViews, selectView, actions }) {
+export function NativeBotHeader(props) {
+  const bot = props.useRoster(value => value.byId?.[props.sessionId])
+  return bot?.advanced === true ? h(HeaderPill, { ...props, native: true }) : null
+}
+
+export function NativeControlsNote({ sessionId, useRoster, actions }) {
+  const bot = useRoster(value => value.byId?.[sessionId])
+  if (bot?.advanced !== true) return null
+  return h('div', { className: 'bt-native-note' },
+    h('p', null, t('Model and permissions are managed in Bot settings.'), ' ',
+      h('button', { type: 'button', onClick: () => actions.openSettings('bots', bot.id) }, t('Bot settings'))),
+    bot.kind !== 'dsh' ? h('p', null, t('Native compaction is unavailable for Bot conversations. Use Bot Context controls to checkpoint safely.'), ' ',
+      h('button', { type: 'button', onClick: () => actions.openSettings('bots', bot.id) }, t('Context controls'))) : null)
+}
+
+export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSession, useActivity, useMemoryNews, useTurnClock, useUi, useLive, useWork, useStore, useConversationViews, selectView, actions, native = false }) {
   const roster = useRoster(value => value)
   const selectedView = useStore?.(state => state.view)
   const away = useConversationViews?.(views => views.some(view => view.id === selectedView && view.id !== 'chat')) === true
@@ -110,7 +125,7 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
   // more: the way back from another view, or a memory that just changed. The details open
   // from a small button beside the header's other buttons.
   const pill = away || memoryNotice
-  return h('div', { className: 'bt-head' },
+  return h('div', { className: native ? 'bt-native-head' : 'bt-head' },
     pill ? h('button', {
       type: 'button', className: 'bt-pill', 'aria-expanded': away ? undefined : detailsOpen, 'data-memory': memoryNotice ? 'updated' : undefined,
       'aria-label': away ? t('Back to chat') : memoryNotice ? t('Memory updated. Open {name}\'s memory', { name: roster.byId[changed]?.name ?? name }) : t('View conversation details'),
@@ -124,6 +139,10 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
     h('span', { className: 'bt-pill-go', 'aria-hidden': true }, h(GoArrow))) : null,
     h('span', { className: 'bt-sr', role: 'status' }, memoryNotice ? t('Memory updated') : ''),
     bot ? h(HeaderButtons, { bot, roster, actions, useWork }) : null,
+    native && bot ? h('button', { type: 'button', className: 'bt-head-details', 'aria-label': t('Bot settings'), title: t('Bot settings'), onClick: () => actions.openSettings('bots', bot.id) }, h(InfoIcon)) : null,
+    actions.hasRightSidebar?.() ? h(Fragment, null,
+      h('button', { type: 'button', className: 'bt-head-details', title: t('Live'), 'aria-label': t('Open Live'), onClick: () => actions.openLive() }, t('Live')),
+      !native ? h('button', { type: 'button', className: 'bt-head-details', 'data-bt-right-sidebar': '', title: t('Right sidebar'), 'aria-label': t('Toggle right sidebar'), onClick: () => actions.toggleRightSidebar() }, h(GoArrow)) : null) : null,
     !away && (bot || room) ? h('button', {
       type: 'button', className: 'bt-head-details', 'aria-label': t('View conversation details'), title: t('Details'),
       'aria-expanded': detailsOpen, onClick: () => actions.toggleDetails(sessionId),

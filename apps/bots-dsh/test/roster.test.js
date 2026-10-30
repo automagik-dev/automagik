@@ -922,6 +922,34 @@ test('a group\'s relay limit is a user setting the state view shows, and old lat
   }
 })
 
+test('advanced/context/memory-review settings persist strictly without waking or reconfiguring a Bot', async t => {
+  const { call, stop, home, sent, selected } = start({
+    version: 1, mainBotIds: ['chief'], rooms: {},
+    bots: { chief: { id: 'chief', name: 'Omni', role: '', instructions: '', model: 'deepseek/v4', kickoff: { text: 'held greeting', from: null } } },
+  })
+  t.after(stop)
+  await call('state', {})
+  const changed = await call('update-bot', { id: 'chief', advanced: true, contextCheckRatio: .6, contextRecentTokens: 4000, memoryReview: false })
+  assert.equal(changed.ok, true)
+  const saved = () => JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).bots.chief
+  assert.equal(saved().advanced, true)
+  assert.equal(saved().contextCheckRatio, .6)
+  assert.equal(saved().contextRecentTokens, 4000)
+  assert.equal(saved().memoryReview, false)
+  assert.ok(saved().kickoff)
+  assert.deepEqual([sent.length, selected.length], [0, 0])
+  for (const patch of [{ advanced: 'true' }, { advanced: null }, { contextCheckRatio: .95 }, { contextRecentTokens: 0 }, { memoryReview: 1 }]) {
+    const refused = await call('update-bot', { id: 'chief', role: 'must not change', ...patch })
+    assert.equal(refused.ok, false)
+    assert.equal(refused.error.code, 'bot/invalid')
+    assert.equal(saved().role, '')
+  }
+  assert.equal((await call('update-bot', { id: 'chief', advanced: false, contextCheckRatio: null, contextRecentTokens: null, memoryReview: null })).ok, true)
+  assert.equal(saved().advanced, false)
+  for (const key of ['contextCheckRatio', 'contextRecentTokens', 'memoryReview']) assert.equal(Object.hasOwn(saved(), key), false)
+  assert.deepEqual([sent.length, selected.length], [0, 0])
+})
+
 test('a Bot wears a pet Genie ships with; a photo set after it wins, and a pet from anywhere else is refused', async (t) => {
   const { call, stop } = start()
   t.after(stop)

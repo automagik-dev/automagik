@@ -32,7 +32,6 @@ const soften = (paint, strength = 1) => {
 }
 
 const full = count => new Intl.NumberFormat(dateLocale()).format(Math.round(count))
-const hitRate = sum => percent(sum.cacheRead, sum.input + sum.cacheRead)
 
 const dates = options => new Intl.DateTimeFormat(dateLocale(), { timeZone: 'UTC', ...options })
 const hourText = ms => `${String(new Date(ms).getUTCHours()).padStart(2, '0')}:00`
@@ -154,9 +153,10 @@ function Stats({ range, total, previous }) {
       h('span', { className: 'bt-us-stat-value' }, compact(shown), h('small', null, t('tokens')),
         change === null ? null : h('span', { className: 'bt-us-delta', title: compareText(range) },
           `${change >= 0 ? '↑' : '↓'} ${Math.abs(change)}%`))),
-    cell(t('Cache hit rate'), `${hitRate(total)}%`),
+    cell(t('Cache reporting'), t('Unknown')),
     cell(t('Output'), compact(total.output)),
-    cell(t('Calls'), full(total.calls)))
+    cell(t('Attempts'), full(total.calls)),
+    h('p', { className: 'bt-set-hint', style: { gridColumn: '1 / -1', margin: 0 } }, t('Legacy aggregates may omit provider fields. Use Bot Advanced Stats for compatible cache ratios and coverage.')))
 }
 
 function niceTop(max) {

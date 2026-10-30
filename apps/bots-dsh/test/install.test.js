@@ -90,6 +90,9 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     'effect ds-bot: memory review',
     'effect ds-bot: Bot compaction',
     'on agent/created',
+    // Explicit checkpoints must cancel when their agent or plugin is disposed.
+    'on agent/disposed',
+    'effect ds-bot: cancel explicit checkpoints',
     'on agent/pre-step (prepend)',
     'on system-prompt/assemble (prepend)',
     'on agent/request-error (prepend)',

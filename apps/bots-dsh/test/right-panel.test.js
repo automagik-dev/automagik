@@ -162,3 +162,18 @@ test('a group keeps only the column tabs, and nothing when they are absent', () 
 test('a non-team surface shows no `···`', () => {
   assert.equal(moreButton(drawer('plain', { canOpenTerminal: () => true })), null)
 })
+
+test('Advanced releases actual native dock, turn actions and process header CSS suppression', async () => {
+  const bundle = await build({ entryPoints: [fileURLToPath(new URL('../src/client/styles.js', import.meta.url))], bundle: true, format: 'cjs', platform: 'node', write: false, external: ['react'] })
+  const module = { exports: {} }
+  runInNewContext(bundle.outputFiles[0].text, { module, exports: module.exports, require: () => ({}), URL, URLSearchParams })
+  const css = module.exports.CONVERSATION_CSS
+  const rules = css.split('\n').filter(line => line.startsWith('body:not([data-bt-advanced])')).join('\n')
+  const dom = new JSDOM(`<style>${rules}</style><body><div data-composer-dock></div><div data-turn-tail><button>Copy</button></div><div data-step-process><div>Expand process</div><div data-step-process-body></div></div></body>`)
+  const targets = ['[data-composer-dock]', '[data-turn-tail]>button', '[data-step-process]>div:first-child'].map(selector => dom.window.document.querySelector(selector))
+  for (const target of targets) assert.equal(dom.window.getComputedStyle(target).display, 'none')
+  dom.window.document.body.setAttribute('data-bt-advanced', '')
+  for (const target of targets) assert.notEqual(dom.window.getComputedStyle(target).display, 'none')
+  dom.window.document.body.removeAttribute('data-bt-advanced')
+  for (const target of targets) assert.equal(dom.window.getComputedStyle(target).display, 'none')
+})

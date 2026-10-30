@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { runStatsOf } from '../src/client/text.js'
+import { runStatsOf, usageOf } from '../src/client/text.js'
 
 const texts = values => runStatsOf(values).map(entry => entry.text)
 
@@ -10,7 +10,7 @@ test('the figures read as DSH counts them', () => {
     tokenUsage: { uncachedInputTokens: 50, cacheReadTokens: 900, cacheWriteTokens: 50, outputTokens: 400 },
     contextPressure: { pressureTokens: 41_000, contextWindow: 100_000 },
   }
-  assert.deepEqual(texts(values), ['12 turns', '38 tok/s', 'Cache hit 90%', 'Context 41%'])
+  assert.deepEqual(texts(values), ['12 turns', '38 tok/s', 'Context 41%'])
   assert.equal(runStatsOf(values).at(-1).title, '41.0K of 100.0K tokens of context in use')
 })
 
@@ -22,11 +22,17 @@ test('a slow speed keeps a decimal, and a projected count wins over the last mea
   assert.deepEqual(texts(values), ['1 turn', '4.5 tok/s', 'Context 30%'])
 })
 
-test('a cache hit short of whole never reads 100%', () => {
-  const hit = cacheReadTokens => texts({ tokenUsage: { uncachedInputTokens: 1000 - cacheReadTokens, cacheReadTokens } })
-  assert.deepEqual(hit(996), ['Cache hit 99.6%'])
-  assert.deepEqual(hit(1000), ['Cache hit 100%'])
-  assert.deepEqual(hit(0), ['Cache hit 0%'])
+test('legacy cache counters without durable provenance do not claim efficiency', () => {
+  for (const cacheReadTokens of [996, 1000, 0]) {
+    assert.deepEqual(texts({ tokenUsage: { uncachedInputTokens: 1000 - cacheReadTokens, cacheReadTokens } }), [])
+  }
+})
+
+test('legacy aggregates cannot manufacture cache zero or cross-provider efficiency', () => {
+  const unreported = { tokenUsage: { uncachedInputTokens: 100 } }
+  assert.equal(runStatsOf(unreported).some(entry => entry.key === 'cache'), false)
+  const list = { projectionsBySession: { a: { values: unreported }, b: { values: { tokenUsage: { uncachedInputTokens: 100, cacheReadTokens: 100 } } } } }
+  assert.doesNotMatch(usageOf(list, ['a', 'b']), /Cache hit.*%/)
 })
 
 test('nothing to count leaves the line empty', () => {

@@ -14,6 +14,7 @@ import { botSettings, useEntries } from './extend.js'
 import { useMemoryCount } from './memory-panel.js'
 import { SPRING_SHAPE, SPRING_TAP, spring } from './motion.js'
 import { t } from './i18n.js'
+import { AdvancedSettings, ADVANCED_SETTINGS_CSS } from './advanced-settings.js'
 
 const capitalize = word => word[0].toUpperCase() + word.slice(1)
 
@@ -157,6 +158,7 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
     ...extraCards.map(entry => h(entry.Component, { key: entry.id, bot, roster, actions, run, Card, Row, SwitchRow })),
     roster.memory === false ? null : h(MemoryCard, { bot, actions }),
     h(BotSchedules, { bot, roster, actions }),
+    h(AdvancedSettings, { key: bot.id, bot, roster, actions, save, Card, Row, SwitchRow }),
     h(Card, { title: t('Main Bot') },
       onlyMain
         ? h('div', { className: 'bt-set-row bt-bs-row' },
@@ -180,7 +182,7 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
         h('span', { className: 'bt-chevron' }, h(ChevronRightIcon)))))
 }
 
-export const BOT_SETTINGS_CSS = `
+export const BOT_SETTINGS_CSS = ADVANCED_SETTINGS_CSS + `
 .bt-bs{display:flex;flex-direction:column;gap:18px}
 .bt-bs-hero{display:flex;align-items:center;gap:14px;padding:2px 4px}
 .bt-bs-who{display:flex;flex-direction:column;min-width:0;gap:2px}

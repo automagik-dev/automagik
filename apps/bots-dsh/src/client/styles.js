@@ -956,9 +956,9 @@ body[data-bt-layout=flat] .bt-think{max-width:calc(var(--bt-flat-w) * 100%)}
    (it is a DSH-wide setting): step groups lose their header and stay open, and what a
    mode folds away in a finished turn stays shown. TurnProcessCell also opens that
    fold; these rules cover the first frame before it does. */
-[data-step-process]>div:first-child{display:none!important}
-[data-step-process]>[data-step-process-body]{display:block!important;content-visibility:visible!important;max-height:none!important;overflow:visible!important;mask-image:none!important;scrollbar-gutter:auto!important}
-:is([data-step-process],[data-turn-process-hidden])[hidden]{content-visibility:visible!important}
+body:not([data-bt-advanced]) [data-step-process]>div:first-child{display:none!important}
+body:not([data-bt-advanced]) [data-step-process]>[data-step-process-body]{display:block!important;content-visibility:visible!important;max-height:none!important;overflow:visible!important;mask-image:none!important;scrollbar-gutter:auto!important}
+body:not([data-bt-advanced]) :is([data-step-process],[data-turn-process-hidden])[hidden]{content-visibility:visible!important}
 [class*="_flowItem"]:has(> [data-slot="conversation.chat.node"]:empty){display:none!important}
 [class*="_header"]:has(.bt-head){border-bottom-color:transparent!important;box-shadow:none!important}
 /* The transcript runs under a floating header pill. */
@@ -975,8 +975,8 @@ header[class*="_header"] .bt-head{flex:1 1 auto;width:100%}
 @property --dsh-chat-user-width{syntax:"*";inherits:false}
 /* DSH's turn tail keeps what plugins put in it (delivered files, the Bot's separators),
    without its copy and branch row; a tail with nothing in it takes no room. */
-[data-turn-tail]>:not([data-slot="conversation.chat.turnTail"]){display:none!important}
-[class*="_flowItem"][data-chat-flow-kind="turn-tail"]:not(:has([data-slot="conversation.chat.turnTail"]:not(:empty))){display:none!important}
+body:not([data-bt-advanced]) [data-turn-tail]>:not([data-slot="conversation.chat.turnTail"]){display:none!important}
+body:not([data-bt-advanced]) [class*="_flowItem"][data-chat-flow-kind="turn-tail"]:not(:has([data-slot="conversation.chat.turnTail"]:not(:empty))){display:none!important}
 /* Every team Session belongs to a Bot or a group, so a blank one is an empty chat, not
    the shell's new-session hero: no headline, no workspace or mode picker, and the
    composer stays docked at the bottom. */
@@ -1061,7 +1061,12 @@ header[class*="_header"] .bt-head{flex:1 1 auto;width:100%}
 @keyframes bt-icon-swap{from{opacity:0;transform:scale(.5) rotate(-30deg)}}
 [data-composer-card] button[class*="_primary"] svg{width:14px;height:14px}
 [data-composer-card] button[class*="_primary"]:disabled{display:none!important}
-[data-composer-dock]{display:none!important}
+body:not([data-bt-advanced]) [data-composer-dock]{display:none!important}
+.bt-native-head{display:flex;align-items:center;gap:6px;min-width:0}
+.bt-native-head .bt-head-details{position:static}
+.bt-native-note{display:flex;flex-wrap:wrap;gap:6px;font:12px/18px var(--bt-font);color:var(--bt-ink-2)}
+.bt-native-note p{margin:0}
+.bt-native-note button{font:inherit;color:var(--bt-accent);background:none;border:0;cursor:pointer;text-decoration:underline}
 .bt-mic,.bt-voice{flex:none;width:28px;height:28px;border-radius:50%;border:0;padding:0;display:inline-grid;place-items:center;cursor:pointer;transition:background-color .15s ease,color .15s ease,${spring(SPRING_TAP, 'scale')}}
 .bt-mic{background:color-mix(in srgb,var(--bt-ink) 5%,transparent);box-shadow:inset 0 0 0 .5px var(--bt-line);color:var(--bt-ink-2)}
 .bt-mic:hover{background:color-mix(in srgb,var(--bt-ink) 10%,transparent);color:var(--bt-ink)}
