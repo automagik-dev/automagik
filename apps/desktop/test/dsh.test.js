@@ -5,7 +5,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import { test } from 'node:test'
-import { appHome, dshEnv, freePort, guardContents, installProfile, launchUrlOf, mergeProfilePackage, mergeProfilePatch, migrateRenamed, navigationOf, pinProfileStore, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, scrubBuildPaths, SHIPPED_STORE, startDsh, stopDsh, storeLayoutOf, writeTools } from '../src/dsh.js'
+import { appHome, dshEnv, forgetDshLogins, freePort, guardContents, installProfile, launchUrlOf, mergeProfilePackage, mergeProfilePatch, migrateRenamed, navigationOf, pinProfileStore, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, scrubBuildPaths, SHIPPED_STORE, startDsh, stopDsh, storeLayoutOf, writeTools } from '../src/dsh.js'
 
 test('the app keeps everything in one folder under ~/.automagik, apart from a dsh you already run', () => {
   assert.equal(appHome({}), join(homedir(), '.automagik', 'desktop'))
@@ -186,6 +186,25 @@ test('the launch URL is read from dsh\'s output, only for the port it was given'
   assert.equal(launchUrlOf(line, 5000), null)
   assert.equal(launchUrlOf('dsh web: http://0.0.0.0:41149/?token=x', 41149), null)
   assert.equal(launchUrlOf('no url here'), null)
+})
+
+test('a start forgets the dsh logins earlier starts left, and nothing else of the host', async () => {
+  // 70 of these came to 15.7 KB and dsh answered the page with 431; cookies ignore the port.
+  const kept = [
+    ...Array.from({ length: 70 }, (_, n) => ({ name: `dsh-auth-${'x'.repeat(43)}${n}`, domain: '127.0.0.1', path: '/' })),
+    { name: 'theme', domain: '127.0.0.1', path: '/' },
+  ]
+  const asked = []
+  const removed = []
+  const cookies = {
+    get: async (filter) => { asked.push(filter); return kept.filter(cookie => cookie.domain === filter.domain) },
+    remove: async (url, name) => { removed.push([url, name]) },
+  }
+  assert.equal(await forgetDshLogins(cookies, 'http://127.0.0.1:57765'), 70)
+  assert.deepEqual(asked, [{ domain: '127.0.0.1' }])
+  assert.equal(removed.length, 70)
+  assert.ok(removed.every(([url, name]) => url === 'http://127.0.0.1/' && name.startsWith('dsh-auth-')))
+  assert.equal(await forgetDshLogins({ get: async () => [], remove: async () => assert.fail('nothing to remove') }, 'http://127.0.0.1:1'), 0)
 })
 
 test('the window stays on dsh\'s origin; web links go to the system browser; the rest is refused', () => {
