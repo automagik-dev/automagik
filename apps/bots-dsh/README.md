@@ -123,7 +123,14 @@ Options go in the profile's `cordis.patch.yml`, under the `omni-ui` entry. All o
     updateCheck: false              # the package's own patch sets false: nothing is checked or installed
     updateRegistry: https://registry.example/   # ask only this npm registry for updates
     github: false                   # hide the GitHub connector; default shown in Connectors
+    appManifest:                    # the web app's name; default Automagik, false keeps DSH's own
+      name: Automagik
+      short_name: Automagik
+      theme_color: '#1a1a2e'        # optional, a #hex color (also background_color)
+      icon: /absolute/path/icon.svg # optional, an .svg or .png; default the Automagik app icon
 ```
+
+**The web app's name**: DSH's page calls itself "DeepSeek Harness", in its manifest (what a browser shows when you install the page as an app) and in its `<title>`. With this plugin it is "Automagik": the plugin serves `/manifest.webmanifest` (`application/manifest+json`, DSH's own fields with these names) ahead of DSH's static file, the icon at `/omni-ui/app-icon.png` (or `.svg`), and puts `name` in the page's `<title>`. The icon is the Automagik app icon (`apps/desktop/assets/icon.png`) at 512 px. `appManifest` names the app otherwise; `appManifest: false` keeps DSH's name and icon. A value it can't use (no `name` or `short_name`, a color that isn't `#hex`, an icon that isn't an absolute `.svg` or `.png` path it can read) is refused with a line in the diagnostics, and the page stays "Automagik".
 
 **Updates**: when a window opens, DS Bot asks where it was installed from for a newer release: the npm registry (the one the DSH plugin manager installs from, then its fallbacks), or the latest GitHub release for a `github:…#vX.Y.Z` install. A newer version shows a cloud button at the top right of the sidebar; **Update** reinstalls DS Bot through the DSH plugin manager, and the new version runs from the next DSH start. A linked or local checkout is never offered an update. Settings → About DS Bot shows the same state, with **Check for updates** to ask again at once.
 
@@ -321,7 +328,7 @@ dev/check.sh                             # all checks (see below)
 | Path | Purpose |
 |---|---|
 | `index.js` | Host entry: installs the `src/host/` modules in order and provides the runtime as `omniTeam` |
-| `src/host/` | Host: team and storage (`roster`, `store`), tools (`tools`), turns and delivery (`turns`, `delivery`), group chats (`groups`), chat parts, the context steward and the index (`parts`, `steward`, `chat-index`), image text (`images`), secrets (`secrets`), Bot browser (`browser`), the hooks other Omni plugins add through (`extend`), the `POST api/omni-ui` route (`channel`) |
+| `src/host/` | Host: team and storage (`roster`, `store`), tools (`tools`), turns and delivery (`turns`, `delivery`), group chats (`groups`), chat parts, the context steward and the index (`parts`, `steward`, `chat-index`), image text (`images`), secrets (`secrets`), Bot browser (`browser`), the hooks other Omni plugins add through (`extend`), the `POST api/omni-ui` route (`channel`), the web app's name and icon (`app-manifest`, `app-icon.png`) |
 | `src/client/` | Browser source: sidebar, chat header, transcript cells, panels and dialogs, themes, Bot browser panel, the registries other Omni plugins add to (`extend`) and the canvas slot they draw into (`canvas-slot`, `canvas-text`) |
 | `client.js` | Built from `src/client/` by `scripts/build-client.mjs` (esbuild); committed |
 | `web-search.js` | The `auto` search provider; independent of the team code |

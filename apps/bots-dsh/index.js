@@ -44,6 +44,7 @@ import * as thinking from './src/host/thinking.js'
 import * as fallback from './src/host/fallback.js'
 import * as channel from './src/host/channel.js'
 import * as feed from './src/host/feed.js'
+import * as appManifest from './src/host/app-manifest.js'
 
 export { COLORS } from './src/host/constants.js'
 
@@ -54,7 +55,7 @@ export const inject = ['llm', 'tools', 'systemPrompt', 'sessionController', 'ses
 // the functions other modules call; they call them through `rt` at run time, never during
 // install. Listeners run and tools are listed in registration order, so this order holds:
 // usage meters model requests after every listener that rewrites them.
-const MODULES = [diagnostics, extend, store, models, providers, permissions, turns, handoffs, requests, delivery, roster, folders, agents, prompt, timeContext, tools, chatIndex, groups, approvals, resume, memory, parts, fallback, images, imagegen, avatarLibrary, secrets, connectors, capabilities, schedules, browser, browserPlugins, usage, update, dshUpdate, thinking, feed, channel]
+const MODULES = [diagnostics, extend, store, models, providers, permissions, turns, handoffs, requests, delivery, roster, folders, agents, prompt, timeContext, tools, chatIndex, groups, approvals, resume, memory, parts, fallback, images, imagegen, avatarLibrary, secrets, connectors, capabilities, schedules, browser, browserPlugins, usage, update, dshUpdate, thinking, feed, channel, appManifest]
 
 // Other Omni plugins inject the runtime as `omniTeam` and add to it through rt.hooks
 // (src/host/extend.js): Omni's channels and automations (@automagik/omni-channels-dsh),
