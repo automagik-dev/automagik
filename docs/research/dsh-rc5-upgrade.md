@@ -87,7 +87,7 @@ Read-only issue evidence retrieved 2026-10-30T21:48Z–21:51Z; all below were OP
 |---|---|---|---|
 | 1 | NOW, review-only | Audit custom Bot thinking rendering against upstream display-text semantics. rc.5 exposes an explicit raw/display boundary and exact-prefix sanitizer, but our custom assistant-step bypasses it. | Small investigation + focused offline renderer tests; medium UI regression/security-presentation risk. **New authorization required for implementing behavior changes**, particularly anything conflated with held #161. Not implemented here. |
 | 2 | NOW, upgrade gate | Retain/revalidate teammate patch and exact package artifacts; keep version tooling from leaving obsolete patch guards behind. | Small source/tooling adjustment already scoped to this upgrade; medium packaging risk. Full route/cold-resume fixture and assembled desktop remain missing promotion evidence. |
-| 3 | NOW, offline QA | Add deterministic streamed/settled signature, partial prefix, absent closer, ordinary tag/whitespace and raw/display-wrapper fixtures. | Small test-only follow-up; low cost, useful because upstream unit coverage excludes signature branches. Needs scoped test authorization; does not require paid models. |
+| 3 | NOW, offline QA | Deterministic streamed/settled signature, partial prefix, absent closer, ordinary tag/whitespace and raw/display-wrapper coverage is **already authorized by this wish**, not a future authorization request. | Extracted compiled-function coverage was added during validation (details below). Retained runnable regression coverage and full mounted integration remain missing; upstream unit coverage excludes signature branches. No paid models needed. |
 | 4 | LATER | Prefer documented reasoning body/content extension seams over maintaining a shadow rendering pipeline, if product requirements permit. | Medium design/migration cost; high risk to Bot visuals/slots. Separate reviewed design, compatibility and build/UI authorization; not a mandatory rc.5 fix. |
 | 5 | LATER | Revisit drafts, MCP auth, blank rendering, stopped retention and memory with their own attributable reproductions. | Separate held-track budget/decision and test authorization. rc.5 supplies no backend implementation that resolves them; no automatic reopening or repair extension. |
 
@@ -129,7 +129,7 @@ Counts are Node runner summaries, **pass / fail / skipped**. Excluded files abov
 
 | Gate | Baseline rc.4 | rc.5 source preview |
 |---|---:|---:|
-| Root aggregate | exit0; 41/0 | precommit exit1; 40/1 (HEAD vs working-tree fixture; see below) |
+| Root aggregate | exit0; 41/0 | **postcommit exit0; 41/0**, marketplace 6 OK (precommit failure retained below) |
 | bots | exit1; 1397/5/2 | exit1; 1397/5/2 |
 | welcome | exit0; 171/0/1 | exit0; 171/0/1 |
 | locale-pt-br | exit0; 18/0/0 | exit0; 18/0/0 |
@@ -176,13 +176,60 @@ but its package.json declares >=0.2.1-rc.4 <0.2.2-0
 40 pass / 1 fail; exit1
 ```
 
-That fixture compares a working-tree manifest with `git show HEAD`; a postcommit rerun is required, not a test or marketplace edit. Do not describe this precommit invocation as green.
+That fixture compares a working-tree manifest with `git show HEAD`. The full `bun run check` rerun on immutable implementation commit **`46962004b123b093abc99b09d3232db20c461371`** completed **exit0**, 41 pass / 0 fail, version 3.51.6 everywhere and marketplace 6 plugins OK. HEAD readback was the same SHA. No test or marketplace edit was used; the precommit invocation remains recorded as failed. Remote dev was re-read at **2026-10-30T22:00:35Z** and still equaled baseline `e883d2253195c9bd91ec758a3e807746075ee208`.
 
 Actual rc.5 package bytes were copied into disposable patch fixtures, not the app: `patchRuntime` with **version checks enabled** applied both files, a second application returned `already patched`, and deliberate tampering was rejected. Before SHA256 values exactly matched rc.4: team `b2d337d10c841773e4e69836475f5c21dce8cd87beb70d73413a7868e9403322`; tool-team `cac22fe5f83a179056469cf329def58393c7620eae23b018c66f42c37d849f63`. After hashes remain the checked-in metadata values. This proves byte/hunk compatibility and idempotence, **not** full semantic routing/resume.
 
 An additional guarded offline fixture evaluated the actual patched route-policy helper bytes (tool-team after SHA256 `f7f2c992e0c55a701b6cb90edb74f0fcb8e45ae53e271159e1731c7a422643a6`), with a synthetic config resolver: omitted options inherit without resolution; selected provider/model picks model-default effort; explicit effort retained; fork overrides, incomplete pairs, disallowed models, invalid effort, disabled selection, and a changed live allowlist are rejected. It passed, exit0, with no network/model call. This is a helper-level fixture, **not** full tool registration, backend spawning, or cold session resume.
 
 Runtime lock audit: **296 DSH package entries** move rc.4→rc.5, root parser also moves its DSH manifest dependency. **Zero package-major changes, zero removed runtime package paths.** The declared npm resolver additionally refreshed **25 non-DSH transitive package entries** within existing major ranges: AWS core/credential/env/http/ini/login/node/process/sso/web-identity/eventstream/middleware/nested-client/signature/xml families, two nested Smithy HTTP handlers, OpenTelemetry semantic conventions, Smithy core/signature, Node typings, encodeurl, jose and tslib. These refreshes are not attributed to a new upstream feature and are not proven necessary compatibility fixes. A scratch `--prefer-dedupe` resolution did not eliminate them and additionally downgraded fflate, so that experiment was **not retained**. Their complete versions/integrities are in the committed lock diff; they remain a supply-chain/promotion review item rather than an implicit authorization for unrelated dependency work.
+
+### Additional affected-seam validation (no product repair)
+
+The independent reviewer correctly flagged that offline reasoning fixtures were required by the original scope, not something needing new authorization. Additional **validation only** was run against unchanged implementation commit `46962004b123b093abc99b09d3232db20c461371`:
+
+- Exact installed `@deepseek-ai/dsh-client-ui-chat@0.2.1-rc.4` bundle SHA256: `a00e5176d1257d51604cefbe9a15d326d4283439df31f76ba20ff690c76e10a1`.
+- Exact installed rc.5 bundle SHA256: `181f766f2fe12ad27eed4f1c0cd4609e8d2211d397890355eb476b6a9ee311c2`. [Artifact lock entry](<apps/desktop/runtime/package-lock.json#L1382-L1385>) SRI: `sha512-/UzmkMvOW94RtwHNbnU36+U5syK3QBRoDYzX9n6iyb+w9PrlKjUIckGqZNZnAoEG374htpvUrrT0YPSp4BDJ+A==`.
+- Fixture SHA256: `e79abb67e249bf0c18ab2768626c11fae85573f0fcd1d7f6b8aae159f46db298`, executed 2026-10-30T22:02:31.888Z. **rc.4 negative control exit1**, precisely `AssertionError: assert.ok(!JSON.stringify(collapsed).includes('synthetic-payload'))`, not a missing module or typo. **rc.5 exit0**.
+- Extracted **actual published bundle function bodies**, not rewritten sanitizer logic: `reasoningText` and `ReasoningRow`, with deterministic `memo`/`useMemo` and JSX object stubs. Covers streamed/settled collapsed/expanded text, exact rawText preservation vs display text, complete/partial signature prefixes, absent closer, LF/CRLF, ordinary/Chinese/whitespace/other tags, and actual local `turnReasoning` bypass.
+- **Limitations:** this is extracted-function evidence, not execution of the full shipped plugin entrypoint, mounted React DOM, disclosure lifecycle, process-activity fallback, translation runtime or browser integration. Those coverage items remain blocked/missing. No source repair or budget reset occurred. The scratch fixture remains available locally as [validation script](<.cache/rc5/check-reasoning.mjs>), [negative output](<.cache/rc5/reasoning-baseline.log>), and [positive evidence](<.cache/rc5/reasoning-evidence.json>); they are ignored checkout-private artifacts, not promised committed regression tests. The durable report records inputs, exact identities, assertions and limitations so the finding is not tmp-only.
+
+### Independent lock metadata finding
+
+The initial lock audit counted version changes only. Independent review and a separate all-field comparison also found **20 unchanged-version native optional entries lost their `libc` selector arrays** in npm's generated lock. This broadens recorded platform eligibility; actual Linux/glibc/musl install effects are **UNKNOWN**, not a demonstrated failure. No Linux CI or assembled desktop build was run. No permission-mode change is implied, but this is a real supply-chain/platform compatibility review item and an additional reason not to promote this preview. No manual lock repair was made under unknown historical repair consumption.
+
+Exact entries (prefix `node_modules/` omitted):
+
+```text
+@img/sharp-libvips-linux-arm         1.3.4  removed [glibc]
+@img/sharp-libvips-linux-arm64       1.3.4  removed [glibc]
+@img/sharp-libvips-linux-ppc64       1.3.4  removed [glibc]
+@img/sharp-libvips-linux-riscv64     1.3.4  removed [glibc]
+@img/sharp-libvips-linux-s390x       1.3.4  removed [glibc]
+@img/sharp-libvips-linux-x64         1.3.4  removed [glibc]
+@img/sharp-libvips-linuxmusl-arm64   1.3.4  removed [musl]
+@img/sharp-libvips-linuxmusl-x64     1.3.4  removed [musl]
+@img/sharp-linux-arm                0.35.5 removed [glibc]
+@img/sharp-linux-arm64              0.35.5 removed [glibc]
+@img/sharp-linux-ppc64              0.35.5 removed [glibc]
+@img/sharp-linux-riscv64            0.35.5 removed [glibc]
+@img/sharp-linux-s390x              0.35.5 removed [glibc]
+@img/sharp-linux-x64                0.35.5 removed [glibc]
+@img/sharp-linuxmusl-arm64          0.35.5 removed [musl]
+@img/sharp-linuxmusl-x64            0.35.5 removed [musl]
+node-addon-require-builtin-linux-arm64-gnu  0.1.9 removed [glibc]
+node-addon-require-builtin-linux-arm64-musl 0.1.9 removed [musl]
+node-addon-require-builtin-linux-x64-gnu    0.1.9 removed [glibc]
+node-addon-require-builtin-linux-x64-musl   0.1.9 removed [musl]
+```
+
+### Independent review disposition
+
+Reviewer: `independent-reviewer`, genuinely uninvolved author, read-only. Criteria were frozen before repository inspection. Target implementation SHA: **`46962004b123b093abc99b09d3232db20c461371`**. Reviewer inspected chronological commit/cumulative source, lock and unchanged generated artifacts plus attributable logs; did not author retained design/patch or run tests.
+
+**Verdict: BLOCKED**, never SHIP. Full native/plugin/desktop integration remains missing; same-baseline red tests are not passes. Reviewer found and Lead independently confirmed the 20 `libc` selector removals. Initial HIGH “missing affected reasoning offline fixture” was **closed at extracted-function/stub level** after reviewer checked actual bundle regions, both bundle hashes, fixture hash and negative/positive outputs. That closure is not a mounted/shipped-entrypoint integration pass. Scratch fixture is not a committed regression test. Provenance/fresh-base evidence is identified as Lead/research primary-source retrieval, not reviewer-run remote verification.
+
+No product repair round was dispatched with unknown historical consumption. Remaining decisions: establish legitimate repair accounting, assess/minimize resolver-driven transitive/platform metadata changes, and arrange authorized isolated full integration/CI coverage before promotion. Do not widen live permissions, install/restart the user's app, or revive held features to close these gaps. Final source/evidence commits are local only; see branch/head handoff in the final response.
 
 Measured source diff before adding these notes: 32 modified files, +2389/-2409 (runtime lock dominates). With plan/report, the complete change exceeds the single-unit 25-file/2000-insertion wish band; it is explicitly a multi-group **blocked preview**, not a falsely admitted single green wish.
 

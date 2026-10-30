@@ -176,6 +176,16 @@ Frozen command matrix, identical baseline/upgraded toolchain and checkout-privat
 - Forbidden/unrun: node scripts/boot-check.mjs --shot boot.png; real teammate model route+cold resume test; app/server launch, browser/GUI, full packaged desktop build. Full gates remain BLOCKED regardless of permitted subset results.
 - Guard lives only in ignored validation scratch and is loaded only for tests, not production or installs. No source tests are weakened; guard failures are failures. Root/package install lifecycle and scripts are inspected before invocation.
 
+### Execution evidence and independent implementation review
+
+Implementation commit: `46962004b123b093abc99b09d3232db20c461371`; 34 files, +2772/-2409, including required plan/report. Generated runtime lock alone +2318/-2374 exceeds the 2000-insertion single-group band; no single-unit admission/SHIP claim. Complete source scope reviewed, no unrelated retained feature work.
+
+Lead baseline/upgraded matrices used Node22.23.4/Bun1.4.2 and private offline environments. Full `bun run check` on committed SHA: exit0,41pass/0fail,marketplace6OK; precommit Git-backed fixture failure is preserved in the report. All12 plugin lints and10 committed-client checks passed. Ten permitted plugin suite commands passed (some exclude service-dependent files; not ten complete unfiltered suites). Bots5/Bridge38/Desktop2 guard-denied failures match baseline names exactly; seven service-dependent files excluded before execution. Full native/core/route-resume/sidebar/desktop integration remains blocked. Patch bytes with versions enabled:2 applied,2 already-patched, tamper rejected; route helper fixture passed. Full results and failure excerpts: `docs/research/dsh-rc5-upgrade.md`.
+
+Independent-reviewer (different author; read-only throughout) reviewed immutable implementation commit and cumulative locks/source/generated artifacts against criteria supplied blind before repository access. Verdict **BLOCKED**, not SHIP: missing full integration/service gates; 25 nonDSH resolver refreshes and20 removed Linux libc selector arrays need promotion/supply-chain assessment. No confirmed Linux runtime failure is claimed. Reviewer initially found HIGH missing affected reasoning fixture evidence; validation-only negative rc4/positive rc5 compiled-function fixtures closed that HIGH gap at extracted-function/stub level. Reviewer independently checked fixture and both published bundle hashes; full React mount/lifecycle/entrypoint coverage remains missing. No source repair or new product behavior was authored by the reviewer or dispatched under unknown historical repair use.
+
+Budget: configured B=2; prior consumed upgrade attempts UNKNOWN; no repair round dispatched, no extension/reset. Report corrections and additional originally authorized offline validation are evidence work, not product repair commits. Existing held-track counters remain untouched. Publication remains commit-only, no push route/PR/merge/release/install/restart.
+
 ## Files to Create/Modify
 
 ```
