@@ -1101,10 +1101,14 @@ export function apply(ctx) {
         nativeDestination = main
         setPlain(true)
         dropPanels()
-        operation.done = Promise.resolve(pendingSource?.done).then(() => {
-          if (mainView() !== main || surface.getSnapshot().mode !== 'bot') throw new Error('Session selection changed before registration')
-          return call('bot-session-adopt', { botId, sessionId: main, sourceSessionId: before })
-        }).then(() => pull()).catch(error => {
+        // A skipped queued pick carries the last registered source forward; it
+        // must not poison the next pick or pretend its own Session was associated.
+        operation.done = Promise.resolve(pendingSource?.done ?? before).then(async sourceSessionId => {
+          if (mainView() !== main || surface.getSnapshot().mode !== 'bot') return sourceSessionId
+          await call('bot-session-adopt', { botId, sessionId: main, sourceSessionId })
+          await pull()
+          return main
+        }).catch(error => {
           console.warn('[ds-bot] bot-session-adopt', error)
           if (mainView() === main) {
             // Failure must not hide a stranded native Session behind Main.

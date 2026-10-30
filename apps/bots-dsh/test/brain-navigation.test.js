@@ -154,7 +154,7 @@ async function start(t, { advanced = false, model, delay = false, reject = false
   const nativeCtx = {
     sessions: { binding: () => ({}), list }, get: name => name === 'uiWorkspace' ? navigation : undefined,
     slots: { registerFactory: options => { nativeSlots.push(options); return () => {} }, register: () => () => {},
-      inject: (_name, fn) => { const result = fn(); if (result?.next) for (const _ of result) { /* run native slot declarations */ } return () => {} },
+      inject: (_name, fn) => { const result = fn(); if (result?.next) while (!result.next().done) { /* run native slot declarations */ } return () => {} },
       entries: () => [], entriesOfSlot: () => [], subscribe: () => () => {} },
     effect: () => () => {}, inject: () => ({ dispose() {} }), plugin() {},
     locale: { bind: () => key => key, register: () => () => {}, subscribe: () => () => {} },
@@ -274,6 +274,29 @@ test('rapid native picks serialize their source ownership and stale completion n
   assert.equal(requests[1].payload.sourceSessionId, 'first')
   await act(async () => { bench.retain('main'); bench.registrations[1].resolve(); await tick() })
   assert.equal(bench.current(), 'main')
+  assert.deepEqual(bench.opened, [])
+})
+
+test('three rapid native picks carry the last registered source past a superseded queued destination', async t => {
+  const bench = await start(t, { delay: true })
+  await bench.pick('first')
+  await bench.pick('second', { workspaceId: 'second-project' })
+  await bench.pick('third', { workspaceId: 'third-project' })
+  assert.equal(bench.registrations.length, 1)
+  await act(async () => {
+    bench.registrations[0].resolve()
+    await tick()
+    bench.registrations[1]?.resolve()
+    await tick()
+  })
+  assert.equal(bench.current(), 'third')
+  assert.equal(bench.hooks.roster.getSnapshot().byId.third?.id, 'brain', 'latest native destination must become Brain-owned after skipping the queued middle pick')
+  const requests = bench.calls.filter(call => call.endpoint === 'bot-session-adopt')
+  assert.deepEqual(requests.map(call => call.payload.sessionId), ['first', 'third'])
+  assert.equal(requests[1].payload.sourceSessionId, 'first')
+  assert.equal(bench.list.getSnapshot().byId.third.cwd, '/third-project')
+  assert.equal(bench.brain.profile, 'cordis')
+  assert.equal(bench.brain.dshAgentId, 'native')
   assert.deepEqual(bench.opened, [])
 })
 

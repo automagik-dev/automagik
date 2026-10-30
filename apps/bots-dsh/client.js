@@ -24017,10 +24017,12 @@ function apply(ctx) {
         nativeDestination = main;
         setPlain(true);
         dropPanels();
-        operation.done = Promise.resolve(pendingSource?.done).then(() => {
-          if (mainView() !== main || surface.getSnapshot().mode !== "bot") throw new Error("Session selection changed before registration");
-          return call("bot-session-adopt", { botId, sessionId: main, sourceSessionId: before });
-        }).then(() => pull()).catch((error) => {
+        operation.done = Promise.resolve(pendingSource?.done ?? before).then(async (sourceSessionId) => {
+          if (mainView() !== main || surface.getSnapshot().mode !== "bot") return sourceSessionId;
+          await call("bot-session-adopt", { botId, sessionId: main, sourceSessionId });
+          await pull();
+          return main;
+        }).catch((error) => {
           console.warn("[ds-bot] bot-session-adopt", error);
           if (mainView() === main) {
             chosen = main;
