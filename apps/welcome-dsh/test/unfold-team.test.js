@@ -48,14 +48,12 @@ const byClass = name => node => String(node?.props?.className ?? '').split(' ').
 const team = await load('team.js')
 const art = await load('companion-art.js')
 
-test('opened for Unfold, Unfold\'s card comes first and starts chosen; elsewhere it is the third', () => {
+test('opened for Unfold, Unfold\'s card comes first and starts chosen; elsewhere there is none', () => {
   assert.deepEqual(plain(team.teamOrder('unfold')), ['unfold', 'omni', 'genie'])
   assert.deepEqual(plain(team.cardsOf('unfold')), ['unfold', 'omni', 'genie'])
   // Unfold's card is only in Unfold's own instance; elsewhere the team step never shows it.
   for (const preload of [null, 'omni']) assert.deepEqual(plain(team.cardsOf(preload)), ['omni', 'genie'])
   assert.deepEqual(plain(team.cardsOf('genie')), ['genie', 'omni'])
-  for (const preload of [null, 'omni']) assert.deepEqual(plain(team.cardsOf(preload, 'unfold')), ['omni', 'genie', 'unfold'])
-  assert.deepEqual(plain(team.cardsOf('genie', 'unfold')), ['genie', 'omni', 'unfold'])
   assert.deepEqual(plain(team.preselected('unfold')), { omni: false, genie: false, unfold: true })
   assert.equal(team.powersOnByItself('unfold', 'asleep', null, false, 'unfold'), true)
   assert.equal(team.powersOnByItself('unfold', 'asleep', null, false), false)
@@ -87,7 +85,7 @@ test('the team step\'s cards, from the state the host serves: Unfold only in Unf
   const cards = async (env) => {
     const { handle } = install(fakeContext({ entries: { 'omni-ai': {} } }).ctx, { env, checkClaude: async () => ({ plugin: false, installed: false, loggedIn: false }) })
     const state = (await handle('state')).value
-    return plain(team.cardsOf(state.preload, state.host ?? null))
+    return plain(team.cardsOf(state.preload))
   }
   for (const env of [{}, { AUTOMAGIK_PRELOAD: 'omni' }, { AUTOMAGIK_PRELOAD: 'genie' }, { AUTOMAGIK_HOST: 'desktop' }]) {
     assert.ok(!(await cards(env)).includes('unfold'), JSON.stringify(env))

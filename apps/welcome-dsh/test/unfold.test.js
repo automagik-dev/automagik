@@ -148,7 +148,9 @@ test('outside Unfold\'s own instance nothing of Unfold\'s installs: no unfold-* 
     const reply = await fake.handle('unfold-plugin-install')
     assert.equal(reply.ok, false, JSON.stringify(env))
     assert.equal(reply.error.code, 'omni-ai/refused')
-    assert.equal((await value(fake, 'unfold-plugin')).install, null)
+    const status = await value(fake, 'unfold-plugin')
+    assert.equal(status.install, null)
+    assert.equal(status.canInstall, false, JSON.stringify(env))
   }
   assert.deepEqual(manager.calls, [])
   assert.equal(gitChecks, 0)
@@ -162,6 +164,7 @@ test('in Unfold\'s own instance everything is preinstalled: choosing Unfold inst
   const fake = host({ manager, team, env: UNFOLD, checkGit: async () => { gitChecks += 1; return null } })
   const status = await value(fake, 'unfold-plugin')
   assert.equal(status.ready, true)
+  assert.equal(status.canInstall, true)
   assert.ok(status.plugins.every(row => row.installed === true))
   await value(fake, 'unfold-plugin-install')
   assert.equal((await settleUnfold(fake)).install.phase, 'done')

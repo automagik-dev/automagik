@@ -11174,7 +11174,7 @@ function teamOrder(preload) {
   if (preload === "unfold") return ["unfold", "omni", "genie"];
   return preload === "genie" ? ["genie", "omni"] : ["omni", "genie"];
 }
-var cardsOf = (preload, host = null) => preload === "unfold" || host !== "unfold" ? teamOrder(preload) : [...teamOrder(preload), "unfold"];
+var cardsOf = (preload) => teamOrder(preload);
 var preselected = (preload) => ({ omni: preload === "omni", genie: preload === "genie", ...preload === "unfold" ? { unfold: true } : {} });
 var powersOnByItself = (preload, phase, detail, started, kind = "omni") => preselected(preload)[kind] === true && !started && phase === "asleep" && detail?.removed !== true;
 function joinedLabel({ omni, genie, unfold = false }, name) {
@@ -11297,7 +11297,7 @@ function TeamStep(props) {
     (0, import_react5.createElement)(
       "div",
       { className: "oai-select" },
-      ...cardsOf(state.preload, state.host ?? null).map((id) => id === "omni" ? (0, import_react5.createElement)(OmniCard, { key: "omni", power: omniPower, onPower: () => {
+      ...cardsOf(state.preload).map((id) => id === "omni" ? (0, import_react5.createElement)(OmniCard, { key: "omni", power: omniPower, onPower: () => {
         setLastPressed("omni");
         power.toggle();
       }, type: omniType, abilities, onToggle: (row, on2) => setAbilities((rows) => ({ ...rows, [row]: on2 })), live }) : id === "genie" ? (0, import_react5.createElement)(GenieCard, { key: "genie", host: state.host ?? null, power: { ...geniePower, toggle: () => {

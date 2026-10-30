@@ -386,7 +386,7 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.e
       }),
       ready: bot !== undefined,
       bot: bot === undefined ? null : { id: bot.id, name: bot.name },
-      canInstall: typeof manager()?.installBundle === 'function',
+      canInstall: offersUnfold && typeof manager()?.installBundle === 'function',
       install,
     }
   }
