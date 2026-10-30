@@ -110,7 +110,10 @@ export function apply(ctx) {
   try { agentSessionCache = new Set(JSON.parse(localStorage.getItem(STORAGE.agentSessions) ?? '[]')) } catch { agentSessionCache = new Set() }
   // Sessions adopted on this window (workspace pick, fork) but not yet in the roster.
   const pendingAdopt = new Map()
-  const isAgentSessionId = id => isAgentSession(roster.getSnapshot(), agentSessionCache, id) || pendingAdopt.has(id)
+  // Bot ownership is distinct from standalone Agent ownership and native rendering.
+  const pendingBot = new Map()
+  let nativeDestination
+  const isAgentSessionId = id => isAgentSession(roster.getSnapshot(), agentSessionCache, id) || pendingAdopt.has(id) || pendingBot.has(id) || (id !== undefined && id === nativeDestination)
   const agentOfSession = id => roster.getSnapshot().agentOf[id] ?? pendingAdopt.get(id)
   // The workspace a Session lives in, for follow-up creates and switch detection.
   const workspaces = ctx.get('workspaces')
@@ -120,6 +123,7 @@ export function apply(ctx) {
   }
   // A navigation this plugin started: the surface effect trusts the id it lands on.
   let expected = null
+  let navigationRevision = 0
   // The last Session opened through actions.openSession (a plugin's included): it stays on
   // screen while blank, where a blank DSH Session would land on the Main Bot.
   let chosen = null
@@ -447,6 +451,7 @@ export function apply(ctx) {
     // or the click appears to do nothing.
     isAgentSession: id => isAgentSessionId(id),
     openedOnPurpose: id => id === chosen,
+    ownershipPending: id => pendingBot.has(id),
     openSession: (id) => {
       // A DSH Agent Session id lands on the plain surface, not the Bot skin.
       if (isAgentSessionId(id)) return actions.openAgentSession(partFor(id))
@@ -526,8 +531,11 @@ export function apply(ctx) {
     },
     // `last` is the Bot conversation the view held before it cleared: when that part
     // was archived for a fresh one, the view goes on in the fresh one.
-    landOn: async (id, last) => {
+    landOn: async (id, last, from = mainView() ?? null) => {
+      if ((mainView() ?? null) !== from || pendingBot.has(from)) return
+      const revision = navigationRevision
       if (last) await pull().catch(() => {})
+      if ((mainView() ?? null) !== from || navigationRevision !== revision || pendingBot.has(from)) return
       const bot = last ? roster.getSnapshot().byId[last.botId] : undefined
       setPlain(false)
       const target = bot && currentPart(bot) !== last.sessionId ? currentPart(bot) : partFor(id)
@@ -1056,24 +1064,73 @@ export function apply(ctx) {
   // unowned Session; coming from a DSH Agent Session it is adopted into that Agent.
   ctx.effect(() => {
     let previous
+    let observed
     const sync = () => {
       const list = ctx.sessions.list.getSnapshot()
       const main = Object.values(list.byId ?? {}).find(session => (session?.retainedBy?.mainView ?? 0) > 0)?.id
-      const plain = isAgentSessionId(main)
+      if (main !== nativeDestination) nativeDestination = undefined
+      const snapshot = roster.getSnapshot()
+      const bot = snapshot.byId[previous]
+      const pendingSource = pendingBot.get(previous)
+      const botId = bot?.kind === 'dsh' && currentPart(bot) === previous ? bot.id : pendingSource?.botId
+      const destination = list.byId[main]
+      const parentId = destination?.parentId ?? destination?.parentSessionId
+      const nativeCandidate = main !== undefined && main !== expected && surface.getSnapshot().mode === 'bot'
+        && botId !== undefined && snapshot.byId[main] === undefined && snapshot.roomsById[main] === undefined
+        && agentOfSession(main) === undefined && destination?.origin !== 'subagent'
+        && (destination?.blank === true || parentId === previous)
+      const plain = isAgentSessionId(main) || nativeCandidate
       setPlain(plain)
       if (plain) dropPanels()
+      if (main !== observed) { navigationRevision += 1; observed = main }
       if (main === previous) return
       const before = previous
-      previous = main
+      // Clearing a source while native navigation attaches its destination is not
+      // a new owner. Keep the source until a real destination arrives.
+      if (main !== undefined) previous = main
       const ours = expected !== null && main === expected
       expected = null
       if (ours || main === undefined) return
       // Adoption is a Bot-mode affair: in Agent mode the native sidebar owns
       // navigation, and opening an existing Session there must not pull it in.
       if (surface.getSnapshot().mode !== 'bot') return
+      if (pendingBot.has(main)) return
+      if (nativeCandidate) {
+        const operation = { botId, forkSource: destination?.blank !== true && parentId === before ? pendingSource : undefined }
+        pendingBot.set(main, operation)
+        nativeDestination = main
+        setPlain(true)
+        dropPanels()
+        // A skipped queued pick carries the last registered source forward; it
+        // must not poison the next pick or pretend its own Session was associated.
+        operation.done = Promise.resolve(pendingSource?.done ?? before).then(async sourceSessionId => {
+          // A selected nonblank fork needs its actual pending parents associated.
+          // Follow only this operation chain; unrelated navigation still skips it.
+          const current = mainView()
+          let required = pendingBot.get(current)
+          while (required !== undefined && required !== operation) required = required.forkSource
+          if ((current !== undefined && current !== main && required !== operation) || surface.getSnapshot().mode !== 'bot') return sourceSessionId
+          await call('bot-session-adopt', { botId, sessionId: main, sourceSessionId })
+          await pull()
+          return main
+        }).catch(error => {
+          console.warn('[ds-bot] bot-session-adopt', error)
+          if (mainView() === main) {
+            // Failure must not hide a stranded native Session behind Main.
+            chosen = main
+            actions.reportError(error, 'bot-session-adopt')
+          }
+          throw error
+        }).finally(() => {
+          if (pendingBot.get(main) === operation) pendingBot.delete(main)
+        })
+        // A later destination can await this operation; an abandoned one must not
+        // leave an unhandled rejection or navigate back on completion.
+        void operation.done.catch(() => {})
+        return
+      }
       const agentId = before !== undefined ? agentOfSession(before) : undefined
       if (agentId === undefined) return
-      const snapshot = roster.getSnapshot()
       if (snapshot.byId[main] !== undefined || snapshot.roomsById[main] !== undefined || agentOfSession(main) !== undefined) return
       // Only a Session this jump created joins the Agent: a blank one from the
       // workspace picker, or a fork of a Session the same Agent owns. An existing
@@ -1089,7 +1146,14 @@ export function apply(ctx) {
       if (row?.blank !== true && !forkedFromAgent) return
       pendingAdopt.set(main, agentId)
       setPlain(true)
-      void call('agent-adopt', { agentId, sessionId: main }).then(() => pull()).catch((error) => {
+      void call('agent-adopt', { agentId, sessionId: main }).then(async () => {
+        await pull()
+        // Only a successful association may retire the empty source it replaced.
+        const next = workspaceOf(main)
+        if (list.byId[before]?.blank === true && next !== undefined && workspaceOf(before) !== next) {
+          await call('agent-archive', { agentId, sessionId: before }).then(() => pull()).catch(() => {})
+        }
+      }).catch((error) => {
         pendingAdopt.delete(main)
         console.warn('[ds-bot] agent-adopt', error)
         // The Session never joined the Agent: the sync puts the team surface
@@ -1097,12 +1161,6 @@ export function apply(ctx) {
         sync()
         actions.reportError(error, 'agent-adopt')
       })
-      // The hero's workspace picker leaves the blank Session it switched away from
-      // behind; in another workspace it stays empty forever, so it is archived.
-      const next = workspaceOf(main)
-      if (list.byId[before]?.blank === true && next !== undefined && workspaceOf(before) !== next) {
-        void call('agent-archive', { agentId, sessionId: before }).then(() => pull()).catch(() => {})
-      }
     }
     const offList = ctx.sessions.list.subscribe(sync)
     const offRoster = roster.subscribe(sync)

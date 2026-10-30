@@ -347,6 +347,9 @@ export function install(rt) {
         case 'agent-adopt':
           await rt.load()
           return ok({ sessionId: await rt.adoptAgentSession(body.agentId, body.sessionId) })
+        case 'bot-session-adopt':
+          await rt.load()
+          return ok({ sessionId: await rt.adoptBotSession(body.botId, body.sessionId, body.sourceSessionId) })
         // A DSH bot becomes a Bot of the team, keeping its Session, folder and name.
         case 'agent-bot-adopt':
           await rt.load()

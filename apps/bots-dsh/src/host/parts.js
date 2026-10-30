@@ -1191,6 +1191,9 @@ export function install(rt) {
   async function folderMove(agent, { midTurn = false } = {}) {
     const place = placeOf(agent.id)
     const cwd = agent.session.header?.cwd
+    // A native own chat keeps the project selected through DSH's workspace picker;
+    // the Bot's durable default folder is not a command to move that Session back.
+    if (place !== undefined && place.roomId === undefined && nativeDshSession(agent.id) && rt.chatOf(place.botId) === agent.id) return undefined
     if (place === undefined || cwd === undefined || (midTurn && place.roomId !== undefined) || Date.now() < (folderRetry.get(agent.id) ?? 0)) return undefined
     const wanted = rt.workDirOf(place)
     const usable = wanted !== undefined && await rt.isFolder(wanted)

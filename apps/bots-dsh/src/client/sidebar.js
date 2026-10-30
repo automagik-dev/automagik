@@ -714,7 +714,7 @@ export function AccountLauncher({ seat = true, settingsOpen, openSettings, openO
  */
 export function staysInView(id, blank, roster, actions) {
   if (id === '') return false
-  return Boolean(roster.roomsById[id]) || (actions.isAgentSession?.(id) ?? roster.agentOf[id] !== undefined) || !blank || actions.openedOnPurpose?.(id) === true
+  return Boolean(roster.roomsById[id]) || actions.ownershipPending?.(id) === true || (actions.isAgentSession?.(id) ?? roster.agentOf[id] !== undefined) || !blank || actions.openedOnPurpose?.(id) === true
 }
 
 function useLandOnMainBot(roster, useSessions, actions) {
@@ -729,7 +729,7 @@ function useLandOnMainBot(roster, useSessions, actions) {
     const bot = id === '' ? undefined : roster.byId[id]
     if (bot !== undefined) {
       lastBot.current = { botId: bot.id, sessionId: id }
-      if (currentPart(bot) !== id) actions.landOn(bot.id)
+      if (currentPart(bot) !== id && actions.ownershipPending?.(id) !== true) actions.landOn(bot.id, undefined, id)
       return undefined
     }
     if (staysInView(id, blank === '1', roster, actions)) {
@@ -737,7 +737,9 @@ function useLandOnMainBot(roster, useSessions, actions) {
       return undefined
     }
     const last = lastBot.current
-    const timer = setTimeout(() => actions.landOn(roster.mainBotId, last), last ? 0 : 400)
+    const timer = setTimeout(() => {
+      if (!staysInView(id, blank === '1', roster, actions)) void actions.landOn(roster.mainBotId, last, id || null)
+    }, last ? 0 : 400)
     return () => clearTimeout(timer)
   }, [mainView, roster])
 }
