@@ -49,7 +49,8 @@ async function instance(t, { team = EMPTY } = {}) {
   const home = join(dsh, 'bot')
   const teamFolder = join(home, 'workspace')
   const unfoldFolder = join(dsh, 'unfold-workspace')
-  for (const dir of [teamFolder, unfoldFolder]) mkdirSync(dir, { recursive: true })
+  const project = join(root, 'project')
+  for (const dir of [teamFolder, unfoldFolder, project]) mkdirSync(dir, { recursive: true })
   writeFileSync(join(home, 'state.json'), JSON.stringify(team))
   const env = { DSH_HOME: process.env.DSH_HOME, AUTOMAGIK_HOST: process.env.AUTOMAGIK_HOST }
   process.env.DSH_HOME = dsh
@@ -58,7 +59,13 @@ async function instance(t, { team = EMPTY } = {}) {
   const fake = await fakeControl(`bots-unfold-root-${t.name}`)
   preload(fake.channel())
 
-  const ctx = fakeContext({ services: { sessionPersistence: { stat: async id => id === ROOT } } })
+  // DSH's compaction engine: what reaches it, the Bot team lets through.
+  const compaction = {
+    compactIfNeeded: async () => 'native',
+    compactNow: async () => 'native',
+    compactRegion: async () => 'native',
+  }
+  const ctx = fakeContext({ services: { sessionPersistence: { stat: async id => id === ROOT }, compaction } })
   const steps = {}
   const on = ctx.on
   ctx.on = (name, listener, options) => {
@@ -150,7 +157,8 @@ async function instance(t, { team = EMPTY } = {}) {
   const unarchived = []
   const disposers = []
   Object.assign(ctx, {
-    inject: (_deps, callback) => callback(ctx),
+    // Like DSH, a callback waits until every service it names is there.
+    inject: (deps, callback) => { if (deps.every(dep => dep in ctx)) callback(ctx) },
     effect(execute) {
       const dispose = execute()
       if (typeof dispose === 'function') disposers.push(dispose)
@@ -224,7 +232,7 @@ async function instance(t, { team = EMPTY } = {}) {
     }
     rmSync(root, { recursive: true, force: true, maxRetries: 5 })
   })
-  return { ctx, rt, fake, agentOf, state, created, archived, unarchived, modelSteps, teamFolder, unfoldFolder }
+  return { ctx, rt, fake, agentOf, state, created, archived, unarchived, modelSteps, teamFolder, unfoldFolder, project, compaction, cwds }
 }
 
 test('the first message in the Unfold root Session reaches Unfold once and stays in that Session', async (t) => {
@@ -284,4 +292,45 @@ test('an Unfold Bot an earlier version moved off the root Session goes back to i
   await root.whenIdle()
   assert.equal(env.fake.rows.filter(row => row.verb === 'submit').length, 1)
   assert.equal(env.rt.chatOf(ROOT), ROOT)
+})
+
+test('what would move the Unfold root Session is refused with a reason; DSH compaction stays its own', async (t) => {
+  const env = await instance(t)
+  const { rt, state } = env
+  await assert.rejects(rt.startFresh(ROOT), { code: 'bot/refused', message: 'Unfold speaks in the conversation its host runs, so it cannot start a new one here.' })
+  await assert.rejects(rt.updateBot(ROOT, { workDir: env.project }), { message: 'Unfold works in the folder its host gave its conversation, so its folder cannot change here' })
+  assert.equal(state().bots[ROOT].workDir, undefined)
+  // The same folder again, as a whole-profile save sends it, is no change.
+  assert.equal((await rt.updateBot(ROOT, { workDir: '', role: 'Unfold, here' })).role, 'Unfold, here')
+  await assert.rejects(rt.checkpointBot(ROOT, { sessionId: ROOT }), { code: 'bot/refused', message: 'Unfold speaks in the conversation its host runs; that conversation keeps its own compaction controls.' })
+  assert.deepEqual(env.created, [])
+
+  // DSH's own compaction reaches the root Session; a Bot's own conversation still makes room itself.
+  const writer = await rt.createBot({ name: 'Writer', pickModel: true })
+  await env.ctx.sessionController.prompt({ requestId: 'composer-3', sessionId: ROOT, mode: 'queue', content: [{ type: 'text', text: 'Hi' }] })
+  await until(() => env.agentOf(ROOT).events.some(event => event.type === 'assistant/message'))
+  await env.agentOf(ROOT).whenIdle()
+  assert.equal(await env.compaction.compactNow({ session: { id: ROOT } }), 'native')
+  await assert.rejects(env.compaction.compactNow({ session: { id: rt.chatOf(writer.id) } }), /makes room on its own/)
+})
+
+test('the Unfold Bot\'s group Session is not pinned: it still moves to a fresh part for its folder', async (t) => {
+  const unfold = { id: ROOT, name: 'Unfold', kind: 'unfold', role: '', instructions: '', createdAt: 1, capabilities: [], sessionPinned: true }
+  const writer = { id: 'w', name: 'Writer', role: '', instructions: '', createdAt: 2, capabilities: [] }
+  const env = await instance(t, {
+    team: {
+      ...EMPTY,
+      mainBotIds: [ROOT],
+      bots: { [ROOT]: unfold, w: writer },
+      rooms: { r1: { id: 'r1', name: 'Ops', members: [ROOT, 'w'], mode: 'admin', admin: ROOT, named: true, sessions: { [ROOT]: 'gu' } } },
+    },
+  })
+  const { rt } = env
+  // The group Session works somewhere other than the team workspace it belongs in.
+  env.agentOf('gu').session.header.cwd = env.unfoldFolder
+  env.agentOf('gu').followup(createUserMessage({ content: [{ type: 'text', text: 'In the group' }], source: { kind: 'user', rpcId: 'group-1' } }))
+  assert.ok(await until(() => rt.roomOf('r1').sessions[ROOT] !== 'gu'), 'the group Session moved on')
+  assert.equal(rt.roomOf('r1').segments[ROOT][0].sessionId, 'gu')
+  assert.equal(rt.chatOf(ROOT), ROOT, 'the own chat stays')
+  assert.deepEqual(env.unarchived, [], 'nothing to put back')
 })

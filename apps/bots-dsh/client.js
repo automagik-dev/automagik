@@ -1430,6 +1430,10 @@ var HOST_ERRORS = [
   [/^There is no folder at (.+)$/, "找不到文件夹 $1"],
   [/^(.+) is a file, not a folder$/, "$1 是文件，不是文件夹"],
   [/^(.+) holds DeepSeek Harness data, so Bots cannot work there$/, "$1 里有 DeepSeek Harness 的数据，Bot 不能在这里工作"],
+  // A Bot made on a Session its host runs (parts.js `pinned`).
+  [/^(.+) works in the folder its host gave its conversation, so its folder cannot change here$/, "$1 在宿主为它的对话指定的文件夹里工作，这里不能更改它的文件夹"],
+  [/^(.+) speaks in the conversation its host runs, so it cannot start a new one here\.$/, "$1 在宿主运行的对话里说话，这里不能开始新对话"],
+  [/^(.+) speaks in the conversation its host runs; that conversation keeps its own compaction controls\.$/, "$1 在宿主运行的对话里说话，那个对话由宿主自己压缩"],
   // Memory changes the memory panel asked for; the whole message is matched.
   [/^This looks like a key, token, or password[\s\S]*$/, "看起来像密钥、令牌或密码，记忆不会保存这类内容"],
   [/^An entry holds at most (\d+) characters; this one has (\d+)\.[\s\S]*$/, "一条记忆最多 $1 个字符，这条有 $2 个"],

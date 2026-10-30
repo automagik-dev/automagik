@@ -316,7 +316,7 @@ export function install(rt) {
   const nativeDshSession = id => rt.botOf(rt.selfOf(id))?.kind === 'dsh'
   const isBotTarget = (target) => {
     const id = target?.session?.id
-    return id !== undefined && !nativeDshSession(id) && (rt.selfOf(id) !== undefined || rt.roomOf(id) !== undefined)
+    return id !== undefined && !nativeDshSession(id) && !pinned(id) && (rt.selfOf(id) !== undefined || rt.roomOf(id) !== undefined)
   }
   const ownedByBot = target => {
     const permit = internalCompaction.getStore()
@@ -817,6 +817,10 @@ export function install(rt) {
   // A Bot made on a Session a host already owned (roster.js `existingSessionId`) stays
   // on it: that host runs the conversation, so its own chat never moves to a fresh part,
   // for a folder, a context line or a failed request. Its group Sessions still do.
+  const pinnedText = (bot, what) => ({
+    fresh: `${bot.name} speaks in the conversation its host runs, so it cannot start a new one here.`,
+    compaction: `${bot.name} speaks in the conversation its host runs; that conversation keeps its own compaction controls.`,
+  })[what]
   const pinned = (sessionId) => {
     const place = placeOf(sessionId)
     return place !== undefined && place.roomId === undefined && rt.botOf(place.botId)?.sessionPinned === true
@@ -1519,6 +1523,7 @@ export function install(rt) {
     if (checkpoints.has(sessionId) || switches.has(sessionId) || checking.has(sessionId) || condensing.has(sessionId)) throw refused('busy', 'This conversation is already making room.')
     const bot = rt.botOf(botId)
     if (bot.kind === 'dsh') throw refused('refused', 'Native DSH conversations keep their own compaction controls.')
+    if (pinned(sessionId)) throw refused('refused', pinnedText(bot, 'compaction'))
     if (loadedSession(sessionId) === undefined) throw refused('refused', 'Open this conversation before checkpointing it.')
     checkpoints.set(sessionId, job)
     let agent
@@ -1579,7 +1584,7 @@ export function install(rt) {
     const bot = rt.botOf(botId)
     if (bot === undefined) throw Object.assign(new Error('Unknown Bot'), { code: 'bot/not-found' })
     if (readOnly()) throw Object.assign(new Error(rt.readOnly()), { code: 'bot/read-only' })
-    if (bot.sessionPinned === true) throw Object.assign(new Error(`${bot.name} keeps the conversation its host runs.`), { code: 'bot/refused' })
+    if (bot.sessionPinned === true) throw refused('refused', pinnedText(bot, 'fresh'))
     const agent = await rt.resolveAgent(rt.chatOf(botId))
     if (!startSwitch(agent, { fresh: true })) throw Object.assign(new Error(`${bot.name} is already moving to a new conversation.`), { code: 'bot/refused' })
     return { id: botId }
@@ -1610,6 +1615,8 @@ export function install(rt) {
     if (moved) {
       delete bot.sessionId
       delete bot.segments
+      // A switch marker left on the first Session would hand its kept input on later.
+      delete state.switching[bot.id]
       for (const part of parts) {
         delete state.switching[part]
         if (state.questions[part] !== undefined && state.questions[bot.id] === undefined) state.questions[bot.id] = state.questions[part]
@@ -1620,8 +1627,13 @@ export function install(rt) {
     }
     await rt.save()
     for (const part of parts) {
-      await rt.moveSchedules?.(part, bot.id)
-        .catch(error => rt.warn('ds-bot: tasks of part %s not moved back: %s', part, error))
+      // Archiving stops a part's tasks, so a part whose tasks did not move stays as it is.
+      try {
+        await rt.moveSchedules?.(part, bot.id)
+      } catch (error) {
+        rt.warn('ds-bot: tasks of part %s not moved back, so it is not archived: %s', part, error)
+        continue
+      }
       await ctx.workspaceRegistry.archiveSession(part, { stopActivity: true })
         .catch(error => rt.warn('ds-bot: part %s not archived: %s', part, error))
     }

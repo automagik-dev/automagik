@@ -329,6 +329,10 @@ export function install(rt) {
     const role = patch.role === undefined ? undefined : cleanRole(patch.role)
     const moving = patch.workDir !== undefined
     const workDir = moving ? await rt.cleanWorkDir(patch.workDir ?? '') : undefined
+    // An adopted Session works in the folder its host gave it (parts.js `pinned`).
+    if (moving && workDir !== bot.workDir && bot.sessionPinned === true) {
+      throw new Error(`${bot.name} works in the folder its host gave its conversation, so its folder cannot change here`)
+    }
     const modelRef = patch.model === undefined ? undefined
       : patch.model === null || patch.model === '' ? null
       : await rt.resolveModel(patch.model)
