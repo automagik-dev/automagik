@@ -18,7 +18,7 @@ import { fade, PAGE_IN_CSS } from './motion.js'
 import { noteRestart, restartLine, steps } from './timeline.js'
 import { dismissSplash, showUpdateSplash } from './splash.js'
 import { PUBLISHERS, TRIAL_MS, beforeStart, checkLane, confirm as confirmLane, installedVersions, laneMemory, stage as stageLane, stagedOf, stagedVersion, trialFailed } from './lane.js'
-import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, privacyFileOf, privacyPatchOf, freePort, guardContents, installProfile, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
+import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, forgetDshLogins, privacyFileOf, privacyPatchOf, freePort, guardContents, installProfile, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
 import { BotCursor } from './bot-cursor.js'
 import { BotRelay } from './bot-relay.js'
 import { BotViews, isBotId, isTabId } from './bot-views.js'
@@ -263,6 +263,9 @@ async function launch() {
   })
   // Before the page load: a page that fails to load must not stop the app from updating.
   watchUpdates()
+  // Earlier starts' dsh logins would pile up until dsh refuses the page (dsh.js forgetDshLogins).
+  await forgetDshLogins(page.webContents.session.cookies, origin)
+    .catch(error => startLog(`${new Date().toISOString()} start: earlier dsh logins kept (${error.message})\n`))
   await page.webContents.loadURL(dsh.url)
 }
 
