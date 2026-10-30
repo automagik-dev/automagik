@@ -9574,6 +9574,7 @@ function teamActions({ call: call2, after, partFor, roster, ui: ui2, live, cards
     folderList: (path) => call2("folder-list", { path: path ?? "" }),
     setTeamWorkspace: (path) => after(call2("team-workspace", { path })),
     deleteBot: (id) => after(call2("delete-bot", { id })),
+    rollbackAdoption: (agentId) => after(call2("agent-bot-rollback", { agentId })),
     duplicateBot: (id) => after(call2("duplicate-bot", { id })),
     setPrefs: (prefs) => after(call2("set-prefs", prefs)),
     setMain: (id, main = true, options = {}) => after(call2("set-main", { id, main, ...options })),
@@ -19860,6 +19861,7 @@ function ContextMenu({ menu, roster, actions, leaving = false }) {
   const isMainBot = isMainOf(roster, menu.id);
   const isTile = roster.mainBotId === menu.id;
   const mainCount = (roster.mainBotIds ?? []).length;
+  const adopted = bot?.dshAgentId !== void 0;
   const groups = [
     [
       isTile ? null : [entry.pinned ? t("Unpin") : t("Pin"), PinIcon, () => actions.setFlags(menu.id, { pinned: !entry.pinned })],
@@ -19884,7 +19886,8 @@ function ContextMenu({ menu, roster, actions, leaving = false }) {
     ],
     [
       isMainBot ? null : [t("Hide from sidebar"), HideIcon, () => actions.setFlags(menu.id, { hidden: true })],
-      isMainBot ? null : [room2 ? t("Delete group") : t("Delete"), TrashIcon, () => bot ? actions.deleteBot(bot.id) : actions.deleteRoom(menu.id), true]
+      isMainBot || adopted ? null : [room2 ? t("Delete group") : t("Delete"), TrashIcon, () => bot ? actions.deleteBot(bot.id) : actions.deleteRoom(menu.id), true],
+      adopted ? [t("Roll back DSH adoption…"), TrashIcon, () => actions.rollbackAdoption(bot.dshAgentId)] : null
     ]
   ].map((group) => group.filter(Boolean)).filter((group) => group.length > 0);
   return (0, import_react58.createElement)(
@@ -19904,7 +19907,8 @@ function ContextMenu({ menu, roster, actions, leaving = false }) {
           void Promise.resolve(run2()).catch((error) => actions.reportError(error, "menu"));
         }
       }, (0, import_react58.createElement)(Icon), label))
-    ))
+    )),
+    adopted ? (0, import_react58.createElement)("div", { className: "bt-menu-note" }, t("Delete is unavailable for an adopted original. Rolling back restores the original DSH bot and its session.")) : null
   );
 }
 function AgentMenu({ menu, roster, actions, leaving }) {

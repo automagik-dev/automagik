@@ -150,3 +150,53 @@ test('adopting refuses a name a Bot already has, a tasks record, a missing Sessi
   assert.deepEqual(view.agents.filter(agent => agent.kind === 'dsh').map(agent => agent.name).sort(), ['Gone', 'Omni'])
   assert.equal(view.bots.some(bot => bot.name === 'Gone'), false)
 })
+
+test('an adopted original refuses delete until adoption is rolled back; rollback restores the DSH bot and ordinary delete still works', async (t) => {
+  const { call, stop, ctx } = start()
+  t.after(stop)
+  await call('state', {})
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'ds-bot-adopt-folder-')))
+  t.after(() => rmSync(project, { recursive: true, force: true }))
+  const rt = ctx.provided.get('omniTeam')
+  const agent = (await call('add-agent', { name: 'Cogna Brain', workDir: project })).value
+  const second = (await call('agent-session', { agentId: agent.id })).value
+  const adopted = (await call('agent-bot-adopt', { agentId: agent.id })).value
+  const botId = adopted.botId
+  assert.equal(botId, second.sessionId)
+
+  // The host guard still refuses the plain delete, so the menu must not pretend it works.
+  const refused = await call('delete-bot', { id: botId })
+  assert.equal(refused.ok, false)
+  assert.equal(refused.error.message, 'Roll back DSH adoption before deleting the original DSH bot')
+  let view = (await call('state', {})).value
+  assert.equal(view.bots.some(bot => bot.id === botId), true)
+
+  // Rollback refuses while the Bot is Main, and the record is unchanged.
+  assert.equal((await call('set-main', { id: botId, main: true })).ok, true)
+  const mainRefused = await call('agent-bot-rollback', { agentId: agent.id })
+  assert.equal(mainRefused.ok, false)
+  assert.match(mainRefused.error.message, /Remove Main Bot\/group roles and resolve new team history/)
+  assert.equal((await call('set-main', { id: botId, main: false })).ok, true)
+
+  // A task from the adopted Bot is new team history too.
+  await rt.startTask({ title: 'Synthetic task', text: 'Synthetic instructions', from: botId })
+  const taskRefused = await call('agent-bot-rollback', { agentId: agent.id })
+  assert.equal(taskRefused.ok, false)
+  assert.match(taskRefused.error.message, /Remove Main Bot\/group roles and resolve new team history/)
+
+  // A fresh adoption with no roles, changed history or tasks rolls back cleanly.
+  const clean = (await call('add-agent', { name: 'Cogna Two', workDir: project })).value
+  const cleanSession = (await call('agent-session', { agentId: clean.id })).value
+  await call('agent-bot-adopt', { agentId: clean.id })
+  const rolled = await call('agent-bot-rollback', { agentId: clean.id })
+  assert.equal(rolled.ok, true)
+  view = (await call('state', {})).value
+  assert.equal(view.bots.some(bot => bot.id === cleanSession.sessionId), false)
+  assert.equal(view.agents.some(entry => entry.id === clean.id && entry.kind === 'dsh'), true)
+
+  // An ordinary Bot is still deletable.
+  const ordinary = (await call('create-bot', { name: 'Ordinary', role: 'Helper' })).value
+  assert.equal((await call('delete-bot', { id: ordinary.id })).ok, true)
+  view = (await call('state', {})).value
+  assert.equal(view.bots.some(bot => bot.id === ordinary.id), false)
+})

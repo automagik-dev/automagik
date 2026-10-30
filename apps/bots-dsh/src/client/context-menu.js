@@ -29,6 +29,9 @@ export function ContextMenu({ menu, roster, actions, leaving = false }) {
   const isMainBot = isMainOf(roster, menu.id)
   const isTile = roster.mainBotId === menu.id
   const mainCount = (roster.mainBotIds ?? []).length
+  // An adopted original is still a Bot record, but the host refuses deleting it until
+  // adoption is rolled back. Offer that supported undo instead of an action that fails.
+  const adopted = bot?.dshAgentId !== undefined
   const groups = [
     [
       isTile ? null : [entry.pinned ? t('Unpin') : t('Pin'), PinIcon, () => actions.setFlags(menu.id, { pinned: !entry.pinned })],
@@ -50,7 +53,8 @@ export function ContextMenu({ menu, roster, actions, leaving = false }) {
     ],
     [
       isMainBot ? null : [t('Hide from sidebar'), HideIcon, () => actions.setFlags(menu.id, { hidden: true })],
-      isMainBot ? null : [room ? t('Delete group') : t('Delete'), TrashIcon, () => (bot ? actions.deleteBot(bot.id) : actions.deleteRoom(menu.id)), true],
+      isMainBot || adopted ? null : [room ? t('Delete group') : t('Delete'), TrashIcon, () => (bot ? actions.deleteBot(bot.id) : actions.deleteRoom(menu.id)), true],
+      adopted ? [t('Roll back DSH adoption…'), TrashIcon, () => actions.rollbackAdoption(bot.dshAgentId)] : null,
     ],
   ].map(group => group.filter(Boolean)).filter(group => group.length > 0)
   return h('div', { ref, className: 'bt-menu', role: 'menu', 'aria-label': t('{name} actions', { name: bot?.name ?? room.name }), style: place, 'data-leaving': leaving || undefined },
@@ -59,7 +63,8 @@ export function ContextMenu({ menu, roster, actions, leaving = false }) {
       group.map(([label, Icon, run, danger]) => h('button', {
         key: label, type: 'button', role: 'menuitem', className: danger ? 'bt-danger' : undefined,
         onClick: () => { actions.closeMenu(); void Promise.resolve(run()).catch(error => actions.reportError(error, 'menu')) },
-      }, h(Icon), label)))))
+      }, h(Icon), label)))),
+    adopted ? h('div', { className: 'bt-menu-note' }, t('Delete is unavailable for an adopted original. Rolling back restores the original DSH bot and its session.')) : null)
 }
 
 // Menus for a DSH bot row (or the tasks row) and its Sessions; none of the Bot entries apply.
