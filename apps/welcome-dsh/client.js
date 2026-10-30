@@ -11174,7 +11174,7 @@ function teamOrder(preload) {
   if (preload === "unfold") return ["unfold", "omni", "genie"];
   return preload === "genie" ? ["genie", "omni"] : ["omni", "genie"];
 }
-var cardsOf = (preload) => preload === "unfold" ? teamOrder(preload) : [...teamOrder(preload), "unfold"];
+var cardsOf = (preload) => teamOrder(preload);
 var preselected = (preload) => ({ omni: preload === "omni", genie: preload === "genie", ...preload === "unfold" ? { unfold: true } : {} });
 var powersOnByItself = (preload, phase, detail, started, kind = "omni") => preselected(preload)[kind] === true && !started && phase === "asleep" && detail?.removed !== true;
 function joinedLabel({ omni, genie, unfold = false }, name) {

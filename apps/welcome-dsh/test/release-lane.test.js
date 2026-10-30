@@ -2,7 +2,8 @@
 // only after checking every one against the lane.json signed for that release: a tarball that
 // does not match, a sibling the lane does not list, a bad or missing signature, a lane for
 // another version, or no lane at all is refused, nothing is installed and no file is written.
-// The same holds for each flow that installs siblings: Unfold, Omni and the Genie team step.
+// The same holds for each flow that installs siblings: Unfold's (only Unfold's own instance
+// offers it; the rig here offers it too), Omni's and the Genie team step.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync } from 'node:fs'
@@ -36,7 +37,7 @@ function rig(t, files, { homeAs } = {}) {
   const team = { state: { bots: {} }, async load() {} }
   const fake = fakeContext({ entries: { 'omni-ai': {} }, services: { pluginManager: manager, omniTeam: team } })
   const env = { AUTOMAGIK_HOME: homeAs ?? home }
-  const { handle } = install(fake.ctx, { env, checkClaude: noClaude, checkGit: async () => null, genieSkills: () => false, release: { fetch: net.fetch, keys: KEYS } })
+  const { handle } = install(fake.ctx, { env, checkClaude: noClaude, checkGit: async () => null, genieSkills: () => false, release: { fetch: net.fetch, keys: KEYS }, offersUnfold: true })
   const dir = join(home, 'welcome', 'tarballs')
   const run = async (flow = 'unfold-plugin') => {
     const started = await handle(`${flow}-install`, {})

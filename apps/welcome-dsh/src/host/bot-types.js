@@ -182,7 +182,7 @@ export const hasGenieSkills = (home = homedir()) => existsSync(join(home, '.agen
 // What an install in Unfold's instance says when a plugin its pack brings is not there.
 export const BUNDLED_MISSING = 'Unfold brings this plugin, and it is missing from this instance.'
 
-export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.env, checkGit = gitProblem, genieSkills = hasGenieSkills, genieCli = () => genieOnPath(env), release = {} }) {
+export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.env, checkGit = gitProblem, genieSkills = hasGenieSkills, genieCli = () => genieOnPath(env), release = {}, offersUnfold = hostOf(env) === 'unfold' }) {
   const manager = () => service(ctx, 'pluginManager')
   // Unfold's own instance brings its plugins and Genie's command line with it: the card names
   // that command line, never the line that installs one, and nothing here installs a plugin.
@@ -386,7 +386,7 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.e
       }),
       ready: bot !== undefined,
       bot: bot === undefined ? null : { id: bot.id, name: bot.name },
-      canInstall: typeof manager()?.installBundle === 'function',
+      canInstall: offersUnfold && typeof manager()?.installBundle === 'function',
       install,
     }
   }
@@ -406,6 +406,8 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.e
   }
 
   function startUnfoldInstall() {
+    // Unfold is offered only in Unfold's own instance: anywhere else nothing of Unfold's installs.
+    if (!offersUnfold) throw refused('Unfold is not offered here: it comes with Unfold\'s own instance.')
     if (unfoldJob?.phase === 'installing') return
     if (typeof manager()?.installBundle !== 'function') throw refused('This DSH has no plugin manager to install Unfold with. Add @automagik/unfold-bot-dsh on its Plugins page, then come back.')
     unfoldJob = { phase: 'installing', current: null, done: [], error: null, restart: false }

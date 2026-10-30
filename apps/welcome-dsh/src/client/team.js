@@ -836,13 +836,14 @@ function usePower() {
 
 // The product the desktop app was opened for (state.preload: 'omni', 'genie', 'unfold' or null,
 // from AUTOMAGIK_PRELOAD): its card comes first and starts chosen, Omni's by powering on through
-// its box as a press would. The other cards stay there to add, then or later; Unfold's is the
-// third, unless the instance was opened for Unfold.
+// its box as a press would. The other cards stay there to add, then or later. Unfold's card is
+// shown only in Unfold's own instance, which always opens for Unfold (preload 'unfold'), and
+// comes first there.
 export function teamOrder(preload) {
   if (preload === 'unfold') return ['unfold', 'omni', 'genie']
   return preload === 'genie' ? ['genie', 'omni'] : ['omni', 'genie']
 }
-export const cardsOf = preload => (preload === 'unfold' ? teamOrder(preload) : [...teamOrder(preload), 'unfold'])
+export const cardsOf = preload => teamOrder(preload)
 export const preselected = preload => ({ omni: preload === 'omni', genie: preload === 'genie', ...(preload === 'unfold' ? { unfold: true } : {}) })
 // Whether Omni powers on by itself now: preloaded, still asleep, and never switched off here.
 export const powersOnByItself = (preload, phase, detail, started, kind = 'omni') =>

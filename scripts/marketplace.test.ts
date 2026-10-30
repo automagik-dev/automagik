@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { INDEX_PATH, REPO_URL, VETTED, checkIndex, pinIndex } from './marketplace';
+import { INDEX_PATH, REPO_URL, VETTED, checkIndex, pinIndex, unlisted } from './marketplace';
 import { pluginNames } from './release-plugins';
 
 const repoDir = join(import.meta.dir, '..');
@@ -46,17 +46,15 @@ describe('market index', () => {
     }
   });
 
-  test('an Unfold plugin is listed as part of Unfold, in the words its package.json gives the market', () => {
-    // A release adds a plugin's description once, at its first listing: a later change to the
-    // package.json is made in the index too.
+  test('no Unfold plugin is listed: they come with Unfold\'s own instance, and a release never adds one', () => {
     const index = JSON.parse(readFileSync(INDEX_PATH, 'utf8'));
-    const unfold = index.plugins.filter((plugin: { name: string }) => plugin.name.startsWith('@automagik/unfold-'));
-    expect(unfold.length).toBeGreaterThan(0);
-    for (const plugin of unfold) {
-      const manifest = JSON.parse(readFileSync(join(repoDir, 'apps', plugin.name.replace('@automagik/', ''), 'package.json'), 'utf8'));
-      expect(plugin.description.en).toBe(manifest.automagik.market.description.en);
-      expect(plugin.description.en).toContain('Part of Unfold; works with the Unfold app.');
-    }
+    expect(index.plugins.filter((plugin: { name: string }) => plugin.name.startsWith('@automagik/unfold-'))).toEqual([]);
+    // Built and released all the same.
+    expect(pluginNames().filter(unlisted).length).toBeGreaterThan(0);
+    // A listing left over from before is dropped at the next release, and the check refuses one.
+    const listed = { ...index, plugins: [{ name: '@automagik/unfold-bridge-dsh', versions: [{ version: '1.0.0', publishTimestamp: 1, source: { type: 'git', url: REPO_URL, commit: head, path: 'apps/unfold-bridge-dsh' } }] }] };
+    expect(checkIndex(structuredClone(listed), repoDir)).toContain('@automagik/unfold-bridge-dsh: is unlisted, so the index must not carry it');
+    expect(pinIndex(structuredClone(listed), repoDir, 'HEAD').plugins.filter((plugin) => unlisted(plugin.name))).toEqual([]);
   });
 
   test('a commit that holds the package passes', () => {
@@ -97,20 +95,20 @@ describe('market index', () => {
   test('a release lists a plugin of ours that is not listed yet, from its package.json automagik.market', () => {
     const index = JSON.parse(readFileSync(INDEX_PATH, 'utf8'));
     const pinned = pinIndex({ ...index, plugins: [] }, repoDir, 'HEAD');
-    const bridge = pinned.plugins.find((plugin) => plugin.name === '@automagik/unfold-bridge-dsh');
-    const manifest = JSON.parse(execFileSync('git', ['show', 'HEAD:apps/unfold-bridge-dsh/package.json'], { cwd: repoDir, encoding: 'utf8' }));
-    expect(bridge).toMatchObject({
+    const pack = pinned.plugins.find((plugin) => plugin.name === '@automagik/locale-pt-br-dsh');
+    const manifest = JSON.parse(execFileSync('git', ['show', 'HEAD:apps/locale-pt-br-dsh/package.json'], { cwd: repoDir, encoding: 'utf8' }));
+    expect(pack).toMatchObject({
       title: manifest.automagik.market.title,
       description: manifest.automagik.market.description,
       author: 'Automagik',
-      homepage: `${REPO_URL}/tree/dev/apps/unfold-bridge-dsh#readme`,
-      repository: { url: REPO_URL, directory: 'apps/unfold-bridge-dsh' },
+      homepage: `${REPO_URL}/tree/dev/apps/locale-pt-br-dsh#readme`,
+      repository: { url: REPO_URL, directory: 'apps/locale-pt-br-dsh' },
       metadata: { category: manifest.automagik.market.category, keywords: manifest.automagik.market.keywords, labels: ['official'] },
-      versions: [{ version: manifest.version, source: { type: 'git', url: REPO_URL, commit: head, path: 'apps/unfold-bridge-dsh' }, engines: { dsh: manifest.engines.dsh } }],
+      versions: [{ version: manifest.version, source: { type: 'git', url: REPO_URL, commit: head, path: 'apps/locale-pt-br-dsh' }, engines: { dsh: manifest.engines.dsh } }],
     });
-    // only plugins with a market block join (the bridge, the pt-BR pack and the Unfold session); the
-    // Bot team and the welcome are listed by hand
-    expect(pinned.plugins.map((plugin) => plugin.name)).toEqual(['@automagik/locale-pt-br-dsh', '@automagik/unfold-bot-dsh', '@automagik/unfold-bridge-dsh', '@automagik/unfold-capabilities-dsh', '@automagik/unfold-events-dsh', '@automagik/unfold-mind-dsh', '@automagik/unfold-session-dsh', '@automagik/unfold-settings-dsh', '@automagik/unfold-trajectory-dsh']);
+    // only plugins with a market block join (the pt-BR pack; Unfold's have one but stay unlisted);
+    // the Bot team and the welcome are listed by hand
+    expect(pinned.plugins.map((plugin) => plugin.name)).toEqual(['@automagik/locale-pt-br-dsh']);
     expect(checkIndex(pinned, repoDir)).toEqual([]);
   });
 
