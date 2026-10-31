@@ -2,6 +2,13 @@
 
 This is a blocker record, **not a repaired landing page or delivery claim**.
 
+> **Resolved on this branch.** The runtime expectation in `apps/bots-dsh/dev/advanced-check.mjs`
+> now follows the declared runtime (0.2.1-rc.5). `apps/landing/capture/capture.mjs` provisions
+> the real Bot team, welcome and Genie plugins at their pinned sources in an owned fixture,
+> seeds the fictional Northwind scenario, asserts each state and captures it. Omni at work is
+> still not captured, and the page leaves it out. Provenance: `apps/landing/assets/CAPTURES.md`.
+> The record below is kept as it was written.
+
 ## Source and ownership
 
 - Starting HEAD: `c9b1625eff458b70b2096aa1fcc8192e3ef1d127`; working branch: `wish/make-landing-page-show-the-actual-produc`.
