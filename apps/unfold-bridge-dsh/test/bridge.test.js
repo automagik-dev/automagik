@@ -365,8 +365,8 @@ test('the thinking level goes through as asked; none asked is the off level, nev
     assert.equal((await effortOf({ reasoning_effort: 'none' })).effort, 'off')
     // Thinking off the chat-template way wins over a level.
     assert.equal((await effortOf({ reasoning_effort: 'high', chat_template_kwargs: { enable_thinking: false } })).effort, 'off')
-    // A model without an off level gets no level at all, not its least.
-    assert.equal((await effortOf({}, 'codex/gpt-5.5')).effort, 'unset')
+    // A model without an off level gets its lowest, explicitly: never the adapter's default.
+    assert.equal((await effortOf({}, 'codex/gpt-5.5')).effort, 'minimal')
     // A level the model does not have is refused before any call.
     const refused = await effortOf({ reasoning_effort: 'medium' })
     assert.equal(refused.status, 400)
@@ -382,7 +382,7 @@ test('the thinking level goes through as asked; none asked is the off level, nev
   } finally { await plain.close() }
 })
 
-test('"none", what Unfold\'s agent always sends on this route, is the model\'s off level, or no level; never a 400', async () => {
+test('"none", what Unfold\'s agent always sends on this route, is the model\'s off level, else its lowest; never a 400', async () => {
   const levels = {
     // A DeepSeek-style adapter: off is one of its levels, and its default thinks.
     'deepseek-official/deepseek-v4-flash': ['off', 'low', 'high', 'max'],
@@ -401,6 +401,24 @@ test('"none", what Unfold\'s agent always sends on this route, is the model\'s o
       const options = b.llm.calls.at(-1)
       sent.push([model, Object.hasOwn(options, 'reasoningEffort') ? options.reasoningEffort : 'unset'])
     }
-    assert.deepEqual(sent, [['deepseek-official/deepseek-v4-flash', 'off'], ['codex/gpt-5.5', 'none'], ['codex/gpt-5.5-mini', 'unset']])
+    assert.deepEqual(sent, [['deepseek-official/deepseek-v4-flash', 'off'], ['codex/gpt-5.5', 'none'], ['codex/gpt-5.5-mini', 'minimal']])
+  } finally { await b.close() }
+})
+
+test('/v1/models leaves out DeepSeek models another route serves; a chat to a DeepSeek route is still served', async () => {
+  const llm = fakeLlm({
+    providers: [{ id: 'openrouter', name: 'OpenRouter' }, { id: 'deepseek-official', name: 'DeepSeek' }],
+    models: {
+      openrouter: [{ id: 'deepseek/deepseek-chat', name: 'DeepSeek V4' }, { id: 'anthropic/claude-x', name: 'Claude X' }],
+      'deepseek-official': [{ id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' }],
+    },
+  })
+  const b = await bridge(llm)
+  try {
+    assert.deepEqual(JSON.parse((await call(b.port)).text).data.map(model => model.id), ['openrouter/anthropic/claude-x'])
+    // An app that saved a DeepSeek route before this still gets its answer.
+    const res = await call(b.port, { method: 'POST', path: '/v1/chat/completions', body: chat() })
+    assert.equal(res.status, 200)
+    assert.equal(llm.calls.at(-1).provider, 'deepseek-official')
   } finally { await b.close() }
 })
