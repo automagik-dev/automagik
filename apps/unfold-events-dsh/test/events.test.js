@@ -983,3 +983,15 @@ test('the redaction canary on the real /api/unfold-events snapshot route and SSE
     await fiber.dispose()
   }
 })
+
+test('memory and task events read as plain facts, never as unrecognised', () => {
+  const env = (kind, fields) => ({ v: 2, id: `g:${kind}`, producer: 'g', seq: 1, t_ns: 1, source: 'guest', kind, ...fields })
+  const recall = catalog.describe(env('memory_recall', { call_id: 'c1', count: 3, total: 5, recall: { status: 'enqueued' } }))
+  assert.equal(recall.known, true)
+  assert.equal(recall.name, 'memory_recalled')
+  assert.equal(recall.summary, 'recalled 3 of 5 saved memories')
+  assert.equal(catalog.describe(env('memory_act', { act_id: 'a1', state: 'committed' })).summary, 'memory saved (a1)')
+  assert.equal(catalog.describe(env('memory_act', { act_id: 'a2', state: 'rejected' })).summary, 'memory refused, not saved (a2)')
+  assert.equal(catalog.describe(env('task_state', { task_id: 't1' })).summary, 'task t1 recorded')
+  for (const kind of ['tasks_ready', 'task_update', 'executor_status']) assert.equal(catalog.describe(env(kind, {})).known, true, kind)
+})
