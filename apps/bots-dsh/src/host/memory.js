@@ -479,7 +479,8 @@ export function install(rt) {
   // own chat. Writes check membership again, so a member that has left writes nothing.
   const roomIdOf = sessionId => rt.groupOwners.get(sessionId)?.roomId ?? rt.pastOwners.get(sessionId)?.roomId
   // The Bot whose model keeps a group's memory: its admin, else its first member.
-  const keeperOf = room => rt.botOf(room.admin) ?? room.members.map(id => rt.botOf(id)).find(Boolean)
+  // A Bot whose model its plugin owns runs no DSH model, so it keeps no group's memory.
+  const keeperOf = room => [room.admin, ...room.members].map(id => rt.botOf(id)).find(bot => bot !== undefined && rt.hostOwned?.(bot) !== true)
 
   // An unreadable memory is not an empty one: callers that change it fail instead of
   // writing over what could not be read, the way store.js treats a broken state.json.
@@ -1235,7 +1236,10 @@ export function install(rt) {
     added: entry.meta.added ?? null, by: entry.meta.by ?? null, source: entry.meta.source ?? null,
   }))
 
+  // A Bot whose model its plugin owns (host-models.js) answers on its own app's engine: its panel
+  // runs no DSH model in its name, not even DSH's default; the summary and "ask or update" say so.
   async function modelFor(bot) {
+    if (rt.hostOwned?.(bot)) throw new Error('This Bot answers through its own app, so its memory panel runs no DSH model.')
     const route = splitRef(await rt.desiredModel(bot) ?? await rt.defaultModel())
     if (route === undefined) throw new Error('No model is available. Add one in Harness settings.')
     return route
@@ -1571,7 +1575,7 @@ export function install(rt) {
 
   // A Bot's own chat, kept in its own memory. A context switch during the wait leaves
   // the Session an earlier part, still the Bot's.
-  const chatReviewEnabled = botId => reviewOn && rt.botOf(botId) !== undefined && rt.botOf(botId).memoryReview !== false
+  const chatReviewEnabled = botId => reviewOn && rt.botOf(botId) !== undefined && rt.botOf(botId).memoryReview !== false && rt.hostOwned?.(rt.botOf(botId)) !== true
   const reviewEnabled = seen => seen?.roomId !== undefined ? reviewOn : seen !== undefined && chatReviewEnabled(seen.botId)
   async function reviewChat(seen) {
     const bot = rt.botOf(reviewOf(seen.sessionId)?.botId ?? seen.botId)

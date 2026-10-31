@@ -43,6 +43,25 @@ export function modelOf(bot, roster) {
   return { ref, name: served?.name ?? rest.join('/'), provider: served?.providerName ?? provider, served: served !== undefined }
 }
 
+// The line under a Bot's model in its settings.
+export function modelHint(bot, roster) {
+  // A Bot whose model its plugin owns: the DSH model saved on it answers nothing. The hint
+  // names what answers now, from the plugin's menu, or says nothing.
+  const host = roster.hostModels?.[bot.id]
+  if (host !== undefined) {
+    const answering = host.entries?.find(entry => entry.answering)?.label
+    return answering ? t('{model} answers now.', { model: answering }) : null
+  }
+  const shown = modelOf(bot, roster)
+  if (shown === undefined) return t('Pick the model this Bot runs on.')
+  if (!shown.served && (roster.models ?? []).length > 0) return t('This model is not available now. Pick another one.')
+  if (bot.appliedModel && bot.appliedModel === bot.model) return t('Every message of this Bot runs on it.')
+  return t('Applies from the next message.')
+}
+
+// A Bot that waits for a model pick: none chosen, and no plugin answers for it.
+export const needsModelPick = (bot, roster) => modelOf(bot, roster) === undefined && roster.hostModels?.[bot.id] === undefined
+
 // The thinking levels of one model, `{efforts, defaultEffort?}` or undefined when it
 // has none. The catalog carries them for models Bots use; any other ref asks the host.
 const effortCache = new Map()

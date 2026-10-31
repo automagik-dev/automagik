@@ -285,3 +285,18 @@ test('the trigger names the picked entry, its group and level, and a fallback sa
   assert.deepEqual(trigger({ ...HOST, status: { kind: 'fallback', answering: 'Granite 4.1 3B' } }), ['DeepSeek V4.1 Flash', 'Granite 4.1 3B answers for now'])
   assert.deepEqual(trigger({ entries: [], loading: true }), ['Choose a model'])
 })
+
+test('a host-owned Bot\'s settings and details name what answers now, never the DSH model saved on it', () => {
+  const { modelHint, needsModelPick } = module.exports
+  const saved = { id: 'unfold', name: 'Unfold', kind: 'unfold', model: 'luna/gpt-5.6', appliedModel: 'luna/gpt-5.6' }
+  const plain = { ready: true, byId: { unfold: saved }, models: [{ ref: 'luna/gpt-5.6', provider: 'luna', providerName: 'Luna', name: 'GPT-5.6 Luna' }] }
+  // Without the plugin's menu it is an ordinary Bot.
+  assert.equal(modelHint(saved, plain), 'Every message of this Bot runs on it.')
+  const hosted = { ...plain, hostModels: { unfold: HOST } }
+  assert.equal(modelHint(saved, hosted), 'Granite 4.1 3B answers now.')
+  assert.equal(modelHint(saved, { ...plain, hostModels: { unfold: { entries: [], loading: true } } }), null)
+  // No "Pick a model" note under the plugin's menu, even with no DSH model saved.
+  const bare = { id: 'unfold', name: 'Unfold', kind: 'unfold' }
+  assert.equal(needsModelPick(bare, { ...plain, byId: { unfold: bare } }), true)
+  assert.equal(needsModelPick(bare, { ...hosted, byId: { unfold: bare } }), false)
+})

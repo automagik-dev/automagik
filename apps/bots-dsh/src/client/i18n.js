@@ -20,6 +20,8 @@ const ZH = {
   'Low': '低',
   'High': '高',
   'Max': '最高',
+  '{model} answers now.': '现在由 {model} 回答。',
+  'This Bot answers through its own app, so its memory panel runs no DSH model.': '这个 Bot 通过它自己的应用回答，所以它的记忆面板不会调用 DSH 模型。',
   // Per-Bot Advanced, native sidebar and honest accounting.
   '{tokens} tok · Cache reporting unavailable': '{tokens} token · 缓存统计不可用',
   'Cache reporting': '缓存统计',
@@ -1529,6 +1531,12 @@ export function t(key, params) {
 
 // A message from the host, in the interface language.
 export function hostText(message) {
+  // A language pack that words this message (any language: the pt-BR pack, a plugin's
+  // addStrings) wins; the patterns below are for Chinese only.
+  if (bound && typeof message === 'string') {
+    const worded = t(message)
+    if (worded !== message) return worded
+  }
   if (!language().startsWith('zh')) return message
   if (Object.hasOwn(ZH, message)) return t(message)
   for (const [pattern, template] of HOST_ERRORS) {
