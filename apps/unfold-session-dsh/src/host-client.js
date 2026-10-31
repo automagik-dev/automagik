@@ -1,5 +1,6 @@
-// The DSH side of Unfold's session-control endpoint: one verb, `POST /submit {session, text}`,
-// over the Unix socket in the instance's 0700 socket dir, with the per-start bearer token. The
+// The DSH side of Unfold's session-control endpoint: `POST /submit {session, text}` (a typed
+// turn), and `GET /answer-with` / `POST /answer-with {choice?, effort?, ack?}` (what Unfold
+// answers with: the model menu of the Unfold Bot, ./answer-with.js), over the Unix socket in the instance's 0700 socket dir, with the per-start bearer token. The
 // socket path and the token come only from the launcher preload's registry: the preload read
 // them from the instance child's environment once, deleted the variables and unlinked the token
 // file before any plugin loaded. There is no TCP path, no default and no token file to re-read.
@@ -32,6 +33,8 @@ const REFUSED = {
   command: 'a message that starts with "/" is an owner command, which only Unfold\'s own keyboard sends',
   session: 'the message was for another Unfold Session',
   unavailable: 'Unfold did not take the turn (no chat is running)',
+  not_offered: 'Unfold does not offer that model or level now',
+  needs_ack: 'Unfold needs your confirmation before it sends your messages there',
 }
 const MAX_ANSWER = 64 * 1024
 
@@ -118,6 +121,76 @@ export class HostClient {
       })
       req.on('finish', () => { written = true })
       req.end(data)
+    })
+  }
+
+  /**
+   * What Unfold answers with: `{status, body}`, 200 with the app's facts (see ./answer-with.js).
+   * Any other status, or status 0 with `{error}` when nothing answered. Read-only, so a failed
+   * read changes nothing.
+   */
+  answerWith() {
+    return this.#call('GET', '/answer-with')
+  }
+
+  /**
+   * Pick what Unfold answers with: `{choice?, effort?, ack?}` -> 200 `{rev, after_reply}`;
+   * 400 `body`, 409 `not_offered` or `needs_ack`, 401/403/503 as for /submit. Never retried: a
+   * status 0 after the request was written is `sent: 'unknown'`, and the next read tells.
+   */
+  chooseAnswer(pick) {
+    const body = {}
+    if (typeof pick?.choice === 'string') body.choice = pick.choice
+    if (typeof pick?.effort === 'string') body.effort = pick.effort
+    if (pick?.ack === true) body.ack = true
+    if (body.choice === undefined && body.effort === undefined) return Promise.resolve({ status: 400, body: { refused: 'body', sent: false } })
+    return this.#call('POST', '/answer-with', body)
+  }
+
+  // One request of the answer-with verbs, with the same channel, token and limits as /submit.
+  #call(method, path, json) {
+    const c = this.#channel()
+    if (!c?.socket || !c?.token) return Promise.resolve({ status: 0, body: { error: 'no_channel', sent: false } })
+    const data = json === undefined ? null : Buffer.from(JSON.stringify(json))
+    return new Promise((resolve) => {
+      let written = false
+      let done = false
+      const finish = (r) => {
+        if (done) return
+        done = true
+        resolve(r)
+      }
+      const headers = { host: 'unfold', authorization: `Bearer ${c.token}`, ...(data ? { 'content-type': 'application/json', 'content-length': data.length } : {}) }
+      const req = http.request({ agent: this.agent, socketPath: c.socket, method, path, headers, timeout: this.timeoutMs }, (res) => {
+        const chunks = []
+        let size = 0
+        res.on('data', (b) => {
+          size += b.length
+          if (size > MAX_ANSWER) {
+            finish({ status: 0, body: { error: 'too_large', sent: 'unknown' } })
+            return req.destroy()
+          }
+          chunks.push(b)
+        })
+        res.on('end', () => {
+          let body
+          try {
+            body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+          } catch {
+            body = { error: 'unparseable' }
+          }
+          if (body === null || typeof body !== 'object' || Array.isArray(body)) body = { error: 'unparseable' }
+          finish({ status: res.statusCode, body: res.statusCode === 200 ? body : { ...body, sent: false } })
+        })
+        res.on('error', () => finish({ status: 0, body: { error: 'transport', sent: 'unknown' } }))
+      })
+      req.on('timeout', () => req.destroy(new Error('timeout')))
+      req.on('error', (e) => {
+        const code = e.code?.startsWith('HPE_') ? 'peer' : e.code === 'EPIPE' ? 'closed' : e.code === 'ENOENT' || e.code === 'ECONNREFUSED' ? 'unreachable' : 'transport'
+        finish({ status: 0, body: { error: code, sent: code === 'transport' && written ? 'unknown' : false } })
+      })
+      req.on('finish', () => { written = true })
+      req.end(data ?? undefined)
     })
   }
 

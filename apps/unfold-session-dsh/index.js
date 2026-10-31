@@ -35,6 +35,7 @@ import { fetchStream, sseHub } from './src/sse.js'
 import { SessionBridge } from './src/bridge.js'
 import { LiveView } from './src/live.js'
 import { HostClient } from './src/host-client.js'
+import { AnswerWith } from './src/answer-with.js'
 
 export const name = 'unfold-session'
 
@@ -161,6 +162,9 @@ export function apply(ctx, config, deps = {}) {
     observer: deps.observer,
     log: (m) => ctx.logger?.info?.(m),
   })
+  // What Unfold answers with (the Unfold Bot's model menu): read from the app only.
+  const answerWith = deps.answerWith ?? new AnswerWith({ host, log: (m) => ctx.logger?.info?.(m) })
+  const rereadAnswer = () => { void answerWith.read().catch(() => {}) }
   const PROMPT_MS = deps.promptMs ?? 5_000
   const counters = { not_composer: 0, llm_stream: 0, agent_request: 0, root_turns: 0, blocked_turns: 0, bubbles: 0, interrupted_bubbles: 0, voice_turns: 0, voice_notes: 0, voice_dropped: 0, voice_waiting: 0, drains: 0, not_sent: 0 }
   const revisions = new WeakMap()
@@ -276,8 +280,14 @@ export function apply(ctx, config, deps = {}) {
   })
 
   ctx.effect(() => {
+    // Every model change restarts the agent: a link that attaches again reads the pick again.
+    const off = bridge.onChange?.((kind, link) => { if (kind === 'link' && link?.state === 'attached') rereadAnswer() })
     bridge.start()
-    return () => bridge.stop()
+    rereadAnswer()
+    return () => {
+      off?.()
+      bridge.stop()
+    }
   }, 'unfold-session: bridge')
 
   // Counted, never answered: any DSH model traffic at all is a failure of this plugin's promise.
@@ -453,6 +463,8 @@ export function apply(ctx, config, deps = {}) {
       if (!ok) counters.interrupted_bubbles++
       frame({ type: 'end', attemptId, index, outcome: { kind: 'committed', eventType: ev.type, seq: ev.seq } })
       record.finished = Date.now()
+      // A pick made in Unfold's own settings shows at the next turn's end at the latest.
+      rereadAnswer()
     } catch (e) {
       record.status = 'error'
       record.detail = String(e?.message ?? e)
@@ -519,6 +531,7 @@ export function apply(ctx, config, deps = {}) {
     sessionId: ROOT,
     ready,
     bridge,
+    answerWith,
     counters,
     turns,
     live,
