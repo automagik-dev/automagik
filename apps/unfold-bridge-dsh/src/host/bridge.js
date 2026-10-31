@@ -170,14 +170,15 @@ async function models(llm, missingKeys) {
 }
 
 // The level a call runs at. A model with no level control gets none, never a guessed one. With
-// levels: the one asked for when the model has it; no level asked, or no thinking asked
-// (`off`, `none`, or `chat_template_kwargs.enable_thinking: false`), is the model's own off
-// level, else its least, so no adapter default can turn thinking on. A level the model does not
-// have is refused before any call.
+// levels: the one asked for when the model has it. No thinking asked (`none`, which Unfold's
+// agent sends on this route, `off`, `chat_template_kwargs.enable_thinking: false`, or no level
+// at all) is the model's own off level (`off` or `none`), so an adapter whose default thinks
+// (DeepSeek's: high) does not; a model whose levels have no off one gets no field, never a
+// level it did not ask for. Any other level the model does not have is refused before any call.
 async function effortFor(llm, chat) {
   const levels = await levelsOf(llm, chat.provider, chat.id)
   if (levels.length === 0) return undefined
-  if (chat.effort === undefined || OFF.has(chat.effort)) return levels.find(id => OFF.has(id)) ?? levels[0]
+  if (chat.effort === undefined || OFF.has(chat.effort)) return levels.find(id => OFF.has(id))
   if (levels.includes(chat.effort)) return chat.effort
   throw invalid(`reasoning_effort ${chat.effort} is not a level of ${chat.model} (its levels: ${levels.join(', ')})`)
 }

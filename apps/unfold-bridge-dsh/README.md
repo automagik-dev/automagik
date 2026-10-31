@@ -16,7 +16,7 @@ The routes are whatever your DSH has: an API key, DSH's own sign-ins, or a provi
 - `temperature`, `max_tokens` (or `max_completion_tokens`) and `stop`;
 - `reasoning_effort`, one of the model's `levels`.
 
-The thinking level is always explicit for a model that has levels: the one asked for, or, when none is asked (or `chat_template_kwargs.enable_thinking` is `false`, or the level is `off` or `none`), the model's off level, else its least. So no adapter default can turn thinking on. A model with no levels gets none. A level the model does not have is refused with 400.
+The thinking level: the one asked for, when the model has it. When no thinking is asked (`reasoning_effort` `none`, which Unfold's agent sends, or `off`, or `chat_template_kwargs.enable_thinking` `false`, or no level at all), a model with an off level (`off` or `none`) gets it, so an adapter whose default thinks does not; a model without one gets no level. A model with no levels gets none. Any other level the model does not have is refused with 400.
 
 Other fields, `top_p` and `chat_template_kwargs` included, are ignored. Nothing else is added to the request here: no DSH Session, agent loop, system prompt, tool or retry; DSH's `llm` service makes one call with the sign-in it holds.
 

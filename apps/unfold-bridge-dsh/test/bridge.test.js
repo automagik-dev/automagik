@@ -365,8 +365,8 @@ test('the thinking level goes through as asked; none asked is the off level, nev
     assert.equal((await effortOf({ reasoning_effort: 'none' })).effort, 'off')
     // Thinking off the chat-template way wins over a level.
     assert.equal((await effortOf({ reasoning_effort: 'high', chat_template_kwargs: { enable_thinking: false } })).effort, 'off')
-    // A model without an off level gets its least.
-    assert.equal((await effortOf({}, 'codex/gpt-5.5')).effort, 'minimal')
+    // A model without an off level gets no level at all, not its least.
+    assert.equal((await effortOf({}, 'codex/gpt-5.5')).effort, 'unset')
     // A level the model does not have is refused before any call.
     const refused = await effortOf({ reasoning_effort: 'medium' })
     assert.equal(refused.status, 400)
@@ -380,4 +380,27 @@ test('the thinking level goes through as asked; none asked is the off level, nev
     await call(plain.port, { method: 'POST', path: '/v1/chat/completions', body: chat({ reasoning_effort: 'high' }) })
     assert.equal(Object.hasOwn(plain.llm.calls[0], 'reasoningEffort'), false)
   } finally { await plain.close() }
+})
+
+test('"none", what Unfold\'s agent always sends on this route, is the model\'s off level, or no level; never a 400', async () => {
+  const levels = {
+    // A DeepSeek-style adapter: off is one of its levels, and its default thinks.
+    'deepseek-official/deepseek-v4-flash': ['off', 'low', 'high', 'max'],
+    // A codex-style adapter whose off level is called none.
+    'codex/gpt-5.5': ['none', 'low', 'medium', 'high'],
+    // A codex-style adapter with no off level.
+    'codex/gpt-5.5-mini': ['minimal', 'low', 'high'],
+  }
+  const llm = fakeLlm({ levels, models: { codex: [{ provider: 'codex', id: 'gpt-5.5', name: 'GPT-5.5' }, { provider: 'codex', id: 'gpt-5.5-mini', name: 'GPT-5.5 mini' }] } })
+  const b = await bridge(llm)
+  try {
+    const sent = []
+    for (const model of Object.keys(levels)) {
+      const res = await call(b.port, { method: 'POST', path: '/v1/chat/completions', body: chat({ model, reasoning_effort: 'none', max_tokens: 400 }) })
+      assert.equal(res.status, 200, model)
+      const options = b.llm.calls.at(-1)
+      sent.push([model, Object.hasOwn(options, 'reasoningEffort') ? options.reasoningEffort : 'unset'])
+    }
+    assert.deepEqual(sent, [['deepseek-official/deepseek-v4-flash', 'off'], ['codex/gpt-5.5', 'none'], ['codex/gpt-5.5-mini', 'unset']])
+  } finally { await b.close() }
 })
