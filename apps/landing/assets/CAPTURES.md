@@ -23,8 +23,9 @@ Omni's plugins are not part of the capture (see *Left out*).
   messaging Genie, Genie's `grant_wish` tool, the wish's own copy of the project and its
   `wish/csv-export` branch, every shell command the thread ran and its output, the commit, the
   tests passing, the files in the review pane, and the branch coming back to the project.
-- **Made up:** the person, the project and the words. Northwind is a fictional company and
-  its three orders are invented. The commits are signed `Northwind Demo
+- **Made up:** the person, the project and the words. Northwind is a fictional company, after
+  Microsoft's classic Northwind sample database, whose customer names the three invented
+  orders borrow. The commits are signed `Northwind Demo
   <demo@northwind.invalid>`. The AI is `capture/scripted-model.mjs`, a loopback stand-in
   for the AI provider: it gives every reply and chooses every tool call from a fixed English
   script, so no AI provider was called. The app labels the model `DeepSeek-V4.1-Flash`
@@ -67,7 +68,7 @@ It asserts every step before it takes a picture:
 
 | File | Size | What it shows |
 |---|---|---|
-| `team-step.png` | 1440×900 @2x | The welcome's **Grow your team** step after the person made their companion, Pip (a bunny). Pip leads. Genie's card says *On your team*: its plugin is installed. Omni's card says *Powered off*. |
+| `team-step.png` | 1440×900 @2x | The welcome's **Grow your team** step after the person made their companion, Pip (an orange bunny). Pip says: *Pip here! Omni is asleep. Click its power button to bring it along.* The step reads *Pip leads. Who comes along?* Omni's card shows a sleeping octopus with its power button off. Its *Powered off* label is for screen readers only, and the capture asserts it. Genie's card says *Ready for a wish* and *On your team*: its plugin is installed. |
 | `pip-delegates.png` | 1440×900 @2x | Pip's chat. The person asks for a CSV export of the Northwind orders report. Pip says it passes the request on, sends Genie a message (*Messaged Genie*), and, after *Message from Genie*, says the wish is running on `wish/csv-export`. In the sidebar, Genie's finished thread **CSV export** is marked *Done*. |
 | `pip-delegates-phone.png` | 390px wide @2x, cropped below the chat's floating header | The same chat at phone width. |
 | `genie-report.png` | 1440×900 @2x | Genie's chat. Genie's greeting, the folded exchange with Pip, *Task finished · Wish: CSV export*, and Genie's report: the branch is back in Northwind with one commit, the tests pass, nothing was pushed or merged. |
@@ -76,14 +77,16 @@ It asserts every step before it takes a picture:
 | `wish-diff.png` | 1440×860 @2x (bottom status row cropped) | The thread's **Report** and its *Edited 4 files* card (package.json, src/csv.js, src/export.js, test/csv.test.js), with the review pane showing the new `src/csv.js`. |
 
 The two wish captures leave out the status row under the composer. Its throughput figure
-comes from the scripted model's instant replies and says nothing about a real model.
+comes from the scripted model's instant replies and says nothing about a real model. For the
+same reason, *Completed in 1s* at the top of `wish-checks.png` is the scripted turn's time,
+not a real model's; the page's provenance note says so.
 
 ## Left out, and why
 
 - **Omni at work** (its channels, reminders or approvals). Turning Omni on in the welcome
   installs Omni's plugins and then looks for an Omni server to link. Its chats come from real
   WhatsApp, Telegram or Slack accounts. Neither works offline without a real channel or a
-  running service, so Omni appears only as the welcome shows it here: powered off.
+  running service, so Omni appears only as the welcome shows it here: asleep, with its power button off.
 - **The desktop window frame.** The captures are the app's web interface in Chrome: the
   interface the desktop app shows inside its window, without the Electron title bar. The
   desktop app also loads Omni's plugins and the AI-subscription add-ons, which add controls

@@ -70,7 +70,8 @@ test('links go to local anchors or reviewed destinations', () => {
 test('the developer commands are exactly the verified ones', () => {
   assert.ok(html.includes('<code>curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash</code>'))
   assert.ok(html.includes('<code>genie desktop</code>'))
-  assert.match(text, /Linux \(x64 or arm64\) or a Mac with Apple silicon/)
+  assert.match(text, /The Genie CLI installs on Linux \(x64 or arm64\) and on a Mac with Apple silicon/)
+  assert.match(text, /there is no Linux arm64 desktop build yet/)
 })
 
 test('the market install stays off and says why', () => {
@@ -83,7 +84,8 @@ test('the market install stays off and says why', () => {
 
 test('claims stay inside what the captures show', () => {
   // Omni appears only as powered off: no channel, reminder or approval is shown or claimed.
-  assert.match(text, /Omni is powered off/)
+  assert.match(text, /Omni is asleep, with its power button off/)
+  assert.doesNotMatch(html, /Powered off/)
   assert.doesNotMatch(text, /remind|approv|WhatsApp|Telegram|Slack/i)
   assert.match(text, /replies are scripted/)
   assert.match(text, /Nothing is pushed or merged/)

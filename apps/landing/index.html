@@ -28,12 +28,12 @@
       <figure class="screen hero-screen">
         <picture>
           <source media="(max-width: 700px)" srcset="assets/screens/pip-delegates-phone.png" width="780" height="1552">
-          <img src="assets/screens/pip-delegates.png" width="2880" height="1800" alt="The Automagik app. In the sidebar are Pip, the Main Bot, and Genie with a finished wish named CSV export. In Pip’s chat the person asks for a CSV export of the Northwind orders report. Pip messages Genie, then says Genie granted it and it is running on the branch wish/csv-export.">
+          <img src="assets/screens/pip-delegates.png" width="2880" height="1800" alt="Pip’s chat in the Automagik app. The person asks whether Genie can add a CSV export to the Northwind orders report. Pip says it is passing it on and messages Genie. After a message from Genie, Pip says Genie granted it and it is running on the branch wish/csv-export.">
         </picture>
         <figcaption><strong>Pip hands the request to Genie.</strong> Pip, the Main Bot, passes the request on with one message. Genie’s reply arrives as a message back to Pip, with the branch the work runs on.</figcaption>
       </figure>
     </section>
-    <p class="provenance wrap">Every screen on this page is the real app, rendered by a capture script from the released plugins. The project is a made-up one, Northwind. The Bots’ replies are scripted for the capture, but every command, commit and file change in them was real. <a href="https://github.com/automagik-dev/automagik/blob/dev/apps/landing/assets/CAPTURES.md">How these screens were made <span aria-hidden="true">↗</span></a></p>
+    <p class="provenance wrap">Every screen on this page is the real app, rendered by a capture script from the released plugins. The project is a fictional one, after Northwind, the classic sample company. The Bots’ replies are scripted for the capture, so the timings on screen (a turn completed in 1s) are not a real model’s. Every command, commit and file change in them was real. <a href="https://github.com/automagik-dev/automagik/blob/dev/apps/landing/assets/CAPTURES.md">How these screens were made <span aria-hidden="true">↗</span></a></p>
 
     <section id="team" class="feature wrap" aria-labelledby="team-title">
       <div class="feature-copy">
@@ -43,12 +43,12 @@
         <ul class="facts">
           <li>Pip, the companion you just made, leads.</li>
           <li>Genie is on the team: its plugin is installed.</li>
-          <li>Omni is powered off. It needs an Omni connection, and this capture has none.</li>
+          <li>Omni is asleep, with its power button off. Turning it on needs an Omni to connect to, and this capture has none.</li>
         </ul>
       </div>
       <figure class="screen">
-        <img src="assets/screens/team-step.png" width="2880" height="1800" loading="lazy" alt="Automagik’s welcome screen titled Grow your team. It says Pip leads, who comes along. Omni’s card says Powered off. Genie’s card says Ready for a wish and On your team. A button reads Continue with Genie.">
-        <figcaption><strong>Grow your team.</strong> The welcome’s team step: Pip leads, Genie is on the team, and Omni stays off.</figcaption>
+        <img src="assets/screens/team-step.png" width="2880" height="1800" loading="lazy" alt="Automagik’s welcome screen titled Grow your team, under Pip, an orange bunny, saying: Pip here! Omni is asleep. Click its power button to bring it along. The text reads Pip leads. Who comes along? Omni’s card shows a sleeping octopus and a power button. Genie’s card says Ready for a wish and On your team.">
+        <figcaption><strong>Grow your team.</strong> The welcome’s team step: Pip leads, Genie is on the team, and Omni stays asleep.</figcaption>
       </figure>
     </section>
 
@@ -63,9 +63,9 @@
           <figure class="screen">
             <picture>
               <source media="(max-width: 700px)" srcset="assets/screens/genie-report-phone.png" width="780" height="1552">
-              <img src="assets/screens/genie-report.png" width="2880" height="1800" loading="lazy" alt="Genie’s chat in Automagik. Below the sidebar row for Genie is a finished thread, CSV export, marked Done. Genie’s message says CSV export is done, wish/csv-export is back in Northwind with one commit, the tests pass, and nothing was pushed or merged.">
+              <img src="assets/screens/genie-report.png" width="2880" height="1800" loading="lazy" alt="Genie’s chat in Automagik. After a line saying Task finished, Wish: CSV export, Genie’s message says CSV export is done, wish/csv-export is back in Northwind with one commit, the tests pass, and nothing was pushed or merged.">
             </picture>
-            <figcaption><span class="step">1</span><strong>Granted, done, reported.</strong> The wish ran as its own thread, listed under Genie. Genie reports what changed and on which branch, and leaves the merge to you.</figcaption>
+            <figcaption><span class="step">1</span><strong>Granted, done, reported.</strong> The wish ran as its own thread, which the sidebar lists under Genie. Genie reports what changed and on which branch, and leaves the merge to you.</figcaption>
           </figure>
         </li>
         <li>
@@ -103,11 +103,11 @@
       <div>
         <p class="eyebrow">04 · GET STARTED</p>
         <h2 id="install-title">Two commands.</h2>
-        <p>For developers on Linux (x64 or arm64) or a Mac with Apple silicon. Intel Macs and Windows are not supported; on Windows, use WSL.</p>
+        <p>For developers. The Genie CLI installs on Linux (x64 or arm64) and on a Mac with Apple silicon. <code>genie desktop</code> needs Linux x64 or a Mac with Apple silicon: there is no Linux arm64 desktop build yet. Intel Macs and Windows are not supported; on Windows, use WSL.</p>
       </div>
       <div class="commands">
         <div class="command"><span class="command-label">1 · Install the Genie CLI</span><pre><code>curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash</code></pre></div>
-        <div class="command"><span class="command-label">2 · Open the Automagik app with Genie</span><pre><code>genie desktop</code></pre><p>Downloads the Automagik desktop build for your machine from <a href="https://github.com/automagik-dev/automagik/releases">GitHub releases</a>, checks it against the release’s SHA256SUMS and opens it with Genie preloaded.</p></div>
+        <div class="command"><span class="command-label">2 · Open the Automagik app with Genie</span><pre><code>genie desktop</code></pre><p>Downloads the Automagik desktop build for your machine from <a href="https://github.com/automagik-dev/automagik/releases">GitHub releases</a>, checks it against the release’s SHA256SUMS and opens it with Genie preloaded. On a Mac it opens the disk image, and you drag the app into Applications.</p></div>
         <p class="fine">You bring your own AI account or API key. Your provider’s fees and terms apply.</p>
       </div>
     </section>
