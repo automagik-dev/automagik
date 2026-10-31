@@ -2073,7 +2073,14 @@ const pack = createPack({
     "Off": "Desligado",
     "Low": "Baixo",
     "High": "Alto",
-    "Max": "Máximo"
+    "Max": "Máximo",
+    "{model} answers now.": "{model} responde agora.",
+    "This Bot answers through its own app, so its memory panel runs no DSH model.": "Este Bot responde pelo próprio app, então o painel de memória não usa nenhum modelo do DSH.",
+    "Unfold is not reachable from here right now": "Não dá para falar com Unfold daqui agora",
+    "Unfold's model list could not be read right now": "Não foi possível ler a lista de modelos de Unfold agora",
+    "Unfold does not offer that model or level now": "Unfold não oferece esse modelo ou nível agora",
+    "Unfold needs your confirmation before it sends your messages there": "Unfold precisa da sua confirmação antes de enviar suas mensagens para lá",
+    "The pick may not have reached Unfold; open the menu again to see": "A escolha pode não ter chegado até Unfold; abra o menu de novo para conferir"
   },
   "permission.access": {
     "mode": "Modo de acesso, atual: {name}",

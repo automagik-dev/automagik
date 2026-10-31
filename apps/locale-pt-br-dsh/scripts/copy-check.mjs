@@ -42,12 +42,22 @@ export const RULES = [
   ['is European Portuguese', /(?<![\p{L}-])[Cc]arregu(?:e|em)\s+(?:em|no|na|nos|nas)\s+(?:[\p{Lu}"“«]|(?:botão|botões|ícone|tecla|link|menu|opção)(?![\p{L}-]))/u],
 ]
 
-// The Bot team's omni-ui keys: its locale hook registers them as the zh dictionary's keys.
+// Plugins that add their own words to the Bot team's omni-ui namespace (its addStrings): the
+// module that holds them, and the export whose keys are the English text.
+export const OMNI_PLUGIN_STRINGS = [
+  ['../../unfold-session-dsh/src/client/strings.js', 'ANSWER_WITH_ZH'],
+]
+
+// The omni-ui keys: the Bot team's (its locale hook registers them as the zh dictionary's keys),
+// then those the plugins above add to the same namespace.
 export async function omniKeys() {
   const { installLocale } = await import('../../bots-dsh/src/client/i18n.js')
   let keys = new Set()
   const off = installLocale({ register: (_ns, _locale, dict) => { keys = new Set(Object.keys(dict)); return () => {} }, bind: () => (key) => key })
   off()
+  for (const [path, name] of OMNI_PLUGIN_STRINGS) {
+    for (const key of Object.keys((await import(path))[name])) keys.add(key)
+  }
   return keys
 }
 

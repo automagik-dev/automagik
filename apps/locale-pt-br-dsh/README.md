@@ -21,6 +21,8 @@ That is 19 of DSH 0.2.1-rc.4's 65 namespaces (1267 of its 2914 strings) and all 
 
 A few `omni-ui` keys hold their English text on purpose rather than a poor translation: brand and product names (`Omni`, `DSH`, `Automagik`, `DeepSeek`, `Claude`, `Codex`, `ChatGPT`, `OpenAI`, `Anthropic`, `Google`, `GitHub`, `Namastex`, `Kimi`, `MCP`, `API`), code-like strings (`cookies.txt, JSON, storageState`, `MEMORY.md`, `GITHUB_TOKEN`, `~/.codex/pets`, `#rrggbb`, `@Name`, `/side`, `/feedback`), words Brazilian Portuguese uses unchanged (`Chat`, `Bots`, `Plugins`, `Admin`, `Site`, `Terminal`, `Endpoint`, `Feedback`, `Skill`, `status`, `tokens`, `Pets`), and strings that are only a value (`{count}`, `{n}h`, `1 item`). `test/coverage.test.js` requires every Bot key to have an entry and at least 95% of them to differ from the English text, so a release cannot quietly fall back to English.
 
+A plugin can add its own words to `omni-ui` through the Bot team's `addStrings` (Unfold session's model-menu messages, `apps/unfold-session-dsh/src/client/strings.js`); `scripts/copy-check.mjs` lists those modules in `OMNI_PLUGIN_STRINGS`, so their keys are checked and covered like the Bot team's. The Bot team words a host message with any language pack's entry for it.
+
 The welcome (`@automagik/welcome-dsh`) has no namespace: its copy is written into its views, so this pack can't reach it.
 
 ## Install
