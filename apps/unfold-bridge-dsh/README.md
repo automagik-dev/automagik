@@ -8,14 +8,17 @@ The routes are whatever your DSH has: an API key, DSH's own sign-ins, or a provi
 
 | Route | What |
 |---|---|
-| `GET /v1/models` | Every model of every provider route, as `provider/model`. Each entry has the model's and the provider's display names, and nothing else. |
+| `GET /v1/models` | Every model of every provider route except DeepSeek's (`deepseek`, `deepseek-official`, …: Unfold calls DeepSeek directly), as `provider/model`. Each entry has the model's and the provider's display names, `ready` (false when its provider's API key is not set in DSH, so every call would fail) and `levels` (the thinking levels its adapter really has, least first; empty when it has none), and nothing else. |
 | `POST /v1/chat/completions` | One model call, streamed (`stream: true`, OpenAI SSE, with `stream_options.include_usage`) or whole. |
 
 **A request may carry:**
 - `system`, `developer`, `user` and `assistant` messages, as text;
-- `temperature`, `max_tokens` (or `max_completion_tokens`) and `stop`.
+- `temperature`, `max_tokens` (or `max_completion_tokens`) and `stop`;
+- `reasoning_effort`, one of the model's `levels`.
 
-Other fields are ignored.
+The thinking level is always explicit for a model that has levels: the one asked for, or, when none is asked (or `chat_template_kwargs.enable_thinking` is `false`, or the level is `off` or `none`), the model's off level, else its least. So no adapter default can turn thinking on. A model with no levels gets none. A level the model does not have is refused with 400.
+
+Other fields, `top_p` and `chat_template_kwargs` included, are ignored. Nothing else is added to the request here: no DSH Session, agent loop, system prompt, tool or retry; DSH's `llm` service makes one call with the sign-in it holds.
 
 **Refused with 400, before any model is called:**
 - tools, or tool messages;

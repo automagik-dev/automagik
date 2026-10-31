@@ -58,7 +58,7 @@ test('apply serves the bridge, writes its endpoint file with a fresh key, and un
     assert.match(endpoint.key, /^[A-Za-z0-9_-]{43}$/, '32 random bytes, base64url')
     const res = await get(endpoint.port, endpoint.key)
     assert.equal(res.status, 200)
-    assert.equal(JSON.parse(res.text).data[0].id, 'deepseek-official/deepseek-v4-flash')
+    assert.equal(JSON.parse(res.text).data[0].id, 'codex/gpt-5.5')
     // the history's assistant turn is made by dsh-llm's own createAssistantMessage
     const body = JSON.stringify({ model: 'deepseek-official/deepseek-v4-flash', messages: [{ role: 'user', content: 'Oi' }, { role: 'assistant', content: 'Oi!' }, { role: 'user', content: 'Tudo bem?' }] })
     const chat = await new Promise((resolve, reject) => {

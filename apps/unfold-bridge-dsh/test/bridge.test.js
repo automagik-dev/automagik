@@ -62,18 +62,18 @@ test('binds 127.0.0.1 only, on a port of its own', async () => {
   } finally { await b.close() }
 })
 
-test('/v1/models lists every provider route as provider/model, names only', async () => {
-  const llm = fakeLlm({ providers: [{ id: 'deepseek-official', name: 'DeepSeek' }, { id: 'broken', name: 'Broken' }, { id: 'codex', name: 'ChatGPT' }] })
+test('/v1/models lists every provider route but DeepSeek\'s as provider/model, with names, ready and levels', async () => {
+  const llm = fakeLlm({ providers: [{ id: 'deepseek-official', name: 'DeepSeek' }, { id: 'deepseek', name: 'DeepSeek' }, { id: 'broken', name: 'Broken' }, { id: 'codex', name: 'ChatGPT' }] })
   const b = await bridge(llm)
   try {
     const res = await call(b.port)
     assert.equal(res.status, 200)
     assert.match(res.headers['content-type'], /^application\/json/)
+    // Unfold calls DeepSeek directly: its routes are never a second DeepSeek row.
     assert.deepEqual(JSON.parse(res.text), {
       object: 'list',
       data: [
-        { id: 'deepseek-official/deepseek-v4-flash', object: 'model', owned_by: 'deepseek-official', name: 'DeepSeek V4 Flash', provider_name: 'DeepSeek' },
-        { id: 'codex/gpt-5.5', object: 'model', owned_by: 'codex', name: 'GPT-5.5', provider_name: 'ChatGPT' },
+        { id: 'codex/gpt-5.5', object: 'model', owned_by: 'codex', name: 'GPT-5.5', provider_name: 'ChatGPT', ready: true, levels: [] },
       ],
     })
   } finally { await b.close() }
@@ -337,4 +337,47 @@ test('a named port outside 1024-65535, or not a port at all, refuses the start',
   for (const port of [NaN, 80, 1023, 65536, 41712.5, -1]) {
     await assert.rejects(bridge(fakeLlm(), { port }), { code: 'bad_port' }, String(port))
   }
+})
+
+const LEVELS = { 'deepseek-official/deepseek-v4-flash': ['off', 'low', 'high', 'max'], 'codex/gpt-5.5': ['minimal', 'low', 'high'] }
+
+test('/v1/models lists each model\'s real levels and whether its provider\'s key is set', async () => {
+  const llm = fakeLlm({ levels: LEVELS })
+  const b = await bridge(llm, { missingKeys: async providers => new Set(providers.filter(id => id === 'codex')) })
+  try {
+    assert.deepEqual(JSON.parse((await call(b.port)).text).data, [
+      { id: 'codex/gpt-5.5', object: 'model', owned_by: 'codex', name: 'GPT-5.5', provider_name: 'ChatGPT', ready: false, levels: ['minimal', 'low', 'high'] },
+    ])
+  } finally { await b.close() }
+})
+
+test('the thinking level goes through as asked; none asked is the off level, never an adapter default', async () => {
+  const b = await bridge(fakeLlm({ levels: LEVELS }))
+  const effortOf = async (extra, model) => {
+    const before = b.llm.calls.length
+    const res = await call(b.port, { method: 'POST', path: '/v1/chat/completions', body: chat({ ...(model ? { model } : {}), ...extra }) })
+    return { status: res.status, effort: b.llm.calls.length > before ? (Object.hasOwn(b.llm.calls.at(-1), 'reasoningEffort') ? b.llm.calls.at(-1).reasoningEffort : 'unset') : 'no call', text: res.text }
+  }
+  try {
+    assert.equal((await effortOf({ reasoning_effort: 'high' })).effort, 'high')
+    assert.equal((await effortOf({ reasoning_effort: 'MAX' })).effort, 'max')
+    assert.equal((await effortOf({})).effort, 'off')
+    assert.equal((await effortOf({ reasoning_effort: 'none' })).effort, 'off')
+    // Thinking off the chat-template way wins over a level.
+    assert.equal((await effortOf({ reasoning_effort: 'high', chat_template_kwargs: { enable_thinking: false } })).effort, 'off')
+    // A model without an off level gets its least.
+    assert.equal((await effortOf({}, 'codex/gpt-5.5')).effort, 'minimal')
+    // A level the model does not have is refused before any call.
+    const refused = await effortOf({ reasoning_effort: 'medium' })
+    assert.equal(refused.status, 400)
+    assert.equal(refused.effort, 'no call')
+    assert.match(JSON.parse(refused.text).error.message, /not a level of deepseek-official\/deepseek-v4-flash/)
+    assert.equal((await effortOf({ reasoning_effort: 7 })).status, 400)
+  } finally { await b.close() }
+  // A model with no level control gets none.
+  const plain = await bridge()
+  try {
+    await call(plain.port, { method: 'POST', path: '/v1/chat/completions', body: chat({ reasoning_effort: 'high' }) })
+    assert.equal(Object.hasOwn(plain.llm.calls[0], 'reasoningEffort'), false)
+  } finally { await plain.close() }
 })
