@@ -7,3 +7,5 @@ node_modules/
 .cache/
 apps/desktop/build/
 apps/desktop/dist/
+# Fixture runs (apps/bots-dsh/dev/advanced-check.mjs)
+.tools/
