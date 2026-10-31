@@ -137,9 +137,12 @@ async function readJson(req, maxBody) {
   return body
 }
 
-// DeepSeek's provider routes (`deepseek`, `deepseek-official`, …) are not listed: Unfold
-// calls DeepSeek directly, so DeepSeek is one row in Unfold, never a second one through here.
+// DeepSeek is not listed: not DeepSeek's provider routes (`deepseek`, `deepseek-official`, …),
+// and not a DeepSeek model another route serves (an aggregator's `deepseek/deepseek-chat`).
+// Unfold calls DeepSeek directly, so DeepSeek is one row in Unfold, never a second one through
+// here. A chat to such a route is still served, for an app that saved one before this.
 export const isDeepSeekRoute = id => /^deepseek(?:-|$)/i.test(String(id))
+export const isDeepSeekModel = id => /deepseek/i.test(String(id))
 // The level ids that mean no thinking, in the vocabularies DSH's adapters use.
 const OFF = new Set(['off', 'none'])
 
@@ -160,7 +163,7 @@ async function models(llm, missingKeys) {
   const data = []
   for (const provider of providers) {
     let listed
-    try { listed = await llm.listModels(provider.id) } catch { continue }
+    try { listed = (await llm.listModels(provider.id)).filter(model => !isDeepSeekModel(model.id)) } catch { continue }
     const levels = await Promise.all(listed.map(model => levelsOf(llm, provider.id, model.id)))
     listed.forEach((model, at) => {
       data.push({ id: `${provider.id}/${model.id}`, object: 'model', owned_by: provider.id, name: model.name ?? model.id, provider_name: provider.name ?? provider.id, ready: !missing.has(provider.id), levels: levels[at] })
@@ -169,16 +172,16 @@ async function models(llm, missingKeys) {
   return { object: 'list', data }
 }
 
-// The level a call runs at. A model with no level control gets none, never a guessed one. With
-// levels: the one asked for when the model has it. No thinking asked (`none`, which Unfold's
-// agent sends on this route, `off`, `chat_template_kwargs.enable_thinking: false`, or no level
-// at all) is the model's own off level (`off` or `none`), so an adapter whose default thinks
-// (DeepSeek's: high) does not; a model whose levels have no off one gets no field, never a
-// level it did not ask for. Any other level the model does not have is refused before any call.
+// The level a call runs at, always explicit for a model that has levels, so no adapter default
+// decides. A model with no level control gets none, never a guessed one. With levels: the one
+// asked for when the model has it. No thinking asked (`none`, which Unfold's agent sends on this
+// route, `off`, `chat_template_kwargs.enable_thinking: false`, or no level at all) is the model's
+// own off level (`off` or `none`), else its lowest. Any other level the model does not have is
+// refused before any call.
 async function effortFor(llm, chat) {
   const levels = await levelsOf(llm, chat.provider, chat.id)
   if (levels.length === 0) return undefined
-  if (chat.effort === undefined || OFF.has(chat.effort)) return levels.find(id => OFF.has(id))
+  if (chat.effort === undefined || OFF.has(chat.effort)) return levels.find(id => OFF.has(id)) ?? levels[0]
   if (levels.includes(chat.effort)) return chat.effort
   throw invalid(`reasoning_effort ${chat.effort} is not a level of ${chat.model} (its levels: ${levels.join(', ')})`)
 }

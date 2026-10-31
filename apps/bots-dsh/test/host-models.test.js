@@ -153,3 +153,20 @@ test('the menu the browser gets keeps the documented fields only', () => {
     ],
   })
 })
+
+test('list_bots names what a host-owned Bot answers with, never its saved DSH model; its memory panel runs no DSH model', async (t) => {
+  const { rt, stop } = start()
+  t.after(stop)
+  t.after(rt.hooks.botModels('unfold', fakeSource()))
+  await rt.load()
+  const listBots = rt.ctx.registeredTools.get('list_bots')
+  const text = await listBots.execute({}, { agent: { id: 'm1' } })
+  const line = text.split('\n').find(row => row.startsWith('- Unfold'))
+  assert.match(line, /answers with Granite 4\.1 3B/)
+  assert.doesNotMatch(text, /luna|gpt-5\.6/)
+  assert.equal(rt.hostAnsweringOf(rt.botOf('u1')), 'Granite 4.1 3B')
+  assert.equal(rt.hostAnsweringOf(rt.botOf('m1')), undefined)
+  // The panel's model calls refuse before any call, rather than run on DSH's default model.
+  await assert.rejects(rt.memoryEndpoint('memory-ask', { botId: 'u1', text: 'what do you keep?' }), /answers through its own app/)
+  assert.equal(rt.memoryReviewStatus('u1').enabled, false)
+})

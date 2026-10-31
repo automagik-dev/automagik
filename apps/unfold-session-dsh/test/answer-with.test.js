@@ -104,3 +104,21 @@ test('the plugin reads the pick at start and again when the agent link attaches'
   // Reading the pick sends nothing to /submit.
   assert.equal(fake.rows.length, 0)
 })
+
+test('every sentence the menu can show from here has its Chinese, and the pt-BR pack reads the same keys', async () => {
+  const { ANSWER_WITH_ZH } = await import('../src/client/strings.js')
+  const { refusedText } = await import('../src/host-client.js')
+  const shown = [
+    refusedText('not_offered'), refusedText('needs_ack'),
+    'Unfold is not reachable from here right now', "Unfold's model list could not be read right now",
+    'The pick may not have reached Unfold; open the menu again to see',
+  ]
+  for (const text of shown) assert.ok(Object.hasOwn(ANSWER_WITH_ZH, text), text)
+  // The menu's read errors are these fixed sentences.
+  const down = new AnswerWith({ host: { answerWith: async () => ({ status: 0, body: { error: 'unreachable' } }) } })
+  await down.read()
+  assert.equal(down.menu().error, 'Unfold is not reachable from here right now')
+  const refused = new AnswerWith({ host: { answerWith: async () => ({ status: 401, body: { refused: 'token' } }) } })
+  await refused.read()
+  assert.equal(refused.menu().error, "Unfold's model list could not be read right now")
+})

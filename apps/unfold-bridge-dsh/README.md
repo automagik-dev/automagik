@@ -8,7 +8,7 @@ The routes are whatever your DSH has: an API key, DSH's own sign-ins, or a provi
 
 | Route | What |
 |---|---|
-| `GET /v1/models` | Every model of every provider route except DeepSeek's (`deepseek`, `deepseek-official`, …: Unfold calls DeepSeek directly), as `provider/model`. Each entry has the model's and the provider's display names, `ready` (false when its provider's API key is not set in DSH, so every call would fail) and `levels` (the thinking levels its adapter really has, least first; empty when it has none), and nothing else. |
+| `GET /v1/models` | Every model of every provider route except DeepSeek (Unfold calls DeepSeek directly): no route of DeepSeek's own (`deepseek`, `deepseek-official`, …) and no DeepSeek model another route serves (an aggregator's `openrouter/deepseek/…`), as `provider/model`. Each entry has the model's and the provider's display names, `ready` (false when its provider's API key is not set in DSH, so every call would fail) and `levels` (the thinking levels its adapter really has, least first; empty when it has none), and nothing else. |
 | `POST /v1/chat/completions` | One model call, streamed (`stream: true`, OpenAI SSE, with `stream_options.include_usage`) or whole. |
 
 **A request may carry:**
@@ -16,7 +16,11 @@ The routes are whatever your DSH has: an API key, DSH's own sign-ins, or a provi
 - `temperature`, `max_tokens` (or `max_completion_tokens`) and `stop`;
 - `reasoning_effort`, one of the model's `levels`.
 
-The thinking level: the one asked for, when the model has it. When no thinking is asked (`reasoning_effort` `none`, which Unfold's agent sends, or `off`, or `chat_template_kwargs.enable_thinking` `false`, or no level at all), a model with an off level (`off` or `none`) gets it, so an adapter whose default thinks does not; a model without one gets no level. A model with no levels gets none. Any other level the model does not have is refused with 400.
+The thinking level is always explicit for a model that has levels, so no adapter default decides: the one asked for, when the model has it. When no thinking is asked (`reasoning_effort` `none`, which Unfold's agent sends, or `off`, or `chat_template_kwargs.enable_thinking` `false`, or no level at all), the model's off level (`off` or `none`), else its lowest. A model with no levels gets none. Any other level the model does not have is refused with 400.
+
+A chat to a DeepSeek route is still served though `/v1/models` no longer lists one, so an older Unfold app that saved a DeepSeek route keeps its answers until it moves to DeepSeek direct.
+
+`ready` checks the key a route's settings name. A route that signs in another way (an account, such as ChatGPT's) names no key and always reads ready, even when its sign-in has expired; such a call then fails with DSH's code.
 
 Other fields, `top_p` and `chat_template_kwargs` included, are ignored. Nothing else is added to the request here: no DSH Session, agent loop, system prompt, tool or retry; DSH's `llm` service makes one call with the sign-in it holds.
 

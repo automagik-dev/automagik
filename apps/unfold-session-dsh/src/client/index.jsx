@@ -18,6 +18,7 @@
 //    right-sidebar tab directly, in the same place and style as the Trajectory button, in the
 //    Unfold root Session only.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { ANSWER_WITH_ZH } from './strings.js'
 
 export const STATUS_ID = '@automagik/unfold-session-dsh'
 export const STATUS_KIND = 'unfold.status'
@@ -79,14 +80,6 @@ export const LIVE_CSS = [
 ].join('\n')
 
 /** 0..5 bars for an onset level in dBFS (−50 dBFS and below: 0; −10 and above: 5). */
-// What the host says about the Unfold Bot's model menu, in Chinese.
-export const ANSWER_WITH_ZH = {
-  'Unfold is not reachable from here right now': '现在无法从这里连接 Unfold',
-  'Unfold does not offer that model or level now': 'Unfold 现在不提供这个模型或级别',
-  'Unfold needs your confirmation before it sends your messages there': '需要你确认后，Unfold 才会把你的消息发送到那里',
-  'The pick may not have reached Unfold; open the menu again to see': '这次选择可能没有送达 Unfold，请重新打开菜单查看',
-}
-
 export function barsOf(dbfs) {
   if (!Number.isFinite(dbfs)) return 0
   return Math.max(0, Math.min(5, Math.round((dbfs + 50) / 8)))
@@ -298,7 +291,7 @@ export async function apply(ctx) {
     omni = (typeof require === 'function' ? require(id) : null)?.omni ?? null
   } catch {}
   // The Unfold Bot's model menu (the host's src/answer-with.js) can show these from the host:
-  // the Bot team's dictionary words them in Chinese.
+  // the Bot team's dictionary words them in Chinese (./strings.js).
   if (typeof omni?.addStrings === 'function') ctx.effect(() => omni.addStrings(ANSWER_WITH_ZH), 'unfold-session: model menu copy')
   if (omni?.headerButtons !== undefined) ctx.effect(() => omni.headerButtons.register({
     id: 'unfold-tabs',
