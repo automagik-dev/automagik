@@ -126,6 +126,18 @@ export function install(rt, team, env = process.env) {
     }, 'unfold-bot: the first Main Bot')
   }
 
+  // In Unfold's own instance the Unfold Bot answers through Unfold's app, never on a DSH model:
+  // its model menu is what the app answers with (@automagik/unfold-session-dsh's answerWith,
+  // read from the app only), owned through the team's botModels hook. Elsewhere nothing registers.
+  const answerWith = unfoldLeads(env) ? ctx.get?.('unfoldSession')?.answerWith : undefined
+  if (answerWith !== undefined && typeof team.hooks?.botModels === 'function') {
+    ctx.effect(() => team.hooks.botModels(UNFOLD_KIND, {
+      snapshot: () => answerWith.menu(),
+      pick: (_bot, pick) => answerWith.pick(pick),
+      refresh: () => answerWith.read(),
+    }), 'unfold-bot: the Unfold Bot\'s model menu')
+  }
+
   const ready = (async () => {
     try {
       return await ensureUnfold()

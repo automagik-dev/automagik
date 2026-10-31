@@ -223,3 +223,31 @@ test('own-instance startup waits for the session service before installing its M
     else process.env.AUTOMAGIK_HOST = before
   }
 })
+
+test('in Unfold\'s instance the Unfold Bot\'s model menu is what Unfold answers with; elsewhere none is registered', async () => {
+  const menu = { entries: [{ id: 'granite', label: 'Granite 4.1 3B', current: true }] }
+  const picks = []
+  let reads = 0
+  const answerWith = { menu: () => menu, pick: async (pick) => { picks.push(pick) }, read: async () => { reads += 1 } }
+  const withSession = () => {
+    const disposers = []
+    return { get: name => name === 'unfoldSession' ? { sessionId: 'configured-unfold', ready: Promise.resolve(), answerWith } : undefined, effect: (run) => { const off = run(); if (typeof off === 'function') disposers.push(off) }, dispose: () => disposers.splice(0).forEach(off => off()) }
+  }
+  const registered = new Map()
+  const hooks = { botModels: (kind, source) => { registered.set(kind, source); return () => registered.delete(kind) } }
+  const team = Object.assign(fakeTeam(), { hooks })
+  const context = withSession()
+  const rt = createRuntime(context, team, {}, LEADS)
+  await rt.unfoldReady
+  const source = registered.get(UNFOLD_KIND)
+  assert.equal(source.snapshot({ id: 'u' }), menu)
+  await source.pick({ id: 'u' }, { id: 'deepseek', effort: 'auto' })
+  await source.refresh({ id: 'u' })
+  assert.deepEqual(picks, [{ id: 'deepseek', effort: 'auto' }])
+  assert.equal(reads, 1)
+  context.dispose()
+  assert.equal(registered.size, 0, 'the registration goes with the plugin')
+  const elsewhere = Object.assign(fakeTeam(), { hooks })
+  await createRuntime(withSession(), elsewhere, {}, ELSEWHERE).unfoldReady
+  assert.equal(registered.size, 0)
+})
