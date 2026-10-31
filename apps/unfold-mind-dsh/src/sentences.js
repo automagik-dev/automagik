@@ -121,6 +121,14 @@ const AGENTD = {
     status: x.status === 'restored' ? 'completed' : x.status === 'partial' ? 'unknown' : 'observed',
   }),
   response_diagnostic: (x) => ({ category: 'act', sentence: `Reply ${val(x.response_id)} outcome detail: ${val(x.provider_status ?? 'no provider status')}${x.provider_reason ? ` (${x.provider_reason})` : ''}, ${x.outcome_source === 'local' ? `decided locally (${val(x.local_reason)})` : 'as the provider reported'}; not a terminal`, status: 'observed' }),
+  // Tasks and memory: receipts of the agent's own ledgers. A recall receipt counts saved items the
+  // agent selected locally; it is not evidence the model received or used them.
+  tasks_ready: (x) => ({ category: 'system', sentence: `Task ledger ready (${val(x.schema)})`, status: 'observed' }),
+  task_state: (x) => ({ category: 'decide', sentence: `Task ${val(x.task_id)} recorded in the task ledger`, status: 'observed' }),
+  task_update: (x) => ({ category: 'act', sentence: `Task worker reported progress on task ${val(x.task_id)}`, status: 'observed' }),
+  executor_status: (x) => ({ category: 'system', sentence: `Task worker status reported${x.task_id ? ` for task ${x.task_id}` : ''}`, status: 'observed' }),
+  memory_act: (x) => ({ category: 'remember', sentence: `Memory act ${val(x.act_id)} ${({ committed: 'saved', proposed: 'proposed, not saved', rejected: 'refused, not saved' })[x.state] ?? val(x.state)}`, status: x.state === 'committed' ? 'completed' : x.state === 'rejected' ? 'failed' : 'observed' }),
+  memory_recall: (x) => ({ category: 'remember', sentence: `Recalled ${val(x.count)} of ${val(x.total)} saved memories locally (receipt ${val(x.call_id)}); not proof the model used them`, status: 'observed' }),
 }
 const CMD = { admitted: 'admitted', dispatched: 'dispatched', completed: 'completed', cancelled: 'stopped', failed: 'failed', interrupted: 'interrupted (agent restarted before a result was recorded)' }
 const CMD_STATUS = { admitted: 'pending', dispatched: 'pending', completed: 'completed', cancelled: 'stopped', failed: 'failed', interrupted: 'unknown' }

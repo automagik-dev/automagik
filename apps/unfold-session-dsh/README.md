@@ -15,7 +15,7 @@ Only your own composer message is ever sent. Nothing an event says (a transcript
 
 The endpoint is a Unix socket in the instance's own 0700 socket dir, with a bearer token made at each start. Unfold's launcher passes both as `UNFOLD_CONTROL_SOCKET` and `UNFOLD_CONTROL_TOKEN_FILE`; the launcher's preload reads them once, deletes them from the environment and unlinks the token file before any plugin loads, and hands the socket path and the token to in-process plugins as `globalThis[Symbol.for('unfold.channel')]`. This plugin reads them from there only. It opens no TCP connection for control, names no port, and never reads the token file. A tool or agent DSH spawns sees neither variable.
 
-The endpoint has one verb, `POST /submit {session, text}`:
+The endpoint has three verbs. `POST /submit {session, text}` sends a typed turn:
 
 | Answer | What the chat shows |
 |---|---|
@@ -25,6 +25,8 @@ The endpoint has one verb, `POST /submit {session, text}`:
 | the connection failed after the message was written | outcome unknown: it may have been sent |
 
 A message is sent at most once: no answer is ever retried, and a message the composer delivers again is never sent again. There is no verb to cancel a reply, so the stop button ends the turn here and says the outcome in Unfold is unknown unless the agent confirms it. After an observer gap a reply keeps the text it saw and is marked possibly incomplete; there is no recorded result to take its whole text from.
+
+`GET /answer-with` and `POST /answer-with {choice?, effort?, ack?}` are what Unfold answers with, the same setting as Unfold's own settings: the Unfold Bot's model menu in DSH (drawn by the Bot team, registered by `@automagik/unfold-bot-dsh`) lists only the options the app returns, with where each message goes, the one picked, the one answering now and, for an option with levels, the app's levels. A pick answers `{rev, after_reply}`; while the app waits for the reply in progress the menu says it switches after this reply. 400 `body`, 409 `not_offered` and 409 `needs_ack` (an option the person has to confirm first) come back as the pick's refusal. The plugin reads the facts at start, when the agent link attaches again (a model change restarts the agent), when the menu opens, after a pick and when a typed turn ends; it never polls. The service carries it as `answerWith`.
 
 Without a channel (a DSH that Unfold's launcher did not start), or before the agent names its Unfold Session, nothing is sent and the chat says so.
 

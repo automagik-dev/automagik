@@ -15,6 +15,7 @@ import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
 import { startBridge, takePort } from './src/host/bridge.js'
+import { missingKeys } from './src/host/ready.js'
 import { clientRoutes, promptWith } from './src/host/client-routes.js'
 import { dshRoutes } from './src/host/dsh-routes.js'
 import { endpointFile, removeEndpoint, takeStateDir, writeEndpoint } from './src/host/endpoint-file.js'
@@ -52,6 +53,7 @@ export function apply(ctx) {
       key,
       port,
       assistant: createAssistantMessage,
+      missingKeys: providers => missingKeys(ctx, providers),
       log: line => ctx.logger?.info?.('unfold-bridge: %s', line),
       dsh: () => routes,
     }).then(async bridge => {

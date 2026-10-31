@@ -1,5 +1,6 @@
 // A stand-in for DSH's llm service: the providers and models it lists, and one canned chunk
-// stream per call, recorded with the options each call was given. Nothing here calls a model.
+// stream per call, recorded with the options each call was given, and the thinking levels of the
+// models given `levels`. Nothing here calls a model.
 
 export const TEXT = [
   { type: 'block-start', index: 0, blockType: 'text' },
@@ -19,10 +20,15 @@ export const failure = (code, message = `the provider said no (${code})`) => [
 export function fakeLlm({ providers = [{ id: 'deepseek-official', name: 'DeepSeek' }, { id: 'codex', name: 'ChatGPT' }], models = {
   'deepseek-official': [{ provider: 'deepseek-official', id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' }],
   codex: [{ provider: 'codex', id: 'gpt-5.5', name: 'GPT-5.5' }],
-}, streams = [TEXT], hold } = {}) {
+}, streams = [TEXT], hold, levels = {} } = {}) {
   const calls = []
   return {
     calls,
+    // `levels`: per `provider/model`, the thinking level ids its adapter lists, least first.
+    async resolveModelInfo(provider, model) {
+      const ids = levels[`${provider}/${model}`]
+      return ids ? { reasoning: { efforts: ids.map(id => ({ id, name: id })) } } : {}
+    },
     listProviders: () => providers.map(provider => ({ ...provider })),
     async listModels(provider) {
       if (provider === 'broken') throw new Error('no catalog')

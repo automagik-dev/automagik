@@ -49,10 +49,11 @@ const isPort = port => Number.isInteger(port) && port >= 1024 && port <= 65535
 const shown = port => (port === '' ? 'empty' : String(port))
 
 // `assistant` makes a durable assistant message for the history (dsh-llm's
-// createAssistantMessage); `log` gets one line per request; `dsh` returns the work-view routes
+// createAssistantMessage); `missingKeys(providers)` resolves to the provider ids whose key is
+// not set (./ready.js), so /v1/models can say which models can run; `log` gets one line per request; `dsh` returns the work-view routes
 // once they are up, else undefined. `port` 0 takes any free port; a named one is bound exactly or
 // the start is refused (EADDRINUSE when it is taken): no other port is tried.
-export async function startBridge({ llm, key, assistant, log = () => {}, maxBody = MAX_BODY, host = '127.0.0.1', dsh = () => undefined, port = 0 }) {
+export async function startBridge({ llm, key, assistant, missingKeys = async () => new Set(), log = () => {}, maxBody = MAX_BODY, host = '127.0.0.1', dsh = () => undefined, port = 0 }) {
   if (port !== 0 && !isPort(port)) throw Object.assign(new Error(`the port is not one from 1024 to 65535 (${shown(port)})`), { code: 'bad_port' })
   const want = digest(`Bearer ${key}`)
   const authorized = header => typeof header === 'string' && timingSafeEqual(digest(header), want)
@@ -65,7 +66,7 @@ export async function startBridge({ llm, key, assistant, log = () => {}, maxBody
     try {
       if (req.headers.host !== `${host}:${bound}` || req.headers.origin !== undefined) throw new Refusal(403, 'forbidden', 'not served to this origin', 'permission_error')
       if (!authorized(req.headers.authorization)) throw new Refusal(401, 'unauthorized', 'a valid key is required', 'authentication_error')
-      if (path === '/v1/models' && req.method === 'GET') return sendJson(res, 200, await models(llm))
+      if (path === '/v1/models' && req.method === 'GET') return sendJson(res, 200, await models(llm, missingKeys))
       if (path === '/v1/chat/completions' && req.method === 'POST') return await complete(llm, assistant, parseChat(await readBody(req, maxBody)), req, res)
       if (path.startsWith('/v1/dsh/')) {
         const routes = dsh()
@@ -136,18 +137,50 @@ async function readJson(req, maxBody) {
   return body
 }
 
-// Every model of every provider route, as `provider/model`. A route whose catalog fails is
-// left out, as DSH's own pickers do.
-async function models(llm) {
+// DeepSeek's provider routes (`deepseek`, `deepseek-official`, …) are not listed: Unfold
+// calls DeepSeek directly, so DeepSeek is one row in Unfold, never a second one through here.
+export const isDeepSeekRoute = id => /^deepseek(?:-|$)/i.test(String(id))
+// The level ids that mean no thinking, in the vocabularies DSH's adapters use.
+const OFF = new Set(['off', 'none'])
+
+// A model's thinking levels, least first, as its adapter lists them; none when it has no level
+// control or cannot say.
+async function levelsOf(llm, provider, model) {
+  const info = await Promise.resolve(llm.resolveModelInfo?.(provider, model)).catch(() => undefined)
+  return (info?.reasoning?.efforts ?? []).map(effort => effort?.id).filter(id => typeof id === 'string' && id !== '')
+}
+
+// Every model of every provider route but DeepSeek's, as `provider/model`, with `ready` (its
+// provider's key is set: a model whose key is missing fails every call) and `levels` (the
+// thinking levels it really has, least first; empty when it has none). A route whose catalog
+// fails is left out, as DSH's own pickers do.
+async function models(llm, missingKeys) {
+  const providers = llm.listProviders().filter(provider => !isDeepSeekRoute(provider.id))
+  const missing = await Promise.resolve(missingKeys(providers.map(provider => provider.id))).catch(() => new Set())
   const data = []
-  for (const provider of llm.listProviders()) {
+  for (const provider of providers) {
     let listed
     try { listed = await llm.listModels(provider.id) } catch { continue }
-    for (const model of listed) {
-      data.push({ id: `${provider.id}/${model.id}`, object: 'model', owned_by: provider.id, name: model.name ?? model.id, provider_name: provider.name ?? provider.id })
-    }
+    const levels = await Promise.all(listed.map(model => levelsOf(llm, provider.id, model.id)))
+    listed.forEach((model, at) => {
+      data.push({ id: `${provider.id}/${model.id}`, object: 'model', owned_by: provider.id, name: model.name ?? model.id, provider_name: provider.name ?? provider.id, ready: !missing.has(provider.id), levels: levels[at] })
+    })
   }
   return { object: 'list', data }
+}
+
+// The level a call runs at. A model with no level control gets none, never a guessed one. With
+// levels: the one asked for when the model has it. No thinking asked (`none`, which Unfold's
+// agent sends on this route, `off`, `chat_template_kwargs.enable_thinking: false`, or no level
+// at all) is the model's own off level (`off` or `none`), so an adapter whose default thinks
+// (DeepSeek's: high) does not; a model whose levels have no off one gets no field, never a
+// level it did not ask for. Any other level the model does not have is refused before any call.
+async function effortFor(llm, chat) {
+  const levels = await levelsOf(llm, chat.provider, chat.id)
+  if (levels.length === 0) return undefined
+  if (chat.effort === undefined || OFF.has(chat.effort)) return levels.find(id => OFF.has(id))
+  if (levels.includes(chat.effort)) return chat.effort
+  throw invalid(`reasoning_effort ${chat.effort} is not a level of ${chat.model} (its levels: ${levels.join(', ')})`)
 }
 
 // The text of a message's content: a string, or text parts only.
@@ -180,6 +213,9 @@ function parseChat(raw) {
   const maxTokens = body.max_completion_tokens ?? body.max_tokens
   if (maxTokens !== undefined && !(Number.isInteger(maxTokens) && maxTokens > 0)) throw invalid('max_tokens must be a positive integer')
   if (body.temperature !== undefined && typeof body.temperature !== 'number') throw invalid('temperature must be a number')
+  if (body.reasoning_effort !== undefined && body.reasoning_effort !== null && (typeof body.reasoning_effort !== 'string' || body.reasoning_effort.trim() === '')) throw invalid('reasoning_effort must be a level name')
+  // Thinking switched off the chat-template way reads as the off level.
+  const effort = body.chat_template_kwargs?.enable_thinking === false ? 'off' : (typeof body.reasoning_effort === 'string' ? body.reasoning_effort.trim().toLowerCase() : undefined)
   const stop = typeof body.stop === 'string' ? [body.stop] : body.stop
   if (stop !== undefined && stop !== null && !(Array.isArray(stop) && stop.every(s => typeof s === 'string'))) throw invalid('stop must be a string or strings')
   return {
@@ -193,6 +229,7 @@ function parseChat(raw) {
     ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(stop?.length ? { stop } : {}),
+    ...(effort !== undefined ? { effort } : {}),
   }
 }
 
@@ -209,6 +246,7 @@ function failed(reason) {
 }
 
 async function complete(llm, assistant, chat, req, res) {
+  const reasoningEffort = await effortFor(llm, chat)
   const abort = new AbortController()
   res.on('close', () => { if (!res.writableFinished) abort.abort() })
   const messages = chat.turns.map(turn => turn.role === 'user'
@@ -222,6 +260,7 @@ async function complete(llm, assistant, chat, req, res) {
     ...(chat.temperature !== undefined ? { temperature: chat.temperature } : {}),
     ...(chat.maxTokens !== undefined ? { maxTokens: chat.maxTokens } : {}),
     ...(chat.stop ? { stop: chat.stop } : {}),
+    ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
     signal: abort.signal,
   })
   const id = `chatcmpl-${randomBytes(12).toString('hex')}`
