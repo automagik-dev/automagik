@@ -1,0 +1,146 @@
+name: Release
+
+# Automagik's release model: every merge to dev that brings a feat, fix or other shipping commit cuts the
+# next 0.N.0. The run gates it, commits "chore(release): v0.N.0" with the version in Cargo.toml and
+# Cargo.lock, tags it, builds the four binaries from the tag and publishes them as the Latest GitHub
+# release with a SHA256SUMS file. Merges with only chore(release), ci, docs or test commits release nothing.
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  cut:
+    name: Cut v<version> on dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: release-cut
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.cut.outputs.version }}
+      previous: ${{ steps.new.outputs.previous }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Anything new since the last release
+        id: new
+        run: |
+          set -euo pipefail
+          last=$(git tag --list 'v0.*.0' --sort=-v:refname | grep -E '^v0\.(0|[1-9][0-9]{0,3})\.0$' | head -1 || true)
+          echo "previous=${last}" >> "$GITHUB_OUTPUT"
+          range="${last:+${last}..}HEAD"
+          if [[ -n "$(git log --no-merges --format=%s "${range}" | grep -vE '^(chore\(release\)|ci|docs|test)(\([^)]*\))?!?: ' || true)" ]]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "dev has nothing that ships since ${last:-the start}: no release"
+          fi
+
+      - name: The gates the release stands on
+        if: steps.new.outputs.release == 'true'
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+
+      - name: Version, commit and tag
+        id: cut
+        if: steps.new.outputs.release == 'true'
+        run: |
+          set -euo pipefail
+          version=$(scripts/version.sh next)
+          scripts/version.sh set "${version}"
+          # The lock must still match Cargo.toml, or the --locked builds of the tag fail.
+          cargo metadata --locked --offline --format-version 1 > /dev/null
+          base=$(git rev-parse HEAD)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # The first release can find the version already in place: then there is nothing to commit.
+          git diff --quiet || git commit -qam "chore(release): v${version}"
+          git tag -a "v${version}" -m "usagemeter ${version}"
+          if ! git push -q --atomic origin HEAD:refs/heads/dev "refs/tags/v${version}"; then
+            git fetch -q origin dev
+            if [[ "$(git rev-parse origin/dev)" != "${base}" ]]; then
+              echo "::notice::dev moved on while this run cut v${version}; the run for the newer merge releases these changes too"
+              exit 0
+            fi
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+  binaries:
+    name: Binaries for v${{ needs.cut.outputs.version }}
+    needs: cut
+    if: needs.cut.outputs.version != ''
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build.yml
+    with:
+      ref: v${{ needs.cut.outputs.version }}
+
+  publish:
+    name: Publish v${{ needs.cut.outputs.version }}
+    needs: [cut, binaries]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.cut.outputs.version }}
+      PREVIOUS: ${{ needs.cut.outputs.previous }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.cut.outputs.version }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: usagemeter-*
+          merge-multiple: true
+          path: assets
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          cd assets
+          set -- usagemeter-*
+          [ "$#" -eq 4 ] || { echo "::error::expected 4 binaries, found $*"; exit 1; }
+          sha256sum usagemeter-* > SHA256SUMS
+          cat SHA256SUMS
+          cp ../install.sh .
+          # What shipped: the conventional subjects since the previous release, without the release commits.
+          changes=$(git log --no-merges --format='- %s' "${PREVIOUS:+${PREVIOUS}..}${tag}" | grep -vE '^- chore\(release\)' | head -40 || true)
+          fence='```'
+          cat > ../notes.md <<NOTES
+          ${changes:-- Maintenance.}
+
+          Install this version:
+
+          ${fence}sh
+          curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/install.sh | sh -s -- ${VERSION}
+          ${fence}
+
+          SHA-256:
+
+          ${fence}
+          $(cat SHA256SUMS)
+          ${fence}
+          NOTES
+          gh release create "$tag" usagemeter-* SHA256SUMS install.sh --verify-tag --latest \
+            --title "usagemeter ${VERSION}" --notes-file ../notes.md --repo "$GITHUB_REPOSITORY"

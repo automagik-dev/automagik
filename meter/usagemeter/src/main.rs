@@ -8,9 +8,9 @@ use meter::{paths, summary};
 
 const USAGE: &str = "\
 Usage:
-  meter sync [--force] [--backfill] [--days N] [--budget-secs N] [--no-publish] [--doc NAME]
-  meter status
-  meter --version
+  usagemeter sync [--force] [--backfill] [--days N] [--budget-secs N] [--no-publish] [--doc NAME]
+  usagemeter status
+  usagemeter --version
 
 sync      Read new harness usage (omp, Claude Code, Codex) into the local store and publish
           the summary doc to herdr-core. Does nothing within 10 minutes of a complete sync.
@@ -91,7 +91,7 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
             }
             other => {
                 return Err(format!(
-                    "unknown option {other:?} for sync; see meter --help"
+                    "unknown option {other:?} for sync; see usagemeter --help"
                 ));
             }
         }
@@ -198,14 +198,14 @@ fn main() -> ExitCode {
         Some("status") if rest.is_empty() => cmd_status(),
         Some("status") => Err("status takes no options".into()),
         Some("--version" | "-V" | "version") => {
-            println!("meter {}", env!("CARGO_PKG_VERSION"));
+            println!("usagemeter {}", env!("CARGO_PKG_VERSION"));
             Ok(ExitCode::SUCCESS)
         }
         Some("-h" | "--help" | "help") | None => {
             println!("{USAGE}");
             Ok(ExitCode::SUCCESS)
         }
-        Some(other) => Err(format!("unknown command {other:?}; see meter --help")),
+        Some(other) => Err(format!("unknown command {other:?}; see usagemeter --help")),
     };
     r.unwrap_or_else(|e| fail(&e))
 }
