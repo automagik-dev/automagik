@@ -2685,8 +2685,7 @@ function bakeMarkup(shape, color) {
   };
 }
 
-// src/client/pet.js
-var import_react5 = require("react");
+// src/client/pet-poses.js
 var CELL = Object.freeze({ width: 192, height: 208, columns: 8 });
 var even = (count, ms, last) => [...Array(count - 1).fill(ms), last];
 var ROWS = Object.freeze({
@@ -2703,6 +2702,48 @@ var ROWS = Object.freeze({
 var LOOK_ROW = 9;
 var DIRECTIONS = 16;
 var SLEEP = Object.freeze({ ms: Array(6).fill(320) });
+var TAU = Math.PI * 2;
+var BODY = 150;
+var FLOOR = 196;
+var NEUTRAL_COLUMN = 6;
+var rest = { dx: 0, dy: 0, rot: 0, sx: 1, sy: 1, face: "open", gx: 0, gy: 0 };
+var pose = (patch) => ({ ...rest, ...patch });
+var POSES = {
+  idle: (f) => {
+    const breath = Math.sin(f / 6 * TAU);
+    return pose({ sy: 1 + breath * 0.02, sx: 1 - breath * 0.012, face: f === 3 ? "closed" : "open" });
+  },
+  "running-right": (f) => hop(f, 1),
+  "running-left": (f) => hop(f, -1),
+  waving: (f) => pose({ rot: f % 2 === 0 ? -9 : 9, dy: f % 2 === 0 ? 0 : -5, face: "happy" }),
+  // Anticipation, lift, peak, descent, settle.
+  jumping: (f) => pose({
+    ...[{ sy: 0.88, sx: 1.08 }, { sy: 1.08, sx: 0.94, dy: -24 }, { sy: 1.02, dy: -38 }, { sy: 1.04, sx: 0.98, dy: -16 }, { sy: 0.9, sx: 1.06 }][f],
+    face: f === 0 || f === 4 ? "closed" : "happy"
+  }),
+  failed: (f) => pose({ dy: 7, sy: 0.93, sx: 1.04, rot: -4 + Math.sin(f / 8 * TAU) * 2.5, face: "sad", gy: 0.7 }),
+  waiting: (f) => pose({ dy: [0, -9, -4, 0, 0, 0][f], sy: f === 3 ? 0.96 : 1, face: "open", gy: -1, gx: Math.sin(f / 6 * TAU) * 0.2 }),
+  running: (f) => {
+    const beat = Math.abs(Math.sin(f / 6 * TAU));
+    return pose({ dy: -8 * beat, sy: 1 - (1 - beat) * 0.05, sx: 1 + (1 - beat) * 0.03, rot: Math.sin(f / 6 * TAU) * 3, face: "focused" });
+  },
+  review: (f) => pose({ rot: Math.sin(f / 6 * TAU) * 2.5, face: "focused", gx: Math.sin(f / 6 * TAU), gy: 0.35 })
+};
+function hop(f, way) {
+  const lift = Math.sin(f % 4 / 4 * Math.PI);
+  return pose({ dy: -16 * lift, rot: 7 * way, sy: f % 4 === 0 ? 0.92 : 1 + lift * 0.03, sx: f % 4 === 0 ? 1.06 : 1, gx: way });
+}
+var lookPose = (d) => {
+  const angle = d / DIRECTIONS * TAU;
+  const gx = Math.sin(angle);
+  const gy = -Math.cos(angle);
+  return pose({ dx: gx * 4, dy: gy * 3, rot: gx * 4, gx, gy });
+};
+var sleepPose = (f) => pose({ sy: 1 + Math.sin(f / 6 * TAU) * 0.018, face: "asleep", dy: 2 });
+var sleepZ = (f) => ({ x: 138 + f * 2, y: 60 - f * 6, size: 20 + f * 2, fill: "rgba(90,100,140,.75)" });
+
+// src/client/pet.js
+var import_react5 = require("react");
 var rowsOf = (version) => version === 2 ? 11 : 9;
 var ONCE = Object.freeze(["waving", "jumping"]);
 var STATE_ROWS = Object.freeze({
@@ -2842,44 +2883,6 @@ var PET_CSS = `
 `;
 
 // src/client/pet-bake.js
-var TAU = Math.PI * 2;
-var BODY = 150;
-var FLOOR = 196;
-var NEUTRAL_COLUMN = 6;
-var rest = { dx: 0, dy: 0, rot: 0, sx: 1, sy: 1, face: "open", gx: 0, gy: 0 };
-var pose = (patch) => ({ ...rest, ...patch });
-var POSES = {
-  idle: (f) => {
-    const breath = Math.sin(f / 6 * TAU);
-    return pose({ sy: 1 + breath * 0.02, sx: 1 - breath * 0.012, face: f === 3 ? "closed" : "open" });
-  },
-  "running-right": (f) => hop(f, 1),
-  "running-left": (f) => hop(f, -1),
-  waving: (f) => pose({ rot: f % 2 === 0 ? -9 : 9, dy: f % 2 === 0 ? 0 : -5, face: "happy" }),
-  // Anticipation, lift, peak, descent, settle.
-  jumping: (f) => pose({
-    ...[{ sy: 0.88, sx: 1.08 }, { sy: 1.08, sx: 0.94, dy: -24 }, { sy: 1.02, dy: -38 }, { sy: 1.04, sx: 0.98, dy: -16 }, { sy: 0.9, sx: 1.06 }][f],
-    face: f === 0 || f === 4 ? "closed" : "happy"
-  }),
-  failed: (f) => pose({ dy: 7, sy: 0.93, sx: 1.04, rot: -4 + Math.sin(f / 8 * TAU) * 2.5, face: "sad", gy: 0.7 }),
-  waiting: (f) => pose({ dy: [0, -9, -4, 0, 0, 0][f], sy: f === 3 ? 0.96 : 1, face: "open", gy: -1, gx: Math.sin(f / 6 * TAU) * 0.2 }),
-  running: (f) => {
-    const beat = Math.abs(Math.sin(f / 6 * TAU));
-    return pose({ dy: -8 * beat, sy: 1 - (1 - beat) * 0.05, sx: 1 + (1 - beat) * 0.03, rot: Math.sin(f / 6 * TAU) * 3, face: "focused" });
-  },
-  review: (f) => pose({ rot: Math.sin(f / 6 * TAU) * 2.5, face: "focused", gx: Math.sin(f / 6 * TAU), gy: 0.35 })
-};
-function hop(f, way) {
-  const lift = Math.sin(f % 4 / 4 * Math.PI);
-  return pose({ dy: -16 * lift, rot: 7 * way, sy: f % 4 === 0 ? 0.92 : 1 + lift * 0.03, sx: f % 4 === 0 ? 1.06 : 1, gx: way });
-}
-var lookPose = (d) => {
-  const angle = d / DIRECTIONS * TAU;
-  const gx = Math.sin(angle);
-  const gy = -Math.cos(angle);
-  return pose({ dx: gx * 4, dy: gy * 3, rot: gx * 4, gx, gy });
-};
-var sleepPose = (f) => pose({ sy: 1 + Math.sin(f / 6 * TAU) * 0.018, face: "asleep", dy: 2 });
 var OMNI_FACE = { open: "calm", closed: "calm", happy: "delighted", focused: "focused", sad: "sad", asleep: "asleep" };
 var loadImage = (src) => new Promise((resolve2, reject) => {
   const image = new Image();
@@ -2938,9 +2941,10 @@ async function bakeBlobs(look, scale = 1) {
   for (let frame = 0; frame < SLEEP.ms.length; frame += 1) {
     drawCell(stripContext, draw, frame, 0, sleepPose(frame), scale);
     stripContext.save();
-    stripContext.fillStyle = "rgba(90,100,140,.75)";
-    stripContext.font = `700 ${Math.round((20 + frame * 2) * scale)}px system-ui, sans-serif`;
-    stripContext.fillText("z", (frame * CELL.width + 138 + frame * 2) * scale, (60 - frame * 6) * scale);
+    const z = sleepZ(frame);
+    stripContext.fillStyle = z.fill;
+    stripContext.font = `700 ${Math.round(z.size * scale)}px system-ui, sans-serif`;
+    stripContext.fillText("z", (frame * CELL.width + z.x) * scale, z.y * scale);
     stripContext.restore();
   }
   const [sheetBlob, sleepBlob] = await Promise.all([blobOf(sheet), blobOf(strip)]);
