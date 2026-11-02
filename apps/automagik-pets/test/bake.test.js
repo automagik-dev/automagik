@@ -2,8 +2,8 @@
 // AUTOMAGIK_BOTS_HOME) and runs the CLI with HOME pointed at a temporary folder too, so the real
 // ~/.automagik is never read or written.
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { execFile, spawn } from 'node:child_process'
+import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, test } from 'node:test'
@@ -13,7 +13,7 @@ import sharp from 'sharp'
 import { createPets, sheetVersion, webpSize } from '../../bots-dsh/src/host/pets.js'
 import { ROWS, SLEEP } from '../../bots-dsh/src/client/pet-poses.js'
 import { CHARACTER_IDS, COLOUR_IDS, allLookIds, cellPlan, lookParts, mixSrgb, parseLookId, resolveInks } from '../src/art.js'
-import { VERSION, bakePet, botsHomeOf, renderCell } from '../src/bake.js'
+import { VERSION, bakePet, botsHomeOf, isCompletePet, moveIntoPlace, renderCell, sweepStale } from '../src/bake.js'
 
 const BIN = fileURLToPath(new URL('../bin/automagik-pets.js', import.meta.url))
 const run = promisify(execFile)
@@ -26,11 +26,11 @@ async function tempHome() {
 after(() => Promise.all(temps.map(dir => rm(dir, { recursive: true, force: true }))))
 
 // The CLI in a child process with a temporary HOME and none of Automagik's variables.
-async function cli(args, env = {}) {
+async function cli(args, env = {}, cwd = undefined) {
   const home = await tempHome()
   const clean = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('AUTOMAGIK_')))
   try {
-    const { stdout, stderr } = await run(process.execPath, [BIN, ...args], { env: { ...clean, HOME: home, ...env } })
+    const { stdout, stderr } = await run(process.execPath, [BIN, ...args], { cwd, env: { ...clean, HOME: home, ...env } })
     return { code: 0, stdout, stderr }
   } catch (error) {
     return { code: error.code, stdout: error.stdout, stderr: error.stderr }
@@ -218,5 +218,134 @@ describe('the command line', () => {
     const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
     assert.equal((await cli(['--version'])).stdout.trim(), pkg.version)
     assert.deepEqual(lastLine((await cli(['--version', '--json'])).stdout), { ok: true, version: pkg.version })
+  })
+})
+
+// The same pixels for the same SVG, rendered once: concurrent bakes then reach their moves together.
+const cache = new Map()
+const cachedRender = (svg) => {
+  if (!cache.has(svg)) cache.set(svg, renderCell(svg))
+  return cache.get(svg)
+}
+
+// Two bakes of one look at once (DSH and Herdr both bake on demand): each one either lands its
+// folder or finds a complete pet already in place, and nothing is left beside it.
+describe('concurrent bakes of the same look', () => {
+
+  test('moves racing to replace one pet all succeed and leave one complete folder', async () => {
+    const home = await tempHome()
+    const { dir } = await bakePet('hex-cyan', { home, render: cachedRender })
+    const pets = join(home, 'pets')
+    const tags = Array.from({ length: 12 }, (_, index) => `${process.pid}.${index.toString(16).padStart(8, '0')}`)
+    await Promise.all(tags.map(tag => cp(dir, join(pets, `.hex-cyan.${tag}.tmp`), { recursive: true })))
+    // Each rename waits a moment first, so every move has looked at the folder before any moves
+    // it: the race is certain, not left to scheduling.
+    const slowRename = async (from, to) => {
+      await new Promise(done => setTimeout(done, 1 + Math.random() * 4))
+      return rename(from, to)
+    }
+    const results = await Promise.all(tags.map(tag => moveIntoPlace(join(pets, `.hex-cyan.${tag}.tmp`), dir, tag, { rename: slowRename })))
+    assert.ok(results.some(result => result.raced), 'the moves raced')
+    assert.ok(await isCompletePet(dir, 'hex-cyan'))
+    assert.deepEqual(await readdir(pets), ['hex-cyan'])
+  })
+
+  test('bakes of one look at once in one process all succeed', async () => {
+    const home = await tempHome()
+    const results = await Promise.all(Array.from({ length: 12 }, () => bakePet('zed-red', { home, render: cachedRender })))
+    for (const result of results) assert.equal(result.dir, join(home, 'pets', 'zed-red'))
+    assert.ok(await isCompletePet(join(home, 'pets', 'zed-red'), 'zed-red'))
+    assert.deepEqual(await readdir(join(home, 'pets')), ['zed-red'])
+  })
+
+  test('the command line run four times at once: every run answers ok and exits 0', async () => {
+    const home = await tempHome()
+    await bakePet('plus-sky', { home, render: cachedRender })
+    const results = await Promise.all(Array.from({ length: 4 }, () => cli(['bake', 'plus-sky', '--home', home, '--json'])))
+    for (const result of results) {
+      assert.equal(result.code, 0, result.stdout + result.stderr)
+      assert.deepEqual(lastLine(result.stdout), { ok: true, dir: join(home, 'pets', 'plus-sky') })
+    }
+    assert.ok(await isCompletePet(join(home, 'pets', 'plus-sky'), 'plus-sky'))
+    assert.deepEqual(await readdir(join(home, 'pets')), ['plus-sky'])
+  })
+
+  test('a pet that cannot be put back is reported with the folder left behind', async () => {
+    const home = await tempHome()
+    const { dir } = await bakePet('cushion-gray', { home, render: cachedRender })
+    const pets = join(home, 'pets')
+    const tag = `${process.pid}.0000abcd`
+    const staging = join(pets, `.cushion-gray.${tag}.tmp`)
+    await cp(dir, staging, { recursive: true })
+    let calls = 0
+    const failing = async (from, to) => {
+      calls += 1
+      if (calls === 1) return rename(from, to)
+      throw Object.assign(new Error(calls === 2 ? 'cross-device move' : 'permission denied'), { code: calls === 2 ? 'EXDEV' : 'EACCES' })
+    }
+    const old = join(pets, `.cushion-gray.${tag}.old`)
+    await assert.rejects(moveIntoPlace(staging, dir, tag, { rename: failing }), (error) => {
+      assert.match(error.message, /cross-device move/)
+      assert.match(error.message, /could not be put back \(permission denied\)/)
+      assert.ok(error.message.includes(old), error.message)
+      return true
+    })
+    assert.ok(await isCompletePet(old, 'cushion-gray'), 'the old pet is kept where the error says')
+  })
+})
+
+describe('folders a killed bake left behind', () => {
+  // A pid that no process has: a child that has already exited.
+  async function deadPid() {
+    const child = spawn(process.execPath, ['-e', ''])
+    await new Promise(done => child.on('exit', done))
+    return child.pid
+  }
+
+  test('the next bake sweeps those of gone processes and old ones, and keeps a live bake\'s', async () => {
+    const home = await tempHome()
+    const pets = join(home, 'pets')
+    const dead = await deadPid()
+    const folders = {
+      deadTmp: `.saucer-blue.${dead}.0000dead.tmp`,
+      deadOld: `.saucer-blue.${dead}.0000beef.old`,
+      oldLive: `.saucer-blue.${process.pid}.00000001.tmp`,
+      freshLive: `.saucer-blue.${process.pid}.00000002.tmp`,
+      otherLook: `.saucer-red.${dead}.0000dead.tmp`,
+    }
+    for (const name of Object.values(folders)) {
+      await mkdir(join(pets, name, 'frames'), { recursive: true })
+      await writeFile(join(pets, name, 'frames', 'idle-0.png'), 'partial')
+    }
+    const hourAgo = new Date(Date.now() - 60 * 60_000)
+    await utimes(join(pets, folders.oldLive), hourAgo, hourAgo)
+    await bakePet('saucer-blue', { home, render: cachedRender })
+    assert.deepEqual((await readdir(pets)).sort(), [folders.freshLive, folders.otherLook, 'saucer-blue'].sort())
+  })
+
+  test('sweepStale on a home with no pets folder sweeps nothing', async () => {
+    assert.deepEqual(await sweepStale(join(await tempHome(), 'pets'), 'kitty-blue'), [])
+  })
+})
+
+describe('--home takes a folder, never the next option', () => {
+  test("'bake kitty-blue --home --json' exits 2 with a JSON error and writes nothing", async () => {
+    const cwd = await tempHome()
+    const result = await cli(['bake', 'kitty-blue', '--home', '--json'], {}, cwd)
+    assert.equal(result.code, 2)
+    const line = lastLine(result.stdout)
+    assert.equal(line.ok, false)
+    assert.match(line.error, /--home needs a folder, not --json/)
+    assert.deepEqual(await readdir(cwd), [])
+  })
+
+  test('a --home= value starting with - and a --home with nothing after it are refused too', async () => {
+    const cwd = await tempHome()
+    for (const args of [['bake', 'kitty-blue', '--json', '--home=-x'], ['bake', 'kitty-blue', '--json', '--home'], ['bake', 'kitty-blue', '--json', '--home=']]) {
+      const result = await cli(args, {}, cwd)
+      assert.equal(result.code, 2, args.join(' '))
+      assert.match(lastLine(result.stdout).error, /--home needs a folder/, args.join(' '))
+    }
+    assert.deepEqual(await readdir(cwd), [])
   })
 })

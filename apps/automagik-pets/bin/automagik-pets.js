@@ -18,11 +18,15 @@ function parse(argv) {
     const arg = argv[index]
     if (arg === '--json') options.json = true
     else if (arg === '--version' || arg === '-v') options.version = true
-    else if (arg === '--home') {
-      options.home = argv[index + 1]
-      index += 1
-      if (options.home === undefined) options.usage = '--home needs a folder'
-    } else if (arg.startsWith('--home=')) options.home = arg.slice('--home='.length)
+    else if (arg === '--home' || arg.startsWith('--home=')) {
+      // A folder is never taken from the next option: in '--home --json' the folder is missing
+      // and --json still counts, so the error answers as JSON.
+      const value = arg === '--home' ? argv[index + 1] : arg.slice('--home='.length)
+      const folder = value !== undefined && value.trim() !== '' && !value.startsWith('-')
+      if (arg === '--home' && folder) index += 1
+      if (folder) options.home = value
+      else options.usage = `--home needs a folder${value ? `, not ${value}` : ''}`
+    }
     else if (arg.startsWith('-')) options.usage = `unknown option ${arg}`
     else options.positional.push(arg)
   }

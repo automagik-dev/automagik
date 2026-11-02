@@ -27,6 +27,14 @@ The bake writes into a dot-named sibling (`.<id>.<pid>.<random>.tmp`, which the 
 and renames it into place. A folder already there is moved aside first and removed afterwards,
 so a reader sees the old pet or the new one, never a partial one. A failed bake keeps the old pet.
 
+Bakes of the same look may run at the same time, because DSH and Herdr both bake on demand. A
+bake whose rename meets another bake's (`ENOENT`, `ENOTEMPTY`) checks the folder in place. If that
+folder is a complete pet, the bake succeeds and removes its own temporary folders. Otherwise it
+tries the move again. If a moved-aside pet cannot be put back, the error names the `.old` folder
+left behind. Each bake first sweeps the `.<id>.<pid>.<random>.tmp` and `.old` folders of earlier
+bakes of that look, when their process is gone or they are over ten minutes old. A bake that was
+killed midway therefore leaves nothing the next bake keeps.
+
 ## What a folder holds
 
 | File | What |
