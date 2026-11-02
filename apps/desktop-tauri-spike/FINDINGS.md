@@ -176,7 +176,7 @@ after the last Electron run (`cp -c -a`, 53 GB, of which 52 GB is `bots/workspac
   Automagik or spike app was running (checked with `pgrep`).
 - **Page drawn:** Electron: the `start: page in` line in `~/.automagik/desktop/logs/start.log`
   (`did-finish-load`), 3.0–4.1 s after `open` (13.5 s in the cold run 1). Tauri: the bridge's `load`
-  from DSH's origin, 3.4–5.1 s after `open`. With the screen locked, the spike's own "page visible"
+  from DSH's origin, 3.5–5.2 s after `open`. With the screen locked, the spike's own "page visible"
   check never runs (its timers are suspended), so `load` is used on both sides.
 - **Read point:** `ps` 60 s after that line. **Quit:** an Apple Event quit to each app's bundle id;
   start.log showed `quit: dsh stopped` for every Electron run and the spike logged `dsh stopped`.
@@ -191,9 +191,13 @@ after the last Electron run (`cp -c -a`, 53 GB, of which 52 GB is `bots/workspac
   row counted belongs to the app's tree or is a WebKit service that started after launch.
 - **Updates:** the app checked for updates and stayed at 3.51.0 ("newest stable release"); nothing
   was downloaded.
-- **Data safety:** nothing under `~/.automagik/desktop` changed between the last Electron quit and the
-  end of the Tauri runs (`find -newer` on a marker). The copy was deleted afterwards. Nothing started
-  by these runs was left running.
+- **Data safety:** `find -newer` on a marker written at the last Electron quit, run again after the last
+  Tauri run, lists 79 files under `~/.automagik/desktop`. All 79 are one git pack: a single file
+  (one inode, 80 hard links) shared by the Bots' wish clones in `bots/workspace` and the main repository
+  `~/workspace/repos/automagik/.git`. Git refreshed its mtime at 23:05:25 UTC, after the last run had
+  stopped (23:04:16), during a git operation in the main repository; the contents did not change.
+  Nothing else in the home changed. The copy was deleted afterwards. Nothing started by these runs was
+  left running.
 
 ### 2 Bot browser views: not measured
 
