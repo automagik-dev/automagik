@@ -253,6 +253,39 @@ fn rewritten_and_truncated_files_are_detected_and_not_double_counted() {
 }
 
 #[test]
+fn a_rewrite_after_a_long_history_is_not_double_counted() {
+    let env = Env::new();
+    let f = env.claude("-work-app/sess-1.jsonl");
+    let a = claude_line("msg_a", "req_a", TS, "model-a", &U1, 0);
+    let b = claude_line("msg_b", "req_b", TS, "model-a", &U1, 0);
+    write_lines(&f, &[a.clone(), b.clone()]);
+    env.run(&env.opts());
+
+    // A long history: more dedupe keys after a and b than the store once kept (600,000).
+    env.store()
+        .conn
+        .execute_batch(
+            "WITH RECURSIVE n(x) AS (SELECT 3 UNION ALL SELECT x + 1 FROM n WHERE x < 700002)
+             INSERT INTO seen(k, seq) SELECT x, x FROM n",
+        )
+        .unwrap();
+
+    // The file is replaced (new inode) and read again from the start, twice.
+    let c = claude_line("msg_c", "req_c", TS, "model-a", &U2, 0);
+    let d = claude_line("msg_d", "req_d", TS, "model-a", &U2, 0);
+    let tmp = f.with_extension("tmp");
+    write_lines(&tmp, &[a.clone(), b.clone(), c.clone()]);
+    fs::rename(&tmp, &f).unwrap();
+    let r = env.run(&env.opts());
+    assert_eq!((r.health.events, r.health.duplicates), (1, 2));
+    write_lines(&tmp, &[a, b, c, d]);
+    fs::rename(&tmp, &f).unwrap();
+    let r = env.run(&env.opts());
+    assert_eq!((r.health.events, r.health.duplicates), (1, 3));
+    assert_eq!(env.totals()["model-a"], sum(&[&U1, &U1, &U2, &U2]));
+}
+
+#[test]
 fn budget_stop_resumes_without_double_counting() {
     let env = Env::new();
     let want = big_fixture(&env, 3, 40, TS);
