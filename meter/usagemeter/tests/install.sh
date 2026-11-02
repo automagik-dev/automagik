@@ -1,7 +1,8 @@
 #!/bin/sh
 # Exercises install.sh against a release laid out on disk: tests/install.sh <dir with usagemeter-* binaries>
-# Fresh install, an idempotent re-run (latest and pinned), a tampered binary that must not be
-# installed, and a bad version argument.
+# Fresh install, an idempotent re-run (latest and pinned), never a downgrade (older, equal and
+# newer installed binaries, compared as numbers), a tampered binary that must not be installed,
+# and a bad version argument.
 set -eu
 
 src=$(cd "$1" && pwd)
@@ -26,6 +27,7 @@ esac
 [ -f "$src/$host" ] || fail "missing $src/$host"
 version=$("$src/$host" --version | sed -n 's/^usagemeter //p')
 [ -n "$version" ] || fail "$host --version does not print 'usagemeter <version>'"
+[ "$version" != 0.0.0 ] || fail "the release under test must be newer than 0.0.0"
 
 # The GitHub layout: latest/download/<file> and download/v<version>/<file>.
 rel=$work/releases
@@ -62,6 +64,54 @@ rm -f "$dest"
 out=$(USAGEMETER_VERSION=$version run) || fail "pinned install failed"
 echo "$out"
 [ "$("$dest" --version)" = "usagemeter $version" ] || fail "pinned install"
+
+# Never a downgrade. Stand-in binaries answer --version like the real one; 9000.x is newer than
+# any release under test, and 9000.10.0 > 9000.9.0 only when compared as numbers.
+fake() { printf '#!/bin/sh\necho "usagemeter %s"\n' "$1" > "$2" && chmod 755 "$2"; }
+offline() { HOME=$home USAGEMETER_BASE_URL=file:///nonexistent sh "$root/install.sh" "$@"; }
+expect() { case $1 in *"$2"*) ;; *) fail "$3: expected '$2' in: $1" ;; esac; }
+fakerel=$rel/download/v9000.10.0
+mkdir -p "$fakerel"
+fake 9000.10.0 "$fakerel/$host"
+(cd "$fakerel" && sums "$host" > SHA256SUMS)
+
+# Older (9000.9.0, string-greater than 9000.10.0): replaced by the pinned 9000.10.0.
+fake 9000.9.0 "$dest"
+out=$(run 9000.10.0) || fail "upgrade from an older binary failed"
+echo "$out"
+[ "$("$dest" --version)" = "usagemeter 9000.10.0" ] || fail "the older binary was not replaced"
+
+# Equal: nothing to do, no network.
+out=$(offline 9000.10.0) || fail "pinned equal version failed"
+echo "$out"
+expect "$out" "already installed" "pinned equal version"
+
+# Newer installed than pinned: kept, exit 0, no network (as strings, 9000.10.0 < 9000.9.0).
+cp "$dest" "$work/kept"
+out=$(offline 9000.9.0) || fail "pinned older version failed"
+echo "$out"
+expect "$out" "not downgrading" "pinned older version"
+out=$(offline "$version") || fail "pinned release version under a newer binary failed"
+echo "$out"
+expect "$out" "not downgrading" "pinned release version under a newer binary"
+cmp -s "$dest" "$work/kept" || fail "a pinned older version replaced a newer binary"
+
+# Newer installed than the latest release: the download is checked and dropped.
+out=$(run) || fail "latest under a newer binary failed"
+echo "$out"
+expect "$out" "not downgrading" "latest under a newer binary"
+cmp -s "$dest" "$work/kept" || fail "the latest release replaced a newer binary"
+[ "$(ls -A "$home/.local/bin")" = usagemeter ] || fail "temp files left behind: $(ls -A "$home/.local/bin")"
+
+# Older installed than the latest release, and than a pinned one: replaced as before.
+fake 0.0.0 "$dest"
+out=$(run) || fail "latest over an older binary failed"
+echo "$out"
+[ "$("$dest" --version)" = "usagemeter $version" ] || fail "latest did not replace an older binary"
+fake 0.0.0 "$dest"
+out=$(run "$version") || fail "pinned over an older binary failed"
+echo "$out"
+[ "$("$dest" --version)" = "usagemeter $version" ] || fail "pinned did not replace an older binary"
 
 # A binary that does not match SHA256SUMS is refused and the installed one stays.
 printf 'tampered' >> "$rel/latest/download/$host"

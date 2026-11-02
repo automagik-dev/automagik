@@ -40,10 +40,11 @@ Each release also carries its own `install.sh`
 
 The installer is POSIX `sh` and needs only `curl` and `sha256sum` (or `shasum -a 256`), no sudo.
 It picks the release binary for this OS and CPU, checks it against the release's `SHA256SUMS`,
-and installs it to `~/.local/bin/usagemeter` atomically. Run again with that version already
-installed, it changes nothing and exits 0: a pinned version is checked with
-`usagemeter --version` without touching the network, the latest by comparing the installed file
-with the release's `SHA256SUMS` (one small download).
+and installs it to `~/.local/bin/usagemeter` atomically. It never downgrades: with that version
+or a newer one already installed, it changes nothing and exits 0. A pinned version is checked with
+`usagemeter --version` without touching the network; the latest by comparing the installed file
+with the release's `SHA256SUMS` (one small download), then by the version of the verified
+download. An older binary is replaced.
 
 Each release carries `usagemeter-darwin-arm64`, `usagemeter-darwin-x86_64`,
 `usagemeter-linux-x86_64` and `usagemeter-linux-aarch64` (static, musl), with `SHA256SUMS`. By
@@ -58,6 +59,22 @@ install -m 755 usagemeter-linux-x86_64 ~/.local/bin/usagemeter
 
 Releases: every merge to `dev` that brings a shipping commit (anything but `chore(release)`,
 `ci`, `docs` or `test`) cuts the next `0.N.0`, tags it and publishes the binaries.
+
+## Shared binary
+
+Several tools on a machine install and run the same usagemeter. They rely on this contract:
+
+- **One install path:** `~/.local/bin/usagemeter`, written only by `install.sh` (atomically).
+- **Version output:** `usagemeter --version` prints exactly `usagemeter <version>` (for example
+  `usagemeter 0.2.0`) and exits 0.
+- **Never downgrade:** when the installed binary reports a version at least the one requested
+  (pinned) or published (latest), compared field by field as numbers (`0.10.0` is newer than
+  `0.9.0`), `install.sh` changes nothing, prints why and exits 0. An older binary is replaced.
+- **Concurrent syncs are safe:** `sync` takes a non-blocking exclusive lock on `meter.lock` in the
+  state dir (see [What it stores](#what-it-stores)). A second run while one holds it skips: it
+  prints `another sync is running; nothing to do` and exits 0.
+- **Release assets:** every release carries `usagemeter-darwin-arm64`, `usagemeter-darwin-x86_64`,
+  `usagemeter-linux-x86_64` and `usagemeter-linux-aarch64`, plus `SHA256SUMS` and `install.sh`.
 
 ## What it reads
 

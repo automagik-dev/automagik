@@ -48,6 +48,45 @@ fn a_killed_run_resumes_without_double_counting() {
 }
 
 #[test]
+fn sync_exits_0_when_there_is_nothing_new_to_read() {
+    let env = Env::new();
+    // The binary runs at the real time: an hour ago is inside the import window.
+    let ts = meter::time::format_rfc3339(meter::time::now_ms() - 3_600_000);
+    let f = env.claude("-work-app/sess-1.jsonl");
+    write_lines(&f, &[claude_line("msg_1", "req_1", &ts, "model-a", &U1, 0)]);
+    let sync = |args: &[&str]| {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_usagemeter"))
+            .arg("sync")
+            .args(args)
+            .arg("--no-publish")
+            .env("HOME", env.home())
+            .env("METER_STATE_DIR", env.state())
+            .env("METER_HC", env.dir.path().join("no-hc"))
+            .env_remove("CLAUDE_CONFIG_DIR")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        assert!(
+            out.status.success(),
+            "sync {args:?} exited {:?}: {stdout}{}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        stdout
+    };
+    let first = sync(&[]);
+    assert!(first.contains(" 1 new usage events"), "{first}");
+    let totals = env.totals();
+    // Fresh: the last sync is younger than the staleness window.
+    let fresh = sync(&[]);
+    assert!(fresh.contains("nothing to do"), "{fresh}");
+    // Forced over unchanged files: a run that reads nothing new.
+    let again = sync(&["--force"]);
+    assert!(again.contains(" 0 new usage events"), "{again}");
+    assert_eq!(env.totals(), totals);
+}
+
+#[test]
 fn repo_key_strips_credentials_and_collapses_worktrees() {
     let git = |dir: &std::path::Path, args: &[&str]| {
         std::process::Command::new("git")
