@@ -12,7 +12,7 @@ use crate::prices::PriceTable;
 use crate::scan::{self, Candidate, Plan, ReadLimits, ReadOutcome};
 use crate::sources::Source;
 use crate::sources::codex::{self, State};
-use crate::store::{Attributed, FileState, Health, SCHEMA_VERSION, SEEN_CAP, Store};
+use crate::store::{Attributed, FileState, Health, SCHEMA_VERSION, Store};
 use crate::summary::{self, SourceHealth};
 use crate::time::{DAY_MS, HOUR_MS, day_start};
 
@@ -525,7 +525,6 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     }
 
     trace.mark("read");
-    store.trim_seen(SEEN_CAP)?;
     store.set_meta("last_run_ms", &now.to_string())?;
     store.set_meta("last_pending_bytes", &report.pending_bytes.to_string())?;
     store.set_meta("last_pending_files", &report.pending_files.to_string())?;

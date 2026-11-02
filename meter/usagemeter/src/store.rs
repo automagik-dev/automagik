@@ -5,7 +5,9 @@
 //!   row carries the split fields, a total_only row carries `unsplit` alone.
 //! - `files`: how far each log has been read, plus what identifies it (device, inode, size, a hash
 //!   of its first bytes) so a rewritten or truncated file is noticed.
-//! - `seen`: a bounded set of dedupe-key hashes, oldest evicted first.
+//! - `seen`: every dedupe-key hash counted since `counted_from`, never evicted, so a log read
+//!   again from the start, or a message a resumed session copies, adds nothing already counted.
+//!   It lives on disk, so it costs bytes, not memory; a reset clears it with the rows.
 //! - `sessions`: which harness session a sub-agent transcript rolls up to.
 //! - `codex_threads`: the last cumulative token count seen per Codex thread, keyed by thread id
 //!   so a rollout that moves (to `archived_sessions`) is never counted twice.
@@ -25,9 +27,6 @@ use crate::sources::codex::{CodexCtx, Cum};
 /// 2: precision is part of the row id (`ae/1` revision 3). A store of an older version is rebuilt
 /// once from the logs (`sync` resets it), because every row id changed.
 pub const SCHEMA_VERSION: i64 = 2;
-/// How many dedupe keys are kept. Claude repeats a message on adjacent lines, so the window only
-/// needs to cover a few days of messages; this covers several weeks on a busy machine.
-pub const SEEN_CAP: i64 = 600_000;
 
 pub struct Store {
     pub conn: Connection,
@@ -395,14 +394,6 @@ impl Store {
         let tx = self.conn.transaction()?;
         put_file(&tx, file)?;
         tx.commit()
-    }
-
-    /// Evicts the oldest dedupe keys beyond `cap`.
-    pub fn trim_seen(&self, cap: i64) -> rusqlite::Result<usize> {
-        self.conn.execute(
-            "DELETE FROM seen WHERE seq <= (SELECT max(seq) FROM seen) - ?1",
-            [cap],
-        )
     }
 
     pub fn mark_success(&self, source: &str, now_ms: i64) -> rusqlite::Result<()> {

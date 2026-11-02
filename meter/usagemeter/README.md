@@ -46,8 +46,9 @@ Codex:
 
 Logs are read incrementally from a saved byte offset, in 8 MB chunks. A line still being written
 waits for the next run. A file whose inode, size or first 4 KB changed is read again from the start,
-and the dedupe set absorbs what was already counted. Symlinks are never followed. Lines over 16 MB
-are skipped and counted.
+and the dedupe set absorbs what was already counted: it keeps every key in the import window, so
+this holds however long the history is. Symlinks are never followed. Lines over 16 MB are
+skipped and counted.
 
 ## What it stores
 
