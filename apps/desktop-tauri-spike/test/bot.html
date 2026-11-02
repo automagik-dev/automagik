@@ -1,0 +1,30 @@
+<!doctype html><meta charset="utf-8"><title>Bot store probe</title>
+<body style="font:14px system-ui;padding:12px">probing…</body>
+<script>
+// Loaded in each Bot view (SPIKE_BOT_URL=…/bot.html), all from the SAME origin. Reads what the
+// view's data store already holds (cookie, localStorage, IndexedDB), then writes this Bot's id.
+// Isolation: bot b reads after bot a wrote, and must not see "a". Persistence: on the next
+// launch each Bot must read back its own id.
+const bot = new URLSearchParams(location.search).get('bot')
+const idb = (mode, value) => new Promise((resolve, reject) => {
+  const open = indexedDB.open('spike', 1)
+  open.onupgradeneeded = () => open.result.createObjectStore('kv')
+  open.onerror = () => reject(open.error)
+  open.onsuccess = () => {
+    const tx = open.result.transaction('kv', mode)
+    const req = mode === 'readonly' ? tx.objectStore('kv').get('who') : tx.objectStore('kv').put(value, 'who')
+    req.onsuccess = () => resolve(req.result ?? null)
+    req.onerror = () => reject(req.error)
+  }
+})
+addEventListener('load', async () => {
+  if (bot === 'b') await new Promise(r => setTimeout(r, 2000))
+  const before = { cookie: document.cookie, localStorage: localStorage.getItem('who'), indexedDB: await idb('readonly').catch(e => String(e)) }
+  document.cookie = `who=${bot}; max-age=86400; path=/`
+  localStorage.setItem('who', bot)
+  await idb('readwrite', bot).catch(() => {})
+  const after = { cookie: document.cookie, localStorage: localStorage.getItem('who') }
+  document.body.textContent = `Bot ${bot} — before: ${JSON.stringify(before)}`
+  window.__TAURI_INTERNALS__.invoke('spike_bridge', { kind: `bot-store-${bot}`, payload: { before, after, visibility: document.visibilityState } })
+})
+</script>
