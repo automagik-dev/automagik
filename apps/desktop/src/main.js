@@ -199,14 +199,14 @@ async function launch() {
   await startUp({
     mark: step => started.mark(step),
     port: freePort,
-    // The profile is in place, with the plugins the lane staged in it, before dsh reads it, and
-    // this start is their trial (lane.js).
+    // The profile is in place before dsh reads it.
     profile: async () => {
       const { target } = await installProfile({ dshHome: join(home, 'dsh'), source: resources.profile })
       pinProfileStore({ target, home, layout: storeLayoutOf(resources.pnpm) })
       laneProfile = target
-      if (app.isPackaged) laneTrial = beforeStart({ home, target, log: laneLog })
     },
+    // Then the plugins the lane staged go in, and this start is their trial (lane.js).
+    lane: () => { if (app.isPackaged) laneTrial = beforeStart({ home, target: laneProfile, log: laneLog }) },
     // Electron's own binary runs dsh as Node, so the app ships one runtime.
     tools: () => { binDir = writeTools({ dir: join(home, 'bin'), node: process.execPath, pnpm: resources.pnpm }) },
     spawn: (port) => {
@@ -241,18 +241,18 @@ async function launch() {
         const plugins = pluginsVersion()
         app.setAboutPanelOptions({ applicationName: PRODUCT, applicationVersion: plugins ?? app.getVersion(), version: plugins ? `app ${app.getVersion()}` : app.getVersion() })
       }
-      // Before the page is made: every webContents from here on keeps to dsh's origin.
-      harden(dshOrigin)
-      if (!window) return
-      makePage()
-      // Before the page load: a page that fails to load must not stop the app from updating.
-      watchUpdates()
     },
+    // Before the page is made: every webContents from here on keeps to dsh's origin.
+    guard: () => harden(dshOrigin),
+    view: () => { if (window) makePage() },
     load: async ({ url }) => {
       if (!window || !page) return
       started.mark('page loading')
       await page.webContents.loadURL(url)
     },
+    // Once dsh is up, as before this ran; a page that fails to load must not stop the app from
+    // updating.
+    updates: () => { if (window && page) watchUpdates() },
   })
 }
 

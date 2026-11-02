@@ -12,7 +12,7 @@
 // one (~/.automagik/bots), so neither sees the other's Bots or Sessions. Omni's own folder
 // (~/.omni: its sandbox, the Bun its channels download) is Omni's.
 import { spawn } from 'node:child_process'
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { cp, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
@@ -195,7 +195,10 @@ export function migrateRenamed({ target, dshHome, shipped, renamed = RENAMED }) 
  * folder too (models and preferences in cordis.patch.yml, .plugin-manager/), and an
  * update must not take them away. The shipped cordis.patch.yml only seeds a new profile.
  * The copies are asynchronous, so the window stays live while a new build's packages go in;
- * dsh must not start before the returned promise resolves.
+ * dsh must not start before the returned promise resolves. A quit can cut a copy short (the app
+ * lets it through while dsh is not spawned yet): a new profile is copied beside its place and
+ * moved in whole, with its marker, so a cut-short one never looks like a profile; an update
+ * writes the marker last, so the next start does it again.
  */
 export async function installProfile({ dshHome, source }) {
   const target = join(dshHome, 'profiles', PROFILE)
@@ -205,7 +208,12 @@ export async function installProfile({ dshHome, source }) {
   if (existsSync(marker) && readFileSync(marker, 'utf8') === stamp) return { target, installed: false }
   if (!existsSync(target)) {
     mkdirSync(join(dshHome, 'profiles'), { recursive: true })
-    await cp(source, target, { recursive: true })
+    const fresh = `${target}.installing`
+    await rm(fresh, { recursive: true, force: true })
+    await cp(source, fresh, { recursive: true })
+    writeFileSync(join(fresh, '.omni-desktop-profile'), stamp)
+    renameSync(fresh, target)
+    return { target, installed: true }
   } else {
     // A profile from a build that shipped the Bot team or the welcome under its old name.
     migrateRenamed({ target, dshHome, shipped: readJson(join(source, 'package.json')) })

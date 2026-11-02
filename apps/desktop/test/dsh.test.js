@@ -92,6 +92,34 @@ test('the shipped profile seeds a new home, and a new build replaces only its pa
   assert.equal(readFileSync(join(first.target, '.plugin-manager', 'state.json'), 'utf8'), '{}')
 })
 
+test('a first copy cut short leaves no profile behind, and the next start copies it whole', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-profile-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const source = join(root, 'shipped')
+  mkdirSync(join(source, 'node_modules', 'a'), { recursive: true })
+  writeFileSync(join(source, 'package.json'), '{"dependencies":{"a":"1.0.0"}}')
+  writeFileSync(join(source, 'cordis.patch.yml'), '- id: seed\n  config: {}\n')
+  writeFileSync(join(source, 'node_modules', 'a', 'index.js'), 'a')
+  const dshHome = join(root, 'dsh')
+  const target = join(dshHome, 'profiles', 'omni')
+  // A quit while the copy ran left half of it: a short root file, no packages.
+  mkdirSync(`${target}.installing`, { recursive: true })
+  writeFileSync(join(`${target}.installing`, 'cordis.patch.yml'), '- id: se')
+  // A copy that fails on the way (an unreadable file stands in for the quit) puts nothing in place.
+  if (process.getuid?.() !== 0) {
+    chmodSync(join(source, 'node_modules', 'a', 'index.js'), 0o000)
+    await assert.rejects(installProfile({ dshHome, source }))
+    assert.equal(existsSync(target), false, 'no profile until the copy is whole')
+    chmodSync(join(source, 'node_modules', 'a', 'index.js'), 0o644)
+  }
+  const { installed } = await installProfile({ dshHome, source })
+  assert.equal(installed, true)
+  assert.equal(readFileSync(join(target, 'cordis.patch.yml'), 'utf8'), '- id: seed\n  config: {}\n')
+  assert.equal(readFileSync(join(target, 'node_modules', 'a', 'index.js'), 'utf8'), 'a')
+  assert.equal(existsSync(`${target}.installing`), false)
+  assert.equal((await installProfile({ dshHome, source })).installed, false)
+})
+
 // pnpm refuses to change node_modules linked from another store (ERR_PNPM_UNEXPECTED_STORE),
 // so a profile built on CI, or one a person's own pnpm config re-linked, could not take a
 // plugin from the market.
