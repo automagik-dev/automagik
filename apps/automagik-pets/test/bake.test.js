@@ -82,7 +82,7 @@ describe('bake', () => {
     assert.equal(dir, join(home, 'pets', 'kitty-blue'))
     const manifest = JSON.parse(await readFile(join(dir, 'pet.json'), 'utf8'))
     assert.equal(manifest.id, 'kitty-blue')
-    assert.equal(manifest.displayName, 'Kitty')
+    assert.equal(manifest.displayName, 'Kitty (blue)')
     assert.equal(manifest.spriteVersionNumber, 2)
     assert.equal(manifest.spritesheetPath, 'spritesheet.webp')
     assert.deepEqual(manifest.look, { character: 'kitty', colour: 'blue' })
@@ -173,7 +173,7 @@ describe('the Bot team reads the baked pet', () => {
     await mkdir(join(home, 'pets', '.whale-red.123.ab.tmp', 'frames'), { recursive: true })
     const pets = JSON.parse(JSON.stringify(await createPets({ home, codexHome: join(home, 'no-codex') }).list()))
     const team = pets.filter(pet => pet.source === 'team')
-    assert.deepEqual(team, [{ id: 'whale-blue', name: 'Whale', description: "Automagik's Whale in blue, baked by automagik-pets.", source: 'team', version: 2, sleep: true }])
+    assert.deepEqual(team, [{ id: 'whale-blue', name: 'Whale (blue)', description: "Automagik's Whale in blue, baked by automagik-pets.", source: 'team', version: 2, sleep: true }])
   })
 })
 

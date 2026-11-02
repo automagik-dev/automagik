@@ -31,7 +31,7 @@ so a reader sees the old pet or the new one, never a partial one. A failed bake 
 
 | File | What |
 | --- | --- |
-| `pet.json` | Codex's fields (`id`, `displayName`, `description`, `spriteVersionNumber: 2`, `spritesheetPath`), plus `look`, `cell`, `rows` and `bake` |
+| `pet.json` | Codex's fields (`id`, `displayName` such as "Kitty (blue)", `description`, `spriteVersionNumber: 2`, `spritesheetPath`), plus `look`, `cell`, `rows` and `bake` |
 | `spritesheet.webp` | the v2 atlas: 11 rows of 192x208 cells, 8 to a row (1536x2288), lossless |
 | `sleep.webp` | the DSH sleep strip: 6 cells (1152x208) |
 | `frames/<row>-<n>.png` | every cell as its own 192x208 PNG, for players that cannot crop a sprite (Herdr's GPUI) |

@@ -94,7 +94,7 @@ export async function bakePet(id, { home, env = process.env, render = renderCell
     const label = labelOf(look.character)
     const manifest = {
       id,
-      displayName: label,
+      displayName: `${label} (${look.colour})`,
       description: `Automagik's ${label} in ${look.colour}, baked by ${TOOL}.`,
       spriteVersionNumber: 2,
       spritesheetPath: 'spritesheet.webp',

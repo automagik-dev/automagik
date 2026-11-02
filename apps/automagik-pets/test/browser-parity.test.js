@@ -92,12 +92,20 @@ test("the neutral cell's fill matches the browser bake", { skip }, async (t) => 
     assert.equal(a[3], 255, `browser pixel ${x},${y} is inside the body`)
     for (let channel = 0; channel < 3; channel += 1) assert.ok(Math.abs(a[channel] - b[channel]) <= 4, `pixel ${x},${y}: browser ${a}, ours ${b}`)
   }
-  // And over the whole cell: the same silhouette, the same colors.
-  let total = 0
-  for (let index = 0; index < browserCell.length; index += 1) total += Math.abs(browserCell[index] - oursCell[index])
-  const mean = total / browserCell.length
-  t.diagnostic(`mean channel difference over the cell: ${mean.toFixed(2)}`)
-  assert.ok(mean < 3, `mean channel difference ${mean.toFixed(2)}`)
+  // And over whole cells: the rest pose, and posed ones that use every term of the move (a
+  // hop and squash, a tilt, the gaze and the body's turn, the sad face looking down), so the
+  // transform order and the face's offset match drawCell's, not only the colors.
+  const parts = lookParts(LOOK)
+  for (const name of ['neutral-0', 'jumping-2', 'waving-1', 'look-12', 'failed-3', 'running-right-1']) {
+    const cell = cellPlan().find(entry => entry.name === name)
+    const browserPixels = await sharp(sheet).extract({ left: cell.column * 192, top: cell.row * 208, width: 192, height: 208 }).ensureAlpha().raw().toBuffer()
+    const ourPixels = await renderCell(cellSvg(parts, cell.pose))
+    let total = 0
+    for (let index = 0; index < browserPixels.length; index += 1) total += Math.abs(browserPixels[index] - ourPixels[index])
+    const mean = total / browserPixels.length
+    t.diagnostic(`${name}: mean channel difference ${mean.toFixed(2)}`)
+    assert.ok(mean < 3, `${name}: mean channel difference ${mean.toFixed(2)}`)
+  }
 })
 
 test.after(() => browser?.close())
