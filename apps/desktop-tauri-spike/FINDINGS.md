@@ -8,7 +8,8 @@ Tauri 2.12.5, wry 0.57.1, system WKWebView. How to run it: RUNNING.md.
 
 Tauri does what the wrapper needs: it starts DSH, signs in, draws the page and answers IPC from
 `http://127.0.0.1`. It uses **about 0.4 GB idle instead of about 1.0 GB**. It does not start any faster,
-and the bundle shrinks only by Electron's 288 MB framework.
+and the bundle shrinks only by Electron's 288 MB framework. A like-for-like re-measure on this Mac
+narrows the memory win to about 0.35 GB (see "Like-for-like RSS (macOS)"; preliminary, screen locked).
 
 Blockers:
 
@@ -86,7 +87,7 @@ Tauri side is, if anything, flattered.
 | Total without DSH | 215–270 MB | ~710 MB |
 
 - **Method:** RSS from `ps`. DSH's tree comes from its pid; WebKit's XPC processes are launchd's children, so they are counted by before/after snapshots. RSS overcounts shared framework pages on both sides.
-- **Not like-for-like:** the Electron figure is the labs prototype on Linux x64 (2026-10-20). The installed Electron app was not launched here: it shares its Chromium profile with the real one and downloads updates on start. Tauri's DSH ran on a fresh home showing "Setting up your Main Bot…", which explains its smaller DSH.
+- **Not like-for-like:** the Electron figure is the labs prototype on Linux x64 (2026-10-20). The installed Electron app was not launched here: it shares its Chromium profile with the real one and downloads updates on start. Tauri's DSH ran on a fresh home showing "Setting up your Main Bot…", which explains its smaller DSH. The installed app was measured later under one protocol for both shells: see "Like-for-like RSS (macOS)".
 - **With two Bot views:** 0.82–0.96 GB, read only 6 s after load. DSH's page process was still at ~320 MB then (before it settles), and each Bot view's WebContent was ~29 MB.
 
 ### Bundle size (macOS arm64)
@@ -120,3 +121,96 @@ DSH's runtime is the bulk on both sides. Download sizes (compressed dmg/zip) wer
 - `src-tauri/src/bridge.js`: the init script (preload equivalent, timings, error capture, the WebKit probes).
 - `src-tauri/capabilities/dsh.json`: the remote-origin capability. `src-tauri/Info.plist`: microphone and speech usage strings.
 - `measure.sh`: one timed launch, RSS, and a full stop. `test/bot.html`: the per-Bot store probe.
+
+## Like-for-like RSS (macOS)
+
+**Preliminary: measured with the console locked.** The Mac's screen was locked from 21:56 UTC
+(`IOConsoleLocked = Yes`), before the first run, so every window was hidden. Chromium throttles hidden
+pages; WebKit suspends their timers and `requestAnimationFrame`. Page and GPU processes are probably
+smaller on both sides than with the window in front (the unlocked spike runs above had a 84–122 MB
+WebContent; here it is 46–52 MB). The DSH rows are the least affected: DSH is a server, not a window.
+Redo all six runs with the screen unlocked before quoting these numbers as final.
+
+Same Mac (Apple silicon, 48 GB, macOS 26.5.2), 2026-11-02, 22:30–23:04 UTC. Both shells run the
+installed 3.51.0 runtime and profile (`/Applications/Automagik.app/Contents/Resources`, dsh 0.2.1-rc.4)
+on the same data: Electron on the real `~/.automagik/desktop`, Tauri on an APFS clone of it taken right
+after the last Electron run (`cp -c -a`, 53 GB, of which 52 GB is `bots/workspace`). The spike logged
+"profile already there", so it used the installed profile in the copy, not a fresh one.
+
+### Idle RSS, 0 Bot browser views (MB, 60 s after the page was drawn)
+
+| Process | Electron run 1 | run 2 | run 3 | Tauri run 1 | run 2 | run 3 |
+|---|---|---|---|---|---|---|
+| App process | 143.9 | 143.5 | 144.3 | 71.0 | 77.5 | 78.8 |
+| Window frame (Electron renderer 1) | 101.5 | 97.9 | 102.3 | — | — | — |
+| DSH's page (Electron renderer 2 / WebKit WebContent) | 167.2 | 128.6 | 157.2 | 46.2 | 51.7 | 51.7 |
+| GPU (Electron helper / WebKit GPU) | 65.0 | 66.6 | 65.0 | 19.6 | 23.0 | 22.7 |
+| Network (Electron utility / WebKit Networking) | 49.2 | 48.1 | 48.6 | 15.3 | 15.5 | 15.2 |
+| DSH (no children at the read point) | 319.3 | 172.7 | 170.4 | 131.7 | 110.8 | 114.9 |
+| **Total** | **846.1** | **657.4** | **687.8** | **283.8** | **278.5** | **283.3** |
+| Total without DSH | 526.8 | 484.7 | 517.4 | 152.1 | 167.7 | 168.4 |
+
+- **Electron:** 0.66–0.85 GB on the real home, not the ~1.0 GB of the Linux prototype figure. Run 1
+  was a cold start (DSH ready after 11.3 s, against 1.9–2.8 s in runs 2–3); its DSH was 319 MB, against
+  ~171 MB warm. The two renderers are told apart by start order: the first starts when the window is
+  shown (the frame), the second after DSH is ready (DSH's page).
+- **Tauri:** 0.28 GB on the same data. Its DSH was 111–132 MB here, against 122–163 MB on a fresh
+  home: the fresh home was not why the spike's DSH looked small.
+- **Shell overhead (total without DSH):** 0.48–0.53 GB for Electron, 0.15–0.17 GB for Tauri. That
+  ~0.35 GB difference is what the wrapper itself saves.
+- **DSH difference (~170 vs 111–132 MB warm) is not credited to Tauri.** Electron runs DSH on its own
+  binary as Node (`ELECTRON_RUN_AS_NODE`, Node 24.21.0, Electron 44.5.0); the spike uses nvm's Node
+  24.13.1. Electron's DSH also adopts the four live Claude keepers in `~/.local/state/dsh-oh-my-claude`,
+  while the spike's was pointed at an empty state dir (below). Electron also sets `AUTOMAGIK_APP_BROWSER`
+  and the user's privacy overlay; the spike leaves the first unset and writes its default overlay.
+
+### Method
+
+- **Total:** the app process and its process tree (Electron's helpers and DSH are its children; DSH
+  had no children at the read point on either side), plus every new process since launch that is off
+  that tree and related to the app (WebKit's WebContent, GPU and Networking XPC services are launchd's
+  children). RSS from one `ps -axo pid,ppid,rss,command` read, in KB, shown here in MB (/1024). RSS
+  overcounts shared framework pages on both sides.
+- **Launch:** like a person, through Launch Services: `open /Applications/Automagik.app`, and
+  `open -n --env …` for the spike's release `.app` (built from this branch). Before each run, no
+  Automagik or spike app was running (checked with `pgrep`).
+- **Page drawn:** Electron: the `start: page in` line in `~/.automagik/desktop/logs/start.log`
+  (`did-finish-load`), 3.0–4.1 s after `open` (13.5 s in the cold run 1). Tauri: the bridge's `load`
+  from DSH's origin, 3.4–5.1 s after `open`. With the screen locked, the spike's own "page visible"
+  check never runs (its timers are suspended), so `load` is used on both sides.
+- **Read point:** `ps` 60 s after that line. **Quit:** an Apple Event quit to each app's bundle id;
+  start.log showed `quit: dsh stopped` for every Electron run and the spike logged `dsh stopped`.
+- **Spike settings:** `SPIKE_START=direct` (the default placeholder start runs into the
+  `SameSite=Strict` cookie break and never shows DSH's app: three earlier runs were thrown away for
+  this, `load` at 86 ms), `SPIKE_RESOURCES` set to the installed app, `SPIKE_HOME` set to the copy,
+  `DSH_OMC_STATE_DIR` set to an empty temp dir. Without that last one, the copy's DSH would adopt the
+  real app's live Claude keepers in `~/.local/state/dsh-oh-my-claude`.
+- **Excluded:** processes that were already running (four keeper processes on the Automagik binary, and
+  a DSH of another home, `~/automagik-gtm`), and processes from other sessions that overlapped
+  (an Electron startup benchmark in Electron run 3, an automagik-herdr node in Tauri runs 2–3). Every
+  row counted belongs to the app's tree or is a WebKit service that started after launch.
+- **Updates:** the app checked for updates and stayed at 3.51.0 ("newest stable release"); nothing
+  was downloaded.
+- **Data safety:** nothing under `~/.automagik/desktop` changed between the last Electron quit and the
+  end of the Tauri runs (`find -newer` on a marker). The copy was deleted afterwards. Nothing started
+  by these runs was left running.
+
+### 2 Bot browser views: not measured
+
+- **Electron:** the only route without code or data changes is the app's own Bot browser panel: two
+  Bots have saved tabs (`bots/browser-profiles/*/tabs.json`: a GitHub sign-in page and iana.org), and
+  opening their panels reopens them as views. With the screen locked the app's window could not be
+  driven: no accessibility tree, a blank capture, and macOS refused to bring it to the front.
+- **Tauri:** the switch exists (`SPIKE_BOT_URL`), but it was not run: there is no Electron number to
+  compare with, and hidden views say little about their size on screen.
+
+### How this changes the recommendation
+
+The memory win is smaller than the "0.4 instead of 1.0 GB" above. On the same Mac and data the
+wrapper saves about 0.35 GB at idle with no Bot browsing (0.15–0.17 against 0.48–0.53 GB of shell),
+and the whole app goes from 0.66–0.85 GB to about 0.28 GB. That saving disappears whenever a Bot
+browses if blocker 1 is solved with a separate Chromium: that brings back roughly the Electron shell's
+browser, GPU, network and renderer processes. The recommendation stays the same: no-go as a drop-in
+replacement. Memory alone does not justify a port; the WKWebView Bot-driver spike decides between
+"Tauri everywhere" and "Tauri shell + Chromium only while a Bot browses". Before D12 cites these
+numbers, redo the six runs (and the 2-view runs) with the screen unlocked.
