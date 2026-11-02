@@ -39,20 +39,21 @@ export const assetUrl = (version, file) => `${RELEASES}/download/v${version}/${f
 
 // Installs or updates ~/.local/bin/usagemeter from $1 (an https URL) if its SHA-256 is not $2.
 // $3 is the version that URL holds: an installed usagemeter reporting a newer one stays (never
-// downgrade). The download goes to a temporary file beside it and replaces it only once the hash
-// matches. Prints current, newer or installed.
+// downgrade), checked again just before the rename in case Herdr updated it meanwhile. The download
+// goes to a temporary file beside it and replaces it only once the hash matches. Prints current,
+// newer or installed.
 export const INSTALL = `set -eu
 url=$1; want=$2; version=$3
 dir=$HOME/.local/bin; dest=$dir/usagemeter
 sum() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
-if [ -f "$dest" ] && [ "$(sum "$dest")" = "$want" ]; then echo current; exit 0; fi
-if [ -x "$dest" ]; then
+newer() {
+  [ -x "$dest" ] || return 1
   have=$("$dest" --version 2>/dev/null | awk 'NR == 1 && $1 == "usagemeter" { v = $2; sub(/^v/, "", v); print v }' || true)
-  case $have in [0-9]*.[0-9]*.[0-9]*) ;; *) have= ;; esac
-  if [ -n "$have" ] && awk -v a="$have" -v b="$version" 'BEGIN { split(a, x, "."); split(b, y, "."); for (i = 1; i <= 3; i++) { if (x[i] + 0 > y[i] + 0) exit 0; if (x[i] + 0 < y[i] + 0) exit 1 } exit 1 }'; then
-    echo newer; exit 0
-  fi
-fi
+  case $have in [0-9]*.[0-9]*.[0-9]*) ;; *) return 1 ;; esac
+  awk -v a="$have" -v b="$version" 'BEGIN { split(a, x, "."); split(b, y, "."); for (i = 1; i <= 3; i++) { if (x[i] + 0 > y[i] + 0) exit 0; if (x[i] + 0 < y[i] + 0) exit 1 } exit 1 }'
+}
+if [ -f "$dest" ] && [ "$(sum "$dest")" = "$want" ]; then echo current; exit 0; fi
+if newer; then echo newer; exit 0; fi
 command -v curl >/dev/null 2>&1 || { echo "curl is not installed" >&2; exit 4; }
 mkdir -p "$dir"
 tmp=$(mktemp "$dir/.usagemeter.XXXXXX")
@@ -60,6 +61,7 @@ trap 'rm -f "$tmp"' EXIT
 curl -fsSL --proto '=https' --tlsv1.2 --max-time 120 -o "$tmp" "$url"
 [ "$(sum "$tmp")" = "$want" ] || { echo "checksum mismatch" >&2; exit 3; }
 chmod 755 "$tmp"
+if newer; then echo newer; exit 0; fi
 mv -f "$tmp" "$dest"
 trap - EXIT
 echo installed`

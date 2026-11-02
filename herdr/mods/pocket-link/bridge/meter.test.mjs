@@ -3,7 +3,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, chmodSync, mkdirSync, statSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, chmodSync, mkdirSync, statSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -67,6 +67,19 @@ test('install never downgrades: an installed usagemeter newer than the release s
       assert.equal(readFileSync(s.dest, 'utf8'), release.toString())
     }
   }
+})
+
+test('install never downgrades a usagemeter updated during the download', () => {
+  const release = Buffer.from('#!/bin/sh\necho usagemeter 0.9.0\n')
+  const s = sandbox(release)
+  fakeMeter(s, '0.8.0')
+  // Another installer (Herdr) puts 0.10.0 in place while this one downloads 0.9.0.
+  const newer = `#!/bin/sh\necho usagemeter 0.10.0\n`
+  writeFileSync(join(s.dir, 'newer'), newer)
+  writeFileSync(join(s.bin, 'curl'), `#!/bin/sh\ncp "${join(s.dir, 'newer')}" "${s.dest}"\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && cp "${s.dir}/payload" "$2"; shift; done\n`)
+  assert.deepEqual(s.run(sha(release), '0.9.0'), { code: 0, out: 'newer' })
+  assert.equal(readFileSync(s.dest, 'utf8'), newer)
+  assert.deepEqual(readdirSync(join(s.home, '.local/bin')), ['usagemeter'], 'the download is cleaned up')
 })
 
 test('install on a machine without curl says so', () => {
