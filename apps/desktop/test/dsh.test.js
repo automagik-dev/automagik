@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
@@ -45,7 +45,7 @@ test('resources come from the app when packaged and from build/ in a checkout', 
   assert.equal(resourcesOf({ packaged: false, resourcesPath: '/x', appPath: '/src/apps/omni-desktop' }).profile, '/src/apps/omni-desktop/build/profile')
 })
 
-test('the shipped profile seeds a new home, and a new build replaces only its packages', (t) => {
+test('the shipped profile seeds a new home, and a new build replaces only its packages', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'omni-desktop-profile-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const source = join(root, 'shipped')
@@ -55,7 +55,7 @@ test('the shipped profile seeds a new home, and a new build replaces only its pa
   writeFileSync(join(source, 'node_modules', '@automagik', 'omni-dsh', 'index.js'), 'v1')
   const dshHome = join(root, 'dsh')
 
-  const first = installProfile({ dshHome, source })
+  const first = await installProfile({ dshHome, source })
   assert.equal(first.installed, true)
   assert.equal(first.target, join(dshHome, 'profiles', 'omni'))
   assert.equal(readFileSync(join(first.target, 'node_modules', '@automagik', 'omni-dsh', 'index.js'), 'utf8'), 'v1')
@@ -65,7 +65,7 @@ test('the shipped profile seeds a new home, and a new build replaces only its pa
   writeFileSync(join(first.target, 'cordis.patch.yml'), '- id: llm-pi-ai  # the user\'s models')
   mkdirSync(join(first.target, '.plugin-manager'))
   writeFileSync(join(first.target, '.plugin-manager', 'state.json'), '{}')
-  assert.equal(installProfile({ dshHome, source }).installed, false)
+  assert.equal((await installProfile({ dshHome, source })).installed, false)
   assert.equal(existsSync(join(first.target, 'cordis.yml')), true)
 
   writeFileSync(join(source, 'package.json'), '{"dependencies":{"@automagik/omni-dsh":"0.1.8"}}')
@@ -73,7 +73,7 @@ test('the shipped profile seeds a new home, and a new build replaces only its pa
   // pnpm resolves the plugin manager's installs from the lock: the new build's comes with its packages.
   writeFileSync(join(source, 'pnpm-lock.yaml'), 'omni-dsh 0.1.8')
   writeFileSync(join(first.target, 'pnpm-lock.yaml'), 'omni-dsh 0.1.7')
-  assert.equal(installProfile({ dshHome, source }).installed, true)
+  assert.equal((await installProfile({ dshHome, source })).installed, true)
   assert.equal(readFileSync(join(first.target, 'pnpm-lock.yaml'), 'utf8'), 'omni-dsh 0.1.8')
   assert.equal(readFileSync(join(first.target, 'node_modules', '@automagik', 'omni-dsh', 'index.js'), 'utf8'), 'v2')
   assert.deepEqual(JSON.parse(readFileSync(join(first.target, 'package.json'), 'utf8')), { dependencies: { '@automagik/omni-dsh': '0.1.8' } })
@@ -82,11 +82,11 @@ test('the shipped profile seeds a new home, and a new build replaces only its pa
 
   // A build id, when the build stamped one, decides even with the same package.json.
   writeFileSync(join(source, '.build-id'), '0.1.8+one')
-  assert.equal(installProfile({ dshHome, source }).installed, true)
-  assert.equal(installProfile({ dshHome, source }).installed, false)
+  assert.equal((await installProfile({ dshHome, source })).installed, true)
+  assert.equal((await installProfile({ dshHome, source })).installed, false)
   writeFileSync(join(source, 'node_modules', '@automagik', 'omni-dsh', 'index.js'), 'v3')
   writeFileSync(join(source, '.build-id'), '0.1.8+two')
-  assert.equal(installProfile({ dshHome, source }).installed, true)
+  assert.equal((await installProfile({ dshHome, source })).installed, true)
   assert.equal(readFileSync(join(first.target, 'node_modules', '@automagik', 'omni-dsh', 'index.js'), 'utf8'), 'v3')
   assert.equal(readFileSync(join(first.target, 'cordis.patch.yml'), 'utf8'), '- id: llm-pi-ai  # the user\'s models')
   assert.equal(readFileSync(join(first.target, '.plugin-manager', 'state.json'), 'utf8'), '{}')
@@ -299,6 +299,27 @@ test('dsh gets node and pnpm on its PATH, both on the app\'s own Node', (t) => {
   assert.equal(dshEnv({ base: { PATH: '/usr/local/bin:/bin' }, home: '/a', userHome: '/u' }).PATH, '/usr/local/bin:/bin:/u/.local/bin:/u/.claude/local:/opt/homebrew/bin')
 })
 
+test('a start leaves node and pnpm as they are when they already say the same, and rewrites them when not', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-tools-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const dir = join(root, 'bin')
+  writeTools({ dir, node: '/app/one/node', pnpm: '/app/one/pnpm.cjs' })
+  const old = new Date(Math.floor(Date.now() / 1000) * 1000 - 60_000)
+  for (const name of ['node', 'pnpm']) utimesSync(join(dir, name), old, old)
+  const unchanged = name => statSync(join(dir, name)).mtimeMs === old.getTime()
+  writeTools({ dir, node: '/app/one/node', pnpm: '/app/one/pnpm.cjs' })
+  assert.ok(unchanged('node') && unchanged('pnpm'), 'nothing is written when nothing changed')
+  // A tool that lost its execute bit is written again.
+  chmodSync(join(dir, 'pnpm'), 0o644)
+  writeTools({ dir, node: '/app/one/node', pnpm: '/app/one/pnpm.cjs' })
+  assert.equal(statSync(join(dir, 'pnpm')).mode & 0o777, 0o755)
+  assert.ok(unchanged('node'))
+  // The app moved (a new install): both name the new path.
+  writeTools({ dir, node: '/app/two/node', pnpm: '/app/one/pnpm.cjs' })
+  assert.ok(!unchanged('node') && readFileSync(join(dir, 'node'), 'utf8').includes("'/app/two/node'"))
+  assert.ok(readFileSync(join(dir, 'pnpm'), 'utf8').includes("'/app/two/node'"))
+})
+
 test('an update adds the settings a newer build ships and keeps every one the user has', () => {
   const shipped = `# Omni's own search.
 - insert:
@@ -323,7 +344,7 @@ test('an update adds the settings a newer build ships and keeps every one the us
   assert.equal(mergeProfilePatch(shipped, shipped), null)
 })
 
-test('an existing profile gets pnpm settings and the newer build\'s settings on update', (t) => {
+test('an existing profile gets pnpm settings and the newer build\'s settings on update', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'omni-desktop-migrate-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const source = join(root, 'shipped')
@@ -332,14 +353,14 @@ test('an existing profile gets pnpm settings and the newer build\'s settings on 
   writeFileSync(join(source, '.build-id'), 'one')
   writeFileSync(join(source, 'cordis.patch.yml'), '- id: web\n  config:\n    searchProvider: auto\n')
   const dshHome = join(root, 'dsh')
-  const { target } = installProfile({ dshHome, source })
+  const { target } = await installProfile({ dshHome, source })
   // An install from before pnpm-workspace.yaml shipped, with the user's own search.
   rmSync(join(target, 'pnpm-workspace.yaml'), { force: true })
   writeFileSync(join(target, 'cordis.patch.yml'), '- id: web\n  config:\n    searchProvider: brave\n')
   writeFileSync(join(source, 'pnpm-workspace.yaml'), 'nodeLinker: hoisted\n')
   writeFileSync(join(source, 'cordis.patch.yml'), '- id: web\n  config:\n    searchProvider: auto\n- id: plugin-market\n  config:\n    indexes: []\n')
   writeFileSync(join(source, '.build-id'), 'two')
-  installProfile({ dshHome, source })
+  await installProfile({ dshHome, source })
   assert.equal(readFileSync(join(target, 'pnpm-workspace.yaml'), 'utf8'), 'nodeLinker: hoisted\n')
   assert.equal(
     readFileSync(join(target, 'cordis.patch.yml'), 'utf8'),
@@ -347,7 +368,7 @@ test('an existing profile gets pnpm settings and the newer build\'s settings on 
   )
 })
 
-test('an update replaces the packages the app ships and keeps the plugins the user installed', (t) => {
+test('an update replaces the packages the app ships and keeps the plugins the user installed', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'omni-desktop-keep-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const source = join(root, 'shipped')
@@ -358,7 +379,7 @@ test('an update replaces the packages the app ships and keeps the plugins the us
   writeFileSync(join(source, 'cordis.patch.yml'), '[]\n')
   writeFileSync(join(source, '.build-id'), 'one')
   const dshHome = join(root, 'dsh')
-  const { target } = installProfile({ dshHome, source })
+  const { target } = await installProfile({ dshHome, source })
   // The user installs a market plugin: dsh's pnpm adds it, and its own dependency, beside Omni's.
   mkdirSync(join(target, 'node_modules', 'dsh-kimi-subscription'), { recursive: true })
   mkdirSync(join(target, 'node_modules', '@automagik', 'their-plugin'), { recursive: true })
@@ -380,7 +401,7 @@ test('an update replaces the packages the app ships and keeps the plugins the us
   writeFileSync(join(source, 'pnpm-lock.yaml'), 'shipped')
   writeFileSync(join(target, 'pnpm-lock.yaml'), 'stale')
   writeFileSync(join(source, '.build-id'), 'two')
-  installProfile({ dshHome, source })
+  await installProfile({ dshHome, source })
   assert.deepEqual(readdirSync(join(target, 'vendor')).sort(), ['omni-dsh-2.tgz', 'their-plugin-1.0.0.tgz'])
   assert.equal(existsSync(join(target, 'pnpm-lock.yaml')), false)
   assert.equal(readFileSync(join(target, 'node_modules', '@automagik', 'omni-dsh', 'index.js'), 'utf8'), 'v2')
@@ -397,7 +418,7 @@ test('an update replaces the packages the app ships and keeps the plugins the us
 // as @automagik/omni-dsh and @automagik/omni-ai-dsh. An update into this app finds such a
 // profile: it must end with the new packages only, the user's rows naming them, and the
 // team's home untouched.
-test('an update moves a profile from the renamed packages to the new ones and keeps everything else', (t) => {
+test('an update moves a profile from the renamed packages to the new ones and keeps everything else', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'omni-desktop-rename-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const dshHome = join(root, 'dsh')
@@ -437,7 +458,7 @@ test('an update moves a profile from the renamed packages to the new ones and ke
   writeFileSync(join(source, 'cordis.patch.yml'), readFileSync(new URL('../profile/cordis.patch.yml', import.meta.url), 'utf8'))
   writeFileSync(join(source, '.build-id'), 'new build')
 
-  assert.equal(installProfile({ dshHome, source }).installed, true)
+  assert.equal((await installProfile({ dshHome, source })).installed, true)
   const merged = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8'))
   assert.deepEqual(Object.keys(merged.dependencies), [...fresh, 'dsh-kimi-subscription'])
   assert.deepEqual(merged.dsh.profile.bundles, ['@deepseek-ai/dsh-base', ...fresh, 'dsh-kimi-subscription'])
