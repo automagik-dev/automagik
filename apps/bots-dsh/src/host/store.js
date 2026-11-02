@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { LEGACY_THEMES, MAX_EXCHANGES, ROOM_MODES, TEXT_KEPT } from './constants.js'
 import { replaceFile } from './files.js'
 import { homeLock } from './home-lock.js'
+import { GENIE_CLAY, shipsPet } from './pets.js'
 import { currentColor, headOf, normalize, unquote } from './text.js'
 
 // A table read that sees only the keys the table holds itself. Ids that come from
@@ -164,6 +165,23 @@ export function install(rt) {
         if (bot?.avatar?.shape === 'whale') bot.avatar = { ...bot.avatar, shape: 'octopus' }
       }
       state.octopusStored = true
+      migrated = true
+    }
+    // Genie's pet moved from genie-cosmic to genie-clay (the clay kit's Genie). Once, every
+    // Bot wearing genie-cosmic changes to it.
+    if (state.genieClayStored !== true) {
+      for (const bot of Object.values(state.bots)) {
+        const pet = bot?.avatar?.pet
+        if (pet?.source === 'builtin' && pet.id === 'genie-cosmic') bot.avatar = { ...bot.avatar, pet: { ...GENIE_CLAY } }
+      }
+      state.genieClayStored = true
+      migrated = true
+    }
+    // A builtin pet the plugin no longer ships would draw nothing: its Bot wears Genie instead.
+    for (const bot of Object.values(state.bots)) {
+      const pet = bot?.avatar?.pet
+      if (pet?.source !== 'builtin' || shipsPet(pet.id)) continue
+      bot.avatar = { ...bot.avatar, pet: { ...GENIE_CLAY } }
       migrated = true
     }
     if (Object.hasOwn(LEGACY_THEMES, state.prefs.theme ?? '')) {

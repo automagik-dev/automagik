@@ -3028,7 +3028,7 @@ function useGaze(ref, enabled) {
   }, [enabled]);
 }
 var FIDGETS = ["hop", "sway", "stretch", "look"];
-var GENIE_PET = Object.freeze({ source: "builtin", id: "genie-cosmic", version: 2, sleep: true });
+var GENIE_PET = Object.freeze({ source: "builtin", id: "genie-clay", version: 1, sleep: true });
 var UNFOLD_PET = Object.freeze({ source: "builtin", id: "unfold", version: 2, sleep: true });
 var petUrl = (pet, part) => `api/omni-ui/pet?${new URLSearchParams({ source: pet.source, id: pet.id, ...part ? { part } : {} })}`;
 var servedPet = (pet) => ({ sheet: petUrl(pet), sleep: pet.sleep ? petUrl(pet, "sleep") : void 0, version: pet.version });
@@ -13560,7 +13560,7 @@ var slug = (text2) => String(text2 ?? "").normalize("NFKD").replace(/[̀-ͯ]/g, 
 var PICK_MS = 900;
 function automagikRoster({ unfold = false } = {}) {
   return [
-    { key: "pet:builtin:genie-cosmic", kind: "pet", pet: { ...GENIE_PET, name: "Genie" }, name: "Genie", line: "Automagik" },
+    { key: "pet:builtin:genie-clay", kind: "pet", pet: { ...GENIE_PET, name: "Genie" }, name: "Genie", line: "Automagik" },
     { key: "omni", kind: "omni", name: "Omni", line: "Automagik" },
     { key: "pet:builtin:automagik", kind: "pet", pet: { source: "builtin", id: "automagik", name: "Automagik", version: 2, sleep: true }, name: "Automagik", line: "Automagik" },
     ...unfold ? [{ key: "pet:builtin:unfold", kind: "pet", pet: { ...UNFOLD_PET, name: "Unfold" }, name: "Unfold", line: "Automagik" }] : [],
@@ -13571,7 +13571,7 @@ function automagikRoster({ unfold = false } = {}) {
 function currentKey(bot, look) {
   if (look.image) return "photo";
   if (look.pet) return `pet:${look.pet.source}:${look.pet.id}`;
-  if (bot?.kind === "genie") return "pet:builtin:genie-cosmic";
+  if (bot?.kind === "genie") return "pet:builtin:genie-clay";
   if (bot?.kind === "unfold") return "pet:builtin:unfold";
   if (look.shape === "octopus" && look.color === "deepseek") return "omni";
   return `shape:${look.shape}`;

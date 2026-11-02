@@ -1,7 +1,7 @@
-// Genie's Codex-format v1 atlas (spritesheet.webp, built by dev/art/clay-kit.py), read by the
-// team's mark states (src/client/mark.js STATES). Not wired into the app yet: the marks show
-// Genie's still faces (src/client/clay-art.js) and move them with CSS. This is the map a
-// sprite player would use.
+// Genie's Codex-format v1 atlas (spritesheet.webp, built by dev/art/clay-kit.py with its
+// sleep strip, sleep.webp), read by the team's mark states (src/client/mark.js STATES). The
+// plugin ships it as the builtin pet genie-clay, which src/client/pet.js plays; this is the
+// row map that player follows, kept beside the art for review.
 export const CELL = Object.freeze({ width: 192, height: 208, columns: 8 })
 // Row index and frame count, in the atlas's order.
 export const ROWS = Object.freeze({
