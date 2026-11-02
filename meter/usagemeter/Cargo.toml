@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
 description = "Counts coding-agent token usage per machine as ae/1 rows and publishes a summary doc to herdr-core"
-license-file = "../LICENSE"
+license-file = "LICENSE"
 publish = false
 
 [[bin]]
