@@ -19,7 +19,7 @@ import { noteRestart, restartLine, steps } from './timeline.js'
 import { startUp } from './startup.js'
 import { dismissSplash, showUpdateSplash } from './splash.js'
 import { PUBLISHERS, TRIAL_MS, beforeStart, checkLane, confirm as confirmLane, installedVersions, laneMemory, stage as stageLane, stagedOf, stagedVersion, trialFailed } from './lane.js'
-import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, forgetDshLogins, privacyFileOf, privacyPatchOf, freePort, guardContents, installProfile, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
+import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, forgetDshLogins, privacyFileOf, privacyPatchOf, guardContents, installProfile, keepPort, launchPort, pinProfileStore, portFileOf, preloadOf, resourcesOf, servesOrigin, startDshOnPort, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
 import { BotCursor } from './bot-cursor.js'
 import { BotRelay } from './bot-relay.js'
 import { BotViews, isBotId, isTabId } from './bot-views.js'
@@ -198,7 +198,9 @@ async function launch() {
   let binDir = null
   await startUp({
     mark: step => started.mark(step),
-    port: freePort,
+    // The port dsh served on last time, while it is still free: the page's URL, and so its
+    // cached bundle and its storage, stay the same (dsh.js launchPort).
+    port: () => launchPort(portFileOf(home)),
     // The profile is in place before dsh reads it.
     profile: async () => {
       const { target } = await installProfile({ dshHome: join(home, 'dsh'), source: resources.profile })
@@ -219,10 +221,17 @@ async function launch() {
       // A new anonymous id every launch (dsh.js ANONYMOUS_ID), unless they chose to keep one.
       if (privacy['stable-id'] !== true) rmSync(join(home, 'dsh', ANONYMOUS_ID), { force: true })
       const overlay = writeOverlay(privacyPatchOf(home), privacy)
-      return startDsh({ node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload, privacy }), port, cwd: home, log, privacy: overlay, onSpawn: (child) => { dshChild = child; child.on('message', message => answerDsh(child, message)); started.mark('dsh spawned') } })
+      // Something that took the port before dsh bound it gets dsh started on a fresh one.
+      const onPort = (next) => {
+        started.mark(`port ${port} taken, dsh on ${next}`)
+        dshOrigin = `http://127.0.0.1:${next}`
+      }
+      return startDshOnPort({ node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload, privacy }), port, onPort, cwd: home, log, privacy: overlay, onSpawn: (child) => { dshChild = child; child.on('message', message => answerDsh(child, message)); started.mark('dsh spawned') } })
         .then((running) => {
           dsh = running
           started.mark('dsh ready')
+          // Only a port dsh bound and served on is kept for the next launch.
+          try { keepPort(portFileOf(home), Number(new URL(running.url).port)) } catch (error) { startLog(`${new Date().toISOString()} start: port not kept (${error.message})\n`) }
           dsh.child.once('exit', (code) => {
             if (!quitting) fail(new Error(`dsh stopped (${code}).`))
           })
@@ -243,10 +252,13 @@ async function launch() {
       }
     },
     // Before the page is made: every webContents from here on keeps to dsh's origin.
-    guard: () => harden(dshOrigin),
+    guard: () => harden(() => dshOrigin),
     view: () => { if (window) makePage() },
-    load: async ({ url }) => {
+    load: async (running) => {
       if (!window || !page) return
+      // The page comes only from the dsh this start spawned, on the origin the guard keeps to.
+      if (!servesOrigin(running, dshOrigin)) throw new Error(`dsh's launch URL is not on ${dshOrigin}.`)
+      const { url } = running
       started.mark('page loading')
       await page.webContents.loadURL(url)
     },
@@ -618,6 +630,7 @@ function shortcut(event, input) {
   event.preventDefault()
 }
 
+// `origin` answers dsh's origin as it is now (a dsh started again on another port moves it).
 function harden(origin) {
   // Every webContents but a Bot view's, which bot-views.js gives rules of its own.
   app.on('web-contents-created', (_event, contents) => {
@@ -627,7 +640,7 @@ function harden(origin) {
   // only, never the camera); macOS asks the person once for the microphone, with the app's
   // usage line (electron-builder.yml).
   const allowed = (contents, permission, details = {}) => {
-    if (new URL(contents.getURL()).origin !== origin) return false
+    if (new URL(contents.getURL()).origin !== origin()) return false
     if (permission === 'media') return !(details.mediaTypes ?? []).includes('video') && details.mediaType !== 'video'
     return ['notifications', 'clipboard-sanitized-write', 'clipboard-read'].includes(permission)
   }
