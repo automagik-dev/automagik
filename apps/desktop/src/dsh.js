@@ -12,7 +12,8 @@
 // one (~/.automagik/bots), so neither sees the other's Bots or Sessions. Omni's own folder
 // (~/.omni: its sandbox, the Bun its channels download) is Omni's.
 import { spawn } from 'node:child_process'
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cp, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
@@ -54,8 +55,9 @@ const shellQuote = text => `'${String(text).replaceAll("'", `'\\''`)}'`
 /**
  * Write `node` and `pnpm` into `dir` for dsh's PATH: dsh's plugin manager installs plugins
  * (the market, Settings → Plugins) with pnpm, and nothing guarantees a machine has Node or
- * pnpm. Both run on `node`, the app's own binary as Node (ELECTRON_RUN_AS_NODE). Written at
- * every launch, since the app's path changes with each install.
+ * pnpm. Both run on `node`, the app's own binary as Node (ELECTRON_RUN_AS_NODE). Checked at
+ * every launch, since the app's path changes with each install; a file that already says the
+ * same, and can run, is left as it is.
  */
 export function writeTools({ dir, node, pnpm }) {
   mkdirSync(dir, { recursive: true })
@@ -65,10 +67,20 @@ export function writeTools({ dir, node, pnpm }) {
   }
   for (const [name, line] of Object.entries(tools)) {
     const file = join(dir, name)
-    writeFileSync(file, `#!/bin/sh\n# Written by the Automagik desktop app at launch (src/dsh.js writeTools).\n${line}\n`)
+    const text = `#!/bin/sh\n# Written by the Automagik desktop app at launch (src/dsh.js writeTools).\n${line}\n`
+    if (sameTool(file, text)) continue
+    writeFileSync(file, text)
     chmodSync(file, 0o755)
   }
   return dir
+}
+
+const sameTool = (file, text) => {
+  try {
+    return (statSync(file).mode & 0o777) === 0o755 && readFileSync(file, 'utf8') === text
+  } catch {
+    return false
+  }
 }
 
 // The top-level entries of a cordis patch file (a YAML list): each starts with "- " at the
@@ -182,8 +194,13 @@ export function migrateRenamed({ target, dshHome, shipped, renamed = RENAMED }) 
  * (node_modules, package.json) and nothing else: dsh keeps the user's settings in that
  * folder too (models and preferences in cordis.patch.yml, .plugin-manager/), and an
  * update must not take them away. The shipped cordis.patch.yml only seeds a new profile.
+ * The copies are asynchronous, so the window stays live while a new build's packages go in;
+ * dsh must not start before the returned promise resolves. A quit can cut a copy short (the app
+ * lets it through while dsh is not spawned yet): a new profile is copied beside its place and
+ * moved in whole, with its marker, so a cut-short one never looks like a profile; an update
+ * writes the marker last, so the next start does it again.
  */
-export function installProfile({ dshHome, source }) {
+export async function installProfile({ dshHome, source }) {
   const target = join(dshHome, 'profiles', PROFILE)
   const id = join(source, '.build-id')
   const stamp = existsSync(id) ? readFileSync(id, 'utf8') : readFileSync(join(source, 'package.json'), 'utf8')
@@ -191,15 +208,20 @@ export function installProfile({ dshHome, source }) {
   if (existsSync(marker) && readFileSync(marker, 'utf8') === stamp) return { target, installed: false }
   if (!existsSync(target)) {
     mkdirSync(join(dshHome, 'profiles'), { recursive: true })
-    cpSync(source, target, { recursive: true })
+    const fresh = `${target}.installing`
+    await rm(fresh, { recursive: true, force: true })
+    await cp(source, fresh, { recursive: true })
+    writeFileSync(join(fresh, '.omni-desktop-profile'), stamp)
+    renameSync(fresh, target)
+    return { target, installed: true }
   } else {
     // A profile from a build that shipped the Bot team or the welcome under its old name.
     migrateRenamed({ target, dshHome, shipped: readJson(join(source, 'package.json')) })
     // Only the packages the app ships are replaced: a plugin the user installed (the market,
     // Settings → Plugins) stays, with its dependencies, and in package.json.
     for (const name of packagesIn(join(source, 'node_modules'))) {
-      rmSync(join(target, 'node_modules', name), { recursive: true, force: true })
-      cpSync(join(source, 'node_modules', name), join(target, 'node_modules', name), { recursive: true })
+      await rm(join(target, 'node_modules', name), { recursive: true, force: true })
+      await cp(join(source, 'node_modules', name), join(target, 'node_modules', name), { recursive: true })
     }
     // The tarballs in vendor/ are the app's (file:vendor/… in the shipped package.json), except
     // those a plugin the person installed names.
@@ -210,7 +232,7 @@ export function installProfile({ dshHome, source }) {
     for (const file of existsSync(join(target, 'vendor')) ? readdirSync(join(target, 'vendor')) : []) {
       if (!kept.has(file)) rmSync(join(target, 'vendor', file), { recursive: true, force: true })
     }
-    if (existsSync(join(source, 'vendor'))) cpSync(join(source, 'vendor'), join(target, 'vendor'), { recursive: true })
+    if (existsSync(join(source, 'vendor'))) await cp(join(source, 'vendor'), join(target, 'vendor'), { recursive: true })
     writeFileSync(join(target, 'package.json'), mergeProfilePackage(user, shipped))
     replaceLocks({ target, source, ownPlugins: own.length > 0 })
     if (existsSync(join(source, '.build-id'))) cpSync(join(source, '.build-id'), join(target, '.build-id'))

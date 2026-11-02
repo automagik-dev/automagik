@@ -21,9 +21,10 @@
 // staged/<name>@<version>, and each replaced plugin as <its folder>.lane-prev until the trial
 // passes. Each lane keeps its own sequence and failures: Genie's numbers are not Automagik's.
 import { createHash, createPublicKey, verify } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { promisify } from 'node:util'
 import { compareVersions } from './update.js'
 import { LANE_KEYS } from './lane-keys.js'
 
@@ -108,6 +109,7 @@ export function installedVersions(target, names) {
   return Object.fromEntries(names.map(name => [name, readJson(join(target, 'node_modules', name, 'package.json'), {})?.version]).filter(([, version]) => typeof version === 'string'))
 }
 
+const unpack = promisify(execFile)
 const integrityOf = bytes => `sha512-${createHash('sha512').update(bytes).digest('base64')}`
 
 /**
@@ -134,8 +136,9 @@ export async function stage(update, { home, fetch = globalThis.fetch, tar = 'tar
     // The tarball stays: it goes into the profile's vendor/ with the plugin.
     const archive = `${into}.tgz`
     writeFileSync(archive, bytes)
-    // npm pack puts everything under package/.
-    execFileSync(tar, ['-xzf', archive, '-C', into, '--strip-components=1'], { stdio: 'ignore' })
+    // npm pack puts everything under package/. Unpacked off the main process's thread: the
+    // window and dsh's page stay live while a lane update is staged.
+    await unpack(tar, ['-xzf', archive, '-C', into, '--strip-components=1'])
     if (readJson(join(into, 'package.json'), {})?.version !== plugin.version) throw fail(`${plugin.name}: the tarball holds another version`)
     ready.push({ publisher, name: plugin.name, version: plugin.version, dir: into, archive, integrity: plugin.integrity })
     done += plugin.size || 0
