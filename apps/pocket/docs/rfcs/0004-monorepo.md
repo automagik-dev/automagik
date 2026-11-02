@@ -46,6 +46,8 @@ ALPNs, see [RFC 0003](0003-pocket-link-pairing.md)).
 - Any shipping commit cuts a release, whichever folder it touches. #20 notes that a mod-only change
   cuts a new APK release too.
 - The planned usage meter would sit beside them as `meter/` ([RFC 0005](0005-usage-meter.md)).
+  It later moved to its own repository,
+  [automagik-dev/usagemeter](https://github.com/automagik-dev/usagemeter).
 
 ## Decisions
 

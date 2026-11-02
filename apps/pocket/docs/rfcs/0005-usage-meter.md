@@ -9,9 +9,9 @@ pr: ""
 
 ## Summary
 
-A small Rust program, `meter/`, runs on each of the user's machines. It records the token usage
-of coding agents as `ae/1` (agent event envelope, revision 3, owned by automagik-herdr) rows in a
-SQLite file on that machine, and publishes a short summary as a herdr-core document. Pocket can
+A small Rust program, [usagemeter](https://github.com/automagik-dev/usagemeter), runs on each of
+the user's machines. It records the token usage of coding agents as `ae/1` (agent event envelope,
+revision 3, owned by automagik-herdr) rows in a SQLite file on that machine, and publishes a short summary as a herdr-core document. Pocket can
 then show usage by reading that document over the connection it already has. Nothing leaves the
 user's machines.
 
@@ -23,7 +23,8 @@ everything under Design and Alternatives is a proposal, not a decision.
 
 ## Current state
 
-- `meter/` ([meter/README.md](../../meter/README.md)): `meter sync` reads omp, Claude Code and
+- [usagemeter](https://github.com/automagik-dev/usagemeter) (built in this repo's `meter/` as
+  `automagik-meter` until it moved there with its history): `usagemeter sync` reads omp, Claude Code and
   Codex usage into hourly `agent.usage` rows in a per-machine SQLite file and publishes a
   `herdr-meter` summary doc with `doc.get`/`doc.set`. The design below predates it; where they
   differ (one row per rollup hour rather than per event; the doc's fields), the code is current.
@@ -36,10 +37,11 @@ everything under Design and Alternatives is a proposal, not a decision.
 - Summary doc schema version 2 (the phone's contract, in the README): per-project, per-task
   (repo + branch) and per-model 24 h / 7 d / 30 d windows, per-harness hourly (48 h) and daily
   (30 d) series. It fits 64 KiB by cutting the task list, then the project list, into `*_other`.
-- Each release carries the meter for macOS (arm64, x86_64) and Linux (static x86_64, aarch64)
-  with `SHA256SUMS`. While Pocket Link's bridge runs, it installs the matching build on this
-  computer and every connected herdr-core machine (hash checked first) and runs
-  `nice -n 19 automagik-meter sync` ten minutes after each pass, skipping machines on battery.
+- Each usagemeter release carries the meter for macOS (arm64, x86_64) and Linux (static x86_64,
+  aarch64) with `SHA256SUMS`. While Pocket Link's bridge runs, it installs the matching build at
+  `~/.local/bin/usagemeter` on this computer and every connected herdr-core machine (hash checked
+  first, never downgrading a newer one) and runs `nice -n 19 usagemeter sync` ten minutes after
+  each pass, skipping machines on battery. Herdr desktop installs usagemeter at the same path.
   This answers open question 4 for Pocket Link users. A machine reached only over SSH, without
   a desktop running the bridge, still needs the meter installed and scheduled by hand.
 - The app already reads herdr-core documents: it calls `doc.get` for the `herdr-app` document,
