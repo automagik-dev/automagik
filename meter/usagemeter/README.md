@@ -1,12 +1,63 @@
-# meter
+# usagemeter
 
-`meter` counts the tokens coding agents use on one machine and publishes a small summary to that
-machine's herdr-core, where Pocket can read it. Design:
-[RFC 0005](../docs/rfcs/0005-usage-meter.md) (Draft). Rows follow `ae/1` (agent event envelope,
-revision 3, owned by automagik-herdr).
+`usagemeter` counts the tokens coding agents use on one machine (Claude Code, Codex and omp) and
+publishes a small summary to that machine's herdr-core. It is shared by two Automagik products:
+Automagik Herdr on the desktop, and the Automagik Pocket phone app through its Pocket Link mod,
+which install it with `install.sh` and run it on the machines they
+reach. Rows follow `ae/1` (agent event envelope, revision 3, owned by automagik-herdr). Design:
+[RFC 0005](https://github.com/automagik-dev/automagik-pocket/blob/dev/docs/rfcs/0005-usage-meter.md).
 
 It runs once and exits. It has no daemon, no listener and makes no network calls; the only process
 it talks to is the local `hc`.
+
+This project used to live in the `meter/` folder of
+[automagik-pocket](https://github.com/automagik-dev/automagik-pocket), where it was built as
+`automagik-meter`; it moved here with its history. Its store, summary doc and environment
+variables did not change, so an existing install keeps its data.
+
+## Privacy
+
+usagemeter records how many tokens were used, never what was said. It stores no prompt text,
+responses, titles, file contents or per-turn rows: only hourly token counts per harness, model,
+repo and branch (see [What it stores](#what-it-stores)). Repo URLs are stripped of credentials.
+The store stays on the machine (0600); the only thing that leaves it is the summary doc, written
+to the local herdr-core. The binary itself opens no network connection.
+
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/automagik-dev/usagemeter/dev/install.sh | sh
+```
+
+A pinned version (`0.3.0` or `v0.3.0`, as an argument or `USAGEMETER_VERSION`):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/automagik-dev/usagemeter/dev/install.sh | sh -s -- 0.3.0
+```
+
+Each release also carries its own `install.sh`
+(`https://github.com/automagik-dev/usagemeter/releases/download/v0.3.0/install.sh`).
+
+The installer is POSIX `sh` and needs only `curl` and `sha256sum` (or `shasum -a 256`), no sudo.
+It picks the release binary for this OS and CPU, checks it against the release's `SHA256SUMS`,
+and installs it to `~/.local/bin/usagemeter` atomically. Run again with that version already
+installed, it changes nothing and exits 0: a pinned version is checked with
+`usagemeter --version` without touching the network, the latest by comparing the installed file
+with the release's `SHA256SUMS` (one small download).
+
+Each release carries `usagemeter-darwin-arm64`, `usagemeter-darwin-x86_64`,
+`usagemeter-linux-x86_64` and `usagemeter-linux-aarch64` (static, musl), with `SHA256SUMS`. By
+hand:
+
+```sh
+curl -fLO https://github.com/automagik-dev/usagemeter/releases/latest/download/usagemeter-linux-x86_64
+curl -fLO https://github.com/automagik-dev/usagemeter/releases/latest/download/SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS
+install -m 755 usagemeter-linux-x86_64 ~/.local/bin/usagemeter
+```
+
+Releases: every merge to `dev` that brings a shipping commit (anything but `chore(release)`,
+`ci`, `docs` or `test`) cuts the next `0.N.0`, tags it and publishes the binaries.
 
 ## What it reads
 
@@ -80,29 +131,14 @@ per-turn rows are stored, and no $ except omp's reported cost.
   running the same harness in the same cwd. Usually null today.
 - `machine` is herdr-core's core id, or a random id kept in the store when hc is absent.
 
-## Install
-
-Each release carries the meter as `automagik-meter-darwin-arm64`, `-darwin-x86_64`,
-`-linux-x86_64` and `-linux-aarch64` (static), with a `SHA256SUMS` file. The Pocket Link bridge
-([desktop/pocket-link](../desktop/pocket-link/README.md)) installs the right one as
-`~/.local/bin/automagik-meter` on this computer and every connected herdr-core machine, checking
-the hash first, and runs `nice -n 19 automagik-meter sync` ten minutes after each pass. By hand:
-
-```sh
-curl -fLO https://github.com/automagik-dev/automagik-pocket/releases/latest/download/automagik-meter-linux-x86_64
-curl -fLO https://github.com/automagik-dev/automagik-pocket/releases/latest/download/SHA256SUMS
-sha256sum --check --ignore-missing SHA256SUMS
-install -m 755 automagik-meter-linux-x86_64 ~/.local/bin/automagik-meter
-```
-
 ## Run
 
 ```sh
-meter sync                 # the normal run: at most 20 s, then publish
-meter sync --no-publish    # update the store only
-meter sync --backfill      # import the full history instead of 30 days (resumes across runs)
-meter status               # what the store holds, as JSON
-meter --version
+usagemeter sync                 # the normal run: at most 20 s, then publish
+usagemeter sync --no-publish    # update the store only
+usagemeter sync --backfill      # import the full history instead of 30 days (resumes across runs)
+usagemeter status               # what the store holds, as JSON
+usagemeter --version
 ```
 
 `sync` options: `--force` (ignore the 10-minute freshness check), `--days N` (import window;
@@ -111,7 +147,7 @@ widening it re-imports), `--budget-secs N` (default 20), `--no-publish`, `--doc 
 
 - The first run imports 30 days, what the summary doc shows. A store that holds less (one first
   filled when the default was 14 days) is re-imported once to 30 days by the next plain `sync`.
-- One run per machine: a second `meter sync` while one runs exits 0 at once.
+- One run per machine: a second `usagemeter sync` while one runs exits 0 at once.
 - A sync within 10 minutes of a complete one does nothing unless `--force`.
 - When the budget runs out, progress so far is committed and the rest waits for the next run. A
   killed run loses at most the chunk it was on and never counts anything twice.
@@ -119,7 +155,7 @@ widening it re-imports), `--budget-secs N` (default 20), `--no-publish`, `--doc 
 
 ## The summary doc
 
-`meter sync` writes one doc per machine, `herdr-meter`, with `doc.get` then `doc.set` on the
+`usagemeter sync` writes one doc per machine, `herdr-meter`, with `doc.get` then `doc.set` on the
 version (retrying on `conflict`). It is a projection of the store for the phone, and stays under
 64 KiB (see [Summary doc schema](#summary-doc-schema)).
 
@@ -275,4 +311,12 @@ window; each step is listed in `truncated`. Entries that stay always keep their 
 cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
-Tests use synthetic fixtures only. CI runs the same on Linux and macOS (`.github/workflows/meter.yml`).
+Tests use synthetic fixtures only. CI (`.github/workflows/ci.yml`) runs the same on Linux and
+macOS, builds the four release binaries (`build.yml`) and runs `tests/install.sh`, which installs
+one with `install.sh` from a release laid out on disk. `release.yml` cuts the releases;
+`scripts/version.sh` reads and sets the version in `Cargo.toml` and `Cargo.lock`.
+
+Some names still say "meter" because existing installs and readers depend on them: the state
+files `meter.db` and `meter.lock`, the variables `METER_STATE_DIR`, `METER_HC` and `METER_TRACE`,
+the doc name `herdr-meter` (also its `kind`), the doc key `meter_version`, the `meter:` prefix of
+the log lines, and the library crate name `meter`.

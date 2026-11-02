@@ -15,7 +15,7 @@ fn a_killed_run_resumes_without_double_counting() {
     let env = Env::new();
     let ts = meter::time::format_rfc3339(meter::time::now_ms() - 3_600_000);
     let want = big_fixture(&env, 6, 3000, &ts);
-    let bin = env!("CARGO_BIN_EXE_meter");
+    let bin = env!("CARGO_BIN_EXE_usagemeter");
     let spawn = || {
         std::process::Command::new(bin)
             .args(["sync", "--force", "--no-publish"])
