@@ -96,6 +96,37 @@ jobs:
       - name: Test
         run: bun run test
 
+  pets:
+    # The headless pet bake (automagik-pets) on Node, as DSH and Automagik Herdr run it: Bun
+    # installs sharp, whose prebuilt binary carries libvips; no browser is needed (the parity
+    # check against Chromium skips without one).
+    name: automagik-pets (tests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/automagik-pets
+    env:
+      DO_NOT_TRACK: '1'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Test
+        run: bun run test
+
   desktop:
     # The desktop app's main-process logic in plain Node (home layout, profile install and the
     # move from the old package names, the preload, dsh supervision, navigation, updates), so

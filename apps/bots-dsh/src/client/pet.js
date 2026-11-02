@@ -1,4 +1,5 @@
 import { createElement as h, useEffect, useRef, useState } from 'react'
+import { CELL, DIRECTIONS, LOOK_ROW, ROWS, SLEEP } from './pet-poses.js'
 
 // -------------------------------------------------------------------------
 // The pet player: every live Bot mark is a pet in the Codex format (codex-pets.net, and
@@ -9,23 +10,8 @@ import { createElement as h, useEffect, useRef, useState } from 'react'
 // (a pet the team installed, Genie's, or a team character baked into an atlas: pet-bake.js)
 // does not matter here.
 
-export const CELL = Object.freeze({ width: 192, height: 208, columns: 8 })
-// Each row's cell durations, as Codex plays them (the toolkit's animation-rows.md).
-const even = (count, ms, last) => [...Array(count - 1).fill(ms), last]
-export const ROWS = Object.freeze({
-  idle: { row: 0, ms: [280, 110, 110, 140, 140, 320] },
-  'running-right': { row: 1, ms: even(8, 120, 220) },
-  'running-left': { row: 2, ms: even(8, 120, 220) },
-  waving: { row: 3, ms: even(4, 140, 280) },
-  jumping: { row: 4, ms: even(5, 140, 280) },
-  failed: { row: 5, ms: even(8, 140, 240) },
-  waiting: { row: 6, ms: even(6, 150, 260) },
-  running: { row: 7, ms: even(6, 120, 220) },
-  review: { row: 8, ms: even(6, 150, 280) },
-})
-export const LOOK_ROW = 9
-export const DIRECTIONS = 16
-export const SLEEP = Object.freeze({ ms: Array(6).fill(320) })
+// The atlas's cells and rows live with the poses (pet-poses.js), which have no React.
+export { CELL, DIRECTIONS, LOOK_ROW, ROWS, SLEEP }
 export const rowsOf = version => (version === 2 ? 11 : 9)
 // Rows that play once, then hand back to the state's own loop.
 export const ONCE = Object.freeze(['waving', 'jumping'])

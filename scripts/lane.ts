@@ -46,8 +46,9 @@ export const LANE_ADDONS = ['dsh-oh-my-claude'];
 const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDependencies', 'bundleDependencies', 'engines', 'dsh', 'main', 'exports', 'files'];
 // What no build of the desktop app reads (its build reads apps/desktop and the plugins
 // alone): the repository's release tooling and CI, the lane's own keys and notes, tests,
-// and the notes at the root. A change there ships nothing to an installed app.
-const NEVER_SHIPPED = [/^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/];
+// and the notes at the root. A change there ships nothing to an installed app. The headless pet
+// bake (apps/automagik-pets) is no plugin and no app build reads it; it ships on its own.
+const NEVER_SHIPPED = [/^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/, /^apps\/automagik-pets\//];
 
 export interface LanePlugin {
   name: string;
