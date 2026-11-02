@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url'
 import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
 import { fade, PAGE_IN_CSS } from './motion.js'
 import { noteRestart, restartLine, steps } from './timeline.js'
+import { startUp } from './startup.js'
 import { dismissSplash, showUpdateSplash } from './splash.js'
 import { PUBLISHERS, TRIAL_MS, beforeStart, checkLane, confirm as confirmLane, installedVersions, laneMemory, stage as stageLane, stagedOf, stagedVersion, trialFailed } from './lane.js'
 import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, forgetDshLogins, privacyFileOf, privacyPatchOf, freePort, guardContents, installProfile, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
@@ -192,40 +193,71 @@ async function launch() {
   openWindow()
   nativeTheme.on('updated', followTheme)
   const resources = resourcesOf({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() })
-  const { target } = installProfile({ dshHome: join(home, 'dsh'), source: resources.profile })
-  pinProfileStore({ target, home, layout: storeLayoutOf(resources.pnpm) })
-  // Plugins the lane staged go in before DSH starts, and this start is their trial (lane.js).
-  laneProfile = target
-  laneDsh = readVersion(join(dirname(resources.bin), '..', 'package.json'))
-  if (app.isPackaged) {
-    laneTrial = beforeStart({ home, target, log: laneLog })
-    laneReady = stagedOf(home)
-  }
-  // About names the version this copy runs: its plugins' (a lane patch, 3.N.P) beside the app's.
-  if (process.platform === 'darwin') {
-    const plugins = pluginsVersion()
-    app.setAboutPanelOptions({ applicationName: PRODUCT, applicationVersion: plugins ?? app.getVersion(), version: plugins ? `app ${app.getVersion()}` : app.getVersion() })
-  }
-  const port = await freePort()
-  dshOrigin = `http://127.0.0.1:${port}`
-  const log = createWriteStream(join(home, 'logs', 'dsh.log'), { flags: 'a' })
-  // Electron's own binary runs dsh as Node, so the app ships one runtime.
-  const binDir = writeTools({ dir: join(home, 'bin'), node: process.execPath, pnpm: resources.pnpm })
-  // `--preload=omni|genie` from `omni desktop` / `genie desktop`, kept in Automagik's home.
-  const preload = preloadOf({ home: root, argv: process.argv, env: process.env })
-  // What the person chose to share on the Privacy page (privacy.js): nothing, unless they did.
-  const privacy = readChoices(privacyFileOf(home))
-  // A new anonymous id every launch (dsh.js ANONYMOUS_ID), unless they chose to keep one.
-  if (privacy['stable-id'] !== true) rmSync(join(home, 'dsh', ANONYMOUS_ID), { force: true })
-  const overlay = writeOverlay(privacyPatchOf(home), privacy)
-  dsh = await startDsh({ node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload, privacy }), port, cwd: home, log, privacy: overlay, onSpawn: (child) => { dshChild = child; child.on('message', message => answerDsh(child, message)); started.mark('dsh spawned') } })
-  started.mark('dsh ready')
-  dsh.child.once('exit', (code) => {
-    if (!quitting) fail(new Error(`dsh stopped (${code}).`))
+  // dsh's boot is the long wait of a start: only what dsh reads as it starts comes before it, and
+  // the page gets ready while it boots (startup.js keeps the order, and its tests check it).
+  let binDir = null
+  await startUp({
+    mark: step => started.mark(step),
+    port: freePort,
+    // The profile is in place, with the plugins the lane staged in it, before dsh reads it, and
+    // this start is their trial (lane.js).
+    profile: async () => {
+      const { target } = await installProfile({ dshHome: join(home, 'dsh'), source: resources.profile })
+      pinProfileStore({ target, home, layout: storeLayoutOf(resources.pnpm) })
+      laneProfile = target
+      if (app.isPackaged) laneTrial = beforeStart({ home, target, log: laneLog })
+    },
+    // Electron's own binary runs dsh as Node, so the app ships one runtime.
+    tools: () => { binDir = writeTools({ dir: join(home, 'bin'), node: process.execPath, pnpm: resources.pnpm }) },
+    spawn: (port) => {
+      dshOrigin = `http://127.0.0.1:${port}`
+      const log = createWriteStream(join(home, 'logs', 'dsh.log'), { flags: 'a' })
+      // `--preload=omni|genie` from `omni desktop` / `genie desktop`, kept in Automagik's home.
+      const preload = preloadOf({ home: root, argv: process.argv, env: process.env })
+      // What the person chose to share on the Privacy page (privacy.js): nothing, unless they did.
+      const privacy = readChoices(privacyFileOf(home))
+      // A new anonymous id every launch (dsh.js ANONYMOUS_ID), unless they chose to keep one.
+      if (privacy['stable-id'] !== true) rmSync(join(home, 'dsh', ANONYMOUS_ID), { force: true })
+      const overlay = writeOverlay(privacyPatchOf(home), privacy)
+      return startDsh({ node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload, privacy }), port, cwd: home, log, privacy: overlay, onSpawn: (child) => { dshChild = child; child.on('message', message => answerDsh(child, message)); started.mark('dsh spawned') } })
+        .then((running) => {
+          dsh = running
+          started.mark('dsh ready')
+          dsh.child.once('exit', (code) => {
+            if (!quitting) fail(new Error(`dsh stopped (${code}).`))
+          })
+          return dsh
+        })
+    },
+    // Earlier starts' dsh logins would pile up until dsh refuses the page (dsh.js forgetDshLogins).
+    // dsh's page has the default session, and cookies ignore the port.
+    forget: port => forgetDshLogins(session.defaultSession.cookies, `http://127.0.0.1:${port}`)
+      .catch(error => startLog(`${new Date().toISOString()} start: earlier dsh logins kept (${error.message})\n`)),
+    after: () => {
+      laneDsh = readVersion(join(dirname(resources.bin), '..', 'package.json'))
+      if (app.isPackaged) laneReady = stagedOf(home)
+      // About names the version this copy runs: its plugins' (a lane patch, 3.N.P) beside the app's.
+      if (process.platform === 'darwin') {
+        const plugins = pluginsVersion()
+        app.setAboutPanelOptions({ applicationName: PRODUCT, applicationVersion: plugins ?? app.getVersion(), version: plugins ? `app ${app.getVersion()}` : app.getVersion() })
+      }
+      // Before the page is made: every webContents from here on keeps to dsh's origin.
+      harden(dshOrigin)
+      if (!window) return
+      makePage()
+      // Before the page load: a page that fails to load must not stop the app from updating.
+      watchUpdates()
+    },
+    load: async ({ url }) => {
+      if (!window || !page) return
+      started.mark('page loading')
+      await page.webContents.loadURL(url)
+    },
   })
-  const origin = new URL(dsh.url).origin
-  harden(origin)
-  if (!window) return
+}
+
+// dsh's page, made while dsh boots and loaded once it is ready.
+function makePage() {
   page = new WebContentsView({
     webPreferences: {
       preload: join(HERE, 'preload.cjs'),
@@ -261,12 +293,6 @@ async function launch() {
     if (back) startLog(back)
     if (pendingLink) void connectFromLink()
   })
-  // Before the page load: a page that fails to load must not stop the app from updating.
-  watchUpdates()
-  // Earlier starts' dsh logins would pile up until dsh refuses the page (dsh.js forgetDshLogins).
-  await forgetDshLogins(page.webContents.session.cookies, origin)
-    .catch(error => startLog(`${new Date().toISOString()} start: earlier dsh logins kept (${error.message})\n`))
-  await page.webContents.loadURL(dsh.url)
 }
 
 // dsh asks over its IPC channel for a Bot's browser endpoint (bots-dsh browser-plugins.js
