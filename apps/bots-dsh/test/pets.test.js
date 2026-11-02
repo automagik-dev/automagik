@@ -11,12 +11,12 @@ import { createPets, sheetVersion, webpSize } from '../src/host/pets.js'
 
 // The player is client code: bundled with a stand-in React, like the marks' tests.
 const bundle = await build({
-  stdin: { contents: "export { CELL, ROWS, cellOf, directionOf, petRowOf } from './src/client/pet.js'", resolveDir: dirname(dirname(fileURLToPath(import.meta.url))) },
+  stdin: { contents: "export { CELL, ONCE, STATE_ROWS, EVENT_ROWS, ROWS, SLEEP, cellOf, directionOf, petRowOf } from './src/client/pet.js'", resolveDir: dirname(dirname(fileURLToPath(import.meta.url))) },
   bundle: true, format: 'cjs', platform: 'node', write: false, logLevel: 'silent', external: ['react'],
 })
 const player = { exports: {} }
 runInNewContext(bundle.outputFiles[0].text, { module: player, exports: player.exports, require: () => ({ createElement: () => null, useEffect: () => {}, useRef: () => ({}), useState: v => [v, () => {}] }) })
-const { CELL, ROWS, cellOf, directionOf, petRowOf } = player.exports
+const { CELL, ONCE, STATE_ROWS, EVENT_ROWS, ROWS, SLEEP, cellOf, directionOf, petRowOf } = player.exports
 
 // A WebP header of a given size, in each of the three encodings (the bytes past it are not read).
 function vp8x(width, height) {
@@ -143,6 +143,28 @@ test('a Bot\'s states play the rows the adoption contract maps them to', () => {
   // The rows and their cells, as Codex lays them out.
   assert.deepEqual(Object.entries(ROWS).map(([name, row]) => [name, row.row, row.ms.length]), [['idle', 0, 6], ['running-right', 1, 8], ['running-left', 2, 8], ['waving', 3, 4], ['jumping', 4, 5], ['failed', 5, 8], ['waiting', 6, 6], ['running', 7, 6], ['review', 8, 6]])
   assert.deepEqual([CELL.width, CELL.height, CELL.columns], [192, 208, 8])
+})
+
+test('the poses shared with Herdr name rows the player has, and play once only what plays once', () => {
+  assert.deepEqual(Object.keys(STATE_ROWS), ['working', 'idle', 'needs-you', 'done', 'failed', 'asleep'])
+  assert.deepEqual(Object.keys(EVENT_ROWS), ['merged'])
+  for (const [state, pose] of Object.entries(STATE_ROWS)) {
+    assert.ok(pose.row in ROWS || (pose.row === 'sleep' && SLEEP.ms.length > 0), `${state} rests in ${pose.row}`)
+    assert.ok(!ONCE.includes(pose.row), `${state} rests in a loop, not a once-row`)
+    if (pose.once !== undefined) assert.ok(pose.once in ROWS && ONCE.includes(pose.once), `${state} plays ${pose.once} once`)
+  }
+  for (const [event, pose] of Object.entries(EVENT_ROWS)) {
+    assert.equal(pose.row, undefined, `${event} has no loop of its own`)
+    assert.ok(pose.once in ROWS && ONCE.includes(pose.once), `${event} plays ${pose.once} once`)
+  }
+  // Copied out of the bundle's realm, whose Object.prototype is another one.
+  assert.deepEqual({ ...STATE_ROWS['needs-you'] }, { once: 'waving', row: 'waiting' })
+  assert.deepEqual({ ...EVENT_ROWS.merged }, { once: 'jumping' })
+  // Frozen all the way down: neither side can change the other's animation.
+  for (const map of [STATE_ROWS, EVENT_ROWS]) {
+    assert.ok(Object.isFrozen(map))
+    for (const pose of Object.values(map)) assert.ok(Object.isFrozen(pose))
+  }
 })
 
 test('a pet looks toward the pointer in sixteen directions, up first and clockwise', () => {
