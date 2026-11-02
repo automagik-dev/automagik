@@ -61,7 +61,7 @@ jobs:
           version=$(scripts/version.sh next)
           scripts/version.sh set "${version}"
           # The lock must still match Cargo.toml, or the --locked builds of the tag fail.
-          cargo metadata --locked --offline --format-version 1 > /dev/null
+          cargo metadata --locked --format-version 1 > /dev/null
           base=$(git rev-parse HEAD)
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
