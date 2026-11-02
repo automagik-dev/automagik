@@ -30,6 +30,23 @@ export const rowsOf = version => (version === 2 ? 11 : 9)
 // Rows that play once, then hand back to the state's own loop.
 export const ONCE = Object.freeze(['waving', 'jumping'])
 
+// The poses DSH and Automagik Herdr agree on (handoffs/bot-system-unification.md, "Agreed"),
+// as data so both play the same animation for a Bot's state. `row` is the loop a state rests
+// in; `once` plays first, once, then hands over to `row`. The row 'sleep' is no ROWS entry:
+// it is the SLEEP strip, the pet's own image. An event has only `once`, and the player then
+// goes back to the state's loop.
+export const STATE_ROWS = Object.freeze({
+  working: Object.freeze({ row: 'running' }),
+  idle: Object.freeze({ row: 'idle' }),
+  'needs-you': Object.freeze({ once: 'waving', row: 'waiting' }),
+  done: Object.freeze({ row: 'review' }),
+  failed: Object.freeze({ row: 'failed' }),
+  asleep: Object.freeze({ row: 'sleep' }),
+})
+export const EVENT_ROWS = Object.freeze({
+  merged: Object.freeze({ once: 'jumping' }),
+})
+
 // What the Bot is doing (mark.js STATES), as the adoption contract maps it (the pet
 // toolkit's FORMAT.md): every kind of work runs, searching reviews, work handed on is a
 // quiet idle, a question or an approval waits for the person, the settle after a run jumps

@@ -2705,6 +2705,17 @@ var DIRECTIONS = 16;
 var SLEEP = Object.freeze({ ms: Array(6).fill(320) });
 var rowsOf = (version) => version === 2 ? 11 : 9;
 var ONCE = Object.freeze(["waving", "jumping"]);
+var STATE_ROWS = Object.freeze({
+  working: Object.freeze({ row: "running" }),
+  idle: Object.freeze({ row: "idle" }),
+  "needs-you": Object.freeze({ once: "waving", row: "waiting" }),
+  done: Object.freeze({ row: "review" }),
+  failed: Object.freeze({ row: "failed" }),
+  asleep: Object.freeze({ row: "sleep" })
+});
+var EVENT_ROWS = Object.freeze({
+  merged: Object.freeze({ once: "jumping" })
+});
 var ROW_OF_STATE = Object.freeze({
   idle: "idle",
   thinking: "running",
