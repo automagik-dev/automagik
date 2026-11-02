@@ -18,6 +18,7 @@ describe('the plugin lane', () => {
     expect(kindOf(['apps/desktop/electron-builder.yml', 'apps/welcome-dsh/client.js'], none, () => false)).toBe('full');
     expect(kindOf(['apps/bots-dsh/package.json'], plugin => plugin === 'bots-dsh')).toBe('full');
     expect(kindOf([], none)).toBe('full');
+    expect(kindOf(['apps/automagik-pets/src/bake.js', 'apps/automagik-pets/bun.lock', 'apps/bots-dsh/client.js'], none)).toBe('plugins');
   });
 
   test('a change no install sees is no release: a plugin file its package does not carry', () => {
