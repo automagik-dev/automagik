@@ -23,14 +23,15 @@ export const supportedHost = ({ platform, arch }) =>
 /**
  * Where herdr-app may be, in order: the override; herdr's own install paths for the OS (an app
  * started from Finder has no ~/.local/bin on its PATH, so these come first); then PATH. On
- * macOS herdrdev's installer writes ~/Applications/Herdr.app; /Applications is a dragged copy.
+ * macOS herdrdev's installer writes ~/Applications/Herdr.app, so it comes before /Applications
+ * (a dragged copy).
  */
 export function candidatesOf({ platform, env = {}, home }) {
   const p = pathOf(platform)
   const listed = []
   if (platform === 'darwin') {
-    listed.push(p.join('/Applications', 'Herdr.app', 'Contents', 'MacOS', 'Herdr'))
     listed.push(p.join(home, 'Applications', 'Herdr.app', 'Contents', 'MacOS', 'Herdr'))
+    listed.push(p.join('/Applications', 'Herdr.app', 'Contents', 'MacOS', 'Herdr'))
     listed.push(p.join(home, '.local', 'bin', 'herdr-app'))
   } else if (platform === 'win32') {
     if (env.LOCALAPPDATA) listed.push(p.join(env.LOCALAPPDATA, 'Programs', 'herdr-app', 'herdr-app.exe'))
@@ -152,13 +153,17 @@ function startDetached(file, args, { env, spawn = nodeSpawn }) {
   })
 }
 
-/** `status` until it exits 0, for up to `limit` ms; exit 2 (no window yet) keeps waiting. */
+/**
+ * `status` until it exits 0, for up to `limit` ms. Only exit 2 (no window yet) keeps waiting:
+ * any other answer stops at once with herdr-app's last stderr line (`failed` true).
+ */
 export async function waitOpen(bin, { env, execFile, limit = LIMIT_MS, every = 250, now = Date.now, sleep = defaultSleep } = {}) {
   const start = now()
   let last = { code: null, stderr: '' }
   for (;;) {
     last = await run(bin, ['status'], { env, execFile, timeout: Math.max(1000, limit - (now() - start)) })
     if (last.code === 0) return { ready: true, ms: now() - start }
+    if (last.code !== 2) return { ready: false, failed: true, ms: now() - start, code: last.code, stderr: lastLine(last.stderr) }
     if (now() - start + every > limit) return { ready: false, ms: now() - start, code: last.code, stderr: lastLine(last.stderr) }
     await sleep(every)
   }
@@ -230,6 +235,11 @@ export async function openHerdr({ platform, arch, env, home, isFile, resolve, ex
   }
   mark('started')
   const waited = await waitOpen(found.bin, { env, execFile, now, sleep, limit })
+  if (waited.failed) {
+    const message = waited.stderr || `status exited ${waited.code}`
+    log(`status-error ${message}`)
+    return { ok: false, reason: 'error', message, detail: message }
+  }
   if (!waited.ready) {
     log(`timeout ${waited.stderr}`)
     return { ok: false, reason: 'timeout', message: NOT_OPENED, detail: waited.stderr }

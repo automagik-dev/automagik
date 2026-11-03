@@ -15,11 +15,11 @@ const MAC_HOME = '/Users/ana'
 const MAC_APP = '/Applications/Herdr.app/Contents/MacOS/Herdr'
 const MAC_USER_APP = `${MAC_HOME}/Applications/Herdr.app/Contents/MacOS/Herdr`
 
-test('macOS: /Applications first, then the installer\'s ~/Applications, as the bundle LaunchServices opens', () => {
+test('macOS: the installer\'s ~/Applications first, then /Applications, as the bundle LaunchServices opens', () => {
   const both = fakeFs([MAC_APP, MAC_USER_APP])
-  assert.deepEqual(findHerdr({ platform: 'darwin', home: MAC_HOME, env: {}, ...both }), { bin: MAC_APP, app: '/Applications/Herdr.app', source: 'install' })
-  const user = fakeFs([MAC_USER_APP])
-  assert.deepEqual(findHerdr({ platform: 'darwin', home: MAC_HOME, env: {}, ...user }), { bin: MAC_USER_APP, app: `${MAC_HOME}/Applications/Herdr.app`, source: 'install' })
+  assert.deepEqual(findHerdr({ platform: 'darwin', home: MAC_HOME, env: {}, ...both }), { bin: MAC_USER_APP, app: `${MAC_HOME}/Applications/Herdr.app`, source: 'install' })
+  const dragged = fakeFs([MAC_APP])
+  assert.deepEqual(findHerdr({ platform: 'darwin', home: MAC_HOME, env: {}, ...dragged }), { bin: MAC_APP, app: '/Applications/Herdr.app', source: 'install' })
 })
 
 test('macOS: the herdr-app link in ~/.local/bin leads back to its bundle; a bare binary on PATH has none', () => {
@@ -151,6 +151,22 @@ test('open gives up after 10 s of exit 2 with herdr-app\'s last line, and report
   assert.match(logged.at(-1), /^timeout herdr-app: no Herdr window/)
   assert.ok(fake.calls().filter(args => args[0] === 'status').length <= 8)
   assert.deepEqual(await openHerdr({ ...LINUX, env: { [OVERRIDE]: '/nowhere' } }), { ok: false, reason: 'missing', message: 'Herdr is not set up' })
+})
+
+test('only exit 2 keeps waiting: exit 1 stops at once with herdr-app\'s own error', posixOnly, async () => {
+  const fake = fakeHerdr([2, 1, 0])
+  const waited = await waitOpen(fake.exe, { env: {}, sleep: instant })
+  assert.equal(waited.ready, false)
+  assert.equal(waited.failed, true)
+  assert.equal(waited.code, 1)
+  assert.equal(waited.stderr, 'herdr-app: something broke')
+  assert.deepEqual(fake.calls(), [['status'], ['status']])
+  const again = fakeHerdr([1])
+  const logged = []
+  const result = await openHerdr({ ...LINUX, env: { PATH: again.bin }, sleep: instant, log: line => logged.push(line) })
+  assert.deepEqual(result, { ok: false, reason: 'error', message: 'herdr-app: something broke', detail: 'herdr-app: something broke' })
+  assert.deepEqual(logged, ['status-error herdr-app: something broke'])
+  assert.equal(again.calls().filter(args => args[0] === 'status').length, 1)
 })
 
 test('waitOpen stops as soon as status answers 0', posixOnly, async () => {
