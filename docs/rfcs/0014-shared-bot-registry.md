@@ -135,13 +135,22 @@ What changes: the desktop app sets `AUTOMAGIK_BOTS_HOME` to `<automagik home>/bo
 `omni-ai`), routes (`/api/omni-ui`), browser-storage prefixes (`omni-ui:`), the files inside the
 team home (README "Data and backups"), and the per-Bot browser partitions in Electron's data.
 
+The team workspace needs care. `<team home>/workspace` is the folder of every Bot without one of
+its own, and their Sessions were started there. The bots-dsh README says it is untested whether
+dsh finds a Session whose folder moved. So the move does not copy `workspace/`: the moved team
+keeps working in `~/.automagik/desktop/bots/workspace` (Q8). A fresh team uses
+`~/.automagik/bots/workspace`.
+
 At the first start of a new app:
 
 1. No old team: the app starts in `~/.automagik/bots`. Felipe's case (D6).
-2. An old team and none in `~/.automagik/bots`: the app offers "Bring my Bots" once. Yes copies
-   the folder (never moves it), checks the copy, then writes `MOVED.json` (`to`, `at`, app
-   version) in the old folder. No starts fresh. Either way the old folder is left as it was (Q8).
-3. A team in both: the two are never merged; see Q7.
+2. An old team, and no `ui/state.json` in `~/.automagik/bots` (its `bots.json` and `pets/`
+   may already be there from delivery 3): the app offers "Bring my Bots" once. Yes copies the
+   old folder (never moves it) except `workspace/`, adds its `pets/` without replacing a pet of
+   the same id, leaves `bots.json` alone, checks the copy, then writes `MOVED.json` (`to`, `at`,
+   app version) in the old folder. No starts fresh. Either way the old folder is left as it
+   was (Q8).
+3. A `ui/state.json` in both: the two teams are never merged; see Q7.
 
 Rollback: an older app reads `~/.automagik/desktop/bots`, still as it was when copied. What it
 cannot undo: changes made after the move are only in the new home; the registry files stay, and
@@ -210,14 +219,19 @@ Undo: delete the file, or revert the delivery; `state.json` keeps every DSH Bot.
    fields kept, a stale write refused. *Rollback:* revert; nothing reads it.
 2. **Herdr reads version 2** (herdr). A byte-equal copy of the module (checked in the gate);
    `botsFileOf(key)`: the repo file, else `.herdr/bots.json`; `projectOf`'s walk-up finds both;
-   the briefing hook follows; `session-` ids accepted; global Bots listed read-only.
+   the briefing hook follows; `session-` ids accepted; global Bots listed read-only. Its one
+   write: a project with a repo file (v2 or legacy) that Herdr opens is added to the home file's
+   `projects[]`, so DSH can find it.
    *Check:* the herdr gate; a v2-only project shows its Bots and briefs its main Bot; a v1
    project is unchanged. *Rollback:* a later pack that reverts it (the pointer never
    downgrades); v2 files stay and v1 projects never changed.
-3. **DSH shares its Bots** (plugin). bots-dsh writes definitions to the home file, reads the home
-   file and the listed local repo files, adopts unknown Bots, and reads pets from the registry
-   home. *Check:* a Bot made in Herdr shows in DSH and opens a new Session; a DSH rename shows in
-   Herdr; two writers racing lose nothing. *Rollback:* revert; `state.json` still holds every DSH
+3. **DSH shares its Bots** (plugin). At its first load bots-dsh writes every Bot the home file
+   lacks, then writes definitions on each change; it reads the home file and the listed local
+   repo files (v2 or legacy), adopts unknown Bots, and reads pets from the registry home. First
+   it checks every place that takes a Bot id for a Session id (`chatOf` at `store.js:413` falls
+   back to the id), since adopted Bots have no Session until opened. *Check:* a Bot made in
+   Herdr shows in DSH and opens a new Session; an adopted Bot with no Session breaks no list,
+   search or usage count; a DSH rename shows in Herdr; two writers racing lose nothing. *Rollback:* revert; `state.json` still holds every DSH
    Bot; adopted Bots without a chat disappear from DSH, and the files stay.
 4. **Herdr writes version 2** (herdr). New projects get the repo file; "Move to .automagik"
    converts a legacy file (write new, then delete old); global Bots are created and started in
@@ -238,12 +252,13 @@ RFC 0013's delivery 8 can start after deliveries 1-3.
 ## Open questions
 
 1. **One file per Bot, or a repo copy beside the home entry?** D1 says "committable copy".
-   *Recommended:* one file per Bot; a project with a repo file keeps its Bots only there.
+   *Recommended:* one file per Bot; a project with a repo file keeps its Bots only there. A home
+   Bot whose folder later gets a repo file stays in the home file until the person moves it.
 2. **Repo path and version** (agreed). *Recommended:* `<repo>/.automagik/bots/bots.json`,
    `version: 2`, `pets/` beside it.
 3. **Id shapes and the mint** (pattern agreed, mint open in the log). *Recommended:* accept both
-   shapes forever; Herdr mints `b-`; DSH keeps minting `session-<uuid>` until a later plugin
-   delivery checks every place that uses a Bot id as a Session id, then mints `b-` too.
+   shapes forever; one `newBotId()` that mints `b-`; Herdr uses it now, DSH once delivery 3's
+   check of ids used as Session ids has shipped.
 4. **`main` and `identity`** (agreed). *Recommended:* as agreed; in the home file `main` means a
    team Main Bot, in a repo file the project's one main Bot.
 5. **The pose map** (agreed). *Recommended:* working→running, idle→idle, needs-you→waving once
@@ -255,8 +270,9 @@ RFC 0013's delivery 8 can start after deliveries 1-3.
 7. **A team in both homes at the move.** Two `state.json`s with Sessions in two DSH homes cannot
    merge, and one home cannot serve two hosts (`home-lock.js`). *Recommended:* the app keeps its
    team in the old home, says so once, and still shares Bots and pets through the registry home.
-8. **The migration offer.** *Recommended:* copy, never move; offered once; the old folder kept
-   until the person deletes it.
+8. **The migration offer.** *Recommended:* copy, never move, everything but `workspace/`;
+   offered once; the moved team keeps its old workspace folder; the old folder kept until the
+   person deletes it.
 9. **The registry home apart from the team home.** *Recommended:* the registry and pets always
    at `$AUTOMAGIK_HOME/bots`, so sharing does not wait for the move.
 10. **A Bot removed in Herdr.** *Recommended:* DSH hides it and keeps its chats and memory,
@@ -265,7 +281,9 @@ RFC 0013's delivery 8 can start after deliveries 1-3.
     every project; its briefing shows each project's main Bot and status; messages do not fan
     out.
 12. **Which repo files DSH reads, and other machines.** *Recommended:* the home file's
-    `projects[]`, this computer only; Bots on other machines are reached through Code.
+    `projects[]`, this computer only; an entry whose file is gone is dropped by the next reader
+    that finds it gone (Herdr's #229 has the same gap). Bots on other machines are reached
+    through Code.
 13. **Pets the bake cannot make** (`genie-clay`, market pets). *Recommended:* `automagik-pets
     frames <id>` cuts Herdr's frames from any v1 or v2 spritesheet; builtin pets are copied into
     the shared folder.
