@@ -360,6 +360,42 @@ test("the entry point runs am's copy first; a missing or broken am copy falls ba
   assert.match(broken.stderr, /broken am/);
 });
 
+test("an am copy that throws after printing or after reading stdin: one briefing, the sidebar's, with the whole hook input", (t) => {
+  const s = botHome(t);
+  syncHooks({ modsDir: s.mods });
+  const command = commands(settings(s.proj))[1];
+  const amDir = join(s.root, ".automagik", "parts", "automagik.am", "3.0.0");
+  mkdirSync(amDir, { recursive: true });
+  symlinkSync("3.0.0", join(dirname(amDir), "current"));
+  const once = (out) => assert.equal(out.split("<herdr-bot>").length - 1, 1, `exactly one briefing:\n${out}`);
+
+  // It printed part of a briefing, then threw: none of it reaches the hook's output.
+  writeFileSync(join(amDir, "briefing.mjs"), "process.stdout.write('<herdr-bot>\\npartial from am\\n');\nthrow new Error('am broke after printing');\n");
+  const printed = s.hook(command, { input: JSON.stringify({ session_id: "s-printed" }) });
+  assert.equal(printed.status, 0, printed.stderr);
+  assert.match(printed.stdout, /^<herdr-bot>\n/);
+  assert.match(printed.stdout, /You are Genie/);
+  assert.doesNotMatch(printed.stdout, /partial from am/);
+  once(printed.stdout);
+  assert.match(printed.stderr, /am broke after printing/);
+  assert.match(read(ledgerPath(s.app)), /"session":"s-printed"/);
+
+  // It read the whole of stdin, then threw: the sidebar's copy still gets all of it.
+  writeFileSync(join(amDir, "briefing.mjs"), [
+    "let text = '';",
+    "for await (const chunk of process.stdin) text += chunk;",
+    "process.stdout.write(`am read ${text.length} bytes\\n`);",
+    "throw new Error('am broke after reading stdin');",
+  ].join("\n"));
+  const consumed = s.hook(command, { input: JSON.stringify({ session_id: "s-consumed" }) });
+  assert.equal(consumed.status, 0, consumed.stderr);
+  assert.match(consumed.stdout, /You are Genie/);
+  assert.doesNotMatch(consumed.stdout, /am read/);
+  once(consumed.stdout);
+  assert.match(consumed.stderr, /am broke after reading stdin/);
+  assert.match(read(ledgerPath(s.app)), /"session":"s-consumed"/, "the sidebar's copy saw the hook's whole input");
+});
+
 test("acceptance: after a later folder rename (simulated), the same hook still runs; a rollback to v0.3 puts v0.3's path back", (t) => {
   const s = botHome(t);
   syncHooks({ modsDir: s.mods });
