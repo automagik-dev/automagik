@@ -18,6 +18,7 @@ registerHooks({
 const { state } = await import(stubs.herdr);
 const { nodes, textOf, index, all } = await import(stubs["gpui-kit"]);
 const { BotForm, FORM_SIZE } = await import("../mods/am-sidebar/create.js");
+const { hcFileOps } = await import("./hc-file-ops.mjs");
 
 const look = (character, colour) => ({ character, colour });
 const MAIN = { id: "b-mainaaaaaa", name: "orch", kind: "main", look: look("octopus", "deepseek"), role: "", instructions: "", agent: "claude" };
@@ -58,6 +59,9 @@ beforeEach((t) => {
   state.terminals = [];
   state.agents = AGENTS;
   state.hcAnswer = () => ({ code: 0, stdout: "{}", stderr: "" });
+  state.offline = new Set();
+  state.calls = [];
+  state.hcCalls = [];
 });
 
 const seed = (bots, extra = {}) => writeFileSync(join(project, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots, ...extra }, null, 2)}\n`);
@@ -430,7 +434,10 @@ test("Bot settings (pick) draws the sidebar's known bots before discovery answer
   index(form.render(cx)); // before cx.settle(): nothing has answered yet
   assert.doesNotMatch(textOf(nodes.get("bot-form-body")), /Finding bots/);
   assert.ok(nodes.has(`pick-${MAIN.id}`), "the known bot shows at once");
-  assert.ok(!nodes.has(`pick-${KIMI.id}`), "another machine's project is left out");
+  assert.ok(nodes.has(`pick-${KIMI.id}`), "a linked machine's project shows too");
+  assert.match(textOf(nodes.get("bot-form-body")), /ELSEWHERE · box/);
+  assert.ok(nodes.has(`edit-${KIMI.id}`) && !nodes.has(`start-${KIMI.id}`) && !nodes.has(`restart-${KIMI.id}`), "Edit only, for now");
+  assert.ok(nodes.has(`start-${MAIN.id}`));
   await cx.settle();
   index(form.render(cx));
   assert.ok(nodes.has(`pick-${MAIN.id}`) && nodes.has(`pick-${OMP.id}`), "the refreshed list replaces it");
@@ -493,7 +500,7 @@ test("menu Configure opens the Edit form for the bot and closes the menu", async
   draw();
   state.opened = [];
   await click("menu-configure");
-  assert.deepEqual(state.opened, [{ mod: "am-sidebar", kind: "dialog", modal: true, ...FORM_SIZE, props: { form: "edit", bot: OMP.id, project } }]);
+  assert.deepEqual(state.opened, [{ mod: "am-sidebar", kind: "dialog", modal: true, ...FORM_SIZE, props: { form: "edit", bot: OMP.id, project, machine: null } }]);
   assert.deepEqual(state.closed, ["o9"]);
 });
 
@@ -681,4 +688,96 @@ test("menu busy labels: only the running action's item changes", async () => {
   assert.equal(textOf(nodes.get("menu-start")), "Start");
   assert.equal(textOf(nodes.get("menu-restart")), "Restart", "a fresh restart leaves plain Restart's label");
   await r.cx.settle();
+});
+
+// ---- automagik#206: a project on a linked machine ("vm": its files are scratch paths here) ----
+
+test("menu on a linked machine: Configure and Prompt, no Run or Inspect yet; Configure opens the form there", async () => {
+  seed([MAIN, OMP]);
+  const { draw, click } = await menu({ machine: "vm" });
+  draw();
+  assert.ok(nodes.has("menu-configure") && nodes.has("menu-prompt"));
+  for (const id of ["menu-start", "menu-restart", "menu-attach", "menu-detach", "menu-focus", "menu-inspect"]) assert.ok(!nodes.has(id), id);
+  assert.match(textOf(nodes.get("menu-remote-note")), /On vm\. Start, Attach and Inspect/);
+  assert.doesNotMatch(textOf(nodes.get("bot-form-body")), /work from that computer/);
+  state.opened = [];
+  await click("menu-configure");
+  assert.deepEqual(state.opened[0].props, { form: "edit", bot: OMP.id, project, machine: "vm" });
+});
+
+test("menu on a linked machine that isn't answering: its last-seen note, nothing to press", async () => {
+  seed([MAIN, OMP]);
+  const { draw } = await menu({ machine: "vm", stale: true });
+  draw();
+  assert.ok(!nodes.has("menu-configure") && !nodes.has("menu-prompt"));
+  assert.match(textOf(nodes.get("menu-remote-note")), /vm isn't answering/);
+});
+
+test("menu Prompt on a linked machine: read there, saved there by hc file edit, a stale snapshot refused", async () => {
+  seed([MAIN, { ...OMP, instructions: "old words" }]);
+  state.hcAnswer = hcFileOps(state);
+  const { form, cx, draw, click } = await menu({ machine: "vm" });
+  draw();
+  await click("menu-prompt");
+  assert.ok(state.calls.some((c) => c.kind === "read" && c.on === "vm" && c.path === join(project, ".herdr/bots.json")));
+  form.prompt.type("new words", cx);
+  draw();
+  await click("menu-prompt-save");
+  assert.equal(form.error, null);
+  assert.equal(stored().bots.find((b) => b.id === OMP.id).instructions, "new words");
+  assert.ok(state.hcCalls.some((a) => a[0] === "file" && a[1] === "edit" && a.includes("vm")));
+  assert.equal(state.calls.filter((c) => c.kind === "write").length, 0, "never Herdr's local write");
+  // An edit there since it opened: refused as stale, named with its machine.
+  const again = await menu({ machine: "vm" });
+  again.draw();
+  await again.click("menu-prompt");
+  again.form.prompt.type("mine", again.cx);
+  seed([MAIN, { ...OMP, instructions: "new words", role: "theirs" }]);
+  again.draw();
+  await again.click("menu-prompt-save");
+  assert.match(again.form.error, /bots\.json on vm changed since this menu opened/);
+  assert.equal(stored().bots.find((b) => b.id === OMP.id).role, "theirs");
+});
+
+test("Edit form on a linked machine: its agents and file there, the CLI line names --machine, saved there", async () => {
+  seed([MAIN, OMP]);
+  state.hcAnswer = hcFileOps(state);
+  const { form, cx, draw, click } = await open({ form: "edit", bot: OMP.id, machine: "vm" });
+  draw();
+  assert.equal(form.machine, "vm");
+  assert.match(textOf(nodes.get("bot-machine")), /on vm/);
+  assert.match(textOf(nodes.get("bot-form")), /--machine=('vm'|vm) --project=/);
+  form.inputs.role.type("trades", cx);
+  draw();
+  await click("bot-save");
+  assert.equal(form.error, null);
+  assert.equal(stored().bots.find((b) => b.id === OMP.id).role, "trades");
+  assert.equal(state.calls.filter((c) => c.kind === "write").length, 0);
+  // The machine away: the save fails with its reason, not as stale.
+  state.offline.add("vm");
+  const away = await open({ form: "edit", bot: OMP.id, machine: "vm" });
+  away.draw();
+  away.form.inputs.role.type("x", away.cx);
+  away.draw();
+  await away.click("bot-save");
+  assert.match(away.form.error ?? "", /^Not saved: /);
+  assert.doesNotMatch(away.form.error ?? "", /changed since/);
+});
+
+test("Create from a focused space on a linked machine: that machine's project, created there, no Create & start", async () => {
+  state.spaces = [{ id: "s1", folder: project, machine: "vm", name: "hedge" }];
+  state.focused = { space: "s1" };
+  const { form, cx, draw, click } = await open({ form: "create", project: undefined });
+  draw();
+  assert.equal(form.key, project);
+  assert.equal(form.machine, "vm");
+  assert.ok(nodes.has("bot-save") && !nodes.has("bot-save-start"), "Start there isn't offered yet");
+  form.inputs.name.type("Hedge", cx);
+  draw();
+  await click("bot-save");
+  assert.equal(form.error, null);
+  assert.equal(stored().bots[0].name, "Hedge");
+  assert.ok(state.calls.some((c) => c.kind === "exec" && c.command === "sh" && c.on === "vm"), "made there");
+  assert.equal(state.calls.filter((c) => c.kind === "write").length, 0);
+  assert.deepEqual(state.shared.get("am.sidebar.projects")?.at(-1), { key: project, machine: "vm" });
 });

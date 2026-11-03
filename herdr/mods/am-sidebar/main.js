@@ -723,7 +723,7 @@ export default class Spaces extends View {
     // row's click goes; Detach); worker: what the row's own click opens (Focus, as openWorker);
     // terminal: the pane focused at the click (Attach).
     const onMenu = () => openBotForm({ form: "menu", bot: b.id, name: b.name, planned: planned, project: project.key,
-      machine: project.machine, terminal: focused()?.terminal ?? null, live: live?.terminal ?? held ?? null, worker: rowWorker(r),
+      machine: project.machine, stale: Boolean(tree.stale), terminal: focused()?.terminal ?? null, live: live?.terminal ?? held ?? null, worker: rowWorker(r),
       helpers: (n.helpers ?? []).map((h) => ({ terminal: h.terminal, name: h.name ?? null })) }, "popup");
     const size = main ? 30 : 26;
     let row = h_flex().flex_1().min_w(0).gap(8).items_center()
@@ -891,7 +891,7 @@ export default class Spaces extends View {
     // Attach with no bot named: the picker, for the pane.
     if (c === "attach" && !args.bot) return openBotForm({ form: "attach", terminal, known: this.knownLocal() });
     // No bot named and the focused pane isn't one: the Bots list, to pick one.
-    if (!bot) return openBotForm({ form: "pick", known: this.knownLocal() }, "popup");
+    if (!bot) return openBotForm({ form: "pick", known: this.knownAll() }, "popup");
     if (c === "edit") return openBotForm({ form: "edit", bot });
     // A bot's project: looked up by its id (ids are random, so it is one project).
     const has = (q) => !q.machine && q.file.bots.some((b) => b.id === bot);
@@ -907,6 +907,11 @@ export default class Spaces extends View {
   // discovery): the pick and attach lists draw them at once and refresh behind (#85).
   knownLocal() {
     return (this.bots ?? []).filter((q) => !q.machine).map((q) => ({ key: q.key, machine: null, file: q.file }));
+  }
+
+  // Every project the sidebar knows, linked machines' too (the Bots list).
+  knownAll() {
+    return (this.bots ?? []).map((q) => ({ key: q.key, machine: q.machine ?? null, file: q.file }));
   }
 
   // A discovery's lists are drawn as they come (this computer's projects first, each other
@@ -928,9 +933,10 @@ export default class Spaces extends View {
       let found;
       try { found = await discoverProjects({ sleep, onUpdate: show }); } catch { return; }
       if (run < this.botsShown) return;
-      // For the footer's Bots tab (am-footer): whether this computer has a bot, as the
-      // Bot settings list counts them. Set only on a change.
-      const defined = found.some((p) => !p.machine && p.file?.bots?.length > 0);
+      // For the footer's Bots tab (am-footer): whether there is a bot the Bot settings list
+      // can configure, this computer's or an answering linked machine's (not one drawn
+      // from the last run of Herdr while its machine is away). Set only on a change.
+      const defined = found.some((p) => (!p.machine || !p.stale) && p.file?.bots?.length > 0);
       if (shared("bots.defined") !== defined) setShared("bots.defined", defined);
       const local = new Set(found.filter((p) => !p.machine).map((p) => p.key));
       for (const key of this.botWatch.keys()) if (!local.has(key)) this.botWatch.delete(key);

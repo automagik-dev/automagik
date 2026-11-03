@@ -1,6 +1,6 @@
 // Bot definitions in Herdr: which projects have them (every open space's folder plus the
-// remembered projects), reading them on this machine or another, writing them here, and
-// watching them. The rules themselves live in model.js. Apache-2.0.
+// remembered projects), reading and writing them on this machine or another (remoteFile.js),
+// and watching them here. The rules themselves live in model.js. Apache-2.0.
 //
 // No `fs/promises` here: Herdr's writes only under its app home, and has no access().
 // Files go through readTextFile/writeTextFile, folders through exec.
@@ -9,6 +9,7 @@ import { spaces, exec, readTextFile, writeTextFile, watchFolder, shared, setShar
 import { BOT_LABEL, BOTS_PATH, PROJECTS_FILE, projectOf, parseBots, checkBots, listedProjects } from "./model.js";
 import { relabel, relabelPlan, relabelWarning } from "./launchArgs.js";
 import { TimedOut, discover, machineGate } from "./discover.js";
+import { writeRemoteText } from "./remoteFile.js";
 
 // Projects a bot was created or attached in: [{ key, machine }], machine null for this one.
 const REMEMBERED = "am.sidebar.projects";
@@ -258,10 +259,13 @@ export function restoreDiscovery(text) {
   return out;
 }
 
+// herdr-core's file ops and a shell on another machine, for remoteFile.js.
+const remoteIo = { hc, exec: (command, args, on) => exec(command, args, { on }) };
+
 /**
- * Writes a project's definitions on this machine (Create writes only here) and remembers
- * the project. Read-edit-write, so nobody's edit is lost:
- *   const text = await readTextFile(`${key}/.herdr/bots.json`);   // null: no file yet
+ * Writes a project's definitions on this machine, or on `machine` (a linked one, through
+ * herdr-core: remoteFile.js), and remembers the project. Read-edit-write, so nobody's edit is lost:
+ *   const text = await readTextFile(`${key}/.herdr/bots.json`, { on: machine });   // null: no file yet
  *   const file = text === null ? { version: 1, categories: [], bots: [] } : parseBots(text).raw;
  *   ... edit `file` ...
  *   await writeBots(key, file, text);
@@ -269,13 +273,21 @@ export function restoreDiscovery(text) {
  * that can't be shown, and writing them would delete those entries. `expected` is required:
  * the text read (null when there was no file); a file changed since rejects (writeTextFile's
  * stale-snapshot rule). A file checkBots faults is refused before anything is written.
+ * On another machine the same rule holds there (a stale snapshot rejects, nothing written).
  * After an edit, the labels of the changed bots' live local panes follow (relabelLocal),
  * without the save waiting for them: resolves with { relabel }, that work's promise.
+ * Another machine's panes are left as they are.
  */
-export async function writeBots(projectKey, file, expected) {
+export async function writeBots(projectKey, file, expected, machine = null) {
   if (expected === undefined) throw new Error("writeBots: pass the text the edit started from (null for a new file)");
   const errors = checkBots(file, expected);
   if (errors.length) throw new Error(`Not saved: ${errors.join("; ")}`);
+  if (machine) {
+    await writeRemoteText(remoteIo, machine, under(projectKey, BOTS_PATH), `${JSON.stringify(file, null, 2)}\n`, expected);
+    keys.clear();
+    rememberProject(projectKey, machine);
+    return { relabel: Promise.resolve({ done: [], failed: [], unchecked: [] }) };
+  }
   // writeTextFile isn't documented to make folders; Herdr's fs writes only in its home.
   if (expected === null) {
     const dir = under(projectKey, ".herdr");
