@@ -5,8 +5,8 @@ with a main bot, captains and members, running in [Herdr](https://dev.herdr.app)
 
 The pack lives in the [Automagik monorepo](https://github.com/automagik-dev/automagik) under
 `herdr/`, and ships on its releases with its one version (`v3.x`): a release carries the pack
-(`automagik-herdr-pack-<v>.tgz`) when `herdr/` changed since the release before. v0.7.x was the
-last release from the old `automagik-dev/automagik-herdr` repository.
+(`automagik-herdr-pack-<v>.tgz`) when `herdr/` changed since the release before. v0.14.x was the
+last release line from the old `automagik-dev/automagik-herdr` repository.
 
 <!-- hero: docs/hero.png, a sidebar screenshot with a team running -->
 

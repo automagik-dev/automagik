@@ -20,7 +20,7 @@ export const POINTER_SIG_URL = `${POINTER_URL}.sig`;
 export const POINTER_SCHEMA = 1;
 /** The public keys this pack trusts for the pointer, beside this file: `{ keys: [{ keyId, publicKey (PEM) }] }`. */
 export const PACK_KEYS_FILE = "pack-keys.json";
-/** Where the pack lived until v0.8.x; the monorepo's release of it is the first above 3.0.0. */
+/** Where the pack lived until v0.14.x; the monorepo's release of it is the first above 3.0.0. */
 export const OLD_REPO = "automagik-dev/automagik-herdr";
 /** The folder that carries the pack's VERSION, update.mjs and the CLI. */
 export const PACK_NAME = "am-sidebar";

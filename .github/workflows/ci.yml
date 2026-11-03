@@ -87,7 +87,7 @@ jobs:
         if: steps.changed.outputs.herdr == 'true'
         run: |
           set -euo pipefail
-          for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs; do
+          for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs scripts/*/*.mjs; do
             node --check "$f"
           done
           sh -n install.sh
@@ -95,9 +95,19 @@ jobs:
           sh -n mods/am-sidebar/bin/automagik-herdr
           shellcheck -s sh install.sh mods/am-sidebar/bin/run.sh mods/am-sidebar/bin/automagik-herdr
 
+      # No home paths, private hosts or machine names in the pack (scripts/privacy-check.mjs).
+      - name: Privacy
+        if: steps.changed.outputs.herdr == 'true'
+        run: node scripts/privacy-check.mjs
+
       - name: Catalog
         if: steps.changed.outputs.herdr == 'true'
         run: node scripts/catalog.mjs --check
+
+      # release.js and install.sh pin each usagemeter build by sha256: checked against the release.
+      - name: usagemeter pin
+        if: steps.changed.outputs.herdr == 'true'
+        run: node scripts/usagemeter-pin.mjs
 
       # On every pull request, whatever changed: herdr.dev skips the whole repository when a herdr-mod
       # entry folder (any folder holding mods/<name>/main.js) holds layouts/ (RFC 0011).

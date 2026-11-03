@@ -59,8 +59,8 @@ catalog; `install.sh` and the updater still do, from the tarball.
   version; the pack has no bump or release logic of its own.
 - No `herdr-v*` tags. The import fetches no tags: the old repository's `v0.N.P` are not releases
   of this one.
-- On its first monorepo release the pack jumps from automagik-herdr's v0.8.x (v0.8.0 or later, the
-  source at the final import) to the monorepo's 3.N.P. Semver only goes up, so every updater accepts
+- On its first monorepo release the pack jumps from automagik-herdr's v0.14.x (the final import is
+  v0.14.1, `513f91ac`, its frozen `dev`) to the monorepo's 3.N.P. Semver only goes up, so every updater accepts
   it.
 
 ## Lanes
@@ -230,9 +230,9 @@ tags.
 1. The monorepo publishes the first release that carries the pack (the first merge after this
    change that ships something under `herdr/`), with `HERDR_PACK_KEY` set and the `herdr-lane`
    pointer signed.
-2. automagik-herdr cuts one bridge release from v0.8.x. It ships this verifier and
+2. automagik-herdr cuts one bridge release from v0.14.x. It ships this verifier and
    `pack-keys.json`: its `release.js`, `update.mjs` and `install.sh` read this repository's
-   `herdr-lane` pointer and check it against the keys it carries, as here. An installed v0.8.x
+   `herdr-lane` pointer and check it against the keys it carries, as here. An installed 0.x
    takes the bridge from automagik-herdr with the hash check alone (that release's `.sha256`), so
    the bridge release is the trust anchor for every 0.x install; from then on each update is the
    3.N.P the signed pointer names.
