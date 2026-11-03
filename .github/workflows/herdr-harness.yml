@@ -1,0 +1,71 @@
+name: Herdr find and raise
+
+# RFC 0013 delivery 1 (Decided 6): does code mode's start or raise work on every OS? On macOS
+# arm64, Ubuntu (under xvfb, with openbox as the window manager) and Windows: check herdrdev's
+# feed and the sha256 of the OS's build, install herdr-app with herdrdev's installer, then run
+# the app's finder and start-or-raise (apps/desktop/src/herdr.js) on a temp HERDR_APP_HOME:
+# status, ls, do space.new, and a raise from behind another window. The harness is
+# apps/desktop/test/cross-os/herdr-harness.mjs; its table is the run summary and its JSON lines
+# an artifact. It runs on runners only, signs nothing, publishes nothing and uses no secrets.
+#
+# #191's cross-OS workflow lives only on spike/cross-os, so this is its own workflow: on a pull
+# request that changes the finder, the harness or this file, or by hand (gh workflow run).
+
+on:
+  pull_request:
+    paths:
+      - apps/desktop/src/herdr.js
+      - apps/desktop/test/cross-os/herdr-harness.mjs
+      - .github/workflows/herdr-harness.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  harness:
+    name: herdr (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos
+            os: macos-latest
+          - name: linux
+            os: ubuntu-24.04
+          - name: windows
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      OUT: ${{ github.workspace }}/out
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+      - name: Linux system packages (display, window manager, software Vulkan)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb openbox x11-utils xterm dbus-x11 mesa-vulkan-drivers libvulkan1 libxkbcommon-x11-0 >/dev/null
+      - name: Harness
+        working-directory: apps/desktop
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            dbus-run-session -- xvfb-run -a -s "-screen 0 1920x1080x24" \
+              sh -c 'openbox >/dev/null 2>&1 & sleep 2; node test/cross-os/herdr-harness.mjs'
+          else
+            node test/cross-os/herdr-harness.mjs
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: herdr-harness-${{ matrix.name }}
+          path: out
+          if-no-files-found: warn
