@@ -270,8 +270,10 @@ What Electron needs before it ships on Windows (found here, not fixed: apps/desk
 4. dsh.js `writeTools` writes `#!/bin/sh` shims for `node` and `pnpm`, which do not run on Windows.
    DSH's page loads anyway; plugin installs that go through those shims were not tested.
 
-On Linux, the app's own Bot browser smoke test fails 4 of 24 checks in all three runs (details in
-the table). The other three OSes pass 24 of 24.
+On Linux, the app's own Bot browser smoke test fails 4 of 24 checks in all three runs; macOS and
+Windows pass 24 of 24. It is a real Linux behaviour, not the virtual display: with Chromium's
+sandbox on, a renderer that crashes itself never reports `render-process-gone`, so the Bot's page
+hangs. See "Linux: a crashed Bot page hangs" below.
 
 ### Per-OS results
 
@@ -285,7 +287,7 @@ the table). The other three OSes pass 24 of 24.
 | 3. 2 Bot views: isolated stores | Tauri | **works** (WKWebsiteDataStore per Bot) | **works** (`data_directory` per Bot) | **works** (`data_directory` per Bot: one WebView2 browser per Bot) |
 | 3. 2 Bot views: persistent across relaunch | Electron | **works** | **works** | **works** |
 | 3. 2 Bot views: persistent across relaunch | Tauri | **works** | **works** | **works** |
-| 4. Bot browser automation | Electron | **works**: `scripts/browser-smoke.mjs` 24/24 (Playwright `connectOverCDP` through bot-relay.js `debugger.attach`) | **degraded**: 20/24, the same 4 in all 3 runs. After a forced renderer crash the relay does not drop the Bot's connection within 10 s; the next 3 checks (cursor follows a click, cursor on the next session, closing tabs closes the cursor) time out on `page.goto` or `connectOverCDP`. Not investigated further | **works**: 24/24 (exit 1 only from the temp folder's cleanup, EPERM) |
+| 4. Bot browser automation | Electron | **works**: `scripts/browser-smoke.mjs` 24/24 (Playwright `connectOverCDP` through bot-relay.js `debugger.attach`) | **degraded**: 20/24, the same 4 in all 3 runs. After a forced renderer crash the relay does not drop the Bot's connection within 10 s; the next 3 checks (cursor follows a click, cursor on the next session, closing tabs closes the cursor) time out on `page.goto` or `connectOverCDP`. Cause: with the sandbox on, the self-crashed renderer never exits (see below); 24/24 with `--no-sandbox` | **works**: 24/24 (exit 1 only from the temp folder's cleanup, EPERM) |
 | 4. Bot browser automation | Tauri | **broken**: WKWebView has no CDP endpoint and no switch for one; only DSH listens in the app's process tree | **broken**: WebKitGTK's inspector server (`WEBKIT_INSPECTOR_HTTP_SERVER`) speaks WebKit's own protocol; `/json/version` answers 404 and `connectOverCDP` fails | **works**: `--remote-debugging-port` per Bot view (`additional_browser_args`); Playwright `connectOverCDP` ran evaluate, screenshot, a trusted click and a `route` abort. Needs one TCP debug port per Bot, which the council's security lens rules out; WebView2's `CallDevToolsProtocolMethod` is a port-free relay like Electron's, untested |
 | 6. Package (unsigned) | Electron | **works**: dmg | **works**: AppImage, deb | **works**: nsis exe, msi |
 | 6. Package (unsigned) | Tauri | **works**: dmg | **works**: AppImage, deb | **works**: nsis exe, msi |
@@ -323,6 +325,46 @@ Windows it is the working set. Read 60 s after the page was drawn.
   runner's Node 24.22 instead of Electron's own. The "without DSH" rows compare the shells.
 - **Tauri's sizes leave out Node.** A release has to ship one (about +116 MB on macOS, see blocker
   3) or install one. The 2.4 MB deb and the 2–3 MB Windows installers are the shell alone.
+
+### Linux: a crashed Bot page hangs (sandbox, not the display)
+
+`cross-os/crash-probe.mjs` makes one view the way bot-views.js does: a sandboxed WebContentsView
+in a persist partition. It crashes that view three ways and records whether the renderer exits,
+whether `render-process-gone` fires (bot-views.js drops the Bot's relay connection and reloads on
+it) and whether the page loads again. The app's `browser-smoke.mjs` runs after it in the same
+setup. Run [41599963561](https://github.com/automagik-dev/automagik/actions/runs/41599963561)
+(`only: crash-probe`), Electron 44.5.0, app at `dbcb95c`:
+
+| Setup | `forcefullyCrashRenderer` | CDP `Page.crash` | SIGKILL to the renderer | browser-smoke |
+|---|---|---|---|---|
+| macOS (control) | event after 8 ms, reloads | event after 10 ms, reloads | event after 32 ms, reloads | 24/24 |
+| Linux, xvfb, sandbox on | **no event**: the renderer stays alive (`State: I (idle)`), `isCrashed()` false, reload times out | **no event** (the page was already wedged) | event after 195 ms, reloads | 20/24, the same 4 failures |
+| Linux, headless Wayland (weston), sandbox on | **no event**, the same as xvfb | **no event** | event after 23 ms, reloads | 20/24, the same 4 failures |
+| Linux, xvfb, `--no-sandbox` | event after 1064 ms (exit 133, SIGTRAP), reloads | event after 6070 ms, reloads | event after 5 ms, reloads | **24/24** |
+| Linux, Chromium's headless ozone | segfault before the first trial (exit 139): Electron does not run there | — | — | — |
+
+- **Not the display:** the failure is the same under X (xvfb) and Wayland (weston). It goes away only
+  when the sandbox is off.
+- **Not the relay:** with the event, bot-views.js and bot-relay.js recover (24/24 with
+  `--no-sandbox`, and every SIGKILL trial).
+- **Where it fails:** in Chromium on Linux. Both crash calls make the renderer crash itself (the log
+  shows `FATAL:child_thread_impl.cc Crashing because hung`). Under the namespace sandbox that
+  renderer never exits, so the browser never learns it is gone. A renderer killed from outside
+  (SIGKILL, as the OOM killer does) is reported at once.
+- **Who it reaches:** the deb install, where the AppArmor profile turns the sandbox on, and any
+  Linux where unprivileged user namespaces are allowed. Not an AppImage on Ubuntu 24.04+ (the
+  launcher adds `--no-sandbox`), and not macOS or Windows.
+- **Not tested:** whether a page that crashes its renderer through a real bug (a segfault, not
+  these two calls) hangs the same way, and whether the same holds on a real Linux desktop (these
+  runners use the Azure kernel 7.0).
+- **Fixes to weigh (not made; apps/desktop is unchanged):**
+  - In the app, a watchdog that SIGKILLs a Bot view's renderer that stops answering (the view's
+    `unresponsive` event, or a relay command that times out). SIGKILL is the path that is reported
+    and recovers.
+  - In `browser-smoke.mjs` on Linux, crash with `process.kill(contents.getOSProcessId(), 'SIGKILL')`
+    so the check tests the recovery rather than this Chromium behaviour.
+- **Probe pitfall:** in an Electron 44 ESM main script, a top-level `await app.whenReady()` never
+  resolves. The probe runs in `app.whenReady().then(main)`, as browser-smoke.mjs does.
 
 ### Harness
 
