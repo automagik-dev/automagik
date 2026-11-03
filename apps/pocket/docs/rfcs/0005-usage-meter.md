@@ -37,6 +37,9 @@ everything under Design and Alternatives is a proposal, not a decision.
 - Summary doc schema version 2 (the phone's contract, in the README): per-project, per-task
   (repo + branch) and per-model 24 h / 7 d / 30 d windows, per-harness hourly (48 h) and daily
   (30 d) series. It fits 64 KiB by cutting the task list, then the project list, into `*_other`.
+- Superseded 2026-11-03 by [Pocket Link doesn't install the usage meter](../decisions/pocket-link-no-meter-installer.md):
+  the Automagik Herdr pack is the one installer, and Pocket Link's bridge no longer installs or
+  runs the meter. The rest of this bullet is how it was.
 - Each usagemeter release carries the meter for macOS (arm64, x86_64) and Linux (static x86_64,
   aarch64) with `SHA256SUMS`. While Pocket Link's bridge runs, it installs the matching build at
   `~/.local/bin/usagemeter` on this computer and every connected herdr-core machine (hash checked

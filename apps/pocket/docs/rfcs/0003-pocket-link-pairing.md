@@ -40,7 +40,11 @@ Phone (`android/app/src/main/java/ai/namastex/automagik/`):
 Desktop (`desktop/pocket-link/mods/pocket-link/bridge/bridge.mjs`):
 
 - A code lasts 10 minutes by default (1 to 60 allowed) (`:158-163`) and works once.
-- Five wrong tries end the code (`:79`).
+- One phone key gets 3 wrong tries, then is refused without counting; 20 wrong tries in all end
+  the code (`bridge/pairing.mjs:7-9`). Closing the dialog ends the code (`bridge.mjs cancel`,
+  `main.js:108`).
+- Before pairing, a connection has 10 s for its handshake and first line, and at most 16 are in
+  that phase and 64 open in all (`bridge/guard.mjs:8-12`).
 - Removing a phone ends its open session (`:98`).
 
 ## Design

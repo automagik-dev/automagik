@@ -19,5 +19,6 @@ Write one from [`_Templates/decision.md`](../_Templates/decision.md).
 | [Pocket Link public-status.json contract (schema 1)](pocket-link-public-status.md) | Accepted | #39 |
 | [Offer Always allow for agent permission prompts](always-allow-permission-prompts.md) | Accepted | #41 |
 | [The phone finds a space's Space Row project itself](space-row-project-key-on-phone.md) | Accepted | #45 |
+| [Pocket Link doesn't install the usage meter](pocket-link-no-meter-installer.md) | Implemented | |
 
 Back to the [docs home](../_index.md).
