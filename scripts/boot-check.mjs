@@ -234,9 +234,10 @@ async function acpShots(browser, url, dir, problems) {
 }
 
 const port = String(args.port ?? 39400 + Math.floor(Math.random() * 500))
-// DSH leads its own process group, so what it starts stops with it: acp-dsh's background
-// adapter install (an npm or pnpm a SIGTERM to DSH alone leaves running) writes into
-// AUTOMAGIK_HOME under `work`, and would still be writing there when `work` is removed.
+// DSH leads its own process group, so what it starts stops with it. acp-dsh's background adapter
+// install (an npm or pnpm writing into AUTOMAGIK_HOME under `work`) is not in it: it leads a group
+// of its own, which only DSH's dispose stops. DSH disposes on SIGTERM, so DSH gets a SIGTERM and a
+// moment before any SIGKILL, or the install would still be writing when `work` is removed.
 const dsh = spawn(process.execPath, [DSH_BIN, '--profile', 'boot', '--no-open', '--host', '127.0.0.1', '--port', port], { cwd: work, env: dshEnv, stdio: ['ignore', 'pipe', 'pipe'], detached: true })
 const signalGroup = (signal) => {
   try {
@@ -246,9 +247,14 @@ const signalGroup = (signal) => {
     return false
   }
 }
-// Out of this terminal's group, DSH would outlive a Ctrl-C or a closed terminal here: stop it too.
+// Out of this terminal's group, DSH would outlive a Ctrl-C or a closed terminal here: stop it too,
+// with a SIGTERM first so its dispose stops the install. A second Ctrl-C quits at once.
+let interrupted
 for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) {
-  process.once(signal, () => {
+  process.once(signal, async () => {
+    interrupted = code
+    signalGroup('SIGTERM')
+    for (let i = 0; i < 30 && signalGroup(0); i++) await new Promise(done => setTimeout(done, 100))
     signalGroup('SIGKILL')
     process.exit(code)
   })
@@ -313,7 +319,8 @@ try {
       done()
     })
   })
-  // Whatever DSH left running (an install mid-way) goes too, and is gone before `work` is.
+  // Whatever is left in DSH's group goes too, and is gone before `work` is. The adapter install
+  // is not in it: DSH's dispose, on the SIGTERM above, stopped it.
   signalGroup('SIGKILL')
   for (let i = 0; i < 50 && signalGroup(0); i++) await new Promise(done => setTimeout(done, 100))
   // The verdict is the checks': a folder that will not go is reported, never a failure.
@@ -325,4 +332,4 @@ try {
     }
   }
 }
-process.exit(failed ? 1 : 0)
+process.exit(interrupted ?? (failed ? 1 : 0))
