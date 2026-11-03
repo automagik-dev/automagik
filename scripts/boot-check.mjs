@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // Boots the plugins for real: a DSH web profile with this checkout's Bot team and welcome and
 // Omni's channels and canvases (from the Omni release apps/desktop/omni.json pins, or
-// OMNI_SOURCE), installed the way DSH installs any plugin (`dsh plugin install`, pnpm), on the
-// DSH the Bot team is tested on. Headless Chromium then opens it and checks that the web UI
-// comes up with every plugin active: DSH refuses to boot the whole UI when one plugin's
-// client import misses, so this is where a renamed package that another plugin imports would
-// show.
+// OMNI_SOURCE) and the add-ons apps/desktop/profile pins, installed the way DSH installs any
+// plugin (`dsh plugin install`, pnpm), on the DSH the Bot team is tested on. Headless Chromium
+// then opens it and checks that the web UI comes up with every plugin active: DSH refuses to
+// boot the whole UI when one plugin's client import misses, so this is where a renamed package
+// that another plugin imports, or an add-on pinned to a development build, would show.
 //
 //   node scripts/boot-check.mjs [--keep <dir>] [--shot <png>] [--port <n>]
 //
@@ -55,11 +55,16 @@ const packed = folders.map((dir) => {
   return { name: info.name, version: info.version, file: info.filename }
 })
 say(`packed ${packed.map(pkg => `${pkg.name}@${pkg.version}`).join(', ')}`)
+// The add-ons the desktop profile pins (Oh My Claude, dsh-subscriptions), at those very pins:
+// they are in the same client graph, and one bad client fails the whole UI (v3.53.0).
+const desktopProfile = readJson(join(ROOT, 'apps', 'desktop', 'profile', 'package.json'))
+const addons = Object.entries(desktopProfile.dependencies).filter(([name]) => !packed.some(pkg => pkg.name === name) && !name.startsWith('@automagik/'))
+say(`add-ons ${addons.map(([name, spec]) => `${name}@${spec}`).join(', ')}`)
 writeFileSync(join(profileDir, 'package.json'), `${JSON.stringify({
   name: 'automagik-boot-check',
   private: true,
-  dependencies: Object.fromEntries(packed.map(pkg => [pkg.name, `file:vendor/${pkg.file}`])),
-  dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', ...packed.map(pkg => pkg.name)] } },
+  dependencies: { ...Object.fromEntries(packed.map(pkg => [pkg.name, `file:vendor/${pkg.file}`])), ...Object.fromEntries(addons) },
+  dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', ...packed.map(pkg => pkg.name), ...addons.map(([name]) => name)] } },
 }, null, 2)}\n`)
 cpSync(join(ROOT, 'apps', 'desktop', 'profile', 'pnpm-workspace.yaml'), join(profileDir, 'pnpm-workspace.yaml'))
 // DSH's plugin manager runs pnpm: the release the desktop app ships.
@@ -121,7 +126,7 @@ try {
     const entries = await page.evaluate(() => (window.__DSH_BOOT__?.entries ?? []).map(row => row.id ?? row.name))
     const body = await page.evaluate(() => document.body.innerText)
     if (/did not activate|Failed to load plugins/i.test(body)) problems.push(`the web UI did not boot: ${body.slice(0, 600)}`)
-    for (const pkg of packed) if (!entries.includes(pkg.name)) problems.push(`${pkg.name} is not in the client graph`)
+    for (const name of [...packed.map(pkg => pkg.name), ...addons.map(([addon]) => addon)]) if (!entries.includes(name)) problems.push(`${name} is not in the client graph`)
     if (args.shot) await page.screenshot({ path: resolve(args.shot) })
     say(`client graph: ${entries.filter(id => id.startsWith('@automagik/')).join(', ')}`)
     for (const problem of problems) say(`FAIL ${problem}`)

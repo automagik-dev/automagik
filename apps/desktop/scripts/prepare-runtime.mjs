@@ -27,6 +27,7 @@ import { scrubBuildPaths } from '../src/dsh.js'
 import { pruneNodeModules } from './prune-runtime.mjs'
 import { acceptsHarness } from './follow-dsh.mjs'
 import { patchRuntime } from './runtime-patches.mjs'
+import { devClientBundles } from './client-bundles.mjs'
 import { compareVersions } from '../src/update.js'
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -164,6 +165,10 @@ for (const [name, version] of Object.entries(ADDONS)) {
   const installed = readJson(join(installDir, 'node_modules', ...name.split('/'), 'package.json')).version
   if (installed !== version) throw new Error(`${name} installed at ${installed}, not the vetted ${version}`)
 }
+// A version names no build: a pinned commit can carry a development client under the vetted
+// version (dsh-oh-my-claude f6e9158), which DSH refuses, and with it the whole web UI.
+const devBuilds = devClientBundles(join(installDir, 'node_modules'), Object.keys(profileDeps))
+if (devBuilds.length > 0) throw new Error(`development client bundles (react/jsx-dev-runtime, which DSH's module table does not carry): ${devBuilds.join(', ')}`)
 // DSH's own record of the build's install (.plugin-manager) is not part of what ships.
 rmSync(join(installDir, '.plugin-manager'), { recursive: true, force: true })
 // Nor is this machine's pnpm store, or pnpm's cache of this machine's paths: the app records

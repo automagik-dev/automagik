@@ -2390,7 +2390,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/automagik-genie/dsh-oh-my-claude",
-            "commit": "f6e9158f71031cf3a3abbf9c805263792cad7d11"
+            "commit": "eb9d1cdad58472ebe34abd194309a60fc22c40d1"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.2 <0.3.0"

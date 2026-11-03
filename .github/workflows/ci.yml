@@ -157,8 +157,9 @@ jobs:
 
   boot:
     # The plugins booted for real with Omni's channels and canvases (the release the desktop
-    # carries): DSH refuses the whole web UI when one plugin's client import misses, so a
-    # rename one of them still imports would fail here.
+    # carries) and the add-ons the desktop profile pins: DSH refuses the whole web UI when one
+    # plugin's client import misses, so a rename one of them still imports, or an add-on pinned
+    # to a development build (v3.53.0, react/jsx-dev-runtime), fails here.
     name: Boot with Omni's plugins
     runs-on: ubuntu-24.04
     timeout-minutes: 20
