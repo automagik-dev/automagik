@@ -18,10 +18,10 @@ Every release is signed with one key. Its certificate's SHA-256 fingerprint:
 Check a download before installing it:
 
 ```sh
-apksigner verify --print-certs automagik.apk   # "Signer #1 certificate SHA-256 digest" must match
+apksigner verify --print-certs automagik-pocket-<version>.apk   # "Signer #1 certificate SHA-256 digest" must match
 ```
 
-The app installs an update only when its SHA-256 matches the release's `latest.json`, and Android installs it only when it is signed with this same key.
+The app installs an update only when its SHA-256 matches `latest.json` (on the `pocket-lane` release; builds up to v0.23.0 were `automagik.apk`), and Android installs it only when it is signed with this same key.
 
 ## What the app can reach
 
