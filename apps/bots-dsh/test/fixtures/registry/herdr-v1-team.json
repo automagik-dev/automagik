@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "categories": [
+    { "id": "core", "title": "Core", "sub": "the build" }
+  ],
+  "bots": [
+    {
+      "id": "b-aaaaaaaaaa",
+      "kind": "main",
+      "name": "Captain",
+      "role": "leads the project",
+      "instructions": "Keep the plan.",
+      "agent": "claude",
+      "model": "opus",
+      "rank": "captain",
+      "look": { "character": "octopus", "colour": "blue" }
+    },
+    {
+      "id": "b-cccccccccc",
+      "kind": "member",
+      "name": "Dev",
+      "role": "builds",
+      "instructions": "",
+      "agent": "codex",
+      "lead": "b-aaaaaaaaaa",
+      "category": "core",
+      "rank": "dev",
+      "worker": { "agent": "codex", "effort": "high", "template": "implementer" },
+      "look": { "character": "star", "colour": "green" },
+      "someFutureField": { "kept": true }
+    },
+    {
+      "id": "b-dddddddddd",
+      "kind": "member",
+      "name": "Planned",
+      "role": "",
+      "instructions": "",
+      "planned": { "wave": 2 },
+      "look": { "character": "moon", "colour": "violet" }
+    },
+    {
+      "id": "b-eeeeeeeeee",
+      "kind": "helper",
+      "name": "Unknown kind",
+      "agent": "claude"
+    },
+    {
+      "id": "b-ffffffffff",
+      "kind": "member",
+      "name": "Bad look",
+      "agent": "claude",
+      "look": { "character": "../..", "colour": "x" },
+      "folder": "/etc"
+    }
+  ]
+}
