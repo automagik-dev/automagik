@@ -1,7 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { install } from '../src/host/endpoint.js'
-import { keyRefOf, saveRoute } from '../src/host/providers.js'
+import { resolveConfig } from '@deepseek-ai/cordis'
+import * as piAi from '@deepseek-ai/dsh-llm-pi-ai'
+import { SIGNIN_ROUTES, isSigninPolicy, keyRefOf, saveRoute } from '../src/host/providers.js'
 import { fakeContext } from './fake-ctx.js'
 
 const withPiAi = (providers = {}) => ({ 'omni-ai': {}, 'llm-pi-ai': { providers } })
@@ -188,20 +190,42 @@ test('Claude signs in through pi-ai\'s anthropic flow (Pro/Max), and the finishe
 })
 
 // The review of #196: a sign-in's route that then takes a key is a key's route, and a key's
-// 429 is DSH's to retry. Only the sign-in's own policy goes; one set by hand stays.
+// 429 is DSH's to retry. DSH's settings describe a route as pi-ai's Config resolved it through
+// Cordis (maxRetries, backoff and the rest filled in), so the fixtures start from that shape.
+const SIGNIN_POLICY = { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] }
+const described = route => resolveConfig(piAi, { providers: { anthropic: route } }).providers.get().anthropic
+
+test('the route DSH describes for a sign-in carries its policy with DSH\'s defaults filled in', () => {
+  const route = described({ retryPolicy: SIGNIN_POLICY })
+  assert.deepEqual(route.retryPolicy, { ...SIGNIN_POLICY, maxRetries: 5, backoff: { initialDelayMs: 500, maxDelayMs: 10000, jitterRatio: 0.1 } })
+  assert.equal(isSigninPolicy(route.retryPolicy, SIGNIN_ROUTES.anthropic.retryPolicy), true)
+  assert.equal(isSigninPolicy(SIGNIN_POLICY, SIGNIN_ROUTES.anthropic.retryPolicy), true)
+  assert.equal(isSigninPolicy({ ...SIGNIN_POLICY, retryableCodes: ['TRANSPORT', 'TIMEOUT', 'SERVER', 'EMPTY_RESPONSE'] }, SIGNIN_ROUTES.anthropic.retryPolicy), true)
+  // Anything someone set by hand is not the sign-in's.
+  for (const policy of [
+    described({ retryPolicy: { mode: 'normal', maxRetries: 2 } }).retryPolicy,
+    { ...SIGNIN_POLICY, retryableCodes: [...SIGNIN_POLICY.retryableCodes, 'RATE_LIMIT'] },
+    { ...SIGNIN_POLICY, maxRetries: 3 },
+    { ...SIGNIN_POLICY, backoff: { initialDelayMs: 1000 } },
+    { mode: 'always' },
+  ]) assert.equal(isSigninPolicy(policy, SIGNIN_ROUTES.anthropic.retryPolicy), false, JSON.stringify(policy))
+})
+
 test('a key added on a sign-in\'s route leaves the sign-in\'s retry policy, at both places a key is saved', async () => {
-  const signin = { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } }
-  const viaKey = host({ entries: withPiAi({ anthropic: structuredClone(signin) }) })
+  const viaKey = host({ entries: withPiAi({ anthropic: described({ retryPolicy: SIGNIN_POLICY }) }) })
   assert.equal((await viaKey.handle('provider-key', { provider: 'anthropic', apiKey: 'sk-ant-0123' })).ok, true)
-  assert.deepEqual(viaKey.valueOf('llm-pi-ai').providers.anthropic, { apiKeyEnv: 'ANTHROPIC_API_KEY' })
-  const own = { retryPolicy: { mode: 'normal', maxRetries: 2 }, displayName: 'Claude' }
-  const handSet = host({ entries: withPiAi({ anthropic: structuredClone(own) }) })
+  const keyed = viaKey.valueOf('llm-pi-ai').providers.anthropic
+  assert.deepEqual([keyed.apiKeyEnv, keyed.retryPolicy], ['ANTHROPIC_API_KEY', undefined])
+  // The route DSH resolves from it again has DSH's default retries, RATE_LIMIT among them.
+  assert.equal(described(keyed).retryPolicy, undefined)
+  // A policy set by hand stays.
+  const handSet = host({ entries: withPiAi({ anthropic: described({ retryPolicy: { mode: 'normal', maxRetries: 2 } }) }) })
   assert.equal((await handSet.handle('provider-key', { provider: 'anthropic', apiKey: 'sk-ant-0123' })).ok, true)
-  assert.deepEqual(handSet.valueOf('llm-pi-ai').providers.anthropic, { ...own, apiKeyEnv: 'ANTHROPIC_API_KEY' })
+  assert.deepEqual(handSet.valueOf('llm-pi-ai').providers.anthropic.retryPolicy, described({ retryPolicy: { mode: 'normal', maxRetries: 2 } }).retryPolicy)
   // Connect AI's own key save (ais.js) goes through the same saveRoute.
-  const ctx = { settings: { describe: () => [{ ns: 'llm-pi-ai', revision: 1, value: { providers: { anthropic: structuredClone(signin) } } }], mutate: async (_ns, ops) => { ctx.ops = ops } } }
+  const ctx = { settings: { describe: () => [{ ns: 'llm-pi-ai', revision: 1, value: { providers: { anthropic: described({ retryPolicy: SIGNIN_POLICY }) } } }], mutate: async (_ns, ops) => { ctx.ops = ops } } }
   await saveRoute(ctx, 'anthropic', { apiKeyEnv: 'ANTHROPIC_API_KEY' })
-  assert.deepEqual(ctx.ops, [{ op: 'set', path: ['providers', 'anthropic'], value: { apiKeyEnv: 'ANTHROPIC_API_KEY' } }])
+  assert.deepEqual([ctx.ops[0].value.apiKeyEnv, ctx.ops[0].value.retryPolicy], ['ANTHROPIC_API_KEY', undefined])
 })
 
 test('an Anthropic API key is saved the Models page\'s way, on the same anthropic route', async () => {

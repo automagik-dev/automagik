@@ -1,4 +1,6 @@
 import { test } from 'node:test'
+import { resolveConfig } from '@deepseek-ai/cordis'
+import * as piAi from '@deepseek-ai/dsh-llm-pi-ai'
 import assert from 'node:assert/strict'
 import { COVERED, OLLAMA_KEY_REF, SUBSCRIPTION_ONLY, VENDORS } from '../src/host/ais.js'
 import { install } from '../src/host/endpoint.js'
@@ -88,9 +90,12 @@ test('Claude on an Anthropic API key: the same row, on the key the route names',
   assert.equal((await stale.handle('ai-switch', { id: 'claude', on: true })).value.on, true)
   assert.deepEqual(stale.valueOf('llm-pi-ai').providers.anthropic, { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] }, reasoning: 'high' })
   // A route a sign-in made, turned on with a key instead: the key's route, with DSH's retries.
-  const signedOut = host({ providers: { anthropic: { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } } }, env: { ANTHROPIC_API_KEY: SECRET } })
+  // The route as DSH describes it: pi-ai's Config resolved through Cordis, defaults filled in.
+  const signinRoute = resolveConfig(piAi, { providers: { anthropic: { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } } } }).providers.get().anthropic
+  const signedOut = host({ providers: { anthropic: signinRoute }, env: { ANTHROPIC_API_KEY: SECRET } })
   assert.equal((await signedOut.handle('ai-switch', { id: 'claude', on: true })).value.on, true)
-  assert.deepEqual(signedOut.valueOf('llm-pi-ai').providers.anthropic, { apiKeyEnv: 'ANTHROPIC_API_KEY' })
+  const keyed = signedOut.valueOf('llm-pi-ai').providers.anthropic
+  assert.deepEqual([keyed.apiKeyEnv, keyed.retryPolicy], ['ANTHROPIC_API_KEY', undefined])
   assert.ok(!JSON.stringify([saved.updates, fromEnv.updates, stale.updates, signedOut.updates]).includes(SECRET))
 })
 
