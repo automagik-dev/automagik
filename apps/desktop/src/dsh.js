@@ -158,6 +158,130 @@ function renamedIn(shipped, renamed = RENAMED) {
 }
 
 /**
+ * Packages earlier builds shipped that this one dropped, each with the profile row ids its
+ * own patch used. Oh My Claude (Claude through the person's Claude Code) is gone: Claude
+ * comes through DSH's pi-ai route now. Left in a profile, an update would keep it as a plugin
+ * the person installed. An update takes it out of node_modules, package.json and both patch
+ * files (retirePatch): DSH skips a settings row for a row id nobody inserts, but an insert row
+ * naming a package that is gone fails to activate.
+ */
+export const RETIRED = Object.freeze({
+  'dsh-oh-my-claude': Object.freeze(['oh-my-claude']),
+})
+
+const retiredIn = (shipped, retired = RETIRED) => Object.keys(retired).filter(name => !Object.hasOwn(shipped?.dependencies ?? {}, name))
+
+// A YAML scalar as a patch line holds it: `name: 'x'`, `name: "x"` or `name: x`, then an
+// optional comment.
+const scalarLine = (key, values) => new RegExp(`^[\\s-]*${key}:\\s*(['"]?)(?:${values.map(escapeRegExp).join('|')})\\1\\s*(?:#.*)?$`)
+
+/**
+ * A cordis patch file's text without the rows of the retired packages, or null when it has
+ * none: a top-level row whose id is one of theirs or whose `name` is the package, and an
+ * `insert` item naming the package (an insert left empty goes whole). Comment lines right
+ * above a dropped row go with it; everything else stays as written.
+ */
+export function retirePatch(text, retired = RETIRED) {
+  const names = Object.keys(retired)
+  if (names.length === 0) return null
+  const ids = Object.values(retired).flat()
+  const named = scalarLine('name', names)
+  const owned = scalarLine('id', ids)
+  const lines = String(text).split('\n')
+  // Blocks: a top-level row (from its "- " line through its indented and blank lines) with
+  // the comment lines right above it; anything else is a block of its own and stays.
+  const blocks = []
+  let comments = []
+  for (const line of lines) {
+    if (line.startsWith('- ')) {
+      blocks.push({ row: true, head: comments, lines: [line] })
+      comments = []
+    } else if (line.startsWith('#')) {
+      comments.push(line)
+    } else if (blocks.at(-1)?.row && comments.length === 0 && (line.trim() === '' || /^\s/.test(line))) {
+      blocks.at(-1).lines.push(line)
+    } else {
+      blocks.push({ row: false, head: comments, lines: [line] })
+      comments = []
+    }
+  }
+  if (comments.length > 0) blocks.push({ row: false, head: comments, lines: [] })
+  let changed = false
+  const out = []
+  for (const block of blocks) {
+    if (!block.row) {
+      out.push(...block.head, ...block.lines)
+      continue
+    }
+    const [first, ...rest] = block.lines
+    if (/^-\s+insert:\s*(?:#.*)?$/.test(first)) {
+      // Its items: each starts at the indent of the first "- " under it.
+      const indent = rest.find(line => /^\s+-\s/.test(line))?.match(/^\s+/)[0]
+      if (indent === undefined) {
+        out.push(...block.head, ...block.lines)
+        continue
+      }
+      const items = []
+      const lead = []
+      for (const line of rest) {
+        if (line.startsWith(`${indent}- `)) items.push([line])
+        else if (items.length > 0) items.at(-1).push(line)
+        else lead.push(line)
+      }
+      const kept = items.filter(item => !item.some(line => named.test(line)))
+      if (kept.length === items.length) {
+        out.push(...block.head, ...block.lines)
+        continue
+      }
+      changed = true
+      if (kept.length > 0) out.push(...block.head, first, ...lead, ...kept.flat())
+      else if (block.lines.at(-1) === '') out.push('')
+      continue
+    }
+    // A row's own keys sit at its first indent; nested config keys are left alone.
+    const own = [first, ...rest.filter(line => /^ {2}\S/.test(line))]
+    if (own.some(line => named.test(line) || owned.test(line))) {
+      changed = true
+      if (block.lines.at(-1) === '') out.push('')
+      continue
+    }
+    out.push(...block.head, ...block.lines)
+  }
+  if (!changed) return null
+  const next = out.join('\n')
+  // A file left with no rows is DSH's empty template.
+  return next.trim() === '' ? '[]\n' : next
+}
+
+/**
+ * Take the retired packages out of a profile an earlier build installed: their folders in
+ * node_modules and their rows in the profile's patch and DSH's own. package.json follows in
+ * mergeProfilePackage. Returns what changed.
+ */
+export function migrateRetired({ target, dshHome, shipped, retired = RETIRED }) {
+  const gone = retiredIn(shipped, retired)
+  if (gone.length === 0) return []
+  const changed = []
+  for (const name of gone) {
+    const dir = join(target, 'node_modules', ...name.split('/'))
+    if (existsSync(dir)) {
+      rmSync(dir, { recursive: true, force: true })
+      changed.push(dir)
+    }
+  }
+  const only = Object.fromEntries(gone.map(name => [name, retired[name]]))
+  for (const file of [join(target, 'cordis.patch.yml'), join(dshHome, 'cordis.patch.yml')]) {
+    if (!existsSync(file)) continue
+    const next = retirePatch(readFileSync(file, 'utf8'), only)
+    if (next !== null) {
+      writeFileSync(file, next)
+      changed.push(file)
+    }
+  }
+  return changed
+}
+
+/**
  * Move a profile from the renamed packages to their new names: the old packages leave
  * node_modules (the new ones arrive with the shipped packages), and the profile's patch and
  * DSH's own (DSH_HOME/cordis.patch.yml) name the new ones. Bots, chats, memory and the Omni
@@ -217,6 +341,8 @@ export async function installProfile({ dshHome, source }) {
   } else {
     // A profile from a build that shipped the Bot team or the welcome under its old name.
     migrateRenamed({ target, dshHome, shipped: readJson(join(source, 'package.json')) })
+    // A profile with a package this build no longer ships (RETIRED).
+    migrateRetired({ target, dshHome, shipped: readJson(join(source, 'package.json')) })
     // Only the packages the app ships are replaced: a plugin the user installed (the market,
     // Settings → Plugins) stays, with its dependencies, and in package.json.
     for (const name of packagesIn(join(source, 'node_modules'))) {
@@ -341,17 +467,18 @@ function packagesIn(dir) {
 
 // The dependencies the person added: neither shipped nor a shipped package under its old name.
 function ownDependencies(user, shipped) {
-  const replaced = new Set(renamedIn(shipped))
+  const replaced = new Set([...renamedIn(shipped), ...retiredIn(shipped)])
   return Object.entries(user?.dependencies ?? {}).filter(([name]) => !Object.hasOwn(shipped?.dependencies ?? {}, name) && !replaced.has(name))
 }
 
 /**
  * The shipped profile package.json with what the user added on top: dependencies and
- * bundles the shipped one does not name keep their place after the shipped ones.
+ * bundles the shipped one does not name keep their place after the shipped ones, except a
+ * shipped package's old name (RENAMED) and a package the app no longer ships (RETIRED).
  */
 export function mergeProfilePackage(user, shipped) {
   const merged = structuredClone(shipped)
-  const replaced = new Set(renamedIn(shipped))
+  const replaced = new Set([...renamedIn(shipped), ...retiredIn(shipped)])
   const extraDependencies = ownDependencies(user, shipped)
   if (extraDependencies.length > 0) merged.dependencies = { ...shipped.dependencies, ...Object.fromEntries(extraDependencies) }
   const shippedBundles = shipped.dsh?.profile?.bundles ?? []
@@ -558,8 +685,8 @@ export async function forgetDshLogins(cookies, origin) {
 /** The environment dsh runs with: its own home, Omni's, and nothing that phones home. */
 /**
  * Where command-line tools that plugins drive install themselves. An app opened from the Dock
- * or a desktop launcher gets a bare PATH without them, so dsh-oh-my-claude could not start
- * Claude Code (which installs to ~/.local/bin) although it works in the person's terminal.
+ * or a desktop launcher gets a bare PATH without them, so a plugin that starts an agent CLI
+ * (Claude Code installs to ~/.local/bin) would not find one that works in the person's terminal.
  */
 export const toolDirs = (userHome = homedir()) => [join(userHome, '.local', 'bin'), join(userHome, '.claude', 'local'), '/opt/homebrew/bin', '/usr/local/bin']
 

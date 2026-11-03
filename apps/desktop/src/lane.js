@@ -36,7 +36,7 @@ export const LANE_URL = 'https://github.com/automagik-dev/automagik/releases/dow
 // the profile pins that have no dependencies of their own (its `addons`, scripts/lane.ts
 // LANE_ADDONS), so a pin move needs no new app either.
 export const PUBLISHERS = Object.freeze([
-  { publisher: 'automagik', url: LANE_URL, keys: LANE_KEYS.automagik, sameLine: true, plugins: ['@automagik/bots-dsh', '@automagik/welcome-dsh', 'dsh-oh-my-claude'] },
+  { publisher: 'automagik', url: LANE_URL, keys: LANE_KEYS.automagik, sameLine: true, plugins: ['@automagik/bots-dsh', '@automagik/welcome-dsh'] },
   { publisher: 'genie', url: 'https://raw.githubusercontent.com/automagik-dev/genie/lane/lane.json', keys: LANE_KEYS.genie, sameLine: false, plugins: ['@automagik/genie-dsh'] },
 ])
 const SCHEMA_VERSION = 1

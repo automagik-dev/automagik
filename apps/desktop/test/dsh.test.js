@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import { createServer } from 'node:net'
 import { test } from 'node:test'
-import { appHome, dshEnv, dshRun, forgetDshLogins, freePort, guardContents, installProfile, keepPort, launchPort, launchUrlOf, listenFailed, mergeProfilePackage, mergeProfilePatch, migrateRenamed, navigationOf, pageUrlOf, pinProfileStore, portFileOf, portFree, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, scrubBuildPaths, serveDsh, servesOrigin, SHIPPED_STORE, startDsh, startDshOnPort, stopDsh, storedPort, storeLayoutOf, writeTools } from '../src/dsh.js'
+import { appHome, dshEnv, dshRun, forgetDshLogins, freePort, guardContents, installProfile, keepPort, launchPort, launchUrlOf, listenFailed, mergeProfilePackage, mergeProfilePatch, migrateRenamed, migrateRetired, navigationOf, pageUrlOf, pinProfileStore, portFileOf, portFree, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, RETIRED, retirePatch, scrubBuildPaths, serveDsh, servesOrigin, SHIPPED_STORE, startDsh, startDshOnPort, stopDsh, storedPort, storeLayoutOf, writeTools } from '../src/dsh.js'
 
 test('the app keeps everything in one folder under ~/.automagik, apart from a dsh you already run', () => {
   assert.equal(appHome({}), join(homedir(), '.automagik', 'desktop'))
@@ -517,6 +517,72 @@ test('the rename touches only the old names, whole', () => {
   assert.equal(renamePatch('# opens this app (@automagik/omni-ai-dsh: Welcome)'), '# opens this app (@automagik/welcome-dsh: Welcome)')
   // A build that does not ship the new name leaves the old one alone.
   assert.deepEqual(JSON.parse(mergeProfilePackage({ dependencies: { '@automagik/omni-dsh': '1' } }, { dependencies: {} })).dependencies, { '@automagik/omni-dsh': '1' })
+})
+
+// Oh My Claude left the app (Claude comes through DSH's pi-ai route). An update of a profile
+// an earlier build installed with it must take it out whole: its folder, its dependency and
+// bundle, and its rows in both patch files, leaving every other row as the user has it.
+test('an update takes a package the app no longer ships out of the profile and keeps everything else', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-retire-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const dshHome = join(root, 'dsh')
+  const target = join(dshHome, 'profiles', 'omni')
+  const shipped = ['@automagik/bots-dsh', '@automagik/welcome-dsh', '@goodandready/dsh-subscriptions']
+  for (const name of [...shipped, 'dsh-oh-my-claude', 'dsh-kimi-subscription']) {
+    mkdirSync(join(target, 'node_modules', ...name.split('/')), { recursive: true })
+    writeFileSync(join(target, 'node_modules', ...name.split('/'), 'index.js'), 'old')
+  }
+  writeFileSync(join(target, 'package.json'), JSON.stringify({
+    dependencies: { ...Object.fromEntries(shipped.map(name => [name, '*'])), 'dsh-oh-my-claude': 'github:automagik-genie/dsh-oh-my-claude#eb9d1cdad58472ebe34abd194309a60fc22c40d1', 'dsh-kimi-subscription': '1.3.10' },
+    dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', ...shipped, 'dsh-oh-my-claude', 'dsh-kimi-subscription'] } },
+  }))
+  writeFileSync(join(target, 'cordis.patch.yml'), [
+    '- insert:', '    - id: web-search-auto', "      name: '@automagik/bots-dsh/web-search'",
+    '    - id: oh-my-claude-tools', '      name: dsh-oh-my-claude # the Claude Code tools',
+    '# Claude Code, as the person set it up',
+    '- id: oh-my-claude', '  config:', '    permissionMode: auto', '',
+    '- id: omni-ai', "  name: '@automagik/welcome-dsh'", '  config:', '    welcomeDone: true',
+    '- id: llm-pi-ai', '  config:', '    providers:', '      anthropic: {}', '',
+  ].join('\n'))
+  writeFileSync(join(target, '.omni-desktop-profile'), 'old build')
+  writeFileSync(join(dshHome, 'cordis.patch.yml'), '- insert:\n    - id: omc\n      name: "dsh-oh-my-claude"\n- id: omc-ui\n  name: dsh-oh-my-claude\n  config:\n    hints: false\n')
+
+  const source = join(root, 'shipped')
+  for (const name of shipped) {
+    mkdirSync(join(source, 'node_modules', ...name.split('/')), { recursive: true })
+    writeFileSync(join(source, 'node_modules', ...name.split('/'), 'index.js'), 'new')
+  }
+  writeFileSync(join(source, 'package.json'), JSON.stringify({ dependencies: Object.fromEntries(shipped.map(name => [name, '*'])), dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', ...shipped] } } }))
+  writeFileSync(join(source, 'cordis.patch.yml'), readFileSync(new URL('../profile/cordis.patch.yml', import.meta.url), 'utf8'))
+  writeFileSync(join(source, '.build-id'), 'new build')
+
+  assert.equal((await installProfile({ dshHome, source })).installed, true)
+  const merged = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8'))
+  assert.deepEqual(Object.keys(merged.dependencies), [...shipped, 'dsh-kimi-subscription'])
+  assert.deepEqual(merged.dsh.profile.bundles, ['@deepseek-ai/dsh-base', ...shipped, 'dsh-kimi-subscription'])
+  assert.equal(existsSync(join(target, 'node_modules', 'dsh-oh-my-claude')), false)
+  assert.equal(readFileSync(join(target, 'node_modules', 'dsh-kimi-subscription', 'index.js'), 'utf8'), 'old')
+  const patch = readFileSync(join(target, 'cordis.patch.yml'), 'utf8')
+  assert.doesNotMatch(patch, /oh-my-claude|Claude Code/)
+  assert.match(patch, /^- insert:\n {4}- id: web-search-auto\n {6}name: '@automagik\/bots-dsh\/web-search'\n\n?- id: omni-ai\n/m)
+  assert.match(patch, /^- id: omni-ai\n {2}name: '@automagik\/welcome-dsh'\n {2}config:\n {4}welcomeDone: true\n- id: llm-pi-ai\n {2}config:\n {4}providers:\n {6}anthropic: \{\}\n/m)
+  // DSH's own patch held nothing else: it is the empty template again.
+  assert.equal(readFileSync(join(dshHome, 'cordis.patch.yml'), 'utf8'), '[]\n')
+  // The next launch of the same build: nothing left to take out.
+  assert.deepEqual(migrateRetired({ target, dshHome, shipped: JSON.parse(readFileSync(join(source, 'package.json'), 'utf8')) }), [])
+})
+
+test('the retirement takes only the retired package\'s rows, and none while the app still ships it', () => {
+  assert.deepEqual(RETIRED, { 'dsh-oh-my-claude': ['oh-my-claude'] })
+  // A name that only starts like it, a nested config key and a comment elsewhere stay.
+  const others = "- id: x\n  name: dsh-oh-my-claude-extra\n- id: y\n  config:\n    name: dsh-oh-my-claude\n# about dsh-oh-my-claude\n- id: web\n"
+  assert.equal(retirePatch(others), null)
+  assert.equal(retirePatch("- id: 'oh-my-claude'\n  config:\n    a: 1\n- id: web\n"), '- id: web\n')
+  assert.equal(retirePatch('- id: a\n  name: "dsh-oh-my-claude"   # theirs\n'), '[]\n')
+  assert.equal(retirePatch('[]\n'), null)
+  // The rows stay, and so does the package, in a build that still ships it.
+  const shipping = { dependencies: { 'dsh-oh-my-claude': '1' } }
+  assert.deepEqual(JSON.parse(mergeProfilePackage({ dependencies: { 'dsh-oh-my-claude': '1' }, dsh: { profile: { bundles: ['dsh-oh-my-claude'] } } }, { ...shipping, dsh: { profile: { bundles: [] } } })).dsh.profile.bundles, ['dsh-oh-my-claude'])
 })
 
 test('a preload comes from the launch and stays in the app\'s home; none is no preference', (t) => {

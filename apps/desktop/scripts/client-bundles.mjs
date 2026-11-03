@@ -1,7 +1,7 @@
 // The client bundles the app's profile ships must be production builds. DSH's web client hands a
 // plugin only the modules in its table (react, react/jsx-runtime, …), never react/jsx-dev-runtime,
 // and refuses the whole web UI when one plugin's import misses ("Failed to load plugins"). A
-// development build of an add-on (dsh-oh-my-claude at f6e9158, v3.53.0) imports exactly that.
+// development build of an add-on (v3.53.0: the Oh My Claude fork at f6e9158) imports exactly that.
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
