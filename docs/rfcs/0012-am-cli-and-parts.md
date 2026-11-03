@@ -164,8 +164,8 @@ need. All are `targets: local`, `set: ["code"]`, artifact `automagik-herdr-pack-
   rollback entry.
 - `writes` (`~/` is the home, `**/` any project): `herdr.pack` the marker and `.prev/**` (in
   `$HERDR_APP_HOME/automagik-herdr/`); am-mods `$HERDR_APP_HOME/keys.json#global.cmd-shift-m`;
-  `herdr.layout` `$HERDR_APP_HOME/layouts/automagik.json`. `automagik.am` takes the briefing's: `briefing.mjs`
-  and `hooks-journal.json` there, and `**/.claude/settings.local.json#hooks.UserPromptSubmit`,
+  `herdr.layout` `$HERDR_APP_HOME/layouts/automagik.json`. `automagik.am` takes the briefing's:
+  `briefing.mjs` and `hooks-journal.json` there, and `**/.claude/settings.local.json#hooks.UserPromptSubmit`,
   plus its links in `~/.local/bin`. Proposed: a `writes` path may start with
   `$HERDR_APP_HOME/`, which am resolves (else `~/.config/herdr-app`). Code gap: the gate accepts
   only `~/` and `**/`, and the manifests spell `~/.config/herdr-app/` out.
