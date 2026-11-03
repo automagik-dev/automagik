@@ -13,10 +13,6 @@ name: Cross-OS wrapper spike
 # pull request, signs nothing, publishes nothing and uses no secrets.
 
 on:
-  # TEMPORARY (one commit, approved): registers the file so it can be dispatched; every job is
-  # skipped on push. Removed in the next commit.
-  push:
-    branches: [spike/cross-os]
   workflow_dispatch:
     inputs:
       desktop_ref:
