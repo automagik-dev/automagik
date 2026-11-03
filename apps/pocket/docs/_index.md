@@ -23,8 +23,8 @@ Rules for agents working in this repo: [AGENTS.md](../AGENTS.md).
 
 - [Development](guides/development.md): build, test, emulator, release key.
 - [Releasing](guides/releasing.md): how a merge to `dev` becomes a release.
-- [Pocket Link desktop mod](../desktop/pocket-link/README.md) and how it's built:
-  [RECIPE](../desktop/pocket-link/RECIPE.md).
+- [Pocket Link desktop mod](../../../herdr/mods/pocket-link/README.md) and how it's built:
+  [RECIPE](../../../herdr/mods/pocket-link/RECIPE.md).
 
 ## Plans and decisions
 

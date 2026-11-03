@@ -1,15 +1,19 @@
 # Agent rules
 
-Short rules for coding agents working in this repo. Humans: the same rules apply.
+Short rules for coding agents working on Pocket, the phone app, in the Automagik monorepo. Humans:
+the same rules apply. The monorepo's own contract is [AGENTS.md](../../AGENTS.md) at its root.
 
 ## Layout
 
-- `android/`: the app (Gradle). Run Gradle from there: `cd android && ./gradlew …`.
-- `desktop/pocket-link/`: the Herdr desktop mod.
+- `android/`: the app (Gradle). Run Gradle from there: `cd apps/pocket/android && ./gradlew …`.
+- `docs/`: Pocket's notes, decisions and RFCs (an Obsidian vault).
+- Pocket Link, the Herdr desktop mod, is [herdr/mods/pocket-link](../../herdr/mods/pocket-link/README.md),
+  beside the pack's mods but Pocket's: the pack never installs, updates or removes it.
 - The usage meter lives in its own repository,
   [automagik-dev/usagemeter](https://github.com/automagik-dev/usagemeter); the Automagik Herdr pack
   installs it. Pocket Link doesn't ([decision](docs/decisions/pocket-link-no-meter-installer.md)).
-- Root: `version.properties`, `scripts/version.sh`, `docs/`, `.github/`.
+- The version is the monorepo's one version (the root `package.json`, `bun scripts/version.ts`);
+  the app's versionCode comes from it. CI is the root's `.github/workflows/` (`ci.yml`, `release.yml`).
 
 ## Working
 
@@ -19,9 +23,11 @@ Short rules for coding agents working in this repo. Humans: the same rules apply
 3. Commit subjects are conventional, `type(scope): description`; CI rejects others. `feat`, `fix`,
    `refactor` and similar cut a release on merge; `docs`, `ci` and `test` don't
    ([releasing](docs/guides/releasing.md)).
-4. Before a pull request: `cd android && ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug`.
-5. Never commit or print the signing key or its password. Never change the app ID, the signing key
-   or the `latest.json` format without an RFC.
+4. Before a pull request: `cd apps/pocket/android && ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug`
+   (the toolchain line in the root [AGENTS.md](../../AGENTS.md)).
+5. Never commit or print the signing key or its password. Never change the app ID, the signing key,
+   the `latest.json` format or where phones read it (the `pocket-lane` release) without an RFC
+   (the monorepo's [RFC 0011](../../docs/rfcs/0011-monorepo-parts-and-releases.md), "Pocket").
 
 ## Docs
 

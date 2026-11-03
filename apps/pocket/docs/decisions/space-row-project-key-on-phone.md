@@ -28,7 +28,7 @@ through unchanged and adds nothing.
   - It already reads Herdr desktop files with `file.read`, which takes `on` for other machines
     (`PocketViewModel.kt:657`, `hc file read --on`).
 - Doing it on the phone needs no new Pocket Link output, so no new contract. Pocket Link pipes
-  `hc connect` byte for byte (`desktop/pocket-link/mods/pocket-link/bridge/bridge.mjs:124`).
+  `hc connect` byte for byte (`herdr/mods/pocket-link/bridge/bridge.mjs:124`).
 
 ## Current state
 

@@ -25,7 +25,7 @@ writes it, and it is the only file in the folder that other mods may read.
 ## Current state
 
 **Where it is.** `public-status.json` in the folder `stateDir` resolves
-(`desktop/pocket-link/mods/pocket-link/bridge/state.mjs:23`), the first that applies:
+(`herdr/mods/pocket-link/bridge/state.mjs:23`), the first that applies:
 
 1. `$POCKET_LINK_STATE_DIR`, when set to an absolute path.
 2. `${XDG_STATE_HOME:-~/.local/state}/automagik-pocket-link-<hash>/`, when `HERDR_APP_HOME` is set
@@ -81,12 +81,12 @@ reader.
 
 **Never in it:** the pairing ticket, this computer's endpoint id, a phone's key, or any secret.
 `publicStatus` copies only `name` and `since` from each phone. A test checks the exact field set
-(`bridge/presence.test.mjs`, CI `.github/workflows/pocket-link.yml`).
+(`bridge/presence.test.mjs`, CI: the `pocket-link` job of the monorepo's `.github/workflows/ci.yml`).
 
 **The dialog** ignores changes that only touch this file, so the 20-second rewrite doesn't reload
 it (`mods/pocket-link/main.js:47`, `:51`).
 
-Documented for mod authors in the [Pocket Link README](../../desktop/pocket-link/README.md#for-other-mods).
+Documented for mod authors in the [Pocket Link README](../../../../herdr/mods/pocket-link/README.md#for-other-mods).
 
 ## Open questions
 
@@ -97,5 +97,5 @@ Documented for mod authors in the [Pocket Link README](../../desktop/pocket-link
 
 - automagik-dev/automagik-pocket #39
 - [Pocket Link keeps its state outside the mod folder](pocket-link-state-outside-mod.md)
-- [Pocket Link README, For other mods](../../desktop/pocket-link/README.md#for-other-mods)
-- [Pocket Link recipe](../../desktop/pocket-link/RECIPE.md)
+- [Pocket Link README, For other mods](../../../../herdr/mods/pocket-link/README.md#for-other-mods)
+- [Pocket Link recipe](../../../../herdr/mods/pocket-link/RECIPE.md)

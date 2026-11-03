@@ -26,7 +26,7 @@ Pocket Link's bridge neither installs nor runs it; the phone keeps reading the `
 
 - Removed: `bridge/meter.mjs`, its tests, the `meter` command, `meter` in `status`, and the
   dialog's failing-meter lines. `serve` deletes an older `meter.json` from the state folder
-  (`desktop/pocket-link/mods/pocket-link/bridge/bridge.mjs:142`).
+  (`herdr/mods/pocket-link/bridge/bridge.mjs:142`).
 - Left alone: a `~/.local/bin/usagemeter` that an older bridge installed. The pack updates it.
 - The phone reads `herdr-meter` as before; no Android change
   ([Using: Spend](../guides/using.md#spend)).
@@ -39,4 +39,4 @@ Pocket Link's bridge neither installs nor runs it; the phone keeps reading the `
 ## Related
 
 - [RFC 0005](../rfcs/0005-usage-meter.md)
-- [Pocket Link README](../../desktop/pocket-link/README.md)
+- [Pocket Link README](../../../../herdr/mods/pocket-link/README.md)

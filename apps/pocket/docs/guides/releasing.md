@@ -2,78 +2,81 @@
 title: "Releasing"
 type: guide
 created: 2026-11-01
-updated: 2026-11-01
+updated: 2026-11-03
 tags: [guide, release, ci, maintainers]
 ---
 # Releasing
 
-**Merge a pull request with a shipping commit into `dev`. CI does the rest.** Each such merge cuts
-the next `0.N.0`. The design and the `latest.json` contract are in
-[RFC 0002](../rfcs/0002-release-and-update-channel.md).
+**Merge a pull request with a shipping change under `apps/pocket/` into `dev`. CI does the rest.**
+Pocket ships as a part of the Automagik monorepo: one version and one tag, `vX.Y.Z`, for everything.
+The design, the `latest.json` move and the versionCode rule are in the monorepo's
+[RFC 0011](../../../../docs/rfcs/0011-monorepo-parts-and-releases.md) ("Pocket"); the `latest.json`
+fields are still [RFC 0002](../rfcs/0002-release-and-update-channel.md)'s.
 
 ## 1. What cuts a release
 
-| Commit types new on `dev` since the last `v0.N.0` tag | Release? |
-|---|---|
-| any `feat`, `fix`, `refactor`, `perf`, `build`, `chore` (other than `chore(release)`), `style`, `revert` | yes |
-| only `docs`, `ci`, `test`, `chore(release)` | no |
+Every merge into `dev` with a shipping commit (not only `docs`, `ci`, `test` or `chore(release)`)
+cuts a release (`.github/workflows/release.yml`). `scripts/lane.ts` decides what it carries:
 
-The rule is in the "Anything new since the last release" step of `.github/workflows/release.yml`.
-Commit subjects are checked on every pull request (`.github/workflows/commitlint.yml`), so a
-subject that doesn't parse never reaches `dev`.
+| Shipping changes since the last release | Kind | Version | Pocket |
+|---|---|---|---|
+| only under `apps/pocket/` (or `apps/pocket/` and `herdr/`) | `pocket` | `3.N.P`, the next patch | the APK and `latest.json` |
+| plugins too | `plugins` | `3.N.P` | the APK and `latest.json` when `apps/pocket/` shipped |
+| the desktop app or anything else | `full` | `3.(N+1).0` | the APK and `latest.json` when `apps/pocket/` shipped |
+
+Changes under `apps/pocket/` that no APK carries (its `*.md`, `docs/`, unit tests,
+`android/scripts/`) ship nothing. A release with no Pocket change carries no APK: phones stay on
+the build they have.
 
 ## 2. What CI does
 
-`.github/workflows/release.yml`, on every push to `dev` (or run by hand: **Actions → Release → Run
-workflow**):
+1. **Cut** (job "Cut v<version> on dev"), before tagging: checks that the
+   `POCKET_SIGNING_KEYSTORE` and `POCKET_SIGNING_PASSWORD` secrets exist (no key, no release),
+   runs the unit tests and lint from `apps/pocket/android/`, then sets the version with
+   `bun scripts/version.ts set` (it refuses a minor or patch over 999), commits
+   `chore(release): vX.Y.Z`, tags and publishes the release (not Latest, for a patch).
+2. **Pocket** (job "Pocket"), from the tag:
+   1. Builds the release APK, signed with the release key from the secrets.
+   2. Checks that its `versionName` is the tag and its `versionCode` is
+      `major*1_000_000 + minor*1_000 + patch`.
+   3. Attaches `automagik-pocket-<version>.apk`, then `latest.json` (`versionCode`, `versionName`,
+      `url` on this release, `sha256`, `notes`), to `vX.Y.Z`.
+   4. Unless the run is a prerelease, replaces `latest.json` on the rolling `pocket-lane` release,
+      never with a lower `versionCode`. Installed phones read only that file.
 
-1. **Cut** (job "Cut v<version> on dev"):
-   1. Finds the newest `v0.N.0` tag and checks for shipping commits since it.
-   2. Runs unit tests and lint from `android/`.
-   3. `scripts/version.sh next` gives `0.(N+1).0`; `scripts/version.sh set` writes
-      `version.properties`.
-   4. Commits `chore(release): v0.(N+1).0`, tags it, and pushes the commit and tag to `dev` in one
-      atomic push. If `dev` moved meanwhile, it stops; the run for the newer merge releases both.
-2. **Publish** (job "Publish v…"):
-   1. Builds the release APK from the tag, signed with the release key from the
-      `POCKET_SIGNING_KEYSTORE` and `POCKET_SIGNING_PASSWORD` secrets. No key, no release.
-   2. Checks that the APK's `versionName` matches the tag.
-   3. Writes `latest.json` (`versionCode`, `versionName`, `url`, `sha256`, `notes`).
-   4. Publishes the GitHub release as **Latest** with `automagik.apk` and `latest.json`. The notes
-      list the commit subjects since the previous release and the APK's SHA-256.
-
-Installed copies find the new `latest.json` at their next launch.
-
-**Releases that don't change the app.** When nothing under `android/` changed since the previous
-release (a Pocket Link change), Publish builds no APK. It copies the previous release's
-`automagik.apk` and `latest.json` unchanged, after checking that the APK matches the `sha256` in
-`latest.json`. Phones see the same version and don't update, and the notes say the app is
-unchanged.
+Installed copies find the new `latest.json` at their next check (on launch, then every 6 hours).
 
 The usage meter is released from its own repository,
-[automagik-dev/usagemeter](https://github.com/automagik-dev/usagemeter). Releases here up to v0.17.0 also carried `automagik-meter-*` binaries and their `SHA256SUMS`.
+[automagik-dev/usagemeter](https://github.com/automagik-dev/usagemeter).
 
 ## 3. Check a release
 
-1. `gh release view -R automagik-dev/automagik-pocket` shows the latest tag, its assets and notes.
-2. Download `automagik.apk` and check its signer against the fingerprint in
+1. `gh release view pocket-lane -R automagik-dev/automagik` and
+   `gh release download pocket-lane -R automagik-dev/automagik -p latest.json -O -` show the build
+   phones are offered; `gh release view vX.Y.Z -R automagik-dev/automagik` shows its APK.
+2. Download the APK and check its signer against the fingerprint in
    [SECURITY.md](../../SECURITY.md):
 
    ```sh
-   apksigner verify --print-certs automagik.apk
+   apksigner verify --print-certs automagik-pocket-<version>.apk
    ```
 
 3. On a phone with the previous release: open the app, or **Settings → About → Check for updates**.
 
+Releases up to v0.23.0, and the bridge release, are on the archived
+[automagik-dev/automagik-pocket](https://github.com/automagik-dev/automagik-pocket/releases).
+
 ## 4. Don'ts
 
-- Don't edit `version.properties` by hand. The release commit owns it.
+- Don't edit a version by hand: `bun scripts/version.ts` owns it.
 - Don't push to `dev` directly; merge a pull request.
 - Don't rotate or regenerate the signing key. Every installed copy would have to uninstall.
-- Don't rename `automagik.apk` or `latest.json`, or change their fields, without an RFC: installed
-  copies and forks depend on them.
+- Don't change `latest.json`'s fields, or where phones read it (`pocket-lane`), without an RFC:
+  installed copies and forks depend on them.
+- Don't create or edit the `pocket-lane` release by hand, or mark it Latest.
 
 ## 5. Forks
 
-A fork publishes with its own key and sets `pocket.updateUrl` in `android/gradle.properties` to
-its own `latest.json` URL. Its installs can't take updates from this repo, and the other way round.
+A fork publishes with its own key and builds with `-Ppocket.updateUrl=<its latest.json URL>` (or
+sets `pocket.updateUrl` in `apps/pocket/android/gradle.properties`). Its installs can't take updates
+from this repo, and the other way round.

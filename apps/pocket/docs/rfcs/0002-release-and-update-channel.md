@@ -7,6 +7,12 @@ pr: "#6, #18"
 ---
 # RFC 0002 — Release and update channel: v0.N.0 per merge to dev, latest.json
 
+> **Since the monorepo (2026-11-03):** releases are the Automagik monorepo's `vX.Y.Z`, the versionCode
+> is `major*1_000_000 + minor*1_000 + patch`, and phones read `latest.json` from the rolling
+> `pocket-lane` release of automagik-dev/automagik
+> ([RFC 0011](../../../../docs/rfcs/0011-monorepo-parts-and-releases.md), "Pocket"). The
+> `latest.json` fields below are unchanged. The rest records the v0.N.0 era.
+
 ## Summary
 
 Every merge to `dev` that brings a shipping commit cuts the next `v0.N.0`, built and signed by CI,

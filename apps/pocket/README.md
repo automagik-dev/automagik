@@ -5,8 +5,10 @@ Android 8.0 or newer. Not an official Herdr release.
 
 ## Install
 
-1. On your phone, open the [latest release](https://github.com/automagik-dev/automagik-pocket/releases/latest)
-   and download `automagik.apk`.
+1. On your phone, open the [newest Pocket build](https://github.com/automagik-dev/automagik/releases/download/pocket-lane/latest.json)
+   and open its `url`: the `automagik-pocket-<version>.apk` on its Automagik release
+   ([all releases](https://github.com/automagik-dev/automagik/releases)). Builds up to v0.23.0 are on
+   the archived [automagik-pocket](https://github.com/automagik-dev/automagik-pocket/releases).
 2. Have the old **Herdr Pocket** (`dev.herdr.pocket`) installed? Uninstall it first. It can't
    update to this app, and you'll pair again.
 3. Open the APK. Allow your browser to install apps when Android asks.
@@ -19,7 +21,7 @@ Want to check the download first? See [SECURITY.md](SECURITY.md).
 The app connects through Pocket Link only.
 
 1. On the computer, add the Pocket Link mod to Herdr desktop: follow
-   [desktop/pocket-link](desktop/pocket-link/README.md). It needs Node.js 20.3+ and herdr-core,
+   [herdr/mods/pocket-link](../../herdr/mods/pocket-link/README.md). It needs Node.js 20.3+ and herdr-core,
    on macOS or Linux.
 2. In Herdr desktop, press ⌘⌥P (Ctrl+Alt+P on Linux), then **Turn on**, then **Pair a phone**.
    A QR code appears.
@@ -94,7 +96,7 @@ Start at [docs/_index.md](docs/_index.md): guides, privacy, RFCs and decisions.
 
 ## License and attribution
 
-Apache-2.0, see [LICENSE](LICENSE). The bundled xterm.js terminal is MIT.
+Apache-2.0, see [LICENSE](../../LICENSE). The bundled xterm.js terminal is MIT.
 
 Herdr desktop's program table and sidebar rules come from
 [herdrdev/herdr-app](https://github.com/herdrdev/herdr-app) (Apache-2.0). The wire format follows

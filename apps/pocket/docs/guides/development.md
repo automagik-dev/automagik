@@ -121,8 +121,8 @@ App code, `android/app/src/main/java/ai/namastex/automagik/`:
 | `Updater.kt`, `UpdatePolicy.kt` | Self-update from GitHub releases: checks, silent install, notifications; the pure rules |
 | `Theme.kt` | Automagik Stage colours, light and dark |
 
-Desktop mod: `desktop/pocket-link/` — see its [README](../../desktop/pocket-link/README.md) and
-[RECIPE](../../desktop/pocket-link/RECIPE.md).
+Desktop mod: `herdr/mods/pocket-link/` — see its [README](../../../../herdr/mods/pocket-link/README.md) and
+[RECIPE](../../../../herdr/mods/pocket-link/RECIPE.md).
 
 ## 7. Commits and pull requests
 

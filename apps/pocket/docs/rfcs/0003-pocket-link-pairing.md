@@ -37,7 +37,7 @@ Phone (`android/app/src/main/java/ai/namastex/automagik/`):
 - iroh library: `android/app/build.gradle.kts:63`. ABIs kept: arm64-v8a, armeabi-v7a, x86_64
   (`:27`); native libraries compressed (`:45`).
 
-Desktop (`desktop/pocket-link/mods/pocket-link/bridge/bridge.mjs`):
+Desktop (`herdr/mods/pocket-link/bridge/bridge.mjs`):
 
 - A code lasts 10 minutes by default (1 to 60 allowed) (`:158-163`) and works once.
 - One phone key gets 3 wrong tries, then is refused without counting; only a flood, 1000 wrong
@@ -89,5 +89,5 @@ SSH remains supported. No other transport was written down as considered.
 ## Related
 
 - automagik-dev/automagik-pocket #4
-- Desktop mod: [`desktop/pocket-link/`](../../desktop/pocket-link/README.md)
+- Desktop mod: [`herdr/mods/pocket-link/`](../../../../herdr/mods/pocket-link/README.md)
 - [Privacy](../privacy.md)

@@ -7,6 +7,12 @@ pr: "#20"
 ---
 # RFC 0004 — One repo: android/ and desktop/pocket-link/
 
+> **Outcome (2026-11-03):** this repository moved, with its history, into the Automagik monorepo:
+> the app and these docs to `apps/pocket/`, Pocket Link to `herdr/mods/pocket-link/`, the version
+> to the monorepo's one version. See the monorepo's
+> [RFC 0011](../../../../docs/rfcs/0011-monorepo-parts-and-releases.md) ("Pocket"). The paths below
+> are the ones this RFC was written with.
+
 ## Summary
 
 This repo is the Automagik Pocket product monorepo. The Android app is in `android/`, the Pocket

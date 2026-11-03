@@ -1,7 +1,7 @@
 # Pocket Link for Herdr
 
 Pair your phone with Herdr desktop like a TV pairs with a streaming account:
-press **Pair a phone**, scan the code with [Automagik Pocket](https://github.com/automagik-dev/automagik-pocket),
+press **Pair a phone**, scan the code with [Automagik Pocket](../../../apps/pocket/README.md),
 done. Your agents on your phone from anywhere, with no SSH, no password and no port to open.
 
 ![Pocket Link](preview.png)
@@ -29,7 +29,7 @@ No release ships the mod and nothing updates an installed copy. To update it:
 2. Copy the new `mods/pocket-link/` over the old one from a fresh clone:
 
    ```sh
-   d=$(mktemp -d) && m=~/.config/herdr-app/mods/pocket-link && git clone -q --depth 1 https://github.com/automagik-dev/automagik-pocket "$d" && { cmp -s "$d/desktop/pocket-link/mods/pocket-link/bridge/package-lock.json" "$m/bridge/package-lock.json" || rm -rf "$m/bridge/node_modules"; } && rsync -a "$d/desktop/pocket-link/mods/pocket-link/" "$m/"
+   d=$(mktemp -d) && m=~/.config/herdr-app/mods/pocket-link && git clone -q --depth 1 --filter=blob:none --sparse https://github.com/automagik-dev/automagik "$d" && git -C "$d" sparse-checkout set herdr/mods/pocket-link && { cmp -s "$d/herdr/mods/pocket-link/bridge/package-lock.json" "$m/bridge/package-lock.json" || rm -rf "$m/bridge/node_modules"; } && rsync -a "$d/herdr/mods/pocket-link/" "$m/"
    ```
 
    It compares the bridge's `package-lock.json` before copying. If the packages changed, it
@@ -88,7 +88,7 @@ Pairings live outside the mod folder and stay.
 - **No usage meter.** Older versions installed and ran
   [usagemeter](https://github.com/automagik-dev/usagemeter) on every connected machine. The
   Automagik Herdr pack installs it now; the phone only reads its summary
-  ([decision](../../docs/decisions/pocket-link-no-meter-installer.md)).
+  ([decision](../../../apps/pocket/docs/decisions/pocket-link-no-meter-installer.md)).
 
 A paired phone can use every herdr-core session on this computer, just like a terminal running `hc`.
 Pair only your own phones. Remove one in the dialog and it's disconnected at once.
