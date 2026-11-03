@@ -386,7 +386,8 @@ async function tauriApp() {
   const viewsEnv = { SPIKE_BOT_URL: botUrl, ...(warm.ok ? {} : { SPIKE_URL: `http://127.0.0.1:${testPort}/host.html` }) }
   const without = warm.ok ? '' : ' (beside a static page: DSH did not start)'
   const inspectPort = await freePort()
-  const cdpBase = await freePort()
+  // Below the ephemeral range (Windows hands out 49152+ in order, so DSH's free port would be base+1).
+  const cdpBase = await cdpPorts()
   const cdpEnv = WIN ? { SPIKE_CDP_PORT: String(cdpBase) }
     : OS === 'linux' ? { WEBKIT_INSPECTOR_HTTP_SERVER: `127.0.0.1:${inspectPort}` } : {}
   const write = await once('views-write', { ...viewsEnv, ...cdpEnv }, { wantBots: true })
@@ -428,6 +429,14 @@ function findFiles(root, name, depth = 5) {
 }
 
 /** Can a Bot driver attach to the platform webview the way bots-dsh does (Playwright connectOverCDP)? */
+async function cdpPorts() {
+  const free = port => new Promise(ok => { const s = netServer().once('error', () => ok(false)).listen(port, '127.0.0.1', () => s.close(() => ok(true))) })
+  for (;;) {
+    const base = 20000 + Math.floor(Math.random() * 9000)
+    if (await free(base + 1) && await free(base + 2)) return base
+  }
+}
+
 async function tauriCdp(run, home, inspectPort, cdpBase) {
   if (OS === 'macos') {
     const ports = spawnSync('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-a', '-p', treeOf(run.child.pid).map(p => p.pid).join(',')], { encoding: 'utf8' }).stdout.trim().split('\n').slice(1)
@@ -451,6 +460,7 @@ async function tauriCdp(run, home, inspectPort, cdpBase) {
     found.push({ ...endpoint, version: version.json ?? version.error ?? version.text?.slice(0, 120), status: version.status, targets: Array.isArray(targets.json) ? targets.json.map(t => t.url.replace(/token=\S+/, 'token=…')) : (targets.error ?? targets.text?.slice(0, 120)) })
   }
   const botEndpoint = found.find(e => Array.isArray(e.targets) && e.targets.some(u => u.includes('bot.html?bot=a')))
+    ?? found.find(e => Array.isArray(e.targets) && e.targets.some(u => u.includes('bot.html?bot=b')))
   if (!botEndpoint) {
     const attempt = await chromium.connectOverCDP(`http://127.0.0.1:${endpoints[0]?.port ?? 9}`, { timeout: 10_000 }).then(b => { b.close(); return 'connected (unexpected)' }, e => e.message.split('\n')[0])
     record('tauri', 'automation', 'broken', {
@@ -463,8 +473,8 @@ async function tauriCdp(run, home, inspectPort, cdpBase) {
   }
   try {
     const browser = await chromium.connectOverCDP(`http://127.0.0.1:${botEndpoint.port}`, { timeout: 15_000 })
-    const page = browser.contexts().flatMap(c => c.pages()).find(p => p.url().includes('bot.html?bot=a'))
-    if (!page) throw new Error(`connected, but no Playwright page for bot a among ${browser.contexts().flatMap(c => c.pages()).map(p => p.url()).join(', ')}`)
+    const page = browser.contexts().flatMap(c => c.pages()).find(p => p.url().includes('bot.html?bot='))
+    if (!page) throw new Error(`connected, but no Playwright page for a Bot view among ${browser.contexts().flatMap(c => c.pages()).map(p => p.url()).join(', ')}`)
     const bot = await page.evaluate(() => window.__probe?.bot ?? document.title)
     const shot = await page.screenshot()
     await page.mouse.click(20, 20)
@@ -474,7 +484,7 @@ async function tauriCdp(run, home, inspectPort, cdpBase) {
     await browser.close()
     record('tauri', 'automation', routed === 'aborted' ? 'works' : 'degraded', {
       value: { endpoint: botEndpoint.port, evaluate: bot, screenshotBytes: shot.length, route: routed, endpoints: found.length, others },
-      reason: `WebView2 opens CDP per Bot view (additional_browser_args --remote-debugging-port, one browser process per data directory); Playwright connectOverCDP on bot a: evaluate, screenshot, mouse click, route abort ${routed}; bot b's port lists ${JSON.stringify(found.find(e => e.port === cdpBase + 2)?.targets ?? null).slice(0, 120)}`,
+      reason: `WebView2 opens CDP per Bot view (additional_browser_args --remote-debugging-port, one browser process per data directory); Playwright connectOverCDP on ${bot}'s view: evaluate, screenshot, mouse click, route abort ${routed}; endpoints: ${found.map(e => `${e.file.replace('SPIKE_CDP_PORT ', '')} ${e.status === 200 ? JSON.stringify(e.targets).slice(0, 90) : `status ${e.status ?? e.version}`}`).join('; ')}`,
     })
   } catch (error) {
     record('tauri', 'automation', 'broken', { value: { endpoints: found }, reason: `CDP endpoint found but Playwright failed: ${error.message.split('\n')[0]}` })
@@ -520,17 +530,19 @@ async function herdr() {
     const all = []
     const walk = d => { for (const e of readdirSync(d, { withFileTypes: true })) { const p = join(d, e.name); if (e.isDirectory()) walk(p); else all.push(p) } }
     walk(join(dir, 'x'))
-    exe = all.find(p => WIN ? /herdr[^\\/]*\.exe$/i.test(basename(p)) && !/uninst|remote/i.test(p) : /^herdr(-gpui)?$/.test(basename(p)))
+    exe = all.find(p => WIN ? /^(herdr-gpui|herdr|herdr-ui)\.exe$/i.test(basename(p)) : /^herdr(-gpui)?$/.test(basename(p)))
       ?? all.find(p => (WIN ? /\.exe$/i : /^[^.]+$/).test(basename(p)) && !/remote/i.test(p))
   }
-  if (!exe) return record('herdr', 'launch', 'broken', { reason: `no executable found in ${asset.name}` })
+  const exes = OS === 'macos' ? [] : (() => { const all = []; const walk = d => { for (const e of readdirSync(d, { withFileTypes: true })) { const p = join(d, e.name); if (e.isDirectory()) walk(p); else if (WIN ? /\.exe$/i.test(e.name) : !e.name.includes('.')) all.push(e.name) } }; walk(join(dir, 'x')); return all })()
+  console.log(`herdr executables: ${exes.join(', ')}`)
+  if (!exe) return record('herdr', 'launch', 'broken', { reason: `no executable found in ${asset.name} (${exes.join(', ')})` })
   // A third-party binary: run it with a bare environment (no token, no runner variables).
   const bare = Object.fromEntries(['PATH', 'HOME', 'USERPROFILE', 'SYSTEMROOT', 'TEMP', 'TMP', 'TMPDIR', 'DISPLAY', 'XDG_RUNTIME_DIR', 'LOCALAPPDATA', 'APPDATA'].filter(k => process.env[k]).map(k => [k, process.env[k]]))
   // herdr-gpui has no --version (exit 2, "Unknown option"); --help proves the binary loads and runs here.
   const out = spawnSync(exe, ['--help'], { encoding: 'utf8', timeout: 20_000, env: bare })
   const text = `${out.stdout ?? ''} ${out.stderr ?? ''}`.trim().replace(/\s+/g, ' ').slice(0, 200)
   const ran = out.status === 0 || /usage: herdr/i.test(text)
-  record('herdr', 'launch', ran ? 'works' : 'broken', { value: { exe: basename(exe), exit: out.status, signal: out.signal, error: out.error?.message }, reason: `${basename(exe)} --help (no daemon, so this proves only that the binary runs here): ${text || '(no output)'}` })
+  record('herdr', 'launch', ran ? 'works' : 'broken', { value: { exe: basename(exe), executables: exes, exit: out.status, signal: out.signal, error: out.error?.message }, reason: `${basename(exe)} --help (no daemon, so this proves only that the binary runs here): ${text || '(no output)'}` })
 }
 
 function runner() {
