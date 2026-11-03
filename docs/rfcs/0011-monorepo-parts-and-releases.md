@@ -1,4 +1,4 @@
-# RFC 0010: Monorepo parts and releases
+# RFC 0011: Monorepo parts and releases
 
 | Field | Value |
 |---|---|
@@ -92,28 +92,32 @@ what a release is and whether it attaches the pack:
 ## Updaters and the installer
 
 - The pack's updater (`release.js`, `update.mjs`, the sidebar's check through `updateCheck.js`)
-  reads `https://api.github.com/repos/automagik-dev/automagik/releases?per_page=100` and takes the
-  newest release, by version, that is neither a draft nor a prerelease and carries both
-  `automagik-herdr-pack-<v>.tgz` and its `.sha256`, as the desktop's `update.js` does. `latest`
-  is the newest such release, not GitHub's Latest.
-- `herdr/install.sh` picks the same release from the same list (Node is checked before it reads the
-  list), downloads the tarball and its `.sha256` from `releases/download/v<v>/`, and checks the
-  hash before anything is written. `--version <v>` takes a release that carries the pack. The
-  one-liner is `curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash`;
+  reads `https://api.github.com/repos/automagik-dev/automagik/releases?per_page=100` page by page
+  (`&page=N`), until a page holds a pack, a page comes back short, or 10 pages (1000 releases,
+  `MAX_RELEASE_PAGES`) were read. It takes the newest release, by version, that is neither a draft
+  nor a prerelease and carries both `automagik-herdr-pack-<v>.tgz` and its `.sha256`, as the
+  desktop's `update.js` does. `latest` is the newest such release, not GitHub's Latest. A single
+  page would not do: at a few releases an hour, a quiet pack falls out of the newest 100 within a
+  day or two (t259).
+- `herdr/install.sh` picks the same release the same way (the same cap, `MAX_PAGES`, kept equal by
+  a test; Node is checked before it reads the list), downloads the tarball and its `.sha256` from
+  `releases/download/v<v>/`, and checks the hash before anything is written. `--version <v>` takes
+  a release that carries the pack. The one-liner is
+  `curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash`;
   `main` moves to every release, so it serves the released installer.
+- Past the cap, both say there is no pack. The search is the stopgap until the signed pointer
+  below, which answers in one request.
 - The mod manager's catalog is `https://raw.githubusercontent.com/automagik-dev/automagik/dev/herdr/catalog/index.json`.
   The old repository's two catalog URLs count as written by the pack: an install or update rewrites
   them to the new one, and until then the mod manager reads the new one. The index names the pack as
   `automagik-dev/automagik`, path `herdr`.
-- Limit: the list holds the newest 100 releases. If 100 releases in a row carry no pack, the updater
-  finds none and says it is up to date. Should that happen, the release workflow can post a rolling
-  pointer, as `plugin-lane` does for the plugins.
 
 ## CI
 
 - `ci.yml`'s `herdr` job runs the old repository's gate from `herdr/`, on the newest Node 22 and
-  on 24 (the pack runs on 22.7 or later, but its test stubs need `module.registerHooks`, which 22.7
-  lacks): `node --test 'test/*.test.mjs'`, `node --check` on every pack mod and
+  on 24. Two floors (t22n's ruling): the pack's users run it on Node 22.7 or later (the launcher,
+  `install.sh`), and its tests need the newest Node 22, as the stubs use `module.registerHooks`
+  (22.15+). No stub fallback: `node --test 'test/*.test.mjs'`, `node --check` on every pack mod and
   script, `sh -n` and `shellcheck -s sh` on the installer and the CLI's shell scripts,
   `node scripts/catalog.mjs --check`, `node scripts/version.mjs check`. It runs when `herdr/`, the
   CI or release workflow, or `scripts/lane.ts` or `scripts/version.ts` changed. The other jobs are
@@ -129,41 +133,49 @@ what a release is and whether it attaches the pack:
   with `--allow-unrelated-histories`, without tags. It refuses a history that holds a database, a
   key or an `.env`. filter-repo is deterministic, so a re-run before the cutover merges only the
   source's newer commits.
-- `commitlint.yml` checks the commits that descend from this repository's own first commit (the
-  root of dev's first-parent line). An imported history never descends from it, on a re-import
-  too, so its commits, written under the source's own rules, are skipped (the herdr import has ten
-  whose bodies run past 100 characters). Every commit made here is still checked, also after dev is
-  merged into the pull request.
+- `commitlint.yml` skips only the history an import brought. An import merge is a merge whose
+  second parent's history never reaches this repository's own first commit (the root of dev's
+  first-parent line), and its imported commits are those reachable from that second parent and not
+  from its first. The final re-run adds a second such merge, and only its new upstream commits are
+  skipped. Every other commit is checked: the pull request's own, ones after dev is merged in, and
+  those of a branch of this repository merged with `--no-ff`. The herdr import has ten commits whose
+  bodies run past 100 characters; they stay as the source wrote them.
 
-## Required follow-up: a signed pack (before the bridge release)
+## Required follow-up before the bridge: a signed rolling pointer
 
 The `.sha256` comes from the same release as the tarball, so it proves integrity, not provenance:
 anyone who can publish a release (or swap its assets) can publish a matching pair (t259's note).
-The plugins already have provenance through the signed lane. Before the bridge points installed
-packs at this repository, the pack gets the same:
+The releases search above also costs up to ten requests. Both are fixed together, as `plugin-lane`
+fixes them for the plugins; the signing and the pointer ship in one change, before the bridge
+points installed packs at this repository:
 
-- The release step signs the tarball's `.sha256` (ed25519, detached, base64, as `scripts/lane.ts
-  sign` does for lane.json) with a key of the pack's own, the `HERDR_PACK_KEY` secret (recommended
-  over reusing `PLUGIN_LANE_KEY`: a leak of one key does not reach the other part, and the pack
-  carries its own public key anyway), and attaches
-  `automagik-herdr-pack-<v>.tgz.sha256.sig`. A release without the signature carries no pack for
-  the updater.
+- A rolling `herdr-lane` release holds only `pack.json` and `pack.json.sig`. `pack.json` names the
+  newest pack release: its version and tag, the tarball's URL, sha256 and size, a monotonic
+  sequence (a consumer refuses one older than the last it took), the key id and the time it was
+  issued. Every release that rebuilt the pack rewrites both, with `--clobber`, after the pack is
+  uploaded to its own versioned release.
+- `pack.json.sig` is ed25519 over the exact bytes of `pack.json`, detached and base64, as
+  `scripts/lane.ts sign` does for `lane.json`. It is signed with a key of the pack's own, the
+  `HERDR_PACK_KEY` secret, not `PLUGIN_LANE_KEY` (t22n's recommendation, agreed by t259): a leak of
+  one key does not reach the other part.
 - The trusted public keys ship inside the pack (`release.js`, kept equal to a committed
-  `herdr/keys/pack-keys.json` by a test), so the installed copy is the trust anchor; a key rotation ships in a pack signed by
-  the old key.
-- `update.mjs` and `install.sh` verify the signature over the `.sha256` before they trust its hash
-  (`node:crypto` in both; Node is already required). Tests sign their fixtures with a key generated
-  per run, passed only in the file:// test mode, never for a GitHub URL.
+  `herdr/keys/pack-keys.json` by a test), so the installed copy is the trust anchor. A key rotation
+  ships in a pack named by a pointer signed with the old key.
+- `update.mjs` and `install.sh` read `releases/download/herdr-lane/pack.json` and its `.sig` in one
+  request each, verify the signature (`node:crypto` in both; Node is already required), then check
+  the tarball against the sha256 the pointer names. The releases search goes, and so does trusting
+  a `.sha256` from the same release. Tests sign their fixtures with a key generated per run, passed
+  only in the file:// test mode, never for a GitHub URL.
 
-It is not part of the import because it touches the release step, both verifiers, the trust
-anchor and every install and update fixture. It is needed only from the bridge on: until then no
-installed copy reads this repository's releases. A fresh install through the new one-liner before
-it lands gets the hash check alone, as the old repository's installs did.
+It is not part of the import: it touches the release step, a new secret, both verifiers, the trust
+anchor and every install and update fixture. It is needed from the bridge on, because until then
+no installed copy reads this repository's releases. A fresh install through the new one-liner
+before it lands gets the hash check alone, as the old repository's installs did.
 
 ## Bridge and cutover (after this change)
 
 1. The monorepo publishes the first release that carries the pack (the first merge after this
-   change that ships something under `herdr/`), and the signed pack above has landed.
+   change that ships something under `herdr/`), and the signed rolling pointer above has landed.
 2. automagik-herdr cuts one bridge release whose `release.js` and `install.sh` read this
    repository's releases, as here. An installed 0.7.x updates to it from automagik-herdr, then to
    3.N.P from here.
@@ -174,10 +186,15 @@ Until the bridge, installed packs keep updating from automagik-herdr.
 
 ## Open questions
 
-1. Is skipping imported histories in `commitlint.yml` acceptable for every future import (Pocket's
-   too)? (t259)
-2. The 100-release window of the releases list: a rolling pointer now, or only when needed? (t259)
-3. The signed pack (above): who builds it, and its key. Recommended (t22n): a key of its own,
-   `HERDR_PACK_KEY`, not `PLUGIN_LANE_KEY`. t259 decides.
-4. `herdr/catalog/repos.json` lists Pocket Link as an external entry at `automagik-dev/automagik-pocket`;
+1. Who builds the signed rolling pointer, and when the `HERDR_PACK_KEY` secret is added (Felipe
+   adds it; never printed, never regenerated). (t22n, t259)
+2. `herdr/catalog/repos.json` lists Pocket Link as an external entry at `automagik-dev/automagik-pocket`;
    Pocket's import moves it. (t16r)
+
+Resolved (t259's review, t22n's rulings, 2026-11-03):
+- Commitlint skips only what an import merge's second parent brought, and keeps working across the
+  final re-run's second import merge.
+- The 100-release window: page through releases now (capped); the signed rolling pointer, with
+  `HERDR_PACK_KEY` as its own key, is a required follow-up before the bridge.
+- The Node floors: users' runtime Node 22.7 or later (the launcher, `install.sh`); tests on the
+  newest Node 22 (22.15+, for `module.registerHooks`) and 24; no stub fallback.
