@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { state } from "./use-stubs.mjs";
+import { hcFileOps } from "./hc-file-ops.mjs";
 import { PROJECTS_FILE } from "../mods/am-sidebar/model.js";
 const { discoverProjects, discoverySnapshot, writeBots, rememberProject, keyOf } = await import("../mods/am-sidebar/bots.js");
 
@@ -357,4 +358,46 @@ test("writeBots after an edit relabels the changed bots' live local panes withou
   const other = await repo(t);
   assert.deepEqual(await (await writeBots(other.main, sample(), null)).relabel, { done: [], failed: [], unchecked: [] });
   assert.deepEqual(state.hcCalls, []);
+});
+
+test("writeBots on another machine: created there by exclusive create, edited by hc file edit, stale and away refused", async (t) => {
+  reset();
+  state.hcCalls = [];
+  state.hcAnswer = hcFileOps(state);
+  t.after(() => { state.hcAnswer = () => ({ code: 0, stdout: "{}", stderr: "" }); });
+  const key = join(scratch(t), "hedgefund");
+  mkdirSync(key);
+  const path = join(key, ".herdr", "bots.json");
+  // A new file: made there (exec on vm), never through Herdr's local writeTextFile.
+  await writeBots(key, sample(), null, "vm");
+  const made = readFileSync(path, "utf8");
+  assert.deepEqual(JSON.parse(made), sample());
+  assert.ok(state.calls.some((c) => c.kind === "exec" && c.command === "sh" && c.on === "vm"));
+  assert.equal(state.calls.filter((c) => c.kind === "write").length, 0, "no local write");
+  assert.deepEqual(state.shared.get("am.sidebar.projects"), [{ key, machine: "vm" }]);
+  // Created again from a stale null: refused, the file left alone.
+  await assert.rejects(writeBots(key, sample(), null, "vm"), /stale snapshot/);
+  assert.equal(readFileSync(path, "utf8"), made);
+  // An edit from the text read: hc file edit there, the whole text for the whole text.
+  const next = sample();
+  next.bots[1].role = "trades";
+  const out = await writeBots(key, next, made, "vm");
+  assert.deepEqual(await out.relabel, { done: [], failed: [], unchecked: [] }, "another machine's panes are left alone");
+  const edit = state.hcCalls.find((a) => a[1] === "edit");
+  assert.deepEqual(edit.slice(0, 5), ["file", "edit", "--json", "--on", "vm"]);
+  assert.equal(edit.at(-1), path);
+  assert.equal(JSON.parse(readFileSync(path, "utf8")).bots[1].role, "trades");
+  // From the old text again (someone's edit landed): stale, nothing written.
+  const now = readFileSync(path, "utf8");
+  await assert.rejects(writeBots(key, sample(), made, "vm"), /stale snapshot/);
+  assert.equal(readFileSync(path, "utf8"), now);
+  // checkBots still refuses before anything is sent; the machine away is an error, not stale.
+  const two = sample();
+  two.bots[1].kind = "main";
+  state.hcCalls = [];
+  await assert.rejects(writeBots(key, two, now, "vm"), /exactly one/);
+  assert.equal(state.hcCalls.length, 0);
+  state.offline.add("vm");
+  await assert.rejects(writeBots(key, next, now, "vm"), (e) => !/stale/.test(e.message) && /vm/.test(e.message));
+  assert.equal(readFileSync(path, "utf8"), now);
 });

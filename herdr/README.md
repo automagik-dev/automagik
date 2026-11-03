@@ -209,6 +209,14 @@ now. A planned bot's menu has no Run items. A restart refused because the bot is
 "Restart anyway". The Bots list and the Attach picker open on the bots the sidebar already
 knows and refresh behind.
 
+A project on a linked machine (`hc machine ls`) is configured from here too: its bots' menu has
+Configure and Prompt, the Bots list names the project with its machine and offers Edit, and
+New bot on a focused space of that machine creates the bot in that machine's project. The file
+is read and written on that machine through herdr-core (`hc file edit` with the text read, an
+exclusive create for a new file), so an edit made there since the form opened is refused, never
+overwritten. Start, Attach and What happened for those bots are not in the menu yet. A machine
+that isn't answering shows its bots as last seen, dimmed, and its menu says so.
+
 On its first load the pack switches Herdr to the Automagik theme, light or dark following the
 system. Both halves are listed in Herdr's Settings, and a theme you pick later stays: the pack
 switches it once and never again. The theme files it copies into Herdr's `themes/` folder are
@@ -249,6 +257,11 @@ automagik-herdr update [--check | --rollback]
   folder at or above it holding `.herdr/bots.json`. A folder named with `--project` is the
   project itself outside git, never a parent folder's project; in git it is still the main
   checkout. A `--project` folder that isn't there is a usage mistake.
+- `ls`, `show`, `create`, `edit`, `rm` and `category` also take `--machine M --project <folder>`:
+  the project on linked machine M (`hc machine ls`), `--project` an absolute folder there, keyed
+  there by the same rule. The file is read and written there through hc by the same
+  compare-and-swap rule, and the `--json` answers carry `machine`. Its panes aren't tracked from
+  this computer yet (`status` is `unknown`), and the commands on panes refuse `--machine`.
 - A bot is named by its id or by its name. A refusal exits 1, a usage mistake (such as a
   missing `--project` folder) exits 2, and nothing is written.
 - `start` runs the bot's agent in a new pane with `hc run`, labelled `bot=<id>`, and records it

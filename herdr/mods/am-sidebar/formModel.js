@@ -265,13 +265,13 @@ export function entryOf(state, file) {
  * copied by Copy. Create: every chosen field, in the mockup's order. Edit: `edit <bot>` and
  * only what changed since `initial`, with the CLI's clearing spellings (--no-model,
  * --no-category, --unplanned, --rank=). A new category is added first with `category add --id`, the
- * id the create line names. The project is named with --project, so the line writes the
- * same file from any folder. Every value goes as `--option=<quoted>` (see opt). Instructions
+ * id the create line names. The project is named with --project (and --machine, a linked
+ * machine's), so the line writes the same file from any folder. Every value goes as `--option=<quoted>` (see opt). Instructions
  * go inline (the mockup's `--instructions-file -` would wait on stdin when pasted).
  */
-export function commandOf(state, { key = null, file = null, initial = null } = {}) {
+export function commandOf(state, { key = null, file = null, initial = null, machine = null } = {}) {
   const { leadId, byMain } = placeOf(state, file);
-  const project = key ? [opt("project", key)] : [];
+  const project = key ? [...(machine ? [opt("machine", machine)] : []), opt("project", key)] : [];
   const cats = file?.categories ?? [];
   const pre = [];
   let categoryId = state.category;

@@ -5,9 +5,11 @@
 // server status (state.core), kill (the terminal finishes), templates (state.templates:
 // [{ name, command }]), machine ls and exec --on (state.machines: [{ name, state, uname, home,
 // path?, temporary? }]: a linked machine is a scratch home folder; its `uname -sm` is `uname`,
-// anything else runs here with HOME=home and `path` (a folder of fakes) first on PATH).
+// anything else runs here with HOME=home and `path` (a folder of fakes) first on PATH, in
+// --cwd or its home), and file read|edit --on (its files are paths here; hc's answers: exit 3
+// not_found, 1 edit_failed or unavailable, 4 machine_unknown, errors as JSON on stderr).
 import { spawnSync } from "node:child_process";
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
 appendFileSync(process.env.HC_FAKE_LOG, `${JSON.stringify(args)}\n`);
@@ -123,17 +125,45 @@ switch (words[0]) {
   }
   case "exec": {
     // hc exec [--json] [--timeout N] [--on M] -- argv… (argv as given: not filtered for --json).
-    let i = args.indexOf("exec") + 1, on = null;
-    for (; i < args.length && args[i] !== "--"; i += 1) if (args[i] === "--on") on = args[++i]; else if (args[i] === "--timeout") i += 1;
+    let i = args.indexOf("exec") + 1, on = null, cwd = null;
+    for (; i < args.length && args[i] !== "--"; i += 1) {
+      if (args[i] === "--on") on = args[++i]; else if (args[i] === "--cwd") cwd = args[++i]; else if (args[i] === "--timeout") i += 1;
+    }
     const argv = args.slice(i + 1);
     const m = (state.machines ?? []).find((x) => x.name === on);
     if (!m) fail(JSON.stringify({ error: { kind: "not_found", message: `no machine "${on}"` } }), 3);
     if (m.state !== "connected") fail(`hc: ${on} is not connected`);
     const b64 = (s) => Buffer.from(s ?? "").toString("base64");
     if (argv[0] === "uname") { out({ code: 0, stdout: b64(`${m.uname}\n`), stderr: "", timed_out: false }); break; }
-    const r = spawnSync(argv[0], argv.slice(1), { cwd: m.home, encoding: "utf8",
+    const r = spawnSync(argv[0], argv.slice(1), { cwd: cwd ?? m.home, encoding: "utf8",
       env: { ...process.env, HOME: m.home, PATH: `${m.path ? `${m.path}:` : ""}/usr/bin:/bin:/usr/sbin:/sbin` } });
     out({ code: r.status ?? -1, stdout: b64(r.stdout), stderr: b64(r.stderr), timed_out: false });
+    break;
+  }
+  case "file": {
+    // hc file read|edit --json --on M [--old=X --new=Y] <path>
+    const err = (code, kind, message) => fail(JSON.stringify({ error: { kind, message } }), code);
+    const on = args.includes("--on") ? args[args.indexOf("--on") + 1] : null;
+    const m = (state.machines ?? []).find((x) => x.name === on);
+    if (on && !m) err(4, "machine_unknown", `unknown machine "${on}"`);
+    if (m && m.state !== "connected") err(1, "unavailable", `${on} is not connected`);
+    const path = args.at(-1);
+    if (!existsSync(path)) err(3, "not_found", `no file ${path}`);
+    const text = readFileSync(path, "utf8");
+    if (words[1] === "read") {
+      const lines = text ? text.split("\n").length - (text.endsWith("\n") ? 1 : 0) : 0;
+      out({ first: 1, last: lines, lines, text });
+      break;
+    }
+    if (words[1] !== "edit") err(2, "invalid_params", `fake hc: no file ${words[1]}`);
+    const old = args.find((a) => a.startsWith("--old=")).slice(6), now = args.find((a) => a.startsWith("--new=")).slice(6);
+    // state.editRace: someone's edit lands between the CLI's read and this edit.
+    if (state.editRace) { writeFileSync(path, state.editRace); delete state.editRace; save(); }
+    const current = readFileSync(path, "utf8");
+    const at = current.indexOf(old);
+    if (at < 0 || current.indexOf(old, at + 1) >= 0) err(1, "edit_failed", "the old text is not in the file");
+    writeFileSync(path, current.slice(0, at) + now + current.slice(at + old.length));
+    out({ bytes: now.length, path });
     break;
   }
   default:
