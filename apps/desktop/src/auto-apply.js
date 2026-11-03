@@ -45,10 +45,16 @@ export function applyNow({ staged, auto, busy, trial, fetching, appUpdate, apply
   if (trial === 'applied' || trial === 'trial') return 'trial running'
   if (fetching) return 'downloading'
   if (busy === null || busy === undefined) return 'busy unknown'
-  if (busy.running > 0) return 'agents at work'
+  if (!stillIdle(busy)) return 'agents at work'
   if (focused && !(idleMs >= APPLY_IDLE_MS)) return 'person here'
   return 'apply'
 }
+
+/**
+ * Whether no agent is at work by the busy file now: checked again just before DSH stops on the
+ * automatic path, since an agent may have started since the minute's look.
+ */
+export const stillIdle = busy => Boolean(busy) && busy.running === 0
 
 /**
  * Each plugin that changes: { name, from, to }. `plugins` are the lane's (staged, or being
@@ -63,6 +69,16 @@ export function changesOf(plugins, installed) {
 /** An error that is the app's own doing (a quit, a window that went), not the plugins'. */
 export const appStopped = message => Object.assign(new Error(message), { code: 'app' })
 const byApp = error => error?.code === 'app'
+
+/**
+ * What a failed restart step was: the app's own doing when the app is quitting, or DSH was stopped
+ * by something other than the restart (a quit stops it before the app says it is quitting, while
+ * no DSH process runs yet); else the plugins'. Answers the error to throw.
+ */
+export function causeOf(error, { quitting, stopped }) {
+  if (byApp(error) || !(quitting || stopped)) return error
+  return appStopped(`the app is quitting (${error?.message ?? error})`)
+}
 
 /**
  * Puts staged plugins in with DSH restarted alone, and judges the result. `cycle(prepare)` stops

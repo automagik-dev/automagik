@@ -26,7 +26,7 @@ import { BotViews, isBotId, isTabId } from './bot-views.js'
 import { pageLayout, tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
 import { awayInstall, LOOK_EVERY_MS, readBusy } from './idle.js'
-import { applyNow, applyStaged, appStopped, changesOf, readAutoApply, settingsFileOf, writeAutoApply } from './auto-apply.js'
+import { applyNow, applyStaged, appStopped, causeOf, changesOf, stillIdle, readAutoApply, settingsFileOf, writeAutoApply } from './auto-apply.js'
 import { readChoices, writeOverlay } from './privacy.js'
 import { compareVersions, isReleasePage, startUpdates, updateMode } from './update.js'
 
@@ -463,8 +463,9 @@ const changeText = changes => changes.map(({ name, from, to }) => `${PLUGIN_NAME
 // Put the staged plugins in now, with DSH restarted alone (auto-apply.js): the window stays, the
 // frame says what is updating while DSH is down, and the page loads again into the new plugins.
 let applyingLane = null
-const applyLaneNow = () => (applyingLane ??= applyLane().finally(() => { applyingLane = null }))
-async function applyLane() {
+// `auto`: the minute's look found a safe moment, and the moment is checked again before DSH stops.
+const applyLaneNow = ({ auto = false } = {}) => (applyingLane ??= applyLane({ auto }).finally(() => { applyingLane = null }))
+async function applyLane({ auto }) {
   if (quitting || !laneReady || !laneProfile || !dshTools || !page || !window) return
   laneApplying = laneWaiting
   const text = changeText(laneApplying)
@@ -474,20 +475,27 @@ async function applyLane() {
   try {
     // The sidebar says it first.
     await new Promise(resolve => setTimeout(resolve, RESTART_NOTICE_MS))
-    outcome = await applyStaged({
-      cycle: prepare => cycleDsh(prepare, `Updating ${text}…`),
-      beforeStart: () => (laneTrial = beforeStart({ home, target: laneProfile, log: laneLog })),
-      confirm: () => { confirmLane(home); laneTrial = 'good' },
-      trialFailed: () => trialFailed(home),
-      // A quit while the page draws is no verdict on the plugins.
-      judge: async () => { if (await teamDrawn()) return true; if (quitting) throw appStopped('the app is quitting'); return false },
-      log: laneLog,
-    })
+    // An agent started meanwhile: the update waits for the next safe moment.
+    if (auto && !stillIdle(readBusy(busyFileOf(home)))) {
+      laneLog('lane: an agent started meanwhile; the plugins wait for the next moment no agent is at work')
+      outcome = 'waiting'
+    } else {
+      outcome = await applyStaged({
+        cycle: prepare => cycleDsh(prepare, `Updating ${text}…`),
+        beforeStart: () => (laneTrial = beforeStart({ home, target: laneProfile, log: laneLog })),
+        confirm: () => { confirmLane(home); laneTrial = 'good' },
+        trialFailed: () => trialFailed(home),
+        // A quit while the page draws is no verdict on the plugins.
+        judge: async () => { if (await teamDrawn()) return true; if (quitting) throw appStopped('the app is quitting'); return false },
+        log: laneLog,
+      })
+    }
   } catch (error) {
     laneLog(`lane: the restart of DSH for the plugins failed: ${error?.message ?? error}`)
   } finally {
     laneApplying = null
   }
+  if (outcome === 'waiting') return void publishUpdate()
   laneLog(`lane: the restart of DSH for the plugins ended: ${outcome}`)
   if (outcome === 'down') return restartForLane({ why: 'lane, DSH down' })
   readStaged()
@@ -505,6 +513,8 @@ async function cycleDsh(prepare, status) {
     if (window && page) window.contentView.removeChildView(page)
     botViews.hideAll()
     sendState({ ready: false, status })
+    // The Bot team opens the same chat again once the page is back (bots-dsh reopen.js).
+    await page?.webContents.executeJavaScript("try { sessionStorage.setItem('omni-ui:reopen', '1') } catch {}").catch(() => {})
     await dshProcess.stop()
     out.mark('dsh stopped')
     if (quitting) throw appStopped('the app is quitting')
@@ -522,8 +532,9 @@ async function cycleDsh(prepare, status) {
     out.mark('page in')
     return prepared
   } catch (error) {
-    // DSH stopped under a quit: that is the app's doing, not the plugins'.
-    throw quitting && error?.code !== 'app' ? appStopped(`the app is quitting (${error?.message ?? error})`) : error
+    // DSH stopped under a quit: that is the app's doing, not the plugins'. A quit that came while no
+    // DSH process ran yet stopped this dshProcess before it spawned (before-quit).
+    throw causeOf(error, { quitting, stopped: dshProcess.stopped })
   } finally {
     restartingDsh = false
   }
@@ -568,7 +579,7 @@ function watchUpdates() {
       idleMs: powerMonitor.getSystemIdleTime() * 1000,
       focused: window?.isFocused() === true,
     })
-    if (why === 'apply') void applyLaneNow()
+    if (why === 'apply') void applyLaneNow({ auto: true })
   }, LOOK_EVERY_MS).unref?.()
   if (mode !== 'auto') return
   // A downloaded update goes in while the person is away (idle.js); else at a quit or Restart.
@@ -792,8 +803,9 @@ app.on('window-all-closed', () => app.quit())
 app.once('will-quit', () => { botRelay.dispose(); botViews.dispose(); botCursor.dispose() })
 app.on('before-quit', (event) => {
   if (quitting) return
-  // Nothing spawned yet: the quit goes on, and a dsh that spawns after it is stopped.
-  if (!dshProcess.child) return void dshProcess.stop()
+  // Nothing spawned yet: the quit goes on, and a dsh that spawns after it is stopped. The app is
+  // quitting from here: a restart of DSH alone under way must not take the stop for its plugins'.
+  if (!dshProcess.child) { quitting = true; return void dshProcess.stop() }
   quitting = true
   event.preventDefault()
   const out = leave('quit')

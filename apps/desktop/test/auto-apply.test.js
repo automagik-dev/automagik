@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
-import { APPLY_IDLE_MS, applyNow, applyStaged, appStopped, changesOf, readAutoApply, settingsFileOf, writeAutoApply } from '../src/auto-apply.js'
+import { APPLY_IDLE_MS, applyNow, applyStaged, appStopped, causeOf, changesOf, stillIdle, readAutoApply, settingsFileOf, writeAutoApply } from '../src/auto-apply.js'
 import { updatePresentation } from '../src/frame.js'
 import { beforeStart, confirm, installedVersions, laneMemory, laneUpdate, PUBLISHERS, stage, stagedOf, trialFailed } from '../src/lane.js'
 
@@ -232,4 +232,33 @@ test('a quit while the new plugins come up is no verdict on them: the next start
     rmSync(join(home, 'lane', 'bad.json'), { force: true })
     await staged(root, home, '3.59.2', true)
   }
+})
+
+test('a quit that stops DSH before the app says it is quitting is still the app\'s doing, not the plugins\'', async (t) => {
+  const failed = new Error('dsh exited before it was ready (SIGTERM)')
+  // main.js cycleDsh's catch: before-quit stopped the fresh dshProcess while no DSH ran yet.
+  assert.equal(causeOf(failed, { quitting: false, stopped: true }).code, 'app')
+  assert.equal(causeOf(failed, { quitting: true, stopped: false }).code, 'app')
+  // Neither: the plugins' own failure, judged as a trial.
+  assert.equal(causeOf(failed, { quitting: false, stopped: false }), failed)
+  const root = temp(t)
+  const home = join(root, 'home')
+  const target = profileWith(root, '3.58.1')
+  await staged(root, home, '3.59.2', true)
+  const outcome = await applyStaged({
+    cycle: async (prepare) => { prepare(); throw causeOf(failed, { quitting: false, stopped: true }) },
+    beforeStart: () => beforeStart({ home, target }),
+    confirm: () => confirm(home),
+    trialFailed: () => assert.fail('a quit is no failed trial'),
+    judge: async () => true,
+  })
+  assert.equal(outcome, 'down')
+  assert.deepEqual(laneMemory(home).bad, [])
+  assert.equal(beforeStart({ home, target }), 'trial')
+})
+
+test('the automatic path looks at the agents again just before DSH stops', () => {
+  assert.equal(stillIdle({ running: 0 }), true)
+  assert.equal(stillIdle({ running: 1 }), false)
+  assert.equal(stillIdle(null), false)
 })

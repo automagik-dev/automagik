@@ -37,7 +37,11 @@ export const LANE_URL = 'https://github.com/automagik-dev/automagik/releases/dow
 // the profile pins that have no dependencies of their own (its `addons`, scripts/lane.ts
 // LANE_ADDONS), so a pin move needs no new app either. Besides the profile's own three, it updates
 // the Automagik plugins a person added from the market (Portuguese, Unfold's), as Genie's lane does
-// Genie: none has dependencies of its own, and a plugin that is not installed is never taken.
+// Genie; a plugin that is not installed is never taken. Swapping a plugin's folder is safe because
+// a lane patch never changes what a plugin is installed by: scripts/lane.ts (kindOf, INSTALL_FIELDS)
+// makes any change to a plugin's dependencies, peers, engines or entry points a full release, a new
+// app, and never a plugin-only patch. So the dependencies pnpm laid out for the installed version
+// are the new version's too.
 export const AUTOMAGIK_PLUGINS = Object.freeze(['@automagik/bots-dsh', '@automagik/welcome-dsh', '@automagik/acp-dsh', '@automagik/locale-pt-br-dsh',
   ...['bot', 'bridge', 'capabilities', 'events', 'mind', 'session', 'settings', 'sse', 'trajectory'].map(name => `@automagik/unfold-${name}-dsh`)])
 export const PUBLISHERS = Object.freeze([
