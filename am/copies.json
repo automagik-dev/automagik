@@ -82,6 +82,10 @@
       "to": "am/release.js"
     },
     {
+      "from": "herdr/mods/am-sidebar/remoteFile.js",
+      "to": "am/remoteFile.js"
+    },
+    {
       "from": "herdr/mods/am-sidebar/restart.js",
       "to": "am/restart.js"
     },
