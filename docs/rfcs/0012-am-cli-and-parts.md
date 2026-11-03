@@ -224,7 +224,9 @@ need. All are `targets: local`, `set: ["code"]`, artifact `automagik-herdr-pack-
   the sidebar off would leave `automagik-herdr` pointing at nothing and stop every briefing
   (t2zx). The guard reads what is installed: it lifts only once the briefing entry point
   resolves into `$AM_HOME/parts/` (am places a link there, never a copy), `automagik-herdr` no
-  longer resolves into the sidebar, and no project hook calls the sidebar's `briefing.mjs`.
+  longer resolves into the sidebar, and no project hook calls the sidebar's `briefing.mjs` or
+  starts through its `bin/run.sh` (the pack's own hook command does, so the guard holds until
+  am runs the hooks, delivery 3).
 - **Every herdr manifest sits inside an existing pack mod folder** (t259 and t22n, 2026-11-03).
   An installed pack's `update.mjs`, old ones included, refuses a tarball with any `layouts/`
   file but `automagik.json` and any top-level folder that is not a pack mod, so a manifest
@@ -598,9 +600,15 @@ check passes on all three OSes.
    across an update and a rollback; after the update, `automagik-herdr` resolves to am's.
    *Rollback:* revert the pack. An older pack relinks its own CLI on install.
 3. **Parts, local, release source** (am). Resolver, parts.json, install, uninstall, doctor,
-   rollback and update; reads the marker during the bridge.
+   rollback and update; reads the marker during the bridge. am takes the briefing hooks over
+   (t22n, 2026-11-03): their command starts through am's own runner
+   (`parts/automagik.am/current/bin/run.sh`) instead of the sidebar's `bin/run.sh`, and am
+   migrates every project's hook to it the way `migrateHooks` moves them today (each settings
+   file backed up, the journal kept), and back on `am uninstall automagik.am`. The sidebar
+   guard's last reason then lifts by itself.
    *Check:* on a temp home with `file://` pointers signed by per-run keys: `am install code` then
-   doctor exits 0; a doctor forced to fail rolls back; a lower sequence is refused; `am uninstall
+   doctor exits 0; after it, no project hook names `mods/am-sidebar/bin/run.sh`; a doctor forced
+   to fail rolls back; a lower sequence is refused; `am uninstall
    herdr.am-quota` switches it off, an update keeps it off, `am install` puts it back; `am
    uninstall herdr.am-sidebar` switches the sidebar off while am, the pack and a Bot's briefing
    keep working; `am uninstall herdr.pack` removes the pack, keeps user data and leaves am.
