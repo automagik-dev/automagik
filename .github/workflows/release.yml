@@ -157,9 +157,7 @@ jobs:
           kind=$(bun scripts/lane.ts kind "${full}" "${last}")
           # The herdr pack is rebuilt when herdr/ shipped something since the last release, any kind.
           herdr=$(bun scripts/lane.ts herdr "${last}")
-          echo "kind=${kind}" >> "$GITHUB_OUTPUT"
-          echo "herdr=${herdr}" >> "$GITHUB_OUTPUT"
-          echo "base=${full#v}" >> "$GITHUB_OUTPUT"
+          { echo "kind=${kind}"; echo "herdr=${herdr}"; echo "base=${full#v}"; } >> "$GITHUB_OUTPUT"
           echo "since ${full:-the start}: ${kind} release; since ${last:-the start}, the herdr pack: ${herdr}"
 
       # The old automagik-herdr CI gate, on the pack this release attaches (Node 22.7+, shellcheck).
