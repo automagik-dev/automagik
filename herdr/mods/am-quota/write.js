@@ -56,10 +56,11 @@ chmod 700 "$1"`;
 export const keychainBackupPath = (appHome, provider, stamp) => `${payloadDir(appHome)}/keychain-${provider}-${stamp}.hex`;
 
 /** Empties a directory of payloads and item backups older than an hour (an interrupted switch
- *  leaves one behind). */
+ *  leaves one behind). Only those names: the panel's own records (`active.json`, `saved.json`)
+ *  live in the same folder and must outlive the hour. */
 export function sweepScript() {
   return `set -eu
-find "$1" -maxdepth 1 -type f \\( -name "*.json" -o -name "*.hex" \\) -mmin +60 -delete 2>/dev/null || true`;
+find "$1" -maxdepth 1 -type f \\( -name "claude-*.json" -o -name "codex-*.json" -o -name "keychain-*.hex" \\) -mmin +60 -delete 2>/dev/null || true`;
 }
 
 /**
