@@ -3,7 +3,7 @@ rfc: "0008"
 title: "Drop SSH: Pocket Link (QR pairing) is the only way to connect"
 status: Accepted
 created: 2026-11-03
-pr: ""
+pr: "#46"
 ---
 # RFC 0008 — Drop SSH: Pocket Link is the only way to connect
 
