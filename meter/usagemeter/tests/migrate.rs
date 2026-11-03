@@ -320,18 +320,196 @@ fn migrate_moves_the_sidecars_with_the_database_and_nothing_else() {
     );
 }
 
+/// Finding 2: a `meter.db-wal` in the new dir that the move did not put there stops the whole
+/// sync before a store is created: exit 0, one stderr line, nothing created or deleted.
 #[test]
-fn migrate_never_puts_a_database_beside_a_different_wal() {
+fn a_foreign_wal_in_the_new_dir_stops_sync_before_a_store_is_made() {
+    let h = Home::new();
+    let rows = h.old_store();
+    let old = h.old_dir();
+    let old_db = fs::read(old.join("meter.db")).unwrap();
+    let new = h.new_dir();
+    meter::paths::ensure_dir(&new).unwrap();
+    fs::write(new.join("meter.db-wal"), b"another store").unwrap();
+
+    for _ in 0..2 {
+        let out = h.sync(None);
+        let err = stderr(&out);
+        assert_eq!(err.lines().count(), 1, "{err}");
+        assert!(err.contains("sidecars of another store"), "{err}");
+        assert!(err.contains("nothing was overwritten or deleted"), "{err}");
+        assert!(!new.join("meter.db").exists(), "no store beside the wal");
+        assert_eq!(
+            fs::read(new.join("meter.db-wal")).unwrap(),
+            b"another store"
+        );
+        assert_eq!(fs::read(old.join("meter.db")).unwrap(), old_db);
+    }
+    assert_eq!(h.rows(&old), rows);
+}
+
+/// Finding 3: a byte-identical `meter.db` in the new dir with no move marker is another store,
+/// not an interrupted move: the old files all stay.
+#[test]
+fn an_identical_store_without_the_marker_leaves_the_old_files_alone() {
+    let h = Home::new();
+    let rows = h.old_store();
+    let old = h.old_dir();
+    fs::write(old.join("claude-limits.jsonl"), b"old\n").unwrap();
+    let before = names(&old);
+    let old_db = fs::read(old.join("meter.db")).unwrap();
+    let new = h.new_dir();
+    meter::paths::ensure_dir(&new).unwrap();
+    fs::copy(old.join("meter.db"), new.join("meter.db")).unwrap();
+
+    let out = h.sync(None);
+    let err = stderr(&out);
+    assert_eq!(err.lines().count(), 1, "{err}");
+    assert!(err.contains("already has a meter.db"), "{err}");
+    assert_eq!(names(&old), before, "the old files all stay");
+    assert_eq!(fs::read(old.join("meter.db")).unwrap(), old_db);
+    assert!(!new.join("claude-limits.jsonl").exists());
+    assert_eq!(h.rows(&old), rows);
+}
+
+fn sha256_hex(b: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(b)
+        .iter()
+        .map(|x| format!("{x:02x}"))
+        .collect()
+}
+
+fn later_row(db: &Path, id: &str) -> bool {
+    let c = rusqlite::Connection::open(db).unwrap();
+    c.query_row("SELECT count(*) FROM usage WHERE id = ?1", [id], |r| {
+        r.get::<_, i64>(0)
+    })
+    .unwrap()
+        == 1
+}
+
+fn insert_row(c: &rusqlite::Connection, id: &str) {
+    let hour = meter::time::now_ms() / 3_600_000 * 3_600_000;
+    c.execute(
+        "INSERT INTO usage (id, hour_ms, harness, model, machine, precision, output, events, updated_ms) \
+         VALUES (?1, ?2, 'claude', 'model-z', 'm-1', 'exact', 7, 1, ?2)",
+        rusqlite::params![id, hour],
+    )
+    .unwrap();
+}
+
+/// Finding 1: the sidecars moved, the run crashed, and an older meter then committed another row
+/// to the old database (holding the old lock). The next sync must not finish the move: the old
+/// database with the later row stays, the moved sidecars stay, and nothing is opened beside them.
+/// Run with the marker a pre-fix build wrote (empty) and with one that records the snapshot.
+#[test]
+fn a_source_changed_after_an_interrupted_move_is_never_deleted() {
+    for valid_marker in [false, true] {
+        let h = Home::new();
+        h.old_store();
+        let old = h.old_dir();
+        let db = old.join("meter.db");
+        // A real WAL generation: a reader stays open so the writer's close leaves its WAL.
+        let reader = rusqlite::Connection::open(&db).unwrap();
+        reader
+            .query_row("SELECT count(*) FROM usage", [], |r| r.get::<_, i64>(0))
+            .unwrap();
+        let writer = rusqlite::Connection::open(&db).unwrap();
+        insert_row(&writer, "in-the-wal");
+        drop(writer);
+        let snap: Vec<(&str, Vec<u8>)> = ["meter.db", "meter.db-wal", "meter.db-shm"]
+            .into_iter()
+            .map(|f| (f, fs::read(old.join(f)).unwrap()))
+            .collect();
+        assert!(!snap[1].1.is_empty(), "the row is in the wal");
+        drop(reader);
+
+        // The crash: the marker is written and the sidecars moved; the database is not.
+        let new = h.new_dir();
+        meter::paths::ensure_dir(&new).unwrap();
+        let marker = if valid_marker {
+            let files: serde_json::Map<String, serde_json::Value> = snap
+                .iter()
+                .map(|(f, b)| {
+                    (
+                        f.to_string(),
+                        serde_json::json!({"len": b.len(), "sha256": sha256_hex(b)}),
+                    )
+                })
+                .collect();
+            serde_json::to_vec(&serde_json::json!({"v": 1, "files": files})).unwrap()
+        } else {
+            Vec::new()
+        };
+        fs::write(new.join(".meter-migrating"), &marker).unwrap();
+        fs::write(&db, &snap[0].1).unwrap();
+        for (f, b) in &snap[1..] {
+            let _ = fs::remove_file(old.join(f));
+            fs::write(new.join(f), b).unwrap();
+        }
+
+        // An older meter commits another row to the old database while holding the old lock.
+        {
+            let _held = meter::paths::try_lock(&old).unwrap().unwrap();
+            let c = rusqlite::Connection::open(&db).unwrap();
+            insert_row(&c, "later");
+        }
+        assert!(later_row(&db, "later"));
+        let old_db = fs::read(&db).unwrap();
+
+        for _ in 0..2 {
+            let out = h.sync(None);
+            let err = stderr(&out);
+            assert_eq!(err.lines().count(), 1, "marker valid={valid_marker}: {err}");
+            assert!(
+                err.contains("nothing was overwritten or deleted"),
+                "marker valid={valid_marker}: {err}"
+            );
+            // A recorded snapshot is read and found stale; an empty marker proves nothing.
+            let why = if valid_marker {
+                "changed since, so"
+            } else {
+                "cannot be verified"
+            };
+            assert!(err.contains(why), "marker valid={valid_marker}: {err}");
+            assert!(err.contains("nothing syncs until"), "{err}");
+            assert_eq!(fs::read(&db).unwrap(), old_db, "the old database stays");
+            assert!(
+                !new.join("meter.db").exists(),
+                "no database beside the moved wal"
+            );
+            for (f, b) in &snap[1..] {
+                assert_eq!(&fs::read(new.join(f)).unwrap(), b, "{f} stays as it was");
+            }
+            assert_eq!(fs::read(new.join(".meter-migrating")).unwrap(), marker);
+        }
+        assert!(later_row(&db, "later"), "the later row is still there");
+    }
+}
+
+/// Finding 4: a directory fsync that fails is an error, and the source stays.
+#[cfg(unix)]
+#[test]
+fn a_failed_directory_fsync_keeps_the_source() {
+    use std::os::unix::fs::PermissionsExt;
     let t = tempfile::tempdir().unwrap();
     let (old, new) = (t.path().join("old"), t.path().join("new"));
     fs::create_dir_all(&old).unwrap();
     meter::paths::ensure_dir(&new).unwrap();
     fs::write(old.join("meter.db"), b"db").unwrap();
-    fs::write(old.join("meter.db-wal"), b"wal-old").unwrap();
-    fs::write(new.join("meter.db-wal"), b"wal-new").unwrap();
-    let m = meter::paths::migrate(&old, &new).unwrap();
-    assert_eq!(m.kept, ["meter.db-wal", "meter.db"]);
-    assert!(m.moved.is_empty());
-    assert!(!new.join("meter.db").exists());
+    fs::write(old.join("meter.db-wal"), b"wal").unwrap();
+    // Writable and searchable but not readable: links and renames work, opening the directory
+    // to fsync it does not.
+    fs::set_permissions(&new, fs::Permissions::from_mode(0o300)).unwrap();
+    if fs::File::open(&new).is_ok() {
+        // Running as root: the mode does not stop the open.
+        fs::set_permissions(&new, fs::Permissions::from_mode(0o700)).unwrap();
+        return;
+    }
+    let r = meter::paths::migrate(&old, &new);
+    fs::set_permissions(&new, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(r.is_err(), "{r:?}");
     assert_eq!(fs::read(old.join("meter.db")).unwrap(), b"db");
+    assert_eq!(fs::read(old.join("meter.db-wal")).unwrap(), b"wal");
 }

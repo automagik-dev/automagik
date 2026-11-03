@@ -142,12 +142,22 @@ is opened, and the folder itself stays.
   another run holds either. The old `meter.lock` is removed last; it stays only beside files that
   were left behind.
 - It never replaces a file: a hard link then removal of the old name on one filesystem, else a
-  copy that is fsynced and compared before the old file is removed. Modes are kept.
-- The database moves with its sidecars, sidecars first, behind a `.meter-migrating` marker in the
-  new dir, so an interrupted move is finished by the next run and never loses a file.
-- If the new dir already has a different `meter.db`, or a `meter.db-wal` or `meter.db-shm` of
-  another store, nothing is moved, overwritten or deleted and each `sync` prints one line to
-  stderr naming the files left behind.
+  copy that is fsynced and compared before the old file is removed. Modes are kept. No old name is
+  removed until the new dir's entry is fsynced; if a directory fsync fails, `sync` stops with an
+  error and the old files stay.
+- The database moves with its sidecars as one unit. First a `.meter-migrating` marker in the new
+  dir records the length and SHA-256 of each of `meter.db`, `meter.db-wal` and `meter.db-shm`;
+  then all of them are placed in the new dir, and only then are the old names removed. The next
+  run finishes an interrupted move only if every file is still exactly what the marker recorded.
+- If the old files changed after an interrupted move (an older meter wrote to them), or the
+  marker cannot be read, nothing is moved, overwritten or deleted: both copies stay, the old dir
+  has the store to keep, and each `sync` prints one line to stderr and syncs nothing. Move the
+  `meter.db*` files and `.meter-migrating` out of the new dir and the next `sync` moves the old
+  store again.
+- If the new dir already has a `meter.db` this move did not put there (even a byte-identical
+  copy), the old files all stay and `sync` uses the new dir's store, printing one stderr line. If
+  it has a `meter.db-wal` or `meter.db-shm` but no `meter.db`, nothing is created, moved or
+  deleted, and each `sync` prints one line and syncs nothing until they are moved away.
 - A `claude-limits.*` file the new dir already has a different copy of stays in the old dir, with
   the same one line.
 - If the new dir is the old dir under another name (a symlink), nothing moves.

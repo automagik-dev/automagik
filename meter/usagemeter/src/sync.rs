@@ -146,6 +146,9 @@ pub struct Report {
 pub enum Outcome {
     /// Another `meter sync` holds the lock.
     Locked,
+    /// The move out of the old state directory is blocked (stderr says why): nothing was
+    /// created, opened or synced.
+    Blocked,
     /// The last complete sync is younger than the staleness window.
     Fresh {
         age_ms: i64,
@@ -366,6 +369,11 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         })?;
         if m.busy {
             return Ok(Outcome::Locked);
+        }
+        // Files the move cannot prove are its own sit in the state directory: creating or
+        // opening a store beside them could replay or delete another generation's log.
+        if m.stop {
+            return Ok(Outcome::Blocked);
         }
     }
     let db = paths::prepare(&opts.state_dir).map_err(mkdir_err)?;

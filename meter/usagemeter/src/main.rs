@@ -101,6 +101,8 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
     }
     match sync::run(&opts).map_err(|e| e.0)? {
         Outcome::Locked => println!("meter: another sync is running; nothing to do"),
+        // The one stderr line from the move says why and what to do.
+        Outcome::Blocked => {}
         Outcome::Fresh { age_ms } => println!(
             "meter: last sync was {}s ago; nothing to do (use --force)",
             age_ms / 1000
