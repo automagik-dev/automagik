@@ -76,30 +76,38 @@ export function promptOf(messages) {
   return [{ type: 'text', text }]
 }
 
+/** Where a Session title on an agent's chat goes when DSH's default model is an agent too. */
+export const SIDE_MODEL = Object.freeze({ provider: 'deepseek-official', model: 'deepseek-flash' })
+const TITLE_PURPOSE = 'session-title'
+
 /**
  * The `llm/stream` listener that keeps DSH's side requests (a Session title, a compaction
- * summary) away from the agents: they would reach the agent as prompts of their own. Such a
- * request on an agent's route goes to the person's DSH default model instead (DeepSeek, unless
- * they chose another), without the agent's effort, which is the agent's model's and not the
- * default's. When the default is an agent too, or there is none, it is turned down. Every
- * other Session's requests, and the agent loop's own, go on as they are. Only here is the
- * agent loop's mark on a request reliable; DSH rebuilds the request before the adapter sees it
- * whenever the Session's tool set changed. `next` takes no request, so the default model's
- * call is a nested `ctx.llm.stream`, which passes through this listener again as another
- * route's.
+ * summary) away from the agents: they would reach the agent as prompts of their own. A Session
+ * title on an agent's route goes to a model that answers on its own instead, without the
+ * agent's effort, which is the agent's model's: DSH's default model when that is not an agent,
+ * else `sideModel()` (acp-dsh's `sideModel` setting, DeepSeek by default). DSH's default is the
+ * model the person last picked, so on a team that chats with an agent it is usually an agent.
+ * Every other side request (a compaction summary) is turned down: it would carry the agent's
+ * whole chat to another provider, and the agent manages its own context. The agent loop's own
+ * requests, and every other route's, go on as they are. Only here is the agent loop's mark on
+ * a request reliable; DSH rebuilds the request before the adapter sees it whenever the
+ * Session's tool set changed. `next` takes no request, so the title's call is a nested
+ * `ctx.llm.stream`, which passes through this listener again as another route's.
  * @param {Map<string, unknown>} providers the agents' routes
  * @param {{ llm?: { stream(options: object): AsyncIterable<object> }, get?: (name: string) => any }} [ctx]
+ * @param {() => { provider?: string, model?: string } | undefined} [sideModel]
  */
-export function aside(providers, ctx) {
+export function aside(providers, ctx, sideModel = () => SIDE_MODEL) {
   const agentRoute = provider => providers.has(provider) || String(provider).startsWith('acp-')
+  const answers = choice => typeof choice?.provider === 'string' && choice.provider !== '' && typeof choice.model === 'string' && choice.model !== '' && !agentRoute(choice.provider)
+  const refuse = () => (async function* () { yield finish('error', 'An ACP agent answers only in its own chat', 'UNSUPPORTED') })()
   return (options, next) => {
     if (!providers.has(options.provider) || isAgentLoopRequest(options)) return next()
-    const fallback = ctx?.get?.('agentDefaultModel')?.currentSelection?.()
-    if (ctx?.llm === undefined || !fallback?.provider || !fallback?.model || agentRoute(fallback.provider)) {
-      return (async function* () { yield finish('error', 'An ACP agent answers only in its own chat', 'UNSUPPORTED') })()
-    }
+    if (options.purpose !== TITLE_PURPOSE || ctx?.llm === undefined) return refuse()
+    const chosen = [ctx.get?.('agentDefaultModel')?.currentSelection?.(), sideModel()].find(answers)
+    if (chosen === undefined) return refuse()
     const { reasoningEffort: _agentEffort, ...request } = options
-    return ctx.llm.stream({ ...request, provider: fallback.provider, model: fallback.model })
+    return ctx.llm.stream({ ...request, provider: chosen.provider, model: chosen.model })
   }
 }
 

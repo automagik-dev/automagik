@@ -27,11 +27,13 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   diff for an edit, the generic card otherwise). When the agent asks permission for the call,
   `acp_tool` asks DSH's approval service (`approval/asked`, `approval/decided`) and gives the
   agent DSH's answer.
-- **Only the chat reaches the agent.** DSH's side requests (a Session title, a compaction
-  summary) on an ACP route never become prompts. At the `llm/stream` waterfall they go to the
-  person's DSH default model instead (`agentDefaultModel`, DeepSeek unless they chose another),
-  without the agent's effort. When that default is an agent too, they are refused
-  (`UNSUPPORTED`). Sessions on any other route are left alone.
+- **Only the chat reaches the agent.** DSH's side requests on an ACP route never become
+  prompts. At the `llm/stream` waterfall a Session title (`purpose: session-title`) goes to a
+  model that answers on its own, without the agent's effort. That is DSH's default model
+  (`agentDefaultModel`) when it is not an agent; else `sideModel` below, DeepSeek Flash by
+  default. Every other side request on an ACP route, a compaction summary included, is refused
+  (`UNSUPPORTED`): it would carry the agent's whole chat to another provider, and the agent
+  manages its own context. Sessions on any other route are left alone.
 - **Host only.** No browser half, so the plugin cannot stop the web UI from loading. With no
   agent CLI installed it registers no route. The welcome draws its setup from the `acpAgents`
   service below.
@@ -59,6 +61,11 @@ live settings: switching one (from the welcome's Connect AI, its Settings page *
 Codex*, or the plugin's own settings form) offers or withdraws the agent at once, with no
 restart, and a connector that lands puts its model in the picker the same way
 (`llm/adapters-updated`).
+
+`sideModel` (`{ provider, model }`, default `deepseek-official/deepseek-flash`, live) is the
+model that writes a Session's title on an agent's chat when DSH's default model is an agent
+too. DSH's default is the model the person last picked, so on a team that chats with an agent it
+usually is one. An agent route set here is ignored.
 
 ## The `acpAgents` service
 
