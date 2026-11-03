@@ -64,6 +64,39 @@ object SpendDemo {
             .put("truncated", JSONArray())
     }
 
+    /**
+     * The preview's Space Row feed (space.version 1) for its `herdr` and `website` repositories: made-up numbers, example
+     * links. `website` has only some sections, so its line 2 shows "–".
+     */
+    fun space(now: Long): Map<String, SpaceFeed.Feed> = listOfNotNull(SpaceFeed.parse(JSONObject("""
+        {"kind":"herdr-meter","schema_version":2,"generated_at":"${iso(now - 4 * 60_000L)}","space":{"version":1,"truncated":false,"projects":{
+          "~/work/herdr":{
+            "merges":{"n":7,"prev_n":5,"by_type":{"feat":3,"fix":3,"test":1},"items":[
+              {"task":"gh-45","type":"feat","forge":"github","url":"https://github.com/example/herdr/pull/45","lead_min":42},
+              {"task":"gh-44","type":"fix","forge":"github","url":"https://github.com/example/herdr/pull/44","lead_min":18},
+              {"task":"gh-43","type":"feat","forge":"github","url":"https://github.com/example/herdr/pull/43","lead_min":95},
+              {"task":"gh-42","type":"fix","forge":"github","url":"https://github.com/example/herdr/pull/42","lead_min":9},
+              {"task":"gh-41","type":"test","forge":"github","url":"https://github.com/example/herdr/pull/41","lead_min":240},
+              {"task":"gh-40","type":"feat","forge":"github","url":"https://github.com/example/herdr/pull/40","lead_min":61},
+              {"task":"gh-39","type":"fix","forge":"github","url":"https://github.com/example/herdr/pull/39","lead_min":null}]},
+            "time":{"median_min":38,"prev_median_min":55,"bands":[1,2,2,1,1,0],"bands_labels":["<15m","15-30m","30m-1h","1-2h","2-6h",">6h"],
+              "fastest":{"task":"gh-42","min":9,"url":"https://github.com/example/herdr/pull/42"},"avg_min":61,
+              "slowest":{"task":"gh-41","min":240,"url":"https://github.com/example/herdr/pull/41"}},
+            "first_pass":{"share":0.57,"prev_share":0.4,"fixes":[4,2,1,0]},
+            "spent":{"real_usd":18.4,"prev_real_usd":22.1,"by_model":{"example-codex-model":12.0,"example-claude-model":null,"example-deepseek-model":6.4},"codex_week_share":0.09},
+            "tokens":{"total":10290000,"prev_total":8700000,"cache_hit":0.88,"by_model":{
+              "example-codex-model":{"input":1200000,"output":90000,"cache_read":9000000,"turns":310,"reasoning_share":0.31,"cache_hit":0.88}}},
+            "bots":{
+              "b-demo-captain":{"usd_per_task":2.6,"min_per_task":38,"usd_24h":18.4,"other_usd":1.2,"parts_kind":"member",
+                "parts":[{"key":"b-demo-dev","usd":9.1},{"key":"b-demo-test","usd":8.1},{"key":"other","usd":1.2}]},
+              "b-demo-dev":{"usd_per_task":null,"min_per_task":null,"usd_24h":0.0,"other_usd":null,"parts_kind":"model","parts":[]}}},
+          "~/work/website":{"merges":{"n":0,"prev_n":0,"by_type":{},"items":[]},"time":null,"first_pass":null,
+            "spent":{"real_usd":0.0,"prev_real_usd":null,"by_model":{},"codex_week_share":0.004},"tokens":{"total":48200,"prev_total":61000,"cache_hit":null,"by_model":{}}}
+        }}}"""))).associateBy { "" }
+
+    /** The preview's bots.json names, keyed like [MachineState.bots]. */
+    val BOTS = mapOf("|~/work/herdr" to SpaceFeed.Names(mapOf("b-demo-captain" to "Captain", "b-demo-dev" to "Dev", "b-demo-test" to "Tester")))
+
     /** The preview's readings, keyed like [MachineState.meter]. */
     fun readings(now: Long): Map<String, Spend.Reading> = mapOfNotNull(
         "" to Spend.parse("Preview machine", doc("preview-core", now, 4 * 60_000L, 1.0, withUnpriced = true)),

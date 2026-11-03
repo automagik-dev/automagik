@@ -23,7 +23,11 @@ data class MachineState(val connecting: Boolean = false, val connected: Boolean 
     /** Git answers for the drawer, by Sidebar.gitKey: null is not a repository. */
     val git: Map<String, GitInfo?> = emptyMap(),
     /** The usage meter's doc per machine this core reaches ("" is its own); a machine with no meter has none. */
-    val meter: Map<String, Spend.Reading> = emptyMap()) {
+    val meter: Map<String, Spend.Reading> = emptyMap(),
+    /** The meter doc's Space Row feed per machine, keyed like [meter]; a machine whose doc has none (or another version) has none. */
+    val space: Map<String, SpaceFeed.Feed> = emptyMap(),
+    /** Bot and category names from each project's `.herdr/bots.json`, by "machine|project key". */
+    val bots: Map<String, SpaceFeed.Names> = emptyMap()) {
     /** Dropped or failed, as opposed to never connected or disconnected on purpose. */
     val offline get() = !connected && (connecting || error != null)
     /** Worth retrying without asking: a dropped or failed connection that isn't waiting on a password. */
@@ -543,12 +547,35 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
      */
     private suspend fun readMeter(id: String, client: CoreClient, linked: List<LinkedMachine>) {
         val read = HashMap<String, Spend.Reading?>()
+        val feeds = HashMap<String, SpaceFeed.Feed?>()
         val own = state.value.hosts.find { it.id == id }?.name ?: "Machine"
         runCatching { client.call("doc.get", JSONObject().put("name", Spend.DOC)) }
-            .onSuccess { read[""] = Spend.parse(own, it.optJSONObject("value")) }
+            .onSuccess { val v = it.optJSONObject("value"); read[""] = Spend.parse(own, v); feeds[""] = SpaceFeed.parse(v) }
         for (m in linked.filter { it.connected }) runCatching { client.call("doc.get", JSONObject().put("name", Spend.DOC).put("on", m.name)) }
-            .onSuccess { read[m.name] = Spend.parse(m.name, it.optJSONObject("value")) }
-        updateMachine(id) { m -> m.copy(meter = (m.meter - read.filterValues { it == null }.keys) + read.mapNotNull { (k, v) -> v?.let { k to it } }) }
+            .onSuccess { val v = it.optJSONObject("value"); read[m.name] = Spend.parse(m.name, v); feeds[m.name] = SpaceFeed.parse(v) }
+        updateMachine(id) { m -> m.copy(meter = (m.meter - read.filterValues { it == null }.keys) + read.mapNotNull { (k, v) -> v?.let { k to it } },
+            space = (m.space - feeds.filterValues { it == null }.keys) + feeds.mapNotNull { (k, v) -> v?.let { k to it } }) }
+        runCatching { readBots(id, client) }
+    }
+    /**
+     * Bot and category names for the bot cards: each project's `.herdr/bots.json`, read only, for projects on a machine whose
+     * meter doc has a Space Row feed. A project with no file (or one that doesn't parse) shows ids instead.
+     */
+    private suspend fun readBots(id: String, client: CoreClient) {
+        val m = state.value.machines[id] ?: return
+        val byAddress = m.terminals.associateBy { it.address }
+        val keys = m.spaces.filter { it.machine in m.space }.mapNotNull { s ->
+            SpaceFeed.projectKey(m.git[Sidebar.gitKey(s.machine, Sidebar.place(s, byAddress))])?.takeIf { it.startsWith("/") }?.let { s.machine to it }
+        }.distinct()
+        val names = HashMap<String, SpaceFeed.Names>()
+        for ((machine, key) in keys) {
+            val params = JSONObject().put("path", "${key.trimEnd('/')}/.herdr/bots.json")
+            if (machine.isNotBlank()) params.put("on", machine)
+            runCatching { withTimeout(20_000) { client.call("file.read", params) } }.getOrNull()
+                ?.takeIf { it.optInt("last") >= it.optInt("lines") }?.optString("text")
+                ?.let { names["$machine|$key"] = SpaceFeed.names(it) }
+        }
+        updateMachine(id) { it.copy(bots = it.bots + names) }
     }
     /** Herdr desktop's config folder on the core's machine (it may have none: an SSH host without the app). */
     private suspend fun herdrHome(id: String, client: CoreClient): String? = herdrHomes[id] ?: exec(client, "printenv", "HERDR_APP_HOME")
@@ -592,7 +619,13 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
             if (!(last == null || dirty || (gitShown && (repo || !known) && now - last > 60_000))) continue
             gitChecked[full] = now
             runCatching { gitCheck(client, machine, place) }
-                .onSuccess { info -> updateMachine(id) { it.copy(git = it.git + (key to info)) } }
+                .onSuccess { info ->
+                    val project = SpaceFeed.projectKey(info)
+                    val unnamed = project != null && machine in m.space && "$machine|$project" !in (state.value.machines[id]?.bots ?: emptyMap())
+                    updateMachine(id) { it.copy(git = it.git + (key to info)) }
+                    // A project first seen after the meter read: its bot names now, not at the next read.
+                    if (unnamed) runCatching { readBots(id, client) }
+                }
                 .onFailure { gitChecked[full] = now - 45_000 }   // unsure (machine away, odd error): keep the last answer, retry in 15 s
         }
     }
@@ -832,8 +865,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         val id = "preview"
         val terminals = listOf(
             CoreTerminal("t1", "Authentication flow", "~/work/herdr-auth", "live", "blocked", "Claude Code", "Waiting for your approval to run the test suite", 80, 24, kind = "permission"),
-            CoreTerminal("t2", "Android companion", "~/work/herdr", "live", "working", "Codex", "Building the mobile navigation", 80, 24),
-            CoreTerminal("t3", "API review", "~/work/herdr-api", "live", "done", "Claude Code", "Reviewed 12 files · ready when you are", 80, 24),
+            CoreTerminal("t2", "Android companion", "~/work/herdr", "live", "working", "Codex", "Building the mobile navigation", 80, 24, labels = mapOf("bot" to "b-demo-captain")),
+            CoreTerminal("t3", "API review", "~/work/herdr-api", "live", "done", "Claude Code", "Reviewed 12 files · ready when you are", 80, 24, labels = mapOf("bot" to "b-demo-dev")),
             CoreTerminal("t4", "Shell", "~/work/website", "live", "", "zsh", "", 80, 24),
             CoreTerminal("t5", "Release notes", "~/work/herdr-squad", "live", "working", "Codex", "Drafting the changelog", 80, 24),
             CoreTerminal("t6", "Landing copy", "~/work/website", "live", "idle", "Claude Code", "", 80, 24))
@@ -847,8 +880,13 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
             repo("~/work/herdr-squad", "feat/release-notes"), repo("~/work/website", "main", "~/work/website/.git", "example/website"))
         _state.update { it.copy(demo = true, screen = Nav.TODAY, selected = null, space = null, project = null,
             machines = mapOf(id to MachineState(connected = true, version = "preview", terminals = terminals, spaces = spaces, git = git,
-                meter = SpendDemo.readings(System.currentTimeMillis())))) }
+                meter = SpendDemo.readings(System.currentTimeMillis()), space = SpendDemo.space(System.currentTimeMillis()), bots = SpendDemo.BOTS))) }
     }
+    private val _sheet = MutableStateFlow<StatsSheet?>(null)
+    /** The Space Row card open as a bottom sheet, if any. */
+    val sheet = _sheet.asStateFlow()
+    fun openStats(s: StatsSheet) { _sheet.value = s }
+    fun closeStats() { _sheet.value = null }
     fun leaveDemo() { detach(); _state.update { it.copy(demo = false, machines = emptyMap(), selected = null, space = null, project = null) } }
     fun hostName(hostId: String) = if (state.value.demo) "Preview machine" else state.value.hosts.find { it.id == hostId }?.name ?: "Machine"
     override fun onCleared() { if (current === this) current = null; discovery.stop(); clients.values.forEach { it.close() }; clients.clear() }

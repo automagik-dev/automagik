@@ -137,8 +137,8 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
     val welcome = selected == null && state.screen == Nav.TODAY && state.space == null && disconnected
     val browsing = !state.demo && (welcome || (selected == null && state.screen == Nav.MACHINES))
     // Hosts in the order they were saved, then any others: what the spaces tree, Projects and Tasks read.
-    val sidebar = state.hosts.mapNotNull { h -> state.machines[h.id]?.let { m -> SidebarHost(h.id, h.name, m.connected, m.spaces, m.terminals, m.linked, m.colors, m.git) } } +
-        state.machines.filterKeys { id -> state.hosts.none { it.id == id } }.map { (id, m) -> SidebarHost(id, vm.hostName(id), m.connected, m.spaces, m.terminals, m.linked, m.colors, m.git) }
+    val sidebar = state.hosts.mapNotNull { h -> state.machines[h.id]?.let { m -> SidebarHost(h.id, h.name, m.connected, m.spaces, m.terminals, m.linked, m.colors, m.git, m.space, m.bots) } } +
+        state.machines.filterKeys { id -> state.hosts.none { it.id == id } }.map { (id, m) -> SidebarHost(id, vm.hostName(id), m.connected, m.spaces, m.terminals, m.linked, m.colors, m.git, m.space, m.bots) }
     val pulse = remember(sidebar, state.seen) { Projects.pulse(sidebar, state.seen) }
     DisposableEffect(browsing) { if (browsing) vm.discovery.start(); onDispose { vm.discovery.stop() } }
     val discovered by vm.discovery.hosts.collectAsStateWithLifecycle()
@@ -235,6 +235,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
             }
         }
     }
+    vm.sheet.collectAsStateWithLifecycle().value?.let { StatsSheetHost(it, onDismiss = vm::closeStats) }
     if (pairDesktop) PairDialog(state.pairing, onDismiss = { pairDesktop = false }, onScan = { scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Scan the code in Pocket Link").setBeepEnabled(false).setOrientationLocked(false)) }, onPair = vm::pair)
     state.offeredPairing?.let { link -> ConfirmPairDialog(link, onPair = { vm.pair(link) }, onCancel = vm::dismissOfferedPairing) }
     if (addHost) HostDialog(null, onDismiss = { addHost = false; addPrefill = null }, onSave = { vm.saveHost(it); addHost = false; addPrefill = null; vm.connect(it) }, prefill = addPrefill)
