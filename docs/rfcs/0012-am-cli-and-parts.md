@@ -134,11 +134,16 @@ change.
     alone (`relinkCli`, `install.sh`), so it never takes it back. `am self uninstall` hands
     `automagik-herdr` back to the pack's entry when a pack is installed. Both links go through
     `parts/automagik.am/current/`, so an update or rollback needs no relink.
-  - The briefing entry point has one content, written by both the pack and am:
-    `briefingEntry.mjs` runs am's copy (`<AM_HOME or ~/.automagik>/parts/automagik.am/current/
-    briefing.mjs`) first, telling it the app home, then the sidebar's, then `spaces-agents`'s.
-    A copy that is missing, or whose import throws, is passed over: a broken am never silences a
-    briefing (t22n).
+  - The briefing entry point: am replaces the pack's plain copy with a link,
+    `<app home>/automagik-herdr/briefing.mjs` -> `$AM_HOME/parts/automagik.am/current/
+    briefingEntry.mjs`, so it resolves into am's parts store (the sidebar guard's test) and an
+    update or rollback needs no relink. The pack's placement leaves such a link alone; `am self
+    uninstall` puts the pack's copy back. `briefingEntry.mjs` takes the app home from the path the
+    hook ran (`argv[1]`: node resolves the link for the module itself), runs am's copy first,
+    telling it the app home, then the sidebar's, then `spaces-agents`'s. A copy that is missing,
+    or whose import throws, is passed over: a broken am never silences a briefing (t22n). Each
+    attempt gets the hook's whole stdin, read once and replayed, and its output is printed only
+    when it succeeds; a session is joined in the ledger once, however many attempts or turns.
   - The copies are the import closure of the CLI, `briefing.mjs` and `briefingEntry.mjs`, plus
     the CLI's wrapper, `run.sh`, `pack-keys.json` and the plugin lane's `keys.json`
     (`plugin-lane-keys.json`). `scripts/am-copies.mjs --check` runs in herdr's gate too, so a
@@ -217,7 +222,9 @@ need. All are `targets: local`, `set: ["code"]`, artifact `automagik-herdr-pack-
 - Until am's own CLI and briefing copies are installed on the machine (delivery 1 released and
   `automagik.am` installed), `am uninstall herdr.am-sidebar` refuses and says why: switching
   the sidebar off would leave `automagik-herdr` pointing at nothing and stop every briefing
-  (t2zx).
+  (t2zx). The guard reads what is installed: it lifts only once the briefing entry point
+  resolves into `$AM_HOME/parts/` (am places a link there, never a copy), `automagik-herdr` no
+  longer resolves into the sidebar, and no project hook calls the sidebar's `briefing.mjs`.
 - **Every herdr manifest sits inside an existing pack mod folder** (t259 and t22n, 2026-11-03).
   An installed pack's `update.mjs`, old ones included, refuses a tarball with any `layouts/`
   file but `automagik.json` and any top-level folder that is not a pack mod, so a manifest
@@ -239,12 +246,13 @@ need. All are `targets: local`, `set: ["code"]`, artifact `automagik-herdr-pack-
   plus its links in `~/.local/bin`. Proposed: a `writes` path may start with
   `$HERDR_APP_HOME/`, which am resolves (else `~/.config/herdr-app`). Code gap: the gate accepts
   only `~/` and `**/`, and the manifests spell `~/.config/herdr-app/` out.
-- The gate, `herdr/scripts/parts.mjs --check`, checks every `part.json` under `herdr/` and
-  `herdr-layout/`: the fields, `paths` against tracked files, `select` as the part's own
-  folder, entry scripts shipping in the tarball, and `writes` (it refuses `shared.json`, `data/`,
-  pocket-link, LaunchAgents). Every `PACK_MODS` folder must have one.
-- Every herdr part lists only `macos` today, and `part.mjs` exits 2 on any other platform
-  (`bin/part.mjs:44`). The Linux and Windows ports are deliveries 5 and 6 (D27).
+- The gate, `herdr/scripts/parts.mjs --check`, checks every `part.json` under `herdr/` (the
+  layout's included, in `am-sidebar/layout/`): the fields, `paths` against tracked files,
+  `select` as the part's own folder, entry scripts shipping in the tarball, and `writes` (it
+  refuses `shared.json`, `data/`, pocket-link, LaunchAgents). Every `PACK_MODS` folder must have
+  one.
+- Every herdr part lists only `macos` today, and `part.mjs` exits 2 on any other platform.
+  The Linux and Windows ports are deliveries 5 and 6 (D27).
 - None declares `~/.local/bin/usagemeter`: that becomes usagemeter's own part (t22b);
   `install.sh` and `am meter` keep handling it until then.
 - Pocket Link (`herdr/mods/pocket-link`) is on the herdr lane but is not a pack member (it is
