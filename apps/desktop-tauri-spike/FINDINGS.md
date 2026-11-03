@@ -240,7 +240,7 @@ one JSON line (`cross-os-out-<os>` artifacts), and the Report job renders them i
   page and opens two Bot views with isolated, persistent stores, through the real app's
   `dsBotApp.browser` and bot-views.js. Bots drive those views over CDP (debugger.attach). What it
   takes to ship on Windows is listed below; none of it is a wrapper limit.
-- **Tauri works everywhere except Bot browser automation.** It builds, packages, loads DSH and gives
+- **Tauri passes every other check in this matrix, but not Bot browser automation.** It builds, packages, loads DSH and gives
   each Bot its own persistent store on all three OSes. CDP works only on Windows (WebView2). macOS
   (WKWebView) and Linux (WebKitGTK) have no CDP, so Playwright cannot attach. A Tauri app would need
   a separate Chromium for Bots on two OSes and a WebView2 path on the third. Bots would then behave
