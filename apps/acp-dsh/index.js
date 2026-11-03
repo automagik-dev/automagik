@@ -227,7 +227,8 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   const daily = setInterval(() => { reconcile({ kick: false }); refresh() }, CHECK_EVERY_MS)
   first.unref?.()
   daily.unref?.()
-  ctx.on?.('dispose', () => {
+  // Cordis 4 has no 'dispose' event: an effect's cleanup is what runs when the plugin stops.
+  ctx.effect?.(() => () => {
     disposed = true
     clearTimeout(first)
     clearInterval(daily)

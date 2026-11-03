@@ -36,6 +36,7 @@ function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {} }
     get: () => undefined,
     provide: (name, value) => { services[name] = value },
     on: (name, listener) => listeners.set(name, [...(listeners.get(name) ?? []), listener]),
+    effect: (setup) => { const cleanup = setup(); listeners.set('stop', [...(listeners.get('stop') ?? []), cleanup]) },
     emit: name => (listeners.get(name) ?? []).forEach(listener => listener()),
   }
   const installs = []
@@ -222,6 +223,6 @@ test('dispose stops the adapter installs', () => {
   const h = harness({ clis: { claude: '/bin/claude' } })
   apply(h.ctx, { claude: live(true), codex: live(false) }, h.deps)
   assert.ok(!h.log.some(([what]) => what === 'store disposed'))
-  h.ctx.emit('dispose')
+  h.ctx.emit('stop')
   assert.ok(h.log.some(([what]) => what === 'store disposed'))
 })
