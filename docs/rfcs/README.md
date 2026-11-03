@@ -43,6 +43,7 @@ Security gaps are named by title only until their fix merges. Details go to a pr
 | [0012](0012-am-cli-and-parts.md) | am, one CLI and parts | Draft | not scheduled |
 | [0013](0013-work-code-switch.md) | The work and code switch | Draft | not scheduled |
 | [0014](0014-shared-bot-registry.md) | Shared Bot registry | Draft | not scheduled |
+| [0015](0015-live-chat-projection.md) | Live chat projection | Draft | not scheduled |
 
 Milestones, in the owner's order:
 
@@ -53,8 +54,9 @@ Milestones, in the owner's order:
 5. The app opens fast
 
 Personal customization (0009) is scheduled after milestone 2; it is Draft until then. Herdr,
-Genie Publish, Platform, Desktop sandbox, `am` and parts, the work and code switch and the shared
-Bot registry stay at the RFC stage until their questions are answered.
+Genie Publish, Platform, Desktop sandbox, `am` and parts, the work and code switch, the shared
+Bot registry and the live chat projection stay at the RFC stage until their questions are
+answered.
 Milestones and one issue per delivery are created after the PR that lands these RFCs merges.
 
 ### Fixes without an RFC
