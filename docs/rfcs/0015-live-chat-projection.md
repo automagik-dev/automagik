@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (one question open: Q5, the approval source) |
+| Status | Draft (every question answered: see Decided and proposed) |
 | Milestone | not scheduled |
 | Lanes | herdr (3.N.P, Pocket Link included), plugin (3.N.P), pocket (3.N.P, [RFC 0011](0011-monorepo-parts-and-releases.md)) |
 | Created | 2026-11-03 |
@@ -79,13 +79,13 @@ Decided by Felipe on this RFC (2026-11-03, relayed by t2ws), each as recommended
 - **Q3: every Claude pane, on a yes.** Herdr offers once "Show every Claude pane as a chat"; on
   yes the pack adds a label-only hook to the person's Claude user settings.
 - **Q4: no redaction in this RFC.** Rows are never stored on the phone or logged.
+- **Q5: the approval source is a hook where it runs.** D30's middle source is hooks: a
+  `PermissionRequest` hook hands the engine the pending tool and its input, in the hooks Start
+  and Attach write and in Q3's one-time offer (delivery 8). Elsewhere (no hook yet, linked
+  machines before #206) approvals fall back to the screen under the guards in "Input".
+  herdr-core's status stays the gate either way.
 
-**One departure from D30, for Felipe (Q5).** D30's middle source is hooks. This RFC uses
-herdr-core's status there instead (see "Status and hooks"), and adds no approval hook, so an
-approval row is found by the screen reader, under the guards in "Input". Q5 asks whether to keep
-that or add a `PermissionRequest` hook as the approval source.
-
-Everything else in Design is this RFC's proposal.
+Everything else in Design is this RFC's proposal. No question is open.
 
 ## Design
 
@@ -202,8 +202,8 @@ runs: `events.subscribe` on the terminal gives `status.state` (`idle`, `working`
 and `turn`; `terminal.send` refuses a blocked program. That is the status row, the "working"
 indicator, the turn boundary and the gate for approval buttons. The status is the program's own
 report, so it is a gate, not proof of what the dialog asks. The briefing hook's facts (session,
-transcript) arrive as labels. Whether a `PermissionRequest` hook also names the pending tool is
-Q5.
+transcript) arrive as labels. Where it is installed, a `PermissionRequest` hook names the
+pending tool and its input (decided, Q5; delivery 8).
 
 ### Screen fallback
 
@@ -255,8 +255,8 @@ anything on its own (0014 Threat model).
   LF. Empty after cleaning: refused. Then:
   1. **Draft check** (Q19). The screen's input row is read. If it holds text the person typed in
      the terminal, the message is **held**: the chat shows it with "The terminal has a half-typed
-     message" and **Send now**. A held message goes by itself once the input row is empty. The
-     draft is never cleared, unlike Orca. **Send now** (decided, Q2) pastes the message after the
+     message" and **Send now**. A held message goes by itself once the input row is empty (part
+     of Q2's accepted recommendation). The draft is never cleared, unlike Orca. **Send now** (decided, Q2) pastes the message after the
      draft and sends both as one message; the chat warns first ("Sends your half-typed terminal
      text with it"). Nothing is cleared or retyped.
   2. **Send.** `terminal.send`: herdr-core pastes the text, waits until nobody has typed for about
@@ -276,12 +276,16 @@ anything on its own (0014 Threat model).
   1. herdr-core reports `blocked` with kind `permission` (or `question` for a question row);
   2. the dialog is read only from the bottom of the screen, the rows around the cursor, never from
      scrollback or the middle of the screen;
-  3. its tool matches the transcript's last tool call that has no result yet (for an agent with no
-     transcript yet, the row shows the dialog with "Answer in the terminal" and no buttons).
+  3. the transcript has exactly one open tool call (no result yet) with the dialog's tool; with
+     none, or with several open at once (parallel calls), there are no buttons. The row shows
+     that call's input from the transcript, never the screen's summary, so the person approves
+     what the agent actually asked to run. An agent with no transcript yet gets the dialog with
+     "Answer in the terminal" and no buttons.
   Allow-always is offered only when the agent's key map has it at a fixed key; a number read from
   the screen is never pressed. Just before pressing, all three are checked again; if one fails,
-  nothing is pressed and the chat says the question changed. If Q5 adds the hook, its payload
-  replaces guard 3 where it runs.
+  nothing is pressed and the chat says the question changed. Where the `PermissionRequest` hook
+  runs (decided, Q5), its payload names the tool and replaces guard 3; guards 1 and 2 still
+  apply.
 - **Questions and pickers.** Paced key steps, one body and one Enter per answer, 500 ms apart
   plus 500 ms to let the next question draw (`native-chat-answer-stepping.ts`). Each step checks
   the screen first and stops at a mismatch with "Finish in the terminal". omp's questions cannot
@@ -435,11 +439,14 @@ Orca's own list of gaps (research note, "Parity gaps") and our answer:
    ranking, the row model, input with the draft hold, approvals, pickers, interrupt, all behind
    one API both clients call. *Check:* tests against a fake `hc` and temp homes (never a live
    Herdr): a held draft is never cleared; a stale approval presses nothing; a fake dialog printed
-   mid-screen, or shown while status is not `blocked`, gets no buttons; a dialog whose tool is not
-   the transcript's open tool call gets no buttons; a call with no watching client is refused; a
+   mid-screen, or shown while status is not `blocked`, gets no buttons; a dialog whose tool has
+   no open call, or two open calls, in the transcript gets no buttons; the approval row shows the
+   transcript's input, not the screen's; a call with no watching client is refused; a
    remote tail reads by offset with `on` from the address; per agent, a multi-line message arrives
-   as one message in a recorded fake terminal.
-   *Rollback:* revert; nothing calls it until 4 or 0014's 9.
+   as one message in a recorded fake terminal. Recorded from Claude, Codex and omp: each reports
+   `blocked` with kind `permission` at an approval; an agent that does not gets no approval
+   buttons (it fails safe, "Answer in the terminal"), and the delivery's PR names which agents
+   those are. *Rollback:* revert; nothing calls it until 4 or 0014's 9.
 4. **The chat route** (herdr, Pocket Link). `herdr-pocket/chat/1` in `bridge.mjs`, the limits,
    cursors, and README's "Update" note. *Check:* `guard.test.mjs` gains: an unpaired key is closed
    before its header is read, a removed phone's chat session ends; a fake hc behind the route
@@ -457,13 +464,14 @@ Orca's own list of gaps (research note, "Parity gaps") and our answer:
    every Claude pane as a chat"; on yes the pack adds a hook to the person's Claude user settings
    that only sets `agent.session` and `agent.transcript` (no briefing, no output, fail-open).
    *Check:* the herdr gate; after a yes, a plain `hc run … claude` pane gets both labels after
-   its first prompt; saying no installs nothing, and the offer does not come back. *Rollback:* a
-   reverting pack removes the hook it added and nothing else.
+   its first prompt; saying no installs nothing, and the offer does not come back. Delivery 8
+   adds the approval hook to this offer (Q5). *Rollback:* a reverting pack removes the hook it
+   added and nothing else.
 7. **Linked machines** (herdr, after #206). Where the pack's hooks run on a linked machine, its
    panes get both labels and are tailed through `hc file read --on`. *Check:* a labelled remote
    pane's chat shows transcript rows; a remote path outside the folders is refused. *Rollback:* a
    reverting pack; remote panes go back to screen only.
-8. **The approval hook** (herdr, t22n, after 2; only if Q5 says (b)). A `PermissionRequest` hook
+8. **The approval hook** (herdr, t22n, after 2; decided, Q5). A `PermissionRequest` hook
    beside the briefing hook in the settings Start and Attach write, and in Q3's offer, handing the
    engine the pending tool and its input. *Check:* the herdr gate; a Claude approval shows its tool
    from the hook; a fake dialog printed by a tool gets no buttons; a pane without the hook keeps
@@ -478,7 +486,7 @@ delivery 7. Its check gains the window's half of "Rendering, both clients": a ro
 
 ## Open questions
 
-One open question, Q5. Felipe answered Q1-Q4 on 2026-11-03, each as recommended (see Decided);
+No open questions. Felipe answered all five on 2026-11-03, each as recommended (see Decided);
 they stay below as the record.
 
 1. **Where the module sits, and how the Automagik window gets it.** *Decided, as recommended:*
@@ -490,7 +498,7 @@ they stay below as the record.
    *Decided, as recommended:* the message is pasted after the draft and both are sent as one
    message; the chat says so before the tap ("Sends your half-typed terminal text with it").
    Nothing is cleared or retyped. Without a tap, the held message goes once the input row is
-   empty.
+   empty (also part of the recommendation Felipe accepted).
 3. **Plain Claude panes.** *Decided, as recommended:* the pack offers once, in Herdr, "Show every
    Claude pane as a chat", and on yes adds a small hook to the person's Claude user settings that
    only sets `agent.session` and `agent.transcript` (no briefing, no output, fail-open). Until
@@ -505,16 +513,17 @@ they stay below as the record.
    - (a) **Screen only, with the guards** in "Input". Nothing new in anyone's Claude settings; it
      works the same in every pane and on linked machines before #206. But what the dialog asks is
      still read from the screen, so it breaks when a TUI changes its dialog, needs a transcript
-     tool call to match, and a fake dialog that lines up with a real pending call passes.
+     tool call to match. A fake dialog can at most answer the one real open call, whose input
+     the row shows from the transcript.
    - (b) **A `PermissionRequest` hook** that hands the engine the pending tool and its input
      (D30's middle source, Orca's way, `native-chat-approval-envelope.ts`). The agent names the
      tool itself, so printed text cannot fake it, and a TUI redesign does not break it. But it runs
      only where the hook is installed (bot panes; plain panes after Q3's yes; linked machines
      after #206), and it is one more hook in the person's settings. Code the agent runs can still
      forge what the hook leaves behind, as it can labels.
-   *Recommended:* (b) where it runs, folded into the hooks Start and Attach already write and into
-   Q3's one-time offer, with (a)'s guards as the fallback everywhere else (delivery 8, after
-   delivery 2).
+   *Decided, as recommended:* (b) where it runs, folded into the hooks Start and Attach already
+   write and into Q3's one-time offer, with (a)'s guards as the fallback everywhere else
+   (delivery 8, after delivery 2).
 
 ## Links
 
