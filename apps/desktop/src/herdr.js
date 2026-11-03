@@ -225,6 +225,14 @@ export async function openHerdr({ platform, arch, env, home, isFile, resolve, ex
     return { ok: false, reason: 'missing', message: 'Herdr is not set up' }
   }
   mark('found')
+  return raiseHerdr({ platform, found, env, execFile, spawn, now, sleep, limit, mark, log })
+}
+
+/**
+ * Steps 3 and 4 for a herdr-app already found: start or raise it, wait for its window, and
+ * look at what is in front. The same answers as openHerdr.
+ */
+export async function raiseHerdr({ platform, found, env, execFile, spawn, now, sleep, limit, mark = () => {}, log = () => {} }) {
   const launch = launchOf({ platform, found, env })
   const started = launch.detached
     ? await startDetached(launch.file, launch.args, { env, spawn })
