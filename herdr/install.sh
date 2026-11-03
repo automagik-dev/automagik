@@ -49,7 +49,7 @@ main() {
   RELEASES=https://github.com/$REPO/releases
   # The keys the pack pointer may be signed with: mods/am-sidebar/pack-keys.json, kept equal by a
   # test (bun scripts/herdr-lane.ts keygen writes both).
-  TRUSTED_KEYS='{"keys":[]}'
+  TRUSTED_KEYS='{"keys":[{"keyId":"herdr-pack-2026-11","publicKey":"-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAU4DbVpmwLMRaZhuWMHXjf0H6pSR8uZdLGplgc+Biy5w=\n-----END PUBLIC KEY-----\n"}]}'
   TTY=/dev/tty
   APPS=/Applications
   APP_HOME=${HERDR_APP_HOME:-$HOME/.config/herdr-app}
