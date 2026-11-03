@@ -343,17 +343,29 @@ jobs:
   desktop:
     # The desktop app's main-process logic in plain Node (home layout, profile install and the
     # move from the old package names, the preload, dsh supervision, navigation, updates), so
-    # the Electron binary itself is not downloaded here.
-    name: Desktop (main-process tests)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # the Electron binary itself is not downloaded here. On Linux and on Windows, which the app
+    # ships on too (desktop-build.yml).
+    name: Desktop (main-process tests${{ matrix.os == 'windows-latest' && ', windows' || '' }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: apps/desktop
+        shell: bash
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
       DO_NOT_TRACK: '1'
     steps:
+      # As the Windows build checks out (desktop-build.yml): the files as the commit holds them.
+      - name: Check out without CRLF
+        if: runner.os == 'Windows'
+        working-directory: .
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
