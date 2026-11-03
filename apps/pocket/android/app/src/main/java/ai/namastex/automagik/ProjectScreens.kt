@@ -43,7 +43,7 @@ private fun plural(n: Int, one: String, many: String = "${one}s") = "$n ${if (n 
         }
         if (tree) {
             sidebarRows(rows, state.space, state.selected, onToggle = { vm.toggleFold(it.key.removePrefix("m:")) },
-                onSpace = { vm.selectSpace(it.hostId, it.space.id) }, onTerminal = vm::selectTerminal)
+                onSpace = { vm.selectSpace(it.hostId, it.space.id) }, onTerminal = vm::selectTerminal, onStats = vm::openStats)
             if (rows.none { it is SpaceRow }) item { Empty(Icons.Outlined.FolderOpen, "No spaces yet", "Your spaces appear here when you connect.") }
         } else {
             item(key = "spend") {
@@ -154,7 +154,7 @@ private fun plural(n: Int, one: String, many: String = "${one}s") = "$n ${if (n 
         }
         item(key = "spaces") { SectionHeader("Spaces", project.spaces.size) }
         for (row in spaceRows) {
-            sidebarRows(listOf(row), state.space, state.selected, onToggle = {}, onSpace = { vm.selectSpace(it.hostId, it.space.id) }, onTerminal = vm::selectTerminal)
+            sidebarRows(listOf(row), state.space, state.selected, onToggle = {}, onSpace = { vm.selectSpace(it.hostId, it.space.id) }, onTerminal = vm::selectTerminal, onStats = vm::openStats)
             agentCards(state, vm, bySpace[row.hostId to row.space.id].orEmpty(), "s:${row.key}")
         }
         // Agents working in this repository from a space that belongs to another project, or from no space.

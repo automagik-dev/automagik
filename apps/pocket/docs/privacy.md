@@ -2,7 +2,7 @@
 title: "Privacy policy"
 type: policy
 created: 2026-11-01
-updated: 2026-11-01
+updated: 2026-11-03
 tags: [privacy, policy, play]
 ---
 # Automagik Pocket privacy policy
@@ -30,6 +30,7 @@ Effective 2026-11-01. Applies to the Android app **Automagik Pocket** (app ID
 | The phone's make and model (for example "Pixel 8") | Sent once to the desktop you pair with | So the desktop can name the paired phone |
 | Folder git status, origin remote URL and Herdr desktop program icons | Read from your machine; the git answers stay in memory, icons cached on the phone | To draw the spaces tree like the desktop, and to group spaces into projects and branches into tasks |
 | Usage meter summary: token counts and estimated $ per repository, branch, model and hour (the `herdr-meter` document, if you run the meter) | Read from your own machines and kept in memory; never written, never sent anywhere else | To show spend on Today, Projects and Tasks |
+| Space Row stats in that document (merges with their PR/MR links, time to merge, first pass, $ and tokens per model, per bot) and bot and category names from each project's `.herdr/bots.json` | Read from your own machines and kept in memory; never written, never sent anywhere else | To show each space's stats line and its bots' cards, as the desktop sidebar does |
 | Update check (app version in the request) | GitHub | To offer a newer release |
 
 Nothing else is collected. We, the developers, receive none of this data.
