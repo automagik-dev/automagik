@@ -363,7 +363,7 @@ None. Felipe answered every question (D27 and Decided).
 - RFCs: [0006](0006-herdr-terminal-mode.md) Herdr terminal mode,
   [0010](0010-desktop-sandbox.md) desktop sandbox;
   [0011](0011-monorepo-parts-and-releases.md) monorepo parts and releases;
-  0012 (`am` CLI and parts, not yet written); the registry RFC (not yet written).
+  0012 (`am` CLI and parts, not yet written); [0014](0014-shared-bot-registry.md) the registry RFC.
 - Unfold: `~/workspace/repos/rth/council/08-poc-vmbox.md`, `27-deployment-boundary.md`.
 - Sandbox sources: apple/container README (Requirements); containers/libkrun
   `docs/building.md` (macOS); superradcompany/microsandbox README (Requirements);
