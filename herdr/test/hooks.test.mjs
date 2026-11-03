@@ -323,6 +323,43 @@ test("acceptance: a v0.2.0 hook is moved and backed up; through the new command 
   assert.match(read(ledgerPath(s.app)), /"session":"s-1"/);
 });
 
+test("the entry point runs am's copy first; a missing or broken am copy falls back to the sidebar's", (t) => {
+  const s = botHome(t);
+  syncHooks({ modsDir: s.mods });
+  const command = commands(settings(s.proj))[1];
+  // The am part's store (RFC 0012): <HOME>/.automagik/parts/automagik.am/<version>/, `current` on it.
+  const part = join(s.root, ".automagik", "parts", "automagik.am");
+  const sidebar = join(s.mods, "spaces-agents", "briefing.mjs");
+  const working = read(sidebar);
+
+  // No am yet (no store, then a dangling `current`): the sidebar's copy runs, silently.
+  assert.match(s.hook(command).stdout, /You are Genie/);
+  mkdirSync(part, { recursive: true });
+  symlinkSync("3.0.0", join(part, "current"));
+  const dangling = s.hook(command);
+  assert.match(dangling.stdout, /You are Genie/);
+  assert.equal(dangling.stderr, "");
+
+  // A working am copy runs, not the sidebar's (broken here to prove it), and with no
+  // HERDR_APP_HOME it is told the entry point's app home: its session lands in that ledger.
+  cpSync(PACK, join(part, "3.0.0"), { recursive: true });
+  writeFileSync(sidebar, "throw new Error('the sidebar copy ran');\n");
+  const am = s.hook(command, { appHome: false, input: JSON.stringify({ session_id: "s-am" }) });
+  assert.equal(am.status, 0, am.stderr);
+  assert.match(am.stdout, /You are Genie/);
+  assert.equal(am.stderr, "");
+  assert.match(read(ledgerPath(s.app)), /"session":"s-am"/);
+
+  // A broken am copy (its import throws) never silences the briefing: the sidebar's runs.
+  writeFileSync(sidebar, working);
+  writeFileSync(join(part, "3.0.0", "briefing.mjs"), "throw new Error('broken am');\n");
+  const broken = s.hook(command);
+  assert.equal(broken.status, 0, broken.stderr);
+  assert.match(broken.stdout, /^<herdr-bot>\n/);
+  assert.match(broken.stdout, /You are Genie/);
+  assert.match(broken.stderr, /broken am/);
+});
+
 test("acceptance: after a later folder rename (simulated), the same hook still runs; a rollback to v0.3 puts v0.3's path back", (t) => {
   const s = botHome(t);
   syncHooks({ modsDir: s.mods });
