@@ -1,0 +1,57 @@
+{
+  "id": "herdr.pack",
+  "title": "Automagik Herdr pack (updater, install record, kept set)",
+  "kind": "herdr-mod",
+  "paths": [
+    "herdr/mods/am-sidebar/pack/**",
+    "herdr/mods/am-sidebar/parts.mjs",
+    "herdr/mods/am-sidebar/update.mjs",
+    "herdr/mods/am-sidebar/release.js",
+    "herdr/mods/am-sidebar/migrate.js",
+    "herdr/mods/am-sidebar/migrateHome.mjs",
+    "herdr/mods/am-sidebar/migrateHooks.mjs",
+    "herdr/mods/am-sidebar/briefingEntry.mjs",
+    "herdr/mods/am-sidebar/pack-keys.json",
+    "herdr/mods/am-sidebar/VERSION"
+  ],
+  "provides": [
+    "herdr.pack@1"
+  ],
+  "requires": [],
+  "os": [
+    "macos"
+  ],
+  "targets": "local",
+  "artifact": "automagik-herdr-pack-{version}.tgz",
+  "select": "am-sidebar/pack/",
+  "entry": {
+    "install": [
+      "node",
+      "part.mjs",
+      "install",
+      "herdr.pack"
+    ],
+    "uninstall": [
+      "node",
+      "part.mjs",
+      "uninstall",
+      "herdr.pack"
+    ],
+    "doctor": [
+      "node",
+      "part.mjs",
+      "doctor",
+      "herdr.pack"
+    ]
+  },
+  "writes": [
+    "$HERDR_APP_HOME/automagik-herdr/installed-by-install.sh",
+    "$HERDR_APP_HOME/automagik-herdr/.prev/**",
+    "$HERDR_APP_HOME/automagik-herdr/briefing.mjs",
+    "$HERDR_APP_HOME/automagik-herdr/hooks-journal.json",
+    "**/.claude/settings.local.json#hooks.UserPromptSubmit"
+  ],
+  "set": [
+    "code"
+  ]
+}

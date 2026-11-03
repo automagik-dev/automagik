@@ -1,18 +1,20 @@
 // The herdr parts' entries (RFC 0012): what `am install|uninstall|doctor <id>` runs for each part.json
-// under herdr/ and herdr-layout/, through bin/part.mjs. Node only (like update.mjs); Herdr never
+// under herdr/ and herdr-layout/, through pack/part.mjs. Node only (like update.mjs); Herdr never
 // loads this file. Apache-2.0.
 //
 // The pack is still one unit underneath: one tarball, installed, updated and rolled back together
 // by update.mjs, and its marker (<app home>/automagik-herdr/installed-by-install.sh) stays the
 // install record during the bridge cycle. These entries keep writing it; am only reads it.
-//   herdr.am-sidebar   install: the pack (update.mjs install --setup) when the record is not at this
-//                      version. uninstall: the whole pack, as install.sh --uninstall does, plus the
-//                      briefing hooks, the hooks' entry point, the pack's keys and the command link.
-//                      Install also links ~/.local/bin/automagik-herdr, as install.sh does, until the am
-//                      part (RFC 0012, D34) takes the command over.
+//   herdr.pack         the updater, the record and the kept set. install: the pack (update.mjs install
+//                      --setup) when the record is not at this version, and ~/.local/bin/automagik-herdr
+//                      linked as install.sh does where nothing else holds it (am's link is left: RFC
+//                      0012, D34). uninstall: the whole pack, as install.sh --uninstall does, plus the
+//                      briefing hooks, the hooks' entry point, the pack's keys and its command link.
 //                      The folders go to the kept set (<app home>/automagik-herdr/.prev) unless --purge.
 //   herdr.am-<mod>     install: the pack, then the mod switched back on. uninstall: switched off
 //                      (moved to mods-disabled/, as the mod manager does); an update keeps it off.
+//                      The sidebar refuses while the CLI link or the briefing entry point still runs
+//                      code in its folder (sidebarCarries), and stops refusing once am's copies do.
 //   herdr.layout       install: the pack, then the automagik layout put back if it was removed.
 //                      uninstall: the layout removed while it is the pack's copy (layout=removed).
 // Never written: Herdr's shared.json or data/, Pocket Link (mods/pocket-link) or its LaunchAgent,
@@ -20,11 +22,11 @@
 
 import { spawnSync } from "node:child_process";
 import {
-  chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync,
+  chmodSync, cpSync, existsSync, realpathSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync,
   symlinkSync, unlinkSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import { stableBriefingPath, ENTRY_SOURCE } from "./briefingText.mjs";
 import { CLI_LINK, knownProjects, ledgerFolders, removeHooks } from "./migrateHooks.mjs";
@@ -32,13 +34,14 @@ import { OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LIN
 import { appHomeOf, binDirOf, markerOf, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeMarker } from "./update.mjs";
 
 export const NODE_MIN = "22.7.0";
-/** What a herdr part's id names: `herdr.<pack mod>`, `herdr.layout`. */
-export const PART_IDS = Object.freeze([...PACK_MODS.map((m) => `herdr.${m}`), "herdr.layout"]);
+/** What a herdr part's id names: `herdr.pack`, `herdr.<pack mod>`, `herdr.layout`. */
+export const PART_IDS = Object.freeze(["herdr.pack", ...PACK_MODS.map((m) => `herdr.${m}`), "herdr.layout"]);
 
 export function partOf(id) {
   if (id === "herdr.layout") return { id, kind: "layout" };
+  if (id === "herdr.pack") return { id, kind: "pack" };
   const mod = typeof id === "string" && id.startsWith("herdr.") ? id.slice("herdr.".length) : null;
-  if (mod && PACK_MODS.includes(mod)) return { id, kind: mod === PACK_NAME ? "pack" : "mod", mod };
+  if (mod && PACK_MODS.includes(mod)) return { id, kind: "mod", mod };
   return null;
 }
 
@@ -379,10 +382,39 @@ function uninstallPack(ctx, { purge }) {
   return { ok: true, changed: true, detail: `the pack ${record.version} is uninstalled${purge ? " (--purge)" : ""}; your bots and Herdr's settings are untouched` };
 }
 
+/**
+ * What still runs code in the sidebar's folder, as the reasons it may not be switched off: the
+ * ~/.local/bin/automagik-herdr link resolving into mods/am-sidebar, and the briefing hooks' entry
+ * point being the sidebar's own (byte-equal to its briefingEntry.mjs, which runs its briefing.mjs).
+ * Read from what is installed, so it lifts by itself once am's link and entry point replace them.
+ */
+export function sidebarCarries(ctx) {
+  const reasons = [];
+  const folder = join(ctx.modsDir, PACK_NAME);
+  const inside = (p) => {
+    const real = (x) => { try { return realpathSync(x); } catch { return resolve(x); } };
+    const r = real(p), f = real(folder);
+    return r === f || r.startsWith(f + sep);
+  };
+  const link = join(ctx.binDir, CLI_LINK);
+  if (isLink(link) && inside(resolve(dirname(link), readlinkSync(link)))) reasons.push(`the command (${link} runs mods/${PACK_NAME}/bin)`);
+  const entry = stableBriefingPath(ctx.appHome), own = join(folder, ENTRY_SOURCE);
+  if (isFile(entry) && isFile(own) && readFileSync(entry).equals(readFileSync(own))) reasons.push(`every bot's briefing (${entry} runs mods/${PACK_NAME}/briefing.mjs)`);
+  return reasons;
+}
+const carriesText = (reasons) => `mods/${PACK_NAME} still carries ${reasons.join(" and ")}: switched off, they would stop working. `
+  + "`am uninstall herdr.pack` removes the whole pack; the sidebar switches off on its own once the am part carries them";
+
 /** `uninstall <id> [--purge]`: idempotent. Returns `{ ok, changed, detail }`; throws on a failure. */
 export function uninstall(ctx, part, { purge = false } = {}) {
   if (part.kind === "pack") return uninstallPack(ctx, { purge });
-  if (part.kind === "mod") return switchOff(ctx, part);
+  if (part.kind === "mod") {
+    if (part.mod === PACK_NAME && exists(join(ctx.modsDir, PACK_NAME))) {
+      const reasons = sidebarCarries(ctx);
+      if (reasons.length) throw new Error(carriesText(reasons));
+    }
+    return switchOff(ctx, part);
+  }
   if (part.kind === "layout") return removeLayout(ctx);
   throw new Error(`${part.id} is not a herdr part`);
 }
@@ -410,15 +442,19 @@ export function doctor(ctx, part) {
   add("record", true, `the pack ${record.version} (${record.mods.join(", ")})`);
   if (ctx.version && compareVersions(record.version, ctx.version) !== 0) add("version", false, `the record says ${record.version}, am expects ${ctx.version}`, reinstall);
 
-  if (part.kind === "mod" || part.kind === "pack") {
+  if (part.kind === "mod") {
     const m = part.mod, live = join(ctx.modsDir, m), off = join(ctx.offDir, m);
     if (!record.mods.includes(m)) { add("listed", false, `the record does not list ${m}: mods/${m}, if any, is not the pack's`, reinstall); return done(); }
-    if (part.kind === "mod" && !exists(live) && exists(off)) { add("switched-off", true, `not applicable: ${m} is switched off (${off})`); return done(2); }
+    if (!exists(live) && exists(off)) { add("switched-off", true, `not applicable: ${m} is switched off (${off})`); return done(2); }
     if (isLink(live)) add("folder", true, `mods/${m} is a link (a checkout): not the release's files`);
     else if (!isDir(live)) { add("folder", false, `mods/${m} is missing`, "curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash"); return done(); }
     else add("folder", true, live);
     const lacks = ["main.js", "mod.json"].filter((f) => !isFile(join(live, f)));
     add("files", lacks.length === 0, lacks.length ? `mods/${m} has no ${lacks.join(" or ")}` : "main.js and mod.json are there", reinstall);
+    if (m === PACK_NAME) {
+      const reasons = sidebarCarries(ctx);
+      add("switch-off", true, reasons.length ? `it cannot be switched off yet: ${carriesText(reasons)}` : "it can be switched off: no command or briefing runs from its folder");
+    }
   }
 
   if (part.kind === "pack") {

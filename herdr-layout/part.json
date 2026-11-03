@@ -47,25 +47,25 @@
   "entry": {
     "install": [
       "node",
-      "../am-sidebar/bin/part.mjs",
+      "../am-sidebar/pack/part.mjs",
       "install",
       "herdr.layout"
     ],
     "uninstall": [
       "node",
-      "../am-sidebar/bin/part.mjs",
+      "../am-sidebar/pack/part.mjs",
       "uninstall",
       "herdr.layout"
     ],
     "doctor": [
       "node",
-      "../am-sidebar/bin/part.mjs",
+      "../am-sidebar/pack/part.mjs",
       "doctor",
       "herdr.layout"
     ]
   },
   "writes": [
-    "~/.config/herdr-app/layouts/automagik.json"
+    "$HERDR_APP_HOME/layouts/automagik.json"
   ],
   "set": [
     "code"

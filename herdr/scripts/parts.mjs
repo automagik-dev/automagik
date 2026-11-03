@@ -4,7 +4,9 @@
 // marker stays the install record during the bridge cycle (RFC 0012, "One install authority").
 // This checks every part.json under herdr/ and herdr-layout/ against the fields RFC 0012 defines,
 // and that what each one names exists: its paths match files git tracks, its select is its own
-// folder inside the pack tarball, and each entry's script ships in that tarball.
+// folder inside the pack tarball, and each entry's script ships in that tarball. Across every
+// part.json the repository tracks (am/ and apps/ too), no two may write the same path, glob or
+// file#key unless one replaces the other.
 //
 //   node scripts/parts.mjs --check    exit 1, naming each problem
 //
@@ -25,7 +27,7 @@ const OPTIONAL = Object.freeze(["replaces"]);
 /** The pack tarball every herdr part comes from; release.js tarballName with the version left open. */
 export const PACK_ARTIFACT = "automagik-herdr-pack-{version}.tgz";
 /** The script every herdr part's entries run, inside the tarball. */
-export const PACK_ENTRY = "am-sidebar/bin/part.mjs";
+export const PACK_ENTRY = "am-sidebar/pack/part.mjs";
 
 export const ID = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+$/;
 export const CAP = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+$/;
@@ -61,8 +63,8 @@ export function globRe(glob) {
  * folder, and any LaunchAgent (Pocket Link's is Pocket's). Each is `[RegExp, why]`.
  */
 export const REFUSED_WRITES = Object.freeze([
-  [/(^|\/)herdr-app\/shared\.json(#|$)/, "Herdr's shared.json"],
-  [/(^|\/)herdr-app\/data(\/|$)/, "Herdr's data/"],
+  [/(^|\/)(herdr-app|\$HERDR_APP_HOME)\/shared\.json(#|$)/, "Herdr's shared.json"],
+  [/(^|\/)(herdr-app|\$HERDR_APP_HOME)\/data(\/|#|$)/, "Herdr's data/"],
   [/(^|\/)pocket-link(\/|$)/, "Pocket Link (Pocket's part)"],
   [/(^|\/)LaunchAgents(\/|$)/, "a LaunchAgent"],
 ]);
@@ -89,6 +91,21 @@ export function refusedWrite(w) {
   const re = globRe(path);
   for (const [sample, why] of PROTECTED_SAMPLES) if (re.test(sample)) return `it can match ${sample}: ${why} is not a part's to write`;
   return null;
+}
+
+/** A write as am resolves it: Herdr's app home spelled one way, `$HERDR_APP_HOME/` (am falls back to ~/.config/herdr-app). */
+const normalWrite = (w) => w.replace(/^~\/\.config\/herdr-app(\/|$)/, "$HERDR_APP_HOME$1");
+
+/**
+ * Whether two writes reach one place: the same path, a glob matching the other's path, or one file
+ * with keys of which one holds the other (`f#hooks` and `f#hooks.X`; a whole file holds every key).
+ */
+export function writesOverlap(a, b) {
+  const [pa, ka = null] = normalWrite(a).split("#");
+  const [pb, kb = null] = normalWrite(b).split("#");
+  if (!(pa === pb || globRe(pa).test(pb) || globRe(pb).test(pa))) return false;
+  if (ka === null || kb === null) return true;
+  return ka === kb || ka.startsWith(`${kb}.`) || kb.startsWith(`${ka}.`);
 }
 
 const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -180,11 +197,29 @@ export function validateParts({ files, read, packMods }) {
 
     if (!strings(part.writes) && !(Array.isArray(part.writes) && part.writes.length === 0)) bad("writes is not a list of paths");
     else for (const w of part.writes) {
-      if (!/^(~\/|\*\*\/)/.test(w)) bad(`writes ${w}: start it with ~/ (the home) or **/ (any project), never a machine's own path`);
+      if (!/^(~\/|\*\*\/|\$HERDR_APP_HOME\/)/.test(w)) bad(`writes ${w}: start it with ~/ (the home), $HERDR_APP_HOME/ (Herdr's app home) or **/ (any project), never a machine's own path`);
       const why = refusedWrite(w);
       if (why) bad(`writes ${w}: ${why}`);
     }
     parts.push({ file, id: part.id });
+  }
+  // No two parts write one place, unless one replaces the other: every part.json git tracks, not only herdr's.
+  const writers = [];
+  for (const file of files.filter((f) => /(^|\/)part\.json$/.test(f) && !f.split("/").includes("node_modules")).sort()) {
+    let part;
+    try { part = JSON.parse(read(file)); } catch { continue; } // a broken one is its own gate's (herdr's: above)
+    if (isObject(part) && typeof part.id === "string" && Array.isArray(part.writes)) {
+      writers.push({ file, id: part.id, writes: part.writes.filter((w) => typeof w === "string"), replaces: Array.isArray(part.replaces) ? part.replaces : [] });
+    }
+  }
+  for (let i = 0; i < writers.length; i++) {
+    for (let j = i + 1; j < writers.length; j++) {
+      const a = writers[i], b = writers[j];
+      if (a.id === b.id || a.replaces.includes(b.id) || b.replaces.includes(a.id)) continue;
+      for (const wa of a.writes) for (const wb of b.writes) {
+        if (writesOverlap(wa, wb)) problems.push(`${a.file}: writes ${wa}, and ${b.id} (${b.file}) writes ${wb}: one place, two parts (one must replace the other)`);
+      }
+    }
   }
   for (const m of packMods) {
     if (!manifests.includes(`herdr/mods/${m}/part.json`)) problems.push(`herdr/mods/${m}: a pack mod with no part.json`);
