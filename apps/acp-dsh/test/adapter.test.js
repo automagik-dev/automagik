@@ -23,7 +23,8 @@ function host({ answer = 'allowed-once' } = {}) {
     llm: { registerAdapter: (providers, adapter) => { for (const id of providers) registered[id] = adapter; return () => {} } },
     agents: { get: id => (id === 's1' ? agent : undefined) },
     get: name => (name === 'approval' ? { request: async (req) => { asked.push(req); return typeof answer === 'function' ? answer(req) : answer } } : undefined),
-    on: (name, fn) => { if (name === 'dispose') disposers.push(fn) },
+    on: () => {},
+    effect: (fn) => { disposers.push(fn()) },
   }
   apply(ctx, { fakeAgent: FAKE, claude: false, codex: false })
   const close = () => { for (const fn of disposers) fn(); rmSync(cwd, { recursive: true, force: true }) }
