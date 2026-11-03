@@ -1,6 +1,6 @@
 {
   "name": "@automagik/welcome-dsh",
-  "version": "3.65.0",
+  "version": "3.66.0",
   "description": "Omni's welcome for DeepSeek Harness: the Omni octopus greets you and connects your AI through DSH's own sign-ins",
   "keywords": [
     "dsh-plugin",
@@ -66,8 +66,8 @@
   "automagik": {
     "omni": {
       "repository": "https://github.com/automagik-dev/omni",
-      "version": "2.261103.61",
-      "commit": "129a037849c8596604f860ac87647bb38a96466b"
+      "version": "2.261103.70",
+      "commit": "fd993ffc9ff408190b9cc855b326c7ad7253999f"
     },
     "genie": {
       "repository": "https://github.com/automagik-dev/genie",
