@@ -29,7 +29,9 @@ data class MachineState(val connecting: Boolean = false, val connected: Boolean 
     /** Desktop space icons (shared.json am.sidebar.icons), by space id. */
     val icons: Map<String, Teams.Icon> = emptyMap(),
     /** Each project's bots as its registry defines them ([Teams.registry]), by "machine|project key". */
-    val members: Map<String, List<Teams.Member>> = emptyMap()) {
+    val members: Map<String, List<Teams.Member>> = emptyMap(),
+    /** The [session] whose terminals and spaces have been read, and when that first reading came ([Teams.ready]). */
+    val readSession: Int = 0, val readMs: Long = 0) {
     /** Dropped or failed, as opposed to never connected or disconnected on purpose. */
     val offline get() = !connected && (connecting || error != null)
     /** Worth retrying without asking: a dropped or failed connection. */
@@ -69,6 +71,10 @@ data class PocketState(
     val iconsVersion: Int = 0,
 )
 const val DEFAULT_FONT_SIZE = 13
+/** Size caps on what Teams copies from a desktop: a space image (Herdr's own limit), a pet's sheet and its sleep strip. */
+const val ICON_MAX = 5 * 1024 * 1024
+const val PET_SHEET_MAX = 6 * 1024 * 1024
+const val PET_SLEEP_MAX = 2 * 1024 * 1024
 private val RECONNECT_DELAYS = listOf(2_000L, 5_000L, 15_000L, 30_000L, 60_000L)
 val FONT_SIZES = 8..24
 
@@ -116,7 +122,9 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     private val _celebrations = MutableStateFlow<Map<String, Long>>(emptyMap())
     /** Bots to celebrate, "team id|bot id" to when their merge was seen: each jumps once. */
     val celebrations = _celebrations.asStateFlow()
-    private var mergesSeen: Set<String>? = null
+    /** The one writer of the Teams cache ([TeamsSync]). */
+    private val teamsSync by lazy { TeamsSync(teamsDao) }
+    private val petJobs = ConcurrentHashMap<String, Job>()
     fun gitShown(shown: Boolean) { gitShown = shown; if (shown) gitWake.trySend(Unit) }
     fun toggleFold(key: String) {
         val folded = state.value.folded.let { if (key in it) it - key else it + key }
@@ -162,18 +170,10 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
                 live ?: return@collectLatest
                 delay(400)
                 val now = System.currentTimeMillis()
-                val teams = Teams.build(live, now)
-                val (rows, bots) = TeamsCache.rows(teams)
-                // Only machines read far enough to have a project replace their cached rows.
-                val read = teams.map { it.hostId }.distinct()
-                runCatching { if (read.isNotEmpty()) { teamsDao.replace(read, rows, bots); teamsDao.raisePeaks(Teams.day(now), Teams.working(teams)) } }
-                val merges = Teams.merges(live)
-                if (live.values.any { it.space.isNotEmpty() }) {
-                    val jump = Teams.celebrations(mergesSeen, merges)
-                    mergesSeen = merges
-                    if (jump.isNotEmpty()) _celebrations.update { it + jump.associateWith { now } }
-                }
-                for ((id, client) in clients.entries.toList()) if (id in live) runCatching { fetchPets(id, client, teams.filter { it.hostId == id }) }
+                val jump = try { teamsSync.reading(live, now) } catch (e: CancellationException) { throw e } catch (_: Exception) { emptySet() }
+                if (jump.isNotEmpty()) _celebrations.update { it + jump.associateWith { now } }
+                for ((id, client) in clients.entries.toList()) if (live[id]?.let { Teams.ready(it, now) } == true)
+                    startPets(id, client, Teams.build(id, live.getValue(id), now))
             }
         }
         viewModelScope.launch(Dispatchers.IO) {
@@ -200,6 +200,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         if (moved && live) connect(profile)
     }
     fun removeHost(id: String) {
+        // Its cached projects and bots go with it (TeamsSync), so Teams never shows a machine the phone no longer has.
+        viewModelScope.launch(Dispatchers.IO) { runCatching { teamsSync.removed(id) } }
         disconnect(id)
         saveHosts(state.value.hosts.filter { it.id != id })
         _state.update { it.copy(machines = it.machines - id, repairing = if (it.repairing == id) null else it.repairing) }
@@ -496,10 +498,12 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         catch (e: CancellationException) { throw e } catch (_: Exception) { null }
     }
     /** A terminal screen's answer button: [choose], then show the outcome. [done] runs either way. */
-    fun answer(ref: TerminalRef, msg: String, options: List<String>, choice: Prompt.Choice, done: () -> Unit) {
+    /** A terminal screen's or the deck's answer: [choose], then show the outcome. [done] runs either way, told whether it was sent ([Teams.sent]). */
+    fun answer(ref: TerminalRef, msg: String, options: List<String>, choice: Prompt.Choice, done: (sent: Boolean) -> Unit) {
         viewModelScope.launch {
-            try { val outcome = choose(ref, msg, options, choice.index, choice.label); _state.update { it.copy(message = outcome) } }
-            finally { done() }
+            var sent = false
+            try { val outcome = choose(ref, msg, options, choice.index, choice.label); sent = Teams.sent(outcome); _state.update { it.copy(message = outcome) } }
+            finally { done(sent) }
         }
     }
     /** The preview has no core: its blocked agent checks the menu the same way, logs the keys it would get, and moves on. */
@@ -563,7 +567,9 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         val previous = alertBase[id]?.takeIf { it.first === client }?.second
         alertBase[id] = client to terminals
         val paned = spaces.flatMap { it.addresses }.toSet()
-        updateMachine(id) { it.copy(terminals = terminals, spaces = spaces, linked = linked, error = null) }
+        val read = System.currentTimeMillis()
+        updateMachine(id) { it.copy(terminals = terminals, spaces = spaces, linked = linked, error = null,
+            readMs = if (it.readSession == it.session) it.readMs else read, readSession = it.session) }
         alert(Alerts.changes(previous, terminals, id) { it.address in paned }, client)
         Alerts.resolved(previous, terminals, id) { it.address in paned }.forEach { Notify.cancel(getApplication(), it) }
         rememberLinked(id, linked.map { it.name })
@@ -696,20 +702,26 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         updateMachine(id) { it.copy(colors = looks.colors, icons = looks.icons) }
         fetchSpaceIcons(id, client, home, looks.icons.values)
     }
-    /** A file's bytes on the core's machine (or [on] another one it reaches), through machine.exec; null if it failed. */
-    private suspend fun readBytes(client: CoreClient, path: String, on: String = ""): ByteArray? = runCatching {
-        val params = JSONObject().put("argv", JSONArray(listOf("cat", path)))
+    /**
+     * A file's bytes on the core's machine (or [on] another one it reaches), through machine.exec: at most [max] bytes are
+     * read (`head -c`), and a larger file is refused. Null if it failed; cancellation is passed on.
+     */
+    private suspend fun readBytes(client: CoreClient, path: String, max: Int, on: String = ""): ByteArray? {
+        val params = JSONObject().put("argv", JSONArray(listOf("head", "-c", "${max + 1}", path)))
         if (on.isNotBlank()) params.put("on", on)
-        val r = withTimeout(30_000) { client.call("machine.exec", params) }
-        if (r.optBoolean("timed_out") || r.optInt("code", 1) != 0) null else java.util.Base64.getDecoder().decode(r.optString("stdout"))
-    }.getOrNull()?.takeIf { it.isNotEmpty() }
+        val r = try { withTimeout(30_000) { client.call("machine.exec", params) } }
+            catch (e: CancellationException) { if (e is TimeoutCancellationException) return null else throw e } catch (_: Exception) { return null }
+        if (r.optBoolean("timed_out") || r.optInt("code", 1) != 0) return null
+        return runCatching { java.util.Base64.getDecoder().decode(r.optString("stdout")) }.getOrNull()?.takeIf { it.isNotEmpty() && it.size <= max }
+    }
     /** The desktop's space images (PNG or SVG under its space-icons folder), copied once; the APK bundles none. */
     private suspend fun fetchSpaceIcons(id: String, client: CoreClient, home: String, icons: Collection<Teams.Icon>) {
         val app = getApplication<Application>()
         var saved = false
         for (file in icons.filterIsInstance<Teams.Icon.Image>().map { it.file }.distinct()) {
-            if (!Teams.safeIconFile(file) || SpaceIcons.cached(app, id, file) || !spaceIconsTried.add("$id|$file")) continue
-            readBytes(client, "$home/$file")?.let { SpaceIcons.save(app, id, file, it); saved = true }
+            if (!Teams.safeIconFile(file) || SpaceIcons.cached(app, id, file) || "$id|$file" in spaceIconsTried) continue
+            readBytes(client, "$home/$file", ICON_MAX)?.let { SpaceIcons.save(app, id, file, it); saved = true }
+            spaceIconsTried += "$id|$file"   // tried only once the read finished (a cancelled one is tried again)
         }
         if (saved) _state.update { it.copy(iconsVersion = it.iconsVersion + 1) }
     }
@@ -717,20 +729,33 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
      * The bots' own pets, from the folder the desktop bakes them into (~/.automagik/bots/pets/<id>, RFC 0014), copied
      * once per launch; until then, and for bots on other machines, Genie. The phone never bakes.
      */
-    private suspend fun fetchPets(id: String, client: CoreClient, teams: List<Teams.Team>) {
+    /** Fetches [teams]' pets in a job of its own, one per machine at a time, so a new reading doesn't cancel it. */
+    private fun startPets(id: String, client: CoreClient, teams: List<Teams.Team>) {
         val app = getApplication<Application>()
         val wanted = teams.filter { it.machine.isBlank() }.flatMap { t -> t.bots.mapNotNull { Teams.petId(it.pet) } }.distinct()
-            .filter { it != Teams.GENIE && !Pets.cached(app, it) && petsTried.add("$id|$it") }
-        if (wanted.isEmpty()) return
-        val home = (homes[id] ?: exec(client, "printenv", "HOME")).ifBlank { return }
-        val bots = exec(client, "printenv", "AUTOMAGIK_BOTS_HOME").ifBlank { exec(client, "printenv", "AUTOMAGIK_HOME").ifBlank { null }?.let { "$it/bots" } ?: "$home/.automagik/bots" }
+            .filter { it != Teams.GENIE && "$id|$it" !in petsTried && !Pets.cached(app, it) }
+        if (wanted.isEmpty() || petJobs[id]?.isActive == true) return
+        petJobs[id] = viewModelScope.launch(Dispatchers.IO) { fetchPets(id, client, wanted) }
+    }
+    private suspend fun fetchPets(id: String, client: CoreClient, wanted: List<String>) {
+        val app = getApplication<Application>()
+        val home = homes[id] ?: execText(client, "printenv", "HOME").also { if (it.isNotBlank()) homes[id] = it }
+        if (home.isBlank()) return
+        val bots = execText(client, "printenv", "AUTOMAGIK_BOTS_HOME").ifBlank {
+            execText(client, "printenv", "AUTOMAGIK_HOME").ifBlank { null }?.let { "$it/bots" } ?: "$home/.automagik/bots" }
         var any = false
         for (pet in wanted) {
-            val sheet = readBytes(client, "$bots/pets/$pet/spritesheet.webp") ?: continue
-            any = Pets.save(app, pet, sheet, readBytes(client, "$bots/pets/$pet/sleep.webp")) || any
+            val sheet = readBytes(client, "$bots/pets/$pet/spritesheet.webp", PET_SHEET_MAX)
+            if (sheet != null) any = Pets.save(app, pet, sheet, readBytes(client, "$bots/pets/$pet/sleep.webp", PET_SLEEP_MAX)) || any
+            petsTried += "$id|$pet"   // only once its reads finished: a cancelled fetch tries again
         }
         if (any) _state.update { it.copy(iconsVersion = it.iconsVersion + 1) }
     }
+    /** [exec], but passing cancellation on. */
+    private suspend fun execText(client: CoreClient, vararg argv: String): String = try {
+        val r = client.call("machine.exec", JSONObject().put("argv", JSONArray(argv.toList())))
+        if (r.optInt("code", 1) != 0) "" else String(java.util.Base64.getDecoder().decode(r.optString("stdout")), Charsets.UTF_8).trim()
+    } catch (e: CancellationException) { throw e } catch (_: Exception) { "" }
     /** A program's trimmed output on the core's machine, or "" if it failed. */
     private suspend fun exec(client: CoreClient, vararg argv: String): String = runCatching {
         val r = client.call("machine.exec", JSONObject().put("argv", JSONArray(argv.toList())))

@@ -13,6 +13,7 @@ import androidx.room.RoomDatabase
 import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.withLock
 
 /**
  * The Teams tab's local copy (SQLite, through Room), in the app's private storage: the projects, their bots and each
@@ -91,5 +92,51 @@ object TeamsCache {
                     Teams.Bot(b.id, b.name, b.main, b.pet, b.pose, b.message, b.statusMs, b.address?.let { TerminalRef(b.hostId, it) }, b.kind)
                 }, r.merged, r.agentMin)
         }
+    }
+}
+
+/**
+ * The one writer of the Teams cache. A reading of the machines replaces the rows of each machine read far enough
+ * ([Teams.ready]), even when it has no project left, and writes nothing when its rows didn't change; it raises today's
+ * peaks only above what it already wrote. A removed machine's rows go at once. It also keeps each feed's merges, so a
+ * bot celebrates only a merge its own feed newly lists.
+ */
+class TeamsSync(private val dao: TeamsDao) {
+    private val lock = kotlinx.coroutines.sync.Mutex()
+    private val written = HashMap<String, Pair<List<TeamRow>, List<BotRow>>>()
+    private val peaks = HashMap<String, Int>()
+    private val seen = HashMap<String, Set<String>>()
+
+    /** Writes what changed; returns the bots to celebrate, as "team id|bot id". */
+    suspend fun reading(machines: Map<String, MachineState>, now: Long): Set<String> = lock.withLock {
+        val ready = machines.filterValues { Teams.ready(it, now) }
+        val teams = Teams.build(ready, now)
+        for (host in ready.keys) {
+            val rows = TeamsCache.rows(teams.filter { it.hostId == host })
+            if (written[host] == rows) continue
+            dao.replace(listOf(host), rows.first, rows.second)
+            written[host] = rows
+        }
+        if (ready.isNotEmpty()) {
+            val day = Teams.day(now)
+            val higher = Teams.working(teams).filter { (scope, n) -> n > (peaks["$day|$scope"] ?: -1) }
+            if (higher.isNotEmpty()) {
+                dao.raisePeaks(day, higher)
+                for ((scope, n) in higher) peaks["$day|$scope"] = n
+            }
+        }
+        val jump = HashSet<String>()
+        for ((feed, merges) in Teams.merges(ready)) {
+            jump += Teams.celebrations(seen[feed], merges)
+            seen[feed] = merges
+        }
+        jump
+    }
+
+    /** A machine removed from the phone: its cached projects and bots go, and its feeds' baselines. */
+    suspend fun removed(host: String) = lock.withLock {
+        dao.replace(listOf(host), emptyList(), emptyList())
+        written.remove(host)
+        seen.keys.removeAll { it.startsWith("$host|") }
     }
 }

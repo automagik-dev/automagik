@@ -155,27 +155,54 @@ object Teams {
     fun build(machines: Map<String, MachineState>, now: Long): List<Team> =
         machines.flatMap { (hostId, m) -> build(hostId, m, now) }
 
+    /** Where a space's project key stands: known ([key]), not known yet, or on a machine that isn't up (left out). */
+    private sealed interface SpaceKey { data class Known(val key: String) : SpaceKey; data object Pending : SpaceKey; data object Away : SpaceKey }
+    private fun spaceKey(m: MachineState, s: PocketSpace, byAddress: Map<String, CoreTerminal>): SpaceKey {
+        if (s.machine.isNotBlank() && m.linked.find { it.name == s.machine }?.connected != true) return SpaceKey.Away
+        val place = Sidebar.place(s, byAddress)
+        val gitKey = Sidebar.gitKey(s.machine, place)
+        return when {
+            gitKey in m.git -> SpaceKey.Known(SpaceFeed.projectKey(m.git[gitKey]) ?: "space:${s.id}")
+            // git never runs on a folder the core didn't report as a path: the space is a project of its own.
+            !place.startsWith("/") -> SpaceKey.Known("space:${s.id}")
+            else -> SpaceKey.Pending
+        }
+    }
+
+    /** Waiting this long after the first reading, a space whose git never answers no longer holds its machine back. */
+    const val READ_GRACE_MS = 30_000L
+    /**
+     * A machine read far enough to replace its cached projects: connected, its terminals and spaces read this session,
+     * and git answered for every space (or [READ_GRACE_MS] passed since that first reading).
+     */
+    fun ready(m: MachineState, now: Long): Boolean {
+        if (!m.connected || m.readSession != m.session) return false
+        val byAddress = m.terminals.associateBy { it.address }
+        return now - m.readMs >= READ_GRACE_MS || m.spaces.none { spaceKey(m, it, byAddress) == SpaceKey.Pending }
+    }
+
     fun build(hostId: String, m: MachineState, now: Long): List<Team> {
         val byAddress = m.terminals.associateBy { it.address }
         data class Draft(val machine: String, val key: String, val space: PocketSpace, val addresses: MutableSet<String>)
         val drafts = LinkedHashMap<String, Draft>()
         for (s in m.spaces) {
             // Not known yet (git hasn't answered): left out until it has, so a project never shows under a passing key.
-            val gitKey = Sidebar.gitKey(s.machine, Sidebar.place(s, byAddress))
-            if (gitKey !in m.git) continue
-            val key = SpaceFeed.projectKey(m.git[gitKey]) ?: "space:${s.id}"
+            val key = (spaceKey(m, s, byAddress) as? SpaceKey.Known)?.key ?: continue
             drafts.getOrPut("${s.machine}|$key") { Draft(s.machine, key, s, HashSet()) }.addresses += s.addresses
         }
         val labelled = m.terminals.filter { it.live && !it.labels["bot"].isNullOrBlank() }
         fun machineOf(address: String) = address.substringBefore('/', "")
+        // A pane outside the project's spaces is its bot's only when its own folder is in the project's repository.
+        fun inProject(t: CoreTerminal, d: Draft) = t.address in d.addresses ||
+            (t.cwd.startsWith("/") && SpaceFeed.projectKey(m.git[Sidebar.gitKey(d.machine, t.cwd)]) == d.key)
         return drafts.map { (where, d) ->
             val members = m.members[where].orEmpty()
             val own = labelled.filter { it.address in d.addresses }
             val ids = members.map { it.id } + own.mapNotNull { it.labels["bot"]?.trim() }.filter { id -> members.none { it.id == id } }.distinct()
             val bots = ids.map { id ->
                 val member = members.find { it.id == id }
-                val panes = labelled.filter { it.labels["bot"]?.trim() == id && machineOf(it.address) == d.machine }
-                val pane = (panes.filter { it.address in d.addresses }.ifEmpty { panes }).minByOrNull { urgency(poseOf(it, now)) }
+                val panes = labelled.filter { it.labels["bot"]?.trim() == id && machineOf(it.address) == d.machine && inProject(it, d) }
+                val pane = panes.minByOrNull { urgency(poseOf(it, now)) }
                 Bot(id, member?.name ?: id, member?.main == true, member?.pet, poseOf(pane, now), pane?.message.orEmpty(),
                     pane?.statusMs ?: 0L, pane?.let { TerminalRef(hostId, it.address) }, pane?.kind.orEmpty())
             }
@@ -211,20 +238,46 @@ object Teams {
         .sortedWith(compareBy<Pair<Team, Bot>> { urgency(it.second.pose) }.thenByDescending { it.second.statusMs }
             .thenBy(String.CASE_INSENSITIVE_ORDER) { it.second.name }.thenBy { it.first.id })
 
-    /** The swipe deck: every bot waiting on the person, oldest request first. */
-    fun deck(teams: List<Team>): List<Pair<Team, Bot>> = teams.flatMap { t -> t.bots.filter { it.needsYou && it.ref != null }.map { t to it } }
-        .sortedBy { it.second.statusMs }
+    /** The swipe deck: every bot waiting on the person that can be answered now, oldest request first. */
+    fun deck(teams: List<Team>): List<Pair<Team, Bot>> = teams.filter { !it.stale }
+        .flatMap { t -> t.bots.filter { it.needsYou && it.ref != null }.map { t to it } }.sortedBy { it.second.statusMs }
+    /** One request: a new request from the same pane (a later status) is another card. */
+    fun deckKey(b: Bot) = "${b.ref?.hostId}|${b.ref?.address}|${b.statusMs}"
+
+    /** What the deck shows: the cards left, "all clear", or offline (requests it can't reach, or no machine at all). */
+    sealed interface DeckView {
+        data class Cards(val cards: List<Pair<Team, Bot>>) : DeckView
+        data object Clear : DeckView
+        /** [waiting]: the requests last seen on machines the phone can't reach now. */
+        data class Offline(val waiting: Int) : DeckView
+    }
+    fun deckView(teams: List<Team>, answered: Set<String>, anyConnected: Boolean): DeckView {
+        val cards = deck(teams).filter { deckKey(it.second) !in answered }
+        if (cards.isNotEmpty()) return DeckView.Cards(cards)
+        val waiting = teams.filter { it.stale }.sumOf { it.needsYou }
+        return if (waiting > 0 || !anyConnected) DeckView.Offline(waiting) else DeckView.Clear
+    }
+
+    /** A swipe's answer, by the axis it moved most along: up opens, right is Yes, left is No; short of [threshold], none. */
+    enum class Swipe { YES, NO, OPEN, NONE }
+    fun swipe(dx: Float, dy: Float, threshold: Float, canYes: Boolean, canNo: Boolean): Swipe = when {
+        -dy > kotlin.math.abs(dx) -> if (-dy > threshold) Swipe.OPEN else Swipe.NONE
+        dx > threshold && canYes -> Swipe.YES
+        dx < -threshold && canNo -> Swipe.NO
+        else -> Swipe.NONE
+    }
+    /** Whether an answer reached the agent ([PocketViewModel.choose]'s outcome): only then does its card leave the deck. */
+    fun sent(outcome: String) = outcome.startsWith("You chose")
 
     /**
-     * Live projects, plus the cached ones of every machine with none live: marked stale (their terminals can't be opened)
-     * when the machine isn't connected, as they were while a machine that just connected is still being read.
+     * Live projects of the machines read this session ([read]), plus the cached ones of every other saved machine
+     * ([known]): marked stale, with no terminal to open, until their machine is read again. Machines no longer saved
+     * show nothing.
      */
-    fun merge(live: List<Team>, cached: List<Team>, connected: Set<String>): List<Team> {
-        val read = live.map { it.hostId }.toSet()
-        return live + cached.filter { it.hostId !in read }.map { c ->
-            if (c.hostId in connected) c else c.copy(stale = true, bots = sortBots(c.bots.map { it.copy(ref = null) }))
+    fun merge(live: List<Team>, cached: List<Team>, read: Set<String>, known: Set<String>): List<Team> =
+        live + cached.filter { it.hostId !in read && it.hostId in known }.map { c ->
+            c.copy(stale = true, bots = sortBots(c.bots.map { it.copy(ref = null) }))
         }
-    }
 
     // ---- The progress strip: tasks done, agent time, peak simultaneous agents.
     /** [scope] is "" for All, else the project's id. */
@@ -240,14 +293,15 @@ object Teams {
     fun day(now: Long, zone: ZoneId = ZoneId.systemDefault()): String = Instant.ofEpochMilli(now).atZone(zone).toLocalDate().toString()
 
     /**
-     * Merges seen in the feeds, as "project id|task|bot": a bot whose pair is new since the last reading jumps once. The
-     * first reading sets the baseline (nothing jumps on launch).
+     * Merges seen in the feeds, as "project id|task|bot", by feed ("hostId|machine"): a bot whose pair is new since its
+     * feed's last reading jumps once. Each feed's first reading sets its own baseline, so nothing jumps on launch or when
+     * another machine's feed first arrives.
      */
-    fun merges(machines: Map<String, MachineState>): Set<String> = machines.flatMap { (hostId, m) ->
-        m.space.flatMap { (machine, feed) ->
-            feed.projects.flatMap { (key, p) -> p.tasks.orEmpty().flatMap { t -> t.bots.map { "$hostId|$machine|$key|${t.task}|${it.bot}" } } }
+    fun merges(machines: Map<String, MachineState>): Map<String, Set<String>> = machines.flatMap { (hostId, m) ->
+        m.space.map { (machine, feed) ->
+            "$hostId|$machine" to feed.projects.flatMap { (key, p) -> p.tasks.orEmpty().flatMap { t -> t.bots.map { "$hostId|$machine|$key|${t.task}|${it.bot}" } } }.toSet()
         }
-    }.toSet()
+    }.toMap()
     /** The bots ("hostId|machine|key|botId") to celebrate: merges in [now] that weren't in [before]. */
     fun celebrations(before: Set<String>?, now: Set<String>): Set<String> = if (before == null) emptySet()
         else (now - before).map { val parts = it.split('|'); "${parts[0]}|${parts[1]}|${parts[2]}|${parts.last()}" }.toSet()
