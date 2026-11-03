@@ -264,6 +264,13 @@ export function sharedFolders(runs) {
     .filter((g) => g.idless.length);
 }
 
+/** The session ids more than one of `runs` ({ who, session }) would resume: [{ session, who: [...] }]. */
+export function sameSessions(runs) {
+  const by = new Map();
+  for (const r of runs) if (r.session) by.set(r.session, [...(by.get(r.session) ?? []), r.who]);
+  return [...by].filter(([, who]) => who.length > 1).map(([session, who]) => ({ session, who }));
+}
+
 /**
  * The labels the replacement carries beyond paneLabels: a squad on the old pane (anyone's,
  * not only one this pack copied) and its mark, so the restart moves the pane, not its squad.

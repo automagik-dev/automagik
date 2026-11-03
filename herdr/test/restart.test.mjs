@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 
 import { AGENTS, canResume, resumeArgs, withoutModel, withoutResume } from "../mods/am-sidebar/models.js";
 import { carriedLabels, commandArgv, continueRefusal, helperArgs, helperPlan, ledgerSession, paneCommand, paneSession, planText, restartAnswer, restartArgs,
-  restartPlan, restartRefusal, sessionId, sessionOf, sharedFolders, takesWords, withoutPrompt } from "../mods/am-sidebar/restart.js";
+  restartPlan, restartRefusal, sameSessions, sessionId, sessionOf, sharedFolders, takesWords, withoutPrompt } from "../mods/am-sidebar/restart.js";
 
 const SID = "0f3c2a4e-1b2d-4c5e-9f60-718293a4b5c6";
 const SID2 = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
@@ -241,4 +241,10 @@ test("helperPlan: the worker's worktree first, then the pane's folder, then its 
   assert.equal(helperPlan({ get: { ...get, cwd: undefined }, agents: AGENTS }).cwd, "/pane/sub");
   const fresh = helperPlan({ get, worker: { agent: "omp" }, agents: AGENTS, fresh: "shared folder" });
   assert.deepEqual([fresh.mode, fresh.argv, fresh.note], ["fresh", ["omp"], "shared folder"]);
+});
+
+test("sameSessions: a session id two runs would resume is named with both; distinct ids and id-less runs aren't", () => {
+  assert.deepEqual(sameSessions([{ who: "Genie", session: SID }, { who: "rev-1", session: SID }, { who: "dev", session: SID2 }, { who: "x", session: null }]),
+    [{ session: SID, who: ["Genie", "rev-1"] }]);
+  assert.deepEqual(sameSessions([{ who: "a", session: SID }, { who: "b", session: SID2 }, { who: "c", session: null }, { who: "d", session: null }]), []);
 });

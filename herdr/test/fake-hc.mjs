@@ -54,6 +54,11 @@ switch (words[0]) {
     const t = find(words[1]);
     // Like the real one: exit 3 and a not_found error on stderr.
     if (!t) fail(JSON.stringify({ error: { kind: "not_found", message: `no terminal "${words[1]}"` } }), 3);
+    // idleAfterGets: while mid-turn, answered that many times, then its turn ends (idle).
+    if (typeof t.idleAfterGets === "number" && t.status?.state === "working") {
+      if (t.idleAfterGets <= 0) { t.status.state = "idle"; delete t.idleAfterGets; } else t.idleAfterGets -= 1;
+      save();
+    }
     // exitAfterGets: answered live that many times, then the program exits (a failed resume).
     if (typeof t.exitAfterGets === "number") {
       if (t.exitAfterGets <= 0) { t.state = "finished"; delete t.exitAfterGets; } else t.exitAfterGets -= 1;
