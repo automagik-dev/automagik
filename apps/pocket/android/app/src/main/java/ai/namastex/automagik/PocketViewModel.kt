@@ -29,6 +29,8 @@ data class MachineState(val connecting: Boolean = false, val connected: Boolean 
     /** Worth retrying without asking: a dropped or failed connection that isn't waiting on a password. */
     val retryable get() = !connected && !connecting && error != null && !needsPassword
 }
+/** The demo's one machine, by name: synthetic, nothing real is reached. */
+const val PREVIEW_MACHINE = "Preview machine"
 data class TerminalRef(val hostId: String, val address: String)
 /** Asks for an SSH password after a host rejected this phone's key (or a previous password). */
 data class PasswordPrompt(val hostId: String, val rejected: Boolean)
@@ -850,7 +852,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
                 meter = SpendDemo.readings(System.currentTimeMillis())))) }
     }
     fun leaveDemo() { detach(); _state.update { it.copy(demo = false, machines = emptyMap(), selected = null, space = null, project = null) } }
-    fun hostName(hostId: String) = if (state.value.demo) "Preview machine" else state.value.hosts.find { it.id == hostId }?.name ?: "Machine"
+    fun hostName(hostId: String) = if (state.value.demo) PREVIEW_MACHINE else state.value.hosts.find { it.id == hostId }?.name ?: "Machine"
     override fun onCleared() { if (current === this) current = null; discovery.stop(); clients.values.forEach { it.close() }; clients.clear() }
 }
 
