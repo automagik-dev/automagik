@@ -204,6 +204,17 @@ test("links: am takes the pack's automagik-herdr, leaves a foreign one, and hand
   assert.equal(s.installed("self", "doctor").status, 1);
 });
 
+test("a machine with no pack (work only): am update is am's alone, and herdr.pack is not applicable", (t) => {
+  const s = scratch(t);
+  const all = s.am("update", "--json");
+  assert.equal(all.status, 0, all.stderr);
+  assert.deepEqual(json(all), { am: { state: "none", from: null, to: null, detail: "nothing is posted on am-lane yet" }, pack: { state: "not-installed" } });
+  const pack = s.am("update", "herdr.pack");
+  assert.equal(pack.status, 2);
+  assert.match(pack.stderr, /the herdr pack is not installed on this machine/);
+  assert.equal(existsSync(join(s.app, "mods")), false, "nothing of the pack was installed");
+});
+
 test("usage: exit 2 for an id am does not handle and an unknown option", (t) => {
   const s = scratch(t);
   assert.equal(s.am("rollback", "herdr.am-quota").status, 2);

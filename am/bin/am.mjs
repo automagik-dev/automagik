@@ -3,6 +3,7 @@
 // this process: their output is byte for byte `automagik-herdr`'s. am's own verbs:
 //
 //   am update [automagik.am | herdr.pack] [--check] [--json]   am from am-lane first, then the pack
+//                                                              (where one is installed)
 //   am rollback automagik.am | herdr.pack [--json]             back to the kept previous one
 //   am self install | uninstall [--purge] | doctor [--json]    am's part entries (part.json)
 //   am help                                                    this, then the Bot verbs
@@ -16,7 +17,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { PART } from "../lib/lane.mjs";
-import { OWN_DIR, doctorSelf, installExtract, rollbackSelf, storeOf, uninstallSelf, updateSelf } from "../lib/self.mjs";
+import { OWN_DIR, appHomeOf, doctorSelf, installExtract, rollbackSelf, storeOf, uninstallSelf, updateSelf } from "../lib/self.mjs";
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), "automagik-herdr.mjs");
 const PACK = "herdr.pack";
@@ -28,7 +29,8 @@ Usage: am <command> [options]
   update [automagik.am | herdr.pack] [--check] [--json]
                                 am first, from the signed am-lane (checksum and signature
                                 checked; never an older one), then the herdr pack
-                                (automagik-herdr update); an id updates that part alone
+                                (automagik-herdr update) where one is installed; an id
+                                updates that part alone
   rollback automagik.am | herdr.pack [--json]
                                 back to the version each keeps (am: its previous copy)
   self install | uninstall [--purge] | doctor [--json]
@@ -91,7 +93,17 @@ async function update(args) {
       if (!flags.json) process.stderr.write(`am update: ${e.message}\n`);
     }
   }
-  if (id !== PART) {
+  // The pack only where one is installed (its marker, or a sidebar folder from before the marker):
+  // on a machine without it (work only), `am update` is am's alone.
+  const packInstalled = [["automagik-herdr", "installed-by-install.sh"], ["mods", "am-sidebar"], ["mods", "spaces-agents"]]
+    .some((p) => existsSync(join(appHomeOf(), ...p)));
+  if (id === PACK && !packInstalled) {
+    out.pack = { state: "not-installed" };
+    if (!flags.json) process.stderr.write("am update: the herdr pack is not installed on this machine\n");
+    code = 2;
+  } else if (id !== PART && !packInstalled) {
+    out.pack = { state: "not-installed" };
+  } else if (id !== PART) {
     const r = cli(["update", ...(flags.check ? ["--check"] : []), ...(flags.json ? ["--json"] : [])], { json: Boolean(flags.json) });
     out.pack = r.value;
     if (r.code !== 0) code = r.code;
