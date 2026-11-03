@@ -2,11 +2,12 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import { createServer } from 'node:net'
 import { test } from 'node:test'
-import { appHome, dshEnv, dshRun, forgetDshLogins, freePort, guardContents, installProfile, keepPort, launchPort, launchUrlOf, listenFailed, mergeProfilePackage, mergeProfilePatch, migrateRenamed, migrateRetired, navigationOf, pageUrlOf, pinProfileStore, portFileOf, portFree, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, RETIRED, retirePatch, scrubBuildPaths, serveDsh, servesOrigin, SHIPPED_STORE, startDsh, startDshOnPort, stopDsh, storedPort, storeLayoutOf, writeTools } from '../src/dsh.js'
+import { appHome, dshEnv, dshRun, forgetDshLogins, freePort, guardContents, installProfile, keepPort, launchPort, launchUrlOf, listenFailed, mergeProfilePackage, mergeProfilePatch, migrateRenamed, migrateRetired, navigationOf, pageUrlOf, pinProfileStore, portFileOf, portFree, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, RETIRED, retirePatch, scrubBuildPaths, serveDsh, servesOrigin, SHIPPED_STORE, startDsh, startDshOnPort, stopDsh, storedPort, storeLayoutOf, toolFileOf, writeTools } from '../src/dsh.js'
+import { batchSafe } from '../scripts/batch-spawn.mjs'
 
 test('the app keeps everything in one folder under ~/.automagik, apart from a dsh you already run', () => {
   assert.equal(appHome({}), join(homedir(), '.automagik', 'desktop'))
@@ -314,7 +315,10 @@ test('a dsh that exits before it is ready is reported, and one that never says s
   await assert.rejects(startDsh({ node: process.execPath, bin: silent, env: process.env, port: await freePort(), cwd: root, timeoutMs: 300 }), /did not start within/)
 })
 
-test('dsh gets node and pnpm on its PATH, both on the app\'s own Node', (t) => {
+const posixOnly = { skip: process.platform === 'win32' ? 'the tools are sh scripts here' : false }
+const windowsOnly = { skip: process.platform === 'win32' ? false : 'the tools are batch files on Windows' }
+
+test('dsh gets node and pnpm on its PATH, both on the app\'s own Node', posixOnly, (t) => {
   const root = mkdtempSync(join(tmpdir(), 'omni-desktop-tools-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const script = join(root, "it's pnpm.cjs")
@@ -322,35 +326,66 @@ test('dsh gets node and pnpm on its PATH, both on the app\'s own Node', (t) => {
   const dir = writeTools({ dir: join(root, 'bin'), node: process.execPath, pnpm: script })
   assert.deepEqual(JSON.parse(execFileSync(join(dir, 'pnpm'), ['add', 'a b'], { encoding: 'utf8' })), ['1', 'add', 'a b'])
   assert.equal(execFileSync(join(dir, 'node'), ['-p', '6*7'], { encoding: 'utf8' }).trim(), '42')
-  const tools = '/u/.local/bin:/u/.claude/local:/opt/homebrew/bin:/usr/local/bin'
-  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', binDir: dir, userHome: '/u' }).PATH, `/bin:${tools}:${dir}`)
-  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', userHome: '/u' }).PATH, `/bin:${tools}`)
+})
+
+test('on Windows node and pnpm are batch files that run on the app\'s own Node', windowsOnly, (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni desktop tools-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const script = join(root, "it's pnpm.cjs")
+  writeFileSync(script, 'console.log(JSON.stringify([process.env.ELECTRON_RUN_AS_NODE, ...process.argv.slice(2)]))')
+  const dir = writeTools({ dir: join(root, 'bin'), node: process.execPath, pnpm: script })
+  const run = (name, args) => execFileSync(...batchSafe(join(dir, `${name}.cmd`), args, { encoding: 'utf8', env: { ...process.env, ELECTRON_RUN_AS_NODE: '' } }))
+  assert.deepEqual(JSON.parse(run('pnpm', ['add', 'a b'])), ['1', 'add', 'a b'])
+  assert.equal(run('node', ['-p', '6*7']).trim(), '42')
+  assert.equal(existsSync(join(dir, 'pnpm')), false, 'no sh script beside the batch files')
+})
+
+test('dsh\'s PATH ends with the tool folders and then the app\'s own node and pnpm', () => {
+  const dir = join('/app', 'bin')
+  const tools = [join('/u', '.local', 'bin'), join('/u', '.claude', 'local'), '/opt/homebrew/bin', '/usr/local/bin']
+  const path = (...dirs) => dirs.join(delimiter)
+  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', binDir: dir, userHome: '/u' }).PATH, path('/bin', ...tools, dir))
+  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', userHome: '/u' }).PATH, path('/bin', ...tools))
   // acp-dsh installs its adapters with the app's own pnpm, whatever pnpm comes first on PATH.
-  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', binDir: dir, userHome: '/u' }).AUTOMAGIK_PNPM, join(dir, 'pnpm'))
+  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', binDir: dir, userHome: '/u', platform: 'linux' }).AUTOMAGIK_PNPM, join(dir, 'pnpm'))
+  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', binDir: dir, userHome: '/u', platform: 'win32' }).AUTOMAGIK_PNPM, join(dir, 'pnpm.cmd'))
   assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', userHome: '/u' }).AUTOMAGIK_PNPM, undefined)
   // A folder already on the person's PATH keeps its place and is not repeated.
-  assert.equal(dshEnv({ base: { PATH: '/usr/local/bin:/bin' }, home: '/a', userHome: '/u' }).PATH, '/usr/local/bin:/bin:/u/.local/bin:/u/.claude/local:/opt/homebrew/bin')
+  assert.equal(dshEnv({ base: { PATH: path('/usr/local/bin', '/bin') }, home: '/a', userHome: '/u' }).PATH, path('/usr/local/bin', '/bin', ...tools.slice(0, 3)))
 })
 
 test('a start leaves node and pnpm as they are when they already say the same, and rewrites them when not', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'omni-desktop-tools-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const dir = join(root, 'bin')
+  const file = name => toolFileOf(dir, name)
   writeTools({ dir, node: '/app/one/node', pnpm: '/app/one/pnpm.cjs' })
   const old = new Date(Math.floor(Date.now() / 1000) * 1000 - 60_000)
-  for (const name of ['node', 'pnpm']) utimesSync(join(dir, name), old, old)
-  const unchanged = name => statSync(join(dir, name)).mtimeMs === old.getTime()
+  for (const name of ['node', 'pnpm']) utimesSync(file(name), old, old)
+  const unchanged = name => statSync(file(name)).mtimeMs === old.getTime()
   writeTools({ dir, node: '/app/one/node', pnpm: '/app/one/pnpm.cjs' })
   assert.ok(unchanged('node') && unchanged('pnpm'), 'nothing is written when nothing changed')
-  // A tool that lost its execute bit is written again.
-  chmodSync(join(dir, 'pnpm'), 0o644)
-  writeTools({ dir, node: '/app/one/node', pnpm: '/app/one/pnpm.cjs' })
-  assert.equal(statSync(join(dir, 'pnpm')).mode & 0o777, 0o755)
-  assert.ok(unchanged('node'))
+  if (process.platform !== 'win32') {
+    // A tool that lost its execute bit is written again (Windows keeps no execute bit).
+    chmodSync(file('pnpm'), 0o644)
+    writeTools({ dir, node: '/app/one/node', pnpm: '/app/one/pnpm.cjs' })
+    assert.equal(statSync(file('pnpm')).mode & 0o777, 0o755)
+    assert.ok(unchanged('node'))
+  }
   // The app moved (a new install): both name the new path.
   writeTools({ dir, node: '/app/two/node', pnpm: '/app/one/pnpm.cjs' })
-  assert.ok(!unchanged('node') && readFileSync(join(dir, 'node'), 'utf8').includes("'/app/two/node'"))
-  assert.ok(readFileSync(join(dir, 'pnpm'), 'utf8').includes("'/app/two/node'"))
+  assert.ok(!unchanged('node') && readFileSync(file('node'), 'utf8').includes('/app/two/node'))
+  assert.ok(readFileSync(file('pnpm'), 'utf8').includes('/app/two/node'))
+})
+
+test('a Windows batch tool quotes its paths and doubles a %', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-tools-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const dir = writeTools({ dir: join(root, 'bin'), node: 'C:\\Users\\Ana 100%\\Automagik.exe', pnpm: 'C:\\A\\pnpm.cjs', platform: 'win32' })
+  const text = readFileSync(join(dir, 'pnpm.cmd'), 'utf8')
+  assert.match(text, /^@echo off\r\n/)
+  assert.match(text, /\r\nset ELECTRON_RUN_AS_NODE=1\r\n"C:\\Users\\Ana 100%%\\Automagik\.exe" "C:\\A\\pnpm\.cjs" %\*\r\n$/)
+  assert.equal(existsSync(join(dir, 'pnpm')), false)
 })
 
 test('an update adds the settings a newer build ships and keeps every one the user has', () => {

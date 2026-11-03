@@ -51,33 +51,45 @@ export function resourcesOf({ packaged, resourcesPath, appPath }) {
 }
 
 const shellQuote = text => `'${String(text).replaceAll("'", `'\\''`)}'`
+// In a batch file only a % is read inside double quotes; a Windows path has no ".
+const batchQuote = text => `"${String(text).replaceAll('%', '%%')}"`
+
+/** The file a tool is written to: `pnpm.cmd` on Windows, which runs no `#!/bin/sh` script. */
+export const toolFileOf = (dir, name, platform = process.platform) => join(dir, platform === 'win32' ? `${name}.cmd` : name)
 
 /**
  * Write `node` and `pnpm` into `dir` for dsh's PATH: dsh's plugin manager installs plugins
  * (the market, Settings → Plugins) with pnpm, and nothing guarantees a machine has Node or
  * pnpm. Both run on `node`, the app's own binary as Node (ELECTRON_RUN_AS_NODE). Checked at
  * every launch, since the app's path changes with each install; a file that already says the
- * same, and can run, is left as it is.
+ * same, and can run, is left as it is. On Windows they are batch files, `node.cmd` and
+ * `pnpm.cmd`, which PATH finds by PATHEXT.
  */
-export function writeTools({ dir, node, pnpm }) {
+export function writeTools({ dir, node, pnpm, platform = process.platform }) {
   mkdirSync(dir, { recursive: true })
-  const tools = {
-    node: `ELECTRON_RUN_AS_NODE=1 exec ${shellQuote(node)} "$@"`,
-    pnpm: `ELECTRON_RUN_AS_NODE=1 exec ${shellQuote(node)} ${shellQuote(pnpm)} "$@"`,
-  }
+  const windows = platform === 'win32'
+  const tools = windows
+    ? { node: `${batchQuote(node)} %*`, pnpm: `${batchQuote(node)} ${batchQuote(pnpm)} %*` }
+    : {
+        node: `ELECTRON_RUN_AS_NODE=1 exec ${shellQuote(node)} "$@"`,
+        pnpm: `ELECTRON_RUN_AS_NODE=1 exec ${shellQuote(node)} ${shellQuote(pnpm)} "$@"`,
+      }
   for (const [name, line] of Object.entries(tools)) {
-    const file = join(dir, name)
-    const text = `#!/bin/sh\n# Written by the Automagik desktop app at launch (src/dsh.js writeTools).\n${line}\n`
-    if (sameTool(file, text)) continue
+    const file = toolFileOf(dir, name, platform)
+    const text = windows
+      ? `@echo off\r\nrem Written by the Automagik desktop app at launch (src/dsh.js writeTools).\r\nsetlocal\r\nset ELECTRON_RUN_AS_NODE=1\r\n${line}\r\n`
+      : `#!/bin/sh\n# Written by the Automagik desktop app at launch (src/dsh.js writeTools).\n${line}\n`
+    if (sameTool(file, text, windows)) continue
     writeFileSync(file, text)
     chmodSync(file, 0o755)
   }
   return dir
 }
 
-const sameTool = (file, text) => {
+// Windows keeps no execute bit: there only the text counts.
+const sameTool = (file, text, windows) => {
   try {
-    return (statSync(file).mode & 0o777) === 0o755 && readFileSync(file, 'utf8') === text
+    return (windows || (statSync(file).mode & 0o777) === 0o755) && readFileSync(file, 'utf8') === text
   } catch {
     return false
   }
@@ -693,7 +705,7 @@ export async function forgetDshLogins(cookies, origin) {
  */
 export const toolDirs = (userHome = homedir()) => [join(userHome, '.local', 'bin'), join(userHome, '.claude', 'local'), '/opt/homebrew/bin', '/usr/local/bin']
 
-export function dshEnv({ base = process.env, home, electronAsNode = false, binDir, userHome = homedir(), preload = null, privacy = PRIVACY_DEFAULTS }) {
+export function dshEnv({ base = process.env, home, electronAsNode = false, binDir, userHome = homedir(), preload = null, privacy = PRIVACY_DEFAULTS, platform = process.platform }) {
   // After the machine's own: a project's commands keep the user's node and pnpm, and then the
   // usual tool folders, then the app's own node and pnpm.
   const PATH = [...String(base.PATH ?? '').split(delimiter), ...toolDirs(userHome), ...(binDir ? [binDir] : [])]
@@ -722,7 +734,7 @@ export function dshEnv({ base = process.env, home, electronAsNode = false, binDi
     ...(preload ? { AUTOMAGIK_PRELOAD: preload } : {}),
     // The pnpm acp-dsh installs its ACP adapters with: the app's own pnpm 10, never a newer one
     // the person has first on PATH, which installs the adapters' bundled CLIs anyway (~1.4 GB).
-    ...(binDir ? { AUTOMAGIK_PNPM: join(binDir, 'pnpm') } : {}),
+    ...(binDir ? { AUTOMAGIK_PNPM: toolFileOf(binDir, 'pnpm', platform) } : {}),
     ...(electronAsNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
   }
 }
