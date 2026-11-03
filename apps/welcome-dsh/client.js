@@ -11736,20 +11736,9 @@ function AcpSettingsSection() {
     )
   );
 }
-function installAcpSection(ctx, request2 = call) {
-  let alive = true;
-  let dispose = () => {
-  };
-  request2("acp").then((view) => {
-    if (!alive || view?.available !== true) return;
-    dispose = ctx.slots.inject("settings.section", () => ctx.slots.register({ name: "settings.section", id: SETTINGS_SECTION, order: 30, label: () => t("Claude Code and Codex") }, AcpSettingsSection)) ?? (() => {
-    });
-  }, () => {
+function installAcpSection(ctx) {
+  return ctx.slots.inject("settings.section", () => ctx.slots.register({ name: "settings.section", id: SETTINGS_SECTION, order: 30, label: () => t("Claude Code and Codex") }, AcpSettingsSection)) ?? (() => {
   });
-  return () => {
-    alive = false;
-    dispose();
-  };
 }
 var ACP_CSS = `
 .oai-acp-page{padding:8px 0;font-family:var(--oai-font);color:var(--oai-ink)}

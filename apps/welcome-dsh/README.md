@@ -122,7 +122,8 @@ connected another way.
 
 With [`@automagik/acp-dsh`](../acp-dsh) in the DSH, Connect AI has a **Coding agents** section
 after what was found, and DSH's Settings (and the Bot team's) have a **Claude Code and Codex**
-page with the same rows; without acp-dsh neither shows. Each row says:
+page with the same rows. Without acp-dsh Connect AI shows nothing of it, and the Settings page
+says the ACP agents plugin is not running. Each row says:
 
 - whether the agent's CLI (`claude`, `codex`) is on this computer, with its install link and
   **Check again** when it is not;

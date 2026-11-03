@@ -349,18 +349,22 @@ test('without acp-dsh the Connect AI section draws nothing', () => {
   assert.match(textOf(section), /Coding agents/)
 })
 
-test('the Settings section registers only when acp-dsh answers', async () => {
+test('the Settings section is always there, and says so when acp-dsh is not running', async () => {
   const registered = []
-  const ctx = { slots: { inject: (name, register) => { register(); return () => registered.push('disposed') }, register: options => registered.push(options.id) } }
-  ui.installAcpSection(ctx, async () => ({ available: false, agents: [] }))
-  ui.installAcpSection(ctx, async () => { throw new Error('HTTP_404') })
-  await new Promise(done => setImmediate(done))
-  assert.deepEqual(registered, [])
-  const dispose = ui.installAcpSection(ctx, async () => ({ available: true, agents: [] }))
-  await new Promise(done => setImmediate(done))
-  assert.deepEqual(registered, ['acp-agents'])
+  const ctx = { slots: { inject: (name, register) => { register(); return () => registered.push('disposed') }, register: (options, component) => registered.push([options.id, component]) } }
+  const dispose = ui.installAcpSection(ctx)
+  assert.deepEqual(registered, [['acp-agents', ui.AcpSettingsSection]])
   dispose()
-  assert.deepEqual(registered, ['acp-agents', 'disposed'])
+  assert.equal(registered.at(-1), 'disposed')
+  // Without acp-dsh the host's route does not answer (here: no fetch at all), and the page says so.
+  const run = runHook(() => ui.AcpSettingsSection())
+  try {
+    assert.match(textOf(render(run.current)), /Looking at what this computer has/)
+    await run.settle()
+    assert.match(textOf(render(run.current)), /The ACP agents plugin is not running in this DSH/)
+  } finally {
+    run.done()
+  }
 })
 
 test('the rows read in pt-BR once it is the DSH language', () => {
