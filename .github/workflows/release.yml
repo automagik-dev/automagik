@@ -181,11 +181,13 @@ jobs:
           node scripts/version.mjs check
 
       # Before the cut, so a release that packs the pack never goes out without a pointer the
-      # installed packs trust: HERDR_PACK_KEY must be the key pack-keys.json lists.
+      # installed packs trust: HERDR_PACK_KEY must be a key pack-keys.json lists (its keyId is the
+      # entry with its public key). The HERDR_PACK_SIGNER variable picks the secret slot, so a
+      # rotation's new key waits in HERDR_PACK_KEY_NEXT until it is switched on (RFC 0011).
       - name: The herdr pack's signing key
         if: steps.new.outputs.release == 'true' && steps.lane.outputs.herdr == 'yes'
         env:
-          HERDR_PACK_KEY: ${{ secrets.HERDR_PACK_KEY }}
+          HERDR_PACK_KEY: ${{ vars.HERDR_PACK_SIGNER == 'HERDR_PACK_KEY_NEXT' && secrets.HERDR_PACK_KEY_NEXT || secrets.HERDR_PACK_KEY }}
         run: bun scripts/herdr-lane.ts check-key
 
       # Before the cut, so an add-on that cannot ride the lane stops the run before any tag.
@@ -294,7 +296,7 @@ jobs:
         env:
           VERSION: ${{ steps.cut.outputs.version }}
           SHA: ${{ steps.cut.outputs.sha }}
-          HERDR_PACK_KEY: ${{ secrets.HERDR_PACK_KEY }}
+          HERDR_PACK_KEY: ${{ vars.HERDR_PACK_SIGNER == 'HERDR_PACK_KEY_NEXT' && secrets.HERDR_PACK_KEY_NEXT || secrets.HERDR_PACK_KEY }}
         run: |
           set -euo pipefail
           mkdir -p herdr-lane
@@ -306,7 +308,13 @@ jobs:
               --title "Automagik Herdr pack lane" \
               --notes "pack.json names the newest Automagik Herdr pack (its tarball stays on its own versioned release); pack.json.sig is its ed25519 signature, checked against herdr/mods/am-sidebar/pack-keys.json. See scripts/herdr-lane.ts."
           fi
-          # The signature first: a reader between the two uploads sees a mismatch and tries again later.
+          # Never back: a re-run of an older release's run must not re-post an older pointer over a
+          # newer one. A posted pointer that does not verify is replaced.
+          mkdir -p herdr-lane/posted
+          gh release download herdr-lane --repo "${GITHUB_REPOSITORY}" -p pack.json -p pack.json.sig -D herdr-lane/posted --clobber 2>/dev/null || true
+          bun scripts/herdr-lane.ts posted herdr-lane/pack.json herdr-lane/posted
+          # --clobber replaces each asset in turn, so a reader may briefly see a pointer and a
+          # signature that do not match, or neither: both fail closed (refused, or no update yet).
           gh release upload herdr-lane herdr-lane/pack.json.sig herdr-lane/pack.json --clobber --repo "${GITHUB_REPOSITORY}"
 
       # A herdr patch packs no plugins: the lane stays on the release that last did.

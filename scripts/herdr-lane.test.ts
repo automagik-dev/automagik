@@ -3,7 +3,7 @@ import { createHash, generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { INSTALL_SH, KEY_ID, KEYS_FILE, installKeys, keyProblem, pointer, signPointer, verifyPointer, withInstallKeys } from './herdr-lane';
+import { INSTALL_SH, KEY_ID, KEYS_FILE, SLOTS, installKeys, keyIdOf, keyProblem, pointer, postedProblem, signPointer, slotFor, verifyPointer, withInstallKeys } from './herdr-lane';
 
 // A throwaway key, made for this run only: no private key is ever committed.
 const pair = () => {
@@ -44,13 +44,50 @@ describe('the herdr lane', () => {
     expect(() => verifyPointer(bytes, sig, [{ keyId: 'another', publicKey: key.pub }])).toThrow(/no key herdr-pack/);
   });
 
-  test('check-key: the release refuses a missing key, a non-key, or one pack-keys.json does not list', () => {
+  test('check-key and the keyId: the secret\'s public key picks the pack-keys.json entry', () => {
+    const old = pair();
+    const next = pair();
+    const keys = [{ keyId: KEY_ID, publicKey: old.pub }, { keyId: 'herdr-pack-2027-05', publicKey: next.pub }];
+    expect(keyProblem(undefined, keys)).toBe('HERDR_PACK_KEY is not set');
+    expect(keyProblem('not a pem', keys)).toMatch(/not a private key/);
+    expect(keyProblem(pair().priv, keys)).toMatch(/public key is not in pack-keys\.json/);
+    expect(keyProblem(old.priv, keys)).toBeNull();
+    expect(keyProblem(next.priv, keys)).toBeNull();
+    // Rotation: either listed key signs, under its own id; no constant pins it.
+    expect(keyIdOf(old.priv, keys)).toBe(KEY_ID);
+    expect(keyIdOf(next.priv, keys)).toBe('herdr-pack-2027-05');
+    expect(keyIdOf(pair().priv, keys)).toBeNull();
+    const bytes = Buffer.from(JSON.stringify(pointer(tgz, { version: '3.57.1', commit, issuedAt: 'x', keyId: 'herdr-pack-2027-05' })));
+    expect(verifyPointer(bytes, signPointer(bytes, next.priv), keys).keyId).toBe('herdr-pack-2027-05');
+  });
+
+  test('keygen never writes the slot releases sign with: the first key to HERDR_PACK_KEY, a rotation to the other', () => {
+    const listed = [{ keyId: KEY_ID, publicKey: pair().pub }];
+    expect(SLOTS).toEqual(['HERDR_PACK_KEY', 'HERDR_PACK_KEY_NEXT']);
+    expect(slotFor([], null)).toBe('HERDR_PACK_KEY');
+    expect(slotFor(listed, null)).toBe('HERDR_PACK_KEY_NEXT');
+    expect(slotFor(listed, 'HERDR_PACK_KEY')).toBe('HERDR_PACK_KEY_NEXT');
+    expect(slotFor(listed, 'HERDR_PACK_KEY_NEXT')).toBe('HERDR_PACK_KEY');
+  });
+
+  test('posted: the signer refuses to post a lower sequence than the posted pointer\'s', () => {
     const key = pair();
-    expect(keyProblem(undefined, [])).toBe('HERDR_PACK_KEY is not set');
-    expect(keyProblem('not a pem', [])).toMatch(/not a private key/);
-    expect(keyProblem(key.priv, [])).toMatch(/lists no herdr-pack/);
-    expect(keyProblem(key.priv, [{ keyId: KEY_ID, publicKey: pair().pub }])).toMatch(/is not the herdr-pack/);
-    expect(keyProblem(key.priv, [{ keyId: KEY_ID, publicKey: key.pub }])).toBeNull();
+    const keys = [{ keyId: KEY_ID, publicKey: key.pub }];
+    const at = (version: string) => {
+      const file = join(dir, `automagik-herdr-pack-${version}.tgz`);
+      writeFileSync(file, version);
+      const bytes = Buffer.from(JSON.stringify(pointer(file, { version, commit, issuedAt: 'x' })));
+      return { bytes, sig: signPointer(bytes, key.priv) };
+    };
+    const newer = at('3.60.0');
+    const older = at('3.58.0');
+    expect(postedProblem(older.bytes, null, null, keys)).toBeNull();
+    expect(postedProblem(older.bytes, newer.bytes, newer.sig, keys)).toMatch(/names 3\.60\.0 \(sequence 600000\), newer than 3\.58\.0 \(sequence 580000\): refusing to post an older one/);
+    expect(postedProblem(newer.bytes, older.bytes, older.sig, keys)).toBeNull();
+    expect(postedProblem(newer.bytes, newer.bytes, newer.sig, keys)).toBeNull();
+    // A posted pointer that does not verify (another key, or no signature) is replaced, not obeyed.
+    expect(postedProblem(older.bytes, newer.bytes, signPointer(newer.bytes, pair().priv), keys)).toBeNull();
+    expect(postedProblem(older.bytes, newer.bytes, null, keys)).toBeNull();
   });
 
   test('install.sh embeds the same keys pack-keys.json lists, and keygen rewrites both alike', () => {

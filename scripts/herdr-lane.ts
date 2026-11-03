@@ -14,16 +14,21 @@
  * which ships inside the pack (the installed copy is the trust anchor), and the same list is
  * embedded in herdr/install.sh (a test keeps them equal).
  *
- *   bun scripts/herdr-lane.ts manifest <tgz> <version> <commit> <issuedAt>   print pack.json
+ *   bun scripts/herdr-lane.ts manifest <tgz> <version> <commit> <issuedAt>   print pack.json, its keyId
+ *       the pack-keys.json entry whose public key is HERDR_PACK_KEY's
  *   bun scripts/herdr-lane.ts sign <pack.json>        print its signature (HERDR_PACK_KEY, PEM)
  *   bun scripts/herdr-lane.ts verify <pack.json> <sig>  check it against pack-keys.json
+ *   bun scripts/herdr-lane.ts posted <pack.json> <dir>  refuse to post it when <dir> holds the posted
+ *       pointer (pack.json, pack.json.sig), it verifies, and its sequence is higher
  *   bun scripts/herdr-lane.ts check-key               HERDR_PACK_KEY is set, and its public key is in pack-keys.json
  *   bun scripts/herdr-lane.ts keygen [--repo <owner/repo>] [--key-id <id>]
- *       make the key: an ed25519 pair generated in memory; the private key goes straight to
- *       `gh secret set HERDR_PACK_KEY` on its stdin (never printed, never written to disk), and only
- *       then is the public key added to pack-keys.json and install.sh. A maintainer runs it once
- *       (t259 or the owner), and again to rotate: the old key stays listed until every install has
- *       a pack that knows the new one.
+ *       make a key: an ed25519 pair generated in memory; the private key goes straight to `gh secret
+ *       set` on its stdin (never printed, never written to disk), and only then is the public key
+ *       added to pack-keys.json and install.sh. The first key goes to HERDR_PACK_KEY. A rotation is
+ *       two phases (RFC 0011): keygen puts the new key in the secret slot that is NOT signing (the
+ *       HERDR_PACK_SIGNER variable names the one that is; HERDR_PACK_KEY when unset), so releases
+ *       keep signing with the old key while a pack carrying the new public key ships; later, once
+ *       installs have that pack, `gh variable set HERDR_PACK_SIGNER --body <the new slot>` switches.
  */
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, verify as verifyBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -34,6 +39,8 @@ import { ROOT, sequenceOf, signLane } from './lane';
 export const LANE_RELEASE = 'herdr-lane';
 export const SCHEMA_VERSION = 1;
 export const KEY_ID = 'herdr-pack-2026-11';
+/** The two secret slots a rotation alternates between; release.yml signs with the one HERDR_PACK_SIGNER names. */
+export const SLOTS = ['HERDR_PACK_KEY', 'HERDR_PACK_KEY_NEXT'] as const;
 export const KEYS_FILE = join(ROOT, 'herdr', 'mods', 'am-sidebar', 'pack-keys.json');
 export const INSTALL_SH = join(ROOT, 'herdr', 'install.sh');
 const REPOSITORY = 'https://github.com/automagik-dev/automagik';
@@ -91,15 +98,40 @@ export function verifyPointer(bytes: Buffer, signature: string, keys: PackKey[])
 /** The public key (SPKI PEM) of a private key (PEM). */
 export const publicOf = (privatePem: string) => createPublicKey(createPrivateKey(privatePem)).export({ type: 'spki', format: 'pem' }).toString();
 
-/** Why `privatePem` cannot sign pointers this pack trusts, or null when it can (its public key is listed as KEY_ID). */
-export function keyProblem(privatePem: string | undefined, keys: PackKey[], keyId = KEY_ID): string | null {
-  if (!privatePem) return 'HERDR_PACK_KEY is not set';
+const samePublic = (a: string, b: string) => { try { return createPublicKey(a).export({ type: 'spki', format: 'pem' }).toString() === b; } catch { return false; } };
+
+/** The keyId pack-keys.json gives the public half of `privatePem`, or null when it lists no such key. */
+export function keyIdOf(privatePem: string, keys: PackKey[]): string | null {
   let pub: string;
-  try { pub = publicOf(privatePem); } catch { return 'HERDR_PACK_KEY is not a private key (PEM)'; }
-  const listed = keys.find(entry => entry.keyId === keyId);
-  if (!listed) return `pack-keys.json lists no ${keyId}`;
-  return createPublicKey(listed.publicKey).export({ type: 'spki', format: 'pem' }).toString() === pub ? null : `HERDR_PACK_KEY is not the ${keyId} that pack-keys.json lists`;
+  try { pub = publicOf(privatePem); } catch { return null; }
+  return keys.find(entry => samePublic(entry.publicKey, pub))?.keyId ?? null;
 }
+
+/** Why `privatePem` cannot sign pointers this pack trusts, or null when it can (pack-keys.json lists its public key). */
+export function keyProblem(privatePem: string | undefined, keys: PackKey[]): string | null {
+  if (!privatePem) return 'HERDR_PACK_KEY is not set';
+  try { publicOf(privatePem); } catch { return 'HERDR_PACK_KEY is not a private key (PEM)'; }
+  return keyIdOf(privatePem, keys) ? null : 'HERDR_PACK_KEY\'s public key is not in pack-keys.json';
+}
+
+/**
+ * Why `next` (pack.json's bytes) must not replace the posted pointer, or null when it may: the posted
+ * one verifies against `keys` and names a higher sequence. A posted pointer that does not verify is
+ * no reason to stop (it is replaced); none posted yet, neither.
+ */
+export function postedProblem(next: Buffer, posted: Buffer | null, postedSig: string | null, keys: PackKey[]): string | null {
+  if (!posted || postedSig === null) return null;
+  let current: PackPointer;
+  try { current = verifyPointer(posted, postedSig, keys); } catch { return null; }
+  const mine = JSON.parse(next.toString('utf8')) as PackPointer;
+  return current.sequence > mine.sequence
+    ? `the posted herdr-lane pointer names ${current.version} (sequence ${current.sequence}), newer than ${mine.version} (sequence ${mine.sequence}): refusing to post an older one`
+    : null;
+}
+
+/** The secret slot keygen writes: HERDR_PACK_KEY for the first key, else the slot that is not `signer`. */
+export const slotFor = (keys: PackKey[], signer: string | null) =>
+  keys.length === 0 ? SLOTS[0] : (signer === SLOTS[1] ? SLOTS[0] : SLOTS[1]);
 
 /** install.sh's embedded copy of pack-keys.json: its `TRUSTED_KEYS='…'` line, parsed. */
 export const installKeys = (text: string): PackKey[] => JSON.parse(/^\s*TRUSTED_KEYS='([^']*)'$/m.exec(text)?.[1] ?? 'null')?.keys;
@@ -117,7 +149,9 @@ if (import.meta.main) {
   const flag = (name: string, fallback: string) => { const i = args.indexOf(name); return i >= 0 && args[i + 1] ? args[i + 1] : fallback; };
   if (command === 'manifest' && args.length === 4) {
     const [tgz, version, commit, issuedAt] = args;
-    console.log(JSON.stringify(pointer(tgz, { version, commit, issuedAt }), null, 2));
+    const keyId = process.env.HERDR_PACK_KEY ? keyIdOf(process.env.HERDR_PACK_KEY, readKeys()) : null;
+    if (!keyId) throw new Error(`herdr lane: ${keyProblem(process.env.HERDR_PACK_KEY, readKeys())}`);
+    console.log(JSON.stringify(pointer(tgz, { version, commit, issuedAt, keyId }), null, 2));
   } else if (command === 'sign' && args.length === 1) {
     const key = process.env.HERDR_PACK_KEY;
     if (!key) throw new Error('HERDR_PACK_KEY is not set');
@@ -125,24 +159,36 @@ if (import.meta.main) {
   } else if (command === 'verify' && args.length === 2) {
     const found = verifyPointer(readFileSync(args[0]), readFileSync(args[1], 'utf8'), readKeys());
     console.log(`herdr lane ${found.version} (sequence ${found.sequence}) is signed by ${found.keyId}`);
+  } else if (command === 'posted' && args.length === 2) {
+    const [file, dir] = args;
+    const read = (name: string) => { try { return readFileSync(join(dir, name)); } catch { return null; } };
+    const posted = read('pack.json');
+    const sig = read('pack.json.sig');
+    const problem = postedProblem(readFileSync(file), posted, sig === null ? null : sig.toString('utf8'), readKeys());
+    if (problem) { console.error(`herdr lane: ${problem}`); process.exit(1); }
+    console.log(posted ? 'herdr lane: the posted pointer is not newer' : 'herdr lane: no pointer posted yet');
   } else if (command === 'check-key' && args.length === 0) {
     const problem = keyProblem(process.env.HERDR_PACK_KEY, readKeys());
     if (problem) { console.error(`herdr lane: ${problem} (bun scripts/herdr-lane.ts keygen makes it; RFC 0011)`); process.exit(1); }
-    console.log(`herdr lane: HERDR_PACK_KEY is ${KEY_ID}, listed in pack-keys.json`);
+    console.log(`herdr lane: HERDR_PACK_KEY is ${keyIdOf(process.env.HERDR_PACK_KEY as string, readKeys())}, listed in pack-keys.json`);
   } else if (command === 'keygen') {
     const repo = flag('--repo', 'automagik-dev/automagik');
     const keyId = flag('--key-id', KEY_ID);
     const keys = readKeys();
     if (keys.some(entry => entry.keyId === keyId)) throw new Error(`pack-keys.json already lists ${keyId}: pick a new --key-id to rotate`);
+    // Never the slot releases sign with: a rotation's new key waits in the other one (phase 1).
+    const signer = keys.length === 0 ? null : spawnSync('gh', ['variable', 'get', 'HERDR_PACK_SIGNER', '--repo', repo], { encoding: 'utf8' });
+    const slot = slotFor(keys, signer && signer.status === 0 ? signer.stdout.trim() : null);
     const { publicKey, privateKey } = generateKeyPairSync('ed25519');
-    const secret = spawnSync('gh', ['secret', 'set', 'HERDR_PACK_KEY', '--repo', repo], { input: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(), stdio: ['pipe', 'inherit', 'inherit'] });
+    const secret = spawnSync('gh', ['secret', 'set', slot, '--repo', repo], { input: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(), stdio: ['pipe', 'inherit', 'inherit'] });
     if (secret.status !== 0) { console.error('herdr lane: gh secret set failed; nothing was written'); process.exit(1); }
     const next = [...keys, { keyId, publicKey: publicKey.export({ type: 'spki', format: 'pem' }).toString() }];
     writeFileSync(KEYS_FILE, `${JSON.stringify({ keys: next }, null, 2)}\n`);
     writeFileSync(INSTALL_SH, withInstallKeys(readFileSync(INSTALL_SH, 'utf8'), next));
-    console.log(`herdr lane: HERDR_PACK_KEY set on ${repo}; ${keyId} added to pack-keys.json and install.sh. Commit both.`);
+    console.log(`herdr lane: ${slot} set on ${repo}; ${keyId} added to pack-keys.json and install.sh. Commit both.`);
+    if (keys.length > 0) console.log(`Phase 2, only after a release has shipped this pack-keys.json and installs have taken it: gh variable set HERDR_PACK_SIGNER --body ${slot} --repo ${repo}`);
   } else {
-    console.error('usage: bun scripts/herdr-lane.ts manifest <tgz> <version> <commit> <issuedAt> | sign <pack.json> | verify <pack.json> <sig> | check-key | keygen [--repo <owner/repo>] [--key-id <id>]');
+    console.error('usage: bun scripts/herdr-lane.ts manifest <tgz> <version> <commit> <issuedAt> | sign <pack.json> | verify <pack.json> <sig> | posted <pack.json> <dir> | check-key | keygen [--repo <owner/repo>] [--key-id <id>]');
     process.exit(2);
   }
 }
