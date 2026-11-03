@@ -137,18 +137,25 @@ that old default, once: `meter.db` (with `meter.db-wal` and `meter.db-shm`),
 `meter.lock`, `claude-limits.jsonl` and `claude-limits.last.json`. Nothing else in the old folder
 is opened, and the folder itself stays.
 
-- It runs under the new dir's `meter.lock` and skips (exit 0, retried next run) while another run
-  holds that lock or an older meter holds the old one.
+- It runs under the new dir's `meter.lock` and the old dir's `meter.lock` (created empty if
+  missing, so an older meter starting mid-move waits), and skips (exit 0, retried next run) while
+  another run holds either. The old `meter.lock` is removed last; it stays only beside files that
+  were left behind.
 - It never replaces a file: a hard link then removal of the old name on one filesystem, else a
   copy that is fsynced and compared before the old file is removed. Modes are kept.
-- The database moves with its sidecars, sidecars first, so an interrupted move is finished by the
-  next run and never loses a file.
-- If the new dir already has a different `meter.db`, nothing is moved, overwritten or deleted and
-  each `sync` prints one line to stderr naming the files left behind.
+- The database moves with its sidecars, sidecars first, behind a `.meter-migrating` marker in the
+  new dir, so an interrupted move is finished by the next run and never loses a file.
+- If the new dir already has a different `meter.db`, or a `meter.db-wal` or `meter.db-shm` of
+  another store, nothing is moved, overwritten or deleted and each `sync` prints one line to
+  stderr naming the files left behind.
+- A `claude-limits.*` file the new dir already has a different copy of stays in the old dir, with
+  the same one line.
+- If the new dir is the old dir under another name (a symlink), nothing moves.
 - With `METER_STATE_DIR` set nothing is moved and `~/.automagik/meter` is not created.
 - `status` reads the new dir only; before the first `sync` after an upgrade it reports
   `synced: false`.
-- `prices.json` (below) is not moved: copy an override from the old dir by hand. Rows are hourly `agent.usage` rollups keyed by (bot, role,
+- `prices.json` (below) is not moved; the run that moves the store says so on stderr. Copy an
+  override from the old dir by hand. Rows are hourly `agent.usage` rollups keyed by (bot, role,
 harness, model, machine, repo, branch, hour, precision); the row id (`idempotency_key`) hashes all
 of it, so an hour has at most one `exact` row and one `total_only` row per key. The `ae_usage` view
 renders each row as an `ae/1` envelope:

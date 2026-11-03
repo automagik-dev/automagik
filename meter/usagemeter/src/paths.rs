@@ -297,66 +297,114 @@ pub fn migrate(old: &Path, new: &Path) -> io::Result<Migration> {
     migrate_with(old, new, false)
 }
 
+/// Written in the new directory before the database unit moves and removed after: a resumed move
+/// tells its own sidecars there from another store's by it.
+const MOVING: &str = ".meter-migrating";
+
+/// The same directory under two names (a symlink, a case-insensitive volume).
+#[cfg(unix)]
+fn same_dir(a: &Path, b: &Path) -> bool {
+    match (a.metadata(), b.metadata()) {
+        (Ok(ma), Ok(mb)) => same_inode(&ma, &mb),
+        _ => false,
+    }
+}
+
+#[cfg(not(unix))]
+fn same_dir(a: &Path, b: &Path) -> bool {
+    matches!((a.canonicalize(), b.canonicalize()), (Ok(x), Ok(y)) if x == y)
+}
+
 #[doc(hidden)]
 pub fn migrate_with(old: &Path, new: &Path, force_copy: bool) -> io::Result<Migration> {
     let mut m = Migration::default();
-    if old == new || !MIGRATED_FILES.iter().any(|f| exists(&old.join(f))) {
+    if old == new || same_dir(old, new) || !MIGRATED_FILES.iter().any(|f| exists(&old.join(f))) {
         return Ok(m);
     }
-    // An old-version meter may be mid-sync against the old directory. Its lock file is opened
-    // only if it is there; none is created.
-    let old_lock = match OpenOptions::new().write(true).open(old.join("meter.lock")) {
-        Ok(f) => match lock(f)? {
-            Some(l) => Some(l),
-            None => {
-                m.busy = true;
-                return Ok(m);
-            }
-        },
-        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-        Err(e) => return Err(e),
+    // An older meter may be mid-sync against the old directory. Its lock is taken for the whole
+    // move, and created (empty) if missing, so an older meter starting now waits for the next run
+    // instead of opening a store that is being moved.
+    let had_lock = exists(&old.join("meter.lock"));
+    let Some(old_lock) = try_lock(old)? else {
+        m.busy = true;
+        return Ok(m);
     };
 
-    // The database unit moves only with its database, and only if no file of the unit is in the
-    // way: moving a database next to someone else's write-ahead log would corrupt it.
+    // The database unit moves only with its database, and never next to a file of another store:
+    // a database moved beside someone else's write-ahead log can be corrupted by its replay. A
+    // unit file already in the new directory is this move's own only if it is the same file, or
+    // the move marker says an interrupted move put it there.
+    let moving = new.join(MOVING);
+    let resuming = exists(&moving);
+    let mut blocked = false;
     if exists(&old.join("meter.db")) {
-        let mut blocked = false;
         for f in DB_UNIT {
             let (src, dst) = (old.join(f), new.join(f));
-            if exists(&src) && exists(&dst) && !same_file(&src, &dst)? {
-                blocked = true;
+            if exists(&dst) {
+                let ours = if exists(&src) {
+                    same_file(&src, &dst)?
+                } else {
+                    resuming
+                };
+                blocked |= !ours;
             }
         }
-        if blocked {
-            m.kept
-                .extend(DB_UNIT.iter().filter(|f| exists(&old.join(f))));
-        } else {
+        if !blocked {
+            if !resuming {
+                File::create(&moving)?.sync_all()?;
+                sync_dir(new);
+            }
             for f in DB_UNIT {
-                if let Step::Moved = move_file(old, new, f, force_copy)? {
-                    m.moved.push(f);
+                match move_file(old, new, f, force_copy)? {
+                    Step::Moved => m.moved.push(f),
+                    Step::Absent => {}
+                    // Appeared since the check: stop before the database moves.
+                    Step::Kept => {
+                        blocked = true;
+                        break;
+                    }
                 }
             }
         }
     }
-    for f in LOOSE {
-        match move_file(old, new, f, force_copy)? {
-            Step::Moved => m.moved.push(f),
-            Step::Kept => m.kept.push(f),
-            Step::Absent => {}
+    if !blocked && exists(&moving) {
+        fs::remove_file(&moving)?;
+        sync_dir(new);
+    }
+    if blocked {
+        // Nothing moves while the store is in the way.
+        m.kept.extend(
+            DB_UNIT
+                .iter()
+                .chain(LOOSE.iter())
+                .filter(|f| exists(&old.join(f))),
+        );
+    } else {
+        for f in LOOSE {
+            match move_file(old, new, f, force_copy)? {
+                Step::Moved => m.moved.push(f),
+                Step::Kept => m.kept.push(f),
+                Step::Absent => {}
+            }
         }
     }
     // The lock file is empty and `new` has its own (held by the caller): the old one is removed,
-    // never moved onto the held one. It stays while anything else stays.
-    if m.kept.is_empty() && old_lock.is_some() {
+    // never moved onto the held one, once nothing else is left. One this run created never stays.
+    // An older meter that starts after this finds no store in the old directory.
+    if m.kept.is_empty() || !had_lock {
         fs::remove_file(old.join("meter.lock"))?;
         sync_dir(old);
-        m.moved.push("meter.lock");
+        if had_lock {
+            m.moved.push("meter.lock");
+        }
     }
     drop(old_lock);
 
     if !m.kept.is_empty() {
-        let why = if m.kept.contains(&"meter.db") {
+        let why = if blocked && exists(&new.join("meter.db")) {
             format!("{} already has a meter.db", new.display())
+        } else if blocked {
+            format!("{} already has sidecars of another store", new.display())
         } else {
             format!("{} already has different copies", new.display())
         };
@@ -372,6 +420,13 @@ pub fn migrate_with(old: &Path, new: &Path, force_copy: bool) -> io::Result<Migr
             old.display(),
             new.display()
         );
+        if exists(&old.join("prices.json")) && !exists(&new.join("prices.json")) {
+            eprintln!(
+                "meter: {} was not moved; copy it to {} to keep the price override",
+                old.join("prices.json").display(),
+                new.display()
+            );
+        }
     }
     Ok(m)
 }
@@ -499,7 +554,9 @@ mod tests {
         ensure_dir(&new).unwrap();
         fs::write(old.join("meter.db-wal"), b"wal").unwrap();
         fs::write(old.join("meter.db"), b"db").unwrap();
-        // The crash: the wal moved, the database is linked into place but not yet unlinked.
+        // The crash: the marker is written, the wal moved, the database is linked into place but
+        // not yet unlinked.
+        fs::write(new.join(MOVING), b"").unwrap();
         fs::rename(old.join("meter.db-wal"), new.join("meter.db-wal")).unwrap();
         fs::hard_link(old.join("meter.db"), new.join("meter.db")).unwrap();
         let m = migrate(&old, &new).unwrap();
@@ -508,5 +565,45 @@ mod tests {
         assert!(!exists(&old.join("meter.db")));
         assert_eq!(fs::read(new.join("meter.db")).unwrap(), b"db");
         assert_eq!(fs::read(new.join("meter.db-wal")).unwrap(), b"wal");
+        assert!(
+            !exists(&new.join(MOVING)),
+            "the marker goes once the unit moved"
+        );
+    }
+
+    #[test]
+    fn a_wal_in_the_new_dir_without_the_marker_blocks_the_database() {
+        let t = tempfile::tempdir().unwrap();
+        let (old, new) = (t.path().join("old"), t.path().join("new"));
+        fs::create_dir_all(&old).unwrap();
+        ensure_dir(&new).unwrap();
+        fs::write(old.join("meter.db"), b"db").unwrap();
+        fs::write(old.join("claude-limits.jsonl"), b"l").unwrap();
+        fs::write(new.join("meter.db-wal"), b"another store").unwrap();
+        let m = migrate(&old, &new).unwrap();
+        assert_eq!(m.kept, ["meter.db", "claude-limits.jsonl"]);
+        assert!(m.moved.is_empty());
+        assert!(!exists(&new.join("meter.db")));
+        assert!(!exists(&new.join("claude-limits.jsonl")), "nothing moves");
+        assert!(
+            !exists(&old.join("meter.lock")),
+            "a lock file it created never stays"
+        );
+        assert_eq!(fs::read(old.join("meter.db")).unwrap(), b"db");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_new_dir_that_is_the_old_dir_moves_nothing() {
+        let t = tempfile::tempdir().unwrap();
+        let old = t.path().join("old");
+        fs::create_dir_all(&old).unwrap();
+        fs::write(old.join("meter.db"), b"db").unwrap();
+        let new = t.path().join("am/meter");
+        fs::create_dir_all(new.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&old, &new).unwrap();
+        let _held = try_lock(&new).unwrap().unwrap();
+        assert_eq!(migrate(&old, &new).unwrap(), Migration::default());
+        assert_eq!(fs::read(old.join("meter.db")).unwrap(), b"db");
     }
 }

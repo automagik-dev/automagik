@@ -139,6 +139,7 @@ fn the_first_sync_moves_exactly_the_meter_files_and_keeps_the_store() {
     fs::write(old.join("claude-limits.jsonl"), b"{\"n\":1}\n").unwrap();
     fs::write(old.join("claude-limits.last.json"), b"{\"n\":1}").unwrap();
     let app = foreign(&old);
+    fs::write(old.join("prices.json"), b"{}").unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -148,10 +149,17 @@ fn the_first_sync_moves_exactly_the_meter_files_and_keeps_the_store() {
 
     let out = h.sync(None);
     let err = stderr(&out);
-    assert_eq!(err.lines().count(), 1, "{err}");
+    assert_eq!(err.lines().count(), 2, "{err}");
     assert!(err.starts_with("meter: moved "), "{err}");
+    assert!(
+        err.lines()
+            .nth(1)
+            .unwrap()
+            .contains("prices.json was not moved"),
+        "{err}"
+    );
 
-    assert_eq!(names(&old), ["Local Storage", "Preferences"]);
+    assert_eq!(names(&old), ["Local Storage", "Preferences", "prices.json"]);
     assert_eq!(fs::read(&app).unwrap(), b"FAKE-APP-DATA");
     let new = h.new_dir();
     for f in [
@@ -177,7 +185,7 @@ fn the_first_sync_moves_exactly_the_meter_files_and_keeps_the_store() {
     // Idempotent: a second run finds nothing to move and says nothing.
     let again = h.sync(None);
     assert!(stderr(&again).is_empty(), "{}", stderr(&again));
-    assert_eq!(names(&old), ["Local Storage", "Preferences"]);
+    assert_eq!(names(&old), ["Local Storage", "Preferences", "prices.json"]);
     assert_eq!(h.rows(&new), rows);
 }
 
@@ -188,6 +196,7 @@ fn an_existing_new_store_is_never_overwritten() {
     let old = h.old_dir();
     let old_db = fs::read(old.join("meter.db")).unwrap();
     fs::write(old.join("claude-limits.jsonl"), b"old\n").unwrap();
+    fs::write(old.join("claude-limits.last.json"), b"{}").unwrap();
     // A store already in the new directory.
     h.sync(Some(&h.new_dir()));
     let new_rows = h.rows(&h.new_dir());
@@ -203,6 +212,11 @@ fn an_existing_new_store_is_never_overwritten() {
     assert_eq!(fs::read(old.join("meter.db")).unwrap(), old_db);
     assert!(old.join("meter.lock").exists(), "the old files all stay");
     assert_eq!(fs::read(old.join("claude-limits.jsonl")).unwrap(), b"old\n");
+    assert!(old.join("claude-limits.last.json").exists());
+    assert!(
+        !h.new_dir().join("claude-limits.last.json").exists(),
+        "nothing moves while the store is in the way"
+    );
     assert_eq!(
         fs::read(h.new_dir().join("claude-limits.jsonl")).unwrap(),
         b"new\n"
