@@ -3,7 +3,7 @@ rfc: "0007"
 title: "Watch in background comes back after a phone restart (RECEIVE_BOOT_COMPLETED)"
 status: Accepted
 created: 2026-11-01
-pr: "#38"
+pr: "automagik-dev/automagik-pocket#38"
 ---
 # RFC 0007 — Watch in background comes back after a phone restart
 
@@ -18,7 +18,7 @@ collected or sent.
 
 Today a restart ends the watch, and agent alerts stop until the person opens the app again
 ([using](../guides/using.md), "Limits"). People restart phones for system updates and overnight
-battery tools, so alerts stop without warning. The update case was fixed in #32; the restart case
+battery tools, so alerts stop without warning. The update case was fixed in automagik-dev/automagik-pocket#32; the restart case
 was left as an open question in
 [updates install silently](../decisions/updates-install-silently.md) because it needs a new
 permission, and [AGENTS.md](../../AGENTS.md) requires an RFC first.
@@ -109,9 +109,9 @@ backoff retries it; the service stays on "Reconnecting…" meanwhile, as after a
   case; it has no field for what starts the service
   ([Play help](https://support.google.com/googleplay/android-developer/answer/13392821)). No new
   declaration.
-- The existing `specialUse` declaration gains a start trigger. #31's `docs/play/listing.md` says
-  the service is "only started from the foreground"; that is already untrue since #32 (after an
-  update) and, with this RFC, after a restart. #31 rewords it for the update; once both are in
+- The existing `specialUse` declaration gains a start trigger. automagik-dev/automagik-pocket#31's `docs/play/listing.md` says
+  the service is "only started from the foreground"; that is already untrue since automagik-dev/automagik-pocket#32 (after an
+  update) and, with this RFC, after a restart. automagik-dev/automagik-pocket#31 rewords it for the update; once both are in
   `dev`, a follow-up adds the restart: it starts from the foreground, after an app update, and
   after a phone restart, each only while watching is on.
 
@@ -143,7 +143,7 @@ are read once at boot. [privacy](../privacy.md) lists the new permission.
 
 ## Related
 
-- #32: after an update, the same resume path.
+- automagik-dev/automagik-pocket#32: after an update, the same resume path.
 - [Updates install silently](../decisions/updates-install-silently.md): the decision note whose
   open question this answers.
 - [RFC 0006](https://github.com/automagik-dev/automagik-pocket/pull/31): distribution flavors

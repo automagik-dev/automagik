@@ -3,7 +3,7 @@ rfc: "0003"
 title: "Pocket Link: pair with Herdr desktop over iroh, no SSH"
 status: Implemented
 created: 2026-11-01
-pr: "#4"
+pr: "automagik-dev/automagik-pocket#4"
 ---
 # RFC 0003 — Pocket Link: pair with Herdr desktop over iroh, no SSH
 
@@ -16,7 +16,7 @@ port. SSH stays as the other way to connect.
 
 ## Motivation
 
-Recorded after the fact from #4. Its stated goal: pair "like a TV pairs with a streaming account.
+Recorded after the fact from automagik-dev/automagik-pocket#4. Its stated goal: pair "like a TV pairs with a streaming account.
 No SSH, no password, no open port."
 
 ## Current state
@@ -67,12 +67,12 @@ Paired desktops sit in the machine list next to SSH machines.
 ## Decisions
 
 - Owner, 2026-10-31: pair with Herdr desktop over iroh through the Pocket Link mod, with no SSH,
-  password or open port (PR #4).
+  password or open port (PR automagik-dev/automagik-pocket#4).
 - Owner, 2026-10-31: scan QR codes with the bundled ZXing scanner. Reason in the PR: it works
   without Google Play services, and Google's code scanner couldn't download its module on the
-  emulator (PR #4).
+  emulator (PR automagik-dev/automagik-pocket#4).
 - Owner, 2026-10-31: ship only arm64-v8a, armeabi-v7a and x86_64 and compress the native
-  libraries. Reason in the PR: the APK went from 73 MB to 40 MB (PR #4).
+  libraries. Reason in the PR: the APK went from 73 MB to 40 MB (PR automagik-dev/automagik-pocket#4).
 
 ## Alternatives considered
 
@@ -83,11 +83,11 @@ SSH remains supported. No other transport was written down as considered.
 1. Why iroh rather than another way through NAT? No reason was written. — the owner.
 2. The scheme and ALPNs still say `herdr-pocket`. Rename them with the desktop mod, or keep them
    as a stable protocol name? — the owner.
-3. #4 lists "connecting paired machines automatically at launch" as not done. Still wanted? —
+3. automagik-dev/automagik-pocket#4 lists "connecting paired machines automatically at launch" as not done. Still wanted? —
    the owner.
 
 ## Related
 
-- automagik-dev/automagik-pocket #4
+- automagik-dev/automagik-pocket#4
 - Desktop mod: [`herdr/mods/pocket-link/`](../../../../herdr/mods/pocket-link/README.md)
 - [Privacy](../privacy.md)

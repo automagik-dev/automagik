@@ -4,7 +4,7 @@ type: decision
 status: Implemented
 created: 2026-11-01
 updated: 2026-11-01
-pr: "#19"
+pr: "automagik-dev/automagik-pocket#19"
 tags: [decisions, alerts, security, lock-screen]
 ---
 # Answering from the lock screen starts off
@@ -14,11 +14,11 @@ answer agents without unlocking.
 
 ## Decision
 
-- Owner, 2026-11-01: the setting defaults to off, and Settings explains why (PR #19). Reason in
+- Owner, 2026-11-01: the setting defaults to off, and Settings explains why (PR automagik-dev/automagik-pocket#19). Reason in
   the PR and in the setting's text: anyone holding the locked phone could answer.
-- **Supersedes** the default of on from PR #11 ("on by default, as you chose", 2026-11-01).
+- **Supersedes** the default of on from PR automagik-dev/automagik-pocket#11 ("on by default, as you chose", 2026-11-01).
 - Owner, 2026-11-01: add `SECURITY.md` with private vulnerability reporting, the release
-  certificate fingerprint and what the app can reach (PR #19).
+  certificate fingerprint and what the app can reach (PR automagik-dev/automagik-pocket#19).
 
 ## Current state
 
@@ -37,6 +37,6 @@ None.
 
 ## Related
 
-- automagik-dev/automagik-pocket #11, #19
+- automagik-dev/automagik-pocket#11, automagik-dev/automagik-pocket#19
 - [Alerts are native notifications](native-notifications.md)
 - [Privacy](../privacy.md)

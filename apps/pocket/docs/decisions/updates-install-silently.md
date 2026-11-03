@@ -16,7 +16,7 @@ Android notifications replace the in-app "update available" bar.
 
 - Owner, 2026-11-01: "silent": new versions install on their own in the background, and the person
   is told afterwards. The owner dislikes in-app bottom bars and wants native Android notifications.
-- This supersedes the update snackbar ("Automagik X is available · Update") from #6.
+- This supersedes the update snackbar ("Automagik X is available · Update") from automagik-dev/automagik-pocket#6.
 
 ## Current state
 
@@ -36,7 +36,7 @@ Android notifications replace the in-app "update available" bar.
 
 ## Reconnecting after an update
 
-- 2026-11-01, closing the open question from #28: after an update the new build restarts Watch
+- 2026-11-01, closing the open question from automagik-dev/automagik-pocket#28: after an update the new build restarts Watch
   in background and reconnects the machines it was watching, with no action from the person. If
   watching was off, nothing happens.
 - While watching, the app keeps the ids of connected, connecting and retrying machines in the

@@ -4,7 +4,7 @@ type: decision
 status: Accepted
 created: 2026-11-01
 updated: 2026-11-01
-pr: "#41"
+pr: "automagik-dev/automagik-pocket#41"
 tags: [decisions, alerts, notifications, terminal]
 ---
 # Offer Always allow for agent permission prompts
@@ -16,12 +16,12 @@ Yes and No.
 ## Decision
 
 - Owner, 2026-11-01: permission buttons offer Yes and No only, never "always allow" or "switch to
-  auto mode", which "change settings beyond this one prompt" (PR #13, kept in PR #24).
+  auto mode", which "change settings beyond this one prompt" (PR automagik-dev/automagik-pocket#13, kept in PR automagik-dev/automagik-pocket#24).
   **Superseded** for "don't ask again" options by the next line. Mode changes stay excluded.
 - Owner, 2026-11-01: when a permission prompt offers a "don't ask again" or always option, the
   person can pick it in one tap, in the terminal's answer row and in the notification, ordered
   Yes / Always / No. Notification actions keep the existing lock-screen rules. Requested by Felipe
-  for PR #41, answering PR #24's "Say if you want them in-app".
+  for PR automagik-dev/automagik-pocket#41, answering PR automagik-dev/automagik-pocket#24's "Say if you want them in-app".
 
 ## Current state
 
@@ -58,7 +58,7 @@ What counts as "always": `android/app/src/main/java/ai/namastex/automagik/Prompt
 - Tests: `PromptTest`, on synthetic screens shaped like Claude Code's and Codex's prompts.
 - User guide: [Using Automagik Pocket](../guides/using.md), Alerts.
 
-Excluding mode changes, showing the scope, and keeping No over Reply were proposed in PR #41 to
+Excluding mode changes, showing the scope, and keeping No over Reply were proposed in PR automagik-dev/automagik-pocket#41 to
 meet the request's "decide the best 3 and explain". They are not separate owner decisions.
 
 ## Open questions
@@ -70,6 +70,6 @@ meet the request's "decide the best 3 and explain". They are not separate owner 
 
 ## Related
 
-- automagik-dev/automagik-pocket #13, #24, #41
+- automagik-dev/automagik-pocket#13, automagik-dev/automagik-pocket#24, automagik-dev/automagik-pocket#41
 - [Answering from the lock screen starts off](lock-screen-answers-off.md)
 - [Using Automagik Pocket](../guides/using.md)

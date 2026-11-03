@@ -4,7 +4,7 @@ type: decision
 status: Accepted
 created: 2026-11-01
 updated: 2026-11-01
-pr: "#39"
+pr: "automagik-dev/automagik-pocket#39"
 tags: [decisions, pocket-link, desktop, contract]
 ---
 # Pocket Link public-status.json contract (schema 1)
@@ -17,10 +17,10 @@ writes it, and it is the only file in the folder that other mods may read.
 
 - Owner, 2026-11-01: Pocket Link publishes whether phones are connected in a small, stable,
   versioned file for other mods, kept apart from `status.json`. It holds no ticket, endpoint id or
-  secret, and a clean shutdown writes `running: false`. Requested by Felipe for PR #39, so that the
+  secret, and a clean shutdown writes `running: false`. Requested by Felipe for PR automagik-dev/automagik-pocket#39, so that the
   Herdr sidebar can put a dot on its Pocket Link icon while a phone is connected.
 - Owner, 2026-11-01: `status.json` keeps the pairing ticket and stays 0600, because the dialog's
-  QR code is built from it (PR #39).
+  QR code is built from it (PR automagik-dev/automagik-pocket#39).
 
 ## Current state
 
@@ -77,7 +77,7 @@ reader.
 - Adding a field keeps `schema: 1`. Readers ignore fields they don't know.
 - Removing or renaming a field, or changing its type or meaning, takes `schema: 2`. Readers treat
   any value but 1 as unknown, the same as a missing file.
-- This rule was proposed in PR #39 with the contract.
+- This rule was proposed in PR automagik-dev/automagik-pocket#39 with the contract.
 
 **Never in it:** the pairing ticket, this computer's endpoint id, a phone's key, or any secret.
 `publicStatus` copies only `name` and `since` from each phone. A test checks the exact field set
@@ -95,7 +95,7 @@ Documented for mod authors in the [Pocket Link README](../../../../herdr/mods/po
 
 ## Related
 
-- automagik-dev/automagik-pocket #39
+- automagik-dev/automagik-pocket#39
 - [Pocket Link keeps its state outside the mod folder](pocket-link-state-outside-mod.md)
 - [Pocket Link README, For other mods](../../../../herdr/mods/pocket-link/README.md#for-other-mods)
 - [Pocket Link recipe](../../../../herdr/mods/pocket-link/RECIPE.md)

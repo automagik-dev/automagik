@@ -4,7 +4,7 @@ type: decision
 status: Implemented
 created: 2026-11-01
 updated: 2026-11-01
-pr: "#17"
+pr: "automagik-dev/automagik-pocket#17"
 tags: [decisions, alerts, notifications]
 ---
 # Alerts are native Android notifications, in the app too
@@ -15,8 +15,8 @@ There is no in-app toast.
 ## Decision
 
 - Owner, 2026-11-01: no in-app toast at the bottom of the screen; native Android notifications
-  instead (PR #17, which opens with "Owner asked").
-- This supersedes the in-app sound-and-toast with **Open** from #10 for agent alerts. Crash notices
+  instead (PR automagik-dev/automagik-pocket#17, which opens with "Owner asked").
+- This supersedes the in-app sound-and-toast with **Open** from automagik-dev/automagik-pocket#10 for agent alerts. Crash notices
   still use the in-app snackbar; update notices became notifications too
   ([updates install silently](updates-install-silently.md)).
 
@@ -36,5 +36,5 @@ None.
 
 ## Related
 
-- automagik-dev/automagik-pocket #10, #11, #13, #17
+- automagik-dev/automagik-pocket#10, automagik-dev/automagik-pocket#11, automagik-dev/automagik-pocket#13, automagik-dev/automagik-pocket#17
 - [Lock-screen answering starts off](lock-screen-answers-off.md)

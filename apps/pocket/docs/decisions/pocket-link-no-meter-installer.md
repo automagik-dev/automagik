@@ -4,7 +4,7 @@ type: decision
 status: Implemented
 created: 2026-11-03
 updated: 2026-11-03
-pr: "#53"
+pr: "automagik-dev/automagik-pocket#53"
 tags: [decisions, pocket-link, desktop, usage-meter, security]
 ---
 # Pocket Link doesn't install the usage meter
@@ -20,7 +20,7 @@ Pocket Link's bridge neither installs nor runs it; the phone keeps reading the `
   in `hc machine ls` through `hc exec` and `curl`. Each download was checked only against that same
   release's `SHA256SUMS`, without an opt-in, and the setup text didn't mention it.
 - This supersedes the Pocket Link half of [RFC 0005](../rfcs/0005-usage-meter.md)'s "Current
-  state" and the installer added in #44.
+  state" and the installer added in automagik-dev/automagik-pocket#44.
 
 ## Current state
 

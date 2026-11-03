@@ -3,7 +3,7 @@ rfc: "0001"
 title: "Identity: Automagik name and colours, app ID, repo home"
 status: Implemented
 created: 2026-11-01
-pr: "#14, #15, #16"
+pr: "automagik-dev/automagik-pocket#14, automagik-dev/automagik-pocket#15, automagik-dev/automagik-pocket#16"
 ---
 # RFC 0001 — Identity: Automagik name and colours, app ID, repo home
 
@@ -16,7 +16,7 @@ install `automagik.apk`.
 
 ## Motivation
 
-Recorded after the fact, from three merged pull requests (#14, #15, #16). Their reasons are under
+Recorded after the fact, from three merged pull requests (automagik-dev/automagik-pocket#14, automagik-dev/automagik-pocket#15, automagik-dev/automagik-pocket#16). Their reasons are under
 Decisions where the pull request gave one.
 
 ## Current state
@@ -41,24 +41,24 @@ Decisions where the pull request gave one.
 
 | Thing | Before | Now | PR |
 |---|---|---|---|
-| Name and icon | Herdr Pocket | Automagik, Stage tile icon with a monochrome layer | #14 |
-| Colours | Herdr palette | Automagik Stage, light and dark | #14 |
-| App ID | `dev.herdr.pocket` | `ai.namastex.automagik` | #15 |
-| Release asset | `herdr-pocket.apk` | `automagik.apk` | #15 |
-| Repo | `namastex888/herdr-pocket` | `automagik-dev/automagik-pocket` | #16 |
-| Signing key | — | unchanged across all three | #15 |
+| Name and icon | Herdr Pocket | Automagik, Stage tile icon with a monochrome layer | automagik-dev/automagik-pocket#14 |
+| Colours | Herdr palette | Automagik Stage, light and dark | automagik-dev/automagik-pocket#14 |
+| App ID | `dev.herdr.pocket` | `ai.namastex.automagik` | automagik-dev/automagik-pocket#15 |
+| Release asset | `herdr-pocket.apk` | `automagik.apk` | automagik-dev/automagik-pocket#15 |
+| Repo | `namastex888/herdr-pocket` | `automagik-dev/automagik-pocket` | automagik-dev/automagik-pocket#16 |
+| Signing key | — | unchanged across all three | automagik-dev/automagik-pocket#15 |
 
-Migration for people on the old app ID: uninstall it, install `automagik.apk`, pair again (#15).
+Migration for people on the old app ID: uninstall it, install `automagik.apk`, pair again (automagik-dev/automagik-pocket#15).
 
 ## Decisions
 
 - Owner, 2026-11-01: rebrand to Automagik with Stage colours, light and dark, and a new icon; the
-  app ID stays `dev.herdr.pocket` for this step so it updates in place (PR #14).
+  app ID stays `dev.herdr.pocket` for this step so it updates in place (PR automagik-dev/automagik-pocket#14).
 - Owner, 2026-11-01: app ID and namespace become `ai.namastex.automagik`, "the same ID as
   Automagik desktop", with the title "ready for Google Play"; same release key; the asset becomes
-  `automagik.apk` (PR #15).
+  `automagik.apk` (PR automagik-dev/automagik-pocket#15).
 - Owner, 2026-11-01: the repo moves to `automagik-dev/automagik-pocket`; installed copies keep
-  finding updates because GitHub answers the old `latest.json` URL with a 301 (PR #16).
+  finding updates because GitHub answers the old `latest.json` URL with a 301 (PR automagik-dev/automagik-pocket#16).
 
 ## Alternatives considered
 
@@ -66,8 +66,8 @@ None written down in the pull requests.
 
 ## Open questions
 
-1. Why the rebrand to Automagik and Stage (#14)? No reason was written. — the owner.
-2. Why the repo moved to `automagik-dev` (#16)? No reason was written. — the owner.
+1. Why the rebrand to Automagik and Stage (automagik-dev/automagik-pocket#14)? No reason was written. — the owner.
+2. Why the repo moved to `automagik-dev` (automagik-dev/automagik-pocket#16)? No reason was written. — the owner.
 3. Should the remaining "Herdr" strings in Settings (`Screens.kt:183`, `:211`) and the
    `HerdrPocket` User-Agent change? The URL scheme and ALPNs are a shared protocol and need the
    desktop mod to change with them. — the owner.
@@ -76,5 +76,5 @@ None written down in the pull requests.
 
 ## Related
 
-- automagik-dev/automagik-pocket #14, #15, #16
+- automagik-dev/automagik-pocket#14, automagik-dev/automagik-pocket#15, automagik-dev/automagik-pocket#16
 - [RFC 0002 — Release and update channel](0002-release-and-update-channel.md)

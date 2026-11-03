@@ -4,7 +4,7 @@ type: decision
 status: Accepted
 created: 2026-11-03
 updated: 2026-11-03
-pr: "#45"
+pr: "automagik-dev/automagik-pocket#45"
 tags: [decisions, space-row, meter, pocket-link]
 ---
 # The phone finds a space's Space Row project itself
@@ -18,7 +18,7 @@ through unchanged and adds nothing.
 - Owner, 2026-11-03: accepted. The phone resolves the project key and reads `.herdr/bots.json`
   itself, re-reading it every 5 minutes with the meter, as built. No Pocket Link change.
 - Owner, 2026-11-03: a decision note is enough, no RFC; the [privacy](../privacy.md) row ships in
-  the same pull request (#45).
+  the same pull request (automagik-dev/automagik-pocket#45).
 - Why it was proposed (by a coding agent, 2026-11-03): the task said Pocket Link should resolve
   each space's project key and bot names, because "the phone can't run git" and "can't read
   `.herdr/bots.json`". The phone already does both over herdr-core:

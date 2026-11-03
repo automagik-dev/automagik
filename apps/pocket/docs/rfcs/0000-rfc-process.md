@@ -3,7 +3,7 @@ rfc: "0000"
 title: "How this repo proposes and records changes"
 status: Draft
 created: 2026-11-01
-pr: "#21"
+pr: "automagik-dev/automagik-pocket#21"
 ---
 # RFC 0000 — How this repo proposes and records changes
 
@@ -25,7 +25,7 @@ goes in it, how its status moves, and how decisions are written down.
 
 - Before this change the repo had no `docs/` folder. Its README carried both user and maintainer
   material.
-- Pull requests are the only record of decisions so far (#1 to #19 on
+- Pull requests are the only record of decisions so far (automagik-dev/automagik-pocket#1 to automagik-dev/automagik-pocket#19 on
   `automagik-dev/automagik-pocket`).
 - Every pull request commit must have a conventional subject: `.github/workflows/commitlint.yml`
   (the `Check` step).
@@ -117,12 +117,12 @@ Related.
 
 - Owner, 2026-11-01: this repo keeps its documentation as a Brain-style vault in `docs/`, with
   RFCs, decision notes, guides and a privacy page; the README is rewritten for Android users first.
-  (Recorded in PR #21, which the owner asked for as "Brain-style full".) The process text above
+  (Recorded in PR automagik-dev/automagik-pocket#21, which the owner asked for as "Brain-style full".) The process text above
   is still a Draft until the owner accepts it; see open question 1.
 
 ## Alternatives considered
 
-- **Pull request bodies only.** This is what the repo did up to #19. It loses the "why" once the
+- **Pull request bodies only.** This is what the repo did up to automagik-dev/automagik-pocket#19. It loses the "why" once the
   PR scrolls away, and agents don't read old PRs before proposing.
 - **GitHub issues for proposals.** Good for tracking work, weak for a design that needs to be
   read and cited later, and not part of the vault.

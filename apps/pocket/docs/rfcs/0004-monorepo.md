@@ -3,7 +3,7 @@ rfc: "0004"
 title: "One repo: android/ and desktop/pocket-link/"
 status: Implemented
 created: 2026-11-01
-pr: "#20"
+pr: "automagik-dev/automagik-pocket#20"
 ---
 # RFC 0004 — One repo: android/ and desktop/pocket-link/
 
@@ -21,7 +21,7 @@ and CI stay at the root. Build with `cd android && ./gradlew …`.
 
 ## Motivation
 
-Recorded after the fact from #20. The PR describes what moved, not why; see Open questions. For
+Recorded after the fact from automagik-dev/automagik-pocket#20. The PR describes what moved, not why; see Open questions. For
 context only: the app and the mod share a protocol (the `herdr-pocket://pair` link and the iroh
 ALPNs, see [RFC 0003](0003-pocket-link-pairing.md)).
 
@@ -49,7 +49,7 @@ ALPNs, see [RFC 0003](0003-pocket-link-pairing.md)).
 ## Design
 
 - One product version for the app and the mod.
-- Any shipping commit cuts a release, whichever folder it touches. #20 notes that a mod-only change
+- Any shipping commit cuts a release, whichever folder it touches. automagik-dev/automagik-pocket#20 notes that a mod-only change
   cuts a new APK release too.
 - The planned usage meter would sit beside them as `meter/` ([RFC 0005](0005-usage-meter.md)).
   It later moved to its own repository,
@@ -59,8 +59,8 @@ ALPNs, see [RFC 0003](0003-pocket-link-pairing.md)).
 
 - Owner, 2026-11-01: make this repo the product monorepo, with the app in `android/` and Pocket
   Link imported into `desktop/pocket-link/` with its history; merge with a merge commit so that
-  history survives (PR #20).
-- Owner, 2026-11-01: commit linting checks only the pull request's first-parent commits (PR #20).
+  history survives (PR automagik-dev/automagik-pocket#20).
+- Owner, 2026-11-01: commit linting checks only the pull request's first-parent commits (PR automagik-dev/automagik-pocket#20).
 
 ## Alternatives considered
 
@@ -73,10 +73,10 @@ Keeping two repos, as before. Not otherwise discussed in writing.
    here, or kept? — the owner.
 3. Should mod-only changes cut an APK release, or should `release.yml` filter by path? — the owner.
 4. When the mod gets checks, a workflow with `paths: ['desktop/pocket-link/**']` is the suggestion
-   in #20. — the owner.
+   in automagik-dev/automagik-pocket#20. — the owner.
 
 ## Related
 
-- automagik-dev/automagik-pocket #20
+- automagik-dev/automagik-pocket#20
 - [RFC 0003 — Pocket Link pairing](0003-pocket-link-pairing.md)
 - [Development guide](../guides/development.md)
