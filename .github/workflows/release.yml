@@ -210,10 +210,16 @@ jobs:
           KIND: ${{ steps.lane.outputs.kind }}
         run: |
           set -euo pipefail
-          flags=(--latest)
-          [[ "${PRERELEASE}" == "true" ]] && flags=(--prerelease)
-          # A plugin patch is not the Latest release: the desktop app's builds stay on the full one.
-          [[ "${KIND}" == "plugins" ]] && flags=(--latest=false)
+          # Flags add up: a dispatched prerelease stays a prerelease whatever its kind, and only a
+          # full stable release is Latest. A plugin patch is not Latest: the desktop app's builds
+          # stay on the full one.
+          flags=()
+          [[ "${PRERELEASE}" == "true" ]] && flags+=(--prerelease)
+          if [[ "${PRERELEASE}" == "true" || "${KIND}" == "plugins" ]]; then
+            flags+=(--latest=false)
+          else
+            flags+=(--latest)
+          fi
           gh release create "v${VERSION}" release/* "${flags[@]}" \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \

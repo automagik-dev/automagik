@@ -1,5 +1,6 @@
 // The release workflows' shell, run as written with a fake gh: the desktop build keeps the cut's
-// signed lane on the release, and the cut retries the lane's upload to its versioned release.
+// signed lane on the release, the cut retries the lane's upload to its versioned release, and the cut
+// publishes with flags that add up (a prerelease plugin patch stays a prerelease).
 import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -75,5 +76,43 @@ describe('the cut uploading its signed lane to the versioned release', () => {
     expect(run.gh).toEqual([call, call, call]);
     expect(run.sleeps).toEqual(['10', '20']);
     expect(run.out).toContain('::error::lane/lane.json and lane/lane.json.sig did not reach v9.9.9 after 3 tries');
+  });
+});
+
+describe('the cut choosing how to publish its release', () => {
+  const lines = workflow('release.yml');
+  const step = lines.findIndex(line => line.includes('name: Publish the release'));
+  const start = lines.findIndex((line, i) => i > step && line.trim() === 'flags=()');
+  const end = lines.findIndex((line, i) => i > start && line.trim().startsWith('gh release create "v${VERSION}"'));
+  const block = step > -1 && start > step && end > start ? lines.slice(start, end).join('\n') : '';
+
+  const flags = (env: { PRERELEASE: string; KIND: string }) => {
+    const run = bash(`${block}\nprintf '%s\\n' "\${flags[@]}"`, [], env);
+    expect(run.status).toBe(0);
+    return run.out.trim().split('\n');
+  };
+
+  test('is found as the step writes it', () => {
+    expect(block).not.toBe('');
+  });
+
+  test('a full stable release is Latest', () => {
+    expect(flags({ PRERELEASE: 'false', KIND: 'full' })).toEqual(['--latest']);
+  });
+
+  test('a push-triggered release (no prerelease input) is Latest', () => {
+    expect(flags({ PRERELEASE: '', KIND: 'full' })).toEqual(['--latest']);
+  });
+
+  test('a full prerelease is a prerelease, not Latest', () => {
+    expect(flags({ PRERELEASE: 'true', KIND: 'full' })).toEqual(['--prerelease', '--latest=false']);
+  });
+
+  test('a plugin patch is not Latest', () => {
+    expect(flags({ PRERELEASE: 'false', KIND: 'plugins' })).toEqual(['--latest=false']);
+  });
+
+  test('a prerelease plugin patch stays a prerelease', () => {
+    expect(flags({ PRERELEASE: 'true', KIND: 'plugins' })).toEqual(['--prerelease', '--latest=false']);
   });
 });
