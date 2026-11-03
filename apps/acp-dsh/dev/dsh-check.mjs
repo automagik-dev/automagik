@@ -61,7 +61,9 @@ writeFileSync(join(shims, 'pnpm'), '#!/bin/sh\nexec npx --yes pnpm@10.34.6 "$@"\
 const dshEnv = { ...env, DSH_HOME: dshHome, AUTOMAGIK_HOME: join(work, 'automagik'), AUTOMAGIK_PNPM: join(shims, 'pnpm'), PATH: `${shims}:${env.PATH}` }
 execFileSync(process.execPath, [DSH_BIN, 'plugin', '--profile', 'acp', 'install', '--prod', '--ignore-scripts'], { cwd: profile, env: dshEnv, stdio: ['ignore', 'inherit', 'inherit'] })
 
-const ROUTE = { fake: { provider: 'acp-fake', model: 'fake' }, claude: { provider: 'acp-claude', model: 'default' }, codex: { provider: 'acp-codex', model: 'default' } }[AGENT]
+// The fake turn runs on one of the fake agent's own models at one of that model's efforts: DSH
+// must take them from the agent's catalog and the agent must be put on them before the prompt.
+const ROUTE = { fake: { provider: 'acp-fake', model: 'fake-small', effort: 'high' }, claude: { provider: 'acp-claude', model: 'default' }, codex: { provider: 'acp-codex', model: 'default' } }[AGENT]
 // Claude Code in Manual mode asks before a write its own settings do not already allow; Codex in its workspace sandbox (DSH's own
 // workspace-write level) writes inside the folder (and the temp folders) unasked, as DSH's own
 // tools do, and asks for the network.
@@ -88,6 +90,7 @@ writeFileSync(overlay, [
   '  config:',
   `    provider: ${ROUTE.provider}`,
   `    model: ${ROUTE.model}`,
+  ...(ROUTE.effort ? [`    reasoningEffort: ${ROUTE.effort}`] : []),
   '',
 ].join('\n'))
 const project = join(work, 'project')
@@ -145,6 +148,8 @@ else {
   const decided = asked && of('approval/decided').find(row => row.data?.id === asked.data.id)
   const text = of('assistant/message').flatMap(row => row.data?.message?.content ?? []).filter(block => block.type === 'text').map(block => block.text).join('')
   if (AGENT === 'fake' && !/you said "hello there"/.test(text)) failed.push(`the agent's text is not in the log: ${JSON.stringify(text.slice(0, 200))}`)
+  const thought = of('assistant/message').flatMap(row => row.data?.message?.content ?? []).filter(block => block.type === 'reasoning').map(block => block.text).join('')
+  if (AGENT === 'fake' && !/On fake-small at high effort\./.test(thought)) failed.push(`the agent was not on fake-small at high effort: ${JSON.stringify(thought.slice(0, 200))}`)
   if (!call) failed.push('no tool/call of acp_tool')
   else if (AGENT === 'fake' && JSON.parse(call.data.arguments).title !== 'Run echo hello 1') failed.push(`the card is not the agent's call: ${call.data.arguments}`)
   if (call && !result) failed.push('no tool/result for the call')

@@ -64,6 +64,9 @@ export class AgentRun {
       const session = await this.conn.newSession({ cwd, mcpServers: [] })
       this.sessionId = session.sessionId
       this.modes = session.modes
+      this.options = session.configOptions ?? []
+      // The model the agent started on: DSH's `default` model goes back to it.
+      this.startModel = optionOf(this.options, 'model')?.currentValue
     })()
     try {
       await Promise.race([ready, gone])
@@ -164,6 +167,29 @@ export class AgentRun {
     this.modes = { ...this.modes, currentModeId: modeId }
   }
 
+  /** The agent's own option of `category` (`model`, `thought_level`), as it last said. */
+  option(category) {
+    return optionOf(this.options, category)
+  }
+
+  /**
+   * Set the agent's option of `category` to `value`, one of the values it offers. One it does
+   * not offer fails, naming those it does: the turn then fails rather than run on another model
+   * or effort than the person chose.
+   * @param {string} category
+   * @param {string} value
+   */
+  async setOption(category, value) {
+    const option = this.option(category)
+    if (option === undefined) throw new Error(`it has no ${category} setting`)
+    const values = valuesOf(option)
+    if (!values.some(choice => choice.value === value)) throw new Error(`it offers no ${category} ${value} (it offers ${values.map(choice => choice.value).join(', ') || 'none'})`)
+    if (option.currentValue === value) return
+    const answer = await this.held(() => Promise.race([this.conn.setSessionConfigOption({ sessionId: this.sessionId, configId: option.id, value }), this.gone]))
+    // The answer is the whole set: a new model may bring other efforts.
+    this.options = answer?.configOptions ?? this.options.map(other => (other.id === option.id ? { ...other, currentValue: value } : other))
+  }
+
   async cancel() {
     if (!this.busy || this.sessionId === undefined) return
     await this.held(() => this.conn.cancel({ sessionId: this.sessionId })).catch(() => {})
@@ -204,6 +230,9 @@ export class AgentRun {
         this.changeTool(tool, update)
         break
       }
+      case 'config_option_update':
+        if (Array.isArray(update.configOptions)) this.options = update.configOptions
+        break
       case 'current_mode_update':
         if (this.modes) this.modes = { ...this.modes, currentModeId: update.currentModeId }
         break
@@ -259,5 +288,11 @@ export class AgentRun {
     })
   }
 }
+
+/** The option of `category` among an agent's session config options. */
+export const optionOf = (options, category) => (options ?? []).find(option => option?.category === category && option.type === 'select')
+
+/** The values a select option offers, its groups flattened. */
+export const valuesOf = option => (option?.options ?? []).flatMap(entry => (Array.isArray(entry?.options) ? entry.options : [entry])).filter(entry => typeof entry?.value === 'string')
 
 export const isTerminal = tool => TERMINAL.has(tool.status) || tool.ended === true

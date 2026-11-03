@@ -2,8 +2,32 @@
 // A fake ACP agent for tests. Each prompt: two text chunks, one shell-like tool call that asks
 // permission first, then a line saying whether it ran. A prompt that says "twice" makes two
 // calls; one that says "hang" waits until it is cancelled.
+//
+// Like Claude Code's and Codex's adapters it offers its models and each model's efforts as
+// session config options (categories `model` and `thought_level`, the effort list rebuilt per
+// model), and each turn's thoughts start with the model and effort it runs on. With
+// FAKE_ACP_NO_OPTIONS=1 in its environment it offers none, as an older agent would. Its effort
+// list starts with a "default" row, as Claude Code's does; FAKE_ACP_NO_DEFAULT_EFFORT=1 leaves it
+// out, as Codex's does.
 import { Readable, Writable } from 'node:stream'
-import { AgentSideConnection, PROTOCOL_VERSION, ndJsonStream } from '@agentclientprotocol/sdk'
+import { AgentSideConnection, PROTOCOL_VERSION, RequestError, ndJsonStream } from '@agentclientprotocol/sdk'
+
+const MODELS = [
+  { value: 'fake-large', name: 'Fake Large', efforts: ['low', 'medium', 'high'], effort: 'medium' },
+  { value: 'fake-small', name: 'Fake Small', description: 'Quick and cheap', efforts: ['low', 'high'], effort: 'low' },
+  { value: 'fake-plain', name: 'Fake Plain', efforts: [], effort: undefined },
+]
+const OFFERS = process.env.FAKE_ACP_NO_OPTIONS !== '1'
+const DEFAULT_ROW = process.env.FAKE_ACP_NO_DEFAULT_EFFORT === '1' ? [] : [{ value: 'default', name: 'Default' }]
+
+function configOptions(session) {
+  const model = MODELS.find(entry => entry.value === session.model)
+  const options = [{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: model.value, options: MODELS.map(({ value, name, description }) => ({ value, name, ...(description ? { description } : {}) })) }]
+  if (model.efforts.length > 0) {
+    options.push({ id: 'effort', name: 'Effort', category: 'thought_level', type: 'select', currentValue: session.effort ?? 'default', options: [...DEFAULT_ROW, ...model.efforts.map(value => ({ value, name: value[0].toUpperCase() + value.slice(1) }))] })
+  }
+  return options
+}
 
 const stream = ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))
 const sessions = new Map()
@@ -14,8 +38,24 @@ new AgentSideConnection(conn => ({
   },
   async newSession(params) {
     const sessionId = `fake-${sessions.size + 1}`
-    sessions.set(sessionId, { cwd: params.cwd, cancelled: false, turns: 0 })
-    return { sessionId }
+    const session = { cwd: params.cwd, cancelled: false, turns: 0, model: MODELS[0].value, effort: MODELS[0].effort }
+    sessions.set(sessionId, session)
+    return { sessionId, ...(OFFERS ? { configOptions: configOptions(session) } : {}) }
+  },
+  async setSessionConfigOption({ sessionId, configId, value }) {
+    const session = sessions.get(sessionId)
+    if (!OFFERS || !session) throw RequestError.invalidParams(undefined, `Unknown config option: ${configId}`)
+    const option = configOptions(session).find(entry => entry.id === configId)
+    if (!option?.options.some(entry => entry.value === value)) throw RequestError.invalidParams(undefined, `Invalid value for config option ${configId}: ${value}`)
+    if (configId === 'model') {
+      const model = MODELS.find(entry => entry.value === value)
+      session.model = value
+      // A new model keeps the effort when it offers it, else takes its own.
+      if (!model.efforts.includes(session.effort)) session.effort = model.effort
+    } else {
+      session.effort = value === 'default' ? undefined : value
+    }
+    return { configOptions: configOptions(session) }
   },
   async authenticate() { return {} },
   async cancel({ sessionId }) {
@@ -31,6 +71,7 @@ new AgentSideConnection(conn => ({
     session.turns++
     const said = prompt.filter(block => block.type === 'text').map(block => block.text).join(' ')
     const update = u => conn.sessionUpdate({ sessionId, update: u })
+    if (OFFERS) await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: `On ${session.model} at ${session.effort ?? 'no'} effort. ` } })
     await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'Thinking it over.' } })
     await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `Fake agent, turn ${session.turns}: ` } })
     await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `you said "${said}".` } })
