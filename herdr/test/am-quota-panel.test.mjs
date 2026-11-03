@@ -39,11 +39,11 @@ let poll = 1;
 const quotas = () => ({ accounts: QUOTAS.accounts.map((a) => ({ ...a, fetched_at: iso(poll ? NOW : NOW - H),
   windows: a.windows.map((w) => ({ ...w, used_percent: a.email === "ana@example.com" && !poll ? 88 : w.used_percent })) })) });
 const QUOTAS = { accounts: [
-  { name: "codex-0a-ana@example.com-pro.json", provider: "codex", email: "ana@example.com", plan: "pro",
+  { name: "codex-0a-ana-pro.json", provider: "codex", email: "ana@example.com", plan: "pro",
     windows: [{ id: "primary", used_percent: 92, reset_at: iso(NOW + 10 * H) }] },
-  { name: "codex-0b-bo@example.com-pro.json", provider: "codex", email: "bo@example.com", plan: "pro",
+  { name: "codex-0b-bo-pro.json", provider: "codex", email: "bo@example.com", plan: "pro",
     windows: [{ id: "primary", used_percent: 12, reset_at: iso(NOW + 6 * H) }] },
-  { name: "claude-0c-cy@example.com.json", provider: "claude", email: "cy@example.com",
+  { name: "claude-0c-cy.json", provider: "claude", email: "cy@example.com",
     windows: [{ id: "seven_day", used_percent: 41, reset_at: iso(NOW + 50 * H) }] },
 ] };
 const CREDENTIALS = { files: QUOTAS.accounts.map((a) => ({ name: a.name, provider: a.provider, email: a.email, status: "active" })) };
@@ -69,7 +69,7 @@ function makeCx() {
 const ACTIVE = `${state.appHome}/data/am-quota/active.json`;
 const RUNNER = `${state.appHome}/mods/am-sidebar/bin/run.sh`;
 
-async function panel({ config = { url: BASE, name: "lab" }, key = "example-key", active = { codex: { name: "codex-0a-ana@example.com-pro.json" } }, sidebar = true } = {}) {
+async function panel({ config = { url: BASE, name: "lab" }, key = "example-key", active = { codex: { name: "codex-0a-ana-pro.json" } }, sidebar = true } = {}) {
   state.files = new Map();
   state.calls = [];
   if (config) state.files.set(`${state.appHome}/cliproxy.json`, JSON.stringify(config));
@@ -151,8 +151,8 @@ test("Switch to <email>, then the bots still on the old account, and Restart aft
   };
   nodes.get("primary-codex").click(null, cx);
   await cx.settle();
-  assert.deepEqual(installs.at(-1), { provider: "codex", id: "codex-0b-bo@example.com-pro.json" });
-  assert.equal(JSON.parse(state.files.get(ACTIVE)).codex.name, "codex-0b-bo@example.com-pro.json");
+  assert.deepEqual(installs.at(-1), { provider: "codex", id: "codex-0b-bo-pro.json" });
+  assert.equal(JSON.parse(state.files.get(ACTIVE)).codex.name, "codex-0b-bo-pro.json");
   assert.ok(!asked.some((u) => u.includes("/download")), "the fake switch downloads nothing");
 
   let root = draw();
