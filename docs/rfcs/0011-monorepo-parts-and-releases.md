@@ -73,7 +73,7 @@ what a release is and whether it attaches the pack:
 | What shipped | Kind | Version | Attaches | Desktop build | Plugin lane | Market index |
 |---|---|---|---|---|---|---|
 | Since the last release (any tag), only `herdr/` | `herdr` | 3.N.P (next patch) | the pack | no | not re-signed | not re-pinned |
-| Since the last release, only `apps/pocket/` (or `apps/pocket/` and `herdr/`) | `pocket` | 3.N.P | the APK and `latest.json`, the pack when `herdr/` shipped | no | not re-signed | not re-pinned |
+| Since the last release, only `apps/pocket/` (or `apps/pocket/` and the herdr part) | `pocket` | 3.N.P | the APK and `latest.json`, the pack when `herdr/` shipped | no | not re-signed | not re-pinned |
 | Since the last full release, only plugins (and `herdr/`) | `plugins` | 3.N.P | the plugins, the lane, the pack when `herdr/` shipped since the last release | no | signed | pinned |
 | Anything else | `full` | 3.(N+1).0 | everything, the pack when `herdr/` shipped since the last release | yes | signed | pinned |
 
@@ -271,7 +271,7 @@ README, recipe, keys, licence and preview beside the mod, as the pack's mods kee
   aside. Never shipped in the part: its top-level `*.md`, `docs/`, unit tests (`test/`) and
   `android/scripts/` (the terminal page's test, the vendoring script).
 - A release whose shipping changes since the last release are all under `apps/pocket/`, or under
-  `apps/pocket/` and `herdr/`, is a `pocket` patch: 3.N.P, the APK (and the pack when `herdr/`
+  `apps/pocket/` and the herdr part (`herdr/`, `herdr-layout/`), is a `pocket` patch: 3.N.P, the APK (and the pack when `herdr/`
   shipped), no desktop build, no plugin tarballs, no new plugin lane, no market pin, not Latest.
   With plugins or the app in it, the release is a `plugins` patch or a `full` release that also
   builds the APK; Pocket never makes one.

@@ -61,7 +61,7 @@ name: Release
 # v3.N.P, with the plugin tarballs and no desktop build. When everything since the last release
 # (any tag) is under herdr/, it is a herdr patch, v3.N.P with the pack alone: no plugin tarballs, no
 # new lane, no desktop build, no market listing (the plugins did not move). When it is all under
-# apps/pocket/ (or apps/pocket/ and herdr/), it is a pocket patch the same way, with the APK.
+# apps/pocket/ (or apps/pocket/ and the herdr part), it is a pocket patch the same way, with the APK.
 # Every release, full or patch, then signs lane.json (ed25519, the PLUGIN_LANE_KEY secret; the
 # public keys are plugin-lane/keys.json) and puts it on the rolling `plugin-lane` release, which
 # holds nothing else. The desktop app and Omni's market install the plugins from it, without a

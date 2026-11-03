@@ -157,7 +157,7 @@ export const pocketShips = (changed: string[], inert: (path: string) => boolean 
 /**
  * `herdr` when everything shipping in `sinceLast` (the changes since the last release, any tag) is
  * under herdr/: the pack alone, no app and no plugin. `pocket` when it is all under apps/pocket/,
- * or under apps/pocket/ and herdr/: Pocket's app (the pack along when herdr/ shipped). Otherwise whether the changes since the last
+ * or under apps/pocket/ and the herdr part (herdr/, herdr-layout/): Pocket's app (the pack along when herdr/ shipped). Otherwise whether the changes since the last
  * full release are the plugins' alone: every changed path inside a plugin, or under herdr/ or apps/pocket/ (no app
  * build reads it), or one no app build reads (the market index and the version bumps the releases
  * themselves write, the release tooling, tests, `inert` ones), none in a plugin's dev/harness (that

@@ -63,6 +63,8 @@ describe('the plugin lane', () => {
       '.github/workflows/ci.yml', 'scripts/lane.ts', 'scripts/import-pocket.sh', 'docs/rfcs/0011-monorepo-parts-and-releases.md', 'AGENTS.md'];
     expect(kindOf(importing, none, none, importing)).toBe('pocket');
     expect(herdrShips(importing)).toBe(true);
+    // With the layout's own folder (herdr-layout/, the herdr part) it is still a pocket patch, the pack along.
+    expect(kindOf([...app, 'herdr-layout/automagik.json'], none, none, [...app, 'herdr-layout/automagik.json'])).toBe('pocket');
     // A Pocket Link change alone is the pack's lane: herdr/.
     expect(kindOf(['herdr/mods/pocket-link/bridge/bridge.mjs'], none, none, ['herdr/mods/pocket-link/bridge/bridge.mjs'])).toBe('herdr');
     expect(pocketShips(['herdr/mods/pocket-link/bridge/bridge.mjs'])).toBe(false);

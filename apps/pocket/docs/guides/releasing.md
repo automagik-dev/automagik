@@ -20,7 +20,7 @@ cuts a release (`.github/workflows/release.yml`). `scripts/lane.ts` decides what
 
 | Shipping changes since the last release | Kind | Version | Pocket |
 |---|---|---|---|
-| only under `apps/pocket/` (or `apps/pocket/` and `herdr/`) | `pocket` | `3.N.P`, the next patch | the APK and `latest.json` |
+| only under `apps/pocket/` (or `apps/pocket/` and the herdr part, `herdr/` and `herdr-layout/`) | `pocket` | `3.N.P`, the next patch | the APK and `latest.json` |
 | plugins too | `plugins` | `3.N.P` | the APK and `latest.json` when `apps/pocket/` shipped |
 | the desktop app or anything else | `full` | `3.(N+1).0` | the APK and `latest.json` when `apps/pocket/` shipped |
 
