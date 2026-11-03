@@ -40,7 +40,7 @@
 // (shared with the mod, whose loader takes .js) as ESM by detecting its syntax.
 
 import { execFile, execFileSync } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createPublicKey, randomBytes, verify as verifySignature } from "node:crypto";
 import {
   cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync,
   statSync, symlinkSync, writeFileSync,
@@ -50,15 +50,15 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
-  CATALOG_URL, OLD_PACK_NAME, PACK_CATALOG_URLS, PACK_KEYS, PACK_LAYOUT, PACK_NAME, POCKET_LINK, V020_LAYOUT_SHA256, formatMarker, listReleases,
-  newestPack, parseMarker, parseSums, pickUpdate, updatesOff,
+  CATALOG_URL, OLD_PACK_NAME, PACK_CATALOG_URLS, PACK_KEYS, PACK_KEYS_FILE, PACK_LAYOUT, PACK_NAME, POCKET_LINK, POINTER_SIG_URL, POINTER_URL,
+  TIMEOUT_MS, V020_LAYOUT_SHA256, formatMarker, packOfPointer, parseMarker, parseSums, pickUpdate, updatesOff,
 } from "./release.js";
 import { ABSORBED, RENAMES, editTarget, own, renamedFrom } from "./migrate.js";
 import { apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration } from "./migrateHome.mjs";
 import { CLI_LINK, botPaneFolders, hooksNotice, openSpaces, relink, syncHooks } from "./migrateHooks.mjs";
 
-export { CHECK_EVERY_MS, FIRST_CHECK_MS, NO_UPDATE_ENV, PACK_MODS, PACK_NAME, RELEASES_URL, RETRY_MS, compareVersions, listReleases, newestPack,
-  noticeText, packOf, parseSums, pickUpdate, sumsName, tarballName, updatesOff } from "./release.js";
+export { CHECK_EVERY_MS, FIRST_CHECK_MS, LANE_RELEASE, NO_UPDATE_ENV, PACK_MODS, PACK_NAME, POINTER_SIG_URL, POINTER_URL, RETRY_MS, compareVersions,
+  noticeText, packOfPointer, parseSums, pickUpdate, sumsName, tarballName, updatesOff } from "./release.js";
 
 const run = promisify(execFile);
 const DOWNLOAD_TIMEOUT_MS = 120_000;
@@ -118,11 +118,53 @@ async function download(fetch, url, timeoutMs) {
   return Buffer.from(await response.arrayBuffer());
 }
 
-/** Downloads `update`'s tarball (from pickUpdate) into `dir`, verified against its .sha256 before it is written; returns its path. */
+/**
+ * The keys this pack trusts for the pointer: pack-keys.json beside this file, which the release
+ * tarball carries. The installed copy is the trust anchor; a key rotation ships in a pack whose
+ * pointer the old key signed.
+ */
+export const packKeys = (dir = dirname(fileURLToPath(import.meta.url))) => {
+  try { return JSON.parse(readFileSync(join(dir, PACK_KEYS_FILE), "utf8"))?.keys ?? []; } catch { return []; }
+};
+
+/**
+ * pack.json's exact `bytes` and its base64 `signature` checked against `keys` (ed25519, as
+ * plugin-lane's lane.json.sig): the update it names (packOfPointer). Throws when its key is not
+ * one of `keys` or the signature does not match.
+ */
+export function verifyPointer(bytes, signature, keys) {
+  let pointer;
+  try { pointer = JSON.parse(Buffer.from(bytes).toString("utf8")); } catch { throw new Error("the pack pointer is not JSON: refusing it"); }
+  const key = (keys ?? []).find((k) => k?.keyId === pointer?.keyId);
+  if (!key) throw new Error(`the pack pointer is signed by ${pointer?.keyId}, a key this pack does not trust: refusing it`);
+  let ok = false;
+  try { ok = verifySignature(null, Buffer.from(bytes), createPublicKey(key.publicKey), Buffer.from(String(signature ?? "").trim(), "base64")); } catch {}
+  if (!ok) throw new Error("the pack pointer's signature does not match: refusing it");
+  return packOfPointer(pointer);
+}
+
+/**
+ * The newest pack, as the signed pointer names it (verifyPointer), or null when updates are off or
+ * there is no pointer yet (404: no pack released here). Throws on any other answer, a missing
+ * signature, or one that does not verify.
+ */
+export async function fetchPointer({ fetch = globalThis.fetch, env = process.env, keys = packKeys(), timeoutMs = TIMEOUT_MS } = {}) {
+  if (updatesOff(env)) return null;
+  const get = (url) => fetch(url, { headers: { "user-agent": "automagik-herdr" }, redirect: "follow", signal: AbortSignal.timeout(timeoutMs) });
+  const response = await get(POINTER_URL);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`GitHub answered ${response.status} for the pack pointer`);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  const sig = await get(POINTER_SIG_URL);
+  if (!sig.ok) throw new Error(`GitHub answered ${sig.status} for the pack pointer's signature: refusing the pointer`);
+  return verifyPointer(bytes, await sig.text(), keys);
+}
+
+/** Downloads `update`'s tarball (from pickUpdate) into `dir`, checked against the sha256 the signed pointer names before it is written; returns its path. */
 export async function downloadUpdate(update, { fetch = globalThis.fetch, dir, timeoutMs = DOWNLOAD_TIMEOUT_MS } = {}) {
-  const sums = (await download(fetch, update.sums.url, timeoutMs)).toString("utf8");
   const buf = await download(fetch, update.tarball.url, timeoutMs);
-  verifySha256(buf, sums, update.tarball.name);
+  const got = sha256(buf);
+  if (got !== update.sha256) throw new Error(`${update.tarball.name} does not match the signed pointer (sha256 ${got}, expected ${update.sha256}): refusing it`);
   const target = dir ?? mkdtempSync(join(tmpdir(), "automagik-herdr-"));
   mkdirSync(target, { recursive: true });
   const path = join(target, update.tarball.name);
@@ -824,19 +866,19 @@ export function relinkCli({ modsDir = defaultModsDir(), name = PACK_NAME, binDir
 }
 
 /**
- * `{ current, latest, update, disabled }`: latest is the version of the newest release that carries
- * the pack, or null (a desktop or plugin release carries none); update from pickUpdate.
+ * `{ current, latest, update, disabled }`: latest is the version the signed pointer names, or null
+ * (no pack released yet); update from pickUpdate. `keys`: the trusted keys (packKeys by default).
  */
-export async function checkForUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env) } = {}) {
+export async function checkForUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env), keys } = {}) {
   const current = installedVersion({ modsDir });
   if (updatesOff(env)) return { current, latest: null, update: null, disabled: true };
-  const releases = await listReleases({ fetch, env });
-  return { current, latest: newestPack(releases)?.version ?? null, update: pickUpdate(current, releases), disabled: false };
+  const pack = await fetchPointer({ fetch, env, ...(keys ? { keys } : {}) });
+  return { current, latest: pack?.version ?? null, update: pickUpdate(current, pack), disabled: false };
 }
 
 /** check, then download, verify and apply when there is an update. `{ current, latest, update, installed }`. */
-export async function installUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env), log, binDir = null, window = false } = {}) {
-  const found = await checkForUpdate({ fetch, env, modsDir });
+export async function installUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env), keys, log, binDir = null, window = false } = {}) {
+  const found = await checkForUpdate({ fetch, env, modsDir, keys });
   if (!found.update) return { ...found, installed: null };
   const dir = mkdtempSync(join(tmpdir(), "automagik-herdr-"));
   try {

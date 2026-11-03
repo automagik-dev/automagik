@@ -9,10 +9,11 @@
 #   ... | bash -s -- --no-usagemeter  leave ~/.local/bin/usagemeter alone (install and --uninstall)
 #
 # It checks macOS, Node and Herdr (offering Homebrew for the missing ones, asking first),
-# finds the newest Automagik release that carries the pack (a desktop or plugin release of the
-# monorepo carries none), downloads its pack tarball (automagik-herdr-pack-<v>.tgz: every pack mod
-# and layouts/automagik.json) and that tarball's .sha256, checks the hash before anything is
-# written, and installs every
+# reads the signed pointer to the newest pack (the herdr-lane release's pack.json and its ed25519
+# signature, checked against the keys embedded below: a desktop or plugin release carries no
+# pack, so nothing searches the releases), downloads its pack tarball (automagik-herdr-pack-<v>.tgz: every pack mod
+# and layouts/automagik.json), checks it against the sha256 the signed pointer names before
+# anything is written (a --version release against its own .sha256), and installs every
 # pack mod through the pack's own update.mjs: each folder staged, then swapped in, the replaced
 # ones kept together in <app home>/automagik-herdr/.prev. Its ownership record (the marker)
 # lists every folder it put in mods/; only those are ever replaced. Any other folder is left
@@ -31,11 +32,11 @@
 # The whole script is one function, called on its last line: a download cut short by the
 # network defines part of it and runs nothing.
 #
-# For tests: AUTOMAGIK_HERDR_RELEASE_URL, a file:// folder (the releases list, as GitHub's API
-# answers it, at <url>/releases.json, and files at <url>/download/v<version>/<file>) or a page of
-# this repository on github.com; with a
-# file:// one also AUTOMAGIK_HERDR_TTY (default /dev/tty) and AUTOMAGIK_HERDR_APPS (default
-# /Applications). HERDR_APP_HOME as Herdr reads it. A file:// release folder also serves usagemeter's
+# For tests: AUTOMAGIK_HERDR_RELEASE_URL, a file:// folder (files at <url>/download/<tag>/<file>,
+# the pointer at <url>/download/herdr-lane/pack.json) or a page of this repository on github.com;
+# with a file:// one also AUTOMAGIK_HERDR_TTY (default /dev/tty), AUTOMAGIK_HERDR_APPS (default
+# /Applications) and AUTOMAGIK_HERDR_PACK_KEYS (the trusted keys, as TRUSTED_KEYS: a test's own;
+# never honoured for a GitHub URL). HERDR_APP_HOME as Herdr reads it. A file:// release folder also serves usagemeter's
 # releases from <url>/usagemeter/download/v<version>/, so a test never reaches the network.
 
 main() {
@@ -46,9 +47,9 @@ main() {
   # The pack ships on the Automagik monorepo's releases (its herdr/), v<version> in its one version.
   REPO=automagik-dev/automagik
   RELEASES=https://github.com/$REPO/releases
-  RELEASES_API="https://api.github.com/repos/$REPO/releases?per_page=100"
-  # Pages of 100 read, at most, looking for the newest pack (release.js MAX_RELEASE_PAGES, kept equal by a test).
-  MAX_PAGES=10
+  # The keys the pack pointer may be signed with: mods/am-sidebar/pack-keys.json, kept equal by a
+  # test (bun scripts/herdr-lane.ts keygen writes both).
+  TRUSTED_KEYS='{"keys":[]}'
   TTY=/dev/tty
   APPS=/Applications
   APP_HOME=${HERDR_APP_HOME:-$HOME/.config/herdr-app}
@@ -103,7 +104,7 @@ main() {
     esac
     say "Releases from $RELEASES (AUTOMAGIK_HERDR_RELEASE_URL)."
     case $RELEASES in
-      file://*) TTY=${AUTOMAGIK_HERDR_TTY:-$TTY}; APPS=${AUTOMAGIK_HERDR_APPS:-$APPS}; METER_RELEASES=$RELEASES/usagemeter; RELEASES_API=$RELEASES/releases.json ;;
+      file://*) TTY=${AUTOMAGIK_HERDR_TTY:-$TTY}; APPS=${AUTOMAGIK_HERDR_APPS:-$APPS}; METER_RELEASES=$RELEASES/usagemeter; TRUSTED_KEYS=${AUTOMAGIK_HERDR_PACK_KEYS:-$TRUSTED_KEYS} ;;
     esac
   fi
 
@@ -434,26 +435,27 @@ uninstall_meter() {
   fi
 }
 
-# The newest version whose release (in the GitHub releases list page, the file $1) carries the
-# pack: its tarball and .sha256, tag v<X.Y.Z>, not a draft or prerelease. When none does: `full`
-# for a full page (100: read the next) or `last` for a short one. Node is checked before this runs.
-newest_pack() {
+# The pack pointer: pack.json ($1) and its signature ($2), checked against TRUSTED_KEYS (ed25519, as
+# plugin-lane's lane.json.sig). Prints `<version> <sha256>`; on a refusal prints why and returns 1.
+# Node is checked before this runs.
+read_pointer() {
   # shellcheck disable=SC2016 # JavaScript: its ${...} are template literals, not the shell's.
   node -e '
-    const list = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-    let best = null;
-    for (const r of Array.isArray(list) ? list : []) {
-      if (!r || r.draft || r.prerelease === true || typeof r.tag_name !== "string") continue;
-      const m = /^v(\d+)\.(\d+)\.(\d+)$/.exec(r.tag_name);
-      if (!m) continue;
-      const v = m.slice(1).join("."), names = new Set((r.assets || []).map((a) => a && a.name));
-      if (!names.has(`automagik-herdr-pack-${v}.tgz`) || !names.has(`automagik-herdr-pack-${v}.tgz.sha256`)) continue;
-      const n = m.slice(1).map(Number);
-      const newer = !best || (n[0] !== best[0] ? n[0] > best[0] : n[1] !== best[1] ? n[1] > best[1] : n[2] > best[2]);
-      if (newer) best = n;
-    }
-    console.log(best ? best.join(".") : Array.isArray(list) && list.length >= 100 ? "full" : "last");
-  ' "$1" </dev/null
+    const fs = require("fs"), crypto = require("crypto");
+    const [file, sigFile, keysJson] = process.argv.slice(1);
+    const no = (why) => { console.log(why); process.exit(1); };
+    const bytes = fs.readFileSync(file);
+    let p, keys;
+    try { p = JSON.parse(bytes.toString("utf8")); keys = JSON.parse(keysJson).keys || []; } catch { no("it is not a pack pointer"); }
+    const key = keys.find((k) => k && k.keyId === (p && p.keyId));
+    if (!key) no(`it is signed by ${p && p.keyId}, a key this installer does not trust; nothing was installed`);
+    let ok = false;
+    try { ok = crypto.verify(null, bytes, crypto.createPublicKey(key.publicKey), Buffer.from(fs.readFileSync(sigFile, "utf8").trim(), "base64")); } catch {}
+    if (!ok) no("its signature does not match; nothing was installed");
+    const v = p.version, t = p.tarball || {};
+    if (p.schemaVersion !== 1 || p.part !== "herdr" || !/^\d+\.\d+\.\d+$/.test(v || "") || t.name !== `automagik-herdr-pack-${v}.tgz` || !/^[0-9a-f]{64}$/.test(t.sha256 || "")) no("it is not a pack pointer");
+    console.log(`${v} ${t.sha256}`);
+  ' "$1" "$2" "$TRUSTED_KEYS" </dev/null
 }
 
 node_ok() {
@@ -500,38 +502,35 @@ install() {
   say "Herdr: ok."
 
   # ---- d. the pack ----
-  # Nothing is written into the app home before the tarball matches its .sha256.
+  # Nothing is written into the app home before the tarball matches the signed pointer's sha256.
   TMP=$(mktemp -d "${TMPDIR:-/tmp}/automagik-herdr.XXXXXX")
+  want=
   if [ -z "$WANT" ]; then
-    # The newest release is often a desktop or plugin one, with no pack: the newest that carries
-    # the tarball and its .sha256 (not a draft or prerelease) is the one, as the pack's updater picks.
-    # A quiet pack can sit below many of them: page by page (a file:// release folder serves page
-    # N>1 as releases-N.json), until a page holds it or is short, at most MAX_PAGES pages.
-    page=1
-    while [ -z "$WANT" ] && [ "$page" -le "$MAX_PAGES" ]; do
-      case $RELEASES_API in
-        file://*) if [ "$page" = 1 ]; then page_url=$RELEASES_API; else page_url=${RELEASES_API%.json}-$page.json; fi ;;
-        *) page_url="$RELEASES_API&page=$page" ;;
-      esac
-      curl -fsSL --path-as-is "$page_url" -o "$TMP/releases.json" </dev/null || fail "could not list the releases ($page_url)."
-      found=$(newest_pack "$TMP/releases.json") || fail "could not read the releases list from $page_url."
-      case $found in
-        full) page=$((page + 1)) ;;
-        last) break ;;
-        *) WANT=$found ;;
-      esac
-    done
-    [ -n "$WANT" ] || fail "no release of $REPO carries automagik-herdr-pack-<version>.tgz yet (looked through $((page < MAX_PAGES ? page : MAX_PAGES)) page(s) of releases)."
+    # The newest pack, named by the signed pointer: one file and its signature, never a search.
+    POINTER=$RELEASES/download/herdr-lane/pack.json
+    curl -fsSL --path-as-is "$POINTER" -o "$TMP/pack.json" </dev/null || fail "could not download $POINTER (is a pack released yet?)."
+    curl -fsSL --path-as-is "$POINTER.sig" -o "$TMP/pack.json.sig" </dev/null || fail "could not download $POINTER.sig: refusing the pointer."
+    signed=$(read_pointer "$TMP/pack.json" "$TMP/pack.json.sig") || fail "the pack pointer $POINTER: $signed"
+    WANT=${signed%% *}
+    want=${signed#* }
+    checked="the signed pointer"
+    say "Pack pointer: signed by a key this installer trusts; it names $WANT."
   fi
   case $WANT in
     *[!0-9.]*|.*|*.|*..*) fail "--version takes a version like 3.58.0; not $WANT." ;;
   esac
   base=$RELEASES/download/v$WANT
   TGZ=automagik-herdr-pack-$WANT.tgz
-  SUMS=$TGZ.sha256
-  curl -fsSL --path-as-is "$base/$SUMS" -o "$TMP/$SUMS" </dev/null \
-    || fail "could not download $base/$SUMS (does release v$WANT carry the pack? Not every Automagik release does)."
-  grep -Eq "^[0-9a-fA-F]{64} [ *]$TGZ\$" "$TMP/$SUMS" || fail "$base/$SUMS does not list $TGZ."
+  if [ -z "$want" ]; then
+    # --version: that release's own .sha256, which proves integrity, not who published it.
+    SUMS=$TGZ.sha256
+    curl -fsSL --path-as-is "$base/$SUMS" -o "$TMP/$SUMS" </dev/null \
+      || fail "could not download $base/$SUMS (does release v$WANT carry the pack? Not every Automagik release does)."
+    want=$(sed -n "s/^\([0-9a-fA-F]\{64\}\) [ *]$TGZ\$/\1/p" "$TMP/$SUMS" | head -n 1 | tr 'A-F' 'a-f')
+    [ -n "$want" ] || fail "$base/$SUMS does not list $TGZ."
+    checked=$SUMS
+    say "Note: --version $WANT is checked against its release's .sha256 (integrity, not who published it); without --version the newest pack comes through the signed pointer."
+  fi
   VERSION=$WANT
 
   installed=$(mark_get version)
@@ -546,8 +545,7 @@ install() {
   curl -fsSL --path-as-is "$base/$TGZ" -o "$TMP/$TGZ" </dev/null || fail "could not download $base/$TGZ."
   if command -v shasum >/dev/null 2>&1; then sum=$(shasum -a 256 "$TMP/$TGZ"); else sum=$(sha256sum "$TMP/$TGZ"); fi
   sum=${sum%% *}
-  want=$(sed -n "s/^\([0-9a-fA-F]\{64\}\) [ *]$TGZ\$/\1/p" "$TMP/$SUMS" | head -n 1 | tr 'A-F' 'a-f')
-  [ "$sum" = "$want" ] || fail "$TGZ does not match $SUMS (sha256 $sum, expected $want): nothing was installed."
+  [ "$sum" = "$want" ] || fail "$TGZ does not match $checked (sha256 $sum, expected $want): nothing was installed."
   say "Checksum: ok."
   # Only the installer's files come out here, to run them; update.mjs then lists every entry,
   # stages every folder beside mods/, checks again, keeps the replaced set and swaps, and the

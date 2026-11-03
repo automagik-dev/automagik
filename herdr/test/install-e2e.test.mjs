@@ -20,6 +20,7 @@ const INSTALL = join(ROOT, "install.sh");
 const RELEASE_YML = join(ROOT, "..", ".github", "workflows", "release.yml");
 const { PACK_MODS, PACK_KEYS, PACK_LAYOUT, CATALOG_URL, POCKET_LINK, USAGEMETER, V020_LAYOUT_SHA256, sumsName, tarballName } = await import("../mods/am-sidebar/release.js");
 const { hookCommand, legacyHookCommand } = await import("../mods/am-sidebar/briefingText.mjs");
+const { keys: TEST_KEYS, pointerBytes, signatureOf } = await import("./pointer.mjs");
 /** The release this branch becomes (a monorepo release that carries the pack); release.yml sets VERSION to it in the commit it tags. */
 const RELEASE = "3.57.0";
 /** The latest sidebar-only release (v0.2-v0.4.x: automagik-herdr-<v>.tgz, spaces-agents only). */
@@ -173,20 +174,21 @@ if [ "$1" = status ]; then
 fi
 `);
   // The release: download/v<RELEASE>/{the pack, its .sha256}, as GitHub serves it, and the
-  // releases list (GitHub's API, newest first): a newer desktop-only release carries no pack and a
-  // newer prerelease is not offered, so the one-liner installs RELEASE.
+  // herdr-lane release's pack.json naming it, signed (pack.json.sig) with the test key the
+  // installer is told to trust. A newer release the pointer does not name is not offered.
   const { tgz } = pack(launcher);
-  const dl = join(rel, "download", `v${RELEASE}`);
-  mkdirSync(dl, { recursive: true });
   const body = readFileSync(tgz);
-  writeFileSync(join(dl, tarballName(RELEASE)), body);
-  writeFileSync(join(dl, sumsName(RELEASE)), `${sha(body)}  ${tarballName(RELEASE)}\n`);
-  const asset = (name) => ({ name, browser_download_url: `file://${rel}/download/${name}` });
-  writeFileSync(join(rel, "releases.json"), JSON.stringify([
-    { tag_name: "v3.59.0", prerelease: true, draft: false, assets: [asset(tarballName("3.59.0")), asset(sumsName("3.59.0"))] },
-    { tag_name: "v3.58.0", prerelease: false, draft: false, assets: [asset("Automagik-Mac.dmg"), asset("SHA256SUMS")] },
-    { tag_name: `v${RELEASE}`, prerelease: false, draft: false, assets: [asset(tarballName(RELEASE)), asset(sumsName(RELEASE))] },
-  ]));
+  for (const version of [RELEASE, "3.58.0"]) {
+    const dl = join(rel, "download", `v${version}`);
+    mkdirSync(dl, { recursive: true });
+    writeFileSync(join(dl, tarballName(version)), body);
+    writeFileSync(join(dl, sumsName(version)), `${sha(body)}  ${tarballName(version)}\n`);
+  }
+  const lane = join(rel, "download", "herdr-lane");
+  mkdirSync(lane, { recursive: true });
+  const pointer = pointerBytes(RELEASE, { url: `file://${rel}/download/v${RELEASE}/${tarballName(RELEASE)}`, body });
+  writeFileSync(join(lane, "pack.json"), pointer);
+  writeFileSync(join(lane, "pack.json.sig"), `${signatureOf(pointer)}\n`);
   // usagemeter's pinned release, which install.sh reads from <release>/usagemeter/ for file://:
   // each build a script answering --version.
   const meter = join(rel, "usagemeter", "download", `v${USAGEMETER.version}`);
@@ -200,6 +202,7 @@ fi
   const env = {
     HOME: home, TMPDIR: root, PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
     AUTOMAGIK_HERDR_RELEASE_URL: `file://${rel}`, AUTOMAGIK_HERDR_TTY: join(root, "no-tty"), AUTOMAGIK_HERDR_APPS: apps,
+    AUTOMAGIK_HERDR_PACK_KEYS: JSON.stringify({ keys: TEST_KEYS }),
   };
   return {
     launcher, root, home, appHome, mods: join(appHome, "mods"), state: join(appHome, "automagik-herdr"),

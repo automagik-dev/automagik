@@ -6,23 +6,21 @@
 //
 // The pack lives in the Automagik monorepo (herdr/) and ships on its releases, `v<version>` with
 // the monorepo's one version (docs/rfcs/0011-monorepo-parts-and-releases.md there). A release
-// carries the pack only when herdr/ changed since the one before: the newest release (GitHub's
-// `latest`) is often a desktop or plugin release without it, so the update is the newest release
-// that CARRIES automagik-herdr-pack-<v>.tgz and its .sha256, as the desktop's update.js does.
+// carries the pack only when herdr/ changed since the one before, so the newest pack is named by a
+// signed pointer, as plugin-lane names the plugins: the rolling `herdr-lane` release holds pack.json
+// (the newest pack release, its tarball and that tarball's sha256) and pack.json.sig (ed25519 over
+// its exact bytes, base64), checked against the keys this pack carries (pack-keys.json). The
+// signature is checked in update.mjs and install.sh (node:crypto); this file only reads the pointer.
 
 export const REPO = "automagik-dev/automagik";
-/** The repository's releases, newest first: the pack's are among the desktop's and the plugins'. */
-export const RELEASES_PER_PAGE = 100;
-export const RELEASES_URL = `https://api.github.com/repos/${REPO}/releases?per_page=${RELEASES_PER_PAGE}`;
-/** Page `page` (from 1) of the releases list. */
-export const releasesPageUrl = (page) => (page === 1 ? RELEASES_URL : `${RELEASES_URL}&page=${page}`);
-/**
- * How many pages the updater reads, at most, looking for the newest pack: 1000 releases. A quiet
- * pack can sit below many desktop and plugin releases; past this, it says there is no update.
- * The rolling signed pointer (RFC 0011's required follow-up) replaces the search.
- */
-export const MAX_RELEASE_PAGES = 10;
-/** Where the pack lived until v0.7.x; the monorepo's release of it is the first above 3.0.0. */
+/** The rolling release that names the newest pack, and its two files. */
+export const LANE_RELEASE = "herdr-lane";
+export const POINTER_URL = `https://github.com/${REPO}/releases/download/${LANE_RELEASE}/pack.json`;
+export const POINTER_SIG_URL = `${POINTER_URL}.sig`;
+export const POINTER_SCHEMA = 1;
+/** The public keys this pack trusts for the pointer, beside this file: `{ keys: [{ keyId, publicKey (PEM) }] }`. */
+export const PACK_KEYS_FILE = "pack-keys.json";
+/** Where the pack lived until v0.8.x; the monorepo's release of it is the first above 3.0.0. */
 export const OLD_REPO = "automagik-dev/automagik-herdr";
 /** The folder that carries the pack's VERSION, update.mjs and the CLI. */
 export const PACK_NAME = "am-sidebar";
@@ -35,7 +33,7 @@ export const OLD_PACK_NAME = "spaces-agents";
 /**
  * Every mod folder the pack ships (D3, D10): the tarball's top level is exactly these plus
  * `layouts/automagik.json`, and release.yml asserts it. It ships inside the tarball it checks, so
- * it guards against packaging bugs, not tampering (the tarball's .sha256 covers integrity). Pocket
+ * it guards against packaging bugs, not tampering (the signed pointer covers that). Pocket
  * Link is never one of them: Pocket owns it.
  */
 export const PACK_MODS = Object.freeze(["am-automations", "am-footer", "am-markdown", "am-mods", "am-new-menu", "am-quota",
@@ -75,7 +73,7 @@ export const PACK_CATALOG_URLS = Object.freeze([
 ]);
 /** The pack's tarball on release `version` (release.yml's "Pack the herdr pack" step). */
 export const tarballName = (version) => `automagik-herdr-pack-${version}.tgz`;
-/** Its sha256, `sha256sum` output for the tarball alone, beside it on the same release. */
+/** Its sha256, `sha256sum` output for the tarball alone, beside it on the same release (for --version). */
 export const sumsName = (version) => `${tarballName(version)}.sha256`;
 
 /**
@@ -147,44 +145,31 @@ export function compareVersions(a, b) {
 }
 
 /**
- * A release (GitHub's release JSON) as the pack it carries: `{ version, tag, page, tarball:
- * {name, url}, sums: {name, url} }`, or null when it is a draft or prerelease, its tag is not
- * `v<version>`, or it lacks the pack's tarball or its .sha256 (a desktop or plugin release).
+ * The update a pointer (pack.json, parsed, its signature already checked) names: `{ version, tag,
+ * page, sequence, tarball: { name, url }, sha256, size }`. Throws when it is not this pack's
+ * pointer: another schema or part, a version that is not X.Y.Z, a tarball of another name, or a
+ * sha256 that is not 64 hex.
  */
-export function packOf(release) {
-  const tag = release?.tag_name;
-  if (!release || release.draft || release.prerelease === true || typeof tag !== "string" || !tag.startsWith("v")) return null;
-  const version = tag.slice(1);
-  if (Number.isNaN(compareVersions(version, version))) return null;
-  const asset = (name) => {
-    const found = Array.isArray(release.assets) ? release.assets.find((a) => a?.name === name) : null;
-    return typeof found?.browser_download_url === "string" ? { name, url: found.browser_download_url } : null;
+export function packOfPointer(pointer) {
+  const bad = (why) => { throw new Error(`the pack pointer ${why}: refusing it`); };
+  if (!pointer || typeof pointer !== "object") bad("is not JSON");
+  if (pointer.schemaVersion !== POINTER_SCHEMA) bad(`has schema ${pointer.schemaVersion}, not ${POINTER_SCHEMA}`);
+  if (pointer.part !== "herdr") bad(`names part ${pointer.part}, not herdr`);
+  const version = pointer.version;
+  if (typeof version !== "string" || !/^\d+\.\d+\.\d+$/.test(version)) bad(`names version ${version}`);
+  const tarball = pointer.tarball ?? {};
+  if (tarball.name !== tarballName(version)) bad(`names ${tarball.name}, not ${tarballName(version)}`);
+  if (typeof tarball.url !== "string" || !/^(https|file):\/\//.test(tarball.url)) bad("has no tarball URL");
+  if (typeof tarball.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(tarball.sha256)) bad("has no sha256 of 64 hex");
+  const tag = `v${version}`;
+  return {
+    version, tag, page: `https://github.com/${REPO}/releases/tag/${tag}`, sequence: pointer.sequence ?? null,
+    tarball: { name: tarball.name, url: tarball.url }, sha256: tarball.sha256, size: Number.isInteger(tarball.size) ? tarball.size : null,
   };
-  const tarball = asset(tarballName(version));
-  const sums = asset(sumsName(version));
-  if (!tarball || !sums) return null;
-  const page = typeof release.html_url === "string" ? release.html_url : `https://github.com/${REPO}/releases/tag/${encodeURIComponent(tag)}`;
-  return { version, tag, page, tarball, sums };
 }
 
-/** The newest pack among `releases` (the releases list, or one release), or null when none carries it. */
-export function newestPack(releases) {
-  let best = null;
-  for (const release of Array.isArray(releases) ? releases : releases ? [releases] : []) {
-    const pack = packOf(release);
-    if (pack && (!best || compareVersions(pack.version, best.version) > 0)) best = pack;
-  }
-  return best;
-}
-
-/**
- * The update `releases` (GitHub's releases list; one release is taken as a list of one) offer over
- * `current`: the newest release that carries the pack, when it is newer than `current`, else null.
- */
-export function pickUpdate(current, releases) {
-  const pack = newestPack(releases);
-  return pack && compareVersions(pack.version, current) > 0 ? pack : null;
-}
+/** The update `pack` (packOfPointer's) offers over `current`: itself when newer, else null. */
+export const pickUpdate = (current, pack) => (pack && compareVersions(pack.version, current) > 0 ? pack : null);
 
 /** `sha256sum` output (`<hex>  <name>`, `*<name>` in binary mode) as a Map name → lowercase hex. */
 export function parseSums(text) {
@@ -194,31 +179,6 @@ export function parseSums(text) {
     if (m) sums.set(m[2], m[1].toLowerCase());
   }
   return sums;
-}
-
-/**
- * The repository's releases (GitHub's JSON list, newest first), page by page until a page holds a
- * pack (newestPack), a page comes back short (the last one), or `maxPages` pages were read; null
- * when updates are off or the repository is not there (404). Throws on any other answer. `fetch`
- * is injected: Herdr's runtime has none, so the mod reaches this through `node update.mjs check`.
- */
-export async function listReleases({ fetch = globalThis.fetch, env = globalThis.process?.env ?? {}, timeoutMs = TIMEOUT_MS, maxPages = MAX_RELEASE_PAGES } = {}) {
-  if (updatesOff(env)) return null;
-  const all = [];
-  for (let page = 1; page <= maxPages; page++) {
-    const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(timeoutMs) : undefined;
-    const response = await fetch(releasesPageUrl(page), {
-      headers: { accept: "application/vnd.github+json", "user-agent": "automagik-herdr", "x-github-api-version": "2022-11-28" },
-      signal,
-    });
-    if (response.status === 404) return page === 1 ? null : all;
-    if (!response.ok) throw new Error(`GitHub answered ${response.status} for ${REPO}'s releases (page ${page})`);
-    const list = await response.json();
-    if (!Array.isArray(list)) break;
-    all.push(...list);
-    if (newestPack(list) || list.length < RELEASES_PER_PAGE) break;
-  }
-  return all;
 }
 
 /** The mod's notice for `update` (from pickUpdate). */
