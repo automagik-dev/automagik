@@ -234,7 +234,25 @@ async function acpShots(browser, url, dir, problems) {
 }
 
 const port = String(args.port ?? 39400 + Math.floor(Math.random() * 500))
-const dsh = spawn(process.execPath, [DSH_BIN, '--profile', 'boot', '--no-open', '--host', '127.0.0.1', '--port', port], { cwd: work, env: dshEnv, stdio: ['ignore', 'pipe', 'pipe'] })
+// DSH leads its own process group, so what it starts stops with it: acp-dsh's background
+// adapter install (an npm or pnpm a SIGTERM to DSH alone leaves running) writes into
+// AUTOMAGIK_HOME under `work`, and would still be writing there when `work` is removed.
+const dsh = spawn(process.execPath, [DSH_BIN, '--profile', 'boot', '--no-open', '--host', '127.0.0.1', '--port', port], { cwd: work, env: dshEnv, stdio: ['ignore', 'pipe', 'pipe'], detached: true })
+const signalGroup = (signal) => {
+  try {
+    process.kill(-dsh.pid, signal)
+    return true
+  } catch {
+    return false
+  }
+}
+// Out of this terminal's group, DSH would outlive a Ctrl-C or a closed terminal here: stop it too.
+for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) {
+  process.once(signal, () => {
+    signalGroup('SIGKILL')
+    process.exit(code)
+  })
+}
 let log = ''
 let failed = true
 try {
@@ -286,17 +304,25 @@ try {
     await browser.close()
   }
 } finally {
-  dsh.kill('SIGTERM')
+  signalGroup('SIGTERM')
   await new Promise((done) => {
-    const timer = setTimeout(() => {
-      try { dsh.kill('SIGKILL') } catch {}
-      done()
-    }, 8000)
+    if (dsh.exitCode !== null || dsh.signalCode !== null) return done()
+    const timer = setTimeout(done, 8000)
     dsh.once('exit', () => {
       clearTimeout(timer)
       done()
     })
   })
-  if (!args.keep) rmSync(work, { recursive: true, force: true, maxRetries: 3 })
+  // Whatever DSH left running (an install mid-way) goes too, and is gone before `work` is.
+  signalGroup('SIGKILL')
+  for (let i = 0; i < 50 && signalGroup(0); i++) await new Promise(done => setTimeout(done, 100))
+  // The verdict is the checks': a folder that will not go is reported, never a failure.
+  if (!args.keep) {
+    try {
+      rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+    } catch (error) {
+      say(`cleanup: ${work} was not removed (${error.code ?? error.message}); the result above stands`)
+    }
+  }
 }
 process.exit(failed ? 1 : 0)
