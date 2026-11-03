@@ -50,7 +50,7 @@ class IrohTransport(val input: InputStream, val output: OutputStream, private va
     override fun close() = onClose()
 }
 
-/** This phone's iroh endpoint: one key for its life, kept in no-backup storage like its SSH key. */
+/** This phone's iroh endpoint: one key for its life, kept in no-backup storage, which Android never backs up. */
 object IrohLink {
     private val SESSION = "herdr-pocket/1".toByteArray()
     private val PAIR = "herdr-pocket/pair/1".toByteArray()

@@ -10,14 +10,17 @@ data class HostProfile(
     val port: Int = 22, val session: String = "default", val fingerprint: String = "",
     /** Machines this host's core reaches, remembered so they show before the next connection. */
     val linked: List<String> = emptyList(),
-    /** "ssh", or "iroh" for a desktop paired through Herdr's Pocket Link mod ([ticket] says how to reach it). */
+    /** "iroh" for a desktop paired through Herdr's Pocket Link mod ([ticket] says how to reach it); "ssh" for a
+     *  machine saved before SSH was dropped ([LegacySsh]), kept only until it is paired again or removed. */
     val transport: String = "ssh", val ticket: String = ""
 ) {
     val paired get() = transport == "iroh"
+    /** Saved over SSH by an older version: never connected again, only offered "Pair with QR" ([LegacySsh]). */
+    val legacySsh get() = !paired
     /** How the machine is reached, for its card. */
-    val address get() = if (paired) "Paired · Pocket Link" else "$user@$host"
+    val address get() = if (paired) "Paired · Pocket Link" else "$user@$host · SSH, no longer supported"
     /** What protects the connection, for the terminal's status line. */
-    val encryption get() = if (paired) "Pocket Link encrypted" else "SSH encrypted"
+    val encryption get() = "Pocket Link encrypted"
     fun json() = JSONObject().put("id", id).put("name", name).put("host", host)
         .put("user", user).put("port", port).put("session", session).put("fingerprint", fingerprint)
         .put("linked", JSONArray(linked)).put("transport", transport).put("ticket", ticket)

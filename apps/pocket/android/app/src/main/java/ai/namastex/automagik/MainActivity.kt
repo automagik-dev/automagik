@@ -108,14 +108,17 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
 @Composable fun PocketApp(vm: PocketViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
-    var addHost by remember { mutableStateOf(false) }
     var pairDesktop by remember { mutableStateOf(false) }
-    // Pocket Link's QR code; a cancelled scan returns no contents.
-    val scanner = rememberLauncherForActivityResult(ScanContract()) { result -> result.contents?.let(vm::pair) }
+    // Pocket Link's QR code; a cancelled scan returns no contents, and leaves a legacy SSH card it came from as it was.
+    val scanner = rememberLauncherForActivityResult(ScanContract()) { result -> vm.scanned(result.contents) }
+    fun scan() { scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Scan the code in Pocket Link").setBeepEnabled(false).setOrientationLocked(false)) }
+    // A legacy SSH machine's "Pair with QR" ([LegacySsh]): straight to the scanner; the pairing replaces that card.
+    fun repair(host: HostProfile) { vm.repairWithQr(host.id); scan() }
     // The pairing dialog closes once a pairing it started finishes (the outcome shows as a message).
     var wasPairing by remember { mutableStateOf(false) }
     LaunchedEffect(state.pairing) { if (wasPairing && !state.pairing) pairDesktop = false; wasPairing = state.pairing }
-    var addPrefill by remember { mutableStateOf<HostProfile?>(null) }
+    // Pairing started from the general dialog replaces no legacy SSH card, whatever an earlier scan left behind.
+    LaunchedEffect(pairDesktop) { if (pairDesktop) vm.cancelRepair() }
     var editHost by remember { mutableStateOf<HostProfile?>(null) }
     var newTerminal by remember { mutableStateOf(false) }
     val selected = state.selected
@@ -134,16 +137,10 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
         onDispose { bars?.show(WindowInsetsCompat.Type.systemBars()) }
     }
     val disconnected = state.machines.values.none { it.connected || it.terminals.isNotEmpty() }
-    val welcome = selected == null && state.screen == Nav.TODAY && state.space == null && disconnected
-    val browsing = !state.demo && (welcome || (selected == null && state.screen == Nav.MACHINES))
     // Hosts in the order they were saved, then any others: what the spaces tree, Projects and Tasks read.
     val sidebar = state.hosts.mapNotNull { h -> state.machines[h.id]?.let { m -> SidebarHost(h.id, h.name, m.connected, m.spaces, m.terminals, m.linked, m.colors, m.git, m.space, m.bots) } } +
         state.machines.filterKeys { id -> state.hosts.none { it.id == id } }.map { (id, m) -> SidebarHost(id, vm.hostName(id), m.connected, m.spaces, m.terminals, m.linked, m.colors, m.git, m.space, m.bots) }
     val pulse = remember(sidebar, state.seen) { Projects.pulse(sidebar, state.seen) }
-    DisposableEffect(browsing) { if (browsing) vm.discovery.start(); onDispose { vm.discovery.stop() } }
-    val discovered by vm.discovery.hosts.collectAsStateWithLifecycle()
-    val nearby = (listOfNotNull(Discovery.emulatorHost) + discovered).filter { n -> state.hosts.none { it.host == n.host && it.port == n.port } }
-    fun addNearby(n: NearbyHost) { addPrefill = n.prefill(); addHost = true }
     // Repositories and branches re-check every minute while a screen shows them; otherwise only when work stops.
     val gitScreen = selected == null && (state.screen == Nav.PROJECTS || state.screen == Nav.TASKS)
     LaunchedEffect(gitScreen) { vm.gitShown(gitScreen) }
@@ -206,7 +203,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                     }
                     if (root && state.screen == Nav.TODAY && state.machines.values.any { it.connected } && !state.demo)
                         IconButton(onClick = { newTerminal = true }) { Icon(Icons.Outlined.Add, "New terminal", tint = Accent) }
-                    if (root && state.screen == Nav.MACHINES) IconButton(onClick = { addHost = true }) { Icon(Icons.Outlined.Add, "Add machine", tint = Accent) }
+                    if (root && state.screen == Nav.MACHINES) IconButton(onClick = { pairDesktop = true }) { Icon(Icons.Outlined.Add, "Pair a machine", tint = Accent) }
                     if (root) IconButton(onClick = { vm.navigate(Nav.SETTINGS) }) { Icon(Icons.Outlined.Settings, "Settings", tint = Muted) }
                 }
                 (update as? UpdateState.Downloading)?.takeIf { it.manual }?.let { LinearProgressIndicator(progress = { it.progress }, Modifier.fillMaxWidth().height(2.dp), color = Accent, trackColor = Border) }
@@ -225,35 +222,21 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
             when {
                 selected != null -> TerminalScreen(vm, state, terminal, terminalSpace)
                 space != null -> OverviewScreen(state, space, vm, pulse, onAll = vm::showAll)
-                state.screen == Nav.MACHINES -> MachinesScreen(state, nearby, onAdd = { addHost = true }, onPair = { pairDesktop = true }, onAddNearby = ::addNearby, onConnect = { vm.connect(it) }, onEdit = { editHost = it }, onDisconnect = { vm.disconnect(it) }, onRemove = vm::removeHost)
+                state.screen == Nav.MACHINES -> MachinesScreen(state, onPair = { pairDesktop = true }, onRepair = ::repair, onConnect = { vm.connect(it) }, onEdit = { editHost = it }, onDisconnect = { vm.disconnect(it) }, onRemove = vm::removeHost)
                 state.screen == Nav.SETTINGS -> SettingsScreen(state, vm)
                 state.screen == Nav.PROJECTS && project != null -> ProjectScreen(state, vm, project, pulse, remember(rows, project) { Projects.tree(rows, project) })
                 state.screen == Nav.PROJECTS -> ProjectsScreen(state, vm, pulse, rows, spacesTree) { spacesTree = it }
                 state.screen == Nav.TASKS -> TasksScreen(vm, pulse, taskFilter) { taskFilter = it }
-                disconnected -> WelcomeScreen(state, nearby, onAdd = { addHost = true }, onPair = { pairDesktop = true }, onAddNearby = ::addNearby, onConnect = { vm.connect(it) }, onPreview = vm::enterDemo)
+                disconnected -> WelcomeScreen(state, onPair = { pairDesktop = true }, onRepair = ::repair, onConnect = { vm.connect(it) }, onPreview = vm::enterDemo)
                 else -> OverviewScreen(state, null, vm, pulse, onAll = vm::showAll)
             }
         }
     }
     vm.sheet.collectAsStateWithLifecycle().value?.let { StatsSheetHost(it, onDismiss = vm::closeStats) }
-    if (pairDesktop) PairDialog(state.pairing, onDismiss = { pairDesktop = false }, onScan = { scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Scan the code in Pocket Link").setBeepEnabled(false).setOrientationLocked(false)) }, onPair = vm::pair)
+    if (pairDesktop) PairDialog(state.pairing, onDismiss = { pairDesktop = false }, onScan = ::scan, onPair = vm::pair)
     state.offeredPairing?.let { link -> ConfirmPairDialog(link, onPair = { vm.pair(link) }, onCancel = vm::dismissOfferedPairing) }
-    if (addHost) HostDialog(null, onDismiss = { addHost = false; addPrefill = null }, onSave = { vm.saveHost(it); addHost = false; addPrefill = null; vm.connect(it) }, prefill = addPrefill)
-    editHost?.let { host -> HostDialog(host, onDismiss = { editHost = null }, onSave = { vm.saveHost(it); editHost = null }) }
-    state.passwordPrompt?.let { prompt -> state.hosts.find { it.id == prompt.hostId }?.let { host ->
-        ConnectDialog(host, prompt.rejected, onDismiss = vm::dismissPasswordPrompt, onConnect = { password -> vm.connect(host, password) })
-    } }
+    editHost?.takeIf { it.paired }?.let { host -> PairedHostDialog(host, onDismiss = { editHost = null }, onSave = { vm.saveHost(it); editHost = null }) }
     if (newTerminal) NewTerminalDialog(state, onDismiss = { newTerminal = false }) { host, cwd, command -> vm.startTerminal(host, cwd, command); newTerminal = false }
-    state.trust?.let { challenge ->
-        AlertDialog(onDismissRequest = vm::rejectHost, icon = { Icon(Icons.Outlined.Fingerprint, null, tint = Accent) },
-            title = { Text(if (challenge.profile.fingerprint.isBlank()) "Verify this machine" else "Host key has changed") },
-            text = { Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text("${challenge.profile.user}@${challenge.profile.host}:${challenge.profile.port}", color = Muted)
-                Text("Compare this fingerprint with your machine’s SSH host key before trusting it.")
-                SelectionContainer { Text(challenge.presented, fontFamily = FontFamily.Monospace, fontSize = 13.sp) }
-                if (challenge.profile.fingerprint.isNotBlank()) Text("Previously trusted: ${challenge.profile.fingerprint}", color = Blocked, fontSize = 12.sp)
-            } }, confirmButton = { TextButton(onClick = vm::trustHost) { Text("Trust and connect") } }, dismissButton = { TextButton(onClick = vm::rejectHost) { Text("Cancel") } })
-    }
 }
 
 /** The bottom bar: Today, Projects, Tasks, Machines. Today carries how many agents need the person. */
@@ -275,7 +258,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
     }
 }
 
-@Composable fun WelcomeScreen(state: PocketState, nearby: List<NearbyHost>, onAdd: () -> Unit, onPair: () -> Unit, onAddNearby: (NearbyHost) -> Unit, onConnect: (HostProfile) -> Unit, onPreview: () -> Unit) {
+@Composable fun WelcomeScreen(state: PocketState, onPair: () -> Unit, onRepair: (HostProfile) -> Unit, onConnect: (HostProfile) -> Unit, onPreview: () -> Unit) {
     val returning = state.hosts.isNotEmpty()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 28.dp, vertical = 32.dp), verticalArrangement = Arrangement.Center) {
         Surface(color = Raised, shape = RoundedCornerShape(22.dp), modifier = Modifier.size(if (returning) 64.dp else 80.dp)) {
@@ -287,11 +270,10 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
             // Returning users get one-tap connect instead of a detour through Machines.
             Spacer(Modifier.height(28.dp))
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                state.hosts.forEach { host -> QuickConnectRow(host, state.machines[host.id] ?: MachineState(), state.linkedFor(host)) { onConnect(host) } }
+                state.hosts.forEach { host -> QuickConnectRow(host, state.machines[host.id] ?: MachineState(), state.linkedFor(host), state.pairing) { if (host.legacySsh) onRepair(host) else onConnect(host) } }
             }
             Row(Modifier.padding(top = 6.dp)) {
                 TextButton(onClick = onPair) { Icon(Icons.Outlined.QrCodeScanner, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("Pair a desktop") }
-                TextButton(onClick = onAdd) { Icon(Icons.Outlined.Add, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("SSH machine") }
             }
         } else {
             Spacer(Modifier.height(18.dp)); Text("The same agents. The same terminals.\nConnect to your machine and keep going.", color = Muted, fontSize = 15.sp, lineHeight = 24.sp)
@@ -299,29 +281,28 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
             Button(onClick = onPair, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(12.dp)) {
                 Icon(Icons.Outlined.QrCodeScanner, null, Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text("Pair with Herdr desktop", fontWeight = FontWeight.SemiBold)
             }
-            OutlinedButton(onClick = onAdd, modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(48.dp), shape = RoundedCornerShape(12.dp)) {
-                Icon(Icons.Outlined.Terminal, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Connect over SSH")
-            }
         }
-        if (nearby.isNotEmpty()) { Spacer(Modifier.height(24.dp)); NearbySection(nearby, onAddNearby) }
         TextButton(onClick = onPreview, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Explore the interface", color = Muted, fontSize = 13.sp) }
         Spacer(Modifier.height(36.dp)); HorizontalDivider(color = Border); Spacer(Modifier.height(20.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Outlined.Terminal, null, Modifier.size(16.dp), tint = Muted); Spacer(Modifier.width(10.dp)); Text("Connects to your existing herdr-core, paired or over SSH", color = Muted, fontSize = 12.sp) }
+        Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Outlined.Terminal, null, Modifier.size(16.dp), tint = Muted); Spacer(Modifier.width(10.dp)); Text("Connects to your existing herdr-core through Pocket Link", color = Muted, fontSize = 12.sp) }
     }
 }
 
-@Composable fun QuickConnectRow(host: HostProfile, machine: MachineState, linked: List<LinkedMachine>, onConnect: () -> Unit) {
+/** [onConnect]: Connect, or for a legacy SSH machine ([LegacySsh]) "Pair with QR"; [pairing] holds that while one runs. */
+@Composable fun QuickConnectRow(host: HostProfile, machine: MachineState, linked: List<LinkedMachine>, pairing: Boolean, onConnect: () -> Unit) {
+    val legacy = host.legacySsh
     Surface(shape = RoundedCornerShape(14.dp), color = Surface, border = BorderStroke(1.dp, Border),
-        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable(enabled = !machine.connecting, onClick = onConnect)) {
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable(enabled = if (legacy) !pairing else !machine.connecting, onClick = onConnect)) {
         Column(Modifier.padding(16.dp, 14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.Computer, null, Modifier.size(22.dp), tint = Accent); Spacer(Modifier.width(12.dp))
+                Icon(Icons.Outlined.Computer, null, Modifier.size(22.dp), tint = if (legacy) Muted else Accent); Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(host.name, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(host.address, fontSize = 12.sp, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Spacer(Modifier.width(8.dp))
-                if (machine.connecting) CircularProgressIndicator(Modifier.padding(horizontal = 18.dp).size(20.dp), strokeWidth = 2.dp)
+                if (legacy) FilledTonalButton(onClick = onConnect, enabled = !pairing) { Text(LegacySsh.ACTION) }
+                else if (machine.connecting) CircularProgressIndicator(Modifier.padding(horizontal = 18.dp).size(20.dp), strokeWidth = 2.dp)
                 else FilledTonalButton(onClick = onConnect) { Text("Connect") }
             }
             if (linked.isNotEmpty()) {

@@ -16,7 +16,7 @@ Want to check the download first? See [SECURITY.md](SECURITY.md).
 
 ## Connect
 
-### A. Pocket Link (no SSH)
+The app connects through Pocket Link only.
 
 1. On the computer, add the Pocket Link mod to Herdr desktop: follow
    [desktop/pocket-link](desktop/pocket-link/README.md). It needs Node.js 20.3+ and herdr-core,
@@ -27,17 +27,9 @@ Want to check the download first? See [SECURITY.md](SECURITY.md).
    link.
 4. Done. The code works once, for 10 minutes.
 
-### B. SSH
-
-1. On the computer, run herdr-core or open Herdr desktop. `hc server status` should work.
-2. Make SSH reachable from the phone: same network, or Tailscale.
-3. In the app, open **Settings**, tap **Copy public key**, and add it as a line to
-   `~/.ssh/authorized_keys` on the computer. (Or skip this: the app asks for the SSH password and
-   doesn't save it.)
-4. Tap **Add an SSH machine** (or **Machines → Add machine**). Enter the host, user, port and
-   session (`default`). Tap **Save and connect**.
-5. Compare the fingerprint with the computer's host key, then tap **Trust and connect**. For an
-   Ed25519 key: `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`.
+Saved an SSH machine in an older version? It stays in **Machines**, greyed. Tap **Pair with QR**
+on it and scan that computer's code; the old entry goes once it pairs
+([RFC 0008](docs/rfcs/0008-drop-ssh.md)).
 
 More detail: [docs/guides/using.md](docs/guides/using.md).
 
@@ -66,7 +58,7 @@ More detail: [docs/guides/using.md](docs/guides/using.md).
 ## Limits
 
 - Pocket Link needs the desktop mod and Node.js 20.3+ on macOS or Linux.
-- SSH works with Linux and macOS hosts. No jump hosts, no imported SSH keys.
+- No SSH: a computer without Herdr desktop and the Pocket Link mod can't be reached.
 - If Android stops the background service or the phone restarts, open the app and connect again.
 - Spaces and tabs come from the desktop; the app doesn't edit them.
 - The phone's keys can't be backed up. Uninstalling loses them; pair again.

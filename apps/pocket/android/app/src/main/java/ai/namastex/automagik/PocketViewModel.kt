@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 // session increases with each successful connection, so open terminal views know to attach again.
 data class MachineState(val connecting: Boolean = false, val connected: Boolean = false, val version: String = "",
     val terminals: List<CoreTerminal> = emptyList(), val spaces: List<PocketSpace> = emptyList(), val error: String? = null,
-    val session: Int = 0, val needsPassword: Boolean = false, val linked: List<LinkedMachine> = emptyList(),
+    val session: Int = 0, val linked: List<LinkedMachine> = emptyList(),
     /** Desktop avatar colours (shared.json space.colors), by space id. */
     val colors: Map<String, String> = emptyMap(),
     /** Git answers for the drawer, by Sidebar.gitKey: null is not a repository. */
@@ -30,27 +30,27 @@ data class MachineState(val connecting: Boolean = false, val connected: Boolean 
     val bots: Map<String, SpaceFeed.Names> = emptyMap()) {
     /** Dropped or failed, as opposed to never connected or disconnected on purpose. */
     val offline get() = !connected && (connecting || error != null)
-    /** Worth retrying without asking: a dropped or failed connection that isn't waiting on a password. */
-    val retryable get() = !connected && !connecting && error != null && !needsPassword
+    /** Worth retrying without asking: a dropped or failed connection. */
+    val retryable get() = !connected && !connecting && error != null
 }
 /** The demo's one machine, by name: synthetic, nothing real is reached. */
 const val PREVIEW_MACHINE = "Preview machine"
 data class TerminalRef(val hostId: String, val address: String)
-/** Asks for an SSH password after a host rejected this phone's key (or a previous password). */
-data class PasswordPrompt(val hostId: String, val rejected: Boolean)
 data class PocketState(
     val hosts: List<HostProfile> = emptyList(), val machines: Map<String, MachineState> = emptyMap(),
     /** The bottom tab or Settings ([Nav]); [project] ([Projects.Project.key]) and [space] are open over it, [selected] over all. */
     val screen: String = Nav.TODAY, val space: Pair<String, String>? = null, val selected: TerminalRef? = null,
     val project: String? = null,
-    val publicKey: String = "", val trust: HostTrustRequired? = null, val message: String? = null,
+    val message: String? = null,
     val terminalStatus: String = "", val demo: Boolean = false, val sending: Boolean = false,
     val nativeDisplay: Boolean = false, val screenText: String = "",
     val terminalFullscreen: Boolean = true, val nativeAlternateScreen: Boolean = false,
     val fontSize: Int = DEFAULT_FONT_SIZE, val modifiers: KeyModifiers = KeyModifiers(),
-    val refreshing: Boolean = false, val passwordPrompt: PasswordPrompt? = null,
+    val refreshing: Boolean = false,
     /** A Pocket Link pairing is in progress. */
     val pairing: Boolean = false,
+    /** The legacy SSH machine ([LegacySsh]) whose "Pair with QR" started the scan: the next pairing replaces it. */
+    val repairing: String? = null,
     /** A pairing link that arrived from outside the app, waiting for the person to confirm it. */
     val offeredPairing: PairingLink? = null,
     /** Folded drawer machine groups, as "hostId|machine". */
@@ -70,15 +70,13 @@ val FONT_SIZES = 8..24
 
 class PocketViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = application.getSharedPreferences("pocket", 0)
-    val discovery = Discovery(application)
-    private val keys = SshKeys(application.noBackupFilesDir)
+    /** Null when the saved list couldn't be read: it then shows empty, but its SSH entries may still be in the preferences. */
+    private val savedHosts = LegacySsh.loadHosts(prefs.getString("hosts", "[]"))
     private val _state = MutableStateFlow(PocketState(nativeDisplay = prefs.getBoolean("native_display", false),
         fontSize = prefs.getInt("font_size", DEFAULT_FONT_SIZE).coerceIn(FONT_SIZES), folded = prefs.getStringSet("folded_machines", null).orEmpty().toSet(),
         alertSounds = prefs.getBoolean("alert_sounds", true), alertBlocked = prefs.getBoolean("alert_blocked", true), alertDone = prefs.getBoolean("alert_done", true),
         lockAnswers = prefs.getBoolean("lock_answers", false), watch = prefs.getBoolean(WatchResume.PREF_WATCH, true),
-        seen = runCatching { JSONArray(prefs.getString("seen_done", "[]")).let { a -> (0 until a.length()).map(a::getString) }.toSet() }.getOrDefault(emptySet()), hosts = runCatching {
-        JSONArray(prefs.getString("hosts", "[]")).objects().map(HostProfile::parse)
-    }.getOrDefault(emptyList())))
+        seen = runCatching { JSONArray(prefs.getString("seen_done", "[]")).let { a -> (0 until a.length()).map(a::getString) }.toSet() }.getOrDefault(emptySet()), hosts = savedHosts.orEmpty()))
     val state = _state.asStateFlow()
     /** Herdr desktop's program table, for the drawer's names and icons. */
     val programs: Programs by lazy { Programs(JSONObject(application.assets.open("programs.json").bufferedReader().use { it.readText() })) }
@@ -103,7 +101,6 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     }
     private val clients = ConcurrentHashMap<String, CoreClient>()
     private val jobs = ConcurrentHashMap<String, Job>()
-    private val temporaryPasswords = ConcurrentHashMap<String, String>()
     private var attachJob: Job? = null
     private var nativeJob: Job? = null
     @Volatile private var activeChannel: Pair<CoreClient, Int>? = null
@@ -129,10 +126,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
                     .onFailure { e -> _state.update { it.copy(terminalStatus = "Input not sent: ${e.message}") } }
             }
         }
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching { keys.publicKey() }.onSuccess { pub -> _state.update { it.copy(publicKey = pub) } }
-                .onFailure { e -> _state.update { it.copy(message = "Could not create SSH key: ${e.message}") } }
-        }
+        // Older versions made an SSH key for everyone; it goes once no machine saved over SSH is left.
+        dropSshKeyIfUnused()
         // Opening the app checks for an update (setForeground); this tells a waiting one when installing would interrupt.
         Updater.usage = { val s = state.value; Updater.Usage(foreground, s.selected != null, watchText.isNotEmpty()) }
         ProgramIcons.load(application)
@@ -162,7 +157,13 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     fun removeHost(id: String) {
         disconnect(id)
         saveHosts(state.value.hosts.filter { it.id != id })
-        _state.update { it.copy(machines = it.machines - id) }
+        _state.update { it.copy(machines = it.machines - id, repairing = if (it.repairing == id) null else it.repairing) }
+        dropSshKeyIfUnused()
+    }
+    private fun dropSshKeyIfUnused() {
+        // An unreadable saved list may still hold SSH entries: keep the key for as long as this process runs.
+        val hosts = if (savedHosts == null) null else state.value.hosts
+        viewModelScope.launch(Dispatchers.IO) { runCatching { LegacySsh.deleteKeyIfUnused(getApplication<Application>().noBackupFilesDir, hosts) } }
     }
     /** A tab (or Settings), opened at its top. */
     fun navigate(screen: String) { place(Nav.tab(screen)) }
@@ -195,33 +196,24 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     fun showAll() { navigate(Nav.TODAY) }
 
     /** [retry]: a background reconnect's attempt number; a failure schedules the next. */
-    fun connect(profile: HostProfile, password: String? = null, retry: Int = 0) {
+    fun connect(profile: HostProfile, retry: Int = 0) {
+        // The only way out to a machine: SSH is gone, so a legacy entry is offered "Pair with QR" and never dialled.
+        LegacySsh.refusal(profile)?.let { reason -> _state.update { it.copy(message = reason) }; return }
         disconnect(profile.id, deliberate = retry == 0)
-        _state.update { if (it.passwordPrompt?.hostId == profile.id) it.copy(passwordPrompt = null) else it }
         if (state.value.demo) leaveDemo()
-        if (!password.isNullOrBlank()) temporaryPasswords[profile.id] = password
         jobs[profile.id] = viewModelScope.launch(Dispatchers.IO) {
-            updateMachine(profile.id) { it.copy(connecting = true, connected = false, error = null, needsPassword = false) }
+            updateMachine(profile.id) { it.copy(connecting = true, connected = false, error = null) }
             var client: CoreClient? = null
             try {
                 val connectionScope = CoroutineScope(coroutineContext + SupervisorJob(coroutineContext[Job]))
-                val c = if (profile.paired) {
-                    val t = IrohLink.open(getApplication(), profile.ticket, profile.session, connectionScope)
-                    ensureActive()
-                    CoreClient(t.input, t.output, t, connectionScope) { reason -> lost(profile, reason) }
-                } else {
-                    val t = keys.open(profile, password)
-                    ensureActive()
-                    CoreClient(t.input, t.output, t, connectionScope) { reason -> lost(profile, reason) }
-                }
+                val t = IrohLink.open(getApplication(), profile.ticket, profile.session, connectionScope)
+                ensureActive()
+                val c = CoreClient(t.input, t.output, t, connectionScope) { reason -> lost(profile, reason) }
                 client = c
                 val hello = withTimeout(20_000) { c.start() }
                 ensureActive()
                 clients[profile.id] = c
                 gitChecked.keys.removeIf { it.startsWith("${profile.id}|") }
-                temporaryPasswords.remove(profile.id)
-                // A password isn't kept, so such a connection isn't retried on its own.
-                if (password.isNullOrBlank()) passwordHosts.remove(profile.id) else passwordHosts.add(profile.id)
                 retrying.remove(profile.id)
                 updateMachine(profile.id) { it.copy(connecting = false, connected = true, version = hello.optString("version"), error = null, session = it.session + 1) }
                 val changes = Channel<Unit>(Channel.CONFLATED)
@@ -236,21 +228,9 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
                 client?.close()
                 // A timeout is a failed attempt like any other (and is retried); only a real cancel ends quietly.
                 if (e is CancellationException && e !is TimeoutCancellationException) throw e
-                var cause: Throwable? = e
-                while (cause != null && cause !is HostTrustRequired) cause = cause.cause
-                if (cause is HostTrustRequired) _state.update { it.copy(trust = cause as HostTrustRequired) }
-                else if (e.isAuthFailure()) {
-                    temporaryPasswords.remove(profile.id); retrying.remove(profile.id)
-                    val rejected = !password.isNullOrBlank()
-                    updateMachine(profile.id) { it.copy(needsPassword = true, error = if (rejected) "The host didn’t accept that password." else "The host didn’t accept this phone’s key.") }
-                    // Keep a prompt already open for another machine; this one can be retried from its banner.
-                    _state.update { if (it.passwordPrompt == null || it.passwordPrompt.hostId == profile.id) it.copy(passwordPrompt = PasswordPrompt(profile.id, rejected)) else it }
-                }
-                else {
-                    val reason = if (e is TimeoutCancellationException) "The machine didn’t answer in time." else e.message ?: "Connection failed"
-                    temporaryPasswords.remove(profile.id); updateMachine(profile.id) { it.copy(error = reason) }
-                    if (retry > 0) reconnectLater(profile, retry)
-                }
+                val reason = if (e is TimeoutCancellationException) "The machine didn’t answer in time." else e.message ?: "Connection failed"
+                updateMachine(profile.id) { it.copy(error = reason) }
+                if (retry > 0) reconnectLater(profile, retry)
                 updateMachine(profile.id) { it.copy(connecting = false, connected = false) }
             }
         }
@@ -258,7 +238,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     private fun lost(profile: HostProfile, reason: String) {
         val unexpected = jobs[profile.id]?.isActive == true
         clients.remove(profile.id)
-        if (unexpected && profile.id !in passwordHosts) reconnectLater(profile, 1)
+        if (unexpected) reconnectLater(profile, 1)
         updateMachine(profile.id) { it.copy(connected = false, connecting = false, error = "Disconnected: $reason") }
         if (state.value.selected?.hostId == profile.id) _state.update { it.copy(terminalStatus = "Disconnected") }
     }
@@ -270,10 +250,22 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     fun dismissOfferedPairing() { _state.update { it.copy(offeredPairing = null) } }
 
     /** Pairs with the desktop that showed [text] (a Pocket Link QR or pasted link), saves it and connects. */
+    /** A pasted link: it replaces no legacy card. */
     fun pair(text: String) {
-        pair(PairingLink.parse(text) ?: run { _state.update { it.copy(message = "That isn’t a Pocket Link pairing link.") }; return })
+        pair(PairingLink.parse(text) ?: run { _state.update { it.copy(message = LegacySsh.NOT_A_LINK) }; return })
     }
-    fun pair(link: PairingLink) {
+    /** The QR scanner's result (null when cancelled); only a scan opened from a legacy card replaces that card. */
+    fun scanned(text: String?) {
+        var scan: LegacySsh.Scan = LegacySsh.Scan.Cancelled
+        _state.update { s -> LegacySsh.scanned(s, text).also { scan = it.second }.first }
+        (scan as? LegacySsh.Scan.Pair)?.let { pair(it.link, it.replacing) }
+    }
+    /** A legacy SSH card's "Pair with QR": the scan it opens pairs that computer and replaces the card ([LegacySsh]). */
+    fun repairWithQr(hostId: String) { _state.update { LegacySsh.start(it, hostId) } }
+    /** The scan was cancelled: the legacy card stays as it was. */
+    fun cancelRepair() { _state.update(LegacySsh::cancel) }
+    /** [replacing]: the legacy SSH card this pairing replaces once it succeeds ([scanned]); none for a pasted or external link. */
+    fun pair(link: PairingLink, replacing: String? = null) {
         if (state.value.demo) leaveDemo()
         _state.update { it.copy(pairing = true, offeredPairing = null) }
         viewModelScope.launch(Dispatchers.IO) {
@@ -286,25 +278,22 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
                 val profile = (previous ?: HostProfile(UUID.randomUUID().toString(), name, desktop.take(12), "", 0, transport = "iroh"))
                     .copy(ticket = link.ticket, transport = "iroh")
                 withContext(Dispatchers.Main) {
-                    saveHost(profile)
-                    _state.update { it.copy(pairing = false, message = "Paired with $name") }
-                    connect(profile)
+                    // The legacy SSH entry this pairing replaces goes only now, after the pairing succeeded.
+                    val hosts = LegacySsh.afterPairing(state.value.hosts, profile, replacing)
+                    val replaced = state.value.hosts.filter { h -> hosts.none { it.id == h.id } }.map { it.id }
+                    replaced.forEach { disconnect(it) }
+                    saveHosts(hosts)
+                    _state.update { it.copy(pairing = false, repairing = null, machines = it.machines - replaced.toSet(), message = "Paired with $name") }
+                    dropSshKeyIfUnused()
+                    hosts.find { it.id == profile.id }?.let { connect(it) }
                 }
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
-                _state.update { it.copy(pairing = false, message = e.message ?: "Pairing failed") }
+                _state.update { it.copy(pairing = false, repairing = null, message = e.message ?: "Pairing failed") }
             }
         }
     }
 
-    fun trustHost() {
-        val challenge = state.value.trust ?: return
-        val profile = challenge.profile.copy(fingerprint = challenge.presented)
-        saveHosts(state.value.hosts.map { if (it.id == profile.id) profile else it })
-        _state.update { it.copy(trust = null) }
-        connect(profile, temporaryPasswords[profile.id])
-    }
-    fun dismissPasswordPrompt() { _state.update { it.copy(passwordPrompt = null) } }
     fun reconnect(hostId: String) { state.value.hosts.find { it.id == hostId }?.let { connect(it) } }
     /** Pull to refresh: reload connected inventories, and retry machines whose connection dropped or failed. */
     fun refreshAll() {
@@ -312,7 +301,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         if (state.value.demo) { viewModelScope.launch { _state.update { it.copy(refreshing = true) }; delay(400); _state.update { it.copy(refreshing = false) } }; return }
         _state.update { it.copy(refreshing = true) }
         meterRead.clear()
-        val retry = state.value.hosts.filter { h -> state.value.machines[h.id]?.retryable == true }
+        val retry = state.value.hosts.filter { h -> h.paired && state.value.machines[h.id]?.retryable == true }
         retry.forEach { connect(it) }
         viewModelScope.launch(Dispatchers.IO) {
             val started = System.currentTimeMillis()
@@ -328,24 +317,21 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     }
     fun toggleCtrl() { _state.update { it.copy(modifiers = it.modifiers.copy(ctrl = !it.modifiers.ctrl)) } }
     fun toggleAlt() { _state.update { it.copy(modifiers = it.modifiers.copy(alt = !it.modifiers.alt)) } }
-    fun rejectHost() { state.value.trust?.profile?.id?.let { temporaryPasswords.remove(it) }; _state.update { it.copy(trust = null) } }
     /** [deliberate]: the person asked, so a background reconnect in progress ends too. */
     fun disconnect(id: String, deliberate: Boolean = true) {
         reconnects.remove(id)?.cancel()
         if (deliberate) retrying.remove(id)
-        temporaryPasswords.remove(id)
         if (state.value.selected?.hostId == id) detach()
         jobs.remove(id)?.cancel()
         clients.remove(id)?.close()
         // A deliberate disconnect is not an error to surface or retry.
-        updateMachine(id) { it.copy(connected = false, connecting = false, error = null, needsPassword = false) }
+        updateMachine(id) { it.copy(connected = false, connecting = false, error = null) }
     }
     private fun updateMachine(id: String, transform: (MachineState) -> MachineState) {
         _state.update { it.copy(machines = it.machines + (id to transform(it.machines[id] ?: MachineState()))) }
         syncWatch()
     }
     private val reconnects = ConcurrentHashMap<String, Job>()
-    private val passwordHosts = ConcurrentHashMap.newKeySet<String>()
     /** Machines coming back on their own, so the watch service keeps running between attempts. */
     private val retrying = ConcurrentHashMap.newKeySet<String>()
     /** A dropped connection comes back on its own while watching: after 2 s, then longer, up to a minute between tries. */
@@ -369,7 +355,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         val app = getApplication<Application>()
         // What to reconnect if an update or a restart ends the process ([WatchResume]).
         val active = s.machines.filterValues { it.connected || it.connecting }.keys + retrying
-        val watched = WatchResume.watched(s.watch, s.demo, active, passwordHosts + temporaryPasswords.keys)
+        val watched = WatchResume.watched(s.watch, s.demo, active)
         if (watched != kept) { kept = watched; prefs.edit { putStringSet(WatchResume.PREF, watched) } }
         val machines = s.machines.values.count { it.connected }
         if (!s.watch || s.demo || (machines == 0 && retrying.isEmpty() && s.machines.values.none { it.connecting })) {
@@ -387,7 +373,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         val s = state.value
         if (s.demo) return
         val ids = WatchResume.hosts(s.watch, prefs.getStringSet(WatchResume.PREF, null), s.hosts.map { it.id })
-        val hosts = s.hosts.filter { it.id in ids && jobs[it.id]?.isActive != true }
+        // Never a legacy SSH machine a version before RFC 0008 was watching: it would show "Reconnecting…" forever.
+        val hosts = s.hosts.filter { it.id in ids && it.paired && jobs[it.id]?.isActive != true }
         if (hosts.isEmpty()) return
         retrying.addAll(hosts.map { it.id })
         watchText = ""; syncWatch(canStart = true)
@@ -582,7 +569,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         }
         if (names.isNotEmpty()) updateMachine(id) { it.copy(bots = it.bots + names) }
     }
-    /** Herdr desktop's config folder on the core's machine (it may have none: an SSH host without the app). */
+    /** Herdr desktop's config folder on the core's machine (it may have none: a core running without the desktop app). */
     private suspend fun herdrHome(id: String, client: CoreClient): String? = herdrHomes[id] ?: exec(client, "printenv", "HERDR_APP_HOME")
         .ifBlank { (homes[id] ?: exec(client, "printenv", "HOME")).ifBlank { return null } + "/.config/herdr-app" }.also { herdrHomes[id] = it }
     /** The desktop's own icons for the programs on screen, read from its icons folder once per launch; the APK bundles none. */
@@ -894,7 +881,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     fun closeStats() { _sheet.value = null }
     fun leaveDemo() { detach(); _state.update { it.copy(demo = false, machines = emptyMap(), selected = null, space = null, project = null) } }
     fun hostName(hostId: String) = if (state.value.demo) PREVIEW_MACHINE else state.value.hosts.find { it.id == hostId }?.name ?: "Machine"
-    override fun onCleared() { if (current === this) current = null; discovery.stop(); clients.values.forEach { it.close() }; clients.clear() }
+    override fun onCleared() { if (current === this) current = null; clients.values.forEach { it.close() }; clients.clear() }
 }
 
 /** The preview's sample screen for [t]: a header, and the menu its blocked agent waits on (synthetic). */
