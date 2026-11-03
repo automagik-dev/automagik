@@ -27,15 +27,22 @@ jobs:
         run: |
           set -euo pipefail
           bad=0
-          # Only commits made on this repository: those that descend from its own first commit (the
-          # root of dev's first-parent line). The history of a repository imported whole
-          # (scripts/import-herdr.sh: an unrelated history merged in as a second parent,
-          # docs/rfcs/0010-monorepo-parts-and-releases.md) is kept as that repository wrote it; its
-          # commits never descend from that root, on a re-import too, so they are skipped.
+          # Skipped: only the history an import brought (scripts/import-herdr.sh,
+          # docs/rfcs/0011-monorepo-parts-and-releases.md), kept as the source repository wrote it.
+          # An import merge is a merge whose second parent's history never reaches this
+          # repository's own first commit (the root of dev's first-parent line); its imported
+          # commits are those reachable from that second parent and not from its first. A re-run
+          # of the import adds one more such merge, whose new upstream commits are skipped the same
+          # way. Every other commit, before or after a merge of any kind, is checked.
           root=$(git rev-list --first-parent --max-parents=0 "${BASE}")
+          imported=$(for merge in $(git rev-list --merges "${BASE}..${HEAD}"); do
+            if ! git merge-base --is-ancestor "${root}" "${merge}^2"; then
+              git rev-list --no-merges "${merge}^2" --not "${merge}^1" "${BASE}"
+            fi
+          done)
           skipped=0
           for sha in $(git rev-list --no-merges "${BASE}..${HEAD}"); do
-            if ! git merge-base --is-ancestor "${root}" "${sha}"; then
+            if grep -qxF -- "${sha}" <<< "${imported}"; then
               skipped=$((skipped + 1))
               continue
             fi
