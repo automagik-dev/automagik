@@ -118,6 +118,71 @@ jobs:
         if: steps.changed.outputs.herdr == 'true'
         run: node scripts/version.mjs check
 
+      # am (am/, RFC 0012) carries byte-equal copies of the sidebar's CLI and briefing: a herdr
+      # change that drifts from them fails here, in its own pull request. The fix is to run
+      # `node scripts/am-copies.mjs --write` at the repository's root and commit am/.
+      - name: am's copies of the CLI and briefing
+        if: steps.changed.outputs.herdr == 'true'
+        run: node ../scripts/am-copies.mjs --check
+
+  am:
+    # am, the one command (am/, RFC 0012), which every release carries: its tests, a syntax check,
+    # shellcheck on its launchers and its copies of the pack's CLI and briefing. Plain JavaScript
+    # like the pack: its users run Node 22.7 or later; the tests run on the newest Node 22 and 24.
+    # Only when am/, what it copies, or the workflows and tooling that release it changed.
+    name: am (Node ${{ matrix.node }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    defaults:
+      run:
+        working-directory: am
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Whether am/ changed
+        id: changed
+        working-directory: .
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            echo "am=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(am/|herdr/mods/am-sidebar/|plugin-lane/keys\.json$|\.github/workflows/(ci|release)\.yml$|scripts/(am-copies\.mjs|am-lane\.ts|lane\.ts|version\.ts)$)'; then
+            echo "am=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "am/ did not change: nothing to test"
+          fi
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        if: steps.changed.outputs.am == 'true'
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Tests
+        if: steps.changed.outputs.am == 'true'
+        run: node --test 'test/*.test.mjs'
+
+      - name: Syntax
+        if: steps.changed.outputs.am == 'true'
+        run: |
+          set -euo pipefail
+          for f in *.js *.mjs bin/*.mjs lib/*.mjs; do
+            node --check "$f"
+          done
+          shellcheck -s sh bin/am bin/run.sh bin/automagik-herdr
+
+      - name: Copies of the pack's CLI and briefing
+        if: steps.changed.outputs.am == 'true'
+        run: node ../scripts/am-copies.mjs --check
+
   pocket:
     # Pocket's phone app (apps/pocket/, the old automagik-pocket android.yml): the debug APK, the
     # unit tests and lint. Its version is the root package.json's, so a change there builds it too.
