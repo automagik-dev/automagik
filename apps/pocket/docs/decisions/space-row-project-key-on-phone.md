@@ -1,7 +1,7 @@
 ---
 title: "The phone finds a space's Space Row project itself"
 type: decision
-status: Proposed
+status: Accepted
 created: 2026-11-03
 updated: 2026-11-03
 pr: "#45"
@@ -15,9 +15,13 @@ through unchanged and adds nothing.
 
 ## Decision
 
-- Proposed by a coding agent, 2026-11-03, for the Pocket maintainer and the owner to accept or
-  reverse. The task said Pocket Link should resolve each space's project key and bot names, because "the phone can't
-  run git" and "can't read `.herdr/bots.json`". The phone already does both over herdr-core:
+- Owner, 2026-11-03: accepted. The phone resolves the project key and reads `.herdr/bots.json`
+  itself, re-reading it every 5 minutes with the meter, as built. No Pocket Link change.
+- Owner, 2026-11-03: a decision note is enough, no RFC; the [privacy](../privacy.md) row ships in
+  the same pull request (#45).
+- Why it was proposed (by a coding agent, 2026-11-03): the task said Pocket Link should resolve
+  each space's project key and bot names, because "the phone can't run git" and "can't read
+  `.herdr/bots.json`". The phone already does both over herdr-core:
   - It runs `git rev-parse --path-format=absolute --show-toplevel --git-common-dir` on every
     space (`android/app/src/main/java/ai/namastex/automagik/Git.kt:25`). git prints the common dir
     as a real path (symlinks resolved), so its parent is the rules' project key.
@@ -36,12 +40,9 @@ through unchanged and adds nothing.
 
 ## Open questions
 
-1. Does the owner accept this in place of a Pocket Link resolver? — owner.
-2. Bots file version: the phone reads `bots[].name` and `categories[].title` and ignores
+1. Bots file version: the phone reads `bots[].name` and `categories[].title` and ignores
    `version`. Should it refuse files whose version isn't 1, as the desktop does? — the desktop
-   rules' author.
-3. This adds a row to [privacy](../privacy.md) (a read of `.herdr/bots.json`). Is a decision note
-   enough, or does it need an RFC? — owner.
+   rules' author (asked 2026-11-03).
 
 ## Related
 
