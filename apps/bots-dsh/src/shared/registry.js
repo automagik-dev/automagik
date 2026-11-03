@@ -43,10 +43,55 @@ export const HOME_BOT_FIELDS = Object.freeze(['folder', 'machine', 'dsh'])
 /** Top-level fields only the home file may set; never read from a repo file. */
 export const HOME_FIELDS = Object.freeze(['projects', 'shown'])
 
+/**
+ * Never in either file (RFC 0014): memory, rooms, schedules, secrets, Sessions, photos,
+ * permission levels, capabilities, browser grants and partitions. Kept in `raw` like any
+ * field, but never in a parsed `file`, and a write may not add one.
+ */
+export const NEVER_FIELDS = Object.freeze([
+  'memory', 'rooms', 'schedules', 'secrets', 'secret', 'sessionId', 'segments', 'sessions', 'avatar', 'image',
+  'photo', 'permission', 'permissions', 'level', 'capabilities', 'grants', 'browser', 'browserGrants', 'partition',
+  'partitions',
+])
+// Keys that would reach an object's prototype when assigned one by one.
+const UNSAFE_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype'])
+
+/** `identity`: `omni`, `genie`, or a person's own slug (D4). Never a path. */
+export const IDENTITY = /^[a-z0-9]+(-[a-z0-9]+)*$/
+export const MAX_IDENTITY = 64
+/** Size limits. A file over MAX_FILE_BYTES is neither read nor written. */
+export const MAX_FILE_BYTES = 1024 * 1024
+export const MAX_NAME = 200
+export const MAX_ROLE = 1000
+export const MAX_INSTRUCTIONS_HARD = 100_000
+/** Herdr v1's instructions limit: longer ones read with a warning (DSH sets none). */
+export const MAX_INSTRUCTIONS = 4000
+const TEXT_CAPS = Object.freeze({ role: MAX_ROLE, instructions: MAX_INSTRUCTIONS_HARD })
+/** Herdr's seat fields and worker fields: none may start with a dash (a program reads it as an option). */
+const SEAT_FIELDS = Object.freeze(['agent', 'model'])
+const WORKER_FIELDS = Object.freeze(['agent', 'model', 'effort', 'template'])
+
 const isObject = x => x !== null && typeof x === 'object' && !Array.isArray(x)
 const isText = x => typeof x === 'string' && x.trim() !== ''
 const fail = (message, code) => Object.assign(new Error(message), { code })
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+const dashed = x => typeof x === 'string' && x.trimStart().startsWith('-')
+const isIdentity = x => typeof x === 'string' && x.length <= MAX_IDENTITY && IDENTITY.test(x)
+const byteLength = text => (globalThis.TextEncoder ? new TextEncoder().encode(text).length : text.length * 3)
+
+/** Why a Bot's seat field (`agent`, `model`) can't be used, or null. */
+function seatProblem(bot, key) {
+  if (bot[key] === undefined) return null
+  if (!isText(bot[key])) return `${key} is not text`
+  if (dashed(bot[key])) return `${key} starts with a dash`
+  return null
+}
+/** Why a Bot's `worker` can't be used, or null. Herdr checks the rest (model.js workerProblem). */
+function workerProblem(worker) {
+  if (worker === undefined || !isObject(worker)) return null
+  const bad = WORKER_FIELDS.filter(k => dashed(worker[k]))
+  return bad.length ? `worker ${bad.join(', ')} starts with a dash` : null
+}
 const checkKind = kind => {
   if (!KINDS.includes(kind)) throw new Error(`registry: kind is "home" or "repo", not ${JSON.stringify(kind)}`)
 }
@@ -94,12 +139,18 @@ const ID_RULE = 'id is not b- plus 10 base32 characters or session-<uuid>'
  */
 export function parseRegistry(text, { kind } = {}) {
   checkKind(kind)
+  if (byteLength(String(text)) > MAX_FILE_BYTES) throw new Error(`bots.json: larger than ${MAX_FILE_BYTES} bytes`)
   const raw = JSON.parse(text)
   if (!isObject(raw)) throw new Error('bots.json: not an object')
   if (raw.version !== REGISTRY_VERSION) throw new Error(`bots.json: version ${JSON.stringify(raw.version)}, expected ${REGISTRY_VERSION}`)
   if (!Array.isArray(raw.bots)) throw new Error('bots.json: no bots list')
   const file = JSON.parse(text)
   const warnings = []
+  for (const key of [...NEVER_FIELDS, ...UNSAFE_KEYS]) {
+    if (!Object.hasOwn(file, key)) continue
+    warnings.push(`${key} is never kept in bots.json; ignored`)
+    delete file[key]
+  }
   if (kind === 'repo') {
     for (const key of HOME_FIELDS) {
       if (file[key] === undefined) continue
@@ -128,14 +179,30 @@ export function parseRegistry(text, { kind } = {}) {
     if (!isObject(b) || !isBotId(b.id)) return warnings.push(`${where}: ${ID_RULE}; left out`)
     if (bots.some(k => k.id === b.id)) return warnings.push(`${where}: id used twice; left out`)
     if (!isText(b.name)) return warnings.push(`${where}: name is missing; left out`)
+    if (b.name.length > MAX_NAME) return warnings.push(`${where}: name is longer than ${MAX_NAME} characters; left out`)
     const bot = { ...b }
-    for (const key of ['role', 'instructions']) {
-      if (typeof bot[key] === 'string') continue
-      if (bot[key] !== undefined) warnings.push(`${where}: ${key} is not text`)
+    for (const key of [...NEVER_FIELDS, ...UNSAFE_KEYS]) {
+      if (!Object.hasOwn(bot, key)) continue
+      warnings.push(`${where}: ${key} is never kept in bots.json; ignored`)
+      delete bot[key]
+    }
+    for (const [key, cap] of Object.entries(TEXT_CAPS)) {
+      if (typeof bot[key] === 'string' && bot[key].length <= cap) continue
+      if (bot[key] !== undefined) warnings.push(`${where}: ${key} is ${typeof bot[key] === 'string' ? `longer than ${cap} characters` : 'not text'}; ignored`)
       bot[key] = ''
     }
+    if (bot.instructions.length > MAX_INSTRUCTIONS) warnings.push(`${where}: instructions longer than ${MAX_INSTRUCTIONS} characters`)
+    for (const key of SEAT_FIELDS) {
+      const why = seatProblem(bot, key)
+      if (why) { warnings.push(`${where}: ${why}; ignored`); delete bot[key] }
+    }
+    const workerWhy = workerProblem(bot.worker)
+    if (workerWhy) { warnings.push(`${where}: ${workerWhy}; ignored`); delete bot.worker }
     if (bot.main !== undefined && typeof bot.main !== 'boolean') { warnings.push(`${where}: main is not true or false; ignored`); delete bot.main }
-    if (bot.identity !== undefined && !isText(bot.identity)) { warnings.push(`${where}: identity is not text; ignored`); delete bot.identity }
+    if (bot.identity !== undefined && !isIdentity(bot.identity)) {
+      warnings.push(`${where}: identity is not a lowercase slug; ignored`)
+      delete bot.identity
+    }
     if (bot.pet !== undefined) {
       const why = petProblem(bot.pet)
       if (why) { warnings.push(`${where}: ${why}; ignored`); delete bot.pet }
@@ -182,6 +249,9 @@ export function checkRegistry(file, { kind, before = null } = {}) {
   if (!isObject(file) || file.version !== REGISTRY_VERSION || !Array.isArray(file.bots)) return ['not a version 2 bots file']
   const errors = []
   const hadBot = id => (Array.isArray(had?.bots) ? had.bots.find(b => isObject(b) && b.id === id) : undefined)
+  // A field a write may not add: refused only when new or changed, so a hand-written file is never locked.
+  const added = (obj, was, key) => Object.hasOwn(obj, key) && !same(obj[key], was?.[key])
+  for (const key of NEVER_FIELDS) if (added(file, had, key)) errors.push(`${key}: never kept in bots.json`)
   if (kind === 'repo') {
     for (const key of HOME_FIELDS) {
       if (file[key] !== undefined && !same(file[key], had?.[key])) errors.push(`${key}: only the home file holds it`)
@@ -215,12 +285,21 @@ export function checkRegistry(file, { kind, before = null } = {}) {
     if (ids.has(b.id)) errors.push(`${at}: id used twice`)
     ids.add(b.id)
     if (!isText(b.name)) errors.push(`${at}: name is missing`)
-    for (const key of ['role', 'instructions']) if (b[key] !== undefined && typeof b[key] !== 'string') errors.push(`${at}: ${key} is not text`)
+    else if (b.name.length > MAX_NAME) errors.push(`${at}: name is longer than ${MAX_NAME} characters`)
+    for (const [key, cap] of Object.entries(TEXT_CAPS)) {
+      if (b[key] === undefined) continue
+      if (typeof b[key] !== 'string') errors.push(`${at}: ${key} is not text`)
+      else if (b[key].length > cap) errors.push(`${at}: ${key} is longer than ${cap} characters`)
+    }
+    const was = hadBot(b.id)
+    for (const key of NEVER_FIELDS) if (added(b, was, key)) errors.push(`${at}: ${key}: never kept in bots.json`)
+    for (const key of SEAT_FIELDS) { const why = seatProblem(b, key); if (why) errors.push(`${at}: ${why}`) }
+    const workerWhy = workerProblem(b.worker)
+    if (workerWhy) errors.push(`${at}: ${workerWhy}`)
     if (b.main !== undefined && typeof b.main !== 'boolean') errors.push(`${at}: main is not true or false`)
-    if (b.identity !== undefined && !isText(b.identity)) errors.push(`${at}: identity is not text`)
+    if (b.identity !== undefined && !isIdentity(b.identity)) errors.push(`${at}: identity is not a lowercase slug`)
     if (b.pet !== undefined) { const why = petProblem(b.pet); if (why) errors.push(`${at}: ${why}`) }
     if (kind === 'repo') {
-      const was = hadBot(b.id)
       for (const key of HOME_BOT_FIELDS) {
         if (b[key] !== undefined && !same(b[key], was?.[key])) errors.push(`${at}: ${key}: only the home file holds it`)
       }
@@ -256,13 +335,15 @@ export const serializeRegistry = (raw, indent = '  ') => `${JSON.stringify(raw, 
 /**
  * Sets the Bot `patch.id` in `raw` (added at the end when new): only the fields `patch`
  * names change, a field set to undefined is removed, and the Bot's other fields and every
- * other Bot are kept as they were. Returns `raw`.
+ * other Bot are kept as they were. `__proto__`, `constructor` and `prototype` keys are
+ * skipped. Returns `raw`.
  */
 export function putBot(raw, patch) {
   if (!isBotId(patch?.id)) throw new Error(`putBot: ${JSON.stringify(patch?.id)} is not a Bot id`)
   const at = raw.bots.findIndex(b => isObject(b) && b.id === patch.id)
   const bot = at === -1 ? {} : { ...raw.bots[at] }
   for (const [key, value] of Object.entries(patch)) {
+    if (UNSAFE_KEYS.includes(key)) continue
     if (value === undefined) delete bot[key]
     else bot[key] = value
   }
@@ -286,13 +367,39 @@ export function dropBot(raw, id) {
 // the entry has in the source file (`names[i]`), so the person finds it there.
 const renamed = (warnings, names) => warnings.map(w => w.replace(/^bots\[(\d+)\](?: \([^)]*\))?/, (whole, i) => names[i] ?? whole))
 
+// Herdr's default look (model.js defaultLook, and Automagik's lookOf): FNV-1a, then
+// mulberry32 for the colour and murmur3's fmix32 for the shape, so an id gets the same
+// character and colour in both apps.
+const DEFAULT_CHARACTERS = ['star', 'moon', 'gumdrop', 'peanut', 'bunny', 'kitty', 'acorn']
+const DEFAULT_COLOURS = ['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'violet', 'magenta']
+function fnv1a(text) {
+  let value = 2166136261
+  for (let i = 0; i < text.length; i += 1) value = Math.imul(value ^ text.charCodeAt(i), 16777619)
+  return value >>> 0
+}
+
+/** A stable `{ character, colour }` for a Bot id: Herdr's look for a Bot with none. */
+export function defaultLook(botId) {
+  const id = String(botId)
+  const t = (fnv1a(id) + 1831565813) | 0
+  let n = Math.imul(t ^ (t >>> 15), 1 | t)
+  n = (n + Math.imul(n ^ (n >>> 7), 61 | n)) ^ n
+  const colour = DEFAULT_COLOURS[Math.floor((((n ^ (n >>> 14)) >>> 0) / 4294967296) * DEFAULT_COLOURS.length)]
+  let v = fnv1a(id) | 0
+  v = Math.imul(v ^ (v >>> 16), 73244475)
+  v = Math.imul(v ^ (v >>> 13), 3266489909)
+  const character = DEFAULT_CHARACTERS[((v ^ (v >>> 16)) >>> 0) % DEFAULT_CHARACTERS.length]
+  return { character, colour }
+}
+
 /** Herdr's v1 `kind` values. */
 export const HERDR_V1_KINDS = Object.freeze(['main', 'member'])
 
 /**
  * Herdr's `<project>/.herdr/bots.json`, version 1, as a version 2 repo file: `kind: "main"`
- * becomes `main: true` and `kind` goes; `look` gives the pet `team/<character>-<colour>`
- * (D4, baked on demand) and is kept, since Herdr draws it until the bake lands; every other
+ * becomes `main: true` and `kind` goes; `look` (defaultLook's when it has none, as Herdr
+ * does) gives the pet `team/<character>-<colour>` (D4, baked on demand) and is kept, since
+ * Herdr draws it until the bake lands; every other
  * field is kept. Throws when it is not JSON, not version 1 or has no bots list; otherwise
  * what can't be used is left out with a warning (parseRegistry's rules, as a repo file).
  */
@@ -310,9 +417,12 @@ export function fromHerdrV1(text) {
     if (!HERDR_V1_KINDS.includes(b.kind)) return warnings.push(`${where}: kind ${JSON.stringify(b.kind)} is not main or member; left out`)
     const { kind, ...bot } = b
     if (kind === 'main') bot.main = true
-    if (bot.pet === undefined && isObject(b.look) && isText(b.look.character) && isText(b.look.colour)) {
-      bot.pet = { source: 'team', id: `${b.look.character}-${b.look.colour}` }
+    // As Herdr's parseBots: a Bot with no usable look gets the default one.
+    if (!isObject(bot.look) || typeof bot.look.character !== 'string' || typeof bot.look.colour !== 'string') {
+      warnings.push(`${where}: no look, the default is used`)
+      bot.look = defaultLook(bot.id)
     }
+    if (bot.pet === undefined) bot.pet = { source: 'team', id: `${bot.look.character}-${bot.look.colour}` }
     bots.push(bot)
     names.push(where)
   })
@@ -456,6 +566,7 @@ export async function writeRegistry(path, raw, expected, { kind, fs, wait, stale
   if (errors.length) throw fail(`Not saved: ${path}: ${errors.join('; ')}`, 'registry/invalid')
   const io = await loadFs(fs)
   const text = serializeRegistry(raw, expected === null ? '  ' : indentOf(expected))
+  if (byteLength(text) > MAX_FILE_BYTES) throw fail(`Not saved: ${path}: larger than ${MAX_FILE_BYTES} bytes`, 'registry/invalid')
   io.mkdirSync(parentOf(path), { recursive: true })
   return withLock(`${path}.lock`, async () => {
     const now = await readRegistryText(path, { fs: io })

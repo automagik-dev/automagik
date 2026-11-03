@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import {
-  BOT_ID, checkRegistry, dropBot, dropLock, emptyRegistry, fromDshState, fromHerdrV1, indentOf, isBotId, newBotId,
-  parseRegistry, putBot, readRegistryText, takeLock, updateRegistry, writeRegistry,
+  BOT_ID, MAX_FILE_BYTES, checkRegistry, defaultLook, dropBot, dropLock, emptyRegistry, fromDshState, fromHerdrV1,
+  indentOf, isBotId, newBotId, parseRegistry, putBot, readRegistryText, takeLock, updateRegistry, writeRegistry,
 } from '../src/shared/registry.js'
 
 const ID = { main: 'b-mainmain22', dev: 'b-devdevdev3', dsh: 'session-0b3c1f9e-4d1a-4c55-9a7e-2f6b8d1e0a77' }
@@ -404,4 +404,121 @@ test('state.json reader: DSH\'s Bots in the v2 shape, nothing private, pinned an
   const noName = JSON.parse(state)
   noName.bots[ID.dsh].name = ''
   assert.deepEqual(fromDshState(noName).warnings.at(-1), `bots.${ID.dsh}: name is missing; left out`)
+})
+
+test('the fields never in either file, and dash-led seat fields, stay in raw but out of file', () => {
+  const raw = repoFile()
+  Object.assign(raw.bots[1], {
+    permission: 'full', capabilities: ['shell'], sessionId: 'session-x', memory: { a: 1 }, avatar: { image: 'data:' },
+    agent: '-rf', model: '--dangerously-skip-permissions', worker: { agent: 'codex', template: '-x' },
+  })
+  raw.secrets = { token: 'x' }
+  const parsed = parseRegistry(text(raw), { kind: 'repo' })
+  const dev = parsed.file.bots[1]
+  for (const key of ['permission', 'capabilities', 'sessionId', 'memory', 'avatar', 'agent', 'model', 'worker']) {
+    assert.equal(Object.hasOwn(dev, key), false, key)
+  }
+  assert.equal(parsed.file.secrets, undefined)
+  assert.equal(parsed.raw.bots[1].permission, 'full')
+  assert.equal(parsed.raw.secrets.token, 'x')
+  assert.ok(parsed.warnings.includes(`bots[1] (${ID.dev}): permission is never kept in bots.json; ignored`))
+  assert.ok(parsed.warnings.includes(`bots[1] (${ID.dev}): agent starts with a dash; ignored`))
+  assert.ok(parsed.warnings.includes(`bots[1] (${ID.dev}): worker template starts with a dash; ignored`))
+  assert.ok(parsed.warnings.includes('secrets is never kept in bots.json; ignored'))
+  // A write may not add them, in either file; one a hand-written file already had stays writable.
+  const errors = checkRegistry(raw, { kind: 'repo', before: text(repoFile()) })
+  for (const want of [
+    `bots[1] (${ID.dev}): permission: never kept in bots.json`,
+    `bots[1] (${ID.dev}): capabilities: never kept in bots.json`,
+    `bots[1] (${ID.dev}): sessionId: never kept in bots.json`,
+    `bots[1] (${ID.dev}): agent starts with a dash`,
+    `bots[1] (${ID.dev}): model starts with a dash`,
+    `bots[1] (${ID.dev}): worker template starts with a dash`,
+    'secrets: never kept in bots.json',
+  ]) assert.ok(errors.includes(want), want)
+  const fixedSeats = structuredClone(raw)
+  Object.assign(fixedSeats.bots[1], { agent: 'codex', worker: { agent: 'codex' } })
+  delete fixedSeats.bots[1].model
+  assert.deepEqual(checkRegistry(fixedSeats, { kind: 'repo', before: text(raw) }), [])
+})
+
+test('putBot skips __proto__, constructor and prototype keys', () => {
+  const raw = repoFile()
+  const patch = JSON.parse(`{ "id": "${ID.dev}", "name": "Safe", "__proto__": { "polluted": true }, "constructor": { "x": 1 }, "prototype": 2 }`)
+  putBot(raw, patch)
+  const dev = raw.bots[1]
+  assert.equal(Object.getPrototypeOf(dev), Object.prototype)
+  assert.equal(dev.polluted, undefined)
+  assert.equal({}.polluted, undefined)
+  assert.equal(Object.hasOwn(dev, 'constructor'), false)
+  assert.equal(Object.hasOwn(dev, 'prototype'), false)
+  assert.equal(dev.name, 'Safe')
+  // A parsed file never carries one either.
+  const own = text(repoFile()).replace(`"id": "${ID.dev}",`, `"id": "${ID.dev}", "__proto__": { "polluted": true },`)
+  const { file } = parseRegistry(own, { kind: 'repo' })
+  assert.equal(Object.hasOwn(file.bots[1], '__proto__'), false)
+  assert.equal(Object.getPrototypeOf(file.bots[1]), Object.prototype)
+})
+
+test('identity is a lowercase slug, never a path', () => {
+  for (const bad of ['../../etc', 'Omni', 'a/b', '-x', 'x'.repeat(65), ' ']) {
+    const raw = homeFile()
+    raw.bots[0].identity = bad
+    const parsed = parseRegistry(text(raw), { kind: 'home' })
+    assert.equal(parsed.file.bots[0].identity, undefined, bad)
+    assert.ok(parsed.warnings.includes(`bots[0] (${ID.dsh}): identity is not a lowercase slug; ignored`), bad)
+    assert.deepEqual(checkRegistry(raw, { kind: 'home' }), [`bots[0] (${ID.dsh}): identity is not a lowercase slug`], bad)
+  }
+  for (const good of ['omni', 'genie', 'my-own-2']) {
+    const raw = homeFile()
+    raw.bots[0].identity = good
+    assert.deepEqual(checkRegistry(raw, { kind: 'home' }), [], good)
+  }
+})
+
+test('size limits: the file, the name, the role and the instructions', async (t) => {
+  const raw = repoFile()
+  raw.bots[0].instructions = 'x'.repeat(4001)
+  raw.bots[1].role = 'r'.repeat(1001)
+  raw.bots.push({ id: 'b-longnamexx', name: 'n'.repeat(201) })
+  const parsed = parseRegistry(text(raw), { kind: 'repo' })
+  // Herdr v1's 4000: read with a warning (DSH sets no limit, so a write keeps them).
+  assert.equal(parsed.file.bots[0].instructions.length, 4001)
+  assert.ok(parsed.warnings.includes(`bots[0] (${ID.main}): instructions longer than 4000 characters`))
+  assert.equal(parsed.file.bots[1].role, '')
+  assert.ok(parsed.warnings.includes(`bots[1] (${ID.dev}): role is longer than 1000 characters; ignored`))
+  assert.deepEqual(parsed.file.bots.map(b => b.id), [ID.main, ID.dev])
+  assert.deepEqual(checkRegistry(raw, { kind: 'repo' }).sort(), [
+    `bots[1] (${ID.dev}): role is longer than 1000 characters`,
+    'bots[2] (b-longnamexx): name is longer than 200 characters',
+  ])
+  const huge = repoFile()
+  huge.bots[0].instructions = 'x'.repeat(100_001)
+  assert.deepEqual(checkRegistry(huge, { kind: 'repo' }), [`bots[0] (${ID.main}): instructions is longer than 100000 characters`])
+  // The whole file: not read, not written.
+  const big = repoFile()
+  big.padding = 'p'.repeat(MAX_FILE_BYTES)
+  assert.throws(() => parseRegistry(text(big), { kind: 'repo' }), /larger than 1048576 bytes/)
+  const path = join(tempDir(t), 'bots.json')
+  await assert.rejects(writeRegistry(path, big, null, { kind: 'repo' }), { code: 'registry/invalid', message: /larger than 1048576 bytes/ })
+  assert.equal(existsSync(path), false)
+})
+
+test('v1 reader: a Bot with no look gets Herdr\'s default look, and its pet', () => {
+  // Herdr's own model.js defaultLook gives these (checked against it on 5000 ids).
+  assert.deepEqual(defaultLook('b-aaaaaaaaaa'), { character: 'peanut', colour: 'blue' })
+  assert.deepEqual(defaultLook('b-cccccccccc'), { character: 'acorn', colour: 'orange' })
+  assert.deepEqual(defaultLook('b-xzrwondddr'), { character: 'kitty', colour: 'yellow' })
+  const v1 = JSON.parse(fixture('herdr-v1-automagik.json'))
+  delete v1.bots[0].look
+  v1.bots.push({ id: 'b-cccccccccc', kind: 'member', name: 'Dev', agent: 'claude', look: 'star' })
+  const { file, warnings } = fromHerdrV1(JSON.stringify(v1))
+  assert.deepEqual(file.bots.map(b => [b.look, b.pet]), [
+    [{ character: 'kitty', colour: 'yellow' }, { source: 'team', id: 'kitty-yellow' }],
+    [{ character: 'acorn', colour: 'orange' }, { source: 'team', id: 'acorn-orange' }],
+  ])
+  assert.deepEqual(warnings, [
+    'bots[0] (b-xzrwondddr): no look, the default is used',
+    'bots[1] (b-cccccccccc): no look, the default is used',
+  ])
 })
