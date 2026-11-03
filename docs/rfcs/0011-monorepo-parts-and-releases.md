@@ -137,7 +137,10 @@ plugins (`scripts/herdr-lane.ts`):
 ### Making the key
 
 `HERDR_PACK_KEY` is made once by a maintainer with admin rights on the repository (t259 or the
-owner), the way `PLUGIN_LANE_KEY` was:
+owner). `scripts/lane.ts` has no key command (it only reads `PLUGIN_LANE_KEY`), so how that key
+was made is not recorded here; this is the documented process for the pack's key, and the same
+key type and format (ed25519, PKCS#8 PEM in the secret, SPKI PEM in the keys file) as the plugin
+lane's:
 
 ```sh
 bun scripts/herdr-lane.ts keygen            # --repo automagik-dev/automagik, --key-id herdr-pack-2026-11
