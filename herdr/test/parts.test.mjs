@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { PART_IDS, contextOf, doctor, install, packSource, partOf, runCommand, sidebarCarries, uninstall } from "../mods/am-sidebar/parts.mjs";
 import { main, parseArgs } from "../mods/am-sidebar/pack/part.mjs";
 import { ownHook, withoutHooks } from "../mods/am-sidebar/migrateHooks.mjs";
@@ -345,4 +345,54 @@ test("herdr.am-sidebar switches off like any member only once the command and th
   assert.equal(uninstall(m.ctx(), P("herdr.am-sidebar")).changed, false, "idempotent once off");
   install(m.ctx(), P("herdr.am-sidebar"), packSource);
   assert.ok(existsSync(join(m.mods, "am-sidebar", "main.js")));
+});
+
+test("herdr.pack and herdr.layout run from am's stored extract, outside the app home, while the sidebar is off", async (t) => {
+  const m = machine(t);
+  install(m.ctx(), P("herdr.pack"), packSource);
+  install(m.ctx(), P("herdr.layout"), packSource);
+  // am takes over the command and the briefing; the sidebar then switches off like any member.
+  const am = join(m.dir, "am");
+  mkdirSync(am);
+  writeFileSync(join(am, "am.mjs"), "// am\n");
+  const link = join(m.binDir, "automagik-herdr");
+  rmSync(link);
+  symlinkSync(join(am, "am.mjs"), link);
+  const entry = join(m.app, "automagik-herdr", "briefing.mjs");
+  writeFileSync(entry, "// am's entry point\n");
+  uninstall(m.ctx(), P("herdr.am-sidebar"));
+  uninstall(m.ctx(), P("herdr.am-tabs"));
+  assert.ok(existsSync(join(m.off, "am-sidebar")) && !existsSync(join(m.mods, "am-sidebar")));
+
+  // am's stored copy of the verified extract: the entries load from there, never from mods/.
+  const store = join(m.dir, "store");
+  mkdirSync(store);
+  const tgz = join(m.dir, "p.tgz");
+  execFileSync(process.execPath, [join(ROOT, "scripts", "pack.mjs"), "--worktree", "--out", tgz]);
+  execFileSync("tar", ["-xzf", tgz, "-C", store]);
+  const entryOf = await import(pathToFileURL(join(store, "am-sidebar", "pack", "part.mjs")).href);
+  const partsOf = await import(pathToFileURL(join(store, "am-sidebar", "parts.mjs")).href);
+  const run = (argv, select) => {
+    const out = [];
+    const ctx = partsOf.contextOf({ env: { ...m.env, AM_PART_DIR: join(store, select), AM_JSON: "1" }, log: () => {}, platform: "darwin" });
+    return { code: entryOf.main(argv, { ctx, out: (l) => out.push(l) }), lines: out.map((l) => JSON.parse(l)) };
+  };
+
+  const d = run(["doctor", "herdr.pack"], "am-sidebar/pack");
+  assert.equal(d.code, 0, JSON.stringify(d.lines.filter((c) => !c.ok)));
+  assert.match(d.lines.find((c) => c.check === "pack-version").detail, /mods-disabled\/am-sidebar\/VERSION/);
+  assert.match(d.lines.find((c) => c.check === "briefing-entry").detail, /another part's \(am\)/);
+  assert.equal(run(["doctor", "herdr.layout"], "am-sidebar/layout").code, 0);
+
+  assert.equal(run(["uninstall", "herdr.layout"], "am-sidebar/layout").code, 0);
+  assert.ok(!existsSync(join(m.app, "layouts", "automagik.json")));
+  assert.equal(run(["uninstall", "herdr.pack"], "am-sidebar/pack").code, 0);
+  assert.deepEqual(ls(m.mods), []);
+  assert.deepEqual(ls(m.off), [], "the switched-off mods leave with the pack");
+  const kept = readFileSync(join(m.app, "automagik-herdr", ".prev", ".pack"), "utf8");
+  assert.match(kept, /^off=am-sidebar,am-tabs$/m, "the kept set says which were off");
+  assert.equal(readFileSync(entry, "utf8"), "// am's entry point\n", "am's briefing entry point stays");
+  assert.equal(readlinkSync(link), join(am, "am.mjs"), "am's command stays");
+  assert.equal(readMarker(m.mods), null);
+  assert.equal(run(["doctor", "herdr.pack"], "am-sidebar/pack").code, 1, "not installed any more");
 });

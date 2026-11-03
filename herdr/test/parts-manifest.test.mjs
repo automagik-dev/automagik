@@ -128,6 +128,10 @@ test("writes: Herdr's shared.json and data/, Pocket Link, a LaunchAgent or a mac
     ["~/.config/herdr-app/d*/**", /can match ~\/.config\/herdr-app\/data\/x: Herdr's data\//],
     ["~/.config/herdr-app/layouts/../shared.json", /a path with \.\. is not a part's to write/],
     ["~/**", /can match/],
+    ["~/.config/HERDR-APP/shared.json", /Herdr's shared.json/],
+    ["~/.config/herdr-app/Shared.json", /Herdr's shared.json/],
+    ["~/.config/herdr-app/DATA/x", /Herdr's data\//],
+    ["$HERDR_APP_HOME/SHARED.JSON", /Herdr's shared.json/],
     ["~/.config/herdr-app/mods/pocket-*/**", /Pocket Link/],
     ["/Users/someone/.local/bin/x", /start it with ~\/ \(the home\), \$HERDR_APP_HOME\/ \(Herdr's app home\) or \*\*\/ \(any project\)/],
     ["$HOME/.local/bin/x", /start it with/],
@@ -162,6 +166,21 @@ test("no two parts anywhere in the repository write one place, unless one replac
   parts["herdr/mods/am-tabs/part.json"] = modPart("am-tabs");
   parts["apps/x/part.json"] = "{ broken";
   assert.deepEqual(problemsOf(parts), [], "another folder's broken manifest is its own gate's");
+});
+
+test("every capability a part requires is provided by some part.json the repository tracks", () => {
+  const parts = valid();
+  parts["herdr/mods/am-tabs/part.json"] = modPart("am-tabs", { requires: [{ cap: "nobody.provides", major: 1 }] });
+  assert.match(problemsOf(parts).join("\n"), /am-tabs\/part.json: requires nobody.provides@1, which no part.json provides/);
+  parts["herdr/mods/am-tabs/part.json"] = modPart("am-tabs", { requires: [{ cap: "herdr.am-sidebar", major: 2 }] });
+  assert.match(problemsOf(parts).join("\n"), /requires herdr.am-sidebar@2, which no part.json provides/, "the major must match");
+  parts["am/part.json"] = { id: "automagik.am", provides: ["nobody.provides@1"], writes: [] };
+  parts["herdr/mods/am-tabs/part.json"] = modPart("am-tabs", { requires: [{ cap: "nobody.provides", major: 1 }] });
+  assert.deepEqual(problemsOf(parts), [], "a part outside herdr/ may provide it");
+});
+
+test("writesOverlap ignores case (APFS): one file, spelled two ways", () => {
+  assert.ok(writesOverlap("~/.config/herdr-app/Keys.json", "$HERDR_APP_HOME/keys.json#global.cmd-shift-m"));
 });
 
 test("every pack mod needs a part.json; Pocket Link never has one", () => {
