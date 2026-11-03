@@ -515,10 +515,15 @@ export class BotForm {
     const list = this.mode === "attach" || this.mode === "pick" || this.mode === "menu";
     const title = { attach: `Attach ${this.p.terminal} as a bot`, pick: "Bots", menu: this.p.name }[this.mode] ?? "Bots";
     const body = this.mode === "menu" ? this.menuBody(t) : this.listBody(t);
+    // The body scrolls with overflow_y_scroll, not overflow_y_scrollbar: a popup is as tall as
+    // its content (its height only the most), and the scrollbar's wrapper gives the body no
+    // height of its own there, so the menu, pick and attach popups drew only the title and
+    // Cancel (#239, seen in a live Herdr). Past the popup's height the body shrinks (min_h(0))
+    // and scrolls; in a dialog (Attach from the command palette) it still fills (flex_1).
     return v_flex().id("bot-form").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background)
       .border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).items_center().border_b(1).border_color(t.border).child(div().font_semibold().child(title)))
-      .child(div().id("bot-form-body").flex_1().min_h(0).overflow_y_scrollbar().child(body))
+      .child(div().id("bot-form-body").flex_1().min_h(0).overflow_y_scroll().child(body))
       .child(v_flex().flex_none().px(14).py(10).gap(8).border_t(1).border_color(t.border)
         .when(Boolean(this.error), (el) => el.child(div().text_size(12).text_color(t.ansi1).child(this.error)))
         .child(h_flex().gap(8).justify_end()
@@ -615,7 +620,8 @@ export class BotForm {
       return [label(base(q.key).toUpperCase()), ...bots.map((b) =>
         h_flex().id(`pick-${b.id}`).h(30).px(8).gap(8).items_center().rounded(7).hover((s) => s.bg(t.hover))
           .when(!pick, (el) => el.cursor_pointer().on_click((_e, cx) => this.attach(q, b, cx)))
-          .child(div().flex_none().child(b.name))
+          // The name truncates after the role, so Edit / Start / Restart stay inside the popup.
+          .child(div().min_w(0).truncate().child(b.name))
           .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted)
             .child(b.planned ? `planned · wave ${b.planned.wave}` : b.kind === "main" ? "Main bot" : b.role))
           .when(pick, (el) => el.child(this.button(`edit-${b.id}`, "Edit", t, () => this.edit(q, b), { h: 22 }))

@@ -293,6 +293,38 @@ test("Attach with no bot keeps its message (the New bot line is the pick list's 
   assert.match(textOf(nodes.get("bot-form-body")), /No bots on this computer yet/);
 });
 
+// ---- #239: the list popups keep their content's height ----
+
+// A popup is as tall as its content, its height only the most (Herdr's openOverlay). Live,
+// overflow_y_scrollbar's wrapper gave the body no height there, so the menu, pick and attach
+// popups drew only their title and Cancel; overflow_y_scroll keeps the items' height. The stub
+// lays nothing out, so this checks how the body is built, the part a stub can see.
+const builds = (node) => node.calls.map(([name]) => name);
+for (const [mode, extra] of [["menu", { bot: OMP.id, name: OMP.name, terminal: "t3" }], ["pick", {}], ["attach", { terminal: "t1" }]]) {
+  test(`${mode} popup: the body scrolls without the scrollbar wrapper, so its items have a height (#239)`, async () => {
+    state.spaces = [{ id: "s1", folder: project, machine: null }];
+    seed([MAIN, OMP]);
+    const { draw } = await open({ form: mode, planned: false, machine: null, live: null, ...extra });
+    draw();
+    const body = builds(nodes.get("bot-form-body"));
+    assert.ok(body.includes("overflow_y_scroll"), "the body scrolls past the popup's height");
+    assert.ok(!body.includes("overflow_y_scrollbar"), "no scrollbar wrapper: it collapses to 0 in a popup");
+    assert.ok(body.includes("min_h"), "it can still shrink to the popup's height");
+    assert.ok(textOf(nodes.get("bot-form-body")).length > 0, "items are drawn in the body");
+  });
+}
+
+test("pick popup: a long bot name truncates, so Edit / Start / Restart stay in the popup (#239)", async () => {
+  state.spaces = [{ id: "s1", folder: project, machine: null }];
+  seed([MAIN]);
+  const { draw } = await open({ form: "pick" });
+  draw();
+  const name = nodes.get(`pick-${MAIN.id}`).kids[0].__node;
+  assert.equal(textOf(name), MAIN.name);
+  assert.ok(builds(name).includes("truncate") && builds(name).includes("min_w"), "the name can shrink");
+  assert.ok(!builds(name).includes("flex_none"), "a fixed-width name pushes the buttons out");
+});
+
 // The owner's case: a folder outside git (child) under a folder holding another project's
 // bots.json (repos). `project` is the parent here, seeded with its main bot.
 function underParent() {
