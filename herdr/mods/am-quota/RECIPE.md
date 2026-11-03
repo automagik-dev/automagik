@@ -6,8 +6,12 @@ hits its limit; this panel shows how long the Claude Code or Codex account this 
 last, and moves the tool to another account on your proxy before it runs out. Accounts are added
 on the proxy (sign in there), never on this computer.
 
-Turn it on or off in the **Mods** panel (the puzzle tab in the footer): *Automagik Quota*. The
-footer's **Quota** tab, which opens the panel, shows only while it is on.
+**It ships switched off**, footer tab included: a fresh install puts it in
+`<app home>/mods-disabled/am-quota`, where Herdr does not load it. To turn it on, open the **Mods**
+panel (the puzzle tab in the footer), find *Automagik Quota* and switch it on; the footer's
+**Quota** tab then appears and opens the panel. Switching it off again hides both. An install that
+already has it keeps its state through updates, on or off (`OFF_BY_DEFAULT` in
+`am-sidebar/release.js`; `am install herdr.am-quota` also switches it on).
 
 ## Setup
 

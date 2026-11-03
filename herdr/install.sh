@@ -290,20 +290,30 @@ uninstall() {
   # The record's values are split on commas only, never glob-expanded (set -f).
   set -f
   IFS=,
+  off=
   for m in $mods; do
     case $m in ''|pocket-link|*[!a-z0-9-]*) continue ;; esac
     if [ -L "$MODS/$m" ]; then say "Left $MODS/$m: it is a link, not a folder this script installed."; continue; fi
-    [ -d "$MODS/$m" ] || continue
-    mv "$MODS/$m" "$next/$m"
-    moved=${moved:+$moved,}$m
+    if [ -d "$MODS/$m" ]; then
+      mv "$MODS/$m" "$next/$m"
+      moved=${moved:+$moved,}$m
+    elif [ -d "$APP_HOME/mods-disabled/$m" ] && [ ! -L "$APP_HOME/mods-disabled/$m" ]; then
+      # Switched off (the Mods panel, or a mod that ships off): kept as well, marked off, so a
+      # reinstall or a rollback puts it back off.
+      mv "$APP_HOME/mods-disabled/$m" "$next/$m"
+      moved=${moved:+$moved,}$m
+      off=${off:+$off,}$m
+    fi
   done
   # A folder already kept (one a rollback moved out, with its state) stays kept beside them.
   if [ -n "$moved" ] && [ -f "$STATE/.prev/.pack" ]; then
+    was_off=,$(sed -n 's/^off=//p' "$STATE/.prev/.pack" | head -n 1),
     for m in $(sed -n 's/^mods=//p' "$STATE/.prev/.pack" | head -n 1); do
       case $m in ''|pocket-link|*[!a-z0-9-]*) continue ;; esac
       if [ -d "$STATE/.prev/$m" ] && [ ! -L "$STATE/.prev/$m" ] && [ ! -e "$next/$m" ]; then
         mv "$STATE/.prev/$m" "$next/$m"
         moved=$moved,$m
+        case $was_off in *",$m,"*) off=${off:+$off,}$m ;; esac
       fi
     done
   fi
@@ -311,6 +321,7 @@ uninstall() {
   set +f
   if [ -n "$moved" ]; then
     printf 'version=%s\nmods=%s\nbefore=none\n' "$(mark_get version)" "$moved" >"$next/.pack"
+    if [ -n "$off" ]; then printf 'off=%s\n' "$off" >>"$next/.pack"; fi
     # The old set is set aside first and removed last: a failure never loses the folders just moved.
     old=$(mktemp -d "$STATE/.prev-old.XXXXXX")
     if [ -e "$STATE/.prev" ]; then mv "$STATE/.prev" "$old/set"; fi

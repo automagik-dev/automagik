@@ -15,7 +15,9 @@ const INSTALL = join(ROOT, "install.sh");
 const PACK_SRC = join(ROOT, "mods", "am-sidebar");
 // The layout is its own top-level entry beside herdr/ (RFC 0011); the tarball carries it as layouts/automagik.json.
 const LAYOUT_SRC = join(ROOT, "..", "herdr-layout", "automagik.json");
-const { OLD_PACK_NAME, PACK_MODS, USAGEMETER, V020_LAYOUT_SHA256, parseMarker } = await import("../mods/am-sidebar/release.js");
+const { OFF_BY_DEFAULT, OLD_PACK_NAME, PACK_MODS, USAGEMETER, V020_LAYOUT_SHA256, parseMarker } = await import("../mods/am-sidebar/release.js");
+/** The pack mods a fresh install turns on (herdr-app checks those); OFF_BY_DEFAULT ones start off. */
+const ON_MODS = PACK_MODS.filter((m) => !OFF_BY_DEFAULT.includes(m));
 const CASK = "penso/tap/herdr-gpui";
 const { keys: TEST_KEYS, pointerBytes, signatureOf } = await import("./pointer.mjs");
 
@@ -152,10 +154,12 @@ fi
   const checks = () => readFileSync(herdrLog, "utf8").split("\n").filter((l) => l.startsWith("check "));
   const mark = () => readFileSync(join(appHome, "automagik-herdr", "installed-by-install.sh"), "utf8");
   const mods = join(appHome, "mods"), state = join(appHome, "automagik-herdr");
-  /** Every pack folder's release (its VERSION), by name. */
-  const versions = () => Object.fromEntries(PACK_MODS.map((m) => [m, /\/\/ release (\S+)\n$/.exec(readFileSync(join(mods, m, "main.js"), "utf8"))?.[1]]));
+  /** Where a pack folder is: mods/<m>, or mods-disabled/<m> while it is off (am-quota ships off). */
+  const where = (m) => (existsSync(join(mods, m)) ? join(mods, m) : join(appHome, "mods-disabled", m));
+  /** Every pack folder's release (its VERSION), by name, on or off. */
+  const versions = () => Object.fromEntries(PACK_MODS.map((m) => [m, /\/\/ release (\S+)\n$/.exec(readFileSync(join(where(m), "main.js"), "utf8"))?.[1]]));
   const all = (v) => Object.fromEntries(PACK_MODS.map((m) => [m, v]));
-  return { root, bin, home, apps, appHome, mods, state, pack, old, link, run, piped, publish, publishMeter, meterCalls, brewCalls, addHerdrApp, show, herdrCalls, checks, mark, versions, all, extraEnv, herdrLog };
+  return { root, bin, home, apps, appHome, mods, state, where, pack, old, link, run, piped, publish, publishMeter, meterCalls, brewCalls, addHerdrApp, show, herdrCalls, checks, mark, versions, all, extraEnv, herdrLog };
 }
 
 test("install.sh is POSIX sh", () => {
@@ -553,7 +557,7 @@ test("install, update, rollback, uninstall: a planted pocket-link stays byte-ide
   s.publish("9.9.0");
   s.publishMeter();
   assert.equal(s.run("--yes").code, 0);
-  assert.equal(s.checks().length, PACK_MODS.length, "herdr-app check on every pack mod");
+  assert.equal(s.checks().length, ON_MODS.length, "herdr-app check on every pack mod that is on");
   assert.equal(s.checks().some((c) => c.includes("pocket-link")), false);
   assert.equal(treeSum(pocket), sum, "after install");
   s.publish("9.10.0");
@@ -649,7 +653,7 @@ test("a same-version rerun repairs a corrupted main.js, a deleted layout and a m
   assert.deepEqual(readFileSync(cli), cliShipped);
   assert.deepEqual(readFileSync(layout), readFileSync(LAYOUT_SRC));
   assert.equal(readFileSync(join(s.pack, ".state", "kept"), "utf8"), "the mod's own\n");
-  assert.equal(s.checks().length - checksBefore, PACK_MODS.length, "herdr-app check on every pack mod after the repair");
+  assert.equal(s.checks().length - checksBefore, ON_MODS.length, "herdr-app check on every pack mod that is on, after the repair");
   // The damaged copy is in backup/, not the kept set: a rollback still brings back 9.8.0.
   const backups = readdirSync(join(s.state, "backup"));
   assert.equal(backups.length, 1);
@@ -676,7 +680,7 @@ test("a same-version rerun repairs a corrupted main.js, a deleted layout and a m
   assert.equal(existsSync(join(s.mods, "am-markdown")), false, "a switched-off mod is not turned back on");
   assert.equal(existsSync(join(off, "main.js")), true);
   const ran = s.checks().slice(checksOff);
-  assert.equal(ran.length, PACK_MODS.length - 1, "every pack mod but the switched-off one is checked");
+  assert.equal(ran.length, ON_MODS.length - 1, "every pack mod but the switched-off ones (and those that ship off) is checked");
   assert.equal(ran.some((c) => c.endsWith("/am-markdown")), false);
   assert.match(clean.out, /Automagik Herdr 9\.9\.0 is already up to date .*every file matches the release/);
   assert.doesNotMatch(clean.out, /repaired|Done/);
@@ -736,7 +740,7 @@ test("a clean same-version rerun checks every file and every mod, swaps nothing 
   const r = s.run("--yes");
   assert.equal(r.code, 0, r.err);
   assert.match(r.out, /Checksum: ok\.\n(  check passed: .*\n)+(.*\n)*Automagik Herdr 9\.9\.0 is already up to date .*: every file matches the release and every mod passed herdr-app check\./);
-  assert.equal(s.checks().length - checksBefore, PACK_MODS.length);
+  assert.equal(s.checks().length - checksBefore, ON_MODS.length);
   assert.match(r.out, /usagemeter 0\.3\.0: already installed/);
   assert.equal(s.meterCalls().length, meterBefore, "usagemeter current: nothing downloaded");
   assert.doesNotMatch(r.out, /Downloading|Linked|repaired|missing|differs|Done/);
@@ -999,19 +1003,25 @@ test("every pack mod docks nowhere by itself; the shipped layout names only pack
   assert.deepEqual(readdirSync(join(ROOT, "mods")).filter((m) => m !== "pocket-link").sort(), [...PACK_MODS].sort());
 });
 
-test("rollback, or --uninstall, then a reinstall: a mod's .state comes back from the kept set", (t) => {
+test("rollback, or --uninstall, then a reinstall: a mod's .state comes back from the kept set, off if it was off", (t) => {
   const s = scratch(t);
   s.publish("9.9.0");
   assert.equal(s.run("--yes").code, 0);
+  const off = join(s.appHome, "mods-disabled");
+  assert.ok(existsSync(join(off, "am-quota", "mod.json")), "am-quota ships off");
   for (const m of ["am-quota", "am-tabs"]) {
-    mkdirSync(join(s.mods, m, ".state"));
-    writeFileSync(join(s.mods, m, ".state", "cred"), `${m} secret\n`);
+    mkdirSync(join(s.where(m), ".state"));
+    writeFileSync(join(s.where(m), ".state", "cred"), `${m} secret\n`);
   }
   assert.equal(s.run("--uninstall").code, 0);
-  assert.equal(existsSync(join(s.mods, "am-quota")), false);
+  assert.equal(existsSync(join(s.mods, "am-tabs")), false);
+  assert.equal(existsSync(join(off, "am-quota")), false, "the switched-off copy is kept too, not stranded");
+  assert.match(readFileSync(join(s.state, ".prev", ".pack"), "utf8"), /^off=am-quota$/m);
   const again = s.run("--yes");
   assert.equal(again.code, 0, again.err);
-  for (const m of ["am-quota", "am-tabs"]) assert.equal(readFileSync(join(s.mods, m, ".state", "cred"), "utf8"), `${m} secret\n`, m);
+  for (const m of ["am-quota", "am-tabs"]) assert.equal(readFileSync(join(s.where(m), ".state", "cred"), "utf8"), `${m} secret\n`, m);
+  assert.equal(existsSync(join(s.mods, "am-quota")), false, "it comes back off");
+  assert.ok(existsSync(join(off, "am-quota", "main.js")));
 });
 
 test("--uninstall never glob-expands the record, and moves only backup/<name> paths it adopted", (t) => {
