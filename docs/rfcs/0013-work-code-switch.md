@@ -57,7 +57,8 @@ It runs in Electron's main process (`apps/desktop`), never in the Bot team serve
 server fence will confine DSH, and the launch must not come from inside it.
 
 The page sends a Bot id and nothing else. The preload sends it only during a real click
-(`navigator.userActivation.isActive`), so a script with no click behind it gets an error. Main
+(`navigator.userActivation.isActive`). That only stops calls with no click at all; see the
+Threat model. Main
 accepts it only from DSH's page, the same check as the update channel. Main looks up the Bot's
 folder and machine itself: in the Bot team's state today, in the shared registry once it exists.
 A Bot id that main cannot find opens Herdr with no space picked. Every call to herdr-app is
@@ -162,8 +163,9 @@ different project, so they do not carry over.
 
 Terminals live in herdr-core, so a closed window loses none of them; the next click starts it
 again. Shipping all three at once makes #191's Windows fixes and the cross-OS harness
-prerequisites, not follow-ups. If `ls` or `do` fails on Linux or Windows, we ask herdrdev
-(Decided 6).
+prerequisites, not follow-ups. Supported targets: macOS arm64, Linux x86_64 and aarch64,
+Windows x86_64. Intel Macs and Windows on ARM are not supported (Decided 7). If `ls` or `do`
+fails on Linux or Windows, we ask herdrdev (Decided 6).
 
 ### Sandbox (RFC 0010)
 
@@ -182,46 +184,6 @@ changes the install side:
   repo's Bot definitions sit in its Bot's workspace, so that write stays allowed.
 - If services move into an Arca guest later, the Bot home needs 0010's mount contract, with
   file-watch, or the two modes stop seeing each other's edits.
-
-### Hosts without a herdr-app build
-
-herdrdev ships no build for Intel Macs or Windows on ARM. Felipe's direction is to cover them
-with the sandbox: run herdr-app's Linux build inside Automagik's sandbox, as Unfold runs its
-agent in a microVM, and show its window on the host. Nothing below has been tried. Sources are
-the projects' own READMEs, read on 2026-11-03.
-
-**How Unfold does it.** rth runs its agent in a microVM through microsandbox 0.7.8 (libkrun,
-Apple silicon). The host owns the UI; the guest has no display. Host and guest talk over a
-loopback port (`rth/council/08-poc-vmbox.md`, `27-deployment-boundary.md`). That splits a
-headless service from a host UI. It does not show a guest's window.
-
-**Intel Mac.** None of Unfold's tools run there:
-
-- Apple's `container` needs Apple silicon and macOS 26 (apple/container README).
-- libkrun on macOS needs Apple silicon and macOS 14 (libkrun `docs/building.md`).
-- microsandbox needs Apple silicon on macOS (its README).
-
-A full VM through Virtualization.framework or QEMU could still run Linux on an Intel Mac. GPUI
-on Linux draws with Vulkan; with no GPU in the guest that means software Vulkan, and the window
-reaches the host through a remote-desktop viewer (VNC or similar). X forwarding does not carry a
-Vulkan surface. This is slow and unverified. Apple has also said macOS 26 is the last release
-for Intel Macs.
-
-**Windows on ARM.** Three routes, simplest first:
-
-1. The `windows-x86_64` build under Windows 11's built-in x64 emulation. No sandbox. Unverified
-   for a GPUI app.
-2. WSL2 with WSLg, running the `linux-aarch64` build. WSLg shows Linux GUI windows on the
-   Windows desktop (microsoft/wslg README); its README does not state ARM64 support.
-3. microsandbox, which runs on Windows through the Windows Hypervisor Platform. Upstream it has
-   no display path. The only display work, msb-omarchy, is an unofficial fork for Apple
-   silicon that renders on the CPU (llvmpipe); it was proposed upstream and withdrawn
-   unreviewed on 2026-09-23.
-
-**herdr-core in the sandbox, UI on the host.** This is Unfold's split, and herdr-app supports it
-through remote machines (a space's `machine`). It helps sandbox the terminals on hosts that
-already have herdr-app. It gives no window where herdr-app has no build, unless we build the
-UI, which is code mode lite (rejected by D27).
 
 ## Contracts introduced
 
@@ -247,9 +209,12 @@ UI, which is code mode lite (rejected by D27).
 ## Threat model
 
 - **Who reaches the bridge.** Any script in DSH's page, so any DSH client plugin. It can send
-  only a Bot id, and only during a real click, so a script cannot open Herdr or start an agent
-  without the person clicking. Main finds the folder itself, so the page cannot name a folder.
-  At worst a plugin's click handler opens Herdr on another known Bot's space.
+  only a Bot id, and main finds the folder itself, so the page cannot name a folder. The click
+  check does not tie a call to the switch: user activation belongs to the page and is shared by
+  every script in it. Right after the person clicks anything, any client plugin can call
+  `open()`. After delivery 8 that can start any known Bot's agent and spend the person's tokens.
+  Client plugins are trusted code today. If that changes, the fix is a check in the main
+  process that the click landed on the switch.
 - **The links.** Any web page or app can fire `automagik://open?bot=<id>`. It brings Automagik
   forward and selects a Bot. It never starts, sends or changes anything. The id must match the
   registry's id shapes.
@@ -275,7 +240,7 @@ UI, which is code mode lite (rejected by D27).
 | The remote machine is offline | Herdr comes forward; "<machine> is offline" | `machine-offline` |
 | The Bot's agent fails to start | Herdr shows its own error toast in the space | `start-error` |
 | The OS refuses focus | "Herdr is open in another window" | `no-focus` |
-| No herdr-app build for this host | no switch | `no-build` |
+| Unsupported host (Intel Mac, Windows on ARM) | no switch | `unsupported-host` |
 | An older app and a newer plugin | no switch | nothing |
 
 ## Telemetry
@@ -376,20 +341,17 @@ the orchestrator.
 6. **Linux and Windows control.** Delivery 1's harness proves `ls`, `do` and `status` on all
    three OSes. If it fails, we ask herdrdev.
 
+7. **Supported targets.** The one install supports macOS arm64, Linux x86_64 and aarch64, and
+   Windows x86_64. Intel Macs and Windows on ARM are not supported: the switch never shows there.
+   *Why:* herdrdev ships no build for them, and the sandbox cannot stand in. Apple's
+   `container`, libkrun and microsandbox all need Apple silicon on macOS (their READMEs and
+   libkrun `docs/building.md`). Unfold's microVM (`rth/council/08-poc-vmbox.md`) has no guest
+   display. A full VM would need software Vulkan and a remote-desktop viewer. On Windows on ARM,
+   x64 emulation and WSLg were untested options.
+
 ## Open questions
 
-1. **Hosts without a herdr-app build** (Intel Mac, Windows on ARM). Felipe wants the sandbox to
-   cover them (see "Hosts without a herdr-app build"). The open parts:
-   - How a guest's GPUI window reaches the host display. X forwarding cannot carry Vulkan; a
-     remote-desktop viewer with software rendering can, slowly.
-   - Intel Macs: Apple's `container`, libkrun and microsandbox all need Apple silicon.
-   - Windows on ARM: x64 emulation or WSLg are simpler than a microVM, and neither is tested.
-   - herdr-core alone in the sandbox gives no window without a host UI of our own.
-
-   Recommended: on Windows on ARM, test the x64 build under emulation first, then WSLg. On Intel
-   Macs, hide the switch and ask herdrdev for a `macos-x86_64` build. Zed, also built on GPUI,
-   ships Intel Mac builds, so it is a build target, not a port. Revisit a VM route only if
-   herdrdev says no.
+None. Felipe answered every question (D27 and Decided).
 
 ## Links
 
@@ -405,7 +367,7 @@ the orchestrator.
 - Unfold: `~/workspace/repos/rth/council/08-poc-vmbox.md`, `27-deployment-boundary.md`.
 - Sandbox sources: apple/container README (Requirements); containers/libkrun
   `docs/building.md` (macOS); superradcompany/microsandbox README (Requirements);
-  ya-luotao/msb-omarchy README; microsoft/wslg README.
+  microsoft/wslg README.
 - Code: `apps/desktop/src/deeplink.js`, `main.js:101-131`, `frame.js`, `dsh.js:707`;
   `apps/bots-dsh/src/client/sidebar.js:392`, `client/desktop-update.js:85`, `client/pet.js`,
   `host/roster.js:200`; `herdr/mods/am-sidebar/model.js:13`.
