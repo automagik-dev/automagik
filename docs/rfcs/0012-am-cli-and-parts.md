@@ -4,7 +4,7 @@
 |---|---|
 | Status | Draft (owner's answers in: D35) |
 | Milestone | not scheduled |
-| Lanes | am (proposed, question 11), herdr (3.N.P), plugin (3.N.P), pocket (3.N.P), desktop (3.N) |
+| Lanes | am (3.N.P, D35), herdr (3.N.P), plugin (3.N.P), pocket (3.N.P), desktop (3.N) |
 | Created | 2026-11-03 |
 
 ## Summary
@@ -48,6 +48,15 @@ Decided (the log):
   `--trust` is accepted only through a dialog in the Automagik window or a prompt outside any
   Herdr terminal; signed release parts need no confirmation. herdr-app is a part, and all three
   OSes are prerequisites of "Set up".
+- D35 additions (Felipe 2026-11-03, the rest of this RFC's questions):
+  - am's home: a top-level `am/` folder, its own lane kind `am` (a 3.N.P patch for an am-only
+    merge), and its own rolling `am-lane` pointer signed with its own rotatable key.
+  - Bootstrap: the `install.sh` one-liner and the desktop app's "Set up", both verifying the
+    pointer; Node is the pack's floor (22.7) until RFC 0010's question 2 is answered.
+  - `os` stays OS-only; am applies D28's targets (with their architectures) to every part.
+  - Pack members record the pack tarball's one sha256; no per-member hash.
+  - A path source is refused with `--machine`; a git source works instead.
+  - parts.json is keyed by hc's machine name.
 
 Proposed here: everything else, including t2zx's defaults 3 to 5 as built on
 `feat/herdr-parts` (t22n accepted them over hc; the log does not record them). Where a sentence
@@ -85,18 +94,28 @@ change.
   Rule 8 ("the CLI is its own part", swapped apart from the sidebar) now holds through it.
 - Every `vX.Y.Z` release attaches `automagik-am-<v>.tgz`, whatever its lane kind. This amends
   RFC 0011, where a release attaches only the parts whose paths changed: am is the one part every
-  release carries, and delivery 1 changes `release.yml` and `lane.ts` to match. Proposed: a
-  rolling `am-lane` release holds `am.json` and `am.json.sig`, signed with a key of am's own, as
+  release carries, and delivery 1 changes `release.yml` and `lane.ts` to match. Its code is the
+  top-level `am/` folder, and an am-only merge is an `am` patch (3.N.P) (D35). A rolling
+  `am-lane` release holds `am.json` and `am.json.sig`, signed with a key of am's own (D35), as
   `herdr-lane` is (RFC 0011): the same two-slot rotation, the same refusal of a lower sequence,
-  never Latest, never a `v*` tag (question 11).
+  never Latest, never a `v*` tag. Never `PLUGIN_LANE_KEY` or the pack's key.
 - It carries the Bot verbs that today live in `herdr/mods/am-sidebar/bin/` and every module they
   import from the sidebar (`model.js`, `launchArgs.js`, `attach.js`, `workers.js`, `models.js`,
   `briefing.mjs` and the rest). Proposed: the pack stays the source, and am ships byte-equal
   copies a test keeps equal, the pattern D33 set for the live chat module. At run time am reads
   nothing from the pack's folders, so switching a pack member off cannot break it.
-- It carries the trust anchors it verifies with: its own public keys, and copies of
-  `pack-keys.json` and the plugin lane's keys, kept equal to the originals by a test (as
-  `install.sh`'s `TRUSTED_KEYS` is).
+- It carries every lane's trust anchors: its own public keys, and copies of `pack-keys.json` and
+  the plugin lane's keys, kept equal to the originals by a test (as `install.sh`'s
+  `TRUSTED_KEYS` is). That makes am's key the most valuable one: whoever signs an am can ship
+  one that trusts any key. When a pack is installed, am verifies pack parts against the
+  installed `pack-keys.json`, as the pack's updater does; its own copy serves only a machine
+  with no pack yet.
+- `am-lane` has `herdr-lane`'s guards (RFC 0011, #210). `check-key` runs before the tag on every
+  release kind, since every release signs `am-lane`: a missing secret, or one whose public key
+  am's key list does not hold, stops the release before it tags. The post fails closed: an
+  unreadable or unverifiable posted pointer stops the run unless it is dispatched with
+  `replace_unverified_am_pointer`, and a lower sequence is never posted. A test key override is
+  honoured only for a `file://` pointer, never a GitHub URL.
 - `am update` updates am first: it verifies the new tarball against `am-lane`, stages it beside
   the installed copy, swaps by rename, and keeps the previous one for `am rollback automagik.am`.
   It updates apart from the pack: a pack release does not wait for am, nor the reverse.
@@ -243,11 +262,12 @@ forks have none, so a frozen contract is a capability major. `bots.registry@1` i
 Release parts are verified the way `herdr/install.sh` and the pack's updater already verify
 (RFC 0011): the pointer, its signature against am's trust anchor, then the artifact against the
 sha256 the pointer names, before anything is written. Each lane has its own key: `am-lane`
-(proposed), `herdr-lane` (`pack.json`, `HERDR_PACK_KEY`), `plugin-lane` (`lane.json`,
+(D35), `herdr-lane` (`pack.json`, `HERDR_PACK_KEY`), `plugin-lane` (`lane.json`,
 `PLUGIN_LANE_KEY`). `pack.json` names one sha256 for the whole tarball, so every pack member
-records the tarball's hash; a per-member hash would need a new pointer field (rule 5: a part's
-sha256 comes from the pointer, never from the download). Pocket's `latest.json` is unsigned on
-purpose (the APK's signer is the check); usagemeter's trust is open (question 5).
+records the tarball's hash, and no member has a hash of its own (D35; one would need a new
+pointer field, and rule 5 says a part's sha256 comes from the pointer, never from the
+download). Pocket's `latest.json` is unsigned on purpose (the APK's signer is the check);
+usagemeter's trust is t22b's to decide (question 5).
 
 A named version is checked only against the `.sha256` beside it, which comes from the same
 download: integrity, not who published it. So am records it as unsigned and asks for the same
@@ -255,8 +275,9 @@ confirmation as a path or git source.
 
 **Confirmation (D35).** A signed release part needs none. Anything recorded `signed: false`
 needs the person's yes, given in one of two places: a dialog in the Automagik window, or a
-prompt am shows when it runs outside any Herdr terminal. Inside a Herdr terminal (a Bot's pane
-included), am asks the Automagik window and waits; with no window, it refuses. The yes is
+prompt am shows when it runs outside any Herdr terminal. am treats Automagik's own DSH like a
+Herdr terminal: a Bot's tool call there is agent-run too. Inside a Herdr terminal or under
+DSH's process tree, am asks the Automagik window and waits; with no window, it refuses. The yes is
 recorded per id and source, and `am doctor` keeps listing the part as "unsigned, from <source>"
 for as long as it is installed.
 
@@ -295,8 +316,11 @@ marker's `mods=` stays as it is.
 
 Uninstalling the whole pack part, `herdr.pack`, removes the pack for real with `install.sh
 --uninstall`'s logic: the folders, on or off, go to the kept set `.prev` (deleted with
-`--purge`), adopted folders come back, and the pack's briefing hooks (each file backed up as
-`.am-backup`), keys, the layout it added and the marker are removed. It never touches am.
+`--purge`), adopted folders come back, and the pack's keys, the layout it added and the marker
+are removed. It never touches am, nor the briefing: the hooks, their entry point and journal
+are am's, and with no pack the entry point runs am's copy, so a pack uninstall cannot silence a
+briefing. Only `am uninstall automagik.am` removes the hooks (each file backed up as
+`.am-backup`).
 Uninstalling `herdr.layout` removes the layout while it is byte-equal to the pack's copy and
 records `layout=removed`, so no update or repair puts it back.
 
@@ -352,21 +376,22 @@ writing it, and parts.json becomes the only record.
 
 `targets: fleet` means every connected Herdr machine, under the part's own consent (local,
 everywhere, none), as am-quota and usagemeter ask today. `am install <id> --machine M` installs
-on one machine. Proposed:
+on one machine. Decided (D35): a path source is refused with `--machine`, and parts.json is
+keyed by hc's machine name. Proposed:
 
 - am runs the far side as `hc exec --on M am install <id> --json`. For a release part the far am
   fetches from its own pointer and verifies with its own trust anchor.
 - When the far side has no am (`hc exec` reports the command missing), am offers to bootstrap
-  it there with the same one-liner as question 2, which verifies `am-lane` itself, and goes on
+  it there with the bootstrap one-liner (D35), which verifies `am-lane` itself, and goes on
   only on the person's yes.
 - An unsigned source over `--machine`: the person confirms here (D35). am sends the far side the
   source and the pinned commit, never a "trusted" flag. The far am fetches that exact commit,
   refuses it unless the commit id matches, and records `signed: false`, confirmed on this
-  machine. A path source is refused with `--machine` (whose path is it?).
+  machine. A path source is refused with `--machine` (D35: whose path would it be?).
 - `am doctor --machine all` runs each machine's doctor in parallel with a timeout per machine; a
   machine that does not answer is one line, `ok: false`, with its error.
-- parts.json is keyed by hc's machine name. This machine writes its own entry; a remote's entry
-  here is only its last report, marked with when it came.
+- parts.json is keyed by hc's machine name (D35). This machine writes its own entry; a remote's
+  entry here is only its last report, marked with when it came.
 
 ### Operating systems
 
@@ -432,8 +457,8 @@ feed. For those, `am update` asks the owner (the desktop app) and reports.
   `herdr.am-*` and `herdr.layout`, and one per `apps/*` part as each owner adds it. `herdr.cli`
   is not released.
 - **Capabilities** in the table above. A major is never reused for an incompatible change.
-- **`automagik-am-<v>.tgz`** on every release; proposed **`am-lane`** (`am.json`, `am.json.sig`)
-  and its key (question 11).
+- **`automagik-am-<v>.tgz`** on every release; **`am-lane`** (`am.json`, `am.json.sig`)
+  and its key (D35).
 - **`~/.automagik/parts.json`** and **`~/.automagik/parts/`**. New. am is the only writer.
 - **Entry variables** `AM_HOME`, `AM_PART_DIR`, `AM_ARTIFACT`, `AM_VERSION`, `AM_MACHINE`,
   `AM_JSON`; `--purge` appended to uninstall. **Entry result** `{part, ok, changed, detail}`.
@@ -450,10 +475,14 @@ feed. For those, `am update` asks the owner (the desktop app) and reports.
   path for an injected or mistaken install, and make what was installed visible. They are not a
   wall against code already running as the person.
 - **Unsigned sources** (path, git, a named version). They need the person's yes (D35): the
-  Automagik window's dialog, or a prompt outside any Herdr terminal. A TTY alone proves nothing,
-  since Herdr panes are real terminals. am tells a Herdr terminal by its environment and parent
-  processes; same-user code can fake those, which is the limit above. The window's dialog is the
-  stronger path: it needs a real click in another process.
+  Automagik window's dialog, or a prompt outside any Herdr terminal and outside DSH. A TTY
+  alone proves nothing, since Herdr panes are real terminals. am tells a Herdr terminal or a
+  DSH tool call by its environment and parent processes; same-user code can fake those, which
+  is the limit above. The window's dialog is the stronger path: it needs a real click in
+  another process.
+- **am's key.** am carries every lane's trust anchors, so a leak of its key reaches every part
+  on a machine with no pack yet; installed packs keep verifying against their own
+  `pack-keys.json`. It gets the same two-slot rotation and fail-closed posting as the pack's.
 - **Release parts.** As safe as their pointer's key (RFC 0011). A replayed older pointer is
   refused by sequence. Someone who can write release assets but has no key can only deny updates.
   `herdr.app` trusts herdrdev's host for its bytes and sha256, as RFC 0013 already does.
@@ -469,10 +498,10 @@ feed. For those, `am update` asks the owner (the desktop app) and reports.
 ## Deliveries
 
 Each delivery is one PR on one lane, with its check and rollback. RFC 0013 delivery 7 ("Set
-up") waits on deliveries 1, 3, 4, 5 and 6 and on question 2's bootstrap, and ships only when its
+up") waits on deliveries 1, 3, 4, 5 and 6 and on the bootstrap (D35), and ships only when its
 check passes on all three OSes.
 
-1. **The am part** (am lane, question 11). The dispatcher, help, `--json`, exit codes, the
+1. **The am part** (am lane, D35). The dispatcher, help, `--json`, exit codes, the
    top-level Bot verbs and the briefing, with byte-equal copies of the sidebar modules they
    import; the `automagik-herdr` alias; `automagik-am-<v>.tgz` on every release (`release.yml`,
    amending RFC 0011) and the signed `am-lane`;
@@ -544,31 +573,11 @@ check passes on all three OSes.
 
 ## Open questions
 
-Numbers are kept from the first draft; 1, 3, 7 and 10 are settled.
+Felipe answered the rest on 2026-11-03 (D35 additions, under Decided). One question is left.
 
-1. *Settled (D35):* am is its own signed part on every release.
-2. **How does am first arrive, and on which Node?** Recommended: two bootstraps, both verifying
-   `am-lane` against keys they carry: a one-liner (as `herdr/install.sh` is for the pack), and
-   the desktop app's "Set up" (RFC 0013 delivery 7). Node: the pack's floor (22.7) until RFC
-   0010's question 2 (a separate Node) is answered, then that Node.
-3. *Settled (D27):* herdr-app is a part (delivery 4). Left: its doctor's source wording,
-   recommended "third party, feed-checked".
-4. **Architecture in `os`.** D28's targets carry an architecture; `os` does not. Recommended: am
-   applies D28's list to every part, and `os` stays OS-only until a part needs more.
-5. **usagemeter's trust.** Its `SHA256SUMS` proves integrity, not provenance (handoff).
-   Recommended: sign a usagemeter pointer as herdr-lane does, or pin its hash in the part (t22b
-   decides).
-6. **A per-member hash.** Members record the tarball's sha256. Recommended: keep it; the pack is
-   one unit, and a new pointer field buys nothing.
-7. *Settled (D35):* the Automagik window's dialog or a prompt outside any Herdr terminal.
-8. **Path sources over `--machine`.** Recommended: refused; a git source works instead.
-9. **parts.json's machine key.** Recommended: hc's machine name, so it matches `--machine` and
-   Herdr's spaces.
-10. *Settled (D27):* all three OSes at once (deliveries 5 and 6).
-11. **am's folder, lane kind and key.** Recommended: a top-level `am/` folder (not under `apps/`,
-    which `lane.ts` reads as plugins; not under `herdr/`, which is the pack); a lane kind `am`, a
-    patch (3.N.P) like `herdr`, for an am-only merge; a rolling `am-lane` signed with its own key
-    in two slots, as `HERDR_PACK_KEY` is, never `PLUGIN_LANE_KEY` or the pack's.
+5. **usagemeter's trust** (owner: t22b). Its `SHA256SUMS` proves integrity, not provenance
+   (handoff). Recommended: sign a usagemeter pointer as `herdr-lane` does, or pin its hash in
+   the part.
 
 ## Links
 
