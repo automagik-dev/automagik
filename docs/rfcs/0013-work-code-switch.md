@@ -2,116 +2,111 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Draft (owner's answers in, D27) |
 | Milestone | not scheduled |
 | Lanes | desktop (3.N), plugin (3.N.P), herdr (3.N.P, RFC 0011, after #190) |
 | Created | 2026-11-03 |
 
 ## Summary
 
-The Automagik app gets a Work / Code switch. Work is the app as it is today: DSH and the Bot
-team. Code is Herdr: the herdr-app window and its terminals. The switch does not embed Herdr.
-It finds herdr-app, starts it if needed, brings its window forward and shows the space for the
-current Bot's folder. A button in Herdr brings the person back. Both modes read one Bot
-registry and one pet system. This RFC decides where the switch sits, the launch and focus
-protocol, the install offer, what each side reads and writes, and the delivery order.
+Automagik is one product with two windows. Work is the app as it is today: DSH and the Bot
+team. Code is herdr-app, used exactly as today with its mods. Nothing in Herdr is rebuilt; this
+RFC only glues the two together. A Work / Code switch in Automagik brings the real herdr-app
+window forward, on the space for the current Bot's folder. A button in Herdr brings the person
+back to that Bot. One install sets up DSH, herdr-app and the Automagik Herdr pack. Both modes
+read one Bot registry and one pet system. Felipe's answers are D27 (2026-11-03).
 
 ## Motivation
 
-Felipe wants one Automagik app for work and code (D7, D12; "start the switch", 2026-11-03).
-The desktop council (2026-11-02) found that no shell can embed herdr-app today. Its GPUI window
-has no webview pane, no host-window API and no reparenting (`herdr.d.ts`). D10 forbids a fork.
-So, under any shell, code mode is a launch and focus protocol over the herdr-app CLI or socket.
-The cross-OS spike (#191) keeps Electron on macOS, Linux and Windows, and shows herdr-app has
-builds for all three. People who use both today switch by hand. Nothing carries the Bot or the
-folder across, and nothing tells them Herdr is missing or that an agent there needs them.
+Felipe wants one Automagik for work and code (D7, D12; "start the switch", 2026-11-03). Today
+people switch between the two apps by hand. Nothing carries the Bot or the folder across.
+Nothing tells them Herdr is missing, out of date, or has an agent that needs them.
+
+He first asked for one window with both modes in it. A spike tried that
+(`spike/code-mode-in-wrapper`, see Alternatives). One window works only by rebuilding Herdr's
+UI inside the wrapper. D27 rejects any rebuild: two windows, one product, glue only.
 
 ## Design
 
 ### Where the switch lives
 
 On macOS the app has no title bar. DSH's page fills the window, and the traffic lights sit in
-the Bot sidebar's top row (`frame.js`, `sidebar.js:800`). On Linux the shell bar exists, but the
-sidebar's top row does too. So the switch goes in the sidebar's top row (`.bt-side-top`), the
-same place on every OS. It is part of the Bot team plugin. It shows only when the app's preload
-exposes `omniDesktop.herdr`, the same feature check as `desktop-update.js:30`. DSH in a browser,
-or an older app, shows no switch.
+the Bot sidebar's top row (`frame.js`, `sidebar.js:800`). So the switch goes in the sidebar's
+top row (`.bt-side-top`), the same place on every OS. It is part of the Bot team plugin. It
+shows only when the app's preload exposes `omniDesktop.herdr`, the same feature check as
+`desktop-update.js:30`. DSH in a browser, or an older app, shows no switch.
 
 The switch is two segments, Work and Code. Work is lit while this window is in front. The Code
 segment carries Herdr's state:
 
 | State | How it is known | What Code shows | A click does |
 |---|---|---|---|
-| Missing | no binary found | "Install" dot | opens the install card |
-| Too old | `--version` below the supported minimum | "Update" dot | opens the update card |
-| Closed | binary found, `status` exits 2 ("no Herdr window") | plain | starts Herdr, then opens the space |
-| Open | `status` exits 0 | a count of agents that need the person, from `ls` | opens the space |
+| Not set up | no herdr-app, or no pack | "Set up" | runs the code set's install (delivery 6) |
+| Update due | the installer reports a newer herdr-app | "Update" dot | updates, then opens |
+| Closed | herdr-app found, `status` exits 2 ("no Herdr window") | plain | starts Herdr, then opens |
+| Open | `status` exits 0 | a count of agents that need the person, from `ls` | opens |
 
-The state is read when the window gains focus and when the person hovers or clicks the switch.
-There is no timer. An app menu item, "Switch to Code", does the same as a click. It lives in
-the desktop app and asks the page for the Bot on screen (`onSwitch()`).
+The state is read when the window gains focus and when the person hovers the switch. There is
+no timer. The switch moves only on a click. There is no keyboard shortcut and no menu item, and
+nothing switches on its own (D27). Automagik stays open behind Herdr; it never hides.
 
 ### Launch and focus protocol
 
 It runs in Electron's main process (`apps/desktop`), never in the Bot team server. RFC 0010's
-server fence will confine DSH. Herdr is outside that boundary, so the launch must not come
-from inside it. The sidebar sends `{ folder, botId }` over IPC. Main accepts it only from DSH's
-page, the same check as the update channel. Every call to herdr-app is `execFile` with an argv
-array, never a shell, with a 10 s limit.
+server fence will confine DSH, and the launch must not come from inside it. The sidebar sends
+`{ botId, folder, machine }` over IPC. Main accepts it only from DSH's page, the same check as
+the update channel. Every call to herdr-app is `execFile` with an argv array, never a shell,
+with a 10 s limit.
 
-1. **Find.** In order: the `AUTOMAGIK_HERDR_APP` override; on macOS `/Applications/Herdr.app`,
-   then `~/Applications/Herdr.app`; then `herdr-app` and `herdr-gpui` on PATH. An app started
-   from Finder has no `~/.local/bin` on its PATH, so the macOS bundle paths come first.
-2. **Check the version.** `--version` against the supported minimum (0.1.12 today). The release
-   tags (`v20261102.2`) use another scheme; the CLI's own version is the one compared.
+1. **Find.** The path the installer recorded for the code set (delivery 6). Before that, in
+   order: the `AUTOMAGIK_HERDR_APP` override; on macOS `/Applications/Herdr.app`, then
+   `~/Applications/Herdr.app`; then `herdr-app` and `herdr-gpui` on PATH. An app started from
+   Finder has no `~/.local/bin` on its PATH, so the bundle paths come first.
+2. **Latest.** herdr-app must be the latest (D27). The installer checks and updates it before
+   code mode opens. herdr-app's own `app.update` restarts the window, and its terminals keep
+   running in herdr-core.
 3. **Start or raise.** On macOS through LaunchServices (`open -a <Herdr.app>`): it starts or
    raises the app, and Herdr is not a child of Automagik. On Linux and Windows, the bare binary,
    detached, which "opens or raises the window" (herdr-app skill). herdr-app has no raise
-   command, so raise behaviour on Linux and Windows is checked per OS (see Cross-OS).
+   command, so raising on Linux and Windows is an acceptance check per OS.
 4. **Wait.** `status` until it exits 0, for up to 10 s. Exit 2 means no window yet.
-5. **Open the space.** `ls`, then match a space whose `folder` is the Bot's folder (`workDir`,
-   `roster.js:200`) and whose `machine` is this computer. A match gets `space.select --id`. Two
-   matches: the active one, else the first. No match: `space.new --name <folder name> --folder
-   <folder> --machine ''`. That starts the person's shell there and no agent: the bridge has no
-   argv or task field. A Bot without a folder (a global Bot, D3) only raises Herdr.
-6. **Focus the Bot.** Later (delivery 6): once both apps share Bot ids, `automagik-herdr whois
-   --bot <id> --json` names the Bot's pane, and `agent.focus` shows it. Until then the space is
-   the target.
+5. **Pick the space.** `ls`, then the space whose `folder` is the Bot's folder (`workDir`,
+   `roster.js:200`) on the Bot's machine. Spaces on every machine count, remote ones too (D27).
+   A Bot's machine is this computer unless its registry entry names another. A match gets
+   `space.select --id`. Two matches: the active one, else the first. No match: `space.new --name
+   <folder name> --folder <folder> --machine <machine>`. A Bot with no folder (a global Bot,
+   D3) gets code mode with no space picked: Herdr comes forward as it was.
+6. **The Bot's agent.** Once both apps share Bot ids (the registry RFC, delivery 7):
+   `automagik-herdr whois --bot <id> --json` names the Bot's pane, and `agent.focus` shows it.
+   A Bot with no pane in its space gets its agent started (D27), through Herdr's own `start
+   <bot> --space <id>`. That keeps Herdr's labels, attach ledger and briefing. Until the
+   registry lands, the space is the target and nothing starts.
 
 RFC 0006 names mirrored spaces after Bots. This RFC matches by folder, because the folder is
-what `ls` returns and what a person's own spaces already carry. If 0006 ships, its spaces have
-the Bot's folder too, so the rule still finds them.
+what `ls` returns and what a person's own spaces already carry.
 
-**The return path.** The Automagik Herdr pack gets a Work button (in `am-footer`). It runs the
-OS's link opener (`open`, `xdg-open`, `start`) on `omni://open`. The app already registers
-`omni://` and focuses its window on `open` (`deeplink.js`, `main.js:101-131`). The link carries
-nothing, so a page that fires it can only bring Automagik forward. The window still shows the
-Bot the person left. A Herdr key for the same action is open question 13.
+**The way back.** The Automagik Herdr pack gets a Work button (in `am-footer`). It opens
+`automagik://open?bot=<id>` with the OS's link opener (`open`, `xdg-open`, `start`). The id is
+the Bot attached to the focused pane, or none. The app focuses its window and selects that Bot.
+The app registers `automagik://` and keeps `omni://` as an alias (D27): both open the same way,
+and `omni://connect` is unchanged (`deeplink.js`, `main.js:101-131`).
 
-The Automagik window does not hide when Code comes forward, and nothing switches on its own
-(see Open questions).
+### One install
 
-### When herdr-app is not installed
+One install sets up the whole environment: DSH, herdr-app and the Automagik Herdr pack (D27).
+It runs through the `am` and parts plan (RFC 0012, not yet written): the code set (`part.json`,
+`set: ["code"]`) installs herdr-app and the pack, checks each sha256 against our signed manifest,
+and `am doctor` feeds the switch's state. The same install keeps herdr-app on the latest
+release, so step 2 above is a check, not a new download, in the common case. There is no
+Homebrew card.
 
-The Code segment opens a card. It says what Herdr is and offers the install for the OS:
-
-- **macOS, today.** `brew install --cask penso/tap/herdr-gpui` (macOS 14+). When Homebrew is
-  present, the card runs it on the person's click, in the background, with its output in the
-  card. Without Homebrew, the card shows the command and a link to brew.sh.
-- **Linux and Windows, today.** A link to the penso/herdr-gpui GitHub releases (deb, rpm,
-  tar.gz; setup.exe, zip). Linux needs `libxkbcommon-x11-0`. The app downloads nothing itself.
-- **Later, every OS.** `am install --set code` through the parts plan (RFC 0012, not yet
-  written; `part.json`, `set: ["code"]`). It installs herdr-app and the Automagik Herdr pack,
-  checks sha256 against our signed manifest, and `am doctor` feeds the switch's state.
-
-The update card works the same way (`brew upgrade --cask herdr-gpui`, or the release link).
-Nothing installs without a click.
+Until that installer ships, the switch shows only where herdr-app is already set up.
 
 ### Shared state
 
-The registry format belongs to the Bot system design (handoff: D1, D4, D6, "Agreed" and
-"Conflicts"). This RFC states only who reads and writes what. The switch itself writes none
-of it: it passes a Bot id and a folder.
+The registry format belongs to its own RFC, written before the shared-Bot delivery (D27). This
+RFC states only who reads and writes what. The switch itself writes none of it: it passes a Bot
+id, a folder and a machine.
 
 | Data | Where | Work (Bot team) | Code (Herdr pack) |
 |---|---|---|---|
@@ -127,85 +122,97 @@ The repo copy holds definitions only: never memory, rooms, schedules, secrets or
 partitions. Ids are opaque and never rewritten. Both shapes are valid (`b-` + 10 base32, and
 `session-<uuid>`).
 
-Two moves come first, and both are tracked outside this RFC:
+Two moves come first. The registry RFC owns both:
 
 - The desktop app's Bot home is `~/.automagik/desktop/bots` today (`dsh.js:707`). D6 moves it
-  to `~/.automagik/bots`. Until then, work mode in the app and Herdr see different pets and Bots.
+  to `~/.automagik/bots`. Until then, the app and Herdr see different pets and Bots.
 - Herdr reads `.herdr/bots.json` (`model.js:13`). `botsFileOf()` reads the new file first.
 
 ### Cross-OS
 
+All three OSes ship at once (D27).
+
 | | macOS | Linux | Windows |
 |---|---|---|---|
-| Herdr build | cask, macOS 14+ | GitHub release, x86_64 and aarch64 | GitHub release, x86_64 and aarch64 |
-| Binary | `Herdr.app`, CLI `herdr-app` | `herdr-gpui` | `herdr-gpui.exe` |
+| Herdr build | `Herdr.app` (`dev.herdr.app`), macOS 14+ | GitHub release, x86_64 and aarch64 | GitHub release, x86_64 and aarch64 |
+| Binary | CLI `herdr-app` | `herdr-gpui` | `herdr-gpui.exe` |
 | `ls`, `do`, `status` | verified (0.1.12) | unverified: #191 ran `--help` only | unverified; the socket transport is unknown |
 | Start or raise | LaunchServices | detached binary; Wayland may refuse focus | detached binary; Windows may flash the taskbar instead |
-| Return link | `open` | `xdg-open`; deb registers `omni://`, AppImage unverified | `start`; NSIS registers `omni://` |
+| Return link | `open` | `xdg-open`; deb registers the schemes, AppImage unverified | `start`; NSIS registers the schemes |
 | Automagik app | ships | packages (#191) | needs #191's four fixes first |
 | Window close | keeps running | quits herdr-app (`window.close`) | unverified |
 
-Terminals live in herdr-core, so a quit window loses none of them. The next switch starts it
-again. Where the OS refuses to raise a window, the card says "Herdr is open in another window".
-macOS ships first. Linux and Windows follow once the cross-OS harness proves `ls` and `do`.
+Terminals live in herdr-core, so a closed window loses none of them; the next click starts it
+again. Where the OS refuses to raise a window, the switch says "Herdr is open in another
+window". Shipping all three at once makes #191's Windows fixes and the cross-OS harness
+prerequisites, not follow-ups.
 
 ### Sandbox (RFC 0010)
 
-Code mode sits outside every boundary. RFC 0010 already records this (gap 6) as decided:
-herdr-app is a third-party app, its mods can exec, and its agents run as the person. This RFC
-keeps it that way and adds:
+D27 puts herdr-app inside Automagik's environment. Here that means installed, kept latest and
+checked by Automagik's installer, like DSH. It does not yet mean fenced. RFC 0010 recorded code
+mode as outside every boundary (gap 6). This RFC keeps the process side of that and changes the
+install side:
 
 - herdr-app never runs as a child of the app or DSH. On macOS LaunchServices starts it. On
   Linux and Windows it starts detached, with the app's own launch environment and none of the
   names the supervisor sets for DSH (`DSH_HOME`, `AUTOMAGIK_*`).
+- Its agents run as the person and need the person's git and SSH credentials, which 0010's
+  server fence denies. A fence for code mode waits for 0010's boundary API (open question 2).
 - The launch runs in the main process, so 0010's fence on DSH does not break it.
-- Under the fence, DSH writes `~/.automagik/bots` (its home) and repo files only inside a
-  session's workspace. A repo's `bots.json` is in its Bot's workspace, so that write stays
-  allowed.
+- Under the fence, DSH writes `~/.automagik/bots` and repo files only inside a session's
+  workspace. A repo's `bots.json` is in its Bot's workspace, so that write stays allowed.
 - If services move into an Arca guest later, `~/.automagik/bots` needs 0010's mount contract,
   with file-watch, or the two modes stop seeing each other's edits. herdr-app stays on the host.
 
 ## Contracts introduced
 
-- **Preload bridge `omniDesktop.herdr`**: `status()`, `open({ folder?, botId? })` and
-  `onSwitch(callback)`, which the menu item fires. New.
-  The plugin checks for it; an app without it shows no switch.
-- **IPC channels** `automagik-herdr-status`, `automagik-herdr-open` and `automagik-herdr-switch`.
+- **The `automagik://` scheme.** New: `automagik://open` and `automagik://open?bot=<id>`.
+  `omni://` stays registered as an alias; `omni://connect` keeps its meaning.
+- **`bot` on `open`.** New, on both schemes. It only selects the Bot. An unknown or malformed id
+  opens the app and selects nothing.
+- **Preload bridge `omniDesktop.herdr`**: `status()`, `open({ botId?, folder?, machine? })` and
+  `onOpenBot(callback)`, which a link fires. New. The plugin checks for it; an app without it
+  shows no switch.
+- **IPC channels** `automagik-herdr-status`, `automagik-herdr-open` and `automagik-open-bot`.
   Between the preload and the main process only.
-- **`AUTOMAGIK_HERDR_APP`**: a path override for the binary. New. Unset means the search order.
-- **`omni://open`**: unchanged. No new parameters in this RFC.
+- **`AUTOMAGIK_HERDR_APP`**: a path override for the binary. New.
 - **Log** `~/.automagik/desktop/logs/switch.log`. New, local only.
-- **The herdr-app surface we depend on** (not ours): `--version`; `status` exit codes (0 open,
-  2 no window); `ls` JSON (`spaces[].id`, `folder`, `machine`, `active`, terminal `status`);
-  `do space.select`, `space.new`, `agent.focus`. Pinned by the supported minimum version.
-- Plugin ids, routes, storage prefixes, `~/.automagik/bots` and the `omni://` scheme do not
-  change.
+- **The herdr-app surface we depend on** (not ours): `status` exit codes (0 open, 2 no window);
+  `ls` JSON (`spaces[].id`, `folder`, `machine`, `active`, terminal `status`); `do
+  space.select`, `space.new`, `agent.focus`. Kept latest, so the check is against the newest
+  release. The pack's `start` and `whois --json` are ours (#190), later `am` verbs (D22).
+- Plugin ids, routes, storage prefixes and `~/.automagik/bots` do not change.
 
 ## Threat model
 
-- **Who reaches the bridge.** Any script in DSH's page, so any DSH client plugin. The most it can
-  do is start Herdr, and select or create a space at a folder. A new space starts the person's
-  shell there and no agent. The folder must be absolute and an existing directory, and goes as
-  one argv element.
-- **The return link.** Any web page or app can fire `omni://open`. It only brings Automagik
-  forward. The app takes no other action.
+- **Who reaches the bridge.** Any script in DSH's page, so any DSH client plugin. It can start
+  Herdr, select or create a space, and (after delivery 7) start the Bot's agent. Starting an
+  agent spends the person's tokens, so it happens only from a click on the switch. The folder
+  must be absolute and an existing directory on this computer, or a folder from the registry for
+  a remote machine. It goes as one argv element.
+- **The links.** Any web page or app can fire `automagik://open?bot=<id>`. It brings Automagik
+  forward and selects a Bot. It never starts, sends or changes anything. The id must match the
+  registry's id shapes.
 - **Herdr's socket.** `~/.config/herdr-app/herdr-app.sock` is mode 0755, so only its owner can
   connect. Any process of the same user can already drive Herdr. The switch adds nothing to that.
-- **The install.** A third-party tap and release page. The cask carries its own sha256. Nothing
-  installs without a click, and the app downloads no binary itself until parts check against our
-  signed manifest.
+- **The install.** herdr-app is a third-party app. Parts check its sha256 against our signed
+  manifest; "always latest" means each new upstream release enters that manifest without a
+  review of its own (open question 1).
 - **Undo.** Revert the release. The switch keeps no state but its log.
 
 ## Failure modes
 
 | Failure | What the person sees | Log line |
 |---|---|---|
-| No binary | the install card | `missing` |
-| Version too old | the update card | `old <version>` |
+| Not set up | "Set up" (after delivery 6); before it, no switch | `missing` |
+| The update fails or there is no network | Herdr opens on the installed version, with a note | `stale <version>` |
 | No window within 10 s | "Herdr didn't open", with Retry | `timeout`, the last stderr line |
 | A stale socket (exit 2 after a crash) | treated as closed: start, then retry once | `restart` |
-| `do` answers `{ "error" }` (exit 1) | Herdr comes forward; the card shows the message | `do-error` and the message |
-| The folder is gone, or the Bot has none | Herdr comes forward on its last space | `raise-only` |
+| `do` answers `{ "error" }` (exit 1) | Herdr comes forward; the switch shows the message | `do-error` and the message |
+| The folder is gone, or the Bot has none | Herdr comes forward with no space picked | `no-space` |
+| The remote machine is offline | Herdr comes forward; "<machine> is offline" | `machine-offline` |
+| The Bot's agent fails to start | Herdr shows its own error toast in the space | `start-error` |
 | The OS refuses focus | "Herdr is open in another window" | `no-focus` |
 | An older app and a newer plugin | no switch | nothing |
 | Two writers on a repo's `bots.json` | the second write is refused; it re-reads | the writer's own error |
@@ -213,98 +220,105 @@ keeps it that way and adds:
 ## Telemetry
 
 There is no remote product telemetry today (`privacy.js` holds only third-party shares). The
-switch writes local lines to `logs/switch.log`, in `timeline.js`'s step format: found, version,
-started, ready, space, raised, each with its ms, and the outcome. Bot ids, never names. Any remote
-send would be a new share on the Privacy page, off by default.
+switch writes local lines to `logs/switch.log`, in `timeline.js`'s step format: found, latest,
+started, ready, space, agent, raised, each with its ms, and the outcome. Bot ids, never names.
+Any remote send would be a new share on the Privacy page, off by default.
 
 ## Test plan
 
-- **Unit (desktop, `node --test`).** A pure planner turns `ls` JSON, a folder and a Bot id into
-  the herdr-app argv list: match, no match, two matches, a remote space, no folder. The finder
-  runs against a fake file system for each OS. A fake `herdr-app` on PATH records argv and
-  answers canned JSON and exit codes, as `deeplink.test.js` fakes its inputs.
-- **Unit (plugin).** The switch renders only with the bridge, and each state shows its label.
+- **Unit (desktop, `node --test`).** A pure planner turns `ls` JSON, a Bot id, folder and machine
+  into the herdr-app argv list: match, no match, two matches, a remote space, no folder, a pane
+  to focus, no pane to start. The finder runs against a fake file system for each OS. A fake
+  `herdr-app` on PATH records argv and answers canned JSON and exit codes.
+- **Unit (desktop).** `deeplink.test.js` covers both schemes, `bot` ids good and bad, and that
+  `omni://connect` is unchanged.
+- **Unit (plugin).** The switch renders only with the bridge; each state shows its label; a
+  link's Bot is selected.
 - **Mod.** `herdr-app check` on the pack's mod with the Work button.
-- **Cross-OS.** Extend #191's `workflow_dispatch` harness. Install the herdr-gpui release on
-  Linux (under xvfb) and Windows, start a window on a temp `HERDR_APP_HOME`, run `ls` and
-  `do space.new`. Record whether the window raised.
-- **Manual, macOS, with Felipe's OK** (it drives the real window): the switch with Herdr closed,
-  open and missing (through `AUTOMAGIK_HERDR_APP`), and the Work button back.
+- **Cross-OS.** Extend #191's `workflow_dispatch` harness. On macOS, Linux (under xvfb) and
+  Windows: install the code set, start a window on a temp `HERDR_APP_HOME`, run `ls` and `do
+  space.new`, fire `automagik://open`. Record whether each window raised.
+- **Manual, with Felipe's OK** (it drives the real window): Code with Herdr closed, open and not
+  set up (through `AUTOMAGIK_HERDR_APP`); a remote space; the Work button back to the same Bot.
 
 ## Deliveries
 
-1. **Find and raise** (desktop). The finder, the version check, start or raise, the wait, and the
-   `omniDesktop.herdr` bridge with `status()` and `open()` (raise only). No UI.
-   *Check:* the unit tests; `status()` on macOS answers missing, closed and open correctly.
+Prerequisites, tracked elsewhere: #191's four Windows fixes for the Electron app; RFC 0012's
+`am` shell and parts (for delivery 6); the registry RFC (for delivery 7).
+
+1. **Find and raise** (desktop). The finder, start or raise, the wait, and the bridge with
+   `status()` and `open()` (raise only), on all three OSes.
+   *Check:* the unit tests; the cross-OS harness raises Herdr on each OS.
    *Rollback:* revert. Nothing is stored.
-2. **The right space** (desktop). `open({ folder })` selects or creates the space. The app menu
-   gets "Switch to Code". It tells the page through the bridge's `onSwitch()`; with no listener
-   (an older plugin) it only raises Herdr.
-   *Check:* the planner's argv for each case; on macOS the menu item raises Herdr.
+2. **Automagik's links** (desktop). Register `automagik://`, keep `omni://`, and pass `bot` to
+   the page through `onOpenBot()`.
+   *Check:* `deeplink.test.js`; on each OS, `automagik://open` brings the app forward.
+   *Rollback:* revert; `omni://open` still works.
+3. **The right space** (desktop). `open()` picks or creates the space on the Bot's machine, or
+   none for a Bot without a folder.
+   *Check:* the planner's argv for each case; on macOS a Bot's folder opens its space.
    *Rollback:* revert; `open()` raises only again.
-3. **The switch** (plugin). The sidebar control and its states, the install card with the
-   command and links, and the `onSwitch()` listener that sends the Bot on screen.
-   It ships after delivery 2, so it is complete at merge.
-   *Check:* the plugin test; on macOS, Code opens the Bot's space.
-   *Rollback:* revert. The bridge and the menu item stay.
-4. **The way back** (herdr). The Work button in `am-footer` opens `omni://open`. It ships on the
-   herdr lane after #190, or from automagik-herdr until then.
+4. **The switch** (plugin). The sidebar control and its states, the click, and the
+   `onOpenBot()` listener that selects the Bot. Ships after deliveries 1-3.
+   *Check:* the plugin test; Code opens the Bot's space on each OS.
+   *Rollback:* revert. The bridge stays unused.
+5. **The way back** (herdr). The Work button in `am-footer` opens `automagik://open?bot=<id>`.
    *Check:* `herdr-app check`; a click brings Automagik forward on the same Bot.
    *Rollback:* revert the pack.
-5. **Install from the app** (desktop). On macOS with Homebrew, the card runs the cask install on
-   a click and shows its output; the update card the same.
-   *Check:* on a Mac without Herdr, one click ends with Herdr open on the Bot's space.
-   *Rollback:* revert; `brew uninstall --cask herdr-gpui` removes Herdr.
-6. **The Bot's own pane** (desktop). After D6's home move, `botsFileOf()` and shared ids:
-   `whois --bot`, then `agent.focus`.
-   *Check:* a Bot with a live Herdr pane is shown, not only its space.
+6. **One install, always latest** (desktop, after RFC 0012). "Set up" runs the code set's
+   install; each click updates herdr-app first when a newer release exists.
+   *Check:* on a fresh machine of each OS, one click ends with Herdr open on the Bot's space.
+   *Rollback:* revert; the switch hides where code mode is not set up.
+7. **The Bot's own agent** (desktop, after the registry RFC). `whois --bot`, then `agent.focus`;
+   no pane starts the Bot's agent in its space.
+   *Check:* a Bot with a live pane is shown; a Bot without one starts in its space.
    *Rollback:* revert; the space stays the target.
-7. **Linux and Windows** (desktop). The finder's paths and the raise checks for each OS. Windows
-   waits for #191's four fixes.
-   *Check:* the cross-OS harness passes on that OS.
-   *Rollback:* the switch hides on that OS.
-8. **Install through parts** (desktop, after RFC 0012). The card runs `am install --set code`
-   on every OS, and `am doctor` feeds the state.
-   *Check:* a fresh machine reaches Code in one click.
-   *Rollback:* back to delivery 5 and the links.
+
+## Alternatives
+
+**One window: code mode lite** (spike `spike/code-mode-in-wrapper`, `FINDINGS.md`, 2026-11-03).
+The spike drew herdr-app's real spaces, tabs and splits in the Electron window, with live xterm.js
+terminals on herdr-core's attach stream. It worked: key to echo p50 0.6 ms in the renderer, about
+8 MB/s throughput, about 300 MB more memory with two busy panes. Its cost was about 5 dev-days,
+plus 3-4 for layout editing, plus 1-3 days for each mod. Every mod's UI would be rewritten, and
+herdr-app's keys, themes and palette lost. **Rejected (D27):** it rebuilds Herdr.
+
+**One window: upstream embedding.** No embed, host-window, webview-pane or SDK mode exists or is
+planned in herdr-app, herdr-gpui or herdr-core (the spike's route B). **Not available.**
+
+**One window: docking herdr-app beside the wrapper.** macOS has no cross-process child windows.
+Moving herdr-app through the Accessibility API lags on drag, fights over z-order and focus, and
+breaks fullscreen and Spaces (route C). **Rejected.**
 
 ## Open questions
 
-1. **One window, or two?** This RFC gives two windows and a switch. One window needs a host-window
-   or webview pane in herdr-app, or a fork, which D10 rules out. Who owns herdr-app's source is
-   still open (D7, t22n's question). Recommended: ship two windows; ask upstream for a pane.
-2. **Hide Automagik when Code comes forward?** Recommended: no. Voice and Bot browsers keep
-   running, and a hidden window is easy to lose.
-3. **Switch "on its own" (D7)?** For example, when a Bot starts a coding worker. Recommended:
-   never move focus without a click; light the Code segment instead.
-4. **Start the Bot's agent in Herdr when it has no pane?** Recommended: no. Show the space;
-   starting an agent stays the person's choice in Herdr.
-5. **A Bot without a folder.** Recommended: raise Herdr only, with no new space.
-6. **Run Homebrew from the app?** Recommended: yes, on a click, when Homebrew is present.
-7. **Install the Automagik Herdr pack from the same card?** Recommended: yes, once
-   `am install --set code` exists; a link until then.
-8. **The supported herdr-app version.** Recommended: a minimum, by `--version`, bumped by a
-   reviewed PR, the same review as RFC 0006's pinned binary.
-9. **macOS first?** Recommended: yes. Linux and Windows follow the harness.
-10. **Remote spaces.** Recommended: match only spaces on this computer.
-11. **A Bot in the return link** (`omni://open?bot=<id>`). Recommended: later, and it only
-    selects the Bot.
-12. **The scheme.** Recommended: keep `omni://`. An `automagik://` scheme waits for a naming
-    decision across the app.
-13. **The shortcut.** Recommended: one key for "Switch to Code" in the app menu, and the same key
-    bound in Herdr to go back; chosen in delivery 2.
-14. **Who writes the registry design?** The `bots.json` v2 shape, the id mint, global Bots in
-    Herdr (D3) and the D6 move have no RFC. Recommended: one RFC before delivery 6.
+D27 answered the first fourteen. These came up while applying it.
+
+1. **Which Herdr does Automagik install?** The app on Felipe's Mac is `dev.herdr.app` 0.1.12,
+   from herdrdev/herdr-app, which has no GitHub releases and updates itself. The cask
+   `penso/tap/herdr-gpui` and #191's Linux and Windows builds come from penso/herdr-gpui.
+   Recommended: settle the source with t22n before delivery 1. The manifest pins the source,
+   and each new release enters it automatically.
+2. **"Sandboxed" for herdr-app.** Installed and kept latest by Automagik, or also fenced (RFC
+   0010)? Coding agents need git and SSH credentials the fence denies. Recommended: installed and
+   kept latest now; a fence later, through 0010's boundary API.
+3. **"Always latest" with no network.** Recommended: open on the installed version with a note;
+   never block code mode on an update check.
+4. **Remote starts.** The pack's `start` runs "on this computer". Recommended: start on this
+   computer first; remote starts once the pack supports them (t22n).
+5. **Before RFC 0012's installer.** Recommended: the switch shows only where herdr-app is
+   already set up.
 
 ## Links
 
 - Handoffs: `~/.config/herdr-app/handoffs/bot-system-unification.md` (D1, D4, D6, D7, D10, D12,
-  D13, D15, D20, D22); `council-desktop-shell-2026-11-02.md` (synthesis, finding 4);
+  D13, D15, D20, D22, D27); `council-desktop-shell-2026-11-02.md` (synthesis, finding 4);
   `pocket-into-automagik-monorepo.md` ("One am CLI", "Parts").
-- PRs: #182 (Tauri spike, FINDINGS.md), #191 (cross-OS matrix), #190 (Herdr import).
+- Spikes: #182 (Tauri, FINDINGS.md), #191 (cross-OS matrix), `spike/code-mode-in-wrapper`
+  (`apps/desktop-code-mode-spike/FINDINGS.md`). PR #190 (Herdr import).
 - RFCs: [0006](0006-herdr-terminal-mode.md) Herdr terminal mode,
   [0010](0010-desktop-sandbox.md) desktop sandbox; 0011 (monorepo parts and releases, #190);
-  0012 (`am` CLI and parts, not yet written).
+  0012 (`am` CLI and parts, not yet written); the registry RFC (not yet written).
 - Code: `apps/desktop/src/deeplink.js`, `main.js:101-131`, `frame.js`, `dsh.js:707`;
   `apps/bots-dsh/src/client/sidebar.js:800`, `client/pet.js`, `host/pets.js`, `host/roster.js:200`;
   Herdr `herdr/mods/am-sidebar/model.js:13` (#190).
