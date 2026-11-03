@@ -1,0 +1,5 @@
+# Mounts Automagik ACP. Its Config (index.js) names the agents it serves; with none it
+# registers no route, so this row alone changes nothing in a DSH.
+- insert:
+    - id: acp-dsh
+      name: '@automagik/acp-dsh'

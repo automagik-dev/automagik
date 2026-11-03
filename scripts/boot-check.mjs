@@ -46,13 +46,14 @@ if (!process.env.OMNI_SOURCE) {
 }
 omniDir = resolve(omniDir)
 
-const folders = [join(ROOT, 'apps', 'bots-dsh'), join(omniDir, 'apps', 'omni-channels-dsh'), join(omniDir, 'apps', 'omni-canvas-dsh'), join(ROOT, 'apps', 'welcome-dsh')]
+const folders = [join(ROOT, 'apps', 'bots-dsh'), join(omniDir, 'apps', 'omni-channels-dsh'), join(omniDir, 'apps', 'omni-canvas-dsh'), join(ROOT, 'apps', 'welcome-dsh'), join(ROOT, 'apps', 'acp-dsh')]
 const dshHome = join(work, 'dsh')
 const profileDir = join(dshHome, 'profiles', 'boot')
 mkdirSync(join(profileDir, 'vendor'), { recursive: true })
 const packed = folders.map((dir) => {
   const [info] = JSON.parse(execFileSync('npm', ['pack', '--json', '--ignore-scripts', '--pack-destination', join(profileDir, 'vendor')], { cwd: dir, env, encoding: 'utf8' }))
-  return { name: info.name, version: info.version, file: info.filename }
+  // A plugin with no browser half (acp-dsh) is never in the client graph; it must still activate.
+  return { name: info.name, version: info.version, file: info.filename, client: readJson(join(dir, 'package.json')).dsh?.client !== undefined }
 })
 say(`packed ${packed.map(pkg => `${pkg.name}@${pkg.version}`).join(', ')}`)
 // The add-ons the desktop profile pins (dsh-subscriptions), at those very pins:
@@ -126,9 +127,11 @@ try {
     const entries = await page.evaluate(() => (window.__DSH_BOOT__?.entries ?? []).map(row => row.id ?? row.name))
     const body = await page.evaluate(() => document.body.innerText)
     if (/did not activate|Failed to load plugins/i.test(body)) problems.push(`the web UI did not boot: ${body.slice(0, 600)}`)
-    for (const name of [...packed.map(pkg => pkg.name), ...addons.map(([addon]) => addon)]) if (!entries.includes(name)) problems.push(`${name} is not in the client graph`)
+    for (const name of [...packed.filter(pkg => pkg.client).map(pkg => pkg.name), ...addons.map(([addon]) => addon)]) if (!entries.includes(name)) problems.push(`${name} is not in the client graph`)
     if (args.shot) await page.screenshot({ path: resolve(args.shot) })
     say(`client graph: ${entries.filter(id => id.startsWith('@automagik/')).join(', ')}`)
+    // A host-only plugin shows no trace in the page when its apply throws; DSH's log does.
+    for (const line of log.split('\n')) if (/acp-dsh/.test(line) && /error|fail|throw/i.test(line)) problems.push(`dsh log: ${line.trim().slice(0, 300)}`)
     for (const problem of problems) say(`FAIL ${problem}`)
     failed = problems.length > 0
     if (!failed) say('PASS: the web UI booted with every plugin')

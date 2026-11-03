@@ -48,7 +48,13 @@ Every model entry gets a descriptor `{ harness, connectedBy }`, derived from its
 - **Agents as DSH models.** Each configured agent is a provider route. A Bot or a chat picks it
   like any model. DSH keeps the Session, history and sidebar.
 - **DSH tool cards and approvals.** The agent's tool calls render as DSH tool cards. Every tool
-  call goes through DSH's approval dialog under the Session's level.
+  call goes through DSH's approval dialog under the Session's level. How: the agent runs its own
+  tools, and each call it makes ends the model step with a call to `acp_tool`, a mirror tool
+  registered in that agent's scope only. DSH writes the `tool/call` and `tool/result` rows and
+  draws the card from the call's ACP kind (terminal, diff, generic). The mirror tool waits for
+  the agent's call to finish and, when the agent asks permission, asks DSH's approval service and
+  hands the agent the answer. DSH's side requests on an ACP route (a title, a summary) are refused
+  at the `llm/stream` waterfall, so they never reach the agent as prompts.
 - **The team's tools over MCP.** A Bot's team tools reach the agent through an MCP server the
   plugin hands to the agent per session. It exposes only the tools the Bot's level allows.
 - **Pinned adapters.** Each adapter is a pre-installed binary at an exact version with a SHA-256
@@ -90,6 +96,8 @@ patch is removed in the release whose DSH carries the change.
 - `connectedBy` and `harness` ids above. Compatibility: derived from existing provider ids, so
   every existing Session and Bot keeps its model.
 - Provider ids `acp-<agent>`. New; no collision with `claude-code*`.
+- Tool name `acp_tool` and its arguments `{ id, title, kind, input, locations?, diffs? }`. New;
+  Session logs keep them.
 - Plugin id `@automagik/acp-dsh` in `apps/acp-dsh`, storage prefix `acp-dsh`. New. It joins the
   one-version list and the release loop.
 - Adapter pins: a list of `{ agent, version, sha256 }` in the plugin. A bump is a reviewed PR.

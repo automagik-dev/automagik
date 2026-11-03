@@ -1,6 +1,7 @@
 // Models. Every Bot runs on one model of its own, fixed when it is created and changed
 // only in its settings or by a Main Bot. The team's first Main Bot has none until the
 // user picks one in its chat. The Session keeps the selection durably.
+import { piAiRoutes, routeOf } from '../shared/routes.js'
 import { normalize, splitRef } from './text.js'
 import { install as installHostModels } from './host-models.js'
 
@@ -42,6 +43,9 @@ export function install(rt) {
   async function catalog({ fresh = false } = {}) {
     if (!fresh && Date.now() - catalogCache.at < CATALOG_TTL_MS && catalogCache.value.length > 0) return catalogCache.value
     const listed = []
+    let directory = []
+    try { directory = ctx.llm.listConfigurableProviders?.() ?? [] } catch {}
+    const piAi = piAiRoutes(directory)
     for (const provider of ctx.llm.listProviders()) {
       let models = []
       try { models = await ctx.llm.listModels(provider.id) } catch { continue }
@@ -52,6 +56,7 @@ export function install(rt) {
           providerName: provider.name ?? provider.id,
           id: model.id,
           name: model.name ?? model.id,
+          route: routeOf(provider.id, { piAi }),
           ...(model.inputModalities ? { input: [...model.inputModalities] } : {}),
         })
       }
