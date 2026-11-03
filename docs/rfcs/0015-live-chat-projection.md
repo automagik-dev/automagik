@@ -256,9 +256,9 @@ anything on its own (0014 Threat model).
   1. **Draft check** (Q19). The screen's input row is read. If it holds text the person typed in
      the terminal, the message is **held**: the chat shows it with "The terminal has a half-typed
      message" and **Send now**. A held message goes by itself once the input row is empty (part
-     of Q2's accepted recommendation). The draft is never cleared, unlike Orca. **Send now** (decided, Q2) pastes the message after the
-     draft and sends both as one message; the chat warns first ("Sends your half-typed terminal
-     text with it"). Nothing is cleared or retyped.
+     of Q2's accepted recommendation). The draft is never cleared, unlike Orca. **Send now**
+     (decided, Q2) pastes the message after the draft and sends both as one message; the chat
+     warns first ("Sends your half-typed terminal text with it"). Nothing is cleared or retyped.
   2. **Send.** `terminal.send`: herdr-core pastes the text, waits until nobody has typed for about
      3 s (keys pressed meanwhile are held, then delivered), and presses Enter. Where an agent
      needs Orca's framing instead (a bracketed paste for multi-line text, Enter as its own write
