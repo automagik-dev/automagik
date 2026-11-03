@@ -337,7 +337,11 @@ jobs:
           [[ "${KIND}" == "pocket" ]] && notes="Automagik Pocket (no plugins, no desktop build)."
           [[ "${HERDR}" == "yes" ]] && notes="${notes} Automagik Herdr: \`automagik-herdr-pack-${VERSION}.tgz\` (its sha256 in \`.sha256\`); install with \`curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash\`, or run \`automagik-herdr update\`."
           [[ "${POCKET}" == "yes" ]] && notes="${notes} Automagik Pocket: \`automagik-pocket-${VERSION}.apk\` follows (the Pocket job) with \`latest.json\`; installed phones update on their own."
-          gh release create "v${VERSION}" release/* "${flags[@]}" \
+          # A pocket patch with no herdr/ change packs nothing here (its APK follows in the Pocket
+          # job): the release then starts with no file, never with a literal "release/*".
+          shopt -s nullglob
+          files=(release/*)
+          gh release create "v${VERSION}" "${files[@]}" "${flags[@]}" \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
             --title "Automagik ${VERSION%.0}" \

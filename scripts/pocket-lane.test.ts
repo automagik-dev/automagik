@@ -70,6 +70,16 @@ describe('pocket-lane is never taken for a release', () => {
     expect(lane).toBeGreaterThan(manifest);
   });
 
+  test('a pocket patch with nothing in release/ still publishes its release: no literal release/*', () => {
+    const publish = release.slice(release.indexOf('- name: Publish the release'), release.indexOf('- name: Sign and post the herdr lane'));
+    expect(publish).toContain('shopt -s nullglob');
+    expect(publish).toContain('gh release create "v${VERSION}" "${files[@]}" "${flags[@]}"');
+    expect(publish).not.toContain('release/* "${flags[@]}"');
+    // The guard itself, as bash runs it: an empty folder gives no argument.
+    const run = Bun.spawnSync(['bash', '-c', 'set -euo pipefail; cd "$(mktemp -d)"; mkdir release; shopt -s nullglob; files=(release/*); echo "${#files[@]}"']);
+    expect(run.stdout.toString().trim()).toBe('0');
+  });
+
   test("a full release's desktop build keeps the APK and latest.json the Pocket job put on it", () => {
     const sweep = read('.github/workflows/desktop-build.yml').split('\n').find(line => /case "\$\{name\}" in .*\) continue ;; esac/.test(line)) ?? '';
     const kept = /in (.*)\) continue/.exec(sweep)?.[1].split('|') ?? [];
