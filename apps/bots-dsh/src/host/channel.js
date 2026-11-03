@@ -163,14 +163,16 @@ export function install(rt) {
       if (body.permission === null || body.permission === '') delete state.prefs.permission
       else state.prefs.permission = rt.checkPreset(body.permission)
     }
-    // The background jobs' model (models.js backgroundModel): a model DSH serves that answers
-    // beside the chats, never an agent over ACP. None: DSH's default model.
+    // The background jobs' model (models.js backgroundModel): a model DSH serves, with its key
+    // set, that answers beside the chats, never an agent over ACP. None: DSH's default model.
     if (body.backgroundModel !== undefined) {
       if (body.backgroundModel === null || body.backgroundModel === '') delete state.prefs.backgroundModel
       else {
         const ref = String(body.backgroundModel)
         if (!rt.answersAside(ref)) throw invalid('An agent over ACP answers only in its own chat, so it cannot run background jobs')
-        if (!(await rt.catalog({ fresh: true })).some(entry => entry.ref === ref)) throw invalid(`Model ${ref.slice(0, 80)} is not available`)
+        const entry = (await rt.catalog({ fresh: true })).find(item => item.ref === ref)
+        if (entry === undefined) throw invalid(`Model ${ref.slice(0, 80)} is not available`)
+        if (entry.needsKey) throw invalid(`Model ${ref.slice(0, 80)} has no key yet: add one in Connect AI first`)
         state.prefs.backgroundModel = ref
       }
     }

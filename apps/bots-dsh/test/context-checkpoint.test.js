@@ -414,3 +414,17 @@ test('a chat on an ACP agent asks the steward and writes its note on the backgro
   assert.deepEqual(b.calls.streams.map(options => `${options.provider}/${options.model}`), ['deepseek/flash', 'deepseek/flash', 'deepseek/flash'])
   assert.ok(b.calls.streams.every(options => options.reasoningEffort === undefined))
 })
+
+// The same for a checkpoint: on an ACP agent's chat it is written on the background model,
+// without the agent's effort or output limit, and still committed to the chat's own Session.
+test('a checkpoint of a chat on an ACP agent is written on the background model', async t => {
+  const b = backendBench(); t.after(b.stop)
+  b.session.requestHeader = () => ({ config: { provider: 'acp-codex', model: 'default', reasoningEffort: 'high', maxTokens: 1000 } })
+  b.rt.answersAside = ref => !String(ref).startsWith('acp-')
+  b.rt.backgroundModel = async () => 'deepseek/flash'
+  const result = await b.rt.checkpointBot('b1', { sessionId: 's1' })
+  assert.equal(result.context.counts.checkpoints, 1)
+  const [call] = b.calls.streams
+  assert.deepEqual([call.messages.tag.kind, `${call.provider}/${call.model}`, call.reasoningEffort, call.maxTokens, call.sessionId], ['checkpoint', 'deepseek/flash', undefined, undefined, 's1'])
+  assert.equal(b.calls.persisted.filter(event => event.type === 'compaction/summary').length, 1)
+})

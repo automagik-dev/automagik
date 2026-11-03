@@ -1328,9 +1328,12 @@ export function install(rt) {
   const panelBody = panel => (panel.group ? { roomId: panel.id } : { botId: panel.id })
   const panelLabel = (panel, scope) => (scope.kind === 'team' ? 'the team memory' : panel.group ? 'the group memory' : `${panel.name}'s memory`)
 
-  function startSummary(panel, loaded, language, hash) {
+  // The models a summary runs on, the background model first and the keeper's after it: a
+  // failure stands until one of them changes.
+  const summaryModels = async keeper => `${await rt.backgroundModel() ?? ''}|${keeper?.model ?? ''}`
+
+  function startSummary(panel, loaded, language, hash, models) {
     const { keeper } = panel
-    const model = keeper.model
     const request = panel.group
       ? groupSummaryRequest({ name: panel.name, lines: linesFor(loaded.group), language })
       : summaryRequest({ name: panel.name, own: linesFor(loaded.own), team: linesFor(loaded.team), language })
@@ -1341,15 +1344,15 @@ export function install(rt) {
       summaryFailures.delete(panel.id)
       if (rt.readOnly() === undefined) await writeText(summaryPath(panel.id), JSON.stringify(value, null, 2))
     })().catch((error) => {
-      summaryFailures.set(panel.id, { hash, model, message: error?.message ?? String(error) })
+      summaryFailures.set(panel.id, { hash, models, message: error?.message ?? String(error) })
       rt.warn('ds-bot: memory summary for %s failed: %s', panel.name, error)
     }).finally(() => summarizing.delete(panel.id))
     summarizing.set(panel.id, job)
   }
 
   // The summary is written again when the entries or the interface language change;
-  // a failed one waits for `regenerate`, or a new model for the keeper, instead of
-  // retrying on every poll.
+  // a failed one waits for `regenerate`, or another background model or keeper's model,
+  // instead of retrying on every poll.
   async function memoryView(body) {
     const panel = panelOf(body)
     const loaded = await settled(() => Object.fromEntries(Object.entries(panel.scopes).map(([tag, scope]) => [tag, loadScope(scope)])))
@@ -1358,9 +1361,10 @@ export function install(rt) {
     const hash = createHash('sha256').update(JSON.stringify([language, ...Object.values(loaded).map(linesFor)])).digest('hex')
     const saved = savedSummary(panel.id)
     const prior = summaryFailures.get(panel.id)
-    const failed = prior?.hash === hash && prior.model === panel.keeper?.model ? prior : undefined
+    const models = await summaryModels(panel.keeper)
+    const failed = prior?.hash === hash && prior.models === models ? prior : undefined
     const wanted = body.regenerate === true || (body.summarize === true && saved?.hash !== hash && failed === undefined)
-    if (wanted && entries.length > 0 && panel.keeper !== undefined && !summarizing.has(panel.id)) startSummary(panel, loaded, language, hash)
+    if (wanted && entries.length > 0 && panel.keeper !== undefined && !summarizing.has(panel.id)) startSummary(panel, loaded, language, hash, models)
     return {
       ...panelBody(panel),
       entries,
