@@ -59,11 +59,14 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // bake (apps/automagik-pets) is no plugin and no app build reads it; it ships on its own.
 // The RFCs and notes under docs/ ship nothing either. In the herdr part: its notes (*.md at its top,
 // docs/, .genie/ plans, the mockup) and its catalog, which installed mod managers read from dev
-// directly, not from a release.
+// directly, not from a release; and the layout entry's RECIPE.md and preview.png.
 const NEVER_SHIPPED = [/^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/, /^apps\/automagik-pets\//, /^docs\//,
-  /^herdr\/[^/]+\.md$/, /^herdr\/(\.genie|docs|mockup|catalog)\//];
-/** The herdr part: everything under herdr/ (the pack's mods, layout, installer and tooling). */
-export const HERDR = /^herdr\//;
+  /^herdr\/[^/]+\.md$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr-layout\/(RECIPE\.md|preview\.png)$/];
+/**
+ * The herdr part: everything under herdr/ (the pack's mods, installer and tooling) and its layout's
+ * own entry folder, herdr-layout/ (the pack ships its automagik.json; RFC 0011).
+ */
+export const HERDR = /^herdr(-layout)?\//;
 
 export interface LanePlugin {
   name: string;

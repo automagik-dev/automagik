@@ -34,12 +34,22 @@ and updaters that find their asset among releases that are mostly someone else's
 |---|---|---|---|
 | Desktop app | everything not below (`apps/desktop/`, the profile, lockfiles…) | the dmg, AppImage and deb, `latest-*.yml`, `SHA256SUMS` | `apps/desktop/src/update.js`: the newest release with its platform's feed |
 | Plugins | `apps/<plugin>/` | `automagik-<plugin>-<v>.tgz`, `plugins.json`, `PLUGINS.SHA256SUMS`, `lane.json` | the rolling `plugin-lane` release (`scripts/lane.ts`) |
-| Herdr pack | `herdr/` | `automagik-herdr-pack-<v>.tgz` and `automagik-herdr-pack-<v>.tgz.sha256`; the `herdr-lane` pointer is re-signed | the rolling `herdr-lane` release (`scripts/herdr-lane.ts`), checked against the pack's `pack-keys.json` |
+| Herdr pack | `herdr/`, `herdr-layout/` | `automagik-herdr-pack-<v>.tgz` and `automagik-herdr-pack-<v>.tgz.sha256`; the `herdr-lane` pointer is re-signed | the rolling `herdr-lane` release (`scripts/herdr-lane.ts`), checked against the pack's `pack-keys.json` |
 | Pocket | `apps/pocket/`, `herdr/mods/pocket-link` | (Pocket's import) | (Pocket's import) |
 
 `herdr/` is a top-level folder because Herdr's crawler (herdr.dev) indexes top-level folders. The
 herdr.dev listing waits on the owner's gate: no `herdr-mod` or `herdr-layout` topic is set on this
 repository until then.
+
+The pack's layout is its own top-level entry folder, `herdr-layout/` (`automagik.json`, `RECIPE.md`,
+`preview.png`), not `herdr/layouts/`: the crawler skips the whole repository when a herdr-mod entry
+folder holds `layouts/`, and a skip deletes a listing it had (probe-confirmed, t22n and t259). A
+herdr-mod entry folder is any folder holding `mods/<name>/main.js`, as the mod manager reads a
+package. `herdr/scripts/entries.mjs --check` fails when one holds `layouts/`; CI runs it on every
+pull request and the release with the pack's gates. The folder's name and shape may change after
+the probe's layout test; the move is one commit, so a rename is cheap. Until then the mod manager,
+which installs a package's own `layouts/`, no longer installs the layout with the pack from the
+catalog; `install.sh` and the updater still do, from the tarball.
 
 ## Versioning
 
@@ -67,7 +77,8 @@ what a release is and whether it attaches the pack:
 - `herdr/` shipped since the last release when one of its paths changed that is neither never
   shipped nor a version-only bump. Never shipped in the part: its top-level `*.md`, `docs/`,
   `.genie/`, `mockup/`, `test/` and `catalog/` (installed mod managers read the catalog from `dev`
-  directly). The repository's own `docs/` ships nothing either (this change adds it to
+  directly). `herdr-layout/` is part of the herdr part: its `automagik.json` ships in the pack, its
+  `RECIPE.md` and `preview.png` do not. The repository's own `docs/` ships nothing either (this change adds it to
   `NEVER_SHIPPED`; no build reads it).
 - The herdr kind is measured since the last release of any kind, not since the last full one:
   measured since the full one, a herdr-only merge after a plugin patch would pack the plugins again
@@ -79,7 +90,8 @@ what a release is and whether it attaches the pack:
 `release.yml`'s "Pack the herdr pack" step is the old repository's Pack step, under `herdr/`:
 
 - From the tag, not the working tree: `git archive` of the tag's `herdr/mods/<PACK_MODS>` plus
-  `herdr/layouts/automagik.json` as `layouts/automagik.json`. The folder list is the tag's
+  `herdr-layout/automagik.json` as `layouts/automagik.json` (inside the tarball, `layouts/` is where
+  the updater and the installer look; in the repository it is never under `herdr/`). The folder list is the tag's
   `PACK_MODS` (`herdr/mods/am-sidebar/release.js`); every other folder of `herdr/mods/` but
   `pocket-link` must be in it, and the archive's top level must be exactly it plus `layouts/`.
 - `automagik-herdr-pack-<v>.tgz.sha256` is `sha256sum` of the tarball alone: the same line the old

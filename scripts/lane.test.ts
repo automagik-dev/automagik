@@ -23,7 +23,7 @@ describe('the plugin lane', () => {
 
   test('a herdr-only change is a herdr patch: no desktop build, no plugins, the pack alone', () => {
     const none = () => false;
-    const pack = ['herdr/mods/am-sidebar/main.js', 'herdr/layouts/automagik.json', 'herdr/install.sh'];
+    const pack = ['herdr/mods/am-sidebar/main.js', 'herdr-layout/automagik.json', 'herdr/install.sh'];
     // Since the last release (here also the last full one), only herdr/ ships.
     expect(kindOf(pack, none, none, pack)).toBe('herdr');
     expect(herdrShips(pack)).toBe(true);

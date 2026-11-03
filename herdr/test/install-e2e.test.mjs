@@ -100,13 +100,14 @@ function buildPack(dir, { launcher } = {}) {
   assert.equal(only(/^git show "v\$\{VERSION\}:herdr\/mods\//), 'git show "v${VERSION}:herdr/mods/am-sidebar/release.js" > "${RUNNER_TEMP}/release.mjs"');
   assert.match(only(/^mapfile -t mods /), /const \{ PACK_MODS \} = await import\(process\.argv\[1\]\); for \(const m of PACK_MODS\) console\.log\(m\);' "\$\{RUNNER_TEMP\}\/release\.mjs"\)$/);
   assert.equal(only(/^\(cd release && sha256sum /), '(cd release && sha256sum -- "${tgz}" > "${tgz}.sha256")');
-  const show = swap(only(/^git show "v\$\{VERSION\}:herdr\/layouts\//), '"v${VERSION}:herdr/', '"${TREE}:');
+  // The layout is its own entry at the top (herdr-layout/), so its line reads the whole tree.
+  const show = swap(only(/^git show "v\$\{VERSION\}:herdr-layout\//), '"v${VERSION}:', '"${TOPTREE}:');
   const archive = swap(swap(swap(only(/^git archive /), '"v${VERSION}:herdr/mods"', '"${TREE}:mods"'), '"${mods[@]}"', '"$@"'), '-o "release/${tgz}"', '-o "${tgz}"');
 
   // A tree of the working copy (staged in a scratch index, never the repository's own index),
   // from the repository's top: the pack is its PREFIX (herdr/), and TREE that folder's tree.
   const idx = { GIT_INDEX_FILE: join(dir, "index") };
-  topGit(["add", "-A", "--", `${PREFIX}mods`, `${PREFIX}layouts`], idx);
+  topGit(["add", "-A", "--", `${PREFIX}mods`, "herdr-layout"], idx);
   const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: ROOT, input: `${RELEASE}\n`, encoding: "utf8" }).trim();
   topGit(["update-index", "--cacheinfo", `100644,${blob},${PREFIX}mods/am-sidebar/VERSION`], idx);
   const staged = new Set(topGit(["ls-files", "--", ...LAUNCHER.map((path) => PREFIX + path)], idx).split("\n").filter(Boolean));
@@ -129,7 +130,7 @@ function buildPack(dir, { launcher } = {}) {
   mkdirSync(dirname(tgz), { recursive: true });
   mkdirSync(join(dir, "runner"));
   execFileSync("sh", ["-euc", `${show}\n${archive}\n`, "sh", ...PACK_MODS], {
-    cwd: TOP, env: { ...process.env, TREE: tree, tgz, RUNNER_TEMP: join(dir, "runner") }, stdio: "pipe",
+    cwd: TOP, env: { ...process.env, TREE: tree, TOPTREE: top, tgz, RUNNER_TEMP: join(dir, "runner") }, stdio: "pipe",
   });
   const level = [...new Set(execFileSync("tar", ["-tzf", tgz], { encoding: "utf8" }).split("\n").filter(Boolean).map((p) => p.split("/")[0]))].sort();
   assert.deepEqual(level, [...PACK_MODS, "layouts"].sort(), "the archive's top level is PACK_MODS plus layouts, as release.yml checks");

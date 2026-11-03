@@ -385,12 +385,13 @@ test("a pack made as release.yml makes it (git archive of the tag's mods/am-side
   const tgz = join(home, "pack.tgz");
   try {
     // release.yml's "Pack the herdr pack" step: the tag's PACK_MODS folders of herdr/mods/ plus
-    // the pack's layout, from the repository's top (archive in a subfolder lists only its paths).
+    // the pack's layout (herdr-layout/ at the top), from the repository's top (archive in a
+    // subfolder lists only its paths).
     const { PACK_MODS } = await import("../mods/am-sidebar/release.js");
     const topDir = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: repo, encoding: "utf8" }).trim();
     const prefix = execFileSync("git", ["rev-parse", "--show-prefix"], { cwd: repo, encoding: "utf8" }).trim();
     const layout = join(home, "automagik.json");
-    writeFileSync(layout, execFileSync("git", ["show", `HEAD:${prefix}layouts/automagik.json`], { cwd: topDir }));
+    writeFileSync(layout, execFileSync("git", ["show", "HEAD:herdr-layout/automagik.json"], { cwd: topDir }));
     execFileSync("git", ["archive", "--format=tar.gz", "-o", tgz, "--prefix=layouts/", `--add-file=${layout}`, "--prefix=", `HEAD:${prefix}mods`, "--", ...PACK_MODS], { cwd: topDir });
     const top = [...new Set(execFileSync("tar", ["-tzf", tgz], { encoding: "utf8" }).split("\n").filter(Boolean).map((n) => n.split("/")[0]))].sort();
     assert.deepEqual(top, [...PACK_MODS, "layouts"].sort());

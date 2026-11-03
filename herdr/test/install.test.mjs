@@ -13,7 +13,8 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const INSTALL = join(ROOT, "install.sh");
 const PACK_SRC = join(ROOT, "mods", "am-sidebar");
-const LAYOUT_SRC = join(ROOT, "layouts", "automagik.json");
+// The layout is its own top-level entry beside herdr/ (RFC 0011); the tarball carries it as layouts/automagik.json.
+const LAYOUT_SRC = join(ROOT, "..", "herdr-layout", "automagik.json");
 const { OLD_PACK_NAME, PACK_MODS, USAGEMETER, V020_LAYOUT_SHA256, parseMarker } = await import("../mods/am-sidebar/release.js");
 const CASK = "penso/tap/herdr-gpui";
 const { keys: TEST_KEYS, pointerBytes, signatureOf } = await import("./pointer.mjs");
@@ -86,7 +87,7 @@ fi
   };
   /**
    * Publishes a release as release.yml packs it: every PACK_MODS folder of the repo plus
-   * layouts/automagik.json, at `version`, or `edit(srcDir)` changing it first. As in a real release
+   * the layout (herdr-layout/automagik.json, as layouts/automagik.json), at `version`, or `edit(srcDir)` changing it first. As in a real release
    * only am-sidebar carries VERSION; each main.js ends in a `// release <v>` line, the code
    * change a release brings, so a test can tell which release a folder is from. The tarball and its
    * .sha256 go in download/v<version>/; with `latest`, the herdr-lane release's pack.json names it,
@@ -980,8 +981,10 @@ test("every pack mod docks nowhere by itself; the shipped layout names only pack
   walk(JSON.parse(readFileSync(LAYOUT_SRC, "utf8")));
   assert.ok(named.includes("am-sidebar"));
   assert.deepEqual(named.filter((m) => !PACK_MODS.includes(m) && !stock.has(m)), []);
-  assert.deepEqual(readdirSync(join(ROOT, "layouts")), ["automagik.json"]);
-  assert.equal(existsSync(join(PACK_SRC, "layouts")), false, "one layout: the root one (D8)");
+  // One layout (D8), in its own entry beside herdr/: none in herdr/ (herdr.dev would skip the repo) or the sidebar.
+  assert.ok(readdirSync(join(ROOT, "..", "herdr-layout")).includes("automagik.json"));
+  assert.equal(existsSync(join(ROOT, "layouts")), false, "no layouts/ in the herdr/ entry");
+  assert.equal(existsSync(join(PACK_SRC, "layouts")), false, "one layout: herdr-layout's (D8)");
   assert.deepEqual(readdirSync(join(ROOT, "mods")).filter((m) => m !== "pocket-link").sort(), [...PACK_MODS].sort());
 });
 

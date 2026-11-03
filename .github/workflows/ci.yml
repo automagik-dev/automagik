@@ -66,7 +66,7 @@ jobs:
           # A push that opens a branch, or a base this checkout lacks, tests the pack anyway.
           if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
             echo "herdr=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(herdr/|\.github/workflows/(ci|release)\.yml$|scripts/(lane|version)\.ts$)'; then
+          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(herdr/|herdr-layout/|\.github/workflows/(ci|release)\.yml$|scripts/(lane|version)\.ts$)'; then
             echo "herdr=true" >> "$GITHUB_OUTPUT"
           else
             echo "herdr/ did not change: nothing to test"
@@ -98,6 +98,11 @@ jobs:
       - name: Catalog
         if: steps.changed.outputs.herdr == 'true'
         run: node scripts/catalog.mjs --check
+
+      # On every pull request, whatever changed: herdr.dev skips the whole repository when a herdr-mod
+      # entry folder (any folder holding mods/<name>/main.js) holds layouts/ (RFC 0011).
+      - name: No layouts/ in a herdr-mod entry folder
+        run: node scripts/entries.mjs --check
 
       - name: One version (the root's)
         if: steps.changed.outputs.herdr == 'true'
