@@ -133,7 +133,9 @@ test('routes are offered only for CLIs that are here; before its adapter is in, 
   assert.match(reason.failure.message, /still being installed; the last install failed: npm answered 503/)
   assert.deepEqual(updates, ['@agentclientprotocol/claude-agent-acp', '@agentclientprotocol/claude-agent-acp'])
   installed = { path: join(home, 'index.js'), version: '1.0.0' }
-  assert.deepEqual(await registered[0].adapter.listModels('acp-claude'), [{ provider: 'acp-claude', id: 'default', name: 'Claude Code' }])
+  // An adapter that cannot answer (this one is no script) leaves the usual models standing in.
+  assert.deepEqual((await registered[0].adapter.listModels('acp-claude')).map(model => model.id), ['default', 'opus', 'sonnet', 'haiku'])
+  assert.deepEqual((await registered[0].adapter.resolveModel('acp-claude', 'sonnet')).reasoning.efforts.map(effort => effort.id), ['low', 'medium', 'high'])
   // Turned off in the settings: not offered even with the CLI here.
   const none = []
   apply({ ...ctx, llm: { registerAdapter: providers => none.push(providers) } }, { claude: false, codex: false }, { store })

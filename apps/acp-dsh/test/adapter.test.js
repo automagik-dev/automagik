@@ -30,9 +30,9 @@ function host({ answer = 'allowed-once' } = {}) {
   return { adapter: registered['acp-fake'], agent, tools, asked, close, registered }
 }
 
-async function step(adapter, messages, { signal, onChunk } = {}) {
+async function step(adapter, messages, { signal, onChunk, model = 'default', effort } = {}) {
   const chunks = []
-  for await (const chunk of adapter.stream(markAgentLoopRequest({ provider: 'acp-fake', model: 'fake', sessionId: 's1', messages, signal }))) {
+  for await (const chunk of adapter.stream(markAgentLoopRequest({ provider: 'acp-fake', model, ...(effort ? { reasoningEffort: effort } : {}), sessionId: 's1', messages, signal }))) {
     chunks.push(chunk)
     onChunk?.(chunks)
   }
@@ -40,14 +40,14 @@ async function step(adapter, messages, { signal, onChunk } = {}) {
 }
 
 // One DSH turn: steps until the model stops, tool calls run between them like DSH runs them.
-async function turn(h, messages, text) {
+async function turn(h, messages, text, choice = {}) {
   messages.push({ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] })
   const steps = []
   for (;;) {
-    const chunks = await step(h.adapter, messages)
+    const chunks = await step(h.adapter, messages, choice)
     steps.push(chunks)
     const blocks = chunks.filter(chunk => chunk.type === 'block-end').map(chunk => chunk.block)
-    messages.push({ role: 'assistant', source: { kind: 'model', provider: 'acp-fake', model: 'fake' }, content: blocks })
+    messages.push({ role: 'assistant', source: { kind: 'model', provider: 'acp-fake', model: choice.model ?? 'default' }, content: blocks })
     const finish = chunks.at(-1)
     assert.equal(finish.type, 'finish')
     if (finish.reason.kind !== 'tool-calls') return { steps, finish }
@@ -63,11 +63,11 @@ async function turn(h, messages, text) {
 }
 
 const textIn = chunks => chunks.filter(chunk => chunk.type === 'text-delta').map(chunk => chunk.text).join('')
+const thoughtIn = chunks => chunks.filter(chunk => chunk.type === 'reasoning-delta').map(chunk => chunk.text).join('')
 
 test('a turn streams text, ends its step at the tool call, asks DSH, and goes on after the result', async () => {
   const h = host()
   try {
-    assert.deepEqual(await h.adapter.listModels('acp-fake'), [{ provider: 'acp-fake', id: 'fake', name: 'Fake agent' }])
     const messages = []
     const { steps, finish } = await turn(h, messages, 'hi')
     assert.equal(finish.reason.kind, 'stop')
@@ -156,7 +156,7 @@ test('an agent that cannot start fails the step with its reason', async () => {
   const ctx = { llm: { registerAdapter: (providers, adapter) => { for (const id of providers) registered[id] = adapter } }, agents: { get: () => undefined }, get: () => undefined }
   apply(ctx, { fakeAgent: join(import.meta.dirname, 'fixtures', 'no-such-agent.mjs'), claude: false, codex: false })
   const chunks = []
-  for await (const chunk of registered['acp-fake'].stream(markAgentLoopRequest({ provider: 'acp-fake', model: 'fake', sessionId: 's9', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }))) chunks.push(chunk)
+  for await (const chunk of registered['acp-fake'].stream(markAgentLoopRequest({ provider: 'acp-fake', model: 'default', sessionId: 's9', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }))) chunks.push(chunk)
   assert.equal(chunks.at(-1).reason.kind, 'error')
   assert.match(chunks.at(-1).reason.failure.message, /Fake agent did not start/)
 })
@@ -183,4 +183,68 @@ test("DSH's answer maps to the option the agent offered", () => {
   assert.deepEqual(optionFor('rejected', options), { outcome: { outcome: 'selected', optionId: 'r' } })
   assert.deepEqual(optionFor('unavailable', options), { outcome: { outcome: 'cancelled' } })
   assert.deepEqual(optionFor('cancelled', options), { outcome: { outcome: 'cancelled' } })
+})
+
+test("the agent's own models and each one's efforts are DSH's models and efforts", async () => {
+  const h = host()
+  try {
+    assert.deepEqual(await h.adapter.listModels('acp-fake'), [
+      { provider: 'acp-fake', id: 'default', name: 'Fake agent', description: 'Its own setting: Fake Large' },
+      { provider: 'acp-fake', id: 'fake-large', name: 'Fake Large' },
+      { provider: 'acp-fake', id: 'fake-small', name: 'Fake Small', description: 'Quick and cheap' },
+      { provider: 'acp-fake', id: 'fake-plain', name: 'Fake Plain' },
+    ])
+    // Each model's own efforts, least to most; the agent's "default" row is no level, and its
+    // current value (the person's own setting) is the default effort.
+    await h.adapter.agents.get('acp-fake').catalog.probing
+    const efforts = async model => (await h.adapter.resolveModel('acp-fake', model)).reasoning
+    assert.deepEqual(await efforts('fake-large'), { efforts: [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }], defaultEffort: 'medium' })
+    assert.deepEqual(await efforts('fake-small'), { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'low' })
+    assert.deepEqual(await efforts('default'), await efforts('fake-large'))
+    assert.equal(await efforts('fake-plain'), undefined)
+    // An id the agent does not offer resolves bare, as DSH's routing allows.
+    assert.deepEqual(await h.adapter.resolveModel('acp-fake', 'gone'), { provider: 'acp-fake', id: 'gone', name: 'gone' })
+  } finally {
+    h.close()
+  }
+})
+
+test('the chosen model and effort reach the agent before each prompt; default goes back to its own model', async () => {
+  const h = host()
+  try {
+    const messages = []
+    let next = await turn(h, messages, 'hi', { model: 'fake-small', effort: 'high' })
+    assert.match(thoughtIn(next.steps[0]), /^On fake-small at high effort\. Thinking it over\./)
+    next = await turn(h, messages, 'again', { model: 'fake-large', effort: 'low' })
+    assert.match(thoughtIn(next.steps[0]), /^On fake-large at low effort\./)
+    // DSH's default model: the one the agent started on. No effort leaves the agent's own.
+    await turn(h, messages, 'small', { model: 'fake-small' })
+    next = await turn(h, messages, 'back', { model: 'default' })
+    assert.match(thoughtIn(next.steps[0]), /^On fake-large at low effort\./)
+    // A model or effort the agent does not offer fails the turn, saying what it does offer.
+    const plain = await step(h.adapter, [...messages, { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'x' }] }], { model: 'fake-plain', effort: 'high' })
+    assert.equal(plain.at(-1).reason.kind, 'error')
+    assert.match(plain.at(-1).reason.failure.message, /Fake agent would not take fake-plain at high effort: it has no thought_level setting/)
+    const unknown = await step(h.adapter, [...messages, { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'x' }] }], { model: 'fake-huge' })
+    assert.match(unknown.at(-1).reason.failure.message, /it offers no model fake-huge \(it offers fake-large, fake-small, fake-plain\)/)
+  } finally {
+    h.close()
+  }
+})
+
+test('an agent that offers no models is one model, default, with no efforts', async (t) => {
+  process.env.FAKE_ACP_NO_OPTIONS = '1'
+  t.after(() => { delete process.env.FAKE_ACP_NO_OPTIONS })
+  const h = host()
+  try {
+    assert.deepEqual(await h.adapter.listModels('acp-fake'), [{ provider: 'acp-fake', id: 'default', name: 'Fake agent' }])
+    assert.equal((await h.adapter.resolveModel('acp-fake', 'default')).reasoning, undefined)
+    const { finish, steps } = await turn(h, [], 'hi')
+    assert.equal(finish.reason.kind, 'stop')
+    assert.equal(thoughtIn(steps[0]), 'Thinking it over.')
+    const other = await step(h.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'x' }] }], { model: 'fake-small' })
+    assert.match(other.at(-1).reason.failure.message, /it offers no choice of model, so not fake-small/)
+  } finally {
+    h.close()
+  }
 })

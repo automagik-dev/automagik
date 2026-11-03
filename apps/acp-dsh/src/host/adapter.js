@@ -1,4 +1,6 @@
-// ACP agents as DSH models. Each agent is a provider route with one model. A DSH turn on it is
+// ACP agents as DSH models. Each agent is a provider route whose models and reasoning efforts
+// are the agent's own (catalog.js); the chosen ones are set on its session before each prompt,
+// with the permission mode. A DSH turn on it is
 // one ACP prompt to that Session's agent process: its words stream as text, its thoughts as
 // reasoning, and each of its tool calls ends the model step with a call to the mirror tool
 // (tool.js), so DSH shows the card and asks for approval. The next step drains what the agent
@@ -6,7 +8,8 @@
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { LlmAdapter, isAgentLoopRequest } from '@deepseek-ai/dsh-llm'
-import { AgentRun } from './acp.js'
+import { AgentRun, valuesOf } from './acp.js'
+import { DEFAULT_MODEL } from './catalog.js'
 import { callArguments, levelOf, mirrorTool, TOOL_NAME } from './tool.js'
 
 const CANCEL_WAIT_MS = 5000
@@ -86,10 +89,28 @@ export function aside(providers) {
   }
 }
 
+/**
+ * Put the agent on DSH's model and effort, the model first: the efforts it offers are that
+ * model's. DSH's `default` model is the one the agent started on, and no effort leaves its own.
+ * @param {AgentRun} run
+ * @param {string} model
+ * @param {string | undefined} effort
+ */
+export async function choose(run, model, effort) {
+  const option = run.option('model')
+  if (option === undefined) {
+    if (model !== DEFAULT_MODEL) throw new Error(`it offers no choice of model, so not ${model}`)
+  } else {
+    const target = model === DEFAULT_MODEL && !valuesOf(option).some(choice => choice.value === DEFAULT_MODEL) ? run.startModel : model
+    if (target !== undefined) await run.setOption('model', target)
+  }
+  if (effort !== undefined) await run.setOption('thought_level', effort)
+}
+
 export class AcpAdapter extends LlmAdapter {
   /**
    * @param {import('@deepseek-ai/cordis').Context} ctx
-   * @param {Map<string, { name: string, model: { id: string, name: string }, installed?(): boolean, spawn(): { command: string, args?: string[], env?: Record<string, string> } }>} agents
+   * @param {Map<string, { name: string, catalog: import('./catalog.js').Catalog, installed?(): boolean, spawn(): { command: string, args?: string[], env?: Record<string, string> } }>} agents
    */
   constructor(ctx, agents) {
     super()
@@ -109,7 +130,15 @@ export class AcpAdapter extends LlmAdapter {
   async listModels(provider) {
     const agent = this.agents.get(provider)
     if (agent === undefined || agent.installed?.() === false) return []
-    return [{ provider, id: agent.model.id, name: agent.model.name }]
+    return (await agent.catalog.models()).map(model => ({ provider, id: model.id, name: model.name, ...(model.description ? { description: model.description } : {}) }))
+  }
+
+  // A model's efforts are the ones the agent offers for it; DSH turns down any other before the
+  // agent sees it. An id the agent does not list resolves bare, as DSH's routing allows.
+  async resolveModel(provider, model) {
+    const found = await this.agents.get(provider)?.catalog.model(model)
+    if (found === undefined) return { provider, id: model, name: model }
+    return { provider, id: found.id, name: found.name, ...(found.description ? { description: found.description } : {}), ...(found.reasoning ? { reasoning: found.reasoning } : {}) }
   }
 
   // The mirror tool lives in the agent's own scope: no other Session's model sees it.
@@ -166,7 +195,12 @@ export class AcpAdapter extends LlmAdapter {
         await Promise.race([live.run.prompting, new Promise(resolve => setTimeout(resolve, CANCEL_WAIT_MS).unref?.())])
         if (live.run.busy) return yield finish('error', `${agent.name} is still finishing its last answer; send this again in a moment`)
       }
-      // The Session's level, as the agent's own permission mode, before every prompt.
+      // The Session's model and effort, then its level as the agent's own permission mode, before every prompt.
+      try {
+        await choose(live.run, options.model, options.reasoningEffort)
+      } catch (error) {
+        return yield finish('error', `${agent.name} would not take ${options.model}${options.reasoningEffort ? ` at ${options.reasoningEffort} effort` : ''}: ${error?.message ?? error}`)
+      }
       try {
         await live.run.setMode(agent.modeFor?.(levelOf(this.ctx.get?.('approval'), dshAgent?.session, this.ctx.get?.('sandboxPolicy'))))
       } catch (error) {
@@ -209,6 +243,7 @@ export class AcpAdapter extends LlmAdapter {
   }
 
   dispose() {
+    for (const agent of this.agents.values()) agent.catalog?.dispose()
     for (const live of this.live.values()) live.run.dispose()
     this.live.clear()
   }
