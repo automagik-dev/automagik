@@ -44,8 +44,15 @@ All taken by the Pocket orchestrator on 2026-11-03, from the owner's answers.
   `.herdr/bots.json`. The shared registry (RFC 0014) is a new reader.
 - Icons and colours come from `shared.json`: `am.sidebar.icons` and `am.space.colors`, else the
   keys from before the pack's rename. Images are copied from Herdr's `space-icons/` folder.
-- Cache: `TeamsDb.kt`. Each reading of a connected machine replaces that machine's rows, and
-  cached rows of machines that aren't connected show as last known.
+- Cache: `TeamsDb.kt`, written only by `TeamsSync`.
+  - A machine counts as read once its terminals and spaces have been read this session and git
+    has answered for every space (`Teams.ready`, or 30 s after that first reading). A read
+    machine's rows are then replaced, even with no project left. Nothing is written when the
+    rows didn't change.
+  - Removing a machine purges its rows. Cached rows of a machine that is saved but not read show
+    as last known. They can't be opened or answered, and the deck says "Offline: can't answer".
+  - A bot celebrates a merge only when its own feed newly lists it. Each feed keeps its own
+    baseline.
 - Strip, with "–" for a missing value:
   - **Tasks done:** the feed's `merges.n` (a rolling 24 h).
   - **Agent time:** the feed's `tasks[].bots[].work_min` (merged tasks only).
@@ -54,6 +61,11 @@ All taken by the Pocket orchestrator on 2026-11-03, from the owner's answers.
 - Celebration: a bot that newly appears in a feed's merged `tasks[].bots` jumps once.
 
 ## Open questions
+
+- `readBots` reads every project's registry every 5 minutes. It is one small `file.read` per
+  project. Limiting it to projects that show bots is open.
+- Spaces on a linked machine that is down don't show live, and the next reading replaces their
+  cached rows.
 
 - Linked machines: their projects show the letter, and their bots wear Genie. Reading their
   `shared.json` and pets is not built.
