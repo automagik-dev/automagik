@@ -4,11 +4,12 @@ import assert from 'node:assert/strict'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
 import { markAgentLoopRequest } from '@deepseek-ai/dsh-llm'
 import { apply, nodeCommand } from '../index.js'
 import { AGENTS, findCommand } from '../src/host/agents.js'
-import { AdapterStore, CHECK_EVERY_MS, defaultInstall, INSTALL_TIMEOUT_MS, platformPackages } from '../src/host/install.js'
+import { AdapterStore, CHECK_EVERY_MS, defaultInstall, INSTALL_TIMEOUT_MS, platformPackages, runInstall } from '../src/host/install.js'
 import { fullAccess, levelOf } from '../src/host/tool.js'
 
 const scratch = () => mkdtempSync(join(tmpdir(), 'acp-dsh-install-'))
@@ -289,19 +290,101 @@ test('an install that pulls in a bundled CLI is refused, and the working adapter
   assert.equal(store.lastError(adapter), undefined)
 })
 
-test('a half-done install DSH quit in the middle of is dropped once stale; a running one stays', async (t) => {
+test('a half-done install DSH was killed in the middle of is dropped once its DSH is gone or it is stale; a running one stays', async (t) => {
   const home = scratch()
   t.after(() => rmSync(home, { recursive: true, force: true }))
   const { adapter, bin } = AGENTS['acp-claude']
   const folder = join(home, 'agentclientprotocol__claude-agent-acp')
-  const stale = join(folder, '.install-1-1')
-  const running = join(folder, '.install-2-2')
-  mkdirSync(stale, { recursive: true })
-  mkdirSync(running, { recursive: true })
+  // A pid that ran and is gone.
+  const gone = spawnSync(process.execPath, ['-e', '']).pid
+  const stale = join(folder, `.install-${process.pid}-1`)
+  const orphaned = join(folder, `.install-${gone}-2`)
+  const running = join(folder, `.install-${process.pid}-3`)
+  for (const dir of [stale, orphaned, running]) mkdirSync(dir, { recursive: true })
   const old = (Date.now() - INSTALL_TIMEOUT_MS - 60_000) / 1000
   utimesSync(stale, old, old)
   const store = new AdapterStore({ home, latest: async () => '1.0.0', install: fakeInstall([]) })
   await store.update(adapter, bin)
   assert.equal(existsSync(stale), false)
+  assert.equal(existsSync(orphaned), false, 'the DSH that started it is gone: dropped at once')
   assert.equal(existsSync(running), true)
+})
+
+// A package manager that never finishes and starts a worker of its own that writes into the
+// install folder, as npm's and pnpm's children do. Each records its pid.
+const slowInstaller = (dir) => tool(dir, 'pnpm') && writeFileSync(join(dir, 'pnpm'), [
+  '#!/bin/sh',
+  'echo $$ > "$ACP_TEST_PIDS/installer"',
+  'sh -c \'echo $$ > "$ACP_TEST_PIDS/worker"; while :; do echo x >> progress; sleep 0.05; done\' &',
+  'wait',
+  '',
+].join('\n'), { mode: 0o755 })
+const alive = (pid) => {
+  try { process.kill(pid, 0); return true } catch { return false }
+}
+const until = async (check, ms = 10_000) => {
+  for (const end = Date.now() + ms; Date.now() < end; await new Promise(done => setTimeout(done, 20))) if (check()) return true
+  return check()
+}
+const pidsIn = dir => ['installer', 'worker'].map(name => Number(readFileSync(join(dir, name), 'utf8')))
+
+test('on dispose, a running install is killed with everything it started, and the working adapter stays', { skip: process.platform === 'win32' }, async (t) => {
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const { adapter, bin } = AGENTS['acp-claude']
+  const folder = join(home, 'agentclientprotocol__claude-agent-acp')
+  await new AdapterStore({ home, latest: async () => '1.0.0', install: fakeInstall([]) }).update(adapter, bin)
+  const pids = join(home, 'pids')
+  mkdirSync(pids)
+  slowInstaller(join(home, 'bin'))
+  const env = { ...process.env, AUTOMAGIK_PNPM: join(home, 'bin', 'pnpm'), ACP_TEST_PIDS: pids }
+  const store = new AdapterStore({ home, env, latest: async () => '2.0.0' })
+  const job = store.update(adapter, bin, { force: true })
+  const halfDone = () => readdirSync(folder).filter(name => name.startsWith('.install-'))
+  assert.ok(await until(() => existsSync(join(pids, 'worker')) && halfDone().some(name => existsSync(join(folder, name, 'progress')))), 'the installer and its worker run')
+  const [installer, worker] = pidsIn(pids)
+  assert.ok(alive(installer) && alive(worker))
+
+  store.dispose()
+  // Gone at once: DSH may exit before the install's own cleanup runs.
+  assert.deepEqual(halfDone(), [])
+  await assert.rejects(job, /DSH is quitting/)
+  assert.ok(await until(() => !alive(installer) && !alive(worker), 3000), 'the installer and its worker are killed')
+  await new Promise(done => setTimeout(done, 200))
+  assert.deepEqual(halfDone(), [], 'nothing writes into the adapters home after dispose')
+  assert.equal(JSON.parse(readFileSync(join(folder, 'current.json'), 'utf8')).version, '1.0.0')
+  assert.equal(store.binOf(adapter, bin)?.version, '1.0.0')
+  assert.equal(store.busy(adapter), false)
+  // And none starts after it.
+  await assert.rejects(store.update(adapter, bin, { force: true }), /DSH is quitting/)
+})
+
+test('an install that finishes after dispose is not moved into place', async (t) => {
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const { adapter, bin } = AGENTS['acp-claude']
+  const folder = join(home, 'agentclientprotocol__claude-agent-acp')
+  let finish
+  let calls = 0
+  const store = new AdapterStore({ home, latest: async () => '1.0.0', install: async () => { calls++; await new Promise(done => { finish = done }) } })
+  const job = store.update(adapter, bin)
+  assert.ok(await until(() => finish !== undefined))
+  store.dispose()
+  finish()
+  await assert.rejects(job, /DSH is quitting/)
+  assert.deepEqual(readdirSync(folder), [], 'no current.json, no version folder, no half-done one')
+  assert.equal(store.binOf(adapter, bin), undefined)
+  assert.equal(calls, 1)
+})
+
+test('an install past its time is killed with everything it started', { skip: process.platform === 'win32' }, async (t) => {
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const pids = join(home, 'pids')
+  mkdirSync(pids)
+  slowInstaller(join(home, 'bin'))
+  // Through /bin/sh: macOS can hold a script written a moment ago for a scan before it first runs.
+  await assert.rejects(runInstall('/bin/sh', [join(home, 'bin', 'pnpm'), 'install'], { cwd: home, env: { ...process.env, ACP_TEST_PIDS: pids }, timeoutMs: 1500 }), /timed out/)
+  const [installer, worker] = pidsIn(pids)
+  assert.ok(await until(() => !alive(installer) && !alive(worker), 3000), 'the installer and its worker are killed')
 })

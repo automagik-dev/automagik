@@ -77,6 +77,8 @@ with the desktop app's own pnpm (`AUTOMAGIK_PNPM`, never the person's) or else n
 place when complete, without install scripts or optional dependencies (the CLIs the adapters
 bundle); an install that pulls in a bundled CLI's platform package anyway is refused. The
 previous version stays for a Session still on it. Nothing is downloaded when a Session starts.
+An install still running when DSH quits is killed with everything it started and its folder
+removed; one a killed DSH left behind is removed at the next start.
 Until the first install lands, the agent lists no model; a Session already on it says the
 adapter is being installed, with the last install error.
 

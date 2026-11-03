@@ -44,6 +44,7 @@ function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {} }
     busy: pkg => busy[pkg] === true,
     lastError: pkg => errors[pkg],
     update: async (pkg) => { installs.push(pkg) },
+    dispose: () => { log.push(['store disposed']) },
   }
   const probes = []
   const deps = {
@@ -215,4 +216,12 @@ test("a catalog's key is the adapter release and the CLI as it resolves, so a CL
   unlinkSync(link)
   symlinkSync(join(home, '2.0', 'claude'), link)
   assert.notEqual(key(), first)
+})
+
+test('dispose stops the adapter installs', () => {
+  const h = harness({ clis: { claude: '/bin/claude' } })
+  apply(h.ctx, { claude: live(true), codex: live(false) }, h.deps)
+  assert.ok(!h.log.some(([what]) => what === 'store disposed'))
+  h.ctx.emit('dispose')
+  assert.ok(h.log.some(([what]) => what === 'store disposed'))
 })

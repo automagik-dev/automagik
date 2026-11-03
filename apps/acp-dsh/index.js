@@ -84,7 +84,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     return store.update(spec.adapter, spec.bin).then(
       // A connector that landed (or moved up) is announced, so the picker lists its model now.
       () => { if (store.binOf(spec.adapter, spec.bin)?.version !== before && agents.has(idOf(spec))) publish() },
-      error => warn(ctx, `${spec.adapter} not installed: ${error?.message ?? error}`),
+      error => { if (!disposed) warn(ctx, `${spec.adapter} not installed: ${error?.message ?? error}`) },
     )
   }
   const agentOf = (spec, cli, id = idOf(spec), node = nodeCommand()) => ({
@@ -231,6 +231,8 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     disposed = true
     clearTimeout(first)
     clearInterval(daily)
+    // A running adapter install would otherwise outlive DSH and keep writing into its home.
+    store.dispose?.()
     adapter.dispose()
   })
 }
