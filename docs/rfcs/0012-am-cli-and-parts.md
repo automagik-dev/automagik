@@ -83,30 +83,42 @@ A part is a folder with a `part.json` at its root, beside the part's own manifes
 | `artifact` | Release asset name, `{version}` filled by the release. |
 | `select` | Subpath inside a shared artifact. |
 | `entry` | `install`, `uninstall`, `doctor`, optional `rollback`: argv arrays. |
+| `replaces` | Optional: ids this part stands in for (a fork names the part it swaps out). |
 | `writes` | Paths and globs it writes outside its folder; `#` names a key inside a file. |
 | `set` | Bundles that include it by default: `code`, `work`. |
 
 No version field: a part's version is the release's `vX.Y.Z`, stamped into the artifact by the
-release (the one-version rule). Proposed: `"schema": 1`, so a later change can be told apart.
+release (the one-version rule); a manifest with `version` is refused.
 
-The herdr parts (t2zx's defaults, branch `feat/herdr-parts`):
+The herdr parts, as built on `feat/herdr-parts` (t2zx, `6b5dbba5`, WIP; its write-up is
+`herdr-parts-for-rfc-0012.md`). Eleven parts, all `targets: local`, `set: ["code"]`, artifact
+`automagik-herdr-pack-{version}.tgz`, and today `os: ["macos"]` only (question 10):
 
-- One part per pack mod: `herdr.am-sidebar`, `herdr.am-footer`, `herdr.am-quota` and the rest
-  of `PACK_MODS`. `part.json` ships inside each mod folder of the tarball. `select` is the
-  tarball's real layout (`am-sidebar/`, `am-footer/`), not the repository's `mods/am-sidebar/`.
-- `herdr.cli` at `herdr/mods/am-sidebar/bin/part.json`, `select` `am-sidebar/bin/`. It provides
-  `bots.cli@1` and owns the `automagik-herdr` link (and `am`, rule 8), so the sidebar and the CLI
-  can be swapped separately.
-- The layout at `herdr-layout/part.json`, writing `<app home>/layouts/automagik.json` (removed
-  only while it is still the pack's copy). `select` `layouts/automagik.json`.
-- One shared entry script, `herdr/mods/am-sidebar/parts/entry.mjs <install|uninstall|doctor> <id>`,
-  named relative to each part's root (`["node", "../am-sidebar/parts/entry.mjs", "doctor",
-  "herdr.am-footer"]`). That relative path works because of rule (a): the whole tarball is there.
-- `writes`: am-mods declares `<app home>/keys.json#global.cmd-shift-m` (removed only while it holds
-  the pack's action); am-sidebar declares the per-project briefing hooks
-  (`**/.claude/settings.local.json#hooks.UserPromptSubmit`) and `<app home>/automagik-herdr/
-  briefing.mjs`; herdr.cli declares its links in `~/.local/bin`.
-- Every herdr part is `targets: local`. None declares `~/.local/bin/usagemeter`: that becomes
+- One `herdr-mod` part per pack mod: `herdr.am-sidebar`, `herdr.am-automations`,
+  `herdr.am-footer`, `herdr.am-markdown`, `herdr.am-mods`, `herdr.am-new-menu`, `herdr.am-quota`,
+  `herdr.am-status`, `herdr.am-tabs`. `part.json` ships inside each mod folder of the tarball.
+  `select` is the tarball's real layout (`am-sidebar/`, `am-footer/`), which has no `mods/`.
+- `herdr.cli` (`binary`) at `herdr/mods/am-sidebar/bin/part.json`, `select` `am-sidebar/bin/`. It
+  owns the `automagik-herdr` link, and `am` once the pack ships `bin/am` (rule 8), so the
+  sidebar and the CLI can be swapped separately.
+- `herdr.layout` (`herdr-layout`) at `herdr-layout/part.json`, `select` `layouts/`: in the tarball
+  `herdr-layout/automagik.json` is `layouts/automagik.json`. One function, `repoPathOf` in
+  `herdr/scripts/parts.mjs`, maps tarball paths to the repository's.
+- One entry script, `am-sidebar/bin/part.mjs <install|uninstall|doctor> <id>`, run from the
+  part's folder: `["node", "bin/part.mjs", …]` for the sidebar, `["node", "part.mjs", …]` for
+  the CLI, `["node", "../am-sidebar/bin/part.mjs", …]` for the other mods and the layout. That
+  relative path works because of rule (a): the whole tarball is there. No rollback entry.
+- `writes` (`~/` is the home, `**/` any project; the entries honour `HERDR_APP_HOME`): am-sidebar
+  the marker, `automagik-herdr/.prev/**`, `briefing.mjs`, `hooks-journal.json` and the per-project
+  briefing hooks (`**/.claude/settings.local.json#hooks.UserPromptSubmit`); am-mods
+  `~/.config/herdr-app/keys.json#global.cmd-shift-m`; herdr.cli `~/.local/bin/am` and
+  `~/.local/bin/automagik-herdr`; herdr.layout `~/.config/herdr-app/layouts/automagik.json`.
+- The pack's gate, `herdr/scripts/parts.mjs --check`, checks every `part.json` under `herdr/` and
+  `herdr-layout/`: the fields, `paths` against tracked files, `select` as the part's own folder,
+  entry scripts shipping in the tarball, and `writes` (it refuses `shared.json`, `data/`,
+  pocket-link, LaunchAgents, and any path not starting `~/` or `**/`). Every `PACK_MODS` folder
+  must have one.
+- None declares `~/.local/bin/usagemeter`: that becomes
   usagemeter's own part (t22b); `install.sh` and `am meter` keep handling it until then.
 - Pocket Link (`herdr/mods/pocket-link`) is on the herdr lane but is not a pack member (it is
   never in `PACK_MODS`, and the pack never writes it). Proposed: its own part, owned by Pocket.
@@ -116,15 +128,21 @@ The herdr parts (t2zx's defaults, branch `feat/herdr-parts`):
 ### Capabilities and replacement
 
 Parts depend on capabilities, never on ids (rule 1). The one version bumps on every merge and
-forks have none, so a frozen contract is a capability major. Named so far: `bots.registry@1`,
-`bots.cli@1`, `bots.sidebar@1`, `bots.attach-ledger@1` (attach ledger rows) and
-`bots.whois-json@1` (Brain pins it). Each part's PR declares the rest.
+forks have none, so a frozen contract is a capability major. `bots.registry@1` is the registry's
+(RFC 0014). The herdr parts provide:
+
+| Part | Provides | Requires |
+|---|---|---|
+| `herdr.am-sidebar` | `bots.sidebar@1`, `herdr.pack@1` (the updater and the record) | nothing |
+| `herdr.cli` | `bots.cli@1`, `bots.attach-ledger@1`, `bots.whois-json@1` (Brain pins it) | `herdr.pack@1` |
+| the other mods | `herdr.automations@1`, `herdr.footer@1`, `herdr.markdown@1`, `herdr.mod-manager@1`, `herdr.new-menu@1`, `herdr.quota@1`, `herdr.status-bar@1`, `herdr.tabs@1` | `herdr.pack@1` |
+| `herdr.layout` | `herdr.layout@1` | `bots.sidebar`, `herdr.footer`, `herdr.tabs`, `herdr.status-bar`, `herdr.automations`, `herdr.quota`, `herdr.markdown`, each `@1` |
 
 - `am install` resolves `requires` through `provides` and shows a dry run first: what it adds,
   what it replaces, what it removes.
 - Two installed parts may not provide one capability. A fork keeps the `provides`, changes the
-  `id` (`me.my-sidebar`), and is swapped in with `am install <source> --replace <id>`: the old
-  part is uninstalled (or switched off, for a pack member), the new one installed.
+  `id` (`me.my-sidebar`), and names the part it swaps out in `replaces`. `am install <source>`
+  then uninstalls the old part (or switches it off, for a pack member) and installs the new one.
 - Proposed: `am uninstall` refuses to remove the only provider of a capability another installed
   part requires, and its dry run names those parts.
 
@@ -147,10 +165,10 @@ signer is the check); usagemeter's trust is open (questions).
 
 **Rule (a), agreed by t259 and t22n.** For a release source, am verifies the pack tarball against
 the signed pointer's sha256, extracts the whole tarball to a staging folder, and runs each entry
-with `AM_PART_DIR=<extracted>/<select>` and `AM_ARTIFACT=<verified tgz path>`. The entry stages
-the pack from there (a new `update.mjs install --from-dir`, with `stagePack`'s checks unchanged).
-For a path source the entry builds the tarball's layout from `herdr/mods/<PACK_MODS>` plus
-`herdr-layout/automagik.json`.
+with `AM_PART_DIR=<extracted>/<select>` and `AM_ARTIFACT=<verified tgz path>`. The herdr entry
+prefers `AM_ARTIFACT` and installs the pack through the tarball's own `update.mjs install
+--setup` (unless the marker already names `AM_VERSION`), with `stagePack`'s checks unchanged.
+Without it, `AM_PART_DIR` may also be a checkout's folder (a path source).
 
 Path and git sources need `--trust` once per id and source. `am doctor` keeps listing them as
 "unsigned, from <source>" for as long as they are installed.
@@ -165,9 +183,9 @@ Path and git sources need `--trust` once per id and source. `am doctor` keeps li
   sequence, and said so.
 - am keeps the previous artifact of every part. When install fails, or the doctor run after it
   exits 1, am rolls back: `entry.rollback` when the part has one, else the install entry run
-  again on the kept artifact. For the herdr pack the kept set is the pack's own `.prev/`
-  (`update.mjs rollback`), which also restores its sequence. `am rollback <id>` does the same by
-  hand.
+  again on the kept artifact. The herdr parts have no rollback entry, so am restores the kept
+  tarball; the pack's own `.prev/` stays the updater's kept set. `am rollback <id>` does the same
+  by hand.
 - A shared artifact is one unit. The pack installs and updates as a whole (`stagePack` accepts
   only exactly `PACK_MODS`), so installing or updating any member installs or updates the pack,
   and all members carry one version.
@@ -180,9 +198,13 @@ records it as `disabled`. Its doctor reports it as not applicable (exit 2). A pa
 it off: the updater updates it in place in `mods-disabled/` (t2zx's change to `update.mjs`, which
 also fixes today's bug where an update puts a second copy of a mod the manager switched off back
 into `mods/`). `am install <id>` switches it back on, and installs the pack first when none is
-installed. Uninstalling the whole pack part, `herdr.am-sidebar` (it carries the updater, the
-record and the CLI), removes the pack for real with `install.sh --uninstall`'s logic, keeping user
-data unless `--purge`.
+installed. The marker's `mods=` stays as it is. Uninstalling the whole pack part,
+`herdr.am-sidebar` (it carries the updater, the record and the CLI), removes the pack for real
+with `install.sh --uninstall`'s logic: the folders, on or off, go to the kept set `.prev` (deleted
+with `--purge`), adopted folders come back, and the pack's briefing hooks (each file backed up as
+`.am-backup`), keys, links, the layout it added and the marker are removed. Uninstalling
+`herdr.layout` removes the layout while it is byte-equal to the pack's copy and records
+`layout=removed`, so no update or repair puts it back.
 
 ### The entry contract
 
@@ -190,16 +212,24 @@ data unless `--purge`.
   the part's folder as the working directory, resolves a relative argv path against it, and runs
   `node` as the Node am itself runs on.
 - am sets `AM_HOME` (`$AUTOMAGIK_HOME`, else `~/.automagik`), `AM_PART_DIR`, `AM_ARTIFACT` (release
-  sources), `AM_VERSION`, `AM_MACHINE` and `AM_JSON=1`. Proposed: `AM_PURGE=1` for `--purge`, so
-  argv stays fixed.
-- install and uninstall are idempotent. Uninstall keeps user data unless `--purge`.
-- doctor is read-only and finishes in under 30 s (Herdr's exec cap).
+  sources), `AM_VERSION`, `AM_MACHINE` and `AM_JSON=1`. am appends `--purge` to the uninstall
+  argv when asked.
+- install and uninstall are idempotent. Uninstall keeps user data unless `--purge`. They log to
+  stderr and print one stdout line, `{part, ok, changed, detail}` with `AM_JSON=1`, else the
+  detail.
+- doctor is read-only and finishes in under 30 s (Herdr's exec cap). The herdr doctors run no
+  program and no network and take milliseconds.
 - Exit 0 healthy, 1 broken, 2 not applicable (a switched-off member, an OS the part does not list).
 
 ### Doctor
 
-A doctor prints JSON lines `{check, ok, detail, fix}`. am adds `part`, and `machine` when it runs
-across machines. `fix` is the exact command, or null when no command fixes it. am adds its own
+A doctor prints JSON lines `{part, check, ok, detail, fix}`; am fills `part` when an entry leaves
+it out, and adds `machine` when it runs across machines. `fix` is the exact command, or null when
+no command fixes it. The herdr checks: every part `record` (the marker exists) and `version`; the
+mods `listed`, `folder`, `files`; the sidebar also `pack-version`, `pack-mods`, `briefing-entry`;
+am-mods `keys`; the CLI `command`, `am`, `path` (`~/.local/bin` on PATH), `node` (22.7 or later);
+the layout `layout`, `layout-json`. Their `fix` is `am install <id>`, the `install.sh` one-liner
+for a missing pack folder, or the PATH or brew command. am adds its own
 checks per part (proposed names): `am.source` (signed, or "unsigned, from <source>"),
 `am.sequence`, `am.artifact` (the kept artifact still matches its sha256), `am.writes` (each
 declared path present), `am.capabilities` (no unmet `requires`, no two providers). `am doctor`
@@ -240,7 +270,9 @@ on one machine. Proposed:
 
 Supported targets are D28's: macOS arm64, Linux x86_64 and aarch64, Windows x86_64. Intel Macs and
 Windows on ARM are not supported: the code set is refused there, and RFC 0013's switch never
-shows. am refuses a part whose `os` does not list this one, and its doctor reports 2. Argv entries
+shows. am refuses a part whose `os` does not list this one, and its doctor reports 2. The herdr
+parts list only `macos` today, so on Linux and Windows the code set's pack parts are refused
+until they add those OSes (question 10). Argv entries
 and running `node` by am's own path keep entries portable. Proposed for Windows: `~/.automagik`
 is `%USERPROFILE%\.automagik`, and the `am` and `automagik-herdr` links are `.cmd` shims in a
 folder am adds to the user's PATH.
@@ -264,36 +296,35 @@ update` asks the owner (the desktop app, the pack's updater) and reports.
 
 ## Contracts introduced
 
-- **`part.json`**, schema 1, at each part's root. Its `id` is permanent. Example (a pack member):
+- **`part.json`** at each part's root. Its `id` is permanent. Example (a pack member, as built):
 
   ```json
   {
-    "schema": 1,
     "id": "herdr.am-footer",
     "title": "Footer",
     "kind": "herdr-mod",
     "paths": ["herdr/mods/am-footer/**"],
     "provides": ["herdr.footer@1"],
-    "requires": [{ "cap": "bots.cli", "major": 1 }],
-    "os": ["macos", "linux", "windows"],
+    "requires": [{ "cap": "herdr.pack", "major": 1 }],
+    "os": ["macos"],
     "targets": "local",
     "artifact": "automagik-herdr-pack-{version}.tgz",
     "select": "am-footer/",
     "entry": {
-      "install": ["node", "../am-sidebar/parts/entry.mjs", "install", "herdr.am-footer"],
-      "uninstall": ["node", "../am-sidebar/parts/entry.mjs", "uninstall", "herdr.am-footer"],
-      "doctor": ["node", "../am-sidebar/parts/entry.mjs", "doctor", "herdr.am-footer"]
+      "install": ["node", "../am-sidebar/bin/part.mjs", "install", "herdr.am-footer"],
+      "uninstall": ["node", "../am-sidebar/bin/part.mjs", "uninstall", "herdr.am-footer"],
+      "doctor": ["node", "../am-sidebar/bin/part.mjs", "doctor", "herdr.am-footer"]
     },
     "writes": [],
     "set": ["code"]
   }
   ```
-  (`herdr.footer@1` is illustrative; t2zx's PR names the real capabilities.)
-- **Part ids** `herdr.*` (t2zx's PR), and one per `apps/*` part as each owner adds it.
+- **Part ids** the eleven `herdr.*` above, and one per `apps/*` part as each owner adds it.
 - **Capabilities** listed above. A major is never reused for an incompatible change.
 - **`~/.automagik/parts.json`** and **`~/.automagik/parts/`**. New. am is the only writer.
 - **Entry variables** `AM_HOME`, `AM_PART_DIR`, `AM_ARTIFACT`, `AM_VERSION`, `AM_MACHINE`,
-  `AM_JSON` (and proposed `AM_PURGE`). **Doctor lines** `{part, check, ok, detail, fix}` (proposed:
+  `AM_JSON`; `--purge` appended to uninstall. **Entry result** `{part, ok, changed, detail}`.
+  **Doctor lines** `{part, check, ok, detail, fix}` (proposed:
   plus `machine`) and exit codes 0, 1, 2.
 - **`am` verbs** above; `automagik-herdr` unchanged and byte-identical.
 - **`<app home>/mods-disabled/`** now also holds pack members switched off by am. Compatible: the
@@ -322,11 +353,11 @@ Each delivery is one PR on one lane. Lanes for 2 and 3 depend on question 1 (sho
 recommendation).
 
 1. **Herdr part manifests** (herdr; t2zx, `feat/herdr-parts`). `part.json` for every pack member,
-   `herdr.cli` and the layout; the shared `parts/entry.mjs`; `update.mjs install --from-dir`;
-   switched-off members updated in place.
-   *Check:* the pack's gate; `herdr-app check`, `catalog.mjs` and `entries.mjs --check` accept the
-   files; each doctor prints valid lines in under 30 s; a member in `mods-disabled/` stays there
-   across an update.
+   `herdr.cli` and the layout; `am-sidebar/bin/part.mjs`; `herdr/scripts/parts.mjs --check`;
+   switched-off members kept off by updates and rollbacks (t2zx's `0deadda2`).
+   *Check:* the pack's gate with `parts.mjs --check`; `herdr-app check`, `catalog.mjs` and
+   `entries.mjs --check` accept the files; each doctor prints valid lines and exits 0, 1 or 2; a
+   member in `mods-disabled/` stays there across an update and a rollback.
    *Rollback:* revert the pack. The manifests are inert without am.
 2. **The am shell** (herdr). Dispatcher, help, `--json`, exit codes, the top-level Bot verbs, the
    `automagik-herdr` alias; `scripts/lane.ts` reads part paths (same PR, per the handoff).
@@ -341,7 +372,7 @@ recommendation).
    back; uninstalling `herdr.am-sidebar` removes the pack and keeps user data. The same run on a
    fresh macOS, Linux and Windows runner (#191's harness). RFC 0013 delivery 7 waits on this.
    *Rollback:* revert; `install.sh` and the pack's updater still work, and the marker is intact.
-4. **Path and git sources, `--trust`, `--replace`** (herdr).
+4. **Path and git sources, `--trust`, `replaces`** (herdr).
    *Check:* a fork of the sidebar with the same `provides` swaps in and back; two providers are
    refused; doctor lists the fork as unsigned; `--trust` without a TTY is refused.
    *Rollback:* revert; an installed fork stays, listed as unsigned, until it is uninstalled.
@@ -383,6 +414,12 @@ recommendation).
 8. **Path sources over `--machine`.** Recommended: refused; a git source works instead.
 9. **parts.json's machine key.** Recommended: hc's machine name, so it matches `--machine` and
    Herdr's spaces.
+10. **The herdr parts are macOS-only today** (`os: ["macos"]`; their entries exit 2 elsewhere),
+    but D27 and D28 want the one install on macOS, Linux and Windows, and RFC 0013 delivery 7
+    checks all three. Recommended: add `linux` in delivery 1 or 3 (the launcher and `install.sh`
+    are POSIX sh), and `windows` with its own delivery, which ports the launcher and links (the
+    `.cmd` shims above) and replaces am-quota's Keychain reads. Until then RFC 0013's "Set up"
+    shows on macOS only.
 
 ## Links
 
