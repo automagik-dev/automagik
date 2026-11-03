@@ -13,6 +13,10 @@ name: Cross-OS wrapper spike
 # pull request, signs nothing, publishes nothing and uses no secrets.
 
 on:
+  # TEMPORARY (one commit, approved): registers the file so it can be dispatched; every job is
+  # skipped on push. Removed in the next commit.
+  push:
+    branches: [spike/cross-os]
   workflow_dispatch:
     inputs:
       desktop_ref:
@@ -31,6 +35,7 @@ permissions: {}
 jobs:
   matrix:
     name: ${{ matrix.name }}
+    if: github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -310,7 +315,7 @@ jobs:
   report:
     name: Report
     needs: matrix
-    if: always()
+    if: always() && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
