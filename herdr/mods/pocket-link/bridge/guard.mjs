@@ -8,7 +8,7 @@ import { copyFileSync, chmodSync, statSync, truncateSync } from 'node:fs'
 export const HANDSHAKE_MS = 10_000
 /** Connections still in that phase. */
 export const MAX_PENDING = 16
-/** Connections in that phase from one address: an IP, or over a relay the key it claims. */
+/** Connections in that phase from one address: an IPv4 address, an IPv6 /64, or over a relay the key it claims. */
 export const MAX_PER_ADDRESS = 4
 /** Every connection, open sessions included. */
 export const MAX_OPEN = 64
@@ -54,12 +54,27 @@ export function slots({ pending: maxPending = MAX_PENDING, open: maxOpen = MAX_O
   }
 }
 
+/** The /64 an IPv6 address is in, as its first four groups: one host usually gets a whole /64. */
+function ipv6Net(ip) {
+  const [head, tail] = ip.split('%')[0].split('::')
+  const left = head ? head.split(':') : []
+  const right = tail === undefined ? [] : tail ? tail.split(':') : []
+  const groups = tail === undefined ? left : [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill('0'), ...right]
+  return groups.slice(0, 4).map(g => (parseInt(g, 16) || 0).toString(16)).join(':') + '::/64'
+}
+
 /**
- * Where an incoming connection comes from, before its handshake: the IP of a direct one, the key a
- * relayed one claims (the relay itself is shared by everyone, the owner's phones too).
+ * Where an incoming connection comes from, before its handshake: the IPv4 address or IPv6 /64 of a
+ * direct one, the key a relayed one claims (the relay itself is shared by everyone, the owner's
+ * phones too).
  */
 export function addressOf(addr) {
-  if (addr?.kind === 'ip' && addr.addr) return `ip:${addr.addr.replace(/:\d+$/, '').replace(/^\[(.*)\]$/, '$1')}`
+  if (addr?.kind === 'ip' && addr.addr) {
+    const ip = addr.addr.replace(/:\d+$/, '').replace(/^\[(.*)\]$/, '$1')
+    if (!ip.includes(':')) return `ip:${ip}`
+    const v4 = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i)
+    return v4 ? `ip:${v4[1]}` : `ip:${ipv6Net(ip)}`
+  }
   if (addr?.kind === 'relay' && addr.endpointId) return `relay:${addr.endpointId}`
   return addr?.kind ?? '?'
 }
@@ -100,7 +115,9 @@ export function rotateLog(path, max = LOG_MAX) {
 const closeConn = (conn, why) => { try { conn.close(1n, [...Buffer.from(why)]) } catch {} }
 
 /**
- * One incoming connection. Over the cap (see `slots`) it is refused before its handshake. Then,
+ * One incoming connection. One whose source address isn't validated yet is sent a QUIC retry
+ * first, so a spoofed source never takes a slot; it comes back as a new, validated one. Over the
+ * cap (see `slots`) it is refused before its handshake. Then,
  * within `ms`: the handshake, `admit(peer)` (false closes it with `closing` before anything is
  * read), the first stream and its header line. A route with `timed` (pairing) also runs, and waits
  * for the phone to hang up, inside that deadline; a session runs untimed once its header is in.
@@ -111,6 +128,10 @@ const closeConn = (conn, why) => { try { conn.close(1n, [...Buffer.from(why)]) }
  * Resolves when the connection is done with; never rejects.
  */
 export async function acceptOne(incoming, { routes, cap, refused, log = refused, ms = HANDSHAKE_MS }) {
+  const validated = await Promise.resolve().then(() => incoming.remoteAddrValidated()).catch(() => false)
+  if (!validated) {
+    try { await incoming.retry(); return } catch {} // only fails for one already validated: go on
+  }
   const address = await Promise.resolve().then(() => incoming.remoteAddr()).then(addressOf, () => '?')
   const slot = cap.enter(address)
   if (!slot) {

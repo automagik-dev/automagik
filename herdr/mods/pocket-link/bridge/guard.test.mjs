@@ -17,7 +17,7 @@ function recv(chunks, { hang = false } = {}) {
 }
 
 /** A fake peer. Each step can be swapped for one that is slow or never answers. */
-function peer({ alpn = 'pair', id = 'a'.repeat(64), lines = ['{"code":"x"}\n'], hang = false, connect, acceptBi, from = { kind: 'ip', addr: '198.51.100.7:4433' } } = {}) {
+function peer({ alpn = 'pair', id = 'a'.repeat(64), lines = ['{"code":"x"}\n'], hang = false, connect, acceptBi, from = { kind: 'ip', addr: '198.51.100.7:4433' }, validated = true } = {}) {
   const conn = {
     closedWith: null,
     remoteId: () => ({ toString: () => id }),
@@ -29,6 +29,9 @@ function peer({ alpn = 'pair', id = 'a'.repeat(64), lines = ['{"code":"x"}\n'], 
     refused: false,
     refuse: async () => { incoming.refused = true },
     remoteAddr: async () => from,
+    retried: false,
+    remoteAddrValidated: async () => validated,
+    retry: async () => { if (validated) throw new Error('already validated'); incoming.retried = true },
     accept: async () => ({ alpn: async () => [...Buffer.from(alpn)], connect: connect ? () => connect(conn) : async () => conn }),
   }
   return { conn, incoming }
@@ -157,9 +160,29 @@ test('one address can hold only a few pending slots; others, and its trusted ses
   assert.ok(cap.enter('ip:203.0.113.5')) // trusted sessions no longer count as pending
 })
 
-test('the address is the IP of a direct connection and the claimed key over a relay, never the shared relay', () => {
+test('an unvalidated source address gets a retry and takes no slot; a validated one goes on', async () => {
+  const cap = slots({ pending: 1, open: 1 })
+  const routes = { pair: { admit: () => true, run: () => {}, timed: true } }
+  const spoofed = peer({ validated: false })
+  let accepted = false
+  spoofed.incoming.accept = async () => { accepted = true; throw new Error('should not get here') }
+  await acceptOne(spoofed.incoming, { routes, cap, refused: logged(), ms: 50 })
+  assert.equal(spoofed.incoming.retried, true)
+  assert.equal(accepted, false)
+  assert.deepEqual(cap.counts(), { pending: 0, open: 0 })
+  const back = peer()
+  await acceptOne(back.incoming, { routes, cap, refused: logged(), ms: 50 })
+  assert.equal(back.incoming.retried, false)
+  assert.equal(back.conn.closedWith, null) // let through: handshake, header, run, done
+})
+
+test('the address is the IPv4 address or IPv6 /64 of a direct connection and the claimed key over a relay, never the shared relay', () => {
   assert.equal(addressOf({ kind: 'ip', addr: '198.51.100.7:4433' }), 'ip:198.51.100.7')
-  assert.equal(addressOf({ kind: 'ip', addr: '[2001:db8::1]:4433' }), 'ip:2001:db8::1')
+  assert.equal(addressOf({ kind: 'ip', addr: '[2001:db8::1]:4433' }), 'ip:2001:db8:0:0::/64')
+  assert.equal(addressOf({ kind: 'ip', addr: '[2001:db8:0:0:ffff:1:2:3]:9' }), 'ip:2001:db8:0:0::/64') // same /64
+  assert.equal(addressOf({ kind: 'ip', addr: '[2001:db8:0:1::5]:9' }), 'ip:2001:db8:0:1::/64')
+  assert.equal(addressOf({ kind: 'ip', addr: '[fe80::1%en0]:9' }), 'ip:fe80:0:0:0::/64')
+  assert.equal(addressOf({ kind: 'ip', addr: '[::ffff:198.51.100.7]:9' }), 'ip:198.51.100.7')
   assert.equal(addressOf({ kind: 'relay', addr: 'https://relay.example/', endpointId: 'abc' }), 'relay:abc')
   assert.equal(addressOf(undefined), '?')
 })
