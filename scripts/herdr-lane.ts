@@ -19,7 +19,9 @@
  *   bun scripts/herdr-lane.ts sign <pack.json>        print its signature (HERDR_PACK_KEY, PEM)
  *   bun scripts/herdr-lane.ts verify <pack.json> <sig>  check it against pack-keys.json
  *   bun scripts/herdr-lane.ts posted <pack.json> <dir>  refuse to post it when <dir> holds the posted
- *       pointer (pack.json, pack.json.sig), it verifies, and its sequence is higher
+ *       pointer (pack.json, pack.json.sig), it verifies, and its sequence is higher; or when <dir>
+ *       holds a posted pointer that does not verify, unless HERDR_LANE_REPLACE_UNVERIFIED=true (the
+ *       release's replace_unverified_herdr_pointer input)
  *   bun scripts/herdr-lane.ts check-key               HERDR_PACK_KEY is set, and its public key is in pack-keys.json
  *   bun scripts/herdr-lane.ts keygen [--repo <owner/repo>] [--key-id <id>]
  *       make a key: an ed25519 pair generated in memory; the private key goes straight to `gh secret
@@ -115,14 +117,25 @@ export function keyProblem(privatePem: string | undefined, keys: PackKey[]): str
 }
 
 /**
- * Why `next` (pack.json's bytes) must not replace the posted pointer, or null when it may: the posted
- * one verifies against `keys` and names a higher sequence. A posted pointer that does not verify is
- * no reason to stop (it is replaced); none posted yet, neither.
+ * Why `next` (pack.json's bytes) must not replace the posted pointer, or null when it may. Nothing
+ * posted yet (neither file) is no reason to stop. A posted pointer that verifies against `keys` and
+ * names a higher sequence always stops it. One that does not verify (another key, a key since
+ * removed from pack-keys.json, a bad signature, or only one of the two files) stops it too, since
+ * its sequence cannot be trusted, unless `replaceUnverified` is set: the release's
+ * replace_unverified_herdr_pointer input, for an operator who has checked the posted pointer.
  */
-export function postedProblem(next: Buffer, posted: Buffer | null, postedSig: string | null, keys: PackKey[]): string | null {
-  if (!posted || postedSig === null) return null;
+export function postedProblem(next: Buffer, posted: Buffer | null, postedSig: string | null, keys: PackKey[], { replaceUnverified = false } = {}): string | null {
+  if (!posted && postedSig === null) return null;
   let current: PackPointer;
-  try { current = verifyPointer(posted, postedSig, keys); } catch { return null; }
+  try {
+    if (!posted) throw new Error('pack.json is missing');
+    if (postedSig === null) throw new Error('pack.json.sig is missing');
+    current = verifyPointer(posted, postedSig, keys);
+  } catch (error) {
+    if (replaceUnverified) return null;
+    const why = (error as Error).message.replace(/^herdr lane: /, '');
+    return `the posted herdr-lane pointer does not verify (${why}), so its sequence is unknown: refusing to replace it. Dispatch the release with replace_unverified_herdr_pointer=true once you have checked it is not newer`;
+  }
   const mine = JSON.parse(next.toString('utf8')) as PackPointer;
   return current.sequence > mine.sequence
     ? `the posted herdr-lane pointer names ${current.version} (sequence ${current.sequence}), newer than ${mine.version} (sequence ${mine.sequence}): refusing to post an older one`
@@ -164,9 +177,18 @@ if (import.meta.main) {
     const read = (name: string) => { try { return readFileSync(join(dir, name)); } catch { return null; } };
     const posted = read('pack.json');
     const sig = read('pack.json.sig');
-    const problem = postedProblem(readFileSync(file), posted, sig === null ? null : sig.toString('utf8'), readKeys());
-    if (problem) { console.error(`herdr lane: ${problem}`); process.exit(1); }
-    console.log(posted ? 'herdr lane: the posted pointer is not newer' : 'herdr lane: no pointer posted yet');
+    const next = readFileSync(file);
+    const postedSig = sig === null ? null : sig.toString('utf8');
+    const problem = postedProblem(next, posted, postedSig, readKeys());
+    const replaceUnverified = process.env.HERDR_LANE_REPLACE_UNVERIFIED === 'true';
+    if (problem && replaceUnverified && postedProblem(next, posted, postedSig, readKeys(), { replaceUnverified }) === null) {
+      console.log(`::warning::herdr lane: ${problem.split(': refusing')[0]}; replacing it (replace_unverified_herdr_pointer)`);
+    } else if (problem) {
+      console.error(`herdr lane: ${problem}`);
+      process.exit(1);
+    } else {
+      console.log(posted || sig ? 'herdr lane: the posted pointer is not newer' : 'herdr lane: no pointer posted yet');
+    }
   } else if (command === 'check-key' && args.length === 0) {
     const problem = keyProblem(process.env.HERDR_PACK_KEY, readKeys());
     if (problem) { console.error(`herdr lane: ${problem} (bun scripts/herdr-lane.ts keygen makes it; RFC 0011)`); process.exit(1); }
