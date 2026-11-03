@@ -91,12 +91,16 @@ export function aside(providers) {
 
 /**
  * Put the agent on DSH's model and effort, the model first: the efforts it offers are that
- * model's. DSH's `default` model is the one the agent started on, and no effort leaves its own.
+ * model's. DSH's `default` model is the one the agent started on. With no effort, the model's
+ * own comes back, so an earlier turn's choice does not stay: the agent's "default" row when it
+ * has one (Claude Code's, which hands effort back to its settings), else `ownEffort`, the one
+ * the agent showed for that model when it was read.
  * @param {AgentRun} run
  * @param {string} model
  * @param {string | undefined} effort
+ * @param {string | undefined} [ownEffort]
  */
-export async function choose(run, model, effort) {
+export async function choose(run, model, effort, ownEffort) {
   const option = run.option('model')
   if (option === undefined) {
     if (model !== DEFAULT_MODEL) throw new Error(`it offers no choice of model, so not ${model}`)
@@ -104,7 +108,12 @@ export async function choose(run, model, effort) {
     const target = model === DEFAULT_MODEL && !valuesOf(option).some(choice => choice.value === DEFAULT_MODEL) ? run.startModel : model
     if (target !== undefined) await run.setOption('model', target)
   }
-  if (effort !== undefined) await run.setOption('thought_level', effort)
+  if (effort !== undefined) return run.setOption('thought_level', effort)
+  const levels = run.option('thought_level')
+  if (levels === undefined) return
+  const offered = valuesOf(levels).map(choice => choice.value)
+  const own = offered.includes(DEFAULT_MODEL) ? DEFAULT_MODEL : offered.includes(ownEffort) ? ownEffort : undefined
+  if (own !== undefined) await run.setOption('thought_level', own)
 }
 
 export class AcpAdapter extends LlmAdapter {
@@ -197,7 +206,8 @@ export class AcpAdapter extends LlmAdapter {
       }
       // The Session's model and effort, then its level as the agent's own permission mode, before every prompt.
       try {
-        await choose(live.run, options.model, options.reasoningEffort)
+        const own = options.reasoningEffort === undefined ? (await agent.catalog?.model(options.model))?.reasoning?.defaultEffort : undefined
+        await choose(live.run, options.model, options.reasoningEffort, own)
       } catch (error) {
         return yield finish('error', `${agent.name} would not take ${options.model}${options.reasoningEffort ? ` at ${options.reasoningEffort} effort` : ''}: ${error?.message ?? error}`)
       }

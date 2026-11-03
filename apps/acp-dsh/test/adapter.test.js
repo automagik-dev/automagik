@@ -217,10 +217,11 @@ test('the chosen model and effort reach the agent before each prompt; default go
     assert.match(thoughtIn(next.steps[0]), /^On fake-small at high effort\. Thinking it over\./)
     next = await turn(h, messages, 'again', { model: 'fake-large', effort: 'low' })
     assert.match(thoughtIn(next.steps[0]), /^On fake-large at low effort\./)
-    // DSH's default model: the one the agent started on. No effort leaves the agent's own.
+    // DSH's default model: the one the agent started on. A turn with no effort hands it back to
+    // the agent's own "default" row, so the low effort of the turn before does not stay.
     await turn(h, messages, 'small', { model: 'fake-small' })
     next = await turn(h, messages, 'back', { model: 'default' })
-    assert.match(thoughtIn(next.steps[0]), /^On fake-large at low effort\./)
+    assert.match(thoughtIn(next.steps[0]), /^On fake-large at no effort\./)
     // A model or effort the agent does not offer fails the turn, saying what it does offer.
     const plain = await step(h.adapter, [...messages, { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'x' }] }], { model: 'fake-plain', effort: 'high' })
     assert.equal(plain.at(-1).reason.kind, 'error')
@@ -244,6 +245,24 @@ test('an agent that offers no models is one model, default, with no efforts', as
     assert.equal(thoughtIn(steps[0]), 'Thinking it over.')
     const other = await step(h.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'x' }] }], { model: 'fake-small' })
     assert.match(other.at(-1).reason.failure.message, /it offers no choice of model, so not fake-small/)
+  } finally {
+    h.close()
+  }
+})
+
+test("with no \"default\" effort row (Codex), a turn with no effort goes back to the model's own", async (t) => {
+  process.env.FAKE_ACP_NO_DEFAULT_EFFORT = '1'
+  t.after(() => { delete process.env.FAKE_ACP_NO_DEFAULT_EFFORT })
+  const h = host()
+  try {
+    const messages = []
+    let next = await turn(h, messages, 'hi', { model: 'fake-large', effort: 'high' })
+    assert.match(thoughtIn(next.steps[0]), /^On fake-large at high effort\./)
+    next = await turn(h, messages, 'again', { model: 'fake-large' })
+    assert.match(thoughtIn(next.steps[0]), /^On fake-large at medium effort\./)
+    next = await turn(h, messages, 'small', { model: 'fake-small', effort: 'high' })
+    next = await turn(h, messages, 'small again', { model: 'fake-small' })
+    assert.match(thoughtIn(next.steps[0]), /^On fake-small at low effort\./)
   } finally {
     h.close()
   }

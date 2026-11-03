@@ -6,7 +6,9 @@
 // Like Claude Code's and Codex's adapters it offers its models and each model's efforts as
 // session config options (categories `model` and `thought_level`, the effort list rebuilt per
 // model), and each turn's thoughts start with the model and effort it runs on. With
-// FAKE_ACP_NO_OPTIONS=1 in its environment it offers none, as an older agent would.
+// FAKE_ACP_NO_OPTIONS=1 in its environment it offers none, as an older agent would. Its effort
+// list starts with a "default" row, as Claude Code's does; FAKE_ACP_NO_DEFAULT_EFFORT=1 leaves it
+// out, as Codex's does.
 import { Readable, Writable } from 'node:stream'
 import { AgentSideConnection, PROTOCOL_VERSION, RequestError, ndJsonStream } from '@agentclientprotocol/sdk'
 
@@ -16,12 +18,13 @@ const MODELS = [
   { value: 'fake-plain', name: 'Fake Plain', efforts: [], effort: undefined },
 ]
 const OFFERS = process.env.FAKE_ACP_NO_OPTIONS !== '1'
+const DEFAULT_ROW = process.env.FAKE_ACP_NO_DEFAULT_EFFORT === '1' ? [] : [{ value: 'default', name: 'Default' }]
 
 function configOptions(session) {
   const model = MODELS.find(entry => entry.value === session.model)
   const options = [{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: model.value, options: MODELS.map(({ value, name, description }) => ({ value, name, ...(description ? { description } : {}) })) }]
   if (model.efforts.length > 0) {
-    options.push({ id: 'effort', name: 'Effort', category: 'thought_level', type: 'select', currentValue: session.effort ?? 'default', options: [{ value: 'default', name: 'Default' }, ...model.efforts.map(value => ({ value, name: value[0].toUpperCase() + value.slice(1) }))] })
+    options.push({ id: 'effort', name: 'Effort', category: 'thought_level', type: 'select', currentValue: session.effort ?? 'default', options: [...DEFAULT_ROW, ...model.efforts.map(value => ({ value, name: value[0].toUpperCase() + value.slice(1) }))] })
   }
   return options
 }

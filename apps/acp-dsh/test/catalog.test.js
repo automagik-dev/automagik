@@ -91,3 +91,30 @@ test("an agent's own default model is kept as it names it; efforts come per mode
   assert.equal(reasoningOf(undefined), undefined)
 })
 
+
+test('a kept file of any other shape is not used: the stand-ins answer until a probe writes it again', async (t) => {
+  const { writeFileSync } = await import('node:fs')
+  const shapes = [
+    { models: [null] },
+    { models: [{ id: 'opus', name: 'Opus', reasoning: { efforts: 'high' } }] },
+    { models: [{ id: 'opus', name: 'Opus', reasoning: { efforts: [{ id: 3, name: 'x' }] } }] },
+    { models: [{ id: 'opus', name: 'Opus', reasoning: { efforts: [{ id: 'low', name: 'Low' }], defaultEffort: 'max' } }] },
+    { models: [{ id: 'opus' }] },
+    { models: [] },
+    'not json',
+  ]
+  for (const shape of shapes) {
+    const home = scratch()
+    t.after(() => rmSync(home, { recursive: true, force: true }))
+    writeFileSync(join(home, 'acp-test.json'), typeof shape === 'string' ? shape : JSON.stringify({ key: 'v1', ...shape }))
+    // No adapter installed: no probe, so only the kept file could answer.
+    const made = catalog(home, { key: () => undefined })
+    t.after(() => made.dispose())
+    assert.deepEqual(await made.models(), FALLBACK, JSON.stringify(shape))
+  }
+  // A well-formed one is used.
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  writeFileSync(join(home, 'acp-test.json'), JSON.stringify({ key: 'v1', models: [{ id: 'opus', name: 'Opus', reasoning: { efforts: [{ id: 'low', name: 'Low' }], defaultEffort: 'low' } }] }))
+  assert.deepEqual((await catalog(home, { key: () => undefined }).models()).map(model => model.id), ['opus'])
+})

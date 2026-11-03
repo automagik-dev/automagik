@@ -72,6 +72,20 @@ export async function readCatalog(run, { defaultName, seen = () => {}, stopped =
  * @typedef {{ models: CatalogModel[], complete: boolean }} CatalogState
  */
 
+const isText = value => typeof value === 'string' && value.length > 0
+const isEffort = effort => isText(effort?.id) && isText(effort?.name) && (effort.description === undefined || typeof effort.description === 'string')
+/** Whether a kept entry is a model as a probe writes it: DSH turns down any other shape. */
+export function isModel(model) {
+  if (!isText(model?.id) || !isText(model?.name)) return false
+  if (model.description !== undefined && typeof model.description !== 'string') return false
+  const reasoning = model.reasoning
+  if (reasoning === undefined) return true
+  if (!Array.isArray(reasoning?.efforts) || reasoning.efforts.length === 0 || !reasoning.efforts.every(isEffort)) return false
+  const ids = reasoning.efforts.map(effort => effort.id)
+  if (new Set(ids).size !== ids.length) return false
+  return reasoning.defaultEffort === undefined || ids.includes(reasoning.defaultEffort)
+}
+
 export class Catalog {
   /**
    * @param {{
@@ -95,11 +109,13 @@ export class Catalog {
     this.disposed = false
   }
 
+  // A kept file that is not wholly what a probe writes is not used: the stand-ins answer until
+  // the next probe writes it again.
   read() {
     if (this.file === undefined) return undefined
     try {
       const saved = JSON.parse(readFileSync(this.file, 'utf8'))
-      return Array.isArray(saved?.models) && saved.models.length > 0 ? saved : undefined
+      return Array.isArray(saved?.models) && saved.models.length > 0 && saved.models.every(isModel) ? saved : undefined
     } catch {
       return undefined
     }
