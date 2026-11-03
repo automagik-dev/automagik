@@ -15,9 +15,10 @@ const PLUGIN = dirname(dirname(fileURLToPath(import.meta.url)))
 // ---- The host -------------------------------------------------------------------------------
 
 // acp-dsh's service as its status() answers, with what a call did.
-function fakeAcp(agents) {
+function fakeAcp(agents, { settingsEntry } = {}) {
   const calls = []
   const service = {
+    ...(settingsEntry === undefined ? {} : { settingsEntry }),
     status: async () => { calls.push('status'); return { agents: structuredClone(agents) } },
     refresh: async () => { calls.push('refresh'); return { agents: structuredClone(agents) } },
     retry: async (id) => { calls.push(['retry', id]); return { agents: structuredClone(agents) } },
@@ -84,6 +85,14 @@ test("a switch writes acp-dsh's own setting under its key, at the revision it re
     assert.equal(reply.error.code, 'omni-ai/invalid')
   }
   assert.equal(fake.updates.length, 2)
+})
+
+test('a switch writes to the settings entry acp-dsh names as its own', async () => {
+  const acp = fakeAcp([agent('acp-claude')], { settingsEntry: 'acp-dsh-work' })
+  const fake = host({ acp, entries: { 'omni-ai': {}, [ACP_ENTRY]: { claude: true }, 'acp-dsh-work': { claude: true } } })
+  const reply = await fake.handle('acp-switch', { id: 'acp-claude', on: false })
+  assert.equal(reply.ok, true)
+  assert.deepEqual(fake.updates, [{ ns: 'acp-dsh-work', patch: { claude: false }, expectedRevision: 3 }])
 })
 
 test('a DSH without the acp-dsh settings entry refuses the switch in words', async () => {

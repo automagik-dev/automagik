@@ -70,10 +70,12 @@ export function createAcpActions(ctx) {
       const acp = service()
       if (acp === undefined) throw refused('The ACP agents plugin is not running in this DSH.')
       const agent = (await acp.status()).agents.find(row => row.id === asked.id)
-      const entry = ctx.settings.describe().find(row => row.ns === ACP_ENTRY)
+      // The settings entry acp-dsh says is its own; an older acp-dsh does not say.
+      const ns = typeof acp.settingsEntry === 'string' && acp.settingsEntry !== '' ? acp.settingsEntry : ACP_ENTRY
+      const entry = ctx.settings.describe().find(row => row.ns === ns)
       if (agent === undefined || entry === undefined) throw refused('This DSH cannot change the ACP agents\' settings.')
       try {
-        await ctx.settings.update(ACP_ENTRY, { [agent.key]: asked.on }, entry.revision)
+        await ctx.settings.update(ns, { [agent.key]: asked.on }, entry.revision)
       } catch (error) {
         if (error?.code === 'SETTINGS_CONFLICT') throw refused('The ACP agents\' settings changed while saving. Try again.')
         throw refused(`DSH did not save the switch: ${error?.message ?? error}`)
