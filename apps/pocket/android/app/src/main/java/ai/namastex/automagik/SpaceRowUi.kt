@@ -67,23 +67,19 @@ private val CHIP_TINT = mapOf(Chip.MERGES to "ansi2", Chip.TIME to "dim", Chip.F
             p.merges?.items?.firstOrNull()?.forge?.takeIf { it == "github" || it == "gitlab" }?.let { forge ->
                 Icon(Icons.Outlined.Code, if (forge == "github") "GitHub" else "GitLab", Modifier.size(12.dp), tint = herdr(if (forge == "gitlab") "ansi3" else "dim"))
             }
-            LineChip(Chip.MERGES, Fmt.count(p.merges?.n), p.merges?.n, Fmt.arrow(p.merges?.n, p.merges?.prevN), upGood = true, onChip)
-            LineChip(Chip.TIME, Fmt.minutes(p.time?.medianMin), p.time?.medianMin, Fmt.arrow(p.time?.medianMin, p.time?.prevMedianMin), upGood = false, onChip)
-            LineChip(Chip.FIRST_PASS, Fmt.share(p.firstPass?.share), p.firstPass?.share, Fmt.arrow(p.firstPass?.share, p.firstPass?.prevShare), upGood = true, onChip)
-            LineChip(Chip.SPENT, Fmt.share(p.spent?.codexWeekShare), p.spent?.codexWeekShare, Fmt.arrow(p.spent?.realUsd, p.spent?.prevRealUsd), upGood = false, onChip)
-            LineChip(Chip.TOKENS, Fmt.tokens(p.tokens?.total), p.tokens?.total, Fmt.arrow(p.tokens?.total, p.tokens?.prevTotal), upGood = false, onChip)
+            SpaceFeed.line2(p).zip(Chip.entries).forEach { (c, chip) -> LineChip(chip, c, onChip) }
         }
     }
 }
 
-@Composable private fun LineChip(chip: Chip, text: String, value: Double?, arrow: Fmt.Arrow, upGood: Boolean, onChip: (Chip) -> Unit) {
+@Composable private fun LineChip(chip: Chip, c: SpaceFeed.LineChip, onChip: (Chip) -> Unit) {
     Row(Modifier.clip(RoundedCornerShape(4.dp)).clickable { onChip(chip) }.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(CHIP_ICON.getValue(chip), chip.name.lowercase().replace('_', ' '), Modifier.size(12.dp), tint = herdr(CHIP_TINT.getValue(chip)))
         Spacer(Modifier.width(3.dp))
-        Text(text, style = mono(11.5.sp), color = herdr(if (value == null) "dim" else "foreground"), maxLines = 1, softWrap = false)
-        Fmt.good(arrow, upGood)?.let { good ->
+        Text(c.text, style = mono(11.5.sp), color = herdr(if (c.isNull) "dim" else "foreground"), maxLines = 1, softWrap = false)
+        c.good?.let { good ->
             Spacer(Modifier.width(1.dp))
-            Text(arrow.glyph, fontSize = 8.sp, color = herdr(if (good) "ansi2" else "ansi1"), maxLines = 1)
+            Text(c.arrow.glyph, fontSize = 8.sp, color = herdr(if (good) "ansi2" else "ansi1"), maxLines = 1)
         }
     }
 }
@@ -154,11 +150,11 @@ private val CHIP_TINT = mapOf(Chip.MERGES to "ansi2", Chip.TIME to "dim", Chip.F
             val t = p.time
             Header(icon, tint, "Worktree → merge", Fmt.minutes(t?.medianMin), t?.prevMedianMin?.let(Fmt::minutes))
             t ?: return
-            val colors = SpaceColors.scale(t.bands.size, dark)
+            val colors = SpaceColors.scale(6, dark)
             Spacer(Modifier.height(10.dp))
             Pie(t.bands.mapIndexed { i, n ->
                 val label = t.labels.getOrNull(i)?.ifBlank { null } ?: "band ${i + 1}"
-                Slice(label, n, Color(0xff000000.toInt() or colors[i]), Fmt.count(n), Fmt.count(n)) {
+                Slice(label, n, Color(0xff000000.toInt() or colors[i.coerceAtMost(colors.lastIndex)]), Fmt.count(n), Fmt.count(n)) {
                     Text("$label: ${Fmt.count(n)}", fontSize = 12.sp, color = herdr("muted"))
                 }
             })
@@ -178,7 +174,7 @@ private val CHIP_TINT = mapOf(Chip.MERGES to "ansi2", Chip.TIME to "dim", Chip.F
             Spacer(Modifier.height(10.dp))
             Pie(f.fixes.take(4).mapIndexed { i, n ->
                 Slice(labels[i], n, Color(0xff000000.toInt() or colors[i]), Fmt.count(n), Fmt.count(n)) {
-                    Text("${labels[i]}: ${Fmt.count(n)}", fontSize = 12.sp, color = herdr("muted"))
+                    Text(Fmt.count(n), style = mono(12.sp), color = herdr("muted"))
                 }
             })
         }
@@ -187,11 +183,10 @@ private val CHIP_TINT = mapOf(Chip.MERGES to "ansi2", Chip.TIME to "dim", Chip.F
             Header(icon, tint, "Spent, 24 h", Fmt.dollars(sp?.realUsd), sp?.prevRealUsd?.let(Fmt::dollars))
             sp ?: return
             Sub("${Fmt.share(sp.codexWeekShare)} of a Codex week")
-            val models = SpaceFeed.models(p)
             Spacer(Modifier.height(10.dp))
             Pie(sp.byModel.keys.sorted().map { id ->
                 val usd = sp.byModel[id]
-                Slice(id, usd, herdr(SpaceColors.series(models.indexOf(id))), "", Fmt.dollars(usd)) {
+                Slice(id, usd, herdr(SpaceFeed.modelColor(p, id)), "", Fmt.dollars(usd)) {
                     Text("$id: ${Fmt.dollars(usd)}", fontSize = 12.sp, color = herdr("muted"))
                 }
             }, insideLabels = false)
@@ -201,11 +196,10 @@ private val CHIP_TINT = mapOf(Chip.MERGES to "ansi2", Chip.TIME to "dim", Chip.F
             Header(icon, tint, "Tokens", Fmt.tokens(tk?.total), tk?.prevTotal?.let(Fmt::tokens))
             tk ?: return
             Sub("cache hit ${Fmt.share(tk.cacheHit)}")
-            val models = SpaceFeed.models(p)
             Spacer(Modifier.height(10.dp))
             Pie(tk.byModel.keys.sorted().map { id ->
                 val m = tk.byModel.getValue(id)
-                Slice(id, m.size, herdr(SpaceColors.series(models.indexOf(id))), "", null) {
+                Slice(id, m.size, herdr(SpaceFeed.modelColor(p, id)), "", null) {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Cell("input", Fmt.tokens(m.input), null, null, null, Modifier.weight(1f))
                         Cell("output", Fmt.tokens(m.output), null, null, null, Modifier.weight(1f))
@@ -323,18 +317,17 @@ private class Slice(val label: String, val value: Double?, val color: Color, val
         Cell("24 h", Fmt.dollars(b?.usd24h), null, null, null, Modifier.weight(1f))
     }
     val parts = b?.parts.orEmpty()
-    fun color(i: Int, key: String) = if (key == "other") "dim" else SpaceColors.series(i)
     if (parts.isEmpty()) { Spacer(Modifier.height(10.dp)); Text("no breakdown yet", fontSize = 12.sp, color = herdr("dim")) }
     else {
         val bar = parts.withIndex().filter { (it.value.usd ?: 0.0) > 0.0 }
         val sum = bar.sumOf { it.value.usd ?: 0.0 }
         if (bar.isNotEmpty()) Row(Modifier.padding(top = 12.dp, bottom = 8.dp).fillMaxWidth().height(8.dp).clip(RoundedCornerShape(3.dp)),
             horizontalArrangement = Arrangement.spacedBy(1.dp)) {
-            bar.forEach { (i, part) -> Box(Modifier.weight(((part.usd ?: 0.0) / sum).toFloat()).fillMaxHeight().background(herdr(color(i, part.key)))) }
+            bar.forEach { (i, part) -> Box(Modifier.weight(((part.usd ?: 0.0) / sum).toFloat()).fillMaxHeight().background(herdr(SpaceColors.part(i, part.key)))) }
         } else Spacer(Modifier.height(10.dp))
         parts.forEachIndexed { i, part ->
             Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(8.dp).background(herdr(color(i, part.key)), RoundedCornerShape(2.dp)))
+                Box(Modifier.size(8.dp).background(herdr(SpaceColors.part(i, part.key)), RoundedCornerShape(2.dp)))
                 Spacer(Modifier.width(7.dp))
                 Text(SpaceFeed.partLabel(part, b?.partsKind, s.names), fontSize = 12.sp, color = herdr("muted"), maxLines = 1,
                     overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))

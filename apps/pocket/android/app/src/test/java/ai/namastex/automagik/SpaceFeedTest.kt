@@ -73,6 +73,51 @@ class SpaceFeedTest {
         assertEquals(true, Fmt.good(Arrow.DOWN, upGood = false)); assertNull(Fmt.good(Arrow.NONE, upGood = true))
     }
 
+    @Test fun line2ChipsFollowTheArrowTable() {
+        val p = SpaceFeed.parse(fixture())!!.project("/work/example-project")!!
+        val line = SpaceFeed.line2(p).associateBy { it.key }
+        assertEquals(listOf("merges", "time", "first_pass", "spent", "tokens"), SpaceFeed.line2(p).map { it.key })
+        assertEquals(Arrow.UP to true, line.getValue("merges").let { it.arrow to it.good })        // 7 vs 5, up is good
+        assertEquals(Arrow.DOWN to true, line.getValue("time").let { it.arrow to it.good })        // 38 vs 55, up is bad
+        assertEquals(Arrow.UP to true, line.getValue("first_pass").let { it.arrow to it.good })    // 0.57 vs 0.4
+        assertEquals(Arrow.DOWN to true, line.getValue("spent").let { it.arrow to it.good })       // real_usd 18.4 vs 22.1
+        assertEquals(Arrow.UP to false, line.getValue("tokens").let { it.arrow to it.good })       // more tokens is bad
+        assertEquals("9%", line.getValue("spent").text)
+    }
+
+    @Test fun aNullValueHasNoArrowEvenWhenItsFieldsMoved() {
+        // Spent's value is codex_week_share; its arrow compares real_usd. Null share: "–" and no arrow.
+        val spent = SpaceFeed.Spent(realUsd = 18.4, prevRealUsd = 22.1, byModel = emptyMap(), codexWeekShare = null)
+        val chip = SpaceFeed.line2(SpaceFeed.Project(null, null, null, spent, null, emptyMap())).single { it.key == "spent" }
+        assertEquals(dash, chip.text); assertEquals(true, chip.isNull)
+        assertEquals(Arrow.NONE, chip.arrow); assertNull(chip.good)
+        // Missing sections: every chip "–", no arrows.
+        SpaceFeed.line2(SpaceFeed.Project(null, null, null, null, null, emptyMap())).forEach {
+            assertEquals(dash, it.text); assertEquals(Arrow.NONE, it.arrow); assertNull(it.good)
+        }
+    }
+
+    @Test fun modelsSortByUtf16AndTakeColoursModEight() {
+        val ids = listOf("b", "é", "B", "a", "Z", "m1", "m2", "m3", "m4")
+        val p = SpaceFeed.Project(null, null, null,
+            SpaceFeed.Spent(null, null, ids.take(5).associateWith { 1.0 }, null),
+            SpaceFeed.Tokens(null, null, null, ids.drop(4).associateWith { SpaceFeed.ModelTokens(1.0, null, null, null, null, null) }), emptyMap())
+        // UTF-16 code units: uppercase before lowercase, accented after ASCII.
+        assertEquals(listOf("B", "Z", "a", "b", "m1", "m2", "m3", "m4", "é"), SpaceFeed.models(p))
+        assertEquals(listOf("ansi4", "ansi6", "ansi3", "ansi5", "ansi2", "ansi12", "ansi13", "ansi14", "ansi4"),
+            SpaceFeed.models(p).map { SpaceFeed.modelColor(p, it) })
+        // The same model has one colour in both cards: "Z" is in spent and tokens.
+        assertEquals("ansi6", SpaceFeed.modelColor(p, "Z"))
+    }
+
+    @Test fun partsAndMergeTypesTakeTheirColours() {
+        assertEquals(listOf("ansi4", "ansi6", "dim", "ansi5"), listOf("a", "b", "other", "c").mapIndexed { i, k -> SpaceColors.part(i, k) })
+        assertEquals("ansi4", SpaceColors.part(8, "x"))
+        val types = mapOf("feat" to "ansi13", "fix" to "ansi11", "test" to "ansi14", "docs" to "ansi12", "refactor" to "ansi5", "perf" to "ansi10",
+            "ci" to "ansi4", "build" to "ansi6", "chore" to "ansi8", "style" to "ansi9", "revert" to "ansi1", "wip" to "dim")
+        types.forEach { (t, token) -> assertEquals(t, token, SpaceColors.type(t)) }
+    }
+
     @Test fun noSpaceOrAnotherVersionDrawsNothing() {
         assertNull(SpaceFeed.parse(null))
         assertNull(SpaceFeed.parse(JSONObject().put("kind", "herdr-meter").put("schema_version", 2)))

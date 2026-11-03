@@ -561,23 +561,26 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     }
     /**
      * Bot and category names for the bot cards: each project's `.herdr/bots.json`, read only, for projects on a machine whose
-     * meter doc has a Space Row feed. A project with no file (or one that doesn't parse) shows ids instead.
+     * meter doc has a Space Row feed, on machines that are up. Read after each meter read (every 5 minutes), and for [only]
+     * when a project first appears. A project with no file, or one that doesn't parse, gets empty names (its bots show their
+     * ids) and isn't read again until the next meter read; a read that fails keeps the names read before.
      */
-    private suspend fun readBots(id: String, client: CoreClient) {
+    private suspend fun readBots(id: String, client: CoreClient, only: Pair<String, String>? = null) {
         val m = state.value.machines[id] ?: return
         val byAddress = m.terminals.associateBy { it.address }
-        val keys = m.spaces.filter { it.machine in m.space }.mapNotNull { s ->
-            SpaceFeed.projectKey(m.git[Sidebar.gitKey(s.machine, Sidebar.place(s, byAddress))])?.takeIf { it.startsWith("/") }?.let { s.machine to it }
-        }.distinct()
+        fun up(machine: String) = machine.isBlank() || m.linked.find { it.name == machine }?.connected == true
+        val keys = (only?.let(::listOf) ?: m.spaces.filter { it.machine in m.space }.mapNotNull { s ->
+            SpaceFeed.projectKey(m.git[Sidebar.gitKey(s.machine, Sidebar.place(s, byAddress))])?.let { s.machine to it }
+        }).filter { (machine, key) -> key.startsWith("/") && machine in m.space && up(machine) }.distinct()
         val names = HashMap<String, SpaceFeed.Names>()
         for ((machine, key) in keys) {
             val params = JSONObject().put("path", "${key.trimEnd('/')}/.herdr/bots.json")
             if (machine.isNotBlank()) params.put("on", machine)
-            runCatching { withTimeout(20_000) { client.call("file.read", params) } }.getOrNull()
+            val text = runCatching { withTimeout(20_000) { client.call("file.read", params) } }.getOrNull()
                 ?.takeIf { it.optInt("last") >= it.optInt("lines") }?.optString("text")
-                ?.let { names["$machine|$key"] = SpaceFeed.names(it) }
+            names["$machine|$key"] = text?.let(SpaceFeed::names) ?: m.bots["$machine|$key"] ?: SpaceFeed.Names()
         }
-        updateMachine(id) { it.copy(bots = it.bots + names) }
+        if (names.isNotEmpty()) updateMachine(id) { it.copy(bots = it.bots + names) }
     }
     /** Herdr desktop's config folder on the core's machine (it may have none: an SSH host without the app). */
     private suspend fun herdrHome(id: String, client: CoreClient): String? = herdrHomes[id] ?: exec(client, "printenv", "HERDR_APP_HOME")
@@ -625,8 +628,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
                     val project = SpaceFeed.projectKey(info)
                     val unnamed = project != null && machine in m.space && "$machine|$project" !in (state.value.machines[id]?.bots ?: emptyMap())
                     updateMachine(id) { it.copy(git = it.git + (key to info)) }
-                    // A project first seen after the meter read: its bot names now, not at the next read.
-                    if (unnamed) runCatching { readBots(id, client) }
+                    // A project first seen after the meter read: its bot names now, once (a missing file is stored as empty).
+                    if (unnamed) runCatching { readBots(id, client, machine to project!!) }
                 }
                 .onFailure { gitChecked[full] = now - 45_000 }   // unsure (machine away, odd error): keep the last answer, retry in 15 s
         }

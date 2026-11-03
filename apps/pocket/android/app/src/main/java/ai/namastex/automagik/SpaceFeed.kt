@@ -121,8 +121,27 @@ object SpaceFeed {
     val TYPES = listOf("feat", "fix", "test", "docs", "refactor", "perf", "ci", "build", "chore", "style", "revert")
     fun typeOrder(types: Collection<String>) = TYPES.filter { it in types } + types.filter { it !in TYPES }.sorted()
 
+    /** One line 2 chip: its text, whether its value is null (dim, no arrow), and its arrow with good/bad (null: none). */
+    data class LineChip(val key: String, val text: String, val isNull: Boolean, val arrow: Fmt.Arrow, val good: Boolean?)
+
+    /** Line 2's five chips (rules sections 4 and 6), in order. A null value has no arrow, even if its compared fields moved. */
+    fun line2(p: Project): List<LineChip> {
+        fun chip(key: String, value: Double?, text: String, now: Double?, prev: Double?, upGood: Boolean): LineChip {
+            val arrow = if (value == null) Fmt.Arrow.NONE else Fmt.arrow(now, prev)
+            return LineChip(key, text, value == null, arrow, Fmt.good(arrow, upGood))
+        }
+        return listOf(
+            chip("merges", p.merges?.n, Fmt.count(p.merges?.n), p.merges?.n, p.merges?.prevN, upGood = true),
+            chip("time", p.time?.medianMin, Fmt.minutes(p.time?.medianMin), p.time?.medianMin, p.time?.prevMedianMin, upGood = false),
+            chip("first_pass", p.firstPass?.share, Fmt.share(p.firstPass?.share), p.firstPass?.share, p.firstPass?.prevShare, upGood = true),
+            chip("spent", p.spent?.codexWeekShare, Fmt.share(p.spent?.codexWeekShare), p.spent?.realUsd, p.spent?.prevRealUsd, upGood = false),
+            chip("tokens", p.tokens?.total, Fmt.tokens(p.tokens?.total), p.tokens?.total, p.tokens?.prevTotal, upGood = false))
+    }
+
     /** Every model of a project, sorted by UTF-16 code unit, so a model has one colour in both cards. */
     fun models(p: Project?): List<String> = ((p?.spent?.byModel?.keys.orEmpty()) + (p?.tokens?.byModel?.keys.orEmpty())).distinct().sorted()
+    /** A model's colour token: its place in [models] at `i mod 8`. */
+    fun modelColor(p: Project?, model: String) = SpaceColors.series(models(p).indexOf(model))
 }
 
 /** Number formats, character for character as the desktop prints them (rules section 3). Null is "–". */
@@ -192,6 +211,8 @@ object SpaceColors {
     /** The 8-colour list for models and bot parts, taken at `i mod 8`. */
     val SERIES = listOf("ansi4", "ansi6", "ansi3", "ansi5", "ansi2", "ansi12", "ansi13", "ansi14")
     fun series(i: Int) = SERIES[i.mod(SERIES.size)]
+    /** A bot card part's colour token: the i-th of [SERIES] in feed order; the key `other` is always `dim`. */
+    fun part(i: Int, key: String) = if (key == "other") "dim" else series(i)
 
     /** The good-to-bad scale: `ansi2` at 0, `ansi3` at 0.5, `ansi1` at 1, mixed per sRGB channel; [n] stops. */
     fun scale(n: Int, dark: Boolean): List<Int> = (0 until n).map { i ->
