@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (every question answered: see Decided and proposed) |
+| Status | Draft (one question open: Q5, the approval source) |
 | Milestone | not scheduled |
 | Lanes | herdr (3.N.P, Pocket Link included), plugin (3.N.P), pocket (3.N.P, [RFC 0011](0011-monorepo-parts-and-releases.md)) |
 | Created | 2026-11-03 |
@@ -38,9 +38,11 @@ and get a live chat view. Today:
   transcript path never leaves this computer's ledger, and the hook runs only in panes Start or
   Attach set up, on the one Mac that has the pack's hooks (t22n's note; #206).
 
-Orca (`github.com/stablyai/orca` at `ec3a707`, MIT, © 2026 Lovecast Inc.) already shows terminal
-agents as chat. The research note (`bot-chat-backend/orca-research-2026-11-03.md`) cites its
-files; this RFC cites them again where it takes from them.
+Orca (`github.com/stablyai/orca` at `e1dfc022`, MIT, © 2026 Lovecast Inc.) already shows
+terminal agents as chat. The research note (`bot-chat-backend/orca-research-2026-11-03.md`) cites
+its files at `ec3a707`; that is `e1dfc022`'s parent, and `e1dfc022` changes no file this RFC
+takes or cites (it touches Orca's hook server and usage code), so the line numbers hold. This RFC
+pins `e1dfc022`, as 0014 and the decision log do.
 
 ## Decided and proposed
 
@@ -78,7 +80,12 @@ Decided by Felipe on this RFC (2026-11-03, relayed by t2ws), each as recommended
   yes the pack adds a label-only hook to the person's Claude user settings.
 - **Q4: no redaction in this RFC.** Rows are never stored on the phone or logged.
 
-Everything else in Design is this RFC's proposal. No question is open.
+**One departure from D30, for Felipe (Q5).** D30's middle source is hooks. This RFC uses
+herdr-core's status there instead (see "Status and hooks"), and adds no approval hook, so an
+approval row is found by the screen reader, under the guards in "Input". Q5 asks whether to keep
+that or add a `PermissionRequest` hook as the approval source.
+
+Everything else in Design is this RFC's proposal.
 
 ## Design
 
@@ -115,7 +122,7 @@ the bridge and in the DSH host. Its floor is the bridge's Node (`bridge/package.
 Ported from TypeScript to JavaScript with JSDoc types, behaviour unchanged, each file's header
 naming its upstream path:
 
-| Ours (`chat/`) | Orca at `ec3a707` |
+| Ours (`chat/`) | Orca at `e1dfc022` |
 |---|---|
 | `decode-claude.js`, `decode-codex.js`, `decode-omp.js` | `src/main/native-chat/transcript-line-decoders-{claude,codex,omp}.ts` |
 | `types.js` (rows, turn lifecycle, session status, sources) | `src/shared/native-chat/native-chat-types.ts`, `src/shared/agent-status-types.ts` (the parts used) |
@@ -165,11 +172,14 @@ transcript folder: `.claude/projects/`, `.codex/sessions/` or `.omp/agent/sessio
 default, `omp-session-root.ts` in Orca), under the
 home of the machine the terminal runs on, and ends in `.jsonl`. On this computer the path is
 resolved (`realpath`) before the check, so a symlink out of the folder is refused. For a terminal
-on another machine the path is made home-relative, must have no `..` or empty segment, and is
-read as that relative path with `hc file read --on <machine>`, which starts relative paths at
-that machine's home. `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and omp's XDG folder are not followed in
-this RFC; such a pane is screen only. A refused path is logged once, by its folder, never its
-contents.
+on another machine the check is textual only, since `realpath` runs only here: the path is made
+home-relative, must have no `..` or empty segment, and is read as that relative path with
+`hc file read --on <machine>`. The engine always passes `on` from the terminal's own address
+(`<machine>/tN`), never from a path or label, and sets no `cwd`, so the base is that machine's
+home as `file.read` defines it. A symlink inside a remote agent folder is followed; that folder is
+written by the same account as the agent. `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and omp's XDG
+folder are not followed in this RFC; such a pane is screen only. A refused path is logged once,
+by its folder, never its contents.
 
 ### Tailing
 
@@ -187,11 +197,13 @@ contents.
 ### Status and hooks
 
 Orca's middle source is its own hook server. We have herdr-core instead, which every machine
-runs: `events.subscribe` on the terminal gives `status.state` (`working`, `idle`), `status.msg`
-and `turn`, and `terminal.send` answers `blocked` when the program sits in a dialog. That is the
-status row, the "working" indicator and the turn boundary. The briefing hook's facts (session,
-transcript) arrive as labels. No new hook is added in this RFC; a Claude hook that names a
-pending approval's tool is a possible later step if screen reading proves too weak.
+runs: `events.subscribe` on the terminal gives `status.state` (`idle`, `working`, `done`,
+`blocked`, `error`), `status.kind` while blocked (`permission`, `question`, `auth`), `status.msg`
+and `turn`; `terminal.send` refuses a blocked program. That is the status row, the "working"
+indicator, the turn boundary and the gate for approval buttons. The status is the program's own
+report, so it is a gate, not proof of what the dialog asks. The briefing hook's facts (session,
+transcript) arrive as labels. Whether a `PermissionRequest` hook also names the pending tool is
+Q5.
 
 ### Screen fallback
 
@@ -220,7 +232,7 @@ Every row: `id` (stable: the transcript's own id, else `<file>:<line>`), `turn`,
 - `text`: `role` (`user` or `assistant`), `text` (markdown);
 - `tool-call`: `tool`, `summary`, `input` (a short preview);
 - `tool-result`: `call` (the tool-call row's id), `ok`, `output` (a preview);
-- `approval`: `tool`, `summary`, `choices` (`allow`, `allow-always` when the dialog shows it,
+- `approval`: `tool`, `summary`, `choices` (`allow`, `allow-always` when the key map has it,
   `deny`), `open` (still on screen);
 - `question`: `prompt`, `options`, `multi`, `answerable` (false where the agent cannot be answered
   by keys, below);
@@ -258,10 +270,18 @@ anything on its own (0014 Threat model).
   4. **Blocked.** A send that herdr-core answers `blocked` (a dialog is open) is not forced: the
      message waits, and the dialog shows as an approval or question row.
 - **Approvals.** The key map comes from Orca: allow is `1` for Claude and Codex, deny is `esc`
-  (`native-chat-approval-envelope.ts:38-45`, `native-chat-agent-support.ts:66`); allow-always is
-  the dialog's own number, read from the screen. Just before pressing, the screen is read again:
-  if the same dialog (tool and summary) is no longer there, nothing is pressed and the chat says
-  the question changed.
+  (`native-chat-approval-envelope.ts:38-45`, `native-chat-agent-support.ts:66`). Text on the
+  screen can be anyone's (a tool's output can print a fake dialog), so an approval row gets
+  buttons only when all of these hold (t2x5):
+  1. herdr-core reports `blocked` with kind `permission` (or `question` for a question row);
+  2. the dialog is read only from the bottom of the screen, the rows around the cursor, never from
+     scrollback or the middle of the screen;
+  3. its tool matches the transcript's last tool call that has no result yet (for an agent with no
+     transcript yet, the row shows the dialog with "Answer in the terminal" and no buttons).
+  Allow-always is offered only when the agent's key map has it at a fixed key; a number read from
+  the screen is never pressed. Just before pressing, all three are checked again; if one fails,
+  nothing is pressed and the chat says the question changed. If Q5 adds the hook, its payload
+  replaces guard 3 where it runs.
 - **Questions and pickers.** Paced key steps, one body and one Enter per answer, 500 ms apart
   plus 500 ms to let the next question draw (`native-chat-answer-stepping.ts`). Each step checks
   the screen first and stops at a mismatch with "Finish in the terminal". omp's questions cannot
@@ -361,12 +381,22 @@ Orca's own list of gaps (research note, "Parity gaps") and our answer:
   host. A paired phone already has the whole `hc connect` API, including `terminal.attach`,
   `terminal.keys` and `file.read`: the chat route gives it a better view of what it can already
   read and type, and no new reach.
+- **Who can call the engine.** The DSH host also runs plugins, tools and automations. The
+  engine's send, answer and interrupt calls are reachable only from the chat route bots-dsh serves
+  to the person's own window, and on the phone only from `chat.*` on a paired connection. They are
+  never registered as a DSH tool, never given to an automation or another plugin, and refused
+  without a client that watches that terminal. Each carries the action the person took: the
+  message they wrote, or the id of an open approval or question row the engine itself raised.
+- **The per-project yes** (0014 Threat model, item 3). It lives in 0014's `shown[]`, keyed by
+  (machine, project). This RFC adds nothing to it and reads no repo file: a chat opens only for a
+  Bot already shown under that yes, or a terminal the person opens.
 - **What it can read.** Transcripts of live terminals' agents, through the folder rule. The rule
   is against a bad label, hook payload or ledger row pointing a chat at another file (`~/.ssh`),
   not against the phone. Labels are free-form and any program in a terminal can set them, so the
   label is never trusted more than the rule allows.
 - **What it can send.** Text, through the cleaner and the draft check; mapped approval and answer
-  keys after a screen check; interrupt. Only on the person's action in a client.
+  keys under the guards in "Input"; interrupt. Only on the person's action in a client, enforced
+  as in "Who can call the engine".
 - **Rendering.** Transcript text is written by the agent and by whatever it read (web pages,
   files, tool output). It is shown as text or sanitized markdown, with no HTML and no remote load
   by itself, so a page the agent read cannot run in, or call home from, either window.
@@ -404,8 +434,11 @@ Orca's own list of gaps (research note, "Parity gaps") and our answer:
 3. **The engine** (herdr). Transcript finding, tailing (here and `--on`), status, screen reading,
    ranking, the row model, input with the draft hold, approvals, pickers, interrupt, all behind
    one API both clients call. *Check:* tests against a fake `hc` and temp homes (never a live
-   Herdr): a held draft is never cleared; a stale approval presses nothing; a remote tail reads by
-   offset; per agent, a multi-line message arrives as one message in a recorded fake terminal.
+   Herdr): a held draft is never cleared; a stale approval presses nothing; a fake dialog printed
+   mid-screen, or shown while status is not `blocked`, gets no buttons; a dialog whose tool is not
+   the transcript's open tool call gets no buttons; a call with no watching client is refused; a
+   remote tail reads by offset with `on` from the address; per agent, a multi-line message arrives
+   as one message in a recorded fake terminal.
    *Rollback:* revert; nothing calls it until 4 or 0014's 9.
 4. **The chat route** (herdr, Pocket Link). `herdr-pocket/chat/1` in `bridge.mjs`, the limits,
    cursors, and README's "Update" note. *Check:* `guard.test.mjs` gains: an unpaired key is closed
@@ -430,15 +463,22 @@ Orca's own list of gaps (research note, "Parity gaps") and our answer:
    panes get both labels and are tailed through `hc file read --on`. *Check:* a labelled remote
    pane's chat shows transcript rows; a remote path outside the folders is refused. *Rollback:* a
    reverting pack; remote panes go back to screen only.
+8. **The approval hook** (herdr, t22n, after 2; only if Q5 says (b)). A `PermissionRequest` hook
+   beside the briefing hook in the settings Start and Attach write, and in Q3's offer, handing the
+   engine the pending tool and its input. *Check:* the herdr gate; a Claude approval shows its tool
+   from the hook; a fake dialog printed by a tool gets no buttons; a pane without the hook keeps
+   (a)'s guards. *Rollback:* a reverting pack removes the hook; approvals fall back to (a).
 
 **With RFC 0014.** 0014's delivery 8 carries this RFC's delivery 2 (or follows it). 0014's
 delivery 9 (one conversation in the Automagik window) needs deliveries 1-3 here, not 4-5, and
-copies the module into bots-dsh. The phone (5) needs 4. Linked machines (7) need #206, as 0014's
-delivery 7 does.
+copies the module into bots-dsh; its check for a live pane on a linked machine also needs
+delivery 7. Its check gains the window's half of "Rendering, both clients": a row holding
+`<img src=…>` and `<script>` renders as text in the Automagik window and loads nothing. The phone
+(5) needs 4. Linked machines (7) need #206, as 0014's delivery 7 does.
 
 ## Open questions
 
-No open questions. Felipe answered all four on 2026-11-03, each as recommended (see Decided);
+One open question, Q5. Felipe answered Q1-Q4 on 2026-11-03, each as recommended (see Decided);
 they stay below as the record.
 
 1. **Where the module sits, and how the Automagik window gets it.** *Decided, as recommended:*
@@ -459,6 +499,22 @@ they stay below as the record.
    the same text a paired phone can already read from the terminal; they are never written to
    disk on the phone or logged by the bridge or the host. Revisit if chat rows are ever stored or
    sent anywhere new.
+5. **Where approval rows come from** (t2x5; D30's middle source is hooks). Either way, buttons
+   need herdr-core's `blocked` with kind `permission`, and the dialog is read only around the
+   cursor.
+   - (a) **Screen only, with the guards** in "Input". Nothing new in anyone's Claude settings; it
+     works the same in every pane and on linked machines before #206. But what the dialog asks is
+     still read from the screen, so it breaks when a TUI changes its dialog, needs a transcript
+     tool call to match, and a fake dialog that lines up with a real pending call passes.
+   - (b) **A `PermissionRequest` hook** that hands the engine the pending tool and its input
+     (D30's middle source, Orca's way, `native-chat-approval-envelope.ts`). The agent names the
+     tool itself, so printed text cannot fake it, and a TUI redesign does not break it. But it runs
+     only where the hook is installed (bot panes; plain panes after Q3's yes; linked machines
+     after #206), and it is one more hook in the person's settings. Code the agent runs can still
+     forge what the hook leaves behind, as it can labels.
+   *Recommended:* (b) where it runs, folded into the hooks Start and Attach already write and into
+   Q3's one-time offer, with (a)'s guards as the fallback everywhere else (delivery 8, after
+   delivery 2).
 
 ## Links
 
@@ -474,5 +530,5 @@ they stay below as the record.
   `apps/pocket/android/app/src/main/java/ai/namastex/automagik/CoreClient.kt`; herdr-core's API
   (`hc schema`: `terminal.send`, `terminal.keys`, `terminal.interrupt`, `terminal.read`,
   `file.read`, `events.subscribe`).
-- Orca: `github.com/stablyai/orca` at `ec3a707` (MIT, © 2026 Lovecast Inc.).
+- Orca: `github.com/stablyai/orca` at `e1dfc022` (MIT, © 2026 Lovecast Inc.).
 - Issues: #206 (linked machines).
