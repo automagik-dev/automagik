@@ -119,22 +119,44 @@ test('a kept file of any other shape is not used: the stand-ins answer until a p
   assert.deepEqual((await catalog(home, { key: () => undefined }).models()).map(model => model.id), ['opus'])
 })
 
-test("a model's own effort is the one read for it: a probe still reading it is waited on, a stand-in never answers", async (t) => {
+test("a model's own effort is the one read for it or kept, at once: a stand-in never answers, a probe is never waited on", async (t) => {
+  const { writeFileSync } = await import('node:fs')
   const made = catalog(undefined, { key: () => undefined })
   t.after(() => made.dispose())
   const effort = (id, defaultEffort) => ({ efforts: [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }].filter(level => id === 'default' || level.id !== 'medium'), defaultEffort })
   // Mid-probe: the start model is read, the other not yet, so its listed efforts stand in from the start model's.
   made.live = { complete: false, models: [{ id: 'default', name: 'Default', reasoning: effort('default', 'medium'), probed: true }, { id: 'small', name: 'Small', probed: false }] }
-  let done
-  made.probing = new Promise((resolve) => { done = resolve })
+  made.probing = new Promise(() => {})
   assert.equal((await made.model('small')).reasoning.defaultEffort, 'medium')
-  const own = made.ownEffort('small')
+  // A probe that never ends: the answer is immediate (not a promise) and no stand-in.
+  assert.equal(made.ownEffort('small'), undefined)
+  assert.equal(made.ownEffort('default'), 'medium')
   made.live.models[1] = { id: 'small', name: 'Small', reasoning: effort('small', 'low'), probed: true }
-  done()
-  assert.equal(await own, 'low')
-  assert.equal(await made.ownEffort('default'), 'medium')
-  // Nothing read and nothing kept: no own effort, whatever the stand-ins list.
-  const cold = catalog(undefined, { key: () => undefined })
-  t.after(() => cold.dispose())
-  assert.equal(await cold.ownEffort('default'), undefined)
+  assert.equal(made.ownEffort('small'), 'low')
+  // Nothing read: what was kept answers; nothing kept, nothing does.
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  writeFileSync(join(home, 'acp-test.json'), JSON.stringify({ key: 'v1', models: [{ id: 'small', name: 'Small', reasoning: effort('small', 'high') }] }))
+  const kept = catalog(home, { key: () => undefined })
+  t.after(() => kept.dispose())
+  assert.equal(kept.ownEffort('small'), 'high')
+  assert.equal(catalog(undefined, { key: () => undefined }).ownEffort('default'), undefined)
+})
+
+test('a kept catalog from the release installed now is not probed again at start; another release is', async (t) => {
+  const { writeFileSync } = await import('node:fs')
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  writeFileSync(join(home, 'acp-test.json'), JSON.stringify({ key: 'v1', models: [{ id: 'default', name: 'Kept' }] }))
+  let spawned = 0
+  const same = catalog(home, { key: () => 'v1', spawn: () => { spawned++; return fake } })
+  t.after(() => same.dispose())
+  assert.deepEqual((await same.models()).map(model => model.name), ['Kept'])
+  assert.equal(same.probing, undefined)
+  assert.equal(spawned, 0)
+  const next = catalog(home, { key: () => 'v2', spawn: () => { spawned++; return fake } })
+  t.after(() => next.dispose())
+  await next.models()
+  await next.probing
+  assert.equal(spawned, 1)
 })

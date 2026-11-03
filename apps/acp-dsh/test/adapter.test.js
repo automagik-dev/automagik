@@ -8,7 +8,7 @@ import { test } from 'node:test'
 import { markAgentLoopRequest } from '@deepseek-ai/dsh-llm'
 import { apply } from '../index.js'
 import { optionFor, TOOL_NAME } from '../src/host/tool.js'
-import { aside, promptOf } from '../src/host/adapter.js'
+import { aside, choose, promptOf } from '../src/host/adapter.js'
 
 const FAKE = join(import.meta.dirname, '..', 'dev', 'fake-agent.mjs')
 
@@ -255,6 +255,9 @@ test("with no \"default\" effort row (Codex), a turn with no effort goes back to
   t.after(() => { delete process.env.FAKE_ACP_NO_DEFAULT_EFFORT })
   const h = host()
   try {
+    // The probe has read every model: each one's own effort is known.
+    await h.adapter.listModels('acp-fake')
+    await h.adapter.agents.get('acp-fake').catalog.probing
     const messages = []
     let next = await turn(h, messages, 'hi', { model: 'fake-large', effort: 'high' })
     assert.match(thoughtIn(next.steps[0]), /^On fake-large at high effort\./)
@@ -266,4 +269,26 @@ test("with no \"default\" effort row (Codex), a turn with no effort goes back to
   } finally {
     h.close()
   }
+})
+
+test("with no effort, the model's own is asked for only without a default row, and an unknown one sets nothing", async () => {
+  const set = []
+  const runOf = levels => ({
+    startModel: 'm',
+    option: category => (category === 'model' ? { id: 'model', category, type: 'select', currentValue: 'm', options: [{ value: 'm', name: 'M' }] } : { id: 'effort', category, type: 'select', currentValue: 'high', options: levels.map(value => ({ value, name: value })) }),
+    setOption: async (category, value) => { set.push([category, value]) },
+  })
+  let asked = 0
+  const own = value => () => { asked++; return value }
+  // Claude Code: its default row, never the catalog.
+  await choose(runOf(['default', 'low', 'high']), 'm', undefined, own('low'))
+  assert.deepEqual([asked, set], [0, [['model', 'm'], ['thought_level', 'default']]])
+  // Codex: the model's own, as read.
+  set.length = 0
+  await choose(runOf(['low', 'high']), 'm', undefined, own('low'))
+  assert.deepEqual([asked, set], [1, [['model', 'm'], ['thought_level', 'low']]])
+  // Not read yet: no effort is set (the agent keeps its own), and nothing waits.
+  set.length = 0
+  await choose(runOf(['low', 'high']), 'm', undefined, own(undefined))
+  assert.deepEqual([asked, set], [2, [['model', 'm']]])
 })

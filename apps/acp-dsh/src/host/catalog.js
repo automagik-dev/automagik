@@ -16,8 +16,6 @@ export const DEFAULT_MODEL = 'default'
 // waits on every provider at once.
 export const LIST_WAIT_MS = 8000
 const PROBE_TIMEOUT_MS = 120_000
-// How long a turn with no effort waits for a probe still reading its model's own effort.
-const OWN_WAIT_MS = 20_000
 const RETRY_MS = 10 * 60 * 1000
 
 /**
@@ -105,7 +103,9 @@ export class Catalog {
     this.live = undefined
     this.probing = undefined
     this.listed = undefined
-    this.probedKey = undefined
+    // A kept catalog read from the release installed now is not read again at start: a new
+    // adapter release (or another CLI) changes the key and probes again.
+    this.probedKey = this.saved?.key
     this.failedAt = undefined
     this.run = undefined
     this.disposed = false
@@ -205,18 +205,12 @@ export class Catalog {
   }
 
   /**
-   * The effort the agent itself shows for a model, as read for that model: never a stand-in's,
-   * so a probe still reading it is waited on (a while), then what was kept, else undefined.
+   * The effort the agent itself shows for a model, as read for that model: a probe's when it has
+   * read that model, else what was kept, else undefined. Never a stand-in's, and never waited
+   * for: a turn does not stall on a probe.
    */
-  async ownEffort(id) {
-    await this.models()
-    const read = () => this.live?.models.find(model => model.id === id)
-    if (read()?.probed === false && this.probing !== undefined) {
-      let timer
-      await Promise.race([this.probing, new Promise((resolve) => { timer = setTimeout(resolve, OWN_WAIT_MS); timer.unref?.() })])
-      clearTimeout(timer)
-    }
-    const live = read()
+  ownEffort(id) {
+    const live = this.live?.models.find(model => model.id === id)
     if (live?.probed) return live.reasoning?.defaultEffort
     return this.saved?.models.find(model => model.id === id)?.reasoning?.defaultEffort
   }
