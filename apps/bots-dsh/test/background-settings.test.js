@@ -21,4 +21,9 @@ test('the background model choices leave out ACP agents, models without their ke
   ]
   assert.deepEqual(Array.from(backgroundChoices(models), model => model.ref), ['deepseek/deepseek-flash', 'anthropic/claude-opus-5-5'])
   assert.equal(backgroundChoices(undefined).length, 0)
+  // The saved pick stays listed when a newer Claude supersedes it; an agent or a model with no
+  // key does not come back by being saved.
+  assert.deepEqual(Array.from(backgroundChoices(models, 'anthropic/claude-opus-4-7'), model => model.ref), ['deepseek/deepseek-flash', 'anthropic/claude-opus-5-5', 'anthropic/claude-opus-4-7'])
+  assert.deepEqual(Array.from(backgroundChoices(models, 'acp-codex/default'), model => model.ref), ['deepseek/deepseek-flash', 'anthropic/claude-opus-5-5'])
+  assert.deepEqual(Array.from(backgroundChoices(models, 'openai/gpt-5.5'), model => model.ref), ['deepseek/deepseek-flash', 'anthropic/claude-opus-5-5'])
 })

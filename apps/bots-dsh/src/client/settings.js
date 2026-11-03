@@ -192,14 +192,15 @@ function PermissionsSection({ roster, actions, run }) {
 
 // The model memory review runs on, and a part's note when its chat is on an agent (models.js
 // backgroundModel). Only a model that answers beside the chats is offered: an agent over ACP
-// answers only in its own chat. Default: DSH's default model.
-export function backgroundChoices(models) {
-  return (models ?? []).filter(model => !model.needsKey && model.superseded !== true && routeOf(model.provider ?? model.ref.split('/')[0]).connectedBy !== 'acp')
+// answers only in its own chat. Default: DSH's default model. An older Claude stays listed
+// while it is the saved pick, as in a Bot's model menu (offeredModels).
+export function backgroundChoices(models, saved) {
+  return (models ?? []).filter(model => !model.needsKey && (model.superseded !== true || model.ref === saved) && routeOf(model.provider ?? model.ref.split('/')[0]).connectedBy !== 'acp')
 }
 function BackgroundSection({ roster, actions, run }) {
-  const choices = backgroundChoices(roster.models)
-  if (choices.length === 0) return null
   const saved = roster.prefs?.backgroundModel ?? ''
+  const choices = backgroundChoices(roster.models, saved)
+  if (choices.length === 0) return null
   const shown = choices.some(model => model.ref === saved) ? saved : ''
   const fallback = choices.find(model => model.ref === roster.backgroundModel && saved === '')
   return h(SetSection, { title: t('Background jobs') },
