@@ -19,9 +19,10 @@ curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/
 ```
 
 The installer checks Node and Herdr, and offers to install Herdr with Homebrew if it is
-missing (it asks first). It downloads the pack of the newest Automagik release that carries one
+missing (it asks first). It reads the signed pack pointer (the `herdr-lane` release's `pack.json`,
+checked against the keys the installer carries), downloads the pack it names
 (`automagik-herdr-pack-<v>.tgz`: every mod below and the `automagik` layout; a desktop-only release
-has none), checks it against its `.sha256` before writing
+has none), checks it against the sha256 the pointer names before writing
 anything, and installs every mod into `~/.config/herdr-app/mods/` as one unit. It links the
 `automagik-herdr` command into `~/.local/bin`, merges the pack's keys where they are free (a key
 you already use stays yours), points the mod manager at the pack's catalog (`herdr/catalog/` here), and runs
@@ -417,19 +418,23 @@ still places panes by the walk-up, so a folder joins its own project once it has
 
 ```bash
 automagik-herdr update --check      # the installed and the latest version
-automagik-herdr update              # download, verify against its .sha256, install
+automagik-herdr update              # download, verify against the signed pointer, install
 automagik-herdr update --rollback   # put the replaced set of mods back
 ```
 
-Updates come from the Automagik monorepo's GitHub releases: the newest one that carries the
-pack (not GitHub's "latest", often a desktop or plugin release without it). The sidebar looks 20 seconds after it
+Updates come from the Automagik monorepo's GitHub releases, through one signed pointer: the
+`herdr-lane` release's `pack.json` names the newest pack release (not GitHub's "latest", often a
+desktop or plugin release without it), and `pack.json.sig` signs it. The sidebar looks 20 seconds after it
 loads and then every 4 hours, and shows one notice per new version with the command to run.
 When it can't look (no network, no `node`), it says nothing and tries again in 30 minutes.
 Set `AUTOMAGIK_HERDR_NO_UPDATE=1` to turn both off. A pack installed as a link to a checkout
 is never replaced: update it with git.
 
-The checksum proves integrity, not authenticity, like Automagik's desktop Linux/Windows
-updates: it shows the tarball is the one the release lists, not who published the release.
+The pointer is ed25519-signed with the pack's own key; the installed pack carries the public keys
+(`mods/am-sidebar/pack-keys.json`) and refuses a pointer it can't verify, then a tarball whose
+sha256 is not the one the pointer names. So an update shows who published it, not only that the
+download is intact. `install.sh --version <v>` is the exception: a named older release is checked
+against its own `.sha256` alone, and the installer says so.
 
 ## Pane labels
 
