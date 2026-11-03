@@ -23,6 +23,9 @@ function scene(t, { state = "connected" } = {}) {
   for (const d of [bin, home, app, vm]) mkdirSync(d, { recursive: true });
   writeFileSync(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
   chmodSync(join(bin, "hc"), 0o755);
+  // Never the real window: a herdr-app that fails, first on PATH.
+  writeFileSync(join(bin, "herdr-app"), "#!/bin/sh\nexit 1\n");
+  chmodSync(join(bin, "herdr-app"), 0o755);
   // The project there: a git repository in vm's home, and this computer's own folder elsewhere.
   const project = join(vm, "hedgefund");
   mkdirSync(project);
@@ -79,7 +82,7 @@ test("--machine keys --project there by the same rule: a worktree's folder is it
   assert.ok(s.calls().some((c) => c[0] === "exec" && c.includes("--cwd") && c.includes("git")), "git asked there");
 });
 
-test("ls, show, edit, category and rm --machine work on the file there; panes there are unknown, not 'not running'", (t) => {
+test("ls, show, edit, category and rm --machine work on the file there", (t) => {
   const s = scene(t);
   assert.equal(s.cli(["create", ...s.on, "--name", "Hedge", "--agent", "claude"]).code, 0);
   assert.equal(s.cli(["create", ...s.on, "--name", "Trader", "--agent", "claude"]).code, 0);
@@ -88,10 +91,9 @@ test("ls, show, edit, category and rm --machine work on the file there; panes th
   const [p] = ls.json().projects;
   assert.equal(p.project, s.project);
   assert.equal(p.machine, "vm");
-  assert.deepEqual(p.bots.map((b) => [b.name, b.status, b.machine]), [["Hedge", "unknown", "vm"], ["Trader", "unknown", "vm"]]);
+  assert.deepEqual(p.bots.map((b) => [b.name, b.status, b.machine]), [["Hedge", "not running", "vm"], ["Trader", "not running", "vm"]]);
   const text = s.cli(["ls", ...s.on]);
   assert.match(text.out, new RegExp(`^${s.project} on vm$`, "m"));
-  assert.match(text.out, /aren't tracked from this computer yet/);
   assert.match(s.cli(["show", "Trader", ...s.on]).out, /project {6}.* on vm/);
   const edited = s.cli(["edit", "Trader", ...s.on, "--role", "trades", "--json"]);
   assert.equal(edited.code, 0, edited.err);
@@ -133,12 +135,12 @@ test("--machine refusals: no --project, a relative one, a folder not there, a ma
   assert.match(s.cli(["ls", "--all", ...s.on]).err, /without --all/);
 });
 
-test("--machine with a command on panes is refused, never run on this computer instead", (t) => {
+test("--machine with a command still on this computer only (worker, brief, history, tidy) is refused, never run here instead", (t) => {
   const s = scene(t);
-  for (const args of [["start", "Hedge"], ["attach", "Hedge", "t1"], ["detach", "Hedge"], ["history", "Hedge"], ["restart", "Hedge"], ["whois", "t1"]]) {
+  for (const args of [["history", "Hedge"], ["brief", "Hedge"], ["worker", "task", "--branch", "x"], ["tidy"]]) {
     const r = s.cli([...args, ...s.on]);
     assert.equal(r.code, 2, args.join(" "));
-    assert.match(r.err, /this computer's panes only for now/);
+    assert.match(r.err, /works on this computer only for now/);
   }
   assert.deepEqual(s.calls(), [], "nothing asked of hc");
 });
