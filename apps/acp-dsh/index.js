@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import { AcpAdapter, aside } from './src/host/adapter.js'
 import { AGENTS, findCommand, signedInOf } from './src/host/agents.js'
-import { Catalog, DEFAULT_MODEL } from './src/host/catalog.js'
+import { Catalog, cliStamp, DEFAULT_MODEL } from './src/host/catalog.js'
 import { AdapterStore, CHECK_EVERY_MS } from './src/host/install.js'
 
 export const name = 'acp-dsh'
@@ -101,7 +101,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       log,
       key: () => {
         const bin = store.binOf(spec.adapter, spec.bin)
-        return bin === undefined ? undefined : `${bin.path} ${cli}`
+        return bin === undefined ? undefined : `${bin.path} ${cliStamp(cli)}`
       },
       spawn: () => ({ command: node.command, args: [store.binOf(spec.adapter, spec.bin).path], env: { ...node.env, ...spec.env(cli) } }),
     }),

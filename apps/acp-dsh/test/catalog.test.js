@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { Catalog, readCatalog, reasoningOf } from '../src/host/catalog.js'
+import { Catalog, cliStamp, readCatalog, reasoningOf, STALE_MS } from '../src/host/catalog.js'
 
 const FAKE = join(import.meta.dirname, '..', 'dev', 'fake-agent.mjs')
 const FALLBACK = [{ id: 'default', name: 'Stand-in' }]
@@ -147,7 +147,7 @@ test('a kept catalog from the release installed now is not probed again at start
   const { writeFileSync } = await import('node:fs')
   const home = scratch()
   t.after(() => rmSync(home, { recursive: true, force: true }))
-  writeFileSync(join(home, 'acp-test.json'), JSON.stringify({ key: 'v1', models: [{ id: 'default', name: 'Kept' }] }))
+  writeFileSync(join(home, 'acp-test.json'), JSON.stringify({ key: 'v1', at: Date.now() - 60 * 60 * 1000, models: [{ id: 'default', name: 'Kept' }] }))
   let spawned = 0
   const same = catalog(home, { key: () => 'v1', spawn: () => { spawned++; return fake } })
   t.after(() => same.dispose())
@@ -159,4 +159,49 @@ test('a kept catalog from the release installed now is not probed again at start
   await next.models()
   await next.probing
   assert.equal(spawned, 1)
+})
+
+test('a kept catalog a day old is read again behind the picker, which answers from it at once', async (t) => {
+  const { writeFileSync } = await import('node:fs')
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const file = join(home, 'acp-test.json')
+  writeFileSync(file, JSON.stringify({ key: 'v1', at: Date.now() - STALE_MS - 60_000, models: [{ id: 'default', name: 'Kept' }] }))
+  let spawned = 0
+  const stale = catalog(home, { key: () => 'v1', spawn: () => { spawned++; return fake } })
+  t.after(() => stale.dispose())
+  assert.deepEqual((await stale.models()).map(model => model.name), ['Kept'])
+  assert.equal(spawned, 1)
+  await stale.probing
+  const kept = JSON.parse(readFileSync(file, 'utf8'))
+  assert.ok(Date.now() - kept.at < 60_000, 'the new read is kept with its time')
+  assert.deepEqual(kept.models.map(model => model.id), ['default', 'fake-large', 'fake-small', 'fake-plain'])
+  // Read just now: not again in this process either.
+  await stale.models()
+  assert.equal(spawned, 1)
+})
+
+test("the CLI's key changes when it is updated, through a link or in place, with no process spawned", async (t) => {
+  const { mkdirSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } = await import('node:fs')
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  for (const version of ['1.0', '2.0']) {
+    mkdirSync(join(home, version))
+    writeFileSync(join(home, version, 'claude'), '#!/bin/sh\n')
+  }
+  mkdirSync(join(home, 'bin'))
+  const link = join(home, 'bin', 'claude')
+  symlinkSync(join(home, '1.0', 'claude'), link)
+  const first = cliStamp(link)
+  assert.match(first, /1\.0\/claude \d/)
+  // The installer moves the link to a new version's folder.
+  unlinkSync(link)
+  symlinkSync(join(home, '2.0', 'claude'), link)
+  const second = cliStamp(link)
+  assert.notEqual(second, first)
+  // npm writes the new version over the same file.
+  utimesSync(join(home, '2.0', 'claude'), new Date(), new Date(Date.now() + 5000))
+  assert.notEqual(cliStamp(link), second)
+  // Gone: the path itself, never a throw.
+  assert.equal(cliStamp(join(home, 'nothing')), join(home, 'nothing'))
 })

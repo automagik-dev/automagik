@@ -5,7 +5,7 @@
 // an agent rebuilds its effort list per model. The result is kept here and, for the real
 // agents, on disk, so the next start lists them at once while a new probe runs behind it.
 // Until a probe answers, a short list of the agent's well-known names stands in.
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { AgentRun, valuesOf } from './acp.js'
@@ -17,6 +17,23 @@ export const DEFAULT_MODEL = 'default'
 export const LIST_WAIT_MS = 8000
 const PROBE_TIMEOUT_MS = 120_000
 const RETRY_MS = 10 * 60 * 1000
+// A kept catalog older than this is read again in the background (the picker answers from it
+// meanwhile): it carries the person's own effort settings, which they may have changed.
+export const STALE_MS = 24 * 60 * 60 * 1000
+
+/**
+ * The CLI as a catalog key, with no process spawned: the file it resolves to and when that file
+ * last changed. A CLI on PATH is often a link to a versioned folder (Claude Code's installer)
+ * or a file updated in place (npm), so the path alone stays the same across its updates.
+ */
+export function cliStamp(cli) {
+  try {
+    const real = realpathSync(cli)
+    return `${real} ${statSync(real).mtimeMs}`
+  } catch {
+    return cli
+  }
+}
 
 /**
  * The efforts a `thought_level` option offers, from least to most, as DSH reasoning metadata.
@@ -103,9 +120,10 @@ export class Catalog {
     this.live = undefined
     this.probing = undefined
     this.listed = undefined
-    // A kept catalog read from the release installed now is not read again at start: a new
-    // adapter release (or another CLI) changes the key and probes again.
+    // A kept catalog read from the release and CLI installed now is not read again at start
+    // unless it is a day old: a new adapter release or an updated CLI changes the key.
     this.probedKey = this.saved?.key
+    this.readAt = typeof this.saved?.at === 'number' ? this.saved.at : undefined
     this.failedAt = undefined
     this.run = undefined
     this.disposed = false
@@ -140,7 +158,10 @@ export class Catalog {
     if (this.probing !== undefined || this.disposed) return
     const key = this.spec.key()
     if (key === undefined) return
-    if (this.probedKey === key && (this.failedAt === undefined || this.now() - this.failedAt < RETRY_MS)) return
+    const fresh = this.failedAt !== undefined
+      ? this.now() - this.failedAt < RETRY_MS
+      : this.readAt !== undefined && this.now() - this.readAt < STALE_MS
+    if (this.probedKey === key && fresh) return
     this.probedKey = key
     this.failedAt = undefined
     let listed
@@ -169,6 +190,7 @@ export class Catalog {
         },
       })
       if (!state.complete) throw new Error('it stopped before every model was read')
+      this.readAt = this.now()
       this.write(key, state.models)
     } catch (error) {
       this.failedAt = this.now()
