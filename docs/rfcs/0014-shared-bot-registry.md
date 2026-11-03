@@ -93,7 +93,7 @@ Decided by Felipe on this RFC (2026-11-03, relayed by t2x5):
   main path is Herdr Bots exposed in Automagik; the handling of a clashing home stays, for
   other people.
 - **Picked Bots only.** The Bots shown in Automagik are the ones the person picks ("Show in
-  Automagik"). Workers and helpers stay in Herdr.
+  Automagik"). Workers and helpers stay in Herdr: D29 (chosen option text; see the D29 clarification in the log).
 - **One conversation.** Chatting with an exposed Bot in Automagik talks to the same live Herdr
   agent: one conversation, seen from both windows, and Code shows the same session as a
   terminal.
@@ -211,7 +211,7 @@ the person picks, to talk to them in the friendlier window and switch to Code at
   list of a project's Bots. The first pick in a project asks once for that project (decided,
   Q17): "Show Bots from `<project>` in Automagik? Their instructions are used there." Picks and
   the yes go in the home file's `shown[]`, never in a repo file. Workers, helpers and unpicked
-  Bots stay in Herdr only (D29: "workers and helpers stay in Herdr").
+  Bots stay in Herdr only: D29 (chosen option text; see the D29 clarification in the log).
 - **One conversation** (D29, D30). An exposed Bot has no DSH Session. Its chat in Automagik is a
   projection of its live Herdr agent, and Code shows the same session as a terminal; show
   terminal is always there. A Bot with no live pane gets its agent started first (D27). Input
@@ -424,7 +424,7 @@ Undo: delete the file, or revert the delivery; `state.json` keeps every DSH Bot.
    *Rollback:* a reverting pack; that machine's files go read-only again, and remote Bots without
    a pane wait to be started there.
 8. **Show in Automagik, in Herdr** (herdr). The toggle in the Bot menu and the per-project ask,
-   writing `shown[]` through the CLI under the lock. Worker panes get no toggle (D29). The
+   writing `shown[]` through the CLI under the lock. Worker panes get no toggle: D29 (chosen option text; see the D29 clarification in the log). The
    briefing hook (`briefing.mjs`) passes the agent's `transcript_path` on, for RFC 0015's
    projection. *Check:* the gate; a pick in Herdr shows the Bot in DSH and unpicking hides it;
    the hook's output names the transcript of the pane's agent. *Rollback:* a reverting
