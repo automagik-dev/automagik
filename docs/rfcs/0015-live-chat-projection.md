@@ -132,8 +132,11 @@ the program in `argv`. Claude, Codex and omp have decoders; any other agent is s
 The transcript of terminal `t`, first match wins:
 
 1. **The `agent.transcript` label** (new; delivery 2). The briefing hook already holds
-   `transcript_path` when it ties the session; it sets this label beside `agent.session`. A label
-   is readable through `hc get` on any machine, which the ledger is not.
+   `transcript_path` when it ties the session; it sets this label beside `agent.session`. Today
+   it ties only when the session id changes (`workers.js:324-334`), so the rule widens: it also
+   ties when `agent.transcript` is missing or differs, and a pane labelled before the update gets
+   the new label at its next prompt. A label is readable through `hc get` on any machine, which
+   the ledger is not.
 2. **The workers ledger's last `session` row** for `t` with a `transcript`, on this computer
    (`inspect.js:43` reads it the same way).
 3. **Derived from `agent.session`.** Claude: `.claude/projects/<cwd slug>/<session>.jsonl`.
@@ -146,13 +149,14 @@ The transcript of terminal `t`, first match wins:
 5. **None.** The chat is screen only (see "Unlabeled panes and other machines").
 
 **The folder rule** (t2x5). A path from any of these is used only if it is inside the agent's own
-transcript folder: `.claude/projects/`, `.codex/sessions/` or `.omp/agent/sessions/`, under the
+transcript folder: `.claude/projects/`, `.codex/sessions/` or `.omp/agent/sessions/` (omp's
+default, `omp-session-root.ts` in Orca), under the
 home of the machine the terminal runs on, and ends in `.jsonl`. On this computer the path is
 resolved (`realpath`) before the check, so a symlink out of the folder is refused. For a terminal
 on another machine the path is made home-relative, must have no `..` or empty segment, and is
 read as that relative path with `hc file read --on <machine>`, which starts relative paths at
-that machine's home. `CLAUDE_CONFIG_DIR` and `CODEX_HOME` moves are not followed in this RFC; such
-a pane is screen only. A refused path is logged once, by its folder, never its contents.
+that machine's home. `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and omp's XDG folder are not followed in
+this RFC; such a pane is screen only. A refused path is logged once, by its folder, never its contents.
 
 ### Tailing
 
@@ -376,9 +380,11 @@ Orca's own list of gaps (research note, "Parity gaps") and our answer:
    *Rollback:* revert in a later herdr patch; nothing uses it.
 2. **The transcript label** (herdr, t22n; RFC 0014 delivery 8's "the briefing hook passes the
    agent's `transcript_path` on"). `joinSession` also sets `agent.transcript`, only for a path
-   the folder rule accepts. One PR with 0014's delivery 8, or before it. *Check:* the herdr gate;
-   after one prompt in a bot pane, `hc get` shows both labels; a hook input naming a path outside
-   the folders sets no `agent.transcript`. *Rollback:* a reverting pack (the pointer never
+   the folder rule accepts, and `sessionChange` also fires when that label is missing or stale.
+   One PR with 0014's delivery 8, or before it. *Check:* the herdr gate; after one prompt in a
+   new bot pane, `hc get` shows both labels; a pane that had `agent.session` before the update
+   gets `agent.transcript` at its next prompt, with no second ledger row for the same session; a
+   hook input naming a path outside the folders sets no `agent.transcript`. *Rollback:* a reverting pack (the pointer never
    downgrades); labels already set stay and are harmless.
 3. **The engine** (herdr). Transcript finding, tailing (here and `--on`), status, screen reading,
    ranking, the row model, input with the draft hold, approvals, pickers, interrupt, all behind
@@ -393,7 +399,8 @@ Orca's own list of gaps (research note, "Parity gaps") and our answer:
    Link by itself); phones fall back to the terminal view.
 5. **The phone's chat view** (pocket, after 4). A Chat tab on an agent terminal: rows, approvals,
    held messages with Send now, interrupt, Show terminal; `docs/privacy.md` says transcripts now
-   reach the phone and stay in memory. *Check:* the Gradle gate; unit tests render `<img
+   reach the phone and stay in memory, and Pocket's RFC index (`apps/pocket/docs/rfcs/README.md`)
+   links this RFC, as Pocket's AGENTS.md asks for a contract change. *Check:* the Gradle gate; unit tests render `<img
    src=…>` and `<script>` as text and load nothing; on a paired phone, a Claude pane's turn shows
    as chat and an approval answered there lands in the terminal. *Rollback:* a later release
    hides the tab (never a lower versionCode); the terminal view is unchanged.
