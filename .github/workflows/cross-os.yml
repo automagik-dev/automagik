@@ -422,15 +422,15 @@ jobs:
           (cd app/apps/desktop && node -e "require('electron')" >/dev/null)
           E=$(cd app/apps/desktop && node -p "require('electron')" | tail -n 1)
           [ -x "$E" ] || { echo "no Electron binary at $E"; exit 1; }
-          T=$(command -v timeout || true)
+          T=$(command -v timeout || command -v gtimeout || true)
           probe="$GITHUB_WORKSPACE/apps/desktop-tauri-spike/cross-os/crash-probe.mjs"
           run() { # name, then the command prefix and Electron's switches
             local name=$1; shift
             echo "::group::$name"
-            ${T:+$T 150} "$@" "$probe" > "$OUT/$name-probe.log" 2>&1; echo "probe exit $?" >> "$OUT/$name-probe.log"
-            grep '^PROBE ' "$OUT/$name-probe.log" || tail -n 20 "$OUT/$name-probe.log"
-            (cd app/apps/desktop && ${T:+$T 420} "$@" scripts/browser-smoke.mjs > "$OUT/$name-smoke.log" 2>&1; echo "smoke exit $?" >> "$OUT/$name-smoke.log")
-            grep -E '^(ok|FAIL) |browser smoke:|smoke exit' "$OUT/$name-smoke.log" | grep -E 'crash|FAIL|browser smoke:|smoke exit'
+            code=0; ${T:+$T 150} "$@" "$probe" > "$OUT/$name-probe.log" 2>&1 || code=$?; echo "probe exit $code" >> "$OUT/$name-probe.log"
+            grep '^PROBE ' "$OUT/$name-probe.log" || tail -n 20 "$OUT/$name-probe.log" || true
+            (cd app/apps/desktop && code=0 && { ${T:+$T 420} "$@" scripts/browser-smoke.mjs > "$OUT/$name-smoke.log" 2>&1 || code=$?; } && echo "smoke exit $code" >> "$OUT/$name-smoke.log")
+            grep -E '^(ok|FAIL) |browser smoke:|smoke exit' "$OUT/$name-smoke.log" | grep -E 'crash|FAIL|browser smoke:|smoke exit' || true
             echo "::endgroup::"
           }
           if [ "$RUNNER_OS" = Linux ]; then

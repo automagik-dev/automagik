@@ -22,11 +22,15 @@ const alive = (pid) => { try { process.kill(pid, 0); return true } catch { retur
 const userNs = (pid) => { try { return readlinkSync(`/proc/${pid}/ns/user`) } catch { return null } }
 const state = (pid) => { try { return readFileSync(`/proc/${pid}/status`, 'utf8').match(/^State:\s+(.*)$/m)?.[1] ?? null } catch { return null } }
 
+// Electron 44 fires 'ready' only once the ESM main module has finished evaluating, so a
+// top-level `await app.whenReady()` never resolves: everything runs in .then(), as
+// browser-smoke.mjs does.
+app.whenReady().then(main).catch((error) => { out('crashed', { error: error.stack }); app.exit(1) })
+
+async function main() {
 const server = createServer((request, response) => response.writeHead(200, { 'content-type': 'text/html' }).end(`<!doctype html><title>${request.url.slice(1) || 'home'}</title><body>${request.url}</body>`))
 await new Promise(r => server.listen(0, '127.0.0.1', r))
 const base = `http://127.0.0.1:${server.address().port}/`
-
-await app.whenReady()
 out('env', {
   platform: process.platform, electron: process.versions.electron, argv: process.argv.slice(1).filter(a => a.startsWith('--')),
   display: process.env.DISPLAY ?? null, wayland: process.env.WAYLAND_DISPLAY ?? null, ozone: app.commandLine.getSwitchValue('ozone-platform') || null,
@@ -63,7 +67,8 @@ for (const [method, crash] of Object.entries(methods)) {
   gone.length = 0
   const t0 = Date.now()
   let error = null
-  await crash().catch(e => { error = e.message })
+  // Page.crash never answers (its renderer is gone): no crash call may hold the probe up.
+  await Promise.race([crash().catch(e => { error = e.message }), delay(5000)])
   let event = null
   for (const end = t0 + 30_000; Date.now() < end && !(event = gone[0]);) await delay(50)
   const after = { alive: alive(pid), state: state(pid), crashedFlag: contents.isCrashed() }
@@ -82,3 +87,4 @@ for (const [method, crash] of Object.entries(methods)) {
 }
 server.close()
 app.exit(0)
+}
