@@ -22,7 +22,7 @@ through unchanged and adds nothing.
     space (`android/app/src/main/java/ai/namastex/automagik/Git.kt:25`). git prints the common dir
     as a real path (symlinks resolved), so its parent is the rules' project key.
   - It already reads Herdr desktop files with `file.read`, which takes `on` for other machines
-    (`PocketViewModel.kt:652`, `hc file read --on`).
+    (`PocketViewModel.kt:654`, `hc file read --on`).
 - Doing it on the phone needs no new Pocket Link output, so no new contract. Pocket Link pipes
   `hc connect` byte for byte (`desktop/pocket-link/mods/pocket-link/bridge/bridge.mjs:124`).
 
@@ -30,9 +30,9 @@ through unchanged and adds nothing.
 
 - Project key: `SpaceFeed.projectKey` (`android/app/src/main/java/ai/namastex/automagik/SpaceFeed.kt:51`).
   Rows: `Sidebar.kt:107`; nested worktree rows get no line 2.
-- Bot names: `readBots` (`PocketViewModel.kt:564`), only for machines whose doc has a Space Row feed,
+- Bot names: `readBots` (`PocketViewModel.kt:566`), only for machines whose doc has a Space Row feed,
   after each meter read and when a new repository's git answer arrives.
-- Each machine's spaces read that machine's own `herdr-meter` doc (`PocketViewModel.kt:553`).
+- Each machine's spaces read that machine's own `herdr-meter` doc (`PocketViewModel.kt:555`).
 
 ## Open questions
 
