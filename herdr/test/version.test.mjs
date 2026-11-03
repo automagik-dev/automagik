@@ -1,143 +1,71 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FIRST, FIX, NOT_SHIPPING, VERSION, drift, isPrereleaseSubject, lastReleaseTag, nextVersion, planRelease, setVersion, shipping, tagSubject } from "../scripts/version.mjs";
+import { VERSION, drift, monorepoVersion } from "../scripts/version.mjs";
 
 const SCRIPT = fileURLToPath(new URL("../scripts/version.mjs", import.meta.url));
 
-function scratchRepo(version = "0.0.0") {
-  const root = mkdtempSync(join(tmpdir(), "version-test-"));
-  mkdirSync(join(root, "scripts"));
-  mkdirSync(join(root, "mods", "am-sidebar"), { recursive: true });
-  copyFileSync(SCRIPT, join(root, "scripts", "version.mjs"));
-  writeFileSync(join(root, "package.json"), `${JSON.stringify({ name: "automagik-herdr", private: true, version, type: "module" }, null, 2)}\n`);
-  writeFileSync(join(root, "mods", "am-sidebar", "VERSION"), `${version}\n`);
-  return root;
+// A monorepo in a temp folder: its root package.json at `root`, the pack at herdr/ carrying `pack`.
+function scratchMonorepo(root = "3.7.0", pack = root) {
+  const top = mkdtempSync(join(tmpdir(), "version-test-"));
+  const herdr = join(top, "herdr");
+  mkdirSync(join(herdr, "scripts"), { recursive: true });
+  mkdirSync(join(herdr, "mods", "am-sidebar"), { recursive: true });
+  copyFileSync(SCRIPT, join(herdr, "scripts", "version.mjs"));
+  writeFileSync(join(top, "package.json"), `${JSON.stringify({ name: "automagik", private: true, version: root }, null, 2)}\n`);
+  writeFileSync(join(herdr, "package.json"), `${JSON.stringify({ name: "automagik-herdr", private: true, version: pack, type: "module" }, null, 2)}\n`);
+  writeFileSync(join(herdr, "mods", "am-sidebar", "VERSION"), `${pack}\n`);
+  return { top, herdr };
 }
-const git = (root, ...args) => execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-const cli = (root, ...args) => execFileSync(process.execPath, [join(root, "scripts", "version.mjs"), ...args], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-const commit = (root, subject) => {
-  writeFileSync(join(root, "change.txt"), `${subject}\n${Math.random()}\n`);
-  git(root, "add", "-A");
-  git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", subject);
-};
+const cli = (herdr, ...args) => spawnSync(process.execPath, [join(herdr, "scripts", "version.mjs"), ...args], { cwd: herdr, encoding: "utf8" });
 
-test("the repository carries one version, and 0.0.0 until the first release", () => {
-  const root = fileURLToPath(new URL("..", import.meta.url));
-  const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
+test("the pack carries the monorepo's one version", () => {
+  const herdr = fileURLToPath(new URL("..", import.meta.url));
+  const version = monorepoVersion(herdr);
   assert.match(version, VERSION);
-  assert.deepEqual(drift(version, root), []);
+  assert.deepEqual(drift(version, herdr), []);
 });
 
-test("next: 0.2.0 first (FIRST), a patch when everything shipping is a fix, else a minor", () => {
-  assert.equal(FIRST, "0.2.0");
-  assert.equal(nextVersion([]), "0.2.0");
-  assert.equal(nextVersion(["v3.4.0", "nightly", "v0.01.0"]), "0.2.0", "other tags are ignored");
-  assert.equal(nextVersion(["v0.2.0"], ["fix(cli): quote paths", "docs: typo", "chore(release): v0.2.0"]), "0.2.1");
-  assert.equal(nextVersion(["v0.2.0", "v0.2.1"], ["fix: a", "fix(mod): b"]), "0.2.2");
-  assert.equal(nextVersion(["v0.2.0"], ["fix: a", "feat(cli): update"]), "0.3.0");
-  assert.equal(nextVersion(["v0.2.0"], ["fix!: drop the old flag"]), "0.3.0", "a breaking fix is not a patch");
-  assert.equal(nextVersion(["v0.2.0"], ["refactor: split"]), "0.3.0");
-  assert.equal(nextVersion(["v0.2.0"], []), "0.3.0");
-  assert.equal(nextVersion(["v0.1.0"], ["feat: x"]), "0.2.0", "once a tag exists, the tags decide");
-  assert.equal(nextVersion(["v0.2.0", "v0.10.0", "v0.9.3"], ["feat: x"]), "0.11.0", "compared as numbers");
-});
-
-test("lastReleaseTag and the shipping rule", () => {
-  assert.equal(lastReleaseTag(["v0.2.0", "v0.10.0", "v0.10.2", "v0.9.9"]), "v0.10.2");
-  assert.equal(lastReleaseTag(["v1.0.0", "x"]), null);
-  assert.deepEqual(shipping(["chore(release): v0.1.0", "ci: pin", "docs(readme): x", "test: y", "test!: z", "chore: deps", "fix: a"]),
-    ["fix: a"], "chore releases nothing");
-  assert.deepEqual(shipping(["build: x", "refactor: y", "perf: z", "style: w", "chore(deps): v"]), ["build: x", "refactor: y", "perf: z", "style: w"]);
-  assert.ok(NOT_SHIPPING.test("ci(release): x"));
-  assert.ok(!FIX.test("fix!: x"));
-});
-
-test("planRelease: a tag without its release is resumed before anything new is cut", () => {
-  assert.deepEqual(planRelease({ last: null, published: true }), { action: "cut" }, "no release yet");
-  assert.deepEqual(planRelease({ last: "v0.1.1", published: false, subjects: ["feat: x"] }), { action: "resume", version: "0.1.1" });
-  assert.deepEqual(planRelease({ last: "v0.1.1", published: true, subjects: ["feat: x"] }), { action: "cut" });
-  assert.deepEqual(planRelease({ last: "v0.1.1", published: true, subjects: ["chore: deps", "docs: y"] }), { action: "none" });
-  assert.deepEqual(planRelease({ last: "v0.1.1", published: true, subjects: [] }), { action: "none" });
-  assert.deepEqual(planRelease({ last: "v0.1.1", published: "partial", subjects: ["feat: x"] }), { action: "repair", version: "0.1.1" },
-    "a release missing an asset is repaired before anything new");
-});
-
-test("set writes every field, check finds drift, set refuses a non-version", () => {
-  const root = scratchRepo();
+test("check passes when the pack carries the root's version, and names every field that does not", () => {
+  const ok = scratchMonorepo("3.7.0");
   try {
-    setVersion("0.3.1", root);
-    assert.deepEqual(drift("0.3.1", root), []);
-    assert.equal(readFileSync(join(root, "mods", "am-sidebar", "VERSION"), "utf8"), "0.3.1\n");
-    assert.equal(JSON.parse(readFileSync(join(root, "package.json"), "utf8")).type, "module", "other keys kept");
-    writeFileSync(join(root, "mods", "am-sidebar", "VERSION"), "0.3.0\n");
-    assert.deepEqual(drift("0.3.1", root), ["mods/am-sidebar/VERSION = 0.3.0"]);
-    assert.throws(() => setVersion("1.0.0", root), /not a version/);
-    assert.throws(() => setVersion("0.01.0", root), /not a version/);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+    const run = cli(ok.herdr, "check");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /the pack carries 3\.7\.0/);
+    assert.equal(cli(ok.herdr, "current").stdout.trim(), "3.7.0");
+  } finally { rmSync(ok.top, { recursive: true, force: true }); }
+
+  // A pack still on its own 0.N.P (as automagik-herdr released it) is drift, not a version of its own.
+  const old = scratchMonorepo("3.7.0", "0.7.0");
+  try {
+    const run = cli(old.herdr, "check");
+    assert.equal(run.status, 1);
+    assert.match(run.stderr, /herdr\/package\.json:version = 0\.7\.0, not 3\.7\.0/);
+    assert.match(run.stderr, /herdr\/mods\/am-sidebar\/VERSION = 0\.7\.0, not 3\.7\.0/);
+    assert.deepEqual(drift("3.7.0", old.herdr), ["herdr/package.json:version = 0.7.0", "herdr/mods/am-sidebar/VERSION = 0.7.0"]);
+  } finally { rmSync(old.top, { recursive: true, force: true }); }
 });
 
-test("the CLI over git: ships, next, set and check as release.yml runs them", () => {
-  const root = scratchRepo();
+test("the pack has no bump of its own: set, next and plan are gone", () => {
+  const { top, herdr } = scratchMonorepo("3.7.0");
   try {
-    git(root, "init", "-q", "-b", "dev");
-    commit(root, "feat: the pack");
-    assert.equal(cli(root, "current"), "0.0.0");
-    assert.equal(cli(root, "ships"), "yes", "no release yet");
-    assert.equal(cli(root, "last"), "");
-    assert.equal(cli(root, "plan", "yes"), "cut");
-    assert.equal(cli(root, "next"), "0.2.0");
-    cli(root, "set", "0.2.0");
-    assert.equal(cli(root, "check"), "version: 0.2.0 everywhere");
-    git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "chore(release): v0.2.0");
-    git(root, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-a", "v0.2.0", "-m", "Automagik Herdr 0.2.0");
-    assert.equal(cli(root, "ships"), "no", "only the release commit since the tag");
-    commit(root, "docs: readme");
-    commit(root, "chore: tidy");
-    assert.equal(cli(root, "ships"), "no");
-    assert.equal(cli(root, "last"), "v0.2.0");
-    assert.equal(cli(root, "plan", "yes"), "none");
-    assert.equal(cli(root, "plan", "no"), "resume 0.2.0", "tagged, never published");
-    assert.equal(cli(root, "plan", "partial"), "repair 0.2.0", "published without both assets");
-    assert.throws(() => cli(root, "plan", "maybe"), /Command failed/);
-    commit(root, "fix(update): retry");
-    assert.equal(cli(root, "ships"), "yes");
-    assert.equal(cli(root, "next"), "0.2.1");
-    assert.equal(cli(root, "plan", "yes"), "cut");
-    commit(root, "feat(cli): update --check");
-    assert.equal(cli(root, "next"), "0.3.0");
-    writeFileSync(join(root, "mods", "am-sidebar", "VERSION"), "0.0.9\n");
-    assert.throws(() => cli(root, "check"), /Command failed/);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+    for (const command of ["set", "next", "plan", "ships", "last"]) {
+      const run = cli(herdr, command, "3.8.0");
+      assert.equal(run.status, 2, command);
+      assert.match(run.stderr, /usage: node scripts\/version\.mjs check \| current/);
+    }
+    assert.equal(readFileSync(join(herdr, "mods", "am-sidebar", "VERSION"), "utf8"), "3.7.0\n");
+  } finally { rmSync(top, { recursive: true, force: true }); }
 });
 
-test("the tag's subject carries the release kind, and a resume reads it back", () => {
-  assert.equal(tagSubject("0.2.0"), "Automagik Herdr 0.2.0");
-  assert.equal(tagSubject("0.2.1", true), "Automagik Herdr 0.2.1 (prerelease)");
-  assert.ok(isPrereleaseSubject(tagSubject("0.2.1", true)));
-  assert.ok(!isPrereleaseSubject(tagSubject("0.2.0")));
-  assert.ok(!isPrereleaseSubject("Automagik Herdr 0.2.0 (prerelease) notes"));
-  const root = scratchRepo();
+test("an unreadable field is drift, with the reason", () => {
+  const { top, herdr } = scratchMonorepo("3.7.0");
   try {
-    git(root, "init", "-q", "-b", "dev");
-    commit(root, "feat: the pack");
-    assert.equal(cli(root, "tag-subject", "0.1.0", "false"), "Automagik Herdr 0.1.0");
-    git(root, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-a", "v0.1.0", "-m", cli(root, "tag-subject", "0.1.0", "false"));
-    git(root, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-a", "v0.1.1", "-m", cli(root, "tag-subject", "0.1.1", "true"));
-    assert.equal(cli(root, "prerelease", "v0.1.0"), "false");
-    assert.equal(cli(root, "prerelease", "v0.1.1"), "true", "a resumed prerelease tag publishes as a prerelease");
-    assert.equal(cli(root, "plan", "no"), "resume 0.1.1", "the prerelease tag is the newest, never published");
-    assert.throws(() => cli(root, "prerelease", "v9.9.9"), /Command failed/, "no such tag");
-    assert.throws(() => cli(root, "tag-subject", "1.0.0", "true"), /Command failed/, "not a version");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+    rmSync(join(herdr, "mods", "am-sidebar", "VERSION"));
+    assert.deepEqual(drift("3.7.0", herdr), ["herdr/mods/am-sidebar/VERSION = unreadable (ENOENT)"]);
+  } finally { rmSync(top, { recursive: true, force: true }); }
 });

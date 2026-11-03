@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
- * Automagik's one version: the repository, the Bot team, the welcome, the Unfold bridge and the desktop app all
- * carry it. Each release is 3.N (semver 3.N.0, tagged v3.N.0), N one above the highest release
+ * Automagik's one version: the repository, the Bot team, the welcome, the Unfold bridge, the desktop app and
+ * the herdr pack (herdr/package.json and the pack's own mods/am-sidebar/VERSION) all carry it. Each release is 3.N (semver 3.N.0, tagged v3.N.0), N one above the highest release
  * tag, numbers compared as numbers, as Tactu numbers its v1.N: above every Omni desktop build
  * (2.YYMMDD.N, from automagik-dev/omni-desktop), so an installed app updates into this one.
  * Until the first release the repository carries 3.0.0, which is never released. The calendar
@@ -25,7 +25,10 @@ export const VERSION = /^3\.(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,3})$/;
 /** A release tag: `v3.N.0`, N a whole number without leading zeros. */
 export const RELEASE_TAG = /^v3\.(0|[1-9]\d*)\.0$/;
 
-/** Every file and JSON path that carries the version. */
+/**
+ * Every file and JSON path that carries the version. An empty path is a plain-text file that holds
+ * the version alone, on one line (the herdr pack's VERSION, which its updater reads).
+ */
 export const FIELDS: { file: string; path: string[] }[] = [
   { file: 'package.json', path: ['version'] },
   { file: 'apps/bots-dsh/package.json', path: ['version'] },
@@ -44,6 +47,8 @@ export const FIELDS: { file: string; path: string[] }[] = [
   { file: 'apps/desktop/package.json', path: ['version'] },
   { file: 'apps/desktop/package-lock.json', path: ['version'] },
   { file: 'apps/desktop/package-lock.json', path: ['packages', '', 'version'] },
+  { file: 'herdr/package.json', path: ['version'] },
+  { file: 'herdr/mods/am-sidebar/VERSION', path: [] },
 ];
 
 const read = (root: string, file: string) => JSON.parse(readFileSync(join(root, file), 'utf8'));
@@ -53,7 +58,7 @@ const at = (value: unknown, path: string[]) =>
 /** The fields that do not carry `version`, as `file:path = value`. */
 export function drift(version: string, root = ROOT): string[] {
   return FIELDS.flatMap(({ file, path }) => {
-    const value = at(read(root, file), path);
+    const value = path.length === 0 ? readFileSync(join(root, file), 'utf8').trim() : at(read(root, file), path);
     return value === version ? [] : [`${file}:${path.join('.') || '.'} = ${String(value)}`];
   });
 }
@@ -61,6 +66,10 @@ export function drift(version: string, root = ROOT): string[] {
 export function setVersion(version: string, root = ROOT): void {
   if (!VERSION.test(version)) throw new Error(`not a version: ${version} (want ${MAJOR}.N.P)`);
   for (const file of new Set(FIELDS.map((field) => field.file))) {
+    if (FIELDS.some((field) => field.file === file && field.path.length === 0)) {
+      writeFileSync(join(root, file), `${version}\n`);
+      continue;
+    }
     const json = read(root, file);
     for (const field of FIELDS.filter((candidate) => candidate.file === file)) {
       const parent = at(json, field.path.slice(0, -1)) as Record<string, unknown>;
