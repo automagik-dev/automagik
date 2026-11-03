@@ -14,7 +14,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { PART_IDS, contextOf, doctor, install, packSource, partOf, runCommand, sidebarCarries, uninstall } from "../mods/am-sidebar/parts.mjs";
 import { main, parseArgs } from "../mods/am-sidebar/pack/part.mjs";
 import { ownHook, withoutHooks } from "../mods/am-sidebar/migrateHooks.mjs";
-import { hookCommand } from "../mods/am-sidebar/briefingText.mjs";
+import { directHookCommand, hookCommand } from "../mods/am-sidebar/briefingText.mjs";
 import { PACK_MODS } from "../mods/am-sidebar/release.js";
 import { placeLayout, readMarker, readVersion } from "../mods/am-sidebar/update.mjs";
 
@@ -38,6 +38,16 @@ function machine(t) {
   return { dir, home, app, binDir, mods: join(app, "mods"), off: join(app, "mods-disabled"), env, logs, calls, ctx };
 }
 const noExec = () => { throw new Error("doctor ran a program"); };
+/** am's briefing entry point, as am places it: a link into its parts store (~/.automagik/parts/…). */
+function amEntry(m) {
+  const store = join(m.home, ".automagik", "parts", "sha-am", "briefing");
+  mkdirSync(store, { recursive: true });
+  writeFileSync(join(store, "briefing.mjs"), "// am's briefing entry point\n");
+  const entry = join(m.app, "automagik-herdr", "briefing.mjs");
+  rmSync(entry, { force: true });
+  symlinkSync(join(store, "briefing.mjs"), entry);
+  return entry;
+}
 const doctorOf = (m, id, extra) => doctor(contextOf({ env: { ...m.env, ...extra }, exec: noExec, log: () => {}, platform: "darwin" }), P(id));
 const failed = (r) => r.checks.filter((c) => !c.ok).map((c) => c.check);
 const ls = (dir) => (existsSync(dir) ? readdirSync(dir).sort() : []);
@@ -332,7 +342,19 @@ test("herdr.am-sidebar switches off like any member only once the command and th
   symlinkSync(join(am, "am.mjs"), link);
   assert.equal(sidebarCarries(m.ctx()).length, 1, "the briefing still runs from the sidebar");
   assert.throws(() => uninstall(m.ctx(), P("herdr.am-sidebar")), /every bot's briefing/);
-  writeFileSync(entry, "// am's entry point: runs am's briefing\n");
+  // A plain file there is not positively am's: still refused (fail closed).
+  writeFileSync(entry, "// someone's entry point\n");
+  assert.throws(() => uninstall(m.ctx(), P("herdr.am-sidebar")), /every bot's briefing .* is not am's/);
+  amEntry(m);
+  // A project hook that still calls the sidebar's briefing.mjs directly keeps it on too.
+  const project = join(m.dir, "project");
+  mkdirSync(join(project, ".claude"), { recursive: true });
+  const settings = join(project, ".claude", "settings.local.json");
+  const hooked = (command) => JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command }] }] } });
+  writeFileSync(settings, hooked(directHookCommand(m.app)));
+  writeFileSync(join(m.app, "am-sidebar-projects.json"), JSON.stringify([project]));
+  assert.throws(() => uninstall(m.ctx(), P("herdr.am-sidebar")), /the briefing hook in 1 project .* call mods\/am-sidebar\/briefing.mjs/);
+  writeFileSync(settings, hooked(hookCommand(m.app)));
   assert.deepEqual(sidebarCarries(m.ctx()), []);
   assert.match(doctorOf(m, "herdr.am-sidebar").checks.find((c) => c.check === "switch-off").detail, /can be switched off/);
   assert.equal(doctorOf(m, "herdr.pack").checks.find((c) => c.check === "command").ok, true, "am's link is not the pack's to fix");
@@ -358,8 +380,7 @@ test("herdr.pack and herdr.layout run from am's stored extract, outside the app 
   const link = join(m.binDir, "automagik-herdr");
   rmSync(link);
   symlinkSync(join(am, "am.mjs"), link);
-  const entry = join(m.app, "automagik-herdr", "briefing.mjs");
-  writeFileSync(entry, "// am's entry point\n");
+  const entry = amEntry(m);
   uninstall(m.ctx(), P("herdr.am-sidebar"));
   uninstall(m.ctx(), P("herdr.am-tabs"));
   assert.ok(existsSync(join(m.off, "am-sidebar")) && !existsSync(join(m.mods, "am-sidebar")));
@@ -381,7 +402,7 @@ test("herdr.pack and herdr.layout run from am's stored extract, outside the app 
   const d = run(["doctor", "herdr.pack"], "am-sidebar/pack");
   assert.equal(d.code, 0, JSON.stringify(d.lines.filter((c) => !c.ok)));
   assert.match(d.lines.find((c) => c.check === "pack-version").detail, /mods-disabled\/am-sidebar\/VERSION/);
-  assert.match(d.lines.find((c) => c.check === "briefing-entry").detail, /another part's \(am\)/);
+  assert.match(d.lines.find((c) => c.check === "briefing-entry").detail, /\(not the pack's\)/);
   assert.equal(run(["doctor", "herdr.layout"], "am-sidebar/layout").code, 0);
 
   assert.equal(run(["uninstall", "herdr.layout"], "am-sidebar/layout").code, 0);
@@ -391,8 +412,31 @@ test("herdr.pack and herdr.layout run from am's stored extract, outside the app 
   assert.deepEqual(ls(m.off), [], "the switched-off mods leave with the pack");
   const kept = readFileSync(join(m.app, "automagik-herdr", ".prev", ".pack"), "utf8");
   assert.match(kept, /^off=am-sidebar,am-tabs$/m, "the kept set says which were off");
-  assert.equal(readFileSync(entry, "utf8"), "// am's entry point\n", "am's briefing entry point stays");
+  assert.equal(readFileSync(entry, "utf8"), "// am's briefing entry point\n", "am's briefing entry point stays");
   assert.equal(readlinkSync(link), join(am, "am.mjs"), "am's command stays");
   assert.equal(readMarker(m.mods), null);
   assert.equal(run(["doctor", "herdr.pack"], "am-sidebar/pack").code, 1, "not installed any more");
+});
+
+test("a plain copy of the repository (no .git) is refused in plain words, never packed from a guess", (t) => {
+  const m = machine(t);
+  const copy = join(m.dir, "copy");
+  mkdirSync(join(copy, "herdr", "scripts"), { recursive: true });
+  mkdirSync(join(copy, "herdr", "mods", "am-sidebar"), { recursive: true });
+  writeFileSync(join(copy, "herdr", "scripts", "pack.mjs"), "");
+  writeFileSync(join(copy, "herdr", "mods", "am-sidebar", "update.mjs"), "");
+  assert.throws(() => packSource(m.ctx({ AM_PART_DIR: join(copy, "herdr", "mods", "am-footer") })), /is a copy of the repository, not a git checkout: am installs a herdr part from a git checkout \(git clone\) or a release/);
+});
+
+test("--purge keeps the hooks journal when the briefing entry point is am's, and drops it when it is the pack's", (t) => {
+  for (const ams of [true, false]) {
+    const m = machine(t);
+    install(m.ctx(), P("herdr.pack"), packSource);
+    if (ams) amEntry(m);
+    const journal = join(m.app, "automagik-herdr", "hooks-journal.json");
+    writeFileSync(journal, JSON.stringify({ version: 1, hooks: [] }));
+    uninstall(m.ctx(), P("herdr.pack"), { purge: true });
+    assert.equal(existsSync(journal), ams, ams ? "am's journal stays" : "the pack's journal goes");
+    assert.ok(m.logs.some((l) => (ams ? /left the briefing hooks and their entry point: they are not the pack's/ : /removed the briefing hook's entry point/).test(l)));
+  }
 });

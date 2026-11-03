@@ -123,11 +123,25 @@ test("writes: Herdr's shared.json and data/, Pocket Link, a LaunchAgent or a mac
     ["$HERDR_APP_HOME/data/x", /Herdr's data\//],
     ["$HERDR_APP_HOME/data#x", /Herdr's data\//],
     ["~/Library/LaunchAgents/ai.namastex.pocket-link.plist", /a LaunchAgent/],
-    ["~/.config/herdr-app/**", /can match ~\/.config\/herdr-app\/shared.json/],
-    ["~/.config/herdr-app/*.json", /can match ~\/.config\/herdr-app\/shared.json/],
-    ["~/.config/herdr-app/d*/**", /can match ~\/.config\/herdr-app\/data\/x: Herdr's data\//],
+    ["~/.config/herdr-app/**", /can reach ~\/.config\/herdr-app\/shared.json/],
+    ["~/.config/herdr-app/*.json", /can reach ~\/.config\/herdr-app\/shared.json/],
+    ["~/.config/herdr-app/d*/**", /can reach ~\/.config\/herdr-app\/data: Herdr's data\//],
     ["~/.config/herdr-app/layouts/../shared.json", /a path with \.\. is not a part's to write/],
-    ["~/**", /can match/],
+    ["~/**", /can reach/],
+    ["~/.config/herdr-app", /can reach ~\/.config\/herdr-app\/shared.json/],
+    // The #258 review's bypasses: spelled with ./ or //, or a glob over a protected folder.
+    ["$HERDR_APP_HOME/./shared.json", /Herdr's shared.json/],
+    ["//shared.json", /start it with/],
+    ["~/.config/herdr-app/./data/x", /Herdr's data\//],
+    ["$HERDR_APP_HOME/d*/secret.db", /Herdr's data\//],
+    ["$HERDR_APP_HOME/dat?/x/y/z.db", /Herdr's data\//],
+    ["dat?/x/y/z.db", /start it with/],
+    ["$HERDR_APP_HOME/mods/p*/bridge/x.js", /Pocket Link/],
+    ["mods/p*/bridge/x.js", /start it with/],
+    ["~/Library/Launch?gents/evil.plist", /a LaunchAgent/],
+    ["**/shared.json", /Herdr's shared.json/],
+    ["**/data/x", /Herdr's data\//],
+    ["**/*.json", /Herdr's shared.json/],
     ["~/.config/HERDR-APP/shared.json", /Herdr's shared.json/],
     ["~/.config/herdr-app/Shared.json", /Herdr's shared.json/],
     ["~/.config/herdr-app/DATA/x", /Herdr's data\//],
@@ -151,6 +165,17 @@ test("writesOverlap: one path, a glob over the other, or keys one inside the oth
   assert.ok(writesOverlap("**/.claude/settings.local.json#hooks.UserPromptSubmit", "~/.claude/settings.local.json#hooks"));
   assert.ok(!writesOverlap("**/.claude/settings.local.json#hooks.UserPromptSubmit", "**/.claude/settings.local.json#hooks.Stop"));
   assert.ok(!writesOverlap("~/.local/bin/am", "~/.local/bin/automagik-herdr"));
+  // Glob against glob, spelled ./ or //, and a folder holding a file: conservative.
+  assert.ok(writesOverlap("~/x/*.json", "~/x/a*"));
+  assert.ok(writesOverlap("./keys.json#global", "keys.json#global.x"));
+  assert.ok(writesOverlap("$HERDR_APP_HOME//keys.json#global", "~/.config/herdr-app/./keys.json#global.x"));
+  assert.ok(writesOverlap("~/x", "~/x/y.json"), "a folder holds what is under it");
+  assert.ok(writesOverlap("~/x/a?c/**", "~/x/*c/d"));
+  assert.ok(!writesOverlap("~/x/a*.json", "~/x/b*.json"), "different literal heads never meet");
+  // A project glob is not under a folder of the home just because ** could walk into it.
+  assert.ok(!writesOverlap("**/.claude/settings.local.json#hooks.UserPromptSubmit", "$HERDR_APP_HOME/automagik-herdr/.prev/**"));
+  assert.ok(writesOverlap("**/.claude/settings.local.json#hooks", "~/p/.claude/settings.local.json#hooks.UserPromptSubmit"));
+  assert.ok(writesOverlap("**/.claude", "~/p/.claude/settings.local.json"));
 });
 
 test("no two parts anywhere in the repository write one place, unless one replaces the other", () => {

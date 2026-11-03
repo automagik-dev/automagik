@@ -63,55 +63,94 @@ export function globRe(glob) {
 }
 
 /**
- * What no part may write (RFC 0012, `writes`): Herdr's own (shared.json, data/), Pocket Link's
- * folder, and any LaunchAgent (Pocket Link's is Pocket's). Each is `[RegExp, why]`.
+ * A write in one spelling: lowercased (APFS is case-insensitive by default), Herdr's app home as
+ * ~/.config/herdr-app ($HERDR_APP_HOME is how parts spell it), `//` collapsed, and `.` segments and a
+ * trailing slash dropped. `{ path, key, dotdot }`: key is what follows `#` (null for the whole file).
  */
-export const REFUSED_WRITES = Object.freeze([
-  [/(^|\/)(herdr-app|\$HERDR_APP_HOME)\/shared\.json(#|$)/, "Herdr's shared.json"],
-  [/(^|\/)(herdr-app|\$HERDR_APP_HOME)\/data(\/|#|$)/, "Herdr's data/"],
-  [/(^|\/)pocket-link(\/|$)/, "Pocket Link (Pocket's part)"],
-  [/(^|\/)LaunchAgents(\/|$)/, "a LaunchAgent"],
-]);
+export function normalWrite(w) {
+  const [p, ...k] = String(w).toLowerCase().split("#");
+  const segs = p.replace(/^\$herdr_app_home(?=\/|$)/, "~/.config/herdr-app").replace(/\/{2,}/g, "/").split("/");
+  const path = segs.filter((s, i) => s !== "." && !(s === "" && i === segs.length - 1 && i > 0)).join("/");
+  return { path, key: k.length ? k.join("#") : null, dotdot: segs.includes("..") };
+}
+
+const wild = (s) => /[*?]/.test(s);
+const escape = (c) => c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+const segRe = (s) => new RegExp(`^${[...s].map((c) => (c === "*" ? "[^/]*" : c === "?" ? "[^/]" : escape(c))).join("")}$`);
+/** Whether two path segments (`*` and `?` wildcards) could name one segment; conservative when both are globs. */
+function segsMeet(p, q) {
+  if (!wild(p) && !wild(q)) return p === q;
+  if (!wild(p)) return segRe(q).test(p);
+  if (!wild(q)) return segRe(p).test(q);
+  const head = (s) => s.slice(0, s.search(/[*?]/));
+  const tail = (s) => s.slice(Math.max(s.lastIndexOf("*"), s.lastIndexOf("?")) + 1);
+  const [hp, hq, tp, tq] = [head(p), head(q), tail(p), tail(q)];
+  return (hp.startsWith(hq) || hq.startsWith(hp)) && (tp.endsWith(tq) || tq.endsWith(tp));
+}
+/**
+ * Whether two paths or globs (normalWrite's; `**` a whole segment, any depth) could name one path.
+ * Conservative: when it cannot tell, it says yes. `touch`: also require that one of `b`'s first
+ * `touch` segments meets a segment of `a` that is not `**` (see reaches).
+ */
+export function pathsMeet(a, b, touch = 0) {
+  const A = a.split("/"), B = b.split("/");
+  const memo = new Map();
+  const f = (i, j, t) => {
+    const k = `${i},${j},${t}`;
+    if (memo.has(k)) return memo.get(k);
+    let r;
+    if (i === A.length && j === B.length) r = t;
+    else if (A[i] === "**") r = f(i + 1, j, t) || (j < B.length && f(i, j + 1, t));
+    else if (B[j] === "**") r = f(i, j + 1, t) || (i < A.length && f(i + 1, j, t));
+    else if (i === A.length || j === B.length) r = false;
+    else r = segsMeet(A[i], B[j]) && f(i + 1, j + 1, t || j < touch);
+    memo.set(k, r);
+    return r;
+  };
+  return f(0, 0, touch === 0);
+}
+/**
+ * Whether `a` and `b` could touch one file: one names the other, or a folder holding the other. A
+ * project glob (one starting `**` then `/`: a file in any project) sits under a folder only when its
+ * own tail meets that folder's named segments. The hooks' settings.local.json glob is not under
+ * data/ just because `**` could walk into it (projects never live there), but a data/x glob is.
+ */
+const reaches = (a, b) => {
+  const project = a.startsWith("**/") || b.startsWith("**/");
+  const n = (x) => (project ? x.split("/").length : 0);
+  return (pathsMeet(a, b, n(b)) && pathsMeet(b, a, n(a))) || pathsMeet(a, `${b}/**`, n(b)) || pathsMeet(b, `${a}/**`, n(a));
+};
 
 /**
- * Paths no write may reach, as samples a glob is tried against: a glob that matches one (`~/**`,
- * `~/.config/herdr-app/*.json`, `…/d*\/**`) is refused like the path itself.
+ * What no part may write (RFC 0012, `writes`), as the folders and files themselves: Herdr's own
+ * (shared.json, data/), Pocket Link's folder, and the LaunchAgents (Pocket Link's is Pocket's). A
+ * write is refused when it could name one, sit under one, or hold one.
  */
-export const PROTECTED_SAMPLES = Object.freeze([
+export const PROTECTED = Object.freeze([
   ["~/.config/herdr-app/shared.json", "Herdr's shared.json"],
   ["~/.config/herdr-app/data", "Herdr's data/"],
-  ["~/.config/herdr-app/data/x", "Herdr's data/"],
-  ["~/.config/herdr-app/data/x/y.json", "Herdr's data/"],
   ["~/.config/herdr-app/mods/pocket-link", "Pocket Link (Pocket's part)"],
-  ["~/.config/herdr-app/mods/pocket-link/main.js", "Pocket Link (Pocket's part)"],
-  ["~/Library/LaunchAgents/ai.namastex.pocket-link.plist", "a LaunchAgent"],
+  ["~/library/launchagents", "a LaunchAgent"],
 ]);
 
-/** Why a write may not be declared, or null: `..`, a protected path (REFUSED_WRITES), or a glob that reaches one. */
+/** Why a write may not be declared, or null: `..`, or a path or glob that can reach a PROTECTED one. */
 export function refusedWrite(w) {
-  // Lowercased: APFS is case-insensitive by default, so ~/.config/HERDR-APP/Shared.json is shared.json.
-  w = w.toLowerCase();
-  const path = w.split("#")[0].replace(/^\$herdr_app_home(\/|$)/, "~/.config/herdr-app$1");
-  if (path.split("/").includes("..")) return "a path with .. is not a part's to write (it can reach anything)";
-  for (const [r, why] of REFUSED_WRITES) if (new RegExp(r.source, "i").test(w) || new RegExp(r.source, "i").test(path)) return `${why} is not a part's to write`;
-  const re = globRe(path);
-  for (const [sample, why] of PROTECTED_SAMPLES) if (re.test(sample.toLowerCase())) return `it can match ${sample}: ${why} is not a part's to write`;
+  const { path, dotdot } = normalWrite(w);
+  if (dotdot) return "a path with .. is not a part's to write (it can reach anything)";
+  for (const [p, why] of PROTECTED) if (reaches(path, p)) return `it can reach ${p}: ${why} is not a part's to write`;
   return null;
 }
 
-/** A write as am resolves it: Herdr's app home spelled one way, `$HERDR_APP_HOME/` (am falls back to ~/.config/herdr-app). */
-const normalWrite = (w) => w.toLowerCase().replace(/^~\/\.config\/herdr-app(\/|$)/, "$herdr_app_home$1");
-
 /**
- * Whether two writes reach one place: the same path, a glob matching the other's path, or one file
- * with keys of which one holds the other (`f#hooks` and `f#hooks.X`; a whole file holds every key).
+ * Whether two writes reach one place: paths or globs that could name one file, or one holding the
+ * other (conservative: a false alarm is fine), then for one file, keys of which one holds the other
+ * (`f#hooks` and `f#hooks.X`; a whole file holds every key).
  */
 export function writesOverlap(a, b) {
-  const [pa, ka = null] = normalWrite(a).split("#");
-  const [pb, kb = null] = normalWrite(b).split("#");
-  if (!(pa === pb || globRe(pa).test(pb) || globRe(pb).test(pa))) return false;
-  if (ka === null || kb === null) return true;
-  return ka === kb || ka.startsWith(`${kb}.`) || kb.startsWith(`${ka}.`);
+  const x = normalWrite(a), y = normalWrite(b);
+  if (!reaches(x.path, y.path)) return false;
+  if (!pathsMeet(x.path, y.path) || x.key === null || y.key === null) return true;
+  return x.key === y.key || x.key.startsWith(`${y.key}.`) || y.key.startsWith(`${x.key}.`);
 }
 
 const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -203,7 +242,7 @@ export function validateParts({ files, read, packMods }) {
 
     if (!strings(part.writes) && !(Array.isArray(part.writes) && part.writes.length === 0)) bad("writes is not a list of paths");
     else for (const w of part.writes) {
-      if (!/^(~\/|\*\*\/|\$HERDR_APP_HOME\/)/.test(w)) bad(`writes ${w}: start it with ~/ (the home), $HERDR_APP_HOME/ (Herdr's app home) or **/ (any project), never a machine's own path`);
+      if (!/^(~\/|\*\*\/)/.test(normalWrite(w).path)) bad(`writes ${w}: start it with ~/ (the home), $HERDR_APP_HOME/ (Herdr's app home) or **/ (any project), never a machine's own path`);
       const why = refusedWrite(w);
       if (why) bad(`writes ${w}: ${why}`);
     }
