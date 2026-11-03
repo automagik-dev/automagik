@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "bots": [
+    { "id": "b-aaaaaaaaaa", "name": "Lead", "kind": "main", "look": { "character": "kitty", "colour": "blue" } },
+    { "id": "b-bbbbbbbbbb", "name": "Builder", "kind": "member", "lead": "b-aaaaaaaaaa", "look": { "character": "star", "colour": "red" } },
+    { "id": "b-cccccccccc", "name": "Checker", "kind": "member" },
+    { "id": "b-dddddddddd", "kind": "member", "look": { "character": "../etc", "colour": "x" } },
+    { "id": "b-bbbbbbbbbb", "name": "Duplicate", "kind": "member" },
+    { "name": "No id", "kind": "member" }
+  ],
+  "categories": [ { "id": "build", "title": "Build" } ]
+}
