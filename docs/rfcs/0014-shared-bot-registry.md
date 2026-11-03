@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Draft (Felipe's answers in: Decided and proposed) |
 | Milestone | not scheduled |
 | Lanes | plugin (3.N.P), desktop (3.N), herdr (3.N.P, [RFC 0011](0011-monorepo-parts-and-releases.md)) |
 | Created | 2026-11-03 |
@@ -14,7 +14,7 @@ places today, with two id shapes and two pet systems. This RFC proposes one Bot 
 read and write: a `bots.json` version 2 in `~/.automagik/bots/` for Bots that belong to no
 project, and in `<repo>/.automagik/bots/` for a project's Bots. It covers writes that never
 overwrite each other, global Bots in Herdr, the desktop app's move to `~/.automagik/bots` (D6),
-one pet folder, Bots on other machines, and the deliveries. RFC 0013's delivery 8 (shared Bots
+one pet folder, Bots on other machines, and the deliveries. Felipe made Herdr's Bots the main team: Automagik shows the ones the person picks, and chatting with one talks to its live Herdr agent. RFC 0013's delivery 8 (shared Bots
 in the switch) waits on it.
 
 ## Motivation
@@ -51,6 +51,26 @@ platform; D6 the desktop app's home merges into it, Felipe starts from scratch, 
 optional and offered to others; D11 bake on demand into `~/.automagik/bots/pets/`; D27 one
 registry RFC before the shared-Bot step.
 
+Decided by Felipe on this RFC (2026-11-03, relayed by t2x5):
+
+- **Q1: A, one file per Bot.** A project with a repo file keeps its Bots only there.
+- **Q7, reframed.** Felipe: "the real team is on herdr, the automagik one not yet really
+  exist... i will want to expose some orchestrators, so that i can talk to them from within the
+  friendlier interface, and switch to code when i want". Herdr's Bots are the real team. The
+  main path is Herdr Bots exposed in Automagik; the handling of a clashing home stays, for
+  other people.
+- **Picked Bots only.** The Bots shown in Automagik are the ones the person picks ("Show in
+  Automagik"). Workers and helpers stay in Herdr.
+- **One conversation.** Chatting with an exposed Bot in Automagik talks to the same live Herdr
+  agent: one conversation, seen from both windows, and Code shows the same session as a
+  terminal.
+- **Q10: as recommended.** A Bot removed elsewhere is hidden; its chats are kept; Restore and
+  Delete.
+- **Q11: as recommended.** Global Bots sit above every project; their briefing shows each
+  project's main Bot and its status; messages do not fan out.
+- **Q17: ask first per project.** Bots taken in from a project then get the team's default
+  level.
+
 Agreed between the two orchestrators (t259, t22n), not decided by Felipe: the id pattern,
 `main` and `identity`, the pose map, the repo path and `version: 2`, and the order of the
 pack's reads. Each one is an open question below, recommended as agreed.
@@ -68,9 +88,7 @@ Everything else in Design is this RFC's proposal.
 - **The legacy file**, `<project>/.herdr/bots.json`, stays version 1. It is read, and written in
   place, while it is the only file in the project; nothing writes version 2 there.
 
-This draft is written as if each Bot lives in exactly one file, with no copies to keep in step.
-D1's "committable copy" can also be read as a copy of home entries; Q1 puts the choice to
-Felipe, and the other options change this section and deliveries 2-4.
+Each Bot lives in exactly one file, with no copies to keep in step (Q1, decided: A).
 
 The home file is in the registry home, `$AUTOMAGIK_HOME/bots`, always, whatever
 `AUTOMAGIK_BOTS_HOME` says. So the desktop app and Herdr share Bots before the home move, and
@@ -80,7 +98,10 @@ still do if a person keeps two team homes (Q9).
 
 Top level: `version: 2`; `bots[]`; in a repo file, the optional `name` (the project's display
 name) and Herdr's `categories[]`; in the home file, `projects[]`, the `{ folder, machine? }` of
-each project with a repo file that either app has opened, so DSH can find them (Q12).
+each project with a repo file that either app has opened, so DSH can find them (Q12); and
+`shown[]`, the person's picks: `{ project, machine?, bots: [id] }`, where an entry for a project
+records the person's yes for it (`project: null` for global Bots, which need no yes). `shown[]`
+is never read from a repo file.
 
 Per Bot:
 
@@ -120,12 +141,15 @@ That compare alone is not enough. Herdr's in-app writer, `writeTextFile(path, te
 (`bots.js:285`), shares no lock with a Node writer, so DSH and Herdr can both pass the compare
 from the same text, and the later rename drops the earlier edit. So every writer also holds one
 lock, `bots.json.lock` beside the file, across the compare and the rename. The lock is the CLI's
-existing one (`automagik-herdr.mjs:204-238`): an exclusive create holding a pid and a token, waited
-for up to 3 s, taken over when older than 10 s, and removed only by its holder. The registry
-module carries it, so DSH takes the same lock. The mod cannot: Herdr's file API has no exclusive
-create, and the mod has no `fs`. So the mod's writes go through the CLI, which it already runs
-through the pack's Node launcher (`bin/run.sh`) (Q6). Until delivery 2 does this, the race stays
-as it is today between the form and the CLI.
+existing helper (`automagik-herdr.mjs:204-238`): an exclusive create holding a pid and a token,
+waited for up to 3 s, taken over when older than 10 s, and removed only by its holder. Today it
+guards only the CLI's project list; `writeBotsFile` (`:184-200`) takes no lock. Delivery 2 wraps
+the bots.json writes in it. The registry module carries the same helper, so DSH takes the same
+lock. The mod cannot: Herdr's file API has no exclusive create, and the mod has no `fs`. So the
+mod's writes go through the CLI. It can already do that: `runCli` (`launch.js:19-22`) runs
+`automagik-herdr ... --json` through the pack's launcher, and the form uses it for history
+(`create.js:414`) (Q6). Until delivery 2 does this, the race stays as it is today between the
+form and the CLI.
 
 - A write changes only the Bots and fields the person changed. Unknown fields and other Bots are
   kept as parsed, so DSH never drops Herdr's `rank` and Herdr never drops `dsh`.
@@ -133,10 +157,11 @@ as it is today between the form and the CLI.
 - Herdr's form says "changed since this form opened", as now. DSH's own writes (a rename, a new
   Bot) redo the edit on the fresh text, up to three times, then notify.
 
-DSH reads the files at load and when they change. A Bot it does not know is adopted: it is shown,
-and it gets a Session the first time it is opened (`sessionId` set, `id` unchanged). Definitions
-in the file win over `state.json`; a Bot gone from the file is handled by Q10. `state.lock` keeps
-governing `state.json` only.
+DSH reads the files at load and when they change. It shows its own Bots and the Bots the person
+picked in `shown[]` (see "Herdr Bots in Automagik"). A Bot nobody picked is not shown, and a
+project nobody said yes to adds no Bots. For DSH's own Bots, definitions in the file win over
+`state.json`; a Bot gone from the file is hidden, its chats kept, with Restore and Delete
+(decided, Q10). `state.lock` keeps governing `state.json` only.
 
 ### Global Bots in Herdr
 
@@ -144,6 +169,35 @@ Global Bots are the home file's Bots with no folder (D3). Herdr lists them above
 (#226). One can be started in the team workspace (`<team home>/workspace`, DSH's folder for Bots
 without one). Its briefing lists each project's main Bot with its status (Q11). RFC 0013 is
 unchanged: a global Bot with a live pane is focused, otherwise Code opens on no space (D27).
+
+### Herdr Bots in Automagik
+
+This is the main path (decided, Q7): Herdr's Bots are the team, and Automagik shows the ones
+the person picks, to talk to them in the friendlier window and switch to Code at will.
+
+- **Picking.** "Show in Automagik" is a toggle on a Bot, in Herdr's Bot menu and in Automagik's
+  list of a project's Bots. The first pick in a project asks once for that project (decided,
+  Q17): "Show Bots from `<project>` in Automagik? Their instructions are used there." Picks and
+  the yes go in the home file's `shown[]`, never in a repo file. Workers, helpers and unpicked
+  Bots stay in Herdr only (decided).
+- **One conversation** (decided). An exposed Bot has no DSH Session. Its chat in Automagik is
+  its live Herdr agent: what the person writes goes to that agent's pane, Automagik shows that
+  agent's conversation, and Code shows the same session as a terminal. A Bot with no live pane
+  gets its agent started first, as Herdr's Start does (D27). How Automagik sends and reads is
+  Q19.
+- **Status.** From hc's status of the pane: idle, working, blocked, done, error. Blocked means
+  the agent needs the person: Automagik says so and offers Code. It never answers a terminal
+  prompt itself; `hc send` refuses a blocked terminal.
+- **Two writers.** The person may be typing in the terminal while Automagik sends, and a send
+  types into the same input. Automagik sends a whole message only when the pane is idle and its
+  input line is empty; otherwise it holds the message, shows "waiting for the terminal", and
+  sends when both hold. The person can still choose "Send now". A message typed in the terminal
+  shows in Automagik once the agent's conversation records it.
+- **Level.** A Bot taken in from a project gets the team's default level (decided, Q17). An
+  exposed Bot's tools run inside its Herdr agent, under that agent's own settings, as in Code
+  today; the team level governs what DSH itself does for the Bot.
+- **Kept apart from DSH's team.** Exposed Bots are never written to `state.json`. They join no
+  group chat and get no DSH memory in this RFC.
 
 ### The home move (D6)
 
@@ -215,6 +269,8 @@ opens the app with nothing selected, as 0013 already says.
   purpose: AGENTS.md:14 gains the rule for the move, and README.md:30 ("From 3.12 the team's
   home ...") changes with it. Plugin ids, routes, storage prefixes and DSH_HOME do not change.
 - **`MOVED.json`** in the old desktop home. New.
+- **`shown[]`** in the home file and the "Show in Automagik" toggle in both apps. New.
+- **DSH runs `hc` and `automagik-herdr`** for exposed Bots' chats (delivery 9). New.
 - **`~/.automagik/bots/pets/<id>/`**: the shared pet folder (D11), now also read by Herdr.
 
 ## Threat model
@@ -236,14 +292,15 @@ A repo file arrives with a clone, so its text is untrusted. Herdr already feeds 
   capability, grant or secret field.
 - **Pet ids** are checked as one path segment (`cleanPetId`, `pets.js:27`) before any path is
   made from them.
-- **Instructions become a prompt.** A repo Bot's `instructions` become a DSH Bot's prompt once
-  it is adopted. Herdr lists every repo it opens in `projects[]`, so that list is only an
-  offer: DSH adopts a project's Bots only after the person says yes for that project, and keeps
-  that yes in its own `state.json`, never in a file that could vouch for itself. Until then DSH
-  shows "Bots in `<project>`" with Add, and makes no Session.
-- **Level.** An adopted Bot gets the team's default level, as any new Bot does
-  (`roster.js:222`). If that default is Full access, a repo Bot would start there; Q17 asks for
-  a lower start.
+- **Instructions become a prompt.** A repo Bot's `instructions` are used in Automagik once it
+  is shown there. Herdr lists every repo it opens in `projects[]`, so that list is only an
+  offer: Automagik shows a project's Bots only after the person says yes for that project and
+  picks them (decided, Q17). The yes is kept in the home file's `shown[]`, never in a repo file
+  that could vouch for itself.
+- **Level.** A Bot taken in gets the team's default level, as any new Bot does (`roster.js:222`;
+  decided, Q17). If that default is Full access, it applies to such a Bot too.
+- **Sending to a pane.** The DSH host sends to a Herdr pane only a message the person typed in
+  that Bot's chat. No DSH tool is given `hc`.
 - `identity` from a repo file sets the look only: Omni's or Unfold's tools come from DSH's own
   `kind`, never from the file (Q17).
 - The home file is the person's own, like `state.json`: no new boundary. A remote machine's file
@@ -270,7 +327,8 @@ Undo: delete the file, or revert the delivery; `state.json` keeps every DSH Bot.
    the briefing hook follows; `session-` ids accepted; global Bots listed read-only; the mod's
    writes go through the CLI under the lock (Q6). Its one new write: a project with a repo file
    (v2 or legacy) that Herdr opens is added to the home file's `projects[]`, so DSH can offer it
-   (it adopts nothing without a yes; see Threat model).
+   (nothing is shown without a yes; see Threat model). The CLI's lock helper now wraps
+   `writeBotsFile`.
    *Check:* the herdr gate; a v2-only project shows its Bots and briefs its main Bot; a v1
    project is unchanged; the mod reads `~/.automagik/bots/bots.json`, which is outside any
    project and outside Herdr's app home (`bots.js:5` says Herdr's own file writes stay in its
@@ -278,20 +336,17 @@ Undo: delete the file, or revert the delivery; `state.json` keeps every DSH Bot.
    saved and one refused. *Rollback:* a later pack that reverts it (the pointer never
    downgrades); v2 files stay and v1 projects never changed.
 3. **DSH shares its Bots** (plugin). At its first load bots-dsh writes every Bot the home file
-   lacks, then writes definitions on each change; it reads the home file and the listed local
-   repo files (v2 or legacy), adopts unknown Bots, and reads pets from the registry home. First
-   it checks every place that takes a Bot id for a Session id (`chatOf` at `store.js:413` falls
-   back to the id), since adopted Bots have no Session until opened. *Check:* a Bot made in
-   Herdr shows in DSH and opens a new Session; an adopted Bot with no Session breaks no list,
-   search or usage count; a DSH rename shows in Herdr; two writers racing lose nothing.
-   DSH keeps writing every definition field to `state.json` as well, and an adopted Bot enters
-   `state.json` only when first opened, with its new `sessionId`. *Rollback:* revert. It holds
-   because `state.json` still has every DSH Bot with current definitions; edits made in Herdr
-   after the last DSH save are not in it, and the files stay. Bots adopted and opened under
-   delivery 3 stay in `state.json` with `b-` (or another host's) ids. The older plugin lacks
-   delivery 3's check, so wherever it takes a Bot id for a Session id, it fails for those Bots;
-   their chats still open through `sessionId` (`store.js:413`). The check's list of places is
-   copied into this rollback note when delivery 3 is written.
+   lacks whose id matches the pattern (Q18), then writes definitions on each change. It reads the
+   home file and the listed local repo files (v2 or legacy), shows the Bots picked in `shown[]`
+   with DSH's side of the toggle and the per-project ask, and reads pets from the registry home.
+   A picked Bot shows with Code to reach it; its chat is delivery 9. First it checks that the
+   views that list Bots (sidebar, mentions, groups, usage) take a Bot that is not in
+   `state.json`. DSH keeps writing every definition field of its own Bots to `state.json` as
+   well; exposed Bots are never written there. *Check:* a Bot picked in Herdr shows in DSH; a
+   project nobody said yes to adds no Bots; a DSH rename shows in Herdr; two writers racing lose
+   nothing. *Rollback:* revert. It holds because `state.json` still has every DSH Bot with
+   current definitions; edits made in Herdr after the last DSH save are not in it, and the files
+   stay. Exposed Bots were never in `state.json`, so the older plugin does not show them.
 4. **Herdr writes version 2** (herdr). New projects get the repo file; "Move to .automagik"
    converts a legacy file (write new, then delete old); global Bots are created and started in
    Herdr. A converted project has no `.herdr/bots.json`, so a pack older than delivery 2 shows no
@@ -307,25 +362,29 @@ Undo: delete the file, or revert the delivery; `state.json` keeps every DSH Bot.
 7. **Other machines** (herdr, after #206). Writes to a linked machine's repo file with the same
    rule. *Check:* an edit from this computer lands there; a stale one is refused.
    *Rollback:* a reverting pack; that machine's files go read-only again.
+8. **Show in Automagik, in Herdr** (herdr). The toggle in the Bot menu and the per-project ask,
+   writing `shown[]` through the CLI under the lock. Worker panes get no toggle. *Check:* the
+   gate; a pick in Herdr shows the Bot in DSH and unpicking hides it. *Rollback:* a reverting
+   pack; the picks stay in the home file and DSH's toggle still works.
+9. **One conversation** (plugin, after 3, once Q19 is answered). An exposed Bot's chat is its
+   live Herdr agent: start it when it has no pane, send, show its conversation, and the
+   two-writers rule. *Check:* a message sent from Automagik is answered in the terminal and both
+   windows show the same turns; a message typed in the terminal shows in Automagik; a send while
+   the terminal's input line holds text is held; a blocked pane shows "needs you" and offers
+   Code. *Rollback:* revert; picked Bots show without a chat, and Code still reaches them.
 
 RFC 0013's delivery 8 can start after deliveries 1-3.
 
 ## Open questions
 
-1. **What is a repo's "committable copy" (D1)?** For Felipe; no recommendation, since the
-   options read D1 differently.
-   - A. *One file per Bot.* A project with a repo file keeps its Bots only there; the home file
-     holds the rest. No syncing; a clone brings the Bots. A home Bot whose folder later gets a
-     repo file stays at home until the person moves it. This draft is written this way.
-   - B. *Home holds every Bot; the repo file is a copy the apps keep in step.* Needs a rule for
-     which side wins when both changed, and for a clone whose copy is newer than home.
-   - C. *Home holds every Bot; the repo file is an export the person commits.* It is read only
-     when the person imports it, so a clone brings nothing until then.
+1. **What is a repo's "committable copy" (D1)?** *Decided:* A, one file per Bot. A home Bot whose
+   folder later gets a repo file stays at home until the person moves it.
 2. **Repo path and version** (agreed). *Recommended:* `<repo>/.automagik/bots/bots.json`,
    `version: 2`, `pets/` beside it.
 3. **Id shapes and the mint** (pattern agreed, mint open in the log). *Recommended:* accept both
-   shapes forever; one `newBotId()` that mints `b-`; Herdr uses it now, DSH once delivery 3's
-   check of ids used as Session ids has shipped.
+   shapes forever; one `newBotId()` that mints `b-`; Herdr uses it now, DSH once its own Bots
+   can carry an id that is not a Session id (a check of every place that takes a Bot id for one,
+   such as `chatOf` at `store.js:413`).
 4. **`main` and `identity`** (agreed). *Recommended:* as agreed; in the home file `main` means a
    team Main Bot, in a repo file the project's one main Bot.
 5. **The pose map** (agreed). *Recommended:* working→running, idle→idle, needs-you→waving once
@@ -335,22 +394,21 @@ RFC 0013's delivery 8 can start after deliveries 1-3.
    through the registry module. The other way, the mod making the lock with
    `writeTextFile(lock, token, null)` as an exclusive create, rests on behaviour Herdr does not
    document. If neither ships, the race is accepted and the section is renamed to say so.
-7. **`~/.automagik/bots` is already another dsh's team home.** A Bot team installed in the
-   person's own dsh lives there (`folders.js:23`). Two `state.json`s with Sessions in two DSH
-   homes cannot merge, and two hosts on one home leave the second read-only (`home-lock.js:1-3`).
-   *Recommended:* the app keeps its team in its old home, says why once, and still shares Bots
-   and pets through the registry home (Q9). D6 is then not met for that person; Felipe may
-   prefer another answer.
+7. **`~/.automagik/bots` is already another dsh's team home.** *Decided, reframed:* the main path
+   is Herdr Bots exposed in Automagik (see Decided). For other people the clash handling stays:
+   a Bot team installed in their own dsh lives there (`folders.js:23`), two hosts on one home
+   leave the second read-only (`home-lock.js:1-3`), so the app keeps its team in its old home,
+   says why once, and still shares Bots and pets through the registry home (Q9).
 8. **The migration offer.** *Recommended:* copy, never move, everything but `workspace/`;
    offered once; the moved team keeps its old workspace folder; the old folder kept until the
    person deletes it.
 9. **The registry home apart from the team home.** *Recommended:* the registry and pets always
    at `$AUTOMAGIK_HOME/bots`, so sharing does not wait for the move.
-10. **A Bot removed in Herdr.** *Recommended:* DSH hides it and keeps its chats and memory,
-    with Restore and Delete; nothing is archived without the person.
-11. **Global Bots (#226).** *Recommended:* no membership field yet: every global Bot is above
-    every project; its briefing shows each project's main Bot and status; messages do not fan
-    out.
+10. **A Bot removed in Herdr.** *Decided, as recommended:* DSH hides it and keeps its chats and
+    memory, with Restore and Delete; nothing is archived without the person.
+11. **Global Bots (#226).** *Decided, as recommended:* no membership field yet: every global Bot
+    is above every project; its briefing shows each project's main Bot and status; messages do
+    not fan out.
 12. **Which repo files DSH reads, and other machines.** *Recommended:* the home file's
     `projects[]`, this computer only; an entry whose file is gone is dropped by the next reader
     that finds it gone (Herdr's #229 has the same gap). Bots on other machines are reached
@@ -365,13 +423,23 @@ RFC 0013's delivery 8 can start after deliveries 1-3.
     plugin first, then herdr, and readers keep unknown fields.
 16. **Clones and the main checkout (#227, #234).** *Recommended:* a pane is matched by project
     and id; edits from a worktree are written in that worktree, reads stay on the main checkout.
-17. **Trust in a repo file.** *Recommended:* as in the Threat model: adoption per project on an
-    explicit yes; `identity` never grants a plugin's tools; a Bot adopted from a repo starts at
-    a level that asks before acting, whatever the team default, until the person changes it.
+17. **Trust in a repo file.** *Decided:* ask first per project; Bots taken in then get the team's
+    default level. `identity` never grants a plugin's tools (Threat model).
 18. **Ids DSH did not mint as `session-<uuid>`.** Host-pinned Bots (Unfold's `unfold-root`) and
     any id outside the pattern. *Recommended:* they stay DSH-only and are not exported; widening
     the pattern to any opaque id is the other option, and it would let Herdr show Bots it can
     never start.
+19. **How Automagik talks to the live agent.** Two ways:
+    - A. `hc send` to the Bot's pane (found with `automagik-herdr whois --bot`), status from
+      `hc get`, and the conversation read from the agent's own session file (Claude Code's,
+      Codex's). It works for any agent Herdr starts, and on other machines' panes through hc.
+      It needs one reader per agent, on file formats the agents do not promise.
+    - B. ACP: acp-dsh (RFC 0003) attaches to the same Claude or Codex session. Turns come
+      structured, but the pane's agent process already owns that session. Neither CLI documents
+      a second live client on one session, so the terminal and ACP would likely fork it
+      (unverified).
+    *Recommended:* A, Claude first, with the two-writers rule in the design; B only if an agent
+    documents attaching a second client to a live session.
 
 ## Links
 
