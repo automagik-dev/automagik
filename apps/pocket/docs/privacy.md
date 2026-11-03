@@ -1,0 +1,118 @@
+---
+title: "Privacy policy"
+type: policy
+created: 2026-11-01
+updated: 2026-11-03
+tags: [privacy, policy, play]
+---
+# Automagik Pocket privacy policy
+
+Effective 2026-11-03. Applies to the Android app **Automagik Pocket** (app ID
+`ai.namastex.automagik`), published from
+[automagik-dev/automagik-pocket](https://github.com/automagik-dev/automagik-pocket).
+
+## In short
+
+- The app connects your phone to **your own computers**. We run no server for it and have no
+  account system.
+- **No analytics, no ads, no tracking.** The app contains no analytics or advertising library.
+- The only other services it contacts: **GitHub**, to check for updates, and **n0's iroh relays**,
+  which carry Pocket Link traffic they cannot read.
+- What it keeps stays on the phone, is not backed up, and is deleted when you uninstall.
+
+## What the app handles, and where it goes
+
+| Data | Where it goes | Why |
+|---|---|---|
+| Terminal screens, agent status, messages and replies you type or speak | Only between the phone and your machine | This is what the app is for |
+| Paired machine details: name, session name, the desktop's Pocket Link ticket | Stays on the phone | To reconnect |
+| Machines saved over SSH by an older version: name, hostname, SSH user, port, session name, host key fingerprint | Stays on the phone and is never used to connect; deleted when you pair that computer with QR or remove it | So the card can ask you to pair it again ([RFC 0008](rfcs/0008-drop-ssh.md)) |
+| The phone's make and model (for example "Pixel 8") | Sent once to the desktop you pair with | So the desktop can name the paired phone. The desktop lists it beside a fingerprint of the phone's Pocket Link public key, which it already has, so two phones with the same name can be told apart |
+| Folder git status, origin remote URL and Herdr desktop program icons | Read from your machine; the git answers stay in memory, icons cached on the phone | To draw the spaces tree like the desktop, and to group spaces into projects and branches into tasks |
+| Usage meter summary: token counts and estimated $ per repository, branch, model and hour (the `herdr-meter` document, if you run the meter) | Read from your own machines and kept in memory; never written, never sent anywhere else | To show spend on Today, Projects and Tasks |
+| Space Row stats in that document (merges with their PR/MR links, time to merge, first pass, $ and tokens per model, per bot) and bot and category names from each project's `.herdr/bots.json` | Read from your own machines and kept in memory; never written, never sent anywhere else | To show each space's stats line and its bots' cards, as the desktop sidebar does |
+| Update check (app version in the request) | GitHub | To offer a newer release |
+
+Nothing else is collected. We, the developers, receive none of this data.
+
+## Network connections
+
+1. **Your machines over Pocket Link.** iroh connections, end-to-end encrypted, dialled by public
+   key. When no direct path exists, the encrypted traffic passes through relay servers run by n0
+   (the iroh project). Relays forward the encrypted bytes; they can't read them, though they do
+   see the network addresses involved.
+2. **GitHub.** When the app opens (at most every 15 minutes), every 6 hours while it or **Watch in
+   background** runs, and when you tap **Settings → About → Check for updates**, the app downloads
+   `latest.json` from this repo's latest GitHub release. When a newer version is out it downloads
+   the APK from GitHub too: on its own on Wi-Fi with **Install updates automatically** on, otherwise
+   when you tap **Install**. GitHub sees your IP address and a User-Agent with the app version. The
+   check itself can't be turned off in the current version.
+3. **Web links.** A link you tap in a terminal opens in your browser.
+
+## What is stored on the phone
+
+- Your saved machines and settings.
+- The phone's Pocket Link (iroh) key, in app storage that Android never backs up.
+- Only if you used SSH in an older version: that version's SSH key, in the same storage. The app
+  deletes it once no machine saved over SSH is left.
+- Cached program icons, and a downloaded update until it installs.
+- The last crash report, if the app crashed (below).
+
+App backup and device-to-device transfer are turned off for all of it. Uninstalling the app deletes
+it all, including the keys. There is no way to export the private keys.
+
+## Crash reports
+
+If the app crashes, it saves one report on the phone: app version, Android version, phone make
+and model, the time, and the error's stack trace. It holds no keys and no saved settings; an error message in the
+stack trace can still name things such as a machine.
+
+Nothing is sent automatically. On the next launch the app says it closed unexpectedly; **Report**
+opens **Settings → About**, where you can **Copy report**, **Share** it (Android's share sheet: you
+choose the app and the recipient), or **Clear** it.
+
+## Microphone
+
+Used only when you tap the microphone in the side-button assistant panel. The app uses Android's
+`SpeechRecognizer`, which hands the audio to the phone's **default speech recognition service**
+(chosen in Android's settings, often Google's). That service turns it into text, and the app puts
+the text in the message box for you to send. The app itself never records or stores audio. Whether
+the audio leaves the phone depends on that service and its own privacy policy.
+
+## Camera
+
+Used only while you scan a Pocket Link QR code. The bundled scanner (ZXing) reads the code on the
+phone. No picture is stored or sent.
+
+## Notifications and the lock screen
+
+- Notifications show what an agent asks or finished, so their text comes from your machines.
+- **Answer from the lock screen** is off by default. While it's off, notifications are marked
+  private, so Android hides their text on a secure lock screen, and replying or using the side-button panel asks you to unlock first. If you
+  turn it on, anyone holding your locked phone can read and answer agents.
+
+## Permissions
+
+| Permission | Why |
+|---|---|
+| Internet | Connect to your machines, Pocket Link relays, and GitHub for updates |
+| Notifications | Alert you when an agent needs you or finishes |
+| Foreground service (special use) | **Watch in background**: keep connections open while you're away, with a "Watching" notification you can stop |
+| Run at startup | **Watch in background**: after the phone restarts and you unlock it, reconnect the machines it was watching, only if watching was on ([RFC 0007](rfcs/0007-watch-after-reboot.md)) |
+| Microphone | Speak a message in the side-button panel |
+| Camera | Scan the pairing QR code (added by the ZXing scanner library) |
+| Install packages, update without asking again | Install updates from GitHub releases; Android asks once |
+| Network state | Download automatic updates only on Wi-Fi and other unmetered networks |
+
+## Children
+
+The app is a developer tool and is not directed at children.
+
+## Changes
+
+Changes to this policy are made in this file, and its history is public in the repo.
+
+## Contact
+
+Open an issue on [GitHub](https://github.com/automagik-dev/automagik-pocket/issues). For a
+security problem, use private reporting as described in [SECURITY.md](../SECURITY.md).

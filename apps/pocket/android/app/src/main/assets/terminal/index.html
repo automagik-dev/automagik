@@ -1,0 +1,118 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'none'; connect-src 'none'">
+<link rel="stylesheet" href="xterm.css">
+<style>html,body{width:100%;height:100vh;margin:0;background:#17191d;overflow:hidden}#terminal{position:fixed;top:0;right:0;bottom:0;left:0;padding:6px;box-sizing:border-box}#latest{position:fixed;right:12px;bottom:12px;border:1px solid #394454;border-radius:16px;background:#23252a;color:#96b2d7;padding:10px 14px;font:12px sans-serif;z-index:5}#latest[hidden]{display:none}.xterm-viewport::-webkit-scrollbar{width:3px}.xterm-viewport::-webkit-scrollbar-thumb{background:#394454}</style>
+</head><body><div id="terminal"></div><button id="latest" hidden aria-label="Latest output">↓ Latest</button><script>
+if(!window.globalThis)window.globalThis=window;
+if(!window.queueMicrotask)window.queueMicrotask=fn=>Promise.resolve().then(fn);
+for(const type of [Element,Document,DocumentFragment])if(!type.prototype.replaceChildren)type.prototype.replaceChildren=function(){while(this.firstChild)this.removeChild(this.firstChild);for(const child of arguments)this.appendChild(typeof child==='string'?document.createTextNode(child):child)};
+window.addEventListener('error',e=>Pocket.failed((e.error&&e.error.stack)||e.message||'Terminal renderer error'));
+</script><script src="xterm.js"></script><script src="addon-fit.js"></script>
+<script>
+const fontRange=[8,24],clampFont=n=>Math.max(fontRange[0],Math.min(fontRange[1],Math.round(n)||13));
+const initialFont=clampFont(Number(new URLSearchParams(location.search).get('font'))||13);
+const terminal=new Terminal({fontFamily:'monospace',fontSize:initialFont,lineHeight:1.2,scrollback:5000,cursorBlink:true,convertEol:false,allowProposedApi:false,
+linkHandler:{allowNonHttpProtocols:false,activate:(e,uri)=>Pocket.openUrl(uri,true)},
+theme:{background:'#17191d',foreground:'#d2d4d9',cursor:'#d2d4d9',selectionBackground:'#394454',black:'#45484f',red:'#dc8c95',green:'#a6bd91',yellow:'#d8be87',blue:'#96b2d7',magenta:'#b5a2ce',cyan:'#8cbdc3',white:'#d2d4d9',brightBlack:'#818793',brightRed:'#f0a5ad',brightGreen:'#bad5a2',brightYellow:'#ead2a1',brightBlue:'#b0cbef',brightMagenta:'#cbb7e6',brightCyan:'#a4d5db',brightWhite:'#f0f0f2'}});
+const fit=new FitAddon.FitAddon();terminal.loadAddon(fit);terminal.open(document.getElementById('terminal'));
+// hc answers terminal queries. Forward human input only, never emulator query replies.
+terminal.onData((data)=>Pocket.input(btoa(unescape(encodeURIComponent(data)))));
+terminal.onBinary((data)=>Pocket.input(btoa(data)));
+let revision=0,ready=false,resizeTimer;
+// Each selected terminal owns a fresh WebView. Only change the stream token here;
+// resetting xterm during its first layout races its renderer on older WebViews.
+window.resetTerminal=(next)=>{revision=next};
+window.output=(expected,channel,base64)=>{if(expected!==revision)return;const data=Uint8Array.from(atob(base64),c=>c.charCodeAt(0));terminal.write(data,()=>Pocket.painted(expected,channel,data.length))};
+window.focusTerminal=()=>terminal.focus();
+const latest=document.getElementById('latest');
+const updateLatest=()=>{latest.hidden=terminal.buffer.active.type==='alternate'||terminal.buffer.active.viewportY>=terminal.buffer.active.baseY};
+latest.addEventListener('click',()=>{terminal.scrollToBottom();updateLatest()});
+terminal.onScroll(updateLatest);terminal.onWriteParsed(updateLatest);
+// xterm's built-in touch scrolling only moves its local viewport. Full-screen
+// programs (Claude, tmux, etc.) own their history and must receive wheel events.
+// Web links: the same rules as Links.kt. A tap on one opens it; nothing else navigates.
+const urlPattern=/https?:\/\/[^\s"'<>`\u0000-\u001f]+/g;
+const trimUrl=u=>{let before;do{before=u;u=u.replace(/[.,;:!?'"*]+$/,'');for(const[o,c]of['()','[]','{}'])if(u.endsWith(c)&&u.split(o).length<u.split(c).length)u=u.slice(0,-1)}while(u!==before);return u};
+// A row's text, and where each column starts in it (wide characters take two columns).
+const rowText=line=>{let text='';const at=[];for(let x=0;x<terminal.cols;x++){const cell=line.getCell(x);if(!cell)break;at.push(text.length);if(cell.getWidth()!==0)text+=cell.getChars()||' '}return{text,at}};
+// Row y continues on y+1: soft-wrapped, or a program filled the row with a link and went on.
+const continues=y=>{const b=terminal.buffer.active,line=b.getLine(y),next=b.getLine(y+1);if(!line||!next)return false;if(next.isWrapped)return true;
+  const text=line.translateToString(false);return text.length>=terminal.cols&&text[text.length-1]!==' '&&/https?:\/\/\S*$/.test(text)&&/^[^\s]/.test(next.translateToString(true))};
+window.linkAt=(y,x)=>{
+  const b=terminal.buffer.active;if(!b.getLine(y))return null;
+  let first=y;while(first>0&&continues(first-1)&&y-first<20)first--;
+  let text='',offset=-1;
+  for(let row=first;row<first+40;row++){const line=b.getLine(row);if(!line)break;const r=rowText(line);
+    if(row===y)offset=text.length+(r.at[Math.min(x,r.at.length-1)]||0);
+    text+=continues(row)?r.text:r.text.replace(/\s+$/,'');if(!continues(row))break}
+  if(offset<0)return null;
+  urlPattern.lastIndex=0;let m;
+  while((m=urlPattern.exec(text))){const url=trimUrl(m[0]);if(offset>=m.index&&offset<m.index+url.length&&url.split('://')[1])return url}
+  return null};
+const cellAt=(clientX,clientY)=>{const screen=terminal.element.querySelector('.xterm-screen').getBoundingClientRect();
+  const x=Math.floor((clientX-screen.left)/(screen.width/terminal.cols)),row=Math.floor((clientY-screen.top)/(screen.height/terminal.rows));
+  return x<0||row<0||x>=terminal.cols||row>=terminal.rows?null:{x,y:terminal.buffer.active.viewportY+row}};
+const surface=document.getElementById('terminal');
+let touch=null,pinch=null,suppressClickUntil=0;
+// Two fingers change the text size; the app stores it when the fingers lift.
+const spread=t=>Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY)||1;
+const endPinch=()=>{if(pinch&&terminal.options.fontSize!==pinch.size)Pocket.fontSize(terminal.options.fontSize);pinch=null};
+window.setFontSize=n=>{const size=clampFont(n);if(size!==terminal.options.fontSize){terminal.options.fontSize=size;resized()}};
+surface.addEventListener('touchstart',e=>{
+  if(e.touches.length===2){touch=null;pinch={distance:spread(e.touches),size:terminal.options.fontSize};return}
+  if(e.touches.length!==1){touch=null;endPinch();return}
+  const p=e.touches[0];touch={x:p.clientX,y:p.clientY,last:p.clientY,pending:0,dragged:false,at:Date.now()};
+},{capture:true,passive:true});
+surface.addEventListener('touchmove',e=>{
+  if(pinch&&e.touches.length===2){e.preventDefault();e.stopImmediatePropagation();window.setFontSize(pinch.size*spread(e.touches)/pinch.distance);return}
+  if(!touch||e.touches.length!==1)return;
+  const p=e.touches[0],dy=p.clientY-touch.y,dx=p.clientX-touch.x;
+  if(!touch.dragged){
+    if(Math.abs(dy)<8||Math.abs(dy)<Math.abs(dx))return;
+    touch.dragged=true;
+  }
+  e.preventDefault();e.stopImmediatePropagation();
+  touch.pending+=touch.last-p.clientY;touch.last=p.clientY;
+  const cell=terminal.element.querySelector('.xterm-rows').getBoundingClientRect().height/terminal.rows||16;
+  const lines=Math.trunc(touch.pending/cell);
+  if(!lines)return;
+  touch.pending-=lines*cell;
+  // Like a phone browser's toolbar: scrolling back reveals the space's tabs, scrolling on hides them.
+  const up=lines<0;if(touch.up!==up){touch.up=up;if(Pocket.scrolled)Pocket.scrolled(up)}
+  if(terminal.buffer.active.type==='normal'&&terminal.modes.mouseTrackingMode==='none')terminal.scrollLines(lines);
+  else terminal.element.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:lines,deltaMode:1,clientX:p.clientX,clientY:p.clientY}));
+  updateLatest();
+},{capture:true,passive:false});
+surface.addEventListener('touchend',e=>{
+  if(pinch){
+    e.preventDefault();e.stopImmediatePropagation();suppressClickUntil=Date.now()+400;
+    if(e.touches.length<2)endPinch()
+    touch=null;return;
+  }
+  if(touch&&touch.dragged){e.preventDefault();e.stopImmediatePropagation();suppressClickUntil=Date.now()+400}
+  else if(touch&&e.touches.length===0){
+    // A tap never reaches xterm as a mouse press: xterm focuses its textarea on mousedown, which
+    // raised the soft keyboard and resized the screen under the finger. The keyboard button does that.
+    e.preventDefault();e.stopImmediatePropagation();suppressClickUntil=Date.now()+400;
+    // A quick tap on a link opens it; a program that tracks the mouse still gets the tap as a click.
+    const cell=cellAt(touch.x,touch.y),url=Date.now()-touch.at<500&&cell&&window.linkAt(cell.y,cell.x);
+    if(url)Pocket.openUrl(url,false);
+    else if(cell&&terminal.modes.mouseTrackingMode!=='none')click(touch.x,touch.y);
+  }
+  touch=null;
+},{capture:true,passive:false});
+// Sends a click through xterm's own mouse reporting, without the focus it takes on mousedown.
+const click=(x,y)=>{const target=terminal.element.querySelector('.xterm-screen'),area=terminal.textarea;
+  area.focus=()=>{};
+  try{for(const type of['mousedown','mouseup'])target.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,view:window,clientX:x,clientY:y,button:0,buttons:type==='mousedown'?1:0}))}
+  finally{delete area.focus}};
+surface.addEventListener('touchcancel',()=>{touch=null;endPinch()},{capture:true,passive:true});
+surface.addEventListener('click',e=>{if(Date.now()<suppressClickUntil){e.preventDefault();e.stopImmediatePropagation()}},{capture:true});
+// A long press opens xterm's right-click handling, which focuses the textarea too.
+surface.addEventListener('contextmenu',e=>{e.preventDefault();e.stopImmediatePropagation()},{capture:true});
+function measure(){if(!document.documentElement.clientHeight)return;const dimensions=fit.proposeDimensions();if(!dimensions||dimensions.cols<2||dimensions.rows<2)return;fit.fit();if(!ready){ready=true;Pocket.ready(terminal.cols,terminal.rows)}else Pocket.resized(terminal.cols,terminal.rows)}
+const resized=()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(measure,120)};
+if(window.ResizeObserver)new ResizeObserver(resized).observe(document.getElementById('terminal'));else window.addEventListener('resize',resized);
+document.fonts.ready.then(()=>requestAnimationFrame(measure));
+</script></body></html>
