@@ -24,7 +24,7 @@ name: Release
 #   automagik-herdr-pack-<version>.tgz.sha256  last release: every PACK_MODS folder of the tag's
 #                                         herdr/mods/ (never pocket-link) plus layouts/automagik.json,
 #                                         and its sha256, which herdr/install.sh and `automagik-herdr
-#                                         update` check (docs/rfcs/0010-monorepo-parts-and-releases.md)
+#                                         update` check (docs/rfcs/0011-monorepo-parts-and-releases.md)
 #
 # and then the desktop app's builds (desktop-build.yml). Omni pins a release's plugins.json
 # (its apps/automagik.json) to serve them from its own market and admin UI; the

@@ -23,7 +23,7 @@
  *   bun scripts/lane.ts sign <lane.json>                         print its signature (the key in PLUGIN_LANE_KEY, PEM)
  *   bun scripts/lane.ts verify <lane.json> <lane.json.sig>       check it against plugin-lane/keys.json
  *
- * The herdr pack (herdr/, docs/rfcs/0010-monorepo-parts-and-releases.md) is a part of its own: no
+ * The herdr pack (herdr/, docs/rfcs/0011-monorepo-parts-and-releases.md) is a part of its own: no
  * desktop build or plugin reads it, and Herdr installs it from its own tarball. A release whose
  * shipping changes since the last release (any tag) are all under herdr/ is a `herdr` patch, 3.N.P
  * with the pack alone: no desktop build, no plugin tarballs, no new lane. Any release that has a

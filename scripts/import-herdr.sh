@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Imports automagik-dev/automagik-herdr (branch dev) under herdr/, with its history, into the
-# branch checked out here (docs/rfcs/0010-monorepo-parts-and-releases.md).
+# branch checked out here (docs/rfcs/0011-monorepo-parts-and-releases.md).
 #
 #   scripts/import-herdr.sh [<source>] [<branch>]
 #

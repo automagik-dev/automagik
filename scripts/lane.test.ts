@@ -29,7 +29,7 @@ describe('the plugin lane', () => {
     expect(herdrShips(pack)).toBe(true);
     // The import itself: the pack, its tests, notes and catalog, the release tooling and the RFC.
     const importing = [...pack, 'herdr/test/update.test.mjs', 'herdr/README.md', 'herdr/.genie/INDEX.md', 'herdr/catalog/index.json',
-      '.github/workflows/release.yml', 'scripts/lane.ts', 'scripts/import-herdr.sh', 'docs/rfcs/0010-monorepo-parts-and-releases.md', 'AGENTS.md'];
+      '.github/workflows/release.yml', 'scripts/lane.ts', 'scripts/import-herdr.sh', 'docs/rfcs/0011-monorepo-parts-and-releases.md', 'AGENTS.md'];
     expect(kindOf(importing, none, none, importing)).toBe('herdr');
     // After a plugin patch (v3.N.1), a herdr-only change since it is still herdr: the plugins are not packed again.
     expect(kindOf(['apps/bots-dsh/client.js', ...pack], none, none, pack)).toBe('herdr');
@@ -41,7 +41,7 @@ describe('the plugin lane', () => {
     expect(kindOf(pack, none)).toBe('plugins');
     // What the pack does not carry ships nothing: tests, notes, plans, the mockup, the catalog (read from dev).
     const notes = ['herdr/test/update.test.mjs', 'herdr/README.md', 'herdr/RECIPE.md', 'herdr/docs/agent-install.md', 'herdr/.genie/INDEX.md',
-      'herdr/mockup/gen-sidebar.mjs', 'herdr/catalog/index.json', 'docs/rfcs/0010-monorepo-parts-and-releases.md'];
+      'herdr/mockup/gen-sidebar.mjs', 'herdr/catalog/index.json', 'docs/rfcs/0011-monorepo-parts-and-releases.md'];
     expect(ships(notes, none)).toBe(false);
     expect(herdrShips(notes)).toBe(false);
     // The pack's version files, bumped by a release, ship nothing on their own.
