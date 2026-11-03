@@ -74,10 +74,19 @@ Decided by Felipe on this RFC (2026-11-03, relayed by t2x5):
 - **Q16: as proposed.** Panes matched by project and id; edits saved in the worktree they came
   from.
 - **Q18: Automagik-only.** Ids outside the pattern stay in Automagik.
-- **Q19: Orca's way, hold drafts.** The transcript file is the source of truth, found through
-  our own briefing hook's `transcript_path`. hc gives the status and does the sends: a
-  bracketed paste, then Enter as its own write. A half-typed terminal draft is never wiped: the
-  message is held, with Send now. Not Orca's hook format, not ACP.
+- **Q19 (D29): Orca's way, hold drafts.** The transcript file, found through our own briefing
+  hook's `transcript_path`, is the source of truth; hc gives status and does the sends (a
+  bracketed paste, then Enter as its own write). A half-typed terminal draft is never wiped: the
+  message is held, with Send now. Not Orca's hook format or server, not ACP.
+- **D30: two chat backends, like Orca.** Herdr's code Bots use the live model: the chat is a
+  projection of the one terminal agent, from the transcript tail, then hooks, then screen text
+  as the last fallback. Input and approvals go in as terminal keys. Show-terminal is always
+  available; "user won't even know". Automagik's work Bots use structured DSH (ACP) sessions.
+- **D31: vendor Orca's MIT code with attribution.** Its transcript decoders, the paste and
+  Enter sequence, the approval key map and the types. Not its hook format or server.
+- **D32: where the projection lives.** JavaScript in `herdr/`, next to Pocket Link; the
+  Automagik window imports the same module; the phone (Kotlin) only renders. RFC 0015, "Live
+  chat projection" (t2ws), designs it; this RFC does not.
 - **Q7, reframed.** Felipe: "the real team is on herdr, the automagik one not yet really
   exist... i will want to expose some orchestrators, so that i can talk to them from within the
   friendlier interface, and switch to code when i want". Herdr's Bots are the real team. The
@@ -202,20 +211,15 @@ the person picks, to talk to them in the friendlier window and switch to Code at
   list of a project's Bots. The first pick in a project asks once for that project (decided,
   Q17): "Show Bots from `<project>` in Automagik? Their instructions are used there." Picks and
   the yes go in the home file's `shown[]`, never in a repo file. Workers, helpers and unpicked
-  Bots stay in Herdr only (decided).
-- **One conversation** (decided). An exposed Bot has no DSH Session. Its chat in Automagik is
-  its live Herdr agent: what the person writes goes to that agent's pane, Automagik shows that
-  agent's conversation, and Code shows the same session as a terminal. A Bot with no live pane
-  gets its agent started first, as Herdr's Start does (D27). How Automagik sends and reads is decided in
-  Q19.
-- **Status.** From hc's status of the pane: idle, working, blocked, done, error. Blocked means
-  the agent needs the person: Automagik says so and offers Code. It never answers a terminal
-  prompt itself; `hc send` refuses a blocked terminal.
-- **Two writers.** The person may be typing in the terminal while Automagik sends, and a send
-  types into the same input. Automagik sends a whole message only when the pane is idle and its
-  input line is empty; otherwise it holds the message, shows "waiting for the terminal", and
-  sends when both hold. The person can still choose "Send now". A message typed in the terminal
-  shows in Automagik once the agent's conversation records it.
+  Bots stay in Herdr only (D29: "workers and helpers stay in Herdr").
+- **One conversation** (D29, D30). An exposed Bot has no DSH Session. Its chat in Automagik is a
+  projection of its live Herdr agent, and Code shows the same session as a terminal; show
+  terminal is always there. A Bot with no live pane gets its agent started first (D27). Input
+  and approvals go in as terminal keys: when the agent asks for approval, the person can answer
+  in Automagik, which sends the mapped keys. The projection, its decoders, the key map and how
+  sends are paced are RFC 0015's (D31, D32), not this RFC's.
+- **Drafts in the terminal** (Q19). A half-typed draft in the terminal is never wiped: Automagik
+  holds the message and offers Send now.
 - **Level.** A Bot taken in from a project gets the team's default level (decided, Q17). An
   exposed Bot's tools run inside its Herdr agent, under that agent's own settings, as in Code
   today; the team level governs what DSH itself does for the Bot.
@@ -280,8 +284,8 @@ machine `hc machine ls` shows connected (on Felipe's setup: khal-labs, g9, g10, 
   (`rememberProject(key, machine)`, `bots.js:114`); those projects go in the home file's
   `projects[]` with their `machine`. DSH reads the same files with `hc file read --on <machine>`,
   and picks in `shown[]` carry the `machine`.
-- **Chat.** As on this computer (Q19): the pane is `<machine>/tN`, input goes through
-  `hc send`, and the agent's session file is read with `hc file read --on <machine>`.
+- **Chat.** As on this computer (RFC 0015): the pane is `<machine>/tN`, input goes through hc,
+  and the agent's transcript is read with `hc file read --on <machine>`.
 - **What waits for #206** (remote Bots: configure, start, inspect). Starting a remote Bot that
   has no live pane, editing its definition, and inspecting its ledger rows. Until #206 lands, a
   remote Bot without a pane is listed with "start it from that machine", and its definition is
@@ -340,8 +344,18 @@ A repo file arrives with a clone, so its text is untrusted. Herdr already feeds 
   that could vouch for itself.
 - **Level.** A Bot taken in gets the team's default level, as any new Bot does (`roster.js:222`;
   decided, Q17). If that default is Full access, it applies to such a Bot too.
-- **Sending to a pane.** The DSH host sends to a Herdr pane only a message the person typed in
-  that Bot's chat. No DSH tool is given `hc`.
+- **Sending to a pane.** The DSH host sends to a Herdr pane only what the person typed or chose
+  in that Bot's chat, an approval included; it never answers a prompt on its own. No DSH tool
+  is given `hc`.
+- **The chat projection** (RFC 0015 details each):
+  1. Transcript rows render as text or sanitized markdown only: no raw HTML, and no remote image
+     loads by itself.
+  2. A `transcript_path` from a hook payload is accepted only inside the agent's own transcript
+     folders (such as `~/.claude/projects`, `~/.codex/sessions`), on this computer and through
+     `hc file read --on`. So no `~/.ssh` file ever reaches a chat.
+  3. The per-project yes is keyed by machine and project.
+  4. The pasted message is sanitized: `ESC[200~`, `ESC[201~` and every other control sequence are
+     stripped before the bracketed paste.
 - `identity` from a repo file sets the look only: Omni's or Unfold's tools come from DSH's own
   `kind`, never from the file (Q17).
 - The home file is the person's own, like `state.json`: no new boundary. A remote machine's file
@@ -405,19 +419,22 @@ Undo: delete the file, or revert the delivery; `state.json` keeps every DSH Bot.
    team with its chats; No leaves the old folder untouched. *Rollback:* as in "The home move".
 7. **Other machines: edit and start** (herdr, after #206). Writes to a linked machine's repo
    file with the same rule, and starts a remote Bot that has no pane. *Check:* an edit from this
-   computer lands there; a stale one is refused; Automagik starts a remote Bot and chats with it.
+   computer lands there; a stale one is refused; Automagik starts a remote Bot (chatting with it
+   is delivery 9's check, once both have shipped).
    *Rollback:* a reverting pack; that machine's files go read-only again, and remote Bots without
    a pane wait to be started there.
 8. **Show in Automagik, in Herdr** (herdr). The toggle in the Bot menu and the per-project ask,
-   writing `shown[]` through the CLI under the lock. Worker panes get no toggle. *Check:* the
-   gate; a pick in Herdr shows the Bot in DSH and unpicking hides it. *Rollback:* a reverting
+   writing `shown[]` through the CLI under the lock. Worker panes get no toggle (D29). The
+   briefing hook (`briefing.mjs`) passes the agent's `transcript_path` on, for RFC 0015's
+   projection. *Check:* the gate; a pick in Herdr shows the Bot in DSH and unpicking hides it;
+   the hook's output names the transcript of the pane's agent. *Rollback:* a reverting
    pack; the picks stay in the home file and DSH's toggle still works.
-9. **One conversation** (plugin, after 3; Q19 decides how). An exposed Bot's chat is its
-   live Herdr agent: start it when it has no pane, send, show its conversation, and the
-   two-writers rule. *Check:* a message sent from Automagik is answered in the terminal and both
-   windows show the same turns; a message typed in the terminal shows in Automagik; a send while
-   the terminal's input line holds text is held; a blocked pane shows "needs you" and offers
-   Code; the same holds for a live pane on a linked machine. *Rollback:* revert; picked Bots show
+9. **One conversation** (plugin, after deliveries 3 and 8 and RFC 0015's projection module). The
+   Automagik window imports RFC 0015's module (D32) for an exposed Bot's chat, starting the agent
+   when it has no pane. *Check:* a message sent from Automagik is answered in the terminal and
+   both windows show the same turns; a message typed in the terminal shows in Automagik; a
+   terminal draft is never wiped; an approval answered in Automagik lands in the terminal; the
+   same holds for a live pane on a linked machine. *Rollback:* revert; picked Bots show
    without a chat, and Code still reaches them.
 
 RFC 0013's delivery 8 can start after deliveries 1-3.
@@ -474,64 +491,22 @@ No open questions. Felipe answered all nineteen (see Decided); they stay below a
     default level. `identity` never grants a plugin's tools (Threat model).
 18. **Ids DSH did not mint as `session-<uuid>`.** Host-pinned Bots (Unfold's `unfold-root`) and
     any id outside the pattern. *Decided:* they stay Automagik-only and are not exported.
-19. **How Automagik talks to the live agent.** *Decided: Orca's way, hold drafts.* Felipe first said: "check how orca does it. they can
-    abstract the terminal into a perfect ui https://github.com/stablyai/orca". Read at Orca
-    commit `e1dfc022` (2026-11-03, MIT) and in the hook installed on this Mac:
-    - **Two modes.** Orca's "structured chat" talks to the agent directly, not through a
-      terminal; moving between it and the terminal copies the conversation into a new session.
-      Its "terminal-backed chat" is "a transcript view over an agent running in a terminal", and
-      switching between chat and terminal "does not create a new session"
-      (`docs/site/content/docs/agents/native-chat.mdx`). The second is what Felipe decided.
-    - **What it shows.** Rows come from three sources, ranked: the agent's own transcript file
-      (3), hook events (2), and scraped terminal scrollback as a degraded fallback (1)
-      (`src/shared/native-chat/native-chat-types.ts:24-31`). The transcript is found from the
-      `transcript_path` and `session_id` in hook payloads
-      (`src/shared/agent-session/lifecycle/agent-session-resume.ts:161`, `:219`). Working and
-      waiting-for-you come from hooks (`native-chat-live-session-contract.ts`).
-    - **The hooks.** Orca adds a command to 13 Claude Code hook events in
-      `~/.claude/settings.json` (SessionStart, UserPromptSubmit, Pre/PostToolUse, Stop,
-      PermissionRequest, PostCompact, SessionEnd and others). `~/.orca/agent-hooks/claude-hook.sh`
-      POSTs the hook JSON to `127.0.0.1:<port>/hook/claude` with a token and the pane key from
-      `ORCA_*` variables Orca sets in its panes. If the app is not answering, it appends the event
-      to a spool file instead. Outside an Orca pane it does nothing. Codex, Gemini, Kimi and ZCode
-      have their own scripts.
-    - **Input.** The composer types into the same PTY. Each send is queued per PTY: it clears
-      the agent's unsubmitted input (a burst of up to 15 lines, checked by reading the input line
-      again after 140 ms), sends the text as a sanitized bracketed paste, then sends Enter after
-      a delay, because "a CR sharing the paste write can be swallowed"
-      (`src/renderer/src/components/native-chat/native-chat-runtime-send.ts`,
-      `native-chat-pty-send-queue.ts`, `native-chat-input-clear.ts`). It answers AskUserQuestion
-      cards with keystrokes.
-    - **While busy.** A terminal-backed send is not held: it goes into the agent's own input,
-      and the agent queues it. Orca shows it as pending until the transcript has it, and waits
-      20 s when an acknowledgment is lost (`use-native-chat-pending-delivery.ts:21`). Editable
-      queue cards exist only for structured chats (`use-structured-agent-session-queued-messages.ts`).
-      Because of the clear, a send from chat wipes anything half-typed in the terminal.
-    - **Remote.** Over plain SSH Orca reads no transcripts (`ssh-transcript-fs-access.ts` throws
-      `SshHostNotServedError`); it needs its own server on the far side.
-
-    *Decided, as recommended:* adopt Orca's approach on herdr-core, not Orca's hooks or code:
-    - **Show:** the transcript file is the source of truth, found from the hook payload's
-      `transcript_path`, with hc's pane status for working and blocked. No screen scraping.
-    - **Send:** `hc send` with Orca's write order: a bracketed paste, then Enter on its own
-      write.
-    - **Keep our two-writers rule:** hold the message when the input line holds text, instead of
-      Orca's clear, so a person typing in Code never loses a draft.
-    - **Remote:** hc reaches other machines' panes and files (`hc send`, `hc file read --on`),
-      so remote Bots need no server of ours on the far side.
-
-    *Why not reuse Orca's hook format:* its scripts post to Orca's own server, with Orca's token
-    and `ORCA_*` pane variables, so reusing them would make Herdr depend on Orca's wire format.
-    The pack already runs its own per-turn hook (`briefing.mjs`). That hook is the place to
-    pass `transcript_path` and the pane's `bot` label to Automagik. *Why not ACP for this:* the
-    pane's agent already owns the session. Orca also keeps its direct-talk chats as separate
-    sessions, which matches our reading.
+19. **How Automagik talks to the live agent.** *Decided* (D29 Q19, with D30-D32): Orca's way,
+    with drafts held; see Decided. Felipe asked to "check how orca does it". Orca
+    (`stablyai/orca` at `e1dfc022`, MIT) shows a terminal agent as chat from its transcript file
+    first, then hooks, then screen text. It types into the same terminal: a bracketed paste,
+    then Enter as a separate write. Approvals are answered with keys. Unlike our rule, it clears
+    any half-typed terminal draft first. The research is in
+    `~/.config/herdr-app/handoffs/bot-chat-backend/orca-research-2026-11-03.md`. RFC 0015 designs
+    the mechanism.
 
 ## Links
 
-- Handoff: `~/.config/herdr-app/handoffs/bot-system-unification.md` (D1-D6, D11, D27;
-  "Agreed between orchestrators"; "Headless bake design").
-- RFCs: [0013](0013-work-code-switch.md) "Shared state" and delivery 8;
+- Handoff: `~/.config/herdr-app/handoffs/bot-system-unification.md` (D1-D6, D11, D27, D29-D32;
+  "Agreed between orchestrators"; "Headless bake design");
+  `bot-chat-backend/orca-research-2026-11-03.md`.
+- RFCs: [0013](0013-work-code-switch.md) "Shared state" and delivery 8; 0015 "Live chat
+  projection" (t2ws, not yet written);
   [0011](0011-monorepo-parts-and-releases.md) lanes and the herdr pointer;
   [0003](0003-model-routes-and-acp.md) model routes; [0010](0010-desktop-sandbox.md).
 - Code: `apps/desktop/src/dsh.js:707`; `apps/bots-dsh/src/host/{folders,home-lock,roster,store,pets}.js`;
