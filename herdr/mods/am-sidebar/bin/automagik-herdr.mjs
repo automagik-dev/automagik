@@ -33,7 +33,7 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
   writesWorktree } from "../workers.js";
 import { carriedLabels, continueRefusal, ledgerSession, planText as restartText, restartPlan, restartRefusal, sessionOf } from "../restart.js";
-import { autoStatus, binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, managedPack, readMarker, relinkCli, rollback as rollbackPack, writeAuto, writeMarker } from "../update.mjs";
+import { autoStatus, readAuto, binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, managedPack, readMarker, relinkCli, rollback as rollbackPack, writeAuto, writeMarker } from "../update.mjs";
 import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER, updatesOff } from "../release.js";
 import { MACHINE_NAME, OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
@@ -2197,7 +2197,7 @@ export async function cmdUpdate(opts, _rest = [], io = {}) {
     try { r = rollbackPack({ ...(io.modsDir ? { modsDir: io.modsDir } : {}), ...host }); } catch (e) { throw failed("Nothing rolled back", e); }
     const { relinked, note } = relink(before);
     const warned = r.warnings?.length ? ` Warning: ${r.warnings.join("; ")}.` : "";
-    return opts.json ? { rolledBack: r, relinked } : `Rolled back to Automagik Herdr ${r.version ?? "(no VERSION)"} at ${r.pack}. Herdr reloads its mods on its own.${r.from ? ` Updates installed automatically skip ${r.from} and wait for a newer release.` : ""}${warned}${note}${hooksLines(r.hooks?.hooks)}`;
+    return opts.json ? { rolledBack: r, relinked } : `Rolled back to Automagik Herdr ${r.version ?? "(no VERSION)"} at ${r.pack}. Herdr reloads its mods on its own.${r.from && readAuto(io.modsDir ?? defaultModsDir(io.env ?? process.env)).on ? ` Updates installed automatically skip ${r.from} and wait for a newer release.` : ""}${warned}${note}${hooksLines(r.hooks?.hooks)}`;
   }
   let r;
   try { r = opts.check ? await checkForUpdate(where) : await installUpdate(where); } catch (e) {

@@ -63,10 +63,9 @@ export class Updater {
       if (patch.auto && typeof before.auto?.at === "number" && before.auto.at >= started) patch.auto = before.auto;
       try { finish(this.get, this.set, id, { ...patch, request, autoHeld: null }); } catch {}
       const plan = autoPlan(this.state(), this.now());
-      if (plan?.apply) {
+      if (plan?.apply && this.apply(null, plan.apply, { auto: true })) {
         // Announced by the install's own notice; SHOWN_KEY keeps a later check quiet about it.
         this.set(SHOWN_KEY, plan.apply);
-        this.apply(null, plan.apply, { auto: true });
       } else if (plan?.hold) {
         this.patch({ autoHeld: plan.hold });
         const note = shownFrom(this.get(SHOWN_KEY)) === patch.update.version ? null : heldNotice(plan, patch.update);
