@@ -16,27 +16,27 @@ function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {} }
   const log = []
   const listeners = new Map()
   const services = {}
-  let adapter
   const routes = { now: [] }
+  const registered = {}
   const ctx = {
     llm: {
-      registerAdapter(providers, given) {
-        adapter = given
+      registerAdapter(providers, adapter) {
+        registered.adapter = adapter
         routes.now = [...providers]
         log.push(['register', [...providers]])
         const handle = () => { routes.now = []; log.push(['dispose']) }
         handle.replace = (next) => { routes.now = [...next]; log.push(['replace', [...next]]) }
         return handle
       },
-      listModels: async (id) => {
-        if (!routes.now.includes(id)) throw new Error(`no provider ${id}`)
-        return adapter.listModels(id)
-      },
+      listProviders: () => routes.now.map(id => ({ id, name: id })),
+      // The status never asks for models: a first read of an agent's models may take seconds.
+      listModels: () => new Promise(() => {}),
     },
     agents: { get: () => undefined },
     get: () => undefined,
     provide: (name, value) => { services[name] = value },
     on: (name, listener) => listeners.set(name, [...(listeners.get(name) ?? []), listener]),
+    effect: (setup) => { const cleanup = setup(); listeners.set('stop', [...(listeners.get('stop') ?? []), cleanup]) },
     emit: name => (listeners.get(name) ?? []).forEach(listener => listener()),
   }
   const installs = []
@@ -45,6 +45,7 @@ function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {} }
     busy: pkg => busy[pkg] === true,
     lastError: pkg => errors[pkg],
     update: async (pkg) => { installs.push(pkg) },
+    dispose: () => { log.push(['store disposed']) },
   }
   const probes = []
   const deps = {
@@ -52,7 +53,7 @@ function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {} }
     find: name => clis[name],
     signedIn: async (spec, cli) => { probes.push([spec.key, cli]); return signedIn[spec.key] },
   }
-  return { ctx, deps, log, services, installs, probes, routes, store, bins, busy, errors, clis }
+  return { ctx, deps, log, services, installs, probes, routes, store, bins, busy, errors, clis, registered }
 }
 
 const CLAUDE = AGENTS['acp-claude']
@@ -159,7 +160,7 @@ test('retry starts the install again and answers at once', async () => {
 test('a connector ready but not in the picker says a restart is needed', async () => {
   const h = harness({ clis: { claude: '/bin/claude' }, bins: { [CLAUDE.adapter]: { path: '/x', version: '1.0.0' } } })
   apply(h.ctx, { claude: live(true), codex: live(false) }, h.deps)
-  h.ctx.llm.listModels = async () => []
+  h.ctx.llm.listProviders = () => []
   const claude = byId(await h.services[SERVICE].status(), 'acp-claude')
   assert.equal(claude.connector.state, 'ready')
   assert.equal(claude.restartNeeded, true)
@@ -194,4 +195,34 @@ test('the status carries a yes or no for the sign-in and nothing else the CLI sa
   assert.equal(byId(status, 'acp-claude').signedIn, true)
   assert.equal(byId(status, 'acp-codex').signedIn, false)
   assert.doesNotMatch(JSON.stringify(status), /@|email|org/i)
+})
+
+test("a catalog's key is the adapter release and the CLI as it resolves, so a CLI update reads the agent's models again", async (t) => {
+  const { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const home = mkdtempSync(join(tmpdir(), 'acp-dsh-key-'))
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  for (const version of ['1.0', '2.0']) {
+    mkdirSync(join(home, version))
+    writeFileSync(join(home, version, 'claude'), '#!/bin/sh\n')
+  }
+  const link = join(home, 'claude')
+  symlinkSync(join(home, '1.0', 'claude'), link)
+  const h = harness({ clis: { claude: link }, bins: { [CLAUDE.adapter]: { path: '/adapters/0.100.0/index.js', version: '0.100.0' } } })
+  apply(h.ctx, { claude: live(true), codex: live(false) }, h.deps)
+  const key = () => h.registered.adapter.agents.get('acp-claude').catalog.spec.key()
+  const first = key()
+  assert.match(first, /^\/adapters\/0\.100\.0\/index\.js .*1\.0\/claude \d/)
+  unlinkSync(link)
+  symlinkSync(join(home, '2.0', 'claude'), link)
+  assert.notEqual(key(), first)
+})
+
+test('dispose stops the adapter installs', () => {
+  const h = harness({ clis: { claude: '/bin/claude' } })
+  apply(h.ctx, { claude: live(true), codex: live(false) }, h.deps)
+  assert.ok(!h.log.some(([what]) => what === 'store disposed'))
+  h.ctx.emit('stop')
+  assert.ok(h.log.some(([what]) => what === 'store disposed'))
 })

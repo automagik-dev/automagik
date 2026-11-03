@@ -12,9 +12,11 @@
 // section) what each agent has: its CLI, its connector (the ACP adapter), its sign-in, and
 // whether its model is in the picker. It writes nothing: the switches are this plugin's own
 // live settings, written through DSH's settings service.
+import { dirname, join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import { AcpAdapter, aside } from './src/host/adapter.js'
 import { AGENTS, findCommand, signedInOf } from './src/host/agents.js'
+import { Catalog, cliStamp, DEFAULT_MODEL } from './src/host/catalog.js'
 import { AdapterStore, CHECK_EVERY_MS } from './src/host/install.js'
 
 export const name = 'acp-dsh'
@@ -43,15 +45,18 @@ export function nodeCommand() {
 /**
  * @param {any} ctx
  * @param {{ claude?: any, codex?: any, fakeAgent?: string }} [config]
- * @param {{ store?: any, find?: typeof findCommand, signedIn?: typeof signedInOf }} [deps]
+ * @param {{ store?: any, find?: typeof findCommand, signedIn?: typeof signedInOf, catalogHome?: string }} [deps]
+ *   catalogHome: where each agent's models and efforts are kept (beside the adapters by default).
  */
-export function apply(ctx, config = {}, { store = new AdapterStore({ log: message => info(ctx, message) }), find = name => findCommand(name), signedIn = signedInOf } = {}) {
+export function apply(ctx, config = {}, { store = new AdapterStore({ log: message => info(ctx, message) }), find = name => findCommand(name), signedIn = signedInOf, catalogHome = store.home ? join(dirname(store.home), 'catalog') : undefined } = {}) {
   const agents = new Map()
+  const log = message => info(ctx, message)
   if (config.fakeAgent) {
+    const spawn = () => ({ command: process.execPath, args: [config.fakeAgent] })
     agents.set('acp-fake', {
       name: 'Fake agent',
-      model: { id: 'fake', name: 'Fake agent' },
-      spawn: () => ({ command: process.execPath, args: [config.fakeAgent] }),
+      catalog: new Catalog({ id: 'acp-fake', name: 'Fake agent', defaultName: 'Fake agent', fallback: [{ id: DEFAULT_MODEL, name: 'Fake agent' }], key: () => config.fakeAgent, spawn, log }),
+      spawn,
     })
   }
   const adapter = new AcpAdapter(ctx, agents)
@@ -79,14 +84,27 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     return store.update(spec.adapter, spec.bin).then(
       // A connector that landed (or moved up) is announced, so the picker lists its model now.
       () => { if (store.binOf(spec.adapter, spec.bin)?.version !== before && agents.has(idOf(spec))) publish() },
-      error => warn(ctx, `${spec.adapter} not installed: ${error?.message ?? error}`),
+      error => { if (!disposed) warn(ctx, `${spec.adapter} not installed: ${error?.message ?? error}`) },
     )
   }
-  const agentOf = (spec, cli) => ({
+  const agentOf = (spec, cli, id = idOf(spec), node = nodeCommand()) => ({
     name: spec.name,
-    model: spec.model,
     modeFor: spec.modeFor,
     cli,
+    // The agent's own models and efforts, read from the adapter release installed now.
+    catalog: new Catalog({
+      id,
+      name: spec.name,
+      defaultName: spec.defaultName,
+      fallback: spec.fallback,
+      home: catalogHome,
+      log,
+      key: () => {
+        const bin = store.binOf(spec.adapter, spec.bin)
+        return bin === undefined ? undefined : `${bin.path} ${cliStamp(cli)}`
+      },
+      spawn: () => ({ command: node.command, args: [store.binOf(spec.adapter, spec.bin).path], env: { ...node.env, ...spec.env(cli) } }),
+    }),
     installed: () => store.binOf(spec.adapter, spec.bin) !== undefined,
     spawn: () => {
       const bin = store.binOf(spec.adapter, spec.bin)
@@ -113,10 +131,12 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       const want = enabled(spec) && cli !== undefined
       const have = agents.get(id)
       if (want && have?.cli !== cli) {
+        have?.catalog?.dispose()
         agents.set(id, agentOf(spec, cli))
         changed = true
         if (have === undefined) added.push(spec)
       } else if (!want && have !== undefined) {
+        have.catalog?.dispose()
         agents.delete(id)
         changed = true
       }
@@ -147,14 +167,16 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
         : bin !== undefined ? 'ready'
           : busy || error === undefined ? 'installing'
             : 'failed'
+    // In the picker: DSH serves the route. Read from the registry, never the model list, which may
+    // wait on a first read of the agent's models (catalog.js); a settings page must not.
     let listed = false
     if (connector === 'ready' && agents.has(id)) {
-      try { listed = (await ctx.llm.listModels?.(id))?.length > 0 } catch {}
+      try { listed = ctx.llm.listProviders?.().some(provider => provider.id === id) === true } catch {}
     }
     return {
       id,
       key: spec.key,
-      name: spec.model.name,
+      name: spec.defaultName,
       on,
       cli: { found: cli !== undefined, installUrl: spec.installUrl },
       connector: {
@@ -164,7 +186,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
         ...(connector === 'ready' && busy ? { updating: true } : {}),
       },
       ...(signIns.get(id) === undefined ? {} : { signedIn: signIns.get(id) }),
-      model: { provider: id, id: spec.model.id, name: spec.model.name, listed },
+      model: { provider: id, id: DEFAULT_MODEL, name: spec.defaultName, listed },
       // Ready but not in the picker: only a DSH that has not loaded this plugin's routes.
       restartNeeded: connector === 'ready' && !listed,
     }
@@ -205,10 +227,13 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   const daily = setInterval(() => { reconcile({ kick: false }); refresh() }, CHECK_EVERY_MS)
   first.unref?.()
   daily.unref?.()
-  ctx.on?.('dispose', () => {
+  // Cordis 4 has no 'dispose' event: an effect's cleanup is what runs when the plugin stops.
+  ctx.effect?.(() => () => {
     disposed = true
     clearTimeout(first)
     clearInterval(daily)
+    // A running adapter install would otherwise outlive DSH and keep writing into its home.
+    store.dispose?.()
     adapter.dispose()
   })
 }

@@ -4,8 +4,23 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
 [Agent Client Protocol](https://agentclientprotocol.com) (ACP). The design is
 [RFC 0003](../../docs/rfcs/0003-model-routes-and-acp.md).
 
-- **Agents as DSH models.** Each agent is a provider route with one model (`acp-<agent>`). A
-  chat or a Bot picks it like any model. DSH keeps the Session, its history and the sidebar.
+- **Agents as DSH models.** Each agent is a provider route (`acp-<agent>`) whose models are the
+  agent's own (Claude Code's Opus, Sonnet, Haiku…; Codex's GPT models), each with the reasoning
+  efforts the agent offers for it. A chat or a Bot picks one like any model. DSH keeps the
+  Session, its history and the sidebar.
+- **The agent's own models and efforts.** They are read from the agent over ACP: its session
+  config options of category `model` and `thought_level`. A probe starts the adapter, opens a
+  session it never prompts (no turn, no tokens), reads the models, then picks each one to read
+  its efforts, since an agent rebuilds that list per model. The result is kept in
+  `$AUTOMAGIK_HOME/acp/catalog/<route>.json`, so the next start lists it at once while a new probe
+  runs; a new adapter release probes again. Before any probe has answered, a short list stands
+  in (Claude Code: `default`, `opus`, `sonnet`, `haiku` at low, medium or high effort; Codex:
+  `default`). The model `default` is always listed: it is whatever the agent's own settings
+  choose. An effort's default is the person's own setting for that model.
+- **The Session's model and effort, before each prompt.** The agent's session is put on the
+  Session's model, then its effort (the model first: the efforts are that model's). No effort
+  leaves the agent's own. A model or effort the agent does not offer fails the turn, naming what
+  it offers.
 - **DSH tool cards and approvals.** The agent runs its own tools. Each tool call it makes ends
   the model step with a call to `acp_tool`, a tool registered in that agent's scope only. DSH
   writes the `tool/call` and `tool/result` rows and draws the card (a terminal for a command, a
@@ -62,6 +77,8 @@ with the desktop app's own pnpm (`AUTOMAGIK_PNPM`, never the person's) or else n
 place when complete, without install scripts or optional dependencies (the CLIs the adapters
 bundle); an install that pulls in a bundled CLI's platform package anyway is refused. The
 previous version stays for a Session still on it. Nothing is downloaded when a Session starts.
+An install still running when DSH quits is killed with everything it started and its folder
+removed; one a killed DSH left behind is removed at the next start.
 Until the first install lands, the agent lists no model; a Session already on it says the
 adapter is being installed, with the last install error.
 
@@ -71,7 +88,7 @@ adapter is being installed, with the last install error.
 bun install && bun run harness
 bun run test          # the adapter against the fake agent over real stdio
 bun run lint
-node dev/dsh-check.mjs   # one dsh headless turn on acp-fake in a temporary DSH home
+node dev/dsh-check.mjs   # one dsh headless turn on acp-fake (fake-small, high effort) in a temporary DSH home
 node dev/dsh-check.mjs --agent claude   # the same on your own Claude Code (a few tokens)
 node dev/dsh-check.mjs --agent codex    # the same on your own Codex (a few tokens)
 ```

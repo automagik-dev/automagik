@@ -4,7 +4,7 @@
 |---|---|
 | Status | Draft (owner's answers in, D27) |
 | Milestone | not scheduled |
-| Lanes | desktop (3.N), plugin (3.N.P), herdr (3.N.P, RFC 0011, after #190) |
+| Lanes | desktop (3.N), plugin (3.N.P), herdr (3.N.P, [RFC 0011](0011-monorepo-parts-and-releases.md)) |
 | Created | 2026-11-03 |
 
 ## Summary
@@ -181,7 +181,7 @@ install side:
 - **The herdr-app surface we depend on** (not ours): `status` exit codes (0 open, 2 no window);
   `ls` JSON (`spaces[].id`, `folder`, `machine`, `active`, terminal `status`); `do
   space.select`, `space.new`, `agent.focus`. Kept latest, so the check is against the newest
-  release. The pack's `start` and `whois --json` are ours (#190), later `am` verbs (D22).
+  release. The pack's `start` and `whois --json` are ours (`herdr/`), later `am` verbs (D22).
 - Plugin ids, routes, storage prefixes and `~/.automagik/bots` do not change.
 
 ## Threat model
@@ -315,10 +315,11 @@ D27 answered the first fourteen. These came up while applying it.
   D13, D15, D20, D22, D27); `council-desktop-shell-2026-11-02.md` (synthesis, finding 4);
   `pocket-into-automagik-monorepo.md` ("One am CLI", "Parts").
 - Spikes: #182 (Tauri, FINDINGS.md), #191 (cross-OS matrix), `spike/code-mode-in-wrapper`
-  (`apps/desktop-code-mode-spike/FINDINGS.md`). PR #190 (Herdr import).
+  (`apps/desktop-code-mode-spike/FINDINGS.md`). PR #190 (Herdr import, merged).
 - RFCs: [0006](0006-herdr-terminal-mode.md) Herdr terminal mode,
-  [0010](0010-desktop-sandbox.md) desktop sandbox; 0011 (monorepo parts and releases, #190);
+  [0010](0010-desktop-sandbox.md) desktop sandbox;
+  [0011](0011-monorepo-parts-and-releases.md) monorepo parts and releases;
   0012 (`am` CLI and parts, not yet written); the registry RFC (not yet written).
 - Code: `apps/desktop/src/deeplink.js`, `main.js:101-131`, `frame.js`, `dsh.js:707`;
   `apps/bots-dsh/src/client/sidebar.js:800`, `client/pet.js`, `host/pets.js`, `host/roster.js:200`;
-  Herdr `herdr/mods/am-sidebar/model.js:13` (#190).
+  `herdr/mods/am-sidebar/model.js:13`.

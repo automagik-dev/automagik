@@ -491,13 +491,23 @@ export function install(rt) {
   const missingSections = note => NOTE_SECTIONS.map(([name]) => name)
     .filter(name => !new RegExp(`^#{1,4}\\s*${escapeRegExp(name)}\\s*:?\\s*$`, 'mi').test(note))
 
+  // A part's own calls run on the conversation's route, so the provider serves its prefix
+  // from cache. A chat on an agent over ACP cannot take a request beside its turn (the agent
+  // answers only in its own chat), so they run on the team's background model then, with that
+  // model's own effort and output limit. No background model: the route as it is.
+  async function asideRoute(route) {
+    if (!route?.provider || !route?.model || rt.answersAside?.(`${route.provider}/${route.model}`) !== false) return route
+    const background = splitRef(await rt.backgroundModel?.())
+    return background === undefined ? route : { provider: background.provider, model: background.model }
+  }
+
   // The same system prompt, tools, and messages as the conversation's own requests,
   // plus the note prompt; nothing is written into the Session. A cut-off note, or one
   // without every section, is asked for again once; then the note fails.
   async function writeNote(agent, signal, { folder = false } = {}) {
     const session = agent.session
     const header = session.requestHeader()
-    const route = header?.config
+    const route = await asideRoute(header?.config)
     if (!route?.provider || !route?.model) throw new Error('the Session has not called a model yet')
     const messages = session.deriveMessages()
     const base = folder ? FOLDER_PROMPT : HANDOFF_PROMPT
@@ -569,7 +579,7 @@ export function install(rt) {
     const job = checkpoints.get(session.id)
     if (job !== undefined) assertCheckpoint(job)
     signal?.throwIfAborted()
-    const route = session.requestHeader()?.config
+    const route = await asideRoute(session.requestHeader()?.config)
     if (!route?.provider || !route?.model) throw new Error('the Session has not called a model yet')
     // The results list grows with the work, so the checkpoint may write as much as one
     // of the Bot's own replies.
@@ -626,7 +636,7 @@ export function install(rt) {
   // own prefix, so it stays small. Undefined when its answer names no action.
   async function askSteward(agent, { midTurn }) {
     const session = agent.session
-    const route = session.requestHeader()?.config
+    const route = await asideRoute(session.requestHeader()?.config)
     if (!route?.provider || !route?.model) return undefined
     const group = placeOf(agent.id)?.roomId !== undefined
     const lines = []

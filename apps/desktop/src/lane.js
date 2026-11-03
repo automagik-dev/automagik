@@ -5,9 +5,10 @@
 // run on this app (the same 3.N line, at or past their base) and on its DSH (their engines.dsh),
 // are newer than what the profile has, and were never found bad. It downloads and checks each
 // tarball (sha256, sha512 integrity, size) and unpacks it beside the profile, staged; the next
-// start of the app puts them in place, before DSH starts. That start is a trial: the page must
+// start of DSH puts them in place, before DSH starts. That start is a trial: the page must
 // draw the Bot team within a while, or the previous plugins come back and that version is
-// marked bad. Restart (the sidebar), a quit, or a start while away is that start.
+// marked bad. A restart of DSH alone once no agent is at work (auto-apply.js), the sidebar's
+// notice, a quit, or a start of the app is that start.
 //
 // pnpm must see what the lane put in: a plugin manager install (pnpm add in the profile) resolves
 // from the profile's package.json and lock, and would put the profile's own version back. So the
@@ -34,9 +35,17 @@ export const LANE_URL = 'https://github.com/automagik-dev/automagik/releases/dow
 // 3.N line (Automagik's plugins are built against one app). Genie's plugin follows its own
 // versions, and its base is the oldest app it runs on. Automagik's lane also carries the add-ons
 // the profile pins that have no dependencies of their own (its `addons`, scripts/lane.ts
-// LANE_ADDONS), so a pin move needs no new app either.
+// LANE_ADDONS), so a pin move needs no new app either. Besides the profile's own three, it updates
+// the Automagik plugins a person added from the market (Portuguese, Unfold's), as Genie's lane does
+// Genie; a plugin that is not installed is never taken. Swapping a plugin's folder is safe because
+// a lane patch never changes what a plugin is installed by: scripts/lane.ts (kindOf, INSTALL_FIELDS)
+// makes any change to a plugin's dependencies, peers, engines or entry points a full release, a new
+// app, and never a plugin-only patch. So the dependencies pnpm laid out for the installed version
+// are the new version's too.
+export const AUTOMAGIK_PLUGINS = Object.freeze(['@automagik/bots-dsh', '@automagik/welcome-dsh', '@automagik/acp-dsh', '@automagik/locale-pt-br-dsh',
+  ...['bot', 'bridge', 'capabilities', 'events', 'mind', 'session', 'settings', 'sse', 'trajectory'].map(name => `@automagik/unfold-${name}-dsh`)])
 export const PUBLISHERS = Object.freeze([
-  { publisher: 'automagik', url: LANE_URL, keys: LANE_KEYS.automagik, sameLine: true, plugins: ['@automagik/bots-dsh', '@automagik/welcome-dsh', '@automagik/acp-dsh'] },
+  { publisher: 'automagik', url: LANE_URL, keys: LANE_KEYS.automagik, sameLine: true, plugins: AUTOMAGIK_PLUGINS },
   { publisher: 'genie', url: 'https://raw.githubusercontent.com/automagik-dev/genie/lane/lane.json', keys: LANE_KEYS.genie, sameLine: false, plugins: ['@automagik/genie-dsh'] },
 ])
 const SCHEMA_VERSION = 1

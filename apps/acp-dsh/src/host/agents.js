@@ -6,11 +6,17 @@ import { homedir } from 'node:os'
 import { execFile } from 'node:child_process'
 import { delimiter, dirname, join } from 'node:path'
 
+// Efforts as DSH lists them, from least to most.
+const efforts = (...ids) => Object.freeze({ efforts: Object.freeze(ids.map(id => Object.freeze({ id, name: id.charAt(0).toUpperCase() + id.slice(1) }))) })
+
 export const AGENTS = Object.freeze({
   'acp-claude': Object.freeze({
     key: 'claude',
     name: 'Claude Code (ACP)',
-    model: Object.freeze({ id: 'default', name: 'Claude Code' }),
+    // The models and efforts come from the agent itself (catalog.js). Until it has answered once,
+    // these stand in: names its adapter accepts and the efforts every one of them takes.
+    defaultName: 'Claude Code',
+    fallback: Object.freeze(['default', 'opus', 'sonnet', 'haiku'].map(id => Object.freeze({ id, name: id === 'default' ? 'Claude Code' : id.charAt(0).toUpperCase() + id.slice(1), reasoning: efforts('low', 'medium', 'high') }))),
     cli: 'claude',
     // Where the person gets the CLI when it is not on this computer.
     installUrl: 'https://code.claude.com/docs/en/setup',
@@ -32,7 +38,8 @@ export const AGENTS = Object.freeze({
   'acp-codex': Object.freeze({
     key: 'codex',
     name: 'Codex (ACP)',
-    model: Object.freeze({ id: 'default', name: 'Codex' }),
+    defaultName: 'Codex',
+    fallback: Object.freeze([Object.freeze({ id: 'default', name: 'Codex', reasoning: efforts('low', 'medium', 'high') })]),
     cli: 'codex',
     installUrl: 'https://developers.openai.com/codex/cli',
     // `codex login status` exits 0 when signed in, 1 when not.

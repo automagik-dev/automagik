@@ -14,13 +14,20 @@
  * Omni's market serves them without an Omni release. The signature is ed25519 over the exact
  * bytes of lane.json, detached, base64; the public keys are plugin-lane/keys.json.
  *
- *   bun scripts/lane.ts kind <last-full-tag>                    plugins | full: what the commits since it need
+ *   bun scripts/lane.ts kind <last-full-tag> [<last-tag>]       herdr | plugins | full: what the commits since need
+ *   bun scripts/lane.ts herdr <last-tag>                         yes | no: whether the release rebuilds the herdr pack
  *   bun scripts/lane.ts ships <last-tag>                         yes | no: whether anything since it reaches an install
  *   bun scripts/lane.ts next-patch                               the next patch release: 3.N.(P+1) on the newest 3.N
  *   bun scripts/lane.ts pack-addons <dir>                          pack the add-ons the lane carries into dir, with addons.json
  *   bun scripts/lane.ts manifest <plugins.json> <base> <issuedAt> [addons.json]  print lane.json for a release's plugins.json
  *   bun scripts/lane.ts sign <lane.json>                         print its signature (the key in PLUGIN_LANE_KEY, PEM)
  *   bun scripts/lane.ts verify <lane.json> <lane.json.sig>       check it against plugin-lane/keys.json
+ *
+ * The herdr pack (herdr/, docs/rfcs/0011-monorepo-parts-and-releases.md) is a part of its own: no
+ * desktop build or plugin reads it, and Herdr installs it from its own tarball. A release whose
+ * shipping changes since the last release (any tag) are all under herdr/ is a `herdr` patch, 3.N.P
+ * with the pack alone: no desktop build, no plugin tarballs, no new lane. Any release that has a
+ * shipping herdr/ change since the last release attaches the pack (`herdr`), whatever its kind.
  */
 import { createHash, createPrivateKey, createPublicKey, sign as signBytes, verify as verifyBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -50,7 +57,16 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // alone): the repository's release tooling and CI, the lane's own keys and notes, tests,
 // and the notes at the root. A change there ships nothing to an installed app. The headless pet
 // bake (apps/automagik-pets) is no plugin and no app build reads it; it ships on its own.
-const NEVER_SHIPPED = [/^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/, /^apps\/automagik-pets\//];
+// The RFCs and notes under docs/ ship nothing either. In the herdr part: its notes (*.md at its top,
+// docs/, .genie/ plans, the mockup) and its catalog, which installed mod managers read from dev
+// directly, not from a release; and the layout entry's RECIPE.md and preview.png.
+const NEVER_SHIPPED = [/^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/, /^apps\/automagik-pets\//, /^docs\//,
+  /^herdr\/[^/]+\.md$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr-layout\/(RECIPE\.md|preview\.png)$/];
+/**
+ * The herdr part: everything under herdr/ (the pack's mods, installer and tooling) and its layout's
+ * own entry folder, herdr-layout/ (the pack ships its automagik.json; RFC 0011).
+ */
+export const HERDR = /^herdr(-layout)?\//;
 
 export interface LanePlugin {
   name: string;
@@ -116,16 +132,24 @@ export function unpackedIn(files: Record<string, string[]>) {
 /** Whether any of `changed` reaches an install: one that is neither never shipped nor `inert`. */
 export const ships = (changed: string[], inert: (path: string) => boolean) => changed.some(path => !neverShipped(path) && !inert(path));
 
+/** Whether any of `changed` (since the last release) ships in the herdr pack: the release rebuilds it. */
+export const herdrShips = (changed: string[], inert: (path: string) => boolean = () => false) =>
+  changed.some(path => HERDR.test(path) && !neverShipped(path) && !inert(path));
+
 /**
- * Whether the changes since the last full release are the plugins' alone: every changed path
- * inside a plugin, or one no app build reads (the market index and the version bumps the
- * releases themselves write, the release tooling, tests, `inert` ones), none in a plugin's
- * dev/harness (that moves DSH), no lockfile, and no field a plugin is installed or admitted by.
+ * `herdr` when everything shipping in `sinceLast` (the changes since the last release, any tag) is
+ * under herdr/: the pack alone, no app and no plugin. Otherwise whether the changes since the last
+ * full release are the plugins' alone: every changed path inside a plugin, or under herdr/ (no app
+ * build reads it), or one no app build reads (the market index and the version bumps the releases
+ * themselves write, the release tooling, tests, `inert` ones), none in a plugin's dev/harness (that
+ * moves DSH), no lockfile, and no field a plugin is installed or admitted by.
  */
-export function kindOf(changed: string[], installChanged: (plugin: string) => boolean, inert: (path: string) => boolean = () => false): 'plugins' | 'full' {
+export function kindOf(changed: string[], installChanged: (plugin: string) => boolean, inert: (path: string) => boolean = () => false, sinceLast?: string[]): 'herdr' | 'plugins' | 'full' {
+  const shipping = (sinceLast ?? []).filter(path => !neverShipped(path) && !inert(path));
+  if (shipping.length > 0 && shipping.every(path => HERDR.test(path))) return 'herdr';
   if (changed.length === 0) return 'full';
   for (const path of changed) {
-    if (neverShipped(path) || inert(path)) continue;
+    if (neverShipped(path) || inert(path) || HERDR.test(path)) continue;
     const plugin = PLUGINS.find(name => path.startsWith(`apps/${name}/`));
     if (!plugin) return 'full';
     const inside = path.slice(`apps/${plugin}/`.length);
@@ -243,20 +267,25 @@ export function verifyLane(bytes: Buffer, signature: string, keys: { keyId: stri
   return lane;
 }
 
-const git = (...args: string[]) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8' });
+const git = (...args: string[]) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 
 if (import.meta.main) {
   const [command, ...args] = process.argv.slice(2);
-  if (command === 'kind' || command === 'ships') {
+  if (command === 'kind' || command === 'ships' || command === 'herdr') {
     const last = args[0];
     if (!last) { console.log(command === 'kind' ? 'full' : 'yes'); process.exit(0); }
-    const changed = git('diff', '--name-only', `${last}..HEAD`).split('\n').filter(Boolean);
+    const diff = (from: string) => git('diff', '--name-only', `${from}..HEAD`).split('\n').filter(Boolean);
+    const changed = diff(last);
     const before = (path: string) => git('show', `${last}:${path}`);
     const unpacked = unpackedIn(Object.fromEntries(PLUGINS.map(plugin => [plugin, JSON.parse(readFileSync(join(ROOT, 'apps', plugin, 'package.json'), 'utf8')).files ?? []])));
     // A file only the version fields of changed in (a release's own bump).
     const versionOnly = (path: string) => {
       const fields = FIELDS.filter(field => field.file === path);
       if (fields.length === 0) return false;
+      // A plain-text field (the herdr pack's VERSION) is the version alone, before and after.
+      if (fields.some(field => field.path.length === 0)) {
+        try { return [before(path), readFileSync(join(ROOT, path), 'utf8')].every(text => /^\d+\.\d+\.\d+$/.test(text.trim())); } catch { return false; }
+      }
       const blank = (text: string) => {
         const json = JSON.parse(text);
         for (const { path: at } of fields) {
@@ -269,6 +298,8 @@ if (import.meta.main) {
     };
     if (command === 'ships') {
       console.log(ships(changed, path => versionOnly(path) || unpacked(path)) ? 'yes' : 'no');
+    } else if (command === 'herdr') {
+      console.log(herdrShips(changed, versionOnly) ? 'yes' : 'no');
     } else {
       const installChanged = (plugin: string) => {
         const path = `apps/${plugin}/package.json`;
@@ -280,7 +311,9 @@ if (import.meta.main) {
       const addonPins = (path: string) => {
         try { return path === PROFILE && addonPinsOnly(before(path), readFileSync(join(ROOT, path), 'utf8')); } catch { return false; }
       };
-      console.log(kindOf(changed, installChanged, path => versionOnly(path) || addonPins(path) || unpacked(path)));
+      // The changes since the last release of any kind: a herdr-only run of them is a herdr patch.
+      const sinceLast = args[1] ? diff(args[1]) : undefined;
+      console.log(kindOf(changed, installChanged, path => versionOnly(path) || addonPins(path) || unpacked(path), sinceLast));
     }
   } else if (command === 'next-patch') {
     console.log(nextPatch(git('tag', '--list', 'v3.*').split('\n').filter(Boolean)));
@@ -306,7 +339,7 @@ if (import.meta.main) {
     const lane = verifyLane(readFileSync(args[0]), readFileSync(args[1], 'utf8'), keys);
     console.log(`lane ${lane.version} (sequence ${lane.sequence}) is signed by ${lane.keyId}`);
   } else {
-    console.error('usage: bun scripts/lane.ts kind <last-full-tag> | ships <last-tag> | next-patch | pack-addons <dir> | manifest <plugins.json> <base> <issuedAt> [addons.json] | sign <lane.json> | verify <lane.json> <sig>');
+    console.error('usage: bun scripts/lane.ts kind <last-full-tag> [<last-tag>] | ships <last-tag> | herdr <last-tag> | next-patch | pack-addons <dir> | manifest <plugins.json> <base> <issuedAt> [addons.json] | sign <lane.json> | verify <lane.json> <sig>');
     process.exit(2);
   }
 }

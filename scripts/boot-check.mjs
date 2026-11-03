@@ -234,9 +234,10 @@ async function acpShots(browser, url, dir, problems) {
 }
 
 const port = String(args.port ?? 39400 + Math.floor(Math.random() * 500))
-// DSH leads its own process group, so what it starts stops with it: acp-dsh's background
-// adapter install (an npm or pnpm a SIGTERM to DSH alone leaves running) writes into
-// AUTOMAGIK_HOME under `work`, and would still be writing there when `work` is removed.
+// DSH leads its own process group, so what it starts stops with it. acp-dsh's background adapter
+// install (an npm or pnpm writing into AUTOMAGIK_HOME under `work`) is not in it: it leads a group
+// of its own, which only DSH's dispose stops. DSH disposes on SIGTERM, so DSH gets a SIGTERM and a
+// moment before any SIGKILL, or the install would still be writing when `work` is removed.
 const dsh = spawn(process.execPath, [DSH_BIN, '--profile', 'boot', '--no-open', '--host', '127.0.0.1', '--port', port], { cwd: work, env: dshEnv, stdio: ['ignore', 'pipe', 'pipe'], detached: true })
 const signalGroup = (signal) => {
   try {
@@ -246,10 +247,40 @@ const signalGroup = (signal) => {
     return false
   }
 }
-// Out of this terminal's group, DSH would outlive a Ctrl-C or a closed terminal here: stop it too.
+// One stop for both ways out, the end of the run and a signal: DSH takes a second SIGTERM as
+// "exit now" and would skip its dispose. SIGTERM, DSH's exit (its dispose done) or `graceMs`, then
+// whatever is left in DSH's group goes too, and is gone before `work` is.
+let stopping
+const stopDsh = graceMs => stopping ??= (async () => {
+  signalGroup('SIGTERM')
+  await new Promise((done) => {
+    if (dsh.exitCode !== null || dsh.signalCode !== null) return done()
+    const timer = setTimeout(done, graceMs)
+    dsh.once('exit', () => {
+      clearTimeout(timer)
+      done()
+    })
+  })
+  signalGroup('SIGKILL')
+  for (let i = 0; i < 50 && signalGroup(0); i++) await new Promise(done => setTimeout(done, 100))
+})()
+// The verdict is the checks': a folder that will not go is reported, never a failure.
+const removeWork = () => {
+  if (args.keep) return
+  try {
+    rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  } catch (error) {
+    say(`cleanup: ${work} was not removed (${error.code ?? error.message}); the result above stands`)
+  }
+}
+// Out of this terminal's group, DSH would outlive a Ctrl-C or a closed terminal here: stop it too,
+// SIGTERM first (up to 3 s) so its dispose stops the install. A second Ctrl-C quits at once.
+let interrupted
 for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) {
-  process.once(signal, () => {
-    signalGroup('SIGKILL')
+  process.once(signal, async () => {
+    interrupted = code
+    await stopDsh(3000)
+    removeWork()
     process.exit(code)
   })
 }
@@ -275,7 +306,9 @@ try {
   })
   say(`dsh up on ${port}`)
   const { chromium } = require('playwright-core')
-  const browser = await chromium.launch({ executablePath: chrome() })
+  // The signals are this script's (above): Playwright's own SIGINT handler would exit at once,
+  // before DSH has disposed. Its exit hook still kills the browser.
+  const browser = await chromium.launch({ executablePath: chrome(), handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false })
   try {
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
     const problems = []
@@ -304,25 +337,8 @@ try {
     await browser.close()
   }
 } finally {
-  signalGroup('SIGTERM')
-  await new Promise((done) => {
-    if (dsh.exitCode !== null || dsh.signalCode !== null) return done()
-    const timer = setTimeout(done, 8000)
-    dsh.once('exit', () => {
-      clearTimeout(timer)
-      done()
-    })
-  })
-  // Whatever DSH left running (an install mid-way) goes too, and is gone before `work` is.
-  signalGroup('SIGKILL')
-  for (let i = 0; i < 50 && signalGroup(0); i++) await new Promise(done => setTimeout(done, 100))
-  // The verdict is the checks': a folder that will not go is reported, never a failure.
-  if (!args.keep) {
-    try {
-      rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
-    } catch (error) {
-      say(`cleanup: ${work} was not removed (${error.code ?? error.message}); the result above stands`)
-    }
-  }
+  // The adapter install is not in DSH's group: DSH's dispose, on this SIGTERM, stops it.
+  await stopDsh(8000)
+  removeWork()
 }
-process.exit(failed ? 1 : 0)
+process.exit(interrupted ?? (failed ? 1 : 0))

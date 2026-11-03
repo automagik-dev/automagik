@@ -39,6 +39,7 @@ Security gaps are named by title only until their fix merges. Details go to a pr
 | [0008](0008-platform-and-web-instances.md) | Platform and web instances | Draft | not scheduled |
 | [0009](0009-personal-customization.md) | Personal customization | Draft | after 2 (proposed: Make it yours) |
 | [0010](0010-desktop-sandbox.md) | Desktop sandbox and supervision | Draft | not scheduled |
+| [0011](0011-monorepo-parts-and-releases.md) | Monorepo parts and releases | Accepted | n/a (process) |
 | [0013](0013-work-code-switch.md) | The work and code switch | Draft | not scheduled |
 
 Milestones, in the owner's order:
@@ -51,8 +52,8 @@ Milestones, in the owner's order:
 
 Personal customization (0009) is scheduled after milestone 2; it is Draft until then. Herdr,
 Genie Publish, Platform, Desktop sandbox and the work and code switch stay at the RFC stage until
-their questions are answered. 0011 (monorepo parts and releases) lands with #190. 0012 (the `am` CLI and
-parts) is taken and not yet written.
+their questions are answered.
+0012 (the `am` CLI and parts) is taken and not yet written.
 Milestones and one issue per delivery are created after the PR that lands these RFCs merges.
 
 ### Fixes without an RFC

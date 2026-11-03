@@ -20,6 +20,16 @@ name: Release
 #   plugins.json                          each tarball's name, version, file and integrity
 #   <add-on>-<its version>.tgz            the add-ons the lane carries, at the profile's pins
 #   addons.json                           (scripts/lane.ts LANE_ADDONS), and what each one is
+#   automagik-herdr-pack-<version>.tgz    the herdr pack, when herdr/ shipped something since the
+#   automagik-herdr-pack-<version>.tgz.sha256  last release: every PACK_MODS folder of the tag's
+#                                         herdr/mods/ (never pocket-link) plus herdr-layout/automagik.json
+#                                         as layouts/automagik.json,
+#                                         and its sha256 (docs/rfcs/0011-monorepo-parts-and-releases.md)
+#
+# and, when it packed the herdr pack, it signs pack.json (the newest pack: its release, tarball URL
+# and sha256; ed25519, the HERDR_PACK_KEY secret, the pack's own key; the public keys are
+# herdr/mods/am-sidebar/pack-keys.json) and puts it with pack.json.sig on the rolling `herdr-lane`
+# release, which holds nothing else: herdr/install.sh and `automagik-herdr update` read only that.
 #
 # and then the desktop app's builds (desktop-build.yml). Omni pins a release's plugins.json
 # (its apps/automagik.json) to serve them from its own market and admin UI; the
@@ -39,7 +49,9 @@ name: Release
 #
 # The plugin lane (scripts/lane.ts): when everything since the last full release (v3.N.0) is the
 # plugins' alone (or moves only the pins of the add-ons the lane carries), the release is a patch,
-# v3.N.P, with the plugin tarballs and no desktop build.
+# v3.N.P, with the plugin tarballs and no desktop build. When everything since the last release
+# (any tag) is under herdr/, it is a herdr patch, v3.N.P with the pack alone: no plugin tarballs, no
+# new lane, no desktop build, no market listing (the plugins did not move).
 # Every release, full or patch, then signs lane.json (ed25519, the PLUGIN_LANE_KEY secret; the
 # public keys are plugin-lane/keys.json) and puts it on the rolling `plugin-lane` release, which
 # holds nothing else. The desktop app and Omni's market install the plugins from it, without a
@@ -93,6 +105,7 @@ jobs:
       version: ${{ steps.cut.outputs.version }}
       sha: ${{ steps.cut.outputs.sha }}
       lane: ${{ steps.lane.outputs.kind }}
+      herdr: ${{ steps.lane.outputs.herdr }}
     env:
       DO_NOT_TRACK: '1'
       GH_TOKEN: ${{ github.token }}
@@ -146,14 +159,42 @@ jobs:
         run: |
           set -euo pipefail
           full=$(git tag --list 'v3.*.0' --sort=-v:refname | grep -E '^v3\.(0|[1-9][0-9]{0,3})\.0$' | head -1 || true)
-          kind=$(bun scripts/lane.ts kind "${full}")
-          echo "kind=${kind}" >> "$GITHUB_OUTPUT"
-          echo "base=${full#v}" >> "$GITHUB_OUTPUT"
-          echo "since ${full:-the start}: ${kind} release"
+          last=$(git tag --list 'v3.*' --sort=-v:refname | grep -E '^v3\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})$' | head -1 || true)
+          kind=$(bun scripts/lane.ts kind "${full}" "${last}")
+          # The herdr pack is rebuilt when herdr/ shipped something since the last release, any kind.
+          herdr=$(bun scripts/lane.ts herdr "${last}")
+          { echo "kind=${kind}"; echo "herdr=${herdr}"; echo "base=${full#v}"; } >> "$GITHUB_OUTPUT"
+          echo "since ${full:-the start}: ${kind} release; since ${last:-the start}, the herdr pack: ${herdr}"
+
+      # The old automagik-herdr CI gate, on the pack this release attaches (Node 22.7+, shellcheck).
+      - name: The herdr pack's gates
+        if: steps.new.outputs.release == 'true' && steps.lane.outputs.herdr == 'yes'
+        working-directory: herdr
+        run: |
+          set -euo pipefail
+          node --test 'test/*.test.mjs'
+          for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs scripts/*/*.mjs; do
+            node --check "$f"
+          done
+          sh -n install.sh
+          shellcheck -s sh install.sh mods/am-sidebar/bin/run.sh mods/am-sidebar/bin/automagik-herdr
+          node scripts/catalog.mjs --check
+          node scripts/version.mjs check
+          node scripts/entries.mjs --check
+
+      # Before the cut, so a release that packs the pack never goes out without a pointer the
+      # installed packs trust: HERDR_PACK_KEY must be a key pack-keys.json lists (its keyId is the
+      # entry with its public key). The HERDR_PACK_SIGNER variable picks the secret slot, so a
+      # rotation's new key waits in HERDR_PACK_KEY_NEXT until it is switched on (RFC 0011).
+      - name: The herdr pack's signing key
+        if: steps.new.outputs.release == 'true' && steps.lane.outputs.herdr == 'yes'
+        env:
+          HERDR_PACK_KEY: ${{ vars.HERDR_PACK_SIGNER == 'HERDR_PACK_KEY_NEXT' && secrets.HERDR_PACK_KEY_NEXT || secrets.HERDR_PACK_KEY }}
+        run: bun scripts/herdr-lane.ts check-key
 
       # Before the cut, so an add-on that cannot ride the lane stops the run before any tag.
       - name: Pack the add-ons the lane carries
-        if: steps.new.outputs.release == 'true'
+        if: steps.new.outputs.release == 'true' && steps.lane.outputs.kind != 'herdr'
         run: |
           set -euo pipefail
           bun scripts/lane.ts pack-addons release
@@ -163,11 +204,14 @@ jobs:
         if: steps.new.outputs.release == 'true'
         env:
           KIND: ${{ steps.lane.outputs.kind }}
+          HERDR: ${{ steps.lane.outputs.herdr }}
         run: |
           set -euo pipefail
-          if [[ "${KIND}" == "plugins" ]]; then version=$(bun scripts/lane.ts next-patch); else version=$(bun scripts/version.ts next); fi
+          if [[ "${KIND}" == "plugins" || "${KIND}" == "herdr" ]]; then version=$(bun scripts/lane.ts next-patch); else version=$(bun scripts/version.ts next); fi
           bun scripts/version.ts set "${version}"
           bun scripts/version.ts check
+          # The herdr pack's marketplace index rides the release commit, regenerated from this tree.
+          if [[ "${HERDR}" == "yes" ]]; then (cd herdr && node scripts/catalog.mjs); fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -qam "chore(release): v${version}"
@@ -187,8 +231,35 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      # Into release/ before the plugins' PLUGINS.SHA256SUMS, which then lists the pack too: a full
+      # release's desktop build keeps every file that list names (desktop-build.yml).
+      - name: Pack the herdr pack
+        if: steps.cut.outputs.version != '' && steps.lane.outputs.herdr == 'yes'
+        env:
+          VERSION: ${{ steps.cut.outputs.version }}
+        run: |
+          set -euo pipefail
+          # From the tag, not the working tree: what was tagged is what ships. The folder list is
+          # the tag's PACK_MODS; every other folder of the tag's herdr/mods/ but pocket-link must be
+          # in it, and the archive's top level must be exactly it plus layouts/ (update.mjs refuses
+          # anything else). Only those folders and the one layout go in: no other file.
+          mkdir -p release
+          tgz="automagik-herdr-pack-${VERSION}.tgz"
+          git show "v${VERSION}:herdr/mods/am-sidebar/release.js" > "${RUNNER_TEMP}/release.mjs"
+          mapfile -t mods < <(node --input-type=module -e 'const { PACK_MODS } = await import(process.argv[1]); for (const m of PACK_MODS) console.log(m);' "${RUNNER_TEMP}/release.mjs")
+          tagged=$(git ls-tree --name-only "v${VERSION}:herdr/mods" | grep -vx pocket-link | sort)
+          [[ "${tagged}" == "$(printf '%s\n' "${mods[@]}" | sort)" ]] || { echo "::error::herdr/mods/ at v${VERSION} (${tagged//$'\n'/ }) is not PACK_MODS (${mods[*]})"; exit 1; }
+          # The layout is its own top-level entry (herdr-layout/), never herdr/layouts/: herdr.dev skips a
+          # repository whose herdr-mod entry folder holds layouts/ (RFC 0011).
+          git show "v${VERSION}:herdr-layout/automagik.json" > "${RUNNER_TEMP}/automagik.json"
+          git archive --format=tar.gz -o "release/${tgz}" --prefix=layouts/ --add-file="${RUNNER_TEMP}/automagik.json" --prefix= "v${VERSION}:herdr/mods" -- "${mods[@]}"
+          top=$(tar -tzf "release/${tgz}" | cut -d/ -f1 | sort -u)
+          [[ "${top}" == "$(printf '%s\n' "${mods[@]}" layouts | sort)" ]] || { echo "::error::the archive's top level (${top//$'\n'/ }) is not PACK_MODS plus layouts"; exit 1; }
+          (cd release && sha256sum -- "${tgz}" > "${tgz}.sha256")
+          cat "release/${tgz}.sha256"
+
       - name: Pack the plugins
-        if: steps.cut.outputs.version != ''
+        if: steps.cut.outputs.version != '' && steps.lane.outputs.kind != 'herdr'
         env:
           VERSION: ${{ steps.cut.outputs.version }}
           SHA: ${{ steps.cut.outputs.sha }}
@@ -208,20 +279,51 @@ jobs:
           VERSION: ${{ steps.cut.outputs.version }}
           SHA: ${{ steps.cut.outputs.sha }}
           KIND: ${{ steps.lane.outputs.kind }}
+          HERDR: ${{ steps.lane.outputs.herdr }}
         run: |
           set -euo pipefail
           flags=(--latest)
           [[ "${PRERELEASE}" == "true" ]] && flags=(--prerelease)
-          # A plugin patch is not the Latest release: the desktop app's builds stay on the full one.
-          [[ "${KIND}" == "plugins" ]] && flags=(--latest=false)
+          # A plugin or herdr patch is not the Latest release: the desktop app's builds stay on the full one.
+          [[ "${KIND}" == "plugins" || "${KIND}" == "herdr" ]] && flags=(--latest=false)
+          notes="\`@automagik/acp-dsh\`, \`@automagik/bots-dsh\`, \`@automagik/locale-pt-br-dsh\`, \`@automagik/welcome-dsh\` for DeepSeek Harness, and the Automagik desktop app. Install the plugins from the [Automagik market](https://github.com/automagik-dev/dsh-marketplace) or from an Omni's own market; \`plugins.json\` lists each tarball's integrity. The desktop builds follow when they are done."
+          [[ "${KIND}" == "herdr" ]] && notes="The Automagik Herdr pack alone (no plugins, no desktop build)."
+          [[ "${HERDR}" == "yes" ]] && notes="${notes} Automagik Herdr: \`automagik-herdr-pack-${VERSION}.tgz\` (its sha256 in \`.sha256\`); install with \`curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash\`, or run \`automagik-herdr update\`."
           gh release create "v${VERSION}" release/* "${flags[@]}" \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
             --title "Automagik ${VERSION%.0}" \
-            --notes "\`@automagik/acp-dsh\`, \`@automagik/bots-dsh\`, \`@automagik/locale-pt-br-dsh\`, \`@automagik/welcome-dsh\` for DeepSeek Harness, and the Automagik desktop app. Install the plugins from the [Automagik market](https://github.com/automagik-dev/dsh-marketplace) or from an Omni's own market; \`plugins.json\` lists each tarball's integrity. The desktop builds follow when they are done."
+            --notes "${notes}"
 
+      - name: Sign and post the herdr lane
+        if: steps.cut.outputs.version != '' && steps.lane.outputs.herdr == 'yes'
+        env:
+          VERSION: ${{ steps.cut.outputs.version }}
+          SHA: ${{ steps.cut.outputs.sha }}
+          HERDR_PACK_KEY: ${{ vars.HERDR_PACK_SIGNER == 'HERDR_PACK_KEY_NEXT' && secrets.HERDR_PACK_KEY_NEXT || secrets.HERDR_PACK_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p herdr-lane
+          bun scripts/herdr-lane.ts manifest "release/automagik-herdr-pack-${VERSION}.tgz" "${VERSION}" "${SHA}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > herdr-lane/pack.json
+          bun scripts/herdr-lane.ts sign herdr-lane/pack.json > herdr-lane/pack.json.sig
+          bun scripts/herdr-lane.ts verify herdr-lane/pack.json herdr-lane/pack.json.sig
+          if ! gh release view herdr-lane --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create herdr-lane --repo "${GITHUB_REPOSITORY}" --target dev --prerelease --latest=false \
+              --title "Automagik Herdr pack lane" \
+              --notes "pack.json names the newest Automagik Herdr pack (its tarball stays on its own versioned release); pack.json.sig is its ed25519 signature, checked against herdr/mods/am-sidebar/pack-keys.json. See scripts/herdr-lane.ts."
+          fi
+          # Never back: a re-run of an older release's run must not re-post an older pointer over a
+          # newer one. A posted pointer that does not verify is replaced.
+          mkdir -p herdr-lane/posted
+          gh release download herdr-lane --repo "${GITHUB_REPOSITORY}" -p pack.json -p pack.json.sig -D herdr-lane/posted --clobber 2>/dev/null || true
+          bun scripts/herdr-lane.ts posted herdr-lane/pack.json herdr-lane/posted
+          # --clobber replaces each asset in turn, so a reader may briefly see a pointer and a
+          # signature that do not match, or neither: both fail closed (refused, or no update yet).
+          gh release upload herdr-lane herdr-lane/pack.json.sig herdr-lane/pack.json --clobber --repo "${GITHUB_REPOSITORY}"
+
+      # A herdr patch packs no plugins: the lane stays on the release that last did.
       - name: Sign and post the plugin lane
-        if: steps.cut.outputs.version != ''
+        if: steps.cut.outputs.version != '' && steps.lane.outputs.kind != 'herdr'
         env:
           VERSION: ${{ steps.cut.outputs.version }}
           KIND: ${{ steps.lane.outputs.kind }}
@@ -257,8 +359,8 @@ jobs:
   desktop:
     name: Desktop
     needs: cut
-    # A push carries no inputs, and a missing input compares equal to false. A plugin patch has no app.
-    if: needs.cut.outputs.version != '' && needs.cut.outputs.lane != 'plugins' && (github.event_name == 'push' || inputs.desktop != false)
+    # A push carries no inputs, and a missing input compares equal to false. A plugin or herdr patch has no app.
+    if: needs.cut.outputs.version != '' && needs.cut.outputs.lane != 'plugins' && needs.cut.outputs.lane != 'herdr' && (github.event_name == 'push' || inputs.desktop != false)
     uses: ./.github/workflows/desktop-build.yml
     permissions:
       contents: write
@@ -282,6 +384,7 @@ jobs:
     env:
       VERSION: ${{ needs.cut.outputs.version }}
       SHA: ${{ needs.cut.outputs.sha }}
+      LANE: ${{ needs.cut.outputs.lane }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -293,7 +396,9 @@ jobs:
         with:
           bun-version: 1.4.2
 
+      # A herdr patch moved no plugin: the index stays on the release that last packed them.
       - name: Pin the index to the release
+        if: env.LANE != 'herdr'
         run: |
           set -euo pipefail
           bun install --frozen-lockfile --ignore-scripts
