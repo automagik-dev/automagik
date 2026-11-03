@@ -16,7 +16,8 @@ The app is **Automagik** wherever a person sees it: the bundle and its menu bar,
 | `~/.automagik` (`src/dsh.js` `automagikHome`, `$AUTOMAGIK_HOME`) | the preload, the builds the CLIs download, and the app's own `desktop/` folder (below). |
 | Electron's userData `…/Automagik` (`src/identity.js` `dataPathsOf`) | `main.js` pins it before anything reads it: the page's storage, each Bot browser's partition and the single-instance lock. |
 | Linux: executable `automagik`, desktop entry id `automagik.desktop` (`desktopName`), deb package `automagik` | the window's app id and WM class, `/usr/bin/automagik` and the AppArmor profile match, and a new deb upgrades the installed package. It installs to `/opt/Automagik`. |
-| the `omni://` scheme, the `omni-desktop` client id, `window.omniDesktop` | Omni's protocol names: what Omni's pages, its API and the plugins use. |
+| the `automagik://` scheme (`src/deeplink.js`) | Automagik's own links (RFC 0013): `automagik://open`, which Herdr's Work button opens. They only bring the app forward. |
+| the `omni://` scheme, the `omni-desktop` client id, `window.omniDesktop` | Omni's protocol names: what Omni's pages, its API and the plugins use. `omni://` is also `automagik://`'s alias; only it connects (`omni://connect`). |
 
 There are no keychain items to carry: Electron keeps its cookies unencrypted (the cookie-encryption fuse is off), the app uses no `safeStorage`, and its credentials are the files above.
 

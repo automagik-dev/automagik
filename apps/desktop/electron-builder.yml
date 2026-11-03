@@ -25,10 +25,15 @@ extraResources:
   - from: build/versions.json
     to: versions.json
 asar: true
-# omni:// links (src/deeplink.js): an Omni's "Open in the app" links open this app; the scheme
-# is Omni's, and its pages make the links. macOS takes the scheme from Info.plist
-# (CFBundleURLTypes); Linux from the desktop entry's MimeType.
+# automagik:// and omni:// links (src/deeplink.js) open this app: automagik:// is Automagik's
+# own (Herdr's Work button, RFC 0013), omni:// stays as its alias, and an Omni's "Open in the
+# app" links use it. macOS takes the schemes from Info.plist (CFBundleURLTypes); Linux from the
+# desktop entry's MimeType, which electron-builder writes for each scheme here. NSIS does not
+# read this list: assets/installer.nsh registers the same schemes on Windows.
 protocols:
+  - name: Automagik
+    schemes:
+      - automagik
   - name: Omni
     schemes:
       - omni
@@ -42,8 +47,6 @@ linux:
     - deb
   category: Network
   executableName: automagik
-  mimeTypes:
-    - x-scheme-handler/omni
   icon: assets/icon.png
   syncDesktopName: true
   synopsis: Automagik on your desktop
@@ -59,6 +62,10 @@ deb:
   packageName: automagik
   packageCategory: net
   appArmorProfile: scripts/apparmor-profile.tpl
+# Windows has no build yet (#191's fixes come first). When it does, its installer registers the
+# links' schemes, which electron-builder's NSIS leaves out of `protocols`.
+nsis:
+  include: assets/installer.nsh
 mac:
   # The zip is what an installed app updates from (src/update.js); the dmg is for a first install.
   target:
