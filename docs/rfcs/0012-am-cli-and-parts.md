@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (owner's answers in: D34) |
+| Status | Draft (owner's answers in: D35) |
 | Milestone | not scheduled |
 | Lanes | am (proposed, question 11), herdr (3.N.P), plugin (3.N.P), pocket (3.N.P), desktop (3.N) |
 | Created | 2026-11-03 |
@@ -12,7 +12,7 @@
 Automagik gets one command, `am`, for everything it installs. Bot verbs stay at the top level,
 as in `automagik-herdr` today, and every other part gets its own noun group (D22). `am` is its
 own small signed part, attached to every Automagik release, so every machine has it, work-only
-ones included, and it updates apart from the herdr pack (D34). Every part (a DSH plugin, a herdr
+ones included, and it updates apart from the herdr pack (D35). Every part (a DSH plugin, a herdr
 mod, the pack, the layout, herdr-app, usagemeter, the desktop app) carries a `part.json` and can
 be installed, checked, rolled back and uninstalled on its own, as a set (`code`, `work`) or all
 together, on macOS, Linux and Windows (D27, D28). Parts depend on versioned capabilities, not on
@@ -29,7 +29,7 @@ installed on a machine, whether it works, and how to undo it. RFC 0013's switch 
 answer ("Set up", "Update due"), and so does fleet work over Herdr's machines.
 
 Sources: `pocket-into-automagik-monorepo.md` ("One `am` CLI", "Parts", the eight rules revised
-after t22n's review); `bot-system-unification.md` (D22, D25, D27, D28, and D34's RFC 0012 entry);
+after t22n's review); `bot-system-unification.md` (D22, D25, D27, D28, and D35);
 `herdr-parts-questions-t2zx.md` and `herdr-parts-for-rfc-0012.md` (t2zx, branch
 `feat/herdr-parts`); RFCs 0010, 0011, 0013 and 0014.
 
@@ -43,11 +43,11 @@ Decided (the log):
   installed from herdrdev's feed and kept latest (RFC 0013, Decided 1 to 3).
 - The handoff's eight rules, and t259 and t22n's rules (a) and (b) below. Rules (a) and (b)
   settle t2zx's questions 1 and 2.
-- D34 (RFC 0012 entry, Felipe 2026-11-03): `am` is its own small signed part, attached to every
-  Automagik release, out of the herdr pack, so work-only machines get it. `--trust` is accepted
-  only through a dialog in the Automagik window or a prompt outside any Herdr terminal; signed
-  release parts need no confirmation. herdr-app is a part, and all three OSes are prerequisites
-  of "Set up".
+- D35 (Felipe 2026-11-03; first logged as a second D34): `am` is its own small signed part,
+  attached to every Automagik release, out of the herdr pack, so work-only machines get it.
+  `--trust` is accepted only through a dialog in the Automagik window or a prompt outside any
+  Herdr terminal; signed release parts need no confirmation. herdr-app is a part, and all three
+  OSes are prerequisites of "Set up".
 
 Proposed here: everything else, including t2zx's defaults 3 to 5 as built on
 `feat/herdr-parts` (t22n accepted them over hc; the log does not record them). Where a sentence
@@ -76,7 +76,7 @@ briefing hook in 62 settings files, Bots' instructions, workers' briefs and Brai
 `whois --json` depend on it. The alias is retired only after a bridge cycle, by its own RFC
 change.
 
-### The am part (D34)
+### The am part (D35)
 
 `am` is a part like any other, with one difference: every release carries it.
 
@@ -136,7 +136,7 @@ release (the one-version rule); a manifest with `version` is refused.
 
 ### The herdr parts
 
-As built on `feat/herdr-parts` (t2zx, `6b5dbba5`, WIP), with the changes D34 and the review
+As built on `feat/herdr-parts` (t2zx, `6b5dbba5`, WIP), with the changes D35 and the review
 need. All are `targets: local`, `set: ["code"]`, artifact `automagik-herdr-pack-{version}.tgz`.
 
 - One `herdr-mod` part per pack mod: `herdr.am-sidebar`, `herdr.am-automations`,
@@ -165,7 +165,8 @@ need. All are `targets: local`, `set: ["code"]`, artifact `automagik-herdr-pack-
 - `writes` (`~/` is the home, `**/` any project): `herdr.pack` the marker and `.prev/**` (in
   `$HERDR_APP_HOME/automagik-herdr/`); am-mods `$HERDR_APP_HOME/keys.json#global.cmd-shift-m`;
   `herdr.layout` `$HERDR_APP_HOME/layouts/automagik.json`. `automagik.am` takes the briefing's:
-  `briefing.mjs` and `hooks-journal.json` there, and `**/.claude/settings.local.json#hooks.UserPromptSubmit`,
+  `briefing.mjs` and `hooks-journal.json` there, and
+  `**/.claude/settings.local.json#hooks.UserPromptSubmit`,
   plus its links in `~/.local/bin`. Proposed: a `writes` path may start with
   `$HERDR_APP_HOME/`, which am resolves (else `~/.config/herdr-app`). Code gap: the gate accepts
   only `~/` and `**/`, and the manifests spell `~/.config/herdr-app/` out.
@@ -235,9 +236,9 @@ forks have none, so a frozen contract is a capability major. `bots.registry@1` i
 | Source | How | Checked against | Recorded |
 |---|---|---|---|
 | Release (default) | `am install <id>` | the lane's signed pointer | `signed: true`, lane, sequence |
-| Release, named version | `am install <id> --version <v>`, confirmed (D34) | that release's own `.sha256` | `signed: false`, no sequence |
-| Path | `am install ./path`, confirmed (D34) | nothing; proposed: a hash of the tree at install | `signed: false`, the path |
-| Git | `am install git+<url>@<sha>`, confirmed (D34) | the commit (proposed: 40 hex characters only) | `signed: false`, url and sha |
+| Release, named version | `am install <id> --version <v>`, confirmed (D35) | that release's own `.sha256` | `signed: false`, no sequence |
+| Path | `am install ./path`, confirmed (D35) | nothing; proposed: a hash of the tree at install | `signed: false`, the path |
+| Git | `am install git+<url>@<sha>`, confirmed (D35) | the commit (proposed: 40 hex characters only) | `signed: false`, url and sha |
 
 Release parts are verified the way `herdr/install.sh` and the pack's updater already verify
 (RFC 0011): the pointer, its signature against am's trust anchor, then the artifact against the
@@ -252,7 +253,7 @@ A named version is checked only against the `.sha256` beside it, which comes fro
 download: integrity, not who published it. So am records it as unsigned and asks for the same
 confirmation as a path or git source.
 
-**Confirmation (D34).** A signed release part needs none. Anything recorded `signed: false`
+**Confirmation (D35).** A signed release part needs none. Anything recorded `signed: false`
 needs the person's yes, given in one of two places: a dialog in the Automagik window, or a
 prompt am shows when it runs outside any Herdr terminal. Inside a Herdr terminal (a Bot's pane
 included), am asks the Automagik window and waits; with no window, it refuses. The yes is
@@ -358,7 +359,7 @@ on one machine. Proposed:
 - When the far side has no am (`hc exec` reports the command missing), am offers to bootstrap
   it there with the same one-liner as question 2, which verifies `am-lane` itself, and goes on
   only on the person's yes.
-- An unsigned source over `--machine`: the person confirms here (D34). am sends the far side the
+- An unsigned source over `--machine`: the person confirms here (D35). am sends the far side the
   source and the pinned commit, never a "trusted" flag. The far am fetches that exact commit,
   refuses it unless the commit id matches, and records `signed: false`, confirmed on this
   machine. A path source is refused with `--machine` (whose path is it?).
@@ -448,7 +449,7 @@ feed. For those, `am update` asks the owner (the desktop app) and reports.
   as the same user can already run any code it likes; am's checks stop am from being the easy
   path for an injected or mistaken install, and make what was installed visible. They are not a
   wall against code already running as the person.
-- **Unsigned sources** (path, git, a named version). They need the person's yes (D34): the
+- **Unsigned sources** (path, git, a named version). They need the person's yes (D35): the
   Automagik window's dialog, or a prompt outside any Herdr terminal. A TTY alone proves nothing,
   since Herdr panes are real terminals. am tells a Herdr terminal by its environment and parent
   processes; same-user code can fake those, which is the limit above. The window's dialog is the
@@ -545,7 +546,7 @@ check passes on all three OSes.
 
 Numbers are kept from the first draft; 1, 3, 7 and 10 are settled.
 
-1. *Settled (D34):* am is its own signed part on every release.
+1. *Settled (D35):* am is its own signed part on every release.
 2. **How does am first arrive, and on which Node?** Recommended: two bootstraps, both verifying
    `am-lane` against keys they carry: a one-liner (as `herdr/install.sh` is for the pack), and
    the desktop app's "Set up" (RFC 0013 delivery 7). Node: the pack's floor (22.7) until RFC
@@ -559,7 +560,7 @@ Numbers are kept from the first draft; 1, 3, 7 and 10 are settled.
    decides).
 6. **A per-member hash.** Members record the tarball's sha256. Recommended: keep it; the pack is
    one unit, and a new pointer field buys nothing.
-7. *Settled (D34):* the Automagik window's dialog or a prompt outside any Herdr terminal.
+7. *Settled (D35):* the Automagik window's dialog or a prompt outside any Herdr terminal.
 8. **Path sources over `--machine`.** Recommended: refused; a git source works instead.
 9. **parts.json's machine key.** Recommended: hc's machine name, so it matches `--machine` and
    Herdr's spaces.
@@ -572,7 +573,7 @@ Numbers are kept from the first draft; 1, 3, 7 and 10 are settled.
 ## Links
 
 - Handoffs: `~/.config/herdr-app/handoffs/pocket-into-automagik-monorepo.md` ("One `am` CLI",
-  "Parts"); `bot-system-unification.md` (D22, D25, D27, D28, D33, D34);
+  "Parts"); `bot-system-unification.md` (D22, D25, D27, D28, D33, D35);
   `herdr-parts-questions-t2zx.md` and `herdr-parts-for-rfc-0012.md` (t2zx).
 - RFCs: [0010](0010-desktop-sandbox.md) sandbox, [0011](0011-monorepo-parts-and-releases.md)
   parts and releases, [0013](0013-work-code-switch.md) the switch (delivery 7),
