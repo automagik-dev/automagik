@@ -11,8 +11,11 @@
 //   ~/.local/bin/automagik-herdr   -> parts/automagik.am/current/bin/automagik-herdr, taken only
 //                     when it is missing or points into the pack (the pack leaves a link that
 //                     points elsewhere alone); handed back to the pack's on uninstall
-//   <HERDR_APP_HOME>/automagik-herdr/briefing.mjs   am's copy of the pack's briefing entry, the
-//                     same bytes the pack writes (it tries am's briefing first, then the sidebar's)
+//   <HERDR_APP_HOME>/automagik-herdr/briefing.mjs   a link to parts/automagik.am/current/
+//                     briefingEntry.mjs (it tries am's briefing first, then the sidebar's). A link,
+//                     not a copy: the pack's guard lets the sidebar switch off only once the entry
+//                     point resolves into am's parts store, and the pack leaves such a link alone.
+//                     It replaces the pack's plain copy; anyone else's link is left alone.
 //
 // am-lane is read from https://github.com/automagik-dev/automagik/releases/download/am-lane/. For
 // tests only: AM_RELEASE_URL, a file:// folder (files at <url>/download/<tag>/<file>), and with a
@@ -196,19 +199,43 @@ export function linkCommands(env = process.env) {
   return [one("am", ours), one("automagik-herdr", (to) => ours(to) || pack.has(to))];
 }
 
-/** Writes am's copy of the briefing entry to <app home>/automagik-herdr/briefing.mjs, when Herdr's app home exists. */
+/** The briefing hooks' entry point under Herdr's app home, and what am links it to. */
+const entryOf = (env) => ({ path: join(appHomeOf(env), "automagik-herdr", "briefing.mjs"), want: join(storeOf(env), "current", "briefingEntry.mjs") });
+
+/**
+ * Links <app home>/automagik-herdr/briefing.mjs to am's copy of the entry (through `current`, so an
+ * update or rollback needs no relink), when Herdr's app home exists. The pack's plain copy is
+ * replaced; a link that is not am's, or a folder, is left alone and reported.
+ */
 export function writeEntry(env = process.env) {
   const appHome = appHomeOf(env);
   try { if (!statSync(appHome).isDirectory()) return { state: "no-app-home" }; } catch { return { state: "no-app-home" }; }
-  const text = readFileSync(join(storeOf(env), "current", "briefingEntry.mjs"));
-  const dir = join(appHome, "automagik-herdr");
-  const path = join(dir, "briefing.mjs");
-  try { if (readFileSync(path).equals(text)) return { path, state: "same" }; } catch { /* missing */ }
+  const { path, want } = entryOf(env);
+  const dir = dirname(path);
+  if (linkOf(dir) !== null) return { path, state: "left", detail: `${dir} is a link` };
+  const to = linkOf(path);
+  if (to !== null && absolute(path, to) === want) return { path, state: "linked" };
+  if (to !== null && !inside(absolute(path, to), storeOf(env))) return { path, state: "left", detail: `it points at ${to}` };
+  if (to === null && exists(path) && !lstatSync(path).isFile()) return { path, state: "left", detail: "not a file" };
+  const replaced = to === null && exists(path);
   mkdirSync(dir, { recursive: true });
   const tmp = join(dir, `.briefing-${randomBytes(4).toString("hex")}.mjs`);
-  writeFileSync(tmp, text);
+  symlinkSync(want, tmp);
   renameSync(tmp, path);
-  return { path, state: "written" };
+  return { path, state: replaced ? "linked (replaced the pack's copy)" : "linked" };
+}
+
+/** Hands the entry point back: the installed pack's own copy in place of am's link, else no file. */
+function unlinkEntry(env) {
+  const { path } = entryOf(env);
+  const to = linkOf(path);
+  if (to === null || !inside(absolute(path, to), storeOf(env))) return null;
+  const source = ["am-sidebar", "spaces-agents"].map((m) => join(appHomeOf(env), "mods", m, "briefingEntry.mjs")).find((p) => existsSync(p));
+  if (!source) { rmSync(path, { force: true }); return { link: path, state: "removed" }; }
+  const tmp = join(dirname(path), `.briefing-${randomBytes(4).toString("hex")}.mjs`);
+  writeFileSync(tmp, readFileSync(source));
+  renameSync(tmp, path);
+  return { link: path, state: "handed back", detail: source };
 }
 
 /**
@@ -234,6 +261,8 @@ export function uninstallSelf({ env = process.env, purge = false } = {}) {
       lines.push({ link, state: "removed" });
     }
   }
+  const entry = unlinkEntry(env);
+  if (entry) lines.push(entry);
   if (purge) rmSync(store, { recursive: true, force: true });
   return { links: lines, purged: purge };
 }
@@ -330,10 +359,11 @@ export function doctorSelf({ env = process.env } = {}) {
       `am self install (a ${name} that is not am's is left alone: remove it first)`));
   }
   if (existsSync(appHomeOf(env))) {
-    const path = join(appHomeOf(env), "automagik-herdr", "briefing.mjs");
-    const text = readText(path);
-    const ok = text !== null && existsSync(join(current, "briefingEntry.mjs")) && text === readText(join(current, "briefingEntry.mjs"));
-    lines.push(line("briefing entry", ok, ok ? path : text === null ? `${path} is missing` : `${path} is not am's copy`, "am self install"));
+    const { path, want } = entryOf(env);
+    const to = linkOf(path);
+    const ok = to !== null && absolute(path, to) === want && existsSync(want);
+    lines.push(line("briefing entry", ok, ok ? `${path} -> ${to}` : to ? `${path} points at ${to}` : exists(path) ? `${path} is the pack's copy, not am's link` : `${path} is missing`,
+      "am self install"));
   }
   const keys = ownKeys(existsSync(current) ? current : OWN_DIR);
   // Not a fault of this machine: until a release ships am's key, am only cannot update itself.

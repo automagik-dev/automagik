@@ -537,12 +537,23 @@ export const sidebarOf = (modsDir) => SIDEBARS.find((m) => existsSync(join(modsD
  * A link there, or a link for its folder, is the person's: an error, nothing written.
  * Returns true when it wrote.
  */
+/** Whether `path` resolves into am's parts store ($AM_HOME, else $AUTOMAGIK_HOME, else ~/.automagik; parts.mjs amStoreOf). */
+function intoAmStore(path, env = process.env) {
+  const home = env.AM_HOME || env.AUTOMAGIK_HOME || join(env.HOME || homedir(), ".automagik");
+  try {
+    const store = realpathSync(join(home, "parts"));
+    return realpathSync(path).startsWith(`${store}/`);
+  } catch { return false; }
+}
+
 export function placeEntry(appHome, sidebar) {
   const body = readFileSync(join(appHome, "mods", sidebar, ENTRY_SOURCE));
   const path = stableBriefingPath(appHome);
   if (isLink(dirname(path))) throw new Error(`${dirname(path)} is a link: the hook's entry point was not placed`);
   mkdirSync(dirname(path), { recursive: true });
   const st = lstat(path);
+  // The am part's link (RFC 0012): am owns the entry point once it has placed one; the pack leaves it.
+  if (st?.isSymbolicLink() && intoAmStore(path)) return false;
   if (st && (st.isSymbolicLink() || !st.isFile())) throw new Error(`${path} is a link or not a file: left as it is`);
   if (st && readFileSync(path).equals(body)) return false;
   writeAtomic(path, body, 0o644);

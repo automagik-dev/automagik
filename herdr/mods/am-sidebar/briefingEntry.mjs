@@ -1,6 +1,7 @@
 // The briefing hook's fixed entry point (Group 6b). The pack copies this file to
 // <app home>/automagik-herdr/briefing.mjs, outside mods/, and every Claude bot's and worker's
-// hook runs that copy; the am part (RFC 0012) writes the same bytes there from its own copy. It
+// hook runs that copy; the am part (RFC 0012) puts a link there to its own copy instead, so the
+// app home is the folder the hook named (argv[1]), never this file's real place. It
 // runs the first briefing.mjs it can: am's (<AM_HOME, else ~/.automagik>/parts/automagik.am/
 // current/), then the installed sidebar folder's (mods/am-sidebar, else mods/spaces-agents), so a
 // hook survives the sidebar being switched off, the folder's rename and a rollback across it. A
@@ -16,11 +17,12 @@
 
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const appHome = dirname(dirname(fileURLToPath(import.meta.url)));
+// node resolves a link to its target for import.meta.url, but argv[1] keeps the path the hook ran.
+const appHome = dirname(dirname(process.argv[1] ? resolve(process.argv[1]) : fileURLToPath(import.meta.url)));
 const amHome = process.env.AM_HOME || join(homedir(), ".automagik");
 const copies = [
   { path: join(amHome, "parts", "automagik.am", "current", "briefing.mjs"), am: true },

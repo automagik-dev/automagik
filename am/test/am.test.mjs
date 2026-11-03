@@ -177,6 +177,41 @@ test("refused, with nothing installed: a tarball that is not the signed one, an 
   assert.equal(existsSync(join(s.store, "current")), false);
 });
 
+test("the briefing entry point becomes a link into am's parts store: the pack's guard lifts, its placement leaves it", async (t) => {
+  const s = scratch(t);
+  const { contextOf, sidebarCarries } = await import(join(PACK, "parts.mjs"));
+  const { placeEntry } = await import(join(PACK, "migrateHooks.mjs"));
+  // A machine with the pack: the sidebar, its command link and its plain copy of the entry point.
+  const sidebar = join(s.app, "mods", "am-sidebar");
+  cpSync(PACK, sidebar, { recursive: true });
+  const bin = join(s.home, ".local", "bin");
+  mkdirSync(bin, { recursive: true });
+  symlinkSync(join(sidebar, "bin", "automagik-herdr"), join(bin, "automagik-herdr"));
+  const entry = join(s.app, "automagik-herdr", "briefing.mjs");
+  mkdirSync(dirname(entry), { recursive: true });
+  cpSync(join(sidebar, "briefingEntry.mjs"), entry);
+  const guard = () => sidebarCarries(contextOf({ env: s.env }));
+  assert.equal(guard().length, 2, "before am: the command and every bot's briefing still need the sidebar");
+
+  assert.equal(s.am("self", "install").status, 0);
+  assert.ok(lstatSync(entry).isSymbolicLink(), "a link, not a copy");
+  assert.equal(readlinkSync(entry), join(s.store, "current", "briefingEntry.mjs"));
+  assert.ok(realpathSync(entry).startsWith(`${join(s.home, ".automagik", "parts")}/`), "it resolves into $AM_HOME/parts/");
+  assert.deepEqual(guard(), [], "the sidebar may switch off now");
+  // The pack's placement (an install, update or rollback) leaves am's link as it is, and quietly.
+  const prev = process.env.HOME;
+  process.env.HOME = s.home;
+  try { assert.equal(placeEntry(s.app, "am-sidebar"), false); } finally { process.env.HOME = prev; }
+  assert.equal(readlinkSync(entry), join(s.store, "current", "briefingEntry.mjs"));
+  assert.equal(s.installed("self", "doctor").status, 0);
+
+  // Uninstalling am hands the pack's own copy back: a plain file again, and the guard holds again.
+  assert.equal(s.installed("self", "uninstall").status, 0);
+  assert.ok(lstatSync(entry).isFile());
+  assert.equal(readFileSync(entry, "utf8"), readFileSync(join(sidebar, "briefingEntry.mjs"), "utf8"));
+  assert.equal(guard().length, 2);
+});
+
 test("links: am takes the pack's automagik-herdr, leaves a foreign one, and hands it back on uninstall", (t) => {
   const s = scratch(t);
   const bin = join(s.home, ".local", "bin");

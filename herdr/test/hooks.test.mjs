@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -349,6 +349,21 @@ test("the entry point runs am's copy first; a missing or broken am copy falls ba
   assert.match(am.stdout, /You are Genie/);
   assert.equal(am.stderr, "");
   assert.match(read(ledgerPath(s.app)), /"session":"s-am"/);
+
+  // The entry point as am places it: a link to am's own copy. Run through the link with no
+  // HERDR_APP_HOME, it still knows its app home from the path the hook named (node resolves the
+  // link for the module itself), so am's briefing runs and the session lands in this app home.
+  const entry = stableBriefingPath(s.app);
+  rmSync(entry);
+  symlinkSync(join(part, "current", "briefingEntry.mjs"), entry);
+  const linked = s.hook(command, { appHome: false, input: JSON.stringify({ session_id: "s-linked" }) });
+  assert.equal(linked.status, 0, linked.stderr);
+  assert.match(linked.stdout, /You are Genie/);
+  assert.equal(linked.stderr, "");
+  assert.match(read(ledgerPath(s.app)), /"session":"s-linked"/);
+  process.env.AM_HOME = join(s.root, ".automagik");
+  try { assert.equal(syncHooks({ modsDir: s.mods }).direction, "forward", "the pack's sync leaves am's link and goes on"); } finally { delete process.env.AM_HOME; }
+  assert.ok(lstatSync(entry).isSymbolicLink());
 
   // A broken am copy (its import throws) never silences the briefing: the sidebar's runs.
   writeFileSync(sidebar, working);
