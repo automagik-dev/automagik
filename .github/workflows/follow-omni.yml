@@ -10,11 +10,16 @@ name: Follow Omni
 # harness, it boots that Omni with dev's plugins (boot-check.yml, the check CI runs), and only
 # when it boots does it move omni.json on dev and cut an Automagik release (release.yml): the
 # bump is pushed with GITHUB_TOKEN, so CI never boots it before installed apps update. An Omni
-# that fails the boot is not followed and the run fails; the next run tries it again.
+# that fails the boot is not followed and the run fails; the next run tries it again. The bump
+# commit is built on exactly the dev commit that booted and pushed without force: when dev
+# moved during the boot, the push is refused, nothing is carried, and the next run boots the
+# new dev. Nothing untested rides along.
 # Downgrades and a different patch series wait for a coordinated harness move.
 #
-# Dispatched with dry_run, it stops after the boot check. omni_version (and omni_commit) put
-# a given Omni through the gate, also one that is not newer; they are only taken with dry_run.
+# Dispatched with dry_run, it boots and builds the bump but only rehearses the push
+# (`git push --dry-run`) and cuts no release. omni_version (and omni_commit) put a given Omni
+# through the gate, also one that is not newer; dev_sha boots and builds on an older dev
+# commit, as if dev moved during the boot. All three are only taken with dry_run.
 
 on:
   schedule:
@@ -22,7 +27,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: Boot the candidate Omni only; push nothing, release nothing
+        description: Boot the candidate and rehearse the push; push nothing, release nothing
         type: boolean
         default: false
       omni_version:
@@ -31,6 +36,10 @@ on:
         default: ''
       omni_commit:
         description: The commit to boot for omni_version (its tag's commit when empty; dry_run only)
+        type: string
+        default: ''
+      dev_sha:
+        description: Boot and build on this dev commit instead of dev's tip, as if dev moved (dry_run only)
         type: string
         default: ''
 
@@ -57,6 +66,7 @@ jobs:
       DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
       WANT_VERSION: ${{ inputs.omni_version }}
       WANT_COMMIT: ${{ inputs.omni_commit }}
+      WANT_DEV: ${{ inputs.dev_sha }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -67,8 +77,12 @@ jobs:
         id: newest
         run: |
           set -euo pipefail
-          if [[ -n "${WANT_VERSION}${WANT_COMMIT}" && "${DRY_RUN}" != true ]]; then
-            echo "::error ::omni_version and omni_commit are only taken with dry_run: a chosen Omni is never carried"
+          if [[ -n "${WANT_VERSION}${WANT_COMMIT}${WANT_DEV}" && "${DRY_RUN}" != true ]]; then
+            echo "::error ::omni_version, omni_commit and dev_sha are only taken with dry_run: a chosen Omni or dev is never carried"
+            exit 1
+          fi
+          if [[ -n "${WANT_DEV}" && ! "${WANT_DEV}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error ::dev_sha '${WANT_DEV}' is not a full commit sha"
             exit 1
           fi
           current=$(node -p "require('./apps/desktop/omni.json').version")
@@ -105,7 +119,7 @@ jobs:
           {
             echo "version=${newest}"
             echo "commit=${commit}"
-            echo "dev=$(git rev-parse HEAD)"
+            echo "dev=${WANT_DEV:-$(git rev-parse HEAD)}"
           } >> "$GITHUB_OUTPUT"
           echo "### Candidate: Omni ${newest} (${commit:0:9}), omni.json is at ${current}$([[ "${DRY_RUN}" == true ]] && echo ', dry run: boot check only')" >> "$GITHUB_STEP_SUMMARY"
 
@@ -122,10 +136,11 @@ jobs:
       omni_commit: ${{ needs.follow.outputs.commit }}
 
   carry:
-    # Only after the candidate booted: a failed boot fails the run here and nothing moves.
+    # Only after the candidate booted: a failed boot fails the run here and nothing moves. The
+    # bump goes on the dev commit that booted, and only a fast-forward of dev is pushed.
     name: Move to it
     needs: [follow, boot]
-    if: needs.follow.outputs.version != '' && !inputs.dry_run
+    if: needs.follow.outputs.version != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -135,13 +150,15 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: dev
+          ref: ${{ needs.follow.outputs.dev }}
 
       - name: Move omni.json and the welcome to it
         id: bump
         env:
           VERSION: ${{ needs.follow.outputs.version }}
           COMMIT: ${{ needs.follow.outputs.commit }}
+          BOOTED: ${{ needs.follow.outputs.dev }}
+          DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
         run: |
           set -euo pipefail
           node -e '
@@ -159,13 +176,32 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -qam "chore(desktop): carry Omni ${VERSION}"
-          git push -q origin HEAD:refs/heads/dev
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          [[ "$(git rev-parse HEAD^)" == "${BOOTED}" ]] || { echo "::error ::the bump is not on the dev commit that booted (${BOOTED})"; exit 1; }
+          rehearse=()
+          [[ "${DRY_RUN}" == true ]] && rehearse=(--dry-run)
+          # No force: dev only fast-forwards from the commit that booted.
+          if git push "${rehearse[@]}" origin HEAD:refs/heads/dev; then
+            if [[ "${DRY_RUN}" == true ]]; then
+              echo "### Dry run: Omni ${VERSION} would fast-forward dev ${BOOTED:0:9} -> $(git rev-parse --short=9 HEAD); not pushed, no release" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+          tip=$(git ls-remote origin refs/heads/dev | cut -f1)
+          if [[ -n "${tip}" && "${tip}" != "${BOOTED}" ]]; then
+            line="dev moved from ${BOOTED:0:9} to ${tip:0:9} while Omni ${VERSION} booted: not carried, no release; retrying next schedule"
+            echo "::notice ::${line}"
+            echo "### ${line}" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "::error ::the push to dev was refused and dev is still at ${BOOTED:0:9}"
+          exit 1
 
   release:
     name: Release
     needs: carry
-    if: needs.carry.outputs.sha != ''
+    if: needs.carry.outputs.sha != '' && !inputs.dry_run
     uses: ./.github/workflows/release.yml
     permissions:
       contents: write
