@@ -314,15 +314,33 @@ export async function useSaved(options) {
   return { label: placed.label, fingerprint: placed.fingerprint, name, resaved };
 }
 
+const IN_USE_RESTORE = "a restore here is undone by the next Use, because Claude still holds the login in use — save that login under its own name first";
+
+/**
+ * What a saved row offers for its previous copy: nothing when there is none; the Restore previous
+ * action on a row that is not in use; and on the row in use only a note. There, the client still
+ * holds the login in use, so the next Use's automatic re-save would copy it back over the restored
+ * copy (pushing that into the previous slot again): the restore would flip back.
+ */
+export function restoreOffer({ inUse = false, previousAt = null } = {}) {
+  if (!previousAt) return null;
+  if (inUse) return { note: `previous copy kept — ${IN_USE_RESTORE}` };
+  return { action: "restore" };
+}
+
 /**
  * "Restore previous": the copy the last re-save replaced goes back into the saved login, and the
- * copy it replaces becomes the previous one — a swap, so a restore can itself be undone. The
+ * copy it replaces becomes the previous one — a swap, so a restore can itself be undone. It is one
+ * level deep: the next re-save into that name replaces the previous copy. Refused on the login in
+ * use (`current`). The
  * previous copy is written first: if the second write fails, both slots hold it and nothing that
  * was asked for is lost.
  */
 export async function restorePrevious(options) {
   const io = ioOf(options);
   const name = checked(options.name);
+  // `current` is the record's saved login in use: restoring that one would flip back (see restoreOffer).
+  if (options.current && checked(options.current) === name) throw new Error(`${name} is in use: ${IN_USE_RESTORE}; nothing was changed`);
   const prev = await readLogin(previousSource(name, io), io);
   if (!prev) throw new Error(`there is no previous copy of ${name}; nothing was changed`);
   const now = await readLogin(savedSource(name, io), io).catch(() => null);

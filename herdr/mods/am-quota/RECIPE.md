@@ -111,7 +111,13 @@ work as usual.
 - **A re-save never loses a copy.** When a re-save replaces a copy holding another refresh token,
   the replaced one is kept first as `am-quota saved: <name> (previous)` (on Linux
   `saved/previous/<name>.json`). The row then shows **Restore previous**, which swaps the two back
-  — so a re-save into the wrong name (see below) is undone with one click.
+  — so a re-save into the wrong name (see below) is undone with one click. **It is one level deep:
+  Restore previous works only until the next re-save into that name**, which replaces the previous
+  copy with the one it overwrites. Restore soon, before using or re-saving that name again.
+- **Not on the row in use.** There the panel shows a note instead of Restore previous: Claude still
+  holds the login in use, so the next Use would re-save it over the restored copy and the restore
+  would flip back. Save the login in use under its own name first; the row is then no longer in
+  use, and Restore previous appears.
 - **Forget** removes the saved item and its previous copy (and proves them gone), or the files, and
   then its line in the index. The login in use is not changed.
 - If the app's environment cannot be read, the panel does not know whether a `CLAUDE_CONFIG_DIR`

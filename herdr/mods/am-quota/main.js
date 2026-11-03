@@ -17,7 +17,7 @@ import { credentialTarget, keychainReadScript, keychainService, tokenIdentity, T
 import { install } from "./switch.js";
 import { claim, release } from "./lock.js";
 import { payloadDir, sweepScript } from "./write.js";
-import { forgetSaved, nameProblem, readIndex, resaveActive, restorePrevious, saveLogin, useSaved } from "./saved.js";
+import { forgetSaved, nameProblem, readIndex, resaveActive, restoreOffer, restorePrevious, saveLogin, useSaved } from "./saved.js";
 
 const POLL = 60000;
 /** How often the installed credential's identity is re-read. It is a token-bearing item; the
@@ -380,7 +380,7 @@ export default class AmQuota extends View {
   /** Puts back the copy the last re-save of `name` replaced (a swap, so it can be undone). */
   restore(name, cx) {
     this.savedWrite(cx, `restoring the previous copy of ${name}…`, async () => {
-      await restorePrevious({ ...this.io(), name });
+      await restorePrevious({ ...this.io(), name, current: this.active.claude?.saved ?? null });
       return `${name}: the previous copy is back (the one it replaced is now the previous); the login in use was not changed`;
     });
   }
@@ -429,7 +429,8 @@ export default class AmQuota extends View {
     nameLine.child(button(`saved-forget-${slug(name)}`, this.armed === forgetKey ? "Forget?" : "Forget", (_e, cx) => {
       if (this.armedOrArm(forgetKey, cx)) this.forget(name, cx);
     }, this.armed === forgetKey));
-    if (meta.previousAt) {
+    const offer = restoreOffer({ inUse, previousAt: meta.previousAt });
+    if (offer?.action === "restore") {
       nameLine.child(button(`saved-restore-${slug(name)}`, "Restore previous", (_e, cx) => this.restore(name, cx)));
     }
     const who = [meta.email, meta.org].filter(Boolean).join(" · ") || (meta.plan ? `${meta.plan} plan` : "Claude login");
@@ -438,7 +439,9 @@ export default class AmQuota extends View {
       .child(div().child(`saved ${ago(meta.savedAt)}`));
     const row = v_flex().id(`saved-${slug(name)}`).mx(8).px(8).py(6).gap(3).rounded(7);
     if (inUse) row.bg(t.selected); else row.hover((s) => s.bg(t.hover));
-    return row.child(nameLine).child(facts);
+    row.child(nameLine).child(facts);
+    if (offer?.note) row.child(div().text_size(10).text_color(t.dim).child(offer.note));
+    return row;
   }
 
   savedBlock(t) {

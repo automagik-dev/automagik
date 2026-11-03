@@ -146,7 +146,10 @@ Rules:
   folder `0700`); if that write fails, nothing is replaced. The space in the service and the separate
   folder keep any saved name from reaching either. The row then offers **Restore previous**, a swap
   (the copy it replaces becomes the previous one), so a restore can itself be undone; it never
-  touches the login in use. Forget removes both copies;
+  touches the login in use. One level deep: the next re-save into that name replaces the previous
+  copy. It is not offered (and `restorePrevious` refuses) on the saved login in use, whose copy the
+  next Use re-saves from the client — the restore would flip back (`restoreOffer`). Forget removes
+  both copies;
 - **the record's write is checked.** A failed `active.json` write is shown, not swallowed: a stale
   record points the next automatic re-save at the wrong name;
 - **an unknown environment refuses.** If the app's environment cannot be read, `CLAUDE_CONFIG_DIR`
