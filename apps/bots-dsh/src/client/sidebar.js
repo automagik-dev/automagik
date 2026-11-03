@@ -14,6 +14,7 @@ import { showsDshRow } from './dsh-offer.js'
 import { badges, botChildren, nav, useEntries } from './extend.js'
 import { agentRowSessions, approvalFor, runningTasksOf, taskState, waitsForUser } from './task-card.js'
 import { useApproval } from './approvals.js'
+import { WorkCodeSwitch } from './work-code-switch.js'
 
 // -------------------------------------------------------------------------
 // Sidebar
@@ -391,6 +392,7 @@ export function TeamSidebar(props) {
   return h('div', { className: wide ? 'bt-side' : 'bt-side bt-rail', onKeyDown: typeToSearch },
     wide ? h('div', { className: 'bt-side-top' },
       h('span', { className: 'bt-brand' }, h(Lockup, { height: 27 })),
+      h(WorkCodeSwitch, { roster, useSessions }),
       h(UpdateButton, { useUpdate: props.useUpdate, actions }),
       h('button', { type: 'button', className: 'bt-round', 'aria-label': t('Search'), title: t('Search'), onClick: () => actions.openPalette() }, h(SearchIcon)),
       h('button', { type: 'button', className: 'bt-round', 'aria-label': t('New…'), title: t('New…'), onClick: () => actions.openNewChat('new') }, h(PlusIcon)),

@@ -27,6 +27,7 @@ import { VOICE_BUNDLE } from './speech.js'
 import { sameVersion } from './dsh-offer.js'
 import { QuestionCard, QuestionDock } from './questions.js'
 import { DesktopUpdate, DESKTOP_UPDATE_CSS } from './desktop-update.js'
+import { WORK_CODE_SWITCH_CSS } from './work-code-switch.js'
 import { PRIVACY_CSS } from './privacy.js'
 import { PET_CSS } from './pet.js'
 import { CHARACTER_SELECT_CSS } from './character-select.js'
@@ -898,6 +899,7 @@ export function apply(ctx) {
     () => installCompiledStyles(USER_MESSAGE_CSS, 'user-messages'),
     () => installCompiledStyles(TASK_CSS, 'tasks'),
     () => installCompiledStyles(DESKTOP_UPDATE_CSS, 'desktop-update'),
+    () => installCompiledStyles(WORK_CODE_SWITCH_CSS, 'work-code-switch'),
     () => installCompiledStyles(PRIVACY_CSS, 'privacy'),
     () => installCompiledStyles(PET_CSS, 'pet'),
     () => installCompiledStyles(CHARACTER_SELECT_CSS, 'character-select'),
