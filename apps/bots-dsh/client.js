@@ -1365,6 +1365,23 @@ var ZH = {
   "Restart to update to {version}": "重启以更新到 {version}",
   "Installing the update…": "正在安装更新…",
   "Update check failed · Retry": "检查更新失败 · 重试",
+  // The plugins the app's lane updates, by name (desktop-update.js pluginPill, about.js).
+  "Bot team": "Bot 团队",
+  "Welcome": "欢迎",
+  "ACP agents": "ACP 智能体",
+  "{plugin} {from} → {to}": "{plugin} {from} → {to}",
+  "{first} and {count} more": "{first} 等另外 {count} 个",
+  "Downloading {changes} · {percent}%": "正在下载 {changes} · {percent}%",
+  "Update {changes} now": "立即更新 {changes}",
+  "{changes} · updates when no agent is at work": "{changes} · 没有智能体在工作时更新",
+  "Updating {changes}…": "正在更新 {changes}…",
+  "Downloading · {percent}%": "正在下载 · {percent}%",
+  "Waits for a restart": "等待重启",
+  "Updates when no agent is at work": "没有智能体在工作时更新",
+  "Update now": "立即更新",
+  "Apply plugin updates automatically": "自动应用插件更新",
+  "A plugin update goes in once no agent is at work: DSH restarts for a few seconds and the window stays.": "插件更新会在没有智能体工作时安装：DSH 重启几秒钟，窗口保持打开。",
+  "Plugin updates wait until you update them here or restart Automagik.": "插件更新会等到你在这里更新或重启 Automagik。",
   "This Bot": "这个 Bot",
   "{from} wants to hand work to {to}": "{from} 想把工作交给 {to}",
   "another Bot": "另一个 Bot",
@@ -13306,6 +13323,41 @@ function updatePill(state) {
       return null;
   }
 }
+var PLUGIN_NAMES = {
+  "@automagik/bots-dsh": () => t("Bot team"),
+  "@automagik/welcome-dsh": () => t("Welcome"),
+  "@automagik/acp-dsh": () => t("ACP agents"),
+  "@automagik/genie-dsh": () => "Genie",
+  "@automagik/locale-pt-br-dsh": () => "Português (Brasil)"
+};
+function pluginName(name) {
+  return PLUGIN_NAMES[name]?.() ?? String(name ?? "").replace(/^@[^/]+\//, "");
+}
+function changeText(change) {
+  return change?.from ? t("{plugin} {from} → {to}", { plugin: pluginName(change.name), from: change.from, to: change.to }) : `${pluginName(change?.name)} ${change?.to ?? ""}`.trim();
+}
+function changesLine(changes) {
+  if (changes.length <= 2) return changes.map(changeText).join(", ");
+  return t("{first} and {count} more", { first: changeText(changes[0]), count: changes.length - 1 });
+}
+function pluginPill(plugins) {
+  const changes = Array.isArray(plugins?.changes) ? plugins.changes : [];
+  if (changes.length === 0) return null;
+  const line = changesLine(changes);
+  const title = changes.map(changeText).join("\n");
+  switch (plugins.phase) {
+    case "downloading":
+      return { label: t("Downloading {changes} · {percent}%", { changes: line, percent: plugins.percent ?? 0 }), title, busy: true };
+    case "ready":
+      return plugins.auto === false ? { label: t("Update {changes} now", { changes: line }), title, primary: true } : { label: t("{changes} · updates when no agent is at work", { changes: line }), title };
+    case "installing":
+      return { label: t("Updating {changes}…", { changes: line }), title, busy: true };
+    default:
+      return null;
+  }
+}
+var splitsPlugins = (state) => Boolean(state?.app && state?.plugins);
+var appState = (state) => splitsPlugins(state) ? state.app : state;
 function useDesktopUpdate() {
   const bridge = globalThis.omniDesktop?.updates;
   const [state, setState] = (0, import_react30.useState)(null);
@@ -13328,30 +13380,48 @@ function useDesktopUpdate() {
   }, [bridge]);
   return { bridge, state };
 }
-function DesktopUpdate() {
-  const { bridge, state } = useDesktopUpdate();
-  const pill = updatePill(state);
-  if (!bridge || !pill) return null;
-  const busy = BUSY.has(state.phase);
+function Pill({ pill, busy, percent: percent3, onClick }) {
   return (0, import_react30.createElement)(
     "button",
     {
       type: "button",
       className: `bt-desk-update${pill.primary ? " bt-desk-update-go" : ""}`,
+      title: pill.title,
       "aria-busy": busy || void 0,
       disabled: busy,
-      onClick: () => {
-        void bridge.open().catch(() => {
-        });
-      }
+      onClick
     },
     (0, import_react30.createElement)("span", { className: "bt-desk-update-dot", "aria-hidden": true }),
     (0, import_react30.createElement)("span", { className: "bt-desk-update-label" }, pill.label),
-    state.phase === "downloading" ? (0, import_react30.createElement)("span", { className: "bt-desk-update-bar", "aria-hidden": true }, (0, import_react30.createElement)("i", { style: { width: `${state.percent ?? 0}%` } })) : null
+    percent3 === void 0 ? null : (0, import_react30.createElement)("span", { className: "bt-desk-update-bar", "aria-hidden": true }, (0, import_react30.createElement)("i", { style: { width: `${percent3}%` } }))
+  );
+}
+function DesktopUpdate() {
+  const { bridge, state } = useDesktopUpdate();
+  if (!bridge || !state) return null;
+  const app = appState(state);
+  const appPill = updatePill(app);
+  const plugins = splitsPlugins(state) && !["ready", "installing"].includes(app.phase) ? state.plugins : null;
+  const plugPill = pluginPill(plugins);
+  if (!appPill && !plugPill) return null;
+  const open = () => {
+    void bridge.open().catch(() => {
+    });
+  };
+  const apply2 = () => {
+    void (bridge.applyPlugins ?? bridge.open)().catch(() => {
+    });
+  };
+  return (0, import_react30.createElement)(
+    "div",
+    { className: "bt-desk-updates" },
+    appPill ? (0, import_react30.createElement)(Pill, { pill: appPill, busy: BUSY.has(app.phase), percent: app.phase === "downloading" ? app.percent ?? 0 : void 0, onClick: open }) : null,
+    plugPill ? (0, import_react30.createElement)(Pill, { pill: plugPill, busy: BUSY.has(plugins.phase), percent: plugins.phase === "downloading" ? plugins.percent ?? 0 : void 0, onClick: apply2 }) : null
   );
 }
 var DESKTOP_UPDATE_CSS = `
-[class*="_footArea"]>[class*="_footerActions"]>div:has(>.bt-desk-update){grid-column:1/-1;order:-1}
+[class*="_footArea"]>[class*="_footerActions"]>div:has(>.bt-desk-updates){grid-column:1/-1;order:-1}
+.bt-desk-updates{display:flex;flex-direction:column;gap:6px;width:100%}
 .bt-desk-update{position:relative;display:flex;align-items:center;gap:8px;width:100%;min-height:32px;padding:6px 12px;border:1px solid color-mix(in srgb,var(--bt-accent) 25%,transparent);border-radius:12px;background:color-mix(in srgb,var(--bt-accent) 8%,var(--bt-card));color:var(--bt-accent);font:600 12px/16px var(--bt-font);text-align:left;cursor:pointer;overflow:hidden}
 .bt-desk-update:hover:not(:disabled){background:color-mix(in srgb,var(--bt-accent) 14%,var(--bt-card))}
 .bt-desk-update:disabled{cursor:default}
@@ -19212,7 +19282,7 @@ var import_react56 = require("react");
 var CHEER_MS = 1800;
 var starCount = (count) => new Intl.NumberFormat(dateLocale(), { notation: "compact", maximumFractionDigits: 1 }).format(count);
 function botHint(update, app) {
-  if (update.source === "app" && app.bridge) return updatePill(app.state)?.label ?? t("Updates come with the Automagik app.");
+  if (update.source === "app" && app.bridge) return updatePill(appState(app.state))?.label ?? t("Updates come with the Automagik app.");
   if (update.phase === "installing") return t("Updating Omni…");
   if (update.phase === "installed") return t("Restart DSH to start using Omni {version}.", { version: update.installed ?? update.latest });
   if (update.phase === "updated") return t("Omni {version} is installed.", { version: update.installed ?? update.latest });
@@ -19232,6 +19302,37 @@ function dshHint(dsh, shown) {
   if (dsh.available === false && dsh.blockedBy) return t("Update Omni {version} first.", { version: dsh.blockedBy });
   if (shown) return t("DSH {version} is available", { version: dsh.verified });
   return t("Version {version}", { version: dsh.current });
+}
+function pluginHint(change, plugins) {
+  const versions = change.from ? `${change.from} → ${change.to}` : change.to;
+  if (plugins.phase === "downloading") return `${versions} · ${t("Downloading · {percent}%", { percent: plugins.percent ?? 0 })}`;
+  if (plugins.phase === "installing") return `${versions} · ${t("Updating…")}`;
+  return `${versions} · ${plugins.auto === false ? t("Waits for a restart") : t("Updates when no agent is at work")}`;
+}
+function pluginRows({ app, Row: Row3 }) {
+  const plugins = splitsPlugins(app.state) ? app.state.plugins : null;
+  if (!plugins || !app.bridge) return [];
+  const changes = Array.isArray(plugins.changes) ? plugins.changes : [];
+  const auto = plugins.auto !== false;
+  const rows2 = changes.map((change) => (0, import_react56.createElement)(
+    Row3,
+    { key: `plugin:${change.name}`, label: pluginName(change.name), hint: pluginHint(change, plugins) },
+    plugins.phase === "ready" && plugins.auto === false && app.bridge.applyPlugins ? (0, import_react56.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => {
+      void app.bridge.applyPlugins().catch(() => {
+      });
+    } }, t("Update now")) : null
+  ));
+  if (typeof app.bridge.setAutoApply === "function") {
+    rows2.push((0, import_react56.createElement)(Row3, {
+      key: "plugins:auto",
+      label: t("Apply plugin updates automatically"),
+      hint: auto ? t("A plugin update goes in once no agent is at work: DSH restarts for a few seconds and the window stays.") : t("Plugin updates wait until you update them here or restart Automagik.")
+    }, (0, import_react56.createElement)(Switch, { on: auto, label: t("Apply plugin updates automatically"), onChange: (on) => {
+      void app.bridge.setAutoApply(on).catch(() => {
+      });
+    } })));
+  }
+  return rows2;
 }
 var linkProps = (href) => ({ className: "bt-soft bt-soft-sm bt-about-link", href, target: "_blank", rel: "noopener noreferrer" });
 function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row3 }) {
@@ -19271,8 +19372,8 @@ function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row3
   const markState = checking ? "searching" : phase === "installing" || dshPhase === "installing" ? "working" : cheer ? "done" : "idle";
   const dshNew = showsDshRow(dsh, update.app);
   const dshShown = dshNew && dsh.available;
-  const appPill = updatePill(app.state);
-  const appBusy = ["checking", "downloading", "installing"].includes(app.state?.phase);
+  const appPill = updatePill(appState(app.state));
+  const appBusy = ["checking", "downloading", "installing"].includes(appState(app.state)?.phase);
   const botControl = update.source === "app" ? app.bridge ? (0, import_react56.createElement)(
     "button",
     { type: "button", className: appPill?.primary ? "bt-fb-primary" : "bt-soft bt-soft-sm", disabled: appBusy, onClick: () => {
@@ -19321,7 +19422,8 @@ function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row3
       Section2,
       { key: "updates", title: t("Updates") },
       (0, import_react56.createElement)(Row3, { label: "Omni", hint: botHint(update, app) }, botControl, update.available && update.notesUrl ? (0, import_react56.createElement)("a", linkProps(update.notesUrl), t("What's new")) : null),
-      dsh?.current ? (0, import_react56.createElement)(Row3, { label: "DeepSeek Harness", hint: dshHint(dsh, dshShown) }, dshControl) : null
+      dsh?.current ? (0, import_react56.createElement)(Row3, { label: "DeepSeek Harness", hint: dshHint(dsh, dshShown) }, dshControl) : null,
+      ...pluginRows({ app, Row: Row3 })
     ),
     (0, import_react56.createElement)(
       Section2,
@@ -22958,6 +23060,34 @@ function serveBrowserReads({ browsers, post, clientId = globalThis.crypto.random
   };
 }
 
+// src/client/reopen.js
+var OPEN_CHAT = "omni-ui:open-chat";
+var REOPEN = "omni-ui:reopen";
+var storageOf = () => {
+  try {
+    return globalThis.sessionStorage ?? null;
+  } catch {
+    return null;
+  }
+};
+function rememberOpen(id, storage = storageOf()) {
+  try {
+    if (typeof id === "string" && id !== "") storage?.setItem(OPEN_CHAT, id);
+    else storage?.removeItem(OPEN_CHAT);
+  } catch {
+  }
+}
+function takeReopen(storage = storageOf()) {
+  try {
+    if (storage?.getItem(REOPEN) !== "1") return null;
+    storage.removeItem(REOPEN);
+    const id = storage.getItem(OPEN_CHAT);
+    return typeof id === "string" && id !== "" ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 // src/client/right-panel.js
 var RIGHTBAR_ATTRIBUTES = ["data-rightbar-collapsed", "data-rightbar-fullscreen"];
 function rightColumnOpen(doc) {
@@ -24334,6 +24464,31 @@ function apply(ctx) {
       offRoster();
     };
   }, "ds-bot: agent surface");
+  ctx.effect(() => {
+    let reopening = takeReopen();
+    const note = () => {
+      if (reopening === null) rememberOpen(mainView());
+    };
+    const reopen = () => {
+      const snapshot = roster.getSnapshot();
+      if (!snapshot.ready) return;
+      const id = reopening;
+      reopening = null;
+      if (isAgentSessionId(id) || snapshot.byId?.[id] !== void 0 || snapshot.roomsById?.[id] !== void 0) actions.openSession(id);
+      note();
+    };
+    const offList = ctx.sessions.list.subscribe(note);
+    const offRoster = reopening === null ? () => {
+    } : roster.subscribe(() => {
+      if (reopening !== null) reopen();
+    });
+    if (reopening !== null) reopen();
+    note();
+    return () => {
+      offList();
+      offRoster();
+    };
+  }, "ds-bot: keep the open chat across a DSH restart");
   ctx.effect(() => {
     const groups = surfaceGroups({ shell: installShell, conversation: installConversation }, {
       onError: (_group, error) => actions.reportError(new Error(t("Bot mode could not be set up here: {error}", { error: error?.message ?? String(error) })), "surface")
