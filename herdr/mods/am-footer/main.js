@@ -2,6 +2,8 @@ import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, props, window, shared, setShared, updates, layout, panes, readTextFile, appHome, home, exec, openOverlay, closeOverlay, watchFolder } from "herdr";
 import { badgeCount, oneAtATime, scanFooter, touchesFooter } from "./contributions.js";
+import { notify } from "herdr";
+import { openWork } from "./work.js";
 
 // Where Pocket Link publishes whether a phone is connected (automagik-pocket's "For other mods"
 // contract, schema 1). Resolved as its bridge/state.mjs does: $POCKET_LINK_STATE_DIR, else
@@ -188,6 +190,10 @@ export default class WorkspaceChrome extends View {
         .child(h_flex().gap(3).items_center()
           .when(this.bots, el => el.child(tab("bots", "bot", "Bots", false, false, openBotsMenu)))
           .child(tab("mods", "puzzle", "Mods", false, false, openMods))
+          // The way back to the Automagik app (work.js).
+          .child(tab("work", "briefcase", "Work", false, false,
+            () => openWork({ exec, notify, platform: window()?.platform }))
+            .tooltip("Open Automagik"))
           .child(tab("automations", "clock", "Automations", automations, false, () => run("layout.toggle", { id: "automations-panel" })))
           .child(tab("quota", "layers", "Quota", quota, false, () => run("layout.toggle", { id: "am-quota-panel" })))
           .when(this.pocket, el => el.child(tab("pocket", "smartphone", "Pocket Link", false, false, () => run("mod.open", { name: "pocket-link" }))
