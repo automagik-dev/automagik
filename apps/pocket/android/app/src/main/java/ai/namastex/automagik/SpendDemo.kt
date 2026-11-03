@@ -89,13 +89,28 @@ object SpendDemo {
             "bots":{
               "b-demo-captain":{"usd_per_task":2.6,"min_per_task":38,"usd_24h":18.4,"other_usd":1.2,"parts_kind":"member",
                 "parts":[{"key":"b-demo-dev","usd":9.1},{"key":"b-demo-test","usd":8.1},{"key":"other","usd":1.2}]},
-              "b-demo-dev":{"usd_per_task":null,"min_per_task":null,"usd_24h":0.0,"other_usd":null,"parts_kind":"model","parts":[]}}},
+              "b-demo-dev":{"usd_per_task":null,"min_per_task":null,"usd_24h":0.0,"other_usd":null,"parts_kind":"model","parts":[]}},
+            "tasks":[
+              {"task":"gh-45","usd":3.1,"lead_min":42,"bots":[{"bot":"b-demo-dev","usd":1.9,"work_min":25},{"bot":"b-demo-test","usd":1.2,"work_min":11}]},
+              {"task":"gh-44","usd":1.4,"lead_min":18,"bots":[{"bot":"b-demo-captain","usd":1.4,"work_min":52}]},
+              {"task":"gh-43","usd":2.2,"lead_min":95,"bots":[{"bot":"b-demo-dev","usd":2.2,"work_min":44},{"bot":"b-demo-test","usd":null,"work_min":null}]}]},
           "~/work/website":{"merges":{"n":0,"prev_n":0,"by_type":{},"items":[]},"time":null,"first_pass":null,
             "spent":{"real_usd":0.0,"prev_real_usd":null,"by_model":{},"codex_week_share":0.004},"tokens":{"total":48200,"prev_total":61000,"cache_hit":null,"by_model":{}}}
         }}}"""))).associateBy { "" }
 
     /** The preview's bots.json names, keyed like [MachineState.bots]. */
     val BOTS = mapOf("|~/work/herdr" to SpaceFeed.Names(mapOf("b-demo-captain" to "Captain", "b-demo-dev" to "Dev", "b-demo-test" to "Tester")))
+
+    /** The preview's bot registries, keyed like [MachineState.members]: synthetic bots, Genie's pet for all. */
+    val MEMBERS = mapOf(
+        "|~/work/herdr" to listOf(Teams.Member("b-demo-captain", "Captain", main = true, pet = null),
+            Teams.Member("b-demo-dev", "Dev", main = false, pet = null), Teams.Member("b-demo-test", "Tester", main = false, pet = null),
+            Teams.Member("b-demo-review", "Reviewer", main = false, pet = null)),
+        "|~/work/website" to listOf(Teams.Member("b-demo-writer", "Writer", main = true, pet = null)),
+        "|~/work/notes" to listOf(Teams.Member("b-demo-scribe", "Scribe", main = true, pet = null)))
+    /** The preview's space icons and tile colours, as Herdr stores them (shared.json), by space id. */
+    val ICONS = mapOf<String, Teams.Icon>("sp1" to Teams.Icon.Emoji("🚀"), "sp4" to Teams.Icon.Emoji("📓"))
+    val COLORS = mapOf("sp1" to "ansi3", "sp2" to "ansi1", "sp3" to "ansi4", "sp4" to "ansi5")
 
     /** The preview's readings, keyed like [MachineState.meter]. */
     fun readings(now: Long): Map<String, Spend.Reading> = mapOfNotNull(

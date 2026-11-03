@@ -138,14 +138,17 @@ class ProjectsTest {
         assertEquals(2, Projects.machinesConnected(listOf(host, down)))
     }
 
-    @Test fun backReturnsToTheTabThenToday() {
+    @Test fun backReturnsToTheTabThenTeams() {
         val ref = TerminalRef("mac", "t1")
         assertEquals(Nav.Place(Nav.TASKS), Nav.back(Nav.Place(Nav.TASKS, selected = ref)))
         assertEquals(Nav.Place(Nav.PROJECTS, "repo:x"), Nav.back(Nav.Place(Nav.PROJECTS, "repo:x", "mac" to "s1")))
         assertEquals(Nav.Place(Nav.PROJECTS), Nav.back(Nav.Place(Nav.PROJECTS, "repo:x")))
-        assertEquals(Nav.Place(Nav.TODAY), Nav.back(Nav.Place(Nav.MACHINES)))
-        assertEquals(Nav.Place(Nav.TODAY), Nav.back(Nav.Place(Nav.SETTINGS)))
-        assertNull(Nav.back(Nav.Place(Nav.TODAY)))
+        assertEquals(Nav.Place(Nav.TEAMS), Nav.back(Nav.Place(Nav.MACHINES)))
+        assertEquals(Nav.Place(Nav.TEAMS), Nav.back(Nav.Place(Nav.SETTINGS)))
+        assertEquals(Nav.Place(Nav.TEAMS), Nav.back(Nav.Place(Nav.TODAY)))
+        assertEquals(Nav.Place(Nav.TEAMS), Nav.back(Nav.Place(Nav.TEAMS, selected = ref)))
+        assertNull(Nav.back(Nav.Place(Nav.TEAMS)))
+        assertEquals(Nav.Place(Nav.TEAMS), Nav.Place())
         assertEquals(false, Nav.barShown(Nav.Place(Nav.TASKS, selected = ref)))
         assertEquals(Nav.Place(Nav.PROJECTS), Nav.tab(Nav.PROJECTS))
     }
