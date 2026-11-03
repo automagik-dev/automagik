@@ -247,15 +247,40 @@ const signalGroup = (signal) => {
     return false
   }
 }
+// One stop for both ways out, the end of the run and a signal: DSH takes a second SIGTERM as
+// "exit now" and would skip its dispose. SIGTERM, DSH's exit (its dispose done) or `graceMs`, then
+// whatever is left in DSH's group goes too, and is gone before `work` is.
+let stopping
+const stopDsh = graceMs => stopping ??= (async () => {
+  signalGroup('SIGTERM')
+  await new Promise((done) => {
+    if (dsh.exitCode !== null || dsh.signalCode !== null) return done()
+    const timer = setTimeout(done, graceMs)
+    dsh.once('exit', () => {
+      clearTimeout(timer)
+      done()
+    })
+  })
+  signalGroup('SIGKILL')
+  for (let i = 0; i < 50 && signalGroup(0); i++) await new Promise(done => setTimeout(done, 100))
+})()
+// The verdict is the checks': a folder that will not go is reported, never a failure.
+const removeWork = () => {
+  if (args.keep) return
+  try {
+    rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  } catch (error) {
+    say(`cleanup: ${work} was not removed (${error.code ?? error.message}); the result above stands`)
+  }
+}
 // Out of this terminal's group, DSH would outlive a Ctrl-C or a closed terminal here: stop it too,
-// with a SIGTERM first so its dispose stops the install. A second Ctrl-C quits at once.
+// SIGTERM first (up to 3 s) so its dispose stops the install. A second Ctrl-C quits at once.
 let interrupted
 for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) {
   process.once(signal, async () => {
     interrupted = code
-    signalGroup('SIGTERM')
-    for (let i = 0; i < 30 && signalGroup(0); i++) await new Promise(done => setTimeout(done, 100))
-    signalGroup('SIGKILL')
+    await stopDsh(3000)
+    removeWork()
     process.exit(code)
   })
 }
@@ -281,7 +306,9 @@ try {
   })
   say(`dsh up on ${port}`)
   const { chromium } = require('playwright-core')
-  const browser = await chromium.launch({ executablePath: chrome() })
+  // The signals are this script's (above): Playwright's own SIGINT handler would exit at once,
+  // before DSH has disposed. Its exit hook still kills the browser.
+  const browser = await chromium.launch({ executablePath: chrome(), handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false })
   try {
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
     const problems = []
@@ -310,26 +337,8 @@ try {
     await browser.close()
   }
 } finally {
-  signalGroup('SIGTERM')
-  await new Promise((done) => {
-    if (dsh.exitCode !== null || dsh.signalCode !== null) return done()
-    const timer = setTimeout(done, 8000)
-    dsh.once('exit', () => {
-      clearTimeout(timer)
-      done()
-    })
-  })
-  // Whatever is left in DSH's group goes too, and is gone before `work` is. The adapter install
-  // is not in it: DSH's dispose, on the SIGTERM above, stopped it.
-  signalGroup('SIGKILL')
-  for (let i = 0; i < 50 && signalGroup(0); i++) await new Promise(done => setTimeout(done, 100))
-  // The verdict is the checks': a folder that will not go is reported, never a failure.
-  if (!args.keep) {
-    try {
-      rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
-    } catch (error) {
-      say(`cleanup: ${work} was not removed (${error.code ?? error.message}); the result above stands`)
-    }
-  }
+  // The adapter install is not in DSH's group: DSH's dispose, on this SIGTERM, stops it.
+  await stopDsh(8000)
+  removeWork()
 }
 process.exit(interrupted ?? (failed ? 1 : 0))
