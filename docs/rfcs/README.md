@@ -38,6 +38,7 @@ Security gaps are named by title only until their fix merges. Details go to a pr
 | [0007](0007-desktop-speed.md) | Desktop speed | Accepted | 1 (marks, stable port), 5. The app opens fast |
 | [0008](0008-platform-and-web-instances.md) | Platform and web instances | Draft | not scheduled |
 | [0009](0009-personal-customization.md) | Personal customization | Draft | after 2 (proposed: Make it yours) |
+| [0010](0010-desktop-sandbox.md) | Desktop sandbox and supervision | Draft | not scheduled |
 
 Milestones, in the owner's order:
 
@@ -48,7 +49,7 @@ Milestones, in the owner's order:
 5. The app opens fast
 
 Personal customization (0009) is scheduled after milestone 2; it is Draft until then. Herdr,
-Genie Publish and Platform stay at the RFC stage until their questions are answered.
+Genie Publish, Platform and Desktop sandbox stay at the RFC stage until their questions are answered.
 Milestones and one issue per delivery are created after the PR that lands these RFCs merges.
 
 ### Fixes without an RFC
