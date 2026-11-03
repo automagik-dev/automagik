@@ -25,7 +25,7 @@ well-built supervisor, but it is not a sandbox. Six things are missing:
   (`dsh_child.rs:1038`), minus a few rows (`:255-256`).
 - **HOME is the person's real home** on purpose (`dsh_child.rs:122`).
 - **No fence around the servers.** The only Seatbelt profile is the speech sidecar's
-  (`nemo.rs:28`); the DSH fence is a bench rehearsal (`bench/unfold-own-dsh-g6/fence.sh`).
+  (`S/nemo.rs:28`); the DSH fence is a bench rehearsal (`bench/unfold-own-dsh-g6/fence.sh`).
 - **No egress control** in the shipped path.
 - **The codesign check passes no `-R` requirement**, and the per-start manifest "guards against
   accidents, not against this user" (`dsh_pack.rs:28-31`).
@@ -60,10 +60,10 @@ the desktop pins rc.5 (`runtime/package-lock.json:1115,1139`).
 |---|---|---|---|
 | Supervision | `env_clear` over a denylist of the app env (`S/dsh_child.rs:255-256,1038`); closed-bin PATH shims (`:190-248`); process group, SIGTERM then SIGKILL (`S/tray.rs:305,325-367`); backoff 1-16 s, gives up after the 6th crash (`dsh_child.rs:337-345`); orphans matched by PID and start time (`:440-470`); no parent-death watch | Allowlist env of 9 vars (`packages/cli/src/sandbox.ts:258-260`); pg, then nats, then api, ready on a TCP connect (`sandbox-supervisor.ts:146-153,203-209`); backoff, stops after 5 fast crashes (`:268-275`); orphans swept with `ps` (`sandbox.ts:1013-1070`); SIGTERM and SIGINT only (`sandbox-supervisor.ts:170-173`) | Full `process.env` spread into DSH's env (`src/dsh.js:573`), on Electron as Node (`:593`); SIGTERM then SIGKILL on quit (`src/dsh.js:647-655`, `src/main.js:661-671`); no restart policy; no parent-death watch in `src/dsh.js` |
 | Filesystem and homes | Per-instance homes, 0700 (`dsh_child.rs:523-529`); HOME shared (`:122`); no server fence | One home per sandbox, 0700 (`sandbox.ts:129-151,876`); no fence | `~/.automagik/desktop/{dsh,bots,bin}` (`src/dsh.js:5-13`). DSH's per-call fence is mounted through `dsh-base` (`profile/package.json:22`; dsh-base `cordis.patch.yml:240-247`): Seatbelt, or bwrap/Landlock on Linux, mode `workspace-write`. It governs writes only, reads stay open (sandbox-local README:79) |
-| Network | DSH link on 127.0.0.1 (`dsh_child.rs:316`); port band 41700-41799 under `flock` (`S/dsh_ports.rs:1-9,69`); no egress control | API and NATS on 127.0.0.1 (`sandbox.ts:385,400`); NATS without auth (`nats-server-args.ts:92-93`); Postgres `postgres:postgres` by default (`sandbox.ts:250`); egress "owned by the app" (`docs/cli/sandbox.md:138`) | DSH on `--host 127.0.0.1`, port kept across launches (`src/dsh.js:450-452,608`); the policy has no network vocabulary (sandbox-policy README:147); no egress control |
+| Network | DSH link on 127.0.0.1 (`dsh_child.rs:316`); port band 41700-41799 under `flock` (`S/dsh_ports.rs:1-9,69`); no egress control | API and NATS on 127.0.0.1 (`sandbox.ts:385,400`); NATS without auth (`packages/cli/src/nats-server-args.ts:92-93`); Postgres `postgres:postgres` by default (`sandbox.ts:250`); egress "owned by the app" (`docs/cli/sandbox.md:138`) | DSH on `--host 127.0.0.1`, port kept across launches (`src/dsh.js:450-452,608`); the policy has no network vocabulary (sandbox-policy README:147); no egress control |
 | Secrets | DeepSeek key from the Keychain into DSH's env (`dsh_child.rs:159,1447-1448`), inherited by tools unless DSH scrubs it (not verified); Omni key written to `bots/omni.json` (`S/omni_child.rs:250`); channel vars stripped by the preload (`dsh_child.rs:482`) | API key in `config.json` 0600, passed as env `OMNI_API_KEY` (`sandbox.ts:236-242,406`) | Keys in a 0600 credentials file that "cannot isolate secrets from the agent" (credentials-local README:12,32); Bot secrets in `secrets.json` 0600, given to shells as `$DSH_SECRET_*` and masked toward models (`apps/bots-dsh/src/host/secrets.js:1-4`); shell env keys pass through (`src/dsh.js:573`) |
-| GUI and web exposure | Control socket 0600 in a checked 0700 dir, peer PID and start time checked, token file read once (`S/dsh_control.rs:4-14`, `S/dsh_sockdir.rs:20-48`) | Loopback API, key-gated; NATS and Postgres reachable by any local process | Context isolation and renderer sandbox (`src/main.js:277-278`); permissions only for DSH's origin, audio only (`:643-651`); `window.open` denied (`:569-570`); per-Bot partitions and request filter (`src/bot-views.js:24,47-50`); per-Bot CDP token on loopback (`src/bot-relay.js:63-73`) |
-| Updates and integrity | Pack sha256 pinned at build, codesign without `-R`, manifest checked at every start (`dsh_pack.rs:28-31,186,214,223`) | autopg and nats-server sha256-pinned (`sandbox.ts:1308-1313`, `nats-install.ts:54-57`); runtime from `bun install --production` (`sandbox.ts:907-938`) | electron-updater sha512, plus Squirrel's signature match on macOS (`src/update.js:4-6`); signed plugin lane with ed25519, tarball sha256/sha512 and a trial start that rolls back (`src/lane.js:1-10,64-70,132`) |
+| GUI and web exposure | Control socket 0600 in a checked 0700 dir, peer PID and start time checked, token file read once (`S/dsh_control.rs:4-14`, `S/dsh_sockdir.rs:20-48`) | Loopback API, key-gated; NATS and Postgres reachable by any local process (`sandbox.ts:250,385,400`) | Context isolation and renderer sandbox (`src/main.js:277-278`); permissions only for DSH's origin, audio only (`:643-651`); `window.open` denied (`:569-570`); per-Bot partitions and request filter (`src/bot-views.js:24,47-50`); per-Bot CDP token on loopback (`src/bot-relay.js:63-73`) |
+| Updates and integrity | Pack sha256 pinned at build, codesign without `-R`, manifest checked at every start (`dsh_pack.rs:28-31,186,214,223`) | autopg and nats-server sha256-pinned (`sandbox.ts:1308-1313`, `packages/cli/src/nats-install.ts:54-57`); runtime from `bun install --production` (`sandbox.ts:907-938`) | electron-updater sha512, plus Squirrel's signature match on macOS (`src/update.js:4-6`); signed plugin lane with ed25519, tarball sha256/sha512 and a trial start that rolls back (`src/lane.js:1-10,64-70,132`) |
 | Path to Arca | Owner ruled DSH "not in a VM" (`council/rfc/0008-dsh.md:74`); the microVM (microsandbox/libkrun) denies egress and header-swaps a key, web placement only (`crates/rth-deploy/src/controller.rs:799-815`); verdict "later" (`council/31-dsh-in-guest.md:232`) | none | none; Arca is not in the repo |
 
 ## What is missing across all three
@@ -135,29 +135,34 @@ does not change this table.
 
 ## Deliveries
 
-Each one is a single PR on one lane, with its check and its rollback.
+One PR per lane, each with its check and rollback. Where two lanes are named, the plugin half
+lands first and stays compatible with the older app.
 
 1. **Supervisor hygiene** (desktop). An environment allowlist for DSH, with known provider
-   variables carried by name; a parent-death watch; a restart backoff; and the endpoint
-   handshake over a 0600 socket.
+   variables carried by name; a parent-death watch; a restart backoff. The endpoint handshake
+   over a 0600 socket touches the Bot team's browser bridge too, so it is its own two-lane item
+   (plugin first).
    *Check:* a test asserts the exact key set; an integration test SIGKILLs the parent and sees
    DSH exit within 5 s; a crash-loop test.
    *Rollback:* revert. The allowlist is a single constant.
 2. **Secrets broker** (plugin, then desktop). Provider keys resolved in the server, tool
    processes scrubbed of them, and Bot secrets as placeholders. The Omni link holds a scoped
    key. Omni already narrows scopes per device client (`packages/api/src/login/config.ts:72-100`).
-   *Check:* a Bot shell running `env` and `cat` on the credential file shows no real key, and a
-   provider call still succeeds.
+   *Check:* `env` in a Bot shell shows no real key, and a provider call still succeeds. The
+   credential file stays readable until delivery 4's read denies.
    *Rollback:* a setting returns to direct env injection.
 3. **Egress, observe mode** (desktop). A loopback proxy, with `HTTP(S)_PROXY` set for tool
-   processes, logging each host per Bot. DSH's `runnerCommand` override can add the network rule
-   without forking DSH (sandbox-local README:45).
+   processes, logging each host per Bot. On Linux, DSH's `runnerCommand` override (a
+   bwrap-compatible runner, sandbox-local README:45) can add the network rule without forking
+   DSH; on macOS the rule comes with delivery 4.
    *Check:* the log lists provider and fetch hosts for a scripted session, and nothing is blocked.
    *Rollback:* unset the proxy.
 4. **Server fence, macOS and Linux** (desktop). DSH and Omni under Seatbelt, or bwrap and
    Landlock, with the read denies and write roots above. Explicit `127.0.0.1` rules, never
-   `localhost:*`. Fail closed, with a visible setting to turn it off.
-   *Check:* denial tests for each denied path, a bind on the LAN IP refused, and every Bot tool
+   `localhost:*`. Direct outbound is denied except to the proxy's loopback port, since
+   `HTTP(S)_PROXY` alone is advisory. Fail closed, with a visible setting to turn it off.
+   *Check:* denial tests for each denied path (the credential file included), a bind on the LAN
+   IP refused, a direct connect to an outside host from a tool shell refused, and every Bot tool
    suite green with the fence on.
    *Rollback:* the setting, then revert.
 5. **Egress deny and per-Bot policy** (desktop and plugin). The proxy switches to allowlists
