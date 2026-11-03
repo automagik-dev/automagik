@@ -16,6 +16,20 @@
 //! worktree. Whenever more than one start row could claim a session the answer is
 //! [`Resolution::Unmatched`].
 //!
+//! A start row too incomplete to build a [`Tag`] (no `bot`/`botId`, an unknown `kind`, no
+//! `terminal`) is still evidence: its worktree and `at` close the previous window, and its
+//! terminal and agent still count as a possible claimant. A session it could claim is
+//! [`Resolution::Unmatched`], never the tag of an earlier worker.
+//!
+//! A Claude session id can be reported by more than one terminal: `/resume` in a new pane keeps
+//! the id. The session then belongs to the terminal whose `session` row has the latest `at` not
+//! after the query time; rows without a usable `at` are not candidates, and when no row is a
+//! candidate (or two terminals tie on the latest `at`) the answer is [`Resolution::Unmatched`].
+//!
+//! The agent, model and effort on a start row are what the launch REQUESTED, not what ran: workers
+//! on the default model or on a template have them null, and a swap can change the model later.
+//! The [`Tag`] carries them as `requested_*`; the real model comes from the session transcript.
+//!
 //! Tasks are joined by [`TaskKey`] (project, task), never by the task id alone: two projects can
 //! both have a `gh-45`. Seats have no task.
 
@@ -78,8 +92,13 @@ pub struct Tag {
     pub branch: Option<String>,
     pub role: Option<Role>,
     pub lead: Option<String>,
-    pub model: Option<String>,
-    pub effort: Option<String>,
+    /// The harness the launch asked for (`agent`). Requested, not observed.
+    pub requested_agent: Option<String>,
+    /// The model the launch asked for. Null for default-model and template workers; the model that
+    /// actually ran comes from the transcript.
+    pub requested_model: Option<String>,
+    /// The reasoning effort the launch asked for. Requested, not observed.
+    pub requested_effort: Option<String>,
     /// The model was swapped mid-task: skip it in model evaluation.
     pub swap: bool,
     /// The launch overrode the template's model: skip it in model evaluation.
@@ -120,24 +139,27 @@ pub struct Query<'a> {
     pub agent: Source,
     pub session_id: &'a str,
     pub cwd: Option<&'a str>,
-    /// When the session ran (ms since the epoch); used for Codex and omp only.
+    /// When the session ran (ms since the epoch). Bounds the Codex and omp windows, and picks the
+    /// terminal when a Claude session id was reported by more than one.
     pub at_ms: i64,
 }
 
+/// One `start` row. The boundary and claimant evidence (terminal, worktree, agent, at) is kept
+/// even when the row is too incomplete to build a [`Tag`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Start {
-    terminal: String,
+    terminal: Option<String>,
     worktree: Option<String>,
     agent: Option<String>,
     at_ms: Option<i64>,
-    tag: Tag,
+    tag: Option<Tag>,
 }
 
 #[derive(Debug, Default)]
 pub struct Ledger {
     starts: Vec<Start>,
-    /// Session id to the terminals that reported it (deduped).
-    sessions: HashMap<String, BTreeSet<String>>,
+    /// Session id to the (terminal, at) rows that reported it (deduped).
+    sessions: HashMap<String, BTreeSet<(String, Option<i64>)>>,
 }
 
 /// `$HERDR_WORKERS_LEDGER` when set and non-empty, else the default under `home`.
@@ -182,11 +204,12 @@ impl Ledger {
                     if let (Some(t), Some(s)) =
                         (str_field(&row, "terminal"), str_field(&row, "session"))
                     {
+                        let at = str_field(&row, "at").and_then(crate::time::parse_rfc3339);
                         ledger
                             .sessions
                             .entry(s.to_owned())
                             .or_default()
-                            .insert(t.to_owned());
+                            .insert((t.to_owned(), at));
                     }
                 }
                 _ => {}
@@ -201,7 +224,7 @@ impl Ledger {
 
     pub fn resolve(&self, q: &Query) -> Resolution {
         match q.agent {
-            Source::Claude => self.resolve_by_session(q.session_id),
+            Source::Claude => self.resolve_by_session(q.session_id, q.at_ms),
             Source::Codex | Source::Omp => match q.cwd {
                 Some(cwd) => self.resolve_by_worktree(ledger_agent(q.agent), cwd, q.at_ms),
                 None => Resolution::Untagged,
@@ -209,20 +232,43 @@ impl Ledger {
         }
     }
 
-    fn resolve_by_session(&self, session_id: &str) -> Resolution {
-        let Some(terminals) = self.sessions.get(session_id) else {
+    fn resolve_by_session(&self, session_id: &str, at_ms: i64) -> Resolution {
+        let Some(rows) = self.sessions.get(session_id) else {
             return Resolution::Untagged;
         };
-        if terminals.len() > 1 {
-            return Resolution::Unmatched;
-        }
-        let Some(terminal) = terminals.first() else {
-            return Resolution::Untagged;
+        let terminals: BTreeSet<&str> = rows.iter().map(|(t, _)| t.as_str()).collect();
+        let terminal = if terminals.len() > 1 {
+            // Resumed in another pane: the latest report not after the query time owns it.
+            let Some(latest) = rows
+                .iter()
+                .filter_map(|(_, at)| *at)
+                .filter(|at| *at <= at_ms)
+                .max()
+            else {
+                return Resolution::Unmatched;
+            };
+            let owners: BTreeSet<&str> = rows
+                .iter()
+                .filter(|(_, at)| *at == Some(latest))
+                .map(|(t, _)| t.as_str())
+                .collect();
+            match (owners.first(), owners.len()) {
+                (Some(t), 1) => *t,
+                _ => return Resolution::Unmatched,
+            }
+        } else {
+            match terminals.first() {
+                Some(t) => *t,
+                None => return Resolution::Untagged,
+            }
         };
-        let mut claims = self.starts.iter().filter(|s| &s.terminal == terminal);
+        let mut claims = self
+            .starts
+            .iter()
+            .filter(|s| s.terminal.as_deref() == Some(terminal));
         match (claims.next(), claims.next()) {
             (None, _) => Resolution::Untagged,
-            (Some(s), None) => Resolution::Tag(s.tag.clone()),
+            (Some(s), None) => s.tag.clone().map_or(Resolution::Unmatched, Resolution::Tag),
             (Some(_), Some(_)) => Resolution::Unmatched,
         }
     }
@@ -245,15 +291,17 @@ impl Ledger {
             if !in_window {
                 continue;
             }
-            match s.agent.as_deref() {
-                Some(a) if a == agent => confirmed.push(s),
-                Some(_) => {}
-                None => unknown += 1,
+            // A row that could claim the session but cannot be tagged is uncertainty, not a miss.
+            match (s.agent.as_deref(), &s.tag) {
+                (Some(a), Some(t)) if a == agent => confirmed.push(t),
+                (Some(a), None) if a == agent => unknown += 1,
+                (Some(_), _) => {}
+                (None, _) => unknown += 1,
             }
         }
         match (confirmed.as_slice(), unknown) {
             ([], 0) => Resolution::Untagged,
-            ([s], 0) => Resolution::Tag(s.tag.clone()),
+            ([t], 0) => Resolution::Tag((*t).clone()),
             _ => Resolution::Unmatched,
         }
     }
@@ -289,13 +337,30 @@ fn flag(row: &Map<String, Value>, key: &str) -> bool {
     row.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 
+/// The evidence of a start row, with its tag when the row is complete enough for one. None only
+/// for a row with neither a terminal nor a worktree: it cannot claim or bound anything.
 fn parse_start(row: &Map<String, Value>) -> Option<Start> {
+    let terminal = owned(row, "terminal");
+    let worktree = owned(row, "worktree");
+    if terminal.is_none() && worktree.is_none() {
+        return None;
+    }
+    Some(Start {
+        tag: parse_tag(row),
+        terminal,
+        worktree,
+        agent: owned(row, "agent"),
+        at_ms: str_field(row, "at").and_then(crate::time::parse_rfc3339),
+    })
+}
+
+fn parse_tag(row: &Map<String, Value>) -> Option<Tag> {
     let kind = match str_field(row, "kind")? {
         "worker" => Kind::Worker,
         "seat" => Kind::Seat,
         _ => return None,
     };
-    let terminal = owned(row, "terminal")?;
+    str_field(row, "terminal")?;
     let bot = owned(row, "bot").or_else(|| owned(row, "botId"))?;
     // Rows written before `branch` existed carried the branch in `task`.
     let (task, branch) = if row.contains_key("branch") {
@@ -304,24 +369,19 @@ fn parse_start(row: &Map<String, Value>) -> Option<Start> {
         (None, owned(row, "task"))
     };
     let task = if kind == Kind::Seat { None } else { task };
-    Some(Start {
-        terminal,
-        worktree: owned(row, "worktree"),
-        agent: owned(row, "agent"),
-        at_ms: str_field(row, "at").and_then(crate::time::parse_rfc3339),
-        tag: Tag {
-            bot,
-            kind,
-            task,
-            project: owned(row, "project"),
-            branch,
-            role: str_field(row, "role").and_then(Role::parse),
-            lead: owned(row, "lead"),
-            model: owned(row, "model"),
-            effort: owned(row, "effort"),
-            swap: flag(row, "swap"),
-            override_: flag(row, "override"),
-        },
+    Some(Tag {
+        bot,
+        kind,
+        task,
+        project: owned(row, "project"),
+        branch,
+        role: str_field(row, "role").and_then(Role::parse),
+        lead: owned(row, "lead"),
+        requested_agent: owned(row, "agent"),
+        requested_model: owned(row, "model"),
+        requested_effort: owned(row, "effort"),
+        swap: flag(row, "swap"),
+        override_: flag(row, "override"),
     })
 }
 
@@ -352,8 +412,12 @@ mod tests {
     }
 
     fn session(terminal: &str, id: &str) -> Value {
+        session_at(terminal, id, "2026-01-01T09:00:01Z")
+    }
+
+    fn session_at(terminal: &str, id: &str, at: &str) -> Value {
         json!({"event": "session", "terminal": terminal, "session": id,
-               "transcript": "/work/transcripts/example.jsonl", "at": "2026-01-01T09:00:01Z"})
+               "transcript": "/work/transcripts/example.jsonl", "at": at})
     }
 
     fn claude(id: &str) -> Query<'_> {
@@ -362,6 +426,13 @@ mod tests {
             session_id: id,
             cwd: None,
             at_ms: 0,
+        }
+    }
+
+    fn claude_at<'a>(id: &'a str, at: &str) -> Query<'a> {
+        Query {
+            at_ms: crate::time::parse_rfc3339(at).unwrap(),
+            ..claude(id)
         }
     }
 
@@ -431,7 +502,10 @@ mod tests {
         text.extend_from_slice(b"\n{\"event\":\"start\",\"kind\":\"worker\",\"terminal\":"); // truncated tail
         std::fs::write(&path, &text).unwrap();
         let l = Ledger::load_from(&path);
-        assert_eq!(l.starts.len(), 1);
+        // The bot-only row has no terminal or worktree and is dropped; the unknown-kind row on t9
+        // stays as evidence but builds no tag.
+        assert_eq!(l.starts.len(), 2);
+        assert_eq!(l.starts.iter().filter(|s| s.tag.is_some()).count(), 1);
         assert_eq!(tag(l.resolve(&claude("s-1"))).bot, "b-example");
     }
 
@@ -447,9 +521,11 @@ mod tests {
         assert_eq!(t.bot, "b-old");
         assert_eq!(t.task, None);
         assert_eq!(t.branch.as_deref(), Some("feat/12-old-style"));
+        assert_eq!((&t.project, t.role, &t.lead), (&None, None, &None));
+        // A default-model launch requested nothing: the requested fields stay empty.
         assert_eq!(
-            (&t.project, t.role, &t.lead, &t.model),
-            (&None, None, &None, &None)
+            (&t.requested_agent, &t.requested_model, &t.requested_effort),
+            (&None, &None, &None)
         );
         assert!(!t.skip_for_model_eval());
         assert_eq!(t.task_key(), None);
@@ -457,30 +533,139 @@ mod tests {
 
     #[test]
     fn claude_session_matches_through_its_terminal() {
+        // Two terminals whose start rows differ in every tag field: picking the wrong terminal
+        // fails at least one assertion below.
+        let mut other = start("t2", WT_B, "claude", "2026-01-01T09:00:00Z");
+        other["bot"] = json!("b-other");
+        other["project"] = json!(PROJECT_B);
+        other["task"] = json!("gh-77");
+        other["branch"] = json!("feat/gh-77-other");
+        other["role"] = json!("review");
+        other["lead"] = json!("b-lead-other");
+        other["model"] = json!("other-model");
+        other["effort"] = json!("low");
         let l = ledger(&[
             start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
-            start("t2", WT_B, "claude", "2026-01-01T09:00:00Z"),
+            other,
             session("t1", "s-1"),
+            session("t2", "s-2"),
         ]);
-        let t = tag(l.resolve(&claude("s-1")));
-        assert_eq!(t.kind, Kind::Worker);
-        assert_eq!(t.task.as_deref(), Some("gh-45"));
-        assert_eq!(t.branch.as_deref(), Some("feat/gh-45-example"));
-        assert_eq!(t.role, Some(Role::Dev));
-        assert_eq!(t.lead.as_deref(), Some("b-lead"));
-        assert_eq!(t.model.as_deref(), Some("example-model"));
-        assert_eq!(t.effort.as_deref(), Some("high"));
+        let a = tag(l.resolve(&claude("s-1")));
+        assert_eq!(a.bot, "b-example");
+        assert_eq!(a.kind, Kind::Worker);
+        assert_eq!(a.task.as_deref(), Some("gh-45"));
+        assert_eq!(a.branch.as_deref(), Some("feat/gh-45-example"));
+        assert_eq!(a.role, Some(Role::Dev));
+        assert_eq!(a.lead.as_deref(), Some("b-lead"));
+        assert_eq!(a.requested_agent.as_deref(), Some("claude"));
+        assert_eq!(a.requested_model.as_deref(), Some("example-model"));
+        assert_eq!(a.requested_effort.as_deref(), Some("high"));
         assert_eq!(
-            t.task_key(),
+            a.task_key(),
             Some(TaskKey {
                 project: PROJECT_A.into(),
                 task: "gh-45".into()
+            })
+        );
+        let b = tag(l.resolve(&claude("s-2")));
+        assert_eq!(b.bot, "b-other");
+        assert_eq!(b.task.as_deref(), Some("gh-77"));
+        assert_eq!(b.branch.as_deref(), Some("feat/gh-77-other"));
+        assert_eq!(b.role, Some(Role::Review));
+        assert_eq!(b.lead.as_deref(), Some("b-lead-other"));
+        assert_eq!(b.requested_model.as_deref(), Some("other-model"));
+        assert_eq!(b.requested_effort.as_deref(), Some("low"));
+        assert_eq!(
+            b.task_key(),
+            Some(TaskKey {
+                project: PROJECT_B.into(),
+                task: "gh-77".into()
             })
         );
         assert_eq!(l.resolve(&claude("s-unknown")), Resolution::Untagged);
         // A session row whose terminal has no start row tags nothing.
         let orphan = ledger(&[session("t7", "s-7")]);
         assert_eq!(orphan.resolve(&claude("s-7")), Resolution::Untagged);
+    }
+
+    #[test]
+    fn incomplete_start_closes_the_window_and_is_never_a_stale_tag() {
+        let codex = |l: &Ledger, at| l.resolve(&by_cwd(Source::Codex, WT_A, at));
+        // A later start with no bot and no agent: it may be the codex session's owner.
+        let mut blank = start("t2", WT_A, "codex", "2026-01-01T12:00:00Z");
+        blank["bot"] = Value::Null;
+        blank["agent"] = Value::Null;
+        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), blank]);
+        assert_eq!(tag(codex(&l, "2026-01-01T10:00:00Z")).bot, "b-example");
+        assert_eq!(codex(&l, "2026-01-01T13:00:00Z"), Resolution::Unmatched);
+        // Same agent but no bot: a claimant that cannot be tagged.
+        let mut botless = start("t2", WT_A, "codex", "2026-01-01T12:00:00Z");
+        botless.as_object_mut().unwrap().remove("bot");
+        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), botless]);
+        assert_eq!(codex(&l, "2026-01-01T13:00:00Z"), Resolution::Unmatched);
+        // An unknown kind still closes the window; it runs omp, so codex has no owner after it.
+        let mut robot = start("t2", WT_A, "omp", "2026-01-01T12:00:00Z");
+        robot["kind"] = json!("robot");
+        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), robot]);
+        assert_eq!(codex(&l, "2026-01-01T13:00:00Z"), Resolution::Untagged);
+        // A start row without a terminal still bounds the worktree.
+        let mut headless = start("t2", WT_A, "omp", "2026-01-01T12:00:00Z");
+        headless["terminal"] = Value::Null;
+        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), headless]);
+        assert_eq!(codex(&l, "2026-01-01T13:00:00Z"), Resolution::Untagged);
+        // Claude: the only start on the session's terminal has no bot, so it cannot be confirmed.
+        let mut botless = start("t1", WT_A, "claude", "2026-01-01T09:00:00Z");
+        botless["bot"] = Value::Null;
+        let l = ledger(&[botless.clone(), session("t1", "s-1")]);
+        assert_eq!(l.resolve(&claude("s-1")), Resolution::Unmatched);
+        // ... and a relaunch on the terminal without a bot still makes it ambiguous.
+        botless["at"] = json!("2026-01-01T11:00:00Z");
+        let l = ledger(&[
+            start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
+            botless,
+            session("t1", "s-1"),
+        ]);
+        assert_eq!(l.resolve(&claude("s-1")), Resolution::Unmatched);
+    }
+
+    #[test]
+    fn resumed_claude_session_resolves_by_time() {
+        let mut other = start("t2", WT_B, "claude", "2026-01-01T10:30:00Z");
+        other["bot"] = json!("b-resumed");
+        let starts = [start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"), other];
+        let l = ledger(&[
+            starts[0].clone(),
+            starts[1].clone(),
+            session_at("t1", "s-1", "2026-01-01T09:00:01Z"),
+            session_at("t2", "s-1", "2026-01-01T11:00:00Z"),
+        ]);
+        let at = |when| l.resolve(&claude_at("s-1", when));
+        assert_eq!(tag(at("2026-01-01T10:00:00Z")).bot, "b-example");
+        assert_eq!(tag(at("2026-01-01T11:00:00Z")).bot, "b-resumed");
+        assert_eq!(tag(at("2026-01-01T12:00:00Z")).bot, "b-resumed");
+        // Before either pane reported the id: no row qualifies.
+        assert_eq!(at("2026-01-01T08:00:00Z"), Resolution::Unmatched);
+        // An untimed row is not a candidate; the timed one still decides.
+        let mut untimed = session("t2", "s-1");
+        untimed.as_object_mut().unwrap().remove("at");
+        let l = ledger(&[
+            starts[0].clone(),
+            starts[1].clone(),
+            session_at("t1", "s-1", "2026-01-01T09:00:01Z"),
+            untimed.clone(),
+        ]);
+        assert_eq!(
+            tag(l.resolve(&claude_at("s-1", "2026-01-01T12:00:00Z"))).bot,
+            "b-example"
+        );
+        // No row has a usable time: stay Unmatched.
+        let mut untimed_t1 = session("t1", "s-1");
+        untimed_t1["at"] = json!("not a time");
+        let l = ledger(&[starts[0].clone(), starts[1].clone(), untimed_t1, untimed]);
+        assert_eq!(
+            l.resolve(&claude_at("s-1", "2026-01-01T12:00:00Z")),
+            Resolution::Unmatched
+        );
     }
 
     #[test]
@@ -563,14 +748,17 @@ mod tests {
             l.resolve(&by_cwd(Source::Codex, WT_A, at)),
             Resolution::Unmatched
         );
-        // One Claude session id reported by two terminals.
+        // One Claude session id reported by two terminals at the same instant.
         let l = ledger(&[
             start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
             start("t2", WT_B, "claude", "2026-01-01T09:00:00Z"),
             session("t1", "s-1"),
             session("t2", "s-1"),
         ]);
-        assert_eq!(l.resolve(&claude("s-1")), Resolution::Unmatched);
+        assert_eq!(
+            l.resolve(&claude_at("s-1", "2026-01-01T10:00:00Z")),
+            Resolution::Unmatched
+        );
         // One terminal with two different start rows.
         let mut relaunch = start("t1", WT_A, "claude", "2026-01-01T11:00:00Z");
         relaunch["bot"] = json!("b-relaunch");
