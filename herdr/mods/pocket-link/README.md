@@ -20,17 +20,22 @@ your login shell, nvm, volta, fnm, asdf and Homebrew ([RECIPE.md](RECIPE.md#how-
 
 ## Update
 
-No release ships the mod and nothing updates an installed copy. To update it, copy the new
-`mods/pocket-link/` over the old one from a fresh clone:
+No release ships the mod and nothing updates an installed copy. To update it:
 
-```sh
-d=$(mktemp -d) && git clone -q --depth 1 https://github.com/automagik-dev/automagik-pocket "$d" && rsync -a "$d/desktop/pocket-link/mods/pocket-link/" ~/.config/herdr-app/mods/pocket-link/
-```
+1. Press **Turn off** in the dialog. The bridge loads its packages even to stop, so do this before
+   anything changes.
+2. Copy the new `mods/pocket-link/` over the old one from a fresh clone:
 
-`rsync` without `--delete` keeps `bridge/node_modules`, so the bridge works at once. Then press
-**Turn off** and **Turn on** in the dialog, so the running bridge picks up the new code. If the
-update changed `bridge/package-lock.json`, delete `bridge/node_modules` before that, and press
-**Install the bridge** when the dialog asks. Pairings live outside the mod folder and stay.
+   ```sh
+   d=$(mktemp -d) && git clone -q --depth 1 https://github.com/automagik-dev/automagik-pocket "$d" && rsync -a "$d/desktop/pocket-link/mods/pocket-link/" ~/.config/herdr-app/mods/pocket-link/
+   ```
+
+   `rsync` without `--delete` keeps `bridge/node_modules`.
+3. If the update changed `bridge/package-lock.json`, delete `bridge/node_modules` and press
+   **Install the bridge** when the dialog asks.
+4. Press **Turn on**.
+
+Pairings live outside the mod folder and stay.
 
 ## What it does on your computer
 
