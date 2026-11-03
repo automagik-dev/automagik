@@ -187,9 +187,10 @@ test('a profile without node_modules yet still gets the store, and the layout fo
 
 // The app opens on the Omni octopus (@automagik/welcome-dsh), not on DSH's own welcome
 // notice and credential step.
-test('the shipped profile bundles the Bot team first, Omni\'s plugins, the welcome and the plugin market, and switches DSH\'s own onboarding off', () => {
+test('the shipped profile bundles the Bot team first, Omni\'s plugins, the welcome, ACP agents and the plugin market, and switches DSH\'s own onboarding off', () => {
   const profile = JSON.parse(readFileSync(new URL('../profile/package.json', import.meta.url), 'utf8'))
-  const omni = ['@automagik/bots-dsh', '@automagik/omni-channels-dsh', '@automagik/omni-canvas-dsh', '@automagik/welcome-dsh']
+  // ACP agents (RFC 0003) are on by default here: Claude Code and Codex as models when their CLIs are installed.
+  const omni = ['@automagik/bots-dsh', '@automagik/omni-channels-dsh', '@automagik/omni-canvas-dsh', '@automagik/welcome-dsh', '@automagik/acp-dsh']
   // Omni's plugins first, then the add-ons that connect AI subscriptions, each a reviewed fork at
   // a pinned commit (the build checks it holds the version addonVersions names), bundled after.
   const addons = Object.keys(profile.omni.addonVersions)

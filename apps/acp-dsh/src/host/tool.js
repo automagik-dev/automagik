@@ -36,7 +36,7 @@ export function callArguments(tool) {
 }
 
 function resultOf(tool) {
-  const text = contentText(tool.content) || (tool.rawOutput === undefined ? '' : typeof tool.rawOutput === 'string' ? tool.rawOutput : JSON.stringify(tool.rawOutput))
+  const text = contentText(tool.content) || tool.output || (tool.rawOutput === undefined ? '' : typeof tool.rawOutput === 'string' ? tool.rawOutput : JSON.stringify(tool.rawOutput))
   const diffs = diffsOf(tool.content)
   return {
     title: tool.title,
@@ -132,10 +132,34 @@ export function mirrorTool(host) {
   })
 }
 
+// The sandbox mode the Session runs in: its last sandbox/mode row.
+function sandboxOf(session) {
+  const events = session?.snapshotEvents?.() ?? []
+  for (let i = events.length - 1; i >= 0; i--) if (events[i]?.type === 'sandbox/mode') return events[i].data?.mode
+  return undefined
+}
+
+/** The Session's level: its sandbox mode, its approval policy, and whether that is full access. */
+export function levelOf(approval, session) {
+  let policy
+  let sandbox
+  try {
+    policy = approval?.effectivePolicy?.(session)
+    sandbox = sandboxOf(session)
+  } catch {}
+  return { sandbox, policy, full: policy === 'never' && sandbox === 'danger-full-access' }
+}
+
+// Full access (no approval prompts, no sandbox) lets the agent's calls through as it lets DSH's
+// own: DSH's approval service would reject them unasked under its `never` policy.
+export const fullAccess = (approval, session) => levelOf(approval, session).full
+
 async function ask(host, live, tool, exec) {
   const approval = host.approval()
   if (!approval || !exec.agent) return 'unavailable'
-  const reason = `${live.name}: ${tool.title}`
+  if (fullAccess(approval, exec.agent.session)) return 'allowed-once'
+  const asking = tool.permission?.title
+  const reason = `${live.name}: ${asking && asking !== tool.title ? `${asking.replace(/\?$/, '')}: ` : ''}${tool.title}`
   try {
     return await approval.request({ agent: exec.agent, toolName: TOOL_NAME, callId: exec.callId, reason, displayReason: { en: reason }, signal: exec.signal })
   } catch {

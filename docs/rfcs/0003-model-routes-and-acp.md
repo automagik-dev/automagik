@@ -57,8 +57,22 @@ Every model entry gets a descriptor `{ harness, connectedBy }`, derived from its
   at the `llm/stream` waterfall, so they never reach the agent as prompts.
 - **The team's tools over MCP.** A Bot's team tools reach the agent through an MCP server the
   plugin hands to the agent per session. It exposes only the tools the Bot's level allows.
-- **Pinned adapters.** Each adapter is a pre-installed binary at an exact version with a SHA-256
-  check. Nothing is downloaded at spawn: no `npx`, no global install, no self-update.
+- **The person's own CLI, the newest adapter.** (Amended, owner decision D17.) An agent is offered
+  only when its CLI is installed (`claude`, `codex`, found on PATH or where their installers put
+  them); it runs that CLI, which the person signs in to and which updates itself. Between DSH and
+  the CLI sits the agent's ACP adapter (`@agentclientprotocol/claude-agent-acp`,
+  `@agentclientprotocol/codex-acp`; the `@zed-industries` names are deprecated), at its newest
+  npm release: installed in the background at DSH's start and once a day after, into
+  `$AUTOMAGIK_HOME/acp/adapters`, into a fresh folder renamed into place only when complete,
+  without install scripts or optional dependencies (the CLIs the adapters bundle). Nothing is
+  downloaded when a Session starts: no `npx`. Until the first install lands, a turn says the
+  adapter is being installed.
+- **The Session's level, as the agent's own mode.** Before each prompt the plugin sets the agent's
+  ACP session mode from the Session's level: Claude Code in Manual (`default`), so every write and
+  command it would run asks through DSH, whatever default mode the person's own Claude Code
+  settings name; Codex in its sandbox matching DSH's (`read-only`, `workspace-write`). Full access
+  is `bypassPermissions` and `agent-full-access`, and any ask that still comes is allowed, as DSH
+  allows its own tools there.
 - **Resume.** Use the agent's own session load when it offers one; otherwise start fresh and say so.
 
 ### Retired: the Claude Code plugin
@@ -82,6 +96,9 @@ and D17). Claude runs on pi-ai's `anthropic` route until `acp-claude` ships.
 ### Decided
 
 - The first ACP delivery carries Claude Code and Codex together (owner, 2026-10-30).
+- Adapters are not pinned: always the newest release, running the person's own CLI (owner, D17,
+  2026-11). This replaces the pinned-adapter rule and answers open question 1.
+- acp-dsh is on by default in the desktop profile (owner, D17, 2026-11).
 
 ### Per-teammate models (status note)
 
@@ -100,7 +117,10 @@ patch is removed in the release whose DSH carries the change.
   Session logs keep them.
 - Plugin id `@automagik/acp-dsh` in `apps/acp-dsh`, storage prefix `acp-dsh`. New. It joins the
   one-version list and the release loop.
-- Adapter pins: a list of `{ agent, version, sha256 }` in the plugin. A bump is a reviewed PR.
+- The adapter packages by exact name, `@agentclientprotocol/claude-agent-acp` and
+  `@agentclientprotocol/codex-acp`, at their newest release (no pin list; amended, D17).
+- Settings `claude` and `codex` (on unless set off) and the install folder
+  `$AUTOMAGIK_HOME/acp/adapters`.
 
 ## Threat model
 
@@ -111,9 +131,20 @@ patch is removed in the release whose DSH carries the change.
 - **Authentication.** The agent command comes only from host-side settings, never from a client
   route. The MCP bridge is stdio, or authenticated per session; it never listens on an open port.
 - **Credentials.** Stored with mode 0600 or in the OS keychain. Never returned to the client.
-- **Supply chain.** Adapters are pinned by version and SHA-256, with a source review per bump.
-- **Undo.** The plugin is off by default. Turning it off removes its routes; Sessions on an ACP
-  route fall back to the Bot's previous model.
+- **Supply chain (amended, D17).** Adapters are not pinned. What that costs: a second publisher,
+  the `@agentclientprotocol` npm organisation, joins a boundary that already holds Anthropic's and
+  OpenAI's own CLI update channels, and its releases reach installed apps within a day with no
+  review of ours. A bad or hijacked publish runs as the person, with what the agent CLI can
+  already reach (their files, their sign-ins). What still holds: the exact package names, npm's
+  integrity check of every tarball, no install scripts, no optional dependencies, nothing fetched
+  at spawn, and an install that fails leaves the previous adapter in place. Also new: the adapter
+  carries its own copy of the agent's SDK (`claude-agent-acp` pins `@anthropic-ai/claude-agent-sdk`)
+  and drives whatever CLI the person has, so the two can drift apart; nobody owns that pairing,
+  and a mismatch shows as a failed turn, not a silent one. Turning `claude` or `codex` off in the
+  plugin's settings removes that agent and its updates.
+- **Undo.** The plugin is on by default in the desktop profile and offers an agent only when its
+  CLI is installed. Turning it off removes its routes; Sessions on an ACP route fall back to the
+  Bot's previous model.
 
 ## Deliveries
 
@@ -122,14 +153,15 @@ patch is removed in the release whose DSH carries the change.
 2. **ACP plugin skeleton.** New plugin, off by default, one fake agent for tests. Lane: plugin
    (not yet in the desktop profile). Check: a Session on the fake agent streams text, shows a
    tool card and asks through DSH's dialog. Rollback: revert.
-3. **Claude Code and Codex via ACP, together.** Pinned adapters in the desktop runtime; plugin
-   in the profile, off by default. Lane: desktop. Check: a new Claude Code session and a new
-   Codex session from the DSH UI each run a tool call after approval. Rollback: the next release
-   drops them; the Claude Code plugin route is untouched.
+3. **Claude Code and Codex via ACP, together.** The person's own CLIs through the newest
+   adapters, installed in the background; plugin in the profile, on by default. Lane: desktop.
+   Check: a new Claude Code session and a new Codex session each run a tool call after approval
+   (`apps/acp-dsh/dev/dsh-check.mjs --agent claude|codex`, on a real DSH). Rollback: the next
+   release drops them; the Claude Code plugin route is untouched.
 4. **Bots' tools over MCP.** Lane: plugin. Check: a Bot on `acp-claude` posts to its group
    through a team tool, and a tool above its level is not offered. Rollback: revert; the Bot
    is chat-only on ACP.
-5. **Gemini.** Pinned adapter. Lane: desktop. Check: one session runs a tool call after
+5. **Gemini.** The newest adapter, the person's own CLI. Lane: desktop. Check: one session runs a tool call after
    approval. Rollback: the next release drops it.
 
 Delivery 1 is in milestone 2 (One message box), because the picker needs it. Deliveries 2 to 5
@@ -137,12 +169,13 @@ are milestone 3 (Other agents in the same chat).
 
 ## Open questions
 
-1. **How are adapters delivered?** Recommended: built into the desktop runtime at an exact
-   version with a hash check, and installed the same way by install.sh (RFC 0008).
+1. **How are adapters delivered?** Decided (D17): not pinned; the newest release, installed in the
+   background into Automagik's home, running the person's own CLI. install.sh (RFC 0008) needs
+   nothing for it.
 2. **When is a route retired?** Recommended: after two months with no Session on it in the
    team's own installs and no user report; announce it one release ahead.
-3. **Separate plugin or inside the Bot team?** Recommended: a separate plugin, so it can be
-   off by default and pinned on its own.
+3. **Separate plugin or inside the Bot team?** Decided: a separate plugin, `@automagik/acp-dsh`
+   (D17), on by default in the desktop profile.
 
 ## Links
 

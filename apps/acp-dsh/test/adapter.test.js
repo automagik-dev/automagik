@@ -25,7 +25,7 @@ function host({ answer = 'allowed-once' } = {}) {
     get: name => (name === 'approval' ? { request: async (req) => { asked.push(req); return typeof answer === 'function' ? answer(req) : answer } } : undefined),
     on: (name, fn) => { if (name === 'dispose') disposers.push(fn) },
   }
-  apply(ctx, { fakeAgent: FAKE })
+  apply(ctx, { fakeAgent: FAKE, claude: false, codex: false })
   const close = () => { for (const fn of disposers) fn(); rmSync(cwd, { recursive: true, force: true }) }
   return { adapter: registered['acp-fake'], agent, tools, asked, close, registered }
 }
@@ -147,7 +147,7 @@ test('a request DSH builds on the side never reaches the agent', async () => {
 test('an agent that cannot start fails the step with its reason', async () => {
   const registered = {}
   const ctx = { llm: { registerAdapter: (providers, adapter) => { for (const id of providers) registered[id] = adapter } }, agents: { get: () => undefined }, get: () => undefined }
-  apply(ctx, { fakeAgent: join(import.meta.dirname, 'fixtures', 'no-such-agent.mjs') })
+  apply(ctx, { fakeAgent: join(import.meta.dirname, 'fixtures', 'no-such-agent.mjs'), claude: false, codex: false })
   const chunks = []
   for await (const chunk of registered['acp-fake'].stream(markAgentLoopRequest({ provider: 'acp-fake', model: 'fake', sessionId: 's9', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }))) chunks.push(chunk)
   assert.equal(chunks.at(-1).reason.kind, 'error')
@@ -156,7 +156,7 @@ test('an agent that cannot start fails the step with its reason', async () => {
 
 test('without an agent the plugin registers no route', () => {
   let calls = 0
-  apply({ llm: { registerAdapter: () => { calls++ } } }, {})
+  apply({ llm: { registerAdapter: () => { calls++ } } }, { claude: false, codex: false })
   assert.equal(calls, 0)
 })
 

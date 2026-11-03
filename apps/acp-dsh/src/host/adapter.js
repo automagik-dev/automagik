@@ -7,9 +7,27 @@ import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { LlmAdapter, isAgentLoopRequest } from '@deepseek-ai/dsh-llm'
 import { AgentRun } from './acp.js'
-import { callArguments, mirrorTool, TOOL_NAME } from './tool.js'
+import { callArguments, levelOf, mirrorTool, TOOL_NAME } from './tool.js'
 
 const CANCEL_WAIT_MS = 5000
+// An agent may announce a call before it says what the call does (Claude Code's adapter sends
+// the command in an update right after): the card waits this long for it.
+const DETAIL_WAIT_MS = 1500
+
+const detailed = tool => (tool.rawInput !== undefined && tool.rawInput !== null && Object.keys(tool.rawInput).length > 0) || tool.permission !== undefined || tool.status !== 'pending'
+function settle(tool, ms) {
+  if (detailed(tool)) return Promise.resolve()
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer)
+      tool.listeners.delete(check)
+      resolve()
+    }
+    const check = () => { if (detailed(tool)) done() }
+    const timer = setTimeout(done, ms)
+    tool.listeners.add(check)
+  })
+}
 
 const failure = (message, code = 'ACP_AGENT') => ({ message, code })
 const finish = (kind, message, code) => ({ type: 'finish', reason: message === undefined ? { kind } : { kind, failure: failure(message, code) } })
@@ -129,8 +147,9 @@ export class AcpAdapter extends LlmAdapter {
       }
       let fresh = false
       if (live === undefined) {
-        const run = new AgentRun({ ...agent.spawn(), cwd: dshAgent?.session?.header?.cwd ?? homedir(), name: agent.name })
+        let run
         try {
+          run = new AgentRun({ ...(await agent.spawn()), cwd: dshAgent?.session?.header?.cwd ?? homedir(), name: agent.name })
           await run.start()
         } catch (error) {
           return yield finish('error', `${agent.name} did not start: ${error?.message ?? error}`)
@@ -143,6 +162,12 @@ export class AcpAdapter extends LlmAdapter {
         await live.run.cancel()
         await Promise.race([live.run.prompting, new Promise(resolve => setTimeout(resolve, CANCEL_WAIT_MS).unref?.())])
         if (live.run.busy) return yield finish('error', `${agent.name} is still finishing its last answer; send this again in a moment`)
+      }
+      // The Session's level, as the agent's own permission mode, before every prompt.
+      try {
+        await live.run.setMode(agent.modeFor?.(levelOf(this.ctx.get?.('approval'), dshAgent?.session)))
+      } catch (error) {
+        return yield finish('error', `${agent.name} would not take DSH's permission level: ${error?.message ?? error}`)
       }
       if (fresh && options.messages.some(message => message.role === 'assistant')) {
         yield* blocks.add('text', `(A new ${agent.name} session: it does not see this chat's earlier messages.)\n\n`)
@@ -159,6 +184,7 @@ export class AcpAdapter extends LlmAdapter {
       else if (event.type === 'thought') yield* blocks.add('reasoning', event.text)
       else if (event.type === 'tool') {
         const tool = live.run.tools.get(event.id)
+        await settle(tool, DETAIL_WAIT_MS)
         const id = `acp_${randomUUID()}`
         live.calls.add(id)
         yield* blocks.toolCall(id, TOOL_NAME, JSON.stringify(callArguments(tool)))

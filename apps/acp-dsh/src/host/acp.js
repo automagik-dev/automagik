@@ -63,6 +63,7 @@ export class AgentRun {
       this.init = await this.conn.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} })
       const session = await this.conn.newSession({ cwd, mcpServers: [] })
       this.sessionId = session.sessionId
+      this.modes = session.modes
     })()
     try {
       await Promise.race([ready, gone])
@@ -75,10 +76,24 @@ export class AgentRun {
     return this
   }
 
-  holdOn() { this.hold ??= setInterval(() => {}, 1 << 30) }
-  letGo() {
+  // Each request the agent has yet to answer holds the event loop; the last answer lets it go.
+  holdOn() {
+    this.holds = (this.holds ?? 0) + 1
+    this.hold ??= setInterval(() => {}, 1 << 30)
+  }
+  letGo(all = false) {
+    this.holds = all ? 0 : Math.max(0, (this.holds ?? 0) - 1)
+    if (this.holds > 0) return
     clearInterval(this.hold)
     this.hold = undefined
+  }
+  async held(work) {
+    this.holdOn()
+    try {
+      return await work()
+    } finally {
+      this.letGo()
+    }
   }
 
   get alive() { return this.child !== undefined && this.exited === undefined }
@@ -131,13 +146,21 @@ export class AgentRun {
     this.push(event)
   }
 
+  /** Switch the agent's own permission mode, when it has that mode and is not in it already. */
+  async setMode(modeId) {
+    if (modeId === undefined || this.modes?.currentModeId === modeId) return
+    if (!this.modes?.availableModes?.some(mode => mode.id === modeId)) return
+    await this.held(() => Promise.race([this.conn.setSessionMode({ sessionId: this.sessionId, modeId }), this.gone]))
+    this.modes = { ...this.modes, currentModeId: modeId }
+  }
+
   async cancel() {
     if (!this.busy || this.sessionId === undefined) return
-    await this.conn.cancel({ sessionId: this.sessionId }).catch(() => {})
+    await this.held(() => this.conn.cancel({ sessionId: this.sessionId })).catch(() => {})
   }
 
   dispose() {
-    this.letGo()
+    this.letGo(true)
     for (const tool of this.tools.values()) tool.permission?.answer({ outcome: { outcome: 'cancelled' } })
     try { this.child?.stdin.end() } catch {}
     const child = this.child
@@ -171,6 +194,9 @@ export class AgentRun {
         this.changeTool(tool, update)
         break
       }
+      case 'current_mode_update':
+        if (this.modes) this.modes = { ...this.modes, currentModeId: update.currentModeId }
+        break
       default:
         break
     }
@@ -189,6 +215,10 @@ export class AgentRun {
   }
 
   changeTool(tool, update) {
+    // A command's output, for a client with no terminal of its own (Zed's terminal_output
+    // extension, which codex-acp sends): kept as the call's output.
+    const chunk = update._meta?.terminal_output?.data
+    if (typeof chunk === 'string') tool.output = (tool.output ?? '') + chunk
     for (const key of ['title', 'kind', 'status', 'content', 'locations', 'rawInput', 'rawOutput', 'ended']) {
       if (update[key] !== undefined && update[key] !== null) tool[key] = update[key]
     }
@@ -196,8 +226,11 @@ export class AgentRun {
   }
 
   onPermission(params) {
-    const tool = this.tools.get(params.toolCall?.toolCallId) ?? this.seeTool({ status: 'pending', ...params.toolCall })
-    if (params.toolCall) this.changeTool(tool, { ...params.toolCall, status: undefined })
+    const known = this.tools.get(params.toolCall?.toolCallId)
+    const tool = known ?? this.seeTool({ status: 'pending', ...params.toolCall })
+    // The question's own title ("Run command?") names the question, not the call the card shows.
+    const { title, ...details } = params.toolCall ?? {}
+    this.changeTool(tool, { ...details, status: undefined })
     return new Promise((resolve) => {
       let done = false
       const permission = {
@@ -210,6 +243,7 @@ export class AgentRun {
           for (const listener of tool.listeners) listener()
         },
       }
+      permission.title = title
       tool.permission = permission
       for (const listener of tool.listeners) listener()
     })

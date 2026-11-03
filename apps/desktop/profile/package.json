@@ -1,7 +1,7 @@
 {
   "name": "omni-desktop-profile",
   "private": true,
-  "description": "The dsh profile the Automagik desktop app starts: dsh's own base and web app, its plugin market, Automagik's plugins (the Bot team and the welcome, from this repository) and Omni's (channels and canvases, from the Omni release omni.json pins), and dsh-subscriptions, the add-on that signs in to the plans DSH doesn't, from a reviewed fork at a pinned commit. Claude comes through DSH's own pi-ai route: a Claude Pro or Max sign-in, or an Anthropic API key.",
+  "description": "The dsh profile the Automagik desktop app starts: dsh's own base and web app, its plugin market, Automagik's plugins (the Bot team, the welcome and ACP agents: Claude Code and Codex through the person's own CLIs, from this repository) and Omni's (channels and canvases, from the Omni release omni.json pins), and dsh-subscriptions, the add-on that signs in to the plans DSH doesn't, from a reviewed fork at a pinned commit. Claude comes through DSH's own pi-ai route: a Claude Pro or Max sign-in, or an Anthropic API key.",
   "omni": {
     "addonVersions": {
       "@goodandready/dsh-subscriptions": "0.7.21-omni.1"
@@ -12,6 +12,7 @@
     "@automagik/omni-channels-dsh": "*",
     "@automagik/omni-canvas-dsh": "*",
     "@automagik/welcome-dsh": "*",
+    "@automagik/acp-dsh": "*",
     "@goodandready/dsh-subscriptions": "github:automagik-genie/dsh-subscriptions#2eff034ede95c9d06ecee290517101e6419c7fee"
   },
   "dsh": {
@@ -24,6 +25,7 @@
         "@automagik/omni-channels-dsh",
         "@automagik/omni-canvas-dsh",
         "@automagik/welcome-dsh",
+        "@automagik/acp-dsh",
         "@goodandready/dsh-subscriptions"
       ]
     }
