@@ -48,3 +48,15 @@ test('every release carries the stable download names under Automagik and under 
   assert.match(text, /for pair in "-mac-arm64\.dmg:Mac\.dmg" "-linux-x86_64\.AppImage:Linux\.AppImage" "-linux-amd64\.deb:Linux\.deb"; do/)
   assert.match(text, /for name in Automagik Omni; do cp -- "\$\{file\}" "\$\{name\}-\$\{pair##\*:\}"; done/)
 })
+
+// Windows x86_64 (D27, D28): built on every release, unsigned until a certificate exists (D36).
+test('every release builds Windows, publishes its installer and feed, and never fails on a missing certificate', () => {
+  const text = readFileSync(new URL('../../../.github/workflows/desktop-build.yml', import.meta.url), 'utf8')
+  assert.match(text, /- target: windows\r?\n {12}os: windows-latest\r?\n/)
+  assert.match(text, /npx --no-install electron-builder --win nsis --x64 --publish never/)
+  assert.match(text, /if \[\[ -z "\$\{WIN_CSC_LINK\}" \]\]; then\r?\n {12}echo "::warning ::No Windows code-signing certificate: the installer is unsigned"\r?\n {12}unset WIN_CSC_LINK WIN_CSC_KEY_PASSWORD\r?\n/)
+  assert.match(text, /node scripts\/check-feed\.mjs dist\/latest\.yml/)
+  assert.match(text, /need\+=\("Automagik-\$\{VERSION\}-win-x64\.exe" latest\.yml\)/)
+  assert.match(text, /apps\/desktop\/dist\/latest\.yml\r?\n/)
+  assert.match(text, /cp -- "\$\{file\}" Automagik-Windows\.exe/)
+})

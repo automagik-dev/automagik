@@ -2,9 +2,10 @@ name: Desktop build
 
 # Builds the Automagik desktop app (apps/desktop) at one commit of this repository and adds it
 # to the release `v<version>`, where `omni desktop` (Omni's CLI) and `genie desktop` find it:
-# the Linux AppImage and deb, the macOS arm64 dmg, and SHA256SUMS, which the CLIs check every
-# download against. Installed apps update from the same release (apps/desktop/src/update.js):
-# latest-linux.yml for the AppImage, and latest-mac.yml with the zip for macOS.
+# the Linux AppImage and deb, the macOS arm64 dmg, the Windows x86_64 installer, and
+# SHA256SUMS, which the CLIs check every download against. Installed apps update from the same
+# release (apps/desktop/src/update.js): latest-linux.yml for the AppImage, latest-mac.yml with
+# the zip for macOS, and latest.yml with the installer for Windows.
 #
 # The version is Automagik's (package.json), which the app and every plugin here carry; the
 # release already holds the plugins (release.yml makes it and calls this). Dispatch it by hand
@@ -16,6 +17,11 @@ name: Desktop build
 # contents), APPLE_API_KEY_ID and APPLE_API_ISSUER both are notarized and stapled.
 # Without them the dmg is unsigned, and the release carries no macOS update: a signed app
 # accepts only an update signed like itself, and an unsigned one cannot update.
+#
+# Windows is unsigned for now (D36): the installer and its update feed ship without a
+# signature, and SmartScreen warns on the first download. The WIN_CSC_LINK and
+# WIN_CSC_KEY_PASSWORD secrets (a code-signing certificate as a base64 .pfx) sign it once they
+# exist; apps/desktop/electron-builder.yml `win` has the Azure Trusted Signing alternative.
 
 on:
   workflow_call:
@@ -95,6 +101,8 @@ jobs:
             os: ubuntu-24.04
           - target: mac
             os: macos-14
+          - target: windows
+            os: windows-latest
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     permissions:
@@ -102,9 +110,18 @@ jobs:
     defaults:
       run:
         working-directory: apps/desktop
+        # Git Bash on Windows: every step is the same bash on the three runners.
+        shell: bash
     env:
       DO_NOT_TRACK: '1'
     steps:
+      # Windows' git checks out text with CRLF line endings, and the build checks files byte
+      # for byte (the runtime patches' hashes): check out exactly what the commit holds.
+      - name: Check out without CRLF
+        if: runner.os == 'Windows'
+        working-directory: .
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ needs.version.outputs.sha }}
@@ -179,6 +196,33 @@ jobs:
             rm -f dist/latest-mac.yml dist/*.zip dist/*.zip.blockmap
           fi
 
+      # Unsigned unless WIN_CSC_LINK is set: electron-builder then signs nothing and fails on
+      # nothing. The update feed ships either way: an installed Windows app checks an update's
+      # signature only once a signed build named its publisher (electron-builder.yml `win`).
+      - name: Build Windows installer
+        if: matrix.target == 'windows'
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # Only the Windows certificate signs here, never one meant for another platform.
+          unset CSC_LINK CSC_KEY_PASSWORD
+          if [[ -z "${WIN_CSC_LINK}" ]]; then
+            echo "::warning ::No Windows code-signing certificate: the installer is unsigned"
+            unset WIN_CSC_LINK WIN_CSC_KEY_PASSWORD
+          fi
+          npx --no-install electron-builder --win nsis --x64 --publish never
+          ls -l dist
+          exe=$(ls dist/*-win-x64.exe)
+          status=$(powershell -NoProfile -Command "(Get-AuthenticodeSignature -LiteralPath '${exe}').Status")
+          echo "${exe}: ${status}"
+          if [[ -n "${WIN_CSC_LINK:-}" && "${status}" != Valid* ]]; then
+            echo "::error ::${exe} is not validly signed (${status})"
+            exit 1
+          fi
+          node scripts/check-feed.mjs dist/latest.yml
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: desktop-${{ matrix.target }}
@@ -187,7 +231,9 @@ jobs:
             apps/desktop/dist/*.deb
             apps/desktop/dist/*.dmg
             apps/desktop/dist/*.zip
+            apps/desktop/dist/*.exe
             apps/desktop/dist/*.blockmap
+            apps/desktop/dist/latest.yml
             apps/desktop/dist/latest-*.yml
           if-no-files-found: error
           retention-days: 7
@@ -213,8 +259,9 @@ jobs:
           merge-multiple: true
 
       # A build that finished without one of its files must not publish: a release without
-      # latest-linux.yml or latest-mac.yml leaves every installed app without its update. The
-      # macOS zip and feed are only made when the app is signed.
+      # latest-linux.yml, latest-mac.yml or latest.yml leaves every installed app without its
+      # update. The macOS zip and feed are only made when the app is signed; Windows' feed ships
+      # signed or not.
       - name: Every download is there
         working-directory: assets
         env:
@@ -222,6 +269,7 @@ jobs:
         run: |
           set -euo pipefail
           need=("Automagik-${VERSION}-linux-x86_64.AppImage" "Automagik-${VERSION}-linux-amd64.deb" latest-linux.yml "Automagik-${VERSION}-mac-arm64.dmg")
+          need+=("Automagik-${VERSION}-win-x64.exe" latest.yml)
           [[ "${SIGNED}" == true ]] && need+=("Automagik-${VERSION}-mac-arm64.zip" latest-mac.yml)
           missing=0
           for file in "${need[@]}"; do
@@ -232,8 +280,9 @@ jobs:
       # Every release also carries its downloads under names without the version, so
       # .../releases/latest/download/Automagik-Mac.dmg (the README's buttons) is always the
       # newest. The Omni-* names are the ones the app had before it was Automagik: links to
-      # them keep fetching the newest too. `omni desktop`, `genie desktop` and the updater read
-      # the versioned names, which these never match.
+      # them keep fetching the newest too; Windows came after the rename, so it has only
+      # Automagik-Windows.exe. `omni desktop`, `genie desktop` and the updater read the versioned
+      # names, which these never match.
       - name: Stable download names
         working-directory: assets
         run: |
@@ -243,6 +292,8 @@ jobs:
             [[ -z "${file}" ]] && continue
             for name in Automagik Omni; do cp -- "${file}" "${name}-${pair##*:}"; done
           done
+          file=$(ls -- *-win-x64.exe 2>/dev/null | head -1 || true)
+          [[ -n "${file}" ]] && cp -- "${file}" Automagik-Windows.exe
           ls -l
 
       - name: Checksums
@@ -282,5 +333,5 @@ jobs:
               --repo "${GITHUB_REPOSITORY}" \
               --target "${SHA}" \
               --title "Automagik ${VERSION}" \
-              --notes "**Download:** Mac (Apple silicon): **Automagik-Mac.dmg** · Linux: **Automagik-Linux.deb** (Ubuntu, Debian) or **Automagik-Linux.AppImage**. Already installed (as Omni too)? The app updates itself. SHA256SUMS lists every file's checksum."
+              --notes "**Download:** Mac (Apple silicon): **Automagik-Mac.dmg** · Linux: **Automagik-Linux.deb** (Ubuntu, Debian) or **Automagik-Linux.AppImage** · Windows (x64): **Automagik-Windows.exe** (not signed yet: SmartScreen asks you to confirm, under More info). Already installed (as Omni too)? The app updates itself. SHA256SUMS lists every file's checksum."
           fi
