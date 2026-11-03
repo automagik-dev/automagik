@@ -129,10 +129,11 @@ what a release is and whether it attaches the pack:
   with `--allow-unrelated-histories`, without tags. It refuses a history that holds a database, a
   key or an `.env`. filter-repo is deterministic, so a re-run before the cutover merges only the
   source's newer commits.
-- `commitlint.yml` checks the commits that descend from the pull request's merge base. An imported
-  history has no path to it, so its commits, written under the source's own rules, are skipped (the
-  herdr import has ten whose bodies run past 100 characters). Every commit made here is still
-  checked.
+- `commitlint.yml` checks the commits that descend from this repository's own first commit (the
+  root of dev's first-parent line). An imported history never descends from it, on a re-import
+  too, so its commits, written under the source's own rules, are skipped (the herdr import has ten
+  whose bodies run past 100 characters). Every commit made here is still checked, also after dev is
+  merged into the pull request.
 
 ## Required follow-up: a signed pack (before the bridge release)
 

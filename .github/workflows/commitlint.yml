@@ -27,14 +27,15 @@ jobs:
         run: |
           set -euo pipefail
           bad=0
-          # Only commits made on this repository: those that descend from the pull request's
-          # merge base. The history of a repository imported whole (scripts/import-herdr.sh: an
-          # unrelated history merged in, docs/rfcs/0010-monorepo-parts-and-releases.md) is kept
-          # as that repository wrote it; its own commits never reach the base, so they are skipped.
-          mb=$(git merge-base "${BASE}" "${HEAD}")
+          # Only commits made on this repository: those that descend from its own first commit (the
+          # root of dev's first-parent line). The history of a repository imported whole
+          # (scripts/import-herdr.sh: an unrelated history merged in as a second parent,
+          # docs/rfcs/0010-monorepo-parts-and-releases.md) is kept as that repository wrote it; its
+          # commits never descend from that root, on a re-import too, so they are skipped.
+          root=$(git rev-list --first-parent --max-parents=0 "${BASE}")
           skipped=0
           for sha in $(git rev-list --no-merges "${BASE}..${HEAD}"); do
-            if ! git merge-base --is-ancestor "${mb}" "${sha}"; then
+            if ! git merge-base --is-ancestor "${root}" "${sha}"; then
               skipped=$((skipped + 1))
               continue
             fi

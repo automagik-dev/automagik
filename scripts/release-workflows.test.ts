@@ -85,7 +85,7 @@ describe('commitlint over a pull request that imports a repository with its hist
 
   // A repository with dev at `base`, and a branch on it that merges in an unrelated history (an
   // import, whose commit runs past 100 characters as automagik-herdr's did) and adds its own `own`.
-  function lint(own: string) {
+  function lint(own: string, { devMoves = false } = {}) {
     const dir = mkdtempSync(join(tmpdir(), 'commitlint-'));
     const git = (...args: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8' }).stdout.trim();
     git('init', '-q', '-b', 'dev');
@@ -97,13 +97,22 @@ describe('commitlint over a pull request that imports a repository with its hist
     git('checkout', '-q', '-b', 'pr', base);
     git('merge', '-q', '--allow-unrelated-histories', '-m', 'feat(herdr): import it', 'imported');
     git('commit', '-q', '--allow-empty', '-m', own);
-    const run = spawnSync('bash', ['-c', `set -euo pipefail\n${script}`], { cwd: dir, encoding: 'utf8', env: { PATH: process.env.PATH ?? '', BASE: base, HEAD: git('rev-parse', 'HEAD') } });
+    let tip = base;
+    if (devMoves) {
+      // dev moves on, and the pull request merges it in: its own commits are still checked.
+      git('checkout', '-q', 'dev');
+      git('commit', '-q', '--allow-empty', '-m', 'chore(release): v9.9.9');
+      tip = git('rev-parse', 'HEAD');
+      git('checkout', '-q', 'pr');
+      git('merge', '-q', '-m', 'chore: merge dev', 'dev');
+    }
+    const run = spawnSync('bash', ['-c', `set -euo pipefail\n${script}`], { cwd: dir, encoding: 'utf8', env: { PATH: process.env.PATH ?? '', BASE: tip, HEAD: git('rev-parse', 'HEAD') } });
     rmSync(dir, { recursive: true, force: true });
     return { status: run.status, out: run.stdout + run.stderr };
   }
 
   test('the imported commits are skipped, as the source wrote them; the pull request\'s own are checked', () => {
-    expect(script).toContain('git merge-base --is-ancestor "${mb}" "${sha}"');
+    expect(script).toContain('git merge-base --is-ancestor "${root}" "${sha}"');
     const ok = lint('ci(herdr): run the pack in this repository');
     expect(ok.out).toContain('2 imported commit(s) skipped');
     expect(ok.status).toBe(0);
@@ -111,5 +120,10 @@ describe('commitlint over a pull request that imports a repository with its hist
     expect(bad.status).toBe(1);
     expect(bad.out).toContain('has a line over 100 characters');
     expect(bad.out).not.toContain('is not conventional');
+    // With dev merged into the pull request after its own commit, that commit is still checked.
+    const merged = lint(`fix: a commit of this pull request ${'y'.repeat(80)}`, { devMoves: true });
+    expect(merged.status).toBe(1);
+    expect(merged.out).toContain('has a line over 100 characters');
+    expect(merged.out).toContain('2 imported commit(s) skipped');
   });
 });
