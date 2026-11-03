@@ -234,7 +234,13 @@ const sameToken = (a, b) => fingerprint(str(a?.refreshToken)) === fingerprint(st
  */
 async function keep(name, oauth, io, prior = null) {
   const keepPrior = Boolean(prior) && !sameToken(prior, oauth);
-  if (keepPrior) await place({ provider: "claude", body: body(prior), to: previousSource(name, io), ...io });
+  if (keepPrior) {
+    try {
+      await place({ provider: "claude", body: body(prior), to: previousSource(name, io), ...io });
+    } catch {
+      throw new Error(`could not keep the copy of ${name} that this would replace, so ${name} was not re-saved; nothing was changed`);
+    }
+  }
   const placed = await place({ provider: "claude", body: body(oauth), to: savedSource(name, io), ...io });
   const now = new Date().toISOString();
   await indexed(io, `saved ${name}`, (logins) => {

@@ -295,6 +295,10 @@ export default class AmQuota extends View {
     try {
       await writeTextFile(statePath, JSON.stringify(this.active, null, 2) + "\n", before ?? null);
     } catch (err) {
+      // Keep memory equal to disk: the record on disk is what the next session will read.
+      try {
+        this.active = before ? records(JSON.parse(before)) : {};
+      } catch {}
       throw new Error(`the login was written, but active.json could not record it (${message(err).slice(0, 80)}) — the panel may name the wrong login in use`);
     }
   }
