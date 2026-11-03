@@ -42,7 +42,14 @@ test('a locked-out phone does not count toward the code\'s total', () => {
   assert.equal(pending.tries['phone-a'], TRIES_PER_PHONE)
 })
 
-test('many keys guessing still end the code at the total', () => {
+test('a stranger with a few fresh keys can\'t end the code: 7 keys with 3 wrong tries each', () => {
+  const tries = Array.from({ length: 7 * TRIES_PER_PHONE }, (_, i) => [`stranger-${i % 7}`, 'nope'])
+  const { verdicts, pending } = play(code(), [...tries, ['phone-real', 'right']])
+  assert.equal(pending, null)
+  assert.equal(verdicts.at(-1), 'ok')
+})
+
+test('only a flood of keys ends the code, at the total', () => {
   const tries = Array.from({ length: TRIES_PER_CODE }, (_, i) => [`phone-${i}`, 'nope'])
   const { verdicts, pending } = play(code(), [...tries, ['phone-real', 'right']])
   assert.equal(pending, null)

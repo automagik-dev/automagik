@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, statSync, openSync, writeSync, closeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { acceptOne, slots, throttle, rotateLog, readLine, MAX_LINE } from './guard.mjs'
+import { acceptOne, slots, throttle, rotateLog, readLine, addressOf, MAX_LINE } from './guard.mjs'
 
 const never = () => new Promise(() => {})
 const later = (ms, value) => new Promise(r => setTimeout(() => r(value), ms))
@@ -17,7 +17,7 @@ function recv(chunks, { hang = false } = {}) {
 }
 
 /** A fake peer. Each step can be swapped for one that is slow or never answers. */
-function peer({ alpn = 'pair', id = 'a'.repeat(64), lines = ['{"code":"x"}\n'], hang = false, connect, acceptBi } = {}) {
+function peer({ alpn = 'pair', id = 'a'.repeat(64), lines = ['{"code":"x"}\n'], hang = false, connect, acceptBi, from = { kind: 'ip', addr: '198.51.100.7:4433' } } = {}) {
   const conn = {
     closedWith: null,
     remoteId: () => ({ toString: () => id }),
@@ -28,6 +28,7 @@ function peer({ alpn = 'pair', id = 'a'.repeat(64), lines = ['{"code":"x"}\n'], 
   const incoming = {
     refused: false,
     refuse: async () => { incoming.refused = true },
+    remoteAddr: async () => from,
     accept: async () => ({ alpn: async () => [...Buffer.from(alpn)], connect: connect ? () => connect(conn) : async () => conn }),
   }
   return { conn, incoming }
@@ -75,10 +76,29 @@ test('an unpaired key is closed before anything is read from it', async () => {
   let read = false
   const { conn, incoming } = peer({ alpn: 'session', acceptBi: async () => { read = true; return { recv: recv([]) } } })
   const refused = logged()
-  await acceptOne(incoming, { routes: { session: { admit: () => false, run: () => {}, timed: false } }, cap: slots(), refused, ms: 1000 })
+  await acceptOne(incoming, { routes: { session: { admit: () => false, closing: 'not paired', run: () => {}, timed: false } }, cap: slots(), refused, ms: 1000 })
   assert.equal(conn.closedWith, 'not paired')
   assert.equal(read, false)
-  assert.match(refused.lines[0], /^refused unpaired aaaaaaaaaa$/)
+  assert.match(refused.lines[0], /^refused not paired: aaaaaaaaaa$/)
+})
+
+test('with no live code, a pairing connection is closed with its route\'s reason before anything is read', async () => {
+  let read = false
+  const { conn, incoming } = peer({ acceptBi: async () => { read = true; return { recv: recv([]) } } })
+  const cap = slots()
+  await acceptOne(incoming, { routes: { pair: { admit: () => false, closing: 'no pairing code', run: () => {}, timed: true } }, cap, refused: logged(), ms: 1000 })
+  assert.equal(conn.closedWith, 'no pairing code')
+  assert.equal(read, false)
+  assert.deepEqual(cap.counts(), { pending: 0, open: 0 })
+})
+
+test('a paired session\'s own error is logged in full, not throttled with the strangers\'', async () => {
+  const { conn, incoming } = peer({ alpn: 'session', lines: ['{"session":"main"}\n'] })
+  const refused = logged(), log = logged()
+  await acceptOne(incoming, { routes: { session: { admit: () => true, run: async () => { throw new Error('hc went away') }, timed: false } }, cap: slots(), refused, log, ms: 1000 })
+  assert.deepEqual(log.lines, ['session: hc went away'])
+  assert.deepEqual(refused.lines, [])
+  assert.equal(conn.closedWith, 'failed')
 })
 
 test('a paired session runs past the deadline once its header is in, and holds its slot until it ends', async () => {
@@ -116,6 +136,32 @@ test('over the cap, a connection is refused before its handshake', async () => {
   assert.deepEqual(refused.lines, ['refused too many connections'])
   await Promise.all(waiting)
   assert.deepEqual(cap.counts(), { pending: 0, open: 0 })
+})
+
+test('one address can hold only a few pending slots; others, and its trusted sessions, are not held back', async () => {
+  const cap = slots({ pending: 16, open: 64, perAddress: 2 })
+  const routes = { pair: { admit: () => true, run: () => {}, timed: true } }
+  const stranger = { kind: 'ip', addr: '203.0.113.5:1000' }
+  const hung = [peer({ acceptBi: never, from: stranger }), peer({ acceptBi: never, from: { ...stranger, addr: '203.0.113.5:2000' } })]
+  const waiting = hung.map(p => acceptOne(p.incoming, { routes, cap, refused: logged(), ms: 50 }))
+  await later(5)
+  const third = peer({ from: { ...stranger, addr: '203.0.113.5:3000' } })
+  await acceptOne(third.incoming, { routes, cap, refused: logged(), ms: 50 })
+  assert.equal(third.incoming.refused, true) // a third from the same IP, on another port
+  const owner = peer({ from: { kind: 'relay', addr: 'https://relay.example/', endpointId: 'b'.repeat(64) } })
+  await acceptOne(owner.incoming, { routes, cap, refused: logged(), ms: 50 })
+  assert.equal(owner.incoming.refused, false)
+  await Promise.all(waiting)
+  const a = cap.enter('ip:203.0.113.5'); a.trusted()
+  const b = cap.enter('ip:203.0.113.5'); b.trusted()
+  assert.ok(cap.enter('ip:203.0.113.5')) // trusted sessions no longer count as pending
+})
+
+test('the address is the IP of a direct connection and the claimed key over a relay, never the shared relay', () => {
+  assert.equal(addressOf({ kind: 'ip', addr: '198.51.100.7:4433' }), 'ip:198.51.100.7')
+  assert.equal(addressOf({ kind: 'ip', addr: '[2001:db8::1]:4433' }), 'ip:2001:db8::1')
+  assert.equal(addressOf({ kind: 'relay', addr: 'https://relay.example/', endpointId: 'abc' }), 'relay:abc')
+  assert.equal(addressOf(undefined), '?')
 })
 
 test('open sessions count toward the total cap, not the pending one', () => {

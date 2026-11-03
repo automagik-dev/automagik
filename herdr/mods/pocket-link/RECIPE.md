@@ -76,7 +76,7 @@ Before the bridge can run, the dialog shows one of two other screens in place of
   - The dialog posts a "Phone paired" toast (`notify`, success, 8s) with the phone's name and key fingerprint, puts the card away, and lists the phone. If the phone paired while the dialog was closing, the toast comes from what `cancel` returns.
   - Pairing again from a phone that's already listed refreshes its entry and also shows the toast.
 - **Remove:** forgets the phone. The running bridge checks its list every 2s and closes that phone's open sessions with "not paired". On the phone, Pocket says to pair again.
-- **Wrong codes:** one phone key gets 3 wrong codes, then its tries are refused and not counted; 20 wrong codes in all end the code. A used or expired code is refused.
+- **Wrong codes:** one phone key gets 3 wrong codes, then its tries are refused and not counted; only a flood, 1000 wrong codes in all, ends the code. A used or expired code is refused, and with no live code a pairing connection is closed after its handshake ("No pairing code is live. Make a new one on the desktop.").
 - **Closing the dialog ends the code:** Esc runs `bridge.mjs cancel` and closes it; the view's `close(cx)` runs `cancel` too, for any other way the host closes it. A code still being made when the dialog closes is cancelled as it arrives.
 - **Esc** closes the dialog. **⌘⌥P** on macOS, or **Ctrl+Alt+P** on Linux, opens it (see `keys.json`).
 - **Phone sessions:**
@@ -111,7 +111,7 @@ Before the bridge can run, the dialog shows one of two other screens in place of
     1. It binds an iroh `Endpoint` with the n0 preset, a persistent secret key and two ALPNs: `herdr-pocket/1` and `herdr-pocket/pair/1`.
     2. It writes its ticket (`EndpointTicket.fromAddr(ep.addr())`) to `status.json`, and again whenever its address changes.
        It writes `public-status.json` (`bridge/presence.mjs`) when it starts, every 20 seconds, whenever a phone's session opens or closes, and with `running: false` when it stops.
-    3. It accepts connections through `bridge/guard.mjs`: 10 seconds for the handshake, the first stream and its header line (and a whole pairing); at most 16 connections in that phase and 64 in all, refused before the handshake past that; an unpaired key on `herdr-pocket/1` closed before anything is read. Pair requests check the code (`bridge/pairing.mjs`), and sessions are piped to `hc connect`.
+    3. It accepts connections through `bridge/guard.mjs`: 10 seconds for the handshake, the first stream and its header line (and a whole pairing); at most 16 connections in that phase, 4 from one address (the IP, or over a relay the key it claims, never the relay itself), and 64 in all, refused before the handshake past that; an unpaired key on `herdr-pocket/1` closed before anything is read. Pair requests check the code (`bridge/pairing.mjs`), and sessions are piped to `hc connect`.
     4. Lines a stranger can cause (refusals, timeouts, wrong codes) log at most 5 of each kind a minute. Each minute, a `bridge.log` over 1 MB is copied to `bridge.log.1` and emptied in place; the service's stderr appends, so it carries on at the start.
   - **Finding `hc`:** `$HC`, then `command -v hc` in a login shell, then `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin`.
 - **The state folder,** `${XDG_STATE_HOME:-~/.local/state}/automagik-pocket-link/` (`bridge/state.mjs`), mode 0700, outside the mod so a reinstall keeps it, files written atomically, all mode 0600 but one:

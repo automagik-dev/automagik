@@ -5,8 +5,12 @@ import { unlinkSync, readFileSync } from 'node:fs'
 
 /** Wrong tries one phone key gets at a code; after that its tries are refused and not counted. */
 export const TRIES_PER_PHONE = 3
-/** Wrong tries from all phones together that end a code. */
-export const TRIES_PER_CODE = 20
+/**
+ * Wrong tries from all phones together that end a code. New keys are free, so a low number would let
+ * one stranger end each new code; codes are 128-bit, so guessing isn't the worry. Only a flood gets
+ * here, and it bounds how big pairing.json grows.
+ */
+export const TRIES_PER_CODE = 1000
 
 export const sameCode = (a, b) => {
   const x = createHash('sha256').update(String(a)).digest(), y = createHash('sha256').update(String(b)).digest()
@@ -22,7 +26,7 @@ export const fingerprint = id => (String(id).slice(0, 12).match(/.{1,4}/g) ?? []
  * or undefined to leave it as it is.
  *
  * One phone that keeps getting it wrong locks only itself out, so it can't end each new code for
- * everyone; TRIES_PER_CODE still ends a code that many keys guess at.
+ * everyone; only a flood of keys reaches TRIES_PER_CODE.
  */
 export function judgeCode(pending, phone, code, now = Date.now()) {
   if (!pending || !(now <= pending.expires)) return { verdict: 'gone', next: undefined }

@@ -8,6 +8,8 @@ import { copyFileSync, chmodSync, statSync, truncateSync } from 'node:fs'
 export const HANDSHAKE_MS = 10_000
 /** Connections still in that phase. */
 export const MAX_PENDING = 16
+/** Connections in that phase from one address: an IP, or over a relay the key it claims. */
+export const MAX_PER_ADDRESS = 4
 /** Every connection, open sessions included. */
 export const MAX_OPEN = 64
 /** A header line is at most this many bytes. */
@@ -28,19 +30,38 @@ export async function readLine(recv) {
   return { value: JSON.parse(buf.subarray(0, end).toString('utf8')), rest: buf.subarray(end + 1) }
 }
 
-/** The connection cap: `enter()` gives a slot, or null when full. A slot is pending until `trusted()`. */
-export function slots({ pending: maxPending = MAX_PENDING, open: maxOpen = MAX_OPEN } = {}) {
+/**
+ * The connection cap: `enter(address)` gives a slot, or null when full (in all, pending, or pending
+ * from that address). A slot is pending until `trusted()`.
+ */
+export function slots({ pending: maxPending = MAX_PENDING, open: maxOpen = MAX_OPEN, perAddress = MAX_PER_ADDRESS } = {}) {
   let pending = 0, open = 0
+  const from = new Map()
   return {
     counts: () => ({ pending, open }),
-    enter() {
-      if (pending >= maxPending || open >= maxOpen) return null
-      pending++; open++
+    enter(address = '?') {
+      if (pending >= maxPending || open >= maxOpen || (from.get(address) ?? 0) >= perAddress) return null
+      pending++; open++; from.set(address, (from.get(address) ?? 0) + 1)
       let waiting = true, done = false
-      const settle = () => { if (waiting) { waiting = false; pending-- } }
+      const settle = () => {
+        if (!waiting) return
+        waiting = false; pending--
+        const n = from.get(address) - 1
+        if (n) from.set(address, n); else from.delete(address)
+      }
       return { trusted: settle, done() { if (done) return; done = true; settle(); open-- } }
     },
   }
+}
+
+/**
+ * Where an incoming connection comes from, before its handshake: the IP of a direct one, the key a
+ * relayed one claims (the relay itself is shared by everyone, the owner's phones too).
+ */
+export function addressOf(addr) {
+  if (addr?.kind === 'ip' && addr.addr) return `ip:${addr.addr.replace(/:\d+$/, '').replace(/^\[(.*)\]$/, '$1')}`
+  if (addr?.kind === 'relay' && addr.endpointId) return `relay:${addr.endpointId}`
+  return addr?.kind ?? '?'
 }
 
 /**
@@ -79,17 +100,19 @@ export function rotateLog(path, max = LOG_MAX) {
 const closeConn = (conn, why) => { try { conn.close(1n, [...Buffer.from(why)]) } catch {} }
 
 /**
- * One incoming connection. Over the cap it is refused before its handshake. Then, within `ms`: the
- * handshake, `admit(alpn, peer)` (false closes it before anything is read), the first stream and
- * its header line. A route with `timed` (pairing) also runs, and waits for the phone to hang up,
- * inside that deadline; a session runs untimed once its header is in.
+ * One incoming connection. Over the cap (see `slots`) it is refused before its handshake. Then,
+ * within `ms`: the handshake, `admit(peer)` (false closes it with `closing` before anything is
+ * read), the first stream and its header line. A route with `timed` (pairing) also runs, and waits
+ * for the phone to hang up, inside that deadline; a session runs untimed once its header is in.
  *
- * `routes`: { [alpn]: { admit(peer), run({ conn, bi, value, rest, peer }), timed } }.
- * `refused(kind, ...why)` gets every refusal; it should be throttled.
+ * `routes`: { [alpn]: { admit(peer), closing, run({ conn, bi, value, rest, peer }), timed } }.
+ * `refused(kind, ...why)` gets what a stranger can cause; it should be throttled. `log` gets a
+ * trusted session's own errors, unthrottled.
  * Resolves when the connection is done with; never rejects.
  */
-export async function acceptOne(incoming, { routes, cap, refused, ms = HANDSHAKE_MS }) {
-  const slot = cap.enter()
+export async function acceptOne(incoming, { routes, cap, refused, log = refused, ms = HANDSHAKE_MS }) {
+  const address = await Promise.resolve().then(() => incoming.remoteAddr()).then(addressOf, () => '?')
+  const slot = cap.enter(address)
   if (!slot) {
     refused('refused', 'too many connections')
     await Promise.resolve().then(() => incoming.refuse()).catch(() => {})
@@ -103,7 +126,7 @@ export async function acceptOne(incoming, { routes, cap, refused, ms = HANDSHAKE
     conn = await accepting.connect(); late()
     const peer = conn.remoteId().toString()
     const route = routes[alpn]
-    if (!route || !route.admit(peer)) { closeConn(conn, 'not paired'); return { refusedPeer: peer } }
+    if (!route || !route.admit(peer)) { closeConn(conn, route?.closing ?? 'not paired'); return { refusedPeer: peer, why: route?.closing ?? 'not paired' } }
     const bi = await conn.acceptBi(); late()
     const { value, rest } = await readLine(bi.recv); late()
     const job = { conn, bi, value, rest, peer }
@@ -112,22 +135,30 @@ export async function acceptOne(incoming, { routes, cap, refused, ms = HANDSHAKE
     await conn.closed().catch(() => {})
     return {}
   })()
+  let out
   try {
-    const out = await Promise.race([work, new Promise((_, reject) => {
+    out = await Promise.race([work, new Promise((_, reject) => {
       timer = setTimeout(() => { expired = true; reject(new Error(`nothing within ${ms / 1000} s`)) }, ms)
     })])
+  } catch (e) {
+    // Whatever went wrong, the connection goes too: one left open would sit outside the cap.
+    if (conn) closeConn(conn, expired ? 'too slow' : 'bad request')
+    refused('connection', e.message)
+    slot.done()
+    return
+  } finally {
     clearTimeout(timer)
-    if (out.refusedPeer) { refused('refused', 'unpaired', out.refusedPeer.slice(0, 10)); return }
+    work.catch(() => {})
+  }
+  try {
+    if (out.refusedPeer) { refused('refused', `${out.why}:`, out.refusedPeer.slice(0, 10)); return }
     if (!out.route) return
     slot.trusted()
     await out.route.run(out.job)
   } catch (e) {
-    clearTimeout(timer)
-    // Whatever went wrong, the connection goes too: one left open would sit outside the cap.
-    if (conn) closeConn(conn, expired ? 'too slow' : 'bad request')
-    refused('connection', e.message)
+    closeConn(out.job.conn, 'failed')
+    log('session:', e.message)
   } finally {
-    work.catch(() => {})
     slot.done()
   }
 }

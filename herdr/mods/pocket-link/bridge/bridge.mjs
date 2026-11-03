@@ -151,17 +151,18 @@ async function serve() {
   serving = true; publishPublic()
   setInterval(publishPublic, HEARTBEAT).unref()
   setInterval(revoke, 2000).unref()
-  // Pairing: anyone with the address may try a code, all of it within the handshake deadline.
-  // Sessions: only paired keys, closed before anything is read otherwise.
+  // Pairing: only while a code is live, and all of it within the handshake deadline; anyone with
+  // the address may try then. Sessions: only paired keys. Others are closed before anything is read.
+  const codeLive = () => { const p = readJson(files.pairing, null); return Boolean(p && Date.now() <= p.expires) }
   const routes = {
-    'herdr-pocket/pair/1': { admit: () => true, run: pairPhone, timed: true },
-    'herdr-pocket/1': { admit: id => devices().some(d => d.id === id), run: session, timed: false },
+    'herdr-pocket/pair/1': { admit: codeLive, closing: 'No pairing code is live. Make a new one on the desktop.', run: pairPhone, timed: true },
+    'herdr-pocket/1': { admit: id => devices().some(d => d.id === id), closing: 'not paired', run: session, timed: false },
   }
   const cap = slots()
   for (;;) {
     const incoming = await ep.acceptNext()
     if (!incoming) break
-    acceptOne(incoming, { routes, cap, refused })
+    acceptOne(incoming, { routes, cap, refused, log })
   }
   serving = false; publishPublic()
 }

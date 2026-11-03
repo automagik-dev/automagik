@@ -41,11 +41,14 @@ It needs Node.js 20.3+ and herdr-core (`hc`), on macOS or Linux (systemd).
 
 - **Before a phone is paired** (`bridge/guard.mjs`, `bridge/pairing.mjs`):
   - A connection gets 10 seconds for its handshake and first line, and a pairing all of it, then
-    it is closed. At most 16 connections can be in that phase, and 64 open in all; past that, new
-    ones are refused before their handshake.
-  - A key that isn't paired is closed before the bridge reads anything from it.
-  - One phone key gets 3 wrong codes, then its tries are refused without counting; 20 wrong codes
-    in all end the code. Codes are 128-bit, so these limits are about noise, not guessing.
+    it is closed. At most 16 connections can be in that phase, 4 of them from one address (an IP,
+    or over a relay the key it claims), and 64 open in all; past that, new ones are refused before
+    their handshake.
+  - A key that isn't paired is closed before the bridge reads anything from it, and so is a
+    pairing attempt while no code is live.
+  - One phone key gets 3 wrong codes, then its tries are refused without counting. Only a flood
+    (1000 wrong codes in all) ends a code: new keys are free, so a low total would let one stranger
+    end each new code. Codes are 128-bit, so guessing isn't the worry.
   - Closing the dialog ends its code (`bridge.mjs cancel`). Each paired phone shows its key's
     fingerprint, the first 12 hex characters in fours, next to the name the phone sent.
   - Refusals, timeouts and wrong codes log at most 5 lines of each kind a minute. `bridge.log`
