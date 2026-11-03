@@ -152,15 +152,15 @@ const pack = (launcher) => {
 };
 
 /** A scratch machine: a home, the release folder (file://), and fake uname, brew and herdr-app. */
-function machine(t, { launcher } = {}) {
+function machine(t, { launcher, os = "Darwin", arch = "arm64" } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ah-e2e-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, "home"), bin = join(root, "bin"), apps = join(root, "Applications"), rel = join(root, "release");
-  for (const d of [home, bin, join(apps, "Herdr.app")]) mkdirSync(d, { recursive: true });
+  for (const d of [home, bin, ...(os === "Darwin" ? [join(apps, "Herdr.app")] : [])]) mkdirSync(d, { recursive: true });
   const log = join(root, "herdr-app.log"), shown = join(root, "herdr-shown"), brew = join(root, "brew.log"), spaces = join(root, "herdr-spaces.json");
   writeFileSync(log, "");
   writeFileSync(brew, "");
-  exe(join(bin, "uname"), "#!/bin/sh\ncase $1 in -m) echo arm64 ;; *) echo Darwin ;; esac\n");
+  exe(join(bin, "uname"), `#!/bin/sh\ncase $1 in -m) echo ${arch} ;; *) echo ${os} ;; esac\n`);
   exe(join(bin, "brew"), `#!/bin/sh\necho "$*" >> "${brew}"\nexit 1\n`);
   // herdr-app: logs its arguments; `status` prints the layout show() set, or fails with none;
   // `ls` prints the spaces openSpace() opened, or nothing.
@@ -293,6 +293,13 @@ function assertFullPack(m, r) {
   assert.equal(v.code, 0, `automagik-herdr --version: ${v.out}${v.err}`);
   assert.equal(v.out, `automagik-herdr ${RELEASE}\n`);
   return keys;
+}
+
+for (const arch of ["x86_64", "aarch64"]) {
+  test(`e2e: Linux ${arch} installs the signed release pack and runs its CLI`, { skip: !haveGit && "no git work tree" }, (t) => {
+    const m = machine(t, { os: "Linux", arch });
+    assertFullPack(m, m.oneLiner("--yes"));
+  });
 }
 
 test("e2e: release.yml's pack is the whole pack: every PACK_MODS folder plus the layout, nothing else", { skip: !haveGit && "no git work tree" }, () => {

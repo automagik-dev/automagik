@@ -391,17 +391,94 @@ test("a command link the person pointed elsewhere is never replaced or removed; 
   assert.equal(readdirSync(dirname(s.link)).includes("automagik-herdr"), false);
 });
 
-test("not macOS: explains and exits 1; Node too old with no brew: says where to get it", (t) => {
-  const linux = scratch(t, { os: "Linux" });
-  const r = linux.run("--yes");
+test("unsupported OS: explains and exits 1; Node too old with no brew: says where to get it", (t) => {
+  const unsupported = scratch(t, { os: "FreeBSD" });
+  const r = unsupported.run("--yes");
   assert.equal(r.code, 1);
-  assert.match(r.err, /runs on macOS .*this is Linux/);
+  assert.match(r.err, /supports macOS and Linux; this is FreeBSD/);
   const old = scratch(t);
   exe(join(old.root, "bin", "node"), "#!/bin/sh\nif [ \"$1\" = --version ]; then echo v18.0.0; exit 0; fi\nexit 1\n");
   rmSync(join(old.root, "bin", "brew"));
   const n = old.run("--yes");
   assert.equal(n.code, 1);
   assert.match(n.err, /Node 22\.7 or later is needed \(found: v18\.0\.0\)\. Install it from https:\/\/nodejs\.org/);
+});
+
+for (const arch of ["x86_64", "aarch64"]) {
+  test(`Linux ${arch}: installs all mods, checks them and installs the Linux meter without Homebrew`, (t) => {
+    const s = scratch(t, { os: "Linux", arch, herdr: false });
+    s.addHerdrApp();
+    s.publish("9.9.0");
+    s.publishMeter();
+    const r = s.piped("--yes");
+    assert.equal(r.code, 0, `${r.out}\n${r.err}`);
+    assert.match(r.out, /Linux: ok/);
+    assert.deepEqual(s.versions(), s.all("9.9.0"));
+    assert.equal(s.checks().length, PACK_MODS.length);
+    assert.deepEqual(s.brewCalls(), []);
+    assert.ok(s.meterCalls().some((url) => url.endsWith(`/usagemeter-linux-${arch}`)));
+    assert.equal(s.run("--uninstall").code, 0);
+    assert.equal(existsSync(s.link), false);
+  });
+}
+
+test("Linux without herdr-app: asks before installing, ignores a Mac app folder and never uses brew", (t) => {
+  const s = scratch(t, { os: "Linux" });
+  const r = s.run();
+  assert.equal(r.code, 1);
+  assert.match(r.err, /herdr-app is not on PATH.*https:\/\/herdrui\.dev\/install\.sh/);
+  assert.deepEqual(s.brewCalls(), []);
+  assert.equal(existsSync(s.appHome), false);
+});
+
+// The Linux installer is fetched via the same curl as the pack. Stub that one URL only;
+// all pack and meter downloads remain real file:// downloads into the scratch home.
+function linuxInstaller(s, body, { downloadFails = false } = {}) {
+  const curl = join(s.bin, "curl");
+  const original = readFileSync(curl, "utf8");
+  exe(curl, `#!/bin/sh
+if [ "$2" = https://herdrui.dev/install.sh ]; then
+  ${downloadFails ? "exit 22" : `cat > "$4" <<'LINUX_INSTALLER'\n${body}\nLINUX_INSTALLER\nexit 0`}
+fi
+${original.replace(/^#![^\n]*\n/, "")}`);
+}
+
+test("Linux with --yes: runs the official installer then installs the pack through piped stdin", (t) => {
+  const s = scratch(t, { os: "Linux", herdr: false });
+  s.publish("9.9.0");
+  s.publishMeter();
+  s.addHerdrApp();
+  const app = readFileSync(join(s.bin, "herdr-app"), "utf8");
+  rmSync(join(s.bin, "herdr-app"));
+  linuxInstaller(s, `#!/bin/sh\ncat > '${join(s.bin, "herdr-app")}' <<'APP'\n${app}\nAPP\nchmod +x '${join(s.bin, "herdr-app")}'`);
+  const r = s.piped("--yes");
+  assert.equal(r.code, 0, `${r.out}\n${r.err}`);
+  assert.deepEqual(s.versions(), s.all("9.9.0"));
+  assert.equal(s.checks().length, PACK_MODS.length);
+  assert.deepEqual(s.brewCalls(), []);
+});
+
+for (const failure of ["download", "script", "missing-cli"]) {
+  test(`Linux installer ${failure} failure stops before writing the pack`, (t) => {
+    const s = scratch(t, { os: "Linux", herdr: false });
+    linuxInstaller(s, failure === "script" ? "exit 1" : "exit 0", { downloadFails: failure === "download" });
+    const r = s.piped("--yes");
+    assert.equal(r.code, 1);
+    assert.match(r.err, /Herdr UI.*installer|herdr-app is not on PATH/);
+    assert.equal(existsSync(s.appHome), false);
+    assert.deepEqual(s.brewCalls(), []);
+    assert.equal(readdirSync(s.root).some((name) => name.startsWith("automagik-herdr.")), false);
+  });
+}
+
+test("Linux with old Node: gives portable guidance and never invokes brew", (t) => {
+  const s = scratch(t, { os: "Linux" });
+  exe(join(s.bin, "node"), '#!/bin/sh\n[ "$1" = --version ] && echo v18.0.0\nexit 1\n');
+  const r = s.run("--yes");
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Install it from https:\/\/nodejs.org/);
+  assert.doesNotMatch(r.err, /brew/);
+  assert.deepEqual(s.brewCalls(), []);
 });
 
 test("--help and an unknown option", (t) => {
@@ -953,8 +1030,8 @@ test("the release the signed pointer names is installed, not a newer one it does
   assert.match(bad.err, /--version takes a version like 3\.58\.0/);
 });
 
-test("no override (the real curl | bash path): no unbound variable, no override line, up to the macOS check", (t) => {
-  const s = scratch(t, { os: "Linux" });
+test("no override (the real curl | bash path): no unbound variable, no override line, up to the OS check", (t) => {
+  const s = scratch(t, { os: "FreeBSD" });
   s.extraEnv.AUTOMAGIK_HERDR_RELEASE_URL = "";
   const r = s.run("--yes");
   assert.equal(r.code, 1, r.err);

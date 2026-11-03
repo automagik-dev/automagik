@@ -12,14 +12,19 @@ last release line from the old `automagik-dev/automagik-herdr` repository.
 
 ## Install
 
-On a Mac with Node 22.7 or later:
+On macOS or Linux with Node 22.7 or later:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash
 ```
 
-The installer checks Node and Herdr, and offers to install Herdr with Homebrew if it is
-missing (it asks first). It reads the signed pack pointer (the `herdr-lane` release's `pack.json`,
+The installer checks Node and Herdr UI. If Herdr UI is missing, it asks before using
+Homebrew on macOS or the [official Linux installer](https://herdrui.dev/install.sh) on Linux.
+The Linux installer uses APT, DNF or pacman, may require sudo, and needs glibc 2.39 or later
+on x86_64 or ARM64. Linux needs `herdr-app` on PATH; the Herdr terminal client alone does not
+provide the UI that loads this pack. Install Node from [nodejs.org](https://nodejs.org) first
+on Linux; Node installation through Homebrew is offered only on macOS.
+It reads the signed pack pointer (the `herdr-lane` release's `pack.json`,
 checked against the keys the installer carries), downloads the pack it names
 (`automagik-herdr-pack-<v>.tgz`: every mod below and the `automagik` layout; a desktop-only release
 has none), checks it against the sha256 the pointer names before writing
@@ -80,7 +85,7 @@ Automagik release (one that carries the pack), `--adopt` takes over same-named m
 the installer added it and you haven't changed it.
 
 It also installs [usagemeter](https://github.com/automagik-dev/usagemeter) 0.3.0, the token
-meter, to `~/.local/bin/usagemeter`: that release's build for your Mac, checked against its
+meter, to `~/.local/bin/usagemeter`: that release's build for your OS and architecture, checked against its
 `SHA256SUMS` and against the sha256 the pack pins for that build, written atomically. It skips the download when that version is already there and
 never replaces a newer one (Pocket Link installs the same binary). While Herdr is open, the
 sidebar runs `usagemeter sync` 30 seconds after it loads and then every 10 minutes, one run at a
@@ -148,10 +153,10 @@ The installer:
 Or let a coding agent do it. The prompt lives in [docs/agent-install.md](docs/agent-install.md):
 
 ```text
-Install Automagik Herdr on this Mac and set up my first bot.
+Install Automagik Herdr on this macOS or Linux machine and set up my first bot.
 
 1. Run: curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash
-   If it stops to ask something (install Node or Herdr), ask me; if I say yes, run it again
+   If it stops to ask something (install Node or Herdr UI), ask me; if I say yes, run it again
    with: ... | bash -s -- --yes. If it stops for anything else, tell me what it printed and stop.
    If the output has a layout.switch command, ask me before running that exact command. If
    it names a layout of mine that lacks pack pieces, tell me which; edit it only if I ask.
