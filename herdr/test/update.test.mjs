@@ -130,6 +130,32 @@ test("listReleases asks the monorepo's releases with GitHub's headers, honours A
   await assert.rejects(listReleases({ fetch: fakeFetch({ [RELEASES_URL]: 403 }), env: {} }), /403/);
 });
 
+test("listReleases pages until a page holds the pack, a page is short, or the cap", async () => {
+  const desktop = (n) => ({ tag_name: `v3.${900 - n}.0`, draft: false, prerelease: false, assets: [{ name: "Automagik-Mac.dmg", browser_download_url: "https://dl.test/dmg" }] });
+  const full = (from) => Array.from({ length: 100 }, (_, i) => desktop(from + i));
+  const page = (n) => (n === 1 ? RELEASES_URL : `${RELEASES_URL}&page=${n}`);
+  // A quiet pack below 100 newer desktop and plugin releases: found on page 2, and page 3 is never asked.
+  const calls = [];
+  const got = await listReleases({ fetch: fakeFetch({ [page(1)]: full(0), [page(2)]: [desktop(100), release("3.57.1")], [page(3)]: full(200) }, calls), env: {} });
+  assert.deepEqual(calls.map((c) => c.url), [page(1), page(2)]);
+  assert.equal(pickUpdate("3.0.0", got).version, "3.57.1");
+  // A short page is the last one; a page past the last answers 404 or [], and both end the search.
+  const short = [];
+  assert.equal(newestPack(await listReleases({ fetch: fakeFetch({ [page(1)]: [desktop(0)] }, short), env: {} })), null);
+  assert.equal(short.length, 1);
+  assert.equal((await listReleases({ fetch: fakeFetch({ [page(1)]: full(0) }), env: {} })).length, 100, "page 2 404s: what was read");
+  // The cap: no pack within maxPages pages is no update, after exactly that many requests.
+  const capped = [];
+  const table = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [page(i + 1), full(i * 100)]));
+  const none = await listReleases({ fetch: fakeFetch(table, capped), env: {}, maxPages: 3 });
+  assert.equal(capped.length, 3);
+  assert.equal(pickUpdate("3.0.0", none), null);
+  const deflt = [];
+  await listReleases({ fetch: fakeFetch(table, deflt), env: {} });
+  assert.equal(deflt.length, 10, "MAX_RELEASE_PAGES");
+  await assert.rejects(listReleases({ fetch: fakeFetch({ [page(1)]: full(0), [page(2)]: 500 }), env: {} }), /500 .*page 2/);
+});
+
 test("verifySha256 takes a match and refuses a mismatch or a missing name", () => {
   const buf = Buffer.from("pack");
   const sums = `${sha(buf)}  automagik-herdr-0.2.0.tgz\n${"0".repeat(64)} *other.tgz\n`;

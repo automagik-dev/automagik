@@ -47,6 +47,8 @@ main() {
   REPO=automagik-dev/automagik
   RELEASES=https://github.com/$REPO/releases
   RELEASES_API="https://api.github.com/repos/$REPO/releases?per_page=100"
+  # Pages of 100 read, at most, looking for the newest pack (release.js MAX_RELEASE_PAGES, kept equal by a test).
+  MAX_PAGES=10
   TTY=/dev/tty
   APPS=/Applications
   APP_HOME=${HERDR_APP_HOME:-$HOME/.config/herdr-app}
@@ -432,9 +434,9 @@ uninstall_meter() {
   fi
 }
 
-# The newest version whose release (in the GitHub releases list, the file $1) carries the pack: its
-# tarball and .sha256, tag v<X.Y.Z>, not a draft or prerelease. Empty when none does. Node is
-# checked before this runs.
+# The newest version whose release (in the GitHub releases list page, the file $1) carries the
+# pack: its tarball and .sha256, tag v<X.Y.Z>, not a draft or prerelease. When none does: `full`
+# for a full page (100: read the next) or `last` for a short one. Node is checked before this runs.
 newest_pack() {
   # shellcheck disable=SC2016 # JavaScript: its ${...} are template literals, not the shell's.
   node -e '
@@ -450,7 +452,7 @@ newest_pack() {
       const newer = !best || (n[0] !== best[0] ? n[0] > best[0] : n[1] !== best[1] ? n[1] > best[1] : n[2] > best[2]);
       if (newer) best = n;
     }
-    if (best) console.log(best.join("."));
+    console.log(best ? best.join(".") : Array.isArray(list) && list.length >= 100 ? "full" : "last");
   ' "$1" </dev/null
 }
 
@@ -503,9 +505,23 @@ install() {
   if [ -z "$WANT" ]; then
     # The newest release is often a desktop or plugin one, with no pack: the newest that carries
     # the tarball and its .sha256 (not a draft or prerelease) is the one, as the pack's updater picks.
-    curl -fsSL --path-as-is "$RELEASES_API" -o "$TMP/releases.json" </dev/null || fail "could not list the releases ($RELEASES_API)."
-    WANT=$(newest_pack "$TMP/releases.json") || fail "could not read the releases list from $RELEASES_API."
-    [ -n "$WANT" ] || fail "no release of $REPO carries automagik-herdr-pack-<version>.tgz yet."
+    # A quiet pack can sit below many of them: page by page (a file:// release folder serves page
+    # N>1 as releases-N.json), until a page holds it or is short, at most MAX_PAGES pages.
+    page=1
+    while [ -z "$WANT" ] && [ "$page" -le "$MAX_PAGES" ]; do
+      case $RELEASES_API in
+        file://*) if [ "$page" = 1 ]; then page_url=$RELEASES_API; else page_url=${RELEASES_API%.json}-$page.json; fi ;;
+        *) page_url="$RELEASES_API&page=$page" ;;
+      esac
+      curl -fsSL --path-as-is "$page_url" -o "$TMP/releases.json" </dev/null || fail "could not list the releases ($page_url)."
+      found=$(newest_pack "$TMP/releases.json") || fail "could not read the releases list from $page_url."
+      case $found in
+        full) page=$((page + 1)) ;;
+        last) break ;;
+        *) WANT=$found ;;
+      esac
+    done
+    [ -n "$WANT" ] || fail "no release of $REPO carries automagik-herdr-pack-<version>.tgz yet (looked through $((page < MAX_PAGES ? page : MAX_PAGES)) page(s) of releases)."
   fi
   case $WANT in
     *[!0-9.]*|.*|*.|*..*) fail "--version takes a version like 3.58.0; not $WANT." ;;

@@ -5,14 +5,23 @@
 // `node --test` share it; the download, checksum and swap live in update.mjs. Apache-2.0.
 //
 // The pack lives in the Automagik monorepo (herdr/) and ships on its releases, `v<version>` with
-// the monorepo's one version (docs/rfcs/0010-monorepo-parts-and-releases.md there). A release
+// the monorepo's one version (docs/rfcs/0011-monorepo-parts-and-releases.md there). A release
 // carries the pack only when herdr/ changed since the one before: the newest release (GitHub's
 // `latest`) is often a desktop or plugin release without it, so the update is the newest release
 // that CARRIES automagik-herdr-pack-<v>.tgz and its .sha256, as the desktop's update.js does.
 
 export const REPO = "automagik-dev/automagik";
 /** The repository's releases, newest first: the pack's are among the desktop's and the plugins'. */
-export const RELEASES_URL = `https://api.github.com/repos/${REPO}/releases?per_page=100`;
+export const RELEASES_PER_PAGE = 100;
+export const RELEASES_URL = `https://api.github.com/repos/${REPO}/releases?per_page=${RELEASES_PER_PAGE}`;
+/** Page `page` (from 1) of the releases list. */
+export const releasesPageUrl = (page) => (page === 1 ? RELEASES_URL : `${RELEASES_URL}&page=${page}`);
+/**
+ * How many pages the updater reads, at most, looking for the newest pack: 1000 releases. A quiet
+ * pack can sit below many desktop and plugin releases; past this, it says there is no update.
+ * The rolling signed pointer (RFC 0011's required follow-up) replaces the search.
+ */
+export const MAX_RELEASE_PAGES = 10;
 /** Where the pack lived until v0.7.x; the monorepo's release of it is the first above 3.0.0. */
 export const OLD_REPO = "automagik-dev/automagik-herdr";
 /** The folder that carries the pack's VERSION, update.mjs and the CLI. */
@@ -188,21 +197,28 @@ export function parseSums(text) {
 }
 
 /**
- * The repository's releases (GitHub's JSON list, newest first), or null when updates are off or
- * the repository is not there (404). Throws on any other answer. `fetch` is injected: Herdr's
- * runtime has none, so the mod reaches this through `node update.mjs check`.
+ * The repository's releases (GitHub's JSON list, newest first), page by page until a page holds a
+ * pack (newestPack), a page comes back short (the last one), or `maxPages` pages were read; null
+ * when updates are off or the repository is not there (404). Throws on any other answer. `fetch`
+ * is injected: Herdr's runtime has none, so the mod reaches this through `node update.mjs check`.
  */
-export async function listReleases({ fetch = globalThis.fetch, env = globalThis.process?.env ?? {}, timeoutMs = TIMEOUT_MS } = {}) {
+export async function listReleases({ fetch = globalThis.fetch, env = globalThis.process?.env ?? {}, timeoutMs = TIMEOUT_MS, maxPages = MAX_RELEASE_PAGES } = {}) {
   if (updatesOff(env)) return null;
-  const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(timeoutMs) : undefined;
-  const response = await fetch(RELEASES_URL, {
-    headers: { accept: "application/vnd.github+json", "user-agent": "automagik-herdr", "x-github-api-version": "2022-11-28" },
-    signal,
-  });
-  if (response.status === 404) return null;
-  if (!response.ok) throw new Error(`GitHub answered ${response.status} for ${REPO}'s releases`);
-  const list = await response.json();
-  return Array.isArray(list) ? list : [];
+  const all = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(timeoutMs) : undefined;
+    const response = await fetch(releasesPageUrl(page), {
+      headers: { accept: "application/vnd.github+json", "user-agent": "automagik-herdr", "x-github-api-version": "2022-11-28" },
+      signal,
+    });
+    if (response.status === 404) return page === 1 ? null : all;
+    if (!response.ok) throw new Error(`GitHub answered ${response.status} for ${REPO}'s releases (page ${page})`);
+    const list = await response.json();
+    if (!Array.isArray(list)) break;
+    all.push(...list);
+    if (newestPack(list) || list.length < RELEASES_PER_PAGE) break;
+  }
+  return all;
 }
 
 /** The mod's notice for `update` (from pickUpdate). */

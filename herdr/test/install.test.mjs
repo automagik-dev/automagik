@@ -844,7 +844,32 @@ test("AUTOMAGIK_HERDR_RELEASE_URL with '..' or '%' is refused before anything is
 test("every download keeps the path as written (curl --path-as-is): the releases list, the pack's two, usagemeter's two", () => {
   const calls = readFileSync(INSTALL, "utf8").split("\n").filter((l) => /^\s+curl /.test(l));
   assert.equal(calls.length, 5);
-  for (const l of calls) assert.match(l, /^\s+curl -fsSL --path-as-is "(\$u?base\/|\$RELEASES_API")/);
+  for (const l of calls) assert.match(l, /^\s+curl -fsSL --path-as-is "(\$u?base\/|\$page_url")/);
+});
+
+test("the releases list is read page by page: a pack below 100 newer releases is found; the cap is release.js's", async (t) => {
+  const { MAX_RELEASE_PAGES } = await import("../mods/am-sidebar/release.js");
+  assert.equal(Number(/^\s+MAX_PAGES=(\d+)$/m.exec(readFileSync(INSTALL, "utf8"))?.[1]), MAX_RELEASE_PAGES);
+  const s = scratch(t);
+  s.publish("9.9.0");
+  s.publishMeter();
+  const rel = join(s.root, "release");
+  const desktop = (n) => ({ tag_name: `v99.${n}.0`, assets: [{ name: "Automagik-Mac.dmg" }] });
+  // Page 1: 100 desktop-only releases; page 2 (releases-2.json in a file:// folder): the pack.
+  writeFileSync(join(rel, "releases-2.json"), readFileSync(join(rel, "releases.json")));
+  writeFileSync(join(rel, "releases.json"), JSON.stringify(Array.from({ length: 100 }, (_, i) => desktop(i))));
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(s.versions(), s.all("9.9.0"));
+  // Every page full and none with the pack: the search stops at the cap and says so.
+  const none = scratch(t);
+  for (let page = 1; page <= MAX_RELEASE_PAGES + 2; page++) {
+    mkdirSync(join(none.root, "release"), { recursive: true });
+    writeFileSync(join(none.root, "release", page === 1 ? "releases.json" : `releases-${page}.json`), JSON.stringify(Array.from({ length: 100 }, (_, i) => desktop(page * 100 + i))));
+  }
+  const n = none.run("--yes");
+  assert.equal(n.code, 1);
+  assert.match(n.err, new RegExp(`carries automagik-herdr-pack-<version>\\.tgz yet \\(looked through ${MAX_RELEASE_PAGES} page\\(s\\) of releases\\)`));
 });
 
 test("the newest release that carries the pack is installed: not a newer desktop-only one, a draft or a prerelease", (t) => {
