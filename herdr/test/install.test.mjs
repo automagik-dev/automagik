@@ -91,10 +91,10 @@ fi
    * change a release brings, so a test can tell which release a folder is from. The tarball and its
    * .sha256 go in download/v<version>/; with `latest`, the herdr-lane release's pack.json names it,
    * signed by the test key (pack.json.sig; `sign: "untrusted"` signs with another key, `sign: false`
-   * leaves the signature out). `sums` replaces the sha256 both publish. Without `latest`, only
+   * leaves the signature out; `pointer` adds or overrides pack.json fields). `sums` replaces the sha256 both publish. Without `latest`, only
    * --version reaches it.
    */
-  const publish = (version, { edit, sums, latest = true, sign = true } = {}) => {
+  const publish = (version, { edit, sums, latest = true, sign = true, pointer = {} } = {}) => {
     const src = join(root, `src-${version}`);
     rmSync(src, { recursive: true, force: true });
     for (const m of PACK_MODS) {
@@ -114,7 +114,7 @@ fi
     if (latest) {
       const lane = join(rel, "download", "herdr-lane");
       mkdirSync(lane, { recursive: true });
-      const bytes = pointerBytes(version, { url: `file://${dir}/${name}`, sha256: sum });
+      const bytes = pointerBytes(version, { url: `file://${dir}/${name}`, sha256: sum, ...pointer });
       writeFileSync(join(lane, "pack.json"), bytes);
       rmSync(join(lane, "pack.json.sig"), { force: true });
       if (sign) writeFileSync(join(lane, "pack.json.sig"), `${signatureOf(bytes, { untrusted: sign === "untrusted" })}\n`);
@@ -157,7 +157,7 @@ test("a fresh install puts the pack and the command in place; a second run chang
   const r = s.run("--yes");
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(s.versions(), s.all("9.9.0"));
-  assert.match(s.mark(), new RegExp(`^version=9\\.9\\.0\nmods=${PACK_MODS.join(",")}\nlayout=added\nbefore=none\nusagemeter=0\\.2\\.0\n$`));
+  assert.match(s.mark(), new RegExp(`^version=9\\.9\\.0\nmods=${PACK_MODS.join(",")}\nlayout=added\nbefore=none\nsequence=90000\nusagemeter=0\\.2\\.0\n$`));
   // The pack ships bin/run.sh and the bin/automagik-herdr wrapper (dev #42); the link is the wrapper.
   const listed = execFileSync("tar", ["-tzf", join(s.root, "release", "download", "v9.9.0", "automagik-herdr-pack-9.9.0.tgz")], { encoding: "utf8" }).split("\n");
   for (const f of ["run.sh", "automagik-herdr"]) assert.ok(listed.includes(`am-sidebar/bin/${f}`), `the tarball has am-sidebar/bin/${f}`);
@@ -881,6 +881,43 @@ test("AUTOMAGIK_HERDR_RELEASE_URL with '..' or '%' is refused before anything is
   }
   assert.equal(readFileSync(curlLog, "utf8"), "");
   assert.equal(existsSync(s.pack), false);
+});
+
+test("no downgrade: a re-posted older signed pointer is refused by version or sequence; --version still installs it", (t) => {
+  const s = scratch(t);
+  s.publishMeter();
+  s.publish("9.10.0");
+  const first = s.run("--yes");
+  assert.equal(first.code, 0, first.err);
+  assert.match(s.mark(), /^sequence=100000$/m, "the marker records the pointer's sequence");
+  // Someone who can write release assets, without the key, re-posts the older 9.9.0 pointer and signature.
+  s.publish("9.9.0");
+  const before = treeSum(s.mods);
+  const r = s.run("--yes");
+  assert.equal(r.code, 1);
+  assert.match(r.err, /it names 9\.9\.0 \(sequence 90000\), older than the installed 9\.10\.0: refusing to downgrade; nothing was installed\. To install 9\.9\.0 on purpose: --version 9\.9\.0/);
+  assert.equal(treeSum(s.mods), before, "nothing changed");
+  assert.deepEqual(s.versions(), s.all("9.10.0"));
+  // The same version, signed with a lower sequence: the sequence alone refuses it.
+  s.publish("9.10.0", { pointer: { sequence: 5 } });
+  const seq = s.run("--yes");
+  assert.equal(seq.code, 1);
+  assert.match(seq.err, /it names 9\.10\.0 \(sequence 5\), older than the installed sequence 100000: refusing to downgrade/);
+  // The current pointer again: a re-run checks the install, as before.
+  s.publish("9.10.0");
+  const again = s.run("--yes");
+  assert.equal(again.code, 0, again.err);
+  assert.match(again.out, /already up to date/);
+  // On purpose: --version installs the older release (its .sha256), and records no sequence.
+  const down = s.run("--yes", "--version", "9.9.0");
+  assert.equal(down.code, 0, down.err);
+  assert.deepEqual(s.versions(), s.all("9.9.0"));
+  assert.doesNotMatch(s.mark(), /^sequence=/m);
+  // The newest pointer takes it forward again.
+  const up = s.run("--yes");
+  assert.equal(up.code, 0, up.err);
+  assert.deepEqual(s.versions(), s.all("9.10.0"));
+  assert.match(s.mark(), /^sequence=100000$/m);
 });
 
 test("every download keeps the path as written (curl --path-as-is): the pointer and its signature, the pack's two, usagemeter's two", () => {

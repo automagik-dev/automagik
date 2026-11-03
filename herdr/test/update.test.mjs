@@ -13,6 +13,7 @@ import {
   packOfPointer, parseSums, verifyPointer,
   markerOf, pickUpdate, prevSetOf, readMarker, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
 } from "../mods/am-sidebar/update.mjs";
+import { formatMarker, parseMarker } from "../mods/am-sidebar/release.js";
 import { cmdUpdate } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { keys, pointerBytes, signatureOf } from "./pointer.mjs";
 
@@ -80,6 +81,15 @@ test("compareVersions orders by semver precedence", () => {
   assert.ok(Number.isNaN(compareVersions("v0.1.0", "0.1.0")));
 });
 
+test("the marker carries the pointer's sequence; an unknown or malformed one is none", () => {
+  const text = formatMarker({ version: "3.57.1", mods: ["am-sidebar"], sequence: 570001 });
+  assert.equal(text, "version=3.57.1\nmods=am-sidebar\nbefore=none\nsequence=570001\n");
+  assert.equal(parseMarker(text).sequence, 570001);
+  assert.equal(parseMarker("version=1.0.0\nmods=a\n").sequence, null);
+  assert.equal(parseMarker("version=1.0.0\nmods=a\nsequence=12x\n").sequence, null);
+  assert.doesNotMatch(formatMarker({ version: "1.0.0", mods: ["a"] }), /sequence/);
+});
+
 test("pickUpdate offers only a newer pack than the installed one", () => {
   const up = pickUpdate("0.1.0", packOf("0.2.0"));
   assert.equal(up.version, "0.2.0");
@@ -102,6 +112,10 @@ test("packOfPointer refuses what is not this pack's pointer", () => {
   bad({ tarball: { name: "automagik-herdr-pack-3.57.2.tgz", url: "https://x/y", sha256: "a".repeat(64) } }, /not automagik-herdr-pack-3\.57\.1\.tgz/);
   bad({ tarball: { name: "automagik-herdr-pack-3.57.1.tgz", url: "https://x/y", sha256: "nope" } }, /sha256/);
   bad({ tarball: { name: "automagik-herdr-pack-3.57.1.tgz", sha256: "a".repeat(64) } }, /no tarball URL/);
+  bad({ sequence: undefined }, /has no sequence/);
+  bad({ sequence: "570001" }, /has no sequence/);
+  bad({ sequence: -1 }, /has no sequence/);
+  assert.equal(packOf("3.57.1").sequence, 570001);
 });
 
 test("fetchPointer: a good signature names the pack; a bad one, an untrusted key or no signature is refused", async () => {
@@ -243,6 +257,7 @@ test("checkForUpdate and installUpdate against a fake release", async () => {
     assert.equal(found.update.version, "0.2.0");
     const done = await installUpdate({ fetch: fakeFetch(table), env: {}, modsDir: mods, keys });
     assert.equal(done.installed.version, "0.2.0");
+    assert.equal(readMarker(mods).sequence, 20000, "the update records the signed pointer's sequence");
     const again = await installUpdate({ fetch: fakeFetch(table), env: {}, modsDir: mods, keys });
     assert.equal(again.update, null);
     assert.equal(again.installed, null);

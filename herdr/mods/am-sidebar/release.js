@@ -82,7 +82,8 @@ export const sumsName = (version) => `${tarballName(version)}.sha256`;
  * `adopted=<mod>:<path under automagik-herdr/>,…` for folders moved to backup/ on --adopt, and
  * `migrated=backup/<name>,…`, the rename migration's journals (oldest first) that a rollback across
  * the rename reverts, and `usagemeter=<version>` when install.sh put the usagemeter binary in
- * ~/.local/bin (--uninstall removes only that one). A v1 marker (v0.2.x: no `mods=`) installed only OLD_PACK_NAME.
+ * ~/.local/bin (--uninstall removes only that one), and `sequence=<n>`, the signed pointer's sequence
+ * when the installed release came through it (install.sh refuses an older pointer). A v1 marker (v0.2.x: no `mods=`) installed only OLD_PACK_NAME.
  */
 /** Where an adopted folder may be kept: `backup/<name>`, a plain name (install.sh checks the same). */
 export const ADOPTED_PATH = /^backup\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -102,14 +103,16 @@ export function parseMarker(text) {
       .filter((a) => /^[a-z0-9][a-z0-9-]*$/.test(a.mod) && a.mod !== POCKET_LINK && ADOPTED_PATH.test(a.path)),
     migrated: list(get("migrated")).filter((p) => ADOPTED_PATH.test(p)),
     usagemeter: /^\d+\.\d+\.\d+$/.test(get("usagemeter")) ? get("usagemeter") : null,
+    sequence: /^\d{1,15}$/.test(get("sequence")) ? Number(get("sequence")) : null,
   };
 }
 
-export const formatMarker = ({ version, mods, layout, before = "none", adopted = [], migrated = [], usagemeter = null }) =>
+export const formatMarker = ({ version, mods, layout, before = "none", adopted = [], migrated = [], usagemeter = null, sequence = null }) =>
   [`version=${version}`, `mods=${mods.join(",")}`, ...(layout ? [`layout=${layout}`] : []), `before=${before}`,
     ...(adopted.length ? [`adopted=${adopted.map((a) => `${a.mod}:${a.path}`).join(",")}`] : []),
     ...(migrated.length ? [`migrated=${migrated.join(",")}`] : []),
-    ...(usagemeter ? [`usagemeter=${usagemeter}`] : [])].join("\n") + "\n";
+    // sequence before usagemeter: install.sh appends usagemeter= last, so a rewrite keeps the bytes.
+    ...(Number.isSafeInteger(sequence) ? [`sequence=${sequence}`] : []), ...(usagemeter ? [`usagemeter=${usagemeter}`] : [])].join("\n") + "\n";
 /** Set to 1 to never ask GitHub (the CLI's update --check, the mod's notice). */
 export const NO_UPDATE_ENV = "AUTOMAGIK_HERDR_NO_UPDATE";
 export const FIRST_CHECK_MS = 20_000;
@@ -147,8 +150,8 @@ export function compareVersions(a, b) {
 /**
  * The update a pointer (pack.json, parsed, its signature already checked) names: `{ version, tag,
  * page, sequence, tarball: { name, url }, sha256, size }`. Throws when it is not this pack's
- * pointer: another schema or part, a version that is not X.Y.Z, a tarball of another name, or a
- * sha256 that is not 64 hex.
+ * pointer: another schema or part, a version that is not X.Y.Z, no whole-number sequence, a tarball
+ * of another name, or a sha256 that is not 64 hex.
  */
 export function packOfPointer(pointer) {
   const bad = (why) => { throw new Error(`the pack pointer ${why}: refusing it`); };
@@ -161,9 +164,10 @@ export function packOfPointer(pointer) {
   if (tarball.name !== tarballName(version)) bad(`names ${tarball.name}, not ${tarballName(version)}`);
   if (typeof tarball.url !== "string" || !/^(https|file):\/\//.test(tarball.url)) bad("has no tarball URL");
   if (typeof tarball.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(tarball.sha256)) bad("has no sha256 of 64 hex");
+  if (!Number.isSafeInteger(pointer.sequence) || pointer.sequence < 0) bad("has no sequence");
   const tag = `v${version}`;
   return {
-    version, tag, page: `https://github.com/${REPO}/releases/tag/${tag}`, sequence: pointer.sequence ?? null,
+    version, tag, page: `https://github.com/${REPO}/releases/tag/${tag}`, sequence: pointer.sequence,
     tarball: { name: tarball.name, url: tarball.url }, sha256: tarball.sha256, size: Number.isInteger(tarball.size) ? tarball.size : null,
   };
 }

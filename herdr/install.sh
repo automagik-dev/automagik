@@ -436,13 +436,16 @@ uninstall_meter() {
 }
 
 # The pack pointer: pack.json ($1) and its signature ($2), checked against TRUSTED_KEYS (ed25519, as
-# plugin-lane's lane.json.sig). Prints `<version> <sha256>`; on a refusal prints why and returns 1.
-# Node is checked before this runs.
+# plugin-lane's lane.json.sig), then against what is installed: the marker's version ($3) and
+# sequence ($4), either may be empty. A pointer older than either is refused, so a re-posted older
+# pointer (signed, but replayed by someone who can write release assets) never downgrades; --version
+# is the way to install an older release on purpose. Prints `<version> <sha256> <sequence>`; on a
+# refusal prints why and returns 1. Node is checked before this runs.
 read_pointer() {
   # shellcheck disable=SC2016 # JavaScript: its ${...} are template literals, not the shell's.
   node -e '
     const fs = require("fs"), crypto = require("crypto");
-    const [file, sigFile, keysJson] = process.argv.slice(1);
+    const [file, sigFile, keysJson, haveVersion, haveSeq] = process.argv.slice(1);
     const no = (why) => { console.log(why); process.exit(1); };
     const bytes = fs.readFileSync(file);
     let p, keys;
@@ -453,9 +456,13 @@ read_pointer() {
     try { ok = crypto.verify(null, bytes, crypto.createPublicKey(key.publicKey), Buffer.from(fs.readFileSync(sigFile, "utf8").trim(), "base64")); } catch {}
     if (!ok) no("its signature does not match; nothing was installed");
     const v = p.version, t = p.tarball || {};
-    if (p.schemaVersion !== 1 || p.part !== "herdr" || !/^\d+\.\d+\.\d+$/.test(v || "") || t.name !== `automagik-herdr-pack-${v}.tgz` || !/^[0-9a-f]{64}$/.test(t.sha256 || "")) no("it is not a pack pointer");
-    console.log(`${v} ${t.sha256}`);
-  ' "$1" "$2" "$TRUSTED_KEYS" </dev/null
+    if (p.schemaVersion !== 1 || p.part !== "herdr" || !/^\d+\.\d+\.\d+$/.test(v || "") || t.name !== `automagik-herdr-pack-${v}.tgz` || !/^[0-9a-f]{64}$/.test(t.sha256 || "") || !Number.isSafeInteger(p.sequence) || p.sequence < 0) no("it is not a pack pointer");
+    const older = (a, b) => { const x = a.split(".").map(Number), y = b.split(".").map(Number); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i]; return false; };
+    const refuse = (what) => no(`it names ${v} (sequence ${p.sequence}), older than the installed ${what}: refusing to downgrade; nothing was installed. To install ${v} on purpose: --version ${v}`);
+    if (/^\d+\.\d+\.\d+$/.test(haveVersion || "") && older(v, haveVersion)) refuse(haveVersion);
+    if (/^\d{1,15}$/.test(haveSeq || "") && p.sequence < Number(haveSeq)) refuse(`sequence ${haveSeq}`);
+    console.log(`${v} ${t.sha256} ${p.sequence}`);
+  ' "$1" "$2" "$TRUSTED_KEYS" "$3" "$4" </dev/null
 }
 
 node_ok() {
@@ -505,14 +512,17 @@ install() {
   # Nothing is written into the app home before the tarball matches the signed pointer's sha256.
   TMP=$(mktemp -d "${TMPDIR:-/tmp}/automagik-herdr.XXXXXX")
   want=
+  SEQUENCE=
   if [ -z "$WANT" ]; then
     # The newest pack, named by the signed pointer: one file and its signature, never a search.
     POINTER=$RELEASES/download/herdr-lane/pack.json
     curl -fsSL --path-as-is "$POINTER" -o "$TMP/pack.json" </dev/null || fail "could not download $POINTER (is a pack released yet?)."
     curl -fsSL --path-as-is "$POINTER.sig" -o "$TMP/pack.json.sig" </dev/null || fail "could not download $POINTER.sig: refusing the pointer."
-    signed=$(read_pointer "$TMP/pack.json" "$TMP/pack.json.sig") || fail "the pack pointer $POINTER: $signed"
+    signed=$(read_pointer "$TMP/pack.json" "$TMP/pack.json.sig" "$(mark_get version)" "$(mark_get sequence)") || fail "the pack pointer $POINTER: $signed"
     WANT=${signed%% *}
+    SEQUENCE=${signed##* }
     want=${signed#* }
+    want=${want%% *}
     checked="the signed pointer"
     say "Pack pointer: signed by a key this installer trusts; it names $WANT."
   fi
@@ -581,6 +591,8 @@ install() {
   fi
   if [ "$same" = no ]; then
     set -- install --from "$TMP/$TGZ" --version "$VERSION" --mods "$MODS" --setup
+    # The pointer's sequence goes into the marker (a --version install records none).
+    if [ -n "$SEQUENCE" ]; then set -- "$@" --sequence "$SEQUENCE"; fi
     if [ "$ADOPT" = 1 ]; then set -- "$@" --adopt; fi
     out=$(node "$TMP/x/$side/update.mjs" "$@" </dev/null 2>"$TMP/log") || rc=$?
     if [ "$rc" != 0 ] && [ "$rc" != 3 ] && [ "$rc" != 4 ]; then

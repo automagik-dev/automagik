@@ -8,13 +8,16 @@ export const keys = [{ keyId: KEY_ID, publicKey: publicKey.export({ type: "spki"
 /** A key the tests never trust, to sign what must be refused. */
 const other = generateKeyPairSync("ed25519").privateKey;
 
+/** As scripts/lane.ts sequenceOf: X.N.P as N·10000 + P. */
+export const sequenceOf = (version) => { const [, n, p] = version.split(".").map(Number); return n * 10000 + p; };
+
 export const sha = (buf) => createHash("sha256").update(buf).digest("hex");
 
 /** pack.json's bytes for `version`, its tarball at `url` with `body` (a Buffer) or `sha256`. */
 export function pointerBytes(version, { url = `https://dl.test/v${version}/automagik-herdr-pack-${version}.tgz`, body, sha256, keyId = KEY_ID, ...extra } = {}) {
   const name = `automagik-herdr-pack-${version}.tgz`;
   return Buffer.from(JSON.stringify({
-    schemaVersion: 1, publisher: "automagik", part: "herdr", keyId, sequence: 1, issuedAt: "2026-11-03T00:00:00Z",
+    schemaVersion: 1, publisher: "automagik", part: "herdr", keyId, sequence: sequenceOf(version), issuedAt: "2026-11-03T00:00:00Z",
     repository: "https://github.com/automagik-dev/automagik", version, tag: `v${version}`, commit: "a".repeat(40),
     tarball: { name, url, sha256: sha256 ?? sha(body ?? Buffer.from(name)), size: body?.byteLength ?? 1 }, ...extra,
   }, null, 2));

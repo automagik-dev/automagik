@@ -11,7 +11,7 @@
 //   node update.mjs check             [--mods <dir>]   one JSON line: current, latest, update
 //   node update.mjs update [--check] [--json] [--mods <dir>]   install the latest release (apply: the same, JSON)
 //   node update.mjs rollback          [--mods <dir>]   swap the kept set back; one JSON line
-//   node update.mjs install --from <tgz> --version <v> [--mods <dir>] [--adopt] [--setup]
+//   node update.mjs install --from <tgz> --version <v> [--sequence <n>] [--mods <dir>] [--adopt] [--setup]
 //       a tarball already checked against its .sha256 (install.sh); one JSON line. --setup also
 //       merges free keys, writes the mod manager's catalog.json, places the layout (D8) and runs
 //       `herdr-app check` on every installed mod (exit 3 when one fails). Exit 4: installed, but a
@@ -292,7 +292,7 @@ const restoreSet = (modsDir, old) => { if (old) renameSync(old, prevSetOf(modsDi
 function keepSet(modsDir, next, moved, record, old, rename, warnings) {
   if (moved.length > 0) {
     try {
-      writeFileSync(join(next, ".pack"), formatMarker({ version: record?.version ?? UNRELEASED, mods: moved }));
+      writeFileSync(join(next, ".pack"), formatMarker({ version: record?.version ?? UNRELEASED, mods: moved, sequence: record?.sequence ?? null }));
       rename(next, prevSetOf(modsDir));
     } catch (error) {
       warnings.push(`the replaced folders could not become the kept set (${error.message}): they are in ${next}`);
@@ -419,7 +419,7 @@ export async function verifyInstall({ tgzPath, version, modsDir = defaultModsDir
   }
 }
 
-export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir(), adopt = false, repair = null, log = () => {}, rename = renameSync }) {
+export async function applyUpdate({ tgzPath, version, sequence = null, modsDir = defaultModsDir(), adopt = false, repair = null, log = () => {}, rename = renameSync }) {
   if (typeof version !== "string" || version === "") throw new Error("applyUpdate needs the release's version");
   const state = stateDirOf(modsDir);
   mkdirSync(state, { recursive: true });
@@ -434,6 +434,8 @@ export async function applyUpdate({ tgzPath, version, modsDir = defaultModsDir()
     const record = {
       version, mods: [], layout: before?.layout ?? null, before: before?.before ?? "none", adopted: [...(before?.adopted ?? [])],
       migrated: [...(before?.migrated ?? [])], usagemeter: before?.usagemeter ?? null,
+      // The signed pointer's sequence when this release came through it; a repair keeps the record's.
+      sequence: sequence ?? (repair ? before?.sequence ?? null : null),
     };
     const owned = new Set(before?.mods ?? []);
     const kept = readSet(modsDir);
@@ -610,7 +612,7 @@ export function rollback({ modsDir = defaultModsDir(), rename = renameSync, log 
       adopted.push(a);
     }
   }
-  try { writeMarker(modsDir, { ...record, version: set.version ?? UNRELEASED, mods: set.mods, adopted }); } catch (error) { warnings.push(`the ownership record could not be written (${error.message})`); }
+  try { writeMarker(modsDir, { ...record, version: set.version ?? UNRELEASED, mods: set.mods, adopted, sequence: set.sequence ?? null }); } catch (error) { warnings.push(`the ownership record could not be written (${error.message})`); }
   let old = null;
   try { old = setAside(modsDir); } catch (error) { warnings.push(`the old kept set stays in ${prev} (${error.message})`); }
   if (old || !exists(prev)) keepSet(modsDir, next, out, record, old, rename, warnings);
@@ -884,7 +886,7 @@ export async function installUpdate({ fetch = globalThis.fetch, env = process.en
   try {
     const tgzPath = await downloadUpdate(found.update, { fetch, dir });
     const before = oldSidebarHere(modsDir);
-    const installed = await applyUpdate({ tgzPath, version: found.update.version, modsDir, log });
+    const installed = await applyUpdate({ tgzPath, version: found.update.version, sequence: found.update.sequence, modsDir, log });
     installed.migration = migrateRefs({ modsDir, log, warnings: installed.warnings });
     installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, binDir, window, crossed: crossedRename(modsDir, before) });
     return { ...found, installed };
@@ -927,12 +929,12 @@ export async function repairInstall({ tgzPath, version, modsDir = defaultModsDir
   }
 }
 
-const USAGE = "usage: node update.mjs check | update [--check] [--json] | apply | rollback | install --from <tgz> --version <v> [--adopt] [--setup] | repair --from <tgz> --version <v>  (each takes [--mods <dir>])";
+const USAGE = "usage: node update.mjs check | update [--check] [--json] | apply | rollback | install --from <tgz> --version <v> [--sequence <n>] [--adopt] [--setup] | repair --from <tgz> --version <v>  (each takes [--mods <dir>])";
 const FLAGS = {
-  check: [], apply: [], rollback: [], update: ["--check", "--json"], install: ["--from", "--version", "--adopt", "--setup"],
+  check: [], apply: [], rollback: [], update: ["--check", "--json"], install: ["--from", "--version", "--sequence", "--adopt", "--setup"],
   repair: ["--from", "--version"],
 };
-const VALUED = new Set(["--mods", "--from", "--version"]);
+const VALUED = new Set(["--mods", "--from", "--version", "--sequence"]);
 
 /** Strict arguments: an unknown command or flag, or a flag missing its value, is a usage error before anything is read. */
 export function parseArgs(argv) {
@@ -950,6 +952,7 @@ export function parseArgs(argv) {
     } else opts[flag.slice(2)] = true;
   }
   if ((command === "install" || command === "repair") && !(opts.from && opts.version)) throw usage();
+  if (opts.sequence !== undefined && !/^\d{1,15}$/.test(String(opts.sequence))) throw usage();
   return { command, opts };
 }
 
@@ -986,7 +989,7 @@ async function main(argv) {
   const appHome = dirname(resolve(modsDir));
   if (opts.setup) preflightKeys(appHome);
   const before = oldSidebarHere(modsDir);
-  const installed = await applyUpdate({ tgzPath: opts.from, version: opts.version, modsDir, adopt: Boolean(opts.adopt), log });
+  const installed = await applyUpdate({ tgzPath: opts.from, version: opts.version, sequence: opts.sequence === undefined ? null : Number(opts.sequence), modsDir, adopt: Boolean(opts.adopt), log });
   const crossed = () => crossedRename(modsDir, before);
   // Exit 4: installed, but a step after the swap did not finish (its warning says what and where).
   const done = () => { if (installed.warnings.length) process.exitCode = 4; };
