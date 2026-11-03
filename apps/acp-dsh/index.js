@@ -28,7 +28,7 @@ function nodeCommand(env = process.env) {
   return { command: process.execPath, env: process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {} }
 }
 
-export function apply(ctx, config = {}, { store = new AdapterStore({ log: message => warn(ctx, message) }) } = {}) {
+export function apply(ctx, config = {}, { store = new AdapterStore({ log: message => info(ctx, message) }) } = {}) {
   const agents = new Map()
   if (config.fakeAgent) {
     agents.set('acp-fake', {
@@ -80,5 +80,11 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
 function warn(ctx, message) {
   try {
     ctx.logger?.warn?.(`acp-dsh: ${message}`)
+  } catch {}
+}
+
+function info(ctx, message) {
+  try {
+    ctx.logger?.info?.(`acp-dsh: ${message}`)
   } catch {}
 }

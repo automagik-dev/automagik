@@ -137,7 +137,9 @@ patch is removed in the release whose DSH carries the change.
   review of ours. A bad or hijacked publish runs as the person, with what the agent CLI can
   already reach (their files, their sign-ins). What still holds: the exact package names, npm's
   integrity check of every tarball, no install scripts, no optional dependencies, nothing fetched
-  at spawn, and an install that fails leaves the previous adapter in place. Also new: the adapter
+  at spawn, and an install that fails leaves the previous adapter in place. The exact names cover
+  only the two adapters: their dependency tree (the agent SDKs, JSON-RPC and process helpers) is
+  resolved fresh at each install, with no lockfile. Also new: the adapter
   carries its own copy of the agent's SDK (`claude-agent-acp` pins `@anthropic-ai/claude-agent-sdk`)
   and drives whatever CLI the person has, so the two can drift apart; nobody owns that pairing,
   and a mismatch shows as a failed turn, not a silent one. Turning `claude` or `codex` off in the
@@ -155,8 +157,9 @@ patch is removed in the release whose DSH carries the change.
    tool card and asks through DSH's dialog. Rollback: revert.
 3. **Claude Code and Codex via ACP, together.** The person's own CLIs through the newest
    adapters, installed in the background; plugin in the profile, on by default. Lane: desktop.
-   Check: a new Claude Code session and a new Codex session each run a tool call after approval
-   (`apps/acp-dsh/dev/dsh-check.mjs --agent claude|codex`, on a real DSH). Rollback: the next
+   Check: a new Claude Code session and a new Codex session from the DSH UI each run a tool call
+   after approval (`apps/acp-dsh/dev/dsh-check.mjs --agent claude|codex` runs the same on a real
+   DSH, headless). Rollback: the next
    release drops them; the Claude Code plugin route is untouched.
 4. **Bots' tools over MCP.** Lane: plugin. Check: a Bot on `acp-claude` posts to its group
    through a team tool, and a tool above its level is not offered. Rollback: revert; the Bot

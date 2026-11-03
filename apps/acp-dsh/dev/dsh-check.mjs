@@ -73,7 +73,7 @@ if (AGENT !== 'fake') {
   const { AGENTS } = await import('../src/host/agents.js')
   const { AdapterStore, adaptersHome } = await import('../src/host/install.js')
   const spec = AGENTS[ROUTE.provider]
-  const bin = await new AdapterStore({ home: adaptersHome(dshEnv), env: process.env }).update(spec.adapter, spec.bin, { force: true })
+  const bin = await new AdapterStore({ home: adaptersHome(dshEnv), env: dshEnv }).update(spec.adapter, spec.bin, { force: true })
   say(`installed ${spec.adapter}@${bin.version}`)
 }
 const overlay = join(work, 'check.patch.yml')

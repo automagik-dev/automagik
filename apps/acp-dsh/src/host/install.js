@@ -45,8 +45,11 @@ async function defaultInstall(dir, pkg, version, env) {
   const npm = pnpm ? undefined : findCommand('npm', { env })
   if (!pnpm && !npm) throw new Error('neither pnpm nor npm is on the PATH to install the ACP adapter with')
   const options = { cwd: dir, env: { ...env, npm_config_update_notifier: 'false', npm_config_fund: 'false', npm_config_audit: 'false' }, timeout: INSTALL_TIMEOUT_MS, maxBuffer: 16 << 20 }
-  // No optional dependencies: they are the CLIs the adapters bundle, which the person's own replace.
-  if (pnpm) await run(pnpm, ['install', '--prod', '--ignore-scripts', '--no-optional', '--config.node-linker=hoisted', '--config.ignore-workspace=true', '--reporter=silent'], options)
+  // No optional dependencies: they are the CLIs the adapters bundle, which the person's own
+  // replace. pnpm skips them through package.json's supportedArchitectures (see updateNow):
+  // pnpm 10.34's --no-optional breaks on Codex's aliased platform packages
+  // (ERR_PNPM_LOCKFILE_MISSING_DEPENDENCY).
+  if (pnpm) await run(pnpm, ['install', '--prod', '--ignore-scripts', '--config.node-linker=hoisted', '--config.ignore-workspace=true', '--reporter=silent'], options)
   else await run(npm, ['install', '--omit=optional', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--loglevel=error'], options)
 }
 
@@ -89,7 +92,8 @@ export class AdapterStore {
       rmSync(tmp, { recursive: true, force: true })
       mkdirSync(tmp, { recursive: true })
       try {
-        writeJson(join(tmp, 'package.json'), { name: 'automagik-acp-adapter', private: true, dependencies: { [pkg]: version } })
+        // A platform nothing runs on: pnpm installs no platform-specific optional package.
+        writeJson(join(tmp, 'package.json'), { name: 'automagik-acp-adapter', private: true, dependencies: { [pkg]: version }, pnpm: { supportedArchitectures: { os: ['none'], cpu: ['none'], libc: ['none'] } } })
         await this.install(tmp, pkg, version, this.env)
         if (!existsSync(join(tmp, 'node_modules', ...pkg.split('/'), bin))) throw new Error(`${pkg}@${version} installed without ${bin}`)
         const target = join(folder, version)
