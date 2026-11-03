@@ -867,3 +867,67 @@ test("a pack mod switched off (mods-disabled/) is updated where it is and stays 
     for (const d of [t.src, t3.src, home]) rmSync(d, { recursive: true, force: true });
   }
 });
+
+test("rollback keeps a switched-off mod off: one a release retired (a), and one new in the rolled-out release (b)", async () => {
+  const off = (mods) => offDirOf(mods);
+  const at = (mods, m) => (existsSync(join(mods, m)) ? "on" : existsSync(join(off(mods), m)) ? "off" : "gone");
+  // (a) am-tabs is off; a release that drops it keeps it (off=); the rollback brings it back off.
+  {
+    const { home, mods } = appHome("0.1.0");
+    mkdirSync(off(mods));
+    renameSync(join(mods, "am-tabs"), join(off(mods), "am-tabs"));
+    const t = tarball("0.2.0", { mods: ["am-sidebar"] });
+    try {
+      const r = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
+      assert.deepEqual(r.retired, ["am-tabs"]);
+      assert.match(readFileSync(join(prevSetOf(mods), ".pack"), "utf8"), /^off=am-tabs$/m, "the kept set says it was off");
+      assert.equal(at(mods, "am-tabs"), "gone");
+      rollback({ modsDir: mods });
+      assert.equal(at(mods, "am-tabs"), "off");
+      assert.equal(readFileSync(join(off(mods), "am-tabs", "main.js"), "utf8"), 'export const v = "0.1.0";\n');
+      rollback({ modsDir: mods });
+      assert.equal(at(mods, "am-tabs"), "gone", "forward again: retired again");
+      rollback({ modsDir: mods });
+      assert.equal(at(mods, "am-tabs"), "off", "and back, still off");
+    } finally {
+      rmSync(t.src, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+  // (b) am-tabs is new in 0.2.0 and switched off there; rolled back twice it ends where it was: off.
+  {
+    const { home, mods } = appHome("0.1.0", ["am-sidebar"]);
+    const t = tarball("0.2.0");
+    try {
+      await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
+      mkdirSync(off(mods));
+      renameSync(join(mods, "am-tabs"), join(off(mods), "am-tabs"));
+      rollback({ modsDir: mods });
+      assert.equal(at(mods, "am-tabs"), "gone", "0.1.0 has no am-tabs");
+      assert.match(readFileSync(join(prevSetOf(mods), ".pack"), "utf8"), /^off=am-tabs$/m);
+      rollback({ modsDir: mods });
+      assert.equal(at(mods, "am-tabs"), "off", "back to 0.2.0, still off");
+      assert.equal(readFileSync(join(off(mods), "am-tabs", "main.js"), "utf8"), 'export const v = "0.2.0";\n');
+    } finally {
+      rmSync(t.src, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+});
+
+test("an update with a mod in both mods/ and mods-disabled/ updates mods/ and says the off copy is left", async () => {
+  const { home, mods } = appHome("0.1.0");
+  mkdirSync(join(offDirOf(mods), "am-tabs"), { recursive: true });
+  writeFileSync(join(offDirOf(mods), "am-tabs", "main.js"), "stale\n");
+  const t = tarball("0.2.0");
+  try {
+    const lines = [];
+    await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods, log: (l) => lines.push(l) });
+    assert.equal(readFileSync(join(mods, "am-tabs", "main.js"), "utf8"), 'export const v = "0.2.0";\n');
+    assert.equal(readFileSync(join(offDirOf(mods), "am-tabs", "main.js"), "utf8"), "stale\n");
+    assert.ok(lines.some((l) => /mods\/am-tabs and mods-disabled\/am-tabs both exist/.test(l)));
+  } finally {
+    rmSync(t.src, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});

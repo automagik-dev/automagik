@@ -8,8 +8,8 @@
 //                                           {part, check, ok, detail, fix}
 //
 // Exit 0 healthy (done), 1 broken (failed), 2 not applicable (not macOS; doctor: a mod switched off,
-// or a layout uninstalled). install and uninstall print what they did on stderr, then one line on
-// stdout: JSON `{part, ok, changed, detail}` with AM_JSON=1, else the detail. am runs it with
+// or a layout uninstalled), 64 a usage error. install and uninstall print what they did on stderr,
+// then one line on stdout: JSON `{part, ok, changed, detail}` with AM_JSON=1, else the detail. am runs it with
 // AM_HOME, AM_PART_DIR (`<extracted pack>/<select>`), AM_ARTIFACT (the verified tarball), AM_VERSION,
 // AM_SEQUENCE (the signed pointer's, recorded in the marker) and AM_JSON (parts.mjs packSource reads
 // the artifact; contextOf the rest). Apache-2.0.
@@ -20,7 +20,7 @@ import { PART_IDS, contextOf, doctor, install, packSource, partOf, uninstall } f
 
 export const USAGE = `usage: node part.mjs install <id> | uninstall <id> [--purge] | doctor <id>   (id: ${PART_IDS.join(", ")})`;
 
-/** `{ verb, part, purge }`, or throws a usage error (exit 2). */
+/** `{ verb, part, purge }`, or throws a usage error (exit 64, EX_USAGE: 2 means not applicable). */
 export function parseArgs(argv) {
   const [verb, id, ...rest] = argv;
   const part = partOf(id);
@@ -33,7 +33,7 @@ export function parseArgs(argv) {
 /** Runs one entry; returns the exit code. `out` takes stdout lines. */
 export function main(argv, { ctx = contextOf(), out = (line) => process.stdout.write(`${line}\n`), source = packSource } = {}) {
   let args;
-  try { args = parseArgs(argv); } catch (error) { ctx.log(error.message); return 2; }
+  try { args = parseArgs(argv); } catch (error) { ctx.log(error.message); return 64; }
   const { verb, part, purge } = args;
   if (verb === "doctor") {
     const r = doctor(ctx, part);

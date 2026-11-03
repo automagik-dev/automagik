@@ -63,7 +63,7 @@ test("off macOS every entry is not applicable (exit 2) and changes nothing", (t)
   assert.equal(main(["doctor", "herdr.layout"], { ctx, out: (l) => out.push(l) }), 2);
   assert.match(JSON.parse(out[1]).detail, /not applicable/);
   assert.deepEqual(ls(m.app), []);
-  assert.equal(main(["bogus"], { ctx, out: () => {} }), 2, "a usage error");
+  assert.equal(main(["bogus"], { ctx, out: () => {} }), 64, "a usage error (EX_USAGE), never 2 (not applicable)");
 });
 
 test("install from a checkout: the whole pack once, the record its marker; a second install is a no-op", (t) => {
@@ -155,7 +155,9 @@ test("herdr.am-sidebar links automagik-herdr as install.sh does, leaves someone 
   const d = doctorOf(m, "herdr.am-sidebar");
   assert.deepEqual(failed(d), [], JSON.stringify(d.checks));
   assert.deepEqual(d.checks.map((c) => c.check), ["record", "folder", "files", "pack-version", "pack-mods", "briefing-entry", "command", "path", "node"]);
-  assert.deepEqual(failed(doctorOf(m, "herdr.am-sidebar", { PATH: "/usr/bin" })), ["path"]);
+  const noPath = doctorOf(m, "herdr.am-sidebar", { PATH: "/usr/bin" });
+  assert.equal(noPath.code, 0, "not on PATH is a note, never a rollback");
+  assert.match(noPath.checks.find((c) => c.check === "path").fix, /export PATH=/);
   assert.equal(install(m.ctx(), P("herdr.am-sidebar"), packSource).changed, false, "idempotent");
 
   rmSync(link);
@@ -169,6 +171,15 @@ test("herdr.am-sidebar links automagik-herdr as install.sh does, leaves someone 
   assert.ok(m.logs.some((l) => /points at \/usr\/bin\/true, not this install: left alone/.test(l)));
   uninstall(m.ctx(), P("herdr.am-sidebar"));
   assert.equal(readlinkSync(link), "/usr/bin/true", "the person's link stays");
+  install(m.ctx(), P("herdr.am-sidebar"), packSource);
+  const theirs = doctorOf(m, "herdr.am-sidebar");
+  assert.equal(theirs.code, 0, "someone else's link is a note, never a rollback");
+  const cmd = theirs.checks.find((c) => c.check === "command");
+  assert.match(cmd.detail, /points at \/usr\/bin\/true, not this install: left alone/);
+  assert.equal(cmd.fix, `rm ${link} && am install herdr.am-sidebar`);
+  rmSync(link);
+  writeFileSync(link, "#!/bin/sh\n");
+  assert.equal(doctorOf(m, "herdr.am-sidebar").code, 0, "a file of the person's: a note too");
   assert.equal(P("herdr.cli"), null, "herdr.cli is retired (D34)");
 });
 

@@ -120,6 +120,12 @@ test("writes: Herdr's shared.json and data/, Pocket Link, a LaunchAgent or a mac
     ["~/.config/herdr-app/data/am-mods/catalog.json", /Herdr's data\//],
     ["~/.config/herdr-app/mods/pocket-link/**", /Pocket Link/],
     ["~/Library/LaunchAgents/ai.namastex.pocket-link.plist", /a LaunchAgent/],
+    ["~/.config/herdr-app/**", /can match ~\/.config\/herdr-app\/shared.json/],
+    ["~/.config/herdr-app/*.json", /can match ~\/.config\/herdr-app\/shared.json/],
+    ["~/.config/herdr-app/d*/**", /can match ~\/.config\/herdr-app\/data\/x: Herdr's data\//],
+    ["~/.config/herdr-app/layouts/../shared.json", /a path with \.\. is not a part's to write/],
+    ["~/**", /can match/],
+    ["~/.config/herdr-app/mods/pocket-*/**", /Pocket Link/],
     ["/Users/someone/.local/bin/x", /start it with ~\/ \(the home\) or \*\*\/ \(any project\)/],
   ]) {
     const parts = valid();

@@ -28,7 +28,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import { stableBriefingPath, ENTRY_SOURCE } from "./briefingText.mjs";
 import { CLI_LINK, knownProjects, ledgerFolders, removeHooks } from "./migrateHooks.mjs";
-import { OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions } from "./release.js";
+import { OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker } from "./release.js";
 import { appHomeOf, binDirOf, markerOf, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeMarker } from "./update.mjs";
 
 export const NODE_MIN = "22.7.0";
@@ -323,6 +323,7 @@ function uninstallPack(ctx, { purge }) {
   const next = fresh(state, ".prev-next-");
   mkdirSync(next, { recursive: true });
   const moved = [];
+  const movedOff = [];
   for (const m of record.mods.filter(packFolder)) {
     const on = join(ctx.modsDir, m), off = join(ctx.offDir, m);
     const at = isLink(on) ? null : exists(on) ? on : exists(off) && !isLink(off) ? off : null;
@@ -330,6 +331,7 @@ function uninstallPack(ctx, { purge }) {
     if (!at) continue;
     renameSync(at, join(next, m));
     moved.push(m);
+    if (at === off) movedOff.push(m);
   }
   // A folder already kept (one a rollback moved out) stays kept beside them.
   if (moved.length && isFile(join(prev, ".pack"))) {
@@ -339,7 +341,7 @@ function uninstallPack(ctx, { purge }) {
     }
   }
   if (moved.length) {
-    writeFileSync(join(next, ".pack"), `version=${record.version}\nmods=${moved.join(",")}\nbefore=none\n`);
+    writeFileSync(join(next, ".pack"), formatMarker({ version: record.version, mods: moved, off: movedOff }));
     const old = fresh(state, ".prev-old-");
     if (exists(prev)) renameSync(prev, old);
     if (purge) {
@@ -395,6 +397,8 @@ export function uninstall(ctx, part, { purge = false } = {}) {
 export function doctor(ctx, part) {
   const checks = [];
   const add = (check, ok, detail, fix = null) => checks.push({ part: part.id, check, ok, detail, fix: ok ? null : fix });
+  // Healthy, with a note and the command that changes it: never a reason for am to roll an install back.
+  const note = (check, detail, fix) => checks.push({ part: part.id, check, ok: true, detail, fix });
   const done = (code) => ({ code: code ?? (checks.every((c) => c.ok) ? 0 : 1), checks });
   const reinstall = `am install ${part.id}`;
   if (ctx.platform !== "darwin") { add("os", true, `not applicable: Automagik Herdr runs on macOS (Herdr is a Mac app); this is ${ctx.platform}`); return done(2); }
@@ -447,11 +451,12 @@ export function doctor(ctx, part) {
     const link = join(ctx.binDir, CLI_LINK);
     const to = isLink(link) ? resolve(dirname(link), readlinkSync(link)) : null;
     if (!exists(link)) add("command", false, `${link} is missing`, reinstall);
-    else if (!to) add("command", false, `${link} is a file, not the pack's link`, `rm ${link} && ${reinstall}`);
-    else if (!cliEntries(ctx).includes(to)) add("command", false, `${link} points at ${to}, not this install`, null);
+    else if (!to) note("command", `${link} is a file of yours, not the pack's link: left alone`, `rm ${link} && ${reinstall}`);
+    else if (!cliEntries(ctx).includes(to)) note("command", `${link} points at ${to}, not this install: left alone`, `rm ${link} && ${reinstall}`);
     else add("command", isFile(to), isFile(to) ? `${link} → ${to}` : `${link} points at ${to}, which is gone`, reinstall);
     const onPath = (ctx.env.PATH ?? "").split(":").includes(ctx.binDir);
-    add("path", onPath, onPath ? `${ctx.binDir} is on PATH` : `${ctx.binDir} is not on PATH`, `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`);
+    if (onPath) add("path", true, `${ctx.binDir} is on PATH`);
+    else note("path", `${ctx.binDir} is not on PATH: run automagik-herdr by its full path, or add it`, `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`);
     const nodeOk = compareVersions(ctx.nodeVersion, NODE_MIN) >= 0;
     add("node", nodeOk, `node ${ctx.nodeVersion}${nodeOk ? "" : `: the command needs ${NODE_MIN} or later`}`, "brew install node");
   }

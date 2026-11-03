@@ -67,6 +67,30 @@ export const REFUSED_WRITES = Object.freeze([
   [/(^|\/)LaunchAgents(\/|$)/, "a LaunchAgent"],
 ]);
 
+/**
+ * Paths no write may reach, as samples a glob is tried against: a glob that matches one (`~/**`,
+ * `~/.config/herdr-app/*.json`, `…/d*\/**`) is refused like the path itself.
+ */
+export const PROTECTED_SAMPLES = Object.freeze([
+  ["~/.config/herdr-app/shared.json", "Herdr's shared.json"],
+  ["~/.config/herdr-app/data", "Herdr's data/"],
+  ["~/.config/herdr-app/data/x", "Herdr's data/"],
+  ["~/.config/herdr-app/data/x/y.json", "Herdr's data/"],
+  ["~/.config/herdr-app/mods/pocket-link", "Pocket Link (Pocket's part)"],
+  ["~/.config/herdr-app/mods/pocket-link/main.js", "Pocket Link (Pocket's part)"],
+  ["~/Library/LaunchAgents/ai.namastex.pocket-link.plist", "a LaunchAgent"],
+]);
+
+/** Why a write may not be declared, or null: `..`, a protected path (REFUSED_WRITES), or a glob that reaches one. */
+export function refusedWrite(w) {
+  const path = w.split("#")[0].replace(/^\$HERDR_APP_HOME(\/|$)/, "~/.config/herdr-app$1");
+  if (path.split("/").includes("..")) return "a path with .. is not a part's to write (it can reach anything)";
+  for (const [re, why] of REFUSED_WRITES) if (re.test(w) || re.test(path)) return `${why} is not a part's to write`;
+  const re = globRe(path);
+  for (const [sample, why] of PROTECTED_SAMPLES) if (re.test(sample)) return `it can match ${sample}: ${why} is not a part's to write`;
+  return null;
+}
+
 const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const strings = (v) => Array.isArray(v) && v.every((s) => typeof s === "string" && s.length > 0);
 const relative = (p) => typeof p === "string" && p !== "" && !p.startsWith("/") && !p.split("/").includes("..");
@@ -157,7 +181,8 @@ export function validateParts({ files, read, packMods }) {
     if (!strings(part.writes) && !(Array.isArray(part.writes) && part.writes.length === 0)) bad("writes is not a list of paths");
     else for (const w of part.writes) {
       if (!/^(~\/|\*\*\/)/.test(w)) bad(`writes ${w}: start it with ~/ (the home) or **/ (any project), never a machine's own path`);
-      for (const [re, why] of REFUSED_WRITES) if (re.test(w)) bad(`writes ${w}: ${why} is not a part's to write`);
+      const why = refusedWrite(w);
+      if (why) bad(`writes ${w}: ${why}`);
     }
     parts.push({ file, id: part.id });
   }
