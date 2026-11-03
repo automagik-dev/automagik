@@ -296,7 +296,7 @@ test('off: the switch is off and flipping it asks for the setting', () => {
 test('a refused switch goes back to what acp-dsh has, and nothing polls for it', async () => {
   const off = agent('acp-claude', { on: false, connector: { state: 'off' } })
   const asked = []
-  const request = async (endpoint, payload) => {
+  const request = async (endpoint) => {
     asked.push(endpoint)
     if (endpoint === 'acp-switch') throw new Error("The ACP agents' settings changed while saving. Try again.")
     return view([off])
