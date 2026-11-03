@@ -5,9 +5,12 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import * as nodeFs from 'node:fs'
+import { Writable } from 'node:stream'
 import { NO_FOCUS } from '../src/herdr.js'
 import {
-  APP_UPDATE_MS, FEED, OFFLINE, compareVersions, downloadVerified, installFromFeed, installOf, openLatest, readFeed, targetOf, versionIn,
+  APP_UPDATE_MS, FEED, OFFLINE, compareVersions, downloadVerified, installFromFeed, installOf, onReleases, openLatest, readFeed,
+  targetOf, updateHerdr, versionIn,
 } from '../src/herdr-update.js'
 
 const posixOnly = { skip: process.platform === 'win32' ? 'the fake herdr-app is a sh script' : false }
@@ -65,13 +68,14 @@ test('the feed: this computer\'s build, unreachable, or read but unusable', asyn
 // closed: status answers 0 or 2, a start opens it), `ready` (app.update has a download to restart
 // into: app.check_updates makes one when `downloads` is on), and `version` (set by app.update).
 // Every call is one JSON line in calls.jsonl, with the version of the binary that answered.
-function fakeInstall({ window = 'closed', downloads = false } = {}) {
+function fakeInstall({ window = 'closed', downloads = false, drops = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'herdr-up-'))
   const home = join(root, 'home')
   const state = join(root, 'state')
   mkdirSync(state)
   writeFileSync(join(state, 'window'), window)
   if (downloads) writeFileSync(join(state, 'downloads'), '1')
+  if (drops) writeFileSync(join(state, 'drops'), '1')
   const binary = (version) => {
     const script = join(state, `herdr-app-${version}.cjs`)
     writeFileSync(script, `
@@ -95,6 +99,7 @@ if (args[0] === '--version') {
 } else if (args[0] === 'do' && args[1] === 'app.update') {
   if (!has('ready')) { process.stdout.write('{ "error": "no update downloaded" }\\n'); process.exit(1) }
   fs.writeFileSync(file('version'), ${JSON.stringify(NEW)})
+  if (has('drops')) fs.writeFileSync(file('window'), 'closed')
   process.stdout.write('{}\\n')
 } else if (args[0] === 'do' && args[1] === 'window.close') {
   fs.writeFileSync(file('window'), 'closed')
@@ -130,8 +135,9 @@ if (args[0] === '--version') {
 // The fake feed: what it answers, and every URL asked of it.
 function fakeFeed({ feed, tarball, offline = false }) {
   const asked = []
-  const fetch = async (url) => {
+  const fetch = async (url, options) => {
     asked.push(url)
+    assert.equal(options?.redirect, 'error', `no redirects for ${url}`)
     if (offline) throw new TypeError('fetch failed')
     if (url === FEED) return Response.json(feed)
     if (url === TAR_URL) return new Response(tarball)
@@ -222,7 +228,7 @@ test('a version declined in this session is not offered again; a newer one is', 
 test('yes, with Herdr closed: the feed\'s file, its sha256 checked, installed; it opens on the feed\'s version', posixOnly, async () => {
   const fake = fakeInstall()
   const feed = fakeFeed({ feed: feedOf(NEW, fake.sha256), tarball: fake.tarball })
-  const { options, logged, marks } = host(fake, feed, { update: true })
+  const { options, logged, marks } = host(fake, feed, { update: true, offered: NEW })
   const result = await openLatest(options)
   assert.deepEqual(result, { ok: true, raised: null, message: NO_FOCUS, detail: 'no DISPLAY', version: NEW, updated: true })
   assert.deepEqual(feed.asked, [FEED, TAR_URL])
@@ -239,7 +245,7 @@ test('yes, but the download\'s sha256 is not the feed\'s: nothing in it runs, th
   const before = readFileSync(join(fake.dir, 'herdr-app'))
   const wrong = createHash('sha256').update('something else').digest('hex')
   const feed = fakeFeed({ feed: feedOf(NEW, wrong), tarball: fake.tarball })
-  const { options, logged } = host(fake, feed, { update: true })
+  const { options, logged } = host(fake, feed, { update: true, offered: NEW })
   const result = await openLatest(options)
   assert.equal(result.ok, true)
   assert.equal(result.version, OLD)
@@ -253,7 +259,7 @@ test('yes, but the download\'s sha256 is not the feed\'s: nothing in it runs, th
 test('yes, with Herdr open: herdr-app\'s own app.update, after app.check_updates, and no download of ours', posixOnly, async () => {
   const fake = fakeInstall({ window: 'open', downloads: true })
   const feed = fakeFeed({ feed: feedOf(NEW, fake.sha256), tarball: fake.tarball })
-  const { options, logged } = host(fake, feed, { update: true })
+  const { options, logged } = host(fake, feed, { update: true, offered: NEW })
   const result = await openLatest(options)
   assert.equal(result.ok, true)
   assert.equal(result.version, NEW)
@@ -268,7 +274,7 @@ test('yes, with Herdr open: herdr-app\'s own app.update, after app.check_updates
 test('yes, with Herdr open but app.update never lands: the feed\'s file, then the window restarts on it', posixOnly, async () => {
   const fake = fakeInstall({ window: 'open', downloads: false })
   const feed = fakeFeed({ feed: feedOf(NEW, fake.sha256), tarball: fake.tarball })
-  const { options, logged } = host(fake, feed, { update: true })
+  const { options, logged } = host(fake, feed, { update: true, offered: NEW })
   const t0 = options.now()
   const result = await openLatest(options)
   assert.equal(result.ok, true)
@@ -293,7 +299,7 @@ test('yes on a Herdr the installer did not put there (PATH, override): the perso
     { root: 'C:\\U\\AppData\\Local\\Programs\\herdr-app', name: 'herdr-app', bin: 'herdr-app.exe' })
   const fake = fakeInstall()
   const feed = fakeFeed({ feed: feedOf(NEW, fake.sha256), tarball: fake.tarball })
-  const { options } = host(fake, feed, { update: true, env: { PATH: '/usr/bin:/bin', AUTOMAGIK_HERDR_APP: join(fake.dir, 'herdr-app') } })
+  const { options } = host(fake, feed, { update: true, offered: NEW, env: { PATH: '/usr/bin:/bin', AUTOMAGIK_HERDR_APP: join(fake.dir, 'herdr-app') } })
   const result = await openLatest(options)
   assert.equal(result.ok, true)
   assert.equal(result.version, OLD)
@@ -306,11 +312,11 @@ test('a download is bounded in size, and its file is gone when its sha256 is wro
   const bytes = Buffer.alloc(4096, 1)
   const sha = createHash('sha256').update(bytes).digest('hex')
   const fetch = async () => new Response(bytes)
-  assert.deepEqual(await downloadVerified('https://x/y', join(dir, 'a'), sha, { fetch }), { size: 4096, sha256: sha })
-  await assert.rejects(downloadVerified('https://x/y', join(dir, 'b'), sha, { fetch, max: 1024 }), /over 1024 bytes/)
-  await assert.rejects(downloadVerified('https://x/y', join(dir, 'c'), 'b'.repeat(64), { fetch }), /is not the feed's/)
+  assert.deepEqual(await downloadVerified(TAR_URL, join(dir, 'a'), sha, { fetch }), { size: 4096, sha256: sha })
+  await assert.rejects(downloadVerified(TAR_URL, join(dir, 'b'), sha, { fetch, max: 1024 }), /over 1024 bytes/)
+  await assert.rejects(downloadVerified(TAR_URL, join(dir, 'c'), 'b'.repeat(64), { fetch }), /is not the feed's/)
   assert.equal(existsSync(join(dir, 'c')), false)
-  await assert.rejects(downloadVerified('https://x/y', join(dir, 'd'), sha, { fetch: async () => new Response('', { status: 404 }) }), /HTTP 404/)
+  await assert.rejects(downloadVerified(TAR_URL, join(dir, 'd'), sha, { fetch: async () => new Response('', { status: 404 }) }), /HTTP 404/)
 })
 
 // macOS without a Mac: the file system is real (a temp ~/Applications), every program is a fake
@@ -361,4 +367,132 @@ test('macOS: an ad hoc build gets the installer\'s PATH and an ad hoc signature,
   assert.equal(ran.some(([file]) => String(file).endsWith('PlistBuddy')), false)
   assert.equal(readFileSync(join(app, 'Contents', 'MacOS', 'Herdr'), 'utf8'), 'old')
   assert.deepEqual(readdirSync(join(home, 'Applications')), ['Herdr.app'])
+})
+
+test('only herdrdev\'s release host: the feed\'s build URL, the download, and no redirects', async () => {
+  assert.equal(onReleases(TAR_URL), true)
+  for (const url of ['https://evil.example/herdr-app.tar.gz', 'http://releases.herdr.dev/app/x.tar.gz', 'https://releases.herdr.dev.evil.example/x',
+    'https://releases.herdr.dev:8443/x', 'https://user@releases.herdr.dev/x', 'not a url']) assert.equal(onReleases(url), false, url)
+  const elsewhere = await readFeed({ ...LINUX, fetch: async () => Response.json(feedOf(NEW, 'a'.repeat(64), 'https://evil.example/herdr-app.tar.gz')) })
+  assert.equal(elsewhere.reachable, true)
+  assert.match(elsewhere.error, /is not on https:\/\/releases\.herdr\.dev/)
+  // A feed answered from somewhere else (a redirect the fetch followed anyway) is refused.
+  const moved = Object.defineProperty(Response.json(feedOf(NEW)), 'url', { value: 'https://evil.example/latest.json' })
+  assert.match((await readFeed({ ...LINUX, fetch: async () => moved })).error, /answered from https:\/\/evil\.example/)
+  const dir = mkdtempSync(join(tmpdir(), 'herdr-host-'))
+  let asked = 0
+  const counting = async () => { asked++; return new Response('x') }
+  await assert.rejects(downloadVerified('https://evil.example/a.tar.gz', join(dir, 'a'), 'a'.repeat(64), { fetch: counting }), /is not on/)
+  assert.equal(asked, 0, 'nothing is fetched from another host')
+  const redirected = async () => Object.defineProperty(new Response('x'), 'url', { value: 'https://evil.example/a.tar.gz' })
+  await assert.rejects(downloadVerified(TAR_URL, join(dir, 'b'), 'a'.repeat(64), { fetch: redirected }), /answered from https:\/\/evil\.example/)
+  // fetch's own refusal of a redirect ends the download.
+  const refused = async (_url, options) => { assert.equal(options.redirect, 'error'); throw new TypeError('fetch failed: unexpected redirect') }
+  await assert.rejects(downloadVerified(TAR_URL, join(dir, 'c'), 'a'.repeat(64), { fetch: refused }), /unexpected redirect/)
+})
+
+test('yes counts only for a pending offer of the feed\'s version; otherwise it is the offer again', posixOnly, async () => {
+  const fake = fakeInstall()
+  for (const offered of [undefined, '0.1.10']) {
+    const feed = fakeFeed({ feed: feedOf(NEW, fake.sha256), tarball: fake.tarball })
+    const { options, logged } = host(fake, feed, { update: true, offered })
+    const result = await openLatest(options)
+    assert.deepEqual(result, { ok: false, reason: 'update', installed: OLD, latest: NEW, message: `Herdr ${NEW} is available` })
+    assert.deepEqual(feed.asked, [FEED], 'nothing downloaded')
+    assert.match(logged[0], new RegExp(`^yes to ${offered ?? 'no offer'} while the feed names ${NEW}`))
+  }
+  assert.deepEqual(started(fake), [])
+  assert.equal(fake.installed(), `herdr-app ${OLD}`)
+})
+
+test('app.update landed but the window did not come back: no download, the raise starts it', posixOnly, async () => {
+  const fake = fakeInstall({ window: 'open', downloads: true, drops: true })
+  const feed = fakeFeed({ feed: feedOf(NEW, fake.sha256), tarball: fake.tarball })
+  const { options, logged } = host(fake, feed, { update: true, offered: NEW })
+  const result = await openLatest(options)
+  assert.equal(result.ok, true)
+  assert.equal(result.version, NEW)
+  assert.deepEqual(feed.asked, [FEED], 'the feed\'s file is not fetched again')
+  assert.ok(logged.includes(`updated ${OLD} -> ${NEW} (app.update)`), logged.join('\n'))
+  assert.equal(started(fake).length, 1)
+  assert.equal(fake.window(), 'open')
+})
+
+test('a swap whose second rename fails puts the old install back', posixOnly, async () => {
+  const fake = fakeInstall()
+  const before = readFileSync(join(fake.dir, 'herdr-app'))
+  const fs = { ...nodeFs, renameSync: (from, to) => {
+    if (from.includes('.herdr-update-')) throw Object.assign(new Error('EBUSY: resource busy'), { code: 'EBUSY' })
+    nodeFs.renameSync(from, to)
+  } }
+  const feed = { version: NEW, url: TAR_URL, sha256: fake.sha256 }
+  const found = { source: 'install', bin: join(fake.dir, 'herdr-app') }
+  await assert.rejects(installFromFeed({ platform: 'linux', found, feed, env: { PATH: '/usr/bin:/bin' }, home: fake.home, fetch: fakeFeed({ tarball: fake.tarball }).fetch, fs }), /EBUSY/)
+  assert.deepEqual(readFileSync(join(fake.dir, 'herdr-app')), before)
+  assert.deepEqual(readdirSync(join(fake.home, '.local', 'share')), ['herdr-app'], 'no .old or staging left')
+})
+
+// Windows without Windows: programs and the file system are fakes on one ordered log, and the
+// fake file system refuses to rename the app's folder while its window runs, as Windows does.
+function fakeWindows({ closes = true } = {}) {
+  const root = 'C:\\Users\\u\\AppData\\Local\\Programs\\herdr-app'
+  const exe = `${root}\\herdr-app.exe`
+  const steps = []
+  const files = new Set([exe])
+  let window = 'open'
+  const answer = (done, code, stdout = '', stderr = '') => done(code ? Object.assign(new Error('exit'), { code }) : null, stdout, stderr)
+  const execFile = (file, args, _options, done) => {
+    if (file === exe && args[0] === 'status') return answer(done, window === 'open' ? 0 : 2)
+    if (file === exe && args[0] === '--version') return answer(done, 0, `herdr-app ${OLD}\n`)
+    if (file === exe && args[0] === 'do') {
+      steps.push(`do ${args[1]}`)
+      if (args[1] === 'app.update') return answer(done, 1, '{ "error": "no update downloaded" }\n')
+      if (args[1] === 'window.close' && closes) window = 'closed'
+      return answer(done, 0, '{}\n')
+    }
+    if (file === 'C:\\Windows\\System32\\tar.exe') {
+      steps.push('tar')
+      files.add(`${args[args.indexOf('-C') + 1]}\\herdr-app\\herdr-app.exe`)
+      return answer(done, 0)
+    }
+    if (file.endsWith('\\herdr-app\\herdr-app.exe') && args[0] === '--version') {
+      steps.push('new --version')
+      return answer(done, 0, `herdr-app ${NEW}\n`)
+    }
+    answer(done, 127, '', `unexpected ${file} ${args.join(' ')}`)
+  }
+  const fs = {
+    mkdtempSync: prefix => `${prefix}X`,
+    createWriteStream: () => new Writable({ write: (_chunk, _encoding, done) => done() }),
+    existsSync: file => files.has(file),
+    rmSync: () => {},
+    renameSync: (from, to) => {
+      if (from === root && window === 'open') throw Object.assign(new Error('EPERM: the folder is in use'), { code: 'EPERM' })
+      steps.push(`rename ${from.replace(`${root}`, '<root>')} -> ${to.replace(`${root}`, '<root>')}`)
+    },
+  }
+  const found = { source: 'install', bin: exe }
+  return { found, fs, execFile, steps }
+}
+
+test('Windows, window open: the new build is ready first, then the window closes, then the swap', async () => {
+  const tarball = Buffer.from('a windows build')
+  const feed = { version: NEW, url: `https://releases.herdr.dev/app/${NEW}/herdr-app-windows-x86_64.tar.gz`, sha256: createHash('sha256').update(tarball).digest('hex') }
+  const run = async (options) => updateHerdr({
+    platform: 'win32', feed, env: { SystemRoot: 'C:\\Windows' }, home: 'C:\\Users\\u', resolve: file => file,
+    fetch: async () => new Response(tarball), ...clock(), ...options,
+  })
+  const win = fakeWindows()
+  assert.deepEqual(await run(win), { ok: true, via: 'file' })
+  const after = win.steps.filter(step => !step.startsWith('do app.'))
+  assert.deepEqual(after, [
+    'tar', 'new --version', 'do window.close',
+    'rename <root> -> <root>.old',
+    'rename C:\\Users\\u\\AppData\\Local\\Programs\\.herdr-update-X\\herdr-app -> <root>',
+  ])
+  // A window that will not close stops the update before anything is renamed.
+  const stuck = fakeWindows({ closes: false })
+  const result = await run(stuck)
+  assert.deepEqual(result, { ok: false, error: 'Herdr\'s window did not close' })
+  assert.equal(stuck.steps.some(step => step.startsWith('rename')), false)
 })

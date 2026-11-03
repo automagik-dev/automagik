@@ -631,8 +631,9 @@ ipcMain.handle('automagik-updates-auto-apply', (event, on) => {
 // Code mode (RFC 0013, deliveries 1 and 2): Herdr's state, and its window brought forward on a
 // click in the page (preload.cjs `omniDesktop.herdr`). The page sends a Bot id and, to an offer
 // of a newer Herdr, the person's yes or no; nothing else. It picks no space yet. One open at a
-// time. herdrdev's feed is read on an open only, never here at boot. A version declined is not
-// offered again until the app restarts (kept in memory only). logs/switch.log has the steps.
+// time. herdrdev's feed is read on an open only, never here at boot. A yes is honoured only for
+// a pending offer. A version declined is not offered again until the app restarts (kept in
+// memory only). logs/switch.log has the steps.
 const herdrHost = () => ({ platform: process.platform, arch: process.arch, env: process.env, home: homedir() })
 const switchLog = (line) => { try { appendFileSync(join(home, 'logs', 'switch.log'), line) } catch {} }
 let herdrOpening = null
@@ -648,8 +649,10 @@ ipcMain.handle('automagik-herdr-open', (event, request) => {
     const log = what => switchLog(`${new Date().toISOString()} switch: ${what}\n`)
     try {
       if (update === false && herdrOffered) herdrDeclined = herdrOffered
-      const result = await openLatest({ ...herdrHost(), update, skip: herdrDeclined, mark: timed.mark, log })
-      if (result.reason === 'update') herdrOffered = result.latest
+      // A yes counts only for the version this session offered (openLatest checks the feed
+      // still names it); any other open clears the offer.
+      const result = await openLatest({ ...herdrHost(), update, offered: herdrOffered, skip: herdrDeclined, mark: timed.mark, log })
+      herdrOffered = result.reason === 'update' ? result.latest : null
       if (result.ok) log(`opened${result.raised === true ? '' : ' (no focus)'}`)
       return result
     } catch (error) {

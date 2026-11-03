@@ -14,7 +14,10 @@ import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { findHerdr, raiseHerdr, run, supportedHost, waitOpen } from './herdr.js'
 
-export const FEED = 'https://releases.herdr.dev/app/latest.json'
+// The feed and the sha256 in it come from this one host, so it is trusted in full (the RFC's
+// threat model): the feed is read, and builds downloaded, from it alone, with no redirects.
+export const RELEASES = 'https://releases.herdr.dev'
+export const FEED = `${RELEASES}/app/latest.json`
 export const FEED_MS = 5_000
 export const DOWNLOAD_MS = 120_000
 export const EXTRACT_MS = 60_000
@@ -24,6 +27,18 @@ export const APP_UPDATE_MS = 45_000
 export const RESTART_MS = 30_000
 export const MAX_BYTES = 512 * 1024 * 1024
 export const OFFLINE = "Herdr couldn't check for updates (no connection); this is the installed one"
+
+/** True for an https URL on herdrdev's release host and nowhere else (no port, no user). */
+export function onReleases(url) {
+  try {
+    const parsed = new URL(url)
+    return parsed.origin === RELEASES && !parsed.username && !parsed.password
+  } catch {
+    return false
+  }
+}
+
+const nodeFs = { createWriteStream, existsSync, mkdtempSync, renameSync, rmSync }
 
 const pathOf = platform => (platform === 'win32' ? win32 : posix)
 const lastLine = text => String(text ?? '').trim().split(/\r?\n/).pop() ?? ''
@@ -79,8 +94,9 @@ export async function installedVersion(bin, { env, execFile } = {}) {
 export async function readFeed({ platform, arch, fetch = globalThis.fetch, url = FEED, timeout = FEED_MS }) {
   let feed
   try {
-    const response = await fetch(url, { headers: { 'user-agent': 'automagik-desktop' }, signal: AbortSignal.timeout(timeout) })
+    const response = await fetch(url, { headers: { 'user-agent': 'automagik-desktop' }, redirect: 'error', signal: AbortSignal.timeout(timeout) })
     if (!response.ok) return { reachable: false, error: `${url}: HTTP ${response.status}` }
+    if (response.url && response.url !== url) return { reachable: true, error: `the feed answered from ${response.url}` }
     feed = JSON.parse(await response.text())
   } catch (error) {
     return { reachable: false, error: error?.message ?? String(error) }
@@ -89,19 +105,23 @@ export async function readFeed({ platform, arch, fetch = globalThis.fetch, url =
   const build = feed?.targets?.[target]
   const version = typeof feed?.version === 'string' ? feed.version : ''
   if (!VERSION.test(version)) return { reachable: true, error: `the feed's version is not one: ${JSON.stringify(feed?.version)}` }
-  if (typeof build?.url !== 'string' || !/^https:\/\//.test(build.url)) return { reachable: true, error: `the feed has no ${target} build` }
+  if (typeof build?.url !== 'string') return { reachable: true, error: `the feed has no ${target} build` }
+  if (!onReleases(build.url)) return { reachable: true, error: `the feed's ${target} build is not on ${RELEASES}: ${build.url}` }
   if (typeof build.sha256 !== 'string' || !/^[0-9a-f]{64}$/i.test(build.sha256)) return { reachable: true, error: `the feed's ${target} build has no sha256` }
   return { reachable: true, version, url: build.url, sha256: build.sha256.toLowerCase() }
 }
 
 /**
- * Downloads `url` to `file`, hashing it on the way, and refuses it unless its sha256 is
- * `sha256`: nothing in it is unpacked or run before that. Bounded in time and size.
+ * Downloads `url` (on herdrdev's release host only, no redirects) to `file`, hashing it on the
+ * way, and refuses it unless its sha256 is `sha256`: nothing in it is unpacked or run before
+ * that. Bounded in time and size.
  */
-export async function downloadVerified(url, file, sha256, { fetch = globalThis.fetch, timeout = DOWNLOAD_MS, max = MAX_BYTES } = {}) {
+export async function downloadVerified(url, file, sha256, { fetch = globalThis.fetch, timeout = DOWNLOAD_MS, max = MAX_BYTES, fs = nodeFs } = {}) {
+  if (!onReleases(url)) throw new Error(`download: ${url} is not on ${RELEASES}`)
   const signal = AbortSignal.timeout(timeout)
-  const response = await fetch(url, { headers: { 'user-agent': 'automagik-desktop' }, signal })
+  const response = await fetch(url, { headers: { 'user-agent': 'automagik-desktop' }, redirect: 'error', signal })
   if (!response.ok || !response.body) throw new Error(`download: HTTP ${response.status}`)
+  if (response.url && !onReleases(response.url)) throw new Error(`download: answered from ${response.url}`)
   const hash = createHash('sha256')
   let size = 0
   const count = new Transform({
@@ -112,10 +132,10 @@ export async function downloadVerified(url, file, sha256, { fetch = globalThis.f
       done(null, chunk)
     },
   })
-  await pipeline(Readable.fromWeb(response.body), count, createWriteStream(file), { signal })
+  await pipeline(Readable.fromWeb(response.body), count, fs.createWriteStream(file), { signal })
   const got = hash.digest('hex')
   if (got !== sha256) {
-    rmSync(file, { force: true })
+    fs.rmSync(file, { force: true })
     throw new Error(`the download's sha256 ${got} is not the feed's ${sha256}`)
   }
   return { size, sha256: got }
@@ -179,42 +199,44 @@ async function signLikeInstaller(bundle, { env, home, execFile }) {
 /**
  * The feed's build, installed over herdrdev's own install: downloaded and checked first, then
  * unpacked next to the install (one volume, so the swap is a rename), asked its --version, and
- * swapped in with the old one kept until the new one is in place. Resolves to the version now
- * installed; throws with what went wrong, leaving the old install as it was.
+ * swapped in with the old one kept until the new one is in place. `beforeSwap` runs just before
+ * the swap (the open window closes there: Windows will not rename a running app's folder); a
+ * throw from it stops the update. Resolves to the version now installed; throws with what went
+ * wrong, leaving the old install as it was.
  */
-export async function installFromFeed({ platform, found, feed, env = {}, home, fetch, execFile, resolve }) {
+export async function installFromFeed({ platform, found, feed, env = {}, home, fetch, execFile, resolve, beforeSwap = async () => {}, fs = nodeFs }) {
   const where = installOf({ platform, found, resolve })
   if (!where) throw new Error('this Herdr was not installed by herdrdev\'s installer; update it yourself')
   const p = pathOf(platform)
-  const stage = mkdtempSync(p.join(p.dirname(where.root), '.herdr-update-'))
+  const stage = fs.mkdtempSync(p.join(p.dirname(where.root), '.herdr-update-'))
   try {
     const archive = p.join(stage, 'app.tar.gz')
-    await downloadVerified(feed.url, archive, feed.sha256, { fetch })
+    await downloadVerified(feed.url, archive, feed.sha256, { fetch, fs })
     const unpacked = await run(tarOf({ platform, env }), ['-xzf', archive, '-C', stage], { env, execFile, timeout: EXTRACT_MS })
     const fresh = p.join(stage, where.name)
     if (unpacked.code !== 0) throw new Error(`unpacking failed: ${lastLine(unpacked.stderr)}`)
-    if (!existsSync(p.join(fresh, where.bin))) throw new Error('the download holds no complete app')
+    if (!fs.existsSync(p.join(fresh, where.bin))) throw new Error('the download holds no complete app')
     if (platform === 'darwin') await signLikeInstaller(fresh, { env, home, execFile })
     const version = await installedVersion(p.join(fresh, where.bin), { env, execFile })
     if (version !== feed.version) throw new Error(`the download says it is ${version ?? 'no version'}, not ${feed.version}`)
-    // A running app's folder can be renamed, not deleted (Windows): the old one goes after.
+    await beforeSwap()
     const old = `${where.root}.old`
-    rmSync(old, { recursive: true, force: true })
-    renameSync(where.root, old)
+    fs.rmSync(old, { recursive: true, force: true })
+    fs.renameSync(where.root, old)
     try {
-      renameSync(fresh, where.root)
+      fs.renameSync(fresh, where.root)
     } catch (error) {
-      renameSync(old, where.root)
+      fs.renameSync(old, where.root)
       throw error
     }
-    try { rmSync(old, { recursive: true, force: true }) } catch {}
+    try { fs.rmSync(old, { recursive: true, force: true }) } catch {}
     if (platform === 'darwin') {
       const lsregister = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
       await run(lsregister, ['-f', where.root], { env, execFile })
     }
     return version
   } finally {
-    rmSync(stage, { recursive: true, force: true })
+    fs.rmSync(stage, { recursive: true, force: true })
   }
 }
 
@@ -264,32 +286,42 @@ async function appUpdate({ found, feed, env, execFile, now, sleep }) {
  * Step 2 on yes. Resolves to `{ ok: true, via }` once the installed herdr-app is the feed's
  * version, else `{ ok: false, error }` with the installed one left as it was.
  */
-export async function updateHerdr({ platform, found, feed, env = {}, home, fetch, execFile, resolve, now = Date.now, sleep = defaultSleep, log = () => {} }) {
+export async function updateHerdr({ platform, found, feed, env = {}, home, fetch, execFile, resolve, fs, now = Date.now, sleep = defaultSleep, log = () => {} }) {
   const open = (await run(found.bin, ['status'], { env, execFile })).code === 0
   if (open) {
     if (await appUpdate({ found, feed, env, execFile, now, sleep })) return { ok: true, via: 'app.update' }
+    // It may have landed after all, with the window slow to come back: then the raise starts it.
+    const after = await installedVersion(found.bin, { env, execFile })
+    if (after && compareVersions(after, feed.version) >= 0) return { ok: true, via: 'app.update' }
     log('app.update did not land; installing the feed\'s file')
   }
+  // The open window runs the old build: it closes once the new one is ready, before the swap,
+  // and the raise starts the new one. Windows keeps a running app's folder, so there a window
+  // that will not close stops the update; elsewhere the new build waits for a restart.
+  let closed = !open
+  const beforeSwap = async () => {
+    if (!open) return
+    closed = await closeWindow({ platform, found, env, execFile, now, sleep })
+    if (!closed && platform === 'win32') throw new Error('Herdr\'s window did not close')
+  }
   try {
-    await installFromFeed({ platform, found, feed, env, home, fetch, execFile, resolve })
+    await installFromFeed({ platform, found, feed, env, home, fetch, execFile, resolve, beforeSwap, fs })
   } catch (error) {
     return { ok: false, error: error?.message ?? String(error) }
   }
-  // The window still runs the old build: close it, and the raise starts the new one.
-  if (open && !(await closeWindow({ platform, found, env, execFile, now, sleep }))) {
-    return { ok: true, via: 'file', restart: true }
-  }
-  return { ok: true, via: 'file' }
+  return closed ? { ok: true, via: 'file' } : { ok: true, via: 'file', restart: true }
 }
 
 /**
  * Code mode's open with step 2 (RFC 0013): find, latest, then start or raise. `update` is the
- * person's answer to an offer: undefined (no answer yet), true or false. `skip` is a version the
- * person already declined in this session: it is not offered again. Resolves to openHerdr's
+ * person's answer to an offer: undefined (no answer yet), true or false. A yes counts only for
+ * `offered`, the version this session last offered, and only while the feed still names it:
+ * any other yes gets the offer instead. `skip` is a version the person already declined in this
+ * session: it is not offered again. Resolves to openHerdr's
  * answers, with `note` when the update did not happen, or to `{ ok: false, reason: 'update',
  * installed, latest, message }` when a newer Herdr waits for the person's answer.
  */
-export async function openLatest({ update, skip, platform, arch, env = {}, home, fetch, isFile, resolve, execFile, spawn, now = Date.now, sleep = defaultSleep, limit, mark = () => {}, log = () => {} } = {}) {
+export async function openLatest({ update, offered, skip, platform, arch, env = {}, home, fetch, isFile, resolve, fs, execFile, spawn, now = Date.now, sleep = defaultSleep, limit, mark = () => {}, log = () => {} } = {}) {
   if (!supportedHost({ platform, arch })) {
     log('unsupported-host')
     return { ok: false, reason: 'unsupported', message: 'Herdr has no build for this computer' }
@@ -321,7 +353,9 @@ export async function openLatest({ update, skip, platform, arch, env = {}, home,
   }
   mark('latest')
   if (compareVersions(feed.version, installed) <= 0) return raise({ version: installed })
-  if (update !== true) {
+  const yes = update === true && offered === feed.version
+  if (update === true && !yes) log(`yes to ${offered ?? 'no offer'} while the feed names ${feed.version}: offered again`)
+  if (!yes) {
     if (skip === feed.version) {
       log(`declined ${feed.version}`)
       return raise({ version: installed })
@@ -329,7 +363,7 @@ export async function openLatest({ update, skip, platform, arch, env = {}, home,
     log(`offer ${installed} -> ${feed.version}`)
     return { ok: false, reason: 'update', installed, latest: feed.version, message: `Herdr ${feed.version} is available` }
   }
-  const updated = await updateHerdr({ platform, found, feed, env, home, fetch, execFile, resolve, now, sleep, log })
+  const updated = await updateHerdr({ platform, found, feed, env, home, fetch, execFile, resolve, fs, now, sleep, log })
   if (!updated.ok) {
     log(`stale ${installed} ${updated.error}`)
     return raise({ version: installed, note: `Herdr couldn't update to ${feed.version} (${updated.error}); this is the installed ${installed}` })

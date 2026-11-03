@@ -240,7 +240,7 @@ async function latest() {
       (result, now) => result.reason === 'update' && result.installed === older.version && result.latest === feed.version && now === older.version)
     await step('d2: no opens the installed one', { update: false, skip: feed.version },
       (result, now) => result.ok && now === older.version)
-    await step('d2: yes with the window open ends on the feed\'s version', { update: true },
+    await step('d2: yes with the window open ends on the feed\'s version', { update: true, offered: feed.version },
       (result, now) => result.ok && result.version === feed.version && now === feed.version && compareVersions(now, older.version) > 0)
     const status = await run(found().bin, ['status'], { env })
     record('d2: the window answers after the update', status.code === 0, shown(status))
@@ -250,7 +250,7 @@ async function latest() {
       record('d2: (diagnostic) status on the default home', null, shown(homeless), { needed: false })
     }
     if (!(await downgrade('d2: downgrade again'))) return
-    await step('d2: yes with the window closed ends on the feed\'s version', { update: true },
+    await step('d2: yes with the window closed ends on the feed\'s version', { update: true, offered: feed.version },
       (result, now) => result.ok && result.version === feed.version && now === feed.version)
     const after = await run(found().bin, ['status'], { env })
     record('d2: the window answers on the new build', after.code === 0, shown(after))
