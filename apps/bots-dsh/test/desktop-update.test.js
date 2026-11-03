@@ -24,7 +24,7 @@ runInNewContext(bundle.outputFiles[0].text, {
   },
   document: undefined, window: undefined, Date, Math, JSON, Intl, setTimeout, clearTimeout,
 })
-const { updatePill } = module.exports
+const { appState, changeText, pluginPill, updatePill } = module.exports
 
 test('the sidebar says what the desktop update is doing, and nothing when there is no update', () => {
   assert.equal(updatePill({ phase: 'idle' }), null)
@@ -36,4 +36,34 @@ test('the sidebar says what the desktop update is doing, and nothing when there 
   assert.equal(updatePill({ phase: 'available', version: '3.17.0' }).label, 'Automagik 3.17.0 is out')
   assert.equal(updatePill({ phase: 'installing' }).busy, true)
   assert.equal(updatePill({ phase: 'error', failure: 'check' }).label, 'Update check failed · Retry')
+})
+
+test('the plugins\' notice names each plugin updating, with its versions', () => {
+  const bots = { name: '@automagik/bots-dsh', from: '3.58.1', to: '3.59.2' }
+  const welcome = { name: '@automagik/welcome-dsh', from: '3.58.1', to: '3.59.2' }
+  assert.equal(changeText(bots), 'Bot team 3.58.1 → 3.59.2')
+  // One the app does not know the old version of, or by a name the page does not know.
+  assert.equal(changeText({ name: '@automagik/genie-dsh', to: '0.2.1' }), 'Genie 0.2.1')
+  assert.equal(changeText({ name: '@automagik/unfold-bot-dsh', from: '3.58.1', to: '3.59.2' }), 'unfold-bot-dsh 3.58.1 → 3.59.2')
+  assert.equal(pluginPill({ phase: 'ready', auto: true, changes: [bots] }).label, 'Bot team 3.58.1 → 3.59.2 · updates when no agent is at work')
+  assert.equal(pluginPill({ phase: 'ready', auto: false, changes: [bots, welcome] }).label, 'Update Bot team 3.58.1 → 3.59.2, Welcome 3.58.1 → 3.59.2 now')
+  assert.equal(pluginPill({ phase: 'ready', auto: false, changes: [bots] }).primary, true)
+  assert.equal(pluginPill({ phase: 'installing', changes: [bots] }).label, 'Updating Bot team 3.58.1 → 3.59.2…')
+  assert.equal(pluginPill({ phase: 'installing', changes: [bots] }).busy, true)
+  assert.equal(pluginPill({ phase: 'downloading', percent: 30, changes: [bots] }).label, 'Downloading Bot team 3.58.1 → 3.59.2 · 30%')
+  // Three or more: the first and a count; the title lists them all.
+  const three = pluginPill({ phase: 'installing', changes: [bots, welcome, { name: '@automagik/acp-dsh', from: '3.58.1', to: '3.59.2' }] })
+  assert.equal(three.label, 'Updating Bot team 3.58.1 → 3.59.2 and 2 more…')
+  assert.equal(three.title.split('\n').length, 3)
+  assert.equal(pluginPill({ phase: 'idle', changes: [] }), null)
+  assert.equal(pluginPill(undefined), null)
+})
+
+test('the app\'s own update reads apart from the plugins\', and an older app\'s as before', () => {
+  const split = { phase: 'ready', kind: 'plugins', version: '3.59.2', app: { phase: 'idle' }, plugins: { phase: 'ready', changes: [] } }
+  assert.deepEqual(appState(split), { phase: 'idle' })
+  assert.equal(updatePill(appState(split)), null)
+  const older = { phase: 'ready', version: '3.59.2', kind: 'plugins' }
+  assert.equal(appState(older), older)
+  assert.equal(updatePill(appState(older)).label, 'Restart to update to 3.59.2')
 })
