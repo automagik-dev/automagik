@@ -141,12 +141,14 @@ anyone who can publish a release (or swap its assets) can publish a matching pai
 The plugins already have provenance through the signed lane. Before the bridge points installed
 packs at this repository, the pack gets the same:
 
-- The release step signs the tarball's `.sha256` (ed25519, detached, base64, the `PLUGIN_LANE_KEY`
-  secret and key id, as `scripts/lane.ts sign` does for lane.json) and attaches
+- The release step signs the tarball's `.sha256` (ed25519, detached, base64, as `scripts/lane.ts
+  sign` does for lane.json) with a key of the pack's own, the `HERDR_PACK_KEY` secret (recommended
+  over reusing `PLUGIN_LANE_KEY`: a leak of one key does not reach the other part, and the pack
+  carries its own public key anyway), and attaches
   `automagik-herdr-pack-<v>.tgz.sha256.sig`. A release without the signature carries no pack for
   the updater.
-- The trusted public keys ship inside the pack (`release.js`, kept equal to `plugin-lane/keys.json`
-  by a test), so the installed copy is the trust anchor; a key rotation ships in a pack signed by
+- The trusted public keys ship inside the pack (`release.js`, kept equal to a committed
+  `herdr/keys/pack-keys.json` by a test), so the installed copy is the trust anchor; a key rotation ships in a pack signed by
   the old key.
 - `update.mjs` and `install.sh` verify the signature over the `.sha256` before they trust its hash
   (`node:crypto` in both; Node is already required). Tests sign their fixtures with a key generated
@@ -174,7 +176,7 @@ Until the bridge, installed packs keep updating from automagik-herdr.
 1. Is skipping imported histories in `commitlint.yml` acceptable for every future import (Pocket's
    too)? (t259)
 2. The 100-release window of the releases list: a rolling pointer now, or only when needed? (t259)
-3. The signed pack (above): who builds it, and does it reuse `PLUGIN_LANE_KEY` or get a key of its
-   own? (t22n, t259)
+3. The signed pack (above): who builds it, and its key. Recommended (t22n): a key of its own,
+   `HERDR_PACK_KEY`, not `PLUGIN_LANE_KEY`. t259 decides.
 4. `herdr/catalog/repos.json` lists Pocket Link as an external entry at `automagik-dev/automagik-pocket`;
    Pocket's import moves it. (t16r)
