@@ -4,6 +4,7 @@
 import { piAiRoutes, routeOf } from '../shared/routes.js'
 import { normalize, splitRef } from './text.js'
 import { install as installHostModels } from './host-models.js'
+import { PI_AI_CLAUDE, supersededClaude } from './claude-models.js'
 
 const CATALOG_TTL_MS = 10_000
 const ROUTE_WAIT_MS = 30_000
@@ -63,6 +64,10 @@ export function install(rt) {
     }
     const used = new Set(Object.values(state.bots ?? {}).filter(onDsh).flatMap(bot => [bot.model, bot.appliedModel].filter(Boolean)))
     const entries = listed
+    // Claude on pi-ai's anthropic route: the menu offers each family's newest model.
+    const claude = entries.filter(entry => entry.provider === PI_AI_CLAUDE)
+    const superseded = supersededClaude(claude.map(entry => entry.id))
+    for (const entry of claude) if (superseded.has(entry.id)) entry.superseded = true
     // DSH serves a provider's models whether or not its key is set; without one, every
     // turn on them fails.
     const missing = await rt.missingKeys?.([...new Set(entries.map(entry => entry.provider))]) ?? new Set()
@@ -93,7 +98,8 @@ export function install(rt) {
   }
   // The profile default model of DSH (DeepSeek, unless the user chose another there), when
   // it is served and can run (its provider has its key); else a model of the first account
-  // connected here. Within a provider, a `default` alias comes after the models it names.
+  // connected here. Within a provider, a `default` alias comes after the models it names, and
+  // a superseded model (an older Claude) after the current ones.
   // Nothing can run: none, and a Bot made then waits for one.
   function pickDefault(entries) {
     const usable = entries.filter(entry => !entry.needsKey)
@@ -105,7 +111,7 @@ export function install(rt) {
     const ordered = usable.map((entry, index) => ({ entry, index })).sort((a, b) => rank(a.entry) - rank(b.entry) || a.index - b.index).map(({ entry }) => entry)
     const first = ordered[0]?.provider
     const own = ordered.filter(entry => entry.provider === first)
-    return (own.find(entry => entry.id !== 'default') ?? own[0])?.ref
+    return (own.find(entry => entry.id !== 'default' && entry.superseded !== true) ?? own.find(entry => entry.id !== 'default') ?? own[0])?.ref
   }
   const defaultModel = async () => pickDefault(await catalog())
 

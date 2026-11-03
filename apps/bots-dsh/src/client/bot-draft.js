@@ -11,7 +11,7 @@ export function freshBotName(roster, base = 'New Bot') {
 // The form starts on the DSH default model when it is served, else the first one.
 export function startModel(roster) {
   const models = roster.models ?? []
-  return (models.find(model => model.ref === roster.defaultModel) ?? models[0])?.ref ?? ''
+  return (models.find(model => model.ref === roster.defaultModel) ?? models.find(model => model.superseded !== true) ?? models[0])?.ref ?? ''
 }
 
 // The model is always sent: the host fixes it on the Bot at creation.

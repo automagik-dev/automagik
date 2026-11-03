@@ -112,6 +112,13 @@ Omni's version: they install as a git source from Omni's repository at the relea
 | DeepSeek | DSH's key or account | pi-ai's `deepseek` route |
 | Ollama | a local pi-ai route | dsh-subscriptions' `ollama` |
 
+The route a Claude sign-in adds does not retry a 429 (`retryPolicy` without `RATE_LIMIT`):
+a plan at its limit answers with one, and the Bot team's fallback model takes the turn at once
+instead of after DSH's five retries. A route on an API key keeps DSH's
+default retries, also one a sign-in made before the key: saving the key drops the sign-in's
+policy (a policy set by hand stays). Turning Claude off and on again in Connect AI writes the
+sign-in's policy back.
+
 dsh-subscriptions keeps the vendors nothing else reaches (Cursor, Kiro, GLM, Qwen,
 Perplexity, JetBrains, Cody, Replit and the rest). When an AI is turned on, the other ways
 it is connected stop showing: their models are hidden, and no account or stored sign-in is
