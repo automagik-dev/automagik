@@ -1,0 +1,19 @@
+{
+  "name": "@automagik/desktop-code-mode-spike",
+  "private": true,
+  "description": "Spike, not shipped: code mode (herdr-core terminals) inside an Electron window",
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "start": "electron .",
+    "bench": "node bench.mjs"
+  },
+  "devDependencies": {
+    "electron": "44.5.0"
+  },
+  "dependencies": {
+    "@xterm/xterm": "5.5.0",
+    "@xterm/addon-fit": "0.10.0",
+    "@xterm/addon-webgl": "0.18.0"
+  }
+}
