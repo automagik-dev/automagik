@@ -32,6 +32,7 @@
 // The plan cell and the activity and usage docks are not pack cells: they stay Omni's in
 // every pack (an agent's plan mode is one of its permission modes).
 import { composerPacks } from './extend.js'
+import { routeOf } from '../shared/routes.js'
 
 export const PACK_CELLS = ['permission', 'model']
 
@@ -94,7 +95,19 @@ export const HOST_MODEL_PACK = Object.freeze({
   cells: Object.freeze({ model: 'model' }),
 })
 
-export const BUILTIN_PACKS = [HOST_MODEL_PACK, THINKING_PACK]
+// An agent over ACP (acp-claude, acp-codex): Omni's model menu, so the Bot can move off the
+// agent or onto another. A model the agent offers efforts for (its thought_level) carries
+// them as `reasoning`, so the thinking pack, which comes first, draws the menu with its
+// levels; this pack covers an agent model with none, or none read yet. A pack the agent's own
+// plugin registers comes first (a lower order).
+export const AGENT_MODEL_PACK = Object.freeze({
+  id: 'agent-model',
+  order: -50,
+  match: provider => provider !== undefined && routeOf(provider).connectedBy === 'acp',
+  cells: Object.freeze({ model: 'model' }),
+})
+
+export const BUILTIN_PACKS = [HOST_MODEL_PACK, THINKING_PACK, AGENT_MODEL_PACK]
 
 // Whether Omni steps aside from a cell of the Session in the main view: its pack says
 // 'host', and the control the pack steps aside for is registered there.

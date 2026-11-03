@@ -2112,6 +2112,25 @@ function mountShellInstallers(tools) {
   };
 }
 
+// src/shared/routes.js
+var isClaudeCode = (provider) => provider === "claude-code" || provider.startsWith("claude-code-");
+var CONNECTED_BY = Object.freeze(["native", "pi-ai", "claude-code-plugin", "acp"]);
+var HARNESSES = Object.freeze(["dsh", "claude-code", "codex", "gemini"]);
+var PI_AI_NS = "llm-pi-ai";
+var SUBSCRIPTION_ROUTES = Object.freeze(["codex", "claude", "grok", "antigravity"]);
+var ACP_HARNESS = Object.freeze({ claude: "claude-code", codex: "codex", gemini: "gemini" });
+var piAiRoutes = (directory) => /* @__PURE__ */ new Set([
+  ...SUBSCRIPTION_ROUTES,
+  ...(directory ?? []).filter((entry) => entry?.settingsNs === PI_AI_NS).map((entry) => entry.provider)
+]);
+function routeOf(provider, { piAi = new Set(SUBSCRIPTION_ROUTES) } = {}) {
+  const id = String(provider ?? "");
+  if (isClaudeCode(id)) return { harness: "claude-code", connectedBy: "claude-code-plugin" };
+  if (id.startsWith("acp-")) return { harness: ACP_HARNESS[id.slice(4)] ?? id.slice(4), connectedBy: "acp" };
+  if (piAi.has(id)) return { harness: "dsh", connectedBy: "pi-ai" };
+  return { harness: "dsh", connectedBy: "native" };
+}
+
 // src/client/composer-packs.js
 var PACK_CELLS = ["permission", "model"];
 var DEFAULT_PACK = Object.freeze({ id: "omni", cells: Object.freeze({ permission: "hidden", model: "hidden" }) });
@@ -2163,7 +2182,13 @@ var HOST_MODEL_PACK = Object.freeze({
   match: (_provider, target) => target?.host !== void 0,
   cells: Object.freeze({ model: "model" })
 });
-var BUILTIN_PACKS = [HOST_MODEL_PACK, THINKING_PACK];
+var AGENT_MODEL_PACK = Object.freeze({
+  id: "agent-model",
+  order: -50,
+  match: (provider) => provider !== void 0 && routeOf(provider).connectedBy === "acp",
+  cells: Object.freeze({ model: "model" })
+});
+var BUILTIN_PACKS = [HOST_MODEL_PACK, THINKING_PACK, AGENT_MODEL_PACK];
 function stepsAside({ roster, sessionId, cell, key, env, packs }) {
   const target = targetOf(roster, sessionId);
   const pack = packFor(target, { env, ...packs ? { packs } : {} });
@@ -4124,8 +4149,9 @@ function EffortRows({ reasoning, current, onPick }) {
     ))
   );
 }
+var offeredModels = (models, current) => (models ?? []).filter((model) => model.superseded !== true || model.ref === current);
 function ModelRows({ roster, current, onPick }) {
-  return groupModels(roster.models).map(([provider, list]) => (0, import_react11.createElement)(
+  return groupModels(offeredModels(roster.models, current)).map(([provider, list]) => (0, import_react11.createElement)(
     import_react11.Fragment,
     { key: list[0].provider ?? provider },
     (0, import_react11.createElement)("div", { className: "bt-model-group", role: "presentation" }, provider),
@@ -4343,7 +4369,7 @@ function ModelChoiceDock({ sessionId, useRoster, actions }) {
     }).finally(() => setBusy(""));
   };
   if (!lost && usable.length > 0) {
-    const suggested = usable.find((model) => model.ref === roster.defaultModel)?.ref ?? (usable.find((model) => model.id !== "default") ?? usable[0]).ref;
+    const suggested = usable.find((model) => model.ref === roster.defaultModel)?.ref ?? (usable.find((model) => model.id !== "default" && model.superseded !== true) ?? usable.find((model) => model.id !== "default") ?? usable[0]).ref;
     return (0, import_react11.createElement)(
       "div",
       { className: "bt-model-dock" },
@@ -16315,7 +16341,7 @@ function freshBotName(roster, base = "New Bot") {
 }
 function startModel(roster) {
   const models = roster.models ?? [];
-  return (models.find((model) => model.ref === roster.defaultModel) ?? models[0])?.ref ?? "";
+  return (models.find((model) => model.ref === roster.defaultModel) ?? models.find((model) => model.superseded !== true) ?? models[0])?.ref ?? "";
 }
 function createPayload({ name, look, image, model, effort, brief }) {
   const payload = { name, color: look.color, avatar: image ? { shape: look.shape, image } : { shape: look.shape } };
