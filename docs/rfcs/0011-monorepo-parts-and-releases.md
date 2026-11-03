@@ -102,19 +102,23 @@ plugins (`scripts/herdr-lane.ts`):
   `pack.json.sig`. `pack.json` names the newest pack release: its version, tag and commit, the
   tarball's URL, sha256 and size, a monotonic `sequence` (3.N.P as N·10000 + P), the key id and the
   time it was issued. A release that rebuilt the pack uploads the pack to its own versioned release
-  first, then rewrites both with `--clobber` (the signature first, so a reader between the two
-  uploads sees a mismatch and tries again later).
+  first, then rewrites both with `--clobber`. `--clobber` replaces each asset in turn, so a reader
+  may briefly see a pointer and a signature that do not match, or neither; both fail closed (refused,
+  or no update yet).
+- The pointer never goes back: before it posts, the release downloads the posted pointer, and
+  `herdr-lane.ts posted` refuses to post one whose sequence is lower than a posted pointer that
+  verifies (a re-run of an older release's run). A posted pointer that does not verify is replaced.
 - `pack.json.sig` is ed25519 over the exact bytes of `pack.json`, detached and base64, as
   `scripts/lane.ts sign` makes `lane.json.sig`. It is made with a key of the pack's own, the
   `HERDR_PACK_KEY` Actions secret, never `PLUGIN_LANE_KEY` (t22n's recommendation, t259's ruling): a
-  leak of one key does not reach the other part. The release verifies what it signed before it
-  posts it, and `herdr-lane.ts check-key` stops a release that would ship the pack before it tags
-  when the secret is missing or is not a key `pack-keys.json` lists.
+  leak of one key does not reach the other part. The pointer's `keyId` is the `pack-keys.json` entry
+  whose public key is the secret's, so any listed key signs under its own id. The release verifies
+  what it signed before it posts it, and `herdr-lane.ts check-key` stops a release that would ship
+  the pack before it tags when the secret is missing or its public key is not in `pack-keys.json`.
 - The trusted public keys are `herdr/mods/am-sidebar/pack-keys.json`, which the pack tarball
   carries, so the installed copy is the trust anchor. `install.sh` embeds the same list
-  (`TRUSTED_KEYS`; `herdr-lane.test.ts` keeps the two equal). A key rotation adds the new key to
-  both and ships in a pack the old key's pointer names; the old key stays listed until installs
-  have moved past it.
+  (`TRUSTED_KEYS`; `herdr-lane.test.ts` keeps the two equal). Rotation is in two phases ("Making
+  the key").
 - The pack's updater (`release.js`, `update.mjs`, the sidebar's check through `updateCheck.js`)
   reads `releases/download/herdr-lane/pack.json` and its `.sig`, one request each, verifies the
   signature against the installed `pack-keys.json` (`node:crypto`), offers the pack only when its
@@ -125,38 +129,60 @@ plugins (`scripts/herdr-lane.ts`):
   Releases are never listed or searched.
 - `herdr/install.sh` does the same: the pointer, its signature against its embedded keys (Node is
   checked before it reads them), then the tarball from `releases/download/v<v>/` against the
-  pointer's sha256, before anything is written. `--version <v>` installs a named release and checks
-  it against that release's `.sha256` alone, and says so (integrity, not who published it). The
+  pointer's sha256, before anything is written. It never downgrades: it refuses a pointer whose
+  version is older than the installed one or whose sequence is lower than the one it recorded
+  (the marker's `version=` and `sequence=`; update.mjs records the sequence on every install and
+  update through the pointer, and a rollback restores the kept set's). Someone who can write
+  release assets but has no key can re-post an older signed pointer; a re-run of the installer then
+  stops and says how to downgrade on purpose. `--version <v>` installs a named release, older ones
+  included, and checks it against that release's `.sha256` alone, and says so (integrity, not who
+  published it); it records no sequence. The
   one-liner is `curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash`;
   `main` moves to every release, so it serves the released installer.
 - Tests sign their fixtures with a key generated per run (`herdr/test/pointer.mjs`,
   `scripts/herdr-lane.test.ts`) and pass it only through the file:// test mode
   (`AUTOMAGIK_HERDR_PACK_KEYS`, honoured for a file:// release URL alone), never for a GitHub URL.
   No private key is committed.
-
-### Making the key
-
-`HERDR_PACK_KEY` is made once by a maintainer with admin rights on the repository (t259 or the
-owner). `scripts/lane.ts` has no key command (it only reads `PLUGIN_LANE_KEY`), so how that key
-was made is not recorded here; this is the documented process for the pack's key, and the same
-key type and format (ed25519, PKCS#8 PEM in the secret, SPKI PEM in the keys file) as the plugin
-lane's:
-
-```sh
-bun scripts/herdr-lane.ts keygen            # --repo automagik-dev/automagik, --key-id herdr-pack-2026-11
-```
-
-It generates an ed25519 pair in memory and pipes the private key (PKCS#8 PEM) to
-`gh secret set HERDR_PACK_KEY` on its stdin: it is never printed and never written to disk. Only
-when that succeeds does it add the public key (SPKI PEM) under its key id to `pack-keys.json` and to
-`install.sh`'s `TRUSTED_KEYS`; both are committed in a pull request. To rotate, run it again with a
-new `--key-id`. Until the key exists, a release that ships the pack fails at `check-key`, before it
-tags.
-
 - The mod manager's catalog is `https://raw.githubusercontent.com/automagik-dev/automagik/dev/herdr/catalog/index.json`.
   The old repository's two catalog URLs count as written by the pack: an install or update rewrites
   them to the new one, and until then the mod manager reads the new one. The index names the pack as
   `automagik-dev/automagik`, path `herdr`.
+
+### Making the key
+
+`HERDR_PACK_KEY` was created on 2026-11-03 as key id `herdr-pack-2026-11` (fa21806 committed its
+public key). `scripts/lane.ts` has no key command (it
+only reads `PLUGIN_LANE_KEY`), so how that key was made is not recorded here. This is the
+documented process for the pack's key, with the same key type and format as the plugin lane's
+(ed25519, PKCS#8 PEM in the secret, SPKI PEM in the keys file):
+
+```sh
+bun scripts/herdr-lane.ts keygen --key-id <id>   # --repo automagik-dev/automagik
+```
+
+It generates an ed25519 pair in memory and pipes the private key to `gh secret set` on its stdin:
+it is never printed and never written to disk. Only when that succeeds does it add the public key
+under its key id to `pack-keys.json` and to `install.sh`'s `TRUSTED_KEYS`; both are committed in a
+pull request. It refuses a key id `pack-keys.json` already lists.
+
+There are two secret slots, `HERDR_PACK_KEY` and `HERDR_PACK_KEY_NEXT`. The repository variable
+`HERDR_PACK_SIGNER` names the one releases sign with (`HERDR_PACK_KEY` when unset). keygen never
+writes that slot: the first key goes to `HERDR_PACK_KEY`, and any later key goes to the other slot.
+A rotation is two phases:
+
+1. Ship the new public key. `keygen --key-id herdr-pack-<yyyy-mm>` puts the new private key in the
+   slot that is not signing and adds the public key to both files. Releases keep signing with the
+   old key, so every pack released from then on carries both public keys, under a pointer installs
+   already trust.
+2. Switch the secret, later, once installs have taken a pack that lists the new key:
+   `gh variable set HERDR_PACK_SIGNER --body <the new slot>`. The next release signs with the new
+   key, and its `keyId` follows. An install still on a pack that lists only the old key refuses
+   the new pointers, so wait long enough for installs to update. Retire the old public key from
+   both files in a later release, and leave its slot for the next rotation.
+
+Switched too early, nothing is installed wrongly: those installs stop updating until they reinstall
+with `install.sh`. A release whose secret is missing or unlisted stops at `check-key`, before it
+tags.
 
 ## CI
 
@@ -205,11 +231,7 @@ Until the bridge, installed packs keep updating from automagik-herdr.
 
 ## Open questions
 
-1. `HERDR_PACK_KEY` and its public key: t259 (or the owner) runs `bun scripts/herdr-lane.ts keygen`
-   and commits `pack-keys.json` and `install.sh`. This pull request ships `pack-keys.json` with no
-   key, so it does not merge before then: its own merge ships `herdr/`, and that release fails at
-   `check-key`. (t259)
-2. `herdr/catalog/repos.json` lists Pocket Link as an external entry at `automagik-dev/automagik-pocket`;
+1. `herdr/catalog/repos.json` lists Pocket Link as an external entry at `automagik-dev/automagik-pocket`;
    Pocket's import moves it. (t16r)
 
 Resolved (t259's review, t22n's rulings, 2026-11-03):
@@ -219,5 +241,10 @@ Resolved (t259's review, t22n's rulings, 2026-11-03):
   releases search, no paging. Its key is `HERDR_PACK_KEY`, the pack's own, never `PLUGIN_LANE_KEY`.
 - The bridge release ships the verifier and `pack-keys.json`; its own hash-checked update is the
   trust anchor for 0.x installs.
+- `HERDR_PACK_KEY` exists (2026-11-03): key id `herdr-pack-2026-11`; its public key is in
+  `pack-keys.json` and `install.sh` (fa21806).
+- No downgrade (t259's re-review, H1): install.sh refuses a pointer older than what is installed,
+  by version or by recorded sequence, and the release refuses to post a lower sequence.
+- Key rotation in two phases, the keyId taken from the secret's public key (t259's re-review, M3).
 - The Node floors: users' runtime Node 22.7 or later (the launcher, `install.sh`); tests on the
   newest Node 22 (22.15+, for `module.registerHooks`) and 24; no stub fallback.
