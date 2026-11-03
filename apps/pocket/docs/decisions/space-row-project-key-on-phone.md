@@ -4,7 +4,7 @@ type: decision
 status: Proposed
 created: 2026-11-03
 updated: 2026-11-03
-pr: ""
+pr: "#45"
 tags: [decisions, space-row, meter, pocket-link]
 ---
 # The phone finds a space's Space Row project itself
