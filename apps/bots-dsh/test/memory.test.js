@@ -468,7 +468,9 @@ test('the panel call asks for the model\'s lowest thinking level when it has no 
 
 const routes = requests => requests.map(request => `${request.provider}/${request.model}@${request.maxTokens}`)
 
-test('a summary the Bot\'s model refuses is written by the profile default model', async (t) => {
+// Memory runs on the team's background model (DSH's default here, deepseek/flash), then on the
+// Bot's own (deepseek/v4) when that fails.
+test('a summary the background model refuses is written by the Bot\'s own model', async (t) => {
   const replies = [{ text: '', finish: 'error', failure: '403 Forbidden' }, '## Overview\nYou like tea.']
   const { tool, call, requests, stop } = start({ replies, models: ['v4', 'flash'], defaultModel: 'flash' })
   t.after(() => stop())
@@ -477,11 +479,11 @@ test('a summary the Bot\'s model refuses is written by the profile default model
   await summarized(call)
   const done = (await call('memory-view', { botId: 'b2' })).value
   assert.deepEqual([done.summary?.text, done.fresh, done.error], ['## Overview\nYou like tea.', true, null])
-  assert.deepEqual(routes(requests), ['deepseek/v4@2048', 'deepseek/flash@2048'])
+  assert.deepEqual(routes(requests), ['deepseek/flash@2048', 'deepseek/v4@2048'])
   assert.ok(requests.every(request => request.messages[0].content[0].text.includes('Likes tea')))
 })
 
-test('a summary cut off at both budgets on the Bot\'s model is written by the default model', async (t) => {
+test('a summary cut off at both budgets on the background model is written by the Bot\'s own model', async (t) => {
   const replies = [{ text: '', finish: 'max-tokens' }, { text: '## half', finish: 'max-tokens' }, '## Overview\nYou like tea.']
   const { tool, call, requests, stop } = start({ replies, models: ['v4', 'flash'], defaultModel: 'flash' })
   t.after(() => stop())
@@ -490,7 +492,7 @@ test('a summary cut off at both budgets on the Bot\'s model is written by the de
   await summarized(call)
   const done = (await call('memory-view', { botId: 'b2' })).value
   assert.deepEqual([done.summary?.text, done.error], ['## Overview\nYou like tea.', null])
-  assert.deepEqual(routes(requests), ['deepseek/v4@2048', 'deepseek/v4@8192', 'deepseek/flash@2048'])
+  assert.deepEqual(routes(requests), ['deepseek/flash@2048', 'deepseek/flash@8192', 'deepseek/v4@2048'])
 })
 
 test('a summary that failed on both models is tried again once the Bot has another model', async (t) => {
@@ -501,7 +503,7 @@ test('a summary that failed on both models is tried again once the Bot has anoth
   await call('memory-view', { botId: 'b2', summarize: true })
   await summarized(call)
   const failed = (await call('memory-view', { botId: 'b2', summarize: true })).value
-  assert.equal(failed.error, 'deepseek/v4: 401: Unauthorized; deepseek/flash: 503 Service Unavailable')
+  assert.equal(failed.error, 'deepseek/flash: 401: Unauthorized; deepseek/v4: 503 Service Unavailable')
   assert.equal(failed.summarizing, false)
   assert.equal(requests.length, 2)
 
@@ -515,14 +517,14 @@ test('a summary that failed on both models is tried again once the Bot has anoth
   assert.deepEqual(routes(requests).slice(2), ['deepseek/flash@2048'])
 })
 
-test('"ask or update" falls back to the default model when the Bot\'s model fails', async (t) => {
+test('"ask or update" falls back to the Bot\'s own model when the background model fails', async (t) => {
   const replies = [new Error('403 Forbidden'), JSON.stringify({ reply: 'You like tea.', changes: [] })]
   const { tool, call, requests, stop } = start({ replies, models: ['v4', 'flash'], defaultModel: 'flash' })
   t.after(() => stop())
   await tool('remember', { text: 'Likes tea' }, 'b2')
   const answer = (await call('memory-ask', { botId: 'b2', text: 'What do I like?' })).value
   assert.equal(answer.reply, 'You like tea.')
-  assert.deepEqual(routes(requests), ['deepseek/v4@2048', 'deepseek/flash@2048'])
+  assert.deepEqual(routes(requests), ['deepseek/flash@2048', 'deepseek/v4@2048'])
 })
 
 test('"ask or update" answers from the entries and changes them through the same rules', async (t) => {
@@ -1228,4 +1230,26 @@ test('a memory call names the current part of the Bot chat', async (t) => {
   const answer = await call('memory-ask', { botId: 'b2', text: 'Which part?' })
   assert.equal(answer.ok, true)
   assert.equal(requests[0].sessionId, 'b2-part2')
+})
+
+// Settings → Background jobs: the team picks the model memory runs on. An agent over ACP, or a
+// model DSH does not serve, is refused; clearing the pick goes back to DSH's default.
+test('the team\'s background model runs memory, and the pick is checked', async (t) => {
+  const replies = ['## Overview\nYou like tea.', '## Overview\nYou like tea and toast.']
+  const { tool, call, requests, stop } = start({ replies, models: ['v4', 'flash'], defaultModel: 'flash' })
+  t.after(() => stop())
+  assert.equal((await call('set-prefs', { backgroundModel: 'acp-codex/default' })).error.code, 'bot/invalid')
+  assert.equal((await call('set-prefs', { backgroundModel: 'deepseek/gone' })).error.code, 'bot/invalid')
+  assert.equal((await call('set-prefs', { backgroundModel: 'deepseek/v4' })).ok, true)
+  assert.equal((await call('state')).value.prefs.backgroundModel, 'deepseek/v4')
+  await tool('remember', { text: 'Likes tea' }, 'b2')
+  await call('memory-view', { botId: 'b2', summarize: true })
+  await summarized(call)
+  assert.deepEqual(routes(requests), ['deepseek/v4@2048'])
+  assert.equal((await call('set-prefs', { backgroundModel: null })).ok, true)
+  assert.equal((await call('state')).value.prefs.backgroundModel, undefined)
+  await tool('remember', { text: 'Likes toast' }, 'b2')
+  await call('memory-view', { botId: 'b2', summarize: true })
+  await summarized(call)
+  assert.deepEqual(routes(requests), ['deepseek/v4@2048', 'deepseek/flash@2048'])
 })

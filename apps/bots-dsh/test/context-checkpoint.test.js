@@ -387,3 +387,30 @@ test('failure/cancellation release reservation without switching or claiming suc
     await b.rt.checkpointBot('b1', { sessionId: 's1' })
   }
 })
+
+// A chat on an agent over ACP cannot take a request beside its turn: the steward's call and
+// the part's note go to the team's background model, without the agent's effort or limit.
+test('a chat on an ACP agent asks the steward and writes its note on the background model', async t => {
+  const b = bench(); t.after(b.stop)
+  b.rt.eventsBackwards = async function* () {}
+  b.agent.session.requestHeader = () => ({ config: { provider: 'acp-codex', model: 'default', reasoningEffort: 'high', maxTokens: 1000 } })
+  b.rt.answersAside = ref => !String(ref).startsWith('acp-')
+  b.rt.backgroundModel = async () => 'deepseek/flash'
+  b.bot.contextCheckRatio = .05
+  b.agent.whenIdle = async () => {}
+  b.agent.runMaintenance = fn => fn(new AbortController().signal)
+  const finished = deferred()
+  b.rt.save = async () => { if (++b.calls.saved === 2) finished.resolve() }
+  b.ctx.llm.stream = options => {
+    b.calls.streams.push(options)
+    return (async function* () {
+      yield { type: 'text-delta', index: 0, text: options.messages.tag.kind === 'steward' ? '{"action":"switch"}' : 'invalid note: no headings' }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    })()
+  }
+  b.ctx.emit('agent/status', { agent: b.agent, status: 'idle' })
+  await finished.promise
+  assert.deepEqual(b.calls.streams.map(options => options.messages.tag.kind), ['steward', 'handoff', 'handoff'])
+  assert.deepEqual(b.calls.streams.map(options => `${options.provider}/${options.model}`), ['deepseek/flash', 'deepseek/flash', 'deepseek/flash'])
+  assert.ok(b.calls.streams.every(options => options.reasoningEffort === undefined))
+})

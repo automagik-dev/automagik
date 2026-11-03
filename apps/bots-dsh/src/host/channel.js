@@ -39,7 +39,7 @@ export function install(rt) {
   // Models come from DSH, not state.json, so a provider added in Harness settings
   // changes the view without a new revision. So do the permission presets DSH offers and
   // the Bots and groups whose Auto runs as workspace-write (permissions.js).
-  const modelsKey = () => `${rt.cachedCatalog().map(entry => `${entry.ref}${entry.needsKey ? '!' : ''}${entry.reasoning ? `:${JSON.stringify(entry.reasoning)}` : ''}`).join(',')}|${rt.cachedDefault() ?? ''}|${rt.permissionKey?.() ?? ''}`
+  const modelsKey = () => `${rt.cachedCatalog().map(entry => `${entry.ref}${entry.needsKey ? '!' : ''}${entry.reasoning ? `:${JSON.stringify(entry.reasoning)}` : ''}`).join(',')}|${rt.cachedDefault() ?? ''}|${rt.cachedBackground?.() ?? ''}|${rt.permissionKey?.() ?? ''}`
   const view = () => ({
     revision: state.revision,
     workspaceId: state.workspaceId ?? null,
@@ -81,6 +81,7 @@ export function install(rt) {
     colors: [...COLORS, ...EXTRA_COLORS],
     models: rt.cachedCatalog(),
     defaultModel: rt.cachedDefault() ?? null,
+    backgroundModel: rt.cachedBackground?.() ?? null,
     permissions: rt.permissionCatalog?.() ?? null,
     modelsKey: modelsKey(),
     prefs: state.prefs,
@@ -121,7 +122,7 @@ export function install(rt) {
   const pets = createPets({ home: () => rt.home, warn: (...args) => rt.warn?.(...args) })
   const READS = new Set(['privacy', 'pets', 'pets-browse', 'image-access', 'image-progress', 'state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'context-status', 'usage-stats', 'memory-review-status', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'agent-presets', 'avatar-library'])
 
-  function setPrefs(body) {
+  async function setPrefs(body) {
     if (body.theme !== undefined) {
       if (typeof body.theme !== 'string' || !/^[a-z][\w-]{0,31}$/.test(body.theme)) throw invalid('Unknown theme')
       state.prefs.theme = body.theme
@@ -161,6 +162,17 @@ export function install(rt) {
     if (body.permission !== undefined) {
       if (body.permission === null || body.permission === '') delete state.prefs.permission
       else state.prefs.permission = rt.checkPreset(body.permission)
+    }
+    // The background jobs' model (models.js backgroundModel): a model DSH serves that answers
+    // beside the chats, never an agent over ACP. None: DSH's default model.
+    if (body.backgroundModel !== undefined) {
+      if (body.backgroundModel === null || body.backgroundModel === '') delete state.prefs.backgroundModel
+      else {
+        const ref = String(body.backgroundModel)
+        if (!rt.answersAside(ref)) throw invalid('An agent over ACP answers only in its own chat, so it cannot run background jobs')
+        if (!(await rt.catalog({ fresh: true })).some(entry => entry.ref === ref)) throw invalid(`Model ${ref.slice(0, 80)} is not available`)
+        state.prefs.backgroundModel = ref
+      }
     }
     return rt.save()
   }

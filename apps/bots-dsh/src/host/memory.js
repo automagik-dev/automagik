@@ -1235,9 +1235,11 @@ export function install(rt) {
     added: entry.meta.added ?? null, by: entry.meta.by ?? null, source: entry.meta.source ?? null,
   }))
 
-  async function modelFor(bot) {
-    const route = splitRef(await rt.desiredModel(bot) ?? await rt.defaultModel())
-    if (route === undefined) throw new Error('No model is available. Add one in Harness settings.')
+  // Memory runs beside the chats, on the team's background model (models.js), never on an
+  // agent over ACP, which answers only in its own chat.
+  async function modelFor() {
+    const route = splitRef(await rt.backgroundModel())
+    if (route === undefined) throw new Error('No model can run memory review. Pick a background model in Settings, or add a model in Harness settings.')
     return route
   }
   // The panel's model calls belong to the Bot or group whose memory they serve;
@@ -1273,21 +1275,21 @@ export function install(rt) {
     throw new Error(`The model's reasoning used up the output budget (${SUMMARY_MAX_TOKENS} and ${SUMMARY_RETRY_MAX_TOKENS} tokens); no complete answer was written`)
   }
 
-  // A served model can still refuse the call (a key without access, say), and
-  // desiredModel only falls back for models that are not served; so a failed call
-  // is tried once more on the profile default.
+  // A served model can still refuse the call (a key without access, say), so a failed call
+  // is tried once more on the Bot's own model, when that one answers beside its chat.
   async function botShot(bot, system, text, tag) {
-    const own = await modelFor(bot)
+    const first = await modelFor()
     try {
-      return await oneShot(own, system, text, tag)
+      return await oneShot(first, system, text, tag)
     } catch (error) {
-      const fallback = splitRef(await rt.defaultModel())
-      if (fallback === undefined || (fallback.provider === own.provider && fallback.model === own.model)) throw error
+      const mine = await rt.desiredModel(bot)
+      const fallback = rt.answersAside(mine) ? splitRef(mine) : undefined
+      if (fallback === undefined || (fallback.provider === first.provider && fallback.model === first.model)) throw error
       try {
         return await oneShot(fallback, system, text, tag)
       } catch (again) {
         const said = failure => failure?.message ?? String(failure)
-        throw new Error(`${own.provider}/${own.model}: ${said(error)}; ${fallback.provider}/${fallback.model}: ${said(again)}`)
+        throw new Error(`${first.provider}/${first.model}: ${said(error)}; ${fallback.provider}/${fallback.model}: ${said(again)}`)
       }
     }
   }
