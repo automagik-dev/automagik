@@ -332,6 +332,10 @@ records `layout=removed`, so no update or repair puts it back.
 - am sets `AM_HOME` (`$AUTOMAGIK_HOME`, else `~/.automagik`), `AM_PART_DIR`, `AM_ARTIFACT`
   (release sources), `AM_VERSION`, `AM_MACHINE` and `AM_JSON=1`. am appends `--purge` to the
   uninstall argv when asked.
+- For a release source verified through a signed pointer, am also sets `AM_SEQUENCE`, the
+  pointer's sequence; a named version (`--version`) gets none. The herdr entry forwards it to
+  `update.mjs install --sequence`, so the marker records `sequence=` on every am install and
+  `install.sh`'s replay guard stays on (t2zx).
 - install and uninstall are idempotent. Uninstall keeps user data unless `--purge`. They log to
   stderr and print one stdout line, `{part, ok, changed, detail}` with `AM_JSON=1`, else the
   detail.
@@ -460,8 +464,8 @@ feed. For those, `am update` asks the owner (the desktop app) and reports.
 - **`automagik-am-<v>.tgz`** on every release; **`am-lane`** (`am.json`, `am.json.sig`)
   and its key (D35).
 - **`~/.automagik/parts.json`** and **`~/.automagik/parts/`**. New. am is the only writer.
-- **Entry variables** `AM_HOME`, `AM_PART_DIR`, `AM_ARTIFACT`, `AM_VERSION`, `AM_MACHINE`,
-  `AM_JSON`; `--purge` appended to uninstall. **Entry result** `{part, ok, changed, detail}`.
+- **Entry variables** `AM_HOME`, `AM_PART_DIR`, `AM_ARTIFACT`, `AM_VERSION`, `AM_SEQUENCE`,
+  `AM_MACHINE`, `AM_JSON`; `--purge` appended to uninstall. **Entry result** `{part, ok, changed, detail}`.
   **Doctor lines** `{part, check, ok, detail, fix}` (proposed: plus `machine`) and exit codes
   0, 1, 2. **`writes`** prefixes `~/`, `**/`, and proposed `$HERDR_APP_HOME/`.
 - **`am` verbs** above; `automagik-herdr` unchanged and byte-identical, now linked by am.
