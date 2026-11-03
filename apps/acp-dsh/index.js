@@ -14,7 +14,7 @@
 // live settings, written through DSH's settings service.
 import { dirname, join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
-import { AcpAdapter, aside } from './src/host/adapter.js'
+import { AcpAdapter, aside, SIDE_MODEL } from './src/host/adapter.js'
 import { AGENTS, findCommand, signedInOf } from './src/host/agents.js'
 import { Catalog, cliStamp, DEFAULT_MODEL } from './src/host/catalog.js'
 import { AdapterStore, CHECK_EVERY_MS } from './src/host/install.js'
@@ -22,11 +22,15 @@ import { AdapterStore, CHECK_EVERY_MS } from './src/host/install.js'
 export const name = 'acp-dsh'
 export const inject = ['llm', 'agents']
 
-// claude and codex are live (volatile): DSH's settings service writes them without remounting
+// claude, codex and sideModel are live (volatile): DSH's settings service writes them without remounting
 // the plugin, and loader/volatile-update brings the change here.
 export const Config = z.object({
   claude: z.boolean().default(true).volatile().description("Offer Claude Code as the acp-claude model when the claude CLI is installed. It keeps the person's own Claude Code settings: what their allow rules and hooks allow runs without DSH's approval dialog."),
   codex: z.boolean().default(true).volatile().description('Offer Codex as the acp-codex model when the codex CLI is installed.'),
+  sideModel: z.object({
+    provider: z.string().required(),
+    model: z.string().required(),
+  }).default({ ...SIDE_MODEL }).volatile().description("The model that writes a Session's title when the Session is on an agent and DSH's default model is an agent too. Never an agent."),
   fakeAgent: z.string().description('Tests only: a script that speaks ACP, served as the acp-fake model. The command comes from these host settings, never from a client route.'),
 })
 
@@ -44,7 +48,7 @@ export function nodeCommand() {
 
 /**
  * @param {any} ctx
- * @param {{ claude?: any, codex?: any, fakeAgent?: string }} [config]
+ * @param {{ claude?: any, codex?: any, sideModel?: any, fakeAgent?: string }} [config]
  * @param {{ store?: any, find?: typeof findCommand, signedIn?: typeof signedInOf, catalogHome?: string }} [deps]
  *   catalogHome: where each agent's models and efforts are kept (beside the adapters by default).
  */
@@ -216,7 +220,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // The fake agent alone changes nothing reconcile counts.
   if (registration === undefined) publish()
   ctx.provide?.(SERVICE, service)
-  ctx.on?.('llm/stream', aside(agents))
+  ctx.on?.('llm/stream', aside(agents, ctx, () => flagOf(config.sideModel) ?? SIDE_MODEL))
   // A switch flipped in the settings: offer or withdraw the agent now, and install what it needs.
   ctx.on?.('loader/volatile-update', () => reconcile())
   // The newest adapter releases, at start and daily after; a Session already running keeps its own.
