@@ -91,25 +91,32 @@ export function useAcp(request = call) {
   }, [settling, load])
 
   const say = (id, message) => setProblems(previous => ({ ...previous, [id]: message }))
+  // Whether the host took it; a refusal leaves its words on the row.
   const act = async (id, endpoint, payload) => {
     say(id, null)
     setBusy(id)
+    let ok = true
     try {
       show(await request(endpoint, payload))
     } catch (error) {
+      ok = false
       say(id, error.message)
     }
     if (live.current) setBusy(null)
+    return ok
   }
   return {
     view,
     busy,
     problems,
     isOn: agent => wanted[agent.id] ?? agent.on,
-    flip: (agent) => {
+    flip: async (agent) => {
       const on = !(wanted[agent.id] ?? agent.on)
       setWanted(previous => ({ ...previous, [agent.id]: on }))
-      return act(agent.id, 'acp-switch', { id: agent.id, on })
+      // Refused: the switch goes back to what acp-dsh has, and nothing waits for it to settle.
+      if (!(await act(agent.id, 'acp-switch', { id: agent.id, on })) && live.current) {
+        setWanted(previous => (previous[agent.id] === on ? Object.fromEntries(Object.entries(previous).filter(([id]) => id !== agent.id)) : previous))
+      }
     },
     retry: agent => act(agent.id, 'acp-retry', { id: agent.id }),
     check: agent => act(agent.id, 'acp', { refresh: true }),

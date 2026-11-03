@@ -11651,22 +11651,27 @@ function useAcp(request2 = call) {
   const act = async (id, endpoint, payload) => {
     say(id, null);
     setBusy(id);
+    let ok = true;
     try {
       show(await request2(endpoint, payload));
     } catch (error) {
+      ok = false;
       say(id, error.message);
     }
     if (live.current) setBusy(null);
+    return ok;
   };
   return {
     view,
     busy,
     problems,
     isOn: (agent) => wanted[agent.id] ?? agent.on,
-    flip: (agent) => {
+    flip: async (agent) => {
       const on2 = !(wanted[agent.id] ?? agent.on);
       setWanted((previous) => ({ ...previous, [agent.id]: on2 }));
-      return act(agent.id, "acp-switch", { id: agent.id, on: on2 });
+      if (!await act(agent.id, "acp-switch", { id: agent.id, on: on2 }) && live.current) {
+        setWanted((previous) => previous[agent.id] === on2 ? Object.fromEntries(Object.entries(previous).filter(([id]) => id !== agent.id)) : previous);
+      }
     },
     retry: (agent) => act(agent.id, "acp-retry", { id: agent.id }),
     check: (agent) => act(agent.id, "acp", { refresh: true })

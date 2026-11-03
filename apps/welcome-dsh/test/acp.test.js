@@ -122,14 +122,87 @@ const bundle = await build({
   bundle: true, format: 'cjs', platform: 'node', write: false, logLevel: 'silent',
   external: ['react', 'react-dom'],
 })
-const react = {
-  createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) }),
+// Stateless hooks for drawing a row once; runHook below swaps in ones that keep state.
+const stateless = {
   useState: initial => [typeof initial === 'function' ? initial() : initial, () => {}],
   useEffect: () => {}, useRef: current => ({ current }), useCallback: fn => fn,
 }
+let hooks = stateless
+const react = {
+  createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) }),
+  useState: initial => hooks.useState(initial),
+  useEffect: (effect, deps) => hooks.useEffect(effect, deps),
+  useRef: current => hooks.useRef(current),
+  useCallback: (fn, deps) => hooks.useCallback(fn, deps),
+}
 const client = { exports: {} }
-runInNewContext(bundle.outputFiles[0].text, { module: client, exports: client.exports, setTimeout, clearTimeout, setInterval, clearInterval, require: name => ({ react, 'react-dom': {} })[name] })
+const sandbox = { module: client, exports: client.exports, setTimeout, clearTimeout, setInterval, clearInterval, require: name => ({ react, 'react-dom': {} })[name] }
+runInNewContext(bundle.outputFiles[0].text, sandbox)
 const ui = client.exports
+
+// A hook run the way React runs it: state kept by call order, a render after each update,
+// and effects run after the render when their dependencies change. `intervals` counts the
+// polling timers alive.
+function runHook(hook) {
+  const slots = []
+  const intervals = new Set()
+  let index = 0
+  let result
+  let queued = false
+  const same = (a, b) => a !== undefined && b !== undefined && a.length === b.length && a.every((value, i) => Object.is(value, b[i]))
+  let effects = []
+  const own = {
+    useState(initial) {
+      const i = index++
+      if (!(i in slots)) slots[i] = { value: typeof initial === 'function' ? initial() : initial }
+      const slot = slots[i]
+      slot.set ??= (next) => {
+        slot.value = typeof next === 'function' ? next(slot.value) : next
+        if (!queued) { queued = true; queueMicrotask(draw) }
+      }
+      return [slot.value, slot.set]
+    },
+    useRef(current) {
+      const i = index++
+      slots[i] ??= { current }
+      return slots[i]
+    },
+    useCallback(fn, deps) {
+      const i = index++
+      if (!(i in slots) || !same(slots[i].deps, deps)) slots[i] = { fn, deps }
+      return slots[i].fn
+    },
+    useEffect(effect, deps) {
+      const i = index++
+      const slot = slots[i] ?? (slots[i] = {})
+      if (slot.deps === undefined || !same(slot.deps, deps)) effects.push(() => { slot.cleanup?.(); slot.deps = deps; slot.cleanup = effect() })
+    },
+  }
+  function draw() {
+    queued = false
+    index = 0
+    effects = []
+    hooks = own
+    try { result = hook() } finally { hooks = stateless }
+    for (const run of effects) run()
+  }
+  const realSet = sandbox.setInterval
+  const realClear = sandbox.clearInterval
+  sandbox.setInterval = (fn, ms) => { const timer = realSet(fn, ms); intervals.add(timer); return timer }
+  sandbox.clearInterval = (timer) => { intervals.delete(timer); realClear(timer) }
+  draw()
+  return {
+    get current() { return result },
+    intervals,
+    settle: () => new Promise(done => setImmediate(done)),
+    done() {
+      for (const slot of slots) slot?.cleanup?.()
+      for (const timer of intervals) realClear(timer)
+      sandbox.setInterval = realSet
+      sandbox.clearInterval = realClear
+    },
+  }
+}
 
 function render(node) {
   if (Array.isArray(node)) return node.map(render)
@@ -218,6 +291,54 @@ test('off: the switch is off and flipping it asks for the setting', () => {
   assert.equal(toggle.props['aria-checked'], 'false')
   toggle.props.onClick()
   assert.deepEqual(acp.acted, [['flip', 'acp-claude']])
+})
+
+test('a refused switch goes back to what acp-dsh has, and nothing polls for it', async () => {
+  const off = agent('acp-claude', { on: false, connector: { state: 'off' } })
+  const asked = []
+  const request = async (endpoint, payload) => {
+    asked.push(endpoint)
+    if (endpoint === 'acp-switch') throw new Error("The ACP agents' settings changed while saving. Try again.")
+    return view([off])
+  }
+  const run = runHook(() => ui.useAcp(request))
+  try {
+    await run.settle()
+    const [row] = run.current.view.agents
+    assert.equal(run.current.isOn(row), false)
+    const flipped = run.current.flip(row)
+    await run.settle()
+    await flipped
+    await run.settle()
+    assert.deepEqual(asked, ['acp', 'acp-switch'])
+    assert.equal(run.current.isOn(row), false)
+    assert.equal(run.current.busy, null)
+    assert.match(run.current.problems['acp-claude'], /changed while saving/)
+    assert.equal(run.intervals.size, 0)
+  } finally {
+    run.done()
+  }
+})
+
+test('an accepted switch that has not settled yet keeps polling until acp-dsh says so', async () => {
+  let on = false
+  const row = () => agent('acp-claude', { on, connector: { state: on ? 'ready' : 'off' } })
+  const request = async (endpoint) => (endpoint === 'acp-switch' ? view([agent('acp-claude', { on: false, connector: { state: 'off' } })]) : view([row()]))
+  const run = runHook(() => ui.useAcp(request))
+  try {
+    await run.settle()
+    await run.current.flip(run.current.view.agents[0])
+    await run.settle()
+    assert.equal(run.current.isOn(run.current.view.agents[0]), true)
+    assert.equal(run.intervals.size, 1)
+    on = true
+    await run.current.check(run.current.view.agents[0])
+    await run.settle()
+    assert.equal(run.current.view.agents[0].on, true)
+    assert.equal(run.intervals.size, 0)
+  } finally {
+    run.done()
+  }
 })
 
 test('without acp-dsh the Connect AI section draws nothing', () => {
