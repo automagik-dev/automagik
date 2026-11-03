@@ -455,17 +455,60 @@ export async function launchPort(file, fresh = freePort) {
 
 /**
  * Start dsh on `port` (startDsh); when something took the port before dsh could bind it, start
- * it once more on a fresh one (`fresh`), told first through `onPort`. Resolves as startDsh does.
+ * it once more on a fresh one (`fresh`), told first through `onPort`, unless `stopped()` says the
+ * start was given up meanwhile (a quit). Resolves as startDsh does.
  */
-export async function startDshOnPort({ port, fresh = freePort, onPort, ...options }) {
+export async function startDshOnPort({ port, fresh = freePort, onPort, stopped = () => false, ...options }) {
   try {
     return await startDsh({ ...options, port })
   } catch (error) {
-    if (error.code !== 'EADDRINUSE') throw error
+    if (error.code !== 'EADDRINUSE' || stopped()) throw error
     const next = await fresh()
+    if (stopped()) throw error
     onPort?.(next)
     return startDsh({ ...options, port: next })
   }
+}
+
+/**
+ * The dsh a start runs, whichever process that is now: `track` takes each one as it spawns (the
+ * first, then a retry's). `stop` stops the current one, and any spawned after it was called is
+ * stopped at once, so a quit between the first dsh's exit and the retry leaves none behind.
+ */
+export function dshRun() {
+  let child = null
+  let stopped = false
+  return {
+    get child() { return child },
+    get stopped() { return stopped },
+    track(next) {
+      child = next
+      if (stopped) void stopDsh(next)
+    },
+    stop(graceMs) {
+      stopped = true
+      return stopDsh(child, graceMs)
+    },
+  }
+}
+
+/**
+ * A start's dsh as main.js runs it: startDshOnPort, every process tracked by `run` (dshRun) from
+ * its spawn, no retry once `run` is stopped, and the port kept in `portFile` once dsh serves on
+ * it. A port that cannot be kept goes to `onUnkept(error)`; the start goes on. `onSpawn` also
+ * gets each process.
+ */
+export async function serveDsh({ run, portFile, onSpawn, onUnkept = () => {}, ...options }) {
+  const running = await startDshOnPort({
+    ...options,
+    stopped: () => run.stopped,
+    onSpawn: (child) => {
+      run.track(child)
+      onSpawn?.(child)
+    },
+  })
+  try { keepPort(portFile, Number(new URL(running.url).port)) } catch (error) { onUnkept(error) }
+  return running
 }
 
 /**
@@ -475,6 +518,20 @@ export async function startDshOnPort({ port, fresh = freePort, onPort, ...option
 export function servesOrigin(running, origin) {
   if (!running?.child || running.child.exitCode !== null || running.child.signalCode !== null) return false
   try { return new URL(running.url).origin === origin } catch { return false }
+}
+
+/** The URL to load into the window: `running`'s launch URL, only when it serves `origin`. */
+export function pageUrlOf(running, origin) {
+  if (!servesOrigin(running, origin)) throw new Error(`dsh's launch URL is not on ${origin}.`)
+  return running.url
+}
+
+/**
+ * Whether dsh's output says its listener could not bind 127.0.0.1:`port`: Node's listen error,
+ * `Error: listen EADDRINUSE: address already in use 127.0.0.1:<port>`, at the start of a line.
+ */
+export function listenFailed(text, port) {
+  return String(text).split(/\r?\n/).some(line => line.trim() === `Error: listen EADDRINUSE: address already in use 127.0.0.1:${port}`)
 }
 
 /** The launch URL (with dsh's per-launch token) in a line of dsh's output, or null. */
@@ -569,8 +626,10 @@ export function startDsh({ node, bin, env, port, cwd, log, privacy, timeoutMs = 
     child.once('exit', (code, signal) => {
       clearTimeout(timer)
       const error = new Error(`dsh exited before it was ready (${signal ?? code})`)
-      // Its listener could not bind the port: something took it after the app looked.
-      if (/\bEADDRINUSE\b/.test(seen)) error.code = 'EADDRINUSE'
+      // Its listener could not bind the port: something took it after the app looked. Only
+      // dsh's own listen error for this very address counts (dsh-host-webserver listen), never
+      // other log text that names the code.
+      if (listenFailed(seen, port)) error.code = 'EADDRINUSE'
       fail(error)
     })
     child.once('error', (error) => {

@@ -19,7 +19,7 @@ import { noteRestart, restartLine, steps } from './timeline.js'
 import { startUp } from './startup.js'
 import { dismissSplash, showUpdateSplash } from './splash.js'
 import { PUBLISHERS, TRIAL_MS, beforeStart, checkLane, confirm as confirmLane, installedVersions, laneMemory, stage as stageLane, stagedOf, stagedVersion, trialFailed } from './lane.js'
-import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, forgetDshLogins, privacyFileOf, privacyPatchOf, guardContents, installProfile, keepPort, launchPort, pinProfileStore, portFileOf, preloadOf, resourcesOf, servesOrigin, startDshOnPort, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
+import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, dshRun, forgetDshLogins, privacyFileOf, privacyPatchOf, guardContents, installProfile, launchPort, pageUrlOf, pinProfileStore, portFileOf, preloadOf, resourcesOf, serveDsh, storeLayoutOf, writeTools } from './dsh.js'
 import { BotCursor } from './bot-cursor.js'
 import { BotRelay } from './bot-relay.js'
 import { BotViews, isBotId, isTabId } from './bot-views.js'
@@ -37,7 +37,9 @@ const root = automagikHome()
 const home = appHome()
 let dsh = null
 // dsh's process from the moment it is spawned: a quit before it is ready still stops it.
-let dshChild = null
+// The dsh this start runs, whichever process that is now (a retry on another port replaces the
+// first): every way out stops it, and one that spawns after that is stopped at once.
+const dshProcess = dshRun()
 let window = null
 let page = null
 let quitting = false
@@ -157,7 +159,7 @@ function fail(error) {
   quitting = true
   sendState({ status: `${PRODUCT} could not start.`, problem: true })
   dialog.showErrorBox(`${PRODUCT} could not start`, `${error?.message ?? error}\n\nLog: ${join(home, 'logs', 'dsh.log')}`)
-  void stopDsh(dshChild).finally(() => app.exit(1))
+  void dshProcess.stop().finally(() => app.exit(1))
 }
 
 // macOS's app menu: the system's usual menus, with Check for Updates under the app's name.
@@ -226,12 +228,12 @@ async function launch() {
         started.mark(`port ${port} taken, dsh on ${next}`)
         dshOrigin = `http://127.0.0.1:${next}`
       }
-      return startDshOnPort({ node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload, privacy }), port, onPort, cwd: home, log, privacy: overlay, onSpawn: (child) => { dshChild = child; child.on('message', message => answerDsh(child, message)); started.mark('dsh spawned') } })
+      // Only a port dsh bound and served on is kept for the next launch (dsh.js serveDsh).
+      const onUnkept = error => startLog(`${new Date().toISOString()} start: port not kept (${error.message})\n`)
+      return serveDsh({ run: dshProcess, portFile: portFileOf(home), node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload, privacy }), port, onPort, onUnkept, cwd: home, log, privacy: overlay, onSpawn: (child) => { child.on('message', message => answerDsh(child, message)); started.mark('dsh spawned') } })
         .then((running) => {
           dsh = running
           started.mark('dsh ready')
-          // Only a port dsh bound and served on is kept for the next launch.
-          try { keepPort(portFileOf(home), Number(new URL(running.url).port)) } catch (error) { startLog(`${new Date().toISOString()} start: port not kept (${error.message})\n`) }
           dsh.child.once('exit', (code) => {
             if (!quitting) fail(new Error(`dsh stopped (${code}).`))
           })
@@ -257,8 +259,7 @@ async function launch() {
     load: async (running) => {
       if (!window || !page) return
       // The page comes only from the dsh this start spawned, on the origin the guard keeps to.
-      if (!servesOrigin(running, dshOrigin)) throw new Error(`dsh's launch URL is not on ${dshOrigin}.`)
-      const { url } = running
+      const url = pageUrlOf(running, dshOrigin)
       started.mark('page loading')
       await page.webContents.loadURL(url)
     },
@@ -413,7 +414,7 @@ function restartForLane({ away = false, why } = {}) {
   update = { ...update, state: 'restarting', version: laneReady?.version ?? update?.version }
   publishUpdate()
   void fade(window, { to: 0, reduced: lessMotion() })
-    .then(() => { out.mark('window gone'); return stopDsh(dshChild) })
+    .then(() => { out.mark('window gone'); return dshProcess.stop() })
     .finally(() => {
       out.mark('dsh stopped')
       app.relaunch()
@@ -527,7 +528,7 @@ function installUpdate({ away = false } = {}) {
   }
   setTimeout(() => {
     void fade(window, { to: 0, reduced: lessMotion() })
-      .then(() => { out.mark('window gone'); return stopDsh(dshChild) })
+      .then(() => { out.mark('window gone'); return dshProcess.stop() })
       .finally(() => {
         out.mark('dsh stopped')
         noteRestart(RESTART_NOTE(), { from: app.getVersion(), to: update?.version })
@@ -658,12 +659,14 @@ function harden(origin) {
 app.on('window-all-closed', () => app.quit())
 app.once('will-quit', () => { botRelay.dispose(); botViews.dispose(); botCursor.dispose() })
 app.on('before-quit', (event) => {
-  if (quitting || !dshChild) return
+  if (quitting) return
+  // Nothing spawned yet: the quit goes on, and a dsh that spawns after it is stopped.
+  if (!dshProcess.child) return void dshProcess.stop()
   quitting = true
   event.preventDefault()
   const out = leave('quit')
   // The window goes at once; dsh stops behind it, so a quit never looks stuck.
   void fade(window, { to: 0, reduced: lessMotion() })
-    .then(() => { out.mark('window gone'); return stopDsh(dshChild) })
+    .then(() => { out.mark('window gone'); return dshProcess.stop() })
     .finally(() => { out.mark('dsh stopped'); app.quit() })
 })
