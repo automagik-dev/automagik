@@ -173,7 +173,12 @@ need. All are `targets: local`, `set: ["code"]`, artifact `automagik-herdr-pack-
 - **`herdr.cli` is retired before it ships.** Its files leave `am-sidebar/bin/` for the am part
   (`automagik-herdr`, `automagik-herdr.mjs`, `state.mjs`, `run.sh`, and the briefing), and its
   capabilities go with them. The pack stops linking `automagik-herdr` in the first release after
-  am ships, so the alias never disappears.
+  am ships, so the alias never disappears. No herdr manifest declares `~/.local/bin/am` or
+  `automagik-herdr`: only am's does. The pack's installer hands the link over by leaving one
+  that points at am, and am takes one that points into the pack.
+- Until am carries the CLI and the briefing (delivery 1 released), `am uninstall
+  herdr.am-sidebar` refuses and says why: switching the sidebar off would leave
+  `automagik-herdr` pointing at nothing and stop every briefing (t2zx).
 - `herdr.layout` (`herdr-layout`) at `herdr-layout/part.json`, `select` `layouts/`: in the
   tarball `herdr-layout/automagik.json` is `layouts/automagik.json`. One function, `repoPathOf`
   in `herdr/scripts/parts.mjs`, maps tarball paths to the repository's.
@@ -420,7 +425,8 @@ list a later fence enforces; for now doctor checks it and the part's own uninsta
 Rule 7: am and the gate refuse a manifest whose `writes` names anything Herdr owns
 (`shared.json`, `data/`), or overlaps another part's `writes` (the same path, a glob that matches
 it, or the same `file#key`), unless the manifest `replaces` that part. Code gap: `parts.mjs`
-refuses the fixed list (`REFUSED_WRITES`) but checks no overlap between parts. A glob such as
+refuses the fixed list (`REFUSED_WRITES`) but checks no overlap between parts; the check will
+scan every tracked `part.json` in the repository, `am/` included (t2zx). A glob such as
 `**/.claude/settings.local.json` is removed only by the part's own uninstall entry, from the
 files it recorded (the hooks journal), never by am expanding the glob.
 
