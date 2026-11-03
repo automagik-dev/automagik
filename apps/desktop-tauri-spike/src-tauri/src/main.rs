@@ -17,6 +17,7 @@
 //   SPIKE_URL        skip DSH and load this URL (to test the bridge from any origin)
 //   SPIKE_PROBES     "basic" or "mic": run the WebKit feature probes after the page loads
 //   SPIKE_REPORT     where the probe report (JSON) goes (default: <home>/report.json)
+//   SPIKE_CDP_PORT   (Windows) open CDP on each Bot view: <port>+1 for bot-a, <port>+2 for bot-b
 //   SPIKE_BOT_URL    also lay two Bot browser views (bot-a, bot-b) beside DSH's page, each on its
 //                    own persistent WKWebsiteDataStore, loading this URL with ?bot=a / ?bot=b
 use std::{
@@ -440,6 +441,16 @@ fn add_bot_views(window: &tauri::WebviewWindow, url: &str) -> tauri::Result<()> 
         let builder = builder.data_store_identifier(data_store_of(bot));
         #[cfg(not(target_os = "macos"))]
         let builder = builder.data_directory(app_home().join("bot-stores").join(bot));
+        // Windows: SPIKE_CDP_PORT=<base> opens WebView2's CDP on <base>+1 (bot-a) and <base>+2 (bot-b).
+        // Each Bot has its own data directory, so its own browser process and its own port.
+        #[cfg(windows)]
+        let builder = match env::var("SPIKE_CDP_PORT").ok().and_then(|p| p.parse::<u16>().ok()) {
+            Some(base) => builder.additional_browser_args(&format!(
+                "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port={}",
+                base + 1 + i as u16
+            )),
+            None => builder,
+        };
         host.add_child(
             builder,
             LogicalPosition::new(w * 0.5, h * 0.5 * i as f64),

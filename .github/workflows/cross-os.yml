@@ -58,6 +58,11 @@ jobs:
       DESKTOP: ${{ github.workspace }}/app/apps/desktop
       SPIKE: ${{ github.workspace }}/apps/desktop-tauri-spike
     steps:
+      # Windows runners check text files out as CRLF; the app's build (runtime patches) and the
+      # repo expect LF, as every developer machine and release build has them.
+      - name: LF line endings
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
@@ -87,9 +92,11 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libfuse2 patchelf xvfb >/dev/null
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libfuse2 patchelf xvfb dbus libxkbcommon-x11-0 >/dev/null
           # Chromium's and WebKitGTK's sandboxes need unprivileged user namespaces, which Ubuntu 24.04 restricts.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          # A desktop session has a D-Bus session bus; without one GTK waits 25 s (D-Bus timeout) before
+          # Tauri's window starts. The run steps start one with dbus-run-session for both shells.
 
       # ---------- 1. Build: Electron ----------
 
@@ -181,7 +188,8 @@ jobs:
           elif [ "$E_PREP" = success ]; then rec electron build works "npm ci + scripts/prepare-runtime.mjs"
           elif [ "$E_PREP_SHIM" = success ]; then rec electron build degraded "prepare-runtime.mjs fails on this OS ($(tail_of "$LOGS/electron-prepare-runtime.log")); it builds with cross-os/win-cmd-shim.cjs (shell: true for npm.cmd)"
           else rec electron build broken "prepare-runtime.mjs: $(tail_of "$LOGS/electron-prepare-runtime.log") $(tail_of "$LOGS/electron-prepare-runtime-shim.log")"; fi
-          if [ "$E_PACK" = success ]; then rec electron package works "$(cd "$DESKTOP/dist" && ls *.dmg *.AppImage *.deb *.exe *.msi 2>/dev/null | tr '\n' ' ')"
+          if [ "$E_PACK" = success ] && [ ! -d "$DESKTOP/build/runtime" ]; then rec electron package broken "electron-builder made installers, but without the DSH runtime (build/ missing: prepare-runtime failed)"
+          elif [ "$E_PACK" = success ]; then rec electron package works "$(cd "$DESKTOP/dist" && ls *.dmg *.AppImage *.deb *.exe *.msi 2>/dev/null | tr '\n' ' ')"
           else rec electron package broken "electron-builder: $(tail_of "$LOGS/electron-package.log")"; fi
           if [ "$T_PACK" = success ]; then
             rec tauri build works "cargo build --release (tauri-cli 2.12.4)"
@@ -219,7 +227,7 @@ jobs:
             Windows) exe="$DESKTOP/dist/win-unpacked/Automagik.exe" ;;
           esac
           if [ "$RUNNER_OS" = Linux ]; then
-            xvfb-run -a -s "-screen 0 1920x1080x24" node "$HARNESS" electron-app --exe "$exe" --desktop "$DESKTOP" --test "$SPIKE/test"
+            dbus-run-session -- xvfb-run -a -s "-screen 0 1920x1080x24" node "$HARNESS" electron-app --exe "$exe" --desktop "$DESKTOP" --test "$SPIKE/test"
           else
             node "$HARNESS" electron-app --exe "$exe" --desktop "$DESKTOP" --test "$SPIKE/test"
           fi
@@ -230,7 +238,7 @@ jobs:
         timeout-minutes: 10
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
-            xvfb-run -a -s "-screen 0 1920x1080x24" node "$HARNESS" electron-smoke --desktop "$DESKTOP"
+            dbus-run-session -- xvfb-run -a -s "-screen 0 1920x1080x24" node "$HARNESS" electron-smoke --desktop "$DESKTOP"
           else
             node "$HARNESS" electron-smoke --desktop "$DESKTOP"
           fi
@@ -253,7 +261,7 @@ jobs:
           esac
           args=(tauri-app --exe "$exe" --resources "$DESKTOP/build" --test "$SPIKE/test" --playwright "$GITHUB_WORKSPACE/app/apps/bots-dsh/package.json")
           if [ "$RUNNER_OS" = Linux ]; then
-            xvfb-run -a -s "-screen 0 1920x1080x24" node "$HARNESS" "${args[@]}"
+            dbus-run-session -- xvfb-run -a -s "-screen 0 1920x1080x24" node "$HARNESS" "${args[@]}"
           else
             node "$HARNESS" "${args[@]}"
           fi
@@ -283,7 +291,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a node "$HARNESS" herdr; else node "$HARNESS" herdr; fi
+          if [ "$RUNNER_OS" = Linux ]; then dbus-run-session -- xvfb-run -a node "$HARNESS" herdr; else node "$HARNESS" herdr; fi
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()

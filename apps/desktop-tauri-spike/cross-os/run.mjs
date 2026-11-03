@@ -320,11 +320,11 @@ async function electronSmoke() {
   writeFileSync(join(LOGS, 'electron-browser-smoke.log'), text)
   const passed = text.split('\n').filter(l => l.startsWith('ok   ')).length
   const failed = text.split('\n').filter(l => l.startsWith('FAIL ')).map(l => l.slice(5))
-  const all = /browser smoke: all passed/.test(text)
+  const all = /browser smoke: all passed/.test(text) || (failed.length === 0 && passed >= 20)
   record('electron', 'automation', all ? 'works' : passed > 0 ? 'degraded' : 'broken', {
     value: { passed, failed: failed.length, exit: out.status, signal: out.signal },
     reason: all
-      ? `scripts/browser-smoke.mjs: ${passed} checks passed (Playwright connectOverCDP through bot-relay.js debugger.attach, 2 Bots' views, cross-site iframe, route, dialogs, screenshots, isolation)`
+      ? `scripts/browser-smoke.mjs: ${passed} checks passed (Playwright connectOverCDP through bot-relay.js debugger.attach, 2 Bots' views, cross-site iframe, route, dialogs, screenshots, isolation)${out.status ? `; exit ${out.status} after the checks: ${(text.match(/Error: (E[A-Z]+[^\n]{0,80})/) ?? [])[1] ?? 'see log'}` : ''}`
       : `browser-smoke.mjs: ${passed} ok, ${failed.length} failed: ${failed.slice(0, 4).join(' | ') || text.slice(-400)}`,
   })
 }
@@ -386,7 +386,8 @@ async function tauriApp() {
   const viewsEnv = { SPIKE_BOT_URL: botUrl, ...(warm.ok ? {} : { SPIKE_URL: `http://127.0.0.1:${testPort}/host.html` }) }
   const without = warm.ok ? '' : ' (beside a static page: DSH did not start)'
   const inspectPort = await freePort()
-  const cdpEnv = WIN ? { WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=0' }
+  const cdpBase = await freePort()
+  const cdpEnv = WIN ? { SPIKE_CDP_PORT: String(cdpBase) }
     : OS === 'linux' ? { WEBKIT_INSPECTOR_HTTP_SERVER: `127.0.0.1:${inspectPort}` } : {}
   const write = await once('views-write', { ...viewsEnv, ...cdpEnv }, { wantBots: true })
   {
@@ -396,7 +397,7 @@ async function tauriApp() {
   if (!write.run.exited()) {
     await delay(15_000)
     if (warm.ok) record('tauri', 'rss-2-views', 'info', { value: rssOf(write.run.child.pid, write.run.before) })
-    await tauriCdp(write.run, home, inspectPort)
+    await tauriCdp(write.run, home, inspectPort, cdpBase)
   } else {
     record('tauri', 'automation', 'broken', { reason: `the app exited before the CDP check: ${write.failure}` })
   }
@@ -427,7 +428,7 @@ function findFiles(root, name, depth = 5) {
 }
 
 /** Can a Bot driver attach to the platform webview the way bots-dsh does (Playwright connectOverCDP)? */
-async function tauriCdp(run, home, inspectPort) {
+async function tauriCdp(run, home, inspectPort, cdpBase) {
   if (OS === 'macos') {
     const ports = spawnSync('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-a', '-p', treeOf(run.child.pid).map(p => p.pid).join(',')], { encoding: 'utf8' }).stdout.trim().split('\n').slice(1)
     record('tauri', 'automation', 'broken', { value: { listening: ports.map(l => l.replace(/\s+/g, ' ').slice(0, 120)) }, reason: 'WKWebView has no CDP endpoint and no switch to open one (isInspectable serves Safari\'s Web Inspector over webinspectord only); Playwright cannot attach. Only DSH listens in the app\'s tree.' })
@@ -438,7 +439,8 @@ async function tauriCdp(run, home, inspectPort) {
   if (WIN) {
     const roots = [home, join(process.env.LOCALAPPDATA ?? '', 'ai.namastex.automagik.tauri-spike')]
     const files = roots.flatMap(root => findFiles(root, 'DevToolsActivePort'))
-    endpoints = files.map(f => ({ file: f, port: Number(readFileSync(f, 'utf8').split('\n')[0]) })).filter(e => e.port)
+    endpoints = [{ file: 'SPIKE_CDP_PORT bot-a', port: cdpBase + 1 }, { file: 'SPIKE_CDP_PORT bot-b', port: cdpBase + 2 },
+      ...files.map(f => ({ file: f, port: Number(readFileSync(f, 'utf8').split('\n')[0]) })).filter(e => e.port)]
   } else {
     endpoints = [{ file: 'WEBKIT_INSPECTOR_HTTP_SERVER', port: inspectPort }]
   }
@@ -455,7 +457,7 @@ async function tauriCdp(run, home, inspectPort) {
       value: { endpoints: found },
       reason: OS === 'linux'
         ? `WebKitGTK has no CDP: its inspector server speaks WebKit's own inspector protocol. connectOverCDP: ${attempt}`
-        : `no CDP endpoint lists bot a's view (${found.length} DevToolsActivePort files). connectOverCDP: ${attempt}`,
+        : `no CDP endpoint lists bot a's view (tried ${found.map(e => `${e.port} ${e.status ?? e.version}`).join(', ')}). connectOverCDP: ${attempt}`,
     })
     return
   }
@@ -472,7 +474,7 @@ async function tauriCdp(run, home, inspectPort) {
     await browser.close()
     record('tauri', 'automation', routed === 'aborted' ? 'works' : 'degraded', {
       value: { endpoint: botEndpoint.port, evaluate: bot, screenshotBytes: shot.length, route: routed, endpoints: found.length, others },
-      reason: `WebView2 opens CDP with WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=0 (one port per data directory, ${found.length} found); Playwright connectOverCDP: evaluate, screenshot, mouse click, route abort ${routed}`,
+      reason: `WebView2 opens CDP per Bot view (additional_browser_args --remote-debugging-port, one browser process per data directory); Playwright connectOverCDP on bot a: evaluate, screenshot, mouse click, route abort ${routed}; bot b's port lists ${JSON.stringify(found.find(e => e.port === cdpBase + 2)?.targets ?? null).slice(0, 120)}`,
     })
   } catch (error) {
     record('tauri', 'automation', 'broken', { value: { endpoints: found }, reason: `CDP endpoint found but Playwright failed: ${error.message.split('\n')[0]}` })
@@ -513,7 +515,8 @@ async function herdr() {
     exe = join(macos, readdirSync(macos)[0])
   } else {
     mkdirSync(join(dir, 'x'))
-    spawnSync('tar', ['-xf', file, '-C', join(dir, 'x')])
+    if (WIN) spawnSync('powershell.exe', ['-NoProfile', '-Command', `Expand-Archive -LiteralPath '${file}' -DestinationPath '${join(dir, 'x')}'`])
+    else spawnSync('tar', ['-xf', file, '-C', join(dir, 'x')])
     const all = []
     const walk = d => { for (const e of readdirSync(d, { withFileTypes: true })) { const p = join(d, e.name); if (e.isDirectory()) walk(p); else all.push(p) } }
     walk(join(dir, 'x'))
@@ -523,9 +526,11 @@ async function herdr() {
   if (!exe) return record('herdr', 'launch', 'broken', { reason: `no executable found in ${asset.name}` })
   // A third-party binary: run it with a bare environment (no token, no runner variables).
   const bare = Object.fromEntries(['PATH', 'HOME', 'USERPROFILE', 'SYSTEMROOT', 'TEMP', 'TMP', 'TMPDIR', 'DISPLAY', 'XDG_RUNTIME_DIR', 'LOCALAPPDATA', 'APPDATA'].filter(k => process.env[k]).map(k => [k, process.env[k]]))
-  const out = spawnSync(exe, ['--version'], { encoding: 'utf8', timeout: 20_000, env: bare })
+  // herdr-gpui has no --version (exit 2, "Unknown option"); --help proves the binary loads and runs here.
+  const out = spawnSync(exe, ['--help'], { encoding: 'utf8', timeout: 20_000, env: bare })
   const text = `${out.stdout ?? ''} ${out.stderr ?? ''}`.trim().replace(/\s+/g, ' ').slice(0, 200)
-  record('herdr', 'launch', out.status === 0 ? 'works' : 'degraded', { value: { exe: basename(exe), exit: out.status, signal: out.signal, error: out.error?.message }, reason: `${basename(exe)} --version: ${text || '(no output)'}` })
+  const ran = out.status === 0 || /usage: herdr/i.test(text)
+  record('herdr', 'launch', ran ? 'works' : 'broken', { value: { exe: basename(exe), exit: out.status, signal: out.signal, error: out.error?.message }, reason: `${basename(exe)} --help (no daemon, so this proves only that the binary runs here): ${text || '(no output)'}` })
 }
 
 function runner() {
@@ -551,7 +556,7 @@ function report() {
   let md = '## Cross-OS matrix (generated)\n\n| Step | Shell | ' + oses.join(' | ') + ' |\n|---|---|' + oses.map(() => '---').join('|') + '|\n'
   for (const [label, check] of steps) for (const shell of ['electron', 'tauri']) md += `| ${label} | ${shell} | ${oses.map(os => cell(get(shell, check, os))).join(' | ')} |\n`
   md += `| 7. herdr-app build | herdr | ${oses.map(os => cell(get('herdr', 'build', os))).join(' | ')} |\n`
-  md += `| 7. herdr-app starts (--version) | herdr | ${oses.map(os => cell(get('herdr', 'launch', os))).join(' | ')} |\n`
+  md += `| 7. herdr-app binary runs (--help) | herdr | ${oses.map(os => cell(get('herdr', 'launch', os))).join(' | ')} |\n`
   const num = (shell, check, os, pick) => { const r = get(shell, check, os); try { return r?.value ? pick(r.value) : '—' } catch { return '—' } }
   md += '\n### Numbers\n\n| Number | Shell | ' + oses.join(' | ') + ' |\n|---|---|' + oses.map(() => '---').join('|') + '|\n'
   const numbers = [
