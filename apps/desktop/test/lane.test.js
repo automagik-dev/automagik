@@ -8,6 +8,7 @@ import { test } from 'node:test'
 import { LANE_KEYS } from '../src/lane-keys.js'
 import { PUBLISHERS, beforeStart, confirm, laneMemory, laneUpdate, satisfies, stage, stagedOf, stagedVersion, trialFailed, verifyLane } from '../src/lane.js'
 import { updatePresentation } from '../src/frame.js'
+import { tarOf } from '../src/tar.js'
 
 const temp = (t) => { const dir = mkdtempSync(join(tmpdir(), 'lane-')); t.after(() => rmSync(dir, { recursive: true, force: true })); return dir }
 const automagik = PUBLISHERS.find(entry => entry.publisher === 'automagik')
@@ -94,7 +95,7 @@ function tarball(root, version) {
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: '@automagik/bots-dsh', version }))
   writeFileSync(join(dir, 'index.js'), `export const version = '${version}'\n`)
   const file = join(root, 'plugin.tgz')
-  execFileSync('tar', ['-czf', file, '-C', join(root, 'pack'), 'package'])
+  execFileSync(tarOf(), ['-czf', file, '-C', join(root, 'pack'), 'package'])
   return readFileSync(file)
 }
 
@@ -233,4 +234,12 @@ test('Automagik\'s lane updates only the plugins it names, never an add-on it do
   const carried = lane({ addons: [addon('dsh-oh-my-claude', '1.5.6-omni.8'), addon('@goodandready/dsh-subscriptions', '0.7.22-omni.1')] })
   const installed = { ...context.installed, 'dsh-oh-my-claude': '1.5.6-omni.7', '@goodandready/dsh-subscriptions': '0.7.21-omni.1' }
   assert.deepEqual(laneUpdate(carried, { ...context, installed })?.plugins.map(plugin => `${plugin.name}@${plugin.version}`), ['@automagik/bots-dsh@3.22.1'])
+})
+
+// A bare `tar` on Windows can be Git for Windows' GNU tar, which reads C:\... as a remote host.
+test('the lane unpacks with the system\'s own tar: System32 on Windows, /usr/bin on macOS', () => {
+  assert.equal(tarOf({ platform: 'win32', env: { SystemRoot: 'C:\\Windows' } }), 'C:\\Windows\\System32\\tar.exe')
+  assert.equal(tarOf({ platform: 'win32', env: {} }), 'C:\\Windows\\System32\\tar.exe')
+  assert.equal(tarOf({ platform: 'darwin', env: {} }), '/usr/bin/tar')
+  assert.equal(tarOf({ platform: 'linux', env: {} }), 'tar')
 })

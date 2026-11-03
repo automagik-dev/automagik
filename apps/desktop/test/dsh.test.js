@@ -108,7 +108,8 @@ test('a first copy cut short leaves no profile behind, and the next start copies
   mkdirSync(`${target}.installing`, { recursive: true })
   writeFileSync(join(`${target}.installing`, 'cordis.patch.yml'), '- id: se')
   // A copy that fails on the way (an unreadable file stands in for the quit) puts nothing in place.
-  if (process.getuid?.() !== 0) {
+  // Windows has no unreadable mode (chmod sets read-only there), nor does root.
+  if (process.platform !== 'win32' && process.getuid?.() !== 0) {
     chmodSync(join(source, 'node_modules', 'a', 'index.js'), 0o000)
     await assert.rejects(installProfile({ dshHome, source }))
     assert.equal(existsSync(target), false, 'no profile until the copy is whole')

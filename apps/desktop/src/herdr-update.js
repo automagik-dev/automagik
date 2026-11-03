@@ -10,6 +10,7 @@
 import { createHash } from 'node:crypto'
 import { createWriteStream, existsSync, mkdtempSync, realpathSync, renameSync, rmSync } from 'node:fs'
 import { posix, win32 } from 'node:path'
+import { tarOf } from './tar.js'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { findHerdr, raiseHerdr, run, supportedHost, waitOpen } from './herdr.js'
@@ -168,10 +169,6 @@ function realpathOr(file) {
   }
 }
 
-const tarOf = ({ platform, env }) => {
-  if (platform === 'win32') return win32.join(env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows', 'System32', 'tar.exe')
-  return platform === 'darwin' ? '/usr/bin/tar' : 'tar'
-}
 
 /**
  * macOS, as herdrdev's installer: a Developer ID bundle is only checked, never changed (macOS

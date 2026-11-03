@@ -8,6 +8,7 @@ import { test } from 'node:test'
 import { promisify } from 'node:util'
 import { APPLY_IDLE_MS, applyNow, applyStaged, appStopped, causeOf, changesOf, stillIdle, readAutoApply, settingsFileOf, writeAutoApply } from '../src/auto-apply.js'
 import { updatePresentation } from '../src/frame.js'
+import { tarOf } from '../src/tar.js'
 import { beforeStart, confirm, installedVersions, laneMemory, laneUpdate, PUBLISHERS, stage, stagedOf, trialFailed } from '../src/lane.js'
 
 const run = promisify(execFile)
@@ -98,7 +99,7 @@ async function staged(root, home, version, draws) {
   const dir = join(root, 'pack', version)
   writePlugin(join(dir, 'package'), version, draws)
   const file = join(root, `bots-${version}.tgz`)
-  execFileSync('tar', ['-czf', file, '-C', dir, 'package'])
+  execFileSync(tarOf(), ['-czf', file, '-C', dir, 'package'])
   const bytes = readFileSync(file)
   const plugin = { name: BOTS, version, url: `https://github.com/automagik-dev/automagik/releases/download/v${version}/automagik-bots-dsh-${version}.tgz`, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}` }
   await stage({ publisher: 'automagik', version, sequence: Number(version.replaceAll('.', '')), plugins: [plugin] }, { home, fetch: async () => new Response(bytes) })
