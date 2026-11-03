@@ -84,7 +84,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     return store.update(spec.adapter, spec.bin).then(
       // A connector that landed (or moved up) is announced, so the picker lists its model now.
       () => { if (store.binOf(spec.adapter, spec.bin)?.version !== before && agents.has(idOf(spec))) publish() },
-      error => warn(ctx, `${spec.adapter} not installed: ${error?.message ?? error}`),
+      error => { if (!disposed) warn(ctx, `${spec.adapter} not installed: ${error?.message ?? error}`) },
     )
   }
   const agentOf = (spec, cli, id = idOf(spec), node = nodeCommand()) => ({
@@ -227,10 +227,13 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   const daily = setInterval(() => { reconcile({ kick: false }); refresh() }, CHECK_EVERY_MS)
   first.unref?.()
   daily.unref?.()
-  ctx.on?.('dispose', () => {
+  // Cordis 4 has no 'dispose' event: an effect's cleanup is what runs when the plugin stops.
+  ctx.effect?.(() => () => {
     disposed = true
     clearTimeout(first)
     clearInterval(daily)
+    // A running adapter install would otherwise outlive DSH and keep writing into its home.
+    store.dispose?.()
     adapter.dispose()
   })
 }

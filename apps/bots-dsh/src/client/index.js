@@ -49,6 +49,7 @@ import { FOLDER_CSS } from './folder-menu.js'
 import { USAGE_CSS } from './usage-page.js'
 import { SCHEDULE_CSS } from './schedules.js'
 import { STORAGE, migrateStorage } from './storage.js'
+import { rememberOpen, takeReopen } from './reopen.js'
 import { noteLeft, setUnread, sharedMap, toggleReaction } from './shared-map.js'
 import { freePriority, groupsFor, readMode, surfaceGroups, writeMode } from './surface.js'
 import { addStrings, dateLocale, hostText, installLocale, language, t } from './i18n.js'
@@ -1167,6 +1168,26 @@ export function apply(ctx) {
     sync()
     return () => { offList(); offRoster() }
   }, 'ds-bot: agent surface')
+
+  // The chat on screen, kept for a restart of DSH alone (reopen.js): taken before it is noted
+  // again, opened once the team is known, and noted from then on.
+  ctx.effect(() => {
+    let reopening = takeReopen()
+    const note = () => { if (reopening === null) rememberOpen(mainView()) }
+    const reopen = () => {
+      const snapshot = roster.getSnapshot()
+      if (!snapshot.ready) return
+      const id = reopening
+      reopening = null
+      if (isAgentSessionId(id) || snapshot.byId?.[id] !== undefined || snapshot.roomsById?.[id] !== undefined) actions.openSession(id)
+      note()
+    }
+    const offList = ctx.sessions.list.subscribe(note)
+    const offRoster = reopening === null ? () => {} : roster.subscribe(() => { if (reopening !== null) reopen() })
+    if (reopening !== null) reopen()
+    note()
+    return () => { offList(); offRoster() }
+  }, 'ds-bot: keep the open chat across a DSH restart')
 
   ctx.effect(() => {
     const groups = surfaceGroups({ shell: installShell, conversation: installConversation }, {

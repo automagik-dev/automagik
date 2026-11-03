@@ -9,7 +9,8 @@ import { SPRING_POP } from './motion.js'
 import { BotMark } from './mark.js'
 import { MAIN_LOOK } from './characters.js'
 import { showsDshRow } from './dsh-offer.js'
-import { updatePill, useDesktopUpdate } from './desktop-update.js'
+import { appState, pluginName, splitsPlugins, updatePill, useDesktopUpdate } from './desktop-update.js'
+import { Switch } from './bot-settings.js'
 
 // The length of the mark's `done` hop (bt-done in styles.js).
 const CHEER_MS = 1800
@@ -18,7 +19,7 @@ const starCount = count => new Intl.NumberFormat(dateLocale(), { notation: 'comp
 
 function botHint(update, app) {
   // In the Automagik app, Omni updates with the app: its row follows the app's update.
-  if (update.source === 'app' && app.bridge) return updatePill(app.state)?.label ?? t('Updates come with the Automagik app.')
+  if (update.source === 'app' && app.bridge) return updatePill(appState(app.state))?.label ?? t('Updates come with the Automagik app.')
   if (update.phase === 'installing') return t('Updating Omni…')
   if (update.phase === 'installed') return t('Restart DSH to start using Omni {version}.', { version: update.installed ?? update.latest })
   if (update.phase === 'updated') return t('Omni {version} is installed.', { version: update.installed ?? update.latest })
@@ -39,6 +40,35 @@ function dshHint(dsh, shown) {
   if (dsh.available === false && dsh.blockedBy) return t('Update Omni {version} first.', { version: dsh.blockedBy })
   if (shown) return t('DSH {version} is available', { version: dsh.verified })
   return t('Version {version}', { version: dsh.current })
+}
+
+// One plugin the app's lane updates, as About → Updates lists it.
+function pluginHint(change, plugins) {
+  const versions = change.from ? `${change.from} → ${change.to}` : change.to
+  if (plugins.phase === 'downloading') return `${versions} · ${t('Downloading · {percent}%', { percent: plugins.percent ?? 0 })}`
+  if (plugins.phase === 'installing') return `${versions} · ${t('Updating…')}`
+  return `${versions} · ${plugins.auto === false ? t('Waits for a restart') : t('Updates when no agent is at work')}`
+}
+
+// The plugins the Automagik app updates by itself (its lane): a row for each one updating, and the
+// switch that lets them go in without a restart.
+function pluginRows({ app, Row }) {
+  const plugins = splitsPlugins(app.state) ? app.state.plugins : null
+  if (!plugins || !app.bridge) return []
+  const changes = Array.isArray(plugins.changes) ? plugins.changes : []
+  const auto = plugins.auto !== false
+  const rows = changes.map(change => h(Row, { key: `plugin:${change.name}`, label: pluginName(change.name), hint: pluginHint(change, plugins) },
+    plugins.phase === 'ready' && plugins.auto === false && app.bridge.applyPlugins
+      ? h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => { void app.bridge.applyPlugins().catch(() => {}) } }, t('Update now'))
+      : null))
+  if (typeof app.bridge.setAutoApply === 'function') {
+    rows.push(h(Row, {
+      key: 'plugins:auto',
+      label: t('Apply plugin updates automatically'),
+      hint: auto ? t('A plugin update goes in once no agent is at work: DSH restarts for a few seconds and the window stays.') : t('Plugin updates wait until you update them here or restart Automagik.'),
+    }, h(Switch, { on: auto, label: t('Apply plugin updates automatically'), onChange: on => { void app.bridge.setAutoApply(on).catch(() => {}) } })))
+  }
+  return rows
 }
 
 const linkProps = href => ({ className: 'bt-soft bt-soft-sm bt-about-link', href, target: '_blank', rel: 'noopener noreferrer' })
@@ -72,8 +102,8 @@ export function AboutPage({ useUpdate, actions, run, Section, Row }) {
   // Same rule as the sidebar card.
   const dshNew = showsDshRow(dsh, update.app)
   const dshShown = dshNew && dsh.available
-  const appPill = updatePill(app.state)
-  const appBusy = ['checking', 'downloading', 'installing'].includes(app.state?.phase)
+  const appPill = updatePill(appState(app.state))
+  const appBusy = ['checking', 'downloading', 'installing'].includes(appState(app.state)?.phase)
   const botControl = update.source === 'app'
     ? app.bridge
       // The app's own button: restart into a downloaded update, open its release, or check.
@@ -108,7 +138,8 @@ export function AboutPage({ useUpdate, actions, run, Section, Row }) {
     repo ? h('p', { key: 'ask', className: 'bt-about-ask' }, t('If Omni helps you, a star on GitHub helps more people find it.')) : null,
     h(Section, { key: 'updates', title: t('Updates') },
       h(Row, { label: 'Omni', hint: botHint(update, app) }, botControl, update.available && update.notesUrl ? h('a', linkProps(update.notesUrl), t("What's new")) : null),
-      dsh?.current ? h(Row, { label: 'DeepSeek Harness', hint: dshHint(dsh, dshShown) }, dshControl) : null),
+      dsh?.current ? h(Row, { label: 'DeepSeek Harness', hint: dshHint(dsh, dshShown) }, dshControl) : null,
+      ...pluginRows({ app, Row })),
     h(Section, { key: 'links', title: t('Links') },
       repo ? h(Row, { label: t('Source code'), hint: repo.replace(/^https:\/\//, '') }, h('a', linkProps(repo), h(GitHubMark), t('Open'))) : null,
       update.notesUrl ? h(Row, { label: t('Release notes') }, h('a', linkProps(update.notesUrl), t('Open'))) : null,

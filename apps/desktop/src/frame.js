@@ -56,8 +56,29 @@ export const WINDOW_ACTIONS = new Set(['minimize', 'maximize', 'close', 'menu'])
  * own desktop app does (its DesktopUpdateIndicator): `{ phase, version?, percent?, failure? }`,
  * phase one of idle, checking, available, downloading, installing, ready, error. `update` is
  * update.js's state; `checking` and `failed` (a check that failed) come from Check for Updates.
+ *
+ * Given `lane` ({ changes, auto, applying }: the staged plugins as auto-apply.js changesOf names
+ * them, the setting, and whether they are going in now), it also carries the app's update and
+ * the plugins' apart, for a Bot team that names each plugin: `app` ({ phase, version?, percent?,
+ * failure? }, the app alone) and `plugins` ({ phase, changes, auto, percent? }, phase one of
+ * idle, downloading, ready, installing). The fields above stay as they were, for a Bot team that
+ * reads only those.
  */
-export function updatePresentation(update, { checking = false, failed = false, plugins, fetching } = {}) {
+export function updatePresentation(update, { checking = false, failed = false, plugins, fetching, lane } = {}) {
+  const legacy = lane?.applying ? { phase: 'installing', version: plugins, kind: 'plugins' } : legacyPresentation(update, { checking, failed, plugins, fetching })
+  if (!lane) return legacy
+  return { ...legacy, app: legacyPresentation(update, { checking, failed }), plugins: pluginsPresentation({ lane, fetching }) }
+}
+
+function pluginsPresentation({ lane, fetching }) {
+  const auto = lane.auto !== false
+  if (lane.applying) return { phase: 'installing', changes: lane.changes ?? [], auto }
+  if ((lane.changes ?? []).length > 0) return { phase: 'ready', changes: lane.changes, auto }
+  if (fetching) return { phase: 'downloading', changes: fetching.changes ?? [], percent: Math.floor(fetching.percent ?? 0), auto }
+  return { phase: 'idle', changes: [], auto }
+}
+
+function legacyPresentation(update, { checking, failed, plugins, fetching }) {
   const version = update?.version ? { version: update.version } : {}
   if (update?.state === 'restarting') return { phase: 'installing', ...version }
   if (update?.state === 'ready') return { phase: 'ready', ...version }

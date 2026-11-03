@@ -44,10 +44,31 @@ test('follow-omni follows only an Omni release tested on the dsh the desktop run
   const text = readFileSync(new URL('../../../.github/workflows/follow-omni.yml', import.meta.url), 'utf8')
   assert.match(text, /apps\/omni-channels-dsh\/dev\/harness\/package\.json/)
   assert.match(text, /require\('\.\/apps\/desktop\/runtime\/package\.json'\)/)
-  assert.ok(text.indexOf('not following it until the Bot team moves') < text.indexOf('git commit -qam'), 'a mismatch stops before the commit')
+  assert.ok(text.indexOf('not following it until the Bot team moves') < text.indexOf('git commit -qa'), 'a mismatch stops before the commit')
   // The welcome installs the same Omni release in a plain DSH: both pins move in one commit.
-  assert.ok(text.indexOf('apps/welcome-dsh/package.json') < text.indexOf('git commit -qam'))
+  assert.ok(text.indexOf('apps/welcome-dsh/package.json') < text.indexOf('git commit -qa'))
   assert.match(text, /pkg\.automagik\.omni = \{ \.\.\.pkg\.automagik\.omni, version, commit \}/)
+})
+
+test('follow-omni carries an Omni only after it booted, on the dev commit that booted', () => {
+  const text = readFileSync(new URL('../../../.github/workflows/follow-omni.yml', import.meta.url), 'utf8')
+  const carry = text.slice(text.indexOf('\n  carry:\n'), text.indexOf('\n  release:\n'))
+  // The bump is pushed with GITHUB_TOKEN, so CI never boots it: the gate is here or nowhere.
+  assert.match(text, /\n {2}boot:\n[\s\S]*?uses: \.\/\.github\/workflows\/boot-check\.yml[\s\S]*?ref: \$\{\{ needs\.follow\.outputs\.dev \}\}/)
+  assert.match(carry, /needs: \[follow, boot\]/)
+  assert.match(carry, /ref: \$\{\{ needs\.follow\.outputs\.dev \}\}/)
+  // Only a fast-forward from the commit that booted: a dev that moved is refused, not overwritten.
+  assert.doesNotMatch(carry, /--force|\+HEAD/)
+  assert.match(carry, /dev moved from/)
+  assert.match(text, /\n {2}release:\n {4}name: Release\n {4}needs: carry\n/)
+})
+
+test('the boot gate boots the candidate exactly as carry writes it, both pins', () => {
+  const read = name => readFileSync(new URL(`../../../.github/workflows/${name}`, import.meta.url), 'utf8')
+  const bump = text => text.match(/\n {10}node -e '\n([\s\S]*?)\n {10}' "\$\{(?:OMNI_)?VERSION\}" "\$\{(?:OMNI_)?COMMIT\}"/)?.[1]
+  const carried = bump(read('follow-omni.yml'))
+  assert.ok(carried?.includes('apps/welcome-dsh/package.json'), 'carry moves the welcome too')
+  assert.equal(bump(read('boot-check.yml')), carried)
 })
 
 
