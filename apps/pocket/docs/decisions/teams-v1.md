@@ -4,6 +4,7 @@ type: decision
 status: Accepted
 created: 2026-11-03
 updated: 2026-11-03
+pr: "automagik-dev/automagik#242"
 tags: [decisions, teams, pets, room, bots]
 ---
 # Teams tab v1: home tab, Room cache, Genie bundled at build time
