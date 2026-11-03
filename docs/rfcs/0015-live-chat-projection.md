@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Draft (every question answered: see Decided and proposed) |
 | Milestone | not scheduled |
 | Lanes | herdr (3.N.P, Pocket Link included), plugin (3.N.P), pocket (3.N.P, [RFC 0011](0011-monorepo-parts-and-releases.md)) |
 | Created | 2026-11-03 |
@@ -66,7 +66,19 @@ text or sanitized markdown only; `transcript_path` is accepted only inside the a
 transcript folders, here and through `hc file read --on`; pasted text loses `ESC[200~`,
 `ESC[201~` and every other control sequence; the briefing hook passes the transcript path on.
 
-Everything in Design is this RFC's proposal. Open questions 1-4 wait for Felipe.
+Decided by Felipe on this RFC (2026-11-03, relayed by t2ws), each as recommended:
+
+- **Q1: where the module lives.** Source in `herdr/mods/pocket-link/chat/`, so a copied Pocket
+  Link carries what its bridge runs; a byte-equal copy in `apps/bots-dsh/src/host/live-chat/`,
+  checked by both gates; a change ships herdr first, then the plugin.
+- **Q2: Send now appends.** The held message is pasted after the terminal's half-typed draft and
+  both are sent as one message. The chat warns first ("Sends your half-typed terminal text with
+  it"); nothing is cleared or retyped.
+- **Q3: every Claude pane, on a yes.** Herdr offers once "Show every Claude pane as a chat"; on
+  yes the pack adds a label-only hook to the person's Claude user settings.
+- **Q4: no redaction in this RFC.** Rows are never stored on the phone or logged.
+
+Everything else in Design is this RFC's proposal. No question is open.
 
 ## Design
 
@@ -96,7 +108,7 @@ the bridge and in the DSH host. Its floor is the bridge's Node (`bridge/package.
   (`scripts/entries.mjs --check`).
 - **The Automagik window's copy:** `apps/bots-dsh/src/host/live-chat/`, byte-equal, checked by
   both gates (the pattern 0014 Q15 set for `registry.js`). A change ships herdr first, then the
-  plugin. Open question 1.
+  plugin (decided, Q1).
 
 ### What we take from Orca (D31)
 
@@ -156,7 +168,8 @@ resolved (`realpath`) before the check, so a symlink out of the folder is refuse
 on another machine the path is made home-relative, must have no `..` or empty segment, and is
 read as that relative path with `hc file read --on <machine>`, which starts relative paths at
 that machine's home. `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and omp's XDG folder are not followed in
-this RFC; such a pane is screen only. A refused path is logged once, by its folder, never its contents.
+this RFC; such a pane is screen only. A refused path is logged once, by its folder, never its
+contents.
 
 ### Tailing
 
@@ -231,7 +244,9 @@ anything on its own (0014 Threat model).
   1. **Draft check** (Q19). The screen's input row is read. If it holds text the person typed in
      the terminal, the message is **held**: the chat shows it with "The terminal has a half-typed
      message" and **Send now**. A held message goes by itself once the input row is empty. The
-     draft is never cleared, unlike Orca. What Send now does to the draft is open question 2.
+     draft is never cleared, unlike Orca. **Send now** (decided, Q2) pastes the message after the
+     draft and sends both as one message; the chat warns first ("Sends your half-typed terminal
+     text with it"). Nothing is cleared or retyped.
   2. **Send.** `terminal.send`: herdr-core pastes the text, waits until nobody has typed for about
      3 s (keys pressed meanwhile are held, then delivered), and presses Enter. Where an agent
      needs Orca's framing instead (a bracketed paste for multi-line text, Enter as its own write
@@ -297,8 +312,8 @@ Two gaps today: plain `hc run … claude` panes have no `agent.session` label, a
 sets it runs only on the computer with the pack's hooks.
 
 - **This computer, unlabeled.** Discovery (step 4 above). When discovery cannot decide, the chat
-  is screen only. Open question 3 proposes closing the gap with a small hook for every Claude
-  pane.
+  is screen only, until the person says yes to the label-only hook for every Claude pane
+  (decided, Q3; delivery 6).
 - **Linked machines, until #206 installs the pack there.** A pane with both labels (set by
   something else, such as a Bot started from here) is tailed through `hc file read --on`. A pane
   without them is screen only: discovery needs a folder listing, and `file.read` cannot list,
@@ -356,8 +371,8 @@ Orca's own list of gaps (research note, "Parity gaps") and our answer:
   files, tool output). It is shown as text or sanitized markdown, with no HTML and no remote load
   by itself, so a page the agent read cannot run in, or call home from, either window.
 - **Secrets in transcripts.** Tool output can hold tokens and keys. The phone keeps rows in
-  memory only, never on disk; the bridge and the DSH host never log row text. Redaction is open
-  question 4.
+  memory only, never on disk; the bridge and the DSH host never log row text. No redaction in
+  this RFC (decided, Q4): the rows are text a paired phone can already read from the terminal.
 - **Undo.** Remove the phone in Pocket Link (its sessions end within 2 s), turn the bridge off,
   or revert the deliveries; nothing is stored that needs cleaning.
 
@@ -384,8 +399,8 @@ Orca's own list of gaps (research note, "Parity gaps") and our answer:
    One PR with 0014's delivery 8, or before it. *Check:* the herdr gate; after one prompt in a
    new bot pane, `hc get` shows both labels; a pane that had `agent.session` before the update
    gets `agent.transcript` at its next prompt, with no second ledger row for the same session; a
-   hook input naming a path outside the folders sets no `agent.transcript`. *Rollback:* a reverting pack (the pointer never
-   downgrades); labels already set stay and are harmless.
+   hook input naming a path outside the folders sets no `agent.transcript`. *Rollback:* a
+   reverting pack (the pointer never downgrades); labels already set stay and are harmless.
 3. **The engine** (herdr). Transcript finding, tailing (here and `--on`), status, screen reading,
    ranking, the row model, input with the draft hold, approvals, pickers, interrupt, all behind
    one API both clients call. *Check:* tests against a fake `hc` and temp homes (never a live
@@ -400,13 +415,17 @@ Orca's own list of gaps (research note, "Parity gaps") and our answer:
 5. **The phone's chat view** (pocket, after 4). A Chat tab on an agent terminal: rows, approvals,
    held messages with Send now, interrupt, Show terminal; `docs/privacy.md` says transcripts now
    reach the phone and stay in memory, and Pocket's RFC index (`apps/pocket/docs/rfcs/README.md`)
-   links this RFC, as Pocket's AGENTS.md asks for a contract change. *Check:* the Gradle gate; unit tests render `<img
-   src=…>` and `<script>` as text and load nothing; on a paired phone, a Claude pane's turn shows
-   as chat and an approval answered there lands in the terminal. *Rollback:* a later release
-   hides the tab (never a lower versionCode); the terminal view is unchanged.
-6. **Every Claude pane on this computer** (herdr, t22n, if open question 3 says yes). *Check:* a
-   plain `hc run … claude` pane gets both labels after its first prompt; saying no installs
-   nothing. *Rollback:* a reverting pack removes the hook it added and nothing else.
+   links this RFC, as Pocket's AGENTS.md asks for a contract change. *Check:* the Gradle gate; unit
+   tests render `<img src=…>` and `<script>` as text and load nothing; on a paired phone, a
+   Claude pane's turn shows as chat and an approval answered there lands in the terminal.
+   *Rollback:* a later release hides the tab (never a lower versionCode); the terminal view is
+   unchanged.
+6. **Every Claude pane on this computer** (herdr, t22n; decided, Q3). Herdr offers once "Show
+   every Claude pane as a chat"; on yes the pack adds a hook to the person's Claude user settings
+   that only sets `agent.session` and `agent.transcript` (no briefing, no output, fail-open).
+   *Check:* the herdr gate; after a yes, a plain `hc run … claude` pane gets both labels after
+   its first prompt; saying no installs nothing, and the offer does not come back. *Rollback:* a
+   reverting pack removes the hook it added and nothing else.
 7. **Linked machines** (herdr, after #206). Where the pack's hooks run on a linked machine, its
    panes get both labels and are tailed through `hc file read --on`. *Check:* a labelled remote
    pane's chat shows transcript rows; a remote path outside the folders is refused. *Rollback:* a
@@ -419,23 +438,27 @@ delivery 7 does.
 
 ## Open questions
 
-1. **Where the module sits, and how the Automagik window gets it.** *Recommended:* source in
-   `herdr/mods/pocket-link/chat/` (it ships with a copied Pocket Link, which the bridge needs),
-   a byte-equal copy in `apps/bots-dsh/src/host/live-chat/` checked by both gates, herdr first.
-   The other way, a folder of its own such as `herdr/live-chat/`, needs a second copy inside
-   Pocket Link for the bridge to run it.
+No open questions. Felipe answered all four on 2026-11-03, each as recommended (see Decided);
+they stay below as the record.
+
+1. **Where the module sits, and how the Automagik window gets it.** *Decided, as recommended:*
+   source in `herdr/mods/pocket-link/chat/` (it ships with a copied Pocket Link, which the bridge
+   needs), a byte-equal copy in `apps/bots-dsh/src/host/live-chat/` checked by both gates, herdr
+   first. The other way, a folder of its own such as `herdr/live-chat/`, would need a second copy
+   inside Pocket Link for the bridge to run it.
 2. **What Send now does with the terminal's draft** (Q19 says held and never wiped).
-   *Recommended:* the message is pasted after the draft and both are sent as one message; the
-   chat says so before the tap ("Sends your half-typed terminal text with it"). Nothing is
-   cleared or retyped. Without a tap, the held message goes once the input row is empty.
-3. **Plain Claude panes.** *Recommended:* the pack offers once, in Herdr, "Show every Claude
-   pane as a chat", and on yes adds a small hook to the person's Claude user settings that only
-   sets `agent.session` and `agent.transcript` (no briefing, no output, fail-open). Until then,
-   such panes use discovery or the screen.
-4. **Secrets in transcripts.** *Recommended:* no redaction in this RFC. The rows are the same
-   text a paired phone can already read from the terminal; they are never written to disk on the
-   phone or logged by the bridge or the host. Revisit if chat rows are ever stored or sent
-   anywhere new.
+   *Decided, as recommended:* the message is pasted after the draft and both are sent as one
+   message; the chat says so before the tap ("Sends your half-typed terminal text with it").
+   Nothing is cleared or retyped. Without a tap, the held message goes once the input row is
+   empty.
+3. **Plain Claude panes.** *Decided, as recommended:* the pack offers once, in Herdr, "Show every
+   Claude pane as a chat", and on yes adds a small hook to the person's Claude user settings that
+   only sets `agent.session` and `agent.transcript` (no briefing, no output, fail-open). Until
+   then, such panes use discovery or the screen.
+4. **Secrets in transcripts.** *Decided, as recommended:* no redaction in this RFC. The rows are
+   the same text a paired phone can already read from the terminal; they are never written to
+   disk on the phone or logged by the bridge or the host. Revisit if chat rows are ever stored or
+   sent anywhere new.
 
 ## Links
 
