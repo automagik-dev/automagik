@@ -114,6 +114,10 @@ jobs:
       - name: No layouts/ in a herdr-mod entry folder
         run: node scripts/entries.mjs --check
 
+      # Every part.json under herdr/ and herdr-layout/ (RFC 0012): its fields, and what it names exists.
+      - name: Parts (part.json)
+        run: node scripts/parts.mjs --check
+
       - name: One version (the root's)
         if: steps.changed.outputs.herdr == 'true'
         run: node scripts/version.mjs check
@@ -131,6 +135,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # Also Genie's art and the pet poses, which the APK bundles and its tests check (apps/pocket/docs/decisions/teams-v1.md).
       - name: Whether apps/pocket/ changed
         id: changed
         env:
@@ -140,7 +145,7 @@ jobs:
           # A push that opens a branch, or a base this checkout lacks, builds the app anyway.
           if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
             echo "pocket=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(apps/pocket/|package\.json$|\.github/workflows/(ci|release)\.yml$|scripts/(lane|version)\.ts$)'; then
+          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(apps/pocket/|apps/bots-dsh/src/host/pets/genie-clay/|apps/bots-dsh/src/client/pet(-poses)?\.js$|package\.json$|\.github/workflows/(ci|release)\.yml$|scripts/(lane|version)\.ts$)'; then
             echo "pocket=true" >> "$GITHUB_OUTPUT"
           else
             echo "apps/pocket/ did not change: nothing to build"

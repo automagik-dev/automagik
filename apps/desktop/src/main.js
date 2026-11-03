@@ -24,7 +24,8 @@ import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, dshRun, forge
 import { BotCursor } from './bot-cursor.js'
 import { BotRelay } from './bot-relay.js'
 import { BotViews, isBotId, isTabId } from './bot-views.js'
-import { herdrStatus } from './herdr.js'
+import { findHerdr, herdrStatus } from './herdr.js'
+import { openRequest, pickSpace } from './herdr-space.js'
 import { openLatest } from './herdr-update.js'
 import { pageLayout, tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
@@ -637,9 +638,11 @@ ipcMain.handle('automagik-updates-auto-apply', (event, on) => {
   return saved
 })
 
-// Code mode (RFC 0013, deliveries 1 and 2): Herdr's state, and its window brought forward on a
-// click in the page (preload.cjs `omniDesktop.herdr`). The page sends a Bot id and, to an offer
-// of a newer Herdr, the person's yes or no; nothing else. It picks no space yet. One open at a
+// Code mode (RFC 0013, deliveries 1, 2 and 4): Herdr's state, and its window brought forward on
+// a click in the page (preload.cjs `omniDesktop.herdr`). The page sends a Bot id and, to an
+// offer of a newer Herdr, the person's yes or no; nothing else (openRequest drops the rest).
+// Once the window is open, main looks up the Bot's folder itself and shows its space
+// (herdr-space.js); an unknown Bot, or one with no folder, gets no space picked. One open at a
 // time. herdrdev's feed is read on an open only, never here at boot. A yes is honoured only for
 // a pending offer. A version declined is not offered again until the app restarts (kept in
 // memory only). logs/switch.log has the steps.
@@ -651,8 +654,7 @@ let herdrDeclined = null
 ipcMain.handle('automagik-herdr-status', event => (fromPage(event) ? herdrStatus(herdrHost()) : null))
 ipcMain.handle('automagik-herdr-open', (event, request) => {
   if (!fromPage(event)) return null
-  const botId = isBotId(request?.botId) ? request.botId : null
-  const update = typeof request?.update === 'boolean' ? request.update : undefined
+  const { botId, update } = openRequest(request)
   herdrOpening ??= (async () => {
     const timed = steps(`switch${botId ? ` ${botId}` : ''}`, { write: switchLog, since: Date.now() })
     const log = what => switchLog(`${new Date().toISOString()} switch: ${what}\n`)
@@ -662,8 +664,11 @@ ipcMain.handle('automagik-herdr-open', (event, request) => {
       // still names it); any other open clears the offer.
       const result = await openLatest({ ...herdrHost(), update, offered: herdrOffered, skip: herdrDeclined, mark: timed.mark, log })
       herdrOffered = result.reason === 'update' ? result.latest : null
-      if (result.ok) log(`opened${result.raised === true ? '' : ' (no focus)'}`)
-      return result
+      if (!result.ok) return result
+      log(`opened${result.raised === true ? '' : ' (no focus)'}`)
+      const found = findHerdr(herdrHost())
+      const space = found ? await pickSpace({ ...herdrHost(), botId, found, appHome: home, mark: timed.mark, log }) : { action: 'none' }
+      return { ...result, space }
     } catch (error) {
       log(`failed ${error?.message ?? error}`)
       return { ok: false, reason: 'error', message: "Herdr didn't open" }

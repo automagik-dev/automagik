@@ -32,6 +32,7 @@ before 2026-11, [automagik-dev/automagik-pocket](https://github.com/automagik-de
 | Folder git status, origin remote URL and Herdr desktop program icons | Read from your machine; the git answers stay in memory, icons cached on the phone | To draw the spaces tree like the desktop, and to group spaces into projects and branches into tasks |
 | Usage meter summary: token counts and estimated $ per repository, branch, model and hour (the `herdr-meter` document, if you run the meter) | Read from your own machines and kept in memory; never written, never sent anywhere else | To show spend on Today, Projects and Tasks |
 | Space Row stats in that document (merges with their PR/MR links, time to merge, first pass, $ and tokens per model, per bot) and bot and category names from each project's `.herdr/bots.json` | Read from your own machines and kept in memory; never written, never sent anywhere else | To show each space's stats line and its bots' cards, as the desktop sidebar does |
+| Teams: each project's bots from its `.herdr/bots.json` (id, name, main or member, look), their live state, Herdr's space icons and colours (`shared.json` and its `space-icons/` images) and the bots' pets (`~/.automagik/bots/pets`) | Read from your own machines, never written there. A copy of the projects, bots and their last known state, the space images and the pets stays on the phone | So Teams opens at once, and offline, as you last saw it |
 | Update check (app version in the request) | GitHub | To offer a newer release |
 
 Nothing else is collected. We, the developers, receive none of this data.
@@ -57,6 +58,9 @@ Nothing else is collected. We, the developers, receive none of this data.
 - Only if you used SSH in an older version: that version's SSH key, in the same storage. The app
   deletes it once no machine saved over SSH is left.
 - Cached program icons, and a downloaded update until it installs.
+- The Teams tab's copy, in an SQLite database: projects, bots and their last known state, and today's
+  most agents working at once, which the phone counts itself; plus the space images and pets copied
+  from your machines. Each reading of a machine replaces that machine's part.
 - The last crash report, if the app crashed (below).
 
 App backup and device-to-device transfer are turned off for all of it. Uninstalling the app deletes

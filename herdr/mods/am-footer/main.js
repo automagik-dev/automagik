@@ -72,7 +72,8 @@ export const BOT_FORMS = {
   pick: { mod: "am-sidebar", kind: "dialog", modal: true, width: 560, height: 0.85, props: { form: "pick" } },
 };
 
-// The popup's lines. The sidebar publishes `bots.defined` (false: no bot on this computer);
+// The popup's lines. The sidebar publishes `bots.defined` (false: no bot on this computer or an
+// answering linked machine);
 // then only New bot is offered. Unknown (the sidebar never ran) offers both.
 export function botsMenuItems(defined = shared("bots.defined")) {
   const items = [{ id: "bots-new", label: "New bot", form: "create" }];

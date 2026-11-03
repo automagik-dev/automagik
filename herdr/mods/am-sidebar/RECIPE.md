@@ -94,7 +94,8 @@ One scrolling column, `chrome` background, 13 px text.
 
 `main.js` (the column and its presses), `rows.js`, `characters.js` (21 Automagik characters, inks
 and poses as SVG text), `model.js`, `models.js` (agents, their models and the flags that pin one),
-`bots.js` (reading, writing and watching definitions, relabelling after an edit), `create.js` +
+`bots.js` (reading, writing and watching definitions, relabelling after an edit), `remoteFile.js`
+(a linked machine's bots.json read and written through herdr-core, compare-and-swap), `create.js` +
 `formModel.js` (the form and its rules), `launch.js` + `launchArgs.js` (Start, Attach, pane
 labels), `briefing.mjs` + `briefingText.mjs`, `updateCheck.js` + `update.mjs` + `release.js`
 (updates; `VERSION` is the installed version), `theme.js` + `themes/automagik-light.json` and
@@ -126,7 +127,7 @@ Herdr API: `spaces`, `machines`, `panes`, `agents`, `terminals`, `focused`, `run
 - **State**: shared `am.sidebar.icons` (space id → `{kind: "emoji", char}` or
   `{kind: "image", file}`; an older bare path reads as an image), `am.sidebar.projects`, `am.sidebar.update-shown`,
   `am.sidebar.theme-selected`, `am.space.colors` (space id → palette name, hex or `transparent`), `am.sidebar.collapsed`, `bots.defined` (whether this
-  computer has a bot, for the footer's Bots popup); before the rename they had their old names
+  computer or an answering linked machine has a bot, for the footer's Bots popup); before the rename they had their old names
   (`migrate.js` SHARED_RENAMES lists each), copied to `am.*` once on load and left in place for one
   release (`migrate.js` SHARED_RENAMES). Outside the mod folder,
   so replacing it loses nothing: the rename map (`${appHome()}/sidebar-agents.json`), the CLI's

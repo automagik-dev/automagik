@@ -35,8 +35,9 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
 import { carriedLabels, continueRefusal, ledgerSession, planText as restartText, restartPlan, restartRefusal, sessionOf } from "../restart.js";
 import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, readMarker, relinkCli, rollback as rollbackPack, writeMarker } from "../update.mjs";
 import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER } from "../release.js";
-import { OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
+import { MACHINE_NAME, OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
+import { RemoteFileError, StaleSnapshot, readRemoteText, removeRemoteText, writeRemoteText } from "../remoteFile.js";
 import { botHistory, historyLines } from "../inspect.js";
 import { hooksNotice } from "../migrateHooks.mjs";
 import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
@@ -153,13 +154,103 @@ const onPath = (program) => programPath(program) !== null;
 
 const EMPTY = () => ({ version: 1, categories: [], bots: [] });
 
-/** A project's definitions: { key, text (null: no file), raw, file, warnings }. */
+/** A project's definitions: { key, machine: null, text (null: no file), raw, file, warnings }. */
 export function loadProject(key) {
-  const text = readText(under(key, BOTS_PATH));
-  if (text === null) return { key, text, raw: EMPTY(), file: EMPTY(), warnings: [] };
+  return projectFrom(key, null, readText(under(key, BOTS_PATH)));
+}
+
+function projectFrom(key, machine, text) {
+  if (text === null) return { key, machine, text, raw: EMPTY(), file: EMPTY(), warnings: [] };
   let parsedFile;
-  try { parsedFile = parseBots(text); } catch (e) { throw new CliError(`${under(key, BOTS_PATH)}: ${e?.message ?? e}`); }
-  return { key, text, raw: parsedFile.raw, file: parsedFile.file, warnings: parsedFile.warnings };
+  try { parsedFile = parseBots(text); } catch (e) { throw new CliError(`${fileName({ key, machine })}: ${e?.message ?? e}`); }
+  return { key, machine, text, raw: parsedFile.raw, file: parsedFile.file, warnings: parsedFile.warnings };
+}
+/** A project's file, named for people: `<key>/.herdr/bots.json`, `… on <machine>` for a linked one's. */
+const fileName = ({ key, machine }) => `${under(key, BOTS_PATH)}${machine ? ` on ${machine}` : ""}`;
+
+// ---- a project on a linked machine (--machine M --project DIR; automagik#206) ----
+
+// herdr-core there: its file ops (remoteFile.js) and one program, as `hc exec --on` runs it.
+const remoteIo = {
+  hc,
+  exec: async (command, args, machine, { cwd } = {}) =>
+    decodeExec(await hc(["exec", "--json", "--on", machine, ...(cwd ? ["--cwd", cwd] : []), "--", command, ...args]), 60),
+};
+
+// What hc said: its error's message when it printed one as JSON.
+const hcSaid = (text) => { try { return JSON.parse(text)?.error?.message ?? text; } catch { return text; } };
+
+/**
+ * The project `--project <dir>` names on `--machine`, by namedKeyOf's rule there (its git
+ * main checkout in git, else the folder itself). The folder is an absolute path on that
+ * machine and must be there; a machine that can't be reached is refused, never guessed.
+ */
+export async function remoteKeyOf(opts) {
+  const machine = opts.machine;
+  if (!MACHINE_NAME.test(machine)) throw new CliError(`--machine: "${machine}" isn't a machine name (hc machine ls).`, 2);
+  if (opts.project === undefined) throw new CliError(`--machine needs --project: the project's folder on ${machine}, as an absolute path.`, 2);
+  if (!opts.project.startsWith("/")) throw new CliError(`--project: ${opts.project} is a folder on ${machine}, so give it as an absolute path.`, 2);
+  const dir = opts.project.replace(/\/+$/, "") || "/";
+  const there = await remoteIo.exec("test", ["-d", dir], machine);
+  if (there.code === -1) throw new CliError(`${machine} can't be reached: ${hcSaid(there.stderr)}`);
+  if (there.code !== 0) throw new CliError(`--project: ${dir} is not a folder on ${machine}.`, 2);
+  // A call that got no answer (code -1: hc failed, a timeout) means the machine is away, never
+  // "not in git" or "not there".
+  const ask = async (command, args, cwd) => {
+    const r = await remoteIo.exec(command, args, machine, { cwd });
+    if (r.code === -1) throw new CliError(`${machine} can't be reached: ${hcSaid(r.stderr)}`);
+    return r;
+  };
+  const gitThere = async (args, cwd) => { const r = await ask("git", args, cwd); return r.code === 0 ? r.stdout : null; };
+  const existsThere = async (path) => (await ask("test", ["-e", path])).code === 0;
+  return (await projectOf(dir, gitThere, existsThere)).own;
+}
+
+/** loadProject for a project on a linked machine, read there through herdr-core. */
+export async function loadRemoteProject(key, machine) {
+  let text;
+  try { text = await readRemoteText(remoteIo, machine, under(key, BOTS_PATH)); } catch (e) {
+    if (e instanceof RemoteFileError) throw new CliError(e.message);
+    throw e;
+  }
+  return projectFrom(key, machine, text);
+}
+
+/**
+ * writeBotsFile's rule on a linked machine: the whole raw file must pass checkBots, and the
+ * file there must still hold the text read (null: none), else nothing is written
+ * (remoteFile.js: hc file edit for an edit, an exclusive create for a new file, a checked
+ * remove for `raw === null`).
+ */
+async function writeRemoteBots(project, raw) {
+  const { key, machine, text: expected } = project;
+  const path = under(key, BOTS_PATH);
+  if (raw !== null) {
+    const errors = checkBots(raw, expected);
+    if (errors.length) throw new CliError(`Not saved: ${errors.join("; ")}`);
+  }
+  try {
+    if (raw === null) await removeRemoteText(remoteIo, machine, path, expected);
+    else await writeRemoteText(remoteIo, machine, path, `${JSON.stringify(raw, null, 2)}\n`, expected);
+  } catch (e) {
+    if (e instanceof StaleSnapshot) throw new CliError(`Not saved: ${fileName(project)} changed since it was read (another edit landed first). Run the command again.`);
+    // A write whose answer was lost and that the file doesn't show: said as it is.
+    if (e instanceof RemoteFileError && e.kind === "unknown_state") throw new CliError(e.message);
+    if (e instanceof RemoteFileError) throw new CliError(`Not saved: ${e.message}`);
+    throw e;
+  }
+}
+
+/**
+ * Saves a project's raw file where it is (raw null: deletes it) and, on this computer, lists
+ * the project for the sidebar (`list`). The CLI's project list holds this computer's projects
+ * only: a linked machine's shows in the sidebar from its open space, or once the sidebar
+ * itself has written it.
+ */
+async function saveProject(project, raw, { list = true } = {}) {
+  if (project.machine) return writeRemoteBots(project, raw);
+  writeBotsFile(project.key, raw, project.text);
+  if (list) listProject(project.key);
 }
 
 const fsIo = {
@@ -495,10 +586,11 @@ function describe(project, bot, view, hcError) {
   const shown = shownModel({ argv: live?.foreground?.argv, agentKey: bot.agent, pinned: bot.model, fallback });
   let status = "not running";
   if (bot.planned) status = "planned";
+  else if (project.machine) status = "unknown"; // another machine's panes: not tracked here yet
   else if (hcError) status = "hc unavailable";
   else if (held) status = agentInForeground(live) ? live.status?.state ?? "running" : "no agent in front";
   const out = {
-    id: bot.id, name: bot.name, kind: bot.kind, project: project.key,
+    id: bot.id, name: bot.name, kind: bot.kind, ...placeOf(project),
     lead: lead.lead || null, leadName: file.bots.find((b) => b.id === lead.lead)?.name ?? null,
     category: bot.kind === "member" && lead.lead === mainBotOf(file)?.id ? (bot.category ?? null) : null,
     planned: bot.planned ?? null, agent: bot.agent ?? null,
@@ -561,6 +653,9 @@ const OPTIONS = {
 export const USAGE = `automagik-herdr: Automagik Herdr's bots and updates from the command line
 
 Usage: automagik-herdr <command> [options]      (every command takes --json and --project <folder>)
+       automagik-herdr <command> --machine M --project <folder there> ...
+                                                 ls, show, create, edit, rm and category on a
+                                                 linked machine (hc machine ls), through hc
        automagik-herdr --version                 the installed pack's version
 
   ls [--all]                    bots with kind, lead, category, rank, planned, agent, model, pane, status
@@ -635,7 +730,9 @@ written by start, attach and detach only); the bot label is a display hint, and 
 pane with hc label changes nothing.
 
 A bot is its id or its name in the project. The project is the one the current folder
-keys to (its git main checkout), or --project's.`;
+keys to (its git main checkout), or --project's. With --machine, --project is an absolute
+folder on that machine and the file is read and written there by the same rule (a file
+changed since it was read is never overwritten); its panes aren't tracked from here yet.`;
 
 function readInstructions(opts) {
   if (opts.instructions !== undefined && opts["instructions-file"] !== undefined) throw new CliError("Give --instructions or --instructions-file, not both.", 2);
@@ -792,7 +889,14 @@ function workerDefaults(opts, entry) {
 
 // ---- commands ----
 
-async function projectFor(opts) { return loadProject(await commandKeyOf(opts)); }
+async function projectFor(opts) {
+  if (opts.machine !== undefined) return loadRemoteProject(await remoteKeyOf(opts), opts.machine);
+  return loadProject(await commandKeyOf(opts));
+}
+// The commands that take --machine: the definitions ones (and meter's own --machine).
+const ON_MACHINE = new Set(["ls", "show", "create", "edit", "rm", "category", "meter"]);
+// A project's place in --json answers: `machine` only for a linked machine's.
+const placeOf = (project) => ({ project: project.key, ...(project.machine ? { machine: project.machine } : {}) });
 
 // The projects the sidebar shows with no space open: its remembered list, then this CLI's.
 function rememberedKeys() {
@@ -809,6 +913,13 @@ function rememberedKeys() {
 }
 
 async function cmdLs(opts) {
+  if (opts.machine !== undefined) {
+    if (opts.all) throw new CliError("ls --all lists this computer's projects; give --machine without --all.", 2);
+    const project = await projectFor(opts);
+    const bots = project.file.bots.map((b) => describe(project, b, null, null));
+    const one = { ...placeOf(project), categories: project.file.categories, warnings: project.warnings, bots };
+    return opts.json ? { projects: [one] } : lsLines([one]);
+  }
   const keys = [await commandKeyOf(opts)];
   if (opts.all) for (const k of rememberedKeys()) if (!keys.includes(k)) keys.push(k);
   const projects = [];
@@ -821,9 +932,13 @@ async function cmdLs(opts) {
     projects.push({ project: key, categories: project.file.categories, warnings: project.warnings, bots });
   }
   if (opts.json) return { projects };
+  return lsLines(projects);
+}
+
+function lsLines(projects) {
   const lines = [];
   for (const p of projects) {
-    lines.push(`${p.project}${p.error ? `  (${p.error})` : ""}`);
+    lines.push(`${p.project}${p.machine ? ` on ${p.machine}` : ""}${p.error ? `  (${p.error})` : ""}`);
     if (!p.bots.length && !p.error) lines.push("  no bots");
     for (const b of p.bots) {
       const where = b.kind === "main" ? "main" : `→ ${b.leadName ?? "?"}${b.category ? ` [${b.category}]` : ""}`;
@@ -834,6 +949,7 @@ async function cmdLs(opts) {
     for (const w of p.warnings ?? []) lines.push(`  ! ${w}`);
     const hcError = p.bots.find((b) => b.hcError)?.hcError;
     if (hcError) lines.push(`  ! panes unknown: ${hcError}`);
+    if (p.machine) lines.push(`  (panes on ${p.machine} aren't tracked from this computer yet)`);
   }
   return lines.join("\n");
 }
@@ -845,11 +961,11 @@ const workerText = (w) => (w ? ["template", "agent", "model", "effort"].filter((
 async function cmdShow(opts, [ref]) {
   const project = await projectFor(opts);
   const bot = findBot(project.file, ref);
-  const { view, hcError } = await viewOrError();
+  const { view, hcError } = project.machine ? { view: null, hcError: null } : await viewOrError();
   const info = { ...describe(project, bot, view, hcError), instructions: bot.instructions };
   if (opts.json) return info;
   return [
-    `${info.name} (${info.id})`, `  project      ${info.project}`, `  kind         ${info.kind}`,
+    `${info.name} (${info.id})`, `  project      ${info.project}${info.machine ? ` on ${info.machine}` : ""}`, `  kind         ${info.kind}`,
     ...(info.lead ? [`  lead         ${info.leadName} (${info.lead})`] : []),
     ...(info.category ? [`  category     ${info.category}`] : []),
     ...(info.planned ? [`  planned      wave ${info.planned.wave}${info.planned.note ? ` · ${info.planned.note}` : ""}`] : []),
@@ -893,10 +1009,10 @@ async function cmdCreate(opts) {
   const id = newBotId();
   const entry = entryFrom(opts, { id, kind: mainBotOf(project.file) ? "member" : "main" }, project, { creating: true });
   const raw = applyBotEdit(project.raw, entry);
-  writeBotsFile(project.key, raw, project.text);
-  listProject(project.key);
-  const relabelled = await relabelAfter(project.file, raw); // a lead that becomes a captain
-  return opts.json ? { id, project: project.key, bot: entry, relabelled } : id;
+  await saveProject(project, raw);
+  // A lead that becomes a captain; another machine's panes are left as they are.
+  const relabelled = project.machine ? [] : await relabelAfter(project.file, raw);
+  return opts.json ? { id, ...placeOf(project), bot: entry, relabelled } : id;
 }
 
 async function cmdEdit(opts, [ref]) {
@@ -905,10 +1021,9 @@ async function cmdEdit(opts, [ref]) {
   const stored = project.raw.bots.find((b) => b?.id === bot.id);
   const entry = entryFrom(opts, stored, project, { creating: false });
   const raw = applyBotEdit(project.raw, entry);
-  writeBotsFile(project.key, raw, project.text);
-  listProject(project.key);
-  const relabelled = await relabelAfter(project.file, raw);
-  return opts.json ? { id: bot.id, project: project.key, bot: entry, relabelled } : `${entry.name} (${bot.id}) saved.`;
+  await saveProject(project, raw);
+  const relabelled = project.machine ? [] : await relabelAfter(project.file, raw);
+  return opts.json ? { id: bot.id, ...placeOf(project), bot: entry, relabelled } : `${entry.name} (${bot.id}) saved.`;
 }
 
 async function cmdRm(opts, [ref]) {
@@ -918,7 +1033,7 @@ async function cmdRm(opts, [ref]) {
   // Its pane by the ledger, read before the write (the import, on a first run, needs the bot
   // still defined). hc missing or failing only drops the note.
   let holders = [];
-  if (!bot.planned) {
+  if (!bot.planned && !project.machine) {
     try { const held = (await attachView()).live.get(bot.id); holders = held ? [held.binding.terminal] : []; } catch (e) {
       if (e instanceof LedgerRefusal) throw e;
       holders = [];
@@ -937,23 +1052,22 @@ async function cmdRm(opts, [ref]) {
   // Only an empty list deletes the file; anything else must pass checkBots (a file left
   // with members and no main bot is refused, never deleted).
   const last = raw.bots.length === 0;
-  writeBotsFile(project.key, last ? null : raw, project.text);
-  if (!last) await relabelAfter(file, raw); // its lead may stop being a captain
+  await saveProject(project, last ? null : raw, { list: false });
+  if (!last && !project.machine) await relabelAfter(file, raw); // its lead may stop being a captain
   const notes = [];
-  if (last) notes.push(`${bot.name} was the project's last bot: ${under(project.key, BOTS_PATH)} was deleted.`);
+  if (last) notes.push(`${bot.name} was the project's last bot: ${fileName(project)} was deleted.`);
   if (holders.length) notes.push(`${holders.join(", ")} is still attached to it; detach it with: automagik-herdr detach ${bot.id}`);
   for (const n of notes) process.stderr.write(`automagik-herdr: ${n}\n`);
-  return opts.json ? { removed: bot.id, project: project.key, deletedFile: last, attachedTerminals: holders } : `${bot.name} (${bot.id}) removed.`;
+  return opts.json ? { removed: bot.id, ...placeOf(project), deletedFile: last, attachedTerminals: holders } : `${bot.name} (${bot.id}) removed.`;
 }
 
 async function cmdCategory(opts, [verb, ...rest]) {
   const project = await projectFor(opts);
   const raw = JSON.parse(JSON.stringify(project.raw));
   raw.categories = Array.isArray(raw.categories) ? raw.categories : [];
-  const save = () => {
+  const save = async () => {
     if (project.text === null) throw new CliError("This project has no bots yet; create its main bot first.");
-    writeBotsFile(project.key, raw, project.text);
-    listProject(project.key);
+    await saveProject(project, raw);
   };
   const find = (ref) => {
     const hit = findCategory(project.file, ref);
@@ -961,7 +1075,7 @@ async function cmdCategory(opts, [verb, ...rest]) {
   };
   if (verb === "ls" || verb === undefined) {
     const list = project.file.categories.map((c) => ({ ...c, bots: project.file.bots.filter((b) => b.category === c.id).map((b) => b.id) }));
-    return opts.json ? { project: project.key, categories: list } : list.map((c) => `${c.id}  ${c.title}${c.sub ? ` · ${c.sub}` : ""}  (${c.bots.length} bot${c.bots.length === 1 ? "" : "s"})`).join("\n") || "no categories";
+    return opts.json ? { ...placeOf(project), categories: list } : list.map((c) => `${c.id}  ${c.title}${c.sub ? ` · ${c.sub}` : ""}  (${c.bots.length} bot${c.bots.length === 1 ? "" : "s"})`).join("\n") || "no categories";
   }
   if (verb === "add") {
     if (!opts.title?.trim()) throw new CliError("A category needs a title (--title).", 2);
@@ -971,31 +1085,31 @@ async function cmdCategory(opts, [verb, ...rest]) {
     const cat = { id, title: opts.title.trim() };
     if (opts.sub?.trim()) cat.sub = opts.sub.trim();
     raw.categories.push(cat);
-    save();
-    return opts.json ? { project: project.key, category: cat } : id;
+    await save();
+    return opts.json ? { ...placeOf(project), category: cat } : id;
   }
   if (verb === "edit") {
     const cat = find(rest[0]);
     if (opts.title !== undefined) { if (!opts.title.trim()) throw new CliError("A category's title can't be empty.", 2); cat.title = opts.title.trim(); }
     if (opts.sub !== undefined) { if (opts.sub.trim()) cat.sub = opts.sub.trim(); else delete cat.sub; }
-    save();
-    return opts.json ? { project: project.key, category: cat } : `${cat.id} saved.`;
+    await save();
+    return opts.json ? { ...placeOf(project), category: cat } : `${cat.id} saved.`;
   }
   if (verb === "rm") {
     const cat = find(rest[0]);
     const users = project.file.bots.filter((b) => b.category === cat.id).map((b) => b.name);
     if (users.length) throw new CliError(`${users.join(", ")} ${users.length > 1 ? "are" : "is"} in ${cat.id}; move them first (automagik-herdr edit <bot> --category … or --no-category).`);
     raw.categories = raw.categories.filter((c) => c?.id !== cat.id);
-    save();
-    return opts.json ? { project: project.key, removed: cat.id } : `${cat.id} removed.`;
+    await save();
+    return opts.json ? { ...placeOf(project), removed: cat.id } : `${cat.id} removed.`;
   }
   if (verb === "order") {
     if (!rest.length) throw new CliError("Name the categories in their new order.", 2);
     const ids = rest.map((r) => find(r).id);
     if (new Set(ids).size !== ids.length) throw new CliError("A category is named twice.", 2);
     raw.categories = [...ids.map((id) => raw.categories.find((c) => c?.id === id)), ...raw.categories.filter((c) => !ids.includes(c?.id))];
-    save();
-    return opts.json ? { project: project.key, categories: raw.categories.map((c) => c.id) } : raw.categories.map((c) => c.id).join(" ");
+    await save();
+    return opts.json ? { ...placeOf(project), categories: raw.categories.map((c) => c.id) } : raw.categories.map((c) => c.id).join(" ");
   }
   throw new CliError(`category ${verb}: unknown; use ls, add, edit, rm or order.`, 2);
 }
@@ -2255,6 +2369,9 @@ export async function main(argv = process.argv.slice(2)) {
   if (!run) { process.stderr.write(`automagik-herdr: unknown command "${command}"\n\n${USAGE}\n`); return 2; }
   try {
     if (NEEDS_BOT.has(command) && !rest[0]) throw new CliError(`${command} needs a bot (its id or name).`, 2);
+    if (opts.machine !== undefined && !ON_MACHINE.has(command)) {
+      throw new CliError(`${command} works on this computer's panes only for now; --machine goes with ls, show, create, edit, rm and category.`, 2);
+    }
     const out = await run(opts, rest);
     if (out === PRINTED) return 0;
     if (opts.json) process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);

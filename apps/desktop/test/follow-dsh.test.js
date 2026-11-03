@@ -63,6 +63,33 @@ test('follow-omni carries an Omni only after it booted, on the dev commit that b
   assert.match(text, /\n {2}release:\n {4}name: Release\n {4}needs: carry\n/)
 })
 
+test('follow-omni runs on Omni\'s dispatch, takes its payload only as a logged hint', () => {
+  const text = readFileSync(new URL('../../../.github/workflows/follow-omni.yml', import.meta.url), 'utf8')
+  assert.match(text, /\n {2}repository_dispatch:\n(?: {4}#[^\n]*\n)* {4}types: \[omni-release\]\n/)
+  // The schedule stays as the fallback, and every run queues behind a running follow.
+  assert.match(text, /\n {2}schedule:\n[\s\S]*?- cron: '/)
+  assert.match(text, /\nconcurrency:\n {2}group: follow-omni\n {2}cancel-in-progress: false\n/)
+  // The payload reaches the job only through env, never a run script or another expression.
+  const uses = text.split('\n').filter(line => line.includes('client_payload') && !line.trim().startsWith('#'))
+  assert.deepEqual(uses.map(line => line.trim()), [
+    'HINT_VERSION: ${{ github.event.client_payload.version }}',
+    'HINT_TAG: ${{ github.event.client_payload.tag }}',
+    'HINT_SHA: ${{ github.event.client_payload.sha }}',
+  ])
+  // The hint is printed, only in a shape check, and never chooses what is booted or carried.
+  const hints = [...text.matchAll(/\$\{HINT_\w+\}/g)].map(match => match.index)
+  assert.equal(hints.length, 3)
+  for (const at of hints) assert.match(text.slice(text.lastIndexOf('\n', at), text.indexOf('\n', at)), /\$\(hint "/)
+  const output = text.slice(text.indexOf('commit="${WANT_COMMIT:-'), text.indexOf('} >> "$GITHUB_OUTPUT"'))
+  assert.doesNotMatch(output, /HINT_|client_payload/)
+  assert.doesNotMatch(text, /(?:WANT_\w+|newest|commit)=\S*HINT_/)
+  // A release the list lags on is looked up again, a bounded number of times, then warned about;
+  // what is followed is still only what the lookup lists (or a dry run's omni_version).
+  assert.match(text, /for try in 1 2 3 4 5 6; do\n\s+unlisted \|\| break\n[\s\S]*?sleep 20\n\s+lookup\n\s+done\n/)
+  assert.match(text, /if unlisted; then\n\s+echo "::warning ::Omni dispatched \$\{wanted\}/)
+  assert.deepEqual([...text.matchAll(/\bnewest=(.*)/g)].map(match => match[1]), ['"${WANT_VERSION}"', '$(sort -V releases.txt | tail -1)'])
+})
+
 test('the boot gate boots the candidate exactly as carry writes it, both pins', () => {
   const read = name => readFileSync(new URL(`../../../.github/workflows/${name}`, import.meta.url), 'utf8')
   const bump = text => text.match(/\n {10}node -e '\n([\s\S]*?)\n {10}' "\$\{(?:OMNI_)?VERSION\}" "\$\{(?:OMNI_)?COMMIT\}"/)?.[1]

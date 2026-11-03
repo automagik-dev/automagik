@@ -34,8 +34,13 @@ object SpaceFeed {
     data class Part(val key: String, val usd: Double?)
     data class Bot(val usdPerTask: Double?, val minPerTask: Double?, val usd24h: Double?, val otherUsd: Double?,
                    val partsKind: String?, val parts: List<Part>)
+    /** One bot's work on a merged task: [workMin] is its minutes on it. */
+    data class TaskBot(val bot: String, val workMin: Double?)
+    /** A task merged in the window, with the bots that worked on it. */
+    data class TaskWork(val task: String?, val bots: List<TaskBot>)
+    /** [tasks] is null when the feed has no `tasks` key, empty when it lists none. */
     data class Project(val merges: Merges?, val time: Time?, val firstPass: FirstPass?, val spent: Spent?, val tokens: Tokens?,
-                       val bots: Map<String, Bot>)
+                       val bots: Map<String, Bot>, val tasks: List<TaskWork>? = null)
     /** [generatedMs]: the doc's top-level `generated_at`, for "as of HH:MM". */
     data class Feed(val generatedMs: Long?, val truncated: Boolean, val projects: Map<String, Project>) {
         fun project(key: String?) = key?.let { projects[normal(it)] }
@@ -107,6 +112,9 @@ object SpaceFeed {
                 out[k] = Bot(num(x, "usd_per_task"), num(x, "min_per_task"), num(x, "usd_24h"), num(x, "other_usd"), str(x, "parts_kind"),
                     x.optJSONArray("parts")?.objects().orEmpty().mapNotNull { p -> str(p, "key")?.let { Part(it, num(p, "usd")) } })
             } }
+        },
+        o.optJSONArray("tasks")?.objects()?.map { t ->
+            TaskWork(str(t, "task"), t.optJSONArray("bots")?.objects().orEmpty().mapNotNull { b -> str(b, "bot")?.let { TaskBot(it, num(b, "work_min")) } })
         })
 
     /** A part's legend label (rules section 8). */
