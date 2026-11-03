@@ -480,9 +480,11 @@ feed. For those, `am update` asks the owner (the desktop app) and reports.
   DSH tool call by its environment and parent processes; same-user code can fake those, which
   is the limit above. The window's dialog is the stronger path: it needs a real click in
   another process.
-- **am's key.** am carries every lane's trust anchors, so a leak of its key reaches every part
-  on a machine with no pack yet; installed packs keep verifying against their own
-  `pack-keys.json`. It gets the same two-slot rotation and fail-closed posting as the pack's.
+- **am's key.** am updates itself from `am-lane`, so whoever holds its key can ship an am that
+  runs any code on every machine that has am, with a pack or without. Preferring an installed
+  `pack-keys.json` does not help: the new am is the code doing the checking. It is the most
+  valuable key in the release, kept as its own secret, with the same two-slot rotation and
+  fail-closed posting as the pack's; a suspected leak is answered by rotating it.
 - **Release parts.** As safe as their pointer's key (RFC 0011). A replayed older pointer is
   refused by sequence. Someone who can write release assets but has no key can only deny updates.
   `herdr.app` trusts herdrdev's host for its bytes and sha256, as RFC 0013 already does.
