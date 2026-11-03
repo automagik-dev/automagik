@@ -1,0 +1,142 @@
+package ai.namastex.automagik
+
+import android.content.Context
+import androidx.room.Dao
+import androidx.room.Database
+import androidx.room.Entity
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.PrimaryKey
+import androidx.room.Query
+import androidx.room.Room
+import androidx.room.RoomDatabase
+import androidx.room.Transaction
+import androidx.room.Upsert
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.withLock
+
+/**
+ * The Teams tab's local copy (SQLite, through Room), in the app's private storage: the projects, their bots and each
+ * bot's last known state, so the tab opens at once and offline; and today's peak of simultaneous agents, which only the
+ * phone counts. The desktop stays the source: every reading of a machine replaces that machine's rows.
+ */
+@Entity(tableName = "team")
+data class TeamRow(@PrimaryKey val id: String, val hostId: String, val machine: String, val key: String, val name: String,
+                   val emoji: String?, val image: String?, val color: String?, val position: Int,
+                   val merged: Double?, val agentMin: Double?)
+
+@Entity(tableName = "bot", primaryKeys = ["teamId", "id"])
+data class BotRow(val teamId: String, val id: String, val hostId: String, val name: String, val main: Boolean, val pet: String?,
+                  val pose: String, val message: String, val statusMs: Long, val address: String?, val kind: String, val position: Int)
+
+/** The most agents seen working at once on [day] (yyyy-mm-dd, the phone's own date), for a [scope]: "" is All, else a team id. */
+@Entity(tableName = "day_stat", primaryKeys = ["day", "scope"])
+data class DayStatRow(val day: String, val scope: String, val peak: Int)
+
+@Dao
+interface TeamsDao {
+    @Query("SELECT * FROM team ORDER BY position") fun teams(): Flow<List<TeamRow>>
+    @Query("SELECT * FROM bot ORDER BY teamId, position") fun bots(): Flow<List<BotRow>>
+    @Query("SELECT * FROM day_stat WHERE day = :day") fun day(day: String): Flow<List<DayStatRow>>
+
+    @Query("DELETE FROM team WHERE hostId IN (:hosts)") suspend fun dropTeams(hosts: List<String>)
+    @Query("DELETE FROM bot WHERE hostId IN (:hosts)") suspend fun dropBots(hosts: List<String>)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertTeams(rows: List<TeamRow>)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertBots(rows: List<BotRow>)
+
+    /** [hosts]' rows become [teams] and [bots]: one transaction, so a reader never sees a machine half written. */
+    @Transaction suspend fun replace(hosts: List<String>, teams: List<TeamRow>, bots: List<BotRow>) {
+        dropBots(hosts); dropTeams(hosts); insertTeams(teams); insertBots(bots)
+    }
+
+    @Query("SELECT peak FROM day_stat WHERE day = :day AND scope = :scope") suspend fun peak(day: String, scope: String): Int?
+    @Upsert suspend fun putDay(row: DayStatRow)
+    @Query("DELETE FROM day_stat WHERE day < :day") suspend fun dropBefore(day: String)
+
+    /** Raises each scope's peak for [day] to what is working now, never lowers it; older days are dropped. */
+    @Transaction suspend fun raisePeaks(day: String, working: Map<String, Int>) {
+        dropBefore(day)
+        for ((scope, n) in working) if (n > (peak(day, scope) ?: -1)) putDay(DayStatRow(day, scope, n))
+    }
+}
+
+@Database(entities = [TeamRow::class, BotRow::class, DayStatRow::class], version = 1, exportSchema = false)
+abstract class TeamsDb : RoomDatabase() {
+    abstract fun teams(): TeamsDao
+    companion object {
+        @Volatile private var instance: TeamsDb? = null
+        fun get(context: Context): TeamsDb = instance ?: synchronized(this) {
+            // A cache: a schema change rebuilds it from the desktop rather than migrating it.
+            instance ?: Room.databaseBuilder(context.applicationContext, TeamsDb::class.java, "teams.db")
+                .fallbackToDestructiveMigration(dropAllTables = true).build().also { instance = it }
+        }
+    }
+}
+
+/** The model and its rows, both ways. */
+object TeamsCache {
+    fun rows(teams: List<Teams.Team>): Pair<List<TeamRow>, List<BotRow>> =
+        teams.mapIndexed { i, t ->
+            TeamRow(t.id, t.hostId, t.machine, t.key, t.name, (t.icon as? Teams.Icon.Emoji)?.char, (t.icon as? Teams.Icon.Image)?.file,
+                t.color, i, t.merged, t.agentMin)
+        } to teams.flatMap { t ->
+            t.bots.mapIndexed { i, b -> BotRow(t.id, b.id, t.hostId, b.name, b.main, b.pet, b.pose, b.message, b.statusMs, b.ref?.address, b.kind, i) }
+        }
+
+    fun teams(teams: List<TeamRow>, bots: List<BotRow>): List<Teams.Team> {
+        val byTeam = bots.groupBy { it.teamId }
+        return teams.sortedBy { it.position }.map { r ->
+            val icon = r.emoji?.let { Teams.Icon.Emoji(it) } ?: r.image?.let { Teams.Icon.Image(it) } ?: Teams.Icon.Letter
+            Teams.Team(r.id, r.hostId, r.machine, r.key, r.name, icon, r.color,
+                byTeam[r.id].orEmpty().sortedBy { it.position }.map { b ->
+                    Teams.Bot(b.id, b.name, b.main, b.pet, b.pose, b.message, b.statusMs, b.address?.let { TerminalRef(b.hostId, it) }, b.kind)
+                }, r.merged, r.agentMin)
+        }
+    }
+}
+
+/**
+ * The one writer of the Teams cache. A reading of the machines replaces the rows of each machine read far enough
+ * ([Teams.ready]), even when it has no project left, and writes nothing when its rows didn't change; it raises today's
+ * peaks only above what it already wrote. A removed machine's rows go at once. It also keeps each feed's merges, so a
+ * bot celebrates only a merge its own feed newly lists.
+ */
+class TeamsSync(private val dao: TeamsDao) {
+    private val lock = kotlinx.coroutines.sync.Mutex()
+    private val written = HashMap<String, Pair<List<TeamRow>, List<BotRow>>>()
+    private val peaks = HashMap<String, Int>()
+    private val seen = HashMap<String, Set<String>>()
+
+    /** Writes what changed; returns the bots to celebrate, as "team id|bot id". */
+    suspend fun reading(machines: Map<String, MachineState>, now: Long): Set<String> = lock.withLock {
+        val ready = machines.filterValues { Teams.ready(it, now) }
+        val teams = Teams.build(ready, now)
+        for (host in ready.keys) {
+            val rows = TeamsCache.rows(teams.filter { it.hostId == host })
+            if (written[host] == rows) continue
+            dao.replace(listOf(host), rows.first, rows.second)
+            written[host] = rows
+        }
+        if (ready.isNotEmpty()) {
+            val day = Teams.day(now)
+            val higher = Teams.working(teams).filter { (scope, n) -> n > (peaks["$day|$scope"] ?: -1) }
+            if (higher.isNotEmpty()) {
+                dao.raisePeaks(day, higher)
+                for ((scope, n) in higher) peaks["$day|$scope"] = n
+            }
+        }
+        val jump = HashSet<String>()
+        for ((feed, merges) in Teams.merges(ready)) {
+            jump += Teams.celebrations(seen[feed], merges)
+            seen[feed] = merges
+        }
+        jump
+    }
+
+    /** A machine removed from the phone: its cached projects and bots go, and its feeds' baselines. */
+    suspend fun removed(host: String) = lock.withLock {
+        dao.replace(listOf(host), emptyList(), emptyList())
+        written.remove(host)
+        seen.keys.removeAll { it.startsWith("$host|") }
+    }
+}

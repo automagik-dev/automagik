@@ -6,9 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.*
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -27,7 +25,13 @@ data class MachineState(val connecting: Boolean = false, val connected: Boolean 
     /** The meter doc's Space Row feed per machine, keyed like [meter]; a machine whose doc has none (or another version) has none. */
     val space: Map<String, SpaceFeed.Feed> = emptyMap(),
     /** Bot and category names from each project's `.herdr/bots.json`, by "machine|project key". */
-    val bots: Map<String, SpaceFeed.Names> = emptyMap()) {
+    val bots: Map<String, SpaceFeed.Names> = emptyMap(),
+    /** Desktop space icons (shared.json am.sidebar.icons), by space id. */
+    val icons: Map<String, Teams.Icon> = emptyMap(),
+    /** Each project's bots as its registry defines them ([Teams.registry]), by "machine|project key". */
+    val members: Map<String, List<Teams.Member>> = emptyMap(),
+    /** The [session] whose terminals and spaces have been read, and when that first reading came ([Teams.ready]). */
+    val readSession: Int = 0, val readMs: Long = 0) {
     /** Dropped or failed, as opposed to never connected or disconnected on purpose. */
     val offline get() = !connected && (connecting || error != null)
     /** Worth retrying without asking: a dropped or failed connection. */
@@ -39,7 +43,7 @@ data class TerminalRef(val hostId: String, val address: String)
 data class PocketState(
     val hosts: List<HostProfile> = emptyList(), val machines: Map<String, MachineState> = emptyMap(),
     /** The bottom tab or Settings ([Nav]); [project] ([Projects.Project.key]) and [space] are open over it, [selected] over all. */
-    val screen: String = Nav.TODAY, val space: Pair<String, String>? = null, val selected: TerminalRef? = null,
+    val screen: String = Nav.HOME, val space: Pair<String, String>? = null, val selected: TerminalRef? = null,
     val project: String? = null,
     val message: String? = null,
     val terminalStatus: String = "", val demo: Boolean = false, val sending: Boolean = false,
@@ -63,8 +67,14 @@ data class PocketState(
     val lockAnswers: Boolean = false,
     /** Keep connections open in the background ([WatchService]) so alerts arrive as notifications. */
     val watch: Boolean = true,
+    /** Goes up when a space image or a pet arrives from the desktop, so the Teams tab draws it. */
+    val iconsVersion: Int = 0,
 )
 const val DEFAULT_FONT_SIZE = 13
+/** Size caps on what Teams copies from a desktop: a space image (Herdr's own limit), a pet's sheet and its sleep strip. */
+const val ICON_MAX = 5 * 1024 * 1024
+const val PET_SHEET_MAX = 6 * 1024 * 1024
+const val PET_SLEEP_MAX = 2 * 1024 * 1024
 private val RECONNECT_DELAYS = listOf(2_000L, 5_000L, 15_000L, 30_000L, 60_000L)
 val FONT_SIZES = 8..24
 
@@ -93,6 +103,28 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     private val wasWorking = ConcurrentHashMap<String, Set<String>>()
     @Volatile private var gitShown = false
     private val iconsTried: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val petsTried: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val spaceIconsTried: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    /** The Teams tab's local copy ([TeamsDb]). */
+    private val teamsDao by lazy { TeamsDb.get(application).teams() }
+    /** The cached projects and bots, for the tab's first frame and for machines that aren't connected. */
+    val cachedTeams: StateFlow<List<Teams.Team>> by lazy {
+        combine(teamsDao.teams(), teamsDao.bots()) { t, b -> TeamsCache.teams(t, b) }.flowOn(Dispatchers.IO)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    }
+    /** Today's peaks of simultaneous agents by scope ("" is All), as the phone counted them. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val peaks: StateFlow<Map<String, Int>> by lazy {
+        flow { while (true) { emit(Teams.day(System.currentTimeMillis())); delay(60_000) } }.distinctUntilChanged()
+            .flatMapLatest { teamsDao.day(it) }.map { rows -> rows.associate { it.scope to it.peak } }.flowOn(Dispatchers.IO)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+    }
+    private val _celebrations = MutableStateFlow<Map<String, Long>>(emptyMap())
+    /** Bots to celebrate, "team id|bot id" to when their merge was seen: each jumps once. */
+    val celebrations = _celebrations.asStateFlow()
+    /** The one writer of the Teams cache ([TeamsSync]). */
+    private val teamsSync by lazy { TeamsSync(teamsDao) }
+    private val petJobs = ConcurrentHashMap<String, Job>()
     fun gitShown(shown: Boolean) { gitShown = shown; if (shown) gitWake.trySend(Unit) }
     fun toggleFold(key: String) {
         val folded = state.value.folded.let { if (key in it) it - key else it + key }
@@ -131,6 +163,19 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         // Opening the app checks for an update (setForeground); this tells a waiting one when installing would interrupt.
         Updater.usage = { val s = state.value; Updater.Usage(foreground, s.selected != null, watchText.isNotEmpty()) }
         ProgramIcons.load(application)
+        // Teams: each reading of the connected machines replaces their rows in the cache and raises today's peaks; a new
+        // merge in a feed celebrates its bots; pets and space images the phone lacks are fetched once.
+        viewModelScope.launch(Dispatchers.IO) {
+            state.map { s -> if (s.demo) null else s.machines.filterValues { it.connected } }.distinctUntilChanged().collectLatest { live ->
+                live ?: return@collectLatest
+                delay(400)
+                val now = System.currentTimeMillis()
+                val jump = try { teamsSync.reading(live, now) } catch (e: CancellationException) { throw e } catch (_: Exception) { emptySet() }
+                if (jump.isNotEmpty()) _celebrations.update { it + jump.associateWith { now } }
+                for ((id, client) in clients.entries.toList()) if (live[id]?.let { Teams.ready(it, now) } == true)
+                    startPets(id, client, Teams.build(id, live.getValue(id), now))
+            }
+        }
         viewModelScope.launch(Dispatchers.IO) {
             while (true) {
                 withTimeoutOrNull(15_000) { gitWake.receive() }
@@ -155,6 +200,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         if (moved && live) connect(profile)
     }
     fun removeHost(id: String) {
+        // Its cached projects and bots go with it (TeamsSync), so Teams never shows a machine the phone no longer has.
+        viewModelScope.launch(Dispatchers.IO) { runCatching { teamsSync.removed(id) } }
         disconnect(id)
         saveHosts(state.value.hosts.filter { it.id != id })
         _state.update { it.copy(machines = it.machines - id, repairing = if (it.repairing == id) null else it.repairing) }
@@ -451,10 +498,12 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         catch (e: CancellationException) { throw e } catch (_: Exception) { null }
     }
     /** A terminal screen's answer button: [choose], then show the outcome. [done] runs either way. */
-    fun answer(ref: TerminalRef, msg: String, options: List<String>, choice: Prompt.Choice, done: () -> Unit) {
+    /** A terminal screen's or the deck's answer: [choose], then show the outcome. [done] runs either way, told whether it was sent ([Teams.sent]). */
+    fun answer(ref: TerminalRef, msg: String, options: List<String>, choice: Prompt.Choice, done: (sent: Boolean) -> Unit) {
         viewModelScope.launch {
-            try { val outcome = choose(ref, msg, options, choice.index, choice.label); _state.update { it.copy(message = outcome) } }
-            finally { done() }
+            var sent = false
+            try { val outcome = choose(ref, msg, options, choice.index, choice.label); sent = Teams.sent(outcome); _state.update { it.copy(message = outcome) } }
+            finally { done(sent) }
         }
     }
     /** The preview has no core: its blocked agent checks the menu the same way, logs the keys it would get, and moves on. */
@@ -518,7 +567,9 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         val previous = alertBase[id]?.takeIf { it.first === client }?.second
         alertBase[id] = client to terminals
         val paned = spaces.flatMap { it.addresses }.toSet()
-        updateMachine(id) { it.copy(terminals = terminals, spaces = spaces, linked = linked, error = null) }
+        val read = System.currentTimeMillis()
+        updateMachine(id) { it.copy(terminals = terminals, spaces = spaces, linked = linked, error = null,
+            readMs = if (it.readSession == it.session) it.readMs else read, readSession = it.session) }
         alert(Alerts.changes(previous, terminals, id) { it.address in paned }, client)
         Alerts.resolved(previous, terminals, id) { it.address in paned }.forEach { Notify.cancel(getApplication(), it) }
         rememberLinked(id, linked.map { it.name })
@@ -547,8 +598,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         runCatching { readBots(id, client) }
     }
     /**
-     * Bot and category names for the bot cards: each project's `.herdr/bots.json`, read only, for projects on a machine whose
-     * meter doc has a Space Row feed, on machines that are up. Read after each meter read (every 5 minutes), and for [only]
+     * Bot and category names for the bot cards, and each project's bots for the Teams tab: each project's registry file
+     * ([Teams.registry], today `.herdr/bots.json`), read only, on machines that are up. Read after each meter read (every 5 minutes), and for [only]
      * when a project first appears. A project with no file, or one that doesn't parse, gets empty names (its bots show their
      * ids) and isn't read again until the next meter read; a read that fails keeps the names read before.
      */
@@ -556,18 +607,21 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         val m = state.value.machines[id] ?: return
         val byAddress = m.terminals.associateBy { it.address }
         fun up(machine: String) = machine.isBlank() || m.linked.find { it.name == machine }?.connected == true
-        val keys = (only?.let(::listOf) ?: m.spaces.filter { it.machine in m.space }.mapNotNull { s ->
+        val keys = (only?.let(::listOf) ?: m.spaces.mapNotNull { s ->
             SpaceFeed.projectKey(m.git[Sidebar.gitKey(s.machine, Sidebar.place(s, byAddress))])?.let { s.machine to it }
-        }).filter { (machine, key) -> key.startsWith("/") && machine in m.space && up(machine) }.distinct()
+        }).filter { (machine, key) -> key.startsWith("/") && up(machine) }.distinct()
         val names = HashMap<String, SpaceFeed.Names>()
+        val members = HashMap<String, List<Teams.Member>>()
         for ((machine, key) in keys) {
-            val params = JSONObject().put("path", "${key.trimEnd('/')}/.herdr/bots.json")
+            val params = JSONObject().put("path", Teams.registry.path(key))
             if (machine.isNotBlank()) params.put("on", machine)
-            val text = runCatching { withTimeout(20_000) { client.call("file.read", params) } }.getOrNull()
-                ?.takeIf { it.optInt("last") >= it.optInt("lines") }?.optString("text")
+            val read = runCatching { withTimeout(20_000) { client.call("file.read", params) } }
+            val text = read.getOrNull()?.takeIf { it.optInt("last") >= it.optInt("lines") }?.optString("text")
             names["$machine|$key"] = text?.let(SpaceFeed::names) ?: m.bots["$machine|$key"] ?: SpaceFeed.Names()
+            // A read that failed keeps the bots read before; a file that is missing or doesn't parse has none.
+            members["$machine|$key"] = if (read.isFailure && text == null) m.members["$machine|$key"].orEmpty() else Teams.registry.parse(text)
         }
-        if (names.isNotEmpty()) updateMachine(id) { it.copy(bots = it.bots + names) }
+        if (names.isNotEmpty()) updateMachine(id) { it.copy(bots = it.bots + names, members = it.members + members) }
     }
     /** Herdr desktop's config folder on the core's machine (it may have none: a core running without the desktop app). */
     private suspend fun herdrHome(id: String, client: CoreClient): String? = herdrHomes[id] ?: exec(client, "printenv", "HERDR_APP_HOME")
@@ -613,7 +667,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
             runCatching { gitCheck(client, machine, place) }
                 .onSuccess { info ->
                     val project = SpaceFeed.projectKey(info)
-                    val unnamed = project != null && machine in m.space && "$machine|$project" !in (state.value.machines[id]?.bots ?: emptyMap())
+                    val unnamed = project != null && "$machine|$project" !in (state.value.machines[id]?.bots ?: emptyMap())
                     updateMachine(id) { it.copy(git = it.git + (key to info)) }
                     // A project first seen after the meter read: its bot names now, once (a missing file is stored as empty).
                     if (unnamed) runCatching { readBots(id, client, machine to project!!) }
@@ -639,12 +693,69 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         fun text(k: String) = String(java.util.Base64.getDecoder().decode(r.optString(k)), Charsets.UTF_8)
         return Triple(if (r.optBoolean("timed_out")) -1 else r.optInt("code", -1), text("stdout"), text("stderr"))
     }
+    /** Space colours and icons from the desktop's shared.json ([Teams.looks]: the am.* keys, else the old ones), read only. */
     private suspend fun readColors(id: String, client: CoreClient) {
         val home = herdrHome(id, client) ?: return
-        val shared = JSONObject(client.call("file.read", JSONObject().put("path", "$home/shared.json")).optString("text", "{}"))
-        val colors = shared.optJSONObject("space.colors") ?: return
-        updateMachine(id) { it.copy(colors = colors.keys().asSequence().associateWith { k -> colors.optString(k) }) }
+        val read = client.call("file.read", JSONObject().put("path", "$home/shared.json"))
+        if (read.optInt("last") < read.optInt("lines")) return
+        val looks = Teams.looks(JSONObject(read.optString("text", "{}")))
+        updateMachine(id) { it.copy(colors = looks.colors, icons = looks.icons) }
+        fetchSpaceIcons(id, client, home, looks.icons.values)
     }
+    /**
+     * A file's bytes on the core's machine (or [on] another one it reaches), through machine.exec: at most [max] bytes are
+     * read (`head -c`), and a larger file is refused. Null if it failed; cancellation is passed on.
+     */
+    private suspend fun readBytes(client: CoreClient, path: String, max: Int, on: String = ""): ByteArray? {
+        val params = JSONObject().put("argv", JSONArray(listOf("head", "-c", "${max + 1}", path)))
+        if (on.isNotBlank()) params.put("on", on)
+        val r = try { withTimeout(30_000) { client.call("machine.exec", params) } }
+            catch (e: CancellationException) { if (e is TimeoutCancellationException) return null else throw e } catch (_: Exception) { return null }
+        if (r.optBoolean("timed_out") || r.optInt("code", 1) != 0) return null
+        return runCatching { java.util.Base64.getDecoder().decode(r.optString("stdout")) }.getOrNull()?.takeIf { it.isNotEmpty() && it.size <= max }
+    }
+    /** The desktop's space images (PNG or SVG under its space-icons folder), copied once; the APK bundles none. */
+    private suspend fun fetchSpaceIcons(id: String, client: CoreClient, home: String, icons: Collection<Teams.Icon>) {
+        val app = getApplication<Application>()
+        var saved = false
+        for (file in icons.filterIsInstance<Teams.Icon.Image>().map { it.file }.distinct()) {
+            if (!Teams.safeIconFile(file) || SpaceIcons.cached(app, id, file) || "$id|$file" in spaceIconsTried) continue
+            readBytes(client, "$home/$file", ICON_MAX)?.let { SpaceIcons.save(app, id, file, it); saved = true }
+            spaceIconsTried += "$id|$file"   // tried only once the read finished (a cancelled one is tried again)
+        }
+        if (saved) _state.update { it.copy(iconsVersion = it.iconsVersion + 1) }
+    }
+    /**
+     * The bots' own pets, from the folder the desktop bakes them into (~/.automagik/bots/pets/<id>, RFC 0014), copied
+     * once per launch; until then, and for bots on other machines, Genie. The phone never bakes.
+     */
+    /** Fetches [teams]' pets in a job of its own, one per machine at a time, so a new reading doesn't cancel it. */
+    private fun startPets(id: String, client: CoreClient, teams: List<Teams.Team>) {
+        val app = getApplication<Application>()
+        val wanted = teams.filter { it.machine.isBlank() }.flatMap { t -> t.bots.mapNotNull { Teams.petId(it.pet) } }.distinct()
+            .filter { it != Teams.GENIE && "$id|$it" !in petsTried && !Pets.cached(app, it) }
+        if (wanted.isEmpty() || petJobs[id]?.isActive == true) return
+        petJobs[id] = viewModelScope.launch(Dispatchers.IO) { fetchPets(id, client, wanted) }
+    }
+    private suspend fun fetchPets(id: String, client: CoreClient, wanted: List<String>) {
+        val app = getApplication<Application>()
+        val home = homes[id] ?: execText(client, "printenv", "HOME").also { if (it.isNotBlank()) homes[id] = it }
+        if (home.isBlank()) return
+        val bots = execText(client, "printenv", "AUTOMAGIK_BOTS_HOME").ifBlank {
+            execText(client, "printenv", "AUTOMAGIK_HOME").ifBlank { null }?.let { "$it/bots" } ?: "$home/.automagik/bots" }
+        var any = false
+        for (pet in wanted) {
+            val sheet = readBytes(client, "$bots/pets/$pet/spritesheet.webp", PET_SHEET_MAX)
+            if (sheet != null) any = Pets.save(app, pet, sheet, readBytes(client, "$bots/pets/$pet/sleep.webp", PET_SLEEP_MAX)) || any
+            petsTried += "$id|$pet"   // only once its reads finished: a cancelled fetch tries again
+        }
+        if (any) _state.update { it.copy(iconsVersion = it.iconsVersion + 1) }
+    }
+    /** [exec], but passing cancellation on. */
+    private suspend fun execText(client: CoreClient, vararg argv: String): String = try {
+        val r = client.call("machine.exec", JSONObject().put("argv", JSONArray(argv.toList())))
+        if (r.optInt("code", 1) != 0) "" else String(java.util.Base64.getDecoder().decode(r.optString("stdout")), Charsets.UTF_8).trim()
+    } catch (e: CancellationException) { throw e } catch (_: Exception) { "" }
     /** A program's trimmed output on the core's machine, or "" if it failed. */
     private suspend fun exec(client: CoreClient, vararg argv: String): String = runCatching {
         val r = client.call("machine.exec", JSONObject().put("argv", JSONArray(argv.toList())))
@@ -856,23 +967,29 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         clients.keys.toList().forEach { disconnect(it) }
         val id = "preview"
         val terminals = listOf(
-            CoreTerminal("t1", "Authentication flow", "~/work/herdr-auth", "live", "blocked", "Claude Code", "Waiting for your approval to run the test suite", 80, 24, kind = "permission"),
+            CoreTerminal("t1", "Authentication flow", "~/work/herdr-auth", "live", "blocked", "Claude Code", "Waiting for your approval to run the test suite", 80, 24, labels = mapOf("bot" to "b-demo-test"), kind = "permission"),
             CoreTerminal("t2", "Android companion", "~/work/herdr", "live", "working", "Codex", "Building the mobile navigation", 80, 24, labels = mapOf("bot" to "b-demo-captain")),
             CoreTerminal("t3", "API review", "~/work/herdr-api", "live", "done", "Claude Code", "Reviewed 12 files · ready when you are", 80, 24, labels = mapOf("bot" to "b-demo-dev")),
             CoreTerminal("t4", "Shell", "~/work/website", "live", "", "zsh", "", 80, 24),
             CoreTerminal("t5", "Release notes", "~/work/herdr-squad", "live", "working", "Codex", "Drafting the changelog", 80, 24),
-            CoreTerminal("t6", "Landing copy", "~/work/website", "live", "idle", "Claude Code", "", 80, 24))
+            CoreTerminal("t6", "Landing copy", "~/work/website", "live", "idle", "Claude Code", "", 80, 24, labels = mapOf("bot" to "b-demo-writer")),
+            CoreTerminal("t7", "Notes", "~/work/notes", "live", "idle", "Claude Code", "", 80, 24, labels = mapOf("bot" to "b-demo-scribe")))
+            // Each one's last change, so the Teams rows show times and the scribe has dozed off.
+            .map { t -> t.copy(statusMs = System.currentTimeMillis() - mapOf("t1" to 1L, "t2" to 3L, "t3" to 14L, "t5" to 6L, "t6" to 4L, "t7" to 95L).getOrDefault(t.address, 0L) * 60_000L) }
         val spaces = listOf(PocketSpace("sp1", "herdr", "~/work/herdr", "", listOf(PocketTab("tb2", "Android", listOf("t2", "t3")), PocketTab("tb1", "Authentication", listOf("t1")))),
             PocketSpace("sp3", "Release squad", "~/work/herdr-squad", "", listOf(PocketTab("tb4", "Notes", listOf("t5")))),
-            PocketSpace("sp2", "Website", "~/work/website", "", listOf(PocketTab("tb3", "Shell", listOf("t4")), PocketTab("tb5", "Copy", listOf("t6")))))
+            PocketSpace("sp2", "Website", "~/work/website", "", listOf(PocketTab("tb3", "Shell", listOf("t4")), PocketTab("tb5", "Copy", listOf("t6")))),
+            PocketSpace("sp4", "Notes", "~/work/notes", "", listOf(PocketTab("tb6", "Notes", listOf("t7")))))
         // Sample repositories: one with a squad's worktrees (its branches are tasks), one on main (untasked).
         fun repo(top: String, branch: String, common: String = "~/work/herdr/.git", remote: String = "example/herdr") =
             Sidebar.gitKey("", top) to GitInfo(branch, 0, 0, top, common, remote)
         val git = mapOf(repo("~/work/herdr", "dev"), repo("~/work/herdr-auth", "feat/auth-flow"), repo("~/work/herdr-api", "fix/api-review"),
-            repo("~/work/herdr-squad", "feat/release-notes"), repo("~/work/website", "main", "~/work/website/.git", "example/website"))
-        _state.update { it.copy(demo = true, screen = Nav.TODAY, selected = null, space = null, project = null,
+            repo("~/work/herdr-squad", "feat/release-notes"), repo("~/work/website", "main", "~/work/website/.git", "example/website"),
+            repo("~/work/notes", "main", "~/work/notes/.git", "example/notes"))
+        _state.update { it.copy(demo = true, screen = Nav.HOME, selected = null, space = null, project = null,
             machines = mapOf(id to MachineState(connected = true, version = "preview", terminals = terminals, spaces = spaces, git = git,
-                meter = SpendDemo.readings(System.currentTimeMillis()), space = SpendDemo.space(System.currentTimeMillis()), bots = SpendDemo.BOTS))) }
+                meter = SpendDemo.readings(System.currentTimeMillis()), space = SpendDemo.space(System.currentTimeMillis()), bots = SpendDemo.BOTS,
+                members = SpendDemo.MEMBERS, icons = SpendDemo.ICONS, colors = SpendDemo.COLORS))) }
     }
     private val _sheet = MutableStateFlow<StatsSheet?>(null)
     /** The Space Row card open as a bottom sheet, if any. */

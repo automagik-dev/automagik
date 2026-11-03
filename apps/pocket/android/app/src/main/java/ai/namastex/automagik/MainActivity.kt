@@ -141,6 +141,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
     val sidebar = state.hosts.mapNotNull { h -> state.machines[h.id]?.let { m -> SidebarHost(h.id, h.name, m.connected, m.spaces, m.terminals, m.linked, m.colors, m.git, m.space, m.bots) } } +
         state.machines.filterKeys { id -> state.hosts.none { it.id == id } }.map { (id, m) -> SidebarHost(id, vm.hostName(id), m.connected, m.spaces, m.terminals, m.linked, m.colors, m.git, m.space, m.bots) }
     val pulse = remember(sidebar, state.seen) { Projects.pulse(sidebar, state.seen) }
+    val teams = rememberTeams(state, vm)
     // Repositories and branches re-check every minute while a screen shows them; otherwise only when work stops.
     val gitScreen = selected == null && (state.screen == Nav.PROJECTS || state.screen == Nav.TASKS)
     LaunchedEffect(gitScreen) { vm.gitShown(gitScreen) }
@@ -167,7 +168,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
         if (CrashLog.announce() && snackbar.showSnackbar("Automagik closed unexpectedly last time", "Report", duration = SnackbarDuration.Long) == SnackbarResult.ActionPerformed)
             vm.navigate("settings")
     }
-    BackHandler(selected != null || state.screen != Nav.TODAY || state.space != null || state.project != null) { vm.back() }
+    BackHandler(selected != null || state.screen != Nav.HOME || state.space != null || state.project != null) { vm.back() }
     val project = state.project?.let { key -> pulse.projects.find { it.key == key } }
     val root = selected == null && state.space == null && state.project == null && state.screen in Nav.TABS
     // Kept here, not in the tabs, so a terminal opened from a tab comes back to the same view of it.
@@ -192,6 +193,8 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                             state.screen == Nav.MACHINES -> "Machines" to "${pulse.machines} connected"
                             state.screen == Nav.PROJECTS -> "Projects" to pulse.projects.size.let { if (it == 1) "1 project" else "$it projects" }
                             state.screen == Nav.TASKS -> "Tasks" to pulse.tasks.size.let { if (it == 1) "1 task" else "$it tasks" }
+                            state.screen == Nav.TEAMS -> "Teams" to teams.sumOf { it.bots.size }.let { n ->
+                                "${if (n == 1) "1 bot" else "$n bots"} · ${teams.sumOf { it.working }} working" }
                             else -> "Today" to "${pulse.machines} ${if (pulse.machines == 1) "machine" else "machines"} · ${pulse.spaces} ${if (pulse.spaces == 1) "space" else "spaces"}"
                         }
                         Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -215,9 +218,9 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
             }
         },
         // The terminal has the whole screen; the keyboard has the bar's place while it is up.
-        bottomBar = { if (Nav.barShown(Nav.Place(state.screen, state.project, state.space, selected)) && !keyboard) PocketTabs(state.screen, pulse.needsYou) { vm.navigate(it) } }
+        bottomBar = { if (Nav.barShown(Nav.Place(state.screen, state.project, state.space, selected)) && !keyboard) PocketTabs(state.screen, pulse.needsYou, teams.sumOf { it.needsYou }) { vm.navigate(it) } }
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
+        CompositionLocalProvider(LocalIconsVersion provides state.iconsVersion) { Box(Modifier.fillMaxSize().padding(padding)) {
             val rows = remember(sidebar, state.folded) { Sidebar.rows(sidebar, vm.programs, state.folded) }
             when {
                 selected != null -> TerminalScreen(vm, state, terminal, terminalSpace)
@@ -227,10 +230,12 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                 state.screen == Nav.PROJECTS && project != null -> ProjectScreen(state, vm, project, pulse, remember(rows, project) { Projects.tree(rows, project) })
                 state.screen == Nav.PROJECTS -> ProjectsScreen(state, vm, pulse, rows, spacesTree) { spacesTree = it }
                 state.screen == Nav.TASKS -> TasksScreen(vm, pulse, taskFilter) { taskFilter = it }
+                // Teams opens from the cache while no machine is connected; with nothing cached, the welcome shows instead.
+                state.screen == Nav.TEAMS && !(disconnected && teams.isEmpty()) -> TeamsScreen(state, vm, teams) { vm.selectTerminal(it) }
                 disconnected -> WelcomeScreen(state, onPair = { pairDesktop = true }, onRepair = ::repair, onConnect = { vm.connect(it) }, onPreview = vm::enterDemo)
                 else -> OverviewScreen(state, null, vm, pulse, onAll = vm::showAll)
             }
-        }
+        } }
     }
     vm.sheet.collectAsStateWithLifecycle().value?.let { StatsSheetHost(it, onDismiss = vm::closeStats) }
     if (pairDesktop) PairDialog(state.pairing, onDismiss = { pairDesktop = false }, onScan = ::scan, onPair = vm::pair)
@@ -239,16 +244,17 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
     if (newTerminal) NewTerminalDialog(state, onDismiss = { newTerminal = false }) { host, cwd, command -> vm.startTerminal(host, cwd, command); newTerminal = false }
 }
 
-/** The bottom bar: Today, Projects, Tasks, Machines. Today carries how many agents need the person. */
-@Composable fun PocketTabs(current: String, needsYou: Int, onTab: (String) -> Unit) {
+/** The bottom bar: Teams, Today, Projects, Tasks, Machines. Teams carries how many bots need the person, Today how many agents. */
+@Composable fun PocketTabs(current: String, needsYou: Int, botsNeedYou: Int, onTab: (String) -> Unit) {
     Column {
         HorizontalDivider(color = Border)
         NavigationBar(containerColor = Chrome, tonalElevation = 0.dp) {
-            listOf(Triple(Nav.TODAY, "Today", Icons.Outlined.Home), Triple(Nav.PROJECTS, "Projects", Icons.Outlined.GridView),
+            listOf(Triple(Nav.TEAMS, "Teams", Icons.Outlined.Groups), Triple(Nav.TODAY, "Today", Icons.Outlined.Home), Triple(Nav.PROJECTS, "Projects", Icons.Outlined.GridView),
                 Triple(Nav.TASKS, "Tasks", Icons.Outlined.Checklist), Triple(Nav.MACHINES, "Machines", Icons.Outlined.Computer)).forEach { (screen, label, icon) ->
                 NavigationBarItem(selected = current == screen, onClick = { onTab(screen) }, label = { Text(label, fontSize = 12.sp) },
                     icon = {
-                        if (screen == Nav.TODAY && needsYou > 0) BadgedBox(badge = { Badge(containerColor = Blocked, contentColor = OnAccent) { Text(needsYou.toString()) } }) { Icon(icon, null) }
+                        val count = when (screen) { Nav.TODAY -> needsYou; Nav.TEAMS -> botsNeedYou; else -> 0 }
+                        if (count > 0) BadgedBox(badge = { Badge(containerColor = Blocked, contentColor = OnAccent) { Text(count.toString()) } }) { Icon(icon, null) }
                         else Icon(icon, null)
                     },
                     colors = NavigationBarItemDefaults.colors(selectedIconColor = Accent, selectedTextColor = Accent, indicatorColor = Accent.copy(alpha = .12f),

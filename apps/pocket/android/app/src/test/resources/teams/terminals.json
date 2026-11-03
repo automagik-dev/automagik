@@ -1,0 +1,14 @@
+{
+  "terminals": [
+    { "address": "t1", "name": "lead", "state": "live", "cwd": "/work/example", "labels": { "bot": "b-aaaaaaaaaa" },
+      "status": { "state": "working", "app": "claude-code", "msg": "Routing the fix" }, "status_ms": 1000 },
+    { "address": "t2", "name": "builder", "state": "live", "cwd": "/work/example-wt", "labels": { "bot": "b-bbbbbbbbbb" },
+      "status": { "state": "blocked", "app": "codex", "msg": "Run the tests?", "kind": "permission" }, "status_ms": 2000 },
+    { "address": "t3", "name": "stranger", "state": "live", "cwd": "/work/example", "labels": { "bot": "b-eeeeeeeeee" },
+      "status": { "state": "done", "app": "claude-code", "msg": "Reviewed" }, "status_ms": 3000 },
+    { "address": "t4", "name": "shell", "state": "live", "cwd": "/work/site", "status": { "state": "" } },
+    { "address": "t5", "name": "old", "state": "exited", "cwd": "/work/example", "labels": { "bot": "b-cccccccccc" },
+      "status": { "state": "working" }, "status_ms": 500 }
+  ],
+  "machines": []
+}

@@ -1,6 +1,28 @@
 import java.util.Properties
 
-plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id("org.jetbrains.kotlin.plugin.compose") }
+plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id("org.jetbrains.kotlin.plugin.compose"); id("com.google.devtools.ksp") }
+
+/**
+ * Genie (`genie-clay`), the pet every bot wears until its own is fetched from the desktop, comes from the Bot team's one
+ * pet source (apps/bots-dsh/src/host/pets) at build time, into assets/pets/genie-clay: nothing is copied into git. A
+ * change to that art reaches phones with the next Pocket build, not by itself (scripts/lane.ts doesn't watch it).
+ */
+abstract class BundlePet : DefaultTask() {
+    @get:InputDirectory abstract val source: DirectoryProperty
+    @get:Input abstract val pet: Property<String>
+    @get:OutputDirectory abstract val output: DirectoryProperty
+    @TaskAction fun copy() {
+        val out = output.get().asFile
+        out.deleteRecursively()
+        val into = File(out, "pets/${pet.get()}").apply { mkdirs() }
+        for (name in listOf("pet.json", "spritesheet.webp", "sleep.webp")) File(source.get().asFile, name).copyTo(File(into, name))
+    }
+}
+val bundleGenie = tasks.register<BundlePet>("bundleGeniePet") {
+    pet.set("genie-clay")
+    source.set(rootProject.layout.projectDirectory.dir("../../bots-dsh/src/host/pets/genie-clay"))
+}
+androidComponents { onVariants { it.sources.assets?.addGeneratedSourceDirectory(bundleGenie, BundlePet::output) } }
 
 // The release key. CI passes it in the environment; a maintainer's machine keeps it in ~/.config/herdr-pocket/signing.properties.
 // Without it, builds are debug-signed and can't update, or be updated by, the published releases.
@@ -77,6 +99,14 @@ dependencies {
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     // Draws the desktop's own program icons (SVG), read from the person's desktop at runtime.
     implementation("com.caverock:androidsvg-aar:1.4")
+    // The Teams tab's local cache (SQLite through Room), so it opens at once and offline.
+    implementation("androidx.room:room-runtime:2.7.2")
+    implementation("androidx.room:room-ktx:2.7.2")
+    ksp("androidx.room:room-compiler:2.7.2")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
+    // Room's DAO tests run on the JVM under Robolectric (the gate runs unit tests only, no device).
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("androidx.test:core:1.6.1")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
 }
