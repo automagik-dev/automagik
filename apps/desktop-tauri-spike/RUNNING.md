@@ -31,3 +31,12 @@ python3 -m http.server 8771 --bind 127.0.0.1 -d test &
 
 Knobs: `SPIKE_HOME`, `SPIKE_RESOURCES`, `SPIKE_NODE`, `SPIKE_URL`, `SPIKE_PROBES`,
 `SPIKE_REPORT`, `SPIKE_BOT_URL` (top of `src-tauri/src/main.rs`).
+
+Cross-OS matrix (macOS, Ubuntu, Windows; both shells; FINDINGS.md "Cross-OS matrix"), by hand only:
+
+```sh
+gh workflow run cross-os.yml --ref spike/cross-os -f desktop_ref=<dev commit>
+```
+
+The harness is `cross-os/run.mjs` (one JSON line per check); the run summary has the table.
+`SPIKE_CDP_PORT` (Windows) opens WebView2's CDP on each Bot view.

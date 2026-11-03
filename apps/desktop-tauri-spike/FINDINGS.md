@@ -4,6 +4,9 @@ Question (D12): can a Tauri 2 thin wrapper replace the Electron app in `apps/des
 Throwaway spike, measured on one Mac (Apple silicon, macOS 26.5.2) on 2026-11-02.
 Tauri 2.12.5, wry 0.57.1, system WKWebView. How to run it: RUNNING.md.
 
+> **Cross-OS (2026-11-03):** Electron is the only wrapper that passes every check on macOS, Linux and
+> Windows. Tauri's Bot automation over CDP works only on Windows (WebView2). See "Cross-OS matrix" at the end.
+
 ## Recommendation: no-go as a drop-in replacement today; go for a follow-up spike on one blocker
 
 Tauri does what the wrapper needs: it starts DSH, signs in, draws the page and answers IPC from
@@ -218,3 +221,131 @@ browser, GPU, network and renderer processes. The recommendation stays the same:
 replacement. Memory alone does not justify a port; the WKWebView Bot-driver spike decides between
 "Tauri everywhere" and "Tauri shell + Chromium only while a Bot browses". Before D12 cites these
 numbers, redo the six runs (and the 2-view runs) with the screen unlocked.
+
+## Cross-OS matrix
+
+Question (Felipe, 2026-11-03): which desktop wrapper works on every OS? `.github/workflows/cross-os.yml`
+(run by hand only) builds today's Electron app (apps/desktop at dev `dbcb95c`: Automagik 3.57.0,
+Electron 44.5.0, dsh 0.2.1-rc.5) and this spike on GitHub's macos-latest (Apple M1 virtual, 3 vCPU,
+7 GB), ubuntu-24.04 (x64, 4 vCPU, 16 GB, xvfb and a D-Bus session) and windows-latest (x64, 4 vCPU,
+16 GB). Results: runs [41583307473](https://github.com/automagik-dev/automagik/actions/runs/41583307473)
+and [41585438311](https://github.com/automagik-dev/automagik/actions/runs/41585438311), same app
+commit. Run [41580712280](https://github.com/automagik-dev/automagik/actions/runs/41580712280)
+found the CI problems listed under "Harness". The harness is `cross-os/run.mjs`. Each check writes
+one JSON line (`cross-os-out-<os>` artifacts), and the Report job renders them into the run summary.
+
+### Recommendation: Electron is the only wrapper that works on every OS; keep it (option C)
+
+- **Electron passes every step on all three OSes.** On each one it builds, packages, loads DSH's
+  page and opens two Bot views with isolated, persistent stores, through the real app's
+  `dsBotApp.browser` and bot-views.js. Bots drive those views over CDP (debugger.attach). What it
+  takes to ship on Windows is listed below; none of it is a wrapper limit.
+- **Tauri works everywhere except Bot browser automation.** It builds, packages, loads DSH and gives
+  each Bot its own persistent store on all three OSes. CDP works only on Windows (WebView2). macOS
+  (WKWebView) and Linux (WebKitGTK) have no CDP, so Playwright cannot attach. A Tauri app would need
+  a separate Chromium for Bots on two OSes and a WebView2 path on the third. Bots would then behave
+  differently per OS, which D13's "same app on every OS" rules out. This confirms the council
+  dissent and settles its "WebView2 CDP" evidence gap: WebView2 exposes CDP, and the blocker
+  remains on macOS and Linux.
+- **Tauri's memory win depends on the OS.** Shell overhead (total RSS without DSH) at idle: about
+  0.2–0.3 GB less on macOS (441–542 against 720–723 MB) and about 0.42 GB less on Linux (537–544
+  against 961–965 MB). On Windows it is the same (478–481 against 523–527 MB). With two Bot views
+  Windows reverses: each Bot's data directory is a WebView2 browser of its own, so 20 processes and
+  1003–1010 MB against Electron's 8 processes and 718–721 MB.
+- **herdr-app is not the OS blocker.** The Homebrew cask `penso/tap/herdr-gpui` is macOS-only
+  (`depends_on macos: :sonoma`). The GitHub releases of penso/herdr-gpui (v20261102.2) also ship
+  Linux builds (deb, rpm, pkg.tar.zst and tar.gz, x86_64 and aarch64) and Windows builds (setup.exe
+  and zip, x86_64 and aarch64). `herdr-gpui --help` runs on all three runners. This proves only
+  that the binary runs: no daemon or window was started.
+
+What Electron needs before it ships on Windows (found here, not fixed: apps/desktop is unchanged):
+
+1. `scripts/prepare-runtime.mjs` runs `npm.cmd` through `execFileSync` without a shell. Node ≥
+   18.20.2 refuses that with `spawnSync npm.cmd EINVAL` (CVE-2024-27980). Fix: `shell: true` for
+   `.cmd`, as `cross-os/win-cmd-shim.cjs` does for the matrix.
+2. A Windows code-signing certificate (none in the repo). Until one signs the installers,
+   SmartScreen warns on every download.
+3. A `win` section in electron-builder.yml and a Windows update feed. The matrix built nsis and msi
+   from electron-builder's defaults.
+4. dsh.js `writeTools` writes `#!/bin/sh` shims for `node` and `pnpm`, which do not run on Windows.
+   DSH's page loads anyway; plugin installs that go through those shims were not tested.
+
+On Linux, the app's own Bot browser smoke test fails 4 of 24 checks in all three runs (details in
+the table). The other three OSes pass 24 of 24.
+
+### Per-OS results
+
+| Step | Shell | macOS (arm64) | Ubuntu 24.04 | Windows |
+|---|---|---|---|---|
+| 1. Build | Electron | **works** | **works** | **degraded**: `prepare-runtime.mjs` fails with `spawnSync npm.cmd EINVAL`; builds with `shell: true` for `.cmd` (fix 1 above) |
+| 1. Build | Tauri | **works** | **works** | **works** (after gating the spike's macOS-only calls, see "Harness") |
+| 2. DSH page (omni profile, temp home), first and warm launch | Electron | **works** | **works** | **works** |
+| 2. DSH page | Tauri | **works** | **works** | **works** |
+| 3. 2 Bot views: isolated stores | Electron | **works** (real app: `dsBotApp.browser.views`, persist partitions) | **works** | **works** |
+| 3. 2 Bot views: isolated stores | Tauri | **works** (WKWebsiteDataStore per Bot) | **works** (`data_directory` per Bot) | **works** (`data_directory` per Bot: one WebView2 browser per Bot) |
+| 3. 2 Bot views: persistent across relaunch | Electron | **works** | **works** | **works** |
+| 3. 2 Bot views: persistent across relaunch | Tauri | **works** | **works** | **works** |
+| 4. Bot browser automation | Electron | **works**: `scripts/browser-smoke.mjs` 24/24 (Playwright `connectOverCDP` through bot-relay.js `debugger.attach`) | **degraded**: 20/24, the same 4 in all 3 runs. After a forced renderer crash the relay does not drop the Bot's connection within 10 s; the next 3 checks (cursor follows a click, cursor on the next session, closing tabs closes the cursor) time out on `page.goto` or `connectOverCDP`. Not investigated further | **works**: 24/24 (exit 1 only from the temp folder's cleanup, EPERM) |
+| 4. Bot browser automation | Tauri | **broken**: WKWebView has no CDP endpoint and no switch for one; only DSH listens in the app's process tree | **broken**: WebKitGTK's inspector server (`WEBKIT_INSPECTOR_HTTP_SERVER`) speaks WebKit's own protocol; `/json/version` answers 404 and `connectOverCDP` fails | **works**: `--remote-debugging-port` per Bot view (`additional_browser_args`); Playwright `connectOverCDP` ran evaluate, screenshot, a trusted click and a `route` abort. Needs one TCP debug port per Bot, which the council's security lens rules out; WebView2's `CallDevToolsProtocolMethod` is a port-free relay like Electron's, untested |
+| 6. Package (unsigned) | Electron | **works**: dmg | **works**: AppImage, deb | **works**: nsis exe, msi |
+| 6. Package (unsigned) | Tauri | **works**: dmg | **works**: AppImage, deb | **works**: nsis exe, msi |
+| 6. Signing | both | **degraded**: ad-hoc (linker-signed) only. Blocker: Developer ID and notarization (release.yml has the secrets for Electron; Tauri's bundler takes the same identity, and its updater needs a new minisign key) | **works**: AppImage and deb need no signature | **degraded**: `NotSigned`. Blocker: no Windows code-signing certificate in the repo |
+| 7. herdr-app build for the OS | herdr-gpui | **works**: cask and dmg (macOS 14+) | **works**: 8 builds in GitHub releases, none in the cask | **works**: 4 builds in GitHub releases, none in the cask |
+| 7. herdr-app binary runs (`--help`) | herdr-gpui | **works** | **works** (needs `libxkbcommon-x11-0`) | **works** (`herdr-gpui.exe`) |
+
+### Numbers (run 2 / run 3)
+
+These are CI VMs with no GPU (Linux under xvfb with software rendering), so compare within an OS
+only. Times are ms from process start. Page: Electron's start.log `page in` (`did-finish-load`),
+Tauri's bridge `load`. RSS is the app's process tree, plus WebKit's XPC services on macOS. On
+Windows it is the working set. Read 60 s after the page was drawn.
+
+| | macOS Electron | macOS Tauri | Linux Electron | Linux Tauri | Windows Electron | Windows Tauri |
+|---|---|---|---|---|---|---|
+| Warm launch: DSH ready | 2930 / 3741 | 3072 / 5069 | 2003 / 1589 | 4682 / 1814 | 3445 / 2109 | 3139 / 1998 |
+| Warm launch: page | 11591 / 12664 | 6911 / 10151 | 3261 / 2555 | 7657 / 4313 | 5437 / 3348 | 5106 / 3308 |
+| First launch: page | 13090 / 29737¹ | 9634 / 13497 | 4237 / 3396 | 13566 / 6368 | 9794 / 6487 | 14003 / 10406 |
+| Idle RSS total (MB) | 942 / 994 | 799 / 903 | 1183 / 1255 | 923 / 915 | 712 / 712 | 699 / 689 |
+| … without DSH (the shell) | 720 / 723 | 441 / 542 | 965 / 961 | 537 / 544 | 523 / 527 | 481 / 478 |
+| … DSH | 222 / 272 | 359 / 361 | 218 / 294 | 386 / 372 | 189 / 185 | 218 / 211 |
+| 2 Bot views: total (MB) | 1126 / 1183 | 877 / 1046 | 1400 / 1464 | 1338 / 1335 | 907 / 907 | 1360 / 1214 |
+| … without DSH | 912 / 911 | 534 / 669 | 1174 / 1170 | 969 / 971 | 718 / 721 | 1003 / 1010 |
+| … processes | 8 | 7 | 11 | 8 | 8 | 20 |
+| Installed app (MB) | 737 | 6.1 + 428 runtime and profile | 714 | 5.5 + 429 | 826 | 7.0 + 457 |
+| Installers (MB) | dmg 275 | dmg 3.9 | AppImage 257, deb 200 | AppImage 78, deb 2.4 | exe 241, msi 244 | exe 1.8, msi 2.6 |
+
+¹ The harness's "content seen" time (start.log had no `page in` line yet when it was read).
+
+- **Start time is not a reason to switch.** On Linux and Windows, Electron is at least as fast. On
+  macOS, Electron's 8–9 s from DSH ready to page is a property of this VM: on a real Mac it is
+  0.7–1.1 s ("Cold start" above). Do not quote the macOS CI times.
+- **Tauri's DSH is larger on macOS and Linux** (359–386 against 218–294 MB). It runs on the
+  runner's Node 24.22 instead of Electron's own. The "without DSH" rows compare the shells.
+- **Tauri's sizes leave out Node.** A release has to ship one (about +116 MB on macOS, see blocker
+  3) or install one. The 2.4 MB deb and the 2–3 MB Windows installers are the shell alone.
+
+### Harness
+
+- **The spike on Linux and Windows:** `src-tauri/src/main.rs` gates its macOS-only calls with
+  `cfg`: title bar style, `data_store_identifier` (replaced by `data_directory` per Bot), `kill`
+  (replaced by `taskkill`), `cp -R` (replaced by Node's `fs.cpSync`) and the `#!/bin/sh` tool shims
+  (replaced by `.cmd` files). `node.exe` is looked up on PATH. `SPIKE_CDP_PORT` opens WebView2's
+  CDP per Bot view. `icons/icon.ico` was added for Windows.
+- **Bot views in Electron:** the matrix drives the packaged app's own views. Through CDP on DSH's
+  page it calls `dsBotApp.browser.views.create`, `place` and `read` (`test/bot.html` also leaves its
+  result in `window.__probe`). Automation is the app's `scripts/browser-smoke.mjs`, unchanged.
+- **CI-only fixes from run 1:**
+  - Linux has no D-Bus session bus, so GTK waits 25 s (the D-Bus timeout) before Tauri's setup
+    runs. Run 1 put Tauri's "DSH ready" at 26 s for that reason; runs 2–3 use `dbus-run-session`
+    for both shells.
+  - Windows runners check files out with CRLF line endings, and `runtime-patches.mjs` then rejects
+    its own patches (`changes …lib/index.js, but patches.json lists …lib/index.js`, with a hidden
+    `\r`). Runs 2–3 check out with `core.autocrlf false`. A Windows developer with autocrlf on
+    hits the same error.
+  - On Windows, ephemeral ports are handed out in order, so DSH took the CDP port meant for
+    bot a. CDP ports now come from below the ephemeral range.
+- **Registering the workflow:** GitHub dispatches only workflows it has registered, and a file that
+  exists only on a branch is registered only by a push or PR run. With Felipe's OK, one commit
+  carried a push trigger whose jobs were all skipped (run 41580685041); the next commit removed it.
+- **Not tested:** voice, real signing and notarization, the updater, Arca, a herdr daemon or
+  window, WebView2's `CallDevToolsProtocolMethod`, and plugin installs through DSH on Windows.
