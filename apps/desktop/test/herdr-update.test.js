@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { NO_FOCUS } from '../src/herdr.js'
 import {
-  APP_UPDATE_MS, FEED, OFFLINE, compareVersions, downloadVerified, installOf, openLatest, readFeed, targetOf, versionIn,
+  APP_UPDATE_MS, FEED, OFFLINE, compareVersions, downloadVerified, installFromFeed, installOf, openLatest, readFeed, targetOf, versionIn,
 } from '../src/herdr-update.js'
 
 const posixOnly = { skip: process.platform === 'win32' ? 'the fake herdr-app is a sh script' : false }
@@ -311,4 +311,54 @@ test('a download is bounded in size, and its file is gone when its sha256 is wro
   await assert.rejects(downloadVerified('https://x/y', join(dir, 'c'), 'b'.repeat(64), { fetch }), /is not the feed's/)
   assert.equal(existsSync(join(dir, 'c')), false)
   await assert.rejects(downloadVerified('https://x/y', join(dir, 'd'), sha, { fetch: async () => new Response('', { status: 404 }) }), /HTTP 404/)
+})
+
+// macOS without a Mac: the file system is real (a temp ~/Applications), every program is a fake
+// execFile, so the argv herdrdev's installer steps would run is what is checked.
+test('macOS: an ad hoc build gets the installer\'s PATH and an ad hoc signature, then lsregister', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'herdr-mac-'))
+  const app = join(home, 'Applications', 'Herdr.app')
+  mkdirSync(join(app, 'Contents', 'MacOS'), { recursive: true })
+  writeFileSync(join(app, 'Contents', 'MacOS', 'Herdr'), 'old')
+  const tarball = Buffer.from('a tarball')
+  const sha256 = createHash('sha256').update(tarball).digest('hex')
+  const ran = []
+  const execFile = (file, args, _options, done) => {
+    ran.push([file, ...args])
+    if (file === '/usr/bin/tar') {
+      const stage = args[args.indexOf('-C') + 1]
+      mkdirSync(join(stage, 'Herdr.app', 'Contents', 'MacOS'), { recursive: true })
+      writeFileSync(join(stage, 'Herdr.app', 'Contents', 'MacOS', 'Herdr'), 'new')
+      return done(null, '', '')
+    }
+    if (file === '/usr/bin/codesign' && args[0] === '-dvv') return done(null, '', 'Executable=…\nSignature=adhoc\n')
+    if (file.endsWith('/Contents/MacOS/Herdr') && args[0] === '--version') return done(null, `herdr-app ${NEW}\n`, '')
+    done(null, '', '')
+  }
+  const found = { source: 'install', bin: join(app, 'Contents', 'MacOS', 'Herdr'), app }
+  const feed = { version: NEW, url: TAR_URL, sha256 }
+  assert.equal(await installFromFeed({ platform: 'darwin', found, feed, home, fetch: async () => new Response(tarball), execFile }), NEW)
+  assert.equal(readFileSync(join(app, 'Contents', 'MacOS', 'Herdr'), 'utf8'), 'new')
+  const steps = ran.map(([file, ...args]) => [file.split('/').pop(), ...args.map(arg => arg.replace(home, '~').replace(/\.herdr-update-[^/]+/, '<stage>'))])
+  assert.deepEqual(steps, [
+    ['tar', '-xzf', '~/Applications/<stage>/app.tar.gz', '-C', '~/Applications/<stage>'],
+    ['codesign', '-dvv', '~/Applications/<stage>/Herdr.app'],
+    ['PlistBuddy', '-c', `Add :LSEnvironment:PATH string ~/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`, '~/Applications/<stage>/Herdr.app/Contents/Info.plist'],
+    ['codesign', '--force', '--sign', '-', '~/Applications/<stage>/Herdr.app'],
+    ['Herdr', '--version'],
+    ['lsregister', '-f', '~/Applications/Herdr.app'],
+  ])
+  assert.deepEqual(readdirSync(join(home, 'Applications')), ['Herdr.app'])
+  // A Developer ID build is only verified, never changed; a failed check leaves the old app.
+  writeFileSync(join(app, 'Contents', 'MacOS', 'Herdr'), 'old')
+  ran.length = 0
+  const signed = (file, args, options, done) => {
+    if (file === '/usr/bin/codesign' && args[0] === '-dvv') return done(null, '', 'Authority=Developer ID Application: Herdr (TEAM)\n')
+    if (file === '/usr/bin/codesign' && args[0] === '--verify') { ran.push(['verify']); return done(Object.assign(new Error('x'), { code: 1 }), '', 'a sealed resource is missing') }
+    execFile(file, args, options, done)
+  }
+  await assert.rejects(installFromFeed({ platform: 'darwin', found, feed, home, fetch: async () => new Response(tarball), execFile: signed }), /invalid app signature: a sealed resource is missing/)
+  assert.equal(ran.some(([file]) => String(file).endsWith('PlistBuddy')), false)
+  assert.equal(readFileSync(join(app, 'Contents', 'MacOS', 'Herdr'), 'utf8'), 'old')
+  assert.deepEqual(readdirSync(join(home, 'Applications')), ['Herdr.app'])
 })
