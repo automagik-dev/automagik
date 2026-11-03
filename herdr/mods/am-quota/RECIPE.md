@@ -3,10 +3,14 @@
 One account per client, and the handoff before a window runs dry. The left sidebar panel lists every
 Claude Code and Codex account the CLIProxyAPI knows, with its window, and switches the *local*
 credentials so the clients use the one you pick — no proxy in the traffic path, no rewiring.
+It also keeps **saved Claude logins**: the Claude Code accounts you have signed in to on this Mac,
+each in its own Keychain item, so swapping between them needs no new sign-in — with or without a
+proxy.
 
 ## Setup
 
-The panel reads two files and does not create either of them:
+Saved logins need no setup. For the proxy's accounts the panel reads two files and does not create
+either of them:
 
 - **`~/.config/herdr-app/cliproxy.json`** (or `$HERDR_APP_HOME/cliproxy.json` when that variable
   moves the app home) — JSON with one key for this panel:
@@ -40,6 +44,15 @@ red as the window fills), and `N% used · resets in <time>`, plus `no window`, `
 does not answer, a second line says the windows are unknown instead of showing a column of
 `no window`. A row this panel installed that no longer matches what is on the machine reads
 `changed outside this panel`.
+
+Under the proxy's accounts, **Saved Claude logins**: a name box (`save this login as…`, Enter saves)
+and one row per saved login — its name, `in use` on the one the panel last put in place, the email
+and organisation when the token data carries them (the current CLI's does not, so the row shows the
+plan, e.g. `max plan`), `saved <time> ago`, and **Use**, **Re-save** and **Forget** (plus
+**Restore previous** once a re-save has replaced another copy). Forget, and
+Re-save on a row that is not in use, ask for a second click (`Forget?`, `Replace <name>?`) within
+five seconds. With no proxy configured the panel shows a dim line saying so, and the saved logins
+work as usual.
 
 ## How it behaves
 
@@ -76,6 +89,40 @@ does not answer, a second line says the windows are unknown instead of showing a
   in `argv` and, read from the prompt, truncates at 128 bytes. It is read back before success is
   reported, because an over-long `-i` line can store a truncated item and still exit 0. The scratch
   file is deleted afterwards, success or failure.
+- **Saving a login** (`save this login as…`, or Re-save): the client's current login — the Keychain
+  item the CLI reads, `Claude Code-credentials` or a `CLAUDE_CONFIG_DIR` profile's own suffixed
+  item — is copied out to a `0600` file in the `0700` payload folder, read, and the copy removed;
+  only its `claudeAiOauth` is written into the saved login's own item, `am-quota saved: <name>`,
+  through the same hex `security -i` add and read-back as a switch (`saved.js`). The client's item
+  is only read. On Linux the saved copy is `<app home>/data/am-quota/saved/<name>.json`, `0600` in
+  a `0700` folder, written by temp file + atomic rename with no dated backups. A name is up to 32
+  letters, digits, `.`, `_` or `-`. `data/am-quota/saved.json` lists the names with their plan
+  (and email/org when present) and when they were saved — never a token.
+- **Using a saved login** (`Use`), under the same one-at-a-time lock: the chosen copy is read first
+  (a missing one changes nothing); then the login in use is **re-saved into its own saved copy**,
+  because Claude rotates the refresh token as it is used and the stored copy must be the newest;
+  then the chosen login goes into the client's item through the switch's path — merged (only
+  `claudeAiOauth` changes), the old item backed up, read back, put back on failure. If the login in
+  use is not a saved one, Use refuses: "the login in use is not saved, so it would be lost — save it
+  first". The record in `active.json` names the saved login, and the note says to restart:
+  `automagik-herdr restart <bot>` resumes a bot on the new account.
+- **A proxy switch while a saved login is in use** re-saves that login first too, then installs the
+  proxy's account as before.
+- **A re-save never loses a copy.** When a re-save replaces a copy holding another refresh token,
+  the replaced one is kept first as `am-quota saved: <name> (previous)` (on Linux
+  `saved/previous/<name>.json`). The row then shows **Restore previous**, which swaps the two back
+  — so a re-save into the wrong name (see below) is undone with one click. **It is one level deep:
+  Restore previous works only until the next re-save into that name**, which replaces the previous
+  copy with the one it overwrites. Restore soon, before using or re-saving that name again.
+- **Not on the row in use.** There the panel shows a note instead of Restore previous: Claude still
+  holds the login in use, so the next Use would re-save it over the restored copy and the restore
+  would flip back. Save the login in use under its own name first; the row is then no longer in
+  use, and Restore previous appears.
+- **Forget** removes the saved item and its previous copy (and proves them gone), or the files, and
+  then its line in the index. The login in use is not changed.
+- If the app's environment cannot be read, the panel does not know whether a `CLAUDE_CONFIG_DIR`
+  is set, so Save, Use, Re-save, Forget, Restore and a Claude proxy switch refuse rather than act
+  on the default login. A failed `active.json` write is shown as an error.
 - **After a switch**: the panel records `<provider> → <credential name + token fingerprint>` in
   `data/am-quota/active.json` and says "restart new sessions (or /restart an open one)". Sessions
   already running keep the old account — that is the client's behaviour, not a defect.
@@ -89,10 +136,11 @@ does not answer, a second line says the windows are unknown instead of showing a
 samples, pure), `translate.js` (proxy credential → client credential, item merge, Keychain service
 name, fingerprints; pure apart from the `shasum` lookup), `write.js` (the shell that writes; pure),
 `switch.js` (the install flow, with its shell and files injected so it is tested end to end),
+`saved.js` (saved logins: save, re-save, use, forget — the same injection, the same write path),
 `lock.js` (one switch at a time), `mod.json` (`place: none`), `LICENSE`, `DESIGN.md` (endpoints,
 writers, secret rules), and tests for every module in the repository's `test/`.
 
-Herdr API: `exec`, `theme`, `appHome`, `home`, `readTextFile`, `writeTextFile`, `fs/promises`; the
+Herdr API: `exec`, `theme`, `appHome`, `home`, `readTextFile`, `writeTextFile`, `fs/promises`, `gpui-base`'s `Input`; the
 runtime's `fetch`. Programs: `sh`, `security` (macOS Keychain), `od`/`tr` for the hex encoding.
 
 ## Watch out
@@ -108,6 +156,16 @@ runtime's `fetch`. Programs: `sh`, `security` (macOS Keychain), `od`/`tr` for th
 - `CODEX_HOME` and `CLAUDE_CONFIG_DIR` are honoured: the panel writes where the client would read —
   including the separate Keychain item a `CLAUDE_CONFIG_DIR` profile reads.
 - A provider with no window is shown but never suggested (nothing to project).
+- **Which saved login is in use is the panel's record**, not something the token can say: a rotated
+  refresh token cannot be told from another account's. If you `/login` as a different account
+  outside the panel, Use would re-save it under the old name — so before re-saving, the panel
+  compares the login in use with that name's saved copy (plan, rate tier, scopes) and refuses on a
+  mismatch: "the login in use does not look like <name> — save it under its own name, or Re-save
+  <name> to confirm". Two accounts on the same plan look alike; after a `/login` outside the panel,
+  save the new login under its own name before pressing Use. If a wrong re-save happens anyway, the
+  account it replaced is that row's previous copy: **Restore previous** puts it back.
+- A saved copy whose refresh token has been used elsewhere since (another machine, the proxy) is
+  stale: Use installs it, and Claude asks you to sign in. Sign in, then Re-save that row.
 - The proxy's quota extension (`cpa-quota-api-extension`) supplies the windows; without it the panel
   still lists accounts and shows the error line, with no advice.
 
@@ -116,4 +174,5 @@ runtime's `fetch`. Programs: `sh`, `security` (macOS Keychain), `od`/`tr` for th
 `herdr-app check mods/am-quota` passes; the panel lists both providers' accounts with their windows;
 `Use` rewrites the file (and the Keychain item for Claude — the profile's own item under a
 `CLAUDE_CONFIG_DIR`) with a backup and a 0600 permission; the next `claude`/`codex` run is on the
-chosen account; no token appears in any log, notify or state.
+chosen account; a saved login swaps in with no sign-in and no proxy, after the one in use was
+re-saved; no token appears in any log, notify or state.

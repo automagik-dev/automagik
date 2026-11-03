@@ -85,9 +85,36 @@ describe('the herdr lane', () => {
     expect(postedProblem(older.bytes, newer.bytes, newer.sig, keys)).toMatch(/names 3\.60\.0 \(sequence 600000\), newer than 3\.58\.0 \(sequence 580000\): refusing to post an older one/);
     expect(postedProblem(newer.bytes, older.bytes, older.sig, keys)).toBeNull();
     expect(postedProblem(newer.bytes, newer.bytes, newer.sig, keys)).toBeNull();
-    // A posted pointer that does not verify (another key, or no signature) is replaced, not obeyed.
-    expect(postedProblem(older.bytes, newer.bytes, signPointer(newer.bytes, pair().priv), keys)).toBeNull();
-    expect(postedProblem(older.bytes, newer.bytes, null, keys)).toBeNull();
+  });
+
+  test('posted: an unverifiable posted pointer is refused unless the release says to replace it', () => {
+    const key = pair();
+    const keys = [{ keyId: KEY_ID, publicKey: key.pub }];
+    const at = (version: string) => {
+      const file = join(dir, `automagik-herdr-pack-${version}.tgz`);
+      writeFileSync(file, version);
+      const bytes = Buffer.from(JSON.stringify(pointer(file, { version, commit, issuedAt: 'x' })));
+      return { bytes, sig: signPointer(bytes, key.priv) };
+    };
+    const newer = at('3.60.0');
+    const older = at('3.58.0');
+    const replace = { replaceUnverified: true };
+    const refused = /does not verify \((.+)\), so its sequence is unknown: refusing to replace it/;
+    // Signed by a key pack-keys.json no longer lists (an old key removed, an old release re-run).
+    const removedKey = postedProblem(older.bytes, newer.bytes, newer.sig, []);
+    expect(removedKey).toMatch(refused);
+    expect(removedKey).toContain(`no key ${KEY_ID}`);
+    expect(removedKey).toContain('replace_unverified_herdr_pointer=true');
+    // Another key's signature, a signature alone, a pointer alone, a pointer that is not JSON.
+    expect(postedProblem(older.bytes, newer.bytes, signPointer(newer.bytes, pair().priv), keys)).toMatch(/the signature does not match/);
+    expect(postedProblem(older.bytes, newer.bytes, null, keys)).toMatch(/pack\.json\.sig is missing/);
+    expect(postedProblem(older.bytes, null, newer.sig, keys)).toMatch(/pack\.json is missing/);
+    expect(postedProblem(older.bytes, Buffer.from('<html>'), newer.sig, keys)).toMatch(refused);
+    // The override replaces only what does not verify: a verified higher sequence still stops it.
+    expect(postedProblem(older.bytes, newer.bytes, newer.sig, [], replace)).toBeNull();
+    expect(postedProblem(older.bytes, newer.bytes, null, keys, replace)).toBeNull();
+    expect(postedProblem(older.bytes, newer.bytes, newer.sig, keys, replace)).toMatch(/refusing to post an older one/);
+    expect(postedProblem(older.bytes, null, null, keys, replace)).toBeNull();
   });
 
   test('install.sh embeds the same keys pack-keys.json lists, and keygen rewrites both alike', () => {

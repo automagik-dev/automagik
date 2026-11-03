@@ -122,7 +122,12 @@ plugins (`scripts/herdr-lane.ts`):
   or no update yet).
 - The pointer never goes back: before it posts, the release downloads the posted pointer, and
   `herdr-lane.ts posted` refuses to post one whose sequence is lower than a posted pointer that
-  verifies (a re-run of an older release's run). A posted pointer that does not verify is replaced.
+  verifies (a re-run of an older release's run). It fails closed: only "nothing posted yet" (no
+  release, no assets) lets it post without that check; any other error reading the posted pointer
+  stops the run. A posted pointer that does not verify (its key since removed from
+  `pack-keys.json`, a bad signature, only one of the two files) is refused too, since its sequence
+  cannot be trusted; an operator who has checked it dispatches the release with
+  `replace_unverified_herdr_pointer=true` to post over it (#207, L1).
 - `pack.json.sig` is ed25519 over the exact bytes of `pack.json`, detached and base64, as
   `scripts/lane.ts sign` makes `lane.json.sig`. It is made with a key of the pack's own, the
   `HERDR_PACK_KEY` Actions secret, never `PLUGIN_LANE_KEY` (t22n's recommendation, t259's ruling): a

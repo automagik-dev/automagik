@@ -51,6 +51,9 @@ name: Release
 #
 # A push to dev (a merged pull request) cuts one; so does follow-omni.yml (workflow_call), and a
 # dispatch: gh workflow run release.yml --ref dev [--field prerelease=true] [--field desktop=false]
+# [--field replace_unverified_herdr_pointer=true] (only when the posted herdr-lane pointer no longer
+# verifies, e.g. its key left pack-keys.json, and you have checked its sequence is not newer: the
+# release otherwise refuses to post over it; scripts/herdr-lane.ts posted).
 # The workflow's own pushes (the version commit, the index listing, follow-omni's pin) start no
 # run: GitHub starts none for a push made with the workflow token. A dev that has nothing since the
 # last release but those commits cuts nothing. Cuts queue one at a time; a merge that lands while
@@ -86,6 +89,11 @@ on:
         required: false
         type: boolean
         default: true
+      replace_unverified_herdr_pointer:
+        description: 'Post the herdr lane over a posted pointer that does not verify (RFC 0011)'
+        required: false
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       prerelease:
@@ -98,6 +106,11 @@ on:
         required: false
         type: boolean
         default: true
+      replace_unverified_herdr_pointer:
+        description: 'Post the herdr lane over a posted pointer that does not verify (RFC 0011)'
+        required: false
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -333,15 +346,21 @@ jobs:
           POCKET: ${{ steps.lane.outputs.pocket }}
         run: |
           set -euo pipefail
-          flags=(--latest)
-          [[ "${PRERELEASE}" == "true" ]] && flags=(--prerelease)
-          # A plugin, herdr or pocket patch is not the Latest release: the desktop app's builds stay on the full one.
-          [[ "${KIND}" == "plugins" || "${KIND}" == "herdr" || "${KIND}" == "pocket" ]] && flags=(--latest=false)
           notes="\`@automagik/acp-dsh\`, \`@automagik/bots-dsh\`, \`@automagik/locale-pt-br-dsh\`, \`@automagik/welcome-dsh\` for DeepSeek Harness, and the Automagik desktop app. Install the plugins from the [Automagik market](https://github.com/automagik-dev/dsh-marketplace) or from an Omni's own market; \`plugins.json\` lists each tarball's integrity. The desktop builds follow when they are done."
           [[ "${KIND}" == "herdr" ]] && notes="The Automagik Herdr pack alone (no plugins, no desktop build)."
           [[ "${KIND}" == "pocket" ]] && notes="Automagik Pocket (no plugins, no desktop build)."
           [[ "${HERDR}" == "yes" ]] && notes="${notes} Automagik Herdr: \`automagik-herdr-pack-${VERSION}.tgz\` (its sha256 in \`.sha256\`); install with \`curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash\`, or run \`automagik-herdr update\`."
           [[ "${POCKET}" == "yes" ]] && notes="${notes} Automagik Pocket: \`automagik-pocket-${VERSION}.apk\` follows (the Pocket job) with \`latest.json\`; installed phones update on their own."
+          # Flags add up: a dispatched prerelease stays a prerelease whatever its kind, and only a
+          # full stable release is Latest. A plugin, herdr or pocket patch is not Latest: the desktop
+          # app's builds stay on the full one.
+          flags=()
+          [[ "${PRERELEASE}" == "true" ]] && flags+=(--prerelease)
+          if [[ "${PRERELEASE}" == "true" || "${KIND}" == "plugins" || "${KIND}" == "herdr" || "${KIND}" == "pocket" ]]; then
+            flags+=(--latest=false)
+          else
+            flags+=(--latest)
+          fi
           # A pocket patch with no herdr/ change packs nothing here (its APK follows in the Pocket
           # job): the release then starts with no file, never with a literal "release/*".
           shopt -s nullglob
@@ -358,6 +377,7 @@ jobs:
           VERSION: ${{ steps.cut.outputs.version }}
           SHA: ${{ steps.cut.outputs.sha }}
           HERDR_PACK_KEY: ${{ vars.HERDR_PACK_SIGNER == 'HERDR_PACK_KEY_NEXT' && secrets.HERDR_PACK_KEY_NEXT || secrets.HERDR_PACK_KEY }}
+          HERDR_LANE_REPLACE_UNVERIFIED: ${{ inputs.replace_unverified_herdr_pointer }}
         run: |
           set -euo pipefail
           mkdir -p herdr-lane
@@ -370,9 +390,19 @@ jobs:
               --notes "pack.json names the newest Automagik Herdr pack (its tarball stays on its own versioned release); pack.json.sig is its ed25519 signature, checked against herdr/mods/am-sidebar/pack-keys.json. See scripts/herdr-lane.ts."
           fi
           # Never back: a re-run of an older release's run must not re-post an older pointer over a
-          # newer one. A posted pointer that does not verify is replaced.
+          # newer one. Only "nothing posted yet" lets it post blind; any other error reading the
+          # posted pointer stops the run (re-run it), and a posted pointer that does not verify is
+          # replaced only when the run was dispatched with replace_unverified_herdr_pointer.
           mkdir -p herdr-lane/posted
-          gh release download herdr-lane --repo "${GITHUB_REPOSITORY}" -p pack.json -p pack.json.sig -D herdr-lane/posted --clobber 2>/dev/null || true
+          if ! gh release download herdr-lane --repo "${GITHUB_REPOSITORY}" -p pack.json -p pack.json.sig -D herdr-lane/posted --clobber 2> herdr-lane/download.err; then
+            if grep -qE '^(release not found|no assets match the file pattern|no assets to download)$' herdr-lane/download.err; then
+              echo "herdr lane: nothing posted on herdr-lane yet"
+            else
+              cat herdr-lane/download.err >&2
+              echo "::error::herdr lane: could not read the posted pointer; refusing to post blind (re-run the job)"
+              exit 1
+            fi
+          fi
           bun scripts/herdr-lane.ts posted herdr-lane/pack.json herdr-lane/posted
           # --clobber replaces each asset in turn, so a reader may briefly see a pointer and a
           # signature that do not match, or neither: both fail closed (refused, or no update yet).

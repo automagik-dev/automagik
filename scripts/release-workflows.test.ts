@@ -1,5 +1,7 @@
 // The release workflows' shell, run as written with a fake gh: the desktop build keeps the cut's
-// signed lane on the release, and the cut retries the lane's upload to its versioned release.
+// signed lane on the release, the cut retries the lane's upload to its versioned release, the cut
+// publishes with flags that add up (a prerelease plugin or herdr patch stays a prerelease), and the
+// cut posts the herdr lane blind only when nothing is posted yet.
 import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -165,5 +167,108 @@ describe('commitlint over a pull request that imports a repository with its hist
     expect(side.status).toBe(1);
     expect(side.out).toContain('is not conventional: wip on a side branch');
     expect(side.out).not.toContain('skipped');
+  });
+});
+
+describe('the cut choosing how to publish its release', () => {
+  const lines = workflow('release.yml');
+  const step = lines.findIndex(line => line.includes('name: Publish the release'));
+  const start = lines.findIndex((line, i) => i > step && line.trim() === 'flags=()');
+  const end = lines.findIndex((line, i) => i > start && line.trim().startsWith('gh release create "v${VERSION}"'));
+  const block = step > -1 && start > step && end > start ? lines.slice(start, end).join('\n') : '';
+
+  const flags = (env: { PRERELEASE: string; KIND: string }) => {
+    const run = bash(`${block}\nprintf '%s\\n' "\${flags[@]}"`, [], env);
+    expect(run.status).toBe(0);
+    return run.out.trim().split('\n');
+  };
+
+  test('is found as the step writes it', () => {
+    expect(block).not.toBe('');
+  });
+
+  test('a full stable release is Latest', () => {
+    expect(flags({ PRERELEASE: 'false', KIND: 'full' })).toEqual(['--latest']);
+  });
+
+  test('a push-triggered release (no prerelease input) is Latest', () => {
+    expect(flags({ PRERELEASE: '', KIND: 'full' })).toEqual(['--latest']);
+  });
+
+  test('a full prerelease is a prerelease, not Latest', () => {
+    expect(flags({ PRERELEASE: 'true', KIND: 'full' })).toEqual(['--prerelease', '--latest=false']);
+  });
+
+  test('a plugin patch is not Latest', () => {
+    expect(flags({ PRERELEASE: 'false', KIND: 'plugins' })).toEqual(['--latest=false']);
+  });
+
+  test('a prerelease plugin patch stays a prerelease', () => {
+    expect(flags({ PRERELEASE: 'true', KIND: 'plugins' })).toEqual(['--prerelease', '--latest=false']);
+  });
+
+  test('a herdr patch is not Latest', () => {
+    expect(flags({ PRERELEASE: 'false', KIND: 'herdr' })).toEqual(['--latest=false']);
+    expect(flags({ PRERELEASE: '', KIND: 'herdr' })).toEqual(['--latest=false']);
+  });
+
+  test('a prerelease herdr patch stays a prerelease', () => {
+    expect(flags({ PRERELEASE: 'true', KIND: 'herdr' })).toEqual(['--prerelease', '--latest=false']);
+  });
+});
+
+describe('the cut reading the posted herdr-lane pointer before it posts its own', () => {
+  const lines = workflow('release.yml');
+  const start = lines.findIndex(line => line.trim() === 'mkdir -p herdr-lane/posted');
+  const end = lines.findIndex((line, i) => i > start && line.trim().startsWith('bun scripts/herdr-lane.ts posted '));
+  const block = start > -1 && end > start ? lines.slice(start, end + 1).join('\n') : '';
+
+  // gh exits `status` after printing `stderr`; bun logs its arguments (the downgrade check ran).
+  function read(status: number, stderr = '') {
+    const dir = mkdtempSync(join(tmpdir(), 'herdr-lane-posted-'));
+    const bin = join(dir, 'bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'gh'), `#!/usr/bin/env bash\necho "$*" >> "${dir}/gh.log"\nprintf '%s\\n' '${stderr}' >&2\nexit ${status}\n`);
+    writeFileSync(join(bin, 'bun'), `#!/usr/bin/env bash\necho "$*" >> "${dir}/bun.log"\n`);
+    chmodSync(join(bin, 'gh'), 0o755);
+    chmodSync(join(bin, 'bun'), 0o755);
+    const run = bash(`cd "${dir}"\n${block}`, [], { PATH: `${bin}:${process.env.PATH ?? ''}`, GITHUB_REPOSITORY: 'owner/repo' });
+    const log = (name: string) => { try { return readFileSync(join(dir, name), 'utf8').trim().split('\n').filter(Boolean); } catch { return []; } };
+    const result = { ...run, gh: log('gh.log'), bun: log('bun.log') };
+    rmSync(dir, { recursive: true, force: true });
+    return result;
+  }
+  const checked = ['scripts/herdr-lane.ts posted herdr-lane/pack.json herdr-lane/posted'];
+
+  test('is found as the step writes it, with no error swallowed', () => {
+    expect(block).not.toBe('');
+    expect(block).not.toContain('|| true');
+    expect(block).not.toContain('2>/dev/null');
+  });
+
+  test('a posted pointer downloads: the downgrade check runs on it', () => {
+    const run = read(0);
+    expect(run.status).toBe(0);
+    expect(run.gh).toEqual(['release download herdr-lane --repo owner/repo -p pack.json -p pack.json.sig -D herdr-lane/posted --clobber']);
+    expect(run.bun).toEqual(checked);
+  });
+
+  test('no pointer posted yet (the first post): the run goes on to post', () => {
+    for (const message of ['no assets match the file pattern', 'no assets to download', 'release not found']) {
+      const run = read(1, message);
+      expect(run.status).toBe(0);
+      expect(run.out).toContain('herdr lane: nothing posted on herdr-lane yet');
+      expect(run.bun).toEqual(checked);
+    }
+  });
+
+  test('any other error reading it (a transient GitHub error, auth, the network) stops the run', () => {
+    for (const message of ['HTTP 502: Bad Gateway (https://api.github.com/repos/owner/repo/releases/tags/herdr-lane)', 'HTTP 401: Bad credentials', 'error connecting to api.github.com']) {
+      const run = read(1, message);
+      expect(run.status).toBe(1);
+      expect(run.err).toContain(message);
+      expect(run.out).toContain('::error::herdr lane: could not read the posted pointer; refusing to post blind');
+      expect(run.bun).toEqual([]);
+    }
   });
 });

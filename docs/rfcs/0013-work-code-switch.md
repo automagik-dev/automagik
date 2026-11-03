@@ -148,7 +148,7 @@ All three OSes ship at once (D27).
 | | macOS | Linux | Windows |
 |---|---|---|---|
 | Herdr build (`dev.herdr.app`) | aarch64 only, no Intel Mac | x86_64 and aarch64 | x86_64 only, Windows 10 1803+ |
-| Installed at | `/Applications/Herdr.app`; CLI `herdr-app` | `~/.local/share/herdr-app`; `herdr-app` in `~/.local/bin` | `%LOCALAPPDATA%\Programs\herdr-app\herdr-app.exe`, on PATH |
+| Installed at | `~/Applications/Herdr.app` (herdrdev's `install.sh`), else `/Applications/Herdr.app`; CLI `herdr-app` | `~/.local/share/herdr-app`; `herdr-app` in `~/.local/bin` | `%LOCALAPPDATA%\Programs\herdr-app\herdr-app.exe`, on PATH |
 | `ls`, `do`, `status` | verified (0.1.12) | documented; delivery 1 proves it | documented; delivery 1 proves it; socket or named pipe unknown |
 | Start or raise | LaunchServices | detached binary; Wayland may refuse focus | detached binary; Windows may flash the taskbar instead |
 | Return link | `open` | `xdg-open`; deb registers the schemes, AppImage unverified | `start`; NSIS registers the schemes |
