@@ -70,13 +70,13 @@ val FONT_SIZES = 8..24
 
 class PocketViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = application.getSharedPreferences("pocket", 0)
+    /** Null when the saved list couldn't be read: it then shows empty, but its SSH entries may still be in the preferences. */
+    private val savedHosts = LegacySsh.loadHosts(prefs.getString("hosts", "[]"))
     private val _state = MutableStateFlow(PocketState(nativeDisplay = prefs.getBoolean("native_display", false),
         fontSize = prefs.getInt("font_size", DEFAULT_FONT_SIZE).coerceIn(FONT_SIZES), folded = prefs.getStringSet("folded_machines", null).orEmpty().toSet(),
         alertSounds = prefs.getBoolean("alert_sounds", true), alertBlocked = prefs.getBoolean("alert_blocked", true), alertDone = prefs.getBoolean("alert_done", true),
         lockAnswers = prefs.getBoolean("lock_answers", false), watch = prefs.getBoolean(WatchResume.PREF_WATCH, true),
-        seen = runCatching { JSONArray(prefs.getString("seen_done", "[]")).let { a -> (0 until a.length()).map(a::getString) }.toSet() }.getOrDefault(emptySet()), hosts = runCatching {
-        JSONArray(prefs.getString("hosts", "[]")).objects().map(HostProfile::parse)
-    }.getOrDefault(emptyList())))
+        seen = runCatching { JSONArray(prefs.getString("seen_done", "[]")).let { a -> (0 until a.length()).map(a::getString) }.toSet() }.getOrDefault(emptySet()), hosts = savedHosts.orEmpty()))
     val state = _state.asStateFlow()
     /** Herdr desktop's program table, for the drawer's names and icons. */
     val programs: Programs by lazy { Programs(JSONObject(application.assets.open("programs.json").bufferedReader().use { it.readText() })) }
@@ -161,7 +161,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         dropSshKeyIfUnused()
     }
     private fun dropSshKeyIfUnused() {
-        val hosts = state.value.hosts
+        // An unreadable saved list may still hold SSH entries: keep the key for as long as this process runs.
+        val hosts = if (savedHosts == null) null else state.value.hosts
         viewModelScope.launch(Dispatchers.IO) { runCatching { LegacySsh.deleteKeyIfUnused(getApplication<Application>().noBackupFilesDir, hosts) } }
     }
     /** A tab (or Settings), opened at its top. */
@@ -197,7 +198,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     /** [retry]: a background reconnect's attempt number; a failure schedules the next. */
     fun connect(profile: HostProfile, retry: Int = 0) {
         // The only way out to a machine: SSH is gone, so a legacy entry is offered "Pair with QR" and never dialled.
-        if (profile.legacySsh) { _state.update { it.copy(message = LegacySsh.REFUSED) }; return }
+        LegacySsh.refusal(profile)?.let { reason -> _state.update { it.copy(message = reason) }; return }
         disconnect(profile.id, deliberate = retry == 0)
         if (state.value.demo) leaveDemo()
         jobs[profile.id] = viewModelScope.launch(Dispatchers.IO) {
@@ -249,16 +250,23 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     fun dismissOfferedPairing() { _state.update { it.copy(offeredPairing = null) } }
 
     /** Pairs with the desktop that showed [text] (a Pocket Link QR or pasted link), saves it and connects. */
+    /** A pasted link: it replaces no legacy card. */
     fun pair(text: String) {
-        pair(PairingLink.parse(text) ?: run { _state.update { it.copy(message = "That isn’t a Pocket Link pairing link.", repairing = null) }; return })
+        pair(PairingLink.parse(text) ?: run { _state.update { it.copy(message = LegacySsh.NOT_A_LINK) }; return })
+    }
+    /** The QR scanner's result (null when cancelled); only a scan opened from a legacy card replaces that card. */
+    fun scanned(text: String?) {
+        var scan: LegacySsh.Scan = LegacySsh.Scan.Cancelled
+        _state.update { s -> LegacySsh.scanned(s, text).also { scan = it.second }.first }
+        (scan as? LegacySsh.Scan.Pair)?.let { pair(it.link, it.replacing) }
     }
     /** A legacy SSH card's "Pair with QR": the scan it opens pairs that computer and replaces the card ([LegacySsh]). */
-    fun repairWithQr(hostId: String) { _state.update { it.copy(repairing = hostId) } }
+    fun repairWithQr(hostId: String) { _state.update { LegacySsh.start(it, hostId) } }
     /** The scan was cancelled: the legacy card stays as it was. */
-    fun cancelRepair() { _state.update { it.copy(repairing = null) } }
-    fun pair(link: PairingLink) {
+    fun cancelRepair() { _state.update(LegacySsh::cancel) }
+    /** [replacing]: the legacy SSH card this pairing replaces once it succeeds ([scanned]); none for a pasted or external link. */
+    fun pair(link: PairingLink, replacing: String? = null) {
         if (state.value.demo) leaveDemo()
-        val replacing = state.value.repairing
         _state.update { it.copy(pairing = true, offeredPairing = null) }
         viewModelScope.launch(Dispatchers.IO) {
             try {

@@ -2,6 +2,7 @@ package ai.namastex.automagik
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -52,6 +53,56 @@ class LegacySshTest {
             assertTrue(LegacySsh.deleteKeyIfUnused(root, listOf(desk)))
             assertFalse(File(root, "ssh").exists())
             assertTrue("nothing to delete is fine", LegacySsh.deleteKeyIfUnused(root, emptyList()))
+        } finally { root.deleteRecursively() }
+    }
+
+    private val link = "herdr-pocket://pair?v=1&n=Studio&c=Zx9_-aB3cD4eF5gH6iJ7kQ&t=endpoint" + "abcdefghijklmnopqrstuvwxyz234567".repeat(4)
+    private val saved = PocketState(hosts = listOf(desk, ssh))
+
+    @Test fun theCardsButtonSetsTheRepairTargetAndCancelClearsIt() {
+        val started = LegacySsh.start(saved, ssh.id)
+        assertEquals(ssh.id, started.repairing)
+        assertNull(LegacySsh.cancel(started).repairing)
+        // Only a legacy card can be a target.
+        assertNull(LegacySsh.start(saved, desk.id).repairing)
+        assertNull(LegacySsh.start(saved, "gone").repairing)
+    }
+
+    @Test fun aScanFromTheCardPairsForThatCardAndUsesTheTargetUp() {
+        val (after, scan) = LegacySsh.scanned(LegacySsh.start(saved, ssh.id), link)
+        assertEquals(ssh.id, (scan as LegacySsh.Scan.Pair).replacing)
+        assertEquals("Studio", scan.link.name)
+        assertNull(after.repairing)
+    }
+
+    @Test fun aCancelledScanChangesNothingButTheTarget() {
+        val (after, scan) = LegacySsh.scanned(LegacySsh.start(saved, ssh.id), null)
+        assertEquals(LegacySsh.Scan.Cancelled, scan)
+        assertNull(after.repairing); assertEquals(saved.hosts, after.hosts); assertNull(after.message)
+    }
+
+    @Test fun aWrongCodeLeavesNoStaleTarget() {
+        val (after, scan) = LegacySsh.scanned(LegacySsh.start(saved, ssh.id), "https://example.com")
+        assertEquals(LegacySsh.Scan.Invalid, scan)
+        assertNull(after.repairing); assertEquals(LegacySsh.NOT_A_LINK, after.message)
+        // So a later scan from the general dialog replaces nothing.
+        assertNull((LegacySsh.scanned(after, link).second as LegacySsh.Scan.Pair).replacing)
+    }
+
+    @Test fun connectRefusesALegacyEntry() {
+        assertEquals(LegacySsh.REFUSED, LegacySsh.refusal(ssh))
+        assertNull(LegacySsh.refusal(desk))
+    }
+
+    @Test fun anUnreadableSavedListKeepsTheKey() {
+        assertNull(LegacySsh.loadHosts("not json"))
+        assertEquals(listOf(ssh), LegacySsh.loadHosts(org.json.JSONArray(listOf(ssh.json())).toString()))
+        assertEquals(emptyList<HostProfile>(), LegacySsh.loadHosts(null))
+        val root = Files.createTempDirectory("pocket-identity-").toFile()
+        try {
+            val key = File(root, "ssh/id_ed25519").apply { parentFile!!.mkdirs(); writeText("synthetic") }
+            assertFalse(LegacySsh.deleteKeyIfUnused(root, LegacySsh.loadHosts("not json")))
+            assertTrue(key.exists())
         } finally { root.deleteRecursively() }
     }
 

@@ -21,8 +21,11 @@ Everything the [README](../../README.md) keeps short. Install and first connecti
 - **No SSH.** The app no longer connects over SSH ([RFC 0008](../rfcs/0008-drop-ssh.md)). A
   machine saved over SSH in an older version stays in **Machines**, greyed, with one button:
   **Pair with QR**. It opens the scanner; scan that computer's Pocket Link code and the old entry
-  is replaced by the paired one, keeping its core session. A cancelled or failed scan leaves the
-  entry as it was. You can also remove it. Once no SSH machine is left, the app deletes the SSH
+  goes once it pairs. If that desktop wasn't paired yet, its new card takes the entry's place and
+  keeps its core session; if it was, its existing card stays as it was. A cancelled or failed scan
+  leaves the entry as it was. The phone can't tell whether the code is from the same computer, so
+  scan the right one. Pairing from **Pair with Herdr desktop** leaves the old entry; remove it by
+  hand. Once no SSH machine is left, the app deletes the SSH
   key older versions made.
 
 ## Tabs

@@ -110,7 +110,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
     val snackbar = remember { SnackbarHostState() }
     var pairDesktop by remember { mutableStateOf(false) }
     // Pocket Link's QR code; a cancelled scan returns no contents, and leaves a legacy SSH card it came from as it was.
-    val scanner = rememberLauncherForActivityResult(ScanContract()) { result -> result.contents?.let(vm::pair) ?: vm.cancelRepair() }
+    val scanner = rememberLauncherForActivityResult(ScanContract()) { result -> vm.scanned(result.contents) }
     fun scan() { scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Scan the code in Pocket Link").setBeepEnabled(false).setOrientationLocked(false)) }
     // A legacy SSH machine's "Pair with QR" ([LegacySsh]): straight to the scanner; the pairing replaces that card.
     fun repair(host: HostProfile) { vm.repairWithQr(host.id); scan() }
