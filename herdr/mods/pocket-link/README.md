@@ -40,10 +40,12 @@ It needs Node.js 20.3+ and herdr-core (`hc`), on macOS or Linux (systemd).
   - Deleting this folder unpairs every phone.
 
 - **Before a phone is paired** (`bridge/guard.mjs`, `bridge/pairing.mjs`):
+  - A connection from a source address that isn't validated yet gets a QUIC retry first, so a
+    spoofed address never takes a slot.
   - A connection gets 10 seconds for its handshake and first line, and a pairing all of it, then
-    it is closed. At most 16 connections can be in that phase, 4 of them from one address (an IP,
-    or over a relay the key it claims), and 64 open in all; past that, new ones are refused before
-    their handshake.
+    it is closed. At most 16 connections can be in that phase, 4 of them from one address (an IPv4
+    address, an IPv6 /64, or over a relay the key it claims), and 64 open in all; past that, new
+    ones are refused before their handshake.
   - A key that isn't paired is closed before the bridge reads anything from it, and so is a
     pairing attempt while no code is live.
   - One phone key gets 3 wrong codes, then its tries are refused without counting. Only a flood
@@ -53,6 +55,11 @@ It needs Node.js 20.3+ and herdr-core (`hc`), on macOS or Linux (systemd).
     fingerprint, the first 12 hex characters in fours, next to the name the phone sent.
   - Refusals, timeouts and wrong codes log at most 5 lines of each kind a minute. `bridge.log`
     stays under 1 MB: past that it is copied to `bridge.log.1` and emptied.
+  - **What's left (accepted):** someone who knows this computer's key can still fill the 16
+    pending slots, by flooding through a relay with a new key per connection or by stalling
+    handshakes. While that lasts, a paired phone's *new* sessions are refused. Sessions already
+    open keep working, and nothing gets paired. The remedy is a new desktop key, so the old address
+    leads nowhere: [#48](https://github.com/automagik-dev/automagik-pocket/issues/48).
 - **No usage meter.** Older versions installed and ran
   [usagemeter](https://github.com/automagik-dev/usagemeter) on every connected machine. The
   Automagik Herdr pack installs it now; the phone only reads its summary
