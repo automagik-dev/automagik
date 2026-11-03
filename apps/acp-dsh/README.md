@@ -15,13 +15,37 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
 - **Only the chat reaches the agent.** DSH's side requests (a Session title, a summary) on an
   ACP route are refused at the `llm/stream` waterfall, so they never become prompts.
 - **Host only.** No browser half, so the plugin cannot stop the web UI from loading. With no
-  agent configured it registers no route.
+  agent CLI installed it registers no route.
+- **The Session's level, as the agent's own mode.** Before each prompt the agent's ACP session
+  mode follows the Session: Manual is Claude Code's `default` mode, whatever default mode its
+  own settings name; Codex runs in the sandbox that matches DSH's. Auto is Claude Code's `auto`
+  and Codex's `agent`. Full access lets every call through, as it does DSH's own tools. An agent
+  that does not offer the strict mode fails the turn instead of running in its own default.
+- **Claude Code keeps the person's own settings.** It loads their Claude Code settings (user,
+  project and local) and asks DSH only for what those leave as "ask". A call their allow rules,
+  saved "always allow" rules or PreToolUse/PermissionRequest hooks approve runs with no DSH
+  dialog. This is the owner's decision (RFC 0003, Decided).
 
 ## Agents
 
-| Route | Agent | Status |
-|---|---|---|
-| `acp-fake` | `test/fixtures/fake-agent.mjs`, set as `fakeAgent` | tests only |
+| Route | Agent | Runs | Adapter (newest release) |
+|---|---|---|---|
+| `acp-claude` | Claude Code | the person's `claude` (`CLAUDE_CODE_EXECUTABLE`) | `@agentclientprotocol/claude-agent-acp` |
+| `acp-codex` | Codex | the person's `codex` (`CODEX_PATH`) | `@agentclientprotocol/codex-acp` |
+| `acp-fake` | `test/fixtures/fake-agent.mjs`, set as `fakeAgent` | Node | none; tests only |
+
+An agent is offered only when its CLI is on PATH or where its installer puts it (`~/.local/bin`,
+`/opt/homebrew/bin`, …). The settings `claude: false` or `codex: false` take one away.
+
+The adapters are not pinned (RFC 0003, amended): the CLIs update themselves, and an adapter that
+lags its CLI breaks first. They install in the background at DSH's start and once a day after,
+with the desktop app's own pnpm (`AUTOMAGIK_PNPM`, never the person's) or else npm, into
+`$AUTOMAGIK_HOME/acp/adapters/<package>/<version>`. An install goes to a fresh folder renamed into
+place when complete, without install scripts or optional dependencies (the CLIs the adapters
+bundle); an install that pulls in a bundled CLI's platform package anyway is refused. The
+previous version stays for a Session still on it. Nothing is downloaded when a Session starts.
+Until the first install lands, the agent lists no model; a Session already on it says the
+adapter is being installed, with the last install error.
 
 ## Check it
 
@@ -30,6 +54,8 @@ bun install && bun run harness
 bun run test          # the adapter against the fake agent over real stdio
 bun run lint
 node dev/dsh-check.mjs   # one dsh headless turn on acp-fake in a temporary DSH home
+node dev/dsh-check.mjs --agent claude   # the same on your own Claude Code (a few tokens)
+node dev/dsh-check.mjs --agent codex    # the same on your own Codex (a few tokens)
 ```
 
 `dev/dsh-check.mjs` installs the plugin the way DSH installs any plugin and reads the Session
