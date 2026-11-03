@@ -418,7 +418,10 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p "$OUT"
-          E=$(cd app/apps/desktop && node -p "require('electron')")
+          # Electron downloads its binary on the first require and says so on stdout: fetch it first.
+          (cd app/apps/desktop && node -e "require('electron')" >/dev/null)
+          E=$(cd app/apps/desktop && node -p "require('electron')" | tail -n 1)
+          [ -x "$E" ] || { echo "no Electron binary at $E"; exit 1; }
           T=$(command -v timeout || true)
           probe="$GITHUB_WORKSPACE/apps/desktop-tauri-spike/cross-os/crash-probe.mjs"
           run() { # name, then the command prefix and Electron's switches
