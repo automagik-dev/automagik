@@ -13,7 +13,8 @@ it talks to is the local `hc`.
 This project used to live in the `meter/` folder of
 [automagik-pocket](https://github.com/automagik-dev/automagik-pocket), where it was built as
 `automagik-meter`; it moved here with its history. Its store, summary doc and environment
-variables did not change, so an existing install keeps its data.
+variables did not change, so an existing install keeps its data. Since 0.4.0 the store lives in
+`~/.automagik/meter/` and the first `sync` moves it there (see [What it stores](#what-it-stores)).
 
 ## Privacy
 
@@ -120,13 +121,34 @@ skipped and counted.
 
 ## What it stores
 
-One SQLite file (WAL) per machine:
+One SQLite file (WAL) per machine, in the state dir:
 
-- macOS: `~/Library/Application Support/automagik/meter.db`
-- Linux: `$XDG_STATE_HOME/automagik/meter.db`, else `~/.local/state/automagik/meter.db`
-- `METER_STATE_DIR` overrides both.
+- `~/.automagik/meter/meter.db` on every OS.
+- `$AM_HOME/meter/meter.db` when `AM_HOME` is set to an absolute path.
+- `METER_STATE_DIR` overrides both, and wins over everything.
 
-The directory is 0700 and the file 0600. Rows are hourly `agent.usage` rollups keyed by (bot, role,
+The directory is 0700 and the file 0600.
+
+Before 0.4.0 the state dir was `~/Library/Application Support/automagik/` on macOS and
+`$XDG_STATE_HOME/automagik/` (else `~/.local/state/automagik/`) elsewhere. On a case-insensitive
+macOS volume that is the same folder as the Automagik desktop app's own data, so clearing the
+app's data deleted the store. The first `sync` of 0.4.0 or later moves the meter's own files out of
+that old default, once: `meter.db` (with `meter.db-wal` and `meter.db-shm`),
+`meter.lock`, `claude-limits.jsonl` and `claude-limits.last.json`. Nothing else in the old folder
+is opened, and the folder itself stays.
+
+- It runs under the new dir's `meter.lock` and skips (exit 0, retried next run) while another run
+  holds that lock or an older meter holds the old one.
+- It never replaces a file: a hard link then removal of the old name on one filesystem, else a
+  copy that is fsynced and compared before the old file is removed. Modes are kept.
+- The database moves with its sidecars, sidecars first, so an interrupted move is finished by the
+  next run and never loses a file.
+- If the new dir already has a different `meter.db`, nothing is moved, overwritten or deleted and
+  each `sync` prints one line to stderr naming the files left behind.
+- With `METER_STATE_DIR` set nothing is moved and `~/.automagik/meter` is not created.
+- `status` reads the new dir only; before the first `sync` after an upgrade it reports
+  `synced: false`.
+- `prices.json` (below) is not moved: copy an override from the old dir by hand. Rows are hourly `agent.usage` rollups keyed by (bot, role,
 harness, model, machine, repo, branch, hour, precision); the row id (`idempotency_key`) hashes all
 of it, so an hour has at most one `exact` row and one `total_only` row per key. The `ae_usage` view
 renders each row as an `ae/1` envelope:
@@ -311,6 +333,9 @@ window; each step is listed in `truncated`. Entries that stay always keep their 
 `models`, `windows` and the totals in `daily` are never cut.
 
 ### Schema history
+
+0.4.0 moved the state dir to `~/.automagik/meter/` (see [What it stores](#what-it-stores)). That is
+a path change, not a schema change: `schema_version` stays 2 and the `ae/1` rows are the same.
 
 - 2 — per-project, per-task and per-model windows (`d1`/`d7`/`d30`), hourly and daily series per
   harness, `un`/`unpriced`, `sources.*.status`. Replaces version 1's `totals`, `hourly` and `daily`

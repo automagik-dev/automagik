@@ -63,6 +63,9 @@ pub struct Options {
     /// `~/.codex` (or `$CODEX_HOME`).
     pub codex_home: PathBuf,
     pub state_dir: PathBuf,
+    /// The old default state directory to move the meter's files out of, once, before the first
+    /// run in `state_dir` (see [`paths::migrate`]). None when `METER_STATE_DIR` is set.
+    pub migrate_from: Option<PathBuf>,
     /// Window for the first import, and for a widening re-import.
     pub days: Option<i64>,
     pub backfill: bool,
@@ -100,6 +103,7 @@ impl Options {
             claude_root,
             codex_home,
             state_dir,
+            migrate_from: None,
             days: None,
             backfill: false,
             force: false,
@@ -333,12 +337,13 @@ pub fn source_health(store: &Store) -> rusqlite::Result<Vec<SourceHealth>> {
 pub fn run(opts: &Options) -> Result<Outcome, Error> {
     let started = Instant::now();
     let deadline = started + opts.budget;
-    let db = paths::prepare(&opts.state_dir).map_err(|e| {
+    let mkdir_err = |e: std::io::Error| {
         Error(format!(
             "cannot create the state directory {}: {e}",
             opts.state_dir.display()
         ))
-    })?;
+    };
+    paths::ensure_dir(&opts.state_dir).map_err(mkdir_err)?;
     let Some(_lock) = paths::try_lock(&opts.state_dir).map_err(|e| {
         Error(format!(
             "cannot take the lock in {}: {e}",
@@ -348,6 +353,22 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     else {
         return Ok(Outcome::Locked);
     };
+    // The move runs under the lock and before `prepare`, which creates an empty database.
+    if let Some(old) = &opts.migrate_from {
+        let m = paths::migrate(old, &opts.state_dir).map_err(|e| {
+            Error(format!(
+                "cannot move the state from {} to {}: {e}; files already moved are in {}, the rest are still in {}",
+                old.display(),
+                opts.state_dir.display(),
+                opts.state_dir.display(),
+                old.display()
+            ))
+        })?;
+        if m.busy {
+            return Ok(Outcome::Locked);
+        }
+    }
+    let db = paths::prepare(&opts.state_dir).map_err(mkdir_err)?;
     let trace = Trace::new();
     let mut store = Store::open(&db)?;
     let prices = PriceTable::load(&opts.state_dir.join("prices.json")).map_err(Error)?;

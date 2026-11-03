@@ -22,7 +22,8 @@ sync      Read new harness usage (omp, Claude Code, Codex) into the local store 
   --doc NAME      Doc name to publish to (default herdr-meter).
 status    Print the store's state as JSON.
 
-The state lives in METER_STATE_DIR if set, else the platform state directory.";
+The state lives in METER_STATE_DIR if set, else $AM_HOME/meter, else ~/.automagik/meter.
+The first sync moves the meter's files out of the pre-0.4.0 default directory.";
 
 fn fail(msg: &str) -> ExitCode {
     eprintln!("meter: {msg}");
@@ -44,8 +45,8 @@ fn human_bytes(b: u64) -> String {
     }
 }
 
-fn state_dir() -> Result<std::path::PathBuf, String> {
-    paths::default_state_dir()
+fn state_dirs() -> Result<paths::StateDirs, String> {
+    paths::state_dirs(|k| std::env::var_os(k))
         .ok_or_else(|| "HOME is not set; set METER_STATE_DIR to choose a state directory".into())
 }
 
@@ -62,7 +63,9 @@ fn parse_num(flag: &str, v: Option<String>, min: u64, max: u64) -> Result<u64, S
 
 fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
     let home = paths::home().ok_or("HOME is not set")?;
-    let mut opts = Options::new(home, state_dir()?, now_ms());
+    let dirs = state_dirs()?;
+    let mut opts = Options::new(home, dirs.dir, now_ms());
+    opts.migrate_from = dirs.legacy;
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -154,7 +157,7 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
 }
 
 fn cmd_status() -> Result<ExitCode, String> {
-    let dir = state_dir()?;
+    let dir = state_dirs()?.dir;
     let db = dir.join("meter.db");
     if !db.exists() {
         println!("{}", serde_json::json!({"state_dir": dir, "synced": false}));
