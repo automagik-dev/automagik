@@ -487,10 +487,12 @@ export function removeHooks(projects, { appHome, git = runGit, also = [], log } 
 
 /**
  * The settings.local.json files, where syncHooks looks, whose UserPromptSubmit runs one of `scripts`
- * (absolute paths) through a hook of the pack's shapes. Reads only.
+ * (absolute paths) through a hook of the pack's shapes, or whose hook command names one of
+ * `runners` (absolute paths: a runner such as the sidebar's bin/run.sh). Reads only.
  */
-export function hooksRunning(projects, { scripts, git = runGit, also = [], log } = {}) {
+export function hooksRunning(projects, { scripts = [], runners = [], git = runGit, also = [], log } = {}) {
   const want = new Set(scripts.map((s) => resolve(s)));
+  const via = runners.map((r) => resolve(r));
   const found = [];
   for (const folder of foldersOf(projects, { git, also, log })) {
     const s = settingsOf(folder);
@@ -498,7 +500,7 @@ export function hooksRunning(projects, { scripts, git = runGit, also = [], log }
     let settings;
     try { settings = JSON.parse(readFileSync(s.file, "utf8")); } catch { continue; }
     const list = isObject(settings) && isObject(settings.hooks) ? settings.hooks.UserPromptSubmit : null;
-    const runs = (h) => isObject(h) && typeof h.command === "string" && want.has(scriptOf(h.command) ?? "");
+    const runs = (h) => isObject(h) && typeof h.command === "string" && (want.has(scriptOf(h.command) ?? "") || via.some((r) => h.command.includes(r)));
     if ((Array.isArray(list) ? list : []).some((g) => (Array.isArray(g?.hooks) ? g.hooks : []).some(runs))) found.push(s.file);
   }
   return found;
