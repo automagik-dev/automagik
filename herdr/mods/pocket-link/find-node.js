@@ -30,11 +30,12 @@ export function servicePath(text) {
 // `set -m` elsewhere), and at 3 s the whole group gets SIGKILL, so neither a shell that ignores
 // TERM nor a child it started outlives the cap. Without either, only the shell itself is killed.
 // Its answer goes to a temp file, so nothing left behind can hold stdout open.
+// `kill -SIG -pid` names a group in dash and bash alike; dash's kill rejects `--`.
 export const SHELL_PROBE = [
   'f=$(mktemp) || exit 1; s="${SHELL:-/bin/sh}"',
   'if command -v setsid >/dev/null 2>&1; then setsid "$s" -lc "command -v node" >"$f" 2>/dev/null </dev/null & else set -m 2>/dev/null; "$s" -lc "command -v node" >"$f" 2>/dev/null </dev/null & fi',
-  'p=$!; (sleep 3; kill -KILL -- -$p 2>/dev/null || kill -KILL $p) >/dev/null 2>&1 & w=$!',
-  'wait $p; c=$?; kill -- -$w 2>/dev/null || kill $w 2>/dev/null; cat "$f"; rm -f "$f"; exit $c',
+  'p=$!; (sleep 3; kill -KILL -$p 2>/dev/null || kill -KILL $p) >/dev/null 2>&1 & w=$!',
+  'wait $p; c=$?; kill -TERM -$w 2>/dev/null || kill $w 2>/dev/null; cat "$f"; rm -f "$f"; exit $c',
 ].join("\n");
 
 const lastPath = (out) => (out ?? "").split("\n").map((l) => l.trim()).filter((l) => l.startsWith("/")).pop() ?? null;
