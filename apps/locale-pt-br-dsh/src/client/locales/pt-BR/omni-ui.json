@@ -1202,6 +1202,8 @@
   "No connection: Herdr opened on the installed version": "Sem conexão: o Herdr abriu na versão instalada",
   "Herdr couldn't update: it opened on the installed version": "O Herdr não conseguiu atualizar: abriu na versão instalada",
   "Herdr says: {message}": "O Herdr diz: {message}",
+  "Herdr couldn't check for updates: it opened on the installed version": "O Herdr não conseguiu verificar atualizações: abriu na versão instalada",
+  "Herdr {version} is installed: it starts when Herdr restarts": "O Herdr {version} está instalado: começa quando o Herdr reiniciar",
   "This Bot": "Este Bot",
   "{from} wants to hand work to {to}": "{from} quer passar trabalho para {to}",
   "another Bot": "outro Bot",

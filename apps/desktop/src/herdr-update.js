@@ -27,6 +27,10 @@ export const APP_UPDATE_MS = 45_000
 export const RESTART_MS = 30_000
 export const MAX_BYTES = 512 * 1024 * 1024
 export const OFFLINE = "Herdr couldn't check for updates (no connection); this is the installed one"
+// What an open's `note` is about, for the page to label (bots-dsh work-code-switch.js): no
+// network, a feed it could read but not use, an update that failed (the installed one opened),
+// and an update in place that starts when Herdr restarts.
+export const NOTE_KINDS = Object.freeze(['offline', 'check-failed', 'update-failed', 'updated-restart'])
 
 /** True for an https URL on herdrdev's release host and nowhere else (no port, no user). */
 export function onReleases(url) {
@@ -318,7 +322,8 @@ export async function updateHerdr({ platform, found, feed, env = {}, home, fetch
  * `offered`, the version this session last offered, and only while the feed still names it:
  * any other yes gets the offer instead. `skip` is a version the person already declined in this
  * session: it is not offered again. Resolves to openHerdr's
- * answers, with `note` when the update did not happen, or to `{ ok: false, reason: 'update',
+ * answers, with `note` and its `noteKind` when there is something to tell (NOTE_KINDS: the
+ * page labels by the kind, in its own language), or to `{ ok: false, reason: 'update',
  * installed, latest, message }` when a newer Herdr waits for the person's answer.
  */
 export async function openLatest({ update, offered, skip, platform, arch, env = {}, home, fetch, isFile, resolve, fs, execFile, spawn, now = Date.now, sleep = defaultSleep, limit, mark = () => {}, log = () => {} } = {}) {
@@ -345,11 +350,11 @@ export async function openLatest({ update, offered, skip, platform, arch, env = 
   const feed = await readFeed({ platform, arch, fetch })
   if (!feed.reachable) {
     log(`stale ${installed} offline: ${feed.error}`)
-    return raise({ version: installed, note: OFFLINE })
+    return raise({ version: installed, note: OFFLINE, noteKind: 'offline' })
   }
   if (feed.error) {
     log(`stale ${installed} feed: ${feed.error}`)
-    return raise({ version: installed, note: `Herdr couldn't check for updates (${feed.error}); this is the installed one` })
+    return raise({ version: installed, note: `Herdr couldn't check for updates (${feed.error}); this is the installed one`, noteKind: 'check-failed' })
   }
   mark('latest')
   if (compareVersions(feed.version, installed) <= 0) return raise({ version: installed })
@@ -366,10 +371,10 @@ export async function openLatest({ update, offered, skip, platform, arch, env = 
   const updated = await updateHerdr({ platform, found, feed, env, home, fetch, execFile, resolve, fs, now, sleep, log })
   if (!updated.ok) {
     log(`stale ${installed} ${updated.error}`)
-    return raise({ version: installed, note: `Herdr couldn't update to ${feed.version} (${updated.error}); this is the installed ${installed}` })
+    return raise({ version: installed, note: `Herdr couldn't update to ${feed.version} (${updated.error}); this is the installed ${installed}`, noteKind: 'update-failed' })
   }
   mark('updated')
   log(`updated ${installed} -> ${feed.version} (${updated.via})`)
-  if (updated.restart) return raise({ version: feed.version, note: `Herdr ${feed.version} is installed; it starts when Herdr restarts` })
+  if (updated.restart) return raise({ version: feed.version, note: `Herdr ${feed.version} is installed; it starts when Herdr restarts`, noteKind: 'updated-restart' })
   return raise({ version: feed.version, updated: true })
 }

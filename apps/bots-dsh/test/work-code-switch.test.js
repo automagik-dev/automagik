@@ -26,7 +26,7 @@ const context = {
 }
 context.exports = context.module.exports
 runInNewContext(bundle.outputFiles[0].text, context)
-const { WorkCodeSwitch, createCodeSwitch, showsSwitch, shownBotId } = context.module.exports
+const { WorkCodeSwitch, createCodeSwitch, noteKindOf, showsSwitch, shownBotId } = context.module.exports
 // The module's arrays and objects are the sandbox's: compare them as plain values.
 const plain = value => (value === undefined ? value : JSON.parse(JSON.stringify(value)))
 const codeNotices = result => plain(context.module.exports.codeNotices(result))
@@ -68,6 +68,7 @@ const all = (node, found = []) => {
 }
 const textOf = node => all(node).flatMap(n => n.props.children.filter(c => typeof c === 'string')).join(' ')
 const button = (tree, label) => all(tree).find(n => n.type === 'button' && n.props.children.includes(label))
+const segment = (tree, label) => all(tree).find(n => n.props.className === 'bt-code-seg' && n.props.children.includes(label))
 
 test('the switch shows only with the app\'s bridge and a herdr-app that is set up', async () => {
   assert.equal(mount(undefined), null)
@@ -84,7 +85,7 @@ test('the switch shows only with the app\'s bridge and a herdr-app that is set u
     assert.equal(mount(bridge), null, 'nothing shows before status() answers')
     await settle()
     const tree = mount(bridge)
-    assert.ok(button(tree, 'Work') && button(tree, 'Code'), state)
+    assert.ok(segment(tree, 'Work') && button(tree, 'Code'), state)
   }
   // herdr-app found but its `status` failed: it is set up, the switch shows.
   assert.equal(showsSwitch({ state: 'error', source: 'path', message: 'boom' }), true)
@@ -104,7 +105,10 @@ test('Code sends the shown Bot\'s id, and nothing calls open() without a click',
   // Mounting, the window's focus and the pointer entering read the state; none opens Herdr.
   for (const listener of listeners.focus ?? []) listener()
   all(tree).find(n => n.props.role === 'group').props.onPointerEnter()
-  button(tree, 'Work').props.onClick?.()
+  // Work is where the person is, a mark and not a control: nothing to click or focus.
+  assert.equal(segment(tree, 'Work').type, 'span')
+  assert.equal(segment(tree, 'Work').props['aria-current'], 'true')
+  assert.equal(button(tree, 'Code').props['aria-current'], undefined)
   await settle()
   assert.deepEqual(bridge.calls.open, [])
   assert.ok(bridge.calls.status >= 2)
@@ -160,10 +164,28 @@ test('each answer from the app shows its label', () => {
   assert.deepEqual(labels({ ok: true, raised: false, message: 'Herdr is open in another window' }), ['Herdr is open in another window'])
   assert.deepEqual(labels({ ok: true, raised: null }), ['Herdr is open in another window'], 'the OS could not tell')
   const offline = "Herdr couldn't check for updates (no connection); this is the installed one"
-  assert.deepEqual(labels({ ok: true, raised: true, note: offline }), ['No connection: Herdr opened on the installed version'])
-  const stale = codeNotices({ ok: true, raised: true, note: "Herdr couldn't update to 1.0.0 (disk full); this is the installed 0.9.0" })
-  assert.equal(stale[0].label, "Herdr couldn't update: it opened on the installed version")
-  assert.match(stale[0].title, /disk full/)
+  const unusable = "Herdr couldn't check for updates (the feed has no linux-x86_64 build); this is the installed one"
+  const failed = "Herdr couldn't update to 1.0.0 (disk full); this is the installed 0.9.0"
+  const restart = 'Herdr 1.0.0 is installed; it starts when Herdr restarts'
+  const notes = [
+    ['offline', offline, 'No connection: Herdr opened on the installed version'],
+    ['check-failed', unusable, "Herdr couldn't check for updates: it opened on the installed version"],
+    ['update-failed', failed, "Herdr couldn't update: it opened on the installed version"],
+    ['updated-restart', restart, 'Herdr 1.0.0 is installed: it starts when Herdr restarts'],
+  ]
+  for (const [noteKind, note, label] of notes) {
+    // The app names the kind; an older one sends the note alone, and its text tells the kind.
+    for (const result of [{ ok: true, raised: true, version: '1.0.0', note, noteKind }, { ok: true, raised: true, version: '1.0.0', note }]) {
+      assert.equal(noteKindOf(result), noteKind, note)
+      const [notice] = codeNotices(result)
+      assert.equal(notice.label, label)
+      assert.equal(notice.title, note)
+    }
+  }
+  // A successful update is never reported as a failure, whatever the note says.
+  assert.deepEqual(labels({ ok: true, raised: true, version: '1.0.0', note: 'anything', noteKind: 'updated-restart' }), ['Herdr 1.0.0 is installed: it starts when Herdr restarts'])
+  // A note of a kind or wording this page does not know: Herdr's own words.
+  assert.deepEqual(labels({ ok: true, raised: true, note: 'Something new', noteKind: 'later-kind' }), ['Herdr says: Something new'])
   assert.deepEqual(labels({ ok: true, raised: true, space: { action: 'new', error: 'box is offline' } }), ['Herdr says: box is offline'])
   assert.deepEqual(labels({ ok: true, raised: false, note: offline }), ['Herdr is open in another window', 'No connection: Herdr opened on the installed version'])
   assert.deepEqual(labels(null), ["Herdr didn't open"], 'an app that refused the page')

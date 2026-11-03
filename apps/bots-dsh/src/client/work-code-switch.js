@@ -15,8 +15,33 @@ import { t } from './i18n.js'
 // everything else (apps/desktop src/main.js `automagik-herdr-open`) and answers with what
 // happened; each answer shows here with its label (the RFC's Failure modes).
 
-// apps/desktop src/herdr-update.js OFFLINE: the note main adds when the feed could not be read.
-const OFFLINE = "Herdr couldn't check for updates (no connection); this is the installed one"
+// What main's `note` is about (apps/desktop src/herdr-update.js NOTE_KINDS). An app from before
+// `noteKind` sends the note alone: its kind is read from main's own English wording, and a note
+// that matches none is shown as Herdr's message.
+const NOTE_PATTERNS = [
+  ['offline', /^Herdr couldn't check for updates \(no connection\)/],
+  ['check-failed', /^Herdr couldn't check for updates /],
+  ['update-failed', /^Herdr couldn't update to /],
+  ['updated-restart', /^Herdr \S+ is installed; it starts when Herdr restarts$/],
+]
+
+/** The kind of an open's note: main's `noteKind`, else read from the note's text; or null. */
+export function noteKindOf(result) {
+  if (typeof result?.noteKind === 'string' && NOTE_PATTERNS.some(([kind]) => kind === result.noteKind)) return result.noteKind
+  if (typeof result?.note !== 'string') return null
+  return NOTE_PATTERNS.find(([, pattern]) => pattern.test(result.note))?.[0] ?? null
+}
+
+function noteNotice(result) {
+  const kind = noteKindOf(result)
+  switch (kind) {
+    case 'offline': return { kind, label: t('No connection: Herdr opened on the installed version'), title: result.note }
+    case 'check-failed': return { kind, label: t("Herdr couldn't check for updates: it opened on the installed version"), title: result.note }
+    case 'update-failed': return { kind, label: t("Herdr couldn't update: it opened on the installed version"), title: result.note }
+    case 'updated-restart': return { kind, label: t('Herdr {version} is installed: it starts when Herdr restarts', { version: result.version ?? '' }), title: result.note }
+    default: return { kind: 'note', label: t('Herdr says: {message}', { message: result.note }) }
+  }
+}
 
 /** Whether the switch shows for a `status()` answer: only where herdr-app is set up. */
 export function showsSwitch(status) {
@@ -41,11 +66,7 @@ export function codeNotices(result) {
   const notes = []
   // `raised` is false, or null where the OS cannot tell: main says so unless it is true.
   if (result.raised !== true) notes.push({ kind: 'no-focus', label: t('Herdr is open in another window'), title: result.detail || undefined })
-  if (typeof result.note === 'string' && result.note !== '') {
-    notes.push(result.note === OFFLINE
-      ? { kind: 'offline', label: t('No connection: Herdr opened on the installed version') }
-      : { kind: 'stale', label: t("Herdr couldn't update: it opened on the installed version"), title: result.note })
-  }
+  if (typeof result.note === 'string' && result.note !== '') notes.push(noteNotice(result))
   // herdr-app's own message: a `do` it refused, a remote machine that is offline.
   if (typeof result.space?.error === 'string' && result.space.error !== '') notes.push({ kind: 'space', label: t('Herdr says: {message}', { message: result.space.error }) })
   return notes
@@ -166,11 +187,12 @@ export function WorkCodeSwitch({ roster, useSessions }) {
   const notices = state.result ? codeNotices(state.result) : []
   return h('div', { className: 'bt-code-switch-wrap' },
     h('div', { className: 'bt-code-switch', role: 'group', 'aria-label': t('Work or code'), onPointerEnter: () => { void control.refresh() } },
-      h('button', { type: 'button', className: 'bt-code-seg', 'aria-pressed': state.front, title: t('Work, in this window') }, t('Work')),
+      // Work is this window: a mark of where the person is, not a control.
+      h('span', { className: 'bt-code-seg', 'aria-current': state.front ? 'true' : undefined, title: t('Work, in this window') }, t('Work')),
       h('button', {
         type: 'button',
         className: 'bt-code-seg',
-        'aria-pressed': !state.front,
+        'aria-current': state.front ? undefined : 'true',
         'aria-busy': state.busy || undefined,
         disabled: state.busy,
         title: state.busy ? t('Opening Herdr…') : botId ? t('Code: open this Bot’s folder in Herdr') : t('Code: open Herdr'),
@@ -184,9 +206,10 @@ export function WorkCodeSwitch({ roster, useSessions }) {
 export const WORK_CODE_SWITCH_CSS = `
 .bt-side-top .bt-code-switch-wrap{position:relative;margin-right:auto;min-width:0}
 .bt-code-switch{display:inline-flex;align-items:center;max-width:100%;padding:2px;border:1px solid var(--bt-line);border-radius:999px;background:var(--bt-main)}
-.bt-code-seg{min-width:0;height:24px;padding:0 9px;border:0;border-radius:999px;background:none;color:var(--bt-ink-2);font:600 12px/16px var(--bt-font);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
-.bt-code-seg[aria-pressed=true]{background:var(--bt-card);color:var(--bt-ink);box-shadow:0 0 0 1px var(--bt-line)}
-.bt-code-seg:hover:not(:disabled):not([aria-pressed=true]){color:var(--bt-ink)}
+.bt-code-seg{display:inline-flex;align-items:center;min-width:0;height:24px;padding:0 9px;border:0;border-radius:999px;background:none;color:var(--bt-ink-2);font:600 12px/16px var(--bt-font);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.bt-code-seg[aria-current=true]{background:var(--bt-card);color:var(--bt-ink);box-shadow:0 0 0 1px var(--bt-line)}
+span.bt-code-seg{cursor:default}
+button.bt-code-seg:hover:not(:disabled):not([aria-current=true]){color:var(--bt-ink)}
 .bt-code-seg:disabled{cursor:default}
 .bt-code-seg[aria-busy]{animation:bt-code-pulse 1.2s ease-in-out infinite}
 .bt-code-notes{position:absolute;top:calc(100% + 6px);left:0;z-index:30;display:flex;flex-direction:column;gap:6px;width:240px;max-width:72vw}

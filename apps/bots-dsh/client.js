@@ -1384,6 +1384,8 @@ var ZH = {
   "No connection: Herdr opened on the installed version": "没有网络：Herdr 以已安装的版本打开",
   "Herdr couldn't update: it opened on the installed version": "Herdr 无法更新：已以已安装的版本打开",
   "Herdr says: {message}": "Herdr 提示：{message}",
+  "Herdr couldn't check for updates: it opened on the installed version": "Herdr 无法检查更新：已以已安装的版本打开",
+  "Herdr {version} is installed: it starts when Herdr restarts": "Herdr {version} 已安装：Herdr 重启后生效",
   // The plugins the app's lane updates, by name (desktop-update.js pluginPill, about.js).
   "Bot team": "Bot 团队",
   "Welcome": "欢迎",
@@ -11370,7 +11372,32 @@ var useApproval = (useWork, match) => useWork ? useWork((work) => (work.approval
 
 // src/client/work-code-switch.js
 var import_react26 = require("react");
-var OFFLINE = "Herdr couldn't check for updates (no connection); this is the installed one";
+var NOTE_PATTERNS = [
+  ["offline", /^Herdr couldn't check for updates \(no connection\)/],
+  ["check-failed", /^Herdr couldn't check for updates /],
+  ["update-failed", /^Herdr couldn't update to /],
+  ["updated-restart", /^Herdr \S+ is installed; it starts when Herdr restarts$/]
+];
+function noteKindOf(result) {
+  if (typeof result?.noteKind === "string" && NOTE_PATTERNS.some(([kind]) => kind === result.noteKind)) return result.noteKind;
+  if (typeof result?.note !== "string") return null;
+  return NOTE_PATTERNS.find(([, pattern]) => pattern.test(result.note))?.[0] ?? null;
+}
+function noteNotice(result) {
+  const kind = noteKindOf(result);
+  switch (kind) {
+    case "offline":
+      return { kind, label: t("No connection: Herdr opened on the installed version"), title: result.note };
+    case "check-failed":
+      return { kind, label: t("Herdr couldn't check for updates: it opened on the installed version"), title: result.note };
+    case "update-failed":
+      return { kind, label: t("Herdr couldn't update: it opened on the installed version"), title: result.note };
+    case "updated-restart":
+      return { kind, label: t("Herdr {version} is installed: it starts when Herdr restarts", { version: result.version ?? "" }), title: result.note };
+    default:
+      return { kind: "note", label: t("Herdr says: {message}", { message: result.note }) };
+  }
+}
 function showsSwitch(status) {
   return status?.state === "open" || status?.state === "closed" || status?.state === "error" && Boolean(status.source);
 }
@@ -11390,9 +11417,7 @@ function codeNotices(result) {
   }
   const notes = [];
   if (result.raised !== true) notes.push({ kind: "no-focus", label: t("Herdr is open in another window"), title: result.detail || void 0 });
-  if (typeof result.note === "string" && result.note !== "") {
-    notes.push(result.note === OFFLINE ? { kind: "offline", label: t("No connection: Herdr opened on the installed version") } : { kind: "stale", label: t("Herdr couldn't update: it opened on the installed version"), title: result.note });
-  }
+  if (typeof result.note === "string" && result.note !== "") notes.push(noteNotice(result));
   if (typeof result.space?.error === "string" && result.space.error !== "") notes.push({ kind: "space", label: t("Herdr says: {message}", { message: result.space.error }) });
   return notes;
 }
@@ -11522,11 +11547,12 @@ function WorkCodeSwitch({ roster, useSessions }) {
       { className: "bt-code-switch", role: "group", "aria-label": t("Work or code"), onPointerEnter: () => {
         void control.refresh();
       } },
-      (0, import_react26.createElement)("button", { type: "button", className: "bt-code-seg", "aria-pressed": state.front, title: t("Work, in this window") }, t("Work")),
+      // Work is this window: a mark of where the person is, not a control.
+      (0, import_react26.createElement)("span", { className: "bt-code-seg", "aria-current": state.front ? "true" : void 0, title: t("Work, in this window") }, t("Work")),
       (0, import_react26.createElement)("button", {
         type: "button",
         className: "bt-code-seg",
-        "aria-pressed": !state.front,
+        "aria-current": state.front ? void 0 : "true",
         "aria-busy": state.busy || void 0,
         disabled: state.busy,
         title: state.busy ? t("Opening Herdr…") : botId ? t("Code: open this Bot’s folder in Herdr") : t("Code: open Herdr"),
@@ -11539,9 +11565,10 @@ function WorkCodeSwitch({ roster, useSessions }) {
 var WORK_CODE_SWITCH_CSS = `
 .bt-side-top .bt-code-switch-wrap{position:relative;margin-right:auto;min-width:0}
 .bt-code-switch{display:inline-flex;align-items:center;max-width:100%;padding:2px;border:1px solid var(--bt-line);border-radius:999px;background:var(--bt-main)}
-.bt-code-seg{min-width:0;height:24px;padding:0 9px;border:0;border-radius:999px;background:none;color:var(--bt-ink-2);font:600 12px/16px var(--bt-font);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
-.bt-code-seg[aria-pressed=true]{background:var(--bt-card);color:var(--bt-ink);box-shadow:0 0 0 1px var(--bt-line)}
-.bt-code-seg:hover:not(:disabled):not([aria-pressed=true]){color:var(--bt-ink)}
+.bt-code-seg{display:inline-flex;align-items:center;min-width:0;height:24px;padding:0 9px;border:0;border-radius:999px;background:none;color:var(--bt-ink-2);font:600 12px/16px var(--bt-font);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.bt-code-seg[aria-current=true]{background:var(--bt-card);color:var(--bt-ink);box-shadow:0 0 0 1px var(--bt-line)}
+span.bt-code-seg{cursor:default}
+button.bt-code-seg:hover:not(:disabled):not([aria-current=true]){color:var(--bt-ink)}
 .bt-code-seg:disabled{cursor:default}
 .bt-code-seg[aria-busy]{animation:bt-code-pulse 1.2s ease-in-out infinite}
 .bt-code-notes{position:absolute;top:calc(100% + 6px);left:0;z-index:30;display:flex;flex-direction:column;gap:6px;width:240px;max-width:72vw}

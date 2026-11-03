@@ -1336,6 +1336,8 @@ const ZH = {
   'No connection: Herdr opened on the installed version': '没有网络：Herdr 以已安装的版本打开',
   "Herdr couldn't update: it opened on the installed version": 'Herdr 无法更新：已以已安装的版本打开',
   'Herdr says: {message}': 'Herdr 提示：{message}',
+  "Herdr couldn't check for updates: it opened on the installed version": 'Herdr 无法检查更新：已以已安装的版本打开',
+  'Herdr {version} is installed: it starts when Herdr restarts': 'Herdr {version} 已安装：Herdr 重启后生效',
   // The plugins the app's lane updates, by name (desktop-update.js pluginPill, about.js).
   'Bot team': 'Bot 团队',
   'Welcome': '欢迎',

@@ -9,7 +9,7 @@ import * as nodeFs from 'node:fs'
 import { Writable } from 'node:stream'
 import { NO_FOCUS } from '../src/herdr.js'
 import {
-  APP_UPDATE_MS, FEED, OFFLINE, compareVersions, downloadVerified, installFromFeed, installOf, onReleases, openLatest, readFeed,
+  APP_UPDATE_MS, FEED, NOTE_KINDS, OFFLINE, compareVersions, downloadVerified, installFromFeed, installOf, onReleases, openLatest, readFeed,
   targetOf, updateHerdr, versionIn,
 } from '../src/herdr-update.js'
 
@@ -68,7 +68,7 @@ test('the feed: this computer\'s build, unreachable, or read but unusable', asyn
 // closed: status answers 0 or 2, a start opens it), `ready` (app.update has a download to restart
 // into: app.check_updates makes one when `downloads` is on), and `version` (set by app.update).
 // Every call is one JSON line in calls.jsonl, with the version of the binary that answered.
-function fakeInstall({ window = 'closed', downloads = false, drops = false } = {}) {
+function fakeInstall({ window = 'closed', downloads = false, drops = false, sticks = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'herdr-up-'))
   const home = join(root, 'home')
   const state = join(root, 'state')
@@ -76,6 +76,7 @@ function fakeInstall({ window = 'closed', downloads = false, drops = false } = {
   writeFileSync(join(state, 'window'), window)
   if (downloads) writeFileSync(join(state, 'downloads'), '1')
   if (drops) writeFileSync(join(state, 'drops'), '1')
+  if (sticks) writeFileSync(join(state, 'sticks'), '1')
   const binary = (version) => {
     const script = join(state, `herdr-app-${version}.cjs`)
     writeFileSync(script, `
@@ -102,7 +103,7 @@ if (args[0] === '--version') {
   if (has('drops')) fs.writeFileSync(file('window'), 'closed')
   process.stdout.write('{}\\n')
 } else if (args[0] === 'do' && args[1] === 'window.close') {
-  fs.writeFileSync(file('window'), 'closed')
+  if (!has('sticks')) fs.writeFileSync(file('window'), 'closed')
   process.stdout.write('{}\\n')
 }
 `)
@@ -198,10 +199,42 @@ test('the feed unreachable (offline): the installed one opens, with the note', p
     const result = await openLatest(options)
     assert.equal(result.ok, true)
     assert.equal(result.note, OFFLINE)
+    assert.equal(result.noteKind, 'offline')
     assert.equal(result.version, OLD)
     assert.match(logged[0], new RegExp(`^stale ${OLD} offline: fetch failed`))
     assert.equal(fake.installed(), `herdr-app ${OLD}`)
   }
+})
+
+test('a feed it reads but cannot use: the installed one opens, with the check-failed note', posixOnly, async () => {
+  const fake = fakeInstall()
+  const feed = fakeFeed({ feed: { ...feedOf(NEW), version: 'latest' } })
+  const { options } = host(fake, feed)
+  const result = await openLatest(options)
+  assert.equal(result.ok, true)
+  assert.equal(result.version, OLD)
+  assert.match(result.note, /^Herdr couldn't check for updates \(the feed's version is not one/)
+  assert.equal(result.noteKind, 'check-failed')
+})
+
+test('yes, with a window that will not close (not Windows): installed, it starts on a restart', posixOnly, async () => {
+  const fake = fakeInstall({ window: 'open', downloads: false, sticks: true })
+  const feed = fakeFeed({ feed: feedOf(NEW, fake.sha256), tarball: fake.tarball })
+  const { options } = host(fake, feed, { update: true, offered: NEW })
+  const result = await openLatest(options)
+  assert.equal(result.ok, true)
+  assert.equal(result.version, NEW)
+  assert.equal(result.note, `Herdr ${NEW} is installed; it starts when Herdr restarts`)
+  assert.equal(result.noteKind, 'updated-restart')
+  assert.equal(fake.installed(), `herdr-app ${NEW}`)
+})
+
+test('every note names a kind the page knows, and an open with nothing to tell has neither', posixOnly, async () => {
+  assert.deepEqual([...NOTE_KINDS], ['offline', 'check-failed', 'update-failed', 'updated-restart'])
+  const fake = fakeInstall()
+  const result = await openLatest(host(fake, fakeFeed({ feed: feedOf(OLD) })).options)
+  assert.equal(result.note, undefined)
+  assert.equal(result.noteKind, undefined)
 })
 
 test('no: the installed one opens, and the feed is not even read', posixOnly, async () => {
@@ -252,6 +285,7 @@ test('yes, but the download\'s sha256 is not the feed\'s: nothing in it runs, th
   assert.equal(result.ok, true)
   assert.equal(result.version, OLD)
   assert.match(result.note, new RegExp(`^Herdr couldn't update to ${NEW} \\(the download's sha256 [0-9a-f]{64} is not the feed's ${wrong}\\)`))
+  assert.equal(result.noteKind, 'update-failed')
   assert.match(logged.at(-2), new RegExp(`^stale ${OLD} the download's sha256`))
   assert.deepEqual(readFileSync(join(fake.dir, 'herdr-app')), before, 'the install is byte for byte as it was')
   assert.equal(fake.calls().some(call => call.v === NEW), false, 'the download never ran')
@@ -306,6 +340,7 @@ test('yes on a Herdr the installer did not put there (PATH, override): the perso
   assert.equal(result.ok, true)
   assert.equal(result.version, OLD)
   assert.match(result.note, /update it yourself/)
+  assert.equal(result.noteKind, 'update-failed')
   assert.deepEqual(feed.asked, [FEED])
 })
 
