@@ -143,8 +143,8 @@ is opened, and the folder itself stays.
   were left behind.
 - It never replaces a file: a hard link then removal of the old name on one filesystem, else a
   copy that is fsynced and compared before the old file is removed. Modes are kept. No old name is
-  removed until the new dir's entry is fsynced; if a directory fsync fails, `sync` stops with an
-  error and the old files stay.
+  removed before its new entry is fsynced; a failed fsync before that point stops `sync` with an
+  error and the old file stays.
 - The database moves with its sidecars as one unit. First a `.meter-migrating` marker in the new
   dir records the length and SHA-256 of each of `meter.db`, `meter.db-wal` and `meter.db-shm`;
   then all of them are placed in the new dir, and only then are the old names removed. The next
