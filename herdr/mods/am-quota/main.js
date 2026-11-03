@@ -17,7 +17,7 @@ import { credentialTarget, keychainReadScript, keychainService, tokenIdentity, T
 import { install } from "./switch.js";
 import { claim, release } from "./lock.js";
 import { payloadDir, sweepScript } from "./write.js";
-import { forgetSaved, nameProblem, readIndex, resaveActive, saveLogin, useSaved } from "./saved.js";
+import { forgetSaved, nameProblem, readIndex, resaveActive, restorePrevious, saveLogin, useSaved } from "./saved.js";
 
 const POLL = 60000;
 /** How often the installed credential's identity is re-read. It is a token-bearing item; the
@@ -48,15 +48,18 @@ const platform = () => {
     return "macos";
   }
 };
-/** Values of the named environment variables (the shell's real environment): never logged. */
+/**
+ * Values of the named environment variables (the shell's real environment): never logged. An unset
+ * variable is not a failure (the script exits 0); a read that could not run rejects, because an
+ * unknown CLAUDE_CONFIG_DIR must not be mistaken for none — that would act on the default login.
+ */
 const readEnv = async (names) => {
   const out = {};
   await Promise.all(names.map(async (name) => {
-    try {
-      const r = await exec("sh", ["-c", 'v=$(printenv -- "$1") || exit 0; printf %s "$v"', "sh", name]);
-      const v = r.code === 0 ? r.stdout.trim() : "";
-      if (v) out[name] = v;
-    } catch {}
+    const r = await exec("sh", ["-c", 'v=$(printenv -- "$1") || exit 0; printf %s "$v"', "sh", name]);
+    if (r?.code !== 0) throw new Error(`could not read ${name}`);
+    const v = String(r.stdout ?? "").trim();
+    if (v) out[name] = v;
   }));
   return out;
 };
@@ -123,8 +126,16 @@ export default class AmQuota extends View {
   }
 
   async settings() {
-    // The app's environment does not change while it runs: read it once, not once a minute.
-    const env = await (this.envVars ??= readEnv([KEY_ENV, "CODEX_HOME", "CLAUDE_CONFIG_DIR"]).catch(() => ({})));
+    // The app's environment does not change while it runs: read it once, not once a minute. A
+    // failed read is not cached (the next call tries again) and is reported as `envKnown: false`.
+    let env = {};
+    let envKnown = true;
+    try {
+      env = await (this.envVars ??= readEnv([KEY_ENV, "CODEX_HOME", "CLAUDE_CONFIG_DIR"]));
+    } catch {
+      this.envVars = null;
+      envKnown = false;
+    }
     let base = null;
     try {
       base = JSON.parse((await readTextFile(`${appHome()}/cliproxy.json`)) ?? "{}")?.url ?? null;
@@ -135,7 +146,7 @@ export default class AmQuota extends View {
         key = ((await readTextFile(expand(KEY_FILE))) ?? "").trim() || null;
       } catch {}
     }
-    return { base, key, env: { CODEX_HOME: env.CODEX_HOME, CLAUDE_CONFIG_DIR: env.CLAUDE_CONFIG_DIR } };
+    return { base, key, envKnown, env: { CODEX_HOME: env.CODEX_HOME, CLAUDE_CONFIG_DIR: env.CLAUDE_CONFIG_DIR } };
   }
 
   /** The timer's body: a hidden panel does not need a fresh read (its timer keeps running). */
@@ -247,6 +258,8 @@ export default class AmQuota extends View {
       wake(cx);
       try {
         // A saved login in use is about to be replaced: keep its newest refresh token first.
+        // Claude's item depends on CLAUDE_CONFIG_DIR: an unknown environment is a refusal.
+        if (provider === "claude") await this.knownEnv();
         const kept = provider === "claude" ? this.active.claude?.saved : null;
         if (kept) await resaveActive({ ...this.io(), name: kept });
         const result = await install({ api: this.api, provider, account, ...this.io() });
@@ -269,13 +282,28 @@ export default class AmQuota extends View {
     return { home: home(), appHome: appHome(), env: this.env, platform: platform(), exec, readTextFile, writeTextFile };
   }
 
-  /** Writes `active.json` and drops the cached identity, so the badge follows what was written. */
+  /**
+   * Writes `active.json` and drops the cached identity, so the badge follows what was written. A
+   * failed write is shown, not swallowed: the record says which saved login a later Use re-saves
+   * into, and a stale one would point that re-save at the wrong account.
+   */
   async record(provider) {
+    delete this.identities[provider];
     // writeTextFile wants the snapshot it replaces: null only creates.
     const statePath = `${appHome()}/data/${STATE}`;
     const before = await readTextFile(statePath).catch(() => null);
-    await writeTextFile(statePath, JSON.stringify(this.active, null, 2) + "\n", before ?? null).catch(() => {});
-    delete this.identities[provider];
+    try {
+      await writeTextFile(statePath, JSON.stringify(this.active, null, 2) + "\n", before ?? null);
+    } catch (err) {
+      throw new Error(`the login was written, but active.json could not record it (${message(err).slice(0, 80)}) — the panel may name the wrong login in use`);
+    }
+  }
+
+  /** The clients' environment, or a refusal: an unknown CLAUDE_CONFIG_DIR names an unknown item. */
+  async knownEnv() {
+    const s = await this.settings();
+    if (!s.envKnown) throw new Error("could not read this app's environment (CLAUDE_CONFIG_DIR), so which login Claude uses is unknown; nothing was changed");
+    this.env = s.env;
   }
 
   /**
@@ -297,7 +325,7 @@ export default class AmQuota extends View {
       try {
         // The environment is read once and cached; a click before the first read finishes must
         // still see CLAUDE_CONFIG_DIR, or it would act on the default profile's login.
-        this.env = (await this.settings()).env;
+        await this.knownEnv();
         this.note = await work();
         this.saved = await readIndex({ appHome: appHome(), readTextFile }).catch(() => this.saved);
         this.reload(cx);
@@ -345,6 +373,14 @@ export default class AmQuota extends View {
     });
   }
 
+  /** Puts back the copy the last re-save of `name` replaced (a swap, so it can be undone). */
+  restore(name, cx) {
+    this.savedWrite(cx, `restoring the previous copy of ${name}…`, async () => {
+      await restorePrevious({ ...this.io(), name });
+      return `${name}: the previous copy is back (the one it replaced is now the previous); the login in use was not changed`;
+    });
+  }
+
   forget(name, cx) {
     this.savedWrite(cx, `forgetting ${name}…`, async () => {
       await forgetSaved({ ...this.io(), name });
@@ -389,6 +425,9 @@ export default class AmQuota extends View {
     nameLine.child(button(`saved-forget-${slug(name)}`, this.armed === forgetKey ? "Forget?" : "Forget", (_e, cx) => {
       if (this.armedOrArm(forgetKey, cx)) this.forget(name, cx);
     }, this.armed === forgetKey));
+    if (meta.previousAt) {
+      nameLine.child(button(`saved-restore-${slug(name)}`, "Restore previous", (_e, cx) => this.restore(name, cx)));
+    }
     const who = [meta.email, meta.org].filter(Boolean).join(" · ") || (meta.plan ? `${meta.plan} plan` : "Claude login");
     const facts = h_flex().gap(8).text_size(10.5).text_color(t.dim)
       .child(div().truncate().child(who))

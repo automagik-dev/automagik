@@ -45,6 +45,14 @@ export const savedService = (name) => `${SAVED_PREFIX}${checked(name)}`;
 /** Where a saved login is kept without a Keychain: its own file in a `0700` folder. */
 export const savedFile = (appHome, name) => `${payloadDir(appHome)}/saved/${checked(name)}.json`;
 
+/**
+ * The copy a re-save replaced, one level deep, so a re-save into the wrong name (the record can be
+ * wrong: a /login outside the panel, an old session refreshing its tokens back in) loses nothing.
+ * The service holds a space and the file sits in its own folder, so no saved name can reach either.
+ */
+export const previousService = (name) => `${SAVED_PREFIX}${checked(name)} (previous)`;
+export const previousFile = (appHome, name) => `${payloadDir(appHome)}/saved/previous/${checked(name)}.json`;
+
 /** The index: names and what to show for them (plan, email, org, saved-at). Never a token. */
 export const indexPath = (appHome) => `${payloadDir(appHome)}/saved.json`;
 
@@ -110,6 +118,7 @@ export async function readIndex({ appHome, readTextFile }) {
         email: str(meta.email) || null,
         org: str(meta.org) || null,
         plan: str(meta.plan) || null,
+        previousAt: str(meta.previousAt) || null,
       };
     }
     return out;
@@ -145,6 +154,29 @@ async function clientSource({ home, env, platform, exec }) {
 function savedSource(name, { home, env, platform, appHome }) {
   const plan = credentialTarget("claude", { home, env, platform });
   return plan.keychain ? { service: savedService(name) } : { file: savedFile(appHome, name) };
+}
+
+/** Where the copy a re-save replaced is kept. */
+function previousSource(name, { home, env, platform, appHome }) {
+  const plan = credentialTarget("claude", { home, env, platform });
+  return plan.keychain ? { service: previousService(name) } : { file: previousFile(appHome, name) };
+}
+
+/** Removes one item or file and proves it gone. */
+async function remove(where, io) {
+  const r = where.service
+    ? await io.exec("sh", ["-c", keychainForgetScript(), "sh", where.service])
+    : await io.exec("sh", ["-c", fileForgetScript(), "sh", where.file]);
+  return r.code === 0;
+}
+
+/** Writes the index, naming the failure: the copies themselves have already changed. */
+async function indexed(io, done, change) {
+  try {
+    await updateIndex(io, change);
+  } catch {
+    throw new Error(`${done}, but the list of saved logins could not be updated — reopen the panel`);
+  }
 }
 
 /**
@@ -192,10 +224,23 @@ const ioOf = (o) => ({
   unlink: o.unlink ?? ((p) => fs.unlink(p)),
 });
 
-/** Writes one login into a saved copy and the index. */
-async function keep(name, oauth, io) {
-  const placed = await place({ provider: "claude", body: JSON.stringify({ claudeAiOauth: oauth }), to: savedSource(name, io), ...io });
-  await updateIndex(io, (logins) => { logins[name] = { savedAt: new Date().toISOString(), ...describe(oauth) }; });
+const body = (oauth) => JSON.stringify({ claudeAiOauth: oauth });
+const sameToken = (a, b) => fingerprint(str(a?.refreshToken)) === fingerprint(str(b?.refreshToken));
+
+/**
+ * Writes one login into a saved copy and the index. A copy it replaces that holds another refresh
+ * token (`prior`, read by the caller) is first written to the previous slot, the same safe way; if
+ * that fails nothing is replaced.
+ */
+async function keep(name, oauth, io, prior = null) {
+  const keepPrior = Boolean(prior) && !sameToken(prior, oauth);
+  if (keepPrior) await place({ provider: "claude", body: body(prior), to: previousSource(name, io), ...io });
+  const placed = await place({ provider: "claude", body: body(oauth), to: savedSource(name, io), ...io });
+  const now = new Date().toISOString();
+  await indexed(io, `saved ${name}`, (logins) => {
+    const was = logins[name];
+    logins[name] = { savedAt: now, ...describe(oauth), previousAt: keepPrior ? (was?.savedAt ?? now) : (was?.previousAt ?? null) };
+  });
   return placed;
 }
 
@@ -212,7 +257,8 @@ export async function saveLogin(options) {
   }
   const current = await readLogin(await clientSource(io), io, "the login in use");
   if (!current) throw new Error("there is no Claude Code login on this machine to save — sign in first");
-  const placed = await keep(name, current, io);
+  const prior = await readLogin(savedSource(name, io), io).catch(() => null);
+  const placed = await keep(name, current, io, prior);
   return { name, fingerprint: placed.fingerprint, ...describe(current) };
 }
 
@@ -234,7 +280,9 @@ export async function resaveActive(options) {
   if (copy && !sameAccountShape(copy, current)) {
     throw new Error(`the login in use does not look like ${name} (its plan differs) — save it under its own name, or Re-save ${name} to confirm; nothing was changed`);
   }
-  await keep(name, current, io);
+  // The record can be wrong, and two accounts on one plan pass the check above: the copy being
+  // replaced is kept as the previous one, so a wrong re-save can be undone (`restorePrevious`).
+  await keep(name, current, io, copy);
   return { resaved: true };
 }
 
@@ -260,15 +308,44 @@ export async function useSaved(options) {
   return { label: placed.label, fingerprint: placed.fingerprint, name, resaved };
 }
 
-/** Forget a saved login: its item (or file) is removed and proved gone, then its index entry. */
+/**
+ * "Restore previous": the copy the last re-save replaced goes back into the saved login, and the
+ * copy it replaces becomes the previous one — a swap, so a restore can itself be undone. The
+ * previous copy is written first: if the second write fails, both slots hold it and nothing that
+ * was asked for is lost.
+ */
+export async function restorePrevious(options) {
+  const io = ioOf(options);
+  const name = checked(options.name);
+  const prev = await readLogin(previousSource(name, io), io);
+  if (!prev) throw new Error(`there is no previous copy of ${name}; nothing was changed`);
+  const now = await readLogin(savedSource(name, io), io).catch(() => null);
+  await place({ provider: "claude", body: body(prev), to: savedSource(name, io), ...io });
+  if (now) {
+    try {
+      await place({ provider: "claude", body: body(now), to: previousSource(name, io), ...io });
+    } catch {
+      throw new Error(`${name} is restored, but the copy it replaced could not be kept as the previous one`);
+    }
+  } else if (!(await remove(previousSource(name, io), io))) {
+    throw new Error(`${name} is restored, but its previous copy could not be removed`);
+  }
+  await indexed(io, `restored ${name}`, (logins) => {
+    const was = logins[name] ?? {};
+    logins[name] = { ...was, ...describe(prev), savedAt: was.previousAt ?? new Date().toISOString(), previousAt: now ? (was.savedAt ?? null) : null };
+  });
+  return { name };
+}
+
+/**
+ * Forget a saved login: its copy and its previous copy are removed and proved gone; only then is
+ * its index entry dropped, and a failure there is reported.
+ */
 export async function forgetSaved(options) {
   const io = ioOf(options);
   const name = checked(options.name);
-  const where = savedSource(name, io);
-  const r = where.service
-    ? await io.exec("sh", ["-c", keychainForgetScript(), "sh", where.service])
-    : await io.exec("sh", ["-c", fileForgetScript(), "sh", where.file]);
-  if (r.code !== 0) throw new Error(`could not remove the saved login ${name}`);
-  await updateIndex(io, (logins) => { delete logins[name]; });
+  if (!(await remove(savedSource(name, io), io))) throw new Error(`could not remove the saved login ${name}`);
+  if (!(await remove(previousSource(name, io), io))) throw new Error(`removed ${name}, but not its previous copy`);
+  await indexed(io, `removed ${name}`, (logins) => { delete logins[name]; });
   return { name };
 }

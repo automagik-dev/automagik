@@ -31,7 +31,7 @@ const RUN_SCRIPT = /((?:[\w.]+)(?:\([^()]*\))?)\(\s*(?:["'](?:\/bin\/)?sh["']\s*
 const RUN_OK = /^(?:(?:w\.)?kc\.(?:sh|exec\([^()]*\))|assert\.\w+)$/;
 const runsOutsideStandIn = (line) => [...line.matchAll(RUN_SCRIPT)].some((m) => !RUN_OK.test(m[1]));
 // The product's Keychain scripts: a test that runs one must take its env from the stand-in.
-const KEYCHAIN_SCRIPTS = /\b(?:keychainScript|keychainBackupScript|keychainRestoreScript|keychainReadScript|keychainForgetScript|install|place|saveLogin|useSaved|resaveActive|forgetSaved|readLogin)\b/;
+const KEYCHAIN_SCRIPTS = /\b(?:keychainScript|keychainBackupScript|keychainRestoreScript|keychainReadScript|keychainForgetScript|install|place|saveLogin|useSaved|resaveActive|restorePrevious|forgetSaved|readLogin)\b/;
 
 test("guard: no test spawns security, launchctl, defaults or osascript directly", () => {
   assert.ok(files.length > 10, `found the test files (${files.length})`);

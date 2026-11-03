@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { forgetSaved, nameProblem, readIndex, resaveActive, saveLogin, savedFile, savedService, useSaved } from "../mods/am-quota/saved.js";
+import { forgetSaved, nameProblem, previousFile, previousService, readIndex, resaveActive, restorePrevious, saveLogin, savedFile, savedService, useSaved } from "../mods/am-quota/saved.js";
 import { payloadDir, sweepScript } from "../mods/am-quota/write.js";
 import { fingerprint, TARGETS } from "../mods/am-quota/translate.js";
 import { keychain } from "./am-quota-keychain.mjs";
@@ -27,7 +27,8 @@ const oauth = (who, n = 0, extra = {}) => ({
 const A0 = oauth("a", 0);
 const A1 = oauth("a", 1);   // the same account after Claude rotated its refresh token
 const B0 = oauth("b", 0);
-const TOKENS = [A0, A1, B0].flatMap((o) => [o.accessToken, o.refreshToken]);
+const C0 = oauth("c", 0);   // a third account on the same plan as A and B
+const TOKENS = [A0, A1, B0, C0].flatMap((o) => [o.accessToken, o.refreshToken]);
 const item = (o, rest = {}) => JSON.stringify({ claudeAiOauth: o, ...rest });
 const mode = (p) => statSync(p).mode & 0o777;
 const sha8 = (dir) => createHash("sha256").update(dir).digest("hex").slice(0, 8);
@@ -61,6 +62,7 @@ function world({ env = {}, platform = "macos" } = {}) {
       for (const v of values) assert.ok(!JSON.stringify(v ?? null).includes(t), "no token in what the flow answered or threw");
     }
     const left = existsSync(payloadDir(appHome)) ? readdirSync(payloadDir(appHome)).filter((n) => n !== "saved.json" && n !== "saved") : [];
+    for (const v of values) assert.ok(!JSON.stringify(v ?? null).includes("mcp-secret"));
     assert.deepEqual(left, [], "no payload or item copy is left behind");
   };
   return { root, home, appHome, kc, io, json, adds, clean };
@@ -129,7 +131,8 @@ test("use: the login in use is re-saved FIRST (newest refresh token), then the c
   assert.deepEqual(installed.claudeAiOauth, B0, "the client is on work");
   assert.deepEqual(installed.mcpOAuth, { keep: "me" }, "the client item's other keys survive (merge)");
   assert.deepEqual(w.json(savedService("work")), { claudeAiOauth: B0 }, "the chosen copy is unchanged");
-  assert.deepEqual(w.adds(), [savedService("juice"), CLIENT], "the re-save ran before the swap");
+  assert.deepEqual(w.adds(), [previousService("juice"), savedService("juice"), CLIENT], "the replaced copy is kept, then the re-save, then the swap");
+  assert.deepEqual(w.json(previousService("juice")), { claudeAiOauth: A0 }, "the copy the re-save replaced is kept one level deep");
   assert.equal(out.resaved, true);
   assert.equal(out.fingerprint, fingerprint(B0.refreshToken));
   w.clean(out);
@@ -201,7 +204,42 @@ test("re-save before a proxy switch keeps the newest token of the saved login in
   w.kc.seed(CLIENT, item(A1));
   assert.deepEqual(await resaveActive({ ...w.io, name: "juice" }), { resaved: true });
   assert.deepEqual(w.json(savedService("juice")), { claudeAiOauth: A1 });
+  assert.deepEqual(w.json(previousService("juice")), { claudeAiOauth: A0 });
   assert.equal(w.kc.item(CLIENT), item(A1), "the client item is only read");
+  w.clean();
+});
+
+test("review M1: a wrong record re-saves another same-plan account over juice — and juice is not lost", async () => {
+  const w = world();
+  w.kc.seed(savedService("juice"), item(A0));
+  w.kc.seed(savedService("side"), item(C0));
+  // The client holds B (signed in outside the panel), but the record still says juice. B is on
+  // the same plan as A, so the shape check cannot tell them apart.
+  w.kc.seed(CLIENT, item(B0));
+
+  const out = await useSaved({ ...w.io, name: "side", current: "juice" });
+  assert.equal(out.resaved, true);
+  assert.deepEqual(w.json(savedService("juice")), { claudeAiOauth: B0 }, "the wrong re-save happened, as reproduced");
+  assert.deepEqual(w.json(previousService("juice")), { claudeAiOauth: A0 }, "but A is kept as juice's previous copy");
+  assert.deepEqual(w.json(CLIENT).claudeAiOauth, C0, "the switch itself went through");
+  assert.ok((await readIndex(w.io)).juice.previousAt, "the row can offer Restore previous");
+
+  await restorePrevious({ ...w.io, name: "juice" });
+  assert.deepEqual(w.json(savedService("juice")), { claudeAiOauth: A0 }, "A is back under juice");
+  assert.deepEqual(w.json(previousService("juice")), { claudeAiOauth: B0 }, "a swap: the restore can be undone too");
+  assert.deepEqual(w.json(CLIENT).claudeAiOauth, C0, "restoring never touches the login in use");
+  w.clean(out);
+});
+
+test("restore previous: with none, nothing changes; an unchanged re-save keeps no previous", async () => {
+  const w = world();
+  w.kc.seed(CLIENT, item(A0));
+  await saveLogin({ ...w.io, name: "juice" });
+  await saveLogin({ ...w.io, name: "juice" });   // the same token: nothing worth keeping
+  assert.equal(w.kc.item(previousService("juice")), null);
+  assert.equal((await readIndex(w.io)).juice.previousAt, null);
+  await assert.rejects(restorePrevious({ ...w.io, name: "juice" }), /no previous copy of juice; nothing was changed/);
+  assert.deepEqual(w.json(savedService("juice")), { claudeAiOauth: A0 });
   w.clean();
 });
 
@@ -210,12 +248,18 @@ test("forget: the saved item is removed and proved gone; the login in use stays"
   w.kc.seed(CLIENT, item(A0));
   await saveLogin({ ...w.io, name: "juice" });
 
+  w.kc.seed(CLIENT, item(A1));
+  await saveLogin({ ...w.io, name: "juice" });   // a rotated re-save: A0 becomes the previous copy
+  assert.ok(w.kc.item(previousService("juice")));
+
   await forgetSaved({ ...w.io, name: "juice" });
   assert.equal(w.kc.item(savedService("juice")), null);
+  assert.equal(w.kc.item(previousService("juice")), null, "the previous copy goes with it");
   assert.deepEqual(await readIndex(w.io), {});
-  assert.equal(w.kc.item(CLIENT), item(A0));
+  assert.equal(w.kc.item(CLIENT), item(A1));
   await forgetSaved({ ...w.io, name: "juice" });   // already gone: nothing to do, not an error
-  assert.ok(w.kc.calls().filter((c) => c.cmd === "delete-generic-password").every((c) => c.service === savedService("juice")));
+  const deleted = new Set(w.kc.calls().filter((c) => c.cmd === "delete-generic-password").map((c) => c.service));
+  assert.deepEqual([...deleted].sort(), [savedService("juice"), previousService("juice")].sort(), "only juice's own items");
   w.clean();
 });
 
@@ -239,6 +283,11 @@ test("linux: a saved login is a 0600 file in a 0700 folder, and no security call
   const out = await useSaved({ ...w.io, name: "juice", current: "work" });
   assert.equal(out.resaved, true);
   assert.deepEqual(JSON.parse(readFileSync(savedFile(w.appHome, "work"), "utf8")).claudeAiOauth, oauth("b", 1));
+  const prev = previousFile(w.appHome, "work");
+  assert.deepEqual(JSON.parse(readFileSync(prev, "utf8")), { claudeAiOauth: B0 }, "the replaced copy, kept");
+  assert.equal(mode(prev), 0o600);
+  assert.equal(mode(join(payloadDir(w.appHome), "saved", "previous")), 0o700);
+  assert.equal(existsSync(join(payloadDir(w.appHome), "saved", "juice.previous.json")), false, "no name can collide with it");
   const now = JSON.parse(readFileSync(creds, "utf8"));
   assert.deepEqual(now.claudeAiOauth, A0, "the client file is on juice");
   assert.deepEqual(now.mcpOAuth, { keep: "me" }, "the file's other keys survive");
@@ -246,6 +295,8 @@ test("linux: a saved login is a 0600 file in a 0700 folder, and no security call
 
   await forgetSaved({ ...w.io, name: "juice" });
   assert.equal(existsSync(file), false);
+  await forgetSaved({ ...w.io, name: "work" });
+  assert.equal(existsSync(prev), false, "the previous copy goes with it");
   assert.deepEqual(w.kc.calls(), [], "security was never called");
 });
 

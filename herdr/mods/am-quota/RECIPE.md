@@ -48,7 +48,8 @@ does not answer, a second line says the windows are unknown instead of showing a
 Under the proxy's accounts, **Saved Claude logins**: a name box (`save this login as…`, Enter saves)
 and one row per saved login — its name, `in use` on the one the panel last put in place, the email
 and organisation when the token data carries them (the current CLI's does not, so the row shows the
-plan, e.g. `max plan`), `saved <time> ago`, and **Use**, **Re-save** and **Forget**. Forget, and
+plan, e.g. `max plan`), `saved <time> ago`, and **Use**, **Re-save** and **Forget** (plus
+**Restore previous** once a re-save has replaced another copy). Forget, and
 Re-save on a row that is not in use, ask for a second click (`Forget?`, `Replace <name>?`) within
 five seconds. With no proxy configured the panel shows a dim line saying so, and the saved logins
 work as usual.
@@ -107,8 +108,15 @@ work as usual.
   `automagik-herdr restart <bot>` resumes a bot on the new account.
 - **A proxy switch while a saved login is in use** re-saves that login first too, then installs the
   proxy's account as before.
-- **Forget** removes the saved item (and proves it gone) or the file, and its line in the index. The
-  login in use is not changed.
+- **A re-save never loses a copy.** When a re-save replaces a copy holding another refresh token,
+  the replaced one is kept first as `am-quota saved: <name> (previous)` (on Linux
+  `saved/previous/<name>.json`). The row then shows **Restore previous**, which swaps the two back
+  — so a re-save into the wrong name (see below) is undone with one click.
+- **Forget** removes the saved item and its previous copy (and proves them gone), or the files, and
+  then its line in the index. The login in use is not changed.
+- If the app's environment cannot be read, the panel does not know whether a `CLAUDE_CONFIG_DIR`
+  is set, so Save, Use, Re-save, Forget, Restore and a Claude proxy switch refuse rather than act
+  on the default login. A failed `active.json` write is shown as an error.
 - **After a switch**: the panel records `<provider> → <credential name + token fingerprint>` in
   `data/am-quota/active.json` and says "restart new sessions (or /restart an open one)". Sessions
   already running keep the old account — that is the client's behaviour, not a defect.
@@ -148,7 +156,8 @@ runtime's `fetch`. Programs: `sh`, `security` (macOS Keychain), `od`/`tr` for th
   compares the login in use with that name's saved copy (plan, rate tier, scopes) and refuses on a
   mismatch: "the login in use does not look like <name> — save it under its own name, or Re-save
   <name> to confirm". Two accounts on the same plan look alike; after a `/login` outside the panel,
-  save the new login under its own name before pressing Use.
+  save the new login under its own name before pressing Use. If a wrong re-save happens anyway, the
+  account it replaced is that row's previous copy: **Restore previous** puts it back.
 - A saved copy whose refresh token has been used elsewhere since (another machine, the proxy) is
   stale: Use installs it, and Claude asks you to sign in. Sign in, then Re-save that row.
 - The proxy's quota extension (`cpa-quota-api-extension`) supplies the windows; without it the panel

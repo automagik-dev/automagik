@@ -110,6 +110,7 @@ holds — in a Keychain item of its own:
 | a saved login | item `am-quota saved: <name>`, login account `id -un` | `<app home>/data/am-quota/saved/<name>.json`, `0600`, folder `0700` |
 | the list | `<app home>/data/am-quota/saved.json`: name → `{savedAt, plan, email?, org?}`, no token | same |
 | which one is in use | `active.json`'s `claude.saved` (beside `name` and `fingerprint`) | same |
+| the copy a re-save replaced | item `am-quota saved: <name> (previous)` | `…/saved/previous/<name>.json`, `0600`, folder `0700` |
 
 Rules:
 
@@ -122,7 +123,8 @@ Rules:
   backups**, because an older copy of a rotated token is only exposure;
 - **reading a login** copies the item out with the switch's own backup script (`find-generic-password
   -w` into a `0600` hex file in the `0700` folder), reads it, and removes the copy in `finally`. The
-  client's item is only ever read when saving; it is written only by Use, through the merge;
+  client's item is only ever read when saving; it is written by Use and by a proxy switch, both
+  through the merge;
 - **the name is a word** (`^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$`), because it becomes part of a quoted
   `security -i` service and a file name: no quote, space or slash can reach either;
 - **re-save before replace.** Claude rotates the refresh token on use, so a saved copy goes stale
@@ -136,12 +138,27 @@ Rules:
   scopes (`sameAccountShape`), which a rotation keeps — and a mismatch refuses ("does not look like
   <name>"), so a `/login` made outside the panel cannot be re-saved over another account. Same-plan
   accounts pass this check; the person's explicit Re-save is never guarded;
+- **a replaced copy is kept, one level deep.** The record can be wrong — a `/login` outside the
+  panel, an open session on the old account refreshing its rotated tokens back into the client
+  item, an `active.json` write that failed — and two accounts on one plan pass the check above. So
+  any re-save that replaces a copy holding *another* refresh token first writes that copy, the same
+  safe way, to `am-quota saved: <name> (previous)` (elsewhere `saved/previous/<name>.json`, `0600`,
+  folder `0700`); if that write fails, nothing is replaced. The space in the service and the separate
+  folder keep any saved name from reaching either. The row then offers **Restore previous**, a swap
+  (the copy it replaces becomes the previous one), so a restore can itself be undone; it never
+  touches the login in use. Forget removes both copies;
+- **the record's write is checked.** A failed `active.json` write is shown, not swallowed: a stale
+  record points the next automatic re-save at the wrong name;
+- **an unknown environment refuses.** If the app's environment cannot be read, `CLAUDE_CONFIG_DIR`
+  is unknown, and so is the item Claude reads: Save, Re-save, Use, Forget, Restore and a Claude proxy
+  switch refuse instead of acting on the default login. A failed read is not cached;
 - **one write at a time.** Save, Re-save, Forget and Use all take `lock.claim`, like a proxy switch:
   each reads or writes the client's item, and two must not interleave;
 - **confirm the destructive ones.** Forget, and Re-save on a row that is not in use (it replaces
   that account's saved copy with the login in use), need a second click within five seconds;
-- **forget proves it.** `keychainForgetScript` deletes the item and then checks it is gone; a
-  missing item is not an error;
+- **forget proves it.** `keychainForgetScript` deletes each item and then checks it is gone; a
+  missing item is not an error. The index entry is dropped only after both copies are gone, and a
+  failure to update it is reported;
 - **no proxy needed.** The panel reads the clients' environment (`CLAUDE_CONFIG_DIR`) and the saved
   list before, and apart from, the proxy read, so a profile's suffixed item is the one used even
   with no `cliproxy.json`;
