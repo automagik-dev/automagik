@@ -86,7 +86,9 @@ and D17). Claude runs on pi-ai's `anthropic` route until `acp-claude` ships.
   moves to the closest pi-ai Claude model (`apps/bots-dsh/src/host/claude-models.js`): an alias
   to its family's newest, a version to the nearest one pi-ai serves, `default` to Opus. The old
   ref stays on the Bot as `claudeCodeModel`. The ACP delivery's own migration reads that field to
-  move the Bot on to `acp-claude`, and sets its own flag. Sessions and their history stay.
+  move the Bot on to `acp-claude`, and sets its own flag: once `acp-claude/default` is served
+  (a claude CLI is here), a Bot still on the pi-ai model it was moved to goes to it, once per team
+  (`acpClaudeMoved`); a Bot the person moved since stays (`apps/bots-dsh/src/host/models.js`). Sessions and their history stay.
 - **Auto.** The fork's last build started a new Claude session in Claude Code's own `auto`
   mode; it shipped only in the broken 3.53.0 to 3.54.1, and the team's Claude Bots ran on full
   access, so nobody depends on it. On pi-ai, a Bot's level is DSH's preset, Auto included. The

@@ -16,8 +16,9 @@ export const AGENTS = Object.freeze({
     // The adapter's own Claude Agent SDK would run the CLI it bundles; this runs the person's.
     env: cli => ({ CLAUDE_CODE_EXECUTABLE: cli }),
     // DSH's level, as the agent's own permission mode: Manual asks for every call (through
-    // DSH's dialog), whatever default mode the person's Claude Code settings name.
-    modeFor: level => (level.full ? 'bypassPermissions' : 'default'),
+    // DSH's dialog), whatever default mode the person's Claude Code settings name. DSH's Auto is
+    // Claude Code's own auto mode, never bypassPermissions (RFC 0003, Retired).
+    modeFor: level => (level.full ? 'bypassPermissions' : level.auto ? 'auto' : 'default'),
   }),
   'acp-codex': Object.freeze({
     key: 'codex',
@@ -29,7 +30,8 @@ export const AGENTS = Object.freeze({
     // CODEX_PATH wins over the Codex the adapter depends on (codex-acp startCodexConnection).
     env: cli => ({ CODEX_PATH: cli }),
     // DSH's sandbox, as Codex's own: it asks (through DSH's dialog) for anything beyond it.
-    modeFor: level => (level.full ? 'agent-full-access' : level.sandbox === 'read-only' ? 'read-only' : 'workspace-write'),
+    // DSH's Auto is Codex's auto review.
+    modeFor: level => (level.full ? 'agent-full-access' : level.auto ? 'agent' : level.sandbox === 'read-only' ? 'read-only' : 'workspace-write'),
   }),
 })
 

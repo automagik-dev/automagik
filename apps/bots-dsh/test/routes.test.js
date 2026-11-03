@@ -57,3 +57,36 @@ test('a DSH without the directory still lists every model', async () => {
   install(rt)
   assert.deepEqual((await rt.catalog()).map(entry => entry.route), [{ harness: 'dsh', connectedBy: 'native' }])
 })
+
+test('a Bot that ran on the Claude Code plugin moves on to acp-claude once ACP serves it, unless repicked', async () => {
+  const providers = { anthropic: [{ id: 'claude-opus-5-5' }] }
+  const ctx = { llm: { listProviders: () => Object.keys(providers).map(id => ({ id })), listModels: async id => providers[id], listConfigurableProviders: () => [] }, get: () => undefined }
+  const state = {
+    bots: {
+      a: { id: 'a', name: 'A', claudeCodeModel: 'claude-code/opus', model: 'anthropic/claude-opus-5-5', appliedModel: 'anthropic/claude-opus-5-5' },
+      b: { id: 'b', name: 'B', claudeCodeModel: 'claude-code/opus', model: 'deepseek/v4' },
+      c: { id: 'c', name: 'C', model: 'anthropic/claude-opus-5-5' },
+    },
+  }
+  let saves = 0
+  const rt = { ctx, state, save: async () => { saves++ } }
+  install(rt)
+  // No claude CLI here: acp-claude is not served, nothing moves, and the move stays pending.
+  await rt.moveToAcpClaude()
+  assert.equal(state.bots.a.model, 'anthropic/claude-opus-5-5')
+  assert.equal(state.acpClaudeMoved, undefined)
+  providers['acp-claude'] = [{ id: 'default', name: 'Claude Code' }]
+  rt.dropCatalog()
+  await rt.moveToAcpClaude()
+  assert.equal(state.bots.a.model, 'acp-claude/default')
+  assert.equal(state.bots.a.appliedModel, undefined)
+  assert.equal(state.bots.a.claudeCodeModel, 'claude-code/opus')
+  assert.equal(state.bots.b.model, 'deepseek/v4', 'a Bot the person moved since stays')
+  assert.equal(state.bots.c.model, 'anthropic/claude-opus-5-5', 'a Bot that was never on Claude Code stays')
+  assert.equal(state.acpClaudeMoved, true)
+  // Once: a Bot moved back by hand is not moved again.
+  state.bots.a.model = 'anthropic/claude-opus-5-5'
+  await rt.moveToAcpClaude()
+  assert.equal(state.bots.a.model, 'anthropic/claude-opus-5-5')
+  assert.ok(saves >= 1)
+})

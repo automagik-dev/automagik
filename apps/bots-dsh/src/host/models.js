@@ -2,11 +2,14 @@
 // only in its settings or by a Main Bot. The team's first Main Bot has none until the
 // user picks one in its chat. The Session keeps the selection durably.
 import { piAiRoutes, routeOf } from '../shared/routes.js'
+import { piAiClaudeOf } from './claude-models.js'
 import { normalize, splitRef } from './text.js'
 import { install as installHostModels } from './host-models.js'
 
 const CATALOG_TTL_MS = 10_000
 const ROUTE_WAIT_MS = 30_000
+// Claude Code over ACP (@automagik/acp-dsh), where a Bot that ran on the Claude Code plugin goes.
+export const ACP_CLAUDE = 'acp-claude/default'
 
 export function install(rt) {
   const { ctx, state } = rt
@@ -239,14 +242,32 @@ export function install(rt) {
     if (key !== syncedKey) { syncedKey = key; modelsSynced = modelsSynced?.then(syncAll, syncAll) ?? syncAll() }
     return modelsSynced
   }
+  // A Bot that ran on the Claude Code plugin went to pi-ai's closest Claude when the plugin left
+  // (store.js, `claudeCodeModel`). Once Claude Code is served over ACP, it moves on there, once
+  // per team, unless the person has picked another model for it since. Until ACP serves it
+  // (no claude CLI here), nothing moves and the flag stays unset.
+  async function moveToAcpClaude() {
+    if (state.acpClaudeMoved === true) return
+    if (!(await catalog()).some(entry => entry.ref === ACP_CLAUDE)) return
+    for (const bot of Object.values(state.bots)) {
+      if (!bot?.claudeCodeModel || bot.model !== piAiClaudeOf(bot.claudeCodeModel)) continue
+      bot.model = ACP_CLAUDE
+      delete bot.appliedModel
+      delete bot.appliedEffort
+    }
+    state.acpClaudeMoved = true
+    await rt.save()
+  }
+
   async function syncAll() {
+    await moveToAcpClaude().catch(error => rt.warn('ds-bot: Claude Bots not moved to ACP: %s', error))
     for (const bot of Object.values(state.bots)) {
       await applyModel(bot).catch(error => rt.warn('ds-bot: model for %s not applied: %s', bot.name, error))
     }
   }
 
   Object.assign(rt, {
-    catalog, cachedCatalog: () => catalogCache.value, cachedDefault: () => pickDefault(catalogCache.value),
+    moveToAcpClaude, catalog, cachedCatalog: () => catalogCache.value, cachedDefault: () => pickDefault(catalogCache.value),
     defaultRef, defaultModel, defaultEffort, resolveModel, desiredModel, reasoningOf, resolveEffort, desiredEffort,
     selectSessionModel, applyModel, waitForModel, syncModels,
     dropCatalog: () => { catalogCache = { at: 0, value: [] } },

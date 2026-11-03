@@ -9,7 +9,7 @@ import { markAgentLoopRequest } from '@deepseek-ai/dsh-llm'
 import { apply } from '../index.js'
 import { AGENTS, findCommand } from '../src/host/agents.js'
 import { AdapterStore, CHECK_EVERY_MS } from '../src/host/install.js'
-import { fullAccess } from '../src/host/tool.js'
+import { fullAccess, levelOf } from '../src/host/tool.js'
 
 const scratch = () => mkdtempSync(join(tmpdir(), 'acp-dsh-install-'))
 const tool = (dir, name) => {
@@ -150,4 +150,17 @@ test("a command's streamed output is the card's output, and the question's title
   await run.onUpdate({ sessionUpdate: 'tool_call_update', toolCallId: 'c1', _meta: { terminal_output: { data: 'acp-', terminal_id: 'c1' } } })
   await run.onUpdate({ sessionUpdate: 'tool_call_update', toolCallId: 'c1', status: 'completed', _meta: { terminal_output: { data: 'ok\n', terminal_id: 'c1' } } })
   assert.equal(tool.output, 'acp-ok\n')
+})
+
+test("DSH's level becomes each agent's own mode: Manual, Auto, full access", () => {
+  const level = (policy, sandbox) => levelOf({ effectivePolicy: () => policy }, { snapshotEvents: () => [{ type: 'sandbox/mode', data: { mode: sandbox } }] })
+  const claude = AGENTS['acp-claude'].modeFor
+  const codex = AGENTS['acp-codex'].modeFor
+  assert.equal(claude(level('ask', 'workspace-write')), 'default')
+  assert.equal(claude(level('never', 'workspace-write')), 'auto')
+  assert.equal(claude(level('never', 'danger-full-access')), 'bypassPermissions')
+  assert.equal(codex(level('ask', 'read-only')), 'read-only')
+  assert.equal(codex(level('ask', 'workspace-write')), 'workspace-write')
+  assert.equal(codex(level('never', 'workspace-write')), 'agent')
+  assert.equal(codex(level('never', 'danger-full-access')), 'agent-full-access')
 })

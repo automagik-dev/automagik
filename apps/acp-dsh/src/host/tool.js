@@ -147,7 +147,8 @@ export function levelOf(approval, session) {
     policy = approval?.effectivePolicy?.(session)
     sandbox = sandboxOf(session)
   } catch {}
-  return { sandbox, policy, full: policy === 'never' && sandbox === 'danger-full-access' }
+  // DSH's presets: Full access is no prompts and no sandbox; Auto is no prompts in the workspace sandbox.
+  return { sandbox, policy, full: policy === 'never' && sandbox === 'danger-full-access', auto: policy === 'never' && sandbox === 'workspace-write' }
 }
 
 // Full access (no approval prompts, no sandbox) lets the agent's calls through as it lets DSH's
