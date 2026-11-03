@@ -8,4 +8,3 @@ local.properties
 .idea/
 *.iml
 dist/
-meter/target/

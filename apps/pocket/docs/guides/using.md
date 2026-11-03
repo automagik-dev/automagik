@@ -56,9 +56,9 @@ top.
 
 ## Spend
 
-The Automagik meter ([`meter/`](../../meter/README.md)) counts the tokens your coding agents use
-on each machine and publishes a small `herdr-meter` summary there. The app reads that summary from
-each machine you're connected to and sums it. It never writes it. With no meter on any machine,
+The Automagik usage meter ([usagemeter](https://github.com/automagik-dev/usagemeter)) counts the
+tokens your coding agents use on each machine and publishes a small `herdr-meter` summary there.
+The app reads that summary from each machine you're connected to and sums it. It never writes it. With no meter on any machine,
 **Projects** shows one hint and no numbers.
 
 - **Today:** **spent today**, from local midnight, across every reporting machine.

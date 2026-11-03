@@ -26,7 +26,8 @@ It needs Node.js 20.3+ and herdr-core (`hc`), on macOS or Linux (systemd).
 - **Programs it runs:** `node`, `npm` (setup), `hc connect`, `launchctl` / `systemctl --user`, `sh`;
   for the usage meter, `hc machine ls` and `hc exec` (`uname`, `sh`, `curl`, `nice`, the meter).
 - **Files it writes:** its state folder (below), and the one login service file; on each machine,
-  `~/.local/bin/automagik-meter` (and the meter's own store, see its README).
+  `~/.local/bin/usagemeter` (and the meter's own store, see its README). It removes the older
+  `~/.local/bin/automagik-meter` once usagemeter has synced there.
 - **Where its state lives:** `${XDG_STATE_HOME:-~/.local/state}/automagik-pocket-link/`, mode 0700,
   outside the mod folder: this computer's key (`secret.key`, the identity phones pair with), the
   paired phones, the current pairing code, the bridge's address, its log and the meter's status,
@@ -41,16 +42,22 @@ It needs Node.js 20.3+ and herdr-core (`hc`), on macOS or Linux (systemd).
     `POCKET_LINK_STATE_DIR` sets the folder outright; the login service is given it.
   - Deleting this folder unpairs every phone.
 
-- **Usage meter:** while the bridge runs, it keeps the
-  [Automagik usage meter](../../meter/README.md) on this computer and on every connected herdr-core
+- **Usage meter:** while the bridge runs, it keeps
+  [usagemeter](https://github.com/automagik-dev/usagemeter) on this computer and on every connected herdr-core
   machine, so the phone can show token use and spend:
   - Every 10 minutes after the last pass, one pass at a time (a pass still running is never
     queued behind).
-  - On each machine, through `hc exec`, it runs `uname -sm`. If
-    `~/.local/bin/automagik-meter` is missing or isn't the latest release's build, it downloads
-    that build from this repository's GitHub releases with `curl` and installs it only once its
-    SHA-256 matches the release's `SHA256SUMS`.
-  - Then it runs `nice -n 19 ~/.local/bin/automagik-meter sync`, unless the machine is on battery.
+  - It reads the latest usagemeter release's version and `SHA256SUMS` from GitHub.
+  - On each machine, through `hc exec`, it runs `uname -sm`. If `~/.local/bin/usagemeter` is
+    missing or isn't that release's build, it downloads the build from that release with `curl`
+    and installs it (a temporary file, then a rename) only once its SHA-256 matches `SHA256SUMS`.
+  - It never downgrades: a usagemeter whose `usagemeter --version` is newer than the latest
+    release (Herdr desktop installs and updates usagemeter at the same path) stays.
+  - Then it runs `nice -n 19 ~/.local/bin/usagemeter sync`, unless the machine is on battery.
+    Two syncs at once are safe: usagemeter takes `meter.lock`, and the second exits at once.
+  - Once that sync succeeds, it removes `~/.local/bin/automagik-meter`, the meter this
+    repository used to ship. usagemeter keeps its store and summary doc, so no data moves. If
+    anything fails, the old binary stays.
   - The commands are fixed; nothing a phone sends reaches them. The only network use is the
     release download.
   - The dialog shows a line only for a machine where this keeps failing.

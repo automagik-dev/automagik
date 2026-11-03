@@ -40,7 +40,8 @@ Write one before the work when the change:
    feed, the pairing link and its protocol, the herdr-core wire protocol, the signing key, the
    app ID;
 2. touches privacy, security, permissions or what leaves the phone;
-3. adds a new component to the repo (for example the planned `meter/`);
+3. adds a new component to the repo (for example the usage meter, once `meter/`, now
+   [automagik-dev/usagemeter](https://github.com/automagik-dev/usagemeter));
 4. reverses an earlier decision.
 
 Skip the RFC for bug fixes, refactors that keep every contract, UI polish, tests and docs. Those
