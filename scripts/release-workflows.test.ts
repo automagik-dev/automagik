@@ -1,10 +1,11 @@
 // The release workflows' shell, run as written with a fake gh: the desktop build keeps the cut's
 // signed lane on the release, the cut retries the lane's upload to its versioned release, the cut
 // publishes with flags that add up (a prerelease plugin or herdr patch stays a prerelease), and the
-// cut posts the herdr lane blind only when nothing is posted yet.
+// cut posts the herdr lane and the am lane blind only when nothing is posted yet, and every release
+// packs am and checks am's key before it tags.
 import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -221,6 +222,12 @@ describe('the cut choosing how to publish its release', () => {
     expect(flags({ PRERELEASE: '', KIND: 'pocket' })).toEqual(['--latest=false']);
     expect(flags({ PRERELEASE: 'true', KIND: 'pocket' })).toEqual(['--prerelease', '--latest=false']);
   });
+
+  test('an am patch is not Latest, and a prerelease one stays a prerelease', () => {
+    expect(flags({ PRERELEASE: 'false', KIND: 'am' })).toEqual(['--latest=false']);
+    expect(flags({ PRERELEASE: '', KIND: 'am' })).toEqual(['--latest=false']);
+    expect(flags({ PRERELEASE: 'true', KIND: 'am' })).toEqual(['--prerelease', '--latest=false']);
+  });
 });
 
 describe('the cut reading the posted herdr-lane pointer before it posts its own', () => {
@@ -277,4 +284,129 @@ describe('the cut reading the posted herdr-lane pointer before it posts its own'
       expect(run.bun).toEqual([]);
     }
   });
+});
+
+describe('the cut reading the posted am-lane pointer before it posts its own', () => {
+  const lines = workflow('release.yml');
+  const start = lines.findIndex(line => line.trim() === 'mkdir -p am-lane/posted');
+  const end = lines.findIndex((line, i) => i > start && line.trim().startsWith('bun scripts/am-lane.ts posted '));
+  const block = start > -1 && end > start ? lines.slice(start, end + 1).join('\n') : '';
+
+  function read(status: number, stderr = '') {
+    const dir = mkdtempSync(join(tmpdir(), 'am-lane-posted-'));
+    const bin = join(dir, 'bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'gh'), `#!/usr/bin/env bash\necho "$*" >> "${dir}/gh.log"\nprintf '%s\\n' '${stderr}' >&2\nexit ${status}\n`);
+    writeFileSync(join(bin, 'bun'), `#!/usr/bin/env bash\necho "$*" >> "${dir}/bun.log"\n`);
+    chmodSync(join(bin, 'gh'), 0o755);
+    chmodSync(join(bin, 'bun'), 0o755);
+    const run = bash(`cd "${dir}"\n${block}`, [], { PATH: `${bin}:${process.env.PATH ?? ''}`, GITHUB_REPOSITORY: 'owner/repo' });
+    const log = (name: string) => { try { return readFileSync(join(dir, name), 'utf8').trim().split('\n').filter(Boolean); } catch { return []; } };
+    const result = { ...run, gh: log('gh.log'), bun: log('bun.log') };
+    rmSync(dir, { recursive: true, force: true });
+    return result;
+  }
+  const checked = ['scripts/am-lane.ts posted am-lane/am.json am-lane/posted'];
+
+  test('is found as the step writes it, with no error swallowed', () => {
+    expect(block).not.toBe('');
+    expect(block).not.toContain('|| true');
+    expect(block).not.toContain('2>/dev/null');
+  });
+
+  test('a posted pointer downloads: the downgrade check runs on it', () => {
+    const run = read(0);
+    expect(run.status).toBe(0);
+    expect(run.gh).toEqual(['release download am-lane --repo owner/repo -p am.json -p am.json.sig -D am-lane/posted --clobber']);
+    expect(run.bun).toEqual(checked);
+  }, 30_000);
+
+  test('no pointer posted yet (the first post): the run goes on to post', () => {
+    for (const message of ['no assets match the file pattern', 'no assets to download', 'release not found']) {
+      const run = read(1, message);
+      expect(run.status).toBe(0);
+      expect(run.out).toContain('am lane: nothing posted on am-lane yet');
+      expect(run.bun).toEqual(checked);
+    }
+  }, 30_000);
+
+  test('any other error reading it stops the run', () => {
+    for (const message of ['HTTP 502: Bad Gateway', 'HTTP 401: Bad credentials', 'error connecting to api.github.com']) {
+      const run = read(1, message);
+      expect(run.status).toBe(1);
+      expect(run.err).toContain(message);
+      expect(run.out).toContain('::error::am lane: could not read the posted pointer; refusing to post blind');
+      expect(run.bun).toEqual([]);
+    }
+  }, 30_000);
+});
+
+describe('every release carries am (RFC 0012)', () => {
+  const lines = workflow('release.yml');
+  const at = (name: string) => lines.findIndex(line => line.trim() === `- name: ${name}`);
+  const ifOf = (name: string) => lines[at(name) + 1]?.trim() ?? '';
+
+  test('am\'s gates and key check run on every release kind, before the tag', () => {
+    for (const name of ['The am part\'s gates', 'The am lane\'s signing key']) {
+      expect(at(name)).toBeGreaterThan(-1);
+      expect(at(name)).toBeLessThan(at('Version, commit and tag'));
+    }
+    expect(ifOf('The am part\'s gates')).toBe("if: steps.new.outputs.release == 'true'");
+    expect(lines[at('The am lane\'s signing key') + 1].trim()).toBe('id: amkey');
+    expect(lines[at('The am lane\'s signing key') + 2].trim()).toBe("if: steps.new.outputs.release == 'true'");
+  });
+
+  test('am is packed on every kind, before the plugins\' PLUGINS.SHA256SUMS and the publish', () => {
+    expect(ifOf('Pack am')).toBe("if: steps.cut.outputs.version != ''");
+    expect(at('Pack am')).toBeGreaterThan(at('Version, commit and tag'));
+    expect(at('Pack am')).toBeLessThan(at('Pack the plugins'));
+    expect(at('Pack am')).toBeLessThan(at('Publish the release'));
+  });
+
+  test('am-lane is posted only when check-key said sign=yes, after the publish', () => {
+    expect(ifOf('Sign and post the am lane')).toBe("if: steps.cut.outputs.version != '' && steps.amkey.outputs.sign == 'yes'");
+    expect(at('Sign and post the am lane')).toBeGreaterThan(at('Publish the release'));
+  });
+
+  test('an am patch packs no plugins, posts no plugin lane, builds no app and lists nothing', () => {
+    const text = lines.join('\n');
+    for (const name of ['Pack the add-ons the lane carries', 'Pack the plugins', 'Sign and post the plugin lane']) expect(ifOf(name)).toContain("steps.lane.outputs.kind != 'am'");
+    expect(text).toContain("needs.cut.outputs.lane != 'am'");
+    expect(text).toContain("if: env.LANE != 'herdr' && env.LANE != 'pocket' && env.LANE != 'am'");
+    // Wherever a herdr patch is told apart, an am patch is too.
+    const herdrOnly = lines.filter(line => /kind != 'herdr'|lane != 'herdr'|LANE != 'herdr'/.test(line));
+    for (const line of herdrOnly) expect(line).toMatch(/!= 'am'/);
+  });
+
+  test('the pack step, run on a tag: am/ without its tests, VERSION the release\'s, and its sha256', () => {
+    const start = lines.findIndex((line, i) => i > at('Pack am') && line.trim() === 'mkdir -p release');
+    const end = lines.findIndex((line, i) => i > start && line.trim() === 'cat "release/${tgz}.sha256"');
+    const block = lines.slice(start, end + 1).join('\n');
+    expect(start).toBeGreaterThan(at('Pack am'));
+    const dir = mkdtempSync(join(tmpdir(), 'am-pack-'));
+    try {
+      const git = (...args: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' });
+      git('init', '-q');
+      mkdirSync(join(dir, 'am', 'test'), { recursive: true });
+      mkdirSync(join(dir, 'am', 'bin'));
+      writeFileSync(join(dir, 'am', 'VERSION'), '3.70.1\n');
+      writeFileSync(join(dir, 'am', 'bin', 'am'), '#!/bin/sh\n');
+      writeFileSync(join(dir, 'am', 'test', 'am.test.mjs'), '');
+      git('add', '.');
+      git('commit', '-qm', 'am');
+      git('tag', 'v3.70.1');
+      const run = bash(`cd "${dir}"\n${block}`, [], { VERSION: '3.70.1' });
+      expect(run.status).toBe(0);
+      const names = spawnSync('tar', ['-tzf', join(dir, 'release', 'automagik-am-3.70.1.tgz')], { encoding: 'utf8' }).stdout.trim().split('\n').sort();
+      expect(names).toEqual(['VERSION', 'bin/', 'bin/am']);
+      expect(existsSync(join(dir, 'release', 'automagik-am-3.70.1.tgz.sha256'))).toBe(true);
+      // A tag whose am/VERSION is not the release's stops it.
+      git('tag', 'v3.70.2');
+      const wrong = bash(`cd "${dir}"\nrm -rf release\n${block}`, [], { VERSION: '3.70.2' });
+      expect(wrong.status).toBe(1);
+      expect(wrong.out).toContain("::error::am's VERSION in automagik-am-3.70.2.tgz is not 3.70.2");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

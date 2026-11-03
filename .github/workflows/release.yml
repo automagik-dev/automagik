@@ -26,6 +26,9 @@ name: Release
 #                                         as layouts/automagik.json,
 #                                         and its sha256 (docs/rfcs/0011-monorepo-parts-and-releases.md)
 #
+#   automagik-am-<version>.tgz           am, the one command (am/, docs/rfcs/0012-am-cli-and-parts.md), on
+#   automagik-am-<version>.tgz.sha256    every release whatever its kind: the tag's am/ but its tests
+#
 #   automagik-pocket-<version>.apk       Pocket's phone app, when apps/pocket/ shipped something since
 #   latest.json                           the last release: the APK signed with the release key
 #                                         (POCKET_SIGNING_KEYSTORE / POCKET_SIGNING_PASSWORD) and what
@@ -35,6 +38,13 @@ name: Release
 # and sha256; ed25519, the HERDR_PACK_KEY secret, the pack's own key; the public keys are
 # herdr/mods/am-sidebar/pack-keys.json) and puts it with pack.json.sig on the rolling `herdr-lane`
 # release, which holds nothing else: herdr/install.sh and `automagik-herdr update` read only that.
+#
+# and, on every release, it signs am.json (the newest am: its release, tarball URL and sha256; ed25519,
+# the AM_LANE_KEY secret, am's own key, the slot AM_LANE_SIGNER names; the public keys are
+# am/am-keys.json) and puts it with am.json.sig on the rolling `am-lane` release, which holds nothing
+# else: `am update` reads only that. While AM_LANE_KEY is not set the release attaches am, posts no
+# am-lane and says so in a warning; a key set that am-keys.json does not list stops it before the tag
+# (scripts/am-lane.ts check-key).
 #
 # and, when it built Pocket on a release that is not a prerelease, it replaces latest.json on the
 # rolling `pocket-lane` release, which holds nothing else and is never Latest: installed phones read
@@ -53,7 +63,9 @@ name: Release
 # dispatch: gh workflow run release.yml --ref dev [--field prerelease=true] [--field desktop=false]
 # [--field replace_unverified_herdr_pointer=true] (only when the posted herdr-lane pointer no longer
 # verifies, e.g. its key left pack-keys.json, and you have checked its sequence is not newer: the
-# release otherwise refuses to post over it; scripts/herdr-lane.ts posted).
+# release otherwise refuses to post over it; scripts/herdr-lane.ts posted)
+# [--field replace_unverified_am_pointer=true] (the same for the posted am-lane pointer;
+# scripts/am-lane.ts posted).
 # The workflow's own pushes (the version commit, the index listing, follow-omni's pin) start no
 # run: GitHub starts none for a push made with the workflow token. A dev that has nothing since the
 # last release but those commits cuts nothing. Cuts queue one at a time; a merge that lands while
@@ -65,6 +77,8 @@ name: Release
 # (any tag) is under herdr/, it is a herdr patch, v3.N.P with the pack alone: no plugin tarballs, no
 # new lane, no desktop build, no market listing (the plugins did not move). When it is all under
 # apps/pocket/ (or apps/pocket/ and the herdr part), it is a pocket patch the same way, with the APK.
+# When it is all am's (am/), it is an am patch: am alone. am/ never makes a release more than it is
+# otherwise (scripts/lane.ts kind).
 # Every release, full or patch, then signs lane.json (ed25519, the PLUGIN_LANE_KEY secret; the
 # public keys are plugin-lane/keys.json) and puts it on the rolling `plugin-lane` release, which
 # holds nothing else. The desktop app and Omni's market install the plugins from it, without a
@@ -94,6 +108,11 @@ on:
         required: false
         type: boolean
         default: false
+      replace_unverified_am_pointer:
+        description: 'Post the am lane over a posted pointer that does not verify (RFC 0012)'
+        required: false
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       prerelease:
@@ -108,6 +127,11 @@ on:
         default: true
       replace_unverified_herdr_pointer:
         description: 'Post the herdr lane over a posted pointer that does not verify (RFC 0011)'
+        required: false
+        type: boolean
+        default: false
+      replace_unverified_am_pointer:
+        description: 'Post the am lane over a posted pointer that does not verify (RFC 0012)'
         required: false
         type: boolean
         default: false
@@ -223,6 +247,31 @@ jobs:
           HERDR_PACK_KEY: ${{ vars.HERDR_PACK_SIGNER == 'HERDR_PACK_KEY_NEXT' && secrets.HERDR_PACK_KEY_NEXT || secrets.HERDR_PACK_KEY }}
         run: bun scripts/herdr-lane.ts check-key
 
+      # Every release carries am (RFC 0012): its tests, a syntax check, shellcheck on its launcher,
+      # and its copies of the pack's CLI and briefing byte for byte the pack's.
+      - name: The am part's gates
+        if: steps.new.outputs.release == 'true'
+        working-directory: am
+        run: |
+          set -euo pipefail
+          node --test 'test/*.test.mjs'
+          for f in *.js *.mjs bin/*.mjs lib/*.mjs; do
+            node --check "$f"
+          done
+          shellcheck -s sh bin/am bin/run.sh bin/automagik-herdr
+          node ../scripts/am-copies.mjs --check
+
+      # Before the cut, on every release, since every release carries am: AM_LANE_KEY (the slot
+      # AM_LANE_SIGNER names) must be a key am-keys.json lists, or the run stops before it tags.
+      # While it is not set at all the release warns, attaches am and posts no am-lane (sign=no):
+      # the key is the owner's to add (scripts/am-lane.ts keygen).
+      - name: The am lane's signing key
+        id: amkey
+        if: steps.new.outputs.release == 'true'
+        env:
+          AM_LANE_KEY: ${{ vars.AM_LANE_SIGNER == 'AM_LANE_KEY_NEXT' && secrets.AM_LANE_KEY_NEXT || secrets.AM_LANE_KEY }}
+        run: bun scripts/am-lane.ts check-key
+
       # Before the cut, so a release that rebuilds Pocket never goes out with an app that fails its
       # tests or lint, nor without the key that signs it (names only: the values are never read here).
       - name: Pocket's signing key is in the secrets
@@ -257,7 +306,7 @@ jobs:
 
       # Before the cut, so an add-on that cannot ride the lane stops the run before any tag.
       - name: Pack the add-ons the lane carries
-        if: steps.new.outputs.release == 'true' && steps.lane.outputs.kind != 'herdr' && steps.lane.outputs.kind != 'pocket'
+        if: steps.new.outputs.release == 'true' && steps.lane.outputs.kind != 'herdr' && steps.lane.outputs.kind != 'pocket' && steps.lane.outputs.kind != 'am'
         run: |
           set -euo pipefail
           bun scripts/lane.ts pack-addons release
@@ -270,7 +319,7 @@ jobs:
           HERDR: ${{ steps.lane.outputs.herdr }}
         run: |
           set -euo pipefail
-          if [[ "${KIND}" == "plugins" || "${KIND}" == "herdr" || "${KIND}" == "pocket" ]]; then version=$(bun scripts/lane.ts next-patch); else version=$(bun scripts/version.ts next); fi
+          if [[ "${KIND}" == "plugins" || "${KIND}" == "herdr" || "${KIND}" == "pocket" || "${KIND}" == "am" ]]; then version=$(bun scripts/lane.ts next-patch); else version=$(bun scripts/version.ts next); fi
           bun scripts/version.ts set "${version}"
           bun scripts/version.ts check
           # The herdr pack's marketplace index rides the release commit, regenerated from this tree.
@@ -293,6 +342,23 @@ jobs:
           fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Every release, whatever its kind (RFC 0012). Into release/ before the plugins'
+      # PLUGINS.SHA256SUMS, which then lists it too: a full release's desktop build keeps every file
+      # that list names (desktop-build.yml). From the tag: am/ without its tests.
+      - name: Pack am
+        if: steps.cut.outputs.version != ''
+        env:
+          VERSION: ${{ steps.cut.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          tgz="automagik-am-${VERSION}.tgz"
+          git archive --format=tar.gz -o "release/${tgz}" "v${VERSION}:am" -- . ':(exclude)test'
+          [[ "$(tar -xzOf "release/${tgz}" VERSION)" == "${VERSION}" ]] || { echo "::error::am's VERSION in ${tgz} is not ${VERSION}"; exit 1; }
+          if tar -tzf "release/${tgz}" | grep -q '^test/'; then echo "::error::${tgz} carries am's tests"; exit 1; fi
+          (cd release && sha256sum -- "${tgz}" > "${tgz}.sha256")
+          cat "release/${tgz}.sha256"
 
       # Into release/ before the plugins' PLUGINS.SHA256SUMS, which then lists the pack too: a full
       # release's desktop build keeps every file that list names (desktop-build.yml).
@@ -322,7 +388,7 @@ jobs:
           cat "release/${tgz}.sha256"
 
       - name: Pack the plugins
-        if: steps.cut.outputs.version != '' && steps.lane.outputs.kind != 'herdr' && steps.lane.outputs.kind != 'pocket'
+        if: steps.cut.outputs.version != '' && steps.lane.outputs.kind != 'herdr' && steps.lane.outputs.kind != 'pocket' && steps.lane.outputs.kind != 'am'
         env:
           VERSION: ${{ steps.cut.outputs.version }}
           SHA: ${{ steps.cut.outputs.sha }}
@@ -349,14 +415,16 @@ jobs:
           notes="\`@automagik/acp-dsh\`, \`@automagik/bots-dsh\`, \`@automagik/locale-pt-br-dsh\`, \`@automagik/welcome-dsh\` for DeepSeek Harness, and the Automagik desktop app. Install the plugins from the [Automagik market](https://github.com/automagik-dev/dsh-marketplace) or from an Omni's own market; \`plugins.json\` lists each tarball's integrity. The desktop builds follow when they are done."
           [[ "${KIND}" == "herdr" ]] && notes="The Automagik Herdr pack alone (no plugins, no desktop build)."
           [[ "${KIND}" == "pocket" ]] && notes="Automagik Pocket (no plugins, no desktop build)."
+          [[ "${KIND}" == "am" ]] && notes="am, the Automagik command, alone (no plugins, no desktop build)."
           [[ "${HERDR}" == "yes" ]] && notes="${notes} Automagik Herdr: \`automagik-herdr-pack-${VERSION}.tgz\` (its sha256 in \`.sha256\`); install with \`curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash\`, or run \`automagik-herdr update\`."
+          notes="${notes} am: \`automagik-am-${VERSION}.tgz\` (its sha256 in \`.sha256\`); \`am update\` takes it from the signed am-lane."
           [[ "${POCKET}" == "yes" ]] && notes="${notes} Automagik Pocket: \`automagik-pocket-${VERSION}.apk\` follows (the Pocket job) with \`latest.json\`; installed phones update on their own."
           # Flags add up: a dispatched prerelease stays a prerelease whatever its kind, and only a
-          # full stable release is Latest. A plugin, herdr or pocket patch is not Latest: the desktop
+          # full stable release is Latest. A plugin, herdr, pocket or am patch is not Latest: the desktop
           # app's builds stay on the full one.
           flags=()
           [[ "${PRERELEASE}" == "true" ]] && flags+=(--prerelease)
-          if [[ "${PRERELEASE}" == "true" || "${KIND}" == "plugins" || "${KIND}" == "herdr" || "${KIND}" == "pocket" ]]; then
+          if [[ "${PRERELEASE}" == "true" || "${KIND}" == "plugins" || "${KIND}" == "herdr" || "${KIND}" == "pocket" || "${KIND}" == "am" ]]; then
             flags+=(--latest=false)
           else
             flags+=(--latest)
@@ -408,9 +476,45 @@ jobs:
           # signature that do not match, or neither: both fail closed (refused, or no update yet).
           gh release upload herdr-lane herdr-lane/pack.json.sig herdr-lane/pack.json --clobber --repo "${GITHUB_REPOSITORY}"
 
+      # Every release that has am's key (check-key said sign=yes). Never back, and fail closed, as
+      # the herdr lane: a posted pointer that does not verify is replaced only when the run was
+      # dispatched with replace_unverified_am_pointer.
+      - name: Sign and post the am lane
+        if: steps.cut.outputs.version != '' && steps.amkey.outputs.sign == 'yes'
+        env:
+          VERSION: ${{ steps.cut.outputs.version }}
+          SHA: ${{ steps.cut.outputs.sha }}
+          AM_LANE_KEY: ${{ vars.AM_LANE_SIGNER == 'AM_LANE_KEY_NEXT' && secrets.AM_LANE_KEY_NEXT || secrets.AM_LANE_KEY }}
+          AM_LANE_REPLACE_UNVERIFIED: ${{ inputs.replace_unverified_am_pointer }}
+        run: |
+          set -euo pipefail
+          mkdir -p am-lane
+          bun scripts/am-lane.ts manifest "release/automagik-am-${VERSION}.tgz" "${VERSION}" "${SHA}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > am-lane/am.json
+          bun scripts/am-lane.ts sign am-lane/am.json > am-lane/am.json.sig
+          bun scripts/am-lane.ts verify am-lane/am.json am-lane/am.json.sig
+          if ! gh release view am-lane --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create am-lane --repo "${GITHUB_REPOSITORY}" --target dev --prerelease --latest=false \
+              --title "Automagik am lane" \
+              --notes "am.json names the newest am, the Automagik command (its tarball stays on its own versioned release); am.json.sig is its ed25519 signature, checked against am/am-keys.json. See scripts/am-lane.ts."
+          fi
+          mkdir -p am-lane/posted
+          if ! gh release download am-lane --repo "${GITHUB_REPOSITORY}" -p am.json -p am.json.sig -D am-lane/posted --clobber 2> am-lane/download.err; then
+            if grep -qE '^(release not found|no assets match the file pattern|no assets to download)$' am-lane/download.err; then
+              echo "am lane: nothing posted on am-lane yet"
+            else
+              cat am-lane/download.err >&2
+              echo "::error::am lane: could not read the posted pointer; refusing to post blind (re-run the job)"
+              exit 1
+            fi
+          fi
+          bun scripts/am-lane.ts posted am-lane/am.json am-lane/posted
+          # --clobber replaces each asset in turn: a reader that sees a pointer and a signature that
+          # do not match, or neither, refuses it (no update yet).
+          gh release upload am-lane am-lane/am.json.sig am-lane/am.json --clobber --repo "${GITHUB_REPOSITORY}"
+
       # A herdr or pocket patch packs no plugins: the lane stays on the release that last did.
       - name: Sign and post the plugin lane
-        if: steps.cut.outputs.version != '' && steps.lane.outputs.kind != 'herdr' && steps.lane.outputs.kind != 'pocket'
+        if: steps.cut.outputs.version != '' && steps.lane.outputs.kind != 'herdr' && steps.lane.outputs.kind != 'pocket' && steps.lane.outputs.kind != 'am'
         env:
           VERSION: ${{ steps.cut.outputs.version }}
           KIND: ${{ steps.lane.outputs.kind }}
@@ -567,8 +671,8 @@ jobs:
   desktop:
     name: Desktop
     needs: cut
-    # A push carries no inputs, and a missing input compares equal to false. A plugin, herdr or pocket patch has no app.
-    if: needs.cut.outputs.version != '' && needs.cut.outputs.lane != 'plugins' && needs.cut.outputs.lane != 'herdr' && needs.cut.outputs.lane != 'pocket' && (github.event_name == 'push' || inputs.desktop != false)
+    # A push carries no inputs, and a missing input compares equal to false. A plugin, herdr, pocket or am patch has no app.
+    if: needs.cut.outputs.version != '' && needs.cut.outputs.lane != 'plugins' && needs.cut.outputs.lane != 'herdr' && needs.cut.outputs.lane != 'pocket' && needs.cut.outputs.lane != 'am' && (github.event_name == 'push' || inputs.desktop != false)
     uses: ./.github/workflows/desktop-build.yml
     permissions:
       contents: write
@@ -604,9 +708,9 @@ jobs:
         with:
           bun-version: 1.4.2
 
-      # A herdr or pocket patch moved no plugin: the index stays on the release that last packed them.
+      # A herdr, pocket or am patch moved no plugin: the index stays on the release that last packed them.
       - name: Pin the index to the release
-        if: env.LANE != 'herdr' && env.LANE != 'pocket'
+        if: env.LANE != 'herdr' && env.LANE != 'pocket' && env.LANE != 'am'
         run: |
           set -euo pipefail
           bun install --frozen-lockfile --ignore-scripts
