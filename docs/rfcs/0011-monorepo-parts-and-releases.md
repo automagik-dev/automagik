@@ -4,20 +4,22 @@
 |---|---|
 | Status | Accepted (the owner OKd one version and the jump, 2026-11-03) |
 | Milestone | n/a (process) |
-| Lanes | herdr (3.N.P), added here; pocket, added by Pocket's import |
+| Lanes | herdr (3.N.P), added here; pocket (3.N.P), added by Pocket's import |
 | Created | 2026-11-03 |
 
 ## Summary
 
 Automagik is one repository whose parts ship on their own: the desktop app, the DSH plugins, the
-herdr pack, and Pocket (when it is imported). Every release has the one version and the one tag
+herdr pack, and Pocket, the phone app. Every release has the one version and the one tag
 `vX.Y.Z`. A release rebuilds and attaches only the parts whose paths changed since the release
 before, and each part's updater finds the newest release that carries its own asset (the desktop
-app by its feed, the plugins and the herdr pack through a signed rolling pointer). A desktop-only
+app by its feed, the plugins and the herdr pack through a signed rolling pointer, Pocket through
+the rolling `pocket-lane` release). A desktop-only
 release never offers a pack update, and a pack-only release never cuts a desktop build.
 
-This RFC covers the herdr part, imported from `automagik-dev/automagik-herdr` with its history.
-Pocket's import adds its own part (its `latest.json`, the versionCode guard) to this RFC.
+This RFC covers the herdr part, imported from `automagik-dev/automagik-herdr` with its history,
+and Pocket, imported from `automagik-dev/automagik-pocket` with its history ("Pocket" below: its
+lane, the versionCode guard, `latest.json` on `pocket-lane`, the signing secrets, the bridge).
 
 ## Motivation
 
@@ -35,7 +37,7 @@ and updaters that find their asset among releases that are mostly someone else's
 | Desktop app | everything not below (`apps/desktop/`, the profile, lockfiles…) | the dmg, AppImage and deb, `latest-*.yml`, `SHA256SUMS` | `apps/desktop/src/update.js`: the newest release with its platform's feed |
 | Plugins | `apps/<plugin>/` | `automagik-<plugin>-<v>.tgz`, `plugins.json`, `PLUGINS.SHA256SUMS`, `lane.json` | the rolling `plugin-lane` release (`scripts/lane.ts`) |
 | Herdr pack | `herdr/`, `herdr-layout/` | `automagik-herdr-pack-<v>.tgz` and `automagik-herdr-pack-<v>.tgz.sha256`; the `herdr-lane` pointer is re-signed | the rolling `herdr-lane` release (`scripts/herdr-lane.ts`), checked against the pack's `pack-keys.json` |
-| Pocket | `apps/pocket/`, `herdr/mods/pocket-link` | (Pocket's import) | (Pocket's import) |
+| Pocket | `apps/pocket/` (Pocket Link, `herdr/mods/pocket-link`, is on the herdr lane) | `automagik-pocket-<v>.apk` and `latest.json`; `latest.json` on the rolling `pocket-lane` release is replaced | `latest.json` on `pocket-lane` (`apps/pocket/android/app/build.gradle.kts`, `UPDATE_URL`) |
 
 `herdr/` is a top-level folder because Herdr's crawler (herdr.dev) indexes top-level folders. The
 herdr.dev listing waits on the owner's gate: no `herdr-mod` or `herdr-layout` topic is set on this
@@ -71,6 +73,7 @@ what a release is and whether it attaches the pack:
 | What shipped | Kind | Version | Attaches | Desktop build | Plugin lane | Market index |
 |---|---|---|---|---|---|---|
 | Since the last release (any tag), only `herdr/` | `herdr` | 3.N.P (next patch) | the pack | no | not re-signed | not re-pinned |
+| Since the last release, only `apps/pocket/` (or `apps/pocket/` and `herdr/`) | `pocket` | 3.N.P | the APK and `latest.json`, the pack when `herdr/` shipped | no | not re-signed | not re-pinned |
 | Since the last full release, only plugins (and `herdr/`) | `plugins` | 3.N.P | the plugins, the lane, the pack when `herdr/` shipped since the last release | no | signed | pinned |
 | Anything else | `full` | 3.(N+1).0 | everything, the pack when `herdr/` shipped since the last release | yes | signed | pinned |
 
@@ -209,6 +212,14 @@ tags.
 - am-quota's Keychain tests run against the stand-in `security` in `herdr/test/am-quota-keychain.mjs`,
   and `am-quota-keychain-guard.test.mjs` fails any that could reach the real one.
 - The old repository's workflows were deleted at the import (`herdr/.github/`).
+- Pocket: `ci.yml`'s `pocket` job (JDK 17, the Android SDK 35) runs automagik-pocket's
+  `android.yml` gate from `apps/pocket/android` (`:app:assembleDebug :app:testDebugUnitTest
+  :app:lintDebug`) and the terminal page's Playwright test. It runs when `apps/pocket/`, the root
+  `package.json` (the version Gradle reads), the CI or release workflow, or `scripts/lane.ts` or
+  `scripts/version.ts` changed. The `pocket-link` job (Linux and macOS, Node 22) runs the old
+  `pocket-link.yml`, syntax and bridge tests, when `herdr/mods/pocket-link/` or `ci.yml` changed.
+  automagik-pocket's workflows were not copied (`apps/pocket/.github/` was deleted at the import);
+  its commitlint is the monorepo's.
 
 ## Importing a repository with its history
 
@@ -222,7 +233,11 @@ tags.
   first-parent line), and its imported commits are those reachable from that second parent and not
   from its first. The final re-run adds a second such merge, and only its new upstream commits are
   skipped. Every other commit is checked: the pull request's own, ones after dev is merged in, and
-  those of a branch of this repository merged with `--no-ff`. The herdr import has ten commits whose
+  those of a branch of this repository merged with `--no-ff`. `scripts/import-pocket.sh` does the
+  same for automagik-pocket in two filter-repo passes (all of it under `apps/pocket/`, then Pocket
+  Link's folder and the files around it, including the old automagik-pocket-link history's root
+  `mods/pocket-link/`, to `herdr/mods/pocket-link/`). It also refuses a keystore,
+  `local.properties` or `signing.properties` anywhere in the history. The herdr import has ten commits whose
   bodies run past 100 characters; they stay as the source wrote them.
 
 ## Bridge and cutover (after this change)
@@ -241,10 +256,145 @@ tags.
 
 Until the bridge, installed packs keep updating from automagik-herdr.
 
+## Pocket
+
+Pocket is the Android app (`ai.namastex.automagik`) and Pocket Link, its desktop mod. The owner
+decided (2026-11-03) that it ships only as a part of Automagik: no separate listing, no Pocket step
+in the herdr.dev layout entry. `scripts/import-pocket.sh` imported automagik-pocket `dev` with its
+history: the app and its docs under `apps/pocket/`, Pocket Link under `herdr/mods/pocket-link/` (its
+README, recipe, keys, licence and preview beside the mod, as the pack's mods keep theirs).
+
+### Lane
+
+- `pocket` (`apps/pocket/**`). `scripts/lane.ts pocket <last-tag>` says whether a release rebuilds
+  the app: a shipping `apps/pocket/` change since the last release (any tag), version-only bumps
+  aside. Never shipped in the part: its top-level `*.md`, `docs/`, unit tests (`test/`) and
+  `android/scripts/` (the terminal page's test, the vendoring script).
+- A release whose shipping changes since the last release are all under `apps/pocket/`, or under
+  `apps/pocket/` and `herdr/`, is a `pocket` patch: 3.N.P, the APK (and the pack when `herdr/`
+  shipped), no desktop build, no plugin tarballs, no new plugin lane, no market pin, not Latest.
+  With plugins or the app in it, the release is a `plugins` patch or a `full` release that also
+  builds the APK; Pocket never makes one.
+- Pocket Link (`herdr/mods/pocket-link`) is under `herdr/`, so a change to it is on the herdr lane
+  (the pack is rebuilt; it never carries Pocket Link). Its bridge tests are `ci.yml`'s `pocket-link`
+  job. The pack's catalog (`herdr/scripts/catalog.mjs`) and its no-LaunchAgent test leave it out:
+  it is Pocket's, never in `PACK_MODS`.
+
+### Version and versionCode
+
+- Gradle reads the root `package.json` version (the one version); `version.properties` and
+  `scripts/version.sh` are gone.
+- `versionCode = major*1_000_000 + minor*1_000 + patch` (3.57.0 is 3057000). A minor or patch of
+  1000 would give two versions one code (3.1000.0 and 4.0.0), so minor and patch stop at 999:
+  `bun scripts/version.ts set` and `next` refuse more, `scripts/lane.ts next-patch` refuses
+  3.N.1000 (cut 3.(N+1).0 instead), and Gradle refuses to build one. The release workflow sets the
+  version through `version.ts`, so it refuses it too. `bun scripts/version.ts code <v>` prints the
+  code; the release job checks the APK's against it.
+- The jump: automagik-pocket's builds used minutes since 2025 (v0.21.0 was 966485, about 966 000 in
+  November 2026), and any 3.N.P is at least 3 001 000, so installed phones accept it. The
+  `-Ppocket.versionCode=` override stays for local self-update tests.
+
+### Release
+
+- Before the cut, when `pocket` is yes: the `cut` job checks that `POCKET_SIGNING_KEYSTORE` and
+  `POCKET_SIGNING_PASSWORD` exist (it reads only whether they are set) and runs the unit tests and
+  lint, so a failing app or a missing key stops the run before a tag.
+- After it, the `Pocket` job builds the release APK from the tag, signed with the key from those
+  secrets (decoded to the runner's temp folder and removed after the build). It checks the APK's
+  versionName (the tag) and versionCode (the formula), then attaches `automagik-pocket-<v>.apk` and
+  after it `latest.json` (`versionCode`, `versionName`, `url` on that `vX.Y.Z`, `sha256`, `notes`) to
+  the release. The asset is no longer `automagik.apk`: a monorepo release is shared, and phones take
+  the URL from `latest.json`, never from a name.
+- Then, unless the run is a prerelease, it replaces `latest.json` on `pocket-lane`.
+- `desktop-build.yml`'s sweep of a full release's assets spares `automagik-pocket-*.apk` and
+  `latest.json`.
+
+### Updater: the rolling `pocket-lane` release
+
+Installed phones read `https://github.com/automagik-dev/automagik/releases/download/pocket-lane/latest.json`
+and nothing else; the APK stays on its own `vX.Y.Z` release. `-Ppocket.updateUrl=` (or
+`pocket.updateUrl` in `gradle.properties`) still points a fork or a local test server at its own.
+
+Why not the old URL, and why not the releases API (t16r's ruling, 2026-11-03, after measuring this
+repository that day):
+- `releases/latest/download/latest.json` (automagik-pocket's) cannot work here: a pocket patch is not
+  Latest, and the Latest release is usually a desktop build without Pocket.
+- "The newest release carrying `latest.json`, via the releases API" was the plan. This repository
+  cut 91 releases in 10 days (about 9 a day), and the API returns about 33 KB of JSON per release
+  (100 releases come to 3 MB). Every 6-hour check would download 0.3 to 3 MB over mobile data,
+  growing as Pocket releases get rarer than desktop ones. A window of pages would lose a Pocket
+  release older than about 11 days. And the unauthenticated API allows 60 calls an hour per IP,
+  which carrier NAT shares across many phones; a 403 means no updates.
+- A rolling release, as #190 settled for herdr (`herdr-lane`): one small file, no API, no rate limit,
+  no window.
+
+The rolling release is never taken for a release:
+- Its tag is not `v*`. `apps/desktop/src/update.js` takes only `v`-prefixed tags with its platform's
+  feed. `release.yml`'s last-release and last-full-release lookups read `git tag --list 'v3.*'`
+  filtered by `^v3\.N\.P$`. `scripts/version.ts` and `scripts/lane.ts` read only v3.N.P tags. Follow
+  Omni reads Omni's releases by `^v<semver>$`. None can take `pocket-lane`, `herdr-lane` or
+  `plugin-lane`. `scripts/pocket-lane.test.ts` and `apps/desktop/test/update.test.js` check each.
+- It is created once with `--prerelease --latest=false` and never edited (no `gh release edit`):
+  later runs only `gh release upload --clobber` its `latest.json`. So it is never Latest and never
+  flips prerelease. The same test checks that only the Pocket job writes it, only `latest.json`, never
+  in a prerelease run, and never to a lower versionCode.
+
+Trust: `latest.json` is not signed (`herdr-lane` signs its `pack.json` with ed25519). That is
+acceptable because the pointer cannot make a phone install anything the release key did not sign:
+- Android installs an update only when the APK is signed by the installed app's key (the same-signer
+  rule). The key is only in this repository's secrets.
+- The app downloads only an `https://` URL, checks the APK's SHA-256 against `latest.json` before it
+  hands it to the installer (`Release.matches`), and offers only a versionCode above the installed
+  one (`UpdatePolicy.isNewer`). `ReleaseTest` covers both.
+- So a forged or stale `latest.json` (someone with write access to the releases, or a bad run) can
+  point at nothing installable or at an older build: at worst it denies updates until the next good
+  release replaces it. The herdr pack runs code from a tarball with no such check, which is why its
+  pointer is signed.
+
+Races: `herdr-lane` is posted by the `cut` job and `pocket-lane` by the `Pocket` job, which runs
+after it (`needs: cut`). They are separate releases holding separate files, and on `vX.Y.Z` the
+Pocket job adds only its own two assets, so they never write the same asset. The Pocket job runs in
+the `pocket-lane` concurrency group (one at a time, none cancelled) and keeps the higher versionCode,
+so two runs never interleave on the pointer, and an older run that finishes last does not move it
+back.
+
+### Signing secrets
+
+`POCKET_SIGNING_KEYSTORE` (the keystore, base64) and `POCKET_SIGNING_PASSWORD`: the same release key
+automagik-pocket used, so installed phones accept the monorepo's builds. The owner adds them to this
+repository's secrets. They are never printed, and the key is never regenerated (every installed copy
+would have to uninstall). The import's own merge ships `apps/pocket/`, so it does not merge before
+the secrets exist: that release would stop at the secrets check.
+
+### Bridge and cutover
+
+1. The monorepo publishes the first release that carries Pocket (the import's merge), which creates
+   `pocket-lane`.
+2. automagik-pocket cuts one bridge release: same key, same app ID, its default `pocket.updateUrl` set
+   to `pocket-lane`'s `latest.json`. Its versionCode is still minutes since 2025, below every 3.N.P,
+   so a phone takes the bridge from automagik-pocket, then the monorepo's builds.
+3. An installed phone is seen to update across the bridge; then automagik-pocket is archived, never
+   deleted, with a README pointer here. Its releases stay: phones that have not taken the bridge yet
+   download it from there.
+
+Until the bridge, installed phones keep updating from automagik-pocket.
+
+### Names and the Parts manifest (RFC 0012)
+
+No `part.json` comes with this import. The names it adds are the lane kind `pocket`, the release
+`pocket-lane` and the asset `automagik-pocket-<v>.apk`; none is a part id, a capability, a
+`parts.json` field or an `am` verb, so `apps/pocket/part.json` can take its own id and name this
+artifact later.
+
 ## Open questions
 
-1. `herdr/catalog/repos.json` lists Pocket Link as an external entry at `automagik-dev/automagik-pocket`;
-   Pocket's import moves it. (t16r)
+1. `herdr/catalog/repos.json` lists Pocket Link as an external entry at `automagik-dev/automagik-pocket`,
+   and am-mods' read-only row, its refusal message (`herdr/mods/am-mods/core.js`) and am-footer's
+   comments name that repository. They still work after the archive (the repository stays, with a
+   pointer here). Repointing them to `herdr/mods/pocket-link` needs an external entry with a path,
+   a change to the pack's catalog and manager, so it is left to the pack. (t22n)
+2. The Play build (automagik-pocket PR #31) is the Play session's call; if it moves, it moves into
+   `apps/pocket/`. (t16r)
 
 Resolved (t259's review, t22n's rulings, 2026-11-03):
 - Commitlint skips only what an import merge's second parent brought, and keeps working across the
