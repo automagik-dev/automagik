@@ -3,7 +3,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash
 #   ... | bash -s -- --yes            answer yes to every question (for agents)
-#   ... | bash -s -- --version 3.57.0 a given release that carries the pack, instead of the newest
+#   ... | bash -s -- --version 3.58.0 a given release that carries the pack, instead of the newest
 #   ... | bash -s -- --adopt          also replace pack-named mods this installer did not install
 #   ... | bash -s -- --uninstall      put back what was there before
 #   ... | bash -s -- --no-usagemeter  leave ~/.local/bin/usagemeter alone (install and --uninstall)
@@ -508,7 +508,7 @@ install() {
     [ -n "$WANT" ] || fail "no release of $REPO carries automagik-herdr-pack-<version>.tgz yet."
   fi
   case $WANT in
-    *[!0-9.]*|.*|*.|*..*) fail "--version takes a version like 3.57.0; not $WANT." ;;
+    *[!0-9.]*|.*|*.|*..*) fail "--version takes a version like 3.58.0; not $WANT." ;;
   esac
   base=$RELEASES/download/v$WANT
   TGZ=automagik-herdr-pack-$WANT.tgz

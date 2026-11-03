@@ -9,6 +9,7 @@ name: Release
 #   automagik-unfold-bridge-dsh-<version>.tgz  the Unfold bridge (apps/unfold-bridge-dsh)
 #   automagik-unfold-mind-dsh-<version>.tgz    the Unfold Mind stream (apps/unfold-mind-dsh)
 #   automagik-locale-pt-br-dsh-<version>.tgz   Brazilian Portuguese for DSH (apps/locale-pt-br-dsh)
+#   automagik-acp-dsh-<version>.tgz       agents over ACP as DSH models (apps/acp-dsh)
 #   automagik-unfold-capabilities-dsh-<version>.tgz  what Unfold can do, read-only (apps/unfold-capabilities-dsh)
 #   automagik-unfold-settings-dsh-<version>.tgz      how Unfold is set up, read-only (apps/unfold-settings-dsh)
 #   automagik-unfold-events-dsh-<version>.tgz  what the Unfold agent is doing, in DSH (apps/unfold-events-dsh)
@@ -143,7 +144,7 @@ jobs:
           set -euo pipefail
           bun install --frozen-lockfile --ignore-scripts
           bun run check
-          for app in bots-dsh locale-pt-br-dsh unfold-bot-dsh unfold-bridge-dsh unfold-capabilities-dsh unfold-events-dsh unfold-mind-dsh unfold-session-dsh unfold-settings-dsh unfold-sse-dsh unfold-trajectory-dsh welcome-dsh; do
+          for app in acp-dsh bots-dsh locale-pt-br-dsh unfold-bot-dsh unfold-bridge-dsh unfold-capabilities-dsh unfold-events-dsh unfold-mind-dsh unfold-session-dsh unfold-settings-dsh unfold-sse-dsh unfold-trajectory-dsh welcome-dsh; do
             (cd "apps/${app}" && bun install --frozen-lockfile --ignore-scripts && { [ ! -f scripts/build-client.mjs ] || node scripts/build-client.mjs --check; })
           done
 
@@ -247,7 +248,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          for app in bots-dsh locale-pt-br-dsh unfold-bot-dsh unfold-bridge-dsh unfold-capabilities-dsh unfold-events-dsh unfold-mind-dsh unfold-session-dsh unfold-settings-dsh unfold-sse-dsh unfold-trajectory-dsh welcome-dsh; do
+          for app in acp-dsh bots-dsh locale-pt-br-dsh unfold-bot-dsh unfold-bridge-dsh unfold-capabilities-dsh unfold-events-dsh unfold-mind-dsh unfold-session-dsh unfold-settings-dsh unfold-sse-dsh unfold-trajectory-dsh welcome-dsh; do
             (cd "apps/${app}" && npm pack --silent --ignore-scripts --pack-destination ../../release >/dev/null)
           done
           bun scripts/release-plugins.ts release "${VERSION}" "${SHA}" > release/plugins.json
@@ -267,7 +268,7 @@ jobs:
           [[ "${PRERELEASE}" == "true" ]] && flags=(--prerelease)
           # A plugin or herdr patch is not the Latest release: the desktop app's builds stay on the full one.
           [[ "${KIND}" == "plugins" || "${KIND}" == "herdr" ]] && flags=(--latest=false)
-          notes="\`@automagik/bots-dsh\`, \`@automagik/locale-pt-br-dsh\`, \`@automagik/welcome-dsh\` for DeepSeek Harness, and the Automagik desktop app. Install the plugins from the [Automagik market](https://github.com/automagik-dev/dsh-marketplace) or from an Omni's own market; \`plugins.json\` lists each tarball's integrity. The desktop builds follow when they are done."
+          notes="\`@automagik/acp-dsh\`, \`@automagik/bots-dsh\`, \`@automagik/locale-pt-br-dsh\`, \`@automagik/welcome-dsh\` for DeepSeek Harness, and the Automagik desktop app. Install the plugins from the [Automagik market](https://github.com/automagik-dev/dsh-marketplace) or from an Omni's own market; \`plugins.json\` lists each tarball's integrity. The desktop builds follow when they are done."
           [[ "${KIND}" == "herdr" ]] && notes="The Automagik Herdr pack alone (no plugins, no desktop build)."
           [[ "${HERDR}" == "yes" ]] && notes="${notes} Automagik Herdr: \`automagik-herdr-pack-${VERSION}.tgz\` (its sha256 in \`.sha256\`); install with \`curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash\`, or run \`automagik-herdr update\`."
           gh release create "v${VERSION}" release/* "${flags[@]}" \

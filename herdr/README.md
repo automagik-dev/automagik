@@ -72,7 +72,7 @@ switching (or prints the `herdr-app do layout.switch` command when it can't ask)
 your own that shows the sidebar keeps its blocks: the installer only renames the pack mods it
 names (from v0.4.x, below), lists the pack pieces it lacks and points at the pack's copy to take
 their blocks from (see [Wiring](#wiring-your-layout)); or switch to the `automagik` layout. Running it again is safe.
-Add options after `bash -s --`: `--yes` answers every question, `--version 3.57.0` installs that
+Add options after `bash -s --`: `--yes` answers every question, `--version 3.58.0` installs that
 Automagik release (one that carries the pack), `--adopt` takes over same-named mods,
 `--uninstall` moves the pack out of `mods/`, puts back what it adopted and removes the layout if
 the installer added it and you haven't changed it.

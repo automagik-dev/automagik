@@ -67,6 +67,19 @@
       },
       "versions": [
         {
+          "version": "3.57.0",
+          "publishTimestamp": 1793681629,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "f083ddd5284384eacdaccbbb592d83d3a2cd2f8c",
+            "path": "apps/bots-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.5 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.56.0",
           "publishTimestamp": 1793679194,
           "source": {
@@ -1199,6 +1212,19 @@
         ]
       },
       "versions": [
+        {
+          "version": "3.57.0",
+          "publishTimestamp": 1793681629,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "f083ddd5284384eacdaccbbb592d83d3a2cd2f8c",
+            "path": "apps/welcome-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.5 <0.2.2-0"
+          }
+        },
         {
           "version": "3.56.0",
           "publishTimestamp": 1793679194,
@@ -2442,6 +2468,19 @@
       },
       "versions": [
         {
+          "version": "3.57.0",
+          "publishTimestamp": 1793681629,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "f083ddd5284384eacdaccbbb592d83d3a2cd2f8c",
+            "path": "apps/locale-pt-br-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.5 <0.2.2-0"
+          }
+        },
+        {
           "version": "3.56.0",
           "publishTimestamp": 1793679194,
           "source": {
@@ -2946,6 +2985,47 @@
           },
           "engines": {
             "dsh": ">=0.2.1-rc.3 <0.2.2-0"
+          }
+        }
+      ]
+    },
+    {
+      "name": "@automagik/acp-dsh",
+      "title": {
+        "en": "ACP agents"
+      },
+      "description": {
+        "en": "Agents other than DSH's own as DSH models, over the Agent Client Protocol. A chat on one keeps DSH's history and sidebar; the agent's tool calls show as DSH tool cards and ask through DSH's approval dialog."
+      },
+      "author": "Automagik",
+      "homepage": "https://github.com/automagik-dev/automagik/tree/dev/apps/acp-dsh#readme",
+      "repository": {
+        "url": "https://github.com/automagik-dev/automagik",
+        "directory": "apps/acp-dsh"
+      },
+      "metadata": {
+        "category": "automagik",
+        "keywords": [
+          "acp",
+          "agent-client-protocol",
+          "agents"
+        ],
+        "labels": [
+          "official"
+        ]
+      },
+      "versions": [
+        {
+          "version": "3.57.0",
+          "publishTimestamp": 1793681629,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "f083ddd5284384eacdaccbbb592d83d3a2cd2f8c",
+            "path": "apps/acp-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.5 <0.2.2-0"
           }
         }
       ]

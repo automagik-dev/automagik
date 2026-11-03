@@ -871,7 +871,7 @@ test("the newest release that carries the pack is installed: not a newer desktop
   // --version takes a version, nothing else reaches a URL.
   const bad = s.run("--yes", "--version", "9.9.0/../../x");
   assert.equal(bad.code, 1);
-  assert.match(bad.err, /--version takes a version like 3\.57\.0/);
+  assert.match(bad.err, /--version takes a version like 3\.58\.0/);
 });
 
 test("no override (the real curl | bash path): no unbound variable, no override line, up to the macOS check", (t) => {
