@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { linkInArgs, parseDeepLink, SCHEMES } from '../src/deeplink.js'
+import { linkInArgs, parseDeepLink, registerSchemes, SCHEMES } from '../src/deeplink.js'
 
 test('a connect link gives the Omni\'s address, cleaned, and whether it is encrypted', () => {
   assert.deepEqual(parseDeepLink('omni://connect?url=https%3A%2F%2Fomni.example.com'), { action: 'connect', url: 'https://omni.example.com', host: 'omni.example.com', secure: true })
@@ -114,4 +114,19 @@ test('the builder registers every scheme the app answers to', () => {
     assert.match(installer, new RegExp(`automagikRegisterScheme ${scheme}\\n`), `installer.nsh registers ${scheme}`)
     assert.match(installer, new RegExp(`automagikUnregisterScheme ${scheme}\\n`), `installer.nsh removes ${scheme}`)
   }
+})
+
+test('only a packaged app takes the schemes: a dev run would hand them to Electron', () => {
+  const appOf = (isPackaged, refused = []) => {
+    const calls = []
+    return { calls, isPackaged, setAsDefaultProtocolClient: (...args) => (calls.push(args), !refused.includes(args[0])) }
+  }
+  const packaged = appOf(true)
+  assert.deepEqual(registerSchemes(packaged), ['automagik', 'omni'])
+  assert.deepEqual(packaged.calls, [['automagik'], ['omni']])
+  const dev = appOf(false)
+  assert.deepEqual(registerSchemes(dev), [])
+  assert.deepEqual(dev.calls, [])
+  assert.deepEqual(registerSchemes(appOf(true, ['omni'])), ['automagik'])
+  assert.deepEqual(registerSchemes(undefined), [])
 })

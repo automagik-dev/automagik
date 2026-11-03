@@ -66,6 +66,16 @@ export function parseDeepLink(text) {
   return { action: 'connect', url, host: target.host, secure: target.protocol === 'https:', ...(grant === null ? {} : { grant }) }
 }
 
+/**
+ * Makes this app the system's handler for each scheme, and returns the ones it took. Only a
+ * packaged app does: a dev `electron .` would hand the links to Electron itself. On Linux each
+ * call runs xdg-settings and waits for it, so main calls this once the page is in, not at start.
+ */
+export function registerSchemes(app) {
+  if (!app?.isPackaged) return []
+  return SCHEMES.filter(scheme => app.setAsDefaultProtocolClient(scheme))
+}
+
 /** The first of the app's links in a command line (Linux and Windows pass it as an argument). */
 export function linkInArgs(argv) {
   const ours = arg => typeof arg === 'string' && SCHEMES.some(scheme => arg.startsWith(`${scheme}:`))
