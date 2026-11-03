@@ -4,9 +4,9 @@ name: Release
 # 0.N.0. The run gates it, commits "chore(release): v0.N.0" with version.properties, tags it, builds the
 # release-signed APK and publishes it as the Latest GitHub release with latest.json, which installed copies
 # read to update. Merges with only chore(release), ci, docs or test commits release nothing.
-# A release whose android/ is unchanged since the previous one (a Pocket Link or meter change) builds no app:
-# it carries the previous automagik.apk and latest.json forward, so phones see the same version and don't
-# update, while the meter binaries still ship.
+# A release whose android/ is unchanged since the previous one (a Pocket Link change) builds no app: it
+# carries the previous automagik.apk and latest.json forward, so phones see the same version and don't update.
+# The usage meter is released from its own repository, automagik-dev/usagemeter.
 on:
   push:
     branches: [dev]
@@ -65,14 +65,6 @@ jobs:
         if: steps.new.outputs.release == 'true'
         working-directory: android
         run: ./gradlew --stacktrace :app:testDebugUnitTest :app:lintDebug
-
-      - name: The meter's tests
-        if: steps.new.outputs.release == 'true'
-        working-directory: meter
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-          cargo test --locked
 
       - name: Version, commit and tag
         id: cut
@@ -186,42 +178,3 @@ jobs:
           printf '%s\n\n%s%sSHA-256 of `automagik.apk`: `%s`\n' "${changes:-- Maintenance.}" "$app" "${app:+ }" "$sha" > notes.md
           gh release create "$tag" automagik.apk latest.json --verify-tag --latest \
             --title "Automagik Pocket ${VERSION}" --notes-file notes.md
-
-  # The usage meter rides along: its binaries are built from the same tag and added to the release
-  # after the APK is out, so a meter build problem never holds the app back.
-  meter-binaries:
-    name: Meter binaries for v${{ needs.cut.outputs.version }}
-    needs: cut
-    if: needs.cut.outputs.version != ''
-    permissions:
-      contents: read
-    uses: ./.github/workflows/meter-build.yml
-    with:
-      ref: v${{ needs.cut.outputs.version }}
-
-  meter-publish:
-    name: Add the meter to v${{ needs.cut.outputs.version }}
-    needs: [cut, publish, meter-binaries]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: automagik-meter-*
-          merge-multiple: true
-          path: meter-assets
-
-      - name: Upload with checksums
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: v${{ needs.cut.outputs.version }}
-        working-directory: meter-assets
-        run: |
-          set -euo pipefail
-          ls -l
-          [ "$(ls automagik-meter-* | wc -l)" -eq 4 ] || { echo "::error::expected 4 meter binaries"; exit 1; }
-          sha256sum automagik-meter-* > SHA256SUMS
-          cat SHA256SUMS
-          gh release upload "$TAG" automagik-meter-* SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"

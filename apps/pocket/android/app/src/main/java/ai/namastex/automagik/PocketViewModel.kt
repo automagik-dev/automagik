@@ -29,6 +29,8 @@ data class MachineState(val connecting: Boolean = false, val connected: Boolean 
     /** Worth retrying without asking: a dropped or failed connection that isn't waiting on a password. */
     val retryable get() = !connected && !connecting && error != null && !needsPassword
 }
+/** The demo's one machine, by name: synthetic, nothing real is reached. */
+const val PREVIEW_MACHINE = "Preview machine"
 data class TerminalRef(val hostId: String, val address: String)
 /** Asks for an SSH password after a host rejected this phone's key (or a previous password). */
 data class PasswordPrompt(val hostId: String, val rejected: Boolean)
@@ -361,7 +363,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     private fun syncWatch(canStart: Boolean = foreground) {
         val s = state.value
         val app = getApplication<Application>()
-        // What to reconnect if an update ends the process ([WatchResume]).
+        // What to reconnect if an update or a restart ends the process ([WatchResume]).
         val active = s.machines.filterValues { it.connected || it.connecting }.keys + retrying
         val watched = WatchResume.watched(s.watch, s.demo, active, passwordHosts + temporaryPasswords.keys)
         if (watched != kept) { kept = watched; prefs.edit { putStringSet(WatchResume.PREF, watched) } }
@@ -375,7 +377,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         watchText = text
         WatchService.show(app, text, canStart)
     }
-    /** After an update ended the process: reconnect the machines it was watching and start the watch service, with no
+    /** After an update or a phone restart ended the process: reconnect the machines it was watching and start the watch service, with no
      *  screen. Called from [WatchResumeReceiver], whose broadcast lets the service start from the background. */
     fun resumeWatching() {
         val s = state.value
@@ -850,7 +852,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
                 meter = SpendDemo.readings(System.currentTimeMillis())))) }
     }
     fun leaveDemo() { detach(); _state.update { it.copy(demo = false, machines = emptyMap(), selected = null, space = null, project = null) } }
-    fun hostName(hostId: String) = if (state.value.demo) "Preview machine" else state.value.hosts.find { it.id == hostId }?.name ?: "Machine"
+    fun hostName(hostId: String) = if (state.value.demo) PREVIEW_MACHINE else state.value.hosts.find { it.id == hostId }?.name ?: "Machine"
     override fun onCleared() { if (current === this) current = null; discovery.stop(); clients.values.forEach { it.close() }; clients.clear() }
 }
 

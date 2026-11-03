@@ -56,9 +56,9 @@ top.
 
 ## Spend
 
-The Automagik meter ([`meter/`](../../meter/README.md)) counts the tokens your coding agents use
-on each machine and publishes a small `herdr-meter` summary there. The app reads that summary from
-each machine you're connected to and sums it. It never writes it. With no meter on any machine,
+The Automagik usage meter ([usagemeter](https://github.com/automagik-dev/usagemeter)) counts the
+tokens your coding agents use on each machine and publishes a small `herdr-meter` summary there.
+The app reads that summary from each machine you're connected to and sums it. It never writes it. With no meter on any machine,
 **Projects** shows one hint and no numbers.
 
 - **Today:** **spent today**, from local midnight, across every reporting machine.
@@ -127,6 +127,10 @@ What the numbers mean:
   connections open. **Stop** there disconnects.
 - A dropped Pocket Link or key-based SSH connection comes back on its own. A password connection
   waits for you.
+- After the phone restarts, the watch comes back once you unlock the phone, with the machines it
+  was watching. Not if watching was off, not for a password connection, and not after **Force
+  stop** in Android's app settings: open the app once to start again. Some phones' battery
+  settings (for example Samsung's sleeping apps) can keep it from starting.
 - In the background the app checks for changes less often and skips git checks.
 
 ## Side-button assistant
@@ -165,8 +169,8 @@ stops opening it, for example after reinstalling, set the assistant again.
 
 - The Pocket Link bridge runs as a LaunchAgent on macOS or a systemd user service on Linux.
 - Connections live in the app; with Watch in background they stay open in a foreground service.
-  After an update they come back on their own. After Android stops the service or the phone
-  restarts, open the app and connect again.
+  After an update or a phone restart they come back on their own. After Android stops the
+  service or the app is force-stopped, open the app and connect again.
 - The SSH command assumes a Unix shell, so Windows hosts don't work.
 - The app reads the desktop's layout. It doesn't edit, rename or delete it, and doesn't run
   desktop mods.

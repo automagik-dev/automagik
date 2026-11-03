@@ -104,6 +104,9 @@ class SpendTest {
         // Priced and unpriced together: the $ is a lower bound.
         val mixed = view(a, report("vps", doc)).project(app, D1)!!
         assertEquals("≥ $2.00", Spend.money(mixed))
+        // Today's tile: the same, as one word that can't wrap after the "≥".
+        assertEquals("≥$2.00", Spend.compact(mixed)); assertEquals("$—", Spend.compact(s))
+        assertEquals("$2.00", Spend.compact(view(a).project(app, D1))); assertEquals("—", Spend.compact(null))
     }
 
     @Test fun unsplitTokensCountButNeverPrice() {
@@ -242,6 +245,24 @@ class SpendTest {
         assertEquals("4.1M", Spend.tokens(4_100_000)); assertEquals("820k", Spend.tokens(820_000)); assertEquals("950", Spend.tokens(950))
         assertEquals("3 h", Spend.age(3 * hour + 5)); assertEquals("1.5 h", Spend.hours(1.5))
         assertTrue(Spend.footnote(view(a)).startsWith("API-equivalent estimate at list price, not an amount billed (prices of 2026-01-01)"))
+    }
+
+    /**
+     * Today's $ tile at 360 and 411 dp. Text width = (screen − 2·20 gutter − 3·8 gaps) / 4 − 2·10 padding. Each character
+     * is taken at 0.62 em, wider than Roboto's digits, "$" and "≥" (about 0.56 em). The preview's "≥$7.80" overflows at
+     * 22 sp on both widths (the clipped "≥" in the store screenshots), so the amount auto-sizes; even "≥$99.9k" fits at
+     * the 12 sp floor.
+     */
+    @Test fun todayTileAmountFitsAtPhoneWidths() {
+        fun widthDp(text: String, sp: Int) = text.length * 0.62 * sp
+        assertEquals(54.0, TodayTiles.textWidthDp(360), 0.01); assertEquals(66.75, TodayTiles.textWidthDp(411), 0.01)
+        for (screen in listOf(360, 411)) {
+            val room = TodayTiles.textWidthDp(screen)
+            assertTrue(widthDp("≥$7.80", TodayTiles.MAX_SP) > room)
+            for (amount in listOf("≥$7.80", "≥$99", "≥$9.9k", "≥$99.9k", "$—")) assertTrue("$amount at $screen dp", widthDp(amount, TodayTiles.MIN_SP) <= room)
+        }
+        // The shrink stays readable for the usual amounts: "≥$7.80" fits at 14 sp on a 360 dp phone.
+        assertTrue(widthDp("≥$7.80", 14) <= TodayTiles.textWidthDp(360))
     }
 
     @Test fun previewDocsParseAndMerge() {

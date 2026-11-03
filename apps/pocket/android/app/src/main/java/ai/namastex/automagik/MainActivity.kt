@@ -362,7 +362,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
         }
         // Today: the counts and nothing else above the agents; spent today joins them once a usage meter reports.
         if (space == null) item(key = "today") {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(TodayTiles.GAP_DP.dp)) {
                 CountCard(pulse.needsYou, if (pulse.needsYou == 1) "needs you" else "need you", Blocked, Modifier.weight(1f))
                 CountCard(pulse.working, "working", Working, Modifier.weight(1f))
                 CountCard(pulse.machines, "connected", Ink, Modifier.weight(1f))

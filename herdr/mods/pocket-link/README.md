@@ -26,10 +26,13 @@ It needs Node.js 20.3+ and herdr-core (`hc`), on macOS or Linux (systemd).
 - **Programs it runs:** `node`, `npm` (setup), `hc connect`, `launchctl` / `systemctl --user`, `sh`;
   for the usage meter, `hc machine ls` and `hc exec` (`uname`, `sh`, `curl`, `nice`, the meter).
 - **Files it writes:** its state folder (below), and the one login service file; on each machine,
-  `~/.local/bin/automagik-meter` (and the meter's own store, see its README).
+  `~/.local/bin/usagemeter` (and the meter's own store, see its README). It removes the older
+  `~/.local/bin/automagik-meter` once usagemeter has synced there.
 - **Where its state lives:** `${XDG_STATE_HOME:-~/.local/state}/automagik-pocket-link/`, mode 0700,
   outside the mod folder: this computer's key (`secret.key`, the identity phones pair with), the
-  paired phones, the current pairing code, the bridge's address, its log and the meter's status.
+  paired phones, the current pairing code, the bridge's address, its log and the meter's status,
+  each 0600; and `public-status.json` (0644), which says only whether phones are connected
+  ([For other mods](#for-other-mods)).
   - **Reinstalling the mod is safe.** Deleting `mods/pocket-link/` and copying it again keeps every
     pairing; only **Install the bridge** (npm) needs pressing again.
   - Older versions kept it in `mods/pocket-link/.state/`. The first time the new bridge runs, it
@@ -39,16 +42,22 @@ It needs Node.js 20.3+ and herdr-core (`hc`), on macOS or Linux (systemd).
     `POCKET_LINK_STATE_DIR` sets the folder outright; the login service is given it.
   - Deleting this folder unpairs every phone.
 
-- **Usage meter:** while the bridge runs, it keeps the
-  [Automagik usage meter](../../meter/README.md) on this computer and on every connected herdr-core
+- **Usage meter:** while the bridge runs, it keeps
+  [usagemeter](https://github.com/automagik-dev/usagemeter) on this computer and on every connected herdr-core
   machine, so the phone can show token use and spend:
   - Every 10 minutes after the last pass, one pass at a time (a pass still running is never
     queued behind).
-  - On each machine, through `hc exec`, it runs `uname -sm`. If
-    `~/.local/bin/automagik-meter` is missing or isn't the latest release's build, it downloads
-    that build from this repository's GitHub releases with `curl` and installs it only once its
-    SHA-256 matches the release's `SHA256SUMS`.
-  - Then it runs `nice -n 19 ~/.local/bin/automagik-meter sync`, unless the machine is on battery.
+  - It reads the latest usagemeter release's version and `SHA256SUMS` from GitHub.
+  - On each machine, through `hc exec`, it runs `uname -sm`. If `~/.local/bin/usagemeter` is
+    missing or isn't that release's build, it downloads the build from that release with `curl`
+    and installs it (a temporary file, then a rename) only once its SHA-256 matches `SHA256SUMS`.
+  - It never downgrades: a usagemeter whose `usagemeter --version` is newer than the latest
+    release (Herdr desktop installs and updates usagemeter at the same path) stays.
+  - Then it runs `nice -n 19 ~/.local/bin/usagemeter sync`, unless the machine is on battery.
+    Two syncs at once are safe: usagemeter takes `meter.lock`, and the second exits at once.
+  - Once that sync succeeds, it removes `~/.local/bin/automagik-meter`, the meter this
+    repository used to ship. usagemeter keeps its store and summary doc, so no data moves. If
+    anything fails, the old binary stays.
   - The commands are fixed; nothing a phone sends reaches them. The only network use is the
     release download.
   - The dialog shows a line only for a machine where this keeps failing.
@@ -56,6 +65,54 @@ It needs Node.js 20.3+ and herdr-core (`hc`), on macOS or Linux (systemd).
 
 A paired phone can use every herdr-core session on this computer, just like a terminal running `hc`.
 Pair only your own phones. Remove one in the dialog and it's disconnected at once.
+
+## For other mods
+
+Another mod (a sidebar dot, say) can tell whether a phone is connected from `public-status.json`
+in the state folder. It is **read-only for other mods**: only the bridge writes it, and no other
+file in the folder is part of this contract.
+
+**Where it is.** The first that applies, as `bridge/state.mjs` (`stateDir`) resolves it:
+
+1. `$POCKET_LINK_STATE_DIR`, when set to an absolute path.
+2. `${XDG_STATE_HOME:-~/.local/state}/automagik-pocket-link-<hash>/`, when `HERDR_APP_HOME` is set
+   to an absolute path other than `~/.config/herdr-app`. `<hash>` is the first 8 hex characters of
+   the SHA-256 of the resolved `HERDR_APP_HOME` path.
+3. `${XDG_STATE_HOME:-~/.local/state}/automagik-pocket-link/`.
+
+A relative `XDG_STATE_HOME` or `HERDR_APP_HOME` is ignored. The folder is 0700, so only your own
+user can read the file.
+
+**What it holds** (schema 1):
+
+```json
+{
+  "schema": 1,
+  "running": true,
+  "updated": 1793520000000,
+  "phones_connected": 1,
+  "phones": [{ "name": "Pixel 9", "since": 1793519400000 }]
+}
+```
+
+- `schema`: 1. A new field can be added within schema 1, so ignore fields you don't know. Removing
+  or renaming a field, or changing its type or meaning, takes a new number: treat any value but 1
+  as unknown.
+- `running`: the bridge is serving. A clean stop (**Turn off**, `bridge.mjs stop`, logout) writes
+  `false`, with no phones.
+- `updated`: when it was written, in epoch milliseconds. While it runs, the bridge rewrites it at
+  least every 30 seconds (every 20 today) and whenever a phone connects or hangs up.
+- `phones_connected`: how many phones have a session open now. A phone with several sessions open
+  counts once.
+- `phones`: one entry per connected phone, oldest first: `name`, the device name the phone sent
+  when it paired, and `since`, when its oldest open session began (epoch ms).
+
+**Staleness.** If `updated` is more than 90 seconds old, the bridge stopped without saying so
+(killed, or the computer slept): treat it as `running: false` with no phones. Treat a missing or
+unreadable file, or another `schema`, the same way.
+
+It never holds the pairing ticket, this computer's endpoint id, a phone's key or any secret. Those
+stay in `status.json` and the other 0600 files, which other mods must not read.
 
 See [RECIPE.md](RECIPE.md) for how it's built.
 

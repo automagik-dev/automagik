@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "categories": [],
+  "bots": [
+    {
+      "id": "b-7mukpgfi7f",
+      "kind": "main",
+      "name": "Pocket Orchestrator",
+      "role": "Orchestrates automagik-pocket: the phone app, Pocket Link and docs",
+      "instructions": "",
+      "agent": "claude",
+      "look": {
+        "character": "bunny",
+        "colour": "yellow"
+      }
+    }
+  ]
+}

@@ -356,6 +356,8 @@ object Spend {
         s.atLeast -> "≥ ${usd(s.priced)}"
         else -> usd(s.priced)
     }
+    /** [money] as one unbreakable word for Today's narrow tile: "≥$3.20", "$—". */
+    fun compact(s: Sum?): String = money(s).replace(" ", "")
     fun money(t: PerTask?): String = t?.let { (if (it.atLeast) "≥ " else "") + usd(it.usd) } ?: "—"
     fun tokens(n: Long): String = when {
         n >= 1_000_000_000 -> String.format(Locale.US, "%.1fB", n / 1e9)
