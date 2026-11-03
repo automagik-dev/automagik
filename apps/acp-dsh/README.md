@@ -15,7 +15,8 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
 - **Only the chat reaches the agent.** DSH's side requests (a Session title, a summary) on an
   ACP route are refused at the `llm/stream` waterfall, so they never become prompts.
 - **Host only.** No browser half, so the plugin cannot stop the web UI from loading. With no
-  agent CLI installed it registers no route.
+  agent CLI installed it registers no route. The welcome draws its setup from the `acpAgents`
+  service below.
 - **The Session's level, as the agent's own mode.** Before each prompt the agent's ACP session
   mode follows the Session: Manual is Claude Code's `default` mode, whatever default mode its
   own settings name; Codex runs in the sandbox that matches DSH's. Auto is Claude Code's `auto`
@@ -35,7 +36,24 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
 | `acp-fake` | `test/fixtures/fake-agent.mjs`, set as `fakeAgent` | Node | none; tests only |
 
 An agent is offered only when its CLI is on PATH or where its installer puts it (`~/.local/bin`,
-`/opt/homebrew/bin`, …). The settings `claude: false` or `codex: false` take one away.
+`/opt/homebrew/bin`, …). The settings `claude: false` or `codex: false` take one away. They are
+live settings: switching one (from the welcome's Connect AI, its Settings page *Claude Code and
+Codex*, or the plugin's own settings form) offers or withdraws the agent at once, with no
+restart, and a connector that lands puts its model in the picker the same way
+(`llm/adapters-updated`).
+
+## The `acpAgents` service
+
+A settings page reads the agents through this host service; the plugin stays host only.
+
+| Method | Does |
+|---|---|
+| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl }, connector: { state, version?, error?, updating? }, signedIn?, model: { provider, id, name, listed }, restartNeeded }`. `state` is `off`, `no-cli`, `installing`, `failed` (with the last install error) or `ready`. Spawns nothing. |
+| `refresh()` | Looks for the CLIs again (one installed after DSH started is offered now), then asks each CLI whether it is signed in (`claude auth status --json`, of which only `loggedIn` is read; `codex login status`, by its exit code). No agent turn. |
+| `retry(id)` | Starts the connector's install again, and answers at once. |
+
+The switches are not the service's: a page writes them in the `acp-dsh` settings entry
+through DSH's settings service (the welcome does, `src/host/acp.js` there).
 
 The adapters are not pinned (RFC 0003, amended): the CLIs update themselves, and an adapter that
 lags its CLI breaks first. They install in the background at DSH's start and once a day after,
