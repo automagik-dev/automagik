@@ -167,9 +167,11 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
         : bin !== undefined ? 'ready'
           : busy || error === undefined ? 'installing'
             : 'failed'
+    // In the picker: DSH serves the route. Read from the registry, never the model list, which may
+    // wait on a first read of the agent's models (catalog.js); a settings page must not.
     let listed = false
     if (connector === 'ready' && agents.has(id)) {
-      try { listed = (await ctx.llm.listModels?.(id))?.length > 0 } catch {}
+      try { listed = ctx.llm.listProviders?.().some(provider => provider.id === id) === true } catch {}
     }
     return {
       id,

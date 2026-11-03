@@ -16,22 +16,19 @@ function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {} }
   const log = []
   const listeners = new Map()
   const services = {}
-  let adapter
   const routes = { now: [] }
   const ctx = {
     llm: {
-      registerAdapter(providers, given) {
-        adapter = given
+      registerAdapter(providers) {
         routes.now = [...providers]
         log.push(['register', [...providers]])
         const handle = () => { routes.now = []; log.push(['dispose']) }
         handle.replace = (next) => { routes.now = [...next]; log.push(['replace', [...next]]) }
         return handle
       },
-      listModels: async (id) => {
-        if (!routes.now.includes(id)) throw new Error(`no provider ${id}`)
-        return adapter.listModels(id)
-      },
+      listProviders: () => routes.now.map(id => ({ id, name: id })),
+      // The status never asks for models: a first read of an agent's models may take seconds.
+      listModels: () => new Promise(() => {}),
     },
     agents: { get: () => undefined },
     get: () => undefined,
@@ -159,7 +156,7 @@ test('retry starts the install again and answers at once', async () => {
 test('a connector ready but not in the picker says a restart is needed', async () => {
   const h = harness({ clis: { claude: '/bin/claude' }, bins: { [CLAUDE.adapter]: { path: '/x', version: '1.0.0' } } })
   apply(h.ctx, { claude: live(true), codex: live(false) }, h.deps)
-  h.ctx.llm.listModels = async () => []
+  h.ctx.llm.listProviders = () => []
   const claude = byId(await h.services[SERVICE].status(), 'acp-claude')
   assert.equal(claude.connector.state, 'ready')
   assert.equal(claude.restartNeeded, true)
