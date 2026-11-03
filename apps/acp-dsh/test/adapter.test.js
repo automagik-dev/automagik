@@ -10,7 +10,7 @@ import { apply } from '../index.js'
 import { optionFor, TOOL_NAME } from '../src/host/tool.js'
 import { aside, promptOf } from '../src/host/adapter.js'
 
-const FAKE = join(import.meta.dirname, 'fixtures', 'fake-agent.mjs')
+const FAKE = join(import.meta.dirname, '..', 'dev', 'fake-agent.mjs')
 
 function host({ answer = 'allowed-once' } = {}) {
   const cwd = mkdtempSync(join(tmpdir(), 'acp-dsh-'))
@@ -30,9 +30,12 @@ function host({ answer = 'allowed-once' } = {}) {
   return { adapter: registered['acp-fake'], agent, tools, asked, close, registered }
 }
 
-async function step(adapter, messages, signal) {
+async function step(adapter, messages, { signal, onChunk } = {}) {
   const chunks = []
-  for await (const chunk of adapter.stream(markAgentLoopRequest({ provider: 'acp-fake', model: 'fake', sessionId: 's1', messages, signal }))) chunks.push(chunk)
+  for await (const chunk of adapter.stream(markAgentLoopRequest({ provider: 'acp-fake', model: 'fake', sessionId: 's1', messages, signal }))) {
+    chunks.push(chunk)
+    onChunk?.(chunks)
+  }
   return chunks
 }
 
@@ -116,9 +119,13 @@ test('stopping the turn cancels the agent and finishes aborted', async () => {
   try {
     const controller = new AbortController()
     const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hang' }] }]
-    const pending = step(h.adapter, messages, controller.signal)
-    setTimeout(() => controller.abort(), 200)
-    const chunks = await pending
+    // Stop once the agent has said its words and is waiting on "hang": a reaction to the
+    // stream, not a timer, so a slow start under load cannot abort before the agent speaks.
+    const chunks = await step(h.adapter, messages, {
+      signal: controller.signal,
+      onChunk: seen => { if (!controller.signal.aborted && /you said "hang"/.test(textIn(seen))) controller.abort() },
+    })
+    assert.ok(controller.signal.aborted, 'the step was still streaming when it was stopped')
     assert.equal(chunks.at(-1).reason.kind, 'aborted')
     assert.match(textIn(chunks), /you said "hang"/)
     // The next turn starts cleanly on the same process.
