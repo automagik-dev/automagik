@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import {
-  BOT_ID, checkRegistry, dropBot, dropLock, emptyRegistry, indentOf, isBotId, newBotId, parseRegistry, putBot,
-  readRegistryText, takeLock, updateRegistry, writeRegistry,
+  BOT_ID, checkRegistry, dropBot, dropLock, emptyRegistry, fromDshState, fromHerdrV1, indentOf, isBotId, newBotId,
+  parseRegistry, putBot, readRegistryText, takeLock, updateRegistry, writeRegistry,
 } from '../src/shared/registry.js'
 
 const ID = { main: 'b-mainmain22', dev: 'b-devdevdev3', dsh: 'session-0b3c1f9e-4d1a-4c55-9a7e-2f6b8d1e0a77' }
@@ -87,8 +87,9 @@ test('parse: bad entries are left out with a warning, as Herdr does', () => {
   assert.equal(file.bots[3].main, undefined)
   assert.equal(file.bots[3].role, '')
   assert.equal(warnings.length, 6, warnings.join('\n'))
-  assert.ok(warnings.some(w => /unfold-root: id is not/.test(w)))
-  assert.ok(warnings.some(w => /id used twice/.test(w)))
+  assert.ok(warnings.includes('bots[2] (unfold-root): id is not b- plus 10 base32 characters or session-<uuid>; left out'))
+  assert.ok(warnings.includes(`bots[3] (${ID.dev}): id used twice; left out`))
+  assert.ok(warnings.includes('bots[4] (b-nonamenone): name is missing; left out'))
   assert.ok(warnings.some(w => /pet id "..\/..\/.ssh" is not one path segment/.test(w)))
 })
 
@@ -97,7 +98,7 @@ test('parse: a repo file with two main Bots warns and the first counts', () => {
   raw.bots[1].main = true
   const { file, warnings } = parseRegistry(text(raw), { kind: 'repo' })
   assert.deepEqual(file.bots.map(b => b.main), [true, false])
-  assert.deepEqual(warnings, [`2 main bots; ${ID.main} counts`])
+  assert.deepEqual(warnings, [`bots: 2 main bots; ${ID.main} counts`])
 })
 
 test('a repo file cannot set folder, machine, dsh, shown or projects', () => {
@@ -115,9 +116,9 @@ test('a repo file cannot set folder, machine, dsh, shown or projects', () => {
   // A writer may not add them; one a hand-written file already had stays writable.
   const errors = checkRegistry(raw, { kind: 'repo', before: text(repoFile()) })
   assert.deepEqual(errors.sort(), [
-    `${ID.main}: dsh: only the home file holds it`,
-    `${ID.main}: folder: only the home file holds it`,
-    `${ID.main}: machine: only the home file holds it`,
+    `bots[0] (${ID.main}): dsh: only the home file holds it`,
+    `bots[0] (${ID.main}): folder: only the home file holds it`,
+    `bots[0] (${ID.main}): machine: only the home file holds it`,
     'projects: only the home file holds it',
     'shown: only the home file holds it',
   ])
@@ -127,7 +128,7 @@ test('a repo file cannot set folder, machine, dsh, shown or projects', () => {
 test('check: what a write refuses', () => {
   const noMain = repoFile()
   noMain.bots[0].main = false
-  assert.deepEqual(checkRegistry(noMain, { kind: 'repo' }), ['0 main bots; a project has exactly one'])
+  assert.deepEqual(checkRegistry(noMain, { kind: 'repo' }), ['bots: 0 with main: true; a project has exactly one main bot'])
   assert.deepEqual(checkRegistry({ version: 2, bots: [] }, { kind: 'repo' }), [])
   assert.deepEqual(checkRegistry({ version: 1, bots: [] }, { kind: 'home' }), ['not a version 2 bots file'])
   const bad = homeFile()
@@ -136,14 +137,15 @@ test('check: what a write refuses', () => {
   bad.bots[1].machine = '-oProxyCommand'
   bad.shown.push({ project: '/x', bots: ['nope'] })
   bad.projects.push({ machine: 'g9' })
+  // Each refusal names the entry (its place and id) and the field, so it can be fixed by hand.
   assert.deepEqual(checkRegistry(bad, { kind: 'home' }).sort(), [
-    'a project with no folder',
-    `${ID.dsh}: id used twice`,
-    `${ID.dsh}: no name`,
-    `${ID.dsh}: pet source "codex" is not builtin or team`,
-    `${ID.main}: machine needs a folder and a machine name`,
-    'shown /x: an id that is not a Bot id',
-    'unfold-root: id is not b- plus 10 base32 characters or session-<uuid>',
+    `bots[0] (${ID.dsh}): pet source "codex" is not builtin or team`,
+    `bots[1] (${ID.main}): machine needs a folder and a machine name`,
+    'bots[2] (unfold-root): id is not b- plus 10 base32 characters or session-<uuid>',
+    `bots[3] (${ID.dsh}): id used twice`,
+    `bots[3] (${ID.dsh}): name is missing`,
+    'projects[2]: folder is missing',
+    'shown[2] (/x): bots: an id that is not a Bot id',
   ].sort())
   // A home file may hold any number of team Main Bots.
   const mains = homeFile()
@@ -282,9 +284,21 @@ test('a rename Windows refuses is retried, then not saved; the temporary file go
   assert.deepEqual(readdirSync(join(path, '..')), ['bots.json'])
 })
 
-test('an invalid file is refused before anything is touched', async (t) => {
+test('an invalid file is refused before anything is touched, naming the file, entry and field', async (t) => {
   const path = join(tempDir(t), 'bots.json')
-  await assert.rejects(writeRegistry(path, { version: 2, bots: [{ id: 'unfold-root', name: 'U' }] }, null, { kind: 'home' }), { code: 'registry/invalid' })
+  await assert.rejects(writeRegistry(path, { version: 2, bots: [{ id: 'unfold-root', name: 'U' }] }, null, { kind: 'home' }), {
+    code: 'registry/invalid',
+    message: `Not saved: ${path}: bots[0] (unfold-root): id is not b- plus 10 base32 characters or session-<uuid>`,
+  })
+  // A hand-written file with one bad entry: every write is refused, and says which entry.
+  const handWritten = homeFile()
+  handWritten.bots[1].name = ''
+  writeFileSync(path, text(handWritten))
+  await assert.rejects(updateRegistry(path, r => putBot(r, { id: ID.dsh, role: 'x' }), { kind: 'home' }), {
+    code: 'registry/invalid',
+    message: `Not saved: ${path}: bots[1] (${ID.main}): name is missing`,
+  })
+  rmSync(path)
   assert.equal(await readRegistryText(path), null)
   await assert.rejects(writeRegistry(path, emptyRegistry('home')), /pass the text the edit started from/)
 })
@@ -307,4 +321,87 @@ test('the module imports nothing, so it can be copied byte-equal into Herdr', ()
   assert.doesNotMatch(source, /\brequire\(/)
   const dynamic = [...source.matchAll(/import\(\s*(['"])([^'"]+)\1\s*\)/g)].map(m => m[2])
   assert.deepEqual(dynamic, ['node:fs'])
+})
+
+const fixture = name => readFileSync(new URL(`./fixtures/registry/${name}`, import.meta.url), 'utf8')
+
+test('v1 reader: this repo\'s own .herdr/bots.json reads as a version 2 repo file', () => {
+  const { file, warnings } = fromHerdrV1(fixture('herdr-v1-automagik.json'))
+  assert.deepEqual(warnings, [])
+  assert.equal(file.version, 2)
+  assert.deepEqual(file.categories, [])
+  assert.deepEqual(file.bots, [{
+    id: 'b-xzrwondddr',
+    name: 'Automagik Orchestrator',
+    role: 'Orchestrates automagik (DSH desktop): non-coding work; leads bot-system unification with Herdr',
+    instructions: '',
+    agent: 'claude',
+    look: { character: 'kitty', colour: 'yellow' },
+    main: true,
+    pet: { source: 'team', id: 'kitty-yellow' },
+  }])
+  assert.deepEqual(checkRegistry(file, { kind: 'repo' }), [])
+})
+
+test('v1 reader: a team keeps its seat and team fields; what v2 cannot use is left out', () => {
+  const { file, warnings } = fromHerdrV1(fixture('herdr-v1-team.json'))
+  assert.deepEqual(file.bots.map(b => b.id), ['b-aaaaaaaaaa', 'b-cccccccccc', 'b-dddddddddd', 'b-ffffffffff'])
+  assert.deepEqual(file.categories, [{ id: 'core', title: 'Core', sub: 'the build' }])
+  const [captain, dev, planned, badLook] = file.bots
+  assert.equal(captain.main, true)
+  assert.equal(captain.kind, undefined)
+  assert.deepEqual([captain.agent, captain.model, captain.rank], ['claude', 'opus', 'captain'])
+  assert.equal(dev.main, undefined)
+  assert.deepEqual([dev.lead, dev.category, dev.rank], ['b-aaaaaaaaaa', 'core', 'dev'])
+  assert.deepEqual(dev.worker, { agent: 'codex', effort: 'high', template: 'implementer' })
+  assert.deepEqual(dev.someFutureField, { kept: true })
+  assert.deepEqual(dev.pet, { source: 'team', id: 'star-green' })
+  assert.deepEqual(planned.planned, { wave: 2 })
+  assert.equal(badLook.pet, undefined)
+  assert.equal(badLook.folder, undefined)
+  assert.deepEqual(warnings, [
+    'bots[3] (b-eeeeeeeeee): kind "helper" is not main or member; left out',
+    'bots[4] (b-ffffffffff): pet id "../..-x" is not one path segment; ignored',
+    'bots[4] (b-ffffffffff): folder is read from the home file only; ignored',
+  ])
+  assert.throws(() => fromHerdrV1(text({ version: 2, bots: [] })), /version 2, expected 1/)
+})
+
+test('state.json reader: DSH\'s Bots in the v2 shape, nothing private, pinned and odd ids kept home', () => {
+  const state = fixture('state.json')
+  const { bots, warnings } = fromDshState(state)
+  assert.deepEqual(bots, [
+    {
+      id: ID.dsh,
+      name: 'Omni',
+      role: 'Main Bot',
+      instructions: 'Answer on WhatsApp.',
+      identity: 'omni',
+      main: true,
+      pet: { source: 'builtin', id: 'genie-clay', version: 1, sleep: true },
+      dsh: { model: 'deepseek/deepseek-v4', effort: 'high', color: 'teal' },
+    },
+    {
+      id: 'session-5e6f7a8b-1c2d-4e3f-9a0b-c1d2e3f4a5b6',
+      name: 'Writer',
+      role: '',
+      instructions: '',
+      folder: '/Users/me/notes',
+    },
+  ])
+  assert.deepEqual(warnings, [
+    "unfold-root: a host's pinned Session; stays in Automagik only",
+    'host-chat: not b- or session-<uuid>; stays in Automagik only',
+  ])
+  const exported = JSON.stringify(bots)
+  for (const secret of ['permission', 'capabilities', 'sessionId', 'memory', 'createdAt', 'data:image', 'never exported']) {
+    assert.ok(!exported.includes(secret), secret)
+  }
+  assert.deepEqual(fromDshState(JSON.parse(state)).bots, bots)
+  assert.deepEqual(checkRegistry({ ...emptyRegistry('home'), bots }, { kind: 'home' }), [])
+  assert.throws(() => fromDshState('{}'), /no bots/)
+  // A warning names the Bot by its key in state.json.
+  const noName = JSON.parse(state)
+  noName.bots[ID.dsh].name = ''
+  assert.deepEqual(fromDshState(noName).warnings.at(-1), `bots.${ID.dsh}: name is missing; left out`)
 })

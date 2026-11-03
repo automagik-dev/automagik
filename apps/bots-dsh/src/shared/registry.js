@@ -61,19 +61,28 @@ function petProblem(pet) {
 
 /** Why a home-file `projects[]` entry can't be used, or null. */
 function projectProblem(entry) {
-  if (!isObject(entry) || !isText(entry.folder)) return 'a project with no folder'
-  if (entry.machine !== undefined && !MACHINE_NAME.test(String(entry.machine))) return `project ${entry.folder}: machine is not a machine name`
+  if (!isObject(entry)) return 'not an object'
+  if (!isText(entry.folder)) return 'folder is missing'
+  if (entry.machine !== undefined && !MACHINE_NAME.test(String(entry.machine))) return 'machine is not a machine name'
   return null
 }
 
 /** Why a home-file `shown[]` entry can't be used, or null. */
 function shownProblem(entry) {
-  if (!isObject(entry)) return 'a shown entry is not an object'
-  if (entry.project !== null && !isText(entry.project)) return 'a shown entry has no project (null for global Bots)'
-  if (entry.machine !== undefined && !MACHINE_NAME.test(String(entry.machine))) return `shown ${entry.project}: machine is not a machine name`
-  if (!Array.isArray(entry.bots)) return `shown ${entry.project}: no bots list`
+  if (!isObject(entry)) return 'not an object'
+  if (entry.project !== null && !isText(entry.project)) return 'project is missing (null for global Bots)'
+  if (entry.machine !== undefined && !MACHINE_NAME.test(String(entry.machine))) return 'machine is not a machine name'
+  if (!Array.isArray(entry.bots)) return 'bots is not a list'
   return null
 }
+
+// How a message names an entry: `bots[2] (b-abcdefghij)`, `projects[0] (/srv/app)`, so the
+// person can find it in the file.
+const entryName = (list, entry, i, key) => {
+  const label = isObject(entry) && isText(entry[key]) ? ` (${entry[key]})` : ''
+  return `${list}[${i}]${label}`
+}
+const ID_RULE = 'id is not b- plus 10 base32 characters or session-<uuid>'
 
 /**
  * Reads a version 2 file. Throws when it is not JSON, not version 2 or has no bots list;
@@ -100,27 +109,25 @@ export function parseRegistry(text, { kind } = {}) {
     if (file.name !== undefined && typeof file.name !== 'string') { warnings.push('name is not text; ignored'); delete file.name }
     if (file.categories !== undefined && !Array.isArray(file.categories)) { warnings.push('categories is not a list; ignored'); delete file.categories }
   } else {
-    file.projects = (Array.isArray(file.projects) ? file.projects : []).filter(entry => {
+    file.projects = (Array.isArray(file.projects) ? file.projects : []).filter((entry, i) => {
       const why = projectProblem(entry)
-      if (why) warnings.push(`${why}; left out`)
+      if (why) warnings.push(`${entryName('projects', entry, i, 'folder')}: ${why}; left out`)
       return !why
     })
-    file.shown = (Array.isArray(file.shown) ? file.shown : []).filter(entry => {
+    file.shown = (Array.isArray(file.shown) ? file.shown : []).map((entry, i) => {
       const why = shownProblem(entry)
-      if (why) warnings.push(`${why}; left out`)
-      return !why
-    }).map(entry => {
+      if (why) { warnings.push(`${entryName('shown', entry, i, 'project')}: ${why}; left out`); return null }
       const bots = entry.bots.filter(isBotId)
-      if (bots.length < entry.bots.length) warnings.push(`shown ${entry.project}: an id that is not a Bot id is left out`)
+      if (bots.length < entry.bots.length) warnings.push(`${entryName('shown', entry, i, 'project')}: bots: an id that is not a Bot id is left out`)
       return { ...entry, bots }
-    })
+    }).filter(Boolean)
   }
   const bots = []
   file.bots.forEach((b, i) => {
-    const where = isObject(b) && isText(b.id) ? b.id : `entry ${i + 1}`
-    if (!isObject(b) || !isBotId(b.id)) return warnings.push(`${where}: id is not b- plus 10 base32 characters or session-<uuid>, left out`)
-    if (bots.some(k => k.id === b.id)) return warnings.push(`${where}: id used twice, left out`)
-    if (!isText(b.name)) return warnings.push(`${where}: no name, left out`)
+    const where = entryName('bots', b, i, 'id')
+    if (!isObject(b) || !isBotId(b.id)) return warnings.push(`${where}: ${ID_RULE}; left out`)
+    if (bots.some(k => k.id === b.id)) return warnings.push(`${where}: id used twice; left out`)
+    if (!isText(b.name)) return warnings.push(`${where}: name is missing; left out`)
     const bot = { ...b }
     for (const key of ['role', 'instructions']) {
       if (typeof bot[key] === 'string') continue
@@ -151,9 +158,9 @@ export function parseRegistry(text, { kind } = {}) {
   })
   if (kind === 'repo' && bots.length) {
     const mains = bots.filter(b => b.main === true)
-    if (mains.length === 0) warnings.push('no main bot')
+    if (mains.length === 0) warnings.push('bots: no main bot')
     if (mains.length > 1) {
-      warnings.push(`${mains.length} main bots; ${mains[0].id} counts`)
+      warnings.push(`bots: ${mains.length} main bots; ${mains[0].id} counts`)
       for (const b of mains.slice(1)) b.main = false
     }
   }
@@ -184,32 +191,36 @@ export function checkRegistry(file, { kind, before = null } = {}) {
   } else {
     if (file.projects !== undefined) {
       if (!Array.isArray(file.projects)) errors.push('projects is not a list')
-      else for (const entry of file.projects) { const why = projectProblem(entry); if (why) errors.push(why) }
+      else {
+        file.projects.forEach((entry, i) => {
+          const why = projectProblem(entry)
+          if (why) errors.push(`${entryName('projects', entry, i, 'folder')}: ${why}`)
+        })
+      }
     }
     if (file.shown !== undefined) {
       if (!Array.isArray(file.shown)) errors.push('shown is not a list')
       else {
-        for (const entry of file.shown) {
-          const why = shownProblem(entry)
-          if (why) errors.push(why)
-          else if (!entry.bots.every(isBotId)) errors.push(`shown ${entry.project}: an id that is not a Bot id`)
-        }
+        file.shown.forEach((entry, i) => {
+          const why = shownProblem(entry) ?? (entry.bots.every(isBotId) ? null : 'bots: an id that is not a Bot id')
+          if (why) errors.push(`${entryName('shown', entry, i, 'project')}: ${why}`)
+        })
       }
     }
   }
   const ids = new Set()
-  for (const b of file.bots) {
-    if (!isObject(b) || !isBotId(b.id)) { errors.push(`${b?.id ?? 'a bot'}: id is not b- plus 10 base32 characters or session-<uuid>`); continue }
-    const at = b.id
-    if (ids.has(at)) errors.push(`${at}: id used twice`)
-    ids.add(at)
-    if (!isText(b.name)) errors.push(`${at}: no name`)
+  file.bots.forEach((b, i) => {
+    const at = entryName('bots', b, i, 'id')
+    if (!isObject(b) || !isBotId(b.id)) return errors.push(`${at}: ${ID_RULE}`)
+    if (ids.has(b.id)) errors.push(`${at}: id used twice`)
+    ids.add(b.id)
+    if (!isText(b.name)) errors.push(`${at}: name is missing`)
     for (const key of ['role', 'instructions']) if (b[key] !== undefined && typeof b[key] !== 'string') errors.push(`${at}: ${key} is not text`)
     if (b.main !== undefined && typeof b.main !== 'boolean') errors.push(`${at}: main is not true or false`)
     if (b.identity !== undefined && !isText(b.identity)) errors.push(`${at}: identity is not text`)
     if (b.pet !== undefined) { const why = petProblem(b.pet); if (why) errors.push(`${at}: ${why}`) }
     if (kind === 'repo') {
-      const was = hadBot(at)
+      const was = hadBot(b.id)
       for (const key of HOME_BOT_FIELDS) {
         if (b[key] !== undefined && !same(b[key], was?.[key])) errors.push(`${at}: ${key}: only the home file holds it`)
       }
@@ -218,10 +229,10 @@ export function checkRegistry(file, { kind, before = null } = {}) {
       if (b.machine !== undefined && (b.folder === undefined || !MACHINE_NAME.test(String(b.machine)))) errors.push(`${at}: machine needs a folder and a machine name`)
       if (b.dsh !== undefined && !isObject(b.dsh)) errors.push(`${at}: dsh is not an object`)
     }
-  }
+  })
   if (kind === 'repo' && file.bots.length) {
     const mains = file.bots.filter(b => b?.main === true).length
-    if (mains !== 1) errors.push(`${mains} main bots; a project has exactly one`)
+    if (mains !== 1) errors.push(`bots: ${mains} with main: true; a project has exactly one main bot`)
   }
   return errors
 }
@@ -264,6 +275,85 @@ export function putBot(raw, patch) {
 export function dropBot(raw, id) {
   raw.bots = raw.bots.filter(b => !(isObject(b) && b.id === id))
   return raw
+}
+
+// ---- the legacy sources, read into the version 2 shape (read-only) ----
+//
+// `kind` is read only from these, never from a version 2 file. Neither reader writes:
+// converting a `.herdr/bots.json` is Herdr's (delivery 4), and DSH keeps `state.json`.
+
+// parseRegistry's warnings name `bots[i]` in the list it was given; these put back the name
+// the entry has in the source file (`names[i]`), so the person finds it there.
+const renamed = (warnings, names) => warnings.map(w => w.replace(/^bots\[(\d+)\](?: \([^)]*\))?/, (whole, i) => names[i] ?? whole))
+
+/** Herdr's v1 `kind` values. */
+export const HERDR_V1_KINDS = Object.freeze(['main', 'member'])
+
+/**
+ * Herdr's `<project>/.herdr/bots.json`, version 1, as a version 2 repo file: `kind: "main"`
+ * becomes `main: true` and `kind` goes; `look` gives the pet `team/<character>-<colour>`
+ * (D4, baked on demand) and is kept, since Herdr draws it until the bake lands; every other
+ * field is kept. Throws when it is not JSON, not version 1 or has no bots list; otherwise
+ * what can't be used is left out with a warning (parseRegistry's rules, as a repo file).
+ */
+export function fromHerdrV1(text) {
+  const raw = JSON.parse(text)
+  if (!isObject(raw)) throw new Error('.herdr/bots.json: not an object')
+  if (raw.version !== 1) throw new Error(`.herdr/bots.json: version ${JSON.stringify(raw.version)}, expected 1`)
+  if (!Array.isArray(raw.bots)) throw new Error('.herdr/bots.json: no bots list')
+  const warnings = []
+  const bots = []
+  const names = []
+  raw.bots.forEach((b, i) => {
+    const where = entryName('bots', b, i, 'id')
+    if (!isObject(b)) return warnings.push(`${where}: not an object; left out`)
+    if (!HERDR_V1_KINDS.includes(b.kind)) return warnings.push(`${where}: kind ${JSON.stringify(b.kind)} is not main or member; left out`)
+    const { kind, ...bot } = b
+    if (kind === 'main') bot.main = true
+    if (bot.pet === undefined && isObject(b.look) && isText(b.look.character) && isText(b.look.colour)) {
+      bot.pet = { source: 'team', id: `${b.look.character}-${b.look.colour}` }
+    }
+    bots.push(bot)
+    names.push(where)
+  })
+  const parsed = parseRegistry(JSON.stringify({ ...raw, version: REGISTRY_VERSION, bots }), { kind: 'repo' })
+  return { file: parsed.file, warnings: [...warnings, ...renamed(parsed.warnings, names)] }
+}
+
+/**
+ * DSH's Bots, from a team's `state.json` (its text or object), in the version 2 shape of
+ * the home file: `kind` becomes `identity`, `mainBotIds` gives `main`, `avatar.pet` the
+ * pet, `workDir` the folder, and `model`, `effort` and `color` go in `dsh` (Q14). Nothing
+ * else is taken: no Session, memory, permission level, capability, photo or browser data.
+ * A host-pinned Bot (`sessionPinned`) and an id outside the pattern stay in DSH alone, with
+ * one warning each (Q18). Resolves nothing on disk: `folder` is `workDir` as stored.
+ */
+export function fromDshState(state) {
+  const raw = typeof state === 'string' ? JSON.parse(state) : state
+  if (!isObject(raw) || !isObject(raw.bots)) throw new Error('state.json: no bots')
+  const mains = Array.isArray(raw.mainBotIds) ? raw.mainBotIds : []
+  const warnings = []
+  const bots = []
+  const names = []
+  for (const [key, b] of Object.entries(raw.bots)) {
+    if (!isObject(b)) { warnings.push(`bots.${key}: not an object; left out`); continue }
+    const id = b.id ?? key
+    if (id !== key) { warnings.push(`bots.${key}: its id is ${JSON.stringify(id)}; left out`); continue }
+    if (b.sessionPinned === true) { warnings.push(`${id}: a host's pinned Session; stays in Automagik only`); continue }
+    if (!isBotId(id)) { warnings.push(`${id}: not b- or session-<uuid>; stays in Automagik only`); continue }
+    const bot = { id, name: b.name, role: b.role ?? '', instructions: b.instructions ?? '' }
+    if (b.kind !== undefined) bot.identity = b.kind
+    if (mains.includes(id)) bot.main = true
+    if (isObject(b.avatar?.pet)) bot.pet = { ...b.avatar.pet }
+    if (b.workDir !== undefined) bot.folder = b.workDir
+    const dsh = {}
+    for (const field of ['model', 'effort', 'color']) if (b[field] !== undefined) dsh[field] = b[field]
+    if (Object.keys(dsh).length) bot.dsh = dsh
+    bots.push(bot)
+    names.push(`bots.${key}`)
+  }
+  const parsed = parseRegistry(JSON.stringify({ version: REGISTRY_VERSION, bots }), { kind: 'home' })
+  return { bots: parsed.file.bots, warnings: [...warnings, ...renamed(parsed.warnings, names)] }
 }
 
 // ---- the lock (automagik-herdr's helper, the same protocol on disk) ----
@@ -363,7 +453,7 @@ async function replaceFile(io, path, text) {
 export async function writeRegistry(path, raw, expected, { kind, fs, wait, stale } = {}) {
   if (expected === undefined) throw new Error('writeRegistry: pass the text the edit started from (null for a new file)')
   const errors = checkRegistry(raw, { kind, before: expected })
-  if (errors.length) throw fail(`Not saved: ${errors.join('; ')}`, 'registry/invalid')
+  if (errors.length) throw fail(`Not saved: ${path}: ${errors.join('; ')}`, 'registry/invalid')
   const io = await loadFs(fs)
   const text = serializeRegistry(raw, expected === null ? '  ' : indentOf(expected))
   io.mkdirSync(parentOf(path), { recursive: true })
