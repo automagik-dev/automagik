@@ -47,7 +47,9 @@
     "~/.automagik/parts/automagik.am/**",
     "~/.local/bin/am",
     "~/.local/bin/automagik-herdr",
-    "$HERDR_APP_HOME/automagik-herdr/briefing.mjs"
+    "$HERDR_APP_HOME/automagik-herdr/briefing.mjs",
+    "$HERDR_APP_HOME/automagik-herdr/hooks-journal.json",
+    "**/.claude/settings.local.json#hooks.UserPromptSubmit"
   ],
   "set": [
     "code",
