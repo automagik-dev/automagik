@@ -17,7 +17,7 @@ name: Release
 #   automagik-unfold-session-dsh-<version>.tgz Unfold's session as a DSH conversation (apps/unfold-session-dsh)
 #   automagik-unfold-bot-dsh-<version>.tgz     the Unfold Bot (apps/unfold-bot-dsh)
 #   plugins.json                          each tarball's name, version, file and integrity
-#   dsh-oh-my-claude-<its version>.tgz    the add-ons the lane carries, at the profile's pins
+#   <add-on>-<its version>.tgz            the add-ons the lane carries, at the profile's pins
 #   addons.json                           (scripts/lane.ts LANE_ADDONS), and what each one is
 #
 # and then the desktop app's builds (desktop-build.yml). Omni pins a release's plugins.json

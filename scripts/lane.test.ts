@@ -3,7 +3,7 @@ import { createHash, generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addonPinsOnly, kindOf, manifest, nextPatch, sequenceOf, ships, signLane, unpackedIn, verifyLane } from './lane';
+import { addonPinsOnly, kindOf, LANE_ADDONS, manifest, nextPatch, sequenceOf, ships, signLane, unpackedIn, verifyLane } from './lane';
 
 describe('the plugin lane', () => {
   test('only changes inside the plugins ride the lane; anything the app or an install sees is a full release', () => {
@@ -30,16 +30,17 @@ describe('the plugin lane', () => {
     expect(kindOf(['apps/bots-dsh/dev/harness/package.json'], () => false, unpacked)).toBe('full');
   });
 
-  test('moving only the pins of the add-ons the lane carries keeps a release on the lane', () => {
-    const profile = (omc: string, subscriptions = '2eff034', more = {}) => JSON.stringify({
-      omni: { addonVersions: { '@goodandready/dsh-subscriptions': '0.7.21-omni.1', 'dsh-oh-my-claude': omc } },
-      dependencies: { '@automagik/bots-dsh': '*', '@goodandready/dsh-subscriptions': `github:automagik-genie/dsh-subscriptions#${subscriptions}`, 'dsh-oh-my-claude': `github:automagik-genie/dsh-oh-my-claude#${omc}` },
+  test('the lane carries no add-on, so moving an add-on\'s pin is a full release', () => {
+    expect(LANE_ADDONS).toEqual([]);
+    const profile = (subscriptions = '2eff034', more = {}) => JSON.stringify({
+      omni: { addonVersions: { '@goodandready/dsh-subscriptions': '0.7.21-omni.1' } },
+      dependencies: { '@automagik/bots-dsh': '*', '@goodandready/dsh-subscriptions': `github:automagik-genie/dsh-subscriptions#${subscriptions}` },
       ...more,
     });
-    expect(addonPinsOnly(profile('1.5.6-omni.7'), profile('1.5.6-omni.8'))).toBe(true);
-    // Another add-on's pin (it has dependencies of its own), or anything else, is a full release.
-    expect(addonPinsOnly(profile('1.5.6-omni.7'), profile('1.5.6-omni.8', 'ffff000'))).toBe(false);
-    expect(addonPinsOnly(profile('1.5.6-omni.7'), profile('1.5.6-omni.7', '2eff034', { dsh: { profile: { bundles: [] } } }))).toBe(false);
+    expect(addonPinsOnly(profile(), profile())).toBe(true);
+    // dsh-subscriptions has dependencies of its own: its pin, or anything else, is a full release.
+    expect(addonPinsOnly(profile(), profile('ffff000'))).toBe(false);
+    expect(addonPinsOnly(profile(), profile('2eff034', { dsh: { profile: { bundles: [] } } }))).toBe(false);
   });
 
   test('a patch goes on the newest 3.N, and the sequence keeps the releases in order', () => {
@@ -62,13 +63,13 @@ describe('the plugin lane', () => {
     expect(lane.plugins[0].sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(lane.plugins[0].engines.dsh).toBe('>=0.2.1-rc.3 <0.2.2-0');
     expect([lane.base, lane.sequence, lane.keyId]).toEqual(['3.22.0', 220001, 'automagik-2026-10']);
-    writeFileSync(join(dir, 'dsh-oh-my-claude-1.5.6-omni.8.tgz'), 'addon');
+    writeFileSync(join(dir, 'dsh-addon-1.5.6-omni.8.tgz'), 'addon');
     const carried = manifest({ repository: 'https://github.com/automagik-dev/automagik', version: '3.22.1', commit: 'a'.repeat(40), packages: {} }, {
       base: '3.22.0', issuedAt: '2026-10-26T03:00:00Z', dir, engines: () => '',
-      addons: { 'dsh-oh-my-claude': { version: '1.5.6-omni.8', file: 'dsh-oh-my-claude-1.5.6-omni.8.tgz', integrity: 'sha512-y', size: 5, engines: { dsh: '>=0.2.0-rc.1 <0.3.0' }, source: `github:automagik-genie/dsh-oh-my-claude#${'b'.repeat(40)}` } },
+      addons: { 'dsh-addon': { version: '1.5.6-omni.8', file: 'dsh-addon-1.5.6-omni.8.tgz', integrity: 'sha512-y', size: 5, engines: { dsh: '>=0.2.0-rc.1 <0.3.0' }, source: `github:automagik-genie/dsh-addon#${'b'.repeat(40)}` } },
     });
     // Apart from plugins[] (Omni serves those, checking each), on this release, in the plugins' shape.
-    expect(carried.addons).toEqual([{ name: 'dsh-oh-my-claude', version: '1.5.6-omni.8', url: 'https://github.com/automagik-dev/automagik/releases/download/v3.22.1/dsh-oh-my-claude-1.5.6-omni.8.tgz', integrity: 'sha512-y', sha256: createHash('sha256').update('addon').digest('hex'), size: 5, engines: { dsh: '>=0.2.0-rc.1 <0.3.0' } }]);
+    expect(carried.addons).toEqual([{ name: 'dsh-addon', version: '1.5.6-omni.8', url: 'https://github.com/automagik-dev/automagik/releases/download/v3.22.1/dsh-addon-1.5.6-omni.8.tgz', integrity: 'sha512-y', sha256: createHash('sha256').update('addon').digest('hex'), size: 5, engines: { dsh: '>=0.2.0-rc.1 <0.3.0' } }]);
     const pair = generateKeyPairSync('ed25519');
     const bytes = Buffer.from(JSON.stringify(lane));
     const signature = signLane(bytes, pair.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString());

@@ -31,7 +31,6 @@ export const INDEX_URL = 'https://raw.githubusercontent.com/automagik-dev/automa
  */
 export const VETTED = [
   'https://github.com/automagik-dev/genie',
-  'https://github.com/automagik-genie/dsh-oh-my-claude',
   'https://github.com/automagik-genie/dsh-subscriptions',
 ];
 

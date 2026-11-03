@@ -16,8 +16,9 @@ picks are retired later.
 
 ## Motivation
 
-Today there are three ways to reach a model: DSH's own providers, plans through pi-ai, and
-Claude through the Claude Code plugin (dsh-oh-my-claude). Each was added on its own, and the
+Today there are two ways to reach a model: DSH's own providers, and plans and keys through
+pi-ai, Claude among them (a Claude Pro or Max sign-in, or an Anthropic API key). A third, Claude
+through the Claude Code plugin (dsh-oh-my-claude), was removed (see Retired below). Each was added on its own, and the
 picker shows provider ids, not what runs the work. ACP (Agent Client Protocol) is one protocol
 for many agents. Community ACP plugins were reviewed; none passes DSH's own tools to the agent,
 so a Bot on one would lose its team tools.
@@ -32,13 +33,13 @@ Every model entry gets a descriptor `{ harness, connectedBy }`, derived from its
 |---|---|---|
 | `native` | DSH's own provider, signed in with a key or DSH's own sign-in | DSH's built-in ids |
 | `pi-ai` | A plan through pi-ai (dsh-subscriptions) | pi-ai route ids |
-| `claude-code-plugin` | The Claude Code plugin (dsh-oh-my-claude) | `claude-code`, `claude-code-<box>` |
+| `claude-code-plugin` | Retired: the Claude Code plugin (dsh-oh-my-claude), no longer shipped | `claude-code`, `claude-code-<box>` (none served) |
 | `acp` | An agent over ACP, through our plugin | `acp-<agent>` |
 
 `harness` ids: `dsh`, `claude-code`, `codex`, `gemini`, and later `herdr` (RFC 0006).
 
-- No ACP provider id may start with `claude-code`. The Bot team treats those ids as the Claude
-  Code plugin. ACP ids are `acp-claude`, `acp-codex`, `acp-gemini`.
+- No ACP provider id may start with `claude-code`. The Bot team reads those ids as the retired
+  Claude Code plugin's and moves them (below). ACP ids are `acp-claude`, `acp-codex`, `acp-gemini`.
 - The descriptor is computed, never stored in place of a Session's model reference.
 - The picker (RFC 0004) shows Harness and Connected by as rows under the model.
 
@@ -53,6 +54,24 @@ Every model entry gets a descriptor `{ harness, connectedBy }`, derived from its
 - **Pinned adapters.** Each adapter is a pre-installed binary at an exact version with a SHA-256
   check. Nothing is downloaded at spawn: no `npx`, no global install, no self-update.
 - **Resume.** Use the agent's own session load when it offers one; otherwise start fresh and say so.
+
+### Retired: the Claude Code plugin
+
+The desktop profile no longer ships dsh-oh-my-claude or pins its fork (owner, 2026-11-02, D16
+and D17). Claude runs on pi-ai's `anthropic` route until `acp-claude` ships.
+
+- **Profiles.** An app update takes the plugin out of a profile an earlier build installed
+  (`RETIRED` in `apps/desktop/src/dsh.js`): its folder, dependency, bundle and patch rows.
+- **Bots.** Once per team (`claudeCodeMoved` in state.json), a Bot on a `claude-code*` model
+  moves to the closest pi-ai Claude model (`apps/bots-dsh/src/host/claude-models.js`): an alias
+  to its family's newest, a version to the nearest one pi-ai serves, `default` to Opus. The old
+  ref stays on the Bot as `claudeCodeModel`. The ACP delivery's own migration reads that field to
+  move the Bot on to `acp-claude`, and sets its own flag. Sessions and their history stay.
+- **Auto.** The fork's last build started a new Claude session in Claude Code's own `auto`
+  mode; it shipped only in the broken 3.53.0 to 3.54.1, and the team's Claude Bots ran on full
+  access, so nobody depends on it. On pi-ai, a Bot's level is DSH's preset, Auto included. The
+  ACP Claude adapter should map a Session's Auto to Claude Code's `auto` permission mode, never
+  to `bypassPermissions`.
 
 ### Decided
 

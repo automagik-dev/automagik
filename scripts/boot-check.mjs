@@ -55,7 +55,7 @@ const packed = folders.map((dir) => {
   return { name: info.name, version: info.version, file: info.filename }
 })
 say(`packed ${packed.map(pkg => `${pkg.name}@${pkg.version}`).join(', ')}`)
-// The add-ons the desktop profile pins (Oh My Claude, dsh-subscriptions), at those very pins:
+// The add-ons the desktop profile pins (dsh-subscriptions), at those very pins:
 // they are in the same client graph, and one bad client fails the whole UI (v3.53.0).
 const desktopProfile = readJson(join(ROOT, 'apps', 'desktop', 'profile', 'package.json'))
 const addons = Object.entries(desktopProfile.dependencies).filter(([name]) => !packed.some(pkg => pkg.name === name) && !name.startsWith('@automagik/'))

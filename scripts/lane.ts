@@ -40,7 +40,9 @@ const PROFILE = 'apps/desktop/profile/package.json';
 // The add-ons the desktop profile pins that the lane carries too, so a pin move is a patch: each
 // a reviewed fork with no dependencies of its own (its folder alone is the add-on) that declares
 // engines.dsh. They go in lane.json's `addons`, apart from `plugins` (the ones Omni serves).
-export const LANE_ADDONS = ['dsh-oh-my-claude'];
+// None today: Oh My Claude, the one it carried, left the profile (Claude comes through pi-ai),
+// and dsh-subscriptions has dependencies of its own.
+export const LANE_ADDONS: string[] = [];
 // What a plugin's own package.json may change in a plugin-only release: nothing it is
 // installed or admitted by.
 const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDependencies', 'bundleDependencies', 'engines', 'dsh', 'main', 'exports', 'files'];

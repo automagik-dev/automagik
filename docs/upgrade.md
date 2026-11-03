@@ -149,7 +149,7 @@ DSH_HOME=~/.automagik/web/dsh node <runtime>/node_modules/@deepseek-ai/dsh/lib/b
 One `dsh plugin … add` per release tarball the profile already depends on, then the script
 verifies each installed `node_modules/<package>/package.json` version and the `package.json`
 pin. Tarballs for plugins this profile does **not** install (the Unfold plugins, for example)
-are left alone, as are git-pinned plugins (`genie-dsh`, `omni-*`, `dsh-oh-my-claude`,
+are left alone, as are git-pinned plugins (`genie-dsh`, `omni-*`,
 `dsh-subscriptions`) and local `link:` checkouts. Nothing is installed "just because the
 release has it".
 
