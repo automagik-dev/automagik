@@ -246,8 +246,8 @@ const signalGroup = (signal) => {
     return false
   }
 }
-// Out of this terminal's group, DSH would outlive a Ctrl-C here: stop it too.
-for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
+// Out of this terminal's group, DSH would outlive a Ctrl-C or a closed terminal here: stop it too.
+for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) {
   process.once(signal, () => {
     signalGroup('SIGKILL')
     process.exit(code)
