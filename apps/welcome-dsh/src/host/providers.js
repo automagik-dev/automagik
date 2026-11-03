@@ -21,6 +21,7 @@
 // questions. A sign-in lives in this process; reloading the page leaves it running, and
 // signin-status picks it up again.
 import { randomUUID } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import { Answer, AnswerPayload, KeyPayload, ProviderPayload, Secret, parse } from './payloads.js'
 
 export const PI_AI = 'llm-pi-ai'
@@ -78,12 +79,19 @@ const piAiEntry = (ctx) => {
 }
 
 // Write one route under llm-pi-ai.providers, keeping what it already holds. A route that
-// does not exist yet is added; DSH checks it before the change applies.
+// does not exist yet is added; DSH checks it before the change applies. A route that takes a
+// key leaves what only the sign-in's route holds (SIGNIN_ROUTES): a key's 429 is DSH's to
+// retry. A policy someone set by hand, anything but the sign-in's exactly, stays.
 export async function saveRoute(ctx, provider, patch) {
   const entry = piAiEntry(ctx)
   if (entry === undefined) throw refused('This DSH has no pi-ai entry (llm-pi-ai) to connect providers with.')
   const current = entry.value?.providers?.[provider]
   const route = { ...(current && typeof current === 'object' ? current : {}), ...patch }
+  if (patch.apiKeyEnv !== undefined) {
+    for (const [field, value] of Object.entries(SIGNIN_ROUTES[provider] ?? {})) {
+      if (!Object.hasOwn(patch, field) && isDeepStrictEqual(route[field], value)) delete route[field]
+    }
+  }
   try {
     await ctx.settings.mutate(PI_AI, [{ op: 'set', path: ['providers', provider], value: route }], entry.revision)
   } catch (error) {

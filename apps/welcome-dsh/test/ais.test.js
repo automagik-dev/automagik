@@ -58,18 +58,21 @@ test('Claude signs in through pi-ai\'s anthropic flow and runs on it with a rout
   assert.deepEqual([before.ready, before.on, before.signIn, before.keyUrl], [false, false, true, 'https://console.anthropic.com/settings/keys'])
   assert.equal((await fresh.handle('ai-switch', { id: 'claude', on: true })).error.code, 'omni-ai/refused')
   assert.equal(fresh.valueOf('llm-pi-ai').providers.anthropic, undefined)
-  // Signed in (the record llm-pi-ai/anthropic): on writes a route that names no key.
+  // Signed in (the record llm-pi-ai/anthropic): on writes a route that names no key, and does
+  // not retry the plan's 429 (SIGNIN_ROUTES), also after off and on again.
   const fake = host({ records: ['llm-pi-ai/anthropic'] })
   assert.deepEqual([(await fake.row('claude')).ready, (await fake.row('claude')).on], [true, false])
   assert.equal((await fake.handle('ai-switch', { id: 'claude', on: true })).value.on, true)
-  assert.deepEqual(fake.valueOf('llm-pi-ai').providers.anthropic, {})
+  assert.deepEqual(fake.valueOf('llm-pi-ai').providers.anthropic, { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } })
   // Turning it on again (the page's dedupe after a sign-in) never takes the route away.
   await fake.handle('ai-dedupe', { id: 'claude' })
-  assert.deepEqual(fake.valueOf('llm-pi-ai').providers.anthropic, {})
+  assert.deepEqual(fake.valueOf('llm-pi-ai').providers.anthropic, { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } })
   assert.equal((await fake.row('claude')).duplicates, undefined)
   assert.equal((await fake.handle('ai-switch', { id: 'claude', on: false })).value.on, false)
   assert.equal(fake.valueOf('llm-pi-ai').providers.anthropic, undefined)
   assert.equal((await fake.row('claude')).ready, true)
+  assert.equal((await fake.handle('ai-switch', { id: 'claude', on: true })).value.on, true)
+  assert.deepEqual(fake.valueOf('llm-pi-ai').providers.anthropic, { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } })
 })
 
 test('Claude on an Anthropic API key: the same row, on the key the route names', async () => {
@@ -83,8 +86,12 @@ test('Claude on an Anthropic API key: the same row, on the key the route names',
   const stale = host({ providers: { anthropic: { apiKeyEnv: 'ANTHROPIC_API_KEY', reasoning: 'high' } }, records: ['llm-pi-ai/anthropic'] })
   assert.equal((await stale.row('claude')).on, false)
   assert.equal((await stale.handle('ai-switch', { id: 'claude', on: true })).value.on, true)
-  assert.deepEqual(stale.valueOf('llm-pi-ai').providers.anthropic, { reasoning: 'high' })
-  assert.ok(!JSON.stringify([saved.updates, fromEnv.updates, stale.updates]).includes(SECRET))
+  assert.deepEqual(stale.valueOf('llm-pi-ai').providers.anthropic, { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] }, reasoning: 'high' })
+  // A route a sign-in made, turned on with a key instead: the key's route, with DSH's retries.
+  const signedOut = host({ providers: { anthropic: { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } } }, env: { ANTHROPIC_API_KEY: SECRET } })
+  assert.equal((await signedOut.handle('ai-switch', { id: 'claude', on: true })).value.on, true)
+  assert.deepEqual(signedOut.valueOf('llm-pi-ai').providers.anthropic, { apiKeyEnv: 'ANTHROPIC_API_KEY' })
+  assert.ok(!JSON.stringify([saved.updates, fromEnv.updates, stale.updates, signedOut.updates]).includes(SECRET))
 })
 
 test('off stops using an AI and keeps its key or sign-in; on brings it back', async () => {
@@ -151,7 +158,7 @@ test('turning Claude on hides dsh-subscriptions\' Claude, deletes none of its ac
   assert.deepEqual(subs.slots, [{ provider: 'claude', index: 1 }, { provider: 'cursor', index: 1 }])
   assert.equal(fake.secrets.get('CLAUDE_OAUTH_1'), SECRET)
   // Claude's own route is the row's, never a duplicate of it.
-  assert.deepEqual(fake.valueOf('llm-pi-ai').providers.anthropic, {})
+  assert.deepEqual(fake.valueOf('llm-pi-ai').providers.anthropic, { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } })
   const after = await fake.row('claude')
   assert.equal(after.on, true)
   assert.deepEqual(after.duplicates.map(duplicate => duplicate.hidden), [true])
