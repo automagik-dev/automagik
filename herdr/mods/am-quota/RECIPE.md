@@ -132,7 +132,6 @@ name and the bots a switch left behind, as plain data; pure), `policy.js` (the d
 samples, pure), `translate.js` (proxy credential → client credential, item merge, Keychain service
 name, fingerprints; pure apart from the `shasum` lookup), `write.js` (the shell that writes; pure),
 `switch.js` (the install flow, with its shell and files injected so it is tested end to end),
-`saved.js` (saved logins: save, re-save, use, forget — the same injection, the same write path),
 `lock.js` (one switch at a time), `mod.json` (`place: none`), `LICENSE`, `DESIGN.md` (endpoints,
 writers, secret rules), and tests for every module in the repository's `test/`.
 
