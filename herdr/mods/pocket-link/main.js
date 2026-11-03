@@ -7,12 +7,29 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, appHome, theme, props, closeOverlay, notify, watchFolder } from "herdr";
+import { platform } from "os";
+import { exec, appHome, home, readTextFile, theme, props, closeOverlay, notify, watchFolder } from "herdr";
+import { findNode, noNodeMessage, version, newEnough } from "./find-node.js";
 
 const DIR = "mods/pocket-link";
 const I = (name) => `${DIR}/icons/${name}.svg`;
 const ROOT = () => `${appHome()}/${DIR}`;
 const BRIDGE = () => `${ROOT()}/bridge/bridge.mjs`;
+
+// Answers --version with 20.3 or newer.
+const runs = (path) => exec(path, ["--version"]).then((r) => r.code === 0 && newEnough(version(r.stdout)), () => false);
+
+// The Node every bridge command runs with (find-node.js), once found. A failed search is kept by
+// the dialog that made it, so opening Pocket Link again looks again.
+let found = null;
+const io = () => ({
+  home: home(),
+  platform: platform(),
+  mod: ROOT(),
+  exec: (cmd, args) => exec(cmd, args),
+  read: (path) => readTextFile(path),
+  list: (dir) => exec("ls", ["-1", dir]).then((r) => (r.code === 0 ? r.stdout.split("\n").filter(Boolean) : [])),
+});
 
 // "3 min ago", "Oct 31": when a phone was last seen.
 function ago(ms) {
@@ -36,6 +53,8 @@ export default class PocketLink extends View {
   init(_props, cx) {
     this.status = null; // bridge.mjs status
     this.problem = null; // why it can't run here: "node" | "setup" | null
+    this.looking = null; // the search for Node (find-node.js)
+    this.checked = null; // where it looked, when it found none
     this.busy = null; // what a button is doing
     this.error = null;
     this.pairing = null; // { link, qr, expires }
@@ -65,15 +84,28 @@ export default class PocketLink extends View {
     });
   }
 
-  async bridge(args) {
-    const r = await exec("node", [BRIDGE(), ...args]).catch((e) => ({ code: 127, stdout: "", stderr: String(e) }));
-    if (r.code === 127 || /not found|ENOENT/.test(r.stderr) && !r.stdout) return { ok: false, error: "node" };
+  // When the bridge gives no answer and the kept Node no longer runs (gone, or broken by an
+  // upgrade), forget it, find another and try once more.
+  async bridge(args, again = true) {
+    const node = found ?? (await (this.looking ??= findNode(io())));
+    if (!node.path) {
+      this.checked = node.checked;
+      return { ok: false, error: "node" };
+    }
+    found = node;
+    const r = await exec(node.path, [BRIDGE(), ...args]).catch((e) => ({ code: 127, stdout: "", stderr: String(e) }));
     try {
       return JSON.parse(r.stdout.trim().split("\n").pop());
-    } catch {
-      return { ok: false, error: /Cannot find (package|module)/.test(r.stderr) ? "setup" : (r.stderr || "The bridge didn't answer.").trim().slice(0, 300) };
+    } catch {}
+    if (!(await runs(node.path))) {
+      found = null;
+      this.looking = null;
+      this.checked = null;
+      return again ? this.bridge(args, false) : { ok: false, error: "node" };
     }
+    return { ok: false, error: /Cannot find (package|module)/.test(r.stderr) ? "setup" : (r.stderr || "The bridge didn't answer.").trim().slice(0, 300) };
   }
+
 
   async reload() {
     const before = this.status ? newest(this.status.devices) : null;
@@ -161,8 +193,10 @@ export default class PocketLink extends View {
     if (this.busy) return;
     this.busy = "setup";
     cx.notify();
-    // npm may take longer than one exec allows: run it detached, watch for the end.
-    exec("sh", ["-c", 'cd "$1/bridge" && (npm ci --omit=dev --no-audit --no-fund > "$1/.setup.log" 2>&1; echo $? > "$1/.setup.done") &', "sh", ROOT()]).catch(() => null);
+    // npm may take longer than one exec allows: run it detached, watch for the end. npm sits next
+    // to the Node found for the bridge (nvm, volta, Homebrew), which Herdr's PATH may not have.
+    const bin = found?.path.replace(/\/[^/]*$/, "") ?? "";
+    exec("sh", ["-c", 'cd "$1/bridge" && (PATH="${2:+$2:}$PATH" npm ci --omit=dev --no-audit --no-fund > "$1/.setup.log" 2>&1; echo $? > "$1/.setup.done") &', "sh", ROOT(), bin]).catch(() => null);
     cx.spawn(async (cx) => {
       for (let i = 0; i < 120; i++) {
         await cx.sleep(2000);
@@ -212,7 +246,7 @@ export default class PocketLink extends View {
       return v_flex()
         .gap(8)
         .pt(14)
-        .child(this.note(t, "Pocket Link runs a small bridge with Node.js 20.3 or newer, and this computer doesn't have it on its PATH. Install Node (nodejs.org, or your package manager), then open Pocket Link again."));
+        .child(this.note(t, noNodeMessage(this.checked, home())));
     return v_flex()
       .gap(10)
       .pt(14)

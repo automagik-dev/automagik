@@ -52,7 +52,7 @@ Buttons are 30px tall with 12px side padding, a 7px radius and 12.5px medium tex
 - **Busy:** the label changes ("Turning on…", "Making a code…") and a 12px spinner turns once every 900ms.
 
 Before the bridge can run, the dialog shows one of two other screens in place of items 3–5:
-- **No Node.js 20.3+ on PATH:** a note says how to get it.
+- **No Node.js 20.3+ found:** a note lists the places it looked, any Node there that is too old, and how to get one.
 - **Packages not installed:** a note and a primary **Install the bridge** button.
 
 ## How it behaves
@@ -92,11 +92,19 @@ Before the bridge can run, the dialog shows one of two other screens in place of
   - **Imports:**
     - `div` and `svg` from `gpui-kit`
     - `v_flex` and `h_flex` from `gpui-base`
-    - `exec`, `appHome`, `theme`, `props`, `closeOverlay`, `notify` and `watchFolder` from `herdr`
-  - **Calling the bridge:** it runs `exec("node", ["<appHome>/mods/pocket-link/bridge/bridge.mjs", <command>, …])` and parses the last stdout line as JSON. The commands are `status`, `install`, `start`, `stop`, `pair`, `cancel` and `forget <id>`.
+    - `exec`, `appHome`, `home`, `readTextFile`, `theme`, `props`, `closeOverlay`, `notify` and `watchFolder` from `herdr`
+    - `platform` from `os`
+    - `findNode` and `noNodeMessage` from `./find-node.js`
+  - **Finding Node** (`find-node.js`): Herdr started from the Dock or by launchd has a short PATH, without nvm, volta, fnm or asdf. The dialog takes the first Node that answers `--version` with 20.3 or newer, from:
+    1. the login service file (the Node the LaunchAgent or systemd unit was installed with), then `.node` in the mod folder, which `install` and `start` write;
+    2. the login shell (`$SHELL -lc 'command -v node'`), then Herdr's own PATH. A non-interactive login shell reads `.zprofile` or `.bash_profile`, not `.zshrc` or `.bashrc`, so it finds Homebrew or volta set up there but usually not nvm, which step 3 finds. The shell gets 3s: it runs in its own process group (`setsid` on Linux, where `sh` is dash and has no job control without a terminal; `set -m` elsewhere), and the whole group gets SIGKILL at the cap. Its answer goes through a temp file, so nothing left behind holds the pipe;
+    3. `~/.nvm/versions/node/*` (newest first), `~/.volta/bin`, fnm's `node-versions` and default alias, `~/.asdf/shims`, then `/opt/homebrew/bin` and `/usr/local/bin` (macOS) or `/usr/local/bin` and `/usr/bin` (Linux).
+
+    It keeps the answer for every later call. A search that found nothing is kept until the dialog closes; when the bridge gives no answer and the kept Node no longer answers `--version` with 20.3+ (gone, or broken by an upgrade), the dialog forgets it, searches again and retries the command once.
+  - **Calling the bridge:** it runs `exec("<that node>", ["<appHome>/mods/pocket-link/bridge/bridge.mjs", <command>, …])` and parses the last stdout line as JSON. `install` and `start` run under that Node, so the login service and a detached bridge use it too. The commands are `status`, `install`, `start`, `stop`, `pair`, `cancel` and `forget <id>`.
   - **Clipboard:** `cx.write_to_clipboard`.
   - **Timers:** a 1s `cx.timer.every` runs only while a code shows.
-  - **Install the bridge:** runs `npm ci --omit=dev` in `bridge/`. It is detached so it can run past `exec`'s 30s limit, and the dialog watches for `.setup.done`.
+  - **Install the bridge:** runs `npm ci --omit=dev` in `bridge/`, with the found Node's folder first on PATH (npm sits next to it). It is detached so it can run past `exec`'s 30s limit, and the dialog watches for `.setup.done`.
   - **The QR:** drawn as divs, one `h_flex` per module row, with runs of dark modules merged into one div.
 - **`mods/pocket-link/icons/`:** its own `link.svg`, `phone.svg`, `spinner.svg` and `x.svg`. These are 24×24 strokes on `currentColor`, used with `svg()` so they take the text colour.
 - **`mods/pocket-link/bridge/`:**
@@ -126,7 +134,7 @@ Before the bridge can run, the dialog shows one of two other screens in place of
 - **The phone side:** [automagik-pocket](https://github.com/automagik-dev/automagik-pocket), with `computer.iroh:iroh-android:1.2.0`. It opens the `herdr-pocket://pair` link from a scan, a paste or a tapped link, asks before pairing, and keeps its own key in no-backup storage.
 - **What it touches on the computer:**
   - **Network:** iroh's n0 preset. It keeps a connection to n0's public relays and publishes the bridge's public key and current addresses to n0's address lookup, so phones find it after an IP change. Phones connect in over QUIC/UDP.
-  - **Programs:** `node`, `npm` (setup only), `hc connect`, `launchctl` or `systemctl --user`, and `sh` (to find `hc` and run setup).
+  - **Programs:** `node`, `npm` (setup only), `hc connect`, `launchctl` or `systemctl --user`, `ls` (to list Node versions), `sh` (to find `hc` and run setup) and the user's login shell (to find `node`).
   - **Files outside the folder:** the state folder above, and the login service file, `~/Library/LaunchAgents/dev.herdr.pocket-link.plist` or `~/.config/systemd/user/herdr-pocket-link.service`.
 
 ## Watch out
@@ -135,6 +143,7 @@ Before the bridge can run, the dialog shows one of two other screens in place of
 - **Keep state out of the mod folder.** Reinstalling a mod is `rm -rf` and a copy; a `.state/` inside it took the computer's key and every pairing with it.
 - **`exec` stops a program after 30s**, so `serve` can't run under it. The bridge has to run as a login service or detached (`start`), and npm setup also has to run detached.
 - **`launchctl bootstrap` right after `bootout` fails** with "Input/output error" while launchd is still unloading the old job. Retry it for a few seconds.
+- **Herdr's PATH isn't the terminal's:** opened from the Dock, Herdr has no nvm, volta, fnm or asdf on PATH, so `exec("node", …)` fails where the terminal works. Find Node yourself (above), and give npm the same folder.
 - **The Homebrew Cellar path breaks:** `process.execPath` under Homebrew is a versioned Cellar path that disappears on upgrade. Write the `opt/<formula>/bin/node` link into the service.
 - **Log lines appear twice:** under launchd, stderr already is `bridge.log`. Append to the file yourself only when stderr is a terminal.
 - **A phone removed mid-session would come back:** it can be re-added by a session that read `devices.json` earlier. Read the file again just before updating a phone's "seen" time.
@@ -143,7 +152,7 @@ Before the bridge can run, the dialog shows one of two other screens in place of
   - The phone accepts only `v=1`, `t` matching `^endpoint[a-z2-7]{20,2000}$` and `c` matching `^[A-Za-z0-9_-]{16,64}$`.
   - Names are cut to 60 characters with control characters removed.
 - **Requirements:**
-  - Node 20.3+ on PATH in the user's environment.
+  - Node 20.3+, in one of the places above.
   - herdr-core's `hc` installed.
   - macOS or Linux with systemd; Windows isn't handled.
 - **Phones see every herdr-core session**, the same way a terminal running `hc` does. Pair only your own phones.
