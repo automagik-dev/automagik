@@ -121,3 +121,15 @@ test("continueRefusal: refused only when another bot's Claude shares the folder"
   assert.match(continueRefusal({ name: "Genie", old: { address: "t5" }, cwd: "/p", sharers: [{ address: "t9", name: "Captain" }, { address: "t8", name: "Dev" }] }),
     /Genie has no recorded Claude session \(t5 has no agent.session label .*\), and Captain \(t9\), Dev \(t8\) also run Claude in \/p, so --continue could resume theirs\. Nothing was started; restart with --fresh/);
 });
+
+test("restartPlan: Hermes resumes a known session by id (--resume), as Claude does; a bad label falls back to --continue", () => {
+  const bot = { agent: "hermes" };
+  const run = ["hermes", "--tui"];
+  const byId = restartPlan({ bot, run, runningAgent: "hermes", session: "atlas-sess-1" });
+  assert.deepEqual(byId.argv, ["hermes", "--tui", "--resume", "atlas-sess-1"]);
+  for (const bad of [null, "-x", "has space", ""]) {
+    assert.deepEqual(restartPlan({ bot, run, runningAgent: "hermes", session: bad }).argv, ["hermes", "--tui", "--continue"], String(bad));
+  }
+  // Claude keeps its UUID rule: a word isn't a Claude session id.
+  assert.deepEqual(restartPlan({ bot: { agent: "claude" }, run: ["claude"], runningAgent: "claude", session: "atlas-sess-1" }).resume, ["--continue"]);
+});

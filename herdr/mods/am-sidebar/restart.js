@@ -3,7 +3,7 @@
 // the replacement carries over from the old pane. The CLI's `restart` runs it with hc; the
 // sidebar's Restart runs the CLI. Pure: no `herdr`, so `node --test` runs it. Apache-2.0.
 
-import { canResume, modelArgs, resumeArgs } from "./models.js";
+import { canResume, modelArgs, resumeArgs, resumesById } from "./models.js";
 import { SQUAD_LABEL, SQUAD_MARK } from "./launchArgs.js";
 
 /** The pane label the briefing hook sets to the Claude session a terminal runs (workers.js SESSION_LABEL). */
@@ -15,6 +15,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** `s` trimmed when it is a session id Restart may resume (UUID-shaped), else null. */
 export const sessionId = (s) => (typeof s === "string" && UUID.test(s.trim()) ? s.trim() : null);
+// Another agent's session id or name (Hermes: "by ID or title"): one word, never a flag.
+const SESSION_WORD = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+/** The session id `agentKey` would resume from the label `s`: Claude's a UUID, another's one safe word; else null. */
+export const sessionFor = (agentKey, s) => (agentKey === "claude" ? sessionId(s)
+  : typeof s === "string" && SESSION_WORD.test(s.trim()) ? s.trim() : null);
 
 /**
  * What the replacement runs. `bot`: { agent, model } as stored; `run`: the target agent's
@@ -35,7 +40,8 @@ export function restartPlan({ bot, run, runningAgent = null, session = null, fre
   if (fresh) return plan("fresh");
   if (runningAgent && runningAgent !== key) return plan("fresh", [], `its pane runs ${runningAgent}, not ${key}, and a conversation doesn't cross agents`);
   if (!canResume(key)) return plan("fresh", [], `${key} has no resume this pack knows`);
-  const id = key === "claude" ? sessionId(session) : null;
+  // The id goes to every agent that resumes by one (models.js resumesById), never only Claude.
+  const id = resumesById(key) ? sessionFor(key, session) : null;
   return plan("resume", resumeArgs(key, id));
 }
 
@@ -61,11 +67,11 @@ export function ledgerSession(rows, terminal) {
  * conversation, which may be a teammate's when another bot's Claude pane runs in that folder.
  * `sharers`: those panes as { address, name }.
  */
-export function continueRefusal({ name, old, cwd, sharers = [] }) {
+export function continueRefusal({ name, old, cwd, sharers = [], agent = "Claude" }) {
   if (!sharers.length) return null;
   const who = sharers.map((x) => `${x.name} (${x.address})`).join(", ");
-  return `${name} has no recorded Claude session (${old.address} has no agent.session label and the ledger has no session row for it), `
-    + `and ${who} also ${sharers.length === 1 ? "runs" : "run"} Claude in ${cwd}, so --continue could resume theirs. Nothing was started; `
+  return `${name} has no recorded ${agent} session (${old.address} has no agent.session label and the ledger has no session row for it), `
+    + `and ${who} also ${sharers.length === 1 ? "runs" : "run"} ${agent} in ${cwd}, so --continue could resume theirs. Nothing was started; `
     + `restart with --fresh for a new conversation.`;
 }
 
@@ -116,8 +122,9 @@ export function planText(plan, session) {
  * this app home): `agent`: Restart on… (a swap); `force`: past a working pane or its helpers;
  * `fresh`: a new conversation.
  */
-export function restartArgs({ botId, projectKey, agent = null, force = false, fresh = false }) {
-  return ["restart", botId, "--project", projectKey, ...(agent ? ["--agent", agent] : []), ...(force ? ["--force"] : []), ...(fresh ? ["--fresh"] : [])];
+export function restartArgs({ botId, projectKey, agent = null, force = false, fresh = false, machine = null }) {
+  return ["restart", botId, "--project", projectKey, ...(machine ? ["--machine", machine] : []),
+    ...(agent ? ["--agent", agent] : []), ...(force ? ["--force"] : []), ...(fresh ? ["--fresh"] : [])];
 }
 
 /**
