@@ -23031,6 +23031,34 @@ function serveBrowserReads({ browsers, post, clientId = globalThis.crypto.random
   };
 }
 
+// src/client/reopen.js
+var OPEN_CHAT = "omni-ui:open-chat";
+var REOPEN = "omni-ui:reopen";
+var storageOf = () => {
+  try {
+    return globalThis.sessionStorage ?? null;
+  } catch {
+    return null;
+  }
+};
+function rememberOpen(id, storage = storageOf()) {
+  try {
+    if (typeof id === "string" && id !== "") storage?.setItem(OPEN_CHAT, id);
+    else storage?.removeItem(OPEN_CHAT);
+  } catch {
+  }
+}
+function takeReopen(storage = storageOf()) {
+  try {
+    if (storage?.getItem(REOPEN) !== "1") return null;
+    storage.removeItem(REOPEN);
+    const id = storage.getItem(OPEN_CHAT);
+    return typeof id === "string" && id !== "" ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 // src/client/right-panel.js
 var RIGHTBAR_ATTRIBUTES = ["data-rightbar-collapsed", "data-rightbar-fullscreen"];
 function rightColumnOpen(doc) {
@@ -24407,6 +24435,31 @@ function apply(ctx) {
       offRoster();
     };
   }, "ds-bot: agent surface");
+  ctx.effect(() => {
+    let reopening = takeReopen();
+    const note = () => {
+      if (reopening === null) rememberOpen(mainView());
+    };
+    const reopen = () => {
+      const snapshot = roster.getSnapshot();
+      if (!snapshot.ready) return;
+      const id = reopening;
+      reopening = null;
+      if (isAgentSessionId(id) || snapshot.byId?.[id] !== void 0 || snapshot.roomsById?.[id] !== void 0) actions.openSession(id);
+      note();
+    };
+    const offList = ctx.sessions.list.subscribe(note);
+    const offRoster = reopening === null ? () => {
+    } : roster.subscribe(() => {
+      if (reopening !== null) reopen();
+    });
+    if (reopening !== null) reopen();
+    note();
+    return () => {
+      offList();
+      offRoster();
+    };
+  }, "ds-bot: keep the open chat across a DSH restart");
   ctx.effect(() => {
     const groups = surfaceGroups({ shell: installShell, conversation: installConversation }, {
       onError: (_group, error) => actions.reportError(new Error(t("Bot mode could not be set up here: {error}", { error: error?.message ?? String(error) })), "surface")
