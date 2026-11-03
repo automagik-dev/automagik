@@ -133,10 +133,33 @@ what a release is and whether it attaches the pack:
   herdr import has ten whose bodies run past 100 characters). Every commit made here is still
   checked.
 
+## Required follow-up: a signed pack (before the bridge release)
+
+The `.sha256` comes from the same release as the tarball, so it proves integrity, not provenance:
+anyone who can publish a release (or swap its assets) can publish a matching pair (t259's note).
+The plugins already have provenance through the signed lane. Before the bridge points installed
+packs at this repository, the pack gets the same:
+
+- The release step signs the tarball's `.sha256` (ed25519, detached, base64, the `PLUGIN_LANE_KEY`
+  secret and key id, as `scripts/lane.ts sign` does for lane.json) and attaches
+  `automagik-herdr-pack-<v>.tgz.sha256.sig`. A release without the signature carries no pack for
+  the updater.
+- The trusted public keys ship inside the pack (`release.js`, kept equal to `plugin-lane/keys.json`
+  by a test), so the installed copy is the trust anchor; a key rotation ships in a pack signed by
+  the old key.
+- `update.mjs` and `install.sh` verify the signature over the `.sha256` before they trust its hash
+  (`node:crypto` in both; Node is already required). Tests sign their fixtures with a key generated
+  per run, passed only in the file:// test mode, never for a GitHub URL.
+
+It is not part of the import because it touches the release step, both verifiers, the trust
+anchor and every install and update fixture. It is needed only from the bridge on: until then no
+installed copy reads this repository's releases. A fresh install through the new one-liner before
+it lands gets the hash check alone, as the old repository's installs did.
+
 ## Bridge and cutover (after this change)
 
 1. The monorepo publishes the first release that carries the pack (the first merge after this
-   change that ships something under `herdr/`).
+   change that ships something under `herdr/`), and the signed pack above has landed.
 2. automagik-herdr cuts one bridge release whose `release.js` and `install.sh` read this
    repository's releases, as here. An installed 0.7.x updates to it from automagik-herdr, then to
    3.N.P from here.
@@ -150,5 +173,7 @@ Until the bridge, installed packs keep updating from automagik-herdr.
 1. Is skipping imported histories in `commitlint.yml` acceptable for every future import (Pocket's
    too)? (t259)
 2. The 100-release window of the releases list: a rolling pointer now, or only when needed? (t259)
-3. `herdr/catalog/repos.json` lists Pocket Link as an external entry at `automagik-dev/automagik-pocket`;
+3. The signed pack (above): who builds it, and does it reuse `PLUGIN_LANE_KEY` or get a key of its
+   own? (t22n, t259)
+4. `herdr/catalog/repos.json` lists Pocket Link as an external entry at `automagik-dev/automagik-pocket`;
    Pocket's import moves it. (t16r)
