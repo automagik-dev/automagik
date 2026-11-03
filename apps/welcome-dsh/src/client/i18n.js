@@ -1,7 +1,7 @@
-// The team step's copy follows the DSH language. Keys are the English text; welcome.team is
-// registered in English and in Brazilian Portuguese, and a key with no text in the active
-// language reads in English. Copy is looked up at render time, so nothing caches a translated
-// string. The rest of the welcome is English only.
+// The team step's copy, and the Claude Code and Codex rows (acp-agents.js), follow the DSH
+// language. Keys are the English text; welcome.team is registered in English and in Brazilian
+// Portuguese, and a key with no text in the active language reads in English. Copy is looked up
+// at render time, so nothing caches a translated string. The rest of the welcome is English only.
 
 export const NAMESPACE = 'welcome.team'
 
@@ -217,6 +217,35 @@ export const PT_BR = {
   'Continue with just {name}': 'Continuar só com {name}',
   'Continue with {who}': 'Continuar com {who}',
   ' and ': ' e ',
+  // Claude Code and Codex (acp-agents.js), in Connect AI and in Settings
+  'Coding agents': 'Agentes de código',
+  'Claude Code and Codex run on this computer with your own sign-in, and show up in DSH\'s model picker.': 'O Claude Code e o Codex rodam neste computador com o seu próprio login e aparecem no seletor de modelos do DSH.',
+  'Claude Code and Codex': 'Claude Code e Codex',
+  'Use the coding agents you already have as models in DSH. Each runs your own CLI, with your own sign-in and settings.': 'Use os agentes de código que você já tem como modelos no DSH. Cada um roda a sua própria CLI, com o seu login e as suas configurações.',
+  'Looking at what this computer has…': 'Vendo o que este computador tem…',
+  'The ACP agents plugin is not running in this DSH.': 'O plugin de agentes ACP não está rodando neste DSH.',
+  'Your own {cli} CLI, as a model in DSH': 'Sua própria CLI {cli}, como modelo no DSH',
+  'Not installed': 'Não instalado',
+  'Off': 'Desligado',
+  'Setting up': 'Configurando',
+  'Needs a retry': 'Precisa tentar de novo',
+  'Restart needed': 'Precisa reiniciar',
+  'Ready': 'Pronto',
+  'The {cli} CLI is not on this computer. Install it, sign in, then check again.': 'A CLI {cli} não está neste computador. Instale, faça login e verifique de novo.',
+  'Install {name}': 'Instalar o {name}',
+  'Found the {cli} CLI on this computer.': 'A CLI {cli} está neste computador.',
+  'Signed in to {name}.': 'Login feito no {name}.',
+  'Not signed in. Run {command} in a terminal, then check again.': 'Sem login. Rode {command} em um terminal e verifique de novo.',
+  'Off. Turn it on to use {name} as a model in DSH.': 'Desligado. Ligue para usar o {name} como modelo no DSH.',
+  'Installing its connector in the background. This takes a minute or two.': 'Instalando o conector em segundo plano. Leva um ou dois minutos.',
+  'The connector did not install: {error}': 'O conector não foi instalado: {error}',
+  'The connector did not install.': 'O conector não foi instalado.',
+  'Connector ready (version {version}).': 'Conector pronto (versão {version}).',
+  'Connector ready.': 'Conector pronto.',
+  'Restart DSH to see {name} in the model picker.': 'Reinicie o DSH para ver o {name} no seletor de modelos.',
+  'Ready: pick {name} in the model picker.': 'Pronto: escolha o {name} no seletor de modelos.',
+  'Retry': 'Tentar de novo',
+  'Check again': 'Verificar de novo',
 }
 
 // English is the key itself; registering it keeps the namespace whole in both languages.

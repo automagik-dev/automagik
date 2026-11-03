@@ -108,6 +108,11 @@ export class AdapterStore {
     return this.failures.get(pkg)
   }
 
+  /** Whether an install of `pkg` is running now. */
+  busy(pkg) {
+    return this.running.has(pkg)
+  }
+
   /** The installed adapter's entry script, or undefined when none is complete. */
   binOf(pkg, bin) {
     const folder = join(this.home, folderOf(pkg))

@@ -3,7 +3,8 @@
 // (installed in the background by install.js, never fetched when a Session starts).
 import { accessSync, constants, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { execFile } from 'node:child_process'
+import { delimiter, dirname, join } from 'node:path'
 
 export const AGENTS = Object.freeze({
   'acp-claude': Object.freeze({
@@ -11,6 +12,10 @@ export const AGENTS = Object.freeze({
     name: 'Claude Code (ACP)',
     model: Object.freeze({ id: 'default', name: 'Claude Code' }),
     cli: 'claude',
+    // Where the person gets the CLI when it is not on this computer.
+    installUrl: 'https://code.claude.com/docs/en/setup',
+    // `claude auth status --json` answers { loggedIn } (and who: never read past loggedIn).
+    signIn: Object.freeze({ args: ['auth', 'status', '--json'], read: ({ stdout }) => { try { const { loggedIn } = JSON.parse(stdout); return typeof loggedIn === 'boolean' ? loggedIn : undefined } catch { return undefined } } }),
     adapter: '@agentclientprotocol/claude-agent-acp',
     bin: 'dist/index.js',
     // The adapter's own Claude Agent SDK would run the CLI it bundles; this runs the person's.
@@ -29,6 +34,9 @@ export const AGENTS = Object.freeze({
     name: 'Codex (ACP)',
     model: Object.freeze({ id: 'default', name: 'Codex' }),
     cli: 'codex',
+    installUrl: 'https://developers.openai.com/codex/cli',
+    // `codex login status` exits 0 when signed in, 1 when not.
+    signIn: Object.freeze({ args: ['login', 'status'], read: ({ code }) => (code === 0 ? true : code === 1 ? false : undefined) }),
     adapter: '@agentclientprotocol/codex-acp',
     bin: 'dist/index.js',
     // CODEX_PATH wins over the Codex the adapter depends on (codex-acp startCodexConnection).
@@ -77,4 +85,26 @@ export function findCommand(name, { env = process.env, home = homedir() } = {}) 
     }
   }
   return undefined
+}
+
+export const SIGN_IN_TIMEOUT_MS = 8000
+
+/**
+ * Whether the person is signed in to `spec`'s CLI, as the CLI itself says: true, false, or
+ * undefined when it cannot tell (an old CLI, a timeout). Runs no agent turn. The CLI's own
+ * folder leads PATH, so a CLI that is a Node script finds the Node it was installed with.
+ */
+export function signedInOf(spec, cli, { env = process.env, run = execFile } = {}) {
+  if (spec.signIn === undefined || cli === undefined) return Promise.resolve(undefined)
+  return new Promise((done) => {
+    try {
+      run(cli, spec.signIn.args, { env: { ...env, PATH: [dirname(cli), env.PATH].filter(Boolean).join(delimiter), NO_COLOR: '1' }, timeout: SIGN_IN_TIMEOUT_MS, maxBuffer: 1 << 20, windowsHide: true }, (error, stdout) => {
+        const code = error ? (typeof error.code === 'number' ? error.code : undefined) : 0
+        if (error && code === undefined) return done(undefined)
+        try { done(spec.signIn.read({ code, stdout: String(stdout ?? '') })) } catch { done(undefined) }
+      })
+    } catch {
+      done(undefined)
+    }
+  })
 }
