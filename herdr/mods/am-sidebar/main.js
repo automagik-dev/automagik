@@ -32,9 +32,10 @@ import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, ne
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
+// The Bots list's rows carry Edit / Start / Restart, so it is as wide as the menu.
 function openBotForm(form, kind = "dialog") {
   openOverlay(kind === "popup"
-    ? { mod: "am-sidebar", kind: "popup", width: form.form === "menu" ? 380 : 300, height: form.form === "menu" ? 640 : 360, props: form }
+    ? { mod: "am-sidebar", kind: "popup", width: form.form === "attach" ? 300 : 380, height: form.form === "menu" ? 640 : 360, props: form }
     : { mod: "am-sidebar", kind: "dialog", modal: true, ...(form.form === "create" || form.form === "edit" ? FORM_SIZE : { width: 560, height: 0.85 }), props: form });
 }
 
