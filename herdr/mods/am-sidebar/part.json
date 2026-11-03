@@ -1,15 +1,19 @@
 {
   "id": "herdr.am-sidebar",
-  "title": "Automagik Sidebar (bots sidebar, briefing hook, pack updater)",
+  "title": "Automagik Sidebar (the bots sidebar)",
   "kind": "herdr-mod",
   "paths": [
     "herdr/mods/am-sidebar/**"
   ],
   "provides": [
-    "bots.sidebar@1",
-    "herdr.pack@1"
+    "bots.sidebar@1"
   ],
-  "requires": [],
+  "requires": [
+    {
+      "cap": "herdr.pack",
+      "major": 1
+    }
+  ],
   "os": [
     "macos"
   ],
@@ -19,31 +23,24 @@
   "entry": {
     "install": [
       "node",
-      "bin/part.mjs",
+      "pack/part.mjs",
       "install",
       "herdr.am-sidebar"
     ],
     "uninstall": [
       "node",
-      "bin/part.mjs",
+      "pack/part.mjs",
       "uninstall",
       "herdr.am-sidebar"
     ],
     "doctor": [
       "node",
-      "bin/part.mjs",
+      "pack/part.mjs",
       "doctor",
       "herdr.am-sidebar"
     ]
   },
-  "writes": [
-    "~/.config/herdr-app/automagik-herdr/installed-by-install.sh",
-    "~/.config/herdr-app/automagik-herdr/.prev/**",
-    "~/.config/herdr-app/automagik-herdr/briefing.mjs",
-    "~/.config/herdr-app/automagik-herdr/hooks-journal.json",
-    "**/.claude/settings.local.json#hooks.UserPromptSubmit",
-    "~/.local/bin/automagik-herdr"
-  ],
+  "writes": [],
   "set": [
     "code"
   ]

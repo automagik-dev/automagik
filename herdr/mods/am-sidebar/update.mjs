@@ -586,6 +586,15 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
         plan.left.push(m);
         continue;
       }
+      // Retired while it was off (the kept set's off=), and shipped again: it comes back off.
+      if (!repair && !exists(live) && !exists(off) && kept?.mods.includes(m) && kept.off.includes(m) && exists(join(prevSetOf(modsDir), m))) {
+        carryPrivate(join(prevSetOf(modsDir), m), fresh);
+        moves.push([fresh, off]);
+        plan.installed.push(m);
+        plan.off.push(m);
+        record.mods.push(m);
+        continue;
+      }
       if (!exists(live)) {
         // Across the rename: the old-named folder's private paths come into its am-* folder. The
         // record's leaves with the kept set (below); a person's own is left, or adopted.

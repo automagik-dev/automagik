@@ -23,19 +23,19 @@
   "entry": {
     "install": [
       "node",
-      "../am-sidebar/bin/part.mjs",
+      "../am-sidebar/pack/part.mjs",
       "install",
       "herdr.am-new-menu"
     ],
     "uninstall": [
       "node",
-      "../am-sidebar/bin/part.mjs",
+      "../am-sidebar/pack/part.mjs",
       "uninstall",
       "herdr.am-new-menu"
     ],
     "doctor": [
       "node",
-      "../am-sidebar/bin/part.mjs",
+      "../am-sidebar/pack/part.mjs",
       "doctor",
       "herdr.am-new-menu"
     ]
