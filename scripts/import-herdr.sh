@@ -2,9 +2,11 @@
 # Imports automagik-dev/automagik-herdr (branch dev) under herdr/, with its history, into the
 # branch checked out here (docs/rfcs/0011-monorepo-parts-and-releases.md).
 #
-#   scripts/import-herdr.sh [<source>] [<branch>]
+#   scripts/import-herdr.sh [<source>] [<branch>] [<commit>]
 #
 # <source> defaults to https://github.com/automagik-dev/automagik-herdr.git, <branch> to dev.
+# <commit> pins the import to that commit of <branch> (the frozen SHA of the final re-run): it must
+# be the branch's tip or reachable from it, else the run stops before anything is merged.
 # It clones the source into a temporary folder, rewrites THAT clone with
 # `git filter-repo --to-subdirectory-filter herdr` (never this repository), and merges the result
 # here with `--allow-unrelated-histories`. Tags are not fetched: the old repo's v0.N.P tags are not
@@ -21,6 +23,7 @@ set -euo pipefail
 
 SOURCE=${1:-https://github.com/automagik-dev/automagik-herdr.git}
 BRANCH=${2:-dev}
+COMMIT=${3:-}
 PREFIX=herdr
 
 command -v git-filter-repo >/dev/null 2>&1 || { echo "git-filter-repo is missing: brew install git-filter-repo" >&2; exit 1; }
@@ -32,6 +35,12 @@ TMP=$(mktemp -d "${TMPDIR:-/tmp}/import-herdr.XXXXXX")
 trap 'rm -rf "${TMP}"' EXIT
 
 git clone -q --no-tags --single-branch --branch "${BRANCH}" "${SOURCE}" "${TMP}/src"
+if [[ -n "${COMMIT}" ]]; then
+  git -C "${TMP}/src" merge-base --is-ancestor "${COMMIT}" HEAD 2>/dev/null \
+    || { echo "${COMMIT} is not on ${BRANCH} of ${SOURCE}: refusing to import" >&2; exit 1; }
+  # The temporary clone only: its branch moves back to the pinned commit.
+  git -C "${TMP}/src" reset -q --hard "${COMMIT}"
+fi
 SOURCE_COMMIT=$(git -C "${TMP}/src" rev-parse HEAD)
 
 # Private data never comes in: a database or a secret anywhere in the source's history stops the run.
