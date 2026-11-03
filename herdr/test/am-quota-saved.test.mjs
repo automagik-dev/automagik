@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { forgetSaved, nameProblem, previousFile, previousService, readIndex, resaveActive, restorePrevious, saveLogin, savedFile, savedService, useSaved } from "../mods/am-quota/saved.js";
+import { forgetSaved, nameProblem, previousFile, previousService, readIndex, resaveActive, restoreOffer, restorePrevious, saveLogin, savedFile, savedService, useSaved } from "../mods/am-quota/saved.js";
 import { payloadDir, sweepScript } from "../mods/am-quota/write.js";
 import { fingerprint, TARGETS } from "../mods/am-quota/translate.js";
 import { keychain } from "./am-quota-keychain.mjs";
@@ -241,6 +241,44 @@ test("restore previous: with none, nothing changes; an unchanged re-save keeps n
   await assert.rejects(restorePrevious({ ...w.io, name: "juice" }), /no previous copy of juice; nothing was changed/);
   assert.deepEqual(w.json(savedService("juice")), { claudeAiOauth: A0 });
   w.clean();
+});
+
+test("restore previous: offered on a row not in use; on the row in use only a note, and the flow refuses", async () => {
+  assert.equal(restoreOffer({ inUse: false, previousAt: null }), null, "no previous copy, nothing to offer");
+  assert.equal(restoreOffer({ inUse: true, previousAt: null }), null);
+  assert.deepEqual(restoreOffer({ inUse: false, previousAt: "2026-11-03T12:00:00.000Z" }), { action: "restore" });
+  const inUse = restoreOffer({ inUse: true, previousAt: "2026-11-03T12:00:00.000Z" });
+  assert.equal(inUse.action, undefined, "no Restore previous button on the row in use");
+  assert.match(inUse.note, /undone by the next Use/);
+
+  // Juice is in use and was re-saved after a rotation, so its previous copy is the older token.
+  const w = world();
+  w.kc.seed(CLIENT, item(A0));
+  await saveLogin({ ...w.io, name: "juice" });
+  w.kc.seed(CLIENT, item(A1));
+  await saveLogin({ ...w.io, name: "juice" });
+  const before = w.adds().length;
+  await assert.rejects(restorePrevious({ ...w.io, name: "juice", current: "juice" }), /juice is in use: a restore here is undone by the next Use.*nothing was changed/);
+  assert.equal(w.adds().length, before, "nothing was written");
+  assert.deepEqual(w.json(savedService("juice")), { claudeAiOauth: A1 });
+  assert.deepEqual(w.json(previousService("juice")), { claudeAiOauth: A0 });
+  w.clean();
+});
+
+test("restore previous is one level deep: the next re-save into that name replaces the previous copy", async () => {
+  const w = world();
+  w.kc.seed(savedService("juice"), item(A0));
+  w.kc.seed(savedService("side"), item(C0));
+  w.kc.seed(CLIENT, item(B0));   // the wrong record again: juice is said to be in use, B is
+  await useSaved({ ...w.io, name: "side", current: "juice" });
+  assert.deepEqual(w.json(previousService("juice")), { claudeAiOauth: A0 }, "A can still be restored");
+
+  // Before restoring, juice is re-saved again (here from B rotated): A leaves the previous slot.
+  w.kc.seed(CLIENT, item(oauth("b", 1)));
+  await saveLogin({ ...w.io, name: "juice" });
+  assert.deepEqual(w.json(previousService("juice")), { claudeAiOauth: B0 }, "only the copy just replaced is kept");
+  await restorePrevious({ ...w.io, name: "juice", current: "side" });
+  assert.deepEqual(w.json(savedService("juice")), { claudeAiOauth: B0 }, "A is gone: restore works only until the next re-save");
 });
 
 test("forget: the saved item is removed and proved gone; the login in use stays", async () => {
