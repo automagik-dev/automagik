@@ -32,6 +32,75 @@ jobs:
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run check
 
+  herdr:
+    # The herdr pack (herdr/, the old automagik-herdr CI): its tests, a syntax check of every pack
+    # mod and its tooling, shellcheck on the installer and the CLI's shell scripts, and its catalog
+    # index (its version is the root's: `bun run check` above). Plain JavaScript that Herdr loads as
+    # it is: no install, no dependencies. On the floor AGENTS.md names (Node 22.7) and on Node 24.
+    # Only when herdr/ changed, or the workflows and lane tooling that test and pack it.
+    name: herdr pack (Node ${{ matrix.node }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.7', '24']
+    defaults:
+      run:
+        working-directory: herdr
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Whether herdr/ changed
+        id: changed
+        working-directory: .
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          # A push that opens a branch, or a base this checkout lacks, tests the pack anyway.
+          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            echo "herdr=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(herdr/|\.github/workflows/(ci|release)\.yml$|scripts/(lane|version)\.ts$)'; then
+            echo "herdr=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "herdr/ did not change: nothing to test"
+          fi
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        if: steps.changed.outputs.herdr == 'true'
+        with:
+          node-version: ${{ matrix.node }}
+
+      # am-quota's Keychain tests run against the stand-in in test/am-quota-keychain.mjs, first on
+      # PATH; am-quota-keychain-guard.test.mjs fails any that could reach the real `security`.
+      - name: Tests
+        if: steps.changed.outputs.herdr == 'true'
+        run: node --test 'test/*.test.mjs'
+
+      - name: Syntax
+        if: steps.changed.outputs.herdr == 'true'
+        run: |
+          set -euo pipefail
+          for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs; do
+            node --check "$f"
+          done
+          sh -n install.sh
+          sh -n mods/am-sidebar/bin/run.sh
+          sh -n mods/am-sidebar/bin/automagik-herdr
+          shellcheck -s sh install.sh mods/am-sidebar/bin/run.sh mods/am-sidebar/bin/automagik-herdr
+
+      - name: Catalog
+        if: steps.changed.outputs.herdr == 'true'
+        run: node scripts/catalog.mjs --check
+
+      - name: One version (the root's)
+        if: steps.changed.outputs.herdr == 'true'
+        run: node scripts/version.mjs check
+
   plugin:
     # The Bot team and the welcome run on Node, as DSH does: Bun installs each and the DSH
     # release it pins in dev/harness/package.json, which its tests run against.
