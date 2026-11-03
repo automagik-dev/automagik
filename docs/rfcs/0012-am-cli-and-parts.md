@@ -210,9 +210,10 @@ need. All are `targets: local`, `set: ["code"]`, artifact `automagik-herdr-pack-
   `launchArgs.js`, `agentPath.mjs`, `formModel.js` and am-mods' `core.js` run it), and so do
   `briefing.mjs`, `briefingText.mjs`, `briefingEntry.mjs` and the modules they import, until the
   bridge ends; am keeps copies of them. The capabilities go with the CLI. The pack stops linking
-  `automagik-herdr` in the first release after am ships, so the alias never disappears. No herdr manifest declares `~/.local/bin/am` or
-  `automagik-herdr`: only am's does. The pack's installer hands the link over by leaving one
-  that points at am, and am takes one that points into the pack.
+  `automagik-herdr` in the first release after am ships, so the alias never disappears. No herdr
+  manifest declares `~/.local/bin/am` or `automagik-herdr`: only am's does. The pack's
+  installer hands the link over by leaving one that points at am, and am takes one that points
+  into the pack.
 - Until am's own CLI and briefing copies are installed on the machine (delivery 1 released and
   `automagik.am` installed), `am uninstall herdr.am-sidebar` refuses and says why: switching
   the sidebar off would leave `automagik-herdr` pointing at nothing and stop every briefing
