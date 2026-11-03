@@ -33,7 +33,7 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
   writesWorktree } from "../workers.js";
 import { carriedLabels, continueRefusal, doomedHelpers, helperArgs, helperPlan, ledgerSession, paneCommand, planText as restartText, restartPlan,
-  restartRefusal, sessionId, sessionOf, sharedResumes } from "../restart.js";
+  paneSession, restartRefusal, sessionId, sharedFolders } from "../restart.js";
 import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, readMarker, relinkCli, rollback as rollbackPack, writeMarker } from "../update.mjs";
 import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER } from "../release.js";
 import { OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
@@ -151,20 +151,31 @@ function programPath(program) {
 const onPath = (program) => programPath(program) !== null;
 
 /**
- * The PATH a pane this CLI starts runs with (#56, #213): this one, with the folder of the
- * program's interpreter first when it lacks it (an npm agent's node, a bun script's bun:
- * agentPath.mjs interpreterPath, given the file programPath found), and the program's own
- * folder last when only programPath found it there. Always passed, as a worker's is: a pane
- * started without one gets herdr-core's PATH, which may have neither (a bare codex, exit 127).
- * { path (null: no PATH at all), note }.
+ * The PATH a pane this CLI starts in folder `cwd` runs with (#56, #213): this one, less what
+ * belongs to the caller's folder (entries under its working folder or the pane's, a
+ * node_modules/.bin, $VIRTUAL_ENV/bin: a venv or a project's tools aren't frozen into the pane),
+ * with the folder of the program's interpreter first when it lacks it (an npm agent's node, a bun
+ * script's bun: agentPath.mjs interpreterPath, given the file programPath found), the program's
+ * own folder when only programPath found it there, and /usr/bin and /bin last when missing (sh
+ * and env, which the pane's command needs). Always passed, as a worker's is: a pane started
+ * without one gets herdr-core's PATH, which may have no node (a bare codex, exit 127).
+ * { path, note }.
  */
-function launchPath(program) {
+function launchPath(program, cwd = null) {
+  const homeDir = home().replace(/\/+$/, "");
+  // A folder that is home or above it (/, /Users) isn't the caller's own: nothing is dropped for it.
+  const here = [process.cwd(), cwd].filter((d) => typeof d === "string" && d).map((d) => d.replace(/\/+$/, "") || "/")
+    .filter((d) => d !== "/" && !`${homeDir}/`.startsWith(`${d}/`));
+  const venv = process.env.VIRTUAL_ENV ? `${process.env.VIRTUAL_ENV.replace(/\/+$/, "")}/bin` : null;
+  const kept = (process.env.PATH ?? "").split(":").filter((d) => d && d !== venv && !/(^|\/)node_modules\/\.bin\/?$/.test(d)
+    && !here.some((h) => d === h || d.startsWith(`${h}/`)));
   const file = program ? programPath(program) : null;
-  const runPath = interpreterPath(file ?? program, process.env.PATH);
-  let path = runPath.path ?? "";
+  const runPath = interpreterPath(file ?? program, kept.join(":"));
+  const dirs = String(runPath.path ?? "").split(":").filter(Boolean);
   const dir = file?.includes("/") ? dirname(file) : null;
-  if (dir && !path.split(":").includes(dir)) path = path ? `${path}:${dir}` : dir;
-  return { path: path || null, note: runPath.note };
+  if (dir && !dirs.includes(dir)) dirs.push(dir);
+  for (const d of ["/usr/bin", "/bin"]) if (!dirs.includes(d)) dirs.push(d);
+  return { path: dirs.join(":"), note: runPath.note };
 }
 
 // ---- the definitions file ----
@@ -572,7 +583,7 @@ const OPTIONS = {
   "worker-template": { type: "string" }, template: { type: "string" },
   branch: { type: "string" }, worktree: { type: "string" }, base: { type: "string" }, effort: { type: "string" },
   task: { type: "string" }, bot: { type: "string" }, move: { type: "boolean" },
-  fresh: { type: "boolean" }, force: { type: "boolean" }, save: { type: "boolean" }, tree: { type: "boolean" },
+  fresh: { type: "boolean" }, force: { type: "boolean" }, save: { type: "boolean" }, tree: { type: "boolean" }, "fresh-shared": { type: "boolean" },
   machine: { type: "string" }, linked: { type: "boolean" }, local: { type: "boolean" },
 };
 
@@ -596,7 +607,7 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   category ls | add --title T [--sub S] [--id ID] | edit <id> [--title T] [--sub S]
            | rm <id> | order <id>...
   start <bot> [--space ID] [--tab ID]   a new pane on this computer (prints its terminal)
-  restart <bot> [--fresh] [--agent A] [--model M [--save]] [--tree] [--force]
+  restart <bot> [--fresh] [--agent A] [--model M [--save]] [--tree [--fresh-shared]] [--force]
                                 the bot's agent again in its pane's place (same space and tab,
                                 same folder, labels kept, and the old pane's own command: its
                                 template, model and effort flags): the new pane starts, and the
@@ -611,8 +622,13 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 --save: also into ${BOTS_PATH}). Refused while the bot is
                                 working or has helpers that would end with it, unless --force
                                 (they end with it) or --tree (they run again under the new pane,
-                                each in its folder with its command, resumed; a helper mid-turn
-                                still refuses). A bot not running is started.
+                                one at a time, each in its folder with its command, resumed: by
+                                its agent.session or revive.session id, else its folder's latest,
+                                refused when another of them shares that folder and agent unless
+                                --fresh-shared starts those on a new conversation; a helper
+                                mid-turn, gone folder or helpers of its own refuse; the first that
+                                fails stops the rest, which stay under the old pane, and prints
+                                how to run it by hand). A bot not running is started.
   attach <bot> <terminal> [--move]   tie a running pane to the bot; a bot attached elsewhere
                                 is refused unless --move (its old pane is detached first)
   detach <bot>                  untie the bot from its pane (a removed bot: by its id)
@@ -1177,9 +1193,9 @@ async function launchSeat(project, bot, over = {}) {
   // As a worker (cmdWorker): the pane gets this PATH, with an npm agent's (#!/usr/bin/env node,
   // like codex) interpreter folder first when it lacks it (#56); start and restart both come
   // here. Always passed (#213): without it the pane has herdr-core's PATH, which may lack node.
-  const runPath = launchPath(argv[0]);
-  const path = runPath.path;
   const cwd = over.cwd ?? key;
+  const runPath = launchPath(argv[0], cwd);
+  const path = runPath.path;
   // A restart's own place (the old pane's space and tab) stands; a start asks the window too:
   // one herdr-app ls, shared by placementOf (a label whose space doesn't show the project is
   // dropped) and windowPlace (an open space on the project, else a new one).
@@ -1317,6 +1333,9 @@ async function attachMoved(bot, oldBinding, terminal, created_ms, key) {
   });
 }
 
+/** The exit code a command that printed its answer still fails with (a --tree that stopped part way): 0 else. */
+const exitAfter = { code: 0 };
+
 /** What cmdRestart returns once it has printed its own answer (a bot restarting itself). */
 export const PRINTED = Symbol.for("automagik-herdr.printed");
 
@@ -1336,64 +1355,92 @@ function workerRowOf(rows, terminal) {
 const isDir = (dir) => { try { return statSync(dir).isDirectory(); } catch { return false; } };
 
 /**
- * Ends `terminal` (hc kill) and waits, bounded, until hc says it finished or is gone: true then.
- * A helper of the old pane ends before its replacement starts, so its name is free and no two
- * agents run one conversation.
+ * `hc get` of `terminal`: { state: "live" | "finished", get }, { state: "gone" } when hc says
+ * there is no such terminal, or { state: "unknown", why } when hc failed otherwise (never read
+ * as gone).
  */
-async function endHelper(terminal, ms = 5000) {
+async function hcState(terminal) {
+  const r = await hc(["get", terminal, "--json"]);
+  if (r.code === 0) {
+    try { const get = JSON.parse(r.stdout); return { state: get?.state === "finished" ? "finished" : "live", get }; } catch { /* below */ }
+    return { state: "unknown", why: `hc get ${terminal} printed no JSON` };
+  }
+  if (r.code === 3 || /not_found/.test(r.stderr ?? "")) return { state: "gone" };
+  return { state: "unknown", why: `hc get ${terminal} failed (${(r.stderr || r.stdout).trim() || `exit ${r.code}`})` };
+}
+
+/**
+ * Ends helper `terminal` right before its replacement starts, and waits (bounded) until hc says
+ * it finished or is gone: { ended: true }. Otherwise { ended: false, why }, the helper maybe
+ * still running: it is mid-turn now (checked here, unless `force`), hc can't say whether it runs,
+ * the kill failed, or it outlasted `ms`. A second copy of it is never started then.
+ */
+async function endHelper(terminal, { force = false, ms = 5000 } = {}) {
+  const first = await hcState(terminal);
+  if (first.state === "gone" || first.state === "finished") return { ended: true };
+  if (first.state === "unknown") return { ended: false, why: `${first.why}, so it may still run` };
+  if (!force && first.get?.status?.state === "working") return { ended: false, why: "it is mid-turn now (wait until it is idle, or pass --force)" };
+  const k = await hc(["kill", terminal]);
+  if (k.code !== 0) return { ended: false, why: `hc kill ${terminal} failed (${(k.stderr || k.stdout).trim()})` };
   const until = Date.now() + ms;
-  let killed = false;
   for (;;) {
-    const get = await hcGet(terminal).catch(() => null);
-    if (!get || get.state === "finished") return true;
-    if (!killed) { await hc(["kill", terminal]); killed = true; }
-    if (Date.now() >= until) return false;
+    const now = await hcState(terminal);
+    if (now.state === "gone" || now.state === "finished") return { ended: true };
+    if (now.state === "unknown") return { ended: false, why: `${now.why} after hc kill, so it may still run` };
+    if (Date.now() >= until) return { ended: false, why: `it still ran ${ms / 1000}s after hc kill ${terminal}` };
     await later(100);
   }
 }
 
+/** `w` as one shell word. */
+const shellWord = (w) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(w) ? w : `'${String(w).replace(/'/g, "'\\''")}'`);
+
+/** How to run helper plan `p` again by hand, as a child of `parent`: its name, folder, command and session. */
+const byHand = (p, parent) => `hc run --bg${p.name ? ` --name ${shellWord(p.name)}` : ""} --cwd ${shellWord(p.cwd)} --parent ${parent} -- `
+  + `${p.argv.map(shellWord).join(" ")}${p.session ? ` (session ${p.session})` : " (no session id known)"}`;
+
 /**
- * Restart --tree's second half (#213): each helper the old pane had (`plans`, helperPlan with
- * its worker row) ended, then run again as a child of `parent` (the bot's new pane), in its
- * folder, with its name and labels, its command resumed and a seat's PATH; each new one waited
- * on as the bot's was. A worker's ledger row is copied to its new terminal. A helper that is
- * itself a bot (`binding`: its attach binding, a pane started by hand and attached) has the
- * binding moved to its new terminal once that is up, as Restart moves its own (attachMoved),
- * and a seat row. `say` takes the warnings. Resolves [{ name, replaced, terminal, bot, agent,
- * mode, session, up, note, error }].
+ * Restart --tree's second half (#213): each helper the old pane had (`plans`, checked before
+ * anything started), one at a time, each only once the one before it is up: ended (endHelper:
+ * mid-turn checked again right before), then run again as a child of `parent` (the bot's new
+ * pane), in its folder, with its name and labels, its command resumed and a seat's PATH, and
+ * waited on as the bot's was. A worker's ledger row is copied to its new terminal. A helper that
+ * is itself a bot (`binding`: a pane started by hand and attached) has its binding moved to it
+ * (attachMoved) and a seat row. The first that fails stops the rest: they stay as they are,
+ * under the old pane (`left`), and the failed one's way to run it by hand is printed. `say`
+ * takes the warnings. Resolves [{ name, replaced, terminal, bot, agent, mode, session, up, left,
+ * note, error }].
  */
-async function rerunHelpers(plans, parent, say) {
-  // One result per helper, in the order they were recorded.
-  const out = plans.map((p) => ({ name: p.name, replaced: p.replaced, terminal: null, bot: p.binding?.bot ?? null, agent: p.agent ?? null, mode: p.mode ?? null,
-    session: p.session ?? null, up: false, note: p.note ?? null, error: p.error ?? null }));
-  const fail = (i, why) => { const p = plans[i]; out[i].error = why; say(`${p.replaced}${p.name ? ` (${p.name})` : ""} wasn't run again: ${why}.`); };
-  // Ended one by one first, as the old pane's end would end them: their names are free then,
-  // and no two agents run one conversation.
+async function rerunHelpers(plans, parent, say, { force = false } = {}) {
+  const out = plans.map((p) => ({ name: p.name, replaced: p.replaced, terminal: null, bot: p.binding?.bot ?? null, agent: p.agent ?? null,
+    mode: p.mode ?? null, session: p.session ?? null, up: false, left: false, note: p.note ?? null, error: null }));
   for (const [i, p] of plans.entries()) {
-    if (p.error) fail(i, `${p.error}; it ended with the old pane`);
-    else if (!(await endHelper(p.replaced))) fail(i, `it didn't end (hc kill ${p.replaced}), and two of it would share one conversation`);
-  }
-  const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
-  const started = [];
-  for (const [i, p] of plans.entries()) {
-    if (out[i].error) continue;
+    const who = `${p.replaced}${p.name && p.name !== p.replaced ? ` (${p.name})` : ""}`;
+    const stop = (why, ended) => {
+      out[i].error = why;
+      out[i].left = !ended;
+      const rest = plans.slice(i + 1).map((q) => q.replaced);
+      for (let j = i + 1; j < plans.length; j += 1) Object.assign(out[j], { error: `not reached: --tree stopped at ${p.replaced}`, left: true });
+      say(`${who} wasn't run again: ${why}. ${ended ? "It has ended" : "It may still run under the old pane"}; to run it again by hand: ${byHand(p, parent)}.`
+        + (rest.length ? ` --tree stopped there: ${rest.join(", ")} ${rest.length === 1 ? "was" : "were"} left as ${rest.length === 1 ? "it was" : "they were"}, under the old pane.` : ""));
+    };
+    const end = await endHelper(p.replaced, { force });
+    if (!end.ended) { stop(end.why, false); break; }
+    const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
     const name = p.name && !taken.has(p.name) ? p.name : null;
-    const r = await hc(helperArgs({ name, cwd: p.cwd, labels: p.labels, parent, argv: p.argv, path: launchPath(p.argv[0]).path }));
+    const r = await hc(helperArgs({ name, cwd: p.cwd, labels: p.labels, parent, argv: p.argv, path: launchPath(p.argv[0], p.cwd).path }));
     let address = null;
     try { address = JSON.parse(r.stdout).address ?? null; } catch { address = null; }
-    if (r.code !== 0 || !address) { fail(i, `hc run failed: ${(r.stderr || r.stdout).trim()}`); continue; }
-    if (name) taken.add(name);
+    if (r.code !== 0 || !address) { stop(`hc run failed (${(r.stderr || r.stdout).trim()})`, true); break; }
     out[i].terminal = address;
-    started.push(i);
-  }
-  const ups = await Promise.all(started.map((i) => agentUp(out[i].terminal)));
-  for (const [k, i] of started.entries()) {
-    const p = plans[i], address = out[i].terminal;
-    out[i].up = ups[k].state === "live";
-    if (!out[i].up) {
-      say(`${address} (${p.name ?? "a helper"}, replacing ${p.replaced}) ${ups[k].state === "ended" ? "exited before its agent was up"
-        : `didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s`}; hc read ${address} says why.`);
+    const up = await agentUp(address);
+    if (up.state !== "live") {
+      const killed = up.state === "ended" || (await hc(["kill", address])).code === 0;
+      stop(up.state === "ended" ? `${address} exited before its agent was up (hc read ${address} says why)`
+        : `${address} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${killed ? ", so it was ended" : ` and couldn't be ended (hc kill ${address})`}`, true);
+      break;
     }
+    out[i].up = true;
     if (p.worker) {
       const w = p.worker;
       const unlogged = appendLedger(startRow({ kind: "worker", terminal: address, pid: await pidOf(address), botId: w.botId, task: w.task, branch: w.branch,
@@ -1403,14 +1450,21 @@ async function rerunHelpers(plans, parent, say) {
     }
     if (p.binding) {
       const b = p.binding;
-      if (!out[i].up) { say(`bot ${b.bot} is attached to no pane now (${p.replaced} ended): once ${address} runs, automagik-herdr attach ${b.bot} ${address}.`); continue; }
-      const created = Number.isSafeInteger(ups[k].get?.created_ms) ? ups[k].get.created_ms : null;
+      const created = Number.isSafeInteger(up.get?.created_ms) ? up.get.created_ms : null;
       let moved;
       try {
         if (created === null) throw new CliError(`hc get gave no created_ms for ${address}`);
         moved = await attachMoved({ id: b.bot }, b, address, created, b.project);
-      } catch (e) { say(`bot ${b.bot} wasn't attached to ${address} (${e?.message ?? e}): automagik-herdr attach ${b.bot} ${address}.`); continue; }
-      if (moved.lost !== undefined) { say(`bot ${b.bot} was attached to ${moved.lost} meanwhile, so ${address} isn't attached to it.`); continue; }
+      } catch (e) {
+        out[i].error = `its attach row wasn't written (${e?.message ?? e})`;
+        say(`${who} runs again in ${address}, but bot ${b.bot}'s attach row wasn't written (${e?.message ?? e}): automagik-herdr attach ${b.bot} ${address}.`);
+        continue;
+      }
+      if (moved.lost !== undefined) {
+        out[i].error = `bot ${b.bot} was attached to ${moved.lost} meanwhile`;
+        say(`bot ${b.bot} was attached to ${moved.lost} while --tree ran, so ${address} isn't attached to it.`);
+        continue;
+      }
       const unlogged = appendLedger(startRow({ kind: "seat", terminal: address, pid: await pidOf(address), botId: b.bot, worktree: p.cwd, project: b.project,
         agent: p.agent, model: null }));
       if (unlogged) say(unlogged);
@@ -1423,10 +1477,67 @@ async function rerunHelpers(plans, parent, say) {
   return out;
 }
 
+/**
+ * Restart --tree's first half (#213), before anything starts: the helpers that end with the old
+ * pane (`helpers`, hc get answers), each planned (helperPlan: its folder, command, agent and
+ * session) and checked, the restart refused (CliError) when one can't be run again, its folder is
+ * gone, it has helpers of its own that would end with it (unless `force`: they end, said), or
+ * the CLI runs inside it. `run`: the bot's own restart ({ who, agent, cwd, session, mode }).
+ * Id-less resumes that share a folder and agent with another of them (sharedFolders) are refused,
+ * or, with `freshShared`, those helpers start a new conversation; the bot itself never does
+ * (restart it with --fresh). Resolves { tree: [plan + { worker, binding }], treeWarnings }.
+ */
+async function treePlans({ bot, old, helpers, view, ledger, agents, sessionFor, force, freshShared, run }) {
+  const doomed = doomedHelpers(helpers);
+  const me = process.env.HC_TERMINAL_ID;
+  const mine = me && doomed.find((h) => [h.address, h.name].includes(me));
+  if (mine) throw new CliError(`This runs in ${mine.address}, one of ${old.address}'s helpers, which --tree ends and runs again: run it from another terminal.`);
+  const treeWarnings = [];
+  // --tree restarts one level: a helper's own helpers that would end with it are refused (or, with --force, said).
+  const nested = (await Promise.all(doomed.map(async (h) => doomedHelpers(await helpersOf(h.address)).map((c) => `${c.address} (under ${h.address})`)))).flat();
+  if (nested.length) {
+    const one = nested.length === 1;
+    if (!force) {
+      throw new CliError(`--tree restarts ${old.address}'s helpers, not theirs: ${nested.join(", ")} would end with ${one ? "its parent" : "their parents"} `
+        + `and not run again. Nothing was started. Let ${one ? "it" : "them"} finish first, or pass --force to end ${one ? "it" : "them"}.`);
+    }
+    treeWarnings.push(`--force: ${nested.join(", ")} ${one ? "ends" : "end"} with ${one ? "its parent" : "their parents"} and ${one ? "isn't" : "aren't"} run again.`);
+  }
+  const planOf = (h, fresh = null) => {
+    const worker = workerRowOf(ledger, h.address);
+    const agentKey = agentKeyOfArgv(h.foreground?.argv, agents) ?? worker?.agent ?? null;
+    // A helper that is itself a bot (attached by hand): its binding moves with it.
+    const binding = view.byTerminal.get(h.address)?.binding ?? null;
+    return { ...helperPlan({ get: h, worker, session: sessionFor(h, agentKey)?.session ?? null, agents, fresh }), worker, binding };
+  };
+  let tree = doomed.map((h) => planOf(h));
+  const broken = tree.filter((p) => p.error).map((p) => p.error);
+  const gone = tree.filter((p) => !p.error && !isDir(p.cwd)).map((p) => `${p.replaced}'s folder ${p.cwd} isn't there`);
+  if (broken.length || gone.length) {
+    throw new CliError(`${[...broken, ...gone].join("; ")}. Nothing was started. Restart without --tree (--force ends ${old.address}'s helpers with it).`);
+  }
+  const whoOf = (p) => p.name ?? p.replaced;
+  const runs = () => [run, ...tree.map((p) => ({ who: whoOf(p), agent: p.agent, cwd: p.cwd, session: p.session, mode: p.mode }))];
+  let shared = sharedFolders(runs());
+  if (shared.length && freshShared) {
+    const helperIdless = new Set(shared.flatMap((g) => g.idless).filter((w) => w !== run.who));
+    tree = tree.map((p, i) => (helperIdless.has(whoOf(p)) ? planOf(doomed[i], `no session id, and its folder ${p.cwd} has other ${p.agent} sessions (--fresh-shared)`) : p));
+    shared = sharedFolders(runs());
+  }
+  if (shared.length) {
+    const lines = shared.map((g) => `${g.idless.join(", ")} would resume the latest ${g.agent} conversation in ${g.cwd} (no session id), which ${g.who.join(", ")} all use`);
+    const botToo = shared.some((g) => g.idless.includes(run.who));
+    throw new CliError(`${lines.join("; ")}: one could pick up another's. Nothing was started. Give each an agent.session label, `
+      + `${botToo && freshShared ? `or restart ${bot.name} with --fresh too` : `or pass --fresh-shared to start those helpers on a new conversation${botToo ? ` (and --fresh for ${bot.name})` : ""}`}.`);
+  }
+  return { tree, treeWarnings };
+}
+
 async function cmdRestart(opts, [ref]) {
   if (opts.tab && !opts.space) throw new CliError("--tab needs --space (the space that tab is in).", 2);
   const swap = opts.agent !== undefined || opts.model !== undefined;
   if (opts.save && !swap) throw new CliError("--save keeps a swap in the bot's definition; it goes with --agent or --model.", 2);
+  if (opts["fresh-shared"] && !opts.tree) throw new CliError("--fresh-shared picks how --tree restarts helpers; it goes with --tree.", 2);
   const project = await projectFor(opts);
   const { file, key } = project;
   if (project.text === null) throw new CliError(`No ${BOTS_PATH} in ${key}.`);
@@ -1458,28 +1569,14 @@ async function cmdRestart(opts, [ref]) {
   const agents = agentTable();
   const ledger = workerLedgerRows();
   const runningAgent = old ? agentKeyOfArgv(old.foreground?.argv, agents) : null;
-  // The session to resume: the old pane's agent.session label, else (a Claude pane, whose hook
-  // writes them) the ledger's last session row for that terminal.
-  const sessionFor = (get, agentKey) => (sessionOf(get) ? { session: sessionOf(get), transcript: null }
-    : agentKey === "claude" ? ledgerSession(ledger, get.address) : null);
+  // The session to resume: the old pane's agent.session label (or a reviver's revive.session),
+  // else (a Claude pane, whose hook writes them) the ledger's last session row for that terminal.
+  const sessionFor = (get, agentKey) => {
+    const id = paneSession(get, agentKey);
+    if (id) return { session: id, transcript: null };
+    return agentKey === "claude" ? ledgerSession(ledger, get.address) : null;
+  };
   const known = old ? sessionFor(old, runningAgent ?? bot.agent) : null;
-  // --tree: the helpers that end with the old pane, as they run now, recorded before anything
-  // starts (its run again comes once the bot's new pane is up). Run from inside one of them,
-  // the CLI would end with it.
-  let tree = [];
-  if (old && opts.tree) {
-    const doomed = doomedHelpers(helpers);
-    const me = process.env.HC_TERMINAL_ID;
-    const mine = me && doomed.find((h) => [h.address, h.name].includes(me));
-    if (mine) throw new CliError(`This runs in ${mine.address}, one of ${old.address}'s helpers, which --tree ends and runs again: run it from another terminal.`);
-    tree = doomed.map((h) => {
-      const agentKey = agentKeyOfArgv(h.foreground?.argv, agents);
-      const worker = workerRowOf(ledger, h.address);
-      // A helper that is itself a bot (attached by hand): its binding moves with it.
-      const binding = view.byTerminal.get(h.address)?.binding ?? null;
-      return { ...helperPlan({ get: h, worker, session: sessionFor(h, agentKey)?.session ?? null, agents }), worker, binding };
-    });
-  }
   const plan = restartPlan({
     bot, run: startableAgent(bot, entry?.agent ?? bot.agent).run,
     runningAgent, session: known?.session ?? null,
@@ -1497,6 +1594,10 @@ async function cmdRestart(opts, [ref]) {
     const refusal = continueRefusal({ name: bot.name, old, cwd, sharers: claudeBotsIn(view, cwd, bot.id, file) });
     if (refusal) throw new CliError(refusal);
   }
+  const { tree, treeWarnings } = old && opts.tree
+    ? await treePlans({ bot, old, helpers, view, ledger, agents, sessionFor, force: opts.force, freshShared: opts["fresh-shared"],
+      run: { who: bot.name, agent: plan.agent, cwd, session: resumeId, mode: plan.mode } })
+    : { tree: [], treeWarnings: [] };
   // A resumed session keeps its label on the new pane, so the next restart resumes it too.
   const carry = { ...carriedLabels(old), ...(resumeId ? { [SESSION_LABEL]: resumeId } : {}) };
   const seat = await launchSeat(project, bot, { agent: plan.agent, model: plan.model, argv: plan.argv, cwd, place, carry, replacing: old ? held.binding : null });
@@ -1504,6 +1605,7 @@ async function cmdRestart(opts, [ref]) {
   const warnings = seat.hook.warnings;
   const say = (w) => { warnings.push(w); report([w]); };
   if (oldCwd && cwd !== oldCwd) say(`${old.address}'s folder ${oldCwd} isn't there now, so ${seat.terminal} runs in ${key}${plan.mode === "resume" ? "; its conversation may not be found there" : ""}.`);
+  for (const w of treeWarnings) say(w);
   let rerun = [];
   if (old) {
     // The old pane ends only once the new one has kept its agent up: the space is never left empty.
@@ -1536,13 +1638,13 @@ async function cmdRestart(opts, [ref]) {
       const unlogged = appendLedger(sessionRow({ terminal: seat.terminal, session: resumeId, transcript: known?.transcript ?? null }));
       if (unlogged) say(unlogged);
     }
-    // --tree: the old helpers end now (they would with the old pane) and run again under the new one.
-    if (tree.length) {
-      rerun = await rerunHelpers(tree, seat.terminal, say);
-      for (const w of sharedResumes([{ who: bot.name, agent: plan.agent, cwd, session: resumeId, mode: plan.mode },
-        ...tree.filter((p) => !p.error).map((p) => ({ who: p.name ?? p.replaced, agent: p.agent, cwd: p.cwd, session: p.session, mode: p.mode }))])) say(w);
-    }
+    // --tree: the old helpers end now, one at a time (they would with the old pane), and run again under the new one.
+    if (tree.length) rerun = await rerunHelpers(tree, seat.terminal, say, { force: opts.force });
   }
+  // A --tree that stopped part way: the command fails (the bot did restart), and the old pane
+  // stays while helpers it stopped at still run under it.
+  if (rerun.some((h) => h.error)) exitAfter.code = 1;
+  const left = rerun.filter((h) => h.left).map((h) => h.replaced);
   if (plan.mode === "resume" && plan.agent === "claude" && !resumeId) {
     say(`No Claude session id was known for ${old.address}, so ${seat.terminal} resumes the latest conversation in ${cwd} (--continue). `
       + `No other bot's Claude runs there; if it isn't ${bot.name}'s, restart again with --fresh.`);
@@ -1567,6 +1669,11 @@ async function cmdRestart(opts, [ref]) {
       session: resumeId, note: plan.note, saved, warnings, ...(opts.tree ? { helpers: rerun } : {}) } : seat.terminal;
   };
   if (!old) return answer();
+  if (left.length) {
+    say(`${old.address} was left running, so ${left.join(", ")} ${left.length === 1 ? "keeps" : "keep"} going under it; `
+      + `once ${left.length === 1 ? "it is" : "they are"} done or run again, end it with hc kill ${old.address}.`);
+    return answer();
+  }
   // A bot restarting itself runs this inside the pane the kill ends: everything is written and
   // printed first, then the kill, the last thing it does.
   if (process.env.HC_TERMINAL_ID && [old.address, old.name].includes(process.env.HC_TERMINAL_ID)) {
@@ -2116,10 +2223,10 @@ async function cmdWorker(opts, rest) {
     if (list.length && !list.includes(plan.model)) warnings.push(`${plan.model} isn't on ${plan.agent}'s model list; started with it anyway.`);
   }
   // An npm agent (#!/usr/bin/env node) gets its interpreter's folder on PATH when the pane lacks it.
-  const runPath = plan.template ? null : launchPath(plan.argv[0]);
-  if (runPath?.note) warnings.push(runPath.note);
   const place = opts.worktree !== undefined ? await givenWorktree(opts.worktree, project.key, bot)
     : await branchWorktree(opts.branch, opts.base, project.key, warnings);
+  const runPath = plan.template ? null : launchPath(plan.argv[0], place.worktree);
+  if (runPath?.note) warnings.push(runPath.note);
   const base = await baseCommit(place, project.key);
   // A Claude worker gets the per-turn hook in its worktree: it prints no briefing there (the
   // worker is no bot), but it ties the Claude session to the terminal (briefing.mjs).
@@ -2411,12 +2518,13 @@ export async function main(argv = process.argv.slice(2)) {
   if (!run) { process.stderr.write(`automagik-herdr: unknown command "${command}"\n\n${USAGE}\n`); return 2; }
   try {
     if (NEEDS_BOT.has(command) && !rest[0]) throw new CliError(`${command} needs a bot (its id or name).`, 2);
+    exitAfter.code = 0;
     const out = await run(opts, rest);
-    if (out === PRINTED) return 0;
+    if (out === PRINTED) return exitAfter.code;
     if (opts.json) process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
     else if (out) process.stdout.write(`${out}\n`);
     if (TIDIES.has(command)) await tidyQuietly();
-    return 0;
+    return exitAfter.code;
   } catch (e) {
     const message = e instanceof CliError ? e.message : `${e?.stack ?? e}`;
     process.stderr.write(`automagik-herdr: ${message}\n`);

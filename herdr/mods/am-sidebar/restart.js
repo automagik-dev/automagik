@@ -39,10 +39,36 @@ export function paneCommand(get) {
   return { argv };
 }
 
-/** `command` (paneCommand) with `words` after it: argv for hc run. */
-export const commandArgv = (command, words = []) => (command.shell !== undefined
-  ? (words.length ? ["sh", "-c", `${command.shell}${ARGS}`, "sh", ...words] : ["sh", "-c", command.shell])
-  : [...command.argv, ...words]);
+/**
+ * Whether words can go after shell command `cmd` as its last command's arguments: not when it
+ * ends in a separator (`;`, `&`, `|`, which would make them a command of their own) or has a
+ * comment (`#` after a blank, which would swallow them). One that already passes "$@" on takes
+ * them as they are.
+ */
+export const takesWords = (cmd) => cmd.includes(ARGS.trim()) || !(/[;&|]\s*$/.test(cmd) || /(^|\s)#/.test(cmd));
+
+/**
+ * `command` (paneCommand) with `words` after it: argv for hc run; null when a shell command
+ * can't take them (takesWords). A command that passes "$@" on itself gets no second one.
+ */
+export function commandArgv(command, words = []) {
+  if (command.shell === undefined) return [...command.argv, ...words];
+  if (!words.length) return ["sh", "-c", command.shell];
+  if (!takesWords(command.shell)) return null;
+  return ["sh", "-c", command.shell.includes(ARGS.trim()) ? command.shell : `${command.shell}${ARGS}`, "sh", ...words];
+}
+
+/**
+ * `args` without a trailing first prompt (a last word with a blank in it that no option takes
+ * as its value: `omp --model=k "fix the bug"`), so a resume doesn't send it again. A prompt
+ * without a blank can't be told from an argument and stays.
+ */
+export function withoutPrompt(args) {
+  const words = [...args];
+  const last = words.at(-1), before = words.at(-2);
+  if (words.length > 1 && typeof last === "string" && /\s/.test(last) && !(before?.startsWith("-") && !before.includes("="))) words.pop();
+  return words;
+}
 
 /**
  * What the replacement runs. `bot`: { agent, model } as stored; `run`: the target agent's
@@ -70,7 +96,12 @@ export function restartPlan({ bot, run, runningAgent = null, session = null, fre
   const own = runningAgent === key && launch ? reusable(launch, key) : null;
   const plan = (mode, extra = [], note = null) => {
     if (!own) return defined(mode, extra, note);
-    if (own.shell !== undefined) return { mode, agent: key, model: runningModel, resume: extra, argv: commandArgv(own, extra), reused: true, note };
+    if (own.shell !== undefined) {
+      const argv = commandArgv(own, extra);
+      if (argv) return { mode, agent: key, model: runningModel, resume: extra, argv, reused: true, note };
+      return { mode: "fresh", agent: key, model: runningModel, resume: [], argv: commandArgv(own), reused: true,
+        note: "its command ends in a separator or a comment, so it can't take resume words" };
+    }
     const pinned = pin && detectModel(own.argv, key) !== pin ? [...withoutModel(key, own.argv), ...modelArgs(key, pin)] : own.argv;
     return { mode, agent: key, model: pin ?? detectModel(pinned, key), resume: extra, argv: [...pinned, ...extra], reused: true, note };
   };
@@ -83,11 +114,23 @@ export function restartPlan({ bot, run, runningAgent = null, session = null, fre
 function reusable(launch, key) {
   if (launch.shell !== undefined) return launch;
   if (agentKeyOfArgv(launch.argv) !== key) return null;
-  return { argv: withoutResume(key, launch.argv) };
+  return { argv: withoutPrompt(withoutResume(key, launch.argv)) };
 }
 
 /** The old pane's Claude session id (its agent.session label, UUID-shaped), or null. */
 export const sessionOf = (get) => sessionId(get?.labels?.[SESSION]);
+
+/**
+ * A pane's session id for agent `agentKey`: its agent.session label, else the revive.session
+ * label a reviver keeps on hc panes (with revive.agent, when set, naming that agent), else null.
+ */
+export function paneSession(get, agentKey) {
+  const own = sessionOf(get);
+  if (own) return own;
+  const labels = get?.labels ?? {};
+  if (labels["revive.agent"] && labels["revive.agent"] !== agentKey) return null;
+  return sessionId(labels["revive.session"]);
+}
 
 /**
  * The last Claude session the workers ledger ties to `terminal` (its session rows, workers.js
@@ -157,10 +200,11 @@ export function restartRefusal({ name, old, helpers = [], force = false, tree = 
  * labels, agent, session, mode: "resume" | "fresh", resume, argv, note }, or { name, replaced, error }
  * when there is nothing to run.
  */
-export function helperPlan({ get, worker = null, session = null, agents }) {
+export function helperPlan({ get, worker = null, session = null, agents, fresh = null }) {
   const name = typeof get?.name === "string" && get.name ? get.name : null;
   const replaced = get?.address ?? null;
-  const cwd = get?.foreground?.cwd ?? get?.cwd ?? null;
+  // A worker's worktree first (the ledger's), then the pane's folder, then its program's.
+  const cwd = worker?.worktree ?? get?.cwd ?? get?.foreground?.cwd ?? null;
   const labels = { ...(get?.labels ?? {}) };
   const agent = agentKeyOfArgv(get?.foreground?.argv, agents) ?? (worker?.agent && agents[worker.agent] ? worker.agent : null);
   const template = worker?.template ?? labels[WORKER_TEMPLATE_LABEL] ?? get?.template ?? null;
@@ -172,16 +216,22 @@ export function helperPlan({ get, worker = null, session = null, agents }) {
   } else {
     const launch = paneCommand(get);
     if (launch?.shell !== undefined) command = launch;
-    else if (launch && agent && agentKeyOfArgv(launch.argv, agents) === agent) command = { argv: withoutResume(agent, launch.argv) };
+    else if (launch && agent && agentKeyOfArgv(launch.argv, agents) === agent) command = { argv: withoutPrompt(withoutResume(agent, launch.argv)) };
   }
   if (!command || !cwd) {
     return { name, replaced, error: `${replaced} can't be run again: hc gave ${cwd ? "no command this pack can reuse" : "no folder"} for it` };
   }
   const id = sessionId(session);
-  const resume = agent && canResume(agent) ? resumeArgs(agent, id) : null;
-  const note = resume ? null : agent ? `${agent} has no resume this pack knows` : "its agent isn't one this pack knows";
+  let resume = fresh ? null : agent && canResume(agent) ? resumeArgs(agent, id) : null;
+  let note = fresh ?? (resume ? null : agent ? `${agent} has no resume this pack knows` : "its agent isn't one this pack knows");
+  let argv = commandArgv(command, resume ?? []);
+  if (!argv) {
+    resume = null;
+    note = "its command ends in a separator or a comment, so it can't take resume words";
+    argv = commandArgv(command);
+  }
   return { name, replaced, cwd, labels, agent, session: resume && resumesById(agent) ? id : null, mode: resume ? "resume" : "fresh",
-    resume: resume ?? [], argv: commandArgv(command, resume ?? []), note };
+    resume: resume ?? [], argv, note };
 }
 
 /**
@@ -197,19 +247,21 @@ export function helperArgs({ name, cwd, labels = {}, parent, argv, path = null }
 }
 
 /**
- * The resumes that pick up their folder's latest conversation (no session id) and share an
- * agent and folder with another one: they may pick up each other's. `runs`: [{ who, agent, cwd,
- * session, mode }]. One line per such group.
+ * The restarts --tree would make that may pick up each other's conversation: a resume by its
+ * folder's latest (no session id: codex resume --last, --continue) of an agent another of
+ * `runs` also runs in that folder. `runs`: [{ who, agent, cwd, session, mode }], the bot's
+ * first. Returns [{ agent, cwd, who: [every run there], idless: [the id-less resumes] }].
  */
-export function sharedResumes(runs) {
+export function sharedFolders(runs) {
   const groups = new Map();
   for (const r of runs) {
-    if (r.mode !== "resume" || r.session || !r.agent || !r.cwd) continue;
+    if (!r.agent || !r.cwd) continue;
     const k = `${r.agent}\u0000${r.cwd}`;
     groups.set(k, [...(groups.get(k) ?? []), r]);
   }
-  return [...groups.values()].filter((g) => g.length > 1).map((g) => `${g.map((r) => r.who).join(" and ")} each resume the latest ${g[0].agent} `
-    + `conversation in ${g[0].cwd} (no session id known), so one may have picked up another's; check them (hc read).`);
+  return [...groups.values()].filter((g) => g.length > 1)
+    .map((g) => ({ agent: g[0].agent, cwd: g[0].cwd, who: g.map((r) => r.who), idless: g.filter((r) => r.mode === "resume" && !r.session).map((r) => r.who) }))
+    .filter((g) => g.idless.length);
 }
 
 /**

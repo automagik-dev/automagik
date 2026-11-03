@@ -49,6 +49,8 @@ switch (words[0]) {
     break;
   }
   case "get": {
+    // state.failGet: terminals hc can't answer for (a server error, not "no such terminal").
+    if ((state.failGet ?? []).includes(words[1])) fail(`hc: server error reading ${words[1]}`);
     const t = find(words[1]);
     // Like the real one: exit 3 and a not_found error on stderr.
     if (!t) fail(JSON.stringify({ error: { kind: "not_found", message: `no terminal "${words[1]}"` } }), 3);
@@ -100,15 +102,26 @@ switch (words[0]) {
     const argv = foregroundOf(launch);
     // `env K=V … program …`: the program is the first word after the assignments.
     const program = /(^|\/)env$/.test(argv[0] ?? "") ? argv.slice(1).find((a) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(a)) : argv[0];
+    // state.failRun: names whose hc run fails (a name taken, the server refusing).
+    if ((state.failRun ?? []).includes(name)) fail(`hc: can't start ${name}`);
     const address = `t${state.next ?? 100}`;
     state.next = (state.next ?? 100) + 1;
     // state.runAs: "shell" (the agent never comes in front), "exit" (it ends at once) or
-    // "flaky" (its agent is in front for one hc get, then it exits).
-    const shell = state.runAs === "shell";
-    state.terminals.push({ address, name, cwd, labels, parent, die_with_parent: Boolean(parent) && !outlive, state: state.runAs === "exit" ? "finished" : "live", created_ms: Date.now(),
+    // "flaky" (its agent is in front for one hc get, then it exits); state.runAsFor[name]: the
+    // same, for the run of that name only.
+    const runAs = state.runAsFor?.[name] ?? state.runAs;
+    const shell = runAs === "shell";
+    // state.workingOnRun: terminals whose agent starts a turn when this run happens (once).
+    for (const a of state.workingOnRun ?? []) { const w = find(a); if (w) w.status = { ...(w.status ?? {}), state: "working" }; }
+    delete state.workingOnRun;
+    // state.failGetOnRun: terminals whose hc get starts failing when this run happens.
+    if (state.failGetOnRun) { state.failGet = [...(state.failGet ?? []), ...state.failGetOnRun]; delete state.failGetOnRun; }
+    // state.noCreated: names whose hc get gives no created_ms.
+    state.terminals.push({ address, name, cwd, labels, parent, die_with_parent: Boolean(parent) && !outlive, state: runAs === "exit" ? "finished" : "live",
+      ...((state.noCreated ?? []).includes(name) ? {} : { created_ms: Date.now() }),
       argv: launch, template: template?.name ?? null,
       pid: 9000 + Number(address.slice(1)), foreground: { argv: shell ? ["zsh"] : argv, cwd, pid: 5000 + Number(address.slice(1)) }, status: { app: program === "claude" ? "claude-code" : program, state: "working" },
-      ...(state.runAs === "flaky" ? { exitAfterGets: 1 } : {}) });
+      ...(runAs === "flaky" ? { exitAfterGets: 1 } : {}) });
     // state.onRunWrite: { path, text }: a file edit that lands while this run happens.
     if (state.onRunWrite) writeFileSync(state.onRunWrite.path, state.onRunWrite.text);
     save();

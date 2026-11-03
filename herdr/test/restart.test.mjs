@@ -5,10 +5,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { AGENTS, canResume, resumeArgs, withoutModel, withoutResume } from "../mods/am-sidebar/models.js";
-import { carriedLabels, continueRefusal, helperArgs, helperPlan, ledgerSession, paneCommand, planText, restartAnswer, restartArgs, restartPlan, restartRefusal,
-  sessionId, sessionOf, sharedResumes } from "../mods/am-sidebar/restart.js";
+import { carriedLabels, commandArgv, continueRefusal, helperArgs, helperPlan, ledgerSession, paneCommand, paneSession, planText, restartAnswer, restartArgs,
+  restartPlan, restartRefusal, sessionId, sessionOf, sharedFolders, takesWords, withoutPrompt } from "../mods/am-sidebar/restart.js";
 
 const SID = "0f3c2a4e-1b2d-4c5e-9f60-718293a4b5c6";
+const SID2 = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
 
 const claude = { agent: "claude", model: "claude-opus-5-5" };
 
@@ -189,7 +190,7 @@ test("helperPlan: a worker rebuilt from its ledger row (its task not sent again)
     labels: { "worker.of": "b-1", "agent.session": SID }, argv: ["/usr/bin/env", "PATH=/x", "omp", "--model=k", "--thinking=high", "the task"] };
   const worker = { agent: "omp", model: "k", effort: "high", template: null };
   const w = helperPlan({ get, worker, session: SID, agents: AGENTS });
-  assert.deepEqual([w.name, w.replaced, w.cwd, w.agent, w.mode, w.session], ["fix-dev", "t7", "/w/sub", "omp", "resume", SID]);
+  assert.deepEqual([w.name, w.replaced, w.cwd, w.agent, w.mode, w.session], ["fix-dev", "t7", "/w", "omp", "resume", SID]);
   assert.deepEqual(w.argv, ["omp", "--model=k", "--thinking=high", `--resume=${SID}`]);
   const tpl = helperPlan({ get: { address: "t8", cwd: "/r", foreground: { argv: ["codex", "-m", "g"] }, argv: ["sh", "-c", "codex -m g"], template: "rev" }, agents: AGENTS });
   assert.deepEqual(tpl.argv, ["sh", "-c", 'codex -m g "$@"', "sh", "resume", "--last"]);
@@ -203,9 +204,41 @@ test("helperPlan: a worker rebuilt from its ledger row (its task not sent again)
     ["run", "--bg", "--json", "--name", "fix-dev", "--cwd", "/w", "--label", "a=1", "--parent", "t100", "--", "/usr/bin/env", "PATH=/p", "omp"]);
 });
 
-test("sharedResumes: two id-less resumes of one agent in one folder are named; with an id, or in other folders, nothing", () => {
-  const runs = [{ who: "Genie", agent: "codex", cwd: "/w", session: null, mode: "resume" }, { who: "rev-1", agent: "codex", cwd: "/w", session: null, mode: "resume" },
-    { who: "dev", agent: "codex", cwd: "/w", session: SID, mode: "resume" }, { who: "other", agent: "codex", cwd: "/o", session: null, mode: "resume" }];
-  assert.deepEqual(sharedResumes(runs), ["Genie and rev-1 each resume the latest codex conversation in /w (no session id known), so one may have picked up another's; check them (hc read)."]);
-  assert.deepEqual(sharedResumes(runs.slice(2)), []);
+test("sharedFolders: an id-less resume sharing a folder and agent with another run (bot or helper, resumed or fresh) is named; one alone, or every one with an id, isn't", () => {
+  const six = ["t2p9", "t2pf", "t2ph", "t2pj", "t2pk", "t2pp"].map((who) => ({ who, agent: "codex", cwd: "/w/integration", session: null, mode: "resume" }));
+  const bot = { who: "Genie", agent: "claude", cwd: "/w", session: null, mode: "resume" };
+  assert.deepEqual(sharedFolders([bot, ...six]), [{ agent: "codex", cwd: "/w/integration", who: six.map((r) => r.who), idless: six.map((r) => r.who) }]);
+  assert.deepEqual(sharedFolders([bot, ...six.map((r, n) => ({ ...r, session: `0f3c2a4e-1b2d-4c5e-9f60-71829300000${n}` }))]), [], "each with its own id");
+  const fresh = { who: "Captain", agent: "codex", cwd: "/w/integration", session: null, mode: "fresh" };
+  assert.deepEqual(sharedFolders([fresh, six[0]]).map((g) => [g.who, g.idless]), [[["Captain", "t2p9"], ["t2p9"]]], "a fresh run there makes the newest conversation");
+  assert.deepEqual(sharedFolders([bot, six[0]]), []);
+});
+
+test("paneSession: the agent.session label, else revive.session when revive.agent names the agent (or is unset); never a non-id", () => {
+  assert.equal(paneSession({ labels: { "agent.session": SID, "revive.session": SID2 } }, "codex"), SID);
+  assert.equal(paneSession({ labels: { "revive.agent": "codex", "revive.session": SID2 } }, "codex"), SID2);
+  assert.equal(paneSession({ labels: { "revive.session": SID2 } }, "omp"), SID2);
+  assert.equal(paneSession({ labels: { "revive.agent": "claude", "revive.session": SID2 } }, "codex"), null, "another agent's session");
+  assert.equal(paneSession({ labels: { "revive.session": "-rf" } }, "codex"), null);
+});
+
+test("commandArgv: no \"$@\" after a command ending in a separator or a comment (null), none twice; withoutPrompt drops a trailing first prompt only", () => {
+  assert.equal(takesWords("omp --x"), true);
+  for (const c of ["omp --x;", "a && b &", "omp |", "omp --x # pinned"]) assert.equal(commandArgv({ shell: c }, ["--continue"]), null, c);
+  assert.deepEqual(commandArgv({ shell: 'omp --x "$@"' }, ["--continue"]), ["sh", "-c", 'omp --x "$@"', "sh", "--continue"], "its own \"$@\" takes them");
+  assert.deepEqual(commandArgv({ shell: "omp;" }), ["sh", "-c", "omp;"], "no words: as it was");
+  assert.deepEqual(withoutPrompt(["omp", "--model=k", "fix the login bug"]), ["omp", "--model=k"]);
+  assert.deepEqual(withoutPrompt(["codex", "-c", "a=b c"]), ["codex", "-c", "a=b c"], "an option's value stays");
+  assert.deepEqual(withoutPrompt(["omp", "task"]), ["omp", "task"], "a one-word prompt can't be told from an argument");
+  const tpl = restartPlan({ bot: { agent: "omp" }, run: ["omp"], runningAgent: "omp", launch: { shell: "omp --x # note" } });
+  assert.deepEqual([tpl.mode, tpl.argv, tpl.note], ["fresh", ["sh", "-c", "omp --x # note"], "its command ends in a separator or a comment, so it can't take resume words"]);
+});
+
+test("helperPlan: the worker's worktree first, then the pane's folder, then its program's; fresh when asked, with the reason", () => {
+  const get = { address: "t7", cwd: "/pane", foreground: { argv: ["omp"], cwd: "/pane/sub" }, labels: { "worker.of": "b-1" } };
+  assert.equal(helperPlan({ get, worker: { agent: "omp", worktree: "/wt" }, agents: AGENTS }).cwd, "/wt");
+  assert.equal(helperPlan({ get, agents: AGENTS }).cwd, "/pane");
+  assert.equal(helperPlan({ get: { ...get, cwd: undefined }, agents: AGENTS }).cwd, "/pane/sub");
+  const fresh = helperPlan({ get, worker: { agent: "omp" }, agents: AGENTS, fresh: "shared folder" });
+  assert.deepEqual([fresh.mode, fresh.argv, fresh.note], ["fresh", ["omp"], "shared folder"]);
 });
