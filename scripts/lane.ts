@@ -16,7 +16,8 @@
  *
  *   bun scripts/lane.ts kind <last-full-tag> [<last-tag>]       herdr | pocket | plugins | full: what the commits since need
  *   bun scripts/lane.ts herdr <last-tag>                         yes | no: whether the release rebuilds the herdr pack
- *   bun scripts/lane.ts pocket <last-tag>                        yes | no: whether the release rebuilds Pocket's app
+ *   bun scripts/lane.ts pocket <tag>                             yes | no: whether the release rebuilds Pocket's app
+ *   bun scripts/lane.ts pocket-since <last-tag> [<lane-version>] the tag Pocket's changes are measured from
  *   bun scripts/lane.ts ships <last-tag>                         yes | no: whether anything since it reaches an install
  *   bun scripts/lane.ts next-patch                               the next patch release: 3.N.(P+1) on the newest 3.N
  *   bun scripts/lane.ts pack-addons <dir>                          pack the add-ons the lane carries into dir, with addons.json
@@ -31,11 +32,13 @@
  * shipping herdr/ change since the last release attaches the pack (`herdr`), whatever its kind.
  *
  * Pocket's phone app (apps/pocket/, same RFC, "Pocket") is a part the same way: no desktop build or
- * plugin reads it, and phones update from the newest release that carries its latest.json. A release
+ * plugin reads it, and phones update from latest.json on the rolling pocket-lane release. A release
  * whose shipping changes since the last release are all under apps/pocket/, or under apps/pocket/ and
  * herdr/, is a `pocket` patch: the app (and the pack, when herdr/ shipped too), no desktop build, no
- * plugin tarballs, no new lane. Any release with a shipping apps/pocket/ change since the last release
- * builds the signed APK and its latest.json (`pocket`), whatever its kind. Pocket Link
+ * plugin tarballs, no new lane. Any release with a shipping apps/pocket/ change since the build phones
+ * have (the version pocket-lane names, `pocket-since`) builds the signed APK and its latest.json
+ * (`pocket`), whatever its kind: a Pocket change that shipped only in a prerelease, or whose lane post
+ * failed, is built again by the next release. Pocket Link
  * (herdr/mods/pocket-link) is under herdr/ and goes with the pack's lane.
  */
 import { createHash, createPrivateKey, createPublicKey, sign as signBytes, verify as verifyBytes } from 'node:crypto';
@@ -44,7 +47,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { ReleasePlugins } from './release-plugins';
-import { FIELDS, MAX_PART } from './version';
+import { FIELDS, MAX_PART, VERSION } from './version';
 
 export const ROOT = join(import.meta.dir, '..');
 export const LANE_RELEASE = 'plugin-lane';
@@ -153,6 +156,17 @@ export const herdrShips = (changed: string[], inert: (path: string) => boolean =
 /** Whether any of `changed` (since the last release) ships in Pocket's app: the release rebuilds it. */
 export const pocketShips = (changed: string[], inert: (path: string) => boolean = () => false) =>
   changed.some(path => POCKET.test(path) && !neverShipped(path) && !inert(path));
+
+/**
+ * The tag Pocket's changes are measured from: the release whose build phones have, the version
+ * pocket-lane's latest.json names, when that is a tag here; else `last`, the last release (before
+ * the first Pocket release, or when the lane can't be read). A prerelease never moves pocket-lane, so
+ * a Pocket change in one is still ahead of the lane and the next release builds it.
+ */
+export function pocketSince(last: string, laneVersion: string | undefined, tags: string[]): string {
+  const tag = laneVersion && VERSION.test(laneVersion) ? `v${laneVersion}` : '';
+  return tag && tags.includes(tag) ? tag : last;
+}
 
 /**
  * `herdr` when everything shipping in `sinceLast` (the changes since the last release, any tag) is
@@ -342,6 +356,8 @@ if (import.meta.main) {
       const sinceLast = args[1] ? diff(args[1]) : undefined;
       console.log(kindOf(changed, installChanged, path => versionOnly(path) || addonPins(path) || unpacked(path), sinceLast));
     }
+  } else if (command === 'pocket-since' && (args.length === 1 || args.length === 2)) {
+    console.log(pocketSince(args[0], args[1], git('tag', '--list', 'v3.*').split('\n').filter(Boolean)));
   } else if (command === 'next-patch') {
     console.log(nextPatch(git('tag', '--list', 'v3.*').split('\n').filter(Boolean)));
   } else if (command === 'pack-addons' && args.length === 1) {
@@ -366,7 +382,7 @@ if (import.meta.main) {
     const lane = verifyLane(readFileSync(args[0]), readFileSync(args[1], 'utf8'), keys);
     console.log(`lane ${lane.version} (sequence ${lane.sequence}) is signed by ${lane.keyId}`);
   } else {
-    console.error('usage: bun scripts/lane.ts kind <last-full-tag> [<last-tag>] | ships <last-tag> | herdr <last-tag> | pocket <last-tag> | next-patch | pack-addons <dir> | manifest <plugins.json> <base> <issuedAt> [addons.json] | sign <lane.json> | verify <lane.json> <sig>');
+    console.error('usage: bun scripts/lane.ts kind <last-full-tag> [<last-tag>] | ships <last-tag> | herdr <last-tag> | pocket <tag> | pocket-since <last-tag> [<lane-version>] | next-patch | pack-addons <dir> | manifest <plugins.json> <base> <issuedAt> [addons.json] | sign <lane.json> | verify <lane.json> <sig>');
     process.exit(2);
   }
 }

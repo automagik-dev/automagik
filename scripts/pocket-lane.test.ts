@@ -11,12 +11,16 @@ const read = (path: string) => readFileSync(join(ROOT, path), 'utf8');
 const release = read('.github/workflows/release.yml');
 const LANES = ['pocket-lane', 'herdr-lane', 'plugin-lane'];
 
-/** The `pocket` job of release.yml, up to the next job. */
-const pocketJob = (() => {
-  const start = release.indexOf('\n  pocket:\n');
-  const end = release.indexOf('\n  desktop:\n', start);
+/** A job of release.yml, from its key up to the next job's. */
+const job = (key: string, next: string) => {
+  const start = release.indexOf(`\n  ${key}:\n`);
+  const end = release.indexOf(`\n  ${next}:\n`, start);
   return start < 0 || end < 0 ? '' : release.slice(start, end);
-})();
+};
+/** `pocket` builds the APK and attaches it; `pocket-lane` alone posts the pointer. */
+const buildJob = job('pocket', 'pocket-lane');
+const laneJob = job('pocket-lane', 'desktop');
+const pocketJob = buildJob + laneJob;
 
 describe('pocket-lane is never taken for a release', () => {
   test('every tag filter in release.yml takes v3.N.P and no rolling lane', () => {
@@ -54,9 +58,28 @@ describe('pocket-lane is never taken for a release', () => {
     expect(release).not.toMatch(/gh release edit pocket-lane/);
     expect([...pocketJob.matchAll(/gh release upload pocket-lane ([^\n]*)/g)].map(match => match[1].split(' --')[0])).toEqual(['pocket/latest.json']);
     // Only a release that is not a prerelease moves it, one run at a time, and never to a lower versionCode.
-    expect(pocketJob).toMatch(/- name: Post latest\.json on pocket-lane\n\s+if: env\.PRERELEASE != 'true'/);
-    expect(pocketJob).toMatch(/concurrency:\n\s+group: pocket-lane\n\s+cancel-in-progress: false/);
-    expect(pocketJob).toContain('if (( code <= ${current:-0} )); then');
+    expect(laneJob).toContain("if: needs.cut.outputs.version != '' && needs.cut.outputs.pocket == 'yes' && inputs.prerelease != true");
+    expect(laneJob).toMatch(/concurrency:\n\s+group: pocket-lane\n\s+cancel-in-progress: false/);
+    expect(laneJob).toContain('if (( code <= ${current:-0} )); then');
+    expect(laneJob).toContain('gh release upload pocket-lane pocket/latest.json --clobber');
+    // It posts the latest.json the build attached to vX.Y.Z, after that build succeeded.
+    expect(laneJob).toContain('needs: [cut, pocket]');
+    expect(laneJob).toContain('gh release download "v${VERSION}" --repo "${GITHUB_REPOSITORY}" -p latest.json -D pocket');
+  });
+
+  test('the build is never in a concurrency group, so no release loses its APK to a newer run', () => {
+    expect(buildJob).not.toBe('');
+    expect(buildJob).not.toContain('concurrency:');
+    expect(buildJob).not.toContain('gh release upload pocket-lane');
+    expect([...release.matchAll(/group: pocket-lane/g)].length).toBe(1);
+    // The APK's versionCode is checked against scripts/version.ts, the one formula.
+    expect(buildJob).toContain('want=$(bun scripts/version.ts code "${VERSION}")');
+  });
+
+  test('Pocket is rebuilt from the version pocket-lane names, so a prerelease-only fix still reaches phones', () => {
+    expect(release).toContain('pocket_since=$(bun scripts/lane.ts pocket-since "${last}" "${lane_version}")');
+    expect(release).toContain('pocket=$(bun scripts/lane.ts pocket "${pocket_since}")');
+    expect(release).not.toContain('pocket=$(bun scripts/lane.ts pocket "${last}")');
   });
 
   test('latest.json names the APK on its own vX.Y.Z release with its sha256, and goes up after it', () => {

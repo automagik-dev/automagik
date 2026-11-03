@@ -41,8 +41,11 @@ the build they have.
       `major*1_000_000 + minor*1_000 + patch`.
    3. Attaches `automagik-pocket-<version>.apk`, then `latest.json` (`versionCode`, `versionName`,
       `url` on this release, `sha256`, `notes`), to `vX.Y.Z`.
-   4. Unless the run is a prerelease, replaces `latest.json` on the rolling `pocket-lane` release,
-      never with a lower `versionCode`. Installed phones read only that file.
+3. **Pocket lane** (job "Pocket lane"), unless the run is a prerelease: replaces `latest.json` on the
+   rolling `pocket-lane` release with this release's, one run at a time and never with a lower
+   `versionCode`. Installed phones read only that file. A Pocket change that shipped only in a
+   prerelease is built again by the next release, because Pocket's changes are measured from the
+   version `pocket-lane` names.
 
 Installed copies find the new `latest.json` at their next check (on launch, then every 6 hours).
 

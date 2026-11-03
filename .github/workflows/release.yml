@@ -117,6 +117,7 @@ jobs:
       lane: ${{ steps.lane.outputs.kind }}
       herdr: ${{ steps.lane.outputs.herdr }}
       pocket: ${{ steps.lane.outputs.pocket }}
+      pocket_since: ${{ steps.lane.outputs.pocket_since }}
     env:
       DO_NOT_TRACK: '1'
       GH_TOKEN: ${{ github.token }}
@@ -174,10 +175,14 @@ jobs:
           kind=$(bun scripts/lane.ts kind "${full}" "${last}")
           # The herdr pack is rebuilt when herdr/ shipped something since the last release, any kind.
           herdr=$(bun scripts/lane.ts herdr "${last}")
-          # Pocket's app is rebuilt when apps/pocket/ shipped something since the last release, any kind.
-          pocket=$(bun scripts/lane.ts pocket "${last}")
-          { echo "kind=${kind}"; echo "herdr=${herdr}"; echo "pocket=${pocket}"; echo "base=${full#v}"; } >> "$GITHUB_OUTPUT"
-          echo "since ${full:-the start}: ${kind} release; since ${last:-the start}, the herdr pack: ${herdr}, Pocket: ${pocket}"
+          # Pocket's app is rebuilt when apps/pocket/ shipped something since the build phones have: the
+          # version pocket-lane names (a prerelease never moves it, so a Pocket change in one comes
+          # again), or the last release when there is no lane yet (scripts/lane.ts pocket-since).
+          lane_version=$(gh release download pocket-lane --repo "${GITHUB_REPOSITORY}" -p latest.json -O - 2>/dev/null | jq -r '.versionName // empty' 2>/dev/null || true)
+          pocket_since=$(bun scripts/lane.ts pocket-since "${last}" "${lane_version}")
+          pocket=$(bun scripts/lane.ts pocket "${pocket_since}")
+          { echo "kind=${kind}"; echo "herdr=${herdr}"; echo "pocket=${pocket}"; echo "pocket_since=${pocket_since}"; echo "base=${full#v}"; } >> "$GITHUB_OUTPUT"
+          echo "since ${full:-the start}: ${kind} release; since ${last:-the start}, the herdr pack: ${herdr}; since ${pocket_since:-the start}, Pocket: ${pocket}"
 
       # The old automagik-herdr CI gate, on the pack this release attaches (Node 22.7+, shellcheck).
       - name: The herdr pack's gates
@@ -414,19 +419,15 @@ jobs:
     if: needs.cut.outputs.version != '' && needs.cut.outputs.pocket == 'yes'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # One at a time across runs: two releases never replace pocket-lane's latest.json together, and
-    # the step below never moves it to a lower versionCode. herdr-lane (the cut job) and plugin-lane
-    # are other releases with other files, so this job shares no asset with them; on vX.Y.Z it adds
-    # only its own two, which desktop-build.yml keeps (its asset sweep spares them).
-    concurrency:
-      group: pocket-lane
-      cancel-in-progress: false
+    # No concurrency group: every release that rebuilt Pocket gets its APK and latest.json, never
+    # dropped for a newer run. Only the small pocket-lane job below takes turns. On vX.Y.Z this job
+    # adds only its own two files, which desktop-build.yml keeps (its asset sweep spares them).
     permissions:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ needs.cut.outputs.version }}
-      PRERELEASE: ${{ inputs.prerelease }}
+      SINCE: ${{ needs.cut.outputs.pocket_since }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -445,6 +446,10 @@ jobs:
           packages: 'platforms;android-35 build-tools;35.0.0'
 
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
 
       # The keystore is written to the runner's temp folder for this one build and removed after it.
       - name: Build the release APK
@@ -468,17 +473,15 @@ jobs:
           meta=apps/pocket/android/app/build/outputs/apk/release/output-metadata.json
           code=$(jq -r '.elements[0].versionCode' "$meta")
           name=$(jq -r '.elements[0].versionName' "$meta")
-          IFS=. read -r major minor patch <<< "${VERSION}"
-          want=$(( major * 1000000 + minor * 1000 + patch ))
+          want=$(bun scripts/version.ts code "${VERSION}")
           [ "$name" = "$VERSION" ] || { echo "::error::the APK says ${name}, the tag says ${VERSION}"; exit 1; }
           [ "$code" = "$want" ] || { echo "::error::the APK's versionCode is ${code}, ${VERSION} gives ${want}"; exit 1; }
           mkdir -p pocket
           apk="automagik-pocket-${VERSION}.apk"
           cp apps/pocket/android/app/build/outputs/apk/release/app-release.apk "pocket/${apk}"
           sha=$(sha256sum "pocket/${apk}" | cut -d' ' -f1)
-          # What changed in the app: the subjects since the last release that touched apps/pocket/.
-          previous=$(git tag --list 'v3.*' --sort=-v:refname | grep -E '^v3\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})$' | grep -vxF "v${VERSION}" | head -1 || true)
-          summary=$(git log --no-merges --format='%s' "${previous:+${previous}..}v${VERSION}" -- apps/pocket | grep -vE '^chore\(release\)' | head -5 | paste -sd ';' - | head -c 400 || true)
+          # What changed in the app: the subjects that touched apps/pocket/ since the build phones have.
+          summary=$(git log --no-merges --format='%s' "${SINCE:+${SINCE}..}v${VERSION}" -- apps/pocket | grep -vE '^chore\(release\)' | head -5 | paste -sd ';' - | head -c 400 || true)
           jq -n --argjson code "$code" --arg name "$name" --arg sha "$sha" --arg notes "$summary" \
             --arg url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/${apk}" \
             '{versionCode: $code, versionName: $name, url: $url, sha256: $sha, notes: $notes}' > pocket/latest.json
@@ -491,14 +494,33 @@ jobs:
           gh release upload "v${VERSION}" "pocket/automagik-pocket-${VERSION}.apk" --repo "${GITHUB_REPOSITORY}"
           gh release upload "v${VERSION}" pocket/latest.json --repo "${GITHUB_REPOSITORY}"
 
-      # Installed phones read only this (docs/rfcs/0011-monorepo-parts-and-releases.md, "Pocket"). A
-      # prerelease run never moves it. Its tag is not v*, so no updater or tag lookup that keys on v3.N.P
-      # takes it, and it is created as a prerelease and never edited, so it is never Latest. A newer run
-      # may have moved it already: it never goes to a lower versionCode.
+  pocket-lane:
+    name: Pocket lane
+    needs: [cut, pocket]
+    # Installed phones read only this (docs/rfcs/0011-monorepo-parts-and-releases.md, "Pocket"). A
+    # prerelease run never moves it, so it never enters the group. Its tag is not v*, so no updater or
+    # tag lookup that keys on v3.N.P takes it, and it is created as a prerelease and never edited, so
+    # it is never Latest. One at a time across runs: GitHub keeps at most one job waiting in the group
+    # and drops an older waiting one for a newer, which is only ever a later release whose APK built,
+    # so the lane still ends on the newest build. It never moves to a lower versionCode either.
+    # herdr-lane (the cut job) and plugin-lane are other releases with other files.
+    if: needs.cut.outputs.version != '' && needs.cut.outputs.pocket == 'yes' && inputs.prerelease != true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: pocket-lane
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.cut.outputs.version }}
+    steps:
       - name: Post latest.json on pocket-lane
-        if: env.PRERELEASE != 'true'
         run: |
           set -euo pipefail
+          mkdir -p pocket
+          gh release download "v${VERSION}" --repo "${GITHUB_REPOSITORY}" -p latest.json -D pocket
           if ! gh release view pocket-lane --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release create pocket-lane --repo "${GITHUB_REPOSITORY}" --target dev --prerelease --latest=false \
               --title "Automagik Pocket lane" \

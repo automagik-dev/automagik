@@ -3,7 +3,7 @@ import { createHash, generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addonPinsOnly, herdrShips, kindOf, LANE_ADDONS, manifest, nextPatch, pocketShips, sequenceOf, ships, signLane, unpackedIn, verifyLane } from './lane';
+import { addonPinsOnly, herdrShips, kindOf, LANE_ADDONS, manifest, nextPatch, pocketShips, pocketSince, sequenceOf, ships, signLane, unpackedIn, verifyLane } from './lane';
 
 describe('the plugin lane', () => {
   test('only changes inside the plugins ride the lane; anything the app or an install sees is a full release', () => {
@@ -77,6 +77,22 @@ describe('the plugin lane', () => {
       'apps/pocket/android/app/src/test/java/ai/namastex/automagik/ReleaseTest.kt', 'apps/pocket/android/scripts/test_terminal.py'];
     expect(ships(notes, none)).toBe(false);
     expect(pocketShips(notes)).toBe(false);
+  });
+
+  // Pocket is rebuilt from what phones have, the version pocket-lane names, not from the last tag: a
+  // prerelease never moves the lane, so a Pocket fix that shipped only in one reaches phones with the
+  // next release, even when that release changes nothing under apps/pocket/.
+  test('Pocket\'s changes are measured from the build pocket-lane names, past prereleases and failed posts', () => {
+    const tags = ['v3.59.0', 'v3.59.1', 'v3.59.2', 'v3.60.0'];
+    // v3.59.1 was a prerelease with a Pocket fix; pocket-lane still names 3.59.0.
+    expect(pocketSince('v3.60.0', '3.59.0', tags)).toBe('v3.59.0');
+    const sincePrerelease = ['apps/pocket/android/app/src/main/java/ai/namastex/automagik/Updater.kt', 'apps/desktop/src/main.js'];
+    expect(pocketShips(sincePrerelease)).toBe(true);
+    // Up to date: the lane names the last release.
+    expect(pocketSince('v3.60.0', '3.60.0', tags)).toBe('v3.60.0');
+    // No lane yet (before the first Pocket release), an unreadable one, or a version with no tag here: the last release.
+    for (const lane of [undefined, '', 'null', '0.23.0', '3.61.0', 'pocket-lane']) expect(pocketSince('v3.60.0', lane, tags)).toBe('v3.60.0');
+    expect(pocketSince('', undefined, [])).toBe('');
   });
 
   test('a patch stops at 3.N.999: Pocket\'s versionCode gives a patch three digits', () => {

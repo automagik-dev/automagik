@@ -266,9 +266,13 @@ README, recipe, keys, licence and preview beside the mod, as the pack's mods kee
 
 ### Lane
 
-- `pocket` (`apps/pocket/**`). `scripts/lane.ts pocket <last-tag>` says whether a release rebuilds
-  the app: a shipping `apps/pocket/` change since the last release (any tag), version-only bumps
-  aside. Never shipped in the part: its top-level `*.md`, `docs/`, unit tests (`test/`) and
+- `pocket` (`apps/pocket/**`). `scripts/lane.ts pocket <tag>` says whether a release rebuilds the
+  app: a shipping `apps/pocket/` change since the build phones have, version-only bumps aside. That
+  tag is `scripts/lane.ts pocket-since`: the version `pocket-lane`'s `latest.json` names, or the last
+  release when there is no lane yet. It is not simply the last tag, because a prerelease never moves
+  `pocket-lane`. A Pocket change that shipped only in a prerelease (or whose lane post failed) is
+  therefore still ahead of the lane, and the next release builds it again, even when that release
+  changes nothing under `apps/pocket/`. Never shipped in the part: its top-level `*.md`, `docs/`, unit tests (`test/`) and
   `android/scripts/` (the terminal page's test, the vendoring script).
 - A release whose shipping changes since the last release are all under `apps/pocket/`, or under
   `apps/pocket/` and the herdr part (`herdr/`, `herdr-layout/`), is a `pocket` patch: 3.N.P, the APK (and the pack when `herdr/`
@@ -289,7 +293,7 @@ README, recipe, keys, licence and preview beside the mod, as the pack's mods kee
   `bun scripts/version.ts set` and `next` refuse more, `scripts/lane.ts next-patch` refuses
   3.N.1000 (cut 3.(N+1).0 instead), and Gradle refuses to build one. The release workflow sets the
   version through `version.ts`, so it refuses it too. `bun scripts/version.ts code <v>` prints the
-  code; the release job checks the APK's against it.
+  code; the Pocket job checks the APK's versionCode against it.
 - The jump: automagik-pocket's builds used minutes since 2025 (v0.21.0 was 966485, about 966 000 in
   November 2026), and any 3.N.P is at least 3 001 000, so installed phones accept it. The
   `-Ppocket.versionCode=` override stays for local self-update tests.
@@ -305,7 +309,8 @@ README, recipe, keys, licence and preview beside the mod, as the pack's mods kee
   after it `latest.json` (`versionCode`, `versionName`, `url` on that `vX.Y.Z`, `sha256`, `notes`) to
   the release. The asset is no longer `automagik.apk`: a monorepo release is shared, and phones take
   the URL from `latest.json`, never from a name.
-- Then, unless the run is a prerelease, it replaces `latest.json` on `pocket-lane`.
+- Then, unless the run is a prerelease, a small `pocket-lane` job (`needs: [cut, pocket]`) takes the
+  `latest.json` from `vX.Y.Z` and replaces the one on `pocket-lane`.
 - `desktop-build.yml`'s sweep of a full release's assets spares `automagik-pocket-*.apk` and
   `latest.json`.
 
@@ -351,12 +356,16 @@ acceptable because the pointer cannot make a phone install anything the release 
   release replaces it. The herdr pack runs code from a tarball with no such check, which is why its
   pointer is signed.
 
-Races: `herdr-lane` is posted by the `cut` job and `pocket-lane` by the `Pocket` job, which runs
-after it (`needs: cut`). They are separate releases holding separate files, and on `vX.Y.Z` the
-Pocket job adds only its own two assets, so they never write the same asset. The Pocket job runs in
-the `pocket-lane` concurrency group (one at a time, none cancelled) and keeps the higher versionCode,
-so two runs never interleave on the pointer, and an older run that finishes last does not move it
-back.
+Races: `herdr-lane` is posted by the `cut` job, and `pocket-lane` by the `pocket-lane` job, which runs
+after the cut and the Pocket build. They are separate releases holding separate files. On `vX.Y.Z`,
+the Pocket job adds only its own two assets, so the two never write the same asset. The Pocket build
+is in no concurrency group, so every release that rebuilt Pocket gets its APK and `latest.json`.
+Only the `pocket-lane` job takes turns, in the `pocket-lane` group, so two runs never interleave on
+the pointer. GitHub keeps at most one job waiting in a group and drops an older waiting one when a
+newer one arrives, even with `cancel-in-progress: false`. The newer one is always a later
+non-prerelease release whose APK built (a prerelease or a failed build never enters the group), so
+the pointer still ends on the newest build. The job also never moves it to a lower versionCode, so
+an older run that finishes last leaves it alone.
 
 ### Signing secrets
 
