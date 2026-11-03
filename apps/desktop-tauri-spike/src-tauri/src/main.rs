@@ -31,7 +31,12 @@ use std::{
 };
 
 use serde_json::{json, Value};
-use tauri::{Manager, RunEvent, TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+#[cfg(target_os = "macos")]
+use tauri::TitleBarStyle;
+
+/// The Node executable's file name on this OS.
+const NODE_EXE: &str = if cfg!(windows) { "node.exe" } else { "node" };
 
 const PROFILE: &str = "omni";
 const MIN_NODE: (u32, u32) = (22, 19);
@@ -75,7 +80,7 @@ fn find_node(user_home: &Path) -> Option<(PathBuf, String, &'static str)> {
     }
     if let Some(path) = env::var_os("PATH") {
         for dir in env::split_paths(&path) {
-            candidates.push((dir.join("node"), "PATH"));
+            candidates.push((dir.join(NODE_EXE), "PATH"));
         }
     }
     let nvm = user_home.join(".nvm/versions/node");
@@ -135,18 +140,30 @@ fn app_home() -> PathBuf {
 }
 
 /// dsh.js installProfile, first-install case only: copy (not link) the shipped profile into
-/// DSH_HOME/profiles/omni. `cp -R` keeps the profile's relative symlinks as symlinks.
-fn install_profile(dsh_home: &Path, source: &Path) -> std::io::Result<bool> {
+/// DSH_HOME/profiles/omni. `cp -R` keeps the profile's relative symlinks as symlinks; Windows
+/// has no `cp`, so there Node's fs.cpSync copies it (keeping pnpm's junctions as links).
+fn install_profile(dsh_home: &Path, source: &Path, node: &Path) -> std::io::Result<bool> {
     let target = dsh_home.join("profiles").join(PROFILE);
     if target.join("package.json").is_file() {
         return Ok(false);
     }
     fs::create_dir_all(dsh_home.join("profiles"))?;
-    let status = Command::new("cp")
-        .arg("-R")
-        .arg(source)
-        .arg(&target)
-        .status()?;
+    let status = if cfg!(windows) {
+        Command::new(node)
+            .args([
+                "-e",
+                "require('fs').cpSync(process.argv[1], process.argv[2], { recursive: true, verbatimSymlinks: true })",
+            ])
+            .arg(source)
+            .arg(&target)
+            .status()?
+    } else {
+        Command::new("cp")
+            .arg("-R")
+            .arg(source)
+            .arg(&target)
+            .status()?
+    };
     if !status.success() {
         return Err(std::io::Error::other("cp -R of the profile failed"));
     }
@@ -157,7 +174,21 @@ fn shell_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 
+/// dsh.js writeTools on Windows: `node.cmd` and `pnpm.cmd` (a `#!/bin/sh` shim does not run there).
+#[cfg(windows)]
+fn write_tools(dir: &Path, node: &Path, pnpm: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dir)?;
+    let node = node.to_string_lossy();
+    fs::write(dir.join("node.cmd"), format!("@echo off\r\n\"{node}\" %*\r\n"))?;
+    fs::write(
+        dir.join("pnpm.cmd"),
+        format!("@echo off\r\n\"{node}\" \"{}\" %*\r\n", pnpm.to_string_lossy()),
+    )?;
+    Ok(())
+}
+
 /// dsh.js writeTools: `node` and `pnpm` for dsh's PATH, on the Node we found.
+#[cfg(unix)]
 fn write_tools(dir: &Path, node: &Path, pnpm: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     fs::create_dir_all(dir)?;
@@ -222,8 +253,8 @@ fn start_dsh(home: &Path, resources: &Path, user_home: &Path) -> Result<String, 
         return Err(format!("no DSH runtime at {}", bin.display()));
     }
     let dsh_home = home.join("dsh");
-    let installed =
-        install_profile(&dsh_home, &resources.join("profile")).map_err(|e| e.to_string())?;
+    let installed = install_profile(&dsh_home, &resources.join("profile"), &node)
+        .map_err(|e| e.to_string())?;
     mark(if installed {
         "profile installed (copied)"
     } else {
@@ -329,6 +360,12 @@ fn stop_dsh() {
     if matches!(child.try_wait(), Ok(Some(_))) {
         return;
     }
+    // Windows has no SIGTERM: taskkill without /F asks the process tree to close.
+    #[cfg(windows)]
+    let _ = Command::new("taskkill")
+        .args(["/PID", &child.id().to_string(), "/T"])
+        .status();
+    #[cfg(unix)]
     let _ = Command::new("kill")
         .args(["-TERM", &child.id().to_string()])
         .status();
@@ -375,6 +412,7 @@ fn spike_bridge(webview: tauri::Webview, kind: String, payload: Value) -> Value 
 
 /// One persistent, isolated website data store per Bot: WKWebsiteDataStore(forIdentifier:),
 /// macOS 14+. Electron's equivalent is the partition `persist:ds-bot-browser-<bot>`.
+#[cfg(target_os = "macos")]
 fn data_store_of(bot: &str) -> [u8; 16] {
     let mut id = [0u8; 16];
     for (i, b) in format!("automagik-bot-{bot}").bytes().enumerate() {
@@ -395,8 +433,13 @@ fn add_bot_views(window: &tauri::WebviewWindow, url: &str) -> tauri::Result<()> 
     let host = window.as_ref().window();
     for (i, bot) in ["a", "b"].into_iter().enumerate() {
         let target: tauri::Url = format!("{url}?bot={bot}").parse().expect("bot url");
-        let builder = WebviewBuilder::new(format!("bot-{bot}"), WebviewUrl::External(target))
-            .data_store_identifier(data_store_of(bot));
+        let builder = WebviewBuilder::new(format!("bot-{bot}"), WebviewUrl::External(target));
+        // macOS: one WKWebsiteDataStore per Bot. Linux (WebKitGTK) and Windows (WebView2) have no
+        // data store identifier; there each Bot gets a data directory of its own instead.
+        #[cfg(target_os = "macos")]
+        let builder = builder.data_store_identifier(data_store_of(bot));
+        #[cfg(not(target_os = "macos"))]
+        let builder = builder.data_directory(app_home().join("bot-stores").join(bot));
         host.add_child(
             builder,
             LogicalPosition::new(w * 0.5, h * 0.5 * i as f64),
@@ -408,13 +451,15 @@ fn add_bot_views(window: &tauri::WebviewWindow, url: &str) -> tauri::Result<()> 
 }
 
 fn make_window(handle: &tauri::AppHandle, url: WebviewUrl) -> tauri::Result<tauri::WebviewWindow> {
-    let window = WebviewWindowBuilder::new(handle, "main", url)
+    let builder = WebviewWindowBuilder::new(handle, "main", url)
         .title("Automagik (Tauri spike)")
         .inner_size(1280.0, 820.0)
+        .initialization_script(init_script());
+    #[cfg(target_os = "macos")]
+    let builder = builder
         .title_bar_style(TitleBarStyle::Overlay)
-        .hidden_title(true)
-        .initialization_script(init_script())
-        .build()?;
+        .hidden_title(true);
+    let window = builder.build()?;
     mark("window created");
     Ok(window)
 }

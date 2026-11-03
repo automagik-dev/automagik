@@ -1,0 +1,343 @@
+name: Cross-OS wrapper spike
+
+# SPIKE (D12, approved by Felipe): which desktop wrapper works on every OS? Builds today's
+# Electron app (apps/desktop at `desktop_ref`, default dev) and the Tauri 2 spike
+# (apps/desktop-tauri-spike at this commit) on macOS arm64, Ubuntu 24.04 and Windows, then on
+# each OS: starts both (Linux under xvfb) with DSH and the omni profile in a temp home, checks
+# DSH's page, opens 2 Bot browser views with isolated persistent stores, tries Bot browser
+# automation over CDP, records cold start, idle RSS and bundle sizes, packages both unsigned,
+# and checks herdr-app's builds for the OS. The harness is apps/desktop-tauri-spike/cross-os/run.mjs.
+# Every check is one JSON line; the report job turns them into the table in the run summary.
+#
+# By hand only: gh workflow run cross-os.yml --ref spike/cross-os. It never runs on a push or a
+# pull request, signs nothing, publishes nothing and uses no secrets.
+
+on:
+  workflow_dispatch:
+    inputs:
+      desktop_ref:
+        description: 'Ref of the Electron app to build (apps/desktop)'
+        required: false
+        type: string
+        default: dev
+      idle_seconds:
+        description: 'Seconds of idle before the RSS read'
+        required: false
+        type: string
+        default: '60'
+
+permissions: {}
+
+jobs:
+  matrix:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos
+            os: macos-latest
+          - name: linux
+            os: ubuntu-24.04
+          - name: windows
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      DO_NOT_TRACK: '1'
+      HARNESS: ${{ github.workspace }}/apps/desktop-tauri-spike/cross-os/run.mjs
+      RESULTS: ${{ github.workspace }}/out/results-${{ matrix.name }}.jsonl
+      LOGS: ${{ github.workspace }}/out/logs-${{ matrix.name }}
+      IDLE_SECONDS: ${{ inputs.idle_seconds }}
+      DESKTOP: ${{ github.workspace }}/app/apps/desktop
+      SPIKE: ${{ github.workspace }}/apps/desktop-tauri-spike
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Check out the Electron app at ${{ inputs.desktop_ref }}
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.desktop_ref }}
+          path: app
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24'
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Runner
+        run: |
+          mkdir -p "$LOGS"
+          node "$HARNESS" runner
+          git -C app log -1 --format='app at %H %s'
+
+      - name: Linux system packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libfuse2 patchelf xvfb >/dev/null
+          # Chromium's and WebKitGTK's sandboxes need unprivileged user namespaces, which Ubuntu 24.04 restricts.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # ---------- 1. Build: Electron ----------
+
+      - name: 'Electron: install'
+        id: e_install
+        continue-on-error: true
+        working-directory: app/apps/desktop
+        run: npm ci --no-audit --no-fund
+
+      - name: 'Electron: prepare the runtime and the plugins'
+        id: e_prep
+        continue-on-error: true
+        working-directory: app/apps/desktop
+        run: |
+          set -o pipefail
+          node scripts/prepare-runtime.mjs 2>&1 | tee "$LOGS/electron-prepare-runtime.log"
+
+      - name: 'Electron: prepare the runtime with the .cmd shim (Windows, after a failure)'
+        id: e_prep_shim
+        if: runner.os == 'Windows' && steps.e_prep.outcome == 'failure'
+        continue-on-error: true
+        working-directory: app/apps/desktop
+        run: |
+          set -o pipefail
+          rm -rf build
+          NODE_OPTIONS="--require $SPIKE/cross-os/win-cmd-shim.cjs" node scripts/prepare-runtime.mjs 2>&1 | tee "$LOGS/electron-prepare-runtime-shim.log"
+
+      - name: 'Electron: the workspace (playwright-core for the Bot browser smoke)'
+        id: e_bun
+        continue-on-error: true
+        working-directory: app
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: 'Electron: package (unsigned)'
+        id: e_pack
+        continue-on-error: true
+        working-directory: app/apps/desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          set -o pipefail
+          case "$RUNNER_OS" in
+            Linux) npx --no-install electron-builder --linux AppImage deb --publish never ;;
+            macOS)
+              sudo sysctl -w kern.maxfiles=524288 kern.maxfilesperproc=524288 >/dev/null
+              sudo launchctl limit maxfiles 524288 524288
+              ulimit -n 524288
+              npx --no-install electron-builder --mac dmg --arm64 --publish never ;;
+            Windows) npx --no-install electron-builder --win nsis msi --x64 --publish never '-c.win.artifactName=Automagik-${version}-win-${arch}.${ext}' ;;
+          esac 2>&1 | tee "$LOGS/electron-package.log"
+          ls -la dist
+
+      # ---------- 1. Build: Tauri ----------
+
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+        with:
+          workspaces: apps/desktop-tauri-spike/src-tauri
+
+      - name: 'Tauri: build and package (unsigned)'
+        id: t_pack
+        continue-on-error: true
+        working-directory: apps/desktop-tauri-spike/src-tauri
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+          NO_STRIP: 'true'
+        run: |
+          set -o pipefail
+          case "$RUNNER_OS" in
+            Linux) bundles=appimage,deb ;;
+            macOS) bundles=app,dmg ;;
+            Windows) bundles=nsis,msi ;;
+          esac
+          rustc --version
+          npx --yes @tauri-apps/cli@2.12.4 build --bundles "$bundles" 2>&1 | tee "$LOGS/tauri-build.log"
+          find target/release/bundle -maxdepth 2 | head -40
+
+      - name: Record the builds and packages
+        if: always()
+        env:
+          E_INSTALL: ${{ steps.e_install.outcome }}
+          E_PREP: ${{ steps.e_prep.outcome }}
+          E_PREP_SHIM: ${{ steps.e_prep_shim.outcome }}
+          E_PACK: ${{ steps.e_pack.outcome }}
+          T_PACK: ${{ steps.t_pack.outcome }}
+        run: |
+          rec() { node "$HARNESS" record --shell "$1" --check "$2" --result "$3" --reason "$4"; }
+          tail_of() { [ -f "$1" ] && grep -iE 'error|fail|cannot|EINVAL|ENOENT' "$1" | grep -v '^\s*at ' | tail -n 3 | tr '\n' ' ' | cut -c1-500; }
+          if [ "$E_INSTALL" != success ]; then rec electron build broken "npm ci failed"
+          elif [ "$E_PREP" = success ]; then rec electron build works "npm ci + scripts/prepare-runtime.mjs"
+          elif [ "$E_PREP_SHIM" = success ]; then rec electron build degraded "prepare-runtime.mjs fails on this OS ($(tail_of "$LOGS/electron-prepare-runtime.log")); it builds with cross-os/win-cmd-shim.cjs (shell: true for npm.cmd)"
+          else rec electron build broken "prepare-runtime.mjs: $(tail_of "$LOGS/electron-prepare-runtime.log") $(tail_of "$LOGS/electron-prepare-runtime-shim.log")"; fi
+          if [ "$E_PACK" = success ]; then rec electron package works "$(cd "$DESKTOP/dist" && ls *.dmg *.AppImage *.deb *.exe *.msi 2>/dev/null | tr '\n' ' ')"
+          else rec electron package broken "electron-builder: $(tail_of "$LOGS/electron-package.log")"; fi
+          if [ "$T_PACK" = success ]; then
+            rec tauri build works "cargo build --release (tauri-cli 2.12.4)"
+            rec tauri package works "$(cd "$SPIKE/src-tauri/target/release/bundle" && find . -type f \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.exe' -o -name '*.msi' \) | tr '\n' ' ')"
+          else
+            if [ -f "$SPIKE/src-tauri/target/release/automagik-tauri-spike" ] || [ -f "$SPIKE/src-tauri/target/release/automagik-tauri-spike.exe" ]; then rec tauri build works "cargo build --release"; else rec tauri build broken "$(tail_of "$LOGS/tauri-build.log")"; fi
+            rec tauri package broken "tauri bundle: $(tail_of "$LOGS/tauri-build.log")"
+          fi
+          case "$RUNNER_OS" in
+            macOS)
+              e=$(codesign -dv "$DESKTOP/dist/mac-arm64/Automagik.app" 2>&1 | grep -E 'Signature|Authority|flags' | tr '\n' ' ')
+              t=$(codesign -dv "$SPIKE/src-tauri/target/release/bundle/macos/Automagik Spike.app" 2>&1 | grep -E 'Signature|Authority|flags' | tr '\n' ' ')
+              rec electron signing degraded "unsigned dmg (codesign: ${e:-none}). Blocker: a Developer ID cert + notarization (the repo holds MAC_CSC_LINK / APPLE_API_KEY for release.yml); unsigned means Gatekeeper's 'unidentified developer' and no macOS update feed."
+              rec tauri signing degraded "unsigned dmg (codesign: ${t:-none}). Same Developer ID + notarization as Electron (tauri bundler reads APPLE_SIGNING_IDENTITY / APPLE_API_KEY); the updater needs its own minisign key pair, new custody." ;;
+            Windows)
+              e=$(powershell -NoProfile -Command "(Get-AuthenticodeSignature '$DESKTOP\\dist\\win-unpacked\\Automagik.exe').Status" 2>/dev/null)
+              t=$(powershell -NoProfile -Command "(Get-AuthenticodeSignature '$SPIKE\\src-tauri\\target\\release\\automagik-tauri-spike.exe').Status" 2>/dev/null)
+              rec electron signing degraded "Authenticode: ${e:-unknown}. Blocker: no Windows code-signing certificate in the repo (SmartScreen warns on every download until one, ideally EV or Azure Trusted Signing, signs the nsis/msi); electron-updater on Windows also checks the publisher."
+              rec tauri signing degraded "Authenticode: ${t:-unknown}. Same certificate blocker (tauri bundler: certificateThumbprint or signCommand); updater needs a minisign key." ;;
+            Linux)
+              rec electron signing works "AppImage and deb need no signature to install; the deb's AppArmor profile is what makes the sandbox work on Ubuntu 24.04+."
+              rec tauri signing works "AppImage and deb need no signature to install (optional AppImage GPG signing)." ;;
+          esac
+
+      # ---------- 2-5. Run: Electron ----------
+
+      - name: 'Electron: launch, DSH page, 2 Bot views, idle RSS'
+        if: always() && steps.e_pack.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 20
+        run: |
+          case "$RUNNER_OS" in
+            Linux) exe="$DESKTOP/dist/linux-unpacked/automagik" ;;
+            macOS) exe="$DESKTOP/dist/mac-arm64/Automagik.app/Contents/MacOS/Automagik" ;;
+            Windows) exe="$DESKTOP/dist/win-unpacked/Automagik.exe" ;;
+          esac
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a -s "-screen 0 1920x1080x24" node "$HARNESS" electron-app --exe "$exe" --desktop "$DESKTOP" --test "$SPIKE/test"
+          else
+            node "$HARNESS" electron-app --exe "$exe" --desktop "$DESKTOP" --test "$SPIKE/test"
+          fi
+
+      - name: 'Electron: Bot browser automation over CDP (scripts/browser-smoke.mjs)'
+        if: always() && steps.e_install.outcome == 'success' && steps.e_bun.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 10
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a -s "-screen 0 1920x1080x24" node "$HARNESS" electron-smoke --desktop "$DESKTOP"
+          else
+            node "$HARNESS" electron-smoke --desktop "$DESKTOP"
+          fi
+
+      # ---------- 2-5. Run: Tauri ----------
+
+      - name: 'Tauri: launch, DSH page, 2 Bot views, CDP, idle RSS'
+        if: always() && (steps.t_pack.outcome == 'success' || hashFiles('apps/desktop-tauri-spike/src-tauri/target/release/automagik-tauri-spike*') != '')
+        continue-on-error: true
+        timeout-minutes: 25
+        env:
+          # WebKitGTK under xvfb has no GPU: draw without compositing or DMA-BUF.
+          WEBKIT_DISABLE_COMPOSITING_MODE: '1'
+          WEBKIT_DISABLE_DMABUF_RENDERER: '1'
+        run: |
+          case "$RUNNER_OS" in
+            Linux) exe="$SPIKE/src-tauri/target/release/automagik-tauri-spike" ;;
+            macOS) exe="$SPIKE/src-tauri/target/release/bundle/macos/Automagik Spike.app/Contents/MacOS/automagik-tauri-spike" ;;
+            Windows) exe="$SPIKE/src-tauri/target/release/automagik-tauri-spike.exe" ;;
+          esac
+          args=(tauri-app --exe "$exe" --resources "$DESKTOP/build" --test "$SPIKE/test" --playwright "$GITHUB_WORKSPACE/app/apps/bots-dsh/package.json")
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a -s "-screen 0 1920x1080x24" node "$HARNESS" "${args[@]}"
+          else
+            node "$HARNESS" "${args[@]}"
+          fi
+
+      # ---------- 5. Sizes, 7. herdr-app ----------
+
+      - name: Bundle and installer sizes
+        if: always()
+        run: |
+          shopt -s nullglob
+          case "$RUNNER_OS" in
+            Linux) e="$DESKTOP/dist/linux-unpacked"; t="$SPIKE/src-tauri/target/release/automagik-tauri-spike" ;;
+            macOS) e="$DESKTOP/dist/mac-arm64/Automagik.app"; t="$SPIKE/src-tauri/target/release/bundle/macos/Automagik Spike.app" ;;
+            Windows) e="$DESKTOP/dist/win-unpacked"; t="$SPIKE/src-tauri/target/release/automagik-tauri-spike.exe" ;;
+          esac
+          node "$HARNESS" size --shell electron --check bundle-size --path "$e"
+          node "$HARNESS" size --shell tauri --check bundle-size --path "$t" --add "$DESKTOP/build/runtime" --add "$DESKTOP/build/profile"
+          args=(); for f in "$DESKTOP"/dist/*.{dmg,AppImage,deb,exe,msi}; do args+=(--path "$f"); done
+          node "$HARNESS" size --shell electron --check installers "${args[@]}"
+          args=(); while IFS= read -r f; do args+=(--path "$f"); done < <(find "$SPIKE/src-tauri/target/release/bundle" -type f \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.exe' -o -name '*.msi' \) 2>/dev/null)
+          node "$HARNESS" size --shell tauri --check installers "${args[@]}"
+
+      - name: herdr-app builds for this OS
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a node "$HARNESS" herdr; else node "$HARNESS" herdr; fi
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: cross-os-out-${{ matrix.name }}
+          path: |
+            out/
+            app/apps/desktop/dist/*.yml
+          if-no-files-found: warn
+          retention-days: 14
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: cross-os-tauri-bundles-${{ matrix.name }}
+          path: |
+            apps/desktop-tauri-spike/src-tauri/target/release/bundle/dmg/*.dmg
+            apps/desktop-tauri-spike/src-tauri/target/release/bundle/appimage/*.AppImage
+            apps/desktop-tauri-spike/src-tauri/target/release/bundle/deb/*.deb
+            apps/desktop-tauri-spike/src-tauri/target/release/bundle/nsis/*.exe
+            apps/desktop-tauri-spike/src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: ignore
+          retention-days: 7
+
+  report:
+    name: Report
+    needs: matrix
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          sparse-checkout: apps/desktop-tauri-spike/cross-os
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24'
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: cross-os-out-*
+          path: in
+          merge-multiple: true
+
+      - name: Table
+        run: |
+          mkdir -p results && find in -name 'results-*.jsonl' -exec cp {} results/ \;
+          cat results/*.jsonl > results/all.jsonl.txt
+          node apps/desktop-tauri-spike/cross-os/run.mjs report --in results --out results/cross-os.md
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cross-os-report
+          path: results/

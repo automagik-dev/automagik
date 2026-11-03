@@ -4,7 +4,8 @@
 // Loaded in each Bot view (SPIKE_BOT_URL=…/bot.html), all from the SAME origin. Reads what the
 // view's data store already holds (cookie, localStorage, IndexedDB), then writes this Bot's id.
 // Isolation: bot b reads after bot a wrote, and must not see "a". Persistence: on the next
-// launch each Bot must read back its own id.
+// launch each Bot must read back its own id. Also loaded by cross-os/run.mjs in Electron's real
+// Bot views (dsBotApp.browser), and in the Tauri spike on Linux and Windows.
 const bot = new URLSearchParams(location.search).get('bot')
 const idb = (mode, value) => new Promise((resolve, reject) => {
   const open = indexedDB.open('spike', 1)
@@ -25,6 +26,8 @@ addEventListener('load', async () => {
   await idb('readwrite', bot).catch(() => {})
   const after = { cookie: document.cookie, localStorage: localStorage.getItem('who') }
   document.body.textContent = `Bot ${bot} — before: ${JSON.stringify(before)}`
-  window.__TAURI_INTERNALS__.invoke('spike_bridge', { kind: `bot-store-${bot}`, payload: { before, after, visibility: document.visibilityState } })
+  // Tauri: through the spike's bridge. Electron (cross-os/run.mjs): read back with dsBotApp.browser.views.read.
+  window.__probe = { bot, before, after, visibility: document.visibilityState }
+  window.__TAURI_INTERNALS__?.invoke('spike_bridge', { kind: `bot-store-${bot}`, payload: { before, after, visibility: document.visibilityState } })
 })
 </script>
