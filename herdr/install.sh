@@ -1,5 +1,5 @@
 #!/bin/sh
-# Automagik Herdr installer (A17): turns a plain Herdr into Automagik Herdr on a Mac.
+# Automagik Herdr installer (A17): turns a plain Herdr into Automagik Herdr on macOS or Linux.
 #
 #   curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash
 #   ... | bash -s -- --yes            answer yes to every question (for agents)
@@ -9,7 +9,8 @@
 #   ... | bash -s -- --no-usagemeter  leave usagemeter alone everywhere (install and --uninstall)
 #   ... | bash -s -- --usagemeter-local-only  usagemeter on this computer only, no linked machine
 #
-# It checks macOS, Node and Herdr (offering Homebrew for the missing ones, asking first),
+# It checks the OS, Node and Herdr (offering Homebrew on macOS or Herdr UI's Linux installer,
+# asking first),
 # reads the signed pointer to the newest pack (the herdr-lane release's pack.json and its ed25519
 # signature, checked against the keys embedded below: a desktop or plugin release carries no
 # pack, so nothing searches the releases), downloads its pack tarball (automagik-herdr-pack-<v>.tgz: every pack mod
@@ -130,7 +131,7 @@ Automagik Herdr installer
   install.sh --uninstall [--yes]       move the pack out of mods/, put back what was there before
   install.sh --help
 
---yes answers yes to every question (installing Node or Herdr with Homebrew, switching
+--yes answers yes to every question (installing Node or Herdr on macOS, Herdr UI on Linux, switching
 Herdr to the automagik layout). --version installs that Automagik release; it must carry the
 pack (automagik-herdr-pack-<v>.tgz): not every release does.
 --adopt replaces a pack-named mod this installer did not install, after moving it to
@@ -565,18 +566,24 @@ node_ok() {
   command -v node >/dev/null 2>&1 || return 1
   node -e 'const [a, b] = process.versions.node.split(".").map(Number); const [x, y] = process.argv[1].split(".").map(Number); process.exit(a > x || (a === x && b >= y) ? 0 : 1)' "$NODE_MIN" </dev/null 2>/dev/null
 }
-herdr_ok() { [ -d "$APPS/Herdr.app" ] || command -v herdr-app >/dev/null 2>&1; }
+herdr_ok() {
+  command -v herdr-app >/dev/null 2>&1 && return 0
+  [ "$os" = Darwin ] && [ -d "$APPS/Herdr.app" ]
+}
 
 install() {
-  # ---- a. macOS ----
+  # ---- a. supported OS ----
   os=$(uname -s)
-  [ "$os" = Darwin ] || fail "Automagik Herdr runs on macOS (Herdr is a Mac app); this is $os."
-  say "macOS: ok."
+  case $os in
+    Darwin) say "macOS: ok." ;;
+    Linux) say "Linux: ok." ;;
+    *) fail "Automagik Herdr supports macOS and Linux; this is $os." ;;
+  esac
 
   # ---- b. Node ----
   if ! node_ok; then
     have=$(node --version 2>/dev/null || echo none)
-    if command -v brew >/dev/null 2>&1; then
+    if [ "$os" = Darwin ] && command -v brew >/dev/null 2>&1; then
       if ask "Node $NODE_MIN or later is needed (found: $have). Install it with 'brew install node'?"; then
         brew install node </dev/null
         node_ok || fail "Node is still older than $NODE_MIN after brew; open a new terminal and run this again."
@@ -584,14 +591,28 @@ install() {
         fail "Node $NODE_MIN or later is needed (found: $have). Run: brew install node   then run this again."
       fi
     else
-      fail "Node $NODE_MIN or later is needed (found: $have). Install it from https://nodejs.org (or Homebrew: brew install node), then run this again."
+      fail "Node $NODE_MIN or later is needed (found: $have). Install it from https://nodejs.org, then run this again."
     fi
   fi
   say "Node $(node --version): ok."
 
   # ---- c. Herdr ----
   if ! herdr_ok; then
-    if command -v brew >/dev/null 2>&1; then
+    if [ "$os" = Linux ]; then
+      linux_hint="Herdr UI is not installed (herdr-app is not on PATH). Run: curl -fsSL https://herdrui.dev/install.sh | sh   then run this again."
+      if ask "Herdr UI is not installed. Run its official Linux installer (may require sudo)?"; then
+        TMP=$(mktemp -d "${TMPDIR:-/tmp}/automagik-herdr.XXXXXX")
+        # Download completely before executing; stdin may contain this very installer.
+        curl -fsSL https://herdrui.dev/install.sh -o "$TMP/herdr-ui-install.sh" </dev/null \
+          || fail "could not download the Herdr UI installer; $linux_hint"
+        sh "$TMP/herdr-ui-install.sh" </dev/null || fail "Herdr UI's Linux installer failed; $linux_hint"
+        herdr_ok || fail "$linux_hint"
+        rm -rf "$TMP"
+        TMP=
+      else
+        fail "$linux_hint"
+      fi
+    elif command -v brew >/dev/null 2>&1; then
       if ask "Herdr is not installed. Install it with 'brew install --cask $CASK'?"; then
         brew install --cask "$CASK" </dev/null
         herdr_ok || fail "Herdr still isn't in $APPS after brew; install it from https://herdrui.dev and run this again."
