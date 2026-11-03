@@ -502,6 +502,10 @@ var ZH = {
   "Runs as Workspace here": "这里按“工作区内修改”运行",
   "New Bots start with": "新 Bot 的初始权限",
   "Bots you already have keep their own.": "已有的 Bot 保留各自的权限。",
+  "Background jobs": "后台任务",
+  "Background model": "后台模型",
+  "Memory review runs on it, and so do the notes of a chat on Claude Code or Codex.": "记忆整理用它运行，在 Claude Code 或 Codex 上的对话的笔记也用它。",
+  "Default: {model}": "默认：{model}",
   "Same for every member": "全员统一",
   "Replaces each member's own permissions in this group.": "在这个群里代替各成员自己的权限。",
   "Add Omni": "添加 Omni",
@@ -2022,7 +2026,7 @@ function createSource(initial) {
     }
   };
 }
-var EMPTY_ROSTER = { revision: -1, mainBotId: null, mainBotIds: [], bots: [], rooms: [], agents: [], exchangeTurns: {}, questions: {}, btwCards: {}, sideChats: {}, secrets: [], capabilities: [], capabilityStatuses: {}, secretRequests: {}, models: [], defaultModel: null, modelsKey: null, prefs: {}, byId: {}, roomsById: {}, agentsById: {}, agentOf: {}, ready: false };
+var EMPTY_ROSTER = { revision: -1, mainBotId: null, mainBotIds: [], bots: [], rooms: [], agents: [], exchangeTurns: {}, questions: {}, btwCards: {}, sideChats: {}, secrets: [], capabilities: [], capabilityStatuses: {}, secretRequests: {}, models: [], defaultModel: null, backgroundModel: null, modelsKey: null, prefs: {}, byId: {}, roomsById: {}, agentsById: {}, agentOf: {}, ready: false };
 var isMainOf = (roster, id) => id !== void 0 && (roster.mainBotIds ?? []).includes(id);
 function indexRoster(value) {
   const byId = {};
@@ -19962,6 +19966,30 @@ function PermissionsSection({ roster, actions, run: run2 }) {
     )
   );
 }
+function backgroundChoices(models, saved) {
+  return (models ?? []).filter((model) => !model.needsKey && (model.superseded !== true || model.ref === saved) && routeOf(model.provider ?? model.ref.split("/")[0]).connectedBy !== "acp");
+}
+function BackgroundSection({ roster, actions, run: run2 }) {
+  const saved = roster.prefs?.backgroundModel ?? "";
+  const choices = backgroundChoices(roster.models, saved);
+  if (choices.length === 0) return null;
+  const shown = choices.some((model) => model.ref === saved) ? saved : "";
+  const fallback = choices.find((model) => model.ref === roster.backgroundModel && saved === "");
+  return (0, import_react58.createElement)(
+    SetSection,
+    { title: t("Background jobs") },
+    (0, import_react58.createElement)(
+      SetRow,
+      { label: t("Background model"), hint: t("Memory review runs on it, and so do the notes of a chat on Claude Code or Codex.") },
+      (0, import_react58.createElement)(
+        "select",
+        { className: "bt-select", "aria-label": t("Background model"), value: shown, onChange: (event) => run2(actions.setPrefs({ backgroundModel: event.target.value || null })) },
+        (0, import_react58.createElement)("option", { value: "" }, fallback ? t("Default: {model}", { model: fallback.name }) : t("Default")),
+        choices.map((model) => (0, import_react58.createElement)("option", { key: model.ref, value: model.ref }, `${model.name} · ${model.providerName ?? model.provider}`))
+      )
+    )
+  );
+}
 var MOTIONS = [["quiet", "Quiet"], ["normal", "Normal"], ["lively", "Lively"]];
 function MotionSection({ roster, actions, run: run2 }) {
   const motion = roster.prefs?.motion === "quiet" || roster.prefs?.motion === "lively" ? roster.prefs.motion : "normal";
@@ -19987,6 +20015,7 @@ function BotsPage({ roster, actions, run: run2 }) {
   return [
     (0, import_react58.createElement)(MainBotsSection, { key: "main", roster, actions, run: run2 }),
     (0, import_react58.createElement)(PermissionsSection, { key: "permissions", roster, actions, run: run2 }),
+    (0, import_react58.createElement)(BackgroundSection, { key: "background", roster, actions, run: run2 }),
     (0, import_react58.createElement)(MotionSection, { key: "motion", roster, actions, run: run2 }),
     (0, import_react58.createElement)(VoiceSection, { key: "voice", actions, Section: SetSection, Row: SetRow }),
     (0, import_react58.createElement)(ImagesSection, { key: "images", Section: SetSection, Row: SetRow }),

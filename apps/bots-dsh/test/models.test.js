@@ -314,3 +314,47 @@ test('without DeepSeek, the default is the first account connected here, and it 
   missing = new Set()
   assert.equal(await fresh(), 'deepseek/deepseek-flash')
 })
+
+// Memory review and the other jobs beside the chats run on one model that answers on its own:
+// never an agent over ACP, which answers only in its own chat (a fresh team's main Bot is on one).
+test('the background model is the team\'s pick, else DSH\'s default, never an ACP agent', async () => {
+  const providers = { 'acp-codex': [{ id: 'default' }], 'acp-claude': [{ id: 'default' }], deepseek: [{ id: 'deepseek-flash' }], anthropic: [{ id: 'claude-opus-5-5' }] }
+  let selection = { provider: 'deepseek', model: 'deepseek-flash' }
+  let missing = new Set()
+  const state = { bots: { main: { id: 'main', model: 'acp-codex/default' } }, providersSeen: ['acp-codex', 'acp-claude', 'anthropic'], prefs: {} }
+  const rt = {
+    ctx: {
+      llm: { listProviders: () => Object.keys(providers).map(id => ({ id })), listModels: async id => providers[id] },
+      get: name => (name === 'agentDefaultModel' ? { currentSelection: () => selection } : undefined),
+      on: () => {},
+    },
+    state,
+    save: async () => {},
+    missingKeys: async () => missing,
+  }
+  install(rt)
+  const background = async () => { await rt.catalog({ fresh: true }); return rt.backgroundModel() }
+  // DSH's default (DeepSeek) though the Bot team's own default is the ACP agent connected first.
+  assert.equal(await rt.defaultModel(), 'deepseek/deepseek-flash')
+  assert.equal(await background(), 'deepseek/deepseek-flash')
+  // DeepSeek without its key: the first other account connected that answers on its own.
+  missing = new Set(['deepseek'])
+  assert.equal(await background(), 'anthropic/claude-opus-5-5')
+  // DSH's default set to an agent: skipped.
+  missing = new Set()
+  selection = { provider: 'acp-claude', model: 'default' }
+  assert.equal(await background(), 'anthropic/claude-opus-5-5')
+  // The team's pick wins while it is served and can run; an ACP pick is never taken.
+  state.prefs.backgroundModel = 'deepseek/deepseek-flash'
+  assert.equal(await background(), 'deepseek/deepseek-flash')
+  state.prefs.backgroundModel = 'acp-codex/default'
+  assert.equal(await background(), 'anthropic/claude-opus-5-5')
+  state.prefs.backgroundModel = 'deepseek/gone'
+  assert.equal(await background(), 'anthropic/claude-opus-5-5')
+  // Only agents: no background model at all.
+  for (const id of ['deepseek', 'anthropic']) delete providers[id]
+  assert.equal(await background(), undefined)
+  assert.equal(rt.answersAside('acp-claude/default'), false)
+  assert.equal(rt.answersAside('deepseek/deepseek-flash'), true)
+  assert.equal(rt.answersAside(undefined), false)
+})
