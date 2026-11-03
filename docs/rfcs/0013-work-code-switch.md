@@ -170,7 +170,8 @@ keeps it that way and adds:
 - **Preload bridge `omniDesktop.herdr`**: `status()`, `open({ folder?, botId? })` and
   `onSwitch(callback)`, which the menu item fires. New.
   The plugin checks for it; an app without it shows no switch.
-- **IPC channels** `automagik-herdr-status` and `automagik-herdr-open`. Main process only.
+- **IPC channels** `automagik-herdr-status`, `automagik-herdr-open` and `automagik-herdr-switch`.
+  Between the preload and the main process only.
 - **`AUTOMAGIK_HERDR_APP`**: a path override for the binary. New. Unset means the search order.
 - **`omni://open`**: unchanged. No new parameters in this RFC.
 - **Log** `~/.automagik/desktop/logs/switch.log`. New, local only.
