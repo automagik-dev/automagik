@@ -502,7 +502,8 @@ sha256, the replaced set kept for `--rollback`), Herdr reloads the mods, and one
 "Automagik Herdr updated to X". Your bots keep running: they live in herdr-core, not in the mods.
 A version you rolled back with `--rollback` is never installed on its own again; it waits for a
 newer one. A failed install posts one notice with the reason, changes nothing, and tries again
-in 4 hours (then 8, 16, 24). Turn it off with `automagik-herdr update --auto off` or the switch
+4 hours later; each further failure of that release waits longer (8, 16, then 24 hours, then
+daily), with no second notice. Turn it off with `automagik-herdr update --auto off` or the switch
 in the status bar; then a new release is only announced, as before. It applies only to a pack
 `install.sh` installed from a signed release (its record in `<app home>/automagik-herdr/` has a
 `sequence=`); the setting lives beside it, in `auto-update.json`.

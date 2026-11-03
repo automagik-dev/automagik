@@ -104,6 +104,12 @@ export class Updater {
         try { this.after(RELOAD_GRACE_MS, () => this.unreloaded(patch.current)); } catch {}
         return;
       }
+      if (auto && patch.refused) {
+        // The latest moved on between the check and the install: not a failure, and nothing to
+        // tell the person. The new release goes in at the next check.
+        try { finish(this.get, this.set, id, { ...patch, request, applyError: null, autoHeld: "a newer release came out; it installs at the next check" }); } catch {}
+        return;
+      }
       if (auto && patch.applyError) {
         // A failed install on its own: one notice per version, then backoffOf before the next try.
         const failed = autoFailure(this.state(), to, patch.applyError, this.now());
@@ -177,7 +183,10 @@ export class Updater {
     const busy = busyOf(state, now);
     if (what === "auto") {
       this.seen = id;
-      if (typeof value.on === "boolean") this.spawn(() => this.setAuto(value.on, id));
+      // One sidebar copy writes it: the first to see the request claims its id.
+      if (typeof value.on !== "boolean" || state.autoRequest === id) return;
+      this.patch({ autoRequest: id });
+      this.spawn(() => this.setAuto(value.on, id));
       return;
     }
     if (what === "check") {

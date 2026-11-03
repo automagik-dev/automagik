@@ -202,7 +202,8 @@ export function applyPatch(result, state, now) {
   if (result?.code === 0 && typeof answer?.held === "string") return { autoHeld: answer.held, at: now };
   if (result?.code === 0 && answer?.refused) {
     // The latest moved on after the confirm: offer the new one, nothing installed.
-    return { ...checkPatch(result, now), applyError: `${answer.refused.latest} is out now, not ${answer.refused.expected}: confirm again` };
+    return { ...checkPatch(result, now), refused: answer.refused,
+      applyError: `${answer.refused.latest} is out now, not ${answer.refused.expected}: confirm again` };
   }
   if (result?.code === 0 && answer && !answer.error && answer.installed === null) return checkPatch(result, now);
   const why = typeof answer?.error === "string" ? answer.error : result ? `exit ${result.code}` : "node not found";
@@ -255,9 +256,12 @@ export function requestDue(value, seen, now) {
 // reads the setting and the rollback skip again under its lock before any download.
 
 /** A failed install on its own waits this long before the same version is tried again, doubling
- *  after each failure up to AUTO_BACKOFF_MAX_MS; the person hears of it once per version. */
+ *  after each failure up to AUTO_BACKOFF_MAX_MS; the person hears of it once per version. The
+ *  checks come every CHECK_EVERY_MS, so the tries land 4 h, 8 h, 16 h and 24 h after each failure,
+ *  then daily: BACKOFF_SLACK_MS lets the check due at the end of a wait make the try. */
 export const AUTO_BACKOFF_MS = CHECK_EVERY_MS;
 export const AUTO_BACKOFF_MAX_MS = 24 * 60 * 60 * 1000;
+export const BACKOFF_SLACK_MS = 10 * 60_000;
 export const backoffOf = (count) => Math.min(AUTO_BACKOFF_MS * 2 ** Math.max(0, count - 1), AUTO_BACKOFF_MAX_MS);
 
 /**
@@ -272,8 +276,13 @@ export function autoPlan(state, now) {
   const version = state.update.version;
   const hold = autoHold(version, auto);
   if (hold) return { hold, manual: !auto.managed || auto.on === false };
+  // Just installed (the record may say otherwise only when it failed): never the same one again.
+  const landed = objectOr(state.landed, null);
+  if (landed?.version === version && typeof landed.at === "number" && now - landed.at < LANDING_MS) {
+    return { hold: `${version} was just installed` };
+  }
   const failed = objectOr(state.autoFailed, null);
-  if (failed?.version === version && typeof failed.at === "number" && now - failed.at < backoffOf(failed.count ?? 1)) {
+  if (failed?.version === version && typeof failed.at === "number" && now - failed.at < backoffOf(failed.count ?? 1) - BACKOFF_SLACK_MS) {
     return { hold: `the last try failed (${failed.why}): next try after ${new Date(failed.at + backoffOf(failed.count ?? 1)).toISOString()}` };
   }
   return { apply: version };

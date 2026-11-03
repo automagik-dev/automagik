@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 
 import { Updater } from "../mods/am-sidebar/updater.js";
 import {
-  FIRST_CHECK_MS, LANDING_WAIT_MS, RELOAD_GRACE_MS, REQUEST_KEY, STATE_KEY, backoffOf, busyOf,
+  FIRST_CHECK_MS, LANDING_MS, LANDING_WAIT_MS, RELOAD_GRACE_MS, REQUEST_KEY, STATE_KEY, autoPlan, backoffOf, busyOf,
 } from "../mods/am-sidebar/updateCheck.js";
 import { AUTO_FILE, parseAuto } from "../mods/am-sidebar/release.js";
 import { autoLabel } from "../mods/am-status/label.js";
@@ -250,4 +250,54 @@ test("the status bar's switch writes the pack's setting file and shows at once",
   b.u.request();
   await h.flush();
   assert.deepEqual(parseAuto(h.files.get(`${HOME}/automagik-herdr/${AUTO_FILE}`)), { on: true, skip: "0.8.1" });
+});
+
+test("a version that just landed is never installed again on its own, even when the record still says otherwise", () => {
+  const state = { kind: "update", update: update("0.8.1"), auto: MANAGED, landed: { version: "0.8.1", from: "0.8.0", at: NOW } };
+  assert.deepEqual(autoPlan(state, NOW + 60_000), { hold: "0.8.1 was just installed" });
+  assert.deepEqual(autoPlan(state, NOW + LANDING_MS), { apply: "0.8.1" }, "after the landing window, a check's answer stands");
+});
+
+test("the latest moved on between check and install: no failure, no notice, it goes in at the next check", async () => {
+  const h = herdr();
+  h.answer = (args) => (args[1] === "check" ? h.check()
+    : line({ current: "0.8.0", latest: "0.8.2", update: update("0.8.2"), installed: null, refused: { expected: "0.8.1", latest: "0.8.2" }, auto: MANAGED }));
+  h.build().u.start();
+  await h.tick(FIRST_CHECK_MS);
+  assert.deepEqual(h.notes, []);
+  assert.equal(h.state().autoFailed, undefined);
+  assert.equal(h.state().applyError, null);
+  assert.equal(h.state().autoHeld, "a newer release came out; it installs at the next check");
+  h.check = () => line({ current: "0.8.0", latest: "0.8.2", update: update("0.8.2"), disabled: false, auto: MANAGED });
+  await h.tick(backoffOf(1));
+  assert.deepEqual(h.applies().map((a) => a[2]), ["0.8.1", "0.8.2"]);
+});
+
+test("the switch is written by one sidebar copy, not by each", async () => {
+  const h = herdr();
+  const [a, b] = [h.build(), h.build()];
+  a.u.start(); b.u.start();
+  await h.tick(FIRST_CHECK_MS);
+  h.shared.set(REQUEST_KEY, { id: "auto-1", what: "auto", on: false, at: h.now });
+  a.u.request(); b.u.request();
+  await h.flush();
+  const file = `${HOME}/automagik-herdr/${AUTO_FILE}`;
+  assert.equal(h.files.has(file), true);
+  assert.equal(h.state().autoError ?? null, null, "no second writer hit a stale snapshot");
+});
+
+test("failure retries land 4 h, then 8 h, 16 h and 24 h after each failure, then daily", async () => {
+  const h = herdr();
+  h.answer = (args) => (args[1] === "check" ? h.check() : { code: 1, stdout: '{"error":"network down"}\n', stderr: "" });
+  h.build().u.start();
+  await h.tick(FIRST_CHECK_MS);
+  const tries = [h.now];
+  for (let i = 0; i < 12 * 6; i++) {
+    const before = h.applies().length;
+    await h.tick(backoffOf(1));
+    if (h.applies().length > before) tries.push(h.now);
+  }
+  const gaps = tries.slice(1).map((t, i) => Math.round((t - tries[i]) / 3_600_000));
+  assert.deepEqual(gaps.slice(0, 6), [4, 8, 16, 24, 24, 24]);
+  assert.equal(h.notes.length, 1, "one notice for the version, however many tries");
 });

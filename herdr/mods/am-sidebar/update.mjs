@@ -107,8 +107,17 @@ export function readVersion(packDir) {
 export const autoFileOf = (modsDir) => join(stateDirOf(modsDir), AUTO_FILE);
 export const readAuto = (modsDir) => { try { return parseAuto(readFileSync(autoFileOf(modsDir), "utf8")); } catch { return parseAuto(""); } };
 
-/** Changes the setting (`{ on }` and/or `{ skip }`), written whole through a rename. Returns it. */
+/**
+ * Changes the setting (`{ on }` and/or `{ skip }`), written whole through a rename, holding the
+ * lock, so a switch never races a rollback's skip. Returns it; throws `locked` while a run holds it.
+ */
 export function writeAuto(modsDir, patch) {
+  const free = takeLock(modsDir);
+  try { return writeAutoHeld(modsDir, patch); } finally { free(); }
+}
+
+/** writeAuto for a caller already holding the lock (rollback). */
+function writeAutoHeld(modsDir, patch) {
   const next = { ...readAuto(modsDir), ...patch };
   mkdirSync(stateDirOf(modsDir), { recursive: true });
   const tmp = join(stateDirOf(modsDir), `.${AUTO_FILE}.${process.pid}`);
@@ -139,9 +148,15 @@ export const autoStatus = (modsDir) => ({ ...readAuto(modsDir), ...managedPack(m
 export const LOCK_STALE_MS = 10 * 60_000;
 export const lockOf = (modsDir) => join(stateDirOf(modsDir), "update.lock");
 
+const LOCK_TOKEN = "owner";
+const lockedError = () => Object.assign(new Error("another update or rollback is running: try again when it is done"), { locked: true });
+const tokenOf = (lock) => { try { return readFileSync(join(lock, LOCK_TOKEN), "utf8"); } catch { return null; } };
+
 /**
  * One update, install, repair or rollback at a time (the mod's, the CLI's, install.sh's): takes
- * the lock folder or throws. Returns the function that frees it.
+ * the lock folder or throws `locked`. The folder holds this run's token; the returned function
+ * removes it only while the token is still this run's, so a run whose stale lock was taken over
+ * never frees the newer holder's. A stale lock is renamed aside (one taker wins the rename).
  */
 export function takeLock(modsDir, now = Date.now()) {
   const lock = lockOf(modsDir);
@@ -150,11 +165,21 @@ export function takeLock(modsDir, now = Date.now()) {
     if (error?.code !== "EEXIST") throw error;
     let age = Infinity;
     try { age = now - statSync(lock).mtimeMs; } catch {}
-    if (age < LOCK_STALE_MS) throw Object.assign(new Error("another update or rollback is running: try again when it is done"), { locked: true });
-    rmSync(lock, { recursive: true, force: true });
-    mkdirSync(lock);
+    if (age < LOCK_STALE_MS) throw lockedError();
+    const aside = freshPath(stateDirOf(modsDir), ".update.lock-stale-");
+    try { renameSync(lock, aside); } catch { throw lockedError(); }
+    rmSync(aside, { recursive: true, force: true });
+    try { mkdirSync(lock); } catch (again) { if (again?.code === "EEXIST") throw lockedError(); throw again; }
   }
-  return () => rmSync(lock, { recursive: true, force: true });
+  const token = `${process.pid}-${randomBytes(8).toString("hex")}`;
+  writeFileSync(join(lock, LOCK_TOKEN), token);
+  return () => {
+    if (tokenOf(lock) !== token) return;
+    const gone = freshPath(stateDirOf(modsDir), ".update.lock-free-");
+    try { renameSync(lock, gone); } catch { return; }
+    if (tokenOf(gone) === token) rmSync(gone, { recursive: true, force: true });
+    else { try { renameSync(gone, lock); } catch {} }
+  };
 }
 
 /** Runs `fn` holding the lock. */
@@ -666,7 +691,8 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     // From here the new folders are live: nothing below undoes them or deletes `next`, and the
     // record is written first so it always names what mods/ holds.
     const warnings = [];
-    try { writeMarker(modsDir, record); } catch (error) { warnings.push(`the ownership record could not be written (${error.message})`); }
+    let recorded = true;
+    try { writeMarker(modsDir, record); } catch (error) { recorded = false; warnings.push(`the ownership record could not be written (${error.message})`); }
     if (before?.v1) { try { carryV1(modsDir, record, log); writeMarker(modsDir, record); } catch (error) { warnings.push(`v0.2's kept copies stay where they were (${error.message})`); } }
     if (keep.length) keepLayout(modsDir, next, warnings);
     keepSet(modsDir, next, keep, before, old, rename, warnings, keptOff);
@@ -680,7 +706,7 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     for (const r of plan.repaired) log(`repaired mods/${r.mod}: reinstalled ${version}; the damaged copy is kept in ${r.backup}`);
     for (const m of repair ? plan.installed : []) log(`repaired mods/${m}: it was missing; installed ${version}`);
     for (const w of warnings) log(`warning: ${w}`);
-    return { version, mods: record.mods, ...plan, prev: keep.length && !exists(next) ? prevSetOf(modsDir) : null, warnings };
+    return { version, mods: record.mods, ...plan, prev: keep.length && !exists(next) ? prevSetOf(modsDir) : null, recorded, warnings };
   } finally {
     rmSync(staging, { recursive: true, force: true });
     if (!swapped) rmSync(next, { recursive: true, force: true });
@@ -757,7 +783,7 @@ function rollbackLocked({ modsDir, rename = renameSync, log = () => {}, binDir =
   // newer one). Recorded before the swap: a run that dies after it still leaves the skip; one
   // whose swap fails leaves that version installed, where the skip changes nothing.
   if (/^\d+\.\d+\.\d+$/.test(record.version ?? "") && record.version !== UNRELEASED) {
-    try { writeAuto(modsDir, { skip: record.version }); } catch (error) {
+    try { writeAutoHeld(modsDir, { skip: record.version }); } catch (error) {
       throw new Error(`the rollback could not be recorded in ${autoFileOf(modsDir)} (${error.message}): nothing rolled back`);
     }
   }
@@ -1086,9 +1112,20 @@ export async function installUpdate({ fetch = globalThis.fetch, env = process.en
     throw error;
   }
   try {
+    // Another run may have installed it, or a newer one, between the check and the lock: nothing
+    // to do then (never the same release over itself, which would drop the rollback target, and
+    // never a downgrade).
+    const now = installedVersion({ modsDir });
+    if (!pickUpdate(now, found.update)) return { ...found, current: now, update: null, installed: null };
     const hold = auto ? autoHold(found.update.version, autoStatus(modsDir)) : null;
     if (hold) return { ...found, auto: autoStatus(modsDir), installed: null, held: hold };
-    return await downloadAndApply(found, { fetch, modsDir, log, binDir, window });
+    const done = await downloadAndApply(found, { fetch, modsDir, log, binDir, window });
+    // On its own, an install whose record wasn't written is a failure: the record still names the
+    // old version, and the next check would install it again.
+    if (auto && done.installed?.recorded === false) {
+      throw new Error(`${found.update.version} went in, but the install record could not be written (${markerOf(modsDir)})`);
+    }
+    return done;
   } finally {
     free();
   }

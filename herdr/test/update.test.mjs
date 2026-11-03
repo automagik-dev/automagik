@@ -1099,3 +1099,95 @@ test("automagik-herdr update --auto on|off|status, and apply --auto in update.mj
     assert.throws(() => parseArgs(["check", "--auto"]), /usage/);
   } finally { h.done(); }
 });
+
+// ---- Review of #271: races between runs (the reviewer's zz-race scenarios, with assertions) ----
+
+/** fetch that runs `between()` once, right after the signed pointer is read: another run lands then. */
+const racing = (fetch, between) => {
+  let raced = false;
+  return async (url, init) => {
+    const r = await fetch(url, init);
+    if (!raced && String(url).endsWith(".sig")) { raced = true; await between(); }
+    return r;
+  };
+};
+
+test("race: a CLI update lands between the auto check and its lock: no reinstall over itself, the rollback target kept", async () => {
+  const h = autoHome(["0.2.0"]);
+  try {
+    const base = fakeFetch(h.table);
+    const fetch = racing(base, () => installUpdate({ fetch: base, env: {}, modsDir: h.mods, keys }));
+    const r = await installUpdate({ fetch, env: {}, modsDir: h.mods, keys, expect: "0.2.0", auto: true });
+    assert.equal(r.installed, null);
+    assert.equal(r.update, null);
+    assert.equal(r.current, "0.2.0");
+    assert.equal(parseMarker(readFileSync(join(prevSetOf(h.mods), ".pack"), "utf8")).version, "0.1.0", "rollback still goes to 0.1.0");
+    // The same for an update asked for by hand.
+    rollback({ modsDir: h.mods });
+    writeAuto(h.mods, { skip: null });
+    const manual = racing(base, () => installUpdate({ fetch: base, env: {}, modsDir: h.mods, keys }));
+    const m = await installUpdate({ fetch: manual, env: {}, modsDir: h.mods, keys });
+    assert.equal(m.installed, null);
+    assert.equal(parseMarker(readFileSync(join(prevSetOf(h.mods), ".pack"), "utf8")).version, "0.1.0");
+  } finally { h.done(); }
+});
+
+test("race: a newer release installed between the auto check and its lock is never downgraded", async () => {
+  const h = autoHome(["0.2.0"]);
+  const t3 = autoHome(["0.3.0"]);
+  try {
+    const newer = fakeFetch({ ...h.table, ...t3.table });
+    const fetch = racing(fakeFetch(h.table), () => installUpdate({ fetch: newer, env: {}, modsDir: h.mods, keys }));
+    const r = await installUpdate({ fetch, env: {}, modsDir: h.mods, keys, expect: "0.2.0", auto: true });
+    assert.equal(r.installed, null);
+    assert.equal(readMarker(h.mods).version, "0.3.0");
+    assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.3.0");
+  } finally { h.done(); t3.done(); }
+});
+
+test("an auto install whose record can't be written is a failure (no reinstall loop); asked for by hand it warns", async () => {
+  const h = autoHome(["0.2.0"]);
+  try {
+    mkdirSync(`${markerOf(h.mods)}.tmp`); // writeMarker's temp path is taken: the record can't be written
+    await assert.rejects(installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, keys, expect: "0.2.0", auto: true }),
+      /0\.2\.0 went in, but the install record could not be written/);
+    assert.equal(existsSync(lockOf(h.mods)), false, "the lock is freed");
+    rollback({ modsDir: h.mods });
+    writeAuto(h.mods, { skip: null });
+    const manual = await installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, keys });
+    assert.equal(manual.installed.recorded, false);
+    assert.ok(manual.installed.warnings.some((w) => /ownership record could not be written/.test(w)));
+  } finally { h.done(); }
+});
+
+test("lock: a run whose stale lock was taken over never frees the new holder's; a second taker is refused", () => {
+  const h = autoHome([]);
+  try {
+    const old = takeLock(h.mods, Date.now());
+    const later = Date.now() + 11 * 60_000;
+    const a = takeLock(h.mods, later); // the old one looks dead: taken over
+    assert.throws(() => takeLock(h.mods, Date.now()), /another update or rollback is running/, "A's lock is fresh");
+    old(); // the slow old holder finishes
+    assert.equal(existsSync(lockOf(h.mods)), true, "A still holds it");
+    assert.throws(() => takeLock(h.mods, Date.now()), /another update or rollback is running/);
+    a();
+    assert.equal(existsSync(lockOf(h.mods)), false);
+    assert.deepEqual(readdirSync(stateDirOf(h.mods)).filter((f) => f.startsWith(".update.lock")), [], "nothing left aside");
+  } finally { h.done(); }
+});
+
+test("lock: the setting is written under it, so a switch never wipes a rollback's skip; rollback records it while holding", async () => {
+  const h = autoHome(["0.2.0"]);
+  try {
+    await installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, keys });
+    const free = takeLock(h.mods);
+    assert.throws(() => writeAuto(h.mods, { on: false }), /another update or rollback is running/);
+    await assert.rejects(cmdUpdate({ auto: "off" }, [], { modsDir: h.mods, env: {} }), /The setting was not saved: another update/);
+    assert.equal(readAuto(h.mods).on, true);
+    free();
+    rollback({ modsDir: h.mods });
+    assert.equal(readAuto(h.mods).skip, "0.2.0");
+    writeAuto(h.mods, { on: false });
+    assert.deepEqual(readAuto(h.mods), { on: false, skip: "0.2.0" });
+  } finally { h.done(); }
+});
