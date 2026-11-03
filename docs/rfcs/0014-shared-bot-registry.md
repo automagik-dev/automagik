@@ -14,8 +14,9 @@ places today, with two id shapes and two pet systems. This RFC proposes one Bot 
 read and write: a `bots.json` version 2 in `~/.automagik/bots/` for Bots that belong to no
 project, and in `<repo>/.automagik/bots/` for a project's Bots. It covers writes that never
 overwrite each other, global Bots in Herdr, the desktop app's move to `~/.automagik/bots` (D6),
-one pet folder, Bots on other machines, and the deliveries. Felipe made Herdr's Bots the main team: Automagik shows the ones the person picks, and chatting with one talks to its live Herdr agent. RFC 0013's delivery 8 (shared Bots
-in the switch) waits on it.
+one pet folder, Bots on other machines, and the deliveries. Felipe made Herdr's Bots the main
+team: Automagik shows the ones the person picks, and chatting with one talks to its live Herdr
+agent. RFC 0013's delivery 8 (shared Bots in the switch) waits on it.
 
 ## Motivation
 
@@ -54,6 +55,11 @@ registry RFC before the shared-Bot step.
 Decided by Felipe on this RFC (2026-11-03, relayed by t2x5):
 
 - **Q1: A, one file per Bot.** A project with a repo file keeps its Bots only there.
+- **Q2: the repo file.** `<repo>/.automagik/bots/bots.json`, version 2, `pets/` beside it.
+  Today's `.herdr/bots.json` is converted.
+- **Q3: ids.** Both id shapes are accepted forever. One `newBotId()` mints `b-`: Herdr uses it
+  now, DSH after the check of places that take a Bot id for a Session id.
+- **Q5: the pose map** as written in Q5.
 - **Q7, reframed.** Felipe: "the real team is on herdr, the automagik one not yet really
   exist... i will want to expose some orchestrators, so that i can talk to them from within the
   friendlier interface, and switch to code when i want". Herdr's Bots are the real team. The
@@ -71,9 +77,9 @@ Decided by Felipe on this RFC (2026-11-03, relayed by t2x5):
 - **Q17: ask first per project.** Bots taken in from a project then get the team's default
   level.
 
-Agreed between the two orchestrators (t259, t22n), not decided by Felipe: the id pattern,
-`main` and `identity`, the pose map, the repo path and `version: 2`, and the order of the
-pack's reads. Each one is an open question below, recommended as agreed.
+Agreed between the two orchestrators (t259, t22n), not yet decided by Felipe: `main` and
+`identity` (Q4), and the order of the pack's reads (delivery 2). Q4 is an open question,
+recommended as agreed.
 
 Everything else in Design is this RFC's proposal.
 
@@ -85,8 +91,8 @@ Everything else in Design is this RFC's proposal.
   (no folder) and Bots whose folder is in no project with its own file.
 - **A repo file**, `<project>/.automagik/bots/bots.json`, holds that project's Bots. The project
   key is Herdr's: the main checkout (`model.js` `projectOf`). A repo opts in by having the file.
-- **The legacy file**, `<project>/.herdr/bots.json`, stays version 1. It is read, and written in
-  place, while it is the only file in the project; nothing writes version 2 there.
+- **The legacy file**, `<project>/.herdr/bots.json`, is converted (decided, Q2). Until delivery 4
+  converts it, it stays version 1, read and written in place; nothing writes version 2 there.
 
 Each Bot lives in exactly one file, with no copies to keep in step (Q1, decided: A).
 
@@ -347,8 +353,9 @@ Undo: delete the file, or revert the delivery; `state.json` keeps every DSH Bot.
    nothing. *Rollback:* revert. It holds because `state.json` still has every DSH Bot with
    current definitions; edits made in Herdr after the last DSH save are not in it, and the files
    stay. Exposed Bots were never in `state.json`, so the older plugin does not show them.
-4. **Herdr writes version 2** (herdr). New projects get the repo file; "Move to .automagik"
-   converts a legacy file (write new, then delete old); global Bots are created and started in
+4. **Herdr writes version 2** (herdr). New projects get the repo file; a legacy file is
+   converted (decided, Q2) the first time Herdr writes that project's Bots (write new, then
+   delete old); global Bots are created and started in
    Herdr. A converted project has no `.herdr/bots.json`, so a pack older than delivery 2 shows no
    Bots there until it updates through the herdr lane. *Check:* the gate; a converted project
    keeps its ids and panes. *Rollback:* a reverting pack; converted projects stay version 2,
@@ -379,15 +386,14 @@ RFC 0013's delivery 8 can start after deliveries 1-3.
 
 1. **What is a repo's "committable copy" (D1)?** *Decided:* A, one file per Bot. A home Bot whose
    folder later gets a repo file stays at home until the person moves it.
-2. **Repo path and version** (agreed). *Recommended:* `<repo>/.automagik/bots/bots.json`,
-   `version: 2`, `pets/` beside it.
-3. **Id shapes and the mint** (pattern agreed, mint open in the log). *Recommended:* accept both
-   shapes forever; one `newBotId()` that mints `b-`; Herdr uses it now, DSH once its own Bots
-   can carry an id that is not a Session id (a check of every place that takes a Bot id for one,
-   such as `chatOf` at `store.js:413`).
+2. **Repo path and version.** *Decided:* `<repo>/.automagik/bots/bots.json`, `version: 2`,
+   `pets/` beside it; today's `.herdr/bots.json` is converted.
+3. **Id shapes and the mint.** *Decided:* accept both shapes forever; one `newBotId()` that
+   mints `b-`; Herdr uses it now, DSH after the check of every place that takes a Bot id for a
+   Session id (such as `chatOf` at `store.js:413`).
 4. **`main` and `identity`** (agreed). *Recommended:* as agreed; in the home file `main` means a
    team Main Bot, in a repo file the project's one main Bot.
-5. **The pose map** (agreed). *Recommended:* working→running, idle→idle, needs-you→waving once
+5. **The pose map.** *Decided:* working→running, idle→idle, needs-you→waving once
    then waiting, done→review, failed→failed, asleep→sleep strip, jumping as a one-shot event.
 6. **How the Herdr mod takes the lock.** *Recommended:* the mod's writes go through the CLI,
    which takes the CLI's existing lock (`automagik-herdr.mjs:204-238`); DSH takes the same lock
