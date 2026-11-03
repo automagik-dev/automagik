@@ -580,6 +580,11 @@ test('the retirement takes only the retired package\'s rows, and none while the 
   assert.equal(retirePatch("- id: 'oh-my-claude'\n  config:\n    a: 1\n- id: web\n"), '- id: web\n')
   assert.equal(retirePatch('- id: a\n  name: "dsh-oh-my-claude"   # theirs\n'), '[]\n')
   assert.equal(retirePatch('[]\n'), null)
+  // Another package's insert item whose nested config names it stays, whole; only the
+  // item that is the package goes.
+  const nested = "- insert:\n    - id: router\n      name: '@automagik/bots-dsh/router'\n      config:\n        name: dsh-oh-my-claude\n    - id: omc\n      name: dsh-oh-my-claude\n- id: web\n"
+  assert.equal(retirePatch(nested), "- insert:\n    - id: router\n      name: '@automagik/bots-dsh/router'\n      config:\n        name: dsh-oh-my-claude\n- id: web\n")
+  assert.equal(retirePatch("- insert:\n    - id: router\n      config:\n        name: dsh-oh-my-claude\n"), null)
   // The rows stay, and so does the package, in a build that still ships it.
   const shipping = { dependencies: { 'dsh-oh-my-claude': '1' } }
   assert.deepEqual(JSON.parse(mergeProfilePackage({ dependencies: { 'dsh-oh-my-claude': '1' }, dsh: { profile: { bundles: ['dsh-oh-my-claude'] } } }, { ...shipping, dsh: { profile: { bundles: [] } } })).dsh.profile.bundles, ['dsh-oh-my-claude'])

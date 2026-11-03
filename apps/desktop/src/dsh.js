@@ -228,7 +228,10 @@ export function retirePatch(text, retired = RETIRED) {
         else if (items.length > 0) items.at(-1).push(line)
         else lead.push(line)
       }
-      const kept = items.filter(item => !item.some(line => named.test(line)))
+      // An item's own keys: its "- " line and the lines at the indent right under it; its
+      // nested config is left alone, as for a row below.
+      const ownKey = new RegExp(`^${indent} {2}\\S`)
+      const kept = items.filter(([head, ...lines]) => ![head, ...lines.filter(line => ownKey.test(line))].some(line => named.test(line)))
       if (kept.length === items.length) {
         out.push(...block.head, ...block.lines)
         continue
