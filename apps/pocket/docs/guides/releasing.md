@@ -45,10 +45,13 @@ workflow**):
 Installed copies find the new `latest.json` at their next launch.
 
 **Releases that don't change the app.** When nothing under `android/` changed since the previous
-release (a Pocket Link or meter change), Publish builds no APK. It copies the previous release's
+release (a Pocket Link change), Publish builds no APK. It copies the previous release's
 `automagik.apk` and `latest.json` unchanged, after checking that the APK matches the `sha256` in
-`latest.json`. Phones see the same version and don't update. The meter binaries and `SHA256SUMS`
-still ship with the new tag, and the notes say the app is unchanged.
+`latest.json`. Phones see the same version and don't update, and the notes say the app is
+unchanged.
+
+The usage meter is released from its own repository,
+[automagik-dev/usagemeter](https://github.com/automagik-dev/usagemeter). Releases here up to v0.17.0 also carried `automagik-meter-*` binaries and their `SHA256SUMS`.
 
 ## 3. Check a release
 

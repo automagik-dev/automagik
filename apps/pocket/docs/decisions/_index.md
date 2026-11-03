@@ -17,6 +17,7 @@ Write one from [`_Templates/decision.md`](../_Templates/decision.md).
 | [Updates install silently, and notifications say so](updates-install-silently.md) | Implemented | |
 | [Pocket Link keeps its state outside the mod folder](pocket-link-state-outside-mod.md) | Implemented | #34 |
 | [Pocket Link public-status.json contract (schema 1)](pocket-link-public-status.md) | Accepted | #39 |
+| [Offer Always allow for agent permission prompts](always-allow-permission-prompts.md) | Accepted | #41 |
 | [The phone finds a space's Space Row project itself](space-row-project-key-on-phone.md) | Proposed | #45 |
 
 Back to the [docs home](../_index.md).

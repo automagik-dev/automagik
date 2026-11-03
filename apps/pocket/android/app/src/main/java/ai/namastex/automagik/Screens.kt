@@ -50,6 +50,26 @@ import java.util.UUID
 fun PocketState.linkedFor(host: HostProfile): List<LinkedMachine> =
     machines[host.id]?.linked?.takeIf { it.isNotEmpty() } ?: host.linked.map { LinkedMachine(it, "") }
 
+/** The demo's sample machines: connected in [PocketState.machines] but never saved as a host, so the Machines tab shows them read-only. */
+fun PocketState.previewMachines(): List<Pair<String, MachineState>> =
+    if (!demo) emptyList() else machines.filterKeys { id -> hosts.none { it.id == id } }.toList()
+
+/** A machine card's status line. */
+fun machineStatus(machine: MachineState): String =
+    if (machine.connected) "Connected · hc ${machine.version} · ${machine.terminals.size} terminals" else if (machine.connecting) "Connecting…" else "Not connected"
+
+/** A machine card's icon, name, address and connection dot. */
+@Composable fun MachineHeader(name: String, address: String, connected: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Outlined.Computer, null, Modifier.size(22.dp), tint = Accent); Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(name, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(4.dp)); Text(address, fontSize = 12.sp, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Dot(if (connected) Ok else Muted)
+    }
+}
+
 @Composable fun LinkedMachineRows(linked: List<LinkedMachine>, via: String) {
     if (linked.isEmpty()) return
     Column(Modifier.padding(top = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -95,16 +115,9 @@ fun NearbyHost.prefill() = HostProfile("", name, host, "", port)
             val machine = state.machines[host.id] ?: MachineState()
             Surface(shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Border), color = Surface) {
                 Column(Modifier.padding(18.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Computer, null, Modifier.size(22.dp), tint = Accent); Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(host.name, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Spacer(Modifier.height(4.dp)); Text(if (host.paired) host.address else "${host.user}@${host.host}:${host.port}", fontSize = 12.sp, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        Dot(if (machine.connected) Ok else Muted)
-                    }
+                    MachineHeader(host.name, if (host.paired) host.address else "${host.user}@${host.host}:${host.port}", machine.connected)
                     Spacer(Modifier.height(18.dp))
-                    Text(if (machine.connected) "Connected · hc ${machine.version} · ${machine.terminals.size} terminals" else if (machine.connecting) "Connecting…" else "Not connected", fontSize = 12.sp, color = Muted)
+                    Text(machineStatus(machine), fontSize = 12.sp, color = Muted)
                     machine.error?.let { Spacer(Modifier.height(10.dp)); SelectionContainer { Text(it, color = Blocked, fontSize = 12.sp, lineHeight = 18.sp) } }
                     LinkedMachineRows(state.linkedFor(host), host.name)
                     Spacer(Modifier.height(10.dp))
@@ -117,6 +130,16 @@ fun NearbyHost.prefill() = HostProfile("", name, host, "", port)
                         IconButton(onClick = { onEdit(host) }) { Icon(Icons.Outlined.Edit, "Edit ${host.name}", Modifier.size(19.dp), tint = Muted) }
                         IconButton(onClick = { remove = host }) { Icon(Icons.Outlined.DeleteOutline, "Remove ${host.name}", Modifier.size(19.dp), tint = Muted) }
                     }
+                }
+            }
+        }
+        // The preview's sample machine, like a connected one but read-only: no connect, edit or remove, and no network.
+        items(state.previewMachines(), key = { "preview:${it.first}" }) { (_, machine) ->
+            Surface(shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Border), color = Surface) {
+                Column(Modifier.padding(18.dp)) {
+                    MachineHeader(PREVIEW_MACHINE, "Sample data · not a real connection", machine.connected)
+                    Spacer(Modifier.height(18.dp))
+                    Text(machineStatus(machine), fontSize = 12.sp, color = Muted)
                 }
             }
         }
@@ -180,7 +203,7 @@ fun NearbyHost.prefill() = HostProfile("", name, host, "", port)
         Row(verticalAlignment = Alignment.CenterVertically) { Brand(36); Spacer(Modifier.width(12.dp)); Column { Text("Automagik", fontWeight = FontWeight.SemiBold); Text("${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · Android companion", color = Muted, fontSize = 12.sp) } }
         Spacer(Modifier.height(16.dp)); UpdateRow()
         CrashRow()
-        Spacer(Modifier.height(18.dp)); Text("A native companion for your existing herdr-core. Graphite colors, spaces and tabs follow the desktop’s design.", color = Muted, fontSize = 13.sp, lineHeight = 20.sp)
+        Spacer(Modifier.height(18.dp)); Text("A native companion for your existing herdr-core, in Automagik’s colors, light or dark as your phone is set. Spaces and tabs follow the desktop’s design.", color = Muted, fontSize = 13.sp, lineHeight = 20.sp)
         Spacer(Modifier.height(10.dp)); Text("With Watch in background on, connections stay open while you’re away and come back on their own after a drop. Otherwise Android may close them; pull down on the agent list or tap Reconnect. Your remote programs keep running.", color = Muted, fontSize = 13.sp, lineHeight = 20.sp)
         Spacer(Modifier.height(20.dp)); TextButton(onClick = vm::enterDemo, contentPadding = PaddingValues(0.dp)) { Text("Explore the interface with sample data", fontSize = 13.sp) }
     }
@@ -208,7 +231,7 @@ fun NearbyHost.prefill() = HostProfile("", name, host, "", port)
             Text("Side button assistant", fontSize = 15.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.height(2.dp))
             Text(if (held) "Automagik is your assistant. Hold the side button to see what needs you and answer by typing or speaking, on the lock screen too."
-                else "Hold the side button to open Herdr over any screen, the lock screen too: see what needs you and answer by typing or speaking.",
+                else "Hold the side button to open Automagik over any screen, the lock screen too: see what needs you and answer by typing or speaking.",
                 color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
         }
         Spacer(Modifier.width(8.dp))

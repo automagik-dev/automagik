@@ -4,6 +4,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -17,17 +20,34 @@ import androidx.compose.ui.unit.sp
 
 /** Every machine's meter doc from [state], merged; the machines connected now are the ones expected to report. */
 fun spendView(state: PocketState, now: Long = System.currentTimeMillis()): Spend.View {
-    fun own(id: String) = state.hosts.find { it.id == id }?.name ?: if (state.demo) "Preview machine" else "Machine"
+    fun own(id: String) = state.hosts.find { it.id == id }?.name ?: if (state.demo) PREVIEW_MACHINE else "Machine"
     val expected = state.machines.filterValues { it.connected }.flatMap { (id, m) -> listOf(own(id)) + m.linked.filter { it.connected }.map { it.name } }
     return Spend.View(state.machines.values.flatMap { it.meter.values }, expected.distinct(), now)
 }
 
 @Composable fun rememberSpend(state: PocketState): Spend.View = remember(state.machines, state.hosts, state.demo) { spendView(state) }
 
+/**
+ * Today's row of four count tiles: the screen gutter, the gaps and the tile padding, so the $ tile's text width can be
+ * worked out per screen width ([textWidthDp]). At 360 dp a tile has 54 dp for text, which "≥$7.80" overflows at
+ * [MAX_SP]; the amount shrinks down to [MIN_SP] rather than clip.
+ */
+object TodayTiles {
+    const val GUTTER_DP = 20
+    const val GAP_DP = 8
+    const val COUNT = 4
+    const val PAD_DP = 10
+    const val MAX_SP = 22
+    const val MIN_SP = 12
+    fun textWidthDp(screenDp: Int): Double = (screenDp - 2.0 * GUTTER_DP - (COUNT - 1) * GAP_DP) / COUNT - 2 * PAD_DP
+}
+
 /** Today's "spent today" count, beside needs you / working / connected; the caller shows it only when a meter reports. */
 @Composable fun SpendCount(view: Spend.View, modifier: Modifier = Modifier) {
-    Column(modifier.clip(RoundedCornerShape(12.dp)).background(Surface).border(1.dp, Border, RoundedCornerShape(12.dp)).padding(10.dp, 10.dp)) {
-        Text(Spend.money(view.today()), color = Ink, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+    Column(modifier.clip(RoundedCornerShape(12.dp)).background(Surface).border(1.dp, Border, RoundedCornerShape(12.dp)).padding(TodayTiles.PAD_DP.dp, 10.dp)) {
+        // One word that never wraps, shrinking to fit the tile; the theme's fixed line height (as CountCard's) keeps the row level.
+        BasicText(Spend.compact(view.today()), style = LocalTextStyle.current.copy(color = Ink, fontSize = TodayTiles.MAX_SP.sp, fontWeight = FontWeight.SemiBold),
+            maxLines = 1, softWrap = false, autoSize = TextAutoSize.StepBased(TodayTiles.MIN_SP.sp, TodayTiles.MAX_SP.sp, 1.sp))
         Text("spent today", color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
