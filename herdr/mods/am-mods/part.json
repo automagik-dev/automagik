@@ -23,25 +23,25 @@
   "entry": {
     "install": [
       "node",
-      "../am-sidebar/bin/part.mjs",
+      "../am-sidebar/pack/part.mjs",
       "install",
       "herdr.am-mods"
     ],
     "uninstall": [
       "node",
-      "../am-sidebar/bin/part.mjs",
+      "../am-sidebar/pack/part.mjs",
       "uninstall",
       "herdr.am-mods"
     ],
     "doctor": [
       "node",
-      "../am-sidebar/bin/part.mjs",
+      "../am-sidebar/pack/part.mjs",
       "doctor",
       "herdr.am-mods"
     ]
   },
   "writes": [
-    "~/.config/herdr-app/keys.json#global.cmd-shift-m"
+    "$HERDR_APP_HOME/keys.json#global.cmd-shift-m"
   ],
   "set": [
     "code"
