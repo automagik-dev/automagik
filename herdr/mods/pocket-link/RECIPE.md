@@ -29,7 +29,7 @@ The dialog is 460px wide, from `mod.json` `{ "kind": "dialog", "width": 460 }`, 
      - Off: "Off" over "Phones can't reach this computer."
    - On the right, a button: **Turn off** (outlined), or **Turn on** (solid, primary).
 4. **"Pair a phone"** section, shown only while it's on. The section title is 11.5px medium `dim` with 16px above and 6px below.
-   - With no code: one `muted` note and a primary **Pair a phone** button. The note reads "Open Herdr Pocket on the phone, tap Pair with Herdr desktop, and scan the code this makes. The code works once, for 10 minutes."
+   - With no code: one `muted` note and a primary **Pair a phone** button. The note reads "Open Herdr Pocket on the phone, tap Pair with Herdr desktop, and scan the code this makes. The code works once, for 10 minutes, and ends when you close this window."
    - With a code, a `raised` card (14px padding, 10px radius) holds, centred:
      - The QR code: black modules on a white card with an 8px radius and a 3-module quiet zone. Each module is `floor(224 / modules)` px, which is 3px for the usual 73 modules, so about 237px square.
      - "Scan with Herdr Pocket" in 12.5px.
@@ -39,7 +39,8 @@ The dialog is 460px wide, from `mod.json` `{ "kind": "dialog", "width": 460 }`, 
 5. **Phones:** the section title is "Paired phones", or "No phones paired yet". Each phone is a row, 40px tall with a 10px side padding and an 8px radius, that turns `hover` under the pointer. The row has:
    - a 15px phone icon in `muted`
    - the phone's name in 13px, truncated
-   - "Last seen 3 min ago · key 4f1c9a07de" in 11.5px `dim`
+   - the key fingerprint, "4f1c 9a07 de21" (the first 12 hex characters of its key, in fours), in 11.5px `dim` beside the name
+   - "Last seen 3 min ago" in 11.5px `dim`
    - an outlined **Remove** button
 6. **Errors:** when there is one, it shows in 12px `blocked`.
 7. **Footer:** in 11.5px/17px `dim`: "Phones connect directly when they can, and otherwise through a public iroh relay that passes along encrypted bytes it can't read. Removing a phone disconnects it at once."
@@ -72,10 +73,11 @@ Before the bridge can run, the dialog shows one of two other screens in place of
   - At 0:00 the card goes back to the button.
 - **When a phone pairs** with the code:
   - The bridge stores the phone's iroh public key and deletes the code.
-  - The dialog posts a "Phone paired" toast (`notify`, success, 6s), puts the card away, and lists the phone.
+  - The dialog posts a "Phone paired" toast (`notify`, success, 8s) with the phone's name and key fingerprint, puts the card away, and lists the phone. If the phone paired while the dialog was closing, the toast comes from what `cancel` returns.
   - Pairing again from a phone that's already listed refreshes its entry and also shows the toast.
 - **Remove:** forgets the phone. The running bridge checks its list every 2s and closes that phone's open sessions with "not paired". On the phone, Pocket says to pair again.
-- **Wrong codes:** five wrong codes in a row end the code, and a used or expired code is refused, so guessing gets nowhere.
+- **Wrong codes:** one phone key gets 3 wrong codes, then its tries are refused and not counted; 20 wrong codes in all end the code. A used or expired code is refused.
+- **Closing the dialog ends the code:** Esc runs `bridge.mjs cancel` and closes it; the view's `close(cx)` runs `cancel` too, for any other way the host closes it. A code still being made when the dialog closes is cancelled as it arrives.
 - **Esc** closes the dialog. **⌘⌥P** on macOS, or **Ctrl+Alt+P** on Linux, opens it (see `keys.json`).
 - **Phone sessions:**
   - Each phone session opens a bidirectional QUIC stream on ALPN `herdr-pocket/1`.
@@ -91,7 +93,7 @@ Before the bridge can run, the dialog shows one of two other screens in place of
     - `div` and `svg` from `gpui-kit`
     - `v_flex` and `h_flex` from `gpui-base`
     - `exec`, `appHome`, `theme`, `props`, `closeOverlay`, `notify` and `watchFolder` from `herdr`
-  - **Calling the bridge:** it runs `exec("node", ["<appHome>/mods/pocket-link/bridge/bridge.mjs", <command>, …])` and parses the last stdout line as JSON. The commands are `status`, `install`, `start`, `stop`, `pair` and `forget <id>`.
+  - **Calling the bridge:** it runs `exec("node", ["<appHome>/mods/pocket-link/bridge/bridge.mjs", <command>, …])` and parses the last stdout line as JSON. The commands are `status`, `install`, `start`, `stop`, `pair`, `cancel` and `forget <id>`.
   - **Clipboard:** `cx.write_to_clipboard`.
   - **Timers:** a 1s `cx.timer.every` runs only while a code shows.
   - **Install the bridge:** runs `npm ci --omit=dev` in `bridge/`. It is detached so it can run past `exec`'s 30s limit, and the dialog watches for `.setup.done`.
@@ -102,21 +104,22 @@ Before the bridge can run, the dialog shows one of two other screens in place of
   - **`bridge.mjs`** commands:
     - `serve`
     - `pair [minutes]` prints `{link, expires, rows}`, where `rows` holds the QR modules as strings of `1`/`0`
-    - `status` prints `{running, id, name, ticket, devices, pairing, login, meter, state}`
+    - `status` prints `{running, id, name, ticket, devices, pairing, login, state}`; each device has `fingerprint`
+    - `cancel` deletes the live code and prints `{ok, cancelled, devices}`
     - `start`, `stop`, `forget <id>`, `install` and `uninstall`
   - **Serving:**
     1. It binds an iroh `Endpoint` with the n0 preset, a persistent secret key and two ALPNs: `herdr-pocket/1` and `herdr-pocket/pair/1`.
     2. It writes its ticket (`EndpointTicket.fromAddr(ep.addr())`) to `status.json`, and again whenever its address changes.
        It writes `public-status.json` (`bridge/presence.mjs`) when it starts, every 20 seconds, whenever a phone's session opens or closes, and with `running: false` when it stops.
-    3. It accepts connections: pair requests check the code, and sessions are piped to `hc connect`.
+    3. It accepts connections through `bridge/guard.mjs`: 10 seconds for the handshake, the first stream and its header line (and a whole pairing); at most 16 connections in that phase and 64 in all, refused before the handshake past that; an unpaired key on `herdr-pocket/1` closed before anything is read. Pair requests check the code (`bridge/pairing.mjs`), and sessions are piped to `hc connect`.
+    4. Lines a stranger can cause (refusals, timeouts, wrong codes) log at most 5 of each kind a minute. Each minute, a `bridge.log` over 1 MB is copied to `bridge.log.1` and emptied in place; the service's stderr appends, so it carries on at the start.
   - **Finding `hc`:** `$HC`, then `command -v hc` in a login shell, then `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin`.
 - **The state folder,** `${XDG_STATE_HOME:-~/.local/state}/automagik-pocket-link/` (`bridge/state.mjs`), mode 0700, outside the mod so a reinstall keeps it, files written atomically, all mode 0600 but one:
   - `secret.key`
   - `status.json`
   - `devices.json`
   - `pairing.json`
-  - `bridge.log`
-  - `meter.json`
+  - `bridge.log`, and `bridge.log.1` once it has filled
   - `public-status.json`, mode 0644: whether the bridge runs and which phones are connected, for other mods ([README](README.md#for-other-mods)). No ticket, id or secret. The dialog's folder watch skips it.
   - Another `HERDR_APP_HOME` gets `automagik-pocket-link-<hash>/`; `POCKET_LINK_STATE_DIR` overrides both, and the login service is given the resolved folder that way (launchd and systemd don't see the dialog's environment).
   - **Moving from `mods/pocket-link/.state/`:** when the new folder has no `secret.key`, the bridge moves each old file with `link()` and `unlink()` (atomic, never over an existing file, the mode kept), then logs one line. While an older bridge still runs from `.state/` (its `status.json` pid is alive), it uses `.state/` for that run instead and moves nothing.
