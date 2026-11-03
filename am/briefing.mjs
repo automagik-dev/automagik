@@ -14,13 +14,13 @@
 
 import { execFile } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
-import { closeSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync } from "node:fs";
+import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, writeSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { BOT_LABEL, BOTS_PATH, effectiveLead, parseBots, projectKeyOf } from "./model.js";
 import { UNANSWERED, paneOf, rowsOf } from "./launchArgs.js";
 import { attachKey, attachPath, confirmBindings, foldAttach, modeProblem, readAttach, verdictOf } from "./attach.js";
 import { briefingText, directMembers, latestReport } from "./briefingText.mjs";
-import { SESSION_LABEL, ledgerLine, ledgerPath, sessionChange, sessionRow } from "./workers.js";
+import { SESSION_LABEL, ledgerLine, ledgerPath, readLedger, sessionChange, sessionRow } from "./workers.js";
 
 // About two seconds in all (the hook's limit is five): no hc call waits more than 1.5 s,
 // none starts after the 2 s budget, a call that runs out counts as unreachable, and a last
@@ -179,11 +179,25 @@ function readInput(ms) {
   });
 }
 
+const TAIL_BYTES = 65_536;
+
+/** The session `terminal`'s last session row names, from the ledger's tail (open as `fd`), or null. */
+function lastSessionOf(fd, terminal) {
+  const size = fstatSync(fd).size;
+  const length = Math.min(size, TAIL_BYTES);
+  const buf = Buffer.alloc(length);
+  readSync(fd, buf, 0, length, size - length);
+  // A first line cut by the tail is not JSON: readLedger skips it.
+  const rows = readLedger(buf.toString("utf8")).filter((r) => r.event === "session" && r.terminal === terminal);
+  return rows.at(-1)?.session ?? null;
+}
+
 /**
  * Ties the Claude session in the hook's `input` to terminal `me` (its `hc get`) once per
  * change: a session row appended to the ledger under `appHome`, then the agent.session label
- * set (a failed label means the row comes again next turn, never a lost one). Never rejects;
- * resolves with whether the session was new.
+ * set (a failed label is tried again next turn; the row is written once, never lost: a session
+ * the terminal's last row already names is not appended again). Never rejects; resolves with
+ * whether the session was new to the label.
  */
 export async function joinSession(self, me, input, appHome) {
   try {
@@ -193,8 +207,13 @@ export async function joinSession(self, me, input, appHome) {
     const terminal = me.address ?? self;
     const path = ledgerPath(appHome);
     mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true });
-    const fd = openSync(path, "a");
-    try { writeSync(fd, ledgerLine(sessionRow({ terminal, ...change }))); } finally { closeSync(fd); }
+    // Once per session: when the terminal's last session row already names it (the entry point's
+    // first attempt joined, then failed; or a label that did not stick), no second row. The read
+    // and the append are one synchronous step, so two attempts in one hook cannot both append.
+    const fd = openSync(path, "a+");
+    try {
+      if (lastSessionOf(fd, terminal) !== change.session) writeSync(fd, ledgerLine(sessionRow({ terminal, ...change })));
+    } finally { closeSync(fd); }
     await run("hc", ["label", terminal, `${SESSION_LABEL}=${change.session}`]);
     return true;
   } catch { return false; }

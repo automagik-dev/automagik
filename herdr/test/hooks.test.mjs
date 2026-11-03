@@ -360,7 +360,7 @@ test("the entry point runs am's copy first; a missing or broken am copy falls ba
   assert.match(broken.stderr, /broken am/);
 });
 
-test("an am copy that throws after printing or after reading stdin: one briefing, the sidebar's, with the whole hook input", (t) => {
+test("an am copy that throws after printing, reading stdin or joining: one briefing, the sidebar's, the whole input, one session row", (t) => {
   const s = botHome(t);
   syncHooks({ modsDir: s.mods });
   const command = commands(settings(s.proj))[1];
@@ -394,6 +394,21 @@ test("an am copy that throws after printing or after reading stdin: one briefing
   once(consumed.stdout);
   assert.match(consumed.stderr, /am broke after reading stdin/);
   assert.match(read(ledgerPath(s.app)), /"session":"s-consumed"/, "the sidebar's copy saw the hook's whole input");
+
+  // A real am copy that joined the session, then threw: the sidebar's attempt joins too, but the
+  // ledger gets one session row. hc label fails here (the fake has none), so the next turn tries
+  // again: still one row.
+  rmSync(amDir, { recursive: true });
+  cpSync(PACK, amDir, { recursive: true });
+  writeFileSync(join(amDir, "briefing.mjs"), `${read(join(PACK, "briefing.mjs"))}\nthrow new Error('am broke after joining');\n`);
+  const rows = () => read(ledgerPath(s.app)).split("\n").filter((l) => l.includes('"session":"s-joined"')).length;
+  for (const turn of [1, 2]) {
+    const joined = s.hook(command, { input: JSON.stringify({ session_id: "s-joined" }) });
+    assert.equal(joined.status, 0, joined.stderr);
+    once(joined.stdout);
+    assert.match(joined.stderr, /am broke after joining/);
+    assert.equal(rows(), 1, `turn ${turn}: one session row for s-joined`);
+  }
 });
 
 test("acceptance: after a later folder rename (simulated), the same hook still runs; a rollback to v0.3 puts v0.3's path back", (t) => {
