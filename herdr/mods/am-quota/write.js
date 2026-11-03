@@ -95,6 +95,22 @@ true`;
 }
 
 /**
+ * Installs the payload file as a saved login's own copy where there is no Keychain: the folder
+ * `0700`, a sibling temp file `0600`, an atomic `mv`, the payload removed. No dated backup — a
+ * saved copy is replaced by a newer one of the same login, and an old one is only exposure.
+ */
+export function privateFileScript(stamp) {
+  return `set -eu
+trap 'rm -f "$2.tmp-${stamp}"' EXIT
+mkdir -p "$(dirname "$2")"
+chmod 700 "$(dirname "$2")"
+cp "$1" "$2.tmp-${stamp}"
+chmod 600 "$2.tmp-${stamp}"
+mv "$2.tmp-${stamp}" "$2"
+rm -f "$1"`;
+}
+
+/**
  * Writes the Keychain item the CLI actually reads (`security find-generic-password -w -s
  * "<service>"`; `$1` is the service, which for a `CLAUDE_CONFIG_DIR` profile is the suffixed name
  * from `translate.keychainService`). Measured against the installed CLI's own writer: it feeds
