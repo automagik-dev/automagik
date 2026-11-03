@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (owner's answers in, D27) |
+| Status | Draft (owner's answers in: D27 and Decided) |
 | Milestone | not scheduled |
 | Lanes | desktop (3.N), plugin (3.N.P), herdr (3.N.P, [RFC 0011](0011-monorepo-parts-and-releases.md)) |
 | Created | 2026-11-03 |
@@ -42,7 +42,7 @@ segment carries Herdr's state:
 | State | How it is known | What Code shows | A click does |
 |---|---|---|---|
 | Not set up | no herdr-app, or no pack | "Set up" | runs the code set's install (delivery 6) |
-| Update due | the installer reports a newer herdr-app | "Update" dot | updates, then opens |
+| Update due | a newer herdr-app exists | "Update" dot | offers the update; yes updates, then opens; no opens the installed one |
 | Closed | herdr-app found, `status` exits 2 ("no Herdr window") | plain | starts Herdr, then opens |
 | Open | `status` exits 0 | a count of agents that need the person, from `ls` | opens |
 
@@ -59,12 +59,14 @@ the update channel. Every call to herdr-app is `execFile` with an argv array, ne
 with a 10 s limit.
 
 1. **Find.** The path the installer recorded for the code set (delivery 6). Before that, in
-   order: the `AUTOMAGIK_HERDR_APP` override; on macOS `/Applications/Herdr.app`, then
-   `~/Applications/Herdr.app`; then `herdr-app` and `herdr-gpui` on PATH. An app started from
-   Finder has no `~/.local/bin` on its PATH, so the bundle paths come first.
-2. **Latest.** herdr-app must be the latest (D27). The installer checks and updates it before
-   code mode opens. herdr-app's own `app.update` restarts the window, and its terminals keep
-   running in herdr-core.
+   order: the `AUTOMAGIK_HERDR_APP` override; herdr's own install path for the OS (see
+   Cross-OS); then `herdr-app` on PATH. An app started from Finder has no `~/.local/bin` on its
+   PATH, so the install paths come first.
+2. **Latest.** The installed `--version` is compared with the feed's `latest.json`. When a newer
+   herdr-app exists, the switch offers the update. On yes, it updates
+   before code mode opens; on no, it opens the installed one. With no network it opens the
+   installed one, with a note. herdr-app's own `app.update` restarts the window, and its
+   terminals keep running in herdr-core.
 3. **Start or raise.** On macOS through LaunchServices (`open -a <Herdr.app>`): it starts or
    raises the app, and Herdr is not a child of Automagik. On Linux and Windows, the bare binary,
    detached, which "opens or raises the window" (herdr-app skill). herdr-app has no raise
@@ -79,7 +81,8 @@ with a 10 s limit.
 6. **The Bot's agent.** Once both apps share Bot ids (the registry RFC, delivery 7):
    `automagik-herdr whois --bot <id> --json` names the Bot's pane, and `agent.focus` shows it.
    A Bot with no pane in its space gets its agent started (D27), through Herdr's own `start
-   <bot> --space <id>`. That keeps Herdr's labels, attach ledger and briefing. Until the
+   <bot> --space <id>`. That keeps Herdr's labels, attach ledger and briefing. The pack starts
+   agents on this computer today; remote starts come as soon as it supports them. Until the
    registry lands, the space is the target and nothing starts.
 
 RFC 0006 names mirrored spaces after Bots. This RFC matches by folder, because the folder is
@@ -95,10 +98,10 @@ and `omni://connect` is unchanged (`deeplink.js`, `main.js:101-131`).
 
 One install sets up the whole environment: DSH, herdr-app and the Automagik Herdr pack (D27).
 It runs through the `am` and parts plan (RFC 0012, not yet written): the code set (`part.json`,
-`set: ["code"]`) installs herdr-app and the pack, checks each sha256 against our signed manifest,
-and `am doctor` feeds the switch's state. The same install keeps herdr-app on the latest
-release, so step 2 above is a check, not a new download, in the common case. There is no
-Homebrew card.
+`set: ["code"]`) installs herdr-app and the pack. The pack is checked against our signed
+manifest, herdr-app against the sha256 in herdrdev's feed. `am doctor` feeds the switch's state. There is no Homebrew card. The herdr-app it installs
+is `dev.herdr.app`, from herdrdev, which updates itself. Updates follow step 2: offered, and
+done on yes.
 
 Until that installer ships, the switch shows only where herdr-app is already set up.
 
@@ -134,9 +137,9 @@ All three OSes ship at once (D27).
 
 | | macOS | Linux | Windows |
 |---|---|---|---|
-| Herdr build | `Herdr.app` (`dev.herdr.app`), macOS 14+ | GitHub release, x86_64 and aarch64 | GitHub release, x86_64 and aarch64 |
-| Binary | CLI `herdr-app` | `herdr-gpui` | `herdr-gpui.exe` |
-| `ls`, `do`, `status` | verified (0.1.12) | unverified: #191 ran `--help` only | unverified; the socket transport is unknown |
+| Herdr build (`dev.herdr.app`) | aarch64 only, no Intel Mac | x86_64 and aarch64 | x86_64 only, Windows 10 1803+ |
+| Installed at | `/Applications/Herdr.app`; CLI `herdr-app` | `~/.local/share/herdr-app`; `herdr-app` in `~/.local/bin` | `%LOCALAPPDATA%\Programs\herdr-app\herdr-app.exe`, on PATH |
+| `ls`, `do`, `status` | verified (0.1.12) | documented, not yet run | documented, not yet run; socket or named pipe unknown |
 | Start or raise | LaunchServices | detached binary; Wayland may refuse focus | detached binary; Windows may flash the taskbar instead |
 | Return link | `open` | `xdg-open`; deb registers the schemes, AppImage unverified | `start`; NSIS registers the schemes |
 | Automagik app | ships | packages (#191) | needs #191's four fixes first |
@@ -146,6 +149,14 @@ Terminals live in herdr-core, so a closed window loses none of them; the next cl
 again. Where the OS refuses to raise a window, the switch says "Herdr is open in another
 window". Shipping all three at once makes #191's Windows fixes and the cross-OS harness
 prerequisites, not follow-ups.
+
+Every build comes from herdrdev's feed, `https://releases.herdr.dev/app/latest.json`: version,
+`core_min`, and a URL and sha256 for each target (`herdr-app-<target>.tar.gz`). herdrdev
+publishes no GitHub release assets. Its installers (`install.sh` for Linux and macOS,
+`install.ps1` for Windows) install herdr-core and `hc` when missing, and running them again
+updates the app. #191's Linux and Windows results were for penso/herdr-gpui, a different
+project, so they do not carry over. Linux and Windows `ls` and `do` are proven by delivery 1's
+harness, or delivery 1 does not ship.
 
 ### Sandbox (RFC 0010)
 
@@ -158,7 +169,8 @@ install side:
   Linux and Windows it starts detached, with the app's own launch environment and none of the
   names the supervisor sets for DSH (`DSH_HOME`, `AUTOMAGIK_*`).
 - Its agents run as the person and need the person's git and SSH credentials, which 0010's
-  server fence denies. A fence for code mode waits for 0010's boundary API (open question 2).
+  server fence denies. herdr-app is installed and kept latest now; a fence for code mode comes
+  later, through 0010's boundary API (Decided 2).
 - The launch runs in the main process, so 0010's fence on DSH does not break it.
 - Under the fence, DSH writes `~/.automagik/bots` and repo files only inside a session's
   workspace. A repo's `bots.json` is in its Bot's workspace, so that write stays allowed.
@@ -196,9 +208,9 @@ install side:
   registry's id shapes.
 - **Herdr's socket.** `~/.config/herdr-app/herdr-app.sock` is mode 0755, so only its owner can
   connect. Any process of the same user can already drive Herdr. The switch adds nothing to that.
-- **The install.** herdr-app is a third-party app. Parts check its sha256 against our signed
-  manifest; "always latest" means each new upstream release enters that manifest without a
-  review of its own (open question 1).
+- **The install.** herdr-app is a third-party app. Each download is checked against the sha256
+  in herdrdev's `latest.json`; that proves the file matches the feed, not who made it. After
+  the first install, herdr-app updates itself, and no release passes a review of ours.
 - **Undo.** Revert the release. The switch keeps no state but its log.
 
 ## Failure modes
@@ -206,6 +218,7 @@ install side:
 | Failure | What the person sees | Log line |
 |---|---|---|
 | Not set up | "Set up" (after delivery 6); before it, no switch | `missing` |
+| The person declines the update | Herdr opens on the installed version | `declined <version>` |
 | The update fails or there is no network | Herdr opens on the installed version, with a note | `stale <version>` |
 | No window within 10 s | "Herdr didn't open", with Retry | `timeout`, the last stderr line |
 | A stale socket (exit 2 after a crash) | treated as closed: start, then retry once | `restart` |
@@ -266,7 +279,7 @@ Prerequisites, tracked elsewhere: #191's four Windows fixes for the Electron app
    *Check:* `herdr-app check`; a click brings Automagik forward on the same Bot.
    *Rollback:* revert the pack.
 6. **One install, always latest** (desktop, after RFC 0012). "Set up" runs the code set's
-   install; each click updates herdr-app first when a newer release exists.
+   install; a click offers the update when a newer herdr-app exists.
    *Check:* on a fresh machine of each OS, one click ends with Herdr open on the Bot's space.
    *Rollback:* revert; the switch hides where code mode is not set up.
 7. **The Bot's own agent** (desktop, after the registry RFC). `whois --bot`, then `agent.focus`;
@@ -290,24 +303,28 @@ planned in herdr-app, herdr-gpui or herdr-core (the spike's route B). **Not avai
 Moving herdr-app through the Accessibility API lags on drag, fights over z-order and focus, and
 breaks fullscreen and Spaces (route C). **Rejected.**
 
+## Decided
+
+D27 answered the first fourteen questions. Felipe answered the next five on 2026-11-03 (relayed
+by t259).
+
+1. **The Herdr source** is `dev.herdr.app`, from herdrdev, self-updating. It ships macOS,
+   Linux and Windows builds (t22n, from herdrdev's feed).
+2. **Sandbox.** herdr-app is installed and kept latest now. The fence comes later.
+3. **Updates.** The switch offers an update and does it on yes. With no network, it opens the
+   installed version with a note.
+4. **Remote starts** come as soon as the pack supports them. Spaces on every machine count now.
+5. **Before RFC 0012's installer,** the switch shows only where herdr-app is already set up.
+
 ## Open questions
 
-D27 answered the first fourteen. These came up while applying it.
-
-1. **Which Herdr does Automagik install?** The app on Felipe's Mac is `dev.herdr.app` 0.1.12,
-   from herdrdev/herdr-app, which has no GitHub releases and updates itself. The cask
-   `penso/tap/herdr-gpui` and #191's Linux and Windows builds come from penso/herdr-gpui.
-   Recommended: settle the source with t22n before delivery 1. The manifest pins the source,
-   and each new release enters it automatically.
-2. **"Sandboxed" for herdr-app.** Installed and kept latest by Automagik, or also fenced (RFC
-   0010)? Coding agents need git and SSH credentials the fence denies. Recommended: installed and
-   kept latest now; a fence later, through 0010's boundary API.
-3. **"Always latest" with no network.** Recommended: open on the installed version with a note;
-   never block code mode on an update check.
-4. **Remote starts.** The pack's `start` runs "on this computer". Recommended: start on this
-   computer first; remote starts once the pack supports them (t22n).
-5. **Before RFC 0012's installer.** Recommended: the switch shows only where herdr-app is
-   already set up.
+1. **No Intel Mac and no Windows on ARM.** herdrdev's feed has `macos-aarch64` and
+   `windows-x86_64` only. The Automagik app may run on both, so code mode would be missing
+   there, which conflicts with "all three OSes". Recommended: hide the switch on those two and
+   ask herdrdev for the builds.
+2. **Linux and Windows control is unproven.** herdr-app documents `ls`, `do` and `status` on
+   every OS, but nobody has run them on Linux or Windows. The Windows transport (socket or named
+   pipe) is unknown. Recommended: delivery 1's harness proves them; ask herdrdev if it fails.
 
 ## Links
 
