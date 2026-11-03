@@ -11430,7 +11430,7 @@ function createCodeSwitch(bridge, { focused = () => true } = {}) {
         answer = Promise.reject(error);
       }
       return answer.then((result) => result, (error) => ({ ok: false, reason: "error", message: error?.message })).then((result) => {
-        set({ busy: false, result: result ?? null });
+        set({ busy: false, result: result ?? { ok: false, reason: "error" } });
         if (result?.reason === "missing" || result?.reason === "unsupported") void refresh();
         return result;
       });
@@ -11468,7 +11468,8 @@ function Notice({ notice, onAnswer, onRetry, onDismiss, busy }) {
         "span",
         { className: "bt-code-note-row" },
         (0, import_react26.createElement)("button", { type: "button", className: "bt-code-note-go", disabled: busy, onClick: () => onAnswer(true) }, t("Update and open")),
-        (0, import_react26.createElement)("button", { type: "button", className: "bt-code-note-btn", disabled: busy, onClick: () => onAnswer(false) }, t("Open this version"))
+        (0, import_react26.createElement)("button", { type: "button", className: "bt-code-note-btn", disabled: busy, onClick: () => onAnswer(false) }, t("Open this version")),
+        (0, import_react26.createElement)("button", { type: "button", className: "bt-code-note-btn", onClick: onDismiss }, t("Dismiss"))
       )
     );
   }

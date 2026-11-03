@@ -123,7 +123,7 @@ test('Code sends the shown Bot\'s id, and nothing calls open() without a click',
 
 test('an offer of a newer Herdr asks first: yes updates, no opens the installed one', async () => {
   const offer = { ok: false, reason: 'update', installed: '0.9.0', latest: '1.0.0', message: 'Herdr 1.0.0 is available' }
-  const bridge = fakeBridge({ state: 'open', source: 'path' }, [offer, offer])
+  const bridge = fakeBridge({ state: 'open', source: 'path' }, [offer, offer, { ok: true, raised: true }, offer])
   mount(bridge)
   await settle()
   button(mount(bridge), 'Code').props.onClick()
@@ -136,6 +136,12 @@ test('an offer of a newer Herdr asks first: yes updates, no opens the installed 
   button(tree, 'Open this version').props.onClick()
   await settle()
   assert.deepEqual(bridge.calls.open, [{ botId: 'writer' }, { botId: 'writer', update: true }, { botId: 'writer', update: false }])
+  // Neither: the offer can be put away without opening anything.
+  button(mount(bridge), 'Code').props.onClick()
+  await settle()
+  button(mount(bridge), 'Dismiss').props.onClick()
+  assert.equal(button(mount(bridge), 'Update and open'), undefined)
+  assert.equal(bridge.calls.open.length, 4)
 })
 
 test('each answer from the app shows its label', () => {
@@ -173,6 +179,10 @@ test('a failed or refused open shows its label and can be dismissed', async () =
   assert.deepEqual(codeNotices(control.snapshot().result).map(n => n.label), ["Herdr didn't open"])
   control.dismiss()
   assert.equal(control.snapshot().result, null)
+  // An app that refused the page answers null: a failed open, not silence.
+  const silent = createCodeSwitch({ status: async () => ({ state: 'open' }), open: async () => null })
+  await silent.open({ botId: 'writer' })
+  assert.deepEqual(codeNotices(silent.snapshot().result).map(n => n.label), ["Herdr didn't open"])
   // One open at a time: a second click while the first runs does not reach the bridge again.
   const slow = fakeBridge({ state: 'open', source: 'path' })
   const twice = createCodeSwitch(slow)

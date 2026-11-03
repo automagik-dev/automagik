@@ -91,7 +91,8 @@ export function createCodeSwitch(bridge, { focused = () => true } = {}) {
         answer = Promise.reject(error)
       }
       return answer.then(result => result, error => ({ ok: false, reason: 'error', message: error?.message })).then((result) => {
-        set({ busy: false, result: result ?? null })
+        // An app that refused the page answers null: that is a failed open too.
+        set({ busy: false, result: result ?? { ok: false, reason: 'error' } })
         // Herdr went away since the last read: the switch hides once status says so.
         if (result?.reason === 'missing' || result?.reason === 'unsupported') void refresh()
         return result
@@ -131,7 +132,8 @@ function Notice({ notice, onAnswer, onRetry, onDismiss, busy }) {
       h('span', { className: 'bt-code-note-text' }, notice.label),
       h('span', { className: 'bt-code-note-row' },
         h('button', { type: 'button', className: 'bt-code-note-go', disabled: busy, onClick: () => onAnswer(true) }, t('Update and open')),
-        h('button', { type: 'button', className: 'bt-code-note-btn', disabled: busy, onClick: () => onAnswer(false) }, t('Open this version'))))
+        h('button', { type: 'button', className: 'bt-code-note-btn', disabled: busy, onClick: () => onAnswer(false) }, t('Open this version')),
+        h('button', { type: 'button', className: 'bt-code-note-btn', onClick: onDismiss }, t('Dismiss'))))
   }
   return h('div', { className: `bt-code-note bt-code-note-${notice.kind}`, role: 'status', title: notice.title },
     h('span', { className: 'bt-code-note-text' }, notice.label),
