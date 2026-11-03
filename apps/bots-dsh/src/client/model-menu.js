@@ -85,8 +85,12 @@ function EffortRows({ reasoning, current, onPick }) {
     h('span', { className: 'bt-model-tick', 'aria-hidden': true }, (row.effort ?? null) === (current ?? null) ? h(CheckIcon) : null))))
 }
 
+// A model a newer one of its family replaces (`superseded`, Claude's older versions) is left
+// out of the menu, unless the Bot is on it.
+export const offeredModels = (models, current) => (models ?? []).filter(model => model.superseded !== true || model.ref === current)
+
 function ModelRows({ roster, current, onPick }) {
-  return groupModels(roster.models).map(([provider, list]) => h(Fragment, { key: list[0].provider ?? provider },
+  return groupModels(offeredModels(roster.models, current)).map(([provider, list]) => h(Fragment, { key: list[0].provider ?? provider },
     h('div', { className: 'bt-model-group', role: 'presentation' }, provider),
     list.map(model => h('button', {
       key: model.ref, type: 'button', role: 'menuitemradio', 'aria-checked': model.ref === current, title: model.ref,
@@ -281,7 +285,7 @@ export function ModelChoiceDock({ sessionId, useRoster, actions }) {
   // it would get (DSH's default when it can run, else the first that can), one press
   // starts it, and "change" picks another.
   if (!lost && usable.length > 0) {
-    const suggested = usable.find(model => model.ref === roster.defaultModel)?.ref ?? (usable.find(model => model.id !== 'default') ?? usable[0]).ref
+    const suggested = usable.find(model => model.ref === roster.defaultModel)?.ref ?? (usable.find(model => model.id !== 'default' && model.superseded !== true) ?? usable.find(model => model.id !== 'default') ?? usable[0]).ref
     return h('div', { className: 'bt-model-dock' },
       h('div', { className: 'bt-astack', 'data-lead': '' },
         h('div', { className: 'bt-msg' },

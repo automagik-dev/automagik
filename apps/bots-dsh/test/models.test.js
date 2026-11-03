@@ -261,7 +261,25 @@ test('the catalog lists every Claude model pi-ai serves', async () => {
   }
   const rt = { ctx, state: { bots: { a: { model: 'anthropic/claude-sonnet-4-6' } } } }
   install(rt)
-  assert.deepEqual((await rt.catalog({ fresh: true })).map(entry => entry.ref), ['anthropic/claude-opus-5-5', 'anthropic/claude-opus-5', 'anthropic/claude-sonnet-5-5', 'anthropic/claude-sonnet-4-6'])
+  const catalog = await rt.catalog({ fresh: true })
+  assert.deepEqual(catalog.map(entry => entry.ref), ['anthropic/claude-opus-5-5', 'anthropic/claude-opus-5', 'anthropic/claude-sonnet-5-5', 'anthropic/claude-sonnet-4-6'])
+  // All stay served (the Bot on Sonnet 4.6 keeps it); the older ones are marked, so the menu
+  // offers each family's newest.
+  assert.deepEqual(catalog.filter(entry => entry.superseded).map(entry => entry.ref), ['anthropic/claude-opus-5', 'anthropic/claude-sonnet-4-6'])
+  assert.equal(await rt.desiredModel({ model: 'anthropic/claude-sonnet-4-6' }), 'anthropic/claude-sonnet-4-6')
+})
+
+test('a first model from Claude is the newest, not the first pi-ai lists', async () => {
+  const ctx = {
+    llm: {
+      listProviders: () => [{ id: 'anthropic', name: 'Anthropic' }],
+      listModels: async () => ['claude-fable-5', 'claude-fable-5-1', 'claude-haiku-4-5', 'claude-opus-5-5'].map(id => ({ provider: 'anthropic', id, name: id })),
+    },
+    get: () => undefined,
+  }
+  const rt = { ctx, state: { bots: {} } }
+  install(rt)
+  assert.equal(await rt.defaultModel(), 'anthropic/claude-fable-5-1')
 })
 
 test('without DeepSeek, the default is the first account connected here, and it stays so', async () => {

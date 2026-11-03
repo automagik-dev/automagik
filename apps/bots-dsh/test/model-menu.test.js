@@ -35,7 +35,7 @@ runInNewContext(bundle.outputFiles[0].text, {
     return platform[name]
   },
 })
-const { groupModels, greetingOnly, ModelChoiceDock, ModelLine, ModelLineTail, ModelMenu, effortRows } = module.exports
+const { groupModels, greetingOnly, ModelChoiceDock, ModelLine, ModelLineTail, ModelMenu, effortRows, offeredModels } = module.exports
 
 // ModelMenu picks the menu a Bot gets (DSH's models, or its plugin's): draw the one it picked.
 const drawMenu = (props) => {
@@ -284,4 +284,16 @@ test('the trigger names the picked entry, its group and level, and a fallback sa
   assert.deepEqual(trigger({ ...HOST, status: undefined }), ['DeepSeek V4.1 Flash', 'Unfold · Auto'])
   assert.deepEqual(trigger({ ...HOST, status: { kind: 'fallback', answering: 'Granite 4.1 3B' } }), ['DeepSeek V4.1 Flash', 'Granite 4.1 3B answers for now'])
   assert.deepEqual(trigger({ entries: [], loading: true }), ['Choose a model'])
+})
+
+test('the menu leaves out a superseded model, unless the Bot is on it', () => {
+  const models = [
+    { ref: 'anthropic/claude-opus-5-5', provider: 'anthropic' },
+    { ref: 'anthropic/claude-opus-4-7', provider: 'anthropic', superseded: true },
+    { ref: 'acp-claude/default', provider: 'acp-claude' },
+  ]
+  assert.deepEqual(Array.from(offeredModels(models, 'acp-claude/default'), model => model.ref), ['anthropic/claude-opus-5-5', 'acp-claude/default'])
+  // A Bot saved on an older Claude still sees, and keeps, the model it is on.
+  assert.deepEqual(Array.from(offeredModels(models, 'anthropic/claude-opus-4-7'), model => model.ref), ['anthropic/claude-opus-5-5', 'anthropic/claude-opus-4-7', 'acp-claude/default'])
+  assert.equal(offeredModels(undefined, undefined).length, 0)
 })

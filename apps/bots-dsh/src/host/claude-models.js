@@ -64,3 +64,24 @@ export function piAiClaudeOf(ref) {
   if (slash <= 0 || !isClaudeCode(ref.slice(0, slash))) return undefined
   return `${PI_AI_CLAUDE}/${closestClaude(ref.slice(slash + 1))}`
 }
+
+// The Claude models a menu offers on `anthropic`: each family's newest, by the same reading
+// as closestClaude. pi-ai serves its whole Claude catalog there (17 models in pi-ai 1.4.0:
+// every 4.5 to 5.5 version, dated snapshots, "(latest)" aliases), so the rest is marked
+// `superseded` and the menu hides it. It stays served: a Bot already on one keeps it, a Main
+// Bot can still name it. An id this cannot read is never superseded.
+const SNAPSHOT = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(-\d{8})?$/
+
+/** The ids among `ids` that a newer model of their family, or the undated alias, replaces. */
+export function supersededClaude(ids) {
+  const read = []
+  const newest = new Map()
+  for (const id of ids) {
+    const match = SNAPSHOT.exec(String(id))
+    if (!match) continue
+    const version = Number(match[2]) + Number(match[3] ?? 0) / 100
+    read.push({ id, family: match[1], version, dated: match[4] !== undefined })
+    newest.set(match[1], Math.max(newest.get(match[1]) ?? -Infinity, version))
+  }
+  return new Set(read.filter(model => model.dated || model.version < newest.get(model.family)).map(model => model.id))
+}
