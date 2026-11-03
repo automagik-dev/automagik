@@ -6,7 +6,7 @@ import { t } from './i18n.js'
 // CLI is on this computer (with its install link when it is not), the connector acp-dsh
 // installs in the background, the CLI's own sign-in, and a switch that is acp-dsh's own
 // claude/codex setting. Drawn in Connect AI and in Settings (the acp-agents section); without
-// acp-dsh the host answers { available: false } and nothing is drawn.
+// acp-dsh the host answers { available: false }: Connect AI draws nothing, Settings says so.
 
 export const CLI_OF = { 'acp-claude': 'claude', 'acp-codex': 'codex' }
 export const LOGO_OF = { 'acp-claude': 'CC', 'acp-codex': 'CX' }
@@ -91,25 +91,32 @@ export function useAcp(request = call) {
   }, [settling, load])
 
   const say = (id, message) => setProblems(previous => ({ ...previous, [id]: message }))
+  // Whether the host took it; a refusal leaves its words on the row.
   const act = async (id, endpoint, payload) => {
     say(id, null)
     setBusy(id)
+    let ok = true
     try {
       show(await request(endpoint, payload))
     } catch (error) {
+      ok = false
       say(id, error.message)
     }
     if (live.current) setBusy(null)
+    return ok
   }
   return {
     view,
     busy,
     problems,
     isOn: agent => wanted[agent.id] ?? agent.on,
-    flip: (agent) => {
+    flip: async (agent) => {
       const on = !(wanted[agent.id] ?? agent.on)
       setWanted(previous => ({ ...previous, [agent.id]: on }))
-      return act(agent.id, 'acp-switch', { id: agent.id, on })
+      // Refused: the switch goes back to what acp-dsh has, and nothing waits for it to settle.
+      if (!(await act(agent.id, 'acp-switch', { id: agent.id, on })) && live.current) {
+        setWanted(previous => (previous[agent.id] === on ? Object.fromEntries(Object.entries(previous).filter(([id]) => id !== agent.id)) : previous))
+      }
     },
     retry: agent => act(agent.id, 'acp-retry', { id: agent.id }),
     check: agent => act(agent.id, 'acp', { refresh: true }),
@@ -163,18 +170,10 @@ export function AcpSettingsSection() {
 }
 
 // Settings → Claude Code and Codex, after onboarding too: DSH's settings and the
-// Bot team's both list it. Only once the host says acp-dsh is running; without it, no page.
-export function installAcpSection(ctx, request = call) {
-  let alive = true
-  let dispose = () => {}
-  request('acp').then((view) => {
-    if (!alive || view?.available !== true) return
-    dispose = ctx.slots.inject('settings.section', () => ctx.slots.register({ name: 'settings.section', id: SETTINGS_SECTION, order: 30, label: () => t('Claude Code and Codex') }, AcpSettingsSection)) ?? (() => {})
-  }, () => {})
-  return () => {
-    alive = false
-    dispose()
-  }
+// Bot team's both list it. Always there, so an acp-dsh turned on after the page loaded has its
+// page without a reload; without acp-dsh the page says the plugin is not running.
+export function installAcpSection(ctx) {
+  return ctx.slots.inject('settings.section', () => ctx.slots.register({ name: 'settings.section', id: SETTINGS_SECTION, order: 30, label: () => t('Claude Code and Codex') }, AcpSettingsSection)) ?? (() => {})
 }
 
 export const ACP_CSS = `

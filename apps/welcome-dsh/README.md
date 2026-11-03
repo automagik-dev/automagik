@@ -122,7 +122,8 @@ connected another way.
 
 With [`@automagik/acp-dsh`](../acp-dsh) in the DSH, Connect AI has a **Coding agents** section
 after what was found, and DSH's Settings (and the Bot team's) have a **Claude Code and Codex**
-page with the same rows; without acp-dsh neither shows. Each row says:
+page with the same rows. Without acp-dsh Connect AI shows nothing of it, and the Settings page
+says the ACP agents plugin is not running. Each row says:
 
 - whether the agent's CLI (`claude`, `codex`) is on this computer, with its install link and
   **Check again** when it is not;
@@ -211,7 +212,7 @@ The shape was read from DSH 0.2.1-rc.2:
 | `omni-plugins` | none | The Omni plugins (`@automagik/bots-dsh`, `@automagik/omni-channels-dsh`, `-canvas-dsh`): each one's version and whether it is installed, `ready` once they run here, and the install in progress. |
 | `omni-plugins-install` | none | Installs the missing ones in order through DSH's plugin manager (`installBundle`: the Bot team from this plugin's own source pointed at its sibling, else this release's tarball; Omni's from Omni's repository at the pinned release), switching on any that are off. Pressing Omni's power button in the team step calls it. |
 | `acp` | `{ refresh? }` | Claude Code and Codex, from acp-dsh's `acpAgents` service: `{ available, agents: [{ id, key, name, on, cli: { found, installUrl? }, connector: { state, version?, error? }, signedIn?, listed, restartNeeded }] }`. `refresh` looks for the CLIs again and asks each whether it is signed in. `{ available: false }` without acp-dsh. |
-| `acp-switch` | `{ id, on }` | Writes acp-dsh's `claude` or `codex` setting (entry `acp-dsh`) at the revision `describe()` gave. |
+| `acp-switch` | `{ id, on }` | Writes acp-dsh's `claude` or `codex` setting in the entry its service names (`settingsEntry`, else `acp-dsh`) at the revision `describe()` gave. |
 | `acp-retry` | `{ id }` | Starts a failed connector install again. |
 | `bot-type` | `{ type: 'omni' }` | What the Omni Bot starts with, as groups: model and thinking (DSH's default), plugins with versions, tool groups with their switches, skills, folder and permissions. |
 

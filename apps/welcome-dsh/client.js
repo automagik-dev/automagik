@@ -11651,22 +11651,27 @@ function useAcp(request2 = call) {
   const act = async (id, endpoint, payload) => {
     say(id, null);
     setBusy(id);
+    let ok = true;
     try {
       show(await request2(endpoint, payload));
     } catch (error) {
+      ok = false;
       say(id, error.message);
     }
     if (live.current) setBusy(null);
+    return ok;
   };
   return {
     view,
     busy,
     problems,
     isOn: (agent) => wanted[agent.id] ?? agent.on,
-    flip: (agent) => {
+    flip: async (agent) => {
       const on2 = !(wanted[agent.id] ?? agent.on);
       setWanted((previous) => ({ ...previous, [agent.id]: on2 }));
-      return act(agent.id, "acp-switch", { id: agent.id, on: on2 });
+      if (!await act(agent.id, "acp-switch", { id: agent.id, on: on2 }) && live.current) {
+        setWanted((previous) => previous[agent.id] === on2 ? Object.fromEntries(Object.entries(previous).filter(([id]) => id !== agent.id)) : previous);
+      }
     },
     retry: (agent) => act(agent.id, "acp-retry", { id: agent.id }),
     check: (agent) => act(agent.id, "acp", { refresh: true })
@@ -11731,20 +11736,9 @@ function AcpSettingsSection() {
     )
   );
 }
-function installAcpSection(ctx, request2 = call) {
-  let alive = true;
-  let dispose = () => {
-  };
-  request2("acp").then((view) => {
-    if (!alive || view?.available !== true) return;
-    dispose = ctx.slots.inject("settings.section", () => ctx.slots.register({ name: "settings.section", id: SETTINGS_SECTION, order: 30, label: () => t("Claude Code and Codex") }, AcpSettingsSection)) ?? (() => {
-    });
-  }, () => {
+function installAcpSection(ctx) {
+  return ctx.slots.inject("settings.section", () => ctx.slots.register({ name: "settings.section", id: SETTINGS_SECTION, order: 30, label: () => t("Claude Code and Codex") }, AcpSettingsSection)) ?? (() => {
   });
-  return () => {
-    alive = false;
-    dispose();
-  };
 }
 var ACP_CSS = `
 .oai-acp-page{padding:8px 0;font-family:var(--oai-font);color:var(--oai-ink)}
