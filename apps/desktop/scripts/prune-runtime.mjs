@@ -8,7 +8,7 @@
 //       TypeScript from node_modules; kept when the package's entry points name src/
 //   typings (*.d.ts, *.d.mts, *.d.cts)                     only an editor reads them
 //   a package's README, CHANGELOG and HISTORY (.md)         runtime only: plugins in the
-//       profile read their own (dsh-oh-my-claude's Changelog card reads CHANGELOG.md)
+//       profile read their own (a plugin's Changelog card reads its CHANGELOG.md)
 //
 // DSH's own packages and the profile's plugins keep their typings and READMEs: DSH's
 // plugin-development skill (dsh-agent-preset, cordis-plugin-development) reads

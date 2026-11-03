@@ -65,39 +65,10 @@ test('a preset the Bot\'s own chat refuses is not kept', async () => {
   assert.equal(bot.permission, 'workspace-write')
 })
 
-// The whole team over a fake DSH presets service and fake dsh-oh-my-claude adapters, all
-// writing to one log. As in DSH, a Session's first open fires session/created inside the
-// resolve ("announced" follows the listeners' synchronous part), and a preset that does
-// not change appends nothing. As in dsh-oh-my-claude, the adapters share one override
-// Map, save each write to a file of their own (`io`) and clamp an override to the ceiling
-// of the access mode; `config` stands for its permissionMode setting. A Session in
+// The whole team over a fake DSH presets service writing to one log. As in DSH, a Session's
+// first open fires session/created inside the resolve ("announced" follows the listeners'
+// synchronous part), and a preset that does not change appends nothing. A Session in
 // `closed` holds Auto that DSH will not restore.
-const RANK = { plan: 0, default: 1, acceptEdits: 2, auto: 3, bypassPermissions: 4 }
-const CEILING = { 'read-only': 'default', 'workspace-write': 'acceptEdits', 'danger-full-access': 'bypassPermissions' }
-function claudeAdapter(log, overrides, { config = 'dsh', io = async () => {} } = {}) {
-  return {
-    async restorePermissionMode(sessionId, mode) {
-      await io()
-      overrides.set(sessionId, mode)
-      log.push(`${sessionId} override ${mode}`)
-    },
-    async setPermissionMode(sessionId, mode) {
-      await io()
-      if (mode === null) overrides.delete(sessionId)
-      else overrides.set(sessionId, mode)
-      log.push(`${sessionId} override ${mode}`)
-    },
-    permissionModeInfo: sessionId => ({ override: overrides.get(sessionId) ?? null }),
-    getPermissionMode(sessionId, access) {
-      const ceiling = config === 'dsh' ? CEILING[access] ?? 'acceptEdits' : config
-      const override = overrides.get(sessionId)
-      const mode = override !== undefined && RANK[override] <= RANK[ceiling] ? override : ceiling
-      log.push(`${sessionId} reads ${mode}`)
-      return mode
-    },
-  }
-}
-
 const TEAM = {
   version: 1,
   mainBotIds: ['m1'],
@@ -112,14 +83,13 @@ const TEAM = {
   questions: {},
 }
 
-function team(t, { auto = true, adapters = () => [], bots = {}, loaded = [], saved = {}, closed = [] } = {}) {
+function team(t, { auto = true, bots = {}, loaded = [], closed = [] } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-permissions-'))
   writeFileSync(join(home, 'state.json'), JSON.stringify({ ...TEAM, bots: { m1: TEAM.bots.m1, b2: { ...TEAM.bots.b2, ...bots.b2 } } }))
   const log = []
   const opened = []
   const open = new Set(loaded)
   const presetOf = new Map()
-  const overrides = new Map(Object.entries(saved))
   const service = {
     auto,
     names: () => ['read-only', 'workspace-write', 'danger-full-access', ...(service.auto ? ['auto'] : [])],
@@ -160,13 +130,11 @@ function team(t, { auto = true, adapters = () => [], bots = {}, loaded = [], sav
     sessionTitle: { rename: async () => {} },
     sessions: { flush: async () => {}, list: () => loaded.map(id => ({ id })) },
   })
-  globalThis[Symbol.for('dsh-oh-my-claude.adapter')] = new Map(adapters(log, overrides).map((adapter, index) => [`claude-code-${index}`, adapter]))
   let route
   const register = ctx.connection.fetch.register
   ctx.connection.fetch.register = (options) => { route = options; return register(options) }
   apply(ctx, { home })
   t.after(async () => {
-    delete globalThis[Symbol.for('dsh-oh-my-claude.adapter')]
     await ctx.dispose()
     rmSync(home, { recursive: true, force: true, maxRetries: 5 })
   })
@@ -175,24 +143,11 @@ function team(t, { auto = true, adapters = () => [], bots = {}, loaded = [], sav
   const presets = sessionId => of(sessionId).filter(line => line.includes(' preset ')).map(line => line.split(' preset ')[1])
   // Settles the session/created re-applies a step left queued.
   const settle = () => new Promise(resolve => setTimeout(resolve, 20))
-  return { ctx, rt: ctx.provided.get('omniTeam'), service, call, of, presets, opened, overrides, settle }
+  return { ctx, rt: ctx.provided.get('omniTeam'), service, call, of, presets, opened, settle }
 }
 
-// Every `preset auto` follows both adapters reading back auto since the preset before it.
-function autoAfterReadBack(lines) {
-  let reads = 0
-  for (const line of lines) {
-    if (line.endsWith(' reads auto')) reads += 1
-    else if (line.includes(' preset ')) {
-      if (line.endsWith(' preset auto')) assert.ok(reads >= 2, `${line} came before both adapters read back auto`)
-      reads = 0
-    }
-  }
-}
-
-test('Auto is set only after every Claude Code adapter reads back auto; a lower level clears it after', async (t) => {
-  const two = (log, overrides) => [claudeAdapter(log, overrides), claudeAdapter(log, overrides)]
-  const { rt, call, of, presets, overrides, settle } = team(t, { adapters: two })
+test('Auto is DSH\'s own Auto on every Session of the Bot or group; a lower level replaces it', async (t) => {
+  const { rt, call, presets, settle } = team(t)
   assert.equal((await call('update-bot', { id: 'b2', permission: 'auto' })).ok, true)
   assert.equal((await call('update-room', { id: 'r1', permission: 'auto' })).ok, true)
   await rt.applyPermission(rt.botOf('b2'), 'fresh')
@@ -201,42 +156,27 @@ test('Auto is set only after every Claude Code adapter reads back auto; a lower 
   const created = await call('create-bot', { name: 'Nova' })
   assert.equal(created.value.permission, 'auto')
   await settle()
-  for (const id of ['b2', 'g2', 'fresh', created.value.id]) {
-    // Until Claude Code confirms auto, the Session runs as workspace-write.
-    assert.deepEqual(presets(id), ['workspace-write', 'auto'], id)
-    autoAfterReadBack(of(id))
-    assert.equal(overrides.get(id), 'auto')
-  }
-  // Below Auto the preset goes first, then the auto override is cleared.
+  for (const id of ['b2', 'g2', 'fresh', created.value.id]) assert.deepEqual(presets(id), ['auto'], id)
   await call('update-bot', { id: 'b2', permission: 'workspace-write' })
   await settle()
-  const lowered = of('b2')
-  assert.deepEqual(presets('b2'), ['workspace-write', 'auto', 'workspace-write'])
-  assert.ok(lowered.lastIndexOf('b2 preset workspace-write') < lowered.indexOf('b2 override null'))
-  // Each adapter clears it, so each one's saved file drops it.
-  assert.equal(lowered.filter(line => line === 'b2 override null').length, 2)
-  assert.equal(overrides.get('b2'), undefined)
+  assert.deepEqual(presets('b2'), ['auto', 'workspace-write'])
 
   // An idle Auto Bot: opening a Session sets its first preset within the announce, and
   // lowering the Bot opens its chat, whose session/created re-apply finds the new level.
-  const idle = team(t, { adapters: two, bots: { b2: { permission: 'auto' } }, saved: { b2: 'auto', g2: 'auto' } })
+  const idle = team(t, { bots: { b2: { permission: 'auto' } } })
   await idle.call('state', {})
   await idle.rt.resolveAgent('g2')
-  assert.deepEqual(idle.of('g2').slice(0, 2), ['g2 preset workspace-write', 'g2 announced'])
+  assert.deepEqual(idle.of('g2').slice(0, 2), ['g2 preset auto', 'g2 announced'])
   assert.equal((await idle.call('update-bot', { id: 'b2', permission: 'workspace-write' })).ok, true)
   await idle.settle()
   assert.deepEqual(idle.presets('b2'), ['workspace-write'])
-  assert.equal(idle.overrides.get('b2'), undefined)
 
-  // Applies to one Session run in turn: Auto still waiting on Claude Code's files does
-  // not land after a lower level picked meanwhile.
-  const slow = (log, saved) => [claudeAdapter(log, saved, { io: () => new Promise(resolve => setTimeout(resolve, 5)) })]
-  const racing = team(t, { adapters: slow })
+  // Applies to one Session run in turn: a lower level picked meanwhile lands last.
+  const racing = team(t)
   await racing.call('state', {})
   await Promise.all([racing.call('update-bot', { id: 'b2', permission: 'auto' }), racing.call('update-bot', { id: 'b2', permission: 'workspace-write' })])
   await racing.settle()
   assert.equal(racing.service.current({ id: 'b2' }), 'workspace-write')
-  assert.equal(racing.overrides.get('b2'), undefined)
 })
 
 test('a saved Auto that cannot hold runs as workspace-write and says so', async (t) => {
@@ -250,22 +190,25 @@ test('a saved Auto that cannot hold runs as workspace-write and says so', async 
     assert.equal(bot.permission, 'auto')
     assert.equal(bot.permissionFallback, 'workspace-write')
   }
-  const pickAuto = ({ call }) => call('update-bot', { id: 'b2', permission: 'auto' })
   // Without the layer DSH offers no Auto; a Bot saved on it before runs below it.
   await runsAsFallback({ auto: false, bots: { b2: { permission: 'auto' } } }, async ({ rt }) => {
     await rt.load()
     await rt.applyPermission(rt.botOf('b2'), 'b2')
   })
-  // dsh-oh-my-claude set to its own mode, not 'dsh'.
-  await runsAsFallback({ adapters: (log, overrides) => [claudeAdapter(log, overrides, { config: 'acceptEdits' })] }, pickAuto)
-  // An adapter without the methods, and one whose write fails.
-  await runsAsFallback({ adapters: (log, overrides) => [claudeAdapter(log, overrides), {}] }, pickAuto)
-  await runsAsFallback({ adapters: (log, overrides) => [claudeAdapter(log, overrides, { io: async () => { throw new Error('disk full') } })] }, pickAuto)
-  // The layer unloads: every loaded Auto Session moves to workspace-write at once, even
-  // while another's override clear waits on its file, and no Session is opened. The
-  // windows learn of it through modelsKey, with no save.
-  const hung = { adapters: (log, overrides) => [claudeAdapter(log, overrides, { io: () => new Promise(() => {}) })] }
-  const { ctx, call, service, presets, opened, settle } = team(t, { ...hung, bots: { b2: { permission: 'auto' } }, loaded: ['b2', 'g2'], saved: { b2: 'auto', g2: 'auto' } })
+  // DSH refuses its own Auto when it comes to set it.
+  const refusing = team(t)
+  const set = refusing.service.set
+  refusing.service.set = (session, name) => {
+    if (name === 'auto') throw new Error('permission: Auto is not ready')
+    set(session, name)
+  }
+  assert.equal((await refusing.call('update-bot', { id: 'b2', permission: 'auto' })).ok, true)
+  await refusing.settle()
+  assert.deepEqual(refusing.presets('b2'), ['workspace-write'])
+  assert.equal((await refusing.call('state', {})).value.bots.find(entry => entry.id === 'b2').permissionFallback, 'workspace-write')
+  // The layer unloads: every loaded Auto Session moves to workspace-write at once, and no
+  // Session is opened. The windows learn of it through modelsKey, with no save.
+  const { ctx, call, service, presets, opened, settle } = team(t, { bots: { b2: { permission: 'auto' } }, loaded: ['b2', 'g2'] })
   const before = (await call('state', {})).value
   service.auto = false
   for (const listener of ctx.listeners.get('permission-presets/catalog-changed')) void listener()

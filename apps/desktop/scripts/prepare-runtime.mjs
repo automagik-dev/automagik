@@ -166,7 +166,7 @@ for (const [name, version] of Object.entries(ADDONS)) {
   if (installed !== version) throw new Error(`${name} installed at ${installed}, not the vetted ${version}`)
 }
 // A version names no build: a pinned commit can carry a development client under the vetted
-// version (dsh-oh-my-claude f6e9158), which DSH refuses, and with it the whole web UI.
+// version (v3.53.0: an add-on's fork at f6e9158), which DSH refuses, and with it the whole web UI.
 const devBuilds = devClientBundles(join(installDir, 'node_modules'), Object.keys(profileDeps))
 if (devBuilds.length > 0) throw new Error(`development client bundles (react/jsx-dev-runtime, which DSH's module table does not carry): ${devBuilds.join(', ')}`)
 // DSH's own record of the build's install (.plugin-manager) is not part of what ships.

@@ -702,6 +702,46 @@ test('a Bot wearing a builtin pet that no longer ships wears Genie instead of no
   assert.deepEqual(JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).bots.m1.avatar, { pet: GENIE_CLAY })
 })
 
+// Oh My Claude left Automagik. Once, a Bot on a claude-code model moves to the closest pi-ai
+// Claude model, keeps the old ref for a later move to acp-claude, and keeps its Session.
+test('a Bot on a Claude Code model moves to pi-ai\'s Claude once, keeping the old ref and its Session', async (t) => {
+  const CLAUDE_TEAM = {
+    ...OLD_TEAM,
+    whaleStored: true,
+    octopusStored: true,
+    genieClayStored: true,
+    bots: {
+      m1: { ...OLD_TEAM.bots.m1, lab: undefined, model: 'claude-code/opus', appliedModel: 'claude-code/opus', appliedEffort: 'high', effort: 'high' },
+      w2: { ...OLD_TEAM.bots.w2, lab: undefined, model: 'claude-code-work/claude-sonnet-4-5-20250929[1m]' },
+      d3: { id: 'd3', sessionId: 'd3', name: 'Coder', role: 'Codes', instructions: '', createdAt: 3, model: 'deepseek/deepseek-v4-flash', appliedModel: 'deepseek/deepseek-v4-flash' },
+    },
+  }
+  for (const bot of Object.values(CLAUDE_TEAM.bots)) delete bot.lab
+  const { call, stop, home, archived } = start(CLAUDE_TEAM, { models: ['deepseek-v4-flash'] })
+  t.after(stop)
+  const bots = async () => Object.fromEntries((await call('state', {})).value.bots.map(bot => [bot.id, bot]))
+  const loaded = await bots()
+  assert.equal(loaded.m1.model, 'anthropic/claude-opus-5-5')
+  assert.equal(loaded.w2.model, 'anthropic/claude-sonnet-4-5')
+  assert.equal(loaded.d3.model, 'deepseek/deepseek-v4-flash')
+  const saved = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))
+  assert.equal(saved.claudeCodeMoved, true)
+  assert.equal(saved.bots.m1.claudeCodeModel, 'claude-code/opus')
+  assert.equal(saved.bots.w2.claudeCodeModel, 'claude-code-work/claude-sonnet-4-5-20250929[1m]')
+  assert.equal(saved.bots.d3.claudeCodeModel, undefined)
+  // The thinking level the user picked stays; the Session's record of Claude Code goes.
+  assert.equal(saved.bots.m1.effort, 'high')
+  assert.notEqual(saved.bots.m1.appliedModel, 'claude-code/opus')
+  // Same Sessions, none archived: the old chats stay readable.
+  assert.deepEqual([saved.bots.m1.sessionId, saved.bots.w2.sessionId], ['m1', 'w2'])
+  assert.deepEqual(archived, [])
+
+  // The move ran once: a model the user picks afterwards is never overwritten on the next load.
+  assert.equal((await call('update-bot', { id: 'm1', model: 'deepseek/deepseek-v4-flash' })).ok, true)
+  assert.equal((await bots()).m1.model, 'deepseek/deepseek-v4-flash')
+  assert.equal(JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).bots.m1.claudeCodeModel, 'claude-code/opus')
+})
+
 // #99: the team tools take a Bot's thinking level. `effort` is optional, an empty
 // string returns to the model's default, and a level the model does not serve is
 // refused before anything about the Bot changes.

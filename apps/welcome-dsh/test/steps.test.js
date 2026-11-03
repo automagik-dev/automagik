@@ -74,7 +74,7 @@ test('finishing writes the flag, then completes; a tile completes before it open
 test('Connect AI is a list of switches: found first, then 4 more and the rest on demand', async () => {
   const { sections, onCount, flipAction, FIRST_OTHERS } = await load('connect-ai.js')
   const rows = [
-    { id: 'claude', found: 'Signed in to Claude Code', ready: true, on: true },
+    { id: 'claude', found: 'Signed in to Claude', ready: true, on: true },
     { id: 'chatgpt', found: null, ready: false, on: false },
     { id: 'deepseek', found: 'DEEPSEEK_API_KEY found', ready: true, on: true },
     { id: 'openai', found: null, ready: true, on: true },
@@ -97,13 +97,14 @@ test('Continue needs one AI really on; Skip always finishes', async () => {
   assert.equal(onCount([{ on: false }, { on: true }]), 1)
 })
 
-test('every row that signs in names its own provider; Claude never signs in, keys say where to get one', async () => {
+test('every row that signs in names its own provider; Claude is pi-ai\'s anthropic route, offered once', async () => {
   const { PROVIDER_OF, LOGOS } = await load('connect-ai.js')
   const providers = plain(PROVIDER_OF)
-  assert.equal(providers.claude, undefined)
-  assert.deepEqual([providers.chatgpt, providers.kimi, providers.copilot, providers.grok], ['openai-codex', 'kimi-coding', 'github-copilot', 'xai'])
+  assert.deepEqual([providers.claude, providers.chatgpt, providers.kimi, providers.copilot, providers.grok], ['anthropic', 'openai-codex', 'kimi-coding', 'github-copilot', 'xai'])
+  assert.equal(Object.values(providers).filter(provider => provider === 'anthropic').length, 1)
   assert.ok(!Object.values(providers).includes('claude'))
   assert.equal(typeof plain(LOGOS).claude, 'string')
+  assert.equal(plain(LOGOS).anthropic, undefined)
 })
 
 test('the rail names only the steps this DSH has: Connect Omni only with the plugin that brings it', () => {

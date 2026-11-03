@@ -2112,30 +2112,6 @@ function mountShellInstallers(tools) {
   };
 }
 
-// src/shared/permission-levels.js
-var AUTO = "auto";
-var AUTO_FALLBACK = "workspace-write";
-var isClaudeCode = (provider) => provider === "claude-code" || String(provider).startsWith("claude-code-");
-var ADAPTERS = /* @__PURE__ */ Symbol.for("dsh-oh-my-claude.adapter");
-var claudeAdapters = () => [...globalThis[ADAPTERS]?.values() ?? []];
-async function pinClaudeMode(sessionId, mode) {
-  const adapters = claudeAdapters();
-  try {
-    if (mode === AUTO) {
-      if (adapters.some((adapter) => typeof adapter.restorePermissionMode !== "function" || typeof adapter.getPermissionMode !== "function")) return false;
-      for (const adapter of adapters) await adapter.restorePermissionMode(sessionId, AUTO);
-      return adapters.every((adapter) => adapter.getPermissionMode(sessionId, "danger-full-access") === AUTO);
-    }
-    const readable = adapters.filter((adapter) => typeof adapter.permissionModeInfo === "function");
-    if (!readable.some((adapter) => adapter.permissionModeInfo(sessionId).override === AUTO)) return true;
-    const writable = adapters.filter((adapter) => typeof adapter.setPermissionMode === "function");
-    for (const adapter of writable) await adapter.setPermissionMode(sessionId, null);
-    return writable.length === adapters.length && readable.every((adapter) => adapter.permissionModeInfo(sessionId).override === null);
-  } catch {
-    return false;
-  }
-}
-
 // src/client/composer-packs.js
 var PACK_CELLS = ["permission", "model"];
 var DEFAULT_PACK = Object.freeze({ id: "omni", cells: Object.freeze({ permission: "hidden", model: "hidden" }) });
@@ -2175,21 +2151,6 @@ function cellChoice(pack, cell, target) {
   }
   return choice === "host" || choice === "model" ? choice : "hidden";
 }
-var OH_MY_CLAUDE = /oh-my-claude/i;
-var CLAUDE_KEYS = ["conversation.input.permission", "conversation.input.left", "conversation.input.dock", "conversation.composer.dock"];
-var hasOhMyClaude = (env) => CLAUDE_KEYS.some((key) => (env.registrants?.(key) ?? []).some((name) => OH_MY_CLAUDE.test(name ?? "")));
-var CLAUDE_CODE_PACK = Object.freeze({
-  id: "claude-code",
-  order: -200,
-  match: isClaudeCode,
-  available: hasOhMyClaude,
-  cells: Object.freeze({
-    permission: (target) => target?.bot?.permission ? "hidden" : "host",
-    model: "model"
-  }),
-  // Without its permission control (an older DSH puts it elsewhere), DSH's own would show.
-  hostFor: Object.freeze({ permission: OH_MY_CLAUDE })
-});
 var THINKING_PACK = Object.freeze({
   id: "thinking",
   order: -100,
@@ -2202,7 +2163,7 @@ var HOST_MODEL_PACK = Object.freeze({
   match: (_provider, target) => target?.host !== void 0,
   cells: Object.freeze({ model: "model" })
 });
-var BUILTIN_PACKS = [HOST_MODEL_PACK, CLAUDE_CODE_PACK, THINKING_PACK];
+var BUILTIN_PACKS = [HOST_MODEL_PACK, THINKING_PACK];
 function stepsAside({ roster, sessionId, cell, key, env, packs }) {
   const target = targetOf(roster, sessionId);
   const pack = packFor(target, { env, ...packs ? { packs } : {} });
@@ -17375,6 +17336,10 @@ function VoiceMode({ sessionId, roster, actions, useSessions, useSessionStatus }
     )
   );
 }
+
+// src/shared/permission-levels.js
+var AUTO = "auto";
+var AUTO_FALLBACK = "workspace-write";
 
 // src/client/permission-picker.js
 var import_react50 = require("react");

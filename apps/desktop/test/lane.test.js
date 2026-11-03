@@ -226,9 +226,11 @@ test('a lane record from before each lane kept its own still reads', (t) => {
   assert.deepEqual(laneMemory(home, 'genie'), { last: 0, bad: [] })
 })
 
-test('Automagik\'s lane carries the add-ons it names, beside its plugins, and no other add-on', () => {
+// Oh My Claude left the lane with the app (dsh.js RETIRED): a lane that still carries it updates
+// nothing of it, and an add-on the lane does not name is never taken either.
+test('Automagik\'s lane updates only the plugins it names, never an add-on it does not', () => {
   const addon = (name, version) => ({ name, version, url: `https://github.com/automagik-dev/automagik/releases/download/v3.22.1/${name.replace('/', '-')}-${version}.tgz`, integrity: 'sha512-x', sha256: 'y', size: 1, engines: { dsh: '>=0.2.0-rc.1 <0.3.0' } })
   const carried = lane({ addons: [addon('dsh-oh-my-claude', '1.5.6-omni.8'), addon('@goodandready/dsh-subscriptions', '0.7.22-omni.1')] })
   const installed = { ...context.installed, 'dsh-oh-my-claude': '1.5.6-omni.7', '@goodandready/dsh-subscriptions': '0.7.21-omni.1' }
-  assert.deepEqual(laneUpdate(carried, { ...context, installed })?.plugins.map(plugin => `${plugin.name}@${plugin.version}`), ['@automagik/bots-dsh@3.22.1', 'dsh-oh-my-claude@1.5.6-omni.8'])
+  assert.deepEqual(laneUpdate(carried, { ...context, installed })?.plugins.map(plugin => `${plugin.name}@${plugin.version}`), ['@automagik/bots-dsh@3.22.1'])
 })

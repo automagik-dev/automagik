@@ -36,23 +36,20 @@ test('the default model can run: a provider without its key is passed over, and 
     install(runtime)
     return runtime
   }
-  const lineup = { deepseek: [{ id: 'deepseek-v4-pro' }], 'claude-code': [{ id: 'default', name: 'Default (recommended)' }, { id: 'opus', name: 'Claude Opus 5.5' }] }
+  const lineup = { deepseek: [{ id: 'deepseek-v4-pro' }], gateway: [{ id: 'default', name: 'Default (recommended)' }, { id: 'opus', name: 'Claude Opus 5.5' }] }
   // DSH's default needs a key nobody set: the first model that can run, not the alias.
-  assert.equal(await rt({ provider: 'deepseek', model: 'deepseek-v4-pro' }, ['deepseek'], lineup).defaultModel(), 'claude-code/opus')
-  // Claude Code runs on a Claude Code already on this computer: any account connected here comes first.
-  const three = { 'claude-code': [{ id: 'opus' }], deepseek: [{ id: 'deepseek-v4-pro' }], openai: [{ id: 'gpt-5.5' }] }
-  assert.equal(await rt({ provider: 'deepseek', model: 'deepseek-v4-pro' }, ['deepseek'], three).defaultModel(), 'openai/gpt-5.5')
+  assert.equal(await rt({ provider: 'deepseek', model: 'deepseek-v4-pro' }, ['deepseek'], lineup).defaultModel(), 'gateway/opus')
   // DSH's default can run: it is the one, even an alias the user chose there.
   assert.equal(await rt({ provider: 'deepseek', model: 'deepseek-v4-pro' }, [], lineup).defaultModel(), 'deepseek/deepseek-v4-pro')
-  assert.equal(await rt({ provider: 'claude-code', model: 'default' }, ['deepseek'], lineup).defaultModel(), 'claude-code/default')
+  assert.equal(await rt({ provider: 'gateway', model: 'default' }, ['deepseek'], lineup).defaultModel(), 'gateway/default')
   // Only the alias can run: it is used.
-  assert.equal(await rt(undefined, ['deepseek'], { deepseek: [{ id: 'v4' }], 'claude-code': [{ id: 'default' }] }).defaultModel(), 'claude-code/default')
+  assert.equal(await rt(undefined, ['deepseek'], { deepseek: [{ id: 'v4' }], gateway: [{ id: 'default' }] }).defaultModel(), 'gateway/default')
   // Nothing can run: no default, so a Bot made now waits for one.
   const none = rt({ provider: 'deepseek', model: 'deepseek-v4-pro' }, ['deepseek'], { deepseek: [{ id: 'deepseek-v4-pro' }] })
   assert.equal(await none.defaultModel(), undefined)
   assert.equal(none.cachedDefault(), undefined)
   // A Bot whose model went away falls back to one that can run.
-  assert.equal(await rt(undefined, ['deepseek'], lineup).desiredModel({ model: 'gone/model' }), 'claude-code/opus')
+  assert.equal(await rt(undefined, ['deepseek'], lineup).desiredModel({ model: 'gone/model' }), 'gateway/opus')
 })
 
 test('a model is named by its ref, or by an id or name only one provider serves', async () => {
@@ -252,39 +249,24 @@ test('a Bot on the default model with its own thinking level leaves the default 
   assert.deepEqual(current(), fallback)
 })
 
-test('Claude through Claude Code offers the newest of each family, and keeps what a Bot runs on', async () => {
-  const { currentClaudeModels } = await import('../src/host/models.js')
-  const row = (id, provider = 'claude-code') => ({ ref: `${provider}/${id}`, provider, id, name: id })
-  // What dsh-oh-my-claude 1.5.5 lists once the CLI (2.1.309) has answered: its lineup, then
-  // the models it knew before.
-  const live = ['default', 'opus', 'claude-fable-5-1[1m]', 'sonnet', 'haiku', 'claude-fable-5-1', 'claude-fable-5', 'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-6', 'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-opus-4-5', 'claude-sonnet-4-5', 'claude-haiku-4-5-20251001']
-  const ids = list => list.map(entry => entry.ref)
-  assert.deepEqual(ids(currentClaudeModels([...live.map(id => row(id)), row('deepseek-v4-pro', 'deepseek')])), ['claude-code/default', 'claude-code/opus', 'claude-code/claude-fable-5-1[1m]', 'claude-code/sonnet', 'claude-code/haiku', 'deepseek/deepseek-v4-pro'])
-  // Before the CLI answered, only the models it knew: the newest of each.
-  const known = ['claude-fable-5-1', 'claude-fable-5', 'claude-opus-5', 'claude-opus-4-8', 'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-haiku-4-5']
-  assert.deepEqual(ids(currentClaudeModels(known.map(id => row(id)))), ['claude-code/claude-fable-5-1', 'claude-code/claude-opus-5', 'claude-code/claude-sonnet-5', 'claude-code/claude-haiku-4-5'])
-  // Once the plugin knows the 5.5 ids, its lineup takes them, and the older ones go.
-  assert.deepEqual(ids(currentClaudeModels(['claude-opus-5-5', 'claude-opus-5', 'claude-haiku-5-5', 'claude-haiku-4-5'].map(id => row(id)))), ['claude-code/claude-opus-5-5', 'claude-code/claude-haiku-5-5'])
-  // A Bot on an older model keeps it; another box's route is weighed on its own.
-  assert.deepEqual(ids(currentClaudeModels([row('opus'), row('claude-opus-4-8'), row('claude-opus-4-8', 'claude-code-studio')], new Set(['claude-code/claude-opus-4-8']))), ['claude-code/opus', 'claude-code/claude-opus-4-8', 'claude-code-studio/claude-opus-4-8'])
-})
-
-test('the catalog leaves out superseded Claude models but keeps one a Bot runs on', async () => {
+// Claude is an ordinary provider now (pi-ai's anthropic route): every model it serves is
+// listed, none set aside as Claude Code's lineup was.
+test('the catalog lists every Claude model pi-ai serves', async () => {
   const ctx = {
     llm: {
-      listProviders: () => [{ id: 'claude-code', name: 'Oh My Claude' }],
-      listModels: async () => ['opus', 'sonnet', 'claude-opus-4-8', 'claude-sonnet-4-6'].map(id => ({ provider: 'claude-code', id, name: id })),
+      listProviders: () => [{ id: 'anthropic', name: 'Anthropic' }],
+      listModels: async () => ['claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-sonnet-4-6'].map(id => ({ provider: 'anthropic', id, name: id })),
     },
     get: () => undefined,
   }
-  const rt = { ctx, state: { bots: { a: { model: 'claude-code/claude-sonnet-4-6' } } } }
+  const rt = { ctx, state: { bots: { a: { model: 'anthropic/claude-sonnet-4-6' } } } }
   install(rt)
-  assert.deepEqual((await rt.catalog({ fresh: true })).map(entry => entry.ref), ['claude-code/opus', 'claude-code/sonnet', 'claude-code/claude-sonnet-4-6'])
+  assert.deepEqual((await rt.catalog({ fresh: true })).map(entry => entry.ref), ['anthropic/claude-opus-5-5', 'anthropic/claude-opus-5', 'anthropic/claude-sonnet-5-5', 'anthropic/claude-sonnet-4-6'])
 })
 
 test('without DeepSeek, the default is the first account connected here, and it stays so', async () => {
-  const providers = { 'claude-code': [{ id: 'opus' }], kimi: [{ id: 'k3' }], openai: [{ id: 'gpt-5.5' }] }
-  let missing = new Set(['deepseek', 'kimi', 'openai'])
+  const providers = { anthropic: [{ id: 'claude-opus-5-5' }], kimi: [{ id: 'k3' }], openai: [{ id: 'gpt-5.5' }] }
+  let missing = new Set(['deepseek', 'anthropic', 'kimi', 'openai'])
   const state = { bots: {} }
   let saves = 0
   const runtime = {
@@ -299,14 +281,16 @@ test('without DeepSeek, the default is the first account connected here, and it 
   }
   install(runtime)
   const fresh = async () => { await runtime.catalog({ fresh: true }); return runtime.defaultModel() }
-  // Only Claude Code can run, on the credentials it found: it is the default until something else can.
-  assert.equal(await fresh(), 'claude-code/opus')
-  // The person connects OpenAI, then Kimi: OpenAI, the first, is the default.
-  missing = new Set(['deepseek', 'kimi'])
+  // Nothing can run yet: no default.
+  assert.equal(await fresh(), undefined)
+  // The person connects OpenAI, then Kimi, then Claude: OpenAI, the first, is the default.
+  missing = new Set(['deepseek', 'anthropic', 'kimi'])
+  assert.equal(await fresh(), 'openai/gpt-5.5')
+  missing = new Set(['deepseek', 'anthropic'])
   assert.equal(await fresh(), 'openai/gpt-5.5')
   missing = new Set(['deepseek'])
   assert.equal(await fresh(), 'openai/gpt-5.5')
-  assert.deepEqual([...state.providersSeen], ['claude-code', 'openai', 'kimi'])
+  assert.deepEqual([...state.providersSeen], ['openai', 'kimi', 'anthropic'])
   assert.ok(saves >= 3)
   // DeepSeek signed in: DSH's default, DeepSeek, wins.
   missing = new Set()
