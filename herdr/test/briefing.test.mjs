@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -174,8 +174,12 @@ test("hook command, run by sh: the script gets stdin; no run.sh exits 0 silently
   // The script the hook names: the stable entry point (the shim is tested in hooks.test.mjs).
   mkdirSync(dirname(stableBriefingPath(app)), { recursive: true });
   writeFileSync(stableBriefingPath(app), 'let s = ""; process.stdin.on("data", (d) => { s += d; }).on("end", () => console.log(`briefed ${s}`));\n');
+  // Keep system Node out of PATH, including on Linux where it may be /usr/bin/node.
+  const shellBin = join(root, "shell-bin");
+  mkdirSync(shellBin);
+  symlinkSync("/bin/sh", join(shellBin, "sh"));
   const hook = (env) => spawnSync("/bin/sh", ["-c", hookCommand(app)], { input: '{"prompt":"hi"}', encoding: "utf8",
-    env: { HOME: root, PATH: "/usr/bin:/bin", AUTOMAGIK_HERDR_RUNTIME_DIRS: dirname(process.execPath), ...env } });
+    env: { HOME: root, PATH: shellBin, AUTOMAGIK_HERDR_RUNTIME_DIRS: dirname(process.execPath), ...env } });
   // A rollback to a pack without run.sh, or an uninstall: nothing, exit 0.
   const missing = hook();
   assert.deepEqual([missing.status, missing.stdout, missing.stderr], [0, "", ""]);

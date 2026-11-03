@@ -182,7 +182,14 @@ test("a fresh install puts the pack and the command in place; a second run chang
   const version = spawnSync(s.link, ["--version"], { encoding: "utf8", env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` } });
   assert.equal(version.stdout.trim(), "automagik-herdr 9.9.0", version.stderr);
   // No node on PATH (a pane Herdr started): bin/run.sh finds one anyway.
-  const bare = { HOME: s.home, PATH: "/usr/bin:/bin", AUTOMAGIK_HERDR_RUNTIME_DIRS: dirname(process.execPath) };
+  // Linux may install node in /usr/bin: expose only the wrapper's shell utilities.
+  const bareBin = join(s.root, "bare-bin");
+  mkdirSync(bareBin);
+  for (const cmd of ["sh", "dirname", "readlink"]) {
+    const path = execFileSync("/bin/sh", ["-c", `command -v ${cmd}`], { encoding: "utf8" }).trim();
+    symlinkSync(path, join(bareBin, cmd));
+  }
+  const bare = { HOME: s.home, PATH: bareBin, AUTOMAGIK_HERDR_RUNTIME_DIRS: dirname(process.execPath) };
   const which = spawnSync("/bin/sh", ["-c", "command -v node"], { encoding: "utf8", env: bare });
   assert.notEqual(which.status, 0, `node must be absent from the test PATH, found ${which.stdout.trim()}`);
   const noNode = spawnSync(s.link, ["--version"], { encoding: "utf8", env: bare });
@@ -1009,10 +1016,13 @@ test("no downgrade: a re-posted older signed pointer is refused by version or se
   assert.match(s.mark(), /^sequence=100000$/m);
 });
 
-test("every download keeps the path as written (curl --path-as-is): the pointer and its signature, the pack's two, usagemeter's two", () => {
+test("every download keeps the path as written (curl --path-as-is), including the Linux UI installer", () => {
   const calls = readFileSync(INSTALL, "utf8").split("\n").filter((l) => /^\s+curl /.test(l));
-  assert.equal(calls.length, 6);
-  for (const l of calls) assert.match(l, /^\s+curl -fsSL --path-as-is "(\$u?base\/|\$POINTER(\.sig)?")/);
+  assert.equal(calls.length, 7);
+  for (const l of calls) assert.match(l, /--path-as-is/);
+  for (const l of calls.filter((line) => !line.includes("https://herdrui.dev/install.sh"))) {
+    assert.match(l, /^\s+curl -fsSL --path-as-is "(\$u?base\/|\$POINTER(\.sig)?")/);
+  }
   assert.doesNotMatch(readFileSync(INSTALL, "utf8"), /api\.github\.com|releases\?per_page|MAX_PAGES/, "no search through the releases");
 });
 

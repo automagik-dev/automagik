@@ -574,7 +574,7 @@ install() {
       if ask "Herdr UI is not installed. Run its official Linux installer (may require sudo)?"; then
         TMP=$(mktemp -d "${TMPDIR:-/tmp}/automagik-herdr.XXXXXX")
         # Download completely before executing; stdin may contain this very installer.
-        curl -fsSL https://herdrui.dev/install.sh -o "$TMP/herdr-ui-install.sh" </dev/null \
+        curl -fsSL https://herdrui.dev/install.sh -o "$TMP/herdr-ui-install.sh" --path-as-is </dev/null \
           || fail "could not download the Herdr UI installer; $linux_hint"
         sh "$TMP/herdr-ui-install.sh" </dev/null || fail "Herdr UI's Linux installer failed; $linux_hint"
         herdr_ok || fail "$linux_hint"
