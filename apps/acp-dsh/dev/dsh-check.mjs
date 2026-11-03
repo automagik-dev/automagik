@@ -57,11 +57,12 @@ copyFileSync(join(PLUGIN, '..', 'desktop', 'profile', 'pnpm-workspace.yaml'), jo
 const shims = join(work, 'bin')
 mkdirSync(shims, { recursive: true })
 writeFileSync(join(shims, 'pnpm'), '#!/bin/sh\nexec npx --yes pnpm@10.34.6 "$@"\n', { mode: 0o755 })
-const dshEnv = { ...env, DSH_HOME: dshHome, AUTOMAGIK_HOME: join(work, 'automagik'), PATH: `${shims}:${env.PATH}` }
+// AUTOMAGIK_PNPM: the adapters install with this pnpm 10, as the desktop app's own (src/dsh.js dshEnv).
+const dshEnv = { ...env, DSH_HOME: dshHome, AUTOMAGIK_HOME: join(work, 'automagik'), AUTOMAGIK_PNPM: join(shims, 'pnpm'), PATH: `${shims}:${env.PATH}` }
 execFileSync(process.execPath, [DSH_BIN, 'plugin', '--profile', 'acp', 'install', '--prod', '--ignore-scripts'], { cwd: profile, env: dshEnv, stdio: ['ignore', 'inherit', 'inherit'] })
 
 const ROUTE = { fake: { provider: 'acp-fake', model: 'fake' }, claude: { provider: 'acp-claude', model: 'default' }, codex: { provider: 'acp-codex', model: 'default' } }[AGENT]
-// Claude Code in Manual mode asks before any write; Codex in its workspace sandbox (DSH's own
+// Claude Code in Manual mode asks before a write its own settings do not already allow; Codex in its workspace sandbox (DSH's own
 // workspace-write level) writes inside the folder (and the temp folders) unasked, as DSH's own
 // tools do, and asks for the network.
 const TASK = {

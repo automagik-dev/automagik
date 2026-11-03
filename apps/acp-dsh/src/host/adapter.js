@@ -89,7 +89,7 @@ export function aside(providers) {
 export class AcpAdapter extends LlmAdapter {
   /**
    * @param {import('@deepseek-ai/cordis').Context} ctx
-   * @param {Map<string, { name: string, model: { id: string, name: string }, spawn(): { command: string, args?: string[], env?: Record<string, string> } }>} agents
+   * @param {Map<string, { name: string, model: { id: string, name: string }, installed?(): boolean, spawn(): { command: string, args?: string[], env?: Record<string, string> } }>} agents
    */
   constructor(ctx, agents) {
     super()
@@ -97,16 +97,19 @@ export class AcpAdapter extends LlmAdapter {
     this.agents = agents
     this.live = new Map()
     this.scoped = new WeakSet()
-    this.tool = mirrorTool({ runOf: sessionId => this.live.get(sessionId), approval: () => ctx.get?.('approval') })
+    this.tool = mirrorTool({ runOf: sessionId => this.live.get(sessionId), approval: () => ctx.get?.('approval'), sandboxPolicy: () => ctx.get?.('sandboxPolicy') })
   }
 
   providerInfo(provider) {
     return { id: provider, name: this.agents.get(provider)?.name ?? provider }
   }
 
+  // An agent whose ACP adapter is not installed yet lists no model, so nothing (a picker, a
+  // Bot's model) can choose one that cannot answer.
   async listModels(provider) {
     const agent = this.agents.get(provider)
-    return agent ? [{ provider, id: agent.model.id, name: agent.model.name }] : []
+    if (agent === undefined || agent.installed?.() === false) return []
+    return [{ provider, id: agent.model.id, name: agent.model.name }]
   }
 
   // The mirror tool lives in the agent's own scope: no other Session's model sees it.
@@ -165,7 +168,7 @@ export class AcpAdapter extends LlmAdapter {
       }
       // The Session's level, as the agent's own permission mode, before every prompt.
       try {
-        await live.run.setMode(agent.modeFor?.(levelOf(this.ctx.get?.('approval'), dshAgent?.session)))
+        await live.run.setMode(agent.modeFor?.(levelOf(this.ctx.get?.('approval'), dshAgent?.session, this.ctx.get?.('sandboxPolicy'))))
       } catch (error) {
         return yield finish('error', `${agent.name} would not take DSH's permission level: ${error?.message ?? error}`)
       }

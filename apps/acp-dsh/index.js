@@ -13,18 +13,16 @@ export const name = 'acp-dsh'
 export const inject = ['llm', 'agents']
 
 export const Config = z.object({
-  claude: z.boolean().default(true).description('Offer Claude Code as the acp-claude model when the claude CLI is installed.'),
+  claude: z.boolean().default(true).description("Offer Claude Code as the acp-claude model when the claude CLI is installed. It keeps the person's own Claude Code settings: what their allow rules and hooks allow runs without DSH's approval dialog."),
   codex: z.boolean().default(true).description('Offer Codex as the acp-codex model when the codex CLI is installed.'),
   fakeAgent: z.string().description('Tests only: a script that speaks ACP, served as the acp-fake model. The command comes from these host settings, never from a client route.'),
 })
 
 const FIRST_CHECK_MS = 5000
 
-// The Node that runs an adapter: the one on DSH's PATH (the desktop app puts its own there),
-// else the one running DSH, as Node when that is Electron's binary.
-function nodeCommand(env = process.env) {
-  const node = findCommand('node', { env })
-  if (node) return { command: node, env: {} }
+// The Node that runs an adapter: the one running DSH (as Node when that is Electron's binary),
+// never another node on the PATH, which may be too old for the adapter (Node 22 or newer).
+export function nodeCommand() {
   return { command: process.execPath, env: process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {} }
 }
 
@@ -47,11 +45,15 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       name: spec.name,
       model: spec.model,
       modeFor: spec.modeFor,
+      installed: () => store.binOf(spec.adapter, spec.bin) !== undefined,
       spawn: () => {
         const bin = store.binOf(spec.adapter, spec.bin)
         if (bin === undefined) {
+          const failed = store.lastError?.(spec.adapter)
           store.update(spec.adapter, spec.bin).catch(error => warn(ctx, `${spec.adapter} not installed: ${error?.message ?? error}`))
-          throw new Error(`its ACP adapter (${spec.adapter}) is still being installed; send this again in a minute`)
+          throw new Error(failed
+            ? `its ACP adapter (${spec.adapter}) is still being installed; the last install failed: ${failed}`
+            : `its ACP adapter (${spec.adapter}) is still being installed; send this again in a minute`)
         }
         const node = nodeCommand()
         return { command: node.command, args: [bin.path], env: { ...node.env, ...spec.env(cli) } }

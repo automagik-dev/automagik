@@ -17,9 +17,14 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
 - **Host only.** No browser half, so the plugin cannot stop the web UI from loading. With no
   agent CLI installed it registers no route.
 - **The Session's level, as the agent's own mode.** Before each prompt the agent's ACP session
-  mode follows the Session: Claude Code in Manual, so it asks (through DSH) before any write or
-  command whatever its own settings say; Codex in the sandbox that matches DSH's. Full access
-  lets every call through, as it does DSH's own tools.
+  mode follows the Session: Manual is Claude Code's `default` mode, whatever default mode its
+  own settings name; Codex runs in the sandbox that matches DSH's. Auto is Claude Code's `auto`
+  and Codex's `agent`. Full access lets every call through, as it does DSH's own tools. An agent
+  that does not offer the strict mode fails the turn instead of running in its own default.
+- **Claude Code keeps the person's own settings.** It loads their Claude Code settings (user,
+  project and local) and asks DSH only for what those leave as "ask". A call their allow rules,
+  saved "always allow" rules or PreToolUse/PermissionRequest hooks approve runs with no DSH
+  dialog. This is the owner's decision (RFC 0003, Decided).
 
 ## Agents
 
@@ -34,11 +39,13 @@ An agent is offered only when its CLI is on PATH or where its installer puts it 
 
 The adapters are not pinned (RFC 0003, amended): the CLIs update themselves, and an adapter that
 lags its CLI breaks first. They install in the background at DSH's start and once a day after,
-with the pnpm on DSH's PATH (the desktop app's own) or else npm, into
+with the desktop app's own pnpm (`AUTOMAGIK_PNPM`, never the person's) or else npm, into
 `$AUTOMAGIK_HOME/acp/adapters/<package>/<version>`. An install goes to a fresh folder renamed into
 place when complete, without install scripts or optional dependencies (the CLIs the adapters
-bundle); the previous version stays for a Session still on it. Nothing is downloaded when a
-Session starts. Until the first install lands, a turn on the agent says so.
+bundle); an install that pulls in a bundled CLI's platform package anyway is refused. The
+previous version stays for a Session still on it. Nothing is downloaded when a Session starts.
+Until the first install lands, the agent lists no model; a Session already on it says the
+adapter is being installed, with the last install error.
 
 ## Check it
 

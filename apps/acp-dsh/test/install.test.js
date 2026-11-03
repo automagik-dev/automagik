@@ -1,14 +1,14 @@
 // Delivery 3's plumbing without the network: the CLI search, the background adapter install
 // (fake registry, fake package manager), the routes only for CLIs that are here, and full access.
 import assert from 'node:assert/strict'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { markAgentLoopRequest } from '@deepseek-ai/dsh-llm'
-import { apply } from '../index.js'
+import { apply, nodeCommand } from '../index.js'
 import { AGENTS, findCommand } from '../src/host/agents.js'
-import { AdapterStore, CHECK_EVERY_MS } from '../src/host/install.js'
+import { AdapterStore, CHECK_EVERY_MS, defaultInstall, INSTALL_TIMEOUT_MS, platformPackages } from '../src/host/install.js'
 import { fullAccess, levelOf } from '../src/host/tool.js'
 
 const scratch = () => mkdtempSync(join(tmpdir(), 'acp-dsh-install-'))
@@ -111,16 +111,29 @@ test('routes are offered only for CLIs that are here; before its adapter is in, 
   tool(join(home, 'bin'), 'claude')
   const registered = []
   const updates = []
-  const store = { binOf: () => undefined, update: async (pkg) => { updates.push(pkg) } }
+  let installed
+  let failed
+  const store = { binOf: () => installed, update: async (pkg) => { updates.push(pkg) }, lastError: () => failed }
   const ctx = { llm: { registerAdapter: (providers, adapter) => registered.push({ providers, adapter }) }, agents: { get: () => undefined }, get: () => undefined, on: () => {} }
   apply(ctx, { codex: false }, { store })
   assert.deepEqual(registered[0].providers, ['acp-claude'])
+  // No model until the adapter is installed: nothing (a picker, a Bot) can pick it before it can answer.
+  assert.deepEqual(await registered[0].adapter.listModels('acp-claude'), [])
+  const turn = async () => {
+    const chunks = []
+    for await (const chunk of registered[0].adapter.stream(markAgentLoopRequest({ provider: 'acp-claude', model: 'default', sessionId: 's1', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }))) chunks.push(chunk)
+    return chunks.at(-1).reason
+  }
+  // A Session already on it says the adapter is being installed, and why the last install failed.
+  let reason = await turn()
+  assert.equal(reason.kind, 'error')
+  assert.match(reason.failure.message, /still being installed; send this again/)
+  failed = 'npm answered 503'
+  reason = await turn()
+  assert.match(reason.failure.message, /still being installed; the last install failed: npm answered 503/)
+  assert.deepEqual(updates, ['@agentclientprotocol/claude-agent-acp', '@agentclientprotocol/claude-agent-acp'])
+  installed = { path: join(home, 'index.js'), version: '1.0.0' }
   assert.deepEqual(await registered[0].adapter.listModels('acp-claude'), [{ provider: 'acp-claude', id: 'default', name: 'Claude Code' }])
-  const chunks = []
-  for await (const chunk of registered[0].adapter.stream(markAgentLoopRequest({ provider: 'acp-claude', model: 'default', sessionId: 's1', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }))) chunks.push(chunk)
-  assert.equal(chunks.at(-1).reason.kind, 'error')
-  assert.match(chunks.at(-1).reason.failure.message, /still being installed/)
-  assert.deepEqual(updates, ['@agentclientprotocol/claude-agent-acp'])
   // Turned off in the settings: not offered even with the CLI here.
   const none = []
   apply({ ...ctx, llm: { registerAdapter: providers => none.push(providers) } }, { claude: false, codex: false }, { store })
@@ -156,11 +169,137 @@ test("DSH's level becomes each agent's own mode: Manual, Auto, full access", () 
   const level = (policy, sandbox) => levelOf({ effectivePolicy: () => policy }, { snapshotEvents: () => [{ type: 'sandbox/mode', data: { mode: sandbox } }] })
   const claude = AGENTS['acp-claude'].modeFor
   const codex = AGENTS['acp-codex'].modeFor
-  assert.equal(claude(level('ask', 'workspace-write')), 'default')
-  assert.equal(claude(level('never', 'workspace-write')), 'auto')
-  assert.equal(claude(level('never', 'danger-full-access')), 'bypassPermissions')
-  assert.equal(codex(level('ask', 'read-only')), 'read-only')
-  assert.equal(codex(level('ask', 'workspace-write')), 'workspace-write')
-  assert.equal(codex(level('never', 'workspace-write')), 'agent')
-  assert.equal(codex(level('never', 'danger-full-access')), 'agent-full-access')
+  assert.deepEqual(claude(level('ask', 'workspace-write')), ['default'])
+  assert.deepEqual(claude(level('never', 'workspace-write')), ['auto', 'default'])
+  assert.deepEqual(claude(level('never', 'danger-full-access')), ['bypassPermissions', 'default'])
+  assert.deepEqual(codex(level('ask', 'read-only')), ['read-only'])
+  assert.deepEqual(codex(level('ask', 'workspace-write')), ['workspace-write'])
+  assert.deepEqual(codex(level('never', 'workspace-write')), ['agent', 'workspace-write'])
+  assert.deepEqual(codex(level('never', 'danger-full-access')), ['agent-full-access', 'workspace-write'])
+})
+
+test("the Session's sandbox is the one DSH's sandbox-policy service resolves, deployment default included", () => {
+  const ask = { effectivePolicy: () => 'ask' }
+  const never = { effectivePolicy: () => 'never' }
+  const noRows = { snapshotEvents: () => [] }
+  // DSH_PERMISSION_MODE=read-only and no row in the Session: Codex gets read-only, not workspace-write.
+  const readOnly = { resolve: () => ({ mode: 'read-only' }) }
+  assert.deepEqual(AGENTS['acp-codex'].modeFor(levelOf(ask, noRows, readOnly)), ['read-only'])
+  // A full-access deployment under the never policy is full access.
+  assert.equal(fullAccess(never, noRows, { resolve: () => ({ mode: 'danger-full-access' }) }), true)
+  // Without the service, the Session's own last row.
+  assert.equal(levelOf(ask, { snapshotEvents: () => [{ type: 'sandbox/mode', data: { mode: 'read-only' } }] }).sandbox, 'read-only')
+})
+
+test("a missing strict mode fails the turn; a missing permissive one falls back to the strict one", async () => {
+  const { AgentRun } = await import('../src/host/acp.js')
+  const runWith = (ids, current) => {
+    const run = new AgentRun({ name: 'probe', cwd: '/' })
+    const set = []
+    run.conn = { setSessionMode: async ({ modeId }) => { set.push(modeId) } }
+    run.gone = new Promise(() => {})
+    run.modes = ids === undefined ? undefined : { currentModeId: current, availableModes: ids.map(id => ({ id, name: id })) }
+    return { run, set }
+  }
+  // Claude renamed `default`: the turn fails instead of keeping the person's `auto`.
+  let probe = runWith(['auto', 'acceptEdits', 'plan'], 'auto')
+  await assert.rejects(probe.run.setMode(['default']), /offers none of the modes default/)
+  assert.deepEqual(probe.set, [])
+  // No modes reported at all: the same.
+  probe = runWith(undefined)
+  await assert.rejects(probe.run.setMode(['workspace-write']), /no modes/)
+  // bypassPermissions not offered (root, or settings that disable it): `default`, never the agent's own.
+  probe = runWith(['default', 'auto', 'plan'], 'auto')
+  await probe.run.setMode(['bypassPermissions', 'default'])
+  assert.deepEqual(probe.set, ['default'])
+  assert.equal(probe.run.modes.currentModeId, 'default')
+  // Already there: nothing sent.
+  await probe.run.setMode(['default'])
+  assert.deepEqual(probe.set, ['default'])
+})
+
+test("the adapter runs on DSH's own Node, never another node on PATH", () => {
+  assert.equal(nodeCommand().command, process.execPath)
+})
+
+// A package manager script that says which one ran (in ../used) and "installs" the adapter's entry script.
+const fakeManager = (dir, name, label) => {
+  mkdirSync(dir, { recursive: true })
+  const file = join(dir, name)
+  const entry = 'node_modules/@agentclientprotocol/claude-agent-acp/dist'
+  writeFileSync(file, `#!/bin/sh\necho ${label} "$@" > "$PWD/../used"\n/bin/mkdir -p ${entry} && echo > ${entry}/index.js\n`, { mode: 0o755 })
+  chmodSync(file, 0o755)
+  return file
+}
+
+test("adapters install with the desktop app's pnpm, never the person's; else npm", async (t) => {
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const { adapter, bin } = AGENTS['acp-claude']
+  fakeManager(join(home, 'person'), 'pnpm', 'person-pnpm')
+  fakeManager(join(home, 'person'), 'npm', 'person-npm')
+  const app = fakeManager(join(home, 'app'), 'pnpm', 'app-pnpm')
+  const install = async (name, env) => {
+    const dir = join(home, name, 'pkg')
+    mkdirSync(dir, { recursive: true })
+    await defaultInstall(dir, adapter, '1.0.0', env)
+    assert.ok(existsSync(join(dir, 'node_modules', ...adapter.split('/'), bin)))
+    return readFileSync(join(home, name, 'used'), 'utf8')
+  }
+  // The person's pnpm (pnpm 12 pulls in the bundled CLIs) comes first on PATH; the app's is AUTOMAGIK_PNPM.
+  assert.match(await install('one', { PATH: join(home, 'person'), AUTOMAGIK_PNPM: app }), /^app-pnpm install --prod --ignore-scripts/)
+  // Without the app's pnpm (a DSH the person runs): npm, never the person's pnpm.
+  assert.match(await install('two', { PATH: join(home, 'person') }), /^person-npm install --omit=optional/)
+  assert.match(await install('three', { PATH: join(home, 'person'), AUTOMAGIK_PNPM: join(home, 'missing', 'pnpm') }), /^person-npm install/)
+})
+
+test('an install that pulls in a bundled CLI is refused, and the working adapter stays', async (t) => {
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const { adapter, bin } = AGENTS['acp-codex']
+  let version = '1.0.0'
+  let now = 1_000
+  let extra = []
+  const install = async (dir, ...rest) => {
+    await fakeInstall([])(dir, ...rest)
+    for (const pkg of extra) mkdirSync(join(dir, 'node_modules', ...pkg.split('/')), { recursive: true })
+  }
+  const store = new AdapterStore({ home, latest: async () => version, install, now: () => now })
+  // @openai/codex (no platform in its name) is a launcher codex-acp depends on: allowed.
+  extra = ['@openai/codex', '@anthropic-ai/claude-agent-sdk']
+  assert.equal((await store.update(adapter, bin)).version, '1.0.0')
+  version = '2.0.0'
+  now += CHECK_EVERY_MS + 1
+  extra = ['@openai/codex', '@openai/codex-darwin-arm64']
+  await assert.rejects(store.update(adapter, bin), /installed the CLIs it bundles \(@openai\/codex-darwin-arm64\); refused/)
+  assert.equal(store.binOf(adapter, bin).version, '1.0.0')
+  assert.match(store.lastError(adapter), /refused/)
+  const folder = join(home, 'agentclientprotocol__codex-acp')
+  assert.deepEqual(readdirSync(folder).sort(), ['1.0.0', 'current.json'])
+  // Nested and pnpm-store spellings are found too.
+  const tree = join(home, 'tree')
+  mkdirSync(join(tree, 'node_modules', 'a', 'node_modules', '@anthropic-ai', 'claude-agent-sdk-linux-x64-musl'), { recursive: true })
+  mkdirSync(join(tree, 'node_modules', '.pnpm', '@openai+codex-win32-x64@0.1.0'), { recursive: true })
+  assert.deepEqual(platformPackages(tree).sort(), ['@anthropic-ai/claude-agent-sdk-linux-x64-musl', '@openai+codex-win32-x64@0.1.0'])
+  // A later install that works clears the last error.
+  extra = []
+  await store.update(adapter, bin)
+  assert.equal(store.lastError(adapter), undefined)
+})
+
+test('a half-done install DSH quit in the middle of is dropped once stale; a running one stays', async (t) => {
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const { adapter, bin } = AGENTS['acp-claude']
+  const folder = join(home, 'agentclientprotocol__claude-agent-acp')
+  const stale = join(folder, '.install-1-1')
+  const running = join(folder, '.install-2-2')
+  mkdirSync(stale, { recursive: true })
+  mkdirSync(running, { recursive: true })
+  const old = (Date.now() - INSTALL_TIMEOUT_MS - 60_000) / 1000
+  utimesSync(stale, old, old)
+  const store = new AdapterStore({ home, latest: async () => '1.0.0', install: fakeInstall([]) })
+  await store.update(adapter, bin)
+  assert.equal(existsSync(stale), false)
+  assert.equal(existsSync(running), true)
 })

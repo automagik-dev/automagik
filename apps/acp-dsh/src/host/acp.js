@@ -146,10 +146,20 @@ export class AgentRun {
     this.push(event)
   }
 
-  /** Switch the agent's own permission mode, when it has that mode and is not in it already. */
-  async setMode(modeId) {
-    if (modeId === undefined || this.modes?.currentModeId === modeId) return
-    if (!this.modes?.availableModes?.some(mode => mode.id === modeId)) return
+  /**
+   * Switch the agent's own permission mode to the first of `modeIds` it offers (most wanted
+   * first, the strict one last). One it lacks falls back to the next; when it offers none of
+   * them, not even the strict one, the turn fails rather than run in whatever mode the agent
+   * started in (the person's own default, which may let calls through unasked).
+   * @param {string | string[] | undefined} modeIds
+   */
+  async setMode(modeIds) {
+    if (modeIds === undefined) return
+    const wanted = [modeIds].flat()
+    const offered = new Set((this.modes?.availableModes ?? []).map(mode => mode.id))
+    const modeId = wanted.find(id => offered.has(id))
+    if (modeId === undefined) throw new Error(`it offers none of the modes ${wanted.join(', ')} (it offers ${[...offered].join(', ') || 'no modes'})`)
+    if (this.modes?.currentModeId === modeId) return
     await this.held(() => Promise.race([this.conn.setSessionMode({ sessionId: this.sessionId, modeId }), this.gone]))
     this.modes = { ...this.modes, currentModeId: modeId }
   }

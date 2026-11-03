@@ -47,8 +47,9 @@ Every model entry gets a descriptor `{ harness, connectedBy }`, derived from its
 
 - **Agents as DSH models.** Each configured agent is a provider route. A Bot or a chat picks it
   like any model. DSH keeps the Session, history and sidebar.
-- **DSH tool cards and approvals.** The agent's tool calls render as DSH tool cards. Every tool
-  call goes through DSH's approval dialog under the Session's level. How: the agent runs its own
+- **DSH tool cards and approvals.** The agent's tool calls render as DSH tool cards. Every call
+  the agent asks permission for goes through DSH's approval dialog under the Session's level
+  (what the agent's own settings already allow does not ask; see the Session's level below). How: the agent runs its own
   tools, and each call it makes ends the model step with a call to `acp_tool`, a mirror tool
   registered in that agent's scope only. DSH writes the `tool/call` and `tool/result` rows and
   draws the card from the call's ACP kind (terminal, diff, generic). The mirror tool waits for
@@ -64,15 +65,28 @@ Every model entry gets a descriptor `{ harness, connectedBy }`, derived from its
   `@agentclientprotocol/codex-acp`; the `@zed-industries` names are deprecated), at its newest
   npm release: installed in the background at DSH's start and once a day after, into
   `$AUTOMAGIK_HOME/acp/adapters`, into a fresh folder renamed into place only when complete,
-  without install scripts or optional dependencies (the CLIs the adapters bundle). Nothing is
-  downloaded when a Session starts: no `npx`. Until the first install lands, a turn says the
-  adapter is being installed.
+  without install scripts or optional dependencies (the CLIs the adapters bundle). The install
+  uses the desktop app's own pnpm 10 (`AUTOMAGIK_PNPM`), never a newer pnpm the person has
+  (pnpm 12 installs the bundled CLIs anyway: about 700 MB for the two), else npm; an install
+  that still pulls in a bundled CLI's platform package is refused. Nothing is downloaded when a
+  Session starts: no `npx`. An agent lists its model only once its adapter is installed, so
+  nothing can pick it before it can answer; a Session already on it says the adapter is being
+  installed, with the last install error when there is one.
 - **The Session's level, as the agent's own mode.** Before each prompt the plugin sets the agent's
-  ACP session mode from the Session's level: Claude Code in Manual (`default`), so every write and
-  command it would run asks through DSH, whatever default mode the person's own Claude Code
-  settings name; Codex in its sandbox matching DSH's (`read-only`, `workspace-write`). Full access
-  is `bypassPermissions` and `agent-full-access`, and any ask that still comes is allowed, as DSH
-  allows its own tools there.
+  ACP session mode from the Session's level (its sandbox as DSH's sandbox-policy service resolves
+  it, the deployment default included): Claude Code in Manual is Claude Code's `default` mode,
+  whatever default mode the person's own Claude Code settings name; Codex in its sandbox matching
+  DSH's (`read-only`, `workspace-write`). DSH's Auto is Claude Code's `auto` and Codex's `agent`.
+  Full access is `bypassPermissions` and `agent-full-access`, and any ask that still comes is
+  allowed, as DSH allows its own tools there. An agent that does not offer the strict mode
+  (`default`; `read-only` or `workspace-write`) fails the turn; one that lacks a permissive mode
+  gets the strict one instead.
+- **Claude Code keeps the person's own settings.** (Owner decision, 2026-11-03.) The Claude
+  adapter loads the person's Claude Code settings (user, project and local), and Claude Code asks
+  DSH only for what those leave as "ask". So in Manual, a call the person's allow rules or saved
+  "always allow" rules permit, or a PreToolUse or PermissionRequest hook approves, runs with no
+  DSH dialog; a call they deny is denied. Their CLAUDE.md, MCP servers and hooks keep working
+  too.
 - **Resume.** Use the agent's own session load when it offers one; otherwise start fresh and say so.
 
 ### Retired: the Claude Code plugin
@@ -85,10 +99,9 @@ and D17). Claude runs on pi-ai's `anthropic` route until `acp-claude` ships.
 - **Bots.** Once per team (`claudeCodeMoved` in state.json), a Bot on a `claude-code*` model
   moves to the closest pi-ai Claude model (`apps/bots-dsh/src/host/claude-models.js`): an alias
   to its family's newest, a version to the nearest one pi-ai serves, `default` to Opus. The old
-  ref stays on the Bot as `claudeCodeModel`. The ACP delivery's own migration reads that field to
-  move the Bot on to `acp-claude`, and sets its own flag: once `acp-claude/default` is served
-  (a claude CLI is here), a Bot still on the pi-ai model it was moved to goes to it, once per team
-  (`acpClaudeMoved`); a Bot the person moved since stays (`apps/bots-dsh/src/host/models.js`). Sessions and their history stay.
+  ref stays on the Bot as `claudeCodeModel`. Sessions and their history stay. Moving those Bots
+  on to `acp-claude` waits for delivery 4: until the team's tools reach the agent over MCP, a Bot
+  on `acp-claude` would lose them (posting to its group, reading the group chat, recall).
 - **Auto.** The fork's last build started a new Claude session in Claude Code's own `auto`
   mode; it shipped only in the broken 3.53.0 to 3.54.1, and the team's Claude Bots ran on full
   access, so nobody depends on it. On pi-ai, a Bot's level is DSH's preset, Auto included. The
@@ -101,6 +114,8 @@ and D17). Claude runs on pi-ai's `anthropic` route until `acp-claude` ships.
 - Adapters are not pinned: always the newest release, running the person's own CLI (owner, D17,
   2026-11). This replaces the pinned-adapter rule and answers open question 1.
 - acp-dsh is on by default in the desktop profile (owner, D17, 2026-11).
+- Claude Code over ACP keeps the person's own Claude Code settings, allow rules and hooks
+  included (owner, 2026-11-03).
 
 ### Per-teammate models (status note)
 
@@ -128,8 +143,11 @@ patch is removed in the release whose DSH carries the change.
 
 - **Who can reach it.** The agent is third-party code running as the user, with its own tools.
   The MCP bridge hands it the Bot's team tools.
-- **What it can do.** Whatever its tools and the Bot's level allow. Every tool call it surfaces
-  goes through DSH's approval dialog under the Session's level.
+- **What it can do.** Whatever its tools and the Bot's level allow, and what the agent's own
+  settings allow: every call the agent asks permission for goes through DSH's approval dialog
+  under the Session's level, but Claude Code does not ask for what the person's Claude Code
+  allow rules or hooks approve (decided, above). If the agent offers no strict mode, the turn
+  fails rather than run in the agent's own default.
 - **Authentication.** The agent command comes only from host-side settings, never from a client
   route. The MCP bridge is stdio, or authenticated per session; it never listens on an open port.
 - **Credentials.** Stored with mode 0600 or in the OS keychain. Never returned to the client.
@@ -164,8 +182,10 @@ patch is removed in the release whose DSH carries the change.
    DSH, headless). Rollback: the next
    release drops them; the Claude Code plugin route is untouched.
 4. **Bots' tools over MCP.** Lane: plugin. Check: a Bot on `acp-claude` posts to its group
-   through a team tool, and a tool above its level is not offered. Rollback: revert; the Bot
-   is chat-only on ACP.
+   through a team tool, and a tool above its level is not offered. With it, once per team, a Bot
+   that ran on the Claude Code plugin (`claudeCodeModel`) and is still on the pi-ai model it was
+   moved to goes to `acp-claude`, only where that route lists its model (adapter installed).
+   Rollback: revert; the Bot is chat-only on ACP.
 5. **Gemini.** The newest adapter, the person's own CLI. Lane: desktop. Check: one session runs a tool call after
    approval. Rollback: the next release drops it.
 
