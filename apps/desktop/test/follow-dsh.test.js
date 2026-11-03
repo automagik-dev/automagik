@@ -83,6 +83,11 @@ test('follow-omni runs on Omni\'s dispatch, takes its payload only as a logged h
   const output = text.slice(text.indexOf('commit="${WANT_COMMIT:-'), text.indexOf('} >> "$GITHUB_OUTPUT"'))
   assert.doesNotMatch(output, /HINT_|client_payload/)
   assert.doesNotMatch(text, /(?:WANT_\w+|newest|commit)=\S*HINT_/)
+  // A release the list lags on is looked up again, a bounded number of times, then warned about;
+  // what is followed is still only what the lookup lists (or a dry run's omni_version).
+  assert.match(text, /for try in 1 2 3 4 5 6; do\n\s+unlisted \|\| break\n[\s\S]*?sleep 20\n\s+lookup\n\s+done\n/)
+  assert.match(text, /if unlisted; then\n\s+echo "::warning ::Omni dispatched \$\{wanted\}/)
+  assert.deepEqual([...text.matchAll(/\bnewest=(.*)/g)].map(match => match[1]), ['"${WANT_VERSION}"', '$(sort -V releases.txt | tail -1)'])
 })
 
 test('the boot gate boots the candidate exactly as carry writes it, both pins', () => {
