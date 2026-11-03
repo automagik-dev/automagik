@@ -4,7 +4,7 @@ type: decision
 status: Implemented
 created: 2026-11-03
 updated: 2026-11-03
-pr: ""
+pr: "#53"
 tags: [decisions, pocket-link, desktop, usage-meter, security]
 ---
 # Pocket Link doesn't install the usage meter
