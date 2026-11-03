@@ -19,7 +19,21 @@ const updates = Object.freeze({
   },
 })
 
-contextBridge.exposeInMainWorld('omniDesktop', Object.freeze({ app: 'omni-desktop', platform: process.platform, updates }))
+// Code mode (RFC 0013): Herdr's state, and bringing its window forward. The page sends a Bot
+// id and nothing else, and only during a real click; main finds everything else itself.
+// User activation is the page's, shared by every script in it (the RFC's threat model).
+const herdr = Object.freeze({
+  status: () => ipcRenderer.invoke('automagik-herdr-status'),
+  open(options) {
+    if (globalThis.navigator?.userActivation?.isActive !== true) {
+      return Promise.reject(new Error('Herdr opens only on a click'))
+    }
+    const botId = options?.botId
+    return ipcRenderer.invoke('automagik-herdr-open', { botId: typeof botId === 'string' ? botId : null })
+  },
+})
+
+contextBridge.exposeInMainWorld('omniDesktop', Object.freeze({ app: 'omni-desktop', platform: process.platform, updates, herdr }))
 
 // The Bot browsers (main.js, bot-views.js), in the shape the Bot team's panel drives
 // (bots-dsh src/client/bot-browsers.js `bridge.views`): each tab is a view the app lays over

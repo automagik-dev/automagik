@@ -11,6 +11,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, powerMonitor, session, shell, systemPreferences, WebContentsView } from 'electron'
 import updaterModule from 'electron-updater'
 import { appendFileSync, createWriteStream, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
@@ -23,6 +24,7 @@ import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, dshRun, forge
 import { BotCursor } from './bot-cursor.js'
 import { BotRelay } from './bot-relay.js'
 import { BotViews, isBotId, isTabId } from './bot-views.js'
+import { herdrStatus, openHerdr } from './herdr.js'
 import { pageLayout, tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
 import { awayInstall, LOOK_EVERY_MS, readBusy } from './idle.js'
@@ -623,6 +625,33 @@ ipcMain.handle('automagik-updates-auto-apply', (event, on) => {
   const saved = writeAutoApply(settingsFileOf(home), on)
   publishUpdate()
   return saved
+})
+
+// Code mode (RFC 0013, delivery 1): Herdr's state, and its window brought forward on a click
+// in the page (preload.cjs `omniDesktop.herdr`). The page sends a Bot id and nothing else; it
+// picks no space yet. One open at a time. logs/switch.log has each open's steps.
+const herdrHost = () => ({ platform: process.platform, arch: process.arch, env: process.env, home: homedir() })
+const switchLog = (line) => { try { appendFileSync(join(home, 'logs', 'switch.log'), line) } catch {} }
+let herdrOpening = null
+ipcMain.handle('automagik-herdr-status', event => (fromPage(event) ? herdrStatus(herdrHost()) : null))
+ipcMain.handle('automagik-herdr-open', (event, request) => {
+  if (!fromPage(event)) return null
+  const botId = isBotId(request?.botId) ? request.botId : null
+  herdrOpening ??= (async () => {
+    const timed = steps(`switch${botId ? ` ${botId}` : ''}`, { write: switchLog, since: Date.now() })
+    const log = what => switchLog(`${new Date().toISOString()} switch: ${what}\n`)
+    try {
+      const result = await openHerdr({ ...herdrHost(), mark: timed.mark, log })
+      if (result.ok) log(`opened${result.raised === true ? '' : ' (no focus)'}`)
+      return result
+    } catch (error) {
+      log(`failed ${error?.message ?? error}`)
+      return { ok: false, reason: 'error', message: "Herdr didn't open" }
+    } finally {
+      herdrOpening = null
+    }
+  })()
+  return herdrOpening
 })
 
 // Check for Updates (the app menu, the title bar's menu, the sidebar): the sidebar shows the
