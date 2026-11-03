@@ -2,6 +2,7 @@
 node_modules/
 .setup.log
 .setup.done
+.node
 # Herdr writes these for editors
 gpui-kit.d.ts
 jsconfig.json

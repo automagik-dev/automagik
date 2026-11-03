@@ -188,6 +188,9 @@ function nodePath() {
   return opt && existsSync(opt) ? opt : process.execPath
 }
 
+// The dialog runs the bridge with this Node next time (find-node.js): Herdr's own PATH may not have it.
+function recordNode() { try { writeFileSync(join(HERE, '..', '.node'), nodePath() + '\n') } catch {} }
+
 function loginService() {
   if (platform() === 'darwin') {
     const plist = join(homedir(), 'Library/LaunchAgents', `${LABEL}.plist`)
@@ -246,6 +249,7 @@ try {
   else if (command === 'start') {
     // Without the login service: a detached bridge that lives until stopped or logout.
     const s = readJson(files.status, {})
+    recordNode()
     if (!(s.pid && alive(s.pid))) {
       const err = openSync(files.log, 'a', 0o600)
       spawn(process.execPath, [join(HERE, 'bridge.mjs'), 'serve'], { detached: true, stdio: ['ignore', 'ignore', err] }).unref()
@@ -260,7 +264,7 @@ try {
     out({ ok: true })
   }
   else if (command === 'forget') { writeJson(files.devices, devices().filter(d => d.id !== arg)); out({ ok: true }) }
-  else if (command === 'install') { const s = loginService(); mkdirSync(dirname(s.path), { recursive: true }); writeFileSync(s.path, s.body); s.on(); out({ ok: true, path: s.path }) }
+  else if (command === 'install') { const s = loginService(); mkdirSync(dirname(s.path), { recursive: true }); writeFileSync(s.path, s.body); s.on(); recordNode(); out({ ok: true, path: s.path }) }
   else if (command === 'uninstall') { const s = loginService(); s.off(); try { unlinkSync(s.path) } catch {}; out({ ok: true }) }
   else { out({ ok: false, error: `unknown command ${command}` }); process.exit(2) }
 } catch (e) { out({ ok: false, error: e.message }); process.exit(1) }

@@ -1,7 +1,7 @@
 name: Pocket Link
 
 # The desktop mod's bridge (desktop/pocket-link/): syntax and its dependency-free tests (the
-# pre-pairing limits, the pairing code, where its state lives, and public-status.json), on Linux and macOS. Runs only when the mod changes.
+# pre-pairing limits, the pairing code, where its state lives, public-status.json, and how the dialog finds Node), on Linux and macOS. Runs only when the mod changes.
 on:
   push:
     branches: [dev]
@@ -41,6 +41,6 @@ jobs:
         with:
           node-version: '22'
       - name: Syntax
-        run: node --check bridge/bridge.mjs && node --check bridge/guard.mjs && node --check bridge/pairing.mjs && node --check bridge/state.mjs && node --check bridge/presence.mjs
+        run: node --check bridge/bridge.mjs && node --check bridge/guard.mjs && node --check bridge/pairing.mjs && node --check bridge/state.mjs && node --check bridge/presence.mjs && node --check find-node.js
       - name: Test
-        run: node --test bridge/guard.test.mjs bridge/pairing.test.mjs bridge/state.test.mjs bridge/presence.test.mjs
+        run: node --test bridge/guard.test.mjs bridge/pairing.test.mjs bridge/state.test.mjs bridge/presence.test.mjs find-node.test.mjs
