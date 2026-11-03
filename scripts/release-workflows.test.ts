@@ -215,6 +215,12 @@ describe('the cut choosing how to publish its release', () => {
   test('a prerelease herdr patch stays a prerelease', () => {
     expect(flags({ PRERELEASE: 'true', KIND: 'herdr' })).toEqual(['--prerelease', '--latest=false']);
   });
+
+  test('a pocket patch is not Latest, and a prerelease one stays a prerelease', () => {
+    expect(flags({ PRERELEASE: 'false', KIND: 'pocket' })).toEqual(['--latest=false']);
+    expect(flags({ PRERELEASE: '', KIND: 'pocket' })).toEqual(['--latest=false']);
+    expect(flags({ PRERELEASE: 'true', KIND: 'pocket' })).toEqual(['--prerelease', '--latest=false']);
+  });
 });
 
 describe('the cut reading the posted herdr-lane pointer before it posts its own', () => {

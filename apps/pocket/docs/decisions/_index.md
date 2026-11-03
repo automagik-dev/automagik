@@ -1,0 +1,24 @@
+---
+title: "Decisions"
+type: moc
+created: 2026-11-01
+updated: 2026-11-03
+tags: [moc, decisions]
+---
+# Decisions
+
+Single choices with one reason, kept as notes. Bigger changes are [RFCs](../rfcs/README.md).
+Write one from [`_Templates/decision.md`](../_Templates/decision.md).
+
+| Decision | Status | PR |
+|---|---|---|
+| [Alerts are native Android notifications, in the app too](native-notifications.md) | Implemented | automagik-dev/automagik-pocket#17 |
+| [Answering from the lock screen starts off](lock-screen-answers-off.md) | Implemented | automagik-dev/automagik-pocket#19 |
+| [Updates install silently, and notifications say so](updates-install-silently.md) | Implemented | |
+| [Pocket Link keeps its state outside the mod folder](pocket-link-state-outside-mod.md) | Implemented | automagik-dev/automagik-pocket#34 |
+| [Pocket Link public-status.json contract (schema 1)](pocket-link-public-status.md) | Accepted | automagik-dev/automagik-pocket#39 |
+| [Offer Always allow for agent permission prompts](always-allow-permission-prompts.md) | Accepted | automagik-dev/automagik-pocket#41 |
+| [The phone finds a space's Space Row project itself](space-row-project-key-on-phone.md) | Accepted | automagik-dev/automagik-pocket#45 |
+| [Pocket Link doesn't install the usage meter](pocket-link-no-meter-installer.md) | Implemented | automagik-dev/automagik-pocket#53 |
+
+Back to the [docs home](../_index.md).

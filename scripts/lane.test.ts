@@ -3,7 +3,7 @@ import { createHash, generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addonPinsOnly, herdrShips, kindOf, LANE_ADDONS, manifest, nextPatch, sequenceOf, ships, signLane, unpackedIn, verifyLane } from './lane';
+import { addonPinsOnly, herdrShips, kindOf, LANE_ADDONS, manifest, nextPatch, pocketShips, pocketSince, sequenceOf, ships, signLane, unpackedIn, verifyLane } from './lane';
 
 describe('the plugin lane', () => {
   test('only changes inside the plugins ride the lane; anything the app or an install sees is a full release', () => {
@@ -50,6 +50,54 @@ describe('the plugin lane', () => {
     expect(herdrShips(versions)).toBe(true);
     // Nothing shipping since the last release falls back to the rule since the last full one.
     expect(kindOf(['apps/bots-dsh/client.js'], none, none, ['herdr/README.md'])).toBe('plugins');
+  });
+
+  test('a Pocket-only change is a pocket patch: the phone app, no desktop build, no plugins', () => {
+    const none = () => false;
+    const app = ['apps/pocket/android/app/src/main/java/ai/namastex/automagik/Updater.kt', 'apps/pocket/android/app/build.gradle.kts'];
+    expect(kindOf(app, none, none, app)).toBe('pocket');
+    expect(pocketShips(app)).toBe(true);
+    expect(herdrShips(app)).toBe(false);
+    // The import itself: the app, its docs, Pocket Link under herdr/, the tooling, the RFC.
+    const importing = [...app, 'apps/pocket/README.md', 'apps/pocket/docs/guides/releasing.md', 'herdr/mods/pocket-link/main.js',
+      '.github/workflows/ci.yml', 'scripts/lane.ts', 'scripts/import-pocket.sh', 'docs/rfcs/0011-monorepo-parts-and-releases.md', 'AGENTS.md'];
+    expect(kindOf(importing, none, none, importing)).toBe('pocket');
+    expect(herdrShips(importing)).toBe(true);
+    // With the layout's own folder (herdr-layout/, the herdr part) it is still a pocket patch, the pack along.
+    expect(kindOf([...app, 'herdr-layout/automagik.json'], none, none, [...app, 'herdr-layout/automagik.json'])).toBe('pocket');
+    // A Pocket Link change alone is the pack's lane: herdr/.
+    expect(kindOf(['herdr/mods/pocket-link/bridge/bridge.mjs'], none, none, ['herdr/mods/pocket-link/bridge/bridge.mjs'])).toBe('herdr');
+    expect(pocketShips(['herdr/mods/pocket-link/bridge/bridge.mjs'])).toBe(false);
+    // With a plugin change it is a plugin patch, with an app change a full release: Pocket comes along, never makes one.
+    expect(kindOf(['apps/bots-dsh/client.js', ...app], none, none, ['apps/bots-dsh/client.js', ...app])).toBe('plugins');
+    expect(kindOf(['apps/desktop/src/main.js', ...app], none, none, ['apps/desktop/src/main.js', ...app])).toBe('full');
+    expect(kindOf(app, none)).toBe('plugins');
+    // What no APK carries ships nothing: its notes, docs, unit tests and the Android project's scripts.
+    const notes = ['apps/pocket/README.md', 'apps/pocket/AGENTS.md', 'apps/pocket/docs/rfcs/0002-release-and-update-channel.md',
+      'apps/pocket/android/app/src/test/java/ai/namastex/automagik/ReleaseTest.kt', 'apps/pocket/android/scripts/test_terminal.py'];
+    expect(ships(notes, none)).toBe(false);
+    expect(pocketShips(notes)).toBe(false);
+  });
+
+  // Pocket is rebuilt from what phones have, the version pocket-lane names, not from the last tag: a
+  // prerelease never moves the lane, so a Pocket fix that shipped only in one reaches phones with the
+  // next release, even when that release changes nothing under apps/pocket/.
+  test('Pocket\'s changes are measured from the build pocket-lane names, past prereleases and failed posts', () => {
+    const tags = ['v3.59.0', 'v3.59.1', 'v3.59.2', 'v3.60.0'];
+    // v3.59.1 was a prerelease with a Pocket fix; pocket-lane still names 3.59.0.
+    expect(pocketSince('v3.60.0', '3.59.0', tags)).toBe('v3.59.0');
+    const sincePrerelease = ['apps/pocket/android/app/src/main/java/ai/namastex/automagik/Updater.kt', 'apps/desktop/src/main.js'];
+    expect(pocketShips(sincePrerelease)).toBe(true);
+    // Up to date: the lane names the last release.
+    expect(pocketSince('v3.60.0', '3.60.0', tags)).toBe('v3.60.0');
+    // No lane yet (before the first Pocket release), an unreadable one, or a version with no tag here: the last release.
+    for (const lane of [undefined, '', 'null', '0.23.0', '3.61.0', 'pocket-lane']) expect(pocketSince('v3.60.0', lane, tags)).toBe('v3.60.0');
+    expect(pocketSince('', undefined, [])).toBe('');
+  });
+
+  test('a patch stops at 3.N.999: Pocket\'s versionCode gives a patch three digits', () => {
+    expect(nextPatch(['v3.22.0', 'v3.22.998'])).toBe('3.22.999');
+    expect(() => nextPatch(['v3.22.0', 'v3.22.999'])).toThrow(/cut 3\.23\.0 instead/);
   });
 
   test('a change no install sees is no release: a plugin file its package does not carry', () => {

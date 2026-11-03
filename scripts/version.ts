@@ -10,8 +10,14 @@
  *   bun scripts/version.ts check            every field carries the root version; exit 1 when not
  *   bun scripts/version.ts set <version>    write it everywhere
  *   bun scripts/version.ts next             the next release: 3.(highest v3.N.0 + 1).0, 3.1.0 first
+ *   bun scripts/version.ts code [<version>] Pocket's Android versionCode for it (the root version by default)
  *
  * A plugin-only merge is released as a patch on the newest 3.N instead (scripts/lane.ts next-patch).
+ *
+ * Pocket (apps/pocket/android) builds its versionCode from the version: major·1 000 000 + minor·1 000
+ * + patch, so 3.57.0 is 3057000. Minor and patch are therefore at most 999 (3.1000.0 would be 4.0.0's
+ * code): a version above that is refused here, so the release workflow, which sets the version through
+ * this file, refuses it too. Bump the next part up instead (docs/rfcs/0011, "Pocket").
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -20,8 +26,11 @@ import { join } from 'node:path';
 export const ROOT = join(import.meta.dir, '..');
 export const MAJOR = 3;
 // A release: 3.N.0, or a plugin-only patch on it, 3.N.P (scripts/lane.ts). N and P are at most
-// four digits, so a calendar tag's 3.YYMMDD.N is never taken for one.
-export const VERSION = /^3\.(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,3})$/;
+// three digits, 999, so Pocket's versionCode stays one number per version (see versionCode) and a
+// calendar tag's 3.YYMMDD.N is never taken for one.
+export const VERSION = /^3\.(0|[1-9]\d{0,2})\.(0|[1-9]\d{0,2})$/;
+/** The highest minor and patch: Pocket's versionCode gives each 1 000 values. */
+export const MAX_PART = 999;
 /** A release tag: `v3.N.0`, N a whole number without leading zeros. */
 export const RELEASE_TAG = /^v3\.(0|[1-9]\d*)\.0$/;
 
@@ -64,7 +73,24 @@ export function drift(version: string, root = ROOT): string[] {
   });
 }
 
+/** Refuses a version whose minor or patch is over 999, which Pocket's versionCode can't tell apart. */
+function guard(version: string): void {
+  const parts = /^\d+\.(\d+)\.(\d+)$/.exec(version);
+  if (parts && (Number(parts[1]) > MAX_PART || Number(parts[2]) > MAX_PART)) {
+    throw new Error(`not a version: ${version} (minor and patch stop at ${MAX_PART}, Pocket's versionCode; bump the next part up)`);
+  }
+}
+
+/** Pocket's Android versionCode: major·1 000 000 + minor·1 000 + patch, one per version. */
+export function versionCode(version: string): number {
+  guard(version);
+  const parts = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(version);
+  if (!parts) throw new Error(`not a version: ${version}`);
+  return Number(parts[1]) * 1_000_000 + Number(parts[2]) * 1_000 + Number(parts[3]);
+}
+
 export function setVersion(version: string, root = ROOT): void {
+  guard(version);
   if (!VERSION.test(version)) throw new Error(`not a version: ${version} (want ${MAJOR}.N.P)`);
   for (const file of new Set(FIELDS.map((field) => field.file))) {
     if (FIELDS.some((field) => field.file === file && field.path.length === 0)) {
@@ -82,8 +108,12 @@ export function setVersion(version: string, root = ROOT): void {
 
 /** The release after the highest `v3.N.0` in `tags` (3.1.0 when there is none); others are ignored. */
 export function nextVersion(tags: string[]): string {
-  const taken = tags.map((tag) => RELEASE_TAG.exec(tag)?.[1]).filter((n): n is string => n !== undefined).map(Number);
-  return `${MAJOR}.${Math.max(0, ...taken) + 1}.0`;
+  const taken = tags.map((tag) => RELEASE_TAG.exec(tag)?.[1]).filter((n): n is string => n !== undefined).map(Number)
+    // A calendar tag (v3.YYMMDD.0) is not a release.
+    .filter((n) => n <= MAX_PART);
+  const next = `${MAJOR}.${Math.max(0, ...taken) + 1}.0`;
+  guard(next);
+  return next;
 }
 
 if (import.meta.main) {
@@ -100,8 +130,10 @@ if (import.meta.main) {
   } else if (command === 'next') {
     const tags = execFileSync('git', ['tag', '--list', `v${MAJOR}.*`], { cwd: ROOT, encoding: 'utf8' }).split('\n');
     console.log(nextVersion(tags));
+  } else if (command === 'code') {
+    console.log(versionCode(arg ?? root));
   } else {
-    console.error('usage: bun scripts/version.ts check | set <version> | next');
+    console.error('usage: bun scripts/version.ts check | set <version> | next | code [<version>]');
     process.exit(2);
   }
 }

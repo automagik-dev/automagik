@@ -108,7 +108,9 @@ test("the sidebar wires it: Herdr's exec and home(), 30 s after load, no LaunchA
   assert.match(main, /cx\.timer\.after\(wait, \(cx\) => this\.meterTick\(cx\)\)/);
   // meter.js is pure: no import at all, so node --test and the mod share it.
   assert.doesNotMatch(readFileSync(join(ROOT, "mods", "am-sidebar", "meter.js"), "utf8"), /^import /m);
-  for (const dir of readdirSync(join(ROOT, "mods"))) {
+  // The pack's mods: Pocket Link (mods/pocket-link, Pocket's, never in the pack) runs its own bridge
+  // LaunchAgent, which the pack never writes.
+  for (const dir of readdirSync(join(ROOT, "mods")).filter((d) => d !== "pocket-link")) {
     for (const name of readdirSync(join(ROOT, "mods", dir)).filter((n) => /\.(m?js)$/.test(n))) {
       assert.doesNotMatch(readFileSync(join(ROOT, "mods", dir, name), "utf8"), /Library\/LaunchAgents|launchctl/, `${dir}/${name}`);
     }

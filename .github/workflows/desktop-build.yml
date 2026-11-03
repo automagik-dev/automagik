@@ -265,7 +265,7 @@ jobs:
             # installs nothing without its lane.
             cut=$(gh release download "${TAG}" --repo "${GITHUB_REPOSITORY}" -p PLUGINS.SHA256SUMS -O - 2>/dev/null | awk '{print $2}' || true)
             for name in $(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name'); do
-              case "${name}" in automagik-*.tgz|plugins.json|PLUGINS.SHA256SUMS|lane.json|lane.json.sig) continue ;; esac
+              case "${name}" in automagik-*.tgz|plugins.json|PLUGINS.SHA256SUMS|lane.json|lane.json.sig|automagik-pocket-*.apk|latest.json) continue ;; esac
               grep -qxF -- "${name}" <<< "${cut}" && continue
               [[ -e "assets/${name}" ]] || gh release delete-asset "${TAG}" "${name}" --yes --repo "${GITHUB_REPOSITORY}"
             done

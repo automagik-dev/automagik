@@ -81,8 +81,11 @@ function titleOf(dir) {
   }
 }
 
-// Every folder under mods/ with a main.js is a mod the pack installs; each must carry its own
-// RECIPE.md and LICENSE, or the pack is not publishable.
+// Every folder under mods/ with a main.js is a mod the pack installs, but Pocket Link: it is Pocket's
+// (apps/pocket, the monorepo's AGENTS.md), never in PACK_MODS, and its catalog row stays the external
+// one in repos.json. Each pack mod must carry its own RECIPE.md and LICENSE, or the pack is not
+// publishable.
+const NOT_THE_PACKS = new Set(["pocket-link"]);
 function localMods() {
   const modsDir = join(ROOT, "mods");
   let names = [];
@@ -95,7 +98,7 @@ function localMods() {
   const problems = [];
   for (const name of names) {
     const dir = join(modsDir, name);
-    if (!statSync(dir).isDirectory()) continue;
+    if (NOT_THE_PACKS.has(name) || !statSync(dir).isDirectory()) continue;
     const has = (file) => existsSync(join(dir, file));
     if (!has("main.js")) {
       problems.push(`mods/${name}: no main.js`);

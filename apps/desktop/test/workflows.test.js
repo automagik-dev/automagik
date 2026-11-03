@@ -37,9 +37,10 @@ test('release.yml declares every input it reads for follow-omni, which calls it'
   }
 })
 
-test('a desktop rebuild keeps the plugins its release carries, and their signed lane', () => {
+// And Pocket's APK and latest.json, which the release's Pocket job attaches (docs/rfcs/0011, "Pocket").
+test('a desktop rebuild keeps the plugins its release carries, their signed lane, and Pocket\'s APK', () => {
   const text = readFileSync(new URL('../../../.github/workflows/desktop-build.yml', import.meta.url), 'utf8')
-  assert.match(text, /case "\$\{name\}" in automagik-\*\.tgz\|plugins\.json\|PLUGINS\.SHA256SUMS\|lane\.json\|lane\.json\.sig\) continue ;; esac/)
+  assert.match(text, /case "\$\{name\}" in automagik-\*\.tgz\|plugins\.json\|PLUGINS\.SHA256SUMS\|lane\.json\|lane\.json\.sig\|automagik-pocket-\*\.apk\|latest\.json\) continue ;; esac/)
 })
 
 test('every release carries the stable download names under Automagik and under Omni, the old name', () => {

@@ -38,6 +38,24 @@ test("the update is the newest release above this one with this platform's feed;
   assert.equal(pickUpdate({ message: 'rate limited' }, { current: '2.261019.10', platform: 'darwin' }), null)
 })
 
+// The rolling lane releases (docs/rfcs/0011-monorepo-parts-and-releases.md): plugin-lane, herdr-lane and
+// Pocket's pocket-lane are newer than any version and hold small files, but their tags are not v*, so
+// the app never takes one for a build of its own, on either channel, even with a feed file on it.
+test('the rolling lanes, pocket-lane included, are never an update', () => {
+  const releases = [
+    release('pocket-lane', ['latest.json', 'latest-mac.yml', 'latest-linux.yml'], { prerelease: true }),
+    release('herdr-lane', ['pack.json', 'pack.json.sig'], { prerelease: true }),
+    release('plugin-lane', ['lane.json', 'lane.json.sig'], { prerelease: true }),
+    release('v3.58.1', ['automagik-pocket-3.58.1.apk', 'latest.json']),
+    release('v3.58.0'),
+  ]
+  for (const channel of ['stable', 'prerelease']) {
+    assert.equal(pickUpdate(releases, { current: '3.57.0', platform: 'darwin', channel }).version, '3.58.0')
+  }
+  // A Pocket-only release carries no desktop feed: nothing to take when the app is already on 3.58.0.
+  assert.equal(pickUpdate(releases, { current: '3.58.0', platform: 'linux' }), null)
+})
+
 test('only a packaged build updates itself: on macOS, or from an AppImage; OMNI_DESKTOP_UPDATES=off turns it off', () => {
   assert.equal(updatesEnabled({ packaged: true, platform: 'darwin', env: {} }), true)
   assert.equal(updatesEnabled({ packaged: true, platform: 'darwin', env: { OMNI_DESKTOP_UPDATES: 'off' } }), false)

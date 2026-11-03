@@ -674,10 +674,10 @@ with its own `RECIPE.md`:
 | `am-mods` | `jacksonpires/herdr-app-mod-manager` (MIT) | The table over every installed mod — on/off, check result, version, source, drift — install, update, remove; `⌘⇧M`. |
 | `am-quota` | clean-room | A sidebar panel listing every Claude Code and Codex account the CLIProxyAPI knows, with its window, and switching the local credentials to the one you pick; the rail's Quota tab toggles it. |
 
-**Not in this pack, on purpose:** Pocket Link belongs to
-[automagik-pocket](https://github.com/automagik-dev/automagik-pocket) (`desktop/pocket-link/`), which
-owns its mod, its LaunchAgent and its pairing state. Install it from there; this pack never vendors,
-installs, updates, removes or restarts it.
+**Not in this pack, on purpose:** Pocket Link ([mods/pocket-link](mods/pocket-link/README.md)) sits
+beside the pack's mods but belongs to Pocket (`apps/pocket/`), which owns its mod, its LaunchAgent and
+its pairing state. Install it from its README; this pack never vendors, installs, updates, removes or
+restarts it.
 
 ## Add a sidebar button from your mod
 

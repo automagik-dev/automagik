@@ -118,6 +118,128 @@ jobs:
         if: steps.changed.outputs.herdr == 'true'
         run: node scripts/version.mjs check
 
+  pocket:
+    # Pocket's phone app (apps/pocket/, the old automagik-pocket android.yml): the debug APK, the
+    # unit tests and lint. Its version is the root package.json's, so a change there builds it too.
+    # Only when apps/pocket/ changed, or the workflows, lane tooling and version that build it.
+    name: Pocket (build, test, lint)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Whether apps/pocket/ changed
+        id: changed
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          # A push that opens a branch, or a base this checkout lacks, builds the app anyway.
+          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            echo "pocket=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(apps/pocket/|package\.json$|\.github/workflows/(ci|release)\.yml$|scripts/(lane|version)\.ts$)'; then
+            echo "pocket=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "apps/pocket/ did not change: nothing to build"
+          fi
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        if: steps.changed.outputs.pocket == 'true'
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        if: steps.changed.outputs.pocket == 'true'
+        with:
+          packages: 'platforms;android-35 build-tools;35.0.0'
+
+      # Validates the wrapper checksum and caches Gradle's dependencies.
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        if: steps.changed.outputs.pocket == 'true'
+
+      - name: Build the debug APK, run the unit tests and lint
+        if: steps.changed.outputs.pocket == 'true'
+        working-directory: apps/pocket/android
+        run: ./gradlew --stacktrace :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && steps.changed.outputs.pocket == 'true'
+        with:
+          name: pocket-reports
+          path: |
+            apps/pocket/android/app/build/reports/
+            apps/pocket/android/app/build/test-results/
+          if-no-files-found: ignore
+
+      # The terminal page the app shows (its xterm assets), driven in Chromium.
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        if: steps.changed.outputs.pocket == 'true'
+        with:
+          python-version: '3.12'
+
+      - name: Terminal page (Playwright)
+        if: steps.changed.outputs.pocket == 'true'
+        run: |
+          set -euo pipefail
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+          python apps/pocket/android/scripts/test_terminal.py
+
+  pocket-link:
+    # Pocket Link's bridge (herdr/mods/pocket-link, Pocket's, never in the pack): syntax and its
+    # dependency-free tests (the pre-pairing limits, the pairing code, where its state lives,
+    # public-status.json, how the dialog finds Node), on Linux and macOS. The pack's own gate above
+    # does not run them: they live beside the mod, not in herdr/test/.
+    name: Pocket Link bridge (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    defaults:
+      run:
+        working-directory: herdr/mods/pocket-link
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Whether Pocket Link changed
+        id: changed
+        working-directory: .
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            echo "link=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(herdr/mods/pocket-link/|\.github/workflows/ci\.yml$)'; then
+            echo "link=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "herdr/mods/pocket-link/ did not change: nothing to test"
+          fi
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        if: steps.changed.outputs.link == 'true'
+        with:
+          node-version: '22'
+
+      - name: Syntax
+        if: steps.changed.outputs.link == 'true'
+        run: |
+          set -euo pipefail
+          for f in bridge/*.mjs find-node.js main.js; do node --check "$f"; done
+
+      - name: Test
+        if: steps.changed.outputs.link == 'true'
+        run: node --test bridge/*.test.mjs find-node.test.mjs
+
   plugin:
     # The Bot team and the welcome run on Node, as DSH does: Bun installs each and the DSH
     # release it pins in dev/harness/package.json, which its tests run against.
