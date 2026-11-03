@@ -8,7 +8,9 @@
 // footer. Its rules live in formModel.js. Text fields are Herdr's Input and Textarea; the two
 // lists are Herdr's Popover. The form reads the project's .herdr/bots.json itself and writes
 // back its raw copy with the text it read as the snapshot, so an entry it can't show, or
-// someone's edit since, is never lost. Apache-2.0.
+// someone's edit since, is never lost. A project on a linked machine (props.machine, or the
+// focused space's) is read there and written there through herdr-core (bots.js writeBots),
+// by the same rule; Run and Inspect stay this computer's for now (automagik#206). Apache-2.0.
 
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, Popover, Button } from "gpui-base";
@@ -44,7 +46,8 @@ function icon(p, size, color) {
 // Which Restart a busy menu runs (the item whose label says "Restarting…").
 const restartKey = ({ agent = null, force = false, fresh = false } = {}) => (agent ? "restart-on" : force ? "restart-force" : fresh ? "restart-fresh" : "restart");
 
-const notSaved = (why) => (/^Not saved:/.test(String(why)) ? String(why) : `Not saved: ${why}`);
+// A linked machine's write whose answer was lost says "State unknown:" itself (remoteFile.js).
+const notSaved = (why) => (/^(Not saved|State unknown):/.test(String(why)) ? String(why) : `Not saved: ${why}`);
 
 // The form's text fields, read into the plain state formModel works on.
 const TEXT = ["name", "role", "note", "catTitle", "catSub"];
@@ -53,6 +56,8 @@ export class BotForm {
   constructor(p, cx) {
     this.p = p;
     this.mode = p.form;
+    // The project's machine (a linked one's name), null for this computer.
+    this.machine = typeof p.machine === "string" && p.machine ? p.machine : null;
     this.error = null; // why it can't be saved, shown above the buttons
     this.busy = false;
     if (this.mode === "menu") {
@@ -68,11 +73,13 @@ export class BotForm {
     }
     if (this.mode === "attach" || this.mode === "pick") {
       // The sidebar's projects as it last found them (props.known, its #74 first paint)
-      // draw at once; a fresh discovery replaces them when it answers.
-      this.projects = Array.isArray(p.known) ? p.known.filter((q) => q && !q.machine && Array.isArray(q.file?.bots)) : null;
+      // draw at once; a fresh discovery replaces them when it answers. The Bots list (pick)
+      // shows linked machines' projects too; Attach ties a pane here to a bot here.
+      const shown = (q) => q && Array.isArray(q.file?.bots) && (this.mode === "pick" || !q.machine);
+      this.projects = Array.isArray(p.known) ? p.known.filter(shown) : null;
       this.refreshing = true;
       cx.spawn(async (cx) => {
-        try { this.projects = (await discoverProjects()).filter((q) => !q.machine); } catch (e) { if (!this.projects) this.error = String(e?.message ?? e); }
+        try { this.projects = (await discoverProjects()).filter(shown); } catch (e) { if (!this.projects) this.error = String(e?.message ?? e); }
         this.refreshing = false;
         cx.notify();
       });
@@ -106,8 +113,7 @@ export class BotForm {
     this.agentsError = null;
     this.dark = isDark(theme().background);
     cx.spawn(async (cx) => {
-      try { this.agents = (await knownAgents()).sort((a, b) => Number(b.installed) - Number(a.installed)); }
-      catch (e) { this.agentsError = `Herdr couldn't list its coding agents (${e?.message ?? e}).`; }
+      await this.loadAgents(this.machine);
       for (const [name, path] of Object.entries(configPaths(home()))) {
         try { this.texts[name] = await readTextFile(path); } catch { this.texts[name] = null; }
       }
@@ -118,54 +124,76 @@ export class BotForm {
     });
   }
 
-  // Which project, then its file as it is now (kept as the write's snapshot).
+  // The coding agents Herdr can start on `machine` (null: this computer), installed first.
+  async loadAgents(machine) {
+    this.agentsOn = machine;
+    this.agentsError = null;
+    try { this.agents = (await knownAgents({ on: machine })).sort((a, b) => Number(b.installed) - Number(a.installed)); }
+    catch (e) {
+      this.agents = [];
+      this.agentsError = `Herdr couldn't list ${machine ? `${machine}'s` : "its"} coding agents (${e?.message ?? e}).`;
+    }
+  }
+
+  // The project's file, named for people: `<key>/.herdr/bots.json`, and its machine.
+  fileName(key = this.key, machine = this.machine) {
+    return `${key}/${BOTS_PATH}${machine ? ` on ${machine}` : ""}`;
+  }
+
+  // Which project (and machine), then its file as it is now (kept as the write's snapshot).
   async open(cx) {
     let key = this.p.project ?? null;
+    let machine = this.machine;
     if (this.mode === "edit" && !key) {
       const hit = (await discoverProjects()).find((q) => q.file.bots.some((b) => b.id === this.p.bot));
       if (!hit) throw new Error(`No project has bot ${this.p.bot}.`);
-      if (hit.machine) throw new Error(`${this.p.bot} is defined on ${hit.machine}; the form edits this computer's projects only.`);
       key = hit.key;
+      machine = hit.machine ?? null;
     }
     if (!key) {
-      // The focused space's folder, when it is still there. Outside git, a walk-up that
-      // lands on a parent's project is offered, never assumed (this.choice).
-      const shown = spaces().find((s) => s.id === focused()?.space && !s.machine);
-      if (shown?.folder && await folderExists(shown.folder)) {
-        const found = await projectOfFolder(shown.folder);
-        if (found.key === found.own) key = found.key;
-        else this.choice = { parent: found.key, own: found.own };
+      // The focused space's folder (on its machine), when it is still there. Outside git, a
+      // walk-up that lands on a parent's project is offered, never assumed (this.choice).
+      const shown = spaces().find((s) => s.id === focused()?.space);
+      const on = shown?.machine || null;
+      if (shown?.folder && await folderExists(shown.folder, on)) {
+        const found = await projectOfFolder(shown.folder, on);
+        if (found.key === found.own) { key = found.key; machine = on; }
+        else this.choice = { parent: found.key, own: found.own, machine: on };
       }
     }
-    if (key) await this.load(key);
+    if (key) await this.load(key, machine);
     cx.notify();
   }
 
-  async load(key) {
+  async load(key, machine = null) {
     this.key = key;
+    this.machine = machine;
     this.choice = null;
     this.loadError = null;
-    this.text = await readTextFile(`${key}/${BOTS_PATH}`);
+    if (this.agentsOn !== machine) await this.loadAgents(machine);
+    this.text = await readTextFile(`${key}/${BOTS_PATH}`, { on: machine });
     let file = { version: 1, categories: [], bots: [] };
     this.raw = null;
     if (this.text !== null) {
       try { ({ file, raw: this.raw } = parseBots(this.text)); } catch (e) {
-        this.loadError = `${key}/${BOTS_PATH} can't be read (${e?.message ?? e}); fix it by hand before adding bots.`;
+        this.loadError = `${this.fileName()} can't be read (${e?.message ?? e}); fix it by hand before adding bots.`;
       }
     }
     this.file = file;
     this.space = null;
     for (const s of spaces()) {
-      if (s.machine || !s.folder) continue;
-      try { if (s.folder === key || await keyOf(s.folder) === key) { this.space = s.name; break; } } catch {}
+      if ((s.machine || null) !== machine || !s.folder) continue;
+      try { if (s.folder === key || await keyOf(s.folder, machine) === key) { this.space = s.name; break; } } catch {}
     }
     if (this.mode === "edit") {
       // The entry as stored (raw), so a field the form leaves alone is written back as it was.
       const b = this.raw?.bots?.find((x) => x?.id === this.p.bot) ?? file.bots.find((x) => x.id === this.p.bot);
-      if (!b) throw new Error(`${key}/${BOTS_PATH} has no bot ${this.p.bot}.`);
+      if (!b) throw new Error(`${this.fileName()} has no bot ${this.p.bot}.`);
       this.fill(formFrom({ mode: "edit", bot: b }));
       this.initial = this.snapshot();
-      await this.detect(b);
+      // The model a running pane shows: this computer's panes only, for now.
+      this.live = null;
+      if (!machine) await this.detect(b);
     } else {
       const agent = this.s.agent || (this.agents.find((a) => a.installed)?.key ?? "");
       const fresh = formFrom({ mode: "create", file, id: this.s.id, agent });
@@ -290,10 +318,10 @@ export class BotForm {
     this.error = null;
     cx.spawn(async (cx) => {
       try {
-        await writeBots(this.key, applyBotEdit(this.raw, entry, newCategory), this.text);
+        await writeBots(this.key, applyBotEdit(this.raw, entry, newCategory), this.text, this.machine);
       } catch (e) {
         const msg = String(e?.message ?? e);
-        this.error = notSaved(/stale/i.test(msg) ? `${this.key}/${BOTS_PATH} changed since this form opened; close it and open it again.` : msg);
+        this.error = notSaved(/stale/i.test(msg) ? `${this.fileName()} changed since this form opened; close it and open it again.` : msg);
         this.busy = false;
         cx.notify();
         return;
@@ -338,7 +366,8 @@ export class BotForm {
   }
 
   edit(project, bot) {
-    openOverlay({ mod: "am-sidebar", kind: "dialog", modal: true, ...FORM_SIZE, props: { form: "edit", bot: bot.id, project: project.key } });
+    openOverlay({ mod: "am-sidebar", kind: "dialog", modal: true, ...FORM_SIZE,
+      props: { form: "edit", bot: bot.id, project: project.key, machine: project.machine ?? null } });
     closeOverlay(this.p.overlay);
   }
 
@@ -423,11 +452,11 @@ export class BotForm {
   // read is the save's snapshot, the raw entry what the save edits.
   async loadPrompt() {
     const key = this.p.project;
-    const text = await readTextFile(`${key}/${BOTS_PATH}`);
-    if (text === null) throw new Error(`${key}/${BOTS_PATH} is gone.`);
+    const text = await readTextFile(`${key}/${BOTS_PATH}`, { on: this.machine });
+    if (text === null) throw new Error(`${this.fileName(key)} is gone.`);
     const { file, raw } = parseBots(text);
     const b = raw?.bots?.find((x) => x?.id === this.p.bot) ?? file.bots.find((x) => x.id === this.p.bot);
-    if (!b) throw new Error(`${key}/${BOTS_PATH} has no bot ${this.p.bot}.`);
+    if (!b) throw new Error(`${this.fileName(key)} has no bot ${this.p.bot}.`);
     this.promptBase = { text, raw, file, state: formFrom({ mode: "edit", bot: b }) };
     this.prompt.set_value(this.promptBase.state.instructions ?? "");
   }
@@ -447,10 +476,10 @@ export class BotForm {
     this.error = null;
     cx.spawn(async (cx) => {
       try {
-        await writeBots(key, applyBotEdit(raw, entry, newCategory), text);
+        await writeBots(key, applyBotEdit(raw, entry, newCategory), text, this.machine);
       } catch (e) {
         const msg = String(e?.message ?? e);
-        this.error = notSaved(/stale/i.test(msg) ? `${key}/${BOTS_PATH} changed since this menu opened; close it and open it again.` : msg);
+        this.error = notSaved(/stale/i.test(msg) ? `${this.fileName(key)} changed since this menu opened; close it and open it again.` : msg);
         this.busy = false;
         cx.notify();
         return;
@@ -515,10 +544,15 @@ export class BotForm {
     const list = this.mode === "attach" || this.mode === "pick" || this.mode === "menu";
     const title = { attach: `Attach ${this.p.terminal} as a bot`, pick: "Bots", menu: this.p.name }[this.mode] ?? "Bots";
     const body = this.mode === "menu" ? this.menuBody(t) : this.listBody(t);
+    // The body scrolls with overflow_y_scroll, not overflow_y_scrollbar: a popup is as tall as
+    // its content (its height only the most), and the scrollbar's wrapper gives the body no
+    // height of its own there, so the menu, pick and attach popups drew only the title and
+    // Cancel (#239, seen in a live Herdr). Past the popup's height the body shrinks (min_h(0))
+    // and scrolls; in a dialog (Attach from the command palette) it still fills (flex_1).
     return v_flex().id("bot-form").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background)
       .border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).items_center().border_b(1).border_color(t.border).child(div().font_semibold().child(title)))
-      .child(div().id("bot-form-body").flex_1().min_h(0).overflow_y_scrollbar().child(body))
+      .child(div().id("bot-form-body").flex_1().min_h(0).overflow_y_scroll().child(body))
       .child(v_flex().flex_none().px(14).py(10).gap(8).border_t(1).border_color(t.border)
         .when(Boolean(this.error), (el) => el.child(div().text_size(12).text_color(t.ansi1).child(this.error)))
         .child(h_flex().gap(8).justify_end()
@@ -528,13 +562,10 @@ export class BotForm {
   // A bot row's right-click (A10, #85): Configure (the Edit form), its Prompt edited in
   // place, Run (inspect.js menuItems: Start or Focus, Restart, Restart with a new
   // conversation, Restart on…, Attach to the pane focused at the click, Detach; none for a
-  // planned bot) and Inspect, what happened. A bot defined on another machine is changed
-  // from there.
+  // planned bot) and Inspect, what happened. A bot defined on a linked machine: Configure and
+  // its Prompt, written there (remoteMenu).
   menuBody(t) {
-    if (this.p.machine) {
-      return div().p(14).text_size(12).text_color(t.muted)
-        .child(`${this.p.name} is defined on ${this.p.machine}; Configure, Prompt, Run and Inspect work from that computer.`);
-    }
+    if (this.machine) return this.remoteMenu(t);
     const project = { key: this.p.project }, bot = { id: this.p.bot };
     const local = (x) => (typeof x === "string" && x && !x.includes("/") ? x : null);
     const pane = local(this.p.terminal), live = local(this.p.live);
@@ -565,6 +596,23 @@ export class BotForm {
       .child(label("INSPECT"))
       .child(item("menu-inspect", `What happened ${fold("inspect")}`, (cx) => this.toggle("inspect", cx)))
       .when(this.shown.has("inspect"), (el) => el.child(this.historyView(t, note)));
+  }
+
+  // A linked machine's bot: Configure and Prompt read and write its file there; Run and
+  // Inspect aren't offered from here yet. A machine that isn't answering (its rows drawn from
+  // the last run of Herdr, props.stale) offers nothing until it is back.
+  remoteMenu(t) {
+    const note = (s) => div().id("menu-remote-note").px(10).pt(6).pb(4).text_size(12).text_color(t.muted).child(s);
+    if (this.p.stale) return v_flex().p(6).child(note(`${this.machine} isn't answering, so ${this.p.name} shows as last seen. Configure and Prompt work once it is back.`));
+    const project = { key: this.p.project, machine: this.machine }, bot = { id: this.p.bot };
+    const item = (id, label, onClick) => h_flex().id(id).h(30).px(10).items_center().rounded(7).cursor_pointer()
+      .hover((s) => s.bg(t.hover)).on_click((_e, cx) => onClick(cx)).child(label);
+    const fold = (section) => (this.shown.has(section) ? "▾" : "▸");
+    return v_flex().p(6).gap(2)
+      .child(item("menu-configure", "Configure…", () => this.edit(project, bot)))
+      .child(item("menu-prompt", `Prompt ${fold("prompt")}`, (cx) => this.toggle("prompt", cx)))
+      .when(this.shown.has("prompt"), (el) => el.child(this.promptView(t)))
+      .child(note(`On ${this.machine}. Start, Attach and Inspect for its bots aren't in this menu yet.`));
   }
 
   // The prompt in place: the bot's instructions, Save writes them as the Edit form would.
@@ -604,7 +652,8 @@ export class BotForm {
         .children(helpers.map((h) => line(`menu-helper-${h.terminal}`, [h.name, h.terminal].filter(Boolean).join(" · ")))));
   }
 
-  // This computer's bots by project: click one to attach the pane (attach), or Edit / Start (pick).
+  // The bots by project: click one to attach the pane (attach: this computer's), or Edit /
+  // Start / Restart (pick; a linked machine's project, named with its machine: Edit only).
   listBody(t) {
     const label = (s) => div().pt(8).text_size(11).font_semibold().text_color(t.dim).child(s);
     if (!this.projects) return div().p(14).text_color(t.muted).child("Finding bots…");
@@ -612,14 +661,16 @@ export class BotForm {
     const rows = this.projects.flatMap((q) => {
       const bots = q.file.bots.filter((b) => pick || !b.planned);
       if (!bots.length) return [];
-      return [label(base(q.key).toUpperCase()), ...bots.map((b) =>
+      const title = base(q.key).toUpperCase();
+      return [label(q.machine ? `${title} · ${q.machine}` : title), ...bots.map((b) =>
         h_flex().id(`pick-${b.id}`).h(30).px(8).gap(8).items_center().rounded(7).hover((s) => s.bg(t.hover))
           .when(!pick, (el) => el.cursor_pointer().on_click((_e, cx) => this.attach(q, b, cx)))
-          .child(div().flex_none().child(b.name))
+          // The name truncates after the role, so Edit / Start / Restart stay inside the popup.
+          .child(div().min_w(0).truncate().child(b.name))
           .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted)
             .child(b.planned ? `planned · wave ${b.planned.wave}` : b.kind === "main" ? "Main bot" : b.role))
           .when(pick, (el) => el.child(this.button(`edit-${b.id}`, "Edit", t, () => this.edit(q, b), { h: 22 }))
-            .when(!b.planned, (el) => el.child(this.button(`start-${b.id}`, "Start", t, (cx) => this.start(q, b, cx), { h: 22 }))
+            .when(!b.planned && !q.machine, (el) => el.child(this.button(`start-${b.id}`, "Start", t, (cx) => this.start(q, b, cx), { h: 22 }))
               .child(this.button(`restart-${b.id}`, "Restart", t, (cx) => this.restart(q, b, cx), { h: 22 })))))];
     });
     if (!rows.length && pick && !this.refreshing) {
@@ -642,7 +693,7 @@ export class BotForm {
     const live = this.live && this.live.model ? this.live : null;
     const model = modelLine({ agentName: agent?.name ?? state.agent, pin: state.pin, info, detected: live?.model ?? null, terminal: live?.terminal ?? null });
     const place = placeOf(state, file);
-    const cli = commandOf(state, { key: this.key, file, initial: this.initial });
+    const cli = commandOf(state, { key: this.key, file, initial: this.initial, machine: this.machine });
     const pinKept = this.initial && state.pin === this.initial.pin && state.agent === this.initial.agent;
     const refusal = problemOf(state, { key: this.key, loadError: this.loadError, file, info: pinKept ? null : info });
     const v = { t, state, agent, info, model, place, cli, refusal, mono: settings()?.font_family ?? "JetBrains Mono" };
@@ -679,6 +730,7 @@ export class BotForm {
       .bg(t.surface ?? t.background).text_size(12)
       .child(this.glyph("folder", 13, t.muted))
       .child(div().text_color(t.foreground).child(this.key ? base(this.key) : "Pick a project…"))
+      .when(Boolean(this.key && this.machine), (el) => el.child(div().id("bot-machine").text_color(t.muted).child(`on ${this.machine}`)))
       .when(Boolean(this.space), (el) => el.child(div().text_color(t.muted).child(`· ${this.space}`)))
       .when(this.mode === "create", (el) => el.cursor_pointer().hover((s) => s.bg(t.hover))
         .tooltip(this.key ? `${this.key}. Change project` : "Pick the project folder")
@@ -687,14 +739,14 @@ export class BotForm {
           const dir = await pickFolder({ prompt: "Use this project" });
           if (dir) {
             // A picked folder is the project itself outside git (its git main checkout in it).
-            try { await this.load(await ownKeyOf(dir)); this.error = null; this.ensurePets(cx); } catch (e) { this.error = String(e?.message ?? e); }
+            try { await this.load(await ownKeyOf(dir), null); this.error = null; this.ensurePets(cx); } catch (e) { this.error = String(e?.message ?? e); }
           }
           cx.notify();
         })))
-      .when(this.mode !== "create" && Boolean(this.key), (el) => el.tooltip(this.key));
+      .when(this.mode !== "create" && Boolean(this.key), (el) => el.tooltip(this.machine ? `${this.key} on ${this.machine}` : this.key));
     // The focused folder sits under another project's folder: which project is it?
     const pick = (id, text, key) => this.chip(t, id, text, (cx) => cx.spawn(async (cx) => {
-      try { await this.load(key); this.error = null; this.ensurePets(cx); } catch (e) { this.error = String(e?.message ?? e); }
+      try { await this.load(key, this.choice?.machine ?? null); this.error = null; this.ensurePets(cx); } catch (e) { this.error = String(e?.message ?? e); }
       cx.notify();
     }));
     const choice = this.mode === "create" && !this.key && this.choice ? this.choice : null;
@@ -980,6 +1032,7 @@ export class BotForm {
             .child(this.glyph("copy", 12, t.foreground)).child(this.copied ? "Copied" : "Copy")))
         .child(btn("bot-cancel", done ? "Close" : "Cancel", () => closeOverlay(this.p.overlay), "ghost"))
         .when(!done, (el) => el.child(btn("bot-save", this.busy ? "Saving…" : save, (cx) => this.save(cx), "raised")))
-        .when(!done && creating && !state.planned, (el) => el.child(btn("bot-save-start", this.busy ? "Starting…" : "Create & start", (cx) => this.save(cx, true), "solid"))));
+        // Start on a linked machine isn't offered from here yet (automagik#206).
+        .when(!done && creating && !state.planned && !this.machine, (el) => el.child(btn("bot-save-start", this.busy ? "Starting…" : "Create & start", (cx) => this.save(cx, true), "solid"))));
   }
 }

@@ -14,7 +14,7 @@ import { appendFileSync, createWriteStream, mkdirSync, readFileSync, rmSync } fr
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
+import { linkInArgs, parseDeepLink, registerSchemes } from './deeplink.js'
 import { fade, PAGE_IN_CSS } from './motion.js'
 import { noteRestart, restartLine, steps } from './timeline.js'
 import { startUp } from './startup.js'
@@ -24,7 +24,8 @@ import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, dshRun, forge
 import { BotCursor } from './bot-cursor.js'
 import { BotRelay } from './bot-relay.js'
 import { BotViews, isBotId, isTabId } from './bot-views.js'
-import { herdrStatus, openHerdr } from './herdr.js'
+import { herdrStatus } from './herdr.js'
+import { openLatest } from './herdr-update.js'
 import { pageLayout, tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
 import { awayInstall, LOOK_EVERY_MS, readBusy } from './idle.js'
@@ -102,12 +103,12 @@ const wayland = process.platform === 'linux' && process.env.XDG_SESSION_TYPE ===
   !['ozone-platform', 'ozone-platform-hint'].some(name => app.commandLine.getSwitchValue(name) === 'x11')
 const botCursor = new BotCursor({ window: () => window, BrowserWindow, views: botViews, placeable: !wayland })
 
-// omni:// links (deeplink.js): the system hands them to the running app (macOS: open-url;
-// Linux: a second instance with the link as an argument), or starts the app with one.
-// A link that arrives before the app's page is up waits for it.
+// automagik:// and omni:// links (deeplink.js): the system hands them to the running app
+// (macOS: open-url; Linux and Windows: a second instance with the link as an argument), or
+// starts the app with one. A link that arrives before the app's page is up waits for it.
+// The schemes are taken once the page is in (registerSchemes).
 let pendingLink = linkInArgs(process.argv)
-if (process.defaultApp && process.argv.length >= 2) app.setAsDefaultProtocolClient(SCHEME, process.execPath, [process.argv[1]])
-else app.setAsDefaultProtocolClient(SCHEME)
+let schemesTaken = null
 app.on('open-url', (event, url) => {
   event.preventDefault()
   receiveLink(url)
@@ -136,9 +137,15 @@ function receiveLink(text) {
     if (window.isMinimized()) window.restore()
     window.focus()
   }
+  logLinkBot(link)
   if (link.action !== 'connect') return
   pendingLink = text
   if (ready) void connectFromLink()
+}
+
+// A link's Bot is selected from RFC 0013 delivery 8; until then it is only logged.
+function logLinkBot(link) {
+  if (link?.bot) switchLog(`${new Date().toISOString()} link: open, bot ${link.bot} (not selected yet)\n`)
 }
 
 // Ask, then hand the address to Omni's page (apps/omni-channels-dsh, the omni-desktop:connect
@@ -147,6 +154,8 @@ function receiveLink(text) {
 async function connectFromLink() {
   const link = parseDeepLink(pendingLink)
   pendingLink = null
+  // A link that started the app (Linux and Windows: in its argv) is read here, once the page is in.
+  logLinkBot(link)
   if (!link || link.action !== 'connect' || !window || !page) return
   const { response } = await dialog.showMessageBox(window, {
     type: 'question',
@@ -321,6 +330,7 @@ function makePage() {
     const back = restartLine(RESTART_NOTE(), { version: app.getVersion() })
     if (back) startLog(back)
     if (pendingLink) void connectFromLink()
+    schemesTaken ??= registerSchemes(app)
   })
 }
 
@@ -627,21 +637,31 @@ ipcMain.handle('automagik-updates-auto-apply', (event, on) => {
   return saved
 })
 
-// Code mode (RFC 0013, delivery 1): Herdr's state, and its window brought forward on a click
-// in the page (preload.cjs `omniDesktop.herdr`). The page sends a Bot id and nothing else; it
-// picks no space yet. One open at a time. logs/switch.log has each open's steps.
+// Code mode (RFC 0013, deliveries 1 and 2): Herdr's state, and its window brought forward on a
+// click in the page (preload.cjs `omniDesktop.herdr`). The page sends a Bot id and, to an offer
+// of a newer Herdr, the person's yes or no; nothing else. It picks no space yet. One open at a
+// time. herdrdev's feed is read on an open only, never here at boot. A yes is honoured only for
+// a pending offer. A version declined is not offered again until the app restarts (kept in
+// memory only). logs/switch.log has the steps.
 const herdrHost = () => ({ platform: process.platform, arch: process.arch, env: process.env, home: homedir() })
 const switchLog = (line) => { try { appendFileSync(join(home, 'logs', 'switch.log'), line) } catch {} }
 let herdrOpening = null
+let herdrOffered = null
+let herdrDeclined = null
 ipcMain.handle('automagik-herdr-status', event => (fromPage(event) ? herdrStatus(herdrHost()) : null))
 ipcMain.handle('automagik-herdr-open', (event, request) => {
   if (!fromPage(event)) return null
   const botId = isBotId(request?.botId) ? request.botId : null
+  const update = typeof request?.update === 'boolean' ? request.update : undefined
   herdrOpening ??= (async () => {
     const timed = steps(`switch${botId ? ` ${botId}` : ''}`, { write: switchLog, since: Date.now() })
     const log = what => switchLog(`${new Date().toISOString()} switch: ${what}\n`)
     try {
-      const result = await openHerdr({ ...herdrHost(), mark: timed.mark, log })
+      if (update === false && herdrOffered) herdrDeclined = herdrOffered
+      // A yes counts only for the version this session offered (openLatest checks the feed
+      // still names it); any other open clears the offer.
+      const result = await openLatest({ ...herdrHost(), update, offered: herdrOffered, skip: herdrDeclined, mark: timed.mark, log })
+      herdrOffered = result.reason === 'update' ? result.latest : null
       if (result.ok) log(`opened${result.raised === true ? '' : ' (no focus)'}`)
       return result
     } catch (error) {

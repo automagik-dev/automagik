@@ -223,7 +223,10 @@ changes the install side:
   Herdr; the switch adds nothing to that.
 - **The install and updates.** herdr-app is a third-party app. Each download is checked against
   the sha256 in herdrdev's `latest.json`; that proves the file matches the feed, not who made
-  it. herdr-app also updates itself, and no release passes a review of ours.
+  it. The feed and its sha256 come from the same host, `releases.herdr.dev`, so that host is
+  trusted in full: whoever controls it controls what installs. The switch reads the feed and
+  downloads builds from that host alone, over https, with redirects refused. herdr-app also
+  updates itself, and no release passes a review of ours.
 - **Undo.** Revert the release. The switch keeps no state but its log.
 
 ## Failure modes
@@ -363,7 +366,7 @@ None. Felipe answered every question (D27 and Decided).
 - RFCs: [0006](0006-herdr-terminal-mode.md) Herdr terminal mode,
   [0010](0010-desktop-sandbox.md) desktop sandbox;
   [0011](0011-monorepo-parts-and-releases.md) monorepo parts and releases;
-  0012 (`am` CLI and parts, not yet written); the registry RFC (not yet written).
+  0012 (`am` CLI and parts, not yet written); [0014](0014-shared-bot-registry.md) the registry RFC.
 - Unfold: `~/workspace/repos/rth/council/08-poc-vmbox.md`, `27-deployment-boundary.md`.
 - Sandbox sources: apple/container README (Requirements); containers/libkrun
   `docs/building.md` (macOS); superradcompany/microsandbox README (Requirements);
