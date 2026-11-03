@@ -19637,25 +19637,6 @@ var PROVIDERS_CSS = `
 @media (prefers-reduced-motion:reduce){.bt-provider-add{animation:none}}
 `;
 
-// src/shared/routes.js
-var isClaudeCode = (provider) => provider === "claude-code" || provider.startsWith("claude-code-");
-var CONNECTED_BY = Object.freeze(["native", "pi-ai", "claude-code-plugin", "acp"]);
-var HARNESSES = Object.freeze(["dsh", "claude-code", "codex", "gemini"]);
-var PI_AI_NS = "llm-pi-ai";
-var SUBSCRIPTION_ROUTES = Object.freeze(["codex", "claude", "grok", "antigravity"]);
-var ACP_HARNESS = Object.freeze({ claude: "claude-code", codex: "codex", gemini: "gemini" });
-var piAiRoutes = (directory) => /* @__PURE__ */ new Set([
-  ...SUBSCRIPTION_ROUTES,
-  ...(directory ?? []).filter((entry) => entry?.settingsNs === PI_AI_NS).map((entry) => entry.provider)
-]);
-function routeOf(provider, { piAi = new Set(SUBSCRIPTION_ROUTES) } = {}) {
-  const id = String(provider ?? "");
-  if (isClaudeCode(id)) return { harness: "claude-code", connectedBy: "claude-code-plugin" };
-  if (id.startsWith("acp-")) return { harness: ACP_HARNESS[id.slice(4)] ?? id.slice(4), connectedBy: "acp" };
-  if (piAi.has(id)) return { harness: "dsh", connectedBy: "pi-ai" };
-  return { harness: "dsh", connectedBy: "native" };
-}
-
 // src/client/settings.js
 var import_react58 = require("react");
 var capitalize3 = (word) => word[0].toUpperCase() + word.slice(1);
