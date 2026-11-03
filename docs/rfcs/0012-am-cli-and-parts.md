@@ -465,7 +465,8 @@ feed. For those, `am update` asks the owner (the desktop app) and reports.
   and its key (D35).
 - **`~/.automagik/parts.json`** and **`~/.automagik/parts/`**. New. am is the only writer.
 - **Entry variables** `AM_HOME`, `AM_PART_DIR`, `AM_ARTIFACT`, `AM_VERSION`, `AM_SEQUENCE`,
-  `AM_MACHINE`, `AM_JSON`; `--purge` appended to uninstall. **Entry result** `{part, ok, changed, detail}`.
+  `AM_MACHINE`, `AM_JSON`; `--purge` appended to uninstall. **Entry result**
+  `{part, ok, changed, detail}`.
   **Doctor lines** `{part, check, ok, detail, fix}` (proposed: plus `machine`) and exit codes
   0, 1, 2. **`writes`** prefixes `~/`, `**/`, and proposed `$HERDR_APP_HOME/`.
 - **`am` verbs** above; `automagik-herdr` unchanged and byte-identical, now linked by am.
