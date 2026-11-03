@@ -117,6 +117,8 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
     // The pairing dialog closes once a pairing it started finishes (the outcome shows as a message).
     var wasPairing by remember { mutableStateOf(false) }
     LaunchedEffect(state.pairing) { if (wasPairing && !state.pairing) pairDesktop = false; wasPairing = state.pairing }
+    // Pairing started from the general dialog replaces no legacy SSH card, whatever an earlier scan left behind.
+    LaunchedEffect(pairDesktop) { if (pairDesktop) vm.cancelRepair() }
     var editHost by remember { mutableStateOf<HostProfile?>(null) }
     var newTerminal by remember { mutableStateOf(false) }
     val selected = state.selected

@@ -7,7 +7,7 @@ tags: [privacy, policy, play]
 ---
 # Automagik Pocket privacy policy
 
-Effective 2026-11-01. Applies to the Android app **Automagik Pocket** (app ID
+Effective 2026-11-03. Applies to the Android app **Automagik Pocket** (app ID
 `ai.namastex.automagik`), published from
 [automagik-dev/automagik-pocket](https://github.com/automagik-dev/automagik-pocket).
 

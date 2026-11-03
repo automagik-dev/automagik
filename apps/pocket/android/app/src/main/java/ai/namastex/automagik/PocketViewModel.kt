@@ -246,7 +246,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Pairs with the desktop that showed [text] (a Pocket Link QR or pasted link), saves it and connects. */
     fun pair(text: String) {
-        pair(PairingLink.parse(text) ?: run { _state.update { it.copy(message = "That isn’t a Pocket Link pairing link.") }; return })
+        pair(PairingLink.parse(text) ?: run { _state.update { it.copy(message = "That isn’t a Pocket Link pairing link.", repairing = null) }; return })
     }
     /** A legacy SSH card's "Pair with QR": the scan it opens pairs that computer and replaces the card ([LegacySsh]). */
     fun repairWithQr(hostId: String) { _state.update { it.copy(repairing = hostId) } }
