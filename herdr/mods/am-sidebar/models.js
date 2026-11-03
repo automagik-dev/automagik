@@ -298,14 +298,15 @@ export function promptArgs(agentKey, task) {
 
 // How each agent picks up where it left off, for Restart: the words after its `run`. Each
 // was read from that agent's own --help on 2026-11-03 (claude, codex resume, pi, omp, kimi,
-// agy, hermes). Claude resumes a known session by id, else the latest one in its folder;
-// codex resume is a subcommand, which still goes after `run` (its top-level options come
-// before it). An agent missing here has no resume this pack knows: Restart starts it fresh.
+// agy, hermes). Claude, codex, omp and pi resume a known session by id, else the latest one in
+// their folder (codex resume --last filters by folder unless --all); codex resume is a
+// subcommand, which still goes after `run` (its top-level options come before it). An agent
+// missing here has no resume this pack knows: Restart starts it fresh.
 const RESUME = {
   claude: (session) => (session ? ["--resume", session] : ["--continue"]),
-  codex: () => ["resume", "--last"],
-  pi: () => ["--continue"],
-  omp: () => ["--continue"],
+  codex: (session) => ["resume", session ?? "--last"],
+  pi: (session) => (session ? ["--session", session] : ["--continue"]),
+  omp: (session) => (session ? [`--resume=${session}`] : ["--continue"]),
   kimi: () => ["--continue"],
   antigravity: () => ["--continue"],
   hermes: () => ["--continue"],
@@ -314,13 +315,83 @@ const RESUME = {
 /** True when Restart can resume `agentKey`'s conversation (RESUME lists it). */
 export const canResume = (agentKey) => Boolean(RESUME[agentKey]);
 
+/** True when `agentKey` resumes a known session by its id (not only its folder's latest). */
+export const resumesById = (agentKey) => ["claude", "codex", "pi", "omp"].includes(agentKey);
+
 /**
  * The words that resume `agentKey`'s last conversation, appended to its `run`: `session` is a
- * known session id (Claude's, from the pane's agent.session label), null when none is known.
- * Null when the agent has no resume (Restart then starts it fresh, and says so).
+ * known session id (the pane's agent.session label), null when none is known. Null when the
+ * agent has no resume (Restart then starts it fresh, and says so).
  */
 export function resumeArgs(agentKey, session = null) {
   // Never a value that reads as a flag (the CLI passes only UUIDs; restart.js sessionId).
-  const s = typeof session === "string" && session.trim() && !session.trim().startsWith("-") ? session.trim() : null;
+  const s = typeof session === "string" && session.trim() && !session.trim().startsWith("-") && resumesById(agentKey) ? session.trim() : null;
   return RESUME[agentKey] ? RESUME[agentKey](s) : null;
+}
+
+// The words an earlier resume left in a command line, per agent, so a reused command doesn't
+// resume twice: `flags` stand alone, `valued` take the next word (or `=value`), `inline` only
+// take `=value` (omp's --resume picks a session when bare). codex's is the `resume` subcommand
+// with its --last or session id. omp's and claude's -c is --continue; codex's -c is --config.
+const RESUMED = {
+  claude: { flags: ["--continue", "-c"], valued: ["--resume", "-r"] },
+  omp: { flags: ["--continue", "-c", "--resume", "-r"], inline: ["--resume", "-r", "--restore"] },
+  pi: { flags: ["--continue", "-c", "--resume", "-r"], valued: ["--session"] },
+  kimi: { flags: ["--continue"] },
+  antigravity: { flags: ["--continue"] },
+  hermes: { flags: ["--continue"] },
+};
+
+/**
+ * `args` (a command line) without the words that resumed a conversation (RESUMED; codex's
+ * `resume --last` / `resume <id>`), for a restart that reuses the command and adds its own.
+ */
+export function withoutResume(agentKey, args) {
+  const words = Array.isArray(args) ? args.map(String) : [];
+  if (agentKey === "codex") {
+    const i = words.indexOf("resume");
+    if (i < 0) return words;
+    const next = words[i + 1];
+    const drop = next !== undefined && (next === "--last" || !next.startsWith("-")) ? 2 : 1;
+    return [...words.slice(0, i), ...words.slice(i + drop)];
+  }
+  const r = RESUMED[agentKey];
+  if (!r) return words;
+  const out = [];
+  for (let i = 0; i < words.length; i += 1) {
+    const w = words[i];
+    if (w === "--") { out.push(...words.slice(i)); break; }
+    const eq = w.startsWith("-") ? w.indexOf("=") : -1;
+    const name = eq > 0 ? w.slice(0, eq) : w;
+    if (eq > 0 && ((r.valued ?? []).includes(name) || (r.inline ?? []).includes(name))) continue;
+    if (eq < 0 && (r.valued ?? []).includes(w)) { i += 1; continue; }
+    if (eq < 0 && (r.flags ?? []).includes(w)) continue;
+    out.push(w);
+  }
+  return out;
+}
+
+/**
+ * `args` (a command line) without the flags that name `agentKey`'s model (FLAGS: `--model X`,
+ * `--model=X`, codex's `-m X`, `-mX` and `-c model=X`), so a bot's pin can replace them.
+ */
+export function withoutModel(agentKey, args) {
+  const words = Array.isArray(args) ? args.map(String) : [];
+  const flags = FLAGS[agentKey];
+  if (!flags) return words;
+  const out = [];
+  for (let i = 0; i < words.length; i += 1) {
+    const w = words[i];
+    if (w === "--") { out.push(...words.slice(i)); break; }
+    const eq = w.startsWith("--") ? w.indexOf("=") : -1;
+    const name = eq > 0 ? w.slice(0, eq) : w;
+    if ((flags.long ?? []).includes(name) || (flags.short ?? []).includes(name)) { if (eq < 0) i += 1; continue; }
+    if ((flags.short ?? []).some((f) => w.startsWith(f) && w.length > f.length && !w.startsWith("--"))) continue;
+    if ((flags.config ?? []).includes(name)) {
+      const v = eq > 0 ? w.slice(eq + 1) : words[i + 1];
+      if (typeof v === "string" && /^model\s*=/.test(v.trim())) { if (eq < 0) i += 1; continue; }
+    }
+    out.push(w);
+  }
+  return out;
 }

@@ -4,8 +4,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { canResume, resumeArgs } from "../mods/am-sidebar/models.js";
-import { carriedLabels, continueRefusal, ledgerSession, planText, restartAnswer, restartArgs, restartPlan, restartRefusal, sessionId, sessionOf } from "../mods/am-sidebar/restart.js";
+import { AGENTS, canResume, resumeArgs, withoutModel, withoutResume } from "../mods/am-sidebar/models.js";
+import { carriedLabels, continueRefusal, helperArgs, helperPlan, ledgerSession, paneCommand, planText, restartAnswer, restartArgs, restartPlan, restartRefusal,
+  sessionId, sessionOf, sharedResumes } from "../mods/am-sidebar/restart.js";
 
 const SID = "0f3c2a4e-1b2d-4c5e-9f60-718293a4b5c6";
 
@@ -120,4 +121,91 @@ test("continueRefusal: refused only when another bot's Claude shares the folder"
   assert.equal(continueRefusal({ name: "Genie", old: { address: "t5" }, cwd: "/p" }), null);
   assert.match(continueRefusal({ name: "Genie", old: { address: "t5" }, cwd: "/p", sharers: [{ address: "t9", name: "Captain" }, { address: "t8", name: "Dev" }] }),
     /Genie has no recorded Claude session \(t5 has no agent.session label .*\), and Captain \(t9\), Dev \(t8\) also run Claude in \/p, so --continue could resume theirs\. Nothing was started; restart with --fresh/);
+});
+
+// ---- #213: the old pane's own command, resume by id, --tree ----
+
+test("resumeArgs by session id: codex resume <id>, omp --resume=<id>, pi --session <id>; kimi, agy and hermes only --continue", () => {
+  assert.deepEqual(resumeArgs("codex", SID), ["resume", SID]);
+  assert.deepEqual(resumeArgs("omp", SID), [`--resume=${SID}`]);
+  assert.deepEqual(resumeArgs("pi", SID), ["--session", SID]);
+  for (const k of ["kimi", "antigravity", "hermes"]) assert.deepEqual(resumeArgs(k, SID), ["--continue"], k);
+  assert.deepEqual(resumeArgs("omp", "-x"), ["--continue"], "never a flag as an id");
+});
+
+test("withoutResume drops an earlier resume per agent (codex's -c is its config, kept); withoutModel drops the model flags", () => {
+  assert.deepEqual(withoutResume("claude", ["claude", "--model", "m", "--resume", SID, "-c"]), ["claude", "--model", "m"]);
+  assert.deepEqual(withoutResume("codex", ["codex", "-c", "x=1", "resume", "--last", "-m", "g"]), ["codex", "-c", "x=1", "-m", "g"]);
+  assert.deepEqual(withoutResume("codex", ["codex", "resume", SID]), ["codex"]);
+  assert.deepEqual(withoutResume("omp", ["omp", "-c", "--resume=abc", "--model=k", "--restore=x"]), ["omp", "--model=k"]);
+  assert.deepEqual(withoutResume("pi", ["pi", "--session", SID, "--continue", "--model", "p"]), ["pi", "--model", "p"]);
+  assert.deepEqual(withoutModel("codex", ["codex", "-m", "a", "-mb", "--model=c", "-c", "model=d", "-c", "model_reasoning_effort=high"]),
+    ["codex", "-c", "model_reasoning_effort=high"]);
+  assert.deepEqual(withoutModel("omp", ["omp", "--model=k", "--thinking=high"]), ["omp", "--thinking=high"]);
+});
+
+test("paneCommand: hc's launch argv without this pack's env PATH prefix; a template's sh -c command, its \"$@\" and old arguments dropped", () => {
+  assert.equal(paneCommand({}), null);
+  assert.deepEqual(paneCommand({ argv: ["/usr/bin/env", "PATH=/a", "omp", "--model=k"] }), { argv: ["omp", "--model=k"] });
+  assert.deepEqual(paneCommand({ argv: ["env", "FOO=1", "omp"] }), { argv: ["env", "FOO=1", "omp"] }, "someone else's env stays");
+  assert.deepEqual(paneCommand({ argv: ["sh", "-c", "omp --x"] }), { shell: "omp --x" });
+  assert.deepEqual(paneCommand({ argv: ["/usr/bin/env", "PATH=/a", "sh", "-c", 'omp --x "$@"', "sh", "--continue"] }), { shell: "omp --x" });
+});
+
+test("restartPlan reuses the old pane's command when it runs the bot's agent: a template resumed through \"$@\", flags kept, a pin replacing the model", () => {
+  const omp = { agent: "omp" };
+  const tpl = restartPlan({ bot: omp, run: ["omp"], runningAgent: "omp", launch: { shell: "omp --auto-approve --model k" }, runningModel: "k" });
+  assert.deepEqual([tpl.mode, tpl.reused, tpl.model], ["resume", true, "k"]);
+  assert.deepEqual(tpl.argv, ["sh", "-c", 'omp --auto-approve --model k "$@"', "sh", "--continue"]);
+  const fresh = restartPlan({ bot: omp, run: ["omp"], runningAgent: "omp", fresh: true, launch: { shell: "omp --model k" } });
+  assert.deepEqual([fresh.mode, fresh.argv], ["fresh", ["sh", "-c", "omp --model k"]], "--fresh: the same command, no resume");
+  const codex = restartPlan({ bot: { agent: "codex", model: "gpt-b" }, run: ["codex"], runningAgent: "codex", session: SID,
+    launch: { argv: ["codex", "-m", "gpt-a", "-c", "model_reasoning_effort=high", "resume", "--last"] } });
+  assert.deepEqual(codex.argv, ["codex", "-c", "model_reasoning_effort=high", "--model", "gpt-b", "resume", SID]);
+  assert.equal(codex.model, "gpt-b");
+  const same = restartPlan({ bot: claude, run: ["claude"], runningAgent: "claude", session: SID, launch: { argv: ["claude", "--model", "claude-opus-5-5", "--effort", "high"] } });
+  assert.deepEqual(same.argv, ["claude", "--model", "claude-opus-5-5", "--effort", "high", "--resume", SID]);
+  // Another agent in the pane, or a swap: the definition's command, as before.
+  const other = restartPlan({ bot: omp, run: ["omp"], runningAgent: "codex", launch: { argv: ["codex", "-m", "x"] } });
+  assert.deepEqual([other.mode, other.reused, other.argv], ["fresh", false, ["omp"]]);
+  const swap = restartPlan({ bot: omp, run: ["codex"], runningAgent: "omp", agent: "codex", launch: { shell: "omp" } });
+  assert.deepEqual([swap.mode, swap.reused, swap.argv], ["swap", false, ["codex"]]);
+});
+
+test("restartRefusal --tree: helpers that end with the pane don't refuse unless one is mid-turn; without it the refusal names --tree and --force", () => {
+  const idle = { address: "t5", status: { state: "idle" } };
+  const helper = { address: "t7", state: "live", die_with_parent: true, status: { state: "idle" } };
+  const without = restartRefusal({ name: "Genie", old: idle, helpers: [helper] });
+  assert.match(without, /pass --tree to restart it too \(resumed, under the new pane\), or pass --force to end it with the pane\./);
+  assert.equal(restartAnswer({ code: 1, err: without }).forceable, true, "the sidebar still offers --force");
+  assert.equal(restartRefusal({ name: "Genie", old: idle, helpers: [helper], tree: true }), null);
+  const busy = { ...helper, status: { state: "working" } };
+  assert.match(restartRefusal({ name: "Genie", old: idle, helpers: [busy], tree: true }), /t5's helper t7 is working; .* or pass --force\./);
+  assert.equal(restartRefusal({ name: "Genie", old: idle, helpers: [busy], tree: true, force: true }), null);
+});
+
+test("helperPlan: a worker rebuilt from its ledger row (its task not sent again), a template's command, anything else's own; resumed in its folder", () => {
+  const get = { address: "t7", name: "fix-dev", cwd: "/w", foreground: { argv: ["bun", "/b/omp", "--model=k", "--thinking=high", "the task"], cwd: "/w/sub" },
+    labels: { "worker.of": "b-1", "agent.session": SID }, argv: ["/usr/bin/env", "PATH=/x", "omp", "--model=k", "--thinking=high", "the task"] };
+  const worker = { agent: "omp", model: "k", effort: "high", template: null };
+  const w = helperPlan({ get, worker, session: SID, agents: AGENTS });
+  assert.deepEqual([w.name, w.replaced, w.cwd, w.agent, w.mode, w.session], ["fix-dev", "t7", "/w/sub", "omp", "resume", SID]);
+  assert.deepEqual(w.argv, ["omp", "--model=k", "--thinking=high", `--resume=${SID}`]);
+  const tpl = helperPlan({ get: { address: "t8", cwd: "/r", foreground: { argv: ["codex", "-m", "g"] }, argv: ["sh", "-c", "codex -m g"], template: "rev" }, agents: AGENTS });
+  assert.deepEqual(tpl.argv, ["sh", "-c", 'codex -m g "$@"', "sh", "resume", "--last"]);
+  const hand = helperPlan({ get: { address: "t9", cwd: "/h", foreground: { argv: ["claude", "--model", "m"] }, argv: ["claude", "--model", "m", "--continue"] }, agents: AGENTS });
+  assert.deepEqual(hand.argv, ["claude", "--model", "m", "--continue"]);
+  const none = helperPlan({ get: { address: "t10", cwd: "/h", foreground: { argv: ["claude"] } }, agents: AGENTS });
+  assert.match(none.error, /t10 can't be run again: hc gave no command this pack can reuse/);
+  const plain = helperPlan({ get: { address: "t11", cwd: "/h", foreground: { argv: ["amp"] }, argv: ["amp"] }, agents: AGENTS });
+  assert.deepEqual([plain.mode, plain.argv, plain.note], ["fresh", ["amp"], "amp has no resume this pack knows"]);
+  assert.deepEqual(helperArgs({ name: "fix-dev", cwd: "/w", labels: { a: "1", gone: "" }, parent: "t100", argv: ["omp"], path: "/p" }),
+    ["run", "--bg", "--json", "--name", "fix-dev", "--cwd", "/w", "--label", "a=1", "--parent", "t100", "--", "/usr/bin/env", "PATH=/p", "omp"]);
+});
+
+test("sharedResumes: two id-less resumes of one agent in one folder are named; with an id, or in other folders, nothing", () => {
+  const runs = [{ who: "Genie", agent: "codex", cwd: "/w", session: null, mode: "resume" }, { who: "rev-1", agent: "codex", cwd: "/w", session: null, mode: "resume" },
+    { who: "dev", agent: "codex", cwd: "/w", session: SID, mode: "resume" }, { who: "other", agent: "codex", cwd: "/o", session: null, mode: "resume" }];
+  assert.deepEqual(sharedResumes(runs), ["Genie and rev-1 each resume the latest codex conversation in /w (no session id known), so one may have picked up another's; check them (hc read)."]);
+  assert.deepEqual(sharedResumes(runs.slice(2)), []);
 });

@@ -1,8 +1,10 @@
 // A stand-in for herdr-core's `hc`, for the CLI tests: every call is appended to
 // $HC_FAKE_LOG as one JSON argv line, and answers come from the terminals in
 // $HC_FAKE_STATE ({ terminals: [hc get objects], next: number }), which `label` and `run`
-// change. Only the calls automagik-herdr makes: ls [--label k=v], get, read, label, run,
-// server status (state.core), kill (the terminal finishes), templates (state.templates:
+// change. Only the calls automagik-herdr makes: ls [--label k=v], get, read, label, run (its
+// launch argv kept as `argv`, `sh -c <command>` for a template, as hc's own get shows), server
+// status (state.core), kill (the terminal finishes, and its live die_with_parent children with
+// it, as hc ends them), templates (state.templates:
 // [{ name, command }]), machine ls and exec --on (state.machines: [{ name, state, uname, home,
 // path?, temporary? }]: a linked machine is a scratch home folder; its `uname -sm` is `uname`,
 // anything else runs here with HOME=home and `path` (a folder of fakes) first on PATH).
@@ -19,6 +21,20 @@ const words = args.filter((a) => a !== "--json");
 const find = (t) => state.terminals.find((x) => x.address === t || x.name === t);
 // state.fail: commands that fail as a server that is down would (exit 1).
 if ((state.fail ?? []).includes(words[0])) fail(`hc: can't reach the server (${words[0]})`);
+
+/**
+ * What a launch argv has in front once it runs: `sh -c <command> [$0 args…]` (behind any
+ * `env K=V`) is the command's words and the args (sh execs a simple command, as the real one
+ * does); anything else is itself.
+ */
+function foregroundOf(launch) {
+  let w = [...launch];
+  if (/(^|\/)env$/.test(w[0] ?? "")) { let j = 1; while (j < w.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(w[j])) j += 1; w = w.slice(j); }
+  if (/(^|\/)(sh|bash)$/.test(w[0] ?? "") && w[1] === "-c" && typeof w[2] === "string") {
+    return [...w[2].replace(/ "\$@"$/, "").split(/\s+/).filter(Boolean), ...w.slice(4)];
+  }
+  return launch;
+}
 
 switch (words[0]) {
   case "ls": {
@@ -76,7 +92,12 @@ switch (words[0]) {
       else if (words[i] === "--parent") parent = words[++i];
       else if (words[i] === "--outlive-parent") outlive = true;
     }
-    const argv = words.slice(words[i] === "--" ? i + 1 : i);
+    const given = words.slice(words[i] === "--" ? i + 1 : i);
+    // A template (no `--`, a name state.templates lists): hc runs its command through sh -c
+    // and types the task in as the first message; its foreground is the command's program.
+    const template = words[i] !== "--" ? (state.templates ?? []).find((x) => x.name === given[0]) ?? null : null;
+    const launch = template ? ["sh", "-c", template.command] : given;
+    const argv = foregroundOf(launch);
     // `env K=V … program …`: the program is the first word after the assignments.
     const program = /(^|\/)env$/.test(argv[0] ?? "") ? argv.slice(1).find((a) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(a)) : argv[0];
     const address = `t${state.next ?? 100}`;
@@ -85,6 +106,7 @@ switch (words[0]) {
     // "flaky" (its agent is in front for one hc get, then it exits).
     const shell = state.runAs === "shell";
     state.terminals.push({ address, name, cwd, labels, parent, die_with_parent: Boolean(parent) && !outlive, state: state.runAs === "exit" ? "finished" : "live", created_ms: Date.now(),
+      argv: launch, template: template?.name ?? null,
       pid: 9000 + Number(address.slice(1)), foreground: { argv: shell ? ["zsh"] : argv, cwd, pid: 5000 + Number(address.slice(1)) }, status: { app: program === "claude" ? "claude-code" : program, state: "working" },
       ...(state.runAs === "flaky" ? { exitAfterGets: 1 } : {}) });
     // state.onRunWrite: { path, text }: a file edit that lands while this run happens.
@@ -98,6 +120,7 @@ switch (words[0]) {
     if (!t) fail(`no terminal ${words[1]}`);
     if (state.failKill === words[1]) fail(`kill refused on ${words[1]}`);
     t.state = "finished";
+    for (const c of state.terminals) if (c.parent === t.address && c.state === "live" && c.die_with_parent) c.state = "finished";
     save();
     out({ address: t.address, state: t.state });
     // Killing the caller's own terminal ends the caller (this fake runs exec'd by the wrapper,
