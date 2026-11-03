@@ -13,10 +13,10 @@
 //                        in that plugin's own picker settings, on shows them again; the
 //                        account stays signed in either way
 //
-// One source per vendor. Claude comes only through the Claude Code app (dsh-oh-my-claude):
-// DSH's own Claude sign-in and dsh-subscriptions' claude both present as Claude Code, so
-// Omni never offers them, and when Claude is on their models are hidden. The other vendors
-// keep DSH's own sign-in, and dsh-subscriptions keeps the ones nothing else covers.
+// One source per vendor, through DSH's own sign-ins and keys. Claude is pi-ai's anthropic
+// route, on a Claude Pro or Max sign-in or an Anthropic API key: one row, one route, and
+// dsh-subscriptions' claude is a duplicate of it whose models are hidden when Claude is on.
+// dsh-subscriptions keeps the vendors nothing else covers.
 //
 // Replies carry names and states only: never a key, a token or an account's credential.
 import { z } from 'zod'
@@ -26,7 +26,6 @@ const RECORD_SCOPE = 'llm-pi-ai'
 export const DEEPSEEK_REF = 'DEEPSEEK_API_KEY'
 export const DEEPSEEK_ACCOUNT = 'deepseek-account-platform/default'
 export const SUBSCRIPTIONS = 'dsh-subscriptions'
-export const OH_MY_CLAUDE = 'dsh-oh-my-claude'
 export const CLIPROXY_ROUTE = 'cliproxy'
 export const OLLAMA_ROUTE = 'ollama'
 export const OLLAMA_URL = 'http://127.0.0.1:11434'
@@ -37,14 +36,13 @@ const OLLAMA_PROBE_MS = 800
 // The rows, in the order "Add another" lists them. `envRefs` are the variables pi-ai reads
 // for that provider, so a key already in the environment is found.
 export const VENDORS = [
-  { id: 'claude', name: 'Claude', via: 'Through the Claude Code app you already use', kind: 'claude' },
+  { id: 'claude', name: 'Claude', via: 'Your Claude Pro or Max plan, or an Anthropic API key', kind: 'signin', provider: 'anthropic', envRefs: ['ANTHROPIC_API_KEY'], keyUrl: 'https://console.anthropic.com/settings/keys' },
   { id: 'chatgpt', name: 'ChatGPT', via: 'Your ChatGPT Plus or Pro plan, through Codex', kind: 'signin', provider: 'openai-codex' },
   { id: 'deepseek', name: 'DeepSeek', via: 'With your API key, or your DeepSeek account', kind: 'key', provider: 'deepseek', ref: DEEPSEEK_REF, route: false, keyUrl: 'https://platform.deepseek.com/api_keys' },
   { id: 'kimi', name: 'Kimi', via: 'Your Kimi Code plan', kind: 'signin', provider: 'kimi-coding' },
   { id: 'copilot', name: 'GitHub Copilot', via: 'Your Copilot plan', kind: 'signin', provider: 'github-copilot' },
   { id: 'grok', name: 'Grok', via: 'SuperGrok or X Premium, or an xAI key', kind: 'signin', provider: 'xai', envRefs: ['XAI_API_KEY'], keyUrl: 'https://console.x.ai' },
   { id: 'openai', name: 'OpenAI API', via: 'With an API key, billed per use', kind: 'key', provider: 'openai', envRefs: ['OPENAI_API_KEY'], keyUrl: 'https://platform.openai.com/api-keys' },
-  { id: 'anthropic', name: 'Anthropic API', via: 'With an API key, billed per use', kind: 'key', provider: 'anthropic', envRefs: ['ANTHROPIC_API_KEY'], keyUrl: 'https://console.anthropic.com/settings/keys' },
   { id: 'openrouter', name: 'OpenRouter', via: 'One key, hundreds of models', kind: 'key', provider: 'openrouter', envRefs: ['OPENROUTER_API_KEY'], keyUrl: 'https://openrouter.ai/keys' },
   { id: 'zai', name: 'Z.ai', via: 'GLM models, with an API key', kind: 'key', provider: 'zai', envRefs: ['ZAI_API_KEY'], keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
   { id: 'moonshot', name: 'Moonshot', via: 'Kimi models, with an API key', kind: 'key', provider: 'moonshotai', envRefs: ['MOONSHOT_API_KEY'], keyUrl: 'https://platform.moonshot.ai/console/api-keys' },
@@ -116,13 +114,6 @@ async function subscriptionAccounts(ctx) {
   return { accounts, hidden: Array.isArray(entry.value?.hiddenModels) ? entry.value.hiddenModels : [], revision: entry.revision }
 }
 
-// The Claude Code plugin's row in DSH's plugin manager, when it manages one.
-async function ohMyClaudeRow(ctx) {
-  const manager = service(ctx, 'pluginManager')
-  const rows = await quietly(() => manager?.listPlugins?.(), [])
-  return { manager, row: rows.find(row => row?.moduleName === OH_MY_CLAUDE) }
-}
-
 async function ollamaRunning(fetchImpl) {
   try {
     const response = await fetchImpl(`${OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(OLLAMA_PROBE_MS), redirect: 'error' })
@@ -132,11 +123,7 @@ async function ollamaRunning(fetchImpl) {
   }
 }
 
-// The one line that installs Claude Code, which the Claude row offers while it is missing. It is
-// sent with the row, never built into the page; Unfold's own instance (host unfold) sends none.
-export const CLAUDE_INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash'
-
-export function createAiActions(ctx, { fetch: fetchImpl = globalThis.fetch, claudeCode, saveRoute, unsetRoute, host = null } = {}) {
+export function createAiActions(ctx, { fetch: fetchImpl = globalThis.fetch, saveRoute, unsetRoute } = {}) {
   const llm = () => service(ctx, 'llm')
   const authorization = () => service(ctx, 'authorization')
 
@@ -144,17 +131,6 @@ export function createAiActions(ctx, { fetch: fetchImpl = globalThis.fetch, clau
   async function rowFor(vendor, seen) {
     const routes = seen.routes
     const base = { id: vendor.id, name: vendor.name, via: vendor.via, kind: vendor.kind }
-    if (vendor.kind === 'claude') {
-      const check = seen.claude ?? {}
-      const plugin = seen.ohMyClaude.row
-      const hasPlugin = plugin !== undefined || check.plugin === true
-      const pluginOn = plugin ? plugin.enabled !== false : check.plugin === true
-      // On only once Claude Code is signed in: the plugin alone serves nothing.
-      const ready = check.installed === true && check.loggedIn === true && hasPlugin
-      const found = check.loggedIn ? 'Signed in to Claude Code' : check.installed ? 'Claude Code found, not signed in' : null
-      const needs = !hasPlugin ? 'plugin' : !check.installed ? 'install' : !check.loggedIn ? 'login' : check.reachable === false ? 'restart' : null
-      return { ...base, ready, on: ready && pluginOn && check.reachable !== false, found, needs, ...(needs === 'install' && host !== 'unfold' ? { install: CLAUDE_INSTALL } : {}), ...(check.email ? { detail: check.email } : {}), ...(check.plan ? { plan: check.plan } : {}) }
-    }
     if (vendor.kind === 'key') {
       const key = await keyOf(ctx, vendor)
       const account = vendor.id === 'deepseek' && (await quietly(() => ctx.credentials.describeRecord(DEEPSEEK_ACCOUNT), {}))?.configured === true
@@ -170,8 +146,11 @@ export function createAiActions(ctx, { fetch: fetchImpl = globalThis.fetch, clau
       const key = vendor.envRefs ? await keyOf(ctx, vendor) : null
       const flow = authorization()?.describe?.(recordKeyOf(vendor.provider)) !== undefined
       const ready = signedIn || key !== null
-      const found = signedIn ? `Signed in to ${vendor.name}` : key?.source === 'env' ? `${key.ref} found` : null
-      return { ...base, ready, on: ready && Object.hasOwn(routes, vendor.provider), found, signIn: flow, ...(vendor.keyUrl ? { keyUrl: vendor.keyUrl } : {}) }
+      const found = signedIn ? `Signed in to ${vendor.name}` : key?.source === 'env' ? `${key.ref} found` : key ? 'Key saved' : null
+      // A route that names a key runs on that key; one that names none, on the sign-in.
+      const route = routes[vendor.provider]
+      const runs = route?.apiKeyEnv !== undefined ? key !== null : ready
+      return { ...base, ready, on: Object.hasOwn(routes, vendor.provider) && runs, found, signIn: flow, ...(vendor.keyUrl ? { keyUrl: vendor.keyUrl } : {}) }
     }
     if (vendor.kind === 'gateway') {
       const routed = Object.hasOwn(routes, CLIPROXY_ROUTE)
@@ -184,13 +163,11 @@ export function createAiActions(ctx, { fetch: fetchImpl = globalThis.fetch, clau
   }
 
   async function look() {
-    const [claude, ohMyClaude, subscriptions, ollama] = await Promise.all([
-      quietly(() => claudeCode?.(), null),
-      ohMyClaudeRow(ctx),
+    const [subscriptions, ollama] = await Promise.all([
       subscriptionAccounts(ctx),
       ollamaRunning(fetchImpl),
     ])
-    return { routes: routesOf(ctx), claude, ohMyClaude, subscriptions, ollama }
+    return { routes: routesOf(ctx), subscriptions, ollama }
   }
 
   // The other ways a row's AI is connected right now, and whether their models still show.
@@ -201,10 +178,6 @@ export function createAiActions(ctx, { fetch: fetchImpl = globalThis.fetch, clau
       if (rowId !== row.id || !subs) continue
       if (!subs.accounts.some(account => account.provider === vendor)) continue
       out.push({ via: 'dsh-subscriptions', provider: vendor, hidden: subs.hidden.some(model => model?.provider === vendor) })
-    }
-    // DSH's own Claude sign-in: a pi-ai anthropic route that names no key runs on that sign-in.
-    if (row.id === 'claude' && Object.hasOwn(seen.routes, 'anthropic') && seen.routes.anthropic?.apiKeyEnv === undefined) {
-      out.push({ via: 'DSH\'s Claude sign-in', provider: 'anthropic', hidden: false })
     }
     return out
   }
@@ -237,25 +210,10 @@ export function createAiActions(ctx, { fetch: fetchImpl = globalThis.fetch, clau
       }
       await ctx.settings.update(SUBSCRIPTIONS, { hiddenModels: hidden }, subs.revision)
     }
-    if (rowId === 'claude' && Object.hasOwn(seen.routes, 'anthropic') && seen.routes.anthropic?.apiKeyEnv === undefined) {
-      // The route goes; DSH keeps the sign-in's stored credential.
-      await unsetRoute('anthropic')
-      done.push('anthropic')
-    }
     return done
   }
 
   async function turn(vendor, on, seen) {
-    if (vendor.kind === 'claude') {
-      const { manager, row } = seen.ohMyClaude
-      if (!row) {
-        if (on) return
-        throw refused('This DSH does not let Omni turn the Claude Code plugin off. Turn it off in Settings → Plugins.')
-      }
-      if (row.readOnlyReason !== undefined) throw refused('DSH keeps the Claude Code plugin as it is. Change it in Settings → Plugins.')
-      if ((row.enabled !== false) !== on) await manager.setPluginEnabled(row.entryId, on)
-      return
-    }
     if (vendor.kind === 'key') {
       if (vendor.route === false) {
         if (!on) throw refused('DeepSeek is DSH\'s own route. Remove its key in Settings → Models to stop using it.')
@@ -268,8 +226,14 @@ export function createAiActions(ctx, { fetch: fetchImpl = globalThis.fetch, clau
     if (vendor.kind === 'signin') {
       if (!on) return unsetRoute(vendor.provider)
       const signedIn = (await quietly(() => ctx.credentials.describeRecord(recordKeyOf(vendor.provider)), {}))?.configured === true
-      // A sign-in sits beneath a key: a route that names no key uses the sign-in.
-      if (signedIn) return saveRoute(vendor.provider, {})
+      // A sign-in sits beneath a key: a route that names no key uses the sign-in. A route left
+      // on a key that is gone moves to the sign-in, keeping the rest of what it holds.
+      if (signedIn) {
+        const { apiKeyEnv, ...rest } = seen.routes[vendor.provider] ?? {}
+        if (apiKeyEnv !== undefined && await keyOf(ctx, vendor) !== null) return
+        if (apiKeyEnv !== undefined) await unsetRoute(vendor.provider)
+        return saveRoute(vendor.provider, rest)
+      }
       const key = await keyOf(ctx, vendor)
       return saveRoute(vendor.provider, { apiKeyEnv: key.ref })
     }

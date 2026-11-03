@@ -13,20 +13,14 @@
 //                                 its latest notice (message, url, code) and open question
 //   signin-answer { provider, promptId, value }
 //   signin-cancel { provider }
-//   claude-code                   Claude through the person's own Claude Code: whether the
-//                                 `claude` CLI is installed and signed in (`claude auth
-//                                 status`), as the dsh-oh-my-claude plugin drives it. Claude has
-//                                 no sign-in of ours: Anthropic allows its subscriptions in
-//                                 other apps through Claude Code, not through a login of theirs
+//
+// Claude is pi-ai's anthropic route: its Claude Pro/Max sign-in (pi-ai's OAuth, the flow
+// llm-pi-ai/anthropic) or an Anthropic API key (ANTHROPIC_API_KEY), one route either way.
 //
 // The browser never sees a key or a token: it sees the flow's notices and answers its
 // questions. A sign-in lives in this process; reloading the page leaves it running, and
 // signin-status picks it up again.
-import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { accessSync, constants, readdirSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { delimiter, join } from 'node:path'
 import { Answer, AnswerPayload, KeyPayload, ProviderPayload, Secret, parse } from './payloads.js'
 
 export const PI_AI = 'llm-pi-ai'
@@ -43,9 +37,9 @@ export const KEY_PROVIDERS = {
   moonshotai: { label: 'Moonshot (Kimi API)' },
   xai: { label: 'xAI' },
 }
-// Providers a subscription sign-in can connect, by pi-ai's provider id. Claude is not one:
-// see claude-code.
+// Providers a subscription sign-in can connect, by pi-ai's provider id.
 export const SIGNIN_PROVIDERS = {
+  anthropic: { label: 'Claude (Pro/Max)' },
   'openai-codex': { label: 'ChatGPT (Codex)' },
   'kimi-coding': { label: 'Kimi Code' },
   'github-copilot': { label: 'GitHub Copilot' },
@@ -53,40 +47,6 @@ export const SIGNIN_PROVIDERS = {
 }
 // A finished attempt is kept this long, so a page that comes back still learns how it ended.
 const KEEP_MS = 10 * 60 * 1000
-
-// dsh-oh-my-claude's model route, and where Claude Code installs itself when not on PATH (an
-// app opened from the Dock or a launcher does not get the shell's PATH).
-export const CLAUDE_CODE_ROUTE = 'claude-code'
-const CLAUDE_STATUS_MS = 15_000
-export function claudeCandidates(env = process.env, home = homedir()) {
-  const onPath = String(env.PATH ?? '').split(delimiter).filter(Boolean).map(dir => join(dir, 'claude'))
-  const nvm = join(home, '.nvm', 'versions', 'node')
-  let nvmBins = []
-  try {
-    nvmBins = readdirSync(nvm).map(version => join(nvm, version, 'bin', 'claude'))
-  } catch {}
-  return [...onPath, join(home, '.local', 'bin', 'claude'), join(home, '.claude', 'local', 'claude'), '/opt/homebrew/bin/claude', '/usr/local/bin/claude', join(home, '.bun', 'bin', 'claude'), join(home, '.npm-global', 'bin', 'claude'), ...nvmBins]
-}
-const executable = (path) => {
-  try {
-    accessSync(path, constants.X_OK)
-    return true
-  } catch {
-    return false
-  }
-}
-// `claude auth status`: JSON from a current CLI; an older one prints prose.
-export function parseClaudeStatus(text) {
-  try {
-    const status = JSON.parse(text)
-    return { loggedIn: status?.loggedIn === true, email: typeof status?.email === 'string' ? status.email : null, plan: typeof status?.subscriptionType === 'string' ? status.subscriptionType : null, method: typeof status?.authMethod === 'string' ? status.authMethod : null }
-  } catch {
-    return { loggedIn: /logged in/i.test(text) && !/not logged in/i.test(text), email: null, plan: null, method: null }
-  }
-}
-const runStatus = (path, env) => new Promise((resolve) => {
-  execFile(path, ['auth', 'status'], { timeout: CLAUDE_STATUS_MS, env, maxBuffer: 256 * 1024 }, (error, stdout) => resolve(error && !stdout ? null : String(stdout)))
-})
 
 const failure = (code, message) => Object.assign(new Error(message), { code })
 const invalid = message => failure('omni-ai/invalid', message)
@@ -155,20 +115,6 @@ const authorizationOf = (ctx) => {
   }
 }
 
-// Claude through Claude Code: the plugin's route, the CLI, its sign-in, and whether DSH's own
-// PATH reaches the CLI (the plugin starts a plain `claude`).
-export async function checkClaudeCode(ctx, { env = process.env, home = homedir() } = {}) {
-  let plugin = false
-  try {
-    plugin = (ctx.get?.('llm')?.listProviders?.() ?? []).some(provider => provider?.id === CLAUDE_CODE_ROUTE)
-  } catch {}
-  const path = claudeCandidates(env, home).find(executable) ?? null
-  if (path === null) return { plugin, installed: false, loggedIn: false }
-  const status = parseClaudeStatus((await runStatus(path, env)) ?? '')
-  const reachable = String(env.PATH ?? '').split(delimiter).filter(Boolean).some(dir => executable(join(dir, 'claude')))
-  return { plugin, installed: true, path, reachable, loggedIn: status.loggedIn, email: status.email, plan: status.plan }
-}
-
 export function createProviderActions(ctx) {
   // One attempt per provider: { id, status, notice, prompt, error, answer, finishedAt }.
   const attempts = new Map()
@@ -185,10 +131,6 @@ export function createProviderActions(ctx) {
   }
 
   return {
-    async 'claude-code'() {
-      return checkClaudeCode(ctx)
-    },
-
     async providers() {
       const providers = piAiEntry(ctx)?.value?.providers ?? {}
       const out = {}

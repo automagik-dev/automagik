@@ -2,20 +2,21 @@ import { createElement as h, useCallback, useEffect, useMemo, useState } from 'r
 import { call } from './api.js'
 import { Stage, useFinish, useGate, useGlitch } from './stage.js'
 import { SUBSCRIPTION_TILES, SubscriptionSignIn, signedInCount } from './subscriptions.js'
-import { ClaudeLoginTerminal } from './terminal.js'
 
 // Step omni-connect-ai (order -200): every AI is a row with a switch, and several can be on.
 // What this computer already has comes first, on (src/host/ais.js finds it). A row that is not
-// set up opens its setup in place: a key, the provider's own sign-in in DSH, Claude Code's own
-// login in a terminal, a gateway. Off stops using an AI and keeps its key or sign-in.
+// set up opens its setup in place: a key, the provider's own sign-in in DSH (or, where the
+// provider takes both, a choice of the two), a gateway. Off stops using an AI and keeps its
+// key or sign-in.
 //
-// One way to reach each AI: Claude only through Claude Code, the others through DSH's own
-// sign-ins, and dsh-subscriptions for what nothing else covers.
+// One way to reach each AI: DSH's own sign-ins and keys (Claude: pi-ai's anthropic route, a
+// Claude Pro or Max sign-in or an Anthropic API key), and dsh-subscriptions for what nothing
+// else covers.
 
 export const VENDOR_TERMS = 'Personal use under the vendor\'s terms'
 // How many "Add another" rows show before "Show N more".
 export const FIRST_OTHERS = 4
-export const LOGOS = { claude: 'C', chatgpt: 'G', deepseek: 'D', kimi: 'K', copilot: 'P', grok: 'X', openai: 'O', anthropic: 'A', openrouter: 'R', zai: 'Z', moonshot: 'M', opencode: 'OC', cliproxy: '⇄', ollama: 'L' }
+export const LOGOS = { claude: 'C', chatgpt: 'G', deepseek: 'D', kimi: 'K', copilot: 'P', grok: 'X', openai: 'O', openrouter: 'R', zai: 'Z', moonshot: 'M', opencode: 'OC', cliproxy: '⇄', ollama: 'L' }
 
 // dsh-subscriptions' vendors as rows, when that plugin is here.
 export function subscriptionRows(subscriptions) {
@@ -40,13 +41,6 @@ export const onCount = rows => rows.filter(row => row.on).length
 export function flipAction(row) {
   if (row.on) return 'off'
   return row.ready ? 'on' : 'setup'
-}
-
-function Copyable({ text }) {
-  const [copied, setCopied] = useState(false)
-  return h('div', { className: 'oai-code oai-command' },
-    h('code', null, text),
-    h('button', { type: 'button', className: 'oai-ghost', onClick: () => navigator.clipboard?.writeText(text).then(() => setCopied(true)) }, copied ? 'Copied' : 'Copy'))
 }
 
 function KeyForm({ row, provider, onSaved }) {
@@ -166,27 +160,21 @@ function CliproxyForm({ onSaved }) {
     problem ? h('p', { className: 'oai-error', role: 'alert' }, problem) : null)
 }
 
-// Claude through the person's own Claude Code: Omni never signs anyone in to Claude. The CLI
-// signs itself in, here in a terminal, and the row turns on once it says so.
-function ClaudeSetup({ row, onSaved, onClose }) {
-  if (row.needs === 'plugin') return h('p', null, 'Claude runs through the Oh My Claude plugin, which this DSH does not have. Add it from Settings → Plugins.')
-  if (row.needs === 'install') {
-    return h('div', null,
-      // The line comes with the row (src/host/ais.js), so the page itself carries none.
-      row.install ? h('p', null, 'Install Claude Code, Anthropic\'s own app. In a terminal:') : h('p', null, 'Install Claude Code, Anthropic\'s own app.'),
-      row.install ? h(Copyable, { text: row.install }) : null,
-      h('p', { className: 'oai-muted' }, 'Or follow ', h('a', { className: 'oai-link', href: 'https://code.claude.com/docs/en/setup', target: '_blank', rel: 'noreferrer' }, 'Anthropic\'s setup guide'), '. Then flip this again.'))
-  }
-  if (row.needs === 'restart') return h('p', { className: 'oai-error' }, 'Claude Code is signed in, but this app cannot start it from where it is installed. Restart the app to pick it up.')
-  return h('div', null,
-    h(ClaudeLoginTerminal, { onClose, onEnded: (reply) => { if (reply.state === 'done') onSaved() } }),
-    h('p', { className: 'oai-muted' }, 'Press Enter in the terminal. Claude Code signs in with your own Claude account; Omni only talks to the Claude Code app.'))
+// A provider that takes both a sign-in and a key (Claude: a Pro or Max plan or an Anthropic API
+// key; Grok): the person picks one before anything starts.
+function SignInOrKey({ row, provider, onSaved, onClose }) {
+  const [way, setWay] = useState(null)
+  if (way === 'signin') return h(SignIn, { row, provider, onSaved, onCancel: onClose })
+  if (way === 'key') return h(KeyForm, { row, provider, onSaved })
+  return h('div', { className: 'oai-choices', role: 'group', 'aria-label': `How to connect ${row.name}` },
+    h('button', { type: 'button', onClick: () => setWay('signin') }, h('strong', null, `Sign in to ${row.name}`), h('span', null, 'With your plan, in the browser')),
+    h('button', { type: 'button', onClick: () => setWay('key') }, h('strong', null, 'Use an API key'), h('span', null, 'Billed per use')))
 }
 
 function Setup({ row, onSaved, onClose }) {
-  if (row.kind === 'claude') return h(ClaudeSetup, { row, onSaved, onClose })
   if (row.kind === 'key') return h(KeyForm, { row, provider: providerOf(row), onSaved })
   if (row.kind === 'signin') {
+    if (row.signIn && row.keyUrl) return h(SignInOrKey, { row, provider: providerOf(row), onSaved, onClose })
     if (row.signIn) return h(SignIn, { row, provider: providerOf(row), onSaved, onCancel: onClose })
     if (row.keyUrl) return h(KeyForm, { row, provider: providerOf(row), onSaved })
     return h('p', null, `This DSH offers no ${row.name} sign-in.`)
@@ -197,7 +185,7 @@ function Setup({ row, onSaved, onClose }) {
   return null
 }
 
-export const PROVIDER_OF = { chatgpt: 'openai-codex', kimi: 'kimi-coding', copilot: 'github-copilot', grok: 'xai', openai: 'openai', anthropic: 'anthropic', openrouter: 'openrouter', zai: 'zai', moonshot: 'moonshotai', opencode: 'opencode', deepseek: 'deepseek' }
+export const PROVIDER_OF = { claude: 'anthropic', chatgpt: 'openai-codex', kimi: 'kimi-coding', copilot: 'github-copilot', grok: 'xai', openai: 'openai', openrouter: 'openrouter', zai: 'zai', moonshot: 'moonshotai', opencode: 'opencode', deepseek: 'deepseek' }
 const providerOf = row => PROVIDER_OF[row.id] ?? row.id
 
 // "Also connected through …": the other ways this row's AI is connected, which Omni does not use.
@@ -206,7 +194,7 @@ function Duplicates({ row, onDedupe }) {
   const shown = row.duplicates.filter(duplicate => !duplicate.hidden)
   return h('div', { className: 'oai-dupes' },
     row.duplicates.map(duplicate => h('p', { key: `${duplicate.via}:${duplicate.provider}`, className: 'oai-muted' },
-      `Also connected through ${duplicate.via}; Omni uses ${row.name} ${row.kind === 'claude' ? 'through Claude Code' : 'here'}.`,
+      `Also connected through ${duplicate.via}; Omni uses ${row.name} here.`,
       duplicate.hidden ? ' Its models are hidden.' : null)),
     shown.length && row.on ? h('button', { type: 'button', className: 'oai-ghost', onClick: onDedupe }, `Use only this ${row.name}`) : null)
 }

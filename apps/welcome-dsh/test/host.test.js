@@ -8,11 +8,9 @@ const KEY = 'sk-cliproxy-secret-0123456789'
 const MODELS = { object: 'list', data: [{ id: 'gpt-5' }, { id: 'claude-sonnet-4-5' }, { id: 'gpt-5' }, { id: '' }, { nope: 1 }] }
 const withPiAi = (providers = {}) => ({ 'omni-ai': {}, 'llm-pi-ai': { providers } })
 
-// No Claude Code here, unless a test says so.
-const noClaude = async () => ({ plugin: false, installed: false, loggedIn: false })
-function host({ entries = withPiAi(), gateway = fakeGateway({ body: MODELS }), checkClaude = noClaude, ...rest } = {}) {
+function host({ entries = withPiAi(), gateway = fakeGateway({ body: MODELS }), ...rest } = {}) {
   const fake = fakeContext({ entries, ...rest })
-  const { actions, handle } = install(fake.ctx, { fetch: gateway.fetch, checkClaude })
+  const { actions, handle } = install(fake.ctx, { fetch: gateway.fetch })
   return { ...fake, actions, handle, gateway }
 }
 const everything = fake => JSON.stringify([fake.updates, [...fake.routes].map(route => route.path), fake.logs, fake.valueOf('llm-pi-ai'), fake.valueOf('omni-ai')])
@@ -158,13 +156,13 @@ test('done writes the step flag in the plugin entry', async () => {
   const fake = host()
   assert.deepEqual(await fake.handle('done', { stepId: 'omni-companion' }), { ok: true, value: { companionDone: true } })
   assert.deepEqual((await fake.handle('done', { stepId: 'omni-connect' })).value, { connectOmniSkipped: true })
-  // The first step finished on a fresh install also hides the starter hint, once (starter.test.js).
-  assert.deepEqual(fake.updates.map(update => [update.ns, update.patch]), [['omni-ai', { companionDone: true }], ['omni-ai', { starterSeeded: true }], ['omni-ai', { connectOmniSkipped: true }]])
-  assert.deepEqual(fake.valueOf('omni-ai'), { companionDone: true, starterSeeded: true, connectOmniSkipped: true })
+  // Only the step's own flag is written.
+  assert.deepEqual(fake.updates.map(update => [update.ns, update.patch]), [['omni-ai', { companionDone: true }], ['omni-ai', { connectOmniSkipped: true }]])
+  assert.deepEqual(fake.valueOf('omni-ai'), { companionDone: true, connectOmniSkipped: true })
   for (const stepId of ['toString', 'deepseek-official', undefined]) {
     assert.equal((await fake.handle('done', { stepId })).error.code, 'omni-ai/invalid')
   }
-  assert.equal(fake.updates.length, 3)
+  assert.equal(fake.updates.length, 2)
 })
 
 test('state reports the flags and whether an AI is already connected', async () => {
@@ -182,9 +180,8 @@ test('state reports the flags and whether an AI is already connected', async () 
   assert.equal(value.aiConnected, true)
   // A route with nothing behind it (a sign-in that never finished) is not an AI.
   assert.equal((await host({ entries: withPiAi({ 'kimi-coding': {} }) }).handle('state')).value.aiConnected, false)
-  // Claude Code signed in is.
-  const claude = async () => ({ plugin: true, installed: true, loggedIn: true, reachable: true })
-  assert.equal((await host({ checkClaude: claude }).handle('state')).value.aiConnected, true)
+  // Claude signed in, on its keyless anthropic route, is.
+  assert.equal((await host({ entries: withPiAi({ anthropic: {} }), records: ['llm-pi-ai/anthropic'] }).handle('state')).value.aiConnected, true)
 
   assert.equal((await host({ credentials: { DEEPSEEK_API_KEY: 'x' } }).handle('state')).value.deepseek, true)
   assert.equal((await host({ records: ['deepseek-account-platform/default'] }).handle('state')).value.deepseek, true)

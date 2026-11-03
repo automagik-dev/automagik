@@ -25,13 +25,11 @@ function fakeAuthorization(flows = ['llm-pi-ai/kimi-coding', 'llm-pi-ai/openai-c
   }
 }
 
-// Nothing answers on this computer's network, and no Claude Code, unless a test says so
-// (checkClaude: null runs the real check).
+// Nothing answers on this computer's network unless a test says so.
 const offline = async () => { throw new Error('offline') }
-const noClaude = async () => ({ plugin: false, installed: false, loggedIn: false })
-function host({ entries = withPiAi(), authorization = fakeAuthorization(), services = {}, checkClaude = noClaude, fetch = offline, ...rest } = {}) {
+function host({ entries = withPiAi(), authorization = fakeAuthorization(), services = {}, fetch = offline, ...rest } = {}) {
   const fake = fakeContext({ entries, services: { ...(authorization ? { authorization } : {}), ...services }, ...rest })
-  const { handle } = install(fake.ctx, { fetch, ...(checkClaude ? { checkClaude } : {}) })
+  const { handle } = install(fake.ctx, { fetch })
   return { ...fake, handle, authorization }
 }
 
@@ -161,39 +159,28 @@ test('providers reports, per tile, a stored key, a sign-in and whether this DSH 
   assert.equal(value['github-copilot'].signIn, false)
 })
 
-test('Claude has no sign-in of ours: no anthropic flow is ever begun', async () => {
+test('Claude signs in through pi-ai\'s anthropic flow (Pro/Max), and the finished sign-in adds a route that names no key', async () => {
   const fake = host({ authorization: fakeAuthorization(['llm-pi-ai/anthropic']) })
-  assert.equal((await fake.handle('signin-start', { provider: 'anthropic' })).error.code, 'omni-ai/invalid')
-  assert.equal(fake.authorization.begun.length, 0)
+  assert.equal((await fake.handle('signin-start', { provider: 'anthropic' })).value.status, 'running')
+  const [attempt] = fake.authorization.begun
+  assert.deepEqual([attempt.key, attempt.method], ['llm-pi-ai/anthropic', 'oauth'])
+  attempt.settle({ status: 'authorized' })
+  await tick()
+  await tick()
+  assert.deepEqual(fake.valueOf('llm-pi-ai').providers.anthropic, {})
+  assert.equal((await fake.handle('providers')).value.anthropic.signIn, true)
+  // A route already on an Anthropic API key keeps it: the key runs, the sign-in sits beneath it.
+  const keyed = host({ entries: withPiAi({ anthropic: { apiKeyEnv: 'ANTHROPIC_API_KEY' } }), authorization: fakeAuthorization(['llm-pi-ai/anthropic']) })
+  await keyed.handle('signin-start', { provider: 'anthropic' })
+  keyed.authorization.begun[0].settle({ status: 'authorized' })
+  await tick()
+  await tick()
+  assert.deepEqual(keyed.valueOf('llm-pi-ai').providers.anthropic, { apiKeyEnv: 'ANTHROPIC_API_KEY' })
 })
 
-test('claude-code finds the CLI, reads `claude auth status`, and sees the dsh-oh-my-claude route', async () => {
-  const { mkdtempSync, writeFileSync, chmodSync } = await import('node:fs')
-  const { tmpdir } = await import('node:os')
-  const { join } = await import('node:path')
-  const dir = mkdtempSync(join(tmpdir(), 'claude-cli-'))
-  const bin = join(dir, 'claude')
-  writeFileSync(bin, '#!/bin/sh\n[ "$1 $2" = "auth status" ] && echo \'{"loggedIn":true,"authMethod":"claude.ai","email":"owner@example.com","subscriptionType":"max"}\'\n')
-  chmodSync(bin, 0o755)
-  const path = process.env.PATH
-  process.env.PATH = `${dir}:${path}`
-  const llm = { listProviders: () => [{ id: 'deepseek-official' }, { id: 'claude-code' }] }
-  try {
-    const fake = host({ services: { llm }, checkClaude: null })
-    const value = (await fake.handle('claude-code')).value
-    assert.deepEqual(value, { plugin: true, installed: true, path: bin, reachable: true, loggedIn: true, email: 'owner@example.com', plan: 'max' })
-    writeFileSync(bin, '#!/bin/sh\necho \'{"loggedIn":false}\'\n')
-    assert.equal((await fake.handle('claude-code')).value.loggedIn, false)
-    // Without the plugin's route, Claude cannot run here whatever the CLI says.
-    assert.equal((await host({ checkClaude: null }).handle('claude-code')).value.plugin, false)
-  } finally {
-    process.env.PATH = path
-  }
-})
-
-test('an older CLI that answers auth status in prose is still read', async () => {
-  const { parseClaudeStatus, claudeCandidates } = await import('../src/host/providers.js')
-  assert.equal(parseClaudeStatus('Logged in as owner@example.com').loggedIn, true)
-  assert.equal(parseClaudeStatus('Not logged in').loggedIn, false)
-  assert.ok(claudeCandidates({ PATH: '' }, '/home/u').includes('/home/u/.local/bin/claude'))
+test('an Anthropic API key is saved the Models page\'s way, on the same anthropic route', async () => {
+  const fake = host()
+  assert.equal((await fake.handle('provider-key', { provider: 'anthropic', apiKey: 'sk-ant-0123' })).ok, true)
+  assert.equal(fake.secrets.get('ANTHROPIC_API_KEY'), 'sk-ant-0123')
+  assert.deepEqual(fake.valueOf('llm-pi-ai').providers.anthropic, { apiKeyEnv: 'ANTHROPIC_API_KEY' })
 })

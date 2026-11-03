@@ -9977,8 +9977,6 @@ var xterm_default = `/**
 
 // src/client/terminal.js
 var import_react4 = require("react");
-var READ_MS = 150;
-var ROWS = 10;
 var FONT = "13px ui-monospace, SFMono-Regular, Menlo, monospace";
 var THEME = {
   background: "#05080e",
@@ -10003,7 +10001,6 @@ var THEME = {
   brightCyan: "#8ff4ff",
   brightWhite: "#ffffff"
 };
-var ENDED = /* @__PURE__ */ new Set(["done", "failed", "cancelled"]);
 function columnsFor(width, charWidth2) {
   if (!(width > 0) || !(charWidth2 > 0)) return 80;
   return Math.max(30, Math.min(400, Math.floor((width - 24) / charWidth2)));
@@ -10016,110 +10013,6 @@ function charWidth() {
   context.font = FONT;
   measured = context.measureText("W").width || 7.8;
   return measured;
-}
-function footFor({ state, entered, exitCode, error }) {
-  if (state === "preparing") return "Opening a terminal…";
-  if (state === "ready") return entered ? "Signing in… Finish in the browser page Claude Code opens." : "The command is ready. Press Enter to run it, or edit it first.";
-  if (state === "checking") return "Finished. Checking that Claude Code is signed in…";
-  if (state === "done") return "Signed in. Closing the terminal…";
-  if (state === "cancelled") return "Nothing ran. Open it again when you are ready.";
-  if (error) return error;
-  return `It stopped with exit code ${exitCode ?? "?"}. Read what it printed above, then try again.`;
-}
-function ClaudeLoginTerminal({ onEnded, onClose }) {
-  const box = (0, import_react4.useRef)(null);
-  const [status, setStatus] = (0, import_react4.useState)({ state: "preparing", entered: false });
-  const ended = (0, import_react4.useRef)(onEnded);
-  ended.current = onEnded;
-  (0, import_react4.useEffect)(() => {
-    let alive = true;
-    let timer = 0;
-    let terminal = null;
-    let offset = 0;
-    let entered = false;
-    let writing = Promise.resolve();
-    let term = null;
-    let typed = null;
-    let observer = null;
-    const fit = () => {
-      const cols = columnsFor(box.current?.clientWidth, charWidth());
-      if (term === null || cols === term.cols) return;
-      term.resize(cols, ROWS);
-      if (terminal !== null) void call("ai-terminal-resize", { terminal, cols, rows: ROWS }).catch(() => {
-      });
-    };
-    const read = async () => {
-      try {
-        const reply = await call("ai-terminal-read", { terminal, from: offset });
-        if (!alive) return;
-        if (reply.data) term.write(reply.data);
-        offset = reply.next ?? offset;
-        setStatus({ state: reply.state, entered, exitCode: reply.exitCode, error: reply.error });
-        if (ENDED.has(reply.state)) {
-          ended.current?.(reply);
-          return;
-        }
-      } catch (error) {
-        if (!alive) return;
-        setStatus({ state: "failed", error: error.message, entered });
-        return;
-      }
-      timer = setTimeout(read, READ_MS);
-    };
-    const start = async () => {
-      const { Terminal } = await Promise.resolve().then(() => (init_xterm(), xterm_exports));
-      if (!alive) return;
-      term = new Terminal({ rows: ROWS, cols: columnsFor(box.current?.clientWidth, charWidth()), fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 13, lineHeight: 1.2, cursorBlink: true, scrollback: 2e3, theme: THEME });
-      term.open(box.current);
-      typed = term.onData((data) => {
-        if (terminal === null) return;
-        if (/[\r\n]/.test(data) && !entered) {
-          entered = true;
-          setStatus((previous) => ({ ...previous, entered: true }));
-        }
-        writing = writing.then(() => call("ai-terminal-write", { terminal, data })).catch(() => {
-        });
-      });
-      observer = typeof ResizeObserver === "function" ? new ResizeObserver(fit) : null;
-      observer?.observe(box.current);
-      const reply = await call("ai-terminal-open", { kind: "claude-login", cols: term.cols, rows: ROWS });
-      if (!alive) {
-        void call("ai-terminal-close", { terminal: reply.terminal }).catch(() => {
-        });
-        return;
-      }
-      terminal = reply.terminal;
-      setStatus((previous) => ({ ...previous, state: reply.state }));
-      term.focus();
-      void read();
-    };
-    start().catch((error) => {
-      if (alive) setStatus({ state: "failed", error: error.message, entered: false });
-    });
-    return () => {
-      alive = false;
-      clearTimeout(timer);
-      observer?.disconnect();
-      typed?.dispose();
-      term?.dispose();
-      if (terminal !== null) void call("ai-terminal-close", { terminal }).catch(() => {
-      });
-    };
-  }, []);
-  const stopped = status.state === "failed" || status.state === "cancelled";
-  return (0, import_react4.createElement)(
-    "div",
-    { className: `oai-term${stopped ? " oai-term-stopped" : ""}` },
-    (0, import_react4.createElement)(
-      "div",
-      { className: "oai-term-bar" },
-      (0, import_react4.createElement)("span", { className: "oai-term-dots", "aria-hidden": true }, (0, import_react4.createElement)("i"), (0, import_react4.createElement)("i"), (0, import_react4.createElement)("i")),
-      (0, import_react4.createElement)("span", { className: "oai-term-title" }, "Sign in to Claude Code"),
-      onClose ? (0, import_react4.createElement)("button", { type: "button", className: "oai-term-close", onClick: onClose, "aria-label": "Close the terminal" }, "×") : (0, import_react4.createElement)("span")
-    ),
-    (0, import_react4.createElement)("div", { className: "oai-term-screen", ref: box, role: "application", "aria-label": "Claude Code sign-in terminal" }),
-    (0, import_react4.createElement)("div", { className: "oai-term-foot", role: "status" }, footFor(status))
-  );
 }
 var LOG_ROWS = 7;
 function InstallLog({ text, label }) {
@@ -10165,14 +10058,8 @@ function InstallLog({ text, label }) {
 }
 var TERMINAL_CSS = xterm_default + `
 .oai-term{margin-top:10px;border:1px solid var(--oai-line);border-radius:12px;overflow:hidden;background:#05080e}
-.oai-term.oai-term-stopped{border-color:color-mix(in srgb,var(--oai-bad) 55%,transparent)}
-.oai-term-bar{display:grid;grid-template-columns:44px 1fr 44px;align-items:center;padding:7px 12px;border-bottom:1px solid var(--oai-line);color:var(--oai-ink2);font-size:12px}
-.oai-term-dots{display:inline-flex;gap:6px}.oai-term-dots i{width:9px;height:9px;border-radius:50%;background:#253247}
-.oai-term-title{text-align:center}
-.oai-card button.oai-term-close{justify-self:end;width:auto;margin:0;padding:0 2px;background:none;border:0;color:var(--oai-ink2);font-size:16px;line-height:1}
 .oai-term-screen{padding:10px 12px;min-height:150px}
 .oai-term-screen .xterm-viewport{background:#05080e!important}
-.oai-term-foot{padding:8px 14px;border-top:1px solid var(--oai-line);color:var(--oai-ink2);font-size:12.5px}
 .oai-mini-term{margin:8px 0 0;width:100%;text-align:left}
 .oai-mini-term .oai-term-screen{min-height:0;padding:8px 10px}
 `;
@@ -11663,7 +11550,7 @@ function SubscriptionSignIn({ tile, onBack, onSaved, glitch }) {
 var import_react7 = require("react");
 var VENDOR_TERMS = "Personal use under the vendor's terms";
 var FIRST_OTHERS = 4;
-var LOGOS = { claude: "C", chatgpt: "G", deepseek: "D", kimi: "K", copilot: "P", grok: "X", openai: "O", anthropic: "A", openrouter: "R", zai: "Z", moonshot: "M", opencode: "OC", cliproxy: "⇄", ollama: "L" };
+var LOGOS = { claude: "C", chatgpt: "G", deepseek: "D", kimi: "K", copilot: "P", grok: "X", openai: "O", openrouter: "R", zai: "Z", moonshot: "M", opencode: "OC", cliproxy: "⇄", ollama: "L" };
 function subscriptionRows(subscriptions) {
   if (!subscriptions) return [];
   return SUBSCRIPTION_TILES.map((tile) => {
@@ -11681,15 +11568,6 @@ var onCount = (rows) => rows.filter((row) => row.on).length;
 function flipAction(row) {
   if (row.on) return "off";
   return row.ready ? "on" : "setup";
-}
-function Copyable({ text }) {
-  const [copied, setCopied] = (0, import_react7.useState)(false);
-  return (0, import_react7.createElement)(
-    "div",
-    { className: "oai-code oai-command" },
-    (0, import_react7.createElement)("code", null, text),
-    (0, import_react7.createElement)("button", { type: "button", className: "oai-ghost", onClick: () => navigator.clipboard?.writeText(text).then(() => setCopied(true)) }, copied ? "Copied" : "Copy")
-  );
 }
 function KeyForm({ row, provider, onSaved }) {
   const [apiKey, setApiKey] = (0, import_react7.useState)("");
@@ -11830,32 +11708,21 @@ function CliproxyForm({ onSaved }) {
     problem ? (0, import_react7.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null
   );
 }
-function ClaudeSetup({ row, onSaved, onClose }) {
-  if (row.needs === "plugin") return (0, import_react7.createElement)("p", null, "Claude runs through the Oh My Claude plugin, which this DSH does not have. Add it from Settings → Plugins.");
-  if (row.needs === "install") {
-    return (0, import_react7.createElement)(
-      "div",
-      null,
-      // The line comes with the row (src/host/ais.js), so the page itself carries none.
-      row.install ? (0, import_react7.createElement)("p", null, "Install Claude Code, Anthropic's own app. In a terminal:") : (0, import_react7.createElement)("p", null, "Install Claude Code, Anthropic's own app."),
-      row.install ? (0, import_react7.createElement)(Copyable, { text: row.install }) : null,
-      (0, import_react7.createElement)("p", { className: "oai-muted" }, "Or follow ", (0, import_react7.createElement)("a", { className: "oai-link", href: "https://code.claude.com/docs/en/setup", target: "_blank", rel: "noreferrer" }, "Anthropic's setup guide"), ". Then flip this again.")
-    );
-  }
-  if (row.needs === "restart") return (0, import_react7.createElement)("p", { className: "oai-error" }, "Claude Code is signed in, but this app cannot start it from where it is installed. Restart the app to pick it up.");
+function SignInOrKey({ row, provider, onSaved, onClose }) {
+  const [way, setWay] = (0, import_react7.useState)(null);
+  if (way === "signin") return (0, import_react7.createElement)(SignIn, { row, provider, onSaved, onCancel: onClose });
+  if (way === "key") return (0, import_react7.createElement)(KeyForm, { row, provider, onSaved });
   return (0, import_react7.createElement)(
     "div",
-    null,
-    (0, import_react7.createElement)(ClaudeLoginTerminal, { onClose, onEnded: (reply) => {
-      if (reply.state === "done") onSaved();
-    } }),
-    (0, import_react7.createElement)("p", { className: "oai-muted" }, "Press Enter in the terminal. Claude Code signs in with your own Claude account; Omni only talks to the Claude Code app.")
+    { className: "oai-choices", role: "group", "aria-label": `How to connect ${row.name}` },
+    (0, import_react7.createElement)("button", { type: "button", onClick: () => setWay("signin") }, (0, import_react7.createElement)("strong", null, `Sign in to ${row.name}`), (0, import_react7.createElement)("span", null, "With your plan, in the browser")),
+    (0, import_react7.createElement)("button", { type: "button", onClick: () => setWay("key") }, (0, import_react7.createElement)("strong", null, "Use an API key"), (0, import_react7.createElement)("span", null, "Billed per use"))
   );
 }
 function Setup({ row, onSaved, onClose }) {
-  if (row.kind === "claude") return (0, import_react7.createElement)(ClaudeSetup, { row, onSaved, onClose });
   if (row.kind === "key") return (0, import_react7.createElement)(KeyForm, { row, provider: providerOf(row), onSaved });
   if (row.kind === "signin") {
+    if (row.signIn && row.keyUrl) return (0, import_react7.createElement)(SignInOrKey, { row, provider: providerOf(row), onSaved, onClose });
     if (row.signIn) return (0, import_react7.createElement)(SignIn, { row, provider: providerOf(row), onSaved, onCancel: onClose });
     if (row.keyUrl) return (0, import_react7.createElement)(KeyForm, { row, provider: providerOf(row), onSaved });
     return (0, import_react7.createElement)("p", null, `This DSH offers no ${row.name} sign-in.`);
@@ -11866,7 +11733,7 @@ function Setup({ row, onSaved, onClose }) {
   } });
   return null;
 }
-var PROVIDER_OF = { chatgpt: "openai-codex", kimi: "kimi-coding", copilot: "github-copilot", grok: "xai", openai: "openai", anthropic: "anthropic", openrouter: "openrouter", zai: "zai", moonshot: "moonshotai", opencode: "opencode", deepseek: "deepseek" };
+var PROVIDER_OF = { claude: "anthropic", chatgpt: "openai-codex", kimi: "kimi-coding", copilot: "github-copilot", grok: "xai", openai: "openai", openrouter: "openrouter", zai: "zai", moonshot: "moonshotai", opencode: "opencode", deepseek: "deepseek" };
 var providerOf = (row) => PROVIDER_OF[row.id] ?? row.id;
 function Duplicates({ row, onDedupe }) {
   if (!row.duplicates?.length) return null;
@@ -11877,7 +11744,7 @@ function Duplicates({ row, onDedupe }) {
     row.duplicates.map((duplicate) => (0, import_react7.createElement)(
       "p",
       { key: `${duplicate.via}:${duplicate.provider}`, className: "oai-muted" },
-      `Also connected through ${duplicate.via}; Omni uses ${row.name} ${row.kind === "claude" ? "through Claude Code" : "here"}.`,
+      `Also connected through ${duplicate.via}; Omni uses ${row.name} here.`,
       duplicate.hidden ? " Its models are hidden." : null
     )),
     shown.length && row.on ? (0, import_react7.createElement)("button", { type: "button", className: "oai-ghost", onClick: onDedupe }, `Use only this ${row.name}`) : null

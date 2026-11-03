@@ -7,7 +7,6 @@ import assert from 'node:assert/strict'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CLAUDE_INSTALL } from '../src/host/ais.js'
 import { install } from '../src/host/endpoint.js'
 import { OMNI_PLUGINS, UNFOLD_PLUGIN, UNFOLD_PLUGINS, installTargetOf } from '../src/host/bot-types.js'
 import { OMNI_BOT, UNFOLD_BOT } from '../src/host/companion.js'
@@ -17,7 +16,6 @@ import { fakeContext } from './fake-ctx.js'
 import { KEYS, filesOf, release } from './lane-fixture.js'
 
 const PKG = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-const noClaude = async () => ({ plugin: false, installed: false, loggedIn: false })
 const OWN_LINK = 'link:/home/someone/automagik/apps/welcome-dsh'
 const UNFOLD = { AUTOMAGIK_PRELOAD: 'unfold', AUTOMAGIK_HOST: 'unfold' }
 const folder = (t) => {
@@ -54,7 +52,7 @@ function fakeManager({ bundles = [{ name: PKG.name, availability: 'profile', ena
 
 function host({ manager, team, env = {}, entries = { 'omni-ai': {} }, checkGit, genieSkills = () => false, genieCli, release } = {}) {
   const fake = fakeContext({ entries, services: { ...(manager ? { pluginManager: manager } : {}), ...(team ? { omniTeam: team } : {}) } })
-  const { handle } = install(fake.ctx, { env, checkClaude: noClaude, ...(checkGit ? { checkGit } : {}), genieSkills, ...(genieCli ? { genieCli } : {}), ...(release ? { release } : {}) })
+  const { handle } = install(fake.ctx, { env, ...(checkGit ? { checkGit } : {}), genieSkills, ...(genieCli ? { genieCli } : {}), ...(release ? { release } : {}) })
   return { ...fake, handle }
 }
 const value = async (fake, endpoint, payload) => {
@@ -261,29 +259,11 @@ test('under AUTOMAGIK_HOST=unfold, a genie that never answers --version is not i
   assert.ok(performance.now() - t0 < 4000, `the card answered after ${Math.round(performance.now() - t0)} ms`)
 })
 
-test('without dsh-oh-my-claude, the first step finished still finishes', async (t) => {
-  // Its state folder cannot be made: a file stands where it would go.
-  const dir = folder(t)
-  writeFileSync(join(dir, 'omc'), 'not a folder')
-  const fake = fakeContext({ entries: { 'omni-ai': {} } })
-  const { handle } = install(fake.ctx, { env: UNFOLD, checkClaude: noClaude, hintsFile: join(dir, 'omc', 'hints.json') })
-  const reply = await handle('done', { stepId: 'omni-team' })
-  assert.equal(reply.ok, true)
-  assert.deepEqual(reply.value, { teamDone: true })
-})
-
-test('Claude Code\'s install line comes with its row, never in the page; Unfold\'s instance sends none', async () => {
-  const claude = async (env) => {
-    const fake = fakeContext({ entries: { 'omni-ai': {}, 'llm-pi-ai': { providers: {} } } })
-    const { handle } = install(fake.ctx, { env, checkClaude: async () => ({ plugin: true, installed: false, loggedIn: false }) })
-    return (await handle('ais')).value.rows.find(row => row.id === 'claude')
-  }
-  const elsewhere = await claude({})
-  assert.equal(elsewhere.needs, 'install')
-  assert.equal(elsewhere.install, CLAUDE_INSTALL)
-  const instance = await claude(UNFOLD)
-  assert.equal(instance.needs, 'install')
-  assert.equal('install' in instance, false)
+test('in Unfold\'s instance, Claude signs in through DSH\'s own anthropic flow, with nothing to install', async () => {
+  const fake = fakeContext({ entries: { 'omni-ai': {}, 'llm-pi-ai': { providers: {} } }, services: { authorization: { describe: key => (key === 'llm-pi-ai/anthropic' ? { key } : undefined) } } })
+  const { handle } = install(fake.ctx, { env: UNFOLD })
+  const claude = (await handle('ais')).value.rows.find(row => row.id === 'claude')
+  assert.deepEqual([claude.kind, claude.signIn, 'install' in claude, 'needs' in claude], ['signin', true, false, false])
 })
 
 // Unfold's product overlay sets DSH's plugin-market.indexes to [] (installs reach the instance only
