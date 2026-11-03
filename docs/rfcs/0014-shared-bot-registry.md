@@ -60,6 +60,20 @@ Decided by Felipe on this RFC (2026-11-03, relayed by t2x5):
 - **Q3: ids.** Both id shapes are accepted forever. One `newBotId()` mints `b-`: Herdr uses it
   now, DSH after the check of places that take a Bot id for a Session id.
 - **Q5: the pose map** as written in Q5.
+- **Q4: `main` as proposed.** In the home file, a team Main Bot; in a repo file, the project's
+  one main Bot.
+- **Q6: one shared lock.** The CLI's helper; the mod writes through the CLI, DSH through the
+  registry module.
+- **Q8: the migration.** Copy, never move; offered once; everything but `workspace/`.
+- **Q9: the registry home.** Registry and pets at `~/.automagik/bots` now.
+- **Q12, changed: "Remote Bots in the list now".** Automagik lists, and chats with, Bots on the
+  person's other machines too, not only this computer (see "Other machines").
+- **Q13: as proposed.** `automagik-pets frames <id>`; builtin pets copied into the shared folder.
+- **Q14: one model field per app** until ACP.
+- **Q15: as proposed.** `registry.js` plus a byte-equal copy, checked by both gates.
+- **Q16: as proposed.** Panes matched by project and id; edits saved in the worktree they came
+  from.
+- **Q18: Automagik-only.** Ids outside the pattern stay in Automagik.
 - **Q7, reframed.** Felipe: "the real team is on herdr, the automagik one not yet really
   exist... i will want to expose some orchestrators, so that i can talk to them from within the
   friendlier interface, and switch to code when i want". Herdr's Bots are the real team. The
@@ -77,9 +91,8 @@ Decided by Felipe on this RFC (2026-11-03, relayed by t2x5):
 - **Q17: ask first per project.** Bots taken in from a project then get the team's default
   level.
 
-Agreed between the two orchestrators (t259, t22n), not yet decided by Felipe: `main` and
-`identity` (Q4), and the order of the pack's reads (delivery 2). Q4 is an open question,
-recommended as agreed.
+Agreed between the two orchestrators (t259, t22n): the order of the pack's reads (delivery 2).
+Felipe has decided every question except Q19.
 
 Everything else in Design is this RFC's proposal.
 
@@ -255,11 +268,29 @@ codex-pets.net pets, are Q13.
 
 ### Other machines
 
-A repo file on a linked machine lives on that machine. Herdr reads it through herdr-core as
-today; writing it there is #206, with the same compare-before-write (Q12). The home file is on
-this computer; a Bot there may name a `machine` for its folder. DSH reads only this computer's
-files. RFC 0013's main reads `folder` and `machine` to pick the space; an id DSH cannot find
-opens the app with nothing selected, as 0013 already says.
+Automagik lists, and chats with, Bots on the person's other machines too (decided, Q12): every
+machine `hc machine ls` shows connected (on Felipe's setup: khal-labs, g9, g10, ryzen, hx470).
+
+- **Where they come from.** A repo file on a linked machine lives on that machine. Herdr already
+  reads it through herdr-core (`bots.js:41`) and remembers the project with its machine
+  (`rememberProject(key, machine)`, `bots.js:114`); those projects go in the home file's
+  `projects[]` with their `machine`. DSH reads the same files with `hc file read --on <machine>`,
+  and picks in `shown[]` carry the `machine`.
+- **Chat.** As on this computer (Q19): the pane is `<machine>/tN`, input goes through
+  `hc send`, and the agent's session file is read with `hc file read --on <machine>`.
+- **What waits for #206** (remote Bots: configure, start, inspect). Starting a remote Bot that
+  has no live pane, editing its definition, and inspecting its ledger rows. Until #206 lands, a
+  remote Bot without a pane is listed with "start it from that machine", and its definition is
+  read-only in both apps.
+- **Offline.** A machine that does not answer within Herdr's call timeout is offline. Its Bots
+  stay in the list, greyed, with "`<machine>` is offline, last seen `<time>`", from the last
+  good read (as Herdr does today, `bots.js:150`). Their chat shows the conversation as last read;
+  the composer keeps the draft and says it cannot send until the machine is back. Nothing is
+  queued to send later.
+
+The home file is on this computer; a Bot there may name a `machine` for its folder. RFC 0013's
+main reads `folder` and `machine` to pick the space; an id DSH cannot find opens the app with
+nothing selected, as 0013 already says.
 
 ## Contracts introduced
 
@@ -343,13 +374,15 @@ Undo: delete the file, or revert the delivery; `state.json` keeps every DSH Bot.
    downgrades); v2 files stay and v1 projects never changed.
 3. **DSH shares its Bots** (plugin). At its first load bots-dsh writes every Bot the home file
    lacks whose id matches the pattern (Q18), then writes definitions on each change. It reads the
-   home file and the listed local repo files (v2 or legacy), shows the Bots picked in `shown[]`
+   home file and the listed repo files (v2 or legacy) on this computer and, through
+   `hc file read --on`, on the linked machines (Q12), shows the Bots picked in `shown[]`
    with DSH's side of the toggle and the per-project ask, and reads pets from the registry home.
    A picked Bot shows with Code to reach it; its chat is delivery 9. First it checks that the
    views that list Bots (sidebar, mentions, groups, usage) take a Bot that is not in
    `state.json`. DSH keeps writing every definition field of its own Bots to `state.json` as
    well; exposed Bots are never written there. *Check:* a Bot picked in Herdr shows in DSH; a
-   project nobody said yes to adds no Bots; a DSH rename shows in Herdr; two writers racing lose
+   Bot on a linked machine shows with its machine, and greys out with "offline" when that
+   machine stops answering; a project nobody said yes to adds no Bots; a DSH rename shows in Herdr; two writers racing lose
    nothing. *Rollback:* revert. It holds because `state.json` still has every DSH Bot with
    current definitions; edits made in Herdr after the last DSH save are not in it, and the files
    stay. Exposed Bots were never in `state.json`, so the older plugin does not show them.
@@ -366,9 +399,11 @@ Undo: delete the file, or revert the delivery; `state.json` keeps every DSH Bot.
 6. **The home move** (desktop). `AUTOMAGIK_BOTS_HOME`, the first-start offer, `MOVED.json`, and
    Q7's rule. *Check:* a fresh install uses `~/.automagik/bots`; "Bring my Bots" opens the old
    team with its chats; No leaves the old folder untouched. *Rollback:* as in "The home move".
-7. **Other machines** (herdr, after #206). Writes to a linked machine's repo file with the same
-   rule. *Check:* an edit from this computer lands there; a stale one is refused.
-   *Rollback:* a reverting pack; that machine's files go read-only again.
+7. **Other machines: edit and start** (herdr, after #206). Writes to a linked machine's repo
+   file with the same rule, and starts a remote Bot that has no pane. *Check:* an edit from this
+   computer lands there; a stale one is refused; Automagik starts a remote Bot and chats with it.
+   *Rollback:* a reverting pack; that machine's files go read-only again, and remote Bots without
+   a pane wait to be started there.
 8. **Show in Automagik, in Herdr** (herdr). The toggle in the Bot menu and the per-project ask,
    writing `shown[]` through the CLI under the lock. Worker panes get no toggle. *Check:* the
    gate; a pick in Herdr shows the Bot in DSH and unpicking hides it. *Rollback:* a reverting
@@ -378,7 +413,8 @@ Undo: delete the file, or revert the delivery; `state.json` keeps every DSH Bot.
    two-writers rule. *Check:* a message sent from Automagik is answered in the terminal and both
    windows show the same turns; a message typed in the terminal shows in Automagik; a send while
    the terminal's input line holds text is held; a blocked pane shows "needs you" and offers
-   Code. *Rollback:* revert; picked Bots show without a chat, and Code still reaches them.
+   Code; the same holds for a live pane on a linked machine. *Rollback:* revert; picked Bots show
+   without a chat, and Code still reaches them.
 
 RFC 0013's delivery 8 can start after deliveries 1-3.
 
@@ -391,61 +427,99 @@ RFC 0013's delivery 8 can start after deliveries 1-3.
 3. **Id shapes and the mint.** *Decided:* accept both shapes forever; one `newBotId()` that
    mints `b-`; Herdr uses it now, DSH after the check of every place that takes a Bot id for a
    Session id (such as `chatOf` at `store.js:413`).
-4. **`main` and `identity`** (agreed). *Recommended:* as agreed; in the home file `main` means a
-   team Main Bot, in a repo file the project's one main Bot.
+4. **`main` and `identity`.** *Decided, as proposed:* in the home file `main` means a team Main
+   Bot, in a repo file the project's one main Bot.
 5. **The pose map.** *Decided:* working→running, idle→idle, needs-you→waving once
    then waiting, done→review, failed→failed, asleep→sleep strip, jumping as a one-shot event.
-6. **How the Herdr mod takes the lock.** *Recommended:* the mod's writes go through the CLI,
-   which takes the CLI's existing lock (`automagik-herdr.mjs:204-238`); DSH takes the same lock
-   through the registry module. The other way, the mod making the lock with
-   `writeTextFile(lock, token, null)` as an exclusive create, rests on behaviour Herdr does not
-   document. If neither ships, the race is accepted and the section is renamed to say so.
+6. **How the Herdr mod takes the lock.** *Decided:* one shared lock, the CLI's helper
+   (`automagik-herdr.mjs:204-238`); the mod writes through the CLI, DSH through the registry
+   module.
 7. **`~/.automagik/bots` is already another dsh's team home.** *Decided, reframed:* the main path
    is Herdr Bots exposed in Automagik (see Decided). For other people the clash handling stays:
    a Bot team installed in their own dsh lives there (`folders.js:23`), two hosts on one home
    leave the second read-only (`home-lock.js:1-3`), so the app keeps its team in its old home,
    says why once, and still shares Bots and pets through the registry home (Q9).
-8. **The migration offer.** *Recommended:* copy, never move, everything but `workspace/`;
-   offered once; the moved team keeps its old workspace folder; the old folder kept until the
-   person deletes it.
-9. **The registry home apart from the team home.** *Recommended:* the registry and pets always
-   at `$AUTOMAGIK_HOME/bots`, so sharing does not wait for the move.
+8. **The migration offer.** *Decided:* copy, never move; offered once; everything but
+   `workspace/` (the moved team keeps its old workspace folder; the old folder stays until the
+   person deletes it).
+9. **The registry home apart from the team home.** *Decided:* registry and pets at
+   `~/.automagik/bots` now, so sharing does not wait for the move.
 10. **A Bot removed in Herdr.** *Decided, as recommended:* DSH hides it and keeps its chats and
     memory, with Restore and Delete; nothing is archived without the person.
 11. **Global Bots (#226).** *Decided, as recommended:* no membership field yet: every global Bot
     is above every project; its briefing shows each project's main Bot and status; messages do
     not fan out.
-12. **Which repo files DSH reads, and other machines.** *Recommended:* the home file's
-    `projects[]`, this computer only; an entry whose file is gone is dropped by the next reader
-    that finds it gone (Herdr's #229 has the same gap). Bots on other machines are reached
-    through Code.
-13. **Pets the bake cannot make** (`genie-clay`, market pets). *Recommended:* `automagik-pets
+12. **Which repo files DSH reads, and other machines.** *Decided, changed:* "Remote Bots in the
+    list now". DSH reads the home file's `projects[]` on this computer and on every linked
+    machine, and chats with remote Bots too; editing and starting them waits for #206 (delivery
+    7). An entry whose file is gone is dropped by the next reader that finds it gone (Herdr's
+    #229 has the same gap).
+13. **Pets the bake cannot make** (`genie-clay`, market pets). *Decided, as proposed:* `automagik-pets
     frames <id>` cuts Herdr's frames from any v1 or v2 spritesheet; builtin pets are copied into
     the shared folder.
-14. **One model field or one per app?** *Recommended:* per app: Herdr's `agent`, `model` and
+14. **One model field or one per app?** *Decided:* per app: Herdr's `agent`, `model` and
     `worker`, DSH's `dsh.model` and `dsh.effort`, until RFC 0003's ACP route makes one possible.
-15. **Where the module lives.** *Recommended:* `apps/bots-dsh/src/shared/registry.js`, with a
+15. **Where the module lives.** *Decided, as proposed:* `apps/bots-dsh/src/shared/registry.js`, with a
     byte-equal copy in `herdr/mods/am-sidebar/` that both gates check; a schema change ships
     plugin first, then herdr, and readers keep unknown fields.
-16. **Clones and the main checkout (#227, #234).** *Recommended:* a pane is matched by project
+16. **Clones and the main checkout (#227, #234).** *Decided, as proposed:* a pane is matched by project
     and id; edits from a worktree are written in that worktree, reads stay on the main checkout.
 17. **Trust in a repo file.** *Decided:* ask first per project; Bots taken in then get the team's
     default level. `identity` never grants a plugin's tools (Threat model).
 18. **Ids DSH did not mint as `session-<uuid>`.** Host-pinned Bots (Unfold's `unfold-root`) and
-    any id outside the pattern. *Recommended:* they stay DSH-only and are not exported; widening
-    the pattern to any opaque id is the other option, and it would let Herdr show Bots it can
-    never start.
-19. **How Automagik talks to the live agent.** Two ways:
-    - A. `hc send` to the Bot's pane (found with `automagik-herdr whois --bot`), status from
-      `hc get`, and the conversation read from the agent's own session file (Claude Code's,
-      Codex's). It works for any agent Herdr starts, and on other machines' panes through hc.
-      It needs one reader per agent, on file formats the agents do not promise.
-    - B. ACP: acp-dsh (RFC 0003) attaches to the same Claude or Codex session. Turns come
-      structured, but the pane's agent process already owns that session. Neither CLI documents
-      a second live client on one session, so the terminal and ACP would likely fork it
-      (unverified).
-    *Recommended:* A, Claude first, with the two-writers rule in the design; B only if an agent
-    documents attaching a second client to a live session.
+    any id outside the pattern. *Decided:* they stay Automagik-only and are not exported.
+19. **How Automagik talks to the live agent.** Open. Felipe: "check how orca does it. they can
+    abstract the terminal into a perfect ui https://github.com/stablyai/orca". Read at Orca
+    commit `e1dfc022` (2026-11-03, MIT) and in the hook installed on this Mac:
+    - **Two modes.** Orca's "structured chat" talks to the agent directly, not through a
+      terminal; moving between it and the terminal copies the conversation into a new session.
+      Its "terminal-backed chat" is "a transcript view over an agent running in a terminal", and
+      switching between chat and terminal "does not create a new session"
+      (`docs/site/content/docs/agents/native-chat.mdx`). The second is what Felipe decided.
+    - **What it shows.** Rows come from three sources, ranked: the agent's own transcript file
+      (3), hook events (2), and scraped terminal scrollback as a degraded fallback (1)
+      (`src/shared/native-chat/native-chat-types.ts:24-31`). The transcript is found from the
+      `transcript_path` and `session_id` in hook payloads
+      (`src/shared/agent-session/lifecycle/agent-session-resume.ts:161`, `:219`). Working and
+      waiting-for-you come from hooks (`native-chat-live-session-contract.ts`).
+    - **The hooks.** Orca adds a command to 13 Claude Code hook events in
+      `~/.claude/settings.json` (SessionStart, UserPromptSubmit, Pre/PostToolUse, Stop,
+      PermissionRequest, PostCompact, SessionEnd and others). `~/.orca/agent-hooks/claude-hook.sh`
+      POSTs the hook JSON to `127.0.0.1:<port>/hook/claude` with a token and the pane key from
+      `ORCA_*` variables Orca sets in its panes. If the app is not answering, it appends the event
+      to a spool file instead. Outside an Orca pane it does nothing. Codex, Gemini, Kimi and ZCode
+      have their own scripts.
+    - **Input.** The composer types into the same PTY. Each send is queued per PTY: it clears
+      the agent's unsubmitted input (a burst of up to 15 lines, checked by reading the input line
+      again after 140 ms), sends the text as a sanitized bracketed paste, then sends Enter after
+      a delay, because "a CR sharing the paste write can be swallowed"
+      (`src/renderer/src/components/native-chat/native-chat-runtime-send.ts`,
+      `native-chat-pty-send-queue.ts`, `native-chat-input-clear.ts`). It answers AskUserQuestion
+      cards with keystrokes.
+    - **While busy.** A terminal-backed send is not held: it goes into the agent's own input,
+      and the agent queues it. Orca shows it as pending until the transcript has it, and waits
+      20 s when an acknowledgment is lost (`use-native-chat-pending-delivery.ts:21`). Editable
+      queue cards exist only for structured chats (`use-structured-agent-session-queued-messages.ts`).
+      Because of the clear, a send from chat wipes anything half-typed in the terminal.
+    - **Remote.** Over plain SSH Orca reads no transcripts (`ssh-transcript-fs-access.ts` throws
+      `SshHostNotServedError`); it needs its own server on the far side.
+
+    *Recommended:* adopt Orca's approach on herdr-core, not Orca's hooks or code:
+    - **Show:** the transcript file is the source of truth, found from the hook payload's
+      `transcript_path`, with hc's pane status for working and blocked. No screen scraping.
+    - **Send:** `hc send` with Orca's write order: a bracketed paste, then Enter on its own
+      write.
+    - **Keep our two-writers rule:** hold the message when the input line holds text, instead of
+      Orca's clear, so a person typing in Code never loses a draft.
+    - **Remote:** hc reaches other machines' panes and files (`hc send`, `hc file read --on`),
+      so remote Bots need no server of ours on the far side.
+
+    *Why not reuse Orca's hook format:* its scripts post to Orca's own server, with Orca's token
+    and `ORCA_*` pane variables, so reusing them would make Herdr depend on Orca's wire format.
+    The pack already runs its own per-turn hook (`briefing.mjs`). That hook is the place to
+    pass `transcript_path` and the pane's `bot` label to Automagik. *Why not ACP for this:* the
+    pane's agent already owns the session. Orca also keeps its direct-talk chats as separate
+    sessions, which matches our reading.
 
 ## Links
 
