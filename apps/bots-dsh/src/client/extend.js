@@ -64,7 +64,7 @@ export const chatSuggestions = registry()
 // Composer packs: what a Bot's composer offers for the AI the Bot runs on. The first pack
 // (lowest `order`) that matches the Bot's provider and is available wins; none means
 // Omni's own composer, which shows no permission, plan or model control. See
-// composer-packs.js for the shape and the packs Omni brings (Claude Code, thinking levels).
+// composer-packs.js for the shape and the packs Omni brings (a plugin's own model menu, thinking levels).
 export const composerPacks = registry()
 export const registerComposerPack = pack => composerPacks.register(pack)
 

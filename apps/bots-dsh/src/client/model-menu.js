@@ -218,7 +218,7 @@ function modelWords(roster, ref) {
 }
 
 // One line naming the model a Bot runs on and its provider, with "change" opening the
-// model menu (which also leads to the providers): "Using Claude Opus 5.5 · Oh My Claude ·
+// model menu (which also leads to the providers): "Using Claude Opus 5.5 · Anthropic ·
 // change". `ref` and `onPick` stand in for a model the Bot does not have yet.
 export function ModelLine({ bot, roster, actions, run, ref, onPick }) {
   const words = modelWords(roster, ref ?? bot.model ?? bot.appliedModel)

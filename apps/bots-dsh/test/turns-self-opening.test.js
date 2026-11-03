@@ -4,9 +4,8 @@ import { install as installTurns, opensByItself } from '../src/host/turns.js'
 import { SOURCE_KIND } from '../src/host/constants.js'
 import { isHiddenTurn } from '../src/client/text.js'
 
-// A turn Claude Code opens by itself after a restart carries the reply the person waits
-// for: a Bot's request that lands inside it must not claim it, hide it and take its reply
-// (issue #62).
+// A turn that opens by itself (a goal round) carries the reply the person waits for: a Bot's
+// request that lands inside it must not claim it, hide it and take its reply (issue #62).
 function host() {
   let listener
   const delivered = []
@@ -27,8 +26,6 @@ const text = value => [{ type: 'text', text: value }]
 const request = { kind: SOURCE_KIND, form: 'relay', role: 'request', exchangeId: 'e1', senderSessionId: 'a', senderName: 'Omni' }
 
 for (const [label, opener] of [
-  ['Claude Code reattached after a restart', { kind: 'plugin:dsh-oh-my-claude', form: 'notice', summary: 'reattached' }],
-  ['Claude Code woke (v3 log)', { kind: 'plugin', plugin: 'dsh-oh-my-claude' }],
   ['a goal round', { kind: 'goal', goalId: 'g', revision: 1, round: 2 }],
 ]) {
   test(`a turn opened by ${label} keeps its reply when another Bot's request joins it`, async () => {
@@ -46,10 +43,7 @@ for (const [label, opener] of [
   })
 }
 
-test('only goal rounds and Claude Code\'s own notices open a turn by themselves', () => {
-  assert.equal(opensByItself({ kind: 'plugin:dsh-oh-my-claude' }), true)
-  assert.equal(opensByItself({ kind: 'plugin:claude-code' }), true)
-  assert.equal(opensByItself({ kind: 'plugin', plugin: 'dsh-oh-my-claude' }), true)
+test('only goal rounds open a turn by themselves', () => {
   assert.equal(opensByItself({ kind: 'goal' }), true)
   assert.equal(opensByItself({ kind: 'plugin:something-else' }), false)
   assert.equal(opensByItself({ kind: 'system-prompt' }), false)

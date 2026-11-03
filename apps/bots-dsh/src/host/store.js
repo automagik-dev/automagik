@@ -4,6 +4,7 @@
 import { mkdirSync, statSync } from 'node:fs'
 import { copyFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { piAiClaudeOf } from './claude-models.js'
 import { LEGACY_THEMES, MAX_EXCHANGES, ROOM_MODES, TEXT_KEPT } from './constants.js'
 import { replaceFile } from './files.js'
 import { homeLock } from './home-lock.js'
@@ -175,6 +176,26 @@ export function install(rt) {
         if (pet?.source === 'builtin' && pet.id === 'genie-cosmic') bot.avatar = { ...bot.avatar, pet: { ...GENIE_CLAY } }
       }
       state.genieClayStored = true
+      migrated = true
+    }
+    // Claude through Claude Code (Oh My Claude) left Automagik; Claude comes through pi-ai's
+    // anthropic route. Once, every Bot on a claude-code model moves to the pi-ai model closest
+    // to it (claude-models.js) and keeps the old ref as `claudeCodeModel`, for a later move to
+    // ACP's acp-claude. The Session's record of the model it ran on goes with it, so the next
+    // sync selects the new one; the Session and its history stay as they are.
+    if (state.claudeCodeMoved !== true) {
+      for (const bot of Object.values(state.bots)) {
+        const moved = piAiClaudeOf(bot?.model)
+        if (moved !== undefined) {
+          bot.claudeCodeModel = bot.model
+          bot.model = moved
+        }
+        if (piAiClaudeOf(bot?.appliedModel) !== undefined) {
+          delete bot.appliedModel
+          delete bot.appliedEffort
+        }
+      }
+      state.claudeCodeMoved = true
       migrated = true
     }
     // A builtin pet the plugin no longer ships would draw nothing: its Bot wears Genie instead.
