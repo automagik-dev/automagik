@@ -12,6 +12,10 @@
     {
       "cap": "herdr.pack",
       "major": 1
+    },
+    {
+      "cap": "bots.sidebar",
+      "major": 1
     }
   ],
   "os": [

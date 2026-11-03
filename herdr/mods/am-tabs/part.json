@@ -12,6 +12,10 @@
     {
       "cap": "herdr.pack",
       "major": 1
+    },
+    {
+      "cap": "herdr.new-menu",
+      "major": 1
     }
   ],
   "os": [
