@@ -153,7 +153,7 @@ function savedSource(name, { home, env, platform, appHome }) {
  * item), read, and the copy removed. Throws, without detail, when the item exists but cannot be
  * read, or holds something that is not a login.
  */
-export async function readLogin(source, { appHome, exec, readTextFile, unlink = (p) => fs.unlink(p) }) {
+export async function readLogin(source, { appHome, exec, readTextFile, unlink = (p) => fs.unlink(p) }, what = "the saved login") {
   let text = null;
   if (source.service) {
     const prep = await exec("sh", ["-c", prepareScript(), "sh", payloadDir(appHome)]);
@@ -181,7 +181,7 @@ export async function readLogin(source, { appHome, exec, readTextFile, unlink = 
     oauth = body ? JSON.parse(body)?.claudeAiOauth ?? null : null;
   } catch {}
   if (!oauth || typeof oauth !== "object" || !isToken(oauth.accessToken) || !isToken(oauth.refreshToken)) {
-    throw new Error("the stored login is not a Claude Code login");
+    throw new Error(`${what} is not a Claude Code login`);
   }
   return oauth;
 }
@@ -210,7 +210,7 @@ export async function saveLogin(options) {
   if (options.replace === false && (await readIndex(io))[name]) {
     throw new Error(`${name} is already saved — use its Re-save to replace it with the login in use`);
   }
-  const current = await readLogin(await clientSource(io), io);
+  const current = await readLogin(await clientSource(io), io, "the login in use");
   if (!current) throw new Error("there is no Claude Code login on this machine to save — sign in first");
   const placed = await keep(name, current, io);
   return { name, fingerprint: placed.fingerprint, ...describe(current) };
@@ -227,7 +227,7 @@ export async function saveLogin(options) {
 export async function resaveActive(options) {
   const io = ioOf(options);
   const name = checked(options.name);
-  const current = await readLogin(await clientSource(io), io);
+  const current = await readLogin(await clientSource(io), io, "the login in use");
   if (!current) return { resaved: false };
   const copy = await readLogin(savedSource(name, io), io).catch(() => null);
   if (copy && fingerprint(str(copy.refreshToken)) === fingerprint(str(current.refreshToken))) return { resaved: false };

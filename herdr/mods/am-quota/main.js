@@ -39,7 +39,7 @@ const ago = (iso) => {
 };
 /** How long a destructive button stays armed for its confirming second click. */
 const ARMED = 5000;
-const RESTART = "restart sessions to use it: `automagik-herdr restart <bot>` resumes a bot on the new account";
+const RESTART = "restart sessions to use it: automagik-herdr restart <bot> resumes a bot on the new account";
 /** The platform the panel runs on: `security` exists on macOS only. */
 const platform = () => {
   try {
