@@ -129,7 +129,8 @@ pub enum Resolution {
     Tag(Tag),
     /// No start row claims the session.
     Untagged,
-    /// More than one start row could claim it, or the only one could not be confirmed.
+    /// More than one start row could claim it, the only one could not be confirmed, or a row
+    /// without a usable time could change the answer.
     Unmatched,
 }
 
@@ -140,7 +141,8 @@ pub struct Query<'a> {
     pub session_id: &'a str,
     pub cwd: Option<&'a str>,
     /// When the session ran (ms since the epoch). Bounds the Codex and omp windows, and picks the
-    /// terminal when a Claude session id was reported by more than one.
+    /// terminal when a Claude session id was reported by more than one. Rows without a usable
+    /// time cannot be placed against it, so they never lose to a timed row: they make it Unmatched.
     pub at_ms: i64,
 }
 
@@ -252,10 +254,15 @@ impl Ledger {
                 .filter(|(_, at)| *at == Some(latest))
                 .map(|(t, _)| t.as_str())
                 .collect();
-            match (owners.first(), owners.len()) {
+            let owner = match (owners.first(), owners.len()) {
                 (Some(t), 1) => *t,
                 _ => return Resolution::Unmatched,
+            };
+            // Another terminal reported the id at an unknown time: it may be the later resume.
+            if rows.iter().any(|(t, at)| at.is_none() && t != owner) {
+                return Resolution::Unmatched;
             }
+            owner
         } else {
             match terminals.first() {
                 Some(t) => *t,
@@ -275,11 +282,21 @@ impl Ledger {
 
     fn resolve_by_worktree(&self, agent: &str, cwd: &str, at_ms: i64) -> Resolution {
         let cwd = normalize(cwd);
-        let opens: Vec<(i64, &Start)> = self
+        let on_worktree: Vec<&Start> = self
             .starts
             .iter()
             .filter(|s| s.worktree.as_deref().map(normalize) == Some(cwd))
-            .filter_map(|s| Some((s.at_ms?, s)))
+            .collect();
+        let opens: Vec<(i64, &Start)> = on_worktree
+            .iter()
+            .filter_map(|s| Some((s.at_ms?, *s)))
+            .collect();
+        // A start without a usable time could sit anywhere: it may have closed any window on the
+        // worktree, and when it could run this agent it may be the owner itself.
+        let untimed: Vec<&Start> = on_worktree
+            .iter()
+            .filter(|s| s.at_ms.is_none())
+            .copied()
             .collect();
         // The window of a start row closes at the first later start on the same worktree; rows
         // sharing an `at` keep each other's window open, so both stay candidates.
@@ -299,9 +316,13 @@ impl Ledger {
                 (None, _) => unknown += 1,
             }
         }
+        unknown += untimed
+            .iter()
+            .filter(|s| s.agent.as_deref().is_none_or(|a| a == agent))
+            .count();
         match (confirmed.as_slice(), unknown) {
             ([], 0) => Resolution::Untagged,
-            ([t], 0) => Resolution::Tag((*t).clone()),
+            ([t], 0) if untimed.is_empty() => Resolution::Tag((*t).clone()),
             _ => Resolution::Unmatched,
         }
     }
@@ -645,7 +666,7 @@ mod tests {
         assert_eq!(tag(at("2026-01-01T12:00:00Z")).bot, "b-resumed");
         // Before either pane reported the id: no row qualifies.
         assert_eq!(at("2026-01-01T08:00:00Z"), Resolution::Unmatched);
-        // An untimed row is not a candidate; the timed one still decides.
+        // A competing terminal reported the id at an unknown time: it may own the session now.
         let mut untimed = session("t2", "s-1");
         untimed.as_object_mut().unwrap().remove("at");
         let l = ledger(&[
@@ -655,8 +676,8 @@ mod tests {
             untimed.clone(),
         ]);
         assert_eq!(
-            tag(l.resolve(&claude_at("s-1", "2026-01-01T12:00:00Z"))).bot,
-            "b-example"
+            l.resolve(&claude_at("s-1", "2026-01-01T12:00:00Z")),
+            Resolution::Unmatched
         );
         // No row has a usable time: stay Unmatched.
         let mut untimed_t1 = session("t1", "s-1");
@@ -664,6 +685,99 @@ mod tests {
         let l = ledger(&[starts[0].clone(), starts[1].clone(), untimed_t1, untimed]);
         assert_eq!(
             l.resolve(&claude_at("s-1", "2026-01-01T12:00:00Z")),
+            Resolution::Unmatched
+        );
+    }
+
+    #[test]
+    fn untimed_session_row_is_uncertainty_only_against_a_competitor() {
+        let mut other = start("t2", WT_B, "claude", "2026-01-01T10:30:00Z");
+        other["bot"] = json!("b-resumed");
+        let untimed = |terminal| {
+            let mut row = session(terminal, "s-1");
+            row.as_object_mut().unwrap().remove("at");
+            row
+        };
+        let at = |l: &Ledger, when| l.resolve(&claude_at("s-1", when));
+        // t2 reported the id at an unknown time: neither terminal can be picked at noon.
+        let l = ledger(&[
+            start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
+            other.clone(),
+            session_at("t1", "s-1", "2026-01-01T09:00:00Z"),
+            untimed("t2"),
+        ]);
+        assert_eq!(at(&l, "2026-01-01T12:00:00Z"), Resolution::Unmatched);
+        // An untimed row on the owning terminal competes with nobody.
+        let l = ledger(&[
+            start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
+            other.clone(),
+            session_at("t1", "s-1", "2026-01-01T09:00:00Z"),
+            untimed("t1"),
+            session_at("t2", "s-1", "2026-01-01T11:00:00Z"),
+        ]);
+        assert_eq!(tag(at(&l, "2026-01-01T10:00:00Z")).bot, "b-example");
+        // ... but once t2 owns it, t1's untimed report may be a later resume back into t1.
+        assert_eq!(at(&l, "2026-01-01T12:00:00Z"), Resolution::Unmatched);
+        // A single untimed row with no competitor still matches its terminal.
+        let l = ledger(&[
+            start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
+            untimed("t1"),
+        ]);
+        assert_eq!(tag(at(&l, "2026-01-01T12:00:00Z")).bot, "b-example");
+    }
+
+    #[test]
+    fn untimed_start_keeps_its_worktree_uncertain() {
+        let codex = |l: &Ledger, cwd, at| l.resolve(&by_cwd(Source::Codex, cwd, at));
+        let untimed = |terminal, worktree, agent| {
+            let mut row = start(terminal, worktree, agent, "2026-01-01T12:00:00Z");
+            row.as_object_mut().unwrap().remove("at");
+            row
+        };
+        // A botless start with no time may have closed the 09:00 codex window before noon.
+        let mut botless = untimed("t2", WT_A, "codex");
+        botless.as_object_mut().unwrap().remove("bot");
+        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), botless]);
+        assert_eq!(
+            codex(&l, WT_A, "2026-01-01T12:00:00Z"),
+            Resolution::Unmatched
+        );
+        assert_eq!(
+            codex(&l, WT_A, "2026-01-01T09:30:00Z"),
+            Resolution::Unmatched
+        );
+        // A fully tagged omp start with an unparseable time: it cannot claim a codex session, but
+        // it may still have closed the codex window.
+        let mut omp = untimed("t2", WT_A, "omp");
+        omp["at"] = json!("not a time");
+        omp["bot"] = json!("b-omp");
+        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), omp]);
+        assert_eq!(
+            codex(&l, WT_A, "2026-01-01T12:00:00Z"),
+            Resolution::Unmatched
+        );
+        // Nothing could claim codex there before 09:00, so that stays untagged, not uncertain.
+        assert_eq!(
+            codex(&l, WT_A, "2026-01-01T08:00:00Z"),
+            Resolution::Untagged
+        );
+        // A lone untimed codex start may be the owner, but its window cannot be placed.
+        let l = ledger(&[untimed("t1", WT_A, "codex")]);
+        assert_eq!(
+            codex(&l, WT_A, "2026-01-01T12:00:00Z"),
+            Resolution::Unmatched
+        );
+        // The uncertainty stays on its own worktree.
+        let l = ledger(&[
+            start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"),
+            untimed("t2", WT_B, "codex"),
+        ]);
+        assert_eq!(
+            tag(codex(&l, WT_A, "2026-01-01T12:00:00Z")).bot,
+            "b-example"
+        );
+        assert_eq!(
+            codex(&l, WT_B, "2026-01-01T12:00:00Z"),
             Resolution::Unmatched
         );
     }
