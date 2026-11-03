@@ -97,10 +97,10 @@ Before the bridge can run, the dialog shows one of two other screens in place of
     - `findNode` and `noNodeMessage` from `./find-node.js`
   - **Finding Node** (`find-node.js`): Herdr started from the Dock or by launchd has a short PATH, without nvm, volta, fnm or asdf. The dialog takes the first Node that answers `--version` with 20.3 or newer, from:
     1. the login service file (the Node the LaunchAgent or systemd unit was installed with), then `.node` in the mod folder, which `install` and `start` write;
-    2. the login shell (`$SHELL -lc 'command -v node'`, given 3s, then killed; its answer goes through a temp file so a leftover child can't hold the pipe), then Herdr's own PATH;
+    2. the login shell (`$SHELL -lc 'command -v node'`), then Herdr's own PATH. A non-interactive login shell reads `.zprofile` or `.bash_profile`, not `.zshrc` or `.bashrc`, so it finds Homebrew or volta set up there but usually not nvm, which step 3 finds. The shell gets 3s: it runs in its own process group (`setsid` on Linux, where `sh` is dash and has no job control without a terminal; `set -m` elsewhere), and the whole group gets SIGKILL at the cap. Its answer goes through a temp file, so nothing left behind holds the pipe;
     3. `~/.nvm/versions/node/*` (newest first), `~/.volta/bin`, fnm's `node-versions` and default alias, `~/.asdf/shims`, then `/opt/homebrew/bin` and `/usr/local/bin` (macOS) or `/usr/local/bin` and `/usr/bin` (Linux).
 
-    It keeps the answer for every later call. A search that found nothing is kept until the dialog closes; a Node that stops starting is searched for again.
+    It keeps the answer for every later call. A search that found nothing is kept until the dialog closes; when the bridge gives no answer and the kept Node no longer answers `--version` with 20.3+ (gone, or broken by an upgrade), the dialog forgets it, searches again and retries the command once.
   - **Calling the bridge:** it runs `exec("<that node>", ["<appHome>/mods/pocket-link/bridge/bridge.mjs", <command>, …])` and parses the last stdout line as JSON. `install` and `start` run under that Node, so the login service and a detached bridge use it too. The commands are `status`, `install`, `start`, `stop`, `pair`, `cancel` and `forget <id>`.
   - **Clipboard:** `cx.write_to_clipboard`.
   - **Timers:** a 1s `cx.timer.every` runs only while a code shows.
@@ -152,7 +152,7 @@ Before the bridge can run, the dialog shows one of two other screens in place of
   - The phone accepts only `v=1`, `t` matching `^endpoint[a-z2-7]{20,2000}$` and `c` matching `^[A-Za-z0-9_-]{16,64}$`.
   - Names are cut to 60 characters with control characters removed.
 - **Requirements:**
-  - Node 20.3+, on the login shell's PATH or in one of the places above.
+  - Node 20.3+, in one of the places above.
   - herdr-core's `hc` installed.
   - macOS or Linux with systemd; Windows isn't handled.
 - **Phones see every herdr-core session**, the same way a terminal running `hc` does. Pair only your own phones.

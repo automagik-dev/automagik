@@ -9,12 +9,15 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { platform } from "os";
 import { exec, appHome, home, readTextFile, theme, props, closeOverlay, notify, watchFolder } from "herdr";
-import { findNode, noNodeMessage } from "./find-node.js";
+import { findNode, noNodeMessage, version, newEnough } from "./find-node.js";
 
 const DIR = "mods/pocket-link";
 const I = (name) => `${DIR}/icons/${name}.svg`;
 const ROOT = () => `${appHome()}/${DIR}`;
 const BRIDGE = () => `${ROOT()}/bridge/bridge.mjs`;
+
+// Answers --version with 20.3 or newer.
+const runs = (path) => exec(path, ["--version"]).then((r) => r.code === 0 && newEnough(version(r.stdout)), () => false);
 
 // The Node every bridge command runs with (find-node.js), once found. A failed search is kept by
 // the dialog that made it, so opening Pocket Link again looks again.
@@ -81,7 +84,9 @@ export default class PocketLink extends View {
     });
   }
 
-  async bridge(args) {
+  // When the bridge gives no answer and the kept Node no longer runs (gone, or broken by an
+  // upgrade), forget it, find another and try once more.
+  async bridge(args, again = true) {
     const node = found ?? (await (this.looking ??= findNode(io())));
     if (!node.path) {
       this.checked = node.checked;
@@ -89,19 +94,18 @@ export default class PocketLink extends View {
     }
     found = node;
     const r = await exec(node.path, [BRIDGE(), ...args]).catch((e) => ({ code: 127, stdout: "", stderr: String(e) }));
-    if (r.code === 127 || /not found|ENOENT/.test(r.stderr) && !r.stdout) {
-      // That Node is gone (an nvm uninstall, say): look again on the next try.
+    try {
+      return JSON.parse(r.stdout.trim().split("\n").pop());
+    } catch {}
+    if (!(await runs(node.path))) {
       found = null;
       this.looking = null;
       this.checked = null;
-      return { ok: false, error: "node" };
+      return again ? this.bridge(args, false) : { ok: false, error: "node" };
     }
-    try {
-      return JSON.parse(r.stdout.trim().split("\n").pop());
-    } catch {
-      return { ok: false, error: /Cannot find (package|module)/.test(r.stderr) ? "setup" : (r.stderr || "The bridge didn't answer.").trim().slice(0, 300) };
-    }
+    return { ok: false, error: /Cannot find (package|module)/.test(r.stderr) ? "setup" : (r.stderr || "The bridge didn't answer.").trim().slice(0, 300) };
   }
+
 
   async reload() {
     const before = this.status ? newest(this.status.devices) : null;

@@ -2,7 +2,8 @@
 // nvm, volta, fnm or asdf, so a bare `node` often isn't there even when the bridge runs fine.
 // Looks, in order: (a) what the bridge was last run with (its login service, then the `.node` it
 // records in the mod folder), (b) the user's login shell, then Herdr's own PATH, (c) the usual
-// install places. Every candidate must answer `--version` with 20.3 or newer.
+// install places. (b) finds a Node set up in login files (.zprofile, .bash_profile, .profile);
+// nvm usually lives in .zshrc or .bashrc, which a non-interactive login shell skips, so (c) finds it. Every candidate must answer `--version` with 20.3 or newer.
 // Pure: main.js passes Herdr's exec and file reads; find-node.test.mjs passes fakes.
 
 export const MIN = [20, 3, 0];
@@ -24,11 +25,17 @@ export function servicePath(text) {
   return m && m[1].startsWith("/") ? m[1] : null;
 }
 
-// The login shell, with 3 s to answer: a slow rc file can't hang the dialog. Its answer goes to a
-// temp file, so a child it leaves behind can't hold stdout open past the kill. No job control:
-// dash (Linux's sh) has none without a terminal.
-export const SHELL_PROBE =
-  'f=$(mktemp) || exit 1; "${SHELL:-/bin/sh}" -lc "command -v node" >"$f" 2>/dev/null </dev/null & p=$!; (sleep 3; kill $p) >/dev/null 2>&1 & w=$!; wait $p; c=$?; kill $w 2>/dev/null; cat "$f"; rm -f "$f"; exit $c';
+// The login shell, with 3 s to answer: a slow rc file can't hang the dialog. The shell gets its own
+// process group (setsid on Linux, where sh is dash and has no job control without a terminal;
+// `set -m` elsewhere), and at 3 s the whole group gets SIGKILL, so neither a shell that ignores
+// TERM nor a child it started outlives the cap. Without either, only the shell itself is killed.
+// Its answer goes to a temp file, so nothing left behind can hold stdout open.
+export const SHELL_PROBE = [
+  'f=$(mktemp) || exit 1; s="${SHELL:-/bin/sh}"',
+  'if command -v setsid >/dev/null 2>&1; then setsid "$s" -lc "command -v node" >"$f" 2>/dev/null </dev/null & else set -m 2>/dev/null; "$s" -lc "command -v node" >"$f" 2>/dev/null </dev/null & fi',
+  'p=$!; (sleep 3; kill -KILL -- -$p 2>/dev/null || kill -KILL $p) >/dev/null 2>&1 & w=$!',
+  'wait $p; c=$?; kill -- -$w 2>/dev/null || kill $w 2>/dev/null; cat "$f"; rm -f "$f"; exit $c',
+].join("\n");
 
 const lastPath = (out) => (out ?? "").split("\n").map((l) => l.trim()).filter((l) => l.startsWith("/")).pop() ?? null;
 

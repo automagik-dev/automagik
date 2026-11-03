@@ -15,8 +15,10 @@ Ask your Herdr agent to add this mod, or do it yourself:
 3. Open it with ⌘⌥P. The first time, press **Install the bridge** (npm, about 25 MB), then **Turn on**.
 
 It needs Node.js 20.3+ and herdr-core (`hc`), on macOS or Linux (systemd). Herdr opened from the
-Dock doesn't see a Node that only your shell's rc file adds to PATH, so the dialog also looks in
-your login shell, nvm, volta, fnm, asdf and Homebrew ([RECIPE.md](RECIPE.md#how-it-behaves)).
+Dock doesn't see a Node that only your shell's rc file adds to PATH. So the dialog also asks your
+login shell, which finds a Node set up in `.zprofile` or `.bash_profile` but not one that
+`.zshrc` or `.bashrc` adds (where nvm usually puts itself), then looks in nvm's, volta's, fnm's,
+asdf's and Homebrew's folders ([RECIPE.md](RECIPE.md#how-it-behaves)).
 
 ## Update
 
@@ -27,12 +29,12 @@ No release ships the mod and nothing updates an installed copy. To update it:
 2. Copy the new `mods/pocket-link/` over the old one from a fresh clone:
 
    ```sh
-   d=$(mktemp -d) && git clone -q --depth 1 https://github.com/automagik-dev/automagik-pocket "$d" && rsync -a "$d/desktop/pocket-link/mods/pocket-link/" ~/.config/herdr-app/mods/pocket-link/
+   d=$(mktemp -d) && m=~/.config/herdr-app/mods/pocket-link && git clone -q --depth 1 https://github.com/automagik-dev/automagik-pocket "$d" && { cmp -s "$d/desktop/pocket-link/mods/pocket-link/bridge/package-lock.json" "$m/bridge/package-lock.json" || rm -rf "$m/bridge/node_modules"; } && rsync -a "$d/desktop/pocket-link/mods/pocket-link/" "$m/"
    ```
 
-   `rsync` without `--delete` keeps `bridge/node_modules`.
-3. If the update changed `bridge/package-lock.json`, delete `bridge/node_modules` and press
-   **Install the bridge** when the dialog asks.
+   It compares the bridge's `package-lock.json` before copying. If the packages changed, it
+   deletes `bridge/node_modules`; otherwise `rsync` (without `--delete`) keeps them.
+3. Open the dialog. If it shows **Install the bridge**, press it.
 4. Press **Turn on**.
 
 Pairings live outside the mod folder and stay.

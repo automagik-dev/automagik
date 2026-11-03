@@ -159,3 +159,29 @@ test('no Node anywhere: every place is listed, with the too-old ones', async () 
 test('the message without a list still says what to do', () => {
   assert.match(noNodeMessage(null, HOME), /Install Node .* then open Pocket Link again\.$/)
 })
+
+// The real probe, run by the real sh (dash on Ubuntu, bash on macOS) with a fake login shell.
+test('the login-shell probe answers fast, and kills a slow shell and its children at 3 s', { timeout: 15000 }, async () => {
+  const { execFile } = await import('node:child_process')
+  const { mkdtempSync, writeFileSync, readFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const dir = mkdtempSync(`${tmpdir()}/find-node-`)
+  const shell = (name, body) => { writeFileSync(`${dir}/${name}`, `#!/bin/sh\n${body}\n`, { mode: 0o755 }); return `${dir}/${name}` }
+  const probe = SHELL => new Promise(resolve => {
+    const t = Date.now()
+    execFile('sh', ['-c', SHELL_PROBE], { env: { ...process.env, SHELL, PIDFILE: `${dir}/child.pid` } }, (_e, stdout) => resolve({ stdout, ms: Date.now() - t }))
+  })
+
+  const fast = await probe(shell('fast', 'echo /fake/bin/node'))
+  assert.equal(fast.stdout.trim(), '/fake/bin/node')
+  assert.ok(fast.ms < 2000, `fast shell took ${fast.ms} ms`)
+
+  // Ignores TERM, starts a child that would outlive it, and never answers.
+  const slow = await probe(shell('slow', 'trap "" TERM\nsleep 20 &\necho $! > "$PIDFILE"\nwait\necho /late/node'))
+  assert.equal(slow.stdout.trim(), '')
+  assert.ok(slow.ms >= 2500 && slow.ms < 5000, `slow shell took ${slow.ms} ms`)
+  const child = Number(readFileSync(`${dir}/child.pid`, 'utf8'))
+  const alive = () => { try { process.kill(child, 0); return true } catch { return false } }
+  for (let i = 0; i < 20 && alive(); i++) await new Promise(r => setTimeout(r, 50))
+  assert.equal(alive(), false, 'the shell\'s child was killed with it')
+})
