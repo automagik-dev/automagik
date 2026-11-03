@@ -27,7 +27,7 @@ const OLD = {
   'secret.key': ['old-key-bytes', 0o600],
   'devices.json': ['[{"id":"phone-1","name":"Pixel"}]\n', 0o600],
   'status.json': ['{"pid":999999}\n', 0o600],
-  'meter.json': ['{}\n', 0o600],
+  'pairing.json': ['{}\n', 0o600],
 }
 
 test('fresh: the default dir is under ~/.local/state, created 0700, nothing to move', () => {
@@ -56,7 +56,7 @@ test('migration: every file moves from <mod>/.state, secret.key stays 0600, one 
   assert.equal(mode(join(s.dir, 'secret.key')), 0o600)
   assert.equal(readFileSync(join(s.dir, 'devices.json'), 'utf8'), OLD['devices.json'][0])
   assert.equal(mode(join(s.dir, 'devices.json')), 0o600)
-  assert.deepEqual(readdirSync(s.dir).sort(), ['devices.json', 'meter.json', 'qr-1.svg', 'secret.key', 'status.json'])
+  assert.deepEqual(readdirSync(s.dir).sort(), ['devices.json', 'pairing.json', 'qr-1.svg', 'secret.key', 'status.json'])
   assert.deepEqual(readdirSync(join(s.modRoot, '.state')), [], 'the old folder is left empty')
   assert.equal(s.lines.length, 1)
   assert.match(s.lines[0], /^state: moved 5 file\(s\) from .*\.state to .*automagik-pocket-link$/)

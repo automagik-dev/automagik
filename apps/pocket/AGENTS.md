@@ -7,7 +7,8 @@ Short rules for coding agents working in this repo. Humans: the same rules apply
 - `android/`: the app (Gradle). Run Gradle from there: `cd android && ./gradlew …`.
 - `desktop/pocket-link/`: the Herdr desktop mod.
 - The usage meter lives in its own repository,
-  [automagik-dev/usagemeter](https://github.com/automagik-dev/usagemeter); Pocket Link installs its releases (`desktop/pocket-link/mods/pocket-link/bridge/meter.mjs`).
+  [automagik-dev/usagemeter](https://github.com/automagik-dev/usagemeter); the Automagik Herdr pack
+  installs it. Pocket Link doesn't ([decision](docs/decisions/pocket-link-no-meter-installer.md)).
 - Root: `version.properties`, `scripts/version.sh`, `docs/`, `.github/`.
 
 ## Working

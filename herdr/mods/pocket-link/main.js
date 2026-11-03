@@ -24,6 +24,9 @@ function ago(ms) {
   return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+// When the newest phone in a status paired.
+const newest = (devices) => Math.max(0, ...(devices ?? []).map((d) => d.paired ?? 0));
+
 const left = (ms) => {
   const s = Math.max(0, Math.round((ms - Date.now()) / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -37,6 +40,8 @@ export default class PocketLink extends View {
     this.error = null;
     this.pairing = null; // { link, qr, expires }
     this.copied = false;
+    this.closed = false;
+    this.cancelling = null;
     this.handle = cx.focus_handle();
     cx.spawn(async (cx) => {
       await this.reload();
@@ -71,8 +76,7 @@ export default class PocketLink extends View {
   }
 
   async reload() {
-    const newest = (st) => Math.max(0, ...(st?.devices ?? []).map((d) => d.paired ?? 0));
-    const before = this.status ? newest(this.status) : null;
+    const before = this.status ? newest(this.status.devices) : null;
     const s = await this.bridge(["status"]);
     if (s.error === "node" || s.error === "setup") {
       this.problem = s.error;
@@ -87,11 +91,40 @@ export default class PocketLink extends View {
     this.status = s;
     if (!s.pairing) this.pairing = null;
     // A phone just paired (or paired again): say so, and put the code away.
-    if (before !== null && newest(s) > before) {
-      const phone = s.devices.find((d) => d.paired === newest(s));
+    if (before !== null && this.announce(before, s.devices)) this.pairing = null;
+  }
+
+  // "Phone paired", for a phone that paired after `before`, with its key's fingerprint.
+  announce(before, devices) {
+    const at = newest(devices);
+    if (at <= before) return false;
+    const phone = devices.find((d) => d.paired === at);
+    notify({ title: "Phone paired", body: `${phone.name} (key ${phone.fingerprint ?? phone.id.slice(0, 12)}) can reach this computer now.`, level: "success", timeout: 8000 });
+    return true;
+  }
+
+  // Closing the dialog ends the code it shows (bridge `cancel`), once. A phone that paired just
+  // before still gets its notice, from what `cancel` says.
+  cancelCode() {
+    if (!this.cancelling && (this.pairing || this.status?.pairing || this.busy === "pair")) {
+      const before = newest(this.status?.devices);
       this.pairing = null;
-      notify({ title: "Phone paired", body: `${phone.name} can reach this computer now.`, level: "success", timeout: 6000 });
+      this.cancelling = this.bridge(["cancel"]).then((r) => { if (r.ok !== false) this.announce(before, r.devices); });
     }
+    return this.cancelling ?? Promise.resolve();
+  }
+
+  // Escape (or anything here that closes the dialog).
+  dismiss() {
+    this.closed = true;
+    this.cancelCode();
+    closeOverlay(props().overlay);
+  }
+
+  // The host calls this when it closes the dialog by any means: Esc, a click outside, ⌘⌥P again.
+  async close(_cx) {
+    this.closed = true;
+    await this.cancelCode();
   }
 
   act(what, args, cx, then) {
@@ -143,10 +176,6 @@ export default class PocketLink extends View {
       await this.reload();
       cx.notify();
     });
-  }
-
-  close() {
-    closeOverlay(props().overlay);
   }
 
   button(t, id, label, onClick, { primary = false, disabled = false, spinning = false } = {}) {
@@ -217,13 +246,20 @@ export default class PocketLink extends View {
       );
   }
 
+  // A code made while the dialog was closing must not outlive it.
+  async showCode(r) {
+    if (this.closed) return this.bridge(["cancel"]);
+    this.pairing = r;
+    this.copied = false;
+  }
+
   pairCard(t) {
     const p = this.pairing;
     if (!p)
       return v_flex()
         .gap(8)
-        .child(this.note(t, "Open Herdr Pocket on the phone, tap Pair with Herdr desktop, and scan the code this makes. The code works once, for 10 minutes."))
-        .child(h_flex().child(this.button(t, "pl-pair", this.busy === "pair" ? "Making a code…" : "Pair a phone", (cx) => this.act("pair", ["pair"], cx, (r) => { this.pairing = r; this.copied = false; }), { primary: true, disabled: Boolean(this.busy), spinning: this.busy === "pair" })));
+        .child(this.note(t, "Open Herdr Pocket on the phone, tap Pair with Herdr desktop, and scan the code this makes. The code works once, for 10 minutes, and ends when you close this window."))
+        .child(h_flex().child(this.button(t, "pl-pair", this.busy === "pair" ? "Making a code…" : "Pair a phone", (cx) => this.act("pair", ["pair"], cx, (r) => this.showCode(r)), { primary: true, disabled: Boolean(this.busy), spinning: this.busy === "pair" })));
     return v_flex()
       .gap(10)
       .items_center()
@@ -239,7 +275,7 @@ export default class PocketLink extends View {
         h_flex()
           .gap(8)
           .child(this.button(t, "pl-copy", this.copied ? "Copied" : "Copy link", (cx) => { cx.write_to_clipboard(p.link); this.copied = true; cx.notify(); }))
-          .child(this.button(t, "pl-new", "New code", (cx) => this.act("pair", ["pair"], cx, (r) => { this.pairing = r; this.copied = false; }), { disabled: Boolean(this.busy) })),
+          .child(this.button(t, "pl-new", "New code", (cx) => this.act("pair", ["pair"], cx, (r) => this.showCode(r)), { disabled: Boolean(this.busy) })),
       )
       .child(div().text_size(11.5).text_color(t.dim).child("On the phone itself? Copy the link and paste it in Pocket."));
   }
@@ -270,8 +306,14 @@ export default class PocketLink extends View {
         v_flex()
           .flex_1()
           .min_w(0)
-          .child(div().text_size(13).truncate().child(d.name))
-          .child(div().text_size(11.5).text_color(t.dim).child(`Last seen ${ago(d.seen)} · key ${d.id.slice(0, 10)}`)),
+          .child(
+            h_flex()
+              .gap(8)
+              .min_w(0)
+              .child(div().text_size(13).truncate().child(d.name))
+              .child(div().flex_none().text_size(11.5).text_color(t.dim).child(d.fingerprint ?? d.id.slice(0, 12))),
+          )
+          .child(div().text_size(11.5).text_color(t.dim).child(`Last seen ${ago(d.seen)}`)),
       )
       .child(this.button(t, `pl-forget-${d.id}`, "Remove", (cx) => this.act("forget", ["forget", d.id], cx), { disabled: Boolean(this.busy) }));
   }
@@ -292,7 +334,7 @@ export default class PocketLink extends View {
     return v_flex()
       .id("pocket-link")
       .track_focus(this.handle)
-      .on_key_down((e, cx) => { if (e.key === "escape") { this.close(); cx.stop_propagation(); } })
+      .on_key_down((e, cx) => { if (e.key === "escape") { this.dismiss(); cx.stop_propagation(); } })
       .w_full()
       .min_h(0)
       .p(18)
@@ -309,9 +351,6 @@ export default class PocketLink extends View {
       .child(div().pt(6).child(this.note(t, "Your agents on your phone, from anywhere. A phone pairs once with a code from this screen: no SSH, no password, no port to open.")))
       .children(body)
       .when(Boolean(this.error), (el) => el.child(div().pt(10).text_size(12).text_color(t.blocked).child(String(this.error))))
-      // The usage meter the bridge keeps running on each machine: shown only when it keeps failing.
-      .children((s?.meter?.failing ?? []).map((f) =>
-        div().pt(10).text_size(12).text_color(t.blocked).child(`Usage meter on ${f.machine}: ${f.error ?? "failing"}`)))
       .child(
         div()
           .pt(16)

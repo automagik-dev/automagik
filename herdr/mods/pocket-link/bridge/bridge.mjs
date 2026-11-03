@@ -6,29 +6,29 @@
 //   node bridge.mjs pair [minutes]   make a one-time pairing link and QR, print {link, expires, rows}
 //   node bridge.mjs status           print {running, id, ticket, devices, pairing, login, state}
 //   node bridge.mjs start | stop     start the bridge detached; stop it (and its login service)
+//   node bridge.mjs cancel           end the pairing code, if one is live (the dialog does on close)
 //   node bridge.mjs forget <id>      remove a paired phone
 //   node bridge.mjs install|uninstall   start at login (LaunchAgent on macOS, systemd user unit on Linux)
-//   node bridge.mjs meter [machine]  install/update and run the usage meter once, on every machine
-//                                    (or on this computer and that machine)
-//                                    (`serve` does it 10 minutes after each pass; see meter.mjs)
+//
+// What a stranger can make it do before pairing is bounded in guard.mjs; the code itself in pairing.mjs.
 //
 // State lives outside the mod folder (see state.mjs), so reinstalling the mod keeps the pairings.
 import { Endpoint, EndpointTicket, SecretKey } from '@number0/iroh'
 import { spawn, execFileSync } from 'node:child_process'
-import { randomBytes, timingSafeEqual, createHash } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { promises as fs, existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, chmodSync, unlinkSync, readdirSync, openSync } from 'node:fs'
 import { homedir, hostname, platform } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import QRCode from 'qrcode'
-import { startMeter, failing } from './meter.mjs'
+import { acceptOne, slots, throttle, rotateLog } from './guard.mjs'
+import { judgeCode, cancelCode, fingerprint } from './pairing.mjs'
 import { open as openState } from './state.mjs'
 import { presence, publicStatus, writePublic, HEARTBEAT } from './presence.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SESSION = [...Buffer.from('herdr-pocket/1')]
 const PAIR = [...Buffer.from('herdr-pocket/pair/1')]
-const MAX_LINE = 4096
 const LABEL = 'dev.herdr.pocket-link'
 
 // As a service, stderr already is the log file; in a terminal, write both.
@@ -39,8 +39,10 @@ const log = (...args) => { const line = `${new Date().toISOString()} ${args.join
 const { dir: STATE, target: STATE_HOME } = openState({ env: process.env, home: homedir(), modRoot: join(HERE, '..'), log })
 files = {
   key: join(STATE, 'secret.key'), status: join(STATE, 'status.json'), devices: join(STATE, 'devices.json'),
-  pairing: join(STATE, 'pairing.json'), log: join(STATE, 'bridge.log'), meter: join(STATE, 'meter.json'),
+  pairing: join(STATE, 'pairing.json'), log: join(STATE, 'bridge.log'),
 }
+// Lines any peer can cause, before it is trusted: at most a few of each kind a minute.
+const refused = throttle(log)
 const readJson = (path, fallback) => { try { return JSON.parse(readFileSync(path, 'utf8')) } catch { return fallback } }
 // Atomic, owner-only writes: a reader never sees half a file.
 const writeJson = (path, value) => { const tmp = `${path}.${process.pid}.tmp`; writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 }); renameSync(tmp, path) }
@@ -62,39 +64,22 @@ function hcPath() {
   return candidates.find(p => p && existsSync(p)) ?? 'hc'
 }
 
-/** One line of JSON from a stream, at most MAX_LINE bytes; the rest of what was read comes back too. */
-async function readLine(recv) {
-  let buf = Buffer.alloc(0)
-  while (!buf.includes(10)) {
-    if (buf.length > MAX_LINE) throw new Error('header too long')
-    const chunk = await recv.read(MAX_LINE)
-    if (!chunk || chunk.length === 0) throw new Error('closed before its header')
-    buf = Buffer.concat([buf, Buffer.from(chunk)])
-  }
-  const end = buf.indexOf(10)
-  return { value: JSON.parse(buf.subarray(0, end).toString('utf8')), rest: buf.subarray(end + 1) }
-}
-
-const sameCode = (a, b) => { const x = createHash('sha256').update(String(a)).digest(), y = createHash('sha256').update(String(b)).digest(); return timingSafeEqual(x, y) }
-
-async function pairPhone(conn, bi) {
-  const phone = conn.remoteId().toString()
-  const reply = value => bi.send.writeAll([...Buffer.from(JSON.stringify(value) + '\n')]).then(() => bi.send.finish())
-  const { value } = await readLine(bi.recv)
+// The header is in (guard.mjs read it, within its deadline). Synchronous from reading pairing.json to
+// writing it, so two tries at once can't both count from the same state.
+async function pairPhone({ bi, value, peer: phone }) {
+  // The phone hangs up as soon as it has the reply, which can fail finish(); nothing to do about it then.
+  const reply = value => bi.send.writeAll([...Buffer.from(JSON.stringify(value) + '\n')]).then(() => bi.send.finish()).catch(() => {})
   const pending = readJson(files.pairing, null)
-  if (!pending || Date.now() > pending.expires) return reply({ ok: false, error: 'This pairing code was already used or has expired. Make a new one on the desktop.' })
-  if (!sameCode(value.code, pending.code)) {
-    // Five wrong tries end the code: guessing needs a new one each time.
-    pending.failures = (pending.failures ?? 0) + 1
-    if (pending.failures >= 5) unlinkSync(files.pairing); else writeJson(files.pairing, pending)
-    log('pair: wrong code from', phone.slice(0, 10))
-    return reply({ ok: false, error: 'That code is not the one on the desktop.' })
-  }
-  unlinkSync(files.pairing)
+  const { verdict, next } = judgeCode(pending, phone, value?.code)
+  if (next === null) try { unlinkSync(files.pairing) } catch {}
+  else if (next) writeJson(files.pairing, next)
+  if (verdict === 'gone') return reply({ ok: false, error: 'This pairing code was already used or has expired. Make a new one on the desktop.' })
+  if (verdict === 'locked') { refused('pair', 'too many wrong codes from', fingerprint(phone)); return reply({ ok: false, error: 'Too many wrong codes from this phone. Make a new code on the desktop.' }) }
+  if (verdict === 'wrong') { refused('pair', 'wrong code from', fingerprint(phone)); return reply({ ok: false, error: 'That code is not the one on the desktop.' }) }
   const name = String(value.device ?? 'Phone').replace(/[\u0000-\u001f]/g, '').slice(0, 60) || 'Phone'
   writeJson(files.devices, [...devices().filter(d => d.id !== phone), { id: phone, name, paired: Date.now(), seen: Date.now() }])
   clearQr()
-  log('pair: added', name, phone.slice(0, 10))
+  log('pair: added', name, fingerprint(phone))
   return reply({ ok: true, name: pending.name })
 }
 
@@ -112,12 +97,11 @@ function revoke() {
   }
 }
 
-async function session(conn, bi) {
-  const phone = conn.remoteId().toString()
+// Admitted (a paired key) and its header read, by guard.mjs.
+async function session({ conn, bi, value, rest, peer: phone }) {
   const device = devices().find(d => d.id === phone)
-  if (!device) { log('session: refused unpaired', phone.slice(0, 10)); conn.close(1n, [...Buffer.from('not paired')]); return }
-  const { value, rest } = await readLine(bi.recv)
-  const name = typeof value.session === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(value.session) ? value.session : 'default'
+  if (!device) { conn.close(1n, [...Buffer.from('not paired')]); return } // removed since it was admitted
+  const name = typeof value?.session === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(value.session) ? value.session : 'default'
   // Read again: a phone removed meanwhile must stay removed.
   writeJson(files.devices, devices().map(d => d.id === phone ? { ...d, seen: Date.now() } : d))
   log('session:', device.name, 'session', name)
@@ -145,10 +129,6 @@ async function session(conn, bi) {
   } finally { close() }
 }
 
-// The usage meter on this computer and every connected machine (meter.mjs). Its state is
-// meter.json in the state dir; the dialog shows only machines that keep failing.
-const meterLoop = (only = null) => startMeter({ hc: hcPath(), read: () => readJson(files.meter, {}), write: s => writeJson(files.meter, s), log, only })
-
 async function serve() {
   const other = readJson(files.status, {})
   if (other.pid && other.pid !== process.pid && alive(other.pid)) { log('serve: already running as', other.pid); process.exit(0) }
@@ -158,25 +138,31 @@ async function serve() {
   publish()
   ep.online().then(() => { publish(); log('serve: online as', ep.id().fmtShort()) }, e => log('serve: no relay yet:', e.message))
   ep.watchAddr(() => publish())
-  const meter = meterLoop()
-  const stop = async () => { meter.stop(); serving = false; publishPublic(); try { const s = readJson(files.status, {}); if (s.pid === process.pid) unlinkSync(files.status) } catch {}; await ep.close().catch(() => {}); process.exit(0) }
+  // Older versions kept the usage meter's status here; the meter is the Automagik Herdr pack's now.
+  try { unlinkSync(join(STATE, 'meter.json')) } catch {}
+  // The log stays under guard.mjs's LOG_MAX (plus one older copy), checked each minute.
+  const logs = [...new Set([files.log, join(STATE_HOME, 'bridge.log')])]
+  const rotate = () => { for (const l of logs) try { rotateLog(l) } catch (e) { log('log:', e.message) } }
+  rotate(); setInterval(rotate, 60_000).unref()
+  const stop = async () => { serving = false; publishPublic(); try { const s = readJson(files.status, {}); if (s.pid === process.pid) unlinkSync(files.status) } catch {}; await ep.close().catch(() => {}); process.exit(0) }
   process.on('SIGTERM', stop); process.on('SIGINT', stop)
   // public-status.json: running from here (a stop now writes running: false), then `updated` every
   // HEARTBEAT and on each session open and close.
   serving = true; publishPublic()
   setInterval(publishPublic, HEARTBEAT).unref()
   setInterval(revoke, 2000).unref()
+  // Pairing: only while a code is live, and all of it within the handshake deadline; anyone with
+  // the address may try then. Sessions: only paired keys. Others are closed before anything is read.
+  const codeLive = () => { const p = readJson(files.pairing, null); return Boolean(p && Date.now() <= p.expires) }
+  const routes = {
+    'herdr-pocket/pair/1': { admit: codeLive, closing: 'No pairing code is live. Make a new one on the desktop.', run: pairPhone, timed: true },
+    'herdr-pocket/1': { admit: id => devices().some(d => d.id === id), closing: 'not paired', run: session, timed: false },
+  }
+  const cap = slots()
   for (;;) {
     const incoming = await ep.acceptNext()
     if (!incoming) break
-    ;(async () => {
-      const accepting = await incoming.accept()
-      const alpn = Buffer.from(await accepting.alpn()).toString()
-      const conn = await accepting.connect()
-      const bi = await conn.acceptBi()
-      if (alpn === 'herdr-pocket/pair/1') await pairPhone(conn, bi)
-      else await session(conn, bi)
-    })().catch(e => log('connection:', e.message))
+    acceptOne(incoming, { routes, cap, refused, log })
   }
   serving = false; publishPublic()
 }
@@ -250,11 +236,13 @@ try {
     const s = readJson(files.status, {})
     const p = readJson(files.pairing, null)
     out({ running: Boolean(s.pid && alive(s.pid)), id: s.id ?? null, name: s.name ?? null, ticket: s.ticket ?? null,
-      devices: devices().map(({ id, name, paired, seen }) => ({ id, name, paired, seen })),
-      pairing: p && Date.now() < p.expires ? { expires: p.expires } : null, login: existsSync(loginService().path),
-      meter: { failing: failing(readJson(files.meter, {})) }, state: STATE })
+      devices: devices().map(({ id, name, paired, seen }) => ({ id, name, fingerprint: fingerprint(id), paired, seen })),
+      pairing: p && Date.now() < p.expires ? { expires: p.expires } : null, login: existsSync(loginService().path), state: STATE })
   }
-  else if (command === 'meter') { const m = meterLoop(arg ?? null); const s = await m.pass(); m.stop(); out(s) }
+  else if (command === 'cancel') {
+    const cancelled = cancelCode(files.pairing); clearQr()
+    out({ ok: true, cancelled, devices: devices().map(({ id, name, paired }) => ({ id, name, fingerprint: fingerprint(id), paired })) })
+  }
   else if (command === 'start') {
     // Without the login service: a detached bridge that lives until stopped or logout.
     const s = readJson(files.status, {})
@@ -268,7 +256,7 @@ try {
     const s = loginService(); s.off(); try { unlinkSync(s.path) } catch {}
     const st = readJson(files.status, {})
     if (st.pid && alive(st.pid)) try { process.kill(st.pid) } catch {}
-    try { unlinkSync(files.pairing) } catch {}; clearQr()
+    cancelCode(files.pairing); clearQr()
     out({ ok: true })
   }
   else if (command === 'forget') { writeJson(files.devices, devices().filter(d => d.id !== arg)); out({ ok: true }) }

@@ -40,7 +40,18 @@ Phone (`android/app/src/main/java/ai/namastex/automagik/`):
 Desktop (`desktop/pocket-link/mods/pocket-link/bridge/bridge.mjs`):
 
 - A code lasts 10 minutes by default (1 to 60 allowed) (`:158-163`) and works once.
-- Five wrong tries end the code (`:79`).
+- One phone key gets 3 wrong tries, then is refused without counting; only a flood, 1000 wrong
+  tries in all, ends the code (`bridge/pairing.mjs:7-13`). With no live code, a pairing connection
+  is closed before anything is read. Closing the dialog ends the code (`bridge.mjs cancel`,
+  `main.js:108`).
+- Before pairing, a connection from an unvalidated source address gets a QUIC retry. Then it
+  has 10 s for its handshake and first line; at most 16 are in that phase, 4 from one address (an
+  IPv4 address, an IPv6 /64, or the key a relayed peer claims), and 64 open in all
+  (`bridge/guard.mjs:8-14`).
+- Residual risk, accepted by the owner 2026-11-03: a flood through a relay with a new key per
+  connection, or stalled handshakes, can fill the pending slots and refuse a paired phone's new
+  sessions while it lasts. Open sessions are unaffected. Remedy: reset the desktop key
+  ([#48](https://github.com/automagik-dev/automagik-pocket/issues/48)).
 - Removing a phone ends its open session (`:98`).
 
 ## Design

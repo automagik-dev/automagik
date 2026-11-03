@@ -25,7 +25,7 @@ The app connects through Pocket Link only.
    A QR code appears.
 3. In the app, tap **Pair with Herdr desktop**, then **Scan the QR code**. You can also paste the
    link.
-4. Done. The code works once, for 10 minutes.
+4. Done. The code works once, for 10 minutes, and ends when you close the dialog.
 
 Saved an SSH machine in an older version? It stays in **Machines**, greyed. Tap **Pair with QR**
 on it and scan that computer's code; the old entry goes once it pairs
