@@ -109,7 +109,7 @@ The herdr parts (t2zx's defaults, branch `feat/herdr-parts`):
 - Every herdr part is `targets: local`. None declares `~/.local/bin/usagemeter`: that becomes
   usagemeter's own part (t22b); `install.sh` and `am meter` keep handling it until then.
 - Pocket Link (`herdr/mods/pocket-link`) is on the herdr lane but is not a pack member (it is
-  never in `PACK_MODS`, and the pack never writes it). It gets its own part, owned by Pocket.
+  never in `PACK_MODS`, and the pack never writes it). Proposed: its own part, owned by Pocket.
   Pocket itself (`android-app`) installs nothing on a computer: proposed, its doctor reports 2
   there, and `am pocket pair` is how a phone joins.
 
