@@ -25,13 +25,19 @@ on:
         required: false
         type: string
         default: '60'
+      only:
+        description: 'all: the full matrix; crash-probe: only the Linux renderer-crash probe (macOS as the control)'
+        required: false
+        type: choice
+        options: [all, crash-probe]
+        default: all
 
 permissions: {}
 
 jobs:
   matrix:
     name: ${{ matrix.name }}
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.only != 'crash-probe'
     strategy:
       fail-fast: false
       matrix:
@@ -319,7 +325,7 @@ jobs:
   report:
     name: Report
     needs: matrix
-    if: always() && github.event_name == 'workflow_dispatch'
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.only != 'crash-probe'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -350,3 +356,99 @@ jobs:
         with:
           name: cross-os-report
           path: results/
+
+  crash-probe:
+    # Why browser-smoke.mjs's "a crashed page drops the connection and loads again" fails on Linux:
+    # cross-os/crash-probe.mjs (three ways to crash a Bot-like view) and the smoke test itself,
+    # under xvfb, xvfb --no-sandbox, Chromium's headless ozone (no display server) and a headless
+    # Wayland compositor. macOS is the control.
+    name: crash-probe (${{ matrix.name }})
+    if: github.event_name == 'workflow_dispatch' && inputs.only == 'crash-probe'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-24.04
+          - name: macos
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      DO_NOT_TRACK: '1'
+      OUT: ${{ github.workspace }}/out/crash-${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Check out the Electron app at ${{ inputs.desktop_ref }}
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.desktop_ref }}
+          path: app
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24'
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Linux system packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb dbus weston >/dev/null
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Install Electron and the workspace
+        run: |
+          (cd app/apps/desktop && npm ci --no-audit --no-fund)
+          (cd app && bun install --frozen-lockfile --ignore-scripts)
+
+      - name: Probe and smoke under each display
+        continue-on-error: true
+        run: |
+          mkdir -p "$OUT"
+          E=$(cd app/apps/desktop && node -p "require('electron')")
+          T=$(command -v timeout || true)
+          probe="$GITHUB_WORKSPACE/apps/desktop-tauri-spike/cross-os/crash-probe.mjs"
+          run() { # name, then the command prefix and Electron's switches
+            local name=$1; shift
+            echo "::group::$name"
+            ${T:+$T 150} "$@" "$probe" > "$OUT/$name-probe.log" 2>&1; echo "probe exit $?" >> "$OUT/$name-probe.log"
+            grep '^PROBE ' "$OUT/$name-probe.log" || tail -n 20 "$OUT/$name-probe.log"
+            (cd app/apps/desktop && ${T:+$T 420} "$@" scripts/browser-smoke.mjs > "$OUT/$name-smoke.log" 2>&1; echo "smoke exit $?" >> "$OUT/$name-smoke.log")
+            grep -E '^(ok|FAIL) |browser smoke:|smoke exit' "$OUT/$name-smoke.log" | grep -E 'crash|FAIL|browser smoke:|smoke exit'
+            echo "::endgroup::"
+          }
+          if [ "$RUNNER_OS" = Linux ]; then
+            run xvfb dbus-run-session -- xvfb-run -a -s "-screen 0 1920x1080x24" "$E"
+            run xvfb-no-sandbox dbus-run-session -- xvfb-run -a -s "-screen 0 1920x1080x24" "$E" --no-sandbox
+            run ozone-headless dbus-run-session -- "$E" --ozone-platform=headless
+            export XDG_RUNTIME_DIR=$(mktemp -d) && chmod 700 "$XDG_RUNTIME_DIR"
+            weston --backend=headless --socket=wl-probe --idle-time=0 > "$OUT/weston.log" 2>&1 &
+            for _ in $(seq 1 50); do [ -S "$XDG_RUNTIME_DIR/wl-probe" ] && break; sleep 0.2; done
+            WAYLAND_DISPLAY=wl-probe run wayland-headless dbus-run-session -- env WAYLAND_DISPLAY=wl-probe "$E" --ozone-platform=wayland
+          else
+            run macos "$E"
+          fi
+          {
+            echo "## crash-probe (${{ matrix.name }})"
+            for f in "$OUT"/*-probe.log; do n=$(basename "$f" -probe.log); echo "### $n"; echo '```'; grep '^PROBE ' "$f" | cut -c7- ; grep -E 'crash|browser smoke:|smoke exit' "$OUT/$n-smoke.log"; echo '```'; done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: crash-probe-${{ matrix.name }}
+          path: out/
+          retention-days: 14
