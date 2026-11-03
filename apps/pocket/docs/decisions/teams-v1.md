@@ -45,14 +45,22 @@ All taken by the Pocket orchestrator on 2026-11-03, from the owner's answers.
 - Icons and colours come from `shared.json`: `am.sidebar.icons` and `am.space.colors`, else the
   keys from before the pack's rename. Images are copied from Herdr's `space-icons/` folder.
 - Cache: `TeamsDb.kt`, written only by `TeamsSync`.
-  - A machine counts as read once its terminals and spaces have been read this session and git
-    has answered for every space (`Teams.ready`, or 30 s after that first reading). A read
-    machine's rows are then replaced, even with no project left. Nothing is written when the
-    rows didn't change.
+  - Each machine counts on its own: a saved machine's own core and every machine it links to
+    (`Teams.scope`). One counts as read once this session has read its terminals and its spaces,
+    and git has answered for each of its spaces (`Teams.ready`, or 30 s after its spaces were
+    first read). Its rows are then replaced, even with no project left, while a machine still
+    being read (or one whose layout timed out) keeps its cached rows. Nothing is written when
+    the rows didn't change.
   - Removing a machine purges its rows. Cached rows of a machine that is saved but not read show
     as last known. They can't be opened or answered, and the deck says "Offline: can't answer".
   - A bot celebrates a merge only when its own feed newly lists it. Each feed keeps its own
     baseline.
+- Reads (`HostBatch`): git for every folder of a machine is one `machine.exec`, as is every
+  project registry there (re-read every 5 minutes). The machines are read at once, at most six,
+  each time-boxed (layouts 8 s, batches 15 s remote and 20 s on the core's own machine). Before,
+  there was one call per folder and command, one machine after another. On a desktop with 19
+  spaces on 7 machines that took about a minute (~280-320 calls); now it fills in within ~10 s
+  (~50-70 calls, the refreshes meanwhile included).
 - Strip, with "–" for a missing value:
   - **Tasks done:** the feed's `merges.n` (a rolling 24 h).
   - **Agent time:** the feed's `tasks[].bots[].work_min` (merged tasks only).
@@ -62,10 +70,8 @@ All taken by the Pocket orchestrator on 2026-11-03, from the owner's answers.
 
 ## Open questions
 
-- `readBots` reads every project's registry every 5 minutes. It is one small `file.read` per
-  project. Limiting it to projects that show bots is open.
-- Spaces on a linked machine that is down don't show live, and the next reading replaces their
-  cached rows.
+- Spaces on a linked machine that is down don't show live; its cached rows stay, stale, until it
+  is read again.
 
 - Linked machines: their projects show the letter, and their bots wear Genie. Reading their
   `shared.json` and pets is not built.

@@ -227,7 +227,7 @@ class TeamsTest {
         val live = listOf(team("a", Teams.WORKING).copy(hostId = "h1"))
         val cached = listOf(team("a", Teams.IDLE).copy(hostId = "h1"), team("b", Teams.NEEDS_YOU).copy(hostId = "h2"),
             team("c", Teams.IDLE).copy(hostId = "gone"))
-        val merged = Teams.merge(live, cached, read = setOf("h1"), known = setOf("h1", "h2"))
+        val merged = Teams.merge(live, cached, read = setOf("h1|"), known = setOf("h1", "h2"))
         assertEquals(listOf("a", "b"), merged.map { it.id })   // a machine no longer saved shows nothing
         assertEquals(Teams.WORKING, merged[0].bots.single().pose)
         assertTrue(merged[1].stale)
@@ -249,21 +249,85 @@ class TeamsTest {
     }
 
     @Test fun aMachineIsReadOnceItsSpacesAndGitAre() {
-        val m = machine().copy(session = 2, readSession = 2, readMs = 1_000L)
-        assertTrue(Teams.ready(m, now = 2_000L))
-        assertTrue(!Teams.ready(m.copy(connected = false), 2_000L))
-        assertTrue(!Teams.ready(m.copy(readSession = 1), 2_000L))   // this session's terminals not read yet
+        val m = machine().copy(session = 2, readSession = 2, layouts = mapOf("" to 1_000L))
+        assertTrue(Teams.ready(m, "", now = 2_000L))
+        assertTrue(!Teams.ready(m.copy(connected = false), "", 2_000L))
+        assertTrue(!Teams.ready(m.copy(readSession = 1), "", 2_000L))   // this session's terminals not read yet
         val pending = m.copy(git = m.git - Sidebar.gitKey("", "/work/site"))
-        assertTrue(!Teams.ready(pending, 2_000L))
-        assertTrue(Teams.ready(pending, 1_000L + Teams.READ_GRACE_MS))   // a space whose git never answers stops holding it
+        assertTrue(!Teams.ready(pending, "", 2_000L))
+        assertTrue(Teams.ready(pending, "", 1_000L + Teams.READ_GRACE_MS))   // a space whose git never answers stops holding it
         // A space on a linked machine that is down doesn't hold it back, and shows nothing.
         val away = m.copy(spaces = m.spaces + PocketSpace("box/s9", "Box", "/x", "box", listOf(PocketTab("box/z", "Z", listOf("box/t9")))))
-        assertTrue(Teams.ready(away, 2_000L))
+        assertTrue(Teams.ready(away, "", 2_000L))
         assertEquals(2, Teams.build("h1", away, 2_000L).size)
         // A folder the core didn't report as a path: a project of its own, no git needed.
         val relative = m.copy(spaces = m.spaces + PocketSpace("s8", "Home", "~", "", emptyList()))
-        assertTrue(Teams.ready(relative, 2_000L))
+        assertTrue(Teams.ready(relative, "", 2_000L))
         assertEquals("h1||space:s8", Teams.build("h1", relative, 2_000L).last().id)
+    }
+
+    // ---- each linked machine on its own
+
+    /** [machine] plus linked machines "fast" and "slow" with a project each; [slowGit]: slow's git has answered. */
+    private fun linkedMachines(slowGit: Boolean, slowLaidOut: Boolean = true, slowUp: Boolean = true): MachineState {
+        val m = machine().copy(session = 2, readSession = 2)
+        fun space(machine: String) = PocketSpace("$machine/s1", machine, "/srv/$machine", machine,
+            listOf(PocketTab("$machine/a", "A", listOf("$machine/t1"))))
+        fun pane(machine: String) = CoreTerminal("$machine/t1", "lead", "/srv/$machine", "live", "blocked", "claude-code", "Run it?", 80, 24,
+            labels = mapOf("bot" to "b-$machine"), statusMs = 7, kind = "permission")
+        fun git(machine: String) = Sidebar.gitKey(machine, "/srv/$machine") to GitInfo("main", 0, 0, "/srv/$machine", "/srv/$machine/.git")
+        return m.copy(spaces = m.spaces + space("fast") + space("slow"), terminals = m.terminals + pane("fast") + pane("slow"),
+            git = m.git + git("fast") + (if (slowGit) mapOf(git("slow")) else emptyMap()),
+            linked = listOf(LinkedMachine("fast", "connected"), LinkedMachine("slow", if (slowUp) "connected" else "disconnected")),
+            layouts = mapOf("" to 1_000L, "fast" to 1_000L) + (if (slowLaidOut) mapOf("slow" to 1_000L) else emptyMap()))
+    }
+
+    @Test fun eachLinkedMachineGoesLiveOnItsOwnAndASlowOneDoesNotHoldTheOthersBack() {
+        val m = linkedMachines(slowGit = false)
+        // slow's git hasn't answered: the core's own machine and fast are read, slow isn't (until the grace runs out).
+        assertEquals(setOf("h1|", "h1|fast"), Teams.read(mapOf("h1" to m), 2_000L))
+        assertEquals(setOf("h1|", "h1|fast", "h1|slow"), Teams.read(mapOf("h1" to m), 1_000L + Teams.READ_GRACE_MS))
+        // Its git answers: slow is read too, without waiting for the grace.
+        assertEquals(setOf("h1|", "h1|fast", "h1|slow"), Teams.read(mapOf("h1" to linkedMachines(slowGit = true)), 2_000L))
+        // A machine whose layout didn't answer this session, or that is down, is never read, whatever the grace.
+        for (away in listOf(linkedMachines(slowGit = true, slowLaidOut = false), linkedMachines(slowGit = true, slowUp = false)))
+            assertEquals(setOf("h1|", "h1|fast"), Teams.read(mapOf("h1" to away), 1_000L + Teams.READ_GRACE_MS))
+        // Nothing of this session read yet: nothing is.
+        assertEquals(emptySet<String>(), Teams.read(mapOf("h1" to m.copy(readSession = 1)), 2_000L))
+    }
+
+    @Test fun theCacheShowsFirstAndEachMachineReplacesItsRowsAsItIsRead() {
+        val full = linkedMachines(slowGit = true)
+        val cached = Teams.build(mapOf("h1" to full), 2_000L)
+        val known = setOf("h1")
+        // Connected, nothing read yet: every cached project shows at once, stale.
+        val first = Teams.merge(Teams.live(mapOf("h1" to full), emptySet(), 2_000L), cached, emptySet(), known)
+        assertEquals(cached.map { it.id }.toSet(), first.map { it.id }.toSet())
+        assertTrue(first.all { it.stale })
+        // fast and the core's own are read; slow is still being read: its row stays cached and stale.
+        val partial = linkedMachines(slowGit = false)
+        val read = Teams.read(mapOf("h1" to partial), 2_000L)
+        val shown = Teams.merge(Teams.live(mapOf("h1" to partial), read, 2_000L), cached, read, known)
+        assertEquals(cached.map { it.id }.toSet(), shown.map { it.id }.toSet())
+        assertEquals(listOf("slow"), shown.filter { it.stale }.map { it.machine })
+        assertTrue(shown.filter { !it.stale }.all { it.machine in setOf("", "fast") })
+        // Then slow: nothing stale is left.
+        val all = Teams.read(mapOf("h1" to full), 2_000L)
+        assertTrue(Teams.merge(Teams.live(mapOf("h1" to full), all, 2_000L), cached, all, known).none { it.stale })
+    }
+
+    @Test fun theDeckAnswersOnlyFromMachinesReadThisSession() {
+        val partial = linkedMachines(slowGit = false)
+        val cached = Teams.build(mapOf("h1" to linkedMachines(slowGit = true)), 2_000L)
+        val read = Teams.read(mapOf("h1" to partial), 2_000L)
+        val shown = Teams.merge(Teams.live(mapOf("h1" to partial), read, 2_000L), cached, read, setOf("h1"))
+        // slow's request is in the cache, but slow isn't read: it can't be answered, and it has no terminal to open.
+        val deck = Teams.deck(shown).map { it.second.id }
+        assertTrue("b-slow" !in deck)
+        assertTrue("b-fast" in deck)
+        assertNull(shown.single { it.machine == "slow" }.bots.single { it.id == "b-slow" }.ref)
+        // Every card is one a read machine's live terminal answers.
+        assertTrue(Teams.deck(shown).all { (t, b) -> Teams.scope(t.hostId, t.machine) in read && b.ref != null })
     }
 
     @Test fun aBotsPaneMustBeInItsProject() {

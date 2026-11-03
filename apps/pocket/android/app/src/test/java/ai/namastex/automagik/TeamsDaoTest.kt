@@ -60,7 +60,7 @@ class TeamsDaoTest {
             Sidebar.gitKey("", "/work/two") to GitInfo("dev", 0, 0, "/work/two", "/work/two/.git"))
         val feed = SpaceFeed.Feed(null, false, mapOf("/work/one" to SpaceFeed.Project(null, null, null, null, null, emptyMap(),
             feedTasks.map { SpaceFeed.TaskWork(it, listOf(SpaceFeed.TaskBot("b-aaaaaaaaaa", 10.0))) })))
-        return MachineState(connected = true, session = 1, readSession = 1, readMs = 0, terminals = terminals, spaces = all.take(spaces),
+        return MachineState(connected = true, session = 1, readSession = 1, layouts = mapOf("" to 0L), terminals = terminals, spaces = all.take(spaces),
             git = git, space = mapOf("" to feed))
     }
 
@@ -95,6 +95,34 @@ class TeamsDaoTest {
         assertEquals("marked", read().single().name)
         sync.reading(mapOf("h1" to machine().let { it.copy(terminals = it.terminals.map { x -> x.copy(status = "working") }) }), 2_000L)
         assertEquals("One", read().single().name)
+    }
+
+    /** h1's own core plus a linked machine "box" with one project, its git answered or not. */
+    private fun linked(boxGit: Boolean, boxLaidOut: Boolean = true): MachineState {
+        val m = machine()
+        val box = PocketSpace("box/s1", "Box", "/srv/box", "box", listOf(PocketTab("box/a", "A", listOf("box/t1"))))
+        val git = if (boxGit) m.git + (Sidebar.gitKey("box", "/srv/box") to GitInfo("main", 0, 0, "/srv/box", "/srv/box/.git")) else m.git
+        return m.copy(spaces = m.spaces + box, git = git, linked = listOf(LinkedMachine("box", "connected")),
+            layouts = if (boxLaidOut) mapOf("" to 0L, "box" to 0L) else mapOf("" to 0L))
+    }
+
+    @Test fun eachMachineReplacesOnlyItsOwnRowsAndASlowOneKeepsItsCache() = runTest {
+        val sync = TeamsSync(dao)
+        sync.reading(mapOf("h1" to linked(boxGit = true)), 1_000L)
+        assertEquals(setOf("h1||/work/one", "h1|box|/srv/box"), read().map { it.id }.toSet())
+        // A new session: box's git hasn't answered yet, so only h1's own rows are replaced; box keeps its cached row.
+        val slow = linked(boxGit = false).let { it.copy(session = 2, readSession = 2,
+            terminals = it.terminals.map { t -> t.copy(status = "working") }) }
+        sync.reading(mapOf("h1" to slow), 2_000L)
+        assertEquals(setOf("h1||/work/one", "h1|box|/srv/box"), read().map { it.id }.toSet())
+        assertEquals(Teams.WORKING, read().single { it.machine == "" }.bots.single().pose)
+        // A linked machine whose layout didn't answer at all this session isn't read either: its row stays.
+        sync.reading(mapOf("h1" to linked(boxGit = true, boxLaidOut = false).copy(session = 3, readSession = 3)), 3_000L)
+        assertEquals(setOf("h1||/work/one", "h1|box|/srv/box"), read().map { it.id }.toSet())
+        // Read, with its project gone: box's rows go, h1's own stay.
+        val gone = linked(boxGit = true).let { it.copy(spaces = it.spaces.filter { s -> s.machine == "" }) }
+        sync.reading(mapOf("h1" to gone), 4_000L)
+        assertEquals(listOf("h1||/work/one"), read().map { it.id })
     }
 
     @Test fun eachFeedHasItsOwnMergeBaseline() = runTest {
