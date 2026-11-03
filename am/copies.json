@@ -1,0 +1,101 @@
+{
+  "note": "Written by node scripts/am-copies.mjs --write; do not edit. Each is a byte-equal copy (RFC 0012).",
+  "files": [
+    {
+      "from": "herdr/mods/am-sidebar/agentPath.mjs",
+      "to": "am/agentPath.mjs"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/attach.js",
+      "to": "am/attach.js"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/bin/automagik-herdr",
+      "to": "am/bin/automagik-herdr"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/bin/automagik-herdr.mjs",
+      "to": "am/bin/automagik-herdr.mjs"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/bin/run.sh",
+      "to": "am/bin/run.sh"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/bin/state.mjs",
+      "to": "am/bin/state.mjs"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/briefing.mjs",
+      "to": "am/briefing.mjs"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/briefingEntry.mjs",
+      "to": "am/briefingEntry.mjs"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/briefingText.mjs",
+      "to": "am/briefingText.mjs"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/inspect.js",
+      "to": "am/inspect.js"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/launchArgs.js",
+      "to": "am/launchArgs.js"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/meterFleet.js",
+      "to": "am/meterFleet.js"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/migrate.js",
+      "to": "am/migrate.js"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/migrateHome.mjs",
+      "to": "am/migrateHome.mjs"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/migrateHooks.mjs",
+      "to": "am/migrateHooks.mjs"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/model.js",
+      "to": "am/model.js"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/models.js",
+      "to": "am/models.js"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/pack-keys.json",
+      "to": "am/pack-keys.json"
+    },
+    {
+      "from": "plugin-lane/keys.json",
+      "to": "am/plugin-lane-keys.json"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/release.js",
+      "to": "am/release.js"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/restart.js",
+      "to": "am/restart.js"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/tidy.js",
+      "to": "am/tidy.js"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/update.mjs",
+      "to": "am/update.mjs"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/workers.js",
+      "to": "am/workers.js"
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "id": "automagik.am",
+  "title": "am, the Automagik command (Bot verbs, briefing, parts)",
+  "kind": "binary",
+  "paths": [
+    "am/**"
+  ],
+  "provides": [
+    "bots.cli@1",
+    "bots.attach-ledger@1",
+    "bots.whois-json@1"
+  ],
+  "requires": [],
+  "os": [
+    "macos",
+    "linux"
+  ],
+  "targets": "local",
+  "artifact": "automagik-am-{version}.tgz",
+  "entry": {
+    "install": [
+      "sh",
+      "bin/am",
+      "self",
+      "install"
+    ],
+    "uninstall": [
+      "sh",
+      "bin/am",
+      "self",
+      "uninstall"
+    ],
+    "doctor": [
+      "sh",
+      "bin/am",
+      "self",
+      "doctor"
+    ],
+    "rollback": [
+      "sh",
+      "bin/am",
+      "rollback",
+      "automagik.am"
+    ]
+  },
+  "writes": [
+    "~/.automagik/parts/automagik.am/**",
+    "~/.local/bin/am",
+    "~/.local/bin/automagik-herdr",
+    "$HERDR_APP_HOME/automagik-herdr/briefing.mjs"
+  ],
+  "set": [
+    "code",
+    "work"
+  ]
+}
