@@ -14,7 +14,7 @@ import { appendFileSync, createWriteStream, mkdirSync, readFileSync, rmSync } fr
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { linkInArgs, parseDeepLink, SCHEME } from './deeplink.js'
+import { linkInArgs, parseDeepLink, SCHEMES } from './deeplink.js'
 import { fade, PAGE_IN_CSS } from './motion.js'
 import { noteRestart, restartLine, steps } from './timeline.js'
 import { startUp } from './startup.js'
@@ -102,12 +102,14 @@ const wayland = process.platform === 'linux' && process.env.XDG_SESSION_TYPE ===
   !['ozone-platform', 'ozone-platform-hint'].some(name => app.commandLine.getSwitchValue(name) === 'x11')
 const botCursor = new BotCursor({ window: () => window, BrowserWindow, views: botViews, placeable: !wayland })
 
-// omni:// links (deeplink.js): the system hands them to the running app (macOS: open-url;
-// Linux: a second instance with the link as an argument), or starts the app with one.
-// A link that arrives before the app's page is up waits for it.
+// automagik:// and omni:// links (deeplink.js): the system hands them to the running app
+// (macOS: open-url; Linux and Windows: a second instance with the link as an argument), or
+// starts the app with one. A link that arrives before the app's page is up waits for it.
 let pendingLink = linkInArgs(process.argv)
-if (process.defaultApp && process.argv.length >= 2) app.setAsDefaultProtocolClient(SCHEME, process.execPath, [process.argv[1]])
-else app.setAsDefaultProtocolClient(SCHEME)
+for (const scheme of SCHEMES) {
+  if (process.defaultApp && process.argv.length >= 2) app.setAsDefaultProtocolClient(scheme, process.execPath, [process.argv[1]])
+  else app.setAsDefaultProtocolClient(scheme)
+}
 app.on('open-url', (event, url) => {
   event.preventDefault()
   receiveLink(url)
@@ -136,6 +138,8 @@ function receiveLink(text) {
     if (window.isMinimized()) window.restore()
     window.focus()
   }
+  // A link's Bot is selected from RFC 0013 delivery 8; until then it is only logged.
+  if (link.bot) switchLog(`${new Date().toISOString()} link: open, bot ${link.bot} (not selected yet)\n`)
   if (link.action !== 'connect') return
   pendingLink = text
   if (ready) void connectFromLink()
