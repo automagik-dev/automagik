@@ -43,13 +43,13 @@ const failed = (r) => r.checks.filter((c) => !c.ok).map((c) => c.check);
 const ls = (dir) => (existsSync(dir) ? readdirSync(dir).sort() : []);
 
 test("the ids, the argv and the contract around them", () => {
-  assert.deepEqual(PART_IDS, [...PACK_MODS.map((m) => `herdr.${m}`), "herdr.cli", "herdr.layout"]);
+  assert.deepEqual(PART_IDS, [...PACK_MODS.map((m) => `herdr.${m}`), "herdr.layout"]);
   assert.deepEqual(P("herdr.am-sidebar"), { id: "herdr.am-sidebar", kind: "pack", mod: "am-sidebar" });
   assert.deepEqual(P("herdr.am-tabs"), { id: "herdr.am-tabs", kind: "mod", mod: "am-tabs" });
   assert.equal(P("herdr.pocket-link"), null);
   assert.equal(P("me.my-sidebar"), null);
   assert.deepEqual(parseArgs(["uninstall", "herdr.am-tabs", "--purge"]), { verb: "uninstall", part: P("herdr.am-tabs"), purge: true });
-  for (const bad of [["install"], ["install", "herdr.nope"], ["remove", "herdr.cli"], ["install", "herdr.cli", "--purge"], ["doctor", "herdr.cli", "-v"]]) {
+  for (const bad of [["install"], ["install", "herdr.nope"], ["remove", "herdr.layout"], ["install", "herdr.layout", "--purge"], ["doctor", "herdr.layout", "-v"], ["install", "herdr.cli"]]) {
     assert.throws(() => parseArgs(bad), /usage: node part.mjs/, bad.join(" "));
   }
 });
@@ -60,7 +60,7 @@ test("off macOS every entry is not applicable (exit 2) and changes nothing", (t)
   const ctx = m.ctx({ AM_JSON: "1" }, { platform: "linux" });
   assert.equal(main(["install", "herdr.am-sidebar"], { ctx, out: (l) => out.push(l) }), 2);
   assert.equal(JSON.parse(out[0]).ok, false);
-  assert.equal(main(["doctor", "herdr.cli"], { ctx, out: (l) => out.push(l) }), 2);
+  assert.equal(main(["doctor", "herdr.layout"], { ctx, out: (l) => out.push(l) }), 2);
   assert.match(JSON.parse(out[1]).detail, /not applicable/);
   assert.deepEqual(ls(m.app), []);
   assert.equal(main(["bogus"], { ctx, out: () => {} }), 2, "a usage error");
@@ -81,7 +81,9 @@ test("install from a checkout: the whole pack once, the record its marker; a sec
   const installs = m.calls.filter((c) => c.some((a) => a.endsWith("update.mjs"))).length;
   assert.equal(installs, 1);
 
-  for (const id of PART_IDS.filter((id) => id !== "herdr.cli")) {
+  // The pack is in; the sidebar's part also links the command (a change), then nothing changes again.
+  assert.equal(install(m.ctx({ AM_VERSION: VERSION }), P("herdr.am-sidebar"), packSource).changed, true);
+  for (const id of PART_IDS) {
     const r = install(m.ctx({ AM_VERSION: VERSION }), P(id), packSource);
     assert.equal(r.changed, false, id);
   }
@@ -104,6 +106,7 @@ test("AM_ARTIFACT: am's verified tarball is installed as it is", (t) => {
 test("one mod: uninstall switches it off, an update keeps it off, doctor says not applicable, install switches it on", (t) => {
   const m = machine(t);
   install(m.ctx(), P("herdr.am-tabs"), packSource);
+  install(m.ctx(), P("herdr.am-sidebar"), packSource);
   assert.equal(doctorOf(m, "herdr.am-tabs").code, 0);
 
   const r = uninstall(m.ctx(), P("herdr.am-tabs"));
@@ -141,29 +144,32 @@ test("am-mods: its key goes with it while it is the pack's, a rebound one stays,
   assert.match(doctorOf(m, "herdr.am-mods").checks.find((c) => c.check === "keys").detail, /is yours/);
 });
 
-test("herdr.cli: links automagik-herdr into ~/.local/bin, leaves a link of someone else's, unlinks only its own", (t) => {
+test("herdr.am-sidebar links automagik-herdr as install.sh does, leaves someone else's, and records AM_SEQUENCE", (t) => {
   const m = machine(t);
-  const r = install(m.ctx(), P("herdr.cli"), packSource);
+  const r = install(m.ctx({ AM_SEQUENCE: "630001" }), P("herdr.am-sidebar"), packSource);
   assert.equal(r.ok, true);
+  assert.equal(readMarker(m.mods).sequence, 630001, "the signed pointer's sequence: install.sh's replay guard stays on");
   const link = join(m.binDir, "automagik-herdr");
   assert.equal(readlinkSync(link), join(m.mods, "am-sidebar", "bin", "automagik-herdr"));
-  assert.ok(m.logs.some((l) => /the pack ships no am command yet/.test(l)));
-  assert.ok(!existsSync(join(m.binDir, "am")));
-  const d = doctorOf(m, "herdr.cli");
+  assert.ok(!existsSync(join(m.binDir, "am")), "am is the am part's (D34), never the pack's");
+  const d = doctorOf(m, "herdr.am-sidebar");
   assert.deepEqual(failed(d), [], JSON.stringify(d.checks));
-  assert.deepEqual(d.checks.map((c) => c.check), ["record", "command", "am", "path", "node"]);
-  assert.deepEqual(failed(doctorOf(m, "herdr.cli", { PATH: "/usr/bin" })), ["path"]);
-  assert.equal(install(m.ctx(), P("herdr.cli"), packSource).changed, false, "idempotent");
+  assert.deepEqual(d.checks.map((c) => c.check), ["record", "folder", "files", "pack-version", "pack-mods", "briefing-entry", "command", "path", "node"]);
+  assert.deepEqual(failed(doctorOf(m, "herdr.am-sidebar", { PATH: "/usr/bin" })), ["path"]);
+  assert.equal(install(m.ctx(), P("herdr.am-sidebar"), packSource).changed, false, "idempotent");
 
-  uninstall(m.ctx(), P("herdr.cli"));
-  assert.ok(!existsSync(link));
-  assert.deepEqual(failed(doctorOf(m, "herdr.cli")), ["command"]);
-  assert.equal(doctorOf(m, "herdr.cli").checks.find((c) => c.check === "command").fix, "am install herdr.cli");
+  rmSync(link);
+  assert.deepEqual(failed(doctorOf(m, "herdr.am-sidebar")), ["command"]);
+  assert.equal(doctorOf(m, "herdr.am-sidebar").checks.find((c) => c.check === "command").fix, "am install herdr.am-sidebar");
+  assert.equal(install(m.ctx(), P("herdr.am-sidebar"), packSource).changed, true, "the link comes back");
 
+  rmSync(link);
   symlinkSync("/usr/bin/true", link);
-  assert.throws(() => install(m.ctx(), P("herdr.cli"), packSource), /points at \/usr\/bin\/true, not this install: left alone/);
-  uninstall(m.ctx(), P("herdr.cli"));
+  assert.equal(install(m.ctx(), P("herdr.am-sidebar"), packSource).ok, true);
+  assert.ok(m.logs.some((l) => /points at \/usr\/bin\/true, not this install: left alone/.test(l)));
+  uninstall(m.ctx(), P("herdr.am-sidebar"));
   assert.equal(readlinkSync(link), "/usr/bin/true", "the person's link stays");
+  assert.equal(P("herdr.cli"), null, "herdr.cli is retired (D34)");
 });
 
 test("herdr.layout: uninstall removes the pack's copy and no update puts it back; install does; yours stays", (t) => {
@@ -198,7 +204,6 @@ test("herdr.layout: uninstall removes the pack's copy and no update puts it back
 test("herdr.am-sidebar uninstall: the whole pack out; hooks, entry point, keys and links go; Herdr's and Pocket's files stay", (t) => {
   const m = machine(t);
   install(m.ctx(), P("herdr.am-sidebar"), packSource);
-  install(m.ctx(), P("herdr.cli"), packSource);
   uninstall(m.ctx(), P("herdr.am-quota"));
   assert.equal(doctorOf(m, "herdr.am-sidebar").code, 0, JSON.stringify(doctorOf(m, "herdr.am-sidebar").checks));
 
@@ -248,7 +253,6 @@ test("herdr.am-sidebar uninstall: the whole pack out; hooks, entry point, keys a
 test("doctor reads only: a healthy pack passes every part, a broken one names the check and its fix", (t) => {
   const m = machine(t);
   install(m.ctx(), P("herdr.am-sidebar"), packSource);
-  install(m.ctx(), P("herdr.cli"), packSource);
   const before = execFileSync("find", [m.dir, "-print"], { encoding: "utf8" });
   for (const id of PART_IDS) {
     const r = doctorOf(m, id, { AM_VERSION: VERSION });

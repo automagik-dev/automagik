@@ -10,8 +10,9 @@
 // Exit 0 healthy (done), 1 broken (failed), 2 not applicable (not macOS; doctor: a mod switched off,
 // or a layout uninstalled). install and uninstall print what they did on stderr, then one line on
 // stdout: JSON `{part, ok, changed, detail}` with AM_JSON=1, else the detail. am runs it with
-// AM_HOME, AM_PART_DIR (`<extracted pack>/<select>`), AM_ARTIFACT (the verified tarball), AM_VERSION
-// and AM_JSON (parts.mjs packSource reads the artifact; contextOf the rest). Apache-2.0.
+// AM_HOME, AM_PART_DIR (`<extracted pack>/<select>`), AM_ARTIFACT (the verified tarball), AM_VERSION,
+// AM_SEQUENCE (the signed pointer's, recorded in the marker) and AM_JSON (parts.mjs packSource reads
+// the artifact; contextOf the rest). Apache-2.0.
 
 import { fileURLToPath } from "node:url";
 import { realpathSync } from "node:fs";

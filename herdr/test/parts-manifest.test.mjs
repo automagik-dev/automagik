@@ -142,9 +142,14 @@ test("this checkout's part.json files are valid (what CI runs: node scripts/part
   const files = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: top, encoding: "utf8" }).split("\0").filter(Boolean);
   const r = validateParts({ files, read: (f) => readFileSync(join(top, f), "utf8"), packMods: PACK_MODS });
   assert.deepEqual(r.problems, []);
-  assert.deepEqual(r.parts.map((p) => p.id).sort(), [...PACK_MODS.map((m) => `herdr.${m}`), "herdr.cli", "herdr.layout"].sort());
-  // The frozen contracts stay where Brain and the ledger readers pin them.
-  const cli = JSON.parse(readFileSync(join(top, "herdr/mods/am-sidebar/bin/part.json"), "utf8"));
-  for (const cap of ["bots.cli@1", "bots.attach-ledger@1", "bots.whois-json@1"]) assert.ok(cli.provides.includes(cap), cap);
-  assert.deepEqual(cli.writes.sort(), ["~/.local/bin/am", "~/.local/bin/automagik-herdr"]);
+  assert.deepEqual(r.parts.map((p) => p.id).sort(), [...PACK_MODS.map((m) => `herdr.${m}`), "herdr.layout"].sort());
+  // The commands are the am part's (RFC 0012, D34): no herdr part ships or claims them, but the sidebar's
+  // pack still links automagik-herdr as install.sh does until am ships.
+  assert.ok(!files.includes("herdr/mods/am-sidebar/bin/part.json"), "herdr.cli is retired, never released");
+  const sidebar = JSON.parse(readFileSync(join(top, "herdr/mods/am-sidebar/part.json"), "utf8"));
+  assert.ok(sidebar.writes.includes("~/.local/bin/automagik-herdr"));
+  assert.ok(!sidebar.writes.includes("~/.local/bin/am"));
+  for (const cap of ["bots.cli", "bots.attach-ledger", "bots.whois-json"]) {
+    for (const p of r.parts) assert.ok(!JSON.parse(readFileSync(join(top, p.file), "utf8")).provides.some((c) => c.startsWith(`${cap}@`)), `${p.id} provides ${cap}`);
+  }
 });

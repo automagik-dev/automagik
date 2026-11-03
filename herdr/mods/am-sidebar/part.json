@@ -41,7 +41,8 @@
     "~/.config/herdr-app/automagik-herdr/.prev/**",
     "~/.config/herdr-app/automagik-herdr/briefing.mjs",
     "~/.config/herdr-app/automagik-herdr/hooks-journal.json",
-    "**/.claude/settings.local.json#hooks.UserPromptSubmit"
+    "**/.claude/settings.local.json#hooks.UserPromptSubmit",
+    "~/.local/bin/automagik-herdr"
   ],
   "set": [
     "code"

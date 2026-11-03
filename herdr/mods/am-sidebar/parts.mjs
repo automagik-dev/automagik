@@ -7,12 +7,12 @@
 // install record during the bridge cycle. These entries keep writing it; am only reads it.
 //   herdr.am-sidebar   install: the pack (update.mjs install --setup) when the record is not at this
 //                      version. uninstall: the whole pack, as install.sh --uninstall does, plus the
-//                      briefing hooks, the hooks' entry point, the pack's keys and the command links.
+//                      briefing hooks, the hooks' entry point, the pack's keys and the command link.
+//                      Install also links ~/.local/bin/automagik-herdr, as install.sh does, until the am
+//                      part (RFC 0012, D34) takes the command over.
 //                      The folders go to the kept set (<app home>/automagik-herdr/.prev) unless --purge.
 //   herdr.am-<mod>     install: the pack, then the mod switched back on. uninstall: switched off
 //                      (moved to mods-disabled/, as the mod manager does); an update keeps it off.
-//   herdr.cli          install: the pack, then ~/.local/bin/automagik-herdr (and `am` once the pack
-//                      ships one) linked. uninstall: the links, only where they are the pack's.
 //   herdr.layout       install: the pack, then the automagik layout put back if it was removed.
 //                      uninstall: the layout removed while it is the pack's copy (layout=removed).
 // Never written: Herdr's shared.json or data/, Pocket Link (mods/pocket-link) or its LaunchAgent,
@@ -31,14 +31,11 @@ import { CLI_LINK, knownProjects, ledgerFolders, removeHooks } from "./migrateHo
 import { OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions } from "./release.js";
 import { appHomeOf, binDirOf, markerOf, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeMarker } from "./update.mjs";
 
-/** The command `am` links beside automagik-herdr once the pack ships it (bin/am or bin/am.mjs); none does yet. */
-export const AM_LINK = "am";
 export const NODE_MIN = "22.7.0";
-/** What a herdr part's id names: `herdr.<pack mod>`, `herdr.cli`, `herdr.layout`. */
-export const PART_IDS = Object.freeze([...PACK_MODS.map((m) => `herdr.${m}`), "herdr.cli", "herdr.layout"]);
+/** What a herdr part's id names: `herdr.<pack mod>`, `herdr.layout`. */
+export const PART_IDS = Object.freeze([...PACK_MODS.map((m) => `herdr.${m}`), "herdr.layout"]);
 
 export function partOf(id) {
-  if (id === "herdr.cli") return { id, kind: "cli" };
   if (id === "herdr.layout") return { id, kind: "layout" };
   const mod = typeof id === "string" && id.startsWith("herdr.") ? id.slice("herdr.".length) : null;
   if (mod && PACK_MODS.includes(mod)) return { id, kind: mod === PACK_NAME ? "pack" : "mod", mod };
@@ -145,7 +142,9 @@ function ensurePack(ctx, source) {
   // am's AM_VERSION when it gives one, so an install already at that version unpacks nothing.
   if (record && !record.v1 && record.version === (ctx.version ?? source().version)) return false;
   const src = source();
-  const r = ctx.exec(ctx.node, [join(src.tree, PACK_NAME, "update.mjs"), "install", "--from", src.tgz, "--version", src.version, "--mods", ctx.modsDir, "--setup"],
+  // AM_SEQUENCE: the signed pointer's sequence, so the record keeps install.sh's replay guard on.
+  const sequence = /^\d{1,15}$/.test(ctx.env.AM_SEQUENCE ?? "") ? ["--sequence", ctx.env.AM_SEQUENCE] : [];
+  const r = ctx.exec(ctx.node, [join(src.tree, PACK_NAME, "update.mjs"), "install", "--from", src.tgz, "--version", src.version, "--mods", ctx.modsDir, "--setup", ...sequence],
     { env: { ...ctx.env, HERDR_APP_HOME: ctx.appHome } });
   for (const line of r.stderr.split("\n").filter(Boolean)) ctx.log(line.replace(/^notice: /, ""));
   if (r.code === 3) throw new Error(`the pack ${src.version} is installed, but herdr-app check failed for a mod (above)`);
@@ -186,8 +185,6 @@ function dropKeys(ctx) {
 
 /** The CLI's own entries in a sidebar folder: the bin/automagik-herdr wrapper and the .mjs it runs. */
 const cliEntries = (ctx, sidebar = PACK_NAME) => ["automagik-herdr", "automagik-herdr.mjs"].map((f) => join(ctx.modsDir, sidebar, "bin", f));
-/** `am`'s, once the pack ships it. */
-const amEntries = (ctx) => ["am", "am.mjs"].map((f) => join(ctx.modsDir, PACK_NAME, "bin", f));
 /** Whether the link `link` is the pack's (install.sh link_ours): it points at one of `entries`. */
 function linkOurs(link, entries) {
   if (!isLink(link)) return false;
@@ -210,15 +207,11 @@ function linkCommand(ctx, name, entries, ours) {
   renameSync(tmp, link);
   return { link, done: true, changed: true };
 }
-/** The pack's links (automagik-herdr, am) removed where they are ours; others are reported. */
+/** The pack's automagik-herdr link removed where it is ours; another is reported. */
 function unlinkCommands(ctx) {
-  const out = [];
-  for (const [name, ours] of [[CLI_LINK, [...cliEntries(ctx), ...cliEntries(ctx, OLD_PACK_NAME)]], [AM_LINK, amEntries(ctx)]]) {
-    const link = join(ctx.binDir, name);
-    if (linkOurs(link, ours)) { unlinkSync(link); out.push(`removed ${link}`); }
-    else if (exists(link)) out.push(`left ${link}: it is not this install's`);
-  }
-  return out;
+  const link = join(ctx.binDir, CLI_LINK);
+  if (linkOurs(link, [...cliEntries(ctx), ...cliEntries(ctx, OLD_PACK_NAME)])) { unlinkSync(link); return [`removed ${link}`]; }
+  return exists(link) ? [`left ${link}: it is not this install's`] : [];
 }
 
 /**
@@ -244,16 +237,6 @@ export function install(ctx, part, source) {
       if (part.mod === "am-mods" && mergeKeys(ctx)) { ctx.log("added the mod manager's key (cmd-shift-m)"); changed = true; }
       return { ok: true, changed, detail: `${part.mod} is on (pack ${record.version})` };
     }
-    if (part.kind === "cli") {
-      const cli = linkCommand(ctx, CLI_LINK, cliEntries(ctx), [...cliEntries(ctx), ...cliEntries(ctx, OLD_PACK_NAME)]);
-      if (!cli.done) throw new Error(cli.why === "not shipped" ? `${join(ctx.modsDir, PACK_NAME, "bin")} has no automagik-herdr command` : cli.why);
-      const am = linkCommand(ctx, AM_LINK, amEntries(ctx), amEntries(ctx));
-      if (!am.done) ctx.log(am.why === "not shipped" ? `the pack ships no am command yet: ${am.link} not linked` : am.why);
-      const linked = [cli, am].filter((l) => l.changed).map((l) => l.link);
-      for (const l of linked) ctx.log(`linked ${l}`);
-      if (!(ctx.env.PATH ?? "").split(":").includes(ctx.binDir)) ctx.log(`add ${ctx.binDir} to your PATH: echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`);
-      return { ok: true, changed: changed || linked.length > 0, detail: `${join(ctx.binDir, CLI_LINK)} → the pack ${record.version}` };
-    }
     if (part.kind === "layout") {
       const live = join(ctx.appHome, PACK_LAYOUT);
       if (!exists(live)) {
@@ -264,6 +247,11 @@ export function install(ctx, part, source) {
       }
       return { ok: true, changed, detail: `${live} is in place` };
     }
+    // The pack's command, as install.sh links it: a file or another link there stays the person's.
+    const cli = linkCommand(ctx, CLI_LINK, cliEntries(ctx), [...cliEntries(ctx), ...cliEntries(ctx, OLD_PACK_NAME)]);
+    if (cli.changed) { ctx.log(`linked ${cli.link}`); changed = true; }
+    if (!cli.done) ctx.log(cli.why === "not shipped" ? `${join(ctx.modsDir, PACK_NAME, "bin")} has no automagik-herdr command: not linked` : cli.why);
+    if (!(ctx.env.PATH ?? "").split(":").includes(ctx.binDir)) ctx.log(`add ${ctx.binDir} to your PATH: echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`);
     return { ok: true, changed, detail: `the pack ${record.version} is installed (${record.mods.join(", ")})` };
   } finally {
     src?.cleanup();
@@ -394,9 +382,7 @@ export function uninstall(ctx, part, { purge = false } = {}) {
   if (part.kind === "pack") return uninstallPack(ctx, { purge });
   if (part.kind === "mod") return switchOff(ctx, part);
   if (part.kind === "layout") return removeLayout(ctx);
-  const lines = unlinkCommands(ctx);
-  for (const l of lines) ctx.log(l);
-  return { ok: true, changed: lines.some((l) => l.startsWith("removed")), detail: "the pack's command links are out" };
+  throw new Error(`${part.id} is not a herdr part`);
 }
 
 // ---- doctor ----
@@ -457,16 +443,13 @@ export function doctor(ctx, part) {
     }
   }
 
-  if (part.kind === "cli") {
+  if (part.kind === "pack") {
     const link = join(ctx.binDir, CLI_LINK);
     const to = isLink(link) ? resolve(dirname(link), readlinkSync(link)) : null;
     if (!exists(link)) add("command", false, `${link} is missing`, reinstall);
     else if (!to) add("command", false, `${link} is a file, not the pack's link`, `rm ${link} && ${reinstall}`);
     else if (!cliEntries(ctx).includes(to)) add("command", false, `${link} points at ${to}, not this install`, null);
     else add("command", isFile(to), isFile(to) ? `${link} → ${to}` : `${link} points at ${to}, which is gone`, reinstall);
-    const am = join(ctx.binDir, AM_LINK);
-    if (!amEntries(ctx).some(isFile)) add("am", true, "the pack ships no am command yet");
-    else add("am", linkOurs(am, amEntries(ctx)) && isFile(am), `${am} ${linkOurs(am, amEntries(ctx)) ? "is the pack's" : "is not the pack's link"}`, reinstall);
     const onPath = (ctx.env.PATH ?? "").split(":").includes(ctx.binDir);
     add("path", onPath, onPath ? `${ctx.binDir} is on PATH` : `${ctx.binDir} is not on PATH`, `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`);
     const nodeOk = compareVersions(ctx.nodeVersion, NODE_MIN) >= 0;
