@@ -23,8 +23,12 @@ name: Release
 #   automagik-herdr-pack-<version>.tgz    the herdr pack, when herdr/ shipped something since the
 #   automagik-herdr-pack-<version>.tgz.sha256  last release: every PACK_MODS folder of the tag's
 #                                         herdr/mods/ (never pocket-link) plus layouts/automagik.json,
-#                                         and its sha256, which herdr/install.sh and `automagik-herdr
-#                                         update` check (docs/rfcs/0011-monorepo-parts-and-releases.md)
+#                                         and its sha256 (docs/rfcs/0011-monorepo-parts-and-releases.md)
+#
+# and, when it packed the herdr pack, it signs pack.json (the newest pack: its release, tarball URL
+# and sha256; ed25519, the HERDR_PACK_KEY secret, the pack's own key; the public keys are
+# herdr/mods/am-sidebar/pack-keys.json) and puts it with pack.json.sig on the rolling `herdr-lane`
+# release, which holds nothing else: herdr/install.sh and `automagik-herdr update` read only that.
 #
 # and then the desktop app's builds (desktop-build.yml). Omni pins a release's plugins.json
 # (its apps/automagik.json) to serve them from its own market and admin UI; the
@@ -176,6 +180,14 @@ jobs:
           node scripts/catalog.mjs --check
           node scripts/version.mjs check
 
+      # Before the cut, so a release that packs the pack never goes out without a pointer the
+      # installed packs trust: HERDR_PACK_KEY must be the key pack-keys.json lists.
+      - name: The herdr pack's signing key
+        if: steps.new.outputs.release == 'true' && steps.lane.outputs.herdr == 'yes'
+        env:
+          HERDR_PACK_KEY: ${{ secrets.HERDR_PACK_KEY }}
+        run: bun scripts/herdr-lane.ts check-key
+
       # Before the cut, so an add-on that cannot ride the lane stops the run before any tag.
       - name: Pack the add-ons the lane carries
         if: steps.new.outputs.release == 'true' && steps.lane.outputs.kind != 'herdr'
@@ -276,6 +288,26 @@ jobs:
             --verify-tag \
             --title "Automagik ${VERSION%.0}" \
             --notes "${notes}"
+
+      - name: Sign and post the herdr lane
+        if: steps.cut.outputs.version != '' && steps.lane.outputs.herdr == 'yes'
+        env:
+          VERSION: ${{ steps.cut.outputs.version }}
+          SHA: ${{ steps.cut.outputs.sha }}
+          HERDR_PACK_KEY: ${{ secrets.HERDR_PACK_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p herdr-lane
+          bun scripts/herdr-lane.ts manifest "release/automagik-herdr-pack-${VERSION}.tgz" "${VERSION}" "${SHA}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > herdr-lane/pack.json
+          bun scripts/herdr-lane.ts sign herdr-lane/pack.json > herdr-lane/pack.json.sig
+          bun scripts/herdr-lane.ts verify herdr-lane/pack.json herdr-lane/pack.json.sig
+          if ! gh release view herdr-lane --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create herdr-lane --repo "${GITHUB_REPOSITORY}" --target dev --prerelease --latest=false \
+              --title "Automagik Herdr pack lane" \
+              --notes "pack.json names the newest Automagik Herdr pack (its tarball stays on its own versioned release); pack.json.sig is its ed25519 signature, checked against herdr/mods/am-sidebar/pack-keys.json. See scripts/herdr-lane.ts."
+          fi
+          # The signature first: a reader between the two uploads sees a mismatch and tries again later.
+          gh release upload herdr-lane herdr-lane/pack.json.sig herdr-lane/pack.json --clobber --repo "${GITHUB_REPOSITORY}"
 
       # A herdr patch packs no plugins: the lane stays on the release that last did.
       - name: Sign and post the plugin lane
