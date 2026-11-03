@@ -3,6 +3,7 @@
 // the attach refusal message. Pure: no `herdr`, so `node --test` runs it. Apache-2.0.
 
 import { BOT_LABEL, effectiveCategory, effectiveLead, mainBotOf } from "./model.js";
+import { ENV } from "./workers.js";
 
 const SHELLS = new Set(["sh", "zsh", "bash", "fish", "dash", "ksh", "tcsh", "csh", "nu", "login"]);
 const base = (p) => String(p ?? "").split("/").pop().replace(/^-/, "");
@@ -42,8 +43,10 @@ export function startRefusal(file, botId) {
 /**
  * `hc run` arguments for Start: in the background, labelled with the bot and Herdr's
  * adoption labels, named, in the project folder, with the parent rule, never --no-notify.
+ * With `path`, the agent runs as `/usr/bin/env PATH=<path> <argv>`, as a worker does
+ * (workers.js workerArgs): the PATH agentPath.mjs interpreterPath gives it (#56).
  */
-export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels = {} }) {
+export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels = {}, path = null }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
   args.push("--cwd", cwd, "--label", `${BOT_LABEL}=${botId}`);
@@ -51,7 +54,8 @@ export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels =
   for (const [k, v] of Object.entries(labels)) if (k !== BOT_LABEL && v) args.push("--label", `${k}=${v}`);
   if (space) args.push("--label", `herdr.space=${space}`);
   if (tab) args.push("--label", `herdr.tab=${tab}`);
-  return [...args, ...parent, "--", ...argv];
+  const env = path ? [ENV, `PATH=${path}`] : [];
+  return [...args, ...parent, "--", ...env, ...argv];
 }
 
 /** True when `hc get`'s foreground is a program other than a shell (an agent, by Decision 3). */
@@ -119,7 +123,8 @@ export function roleOf(file, botId) {
  * edit's relabel, in the CLI and the sidebar alike.
  */
 export function leadPane(rows) {
-  const live = (rows ?? []).filter((r) => r?.state === "live" && (rowIsAgent(r) ?? agentInForeground(r)));
+  // program.agent false is not the last word: an agent in the foreground counts too.
+  const live = (rows ?? []).filter((r) => r?.state === "live" && (rowIsAgent(r) === true || agentInForeground(r)));
   // newest() starts from null, so a row with no created_ms would never be picked.
   return live.length ? live.reduce((a, b) => ((b.created_ms ?? -1) > (a.created_ms ?? -1) ? b : a)) : null;
 }
@@ -333,4 +338,14 @@ export async function paneOf(botId, ask, { localOnly = false } = {}) {
 export function placementFrom(gets) {
   const g = gets.find((x) => typeof x?.labels?.["herdr.space"] === "string" && x.labels["herdr.space"]);
   return g ? { space: g.labels["herdr.space"], tab: g.labels["herdr.tab"] || null, from: g.address } : null;
+}
+
+/**
+ * The same from the window (`herdr-app ls` as state.mjs spacesOf has it): the first space of
+ * this computer whose folder keys to the project (`keys`: Map<folder, key>), in its selected
+ * tab, passing over the ids in `skip`. Null when none does.
+ */
+export function spacePlace(spaces, keys, key, skip = new Set()) {
+  const s = spaces.find((x) => !x.machine && !skip.has(x.id) && x.folder && keys.get(x.folder) === key);
+  return s ? { space: s.id, tab: s.tabs?.find((t) => t.selected)?.id ?? null, from: null } : null;
 }

@@ -29,12 +29,13 @@ you already use stays yours), points the mod manager at the pack's catalog (`her
 `herdr-app check` on each mod.
 
 **What a release contains.** From v0.5.0, every release is one pack: `automagik-herdr-pack-<v>.tgz`
-holds eight mod folders and one layout, and nothing else:
+holds nine mod folders and one layout, and nothing else:
 
 | Folder | What you get |
 |---|---|
 | `am-sidebar` | the sidebar: spaces, bots, workers, the Create form, the `automagik-herdr` command |
 | `am-footer` | the footer rail (Bots, Mods, Automations, Quota, Settings, Add machine) |
+| `am-status` | the bottom status bar, with the pack's version and its update check |
 | `am-tabs` | the tab bar |
 | `am-new-menu` | the `+` menu (a space row's `+` and the tab bar's `+`) |
 | `am-markdown` | the terminal's right-click menu with its Markdown files |
@@ -47,11 +48,11 @@ Releases up to v0.4.x shipped `automagik-herdr-<v>.tgz` instead: the sidebar alo
 old folder name, see [From v0.2 to v0.4.x](#from-v02-to-v04x)), with no footer, tab bar, `+` menu, Markdown menu, mod manager, automations or quota. A
 checksum and a version number don't tell the two apart; the folder list does. After installing,
 the installer prints `Installed the pack <v> in <mods>: <folders>`; that list must name all
-eight. To check an install later:
+nine. To check an install later:
 
 ```bash
 sed -n 's/^mods=//p' ~/.config/herdr-app/automagik-herdr/installed-by-install.sh
-# am-automations,am-footer,am-markdown,am-mods,am-new-menu,am-quota,am-sidebar,am-tabs
+# am-automations,am-footer,am-markdown,am-mods,am-new-menu,am-quota,am-sidebar,am-status,am-tabs
 ```
 
 It never touches anything it did not install:
@@ -78,9 +79,9 @@ Automagik release (one that carries the pack), `--adopt` takes over same-named m
 `--uninstall` moves the pack out of `mods/`, puts back what it adopted and removes the layout if
 the installer added it and you haven't changed it.
 
-It also installs [usagemeter](https://github.com/automagik-dev/usagemeter) 0.2.0, the token
+It also installs [usagemeter](https://github.com/automagik-dev/usagemeter) 0.3.0, the token
 meter, to `~/.local/bin/usagemeter`: that release's build for your Mac, checked against its
-`SHA256SUMS`, written atomically. It skips the download when that version is already there and
+`SHA256SUMS` and against the sha256 the pack pins for that build, written atomically. It skips the download when that version is already there and
 never replaces a newer one (Pocket Link installs the same binary). While Herdr is open, the
 sidebar runs `usagemeter sync` 30 seconds after it loads and then every 10 minutes, one run at a
 time; there is no LaunchAgent and no daemon. A dev build counts by its version number, so
@@ -88,6 +89,26 @@ time; there is no LaunchAgent and no daemon. A dev build counts by its version n
 `--no-usagemeter` leaves the binary alone, on install and on `--uninstall`; a failed install is
 only a warning. `--uninstall` removes the binary only when this installer put it there, it is still
 that version and Pocket Link is not installed; usagemeter's data is kept.
+
+The phone reads each machine's own usage summary there (the `herdr-meter` document in that
+machine's herdr-core), so usagemeter runs on every linked machine too: the installer installs the
+same pinned build on each connected machine in `hc machine ls` (each machine downloads it and checks
+both hashes itself; one that fails is a warning naming it), and the sidebar's 10-minute run syncs
+each connected machine after this computer, one at a time. `automagik-herdr meter install
+[--machine M]` does it again, for example for a machine linked later. `--usagemeter-local-only`
+keeps it to this computer, and `--no-usagemeter` covers the linked machines too; both are
+remembered.
+
+**Updating to this release from an earlier one:** the update is run by the earlier release's
+command, which has no usagemeter step, so run `automagik-herdr meter install` once afterwards. It
+installs the pinned usagemeter on this computer and every connected linked machine, and records
+that you asked for it. From then on, `automagik-herdr update` keeps them on the pack's pin within
+what you chose. An earlier install's record is never read as a yes for the linked machines: if
+that installer put usagemeter on this computer, `update` keeps it there only; if it recorded
+nothing (an earlier `install.sh --no-usagemeter` recorded nothing), `update` installs nowhere and
+prints that command instead. Either way the sidebar syncs only this computer until you run it. `--uninstall` removes it
+from a linked machine only where the install record says the pack put it and it is still that
+version.
 
 ### From v0.2 to v0.4.x
 
@@ -116,7 +137,7 @@ The installer:
 - points the `automagik-herdr` link at `am-sidebar`'s command;
 - moves the bots' briefing hooks to a fixed path and lists, at the end of its run, every file it
   rewrote. A Claude session already running in one of those projects keeps the old hook and gets
-  no briefing until it is restarted or `/hooks` is run in it. A project the installer doesn't
+  no briefing until it is restarted: `automagik-herdr restart <bot>` (or the bot row's Restart). A project the installer doesn't
   know about keeps the old hook: `automagik-herdr start` or `attach` its bot, or open it as a
   space in Herdr and run the installer again.
 
@@ -137,8 +158,8 @@ Install Automagik Herdr on this Mac and set up my first bot.
 2. Verify, don't assume: a version and a checksum don't say what was installed. All must hold:
    automagik-herdr --version prints 0.5.0 or later (0.4.x and older are the sidebar alone);
    sed -n 's/^mods=//p' ~/.config/herdr-app/automagik-herdr/installed-by-install.sh prints
-   am-automations,am-footer,am-markdown,am-mods,am-new-menu,am-quota,am-sidebar,am-tabs;
-   herdr-app check ~/.config/herdr-app/mods/<mod> succeeds for each of those eight mods.
+   am-automations,am-footer,am-markdown,am-mods,am-new-menu,am-quota,am-sidebar,am-status,am-tabs;
+   herdr-app check ~/.config/herdr-app/mods/<mod> succeeds for each of those nine mods.
    If anything is missing or fails, report the install as incomplete. If automagik-herdr is not
    found, use ~/.local/bin/automagik-herdr and tell me to add ~/.local/bin to my PATH.
 3. Ask me for: the project folder, and the main bot's name, character and coding agent
@@ -177,7 +198,16 @@ a place in a team, and keeps that team in front of every agent and of you.
 The pack replaces Herdr's `spaces` sidebar with one that draws each project's team under its
 space: the main bot as a card, categories as headers, captains with their members folded
 under them, planned bots dimmed with their wave. Each bot shows its character, its role and
-model, its agent's icon and its status. Right-click a bot to edit, start or attach it.
+model, its agent's icon and its status. Right-click a bot for its menu: Configure opens the edit
+form (name, agent, model, role, category, lead, worker defaults); Prompt edits its instructions
+in place and saves them as the form does; Run starts it, or focuses its pane when it has one,
+restarts it (Restart runs `automagik-herdr restart`; Restart on… restarts it on another installed
+agent, a new conversation, the bot's definition keeping its agent), attaches it to the focused
+pane or detaches it; What happened shows `automagik-herdr history` for it (its panes, starts,
+sessions, the newest transcript, which a click copies, its workers) and the helpers its pane runs
+now. A planned bot's menu has no Run items. A restart refused because the bot is mid-turn offers
+"Restart anyway". The Bots list and the Attach picker open on the bots the sidebar already
+knows and refresh behind.
 
 On its first load the pack switches Herdr to the Automagik theme, light or dark following the
 system. Both halves are listed in Herdr's Settings, and a theme you pick later stays: the pack
@@ -202,9 +232,11 @@ automagik-herdr edit <bot> [the create options] [--unplanned] [--no-model] [--no
 automagik-herdr rm <bot>
 automagik-herdr category ls | add --title T [--sub S] [--id ID] | edit <id> | rm <id> | order <id>...
 automagik-herdr start <bot> [--space ID] [--tab ID]
+automagik-herdr restart <bot> [--fresh] [--agent A] [--model M [--save]] [--force]
 automagik-herdr attach <bot> <terminal> [--move]
 automagik-herdr detach <bot>
 automagik-herdr whois <terminal> | whois --bot <bot>
+automagik-herdr history <bot>
 automagik-herdr brief <bot>
 automagik-herdr worker "<task>" (--branch B [--base REF] | --worktree DIR)
        [[--agent A] [--model M] [--effort E] | --template T] [--name N] [--role dev|test|review|fix]
@@ -222,11 +254,37 @@ automagik-herdr update [--check | --rollback]
 - `start` runs the bot's agent in a new pane with `hc run`, labelled `bot=<id>`, and records it
   in the [attach ledger](#the-attach-ledger). A member whose lead is running gets the lead's
   pane as its parent. A running bot is not started twice.
+  The pane opens in the space showing the project; with none open, `start` opens one on the
+  project folder (`--space`/`--tab` pick the place instead).
+- `restart` runs the bot's agent again in its pane's place: the new pane starts in the same
+  space, tab and folder with the same labels, and the old one is ended (`hc kill`) only once the
+  new one has kept its agent in front at every check for 5 seconds (1.5 once the agent reports
+  its status to hc), so an agent that exits at startup (a stale resume, a failed swap) never
+  leaves the space empty. A replacement that doesn't make it is ended, and the old pane keeps
+  running. It resumes the conversation: Claude by the session id on the pane (`agent.session`,
+  carried to the new pane), else the workers ledger's last session row for that terminal, else
+  `--continue` in the bot's folder, which is refused while another bot's Claude runs in that
+  folder (it could resume theirs; `--fresh` starts a new one); `codex resume --last`;
+  `--continue` for pi, omp, kimi, agy and hermes. Any other agent starts fresh, and says so.
+  `--fresh` starts a new conversation. `--agent` / `--model` swap the agent or model (always a new
+  conversation: they don't cross agents); `bots.json` keeps the old ones unless `--save` is given.
+  A bot that isn't running is started. It is refused while the bot is working (it would cut the
+  turn in half) or has helpers, such as workers, that hc would end with its pane; `--force`
+  restarts anyway. The old pane is found in the attach ledger; once the new pane has stayed up,
+  the ledger moves the bot to it (the old binding detached, by `start`, reason `moved`; the new
+  terminal attached, by `start`), and a replacement that didn't make it writes no rows. A bot
+  restarting itself writes and prints everything before the kill that ends its own pane. It
+  prints the new terminal.
 - `attach` ties a running pane to a bot. A Claude pane whose session runs outside the bot's
   project is refused, and so are a pane another bot plays and a bot another pane plays; the
   refusal names the holder. `attach --move` moves a bot from its pane to this one.
 - `detach` unties a bot from its pane. `whois` says which bot a pane plays, or which pane a
   bot plays.
+- `history` reads the two ledgers for a bot: its attach, detach and end rows, its starts, the
+  Claude sessions of the panes it played, matched by terminal id and time, with the newest
+  transcript, and the workers it started. The match is exact once a pane's detach or end row is
+  written; a terminal id hc reused before then can briefly show the new pane's session. It
+  writes nothing; a removed bot is named by its id.
 
 ## The attach ledger
 
@@ -529,7 +587,7 @@ rollback to a pack without the entry point moves the hooks back onto that folder
 `briefing.mjs`. It prints nothing outside a bot's pane (by the attach ledger), finishes within about 2 seconds, and never fails a
 prompt. `automagik-herdr worker` adds the same hook to a Claude worker's worktree. In any hc
 terminal it runs in, the hook also records a new Claude session (see [Workers](#workers)). Members' reports are fenced as untrusted data. A session attached while it was
-already running may need `/hooks` once to load the hook.
+already running may need a restart to load the hook: `automagik-herdr restart <bot>` (or the bot row's Restart).
 
 ### Requirements
 
@@ -572,12 +630,12 @@ No build step and no dependencies. The checks CI runs (`.github/workflows/ci.yml
 monorepo's root, from `herdr/`):
 
 ```bash
-node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs; do node --check "$f" || exit 1; done && node scripts/version.mjs check
+node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs scripts/*/*.mjs; do node --check "$f" || exit 1; done && node scripts/version.mjs check
 ```
 
 The rules shared by the sidebar and the CLI import nothing from Herdr (`model.js`,
 `launchArgs.js`, `models.js`, `workers.js`, `attach.js`, `formModel.js`, `release.js`,
-`updateCheck.js`, `workerTab.js`, `migrate.js`), so the tests
+`updateCheck.js`, `workerTab.js`, `migrate.js`, `restart.js`), so the tests
 run them under plain node. The tests run the CLI and the briefing against scratch git
 projects with a fake `hc`, and the sidebar's modules against stand-ins for Herdr's own. A
 pass does not prove the pack works inside Herdr; check that in Herdr itself. Releases are
@@ -608,6 +666,7 @@ with its own `RECIPE.md`:
 | Mod | Derived from | What it does |
 |---|---|---|
 | `am-footer` | Herdr's `workspace-chrome` | The sidebar's brand bar and a footer rail of icon tabs — Bots, Mods, Automations, Quota, Settings, Add machine, and up to 4 buttons other mods add — so tabs never stack up. |
+| `am-status` | Herdr's `workspace-status` | The window's bottom status bar (machine, branch, agents, `⌘⇧P commands`) plus the installed Automagik Herdr version beside "commands": click it to check now; when a release is out, `0.8.0 → 0.8.1 · update` installs it after a confirm, the same way `automagik-herdr update` does. |
 | `am-tabs` | Herdr's `tabs` | The tab bar: pills named from the agent's own title, close ✕ on hover, middle-click to close, drag to reorder, per-space side-panel memory. Scrolling never switches tabs. Its `+` opens `am-new-menu`. |
 | `am-automations` | `DnzzL/herdr-automations` (MIT) | Scheduled agent prompts as a side panel: inbox of finished runs, run now, pause all, and a form that previews the next runs. The panel draws and asks; the `herdr-automations` scheduler launches the work. |
 | `am-markdown` | Herdr's `menu` + `ohneda/herdr-markdown-browser` (MIT) | Right-click a terminal: under Herdr's own items, the Markdown files that terminal printed. Pick one and it renders in a preview pane — live reload on save, `Default app` — that the next pick replaces in place. |
@@ -659,7 +718,9 @@ copy these from `~/.config/herdr-app/automagik-herdr/automagik.json` (the pack's
 5. a block `{ "id": "automations-panel", "content": { "mod": "am-automations" }, "size":
    { "weight": 1 }, "min": 140, "hidden": true }` in the sidebar's column — the rail's clock toggles
    it;
-6. the same block for `am-quota` (`"id": "am-quota-panel"`), which the rail's Quota tab toggles.
+6. the same block for `am-quota` (`"id": "am-quota-panel"`), which the rail's Quota tab toggles;
+7. the status bar block (`"id": "status"`, `"size": { "px": 28 }`): `"mod": "am-status"` in place of
+   `workspace-status`.
 
 `am-new-menu` (opened by the sidebar's and the tab bar's `+`) and `am-mods` (`⌘⇧M`, the rail's
 Mods tab) need no block.
@@ -692,7 +753,7 @@ The one layout the pack ships is `../herdr-layout/automagik.json`, beside this f
 ## Develop
 
 ```bash
-node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs; do node --check "$f" || exit 1; done
+node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs scripts/*/*.mjs; do node --check "$f" || exit 1; done
 ```
 
 The pure rules (project key, schema, leads, ids, looks) live in `mods/am-sidebar/model.js`

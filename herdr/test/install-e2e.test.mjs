@@ -198,12 +198,21 @@ fi
     exe(join(meter, name), `#!/bin/sh\n[ "$1" = --version ] && echo "usagemeter ${USAGEMETER.version}"\nexit 0\n`);
     return `${sha(readFileSync(join(meter, name)))}  ${name}\n`;
   }).join(""));
+  // The fakes are not the real builds: a file:// release's pin hook names theirs.
+  const meterPin = join(root, "meter-pin");
+  writeFileSync(meterPin, readFileSync(join(meter, "SHA256SUMS")));
+  // A fake hc with no linked machine: install.sh's `meter install --linked` never reaches a real one.
+  const hcState = join(root, "hc.json"), hcLog = join(root, "hc.log");
+  writeFileSync(hcState, JSON.stringify({ terminals: [], machines: [] }));
+  writeFileSync(hcLog, "");
+  exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${join(ROOT, "test", "fake-hc.mjs")}" "$@"\n`);
 
   const appHome = join(home, ".config", "herdr-app");
   const env = {
     HOME: home, TMPDIR: root, PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
     AUTOMAGIK_HERDR_RELEASE_URL: `file://${rel}`, AUTOMAGIK_HERDR_TTY: join(root, "no-tty"), AUTOMAGIK_HERDR_APPS: apps,
     AUTOMAGIK_HERDR_PACK_KEYS: JSON.stringify({ keys: TEST_KEYS }),
+    AUTOMAGIK_HERDR_METER_PIN: meterPin, HC_FAKE_STATE: hcState, HC_FAKE_LOG: hcLog,
   };
   return {
     launcher, root, home, appHome, mods: join(appHome, "mods"), state: join(appHome, "automagik-herdr"),
@@ -371,7 +380,7 @@ test(`e2e (b): a v0.4.0 sidebar-only install is replaced by the whole pack (${la
   const from = out.indexOf("IMPORTANT: the bots' briefing hook moved to a new path in 1 settings file:");
   assert.ok(from > 0, r.out);
   assert.equal(out[from + 1], `  ${proj}: ${projSettings}`);
-  assert.match(out[from + 2], /keeps the OLD hook and gets NO briefing until it is restarted, or until \/hooks is run in it once/);
+  assert.match(out[from + 2], /keeps the OLD hook and gets NO briefing until it is restarted\. Restart the bot: automagik-herdr restart <bot> \(or the bot row's Restart\)/);
   assert.match(out[from + 3], /were not rewritten .*automagik-herdr start <bot>/);
   assert.ok(out.findIndex((l) => l.startsWith("Done: Automagik Herdr")) > from + 3, "after every step's output, before the closing lines");
   assert.ok(!r.out.includes("notice: "), "the tag never shows");
@@ -475,7 +484,7 @@ test("e2e: a project unknown at the upgrade keeps its hook and is warned about; 
   const lines = up.out.split("\n");
   const at = lines.findIndex((l) => l.startsWith("IMPORTANT: the sidebar moved to a new folder, and no settings file's briefing hook was rewritten"));
   assert.ok(at > 0, up.out);
-  assert.match(lines[at + 1], /keeps the OLD hook and gets NO briefing until it is restarted, or until \/hooks is run in it once/);
+  assert.match(lines[at + 1], /keeps the OLD hook and gets NO briefing until it is restarted\. Restart the bot: automagik-herdr restart <bot> \(or the bot row's Restart\)/);
   assert.match(lines[at + 2], /were not rewritten .*open it as a space in Herdr and run the installer again/);
   assert.ok(lines.findIndex((l) => l.startsWith("Done: Automagik Herdr")) > at);
 

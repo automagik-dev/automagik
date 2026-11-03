@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-03T04:58:47.874Z",
-  "modCount": 9,
-  "repositoryCount": 3,
+  "generatedAt": "2026-11-03T15:51:18.185Z",
+  "modCount": 11,
+  "repositoryCount": 4,
   "source": "automagik-herdr",
   "mods": [
     {
@@ -12,7 +12,7 @@
       "url": "https://github.com/automagik-dev/automagik",
       "defaultBranch": "dev",
       "stars": 0,
-      "pushedAt": "2026-11-03T01:50:22-03:00",
+      "pushedAt": "2026-11-03T12:43:04-03:00",
       "headCommit": "",
       "path": "herdr",
       "name": "Automagik Herdr",
@@ -25,11 +25,12 @@
         "am-new-menu",
         "am-quota",
         "am-sidebar",
+        "am-status",
         "am-tabs"
       ],
       "hasKeys": true,
       "hasPreview": false,
-      "recipeBytes": 5208,
+      "recipeBytes": 5287,
       "previewUrl": "",
       "license": "Apache-2.0",
       "mods": [
@@ -41,7 +42,7 @@
         {
           "name": "am-footer",
           "title": "Automagik Footer",
-          "blurb": "The sidebar's footer as a rail of tabs instead of a stack of rows — robot **Bots** (first), puzzle **Mods**, clock **Automations**, gear **Settings**, plus **Add machine** — and the brand bar above it. Derived from Herdr's shipped `workspace-chrome`."
+          "blurb": "The sidebar's footer as a rail of tabs instead of a stack of rows — robot **Bots** (first), puzzle **Mods**, clock **Automations**, gear **Settings**, plus **Add machine** — and the brand bar above it. Derived from Herdr's shipped `workspace-chrome` 0.1.11."
         },
         {
           "name": "am-markdown",
@@ -56,7 +57,7 @@
         {
           "name": "am-new-menu",
           "title": "Automagik New Menu",
-          "blurb": "The `+` menu (the tab bar's `+`, and a space row's, in place of Herdr's stock one): start a terminal or an installed coding agent in the shown space (or a space row's `+`), make a new space, or open a worktree. Derived from Herdr's shipped `new-menu`; it asks herdr-core which age"
+          "blurb": "The `+` menu (the tab bar's `+`, and a space row's, in place of Herdr's stock one): start a terminal or an installed coding agent in the shown space (or a space row's `+`), make a new space, or open a worktree. Derived from Herdr's shipped `new-menu` 0.1.7; it asks herdr-core whi"
         },
         {
           "name": "am-quota",
@@ -67,6 +68,11 @@
           "name": "am-sidebar",
           "title": "Automagik Sidebar",
           "blurb": "The sidebar of Automagik Herdr, and the bots in it: each project's main bot and its team, drawn with Automagik's characters, created and edited in one form, started on or attached to any coding agent, labelled for the agent event envelope, and briefed before every Claude turn. De"
+        },
+        {
+          "name": "am-status",
+          "title": "Automagik Status",
+          "blurb": "The window's bottom status bar, with the installed Automagik Herdr version and its update check beside \"commands\". Derived from Herdr's shipped `workspace-status` 0.1.12."
         },
         {
           "name": "am-tabs",
@@ -81,9 +87,9 @@
       "fullName": "GaganSD/coding-agent-toolkit",
       "url": "https://github.com/GaganSD/coding-agent-toolkit",
       "defaultBranch": "main",
-      "stars": 38,
-      "pushedAt": "2026-10-31T02:52:29Z",
-      "headCommit": "92cdb30bfe5b41b0b25e5a44f2b3965f9811ce24",
+      "stars": 40,
+      "pushedAt": "2026-11-03T06:54:16Z",
+      "headCommit": "e68e6bf16e7873b501f9b26b3d72a167fa70ffd3",
       "path": "herdr-insights",
       "name": "Insights",
       "blurb": "A native Herdr dashboard for token usage across Pi, Codex, Claude Code, and OpenCode. It reads existing local session data, shows model rankings and activity, and opens in its own tab without changing terminals, layouts, or keys.",
@@ -92,13 +98,41 @@
       ],
       "hasKeys": false,
       "hasPreview": true,
-      "recipeBytes": 8962,
+      "recipeBytes": 13422,
       "previewUrl": "",
       "license": "MIT",
       "mods": [
         {
           "name": "insights",
           "title": "insights",
+          "blurb": ""
+        }
+      ]
+    },
+    {
+      "owner": "dmazlum",
+      "repo": "herdr-revive",
+      "fullName": "dmazlum/herdr-revive",
+      "url": "https://github.com/dmazlum/herdr-revive",
+      "defaultBranch": "main",
+      "stars": 4,
+      "pushedAt": "2026-11-03T12:30:13Z",
+      "headCommit": "ae95ce54c1780e495a6772b3d06c4a51d2a16081",
+      "path": "",
+      "name": "Revive",
+      "blurb": "Brings back the coding agent a Herdr terminal lost to a reboot or a herdr-core restart, in the same pane with the same session and flags, and forks a live session beside it (Claude Code; Codex, Factory Droid, Cursor CLI and pi experimental).",
+      "modNames": [
+        "revive"
+      ],
+      "hasKeys": true,
+      "hasPreview": true,
+      "recipeBytes": 17712,
+      "previewUrl": "",
+      "license": "MIT",
+      "mods": [
+        {
+          "name": "revive",
+          "title": "revive",
           "blurb": ""
         }
       ]

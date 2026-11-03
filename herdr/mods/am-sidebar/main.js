@@ -13,25 +13,28 @@ import { spaces, machines, panes, agents, terminals, focused, setAgentOrder, run
 import * as fs from "fs/promises";
 import { isPng, keysFor, remote } from "./paste.js";
 import { command } from "./argv.js";
-import { discoverProjects, watchProject } from "./bots.js";
+import { discoverProjects, discoverySnapshot, restoreDiscovery, watchProject } from "./bots.js";
 import { BOT_LABEL } from "./model.js";
 import { BotForm, FORM_SIZE } from "./create.js";
 import { SpaceIconDialog, spaceIconOverlay } from "./spaceIcon.js";
 import { ensureTheme, themeSettled } from "./theme.js";
 import { SHARED_RENAMES, carryShared } from "./migrate.js";
-import { FIRST_CHECK_MS, announce, nextCheckIn, readCheck, runCheck } from "./updateCheck.js";
-import { METER_EVERY_MS, METER_FIRST_MS, meterBin, syncMeter } from "./meter.js";
-import { startBot, attachBot, botOfTerminal, modelTexts } from "./launch.js";
+import { FIRST_CHECK_MS, REQUEST_KEY, RETRY_MS, STATE_KEY, announce, applyNotice, applyPatch, applyRefusal, busyOf, checkPatch, claim,
+  coolingDown, finish, nextCheckIn, requestDue, runCheck, stateFrom } from "./updateCheck.js";
+import { METER_EVERY_MS, METER_FIRST_MS, meterBin, syncMeter, syncTargets } from "./meter.js";
+import { parseMarker } from "./release.js";
+import { meterScope } from "./meterFleet.js";
+import { startBot, attachBot, botOfTerminal, modelTexts, sleepOf } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
-import { workerClick, workerTabName, openWorkerTab } from "./workerTab.js";
-import { liveFrom, buildTree, placeTrees, knownBots, nextWake, projectId, secondLine, argvToAsk, argvEntry, spaceRowOrder, clickActionOf } from "./rows.js";
+import { workerClick, rowWorker, openWorkerTab } from "./workerTab.js";
+import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, argvToAsk, argvAfter, argvReader, spaceRowOrder, clickActionOf, heldTerminalOf, heldClickOf } from "./rows.js";
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
 function openBotForm(form, kind = "dialog") {
   openOverlay(kind === "popup"
-    ? { mod: "am-sidebar", kind: "popup", width: form.form === "menu" ? 240 : 300, height: form.form === "menu" ? 220 : 360, props: form }
+    ? { mod: "am-sidebar", kind: "popup", width: form.form === "menu" ? 380 : 300, height: form.form === "menu" ? 640 : 360, props: form }
     : { mod: "am-sidebar", kind: "dialog", modal: true, ...(form.form === "create" || form.form === "edit" ? FORM_SIZE : { width: 560, height: 0.85 }), props: form });
 }
 
@@ -113,6 +116,9 @@ const FALLBACK = 60000;
 // Character pictures (characters.js), under the app home outside mods/, by their path
 // relative to the app home, as image() takes it.
 const PETS = "am-sidebar-pets";
+// The last bot discovery (bots.js discoverySnapshot), in the mod's localStorage: drawn at
+// startup until the first discovery answers.
+const BOTS_SAVED = "bots.last";
 
 // What a stored color name looks like on an avatar (the same in every mod
 // that draws space avatars): one strong color per hue, light and dark alike.
@@ -168,10 +174,12 @@ export default class Spaces extends View {
     });
     // `git status` walks the whole tree, on another machine a process there:
     // only when its answer could have changed (see `due`).
-    cx.timer.every(250, (cx) => { this.checkNew(cx); this.botTick(cx); });
+    cx.timer.every(250, (cx) => { this.checkNew(cx); this.botTick(cx); this.updateRequest(cx); });
     // Updates (A14): a look FIRST_CHECK_MS after load, then every CHECK_EVERY_MS; a failed
-    // look is "no update", tried again after RETRY_MS, never an error (updateCheck.js).
-    this.updates = { node: null };
+    // look is "no update", tried again after RETRY_MS, never an error (updateCheck.js). The
+    // status bar (am-status) shows the answer and asks for a look or an install (REQUEST_KEY);
+    // a request saved before this load was someone else's to answer.
+    this.updates = { node: null, seen: stateFrom(shared(REQUEST_KEY)).id ?? null };
     // The Automagik theme, selected once (theme.js): now, then on the 15-second timer until done.
     this.applyTheme(cx);
     cx.timer.after(FIRST_CHECK_MS, (cx) => this.checkUpdates(cx));
@@ -206,9 +214,11 @@ export default class Spaces extends View {
     this.loadExtra(cx);
     // Bot definitions (bots.js): every project with a .herdr/bots.json, read now, on the
     // 15-second timer (another machine's) and on a change under a local project's .herdr/.
-    this.bots = [];
-    this.botsSeen = "[]"; // the last result, as text: re-render only on a change
-    this.botsRun = 0; // the latest discovery; an older one finishing late is dropped
+    // Until the first discovery answers, the last one saved (BOTS_SAVED) is drawn.
+    try { this.bots = restoreDiscovery(localStorage.getItem(BOTS_SAVED)); } catch { this.bots = []; }
+    this.botsSeen = JSON.stringify(this.bots); // the last result, as text: re-render only on a change
+    this.botsRun = 0; // the latest discovery started
+    this.botsShown = 0; // the discovery drawn last: an older one answering after it is dropped
     this.botWatch = new Map(); // local project key -> the token of its one watcher
     this.refreshBots(cx);
     // The bot view (rows.js): the folds made this session (A7: fold id -> open), the row under
@@ -220,6 +230,9 @@ export default class Spaces extends View {
     this.open = new Map();
     this.hoverRow = null;
     this.trees = [];
+    // Per project id, from the last draw that showed its space: its index in its sidebar
+    // list, where its rows stay once that space closes.
+    this.places = new Map();
     this.botOf = new Map(); // terminal address -> bot id
     this.pets = new Set();
     this.petsWanted = new Map(); // file -> { look, pose, dark }
@@ -231,7 +244,7 @@ export default class Spaces extends View {
     // didn't carry it.
     this.modelTexts = {};
     this.argvOf = new Map();
-    // Workers whose tab is on its way (openHelper): a second click waits for it.
+    // Workers whose tab is on its way (openWorker): a second click waits for it.
     this.opening = new Set();
     this.loadModelTexts(cx);
     // Hermes's own icon from the program table (its process shows as Python).
@@ -243,7 +256,7 @@ export default class Spaces extends View {
   }
 
   // The core terminal behind a pane: by address; else, for a machine renamed in the app
-  // whose terminals still carry its old name (server/t2 behind hx470/t2), the one with
+  // whose terminals still carry its old name (server/t2 behind host-b/t2), the one with
   // the same local id and the core's own herdr.tab label for that pane's tab.
   coreTerminal(p) {
     if (!p?.terminal) return null;
@@ -346,7 +359,7 @@ export default class Spaces extends View {
       // Not in agents() (no status, or a renamed machine): agent.focus wouldn't know it; its pane does.
       .on_click(() => (a.extra || a.alias ? run("pane.focus", { pane: a.pane }) : focusOrPeek(a.address)))
       // "Attach as bot…": the clone has no terminal menu of its own, so the row's right-click.
-      .when(!machine, (el) => el.on_mouse_down("right", () => openBotForm({ form: "attach", terminal: a.address }, "popup")))
+      .when(!machine, (el) => el.on_mouse_down("right", () => openBotForm({ form: "attach", terminal: a.address, known: this.knownLocal() }, "popup")))
       .when(Boolean(pic), (el) => el.child(pic))
       .child(div().flex_1().min_w(0).truncate().text_color(idle ? t.muted : t.foreground).child(a.extra ? a.name : this.agentName(a)))
       .when(Boolean(machine), (el) => el.child(div().flex_none().text_size(10).text_color(t.dim).child(machine)))
@@ -407,11 +420,12 @@ export default class Spaces extends View {
 
   // Live bots, poses and trees from this render's terminals() (rows.js decides; no hc get
   // here: terminals() carries program.agent, status, status_ms and created_ms on this host;
-  // a command line it lacks comes from readBotArgv, read off the drawing path).
+  // a command line it lacks comes from readBotArgv, read off the drawing path, and counts
+  // for liveness too: the program table can say shell while the agent runs).
   prepareBots() {
     const now = Date.now();
     const known = knownBots(this.bots);
-    const live = liveFrom(this.all, known);
+    const live = liveFrom(this.all, known, argvReader(this.argvOf));
     this.botOf = new Map(this.all.filter((k) => known.has(k.labels?.[BOT_LABEL])).map((k) => [k.address, k.labels[BOT_LABEL]]));
     this.trees = buildTree({ projects: this.bots, live, terminals: this.all, now });
     this.wakeAt = nextWake(live, now);
@@ -436,30 +450,96 @@ export default class Spaces extends View {
   }
 
   // One update look through `node <pack>/update.mjs check` (Herdr's runtime has no fetch),
-  // one notice per new version, then the next look scheduled by what it found.
-  checkUpdates(cx) {
+  // one notice per new version, then the next look scheduled by what it found (`scheduled`;
+  // a look the status bar asked for schedules nothing). One look or install at a time across
+  // sidebar copies (claim): a timer that finds one running looks again after RETRY_MS.
+  checkUpdates(cx, scheduled = true, request = null) {
+    const id = claim(shared, setShared, "check", Date.now(), request ? { request } : {});
+    if (id === null) {
+      if (scheduled) cx.timer.after(RETRY_MS, (cx) => this.checkUpdates(cx));
+      return;
+    }
     cx.spawn(async (cx) => {
-      let check = { kind: "retry" };
+      let patch = { kind: "retry", why: "the check did not run", at: Date.now() };
       try {
         const sleep = (ms) => new Promise((done) => cx.timer.after(ms, () => done()));
         const { node, result } = await runCheck(exec, `${appHome()}/mods/am-sidebar/update.mjs`, this.updates.node,
           { mods: `${appHome()}/mods`, sleep });
         if (node) this.updates.node = node;
-        check = readCheck(result);
+        patch = checkPatch(result, Date.now());
       } catch {}
+      try { finish(shared, setShared, id, { ...patch, request }); } catch {}
       // The version already announced is shared, so a reload or a second view stays quiet.
-      try { announce(check, shared, setShared, notify); } catch {}
-      const wait = nextCheckIn(check.kind);
-      if (wait !== null) cx.timer.after(wait, (cx) => this.checkUpdates(cx));
+      try { announce(patch, shared, setShared, notify); } catch {}
+      const wait = nextCheckIn(patch.kind);
+      if (scheduled && wait !== null) cx.timer.after(wait, (cx) => this.checkUpdates(cx));
     });
   }
 
-  // One due `usagemeter sync` through Herdr's exec, then the next look when meter.js says.
+  // The status bar's install: `node <pack>/update.mjs apply`, the path `automagik-herdr update`
+  // takes (checksum checked, the replaced pack kept for --rollback), then a notice to reload.
+  // `to`: the version the person confirmed; update.mjs refuses when the latest is another by now.
+  applyUpdates(cx, request, to) {
+    const before = stateFrom(shared(STATE_KEY));
+    const id = claim(shared, setShared, "apply", Date.now(), { request, to });
+    if (id === null) return false;
+    cx.spawn(async (cx) => {
+      let patch = { applyError: "the install did not run", at: Date.now() };
+      try {
+        const { node, result } = await runCheck(exec, `${appHome()}/mods/am-sidebar/update.mjs`, this.updates.node,
+          { mods: `${appHome()}/mods`, command: "apply", extra: ["--expect", to] });
+        if (node) this.updates.node = node;
+        patch = applyPatch(result, before, Date.now());
+      } catch (e) { patch = { applyError: String(e?.message ?? e), at: Date.now() }; }
+      try { finish(shared, setShared, id, { ...patch, request }); } catch {}
+      const note = applyNotice(patch);
+      if (note) try { notify(note); } catch {}
+    });
+    return true;
+  }
+
+  // On the 250 ms timer: a new request from the status bar. A look asked for while one runs is
+  // answered by it, and one within a minute of the last by that one (GitHub's hourly limit); an
+  // install asked for while one runs is that one, one for a version no longer offered is refused
+  // (the bar asks again), and one waits for a running look (fresh for REQUEST_FRESH_MS).
+  updateRequest(cx) {
+    const value = shared(REQUEST_KEY);
+    const now = Date.now();
+    const what = requestDue(value, this.updates.seen, now);
+    if (!what) return;
+    const { id } = value;
+    const state = stateFrom(shared(STATE_KEY));
+    const busy = busyOf(state, now);
+    if (what === "check") {
+      this.updates.seen = id;
+      if (busy) return;
+      if (coolingDown(state, now)) finish(shared, setShared, null, { request: id });
+      else this.checkUpdates(cx, false, id);
+      return;
+    }
+    if (busy?.what === "apply") { this.updates.seen = id; return; }
+    if (busy) return;
+    const refused = applyRefusal(value, state);
+    if (refused) {
+      this.updates.seen = id;
+      finish(shared, setShared, null, { request: id, applyError: refused });
+    } else if (this.applyUpdates(cx, id, value.to)) this.updates.seen = id;
+  }
+
+  // One due `usagemeter sync` through Herdr's exec, here and then on each connected linked machine
+  // the person agreed to (meterScope "all", or one a meter install --machine put it on), then the next look.
   meterTick(cx) {
     cx.spawn(async (cx) => {
       let wait = METER_EVERY_MS;
       try {
-        ({ wait } = await syncMeter({ exec, bin: meterBin(home()), get: shared, set: setShared, state: this.meter }));
+        let scope = null, owned = [];
+        try {
+          const record = parseMarker(await readTextFile(`${appHome()}/automagik-herdr/installed-by-install.sh`));
+          scope = meterScope(record);
+          owned = Object.keys(record?.usagemeterOn ?? {});
+        } catch {}
+        const machines = syncTargets(this.machines, scope, owned);
+        ({ wait } = await syncMeter({ exec, bin: meterBin(home()), get: shared, set: setShared, state: this.meter, machines, sleep: sleepOf(cx) }));
       } catch {}
       cx.timer.after(wait, (cx) => this.meterTick(cx));
     });
@@ -560,7 +640,8 @@ export default class Spaces extends View {
       .when(Boolean(onMenu), (el) => el.on_mouse_down("right", () => onMenu()));
   }
 
-  // One tree's rows, as spaceRowOrder gives them, in one block.
+  // One tree's rows, as spaceRowOrder gives them, in one block; dimmed while it shows a file
+  // from the last run of Herdr its machine hasn't confirmed (bots.js lastOf: `stale`).
   botBlock(tree, t, dark, shown) {
     const rows = shown.map((r) => {
       if (r.kind === "category") return this.categoryRow(r, t);
@@ -569,7 +650,7 @@ export default class Spaces extends View {
         .child(div().flex_1().min_w(0).truncate().child(`${base(tree.key)}: ${r.text}`));
       return this.botRow(r, tree, t, dark);
     });
-    return [v_flex().id(`bots-${projectId(tree)}`).children(rows)];
+    return [v_flex().id(`bots-${projectId(tree)}`).opacity(tree.stale ? 0.5 : 1).children(rows)];
   }
 
   categoryRow(r, t) {
@@ -593,7 +674,7 @@ export default class Spaces extends View {
       .children(this.guides(r.guides, t))
       .child(h_flex().id(`row-${r.id}`).flex_1().min_w(0).h(26).px(6).gap(8).items_center().rounded(8).text_size(12).cursor_pointer()
         .when(shown, (el) => el.bg(t.raised)).hover((s) => s.bg(t.hover))
-        .on_click((_e, cx) => this.openHelper(r, cx))
+        .on_click((_e, cx) => this.openWorker(r, cx))
         .child(pic)
         .child(div().flex_1().min_w(0).truncate().text_color(shown ? t.foreground : t.muted).child(h.name))
         .when(Boolean(h.template || h.model || h.effort), (el) => el.child(div().flex_none().max_w(110).truncate().text_size(10)
@@ -602,17 +683,19 @@ export default class Spaces extends View {
         .child(this.status(t, { status: kidStatus({ address: h.terminal, status: h.status }, this.listed) })));
   }
 
-  // A helper or worker row's click (workerTab.js): its pane; else a tab after its bot's tab,
-  // once per worker while that tab is on its way; else a peek.
-  openHelper(r, cx) {
-    const h = r.helper;
-    const plan = workerClick({ terminal: h.terminal, botTerminal: r.ownerTerminal, name: workerTabName(h), panes: panes(), spaces: spaces() });
-    if (plan.kind !== "open") return focusOrPeek(h.terminal);
-    if (this.opening.has(h.terminal)) return;
-    this.opening.add(h.terminal);
+  // A helper, worker or live bot row's click (workerTab.js rowWorker): its pane; else a tab
+  // after its bot's (a bot row: its hc parent's) tab, once per terminal while that tab is on
+  // its way; else a peek.
+  openWorker(r, cx) {
+    const w = rowWorker(r);
+    if (!w) return;
+    const plan = workerClick({ ...w, panes: panes(), spaces: spaces() });
+    if (plan.kind !== "open") return focusOrPeek(w.terminal);
+    if (this.opening.has(w.terminal)) return;
+    this.opening.add(w.terminal);
     cx.spawn(async (cx) => {
       const sleep = (ms) => new Promise((done) => cx.timer.after(ms, () => done()));
-      try { await openWorkerTab(plan, { run, panes, spaces, hc, sleep, notify }); } finally { this.opening.delete(h.terminal); }
+      try { await openWorkerTab(plan, { run, panes, spaces, hc, sleep, notify }); } finally { this.opening.delete(w.terminal); }
     });
   }
 
@@ -628,11 +711,19 @@ export default class Spaces extends View {
     const second = secondLine(r, tree, { texts: this.modelTexts, argvOf: (a) => this.argvOf.get(a)?.argv ?? null });
     const s = n.status === "error" ? "blocked" : n.status;
     const project = { key: tree.key, machine: tree.machine };
+    // Not counted live but holding a live terminal (no agent seen in front yet): its pane, or
+    // a peek, rather than nothing; read again at click time (panes() too), nothing if it is gone.
+    const held = live || planned ? null : heldTerminalOf(b.id, this.all);
     const onClick = live
-      ? () => focusOrPeek(live.terminal)
-      : r.foldable ? (cx) => this.toggle(r.id, r.open, cx) : null;
+      ? (cx) => this.openWorker(r, cx)
+      : held ? () => { const a = heldClickOf(b.id, terminals(), panes()); if (a) run(a.command, a.args); }
+        : r.foldable ? (cx) => this.toggle(r.id, r.open, cx) : null;
+    // live: its own pane, or the terminal it holds before an agent shows (Focus goes where the
+    // row's click goes; Detach); worker: what the row's own click opens (Focus, as openWorker);
+    // terminal: the pane focused at the click (Attach).
     const onMenu = () => openBotForm({ form: "menu", bot: b.id, name: b.name, planned: planned, project: project.key,
-      machine: project.machine, terminal: focused()?.terminal ?? null }, "popup");
+      machine: project.machine, terminal: focused()?.terminal ?? null, live: live?.terminal ?? held ?? null, worker: rowWorker(r),
+      helpers: (n.helpers ?? []).map((h) => ({ terminal: h.terminal, name: h.name ?? null })) }, "popup");
     const size = main ? 30 : 26;
     let row = h_flex().flex_1().min_w(0).gap(8).items_center()
       .when(!planned, (el) => el.child(this.arrow(r, t)))
@@ -663,12 +754,39 @@ export default class Spaces extends View {
     return h_flex().items_stretch().children(this.guides(r.guides, t)).child(styled);
   }
 
-  // A project with no open space (A8): its tree at the end, under a plain header.
+  // A project with no open space (A8): its tree where its space was, under a plain header
+  // with Start on the main bot (Start opens a space on the project).
   projectHeader(tree, t) {
+    const b = this.startable(tree);
     return h_flex().id(`project-${projectId(tree)}`).h(28).mt(6).px(8).gap(8).items_center().text_size(12).text_color(t.dim)
       .child(svg("mods/workspace-chrome/folder.svg").size(13).flex_none())
       .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(base(tree.key)))
-      .when(Boolean(tree.machine), (el) => el.child(div().flex_none().text_size(10).child(tree.machine)));
+      .when(Boolean(tree.machine), (el) => el.child(div().flex_none().text_size(10).child(tree.machine)))
+      .when(Boolean(b), (el) => el.child(div().id(`project-start-${projectId(tree)}`).flex_none().px(7).py(1).rounded(999)
+        .border_1().border_color(t.border).text_size(11).text_color(t.muted).cursor_pointer()
+        .hover((s) => s.bg(t.hover).text_color(t.foreground))
+        .on_click((_e, cx) => this.startFromRow(b.id, cx)).child("Start")));
+  }
+
+  // The same project while the sidebar is narrow: its main bot; a click starts it.
+  compactProject(tree, t, dark) {
+    const b = this.startable(tree), main = tree.main;
+    return h_flex().id(`project-${projectId(tree)}`).h(26).flex_none().justify_center().items_center().hover((s) => s.bg(t.hover))
+      .tooltip(main ? `${main.bot.name} · ${base(tree.key)}` : base(tree.key))
+      .when(Boolean(b), (el) => el.cursor_pointer().on_click((_e, cx) => this.startFromRow(b.id, cx)))
+      .child(main ? this.pet(main.bot, main.pose, 18, dark) : svg("mods/workspace-chrome/folder.svg").size(13).flex_none());
+  }
+
+  // The bot a spaceless project's Start starts: its main bot, on this computer, not live.
+  startable(tree) {
+    const n = tree.main;
+    return !tree.machine && n && !n.planned && !n.live ? n.bot : null;
+  }
+
+  startFromRow(bot, cx) {
+    cx.spawn(async (cx) => {
+      try { await this.botCommand("start", { bot }, cx); } catch (e) { notify({ title: "Bots", body: String(e?.message ?? e), level: "error" }); }
+    });
   }
 
   checkNew(cx) {
@@ -770,25 +888,45 @@ export default class Spaces extends View {
     const title = { edit: "Edit bot", start: "Start bot", attach: "Attach as bot" }[c];
     if (c === "attach" && !terminal) return notify({ title, body: "Focus the pane to attach first.", level: "warning" });
     // Attach with no bot named: the picker, for the pane.
-    if (c === "attach" && !args.bot) return openBotForm({ form: "attach", terminal });
+    if (c === "attach" && !args.bot) return openBotForm({ form: "attach", terminal, known: this.knownLocal() });
     // No bot named and the focused pane isn't one: the Bots list, to pick one.
-    if (!bot) return openBotForm({ form: "pick" }, "popup");
+    if (!bot) return openBotForm({ form: "pick", known: this.knownLocal() }, "popup");
     if (c === "edit") return openBotForm({ form: "edit", bot });
     // A bot's project: looked up by its id (ids are random, so it is one project).
     const has = (q) => !q.machine && q.file.bots.some((b) => b.id === bot);
     const project = this.bots.find(has) ?? (await discoverProjects()).find(has);
     if (!project) return notify({ title, body: `No project on this computer defines ${bot}.`, level: "warning" });
-    const r = c === "start" ? await startBot(project.key, bot) : await attachBot(project.key, bot, terminal);
+    // Start opens a space on the project when none is open (sleepOf: to wait for it).
+    const r = c === "start" ? await startBot(project.key, bot, { sleep: sleepOf(cx) }) : await attachBot(project.key, bot, terminal);
     if (r.refused) notify({ title, body: r.refused, level: "warning", timeout: 12000 });
     this.refreshBots(cx);
   }
 
+  // This computer's projects as the sidebar last found them (#74's first paint, then each
+  // discovery): the pick and attach lists draw them at once and refresh behind (#85).
+  knownLocal() {
+    return (this.bots ?? []).filter((q) => !q.machine).map((q) => ({ key: q.key, machine: null, file: q.file }));
+  }
+
+  // A discovery's lists are drawn as they come (this computer's projects first, each other
+  // machine as it answers); one still running when the next starts is drawn until a newer
+  // one has been (a discovery longer than the 15-second timer still shows).
   refreshBots(cx) {
     const run = ++this.botsRun;
     cx.spawn(async (cx) => {
+      const sleep = (ms) => new Promise((done) => cx.timer.after(ms, () => done()));
+      const show = (found) => {
+        if (run < this.botsShown) return;
+        this.botsShown = run;
+        const seen = JSON.stringify(found);
+        if (seen === this.botsSeen) return;
+        this.botsSeen = seen;
+        this.bots = found;
+        cx.notify();
+      };
       let found;
-      try { found = await discoverProjects(); } catch { return; }
-      if (run !== this.botsRun) return;
+      try { found = await discoverProjects({ sleep, onUpdate: show }); } catch { return; }
+      if (run < this.botsShown) return;
       // For the footer's Bots tab (am-footer): whether this computer has a bot, as the
       // Bot settings list counts them. Set only on a change.
       const defined = found.some((p) => !p.machine && p.file?.bots?.length > 0);
@@ -804,12 +942,11 @@ export default class Spaces extends View {
           if (this.botWatch.get(key) === token) this.botWatch.delete(key);
         });
       }
-      const seen = JSON.stringify(found);
-      if (seen !== this.botsSeen) {
-        this.botsSeen = seen;
-        this.bots = found;
-        cx.notify();
-      }
+      show(found);
+      try {
+        const saved = discoverySnapshot(found);
+        if (saved !== this.botsSaved) { this.botsSaved = saved; localStorage.setItem(BOTS_SAVED, saved); }
+      } catch {}
       this.readBotArgv(cx);
     });
   }
@@ -831,12 +968,14 @@ export default class Spaces extends View {
   // A12: each live bot pane's foreground command line, for the model it runs. rows.js
   // argvToAsk picks the panes: labelled with a known bot, no `foreground.argv` in the row, not
   // read already for the same pane (created_ms), three at most. Asked after each discovery
-  // (on load, the 15-second timer and a .herdr change), never while drawing. A failed ask
-  // keeps what was read before; a pane gone is dropped.
+  // (on load, the 15-second timer and a .herdr change), never while drawing. A failed or empty
+  // ask keeps what was read before, else marks the pane read (rows.js argvAfter); a pane gone
+  // is dropped.
   readBotArgv(cx) {
     if (this.argvBusy) return;
     const rows = terminals();
-    const { ask, gone } = argvToAsk(rows, knownBots(this.bots), this.argvOf);
+    const { ask, gone, next } = argvToAsk(rows, knownBots(this.bots), this.argvOf, 3, this.argvCursor ?? 0);
+    this.argvCursor = next;
     let changed = gone.length > 0;
     for (const a of gone) this.argvOf.delete(a);
     if (!ask.length) { if (changed) cx.notify(); return; }
@@ -845,13 +984,12 @@ export default class Spaces extends View {
     cx.spawn(async (cx) => {
       try {
         for (const address of ask) {
-          let entry;
+          let get = null;
           try {
             const r = await hc(["get", address, "--json"]);
-            if (r.code !== 0) continue;
-            entry = argvEntry(JSON.parse(r.stdout), createdOf.get(address));
-          } catch { continue; }
-          if (!entry.argv) continue;
+            if (r.code === 0) get = JSON.parse(r.stdout);
+          } catch {}
+          const entry = argvAfter(this.argvOf.get(address), get, createdOf.get(address));
           if (JSON.stringify(entry.argv) !== JSON.stringify(this.argvOf.get(address)?.argv)) changed = true;
           this.argvOf.set(address, entry);
         }
@@ -966,13 +1104,20 @@ export default class Spaces extends View {
   grouped(t, collapsed) {
     const rows = this.ordered();
     // A8: each project's bot tree after the first space row of it, in this order; a project
-    // with no space shown, at the end under a plain header. None while the sidebar is narrow.
+    // with no space shown stays where its space last was in its machine's list (else right
+    // after the open spaces) under a plain header; one compact row while the sidebar is narrow.
     const dark = isDark(t.chrome);
     const { at, rest } = placeTrees(rows.map((r) => r.w.id), this.trees);
     const byId = new Map(this.trees.map((tr) => [projectId(tr), tr]));
     const treeRows = (tree) => spaceRowOrder({ tree, open: this.open }).map((d) => d.row);
-    const tail = collapsed ? [] : rest.flatMap((id) => [this.projectHeader(byId.get(id), t),
-      ...this.botBlock(byId.get(id), t, dark, treeRows(byId.get(id)))]);
+    const spaceless = (tree) => (collapsed ? [this.compactProject(tree, t, dark)]
+      : [this.projectHeader(tree, t), ...this.botBlock(tree, t, dark, treeRows(tree))]);
+    const list = (mine, m) => {
+      const ids = mine.map((r) => r.w.id), rowOf = new Map(mine.map((r) => [r.w.id, r]));
+      for (const [id, i] of placesOf(ids, at)) this.places.set(id, i);
+      const orphans = rest.filter((id) => (byId.get(id).machine ?? null) === m);
+      return withSpaceless(ids, orphans, this.places).flatMap((x) => (x.space ? draw(rowOf.get(x.space)) : spaceless(byId.get(x.project))));
+    };
     // A space's row, then (expanded) its rows in R3 order (spaceRowOrder): the bot tree placed
     // there, then its plain agents with their sub-agents. Built in that order, so this.order
     // (agent cycling) follows the drawn order.
@@ -997,8 +1142,9 @@ export default class Spaces extends View {
         || spaces().some(s => (s.machine ?? null) === m && !this.shown.has(s.id));
     };
     const loadingRow = m => div().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(8).text_size(12).text_color(t.dim).child(collapsed ? "…" : "Loading…");
-    if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : [...rows.flatMap(draw), ...tail];
     const machineNames = [null, ...remote];
+    const tail = rest.filter((id) => !machineNames.includes(byId.get(id).machine ?? null)).flatMap((id) => spaceless(byId.get(id)));
+    if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : [...list(rows, null), ...tail];
     return [...machineNames.flatMap((m) => {
       const mine = rows.filter((r) => (r.w.machine ?? null) === m);
       const machine = this.machines.find(k => k.name === m);
@@ -1022,7 +1168,7 @@ export default class Spaces extends View {
         .text_size(12).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
         .on_click(() => run("space.new", m ? { machine: m } : {}))
         .child(svg("mods/workspace-chrome/plus.svg").size(12)).when(!collapsed, el => el.child("New space there"));
-      return [head, ...(folded ? [] : mine.length ? mine.flatMap(draw) : [loading(m) ? loadingRow(m) : empty])];
+      return [head, ...(folded ? [] : [...(mine.length ? [] : [loading(m) ? loadingRow(m) : empty]), ...list(mine, m)])];
     }), ...tail];
   }
 
