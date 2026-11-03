@@ -24,3 +24,19 @@
   config:
     indexes:
       - https://raw.githubusercontent.com/automagik-dev/dsh-marketplace/main/index.json
+# Session titles run on DSH's DeepSeek default (dsh-base's agent-default-model:
+# deepseek-official/deepseek-flash), never on the Session's own route, which on an agent over
+# ACP (acp-claude, acp-codex) answers only in its own chat. A patch row replaces a row's whole
+# config, so this one restates dsh-base's. The fields are not live settings in DSH yet; a row
+# the person keeps in this profile's patch or in DSH_HOME/cordis.patch.yml wins over this one.
+# Compaction summaries are not set here: the compaction-basic that runs is a child of each
+# agent preset, which a row patch cannot reach.
+- id: session-title-llm
+  config:
+    targetWords: 5
+    targetCjkCharacters: 10
+    maxInputBytes: 4096
+    maxOutputTokens: 4096
+    timeoutMs: 60000
+    provider: deepseek-official
+    model: deepseek-flash

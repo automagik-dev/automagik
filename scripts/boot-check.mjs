@@ -80,6 +80,59 @@ writeFileSync(join(shims, 'pnpm'), '#!/bin/sh\nexec npx --yes pnpm@10.34.6 "$@"\
 const dshEnv = { ...env, DSH_HOME: dshHome, AUTOMAGIK_HOME: join(work, 'automagik-home'), OMNI_HOME: join(work, 'omni-home'), PATH: `${shims}:${env.PATH}` }
 execFileSync(process.execPath, [DSH_BIN, 'plugin', '--profile', 'boot', 'install', '--prod', '--ignore-scripts'], { cwd: profileDir, env: dshEnv, stdio: ['ignore', 'inherit', 'inherit'] })
 
+// The desktop profile's own rows, through DSH's real composition (`--dump-config`, no boot):
+// a fresh profile (the shipped cordis.patch.yml seeds the profile's) runs session titles on
+// DSH's DeepSeek default, never on an agent over ACP; and a row the person keeps in
+// DSH_HOME/cordis.patch.yml wins over the profile's. The boot below runs
+// without either file, as before.
+function dumpedRow(dump, id) {
+  const lines = dump.split('\n')
+  const start = lines.findIndex(line => new RegExp(`^\\s*- id: ['"]?${id}['"]?\\s*$`).test(line))
+  if (start === -1) return undefined
+  const indent = lines[start].search(/\S/)
+  const row = {}
+  for (const line of lines.slice(start + 1)) {
+    if (line.trim() === '' || line.trim().startsWith('#')) continue
+    if (line.search(/\S/) <= indent) break
+    const field = /^\s*([A-Za-z]+):\s*['"]?([^'"#\s]+)/.exec(line)
+    if (field) row[field[1]] = field[2]
+  }
+  return row
+}
+const dumpConfig = () => execFileSync(process.execPath, [DSH_BIN, '--profile', 'boot', '--dump-config'], { cwd: work, env: dshEnv, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+{
+  const profilePatch = join(profileDir, 'cordis.patch.yml')
+  const homePatch = join(dshHome, 'cordis.patch.yml')
+  const before = existsSync(profilePatch) ? readFileSync(profilePatch, 'utf8') : undefined
+  const problems = []
+  const expect = (what, got, want) => { if (got !== want) problems.push(`${what}: ${got ?? 'unset'}, expected ${want}`) }
+  try {
+    cpSync(join(ROOT, 'apps', 'desktop', 'profile', 'cordis.patch.yml'), profilePatch)
+    const fresh = dumpConfig()
+    const title = dumpedRow(fresh, 'session-title-llm')
+    expect('fresh profile: session-title-llm provider', title?.provider, 'deepseek-official')
+    expect('fresh profile: session-title-llm model', title?.model, 'deepseek-flash')
+    expect('fresh profile: session-title-llm targetWords', title?.targetWords, '5')
+    if (/^\s*provider:\s*['"]?acp-/m.test(fresh)) problems.push('fresh profile: a model is set to an ACP agent')
+    writeFileSync(homePatch, '- id: session-title-llm\n  config:\n    targetWords: 6\n    targetCjkCharacters: 10\n    maxInputBytes: 4096\n    maxOutputTokens: 4096\n    timeoutMs: 60000\n    provider: anthropic\n    model: claude-haiku-5-5\n')
+    const own = dumpConfig()
+    expect('the person\'s DSH_HOME patch: session-title-llm provider', dumpedRow(own, 'session-title-llm')?.provider, 'anthropic')
+    expect('the person\'s DSH_HOME patch: session-title-llm targetWords', dumpedRow(own, 'session-title-llm')?.targetWords, '6')
+  } catch (error) {
+    problems.push(`dsh --dump-config failed: ${String(error.stderr ?? error.message).slice(-2000)}`)
+  } finally {
+    rmSync(homePatch, { force: true })
+    if (before === undefined) rmSync(profilePatch, { force: true })
+    else writeFileSync(profilePatch, before)
+  }
+  if (problems.length > 0) {
+    for (const problem of problems) say(`FAIL ${problem}`)
+    if (!args.keep) rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+    process.exit(1)
+  }
+  say('profile: session titles resolve to deepseek-official/deepseek-flash; the person\'s own row wins')
+}
+
 function chrome() {
   if (process.env.CHROME_BIN) return process.env.CHROME_BIN
   for (const name of ['google-chrome', 'chromium', 'chromium-browser']) {

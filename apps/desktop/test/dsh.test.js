@@ -848,3 +848,32 @@ test('main.js guards the origin as it is now, and loads only the URL pageUrlOf h
   assert.match(main, /serveDsh\(\{ run: dshProcess,/)
   assert.equal(/stopDsh\(|dshChild/.test(main), false, 'every way out stops dshProcess, the current dsh')
 })
+
+// Session titles: DSH's DeepSeek default, set in the shipped profile, since DSH does not let
+// them follow a setting yet. Never an agent over ACP.
+const SHIPPED_PATCH = readFileSync(new URL('../profile/cordis.patch.yml', import.meta.url), 'utf8')
+const rowOf = (text, id) => {
+  const lines = text.split('\n')
+  const start = lines.findIndex(line => line === `- id: ${id}`)
+  if (start === -1) return undefined
+  const end = lines.findIndex((line, index) => index > start && !/^\s/.test(line))
+  return Object.fromEntries(lines.slice(start + 1, end === -1 ? undefined : end).map(line => /^\s{4}(\w+):\s*(\S+)/.exec(line)).filter(Boolean).map(([, key, value]) => [key, value]))
+}
+
+test('a fresh profile runs session titles on DSH\'s DeepSeek default', () => {
+  const title = rowOf(SHIPPED_PATCH, 'session-title-llm')
+  // The row replaces dsh-base's whole config, so it restates it.
+  assert.deepEqual(title, { targetWords: '5', targetCjkCharacters: '10', maxInputBytes: '4096', maxOutputTokens: '4096', timeoutMs: '60000', provider: 'deepseek-official', model: 'deepseek-flash' })
+  assert.ok(!/^\s+(provider|summarizationProvider):\s*['"]?acp-/m.test(SHIPPED_PATCH))
+})
+
+test('an update brings the DeepSeek title row to an older profile, and a row the person set stays theirs', () => {
+  const marker = SHIPPED_PATCH.indexOf('# Session titles run on')
+  const older = SHIPPED_PATCH.slice(0, marker)
+  const updated = mergeProfilePatch(older, SHIPPED_PATCH)
+  assert.deepEqual(rowOf(updated, 'session-title-llm').provider, 'deepseek-official')
+  const own = `${older}- id: session-title-llm\n  config:\n    targetWords: 6\n    targetCjkCharacters: 10\n    maxInputBytes: 4096\n    maxOutputTokens: 4096\n    timeoutMs: 60000\n    provider: anthropic\n    model: claude-haiku-5-5\n`
+  // Nothing shipped is missing, so the update leaves the person's patch as it is.
+  assert.equal(mergeProfilePatch(own, SHIPPED_PATCH), null)
+  assert.deepEqual([rowOf(own, 'session-title-llm').provider, rowOf(own, 'session-title-llm').targetWords], ['anthropic', '6'])
+})
