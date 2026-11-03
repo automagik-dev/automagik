@@ -104,7 +104,7 @@ test('a Genie Bot wears its pet, and its clay face where a mark is too small for
   assert.equal(pet.props['data-shape'], 'pet')
   assert.equal(pet.props['data-state'], 'alert')
   assert.equal(pet.children[0].props.state, 'alert')
-  assert.match(pet.children[0].props.pet.sheet, /^api\/omni-ui\/pet\?source=builtin&id=genie-cosmic$/)
+  assert.match(pet.children[0].props.pet.sheet, /^api\/omni-ui\/pet\?source=builtin&id=genie-clay$/)
   assert.match(pet.children[0].props.pet.sleep, /part=sleep/)
   assert.match(SHELL_CSS, /\.bt-clay-genie\{[^}]*url\("data:image\/webp;base64,/)
 })

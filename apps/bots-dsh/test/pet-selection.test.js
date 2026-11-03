@@ -53,7 +53,7 @@ test('selecting Automagik persists through plugin reload without changing other 
   const main = initial.bots.find(bot => bot.id === initial.mainBotId)
   const logo = await app.call('create-bot', { name: 'Logo', role: 'Tests the logo' })
   const genie = await app.call('create-bot', { name: 'Existing pet', role: 'Keeps Genie' })
-  await app.call('pet-use', { botId: genie.id, source: 'builtin', id: 'genie-cosmic' })
+  await app.call('pet-use', { botId: genie.id, source: 'builtin', id: 'genie-clay' })
   const worn = await app.call('pet-use', { botId: logo.id, source: 'builtin', id: 'automagik' })
   const expected = { pet: { source: 'builtin', id: 'automagik', version: 2, sleep: true } }
   assert.deepEqual(worn.avatar, expected)
@@ -63,6 +63,6 @@ test('selecting Automagik persists through plugin reload without changing other 
   app = start(home)
   const restored = await app.call('state')
   assert.deepEqual(restored.bots.find(bot => bot.id === logo.id).avatar, expected)
-  assert.deepEqual(restored.bots.find(bot => bot.id === genie.id).avatar, { pet: { source: 'builtin', id: 'genie-cosmic', version: 2, sleep: true } })
+  assert.deepEqual(restored.bots.find(bot => bot.id === genie.id).avatar, { pet: { source: 'builtin', id: 'genie-clay', version: 1, sleep: true } })
   assert.deepEqual(restored.bots.find(bot => bot.id === main.id).avatar, main.avatar)
 })

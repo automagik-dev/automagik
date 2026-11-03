@@ -16,7 +16,7 @@ const { automagikRoster, currentKey, lookOf } = select.exports
 
 test('Automagik\'s own come first: Genie, Omni, the logo pet, Wisp, then every character but the octopus Omni wears', () => {
   const roster = automagikRoster()
-  assert.deepEqual([...roster.slice(0, 2).map(entry => entry.key)], ['pet:builtin:genie-cosmic', 'omni'])
+  assert.deepEqual([...roster.slice(0, 2).map(entry => entry.key)], ['pet:builtin:genie-clay', 'omni'])
   assert.equal(roster[2].key, 'pet:builtin:automagik')
   assert.equal(roster[2].name, 'Automagik')
   assert.equal(roster[2].kind, 'pet')
@@ -33,7 +33,7 @@ test('the cursor starts on what the Bot wears now', () => {
   const key = bot => currentKey(bot, lookOf(bot))
   assert.equal(key({ id: 'b', avatar: { shape: 'star' } }), 'shape:star')
   assert.equal(key({ id: 'b', color: 'deepseek', avatar: { shape: 'octopus' } }), 'omni')
-  assert.equal(key({ id: 'g', kind: 'genie' }), 'pet:builtin:genie-cosmic')
+  assert.equal(key({ id: 'g', kind: 'genie' }), 'pet:builtin:genie-clay')
   const saved = JSON.parse(JSON.stringify({ id: 'g', kind: 'genie', avatar: { pet: automagikRoster()[2].pet } }))
   assert.equal(key(saved), 'pet:builtin:automagik')
   assert.equal(key({ id: 'b', avatar: { pet: { source: 'team', id: 'sayo', version: 2 } } }), 'pet:team:sayo')

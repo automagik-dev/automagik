@@ -651,6 +651,57 @@ test('a Main Bot still wearing the whale becomes the octopus once, and the chang
   assert.equal(JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).bots.m1.avatar.shape, 'moon')
 })
 
+const GENIE_CLAY = { source: 'builtin', id: 'genie-clay', version: 1, sleep: true }
+
+test('a Bot wearing the genie-cosmic pet wears genie-clay once, and the change is kept', async (t) => {
+  const COSMIC_TEAM = {
+    ...OLD_TEAM,
+    whaleStored: true,
+    octopusStored: true,
+    bots: {
+      ...OLD_TEAM.bots,
+      w2: { ...OLD_TEAM.bots.w2, avatar: { shape: 'star', pet: { source: 'builtin', id: 'genie-cosmic', version: 2, sleep: true } } },
+      t3: { id: 't3', sessionId: 't3', name: 'Fox', role: 'Plays', instructions: '', createdAt: 3, avatar: { pet: { source: 'team', id: 'genie-cosmic', version: 2 } } },
+    },
+  }
+  const { call, stop, home } = start(COSMIC_TEAM)
+  t.after(stop)
+  const bots = async () => Object.fromEntries((await call('state', {})).value.bots.map(bot => [bot.id, bot]))
+  const loaded = await bots()
+  // The look under the pet stays; a team's own pet of the same name is the team's, not ours.
+  assert.deepEqual(loaded.w2.avatar, { shape: 'star', pet: GENIE_CLAY })
+  assert.deepEqual(loaded.t3.avatar, { pet: { source: 'team', id: 'genie-cosmic', version: 2 } })
+  const saved = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))
+  assert.equal(saved.genieClayStored, true)
+  assert.deepEqual(saved.bots.w2.avatar, { shape: 'star', pet: GENIE_CLAY })
+
+  // The migration ran once: a pet the user picks afterwards is never overwritten on the next load.
+  assert.equal((await call('pet-use', { botId: 'w2', source: 'builtin', id: 'automagik' })).ok, true)
+  assert.equal((await bots()).w2.avatar.pet.id, 'automagik')
+  assert.equal(JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).bots.w2.avatar.pet.id, 'automagik')
+})
+
+test('a Bot wearing a builtin pet that no longer ships wears Genie instead of nothing', async (t) => {
+  const RETIRED_TEAM = {
+    ...OLD_TEAM,
+    whaleStored: true,
+    octopusStored: true,
+    genieClayStored: true,
+    bots: {
+      ...OLD_TEAM.bots,
+      m1: { ...OLD_TEAM.bots.m1, avatar: { pet: { source: 'builtin', id: 'retired', version: 2, sleep: true } } },
+      w2: { ...OLD_TEAM.bots.w2, avatar: { pet: { source: 'builtin', id: 'unfold', version: 2, sleep: true } } },
+    },
+  }
+  const { call, stop, home } = start(RETIRED_TEAM)
+  t.after(stop)
+  const bots = Object.fromEntries((await call('state', {})).value.bots.map(bot => [bot.id, bot]))
+  assert.deepEqual(bots.m1.avatar, { pet: GENIE_CLAY })
+  // A pet the plugin still ships stays, even one this instance does not list (Unfold's).
+  assert.deepEqual(bots.w2.avatar, { pet: { source: 'builtin', id: 'unfold', version: 2, sleep: true } })
+  assert.deepEqual(JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).bots.m1.avatar, { pet: GENIE_CLAY })
+})
+
 // #99: the team tools take a Bot's thinking level. `effort` is optional, an empty
 // string returns to the model's default, and a level the model does not serve is
 // refused before anything about the Bot changes.
@@ -955,8 +1006,8 @@ test('a Bot wears a pet Genie ships with; a photo set after it wins, and a pet f
   t.after(stop)
   await call('state', {})
   const writer = (await call('create-bot', { name: 'Writer', role: 'Writes' })).value
-  const worn = (await call('pet-use', { botId: writer.id, source: 'builtin', id: 'genie-cosmic' })).value
-  assert.deepEqual(worn.avatar, { pet: { source: 'builtin', id: 'genie-cosmic', version: 2, sleep: true } })
+  const worn = (await call('pet-use', { botId: writer.id, source: 'builtin', id: 'genie-clay' })).value
+  assert.deepEqual(worn.avatar, { pet: { source: 'builtin', id: 'genie-clay', version: 1, sleep: true } })
   // A photo, uploaded over it, replaces it; a pet named outside what the team keeps is dropped.
   const photo = 'data:image/png;base64,iVBORw0KGgo='
   const pictured = (await call('update-bot', { id: writer.id, avatar: { ...worn.avatar, image: photo } })).value

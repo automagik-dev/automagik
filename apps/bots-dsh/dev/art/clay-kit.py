@@ -22,6 +22,14 @@
       are drawn at different sizes (jumping much smaller), so each is scaled to the same
       face size (the dark face's longer side, at its largest in the strip), standing on one baseline; a strip's
       lift above its own resting frame (hops, the jump) is kept, scaled with it.
+  pet-v1/sleep.webp
+      Genie's sleep strip, the DSH extension's (src/client/pet.js SLEEP: six cells, 320 ms
+      each; src/host/pets.js takes 1152x208 WebP): the kit's asleep still, breathing. Each
+      cell is the still alone, at the idle row's scale (the same face size, the same
+      baseline, the same face centre), so falling asleep does not move the head. The breath
+      is a slow rise and fall: the still stretched up from the baseline by at most
+      BREATH (narrowing a little as it rises, as clay does), eased in and out over the six
+      cells and back, so the last cell leads into the first. Nothing new is drawn.
   pet-v1/preview.png
       The atlas on the cream and the night clay, for review.
   brand/lamp.webp
@@ -61,6 +69,11 @@ ROWS = [
 ]
 # The resting character's height in a cell, leaving room above it for a hop's lift.
 REST_H, BASELINE = 150, 204
+# The sleep strip: six cells (the player's SLEEP), each the asleep still stretched up by
+# BREATH times its share of the breath (eased: out, in, held at the top, back out).
+SLEEP_CELLS = 6
+BREATH = 0.04
+BREATH_SHARE = [0, 0.25, 0.75, 1, 0.75, 0.25]
 
 
 def clean(image):
@@ -167,7 +180,36 @@ def motion_atlas(kit, sad_still):
             if used != check['occupied'] or check['edgePixels']:
                 raise SystemExit(f'cell {name} {column}: {check}')
             cells[f'{row}:{column}'] = 'used' if used else 'empty'
-    return atlas, report, cells
+    # The face size in a cell (every strip's widest face is scaled to it), for the stills
+    # drawn on the same scale.
+    return atlas, report, cells, target_face * cell_scale
+
+
+def sleep_strip(asleep, face):
+    """The asleep still breathing, in SLEEP_CELLS cells of CELL_W x CELL_H on one row."""
+    width, centre = face_width(asleep)
+    scale = face / width
+    x0, y0, x1, y1 = asleep.getbbox()
+    crop = asleep.crop((x0, y0, x1, y1))
+    strip = Image.new('RGBA', (CELL_W * SLEEP_CELLS, CELL_H))
+    frames = []
+    for column, share in enumerate(BREATH_SHARE):
+        rise = 1 + BREATH * share
+        sized = crop.resize((max(1, round(crop.width * scale / rise ** 0.4)), max(1, round(crop.height * scale * rise))), Image.Resampling.LANCZOS)
+        top = BASELINE - sized.height
+        if top < 2:
+            raise SystemExit(f'sleep cell {column} leaves the cell (top {top})')
+        # The face's centre stays at the cell's centre while the still narrows around it.
+        left = round(CELL_W / 2 + (x0 - centre) * sized.width / crop.width)
+        left = min(max(left, 2), CELL_W - 2 - sized.width)
+        cell = Image.new('RGBA', (CELL_W, CELL_H))
+        cell.alpha_composite(sized, (left, top))
+        strip.alpha_composite(cell, (CELL_W * column, 0))
+        frames.append({'size': [sized.width, sized.height], 'top': top, **cell_check(cell)})
+    for column, frame in enumerate(frames):
+        if not frame['occupied'] or frame['edgePixels']:
+            raise SystemExit(f'sleep cell {column}: {frame}')
+    return strip, {'from': 'stills/asleep.png', 'cells': SLEEP_CELLS, 'breath': BREATH, 'share': BREATH_SHARE, 'scale': round(scale, 4), 'frames': frames}
 
 
 def preview(atlas):
@@ -195,7 +237,7 @@ def main(kit, out):
         row.save(out / 'expressions' / f'{who}.webp', quality=86, alpha_quality=90, method=6)
         rows[who] = cleaned
         report[f'{who}Expressions'] = {'faces': FACES, 'cell': list(size), 'scale': round(scale, 5), 'cells': [cell_check(row.crop((size[0] * i, 0, size[0] * (i + 1), size[1]))) for i in range(len(FACES))]}
-    atlas, motion, cells = motion_atlas(kit, rows['genie'][FACES.index('sad')])
+    atlas, motion, cells, face = motion_atlas(kit, rows['genie'][FACES.index('sad')])
     if atlas.size != (1536, 1872):
         raise SystemExit(f'atlas is {atlas.size}')
     atlas.save(out / 'pet-v1' / 'spritesheet.webp', lossless=True, exact=True)
@@ -205,6 +247,12 @@ def main(kit, out):
         'rows': motion, 'cells': cells,
         'usedCells': sum(1 for v in cells.values() if v == 'used'), 'emptyCells': sum(1 for v in cells.values() if v == 'empty'),
     }
+    sleep, sleep_report = sleep_strip(rows['genie'][FACES.index('asleep')], face)
+    if sleep.size != (CELL_W * SLEEP_CELLS, CELL_H):
+        raise SystemExit(f'sleep strip is {sleep.size}')
+    sleep.save(out / 'pet-v1' / 'sleep.webp', lossless=True, exact=True)
+    check = Image.open(out / 'pet-v1' / 'sleep.webp')
+    report['petV1']['sleep'] = {'size': list(check.size), 'mode': check.mode, 'bytes': (out / 'pet-v1' / 'sleep.webp').stat().st_size, **sleep_report}
     (out / 'pet-v1' / 'pet.json').write_text(json.dumps({
         'id': 'genie-clay', 'displayName': 'Genie', 'description': 'Genie in Automagik clay: the deep-space face, a plume that follows.',
         'spriteVersionNumber': 1, 'spritesheetPath': 'spritesheet.webp',

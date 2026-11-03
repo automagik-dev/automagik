@@ -1,5 +1,5 @@
 {
-  "kit": "kit",
+  "kit": "full-kit-v4",
   "alphaMin": 100,
   "stills": {
     "genie/calm": {
@@ -432,7 +432,83 @@
       "8:7": "empty"
     },
     "usedCells": 57,
-    "emptyCells": 15
+    "emptyCells": 15,
+    "sleep": {
+      "size": [
+        1152,
+        208
+      ],
+      "mode": "RGBA",
+      "bytes": 122822,
+      "from": "stills/asleep.png",
+      "cells": 6,
+      "breath": 0.04,
+      "share": [
+        0,
+        0.25,
+        0.75,
+        1,
+        0.75,
+        0.25
+      ],
+      "scale": 0.2002,
+      "frames": [
+        {
+          "size": [
+            141,
+            152
+          ],
+          "top": 52,
+          "occupied": true,
+          "edgePixels": 0
+        },
+        {
+          "size": [
+            140,
+            154
+          ],
+          "top": 50,
+          "occupied": true,
+          "edgePixels": 0
+        },
+        {
+          "size": [
+            139,
+            157
+          ],
+          "top": 47,
+          "occupied": true,
+          "edgePixels": 0
+        },
+        {
+          "size": [
+            139,
+            158
+          ],
+          "top": 46,
+          "occupied": true,
+          "edgePixels": 0
+        },
+        {
+          "size": [
+            139,
+            157
+          ],
+          "top": 47,
+          "occupied": true,
+          "edgePixels": 0
+        },
+        {
+          "size": [
+            140,
+            154
+          ],
+          "top": 50,
+          "occupied": true,
+          "edgePixels": 0
+        }
+      ]
+    }
   },
   "lamp": [
     256,

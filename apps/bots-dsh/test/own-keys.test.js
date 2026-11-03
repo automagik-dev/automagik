@@ -17,6 +17,7 @@ const TEAM = {
   whaleStored: true,
   // Omni's whale-to-octopus migration already ran, so loading writes nothing.
   octopusStored: true,
+  genieClayStored: true,
   bots: {
     m1: { id: 'm1', sessionId: 'm1', name: 'Omni', role: 'Lead', model: 'deepseek/v4', instructions: '', createdAt: 1, capabilities: [] },
     b2: { id: 'b2', sessionId: 'b2', name: 'Writer', role: 'Write', model: 'deepseek/v4', instructions: '', createdAt: 2, capabilities: [] },
