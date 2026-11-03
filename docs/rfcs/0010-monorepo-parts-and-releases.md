@@ -111,8 +111,9 @@ what a release is and whether it attaches the pack:
 
 ## CI
 
-- `ci.yml`'s `herdr` job runs the old repository's gate from `herdr/`, on Node 22.7 (the floor
-  AGENTS.md names) and 24: `node --test 'test/*.test.mjs'`, `node --check` on every pack mod and
+- `ci.yml`'s `herdr` job runs the old repository's gate from `herdr/`, on the newest Node 22 and
+  on 24 (the pack runs on 22.7 or later, but its test stubs need `module.registerHooks`, which 22.7
+  lacks): `node --test 'test/*.test.mjs'`, `node --check` on every pack mod and
   script, `sh -n` and `shellcheck -s sh` on the installer and the CLI's shell scripts,
   `node scripts/catalog.mjs --check`, `node scripts/version.mjs check`. It runs when `herdr/`, the
   CI or release workflow, or `scripts/lane.ts` or `scripts/version.ts` changed. The other jobs are

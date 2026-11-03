@@ -36,7 +36,8 @@ jobs:
     # The herdr pack (herdr/, the old automagik-herdr CI): its tests, a syntax check of every pack
     # mod and its tooling, shellcheck on the installer and the CLI's shell scripts, and its catalog
     # index (its version is the root's: `bun run check` above). Plain JavaScript that Herdr loads as
-    # it is: no install, no dependencies. On the floor AGENTS.md names (Node 22.7) and on Node 24.
+    # it is: no install, no dependencies. On the newest Node 22 and on 24: the pack runs on 22.7 or
+    # later (AGENTS.md), but its test stubs need module.registerHooks, which 22.7 lacks.
     # Only when herdr/ changed, or the workflows and lane tooling that test and pack it.
     name: herdr pack (Node ${{ matrix.node }})
     runs-on: ubuntu-24.04
@@ -44,7 +45,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ['22.7', '24']
+        node: ['22', '24']
     defaults:
       run:
         working-directory: herdr
