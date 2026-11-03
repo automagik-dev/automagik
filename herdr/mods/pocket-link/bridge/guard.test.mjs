@@ -53,6 +53,16 @@ test('a header that never ends a line is cut off at the deadline too', async () 
   assert.equal(conn.closedWith, 'too slow')
 })
 
+test('a header that is not JSON closes the connection at once and gives its slot back', async () => {
+  const { conn, incoming } = peer({ lines: ['not json\n'] })
+  const cap = slots()
+  const refused = logged()
+  await acceptOne(incoming, { routes: { pair: { admit: () => true, run: () => {}, timed: true } }, cap, refused, ms: 1000 })
+  assert.equal(conn.closedWith, 'bad request')
+  assert.match(refused.lines[0], /^connection /)
+  assert.deepEqual(cap.counts(), { pending: 0, open: 0 })
+})
+
 test('a handshake that finishes after the deadline is closed when it does', async () => {
   const { conn, incoming } = peer({ connect: c => later(60, c) })
   await acceptOne(incoming, { routes: { pair: { admit: () => true, run: () => {}, timed: true } }, cap: slots(), refused: logged(), ms: 20 })

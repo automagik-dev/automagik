@@ -123,7 +123,8 @@ export async function acceptOne(incoming, { routes, cap, refused, ms = HANDSHAKE
     await out.route.run(out.job)
   } catch (e) {
     clearTimeout(timer)
-    if (expired && conn) closeConn(conn, 'too slow')
+    // Whatever went wrong, the connection goes too: one left open would sit outside the cap.
+    if (conn) closeConn(conn, expired ? 'too slow' : 'bad request')
     refused('connection', e.message)
   } finally {
     work.catch(() => {})
