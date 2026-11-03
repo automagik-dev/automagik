@@ -493,12 +493,25 @@ still places panes by the walk-up, so a folder joins its own project once it has
 automagik-herdr update --check      # the installed and the latest version
 automagik-herdr update              # download, verify against the signed pointer, install
 automagik-herdr update --rollback   # put the replaced set of mods back
+automagik-herdr update --auto off   # Install updates automatically: on (default), off, or status
 ```
+
+**Install updates automatically** is on by default: when the sidebar's check finds a newer
+release, it installs it the same way `automagik-herdr update` does (the signed pointer, the
+sha256, the replaced set kept for `--rollback`), Herdr reloads the mods, and one notice says
+"Automagik Herdr updated to X". Your bots keep running: they live in herdr-core, not in the mods.
+A version you rolled back with `--rollback` is never installed on its own again; it waits for a
+newer one. A failed install posts one notice with the reason, changes nothing, and tries again
+in 4 hours (then 8, 16, 24). Turn it off with `automagik-herdr update --auto off` or the switch
+in the status bar; then a new release is only announced, as before. It applies only to a pack
+`install.sh` installed from a signed release (its record in `<app home>/automagik-herdr/` has a
+`sequence=`); the setting lives beside it, in `auto-update.json`.
 
 Updates come from the Automagik monorepo's GitHub releases, through one signed pointer: the
 `herdr-lane` release's `pack.json` names the newest pack release (not GitHub's "latest", often a
 desktop or plugin release without it), and `pack.json.sig` signs it. The sidebar looks 20 seconds after it
-loads and then every 4 hours, and shows one notice per new version with the command to run.
+loads and then every 4 hours, and installs a newer one (or, with the switch off, shows one notice
+per new version with the command to run).
 When it can't look (no network, no `node`), it says nothing and tries again in 30 minutes.
 Set `AUTOMAGIK_HERDR_NO_UPDATE=1` to turn both off. A pack installed as a link to a checkout
 is never replaced: update it with git.

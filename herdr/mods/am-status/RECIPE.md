@@ -27,7 +27,12 @@ it couldn't (offline, GitHub refusing, no node, no sidebar answering).
   Confirm runs `am-status.update`, and the sidebar installs the release with `node
   <pack>/update.mjs apply`, the path `automagik-herdr update` takes: the tarball checked against
   the release's `SHA256SUMS`, the replaced pack kept for `automagik-herdr update --rollback`. A
-  notice then says to reload Herdr's mods (no mod can reload them itself).
+  swap reloads the mods (Herdr reloads a mod whose files change), and the new build posts
+  "Automagik Herdr updated to X"; if no reload came within 30 s, the old build's notice says to
+  quit and reopen Herdr.
+- **Install updates automatically: on/off**: beside the version, for a pack install.sh installed.
+  A click flips it (the sidebar writes `<app home>/automagik-herdr/auto-update.json`); the
+  tooltip says when a version waits (rolled back here, or the last try failed).
 - **Check now** at most once a minute (GitHub answers 60 unauthenticated requests an hour): a
   click inside that minute is answered with the last check ("checked just now").
 - **Only the confirmed version**: the request carries the version the dialog named, and the

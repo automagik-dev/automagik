@@ -100,7 +100,7 @@ test("installing: '0.8.0 → 0.8.1 · updating…' until VERSION says 0.8.1; a s
   assert.equal(text(statusLabel({ state: { kind: "update", update: { version: "0.8.1" }, busy: stale }, version: "0.8.0", now: NOW })), "0.8.0 → 0.8.1 · update");
   const installed = statusLabel({ state: { kind: "installed", from: "0.8.0", current: "0.8.1", at: NOW }, version: "0.8.1", now: NOW });
   assert.equal(text(installed), "Automagik Herdr 0.8.1");
-  assert.match(installed.tooltip, /Updated from 0\.8\.0\. Reload Herdr's mods/);
+  assert.match(installed.tooltip, /Updated from 0\.8\.0; Herdr reloaded its mods/);
 });
 
 test("the confirm dialog names both versions and the rollback", () => {
@@ -170,7 +170,7 @@ test("checkPatch and applyPatch: update.mjs's JSON line as the shared state", ()
   const before = { kind: "update", current: "0.8.0", update: u };
   const done = check.applyPatch(out({ current: "0.8.0", latest: "0.8.1", update: u, installed: { version: "0.8.1" } }), before, NOW);
   assert.deepEqual([done.kind, done.from, done.current], ["installed", "0.8.0", "0.8.1"]);
-  assert.match(check.applyNotice(done).body, /0\.8\.0 → 0\.8\.1.*--rollback.*Reload Herdr's mods/);
+  assert.match(check.applyNotice(done).body, /0\.8\.0 → 0\.8\.1.*--rollback.*Herdr reloads its mods/);
   const failed = check.applyPatch(out({ error: "sha256 mismatch for automagik-herdr-pack-0.8.1.tgz" }, 1), before, NOW);
   assert.deepEqual(failed, { applyError: "sha256 mismatch for automagik-herdr-pack-0.8.1.tgz", at: NOW });
   assert.equal(check.applyNotice(failed).level, "error");

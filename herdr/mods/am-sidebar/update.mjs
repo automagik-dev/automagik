@@ -51,8 +51,9 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
-  CATALOG_URL, OLD_PACK_NAME, PACK_CATALOG_URLS, PACK_KEYS, PACK_KEYS_FILE, PACK_LAYOUT, PACK_NAME, POCKET_LINK, POINTER_SIG_URL, POINTER_URL,
-  TIMEOUT_MS, V020_LAYOUT_SHA256, formatMarker, packOfPointer, parseMarker, parseSums, pickUpdate, updatesOff,
+  AUTO_FILE, CATALOG_URL, OLD_PACK_NAME, PACK_CATALOG_URLS, PACK_KEYS, PACK_KEYS_FILE, PACK_LAYOUT, PACK_NAME, POCKET_LINK, POINTER_SIG_URL, POINTER_URL,
+  TIMEOUT_MS, V020_LAYOUT_SHA256, autoHold, formatAuto, formatMarker, packOfPointer, parseAuto, parseMarker, parseSums, pickUpdate,
+  updatesOff,
 } from "./release.js";
 import { ABSORBED, RENAMES, editTarget, own, renamedFrom } from "./migrate.js";
 import { apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration } from "./migrateHome.mjs";
@@ -100,6 +101,66 @@ const twinOf = (name) => (Object.hasOwn(RENAMES, name) ? RENAMES[name] : Object.
 /** The version a pack folder carries in its VERSION file (UNRELEASED when it has none). */
 export function readVersion(packDir) {
   try { return readFileSync(join(packDir, "VERSION"), "utf8").trim() || UNRELEASED; } catch { return UNRELEASED; }
+}
+
+/** The pack's auto-update setting and rollback skip (release.js AUTO_FILE), beside the record. */
+export const autoFileOf = (modsDir) => join(stateDirOf(modsDir), AUTO_FILE);
+export const readAuto = (modsDir) => { try { return parseAuto(readFileSync(autoFileOf(modsDir), "utf8")); } catch { return parseAuto(""); } };
+
+/** Changes the setting (`{ on }` and/or `{ skip }`), written whole through a rename. Returns it. */
+export function writeAuto(modsDir, patch) {
+  const next = { ...readAuto(modsDir), ...patch };
+  mkdirSync(stateDirOf(modsDir), { recursive: true });
+  const tmp = join(stateDirOf(modsDir), `.${AUTO_FILE}.${process.pid}`);
+  writeFileSync(tmp, formatAuto(next));
+  renameSync(tmp, autoFileOf(modsDir));
+  return next;
+}
+
+/**
+ * Whether the updater may replace this pack on its own: install.sh put it in place (the record,
+ * v2, with `version=`) from a signed release (`sequence=`), and mods/am-sidebar is a folder, not a
+ * link to a checkout. Anything else keeps today's behaviour: a notice, and an update when asked.
+ */
+export function managedPack(modsDir) {
+  if (isLink(join(modsDir, PACK_NAME))) return { managed: false, why: `mods/${PACK_NAME} is a link to a checkout: update it with git` };
+  const record = readMarker(modsDir);
+  if (!record || record.v1 || !record.version) return { managed: false, why: "this pack was not installed by install.sh (no install record)" };
+  if (!Number.isSafeInteger(record.sequence)) {
+    return { managed: false, why: "this pack came from before signed releases: run `automagik-herdr update` once" };
+  }
+  return { managed: true, why: null };
+}
+
+/** `{ on, skip, managed, why }`: the setting and whether it applies here (autoHold reads it). */
+export const autoStatus = (modsDir) => ({ ...readAuto(modsDir), ...managedPack(modsDir) });
+
+/** An update or rollback holds this folder while it runs; one older than this was a run that died. */
+export const LOCK_STALE_MS = 10 * 60_000;
+export const lockOf = (modsDir) => join(stateDirOf(modsDir), "update.lock");
+
+/**
+ * One update, install, repair or rollback at a time (the mod's, the CLI's, install.sh's): takes
+ * the lock folder or throws. Returns the function that frees it.
+ */
+export function takeLock(modsDir, now = Date.now()) {
+  const lock = lockOf(modsDir);
+  mkdirSync(stateDirOf(modsDir), { recursive: true });
+  try { mkdirSync(lock); } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+    let age = Infinity;
+    try { age = now - statSync(lock).mtimeMs; } catch {}
+    if (age < LOCK_STALE_MS) throw Object.assign(new Error("another update or rollback is running: try again when it is done"), { locked: true });
+    rmSync(lock, { recursive: true, force: true });
+    mkdirSync(lock);
+  }
+  return () => rmSync(lock, { recursive: true, force: true });
+}
+
+/** Runs `fn` holding the lock. */
+async function locked(modsDir, fn) {
+  const free = takeLock(modsDir);
+  try { return await fn(); } finally { free(); }
 }
 
 export const readMarker = (modsDir) => { try { return parseMarker(readFileSync(markerOf(modsDir), "utf8")); } catch { return null; } };
@@ -622,7 +683,13 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
  * every folder of the kept one comes back (private paths carried over), so a second rollback
  * undoes the first. Refuses, changing nothing, when a folder in the way is not the record's.
  */
-export function rollback({ modsDir = defaultModsDir(), rename = renameSync, log = () => {}, binDir = null, window = false } = {}) {
+export function rollback(opts = {}) {
+  const modsDir = opts.modsDir ?? defaultModsDir();
+  const free = takeLock(modsDir);
+  try { return rollbackLocked({ ...opts, modsDir }); } finally { free(); }
+}
+
+function rollbackLocked({ modsDir, rename = renameSync, log = () => {}, binDir = null, window = false }) {
   const set = readSet(modsDir);
   const prev = prevSetOf(modsDir);
   if (!set || set.mods.length === 0) throw new Error(`no earlier pack kept at ${prev}: nothing to roll back to`);
@@ -677,6 +744,14 @@ export function rollback({ modsDir = defaultModsDir(), rename = renameSync, log 
     out.push(m);
     if (at !== join(modsDir, m)) outOff.push(m);
   }
+  // The version rolled away from is never installed on its own again (auto-update waits for a
+  // newer one). Recorded before the swap: a run that dies after it still leaves the skip; one
+  // whose swap fails leaves that version installed, where the skip changes nothing.
+  if (/^\d+\.\d+\.\d+$/.test(record.version ?? "") && record.version !== UNRELEASED) {
+    try { writeAuto(modsDir, { skip: record.version }); } catch (error) {
+      throw new Error(`the rollback could not be recorded in ${autoFileOf(modsDir)} (${error.message}): nothing rolled back`);
+    }
+  }
   // The kept set's folders come back out of `prev`, which then holds only what stays behind
   // (.pack and anything unlisted): it is set aside, and removed only once the swap stands.
   try {
@@ -722,7 +797,7 @@ export function rollback({ modsDir = defaultModsDir(), rename = renameSync, log 
   const reverted = revertRefs({ modsDir, log, warnings, left: (mod) => left.has(mod) && !set.mods.includes(mod) });
   const migration = migrateRefs({ modsDir, log, warnings });
   const hooks = moveHooks({ modsDir, log, warnings, binDir, window });
-  return { pack: modsDir, prev, mods: set.mods, version: set.version, layout, reverted: reverted.restored, migration, hooks, warnings };
+  return { pack: modsDir, prev, mods: set.mods, version: set.version, from: record.version ?? null, layout, reverted: reverted.restored, migration, hooks, warnings };
 }
 
 /**
@@ -972,25 +1047,45 @@ export function relinkCli({ modsDir = defaultModsDir(), name = PACK_NAME, binDir
 }
 
 /**
- * `{ current, latest, update, disabled }`: latest is the version the signed pointer names, or null
- * (no pack released yet); update from pickUpdate. `keys`: the trusted keys (packKeys by default).
+ * `{ current, latest, update, disabled, auto }`: latest is the version the signed pointer names, or
+ * null (no pack released yet); update from pickUpdate; auto from autoStatus, so the mod decides
+ * from one check whether to install on its own. `keys`: the trusted keys (packKeys by default).
  */
 export async function checkForUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env), keys } = {}) {
   const current = installedVersion({ modsDir });
-  if (updatesOff(env)) return { current, latest: null, update: null, disabled: true };
+  const auto = autoStatus(modsDir);
+  if (updatesOff(env)) return { current, latest: null, update: null, disabled: true, auto };
   const pack = await fetchPointer({ fetch, env, ...(keys ? { keys } : {}) });
-  return { current, latest: pack?.version ?? null, update: pickUpdate(current, pack), disabled: false };
+  return { current, latest: pack?.version ?? null, update: pickUpdate(current, pack), disabled: false, auto };
 }
 
 /**
  * check, then download, verify and apply when there is an update. `{ current, latest, update, installed }`.
  * `expect`: the version the person confirmed (the status bar's dialog). When the latest release
  * is another one by now, nothing is downloaded: `{ ..., installed: null, refused: { expected, latest } }`.
+ * `auto`: the mod installing on its own. Under the lock, before any download, the setting and the
+ * record are read again: when autoHold says no, or another update or rollback runs, nothing is
+ * downloaded: `{ ..., installed: null, held: why }`.
  */
-export async function installUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env), keys, log, binDir = null, window = false, expect = null } = {}) {
+export async function installUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env), keys, log, binDir = null, window = false, expect = null, auto = false } = {}) {
   const found = await checkForUpdate({ fetch, env, modsDir, keys });
   if (!found.update) return { ...found, installed: null };
   if (expect && found.update.version !== expect) return { ...found, installed: null, refused: { expected: expect, latest: found.update.version } };
+  let free;
+  try { free = takeLock(modsDir); } catch (error) {
+    if (auto && error.locked) return { ...found, installed: null, held: error.message };
+    throw error;
+  }
+  try {
+    const hold = auto ? autoHold(found.update.version, autoStatus(modsDir)) : null;
+    if (hold) return { ...found, auto: autoStatus(modsDir), installed: null, held: hold };
+    return await downloadAndApply(found, { fetch, modsDir, log, binDir, window });
+  } finally {
+    free();
+  }
+}
+
+async function downloadAndApply(found, { fetch, modsDir, log, binDir, window }) {
   const dir = mkdtempSync(join(tmpdir(), "automagik-herdr-"));
   try {
     const tgzPath = await downloadUpdate(found.update, { fetch, dir });
@@ -1046,9 +1141,9 @@ export async function repairInstall({ tgzPath, version, modsDir = defaultModsDir
   }
 }
 
-const USAGE = "usage: node update.mjs check | update [--check] [--json] | apply [--expect <v>] | rollback | install --from <tgz> --version <v> [--sequence <n>] [--adopt] [--setup] | repair --from <tgz> --version <v>  (each takes [--mods <dir>])";
+const USAGE = "usage: node update.mjs check | update [--check] [--json] | apply [--expect <v>] [--auto] | rollback | install --from <tgz> --version <v> [--sequence <n>] [--adopt] [--setup] | repair --from <tgz> --version <v>  (each takes [--mods <dir>])";
 const FLAGS = {
-  check: [], apply: ["--expect"], rollback: [], update: ["--check", "--json"], install: ["--from", "--version", "--sequence", "--adopt", "--setup"],
+  check: [], apply: ["--expect", "--auto"], rollback: [], update: ["--check", "--json"], install: ["--from", "--version", "--sequence", "--adopt", "--setup"],
   repair: ["--from", "--version"],
 };
 const VALUED = new Set(["--mods", "--from", "--version", "--expect", "--sequence"]);
@@ -1083,9 +1178,11 @@ async function main(argv) {
   const host = { binDir: binDirOf(), window: liveHome(modsDir) };
   if (command === "check" || (command === "update" && opts.check)) return checkForUpdate({ modsDir });
   if (command === "apply" || command === "update") {
-    const r = await installUpdate({ modsDir, log: command === "update" ? log : undefined, expect: opts.expect ?? null, ...host });
+    const r = await installUpdate({ modsDir, log: command === "update" ? log : undefined, expect: opts.expect ?? null, auto: Boolean(opts.auto), ...host });
     if (command === "update") notice(r.installed?.hooks?.hooks);
-    if (command === "apply" || opts.json) return r;
+    // The mod's notice says whether running Claude bots need a restart for their briefings.
+    if (command === "apply") return r.installed ? { ...r, notice: hooksNotice(r.installed.hooks?.hooks) } : r;
+    if (opts.json) return r;
     return { text: r.installed ? `Updated ${r.current} → ${r.installed.version}.` : `Up to date (${r.current}; latest ${r.latest ?? "none yet"}).` };
   }
   if (command === "rollback") {
@@ -1096,7 +1193,7 @@ async function main(argv) {
   }
   if (command === "repair") {
     // Exit 3: a mod's herdr-app check failed; exit 4: a step after a swap did not finish.
-    const r = await repairInstall({ tgzPath: opts.from, version: opts.version, modsDir, log, window: host.window });
+    const r = await locked(modsDir, () => repairInstall({ tgzPath: opts.from, version: opts.version, modsDir, log, window: host.window }));
     notice(r.hooks?.hooks);
     if (r.warnings.length) process.exitCode = 4;
     else if (r.checkFailed.length) process.exitCode = 3;
@@ -1106,7 +1203,8 @@ async function main(argv) {
   const appHome = dirname(resolve(modsDir));
   if (opts.setup) preflightKeys(appHome);
   const before = oldSidebarHere(modsDir);
-  const installed = await applyUpdate({ tgzPath: opts.from, version: opts.version, sequence: opts.sequence === undefined ? null : Number(opts.sequence), modsDir, adopt: Boolean(opts.adopt), log });
+  const installed = await locked(modsDir, () => applyUpdate({ tgzPath: opts.from, version: opts.version,
+    sequence: opts.sequence === undefined ? null : Number(opts.sequence), modsDir, adopt: Boolean(opts.adopt), log }));
   const crossed = () => crossedRename(modsDir, before);
   // Exit 4: installed, but a step after the swap did not finish (its warning says what and where).
   const done = () => { if (installed.warnings.length) process.exitCode = 4; };
