@@ -19864,13 +19864,13 @@ function PermissionsSection({ roster, actions, run: run2 }) {
     )
   );
 }
-function backgroundChoices(models) {
-  return (models ?? []).filter((model) => !model.needsKey && model.superseded !== true && routeOf(model.provider ?? model.ref.split("/")[0]).connectedBy !== "acp");
+function backgroundChoices(models, saved) {
+  return (models ?? []).filter((model) => !model.needsKey && (model.superseded !== true || model.ref === saved) && routeOf(model.provider ?? model.ref.split("/")[0]).connectedBy !== "acp");
 }
 function BackgroundSection({ roster, actions, run: run2 }) {
-  const choices = backgroundChoices(roster.models);
-  if (choices.length === 0) return null;
   const saved = roster.prefs?.backgroundModel ?? "";
+  const choices = backgroundChoices(roster.models, saved);
+  if (choices.length === 0) return null;
   const shown = choices.some((model) => model.ref === saved) ? saved : "";
   const fallback = choices.find((model) => model.ref === roster.backgroundModel && saved === "");
   return (0, import_react58.createElement)(
