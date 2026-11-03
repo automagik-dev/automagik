@@ -34,12 +34,16 @@ export const CAP = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+$/;
 const PROVIDED = /^([a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)+)@([1-9]\d*)$/;
 
 /**
- * Where a path inside the pack tarball lives in the repository: `layouts/<x>` is
- * `herdr-layout/<x>` (release.yml packs herdr-layout/automagik.json there), and every other
- * `<mod>/…` is `herdr/mods/<mod>/…`. The one place to change when the layout entry's shape does.
+ * Where a path inside the pack tarball lives in the repository (scripts/pack.mjs packs it so):
+ * `layouts/automagik.json` and the layout part's folder `am-sidebar/layout/` are `herdr-layout/`
+ * (the layout's part.json rides inside the sidebar's folder, the only place every installed
+ * updater accepts a new file), and every other `<mod>/…` is `herdr/mods/<mod>/…`. The one place to
+ * change when the layout entry's shape does.
  */
+export const LAYOUT_PART_DIR = "am-sidebar/layout/";
 export function repoPathOf(inPack) {
   if (inPack === "layouts" || inPack.startsWith("layouts/")) return `herdr-layout${inPack.slice("layouts".length)}`;
+  if (inPack === LAYOUT_PART_DIR.slice(0, -1) || inPack.startsWith(LAYOUT_PART_DIR)) return `herdr-layout/${inPack.slice(LAYOUT_PART_DIR.length)}`;
   return `herdr/mods/${inPack}`;
 }
 
@@ -85,16 +89,18 @@ export const PROTECTED_SAMPLES = Object.freeze([
 
 /** Why a write may not be declared, or null: `..`, a protected path (REFUSED_WRITES), or a glob that reaches one. */
 export function refusedWrite(w) {
-  const path = w.split("#")[0].replace(/^\$HERDR_APP_HOME(\/|$)/, "~/.config/herdr-app$1");
+  // Lowercased: APFS is case-insensitive by default, so ~/.config/HERDR-APP/Shared.json is shared.json.
+  w = w.toLowerCase();
+  const path = w.split("#")[0].replace(/^\$herdr_app_home(\/|$)/, "~/.config/herdr-app$1");
   if (path.split("/").includes("..")) return "a path with .. is not a part's to write (it can reach anything)";
-  for (const [re, why] of REFUSED_WRITES) if (re.test(w) || re.test(path)) return `${why} is not a part's to write`;
+  for (const [r, why] of REFUSED_WRITES) if (new RegExp(r.source, "i").test(w) || new RegExp(r.source, "i").test(path)) return `${why} is not a part's to write`;
   const re = globRe(path);
-  for (const [sample, why] of PROTECTED_SAMPLES) if (re.test(sample)) return `it can match ${sample}: ${why} is not a part's to write`;
+  for (const [sample, why] of PROTECTED_SAMPLES) if (re.test(sample.toLowerCase())) return `it can match ${sample}: ${why} is not a part's to write`;
   return null;
 }
 
 /** A write as am resolves it: Herdr's app home spelled one way, `$HERDR_APP_HOME/` (am falls back to ~/.config/herdr-app). */
-const normalWrite = (w) => w.replace(/^~\/\.config\/herdr-app(\/|$)/, "$HERDR_APP_HOME$1");
+const normalWrite = (w) => w.toLowerCase().replace(/^~\/\.config\/herdr-app(\/|$)/, "$herdr_app_home$1");
 
 /**
  * Whether two writes reach one place: the same path, a glob matching the other's path, or one file
@@ -205,9 +211,11 @@ export function validateParts({ files, read, packMods }) {
   }
   // No two parts write one place, unless one replaces the other: every part.json git tracks, not only herdr's.
   const writers = [];
+  const provided = new Set();
   for (const file of files.filter((f) => /(^|\/)part\.json$/.test(f) && !f.split("/").includes("node_modules")).sort()) {
     let part;
     try { part = JSON.parse(read(file)); } catch { continue; } // a broken one is its own gate's (herdr's: above)
+    if (isObject(part) && Array.isArray(part.provides)) for (const c of part.provides) if (typeof c === "string") provided.add(c);
     if (isObject(part) && typeof part.id === "string" && Array.isArray(part.writes)) {
       writers.push({ file, id: part.id, writes: part.writes.filter((w) => typeof w === "string"), replaces: Array.isArray(part.replaces) ? part.replaces : [] });
     }
@@ -219,6 +227,14 @@ export function validateParts({ files, read, packMods }) {
       for (const wa of a.writes) for (const wb of b.writes) {
         if (writesOverlap(wa, wb)) problems.push(`${a.file}: writes ${wa}, and ${b.id} (${b.file}) writes ${wb}: one place, two parts (one must replace the other)`);
       }
+    }
+  }
+  // Every capability a herdr part requires is provided by some part.json the repository tracks.
+  for (const file of manifests) {
+    let part;
+    try { part = JSON.parse(read(file)); } catch { continue; }
+    for (const r of Array.isArray(part?.requires) ? part.requires : []) {
+      if (isObject(r) && typeof r.cap === "string" && !provided.has(`${r.cap}@${r.major}`)) problems.push(`${file}: requires ${r.cap}@${r.major}, which no part.json provides`);
     }
   }
   for (const m of packMods) {

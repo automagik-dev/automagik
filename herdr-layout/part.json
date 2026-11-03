@@ -43,23 +43,23 @@
   ],
   "targets": "local",
   "artifact": "automagik-herdr-pack-{version}.tgz",
-  "select": "layouts/",
+  "select": "am-sidebar/layout/",
   "entry": {
     "install": [
       "node",
-      "../am-sidebar/pack/part.mjs",
+      "../pack/part.mjs",
       "install",
       "herdr.layout"
     ],
     "uninstall": [
       "node",
-      "../am-sidebar/pack/part.mjs",
+      "../pack/part.mjs",
       "uninstall",
       "herdr.layout"
     ],
     "doctor": [
       "node",
-      "../am-sidebar/pack/part.mjs",
+      "../pack/part.mjs",
       "doctor",
       "herdr.layout"
     ]
