@@ -388,3 +388,20 @@ test('an install past its time is killed with everything it started', { skip: pr
   const [installer, worker] = pidsIn(pids)
   assert.ok(await until(() => !alive(installer) && !alive(worker), 3000), 'the installer and its worker are killed')
 })
+
+test('a stop after the install exited kills nothing: its pid may already be a stranger\'s', { skip: process.platform === 'win32' }, async (t) => {
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  // Exits at once; a child of its own holds the output open, so 'close' comes a second later.
+  writeFileSync(join(home, 'quick'), '#!/bin/sh\necho $$ > "$ACP_TEST_PIDS/installer"\nsleep 1 &\nexit 0\n')
+  const kills = []
+  const quit = new AbortController()
+  const job = runInstall('/bin/sh', [join(home, 'quick')], { cwd: home, env: { ...process.env, ACP_TEST_PIDS: home }, signal: quit.signal, kill: pid => kills.push(pid) })
+  assert.ok(await until(() => existsSync(join(home, 'installer'))))
+  const installer = Number(readFileSync(join(home, 'installer'), 'utf8'))
+  assert.ok(await until(() => !alive(installer), 3000), 'the installer exited and was reaped')
+  await new Promise(done => setTimeout(done, 50))
+  quit.abort()
+  await assert.rejects(job, /DSH is quitting/)
+  assert.deepEqual(kills, [])
+})

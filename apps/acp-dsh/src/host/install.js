@@ -80,54 +80,25 @@ export function packageManagerOf(env = process.env) {
   return npm ? { kind: 'npm', command: npm } : undefined
 }
 
-/** The pids under `root`, from `ps`: its children, theirs, and so on. */
-export function descendantsOf(root) {
-  let table
-  try { table = execFileSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8', timeout: 5000 }) } catch { return [] }
-  const children = new Map()
-  for (const line of table.split('\n')) {
-    const [pid, ppid] = line.trim().split(/\s+/).map(Number)
-    if (!pid || ppid === undefined) continue
-    children.set(ppid, [...(children.get(ppid) ?? []), pid])
-  }
-  const found = []
-  const queue = [root]
-  while (queue.length > 0) {
-    for (const pid of children.get(queue.shift()) ?? []) {
-      if (found.includes(pid)) continue
-      found.push(pid)
-      queue.push(pid)
-    }
-  }
-  return found
-}
-
-const sendSignal = (pid, name) => {
-  try { process.kill(pid, name); return true } catch { return false }
-}
-
-// Stop `root` and everything it started. Each process is frozen before the next walk, so none
-// forks or hands its children to init while the tree is read; then all of them are killed. The
-// install stays in DSH's process group (not detached): whatever stops DSH's group stops it too.
-export function killTree(root) {
+// Stop an install and everything it started. On POSIX the install leads its own process group
+// (spawned detached), so one kill of the group reaches all of it at once. It is out of DSH's
+// group: DSH's SIGTERM disposes this plugin, which kills it here; a SIGKILL to DSH's group alone
+// does not reach it. On Windows, taskkill /T walks the tree by parent pid, which Windows reuses:
+// a process that outlived its parent can carry a stranger's pid as its parent.
+export function killTree(pid) {
   if (process.platform === 'win32') {
-    try { execFileSync('taskkill', ['/pid', String(root), '/T', '/F'], { stdio: 'ignore', timeout: 10_000 }) } catch {}
+    try { execFileSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', timeout: 10_000 }) } catch {}
     return
   }
-  const frozen = []
-  for (let walk = 0, fresh = [root]; walk < 10 && fresh.length > 0; walk++) {
-    for (const pid of fresh) if (sendSignal(pid, 'SIGSTOP')) frozen.push(pid)
-    fresh = descendantsOf(root).filter(pid => !frozen.includes(pid))
-  }
-  for (const pid of [root, ...frozen]) sendSignal(pid, 'SIGKILL')
+  try { process.kill(-pid, 'SIGKILL') } catch {}
 }
 
 // One install command: rejects with its last output when it fails, and kills its whole tree
 // when `signal` aborts or it runs past INSTALL_TIMEOUT_MS.
-export function runInstall(command, args, { cwd, env, signal: abort, timeoutMs = INSTALL_TIMEOUT_MS }) {
+export function runInstall(command, args, { cwd, env, signal: abort, timeoutMs = INSTALL_TIMEOUT_MS, kill = killTree }) {
   return new Promise((resolve, reject) => {
     if (abort?.aborted) return reject(new Error('install stopped: DSH is quitting'))
-    const child = spawn(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+    const child = spawn(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' })
     let output = ''
     let stopped
     const keep = (chunk) => { output = (output + chunk).slice(-16_384) }
@@ -136,7 +107,9 @@ export function runInstall(command, args, { cwd, env, signal: abort, timeoutMs =
     const stop = (why) => {
       if (stopped !== undefined) return
       stopped = why
-      if (child.pid !== undefined) killTree(child.pid)
+      // Only while it runs: once Node has reaped it ('exit' comes before 'close'), its pid may
+      // already be a stranger's.
+      if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) kill(child.pid)
     }
     const onAbort = () => stop('install stopped: DSH is quitting')
     const timer = setTimeout(() => stop(`install timed out after ${Math.round(timeoutMs / 1000)}s`), timeoutMs)
