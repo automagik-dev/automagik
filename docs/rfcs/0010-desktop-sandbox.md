@@ -13,6 +13,8 @@ The desktop wrapper (D12, D13) has to run DSH, Omni and later Herdr's code mode 
 safe sandbox". This RFC compares what Unfold 0.5, Omni's `sandbox run --embedded` and our
 Electron app do today, layer by layer. It names the gaps all three share and proposes six
 deliveries. Each delivery is small and can be reverted, and none of them waits for Arca.
+Felipe's answers (D19) are under Decided. They defer secret swapping and egress control to a
+later phase.
 
 ## Motivation
 
@@ -119,8 +121,10 @@ does not change this table.
   folders.
 - **Network.** Servers bind 127.0.0.1 only. Agent tool processes reach the network only
   through a loopback egress proxy that the supervisor runs. The proxy logs every host per Bot
-  and, once switched to deny, enforces per-Bot allowlists.
-- **Secrets.** A broker in the DSH server holds provider keys and Bot secrets. Tool processes
+  and, once switched to deny, enforces per-Bot allowlists. Later phase (D19): outbound is
+  allow-all for now.
+- **Secrets.** Later phase (D19): for now provider keys pass through the environment, and
+  agents can read them. The design for that phase: a broker in the DSH server holds provider keys and Bot secrets. Tool processes
   get placeholders, and the proxy swaps in the real value only for the allowed host, the
   pattern rth's microVM already uses (`controller.rs:799-801`). Credential files move out of
   the agent's readable set through the fence's read denies. `bots/omni.json` keeps its path and
@@ -145,7 +149,7 @@ lands first and stays compatible with the older app.
    *Check:* a test asserts the exact key set; an integration test SIGKILLs the parent and sees
    DSH exit within 5 s; a crash-loop test.
    *Rollback:* revert. The allowlist is a single constant.
-2. **Secrets broker** (plugin, then desktop). Provider keys resolved in the server, tool
+2. **Secrets broker** (plugin, then desktop). Later phase (D19). Provider keys resolved in the server, tool
    processes scrubbed of them, and Bot secrets as placeholders. The Omni link holds a scoped
    key. Omni already narrows scopes per device client (`packages/api/src/login/config.ts:72-100`).
    *Check:* `env` in a Bot shell shows no real key, and a provider call still succeeds. The
@@ -155,17 +159,19 @@ lands first and stays compatible with the older app.
    processes, logging each host per Bot. On Linux, DSH's `runnerCommand` override (a
    bwrap-compatible runner, sandbox-local README:45) can add the network rule without forking
    DSH; on macOS the rule comes with delivery 4.
+   It blocks nothing, so it fits D19's allow-all.
    *Check:* the log lists provider and fetch hosts for a scripted session, and nothing is blocked.
    *Rollback:* unset the proxy.
 4. **Server fence, macOS and Linux** (desktop). DSH and Omni under Seatbelt, or bwrap and
    Landlock, with the read denies and write roots above. Explicit `127.0.0.1` rules, never
-   `localhost:*`. Direct outbound is denied except to the proxy's loopback port, since
-   `HTTP(S)_PROXY` alone is advisory. Fail closed, with a visible setting to turn it off.
+   `localhost:*`. Outbound stays open for now (D19). In the later phase, direct outbound is
+   denied except to the proxy's loopback port, since `HTTP(S)_PROXY` alone is advisory. Fail
+   closed, with a visible setting to turn it off.
    *Check:* denial tests for each denied path (the credential file included), a bind on the LAN
-   IP refused, a direct connect to an outside host from a tool shell refused, and every Bot tool
-   suite green with the fence on.
+   IP refused, and every Bot tool suite green with the fence on. In the later phase, a direct
+   connect to an outside host from a tool shell is refused.
    *Rollback:* the setting, then revert.
-5. **Egress deny and per-Bot policy** (desktop and plugin). The proxy switches to allowlists
+5. **Egress deny and per-Bot policy** (desktop and plugin). Later phase (D19). The proxy switches to allowlists
    built from the observe logs, plus a per-Bot workspace root and mode on DSH's session
    policy. The "Ask" flow from `folders.js:148-170` extends to new hosts.
    *Check:* an unlisted host is refused with a clear message and allowed after approval.
@@ -180,25 +186,38 @@ Omni upstream asks, in Omni's repo, needed before the desktop runs a local Omni:
 scoped Postgres role, a machine-readable readiness line, and a parent-death watch (Omni's own
 DESIGN.md already lists the first two).
 
+## Decided
+
+Felipe answered these on 2026-11-03 (D19).
+
+1. **Shell-env API keys.** They keep passing through to DSH's environment, as today. Agents
+   can read them. Header-swapped secrets (the broker in Design and delivery 2) are deferred to
+   a later phase. The read fence still denies the credential file, but the keys stay readable
+   through the environment.
+2. **Egress.** Outbound traffic is allow-all for now. Egress control is a later phase: the
+   proxy allowlists, the fence's outbound deny (delivery 4) and delivery 5. Delivery 3 only
+   observes, so it can ship before then.
+3. **Server read fence.** The fence around the DSH and Omni servers is a denylist of sensitive
+   paths. Agents need the person's files; an allowlist breaks too much work.
+
+Until the later phase, the first two gaps under "What is missing" stay open. A prompt-injected
+Bot can read a key and send it out. D19 accepts this for now.
+
 ## Open questions
 
-1. **Read fence: denylist or allowlist?** Recommended: a denylist of sensitive paths, because
-   agents need the person's files; an allowlist breaks too much work.
-2. **Shell-env API keys after delivery 1?** Recommended: offer a one-time import into the
-   credential store; after that, carry no key variables by default.
-3. **Egress default once deny ships?** Recommended: observe for one release, then deny for new
-   Bots and an opt-in for existing ones.
-4. **Omni hardening: upstream or wrapped by us?** Recommended: upstream. Omni's design already
+1. **Omni hardening: upstream or wrapped by us?** Recommended: upstream. Omni's design already
    names it, and wrapping would fork its lifecycle.
-5. **A separate Node for DSH (drops RunAsNode) now, or with a shell move?** Recommended: now.
-   The fence and the fuses both want DSH to be its own binary, and both shells need the same
-   Node ≥ 22.19.
-6. **Per-Bot OS processes or policy-only?** Recommended: policy-only (deliveries 4 and 5)
+2. **A separate Node for DSH (drops RunAsNode) now, or with a shell move?** Still open after
+   D19. The cross-OS spike (#191) keeps Electron on macOS, Linux and Windows. Windows needs four
+   fixes: `npm.cmd` run through a shell, a code-signing certificate, a Windows build and its
+   update feed, and the `#!/bin/sh` tool shims in `src/dsh.js`. Recommended: now. The fence and
+   the fuses both want DSH to be its own binary, and both shells need the same Node ≥ 22.19.
+3. **Per-Bot OS processes or policy-only?** Recommended: policy-only (deliveries 4 and 5)
    until a measured need appears. One process per Bot multiplies RSS.
-7. **Apple `container` floor.** Apple's README asks for Apple silicon and macOS 26 (not verified
+4. **Apple `container` floor.** Apple's README asks for Apple silicon and macOS 26 (not verified
    here). The app sets no floor below Electron's. Recommended: keep the host supervisor as the
    default and offer the guest only where it runs.
-8. **Unfold.** Recommended: Unfold consumes the same boundary API, so one supervisor serves
+5. **Unfold.** Recommended: Unfold consumes the same boundary API, so one supervisor serves
    both products.
 
 ## Links
@@ -207,4 +226,5 @@ DESIGN.md already lists the first two).
   Unfold notes, 2026-11-03); council: `council-desktop-shell-2026-11-02.md` (synthesis).
 - [0006](0006-herdr-terminal-mode.md) Herdr terminal mode, [0007](0007-desktop-speed.md)
   desktop speed, [0008](0008-platform-and-web-instances.md) platforms.
+- Decisions: D19 (2026-11-03) in the handoff above. Cross-OS spike: #191.
 - Omni `origin/dev` `0c388fae3`: `docs/cli/sandbox.md`, `.genie/brainstorms/omni-local-daemon/DESIGN.md`.
