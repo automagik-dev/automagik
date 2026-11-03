@@ -27,7 +27,17 @@ jobs:
         run: |
           set -euo pipefail
           bad=0
+          # Only commits made on this repository: those that descend from the pull request's
+          # merge base. The history of a repository imported whole (scripts/import-herdr.sh: an
+          # unrelated history merged in, docs/rfcs/0010-monorepo-parts-and-releases.md) is kept
+          # as that repository wrote it; its own commits never reach the base, so they are skipped.
+          mb=$(git merge-base "${BASE}" "${HEAD}")
+          skipped=0
           for sha in $(git rev-list --no-merges "${BASE}..${HEAD}"); do
+            if ! git merge-base --is-ancestor "${mb}" "${sha}"; then
+              skipped=$((skipped + 1))
+              continue
+            fi
             subject=$(git log -1 --format=%s "${sha}")
             if ! [[ "${subject}" =~ ^(feat|fix|chore|docs|refactor|test|ci|build|perf|style|revert)(\([a-z0-9._/-]+\))?!?:\ .+ ]]; then
               echo "::error ::${sha:0:9} is not conventional: ${subject}"
@@ -38,4 +48,5 @@ jobs:
               bad=1
             fi
           done
+          (( skipped == 0 )) || echo "${skipped} imported commit(s) skipped: their history is the source repository's"
           exit "${bad}"

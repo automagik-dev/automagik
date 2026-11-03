@@ -77,3 +77,39 @@ describe('the cut uploading its signed lane to the versioned release', () => {
     expect(run.out).toContain('::error::lane/lane.json and lane/lane.json.sig did not reach v9.9.9 after 3 tries');
   });
 });
+
+describe('commitlint over a pull request that imports a repository with its history', () => {
+  const lines = workflow('commitlint.yml');
+  const start = lines.findIndex(line => line.trim() === 'run: |');
+  const script = start > 0 ? lines.slice(start + 1).map(line => line.replace(/^ {10}/, '')).join('\n') : '';
+
+  // A repository with dev at `base`, and a branch on it that merges in an unrelated history (an
+  // import, whose commit runs past 100 characters as automagik-herdr's did) and adds its own `own`.
+  function lint(own: string) {
+    const dir = mkdtempSync(join(tmpdir(), 'commitlint-'));
+    const git = (...args: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8' }).stdout.trim();
+    git('init', '-q', '-b', 'dev');
+    git('commit', '-q', '--allow-empty', '-m', 'chore: the base');
+    const base = git('rev-parse', 'HEAD');
+    git('checkout', '-q', '--orphan', 'imported');
+    git('commit', '-q', '--allow-empty', '-m', `docs(old): a line the old repository allowed ${'x'.repeat(80)}`);
+    git('commit', '-q', '--allow-empty', '-m', 'Merge-ish subject that is not conventional at all');
+    git('checkout', '-q', '-b', 'pr', base);
+    git('merge', '-q', '--allow-unrelated-histories', '-m', 'feat(herdr): import it', 'imported');
+    git('commit', '-q', '--allow-empty', '-m', own);
+    const run = spawnSync('bash', ['-c', `set -euo pipefail\n${script}`], { cwd: dir, encoding: 'utf8', env: { PATH: process.env.PATH ?? '', BASE: base, HEAD: git('rev-parse', 'HEAD') } });
+    rmSync(dir, { recursive: true, force: true });
+    return { status: run.status, out: run.stdout + run.stderr };
+  }
+
+  test('the imported commits are skipped, as the source wrote them; the pull request\'s own are checked', () => {
+    expect(script).toContain('git merge-base --is-ancestor "${mb}" "${sha}"');
+    const ok = lint('ci(herdr): run the pack in this repository');
+    expect(ok.out).toContain('2 imported commit(s) skipped');
+    expect(ok.status).toBe(0);
+    const bad = lint(`fix: a commit of this pull request ${'y'.repeat(80)}`);
+    expect(bad.status).toBe(1);
+    expect(bad.out).toContain('has a line over 100 characters');
+    expect(bad.out).not.toContain('is not conventional');
+  });
+});
