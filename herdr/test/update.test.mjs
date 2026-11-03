@@ -732,8 +732,9 @@ function layoutHome() {
   writeFileSync(join(home, "layouts", "automagik.json"), LAYOUT_V1);
   writeFileSync(join(home, "automagik-herdr", "automagik.json"), LAYOUT_V1);
   const t = tarballWithLayout("0.2.0", LAYOUT_V2);
-  const rel = release("0.2.0");
-  const table = { [LATEST_URL]: rel, [rel.assets[0].browser_download_url]: t.buf, [rel.assets[1].browser_download_url]: `${sha(t.buf)}  automagik-herdr-pack-0.2.0.tgz\n` };
+  // The signed herdr-lane pointer to 0.2.0 and its tarball.
+  const url = "https://dl.test/v0.2.0/automagik-herdr-pack-0.2.0.tgz";
+  const table = { ...served("0.2.0", { url, body: t.buf }), [url]: t.buf };
   const live = () => readFileSync(join(home, "layouts", "automagik.json"), "utf8");
   const ref = () => readFileSync(join(home, "automagik-herdr", "automagik.json"), "utf8");
   const done = () => { rmSync(t.src, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); };
@@ -743,7 +744,7 @@ function layoutHome() {
 test("installUpdate places the release's layout over the last pack's own (what `automagik-herdr update` runs)", async () => {
   const h = layoutHome();
   try {
-    const r = await installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods });
+    const r = await installUpdate({ keys, fetch: fakeFetch(h.table), env: {}, modsDir: h.mods });
     assert.equal(r.installed.version, "0.2.0");
     assert.equal(r.installed.layout, "replaced");
     assert.equal(h.live(), LAYOUT_V2, "the status bar block names am-status now");
@@ -757,7 +758,7 @@ test("installUpdate keeps a layout the person edited (D8), and adds one that is 
   try {
     const mine = LAYOUT_V1.replace('"root"', '"mine"');
     writeFileSync(join(h.home, "layouts", "automagik.json"), mine);
-    const r = await installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods });
+    const r = await installUpdate({ keys, fetch: fakeFetch(h.table), env: {}, modsDir: h.mods });
     assert.equal(r.installed.layout, "kept");
     assert.equal(h.live(), mine);
     assert.equal(h.ref(), LAYOUT_V2, "the pack's copy is still the reference");
@@ -765,7 +766,7 @@ test("installUpdate keeps a layout the person edited (D8), and adds one that is 
   const g = layoutHome();
   try {
     rmSync(join(g.home, "layouts", "automagik.json"));
-    const r = await installUpdate({ fetch: fakeFetch(g.table), env: {}, modsDir: g.mods });
+    const r = await installUpdate({ keys, fetch: fakeFetch(g.table), env: {}, modsDir: g.mods });
     assert.equal(r.installed.layout, "added");
     assert.equal(g.live(), LAYOUT_V2);
   } finally { g.done(); }
@@ -774,7 +775,7 @@ test("installUpdate keeps a layout the person edited (D8), and adds one that is 
 test("rollback puts the rolled-to pack's layout back (no layout naming a missing am-status), and a second rollback undoes it", async () => {
   const h = layoutHome();
   try {
-    await installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods });
+    await installUpdate({ keys, fetch: fakeFetch(h.table), env: {}, modsDir: h.mods });
     const back = rollback({ modsDir: h.mods });
     assert.equal(back.version, "0.1.0");
     assert.equal(back.layout, "restored");
@@ -792,7 +793,7 @@ test("rollback puts the rolled-to pack's layout back (no layout naming a missing
 test("rollback keeps a layout the person edited after the update; a set kept before v0.9 (no layout) changes nothing", async () => {
   const h = layoutHome();
   try {
-    await installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods });
+    await installUpdate({ keys, fetch: fakeFetch(h.table), env: {}, modsDir: h.mods });
     const mine = LAYOUT_V2.replace('"root"', '"mine"');
     writeFileSync(join(h.home, "layouts", "automagik.json"), mine);
     const back = rollback({ modsDir: h.mods });
@@ -802,7 +803,7 @@ test("rollback keeps a layout the person edited after the update; a set kept bef
   } finally { h.done(); }
   const g = layoutHome();
   try {
-    await installUpdate({ fetch: fakeFetch(g.table), env: {}, modsDir: g.mods });
+    await installUpdate({ keys, fetch: fakeFetch(g.table), env: {}, modsDir: g.mods });
     rmSync(join(prevSetOf(g.mods), ".layout.json"));
     const back = rollback({ modsDir: g.mods });
     assert.equal(back.layout, null);
@@ -814,12 +815,12 @@ test("installUpdate with `expect`: a newer latest than the confirmed version dow
   const h = layoutHome();
   try {
     const calls = [];
-    const r = await installUpdate({ fetch: fakeFetch(h.table, calls), env: {}, modsDir: h.mods, expect: "0.1.5" });
+    const r = await installUpdate({ keys, fetch: fakeFetch(h.table, calls), env: {}, modsDir: h.mods, expect: "0.1.5" });
     assert.equal(r.installed, null);
     assert.deepEqual(r.refused, { expected: "0.1.5", latest: "0.2.0" });
-    assert.deepEqual(calls.map((c) => c.url), [LATEST_URL], "only the release lookup: no tarball, no SHA256SUMS");
+    assert.deepEqual(calls.map((c) => c.url), [POINTER_URL, POINTER_SIG_URL], "only the signed pointer: no tarball");
     assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.1.0");
-    const ok = await installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, expect: "0.2.0" });
+    const ok = await installUpdate({ keys, fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, expect: "0.2.0" });
     assert.equal(ok.installed.version, "0.2.0");
   } finally { h.done(); }
 });
