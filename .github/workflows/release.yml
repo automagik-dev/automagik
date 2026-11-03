@@ -255,12 +255,12 @@ jobs:
         working-directory: am
         run: |
           set -euo pipefail
+          node ../scripts/am-copies.mjs --check
           node --test 'test/*.test.mjs'
           for f in *.js *.mjs bin/*.mjs lib/*.mjs; do
             node --check "$f"
           done
           shellcheck -s sh bin/am bin/run.sh bin/automagik-herdr
-          node ../scripts/am-copies.mjs --check
 
       # Before the cut, on every release, since every release carries am: AM_LANE_KEY (the slot
       # AM_LANE_SIGNER names) must be a key am-keys.json lists, or the run stops before it tags.

@@ -170,6 +170,11 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
 
+      # First, so a herdr change that drifted from am's copies fails here, naming the fix.
+      - name: Copies of the pack's CLI and briefing
+        if: steps.changed.outputs.am == 'true'
+        run: node ../scripts/am-copies.mjs --check
+
       - name: Tests
         if: steps.changed.outputs.am == 'true'
         run: node --test 'test/*.test.mjs'
@@ -182,10 +187,6 @@ jobs:
             node --check "$f"
           done
           shellcheck -s sh bin/am bin/run.sh bin/automagik-herdr
-
-      - name: Copies of the pack's CLI and briefing
-        if: steps.changed.outputs.am == 'true'
-        run: node ../scripts/am-copies.mjs --check
 
   pocket:
     # Pocket's phone app (apps/pocket/, the old automagik-pocket android.yml): the debug APK, the
