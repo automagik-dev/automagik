@@ -44,14 +44,15 @@ import androidx.compose.ui.unit.sp
 
 /** The drawer's machine/space/agent tree, row for row as Herdr desktop's sidebar draws it. */
 fun LazyListScope.sidebarRows(rows: List<SidebarRow>, activeSpace: Pair<String, String>?, focused: TerminalRef?,
-                              onToggle: (MachineHeaderRow) -> Unit, onSpace: (SpaceRow) -> Unit, onTerminal: (TerminalRef) -> Unit) {
+                              onToggle: (MachineHeaderRow) -> Unit, onSpace: (SpaceRow) -> Unit, onTerminal: (TerminalRef) -> Unit,
+                              onStats: (StatsSheet) -> Unit = {}) {
     items(rows, key = { it.key }) { row ->
         Box(Modifier.padding(horizontal = 8.dp)) {
             when (row) {
                 is MachineHeaderRow -> MachineHeader(row) { onToggle(row) }
-                is SpaceRow -> SpaceLine(row, activeSpace == (row.hostId to row.space.id)) { onSpace(row) }
-                is AgentRow -> AgentLine(row, focused == TerminalRef(row.hostId, row.terminal.address)) { onTerminal(TerminalRef(row.hostId, row.terminal.address)) }
-                is KidRow -> KidLine(row, focused == TerminalRef(row.hostId, row.terminal.address)) { onTerminal(TerminalRef(row.hostId, row.terminal.address)) }
+                is SpaceRow -> SpaceLine(row, activeSpace == (row.hostId to row.space.id), onStats) { onSpace(row) }
+                is AgentRow -> AgentLine(row, focused == TerminalRef(row.hostId, row.terminal.address), onStats) { onTerminal(TerminalRef(row.hostId, row.terminal.address)) }
+                is KidRow -> KidLine(row, focused == TerminalRef(row.hostId, row.terminal.address), onStats) { onTerminal(TerminalRef(row.hostId, row.terminal.address)) }
             }
         }
     }
@@ -71,9 +72,9 @@ fun LazyListScope.sidebarRows(rows: List<SidebarRow>, activeSpace: Pair<String, 
     }
 }
 
-@Composable private fun SpaceLine(row: SpaceRow, active: Boolean, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(if (row.nested) 28.dp else 34.dp).clip(RoundedCornerShape(8.dp))
-        .background(if (active) SidebarSelected else Color.Transparent).clickable(onClick = onClick).padding(horizontal = 8.dp),
+@Composable private fun SpaceLine(row: SpaceRow, active: Boolean, onStats: (StatsSheet) -> Unit, onClick: () -> Unit) {
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (active) SidebarSelected else Color.Transparent).clickable(onClick = onClick)) {
+    Row(Modifier.fillMaxWidth().height(if (row.nested) 28.dp else 34.dp).padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically) {
         // A worktree nested under its main checkout: a branch glyph instead of the avatar.
         if (row.nested) { Spacer(Modifier.width(14.dp)); BranchGlyph(); Spacer(Modifier.width(8.dp)) }
@@ -90,6 +91,9 @@ fun LazyListScope.sidebarRows(rows: List<SidebarRow>, activeSpace: Pair<String, 
             if (row.behind > 0) Text("↓${row.behind}", color = Color(Sidebar.MARK.getValue("ansi1")), fontSize = 11.5.sp, maxLines = 1, softWrap = false)
         }
     }
+    // Line 2 starts under the name, after the avatar (8 + 18 + 9).
+    row.stats?.let { s -> SpaceLine2(s, Modifier.padding(start = 35.dp, end = 8.dp, bottom = 6.dp)) { onStats(ChipSheet(s, it)) } }
+    }
 }
 
 /** Lucide's git-branch (ISC), 13 dp in dim, as the desktop draws nested worktree rows. */
@@ -104,7 +108,7 @@ fun LazyListScope.sidebarRows(rows: List<SidebarRow>, activeSpace: Pair<String, 
     }
 }
 
-@Composable private fun AgentLine(row: AgentRow, focused: Boolean, onClick: () -> Unit) {
+@Composable private fun AgentLine(row: AgentRow, focused: Boolean, onStats: (StatsSheet) -> Unit, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().height(32.dp).clip(RoundedCornerShape(8.dp)).background(if (focused) SidebarSelected else Color.Transparent)
         .clickable(onClick = onClick).padding(start = if (row.nested) 44.dp else 28.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         ProgramIcon(row.program, 14)
@@ -112,19 +116,21 @@ fun LazyListScope.sidebarRows(rows: List<SidebarRow>, activeSpace: Pair<String, 
         Text(row.label, color = if (row.status == "idle" && !focused) SidebarMuted else Ink, fontSize = 12.5.sp, maxLines = 1,
             overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         row.machineLabel?.let { Spacer(Modifier.width(6.dp)); Text(it, color = SidebarDim, fontSize = 10.sp, maxLines = 1) }
-        Spacer(Modifier.width(8.dp))
+        row.bot?.let { b -> Spacer(Modifier.width(4.dp)); StatsButton { onStats(BotSheet(b)) } }
+        Spacer(Modifier.width(if (row.bot != null) 4.dp else 8.dp))
         StatusMark(row.status)
     }
 }
 
-@Composable private fun KidLine(row: KidRow, focused: Boolean, onClick: () -> Unit) {
+@Composable private fun KidLine(row: KidRow, focused: Boolean, onStats: (StatsSheet) -> Unit, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().height(30.dp).clip(RoundedCornerShape(8.dp)).background(if (focused) Raised else Color.Transparent)
         .clickable(onClick = onClick).padding(start = if (row.nested) 50.dp else 34.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         row.lines.forEach { TreeLine(it) }
         ProgramIcon(row.program, 13)
         Spacer(Modifier.width(7.dp))
         Text(row.label, color = if (focused) Ink else SidebarMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-        Spacer(Modifier.width(8.dp))
+        row.bot?.let { b -> Spacer(Modifier.width(4.dp)); StatsButton { onStats(BotSheet(b)) } }
+        Spacer(Modifier.width(if (row.bot != null) 4.dp else 8.dp))
         StatusMark(row.status)
     }
 }

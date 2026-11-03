@@ -56,17 +56,28 @@ data class MachineHeaderRow(override val key: String, val hostId: String, val ma
     val connected: Boolean, val state: String, val folded: Boolean) : SidebarRow
 /** [tail] is the desktop's repo · branch text, with [ahead]/[behind] beside it; a [nested] worktree draws a branch glyph. */
 data class SpaceRow(override val key: String, val hostId: String, val space: PocketSpace, val letter: String, val color: String,
-    val nested: Boolean, val tail: String = "", val ahead: Int = 0, val behind: Int = 0) : SidebarRow
+    val nested: Boolean, val tail: String = "", val ahead: Int = 0, val behind: Int = 0,
+    /** Line 2: the space's project in its machine's Space Row feed; null for nested worktrees and projects the feed lacks. */
+    val stats: SpaceStats? = null) : SidebarRow
 data class AgentRow(override val key: String, val hostId: String, val terminal: CoreTerminal, val label: String, val program: Program,
-    val status: String, val machineLabel: String?, val nested: Boolean) : SidebarRow
+    val status: String, val machineLabel: String?, val nested: Boolean,
+    /** The stats button: a pane labelled `bot=<id>` on a machine whose meter doc has a Space Row feed. */
+    val bot: BotStats? = null) : SidebarRow
 data class KidRow(override val key: String, val hostId: String, val terminal: CoreTerminal, val label: String, val program: Program,
-    val status: String, val lines: List<String>, val nested: Boolean) : SidebarRow
+    val status: String, val lines: List<String>, val nested: Boolean, val bot: BotStats? = null) : SidebarRow
+
+/** A space row's line 2: its project in the feed. */
+data class SpaceStats(val feed: SpaceFeed.Feed, val project: SpaceFeed.Project)
+/** A bot row's card: [bot] is null when the feed has no figures for it (every cell "–"). */
+data class BotStats(val id: String, val name: String, val feed: SpaceFeed.Feed, val bot: SpaceFeed.Bot?, val names: SpaceFeed.Names?)
 
 /** What one connection contributes: its spaces (local first in document order, then remote), terminals and machines. */
 data class SidebarHost(val hostId: String, val name: String, val connected: Boolean, val spaces: List<PocketSpace>,
     val terminals: List<CoreTerminal>, val machines: List<LinkedMachine>, val colors: Map<String, String> = emptyMap(),
     /** Git answers by [Sidebar.gitKey]; null means not a repository, missing means not known yet. */
-    val git: Map<String, GitInfo?> = emptyMap())
+    val git: Map<String, GitInfo?> = emptyMap(),
+    /** The Space Row feed per machine ("" is the core's own) and bots.json names by "machine|project key". */
+    val space: Map<String, SpaceFeed.Feed> = emptyMap(), val bots: Map<String, SpaceFeed.Names> = emptyMap())
 
 object Sidebar {
     /** Herdr desktop's avatar palette (spaces-agents MARK), by the space.colors names it stores. */
@@ -90,9 +101,14 @@ object Sidebar {
                 fun info(space: PocketSpace) = host.git[gitKey(machine, place(space, byAddress))]
                 for ((space, nested) in GitInfo.ordered(host.spaces.filter { it.machine == machine }, ::info)) {
                     val git = info(space)
+                    // The machine's own feed, by the space's project key; a worktree maps to its main checkout's project.
+                    val feed = host.space[machine]
+                    val project = SpaceFeed.projectKey(git)
+                    val stats = feed?.project(project)?.takeIf { !nested }?.let { SpaceStats(feed, it) }
                     out += SpaceRow("s:${host.hostId}:${space.id}", host.hostId, space, letter(space.name), host.colors[space.id] ?: "ansi6", nested,
-                        git?.tail(space.name, nested).orEmpty(), git?.ahead ?: 0, git?.behind ?: 0)
-                    agents(host, space, programs, nested, out)
+                        git?.tail(space.name, nested).orEmpty(), git?.ahead ?: 0, git?.behind ?: 0, stats)
+                    val bot = { t: CoreTerminal -> feed?.let { f -> botStats(t, f, project, host.bots["$machine|$project"]) } }
+                    agents(host, space, programs, nested, out, bot)
                 }
             }
         }
@@ -107,7 +123,14 @@ object Sidebar {
     fun gitKey(machine: String, place: String) = "$machine|$place"
 
     // agents() order: the space's tabs, then panes; plain shells and programs with a pane get no row.
-    private fun agents(host: SidebarHost, space: PocketSpace, programs: Programs, nested: Boolean, out: MutableList<SidebarRow>) {
+    /** A pane's bot card, when it carries a `bot=<id>` label (desktop BOT_LABEL); a bot the feed lacks has every field null. */
+    fun botStats(t: CoreTerminal, feed: SpaceFeed.Feed, project: String?, names: SpaceFeed.Names?): BotStats? {
+        val id = t.labels["bot"]?.trim()?.ifBlank { null } ?: return null
+        return BotStats(id, names?.bots?.get(id) ?: id, feed, feed.project(project)?.bots?.get(id), names)
+    }
+
+    private fun agents(host: SidebarHost, space: PocketSpace, programs: Programs, nested: Boolean, out: MutableList<SidebarRow>,
+                       bot: (CoreTerminal) -> BotStats? = { null }) {
         val byAddress = host.terminals.associateBy { it.address }
         data class Candidate(val terminal: CoreTerminal, val tab: PocketTab, val program: Program)
         val candidates = space.tabs.flatMap { tab ->
@@ -125,14 +148,14 @@ object Sidebar {
             val name = detail ?: if (labels[i].isNumeric()) c.program.name.ifBlank { labels[i] } else labels[i]
             val path = "a:${host.hostId}:${space.id}:${c.tab.id}:${c.terminal.address}"
             out += AgentRow(path, host.hostId, c.terminal, name, c.program, agentStatus(c.terminal),
-                c.terminal.address.substringBefore('/', "").ifBlank { null }, nested)
-            kids(host, c.terminal.address, emptyList(), path, programs, nested, out, setOf(c.terminal.address))
+                c.terminal.address.substringBefore('/', "").ifBlank { null }, nested, bot(c.terminal))
+            kids(host, c.terminal.address, emptyList(), path, programs, nested, out, setOf(c.terminal.address), bot)
         }
     }
 
     // Every live terminal started by this one, on any machine, depth first, in core order.
     private fun kids(host: SidebarHost, parent: String, lines: List<String>, path: String, programs: Programs, nested: Boolean,
-                     out: MutableList<SidebarRow>, ancestors: Set<String>) {
+                     out: MutableList<SidebarRow>, ancestors: Set<String>, bot: (CoreTerminal) -> BotStats? = { null }) {
         if (lines.size >= 8) return
         val children = host.terminals.filter { it.live && it.address !in ancestors && isChild(it, parent) }
         children.forEachIndexed { i, k ->
@@ -140,8 +163,8 @@ object Sidebar {
             val program = programs.of(k)
             val key = "$path>${k.address}"
             out += KidRow(key, host.hostId, k, k.hcName.ifBlank { k.template }.ifBlank { program.name }.ifBlank { k.address },
-                program, kidStatus(k.status), lines + if (last) "└" else "├", nested)
-            kids(host, k.address, lines + if (last) "" else "│", key, programs, nested, out, ancestors + k.address)
+                program, kidStatus(k.status), lines + if (last) "└" else "├", nested, bot(k))
+            kids(host, k.address, lines + if (last) "" else "│", key, programs, nested, out, ancestors + k.address, bot)
         }
     }
 
