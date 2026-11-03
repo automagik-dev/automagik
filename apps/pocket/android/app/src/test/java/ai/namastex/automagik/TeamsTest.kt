@@ -213,7 +213,7 @@ class TeamsTest {
         val team = Teams.build(mapOf("h1" to m), 10_000L).first()
         assertEquals(2.0, team.merged!!, 0.0)
         assertEquals(36.0, team.agentMin!!, 0.0)
-        val seen = Teams.merges(mapOf("h1" to m))
+        val seen = Teams.merges(mapOf("h1" to m)).getValue("h1|")
         assertEquals(emptySet<String>(), Teams.celebrations(null, seen))   // the first reading is the baseline
         assertEquals(emptySet<String>(), Teams.celebrations(seen, seen))
         val before = seen - "h1||/work/example|gh-2|b-aaaaaaaaaa"
@@ -225,9 +225,10 @@ class TeamsTest {
 
     @Test fun cachedProjectsOfOfflineMachinesStayAndAreStale() {
         val live = listOf(team("a", Teams.WORKING).copy(hostId = "h1"))
-        val cached = listOf(team("a", Teams.IDLE).copy(hostId = "h1"), team("b", Teams.NEEDS_YOU).copy(hostId = "h2"))
-        val merged = Teams.merge(live, cached, connected = setOf("h1"))
-        assertEquals(listOf("a", "b"), merged.map { it.id })
+        val cached = listOf(team("a", Teams.IDLE).copy(hostId = "h1"), team("b", Teams.NEEDS_YOU).copy(hostId = "h2"),
+            team("c", Teams.IDLE).copy(hostId = "gone"))
+        val merged = Teams.merge(live, cached, read = setOf("h1"), known = setOf("h1", "h2"))
+        assertEquals(listOf("a", "b"), merged.map { it.id })   // a machine no longer saved shows nothing
         assertEquals(Teams.WORKING, merged[0].bots.single().pose)
         assertTrue(merged[1].stale)
         assertNull(merged[1].bots.single().ref)   // an offline machine's terminal can't be opened
@@ -240,9 +241,75 @@ class TeamsTest {
         // Not a repository (git answered null): a project of its own, keyed by the space.
         val site = Teams.build(mapOf("h1" to m.copy(git = m.git + (Sidebar.gitKey("", "/work/site") to null))), 10_000L).last()
         assertEquals("h1||space:s3", site.id)
+        // Connected but not read yet: the cache shows, stale, and nothing in it can be answered.
         val cached = Teams.build(mapOf("h1" to m), 10_000L)
-        val shown = Teams.merge(emptyList(), cached, connected = setOf("h1"))
-        assertEquals(cached, shown)   // connected, nothing read yet: the cache, still openable
+        val shown = Teams.merge(emptyList(), cached, read = emptySet(), known = setOf("h1"))
+        assertEquals(cached.map { it.id }, shown.map { it.id })
+        assertTrue(shown.all { it.stale } && Teams.deck(shown).isEmpty())
+    }
+
+    @Test fun aMachineIsReadOnceItsSpacesAndGitAre() {
+        val m = machine().copy(session = 2, readSession = 2, readMs = 1_000L)
+        assertTrue(Teams.ready(m, now = 2_000L))
+        assertTrue(!Teams.ready(m.copy(connected = false), 2_000L))
+        assertTrue(!Teams.ready(m.copy(readSession = 1), 2_000L))   // this session's terminals not read yet
+        val pending = m.copy(git = m.git - Sidebar.gitKey("", "/work/site"))
+        assertTrue(!Teams.ready(pending, 2_000L))
+        assertTrue(Teams.ready(pending, 1_000L + Teams.READ_GRACE_MS))   // a space whose git never answers stops holding it
+        // A space on a linked machine that is down doesn't hold it back, and shows nothing.
+        val away = m.copy(spaces = m.spaces + PocketSpace("box/s9", "Box", "/x", "box", listOf(PocketTab("box/z", "Z", listOf("box/t9")))))
+        assertTrue(Teams.ready(away, 2_000L))
+        assertEquals(2, Teams.build("h1", away, 2_000L).size)
+        // A folder the core didn't report as a path: a project of its own, no git needed.
+        val relative = m.copy(spaces = m.spaces + PocketSpace("s8", "Home", "~", "", emptyList()))
+        assertTrue(Teams.ready(relative, 2_000L))
+        assertEquals("h1||space:s8", Teams.build("h1", relative, 2_000L).last().id)
+    }
+
+    @Test fun aBotsPaneMustBeInItsProject() {
+        val m = machine()
+        // b-aaaaaaaaaa's pane moved into the Site space: no longer the example project's pane, and not labelled there.
+        val moved = m.copy(spaces = listOf(m.spaces[0].copy(tabs = listOf(PocketTab("a", "Main", listOf("t3", "t5")))), m.spaces[1],
+            m.spaces[2].copy(tabs = listOf(PocketTab("c", "Shell", listOf("t4", "t1"))))),
+            terminals = m.terminals.map { if (it.address == "t1") it.copy(cwd = "/work/site") else it },
+            git = m.git + (Sidebar.gitKey("", "/work/site") to GitInfo("main", 0, 0, "/work/site", "/work/site/.git")))
+        val teams = Teams.build("h1", moved, 10_000L)
+        val lead = teams[0].bots.single { it.id == "b-aaaaaaaaaa" }
+        assertEquals(Teams.ASLEEP, lead.pose)
+        assertNull(lead.ref)
+        // A pane outside the spaces whose folder is in the project's repository is still its bot's.
+        val outside = m.copy(spaces = listOf(m.spaces[0].copy(tabs = listOf(PocketTab("a", "Main", listOf("t3", "t5")))), m.spaces[1], m.spaces[2]))
+        assertEquals(TerminalRef("h1", "t1"), Teams.build("h1", outside, 10_000L)[0].bots.single { it.id == "b-aaaaaaaaaa" }.ref)
+    }
+
+    // ---- the deck
+
+    @Test fun aFailedAnswerKeepsItsCardAndOnlyASentOneLeaves() {
+        val teams = Teams.build(mapOf("h1" to machine()), 10_000L)
+        val card = Teams.deck(teams).single().second
+        for (outcome in listOf("Not sent: Machine isn’t connected. Open Automagik to reconnect.", "Not confirmed: check the agent before trying again.",
+                "Not sent: its options changed. Open the agent to answer.")) assertTrue(outcome, !Teams.sent(outcome))
+        assertTrue(Teams.sent("You chose: Yes"))
+        // Not sent: nothing is added to the answered set, so the card stays.
+        assertEquals(listOf(card), (Teams.deckView(teams, emptySet(), anyConnected = true) as Teams.DeckView.Cards).cards.map { it.second })
+        assertEquals(Teams.DeckView.Clear, Teams.deckView(teams, setOf(Teams.deckKey(card)), anyConnected = true))
+    }
+
+    @Test fun aDisconnectIsOfflineNotAllClear() {
+        val live = Teams.build(mapOf("h1" to machine()), 10_000L)
+        val dropped = Teams.merge(emptyList(), live, read = emptySet(), known = setOf("h1"))
+        assertEquals(Teams.DeckView.Offline(1), Teams.deckView(dropped, emptySet(), anyConnected = false))
+        assertEquals(Teams.DeckView.Offline(0), Teams.deckView(emptyList(), emptySet(), anyConnected = false))
+        assertEquals(Teams.DeckView.Clear, Teams.deckView(listOf(team("a", Teams.WORKING)), emptySet(), anyConnected = true))
+    }
+
+    @Test fun aSwipeFollowsTheAxisItMovedMostAlong() {
+        val t = 100f
+        assertEquals(Teams.Swipe.OPEN, Teams.swipe(dx = 120f, dy = -200f, t, canYes = true, canNo = true))   // diagonal, mostly up
+        assertEquals(Teams.Swipe.YES, Teams.swipe(dx = 200f, dy = -120f, t, canYes = true, canNo = true))   // diagonal, mostly right
+        assertEquals(Teams.Swipe.NO, Teams.swipe(dx = -150f, dy = 0f, t, canYes = true, canNo = true))
+        assertEquals(Teams.Swipe.NONE, Teams.swipe(dx = 150f, dy = 0f, t, canYes = false, canNo = true))   // no Yes to send
+        assertEquals(Teams.Swipe.NONE, Teams.swipe(dx = 60f, dy = -80f, t, canYes = true, canNo = true))    // too short
     }
 
     @Test fun rowsRoundTripTheModel() {

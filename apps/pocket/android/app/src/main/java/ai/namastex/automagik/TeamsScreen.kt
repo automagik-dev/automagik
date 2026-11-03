@@ -94,9 +94,11 @@ object SpaceIcons {
     val cached by vm.cachedTeams.collectAsState()
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
-    return remember(state.machines, state.demo, cached, now) {
-        val live = Teams.build(state.machines.filterValues { it.connected }, now)
-        if (state.demo) live else Teams.merge(live, cached, state.machines.filterValues { it.connected }.keys)
+    return remember(state.machines, state.hosts, state.demo, cached, now) {
+        // Live only for a machine read far enough (as the cache is written); until then, its cached projects.
+        val read = state.machines.filterValues { Teams.ready(it, now) }
+        val live = Teams.build(read, now)
+        if (state.demo) live else Teams.merge(live, cached, read.keys, state.hosts.map { it.id }.toSet())
     }
 }
 
@@ -124,6 +126,7 @@ object SpaceIcons {
     val shown = if (selected == null) ordered else listOf(selected)
     val rows = remember(shown) { if (selected == null) Teams.allRows(shown) else selected.bots.map { selected to it } }
     val deck = remember(teams) { Teams.deck(teams) }
+    val offline = teams.any { it.stale }
     val peak = if (state.demo) Teams.working(teams)[selected?.id ?: ""] else peaks[selected?.id ?: ""]
     val connected = state.machines.values.any { it.connected }
     Box(Modifier.fillMaxSize()) {
@@ -137,16 +140,17 @@ object SpaceIcons {
                 }
             }
             item(key = "strip") { ProgressStrip(Teams.strip(shown, peak)) }
-            if (deck.isNotEmpty()) item(key = "deck") {
+            if (deck.isNotEmpty() || (offline && teams.any { it.stale && it.needsYou > 0 })) item(key = "deck") {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp).clip(RoundedCornerShape(12.dp))
                     .background(amber().copy(alpha = .14f)).clickable { deckOpen = true }.padding(horizontal = 14.dp, vertical = 11.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     Dot(amber(), 8); Spacer(Modifier.width(10.dp))
-                    Text(if (deck.size == 1) "1 bot needs you" else "${deck.size} bots need you", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                    val n = deck.size + teams.filter { it.stale }.sumOf { it.needsYou }
+                    Text(if (n == 1) "1 bot needs you" else "$n bots need you", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.weight(1f))
                     Text("Review", color = Accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
-            if (!connected || teams.any { it.stale }) item(key = "offline") {
+            if (!connected || offline) item(key = "offline") {
                 Text(if (connected) "Some machines are offline · last known state" else "Offline · last known state",
                     color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp))
             }
@@ -161,7 +165,7 @@ object SpaceIcons {
                     modifier = Modifier.animateItem(), onOpen = onOpen)
             }
         }
-        if (deckOpen) NeedsYouDeck(vm, deck, onClose = { deckOpen = false }, onOpen = { deckOpen = false; onOpen(it) })
+        if (deckOpen) NeedsYouDeck(vm, teams, connected, onClose = { deckOpen = false }, onOpen = { deckOpen = false; onOpen(it) })
     }
 }
 
@@ -275,31 +279,44 @@ val LocalIconsVersion = compositionLocalOf { 0 }
  * path as the terminal's answer buttons), up opens the bot's terminal. A question, or a menu the phone can't read, is
  * answered in the terminal. An empty deck is the "all clear" moment.
  */
-@Composable fun NeedsYouDeck(vm: PocketViewModel, deck: List<Pair<Teams.Team, Teams.Bot>>, onClose: () -> Unit, onOpen: (TerminalRef) -> Unit) {
+@Composable fun NeedsYouDeck(vm: PocketViewModel, teams: List<Teams.Team>, connected: Boolean, onClose: () -> Unit, onOpen: (TerminalRef) -> Unit) {
     BackHandler(onBack = onClose)
+    // Cards whose answer reached the agent: they leave at once, before the next reading shows the bot moved on.
     var answered by remember { mutableStateOf(setOf<String>()) }
-    fun key(b: Teams.Bot) = "${b.ref}|${b.statusMs}"
-    val cards = deck.filter { key(it.second) !in answered }
+    val view = Teams.deckView(teams, answered, connected)
     Box(Modifier.fillMaxSize().background(Canvas).clickable(enabled = false) {}.padding(16.dp)) {
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(if (cards.isEmpty()) "Needs you" else "Needs you · ${cards.size} left", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text(if (view is Teams.DeckView.Cards) "Needs you · ${view.cards.size} left" else "Needs you", fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                 TextButton(onClick = onClose) { Text("Close") }
             }
-            if (cards.isEmpty()) {
-                Spacer(Modifier.weight(1f))
-                PetView(Teams.GENIE, Teams.IDLE, 140.dp, celebrate = Unit)
-                Spacer(Modifier.height(12.dp))
-                Text("All clear", fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
-                Text("No bot is waiting on you.", color = Muted, fontSize = 14.sp)
-                Spacer(Modifier.weight(1f))
-                Button(onClick = onClose, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Back to Teams") }
-            } else {
-                val (team, bot) = cards.first()
-                key(key(bot)) { DeckCard(vm, team, bot, behind = cards.size - 1, Modifier.weight(1f),
-                    onAnswered = { answered = answered + key(bot) }, onOpen = { bot.ref?.let(onOpen) }) }
+            when (view) {
+                is Teams.DeckView.Cards -> {
+                    val (team, bot) = view.cards.first()
+                    key(Teams.deckKey(bot)) { DeckCard(vm, team, bot, behind = view.cards.size - 1, Modifier.weight(1f),
+                        onAnswered = { answered = answered + Teams.deckKey(bot) }, onOpen = { bot.ref?.let(onOpen) }) }
+                }
+                Teams.DeckView.Clear -> DeckEnd(Teams.IDLE, "All clear", "No bot is waiting on you.", celebrate = true, Modifier.weight(1f), onClose)
+                is Teams.DeckView.Offline -> DeckEnd(Teams.ASLEEP, "Offline: can't answer",
+                    if (view.waiting == 0) "No machine is connected. Reconnect to see who needs you."
+                    else "${if (view.waiting == 1) "1 bot was" else "${view.waiting} bots were"} waiting when the connection dropped. Reconnect to answer.",
+                    celebrate = false, Modifier.weight(1f), onClose)
             }
         }
+    }
+}
+
+/** The deck's end: all clear (one hop of Genie's) or offline (no celebration: nothing was answered). */
+@Composable private fun DeckEnd(pose: String, title: String, text: String, celebrate: Boolean, modifier: Modifier, onClose: () -> Unit) {
+    Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Spacer(Modifier.weight(1f))
+        PetView(Teams.GENIE, pose, 140.dp, celebrate = if (celebrate) Unit else null)
+        Spacer(Modifier.height(12.dp))
+        Text(title, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
+        Text(text, color = Muted, fontSize = 14.sp, textAlign = TextAlign.Center)
+        Spacer(Modifier.weight(1f))
+        Button(onClick = onClose, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Back to Teams") }
     }
 }
 
@@ -308,7 +325,8 @@ val LocalIconsVersion = compositionLocalOf { 0 }
     val ref = bot.ref ?: return
     val scope = rememberCoroutineScope()
     val view = LocalView.current
-    val menu by produceState<Prompt.Menu?>(null, ref) { value = vm.readMenu(ref) }
+    // Read again every 2 s, as the terminal screen does: a menu that wasn't drawn yet, or changed, shows its answers.
+    val menu by produceState<Prompt.Menu?>(null, ref) { while (true) { value = vm.readMenu(ref); delay(2_000) } }
     val choices = remember(menu, bot.kind) { if (bot.kind == "permission") Prompt.choices(bot.kind, menu) else emptyList() }
     val yes = choices.firstOrNull()
     val no = choices.lastOrNull()?.takeIf { choices.size >= 2 }
@@ -321,7 +339,11 @@ val LocalIconsVersion = compositionLocalOf { 0 }
         if (choice == null || sending) return
         sending = true
         view.performHapticFeedback(if (android.os.Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.VIRTUAL_KEY)
-        vm.answer(ref, bot.message, m.options, choice) { sending = false; onAnswered() }
+        // The card leaves only when the answer reached the agent; otherwise it comes back (the outcome shows as a message).
+        vm.answer(ref, bot.message, m.options, choice) { sent ->
+            sending = false
+            if (sent) onAnswered() else scope.launch { launch { dx.animateTo(0f) }; dy.animateTo(0f) }
+        }
     }
     Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
@@ -334,11 +356,11 @@ val LocalIconsVersion = compositionLocalOf { 0 }
                 .pointerInput(ref, yes, no) {
                     detectDragGestures(onDragEnd = {
                         scope.launch {
-                            when {
-                                dx.value > threshold && yes != null -> { dx.animateTo(size.width * 1.5f); send(yes) }
-                                dx.value < -threshold && no != null -> { dx.animateTo(-size.width * 1.5f); send(no) }
-                                dy.value < -threshold -> { onOpen() }
-                                else -> { launch { dx.animateTo(0f) }; dy.animateTo(0f) }
+                            when (Teams.swipe(dx.value, dy.value, threshold, yes != null && menu != null, no != null && menu != null)) {
+                                Teams.Swipe.YES -> { dx.animateTo(size.width * 1.5f); send(yes) }
+                                Teams.Swipe.NO -> { dx.animateTo(-size.width * 1.5f); send(no) }
+                                Teams.Swipe.OPEN -> { launch { dx.animateTo(0f) }; dy.animateTo(0f); onOpen() }
+                                Teams.Swipe.NONE -> { launch { dx.animateTo(0f) }; dy.animateTo(0f) }
                             }
                         }
                     }) { change, drag -> change.consume(); scope.launch { dx.snapTo(dx.value + drag.x); dy.snapTo(minOf(0f, dy.value + drag.y)) } }
