@@ -411,6 +411,129 @@ export function freePort() {
   })
 }
 
+// The port dsh served on last time, in the app's home. A new port each launch made the page's
+// URL new to Chromium's HTTP cache and V8's code cache, so the 19 MB page bundle was fetched
+// and compiled again on every start, and the page's origin (its localStorage: the composer's
+// unsent drafts) changed with it. Only the port is reused, never a server: dsh still binds it
+// itself, and the page still signs in with the launch URL its own output carries.
+export const portFileOf = home => join(home, 'dsh-port')
+
+/** The port in `file`, or null when there is none or it is not an unprivileged port. */
+export function storedPort(file) {
+  let text
+  try { text = readFileSync(file, 'utf8').trim() } catch { return null }
+  if (!/^\d{1,5}$/.test(text)) return null
+  const port = Number(text)
+  return port >= 1024 && port <= 65535 ? port : null
+}
+
+/** Keep `port` in `file` for the next launch; written whole, so a crash never leaves half of it. */
+export function keepPort(file, port) {
+  const temporary = `${file}.${process.pid}.tmp`
+  writeFileSync(temporary, `${port}\n`)
+  renameSync(temporary, file)
+}
+
+/** Whether nothing listens on 127.0.0.1:`port`, the address dsh binds: binds it a moment, as dsh would. */
+export function portFree(port) {
+  return new Promise((done) => {
+    const server = createServer()
+    server.once('error', () => done(false))
+    server.listen(port, '127.0.0.1', () => server.close(() => done(true)))
+  })
+}
+
+/**
+ * The port to start dsh on: the one it served on last time (`file`) while nothing else
+ * listens there, else a new free one. `fresh` finds the new one (freePort).
+ */
+export async function launchPort(file, fresh = freePort) {
+  const stored = storedPort(file)
+  if (stored !== null && await portFree(stored)) return stored
+  return fresh()
+}
+
+/**
+ * Start dsh on `port` (startDsh); when something took the port before dsh could bind it, start
+ * it once more on a fresh one (`fresh`), told first through `onPort`, unless `stopped()` says the
+ * start was given up meanwhile (a quit). Resolves as startDsh does.
+ */
+export async function startDshOnPort({ port, fresh = freePort, onPort, stopped = () => false, ...options }) {
+  try {
+    return await startDsh({ ...options, port })
+  } catch (error) {
+    if (error.code !== 'EADDRINUSE' || stopped()) throw error
+    const next = await fresh()
+    if (stopped()) throw error
+    onPort?.(next)
+    return startDsh({ ...options, port: next })
+  }
+}
+
+/**
+ * The dsh a start runs, whichever process that is now: `track` takes each one as it spawns (the
+ * first, then a retry's). `stop` stops the current one, and any spawned after it was called is
+ * stopped at once, so a quit between the first dsh's exit and the retry leaves none behind.
+ */
+export function dshRun() {
+  let child = null
+  let stopped = false
+  return {
+    get child() { return child },
+    get stopped() { return stopped },
+    track(next) {
+      child = next
+      if (stopped) void stopDsh(next)
+    },
+    stop(graceMs) {
+      stopped = true
+      return stopDsh(child, graceMs)
+    },
+  }
+}
+
+/**
+ * A start's dsh as main.js runs it: startDshOnPort, every process tracked by `run` (dshRun) from
+ * its spawn, no retry once `run` is stopped, and the port kept in `portFile` once dsh serves on
+ * it. A port that cannot be kept goes to `onUnkept(error)`; the start goes on. `onSpawn` also
+ * gets each process.
+ */
+export async function serveDsh({ run, portFile, onSpawn, onUnkept = () => {}, ...options }) {
+  const running = await startDshOnPort({
+    ...options,
+    stopped: () => run.stopped,
+    onSpawn: (child) => {
+      run.track(child)
+      onSpawn?.(child)
+    },
+  })
+  try { keepPort(portFile, Number(new URL(running.url).port)) } catch (error) { onUnkept(error) }
+  return running
+}
+
+/**
+ * Whether `running` (startDsh's answer) serves `origin`: its launch URL is on that origin and the
+ * dsh that printed it still runs. The app loads no other page into its window.
+ */
+export function servesOrigin(running, origin) {
+  if (!running?.child || running.child.exitCode !== null || running.child.signalCode !== null) return false
+  try { return new URL(running.url).origin === origin } catch { return false }
+}
+
+/** The URL to load into the window: `running`'s launch URL, only when it serves `origin`. */
+export function pageUrlOf(running, origin) {
+  if (!servesOrigin(running, origin)) throw new Error(`dsh's launch URL is not on ${origin}.`)
+  return running.url
+}
+
+/**
+ * Whether dsh's output says its listener could not bind 127.0.0.1:`port`: Node's listen error,
+ * `Error: listen EADDRINUSE: address already in use 127.0.0.1:<port>`, at the start of a line.
+ */
+export function listenFailed(text, port) {
+  return String(text).split(/\r?\n/).some(line => line.trim() === `Error: listen EADDRINUSE: address already in use 127.0.0.1:${port}`)
+}
+
 /** The launch URL (with dsh's per-launch token) in a line of dsh's output, or null. */
 export function launchUrlOf(text, port) {
   const match = String(text).match(/dsh web: (http:\/\/127\.0\.0\.1:(\d+)\/\S*token=\S+)/)
@@ -502,7 +625,12 @@ export function startDsh({ node, bin, env, port, cwd, log, privacy, timeoutMs = 
     child.stderr.on('data', onData)
     child.once('exit', (code, signal) => {
       clearTimeout(timer)
-      fail(new Error(`dsh exited before it was ready (${signal ?? code})`))
+      const error = new Error(`dsh exited before it was ready (${signal ?? code})`)
+      // Its listener could not bind the port: something took it after the app looked. Only
+      // dsh's own listen error for this very address counts (dsh-host-webserver listen), never
+      // other log text that names the code.
+      if (listenFailed(seen, port)) error.code = 'EADDRINUSE'
+      fail(error)
     })
     child.once('error', (error) => {
       clearTimeout(timer)
@@ -536,19 +664,22 @@ export function stopDsh(child, graceMs = STOP_GRACE_MS) {
  */
 export function guardContents(contents, { origin, openExternal, isBotView = () => false }) {
   if (isBotView(contents)) return false
+  // dsh's origin, or a function answering it as it is now: a dsh that could not bind its port
+  // starts again on another (startDshOnPort) after the guard is in place.
+  const current = typeof origin === 'function' ? origin : () => origin
   contents.setWindowOpenHandler(({ url }) => {
-    if (navigationOf(url, origin) === 'external') void openExternal(url)
+    if (navigationOf(url, current()) === 'external') void openExternal(url)
     return { action: 'deny' }
   })
   contents.on('will-navigate', (event, url) => {
-    const verdict = navigationOf(url, origin)
+    const verdict = navigationOf(url, current())
     if (verdict === 'allow') return
     event.preventDefault()
     if (verdict === 'external') void openExternal(url)
   })
   // A server redirect is a navigation too.
   contents.on('will-redirect', (event, url) => {
-    if (navigationOf(url, origin) !== 'allow') event.preventDefault()
+    if (navigationOf(url, current()) !== 'allow') event.preventDefault()
   })
   contents.on('will-attach-webview', event => event.preventDefault())
   return true

@@ -4,8 +4,9 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
+import { createServer } from 'node:net'
 import { test } from 'node:test'
-import { appHome, dshEnv, forgetDshLogins, freePort, guardContents, installProfile, launchUrlOf, mergeProfilePackage, mergeProfilePatch, migrateRenamed, navigationOf, pinProfileStore, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, scrubBuildPaths, SHIPPED_STORE, startDsh, stopDsh, storeLayoutOf, writeTools } from '../src/dsh.js'
+import { appHome, dshEnv, dshRun, forgetDshLogins, freePort, guardContents, installProfile, keepPort, launchPort, launchUrlOf, listenFailed, mergeProfilePackage, mergeProfilePatch, migrateRenamed, navigationOf, pageUrlOf, pinProfileStore, portFileOf, portFree, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, scrubBuildPaths, serveDsh, servesOrigin, SHIPPED_STORE, startDsh, startDshOnPort, stopDsh, storedPort, storeLayoutOf, writeTools } from '../src/dsh.js'
 
 test('the app keeps everything in one folder under ~/.automagik, apart from a dsh you already run', () => {
   assert.equal(appHome({}), join(homedir(), '.automagik', 'desktop'))
@@ -539,3 +540,236 @@ test('a preload comes from the launch and stays in the app\'s home; none is no p
   assert.equal('AUTOMAGIK_PRELOAD' in dshEnv({ base: {}, home: '/a' }), false)
 })
 
+
+// A stand-in dsh that binds its port as dsh's webserver does: it prints its launch line once
+// it listens, and exits 1 with the listen error when it cannot (dsh-host-webserver listen).
+const LISTENING_DSH = `
+import { createServer } from 'node:net'
+const args = process.argv.slice(2)
+const port = Number(args[args.indexOf('--port') + 1])
+const server = createServer(socket => socket.end())
+server.once('error', (error) => { console.error('Error: listen ' + error.code + ': address already in use 127.0.0.1:' + port); process.exit(1) })
+server.listen(port, args[args.indexOf('--host') + 1], () => console.log('dsh web: http://127.0.0.1:' + port + '/?token=' + process.pid))
+`
+// Something else listening on 127.0.0.1:`port` (or a fresh port), until the test ends.
+const squat = async (t, port = 0) => {
+  const server = createServer()
+  await new Promise((done, fail) => { server.once('error', fail); server.listen(port, '127.0.0.1', done) })
+  t.after(() => new Promise(done => server.close(done)))
+  return server.address().port
+}
+
+test('the port dsh served on is kept in the app home; a missing, garbled or privileged one reads as none', (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'omni-desktop-port-'))
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const file = portFileOf(home)
+  assert.equal(file, join(home, 'dsh-port'))
+  assert.equal(storedPort(file), null)
+  keepPort(file, 41149)
+  assert.equal(readFileSync(file, 'utf8'), '41149\n')
+  assert.equal(storedPort(file), 41149)
+  assert.deepEqual(readdirSync(home), ['dsh-port'], 'no temporary file is left beside it')
+  for (const text of ['', 'abc', '41149x', '-5', '80', '1023', '65536', '999999', '4.5', '0x1f90']) {
+    writeFileSync(file, text)
+    assert.equal(storedPort(file), null, JSON.stringify(text))
+  }
+  writeFileSync(file, ' 50000 \n')
+  assert.equal(storedPort(file), 50000)
+})
+
+test('a start takes the stored port while it is free, and a fresh one when it is taken or the file is stale', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'omni-desktop-port-'))
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const file = portFileOf(home)
+  let fresh = 0
+  const counted = () => { fresh += 1; return freePort() }
+
+  // No file yet: a fresh port.
+  const first = await launchPort(file, counted)
+  assert.equal(fresh, 1)
+  // The stored port, while nothing listens on it.
+  keepPort(file, first)
+  assert.equal(await portFree(first), true)
+  assert.equal(await launchPort(file, counted), first)
+  assert.equal(fresh, 1)
+  // Something else took it: a fresh port, never the taken one.
+  const taken = await squat(t)
+  keepPort(file, taken)
+  assert.equal(await portFree(taken), false)
+  const instead = await launchPort(file, counted)
+  assert.notEqual(instead, taken)
+  assert.equal(fresh, 2)
+  // A stale file (garbled by a crash, or hand-edited): a fresh port.
+  writeFileSync(file, 'not a port')
+  await launchPort(file, counted)
+  assert.equal(fresh, 3)
+})
+
+test('the page\'s origin stays the same from one start to the next, and moves only when its port is taken', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-origin-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const bin = join(root, 'fake-dsh.mjs')
+  writeFileSync(bin, LISTENING_DSH)
+  const file = portFileOf(root)
+  // A start as main.js makes it: the port, dsh on it, the port kept once dsh serves on it.
+  const start = async () => {
+    const running = await startDshOnPort({ node: process.execPath, bin, env: process.env, port: await launchPort(file), cwd: root })
+    keepPort(file, Number(new URL(running.url).port))
+    const { origin } = new URL(running.url)
+    assert.equal(servesOrigin(running, origin), true)
+    await stopDsh(running.child)
+    return { origin, token: new URL(running.url).searchParams.get('token') }
+  }
+  const one = await start()
+  const two = await start()
+  const three = await start()
+  assert.equal(two.origin, one.origin)
+  assert.equal(three.origin, one.origin)
+  // Each launch still signs in with its own dsh's token.
+  assert.notEqual(two.token, one.token)
+  // The port taken while the app was closed: this start moves, and the next keeps the new origin.
+  await squat(t, Number(new URL(one.origin).port))
+  const moved = await start()
+  assert.notEqual(moved.origin, one.origin)
+  assert.equal((await start()).origin, moved.origin)
+})
+
+test('a port taken after the app looked: dsh exits on the listen error and starts once more on a fresh port', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-race-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const bin = join(root, 'fake-dsh.mjs')
+  writeFileSync(bin, LISTENING_DSH)
+  const taken = await squat(t)
+  // startDsh alone says why it failed.
+  await assert.rejects(startDsh({ node: process.execPath, bin, env: process.env, port: taken, cwd: root }), error => error.code === 'EADDRINUSE' && /exited before it was ready \(1\)/.test(error.message))
+
+  const told = []
+  const running = await startDshOnPort({ node: process.execPath, bin, env: process.env, port: taken, cwd: root, onPort: next => told.push(next) })
+  t.after(() => stopDsh(running.child))
+  const { port } = new URL(running.url)
+  assert.notEqual(Number(port), taken)
+  assert.deepEqual(told, [Number(port)], 'the app hears the new port before dsh is ready on it')
+  assert.equal(servesOrigin(running, `http://127.0.0.1:${port}`), true)
+  assert.equal(servesOrigin(running, `http://127.0.0.1:${taken}`), false, 'never the taken port\'s origin')
+
+  // Any other failure is not retried.
+  const dies = join(root, 'dies.mjs')
+  writeFileSync(dies, 'process.exit(3)')
+  let spawned = 0
+  await assert.rejects(startDshOnPort({ node: process.execPath, bin: dies, env: process.env, port: await freePort(), cwd: root, onSpawn: () => { spawned += 1 } }), error => error.code === undefined)
+  assert.equal(spawned, 1)
+})
+
+test('the page is loaded only from the dsh this start spawned, while it runs, on the guarded origin', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-serves-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const bin = join(root, 'fake-dsh.mjs')
+  writeFileSync(bin, LISTENING_DSH)
+  const running = await startDsh({ node: process.execPath, bin, env: process.env, port: await freePort(), cwd: root })
+  const { origin } = new URL(running.url)
+  assert.equal(servesOrigin(running, origin), true)
+  assert.equal(servesOrigin(running, 'http://127.0.0.1:1'), false)
+  assert.equal(servesOrigin({ child: running.child, url: 'not a url' }, origin), false)
+  assert.equal(servesOrigin(undefined, origin), false)
+  await stopDsh(running.child)
+  assert.equal(servesOrigin(running, origin), false, 'a dsh that has stopped serves nothing')
+})
+
+test('the navigation guard follows dsh\'s origin when dsh moves to another port after the guard is in place', () => {
+  let origin = 'http://127.0.0.1:41149'
+  const contents = new EventEmitter()
+  contents.setWindowOpenHandler = () => {}
+  guardContents(contents, { origin: () => origin, openExternal: () => {} })
+  const refused = (url) => {
+    let refusedIt = false
+    contents.emit('will-navigate', { preventDefault: () => { refusedIt = true } }, url)
+    return refusedIt
+  }
+  assert.equal(refused('http://127.0.0.1:41149/'), false)
+  origin = 'http://127.0.0.1:50000'
+  assert.equal(refused('http://127.0.0.1:50000/'), false)
+  assert.equal(refused('http://127.0.0.1:41149/'), true, 'the old origin is off-origin now')
+})
+
+test('only dsh\'s own listen error for the port it was given counts as a taken port', async (t) => {
+  const line = 'Error: listen EADDRINUSE: address already in use 127.0.0.1:50927'
+  assert.equal(listenFailed(`booting\n    ${line}\n        at Server.setupListenHandle\n`, 50927), true, 'as dsh logs it, indented under its logger')
+  assert.equal(listenFailed(line, 50928), false, 'another port')
+  assert.equal(listenFailed('Error: listen EADDRINUSE: address already in use 0.0.0.0:50927', 50927), false, 'another address')
+  assert.equal(listenFailed('mcp: upstream said EADDRINUSE on 127.0.0.1:50927, retrying', 50927), false, 'other log text naming the code')
+  assert.equal(listenFailed(`plugin note: ${line}`, 50927), false, 'quoted inside another line')
+
+  // A dsh that dies for another reason after logging such text is not started again.
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-noise-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const noisy = join(root, 'noisy.mjs')
+  writeFileSync(noisy, "console.error('mcp: upstream said EADDRINUSE on 127.0.0.1:' + process.argv[process.argv.indexOf('--port') + 1]); process.exit(1)")
+  let spawned = 0
+  await assert.rejects(startDshOnPort({ node: process.execPath, bin: noisy, env: process.env, port: await freePort(), cwd: root, onSpawn: () => { spawned += 1 } }), error => error.code === undefined)
+  assert.equal(spawned, 1)
+})
+
+test('a quit between the first dsh\'s exit and the retry spawns no second dsh', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-quit-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const bin = join(root, 'fake-dsh.mjs')
+  writeFileSync(bin, LISTENING_DSH)
+  const run = dshRun()
+  const spawned = []
+  // The quit comes while the fresh port is being found, after the first dsh has exited.
+  const fresh = async () => { await run.stop(); return freePort() }
+  await assert.rejects(serveDsh({ run, portFile: portFileOf(root), node: process.execPath, bin, env: process.env, port: await squat(t), fresh, cwd: root, onSpawn: child => spawned.push(child) }), error => error.code === 'EADDRINUSE')
+  assert.equal(spawned.length, 1)
+  assert.notEqual(spawned[0].exitCode, null)
+  assert.equal(storedPort(portFileOf(root)), null, 'nothing kept')
+})
+
+test('a quit after the retry spawned stops the retry\'s dsh, and one spawned after a quit is stopped at once', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-quit-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const bin = join(root, 'fake-dsh.mjs')
+  writeFileSync(bin, LISTENING_DSH)
+  const exited = child => (child.exitCode !== null || child.signalCode !== null)
+
+  // The retry's dsh is the current one from its spawn: a quit stops it, not the first, dead one.
+  const run = dshRun()
+  const spawned = []
+  const taken = await squat(t)
+  const running = await serveDsh({ run, portFile: portFileOf(root), node: process.execPath, bin, env: process.env, port: taken, cwd: root, onSpawn: child => spawned.push(child) })
+  assert.equal(spawned.length, 2)
+  assert.equal(run.child, spawned[1])
+  assert.equal(running.child, spawned[1])
+  assert.equal(exited(spawned[0]), true)
+  assert.equal(storedPort(portFileOf(root)), Number(new URL(running.url).port), 'the retry\'s port is kept, not the taken one')
+  await run.stop()
+  assert.equal(exited(spawned[1]), true)
+
+  // A quit before anything spawned: what spawns afterwards is stopped as soon as it is tracked.
+  const late = dshRun()
+  await late.stop()
+  await assert.rejects(startDsh({ node: process.execPath, bin, env: process.env, port: await freePort(), cwd: root, onSpawn: child => late.track(child) }), /exited before it was ready/)
+  assert.equal(exited(late.child), true)
+})
+
+test('a port that cannot be kept is reported and the start goes on; the page URL is refused off the origin', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-unkept-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const bin = join(root, 'fake-dsh.mjs')
+  writeFileSync(bin, LISTENING_DSH)
+  const run = dshRun()
+  const unkept = []
+  const running = await serveDsh({ run, portFile: join(root, 'missing', 'dsh-port'), node: process.execPath, bin, env: process.env, port: await freePort(), cwd: root, onUnkept: error => unkept.push(error.code) })
+  t.after(() => run.stop())
+  assert.deepEqual(unkept, ['ENOENT'])
+  const { origin } = new URL(running.url)
+  assert.equal(pageUrlOf(running, origin), running.url)
+  assert.throws(() => pageUrlOf(running, 'http://127.0.0.1:1'), /not on http:\/\/127\.0\.0\.1:1/)
+})
+
+test('main.js guards the origin as it is now, and loads only the URL pageUrlOf hands it', () => {
+  const main = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8')
+  assert.match(main, /guard: \(\) => harden\(\(\) => dshOrigin\)/)
+  assert.match(main, /const url = pageUrlOf\(running, dshOrigin\)[\s\S]{0,120}loadURL\(url\)/)
+  assert.match(main, /serveDsh\(\{ run: dshProcess,/)
+  assert.equal(/stopDsh\(|dshChild/.test(main), false, 'every way out stops dshProcess, the current dsh')
+})

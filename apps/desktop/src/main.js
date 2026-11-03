@@ -19,7 +19,7 @@ import { noteRestart, restartLine, steps } from './timeline.js'
 import { startUp } from './startup.js'
 import { dismissSplash, showUpdateSplash } from './splash.js'
 import { PUBLISHERS, TRIAL_MS, beforeStart, checkLane, confirm as confirmLane, installedVersions, laneMemory, stage as stageLane, stagedOf, stagedVersion, trialFailed } from './lane.js'
-import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, forgetDshLogins, privacyFileOf, privacyPatchOf, freePort, guardContents, installProfile, pinProfileStore, preloadOf, resourcesOf, startDsh, stopDsh, storeLayoutOf, writeTools } from './dsh.js'
+import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, dshRun, forgetDshLogins, privacyFileOf, privacyPatchOf, guardContents, installProfile, launchPort, pageUrlOf, pinProfileStore, portFileOf, preloadOf, resourcesOf, serveDsh, storeLayoutOf, writeTools } from './dsh.js'
 import { BotCursor } from './bot-cursor.js'
 import { BotRelay } from './bot-relay.js'
 import { BotViews, isBotId, isTabId } from './bot-views.js'
@@ -37,7 +37,9 @@ const root = automagikHome()
 const home = appHome()
 let dsh = null
 // dsh's process from the moment it is spawned: a quit before it is ready still stops it.
-let dshChild = null
+// The dsh this start runs, whichever process that is now (a retry on another port replaces the
+// first): every way out stops it, and one that spawns after that is stopped at once.
+const dshProcess = dshRun()
 let window = null
 let page = null
 let quitting = false
@@ -157,7 +159,7 @@ function fail(error) {
   quitting = true
   sendState({ status: `${PRODUCT} could not start.`, problem: true })
   dialog.showErrorBox(`${PRODUCT} could not start`, `${error?.message ?? error}\n\nLog: ${join(home, 'logs', 'dsh.log')}`)
-  void stopDsh(dshChild).finally(() => app.exit(1))
+  void dshProcess.stop().finally(() => app.exit(1))
 }
 
 // macOS's app menu: the system's usual menus, with Check for Updates under the app's name.
@@ -198,7 +200,9 @@ async function launch() {
   let binDir = null
   await startUp({
     mark: step => started.mark(step),
-    port: freePort,
+    // The port dsh served on last time, while it is still free: the page's URL, and so its
+    // cached bundle and its storage, stay the same (dsh.js launchPort).
+    port: () => launchPort(portFileOf(home)),
     // The profile is in place before dsh reads it.
     profile: async () => {
       const { target } = await installProfile({ dshHome: join(home, 'dsh'), source: resources.profile })
@@ -219,7 +223,14 @@ async function launch() {
       // A new anonymous id every launch (dsh.js ANONYMOUS_ID), unless they chose to keep one.
       if (privacy['stable-id'] !== true) rmSync(join(home, 'dsh', ANONYMOUS_ID), { force: true })
       const overlay = writeOverlay(privacyPatchOf(home), privacy)
-      return startDsh({ node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload, privacy }), port, cwd: home, log, privacy: overlay, onSpawn: (child) => { dshChild = child; child.on('message', message => answerDsh(child, message)); started.mark('dsh spawned') } })
+      // Something that took the port before dsh bound it gets dsh started on a fresh one.
+      const onPort = (next) => {
+        started.mark(`port ${port} taken, dsh on ${next}`)
+        dshOrigin = `http://127.0.0.1:${next}`
+      }
+      // Only a port dsh bound and served on is kept for the next launch (dsh.js serveDsh).
+      const onUnkept = error => startLog(`${new Date().toISOString()} start: port not kept (${error.message})\n`)
+      return serveDsh({ run: dshProcess, portFile: portFileOf(home), node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload, privacy }), port, onPort, onUnkept, cwd: home, log, privacy: overlay, onSpawn: (child) => { child.on('message', message => answerDsh(child, message)); started.mark('dsh spawned') } })
         .then((running) => {
           dsh = running
           started.mark('dsh ready')
@@ -243,10 +254,12 @@ async function launch() {
       }
     },
     // Before the page is made: every webContents from here on keeps to dsh's origin.
-    guard: () => harden(dshOrigin),
+    guard: () => harden(() => dshOrigin),
     view: () => { if (window) makePage() },
-    load: async ({ url }) => {
+    load: async (running) => {
       if (!window || !page) return
+      // The page comes only from the dsh this start spawned, on the origin the guard keeps to.
+      const url = pageUrlOf(running, dshOrigin)
       started.mark('page loading')
       await page.webContents.loadURL(url)
     },
@@ -401,7 +414,7 @@ function restartForLane({ away = false, why } = {}) {
   update = { ...update, state: 'restarting', version: laneReady?.version ?? update?.version }
   publishUpdate()
   void fade(window, { to: 0, reduced: lessMotion() })
-    .then(() => { out.mark('window gone'); return stopDsh(dshChild) })
+    .then(() => { out.mark('window gone'); return dshProcess.stop() })
     .finally(() => {
       out.mark('dsh stopped')
       app.relaunch()
@@ -515,7 +528,7 @@ function installUpdate({ away = false } = {}) {
   }
   setTimeout(() => {
     void fade(window, { to: 0, reduced: lessMotion() })
-      .then(() => { out.mark('window gone'); return stopDsh(dshChild) })
+      .then(() => { out.mark('window gone'); return dshProcess.stop() })
       .finally(() => {
         out.mark('dsh stopped')
         noteRestart(RESTART_NOTE(), { from: app.getVersion(), to: update?.version })
@@ -618,6 +631,7 @@ function shortcut(event, input) {
   event.preventDefault()
 }
 
+// `origin` answers dsh's origin as it is now (a dsh started again on another port moves it).
 function harden(origin) {
   // Every webContents but a Bot view's, which bot-views.js gives rules of its own.
   app.on('web-contents-created', (_event, contents) => {
@@ -627,7 +641,7 @@ function harden(origin) {
   // only, never the camera); macOS asks the person once for the microphone, with the app's
   // usage line (electron-builder.yml).
   const allowed = (contents, permission, details = {}) => {
-    if (new URL(contents.getURL()).origin !== origin) return false
+    if (new URL(contents.getURL()).origin !== origin()) return false
     if (permission === 'media') return !(details.mediaTypes ?? []).includes('video') && details.mediaType !== 'video'
     return ['notifications', 'clipboard-sanitized-write', 'clipboard-read'].includes(permission)
   }
@@ -645,12 +659,14 @@ function harden(origin) {
 app.on('window-all-closed', () => app.quit())
 app.once('will-quit', () => { botRelay.dispose(); botViews.dispose(); botCursor.dispose() })
 app.on('before-quit', (event) => {
-  if (quitting || !dshChild) return
+  if (quitting) return
+  // Nothing spawned yet: the quit goes on, and a dsh that spawns after it is stopped.
+  if (!dshProcess.child) return void dshProcess.stop()
   quitting = true
   event.preventDefault()
   const out = leave('quit')
   // The window goes at once; dsh stops behind it, so a quit never looks stuck.
   void fade(window, { to: 0, reduced: lessMotion() })
-    .then(() => { out.mark('window gone'); return stopDsh(dshChild) })
+    .then(() => { out.mark('window gone'); return dshProcess.stop() })
     .finally(() => { out.mark('dsh stopped'); app.quit() })
 })

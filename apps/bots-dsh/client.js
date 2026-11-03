@@ -11073,6 +11073,15 @@ function installStyles(text2, tag) {
 }
 var FRAGMENT_SELECTOR = /\[class\*="(_[\w-]+)"\]/g;
 var CLASS_TOKEN = /\.((?:\\.|[\w-])+)/g;
+var sheetNames = /* @__PURE__ */ new WeakMap();
+function classNamesOf(sheet) {
+  let names = sheetNames.get(sheet);
+  if (!names) {
+    names = sheetClassNames(sheet);
+    sheetNames.set(sheet, names);
+  }
+  return names;
+}
 function sheetClassNames(sheet) {
   const names = [];
   const visit = (rules) => {
@@ -11101,19 +11110,13 @@ function compileFragmentSelectors(text2, names) {
 function installCompiledStyles(text2, tag) {
   const style = installStyles("", tag);
   let disposed = false;
-  const cache = /* @__PURE__ */ new WeakMap();
   const render = () => {
     if (disposed) return;
     if (!style.isConnected) document.head.appendChild(style);
     const names = /* @__PURE__ */ new Set();
     for (const sheet of document.styleSheets) {
       if (sheet.ownerNode?.dataset?.dshBot) continue;
-      let list = cache.get(sheet);
-      if (!list) {
-        list = sheetClassNames(sheet);
-        cache.set(sheet, list);
-      }
-      for (const name of list) names.add(name);
+      for (const name of classNamesOf(sheet)) names.add(name);
     }
     const next = compileFragmentSelectors(text2, names);
     if (style.textContent !== next) style.textContent = next;
