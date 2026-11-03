@@ -3,6 +3,11 @@
 Autonomous teams of coding agents across harnesses (Claude Code, Codex, Antigravity, Kimi, Oh My Pi…)
 with a main bot, captains and members, running in [Herdr](https://dev.herdr.app).
 
+The pack lives in the [Automagik monorepo](https://github.com/automagik-dev/automagik) under
+`herdr/`, and ships on its releases with its one version (`v3.x`): a release carries the pack
+(`automagik-herdr-pack-<v>.tgz`) when `herdr/` changed since the release before. v0.7.x was the
+last release from the old `automagik-dev/automagik-herdr` repository.
+
 <!-- hero: docs/hero.png, a sidebar screenshot with a team running -->
 
 ## Install
@@ -10,15 +15,16 @@ with a main bot, captains and members, running in [Herdr](https://dev.herdr.app)
 On a Mac with Node 22.7 or later:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash
 ```
 
 The installer checks Node and Herdr, and offers to install Herdr with Homebrew if it is
-missing (it asks first). It downloads the latest release's pack (`automagik-herdr-pack-<v>.tgz`:
-every mod below and the `automagik` layout), checks it against `SHA256SUMS` before writing
+missing (it asks first). It downloads the pack of the newest Automagik release that carries one
+(`automagik-herdr-pack-<v>.tgz`: every mod below and the `automagik` layout; a desktop-only release
+has none), checks it against its `.sha256` before writing
 anything, and installs every mod into `~/.config/herdr-app/mods/` as one unit. It links the
 `automagik-herdr` command into `~/.local/bin`, merges the pack's keys where they are free (a key
-you already use stays yours), points the mod manager at this repository's catalog, and runs
+you already use stays yours), points the mod manager at the pack's catalog (`herdr/catalog/` here), and runs
 `herdr-app check` on each mod.
 
 **What a release contains.** From v0.5.0, every release is one pack: `automagik-herdr-pack-<v>.tgz`
@@ -66,8 +72,8 @@ switching (or prints the `herdr-app do layout.switch` command when it can't ask)
 your own that shows the sidebar keeps its blocks: the installer only renames the pack mods it
 names (from v0.4.x, below), lists the pack pieces it lacks and points at the pack's copy to take
 their blocks from (see [Wiring](#wiring-your-layout)); or switch to the `automagik` layout. Running it again is safe.
-Add options after `bash -s --`: `--yes` answers every question, `--version 0.5.0` installs that
-release (v0.5.0 or later: earlier ones have no pack), `--adopt` takes over same-named mods,
+Add options after `bash -s --`: `--yes` answers every question, `--version 3.57.0` installs that
+Automagik release (one that carries the pack), `--adopt` takes over same-named mods,
 `--uninstall` moves the pack out of `mods/`, puts back what it adopted and removes the layout if
 the installer added it and you haven't changed it.
 
@@ -122,7 +128,7 @@ Or let a coding agent do it. The prompt lives in [docs/agent-install.md](docs/ag
 ```text
 Install Automagik Herdr on this Mac and set up my first bot.
 
-1. Run: curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/install.sh | bash
+1. Run: curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash
    If it stops to ask something (install Node or Herdr), ask me; if I say yes, run it again
    with: ... | bash -s -- --yes. If it stops for anything else, tell me what it printed and stop.
    If the output has a layout.switch command, ask me before running that exact command. If
@@ -411,11 +417,12 @@ still places panes by the walk-up, so a folder joins its own project once it has
 
 ```bash
 automagik-herdr update --check      # the installed and the latest version
-automagik-herdr update              # download, verify against SHA256SUMS, install
+automagik-herdr update              # download, verify against its .sha256, install
 automagik-herdr update --rollback   # put the replaced set of mods back
 ```
 
-Updates come from this repository's GitHub releases. The sidebar looks 20 seconds after it
+Updates come from the Automagik monorepo's GitHub releases: the newest one that carries the
+pack (not GitHub's "latest", often a desktop or plugin release without it). The sidebar looks 20 seconds after it
 loads and then every 4 hours, and shows one notice per new version with the command to run.
 When it can't look (no network, no `node`), it says nothing and tries again in 30 minutes.
 Set `AUTOMAGIK_HERDR_NO_UPDATE=1` to turn both off. A pack installed as a link to a checkout
@@ -556,7 +563,8 @@ If you ran `herdr-bots` from a clone, use `automagik-herdr` in its place.
 
 ## Develop
 
-No build step and no dependencies. The checks CI runs:
+No build step and no dependencies. The checks CI runs (`.github/workflows/ci.yml` at the
+monorepo's root, from `herdr/`):
 
 ```bash
 node --test 'test/*.test.mjs' && for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs; do node --check "$f" || exit 1; done && node scripts/version.mjs check

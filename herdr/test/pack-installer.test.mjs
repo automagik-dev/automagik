@@ -121,7 +121,8 @@ test("catalog.mjs: --check passes on this checkout and writes nothing; an unknow
   }
   assert.equal(spawnSync(process.execPath, [CATALOG, "--help"], { encoding: "utf8" }).status, 0);
   assert.equal(readFileSync(index, "utf8"), before, "the index is untouched");
-  const pack = JSON.parse(before).mods.find((e) => e.fullName === "automagik-dev/automagik-herdr");
+  // The pack's own entry: the monorepo, its herdr/ folder.
+  const pack = JSON.parse(before).mods.find((e) => e.fullName === "automagik-dev/automagik" && e.path === "herdr");
   assert.equal(pack.modNames.includes("pocket-link"), false);
 });
 

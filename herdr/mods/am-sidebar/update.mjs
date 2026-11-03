@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Installs, updates and rolls back the pack as one unit (A14, D3, D10): one release tarball holds
 // every pack mod folder plus layouts/automagik.json; it is checked against the release's
-// SHA256SUMS, each folder is built in a staging folder beside mods/ (the mod's private paths
+// automagik-herdr-pack-<v>.tgz.sha256, each folder is built in a staging folder beside mods/ (the mod's private paths
 // carried in), then renamed into place, and the folders it replaced are kept together as one
 // rollback set. Only folders the ownership record lists are replaced; any other folder in mods/
 // is left alone, or adopted on an explicit --adopt (moved to backup/ first, never replaced).
@@ -12,7 +12,7 @@
 //   node update.mjs update [--check] [--json] [--mods <dir>]   install the latest release (apply: the same, JSON)
 //   node update.mjs rollback          [--mods <dir>]   swap the kept set back; one JSON line
 //   node update.mjs install --from <tgz> --version <v> [--mods <dir>] [--adopt] [--setup]
-//       a tarball already checked against SHA256SUMS (install.sh); one JSON line. --setup also
+//       a tarball already checked against its .sha256 (install.sh); one JSON line. --setup also
 //       merges free keys, writes the mod manager's catalog.json, places the layout (D8) and runs
 //       `herdr-app check` on every installed mod (exit 3 when one fails). Exit 4: installed, but a
 //       step after the swap (the record, the kept set) did not finish; its warning says where things are.
@@ -50,20 +50,18 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
-  CATALOG_URL, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_NAME, POCKET_LINK, V020_LAYOUT_SHA256, formatMarker, latestRelease, parseMarker, parseSums,
-  pickUpdate, updatesOff,
+  CATALOG_URL, OLD_PACK_NAME, PACK_CATALOG_URLS, PACK_KEYS, PACK_LAYOUT, PACK_NAME, POCKET_LINK, V020_LAYOUT_SHA256, formatMarker, listReleases,
+  newestPack, parseMarker, parseSums, pickUpdate, updatesOff,
 } from "./release.js";
 import { ABSORBED, RENAMES, editTarget, own, renamedFrom } from "./migrate.js";
 import { apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration } from "./migrateHome.mjs";
 import { CLI_LINK, botPaneFolders, hooksNotice, openSpaces, relink, syncHooks } from "./migrateHooks.mjs";
 
-export { CHECK_EVERY_MS, FIRST_CHECK_MS, LATEST_URL, NO_UPDATE_ENV, PACK_MODS, PACK_NAME, RETRY_MS, SUMS_NAME, compareVersions, latestRelease,
-  noticeText, parseSums, pickUpdate, tarballName, updatesOff } from "./release.js";
+export { CHECK_EVERY_MS, FIRST_CHECK_MS, NO_UPDATE_ENV, PACK_MODS, PACK_NAME, RELEASES_URL, RETRY_MS, compareVersions, listReleases, newestPack,
+  noticeText, packOf, parseSums, pickUpdate, sumsName, tarballName, updatesOff } from "./release.js";
 
 const run = promisify(execFile);
 const DOWNLOAD_TIMEOUT_MS = 120_000;
-/** Catalog URLs the pack itself has written (the current one, and the `main` one an early pack wrote). */
-const PACK_CATALOG_URLS = [CATALOG_URL, CATALOG_URL.replace("/dev/catalog/", "/main/catalog/")];
 /** The version of a pack with no VERSION file: one installed before releases, older than any. */
 export const UNRELEASED = "0.0.0";
 
@@ -102,15 +100,15 @@ export const installedVersion = ({ modsDir = defaultModsDir() } = {}) => readMar
   ?? readVersion(join(modsDir, [PACK_NAME, OLD_PACK_NAME].find((m) => isFile(join(modsDir, m, "VERSION"))) ?? PACK_NAME));
 
 /**
- * Checks `buf` against the SHA256SUMS line for `name` (`sums`: the file's text or parseSums' Map).
+ * Checks `buf` against the sha256sum line for `name` in `sums` (the release's .sha256: its text or parseSums' Map).
  * Returns the hex digest; throws when the name is missing or the digest differs.
  */
 export function verifySha256(buf, sums, name) {
   const table = sums instanceof Map ? sums : parseSums(sums);
   const want = table.get(name);
-  if (!want) throw new Error(`${name} is not in SHA256SUMS: refusing it`);
+  if (!want) throw new Error(`${name} is not in its .sha256: refusing it`);
   const got = sha256(buf);
-  if (got !== want) throw new Error(`${name} does not match SHA256SUMS (sha256 ${got}, expected ${want}): refusing it`);
+  if (got !== want) throw new Error(`${name} does not match its .sha256 (sha256 ${got}, expected ${want}): refusing it`);
   return got;
 }
 
@@ -120,7 +118,7 @@ async function download(fetch, url, timeoutMs) {
   return Buffer.from(await response.arrayBuffer());
 }
 
-/** Downloads `update`'s tarball (from pickUpdate) into `dir`, verified against its SHA256SUMS before it is written; returns its path. */
+/** Downloads `update`'s tarball (from pickUpdate) into `dir`, verified against its .sha256 before it is written; returns its path. */
 export async function downloadUpdate(update, { fetch = globalThis.fetch, dir, timeoutMs = DOWNLOAD_TIMEOUT_MS } = {}) {
   const sums = (await download(fetch, update.sums.url, timeoutMs)).toString("utf8");
   const buf = await download(fetch, update.tarball.url, timeoutMs);
@@ -338,7 +336,7 @@ function shippedFiles(dir, rel = "") {
 
 /**
  * Checks an installed pack against the release tarball it came from (`tgzPath`, already checked
- * against SHA256SUMS), changing nothing. Every pack folder the ownership record lists must hold
+ * against its .sha256), changing nothing. Every pack folder the ownership record lists must hold
  * each of the release's files byte for byte (a mod's private paths and files it added are not
  * judged), and a shipped executable must still be executable. A folder the record lists that is
  * not in mods/ is missing, unless the mod manager switched it off (moved it to <app
@@ -825,13 +823,15 @@ export function relinkCli({ modsDir = defaultModsDir(), name = PACK_NAME, binDir
   return { link, from, to };
 }
 
-/** `{ current, latest, update, disabled }`: latest is the newest release's version or null; update from pickUpdate. */
+/**
+ * `{ current, latest, update, disabled }`: latest is the version of the newest release that carries
+ * the pack, or null (a desktop or plugin release carries none); update from pickUpdate.
+ */
 export async function checkForUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env) } = {}) {
   const current = installedVersion({ modsDir });
   if (updatesOff(env)) return { current, latest: null, update: null, disabled: true };
-  const release = await latestRelease({ fetch, env });
-  const latest = typeof release?.tag_name === "string" ? release.tag_name.replace(/^v/, "") : null;
-  return { current, latest, update: pickUpdate(current, release), disabled: false };
+  const releases = await listReleases({ fetch, env });
+  return { current, latest: newestPack(releases)?.version ?? null, update: pickUpdate(current, releases), disabled: false };
 }
 
 /** check, then download, verify and apply when there is an update. `{ current, latest, update, installed }`. */

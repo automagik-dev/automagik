@@ -3,11 +3,18 @@
 // Automagik's desktop updater (apps/desktop/src/update.js: compareVersions, pickUpdate, the
 // 4-hour timing). Pure: no `herdr` and no `node:` imports, so the mod, the CLI and
 // `node --test` share it; the download, checksum and swap live in update.mjs. Apache-2.0.
+//
+// The pack lives in the Automagik monorepo (herdr/) and ships on its releases, `v<version>` with
+// the monorepo's one version (docs/rfcs/0010-monorepo-parts-and-releases.md there). A release
+// carries the pack only when herdr/ changed since the one before: the newest release (GitHub's
+// `latest`) is often a desktop or plugin release without it, so the update is the newest release
+// that CARRIES automagik-herdr-pack-<v>.tgz and its .sha256, as the desktop's update.js does.
 
-export const REPO = "automagik-dev/automagik-herdr";
-/** `/latest` answers the newest release that is neither a draft nor a prerelease. */
-export const LATEST_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
-export const SUMS_NAME = "SHA256SUMS";
+export const REPO = "automagik-dev/automagik";
+/** The repository's releases, newest first: the pack's are among the desktop's and the plugins'. */
+export const RELEASES_URL = `https://api.github.com/repos/${REPO}/releases?per_page=100`;
+/** Where the pack lived until v0.7.x; the monorepo's release of it is the first above 3.0.0. */
+export const OLD_REPO = "automagik-dev/automagik-herdr";
 /** The folder that carries the pack's VERSION, update.mjs and the CLI. */
 export const PACK_NAME = "am-sidebar";
 /**
@@ -19,8 +26,8 @@ export const OLD_PACK_NAME = "spaces-agents";
 /**
  * Every mod folder the pack ships (D3, D10): the tarball's top level is exactly these plus
  * `layouts/automagik.json`, and release.yml asserts it. It ships inside the tarball it checks, so
- * it guards against packaging bugs, not tampering (SHA256SUMS covers integrity). Pocket Link is
- * never one of them: automagik-pocket owns it.
+ * it guards against packaging bugs, not tampering (the tarball's .sha256 covers integrity). Pocket
+ * Link is never one of them: Pocket owns it.
  */
 export const PACK_MODS = Object.freeze(["am-automations", "am-footer", "am-markdown", "am-mods", "am-new-menu", "am-quota",
   "am-sidebar", "am-tabs"]);
@@ -45,9 +52,22 @@ export const V020_LAYOUT_SHA256 = "5a479f72db788826acb2413df7d32721fbbb9fd070caa
 /** The pack's keys (the repository's keys.json, which a test keeps equal): merged only where free. */
 export const PACK_KEYS = Object.freeze({ global: Object.freeze({ "cmd-shift-m": "mod.open:am-mods" }) });
 /** What the mod manager lists; mods/am-mods/core.js's CATALOG_URL is kept equal by a test. */
-export const CATALOG_URL = "https://raw.githubusercontent.com/automagik-dev/automagik-herdr/dev/catalog/index.json";
-/** The pack's tarball on release `version` (release.yml's Pack step). */
+export const CATALOG_URL = "https://raw.githubusercontent.com/automagik-dev/automagik/dev/herdr/catalog/index.json";
+/**
+ * Every catalog URL a pack has written (the current one first): the monorepo's on `main`, and the
+ * old repository's on `dev` and `main`. A copy holding one of them is the pack's to rewrite; any
+ * other URL is the person's. core.js keeps the same list (a test keeps them equal).
+ */
+export const PACK_CATALOG_URLS = Object.freeze([
+  CATALOG_URL,
+  "https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/catalog/index.json",
+  `https://raw.githubusercontent.com/${OLD_REPO}/dev/catalog/index.json`,
+  `https://raw.githubusercontent.com/${OLD_REPO}/main/catalog/index.json`,
+]);
+/** The pack's tarball on release `version` (release.yml's "Pack the herdr pack" step). */
 export const tarballName = (version) => `automagik-herdr-pack-${version}.tgz`;
+/** Its sha256, `sha256sum` output for the tarball alone, beside it on the same release. */
+export const sumsName = (version) => `${tarballName(version)}.sha256`;
 
 /**
  * The installer's ownership record (`<app home>/automagik-herdr/installed-by-install.sh`) as data.
@@ -118,24 +138,43 @@ export function compareVersions(a, b) {
 }
 
 /**
- * The update `release` (GitHub's release JSON, as `/latest` answers it) offers over `current`:
- * `{ version, tag, page, tarball: {name, url}, sums: {name, url} }`, or null when it is not newer,
- * is a draft or prerelease, or lacks the pack's tarball or SHA256SUMS.
+ * A release (GitHub's release JSON) as the pack it carries: `{ version, tag, page, tarball:
+ * {name, url}, sums: {name, url} }`, or null when it is a draft or prerelease, its tag is not
+ * `v<version>`, or it lacks the pack's tarball or its .sha256 (a desktop or plugin release).
  */
-export function pickUpdate(current, release) {
+export function packOf(release) {
   const tag = release?.tag_name;
   if (!release || release.draft || release.prerelease === true || typeof tag !== "string" || !tag.startsWith("v")) return null;
   const version = tag.slice(1);
-  if (!(compareVersions(version, current) > 0)) return null;
+  if (Number.isNaN(compareVersions(version, version))) return null;
   const asset = (name) => {
     const found = Array.isArray(release.assets) ? release.assets.find((a) => a?.name === name) : null;
     return typeof found?.browser_download_url === "string" ? { name, url: found.browser_download_url } : null;
   };
   const tarball = asset(tarballName(version));
-  const sums = asset(SUMS_NAME);
+  const sums = asset(sumsName(version));
   if (!tarball || !sums) return null;
   const page = typeof release.html_url === "string" ? release.html_url : `https://github.com/${REPO}/releases/tag/${encodeURIComponent(tag)}`;
   return { version, tag, page, tarball, sums };
+}
+
+/** The newest pack among `releases` (the releases list, or one release), or null when none carries it. */
+export function newestPack(releases) {
+  let best = null;
+  for (const release of Array.isArray(releases) ? releases : releases ? [releases] : []) {
+    const pack = packOf(release);
+    if (pack && (!best || compareVersions(pack.version, best.version) > 0)) best = pack;
+  }
+  return best;
+}
+
+/**
+ * The update `releases` (GitHub's releases list; one release is taken as a list of one) offer over
+ * `current`: the newest release that carries the pack, when it is newer than `current`, else null.
+ */
+export function pickUpdate(current, releases) {
+  const pack = newestPack(releases);
+  return pack && compareVersions(pack.version, current) > 0 ? pack : null;
 }
 
 /** `sha256sum` output (`<hex>  <name>`, `*<name>` in binary mode) as a Map name → lowercase hex. */
@@ -149,20 +188,21 @@ export function parseSums(text) {
 }
 
 /**
- * The newest published release (GitHub's JSON), or null when updates are off or the repository
- * has none yet (404). Throws on any other answer. `fetch` is injected: Herdr's runtime has none,
- * so the mod reaches this through `node update.mjs check`.
+ * The repository's releases (GitHub's JSON list, newest first), or null when updates are off or
+ * the repository is not there (404). Throws on any other answer. `fetch` is injected: Herdr's
+ * runtime has none, so the mod reaches this through `node update.mjs check`.
  */
-export async function latestRelease({ fetch = globalThis.fetch, env = globalThis.process?.env ?? {}, timeoutMs = TIMEOUT_MS } = {}) {
+export async function listReleases({ fetch = globalThis.fetch, env = globalThis.process?.env ?? {}, timeoutMs = TIMEOUT_MS } = {}) {
   if (updatesOff(env)) return null;
   const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(timeoutMs) : undefined;
-  const response = await fetch(LATEST_URL, {
+  const response = await fetch(RELEASES_URL, {
     headers: { accept: "application/vnd.github+json", "user-agent": "automagik-herdr", "x-github-api-version": "2022-11-28" },
     signal,
   });
   if (response.status === 404) return null;
-  if (!response.ok) throw new Error(`GitHub answered ${response.status} for ${REPO}'s latest release`);
-  return response.json();
+  if (!response.ok) throw new Error(`GitHub answered ${response.status} for ${REPO}'s releases`);
+  const list = await response.json();
+  return Array.isArray(list) ? list : [];
 }
 
 /** The mod's notice for `update` (from pickUpdate). */

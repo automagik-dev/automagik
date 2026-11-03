@@ -1,16 +1,18 @@
 #!/bin/sh
 # Automagik Herdr installer (A17): turns a plain Herdr into Automagik Herdr on a Mac.
 #
-#   curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik-herdr/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash
 #   ... | bash -s -- --yes            answer yes to every question (for agents)
-#   ... | bash -s -- --version 1.2.3  a given release (v0.5.0 or later) instead of the latest
+#   ... | bash -s -- --version 3.57.0 a given release that carries the pack, instead of the newest
 #   ... | bash -s -- --adopt          also replace pack-named mods this installer did not install
 #   ... | bash -s -- --uninstall      put back what was there before
 #   ... | bash -s -- --no-usagemeter  leave ~/.local/bin/usagemeter alone (install and --uninstall)
 #
 # It checks macOS, Node and Herdr (offering Homebrew for the missing ones, asking first),
-# downloads the release's SHA256SUMS and pack tarball (automagik-herdr-pack-<v>.tgz: every pack
-# mod and layouts/automagik.json), checks the hash before anything is written, and installs every
+# finds the newest Automagik release that carries the pack (a desktop or plugin release of the
+# monorepo carries none), downloads its pack tarball (automagik-herdr-pack-<v>.tgz: every pack mod
+# and layouts/automagik.json) and that tarball's .sha256, checks the hash before anything is
+# written, and installs every
 # pack mod through the pack's own update.mjs: each folder staged, then swapped in, the replaced
 # ones kept together in <app home>/automagik-herdr/.prev. Its ownership record (the marker)
 # lists every folder it put in mods/; only those are ever replaced. Any other folder is left
@@ -29,8 +31,9 @@
 # The whole script is one function, called on its last line: a download cut short by the
 # network defines part of it and runs nothing.
 #
-# For tests: AUTOMAGIK_HERDR_RELEASE_URL, a file:// folder (files at <url>/latest/download/<file>
-# and <url>/download/v<version>/<file>) or a page of this repository on github.com; with a
+# For tests: AUTOMAGIK_HERDR_RELEASE_URL, a file:// folder (the releases list, as GitHub's API
+# answers it, at <url>/releases.json, and files at <url>/download/v<version>/<file>) or a page of
+# this repository on github.com; with a
 # file:// one also AUTOMAGIK_HERDR_TTY (default /dev/tty) and AUTOMAGIK_HERDR_APPS (default
 # /Applications). HERDR_APP_HOME as Herdr reads it. A file:// release folder also serves usagemeter's
 # releases from <url>/usagemeter/download/v<version>/, so a test never reaches the network.
@@ -40,8 +43,10 @@ main() {
   # Under `curl | bash` the script itself is stdin: every program it runs gets </dev/null, so
   # none can read (eat) the rest of the script; questions read the terminal instead.
 
-  REPO=automagik-dev/automagik-herdr
+  # The pack ships on the Automagik monorepo's releases (its herdr/), v<version> in its one version.
+  REPO=automagik-dev/automagik
   RELEASES=https://github.com/$REPO/releases
+  RELEASES_API="https://api.github.com/repos/$REPO/releases?per_page=100"
   TTY=/dev/tty
   APPS=/Applications
   APP_HOME=${HERDR_APP_HOME:-$HOME/.config/herdr-app}
@@ -96,7 +101,7 @@ main() {
     esac
     say "Releases from $RELEASES (AUTOMAGIK_HERDR_RELEASE_URL)."
     case $RELEASES in
-      file://*) TTY=${AUTOMAGIK_HERDR_TTY:-$TTY}; APPS=${AUTOMAGIK_HERDR_APPS:-$APPS}; METER_RELEASES=$RELEASES/usagemeter ;;
+      file://*) TTY=${AUTOMAGIK_HERDR_TTY:-$TTY}; APPS=${AUTOMAGIK_HERDR_APPS:-$APPS}; METER_RELEASES=$RELEASES/usagemeter; RELEASES_API=$RELEASES/releases.json ;;
     esac
   fi
 
@@ -117,7 +122,8 @@ Automagik Herdr installer
   install.sh --help
 
 --yes answers yes to every question (installing Node or Herdr with Homebrew, switching
-Herdr to the automagik layout). --version installs that release; it needs v0.5.0 or later.
+Herdr to the automagik layout). --version installs that Automagik release; it must carry the
+pack (automagik-herdr-pack-<v>.tgz): not every release does.
 --adopt replaces a pack-named mod this installer did not install, after moving it to
 <app home>/automagik-herdr/backup/; without it such a folder is reported and left alone.
 --no-usagemeter leaves ~/.local/bin/usagemeter (the token meter) alone: install skips it, and
@@ -426,6 +432,28 @@ uninstall_meter() {
   fi
 }
 
+# The newest version whose release (in the GitHub releases list, the file $1) carries the pack: its
+# tarball and .sha256, tag v<X.Y.Z>, not a draft or prerelease. Empty when none does. Node is
+# checked before this runs.
+newest_pack() {
+  # shellcheck disable=SC2016 # JavaScript: its ${...} are template literals, not the shell's.
+  node -e '
+    const list = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    let best = null;
+    for (const r of Array.isArray(list) ? list : []) {
+      if (!r || r.draft || r.prerelease === true || typeof r.tag_name !== "string") continue;
+      const m = /^v(\d+)\.(\d+)\.(\d+)$/.exec(r.tag_name);
+      if (!m) continue;
+      const v = m.slice(1).join("."), names = new Set((r.assets || []).map((a) => a && a.name));
+      if (!names.has(`automagik-herdr-pack-${v}.tgz`) || !names.has(`automagik-herdr-pack-${v}.tgz.sha256`)) continue;
+      const n = m.slice(1).map(Number);
+      const newer = !best || (n[0] !== best[0] ? n[0] > best[0] : n[1] !== best[1] ? n[1] > best[1] : n[2] > best[2]);
+      if (newer) best = n;
+    }
+    if (best) console.log(best.join("."));
+  ' "$1" </dev/null
+}
+
 node_ok() {
   command -v node >/dev/null 2>&1 || return 1
   node -e 'const [a, b] = process.versions.node.split(".").map(Number); const [x, y] = process.argv[1].split(".").map(Number); process.exit(a > x || (a === x && b >= y) ? 0 : 1)' "$NODE_MIN" </dev/null 2>/dev/null
@@ -470,16 +498,25 @@ install() {
   say "Herdr: ok."
 
   # ---- d. the pack ----
-  # Nothing is written into the app home before the tarball matches SHA256SUMS.
+  # Nothing is written into the app home before the tarball matches its .sha256.
   TMP=$(mktemp -d "${TMPDIR:-/tmp}/automagik-herdr.XXXXXX")
-  if [ -n "$WANT" ]; then base=$RELEASES/download/v$WANT; else base=$RELEASES/latest/download; fi
-  curl -fsSL --path-as-is "$base/SHA256SUMS" -o "$TMP/SHA256SUMS" </dev/null || fail "could not download $base/SHA256SUMS."
-  # The release names its tarball automagik-herdr-pack-<version>.tgz; SHA256SUMS lists it.
-  TGZ=$(sed -n 's/^[0-9a-fA-F]\{64\} [ *]\(automagik-herdr-pack-[0-9][0-9A-Za-z.+-]*\.tgz\)$/\1/p' "$TMP/SHA256SUMS" | head -n 1)
-  [ -n "$TGZ" ] || fail "$base/SHA256SUMS names no automagik-herdr-pack-<version>.tgz (a sidebar-only release before v0.5.0?)."
-  VERSION=${TGZ#automagik-herdr-pack-}
-  VERSION=${VERSION%.tgz}
-  [ -z "$WANT" ] || [ "$WANT" = "$VERSION" ] || fail "release v$WANT lists $TGZ, not automagik-herdr-pack-$WANT.tgz."
+  if [ -z "$WANT" ]; then
+    # The newest release is often a desktop or plugin one, with no pack: the newest that carries
+    # the tarball and its .sha256 (not a draft or prerelease) is the one, as the pack's updater picks.
+    curl -fsSL --path-as-is "$RELEASES_API" -o "$TMP/releases.json" </dev/null || fail "could not list the releases ($RELEASES_API)."
+    WANT=$(newest_pack "$TMP/releases.json") || fail "could not read the releases list from $RELEASES_API."
+    [ -n "$WANT" ] || fail "no release of $REPO carries automagik-herdr-pack-<version>.tgz yet."
+  fi
+  case $WANT in
+    *[!0-9.]*|.*|*.|*..*) fail "--version takes a version like 3.57.0; not $WANT." ;;
+  esac
+  base=$RELEASES/download/v$WANT
+  TGZ=automagik-herdr-pack-$WANT.tgz
+  SUMS=$TGZ.sha256
+  curl -fsSL --path-as-is "$base/$SUMS" -o "$TMP/$SUMS" </dev/null \
+    || fail "could not download $base/$SUMS (does release v$WANT carry the pack? Not every Automagik release does)."
+  grep -Eq "^[0-9a-fA-F]{64} [ *]$TGZ\$" "$TMP/$SUMS" || fail "$base/$SUMS does not list $TGZ."
+  VERSION=$WANT
 
   installed=$(mark_get version)
   [ -n "$installed" ] || installed=none
@@ -493,8 +530,8 @@ install() {
   curl -fsSL --path-as-is "$base/$TGZ" -o "$TMP/$TGZ" </dev/null || fail "could not download $base/$TGZ."
   if command -v shasum >/dev/null 2>&1; then sum=$(shasum -a 256 "$TMP/$TGZ"); else sum=$(sha256sum "$TMP/$TGZ"); fi
   sum=${sum%% *}
-  want=$(sed -n "s/^\([0-9a-fA-F]\{64\}\) [ *]$TGZ\$/\1/p" "$TMP/SHA256SUMS" | tr 'A-F' 'a-f')
-  [ "$sum" = "$want" ] || fail "$TGZ does not match SHA256SUMS (sha256 $sum, expected $want): nothing was installed."
+  want=$(sed -n "s/^\([0-9a-fA-F]\{64\}\) [ *]$TGZ\$/\1/p" "$TMP/$SUMS" | head -n 1 | tr 'A-F' 'a-f')
+  [ "$sum" = "$want" ] || fail "$TGZ does not match $SUMS (sha256 $sum, expected $want): nothing was installed."
   say "Checksum: ok."
   # Only the installer's files come out here, to run them; update.mjs then lists every entry,
   # stages every folder beside mods/, checks again, keeps the replaced set and swaps, and the

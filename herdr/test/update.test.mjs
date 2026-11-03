@@ -9,7 +9,7 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import {
-  LATEST_URL, applyUpdate, checkForUpdate, compareVersions, downloadUpdate, installUpdate, latestRelease, noticeText, parseSums,
+  RELEASES_URL, applyUpdate, checkForUpdate, compareVersions, downloadUpdate, installUpdate, listReleases, newestPack, noticeText, parseSums,
   markerOf, pickUpdate, prevSetOf, readMarker, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
 } from "../mods/am-sidebar/update.mjs";
 import { cmdUpdate } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
@@ -58,7 +58,7 @@ const release = (version, extra = {}) => ({
   tag_name: `v${version}`, draft: false, prerelease: false, html_url: `https://github.com/x/releases/tag/v${version}`,
   assets: [
     { name: `automagik-herdr-pack-${version}.tgz`, browser_download_url: `https://dl.test/v${version}/automagik-herdr-pack-${version}.tgz` },
-    { name: "SHA256SUMS", browser_download_url: `https://dl.test/v${version}/SHA256SUMS` },
+    { name: `automagik-herdr-pack-${version}.tgz.sha256`, browser_download_url: `https://dl.test/v${version}/automagik-herdr-pack-${version}.tgz.sha256` },
   ],
   ...extra,
 });
@@ -83,30 +83,51 @@ test("pickUpdate offers only a newer, complete, published release", () => {
   const up = pickUpdate("0.1.0", release("0.2.0"));
   assert.equal(up.version, "0.2.0");
   assert.equal(up.tarball.name, "automagik-herdr-pack-0.2.0.tgz");
-  assert.equal(up.sums.url, "https://dl.test/v0.2.0/SHA256SUMS");
+  assert.equal(up.sums.name, "automagik-herdr-pack-0.2.0.tgz.sha256");
+  assert.equal(up.sums.url, "https://dl.test/v0.2.0/automagik-herdr-pack-0.2.0.tgz.sha256");
   assert.equal(pickUpdate("0.2.0", release("0.2.0")), null, "same version");
   assert.equal(pickUpdate("0.3.0", release("0.2.0")), null, "older");
   assert.equal(pickUpdate("0.1.0", release("0.2.0", { draft: true })), null);
   assert.equal(pickUpdate("0.1.0", release("0.2.0", { prerelease: true })), null);
-  assert.equal(pickUpdate("0.1.0", release("0.2.0", { assets: [release("0.2.0").assets[0]] })), null, "no SHA256SUMS");
+  assert.equal(pickUpdate("0.1.0", release("0.2.0", { assets: [release("0.2.0").assets[0]] })), null, "no .sha256");
   assert.equal(pickUpdate("0.1.0", release("0.2.0", { assets: [release("0.2.0").assets[1]] })), null, "no tarball");
   assert.equal(pickUpdate("0.1.0", null), null);
   assert.equal(pickUpdate("0.0.0", release("0.1.0")).version, "0.1.0", "an unreleased install takes the first release");
   assert.match(noticeText(up), /Automagik Herdr 0\.2\.0 is out/);
 });
 
-test("latestRelease asks /latest with GitHub's headers, honours AUTOMAGIK_HERDR_NO_UPDATE, null on 404", async () => {
+test("pickUpdate over the monorepo's releases: the newest that carries the pack, not GitHub's latest", () => {
+  // Newest first, as GitHub lists them: a desktop-only and a plugin release carry no pack.
+  const desktop = { tag_name: "v3.60.0", draft: false, prerelease: false, assets: [{ name: "Automagik-Mac.dmg", browser_download_url: "https://dl.test/dmg" }, { name: "SHA256SUMS", browser_download_url: "https://dl.test/sums" }] };
+  const plugins = { tag_name: "v3.59.1", draft: false, prerelease: false, assets: [{ name: "automagik-bots-dsh-3.59.1.tgz", browser_download_url: "https://dl.test/bots" }] };
+  const list = [desktop, release("3.59.2", { prerelease: true }), plugins, release("3.59.0"), release("3.57.0")];
+  assert.equal(newestPack(list).version, "3.59.0");
+  assert.equal(pickUpdate("0.7.0", list).version, "3.59.0", "an automagik-herdr v0.7.x install takes the monorepo's pack");
+  assert.equal(pickUpdate("3.57.0", list).version, "3.59.0");
+  assert.equal(pickUpdate("3.59.0", list), null, "the newest pack is installed: a newer desktop release offers nothing");
+  assert.equal(pickUpdate("3.58.0", [desktop, plugins]), null);
+  assert.equal(newestPack([desktop, plugins]), null);
+  // Out of order, the highest version wins; one whose tarball names another version does not count.
+  const odd = release("3.61.0", { assets: release("3.58.0").assets });
+  assert.equal(pickUpdate("3.0.0", [release("3.57.0"), odd, release("3.59.0")]).version, "3.59.0");
+  assert.equal(pickUpdate("3.0.0", []), null);
+});
+
+test("listReleases asks the monorepo's releases with GitHub's headers, honours AUTOMAGIK_HERDR_NO_UPDATE, null on 404", async () => {
+  assert.equal(RELEASES_URL, "https://api.github.com/repos/automagik-dev/automagik/releases?per_page=100");
   const calls = [];
-  const got = await latestRelease({ fetch: fakeFetch({ [LATEST_URL]: release("0.2.0") }, calls), env: {} });
-  assert.equal(got.tag_name, "v0.2.0");
+  const got = await listReleases({ fetch: fakeFetch({ [RELEASES_URL]: [release("0.2.0")] }, calls), env: {} });
+  assert.equal(got[0].tag_name, "v0.2.0");
+  assert.equal(calls[0].url, RELEASES_URL);
   assert.equal(calls[0].init.headers.accept, "application/vnd.github+json");
   assert.equal(calls[0].init.headers["user-agent"], "automagik-herdr");
   assert.ok(calls[0].init.signal instanceof AbortSignal);
   const none = [];
-  assert.equal(await latestRelease({ fetch: fakeFetch({}, none), env: { AUTOMAGIK_HERDR_NO_UPDATE: "1" } }), null);
+  assert.equal(await listReleases({ fetch: fakeFetch({}, none), env: { AUTOMAGIK_HERDR_NO_UPDATE: "1" } }), null);
   assert.equal(none.length, 0, "never asked");
-  assert.equal(await latestRelease({ fetch: fakeFetch({}), env: {} }), null, "no release yet");
-  await assert.rejects(latestRelease({ fetch: fakeFetch({ [LATEST_URL]: 403 }), env: {} }), /403/);
+  assert.equal(await listReleases({ fetch: fakeFetch({}), env: {} }), null, "no repository");
+  assert.deepEqual(await listReleases({ fetch: fakeFetch({ [RELEASES_URL]: { message: "odd" } }), env: {} }), [], "not a list: no releases");
+  await assert.rejects(listReleases({ fetch: fakeFetch({ [RELEASES_URL]: 403 }), env: {} }), /403/);
 });
 
 test("verifySha256 takes a match and refuses a mismatch or a missing name", () => {
@@ -114,8 +135,8 @@ test("verifySha256 takes a match and refuses a mismatch or a missing name", () =
   const sums = `${sha(buf)}  automagik-herdr-0.2.0.tgz\n${"0".repeat(64)} *other.tgz\n`;
   assert.equal(parseSums(sums).get("other.tgz"), "0".repeat(64));
   assert.equal(verifySha256(buf, sums, "automagik-herdr-0.2.0.tgz"), sha(buf));
-  assert.throws(() => verifySha256(Buffer.from("tampered"), sums, "automagik-herdr-0.2.0.tgz"), /does not match SHA256SUMS/);
-  assert.throws(() => verifySha256(buf, sums, "automagik-herdr-0.3.0.tgz"), /not in SHA256SUMS/);
+  assert.throws(() => verifySha256(Buffer.from("tampered"), sums, "automagik-herdr-0.2.0.tgz"), /does not match its \.sha256/);
+  assert.throws(() => verifySha256(buf, sums, "automagik-herdr-0.3.0.tgz"), /not in its \.sha256/);
 });
 
 test("downloadUpdate refuses a tarball whose checksum does not match, writing nothing", async () => {
@@ -124,7 +145,7 @@ test("downloadUpdate refuses a tarball whose checksum does not match, writing no
   try {
     const up = pickUpdate("0.1.0", release("0.2.0"));
     const bad = fakeFetch({ [up.sums.url]: `${"f".repeat(64)}  ${up.tarball.name}\n`, [up.tarball.url]: t.buf });
-    await assert.rejects(downloadUpdate(up, { fetch: bad, dir: out }), /does not match SHA256SUMS/);
+    await assert.rejects(downloadUpdate(up, { fetch: bad, dir: out }), /does not match its \.sha256/);
     assert.equal(existsSync(join(out, up.tarball.name)), false);
     const good = fakeFetch({ [up.sums.url]: `${sha(t.buf)}  ${up.tarball.name}\n`, [up.tarball.url]: t.buf });
     const path = await downloadUpdate(up, { fetch: good, dir: out });
@@ -203,7 +224,7 @@ test("checkForUpdate and installUpdate against a fake release", async () => {
   const { home, mods } = appHome("0.1.0");
   const t = tarball("0.2.0");
   const rel = release("0.2.0");
-  const table = { [LATEST_URL]: rel, [rel.assets[0].browser_download_url]: t.buf, [rel.assets[1].browser_download_url]: `${sha(t.buf)}  automagik-herdr-pack-0.2.0.tgz\n` };
+  const table = { [RELEASES_URL]: [rel], [rel.assets[0].browser_download_url]: t.buf, [rel.assets[1].browser_download_url]: `${sha(t.buf)}  automagik-herdr-pack-0.2.0.tgz\n` };
   try {
     const off = await checkForUpdate({ fetch: fakeFetch(table), env: { AUTOMAGIK_HERDR_NO_UPDATE: "1" }, modsDir: mods });
     assert.deepEqual(off, { current: "0.1.0", latest: null, update: null, disabled: true });
@@ -339,14 +360,17 @@ test("a pack made as release.yml makes it (git archive of the tag's mods/am-side
   const { home, mods } = appHome(null);
   const tgz = join(home, "pack.tgz");
   try {
-    // release.yml's Pack step: the tag's PACK_MODS folders of mods/ plus the root layout.
+    // release.yml's "Pack the herdr pack" step: the tag's PACK_MODS folders of herdr/mods/ plus
+    // the pack's layout, from the repository's top (archive in a subfolder lists only its paths).
     const { PACK_MODS } = await import("../mods/am-sidebar/release.js");
+    const topDir = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: repo, encoding: "utf8" }).trim();
+    const prefix = execFileSync("git", ["rev-parse", "--show-prefix"], { cwd: repo, encoding: "utf8" }).trim();
     const layout = join(home, "automagik.json");
-    writeFileSync(layout, execFileSync("git", ["show", "HEAD:layouts/automagik.json"], { cwd: repo }));
-    execFileSync("git", ["archive", "--format=tar.gz", "-o", tgz, "--prefix=layouts/", `--add-file=${layout}`, "--prefix=", "HEAD:mods", "--", ...PACK_MODS], { cwd: repo });
+    writeFileSync(layout, execFileSync("git", ["show", `HEAD:${prefix}layouts/automagik.json`], { cwd: topDir }));
+    execFileSync("git", ["archive", "--format=tar.gz", "-o", tgz, "--prefix=layouts/", `--add-file=${layout}`, "--prefix=", `HEAD:${prefix}mods`, "--", ...PACK_MODS], { cwd: topDir });
     const top = [...new Set(execFileSync("tar", ["-tzf", tgz], { encoding: "utf8" }).split("\n").filter(Boolean).map((n) => n.split("/")[0]))].sort();
     assert.deepEqual(top, [...PACK_MODS, "layouts"].sort());
-    const version = execFileSync("git", ["show", "HEAD:mods/am-sidebar/VERSION"], { cwd: repo, encoding: "utf8" }).trim();
+    const version = execFileSync("git", ["show", `HEAD:${prefix}mods/am-sidebar/VERSION`], { cwd: topDir, encoding: "utf8" }).trim();
     const done = await applyUpdate({ tgzPath: tgz, version, modsDir: mods });
     assert.equal(done.version, version);
     assert.deepEqual(done.installed, [...PACK_MODS].sort());
@@ -636,7 +660,7 @@ test("update when already up to date (an older CLI did the update) still moves o
   mkdirSync(bin);
   for (const f of ["automagik-herdr", "automagik-herdr.mjs"]) writeFileSync(join(bin, f), "x\n");
   symlinkSync(join(bin, "automagik-herdr.mjs"), link);
-  const io = { modsDir: mods, binDir, env: {}, fetch: fakeFetch({ [LATEST_URL]: release("0.4.0") }) };
+  const io = { modsDir: mods, binDir, env: {}, fetch: fakeFetch({ [RELEASES_URL]: [release("0.4.0")] }) };
   assert.equal(await cmdUpdate({ check: true }, [], io), "Automagik Herdr 0.4.0 is installed; the latest release is 0.4.0. Up to date.");
   assert.equal(readlinkSync(link), join(bin, "automagik-herdr.mjs"), "--check changes nothing");
   assert.match(await cmdUpdate({}, [], io), /Up to date\. .*automagik-herdr now points at .*bin\/automagik-herdr\.$/);

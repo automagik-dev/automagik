@@ -86,8 +86,13 @@ fi
    * Publishes a release as release.yml packs it: every PACK_MODS folder of the repo plus
    * layouts/automagik.json, at `version`, or `edit(srcDir)` changing it first. As in a real release
    * only am-sidebar carries VERSION; each main.js ends in a `// release <v>` line, the code
-   * change a release brings, so a test can tell which release a folder is from.
+   * change a release brings, so a test can tell which release a folder is from. The tarball and its
+   * .sha256 go in download/v<version>/; with `latest`, the release is the newest of releases.json
+   * (GitHub's releases list, newest first), under a newer desktop-only release that carries no
+   * pack, as the monorepo's often are. Without it, only --version reaches it.
    */
+  const listed = [];
+  const asset = (name, version) => ({ name, browser_download_url: `file://${rel}/download/v${version}/${name}` });
   const publish = (version, { edit, sums, latest = true } = {}) => {
     const src = join(root, `src-${version}`);
     rmSync(src, { recursive: true, force: true });
@@ -100,11 +105,14 @@ fi
     cpSync(LAYOUT_SRC, join(src, "layouts", "automagik.json"));
     edit?.(src);
     const name = `automagik-herdr-pack-${version}.tgz`;
-    const dirs = [join(rel, "download", `v${version}`), ...(latest ? [join(rel, "latest", "download")] : [])];
-    for (const dir of dirs) {
-      mkdirSync(dir, { recursive: true });
-      execFileSync("tar", ["-czf", join(dir, name), "-C", src, ...readdirSync(src)], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
-      writeFileSync(join(dir, "SHA256SUMS"), `${sums ?? sha(join(dir, name))}  ${name}\n`);
+    const dir = join(rel, "download", `v${version}`);
+    mkdirSync(dir, { recursive: true });
+    execFileSync("tar", ["-czf", join(dir, name), "-C", src, ...readdirSync(src)], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
+    writeFileSync(join(dir, `${name}.sha256`), `${sums ?? sha(join(dir, name))}  ${name}\n`);
+    if (latest) {
+      listed.unshift({ tag_name: `v${version}`, draft: false, prerelease: false, assets: [asset(name, version), asset(`${name}.sha256`, version)] });
+      const desktop = { tag_name: "v99.0.0", draft: false, prerelease: false, assets: [asset("Automagik-Mac.dmg", "99.0.0"), asset("SHA256SUMS", "99.0.0")] };
+      writeFileSync(join(rel, "releases.json"), JSON.stringify([desktop, ...listed]));
     }
   };
   /**
@@ -146,13 +154,13 @@ test("a fresh install puts the pack and the command in place; a second run chang
   assert.deepEqual(s.versions(), s.all("9.9.0"));
   assert.match(s.mark(), new RegExp(`^version=9\\.9\\.0\nmods=${PACK_MODS.join(",")}\nlayout=added\nbefore=none\nusagemeter=0\\.2\\.0\n$`));
   // The pack ships bin/run.sh and the bin/automagik-herdr wrapper (dev #42); the link is the wrapper.
-  const listed = execFileSync("tar", ["-tzf", join(s.root, "release", "latest", "download", "automagik-herdr-pack-9.9.0.tgz")], { encoding: "utf8" }).split("\n");
+  const listed = execFileSync("tar", ["-tzf", join(s.root, "release", "download", "v9.9.0", "automagik-herdr-pack-9.9.0.tgz")], { encoding: "utf8" }).split("\n");
   for (const f of ["run.sh", "automagik-herdr"]) assert.ok(listed.includes(`am-sidebar/bin/${f}`), `the tarball has am-sidebar/bin/${f}`);
   for (const f of ["run.sh", "automagik-herdr"]) assert.equal(lstatSync(join(s.pack, "bin", f)).mode & 0o111, 0o111, f);
   assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr"));
   assert.match(r.out, /Checksum: ok\.\n(  .*\n)*Installed the pack 9\.9\.0/);
   assert.deepEqual(JSON.parse(readFileSync(join(s.appHome, "keys.json"), "utf8")), { global: { "cmd-shift-m": "mod.open:am-mods" } });
-  assert.match(readFileSync(join(s.appHome, "data", "am-mods", "catalog.json"), "utf8"), /automagik-herdr\/dev\/catalog\/index\.json/);
+  assert.match(readFileSync(join(s.appHome, "data", "am-mods", "catalog.json"), "utf8"), /automagik-dev\/automagik\/dev\/herdr\/catalog\/index\.json/);
   assert.match(r.out, /Add ~\/\.local\/bin to your PATH/);
   const version = spawnSync(s.link, ["--version"], { encoding: "utf8", env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` } });
   assert.equal(version.stdout.trim(), "automagik-herdr 9.9.0", version.stderr);
@@ -226,12 +234,12 @@ test("Herdr missing with --yes: installed with the Homebrew cask, then the pack"
   assert.equal(readFileSync(join(s.pack, "VERSION"), "utf8").trim(), "9.9.0");
 });
 
-test("a tarball that doesn't match SHA256SUMS installs nothing", (t) => {
+test("a tarball that doesn't match its .sha256 installs nothing", (t) => {
   const s = scratch(t);
   s.publish("9.9.0", { sums: "0".repeat(64) });
   const r = s.run("--yes");
   assert.equal(r.code, 1);
-  assert.match(r.err, /does not match SHA256SUMS .*nothing was installed/);
+  assert.match(r.err, /does not match automagik-herdr-pack-[\d.]+\.tgz\.sha256 .*nothing was installed/);
   assert.equal(existsSync(s.appHome), false, "nothing written before the checksum");
   assert.equal(existsSync(s.link), false);
 });
@@ -345,7 +353,7 @@ test("not macOS: explains and exits 1; Node too old with no brew: says where to 
 test("--help and an unknown option", (t) => {
   const s = scratch(t);
   assert.match(s.run("--help").out, /install\.sh --uninstall/);
-  assert.match(s.run("--help").out, /needs v0\.5\.0 or later/);
+  assert.match(s.run("--help").out, /--version installs that Automagik release; it must carry the\npack/);
   assert.match(s.run("--help").out, /--adopt replaces a pack-named mod/);
   assert.equal(s.run("--nope").code, 2);
 });
@@ -812,7 +820,7 @@ test("AUTOMAGIK_HERDR_RELEASE_URL: a file:// folder or this repository on GitHub
   s.extraEnv.AUTOMAGIK_HERDR_RELEASE_URL = "https://evil.example/releases";
   const bad = s.run("--yes");
   assert.equal(bad.code, 1);
-  assert.match(bad.err, /must be a file:\/\/ folder or https:\/\/github\.com\/automagik-dev\/automagik-herdr/);
+  assert.match(bad.err, /must be a file:\/\/ folder or https:\/\/github\.com\/automagik-dev\/automagik\//);
 });
 
 test("AUTOMAGIK_HERDR_RELEASE_URL with '..' or '%' is refused before anything is fetched", (t) => {
@@ -821,8 +829,8 @@ test("AUTOMAGIK_HERDR_RELEASE_URL with '..' or '%' is refused before anything is
   writeFileSync(curlLog, "");
   exe(join(s.bin, "curl"), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${curlLog}"\nexit 1\n`);
   for (const url of [
-    "https://github.com/automagik-dev/automagik-herdr/../../evil/repo/releases",
-    "https://github.com/automagik-dev/automagik-herdr/%2e%2e/%2e%2e/evil/repo/releases",
+    "https://github.com/automagik-dev/automagik/../../evil/repo/releases",
+    "https://github.com/automagik-dev/automagik/%2e%2e/%2e%2e/evil/repo/releases",
   ]) {
     s.extraEnv.AUTOMAGIK_HERDR_RELEASE_URL = url;
     const r = s.run("--yes");
@@ -833,10 +841,37 @@ test("AUTOMAGIK_HERDR_RELEASE_URL with '..' or '%' is refused before anything is
   assert.equal(existsSync(s.pack), false);
 });
 
-test("every download keeps the path as written (curl --path-as-is): the pack's two, usagemeter's two", () => {
+test("every download keeps the path as written (curl --path-as-is): the releases list, the pack's two, usagemeter's two", () => {
   const calls = readFileSync(INSTALL, "utf8").split("\n").filter((l) => /^\s+curl /.test(l));
-  assert.equal(calls.length, 4);
-  for (const l of calls) assert.match(l, /^\s+curl -fsSL --path-as-is "\$u?base\//);
+  assert.equal(calls.length, 5);
+  for (const l of calls) assert.match(l, /^\s+curl -fsSL --path-as-is "(\$u?base\/|\$RELEASES_API")/);
+});
+
+test("the newest release that carries the pack is installed: not a newer desktop-only one, a draft or a prerelease", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  s.publishMeter();
+  // Newer releases above it: a prerelease and a draft that carry a pack, and desktop-only ones.
+  const list = JSON.parse(readFileSync(join(s.root, "release", "releases.json"), "utf8"));
+  const pack = (v) => [`automagik-herdr-pack-${v}.tgz`, `automagik-herdr-pack-${v}.tgz.sha256`].map((name) => ({ name }));
+  list.unshift({ tag_name: "v9.11.0", prerelease: true, assets: pack("9.11.0") }, { tag_name: "v9.10.0", draft: true, assets: pack("9.10.0") },
+    { tag_name: "v9.9.5", assets: [{ name: "automagik-herdr-pack-9.9.5.tgz" }] }, { tag_name: "not-a-version", assets: pack("x") });
+  writeFileSync(join(s.root, "release", "releases.json"), JSON.stringify(list));
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(s.versions(), s.all("9.9.0"));
+  // None carries one: said, and nothing is installed.
+  writeFileSync(join(s.root, "release", "releases.json"), JSON.stringify([{ tag_name: "v9.12.0", assets: [{ name: "Automagik-Mac.dmg" }] }]));
+  const none = scratch(t);
+  mkdirSync(join(none.root, "release"), { recursive: true });
+  cpSync(join(s.root, "release", "releases.json"), join(none.root, "release", "releases.json"));
+  const n = none.run("--yes");
+  assert.equal(n.code, 1);
+  assert.match(n.err, /no release of automagik-dev\/automagik carries automagik-herdr-pack-<version>\.tgz yet/);
+  // --version takes a version, nothing else reaches a URL.
+  const bad = s.run("--yes", "--version", "9.9.0/../../x");
+  assert.equal(bad.code, 1);
+  assert.match(bad.err, /--version takes a version like 3\.57\.0/);
 });
 
 test("no override (the real curl | bash path): no unbound variable, no override line, up to the macOS check", (t) => {

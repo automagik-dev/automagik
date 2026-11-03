@@ -150,11 +150,14 @@ function headOf(fullName, branch) {
 
 const { owner, repo } = remote();
 const fullName = owner && repo ? `${owner}/${repo}` : "";
+// The pack's folder in its repository: herdr/ in the Automagik monorepo (its mods are at
+// <path>/mods/<name> there), empty when the pack is a repository of its own.
+const packPath = git(["rev-parse", "--show-prefix"]).replace(/\/+$/, "");
 const { mods, problems } = localMods();
 // The pack's branch is fixed by the wish (dev); its headCommit is deliberately not pinned to a
 // local commit, so a committed index does not go stale the moment it lands.
 const branch = "dev";
-const recent = git(["log", "-1", "--format=%cI"]);
+const recent = git(["log", "-1", "--format=%cI", "--", "."]);
 const dirty = git(["status", "--porcelain"]).length > 0;
 const readme = (() => {
   try {
@@ -208,14 +211,14 @@ const entries = [];
 
 const entryForPack = {
   owner: owner || "automagik-dev",
-  repo: repo || "automagik-herdr",
-  fullName: fullName || "automagik-dev/automagik-herdr",
+  repo: repo || "automagik",
+  fullName: fullName || "automagik-dev/automagik",
   url: fullName ? `https://github.com/${fullName}` : "",
   defaultBranch: branch,
   stars: 0,
   pushedAt: recent,
   headCommit: "",
-  path: "",
+  path: packPath,
   name: packName,
   blurb: packBlurb,
   modNames: mods.map((m) => m.name),

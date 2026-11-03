@@ -1,5 +1,5 @@
 // The public install path end to end (#43): the pack built by release.yml's own Pack lines, served
-// as a file:// release with SHA256SUMS, installed by install.sh piped into bash as the README's
+// as a file:// release with the tarball's .sha256, installed by install.sh piped into bash as the README's
 // one-liner runs it, on three scratch homes: a fresh one, a v0.4.0 sidebar-only install, and one
 // with a personal layout and an unrelated mod (sheepdog). The folder list is PACK_MODS from
 // mods/am-sidebar/release.js, as release.yml reads it from the tag; this test does not take it
@@ -16,11 +16,12 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const INSTALL = join(ROOT, "install.sh");
-const RELEASE_YML = join(ROOT, ".github", "workflows", "release.yml");
-const { PACK_MODS, PACK_KEYS, PACK_LAYOUT, CATALOG_URL, POCKET_LINK, USAGEMETER, V020_LAYOUT_SHA256, tarballName } = await import("../mods/am-sidebar/release.js");
+// The monorepo's release workflow: its "Pack the herdr pack" step builds the pack from herdr/.
+const RELEASE_YML = join(ROOT, "..", ".github", "workflows", "release.yml");
+const { PACK_MODS, PACK_KEYS, PACK_LAYOUT, CATALOG_URL, POCKET_LINK, USAGEMETER, V020_LAYOUT_SHA256, sumsName, tarballName } = await import("../mods/am-sidebar/release.js");
 const { hookCommand, legacyHookCommand } = await import("../mods/am-sidebar/briefingText.mjs");
-/** The release this branch becomes; release.yml sets VERSION to it in the commit it tags. */
-const RELEASE = "0.5.0";
+/** The release this branch becomes (a monorepo release that carries the pack); release.yml sets VERSION to it in the commit it tags. */
+const RELEASE = "3.57.0";
 /** The latest sidebar-only release (v0.2-v0.4.x: automagik-herdr-<v>.tgz, spaces-agents only). */
 const OLD = "0.4.0";
 /** Paths update.mjs carries over from the replaced folder (D10): never in the archive. */
@@ -28,6 +29,10 @@ const PRIVATE = (rel) => rel.split("/").some((s) => s.startsWith(".") || s === "
 
 const git = (args, env = {}) => execFileSync("git", args, { cwd: ROOT, env: { ...process.env, ...env }, encoding: "utf8" }).trim();
 const haveGit = (() => { try { return git(["rev-parse", "--is-inside-work-tree"]) === "true"; } catch { return false; } })();
+/** The repository's top and the pack's folder in it (`herdr/` in the Automagik monorepo). */
+const TOP = haveGit ? git(["rev-parse", "--show-toplevel"]) : ROOT;
+const PREFIX = haveGit ? git(["rev-parse", "--show-prefix"]) : "";
+const topGit = (args, env = {}) => execFileSync("git", args, { cwd: TOP, env: { ...process.env, ...env }, encoding: "utf8" }).trim();
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
 const sha = (buf) => createHash("sha256").update(buf).digest("hex");
 
@@ -77,8 +82,8 @@ function files(dir, { skip = () => false } = {}) {
  */
 function buildPack(dir, { launcher } = {}) {
   const step = readFileSync(RELEASE_YML, "utf8");
-  const pack = step.slice(step.indexOf("- name: Pack\n"), step.indexOf("- name: Publish the release\n"));
-  assert.ok(pack.length > 0, "release.yml has a Pack step before Publish the release");
+  const pack = step.slice(step.indexOf("- name: Pack the herdr pack\n"), step.indexOf("- name: Pack the plugins\n"));
+  assert.ok(pack.length > 0, "release.yml has a Pack the herdr pack step before Pack the plugins");
   const only = (re) => {
     const lines = pack.split("\n").map((l) => l.trim()).filter((l) => re.test(l));
     assert.equal(lines.length, 1, `release.yml's Pack step has one line matching ${re}`);
@@ -88,41 +93,45 @@ function buildPack(dir, { launcher } = {}) {
     assert.equal(line.split(from).length, 2, `release.yml's line names ${from} once: ${line}`);
     return line.replace(from, to);
   };
-  assert.equal(only(/^tgz=/), 'tgz="release/automagik-herdr-pack-${VERSION}.tgz"');
+  assert.equal(only(/^tgz=/), 'tgz="automagik-herdr-pack-${VERSION}.tgz"');
   // The folder list is the tag's PACK_MODS (bash-only lines, checked as text; the checks they
   // feed are repeated below).
-  assert.equal(only(/^git show "v\$\{VERSION\}:mods\//), 'git show "v${VERSION}:mods/am-sidebar/release.js" > "${RUNNER_TEMP}/release.mjs"');
+  assert.equal(only(/^git show "v\$\{VERSION\}:herdr\/mods\//), 'git show "v${VERSION}:herdr/mods/am-sidebar/release.js" > "${RUNNER_TEMP}/release.mjs"');
   assert.match(only(/^mapfile -t mods /), /const \{ PACK_MODS \} = await import\(process\.argv\[1\]\); for \(const m of PACK_MODS\) console\.log\(m\);' "\$\{RUNNER_TEMP\}\/release\.mjs"\)$/);
-  const show = swap(only(/^git show "v\$\{VERSION\}:layouts\//), '"v${VERSION}:', '"${TREE}:');
-  const archive = swap(swap(only(/^git archive /), '"v${VERSION}:mods"', '"${TREE}:mods"'), '"${mods[@]}"', '"$@"');
+  assert.equal(only(/^\(cd release && sha256sum /), '(cd release && sha256sum -- "${tgz}" > "${tgz}.sha256")');
+  const show = swap(only(/^git show "v\$\{VERSION\}:herdr\/layouts\//), '"v${VERSION}:herdr/', '"${TREE}:');
+  const archive = swap(swap(swap(only(/^git archive /), '"v${VERSION}:herdr/mods"', '"${TREE}:mods"'), '"${mods[@]}"', '"$@"'), '-o "release/${tgz}"', '-o "${tgz}"');
 
-  // A tree of the working copy (staged in a scratch index, never the repository's own index).
+  // A tree of the working copy (staged in a scratch index, never the repository's own index),
+  // from the repository's top: the pack is its PREFIX (herdr/), and TREE that folder's tree.
   const idx = { GIT_INDEX_FILE: join(dir, "index") };
-  git(["add", "-A", "--", "mods", "layouts"], idx);
+  topGit(["add", "-A", "--", `${PREFIX}mods`, `${PREFIX}layouts`], idx);
   const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: ROOT, input: `${RELEASE}\n`, encoding: "utf8" }).trim();
-  git(["update-index", "--cacheinfo", `100644,${blob},mods/am-sidebar/VERSION`], idx);
-  const staged = new Set(git(["ls-files", "--", ...LAUNCHER], idx).split("\n").filter(Boolean));
-  for (const path of LAUNCHER) {
-    if ((launcher === false || launcher === "none") && staged.has(path)) git(["update-index", "--force-remove", "--", path], idx);
+  topGit(["update-index", "--cacheinfo", `100644,${blob},${PREFIX}mods/am-sidebar/VERSION`], idx);
+  const staged = new Set(topGit(["ls-files", "--", ...LAUNCHER.map((path) => PREFIX + path)], idx).split("\n").filter(Boolean));
+  for (const path of LAUNCHER.map((path) => PREFIX + path)) {
+    if ((launcher === false || launcher === "none") && staged.has(path)) topGit(["update-index", "--force-remove", "--", path], idx);
     if (launcher === true && !staged.has(path)) {
       const text = path.endsWith("run.sh") ? RUN_SH : WRAPPER;
       const b = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: ROOT, input: text, encoding: "utf8" }).trim();
-      git(["update-index", "--add", "--cacheinfo", `100755,${b},${path}`], idx);
+      topGit(["update-index", "--add", "--cacheinfo", `100755,${b},${path}`], idx);
     }
   }
-  if (launcher === "none") git(["update-index", "--force-remove", "--", "mods/am-sidebar/bin/automagik-herdr.mjs"], idx);
-  const tree = git(["write-tree"], idx);
+  if (launcher === "none") topGit(["update-index", "--force-remove", "--", `${PREFIX}mods/am-sidebar/bin/automagik-herdr.mjs`], idx);
+  const top = topGit(["write-tree"], idx);
+  const tree = PREFIX ? topGit(["rev-parse", `${top}:${PREFIX.replace(/\/$/, "")}`]) : top;
 
-  const tagged = git(["ls-tree", "--name-only", `${tree}:mods`]).split("\n").filter((m) => m !== POCKET_LINK).sort();
+  // From the top: ls-tree and archive run in a subfolder list only that subfolder's paths.
+  const tagged = topGit(["ls-tree", "--name-only", `${tree}:mods`]).split("\n").filter((m) => m !== POCKET_LINK).sort();
   assert.deepEqual(tagged, [...PACK_MODS].sort(), "mods/ (but pocket-link) is PACK_MODS, as release.yml checks");
   const tgz = join(dir, "release", tarballName(RELEASE));
   mkdirSync(dirname(tgz), { recursive: true });
   mkdirSync(join(dir, "runner"));
   execFileSync("sh", ["-euc", `${show}\n${archive}\n`, "sh", ...PACK_MODS], {
-    cwd: ROOT, env: { ...process.env, TREE: tree, tgz, RUNNER_TEMP: join(dir, "runner") }, stdio: "pipe",
+    cwd: TOP, env: { ...process.env, TREE: tree, tgz, RUNNER_TEMP: join(dir, "runner") }, stdio: "pipe",
   });
-  const top = [...new Set(execFileSync("tar", ["-tzf", tgz], { encoding: "utf8" }).split("\n").filter(Boolean).map((p) => p.split("/")[0]))].sort();
-  assert.deepEqual(top, [...PACK_MODS, "layouts"].sort(), "the archive's top level is PACK_MODS plus layouts, as release.yml checks");
+  const level = [...new Set(execFileSync("tar", ["-tzf", tgz], { encoding: "utf8" }).split("\n").filter(Boolean).map((p) => p.split("/")[0]))].sort();
+  assert.deepEqual(level, [...PACK_MODS, "layouts"].sort(), "the archive's top level is PACK_MODS plus layouts, as release.yml checks");
   const x = join(dir, "archive");
   mkdirSync(x);
   execFileSync("tar", ["-xzf", tgz, "-C", x]);
@@ -163,13 +172,21 @@ if [ "$1" = status ]; then
   printf '{\\n  "layout": "%s",\\n  "zoom": false\\n}\\n' "$(cat "${shown}")"
 fi
 `);
-  // The release: latest/download/{SHA256SUMS, the pack}, as GitHub serves it.
+  // The release: download/v<RELEASE>/{the pack, its .sha256}, as GitHub serves it, and the
+  // releases list (GitHub's API, newest first): a newer desktop-only release carries no pack and a
+  // newer prerelease is not offered, so the one-liner installs RELEASE.
   const { tgz } = pack(launcher);
-  const dl = join(rel, "latest", "download");
+  const dl = join(rel, "download", `v${RELEASE}`);
   mkdirSync(dl, { recursive: true });
   const body = readFileSync(tgz);
   writeFileSync(join(dl, tarballName(RELEASE)), body);
-  writeFileSync(join(dl, "SHA256SUMS"), `${sha(body)}  ${tarballName(RELEASE)}\n`);
+  writeFileSync(join(dl, sumsName(RELEASE)), `${sha(body)}  ${tarballName(RELEASE)}\n`);
+  const asset = (name) => ({ name, browser_download_url: `file://${rel}/download/${name}` });
+  writeFileSync(join(rel, "releases.json"), JSON.stringify([
+    { tag_name: "v3.59.0", prerelease: true, draft: false, assets: [asset(tarballName("3.59.0")), asset(sumsName("3.59.0"))] },
+    { tag_name: "v3.58.0", prerelease: false, draft: false, assets: [asset("Automagik-Mac.dmg"), asset("SHA256SUMS")] },
+    { tag_name: `v${RELEASE}`, prerelease: false, draft: false, assets: [asset(tarballName(RELEASE)), asset(sumsName(RELEASE))] },
+  ]));
   // usagemeter's pinned release, which install.sh reads from <release>/usagemeter/ for file://:
   // each build a script answering --version.
   const meter = join(rel, "usagemeter", "download", `v${USAGEMETER.version}`);
