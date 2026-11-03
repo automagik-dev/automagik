@@ -175,7 +175,13 @@ jobs:
           ' "${VERSION}" "${COMMIT}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -qam "chore(desktop): carry Omni ${VERSION}"
+          empty=()
+          if git diff --quiet; then
+            # A dry run may rehearse the Omni dev already carries; a real run never carries nothing.
+            [[ "${DRY_RUN}" == true ]] || { echo "::error ::Omni ${VERSION} changes nothing on dev ${BOOTED:0:9}"; exit 1; }
+            empty=(--allow-empty)
+          fi
+          git commit -qa "${empty[@]}" -m "chore(desktop): carry Omni ${VERSION}"
           [[ "$(git rev-parse HEAD^)" == "${BOOTED}" ]] || { echo "::error ::the bump is not on the dev commit that booted (${BOOTED})"; exit 1; }
           rehearse=()
           [[ "${DRY_RUN}" == true ]] && rehearse=(--dry-run)
