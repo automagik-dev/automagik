@@ -77,15 +77,29 @@ export function promptOf(messages) {
 }
 
 /**
- * The `llm/stream` listener that keeps DSH's side requests (a Session title, a summary) away
- * from the agents: they would reach the agent as prompts of their own. Only here is the agent
- * loop's mark on a request reliable; DSH rebuilds the request before the adapter sees it
- * whenever the Session's tool set changed.
+ * The `llm/stream` listener that keeps DSH's side requests (a Session title, a compaction
+ * summary) away from the agents: they would reach the agent as prompts of their own. Such a
+ * request on an agent's route goes to the person's DSH default model instead (DeepSeek, unless
+ * they chose another), without the agent's effort, which is the agent's model's and not the
+ * default's. When the default is an agent too, or there is none, it is turned down. Every
+ * other Session's requests, and the agent loop's own, go on as they are. Only here is the
+ * agent loop's mark on a request reliable; DSH rebuilds the request before the adapter sees it
+ * whenever the Session's tool set changed. `next` takes no request, so the default model's
+ * call is a nested `ctx.llm.stream`, which passes through this listener again as another
+ * route's.
+ * @param {Map<string, unknown>} providers the agents' routes
+ * @param {{ llm?: { stream(options: object): AsyncIterable<object> }, get?: (name: string) => any }} [ctx]
  */
-export function aside(providers) {
+export function aside(providers, ctx) {
+  const agentRoute = provider => providers.has(provider) || String(provider).startsWith('acp-')
   return (options, next) => {
     if (!providers.has(options.provider) || isAgentLoopRequest(options)) return next()
-    return (async function* () { yield finish('error', 'An ACP agent answers only in its own chat', 'UNSUPPORTED') })()
+    const fallback = ctx?.get?.('agentDefaultModel')?.currentSelection?.()
+    if (ctx?.llm === undefined || !fallback?.provider || !fallback?.model || agentRoute(fallback.provider)) {
+      return (async function* () { yield finish('error', 'An ACP agent answers only in its own chat', 'UNSUPPORTED') })()
+    }
+    const { reasoningEffort: _agentEffort, ...request } = options
+    return ctx.llm.stream({ ...request, provider: fallback.provider, model: fallback.model })
   }
 }
 

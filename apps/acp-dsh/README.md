@@ -27,8 +27,11 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   diff for an edit, the generic card otherwise). When the agent asks permission for the call,
   `acp_tool` asks DSH's approval service (`approval/asked`, `approval/decided`) and gives the
   agent DSH's answer.
-- **Only the chat reaches the agent.** DSH's side requests (a Session title, a summary) on an
-  ACP route are refused at the `llm/stream` waterfall, so they never become prompts.
+- **Only the chat reaches the agent.** DSH's side requests (a Session title, a compaction
+  summary) on an ACP route never become prompts. At the `llm/stream` waterfall they go to the
+  person's DSH default model instead (`agentDefaultModel`, DeepSeek unless they chose another),
+  without the agent's effort. When that default is an agent too, they are refused
+  (`UNSUPPORTED`). Sessions on any other route are left alone.
 - **Host only.** No browser half, so the plugin cannot stop the web UI from loading. With no
   agent CLI installed it registers no route. The welcome draws its setup from the `acpAgents`
   service below.

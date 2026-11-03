@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { markAgentLoopRequest } from '@deepseek-ai/dsh-llm'
+import { isAgentLoopRequest, markAgentLoopRequest } from '@deepseek-ai/dsh-llm'
 import { apply } from '../index.js'
 import { optionFor, TOOL_NAME } from '../src/host/tool.js'
 import { aside, choose, promptOf } from '../src/host/adapter.js'
@@ -137,19 +137,87 @@ test('stopping the turn cancels the agent and finishes aborted', async () => {
   }
 })
 
-test('a request DSH builds on the side never reaches the agent', async () => {
-  const listen = aside(new Map([['acp-fake', {}]]))
-  const chunks = []
+// DSH's side requests on an agent's route (a title, a compaction summary) go to the person's
+// DSH default model, without the agent's effort; with no default, or an agent as the
+// default, they are refused. The agent never sees them.
+test('a request DSH builds on the side goes to DSH\'s default model, never to the agent', async () => {
+  const drain = async stream => { const chunks = []; for await (const chunk of stream) chunks.push(chunk); return chunks }
   let passed = 0
   const next = () => { passed++; return (async function* () {})() }
-  for await (const chunk of listen({ provider: 'acp-fake', model: 'fake', sessionId: 's1', messages: [] }, next)) chunks.push(chunk)
+  const sent = []
+  let selection = { provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'max' }
+  const ctx = {
+    llm: { stream: options => { sent.push(options); return (async function* () { yield { type: 'finish', reason: { kind: 'stop' } } })() } },
+    get: name => (name === 'agentDefaultModel' ? { currentSelection: () => selection } : undefined),
+  }
+  const listen = aside(new Map([['acp-fake', {}]]), ctx)
+  const title = { provider: 'acp-fake', model: 'fake', reasoningEffort: 'high', maxTokens: 4096, sessionId: 's1', purpose: 'title', messages: [] }
+  assert.deepEqual((await drain(listen(title, next))).map(chunk => chunk.reason.kind), ['stop'])
+  assert.deepEqual(sent, [{ provider: 'deepseek-official', model: 'deepseek-flash', maxTokens: 4096, sessionId: 's1', purpose: 'title', messages: [] }])
   assert.equal(passed, 0)
-  assert.equal(chunks.length, 1)
-  assert.equal(chunks[0].reason.failure.code, 'UNSUPPORTED')
+
+  // A default that is an agent too, or none, turns the request down.
+  for (const none of [{ provider: 'acp-fake', model: 'default' }, { provider: 'acp-other', model: 'default' }, undefined]) {
+    selection = none
+    const chunks = await drain(listen(title, next))
+    assert.deepEqual([chunks.length, chunks[0].reason.failure.code], [1, 'UNSUPPORTED'])
+  }
+  assert.equal(sent.length, 1)
+  assert.equal((await drain(aside(new Map([['acp-fake', {}]]))(title, next)))[0].reason.failure.code, 'UNSUPPORTED')
+
   // The agent loop's own requests, and other providers', go on.
-  for await (const chunk of listen(markAgentLoopRequest({ provider: 'acp-fake', messages: [] }), next)) chunks.push(chunk)
-  for await (const chunk of listen({ provider: 'deepseek', messages: [] }, next)) chunks.push(chunk)
-  assert.equal(passed, 2)
+  await drain(listen(markAgentLoopRequest({ provider: 'acp-fake', messages: [] }), next))
+  await drain(listen({ provider: 'deepseek-official', messages: [] }, next))
+  assert.deepEqual([passed, sent.length], [2, 1])
+})
+
+// The same through DSH's own llm service: the listener's nested call passes through the
+// waterfall again, the default model's adapter answers, and the agent's never runs.
+test('through a real DSH llm service, a side request on an agent\'s route is answered by the default model', async () => {
+  const { Context } = await import('@deepseek-ai/cordis')
+  const { default: LlmRuntime, LlmAdapter } = await import('@deepseek-ai/dsh-llm')
+  const seen = []
+  class Route extends LlmAdapter {
+    constructor(name) { super(); this.name = name }
+    async listModels(provider) { return [{ provider, id: 'm', name: 'm' }] }
+    async resolveModel(provider, model) { return { provider, id: model, name: model, contextWindow: 100000, maxOutputTokens: 8000 } }
+    async *stream(options) {
+      seen.push({ adapter: this.name, provider: options.provider, model: options.model, reasoningEffort: options.reasoningEffort, agentLoop: isAgentLoopRequest(options) })
+      yield { type: 'text-delta', index: 0, text: `from ${this.name}` }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    }
+  }
+  const ctx = new Context()
+  await ctx.plugin(LlmRuntime)
+  ctx.llm.registerAdapter(['acp-fake'], new Route('agent'))
+  ctx.llm.registerAdapter(['deepseek-official'], new Route('deepseek'))
+  const defaults = { currentSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-flash' }) }
+  ctx.on('llm/stream', aside(new Map([['acp-fake', {}]]), { llm: ctx.llm, get: name => (name === 'agentDefaultModel' ? defaults : ctx.get(name)) }))
+  const text = async options => { let out = ''; for await (const chunk of ctx.llm.stream(options)) if (chunk.type === 'text-delta') out += chunk.text; return out }
+  const messages = [{ role: 'user', content: [{ type: 'text', text: 'Name this chat' }] }]
+  assert.equal(await text({ provider: 'acp-fake', model: 'default', reasoningEffort: 'high', messages }), 'from deepseek')
+  assert.equal(await text(markAgentLoopRequest({ provider: 'acp-fake', model: 'default', messages })), 'from agent')
+  assert.deepEqual(seen, [
+    { adapter: 'deepseek', provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: undefined, agentLoop: false },
+    { adapter: 'agent', provider: 'acp-fake', model: 'default', reasoningEffort: undefined, agentLoop: true },
+  ])
+})
+
+test('the plugin sends side requests on its agents\' routes to DSH\'s default model', async () => {
+  const listeners = {}
+  const sent = []
+  const defaults = { currentSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-flash' }) }
+  const ctx = {
+    llm: { registerAdapter: () => () => {}, stream: options => { sent.push(options); return (async function* () {})() } },
+    agents: { get: () => undefined },
+    get: name => (name === 'agentDefaultModel' ? defaults : undefined),
+    on: (name, listener) => { listeners[name] = listener; return () => {} },
+  }
+  apply(ctx, { fakeAgent: FAKE, claude: false, codex: false })
+  const chunks = []
+  for await (const chunk of listeners['llm/stream']({ provider: 'acp-fake', model: 'default', messages: [] }, () => assert.fail('the agent got a side request'))) chunks.push(chunk)
+  assert.deepEqual(chunks, [])
+  assert.deepEqual(sent.map(options => `${options.provider}/${options.model}`), ['deepseek-official/deepseek-flash'])
 })
 
 test('an agent that cannot start fails the step with its reason', async () => {

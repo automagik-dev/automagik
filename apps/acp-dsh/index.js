@@ -216,7 +216,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // The fake agent alone changes nothing reconcile counts.
   if (registration === undefined) publish()
   ctx.provide?.(SERVICE, service)
-  ctx.on?.('llm/stream', aside(agents))
+  ctx.on?.('llm/stream', aside(agents, ctx))
   // A switch flipped in the settings: offer or withdraw the agent now, and install what it needs.
   ctx.on?.('loader/volatile-update', () => reconcile())
   // The newest adapter releases, at start and daily after; a Session already running keeps its own.
