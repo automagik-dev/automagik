@@ -81,6 +81,15 @@ jobs:
             echo "::error ::omni_version, omni_commit and dev_sha are only taken with dry_run: a chosen Omni or dev is never carried"
             exit 1
           fi
+          # Dispatch inputs reach GITHUB_OUTPUT: only a release version and full shas pass.
+          if [[ -n "${WANT_VERSION}" && ! "${WANT_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error ::omni_version is not a release version (x.y.z)"
+            exit 1
+          fi
+          if [[ -n "${WANT_COMMIT}" && ! "${WANT_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error ::omni_commit is not a full commit sha"
+            exit 1
+          fi
           if [[ -n "${WANT_DEV}" && ! "${WANT_DEV}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error ::dev_sha '${WANT_DEV}' is not a full commit sha"
             exit 1

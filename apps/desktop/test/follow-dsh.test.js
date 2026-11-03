@@ -63,6 +63,14 @@ test('follow-omni carries an Omni only after it booted, on the dev commit that b
   assert.match(text, /\n {2}release:\n {4}name: Release\n {4}needs: carry\n/)
 })
 
+test('the boot gate boots the candidate exactly as carry writes it, both pins', () => {
+  const read = name => readFileSync(new URL(`../../../.github/workflows/${name}`, import.meta.url), 'utf8')
+  const bump = text => text.match(/\n {10}node -e '\n([\s\S]*?)\n {10}' "\$\{(?:OMNI_)?VERSION\}" "\$\{(?:OMNI_)?COMMIT\}"/)?.[1]
+  const carried = bump(read('follow-omni.yml'))
+  assert.ok(carried?.includes('apps/welcome-dsh/package.json'), 'carry moves the welcome too')
+  assert.equal(bump(read('boot-check.yml')), carried)
+})
+
 
 test('a carried Omni harness admits only newer compatible releases in the same patch series', () => {
   const range = '>=0.2.1-rc.3 <0.2.2-0'

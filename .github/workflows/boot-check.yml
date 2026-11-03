@@ -7,7 +7,9 @@ name: Boot check
 #
 # CI calls it on every push and pull request with the Omni apps/desktop/omni.json pins.
 # Follow Omni calls it with a candidate Omni (omni_version and omni_commit) before it moves
-# omni.json on dev, so an Omni release that does not boot never reaches a desktop release.
+# omni.json on dev, so an Omni release that does not boot never reaches a desktop release. The
+# candidate is written exactly as Follow Omni's carry writes it (omni.json and the welcome's
+# package.json), so the tree that boots is the tree that is carried.
 
 on:
   workflow_call:
@@ -47,6 +49,7 @@ jobs:
         if: inputs.omni_version != ''
         run: |
           set -euo pipefail
+          [[ "${OMNI_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error ::omni_version is not a release version (x.y.z)"; exit 1; }
           [[ "${OMNI_COMMIT}" =~ ^[0-9a-f]{40}$ ]] || { echo "::error ::omni_commit '${OMNI_COMMIT}' is not a full commit sha"; exit 1; }
           node -e '
             const fs = require("node:fs")
@@ -54,8 +57,14 @@ jobs:
             const file = "apps/desktop/omni.json"
             const json = JSON.parse(fs.readFileSync(file, "utf8"))
             fs.writeFileSync(file, JSON.stringify({ ...json, version, commit }, null, 2) + "\n")
+            // The welcome installs the same release of the Omni plugins in a plain DSH.
+            const welcome = "apps/welcome-dsh/package.json"
+            const pkg = JSON.parse(fs.readFileSync(welcome, "utf8"))
+            pkg.automagik.omni = { ...pkg.automagik.omni, version, commit }
+            fs.writeFileSync(welcome, JSON.stringify(pkg, null, 2) + "\n")
           ' "${OMNI_VERSION}" "${OMNI_COMMIT}"
           cat apps/desktop/omni.json
+          node -p 'JSON.stringify(require("./apps/welcome-dsh/package.json").automagik.omni)'
 
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
