@@ -7,13 +7,32 @@ name: Follow Omni
 # plugins carries the Omni release of its own last change (omni#1356), so a plugin may be
 # behind the release but never ahead of it. When the channels and canvas plugins are at or
 # below its version and admit the desktop runtime in the same DSH patch series as their
-# harness, it moves omni.json on dev and cuts an Automagik release (release.yml). Downgrades
-# and a different patch series wait for a coordinated harness move.
+# harness, it boots that Omni with dev's plugins (boot-check.yml, the check CI runs), and only
+# when it boots does it move omni.json on dev and cut an Automagik release (release.yml): the
+# bump is pushed with GITHUB_TOKEN, so CI never boots it before installed apps update. An Omni
+# that fails the boot is not followed and the run fails; the next run tries it again.
+# Downgrades and a different patch series wait for a coordinated harness move.
+#
+# Dispatched with dry_run, it stops after the boot check. omni_version (and omni_commit) put
+# a given Omni through the gate, also one that is not newer; they are only taken with dry_run.
 
 on:
   schedule:
     - cron: '*/30 * * * *'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Boot the candidate Omni only; push nothing, release nothing
+        type: boolean
+        default: false
+      omni_version:
+        description: Put this Omni release through the gate (dry_run only)
+        type: string
+        default: ''
+      omni_commit:
+        description: The commit to boot for omni_version (its tag's commit when empty; dry_run only)
+        type: string
+        default: ''
 
 permissions: {}
 
@@ -27,29 +46,43 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      contents: write
+      contents: read
     outputs:
-      sha: ${{ steps.bump.outputs.sha }}
+      version: ${{ steps.newest.outputs.version }}
+      commit: ${{ steps.newest.outputs.commit }}
+      dev: ${{ steps.newest.outputs.dev }}
     env:
       GH_TOKEN: ${{ github.token }}
       OMNI: automagik-dev/omni
+      DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
+      WANT_VERSION: ${{ inputs.omni_version }}
+      WANT_COMMIT: ${{ inputs.omni_commit }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: dev
+          persist-credentials: false
 
       - name: The newest Omni release
         id: newest
         run: |
           set -euo pipefail
+          if [[ -n "${WANT_VERSION}${WANT_COMMIT}" && "${DRY_RUN}" != true ]]; then
+            echo "::error ::omni_version and omni_commit are only taken with dry_run: a chosen Omni is never carried"
+            exit 1
+          fi
           current=$(node -p "require('./apps/desktop/omni.json').version")
-          gh api "repos/${OMNI}/releases?per_page=30" \
-            --jq '.[] | select(.draft | not) | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) | .tag_name | ltrimstr("v")' \
-            > releases.txt
-          newest=$(sort -V releases.txt | tail -1)
-          if [[ -z "${newest}" || "${newest}" == "${current}" || "$(printf '%s\n%s\n' "${current}" "${newest}" | sort -V | tail -1)" != "${newest}" ]]; then
-            echo "Omni ${newest:-none}: omni.json is at ${current}, nothing to follow"
-            exit 0
+          if [[ -n "${WANT_VERSION}" ]]; then
+            newest="${WANT_VERSION}"
+          else
+            gh api "repos/${OMNI}/releases?per_page=30" \
+              --jq '.[] | select(.draft | not) | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) | .tag_name | ltrimstr("v")' \
+              > releases.txt
+            newest=$(sort -V releases.txt | tail -1)
+            if [[ -z "${newest}" || "${newest}" == "${current}" || "$(printf '%s\n%s\n' "${current}" "${newest}" | sort -V | tail -1)" != "${newest}" ]]; then
+              echo "Omni ${newest:-none}: omni.json is at ${current}, nothing to follow"
+              exit 0
+            fi
           fi
           read_json() { gh api "repos/${OMNI}/contents/$1?ref=v${newest}" --jq .content 2>/dev/null | base64 -d 2>/dev/null || true; }
           for app in omni-channels-dsh omni-canvas-dsh; do
@@ -68,16 +101,49 @@ jobs:
               exit 0
             fi
           done
-          echo "version=${newest}" >> "$GITHUB_OUTPUT"
+          commit="${WANT_COMMIT:-$(gh api "repos/${OMNI}/commits/v${newest}" --jq .sha)}"
+          {
+            echo "version=${newest}"
+            echo "commit=${commit}"
+            echo "dev=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          echo "### Candidate: Omni ${newest} (${commit:0:9}), omni.json is at ${current}$([[ "${DRY_RUN}" == true ]] && echo ', dry run: boot check only')" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Move to it
+  boot:
+    name: Boot the candidate
+    needs: follow
+    if: needs.follow.outputs.version != ''
+    uses: ./.github/workflows/boot-check.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ needs.follow.outputs.dev }}
+      omni_version: ${{ needs.follow.outputs.version }}
+      omni_commit: ${{ needs.follow.outputs.commit }}
+
+  carry:
+    # Only after the candidate booted: a failed boot fails the run here and nothing moves.
+    name: Move to it
+    needs: [follow, boot]
+    if: needs.follow.outputs.version != '' && !inputs.dry_run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.bump.outputs.sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: dev
+
+      - name: Move omni.json and the welcome to it
         id: bump
-        if: steps.newest.outputs.version != ''
         env:
-          VERSION: ${{ steps.newest.outputs.version }}
+          VERSION: ${{ needs.follow.outputs.version }}
+          COMMIT: ${{ needs.follow.outputs.commit }}
         run: |
           set -euo pipefail
-          commit=$(gh api "repos/${OMNI}/commits/v${VERSION}" --jq .sha)
           node -e '
             const fs = require("node:fs")
             const [version, commit] = process.argv.slice(1)
@@ -89,7 +155,7 @@ jobs:
             const pkg = JSON.parse(fs.readFileSync(welcome, "utf8"))
             pkg.automagik.omni = { ...pkg.automagik.omni, version, commit }
             fs.writeFileSync(welcome, JSON.stringify(pkg, null, 2) + "\n")
-          ' "${VERSION}" "${commit}"
+          ' "${VERSION}" "${COMMIT}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -qam "chore(desktop): carry Omni ${VERSION}"
@@ -98,8 +164,8 @@ jobs:
 
   release:
     name: Release
-    needs: follow
-    if: needs.follow.outputs.sha != ''
+    needs: carry
+    if: needs.carry.outputs.sha != ''
     uses: ./.github/workflows/release.yml
     permissions:
       contents: write
