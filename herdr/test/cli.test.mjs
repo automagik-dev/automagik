@@ -546,7 +546,7 @@ test("attach refuses another bot's pane and a pane that isn't live; a planned bo
   assert.match(s.cli(["attach", "Genie", "t4"]).err, /t4 already plays Captain \(b-bbbbbbbbbb\)/);
   assert.match(s.cli(["attach", "Genie", "t5"]).err, /t5 isn't a live terminal/);
   assert.match(s.cli(["attach", "Studio", "t4"]).err, /Studio is planned/);
-  assert.match(s.cli(["attach", "Genie", "vps/t4"]).err, /this computer's panes only/);
+  assert.match(s.cli(["attach", "Genie", "vps/t4"]).err, /vps\/t4 is on vps; name the bot's project there: --machine vps/);
   assert.deepEqual(labelCalls(s.calls()), []);
 });
 
@@ -1611,4 +1611,17 @@ test("restart: the pane's PATH leaves out the caller's venv, node_modules/.bin a
   assert.equal(r.code, 0, r.err);
   const run = runCall(s.calls());
   assert.equal(run[run.indexOf("--") + 2], `PATH=${bin}:/usr/bin:/bin`);
+});
+
+test("attach by a pane's name writes hc's terminal id, so whois by id finds it (#261 review)", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  const st = JSON.parse(readFileSync(join(s.root, "hc.json"), "utf8"));
+  st.terminals = [{ ...term("t4", { cwd: s.project }), name: "mypane" }];
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["attach", "Genie", "mypane", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const w = s.cli(["whois", "t4", "--json"]);
+  assert.equal(w.json().bot, ID.main);
+  assert.equal(w.json().terminal, "t4");
 });

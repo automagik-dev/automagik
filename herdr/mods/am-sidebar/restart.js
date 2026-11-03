@@ -16,6 +16,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** `s` trimmed when it is a session id Restart may resume (UUID-shaped), else null. */
 export const sessionId = (s) => (typeof s === "string" && UUID.test(s.trim()) ? s.trim() : null);
+// Another agent's session id or name (Hermes: "by ID or title"): one word, never a flag.
+const SESSION_WORD = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+/** The session id `agentKey` would resume from the label `s`: Claude's a UUID, another's one safe word; else null. */
+export const sessionFor = (agentKey, s) => (agentKey === "claude" ? sessionId(s)
+  : typeof s === "string" && SESSION_WORD.test(s.trim()) ? s.trim() : null);
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash"]);
 const base = (p) => String(p ?? "").split("/").pop();
@@ -107,7 +112,9 @@ export function restartPlan({ bot, run, runningAgent = null, session = null, fre
   };
   if (fresh) return plan("fresh");
   if (!canResume(key)) return plan("fresh", [], `${key} has no resume this pack knows`);
-  return plan("resume", resumeArgs(key, sessionId(session)));
+  // The id goes to every agent that resumes by one (models.js resumesById), never only Claude.
+  const id = resumesById(key) ? sessionFor(key, session) : null;
+  return plan("resume", resumeArgs(key, id));
 }
 
 /** `launch` (paneCommand) as Restart reuses it for agent `key`: its old resume words gone; null when it doesn't run `key`. */
@@ -125,11 +132,11 @@ export const sessionOf = (get) => sessionId(get?.labels?.[SESSION]);
  * label a reviver keeps on hc panes (with revive.agent, when set, naming that agent), else null.
  */
 export function paneSession(get, agentKey) {
-  const own = sessionOf(get);
-  if (own) return own;
   const labels = get?.labels ?? {};
+  const own = sessionFor(agentKey, labels[SESSION]);
+  if (own) return own;
   if (labels["revive.agent"] && labels["revive.agent"] !== agentKey) return null;
-  return sessionId(labels["revive.session"]);
+  return sessionFor(agentKey, labels["revive.session"]);
 }
 
 /**
@@ -151,11 +158,11 @@ export function ledgerSession(rows, terminal) {
  * conversation, which may be a teammate's when another bot's Claude pane runs in that folder.
  * `sharers`: those panes as { address, name }.
  */
-export function continueRefusal({ name, old, cwd, sharers = [] }) {
+export function continueRefusal({ name, old, cwd, sharers = [], agent = "Claude" }) {
   if (!sharers.length) return null;
   const who = sharers.map((x) => `${x.name} (${x.address})`).join(", ");
-  return `${name} has no recorded Claude session (${old.address} has no agent.session label and the ledger has no session row for it), `
-    + `and ${who} also ${sharers.length === 1 ? "runs" : "run"} Claude in ${cwd}, so --continue could resume theirs. Nothing was started; `
+  return `${name} has no recorded ${agent} session (${old.address} has no agent.session label and the ledger has no session row for it), `
+    + `and ${who} also ${sharers.length === 1 ? "runs" : "run"} ${agent} in ${cwd}, so --continue could resume theirs. Nothing was started; `
     + `restart with --fresh for a new conversation.`;
 }
 
@@ -221,7 +228,7 @@ export function helperPlan({ get, worker = null, session = null, agents, fresh =
   if (!command || !cwd) {
     return { name, replaced, error: `${replaced} can't be run again: hc gave ${cwd ? "no command this pack can reuse" : "no folder"} for it` };
   }
-  const id = sessionId(session);
+  const id = agent ? sessionFor(agent, session) : null;
   let resume = fresh ? null : agent && canResume(agent) ? resumeArgs(agent, id) : null;
   let note = fresh ?? (resume ? null : agent ? `${agent} has no resume this pack knows` : "its agent isn't one this pack knows");
   let argv = commandArgv(command, resume ?? []);
@@ -298,8 +305,9 @@ export function planText(plan, session) {
  * this app home): `agent`: Restart on… (a swap); `force`: past a working pane or its helpers;
  * `fresh`: a new conversation.
  */
-export function restartArgs({ botId, projectKey, agent = null, force = false, fresh = false }) {
-  return ["restart", botId, "--project", projectKey, ...(agent ? ["--agent", agent] : []), ...(force ? ["--force"] : []), ...(fresh ? ["--fresh"] : [])];
+export function restartArgs({ botId, projectKey, agent = null, force = false, fresh = false, machine = null }) {
+  return ["restart", botId, "--project", projectKey, ...(machine ? ["--machine", machine] : []),
+    ...(agent ? ["--agent", agent] : []), ...(force ? ["--force"] : []), ...(fresh ? ["--fresh"] : [])];
 }
 
 /**

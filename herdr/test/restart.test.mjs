@@ -33,7 +33,7 @@ test("restartPlan resume: claude with the pane's session and the bot's pin; --co
   const latest = restartPlan({ bot: claude, run: ["claude"], runningAgent: "claude" });
   assert.deepEqual(latest.argv, ["claude", "--continue", "--model", "claude-opus-5-5"]);
   assert.match(planText(latest, null), /--continue/);
-  const codex = restartPlan({ bot: { agent: "codex", model: "gpt-5.5" }, run: ["codex", "--yolo"], runningAgent: "codex", session: "ignored" });
+  const codex = restartPlan({ bot: { agent: "codex", model: "gpt-5.5" }, run: ["codex", "--yolo"], runningAgent: "codex", session: "-rf" }); // not a session id: --last
   assert.deepEqual(codex.argv, ["codex", "--yolo", "resume", "--last", "--model", "gpt-5.5"]);
   assert.equal(planText(codex), "resuming its last conversation (resume --last)");
   const pi = restartPlan({ bot: { agent: "pi" }, run: ["pi"], runningAgent: "pi" });
@@ -126,11 +126,12 @@ test("continueRefusal: refused only when another bot's Claude shares the folder"
 
 // ---- #213: the old pane's own command, resume by id, --tree ----
 
-test("resumeArgs by session id: codex resume <id>, omp --resume=<id>, pi --session <id>; kimi, agy and hermes only --continue", () => {
+test("resumeArgs by session id: codex resume <id>, omp --resume=<id>, pi --session <id>, hermes --resume <id>; kimi and agy only --continue", () => {
   assert.deepEqual(resumeArgs("codex", SID), ["resume", SID]);
   assert.deepEqual(resumeArgs("omp", SID), [`--resume=${SID}`]);
   assert.deepEqual(resumeArgs("pi", SID), ["--session", SID]);
-  for (const k of ["kimi", "antigravity", "hermes"]) assert.deepEqual(resumeArgs(k, SID), ["--continue"], k);
+  assert.deepEqual(resumeArgs("hermes", SID), ["--resume", SID]);
+  for (const k of ["kimi", "antigravity"]) assert.deepEqual(resumeArgs(k, SID), ["--continue"], k);
   assert.deepEqual(resumeArgs("omp", "-x"), ["--continue"], "never a flag as an id");
 });
 
@@ -247,4 +248,16 @@ test("sameSessions: a session id two runs would resume is named with both; disti
   assert.deepEqual(sameSessions([{ who: "Genie", session: SID }, { who: "rev-1", session: SID }, { who: "dev", session: SID2 }, { who: "x", session: null }]),
     [{ session: SID, who: ["Genie", "rev-1"] }]);
   assert.deepEqual(sameSessions([{ who: "a", session: SID }, { who: "b", session: SID2 }, { who: "c", session: null }, { who: "d", session: null }]), []);
+});
+
+test("restartPlan: Hermes resumes a known session by id (--resume), as Claude does; a bad label falls back to --continue", () => {
+  const bot = { agent: "hermes" };
+  const run = ["hermes", "--tui"];
+  const byId = restartPlan({ bot, run, runningAgent: "hermes", session: "atlas-sess-1" });
+  assert.deepEqual(byId.argv, ["hermes", "--tui", "--resume", "atlas-sess-1"]);
+  for (const bad of [null, "-x", "has space", ""]) {
+    assert.deepEqual(restartPlan({ bot, run, runningAgent: "hermes", session: bad }).argv, ["hermes", "--tui", "--continue"], String(bad));
+  }
+  // Claude keeps its UUID rule: a word isn't a Claude session id.
+  assert.deepEqual(restartPlan({ bot: { agent: "claude" }, run: ["claude"], runningAgent: "claude", session: "atlas-sess-1" }).resume, ["--continue"]);
 });

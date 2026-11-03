@@ -23,6 +23,11 @@ const words = args.filter((a) => a !== "--json");
 const find = (t) => state.terminals.find((x) => x.address === t || x.name === t);
 // state.fail: commands that fail as a server that is down would (exit 1).
 if ((state.fail ?? []).includes(words[0])) fail(`hc: can't reach the server (${words[0]})`);
+// A linked machine's terminal ("vm/t8") on a machine that isn't connected: unavailable, as hc says.
+if (["get", "label", "kill", "read", "send", "keys", "interrupt"].includes(words[0]) && words[1]?.includes("/")) {
+  const m = (state.machines ?? []).find((x) => x.name === words[1].split("/")[0]);
+  if (!m || m.state !== "connected") fail(JSON.stringify({ error: { kind: m ? "unavailable" : "machine_unknown", message: `${words[1].split("/")[0]} isn't connected` } }), m ? 1 : 4);
+}
 
 /**
  * What a launch argv has in front once it runs: `sh -c <command> [$0 args…]` (behind any
@@ -66,6 +71,11 @@ switch (words[0]) {
       if (t.exitAfterGets <= 0) { t.state = "finished"; delete t.exitAfterGets; } else t.exitAfterGets -= 1;
       save();
     }
+    // reuseAfterGets: answered that many times, then its id is another terminal (reuseCreated).
+    if (typeof t.reuseAfterGets === "number") {
+      if (t.reuseAfterGets <= 0) { t.created_ms = t.reuseCreated; delete t.reuseAfterGets; } else t.reuseAfterGets -= 1;
+      save();
+    }
     out(t);
     break;
   }
@@ -91,7 +101,7 @@ switch (words[0]) {
   }
   case "run": {
     const labels = {};
-    let name = null, cwd = null, parent = null, outlive = false;
+    let name = null, cwd = null, parent = null, outlive = false, on = null, noParent = false;
     let i = 1;
     // Options, then argv: after `--`, or from the first word that isn't an option (a template).
     for (; i < words.length && words[i] !== "--" && words[i].startsWith("--"); i += 1) {
@@ -99,7 +109,9 @@ switch (words[0]) {
       else if (words[i] === "--name") name = words[++i];
       else if (words[i] === "--cwd") cwd = words[++i];
       else if (words[i] === "--parent") parent = words[++i];
+      else if (words[i] === "--on") on = words[++i];
       else if (words[i] === "--outlive-parent") outlive = true;
+      else if (words[i] === "--no-parent") noParent = true;
     }
     const given = words.slice(words[i] === "--" ? i + 1 : i);
     // A template (no `--`, a name state.templates lists): hc runs its command through sh -c
@@ -107,12 +119,21 @@ switch (words[0]) {
     const template = words[i] !== "--" ? (state.templates ?? []).find((x) => x.name === given[0]) ?? null : null;
     const launch = template ? ["sh", "-c", template.command] : given;
     const argv = foregroundOf(launch);
+    // Like the real one: with no --parent and no --no-parent, the calling terminal is its parent.
+    if (!parent && !noParent && process.env.HC_TERMINAL_ID) parent = process.env.HC_TERMINAL_ID;
     // `env K=V … program …`: the program is the first word after the assignments.
     const program = /(^|\/)env$/.test(argv[0] ?? "") ? argv.slice(1).find((a) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(a)) : argv[0];
+    // --on M: a linked machine's terminal, addressed "M/tN" (refused when M isn't connected).
+    if (on) {
+      const m = (state.machines ?? []).find((x) => x.name === on);
+      if (!m) fail(JSON.stringify({ error: { kind: "machine_unknown", message: `unknown machine "${on}"` } }), 4);
+      if (m.state !== "connected") fail(JSON.stringify({ error: { kind: "unavailable", message: `${on} isn't connected` } }));
+    }
     // state.failRun: names whose hc run fails (a name taken, the server refusing).
     if ((state.failRun ?? []).includes(name)) fail(`hc: can't start ${name}`);
-    const address = `t${state.next ?? 100}`;
-    state.next = (state.next ?? 100) + 1;
+    const n = state.next ?? 100;
+    const address = on ? `${on}/t${n}` : `t${n}`;
+    state.next = n + 1;
     // state.runAs: "shell" (the agent never comes in front), "exit" (it ends at once) or
     // "flaky" (its agent is in front for one hc get, then it exits); state.runAsFor[name]: the
     // same, for the run of that name only.
@@ -127,11 +148,14 @@ switch (words[0]) {
     state.terminals.push({ address, name, cwd, labels, parent, die_with_parent: Boolean(parent) && !outlive, state: runAs === "exit" ? "finished" : "live",
       ...((state.noCreated ?? []).includes(name) ? {} : { created_ms: Date.now() }),
       argv: launch, template: template?.name ?? null,
-      pid: 9000 + Number(address.slice(1)), foreground: { argv: shell ? ["zsh"] : argv, cwd, pid: 5000 + Number(address.slice(1)) }, status: { app: program === "claude" ? "claude-code" : program, state: "working" },
+      pid: 9000 + n, foreground: { argv: shell ? ["zsh"] : argv, cwd, pid: 5000 + n }, // state.noStatus: programs that report no status to hc (hermes): status null.
+      status: (state.noStatus ?? []).includes(program) ? null : { app: program === "claude" ? "claude-code" : program, state: "working" },
       ...(runAs === "flaky" ? { exitAfterGets: 1 } : {}) });
     // state.onRunWrite: { path, text }: a file edit that lands while this run happens.
     if (state.onRunWrite) writeFileSync(state.onRunWrite.path, state.onRunWrite.text);
     save();
+    // state.runNoAddress: the pane starts, but the answer carries no address.
+    if (state.runNoAddress) { out({}); break; }
     out({ address });
     break;
   }
@@ -161,7 +185,7 @@ switch (words[0]) {
   }
   case "machine": {
     if (words[1] !== "ls") fail(`fake hc: no machine ${words[1]}`, 2);
-    out({ machines: (state.machines ?? []).map(({ name, state: s, temporary = false }) => ({ name, host: name, state: s, temporary, target: name })) });
+    out({ machines: (state.machines ?? []).map(({ name, id, state: s, temporary = false }) => ({ name, id: id ?? `core-${name}`, host: name, state: s, temporary, target: name })) });
     break;
   }
   case "exec": {
