@@ -187,9 +187,10 @@ test('a profile without node_modules yet still gets the store, and the layout fo
 
 // The app opens on the Omni octopus (@automagik/welcome-dsh), not on DSH's own welcome
 // notice and credential step.
-test('the shipped profile bundles the Bot team first, Omni\'s plugins, the welcome and the plugin market, and switches DSH\'s own onboarding off', () => {
+test('the shipped profile bundles the Bot team first, Omni\'s plugins, the welcome, ACP agents and the plugin market, and switches DSH\'s own onboarding off', () => {
   const profile = JSON.parse(readFileSync(new URL('../profile/package.json', import.meta.url), 'utf8'))
-  const omni = ['@automagik/bots-dsh', '@automagik/omni-channels-dsh', '@automagik/omni-canvas-dsh', '@automagik/welcome-dsh']
+  // ACP agents (RFC 0003) are on by default here: Claude Code and Codex as models when their CLIs are installed.
+  const omni = ['@automagik/bots-dsh', '@automagik/omni-channels-dsh', '@automagik/omni-canvas-dsh', '@automagik/welcome-dsh', '@automagik/acp-dsh']
   // Omni's plugins first, then the add-ons that connect AI subscriptions, each a reviewed fork at
   // a pinned commit (the build checks it holds the version addonVersions names), bundled after.
   const addons = Object.keys(profile.omni.addonVersions)
@@ -324,6 +325,9 @@ test('dsh gets node and pnpm on its PATH, both on the app\'s own Node', (t) => {
   const tools = '/u/.local/bin:/u/.claude/local:/opt/homebrew/bin:/usr/local/bin'
   assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', binDir: dir, userHome: '/u' }).PATH, `/bin:${tools}:${dir}`)
   assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', userHome: '/u' }).PATH, `/bin:${tools}`)
+  // acp-dsh installs its adapters with the app's own pnpm, whatever pnpm comes first on PATH.
+  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', binDir: dir, userHome: '/u' }).AUTOMAGIK_PNPM, join(dir, 'pnpm'))
+  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', userHome: '/u' }).AUTOMAGIK_PNPM, undefined)
   // A folder already on the person's PATH keeps its place and is not repeated.
   assert.equal(dshEnv({ base: { PATH: '/usr/local/bin:/bin' }, home: '/a', userHome: '/u' }).PATH, '/usr/local/bin:/bin:/u/.local/bin:/u/.claude/local:/opt/homebrew/bin')
 })

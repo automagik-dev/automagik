@@ -36,7 +36,7 @@ export function callArguments(tool) {
 }
 
 function resultOf(tool) {
-  const text = contentText(tool.content) || (tool.rawOutput === undefined ? '' : typeof tool.rawOutput === 'string' ? tool.rawOutput : JSON.stringify(tool.rawOutput))
+  const text = contentText(tool.content) || tool.output || (tool.rawOutput === undefined ? '' : typeof tool.rawOutput === 'string' ? tool.rawOutput : JSON.stringify(tool.rawOutput))
   const diffs = diffsOf(tool.content)
   return {
     title: tool.title,
@@ -65,7 +65,7 @@ const changed = (tool, signal) => new Promise((resolve) => {
 })
 
 /**
- * @param {{ runOf(sessionId: string): { run: import('./acp.js').AgentRun, name: string } | undefined, approval(): any }} host
+ * @param {{ runOf(sessionId: string): { run: import('./acp.js').AgentRun, name: string } | undefined, approval(): any, sandboxPolicy?(): any }} host
  */
 export function mirrorTool(host) {
   return defineTool({
@@ -132,10 +132,39 @@ export function mirrorTool(host) {
   })
 }
 
+// The sandbox mode the Session runs in, as DSH's own tools get it: the sandbox-policy service
+// folds the Session's last sandbox/mode row over the deployment default (DSH_PERMISSION_MODE).
+// Without the service, the Session's last row.
+function sandboxOf(session, sandboxPolicy) {
+  const mode = sandboxPolicy?.resolve?.({ session })?.mode
+  if (typeof mode === 'string') return mode
+  const events = session?.snapshotEvents?.() ?? []
+  for (let i = events.length - 1; i >= 0; i--) if (events[i]?.type === 'sandbox/mode') return events[i].data?.mode
+  return undefined
+}
+
+/** The Session's level: its sandbox mode, its approval policy, and whether that is full access. */
+export function levelOf(approval, session, sandboxPolicy) {
+  let policy
+  let sandbox
+  try {
+    policy = approval?.effectivePolicy?.(session)
+    sandbox = sandboxOf(session, sandboxPolicy)
+  } catch {}
+  // DSH's presets: Full access is no prompts and no sandbox; Auto is no prompts in the workspace sandbox.
+  return { sandbox, policy, full: policy === 'never' && sandbox === 'danger-full-access', auto: policy === 'never' && sandbox === 'workspace-write' }
+}
+
+// Full access (no approval prompts, no sandbox) lets the agent's calls through as it lets DSH's
+// own: DSH's approval service would reject them unasked under its `never` policy.
+export const fullAccess = (approval, session, sandboxPolicy) => levelOf(approval, session, sandboxPolicy).full
+
 async function ask(host, live, tool, exec) {
   const approval = host.approval()
   if (!approval || !exec.agent) return 'unavailable'
-  const reason = `${live.name}: ${tool.title}`
+  if (fullAccess(approval, exec.agent.session, host.sandboxPolicy?.())) return 'allowed-once'
+  const asking = tool.permission?.title
+  const reason = `${live.name}: ${asking && asking !== tool.title ? `${asking.replace(/\?$/, '')}: ` : ''}${tool.title}`
   try {
     return await approval.request({ agent: exec.agent, toolName: TOOL_NAME, callId: exec.callId, reason, displayReason: { en: reason }, signal: exec.signal })
   } catch {

@@ -63,6 +63,10 @@ export class AgentRun {
       this.init = await this.conn.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} })
       const session = await this.conn.newSession({ cwd, mcpServers: [] })
       this.sessionId = session.sessionId
+      this.modes = session.modes
+      this.options = session.configOptions ?? []
+      // The model the agent started on: DSH's `default` model goes back to it.
+      this.startModel = optionOf(this.options, 'model')?.currentValue
     })()
     try {
       await Promise.race([ready, gone])
@@ -75,10 +79,24 @@ export class AgentRun {
     return this
   }
 
-  holdOn() { this.hold ??= setInterval(() => {}, 1 << 30) }
-  letGo() {
+  // Each request the agent has yet to answer holds the event loop; the last answer lets it go.
+  holdOn() {
+    this.holds = (this.holds ?? 0) + 1
+    this.hold ??= setInterval(() => {}, 1 << 30)
+  }
+  letGo(all = false) {
+    this.holds = all ? 0 : Math.max(0, (this.holds ?? 0) - 1)
+    if (this.holds > 0) return
     clearInterval(this.hold)
     this.hold = undefined
+  }
+  async held(work) {
+    this.holdOn()
+    try {
+      return await work()
+    } finally {
+      this.letGo()
+    }
   }
 
   get alive() { return this.child !== undefined && this.exited === undefined }
@@ -131,13 +149,54 @@ export class AgentRun {
     this.push(event)
   }
 
+  /**
+   * Switch the agent's own permission mode to the first of `modeIds` it offers (most wanted
+   * first, the strict one last). One it lacks falls back to the next; when it offers none of
+   * them, not even the strict one, the turn fails rather than run in whatever mode the agent
+   * started in (the person's own default, which may let calls through unasked).
+   * @param {string | string[] | undefined} modeIds
+   */
+  async setMode(modeIds) {
+    if (modeIds === undefined) return
+    const wanted = [modeIds].flat()
+    const offered = new Set((this.modes?.availableModes ?? []).map(mode => mode.id))
+    const modeId = wanted.find(id => offered.has(id))
+    if (modeId === undefined) throw new Error(`it offers none of the modes ${wanted.join(', ')} (it offers ${[...offered].join(', ') || 'no modes'})`)
+    if (this.modes?.currentModeId === modeId) return
+    await this.held(() => Promise.race([this.conn.setSessionMode({ sessionId: this.sessionId, modeId }), this.gone]))
+    this.modes = { ...this.modes, currentModeId: modeId }
+  }
+
+  /** The agent's own option of `category` (`model`, `thought_level`), as it last said. */
+  option(category) {
+    return optionOf(this.options, category)
+  }
+
+  /**
+   * Set the agent's option of `category` to `value`, one of the values it offers. One it does
+   * not offer fails, naming those it does: the turn then fails rather than run on another model
+   * or effort than the person chose.
+   * @param {string} category
+   * @param {string} value
+   */
+  async setOption(category, value) {
+    const option = this.option(category)
+    if (option === undefined) throw new Error(`it has no ${category} setting`)
+    const values = valuesOf(option)
+    if (!values.some(choice => choice.value === value)) throw new Error(`it offers no ${category} ${value} (it offers ${values.map(choice => choice.value).join(', ') || 'none'})`)
+    if (option.currentValue === value) return
+    const answer = await this.held(() => Promise.race([this.conn.setSessionConfigOption({ sessionId: this.sessionId, configId: option.id, value }), this.gone]))
+    // The answer is the whole set: a new model may bring other efforts.
+    this.options = answer?.configOptions ?? this.options.map(other => (other.id === option.id ? { ...other, currentValue: value } : other))
+  }
+
   async cancel() {
     if (!this.busy || this.sessionId === undefined) return
-    await this.conn.cancel({ sessionId: this.sessionId }).catch(() => {})
+    await this.held(() => this.conn.cancel({ sessionId: this.sessionId })).catch(() => {})
   }
 
   dispose() {
-    this.letGo()
+    this.letGo(true)
     for (const tool of this.tools.values()) tool.permission?.answer({ outcome: { outcome: 'cancelled' } })
     try { this.child?.stdin.end() } catch {}
     const child = this.child
@@ -171,6 +230,12 @@ export class AgentRun {
         this.changeTool(tool, update)
         break
       }
+      case 'config_option_update':
+        if (Array.isArray(update.configOptions)) this.options = update.configOptions
+        break
+      case 'current_mode_update':
+        if (this.modes) this.modes = { ...this.modes, currentModeId: update.currentModeId }
+        break
       default:
         break
     }
@@ -189,6 +254,10 @@ export class AgentRun {
   }
 
   changeTool(tool, update) {
+    // A command's output, for a client with no terminal of its own (Zed's terminal_output
+    // extension, which codex-acp sends): kept as the call's output.
+    const chunk = update._meta?.terminal_output?.data
+    if (typeof chunk === 'string') tool.output = (tool.output ?? '') + chunk
     for (const key of ['title', 'kind', 'status', 'content', 'locations', 'rawInput', 'rawOutput', 'ended']) {
       if (update[key] !== undefined && update[key] !== null) tool[key] = update[key]
     }
@@ -196,8 +265,11 @@ export class AgentRun {
   }
 
   onPermission(params) {
-    const tool = this.tools.get(params.toolCall?.toolCallId) ?? this.seeTool({ status: 'pending', ...params.toolCall })
-    if (params.toolCall) this.changeTool(tool, { ...params.toolCall, status: undefined })
+    const known = this.tools.get(params.toolCall?.toolCallId)
+    const tool = known ?? this.seeTool({ status: 'pending', ...params.toolCall })
+    // The question's own title ("Run command?") names the question, not the call the card shows.
+    const { title, ...details } = params.toolCall ?? {}
+    this.changeTool(tool, { ...details, status: undefined })
     return new Promise((resolve) => {
       let done = false
       const permission = {
@@ -210,10 +282,17 @@ export class AgentRun {
           for (const listener of tool.listeners) listener()
         },
       }
+      permission.title = title
       tool.permission = permission
       for (const listener of tool.listeners) listener()
     })
   }
 }
+
+/** The option of `category` among an agent's session config options. */
+export const optionOf = (options, category) => (options ?? []).find(option => option?.category === category && option.type === 'select')
+
+/** The values a select option offers, its groups flattened. */
+export const valuesOf = option => (option?.options ?? []).flatMap(entry => (Array.isArray(entry?.options) ? entry.options : [entry])).filter(entry => typeof entry?.value === 'string')
 
 export const isTerminal = tool => TERMINAL.has(tool.status) || tool.ended === true

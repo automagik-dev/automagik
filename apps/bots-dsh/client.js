@@ -502,6 +502,10 @@ var ZH = {
   "Runs as Workspace here": "这里按“工作区内修改”运行",
   "New Bots start with": "新 Bot 的初始权限",
   "Bots you already have keep their own.": "已有的 Bot 保留各自的权限。",
+  "Background jobs": "后台任务",
+  "Background model": "后台模型",
+  "Memory review runs on it, and so do the notes of a chat on Claude Code or Codex.": "记忆整理用它运行，在 Claude Code 或 Codex 上的对话的笔记也用它。",
+  "Default: {model}": "默认：{model}",
   "Same for every member": "全员统一",
   "Replaces each member's own permissions in this group.": "在这个群里代替各成员自己的权限。",
   "Add Omni": "添加 Omni",
@@ -2005,7 +2009,7 @@ function createSource(initial) {
     }
   };
 }
-var EMPTY_ROSTER = { revision: -1, mainBotId: null, mainBotIds: [], bots: [], rooms: [], agents: [], exchangeTurns: {}, questions: {}, btwCards: {}, sideChats: {}, secrets: [], capabilities: [], capabilityStatuses: {}, secretRequests: {}, models: [], defaultModel: null, modelsKey: null, prefs: {}, byId: {}, roomsById: {}, agentsById: {}, agentOf: {}, ready: false };
+var EMPTY_ROSTER = { revision: -1, mainBotId: null, mainBotIds: [], bots: [], rooms: [], agents: [], exchangeTurns: {}, questions: {}, btwCards: {}, sideChats: {}, secrets: [], capabilities: [], capabilityStatuses: {}, secretRequests: {}, models: [], defaultModel: null, backgroundModel: null, modelsKey: null, prefs: {}, byId: {}, roomsById: {}, agentsById: {}, agentOf: {}, ready: false };
 var isMainOf = (roster, id) => id !== void 0 && (roster.mainBotIds ?? []).includes(id);
 function indexRoster(value) {
   const byId = {};
@@ -2112,6 +2116,25 @@ function mountShellInstallers(tools) {
   };
 }
 
+// src/shared/routes.js
+var isClaudeCode = (provider) => provider === "claude-code" || provider.startsWith("claude-code-");
+var CONNECTED_BY = Object.freeze(["native", "pi-ai", "claude-code-plugin", "acp"]);
+var HARNESSES = Object.freeze(["dsh", "claude-code", "codex", "gemini"]);
+var PI_AI_NS = "llm-pi-ai";
+var SUBSCRIPTION_ROUTES = Object.freeze(["codex", "claude", "grok", "antigravity"]);
+var ACP_HARNESS = Object.freeze({ claude: "claude-code", codex: "codex", gemini: "gemini" });
+var piAiRoutes = (directory) => /* @__PURE__ */ new Set([
+  ...SUBSCRIPTION_ROUTES,
+  ...(directory ?? []).filter((entry) => entry?.settingsNs === PI_AI_NS).map((entry) => entry.provider)
+]);
+function routeOf(provider, { piAi = new Set(SUBSCRIPTION_ROUTES) } = {}) {
+  const id = String(provider ?? "");
+  if (isClaudeCode(id)) return { harness: "claude-code", connectedBy: "claude-code-plugin" };
+  if (id.startsWith("acp-")) return { harness: ACP_HARNESS[id.slice(4)] ?? id.slice(4), connectedBy: "acp" };
+  if (piAi.has(id)) return { harness: "dsh", connectedBy: "pi-ai" };
+  return { harness: "dsh", connectedBy: "native" };
+}
+
 // src/client/composer-packs.js
 var PACK_CELLS = ["permission", "model"];
 var DEFAULT_PACK = Object.freeze({ id: "omni", cells: Object.freeze({ permission: "hidden", model: "hidden" }) });
@@ -2163,7 +2186,13 @@ var HOST_MODEL_PACK = Object.freeze({
   match: (_provider, target) => target?.host !== void 0,
   cells: Object.freeze({ model: "model" })
 });
-var BUILTIN_PACKS = [HOST_MODEL_PACK, THINKING_PACK];
+var AGENT_MODEL_PACK = Object.freeze({
+  id: "agent-model",
+  order: -50,
+  match: (provider) => provider !== void 0 && routeOf(provider).connectedBy === "acp",
+  cells: Object.freeze({ model: "model" })
+});
+var BUILTIN_PACKS = [HOST_MODEL_PACK, THINKING_PACK, AGENT_MODEL_PACK];
 function stepsAside({ roster, sessionId, cell, key, env, packs }) {
   const target = targetOf(roster, sessionId);
   const pack = packFor(target, { env, ...packs ? { packs } : {} });
@@ -4124,8 +4153,9 @@ function EffortRows({ reasoning, current, onPick }) {
     ))
   );
 }
+var offeredModels = (models, current) => (models ?? []).filter((model) => model.superseded !== true || model.ref === current);
 function ModelRows({ roster, current, onPick }) {
-  return groupModels(roster.models).map(([provider, list]) => (0, import_react11.createElement)(
+  return groupModels(offeredModels(roster.models, current)).map(([provider, list]) => (0, import_react11.createElement)(
     import_react11.Fragment,
     { key: list[0].provider ?? provider },
     (0, import_react11.createElement)("div", { className: "bt-model-group", role: "presentation" }, provider),
@@ -4343,7 +4373,7 @@ function ModelChoiceDock({ sessionId, useRoster, actions }) {
     }).finally(() => setBusy(""));
   };
   if (!lost && usable.length > 0) {
-    const suggested = usable.find((model) => model.ref === roster.defaultModel)?.ref ?? (usable.find((model) => model.id !== "default") ?? usable[0]).ref;
+    const suggested = usable.find((model) => model.ref === roster.defaultModel)?.ref ?? (usable.find((model) => model.id !== "default" && model.superseded !== true) ?? usable.find((model) => model.id !== "default") ?? usable[0]).ref;
     return (0, import_react11.createElement)(
       "div",
       { className: "bt-model-dock" },
@@ -16315,7 +16345,7 @@ function freshBotName(roster, base = "New Bot") {
 }
 function startModel(roster) {
   const models = roster.models ?? [];
-  return (models.find((model) => model.ref === roster.defaultModel) ?? models[0])?.ref ?? "";
+  return (models.find((model) => model.ref === roster.defaultModel) ?? models.find((model) => model.superseded !== true) ?? models[0])?.ref ?? "";
 }
 function createPayload({ name, look, image, model, effort, brief }) {
   const payload = { name, color: look.color, avatar: image ? { shape: look.shape, image } : { shape: look.shape } };
@@ -19834,6 +19864,30 @@ function PermissionsSection({ roster, actions, run: run2 }) {
     )
   );
 }
+function backgroundChoices(models, saved) {
+  return (models ?? []).filter((model) => !model.needsKey && (model.superseded !== true || model.ref === saved) && routeOf(model.provider ?? model.ref.split("/")[0]).connectedBy !== "acp");
+}
+function BackgroundSection({ roster, actions, run: run2 }) {
+  const saved = roster.prefs?.backgroundModel ?? "";
+  const choices = backgroundChoices(roster.models, saved);
+  if (choices.length === 0) return null;
+  const shown = choices.some((model) => model.ref === saved) ? saved : "";
+  const fallback = choices.find((model) => model.ref === roster.backgroundModel && saved === "");
+  return (0, import_react58.createElement)(
+    SetSection,
+    { title: t("Background jobs") },
+    (0, import_react58.createElement)(
+      SetRow,
+      { label: t("Background model"), hint: t("Memory review runs on it, and so do the notes of a chat on Claude Code or Codex.") },
+      (0, import_react58.createElement)(
+        "select",
+        { className: "bt-select", "aria-label": t("Background model"), value: shown, onChange: (event) => run2(actions.setPrefs({ backgroundModel: event.target.value || null })) },
+        (0, import_react58.createElement)("option", { value: "" }, fallback ? t("Default: {model}", { model: fallback.name }) : t("Default")),
+        choices.map((model) => (0, import_react58.createElement)("option", { key: model.ref, value: model.ref }, `${model.name} · ${model.providerName ?? model.provider}`))
+      )
+    )
+  );
+}
 var MOTIONS = [["quiet", "Quiet"], ["normal", "Normal"], ["lively", "Lively"]];
 function MotionSection({ roster, actions, run: run2 }) {
   const motion = roster.prefs?.motion === "quiet" || roster.prefs?.motion === "lively" ? roster.prefs.motion : "normal";
@@ -19859,6 +19913,7 @@ function BotsPage({ roster, actions, run: run2 }) {
   return [
     (0, import_react58.createElement)(MainBotsSection, { key: "main", roster, actions, run: run2 }),
     (0, import_react58.createElement)(PermissionsSection, { key: "permissions", roster, actions, run: run2 }),
+    (0, import_react58.createElement)(BackgroundSection, { key: "background", roster, actions, run: run2 }),
     (0, import_react58.createElement)(MotionSection, { key: "motion", roster, actions, run: run2 }),
     (0, import_react58.createElement)(VoiceSection, { key: "voice", actions, Section: SetSection, Row: SetRow }),
     (0, import_react58.createElement)(ImagesSection, { key: "images", Section: SetSection, Row: SetRow }),

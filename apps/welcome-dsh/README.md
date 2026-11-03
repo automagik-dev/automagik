@@ -112,11 +112,38 @@ Omni's version: they install as a git source from Omni's repository at the relea
 | DeepSeek | DSH's key or account | pi-ai's `deepseek` route |
 | Ollama | a local pi-ai route | dsh-subscriptions' `ollama` |
 
+The route a Claude sign-in adds does not retry a 429 (`retryPolicy` without `RATE_LIMIT`):
+a plan at its limit answers with one, and the Bot team's fallback model takes the turn at once
+instead of after DSH's five retries. A route on an API key keeps DSH's
+default retries, also one a sign-in made before the key: saving the key drops the sign-in's
+policy (a policy set by hand stays). Turning Claude off and on again in Connect AI writes the
+sign-in's policy back.
+
 dsh-subscriptions keeps the vendors nothing else reaches (Cursor, Kiro, GLM, Qwen,
 Perplexity, JetBrains, Cody, Replit and the rest). When an AI is turned on, the other ways
 it is connected stop showing: their models are hidden, and no account or stored sign-in is
 deleted. A row says when its AI is also
 connected another way.
+
+### Claude Code and Codex
+
+With [`@automagik/acp-dsh`](../acp-dsh) in the DSH, Connect AI has a **Coding agents** section
+after what was found, and DSH's Settings (and the Bot team's) have a **Claude Code and Codex**
+page with the same rows. Without acp-dsh Connect AI shows nothing of it, and the Settings page
+says the ACP agents plugin is not running. Each row says:
+
+- whether the agent's CLI (`claude`, `codex`) is on this computer, with its install link and
+  **Check again** when it is not;
+- whether the CLI is signed in, as the CLI itself says (`claude auth status`, `codex login
+  status`; only yes or no is read), and the command to sign in when it is not;
+- the connector acp-dsh installs in the background: installing, failed with its last error and
+  **Retry**, or ready with its version;
+- once ready, *Ready: pick Claude Code in the model picker*. The model appears without a restart;
+  a DSH that has not loaded acp-dsh's routes says to restart instead.
+
+The switch is acp-dsh's own `claude` or `codex` setting, written through DSH's settings service.
+These rows are not counted as an AI on: the companions' model comes from the rows above. Their
+copy is in the `welcome.team` namespace, in English and pt-BR.
 
 ### Subscription sign-ins and vendor terms
 
@@ -191,11 +218,14 @@ The shape was read from DSH 0.2.1-rc.2:
 | `provider-key`, `signin-*` | see `src/host/providers.js` | A key, or a sign-in run through DSH's authorization service. |
 | `omni-plugins` | none | The Omni plugins (`@automagik/bots-dsh`, `@automagik/omni-channels-dsh`, `-canvas-dsh`): each one's version and whether it is installed, `ready` once they run here, and the install in progress. |
 | `omni-plugins-install` | none | Installs the missing ones in order through DSH's plugin manager (`installBundle`: the Bot team from this plugin's own source pointed at its sibling, else this release's tarball; Omni's from Omni's repository at the pinned release), switching on any that are off. Pressing Omni's power button in the team step calls it. |
+| `acp` | `{ refresh? }` | Claude Code and Codex, from acp-dsh's `acpAgents` service: `{ available, agents: [{ id, key, name, on, cli: { found, installUrl? }, connector: { state, version?, error? }, signedIn?, listed, restartNeeded }] }`. `refresh` looks for the CLIs again and asks each whether it is signed in. `{ available: false }` without acp-dsh. |
+| `acp-switch` | `{ id, on }` | Writes acp-dsh's `claude` or `codex` setting in the entry its service names (`settingsEntry`, else `acp-dsh`) at the revision `describe()` gave. |
+| `acp-retry` | `{ id }` | Starts a failed connector install again. |
 | `bot-type` | `{ type: 'omni' }` | What the Omni Bot starts with, as groups: model and thinking (DSH's default), plugins with versions, tool groups with their switches, skills, folder and permissions. |
 
 The host declares `inject: ['settings', 'credentials', 'connection']`; `connection` serves
 the route. It reads DSH's `llm`, `authorization`, `pluginManager`, `agentDefaultModel`, `tools`, `skills`
-and `permissionPresets` services when they are there.
+and `permissionPresets` services when they are there, and acp-dsh's `acpAgents`.
 
 ## Develop
 

@@ -7,7 +7,12 @@
 // and approval/decided pair for that call. Headless has no dialog, so a test-only answerer
 // allows the ask; the web UI's dialog is the same approval/request waterfall.
 //
-//   node dev/dsh-check.mjs [--keep <dir>]
+//   node dev/dsh-check.mjs [--agent fake|claude|codex] [--keep <dir>]
+//
+// --agent claude or codex (delivery 3) runs the person's own CLI through the newest release of its
+// ACP adapter, installed first by the plugin's own AdapterStore into the temporary Automagik
+// home. The turn asks the agent to run one shell command that writes a file, which the agent
+// must ask for; it costs a few of that agent's tokens.
 //
 // Needs `bun install` and `bun run harness` here, and network for pnpm.
 import { execFileSync } from 'node:child_process'
@@ -18,8 +23,10 @@ import { join, resolve } from 'node:path'
 
 const PLUGIN = resolve(import.meta.dirname, '..')
 const DSH_BIN = join(PLUGIN, 'dev', 'harness', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
-const FAKE = join(PLUGIN, 'test', 'fixtures', 'fake-agent.mjs')
+const FAKE = join(PLUGIN, 'dev', 'fake-agent.mjs')
 const args = process.argv.slice(2)
+const AGENT = args.includes('--agent') ? args[args.indexOf('--agent') + 1] : 'fake'
+if (!['fake', 'claude', 'codex'].includes(AGENT)) throw new Error(`--agent fake, claude or codex, not ${AGENT}`)
 const keep = args.includes('--keep') ? resolve(args[args.indexOf('--keep') + 1]) : undefined
 const say = line => console.log(`[dsh-check] ${line}`)
 const env = { ...process.env, DO_NOT_TRACK: '1', npm_config_fund: 'false', npm_config_audit: 'false', npm_config_update_notifier: 'false' }
@@ -50,25 +57,47 @@ copyFileSync(join(PLUGIN, '..', 'desktop', 'profile', 'pnpm-workspace.yaml'), jo
 const shims = join(work, 'bin')
 mkdirSync(shims, { recursive: true })
 writeFileSync(join(shims, 'pnpm'), '#!/bin/sh\nexec npx --yes pnpm@10.34.6 "$@"\n', { mode: 0o755 })
-const dshEnv = { ...env, DSH_HOME: dshHome, PATH: `${shims}:${env.PATH}` }
+// AUTOMAGIK_PNPM: the adapters install with this pnpm 10, as the desktop app's own (src/dsh.js dshEnv).
+const dshEnv = { ...env, DSH_HOME: dshHome, AUTOMAGIK_HOME: join(work, 'automagik'), AUTOMAGIK_PNPM: join(shims, 'pnpm'), PATH: `${shims}:${env.PATH}` }
 execFileSync(process.execPath, [DSH_BIN, 'plugin', '--profile', 'acp', 'install', '--prod', '--ignore-scripts'], { cwd: profile, env: dshEnv, stdio: ['ignore', 'inherit', 'inherit'] })
 
+// The fake turn runs on one of the fake agent's own models at one of that model's efforts: DSH
+// must take them from the agent's catalog and the agent must be put on them before the prompt.
+const ROUTE = { fake: { provider: 'acp-fake', model: 'fake-small', effort: 'high' }, claude: { provider: 'acp-claude', model: 'default' }, codex: { provider: 'acp-codex', model: 'default' } }[AGENT]
+// Claude Code in Manual mode asks before a write its own settings do not already allow; Codex in its workspace sandbox (DSH's own
+// workspace-write level) writes inside the folder (and the temp folders) unasked, as DSH's own
+// tools do, and asks for the network.
+const TASK = {
+  fake: 'hello there',
+  claude: 'Use your shell tool to run exactly this one command: touch acp-dsh-ok.txt && echo acp-dsh-ok. Then reply with what it printed and nothing else.',
+  codex: "Use your shell tool to run exactly this one command: curl -s -o /dev/null https://example.com && echo acp-dsh-ok. If the sandbox blocks network access, request approval to run it outside the sandbox. Then reply with what it printed and nothing else.",
+}[AGENT]
+if (AGENT !== 'fake') {
+  const { AGENTS } = await import('../src/host/agents.js')
+  const { AdapterStore, adaptersHome } = await import('../src/host/install.js')
+  const spec = AGENTS[ROUTE.provider]
+  const bin = await new AdapterStore({ home: adaptersHome(dshEnv), env: dshEnv }).update(spec.adapter, spec.bin, { force: true })
+  say(`installed ${spec.adapter}@${bin.version}`)
+}
 const overlay = join(work, 'check.patch.yml')
 writeFileSync(overlay, [
   '- id: acp-dsh',
   '  config:',
   `    fakeAgent: ${JSON.stringify(FAKE)}`,
+  `    claude: ${AGENT === 'claude'}`,
+  `    codex: ${AGENT === 'codex'}`,
   '- id: agent-default-model',
   '  config:',
-  '    provider: acp-fake',
-  '    model: fake',
+  `    provider: ${ROUTE.provider}`,
+  `    model: ${ROUTE.model}`,
+  ...(ROUTE.effort ? [`    reasoningEffort: ${ROUTE.effort}`] : []),
   '',
 ].join('\n'))
 const project = join(work, 'project')
 mkdirSync(project, { recursive: true })
 let failed = []
 try {
-  const out = execFileSync(process.execPath, [DSH_BIN, '--profile', 'acp', '--patch', overlay, '--json', 'hello there'], { cwd: project, env: dshEnv, encoding: 'utf8', timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] })
+  const out = execFileSync(process.execPath, [DSH_BIN, '--profile', 'acp', '--patch', overlay, '--json', TASK], { cwd: project, env: dshEnv, encoding: 'utf8', timeout: AGENT === 'fake' ? 120_000 : 300_000, stdio: ['ignore', 'pipe', 'pipe'] })
   say(`headless printed ${out.split('\n').filter(Boolean).length} run events`)
 } catch (error) {
   console.error(error.stdout?.slice(-3000), error.stderr?.slice(-3000))
@@ -111,18 +140,25 @@ else {
   const raw = readFileSync(log)
   const rows = (log.endsWith('.zstd') ? unzstd(raw) : raw).toString('utf8').split('\n').filter(Boolean).map(line => JSON.parse(line))
   const of = type => rows.filter(row => row.type === type)
-  const call = of('tool/call').find(row => row.data?.name === 'acp_tool')
-  const result = call && of('tool/result').find(row => row.data?.message?.toolCallId === call.data.callId || row.data?.callId === call.data.callId || JSON.stringify(row.data).includes(call.data.callId))
-  const asked = of('approval/asked').find(row => row.data?.callId === call?.data?.callId)
+  // The call the agent asked about (an agent may first try a call its sandbox refuses), else its first.
+  const calls = of('tool/call').filter(row => row.data?.name === 'acp_tool')
+  const asked = of('approval/asked').find(row => calls.some(c => c.data.callId === row.data?.callId))
+  const call = calls.find(c => c.data.callId === asked?.data?.callId) ?? calls[0]
+  const result = call && of('tool/result').find(row => row.data?.message?.toolCallId === call.data.callId)
   const decided = asked && of('approval/decided').find(row => row.data?.id === asked.data.id)
   const text = of('assistant/message').flatMap(row => row.data?.message?.content ?? []).filter(block => block.type === 'text').map(block => block.text).join('')
-  if (!/you said "hello there"/.test(text)) failed.push(`the agent's text is not in the log: ${JSON.stringify(text.slice(0, 200))}`)
+  if (AGENT === 'fake' && !/you said "hello there"/.test(text)) failed.push(`the agent's text is not in the log: ${JSON.stringify(text.slice(0, 200))}`)
+  const thought = of('assistant/message').flatMap(row => row.data?.message?.content ?? []).filter(block => block.type === 'reasoning').map(block => block.text).join('')
+  if (AGENT === 'fake' && !/On fake-small at high effort\./.test(thought)) failed.push(`the agent was not on fake-small at high effort: ${JSON.stringify(thought.slice(0, 200))}`)
   if (!call) failed.push('no tool/call of acp_tool')
-  else if (JSON.parse(call.data.arguments).title !== 'Run echo hello 1') failed.push(`the card is not the agent's call: ${call.data.arguments}`)
+  else if (AGENT === 'fake' && JSON.parse(call.data.arguments).title !== 'Run echo hello 1') failed.push(`the card is not the agent's call: ${call.data.arguments}`)
   if (call && !result) failed.push('no tool/result for the call')
   if (!asked) failed.push('no approval/asked for the call')
   if (decided?.data?.outcome !== 'allowed-once') failed.push(`approval/decided is ${decided?.data?.outcome}`)
-  if (!/It printed hello 1\./.test(text)) failed.push('the agent did not go on after the result')
+  const done = AGENT === 'fake' ? /It printed hello 1\./ : /acp-dsh-ok/
+  if (!done.test(text)) failed.push('the agent did not go on after the result')
+  if (result) say(`tool/result ${JSON.stringify(result.data?.message?.content ?? result.data).slice(0, 300)}`)
+  for (const row of of('turn/end')) say(`turn/end ${JSON.stringify(row.data).slice(0, 300)}`)
   say(`log ${log.slice(dshHome.length + 1)}: ${rows.length} rows; text ${JSON.stringify(text)}`)
   if (call) say(`tool/call ${call.data.callId} ${call.data.arguments}`)
   if (asked) say(`approval/asked ${JSON.stringify(asked.data)} -> ${decided?.data?.outcome}`)

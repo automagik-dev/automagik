@@ -20,7 +20,7 @@
 //
 // Replies carry names and states only: never a key, a token or an account's credential.
 import { z } from 'zod'
-import { PI_AI, keyRefOf } from './providers.js'
+import { PI_AI, SIGNIN_ROUTES, keyRefOf } from './providers.js'
 
 const RECORD_SCOPE = 'llm-pi-ai'
 export const DEEPSEEK_REF = 'DEEPSEEK_API_KEY'
@@ -232,7 +232,9 @@ export function createAiActions(ctx, { fetch: fetchImpl = globalThis.fetch, save
         const { apiKeyEnv, ...rest } = seen.routes[vendor.provider] ?? {}
         if (apiKeyEnv !== undefined && await keyOf(ctx, vendor) !== null) return
         if (apiKeyEnv !== undefined) await unsetRoute(vendor.provider)
-        return saveRoute(vendor.provider, rest)
+        // A route on the sign-in holds what the sign-in's route does (a Claude plan's 429 is
+        // not retried), also when the row is turned off and on again.
+        return saveRoute(vendor.provider, { ...SIGNIN_ROUTES[vendor.provider], ...rest })
       }
       const key = await keyOf(ctx, vendor)
       return saveRoute(vendor.provider, { apiKeyEnv: key.ref })

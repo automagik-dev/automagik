@@ -720,6 +720,9 @@ export function dshEnv({ base = process.env, home, electronAsNode = false, binDi
     AUTOMAGIK_BUSY_FILE: busyFileOf(home),
     // The welcome reads it (welcome-dsh src/host/preload.js); none is no preference.
     ...(preload ? { AUTOMAGIK_PRELOAD: preload } : {}),
+    // The pnpm acp-dsh installs its ACP adapters with: the app's own pnpm 10, never a newer one
+    // the person has first on PATH, which installs the adapters' bundled CLIs anyway (~1.4 GB).
+    ...(binDir ? { AUTOMAGIK_PNPM: join(binDir, 'pnpm') } : {}),
     ...(electronAsNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
   }
 }

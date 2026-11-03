@@ -45,6 +45,13 @@ export const SIGNIN_PROVIDERS = {
   'github-copilot': { label: 'GitHub Copilot' },
   xai: { label: 'Grok' },
 }
+// What a sign-in's route holds beyond its provider. A Claude plan at its limit answers with a
+// 429 (rate_limit_error), which DSH's default policy retries five times, about 16 s, before
+// the Bot team's fallback model gets the turn: here the plan's 429 is not retried, so the turn
+// moves on at once. The rest of DSH's default retry set stays.
+export const SIGNIN_ROUTES = {
+  anthropic: { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } },
+}
 // A finished attempt is kept this long, so a page that comes back still learns how it ended.
 const KEEP_MS = 10 * 60 * 1000
 
@@ -70,13 +77,40 @@ const piAiEntry = (ctx) => {
   }
 }
 
+// DSH's retry defaults (dsh-llm resolveRetryPolicy). DSH's settings describe a route as its
+// schema resolved it, so a stored policy carries these filled in.
+const RETRY_DEFAULTS = Object.freeze({ maxRetries: 5, backoff: Object.freeze({ initialDelayMs: 500, maxDelayMs: 10_000, jitterRatio: 0.1 }) })
+const sameCodes = (a, b) => Array.isArray(a) && Array.isArray(b) && new Set(a).size === new Set(b).size && b.every(code => a.includes(code))
+const unsetOr = (value, fallback) => value === undefined || value === fallback
+
+/**
+ * Whether a stored retry policy is the sign-in's (SIGNIN_ROUTES), as written or as DSH's
+ * schema resolved it: the same mode and codes, and every other field absent or DSH's default.
+ */
+export function isSigninPolicy(stored, signin) {
+  if (stored === null || typeof stored !== 'object' || signin === undefined) return false
+  const { mode, retryableCodes, maxRetries, backoff, ...other } = stored
+  if (Object.keys(other).length > 0 || mode !== signin.mode || !sameCodes(retryableCodes, signin.retryableCodes)) return false
+  if (!unsetOr(maxRetries, RETRY_DEFAULTS.maxRetries)) return false
+  if (backoff === undefined) return true
+  if (backoff === null || typeof backoff !== 'object') return false
+  const { initialDelayMs, maxDelayMs, jitterRatio, ...more } = backoff
+  const d = RETRY_DEFAULTS.backoff
+  return Object.keys(more).length === 0 && unsetOr(initialDelayMs, d.initialDelayMs) && unsetOr(maxDelayMs, d.maxDelayMs) && unsetOr(jitterRatio, d.jitterRatio)
+}
+
 // Write one route under llm-pi-ai.providers, keeping what it already holds. A route that
-// does not exist yet is added; DSH checks it before the change applies.
+// does not exist yet is added; DSH checks it before the change applies. A route that takes a
+// key leaves the sign-in's retry policy (isSigninPolicy): a key's 429 is DSH's to retry. A
+// policy someone set by hand stays.
 export async function saveRoute(ctx, provider, patch) {
   const entry = piAiEntry(ctx)
   if (entry === undefined) throw refused('This DSH has no pi-ai entry (llm-pi-ai) to connect providers with.')
   const current = entry.value?.providers?.[provider]
   const route = { ...(current && typeof current === 'object' ? current : {}), ...patch }
+  if (patch.apiKeyEnv !== undefined && !Object.hasOwn(patch, 'retryPolicy') && isSigninPolicy(route.retryPolicy, SIGNIN_ROUTES[provider]?.retryPolicy)) {
+    delete route.retryPolicy
+  }
   try {
     await ctx.settings.mutate(PI_AI, [{ op: 'set', path: ['providers', provider], value: route }], entry.revision)
   } catch (error) {
@@ -205,9 +239,17 @@ export function createProviderActions(ctx) {
             return
           }
           // Only a finished sign-in gets a route. A sign-in sits beneath a key: a route with
-          // apiKeyEnv uses the key, so the route this adds names none, and one that exists
-          // already (keyed or not) is left as it is.
-          if (!Object.hasOwn(piAiEntry(ctx)?.value?.providers ?? {}, provider)) await saveRoute(ctx, provider, {})
+          // apiKeyEnv uses the key, so the route this adds names none, and a keyed one is left
+          // as it is. A route on the sign-in alone takes what the sign-in's route holds
+          // (SIGNIN_ROUTES) when it has none of it yet.
+          const routes = piAiEntry(ctx)?.value?.providers ?? {}
+          const extra = SIGNIN_ROUTES[provider] ?? {}
+          if (!Object.hasOwn(routes, provider)) await saveRoute(ctx, provider, extra)
+          else {
+            const route = routes[provider] ?? {}
+            const missing = Object.fromEntries(Object.entries(extra).filter(([field]) => route[field] === undefined))
+            if (route.apiKeyEnv === undefined && Object.keys(missing).length > 0) await saveRoute(ctx, provider, missing)
+          }
           attempt.status = 'authorized'
         })
         .catch((error) => {

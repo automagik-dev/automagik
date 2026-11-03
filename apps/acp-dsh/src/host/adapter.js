@@ -1,4 +1,6 @@
-// ACP agents as DSH models. Each agent is a provider route with one model. A DSH turn on it is
+// ACP agents as DSH models. Each agent is a provider route whose models and reasoning efforts
+// are the agent's own (catalog.js); the chosen ones are set on its session before each prompt,
+// with the permission mode. A DSH turn on it is
 // one ACP prompt to that Session's agent process: its words stream as text, its thoughts as
 // reasoning, and each of its tool calls ends the model step with a call to the mirror tool
 // (tool.js), so DSH shows the card and asks for approval. The next step drains what the agent
@@ -6,10 +8,29 @@
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { LlmAdapter, isAgentLoopRequest } from '@deepseek-ai/dsh-llm'
-import { AgentRun } from './acp.js'
-import { callArguments, mirrorTool, TOOL_NAME } from './tool.js'
+import { AgentRun, valuesOf } from './acp.js'
+import { DEFAULT_MODEL } from './catalog.js'
+import { callArguments, levelOf, mirrorTool, TOOL_NAME } from './tool.js'
 
 const CANCEL_WAIT_MS = 5000
+// An agent may announce a call before it says what the call does (Claude Code's adapter sends
+// the command in an update right after): the card waits this long for it.
+const DETAIL_WAIT_MS = 1500
+
+const detailed = tool => (tool.rawInput !== undefined && tool.rawInput !== null && Object.keys(tool.rawInput).length > 0) || tool.permission !== undefined || tool.status !== 'pending'
+function settle(tool, ms) {
+  if (detailed(tool)) return Promise.resolve()
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer)
+      tool.listeners.delete(check)
+      resolve()
+    }
+    const check = () => { if (detailed(tool)) done() }
+    const timer = setTimeout(done, ms)
+    tool.listeners.add(check)
+  })
+}
 
 const failure = (message, code = 'ACP_AGENT') => ({ message, code })
 const finish = (kind, message, code) => ({ type: 'finish', reason: message === undefined ? { kind } : { kind, failure: failure(message, code) } })
@@ -68,10 +89,39 @@ export function aside(providers) {
   }
 }
 
+/**
+ * Put the agent on DSH's model and effort, the model first: the efforts it offers are that
+ * model's. DSH's `default` model is the one the agent started on. With no effort, the model's
+ * own comes back, so an earlier turn's choice does not stay: the agent's "default" row when it
+ * has one (Claude Code's, which hands effort back to its settings), else `ownEffort()`, the one
+ * the agent showed for that model when it was read, asked only then; when it is not known, no
+ * effort is set.
+ * @param {AgentRun} run
+ * @param {string} model
+ * @param {string | undefined} effort
+ * @param {() => string | undefined} [ownEffort]
+ */
+export async function choose(run, model, effort, ownEffort) {
+  const option = run.option('model')
+  if (option === undefined) {
+    if (model !== DEFAULT_MODEL) throw new Error(`it offers no choice of model, so not ${model}`)
+  } else {
+    const target = model === DEFAULT_MODEL && !valuesOf(option).some(choice => choice.value === DEFAULT_MODEL) ? run.startModel : model
+    if (target !== undefined) await run.setOption('model', target)
+  }
+  if (effort !== undefined) return run.setOption('thought_level', effort)
+  const levels = run.option('thought_level')
+  if (levels === undefined) return
+  const offered = valuesOf(levels).map(choice => choice.value)
+  if (offered.includes(DEFAULT_MODEL)) return run.setOption('thought_level', DEFAULT_MODEL)
+  const own = ownEffort?.()
+  if (own !== undefined && offered.includes(own)) await run.setOption('thought_level', own)
+}
+
 export class AcpAdapter extends LlmAdapter {
   /**
    * @param {import('@deepseek-ai/cordis').Context} ctx
-   * @param {Map<string, { name: string, model: { id: string, name: string }, spawn(): { command: string, args?: string[], env?: Record<string, string> } }>} agents
+   * @param {Map<string, { name: string, catalog: import('./catalog.js').Catalog, installed?(): boolean, spawn(): { command: string, args?: string[], env?: Record<string, string> } }>} agents
    */
   constructor(ctx, agents) {
     super()
@@ -79,16 +129,27 @@ export class AcpAdapter extends LlmAdapter {
     this.agents = agents
     this.live = new Map()
     this.scoped = new WeakSet()
-    this.tool = mirrorTool({ runOf: sessionId => this.live.get(sessionId), approval: () => ctx.get?.('approval') })
+    this.tool = mirrorTool({ runOf: sessionId => this.live.get(sessionId), approval: () => ctx.get?.('approval'), sandboxPolicy: () => ctx.get?.('sandboxPolicy') })
   }
 
   providerInfo(provider) {
     return { id: provider, name: this.agents.get(provider)?.name ?? provider }
   }
 
+  // An agent whose ACP adapter is not installed yet lists no model, so nothing (a picker, a
+  // Bot's model) can choose one that cannot answer.
   async listModels(provider) {
     const agent = this.agents.get(provider)
-    return agent ? [{ provider, id: agent.model.id, name: agent.model.name }] : []
+    if (agent === undefined || agent.installed?.() === false) return []
+    return (await agent.catalog.models()).map(model => ({ provider, id: model.id, name: model.name, ...(model.description ? { description: model.description } : {}) }))
+  }
+
+  // A model's efforts are the ones the agent offers for it; DSH turns down any other before the
+  // agent sees it. An id the agent does not list resolves bare, as DSH's routing allows.
+  async resolveModel(provider, model) {
+    const found = await this.agents.get(provider)?.catalog.model(model)
+    if (found === undefined) return { provider, id: model, name: model }
+    return { provider, id: found.id, name: found.name, ...(found.description ? { description: found.description } : {}), ...(found.reasoning ? { reasoning: found.reasoning } : {}) }
   }
 
   // The mirror tool lives in the agent's own scope: no other Session's model sees it.
@@ -129,8 +190,9 @@ export class AcpAdapter extends LlmAdapter {
       }
       let fresh = false
       if (live === undefined) {
-        const run = new AgentRun({ ...agent.spawn(), cwd: dshAgent?.session?.header?.cwd ?? homedir(), name: agent.name })
+        let run
         try {
+          run = new AgentRun({ ...(await agent.spawn()), cwd: dshAgent?.session?.header?.cwd ?? homedir(), name: agent.name })
           await run.start()
         } catch (error) {
           return yield finish('error', `${agent.name} did not start: ${error?.message ?? error}`)
@@ -143,6 +205,17 @@ export class AcpAdapter extends LlmAdapter {
         await live.run.cancel()
         await Promise.race([live.run.prompting, new Promise(resolve => setTimeout(resolve, CANCEL_WAIT_MS).unref?.())])
         if (live.run.busy) return yield finish('error', `${agent.name} is still finishing its last answer; send this again in a moment`)
+      }
+      // The Session's model and effort, then its level as the agent's own permission mode, before every prompt.
+      try {
+        await choose(live.run, options.model, options.reasoningEffort, () => agent.catalog?.ownEffort(options.model))
+      } catch (error) {
+        return yield finish('error', `${agent.name} would not take ${options.model}${options.reasoningEffort ? ` at ${options.reasoningEffort} effort` : ''}: ${error?.message ?? error}`)
+      }
+      try {
+        await live.run.setMode(agent.modeFor?.(levelOf(this.ctx.get?.('approval'), dshAgent?.session, this.ctx.get?.('sandboxPolicy'))))
+      } catch (error) {
+        return yield finish('error', `${agent.name} would not take DSH's permission level: ${error?.message ?? error}`)
       }
       if (fresh && options.messages.some(message => message.role === 'assistant')) {
         yield* blocks.add('text', `(A new ${agent.name} session: it does not see this chat's earlier messages.)\n\n`)
@@ -159,6 +232,7 @@ export class AcpAdapter extends LlmAdapter {
       else if (event.type === 'thought') yield* blocks.add('reasoning', event.text)
       else if (event.type === 'tool') {
         const tool = live.run.tools.get(event.id)
+        await settle(tool, DETAIL_WAIT_MS)
         const id = `acp_${randomUUID()}`
         live.calls.add(id)
         yield* blocks.toolCall(id, TOOL_NAME, JSON.stringify(callArguments(tool)))
@@ -180,6 +254,7 @@ export class AcpAdapter extends LlmAdapter {
   }
 
   dispose() {
+    for (const agent of this.agents.values()) agent.catalog?.dispose()
     for (const live of this.live.values()) live.run.dispose()
     this.live.clear()
   }

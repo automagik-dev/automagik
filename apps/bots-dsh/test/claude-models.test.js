@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { closestClaude, PI_AI_CLAUDE_MODELS, piAiClaudeOf } from '../src/host/claude-models.js'
+import { closestClaude, PI_AI_CLAUDE_MODELS, piAiClaudeOf, supersededClaude } from '../src/host/claude-models.js'
 
 test('a Claude Code model moves to the pi-ai Claude model closest to it', () => {
   const cases = {
@@ -40,4 +40,21 @@ test('only a claude-code ref moves, a boxed one too', () => {
   for (const ref of ['anthropic/claude-opus-5-5', 'openai-codex/gpt-6.1-sol', 'claude-codex/x', 'claude-code', '/opus', undefined, null, 7]) {
     assert.equal(piAiClaudeOf(ref), undefined, String(ref))
   }
+})
+
+// pi-ai 1.4.0's anthropic catalog, as it lists it (models.generated.js).
+const PI_AI_1_4_ANTHROPIC = [
+  'claude-fable-5', 'claude-fable-5-1', 'claude-haiku-4-5', 'claude-haiku-4-5-20251001', 'claude-haiku-5-5',
+  'claude-opus-4-5', 'claude-opus-4-5-20251101', 'claude-opus-4-6', 'claude-opus-4-7', 'claude-opus-4-8',
+  'claude-opus-5', 'claude-opus-5-5', 'claude-sonnet-4-5', 'claude-sonnet-4-5-20250929', 'claude-sonnet-4-6',
+  'claude-sonnet-5', 'claude-sonnet-5-5',
+]
+
+test('of pi-ai\'s 17 Claude models, the menu keeps each family\'s newest', () => {
+  const superseded = supersededClaude(PI_AI_1_4_ANTHROPIC)
+  assert.deepEqual(PI_AI_1_4_ANTHROPIC.filter(id => !superseded.has(id)), ['claude-fable-5-1', 'claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5'])
+  // A newer model pi-ai adds later takes the family's place without a change here.
+  assert.equal(supersededClaude(['claude-opus-5-5', 'claude-opus-6']).has('claude-opus-5-5'), true)
+  // A dated snapshot is never the menu's, even alone; an id this cannot read always stays.
+  assert.deepEqual([...supersededClaude(['claude-sonnet-4-5-20250929', 'claude-next', 'claude-opus-5-5[1m]'])], ['claude-sonnet-4-5-20250929'])
 })

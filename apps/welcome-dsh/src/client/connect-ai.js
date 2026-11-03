@@ -2,12 +2,17 @@ import { createElement as h, useCallback, useEffect, useMemo, useState } from 'r
 import { call } from './api.js'
 import { Stage, useFinish, useGate, useGlitch } from './stage.js'
 import { SUBSCRIPTION_TILES, SubscriptionSignIn, signedInCount } from './subscriptions.js'
+import { AcpAgents, useAcp } from './acp-agents.js'
 
 // Step omni-connect-ai (order -200): every AI is a row with a switch, and several can be on.
 // What this computer already has comes first, on (src/host/ais.js finds it). A row that is not
 // set up opens its setup in place: a key, the provider's own sign-in in DSH (or, where the
 // provider takes both, a choice of the two), a gateway. Off stops using an AI and keeps its
 // key or sign-in.
+//
+// Claude Code and Codex (acp-dsh's agents) have their own section, Coding agents, after what
+// was found: acp-agents.js. They are not counted as an AI on: the companions' model comes from
+// the rows above.
 //
 // One way to reach each AI: DSH's own sign-ins and keys (Claude: pi-ai's anthropic route, a
 // Claude Pro or Max sign-in or an Anthropic API key), and dsh-subscriptions for what nothing
@@ -226,6 +231,7 @@ export function ConnectAiStep(props) {
   const [busy, setBusy] = useState(null)
   const [problems, setProblems] = useState({})
   const [showAll, setShowAll] = useState(false)
+  const acp = useAcp()
 
   const refresh = useCallback(async () => {
     const reply = await call('ais').catch(() => ({ rows: [], subscriptions: null }))
@@ -289,6 +295,7 @@ export function ConnectAiStep(props) {
     found.length ? h('section', { key: 'found', className: 'oai-group', 'aria-label': 'Found on this computer' },
       h('h2', null, 'Found on this computer'),
       h('div', { className: 'oai-list' }, found.map(rowOf))) : null,
+    h(AcpAgents, { key: 'acp', acp }),
     h('section', { key: 'others', className: 'oai-group', 'aria-label': found.length ? 'Add another' : 'Your AIs' },
       h('h2', null, found.length ? 'Add another' : 'Your AIs'),
       h('p', { className: 'oai-terms oai-muted' }, `Subscriptions: ${VENDOR_TERMS.toLowerCase()}.`),

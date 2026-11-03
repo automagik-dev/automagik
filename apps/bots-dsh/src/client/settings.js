@@ -24,6 +24,7 @@ import { ProvidersPage } from './providers-page.js'
 import { FolderMenu } from './folder-menu.js'
 import { PermissionFallback, PermissionPicker } from './permission-picker.js'
 import { AUTO, AUTO_FALLBACK } from '../shared/permission-levels.js'
+import { routeOf } from '../shared/routes.js'
 import { t } from './i18n.js'
 
 const capitalize = word => word[0].toUpperCase() + word.slice(1)
@@ -189,6 +190,26 @@ function PermissionsSection({ roster, actions, run }) {
         h(PermissionFallback, { fallback: saved === AUTO && !offered ? AUTO_FALLBACK : undefined }))))
 }
 
+// The model memory review runs on, and a part's note when its chat is on an agent (models.js
+// backgroundModel). Only a model that answers beside the chats is offered: an agent over ACP
+// answers only in its own chat. Default: DSH's default model. An older Claude stays listed
+// while it is the saved pick, as in a Bot's model menu (offeredModels).
+export function backgroundChoices(models, saved) {
+  return (models ?? []).filter(model => !model.needsKey && (model.superseded !== true || model.ref === saved) && routeOf(model.provider ?? model.ref.split('/')[0]).connectedBy !== 'acp')
+}
+function BackgroundSection({ roster, actions, run }) {
+  const saved = roster.prefs?.backgroundModel ?? ''
+  const choices = backgroundChoices(roster.models, saved)
+  if (choices.length === 0) return null
+  const shown = choices.some(model => model.ref === saved) ? saved : ''
+  const fallback = choices.find(model => model.ref === roster.backgroundModel && saved === '')
+  return h(SetSection, { title: t('Background jobs') },
+    h(SetRow, { label: t('Background model'), hint: t('Memory review runs on it, and so do the notes of a chat on Claude Code or Codex.') },
+      h('select', { className: 'bt-select', 'aria-label': t('Background model'), value: shown, onChange: event => run(actions.setPrefs({ backgroundModel: event.target.value || null })) },
+        h('option', { value: '' }, fallback ? t('Default: {model}', { model: fallback.name }) : t('Default')),
+        choices.map(model => h('option', { key: model.ref, value: model.ref }, `${model.name} · ${model.providerName ?? model.provider}`)))))
+}
+
 const MOTIONS = [['quiet', 'Quiet'], ['normal', 'Normal'], ['lively', 'Lively']]
 function MotionSection({ roster, actions, run }) {
   const motion = roster.prefs?.motion === 'quiet' || roster.prefs?.motion === 'lively' ? roster.prefs.motion : 'normal'
@@ -205,6 +226,7 @@ function BotsPage({ roster, actions, run }) {
   return [
     h(MainBotsSection, { key: 'main', roster, actions, run }),
     h(PermissionsSection, { key: 'permissions', roster, actions, run }),
+    h(BackgroundSection, { key: 'background', roster, actions, run }),
     h(MotionSection, { key: 'motion', roster, actions, run }),
     h(VoiceSection, { key: 'voice', actions, Section: SetSection, Row: SetRow }),
     h(ImagesSection, { key: 'images', Section: SetSection, Row: SetRow }),
