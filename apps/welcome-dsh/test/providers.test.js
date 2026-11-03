@@ -159,7 +159,7 @@ test('providers reports, per tile, a stored key, a sign-in and whether this DSH 
   assert.equal(value['github-copilot'].signIn, false)
 })
 
-test('Claude signs in through pi-ai\'s anthropic flow (Pro/Max), and the finished sign-in adds a route that names no key', async () => {
+test('Claude signs in through pi-ai\'s anthropic flow (Pro/Max), and the finished sign-in adds a route that names no key and does not retry the plan\'s 429', async () => {
   const fake = host({ authorization: fakeAuthorization(['llm-pi-ai/anthropic']) })
   assert.equal((await fake.handle('signin-start', { provider: 'anthropic' })).value.status, 'running')
   const [attempt] = fake.authorization.begun
@@ -167,7 +167,8 @@ test('Claude signs in through pi-ai\'s anthropic flow (Pro/Max), and the finishe
   attempt.settle({ status: 'authorized' })
   await tick()
   await tick()
-  assert.deepEqual(fake.valueOf('llm-pi-ai').providers.anthropic, {})
+  // No key, and the plan's 429 is not retried: the turn moves to the fallback model at once.
+  assert.deepEqual(fake.valueOf('llm-pi-ai').providers.anthropic, { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } })
   assert.equal((await fake.handle('providers')).value.anthropic.signIn, true)
   // A route already on an Anthropic API key keeps it: the key runs, the sign-in sits beneath it.
   const keyed = host({ entries: withPiAi({ anthropic: { apiKeyEnv: 'ANTHROPIC_API_KEY' } }), authorization: fakeAuthorization(['llm-pi-ai/anthropic']) })
@@ -176,6 +177,14 @@ test('Claude signs in through pi-ai\'s anthropic flow (Pro/Max), and the finishe
   await tick()
   await tick()
   assert.deepEqual(keyed.valueOf('llm-pi-ai').providers.anthropic, { apiKeyEnv: 'ANTHROPIC_API_KEY' })
+  // A route an older version added for the sign-in (no key, no policy) takes the policy at
+  // the next sign-in, and keeps what else it holds.
+  const older = host({ entries: withPiAi({ anthropic: { displayName: 'Claude' } }), authorization: fakeAuthorization(['llm-pi-ai/anthropic']) })
+  await older.handle('signin-start', { provider: 'anthropic' })
+  older.authorization.begun[0].settle({ status: 'authorized' })
+  await tick()
+  await tick()
+  assert.deepEqual(older.valueOf('llm-pi-ai').providers.anthropic, { displayName: 'Claude', retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } })
 })
 
 test('an Anthropic API key is saved the Models page\'s way, on the same anthropic route', async () => {

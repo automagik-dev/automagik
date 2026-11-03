@@ -45,6 +45,13 @@ export const SIGNIN_PROVIDERS = {
   'github-copilot': { label: 'GitHub Copilot' },
   xai: { label: 'Grok' },
 }
+// What a sign-in's route holds beyond its provider. A Claude plan at its limit answers with a
+// 429 (rate_limit_error), which DSH's default policy retries five times, about 16 s, before
+// the Bot team's fallback model gets the turn: here the plan's 429 is not retried, so the turn
+// moves on at once. The rest of DSH's default retry set stays.
+export const SIGNIN_ROUTES = {
+  anthropic: { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } },
+}
 // A finished attempt is kept this long, so a page that comes back still learns how it ended.
 const KEEP_MS = 10 * 60 * 1000
 
@@ -205,9 +212,17 @@ export function createProviderActions(ctx) {
             return
           }
           // Only a finished sign-in gets a route. A sign-in sits beneath a key: a route with
-          // apiKeyEnv uses the key, so the route this adds names none, and one that exists
-          // already (keyed or not) is left as it is.
-          if (!Object.hasOwn(piAiEntry(ctx)?.value?.providers ?? {}, provider)) await saveRoute(ctx, provider, {})
+          // apiKeyEnv uses the key, so the route this adds names none, and a keyed one is left
+          // as it is. A route on the sign-in alone takes what the sign-in's route holds
+          // (SIGNIN_ROUTES) when it has none of it yet.
+          const routes = piAiEntry(ctx)?.value?.providers ?? {}
+          const extra = SIGNIN_ROUTES[provider] ?? {}
+          if (!Object.hasOwn(routes, provider)) await saveRoute(ctx, provider, extra)
+          else {
+            const route = routes[provider] ?? {}
+            const missing = Object.fromEntries(Object.entries(extra).filter(([field]) => route[field] === undefined))
+            if (route.apiKeyEnv === undefined && Object.keys(missing).length > 0) await saveRoute(ctx, provider, missing)
+          }
           attempt.status = 'authorized'
         })
         .catch((error) => {
