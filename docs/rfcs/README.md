@@ -41,6 +41,7 @@ Security gaps are named by title only until their fix merges. Details go to a pr
 | [0010](0010-desktop-sandbox.md) | Desktop sandbox and supervision | Draft | not scheduled |
 | [0011](0011-monorepo-parts-and-releases.md) | Monorepo parts and releases | Accepted | n/a (process) |
 | [0013](0013-work-code-switch.md) | The work and code switch | Draft | not scheduled |
+| [0014](0014-shared-bot-registry.md) | Shared Bot registry | Draft | not scheduled |
 | [0015](0015-live-chat-projection.md) | Live chat projection | Draft | not scheduled |
 
 Milestones, in the owner's order:
