@@ -26,6 +26,7 @@ import { BotViews, isBotId, isTabId } from './bot-views.js'
 import { pageLayout, tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
 import { awayInstall, LOOK_EVERY_MS, readBusy } from './idle.js'
+import { applyNow, applyStaged, appStopped, changesOf, readAutoApply, settingsFileOf, writeAutoApply } from './auto-apply.js'
 import { readChoices, writeOverlay } from './privacy.js'
 import { compareVersions, isReleasePage, startUpdates, updateMode } from './update.js'
 
@@ -38,8 +39,9 @@ const home = appHome()
 let dsh = null
 // dsh's process from the moment it is spawned: a quit before it is ready still stops it.
 // The dsh this start runs, whichever process that is now (a retry on another port replaces the
-// first): every way out stops it, and one that spawns after that is stopped at once.
-const dshProcess = dshRun()
+// first): every way out stops it, and one that spawns after that is stopped at once. A restart of
+// DSH alone, for plugins the lane staged (auto-apply.js), stops it and makes a new one.
+let dshProcess = dshRun()
 let window = null
 let page = null
 let quitting = false
@@ -54,6 +56,12 @@ let updates = null
 // The plugin lane (lane.js): plugins staged for the next start, this start's trial, and where
 // the profile and DSH's own version are.
 let laneReady = null
+// What the staged plugins change ([{ name, from, to }], auto-apply.js changesOf), and the same
+// while they go in with DSH restarted alone (null when they are not going in).
+let laneWaiting = []
+let laneApplying = null
+// DSH is being stopped and started again on purpose (auto-apply.js): its exit is no failure.
+let restartingDsh = false
 let laneTrial = null
 let laneProfile = null
 let laneDsh = null
@@ -197,7 +205,6 @@ async function launch() {
   const resources = resourcesOf({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() })
   // dsh's boot is the long wait of a start: only what dsh reads as it starts comes before it, and
   // the page gets ready while it boots (startup.js keeps the order, and its tests check it).
-  let binDir = null
   await startUp({
     mark: step => started.mark(step),
     // The port dsh served on last time, while it is still free: the page's URL, and so its
@@ -212,46 +219,16 @@ async function launch() {
     // Then the plugins the lane staged go in, and this start is their trial (lane.js).
     lane: () => { if (app.isPackaged) laneTrial = beforeStart({ home, target: laneProfile, log: laneLog }) },
     // Electron's own binary runs dsh as Node, so the app ships one runtime.
-    tools: () => { binDir = writeTools({ dir: join(home, 'bin'), node: process.execPath, pnpm: resources.pnpm }) },
-    spawn: (port) => {
-      dshOrigin = `http://127.0.0.1:${port}`
-      const log = createWriteStream(join(home, 'logs', 'dsh.log'), { flags: 'a' })
-      // `--preload=omni|genie` from `omni desktop` / `genie desktop`, kept in Automagik's home.
-      const preload = preloadOf({ home: root, argv: process.argv, env: process.env })
-      // What the person chose to share on the Privacy page (privacy.js): nothing, unless they did.
-      const privacy = readChoices(privacyFileOf(home))
-      // A new anonymous id every launch (dsh.js ANONYMOUS_ID), unless they chose to keep one.
-      if (privacy['stable-id'] !== true) rmSync(join(home, 'dsh', ANONYMOUS_ID), { force: true })
-      const overlay = writeOverlay(privacyPatchOf(home), privacy)
-      // Something that took the port before dsh bound it gets dsh started on a fresh one.
-      const onPort = (next) => {
-        started.mark(`port ${port} taken, dsh on ${next}`)
-        dshOrigin = `http://127.0.0.1:${next}`
-      }
-      // Only a port dsh bound and served on is kept for the next launch (dsh.js serveDsh).
-      const onUnkept = error => startLog(`${new Date().toISOString()} start: port not kept (${error.message})\n`)
-      return serveDsh({ run: dshProcess, portFile: portFileOf(home), node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload, privacy }), port, onPort, onUnkept, cwd: home, log, privacy: overlay, onSpawn: (child) => { child.on('message', message => answerDsh(child, message)); started.mark('dsh spawned') } })
-        .then((running) => {
-          dsh = running
-          started.mark('dsh ready')
-          dsh.child.once('exit', (code) => {
-            if (!quitting) fail(new Error(`dsh stopped (${code}).`))
-          })
-          return dsh
-        })
-    },
+    tools: () => { dshTools = { resources, binDir: writeTools({ dir: join(home, 'bin'), node: process.execPath, pnpm: resources.pnpm }) } },
+    spawn: port => spawnDsh(port, started),
     // Earlier starts' dsh logins would pile up until dsh refuses the page (dsh.js forgetDshLogins).
     // dsh's page has the default session, and cookies ignore the port.
     forget: port => forgetDshLogins(session.defaultSession.cookies, `http://127.0.0.1:${port}`)
       .catch(error => startLog(`${new Date().toISOString()} start: earlier dsh logins kept (${error.message})\n`)),
     after: () => {
       laneDsh = readVersion(join(dirname(resources.bin), '..', 'package.json'))
-      if (app.isPackaged) laneReady = stagedOf(home)
-      // About names the version this copy runs: its plugins' (a lane patch, 3.N.P) beside the app's.
-      if (process.platform === 'darwin') {
-        const plugins = pluginsVersion()
-        app.setAboutPanelOptions({ applicationName: PRODUCT, applicationVersion: plugins ?? app.getVersion(), version: plugins ? `app ${app.getVersion()}` : app.getVersion() })
-      }
+      if (app.isPackaged) readStaged()
+      aboutPanel()
     },
     // Before the page is made: every webContents from here on keeps to dsh's origin.
     guard: () => harden(() => dshOrigin),
@@ -267,6 +244,43 @@ async function launch() {
     // updating.
     updates: () => { if (window && page) watchUpdates() },
   })
+}
+
+// What dsh is started with (the app's resources, and the tools on its PATH), for a start and for
+// each restart of DSH alone.
+let dshTools = null
+let dshLog = null
+
+// Start dsh on `port` and resolve with it once it is ready. `steps` notes the moments (start.log).
+function spawnDsh(port, steps) {
+  const { resources, binDir } = dshTools
+  dshOrigin = `http://127.0.0.1:${port}`
+  dshLog?.end()
+  const log = dshLog = createWriteStream(join(home, 'logs', 'dsh.log'), { flags: 'a' })
+  // `--preload=omni|genie` from `omni desktop` / `genie desktop`, kept in Automagik's home.
+  const preload = preloadOf({ home: root, argv: process.argv, env: process.env })
+  // What the person chose to share on the Privacy page (privacy.js): nothing, unless they did.
+  const privacy = readChoices(privacyFileOf(home))
+  // A new anonymous id every launch (dsh.js ANONYMOUS_ID), unless they chose to keep one.
+  if (privacy['stable-id'] !== true) rmSync(join(home, 'dsh', ANONYMOUS_ID), { force: true })
+  const overlay = writeOverlay(privacyPatchOf(home), privacy)
+  // Something that took the port before dsh bound it gets dsh started on a fresh one.
+  const onPort = (next) => {
+    steps.mark(`port ${port} taken, dsh on ${next}`)
+    dshOrigin = `http://127.0.0.1:${next}`
+  }
+  // Only a port dsh bound and served on is kept for the next launch (dsh.js serveDsh).
+  const onUnkept = error => startLog(`${new Date().toISOString()} start: port not kept (${error.message})\n`)
+  return serveDsh({ run: dshProcess, portFile: portFileOf(home), node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload, privacy }), port, onPort, onUnkept, cwd: home, log, privacy: overlay, onSpawn: (child) => { child.on('message', message => answerDsh(child, message)); steps.mark('dsh spawned') } })
+    .then((running) => {
+      dsh = running
+      steps.mark('dsh ready')
+      // Only the dsh that runs now: one stopped for a restart of DSH alone exits on purpose.
+      running.child.once('exit', (code) => {
+        if (!quitting && !restartingDsh && dsh === running) fail(new Error(`dsh stopped (${code}).`))
+      })
+      return running
+    })
 }
 
 // dsh's page, made while dsh boots and loaded once it is ready.
@@ -351,21 +365,40 @@ const readVersion = (file) => { try { return JSON.parse(readFileSync(file, 'utf8
 // This start is a lane trial: the page must draw the Bot team within TRIAL_MS, or the app starts
 // again and the previous plugins come back (lane.js beforeStart).
 async function judgeLane() {
-  const deadline = Date.now() + TRIAL_MS
-  while (Date.now() < deadline && page && !page.webContents.isDestroyed()) {
-    const drawn = await page.webContents.executeJavaScript("Boolean(document.querySelector('.bt-side, .bt-rail, .bt-list'))").catch(() => false)
-    if (drawn) {
-      confirmLane(home)
-      laneLog('lane: the trial passed; the Bot team is drawn')
-      laneTrial = 'good'
-      return
-    }
-    await new Promise(resolve => setTimeout(resolve, 1000))
+  if (await teamDrawn()) {
+    confirmLane(home)
+    laneLog('lane: the trial passed; the Bot team is drawn')
+    laneTrial = 'good'
+    return
   }
   if (quitting) return
   laneLog('lane: the Bot team never drew; starting again with the previous plugins')
   trialFailed(home)
   restartForLane({ why: 'lane rollback' })
+}
+
+// Whether dsh's page draws the Bot team within TRIAL_MS.
+async function teamDrawn() {
+  const deadline = Date.now() + TRIAL_MS
+  while (Date.now() < deadline && page && !page.webContents.isDestroyed() && !quitting) {
+    const drawn = await page.webContents.executeJavaScript("Boolean(document.querySelector('.bt-side, .bt-rail, .bt-list'))").catch(() => false)
+    if (drawn) return true
+    await new Promise(resolve => setTimeout(resolve, 1000))
+  }
+  return false
+}
+
+// What the lane has waiting, and what it changes in the profile as it is now.
+function readStaged() {
+  laneReady = stagedOf(home)
+  laneWaiting = laneReady && laneProfile ? changesOf(laneReady.plugins, installedVersions(laneProfile, laneReady.plugins.map(plugin => plugin.name))) : []
+}
+
+// About names the version this copy runs: its plugins' (a lane patch, 3.N.P) beside the app's.
+function aboutPanel() {
+  if (process.platform !== 'darwin') return
+  const plugins = pluginsVersion()
+  app.setAboutPanelOptions({ applicationName: PRODUCT, applicationVersion: plugins ?? app.getVersion(), version: plugins ? `app ${app.getVersion()}` : app.getVersion() })
 }
 
 // The version this copy runs: Automagik's plugins' (3.N.P once a lane patch went in), and
@@ -382,21 +415,22 @@ const runningVersion = () => (pluginsVersion() ? `${pluginsVersion()} (app ${app
 let looking = null
 const lookAtLanes = () => (looking ??= lookOnce().finally(() => { looking = null }))
 async function lookOnce() {
-  if (!app.isPackaged || !laneProfile || !laneDsh || laneTrial === 'applied' || laneTrial === 'trial') return Boolean(laneReady)
+  if (!app.isPackaged || !laneProfile || !laneDsh || laneTrial === 'applied' || laneTrial === 'trial' || laneApplying) return Boolean(laneReady)
   for (const publisher of PUBLISHERS) {
     try {
       const found = await checkLane({ publisher, appVersion: app.getVersion(), dshVersion: laneDsh, installed: installedVersions(laneProfile, publisher.plugins), ...laneMemory(home, publisher.publisher) })
       if (!found || stagedVersion(home, publisher.publisher) === found.version) continue
       laneLog(`lane: ${publisher.publisher} ${found.version} is out; downloading ${found.plugins.map(plugin => `${plugin.name} ${plugin.version}`).join(', ')}`)
-      laneFetching = { version: found.version, percent: 0 }
+      const changes = changesOf(found.plugins, installedVersions(laneProfile, publisher.plugins))
+      laneFetching = { version: found.version, percent: 0, changes }
       publishUpdate()
       try {
-        await stageLane(found, { home, onProgress: (percent) => { laneFetching = { version: found.version, percent }; publishUpdate() } })
+        await stageLane(found, { home, onProgress: (percent) => { laneFetching = { version: found.version, percent, changes }; publishUpdate() } })
       } finally {
         laneFetching = null
       }
-      laneReady = stagedOf(home)
-      laneLog(`lane: ${found.version} is ready and goes in at the next start`)
+      readStaged()
+      laneLog(`lane: ${found.version} is ready${readAutoApply(settingsFileOf(home)) ? ', and goes in by itself once no agent is at work' : ' and goes in at the next start'}`)
       publishUpdate()
     } catch (error) {
       laneLog(`lane: ${publisher.publisher}: ${error.message}`)
@@ -420,6 +454,79 @@ function restartForLane({ away = false, why } = {}) {
       app.relaunch()
       app.exit(0)
     })
+}
+
+// What a plugin is called in the app's own words (the update log, the frame's status).
+const PLUGIN_NAMES = { '@automagik/bots-dsh': 'Bot team', '@automagik/welcome-dsh': 'Welcome', '@automagik/acp-dsh': 'ACP agents', '@automagik/genie-dsh': 'Genie', '@automagik/locale-pt-br-dsh': 'Português (Brasil)' }
+const changeText = changes => changes.map(({ name, from, to }) => `${PLUGIN_NAMES[name] ?? name.replace(/^@[^/]+\//, '')} ${from ? `${from} → ` : ''}${to}`).join(', ')
+
+// Put the staged plugins in now, with DSH restarted alone (auto-apply.js): the window stays, the
+// frame says what is updating while DSH is down, and the page loads again into the new plugins.
+let applyingLane = null
+const applyLaneNow = () => (applyingLane ??= applyLane().finally(() => { applyingLane = null }))
+async function applyLane() {
+  if (quitting || !laneReady || !laneProfile || !dshTools || !page || !window) return
+  laneApplying = laneWaiting
+  const text = changeText(laneApplying)
+  laneLog(`lane: ${laneReady.version} goes in now (${text}); DSH restarts, the window stays`)
+  publishUpdate()
+  let outcome = 'down'
+  try {
+    // The sidebar says it first.
+    await new Promise(resolve => setTimeout(resolve, RESTART_NOTICE_MS))
+    outcome = await applyStaged({
+      cycle: prepare => cycleDsh(prepare, `Updating ${text}…`),
+      beforeStart: () => (laneTrial = beforeStart({ home, target: laneProfile, log: laneLog })),
+      confirm: () => { confirmLane(home); laneTrial = 'good' },
+      trialFailed: () => trialFailed(home),
+      // A quit while the page draws is no verdict on the plugins.
+      judge: async () => { if (await teamDrawn()) return true; if (quitting) throw appStopped('the app is quitting'); return false },
+      log: laneLog,
+    })
+  } catch (error) {
+    laneLog(`lane: the restart of DSH for the plugins failed: ${error?.message ?? error}`)
+  } finally {
+    laneApplying = null
+  }
+  laneLog(`lane: the restart of DSH for the plugins ended: ${outcome}`)
+  if (outcome === 'down') return restartForLane({ why: 'lane, DSH down' })
+  readStaged()
+  aboutPanel()
+  publishUpdate()
+}
+
+// Stop DSH, run `prepare` while it is down, start it again on its port and load the page into it.
+// The frame shows `status` meanwhile. Answers what `prepare` answered.
+async function cycleDsh(prepare, status) {
+  const out = steps('dsh restart', { write: startLog, since: Date.now() })
+  restartingDsh = true
+  try {
+    ready = false
+    if (window && page) window.contentView.removeChildView(page)
+    botViews.hideAll()
+    sendState({ ready: false, status })
+    await dshProcess.stop()
+    out.mark('dsh stopped')
+    if (quitting) throw appStopped('the app is quitting')
+    dshProcess = dshRun()
+    const prepared = prepare()
+    const running = await spawnDsh(await launchPort(portFileOf(home)), out)
+    await forgetDshLogins(session.defaultSession.cookies, dshOrigin).catch(() => {})
+    if (!window || !page || page.webContents.isDestroyed()) throw appStopped('the window is gone')
+    await page.webContents.loadURL(pageUrlOf(running, dshOrigin))
+    await page.webContents.insertCSS(PAGE_IN_CSS).catch(() => {})
+    window.contentView.addChildView(page)
+    ready = true
+    layout()
+    sendState({ ready: true })
+    out.mark('page in')
+    return prepared
+  } catch (error) {
+    // DSH stopped under a quit: that is the app's doing, not the plugins'.
+    throw quitting && error?.code !== 'app' ? appStopped(`the app is quitting (${error?.message ?? error})`) : error
+  } finally {
+    restartingDsh = false
+  }
 }
 
 // See update.js. Its log is logs/update.log.
@@ -447,26 +554,40 @@ function watchUpdates() {
   // two small files, and a patch should show up soon after it is out.
   setTimeout(() => void lookAtLanes(), 60_000).unref?.()
   setInterval(() => void lookAtLanes(), LANE_EVERY_MS).unref?.()
+  // Plugins the lane staged go in by themselves once no agent is at work (auto-apply.js), with
+  // DSH restarted alone; switched off, they wait for a Restart, a quit or the next start.
+  setInterval(() => {
+    const why = applyNow({
+      staged: laneReady,
+      auto: readAutoApply(settingsFileOf(home)),
+      busy: readBusy(busyFileOf(home)),
+      trial: laneTrial,
+      fetching: laneFetching,
+      appUpdate: Boolean(updates?.ready) || update?.state === 'restarting',
+      applying: Boolean(laneApplying),
+      idleMs: powerMonitor.getSystemIdleTime() * 1000,
+      focused: window?.isFocused() === true,
+    })
+    if (why === 'apply') void applyLaneNow()
+  }, LOOK_EVERY_MS).unref?.()
   if (mode !== 'auto') return
   // A downloaded update goes in while the person is away (idle.js); else at a quit or Restart.
-  // Plugins the lane staged go in the same way, by a start of their own.
   const away = setInterval(() => {
     const state = { idleMs: powerMonitor.getSystemIdleTime() * 1000, focused: window?.isFocused() === true, busy: readBusy(busyFileOf(home)) }
-    if (awayInstall({ ready: updates.ready, ...state }) === 'install') {
+    if (awayInstall({ ready: updates.ready, ...state }) === 'install' && !laneApplying) {
       clearInterval(away)
       log.info(`update: ${updates.ready} installs now, while the computer is not in use`)
       installUpdate({ away: true })
-    } else if (!updates.ready && laneReady && awayInstall({ ready: laneReady.version, ...state }) === 'install') {
-      clearInterval(away)
-      laneLog(`lane: ${laneReady.version} goes in now, while the computer is not in use`)
-      restartForLane({ away: true })
     }
   }, LOOK_EVERY_MS)
 }
 
 // The update shows in the page's sidebar (the Bot team's, bottom left, as in DSH's own app),
 // through the page's preload (preload.cjs `omniDesktop.updates`).
-const presentUpdate = () => updatePresentation(update, { checking, failed: checkFailed, plugins: laneReady?.version, fetching: laneFetching })
+const presentUpdate = () => updatePresentation(update, {
+  checking, failed: checkFailed, plugins: laneReady?.version, fetching: laneFetching,
+  lane: { changes: laneApplying ?? laneWaiting, auto: readAutoApply(settingsFileOf(home)), applying: Boolean(laneApplying) },
+})
 function publishUpdate() {
   if (page && !page.webContents.isDestroyed()) page.webContents.send('automagik-updates', presentUpdate())
 }
@@ -477,9 +598,20 @@ ipcMain.handle('automagik-updates-status', event => (fromPage(event) ? presentUp
 ipcMain.handle('automagik-updates-open', async (event) => {
   if (!fromPage(event)) return
   if (updates?.ready) return installUpdate()
-  if (laneReady && update?.state !== 'available') return restartForLane()
+  if (laneReady && update?.state !== 'available') return void applyLaneNow()
   if (update?.state === 'available' && isReleasePage(update.page)) return void shell.openExternal(update.page)
   await checkForUpdates({ quiet: true })
+})
+// The plugins' own notice: put the staged plugins in now, with DSH restarted alone.
+ipcMain.handle('automagik-updates-apply-plugins', (event) => {
+  if (fromPage(event) && laneReady) void applyLaneNow()
+})
+// The setting "Apply plugin updates automatically" (About → Updates).
+ipcMain.handle('automagik-updates-auto-apply', (event, on) => {
+  if (!fromPage(event) || typeof on !== 'boolean') return null
+  const saved = writeAutoApply(settingsFileOf(home), on)
+  publishUpdate()
+  return saved
 })
 
 // Check for Updates (the app menu, the title bar's menu, the sidebar): the sidebar shows the
@@ -499,8 +631,8 @@ async function checkForUpdates({ quiet = false } = {}) {
   publishUpdate()
   if (quiet) return
   if (result === 'latest' && staged && laneReady) {
-    const { response } = await dialog.showMessageBox(window ?? undefined, { type: 'info', buttons: ['Restart now', 'Later'], defaultId: 0, cancelId: 1, message: `${PRODUCT} ${laneReady.version} is ready`, detail: `It goes in when ${PRODUCT} restarts, in a few seconds. You have ${runningVersion()}.` })
-    if (response === 0) restartForLane()
+    const { response } = await dialog.showMessageBox(window ?? undefined, { type: 'info', buttons: ['Update now', 'Later'], defaultId: 0, cancelId: 1, message: `${PRODUCT} ${laneReady.version} is ready`, detail: `${changeText(laneWaiting)}. It goes in when DSH restarts, in a few seconds; the window stays.${readAutoApply(settingsFileOf(home)) ? ' Later, it goes in by itself once no agent is at work.' : ''} You have ${runningVersion()}.` })
+    if (response === 0) void applyLaneNow()
   } else if (result === 'latest') void dialog.showMessageBox(window ?? undefined, { type: 'info', message: `${PRODUCT} is up to date`, detail: `Version ${runningVersion()}` })
   else if (result === 'error') void dialog.showMessageBox(window ?? undefined, { type: 'warning', message: 'Could not check for updates', detail: 'Check your connection and try again.' })
 }
