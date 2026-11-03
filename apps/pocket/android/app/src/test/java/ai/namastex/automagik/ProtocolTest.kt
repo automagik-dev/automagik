@@ -52,10 +52,6 @@ class ProtocolTest {
         val t = CoreTerminal.parse(JSONObject("""{"address":"t1","argv":["/bin/bash"],"state":"live","status":null} """))
         assertEquals("bash", t.agent); assertEquals("", t.status); assertFalse(t.attention)
     }
-    @Test fun shellQuotingDoesNotExecuteSessionNames() {
-        assertEquals("'a'\\''; touch /tmp/nope; '", shellQuote("a'; touch /tmp/nope; "))
-        assertEquals("'default'", shellQuote("default"))
-    }
     @Test fun savedProfilesPreserveVerifiedFingerprintAndSession() {
         val p = HostProfile("a", "Dev", "dev.tailnet.ts.net", "me", 2222, "work", "SHA256:abc")
         assertEquals(p, HostProfile.parse(p.json()))

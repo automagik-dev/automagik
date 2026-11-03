@@ -1,6 +1,8 @@
 package ai.namastex.automagik
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.json.JSONObject
 import org.junit.Test
@@ -23,14 +25,16 @@ class PairingLinkTest {
         assertEquals("ab", PairingLink.parse("herdr-pocket://pair?v=1&n=a%0Ab&c=$code&t=$ticket")?.name)
         assertEquals(60, PairingLink.parse("herdr-pocket://pair?v=1&n=${"x".repeat(200)}&c=$code&t=$ticket")?.name?.length)
     }
-    @Test fun pairedHostsRoundTripAndOldOnesAreSsh() {
+    @Test fun pairedHostsRoundTripAndOldOnesAreLegacySsh() {
         val host = HostProfile("id", "Mac", "0123456789ab", "", 0, transport = "iroh", ticket = ticket)
         assertEquals(host, HostProfile.parse(host.json()))
-        assertEquals("ssh", HostProfile.parse(JSONObject("""{"id":"a","name":"b","host":"c","user":"d"}""")).transport)
+        assertFalse(host.legacySsh)
+        // A machine saved over SSH by an older version still loads, so it can be shown and paired again.
+        val old = HostProfile.parse(JSONObject("""{"id":"a","name":"b","host":"c","user":"d"}"""))
+        assertEquals("ssh", old.transport); assertTrue(old.legacySsh)
     }
 
-    @Test fun aPairedDesktopsTerminalSaysPocketLinkNotSsh() {
+    @Test fun theTerminalSaysPocketLink() {
         assertEquals("Pocket Link encrypted", HostProfile("id", "Mac", "0123456789ab", "", 0, transport = "iroh", ticket = ticket).encryption)
-        assertEquals("SSH encrypted", HostProfile("id", "Mac", "mac.local", "me").encryption)
     }
 }

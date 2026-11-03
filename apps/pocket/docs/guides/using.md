@@ -2,7 +2,7 @@
 title: "Using Automagik Pocket"
 type: guide
 created: 2026-11-01
-updated: 2026-11-01
+updated: 2026-11-03
 tags: [guide, users]
 ---
 # Using Automagik Pocket
@@ -11,21 +11,19 @@ Everything the [README](../../README.md) keeps short. Install and first connecti
 
 ## Machines
 
-- Save several machines, edit them later, and connect with one tap from the start screen. Adding a
-  machine saves it and connects straight away.
-- Pocket Link and SSH machines sit in the same list.
+- Pair several machines, rename them later, and connect with one tap from the start screen.
+  Pairing a machine saves it and connects straight away.
 - **Pocket Link:** the phone dials the desktop by its public key over iroh. The connection is
   direct on the same network or through hole punching, and otherwise through n0's public relays.
   It is end-to-end encrypted either way. No port is opened on the computer. Removing the phone in
   the desktop's Pocket Link dialog disconnects it at once. The QR scanner is bundled, so it works
   without Google Play services; the app asks for the camera the first time.
-- **SSH:** the phone uses its own Ed25519 key. If the host refuses it, the app asks for the SSH
-  password and doesn't save it. The host key fingerprint is checked before logging in, and a
-  changed key needs your decision again.
-- Over SSH the app runs `hc connect`. If `hc` isn't on the login PATH it tries `herdr-core connect`
-  and then `~/.local/bin/hc`. Nothing is installed on the host: no relay, web server or plugin.
-- While the start screen or **Machines** is open, the app lists computers on the same network that
-  advertise SSH.
+- **No SSH.** The app no longer connects over SSH ([RFC 0008](../rfcs/0008-drop-ssh.md)). A
+  machine saved over SSH in an older version stays in **Machines**, greyed, with one button:
+  **Pair with QR**. It opens the scanner; scan that computer's Pocket Link code and the old entry
+  is replaced by the paired one, keeping its core session. A cancelled or failed scan leaves the
+  entry as it was. You can also remove it. Once no SSH machine is left, the app deletes the SSH
+  key older versions made.
 
 ## Tabs
 
@@ -125,10 +123,9 @@ What the numbers mean:
 
 - On by default. While a machine is connected, a "Watching N machines" notification keeps the
   connections open. **Stop** there disconnects.
-- A dropped Pocket Link or key-based SSH connection comes back on its own. A password connection
-  waits for you.
+- A dropped connection comes back on its own.
 - After the phone restarts, the watch comes back once you unlock the phone, with the machines it
-  was watching. Not if watching was off, not for a password connection, and not after **Force
+  was watching. Not if watching was off, and not after **Force
   stop** in Android's app settings: open the app once to start again. Some phones' battery
   settings (for example Samsung's sleeping apps) can keep it from starting.
 - In the background the app checks for changes less often and skips git checks.
@@ -157,8 +154,7 @@ stops opening it, for example after reinstalling, set the assistant again.
 - Android closes the app to update it. A quiet notification in the **Updates** channel then says
   **Updated to X** with the release's first note, and Settings → About shows the same line.
 - If **Watch in background** was holding connections, the new version reconnects those machines
-  on its own, whether the update came from GitHub or Google Play. A password connection waits for
-  you.
+  on its own, whether the update came from GitHub or Google Play.
 - When Android won't install silently, a notification says **Automagik X is ready**, once per
   version. Tap **Install** to open Settings and Android's confirm prompt. This happens on Android
   11 and older, on a phone plan, with the switch off, until Automagik may install apps (the first
@@ -171,11 +167,10 @@ stops opening it, for example after reinstalling, set the assistant again.
 - Connections live in the app; with Watch in background they stay open in a foreground service.
   After an update or a phone restart they come back on their own. After Android stops the
   service or the app is force-stopped, open the app and connect again.
-- The SSH command assumes a Unix shell, so Windows hosts don't work.
+- Only computers running Herdr desktop with the Pocket Link mod can be reached; there is no SSH.
 - The app reads the desktop's layout. It doesn't edit, rename or delete it, and doesn't run
   desktop mods.
 - Kitty images and Windows win32-input-mode aren't supported.
 - herdr-core gives the last active viewer control of a terminal's size, so opening it on the phone
   can resize it on the desktop.
-- The phone's keys are in app storage that is never backed up. There's no key backup and no
-  hardware-backed SSH signing.
+- The phone's keys are in app storage that is never backed up. There's no key backup.

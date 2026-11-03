@@ -59,8 +59,6 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     implementation("androidx.webkit:webkit:1.13.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
-    implementation("com.github.mwiede:jsch:2.28.8")
-    implementation("org.bouncycastle:bcprov-jdk15to18:1.83")
     // iroh: dial a paired desktop by its key; direct when it can, an end-to-end encrypted relay when it can't.
     implementation("computer.iroh:iroh-android:1.2.0")
     // JNA, which iroh's bindings load, pinned above the 5.15.0 that iroh-android 1.2.0 asks for: 5.15.0's

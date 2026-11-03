@@ -2,7 +2,7 @@
 title: "Privacy policy"
 type: policy
 created: 2026-11-01
-updated: 2026-11-01
+updated: 2026-11-03
 tags: [privacy, policy, play]
 ---
 # Automagik Pocket privacy policy
@@ -25,8 +25,8 @@ Effective 2026-11-01. Applies to the Android app **Automagik Pocket** (app ID
 | Data | Where it goes | Why |
 |---|---|---|
 | Terminal screens, agent status, messages and replies you type or speak | Only between the phone and your machine | This is what the app is for |
-| Machine details: name, hostname, SSH user, port, session name, host key fingerprint | Stays on the phone | To reconnect |
-| SSH password | Sent to that machine when it asks; **never saved** | To log in when the key is refused |
+| Paired machine details: name, session name, the desktop's Pocket Link ticket | Stays on the phone | To reconnect |
+| Machines saved over SSH by an older version: name, hostname, SSH user, port, session name, host key fingerprint | Stays on the phone and is never used to connect; deleted when you pair that computer with QR or remove it | So the card can ask you to pair it again ([RFC 0008](rfcs/0008-drop-ssh.md)) |
 | The phone's make and model (for example "Pixel 8") | Sent once to the desktop you pair with | So the desktop can name the paired phone |
 | Folder git status, origin remote URL and Herdr desktop program icons | Read from your machine; the git answers stay in memory, icons cached on the phone | To draw the spaces tree like the desktop, and to group spaces into projects and branches into tasks |
 | Usage meter summary: token counts and estimated $ per repository, branch, model and hour (the `herdr-meter` document, if you run the meter) | Read from your own machines and kept in memory; never written, never sent anywhere else | To show spend on Today, Projects and Tasks |
@@ -36,27 +36,24 @@ Nothing else is collected. We, the developers, receive none of this data.
 
 ## Network connections
 
-1. **Your machines over SSH.** Direct to the host and port you enter. The host key fingerprint is
-   checked and a changed key needs your decision again.
-2. **Your machines over Pocket Link.** iroh connections, end-to-end encrypted, dialled by public
+1. **Your machines over Pocket Link.** iroh connections, end-to-end encrypted, dialled by public
    key. When no direct path exists, the encrypted traffic passes through relay servers run by n0
    (the iroh project). Relays forward the encrypted bytes; they can't read them, though they do
    see the network addresses involved.
-3. **GitHub.** When the app opens (at most every 15 minutes), every 6 hours while it or **Watch in
+2. **GitHub.** When the app opens (at most every 15 minutes), every 6 hours while it or **Watch in
    background** runs, and when you tap **Settings → About → Check for updates**, the app downloads
    `latest.json` from this repo's latest GitHub release. When a newer version is out it downloads
    the APK from GitHub too: on its own on Wi-Fi with **Install updates automatically** on, otherwise
    when you tap **Install**. GitHub sees your IP address and a User-Agent with the app version. The
    check itself can't be turned off in the current version.
-4. **Your local network.** While the welcome screen or the Machines screen is open, the app looks
-   for SSH servers advertised on the local network (mDNS, `_ssh._tcp`) to suggest them. It sends
-   nothing to them until you connect.
-5. **Web links.** A link you tap in a terminal opens in your browser.
+3. **Web links.** A link you tap in a terminal opens in your browser.
 
 ## What is stored on the phone
 
 - Your saved machines and settings.
-- The phone's SSH key and its Pocket Link (iroh) key, in app storage that Android never backs up.
+- The phone's Pocket Link (iroh) key, in app storage that Android never backs up.
+- Only if you used SSH in an older version: that version's SSH key, in the same storage. The app
+  deletes it once no machine saved over SSH is left.
 - Cached program icons, and a downloaded update until it installs.
 - The last crash report, if the app crashed (below).
 

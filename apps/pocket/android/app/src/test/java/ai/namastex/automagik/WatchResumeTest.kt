@@ -52,9 +52,9 @@ class WatchResumeTest {
         assertFalse(WatchResume.resumes(null, watch = true, watched = setOf("a")))
     }
 
-    @Test fun keepsWhatIsWatchedButNotPasswordsOrTheDemo() {
-        assertEquals(setOf("a", "b"), WatchResume.watched(watch = true, demo = false, active = setOf("a", "b", "p"), passwordHosts = setOf("p")))
-        assertEquals(emptySet<String>(), WatchResume.watched(watch = false, demo = false, active = setOf("a"), passwordHosts = emptySet()))
-        assertEquals(emptySet<String>(), WatchResume.watched(watch = true, demo = true, active = setOf("a"), passwordHosts = emptySet()))
+    @Test fun keepsWhatIsWatchedButNotTheDemo() {
+        assertEquals(setOf("a", "b"), WatchResume.watched(watch = true, demo = false, active = setOf("a", "b")))
+        assertEquals(emptySet<String>(), WatchResume.watched(watch = false, demo = false, active = setOf("a")))
+        assertEquals(emptySet<String>(), WatchResume.watched(watch = true, demo = true, active = setOf("a")))
     }
 }

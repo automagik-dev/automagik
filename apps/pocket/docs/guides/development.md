@@ -2,7 +2,7 @@
 title: "Development"
 type: guide
 created: 2026-11-01
-updated: 2026-11-01
+updated: 2026-11-03
 tags: [guide, build, test, contributors]
 ---
 # Development
@@ -65,9 +65,6 @@ HERDR_TEST_HC=/absolute/path/to/hc ./gradlew :app:testDebugUnitTest --rerun
 They start their own core sessions with temporary XDG state, config and runtime folders, and stop
 only those.
 
-**SSH fixture (optional).** `android/scripts/ssh_test_host.py` runs a loopback-only SSH server
-against an isolated core. It needs Python Paramiko and `HERDR_TEST_HC`. The app doesn't need it.
-
 **Terminal page (Playwright).** CI runs it on every pull request:
 
 ```sh
@@ -113,7 +110,7 @@ App code, `android/app/src/main/java/ai/namastex/automagik/`:
 |---|---|
 | `Model.kt` | Machine profiles, terminal records, the desktop layout reader, frame codec |
 | `CoreClient.kt` | Framed JSON-RPC to herdr-core, events, terminal channels with flow control |
-| `Ssh.kt` | Ed25519 key, host key pinning, SSH transport |
+| `LegacySsh.kt` | Machines saved over SSH before [RFC 0008](../rfcs/0008-drop-ssh.md): re-pair with QR, then delete the old key |
 | `IrohLink.kt`, `PairScreens.kt` | Pocket Link pairing and sessions |
 | `PocketViewModel.kt` | Connections, inventory, selection, terminal lifecycle, input order |
 | `MainActivity.kt`, `Screens.kt`, `ProjectScreens.kt`, `Cockpit.kt`, `Projects.kt`, `Nav.kt`, `Sidebar*.kt` | Compose UI |

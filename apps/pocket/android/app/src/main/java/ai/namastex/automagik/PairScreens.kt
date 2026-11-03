@@ -29,7 +29,7 @@ import androidx.compose.ui.unit.sp
                 keyboardActions = KeyboardActions(onDone = { if (valid) onPair(link) }), modifier = Modifier.fillMaxWidth())
             if (link.isNotBlank() && !valid) Text("That isn’t a Pocket Link pairing link.", color = Blocked, fontSize = 12.sp)
             if (pairing) Row { CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp); Spacer(Modifier.width(10.dp)); Text("Pairing…", fontSize = 13.sp) }
-            Text("No SSH or password needed. The connection is end to end encrypted: directly on your network, or through an encrypted relay when it can’t be.", color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
+            Text("No password needed. The connection is end to end encrypted: directly on your network, or through an encrypted relay when it can’t be.", color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
         }
     }, confirmButton = { TextButton(onClick = { onPair(link) }, enabled = valid && !pairing) { Text("Pair") } },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !pairing) { Text("Cancel") } })

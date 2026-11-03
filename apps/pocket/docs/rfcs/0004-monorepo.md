@@ -24,7 +24,7 @@ ALPNs, see [RFC 0003](0003-pocket-link-pairing.md)).
 | Path | What |
 |---|---|
 | `android/` | Gradle project: `gradlew`, `settings.gradle.kts`, `gradle.properties`, `app/` |
-| `android/scripts/` | `test_terminal.py`, `vendor-terminal.sh`, `ssh_test_host.py` |
+| `android/scripts/` | `test_terminal.py`, `vendor-terminal.sh` (`ssh_test_host.py` removed by [RFC 0008](0008-drop-ssh.md)) |
 | `desktop/pocket-link/` | The mod repo, imported with its history: `README.md`, `RECIPE.md`, `keys.json`, `mods/pocket-link/` |
 | `version.properties`, `scripts/version.sh` | Product version, at the root |
 | `docs/`, `README.md`, `SECURITY.md`, `THIRD_PARTY_NOTICES.md`, `LICENSE`, `.github/` | Root |

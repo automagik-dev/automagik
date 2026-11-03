@@ -17,10 +17,9 @@ object WatchResume {
      *  once. Not LOCKED_BOOT_COMPLETED: the keys and preferences are in storage that opens only after that unlock. */
     val ACTIONS = setOf(Intent.ACTION_MY_PACKAGE_REPLACED, Intent.ACTION_BOOT_COMPLETED)
 
-    /** What to keep for after a restart. Nothing with watching off or in the demo; a machine connected with a typed
-     *  password isn't kept, because the password isn't. */
-    fun watched(watch: Boolean, demo: Boolean, active: Set<String>, passwordHosts: Set<String>): Set<String> =
-        if (!watch || demo) emptySet() else active - passwordHosts
+    /** What to keep for after a restart. Nothing with watching off or in the demo. */
+    fun watched(watch: Boolean, demo: Boolean, active: Set<String>): Set<String> =
+        if (!watch || demo) emptySet() else active
 
     /** Whether the app was watching before it was replaced or the phone restarted, and still should. */
     fun wanted(watch: Boolean, watched: Set<String>?): Boolean = watch && !watched.isNullOrEmpty()
