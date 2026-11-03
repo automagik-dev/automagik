@@ -1,0 +1,52 @@
+{
+  "id": "herdr.cli",
+  "title": "The am and automagik-herdr commands",
+  "kind": "binary",
+  "paths": [
+    "herdr/mods/am-sidebar/bin/**"
+  ],
+  "provides": [
+    "bots.cli@1",
+    "bots.attach-ledger@1",
+    "bots.whois-json@1"
+  ],
+  "requires": [
+    {
+      "cap": "herdr.pack",
+      "major": 1
+    }
+  ],
+  "os": [
+    "macos"
+  ],
+  "targets": "local",
+  "artifact": "automagik-herdr-pack-{version}.tgz",
+  "select": "am-sidebar/bin/",
+  "entry": {
+    "install": [
+      "node",
+      "part.mjs",
+      "install",
+      "herdr.cli"
+    ],
+    "uninstall": [
+      "node",
+      "part.mjs",
+      "uninstall",
+      "herdr.cli"
+    ],
+    "doctor": [
+      "node",
+      "part.mjs",
+      "doctor",
+      "herdr.cli"
+    ]
+  },
+  "writes": [
+    "~/.local/bin/am",
+    "~/.local/bin/automagik-herdr"
+  ],
+  "set": [
+    "code"
+  ]
+}

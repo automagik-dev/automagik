@@ -87,7 +87,8 @@ export const sumsName = (version) => `${tarballName(version)}.sha256`;
 
 /**
  * The installer's ownership record (`<app home>/automagik-herdr/installed-by-install.sh`) as data.
- * v2: `version=`, `mods=<comma list>`, `layout=added|kept`, `before=kept|none`, and
+ * v2: `version=`, `mods=<comma list>`, `layout=added|kept|removed` (removed: `am uninstall herdr.layout`
+ * took it out, and no install or update puts it back), `before=kept|none`, and
  * `adopted=<mod>:<path under automagik-herdr/>,…` for folders moved to backup/ on --adopt, and
  * `migrated=backup/<name>,…`, the rename migration's journals (oldest first) that a rollback across
  * the rename reverts, `installed=<ISO time>` when update.mjs last put the pack's folders in place

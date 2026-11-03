@@ -866,7 +866,8 @@ export function setupHome({ modsDir, tgzDir, record, log = () => {}, herdrApp = 
 /**
  * The pack's layout (D8): added when absent; replaced only when byte-identical to v0.2.x's or to
  * the last pack's; otherwise kept with a note. Records it and keeps the pack's copy as the
- * reference. Returns "added", "replaced", "kept", "same" or null (the tarball has none).
+ * reference. Returns "added", "replaced", "kept", "same", "removed" (the record says the person
+ * uninstalled it: `layout=removed`, left out) or null (the tarball has none).
  */
 export function placeLayout({ modsDir, tgzDir, record, log = () => {} }) {
   const appHome = dirname(resolve(modsDir));
@@ -878,7 +879,11 @@ export function placeLayout({ modsDir, tgzDir, record, log = () => {} }) {
     const body = readFileSync(shipped);
     const had = isFile(live) ? readFileSync(live) : null;
     const lastPack = isFile(ref) ? readFileSync(ref) : null;
-    if (!had || sha256(had) === V020_LAYOUT_SHA256 || (lastPack && had.equals(lastPack))) {
+    if (!had && record.layout === "removed") {
+      // Uninstalled on its own (the herdr.layout part): an update or a repair never adds it back.
+      log(`left out the automagik layout: it was uninstalled (\`am install herdr.layout\` puts it back)`);
+      placed = "removed";
+    } else if (!had || sha256(had) === V020_LAYOUT_SHA256 || (lastPack && had.equals(lastPack))) {
       placed = "same";
       if (!had || !had.equals(body)) {
         mkdirSync(dirname(live), { recursive: true });
@@ -890,7 +895,7 @@ export function placeLayout({ modsDir, tgzDir, record, log = () => {} }) {
       log(`kept your automagik layout (${live}): it differs from the one v0.2 shipped; the pack's is in ${ref}`);
       placed = "kept";
     }
-    record.layout = !had || record.layout === "added" ? "added" : "kept";
+    if (placed !== "removed") record.layout = !had || record.layout === "added" ? "added" : "kept";
     writeFileSync(ref, body);
     writeMarker(modsDir, record);
   }
@@ -1005,7 +1010,7 @@ export async function repairInstall({ tgzPath, version, modsDir = defaultModsDir
   for (const d of found.damaged) {
     log(`differs from the release: mods/${d.mod} (${d.files.slice(0, 5).join(", ")}${d.files.length > 5 ? `, and ${d.files.length - 5} more` : ""})`);
   }
-  if (found.layout === "missing") log(`missing: the automagik layout (${join(dirname(resolve(modsDir)), PACK_LAYOUT)})`);
+  if (found.layout === "missing" && readMarker(modsDir)?.layout !== "removed") log(`missing: the automagik layout (${join(dirname(resolve(modsDir)), PACK_LAYOUT)})`);
   const repaired = found.repair.length ? await applyUpdate({ tgzPath, version, modsDir, repair: found.repair, log }) : null;
   const tgzDir = mkdtempSync(join(tmpdir(), "automagik-herdr-layout-"));
   try {
