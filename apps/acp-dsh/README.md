@@ -32,7 +32,7 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
 |---|---|---|---|
 | `acp-claude` | Claude Code | the person's `claude` (`CLAUDE_CODE_EXECUTABLE`) | `@agentclientprotocol/claude-agent-acp` |
 | `acp-codex` | Codex | the person's `codex` (`CODEX_PATH`) | `@agentclientprotocol/codex-acp` |
-| `acp-fake` | `test/fixtures/fake-agent.mjs`, set as `fakeAgent` | Node | none; tests only |
+| `acp-fake` | `dev/fake-agent.mjs`, set as `fakeAgent` | Node | none; tests only |
 
 An agent is offered only when its CLI is on PATH or where its installer puts it (`~/.local/bin`,
 `/opt/homebrew/bin`, …). The settings `claude: false` or `codex: false` take one away.

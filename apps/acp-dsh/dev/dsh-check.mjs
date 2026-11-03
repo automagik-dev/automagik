@@ -23,7 +23,7 @@ import { join, resolve } from 'node:path'
 
 const PLUGIN = resolve(import.meta.dirname, '..')
 const DSH_BIN = join(PLUGIN, 'dev', 'harness', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
-const FAKE = join(PLUGIN, 'test', 'fixtures', 'fake-agent.mjs')
+const FAKE = join(PLUGIN, 'dev', 'fake-agent.mjs')
 const args = process.argv.slice(2)
 const AGENT = args.includes('--agent') ? args[args.indexOf('--agent') + 1] : 'fake'
 if (!['fake', 'claude', 'codex'].includes(AGENT)) throw new Error(`--agent fake, claude or codex, not ${AGENT}`)

@@ -35,7 +35,7 @@ new AgentSideConnection(conn => ({
     await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `Fake agent, turn ${session.turns}: ` } })
     await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `you said "${said}".` } })
     if (/hang/.test(said)) {
-      await new Promise((resolve) => { session.wake = resolve })
+      if (!session.cancelled) await new Promise((resolve) => { session.wake = resolve })
       return { stopReason: 'cancelled' }
     }
     const calls = /twice/.test(said) ? 2 : 1
