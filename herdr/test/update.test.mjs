@@ -11,7 +11,7 @@ import { gzipSync } from "node:zlib";
 import {
   POINTER_SIG_URL, POINTER_URL, applyUpdate, checkForUpdate, compareVersions, downloadUpdate, fetchPointer, installUpdate, noticeText, packKeys,
   packOfPointer, parseSums, verifyPointer,
-  markerOf, pickUpdate, prevSetOf, readMarker, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
+  markerOf, offDirOf, pickUpdate, prevSetOf, readMarker, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
 } from "../mods/am-sidebar/update.mjs";
 import { formatMarker, parseMarker } from "../mods/am-sidebar/release.js";
 import { cmdUpdate } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
@@ -830,4 +830,40 @@ test("node update.mjs apply --expect <v>: the flag takes a value; other commands
   assert.deepEqual(parseArgs(["apply", "--expect", "0.8.1", "--mods", "/m"]), { command: "apply", opts: { expect: "0.8.1", mods: "/m" } });
   assert.throws(() => parseArgs(["apply", "--expect"]), /usage/);
   assert.throws(() => parseArgs(["check", "--expect", "0.8.1"]), /usage/);
+});
+
+test("a pack mod switched off (mods-disabled/) is updated where it is and stays off; rollback and retiring keep it off", async () => {
+  const { home, mods } = appHome("0.1.0");
+  const off = offDirOf(mods);
+  assert.equal(off, join(home, "mods-disabled"));
+  mkdirSync(off);
+  renameSync(join(mods, "am-tabs"), join(off, "am-tabs"));
+  mkdirSync(join(off, "am-tabs", ".state"));
+  writeFileSync(join(off, "am-tabs", ".state", "mine"), "kept\n");
+  const t = tarball("0.2.0");
+  const t3 = tarball("0.3.0", { mods: ["am-sidebar"] });
+  try {
+    const lines = [];
+    const done = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods, log: (l) => lines.push(l) });
+    assert.deepEqual(done.off, ["am-tabs"]);
+    assert.equal(existsSync(join(mods, "am-tabs")), false, "never switched back on by an update");
+    assert.equal(readFileSync(join(off, "am-tabs", "main.js"), "utf8"), 'export const v = "0.2.0";\n', "updated in mods-disabled/");
+    assert.equal(readFileSync(join(off, "am-tabs", ".state", "mine"), "utf8"), "kept\n", "its private paths carried");
+    assert.equal(readFileSync(join(kept(mods, "am-tabs"), "main.js"), "utf8"), 'export const v = "0.1.0";\n', "the old copy is in the kept set");
+    assert.deepEqual(readMarker(mods).mods, MODS, "the record still lists it");
+    assert.ok(lines.includes("updated mods-disabled/am-tabs: it stays off"));
+
+    rollback({ modsDir: mods });
+    assert.equal(existsSync(join(mods, "am-tabs")), false, "a rollback keeps it off");
+    assert.equal(readFileSync(join(off, "am-tabs", "main.js"), "utf8"), 'export const v = "0.1.0";\n');
+    assert.equal(readFileSync(join(off, "am-tabs", ".state", "mine"), "utf8"), "kept\n");
+
+    // A release that no longer ships it: the off copy leaves with the set, like a live one.
+    const r = await applyUpdate({ tgzPath: t3.path, version: "0.3.0", modsDir: mods });
+    assert.deepEqual(r.retired, ["am-tabs"]);
+    assert.equal(existsSync(join(off, "am-tabs")), false);
+    assert.equal(existsSync(kept(mods, "am-tabs")), true);
+  } finally {
+    for (const d of [t.src, t3.src, home]) rmSync(d, { recursive: true, force: true });
+  }
 });

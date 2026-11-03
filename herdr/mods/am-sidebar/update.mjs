@@ -72,6 +72,8 @@ export const defaultModsDir = (env = process.env) => join(appHomeOf(env), "mods"
 export const stateDirOf = (modsDir) => join(dirname(resolve(modsDir)), "automagik-herdr");
 export const prevSetOf = (modsDir) => join(stateDirOf(modsDir), ".prev");
 export const markerOf = (modsDir) => join(stateDirOf(modsDir), "installed-by-install.sh");
+/** Where a mod switched off waits (the mod manager's setEnabled, or `am uninstall` of one pack mod): beside mods/. */
+export const offDirOf = (modsDir) => join(dirname(resolve(modsDir)), "mods-disabled");
 const backupOf = (modsDir) => join(stateDirOf(modsDir), "backup");
 
 const isFile = (path) => { try { return statSync(path).isFile(); } catch { return false; } };
@@ -79,6 +81,16 @@ const isLink = (path) => { try { return lstatSync(path).isSymbolicLink(); } catc
 const exists = (path) => { try { lstatSync(path); return true; } catch { return false; } };
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
 const today = () => new Date().toISOString().slice(0, 10);
+/**
+ * Where a folder of the record's is: mods/<m>, else mods-disabled/<m> (switched off), else null.
+ * A link in mods/ is never the record's to move (a checkout), and hides an off copy.
+ */
+function placeOf(modsDir, m) {
+  const live = join(modsDir, m), off = join(offDirOf(modsDir), m);
+  if (isLink(live)) return null;
+  if (exists(live)) return live;
+  return exists(off) && !isLink(off) ? off : null;
+}
 /** A folder name the pack may own: lowercase words and dashes, never Pocket Link's. */
 const packFolder = (name) => /^[a-z0-9][a-z0-9-]*$/.test(name) && name !== POCKET_LINK;
 /** The other name of a renamed folder (old → am-*, am-* → old), or undefined. */
@@ -428,7 +440,7 @@ export async function verifyInstall({ tgzPath, version, modsDir = defaultModsDir
   try {
     const folders = await stagePack(tgzPath, version, staging);
     const owned = new Set(readMarker(modsDir)?.mods ?? []);
-    const disabled = join(dirname(resolve(modsDir)), "mods-disabled");
+    const disabled = offDirOf(modsDir);
     const missing = [], damaged = [];
     for (const m of folders) {
       if (m.toLowerCase() === POCKET_LINK) continue;
@@ -478,7 +490,7 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     };
     const owned = new Set(before?.mods ?? []);
     const kept = readSet(modsDir);
-    const plan = { installed: [], replaced: [], renamed: [], left: [], adopted: [], retired: [], repaired: [] };
+    const plan = { installed: [], replaced: [], renamed: [], left: [], adopted: [], retired: [], repaired: [], off: [] };
     const moves = [];
     // A folder the person owns moves to backup/ (never replaced) and is recorded, so --uninstall puts it back.
     const adoptFolder = (m) => {
@@ -492,6 +504,17 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
       // A repair reinstalls only the folders it names; every other one the record lists stays as it
       // is, and one it doesn't list (the person's own, or one they removed) is never installed.
       if (repair && !repair.includes(m)) { if (owned.has(m)) record.mods.push(m); continue; }
+      // A mod of the record's switched off (in mods-disabled/, not mods/) is updated where it is and
+      // stays off: its old copy goes into the kept set like any replaced folder, never back on.
+      const off = join(offDirOf(modsDir), m);
+      if (owned.has(m) && !exists(live) && exists(off) && !isLink(off)) {
+        carryPrivate(off, fresh);
+        moves.push([off, join(next, m)], [fresh, off]);
+        plan.replaced.push(m);
+        plan.off.push(m);
+        record.mods.push(m);
+        continue;
+      }
       if (isLink(live)) {
         if (owned.has(m)) throw new Error(`${live} is a link (a checkout?): update it with git instead`);
         plan.left.push(m);
@@ -548,8 +571,10 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     }
     // A folder the record lists that this release no longer ships leaves mods/ with the set.
     for (const m of repair ? [] : owned) {
-      if (folders.includes(m) || !packFolder(m) || !exists(join(modsDir, m)) || isLink(join(modsDir, m))) continue;
-      moves.push([join(modsDir, m), join(next, m)]);
+      if (folders.includes(m) || !packFolder(m)) continue;
+      const at = placeOf(modsDir, m);
+      if (!at) continue;
+      moves.push([at, join(next, m)]);
       plan.retired.push(m);
     }
     mkdirSync(modsDir, { recursive: true });
@@ -569,6 +594,7 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     if (before?.v1) { try { carryV1(modsDir, record, log); writeMarker(modsDir, record); } catch (error) { warnings.push(`v0.2's kept copies stay where they were (${error.message})`); } }
     if (keep.length) keepLayout(modsDir, next, warnings);
     keepSet(modsDir, next, keep, before, old, rename, warnings);
+    for (const m of plan.off) log(`updated mods-disabled/${m}: it stays off`);
     for (const m of plan.left) {
       const why = Object.hasOwn(ABSORBED, m) ? "the pack's sidebar or Markdown mod does its job now" : "--adopt moves it to backup/ and installs the pack's";
       log(`left alone: mods/${m} (not installed by automagik-herdr; ${why})`);
@@ -609,10 +635,17 @@ export function rollback({ modsDir = defaultModsDir(), rename = renameSync, log 
   }
   for (const m of set.mods) {
     const live = join(modsDir, m);
+    const off = join(offDirOf(modsDir), m);
     if (exists(live)) {
       carryPrivate(live, join(prev, m));
       moves.push([live, join(next, m)]);
       out.push(m);
+    } else if (owned.has(m) && exists(off) && !isLink(off)) {
+      // Switched off: the kept copy comes back where it is, still off.
+      carryPrivate(off, join(prev, m));
+      moves.push([off, join(next, m)], [join(prev, m), off]);
+      out.push(m);
+      continue;
     } else {
       // Across the rename: the live twin's private paths go back with it (it leaves below).
       const twin = twinOf(m), twinLive = twin && join(modsDir, twin);
@@ -621,8 +654,10 @@ export function rollback({ modsDir = defaultModsDir(), rename = renameSync, log 
     moves.push([join(prev, m), live]);
   }
   for (const m of owned) {
-    if (set.mods.includes(m) || !packFolder(m) || !exists(join(modsDir, m)) || isLink(join(modsDir, m))) continue;
-    moves.push([join(modsDir, m), join(next, m)]);
+    if (set.mods.includes(m) || !packFolder(m)) continue;
+    const at = placeOf(modsDir, m);
+    if (!at) continue;
+    moves.push([at, join(next, m)]);
     out.push(m);
   }
   // The kept set's folders come back out of `prev`, which then holds only what stays behind
