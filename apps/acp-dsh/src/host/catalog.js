@@ -16,6 +16,8 @@ export const DEFAULT_MODEL = 'default'
 // waits on every provider at once.
 export const LIST_WAIT_MS = 8000
 const PROBE_TIMEOUT_MS = 120_000
+// How long a turn with no effort waits for a probe still reading its model's own effort.
+const OWN_WAIT_MS = 20_000
 const RETRY_MS = 10 * 60 * 1000
 
 /**
@@ -200,6 +202,23 @@ export class Catalog {
       clearTimeout(timer)
     }
     return this.current()
+  }
+
+  /**
+   * The effort the agent itself shows for a model, as read for that model: never a stand-in's,
+   * so a probe still reading it is waited on (a while), then what was kept, else undefined.
+   */
+  async ownEffort(id) {
+    await this.models()
+    const read = () => this.live?.models.find(model => model.id === id)
+    if (read()?.probed === false && this.probing !== undefined) {
+      let timer
+      await Promise.race([this.probing, new Promise((resolve) => { timer = setTimeout(resolve, OWN_WAIT_MS); timer.unref?.() })])
+      clearTimeout(timer)
+    }
+    const live = read()
+    if (live?.probed) return live.reasoning?.defaultEffort
+    return this.saved?.models.find(model => model.id === id)?.reasoning?.defaultEffort
   }
 
   /** One model by id, or undefined when the agent does not offer it. */

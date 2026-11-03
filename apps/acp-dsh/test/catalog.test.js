@@ -118,3 +118,23 @@ test('a kept file of any other shape is not used: the stand-ins answer until a p
   writeFileSync(join(home, 'acp-test.json'), JSON.stringify({ key: 'v1', models: [{ id: 'opus', name: 'Opus', reasoning: { efforts: [{ id: 'low', name: 'Low' }], defaultEffort: 'low' } }] }))
   assert.deepEqual((await catalog(home, { key: () => undefined }).models()).map(model => model.id), ['opus'])
 })
+
+test("a model's own effort is the one read for it: a probe still reading it is waited on, a stand-in never answers", async (t) => {
+  const made = catalog(undefined, { key: () => undefined })
+  t.after(() => made.dispose())
+  const effort = (id, defaultEffort) => ({ efforts: [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }].filter(level => id === 'default' || level.id !== 'medium'), defaultEffort })
+  // Mid-probe: the start model is read, the other not yet, so its listed efforts stand in from the start model's.
+  made.live = { complete: false, models: [{ id: 'default', name: 'Default', reasoning: effort('default', 'medium'), probed: true }, { id: 'small', name: 'Small', probed: false }] }
+  let done
+  made.probing = new Promise((resolve) => { done = resolve })
+  assert.equal((await made.model('small')).reasoning.defaultEffort, 'medium')
+  const own = made.ownEffort('small')
+  made.live.models[1] = { id: 'small', name: 'Small', reasoning: effort('small', 'low'), probed: true }
+  done()
+  assert.equal(await own, 'low')
+  assert.equal(await made.ownEffort('default'), 'medium')
+  // Nothing read and nothing kept: no own effort, whatever the stand-ins list.
+  const cold = catalog(undefined, { key: () => undefined })
+  t.after(() => cold.dispose())
+  assert.equal(await cold.ownEffort('default'), undefined)
+})

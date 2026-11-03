@@ -206,7 +206,7 @@ export class AcpAdapter extends LlmAdapter {
       }
       // The Session's model and effort, then its level as the agent's own permission mode, before every prompt.
       try {
-        const own = options.reasoningEffort === undefined ? (await agent.catalog?.model(options.model))?.reasoning?.defaultEffort : undefined
+        const own = options.reasoningEffort === undefined ? await agent.catalog?.ownEffort(options.model) : undefined
         await choose(live.run, options.model, options.reasoningEffort, own)
       } catch (error) {
         return yield finish('error', `${agent.name} would not take ${options.model}${options.reasoningEffort ? ` at ${options.reasoningEffort} effort` : ''}: ${error?.message ?? error}`)
