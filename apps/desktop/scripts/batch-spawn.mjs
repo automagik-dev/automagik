@@ -7,6 +7,10 @@
 
 const BATCH = /\.(cmd|bat)$/i
 const UNSAFE = /["%\r\n\0]/
+// A name or path cmd.exe reads as one word. The batch file itself is quoted only when it is not
+// one: started by a quoted bare name ("npm.cmd"), a batch file finds itself in the current
+// folder (%~dp0) instead of its own, and npm.cmd then looks for npm there.
+const PLAIN = /^[\w.:\\/-]+$/
 
 /** One argument as cmd.exe and the C runtime behind it read it back, unchanged. */
 export function quoteForCmd(arg) {
@@ -22,5 +26,5 @@ export function quoteForCmd(arg) {
  */
 export function batchSafe(file, args = [], options = {}, platform = process.platform) {
   if (platform !== 'win32' || !BATCH.test(file)) return [file, args, options]
-  return [quoteForCmd(file), args.map(quoteForCmd), { ...options, shell: true }]
+  return [PLAIN.test(file) ? file : quoteForCmd(file), args.map(quoteForCmd), { ...options, shell: true }]
 }
