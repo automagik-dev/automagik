@@ -97,7 +97,7 @@ Before the bridge can run, the dialog shows one of two other screens in place of
     - `findNode` and `noNodeMessage` from `./find-node.js`
   - **Finding Node** (`find-node.js`): Herdr started from the Dock or by launchd has a short PATH, without nvm, volta, fnm or asdf. The dialog takes the first Node that answers `--version` with 20.3 or newer, from:
     1. the login service file (the Node the LaunchAgent or systemd unit was installed with), then `.node` in the mod folder, which `install` and `start` write;
-    2. the login shell (`$SHELL -lc 'command -v node'`, given 3s, its process group killed after), then Herdr's own PATH;
+    2. the login shell (`$SHELL -lc 'command -v node'`, given 3s, then killed; its answer goes through a temp file so a leftover child can't hold the pipe), then Herdr's own PATH;
     3. `~/.nvm/versions/node/*` (newest first), `~/.volta/bin`, fnm's `node-versions` and default alias, `~/.asdf/shims`, then `/opt/homebrew/bin` and `/usr/local/bin` (macOS) or `/usr/local/bin` and `/usr/bin` (Linux).
 
     It keeps the answer for every later call. A search that found nothing is kept until the dialog closes; a Node that stops starting is searched for again.

@@ -24,10 +24,11 @@ export function servicePath(text) {
   return m && m[1].startsWith("/") ? m[1] : null;
 }
 
-// The login shell, with 3 s to answer: a slow rc file can't hang the dialog. The shell runs in its
-// own process group so the kill takes its children too, and stdout closes.
+// The login shell, with 3 s to answer: a slow rc file can't hang the dialog. Its answer goes to a
+// temp file, so a child it leaves behind can't hold stdout open past the kill. No job control:
+// dash (Linux's sh) has none without a terminal.
 export const SHELL_PROBE =
-  'set -m; "${SHELL:-/bin/sh}" -lc "command -v node" 2>/dev/null </dev/null & p=$!; (sleep 3; kill -- -$p) >/dev/null 2>&1 & w=$!; wait $p; c=$?; kill -- -$w 2>/dev/null; exit $c';
+  'f=$(mktemp) || exit 1; "${SHELL:-/bin/sh}" -lc "command -v node" >"$f" 2>/dev/null </dev/null & p=$!; (sleep 3; kill $p) >/dev/null 2>&1 & w=$!; wait $p; c=$?; kill $w 2>/dev/null; cat "$f"; rm -f "$f"; exit $c';
 
 const lastPath = (out) => (out ?? "").split("\n").map((l) => l.trim()).filter((l) => l.startsWith("/")).pop() ?? null;
 
