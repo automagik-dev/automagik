@@ -26,6 +26,16 @@ describe('one version for the repository', () => {
     for (const bad of ['3.261024.1', '3.7', '3.07.0', '3.7.01', '4.1.0']) expect(() => setVersion(bad, root)).toThrow(/not a version/);
   });
 
+  test('set writes every file the herdr pack checks its version in', async () => {
+    // herdr/scripts/version.mjs is the pack's own gate (the release runs it); a file it checks
+    // that set never writes would stop the next herdr release at its gates.
+    const { FIELDS: pack } = await import('../herdr/scripts/version.mjs');
+    const written = FIELDS.map(({ file, path }) => `${file}:${path.join('.')}`);
+    for (const { file, path = [] } of pack as { file: string; path?: string[] }[]) {
+      expect(written).toContain(`herdr/${file}:${path.join('.')}`);
+    }
+  });
+
   test('the next release is one above the highest v3.N.0, numbers compared as numbers', () => {
     expect(nextVersion([])).toBe('3.1.0');
     expect(nextVersion(['v3.1.0', 'v3.2.0', 'v3.10.0', 'v3.9.0', ''])).toBe('3.11.0');
