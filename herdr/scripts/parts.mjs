@@ -4,7 +4,9 @@
 // marker stays the install record during the bridge cycle (RFC 0012, "One install authority").
 // This checks every part.json under herdr/ and herdr-layout/ against the fields RFC 0012 defines,
 // and that what each one names exists: its paths match files git tracks, its select is its own
-// folder inside the pack tarball, and each entry's script ships in that tarball.
+// folder inside the pack tarball, and each entry's script ships in that tarball. Across every
+// part.json the repository tracks (am/ and apps/ too), no two may write the same path, glob or
+// file#key unless one replaces the other.
 //
 //   node scripts/parts.mjs --check    exit 1, naming each problem
 //
@@ -25,19 +27,23 @@ const OPTIONAL = Object.freeze(["replaces"]);
 /** The pack tarball every herdr part comes from; release.js tarballName with the version left open. */
 export const PACK_ARTIFACT = "automagik-herdr-pack-{version}.tgz";
 /** The script every herdr part's entries run, inside the tarball. */
-export const PACK_ENTRY = "am-sidebar/bin/part.mjs";
+export const PACK_ENTRY = "am-sidebar/pack/part.mjs";
 
 export const ID = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+$/;
 export const CAP = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+$/;
 const PROVIDED = /^([a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)+)@([1-9]\d*)$/;
 
 /**
- * Where a path inside the pack tarball lives in the repository: `layouts/<x>` is
- * `herdr-layout/<x>` (release.yml packs herdr-layout/automagik.json there), and every other
- * `<mod>/…` is `herdr/mods/<mod>/…`. The one place to change when the layout entry's shape does.
+ * Where a path inside the pack tarball lives in the repository (scripts/pack.mjs packs it so):
+ * `layouts/automagik.json` and the layout part's folder `am-sidebar/layout/` are `herdr-layout/`
+ * (the layout's part.json rides inside the sidebar's folder, the only place every installed
+ * updater accepts a new file), and every other `<mod>/…` is `herdr/mods/<mod>/…`. The one place to
+ * change when the layout entry's shape does.
  */
+export const LAYOUT_PART_DIR = "am-sidebar/layout/";
 export function repoPathOf(inPack) {
   if (inPack === "layouts" || inPack.startsWith("layouts/")) return `herdr-layout${inPack.slice("layouts".length)}`;
+  if (inPack === LAYOUT_PART_DIR.slice(0, -1) || inPack.startsWith(LAYOUT_PART_DIR)) return `herdr-layout/${inPack.slice(LAYOUT_PART_DIR.length)}`;
   return `herdr/mods/${inPack}`;
 }
 
@@ -57,38 +63,94 @@ export function globRe(glob) {
 }
 
 /**
- * What no part may write (RFC 0012, `writes`): Herdr's own (shared.json, data/), Pocket Link's
- * folder, and any LaunchAgent (Pocket Link's is Pocket's). Each is `[RegExp, why]`.
+ * A write in one spelling: lowercased (APFS is case-insensitive by default), Herdr's app home as
+ * ~/.config/herdr-app ($HERDR_APP_HOME is how parts spell it), `//` collapsed, and `.` segments and a
+ * trailing slash dropped. `{ path, key, dotdot }`: key is what follows `#` (null for the whole file).
  */
-export const REFUSED_WRITES = Object.freeze([
-  [/(^|\/)herdr-app\/shared\.json(#|$)/, "Herdr's shared.json"],
-  [/(^|\/)herdr-app\/data(\/|$)/, "Herdr's data/"],
-  [/(^|\/)pocket-link(\/|$)/, "Pocket Link (Pocket's part)"],
-  [/(^|\/)LaunchAgents(\/|$)/, "a LaunchAgent"],
-]);
+export function normalWrite(w) {
+  const [p, ...k] = String(w).toLowerCase().split("#");
+  const segs = p.replace(/^\$herdr_app_home(?=\/|$)/, "~/.config/herdr-app").replace(/\/{2,}/g, "/").split("/");
+  const path = segs.filter((s, i) => s !== "." && !(s === "" && i === segs.length - 1 && i > 0)).join("/");
+  return { path, key: k.length ? k.join("#") : null, dotdot: segs.includes("..") };
+}
+
+const wild = (s) => /[*?]/.test(s);
+const escape = (c) => c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+const segRe = (s) => new RegExp(`^${[...s].map((c) => (c === "*" ? "[^/]*" : c === "?" ? "[^/]" : escape(c))).join("")}$`);
+/** Whether two path segments (`*` and `?` wildcards) could name one segment; conservative when both are globs. */
+function segsMeet(p, q) {
+  if (!wild(p) && !wild(q)) return p === q;
+  if (!wild(p)) return segRe(q).test(p);
+  if (!wild(q)) return segRe(p).test(q);
+  const head = (s) => s.slice(0, s.search(/[*?]/));
+  const tail = (s) => s.slice(Math.max(s.lastIndexOf("*"), s.lastIndexOf("?")) + 1);
+  const [hp, hq, tp, tq] = [head(p), head(q), tail(p), tail(q)];
+  return (hp.startsWith(hq) || hq.startsWith(hp)) && (tp.endsWith(tq) || tq.endsWith(tp));
+}
+/**
+ * Whether two paths or globs (normalWrite's; `**` a whole segment, any depth) could name one path.
+ * Conservative: when it cannot tell, it says yes. `touch`: also require that one of `b`'s first
+ * `touch` segments meets a segment of `a` that is not `**` (see reaches).
+ */
+export function pathsMeet(a, b, touch = 0) {
+  const A = a.split("/"), B = b.split("/");
+  const memo = new Map();
+  const f = (i, j, t) => {
+    const k = `${i},${j},${t}`;
+    if (memo.has(k)) return memo.get(k);
+    let r;
+    if (i === A.length && j === B.length) r = t;
+    else if (A[i] === "**") r = f(i + 1, j, t) || (j < B.length && f(i, j + 1, t));
+    else if (B[j] === "**") r = f(i, j + 1, t) || (i < A.length && f(i + 1, j, t));
+    else if (i === A.length || j === B.length) r = false;
+    else r = segsMeet(A[i], B[j]) && f(i + 1, j + 1, t || j < touch);
+    memo.set(k, r);
+    return r;
+  };
+  return f(0, 0, touch === 0);
+}
+/**
+ * Whether `a` and `b` could touch one file: one names the other, or a folder holding the other. A
+ * project glob (one starting `**` then `/`: a file in any project) sits under a folder only when its
+ * own tail meets that folder's named segments. The hooks' settings.local.json glob is not under
+ * data/ just because `**` could walk into it (projects never live there), but a data/x glob is.
+ */
+const reaches = (a, b) => {
+  const project = a.startsWith("**/") || b.startsWith("**/");
+  const n = (x) => (project ? x.split("/").length : 0);
+  return (pathsMeet(a, b, n(b)) && pathsMeet(b, a, n(a))) || pathsMeet(a, `${b}/**`, n(b)) || pathsMeet(b, `${a}/**`, n(a));
+};
 
 /**
- * Paths no write may reach, as samples a glob is tried against: a glob that matches one (`~/**`,
- * `~/.config/herdr-app/*.json`, `…/d*\/**`) is refused like the path itself.
+ * What no part may write (RFC 0012, `writes`), as the folders and files themselves: Herdr's own
+ * (shared.json, data/), Pocket Link's folder, and the LaunchAgents (Pocket Link's is Pocket's). A
+ * write is refused when it could name one, sit under one, or hold one.
  */
-export const PROTECTED_SAMPLES = Object.freeze([
+export const PROTECTED = Object.freeze([
   ["~/.config/herdr-app/shared.json", "Herdr's shared.json"],
   ["~/.config/herdr-app/data", "Herdr's data/"],
-  ["~/.config/herdr-app/data/x", "Herdr's data/"],
-  ["~/.config/herdr-app/data/x/y.json", "Herdr's data/"],
   ["~/.config/herdr-app/mods/pocket-link", "Pocket Link (Pocket's part)"],
-  ["~/.config/herdr-app/mods/pocket-link/main.js", "Pocket Link (Pocket's part)"],
-  ["~/Library/LaunchAgents/ai.namastex.pocket-link.plist", "a LaunchAgent"],
+  ["~/library/launchagents", "a LaunchAgent"],
 ]);
 
-/** Why a write may not be declared, or null: `..`, a protected path (REFUSED_WRITES), or a glob that reaches one. */
+/** Why a write may not be declared, or null: `..`, or a path or glob that can reach a PROTECTED one. */
 export function refusedWrite(w) {
-  const path = w.split("#")[0].replace(/^\$HERDR_APP_HOME(\/|$)/, "~/.config/herdr-app$1");
-  if (path.split("/").includes("..")) return "a path with .. is not a part's to write (it can reach anything)";
-  for (const [re, why] of REFUSED_WRITES) if (re.test(w) || re.test(path)) return `${why} is not a part's to write`;
-  const re = globRe(path);
-  for (const [sample, why] of PROTECTED_SAMPLES) if (re.test(sample)) return `it can match ${sample}: ${why} is not a part's to write`;
+  const { path, dotdot } = normalWrite(w);
+  if (dotdot) return "a path with .. is not a part's to write (it can reach anything)";
+  for (const [p, why] of PROTECTED) if (reaches(path, p)) return `it can reach ${p}: ${why} is not a part's to write`;
   return null;
+}
+
+/**
+ * Whether two writes reach one place: paths or globs that could name one file, or one holding the
+ * other (conservative: a false alarm is fine), then for one file, keys of which one holds the other
+ * (`f#hooks` and `f#hooks.X`; a whole file holds every key).
+ */
+export function writesOverlap(a, b) {
+  const x = normalWrite(a), y = normalWrite(b);
+  if (!reaches(x.path, y.path)) return false;
+  if (!pathsMeet(x.path, y.path) || x.key === null || y.key === null) return true;
+  return x.key === y.key || x.key.startsWith(`${y.key}.`) || y.key.startsWith(`${x.key}.`);
 }
 
 const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -180,11 +242,39 @@ export function validateParts({ files, read, packMods }) {
 
     if (!strings(part.writes) && !(Array.isArray(part.writes) && part.writes.length === 0)) bad("writes is not a list of paths");
     else for (const w of part.writes) {
-      if (!/^(~\/|\*\*\/)/.test(w)) bad(`writes ${w}: start it with ~/ (the home) or **/ (any project), never a machine's own path`);
+      if (!/^(~\/|\*\*\/)/.test(normalWrite(w).path)) bad(`writes ${w}: start it with ~/ (the home), $HERDR_APP_HOME/ (Herdr's app home) or **/ (any project), never a machine's own path`);
       const why = refusedWrite(w);
       if (why) bad(`writes ${w}: ${why}`);
     }
     parts.push({ file, id: part.id });
+  }
+  // No two parts write one place, unless one replaces the other: every part.json git tracks, not only herdr's.
+  const writers = [];
+  const provided = new Set();
+  for (const file of files.filter((f) => /(^|\/)part\.json$/.test(f) && !f.split("/").includes("node_modules")).sort()) {
+    let part;
+    try { part = JSON.parse(read(file)); } catch { continue; } // a broken one is its own gate's (herdr's: above)
+    if (isObject(part) && Array.isArray(part.provides)) for (const c of part.provides) if (typeof c === "string") provided.add(c);
+    if (isObject(part) && typeof part.id === "string" && Array.isArray(part.writes)) {
+      writers.push({ file, id: part.id, writes: part.writes.filter((w) => typeof w === "string"), replaces: Array.isArray(part.replaces) ? part.replaces : [] });
+    }
+  }
+  for (let i = 0; i < writers.length; i++) {
+    for (let j = i + 1; j < writers.length; j++) {
+      const a = writers[i], b = writers[j];
+      if (a.id === b.id || a.replaces.includes(b.id) || b.replaces.includes(a.id)) continue;
+      for (const wa of a.writes) for (const wb of b.writes) {
+        if (writesOverlap(wa, wb)) problems.push(`${a.file}: writes ${wa}, and ${b.id} (${b.file}) writes ${wb}: one place, two parts (one must replace the other)`);
+      }
+    }
+  }
+  // Every capability a herdr part requires is provided by some part.json the repository tracks.
+  for (const file of manifests) {
+    let part;
+    try { part = JSON.parse(read(file)); } catch { continue; }
+    for (const r of Array.isArray(part?.requires) ? part.requires : []) {
+      if (isObject(r) && typeof r.cap === "string" && !provided.has(`${r.cap}@${r.major}`)) problems.push(`${file}: requires ${r.cap}@${r.major}, which no part.json provides`);
+    }
   }
   for (const m of packMods) {
     if (!manifests.includes(`herdr/mods/${m}/part.json`)) problems.push(`herdr/mods/${m}: a pack mod with no part.json`);

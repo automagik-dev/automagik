@@ -1,18 +1,20 @@
 // The herdr parts' entries (RFC 0012): what `am install|uninstall|doctor <id>` runs for each part.json
-// under herdr/ and herdr-layout/, through bin/part.mjs. Node only (like update.mjs); Herdr never
+// under herdr/ and herdr-layout/, through pack/part.mjs. Node only (like update.mjs); Herdr never
 // loads this file. Apache-2.0.
 //
 // The pack is still one unit underneath: one tarball, installed, updated and rolled back together
 // by update.mjs, and its marker (<app home>/automagik-herdr/installed-by-install.sh) stays the
 // install record during the bridge cycle. These entries keep writing it; am only reads it.
-//   herdr.am-sidebar   install: the pack (update.mjs install --setup) when the record is not at this
-//                      version. uninstall: the whole pack, as install.sh --uninstall does, plus the
-//                      briefing hooks, the hooks' entry point, the pack's keys and the command link.
-//                      Install also links ~/.local/bin/automagik-herdr, as install.sh does, until the am
-//                      part (RFC 0012, D34) takes the command over.
+//   herdr.pack         the updater, the record and the kept set. install: the pack (update.mjs install
+//                      --setup) when the record is not at this version, and ~/.local/bin/automagik-herdr
+//                      linked as install.sh does where nothing else holds it (am's link is left: RFC
+//                      0012, D34). uninstall: the whole pack, as install.sh --uninstall does, plus the
+//                      briefing hooks, the hooks' entry point, the pack's keys and its command link.
 //                      The folders go to the kept set (<app home>/automagik-herdr/.prev) unless --purge.
 //   herdr.am-<mod>     install: the pack, then the mod switched back on. uninstall: switched off
 //                      (moved to mods-disabled/, as the mod manager does); an update keeps it off.
+//                      The sidebar refuses while the CLI link or the briefing entry point still runs
+//                      code in its folder (sidebarCarries), and stops refusing once am's copies do.
 //   herdr.layout       install: the pack, then the automagik layout put back if it was removed.
 //                      uninstall: the layout removed while it is the pack's copy (layout=removed).
 // Never written: Herdr's shared.json or data/, Pocket Link (mods/pocket-link) or its LaunchAgent,
@@ -20,25 +22,26 @@
 
 import { spawnSync } from "node:child_process";
 import {
-  chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync,
+  chmodSync, cpSync, existsSync, realpathSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync,
   symlinkSync, unlinkSync, writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import { stableBriefingPath, ENTRY_SOURCE } from "./briefingText.mjs";
-import { CLI_LINK, knownProjects, ledgerFolders, removeHooks } from "./migrateHooks.mjs";
+import { CLI_LINK, hooksRunning, knownProjects, ledgerFolders, removeHooks } from "./migrateHooks.mjs";
 import { OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker } from "./release.js";
 import { appHomeOf, binDirOf, markerOf, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeMarker } from "./update.mjs";
 
 export const NODE_MIN = "22.7.0";
-/** What a herdr part's id names: `herdr.<pack mod>`, `herdr.layout`. */
-export const PART_IDS = Object.freeze([...PACK_MODS.map((m) => `herdr.${m}`), "herdr.layout"]);
+/** What a herdr part's id names: `herdr.pack`, `herdr.<pack mod>`, `herdr.layout`. */
+export const PART_IDS = Object.freeze(["herdr.pack", ...PACK_MODS.map((m) => `herdr.${m}`), "herdr.layout"]);
 
 export function partOf(id) {
   if (id === "herdr.layout") return { id, kind: "layout" };
+  if (id === "herdr.pack") return { id, kind: "pack" };
   const mod = typeof id === "string" && id.startsWith("herdr.") ? id.slice("herdr.".length) : null;
-  if (mod && PACK_MODS.includes(mod)) return { id, kind: mod === PACK_NAME ? "pack" : "mod", mod };
+  if (mod && PACK_MODS.includes(mod)) return { id, kind: "mod", mod };
   return null;
 }
 
@@ -76,26 +79,20 @@ const unshipped = (name) => name.startsWith(".") || name === "node_modules" || n
 // ---- the artifact (RFC 0012 entry contract): the one place that knows how am hands it over ----
 
 /**
- * The pack tree AM_PART_DIR sits in. am extracts the whole verified tarball and points AM_PART_DIR
- * at `<extracted>/<select>`: the tree holds `am-sidebar/update.mjs` and `layouts/`. From a checkout
- * (`am install ./herdr/mods/am-footer`), the tree is made the way release.yml packs it: each
- * PACK_MODS folder of herdr/mods, and herdr-layout/automagik.json as layouts/automagik.json.
+ * Where AM_PART_DIR's pack is: `{ tree }`, the extracted tarball am points AM_PART_DIR into
+ * (`<extracted>/<select>`: the tree holds `am-sidebar/update.mjs` and `layouts/`), or `{ repo }`, a
+ * checkout (`am install ./herdr/mods/am-footer`), which herdr/scripts/pack.mjs --worktree packs the
+ * way release.yml packs a tag.
  */
-export function packTree(partDir, tmp) {
+export function packTree(partDir) {
   if (!partDir) throw new Error("am gave no AM_PART_DIR (nor AM_ARTIFACT): no pack to install from");
   let dir = resolve(partDir);
-  for (let i = 0; i < 4; i++, dir = dirname(dir)) {
-    const checkoutMods = basename(dir) === "mods" && isFile(join(dir, PACK_NAME, "update.mjs")) ? dir
-      : isFile(join(dir, "herdr", "mods", PACK_NAME, "update.mjs")) ? join(dir, "herdr", "mods") : null;
-    const layout = checkoutMods && join(checkoutMods, "..", "..", "herdr-layout", "automagik.json");
-    if (checkoutMods && isFile(layout)) {
-      const tree = join(tmp, "tree");
-      for (const m of PACK_MODS) cpSync(join(checkoutMods, m), join(tree, m), { recursive: true, filter: (src) => !unshipped(basename(src)) });
-      mkdirSync(join(tree, "layouts"), { recursive: true });
-      cpSync(layout, join(tree, PACK_LAYOUT));
-      return tree;
+  for (let i = 0; i < 5; i++, dir = dirname(dir)) {
+    if (isFile(join(dir, "herdr", "scripts", "pack.mjs")) && isFile(join(dir, "herdr", "mods", PACK_NAME, "update.mjs"))) {
+      if (exists(join(dir, ".git"))) return { repo: dir };
+      throw new Error(`${dir} is a copy of the repository, not a git checkout: am installs a herdr part from a git checkout (git clone) or a release, which say what the pack holds`);
     }
-    if (isFile(join(dir, PACK_NAME, "update.mjs")) && isFile(join(dir, PACK_NAME, "release.js"))) return dir;
+    if (isFile(join(dir, PACK_NAME, "update.mjs")) && isFile(join(dir, PACK_NAME, "release.js")) && basename(dir) !== "mods") return { tree: dir };
   }
   throw new Error(`${partDir} is in no Automagik Herdr pack (an extracted automagik-herdr-pack-<v>.tgz, or a checkout's herdr/)`);
 }
@@ -113,10 +110,12 @@ export function packSource(ctx) {
     let tgz = ctx.env.AM_ARTIFACT || null;
     if (tgz && !isFile(tgz)) throw new Error(`AM_ARTIFACT ${tgz} is not a file`);
     if (!tgz) {
-      const tree = packTree(ctx.env.AM_PART_DIR, tmp);
+      const where = packTree(ctx.env.AM_PART_DIR);
       tgz = join(tmp, "pack.tgz");
-      const r = ctx.exec("tar", ["-czf", tgz, "-C", tree, ...readdirSync(tree).filter((n) => !unshipped(n)).sort()], { env: { ...ctx.env, COPYFILE_DISABLE: "1" } });
-      if (r.code !== 0) throw new Error(`could not pack ${tree} (${r.stderr.trim() || `tar exit ${r.code}`})`);
+      const r = where.repo
+        ? ctx.exec(ctx.node, [join(where.repo, "herdr", "scripts", "pack.mjs"), "--worktree", "--repo", where.repo, "--out", tgz], { env: ctx.env })
+        : ctx.exec("tar", ["-czf", tgz, "-C", where.tree, ...readdirSync(where.tree).filter((n) => !unshipped(n)).sort()], { env: { ...ctx.env, COPYFILE_DISABLE: "1" } });
+      if (r.code !== 0) throw new Error(`could not pack ${where.repo ?? where.tree} (${r.stderr.trim() || `exit ${r.code}`})`);
     }
     const tree = join(tmp, "x");
     mkdirSync(tree);
@@ -181,6 +180,14 @@ function dropKeys(ctx) {
   }
   if (dropped) writeFileSync(path, `${JSON.stringify(keys, null, 2)}\n`);
   return dropped;
+}
+
+/** The sidebar's folder wherever it is, on (mods/) or switched off (mods-disabled/); null when neither. */
+const sidebarDir = (ctx) => [join(ctx.modsDir, PACK_NAME), join(ctx.offDir, PACK_NAME)].find((d) => isDir(d) && !isLink(d)) ?? null;
+/** Whether the briefing hooks' entry point is the pack's own (the sidebar's briefingEntry.mjs), not am's. */
+function packEntry(ctx) {
+  const entry = stableBriefingPath(ctx.appHome), dir = sidebarDir(ctx);
+  return Boolean(dir) && isFile(entry) && !isLink(entry) && isFile(join(dir, ENTRY_SOURCE)) && readFileSync(entry).equals(readFileSync(join(dir, ENTRY_SOURCE)));
 }
 
 /** The CLI's own entries in a sidebar folder: the bin/automagik-herdr wrapper and the .mjs it runs. */
@@ -312,6 +319,9 @@ function uninstallPack(ctx, { purge }) {
   const state = stateDirOf(ctx.modsDir);
   const prev = prevSetOf(ctx.modsDir);
   const lines = [];
+  // Read before the folders move: the hooks and their entry point are the pack's only while the entry
+  // point is the sidebar's own; once am's replaces it, they are am's (RFC 0012, D34) and stay.
+  const ownEntry = packEntry(ctx);
 
   const live = join(ctx.appHome, PACK_LAYOUT), ref = join(state, "automagik.json");
   if (record.layout === "added" && isFile(live) && !isLink(live) && isFile(ref) && readFileSync(live).equals(readFileSync(ref))) {
@@ -363,15 +373,18 @@ function uninstallPack(ctx, { purge }) {
     if (isDir(from) && !isLink(from) && !exists(to)) { renameSync(from, to); lines.push(`put back ${to}, the one that was there before the install`); }
   }
 
-  const hooks = removeHooks(knownProjects(ctx.appHome), { appHome: ctx.appHome, also: ledgerFolders(ctx.appHome), log: ctx.log });
-  for (const f of hooks.removed) lines.push(`removed the briefing hook from ${f} (the original is beside it, ${basename(f)}.am-backup…)`);
-  for (const s of hooks.skipped) lines.push(`left: ${s.file} (${s.reason})`);
-  const entry = stableBriefingPath(ctx.appHome);
-  if (isFile(entry) && !isLink(entry)) { rmSync(entry); lines.push(`removed the briefing hook's entry point ${entry}`); }
+  if (ownEntry) {
+    const hooks = removeHooks(knownProjects(ctx.appHome), { appHome: ctx.appHome, also: ledgerFolders(ctx.appHome), log: ctx.log });
+    for (const f of hooks.removed) lines.push(`removed the briefing hook from ${f} (the original is beside it, ${basename(f)}.am-backup…)`);
+    for (const s of hooks.skipped) lines.push(`left: ${s.file} (${s.reason})`);
+    rmSync(stableBriefingPath(ctx.appHome));
+    lines.push(`removed the briefing hook's entry point ${stableBriefingPath(ctx.appHome)}`);
+  } else if (isFile(stableBriefingPath(ctx.appHome))) lines.push("left the briefing hooks and their entry point: they are not the pack's");
   if (dropKeys(ctx)) lines.push("removed the pack's keys from keys.json");
   lines.push(...unlinkCommands(ctx));
   rmSync(markerOf(ctx.modsDir), { force: true });
-  if (purge) for (const f of ["hooks-journal.json", "automagik.json"]) rmSync(join(state, f), { force: true });
+  // The hooks journal is the pack's only while the entry point is; the layout reference always is.
+  if (purge) for (const f of [...(ownEntry ? ["hooks-journal.json"] : []), "automagik.json"]) rmSync(join(state, f), { force: true });
   if (record.usagemeter || Object.keys(record.usagemeterOn).length) {
     lines.push("left usagemeter where it is (~/.local/bin/usagemeter, and linked machines): it is its own part");
   }
@@ -379,10 +392,47 @@ function uninstallPack(ctx, { purge }) {
   return { ok: true, changed: true, detail: `the pack ${record.version} is uninstalled${purge ? " (--purge)" : ""}; your bots and Herdr's settings are untouched` };
 }
 
+/** am's parts store (RFC 0012): `$AM_HOME/parts/`, AM_HOME being $AUTOMAGIK_HOME, else ~/.automagik. */
+export const amStoreOf = (env) => join(env.AM_HOME || env.AUTOMAGIK_HOME || join(env.HOME || homedir(), ".automagik"), "parts");
+/** `p`'s real path (APFS's own case, through every link), or null when it does not resolve. */
+const realOf = (p) => { try { return realpathSync.native(p); } catch { return null; } };
+const within = (p, dir) => { const r = realOf(p), d = realOf(dir); return Boolean(r && d) && (r === d || r.startsWith(d + sep)); };
+
+/**
+ * What still needs the sidebar's folder, as the reasons it may not be switched off; empty when it may.
+ * Read from what is installed, so it lifts by itself once am's copies replace them, and fails closed:
+ *   - ~/.local/bin/automagik-herdr resolving into mods/am-sidebar;
+ *   - the briefing hooks' entry point not being positively am's: it must resolve into am's parts
+ *     store (amStoreOf), or every bot's hook would run the sidebar's briefing.mjs, or nothing;
+ *   - a project hook calling mods/am-sidebar/briefing.mjs directly (written when the entry point could
+ *     not be placed), wherever syncHooks looks.
+ */
+export function sidebarCarries(ctx) {
+  const reasons = [];
+  const folder = join(ctx.modsDir, PACK_NAME);
+  const link = join(ctx.binDir, CLI_LINK);
+  if (isLink(link) && (within(link, folder) || resolve(dirname(link), readlinkSync(link)).startsWith(folder + sep))) {
+    reasons.push(`the command (${link} runs mods/${PACK_NAME}/bin)`);
+  }
+  const entry = stableBriefingPath(ctx.appHome);
+  if (!within(entry, amStoreOf(ctx.env))) reasons.push(`every bot's briefing (${entry} is not am's: it ${isFile(entry) ? "runs the sidebar's briefing.mjs" : "is missing"})`);
+  const direct = hooksRunning(knownProjects(ctx.appHome), { scripts: [join(folder, "briefing.mjs")], also: ledgerFolders(ctx.appHome) });
+  if (direct.length) reasons.push(`the briefing hook in ${direct.length} project${direct.length === 1 ? "" : "s"} (${direct.slice(0, 3).join(", ")}${direct.length > 3 ? ", …" : ""} call mods/${PACK_NAME}/briefing.mjs)`);
+  return reasons;
+}
+const carriesText = (reasons) => `mods/${PACK_NAME} still carries ${reasons.join(" and ")}: switched off, they would stop working. `
+  + "`am uninstall herdr.pack` removes the whole pack; the sidebar switches off on its own once the am part carries them";
+
 /** `uninstall <id> [--purge]`: idempotent. Returns `{ ok, changed, detail }`; throws on a failure. */
 export function uninstall(ctx, part, { purge = false } = {}) {
   if (part.kind === "pack") return uninstallPack(ctx, { purge });
-  if (part.kind === "mod") return switchOff(ctx, part);
+  if (part.kind === "mod") {
+    if (part.mod === PACK_NAME && exists(join(ctx.modsDir, PACK_NAME))) {
+      const reasons = sidebarCarries(ctx);
+      if (reasons.length) throw new Error(carriesText(reasons));
+    }
+    return switchOff(ctx, part);
+  }
   if (part.kind === "layout") return removeLayout(ctx);
   throw new Error(`${part.id} is not a herdr part`);
 }
@@ -410,26 +460,31 @@ export function doctor(ctx, part) {
   add("record", true, `the pack ${record.version} (${record.mods.join(", ")})`);
   if (ctx.version && compareVersions(record.version, ctx.version) !== 0) add("version", false, `the record says ${record.version}, am expects ${ctx.version}`, reinstall);
 
-  if (part.kind === "mod" || part.kind === "pack") {
+  if (part.kind === "mod") {
     const m = part.mod, live = join(ctx.modsDir, m), off = join(ctx.offDir, m);
     if (!record.mods.includes(m)) { add("listed", false, `the record does not list ${m}: mods/${m}, if any, is not the pack's`, reinstall); return done(); }
-    if (part.kind === "mod" && !exists(live) && exists(off)) { add("switched-off", true, `not applicable: ${m} is switched off (${off})`); return done(2); }
+    if (!exists(live) && exists(off)) { add("switched-off", true, `not applicable: ${m} is switched off (${off})`); return done(2); }
     if (isLink(live)) add("folder", true, `mods/${m} is a link (a checkout): not the release's files`);
     else if (!isDir(live)) { add("folder", false, `mods/${m} is missing`, "curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash"); return done(); }
     else add("folder", true, live);
     const lacks = ["main.js", "mod.json"].filter((f) => !isFile(join(live, f)));
     add("files", lacks.length === 0, lacks.length ? `mods/${m} has no ${lacks.join(" or ")}` : "main.js and mod.json are there", reinstall);
+    if (m === PACK_NAME) {
+      const reasons = sidebarCarries(ctx);
+      add("switch-off", true, reasons.length ? `it cannot be switched off yet: ${carriesText(reasons)}` : "it can be switched off: no command or briefing runs from its folder");
+    }
   }
 
   if (part.kind === "pack") {
-    const v = readVersion(join(ctx.modsDir, PACK_NAME));
-    add("pack-version", v === record.version, `mods/${PACK_NAME}/VERSION is ${v}; the record says ${record.version}`, reinstall);
+    const dir = sidebarDir(ctx);
+    const v = dir ? readVersion(dir) : null;
+    add("pack-version", v === record.version, dir ? `${dir}/VERSION is ${v}; the record says ${record.version}` : `mods/${PACK_NAME} is in neither mods/ nor mods-disabled/`, reinstall);
     const gone = record.mods.filter((m) => packFolder(m) && !exists(join(ctx.modsDir, m)) && !exists(join(ctx.offDir, m)));
     add("pack-mods", gone.length === 0, gone.length ? `the record lists ${gone.join(", ")}, in neither mods/ nor mods-disabled/` : "every mod the record lists is there (on or off)",
       "curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash");
-    const entry = stableBriefingPath(ctx.appHome), source = join(ctx.modsDir, PACK_NAME, ENTRY_SOURCE);
-    const same = isFile(entry) && isFile(source) && readFileSync(entry).equals(readFileSync(source));
-    add("briefing-entry", same, same ? entry : `${entry} is ${isFile(entry) ? "not the sidebar's" : "missing"}: the bots' briefing hook finds no briefing`, reinstall);
+    const entry = stableBriefingPath(ctx.appHome);
+    if (!isFile(entry)) add("briefing-entry", false, `${entry} is missing: the bots' briefing hook finds no briefing`, reinstall);
+    else add("briefing-entry", true, packEntry(ctx) ? `${entry} (the pack's)` : `${entry} (not the pack's)`);
   }
 
   if (part.kind === "mod" && part.mod === "am-mods") {

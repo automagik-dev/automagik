@@ -204,7 +204,7 @@ jobs:
         run: |
           set -euo pipefail
           node --test 'test/*.test.mjs'
-          for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs scripts/*.mjs scripts/*/*.mjs; do
+          for f in mods/*/*.js mods/*/*.mjs mods/*/bin/*.mjs mods/*/pack/*.mjs scripts/*.mjs scripts/*/*.mjs; do
             node --check "$f"
           done
           sh -n install.sh
@@ -303,22 +303,14 @@ jobs:
           VERSION: ${{ steps.cut.outputs.version }}
         run: |
           set -euo pipefail
-          # From the tag, not the working tree: what was tagged is what ships. The folder list is
-          # the tag's PACK_MODS; every other folder of the tag's herdr/mods/ but pocket-link must be
-          # in it, and the archive's top level must be exactly it plus layouts/ (update.mjs refuses
-          # anything else). Only those folders and the one layout go in: no other file.
+          # From the tag, not the working tree, by the tag's own herdr/scripts/pack.mjs (the step am
+          # runs on a checkout too, RFC 0012): the tag's PACK_MODS (every folder of herdr/mods/ but
+          # pocket-link must be in it), layouts/automagik.json, and the layout part's part.json inside
+          # the sidebar's folder; it checks the archive's top level is exactly PACK_MODS plus layouts.
           mkdir -p release
           tgz="automagik-herdr-pack-${VERSION}.tgz"
-          git show "v${VERSION}:herdr/mods/am-sidebar/release.js" > "${RUNNER_TEMP}/release.mjs"
-          mapfile -t mods < <(node --input-type=module -e 'const { PACK_MODS } = await import(process.argv[1]); for (const m of PACK_MODS) console.log(m);' "${RUNNER_TEMP}/release.mjs")
-          tagged=$(git ls-tree --name-only "v${VERSION}:herdr/mods" | grep -vx pocket-link | sort)
-          [[ "${tagged}" == "$(printf '%s\n' "${mods[@]}" | sort)" ]] || { echo "::error::herdr/mods/ at v${VERSION} (${tagged//$'\n'/ }) is not PACK_MODS (${mods[*]})"; exit 1; }
-          # The layout is its own top-level entry (herdr-layout/), never herdr/layouts/: herdr.dev skips a
-          # repository whose herdr-mod entry folder holds layouts/ (RFC 0011).
-          git show "v${VERSION}:herdr-layout/automagik.json" > "${RUNNER_TEMP}/automagik.json"
-          git archive --format=tar.gz -o "release/${tgz}" --prefix=layouts/ --add-file="${RUNNER_TEMP}/automagik.json" --prefix= "v${VERSION}:herdr/mods" -- "${mods[@]}"
-          top=$(tar -tzf "release/${tgz}" | cut -d/ -f1 | sort -u)
-          [[ "${top}" == "$(printf '%s\n' "${mods[@]}" layouts | sort)" ]] || { echo "::error::the archive's top level (${top//$'\n'/ }) is not PACK_MODS plus layouts"; exit 1; }
+          git show "v${VERSION}:herdr/scripts/pack.mjs" > "${RUNNER_TEMP}/pack.mjs"
+          node "${RUNNER_TEMP}/pack.mjs" --repo . --ref "v${VERSION}" --out "release/${tgz}"
           (cd release && sha256sum -- "${tgz}" > "${tgz}.sha256")
           cat "release/${tgz}.sha256"
 
