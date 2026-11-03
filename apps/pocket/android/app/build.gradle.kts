@@ -11,24 +11,30 @@ val signing = Properties().apply {
     val password = System.getenv("POCKET_SIGNING_PASSWORD") ?: getProperty("passwordFile")?.let { File(it).takeIf(File::isFile)?.readText()?.trim() }
     password?.let { setProperty("password", it) }
 }
-// Each commit builds a higher version than the one before it: minutes from 2025 to the commit's time, so an installed
-// build always takes the updates published after it. CI and local builds of one commit get the same number.
-val commitMinutes = providers.exec { commandLine("git", "log", "-1", "--format=%ct"); isIgnoreExitValue = true }
-    .standardOutput.asText.map { ((it.trim().toLongOrNull() ?: 1735689660L) - 1735689600L) / 60 }
+// The release version is the monorepo's one version (AGENTS.md): the root package.json, three levels above this
+// Gradle project, set by bun scripts/version.ts on each release. Never edited here.
+val appVersion: String = (groovy.json.JsonSlurper().parse(rootProject.file("../../../package.json")) as Map<*, *>)["version"] as String
+// One versionCode per version: major*1_000_000 + minor*1_000 + patch, so 3.57.0 is 3057000, above every build the old
+// automagik-pocket published (minutes since 2025). Minor and patch stop at 999 (scripts/version.ts refuses more), or
+// 3.1000.0 would be 4.0.0's code (docs/rfcs/0011-monorepo-parts-and-releases.md, "Pocket").
+val versionFromName: Long = Regex("""^(\d+)\.(\d+)\.(\d+)$""").matchEntire(appVersion)?.destructured
+    ?.let { (major, minor, patch) ->
+        require(minor.toLong() <= 999 && patch.toLong() <= 999) { "version $appVersion: minor and patch stop at 999 (Pocket's versionCode)" }
+        major.toLong() * 1_000_000 + minor.toLong() * 1_000 + patch.toLong()
+    } ?: error("not a version: $appVersion")
 // Testing self-update locally: -Ppocket.versionCode=1 builds an "older" copy that a normal build then updates.
 val versionCodeOverride = providers.gradleProperty("pocket.versionCode").map { it.toLong() }
-// The release version (0.N.0), set by the release workflow on dev: scripts/version.sh, version.properties, both at the
-// repository root, one level above this Gradle project: the version is the whole product's.
-val appVersion: String = Properties().apply { rootProject.file("../version.properties").inputStream().use(::load) }.getProperty("version")
 
 android {
     namespace = "ai.namastex.automagik"
     compileSdk = 35
-    defaultConfig { applicationId = "ai.namastex.automagik"; minSdk = 26; targetSdk = 35; versionCode = versionCodeOverride.orElse(commitMinutes).get().toInt(); versionName = appVersion; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    defaultConfig { applicationId = "ai.namastex.automagik"; minSdk = 26; targetSdk = 35; versionCode = versionCodeOverride.orElse(versionFromName).get().toInt(); versionName = appVersion; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // iroh ships a 9–14 MB library per ABI: phones, and x86_64 for Intel emulators. 32-bit x86 and MIPS phones are long gone.
         ndk { abiFilters += setOf("arm64-v8a", "armeabi-v7a", "x86_64") }
-        // Where installed copies look for updates: latest.json on the newest GitHub release. A fork points this at its own.
-        val updates = providers.gradleProperty("pocket.updateUrl").orElse("https://github.com/automagik-dev/automagik-pocket/releases/latest/download/latest.json")
+        // Where installed copies look for updates: latest.json on the monorepo's rolling pocket-lane release, which only a
+        // Pocket release replaces (the APK stays on its vX.Y.Z release). A fork, or a local test server, points this at
+        // its own with -Ppocket.updateUrl=.
+        val updates = providers.gradleProperty("pocket.updateUrl").orElse("https://github.com/automagik-dev/automagik/releases/download/pocket-lane/latest.json")
         buildConfigField("String", "UPDATE_URL", "\"${updates.get()}\"") }
     signingConfigs { if (signing.getProperty("storeFile") != null && signing.getProperty("password") != null) create("pocket") {
         storeFile = file(signing.getProperty("storeFile")); storePassword = signing.getProperty("password")

@@ -33,9 +33,14 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 
-/** The newest published build, from the `latest.json` CI attaches to each GitHub release. */
+/**
+ * The newest published build, from `latest.json` on the monorepo's rolling `pocket-lane` release (the APK itself stays on
+ * its `vX.Y.Z` release; docs/rfcs/0011-monorepo-parts-and-releases.md, "Pocket").
+ */
 data class Release(val versionCode: Long, val versionName: String, val url: String, val sha256: String, val notes: String) {
     val label get() = "$versionName ($versionCode)"
+    /** Whether a download whose SHA-256 is [actual] is this build: nothing else is handed to the installer. */
+    fun matches(actual: String) = actual.lowercase() == sha256
     companion object {
         private val SHA256 = Regex("^[0-9a-f]{64}$")
         /** [cleartext]: also accept an http:// download, only for a build pointed at a local test server over http. */
@@ -276,7 +281,7 @@ object Updater {
         val dir = File(context.cacheDir, "updates").apply { mkdirs() }
         val file = File(dir, "automagik-${release.versionCode}.apk")
         // Already downloaded and still matching the published hash: a tap on the notification needn't fetch it again.
-        if (file.isFile && runCatching { sha256(file) }.getOrNull() == release.sha256) return file
+        if (file.isFile && runCatching { sha256(file) }.getOrNull()?.let(release::matches) == true) return file
         dir.listFiles()?.forEach { it.delete() }
         val digest = MessageDigest.getInstance("SHA-256")
         _state.value = UpdateState.Downloading(release, 0f, manual)
@@ -296,7 +301,7 @@ object Updater {
             } }
         } finally { connection.disconnect() }
         val sha = digest.digest().joinToString("") { "%02x".format(it) }
-        if (sha != release.sha256) { file.delete(); error("the download doesn’t match the published build") }
+        if (!release.matches(sha)) { file.delete(); error("the download doesn’t match the published build") }
         return file
     }
 
