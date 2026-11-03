@@ -3,7 +3,7 @@ import { createHash, generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addonPinsOnly, herdrShips, kindOf, LANE_ADDONS, manifest, nextPatch, pocketShips, pocketSince, sequenceOf, ships, signLane, unpackedIn, verifyLane } from './lane';
+import { AM, addonPinsOnly, amPaths, globPattern, herdrShips, kindOf, LANE_ADDONS, manifest, nextPatch, pocketShips, pocketSince, sequenceOf, ships, signLane, unpackedIn, verifyLane } from './lane';
 
 describe('the plugin lane', () => {
   test('only changes inside the plugins ride the lane; anything the app or an install sees is a full release', () => {
@@ -50,6 +50,31 @@ describe('the plugin lane', () => {
     expect(herdrShips(versions)).toBe(true);
     // Nothing shipping since the last release falls back to the rule since the last full one.
     expect(kindOf(['apps/bots-dsh/client.js'], none, none, ['herdr/README.md'])).toBe('plugins');
+  });
+
+  test('an am-only change is an am patch; am never makes a release more than it is otherwise', () => {
+    const none = () => false;
+    const am = ['am/bin/am.mjs', 'am/lib/self.mjs', 'am/am-keys.json'];
+    expect(kindOf(am, none, none, am)).toBe('am');
+    // am's tests and notes ship nothing; with them alone there is nothing am-only to release.
+    expect(ships(['am/test/am.test.mjs', 'am/README.md'], none)).toBe(false);
+    expect(kindOf(['apps/bots-dsh/client.js'], none, none, ['am/test/am.test.mjs'])).toBe('plugins');
+    // A herdr change that resyncs am's copies of the pack's CLI is a herdr patch, not a full release.
+    const resync = ['herdr/mods/am-sidebar/model.js', 'am/model.js', 'am/copies.json'];
+    expect(kindOf(resync, none, none, resync)).toBe('herdr');
+    expect(kindOf([...resync, 'apps/pocket/android/app/build.gradle.kts'], none, none, [...resync, 'apps/pocket/android/app/build.gradle.kts'])).toBe('pocket');
+    // Beside a plugin change it is still a plugin patch; beside an app change, a full release.
+    expect(kindOf(['apps/bots-dsh/client.js', ...am], none, none, ['apps/bots-dsh/client.js', ...am])).toBe('plugins');
+    expect(kindOf(['apps/desktop/src/main.js', ...am], none, none, ['apps/desktop/src/main.js', ...am])).toBe('full');
+  });
+
+  test('the am part\'s paths come from its part.json', () => {
+    expect(amPaths({ paths: ['am/**'] }).map(String)).toEqual(['/^am\\/.*$/']);
+    expect(globPattern('herdr/mods/*/part.json').test('herdr/mods/am-footer/part.json')).toBe(true);
+    expect(globPattern('herdr/mods/*/part.json').test('herdr/mods/a/b/part.json')).toBe(false);
+    expect(AM.test('am/bin/am.mjs')).toBe(true);
+    expect(AM.test('amx/file')).toBe(false);
+    expect(AM.test('herdr/mods/am-sidebar/model.js')).toBe(false);
   });
 
   test('a Pocket-only change is a pocket patch: the phone app, no desktop build, no plugins', () => {

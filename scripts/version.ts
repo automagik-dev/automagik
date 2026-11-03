@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Automagik's one version: the repository, the Bot team, the welcome, the Unfold bridge, the desktop app and
- * the herdr pack (herdr/package.json and the pack's own mods/am-sidebar/VERSION) all carry it. Each release is 3.N (semver 3.N.0, tagged v3.N.0), N one above the highest release
+ * the herdr pack (herdr/package.json and the pack's own mods/am-sidebar/VERSION) and am (am/VERSION, RFC 0012) all carry it. Each release is 3.N (semver 3.N.0, tagged v3.N.0), N one above the highest release
  * tag, numbers compared as numbers, as Tactu numbers its v1.N: above every Omni desktop build
  * (2.YYMMDD.N, from automagik-dev/omni-desktop), so an installed app updates into this one.
  * Until the first release the repository carries 3.0.0, which is never released. The calendar
@@ -59,6 +59,7 @@ export const FIELDS: { file: string; path: string[] }[] = [
   { file: 'apps/desktop/package-lock.json', path: ['packages', '', 'version'] },
   { file: 'herdr/package.json', path: ['version'] },
   { file: 'herdr/mods/am-sidebar/VERSION', path: [] },
+  { file: 'am/VERSION', path: [] },
 ];
 
 const read = (root: string, file: string) => JSON.parse(readFileSync(join(root, file), 'utf8'));
