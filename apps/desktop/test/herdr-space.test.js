@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { botPlace, folderKey, openRequest, pickSpace, planSpace, spacesIn } from '../src/herdr-space.js'
+import { STATE_MAX_BYTES, botPlace, folderKey, oneLine, openRequest, pickSpace, planSpace, spacesIn } from '../src/herdr-space.js'
 
 const BOT = 'session-0b6f2c1e-5d4a-4c3b-9a2f-1e0d9c8b7a65'
 const OTHER = 'session-1c7a3d2f-6e5b-4d4c-8b3a-2f1e0d9c8b76'
@@ -12,12 +12,22 @@ test('a match: the space on the Bot\'s folder on this computer is selected', () 
     { action: 'select', argv: ['do', 'space.select', '--id', 'sp2'], id: 'sp2' })
 })
 
-test('no match: space.new on that folder, named after it, on this computer (--machine \'\')', () => {
+const made = (args) => ['do', 'space.new', JSON.stringify(args)]
+
+test('no match: space.new on that folder, named after it, on this computer (no machine)', () => {
   const spaces = [space('sp1', '/home/ana/site')]
   assert.deepEqual(planSpace({ spaces, folder: '/home/ana/api', platform: 'linux' }),
-    { action: 'new', argv: ['do', 'space.new', '--name', 'api', '--folder', '/home/ana/api', '--machine', ''] })
+    { action: 'new', argv: made({ name: 'api', folder: '/home/ana/api' }) })
   assert.deepEqual(planSpace({ spaces: [], folder: '/home/ana/api/', platform: 'darwin' }).argv,
-    ['do', 'space.new', '--name', 'api', '--folder', '/home/ana/api/', '--machine', ''])
+    made({ name: 'api', folder: '/home/ana/api/' }))
+})
+
+test('space.new is one JSON object: a folder named like a flag, a number or a bool stays a string', () => {
+  for (const name of ['-x', '--folder', 'true', '2026', 'null', '{"a":1}', 'a b']) {
+    const { argv } = planSpace({ spaces: [], folder: `/w/${name}`, platform: 'linux' })
+    assert.equal(argv.length, 3, name)
+    assert.deepEqual(JSON.parse(argv[2]), { name, folder: `/w/${name}` })
+  }
 })
 
 test('two matches: the active one, else the first ls lists, with a note for the log', () => {
@@ -37,7 +47,7 @@ test('a remote machine: only that machine\'s space matches; else space.new on th
   assert.deepEqual(planSpace({ spaces, folder: '/srv/api', machine: 'vps', platform: 'darwin' }).argv, ['do', 'space.select', '--id', 'vps'])
   assert.deepEqual(planSpace({ spaces, folder: '/srv/api', platform: 'darwin' }).argv, ['do', 'space.select', '--id', 'local'])
   assert.deepEqual(planSpace({ spaces: spaces.slice(0, 2), folder: '/srv/api', machine: 'vps', platform: 'win32' }),
-    { action: 'new', argv: ['do', 'space.new', '--name', 'api', '--folder', '/srv/api', '--machine', 'vps'] })
+    { action: 'new', argv: made({ name: 'api', folder: '/srv/api', machine: 'vps' }) })
   // A remote folder is never resolved on this computer.
   const resolve = () => { throw new Error('resolved a remote folder') }
   assert.equal(planSpace({ spaces, folder: '/srv/api', machine: 'vps', platform: 'linux', resolve }).id, 'vps')
@@ -54,7 +64,7 @@ test('Windows: ls\'s backslash folders match whatever their case or separators',
   const spaces = [space('sp1', 'C:\\Users\\Ana\\Site\\')]
   assert.equal(planSpace({ spaces, folder: 'c:/users/ana/site', platform: 'win32' }).id, 'sp1')
   assert.deepEqual(planSpace({ spaces, folder: 'C:\\Users\\Ana\\Api', platform: 'win32' }).argv,
-    ['do', 'space.new', '--name', 'Api', '--folder', 'C:\\Users\\Ana\\Api', '--machine', ''])
+    made({ name: 'Api', folder: 'C:\\Users\\Ana\\Api' }))
   // macOS and Linux keep case.
   assert.equal(planSpace({ spaces: [space('sp1', '/w/Site')], folder: '/w/site', platform: 'linux' }).action, 'new')
   assert.equal(folderKey('C:\\', 'win32'), 'c:\\')
@@ -118,6 +128,38 @@ test('the lookup: a torn or missing state is unknown; a relative, missing or odd
   assert.equal(await botPlace('session-00000000-0000-4000-8000-000000000000', { appHome: APP, platform: 'linux', read, isFolder }), null)
 })
 
+test('the lookup reads no state over its cap: its Bots are unknown', async () => {
+  const isFolder = folders(['/w/site'])
+  const small = JSON.stringify({ bots: { [BOT]: { workDir: '/w/site' } } })
+  const big = `${small.slice(0, -1)},"pad":"${'x'.repeat(STATE_MAX_BYTES)}"}`
+  assert.deepEqual(await botPlace(BOT, { appHome: APP, platform: 'linux', read: async () => small, isFolder }), { folder: '/w/site', machine: null })
+  assert.equal(await botPlace(BOT, { appHome: APP, platform: 'linux', read: async () => big, isFolder }), null)
+})
+
+test('the real reader: a state over the cap is not read at all', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, truncateSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const appHome = mkdtempSync(join(tmpdir(), 'herdr-space-'))
+  mkdirSync(join(appHome, 'bots'))
+  const file = join(appHome, 'bots', 'state.json')
+  writeFileSync(file, JSON.stringify({ bots: { [BOT]: { workDir: appHome } } }))
+  assert.deepEqual(await botPlace(BOT, { appHome }), { folder: appHome, machine: null })
+  truncateSync(file, STATE_MAX_BYTES + 1)
+  assert.equal(await botPlace(BOT, { appHome }), null)
+})
+
+test('a log line stays one line: control characters in a folder or a message become spaces', async () => {
+  assert.equal(oneLine('a\nb\r\tc\u0000d\u2028e'), 'a b  c d e')
+  const folder = '/w/two\nspace select forged'
+  const herdr = fakeHerdr({ ls: { stdout: JSON.stringify({ spaces: [space('a', folder), space('b', folder)] }) }, 'space.select': { stdout: '{}' } })
+  const read = reader(stateOf({ [BOT]: { workDir: folder } }))
+  const lines = []
+  await pickSpace({ botId: BOT, found: FOUND, platform: 'linux', env: {}, appHome: APP, execFile: herdr.execFile, read, isFolder: folders([folder]), resolve: dir => dir, log: line => lines.push(line) })
+  assert.equal(lines.length, 2)
+  for (const line of lines) assert.doesNotMatch(line, /[\n\r]/)
+})
+
 test('main takes only a Bot id and a yes or no from the page: a folder or machine is dropped', () => {
   assert.deepEqual(openRequest({ botId: BOT, folder: '/etc', machine: 'vps', update: true }), { botId: BOT, update: true })
   assert.deepEqual(openRequest({ botId: '/etc/passwd', update: 'yes' }), { botId: null, update: undefined })
@@ -158,7 +200,7 @@ test('pickSpace: no match makes the space and reports its id; two matches log th
   const read = reader(stateOf({ [BOT]: { workDir: '/w/api' } }))
   const opts = { botId: BOT, found: FOUND, platform: 'linux', env: {}, appHome: APP, read, isFolder: folders(['/w/api']), resolve: dir => dir }
   assert.deepEqual(await pickSpace({ ...opts, execFile: made.execFile }), { action: 'new', id: 'spN' })
-  assert.deepEqual(made.calls[1], ['do', 'space.new', '--name', 'api', '--folder', '/w/api', '--machine', ''])
+  assert.deepEqual(made.calls[1], ['do', 'space.new', '{"name":"api","folder":"/w/api"}'])
   const twice = fakeHerdr({ ls: { stdout: JSON.stringify({ spaces: [space('a', '/w/api'), space('b', '/w/api')] }) }, 'space.select': { stdout: '{}' } })
   const lines = []
   assert.deepEqual(await pickSpace({ ...opts, execFile: twice.execFile, log: line => lines.push(line) }), { action: 'select', id: 'a' })

@@ -148,8 +148,10 @@ function fakeFeed({ feed, tarball, offline = false }) {
 
 // Virtual time: sleeps return at once and move the clock, so the bounded waits run out fast.
 function clock() {
-  let offset = 0
-  return { now: () => Date.now() + offset, sleep: async ms => { offset += ms } }
+  // Only sleeps move it: time spent in the fake herdr-app processes (a loaded host can take
+  // seconds to start one) never counts, so a bounded wait ends the same way on any machine.
+  let at = 0
+  return { now: () => at, sleep: async ms => { at += ms } }
 }
 
 function host(fake, feed, extra = {}) {

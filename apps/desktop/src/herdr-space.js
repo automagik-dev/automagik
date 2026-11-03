@@ -6,7 +6,7 @@
 // pass fakes. Every call to herdr-app goes through herdr.js's run(): an argv array, no shell,
 // a 10 s limit.
 import { realpathSync, statSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { open } from 'node:fs/promises'
 import { posix, win32 } from 'node:path'
 import { isBotId } from './bot-views.js'
 import { run } from './herdr.js'
@@ -41,7 +41,9 @@ export async function botPlace(botId, { appHome, platform = process.platform, re
   if (!isBotId(botId) || !appHome) return null
   let state
   try {
-    state = JSON.parse(await read(botsStateOf(appHome, platform)))
+    const text = await read(botsStateOf(appHome, platform))
+    if (typeof text !== 'string' || text.length > STATE_MAX_BYTES) return null
+    state = JSON.parse(text)
   } catch {
     return null
   }
@@ -54,7 +56,19 @@ export async function botPlace(botId, { appHome, platform = process.platform, re
   return { folder: usable ? dir : null, machine: null }
 }
 
-const readText = file => readFile(file, 'utf8')
+// state.json holds the team's chat history too, and is read on every click: one over this is
+// not read, and its Bots are unknown.
+export const STATE_MAX_BYTES = 8 * 1024 * 1024
+
+async function readText(file) {
+  const handle = await open(file, 'r')
+  try {
+    if ((await handle.stat()).size > STATE_MAX_BYTES) throw new Error(`${file} is over ${STATE_MAX_BYTES} bytes`)
+    return await handle.readFile('utf8')
+  } finally {
+    await handle.close()
+  }
+}
 
 function defaultIsFolder(dir) {
   try {
@@ -112,8 +126,9 @@ export function spacesIn(text) {
  * too. Answers `{ action, argv, id?, note? }`:
  * - `select`: the space on that folder and machine, `do space.select --id <id>`. Of two or
  *   more, the active one, else the first `ls` lists; `note` says so, for the log.
- * - `new`: none matched, `do space.new --name <folder name> --folder <folder> --machine <m>`
- *   (`--machine ''` is this computer, as the pack's own launch.js asks for).
+ * - `new`: none matched, `do space.new {"name":<folder name>,"folder":<folder>,"machine":<m>}`,
+ *   one JSON object (`do` reads `--name value` flags, and a folder named `-x`, `true` or
+ *   `2026` would be read as a flag or a non-string); `machine` left out for this computer.
  * - `none`: the Bot has no folder (D27), `argv` null: Herdr stays as it was.
  * A space whose folder is empty (that machine's home) matches no Bot. `resolve` turns a folder
  * on this computer into its real path (the Bot team saves real paths; a person's own space may
@@ -139,8 +154,12 @@ export function planSpace({ spaces, folder, machine = null, platform, resolve = 
   }
   const p = pathOf(os)
   const name = p.basename(folder.replace(os === 'win32' ? /[\\/]+$/ : /\/+$/, '')) || folder
-  return { action: 'new', argv: ['do', 'space.new', '--name', name, '--folder', folder, '--machine', remote ? machine : ''] }
+  const args = { name, folder, ...(remote ? { machine } : {}) }
+  return { action: 'new', argv: ['do', 'space.new', JSON.stringify(args)] }
 }
+
+/** Text for one log line: control characters (newlines included) become spaces. */
+export const oneLine = text => String(text).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ')
 
 const lastLine = text => String(text ?? '').trim().split(/\r?\n/).pop() ?? ''
 
@@ -161,7 +180,9 @@ function doAnswer(result) {
  * (`action` 'select', 'new' or 'none') or `{ action, error }` when herdr-app refused; never
  * throws. Log lines (logs/switch.log): `space select|new <id>`, `no-space <why>`, `do-error`.
  */
-export async function pickSpace({ botId, found, platform, env, appHome, execFile, read, isFolder, resolve = defaultResolve, place = botPlace, mark = () => {}, log = () => {} }) {
+export async function pickSpace({ botId, found, platform, env, appHome, execFile, read, isFolder, resolve = defaultResolve, place = botPlace, mark = () => {}, log: write = () => {} }) {
+  // One line each in switch.log: a folder, a machine or herdr-app's message can hold anything.
+  const log = line => write(oneLine(line))
   const bot = botId ? await place(botId, { appHome, platform, read, isFolder }) : null
   if (!bot || !bot.folder) {
     log(`no-space ${!botId ? 'no Bot' : !bot ? 'unknown Bot' : 'no folder'}`)

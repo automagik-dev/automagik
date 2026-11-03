@@ -275,13 +275,21 @@ async function rightSpace() {
     const opened = await openHerdr(host)
     if (!opened.ok) return record('d4: window open', false, JSON.stringify(opened))
   }
-  const ids = Array.from({ length: 4 }, () => `session-${randomUUID()}`)
-  const [made, existing, global, unknown] = ids
-  const fresh = realpathSync.native(mkdtempSync(join(tmpdir(), 'hb')))
+  const ids = Array.from({ length: 5 }, () => `session-${randomUUID()}`)
+  const [made, existing, global, unknown, numbered] = ids
+  // Folder names herdr-app's `do` flags would misread (a flag, a number): space.new is sent as
+  // one JSON object, so each must come back as that name.
+  const folderNamed = name => {
+    const dir = join(realpathSync.native(mkdtempSync(join(tmpdir(), 'hb'))), name)
+    mkdirSync(dir)
+    return dir
+  }
+  const fresh = folderNamed('-x')
+  const year = folderNamed('2026')
   const botsHome = mkdtempSync(join(tmpdir(), 'hd'))
   mkdirSync(join(botsHome, 'bots'))
   writeFileSync(join(botsHome, 'bots', 'state.json'), JSON.stringify({ version: 1, bots: {
-    [made]: { name: 'Fresh', workDir: fresh }, [existing]: { name: 'Harness', workDir: harnessFolder }, [global]: { name: 'Global' },
+    [made]: { name: 'Fresh', workDir: fresh }, [numbered]: { name: 'Year', workDir: year }, [existing]: { name: 'Harness', workDir: harnessFolder }, [global]: { name: 'Global' },
   } }))
   const ls = async () => spacesIn((await run(found.bin, ['ls'], { env })).stdout) ?? []
   const onFolder = (spaces, dir) => spaces.filter(space => space.folder === dir)
@@ -298,11 +306,21 @@ async function rightSpace() {
   }
   const told = ({ result, lines, active }) => `${JSON.stringify(result)}\nactive: ${active}\nlog: ${lines.join(' | ')}`
 
+  const nameOf = async id => {
+    try { return JSON.parse((await run(found.bin, ['ls'], { env })).stdout).spaces.find(space => space.id === id)?.name ?? null } catch { return null }
+  }
+
   const harnessSpace = onFolder(await ls(), harnessFolder)[0]?.id
   record('d4: ls has the harness space', Boolean(harnessSpace), harnessSpace ?? 'no space on the harness folder')
   const first = await pick(made)
   record('d4: no space on the folder: space.new opens it', first.result.action === 'new' && Boolean(first.result.id) && first.active === first.result.id &&
     onFolder(first.spaces, fresh).length === 1, told(first))
+  const firstName = await nameOf(first.result.id)
+  record('d4: a folder named -x: the space is named -x', firstName === '-x', `name: ${JSON.stringify(firstName)}`)
+  const yearPick = await pick(numbered)
+  const yearName = await nameOf(yearPick.result.id)
+  record('d4: a folder named 2026: the space is named "2026"', yearPick.result.action === 'new' && yearPick.active === yearPick.result.id &&
+    yearName === '2026' && onFolder(yearPick.spaces, year).length === 1, `${told(yearPick)}\nname: ${JSON.stringify(yearName)}`)
   const back = await pick(existing)
   record('d4: a space on the folder: it is selected', back.result.action === 'select' && back.result.id === harnessSpace && back.active === harnessSpace, told(back))
   const again = await pick(made)

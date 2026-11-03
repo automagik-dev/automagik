@@ -155,8 +155,10 @@ test('open gives up after 10 s of exit 2 with herdr-app\'s last line, and report
 
 // Virtual time: sleeps return at once and move the clock.
 function clock() {
-  let offset = 0
-  return { now: () => Date.now() + offset, sleep: async ms => { offset += ms } }
+  // Only sleeps move it: time spent in the fake herdr-app processes (a loaded host can take
+  // seconds to start one) never counts, so a bounded wait ends the same way on any machine.
+  let at = 0
+  return { now: () => at, sleep: async ms => { at += ms } }
 }
 
 test('a brief exit 1 right after a start is borne for the grace; then status answering 0 opens', posixOnly, async () => {
