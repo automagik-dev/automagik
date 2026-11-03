@@ -6,17 +6,21 @@
 // installer puts back an older build (from a local copy of the feed naming it), and the open
 // is driven through offline, the offer, no, and yes with the window open and closed; yes must
 // end on the feed's version. Each check is one JSON line in $OUT/results.jsonl; the table goes
-// to $GITHUB_STEP_SUMMARY. It exits 1 when a check a delivery needs fails.
+// to $GITHUB_STEP_SUMMARY. It exits 1 when a check a delivery needs fails. Delivery 4
+// (src/herdr-space.js), between the two: a Bot team state.json in a temp app home names Bots'
+// folders, and each Bot's space is picked as main does it: made, selected, the active one of
+// two, and none for a Bot with no folder or an unknown id.
 //
 //   node test/cross-os/herdr-harness.mjs        (Linux: under xvfb-run, with a window manager)
 import { execFile, execFileSync, spawn } from 'node:child_process'
-import { createHash, randomBytes } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { OVERRIDE, findHerdr, frontmost, openHerdr, run } from '../../src/herdr.js'
 import { OFFLINE, compareVersions, installedVersion, openLatest, readFeed } from '../../src/herdr-update.js'
+import { pickSpace, spacesIn } from '../../src/herdr-space.js'
 
 const FEED = 'https://releases.herdr.dev/app/latest.json'
 const platform = process.platform
@@ -99,6 +103,8 @@ async function somethingElseInFront() {
   return { code: 0, stdout: '', stderr: '' }
 }
 
+let harnessFolder = null
+
 async function main() {
   record('runner', null, `${process.platform} ${process.arch} node ${process.version}; HERDR_APP_HOME=${appHome}; DISPLAY=${process.env.DISPLAY ?? ''}`, { needed: false })
   await feed().catch(error => record('feed sha256', false, error.stack))
@@ -134,6 +140,7 @@ async function main() {
   try { JSON.parse(ls.stdout) } catch { lsOk = false }
   record('ls (JSON)', lsOk, shown(ls))
   const folder = realpathSync.native(mkdtempSync(join(tmpdir(), 'hs')))
+  harnessFolder = folder
   const made = await run(found.bin, ['do', 'space.new', '--name', 'harness', '--folder', folder], { env })
   let madeOk = made.code === 0 && !/"error"/.test(made.stdout)
   record('do space.new', madeOk, shown(made))
@@ -259,6 +266,66 @@ async function latest() {
   }
 }
 
+// Delivery 4: the right space, on the window main() left open. Bots are read from a Bot team
+// state.json in a temp app home, as main.js reads ~/.automagik/desktop/bots/state.json.
+async function rightSpace() {
+  const found = findHerdr(host)
+  if (!found || !harnessFolder) return record('d4: setup', false, 'no herdr-app or no harness space from the first checks')
+  if ((await run(found.bin, ['status'], { env })).code !== 0) {
+    const opened = await openHerdr(host)
+    if (!opened.ok) return record('d4: window open', false, JSON.stringify(opened))
+  }
+  const ids = Array.from({ length: 4 }, () => `session-${randomUUID()}`)
+  const [made, existing, global, unknown] = ids
+  const fresh = realpathSync.native(mkdtempSync(join(tmpdir(), 'hb')))
+  const botsHome = mkdtempSync(join(tmpdir(), 'hd'))
+  mkdirSync(join(botsHome, 'bots'))
+  writeFileSync(join(botsHome, 'bots', 'state.json'), JSON.stringify({ version: 1, bots: {
+    [made]: { name: 'Fresh', workDir: fresh }, [existing]: { name: 'Harness', workDir: harnessFolder }, [global]: { name: 'Global' },
+  } }))
+  const ls = async () => spacesIn((await run(found.bin, ['ls'], { env })).stdout) ?? []
+  const onFolder = (spaces, dir) => spaces.filter(space => space.folder === dir)
+  const pick = async botId => {
+    const lines = []
+    const result = await pickSpace({ ...host, botId, found, appHome: botsHome, log: line => lines.push(line) })
+    // The window takes a moment to show what it was asked.
+    let spaces = await ls()
+    for (let tries = 0; tries < 10 && result.id && !spaces.find(space => space.id === result.id)?.active; tries++) {
+      await sleep(200)
+      spaces = await ls()
+    }
+    return { result, lines, spaces, active: spaces.find(space => space.active)?.id ?? null }
+  }
+  const told = ({ result, lines, active }) => `${JSON.stringify(result)}\nactive: ${active}\nlog: ${lines.join(' | ')}`
+
+  const harnessSpace = onFolder(await ls(), harnessFolder)[0]?.id
+  record('d4: ls has the harness space', Boolean(harnessSpace), harnessSpace ?? 'no space on the harness folder')
+  const first = await pick(made)
+  record('d4: no space on the folder: space.new opens it', first.result.action === 'new' && Boolean(first.result.id) && first.active === first.result.id &&
+    onFolder(first.spaces, fresh).length === 1, told(first))
+  const back = await pick(existing)
+  record('d4: a space on the folder: it is selected', back.result.action === 'select' && back.result.id === harnessSpace && back.active === harnessSpace, told(back))
+  const again = await pick(made)
+  record('d4: the Bot\'s space again: selected, no second space', again.result.action === 'select' && again.result.id === first.result.id &&
+    again.active === first.result.id && onFolder(again.spaces, fresh).length === 1, told(again))
+  for (const [botId, check] of [[global, 'd4: a Bot with no folder: no space picked'], [unknown, 'd4: an unknown Bot: no space picked']]) {
+    const none = await pick(botId)
+    record(check, none.result.action === 'none' && none.active === first.result.id && none.lines[0]?.startsWith('no-space'), told(none))
+  }
+  // Two spaces on one folder: the active one, else the first ls lists.
+  const twin = await run(found.bin, ['do', 'space.new', '--name', 'harness twin', '--folder', harnessFolder], { env })
+  const twinId = (() => { try { return JSON.parse(twin.stdout).space } catch { return null } })()
+  record('d4: a second space on the harness folder', twin.code === 0 && Boolean(twinId), shown(twin))
+  if (!twinId) return
+  const activeTwin = await pick(existing)
+  record('d4: two spaces: the active one', activeTwin.result.id === twinId && activeTwin.lines.some(line => line.includes('(active)')), told(activeTwin))
+  await pick(made)
+  const firstTwin = await pick(existing)
+  const listed = onFolder(firstTwin.spaces, harnessFolder).map(space => space.id)
+  record('d4: two spaces, neither active: the first ls lists', listed.length === 2 && firstTwin.result.id === listed[0] && firstTwin.active === listed[0] &&
+    firstTwin.lines.some(line => line.includes('(first)')), `${told(firstTwin)}\nlisted: ${listed.join(', ')}`)
+}
+
 function summary() {
   const cell = row => (row.ok === true ? 'pass' : row.ok === false ? '**fail**' : 'info')
   const md = [`### herdr-app on ${target}`, '', '| check | result | detail |', '|---|---|---|',
@@ -271,6 +338,11 @@ try {
   await main()
 } catch (error) {
   record('harness', false, error.stack)
+}
+try {
+  await rightSpace()
+} catch (error) {
+  record('d4: harness', false, error.stack)
 }
 try {
   await latest()

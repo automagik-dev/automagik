@@ -7,7 +7,8 @@ name: Herdr find, raise and update
 # status, ls, do space.new, and a raise from behind another window. Delivery 2
 # (apps/desktop/src/herdr-update.js): an older build put back with herdrdev's installer, then
 # offline, the offer, no, and yes with the window open and closed, ending on the feed's
-# version. The harness is
+# version. Delivery 4 (apps/desktop/src/herdr-space.js): Bots' folders from a temp Bot team
+# state.json, each opening its space (made, selected, the active of two) or none. The harness is
 # apps/desktop/test/cross-os/herdr-harness.mjs; its table is the run summary and its JSON lines
 # an artifact. It runs on runners only, signs nothing, publishes nothing and uses no secrets.
 #
@@ -19,6 +20,8 @@ on:
     paths:
       - apps/desktop/src/herdr.js
       - apps/desktop/src/herdr-update.js
+      - apps/desktop/src/herdr-space.js
+      - apps/desktop/src/bot-views.js
       - apps/desktop/test/cross-os/herdr-harness.mjs
       - .github/workflows/herdr-harness.yml
   workflow_dispatch:
