@@ -39,6 +39,7 @@ Security gaps are named by title only until their fix merges. Details go to a pr
 | [0008](0008-platform-and-web-instances.md) | Platform and web instances | Draft | not scheduled |
 | [0009](0009-personal-customization.md) | Personal customization | Draft | after 2 (proposed: Make it yours) |
 | [0010](0010-desktop-sandbox.md) | Desktop sandbox and supervision | Draft | not scheduled |
+| [0011](0011-monorepo-parts-and-releases.md) | Monorepo parts and releases | Accepted | n/a (process) |
 
 Milestones, in the owner's order:
 

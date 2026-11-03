@@ -77,3 +77,93 @@ describe('the cut uploading its signed lane to the versioned release', () => {
     expect(run.out).toContain('::error::lane/lane.json and lane/lane.json.sig did not reach v9.9.9 after 3 tries');
   });
 });
+
+describe('commitlint over a pull request that imports a repository with its history', () => {
+  const lines = workflow('commitlint.yml');
+  const start = lines.findIndex(line => line.trim() === 'run: |');
+  const script = start > 0 ? lines.slice(start + 1).map(line => line.replace(/^ {10}/, '')).join('\n') : '';
+  const long = (what: string) => `${what} ${'x'.repeat(90)}`;
+
+  // A repository whose dev is `base`; `steps` builds a pull request branch `pr` on it. `upstream`
+  // is the imported repository's history (an orphan, as filter-repo leaves it), which the steps
+  // grow and merge in as scripts/import-herdr.sh does.
+  function lint(steps: (git: (...args: string[]) => string) => void) {
+    const dir = mkdtempSync(join(tmpdir(), 'commitlint-'));
+    const git = (...args: string[]) => {
+      const run = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8' });
+      if (run.status !== 0) throw new Error(`git ${args.join(' ')}: ${run.stderr}`);
+      return run.stdout.trim();
+    };
+    try {
+      git('init', '-q', '-b', 'dev');
+      git('commit', '-q', '--allow-empty', '-m', 'chore: the base');
+      git('checkout', '-q', '--orphan', 'upstream');
+      git('commit', '-q', '--allow-empty', '-m', long('docs(old): a line the old repository allowed'));
+      git('commit', '-q', '--allow-empty', '-m', 'An old subject that is not conventional');
+      git('checkout', '-q', '-b', 'pr', 'dev');
+      steps(git);
+      const run = spawnSync('bash', ['-c', `set -euo pipefail\n${script}`], { cwd: dir, encoding: 'utf8', env: { PATH: process.env.PATH ?? '', BASE: git('rev-parse', 'dev'), HEAD: git('rev-parse', 'pr') } });
+      return { status: run.status, out: run.stdout + run.stderr };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  const importIt = (git: (...args: string[]) => string) => git('merge', '-q', '--no-ff', '--allow-unrelated-histories', '-m', 'feat(herdr): import it', 'upstream');
+  const commit = (git: (...args: string[]) => string, subject: string) => git('commit', '-q', '--allow-empty', '-m', subject);
+
+  test('the script skips only what an import merge\'s second parent brought', () => {
+    expect(script).toContain('git merge-base --is-ancestor "${root}" "${merge}^2"');
+    expect(script).toContain('git rev-list --no-merges "${merge}^2" --not "${merge}^1" "${BASE}"');
+  });
+
+  test('the first import: its history is skipped; the pull request\'s own commits are checked', () => {
+    const ok = lint(git => { commit(git, 'chore(herdr): add the import script'); importIt(git); commit(git, 'ci(herdr): run the pack here'); });
+    expect(ok.out).toContain('2 imported commit(s) skipped');
+    expect(ok.status).toBe(0);
+    const bad = lint(git => { importIt(git); commit(git, long('fix: a commit of this pull request')); });
+    expect(bad.status).toBe(1);
+    expect(bad.out).toContain('has a line over 100 characters');
+    expect(bad.out).not.toContain('is not conventional');
+  });
+
+  test('the final re-run adds a second import merge: only its new upstream commits are skipped', () => {
+    const rerun = (own: string) => lint(git => {
+      importIt(git);
+      commit(git, 'feat(herdr): point the pack here');
+      git('checkout', '-q', 'upstream');
+      commit(git, long('fix(old): a newer upstream commit'));
+      git('checkout', '-q', 'pr');
+      git('merge', '-q', '--no-ff', '-m', 'feat(herdr): import it again', 'upstream');
+      commit(git, own);
+    });
+    const ok = rerun('fix(herdr): resolve the re-import');
+    expect(ok.out).toContain('3 imported commit(s) skipped');
+    expect(ok.status).toBe(0);
+    const bad = rerun('fixed the re-import');
+    expect(bad.status).toBe(1);
+    expect(bad.out).toContain('is not conventional: fixed the re-import');
+  });
+
+  test('other merges skip nothing: dev merged in, or a branch of this repository merged with --no-ff', () => {
+    const devMoves = lint(git => {
+      importIt(git);
+      commit(git, long('fix: a commit of this pull request'));
+      git('checkout', '-q', 'dev');
+      commit(git, 'chore(release): v9.9.9');
+      git('checkout', '-q', 'pr');
+      git('merge', '-q', '--no-ff', '-m', 'chore: merge dev', 'dev');
+    });
+    expect(devMoves.status).toBe(1);
+    expect(devMoves.out).toContain('has a line over 100 characters');
+    expect(devMoves.out).toContain('2 imported commit(s) skipped');
+    const side = lint(git => {
+      git('checkout', '-q', '-b', 'side', 'dev');
+      commit(git, 'wip on a side branch');
+      git('checkout', '-q', 'pr');
+      git('merge', '-q', '--no-ff', '-m', 'chore: merge side', 'side');
+    });
+    expect(side.status).toBe(1);
+    expect(side.out).toContain('is not conventional: wip on a side branch');
+    expect(side.out).not.toContain('skipped');
+  });
+});

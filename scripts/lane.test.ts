@@ -3,7 +3,7 @@ import { createHash, generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addonPinsOnly, kindOf, LANE_ADDONS, manifest, nextPatch, sequenceOf, ships, signLane, unpackedIn, verifyLane } from './lane';
+import { addonPinsOnly, herdrShips, kindOf, LANE_ADDONS, manifest, nextPatch, sequenceOf, ships, signLane, unpackedIn, verifyLane } from './lane';
 
 describe('the plugin lane', () => {
   test('only changes inside the plugins ride the lane; anything the app or an install sees is a full release', () => {
@@ -19,6 +19,37 @@ describe('the plugin lane', () => {
     expect(kindOf(['apps/bots-dsh/package.json'], plugin => plugin === 'bots-dsh')).toBe('full');
     expect(kindOf([], none)).toBe('full');
     expect(kindOf(['apps/automagik-pets/src/bake.js', 'apps/automagik-pets/bun.lock', 'apps/bots-dsh/client.js'], none)).toBe('plugins');
+  });
+
+  test('a herdr-only change is a herdr patch: no desktop build, no plugins, the pack alone', () => {
+    const none = () => false;
+    const pack = ['herdr/mods/am-sidebar/main.js', 'herdr-layout/automagik.json', 'herdr/install.sh'];
+    // Since the last release (here also the last full one), only herdr/ ships.
+    expect(kindOf(pack, none, none, pack)).toBe('herdr');
+    expect(herdrShips(pack)).toBe(true);
+    // The import itself: the pack, its tests, notes and catalog, the release tooling and the RFC.
+    const importing = [...pack, 'herdr/test/update.test.mjs', 'herdr/README.md', 'herdr/.genie/INDEX.md', 'herdr/catalog/index.json',
+      '.github/workflows/release.yml', 'scripts/lane.ts', 'scripts/import-herdr.sh', 'docs/rfcs/0011-monorepo-parts-and-releases.md', 'AGENTS.md'];
+    expect(kindOf(importing, none, none, importing)).toBe('herdr');
+    // After a plugin patch (v3.N.1), a herdr-only change since it is still herdr: the plugins are not packed again.
+    expect(kindOf(['apps/bots-dsh/client.js', ...pack], none, none, pack)).toBe('herdr');
+    // With a plugin change since the last release it is a plugin patch, and the pack comes along.
+    expect(kindOf(['apps/bots-dsh/client.js', ...pack], none, none, ['apps/bots-dsh/client.js', ...pack])).toBe('plugins');
+    expect(herdrShips(['apps/bots-dsh/client.js', ...pack])).toBe(true);
+    // With an app change it is a full release, the pack included; herdr/ alone never makes one.
+    expect(kindOf(['apps/desktop/src/main.js', ...pack], none, none, ['apps/desktop/src/main.js', ...pack])).toBe('full');
+    expect(kindOf(pack, none)).toBe('plugins');
+    // What the pack does not carry ships nothing: tests, notes, plans, the mockup, the catalog (read from dev).
+    const notes = ['herdr/test/update.test.mjs', 'herdr/README.md', 'herdr/RECIPE.md', 'herdr/docs/agent-install.md', 'herdr/.genie/INDEX.md',
+      'herdr/mockup/gen-sidebar.mjs', 'herdr/catalog/index.json', 'docs/rfcs/0011-monorepo-parts-and-releases.md'];
+    expect(ships(notes, none)).toBe(false);
+    expect(herdrShips(notes)).toBe(false);
+    // The pack's version files, bumped by a release, ship nothing on their own.
+    const versions = ['herdr/package.json', 'herdr/mods/am-sidebar/VERSION'];
+    expect(herdrShips(versions, path => versions.includes(path))).toBe(false);
+    expect(herdrShips(versions)).toBe(true);
+    // Nothing shipping since the last release falls back to the rule since the last full one.
+    expect(kindOf(['apps/bots-dsh/client.js'], none, none, ['herdr/README.md'])).toBe('plugins');
   });
 
   test('a change no install sees is no release: a plugin file its package does not carry', () => {

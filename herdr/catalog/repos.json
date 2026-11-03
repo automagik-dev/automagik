@@ -1,0 +1,48 @@
+{
+  "repos": [
+    {
+      "fullName": "GaganSD/coding-agent-toolkit",
+      "path": "herdr-insights",
+      "name": "Insights",
+      "blurb": "A native Herdr dashboard for token usage across Pi, Codex, Claude Code, and OpenCode. It reads existing local session data, shows model rankings and activity, and opens in its own tab without changing terminals, layouts, or keys.",
+      "modNames": [
+        "insights"
+      ],
+      "headCommit": "e68e6bf16e7873b501f9b26b3d72a167fa70ffd3",
+      "stars": 40,
+      "pushedAt": "2026-11-03T06:54:16Z",
+      "defaultBranch": "main",
+      "hasKeys": false,
+      "hasPreview": true,
+      "license": "MIT",
+      "recipeBytes": 13422
+    },
+    {
+      "fullName": "dmazlum/herdr-revive",
+      "path": "",
+      "name": "Revive",
+      "blurb": "Brings back the coding agent a Herdr terminal lost to a reboot or a herdr-core restart, in the same pane with the same session and flags, and forks a live session beside it (Claude Code; Codex, Factory Droid, Cursor CLI and pi experimental).",
+      "modNames": [
+        "revive"
+      ],
+      "hasKeys": true,
+      "hasPreview": true,
+      "stars": 4,
+      "pushedAt": "2026-11-03T12:30:13Z",
+      "defaultBranch": "main",
+      "license": "MIT",
+      "headCommit": "ae95ce54c1780e495a6772b3d06c4a51d2a16081",
+      "recipeBytes": 17712
+    },
+    {
+      "fullName": "automagik-dev/automagik-pocket",
+      "external": true,
+      "name": "Pocket Link",
+      "blurb": "Pair a phone with this computer so Herdr Pocket reaches its agents from anywhere. The mod, its LaunchAgent and its pairing state live in automagik-pocket and are installed by that repo, never by this pack.",
+      "defaultBranch": "dev",
+      "stars": 0,
+      "pushedAt": "",
+      "license": "Apache-2.0"
+    }
+  ]
+}

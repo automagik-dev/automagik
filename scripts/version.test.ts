@@ -18,6 +18,9 @@ describe('one version for the repository', () => {
     expect(drift('3.7.0', root)).toEqual([]);
     const desktop = JSON.parse(readFileSync(join(root, 'apps/desktop/package.json'), 'utf8'));
     expect(desktop.name).toBe('@automagik/omni-desktop');
+    // The herdr pack's VERSION is the version alone, on one line: its updater reads it so.
+    expect(readFileSync(join(root, 'herdr/mods/am-sidebar/VERSION'), 'utf8')).toBe('3.7.0\n');
+    expect(JSON.parse(readFileSync(join(root, 'herdr/package.json'), 'utf8')).name).toBe('automagik-herdr');
     setVersion('3.7.2', root);
     expect(drift('3.7.2', root)).toEqual([]);
     for (const bad of ['3.261024.1', '3.7', '3.07.0', '3.7.01', '4.1.0']) expect(() => setVersion(bad, root)).toThrow(/not a version/);
