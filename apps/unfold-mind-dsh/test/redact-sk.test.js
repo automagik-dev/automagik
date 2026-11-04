@@ -388,3 +388,23 @@ test('a clip that cuts a token drops the whole token; a clip at a word boundary 
   // A clip that lands on a space keeps the whole word before it.
   assert.ok(said(`${'d'.repeat(139)} tail`).endsWith(`${'d'.repeat(139)}…”`))
 })
+
+// The clip guard lives in quote(), so every raw-field caller inherits it: log keeps 139 characters,
+// typed text, the provider transcript and reply text keep 89. The key straddles the clip at its
+// first, middle and last character, the positions the old order turned into a short fragment.
+test('every raw-field caller keeps a key out of its sentence when the clip lands inside it', () => {
+  const callers = [
+    ['log', 140, (text) => sentence({ lane: 'agentd', kind: 'log', fields: { level: 'info', msg: text } }).sentence],
+    ['user_text', 90, (text) => sentence({ lane: 'agentd', kind: 'user_text', fields: { request_id: 'c1', text } }).sentence],
+    ['input_transcript', 90, (text) => sentence({ lane: 'agentd', kind: 'input_transcript', fields: { text } }).sentence],
+    ['host input_transcript', 90, (text) => sentence({ lane: 'host', kind: 'input_transcript', fields: { text } }).sentence],
+    ['reply_text', 90, (text) => sentence({ lane: 'host', kind: 'reply_text', fields: { response_id: 'r1', text } }).sentence],
+  ]
+  for (const [name, n, said] of callers) {
+    for (const r of [0, Math.floor(CANARY.length / 2), CANARY.length - 1]) {
+      const pad = n - 2 - r // the key starts at pad + 1, so its r-th character is the first dropped
+      const out = said(`${'a'.repeat(pad)} ${CANARY} tail`)
+      assert.equal(fragmentIn(CANARY, out), null, `${name}, clip inside the key at ${r}: ${maskCanary(out)}`)
+    }
+  }
+})
