@@ -9,7 +9,8 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  store, listen, ask, forget, unlinkOwn, fits, bridgeState, claim, clearStale, stopBridge, startedAt, commandOf, servesBridge,
+  store, listen, ask, forget, unlinkOwn, fits, fileId, bridgeState, claim, clearStale, stopBridge, startedAt, commandOf,
+  servesBridge,
   SOCKET, FILE, STATUS, SOCKET_MAX, BUSY_RETRIES, BUSY_WAIT,
 } from './devices.mjs'
 
@@ -489,4 +490,56 @@ test('a genuine bridge that does not take the removal: forget fails closed with 
     await assert.rejects(forget({ dir, id: A.id }), /refused the removal: devices\.json is not writable\. The phone is still paired/)
   } finally { quiet.close() }
   assert.equal(readFileSync(join(dir, FILE), 'utf8'), before, 'nothing written')
+})
+
+/**
+ * lstat as Linux can answer it after a socket is removed and another bound: the same device and
+ * inode number, a later change time. `real` is lstatSync.
+ */
+const reusedInode = (real) => (path, options) => {
+  const s = real(path, options)
+  return { dev: s.dev, ino: s.ino, ctimeNs: s.ctimeNs + 1_000_000n, birthtimeNs: s.birthtimeNs + 1_000_000n }
+}
+
+test('a socket\'s identity is more than its inode: a reused inode number is another file', () => {
+  const dir = tmp()
+  const path = join(dir, 'x')
+  writeFileSync(path, '')
+  const id = fileId(path)
+  assert.match(id, /^\d+:\d+:\d+:\d+$/)
+  assert.equal(fileId(path), id, 'the same file, the same identity')
+  assert.notEqual(fileId(path, reusedInode(lstatSync)), id)
+  assert.equal(fileId(join(dir, 'none')), null)
+})
+
+test('clearing a stale bridge keeps a new socket given the dead one\'s inode number', async () => {
+  const dir = tmp()
+  const sock = join(dir, SOCKET)
+  reused(dir)
+  refusing(sock)
+  const state = await bridgeState({ dir })
+  assert.equal(state.stale, true)
+  // A new bridge's socket and status.json, its inode number the dead socket's.
+  writeFileSync(join(dir, STATUS), JSON.stringify({ pid: 4_000_003 }))
+  clearStale(dir, state, { stat: reusedInode(lstatSync) })
+  assert.ok(existsSync(sock), 'the new socket stays')
+  assert.equal(JSON.parse(readFileSync(join(dir, STATUS), 'utf8')).pid, 4_000_003, 'the new status.json stays')
+  // The same file still there: cleared.
+  reused(dir)
+  clearStale(dir, state)
+  assert.equal(existsSync(sock), false)
+  assert.equal(existsSync(join(dir, STATUS)), false)
+})
+
+test('on exit a bridge keeps a later socket given its own socket\'s inode number', async () => {
+  const dir = tmp()
+  const sock = join(dir, SOCKET)
+  const server = await listen(sock, { forget: () => true })
+  try {
+    unlinkOwn(server, sock, { stat: reusedInode(lstatSync) })
+    assert.ok(existsSync(sock), 'a later bridge\'s socket stays')
+    assert.deepEqual(await ask(sock, { ping: true }), { ok: true, pid: process.pid })
+    unlinkOwn(server, sock)
+    assert.equal(existsSync(sock), false, 'its own socket goes')
+  } finally { server.close() }
 })

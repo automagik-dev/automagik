@@ -13,7 +13,7 @@
 // No dependencies, so node --test runs it without the bridge's packages.
 import { execFileSync } from 'node:child_process'
 import { createConnection, createServer } from 'node:net'
-import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs'
+import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 export const SOCKET = 'bridge.sock'
@@ -39,6 +39,16 @@ export const SOCKET_MAX = process.platform === 'darwin' ? 104 : 107
 export const fits = (path) => Buffer.byteLength(path) <= SOCKET_MAX
 
 const readJson = (path, fallback) => { try { return JSON.parse(readFileSync(path, 'utf8')) } catch { return fallback } }
+
+/**
+ * Which file is at `path` (not followed), or null when none is: its device, inode, change and birth
+ * times to the nanosecond. The inode alone is not enough: Linux gives a freed inode number to the
+ * next file made, so a socket bound in place of a removed one can have the removed one's inode.
+ * `stat` is lstatSync; tests give another to make that reuse happen.
+ */
+export function fileId(path, stat = lstatSync) {
+  try { const s = stat(path, { bigint: true }); return `${s.dev}:${s.ino}:${s.ctimeNs}:${s.birthtimeNs}` } catch { return null }
+}
 
 /**
  * The phones in devices.json. Every change reads the file again and writes it whole, synchronously,
@@ -104,18 +114,18 @@ export function listen(path, { forget, log = () => {}, pid = process.pid }) {
       server.off('error', reject)
       server.on('error', (e) => log('control:', e.message))
       try { chmodSync(path, 0o600) } catch {}
-      try { server.socketIno = statSync(path).ino } catch {}
+      server.socketId = fileId(path)
       resolve(server)
     })
   })
 }
 
 /**
- * For the bridge's exit: removes bridge.sock only while it is still this server's, never one a
- * later bridge has put in its place.
+ * For the bridge's exit: removes bridge.sock only while it is still this server's (fileId), never
+ * one a later bridge has put in its place.
  */
-export function unlinkOwn(server, path) {
-  try { if (server?.socketIno !== undefined && statSync(path).ino === server.socketIno) unlinkSync(path) } catch {}
+export function unlinkOwn(server, path, { stat = lstatSync } = {}) {
+  try { if (server?.socketId && fileId(path, stat) === server.socketId) unlinkSync(path) } catch {}
 }
 
 /**
@@ -201,8 +211,7 @@ export async function bridgeState({ dir, self = null, alive = defaultAlive, star
     return line === null ? null : servesBridge(line)
   }
   const sock = join(dir, SOCKET)
-  let socketIno = null
-  try { socketIno = lstatSync(sock).ino } catch {}
+  const socketId = fileId(sock)
   let answer
   try { answer = await ask(sock, { ping: true }, { timeout }) } catch {
     // Something listens on the bridge's socket but did not answer in time: a busy bridge.
@@ -210,18 +219,19 @@ export async function bridgeState({ dir, self = null, alive = defaultAlive, star
   }
   if (answer) return { running: true, pid: Number.isInteger(answer.pid) && answer.pid > 0 ? answer.pid : ours() === false ? null : named, stale: false }
   // Nothing took the ping and the pid is not the bridge: bridge.sock, if any, is a dead bridge's.
-  if (ours() === false) return { running: false, pid: null, stale: true, stalePid: named, socketIno }
+  if (ours() === false) return { running: false, pid: null, stale: true, stalePid: named, socketId }
   return { running: true, pid: named, stale: false }
 }
 
 /**
- * Removes what a stale bridgeState() found: bridge.sock while it is still the one that refused the
- * ping (a bridge starting now binds a new one), and status.json while it still names the stale pid.
+ * Removes what a stale bridgeState() found: bridge.sock while it is still the file that refused
+ * the ping (fileId; a bridge starting now binds a new one), and status.json while it still names
+ * the stale pid. `stat` as in fileId.
  */
-export function clearStale(dir, state) {
+export function clearStale(dir, state, { stat = lstatSync } = {}) {
   if (!state?.stale) return
   const sock = join(dir, SOCKET), status = join(dir, STATUS)
-  if (state.socketIno !== null && state.socketIno !== undefined) try { if (lstatSync(sock).ino === state.socketIno) unlinkSync(sock) } catch {}
+  if (state.socketId) try { if (fileId(sock, stat) === state.socketId) unlinkSync(sock) } catch {}
   try { if (readJson(status, {}).pid === state.stalePid) unlinkSync(status) } catch {}
 }
 
