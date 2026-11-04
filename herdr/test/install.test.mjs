@@ -1021,6 +1021,8 @@ test("rollback, or --uninstall, then a reinstall: a mod's .state comes back from
   assert.equal(again.code, 0, again.err);
   for (const m of ["am-quota", "am-tabs"]) assert.equal(readFileSync(join(s.where(m), ".state", "cred"), "utf8"), `${m} secret\n`, m);
   assert.equal(existsSync(join(s.mods, "am-quota")), false, "it comes back off");
+  assert.match(again.out, /installed mods-disabled\/am-quota: it was off when it was kept, so it stays off/);
+  assert.doesNotMatch(again.out, /am-quota: it ships off/, "not a first install");
   assert.ok(existsSync(join(off, "am-quota", "main.js")));
 });
 

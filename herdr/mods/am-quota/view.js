@@ -101,8 +101,10 @@ export function why(pick, verdict, activeId, now) {
   else {
     const fresh = all.filter((f) => !f.held && f.id !== me.id);
     const skipped = all.some((f) => f.held && at(f) < at(me));
-    const tied = fresh.some((f) => at(f) === at(me));
-    if (tied) rule = "resets as soon as another, and has more room";
+    const tied = fresh.filter((f) => at(f) === at(me));
+    // A full tie (same reset, same room) is broken by the account's id: say it's a tie.
+    if (tied.some((f) => f.headroom === me.headroom)) rule = "ties with another on its reset and its room";
+    else if (tied.length) rule = "resets as soon as another, and has more room";
     else if (skipped) rule = "resets soonest of the accounts not about to reset";
     else rule = "resets soonest, so none of its hours go to waste";
   }

@@ -493,7 +493,8 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     const kept = readSet(modsDir);
     const plan = { installed: [], replaced: [], renamed: [], left: [], adopted: [], retired: [], repaired: [], off: [], installedOff: [] };
     const keptOff = [];
-    const leftOff = [];   // a mods-disabled/ folder the record doesn't own, where an off-by-default mod would go
+    const leftOff = [];
+    const keptBackOff = [];   // a kept copy that was off when kept, put back off   // a mods-disabled/ folder the record doesn't own, where an off-by-default mod would go
     const both = [];
     const moves = [];
     // A folder the person owns moves to backup/ (never replaced) and is recorded, so --uninstall puts it back.
@@ -551,7 +552,7 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
           if (wasKept) carryPrivate(join(prevSetOf(modsDir), m), fresh);
           moves.push([fresh, off]);
           plan.installed.push(m);
-          plan.installedOff.push(m);
+          (wasKept ? keptBackOff : plan.installedOff).push(m);
           record.mods.push(m);
           continue;
         }
@@ -628,6 +629,7 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     keepSet(modsDir, next, keep, before, old, rename, warnings, keptOff);
     for (const m of plan.off) log(`updated mods-disabled/${m}: it stays off`);
     for (const m of plan.installedOff) log(`installed mods-disabled/${m}: it ships off; turn it on in the Mods panel`);
+    for (const m of keptBackOff) log(`installed mods-disabled/${m}: it was off when it was kept, so it stays off`);
     for (const m of leftOff) log(`left alone: mods-disabled/${m} (not installed by automagik-herdr), so ${m} was not installed`);
     for (const m of both) log(`warning: mods/${m} and mods-disabled/${m} both exist: mods/${m} was updated, the switched-off copy is left as it is`);
     for (const m of plan.left) {
@@ -905,8 +907,7 @@ export function setupHome({ modsDir, tgzDir, record, log = () => {}, herdrApp = 
   }
 
   placeLayout({ modsDir, tgzDir, record, log });
-  // A mod switched off (mods-disabled/, as one that ships off starts) is not loaded: nothing to check.
-  return checkMods({ modsDir, mods: record.mods.filter((m) => exists(join(modsDir, m))), log, herdrApp }).failed;
+  return checkMods({ modsDir, mods: toCheck(modsDir, record.mods), log, herdrApp }).failed;
 }
 
 /**
@@ -952,6 +953,13 @@ export function placeLayout({ modsDir, tgzDir, record, log = () => {} }) {
  * `herdr-app check` on each of `mods`, its whole output shown on a failure. Returns `{ failed,
  * checked }`: the mods whose check failed, and false when herdr-app is not on PATH (said once).
  */
+/**
+ * The record's mods `herdr-app check` should load: all but the ones switched off (in
+ * mods-disabled/ and not in mods/, as a mod that ships off starts). A mod missing from both stays
+ * in the list, so its check fails and the setup says so, instead of passing it over.
+ */
+export const toCheck = (modsDir, mods) => mods.filter((m) => exists(join(modsDir, m)) || !exists(join(offDirOf(modsDir), m)));
+
 export function checkMods({ modsDir, mods, log = () => {}, herdrApp = "herdr-app" }) {
   const failed = [];
   let haveHerdr = true;
@@ -1064,7 +1072,7 @@ export async function repairInstall({ tgzPath, version, modsDir = defaultModsDir
     const record = readMarker(modsDir);
     const layout = placeLayout({ modsDir, tgzDir, record, log });
     // A mod switched off (in mods-disabled/, not mods/) has no folder here to check.
-    const { failed: checkFailed, checked } = checkMods({ modsDir, mods: record.mods.filter((m) => exists(join(modsDir, m))), log, herdrApp });
+    const { failed: checkFailed, checked } = checkMods({ modsDir, mods: toCheck(modsDir, record.mods), log, herdrApp });
     const changed = Boolean(repaired) || layout === "added" || layout === "replaced";
     const warnings = repaired?.warnings ?? [];
     // The hooks too, so a rerun moves those of a project opened (or listed) since the install.

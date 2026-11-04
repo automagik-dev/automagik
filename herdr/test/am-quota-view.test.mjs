@@ -188,6 +188,8 @@ test("the reason is the rule that chose: held accounts skipped, all held, a tie 
   // Two reset together: the one with more room.
   assert.match(reason([acct("ed", { used: 40, resetH: 6 }), acct("flo", { used: 10, resetH: 6 })]), /resets as soon as another, and has more room$/);
   assert.match(reason([cy]), /the only other account with room$/);
+  // Same reset and same room: a tie, not "more room".
+  assert.match(reason([acct("gus", { used: 20, resetH: 6 }), acct("hal", { used: 20, resetH: 6 })]), /ties with another on its reset and its room$/);
 });
 
 test("the dot follows the bar: amber from 85% used even while the account lasts", () => {

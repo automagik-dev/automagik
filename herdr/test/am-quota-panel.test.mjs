@@ -258,3 +258,24 @@ test("active.json from before: a bare name is a record, a saved-login record is 
   assert.deepEqual(records({ codex: "codex-a.json", claude: { name: "saved:work", fingerprint: "f", saved: "work" } }),
     { codex: { name: "codex-a.json", fingerprint: null } });
 });
+
+test("no switch while bots restart; a switch's busy line names the account by email", async () => {
+  const { view, cx, draw } = await panel();
+  view.tool = "codex";
+  draw();
+  view.restarting = true;
+  const before = installs.length;
+  nodes.get("primary-codex").click(null, cx);
+  await cx.settle();
+  assert.equal(installs.length, before, "nothing installed");
+  assert.match(text(draw()), /bots are restarting: switch once they are done/);
+  view.restarting = false;
+  view.switchError = null;
+  let line = null;
+  const busyAt = installs.length;
+  nodes.get("primary-codex").click(null, cx);
+  line = view.busy;
+  await cx.settle();
+  assert.equal(line, "switching Codex to bo@example.com · Pro…");
+  assert.equal(installs.length, busyAt + 1);
+});

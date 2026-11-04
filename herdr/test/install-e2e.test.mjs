@@ -256,7 +256,8 @@ function assertFullPack(m, r) {
   const said = /Installed the pack (\S+) in .*: (.*)\.$/m.exec(r.out);
   assert.ok(said, r.out);
   assert.equal(said[1], RELEASE);
-  assert.deepEqual(said[2].split(", ").sort(), [...PACK_MODS].sort());
+  // A mod that ships off is named, marked off.
+  assert.deepEqual(said[2].split(", ").sort(), PACK_MODS.map((mod) => (OFF_BY_DEFAULT.includes(mod) ? `${mod} (off: turn it on in the Mods panel)` : mod)).sort());
   // herdr-app check on every pack mod that is on (one switched off is not loaded).
   assert.deepEqual(m.herdrLog().filter((l) => l.startsWith("check ")).map((l) => l.slice(6)).sort(), ON_MODS.map((mod) => join(m.mods, mod)).sort());
   // The pack layout (the archive's), and the pack's copy kept for later comparisons.
@@ -408,9 +409,11 @@ test(`e2e (b): a v0.4.0 sidebar-only install is replaced by the whole pack (${la
   const lines = r.out.split("\n"), at = lines.findIndex((l) => l.includes("Your layout") && l.includes(personal));
   assert.ok(at >= 0, `the output names ${personal}:\n${r.out}`);
   const note = `${lines[at]}\n${lines[at + 1]}`;
-  for (const what of ["footer rail (am-footer)", "tab bar (am-tabs)", "Markdown menu (am-markdown)", "automations panel", "Accounts panel (am-quota)"]) {
+  for (const what of ["footer rail (am-footer)", "tab bar (am-tabs)", "Markdown menu (am-markdown)", "automations panel"]) {
     assert.ok(note.includes(what), `it names the ${what}: ${note}`);
   }
+  // am-quota ships off: its block is not missed until it is turned on.
+  assert.ok(!note.includes("Accounts panel"), `a mod that is off is not named: ${note}`);
   assert.ok(note.includes(join(m.state, "automagik.json")), `it points at the pack's layout to copy from: ${note}`);
 });
 }

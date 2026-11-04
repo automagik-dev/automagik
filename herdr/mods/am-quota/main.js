@@ -244,7 +244,8 @@ export default class AmQuota extends View {
       wake(cx);
       return;
     }
-    const refused = claim(this, provider, account);   // a second click starts nothing
+    // A second click starts nothing; the busy line names the account by email, never its file.
+    const refused = claim(this, provider, account, `switching ${TOOLS[provider]} to ${who(account)}…`);
     if (refused) {
       this.switchError = refused;
       wake(cx);
@@ -368,6 +369,7 @@ export default class AmQuota extends View {
     }
     this.armed = null;
     s.restarting = true;
+    this.restarting = true;   // lock.claim refuses a switch until the restarts are done
     s.result = null;
     cx.spawn(async (cx) => {
       wake(cx);
@@ -390,6 +392,7 @@ export default class AmQuota extends View {
         }
       }
       s.restarting = false;
+      this.restarting = false;
       s.done = done;
       s.result = { done, failed };
       // Only the ones that failed are left to restart.

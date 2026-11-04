@@ -11,7 +11,7 @@ import { gzipSync } from "node:zlib";
 import {
   POINTER_SIG_URL, POINTER_URL, applyUpdate, checkForUpdate, compareVersions, downloadUpdate, fetchPointer, installUpdate, noticeText, packKeys,
   packOfPointer, parseSums, verifyPointer,
-  markerOf, offDirOf, pickUpdate, prevSetOf, readMarker, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
+  checkMods, markerOf, offDirOf, pickUpdate, toCheck, prevSetOf, readMarker, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
 } from "../mods/am-sidebar/update.mjs";
 import { formatMarker, parseMarker } from "../mods/am-sidebar/release.js";
 import { cmdUpdate } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
@@ -925,6 +925,26 @@ test("am-quota ships off: a fresh install puts it in mods-disabled/; an installe
     assert.ok(said.some((x) => /left alone: mods-disabled\/am-quota/.test(x)));
   } finally {
     for (const d of [t.src, ...homes]) rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test("herdr-app check skips only a switched-off mod: one missing from mods/ and mods-disabled/ still fails", () => {
+  const { home, mods } = appHome("0.1.0", ["am-sidebar", "am-tabs", "am-quota", "am-footer"]);
+  try {
+    const off = offDirOf(mods);
+    mkdirSync(off);
+    renameSync(join(mods, "am-quota"), join(off, "am-quota"));       // switched off (or shipped off)
+    rmSync(join(mods, "am-footer"), { recursive: true });             // should be on, and is gone
+    assert.deepEqual(toCheck(mods, ["am-sidebar", "am-tabs", "am-quota", "am-footer"]), ["am-sidebar", "am-tabs", "am-footer"]);
+    // A stand-in herdr-app that fails a folder that isn't there, as the real check does.
+    const bin = join(home, "herdr-app");
+    writeFileSync(bin, '#!/bin/sh\n[ "$1" = check ] && [ -d "$2" ] && exit 0\necho "no mod at $2" >&2\nexit 1\n');
+    chmodSync(bin, 0o755);
+    const lines = [];
+    const r = checkMods({ modsDir: mods, mods: toCheck(mods, readMarker(mods).mods), log: (l) => lines.push(l), herdrApp: bin });
+    assert.deepEqual(r.failed, ["am-footer"], "the missing mod fails the setup; the switched-off one is not checked");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });
 

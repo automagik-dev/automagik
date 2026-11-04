@@ -245,6 +245,8 @@ layout_notes() {
       'am-markdown:the Markdown menu (am-markdown)' 'am-automations:the automations panel (am-automations)' 'am-quota:the Accounts panel (am-quota)'; do
       # A block naming the mod ("mod": …), or for am-markdown the root's "terminal_menu": an id like
       # "am-quota-panel" or a mention elsewhere doesn't count.
+      # A mod that is off (mods-disabled/, as am-quota ships) isn't missed: its block would be empty.
+      if [ ! -d "$MODS/${s%%:*}" ] && [ -d "$APP_HOME/mods-disabled/${s%%:*}" ]; then continue; fi
       grep -Eq "\"(mod|terminal_menu)\"[[:space:]]*:[[:space:]]*\"${s%%:*}\"" "$f" || lacks=${lacks:+$lacks, }${s#*:}
     done
     [ -n "$lacks" ] || continue
@@ -252,6 +254,22 @@ layout_notes() {
     say "Your layout ${name%.json} ($f) shows the Automagik sidebar, but not the rest of the pack: $lacks."
     say "  It is left as it is. To add them, copy their blocks (and \"terminal_menu\": \"am-markdown\") from the pack's layout, $REF, into it; or use the automagik layout instead."
   done
+}
+
+# The record's mods as the install summary names them: one switched off (in mods-disabled/, as
+# am-quota ships) says so, and where to turn it on.
+mods_said() {
+  said=
+  set -f
+  old_ifs=$IFS
+  IFS=,
+  for m in $(mark_get mods); do
+    if [ ! -d "$MODS/$m" ] && [ -d "$APP_HOME/mods-disabled/$m" ]; then m="$m (off: turn it on in the Mods panel)"; fi
+    said=${said:+$said, }$m
+  done
+  IFS=$old_ifs
+  set +f
+  printf '%s' "$said"
 }
 
 switch_hint() {
@@ -680,7 +698,7 @@ install() {
     sed -e '/^notice: /d' -e 's/^/  /' "$TMP/log"
     # The briefing hooks' notice (update.mjs): kept for the end of the run, where it is read.
     sed -n 's/^notice: //p' "$TMP/log" >"$TMP/notice"
-    say "Installed the pack $VERSION in $MODS: $(mark_get mods | sed 's/,/, /g')."
+    say "Installed the pack $VERSION in $MODS: $(mods_said)."
     if [ -f "$STATE/.prev/.pack" ] && [ "$installed" != none ]; then
       say "The folders it replaced ($installed) are kept in $STATE/.prev: 'automagik-herdr update --rollback' swaps them back."
     fi
