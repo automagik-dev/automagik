@@ -88,7 +88,7 @@ test('an approval: buttons from the guards, an answer re-checked and pressed, th
   assert.equal(writes().length, 0)
   const fast = { ...engine.timers, setTimeout: (fn) => setImmediate(fn) }
   engine.timers = fast
-  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: 'allow' }), { ok: true, pressed: 'done' })
+  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: 'allow' }), { ok: true, pressed: 'done', sent: true })
   assert.deepEqual(writes().map((c) => [c.method, c.params.keys]), [['terminal.keys', ['1']]])
   hc.change('t1', 'status', { status: { app: 'claude-code', state: 'working' } })
   await settle()
@@ -203,7 +203,7 @@ test('a double tap from one client presses once', async () => {
 
 test('a retry after uncertain is refused while the status stays blocked; the row loses its buttons', async () => {
   const { engine, a, row, writes } = await approvalSetup({ landing: null })
-  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: 'deny' }), { ok: true, pressed: 'uncertain' })
+  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: 'deny' }), { ok: true, pressed: 'uncertain', sent: true })
   await settle()
   assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: 'deny' }), { ok: false, reason: 'answered' })
   assert.equal(writes().length, 1)
@@ -239,5 +239,14 @@ test('the same call asked again after the status moved can be answered again', a
   assert.deepEqual([again.id, again.choices], [row.id, ['allow', 'deny']])
   assert.equal((await engine.answer(a.me, 't1', { row: row.id, choice: 'deny' })).ok, true)
   assert.equal(writes().length, 2)
+  engine.close()
+})
+
+test('a keys call that failed or timed out still marks the call answered: no second press on retry', async () => {
+  const { engine, hc, a, row, writes } = await approvalSetup({ landing: null })
+  hc.onWrite((m) => { if (m === 'terminal.keys') throw Object.assign(new Error('timed out'), { kind: 'timeout' }) })
+  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: 'deny' }), { ok: false, reason: 'timeout', sent: true })
+  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: 'deny' }), { ok: false, reason: 'answered' })
+  assert.equal(writes().filter((c) => c.method === 'terminal.keys').length, 1)
   engine.close()
 })

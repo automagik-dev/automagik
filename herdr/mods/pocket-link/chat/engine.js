@@ -252,8 +252,9 @@ export class Engine {
     entry.answering = answerApproval({ hc: this.hc, address, rowId: row, choice, read: entry.read, timers: this.timers })
     let result
     try { result = await entry.answering } finally { entry.answering = null }
-    // A key went out: that call is answered, whatever the dialog shows until the status moves.
-    if (result.ok && call) entry.answered.add(call)
+    // terminal.keys was called: that call is answered, whatever came back (a timeout or an error
+    // may still have typed it) and whatever the dialog shows, until the status moves.
+    if (result.sent && call) entry.answered.add(call)
     if (result.ok || result.reason === 'changed' || result.reason === 'closed') this.checkApproval(entry)
     return result
   }
