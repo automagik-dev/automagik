@@ -735,11 +735,12 @@ export function install(rt) {
     tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}) }
     // Only the newest tasks are remembered for their reports.
     const kept = Object.entries(tasks()).sort(([, a], [, b]) => b.at - a.at)
-    const forgotten = kept.slice(TASKS_KEPT).map(([id]) => id)
-    for (const id of forgotten) delete tasks()[id]
+    // The level each forgotten task ran at is read while it is still a task.
+    const forgotten = kept.slice(TASKS_KEPT).map(([id]) => [id, rt.taskLevelOf(id)])
+    for (const [id] of forgotten) delete tasks()[id]
     await rt.save()
-    for (const id of forgotten) {
-      await rt.forgetTaskPermission(id)
+    for (const [id, ranAt] of forgotten) {
+      await rt.forgetTaskPermission(id, ranAt)
         .catch(error => rt.warn('ds-bot: the old task %s keeps its permission, the default was not applied: %s', id, error?.message ?? error))
     }
     await askersModel(sessionId, state.bots?.[from])

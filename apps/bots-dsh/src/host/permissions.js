@@ -4,6 +4,7 @@
 // set one working folder. A level is DSH's preset name; DSH's Auto review is one while
 // its layer is loaded (../shared/permission-levels.js).
 import { AUTO, AUTO_FALLBACK } from '../shared/permission-levels.js'
+import { narrowerLevel } from './permission-rank.js'
 
 export function install(rt) {
   const { ctx } = rt
@@ -89,16 +90,35 @@ export function install(rt) {
   // A task a Bot started (state.tasks, `from`) runs at that Bot's level, as the Bot's own
   // chat does; a task asked for in a group (`roomId`) at the group's level when it has one,
   // as the Bot's Session there does. A Bot without a level gives its task the catalog
-  // default, set explicitly so a restart or a catalog change cannot leave it elsewhere, and
-  // so does a Bot that was deleted: a task never keeps more than what now governs it. A task
-  // no Bot asked for keeps DSH's default.
+  // default, set explicitly so a restart or a catalog change cannot leave it elsewhere. A
+  // task no Bot asked for keeps DSH's default. When its Bot or its group is deleted, the
+  // task keeps the level it ran at as a cap (`permissionCap`, capTasks): what governs it
+  // afterwards (the default, the Bot's own level) can lower it, never raise it.
   const taskOf = sessionId => rt.state?.tasks?.[sessionId]
   function taskLevel(task, service) {
     if (task.from === undefined) return undefined
     const bot = rt.botOf(task.from)
-    if (bot === undefined) return service.catalog().defaultPreset
     const room = task.roomId ? rt.roomOf(task.roomId) : undefined
-    return room?.permission ?? bot.permission ?? service.catalog().defaultPreset
+    const level = bot === undefined ? service.catalog().defaultPreset : room?.permission ?? bot.permission ?? service.catalog().defaultPreset
+    if (level === undefined || task.permissionCap === undefined) return level
+    return narrowerLevel(level, task.permissionCap)
+  }
+  // Before a Bot or a group leaves the state: each task `match` picks keeps the level it
+  // runs at now as its cap. Saved with the deletion.
+  function capTasks(match) {
+    const service = presets()
+    if (service === undefined) return
+    for (const task of Object.values(rt.state?.tasks ?? {})) {
+      if (!match(task)) continue
+      const level = taskLevel(task, service)
+      if (level !== undefined) task.permissionCap = level
+    }
+  }
+  // The level a remembered task runs at, read before startTask forgets it.
+  const taskLevelOf = (sessionId) => {
+    const task = taskOf(sessionId)
+    const service = presets()
+    return task === undefined || service === undefined ? undefined : taskLevel(task, service)
   }
   // Sets a task Session's level, read when the apply runs, not when it is queued, so a
   // lower level picked meanwhile lands last. The fallback mark stays the Bot's and the
@@ -127,13 +147,17 @@ export function install(rt) {
         .catch(error => rt.warn('ds-bot: permission for the task %s not applied: %s', sessionId, error))
     }
   }
-  // A task startTask no longer remembers (past TASKS_KEPT) goes to the catalog default now:
-  // when DSH opens it again, nothing tells it was a task, and it must not keep a level its
-  // Bot has since lowered.
-  async function forgetTaskPermission(sessionId) {
+  // A task startTask no longer remembers (past TASKS_KEPT) goes now to the narrower of the
+  // catalog default and `ranAt`, the level it ran at (taskLevelOf before the forget): when
+  // DSH opens it again nothing tells it was a task, so it must not keep a level its Bot has
+  // lowered since, and forgetting it must not raise it either. An unloaded one is opened
+  // in DSH for this: one old Session per startTask past TASKS_KEPT, before the new task's
+  // first turn.
+  async function forgetTaskPermission(sessionId, ranAt) {
     const service = presets()
     if (rt.readOnly() !== undefined || service === undefined) return
-    const level = service.catalog().defaultPreset
+    const fallback = service.catalog().defaultPreset
+    const level = ranAt === undefined ? fallback : fallback === undefined ? ranAt : narrowerLevel(fallback, ranAt)
     if (!level) return
     const loaded = (ctx.sessions?.list?.() ?? []).find(session => session.id === sessionId)
     await serial(sessionId, () => applyLevel(sessionId, level, loaded))
@@ -240,5 +264,5 @@ export function install(rt) {
     return true
   }
 
-  Object.assign(rt, { permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, reapplyTasks, forgetTaskPermission, checkPreset, setPermission, cleanRoomPermission, setRoomPermission })
+  Object.assign(rt, { permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, reapplyTasks, capTasks, taskLevelOf, forgetTaskPermission, checkPreset, setPermission, cleanRoomPermission, setRoomPermission })
 }
