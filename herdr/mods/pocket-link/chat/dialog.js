@@ -80,7 +80,8 @@ export function readDialog(agent, text) {
   let i = footer - 1
   const options = []
   while (i >= 0 && OPTION.test(rows[i].trim())) { options.unshift(rows[i].trim().match(OPTION)[2]); i-- }
-  if (options.length < 2 || !/^Do you want to /.test(rows[i]?.trim() ?? '')) return null
+  // As recorded: the first option is Yes (what `1` answers), and the dialog asks to proceed.
+  if (options.length < 2 || options[0] !== 'Yes' || !/^Do you want to /.test(rows[i]?.trim() ?? '')) return null
   // Up to the `─` rule that opens the dialog: the header follows it, the command sits between `╌` rules.
   let top = i
   while (top >= 0 && !RULE.test(rows[top].trim())) top--
@@ -88,9 +89,10 @@ export function readDialog(agent, text) {
   const body = rows.slice(top + 1, i).map((r) => r.trim())
   const header = body.find((r) => r !== '') ?? ''
   const tool = header.split(/\s+/)[0] ?? ''
-  const open = body.findIndex((r) => DASHED.test(r))
-  const close = open === -1 ? -1 : body.findIndex((r, k) => k > open && DASHED.test(r))
-  if (!tool || open === -1 || close === -1) return null
+  // Exactly two dashed rules: the command between them. More or fewer is not the recorded layout.
+  const dashed = body.flatMap((r, k) => (DASHED.test(r) ? [k] : []))
+  if (!tool || dashed.length !== 2) return null
+  const [open, close] = dashed
   const command = body.slice(open + 1, close).join(' ').replace(/\s+/g, ' ').trim()
   return { kind: 'permission', tool, command, options }
 }

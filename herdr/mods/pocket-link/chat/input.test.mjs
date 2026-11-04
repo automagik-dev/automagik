@@ -133,3 +133,36 @@ test('interrupt is one terminal.interrupt and nothing else (never a second esc)'
   assert.deepEqual(await input.interrupt(), { ok: true, outcome: 'stopped' })
   assert.deepEqual(writes().map((c) => [c.method, c.params]), [['terminal.interrupt', { terminal: 't1' }]])
 })
+
+test('two sends of one id at once paste once', async () => {
+  const { input, writes } = setup()
+  const [a, b] = await Promise.all([input.send({ text: 'once', id: 'm1' }), input.send({ text: 'once', id: 'm1' })])
+  assert.deepEqual([a, b], [{ state: 'sent', id: 'm1' }, { state: 'sent', id: 'm1' }])
+  assert.equal(writes().length, 1)
+})
+
+test('Send now racing a flush pastes once', async () => {
+  const { input, set, writes } = setup({ view: 'claude-draft' })
+  await input.send({ text: 'race', id: 'm1' })
+  set({ screen: screen('claude-idle') })
+  await Promise.all([input.sendHeld({ id: 'm1' }), input.flush(), input.sendHeld({ id: 'm1' })])
+  assert.deepEqual(writes().map((c) => c.params.text), ['race'])
+})
+
+test('Send now keeps the held order: only the oldest held message can go', async () => {
+  const { input, writes } = setup({ view: 'claude-draft' })
+  await input.send({ text: 'first', id: 'a' })
+  await input.send({ text: 'second', id: 'b' })
+  assert.equal((await input.sendHeld({ id: 'b' })).reason, 'behind')
+  assert.equal(writes().length, 0)
+  assert.equal((await input.sendHeld({ id: 'a' })).state, 'sent')
+  assert.deepEqual(writes().map((c) => c.params.text), ['first'])
+})
+
+test('Send now never goes into a terminal whose input row cannot be seen', async () => {
+  const { input, set, writes } = setup({ view: 'claude-draft' })
+  await input.send({ text: 'x', id: 'm1' })
+  set({ screen: screen('claude-dialog') })
+  assert.equal((await input.sendHeld({ id: 'm1' })).why, 'no-input-row')
+  assert.equal(writes().length, 0)
+})

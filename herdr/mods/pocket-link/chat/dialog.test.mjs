@@ -80,3 +80,11 @@ test('a dialog without its footer as the last row is not taken (printed options 
   const noFooter = screen('claude-dialog').replace(' Esc to cancel · Tab to amend\n', '')
   assert.equal(readDialog('claude', noFooter), null)
 })
+
+test('the recorded layout exactly: two dashed rules, and Yes first', () => {
+  const d = screen('claude-dialog')
+  const three = d.replace(' This command requires approval', ` ${'╌'.repeat(40)}\n This command requires approval`)
+  assert.equal(readDialog('claude', three), null, 'a third dashed rule')
+  const notYes = d.replace(' ❯ 1. Yes', ' ❯ 1. No').replace('   4. No', '   4. Yes')
+  assert.equal(readDialog('claude', notYes), null, 'option 1 is not Yes')
+})

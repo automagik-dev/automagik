@@ -5,13 +5,15 @@
 //   - working: Claude takes it as a queued prompt ('queued'); other agents' messages wait, held
 //     ('working'), since the recordings did not show them queueing;
 //   - a half-typed draft in the terminal's input row, or an input row that cannot be read: held
-//     ('draft' / 'no-input-row'). Send now pastes it after the draft and sends both; without a tap
-//     it goes by itself once the row is empty. The draft is never cleared or retyped;
+//     ('draft' / 'no-input-row'). Send now pastes it after the draft and sends both (the oldest
+//     held message only, and never with no input row in sight); without a tap it goes by itself
+//     once the row is empty. The draft is never cleared or retyped;
 //   - else terminal.send pastes it and presses Enter.
 // herdr-core's own rules close the gaps: terminal.send refuses a blocked program (never forced),
 // and `if` (when the state read was exactly idle or working) refuses a status that changed since;
 // either refusal holds the message instead. No caller is passed: herdr-core would otherwise wrap
-// the text as a note from that terminal. Held messages go in order, oldest first.
+// the text as a note from that terminal. Held messages go in order, oldest first. Every attempt
+// runs under one lock, so a retried id, Send now and a flush never paste the same message twice.
 import { cleanChatText } from './paste.js'
 import { readInput } from './dialog.js'
 
@@ -36,6 +38,17 @@ export class Input {
     this.done = new Map()
     this.listeners = new Set()
     this.flushing = null
+    /** Every attempt runs under one lock: never two pastes at once (send, Send now, flush). */
+    this.lock = Promise.resolve()
+    /** id -> the send of that id now in flight, so a second one waits for it instead of pasting. */
+    this.inflight = new Map()
+  }
+
+  /** Run `fn` alone: after every attempt before it has finished. */
+  serial(fn) {
+    const run = this.lock.then(fn, fn)
+    this.lock = run.catch(() => {})
+    return run
   }
 
   on(l) { this.listeners.add(l); return () => this.listeners.delete(l) }
@@ -45,8 +58,15 @@ export class Input {
    * @param {{ text: unknown, id: string }} m
    * @returns {Promise<{ state: 'sent' | 'queued' | 'held' | 'refused', id: string, why?: string, reason?: string, text?: string }>}
    */
-  async send({ text, id }) {
-    if (typeof id !== 'string' || !id) return { state: 'refused', id, reason: 'id' }
+  send({ text, id }) {
+    if (typeof id !== 'string' || !id) return Promise.resolve({ state: 'refused', id, reason: 'id' })
+    if (this.inflight.has(id)) return this.inflight.get(id)
+    const p = this.serial(() => this.sendNow({ text, id })).finally(() => this.inflight.delete(id))
+    this.inflight.set(id, p)
+    return p
+  }
+
+  async sendNow({ text, id }) {
     if (this.done.has(id)) return this.done.get(id)
     const held = this.held.find((h) => h.id === id)
     if (held) return { state: 'held', id, why: held.why }
@@ -67,11 +87,11 @@ export class Input {
     return { state: 'held', id: h.id, why: h.why, text: h.text }
   }
 
-  finish(id, answer) {
+  finish(id, answer, text) {
     this.held = this.held.filter((h) => h.id !== id)
     this.done.set(id, answer)
     if (this.done.size > 1000) this.done.delete(this.done.keys().next().value)
-    this.emit({ type: 'sent', ...answer })
+    this.emit({ type: 'sent', ...answer, text })
     return answer
   }
 
@@ -83,11 +103,10 @@ export class Input {
     const state = status?.state ?? null
     if (state === 'blocked') return this.hold({ id, text, why: 'dialog' })
     if (state === 'working' && agent !== 'claude') return this.hold({ id, text, why: 'working' })
-    if (!draftOk) {
-      const row = readInput(agent, screen)
-      if (!row.found) return this.hold({ id, text, why: 'no-input-row' })
-      if (row.draft) return this.hold({ id, text, why: 'draft' })
-    }
+    // Send now may go after a draft, never into a terminal whose input row cannot be seen.
+    const row = readInput(agent, screen)
+    if (!row.found) return this.hold({ id, text, why: 'no-input-row' })
+    if (row.draft && !draftOk) return this.hold({ id, text, why: 'draft' })
     const params = { terminal: this.address, text, caller: null }
     if (state === 'idle' || state === 'working') params.if = state
     try {
@@ -97,18 +116,23 @@ export class Input {
       if (e?.kind === 'status_mismatch') return this.hold({ id, text, why: 'changed' })
       return { state: 'refused', id, reason: e?.kind ?? 'unavailable' }
     }
-    return this.finish(id, { state: state === 'working' ? 'queued' : 'sent', id })
+    return this.finish(id, { state: state === 'working' ? 'queued' : 'sent', id }, text)
   }
 
   /**
    * Send now: the held message goes after the terminal's half-typed text, as one message (the
    * client warned first: "Sends your half-typed terminal text with it"). Nothing is cleared.
    */
-  async sendHeld({ id }) {
-    const h = this.held.find((x) => x.id === id)
-    if (!h) return this.done.get(id) ?? { state: 'refused', id, reason: 'not-held' }
-    const answer = await this.attempt(h, { draftOk: true })
-    return answer.state === 'held' || answer.state === 'refused' ? answer : { ...answer, warned: 'draft' }
+  sendHeld({ id }) {
+    return this.serial(async () => {
+      // Read inside the lock: a flush may have sent it meanwhile.
+      const h = this.held.find((x) => x.id === id)
+      if (!h) return this.done.get(id) ?? { state: 'refused', id, reason: 'not-held' }
+      // In order: only the oldest held message can go now.
+      if (this.held[0].id !== id) return { state: 'held', id, why: h.why, reason: 'behind' }
+      const answer = await this.attempt(h, { draftOk: true })
+      return answer.state === 'held' || answer.state === 'refused' ? answer : { ...answer, warned: 'draft' }
+    })
   }
 
   cancelHeld({ id }) {
@@ -122,13 +146,13 @@ export class Input {
   /** Try the oldest held message again (on a status change, a screen read). One at a time. */
   flush() {
     if (this.flushing || !this.held.length) return this.flushing ?? Promise.resolve()
-    this.flushing = (async () => {
+    this.flushing = this.serial(async () => {
       while (this.held.length) {
         const h = this.held[0]
         const answer = await this.attempt({ id: h.id, text: h.text })
         if (answer.state === 'held' || answer.state === 'refused') break
       }
-    })().finally(() => { this.flushing = null })
+    }).finally(() => { this.flushing = null })
     return this.flushing
   }
 
