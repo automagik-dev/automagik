@@ -79,6 +79,9 @@ test("spareTab: a new space's shell tab is closed only once the bot shows in a t
   // The shell tab holds more now (a split, or a mod pane: counted, though it has no terminal), or the bot itself: kept.
   assert.equal(spareTab(spare, [{ id: "t5", terminals: ["t-sh", "t9"] }, bot], "t100", true), null);
   assert.equal(spareTab(spare, [{ id: "t5", terminals: ["t-sh"], count: 2 }, bot], "t100", true), null);
+  // No pane count (Herdr's ls has none): a mod pane could be there unseen, so never closed.
+  assert.equal(spareTab(spare, [{ id: "t5", terminals: ["t-sh"] }, bot], "t100", true), null);
+  assert.equal(spareTab(spare, [{ id: "t5", terminals: ["t-sh"], count: null }, bot], "t100", true), null);
   assert.equal(spareTab(spare, [{ id: "t5", terminals: ["t-sh", "t100"] }], "t100", true), null);
   // Something other than the shell in front, or not known: kept.
   assert.equal(spareTab(spare, [shell, bot], "t100", false), null);
@@ -89,12 +92,18 @@ test("spareTab: a new space's shell tab is closed only once the bot shows in a t
   assert.equal(spareTab(null, [shell, bot], "t100", true), null);
 });
 
-test("shellIdle: the shell itself in front, through hc's keep wrapper; anything else, or no answer, is not idle", () => {
-  assert.equal(shellIdle({ foreground: { argv: ["-zsh"] } }), true);
-  assert.equal(shellIdle({ foreground: { argv: ["/bin/bash", "-i"] } }), true);
-  assert.equal(shellIdle({ foreground: { argv: ["vim", "notes.md"] } }), false);
-  assert.equal(shellIdle({ foreground: { argv: ["sh", "-c", "\"$@\"; exec \"${SHELL:-sh}\" -i", "sh", "make"] } }), false);
-  assert.equal(shellIdle({ foreground: { name: "zsh" } }), true);
+test("shellIdle: the terminal's own process in front, a bare shell; a script, a command, another pid or no answer is not idle", () => {
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["-zsh"] } }), true);
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["/bin/bash", "-i"] } }), true);
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, name: "zsh" } }), true);
+  // Another process in front: vim, or a shell's child (bash deploy.sh run from it).
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 8, argv: ["vim", "notes.md"] } }), false);
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 8, argv: ["bash", "deploy.sh"] } }), false);
+  // The terminal's own process, but running a script or a command string.
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["bash", "deploy.sh"] } }), false);
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["sh", "-c", "\"$@\"; exec \"${SHELL:-sh}\" -i", "sh", "make"] } }), false);
+  // No pids to compare, or no answer.
+  assert.equal(shellIdle({ foreground: { argv: ["-zsh"] } }), false);
   assert.equal(shellIdle(null), false);
   assert.equal(shellIdle({}), false);
 });

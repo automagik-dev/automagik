@@ -359,30 +359,33 @@ export function placementFrom(gets) {
  * The spare shell's tab to close once a start's bot shows in a space this start just made
  * (space.new leaves its first tab holding only a shell): `spare` { space, tab, terminal } from
  * when the space was made, `terminal` the bot's. `tabs`: that space's tabs now, each
- * { id, terminals, count } (the terminals its panes show; `count` every pane, a mod pane too).
- * `idle`: the shell has nothing but itself in front (shellIdle). The spare tab's id only while
- * it holds that idle shell alone (one pane) and the bot shows in another tab of the space, so
- * the space is never left without a tab and nothing else is ever closed; else null.
+ * { id, terminals, count } (the terminals its panes show; `count` every pane, a mod pane too,
+ * null when unknown). `idle`: the shell has nothing but itself in front (shellIdle). The spare
+ * tab's id only while it holds that idle shell alone (a known count of one pane) and the bot
+ * shows in another tab of the space, so the space is never left without a tab and nothing else
+ * is ever closed; else null. With no pane count it is never closed: a mod pane could be there.
  */
 export function spareTab(spare, tabs, terminal, idle) {
   if (idle !== true || !spare?.tab || !spare.terminal || !terminal) return null;
   const list = tabs ?? [];
   const tab = list.find((t) => t?.id === spare.tab);
   const terminals = tab?.terminals ?? [];
-  const count = Math.max(Number(tab?.count) || 0, terminals.length);
-  if (!tab || count !== 1 || terminals[0] !== spare.terminal) return null;
+  if (!tab || !Number.isSafeInteger(tab.count) || tab.count !== 1 || terminals.length !== 1 || terminals[0] !== spare.terminal) return null;
   return list.some((t) => t?.id !== spare.tab && (t?.terminals ?? []).includes(terminal)) ? spare.tab : null;
 }
 
 /**
- * True when `hc get`'s answer shows the shell itself in front (its foreground is a shell,
- * looking through hc's keep wrapper): nothing else runs there. False when anything else is in
- * front (vim, an agent, a build), or hc gave no answer: then the shell is never closed.
+ * True when `hc get`'s answer shows the shell itself in front: its foreground process is the
+ * terminal's own (foreground.pid === pid, both given) and a bare shell, its name and flags only.
+ * False for anything else in front, a shell running a script or command (`bash deploy.sh`,
+ * `sh -c …`) included, or when hc gave no answer or no pids: then the shell is never closed.
  */
 export function shellIdle(get) {
   const fg = get?.foreground;
-  const argv0 = unwrapKeep(fg?.argv)?.[0] ?? fg?.name;
-  return Boolean(argv0) && SHELLS.has(base(argv0));
+  if (!Number.isSafeInteger(get?.pid) || fg?.pid !== get.pid) return false;
+  const argv = Array.isArray(fg.argv) && fg.argv.length ? fg.argv : [fg.name];
+  // A bare interactive shell: its name and flags only (-zsh, bash -i, zsh -l); never -c or a script.
+  return Boolean(argv[0]) && SHELLS.has(base(argv[0])) && argv.slice(1).every((a) => /^-[^c]*$/.test(String(a)));
 }
 
 /** A start's place with its space only: Herdr then opens the pane in a tab of its own there. */

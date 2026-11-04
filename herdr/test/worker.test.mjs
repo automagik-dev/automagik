@@ -70,8 +70,8 @@ function scene(t, { file = team(), branch = "main", briefing = true, templates =
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
     HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog, AUTOMAGIK_HERDR_TAB_WAIT_MS: "300" };
   delete env.HC_TERMINAL_ID;
-  const cli = (args, { from = "t1", cwd = project } = {}) => {
-    const r = spawnSync(process.execPath, [CLI, ...args], { cwd, env: from ? { ...env, HC_TERMINAL_ID: from } : env, encoding: "utf8" });
+  const cli = (args, { from = "t1", cwd = project, env: extra = {} } = {}) => {
+    const r = spawnSync(process.execPath, [CLI, ...args], { cwd, env: { ...env, ...extra, ...(from ? { HC_TERMINAL_ID: from } : {}) }, encoding: "utf8" });
     return { code: r.status, out: r.stdout, err: r.stderr, json: () => JSON.parse(r.stdout) };
   };
   const cliAsync = (args, { from = "t1" } = {}) => new Promise((resolve) => {
@@ -337,6 +337,14 @@ test("worker: once Herdr shows its pane, its tab is moved right after its bot's 
   assert.equal(late.code, 0, late.err);
   assert.match(late.json().warnings.join("\n"), /Herdr hadn't shown t100 after 0\.3s, so its tab isn't named or moved beside its bot's/);
   assert.deepEqual(n.appDos(), []);
+  // AUTOMAGIK_HERDR_TAB_WAIT_MS=0 turns the tab setup off: the space label stays, no wait, no tab command, no warning.
+  const off = scene(t);
+  labelBot(off, { "herdr.space": "sp-bot", "herdr.tab": "tb-bot" });
+  off.setWindow(botWindow({ place: true }));
+  const quiet = off.cli(["worker", "fix it", "--branch", "feat/off", "--json"], { env: { AUTOMAGIK_HERDR_TAB_WAIT_MS: "0" } });
+  assert.equal(quiet.code, 0, quiet.err);
+  assert.ok(labelsOf(off.runs()[0]).includes("herdr.space=sp-bot"));
+  assert.deepEqual([off.appDos(), quiet.json().warnings], [[], []]);
 });
 
 test("worker opens in a tab of its own in its bot's space: herdr.space at hc run, never herdr.tab; no space, no label", (t) => {

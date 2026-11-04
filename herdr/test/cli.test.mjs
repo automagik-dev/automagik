@@ -766,39 +766,41 @@ test("start with no space showing the project opens one on its folder and starts
   assert.deepEqual(s2.appCalls(), []);
 });
 
-test("start in a space it opened leaves no lone shell tab: closed once the bot shows in its own tab there", (t) => {
-  const s = scene(t, { window: { spaces: [], place: true } });
+test("start in a space it opened closes its lone shell tab only when ls counts one pane there and the shell is idle", (t) => {
+  // ls with a pane count per tab: the shell (t-sh1) alone in tb-new1, idle; Herdr shows the bot (t100) in tb-t100.
+  const s = scene(t, { window: { spaces: [], place: true, paneCounts: true } });
   s.seed(team());
   const r = s.cli(["start", "Genie", "--json"]);
   assert.equal(r.code, 0, r.err);
   assert.deepEqual([r.json().space, r.json().tab], ["sp-new1", null]);
-  // space.new left its shell (t-sh1) alone in tb-new1; Herdr showed the bot (t100) in tb-t100.
+  // Never `confirmed`: Herdr asks the person whenever it would.
   assert.deepEqual(s.appCalls().filter((c) => c[0] === "do").map((c) => [c[1], JSON.parse(c[2])]),
     [["space.new", { name: "proj", folder: s.project, machine: "" }], ["tab.close", { id: "tb-new1" }]]);
   assert.deepEqual(s.windowNow().spaces.map((x) => [x.id, x.tabs.map((tb) => tb.id)]), [["sp-new1", ["tb-t100"]]]);
   // The next bot starts in that space: nothing else is closed.
   assert.equal(s.cli(["start", "Captain"]).code, 0);
   assert.equal(s.appCalls().filter((c) => c[0] === "do").length, 2);
-  // Herdr not showing the bot (in time): the shell's tab stays, so the space is never left without one.
-  const n = scene(t, { window: { spaces: [] } });
-  n.seed(team());
-  assert.equal(n.cli(["start", "Genie"]).code, 0);
-  assert.deepEqual(n.appCalls().filter((c) => c[0] === "do").map((c) => c[1]), ["space.new"]);
-  assert.deepEqual(n.windowNow().spaces[0].tabs.map((tb) => tb.id), ["tb-new1"]);
-  // Something other than the shell in front of it (vim): kept. A mod pane beside it in its tab: kept.
-  for (const extra of [{ shellBusy: true }, { modInSpare: true }]) {
+  // Kept: Herdr's real ls shape (no pane count: a mod pane there can't be seen); a counted mod pane
+  // beside the shell; vim in front of the shell; and a bot Herdr doesn't show in time.
+  for (const extra of [{}, { paneCounts: true, modInSpare: true }, { paneCounts: true, shellBusy: true }]) {
     const k = scene(t, { window: { spaces: [], place: true, ...extra } });
     k.seed(team());
     assert.equal(k.cli(["start", "Genie"]).code, 0);
     assert.deepEqual(k.appCalls().filter((c) => c[0] === "do").map((c) => c[1]), ["space.new"], JSON.stringify(extra));
     assert.deepEqual(k.windowNow().spaces[0].tabs.map((tb) => tb.id), ["tb-new1", "tb-t100"], JSON.stringify(extra));
   }
+  const n = scene(t, { window: { spaces: [], paneCounts: true } });
+  n.seed(team());
+  assert.equal(n.cli(["start", "Genie"]).code, 0);
+  assert.deepEqual(n.appCalls().filter((c) => c[0] === "do").map((c) => c[1]), ["space.new"]);
+  assert.deepEqual(n.windowNow().spaces[0].tabs.map((tb) => tb.id), ["tb-new1"]);
   // AUTOMAGIK_HERDR_TAB_WAIT_MS=0 turns it off: no wait for the bot's tab, nothing closed.
-  const off = scene(t, { window: { spaces: [], place: true } });
+  const off = scene(t, { window: { spaces: [], place: true, paneCounts: true } });
   off.seed(team());
   assert.equal(off.cli(["start", "Genie"], { env: { AUTOMAGIK_HERDR_TAB_WAIT_MS: "0" } }).code, 0);
   assert.deepEqual(off.appCalls().map((c) => c.slice(0, 2)), [["ls"], ["do", "space.new"], ["ls"]]);
 });
+
 
 test("start refuses an old free-text model pin, naming the fix; a pane started under a minute ago counts as running", (t) => {
   const f = team();

@@ -301,10 +301,12 @@ automagik-herdr update [--check | --rollback]
   space instead, `--tab` a tab in it). The sidebar's Start passes the space only. A space
   opened this way (by `start` or the sidebar's Start) comes with a shell in its first tab:
   that tab is closed (`tab.close`, never confirmed for the person) once the bot shows in its
-  own tab there, and only while that shell is still the tab's one pane (a mod pane counts) with
-  nothing but the shell in front, so the space never keeps a lone shell tab and is never left
-  empty. `AUTOMAGIK_HERDR_TAB_WAIT_MS` sets how long `start` and `worker` wait for Herdr to
-  show the new pane (5000 by default); `0` turns this tab setup off.
+  own tab there, and only while that shell is known to be the tab's one pane (a mod pane
+  counts) with the shell itself in front, idle, so the space is never left empty and nothing
+  else is closed. The sidebar's Start knows the panes; `start` from the command line only
+  when `herdr-app ls` gives a tab's pane count, which it doesn't today, so the tab is left for
+  now. `AUTOMAGIK_HERDR_TAB_WAIT_MS` sets how long `start` and `worker` wait for Herdr to show
+  the new pane (5000 by default); `0` turns this tab setup off.
 - `restart` runs the bot's agent again in its pane's place: the new pane starts in the same
   space, tab and folder with the same labels, and the old one is ended (`hc kill`) only once the
   new one has kept its agent in front at every check for 5 seconds (1.5 once the agent reports

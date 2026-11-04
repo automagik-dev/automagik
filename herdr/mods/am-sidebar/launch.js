@@ -104,7 +104,8 @@ async function keyedSpace(list, projectKey) {
 const opening = new Map(); // project key -> Promise<space | null>
 
 // A space's tabs as spareTab reads them: each tab's id, the terminals its panes show and
-// `count`, every pane in it (a mod pane too: panes() lists it with no terminal).
+// `count`, every pane in it: panes() lists a mod pane too (with no terminal), and the tab's own
+// `panes` count is taken when it says more.
 const tabsOf = (space) => {
   const ps = panes() ?? [];
   return (space?.tabs ?? []).map((t) => {
