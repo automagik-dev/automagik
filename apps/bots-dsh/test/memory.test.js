@@ -777,13 +777,46 @@ test('an answer the review cannot use is asked for once more, then the lines are
   // Two answers for the same lines that were no list of changes: the review moves on.
   assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
   const [passed] = await warnedTimes(home, 'passed the lines', 1)
-  assert.match(passed, /^memory review of Writer passed the lines through #11 after 2 answers it could not use: the model's answer is not a list of changes: Nothing new\.$/)
+  assert.match(passed, /^memory review of Writer passed the lines through #11 after 2 answers it could not use: the model's answer is not a list of changes \(12 chars\)$/)
   await warnedTimes(home, 'memory review of chat:b2 failed', 1)
   // The same lines are not read a third time.
   ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
   await reviewed(call)
   assert.equal(requests.length, 2)
   assert.throws(() => read('bots', 'b2', 'MEMORY.md'), { code: 'ENOENT' })
+})
+
+// Answers with secrets no redactor knows: the log may say what kind of answer
+// it was and how long, never what it said.
+const secretAnswers = ['I use hunter2 as my password', 'hunter3 is my password']
+const diagnosticsLog = home => readFileSync(join(home, 'logs', 'diagnostics.jsonl'), 'utf8')
+
+test('a review that fails on an unusable answer logs no word of the answer', async (t) => {
+  const { ctx, home, call, read, stop } = start({ replies: [...secretAnswers], config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 9 })
+  const [failed] = await warnedTimes(home, 'memory review of chat:b2 failed', 1)
+  const log = diagnosticsLog(home)
+  for (const secret of ['hunter2', 'hunter3']) assert.ok(!log.includes(secret), log)
+  assert.equal(failed, `memory review of chat:b2 failed: the model's answer is not a list of changes (${secretAnswers[0].length} chars)`)
+})
+
+test('lines passed after unusable answers log no word of either answer', async (t) => {
+  const { ctx, home, call, read, stop } = start({ replies: [...secretAnswers], config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  for (let turn = 0; turn < 2; turn += 1) {
+    ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+    await reviewed(call)
+  }
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  const [passed] = await warnedTimes(home, 'passed the lines', 1)
+  const log = diagnosticsLog(home)
+  for (const secret of ['hunter2', 'hunter3']) assert.ok(!log.includes(secret), log)
+  assert.equal(passed, `memory review of Writer passed the lines through #11 after 2 answers it could not use: the model's answer is not a list of changes (${secretAnswers[1].length} chars)`)
 })
 
 test('an answer with a malformed change, an unlisted entry, or a bad topic changes nothing, and is asked for once more', async (t) => {
@@ -939,7 +972,7 @@ test('a usable answer that moves the cursor gives the new position its own two a
   assert.equal(requests.length, 4)
   assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 13 })
   const [passed] = await warnedTimes(home, 'passed the lines', 1)
-  assert.match(passed, /^memory review of Writer passed the lines through #13 after 2 answers it could not use: the model's answer is not a list of changes: Nothing new\.$/)
+  assert.match(passed, /^memory review of Writer passed the lines through #13 after 2 answers it could not use: the model's answer is not a list of changes \(12 chars\)$/)
   ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
   await reviewed(call)
   assert.equal(requests.length, 4)

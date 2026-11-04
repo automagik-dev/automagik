@@ -1659,7 +1659,9 @@ export function install(rt) {
       const unknown = changes.find(change => change.op !== 'add' && numbered[Number(change.entry) - 1] === undefined)
       const kept = changes.slice(0, REVIEW_CHANGES_MAX)
       const badTopic = kept.find(change => change.op === 'add' && typeof change.topic === 'string' && change.topic.trim() !== '' && cleanTopic(change.topic) === undefined)
-      const unusable = parsed === undefined ? `the model's answer is not a list of changes: ${clip(reply.replace(/\s+/g, ' '), 120)}`
+      // No answer text goes in the message: it is thrown to the review's catch and
+      // logged there or below, and an answer can hold a secret no redactor knows.
+      const unusable = parsed === undefined ? `the model's answer is not a list of changes (${reply.length} chars)`
         : unknown !== undefined ? `the model's answer names entry ${unknown.entry}, which is not listed`
           : badTopic !== undefined ? `the model's answer names the topic "${clip(badTopic.topic, 60)}", which cannot be a topic name`
             : undefined
