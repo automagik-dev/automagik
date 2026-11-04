@@ -46,6 +46,11 @@ const ADVERSARIAL = {
   'line starts': '\n '.repeat(40_000),
   'escaped JSON run': '\\"token\\": \\"x\\" '.repeat(5_000),
   'YAML keys': '\npassword: |'.repeat(6_700),
+  'YAML block, CRLF': `password: |\r\n${'  a line of the block\r\n'.repeat(3_400)}`,
+  'YAML block, CR': `password: |\r${'  a line of the block\r'.repeat(3_700)}`,
+  'YAML keys, CRLF': '\r\npassword: |'.repeat(6_200),
+  'YAML keys, CR': '\rpassword: |'.repeat(6_700),
+  'blank lines, CRLF': `password: |${'\r\n'.repeat(40_000)}`,
   'names mid-line': 'a password: '.repeat(6_700),
   'camelCase names mid-line': 'x dbPassword: '.repeat(5_700),
   'bearer runs': 'bearer x '.repeat(9_000),
@@ -84,7 +89,11 @@ const FORMS = [
   ['--key=value', (k) => `tool --${k}=${JOINED}`], ['--key="value"', (k) => `tool --${k}="${PHRASE}"`],
   ['key: value, bare', (k) => `${k}: ${JOINED}`],
   ['escaped JSON', (k) => `{\\"${k}\\": \\"${PHRASE}\\"}`],
-  ['YAML >', (k) => `\n${k}: >\n  ${PHRASE}\n  ${PHRASE}\nnext: shown`], ['YAML |', (k) => `\n  ${k}: |-\n    ${PHRASE}\n\n    ${PHRASE}\n  next: shown`],
+  // A YAML block with LF, CRLF or lone CR line ends.
+  ...[['', '\n'], [', CRLF', '\r\n'], [', CR', '\r']].flatMap(([eol, n]) => [
+    [`YAML >${eol}`, (k) => `${n}${k}: >${n}  ${PHRASE}${n}  ${PHRASE}${n}next: shown`],
+    [`YAML |${eol}`, (k) => `${n}  ${k}: |-${n}    ${PHRASE}${n}${n}    ${PHRASE}${n}  next: shown`],
+  ]),
   ['key = value', (k) => `${k} = ${JOINED}`], ['key : "value"', (k) => `${k} : "${PHRASE}"`], ['{"key" : "value"}', (k) => `{"${k}" : "${PHRASE}"}`],
 ]
 const CASES = KEYS.flatMap((k) => FORMS.map(([form, text]) => [`${k} (${form})`, text(k)]))
@@ -164,12 +173,26 @@ test('fields named for a pass count are kept; fields named for a pass are hidden
 })
 
 test('a YAML block longer than the keep, streamed a line at a time: no word of it is served', () => {
+  for (const [eol, n] of [['LF', '\n'], ['CRLF', '\r\n'], ['CR', '\r']]) {
+    for (const key of ['password', 'dbPassword']) {
+      const r = journal()
+      r.send(`config:${n}  ${key}: |${n}`)
+      for (const line of YAML_LINES) r.send(line.replace(/\n$/, n))
+      assert.deepEqual(leaked(r.served()), [], `${key}, ${eol}`)
+      r.send('next: shown')
+      assert.match(r.served(), /next: shown/, `${key}, ${eol}`)
+    }
+  }
+})
+
+// A CRLF stream can split a line end between deltas: the \r ends one, the \n starts the next.
+test('a YAML block streamed with its CRLF line ends split across deltas: no word of it is served', () => {
   for (const key of ['password', 'dbPassword']) {
     const r = journal()
-    r.send(`config:\n  ${key}: |\n`)
-    for (const line of YAML_LINES) r.send(line)
+    r.send(`config:\r\n  ${key}: |\r`)
+    for (const line of YAML_LINES) r.send(`\n${line.replace(/\n$/, '\r')}`)
     assert.deepEqual(leaked(r.served()), [], key)
-    r.send('next: shown')
+    r.send('\nnext: shown')
     assert.match(r.served(), /next: shown/, key)
   }
 })

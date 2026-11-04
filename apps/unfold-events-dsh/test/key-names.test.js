@@ -86,7 +86,11 @@ const FORMS = [
   ['--key=value', (k) => `tool --${k}=${JOINED}`, 'bare'], ['--key="value"', (k, v) => `tool --${k}="${v}"`],
   ['key: value, bare', (k) => `${k}: ${JOINED}`, 'bare'],
   ['escaped JSON', (k, v) => `{\\"${k}\\": \\"${v}\\"}`],
-  ['YAML >', (k, v) => `\n${k}: >\n  ${v}\n  ${PHRASE}\nnext: shown`], ['YAML |', (k, v) => `\n  ${k}: |-\n    ${v}\n\n    ${PHRASE}\n  next: shown`],
+  // A YAML block with LF, CRLF or lone CR line ends.
+  ...[['', '\n'], [', CRLF', '\r\n'], [', CR', '\r']].flatMap(([eol, n]) => [
+    [`YAML >${eol}`, (k, v) => `${n}${k}: >${n}  ${v}${n}  ${PHRASE}${n}next: shown`],
+    [`YAML |${eol}`, (k, v) => `${n}  ${k}: |-${n}    ${v}${n}${n}    ${PHRASE}${n}  next: shown`],
+  ]),
   ['key = value', (k) => `${k} = ${JOINED}`, 'bare'], ['key : "value"', (k, v) => `${k} : "${v}"`], ['{"key" : "value"}', (k, v) => `{"${k}" : "${v}"}`],
 ]
 const CASES = KEYS.flatMap((k) => FORMS.map(([form, text, bare]) => [`${k} (${form})`, (v = PHRASE) => text(k, v), bare]))
@@ -171,13 +175,15 @@ test('fields named for a pass count are kept; fields named for a pass are hidden
 })
 
 test('a YAML block longer than the 16 KiB bound, streamed a line at a time: no word of it is shown', () => {
-  for (const key of ['password', 'dbPassword']) {
-    const r = rig()
-    r.push(`config:\n  ${key}: |\n`)
-    for (const line of [...YAML_LINES, ...YAML_LINES]) r.push(line)
-    assert.deepEqual(leaked(r.served()), [], key)
-    r.push('next: shown')
-    assert.match(r.served(), /next: shown/, key)
+  for (const [eol, n] of [['LF', '\n'], ['CRLF', '\r\n'], ['CR', '\r']]) {
+    for (const key of ['password', 'dbPassword']) {
+      const r = rig()
+      r.push(`config:${n}  ${key}: |${n}`)
+      for (const line of [...YAML_LINES, ...YAML_LINES]) r.push(line.replace(/\n$/, n))
+      assert.deepEqual(leaked(r.served()), [], `${key}, ${eol}`)
+      r.push('next: shown')
+      assert.match(r.served(), /next: shown/, `${key}, ${eol}`)
+    }
   }
 })
 
