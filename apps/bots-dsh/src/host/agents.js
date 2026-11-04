@@ -735,8 +735,13 @@ export function install(rt) {
     tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}) }
     // Only the newest tasks are remembered for their reports.
     const kept = Object.entries(tasks()).sort(([, a], [, b]) => b.at - a.at)
-    for (const [id] of kept.slice(TASKS_KEPT)) delete tasks()[id]
+    const forgotten = kept.slice(TASKS_KEPT).map(([id]) => id)
+    for (const id of forgotten) delete tasks()[id]
     await rt.save()
+    for (const id of forgotten) {
+      await rt.forgetTaskPermission(id)
+        .catch(error => rt.warn('ds-bot: the old task %s keeps its permission, the default was not applied: %s', id, error?.message ?? error))
+    }
     await askersModel(sessionId, state.bots?.[from])
     const live = await rt.resolveAgent(sessionId)
     // And at its Bot's permission level: DSH announced the Session before it was a task,

@@ -283,3 +283,70 @@ test('a task gets its Bot\'s level again when DSH reopens it after a restart', a
   await settled()
   assert.deepEqual(presetsOf('t1'), ['workspace-write'])
 })
+
+test('a running task follows its Bot when the Bot\'s level is lowered', async (t) => {
+  const { rt, call, presets, settle, announceOnCreate } = team(t, { bots: { m1: { permission: 'danger-full-access' } } })
+  await call('state', {})
+  announceOnCreate()
+  const task = await rt.startTask({ title: 'Wish', text: 'Do it', from: 'm1' })
+  await settle()
+  assert.deepEqual(presets(task), ['danger-full-access'])
+  assert.equal((await call('update-bot', { id: 'm1', permission: 'read-only' })).ok, true)
+  await settle()
+  assert.equal(presets(task).at(-1), 'read-only', `task still at ${presets(task).join(' -> ')}`)
+
+  // A task asked for in a group with a level of its own keeps the group's.
+  const grouped = team(t, { bots: { m1: { permission: 'danger-full-access' } }, rooms: { r1: { permission: 'workspace-write' } } })
+  await grouped.call('state', {})
+  grouped.announceOnCreate()
+  const inGroup = await grouped.rt.startTask({ title: 'Wish', text: 'Do it', from: 'm1', roomId: 'r1' })
+  assert.equal((await grouped.call('update-bot', { id: 'm1', permission: 'read-only' })).ok, true)
+  await grouped.settle()
+  assert.deepEqual(grouped.presets(inGroup), ['workspace-write'])
+})
+
+test('a running group task follows the group when the group\'s level is lowered or cleared', async (t) => {
+  const { rt, call, presets, settle, announceOnCreate } = team(t, { bots: { m1: { permission: 'workspace-write' } }, rooms: { r1: { permission: 'danger-full-access' } } })
+  await call('state', {})
+  announceOnCreate()
+  const task = await rt.startTask({ title: 'Wish', text: 'Do it', from: 'm1', roomId: 'r1' })
+  await settle()
+  assert.deepEqual(presets(task), ['danger-full-access'])
+  assert.equal((await call('update-room', { id: 'r1', permission: null })).ok, true)
+  await settle()
+  assert.equal(presets(task).at(-1), 'workspace-write', `task still at ${presets(task).join(' -> ')}`)
+})
+
+test('the task of a deleted Bot goes to the catalog default, now and after a restart', async (t) => {
+  const tasks = { t1: { title: 'Wish', from: 'b2', at: 1, status: 'working' } }
+  const { rt, call, presets, settle } = team(t, { bots: { b2: { permission: 'danger-full-access' } }, tasks })
+  await rt.load()
+  await rt.resolveAgent('t1')
+  await settle()
+  assert.deepEqual(presets('t1'), ['danger-full-access'])
+  assert.equal((await call('delete-bot', { id: 'b2' })).ok, true)
+  await settle()
+  assert.deepEqual(presets('t1'), ['danger-full-access', 'workspace-write'])
+  // Its task record outlives the Bot: a restart reopens it at the default too.
+  const restarted = team(t, { tasks })
+  await restarted.rt.load()
+  delete restarted.rt.state.bots.b2
+  await restarted.rt.resolveAgent('t1')
+  await restarted.settle()
+  assert.deepEqual(restarted.presets('t1'), ['workspace-write'])
+})
+
+test('a task startTask no longer remembers goes to the catalog default', async (t) => {
+  // 60 remembered tasks; the oldest ran at its Bot's full access.
+  const tasks = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`t${i}`, { title: 'Old', from: 'm1', at: i + 1, status: 'done' }]))
+  const { rt, call, presets, settle, announceOnCreate } = team(t, { bots: { m1: { permission: 'danger-full-access' } }, tasks })
+  await call('state', {})
+  await rt.resolveAgent('t0')
+  await settle()
+  assert.deepEqual(presets('t0'), ['danger-full-access'])
+  announceOnCreate()
+  await rt.startTask({ title: 'New', text: 'Do it', from: 'm1' })
+  await settle()
+  assert.equal(rt.state.tasks.t0, undefined)
+  assert.deepEqual(presets('t0'), ['danger-full-access', 'workspace-write'])
+})

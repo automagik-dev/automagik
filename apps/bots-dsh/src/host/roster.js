@@ -723,6 +723,8 @@ export function install(rt) {
       touched.push(room)
     }
     await followMemberNames(touched)
+    // Its tasks go on as Sessions of their own, at the catalog default, not at its level.
+    await rt.reapplyTasks(task => task.from === id)
     await rt.forgetBotSecrets(id)
     await archived
     const failed = await saveForDelete()
