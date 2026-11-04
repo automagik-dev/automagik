@@ -25,9 +25,10 @@ import { UNANSWERED, agentInForeground, attachRefusal, attachWords, detachWords,
   startArgs, startRefusal, unwrapKeep } from "../launchArgs.js";
 import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, confirmBindings, foldAttach, heldIn, machinesById, modeProblem, placeOf as placeOfRow, readAttach } from "../attach.js";
 import { interpreterPath } from "../agentPath.mjs";
-import { installHook, withExclude } from "../briefingText.mjs";
+import { briefingFilePath, installHook, launchBriefingText, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
-import { agentKeyOfArgv, defaultModel, detectModel, knownModels, modelArgs, resolveAgent, resumesById, shownModel, withOverrides } from "../models.js";
+import { agentKeyOfArgv, briefingLaunch, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, ownPromptIn, resolveAgent, resumesById,
+  shownModel, withBriefing, withOverrides } from "../models.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKTREES_EXCLUDE,
   SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, sessionRow, parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
@@ -710,9 +711,52 @@ const hookIo = {
   mkdir: async (dir) => { mkdirSync(dir, { recursive: true }); },
 };
 
-/** Merges the per-turn briefing hook for a Claude bot; never throws: { written, warnings }. */
+/** Merges the briefing hook for a Claude bot (the session ledger, the once-only fallback); never throws: { written, warnings }. */
 export function writeBriefingHook(bot, folder, appHomeDir = appHome(), options = {}) {
   return installHook(bot.name, folder, appHomeDir, hookIo, options);
+}
+
+// ---- the briefing at launch (models.js briefingLaunch): the agent's system prompt ----
+
+// The config file an agent's own prompt lives in (models.js ownPromptIn), or null.
+const ownConfigOf = (agentKey) => (agentKey === "codex" ? configPaths(home()).codexConfig
+  : agentKey === "hermes" ? (process.env.HERMES_HOME ? `${process.env.HERMES_HOME.replace(/\/+$/, "")}/config.yaml` : configPaths(home()).hermesConfig)
+    : null);
+
+/**
+ * `argv` (what starts `bot`'s agent `agentKey`) with the bot's launch briefing put in as that
+ * agent takes it (a file under the app home for Claude Code, written now, before the agent
+ * reads it; text or an environment variable for the others), any older one taken out. An agent
+ * with no way, or a command that doesn't run it, starts as it is. Never throws: a file that
+ * can't be written, or a codex config that sets its own developer_instructions, means no
+ * briefing at launch and a warning. Returns { argv, env, warnings }.
+ */
+export function briefedLaunch(project, bot, agentKey, argv, appHomeDir = appHome()) {
+  const warnings = [];
+  const way = briefingWay(agentKey);
+  const agents = agentTable();
+  if (!way || agentKeyOfArgv(argv, agents) !== agentKey) return { argv, env: {}, warnings };
+  const text = launchBriefingText({ self: bot, file: project.file });
+  let launch = null;
+  if (way === "file") {
+    const path = briefingFilePath(appHomeDir, project.key, bot.id);
+    try {
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+      const tmp = `${path}.${process.pid}.tmp`;
+      writeFileSync(tmp, `${text}\n`, { mode: 0o600 });
+      renameSync(tmp, path);
+      launch = briefingLaunch(agentKey, { path });
+    } catch (e) {
+      warnings.push(`${bot.name} starts without its briefing in its system prompt (${path}: ${e?.message ?? e}); its hook gives it once instead.`);
+    }
+  } else if (ownPromptIn(agentKey, modelIo().read(ownConfigOf(agentKey)))) {
+    warnings.push(`${bot.name} starts without its briefing: ${agentKey === "codex"
+      ? "codex's config.toml sets developer_instructions, which a -c would replace"
+      : "hermes' config.yaml sets a personality or agent.system_prompt, which HERMES_EPHEMERAL_SYSTEM_PROMPT would replace"}.`);
+  } else {
+    launch = briefingLaunch(agentKey, { text });
+  }
+  return { argv: withBriefing(agentKey, argv, launch, agents), env: launch?.env ?? {}, warnings };
 }
 
 // ---- arguments ----
@@ -799,7 +843,7 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   whois <terminal> | whois --bot <bot>   who plays where, by the attach ledger
   history <bot>                 what the bot did, by the attach and workers ledgers: its panes,
                                 starts, sessions (and the newest transcript) and workers
-  brief <bot>                   print the bot's per-turn briefing as it would be now
+  brief <bot>                   print the bot's briefing with its team's live state, as it is now
   tidy                          what drifted in the window, labels and project list, as a plan;
                                 changes nothing (--json: the plan's actions)
   worker "<task>" (--branch B [--base REF] | --worktree DIR)
@@ -1635,7 +1679,9 @@ async function launchSeat(project, bot, over = {}) {
   const carry = over.carry ?? {};
   const labels = { ...paneLabels(file, bot.id, carry, lead ? leadPane(await liveRows(lead))?.labels ?? null : null), ...carry }; // A16
   const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
-  const argv = over.argv ?? [...agent.run, ...modelArgs(bot.agent, bot.model)];
+  // The briefing goes into the command itself (start and restart alike), so no hook prints it every turn.
+  const briefed = briefedLaunch(project, bot, agentKey, over.argv ?? [...agent.run, ...modelArgs(bot.agent, bot.model)]);
+  const argv = briefed.argv;
   // As a worker (cmdWorker): the pane gets this PATH, with an npm agent's (#!/usr/bin/env node,
   // like codex) interpreter folder first when it lacks it (#56); start and restart both come
   // here. Always passed (#213): without it the pane has herdr-core's PATH, which may lack node.
@@ -1650,9 +1696,11 @@ async function launchSeat(project, bot, over = {}) {
     const seen = await windowSpaces();
     place = await windowPlace(key, await placementOf(key, seen), seen);
   }
-  const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd, space: place?.space, tab: place?.tab, parent, argv, labels, path });
+  const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd, space: place?.space, tab: place?.tab, parent, argv, labels, path,
+    env: briefed.env });
   // The hook goes in before the session starts, so Claude Code reads it at startup.
   const hook = agentKey === "claude" ? await writeBriefingHook(bot, cwd) : { written: false, warnings: [] };
+  hook.warnings.unshift(...briefed.warnings);
   if (runPath.note) hook.warnings.unshift(runPath.note);
   report(hook.warnings);
   const run = async (ledger) => {

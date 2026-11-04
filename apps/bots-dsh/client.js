@@ -8105,12 +8105,12 @@ html body :is(.bt-state,.bt-token){border:1px solid var(--st-line);background:va
 html body .bt-state[aria-pressed=true]{background:var(--st-lilac);color:var(--st-lilac-ink)}
 html body [class*="_composerStack"] [data-composer-card][data-composer-card]{max-width:min(760px,100%)!important;margin-inline:auto!important}
 html body [data-composer-card]{background:var(--st-raised)!important;border:1px solid var(--st-line)!important;border-radius:18px!important;box-shadow:var(--st-hollow)!important}
-html body [data-composer-card][data-composer-card]{flex-wrap:wrap!important;row-gap:6px!important;padding:10px 10px 8px 12px!important;border-radius:18px!important;min-height:0!important}
-html body [data-composer-card][data-composer-card]>[data-input-scroll]{order:0!important;flex:1 1 100%!important;padding:2px 4px 4px!important}
-html body [data-composer-card][data-composer-card] [data-composer-input]{min-height:40px!important}
-html body [data-composer-card][data-composer-card] [class*="_tools"]{order:1!important;align-self:center!important;display:flex;align-items:center;gap:6px}
-html body [data-composer-card][data-composer-card] [class*="_trailing"]{order:2!important;align-self:center!important;margin-left:auto!important;display:flex;align-items:center;gap:6px}
-html body [data-composer-card][data-composer-card]>[data-slot="conversation.input.attachments"]{order:-1!important}
+html body [data-composer-card][data-composer-card]:has(.bt-plus){flex-wrap:wrap!important;row-gap:6px!important;padding:10px 10px 8px 12px!important;border-radius:18px!important;min-height:0!important}
+html body [data-composer-card][data-composer-card]:has(.bt-plus)>[data-input-scroll]{order:0!important;flex:1 1 100%!important;padding:2px 4px 4px!important}
+html body [data-composer-card][data-composer-card]:has(.bt-plus) [data-composer-input]{min-height:40px!important}
+html body [data-composer-card][data-composer-card]:has(.bt-plus) [class*="_tools"]{order:1!important;align-self:center!important;display:flex;align-items:center;gap:6px}
+html body [data-composer-card][data-composer-card]:has(.bt-plus) [class*="_trailing"]{order:2!important;align-self:center!important;margin-left:auto!important;display:flex;align-items:center;gap:6px}
+html body [data-composer-card][data-composer-card]:has(.bt-plus)>[data-slot="conversation.input.attachments"]{order:-1!important}
 html body [data-composer-card]:focus-within{border-color:var(--st-ring)!important;box-shadow:0 0 0 3px color-mix(in srgb,var(--st-ring) 14%,transparent)!important}
 html body [data-composer-card] button[class*="_primary"],html body .bt-voice{background:var(--st-cyan)!important;color:var(--st-cyan-ink)!important;box-shadow:var(--st-clay)!important;border:0!important}
 html body :is(.bt-plus,.bt-mic){background:transparent;box-shadow:none;color:var(--bt-ink-2)}
@@ -9018,12 +9018,16 @@ function Nothing() {
   return null;
 }
 var SEPARATOR_GAP_MS = 30 * 60 * 1e3;
-function nextTurnStart(turns, turn) {
+function nextTurnOf(turns, turn) {
   let next;
   for (const key in turns) {
     const candidate = Number(key);
     if (candidate > turn && turns[key].first !== void 0 && (next === void 0 || candidate < next)) next = candidate;
   }
+  return next;
+}
+function nextTurnStart(turns, turn) {
+  const next = nextTurnOf(turns, turn);
   return next === void 0 ? void 0 : turns[next].first;
 }
 function openingTurn(turns, firstTurns, hiddenTurns) {
@@ -9036,23 +9040,30 @@ function openingTurn(turns, firstTurns, hiddenTurns) {
   return listed.includes(turn) && earlier.every((entry) => hiddenTurns?.includes(entry)) ? { turn, start: start2 } : null;
 }
 var unseenSince = (visit, time) => typeof visit?.seen === "number" && time > visit.seen && time <= visit.entered;
-function TurnTailCell({ turn: location2, sessionId, useTurnClock, useUi, actions }) {
+function TurnTailCell({ turn: location2, sessionId, useRoster, useTurnClock, useUi, actions }) {
   const turn = location2.turn;
+  const hidden = useRoster((roster) => isHiddenTurn(roster, sessionId, turn));
+  const exchangeTurns = useRoster((roster) => roster.exchangeTurns[sessionId]);
+  const nextStart = (turns) => {
+    const next = nextTurnOf(turns, turn);
+    if (next === void 0 || hidden && exchangeTurns?.includes(next)) return void 0;
+    return turns[next].first;
+  };
   const time = location2.end.time;
   (0, import_react22.useEffect)(() => {
     actions.noteTurnTime(sessionId, turn, "end", time);
   }, [sessionId, turn, time]);
   const label = useTurnClock((state) => {
-    const start2 = nextTurnStart(state[sessionId] ?? {}, turn);
+    const start2 = nextStart(state[sessionId] ?? {});
     return start2 !== void 0 && start2 - time >= SEPARATOR_GAP_MS ? clockLabel(start2) : "";
   });
   const visit = useUi((state) => state.visits?.[sessionId]);
   const fresh = useTurnClock((state) => {
     if (typeof visit?.seen !== "number" || time > visit.seen) return false;
-    const start2 = nextTurnStart(state[sessionId] ?? {}, turn);
+    const start2 = nextStart(state[sessionId] ?? {});
     return start2 !== void 0 && start2 > visit.seen && start2 <= visit.entered;
   });
-  const ended = (0, import_react22.createElement)("time", { className: "bt-turn-time", dateTime: new Date(time).toISOString() }, new Date(time).toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" }));
+  const ended = hidden ? null : (0, import_react22.createElement)("time", { className: "bt-turn-time", dateTime: new Date(time).toISOString() }, new Date(time).toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" }));
   return (0, import_react22.createElement)(
     import_react22.Fragment,
     null,

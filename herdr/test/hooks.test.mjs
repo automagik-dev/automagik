@@ -289,8 +289,10 @@ function botHome(t) {
   // Run once before any timing: macOS checks a new executable on its first run, which can take
   // longer than briefing.mjs's 1.5 s per call. The 2 s criterion is about the hook, not that check.
   execFileSync(join(bin, "hc"), ["ls"]);
-  /** The hook as Claude Code runs it: `sh -c <command>` in the project, stdin the event, then closed. */
-  const hook = (command, { input = "{}", appHome = true } = {}) => {
+  /** The hook as Claude Code runs it: `sh -c <command>` in the project, stdin the event, then closed.
+   * Each call is a pane's first turn (what it printed is forgotten) unless `keep`. */
+  const hook = (command, { input = "{}", appHome = true, keep = false } = {}) => {
+    if (!keep) rmSync(join(s.app, "automagik-herdr", "briefed"), { recursive: true, force: true });
     const started = Date.now();
     const env = { PATH: `${bin}:${NODE_DIR}:/usr/bin:/bin`, HOME: s.root, HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: proj };
     if (appHome) env.HERDR_APP_HOME = s.app;
@@ -452,6 +454,23 @@ test("an am copy that throws after printing, reading stdin or joining: one brief
     assert.match(joined.stderr, /am broke after joining/);
     assert.equal(rows(), 1, `turn ${turn}: one session row for s-joined`);
   }
+});
+
+test("migration: a hook installed before the briefing moved to launch prints it once in three turns, its settings file untouched", (t) => {
+  // The command in settings.local.json runs the installed pack's briefing.mjs (through the entry
+  // point or the folder's own path), so the update that replaces that script is the migration:
+  // no settings file needs a rewrite for the per-turn print to stop.
+  const s = botHome(t);
+  syncHooks({ modsDir: s.mods });
+  const before = read(settings(s.proj));
+  for (const command of [commands(settings(s.proj))[1], legacyHookCommand(s.app)]) {
+    rmSync(join(s.app, "automagik-herdr", "briefed"), { recursive: true, force: true });
+    const input = JSON.stringify({ session_id: "s-1" });
+    const outs = [1, 2, 3].map(() => s.hook(command, { input, keep: true }));
+    for (const o of outs) assert.equal(o.status, 0, o.stderr);
+    assert.equal(outs.filter((o) => /You are Genie/.test(o.stdout)).length, 1, command);
+  }
+  assert.equal(read(settings(s.proj)), before);
 });
 
 test("acceptance: after a later folder rename (simulated), the same hook still runs; a rollback to v0.3 puts v0.3's path back", (t) => {

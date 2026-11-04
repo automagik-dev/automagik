@@ -1,7 +1,12 @@
-// The per-turn briefing for a Claude bot (DESIGN Approach "Group 3", Decision 9, A1, A3).
+// The briefing hook for a Claude bot (DESIGN Approach "Group 3", Decision 9, A1, A3).
 // Claude Code runs it on UserPromptSubmit from the per-person hook Start and Attach write
 // in the session's .claude/settings.local.json; whatever it prints reaches the agent as
-// context. Plain node, outside Herdr: it imports no `herdr` or `gpui`, only the pack's pure
+// context. Never every turn: a bot Start or Restart launched has its briefing in its system
+// prompt (--append-system-prompt-file, models.js), so the hook prints nothing for it; a pane it
+// couldn't launch so (Attach on a running pane, a bot started before this pack, a resumed
+// conversation whose recorded system prompt predates the file) gets it once, on its first turn,
+// and again only when the launch text changes or Claude compacted the conversation
+// (briefingText.mjs shouldBrief; what it printed is kept per terminal under the app home). Plain node, outside Herdr: it imports no `herdr` or `gpui`, only the pack's pure
 // modules. Fail-open: it prints nothing and exits 0 unless the attach ledger (attach.js) ties
 // HC_TERMINAL_ID's terminal to a bot defined in the project $CLAUDE_PROJECT_DIR keys to; on an
 // error it prints one stderr line and still exits 0. It only reads the ledger (the CLI alone
@@ -16,13 +21,16 @@
 
 import { execFile } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
-import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, writeSync } from "node:fs";
+import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, writeFileSync, writeSync }
+  from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { BOT_LABEL, BOTS_PATH, effectiveLead, parseBots, projectKeyOf } from "./model.js";
-import { UNANSWERED, paneOf, rowsOf } from "./launchArgs.js";
+import { UNANSWERED, paneOf, rowsOf, unwrapKeep } from "./launchArgs.js";
 import { attachKey, attachPath, confirmBindings, foldAttach, modeProblem, readAttach, verdictOf } from "./attach.js";
-import { briefingText, directMembers, latestReport } from "./briefingText.mjs";
+import { botOfBriefingFile, briefDecision, briefedPath, briefingText, directMembers, latestReport, launchBriefingText, textHash }
+  from "./briefingText.mjs";
+import { briefingFileOf, resumedSessionOf } from "./models.js";
 import { SESSION_LABEL, TRANSCRIPT_LABEL, ledgerLine, ledgerPath, readLedger, sessionChange, sessionRow }
   from "./workers.js";
 import { transcriptRealPath } from "./transcriptFolder.mjs";
@@ -135,21 +143,127 @@ export async function ledgerOf(appHome, ask) {
   };
 }
 
-// `me`: the pending `hc get` of HC_TERMINAL_ID, shared with joinSession.
-async function main(mePending) {
+// `me`: the pending `hc get` of HC_TERMINAL_ID, `input` the hook's parsed stdin, both shared
+// with joinSession. Resolves { text, record } (record: what to keep once the text is out), or null.
+async function main(mePending, inputPending, appHome) {
   const self = process.env.HC_TERMINAL_ID;
   const dir = process.env.CLAUDE_PROJECT_DIR;
   if (!self || !dir) return null;
   const [me, key] = await Promise.all([mePending, projectKeyOf(dir, git, exists)]);
   if (hcMissing) throw new Error("hc is not on PATH");
   if (!me || me === UNANSWERED) return null;
-  const ledger = await ledgerOf(appHomeOf(), hcJson);
-  const botId = ledger ? ledger.botAt({ ...me, address: me.address ?? self }) : me.labels?.[BOT_LABEL];
+  const terminal = me.address ?? self;
+  const argv = unwrapKeep(me.foreground?.argv);
+  const started = briefingFileOf(argv);
+  const ledger = await ledgerOf(appHome, hcJson);
+  const botId = ledger ? ledger.botAt({ ...me, address: terminal }) : me.labels?.[BOT_LABEL];
   if (!botId) return null;
+  // Started with this bot's own briefing file: its text is what the system prompt was given.
+  // A file gone since (deleted) says nothing about that text: the pane counts as not started with it.
+  const own = Boolean(started) && botOfBriefingFile(started) === botId;
+  const startedHash = own ? launchedHash(started) : null;
+  const covered = startedHash !== null;
+  const input = await inputPending;
+  const session = typeof input.session_id === "string" && input.session_id ? input.session_id : null;
+  const paneKey = `${terminal}@${me.created_ms ?? 0}`;
+  // Resumed: the command resumes this very conversation. Claude Code keeps a resumed
+  // conversation's id (`--fork-session` makes a new one, with the old record): another id is a
+  // new conversation since (/clear), with a new prompt. --continue names no id, so the one it
+  // resumed is the first this pane saw.
+  const was = covered ? resumedSessionOf("claude", argv) : undefined;
+  const forked = Array.isArray(argv) && argv.includes("--fork-session");
+  const resumed = was === undefined ? false : forked || session === null ? true
+    : was !== null ? was === session : firstSession(appHome, paneKey, session) === session;
+  const recordKey = session ?? paneKey;
+  const seen = readSeen(appHome, recordKey);
+  // A new conversation started with the file needs no bots.json read: nothing prints.
+  if (covered && !resumed && seen?.hash === startedHash) return null;
   const { file } = parseBots(await readFile(`${key === "/" ? "" : key}/${BOTS_PATH}`, "utf8"));
   const bot = file.bots.find((b) => b.id === botId);
   if (!bot || bot.planned) return null;
-  return gatherBriefing({ file, bot, address: me.address ?? self, ask: hcJson, ...(ledger ? { locate: ledger.locate } : {}) });
+  const transcript = typeof input.transcript_path === "string" ? transcriptRealPath(input.transcript_path, "claude", homedir()) : null;
+  const scan = seen && transcript ? compactedSince(transcript, seen.offset) : { compacted: false, size: seen?.offset ?? 0 };
+  const now = textHash(launchBriefingText({ self: bot, file }));
+  const decision = briefDecision({ covered, started: startedHash, resumed, seen: seen?.hash ?? null, now, compacted: scan.compacted });
+  const offset = () => (transcript ? sizeOf(transcript) : 0);
+  const record = () => writeSeen(appHome, recordKey, { hash: decision.hash ?? seen?.hash, offset: offset() });
+  if (!decision.print) {
+    if (decision.hash !== null || (seen && transcript && scan.size !== seen.offset)) record();
+    return null;
+  }
+  const text = await gatherBriefing({ file, bot, address: terminal, ask: hcJson, ...(ledger ? { locate: ledger.locate } : {}) });
+  return { text, record };
+}
+
+// The first conversation a pane's hook saw (recorded on its first call, under its own key), or
+// `session` when it can't be read or kept: then each conversation counts as the first.
+function firstSession(appHome, paneKey, session) {
+  const key = `pane-${paneKey}`;
+  try {
+    const kept = JSON.parse(readFileSync(briefedPath(appHome, key), "utf8"))?.session;
+    if (typeof kept === "string" && kept) return kept;
+  } catch { /* none yet */ }
+  writeSeen(appHome, key, { session });
+  return session;
+}
+
+// The hash of the launch text in a briefing file (as briefedLaunch wrote it), null when unreadable.
+function launchedHash(path) {
+  try { return textHash(readFileSync(path, "utf8").replace(/\n$/, "")); } catch { return null; }
+}
+
+// ---- which launch text each conversation has (never a print every turn) ----
+
+/** What a conversation's record holds: { hash, offset }, or null. */
+export function readSeen(appHome, key) {
+  try {
+    const seen = JSON.parse(readFileSync(briefedPath(appHome, key), "utf8"));
+    return seen && typeof seen === "object" && typeof seen.hash === "string" ? { ...seen, offset: Number(seen.offset) || 0 } : null;
+  } catch { return null; }
+}
+/** Records `seen` for a conversation, replacing the file whole; a failure means the next turn prints again. */
+export function writeSeen(appHome, key, seen) {
+  try {
+    const path = briefedPath(appHome, key);
+    mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true, mode: 0o700 });
+    const tmp = `${path}.${process.pid}.tmp`;
+    writeFileSync(tmp, `${JSON.stringify(seen)}\n`, { mode: 0o600 });
+    renameSync(tmp, path);
+  } catch { /* fail open: the briefing comes again next turn */ }
+}
+const sizeOf = (path) => { try { return statSync(path).size; } catch { return 0; } };
+
+/** Claude Code's mark of a compaction in its transcript (one JSON line per entry). */
+export const COMPACT_MARK = '"subtype":"compact_boundary"';
+const SCAN_CHUNK = 1 << 20;
+const SCAN_MAX = 64 * SCAN_CHUNK;
+
+/**
+ * Whether the transcript at `path` gained a compaction past byte `offset` (a shorter file: it
+ * was rewritten, which counts as one). Reads only what is new, its last SCAN_MAX bytes at most.
+ * Resolves { compacted, size }; unreadable: { compacted: false, size: offset }.
+ */
+export function compactedSince(path, offset) {
+  let fd = null;
+  try {
+    fd = openSync(path, "r");
+    const size = fstatSync(fd).size;
+    if (size < offset) return { compacted: true, size };
+    const mark = Buffer.from(COMPACT_MARK);
+    const chunk = Buffer.alloc(SCAN_CHUNK);
+    let at = Math.max(offset, size - SCAN_MAX);
+    // The last bytes of the window before, so a mark across two reads is still found.
+    let tail = Buffer.alloc(0);
+    while (at < size) {
+      const n = readSync(fd, chunk, 0, Math.min(SCAN_CHUNK, size - at), at);
+      if (n <= 0) break;
+      const window = Buffer.concat([tail, chunk.subarray(0, n)]);
+      if (window.includes(mark)) return { compacted: true, size };
+      tail = Buffer.from(window.subarray(Math.max(0, window.length - (mark.length - 1))));
+      at += n;
+    }
+    return { compacted: false, size };
+  } catch { return { compacted: false, size: offset }; } finally { if (fd !== null) try { closeSync(fd); } catch {} }
 }
 
 /**
@@ -244,13 +358,18 @@ if (import.meta.url === invoked) {
   guard.unref();
   const self = process.env.HC_TERMINAL_ID;
   const me = self ? hcJson(["get", self]) : Promise.resolve(null);
-  const joined = self ? Promise.all([me, readInput(INPUT_MS)]).then(([get, input]) => joinSession(self, get, input, appHomeOf()), () => false)
+  const raw = self ? readInput(INPUT_MS) : Promise.resolve("");
+  const input = raw.then((text) => { try { const x = JSON.parse(text); return x && typeof x === "object" ? x : {}; } catch { return {}; } });
+  const joined = self ? Promise.all([me, raw]).then(([get, text]) => joinSession(self, get, text, appHomeOf()), () => false)
     : Promise.resolve(false);
   try {
-    const text = await main(me);
+    const out = await main(me, input, appHomeOf());
     // Past this point the block is on its way: the guard must not cut the write short.
     clearTimeout(guard);
-    if (text) process.stdout.write(`${text}\n`);
+    if (out?.text) {
+      process.stdout.write(`${out.text}\n`);
+      out.record();
+    }
   } catch (e) {
     // Fail open: no briefing this turn and exit 0, with one line on stderr as a trace.
     clearTimeout(guard);

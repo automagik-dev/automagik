@@ -1,5 +1,5 @@
-// The per-turn briefing: the pure text (briefingText.mjs) for a main bot, a captain and a
-// member; the 10,000-character cap; planned bots skipped; the hook and exclude merges; then
+// The briefing: the pure text (briefingText.mjs) for a main bot, a captain and a member, and
+// the launch text a bot's agent starts with; the 10,000-character cap; planned bots skipped; the hook and exclude merges; then
 // briefing.mjs itself under node with a fake `hc` on PATH and a scratch git project, for the
 // blocks end to end and the silent exits; then launch.js afterBind over the Herdr stand-ins.
 import { test } from "node:test";
@@ -17,8 +17,9 @@ import { state } from "./use-stubs.mjs";
 import { parseBots } from "../mods/am-sidebar/model.js";
 import {
   briefingText, directMembers, mergeHook, hookCommand, legacyHookCommand, directHookCommand, briefingPath, stableBriefingPath, withExclude, EXCLUDE_LINE, BRIEFING_LIMIT,
+  botOfBriefingFile, briefDecision, briefingFilePath, launchBriefingText, textHash,
 } from "../mods/am-sidebar/briefingText.mjs";
-import { BUDGET_MS, CALL_MS, GUARD_MS, timeScale } from "../mods/am-sidebar/briefing.mjs";
+import { BUDGET_MS, CALL_MS, GUARD_MS, COMPACT_MARK, compactedSince, timeScale } from "../mods/am-sidebar/briefing.mjs";
 const { afterBind } = await import("../mods/am-sidebar/launch.js");
 
 const run = promisify(execFile);
@@ -320,11 +321,15 @@ async function scratch(t) {
   const fixture = join(root, "hc.json");
   writeFileSync(fixture, JSON.stringify(FIXTURE));
   // `input`: the hook's stdin, then closed (as Claude Code sends it); none: stdin left open.
-  const brief = async (env, input) => {
+  // The app home is a scratch one unless a test names its own (the script's own is the repo's).
+  // What the hook printed per terminal is forgotten before each call, so each is a first turn,
+  // unless `keep` (the once-only tests below).
+  const brief = async (env, input, { keep = false } = {}) => {
     const options = {
       env: { PATH: `${bin}:${NODE_DIR}:/usr/bin:/bin`, FAKE_HC: fixture, FAKE_HC_HANG_MS: String(HANG_MS), HOME: root,
-        HERDR_BRIEFING_TIME_SCALE: String(SCALE), ...env },
+        HERDR_BRIEFING_TIME_SCALE: String(SCALE), HERDR_APP_HOME: join(root, "app"), ...env },
     };
+    if (!keep) try { rmSync(join(options.env.HERDR_APP_HOME, "automagik-herdr", "briefed"), { recursive: true, force: true }); } catch {}
     if (input === undefined) return run(RUNTIME, [SCRIPT], options);
     return new Promise((resolve, reject) => {
       const child = execFile(RUNTIME, [SCRIPT], options, (e, stdout, stderr) => (e ? reject(e) : resolve({ stdout, stderr })));
@@ -723,4 +728,199 @@ test("afterBind: outside git the hook is written and no exclude is tried", async
 test("parseBots reads the fixture team as written (guards the fixtures above)", () => {
   const { warnings } = parseBots(JSON.stringify(team()));
   assert.deepEqual(warnings, []);
+});
+
+// ---- the briefing at launch, and the hook that prints it once at most ----
+
+test("launch text: who, role, instructions, how it works, lead and team by id; no status, address or report", () => {
+  const f = team();
+  byId(f, ID.cap).instructions = "Review every PR.";
+  const text = launchBriefingText({ self: byId(f, ID.cap), file: f });
+  assert.match(text, /^<herdr-bot>\n/);
+  assert.match(text, /<\/herdr-bot>$/);
+  assert.match(text, /written from \.herdr\/bots\.json when this session started/);
+  assert.match(text, /You are Captain, a team member \(bot b-bbbbbbbbbb\)\./);
+  assert.match(text, /Instructions:\nReview every PR\./);
+  assert.match(text, /automagik-herdr worker/);
+  assert.match(text, /run `automagik-herdr brief b-bbbbbbbbbb`/, "the live state is one command away");
+  assert.match(text, /Your lead: Genie \(bot b-aaaaaaaaaa\).*hc ls --label bot=b-aaaaaaaaaa/s);
+  assert.match(text, /- Dev \(bot b-cccccccccc/);
+  assert.doesNotMatch(text, /Studio|idle|working|not running|untrusted-report|helpers/, "planned bots and live state stay out");
+  // The same file gives the same text, so its hash only moves with an edit.
+  assert.equal(textHash(text), textHash(launchBriefingText({ self: byId(f, ID.cap), file: f })));
+  byId(f, ID.cap).instructions = "Review every PR twice.";
+  assert.notEqual(textHash(text), textHash(launchBriefingText({ self: byId(f, ID.cap), file: f })));
+  // Long instructions stay under the cap.
+  byId(f, ID.cap).instructions = "x".repeat(20000);
+  assert.ok(launchBriefingText({ self: byId(f, ID.cap), file: f }).length <= BRIEFING_LIMIT);
+});
+
+test("launch file: one per bot and project under the app home, its bot id read back", () => {
+  const a = briefingFilePath("/app/", "/work/proj", ID.main);
+  assert.match(a, /^\/app\/automagik-herdr\/briefings\/[0-9a-f]{10}-b-aaaaaaaaaa\.md$/);
+  assert.equal(a, briefingFilePath("/app", "/work/proj", ID.main), "the same path every start");
+  assert.notEqual(a, briefingFilePath("/app", "/work/other", ID.main));
+  assert.equal(botOfBriefingFile(a), ID.main);
+  assert.equal(botOfBriefingFile("/somewhere/else.md"), null);
+});
+
+test("briefDecision: launched with it, never; resumed, once unless it has that very text; otherwise once, again on an edit or a compaction", () => {
+  // Started with the file on a new conversation: nothing printed, the file's text recorded.
+  assert.deepEqual(briefDecision({ covered: true, started: "f", now: "n" }), { print: false, hash: "f" });
+  assert.deepEqual(briefDecision({ covered: true, started: "f", seen: "f", now: "n" }), { print: false, hash: null });
+  // Resumed: the conversation's recorded prompt is what it had.
+  assert.deepEqual(briefDecision({ covered: true, started: "f", resumed: true, seen: "f", now: "n" }), { print: false, hash: null },
+    "a restart with no edit since: its system prompt already has this text");
+  assert.deepEqual(briefDecision({ covered: true, started: "f2", resumed: true, seen: "f", now: "n" }), { print: true, hash: "f2" }, "an edit since");
+  assert.deepEqual(briefDecision({ covered: true, started: "f", resumed: true, now: "n" }), { print: true, hash: "f" }, "one from before this pack");
+  assert.deepEqual(briefDecision({ covered: true, started: "f2", resumed: true, seen: "f", now: "n", compacted: true }), { print: false, hash: "f2" },
+    "a compaction re-renders the prompt with the launch file");
+  // Not launched with it.
+  assert.deepEqual(briefDecision({ covered: false, now: "n" }), { print: true, hash: "n" });
+  assert.deepEqual(briefDecision({ covered: false, seen: "n", now: "n" }), { print: false, hash: "n" });
+  assert.deepEqual(briefDecision({ covered: false, seen: "n", now: "n2" }), { print: true, hash: "n2" });
+  assert.deepEqual(briefDecision({ covered: false, seen: "n", now: "n", compacted: true }), { print: true, hash: "n" });
+});
+
+test("compactedSince: only what was added is read; a mark across two reads is found; a shorter file counts", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "herdr-compact-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const path = join(root, "s.jsonl");
+  writeFileSync(path, `{"type":"system",${COMPACT_MARK}}\n`);
+  const first = compactedSince(path, 0);
+  assert.equal(first.compacted, true);
+  assert.equal(compactedSince(path, first.size).compacted, false, "an old mark isn't new");
+  writeFileSync(path, `${readFileSync(path, "utf8")}${"x".repeat((1 << 20) - 10)}${COMPACT_MARK}\n`);
+  assert.equal(compactedSince(path, first.size).compacted, true, "across the 1 MiB read boundary");
+  writeFileSync(path, "{}\n");
+  assert.equal(compactedSince(path, first.size).compacted, true);
+  assert.deepEqual(compactedSince(join(root, "missing.jsonl"), 7), { compacted: false, size: 7 });
+});
+
+// A Claude session of three turns through the hook, the pane's command as `argv`. A briefing
+// file it names is written as Start writes it, from the project's bots.json (`launch`).
+const launchFile = (main, bot) => {
+  const { file } = parseBots(readFileSync(join(main, ".herdr", "bots.json"), "utf8"));
+  return `${launchBriefingText({ self: file.bots.find((b) => b.id === bot), file })}\n`;
+};
+async function turns(t, argv, { input = (n) => JSON.stringify({ session_id: "s-1" }) } = {}) {
+  const sc = await scratch(t);
+  const fxPath = join(sc.root, "hc.json");
+  const app = join(sc.root, "app");
+  const pane = (words, created = 1000) => {
+    const fx = JSON.parse(readFileSync(fxPath, "utf8"));
+    Object.assign(fx.terminals.t1, { created_ms: created, foreground: { argv: words, cwd: "/" } });
+    writeFileSync(fxPath, JSON.stringify(fx));
+    const i = words.indexOf("--append-system-prompt-file");
+    if (i > 0) { mkdirSync(dirname(words[i + 1]), { recursive: true }); writeFileSync(words[i + 1], launchFile(sc.main, botOfBriefingFile(words[i + 1]))); }
+  };
+  pane(argv(app, sc.main));
+  const turn = (n) => sc.brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: sc.tree }, input(n), { keep: true });
+  return { ...sc, app, fxPath, turn, pane };
+}
+const count = (outs) => outs.filter((o) => o.stdout.includes("<herdr-bot>")).length;
+
+test("hook, a bot Start launched with its briefing file: three turns print it 0 times; the session is still joined", async (t) => {
+  const { turn, root } = await turns(t, (app, main) => ["claude", "--append-system-prompt-file", briefingFilePath(app, main, ID.main)]);
+  const outs = [await turn(1), await turn(2), await turn(3)];
+  assert.equal(count(outs), 0);
+  for (const o of outs) assert.equal(o.stderr, "");
+  const fx = JSON.parse(readFileSync(join(root, "hc.json"), "utf8"));
+  assert.equal(fx.terminals.t1.labels["agent.session"], "s-1", "the ledger and label half of the hook still runs");
+});
+
+test("hook, a pane not launched with it (Attach): three turns print it once; an edit and a new session print it again", async (t) => {
+  const { turn, main } = await turns(t, () => ["claude"]);
+  const outs = [await turn(1), await turn(2), await turn(3)];
+  assert.equal(count(outs), 1);
+  assert.match(outs[0].stdout, /You are Genie/);
+  assert.match(outs[0].stdout, /Captain \(bot b-bbbbbbbbbb[^)]*\): working at t2/, "the print carries the live team, as brief does");
+  const f = team();
+  byId(f, ID.main).instructions = "New instructions.";
+  writeFileSync(join(main, ".herdr", "bots.json"), JSON.stringify(f));
+  assert.match((await turn(4)).stdout, /New instructions\./);
+  assert.equal((await turn(5)).stdout, "");
+  const other = await turns(t, () => ["claude"], { input: (n) => JSON.stringify({ session_id: n < 2 ? "a" : "b" }) });
+  assert.equal(count([await other.turn(1), await other.turn(2)]), 2, "/clear: a new conversation gets it");
+});
+
+test("hook, a pane not launched with it: a compaction in Claude's transcript prints it once more", async (t) => {
+  let sc = null;
+  const transcript = () => join(sc.root, ".claude", "projects", "-proj", "s-1.jsonl");
+  sc = await turns(t, () => ["claude"], { input: () => JSON.stringify({ session_id: "s-1", transcript_path: transcript() }) });
+  mkdirSync(dirname(transcript()), { recursive: true });
+  writeFileSync(transcript(), '{"type":"user"}\n');
+  assert.equal(count([await sc.turn(1), await sc.turn(2)]), 1);
+  writeFileSync(transcript(), `${readFileSync(transcript(), "utf8")}{"type":"system",${COMPACT_MARK}}\n`);
+  assert.match((await sc.turn(3)).stdout, /You are Genie/);
+  assert.equal((await sc.turn(4)).stdout, "", "that compaction counted once");
+});
+
+test("hook, a launched pane that resumed an older conversation: once (its recorded prompt predates the file), then never", async (t) => {
+  const { turn } = await turns(t, (app, main) => ["claude", "--append-system-prompt-file", briefingFilePath(app, main, ID.main), "--resume", "s-1"]);
+  assert.equal(count([await turn(1), await turn(2), await turn(3)]), 1);
+});
+
+test("hook, restarts that resume a conversation started with the file: none with no edit since, once after an edit", async (t) => {
+  const sc = await turns(t, (app, main) => ["claude", "--append-system-prompt-file", briefingFilePath(app, main, ID.main)]);
+  const path = briefingFilePath(sc.app, sc.main, ID.main);
+  assert.equal(count([await sc.turn(1), await sc.turn(2)]), 0);
+  // Restart: a new pane (another created_ms) resuming s-1, the file written again, unchanged.
+  sc.pane(["claude", "--append-system-prompt-file", path, "--resume", "s-1"], 2000);
+  assert.equal(count([await sc.turn(3), await sc.turn(4)]), 0, "its recorded prompt has this very text");
+  // An edit, then a restart that resumes: the file's new text, printed once.
+  const f = team();
+  byId(f, ID.main).instructions = "After the edit.";
+  writeFileSync(join(sc.main, ".herdr", "bots.json"), JSON.stringify(f));
+  sc.pane(["claude", "--append-system-prompt-file", path, "--resume", "s-1"], 3000);
+  const outs = [await sc.turn(5), await sc.turn(6)];
+  assert.equal(count(outs), 1);
+  assert.match(outs[0].stdout, /After the edit\./);
+  // /clear in that pane: a new conversation, its prompt rendered with the file: nothing.
+  const cleared = await sc.brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: sc.tree }, JSON.stringify({ session_id: "s-2" }), { keep: true });
+  assert.equal(cleared.stdout, "");
+});
+
+test("hook, a pane launched with another bot's file (attached to this bot since): it is not covered, so once", async (t) => {
+  const { turn } = await turns(t, (app, main) => ["claude", "--append-system-prompt-file", briefingFilePath(app, main, ID.solo)]);
+  const outs = [await turn(1), await turn(2)];
+  assert.equal(count(outs), 1);
+  assert.match(outs[0].stdout, /You are Genie/);
+});
+
+test("hook, what it printed can't be kept (the app home is a file): it prints every turn, as before, and never fails", async (t) => {
+  const sc = await scratch(t);
+  writeFileSync(join(sc.root, "blocked"), "a file");
+  const env = { HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: sc.tree, HERDR_APP_HOME: join(sc.root, "blocked") };
+  const outs = [await sc.brief(env, "{}", { keep: true }), await sc.brief(env, "{}", { keep: true })];
+  assert.equal(count(outs), 2);
+  for (const o of outs) assert.equal(o.stderr, "");
+});
+
+test("hook, a launched pane whose briefing file was deleted since: once, never every turn", async (t) => {
+  const sc = await turns(t, (app, main) => ["claude", "--append-system-prompt-file", briefingFilePath(app, main, ID.main)]);
+  assert.equal(count([await sc.turn(1)]), 0);
+  rmSync(briefingFilePath(sc.app, sc.main, ID.main));
+  const outs = [];
+  for (let n = 2; n <= 6; n++) outs.push(await sc.turn(n));
+  assert.equal(count(outs), 0, "the conversation's record has this launch text already");
+  // Deleted before its first turn: nothing recorded, so the once-only rule: one print in five.
+  const early = await turns(t, (app, main) => ["claude", "--append-system-prompt-file", briefingFilePath(app, main, ID.main)]);
+  rmSync(briefingFilePath(early.app, early.main, ID.main));
+  const five = [];
+  for (let n = 1; n <= 5; n++) five.push(await early.turn(n));
+  assert.equal(count(five), 1, "the bot still gets it, once");
+  // A restart that resumed, its file deleted: once, never every turn.
+  const resumed = await turns(t, (app, main) => ["claude", "--append-system-prompt-file", briefingFilePath(app, main, ID.main), "--resume", "s-1"]);
+  rmSync(briefingFilePath(resumed.app, resumed.main, ID.main));
+  const again = [];
+  for (let n = 1; n <= 5; n++) again.push(await resumed.turn(n));
+  assert.equal(count(again), 1);
+});
+
+test("hook, a launched --continue pane: once for the conversation it resumed, none after /clear", async (t) => {
+  const sc = await turns(t, (app, main) => ["claude", "--append-system-prompt-file", briefingFilePath(app, main, ID.main), "--continue"],
+    { input: (n) => JSON.stringify({ session_id: n < 3 ? "s-1" : "s-2" }) });
+  assert.equal(count([await sc.turn(1), await sc.turn(2)]), 1, "the resumed one, recorded before the file");
+  assert.equal(count([await sc.turn(3), await sc.turn(4)]), 0, "/clear: a new conversation, its prompt has the file");
 });

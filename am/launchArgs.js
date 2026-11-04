@@ -44,9 +44,10 @@ export function startRefusal(file, botId) {
  * `hc run` arguments for Start: in the background, labelled with the bot and Herdr's
  * adoption labels, named, in the project folder, with the parent rule, never --no-notify.
  * With `path`, the agent runs as `/usr/bin/env PATH=<path> <argv>`, as a worker does
- * (workers.js workerArgs): the PATH agentPath.mjs interpreterPath gives it (#56).
+ * (workers.js workerArgs): the PATH agentPath.mjs interpreterPath gives it (#56). `env`: more
+ * variables the agent starts with, after PATH (an agent that takes its briefing that way, models.js).
  */
-export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels = {}, path = null }) {
+export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels = {}, path = null, env: more = {} }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
   args.push("--cwd", cwd, "--label", `${BOT_LABEL}=${botId}`);
@@ -54,8 +55,8 @@ export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels =
   for (const [k, v] of Object.entries(labels)) if (k !== BOT_LABEL && v) args.push("--label", `${k}=${v}`);
   if (space) args.push("--label", `herdr.space=${space}`);
   if (tab) args.push("--label", `herdr.tab=${tab}`);
-  const env = path ? [ENV, `PATH=${path}`] : [];
-  return [...args, ...parent, "--", ...env, ...argv];
+  const vars = [...(path ? [`PATH=${path}`] : []), ...Object.entries(more ?? {}).map(([k, v]) => `${k}=${v}`)];
+  return [...args, ...parent, "--", ...(vars.length ? [ENV, ...vars] : []), ...argv];
 }
 
 // hc's keep wrapper (hc run --keep): the program, then a shell once it exits, as
