@@ -39,6 +39,11 @@ No release ships the mod and nothing updates an installed copy. To update it:
 
 Pairings live outside the mod folder and stay.
 
+The phone's chat view (RFC 0015) needs a Pocket Link with the chat route (`herdr-pocket/chat/1`,
+the `chat/` folder and `bridge/chat.mjs`). An older one refuses that route, and the phone says
+"Update Pocket Link on this computer for chat" and shows the terminal view as before. Nothing
+updates Pocket Link by itself, so updating it as above is what turns the chat on.
+
 ## What it does on your computer
 
 - Runs a small bridge (`mods/pocket-link/bridge/bridge.mjs`) as a login service:
@@ -92,6 +97,33 @@ Pairings live outside the mod folder and stay.
 
 A paired phone can use every herdr-core session on this computer, just like a terminal running `hc`.
 Pair only your own phones. Remove one in the dialog and it's disconnected at once.
+
+## The chat route
+
+`herdr-pocket/chat/1` (RFC 0015 delivery 4) serves a terminal agent's conversation as chat rows. It
+is admitted like the terminal session: only paired keys, closed before anything is read
+otherwise, and a removed phone's chats end within 2 seconds. Its header line is the session's
+(`{"session": "<hc session>"}`); each hc session gets its own engine (at most 8).
+
+- **Hello.** The phone sends `hello` with `generation: 1, framed: true`, as to herdr-core. The
+  answer adds `chat: 1`, `credit` (the window each subscription starts with, 256 KiB; read it
+  from here) and `limits`. Then frames, as herdr-core's: a 9-byte little-endian header (channel
+  u32, kind u8, length u32), kinds DATA 0, CREDIT 1, CLOSE 2.
+- **Requests** (JSON-RPC on channel 0): `chat.list`; `chat.subscribe {terminal, after?}` →
+  `{channel}`; `chat.backfill {terminal, before, limit}` (≤ 200 rows, ≤ 1 MiB); `chat.send
+  {terminal, text, id}` (≤ 32 KiB; answers `sent`, `queued`, `held` or `refused`);
+  `chat.sendHeld` and `chat.cancelHeld {terminal, id}`; `chat.answer {terminal, row, choice}`;
+  `chat.interrupt {terminal}`. Every write needs a subscription to that terminal on the same
+  connection.
+- **Events** (JSON lines on the subscription's channel, sent while the phone has credit; it
+  grants more with CREDIT): first a `snapshot` (rows, screen, status, approval, held; `reset`
+  when the cursor in `after` is no longer held), then `rows`, `screen`, `status`, `approval`,
+  `question`, `held`, `sent`, `sending`, `matched`, `source`, `gone` and `offline`. A row's text
+  is cut at 64 KiB (`cut: true`). A subscriber that stops granting credit gets CLOSE `slow` and
+  resubscribes with its cursor. A CLOSE from the phone ends the subscription.
+- Rows are kept in memory only, the last 500 per terminal, while a phone watches and 10 minutes
+  after; a restarted bridge numbers them again, so a phone's cursor gets `reset`. Row text is
+  never logged.
 
 ## For other mods
 
