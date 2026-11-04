@@ -7,8 +7,14 @@
 //      input names a command, it is the dialog's command; the status message's tool, when it
 //      names one, is the dialog's tool too.
 // The row shows that call's input from the transcript, never the screen's text. Allow-always is
-// never offered (no fixed key for it). Just before pressing, everything is read again; if the
-// question changed, nothing is pressed. The engine never answers on its own.
+// never offered (no fixed key for it). The engine never answers on its own.
+//
+// What an answer guarantees: just before the key, the status, the screen and the open calls are
+// read again, and nothing is pressed if the question changed. What it cannot: herdr-core types the
+// key only after ~3 s of quiet, and terminal.keys has no `if`, so the dialog can change in that
+// gap (someone answering in the terminal or the Automagik window at the same moment, so the key
+// lands on the next dialog). The engine allows one answer at a time and one per call (engine.js),
+// and reports 'uncertain' when herdr-core says the key went in at another status or turn.
 import { approvalKeys } from './answer.js'
 import { readDialog, statusTool } from './dialog.js'
 import { preview, toolSummary, INPUT_PREVIEW } from './rows.js'
@@ -85,9 +91,16 @@ export async function answerApproval({ hc, address, rowId, choice, read, timers 
   if (!state.choices.includes(choice)) return { ok: false, reason: 'choice' }
   const keys = approvalKeys(facts.agent)?.[choice]
   if (!keys) return { ok: false, reason: 'choice' }
+  let typed
   try {
-    await hc.call('terminal.keys', { terminal: address, keys, caller: null })
+    typed = await hc.call('terminal.keys', { terminal: address, keys, caller: null })
   } catch (e) { return { ok: false, reason: e?.kind ?? 'unavailable' } }
+  // herdr-core says when the key went in: not at that dialog's status and turn, it may have
+  // answered something else.
+  if ((typeof typed?.status === 'string' && typed.status !== 'blocked') ||
+      (typeof typed?.turn === 'number' && typeof facts.status?.turn === 'number' && typed.turn !== facts.status.turn)) {
+    return { ok: true, pressed: 'uncertain' }
+  }
   // herdr-core types the key after its quiet rule: see the dialog go, or say it is not known yet.
   const deadline = Date.now() + verifyMs
   for (;;) {

@@ -66,8 +66,10 @@ export function createFakeHc({ terminals = [], screens = {}, files = {}, readCap
     'terminal.keys'(params) {
       const t = byAddress.get(params.terminal)
       if (!t) throw Object.assign(new Error('not_found'), { kind: 'not_found' })
+      // As herdr-core: the status and turn when the key went in, before the program reacts.
+      const typed = { status: t.status?.state ?? null, turn: t.turn ?? 0 }
       react('terminal.keys', params)
-      return { status: t.status?.state ?? null, turn: t.turn ?? 0 }
+      return typed
     },
     'terminal.interrupt'(params) {
       const t = byAddress.get(params.terminal)

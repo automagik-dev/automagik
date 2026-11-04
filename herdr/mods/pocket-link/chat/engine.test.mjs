@@ -170,3 +170,74 @@ test('chatEnv drops HC_TERMINAL_ID, so herdr-core never types a message as a not
   const env = chatEnv({ PATH: '/usr/bin', HC_TERMINAL_ID: 't9', HC_SESSION: 'phone' })
   assert.deepEqual(env, { PATH: '/usr/bin', HC_SESSION: 'phone' })
 })
+
+async function approvalSetup({ landing = 'working' } = {}) {
+  const s = setup({ transcript: user('u1', 'list it') + bashCall('a1', 'toolu_1', 'ls -la /home/u/proj') })
+  const a = client(s.engine)
+  const b = client(s.engine)
+  await settle(); await s.engine.entries.get('t1').projection.ready
+  s.hc.screens.t1 = screen('claude-dialog')
+  s.hc.change('t1', 'status', { status: { app: 'claude-code', state: 'blocked', kind: 'permission', msg: 'approve Bash: ls -la /home/u/proj' } })
+  await settle()
+  if (landing) s.hc.onWrite((m) => { if (m === 'terminal.keys') s.hc.set('t1', { status: { app: 'claude-code', state: landing } }) })
+  s.engine.timers = { ...s.engine.timers, setTimeout: (fn) => setImmediate(fn) }
+  const row = a.events.find((e) => e.type === 'approval').row
+  return { ...s, a, b, row }
+}
+
+test('two clients answering one approval at once: one key, the other refused in-flight', async () => {
+  const { engine, a, b, row, writes } = await approvalSetup()
+  const [x, y] = await Promise.all([engine.answer(a.me, 't1', { row: row.id, choice: 'allow' }), engine.answer(b.me, 't1', { row: row.id, choice: 'deny' })])
+  assert.deepEqual([x.ok, y], [true, { ok: false, reason: 'in-flight' }])
+  assert.deepEqual(writes().map((c) => c.params.keys), [['1']])
+  engine.close()
+})
+
+test('a double tap from one client presses once', async () => {
+  const { engine, a, row, writes } = await approvalSetup()
+  const [x, y] = await Promise.all([engine.answer(a.me, 't1', { row: row.id, choice: 'allow' }), engine.answer(a.me, 't1', { row: row.id, choice: 'allow' })])
+  assert.deepEqual([x.ok, y.reason], [true, 'in-flight'])
+  assert.equal(writes().length, 1)
+  engine.close()
+})
+
+test('a retry after uncertain is refused while the status stays blocked; the row loses its buttons', async () => {
+  const { engine, a, row, writes } = await approvalSetup({ landing: null })
+  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: 'deny' }), { ok: true, pressed: 'uncertain' })
+  await settle()
+  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: 'deny' }), { ok: false, reason: 'answered' })
+  assert.equal(writes().length, 1)
+  const last = a.events.filter((e) => e.type === 'approval').at(-1).row
+  assert.deepEqual([last.choices, last.why], [[], 'answered'])
+  engine.close()
+})
+
+test('once the status leaves blocked, the next dialog can be answered again', async () => {
+  const { engine, hc, a, writes, path } = await approvalSetup()
+  await engine.answer(a.me, 't1', { row: (a.events.find((e) => e.type === 'approval').row).id, choice: 'deny' })
+  hc.change('t1', 'status', { status: { app: 'claude-code', state: 'working' } })
+  await settle()
+  appendFileSync(path, line({ type: 'user', uuid: 'r1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'denied' }] } }) + bashCall('a2', 'toolu_2', 'ls -la /home/u/proj'))
+  await engine.entries.get('t1').projection.tail.tick()
+  hc.change('t1', 'status', { status: { app: 'claude-code', state: 'blocked', kind: 'permission', msg: 'approve Bash: ls -la /home/u/proj' } })
+  await settle()
+  const next = a.events.filter((e) => e.type === 'approval' && e.row.open).at(-1).row
+  assert.equal(next.call, '1:4.0')
+  assert.equal((await engine.answer(a.me, 't1', { row: next.id, choice: 'deny' })).ok, true)
+  assert.equal(writes().length, 2)
+  engine.close()
+})
+
+test('the same call asked again after the status moved can be answered again', async () => {
+  const { engine, hc, a, row, writes } = await approvalSetup({ landing: null })
+  assert.equal((await engine.answer(a.me, 't1', { row: row.id, choice: 'deny' })).pressed, 'uncertain')
+  hc.change('t1', 'status', { status: { app: 'claude-code', state: 'working' } })
+  await settle()
+  hc.change('t1', 'status', { status: { app: 'claude-code', state: 'blocked', kind: 'permission', msg: 'approve Bash: ls -la /home/u/proj' } })
+  await settle()
+  const again = a.events.filter((e) => e.type === 'approval' && e.row.open).at(-1).row
+  assert.deepEqual([again.id, again.choices], [row.id, ['allow', 'deny']])
+  assert.equal((await engine.answer(a.me, 't1', { row: row.id, choice: 'deny' })).ok, true)
+  assert.equal(writes().length, 2)
+  engine.close()
+})

@@ -25,6 +25,8 @@ import { answerApproval, approvalRow, approvalState } from './approve.js'
 export const LINGER_MS = 10 * 60_000
 /** While messages are held, how often to look whether they can go. */
 export const FLUSH_MS = 2000
+/** Sent messages waiting for their transcript row, per terminal; the oldest goes past this. */
+export const MAX_PENDING = 100
 const realTimers = { setTimeout, clearTimeout, setInterval, clearInterval }
 
 /** The environment for the engine's `hc connect`: without HC_TERMINAL_ID, so no send has a caller. */
@@ -110,17 +112,23 @@ export class Engine {
 
   open(address) {
     const projection = new Projection(address, { hc: this.hc, hub: this.hub, home: this.home, appHome: this.appHome, log: this.log, refused: this.refused, timers: this.timers, ...this.projectionOptions })
-    const entry = { address, projection, clients: new Map(), linger: null, approval: null, question: null, pending: new Map(), checking: null, flusher: null }
+    const entry = { address, projection, clients: new Map(), linger: null, approval: null, question: null, pending: new Map(), checking: null, flusher: null,
+      answering: null, answered: new Set() }
     const emit = (e) => { for (const l of [...entry.clients.values()]) { try { l(e) } catch {} } }
     entry.emit = emit
     entry.read = () => this.read(entry)
     entry.input = new Input({ hc: this.hc, address, read: entry.read })
     entry.input.on((e) => {
-      emit(e)
-      if (e.type === 'sent') { entry.pending.set(e.id, entry.sentText.get(e.id)); emit({ type: 'sending', id: e.id }) }
+      if (e.type === 'sent') {
+        // The text stays here, to find the transcript's row for it; clients already have it.
+        const { text, ...rest } = e
+        emit(rest)
+        entry.pending.set(e.id, text)
+        if (entry.pending.size > MAX_PENDING) entry.pending.delete(entry.pending.keys().next().value)
+        emit({ type: 'sending', id: e.id })
+      } else emit(e)
       this.flushing(entry)
     })
-    entry.sentText = new Map()
     projection.on((e) => {
       emit(e)
       if (e.type === 'rows') this.match(entry, e.rows)
@@ -187,7 +195,7 @@ export class Engine {
 
   async checkOnce(entry) {
     const status = entry.projection.status
-    if (status.state !== 'blocked') { this.closeApproval(entry); return }
+    if (status.state !== 'blocked') { entry.answered.clear(); this.closeApproval(entry); return }
     if (status.kind !== 'permission') {
       // Questions and pickers are answered in the terminal: no agent's was recorded.
       const id = `question:${status.turn}`
@@ -201,7 +209,9 @@ export class Engine {
     const state = approvalState(facts)
     // Read fresh, no approval is open any more (answered, or the status moved on).
     if (!state) { this.closeApproval(entry); return }
-    const row = approvalRow(state, { turn: status.turn, segment: entry.projection.store.segment })
+    // A call already answered keeps its row, without buttons, until the status moves.
+    const answered = state.call && entry.answered.has(state.call.id)
+    const row = approvalRow(answered ? { ...state, choices: [], why: 'answered' } : state, { turn: status.turn, segment: entry.projection.store.segment })
     if (entry.approval && entry.approval.id === row.id && entry.approval.choices.join() === row.choices.join()) return
     if (entry.approval && entry.approval.id !== row.id) this.closeApproval(entry)
     entry.approval = row
@@ -212,9 +222,7 @@ export class Engine {
 
   async send(client, address, { text, id }) {
     if (!this.watching(client, address)) return refused()
-    const entry = this.entries.get(address)
-    entry.sentText.set(id, typeof text === 'string' ? text : '')
-    return entry.input.send({ text, id })
+    return this.entries.get(address).input.send({ text, id })
   }
 
   sendHeld(client, address, { id }) {
@@ -227,12 +235,25 @@ export class Engine {
     return this.entries.get(address).input.cancelHeld({ id })
   }
 
-  /** An approval the person tapped: only the engine's own open row, checked again before the key. */
+  /**
+   * An approval the person tapped: only the engine's own open row, checked again before the key.
+   * One answer at a time per terminal, and one per open call: herdr-core types a key only after
+   * ~3 s of quiet, during which the dialog stays and every re-read still passes, so a second tap,
+   * another client or a retry after 'uncertain' would press again, maybe on the next dialog. An
+   * answered call is refused until the status leaves blocked.
+   */
   async answer(client, address, { row, choice }) {
     if (!this.watching(client, address)) return refused()
     const entry = this.entries.get(address)
+    if (entry.answering) return { ok: false, reason: 'in-flight' }
     if (!entry.approval || entry.approval.id !== row) return { ok: false, reason: 'no-such-row' }
-    const result = await answerApproval({ hc: this.hc, address, rowId: row, choice, read: entry.read, timers: this.timers })
+    if (entry.approval.call && entry.answered.has(entry.approval.call)) return { ok: false, reason: 'answered' }
+    const call = entry.approval.call
+    entry.answering = answerApproval({ hc: this.hc, address, rowId: row, choice, read: entry.read, timers: this.timers })
+    let result
+    try { result = await entry.answering } finally { entry.answering = null }
+    // A key went out: that call is answered, whatever the dialog shows until the status moves.
+    if (result.ok && call) entry.answered.add(call)
     if (result.ok || result.reason === 'changed' || result.reason === 'closed') this.checkApproval(entry)
     return result
   }

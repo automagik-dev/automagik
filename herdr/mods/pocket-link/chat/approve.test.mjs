@@ -68,7 +68,7 @@ test('3. the status names another tool than the dialog: no buttons', () => {
 
 function answering({ afterKeys = 'idle' } = {}) {
   const hc = createFakeHc({ terminals: [fakeTerminal('t1', { state: 'blocked', kind: 'permission' })], screens: { t1: dialog } })
-  hc.set('t1', { status: { app: 'claude-code', ...blocked } })
+  hc.set('t1', { status: { app: 'claude-code', ...blocked }, turn: blocked.turn })
   hc.onWrite((m) => { if (m === 'terminal.keys' && afterKeys) hc.set('t1', { status: { app: 'claude-code', state: afterKeys } }) })
   let current = facts()
   const read = async () => current
@@ -107,4 +107,13 @@ test('a key herdr-core has not typed yet is reported as uncertain, not as done',
   const fast = { setTimeout: (fn) => setImmediate(fn) }
   assert.deepEqual(await answerApproval({ hc: a.hc, address: 't1', rowId: 'approval:1:4.1', choice: 'deny', read: a.read, timers: fast, verifyMs: 30 }), { ok: true, pressed: 'uncertain' })
   assert.equal(a.keys().length, 1, 'pressed once, never again')
+})
+
+test('herdr-core typed the key at another status or turn: uncertain, never done', async () => {
+  for (const at of [{ status: { app: 'claude-code', state: 'working' }, turn: blocked.turn }, { status: { app: 'claude-code', ...blocked }, turn: blocked.turn + 1 }]) {
+    const a = answering()
+    a.hc.set('t1', at) // what herdr-core saw when it typed; our read was before
+    assert.deepEqual(await answerApproval({ hc: a.hc, address: 't1', rowId: 'approval:1:4.1', choice: 'allow', read: a.read }), { ok: true, pressed: 'uncertain' })
+    assert.equal(a.keys().length, 1)
+  }
 })
