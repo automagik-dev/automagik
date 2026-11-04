@@ -22,7 +22,8 @@ import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMN
   parseBots, plannedOf, projectKeyOf, projectOf, withListedProject } from "../model.js";
 import { UNANSWERED, agentInForeground, attachRefusal, attachWords, detachWords, hcName, isClaude, leadIdOf, leadPane, newest,
   paneLabels, paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWarning, relabelWords, rowsOf, spaceOnly, spacePlace,
-  startArgs, startRefusal, unwrapKeep } from "../launchArgs.js";
+  spareTab, startArgs, startRefusal, unwrapKeep } from "../launchArgs.js";
+import { tabSteps, workerSpace, workerTabName } from "../workerTab.js";
 import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, confirmBindings, foldAttach, heldIn, machinesById, modeProblem, placeOf as placeOfRow, readAttach } from "../attach.js";
 import { interpreterPath } from "../agentPath.mjs";
 import { briefingFilePath, installHook, launchBriefingText, withExclude } from "../briefingText.mjs";
@@ -1333,11 +1334,15 @@ async function placementOf(key, seen = null) {
   return null;
 }
 
+/** `herdr-app ls` as State spaces (spacesOf), or null: no herdr-app, no window. */
+async function windowRead() {
+  const r = await runProgram("herdr-app", ["ls"]);
+  try { return r.code === 0 ? spacesOf(JSON.parse(r.stdout)) : null; } catch { return null; }
+}
+
 /** `herdr-app ls` as State spaces (spacesOf) and each folder's key, or null: no herdr-app, no window. */
 async function windowSpaces() {
-  const r = await runProgram("herdr-app", ["ls"]);
-  let spaces;
-  try { spaces = r.code === 0 ? spacesOf(JSON.parse(r.stdout)) : null; } catch { spaces = null; }
+  const spaces = await windowRead();
   if (!spaces) return null;
   const keys = new Map();
   await Promise.all([...new Set(spaces.map((s) => s.folder).filter(Boolean))].map(async (f) => {
@@ -1371,7 +1376,42 @@ async function windowPlace(key, labelled = null, seen = null) {
   if (first && ours && ours.id !== first.space) {
     await runProgram("herdr-app", ["do", "space.close", JSON.stringify({ id: ours.id, confirmed: true })]);
   }
-  return first || (typeof out.space === "string" ? { space: out.space, tab: null, from: null } : null);
+  const place = first || (typeof out.space === "string" ? { space: out.space, tab: null, from: null } : null);
+  // The space is this start's: its first tab holds only the shell space.new started, closed
+  // once the bot shows in a tab of its own there (launchSeat, spareTab).
+  const shell = ours && place?.space === ours.id ? ours.tabs.find((t) => t.panes.some((p) => p.terminal === out.terminal)) : null;
+  return shell && typeof out.terminal === "string" ? { ...place, spare: { space: ours.id, tab: shell.id, terminal: out.terminal } } : place;
+}
+
+/** How long a start or worker waits for Herdr to show its new pane before its tab setup is left out. */
+const TAB_WAIT_MS = Number(process.env.AUTOMAGIK_HERDR_TAB_WAIT_MS) || 5000;
+const TAB_STEP_MS = 200;
+
+/**
+ * Waits for the window to show `terminal` (a terminal of this computer) in a pane: the window's
+ * spaces then, with each tab's `index` (its position, from 1, as tab.move counts) and
+ * `terminals`, and the space and tab showing it: { spaces, space, tab }. Null when no window
+ * answers, or the pane hasn't shown after TAB_WAIT_MS.
+ */
+async function windowShows(terminal, ms = TAB_WAIT_MS) {
+  const until = Date.now() + ms;
+  for (;;) {
+    const read = await windowRead();
+    if (!read) return null;
+    const spaces = read.map((s) => ({ ...s, tabs: s.tabs.map((t, i) => ({ ...t, index: i + 1, terminals: t.panes.map((p) => p.terminal) })) }));
+    for (const space of spaces.filter((x) => !x.machine)) {
+      const tab = space.tabs.find((t) => t.terminals.includes(terminal));
+      if (tab) return { spaces, space, tab };
+    }
+    if (Date.now() >= until) return null;
+    await later(TAB_STEP_MS);
+  }
+}
+
+/** `herdr-app do <command> <args>`: null when it ran, else what it said. */
+async function windowDo(command, args) {
+  const r = await runProgram("herdr-app", ["do", command, JSON.stringify(args)]);
+  return r.code === 0 ? null : (r.stderr || r.stdout || `exit ${r.code}`).trim();
 }
 
 async function cmdStart(opts, [ref]) {
@@ -1746,6 +1786,10 @@ async function launchSeat(project, bot, over = {}) {
     if (unlogged) { hook.warnings.push(unlogged); report([unlogged]); }
   };
   if (!over.replacing) await logSeat();
+  if (place?.spare) {
+    const why = await closeSpare(place.spare, terminal);
+    if (why) { hook.warnings.push(why); report([why]); }
+  }
   listProject(key);
   // An edit that landed while this Start ran: the file read again, its role and category
   // put on the new pane (relabelWords against the labels it started with).
@@ -1766,6 +1810,21 @@ async function launchSeat(project, bot, over = {}) {
     report(hook.warnings.slice(-1));
   }
   return { terminal, created_ms: started.created_ms, parent, argv, labels, place, hook, logSeat };
+}
+
+/**
+ * Closes the spare shell's tab of a space this start made (windowPlace's `spare`) once the
+ * window shows the bot's pane (`terminal`) in another tab there: never before, so the space
+ * always keeps a tab, and only while that tab holds the shell alone (spareTab). Null, or a
+ * warning when the close failed.
+ */
+async function closeSpare(spare, terminal) {
+  const shown = await windowShows(terminal);
+  if (!shown || shown.space.id !== spare.space) return null;
+  const tab = spareTab(spare, shown.space.tabs, terminal);
+  if (!tab) return null;
+  const why = await windowDo("tab.close", { id: tab, confirmed: true });
+  return why ? `The new space's spare shell tab (${tab}) wasn't closed: ${why}` : null;
 }
 
 // ---- restart: the bot's agent again, in its pane's place ----
@@ -2802,6 +2861,25 @@ async function baseCommit(place, key) {
   return log?.trim().split("\n").filter(Boolean).at(-1) ?? null;
 }
 
+/**
+ * A new worker's tab, once the window shows its pane (`terminal`): renamed `name` and moved
+ * after the tab of its bot's pane (`botTerminal`) when both are in one space (workerTab.js
+ * tabSteps, the setup a sidebar click gives a worker). Never focused: the person's focus
+ * stays where it is. Null, or a warning when the pane didn't show in time or a step failed.
+ */
+async function workerTabSetup(terminal, botTerminal, name) {
+  const shown = await windowShows(terminal);
+  if (!shown) return `Herdr hadn't shown ${terminal} after ${TAB_WAIT_MS / 1000}s, so its tab isn't named or moved beside its bot's.`;
+  const space = shown.spaces.find((s) => !s.machine && s.tabs.some((t) => t.terminals.includes(botTerminal)));
+  const botTab = space?.tabs.find((t) => t.terminals.includes(botTerminal)) ?? null;
+  const steps = tabSteps({ space: space?.id ?? null, tab: botTab?.id ?? null, name }, { tab: shown.tab.id }, shown.spaces);
+  for (const [command, args] of steps) {
+    const why = await windowDo(command, args);
+    if (why) return `${terminal}'s tab: ${command} failed: ${why}`;
+  }
+  return null;
+}
+
 async function cmdWorker(opts, rest) {
   const task = rest.join(" ").trim();
   if (!task) throw new CliError('worker needs the task text: automagik-herdr worker "<task>" --branch <name>.', 2);
@@ -2892,7 +2970,11 @@ async function cmdWorker(opts, rest) {
   const lockDir = ledgerPath(appHome()).replace(/\/[^/]*$/, "");
   try { mkdirSync(lockDir, { recursive: true }); } catch (e) { throw new CliError(`Can't make ${lockDir}: ${e?.message ?? e}`); }
   const worktree = realDir(place.worktree) ?? place.worktree;
-  const terminal = await withLockAsync(worktreeLock(lockDir, worktree), async () => {
+  // The bot's space, no tab: Herdr opens the worker in a tab of its own there, at hc run. The
+  // window is asked first (workerSpace): a label naming a space it no longer has is left out.
+  const window = await windowRead();
+  const space = workerSpace(placementFrom([me])?.space ?? null, window, me.address);
+  const started = await withLockAsync(worktreeLock(lockDir, worktree), async () => {
     const ls = await hcJson(["ls"]);
     // A task's worker is named exactly <id>-<role>: a live holder of that name is refused, never suffixed.
     // This computer's terminals only (hc names are unique per core), as workersIn sees them.
@@ -2916,8 +2998,6 @@ async function cmdWorker(opts, rest) {
     }
     const taken = new Set(rowsOf(ls).map((r) => r?.name).filter(Boolean));
     const name = taskName ?? hcName(opts.name ?? branchSlug(place.branch), bot.id, taken);
-    // The bot's space, no tab: Herdr opens the worker in a tab of its own there, at hc run.
-    const space = placementFrom([me])?.space ?? null;
     const args = workerArgs({ botId: bot.id, branch: place.branch, role, name, cwd: place.worktree, parent: me.address, space,
       agent: plan.agent, model: plan.model, effort: plan.effort, argv: plan.argv, task, template: plan.template,
       path: runPath?.path ?? process.env.PATH, taskId, project: project.key, lead });
@@ -2926,8 +3006,15 @@ async function cmdWorker(opts, rest) {
     let address = null;
     try { address = JSON.parse(r.stdout).address ?? null; } catch { address = null; }
     if (!address) throw new CliError(`hc run gave no terminal address: ${r.stdout.trim()}`);
-    return address;
+    return { address, name };
   }).catch((e) => { throw e instanceof CliError ? e : new CliError(e?.message ?? String(e)); });
+  const terminal = started.address;
+  // Herdr shows a labelled worker at once, so the sidebar's tab setup (workerTab.js) never
+  // runs for it: its tab is named and moved after the bot's tab here, as a click would.
+  if (space && window) {
+    const why = await workerTabSetup(terminal, me.address, workerTabName({ branch: place.branch, name: started.name }));
+    if (why) warnings.push(why);
+  }
   const pid = await pidOf(terminal);
   const unlogged = appendLedger(startRow({ kind: "worker", terminal, pid, botId: bot.id, task: taskId, branch: place.branch,
     project: project.key, lead, worktree, base, created: place.created, agent: plan.agent, model: plan.model, effort: plan.effort,

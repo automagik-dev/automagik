@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { state } from "./use-stubs.mjs";
-import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, isClaude, newest, attachRefusal, parseCommand, unwrapKeep } from "../mods/am-sidebar/launchArgs.js";
+import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, isClaude, newest, attachRefusal, parseCommand, spareTab, unwrapKeep } from "../mods/am-sidebar/launchArgs.js";
 const { startBot, attachBot, liveTerminalOf, botOfTerminal } = await import("../mods/am-sidebar/launch.js");
 import { briefingFilePath } from "../mods/am-sidebar/briefingText.mjs";
 
@@ -67,6 +67,21 @@ test("start: a planned bot, one with no agent, or a member with no main bot is r
   g.bots.shift();
   assert.match(startRefusal(g, ID.cap), /no main bot/);
   assert.equal(startRefusal(team(), ID.dev), null);
+});
+
+test("spareTab: a new space's shell tab is closed only once the bot shows in a tab of its own, and only while the shell is alone", () => {
+  const spare = { space: "s5", tab: "t5", terminal: "t-sh" };
+  const shell = { id: "t5", terminals: ["t-sh"] };
+  assert.equal(spareTab(spare, [shell, { id: "t6", terminals: ["t100"] }], "t100"), "t5");
+  // The bot not shown yet: closing would leave the space without a tab.
+  assert.equal(spareTab(spare, [shell], "t100"), null);
+  // The shell tab holds more now (a split), or the bot itself: kept.
+  assert.equal(spareTab(spare, [{ id: "t5", terminals: ["t-sh", "t9"] }, { id: "t6", terminals: ["t100"] }], "t100"), null);
+  assert.equal(spareTab(spare, [{ id: "t5", terminals: ["t-sh", "t100"] }], "t100"), null);
+  // Gone already, or another program in that tab now: nothing is closed.
+  assert.equal(spareTab(spare, [{ id: "t6", terminals: ["t100"] }], "t100"), null);
+  assert.equal(spareTab(spare, [{ id: "t5", terminals: ["t8"] }, { id: "t6", terminals: ["t100"] }], "t100"), null);
+  assert.equal(spareTab(null, [shell, { id: "t6", terminals: ["t100"] }], "t100"), null);
 });
 
 test("names: slugged to hc's alphabet, suffixed when taken", () => {
@@ -150,7 +165,7 @@ async function world(t, { file = team(), terminals = () => [] } = {}) {
     for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
     rmSync(root, { recursive: true, force: true });
   });
-  Object.assign(state, { spaces: [], shared: new Map(), setSharedCalls: 0, offline: new Set(), calls: [], terminals: [], focused: null,
+  Object.assign(state, { spaces: [], panes: [], shared: new Map(), setSharedCalls: 0, offline: new Set(), calls: [], terminals: [], focused: null,
     hcCalls: [], runs: [], notes: [], appHome: app, agents: [{ key: "claude", name: "Claude Code", run: ["claude"], installed: true }] });
   const calls = () => readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
   const hcState = () => JSON.parse(readFileSync(statePath, "utf8"));
@@ -228,6 +243,39 @@ test("startBot: no space shows the project -> space.new on its folder, waited fo
   assert.ok((await startBot(w.main, ID.cap)).terminal);
   assert.deepEqual(state.runs, []);
   assert.ok(w.calls().filter((a) => a[0] === "run")[1].includes("herdr.space=s0"));
+});
+
+test("startBot: the space it opened keeps no lone shell tab: closed once the bot shows in its own tab, never before", async (t) => {
+  const w = await world(t);
+  state.spaces = [];
+  // Herdr makes the space with its shell (t-sh in tab t5); the bot's tab (t6) comes once hc runs it.
+  let looks = 0;
+  const sleep = async () => {
+    looks += 1;
+    if (looks === 1) {
+      state.spaces = [{ id: "s5", folder: w.main, machine: null, active: true, tabs: [{ id: "t5", index: 1, active: true }] }];
+      state.panes = [{ pane: "p5", terminal: "t-sh", tab: "t5" }];
+    }
+    if (w.calls().some((a) => a[0] === "run") && !state.panes.some((p) => p.terminal === "t100")) {
+      state.spaces = [{ ...state.spaces[0], tabs: [...state.spaces[0].tabs, { id: "t6", index: 2, active: false }] }];
+      state.panes = [...state.panes, { pane: "p6", terminal: "t100", tab: "t6" }];
+    }
+  };
+  assert.deepEqual(await startBot(w.main, ID.main, { sleep }), { terminal: "t100" });
+  assert.deepEqual(state.runs, [["space.new", { name: "proj", folder: w.main, machine: "" }], ["tab.close", { id: "t5", confirmed: true }]]);
+  // A bot that never shows (within waitMs) leaves the shell's tab be: the space keeps a tab.
+  state.spaces = [];
+  state.panes = [];
+  state.runs = [];
+  let seen = 0;
+  const quiet = async () => {
+    if (++seen === 1) {
+      state.spaces = [{ id: "s7", folder: w.main, machine: null, active: true, tabs: [{ id: "t7", index: 1, active: true }] }];
+      state.panes = [{ pane: "p7", terminal: "t-sh7", tab: "t7" }];
+    }
+  };
+  assert.ok((await startBot(w.main, ID.cap, { sleep: quiet, waitMs: 300 })).terminal);
+  assert.deepEqual(state.runs, [["space.new", { name: "proj", folder: w.main, machine: "" }]]);
 });
 
 test("startBot: two bots of one project started at once open one space and both start in it", async (t) => {

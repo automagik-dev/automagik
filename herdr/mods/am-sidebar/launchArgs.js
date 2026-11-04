@@ -355,6 +355,22 @@ export function placementFrom(gets) {
   return g ? { space: g.labels["herdr.space"], tab: g.labels["herdr.tab"] || null, from: g.address } : null;
 }
 
+/**
+ * The spare shell's tab to close once a start's bot shows in a space this start just made
+ * (space.new leaves its first tab holding only a shell): `spare` { space, tab, terminal } from
+ * when the space was made, `terminal` the bot's. `tabs`: that space's tabs now, each
+ * { id, terminals } (the terminals its panes show). The spare tab's id only while it still holds
+ * that shell alone and the bot shows in another tab of the space, so the space is never left
+ * without a tab and nothing else is ever closed; else null.
+ */
+export function spareTab(spare, tabs, terminal) {
+  if (!spare?.tab || !spare.terminal || !terminal) return null;
+  const list = tabs ?? [];
+  const tab = list.find((t) => t?.id === spare.tab);
+  if (!tab || tab.terminals?.length !== 1 || tab.terminals[0] !== spare.terminal) return null;
+  return list.some((t) => t?.id !== spare.tab && (t?.terminals ?? []).includes(terminal)) ? spare.tab : null;
+}
+
 /** A start's place with its space only: Herdr then opens the pane in a tab of its own there. */
 export const spaceOnly = (place) => (place ? { ...place, tab: null } : place);
 

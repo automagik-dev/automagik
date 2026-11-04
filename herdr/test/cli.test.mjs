@@ -57,7 +57,7 @@ function scene(t, { terminals = [], briefing = true, window = { down: true } } =
   writeFileSync(appState, JSON.stringify(window));
   writeFileSync(appLog, "");
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
-    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog };
+    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog, AUTOMAGIK_HERDR_TAB_WAIT_MS: "300" };
   delete env.HC_TERMINAL_ID;
   delete env.HERMES_HOME; // a runner's own hermes home must not decide the hermes tests
   const cli = (args, { cwd = project, input, env: extra = {} } = {}) => {
@@ -522,7 +522,10 @@ test("start (#56) lands in the project's space, a project terminal's only when i
   // No space shows the project: never the caller's tab; a new space on the project is opened (#71).
   const none = startIn({ "herdr.space": "sp-caller", "herdr.tab": "tb-c" }, { projectSpace: false });
   assert.deepEqual([none.json().space, none.json().tab], ["sp-new1", null]);
-  assert.deepEqual(none.appCalls.map((c) => c.slice(0, 2)), [["ls"], ["do", "space.new"], ["ls"]]);
+  assert.deepEqual(none.appCalls.slice(0, 3).map((c) => c.slice(0, 2)), [["ls"], ["do", "space.new"], ["ls"]]);
+  // Then only looks at the window (for the bot's tab, to close the new space's spare shell's):
+  // this fake window never shows the bot, so nothing is closed.
+  assert.deepEqual([...new Set(none.appCalls.slice(3).map((c) => c[0]))], none.appCalls.length > 3 ? ["ls"] : []);
 });
 
 test("start a member: parent is its lead's live terminal, outliving it; else --no-parent; --space/--tab add placement labels", (t) => {
@@ -761,6 +764,27 @@ test("start with no space showing the project opens one on its folder and starts
   s2.seed(team());
   assert.equal(s2.cli(["start", "Genie", "--space", "sp7"]).code, 0);
   assert.deepEqual(s2.appCalls(), []);
+});
+
+test("start in a space it opened leaves no lone shell tab: closed once the bot shows in its own tab there", (t) => {
+  const s = scene(t, { window: { spaces: [], place: true } });
+  s.seed(team());
+  const r = s.cli(["start", "Genie", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual([r.json().space, r.json().tab], ["sp-new1", null]);
+  // space.new left its shell (t-sh1) alone in tb-new1; Herdr showed the bot (t100) in tb-t100.
+  assert.deepEqual(s.appCalls().filter((c) => c[0] === "do").map((c) => [c[1], JSON.parse(c[2])]),
+    [["space.new", { name: "proj", folder: s.project, machine: "" }], ["tab.close", { id: "tb-new1", confirmed: true }]]);
+  assert.deepEqual(s.windowNow().spaces.map((x) => [x.id, x.tabs.map((tb) => tb.id)]), [["sp-new1", ["tb-t100"]]]);
+  // The next bot starts in that space: nothing else is closed.
+  assert.equal(s.cli(["start", "Captain"]).code, 0);
+  assert.equal(s.appCalls().filter((c) => c[0] === "do").length, 2);
+  // Herdr not showing the bot (in time): the shell's tab stays, so the space is never left without one.
+  const n = scene(t, { window: { spaces: [] } });
+  n.seed(team());
+  assert.equal(n.cli(["start", "Genie"]).code, 0);
+  assert.deepEqual(n.appCalls().filter((c) => c[0] === "do").map((c) => c[1]), ["space.new"]);
+  assert.deepEqual(n.windowNow().spaces[0].tabs.map((tb) => tb.id), ["tb-new1"]);
 });
 
 test("start refuses an old free-text model pin, naming the fix; a pane started under a minute ago counts as running", (t) => {

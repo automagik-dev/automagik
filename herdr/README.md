@@ -298,7 +298,10 @@ automagik-herdr update [--check | --rollback]
   pane as its parent. A running bot is not started twice.
   The pane opens in a tab of its own in the space showing the project, never in another
   pane's tab; with none open, `start` opens one on the project folder (`--space` picks the
-  space instead, `--tab` a tab in it). The sidebar's Start passes the space only.
+  space instead, `--tab` a tab in it). The sidebar's Start passes the space only. A space
+  opened this way (by `start` or the sidebar's Start) comes with a shell in its first tab:
+  that tab is closed once the bot shows in its own tab there, and only while it still holds
+  that shell alone, so the space never keeps a lone shell tab and is never left empty.
 - `restart` runs the bot's agent again in its pane's place: the new pane starts in the same
   space, tab and folder with the same labels, and the old one is ended (`hc kill`) only once the
   new one has kept its agent in front at every check for 5 seconds (1.5 once the agent reports
@@ -460,7 +463,11 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
   with `--task`, also `task=<id>`, `task.project=<main checkout>` and `task.lead=<lead>`
   (without it, no `task` label at all). When the bot's pane is in a Herdr space, also
   `herdr.space=<that space>` and no `herdr.tab`, so the worker opens in a tab of its own there
-  as it starts. A worker started before this release has no `branch`
+  as it starts: the space where the window shows the bot's pane, else its pane's
+  `herdr.space` label while the window still has that space (none once it was closed).
+  Once Herdr shows the worker (within 5 seconds), its tab is moved right after the bot's
+  tab and named after its branch, as a click on its row does; it is never focused.
+  A worker started before this release has no `branch`
   label: its `task` label holds the branch, and Herdr's readers fall back to it. Then
   `-- /usr/bin/env PATH=<the calling pane's PATH> <agent argv> <task text>`. The agent gets the
   bot's pane's PATH, not herdr-core's, so programs in `~/.bun/bin` (omp, and the `bun` it runs
