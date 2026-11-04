@@ -39,6 +39,31 @@ function find(node, id) {
   return null;
 }
 
+// The panels the rail opens: Automations (am-automations) and Accounts (am-quota). Each tab shows
+// only while its mod is on: the Mods panel turns a mod off by moving its folder to mods-disabled/,
+// so its mod.json in mods/ is the whole test.
+export const PANELS = Object.freeze([
+  Object.freeze({ tab: "automations", icon: "clock", label: "Automations", mod: "am-automations", node: "automations-panel" }),
+  Object.freeze({ tab: "quota", icon: "layers", label: "Accounts", mod: "am-quota", node: "am-quota-panel" }),
+]);
+
+// A panel is showing only while its block is in the layout and not hidden: a block that isn't
+// there (a layout without it, or a mod that is off) is never active.
+export function panelShown(tree, id) {
+  const node = find(tree, id);
+  return node != null && node.hidden !== true;
+}
+
+// The pack's layout names no panel block: Herdr shows plain Herdr instead of a layout that names a
+// mod missing from mods/ ("needs mods that aren't here"), hidden block or not, and both of these can
+// be off. So the tab opens the mod as a popup over the rail; a layout of the person's own that has
+// the block keeps it, and the tab shows and hides that block instead.
+export const PANEL_POPUP = Object.freeze({ kind: "popup", width: 320, height: 0.6 });
+function togglePanel(panel) {
+  if (find(layout(), panel.node)) run("layout.toggle", { id: panel.node });
+  else openOverlay({ mod: panel.mod, ...PANEL_POPUP });
+}
+
 // The sidebar's rail goes by its width, not a flag: dragging its edge narrows it too.
 const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
 
@@ -97,10 +122,10 @@ export default class WorkspaceChrome extends View {
     carryShared();
     this.pocket = false;
     this.bots = false;     // the Bots tab: only while the sidebar mod (am-sidebar) is installed
-    // The Accounts tab (the am-quota mod): only while it is installed and on. Off moves its
-    // folder to mods-disabled/, so its mod.json in mods/ is the whole test; hidden means no tab at
-    // all, and its sidebar block is hidden too, so an open panel doesn't outlive the mod.
-    this.quota = false;
+    // The Automations and Accounts tabs (PANELS): only while their mod is installed and on. Off
+    // means no tab at all, and a block of it left showing is hidden too, so an open panel doesn't
+    // outlive the mod.
+    this.on = Object.fromEntries(PANELS.map((p) => [p.mod, false]));
     this.phone = false;
     this.statusPath = null;
     this.hovered = null;   // the name of the tab under the pointer, shown dim in the rail
@@ -110,10 +135,13 @@ export default class WorkspaceChrome extends View {
       let bots = false;
       try { bots = (await readTextFile(`${appHome()}/mods/am-sidebar/mod.json`)) !== null; } catch { bots = false; }
       if (bots !== this.bots) { this.bots = bots; cx.notify(); }
+      let automations = false;
+      try { automations = (await readTextFile(`${appHome()}/mods/am-automations/mod.json`)) !== null; } catch { automations = false; }
       let quota = false;
       try { quota = (await readTextFile(`${appHome()}/mods/am-quota/mod.json`)) !== null; } catch { quota = false; }
-      if (quota !== this.quota) { this.quota = quota; cx.notify(); }
-      if (footer && !quota && find(layout(), "am-quota-panel")?.hidden === false) run("layout.hide", { id: "am-quota-panel" });
+      const on = { "am-automations": automations, "am-quota": quota };
+      if (PANELS.some((p) => on[p.mod] !== this.on[p.mod])) { this.on = on; cx.notify(); }
+      for (const p of PANELS) if (footer && !on[p.mod] && panelShown(layout(), p.node)) run("layout.hide", { id: p.node });
       let found = false;
       try { found = (await readTextFile(`${appHome()}/mods/pocket-link/mod.json`)) !== null; } catch { found = false; }
       let phone = false;
@@ -193,8 +221,9 @@ export default class WorkspaceChrome extends View {
           .when(count !== null, el => el.child(div().id(`${b.key}#badge`).h(12).min_w(12).px(3).flex_none().flex().items_center().justify_center()
             .rounded_full().bg(t.accent).text_color(t.accent_foreground).text_size(8.5).font_semibold().child(count)));
       };
-      const automations = !find(layout(), "automations-panel")?.hidden;
-      const quota = !find(layout(), "am-quota-panel")?.hidden;
+      const tree = layout();
+      const panels = PANELS.filter((p) => this.on[p.mod])
+        .map((p) => tab(p.tab, p.icon, p.label, panelShown(tree, p.node), false, () => togglePanel(p)));
       // Ours on the left, the app's on the right: a spacer carries the hovered name, then a rule.
       return v_flex().size_full().bg(t.chrome).border_t(1).border_color(t.border).px(6).pt(6).pb(7)
         .child(h_flex().gap(3).items_center()
@@ -204,8 +233,7 @@ export default class WorkspaceChrome extends View {
           .child(tab("work", "briefcase", "Work", false, false,
             () => openWork({ exec, notify, platform: window()?.platform }))
             .tooltip("Open Automagik"))
-          .child(tab("automations", "clock", "Automations", automations, false, () => run("layout.toggle", { id: "automations-panel" })))
-          .when(this.quota, el => el.child(tab("quota", "layers", "Accounts", quota, false, () => run("layout.toggle", { id: "am-quota-panel" }))))
+          .children(panels)
           .when(this.pocket, el => el.child(tab("pocket", "smartphone", "Pocket Link", false, false, () => run("mod.open", { name: "pocket-link" }))
             .when(this.phone, el => el.child(div().size(6).rounded_full().bg(t.done)))))
           // Their own group, which gives up its width first and clips: the rail's own tabs never do.

@@ -2,7 +2,9 @@
 
 The Herdr layout of the Automagik pack: the Automagik sidebar (`am-sidebar`) docked on the left,
 with the panes the pack's mods open beside it. Its blocks are the pack's mods, so add the pack
-first, or the layout opens with empty blocks.
+first: Herdr shows its own layout instead of one that names a mod missing from `mods/` ("needs mods
+that aren't here"). For that reason it names no mod that can ship off: the footer opens the
+Automations and Accounts panels itself.
 
 ## Add it
 
@@ -21,8 +23,8 @@ first, or the layout opens with empty blocks.
    `layouts/automagik.json` there.
 3. Switch Herdr to it: `herdr-app do layout.switch '{"name":"automagik"}'`.
 4. Check: `herdr-app status` names the layout `automagik`, and the Automagik sidebar shows on the
-   left with no empty blocks. An empty block means step 1 was skipped or failed; do it, then
-   switch again.
+   left. Plain Herdr, or a status error naming missing mods, means step 1 was skipped or failed;
+   do it, then switch again.
 
 ## Why its own folder
 
