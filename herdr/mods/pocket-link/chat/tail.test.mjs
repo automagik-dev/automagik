@@ -148,3 +148,41 @@ test('remote: polls every 2 s while working and 10 s when idle; a failed read is
   assert.deepEqual(errors, ['not_found'])
   await tail.stop()
 })
+
+test('local: the folder rule is asked at every open; a refused file is not read', async () => {
+  const p = tmp()
+  writeFileSync(p, 'a\n')
+  let allow = false
+  const got = []
+  const tail = new LocalTail(p, { onLines: (l) => got.push(...l), admit: () => allow, watch: null, timers: noTimers })
+  await tail.start()
+  assert.deepEqual(got, [])
+  allow = true
+  await tail.tick()
+  assert.deepEqual(got, [{ n: 1, text: 'a' }])
+  await tail.stop()
+})
+
+test('local: readLocalLines reads old lines by number through the sparse index, multi-byte text included', async () => {
+  const { readLocalLines, INDEX_EVERY } = await import('./tail.js')
+  const p = tmp()
+  const lines = Array.from({ length: INDEX_EVERY * 3 + 7 }, (_, i) => `línea ${i + 1} ✓`)
+  writeFileSync(p, lines.join('\n') + '\n')
+  const { tail } = localTail(p)
+  await tail.start()
+  assert.equal(tail.index.length, 4)
+  for (const [from, to] of [[1, 3], [INDEX_EVERY, INDEX_EVERY + 2], [INDEX_EVERY * 2 + 5, INDEX_EVERY * 2 + 5], [INDEX_EVERY * 3 + 6, INDEX_EVERY * 3 + 9]]) {
+    const got = await readLocalLines(tail, from, to)
+    const want = lines.slice(from - 1, to).map((text, i) => ({ n: from + i, text }))
+    assert.deepEqual(got, want, `${from}..${to}`)
+  }
+  await tail.stop()
+})
+
+test('remote: readLines reads a range with on and no cwd', async () => {
+  const hc = createFakeHc({ files: { box: { '.claude/projects/p/s.jsonl': 'a\nb\nc\nd\n' } } })
+  const { tail } = remoteTail(hc)
+  assert.deepEqual(await tail.readLines(2, 3), [{ n: 2, text: 'b' }, { n: 3, text: 'c' }])
+  const last = hc.calls.at(-1).params
+  assert.deepEqual(last, { path: '.claude/projects/p/s.jsonl', on: 'box', offset: 2, limit: 2 })
+})

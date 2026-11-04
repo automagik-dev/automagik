@@ -9,6 +9,8 @@
 // Both hand over complete lines as { n, text } (n counts from 1; text is null for a line too long
 // to keep) and never log a line's text.
 import { open, stat } from 'node:fs/promises'
+/** Every this many lines, LocalTail notes where the line starts, for readLines. */
+export const INDEX_EVERY = 256
 import { watch as fsWatch } from 'node:fs'
 import { StringDecoder } from 'node:string_decoder'
 
@@ -21,10 +23,15 @@ export class LocalTail {
   /**
    * @param {string} path  a path the folder rule accepted
    * @param {{ onLines(lines: { n: number, text: string | null }[]): void, onReset?(): void,
-   *   onError?(e: Error): void, pollMs?: number, watch?: typeof fsWatch | null, timers?: typeof realTimers }} options
+   *   onError?(e: Error): void, admit?(path: string): boolean, pollMs?: number, watch?: typeof fsWatch | null,
+   *   timers?: typeof realTimers }} options
+   *   admit: the folder rule, asked again every time the file is opened (never trusted from before)
    */
-  constructor(path, { onLines, onReset = () => {}, onError = () => {}, pollMs = 1000, watch = fsWatch, timers = realTimers }) {
-    Object.assign(this, { path, onLines, onReset, onError, pollMs, watchFn: watch, timers })
+  constructor(path, { onLines, onReset = () => {}, onError = () => {}, admit = () => true, pollMs = 1000, watch = fsWatch, timers = realTimers }) {
+    Object.assign(this, { path, onLines, onReset, onError, admit, pollMs, watchFn: watch, timers })
+    /** Byte offset where line INDEX_EVERY * k + 1 starts, at [k]. */
+    this.index = [0]
+    this.pos = 0
     this.fh = null
     this.ino = null
     this.offset = 0
@@ -72,7 +79,7 @@ export class LocalTail {
   async reset() {
     try { await this.fh?.close() } catch {}
     this.fh = null
-    Object.assign(this, { offset: 0, line: 0, partial: '', skipping: false, decoder: new StringDecoder('utf8') })
+    Object.assign(this, { offset: 0, line: 0, partial: '', skipping: false, decoder: new StringDecoder('utf8'), index: [0], pos: 0 })
     this.onReset()
   }
 
@@ -81,8 +88,15 @@ export class LocalTail {
     try { onDisk = await stat(this.path) } catch { return } // gone for now: keep what was read
     if (this.fh && (onDisk.ino !== this.ino || onDisk.size < this.offset)) await this.reset()
     if (!this.fh) {
-      this.fh = await open(this.path, 'r')
-      this.ino = (await this.fh.stat()).ino
+      if (!this.admit(this.path)) return
+      const fh = await open(this.path, 'r')
+      const opened = await fh.stat()
+      // The file opened must be the one the rule just checked, not one swapped in since.
+      let checked
+      try { checked = await stat(this.path) } catch { checked = null }
+      if (!checked || checked.ino !== opened.ino || checked.dev !== opened.dev || !opened.isFile()) { await fh.close(); return }
+      this.fh = fh
+      this.ino = opened.ino
     }
     const buf = Buffer.alloc(CHUNK)
     for (;;) {
@@ -103,18 +117,56 @@ export class LocalTail {
       const piece = text.slice(from, at)
       from = at + 1
       this.line += 1
+      // Bytes of every decoded piece are counted, the partial line's included (below), so this is
+      // where the next line starts.
+      this.pos += Buffer.byteLength(piece, 'utf8') + 1
+      if (this.line % INDEX_EVERY === 0) this.index[this.line / INDEX_EVERY] = this.pos
       if (this.skipping) { this.skipping = false; this.partial = ''; out.push({ n: this.line, text: null }); continue }
       const whole = (this.partial + piece).replace(/\r$/, '')
       this.partial = ''
       out.push({ n: this.line, text: whole })
     }
     const rest = text.slice(from)
+    this.pos += Buffer.byteLength(rest, 'utf8')
     if (!this.skipping) {
       this.partial += rest
       if (this.partial.length > MAX_LINE) { this.skipping = true; this.partial = '' }
     }
     if (out.length) this.onLines(out)
   }
+}
+
+/**
+ * Lines `from`..`to` (from 1) of a file LocalTail has indexed, as { n, text }: for a backfill.
+ * Starts at the nearest indexed line before `from`; the folder rule is asked again first.
+ * @param {LocalTail} tail
+ */
+export async function readLocalLines(tail, from, to) {
+  if (from < 1 || to < from || !tail.admit(tail.path)) return []
+  const k = Math.min(Math.floor((from - 1) / INDEX_EVERY), tail.index.length - 1)
+  let n = k * INDEX_EVERY
+  let fh
+  const out = []
+  try {
+    fh = await open(tail.path, 'r')
+    const decoder = new StringDecoder('utf8')
+    const buf = Buffer.alloc(CHUNK)
+    let at = tail.index[k]
+    let partial = ''
+    for (;;) {
+      const { bytesRead } = await fh.read(buf, 0, CHUNK, at)
+      if (bytesRead === 0) return out
+      at += bytesRead
+      const parts = (partial + decoder.write(buf.subarray(0, bytesRead))).split('\n')
+      partial = parts.pop()
+      for (const p of parts) {
+        n += 1
+        if (n >= from) out.push({ n, text: p.length > MAX_LINE ? null : p.replace(/\r$/, '') })
+        if (n >= to) return out
+      }
+      if (partial.length > MAX_LINE) return out
+    }
+  } catch { return out } finally { await fh?.close() }
 }
 
 export class RemoteTail {
@@ -150,6 +202,16 @@ export class RemoteTail {
       this.timer.unref?.()
     })
     return this.busy
+  }
+
+  /** Lines `from`..`to` for a backfill: whole lines only, with the same `on` and no cwd. */
+  async readLines(from, to) {
+    if (from < 1 || to < from) return []
+    try {
+      const r = await this.hc.call('file.read', { path: this.path, on: this.on, offset: from, limit: to - from + 1 })
+      const pieces = (r.text.match(/[^\n]*\n|[^\n]+$/g) ?? []).filter((p) => p.endsWith('\n'))
+      return pieces.map((p, i) => ({ n: r.first + i, text: p.slice(0, -1).replace(/\r$/, '') }))
+    } catch (e) { this.onError(e); return [] }
   }
 
   async readPages() {
