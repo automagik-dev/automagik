@@ -495,6 +495,10 @@ const YAML_ROWS = [
     ['a comment after the indicator', `password: | # note\n  ${SECRET}`],
     ['a comment with no space', `password: |#note\n  ${SECRET}`],
     ['an explicit key', `? password\n: |\n  ${SECRET}`],
+    // Round 6 (explicit key with a gap): comment and blank lines between `? key` and `: |`.
+    ['an explicit key, a comment line before its colon', `? password\n# note\n: |\n  ${SECRET}`],
+    ['an explicit key, a blank line before its colon', `? password\n\n: |\n  ${SECRET}`],
+    ['an explicit key, an indented comment before its colon', `? password\n  # note\n: |\n  ${SECRET}`],
   ].map(([name, raw]) => ({ name, raw })),
   // Round 6 (t2x5): a tab in a line's indent is value, never a terminator, and a NUL or another
   // character that prints nothing on the key line does not stop the key from matching.
