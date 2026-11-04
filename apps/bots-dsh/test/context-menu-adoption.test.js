@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
+import { readFileSync } from 'node:fs'
 import { build } from 'esbuild'
 
 const bundle = await build({
@@ -51,7 +52,7 @@ function menuFor(roster, id, actions = new Proxy({}, { get: () => () => {} })) {
 
 const roster = {
   byId: {
-    adopted: { id: 'adopted', name: 'Original adopted', dshAgentId: 'agent-1' },
+    adopted: { id: 'adopted', name: 'Original adopted', dshAgentId: 'agent-1', adoptionHistoryMatches: true },
     ordinary: { id: 'ordinary', name: 'Ordinary test bot' },
   },
   roomsById: {}, mainBotId: 'main', mainBotIds: ['main'],
@@ -104,6 +105,41 @@ test('an adopted original in a group or with tasks is not offered rollback and s
   const note = walk(tree).filter(node => node.props?.className === 'bt-menu-note').map(node => node.children.join('')).join('')
   assert.match(note, /leaves all groups/)
   assert.match(note, /tasks or new team history/)
+})
+
+const labelsOf = tree => walk(tree).filter(node => node.props?.role === 'menuitem')
+  .map(node => node.children.filter(child => typeof child === 'string').at(-1))
+const noteOf = tree => walk(tree).filter(node => node.props?.className === 'bt-menu-note').map(node => node.children.join('')).join('')
+const withBot = fields => ({ ...roster, byId: { ...roster.byId, adopted: { ...roster.byId.adopted, ...fields } } })
+
+// Issue #170: after New conversation the host refuses rollback, and says so in the view.
+test('an adopted original whose history the host reports changed is not offered rollback', () => {
+  for (const fields of [{ adoptionHistoryMatches: false }, { adoptionHistoryMatches: undefined }]) {
+    const tree = menuFor(withBot(fields), 'adopted')
+    assert.equal(labelsOf(tree).includes('Roll back DSH adoption…'), false, JSON.stringify(fields))
+    assert.equal(labelsOf(tree).includes('Delete'), false)
+    assert.match(noteOf(tree), /tasks or new team history/)
+    assert.doesNotMatch(noteOf(tree), /A confirmation is required/)
+  }
+})
+
+test('Main, group and task blocks still hide rollback when the history matches', () => {
+  const cases = [
+    { ...roster, mainBotId: 'adopted', mainBotIds: ['adopted'] },
+    { ...roster, roomsById: { room: { id: 'room', members: ['adopted'] } } },
+    { ...roster, tasks: { task: { from: 'adopted', title: 'Synthetic task' } } },
+  ]
+  for (const blocked of cases) {
+    const tree = menuFor(blocked, 'adopted')
+    assert.equal(labelsOf(tree).includes('Roll back DSH adoption…'), false)
+    assert.match(noteOf(tree), /leaves all groups/)
+  }
+})
+
+test('the menu reads the host flag and never compares parts with the original Sessions', () => {
+  const source = readFileSync(fileURLToPath(new URL('../src/client/context-menu.js', import.meta.url)), 'utf8')
+  assert.match(source, /adoptionHistoryMatches !== true/)
+  assert.doesNotMatch(source, /\.sessions\b|\.parts\b|\.segments\b|JSON\.stringify/)
 })
 
 test('an ordinary Bot still offers the plain delete and no rollback', () => {

@@ -49,8 +49,17 @@ function start(team = TEAM) {
         return { sessionId: `s${++sessions}` }
       },
       resolveAgent: async (sessionId) => {
+        // Enough of an idle DSH agent for a New conversation to move its Bot on (issue #170).
         const agent = {
-          session: { id: sessionId },
+          id: sessionId,
+          status: 'idle',
+          session: { id: sessionId, header: {}, requestHeader: () => undefined, deriveMessages: () => [] },
+          inbox: { nextStep: [], nextTurn: [], remove() {} },
+          async whenIdle() {},
+          async runMaintenance(fn) { return fn(AbortSignal.timeout(60_000)) },
+          steer() {},
+          inject() {},
+          cancel() {},
           ctx: {
             tools: {
               restrict: (filter) => {
@@ -65,6 +74,7 @@ function start(team = TEAM) {
         return { agent }
       },
       selectModel: async () => {},
+      page: async () => ({ records: [], hasMore: false }),
     },
     sessionTitle: { rename: async () => {} },
     sessions: { flush: async () => {} },
@@ -163,6 +173,9 @@ test('an adopted original refuses delete until adoption is rolled back; rollback
   const adopted = (await call('agent-bot-adopt', { agentId: agent.id })).value
   const botId = adopted.botId
   assert.equal(botId, second.sessionId)
+  // A pristine adoption: the view tells the menu that rollback's history check passes.
+  const adoptedView = bot => bot.id === botId
+  assert.equal((await call('state', {})).value.bots.find(adoptedView).adoptionHistoryMatches, true)
 
   // The host guard still refuses the plain delete, so the menu must not pretend it works.
   const refused = await call('delete-bot', { id: botId })
@@ -176,6 +189,8 @@ test('an adopted original refuses delete until adoption is rolled back; rollback
   const mainRefused = await call('agent-bot-rollback', { agentId: agent.id })
   assert.equal(mainRefused.ok, false)
   assert.match(mainRefused.error.message, /Remove Main Bot\/group roles and resolve new team history/)
+  // Main, group and task blocks are the menu's own to read; the history flag stays true.
+  assert.equal((await call('state', {})).value.bots.find(adoptedView).adoptionHistoryMatches, true)
   assert.equal((await call('set-main', { id: botId, main: false })).ok, true)
 
   // Membership in any group also blocks rollback, even without an admin role.
@@ -195,6 +210,8 @@ test('an adopted original refuses delete until adoption is rolled back; rollback
   const clean = (await call('add-agent', { name: 'Cogna Two', workDir: project })).value
   const cleanSession = (await call('agent-session', { agentId: clean.id })).value
   await call('agent-bot-adopt', { agentId: clean.id })
+  view = (await call('state', {})).value
+  assert.equal(view.bots.find(bot => bot.id === cleanSession.sessionId).adoptionHistoryMatches, true)
   const rolled = await call('agent-bot-rollback', { agentId: clean.id })
   assert.equal(rolled.ok, true)
   view = (await call('state', {})).value
@@ -206,4 +223,57 @@ test('an adopted original refuses delete until adoption is rolled back; rollback
   assert.equal((await call('delete-bot', { id: ordinary.id })).ok, true)
   view = (await call('state', {})).value
   assert.equal(view.bots.some(bot => bot.id === ordinary.id), false)
+})
+
+test('after New conversation an adopted original reports changed history and rollback is refused (issue #170)', async (t) => {
+  const { call, stop, ctx } = start()
+  t.after(stop)
+  await call('state', {})
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'ds-bot-adopt-folder-')))
+  t.after(() => rmSync(project, { recursive: true, force: true }))
+  const rt = ctx.provided.get('omniTeam')
+  const agent = (await call('add-agent', { name: 'Cogna Brain', workDir: project })).value
+  const botId = (await call('agent-session', { agentId: agent.id })).value.sessionId
+  await call('agent-bot-adopt', { agentId: agent.id })
+  const flag = async () => (await call('state', {})).value.bots.find(bot => bot.id === botId).adoptionHistoryMatches
+  assert.equal(await flag(), true)
+
+  // New conversation ends the adopted part and goes on in a fresh one.
+  const fresh = await call('bot-fresh', { id: botId })
+  assert.equal(fresh.ok, true, JSON.stringify(fresh))
+  const deadline = Date.now() + 5000
+  const moving = () => rt.chatOf(botId) === botId || [...rt.switchJobs()].length > 0
+  while (moving() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10))
+  assert.notEqual(rt.chatOf(botId), botId)
+
+  // The view flips on this revision, and the host still refuses: both must agree.
+  assert.equal(await flag(), false)
+  const refused = await call('agent-bot-rollback', { agentId: agent.id })
+  assert.equal(refused.ok, false)
+  assert.match(refused.error.message, /Remove Main Bot\/group roles and resolve new team history/)
+  const view = (await call('state', {})).value
+  assert.equal(view.bots.some(bot => bot.id === botId), true)
+  assert.equal(view.agents.some(entry => entry.id === agent.id), false)
+})
+
+test('the history flag fails closed when the original record is missing or names another Bot', async (t) => {
+  const { call, stop, ctx } = start()
+  t.after(stop)
+  await call('state', {})
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'ds-bot-adopt-folder-')))
+  t.after(() => rmSync(project, { recursive: true, force: true }))
+  const rt = ctx.provided.get('omniTeam')
+  const agent = (await call('add-agent', { name: 'Cogna Brain', workDir: project })).value
+  const botId = (await call('agent-session', { agentId: agent.id })).value.sessionId
+  await call('agent-bot-adopt', { agentId: agent.id })
+  const flag = async () => (await call('state', {})).value.bots.find(bot => bot.id === botId).adoptionHistoryMatches
+  const original = rt.state.agents[agent.id]
+  original.adoptedBotId = 'someone-else'
+  assert.equal(await flag(), false)
+  delete rt.state.agents[agent.id]
+  assert.equal(await flag(), false)
+  rt.state.agents[agent.id] = { ...original, adoptedBotId: botId }
+  assert.equal(await flag(), true)
+  // An ordinary Bot carries no flag at all.
+  assert.equal((await call('state', {})).value.bots.find(bot => bot.id === 'm1').adoptionHistoryMatches, undefined)
 })

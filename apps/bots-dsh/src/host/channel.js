@@ -52,8 +52,11 @@ export function install(rt) {
     tasks: state.tasks ?? {},
     // `sessionId` is the Bot's current own-chat part; `parts` its earlier ones.
     // `waiting`: the Bot holds its greeting until the user picks its model.
+    // `adoptionHistoryMatches` (adopted originals only): rollback's history guard
+    // (agents.js rollbackAdoption) would pass, so the menu offers rollback only then.
     bots: Object.values(state.bots).map(({ segments, kickoff, ...bot }) => ({
       ...bot, sessionId: rt.chatOf(bot.id), parts: (segments ?? []).map(segment => segment.sessionId), ...(kickoff ? { waiting: true } : {}),
+      ...(bot.dshAgentId === undefined ? {} : { adoptionHistoryMatches: rt.adoptionHistoryMatches(bot.id) }),
       ...rt.permissionFallbackOf('bot', bot),
     })),
     // `parts`: the members' hidden group Sessions and their earlier segments, for usage.
