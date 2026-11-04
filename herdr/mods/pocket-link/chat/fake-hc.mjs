@@ -1,0 +1,86 @@
+// A stand-in for herdr-core behind the chat seam (hc.js), for tests only: never a live Herdr.
+// Terminals, screens and files are in memory; every call is recorded so a test can check what
+// was asked (a remote read's `on`, that no `cwd` was sent). file.read follows herdr-core: lines
+// from `offset` (1-based), at most `limit`, line ends kept, and how many lines the file has.
+
+/**
+ * @param {{ terminals?: object[], screens?: Record<string, string>, files?: Record<string, Record<string, string>> }} [state]
+ *   files: { [machine or '']: { [path]: text } } ('' is this computer)
+ */
+export function createFakeHc({ terminals = [], screens = {}, files = {} } = {}) {
+  const calls = []
+  const subs = new Set()
+  let seq = 1
+  const byAddress = new Map(terminals.map((t) => [t.address, structuredClone(t)]))
+  const splitLines = (text) => text.match(/[^\n]*\n|[^\n]+$/g) ?? []
+
+  const methods = {
+    'terminal.get'({ terminal }) {
+      const t = byAddress.get(terminal)
+      if (!t) throw Object.assign(new Error('not_found'), { kind: 'not_found' })
+      return structuredClone(t)
+    },
+    'terminal.list'() {
+      return { terminals: [...byAddress.values()].map((t) => structuredClone(t)), hidden_finished: 0, machines: [] }
+    },
+    'terminal.read'({ terminal }) {
+      if (!byAddress.has(terminal)) throw Object.assign(new Error('not_found'), { kind: 'not_found' })
+      return { text: screens[terminal] ?? '', complete: true, how: 'screen' }
+    },
+    'file.read'({ path, on = null, offset = 1, limit = null }) {
+      const text = files[on ?? '']?.[path]
+      if (text === undefined) throw Object.assign(new Error('not_found'), { kind: 'not_found' })
+      const all = splitLines(text)
+      const first = Math.max(1, offset ?? 1)
+      const given = all.slice(first - 1, limit == null ? undefined : first - 1 + limit)
+      return { text: given.join(''), first, last: first + given.length - 1, lines: all.length }
+    }
+  }
+
+  return {
+    calls,
+    files,
+    screens,
+    async call(method, params = {}) {
+      calls.push({ method, params: structuredClone(params) })
+      const fn = methods[method]
+      if (!fn) throw new Error(`fake hc: no ${method}`)
+      return fn(params)
+    },
+    subscribe(params, onMessage) {
+      calls.push({ method: 'events.subscribe', params: structuredClone(params) })
+      const sub = { params, onMessage, open: true }
+      subs.add(sub)
+      queueMicrotask(() => sub.open && onMessage({ type: 'snapshot', seq, terminals: [...byAddress.values()].map((t) => structuredClone(t)) }))
+      return { close: () => { sub.open = false; subs.delete(sub) } }
+    },
+    close() { for (const s of subs) s.open = false; subs.clear() },
+
+    // ---- test controls
+
+    /** Change a terminal's facts and send the event herdr-core would. */
+    change(address, kind, data) {
+      const t = byAddress.get(address)
+      if (t) Object.assign(t, data)
+      seq += 1
+      for (const s of subs) if (s.open) s.onMessage({ type: 'event', terminal: address, seq, kind, data: structuredClone(data) })
+    },
+    heartbeat() { for (const s of subs) if (s.open) s.onMessage({ type: 'heartbeat', seq }) },
+    missed() {
+      seq += 1
+      for (const s of subs) if (s.open) s.onMessage({ type: 'missed', seq, terminals: [...byAddress.values()].map((t) => structuredClone(t)) })
+    },
+    drop(reason = 'hc exited') { for (const s of subs) { if (s.open) { s.open = false; s.onMessage({ type: 'closed', reason }) } } subs.clear() },
+    append(on, path, text) { files[on ?? ''] ??= {}; files[on ?? ''][path] = (files[on ?? ''][path] ?? '') + text },
+    get subscriptions() { return subs.size }
+  }
+}
+
+/** A terminal record shaped like herdr-core's `Terminal` (only the fields the chat reads). */
+export function fakeTerminal(address, { app = 'claude-code', argv = ['claude'], cwd = '/home/u/proj', labels = {}, state = 'idle', kind = null, created = 1_000, turn = 0 } = {}) {
+  return {
+    address, argv, cwd, labels, created_ms: created, turn, state: 'live', title: '', screen: '', cols: 120, rows: 40,
+    foreground: { pid: 1, name: argv[0], argv, cwd },
+    status: { app, state, ...(kind ? { kind } : {}), msg: '' }
+  }
+}
