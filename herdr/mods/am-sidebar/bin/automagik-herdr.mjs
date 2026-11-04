@@ -27,7 +27,7 @@ import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, co
 import { interpreterPath } from "../agentPath.mjs";
 import { briefingFilePath, installHook, launchBriefingText, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
-import { agentKeyOfArgv, briefingLaunch, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, resolveAgent, resumesById,
+import { agentKeyOfArgv, briefingLaunch, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, ownPromptIn, resolveAgent, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKTREES_EXCLUDE,
   SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, sessionRow, parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
@@ -718,6 +718,11 @@ export function writeBriefingHook(bot, folder, appHomeDir = appHome(), options =
 
 // ---- the briefing at launch (models.js briefingLaunch): the agent's system prompt ----
 
+// The config file an agent's own prompt lives in (models.js ownPromptIn), or null.
+const ownConfigOf = (agentKey) => (agentKey === "codex" ? configPaths(home()).codexConfig
+  : agentKey === "hermes" ? (process.env.HERMES_HOME ? `${process.env.HERMES_HOME.replace(/\/+$/, "")}/config.yaml` : configPaths(home()).hermesConfig)
+    : null);
+
 /**
  * `argv` (what starts `bot`'s agent `agentKey`) with the bot's launch briefing put in as that
  * agent takes it (a file under the app home for Claude Code, written now, before the agent
@@ -744,8 +749,10 @@ export function briefedLaunch(project, bot, agentKey, argv, appHomeDir = appHome
     } catch (e) {
       warnings.push(`${bot.name} starts without its briefing in its system prompt (${path}: ${e?.message ?? e}); its hook gives it once instead.`);
     }
-  } else if (agentKey === "codex" && /^\s*developer_instructions\s*=/m.test(modelIo().read(configPaths(home()).codexConfig) ?? "")) {
-    warnings.push(`${bot.name} starts without its briefing: codex's config.toml sets developer_instructions, which a -c would replace.`);
+  } else if (ownPromptIn(agentKey, modelIo().read(ownConfigOf(agentKey)))) {
+    warnings.push(`${bot.name} starts without its briefing: ${agentKey === "codex"
+      ? "codex's config.toml sets developer_instructions, which a -c would replace"
+      : "hermes' config.yaml sets a personality or agent.system_prompt, which HERMES_EPHEMERAL_SYSTEM_PROMPT would replace"}.`);
   } else {
     launch = briefingLaunch(agentKey, { text });
   }

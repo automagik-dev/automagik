@@ -162,6 +162,7 @@ export function configPaths(home) {
     claudeSettings: `${home}/.claude/settings.json`,
     codexConfig: `${home}/.codex/config.toml`,
     codexModels: `${home}/.codex/models_cache.json`,
+    hermesConfig: `${home}/.hermes/config.yaml`,
     antigravitySettings: `${home}/.gemini/antigravity-cli/settings.json`,
   };
 }
@@ -383,9 +384,11 @@ export function withoutResume(agentKey, args) {
 // is an error, even interactive), codex 0.166.0 `-c developer_instructions=<TOML string>`
 // (`codex debug prompt-input` shows it as a developer message), omp 18.14.2
 // `--append-system-prompt=<text or file>`, grok 1.0.70 `--rules <text>` ("extra rules to append
-// to the system prompt"), hermes 0.22.5's HERMES_EPHEMERAL_SYSTEM_PROMPT (its CLI reads it at
-// start and appends it at every API call, never saving it); pi from its source, not run here:
-// `--append-system-prompt <text or path>`, rebuilt on every resume. `file` takes the briefing's
+// to the system prompt"), pi 1.5.0 `--append-system-prompt <text>` ("text or file contents"),
+// hermes 0.22.5's HERMES_EPHEMERAL_SYSTEM_PROMPT (its CLI reads it at start and adds it at every
+// API call, never saving it). Hermes' variable REPLACES the owner's own overlay (its config's
+// display.personality, else agent.system_prompt), and a codex -c replaces a developer_instructions
+// in config.toml: the CLI skips both then (ownPromptIn), so an owner's own prompt is never lost. `file` takes the briefing's
 // path, `text` its text, `env` names variables; `ours` tells this pack's own words apart from a
 // person's. An agent missing here gets no briefing at launch (agy, cursor-agent, opencode and
 // kimi have no flag that appends).
@@ -397,7 +400,7 @@ const ourFile = (v) => String(v).includes(`/${BRIEFINGS_DIR}/`);
 const BRIEFING = {
   claude: { file: (path) => ["--append-system-prompt-file", path], names: ["--append-system-prompt-file"], ours: ourFile },
   codex: {
-    text: (t) => ["-c", `developer_instructions=${JSON.stringify(t)}`], names: ["-c", "--config"],
+    text: (t) => ["-c", `developer_instructions=${tomlString(t)}`], names: ["-c", "--config"],
     ours: (v) => /^developer_instructions\s*=/.test(String(v)) && String(v).includes(BRIEFING_MARK),
   },
   omp: { text: (t) => [`--append-system-prompt=${t}`], names: ["--append-system-prompt"], ours: ourText },
@@ -405,6 +408,28 @@ const BRIEFING = {
   grok: { text: (t) => ["--rules", t], names: ["--rules"], ours: ourText },
   hermes: { env: (t) => ({ HERMES_EPHEMERAL_SYSTEM_PROMPT: t }) },
 };
+
+/**
+ * `text` as a TOML basic string: JSON's escapes are TOML's, but TOML also wants U+007F escaped
+ * and has no lone surrogates (a value codex can't parse would reach it as the raw literal).
+ */
+export function tomlString(text) {
+  const whole = String(text).replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, "\ufffd");
+  return JSON.stringify(whole).replace(/\x7f/g, "\\u007f");
+}
+
+/**
+ * Whether an agent's own config text (configPaths: codex's config.toml, hermes' config.yaml) sets
+ * the prompt this pack's briefing would replace: codex's top-level developer_instructions, hermes'
+ * display.personality or agent.system_prompt with a value. A key read loosely errs toward true:
+ * the briefing is then left out with a warning, never the owner's prompt.
+ */
+export function ownPromptIn(agentKey, text) {
+  const t = typeof text === "string" ? text : "";
+  if (agentKey === "codex") return /^\s*developer_instructions\s*=/m.test(t);
+  if (agentKey === "hermes") return /^\s*(system_prompt|personality)\s*:[ \t]*(?!$|#|""|''|null\b|~)\S/m.test(t);
+  return false;
+}
 
 /** How `agentKey` takes a briefing at launch: "file", "text", "env", or null when it has no way. */
 export function briefingWay(agentKey) {
@@ -467,6 +492,25 @@ export function briefingFileOf(argv) {
     if (args[i] === "--") break;
     const value = args[i] === name ? args[i + 1] : args[i].startsWith(`${name}=`) ? args[i].slice(name.length + 1) : null;
     if (value != null) found = ourFile(value) ? value : null;
+  }
+  return found;
+}
+
+/**
+ * The conversation a Claude Code `argv` resumes: its id (`--resume <id>`, `-r <id>`,
+ * `--resume=<id>`), null for one with no id (`--continue`, `-c`, a bare --resume), undefined
+ * when it resumes none.
+ */
+export function resumedSessionOf(agentKey, argv) {
+  if (agentKey !== "claude") return resumesConversation(agentKey, argv) ? null : undefined;
+  const { args } = agentArgv(argv);
+  let found;
+  for (let i = 0; i < args.length; i += 1) {
+    const w = args[i];
+    if (w === "--") break;
+    if (w === "--continue" || w === "-c") found ??= null;
+    else if (w === "--resume" || w === "-r") { const v = args[i + 1]; found = v && !v.startsWith("-") ? v : null; }
+    else if (w.startsWith("--resume=")) found = w.slice(9) || null;
   }
   return found;
 }

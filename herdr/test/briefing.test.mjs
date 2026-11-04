@@ -17,7 +17,7 @@ import { state } from "./use-stubs.mjs";
 import { parseBots } from "../mods/am-sidebar/model.js";
 import {
   briefingText, directMembers, mergeHook, hookCommand, legacyHookCommand, directHookCommand, briefingPath, stableBriefingPath, withExclude, EXCLUDE_LINE, BRIEFING_LIMIT,
-  botOfBriefingFile, briefingFilePath, launchBriefingText, shouldBrief, textHash,
+  botOfBriefingFile, briefDecision, briefingFilePath, launchBriefingText, textHash,
 } from "../mods/am-sidebar/briefingText.mjs";
 import { BUDGET_MS, CALL_MS, GUARD_MS, COMPACT_MARK, compactedSince, timeScale } from "../mods/am-sidebar/briefing.mjs";
 const { afterBind } = await import("../mods/am-sidebar/launch.js");
@@ -764,20 +764,22 @@ test("launch file: one per bot and project under the app home, its bot id read b
   assert.equal(botOfBriefingFile("/somewhere/else.md"), null);
 });
 
-test("shouldBrief: launched with it, never; resumed, once per pane and session; otherwise once, again on an edit or a compaction", () => {
-  const now = { created_ms: 1, session: "s", hash: "h" };
-  assert.equal(shouldBrief({ covered: true, now }), false);
-  assert.equal(shouldBrief({ covered: true, now, compacted: true }), false);
-  assert.equal(shouldBrief({ covered: true, resumed: true, now }), true);
-  assert.equal(shouldBrief({ covered: true, resumed: true, seen: now, now }), false);
-  assert.equal(shouldBrief({ covered: true, resumed: true, seen: now, now: { ...now, hash: "h2" }, compacted: true }), false,
-    "a compaction re-renders the launch prompt, and an edit waits for a restart");
-  assert.equal(shouldBrief({ covered: false, now }), true);
-  assert.equal(shouldBrief({ covered: false, seen: now, now }), false);
-  assert.equal(shouldBrief({ covered: false, seen: now, now: { ...now, hash: "h2" } }), true);
-  assert.equal(shouldBrief({ covered: false, seen: now, now, compacted: true }), true);
-  assert.equal(shouldBrief({ covered: false, seen: now, now: { ...now, session: "s2" } }), true, "/clear: a new conversation");
-  assert.equal(shouldBrief({ covered: false, seen: now, now: { ...now, created_ms: 2 } }), true, "a new pane with the old address");
+test("briefDecision: launched with it, never; resumed, once unless it has that very text; otherwise once, again on an edit or a compaction", () => {
+  // Started with the file on a new conversation: nothing printed, the file's text recorded.
+  assert.deepEqual(briefDecision({ covered: true, started: "f", now: "n" }), { print: false, hash: "f" });
+  assert.deepEqual(briefDecision({ covered: true, started: "f", seen: "f", now: "n" }), { print: false, hash: null });
+  // Resumed: the conversation's recorded prompt is what it had.
+  assert.deepEqual(briefDecision({ covered: true, started: "f", resumed: true, seen: "f", now: "n" }), { print: false, hash: null },
+    "a restart with no edit since: its system prompt already has this text");
+  assert.deepEqual(briefDecision({ covered: true, started: "f2", resumed: true, seen: "f", now: "n" }), { print: true, hash: "f2" }, "an edit since");
+  assert.deepEqual(briefDecision({ covered: true, started: "f", resumed: true, now: "n" }), { print: true, hash: "f" }, "one from before this pack");
+  assert.deepEqual(briefDecision({ covered: true, started: "f2", resumed: true, seen: "f", now: "n", compacted: true }), { print: false, hash: "f2" },
+    "a compaction re-renders the prompt with the launch file");
+  // Not launched with it.
+  assert.deepEqual(briefDecision({ covered: false, now: "n" }), { print: true, hash: "n" });
+  assert.deepEqual(briefDecision({ covered: false, seen: "n", now: "n" }), { print: false, hash: "n" });
+  assert.deepEqual(briefDecision({ covered: false, seen: "n", now: "n2" }), { print: true, hash: "n2" });
+  assert.deepEqual(briefDecision({ covered: false, seen: "n", now: "n", compacted: true }), { print: true, hash: "n" });
 });
 
 test("compactedSince: only what was added is read; a mark across two reads is found; a shorter file counts", async (t) => {
@@ -795,15 +797,26 @@ test("compactedSince: only what was added is read; a mark across two reads is fo
   assert.deepEqual(compactedSince(join(root, "missing.jsonl"), 7), { compacted: false, size: 7 });
 });
 
-// A Claude session of three turns through the hook, the pane's command as `argv`.
+// A Claude session of three turns through the hook, the pane's command as `argv`. A briefing
+// file it names is written as Start writes it, from the project's bots.json (`launch`).
+const launchFile = (main, bot) => {
+  const { file } = parseBots(readFileSync(join(main, ".herdr", "bots.json"), "utf8"));
+  return `${launchBriefingText({ self: file.bots.find((b) => b.id === bot), file })}\n`;
+};
 async function turns(t, argv, { input = (n) => JSON.stringify({ session_id: "s-1" }) } = {}) {
   const sc = await scratch(t);
   const fxPath = join(sc.root, "hc.json");
-  const fx = JSON.parse(readFileSync(fxPath, "utf8"));
-  fx.terminals.t1.foreground.argv = argv(join(sc.root, "app"), sc.main);
-  writeFileSync(fxPath, JSON.stringify(fx));
+  const app = join(sc.root, "app");
+  const pane = (words, created = 1000) => {
+    const fx = JSON.parse(readFileSync(fxPath, "utf8"));
+    Object.assign(fx.terminals.t1, { created_ms: created, foreground: { argv: words, cwd: "/" } });
+    writeFileSync(fxPath, JSON.stringify(fx));
+    const i = words.indexOf("--append-system-prompt-file");
+    if (i > 0) { mkdirSync(dirname(words[i + 1]), { recursive: true }); writeFileSync(words[i + 1], launchFile(sc.main, botOfBriefingFile(words[i + 1]))); }
+  };
+  pane(argv(app, sc.main));
   const turn = (n) => sc.brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: sc.tree }, input(n), { keep: true });
-  return { ...sc, fxPath, turn };
+  return { ...sc, app, fxPath, turn, pane };
 }
 const count = (outs) => outs.filter((o) => o.stdout.includes("<herdr-bot>")).length;
 
@@ -846,6 +859,26 @@ test("hook, a pane not launched with it: a compaction in Claude's transcript pri
 test("hook, a launched pane that resumed an older conversation: once (its recorded prompt predates the file), then never", async (t) => {
   const { turn } = await turns(t, (app, main) => ["claude", "--append-system-prompt-file", briefingFilePath(app, main, ID.main), "--resume", "s-1"]);
   assert.equal(count([await turn(1), await turn(2), await turn(3)]), 1);
+});
+
+test("hook, restarts that resume a conversation started with the file: none with no edit since, once after an edit", async (t) => {
+  const sc = await turns(t, (app, main) => ["claude", "--append-system-prompt-file", briefingFilePath(app, main, ID.main)]);
+  const path = briefingFilePath(sc.app, sc.main, ID.main);
+  assert.equal(count([await sc.turn(1), await sc.turn(2)]), 0);
+  // Restart: a new pane (another created_ms) resuming s-1, the file written again, unchanged.
+  sc.pane(["claude", "--append-system-prompt-file", path, "--resume", "s-1"], 2000);
+  assert.equal(count([await sc.turn(3), await sc.turn(4)]), 0, "its recorded prompt has this very text");
+  // An edit, then a restart that resumes: the file's new text, printed once.
+  const f = team();
+  byId(f, ID.main).instructions = "After the edit.";
+  writeFileSync(join(sc.main, ".herdr", "bots.json"), JSON.stringify(f));
+  sc.pane(["claude", "--append-system-prompt-file", path, "--resume", "s-1"], 3000);
+  const outs = [await sc.turn(5), await sc.turn(6)];
+  assert.equal(count(outs), 1);
+  assert.match(outs[0].stdout, /After the edit\./);
+  // /clear in that pane: a new conversation, its prompt rendered with the file: nothing.
+  const cleared = await sc.brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: sc.tree }, JSON.stringify({ session_id: "s-2" }), { keep: true });
+  assert.equal(cleared.stdout, "");
 });
 
 test("hook, a pane launched with another bot's file (attached to this bot since): it is not covered, so once", async (t) => {

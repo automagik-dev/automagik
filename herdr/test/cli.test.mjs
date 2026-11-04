@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { checkBots, parseBots } from "../mods/am-sidebar/model.js";
 import { writeBotsFile, findBot, CliError, listProject } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
@@ -1760,4 +1760,75 @@ test("restart --cwd: a non-Claude resume into another folder is said; --cwd with
   assert.equal(moved.code, 0, moved.err);
   const hook = JSON.parse(readFileSync(join(dir, ".claude/settings.local.json"), "utf8"));
   assert.match(hook.hooks.UserPromptSubmit[0].hooks[0].command, /briefing\.mjs/);
+});
+
+// ---- the briefing in each agent's command: once, right after the executable ----
+
+/** A scene whose main bot runs `agent` (a stand-in executable on PATH), started once. */
+function agentScene(t, agent, { config = null } = {}) {
+  const s = scene(t);
+  exe(join(s.root, "bin", agent), "#!/bin/sh\nexit 0\n");
+  if (config) { mkdirSync(join(s.home, dirname(config.path)), { recursive: true }); writeFileSync(join(s.home, config.path), config.text); }
+  const file = team();
+  file.bots[0].agent = agent;
+  s.seed(file);
+  return s;
+}
+const briefingWords = (words) => words.map((w, i) => [w, i]).filter(([w]) => w.includes("<herdr-bot>"));
+
+test("start: omp, pi and grok get the briefing once, as the word or value right after their executable", (t) => {
+  for (const [agent, flag] of [["omp", null], ["pi", "--append-system-prompt"], ["grok", "--rules"]]) {
+    const s = agentScene(t, agent);
+    const r = s.cli(["start", "Genie", "--json"]);
+    assert.equal(r.code, 0, r.err);
+    const words = agentWords(runCall(s.calls()));
+    assert.equal(words[0], agent);
+    const found = briefingWords(words);
+    assert.equal(found.length, 1, `${agent}: one copy`);
+    if (flag) assert.deepEqual([words[1], found[0][1]], [flag, 2], `${agent}: ${flag} <text> first`);
+    else assert.deepEqual([found[0][1], found[0][0].startsWith("--append-system-prompt=<herdr-bot>\n")], [1, true]);
+    assert.match(found[0][0], /You are Genie, this project's main bot/);
+  }
+});
+
+test("restart: an omp bot's command reused keeps one briefing, the new one, and its own flags", (t) => {
+  const s = agentScene(t, "omp");
+  assert.equal(s.cli(["start", "Genie", "--json"]).code, 0);
+  const first = agentWords(runCall(s.calls()));
+  const st = s.hcState();
+  const pane = st.terminals.find((x) => x.labels?.bot === ID.main);
+  pane.argv = ["/usr/bin/env", "PATH=/bin", "omp", "--thinking=high", ...first.slice(1)];
+  pane.foreground = { argv: ["omp", "--thinking=high", ...first.slice(1)], cwd: s.project };
+  pane.status = { app: "omp", state: "idle" };
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const file = s.bots();
+  file.bots[0].instructions = "Edited.";
+  s.seed(file);
+  const r = s.cli(["restart", "Genie", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const words = agentWords(s.calls().filter((c) => c[0] === "run").at(-1));
+  const found = briefingWords(words);
+  assert.equal(found.length, 1, "never twice");
+  assert.equal(found[0][1], 1, "right after the executable");
+  assert.match(found[0][0], /Edited\./, "the new text, not the old");
+  assert.ok(words.includes("--thinking=high"), "its own flag kept");
+});
+
+test("start: hermes gets the briefing in its environment, unless its config sets its own prompt (then a warning)", (t) => {
+  const plainStart = agentScene(t, "hermes");
+  const r = plainStart.cli(["start", "Genie", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const run = runCall(plainStart.calls());
+  const w = run.slice(run.indexOf("--") + 1);
+  assert.equal(w[0], "/usr/bin/env");
+  assert.match(w[1], /^PATH=/);
+  assert.match(w[2], /^HERMES_EPHEMERAL_SYSTEM_PROMPT=<herdr-bot>\n/);
+  assert.equal(w[3], "hermes");
+  for (const text of ["agent:\n  system_prompt: Be terse.\n", "display:\n  personality: pirate\n"]) {
+    const own = agentScene(t, "hermes", { config: { path: ".hermes/config.yaml", text } });
+    const o = own.cli(["start", "Genie", "--json"]);
+    assert.equal(o.code, 0, o.err);
+    assert.ok(!runCall(own.calls()).some((x) => x.startsWith("HERMES_EPHEMERAL_SYSTEM_PROMPT=")), text);
+    assert.match(o.json().warnings.join("\n"), /hermes' config\.yaml sets a personality or agent\.system_prompt/);
+  }
 });

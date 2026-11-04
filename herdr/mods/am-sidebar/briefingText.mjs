@@ -192,27 +192,34 @@ export function botOfBriefingFile(path) {
   return m ? m[1] : null;
 }
 
-/** Where the hook keeps what it printed for one terminal (its address made a file name). */
+/**
+ * Where the hook keeps, per conversation, which launch text it already has: `key` is Claude's
+ * session id (a pane with none: its terminal and created_ms), made a file name.
+ */
 export const BRIEFED_DIR = "automagik-herdr/briefed";
-export const briefedPath = (appHome, terminal) =>
-  `${appHome.replace(/\/+$/, "")}/${BRIEFED_DIR}/${String(terminal).replace(/[^A-Za-z0-9._-]/g, "_")}.json`;
+export const briefedPath = (appHome, key) =>
+  `${appHome.replace(/\/+$/, "")}/${BRIEFED_DIR}/${String(key).replace(/[^A-Za-z0-9._-]/g, "_")}.json`;
 
 /**
- * Whether the hook prints the briefing this turn (never every turn). `covered`: the agent was
- * started with this bot's briefing in its system prompt; `resumed`: on a conversation that
- * started earlier, whose recorded system prompt Claude Code keeps until it compacts, so it is
- * printed once for that. `seen`: what this terminal's last print recorded, { created_ms,
- * session, hash } (null: none); `now`: the same for this turn; `compacted`: Claude compacted
- * the conversation since then. Otherwise (Attach on a running pane, a bot started before this
- * pack) it prints on the first turn of each pane and session, then again only when the launch
- * text changes or the conversation was compacted.
+ * What the hook does this turn (never print every turn): { print, hash }, `hash` the launch
+ * text the conversation has once this turn is done (to record; null: nothing to record).
+ * `seen`: the hash its record holds (null: none). `covered`: the agent was started with this
+ * bot's briefing file, whose text hashes to `started`; `resumed`: on a conversation recorded
+ * before this pane started, whose system prompt Claude Code keeps as recorded until it compacts.
+ * `now`: the hash of the launch text .herdr/bots.json gives now; `compacted`: Claude compacted
+ * the conversation since the record.
+ * - Started with it on a new conversation: its system prompt has it; nothing printed.
+ * - Started with it on a resumed one: printed once unless the conversation already has that
+ *   very text (a restart with no edit since); a compaction re-renders the prompt with it.
+ * - Otherwise (Attach on a running pane, a bot started before this pack): printed on the
+ *   conversation's first turn, then again only when the launch text changes or it compacted.
  */
-export function shouldBrief({ covered, resumed = false, seen = null, now, compacted = false }) {
-  if (covered && !resumed) return false;
-  const same = Boolean(seen) && seen.created_ms === now.created_ms && seen.session === now.session;
-  if (!same) return true;
-  if (covered) return false;
-  return seen.hash !== now.hash || compacted;
+export function briefDecision({ covered, started = null, resumed = false, seen = null, now, compacted = false }) {
+  if (covered) {
+    if (!resumed || compacted || seen === started) return { print: false, hash: seen === started ? null : started };
+    return { print: true, hash: started };
+  }
+  return { print: seen !== now || compacted, hash: now };
 }
 
 // ---- the hook entry and the git exclude (written by launch.js afterBind) ----

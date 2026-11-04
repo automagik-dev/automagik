@@ -28,9 +28,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { BOT_LABEL, BOTS_PATH, effectiveLead, parseBots, projectKeyOf } from "./model.js";
 import { UNANSWERED, paneOf, rowsOf, unwrapKeep } from "./launchArgs.js";
 import { attachKey, attachPath, confirmBindings, foldAttach, modeProblem, readAttach, verdictOf } from "./attach.js";
-import { botOfBriefingFile, briefedPath, briefingText, directMembers, latestReport, launchBriefingText, shouldBrief, textHash }
+import { botOfBriefingFile, briefDecision, briefedPath, briefingText, directMembers, latestReport, launchBriefingText, textHash }
   from "./briefingText.mjs";
-import { briefingFileOf, resumesConversation } from "./models.js";
+import { briefingFileOf, resumedSessionOf } from "./models.js";
 import { SESSION_LABEL, TRANSCRIPT_LABEL, ledgerLine, ledgerPath, sessionChange, sessionRow }
   from "./workers.js";
 import { transcriptRealPath } from "./transcriptFolder.mjs";
@@ -158,42 +158,56 @@ async function main(mePending, inputPending, appHome) {
   const ledger = await ledgerOf(appHome, hcJson);
   const botId = ledger ? ledger.botAt({ ...me, address: terminal }) : me.labels?.[BOT_LABEL];
   if (!botId) return null;
-  // Started with this bot's own briefing on a new conversation: its system prompt has it.
+  // Started with this bot's own briefing file: its text is what the system prompt was given.
   const covered = Boolean(started) && botOfBriefingFile(started) === botId;
-  const resumed = covered && resumesConversation("claude", argv);
-  if (covered && !resumed) return null;
+  const startedHash = covered ? launchedHash(started) : null;
+  const input = await inputPending;
+  const session = typeof input.session_id === "string" && input.session_id ? input.session_id : null;
+  // Resumed: the command resumes this very conversation (--resume <its id>, or --continue).
+  // Claude Code keeps a resumed conversation's id (`--fork-session` makes a new one, with the
+  // old record): another id means a new conversation since (/clear), with a new prompt.
+  const was = covered ? resumedSessionOf("claude", argv) : undefined;
+  const forked = Array.isArray(argv) && argv.includes("--fork-session");
+  const resumed = was !== undefined && (was === null || session === null || was === session || forked);
+  const recordKey = session ?? `${terminal}@${me.created_ms ?? 0}`;
+  const seen = readSeen(appHome, recordKey);
+  // A new conversation started with the file needs no bots.json read: nothing prints.
+  if (covered && !resumed && seen?.hash === startedHash) return null;
   const { file } = parseBots(await readFile(`${key === "/" ? "" : key}/${BOTS_PATH}`, "utf8"));
   const bot = file.bots.find((b) => b.id === botId);
   if (!bot || bot.planned) return null;
-  const input = await inputPending;
-  const now = { created_ms: me.created_ms ?? null, session: typeof input.session_id === "string" ? input.session_id : null,
-    hash: textHash(launchBriefingText({ self: bot, file })) };
-  const seen = readSeen(appHome, terminal);
   const transcript = typeof input.transcript_path === "string" ? transcriptRealPath(input.transcript_path, "claude", homedir()) : null;
-  const same = seen && seen.created_ms === now.created_ms && seen.session === now.session;
-  const scan = same && transcript ? compactedSince(transcript, seen.offset) : { compacted: false, size: seen?.offset ?? 0 };
-  const record = () => writeSeen(appHome, terminal, { ...now, offset: transcript ? sizeOf(transcript) : 0 });
-  if (!shouldBrief({ covered, resumed, seen, now, compacted: scan.compacted })) {
-    if (same && transcript && scan.size !== seen.offset) writeSeen(appHome, terminal, { ...seen, offset: scan.size });
+  const scan = seen && transcript ? compactedSince(transcript, seen.offset) : { compacted: false, size: seen?.offset ?? 0 };
+  const now = textHash(launchBriefingText({ self: bot, file }));
+  const decision = briefDecision({ covered, started: startedHash, resumed, seen: seen?.hash ?? null, now, compacted: scan.compacted });
+  const offset = () => (transcript ? sizeOf(transcript) : 0);
+  const record = () => writeSeen(appHome, recordKey, { hash: decision.hash ?? seen?.hash, offset: offset() });
+  if (!decision.print) {
+    if (decision.hash !== null || (seen && transcript && scan.size !== seen.offset)) record();
     return null;
   }
   const text = await gatherBriefing({ file, bot, address: terminal, ask: hcJson, ...(ledger ? { locate: ledger.locate } : {}) });
   return { text, record };
 }
 
-// ---- what the hook printed, per terminal (never every turn) ----
+// The hash of the launch text in a briefing file (as briefedLaunch wrote it), null when unreadable.
+function launchedHash(path) {
+  try { return textHash(readFileSync(path, "utf8").replace(/\n$/, "")); } catch { return null; }
+}
 
-/** What the last print on `terminal` recorded: { created_ms, session, hash, offset }, or null. */
-export function readSeen(appHome, terminal) {
+// ---- which launch text each conversation has (never a print every turn) ----
+
+/** What a conversation's record holds: { hash, offset }, or null. */
+export function readSeen(appHome, key) {
   try {
-    const seen = JSON.parse(readFileSync(briefedPath(appHome, terminal), "utf8"));
+    const seen = JSON.parse(readFileSync(briefedPath(appHome, key), "utf8"));
     return seen && typeof seen === "object" && typeof seen.hash === "string" ? { ...seen, offset: Number(seen.offset) || 0 } : null;
   } catch { return null; }
 }
-/** Records `seen` for `terminal`, replacing the file whole; a failure means the next turn prints again. */
-export function writeSeen(appHome, terminal, seen) {
+/** Records `seen` for a conversation, replacing the file whole; a failure means the next turn prints again. */
+export function writeSeen(appHome, key, seen) {
   try {
-    const path = briefedPath(appHome, terminal);
+    const path = briefedPath(appHome, key);
     mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true, mode: 0o700 });
     const tmp = `${path}.${process.pid}.tmp`;
     writeFileSync(tmp, `${JSON.stringify(seen)}\n`, { mode: 0o600 });

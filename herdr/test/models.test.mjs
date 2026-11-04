@@ -5,9 +5,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { AGENTS, LEGACY_AGENTS, agentArgv, agentKeyOfArgv, configPaths, defaultModel, defaultModelFrom, detectModel, knownModels, knownModelsFrom, modelArgs, resolveAgent, shownModel, withOverrides } from "../mods/am-sidebar/models.js";
-import { BRIEFINGS_DIR, briefingFileOf, briefingLaunch, briefingWay, resumesConversation, withBriefing, withoutBriefing }
-  from "../mods/am-sidebar/models.js";
-import { restartPlan } from "../mods/am-sidebar/restart.js";
+import { BRIEFINGS_DIR, briefingFileOf, briefingLaunch, briefingWay, ownPromptIn, resumedSessionOf, resumesConversation, tomlString,
+  withBriefing, withoutBriefing } from "../mods/am-sidebar/models.js";
+import { paneCommand, restartPlan } from "../mods/am-sidebar/restart.js";
+import { startArgs } from "../mods/am-sidebar/launchArgs.js";
 
 const files = (map) => ({ home: "/h", read: (p) => map[p] ?? null });
 
@@ -206,4 +207,43 @@ test("restartPlan reusing a pane's command drops its old briefing words before t
   const launch = { argv: ["omp", "--thinking=high", `--append-system-prompt=${BRIEF}`] };
   const plan = restartPlan({ bot, run: ["omp"], runningAgent: "omp", session: null, launch });
   assert.deepEqual(plan.argv, ["omp", "--thinking=high", "--continue"]);
+});
+
+test("tomlString: JSON's escapes, plus U+007F escaped and lone surrogates replaced (TOML rejects both)", () => {
+  assert.equal(tomlString('a"b\\c\nd'), JSON.stringify('a"b\\c\nd'));
+  assert.equal(tomlString("x\x7fy"), '"x\\u007fy"');
+  assert.equal(tomlString("p\ud800q\udc00r"), '"p�q�r"');
+  assert.equal(tomlString("ok 😀"), '"ok 😀"', "a real pair stays");
+  assert.equal(briefingLaunch("codex", { text: "<herdr-bot>\x7f" }).args[1], 'developer_instructions="<herdr-bot>\\u007f"');
+});
+
+test("ownPromptIn: codex's developer_instructions, hermes' personality or agent.system_prompt; empty values don't count", () => {
+  assert.equal(ownPromptIn("codex", 'model = "o3"\ndeveloper_instructions = "mine"\n'), true);
+  assert.equal(ownPromptIn("codex", 'model = "o3"\n[profiles.x]\nmodel = "y"\n'), false);
+  assert.equal(ownPromptIn("hermes", "agent:\n  system_prompt: Be terse.\n"), true);
+  assert.equal(ownPromptIn("hermes", "agent:\n  system_prompt: |\n    Long one.\n"), true);
+  assert.equal(ownPromptIn("hermes", "display:\n  personality: pirate\n"), true);
+  assert.equal(ownPromptIn("hermes", 'display:\n  personality: ""\n  personalities:\n    pirate: Arr\nagent:\n  system_prompt: \'\'\n'), false);
+  assert.equal(ownPromptIn("hermes", null), false);
+  assert.equal(ownPromptIn("omp", "system_prompt: x"), false);
+});
+
+test("resumedSessionOf: the id a Claude command resumes, null for --continue, undefined for none", () => {
+  assert.equal(resumedSessionOf("claude", ["claude", "--resume", "s-1"]), "s-1");
+  assert.equal(resumedSessionOf("claude", ["claude", "-r", "s-1", "--model", "m"]), "s-1");
+  assert.equal(resumedSessionOf("claude", ["claude", "--resume=s-1"]), "s-1");
+  assert.equal(resumedSessionOf("claude", ["claude", "--continue"]), null);
+  assert.equal(resumedSessionOf("claude", ["claude", "--resume", "--model", "m"]), null, "a bare --resume picks one");
+  assert.equal(resumedSessionOf("claude", ["claude", "--model", "m"]), undefined);
+});
+
+test("restart of a hermes bot fed the whole command Start gave it (env PATH, briefing variable): its own flags kept (#213)", () => {
+  const args = startArgs({ botId: "b-aaaaaaaaaa", cwd: "/p", parent: ["--no-parent"], argv: ["hermes", "--yolo"], path: "/bin",
+    env: { HERMES_EPHEMERAL_SYSTEM_PROMPT: BRIEF } });
+  const launch = paneCommand({ argv: args.slice(args.indexOf("--") + 1) });
+  assert.deepEqual(launch, { argv: ["hermes", "--yolo"] }, "the whole env prefix dropped, the program found");
+  const plan = restartPlan({ bot: { agent: "hermes" }, run: ["hermes"], runningAgent: "hermes", session: null, launch });
+  assert.deepEqual([plan.reused, plan.argv], [true, ["hermes", "--yolo", "--continue"]]);
+  // A person's own env line (not this pack's PATH prefix) is left as it is.
+  assert.deepEqual(paneCommand({ argv: ["/usr/bin/env", "FOO=1", "hermes"] }), { argv: ["/usr/bin/env", "FOO=1", "hermes"] });
 });
