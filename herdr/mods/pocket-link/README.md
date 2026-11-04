@@ -52,7 +52,7 @@ Pairings live outside the mod folder and stay.
   mod folder (the path of the Node it runs with).
 - **Where its state lives:** `${XDG_STATE_HOME:-~/.local/state}/automagik-pocket-link/`, mode 0700,
   outside the mod folder: this computer's key (`secret.key`, the identity phones pair with), the
-  paired phones, the current pairing code, the bridge's address and its log (`bridge.log`, and
+  paired phones (`devices.json`), the current pairing code, the bridge's address and its log (`bridge.log`, and
   `bridge.log.1` once it has filled), each 0600; and `public-status.json` (0644), which says only whether phones are connected
   ([For other mods](#for-other-mods)).
   - **Reinstalling the mod is safe.** Deleting `mods/pocket-link/` and copying it again keeps every
@@ -63,6 +63,10 @@ Pairings live outside the mod folder and stay.
     `automagik-pocket-link-<hash>/`, so a test window never sees your phones.
     `POCKET_LINK_STATE_DIR` sets the folder outright; the login service is given it.
   - Deleting this folder unpairs every phone.
+  - **One writer for the paired phones.** Only the running bridge writes `devices.json`. Remove
+    (`bridge.mjs forget <id>`) hands the phone to it over `bridge.sock`, a socket in this folder,
+    and waits for its answer, so a removed phone can't be written back by a session updating its
+    "last seen" time. With no bridge running, `forget` writes the file itself.
 
 - **Before a phone is paired** (`bridge/guard.mjs`, `bridge/pairing.mjs`):
   - A connection from a source address that isn't validated yet gets a QUIC retry first, so a

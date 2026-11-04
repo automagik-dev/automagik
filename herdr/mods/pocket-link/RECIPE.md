@@ -75,7 +75,7 @@ Before the bridge can run, the dialog shows one of two other screens in place of
   - The bridge stores the phone's iroh public key and deletes the code.
   - The dialog posts a "Phone paired" toast (`notify`, success, 8s) with the phone's name and key fingerprint, puts the card away, and lists the phone. If the phone paired while the dialog was closing, the toast comes from what `cancel` returns.
   - Pairing again from a phone that's already listed refreshes its entry and also shows the toast.
-- **Remove:** forgets the phone. The running bridge checks its list every 2s and closes that phone's open sessions with "not paired". On the phone, Pocket says to pair again.
+- **Remove:** forgets the phone. `forget` hands the removal to the running bridge over `bridge.sock` and waits for its answer; the bridge takes the phone out of `devices.json` and closes its open sessions with "not paired" at once (it also checks its list every 2s). With no bridge running, `forget` writes the file itself. On the phone, Pocket says to pair again.
 - **Wrong codes:** one phone key gets 3 wrong codes, then its tries are refused and not counted; only a flood, 1000 wrong codes in all, ends the code. A used or expired code is refused, and with no live code a pairing connection is closed after its handshake ("No pairing code is live. Make a new one on the desktop.").
 - **Closing the dialog ends the code:** Esc runs `bridge.mjs cancel` and closes it; the view's `close(cx)` runs `cancel` too, for any other way the host closes it. A code still being made when the dialog closes is cancelled as it arrives.
 - **Esc** closes the dialog. **⌘⌥P** on macOS, or **Ctrl+Alt+P** on Linux, opens it (see `keys.json`).
@@ -114,7 +114,8 @@ Before the bridge can run, the dialog shows one of two other screens in place of
     - `pair [minutes]` prints `{link, expires, rows}`, where `rows` holds the QR modules as strings of `1`/`0`
     - `status` prints `{running, id, name, ticket, devices, pairing, login, state}`; each device has `fingerprint`
     - `cancel` deletes the live code and prints `{ok, cancelled, devices}`
-    - `start`, `stop`, `forget <id>`, `install` and `uninstall`
+    - `forget <id>` prints `{ok, removed, via}`: `via` is `bridge` when the running bridge removed the phone, `file` when no bridge answered on `bridge.sock` and `forget` wrote `devices.json` itself (`bridge/devices.mjs`). A bridge that refuses or gives no answer within 5s is an error, and nothing is written.
+    - `start`, `stop`, `install` and `uninstall`
   - **Serving:**
     1. It binds an iroh `Endpoint` with the n0 preset, a persistent secret key and two ALPNs: `herdr-pocket/1` and `herdr-pocket/pair/1`.
     2. It writes its ticket (`EndpointTicket.fromAddr(ep.addr())`) to `status.json`, and again whenever its address changes.
@@ -125,7 +126,8 @@ Before the bridge can run, the dialog shows one of two other screens in place of
 - **The state folder,** `${XDG_STATE_HOME:-~/.local/state}/automagik-pocket-link/` (`bridge/state.mjs`), mode 0700, outside the mod so a reinstall keeps it, files written atomically, all mode 0600 but one:
   - `secret.key`
   - `status.json`
-  - `devices.json`
+  - `devices.json`, written only by the running bridge (or by `forget` when none runs)
+  - `bridge.sock`, the running bridge's socket, where `forget` hands it a removal
   - `pairing.json`
   - `bridge.log`, and `bridge.log.1` once it has filled
   - `public-status.json`, mode 0644: whether the bridge runs and which phones are connected, for other mods ([README](README.md#for-other-mods)). No ticket, id or secret. The dialog's folder watch skips it.
@@ -146,7 +148,7 @@ Before the bridge can run, the dialog shows one of two other screens in place of
 - **Herdr's PATH isn't the terminal's:** opened from the Dock, Herdr has no nvm, volta, fnm or asdf on PATH, so `exec("node", …)` fails where the terminal works. Find Node yourself (above), and give npm the same folder.
 - **The Homebrew Cellar path breaks:** `process.execPath` under Homebrew is a versioned Cellar path that disappears on upgrade. Write the `opt/<formula>/bin/node` link into the service.
 - **Log lines appear twice:** under launchd, stderr already is `bridge.log`. Append to the file yourself only when stderr is a terminal.
-- **A phone removed mid-session would come back:** it can be re-added by a session that read `devices.json` earlier. Read the file again just before updating a phone's "seen" time.
+- **A removed phone would come back with two writers:** a session's "seen" update reads `devices.json` and writes it back, so a separate `forget` process writing between the two is overwritten. Keep one writer: `forget` asks the running bridge over `bridge.sock`, and the bridge's reads and writes of the file are synchronous, so they never interleave. `forget` writes the file only when no bridge answers there (none runs, an older one that a mod update left running, or a state folder whose path is too long for a socket, over about 100 bytes), then asks the socket once more for a bridge that started meanwhile. `bridge/devices.test.mjs` holds a "seen" update open while `forget` runs as its own process.
 - **The pairing link is a capability:** anyone holding the link (or the QR) within its 10 minutes can pair, because the code is the secret. Don't screenshot a live one. This preview's QR encodes a made-up link.
 - **The phone's code must match:**
   - The phone accepts only `v=1`, `t` matching `^endpoint[a-z2-7]{20,2000}$` and `c` matching `^[A-Za-z0-9_-]{16,64}$`.
