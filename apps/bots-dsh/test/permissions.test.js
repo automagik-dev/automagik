@@ -482,3 +482,21 @@ test('deleting a group moves its running task to its Bot\'s own level, never abo
   await customRoom({ reviewed: { sandbox: 'workspace-write', approval: 'ask' } }, ['reviewed'])
   await customRoom({ odd: { sandbox: 'container', approval: 'ask' } }, ['odd', 'workspace-write'])
 })
+
+test('when no level ranks, deleting a Bot leaves its task\'s level as it is and warns', async (t) => {
+  const tasks = { t1: { title: 'Wish', from: 'b2', at: 1, status: 'working' } }
+  const { rt, call, service, presets, settle } = team(t, { bots: { b2: { permission: 'danger-full-access' } }, tasks, loaded: ['t1'] })
+  await rt.load()
+  await rt.applyTaskPermission('t1', { id: 't1' })
+  assert.deepEqual(presets('t1'), ['danger-full-access'])
+  // A catalog whose presets resolve to nothing this ranking knows.
+  const resolve = service.resolve
+  service.resolve = (name) => { resolve(name); return {} }
+  const warnings = []
+  const warn = rt.warn
+  rt.warn = (...args) => { warnings.push(args.join(' ')); return warn(...args) }
+  assert.equal((await call('delete-bot', { id: 'b2' })).ok, true)
+  await settle()
+  assert.deepEqual(presets('t1'), ['danger-full-access'])
+  assert.ok(warnings.some(line => line.includes('can be ranked') && line.includes('t1')), warnings.join(' | '))
+})

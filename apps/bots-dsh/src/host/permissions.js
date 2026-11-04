@@ -131,6 +131,8 @@ export function install(rt) {
       const task = taskOf(sessionId)
       const level = task === undefined ? service.catalog().defaultPreset : taskLevel(task, service)
       if (level) await applyLevel(sessionId, level, session)
+      // No level could be ranked: the task keeps its own, not a default that may be wider.
+      else if (task?.from !== undefined) rt.warn('ds-bot: no permission level for the task %s can be ranked; it keeps its own', sessionId)
     })
     return true
   }
@@ -158,7 +160,10 @@ export function install(rt) {
     if (rt.readOnly() !== undefined || service === undefined) return
     const fallback = service.catalog().defaultPreset
     const level = ranAt === undefined ? fallback : fallback === undefined ? ranAt : narrowerLevel(service, fallback, ranAt)
-    if (!level) return
+    if (!level) {
+      rt.warn('ds-bot: no permission level for the forgotten task %s can be ranked; it keeps its own', sessionId)
+      return
+    }
     const loaded = (ctx.sessions?.list?.() ?? []).find(session => session.id === sessionId)
     await serial(sessionId, () => applyLevel(sessionId, level, loaded))
   }
