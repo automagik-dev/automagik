@@ -27,6 +27,7 @@ for (const c of local) {
     const home = realpathSync(mkdtempSync(join(tmpdir(), "hb-transcript-")));
     t.after(() => rmSync(home, { recursive: true, force: true }));
     const at = (p) => p.replaceAll("{home}", home);
+    for (const d of c.setup?.dirs ?? []) mkdirSync(at(d), { recursive: true });
     for (const f of c.setup?.files ?? []) {
       mkdirSync(dirname(at(f)), { recursive: true });
       writeFileSync(at(f), "");
