@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ROOT, WRITE, copies, problems, write } from './am-copies.mjs';
@@ -25,15 +25,18 @@ describe("am's copies of the pack's CLI and briefing", () => {
       for (const dir of ['am', 'herdr/mods/am-sidebar', 'plugin-lane']) cpSync(join(ROOT, dir), join(root, dir), { recursive: true });
       writeFileSync(join(root, 'am', 'model.js'), '// drifted\n');
       rmSync(join(root, 'am', 'tidy.js'));
-      // The CLI stops importing restart.js: am's copy is stale.
-      const cli = join(root, 'herdr/mods/am-sidebar/bin/automagik-herdr.mjs');
-      writeFileSync(cli, readFileSync(cli, 'utf8').replace(/^import [^\n]*"\.\.\/restart\.js";\n/m, ''));
+      // A copy --write once made that nothing imports now (the CLI dropped it): stale.
+      const record = JSON.parse(readFileSync(join(root, 'am', 'copies.json'), 'utf8'));
+      record.files.push({ from: 'herdr/mods/am-sidebar/gone.js', to: 'am/gone.js' });
+      writeFileSync(join(root, 'am', 'copies.json'), `${JSON.stringify(record, null, 2)}\n`);
+      writeFileSync(join(root, 'am', 'gone.js'), '// gone\n');
       const found = problems(root);
       expect(found).toContain('am/model.js differs from herdr/mods/am-sidebar/model.js');
       expect(found).toContain('am/tidy.js is missing (a copy of herdr/mods/am-sidebar/tidy.js)');
-      expect(found).toContain('am/restart.js is a stale copy: nothing am copies imports it now');
+      expect(found).toContain('am/gone.js is a stale copy: nothing am copies imports it now');
       write(root);
       expect(problems(root)).toEqual([]);
+      expect(existsSync(join(root, 'am', 'gone.js'))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

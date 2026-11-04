@@ -64,16 +64,26 @@ describe('the am lane', () => {
     writeFileSync(out, '');
     const env = { ...process.env, GITHUB_OUTPUT: out };
     delete (env as Record<string, string | undefined>).AM_LANE_KEY;
+    // What the repository's am-keys.json says decides the words: no key listed yet, or the secret not set.
+    const listed = JSON.parse(readFileSync(KEYS_FILE, 'utf8')).keys.length > 0;
     const absent = spawnSync('bun', [SCRIPT, 'check-key'], { encoding: 'utf8', env });
     expect(absent.status).toBe(0);
-    expect(absent.stdout).toMatch(/^::warning::am lane: am\/am-keys\.json lists no key yet: this release attaches automagik-am-<v>\.tgz but posts no am-lane pointer/);
+    expect(absent.stdout).toMatch(listed
+      ? /^::warning::am lane: AM_LANE_KEY is not set: this release attaches automagik-am-<v>\.tgz but posts no am-lane pointer/
+      : /^::warning::am lane: am\/am-keys\.json lists no key yet: this release attaches automagik-am-<v>\.tgz but posts no am-lane pointer/);
     expect(readFileSync(out, 'utf8')).toBe('sign=no\n');
-    // The secret set while am-keys.json lists no key (between keygen and its merge): still a
-    // warning and no post, never a stopped release.
-    const early = spawnSync('bun', [SCRIPT, 'check-key'], { encoding: 'utf8', env: { ...env, AM_LANE_KEY: pair().priv } });
-    expect(early.status).toBe(0);
-    expect(early.stdout).toMatch(/^::warning::am lane: am\/am-keys\.json lists no key yet/);
-    expect(readFileSync(out, 'utf8')).toBe('sign=no\nsign=no\n');
+    // A secret that is none of the listed keys stops the run once keys are listed; while none is
+    // listed (between keygen and its merge) it is still a warning and no post.
+    const other = spawnSync('bun', [SCRIPT, 'check-key'], { encoding: 'utf8', env: { ...env, AM_LANE_KEY: pair().priv } });
+    if (listed) {
+      expect(other.status).toBe(1);
+      expect(other.stderr).toMatch(/AM_LANE_KEY's public key is not in am\/am-keys\.json/);
+      expect(readFileSync(out, 'utf8')).toBe('sign=no\n');
+    } else {
+      expect(other.status).toBe(0);
+      expect(other.stdout).toMatch(/^::warning::am lane: am\/am-keys\.json lists no key yet/);
+      expect(readFileSync(out, 'utf8')).toBe('sign=no\nsign=no\n');
+    }
   });
 
   test('keygen never writes the slot releases sign with: the first key to AM_LANE_KEY, a rotation to the other', () => {
