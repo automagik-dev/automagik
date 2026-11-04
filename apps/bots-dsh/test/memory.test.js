@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -332,7 +332,7 @@ test('a memory file that cannot be read is left alone, and the section says so',
   t.after(() => stop())
   // A directory reads as EISDIR on every platform; no chmod games needed.
   mkdirSync(join(home, 'memory', 'bots', 'b2', 'MEMORY.md'), { recursive: true })
-  await assert.rejects(tool('remember', { text: 'Likes tea' }, 'b2'), /Memory file .*MEMORY\.md could not be read \(EISDIR\)\. Omni leaves it as it is/)
+  await assert.rejects(tool('remember', { text: 'Likes tea' }, 'b2'), /A memory file could not be read \(EISDIR\)\. Omni leaves it as it is/)
   assert.deepEqual(readdirSync(join(home, 'memory', 'bots', 'b2')), ['MEMORY.md'])
   // The prompt shows the failure instead of looking empty, and nothing is frozen.
   assert.match(section('b2'), /\(this memory could not be read: EISDIR\)/)
@@ -411,7 +411,7 @@ test('the memory panel shows every entry and a summary the Bot\'s model writes o
   assert.equal((await call('memory-view', { botId: 'b2', summarize: true })).value.fresh, false)
   await summarized(call)
   const failed = (await call('memory-view', { botId: 'b2', summarize: true })).value
-  assert.deepEqual([failed.summary.text, failed.fresh, failed.error], ['## Overview\nYou like tea.', false, 'provider down'])
+  assert.deepEqual([failed.summary.text, failed.fresh, failed.error], ['## Overview\nYou like tea.', false, 'provider error'])
   assert.equal(requests.length, 2)
   replies.push('## Overview\nYou like tea and live in Hangzhou.')
   await call('memory-view', { botId: 'b2', regenerate: true })
@@ -509,7 +509,8 @@ test('a summary that failed on both models is tried again once the Bot has anoth
   await call('memory-view', { botId: 'b2', summarize: true })
   await summarized(call)
   const failed = (await call('memory-view', { botId: 'b2', summarize: true })).value
-  assert.equal(failed.error, 'deepseek/flash: 401: Unauthorized; deepseek/v4: 503 Service Unavailable')
+  // The provider's words are not kept, only that a provider failed and which one.
+  assert.equal(failed.error, 'deepseek/flash: provider error; deepseek/v4: provider error')
   assert.equal(failed.summarizing, false)
   assert.equal(requests.length, 2)
 
@@ -595,7 +596,7 @@ test('a host that only reads the team shows memory but changes none of it', asyn
   const { tool, call, section, stop } = start({ home })
   t.after(() => stop())
   await call('state', {})
-  await assert.rejects(tool('remember', { text: 'Likes tea' }, 'b2'), /Memory cannot change now: The Bot team in .* is open in another dsh/)
+  await assert.rejects(tool('remember', { text: 'Likes tea' }, 'b2'), /^MemoryWriteError: Memory cannot change now: this window cannot change the Bot team\./)
   assert.equal((await call('memory-view', { botId: 'b2' })).ok, true)
   assert.equal((await call('memory-ask', { botId: 'b2', text: 'hi' })).error.code, 'bot/read-only')
   assert.match(section('b2'), /^# Your memory/)
@@ -1686,4 +1687,157 @@ test('the team\'s background model runs memory, and the pick is checked', async 
   await call('memory-view', { botId: 'b2', summarize: true })
   await summarized(call)
   assert.deepEqual(routes(requests), ['deepseek/v4@2048', 'deepseek/flash@2048'])
+})
+
+// ---------------------------------------------------------------------------
+// Error objects are model data. A failure from the file system names a path, and a
+// path names a topic; a provider's failure may quote the request. Memory logs and
+// throws only a code for those, and its own messages hold no data at all.
+
+test('a write that fails on a locked folder logs no topic name and no memory path', async (t) => {
+  const { home, tool, stop } = start()
+  const dir = join(home, 'memory', 'bots', 'b2')
+  await tool('remember', { text: 'Likes tea' }, 'b2')
+  chmodSync(dir, 0o555)
+  t.after(async () => {
+    chmodSync(dir, 0o755)
+    await stop()
+  })
+  await assert.rejects(tool('remember', { text: 'The user likes green tea', topic: 'hunter3' }, 'b2'), (error) => {
+    assert.equal(error.code, 'memory/failed')
+    assert.equal(error.message, 'The memory could not be changed (EACCES).')
+    return true
+  })
+  await warnedTimes(home, 'is pending', 1)
+  const log = diagnosticsLog(home)
+  assert.ok(!log.includes('hunter3'), log)
+  assert.ok(!log.includes(join(home, 'memory')), log)
+})
+
+test('a marker planted in every input memory reads reaches no log line and no thrown message', async (t) => {
+  // Shaped like no key or password, so no redactor knows it and every path takes it.
+  const MARKER = 'qzcanary7731'
+  const NUMBER = '7731990077318'
+  assert.equal(looksSecret(MARKER) || looksLikeKey(MARKER), false)
+  assert.equal(cleanTopic(MARKER), MARKER)
+  // The marker is in the home's name, so it is in every path memory has.
+  const home = mkdtempSync(join(tmpdir(), `ds-bot-${MARKER}-`))
+  const said = []
+  const history = Object.fromEntries(['b2', 'b3', 'm1'].map(id => [id, [
+    { event: { seq: 10, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: `Please remember ${MARKER}` }] } } },
+    { event: { seq: 11, type: 'assistant/message', data: { message: { content: [{ type: 'text', text: `Saved ${MARKER}.` }] } } } },
+  ]]))
+  const replies = []
+  const { ctx, call, tool, section, stop } = start({ home, replies, history, config: { memoryReviewDelayMs: 0 } })
+  const locked = []
+  t.after(async () => {
+    for (const path of locked) chmodSync(path, 0o755)
+    await stop()
+  })
+  const attempt = async (promise) => {
+    try {
+      const value = await promise
+      if (typeof value === 'string') said.push(value)
+      return value
+    } catch (error) {
+      said.push(String(error?.message), String(error))
+      return error
+    }
+  }
+  const review = async (botId, reply) => {
+    replies.push(reply)
+    ctx.emit('agent/status', { agent: { id: botId }, status: 'idle' })
+    await reviewed(call)
+  }
+  const memory = (...path) => join(home, 'memory', ...path)
+  await call('state', {})
+
+  // The model's answers: one that is no list, one with a bad topic, one naming an
+  // unlisted entry, one with an entry too long and a write that fails.
+  await review('b2', `I keep ${MARKER} for you`)
+  await review('b2', JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea', topic: `pw: ${MARKER}` }] }))
+  await review('b3', JSON.stringify({ changes: [{ op: 'remove', entry: NUMBER }] }))
+  mkdirSync(memory('bots', 'm1'), { recursive: true })
+  writeFileSync(memory('bots', 'm1', 'MEMORY.md'), '# Memory\n\n## Index\n')
+  chmodSync(memory('bots', 'm1'), 0o555)
+  locked.push(memory('bots', 'm1'))
+  const long = `The user tells a story about ${MARKER}: ${'x'.repeat(300)}`
+  await review('m1', JSON.stringify({ changes: [{ op: 'add', text: long }, { op: 'add', text: 'The user likes tea', topic: MARKER }] }))
+  await warnedTimes(home, 'is pending', 1)
+  // The pending change cannot be finished while the folder is locked.
+  assert.match(section('m1'), /Memory is unavailable until its pending change has been recovered/)
+  await until(() => warnings(home, 'memory recovery failed').length > 0)
+  chmodSync(memory('bots', 'm1'), 0o755)
+  locked.pop()
+  // Unlocked, the change is finished; what recall lists is the memory, not a failure.
+  assert.match(await tool('recall', {}, 'm1'), /topics \[\[/)
+
+  // The tools, given the marker: an entry that is not there, a topic that is not
+  // there, and a topic file that cannot be read.
+  await attempt(tool('remember', { text: 'Likes tea' }, 'b2'))
+  await attempt(tool('forget', { entry: MARKER }, 'b2'))
+  await attempt(tool('forget', { entry: 'tea', topic: MARKER }, 'b2'))
+  mkdirSync(memory('bots', 'b2', `${MARKER}.md`))
+  await attempt(tool('remember', { text: 'Likes green tea', topic: MARKER }, 'b2'))
+  await attempt(tool('recall', { topic: MARKER }, 'b2'))
+  rmSync(memory('bots', 'b2', `${MARKER}.md`), { recursive: true })
+  // A MEMORY.md that cannot be read, in the prompt section, and a snapshot that
+  // cannot be saved.
+  mkdirSync(memory('bots', 'b4', 'MEMORY.md'), { recursive: true })
+  said.push(section('b4'))
+  rmSync(memory('snapshots'), { recursive: true, force: true })
+  writeFileSync(memory('snapshots'), MARKER)
+  said.push(section('b3'))
+  rmSync(memory('snapshots'))
+
+  // A change record that does not parse, and one whose path leaves the folder.
+  writeFileSync(memory('pending.json'), `{"id": "${MARKER}`)
+  said.push(section('b2'))
+  await attempt(tool('recall', {}, 'b2'))
+  await attempt(tool('remember', { text: 'Likes coffee' }, 'b2'))
+  writeFileSync(memory('pending.json'), JSON.stringify({ id: MARKER, time: MARKER, op: 'add', scope: 'bot:b2', steps: [{ action: 'write', path: `../../${MARKER}/x.md`, text: MARKER }], row: { id: MARKER } }))
+  said.push(section('b2'))
+  await attempt(tool('recall', {}, 'b2'))
+  rmSync(memory('pending.json'))
+
+  // The provider's failures, in the summary and in the panel.
+  replies.push(new Error(`401: ${MARKER}`))
+  await call('memory-view', { botId: 'b2', summarize: true })
+  await summarized(call)
+  said.push(String((await call('memory-view', { botId: 'b2' })).value.error))
+  replies.push({ text: '', finish: 'error', failure: `503 ${MARKER}` })
+  await call('memory-view', { botId: 'b2', regenerate: true })
+  await summarized(call)
+  said.push(String((await call('memory-view', { botId: 'b2' })).value.error))
+
+  // The panel's ask, given an entry number that is not listed.
+  replies.push(JSON.stringify({ reply: 'Done.', changes: [{ op: 'edit', entry: NUMBER, text: 'The user likes tea' }] }))
+  const asked = (await call('memory-ask', { botId: 'b2', text: 'Change that one' })).value
+  assert.deepEqual(asked.changes.map(change => change.error), ['There is no such entry.'])
+
+  // An archive that cannot be made, for deleted Bots (b4's MEMORY.md is still the
+  // folder from above) and a deleted group.
+  mkdirSync(memory('bots', 'b3'), { recursive: true })
+  writeFileSync(memory('bots', 'b3', 'MEMORY.md'), `# Memory\n\n- ${MARKER} [added: 2026-11-04]\n`)
+  mkdirSync(memory('groups', 'r1'), { recursive: true })
+  writeFileSync(memory('groups', 'r1', 'MEMORY.md'), `# Memory\n\n- ${MARKER} [added: 2026-11-04]\n`)
+  writeFileSync(memory('archive'), MARKER)
+  await call('delete-room', { id: 'r1' })
+  await call('delete-bot', { id: 'b4' })
+  await call('delete-bot', { id: 'b3' })
+
+  // Every path above was taken, so the marker had its chance to show.
+  for (const kind of ['memory review of chat:b2 failed', 'passed the lines', 'memory review of chat:b3 failed', 'left out a change',
+    'memory review of chat:m1 failed', 'is pending', 'memory recovery failed', 'unreadable memory file', 'memory change record',
+    'snapshot for', 'memory of Temp not archived', 'memory of Coder not archived', 'memory of group Launch not archived',
+    'memory summary for Writer failed']) {
+    await until(() => warnings(home, kind).length > 0)
+  }
+  const lines = diagnosticsLog(home).split('\n').filter(Boolean)
+  for (const line of lines) {
+    assert.ok(!line.includes(MARKER), line)
+    assert.ok(!line.includes(NUMBER), line)
+  }
+  assert.ok(said.length >= 15, `${said.length} answers`)
+  for (const text of said) assert.ok(!text.includes(MARKER), text)
 })

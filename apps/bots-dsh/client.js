@@ -1504,6 +1504,7 @@ var HOST_ERRORS = [
   [/^[\s\S]*'s MEMORY\.md would have (\d+) of its (\d+) characters\.[\s\S]*$/, "主记忆会超过 $2 个字符的上限，请先删掉一些"],
   [/^The topic in [\s\S]* would have (\d+) of its (\d+) characters\.[\s\S]*$/, "主题会超过 $2 个字符的上限"],
   [/^[\s\S]* already has (\d+) topics, the most it holds\.[\s\S]*$/, "主题已经有 $1 个，不能再加新主题"],
+  [/^There is no such entry\.$/, "没有这一条"],
   [/^There is no entry (.+)\.$/, "没有第 $1 条"],
   [/^[\s\S]* has no such topic \(\d+ chars\)\.[\s\S]*$/, "没有这个主题"],
   [/^No entry in [\s\S]* matches the text given \(\d+ chars\)\.[\s\S]*$/, "找不到这条记忆"],

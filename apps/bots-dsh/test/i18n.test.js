@@ -44,6 +44,7 @@ test('copy follows the DSH language and stays English without a locale service',
     assert.equal(hostText("Writer's memory's MEMORY.md would have 4100 of its 4000 characters. Make room first: move details into a topic."), '主记忆会超过 4000 个字符的上限，请先删掉一些')
     assert.equal(hostText('The topic in your memory would have 16205 of its 16000 characters. Put the rest in another topic, or forget old entries.'), '主题会超过 16000 个字符的上限')
     assert.equal(hostText('There is no entry 9.'), '没有第 9 条')
+    assert.equal(hostText('There is no such entry.'), '没有这一条')
     assert.equal(hostText('No entry in your memory in that topic matches the text given (25 chars). recall shows what is saved.'), '找不到这条记忆')
     assert.equal(hostText('The text given (6 chars) matches 7 entries in your memory; quote more of the one you mean. recall shows what is saved.'), '对应了 7 条记忆，请说得更具体')
     assert.equal(hostText("Writer's memory has no such topic (7 chars). recall shows what is saved."), '没有这个主题')

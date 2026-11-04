@@ -85,6 +85,18 @@ const REFUSED = 'memory/refused'
 const FAILED = 'memory/failed'
 // A call to save nothing at all.
 const EMPTY = 'memory/empty'
+// A review answer memory cannot use.
+const UNUSABLE = 'memory/unusable-answer'
+
+// What memory says of a failure, in a log, a thrown message or the panel. An error
+// memory makes itself carries a memory/ code and a message that holds no data: no
+// path, no topic name, no entry text, no word of a model's answer. (A tool's refusal
+// may repeat the call's own arguments to the model that made it; no log holds one.)
+// Any other error, from the file system or a provider, may hold all of those, so
+// only its code is said, or `kind` when it has none.
+const failureCode = (error, kind) => (typeof error?.code === 'string' && /^[\w./-]{1,40}$/.test(error.code) ? error.code : kind)
+const ownFailure = error => typeof error?.code === 'string' && error.code.startsWith('memory/')
+const failureText = (error, kind = 'error') => (ownFailure(error) ? String(error.message) : failureCode(error, kind))
 // What a review shows of memory, in characters of entry text.
 const REVIEW_MEMORY_MAX = 16_000
 const NEWS_TEXT_MAX = 160
@@ -490,16 +502,16 @@ export function install(rt) {
 
   // An unreadable memory is not an empty one: callers that change it fail instead of
   // writing over what could not be read, the way store.js treats a broken state.json.
-  const unreadable = (path, error) => {
-    rt.warn('ds-bot: unreadable memory file %s: %s', path, error)
-    throw Object.assign(new Error(`Memory file ${path} could not be read (${error?.code ?? error?.message}). Omni leaves it as it is; fix or move the file.`), { code: 'memory/unreadable' })
+  const unreadable = (error) => {
+    rt.warn('ds-bot: unreadable memory file: %s', failureCode(error, 'error'))
+    throw Object.assign(new Error(`A memory file could not be read (${failureCode(error, 'error')}). Omni leaves it as it is; fix or move the file.`), { code: 'memory/unreadable' })
   }
   const readText = (path) => {
     try {
       return readFileSync(path, 'utf8')
     } catch (error) {
       if (error?.code === 'ENOENT') return ''
-      return unreadable(path, error)
+      return unreadable(error)
     }
   }
   const topicNames = (scope) => {
@@ -508,7 +520,7 @@ export function install(rt) {
       return readdirSync(dir).filter(name => name.endsWith('.md') && name !== MAIN).map(name => name.slice(0, -3)).sort()
     } catch (error) {
       if (error?.code === 'ENOENT') return []
-      return unreadable(dir, error)
+      return unreadable(error)
     }
   }
   // MEMORY.md first, then the topics by name.
@@ -569,7 +581,7 @@ export function install(rt) {
       return readFileSync(journalPath, 'utf8')
     } catch (error) {
       if (error?.code === 'ENOENT') return ''
-      unreadable(journalPath, error)
+      unreadable(error)
     }
   }
 
@@ -639,7 +651,7 @@ export function install(rt) {
       await journalRow(record.row)
       await unlink(pendingPath(root)).catch(error => { if (error?.code !== 'ENOENT') throw error })
     } catch (error) {
-      rt.warn('ds-bot: memory change %s is pending: %s', id, error)
+      rt.warn('ds-bot: memory change %s is pending: %s', id, failureText(error))
       throw error
     }
   }
@@ -667,7 +679,7 @@ export function install(rt) {
 
   // A change that was interrupted is finished when the host starts.
   ctx.effect(() => {
-    void rt.load().then(() => recover()).catch(error => rt.warn('ds-bot: memory recovery failed: %s', error?.message ?? error))
+    void rt.load().then(() => recover()).catch(error => rt.warn('ds-bot: memory recovery failed: %s', failureText(error)))
   }, 'ds-bot: memory recovery')
 
   // Checked when the write runs: a Bot or group chat deleted after the write was
@@ -676,7 +688,8 @@ export function install(rt) {
   // admin, or a group's memory once it has left the group.
   const writable = (scope, actor) => {
     const readOnly = rt.readOnly()
-    if (readOnly !== undefined) throw new Error(`Memory cannot change now: ${readOnly}`)
+    // The store's reason names a path, so it is not repeated here; the window shows it.
+    if (readOnly !== undefined) throw Object.assign(new Error('Memory cannot change now: this window cannot change the Bot team. Close the other dsh window, or fix the team file, and reload.'), { code: 'memory/read-only' })
     const botActor = actor?.id === 'user' ? undefined : actor?.id
     const gone = [scope.kind === 'bot' ? scope.botId : undefined, botActor].some(id => id !== undefined && rt.botOf(id) === undefined)
     if (gone) throw Object.assign(new Error('That Bot has been deleted'), { code: GONE })
@@ -869,7 +882,7 @@ export function install(rt) {
       await mkdir(join(root, 'archive'), { recursive: true })
       await rename(dir, join(root, 'archive', name))
       await journalRow({ id: randomUUID(), time: new Date().toISOString(), op: 'archive', scope: scopeKey(ownScope(botId)), actor: 'user', actorName: 'user', botName: bot?.name, to: `archive/${name}` })
-    }).catch(error => rt.warn('ds-bot: memory of %s not archived: %s', bot?.name ?? botId, error))
+    }).catch(error => rt.warn('ds-bot: memory of %s not archived: %s', bot?.name ?? botId, failureText(error)))
   }
 
   // A deleted group chat's memory moves to the archive, whole. Called before the
@@ -890,7 +903,7 @@ export function install(rt) {
       await mkdir(join(root, 'archive'), { recursive: true })
       await rename(dir, join(root, 'archive', name))
       await journalRow({ id: randomUUID(), time: new Date().toISOString(), op: 'archive', scope: scopeKey(groupScope(room.id)), actor: 'user', actorName: 'user', groupName: room.name, to: `archive/${name}` })
-    }).catch(error => rt.warn('ds-bot: memory of group %s not archived: %s', room.name, error))
+    }).catch(error => rt.warn('ds-bot: memory of group %s not archived: %s', room.name, failureText(error)))
   }
 
   // ---------------------------------------------------------------------------
@@ -911,8 +924,8 @@ export function install(rt) {
       return { text: readFileSync(path, 'utf8') }
     } catch (error) {
       if (error?.code === 'ENOENT') return { text: '' }
-      rt.warn('ds-bot: unreadable memory file %s: %s', path, error)
-      return { text: '', failed: `(this memory could not be read: ${error?.code ?? error?.name ?? 'error'})` }
+      rt.warn('ds-bot: unreadable memory file: %s', failureCode(error, 'error'))
+      return { text: '', failed: `(this memory could not be read: ${failureCode(error, 'error')})` }
     }
   }
   const sectionEntries = read => (read.failed === undefined ? shownEntries(parseMemory(read.text)) : [read.failed])
@@ -969,7 +982,7 @@ export function install(rt) {
     try {
       return { pending: readPending(root) !== undefined }
     } catch (error) {
-      rt.warn('ds-bot: %s', error?.message ?? error)
+      rt.warn('ds-bot: memory change record: %s', failureText(error))
       return { failed: true }
     }
   }
@@ -993,7 +1006,7 @@ export function install(rt) {
     const path = snapshotPath(sessionId)
     const snap = existsSync(path) ? sectionRead(path) : { text: '' }
     if (pending.pending === true || pending.failed === true) {
-      if (pending.pending === true) void recover().catch(error => rt.warn('ds-bot: memory recovery failed: %s', error?.message ?? error))
+      if (pending.pending === true) void recover().catch(error => rt.warn('ds-bot: memory recovery failed: %s', failureText(error)))
       // Only a previously committed snapshot is safe while files may be half-written.
       if (snap.text !== '' && holds(snap.text)) return snap.text
       return ['# Your memory', memoryRules(reviewOn), ...marks, '', 'Memory is unavailable until its pending change has been recovered. Use recall after recovery.'].join('\n')
@@ -1013,7 +1026,7 @@ export function install(rt) {
           writeFileSync(`${path}.tmp`, text, 'utf8')
           renameSync(`${path}.tmp`, path)
         } catch (error) {
-          rt.warn('ds-bot: memory snapshot for %s not saved: %s', bot.name, error)
+          rt.warn('ds-bot: memory snapshot for %s not saved: %s', bot.name, failureCode(error, 'error'))
         }
       }
     }
@@ -1088,7 +1101,7 @@ export function install(rt) {
   const topicArg = (raw) => {
     if (raw === undefined || raw === null || String(raw).trim() === '') return {}
     const topic = cleanTopic(raw)
-    return topic === undefined ? { error: `"${String(raw).slice(0, 60)}" cannot be a topic name: use a short word or two, such as "travel" or "project-x".` } : { topic }
+    return topic === undefined ? { error: `That topic (${String(raw).length} chars) cannot be a topic name: use a short word or two, such as "travel" or "project-x".` } : { topic }
   }
 
   // A write that did not happen. The tools answer with a sentence when they
@@ -1099,10 +1112,10 @@ export function install(rt) {
 
   const refused = message => new MemoryWriteError(message, REFUSED)
   // A failure from the write keeps the code it came with; anything else is a
-  // write that broke.
+  // write that broke, said by its code alone when memory did not make it.
   const writeFailure = failure => failure instanceof MemoryWriteError
     ? failure
-    : new MemoryWriteError(failure?.message ?? String(failure), ROUTED.has(failure?.code) ? failure.code : FAILED)
+    : new MemoryWriteError(ownFailure(failure) ? failureText(failure) : `The memory could not be changed (${failureText(failure)}).`, ROUTED.has(failure?.code) ? failure.code : FAILED)
 
   ctx.tools.register(defineTool({
     name: 'remember',
@@ -1193,7 +1206,7 @@ export function install(rt) {
       try {
         loaded = await settled(() => scopes.map(scope => ({ scope, tag: tagOf(scope, self), label: labelOf(scope, self), files: loadScope(scope) })))
       } catch (failure) {
-        return failure.message
+        return failureText(failure)
       }
       if (args.topic !== undefined && String(args.topic).trim() !== '') {
         const topic = cleanTopic(args.topic)
@@ -1248,7 +1261,7 @@ export function install(rt) {
   // agent over ACP, which answers only in its own chat.
   async function modelFor() {
     const route = splitRef(await rt.backgroundModel())
-    if (route === undefined) throw new Error('No model can run memory review. Pick a background model in Settings, or add a model in Harness settings.')
+    if (route === undefined) throw Object.assign(new Error('No model can run memory review. Pick a background model in Settings, or add a model in Harness settings.'), { code: 'memory/no-model' })
     return route
   }
   // The panel's model calls belong to the Bot or group whose memory they serve;
@@ -1274,14 +1287,15 @@ export function install(rt) {
         signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
       })) assembler.push(chunk)
       const finish = assembler.finish
-      if (finish.kind === 'error' || finish.kind === 'aborted') throw new Error(finish.failure?.message ?? finish.kind)
+      // The provider's message is not kept: it may quote the request. Its code is.
+      if (finish.kind === 'error' || finish.kind === 'aborted') throw Object.assign(new Error(`The model call ended (${finish.kind})`), { code: finish.failure?.code ?? (finish.kind === 'aborted' ? 'aborted' : undefined) })
       const reply = assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('\n').trim()
       if (finish.kind !== 'max-tokens' && reply !== '') return reply
       // A reply cut off at the limit — all of it thinking, or a half-written
       // answer — is dropped, never used; the retry gives it room once.
-      if (finish.kind !== 'max-tokens' && maxTokens === SUMMARY_MAX_TOKENS) throw new Error('The model wrote nothing')
+      if (finish.kind !== 'max-tokens' && maxTokens === SUMMARY_MAX_TOKENS) throw Object.assign(new Error('The model wrote nothing'), { code: 'memory/model-empty' })
     }
-    throw new Error(`The model's reasoning used up the output budget (${SUMMARY_MAX_TOKENS} and ${SUMMARY_RETRY_MAX_TOKENS} tokens); no complete answer was written`)
+    throw Object.assign(new Error(`The model's reasoning used up the output budget (${SUMMARY_MAX_TOKENS} and ${SUMMARY_RETRY_MAX_TOKENS} tokens); no complete answer was written`), { code: 'memory/model-budget' })
   }
 
   // A served model can still refuse the call (a key without access, say), so a failed call
@@ -1297,8 +1311,8 @@ export function install(rt) {
       try {
         return await oneShot(fallback, system, text, tag)
       } catch (again) {
-        const said = failure => failure?.message ?? String(failure)
-        throw new Error(`${first.provider}/${first.model}: ${said(error)}; ${fallback.provider}/${fallback.model}: ${said(again)}`)
+        const said = failure => failureText(failure, 'provider error')
+        throw Object.assign(new Error(`${first.provider}/${first.model}: ${said(error)}; ${fallback.provider}/${fallback.model}: ${said(again)}`), { code: 'memory/model-failed' })
       }
     }
   }
@@ -1353,8 +1367,8 @@ export function install(rt) {
       summaryFailures.delete(panel.id)
       if (rt.readOnly() === undefined) await writeText(summaryPath(panel.id), JSON.stringify(value, null, 2))
     })().catch((error) => {
-      summaryFailures.set(panel.id, { hash, models, message: error?.message ?? String(error) })
-      rt.warn('ds-bot: memory summary for %s failed: %s', panel.name, error)
+      summaryFailures.set(panel.id, { hash, models, message: failureText(error, 'provider error') })
+      rt.warn('ds-bot: memory summary for %s failed: %s', panel.name, failureText(error, 'provider error'))
     }).finally(() => summarizing.delete(panel.id))
     summarizing.set(panel.id, job)
   }
@@ -1404,10 +1418,10 @@ export function install(rt) {
       const label = panelLabel(panel, scope)
       const next = cleanEntry(change?.text)
       try {
-        if (op !== 'add' && target === undefined) throw new Error(`There is no entry ${change?.entry}.`)
+        if (op !== 'add' && target === undefined) throw Object.assign(new Error(`There is no ${/^\d{1,3}$/.test(String(change?.entry ?? '')) ? `entry ${change.entry}` : 'such entry'}.`), { code: REFUSED })
         if (op === 'add' || op === 'edit') {
           const problem = entryProblem(next)
-          if (problem) throw new Error(problem)
+          if (problem) throw Object.assign(new Error(problem), { code: REFUSED })
         }
         if (op === 'add') await addEntry({ scope, text: next, meta, actor: USER, label })
         else if (op === 'edit') await replaceEntry({ scope, topic: target.file.topic, match: target.text, text: next, meta, actor: USER, label })
@@ -1415,7 +1429,7 @@ export function install(rt) {
         else continue
         changes.push({ op, scope: tag, text: op === 'remove' ? target.text : next, ...(op === 'edit' ? { before: target.text } : {}), ok: true })
       } catch (failure) {
-        changes.push({ op, scope: tag, text: next || target?.text || '', ok: false, error: failure.message })
+        changes.push({ op, scope: tag, text: next || target?.text || '', ok: false, error: failureText(failure) })
       }
     }
     return { reply: answer.reply, changes, view: await memoryView(panelBody(panel)) }
@@ -1558,7 +1572,7 @@ export function install(rt) {
         else if (op === 'remove') done.push(await removeEntry({ scope, topic: target.file.topic, match: target.text, actor, label }))
       } catch (failure) {
         if (failure?.code === GONE) return 0
-        leftOut(name, op, op === 'remove' ? target?.text ?? '' : text, failure?.message ?? failure)
+        leftOut(name, op, op === 'remove' ? target?.text ?? '' : text, failureText(failure))
         if (failure?.code !== NO_MATCH && failure?.code !== DENIED && failure?.code !== FULL) failed ??= failure
       }
     }
@@ -1676,7 +1690,7 @@ export function install(rt) {
       const tries = unusable === undefined ? 0 : (before !== undefined && before.place === place ? before.tries : 0) + 1
       if (unusable !== undefined && tries < REVIEW_TRIES_MAX) {
         unusableAnswers.set(key, { place, tries })
-        throw new Error(unusable)
+        throw Object.assign(new Error(unusable), { code: UNUSABLE })
       }
       unusableAnswers.delete(key)
       if (unusable !== undefined) rt.warn('ds-bot: memory review of %s passed the lines through #%d after %d answers it could not use: %s', name, through, tries, unusable)
@@ -1753,7 +1767,7 @@ export function install(rt) {
       try {
         if (rt.readOnly() === undefined && reviewEnabled(waited)) await (waited.roomId === undefined ? reviewChat(waited) : reviewGroup(waited))
       } catch (error) {
-        rt.warn('ds-bot: memory review of %s failed: %s', waited.key, error?.message ?? error)
+        rt.warn('ds-bot: memory review of %s failed: %s', waited.key, failureText(error, 'provider error'))
       } finally {
         runningReviews.delete(waited.key)
         reviewsRunning -= 1
