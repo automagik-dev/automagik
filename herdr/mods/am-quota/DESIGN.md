@@ -1,8 +1,9 @@
 # am-quota — design notes
 
 The decisions this mod is built on, so the panel cannot drift from them. `policy.js`, `proxy.js`,
-`translate.js`, `write.js`, `switch.js`, `saved.js` and `lock.js` are the tested parts
-(`test/am-quota-*.test.mjs`); `main.js` is the panel that wires them. `RECIPE.md` is the
+`translate.js`, `write.js`, `switch.js`, `lock.js` and `view.js` are the tested parts
+(`test/am-quota-*.test.mjs`); `main.js` is the panel that wires them (`am-quota-panel.test.mjs`
+draws it under a stub runtime). `RECIPE.md` is the
 person-facing version.
 
 ## Where the facts come from (measured against a private CLIProxyAPI deployment, 2026-11-01)
@@ -99,74 +100,12 @@ Rules for the write, from the coordinator and from the experiment:
   `codex login status` are shallow: a garbage `{"access_token":"nope"}` was reported as
   "Logged in using ChatGPT".
 
-## Saved logins (`saved.js`)
+## Saved logins (removed)
 
-The owner swaps Claude Code accounts on one Mac without signing in again. A saved login is the
-client credential's **`claudeAiOauth` only** — never `mcpOAuth` or anything else the client item
-holds — in a Keychain item of its own:
-
-| What | macOS | Elsewhere (no `security`) |
-|---|---|---|
-| a saved login | item `am-quota saved: <name>`, login account `id -un` | `<app home>/data/am-quota/saved/<name>.json`, `0600`, folder `0700` |
-| the list | `<app home>/data/am-quota/saved.json`: name → `{savedAt, plan, email?, org?}`, no token | same |
-| which one is in use | `active.json`'s `claude.saved` (beside `name` and `fingerprint`) | same |
-| the copy a re-save replaced | item `am-quota saved: <name> (previous)` | `…/saved/previous/<name>.json`, `0600`, folder `0700` |
-
-Rules:
-
-- **one write path.** Every write — a save, a re-save, the swap — goes through `switch.place`, the
-  proxy switch's own code: the payload in the `0700` folder, `0600` at once, one hex `security -i`
-  add, the read-back, the old item put back on failure. `place({ to })` writes one saved copy:
-  `{ service }` on macOS, `{ file }` elsewhere (chosen by `translate.credentialTarget`, the one
-  place that knows whether there is a Keychain), replaced whole, no merge and no client file. A
-  saved file is written by `write.privateFileScript` — temp + `0600` + atomic rename, **no dated
-  backups**, because an older copy of a rotated token is only exposure;
-- **reading a login** copies the item out with the switch's own backup script (`find-generic-password
-  -w` into a `0600` hex file in the `0700` folder), reads it, and removes the copy in `finally`. The
-  client's item is only ever read when saving; it is written by Use and by a proxy switch, both
-  through the merge;
-- **the name is a word** (`^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$`), because it becomes part of a quoted
-  `security -i` service and a file name: no quote, space or slash can reach either;
-- **re-save before replace.** Claude rotates the refresh token on use, so a saved copy goes stale
-  the moment its login is used. Use therefore re-saves the login in use into its saved copy
-  *before* the swap (skipped when the copy already holds that refresh token), and a proxy switch
-  over a saved login does the same. A login in use that is not saved makes Use refuse, because the
-  swap would lose it — the person saves it first;
-- **the record is the identity, guarded.** Nothing in `claudeAiOauth` names the account, and a
-  rotation changes every token, so which saved login is in use comes from the panel's record. Before
-  an automatic re-save the login in use is compared with that name's saved copy — plan, rate tier,
-  scopes (`sameAccountShape`), which a rotation keeps — and a mismatch refuses ("does not look like
-  <name>"), so a `/login` made outside the panel cannot be re-saved over another account. Same-plan
-  accounts pass this check; the person's explicit Re-save is never guarded;
-- **a replaced copy is kept, one level deep.** The record can be wrong — a `/login` outside the
-  panel, an open session on the old account refreshing its rotated tokens back into the client
-  item, an `active.json` write that failed — and two accounts on one plan pass the check above. So
-  any re-save that replaces a copy holding *another* refresh token first writes that copy, the same
-  safe way, to `am-quota saved: <name> (previous)` (elsewhere `saved/previous/<name>.json`, `0600`,
-  folder `0700`); if that write fails, nothing is replaced. The space in the service and the separate
-  folder keep any saved name from reaching either. The row then offers **Restore previous**, a swap
-  (the copy it replaces becomes the previous one), so a restore can itself be undone; it never
-  touches the login in use. One level deep: the next re-save into that name replaces the previous
-  copy. It is not offered (and `restorePrevious` refuses) on the saved login in use, whose copy the
-  next Use re-saves from the client — the restore would flip back (`restoreOffer`). Forget removes
-  both copies;
-- **the record's write is checked.** A failed `active.json` write is shown, not swallowed: a stale
-  record points the next automatic re-save at the wrong name;
-- **an unknown environment refuses.** If the app's environment cannot be read, `CLAUDE_CONFIG_DIR`
-  is unknown, and so is the item Claude reads: Save, Re-save, Use, Forget, Restore and a Claude proxy
-  switch refuse instead of acting on the default login. A failed read is not cached;
-- **one write at a time.** Save, Re-save, Forget and Use all take `lock.claim`, like a proxy switch:
-  each reads or writes the client's item, and two must not interleave;
-- **confirm the destructive ones.** Forget, and Re-save on a row that is not in use (it replaces
-  that account's saved copy with the login in use), need a second click within five seconds;
-- **forget proves it.** `keychainForgetScript` deletes each item and then checks it is gone; a
-  missing item is not an error. The index entry is dropped only after both copies are gone, and a
-  failure to update it is reported;
-- **no proxy needed.** The panel reads the clients' environment (`CLAUDE_CONFIG_DIR`) and the saved
-  list before, and apart from, the proxy read, so a profile's suffixed item is the one used even
-  with no `cliproxy.json`;
-- the row shows email and organisation only when the token data carries them; the measured
-  `claudeAiOauth` does not, so it shows the plan (`subscriptionType`).
+Earlier versions kept saved Claude logins in their own Keychain items (`am-quota saved: <name>`)
+or `data/am-quota/saved/`. Accounts now live on the person's CLIProxyAPI, so the panel no longer
+reads, writes or deletes them; one left on a Mac stays until removed by hand. An `active.json`
+record naming one (`saved:<name>`) reads as not managed.
 
 The sweep that removes interrupted payloads matches only their names (`claude-*.json`,
 `codex-*.json`, `keychain-*.hex`): it used to match every `*.json` in the folder, which deleted
@@ -179,8 +118,40 @@ refresh token when one is used, so whichever side refreshes first invalidates th
 CLIProxyAPI refreshing the account signs the local CLI out, and a local CLI refresh makes the
 proxy's stored credential stale (the proxy then reports a failed/sign-in-needed account). This is
 inherent to sharing a credential and is not fixed by anything this mod writes — the panel says so
-in its status line and footer, and the way back is to re-import the credential (or sign in) on the
+in the banner after a Claude switch, and the way back is to re-import the credential (or sign in) on the
 side that was signed out.
+
+## The panel (`view.js`)
+
+The owner's ruling (2026-11-03): accounts for both tools live on the person's own CLIProxyAPI and
+are added there, never on the Mac; the panel is a personal tool for people who run one.
+
+- **one tool at a time.** A Claude Code / Codex switch; each card is `view.toolView`: the account in
+  use, one sentence from policy's projection (`minutesToDry` against `minutesToReset` + margin), one
+  primary button when `choose` says switch, then the tool's other accounts. Sentences are built
+  from `facts` and the accounts' emails, never from `choose`'s `reason`, which names credential
+  files;
+- **an account is `email · plan`.** The quota extension and the credential list both carry
+  `email`; the plan is Codex's `plan` (`id_token.plan_type` in the listing, the only claim read).
+  The listing has no Claude plan, so Claude rows show the email alone. The file name stays the id
+  (`active.json`, the download, `activeId`) and is never shown;
+- **not managed is a state, not an error.** No record, a record whose fingerprint no longer matches
+  what is installed, or a record the proxy no longer lists: the card says which, and the policy is
+  run with no active account, so the button names the account to start on;
+- **the proxy's name is the person's.** `cliproxy.json`'s optional `name`, else the URL's host,
+  else "CLIProxyAPI". No deployment's name is in the code, tests or docs. Open strips userinfo,
+  query and fragment from the base URL before handing it to `open`;
+- **no faked bars.** An account with no window reads "usage not tracked"; a quota extension that
+  does not answer is one amber line, not a column of empty bars;
+- **colours are semantic.** Green lasts, amber runs out, grey unknown; a suggestion is the accent
+  button. Red is for errors only;
+- **restarting is the CLI's, after a confirmation.** After a switch the panel lists the bots of that
+  tool whose pane started (`ls --all --json`'s `since`) before the switch; one running bot with no
+  start time makes the split unreliable, so then all of that tool's running bots are listed and the
+  banner says so. Restart is a second press within five seconds, then `automagik-herdr restart
+  <bot> --project <key>` per bot, sequentially, never `--force`; a refusal is shown per bot. The
+  CLI is run as the sidebar runs it (`env HERDR_APP_HOME=… sh <sidebar>/bin/run.sh …`); with no
+  sidebar mod there is no CLI and the banner gives the command instead.
 
 ## The policy
 
