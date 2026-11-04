@@ -94,6 +94,10 @@
       "to": "am/tidy.js"
     },
     {
+      "from": "herdr/mods/am-sidebar/transcriptFolder.mjs",
+      "to": "am/transcriptFolder.mjs"
+    },
+    {
       "from": "herdr/mods/am-sidebar/update.mjs",
       "to": "am/update.mjs"
     },
