@@ -329,6 +329,12 @@ pub fn migrate(old: &Path, new: &Path) -> io::Result<Migration> {
 /// move started, so a resumed move finishes only the generation it started.
 const MOVING: &str = ".meter-migrating";
 
+/// Whether `dir` holds the marker of a move that has not finished: its database files may be
+/// another generation's, and nothing may open them until the move is finished or resolved.
+pub fn move_unfinished(dir: &Path) -> bool {
+    exists(&dir.join(MOVING))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct Print {
     len: u64,
@@ -513,7 +519,9 @@ pub fn migrate_with(old: &Path, new: &Path, force_copy: bool) -> io::Result<Migr
             if exists(&dst) {
                 File::open(&dst)?.sync_all()?;
             } else if exists(&src) {
-                place(&src, &dst, force_copy)?;
+                // Always a copy: a hard link would let an older meter that writes to `old`
+                // before its names go rewrite the very file this generation is in.
+                copy_verified(&src, &dst)?;
             }
         }
         sync_dir(new)?;

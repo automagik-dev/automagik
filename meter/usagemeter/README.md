@@ -141,10 +141,13 @@ is opened, and the folder itself stays.
   missing, so an older meter starting mid-move waits), and skips (exit 0, retried next run) while
   another run holds either. The old `meter.lock` is removed last; it stays only beside files that
   were left behind.
-- It never replaces a file: a hard link then removal of the old name on one filesystem, else a
-  copy that is fsynced and compared before the old file is removed. Modes are kept. No old name is
-  removed before its new entry is fsynced, including an entry an interrupted run already made; a
-  failed fsync before that point stops `sync` with an error and the old file stays.
+- It never replaces a file. `meter.db`, `meter.db-wal` and `meter.db-shm` are always copied,
+  fsynced and compared, so the two dirs never share a file and an older meter writing to the old
+  dir cannot change the new copy (the move needs free space for one more copy of the store). The
+  `claude-limits.*` files are hard-linked on one filesystem, else copied the same way. Modes are
+  kept. No old name is removed before its new entry is fsynced, including an entry an interrupted
+  run already made; a failed fsync before that point stops `sync` with an error and the old file
+  stays.
 - The database moves with its sidecars as one unit. First a `.meter-migrating` marker in the new
   dir records the length and SHA-256 of each of `meter.db`, `meter.db-wal` and `meter.db-shm`;
   then all of them are placed in the new dir, and only then are the old names removed. The next
@@ -156,15 +159,21 @@ is opened, and the folder itself stays.
   deleted, neither store is used, and each `sync` prints one line to stderr and syncs nothing.
   To go on:
   1. Stop every meter, then copy both stores with `cp` (not `mv`) into folders of your own: the
-     old dir's `meter.db*`, and the new dir's `meter.db*` and `.meter-migrating`. The two
-     `meter.db` names can be one hard-linked file, and opening a store in place replays and
-     removes its WAL, so read the copies, not the originals.
+     old dir's `meter.db*`, and the new dir's `meter.db*` and `.meter-migrating`. Opening a store
+     in place replays and removes its WAL, so read the copies, not the originals.
   2. Compare the copies and choose the store to go on with. Remove the other one's `meter.db*`,
      and `.meter-migrating` from the new dir. The next `sync` moves the old store, or uses the
      new one.
   3. Keep the copy of the store you did not choose: the rows only it has are there and nowhere
      else. `sync --backfill` rebuilds every row from the logs still on disk, counting each event
      once whichever store had it, but it drops the rows whose logs are gone.
+
+  A build of this move before the copy-only fix hard-linked `meter.db`. If `ls -i` shows the
+  same number for the two `meter.db` names, the older meter's writes went into the new dir's copy
+  too: it no longer matches its WAL and may not open ("database disk image is malformed"). Only
+  the old store still reads back. Save both anyway (step 1), go on with the old store (step 2),
+  then run `sync --backfill` to bring back, from the logs still on disk, the rows only the new
+  dir's WAL held; rows whose logs are gone are lost from the active store either way.
 - If the new dir already has a `meter.db` this move did not put there (even a byte-identical
   copy), the old files all stay and `sync` uses the new dir's store, printing one stderr line. If
   it has a `meter.db-wal` or `meter.db-shm` but no `meter.db`, nothing is created, moved or
@@ -173,8 +182,10 @@ is opened, and the folder itself stays.
   the same one line.
 - If the new dir is the old dir under another name (a symlink), nothing moves.
 - With `METER_STATE_DIR` set nothing is moved and `~/.automagik/meter` is not created.
-- `status` reads the new dir only; before the first `sync` after an upgrade it reports
-  `synced: false`.
+- `status` reads the new dir only, under its `meter.lock`, read-only: it never changes the
+  schema or checkpoints the WAL. Before the first `sync` after an upgrade it reports
+  `synced: false`. While a sync runs, or while a move into the new dir has not finished, it opens
+  nothing and exits 2 with one stderr line.
 - `prices.json` (below) is not moved; the run that moves the store says so on stderr. Copy an
   override from the old dir by hand. Rows are hourly `agent.usage` rollups keyed by (bot, role,
 harness, model, machine, repo, branch, hour, precision); the row id (`idempotency_key`) hashes all

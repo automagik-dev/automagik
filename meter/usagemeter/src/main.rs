@@ -165,7 +165,21 @@ fn cmd_status() -> Result<ExitCode, String> {
         println!("{}", serde_json::json!({"state_dir": dir, "synced": false}));
         return Ok(ExitCode::SUCCESS);
     }
-    let store = Store::open(&db).map_err(|e| format!("cannot open {}: {e}", db.display()))?;
+    // Under the state lock no sync (and so no move) runs while the store is read. A move that
+    // has not finished leaves files that may be another generation's: opening them could replay
+    // a wal into a database it does not belong to, so status opens nothing.
+    let _lock = paths::try_lock(&dir)
+        .map_err(|e| format!("cannot lock {}: {e}", dir.display()))?
+        .ok_or("another sync is running; run status again when it finishes")?;
+    if paths::move_unfinished(&dir) {
+        return Err(format!(
+            "a move into {} has not finished, so status opens nothing there; the next sync \
+             says why (README: \"An interrupted move\")",
+            dir.display()
+        ));
+    }
+    let store =
+        Store::open_read_only(&db).map_err(|e| format!("cannot open {}: {e}", db.display()))?;
     let get = |k: &str| store.meta_i64(k).ok().flatten();
     let sources = sync::source_health(&store).map_err(|e| e.to_string())?;
     let v = serde_json::json!({

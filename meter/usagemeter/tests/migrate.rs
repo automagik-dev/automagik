@@ -41,6 +41,19 @@ impl Home {
     }
 
     fn run(&self, args: &[&str], state_dir: Option<&Path>) -> Output {
+        let out = self.output(args, state_dir);
+        assert!(
+            out.status.success(),
+            "{args:?} exited {:?}: {}{}",
+            out.status,
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        out
+    }
+
+    /// Runs the binary and returns what it printed and its exit status, success or not.
+    fn output(&self, args: &[&str], state_dir: Option<&Path>) -> Output {
         let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_usagemeter"));
         c.args(args)
             .env("HOME", self.home())
@@ -54,15 +67,7 @@ impl Home {
         if let Some(d) = state_dir {
             c.env("METER_STATE_DIR", d);
         }
-        let out = c.output().unwrap();
-        assert!(
-            out.status.success(),
-            "{args:?} exited {:?}: {}{}",
-            out.status,
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-        out
+        c.output().unwrap()
     }
 
     fn sync(&self, state_dir: Option<&Path>) -> Output {
@@ -661,5 +666,222 @@ fn two_stores_that_grew_apart_are_both_kept_and_neither_is_used() {
         ids(&saved.path().join("meter.db")),
         with("in-the-wal"),
         "new: base and in-the-wal"
+    );
+}
+
+/// The old database's three unit files as they are while a reader keeps its wal open: `base`
+/// plus a row committed only to the wal. Puts them back in `old` and returns their bytes.
+fn wal_generation(old: &Path) -> Vec<(&'static str, Vec<u8>)> {
+    let db = old.join("meter.db");
+    let reader = rusqlite::Connection::open(&db).unwrap();
+    reader
+        .query_row("SELECT count(*) FROM usage", [], |r| r.get::<_, i64>(0))
+        .unwrap();
+    let writer = rusqlite::Connection::open(&db).unwrap();
+    insert_row(&writer, "in-the-wal");
+    drop(writer);
+    let snap: Vec<(&str, Vec<u8>)> = ["meter.db", "meter.db-wal", "meter.db-shm"]
+        .into_iter()
+        .map(|f| (f, fs::read(old.join(f)).unwrap()))
+        .collect();
+    assert!(!snap[1].1.is_empty(), "the row is in the wal");
+    drop(reader);
+    for (f, b) in &snap {
+        fs::write(old.join(f), b).unwrap();
+    }
+    snap
+}
+
+/// An older meter's write: many wide rows, then a close that checkpoints into the database file.
+fn later_rows(db: &Path, n: usize) -> Vec<String> {
+    let c = rusqlite::Connection::open(db).unwrap();
+    let hour = meter::time::now_ms() / 3_600_000 * 3_600_000;
+    let ids: Vec<String> = (0..n).map(|i| format!("later-{i:04}")).collect();
+    for id in &ids {
+        c.execute(
+            "INSERT INTO usage (id, hour_ms, harness, model, machine, precision, output, events, \
+             updated_ms) VALUES (?1, ?2, 'claude', ?3, 'm-1', 'exact', 7, 1, ?2)",
+            rusqlite::params![id, hour, "m".repeat(1000)],
+        )
+        .unwrap();
+    }
+    ids
+}
+
+fn integrity_ok(db: &Path) -> bool {
+    let c = rusqlite::Connection::open(db).unwrap();
+    c.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))
+        .map(|v| v == "ok")
+        .unwrap_or(false)
+}
+
+/// Round 3, finding 1: a move interrupted after it placed the database unit, then an older meter
+/// writes and checkpoints into the old database. The new dir's copy must be a file of its own:
+/// a hard link would share the inode the older meter just rewrote, and the new generation (its
+/// database and the wal holding a committed row) would no longer read back.
+#[cfg(unix)]
+#[test]
+fn the_database_unit_is_copied_so_an_older_meter_cannot_rewrite_the_new_copy() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let h = Home::new();
+    h.old_store();
+    let (old, new) = (h.old_dir(), h.new_dir());
+    let db = old.join("meter.db");
+    let mut base = ids(&db);
+    fs::write(old.join("meter.lock"), b"").unwrap();
+    let snap = wal_generation(&old);
+    meter::paths::ensure_dir(&new).unwrap();
+
+    // The interruption: an old dir whose names cannot be removed stops the move right after it
+    // placed every unit file in the new dir.
+    fs::set_permissions(&old, fs::Permissions::from_mode(0o500)).unwrap();
+    if fs::File::create(old.join("probe")).is_ok() {
+        // Running as root: the mode does not stop the removal.
+        fs::set_permissions(&old, fs::Permissions::from_mode(0o700)).unwrap();
+        return;
+    }
+    let r = meter::paths::migrate(&old, &new);
+    fs::set_permissions(&old, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(r.is_err(), "{r:?}");
+    for (f, b) in &snap {
+        let (o, n) = (old.join(f), new.join(f));
+        assert_eq!(&fs::read(&n).unwrap(), b, "{f} was placed");
+        assert_ne!(
+            o.metadata().unwrap().ino(),
+            n.metadata().unwrap().ino(),
+            "{f} in the new dir is a file of its own"
+        );
+    }
+
+    // The crash came after the old sidecars went; an older meter then writes under the old lock.
+    for (f, _) in &snap[1..] {
+        fs::remove_file(old.join(f)).unwrap();
+    }
+    let later = {
+        let _held = meter::paths::try_lock(&old).unwrap().unwrap();
+        later_rows(&db, 100)
+    };
+    for _ in 0..2 {
+        let err = stderr(&h.sync(None));
+        assert!(err.contains("neither store is used"), "{err}");
+        for (f, b) in &snap {
+            assert_eq!(&fs::read(new.join(f)).unwrap(), b, "{f} stays as it was");
+        }
+    }
+
+    let saved = tempfile::tempdir().unwrap();
+    for (f, _) in &snap {
+        fs::copy(new.join(f), saved.path().join(f)).unwrap();
+    }
+    let saved_db = saved.path().join("meter.db");
+    assert!(integrity_ok(&saved_db), "the new generation reads back");
+    let mut want_new = base.clone();
+    want_new.push("in-the-wal".into());
+    want_new.sort();
+    assert_eq!(ids(&saved_db), want_new, "new: base and in-the-wal");
+    assert!(integrity_ok(&db));
+    base.extend(later);
+    base.sort();
+    assert_eq!(ids(&db), base, "old: base and the later rows");
+}
+
+fn unit_bytes(dirs: &[&Path]) -> Vec<Option<Vec<u8>>> {
+    dirs.iter()
+        .flat_map(|d| {
+            [
+                "meter.db",
+                "meter.db-wal",
+                "meter.db-shm",
+                ".meter-migrating",
+            ]
+            .map(|f| d.join(f))
+        })
+        .map(|p| fs::read(p).ok())
+        .collect()
+}
+
+/// Round 3, finding 2: the reviewer's layout. An earlier build hard-linked the unit into the new
+/// dir, the old sidecars went, and an older meter committed a row to the shared database. `status`
+/// must open nothing while the move is unfinished: replaying the new dir's wal would write into
+/// the database file both directories share.
+#[test]
+fn status_opens_nothing_while_a_move_is_unfinished() {
+    let h = Home::new();
+    h.old_store();
+    let (old, new) = (h.old_dir(), h.new_dir());
+    let db = old.join("meter.db");
+    let snap = wal_generation(&old);
+    meter::paths::ensure_dir(&new).unwrap();
+    let files: Vec<(&str, &[u8])> = snap.iter().map(|(f, b)| (*f, &b[..])).collect();
+    fs::write(new.join(".meter-migrating"), marker_of(&files)).unwrap();
+    for (f, _) in &snap {
+        fs::hard_link(old.join(f), new.join(f)).unwrap();
+    }
+    for (f, _) in &snap[1..] {
+        fs::remove_file(old.join(f)).unwrap();
+    }
+    {
+        let _held = meter::paths::try_lock(&old).unwrap().unwrap();
+        let c = rusqlite::Connection::open(&db).unwrap();
+        insert_row(&c, "later");
+    }
+    let before = unit_bytes(&[&old, &new]);
+
+    for _ in 0..2 {
+        let out = h.output(&["status"], None);
+        let err = stderr(&out);
+        assert_eq!(out.status.code(), Some(2), "{err}");
+        assert!(
+            err.contains("has not finished, so status opens nothing"),
+            "{err}"
+        );
+        assert!(out.stdout.is_empty());
+        assert_eq!(
+            unit_bytes(&[&old, &new]),
+            before,
+            "no byte of either store changed"
+        );
+    }
+    let saved = tempfile::tempdir().unwrap();
+    fs::copy(&db, saved.path().join("meter.db")).unwrap();
+    assert!(
+        later_row(&saved.path().join("meter.db"), "later"),
+        "the later row is kept"
+    );
+}
+
+/// Round 3, finding 2: `status` reads a store without writing it. A row committed only to the wal
+/// is counted, and the database and the wal keep their bytes (no checkpoint on close). It waits
+/// for nobody: while a sync holds the lock it says so and opens nothing.
+#[test]
+fn status_reads_the_store_without_checkpointing_it() {
+    let h = Home::new();
+    let rows = h.old_store();
+    let dir = h.old_dir();
+    wal_generation(&dir);
+    let (db, wal) = (
+        fs::read(dir.join("meter.db")).unwrap(),
+        fs::read(dir.join("meter.db-wal")).unwrap(),
+    );
+
+    assert_eq!(h.rows(&dir), rows + 1, "the wal's row is counted");
+    assert_eq!(
+        fs::read(dir.join("meter.db")).unwrap(),
+        db,
+        "the database is not written"
+    );
+    assert_eq!(
+        fs::read(dir.join("meter.db-wal")).unwrap(),
+        wal,
+        "the wal is not checkpointed"
+    );
+
+    let _held = meter::paths::try_lock(&dir).unwrap().unwrap();
+    let out = h.output(&["status"], Some(&dir));
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        stderr(&out).contains("another sync is running"),
+        "{}",
+        stderr(&out)
     );
 }

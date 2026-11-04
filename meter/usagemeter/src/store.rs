@@ -164,6 +164,21 @@ impl Store {
         Store::init(conn)
     }
 
+    /// Opens an existing store only to read it: no schema setup, no journal-mode change, and no
+    /// checkpoint on close, so the database and its wal keep exactly the bytes they had.
+    pub fn open_read_only(path: &Path) -> rusqlite::Result<Store> {
+        let conn = Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        conn.set_db_config(
+            rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
+            true,
+        )?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        Ok(Store { conn })
+    }
+
     pub fn open_in_memory() -> rusqlite::Result<Store> {
         Store::init(Connection::open_in_memory()?)
     }
