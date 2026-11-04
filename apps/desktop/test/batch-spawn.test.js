@@ -25,7 +25,7 @@ test('a quoted argument reads back as it was, and one cmd.exe would expand is re
   // A trailing backslash would escape the closing quote.
   assert.equal(quoteForCmd('C:\\packs\\'), '"C:\\packs\\\\"')
   assert.equal(quoteForCmd('C:\\a\\b'), '"C:\\a\\b"')
-  for (const bad of ['say "hi"', '%PATH%', 'a\nb', 'a\rb']) assert.throws(() => quoteForCmd(bad), /refusing to pass/)
+  for (const bad of ['say "hi"', '%PATH%', 'Bang!', 'a\nb', 'a\rb']) assert.throws(() => quoteForCmd(bad), /refusing to pass/)
 })
 
 test('on Windows a batch file gets its arguments exactly', { skip: process.platform === 'win32' ? false : 'needs cmd.exe' }, (t) => {

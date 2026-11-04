@@ -18,7 +18,7 @@ test('only a Windows batch file goes through cmd.exe, with every argument quoted
   assert.deepEqual(batchSafe('C:\\Users\\Ana Lu\\.automagik\\desktop\\bin\\pnpm.cmd', ['install', '--prod'], { cwd: 'C:\\x' }, 'win32'),
     ['"C:\\Users\\Ana Lu\\.automagik\\desktop\\bin\\pnpm.cmd"', ['"install"', '"--prod"'], { cwd: 'C:\\x', shell: true }])
   assert.deepEqual(batchSafe('C:\\nvm\\codex.CMD', ['login', 'status'], {}, 'win32'), ['C:\\nvm\\codex.CMD', ['"login"', '"status"'], { shell: true }])
-  for (const bad of ['say "hi"', '%PATH%', 'a\nb']) assert.throws(() => quoteForCmd(bad), /refusing to pass/)
+  for (const bad of ['say "hi"', '%PATH%', 'Bang!', 'a\nb']) assert.throws(() => quoteForCmd(bad), /refusing to pass/)
   assert.equal(quoteForCmd('C:\\dir\\'), '"C:\\dir\\\\"')
 })
 
