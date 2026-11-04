@@ -12,8 +12,9 @@ import { join } from 'node:path'
 
 export const SOCKET = 'bridge.sock'
 export const FILE = 'devices.json'
-// How long `forget` waits for the bridge, and the bridge for a request line.
-export const TIMEOUT = 5_000
+// How long `forget` waits for the bridge (its loop can be busy finding hc for a session), and the
+// bridge for a request line. Under the dialog's 30s exec limit.
+export const TIMEOUT = 10_000
 const MAX_REQUEST = 4096
 
 const readJson = (path, fallback) => { try { return JSON.parse(readFileSync(path, 'utf8')) } catch { return fallback } }

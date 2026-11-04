@@ -114,7 +114,7 @@ Before the bridge can run, the dialog shows one of two other screens in place of
     - `pair [minutes]` prints `{link, expires, rows}`, where `rows` holds the QR modules as strings of `1`/`0`
     - `status` prints `{running, id, name, ticket, devices, pairing, login, state}`; each device has `fingerprint`
     - `cancel` deletes the live code and prints `{ok, cancelled, devices}`
-    - `forget <id>` prints `{ok, removed, via}`: `via` is `bridge` when the running bridge removed the phone, `file` when no bridge answered on `bridge.sock` and `forget` wrote `devices.json` itself (`bridge/devices.mjs`). A bridge that refuses or gives no answer within 5s is an error, and nothing is written.
+    - `forget <id>` prints `{ok, removed, via}`: `via` is `bridge` when the running bridge removed the phone, `file` when no bridge answered on `bridge.sock` and `forget` wrote `devices.json` itself (`bridge/devices.mjs`). A bridge that refuses or gives no answer within 10s is an error, and nothing is written.
     - `start`, `stop`, `install` and `uninstall`
   - **Serving:**
     1. It binds an iroh `Endpoint` with the n0 preset, a persistent secret key and two ALPNs: `herdr-pocket/1` and `herdr-pocket/pair/1`.
