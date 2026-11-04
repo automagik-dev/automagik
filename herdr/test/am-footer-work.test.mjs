@@ -68,8 +68,8 @@ test("the rail draws Work after Mods, with its tooltip, without running it", asy
   const { all, index, nodes } = await import(stubs["gpui-kit"]);
   ui.props = { footer: true };
   const view = new Footer();
-  // init's state before its first look: no Bots or Pocket Link tab, nothing contributed.
-  Object.assign(view, { bots: false, pocket: false, phone: false, contributed: [] });
+  // init's state before its first look: no Bots, panel or Pocket Link tab, nothing contributed.
+  Object.assign(view, { bots: false, on: {}, pocket: false, phone: false, contributed: [] });
   const drawn = view.render();
   index(drawn);
   const ids = all(drawn).map((n) => n.id).filter((id) => id !== undefined);
