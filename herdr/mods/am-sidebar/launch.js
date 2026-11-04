@@ -49,12 +49,14 @@ export async function botOfTerminal(terminal) {
 }
 
 /**
- * The per-turn briefing for a Claude bot (DESIGN Approach "Group 3", Decision 9): merges the
+ * The briefing hook for a Claude bot (DESIGN Approach "Group 3", Decision 9): it ties the session
+ * to its pane, and gives the briefing once to a pane whose agent wasn't started with it (the CLI's
+ * Start and Restart put it in the agent's system prompt). Merges the
  * hook entry, if absent, into `<sessionFolder>/.claude/settings.local.json` (never the shared
  * settings.json) and keeps that file out of git through the clone's exclude file. Writes
  * nothing, and tells the owner the README fix, when the pack's briefing.mjs isn't at the path
- * computed from appHome(). `claude`: whether the session is Claude Code (other agents get
- * nothing). Never throws: a failure is a notification, never a refused Start or Attach.
+ * computed from appHome(). `claude`: whether the session is Claude Code (no other agent runs
+ * these hooks). Never throws: a failure is a notification, never a refused Start or Attach.
  * Resolves with { written } (true when the hook entry was added or updated).
  */
 export async function afterBind(bot, sessionFolder, claude = bot?.agent === "claude") {

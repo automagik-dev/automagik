@@ -189,9 +189,12 @@ a place in a team, and keeps that team in front of every agent and of you.
 - **A role and a lead.** Every bot has a name, a role, instructions and a lead. The project has
   one main bot; captains lead squads; members report to their captain or to the main bot.
   The team lives in `.herdr/bots.json`, committed with the project.
-- **A briefing every turn.** Before each prompt, a Claude bot gets its own instructions and
-  its team's state: a lead sees each member's status and latest report, and a member sees
-  its lead and the terminal to report to.
+- **A briefing at launch.** Start and Restart hand a bot its name, role, instructions, lead and
+  team as part of its agent's system prompt (Claude Code, Codex, Oh My Pi, Pi, Grok, Hermes),
+  once, never again each turn. Its team's live state, each member's status and latest report,
+  is `automagik-herdr brief <bot>`. A Claude pane attached while running gets the briefing
+  once, from its hook, on its first turn and again after an edit or a compaction. An edit to a
+  bot's instructions reaches it at its next `automagik-herdr restart`.
 - **Typed notes when blocked.** A member started under its lead's pane makes herdr-core type
   its `blocked`, `error` and exit notes into the lead's pane, so the lead wakes up.
 - **Any harness.** Bots run Claude Code, Codex, Antigravity, Kimi, Oh My Pi or any agent Herdr
@@ -471,7 +474,7 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
 - **Output:** the worker's terminal, then its role, worktree, branch, and agent, model and
   effort, or its template (`--json`: the same as data, with `role` and `template`).
 - **Lifecycle:** the bot checks the worker's result, and ends it with `hc kill <terminal>`
-  once the task merges. The bot's briefing says so every turn. As an hc child, a worker
+  once the task merges. The bot's briefing says so. As an hc child, a worker
   also ends when its bot's program ends; its worktree and branch stay.
 - **Ledger:** `worker`, `start` and `attach` append one row per terminal to
   `<app home>/automagik-herdr/workers.jsonl`: `{ event: "start", kind: "worker" | "seat",

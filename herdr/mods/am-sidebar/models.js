@@ -63,6 +63,16 @@ const INTERPRETERS = new Set(["node", "bun", "bunx", "deno", "python", "python3"
   "ruby", "bundle", "env", "sudo", "nice", "time", "watch", "nodemon"]);
 const base = (p) => String(p ?? "").split("/").pop().replace(/^-/, "");
 
+// The index of the agent's own executable in `words`: past any interpreter and its flags.
+function programAt(words) {
+  let i = 0;
+  while (i < words.length && INTERPRETERS.has(base(words[i]))) {
+    i += 1;
+    while (i < words.length && (words[i].startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]))) i += 1;
+  }
+  return i;
+}
+
 /**
  * The agent's own arguments in a foreground argv: past any interpreter (`bun …/omp`,
  * `node …/codex.js`, `env K=V claude`) and its flags. Returns { program, args }, `program`
@@ -70,11 +80,7 @@ const base = (p) => String(p ?? "").split("/").pop().replace(/^-/, "");
  */
 export function agentArgv(argv) {
   const words = Array.isArray(argv) ? argv.map(String) : [];
-  let i = 0;
-  while (i < words.length && INTERPRETERS.has(base(words[i]))) {
-    i += 1;
-    while (i < words.length && (words[i].startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]))) i += 1;
-  }
+  const i = programAt(words);
   if (i >= words.length) return { program: words.length ? base(words[0]) : "", args: [] };
   return { program: base(words[i]).replace(/\.(m|c)?js$/, ""), args: words.slice(i + 1) };
 }
@@ -156,6 +162,7 @@ export function configPaths(home) {
     claudeSettings: `${home}/.claude/settings.json`,
     codexConfig: `${home}/.codex/config.toml`,
     codexModels: `${home}/.codex/models_cache.json`,
+    hermesConfig: `${home}/.hermes/config.yaml`,
     antigravitySettings: `${home}/.gemini/antigravity-cli/settings.json`,
   };
 }
@@ -369,6 +376,165 @@ export function withoutResume(agentKey, args) {
     out.push(w);
   }
   return out;
+}
+
+// How each agent takes a bot's briefing at launch, as an addition to its own system prompt,
+// so no hook has to print it on every turn. Each was read on 2026-11-04 from the agent itself:
+// Claude Code 2.1.318 `--append-system-prompt-file <path>` (its parser takes it; a missing file
+// is an error, even interactive), codex 0.166.0 `-c developer_instructions=<TOML string>`
+// (`codex debug prompt-input` shows it as a developer message), omp 18.14.2
+// `--append-system-prompt=<text or file>`, grok 1.0.70 `--rules <text>` ("extra rules to append
+// to the system prompt"), pi 1.5.0 `--append-system-prompt <text>` ("text or file contents"),
+// hermes 0.22.5's HERMES_EPHEMERAL_SYSTEM_PROMPT (its CLI reads it at start and adds it at every
+// API call, never saving it). Hermes' variable REPLACES the owner's own overlay (its config's
+// display.personality, else agent.system_prompt), and a codex -c replaces a developer_instructions
+// in config.toml: the CLI skips both then (ownPromptIn), so an owner's own prompt is never lost. `file` takes the briefing's
+// path, `text` its text, `env` names variables; `ours` tells this pack's own words apart from a
+// person's. An agent missing here gets no briefing at launch (agy, cursor-agent, opencode and
+// kimi have no flag that appends).
+export const BRIEFING_MARK = "<herdr-bot>";
+/** The folder, under an app home, that holds the briefings `file` agents are started with. */
+export const BRIEFINGS_DIR = "automagik-herdr/briefings";
+const ourText = (v) => String(v).startsWith(BRIEFING_MARK);
+const ourFile = (v) => String(v).includes(`/${BRIEFINGS_DIR}/`);
+const BRIEFING = {
+  claude: { file: (path) => ["--append-system-prompt-file", path], names: ["--append-system-prompt-file"], ours: ourFile },
+  codex: {
+    text: (t) => ["-c", `developer_instructions=${tomlString(t)}`], names: ["-c", "--config"],
+    ours: (v) => /^developer_instructions\s*=/.test(String(v)) && String(v).includes(BRIEFING_MARK),
+  },
+  omp: { text: (t) => [`--append-system-prompt=${t}`], names: ["--append-system-prompt"], ours: ourText },
+  pi: { text: (t) => ["--append-system-prompt", t], names: ["--append-system-prompt"], ours: ourText },
+  grok: { text: (t) => ["--rules", t], names: ["--rules"], ours: ourText },
+  hermes: { env: (t) => ({ HERMES_EPHEMERAL_SYSTEM_PROMPT: t }) },
+};
+
+/**
+ * `text` as a TOML basic string: JSON's escapes are TOML's, but TOML also wants U+007F escaped
+ * and has no lone surrogates (a value codex can't parse would reach it as the raw literal).
+ */
+export function tomlString(text) {
+  const whole = String(text).replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, "\ufffd");
+  return JSON.stringify(whole).replace(/\x7f/g, "\\u007f");
+}
+
+/**
+ * Whether an agent's own config text (configPaths: codex's config.toml, hermes' config.yaml) sets
+ * the prompt this pack's briefing would replace: codex's top-level developer_instructions, hermes'
+ * display.personality or agent.system_prompt with a value. A key read loosely errs toward true:
+ * the briefing is then left out with a warning, never the owner's prompt.
+ */
+export function ownPromptIn(agentKey, text) {
+  const t = typeof text === "string" ? text : "";
+  if (agentKey === "codex") return /^\s*developer_instructions\s*=/m.test(t);
+  if (agentKey === "hermes") return hermesPromptIn(t);
+  return false;
+}
+
+// Hermes' display.personality or agent.system_prompt with a value: inline (not "", '', null or
+// ~), or on the lines below the key, more indented (a plain or block scalar). Unsure reads as set.
+function hermesPromptIn(text) {
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const m = /^([ \t]*)(system_prompt|personality)[ \t]*:(.*)$/.exec(lines[i]);
+    if (!m) continue;
+    const inline = m[3].replace(/(^|[ \t])#.*$/, "").trim();
+    if (inline && !/^(""|''|null|~|Null|NULL)$/.test(inline)) return true;
+    if (inline) continue;
+    const next = lines.slice(i + 1).find((l) => l.trim() && !/^[ \t]*#/.test(l));
+    if (next !== undefined && /^[ \t]*/.exec(next)[0].length > m[1].length) return true;
+  }
+  return false;
+}
+
+/** How `agentKey` takes a briefing at launch: "file", "text", "env", or null when it has no way. */
+export function briefingWay(agentKey) {
+  const b = BRIEFING[agentKey];
+  return b?.file ? "file" : b?.text ? "text" : b?.env ? "env" : null;
+}
+
+/**
+ * What starts `agentKey` with its briefing: { args, env }, `path` the briefing file (for a
+ * "file" agent; null: it couldn't be written, so nothing), `text` the briefing itself. Null
+ * when the agent has no way, or what it needs is missing.
+ */
+export function briefingLaunch(agentKey, { path = null, text = null } = {}) {
+  const b = BRIEFING[agentKey];
+  if (b?.file) return path ? { args: b.file(path), env: {} } : null;
+  if (!text) return null;
+  if (b?.text) return { args: b.text(text), env: {} };
+  if (b?.env) return { args: [], env: b.env(text) };
+  return null;
+}
+
+/** `args` without the briefing words this pack put in for `agentKey` (a person's own stay). */
+export function withoutBriefing(agentKey, args) {
+  const words = Array.isArray(args) ? args.map(String) : [];
+  const b = BRIEFING[agentKey];
+  if (!b?.names) return words;
+  const out = [];
+  for (let i = 0; i < words.length; i += 1) {
+    const w = words[i];
+    if (w === "--") { out.push(...words.slice(i)); break; }
+    if (b.names.includes(w) && i + 1 < words.length && b.ours(words[i + 1])) { i += 1; continue; }
+    const eq = w.indexOf("=");
+    if (eq > 0 && b.names.includes(w.slice(0, eq)) && b.ours(w.slice(eq + 1))) continue;
+    out.push(w);
+  }
+  return out;
+}
+
+/**
+ * `argv` (a whole command) with `launch` (briefingLaunch) put in right after the agent's own
+ * executable, before any subcommand (codex's `resume` takes its -c there), and any briefing it
+ * already carried taken out. A command that doesn't run `agentKey` (a shell line) is left as it is.
+ */
+export function withBriefing(agentKey, argv, launch, agents = AGENTS) {
+  const words = Array.isArray(argv) ? argv.map(String) : [];
+  if (agentKeyOfArgv(words, agents) !== agentKey) return words;
+  const at = programAt(words);
+  const rest = withoutBriefing(agentKey, words.slice(at + 1));
+  return [...words.slice(0, at + 1), ...(launch?.args ?? []), ...rest];
+}
+
+/** The briefing file of this pack's that a Claude Code `argv` was started with (its last such flag), or null. */
+export function briefingFileOf(argv) {
+  const words = Array.isArray(argv) ? argv.map(String) : [];
+  if (agentKeyOfArgv(words) !== "claude") return null;
+  const { args } = agentArgv(words);
+  const name = BRIEFING.claude.names[0];
+  let found = null;
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === "--") break;
+    const value = args[i] === name ? args[i + 1] : args[i].startsWith(`${name}=`) ? args[i].slice(name.length + 1) : null;
+    if (value != null) found = ourFile(value) ? value : null;
+  }
+  return found;
+}
+
+/**
+ * The conversation a Claude Code `argv` resumes: its id (`--resume <id>`, `-r <id>`,
+ * `--resume=<id>`), null for one with no id (`--continue`, `-c`, a bare --resume), undefined
+ * when it resumes none.
+ */
+export function resumedSessionOf(agentKey, argv) {
+  if (agentKey !== "claude") return resumesConversation(agentKey, argv) ? null : undefined;
+  const { args } = agentArgv(argv);
+  let found;
+  for (let i = 0; i < args.length; i += 1) {
+    const w = args[i];
+    if (w === "--") break;
+    if (w === "--continue" || w === "-c") found ??= null;
+    else if (w === "--resume" || w === "-r") { const v = args[i + 1]; found = v && !v.startsWith("-") ? v : null; }
+    else if (w.startsWith("--resume=")) found = w.slice(9) || null;
+  }
+  return found;
+}
+
+/** True when `argv` resumes an earlier conversation of `agentKey` (the words RESUMED knows). */
+export function resumesConversation(agentKey, argv) {
+  const { args } = agentArgv(argv);
+  return withoutResume(agentKey, args).length !== args.length;
 }
 
 /**
