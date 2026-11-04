@@ -249,8 +249,9 @@ jobs:
 
   meter:
     # Meter's local tools (meter/statusline: the Claude Code status line and the limits logger that
-    # runs it as `claude-limits-statusline.mjs -- <status line>`): syntax and their dependency-free tests, the formatter against fixture stdin objects
-    # included. No release ships them (scripts/lane.ts NEVER_SHIPPED).
+    # runs it as `claude-limits-statusline.mjs -- <status line>`): syntax and their dependency-free
+    # tests, the formatter against fixture stdin objects included. No release ships them
+    # (scripts/lane.ts NEVER_SHIPPED).
     name: Meter status line
     runs-on: ubuntu-24.04
     timeout-minutes: 5
