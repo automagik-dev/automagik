@@ -2197,10 +2197,11 @@ async function cmdRestart(opts, [ref]) {
   // With no id, a resume takes the folder's latest conversation (--continue, codex resume
   // --last), for every agent: beside another bot on that agent there, a new conversation, and
   // why (#328: an omp --continue picked up a teammate's). Alone there, the resume as before.
+  let sharedNote = null;
   if (plan.mode === "resume" && !resumeId) {
     const note = sharedFresh({ name: bot.name, old, cwd, sharers: botsOn(view, cwd, bot.id, file, plan.agent, ledger),
       agent: agentName(plan.agent), words: plan.resume.join(" ") });
-    if (note) plan = { ...restartPlan({ ...planned, fresh: true }), note };
+    if (note) { plan = { ...restartPlan({ ...planned, fresh: true }), note }; sharedNote = note; }
   }
   const { tree, treeWarnings } = old && opts.tree
     ? await treePlans({ bot, old, helpers, view, ledger, agents, knownSession, force: opts.force, freshShared: opts["fresh-shared"],
@@ -2216,6 +2217,9 @@ async function cmdRestart(opts, [ref]) {
   if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
   const warnings = seat.hook.warnings;
   const say = (w) => { warnings.push(w); report([w]); };
+  // The sidebar's Restart shows only --json's warnings: why it didn't resume goes there too
+  // (the text answer says it in its own line).
+  if (sharedNote) warnings.push(`${bot.name} starts on a new conversation: ${sharedNote}.`);
   if (movedFrom && movedFrom !== wanted && plan.mode === "resume" && plan.agent !== "claude") {
     say(`${seat.terminal} runs in ${wanted}, not ${movedFrom}: ${plan.agent} finds its last conversation by folder${resumeId ? "" : ", so it may not find it there"}.`);
   }

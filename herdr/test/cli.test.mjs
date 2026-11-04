@@ -13,6 +13,7 @@ import { checkBots, parseBots } from "../mods/am-sidebar/model.js";
 import { writeBotsFile, findBot, CliError, listProject } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { ledgerPath, readLedger } from "../mods/am-sidebar/workers.js";
 import { withoutBriefing } from "../mods/am-sidebar/models.js";
+import { restartAnswer } from "../mods/am-sidebar/restart.js";
 // Start and Restart put each bot's briefing in its agent's command (models.js withBriefing);
 // the tests on the rest of the command compare it with those words out.
 const strip = (words) => withoutBriefing("codex", withoutBriefing("claude", words));
@@ -1261,6 +1262,8 @@ test("restart (#328): omp with no session id beside another bot's omp (its pane,
   assert.deepEqual([r.json().mode, r.json().session], ["fresh", null]);
   const note = `no Oh My Pi session id is known for t5, and Captain (t9) also runs Oh My Pi in ${s.project}, so --continue could resume theirs instead of Genie's`;
   assert.equal(r.json().note, note);
+  // The sidebar's Restart shows --json's warnings (restart.js restartAnswer): the why is there too.
+  assert.ok(restartAnswer({ code: 0, out: r.json(), err: r.err }).warnings.includes(`Genie starts on a new conversation: ${note}.`), r.err);
   assert.deepEqual(ownWords(runCall(s.calls())), ["omp"], "no --continue");
   const text = shareScene(t, "omp").cli(["restart", "Genie"]);
   assert.equal(text.code, 0, text.err);
