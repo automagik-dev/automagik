@@ -59,7 +59,12 @@ function scene(t, { terminals = [], tui = true } = {}) {
   const hcState = () => JSON.parse(readFileSync(statePath, "utf8"));
   const setState = (fn) => { const s = hcState(); fn(s); writeFileSync(statePath, JSON.stringify(s)); };
   const rows = () => (existsSync(attachPath(app)) ? readAttach(readFileSync(attachPath(app), "utf8")).rows : []);
-  return { root, project, app, home, cli, on, calls, hcState, setState, rows };
+  // A window that shows `spaces` (herdr-app ls); any other herdr-app call fails.
+  const windowShows = (spaces) => {
+    writeFileSync(join(root, "window.json"), JSON.stringify({ spaces }));
+    exe(join(bin, "herdr-app"), `#!/bin/sh\n[ "$1" = ls ] && exec cat "${join(root, "window.json")}"\nexit 1\n`);
+  };
+  return { root, project, app, home, cli, on, calls, hcState, setState, rows, windowShows };
 }
 
 // The Atlas pane as lab/t8 is: live, under the keep wrapper, no status reported.
@@ -91,6 +96,18 @@ test("start --machine: hc run --on there with the Mac's agent table (programs.js
   const ls = s.cli(["ls", ...s.on, "--json"]).json().projects[0].bots.find((b) => b.id === ATLAS);
   assert.deepEqual([ls.terminal, ls.machine, ls.status], ["t100", "vm", "running"]);
   assert.deepEqual(keysSent(s.calls()), []);
+});
+
+test("start --machine lands in that machine's space on the project, in a tab of its own: never the space's selected tab", (t) => {
+  const s = scene(t);
+  s.windowShows([{ id: "sp-vm", folder: s.project, machine: "vm", active: true,
+    tabs: [{ id: "tb-a", active: false }, { id: "tb-b", active: true }] }]);
+  const r = s.cli(["start", "Atlas", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual([r.json().space, r.json().tab], ["sp-vm", null]);
+  const run = s.calls().find((c) => c[0] === "run");
+  assert.ok(run.includes("herdr.space=sp-vm"), run.join(" "));
+  assert.equal(run.some((a) => a.startsWith("herdr.tab=")), false, run.join(" "));
 });
 
 test("start --machine: an agent not installed there is refused before anything runs; without the override, plain hermes", (t) => {
