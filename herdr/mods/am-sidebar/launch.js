@@ -116,7 +116,7 @@ async function openSpace(projectKey, sleep, { waitMs = 5000, stepMs = 100 } = {}
 
 // Where a started bot opens: the first space of this computer whose folder keys to the
 // project, else a space opened on it (only with a `sleep` to wait for it by, so a space
-// is never left behind empty), else the shown space; in that space's active tab.
+// is never left behind empty), else the shown space; in a tab of its own there (no --tab).
 async function placeFor(projectKey, { sleep = null, ...wait } = {}) {
   let space = await keyedSpace(localSpaces(), projectKey);
   if (!space && sleep) {
@@ -127,8 +127,7 @@ async function placeFor(projectKey, { sleep = null, ...wait } = {}) {
   }
   const mine = localSpaces();
   space ??= mine.find((s) => s.id === focused()?.space) ?? mine.find((s) => s.active) ?? null;
-  const tab = space?.tabs?.find((t) => t.active) ?? null;
-  return { space: space?.id ?? null, tab: tab?.id ?? null };
+  return { space: space?.id ?? null };
 }
 
 // Bots being started now: a second click waits for nothing and is refused.
@@ -160,8 +159,8 @@ async function startOn(projectKey, botId, machine) {
 }
 
 async function startOnce(projectKey, botId, place) {
-  const { space, tab } = await placeFor(projectKey, place);
-  const where = space ? ["--space", space, ...(tab ? ["--tab", tab] : [])] : [];
+  const { space } = await placeFor(projectKey, place);
+  const where = space ? ["--space", space] : [];
   const r = await runCli(["start", botId, "--project", projectKey, ...where]);
   if (r.code !== 0) return refusedBy(r, "start");
   if (r.out?.running) {
