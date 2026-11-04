@@ -11,12 +11,12 @@
 // It is apart from a dsh you already run (~/.dsh) and from the Bot team installed into that
 // one (~/.automagik/bots), so neither sees the other's Bots or Sessions. Omni's own folder
 // (~/.omni: its sandbox, the Bun its channels download) is Omni's.
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { cp, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { delimiter, join, resolve, win32 } from 'node:path'
 import { DEFAULTS as PRIVACY_DEFAULTS, privacyEnv } from './privacy.js'
 
 export const PROFILE = 'omni'
@@ -51,7 +51,8 @@ export function resourcesOf({ packaged, resourcesPath, appPath }) {
 }
 
 const shellQuote = text => `'${String(text).replaceAll("'", `'\\''`)}'`
-// In a batch file only a % is read inside double quotes; a Windows path has no ".
+// In a batch file only a % is read inside double quotes (and a !, with delayed expansion, which the
+// tools switch off); a Windows path has no ".
 const batchQuote = text => `"${String(text).replaceAll('%', '%%')}"`
 
 /** The file a tool is written to: `pnpm.cmd` on Windows, which runs no `#!/bin/sh` script. */
@@ -77,7 +78,7 @@ export function writeTools({ dir, node, pnpm, platform = process.platform }) {
   for (const [name, line] of Object.entries(tools)) {
     const file = toolFileOf(dir, name, platform)
     const text = windows
-      ? `@echo off\r\nrem Written by the Automagik desktop app at launch (src/dsh.js writeTools).\r\nsetlocal\r\nset ELECTRON_RUN_AS_NODE=1\r\n${line}\r\n`
+      ? `@echo off\r\nrem Written by the Automagik desktop app at launch (src/dsh.js writeTools).\r\nsetlocal DisableDelayedExpansion\r\nset ELECTRON_RUN_AS_NODE=1\r\n${line}\r\n`
       : `#!/bin/sh\n# Written by the Automagik desktop app at launch (src/dsh.js writeTools).\n${line}\n`
     if (sameTool(file, text, windows)) continue
     writeFileSync(file, text)
@@ -788,8 +789,13 @@ export function startDsh({ node, bin, env, port, cwd, log, privacy, timeoutMs = 
   })
 }
 
-/** Stop dsh: SIGTERM, then SIGKILL if it is still there after the grace period. */
-export function stopDsh(child, graceMs = STOP_GRACE_MS) {
+/**
+ * Stop dsh: SIGTERM, then SIGKILL if it is still there after the grace period. Windows has no
+ * signals, and ending dsh alone there leaves its children (a terminal's OpenConsole.exe, rg.exe,
+ * pnpm's node) running from the app's folder, where they hold files an update must replace: there
+ * the whole tree ends at once (taskkill /T /F), and dsh alone only when taskkill cannot.
+ */
+export function stopDsh(child, graceMs = STOP_GRACE_MS, { platform = process.platform, env = process.env, run = execFile } = {}) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
   return new Promise((done) => {
     const timer = setTimeout(() => { try { child.kill('SIGKILL') } catch {} }, graceMs)
@@ -797,9 +803,17 @@ export function stopDsh(child, graceMs = STOP_GRACE_MS) {
       clearTimeout(timer)
       done()
     })
+    if (platform === 'win32' && child.pid) {
+      run(taskkillOf(env), ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, (error) => {
+        if (error) try { child.kill() } catch {}
+      })
+      return
+    }
     try { child.kill('SIGTERM') } catch { done() }
   })
 }
+
+const taskkillOf = env => win32.join(env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows', 'System32', 'taskkill.exe')
 
 /**
  * The app's rules for every webContents it makes (main.js harden, on 'web-contents-created'):

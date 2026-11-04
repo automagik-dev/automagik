@@ -9,6 +9,9 @@ import { test } from 'node:test'
 import { appHome, dshEnv, dshRun, forgetDshLogins, freePort, guardContents, installProfile, keepPort, launchPort, launchUrlOf, listenFailed, mergeProfilePackage, mergeProfilePatch, migrateRenamed, migrateRetired, navigationOf, pageUrlOf, pinProfileStore, portFileOf, portFree, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, RETIRED, retirePatch, scrubBuildPaths, serveDsh, servesOrigin, SHIPPED_STORE, startDsh, startDshOnPort, stopDsh, storedPort, storeLayoutOf, toolFileOf, writeTools } from '../src/dsh.js'
 import { batchSafe } from '../scripts/batch-spawn.mjs'
 
+const posixOnly = { skip: process.platform === 'win32' ? 'the tools are sh scripts here' : false }
+const windowsOnly = { skip: process.platform === 'win32' ? false : 'Windows only' }
+
 // Windows cannot remove a folder a process still runs in, and t.after runs its hooks in the order
 // they were added: the folder goes in one hook, after `stop` (set once the test starts its dsh),
 // retrying while a stopped process is still on its way out.
@@ -318,6 +321,41 @@ setInterval(() => {}, 1000)
   assert.notEqual(child.exitCode ?? child.signalCode, null)
 })
 
+// Windows: dsh's whole tree ends, so nothing it started keeps files of the app's folder open
+// under an update's installer.
+test('on Windows stopping dsh ends its whole process tree with taskkill', async () => {
+  const child = Object.assign(new EventEmitter(), { pid: 4242, exitCode: null, signalCode: null, kills: [] })
+  child.kill = signal => child.kills.push(signal ?? 'default')
+  const calls = []
+  const run = (file, args, options, done) => { calls.push([file, ...args]); setImmediate(() => { done(null); child.emit('exit', 1, null) }) }
+  await stopDsh(child, 8_000, { platform: 'win32', env: { SystemRoot: 'C:\\Windows' }, run })
+  assert.deepEqual(calls, [['C:\\Windows\\System32\\taskkill.exe', '/pid', '4242', '/T', '/F']])
+  assert.deepEqual(child.kills, [])
+  // taskkill failing: dsh alone, as before.
+  const lone = Object.assign(new EventEmitter(), { pid: 7, exitCode: null, signalCode: null })
+  lone.kill = () => setImmediate(() => lone.emit('exit', 1, null))
+  await stopDsh(lone, 8_000, { platform: 'win32', env: {}, run: (file, args, options, done) => done(new Error('denied')) })
+})
+
+test('on Windows a dsh\'s own children are gone once it is stopped', windowsOnly, async (t) => {
+  const scope = scratch(t, 'omni-desktop-tree-')
+  const parent = join(scope.root, 'parent.cjs')
+  writeFileSync(parent, `const { spawn } = require('node:child_process')
+const kid = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+console.log(String(kid.pid))
+setInterval(() => {}, 1000)
+`)
+  const { spawn } = await import('node:child_process')
+  const child = spawn(process.execPath, [parent], { cwd: scope.root, stdio: ['ignore', 'pipe', 'ignore'] })
+  const kid = Number(await new Promise(resolvePid => child.stdout.once('data', chunk => resolvePid(String(chunk).trim()))))
+  const alive = pid => { try { process.kill(pid, 0); return true } catch { return false } }
+  assert.equal(alive(kid), true)
+  await stopDsh(child)
+  // taskkill /T ends the tree before it returns; give Windows a moment to reap.
+  for (let i = 0; i < 20 && alive(kid); i++) await new Promise(r => setTimeout(r, 100))
+  assert.equal(alive(kid), false, 'the grandchild outlived dsh')
+})
+
 test('a dsh that exits before it is ready is reported, and one that never says so times out', async (t) => {
   const scope = scratch(t, 'omni-desktop-fail-')
   const { root } = scope
@@ -333,8 +371,6 @@ test('a dsh that exits before it is ready is reported, and one that never says s
   await assert.rejects(startDsh({ node: process.execPath, bin: silent, env: process.env, port: await freePort(), cwd: root, timeoutMs: 300, onSpawn }), /did not start within/)
 })
 
-const posixOnly = { skip: process.platform === 'win32' ? 'the tools are sh scripts here' : false }
-const windowsOnly = { skip: process.platform === 'win32' ? false : 'the tools are batch files on Windows' }
 
 test('dsh gets node and pnpm on its PATH, both on the app\'s own Node', posixOnly, (t) => {
   const root = mkdtempSync(join(tmpdir(), 'omni-desktop-tools-'))
