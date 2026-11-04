@@ -14,6 +14,7 @@ import * as plugin from '../index.js'
 import { loadDefinitions } from '../src/definitions.js'
 import { MindStream } from '../src/mind.js'
 import { REDACTED, redact, redactText, secretsIn } from '../src/redact.js'
+import { sentence } from '../src/sentences.js'
 
 const catalog = loadCatalog()
 const BOOT = 'b0'
@@ -43,6 +44,45 @@ const fragmentsOf = (s, n = 5) => Array.from({ length: s.length - n + 1 }, (_, i
 const DIGEST = /\b[0-9a-f]{64}\b/g
 const fragmentIn = (s, text) => fragmentsOf(s).find((f) => text.replace(DIGEST, '<sha256>').includes(f)) ?? null
 const fixed = (mind) => ((mind.life = 'lifeZ'), mind)
+// A failure's own evidence, without the secret: every run of characters covered by the whole
+// canary or a 5-char fragment of it reads "[canary]", so a report never carries its bytes.
+const maskCanary = (raw) => {
+  const s = raw.replace(DIGEST, '<sha256>')
+  const hidden = new Array(s.length).fill(false)
+  for (const f of [CANARY, ...fragmentsOf(CANARY)]) {
+    for (let at = s.indexOf(f); at >= 0; at = s.indexOf(f, at + 1)) hidden.fill(true, at, at + f.length)
+  }
+  return [...s].map((c, i) => (!hidden[i] ? c : hidden[i - 1] ? '' : '[canary]')).join('')
+}
+// Where a served body carries `frag`: the JSON path of the first string or number holding it
+// (a snapshot body is one JSON value, SSE frames one per `data:` line), its type, and a masked
+// excerpt around it. Never throws: a diagnostic must not replace the failure it explains.
+const whereIn = (text, frag) => {
+  try {
+    const hit = (v, path) => {
+      if (typeof v === 'string' || typeof v === 'number') {
+        const s = String(v).replace(DIGEST, '<sha256>')
+        const at = s.indexOf(frag)
+        return at < 0 ? null : `${path} (${typeof v}): ${maskCanary(s.slice(Math.max(0, at - 40), at + frag.length + 40))}`
+      }
+      if (v && typeof v === 'object') {
+        for (const [k, x] of Object.entries(v)) {
+          const found = hit(x, Array.isArray(v) ? `${path}[${k}]` : `${path}.${k}`)
+          if (found) return found
+        }
+      }
+      return null
+    }
+    const values = text.trimStart().startsWith('{') ? [['$', JSON.parse(text)]] : text.split('\n').filter((l) => l.startsWith('data: ')).map((l, i) => [`frame[${i}]`, JSON.parse(l.slice(6))])
+    for (const [path, v] of values) {
+      const found = hit(v, path)
+      if (found) return found
+    }
+    return 'in no JSON string or number (outside the parsed values)'
+  } catch (e) {
+    return `not located (${e.message})`
+  }
+}
 
 // ── the pattern contract ───────────────────────────────────────────────────────────────────
 
@@ -279,7 +319,48 @@ test('canary on the real /api/unfold-mind snapshot route and SSE stream: no frag
     abort.abort()
     await within(pump.catch(() => {}), 2000, 'the stream ends on abort')
     assert.ok(frames.includes('event: '), 'the stream carried frames')
-    for (const [what, text] of [['snapshot route', snap], ['SSE frames', frames]]) assert.equal(fragmentIn(CANARY, text), null, `${what}: ${fragmentIn(CANARY, text)}`)
+    for (const [what, text] of [['snapshot route', snap], ['SSE frames', frames]]) {
+      const frag = fragmentIn(CANARY, text)
+      assert.equal(frag, null, frag && `${what}: ${frag} at ${whereIn(text, frag)}`)
+    }
+  } finally {
+    await fiber.dispose()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// A quoted field is clipped for its sentence (log at 140, typed text at 90). A clip landing inside a
+// key used to leave its first 15 body characters, too short for the sk- rule, so the fragment
+// survived serve-time redaction. Each field plants the key across its own clip boundary.
+test('a field clipped for its sentence never shows part of a key the clip cut, in the sentence or on the route', async () => {
+  const log = `${'a'.repeat(120)} ${CANARY}` // 140 keeps 139: the space, "sk-" and 15 body chars
+  const typed = `${'a'.repeat(70)} ${CANARY}` // 90 keeps 89: the same 15 body chars
+  for (const [kind, fields] of [['log', { level: 'info', msg: log }], ['user_text', { request_id: 'c1', text: typed }]]) {
+    const said = sentence({ lane: 'agentd', kind, fields }).sentence
+    assert.equal(fragmentIn(CANARY, said), null, `${kind} sentence: ${maskCanary(said)}`)
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'unfold-mind-clip-'))
+  const ctx = new Context()
+  const routes = []
+  ctx.provide('connection', { fetch: { register: (route) => (routes.push(route), async () => routes.splice(routes.indexOf(route), 1)) } })
+  const window = new EventWindow(catalog, { limit: 50 })
+  let seq = 0
+  const push = (kind, fields) => window.push({ v: 2, id: `${P}:${++seq}`, producer: P, seq, t_ns: seq * 1000, source: 'guest', kind, ...fields })
+  ctx.provide('unfoldEvents', { window, catalog, snapshot: () => ({ link: { state: 'attached', detail: 'observer' } }) })
+  const fiber = ctx.plugin(plugin, { dataDir: dir })
+  try {
+    await fiber
+    await settle()
+    fixed(ctx.get('unfoldMind').mind)
+    push('log', { level: 'info', msg: log })
+    push('user_text', { request_id: 'c1', text: typed })
+    for (let i = 0; i < 5; i++) await settle()
+    const snap = await (await routes.find((r) => r.path === '/api/unfold-mind').fetch(new Request('http://h/api/unfold-mind'))).text()
+    assert.ok(snap.includes('Agent note (info)') && snap.includes('Received a typed message'), 'both rows were served')
+    // Mind's wall clock is real here: its ms readings are JSON numbers, never a quoted field.
+    const body = snap.replace(/(?<=":)\d{10,}(?=[,}\]])/g, '0')
+    const frag = fragmentIn(CANARY, body)
+    assert.equal(frag, null, frag && `snapshot route: ${frag} at ${whereIn(body, frag)}`)
   } finally {
     await fiber.dispose()
     rmSync(dir, { recursive: true, force: true })
