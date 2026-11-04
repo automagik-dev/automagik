@@ -35,9 +35,9 @@ repeated here, as MIT requires — that file, not the mod's Apache LICENSE, is t
   mods/pocket-link/chat Pocket Link's live chat projection (RFC 0015), ported from stablyai/orca at
                         e1dfc022 (TypeScript to JavaScript, behaviour unchanged except as noted in
                         chat/UPSTREAM.md): decode-claude.js, decode-codex.js, decode-omp.js,
-                        decode-shared.js, types.js, screen.js, and the paste framing in paste.js,
-                        with their tests. chat/UPSTREAM.md lists each upstream path and blob id. Pocket Link
-                        is Pocket's and never part of the pack.
+                        decode-shared.js, types.js, screen.js, answer.js, and the paste framing in
+                        paste.js, with their tests. chat/UPSTREAM.md lists each upstream path and
+                        blob id. Pocket Link is Pocket's and never part of the pack.
 
   jacksonpires/herdr-app-mod-manager:
 
