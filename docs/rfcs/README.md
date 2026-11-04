@@ -35,12 +35,12 @@ Security gaps are named by title only until their fix merges. Details go to a pr
 | [0003](0003-model-routes-and-acp.md) | Model routes and ACP | Accepted (deliveries 1-3 merged: #187, #189) | 2 (route descriptor), 3. Other agents in the same chat |
 | [0004](0004-composer-chat-kinds.md) | Composer and chat kinds | Accepted | 2. One message box |
 | [0005](0005-workspace-and-genie-projects.md) | Workspace and Genie projects | Accepted | 4. Projects in one place (Publish not scheduled) |
-| [0006](0006-herdr-terminal-mode.md) | Herdr terminal mode | Superseded (by RFC 0013 under D27, and RFC 0015) | not scheduled |
+| [0006](0006-herdr-terminal-mode.md) | Herdr terminal mode | Superseded (D27: herdr-app as the code window, RFC 0013; its Workers section, a herdr subagents provider for DSH, is not replaced) | not scheduled |
 | [0007](0007-desktop-speed.md) | Desktop speed | Accepted (delivery 2 merged: #184; part of 4: #179) | 1 (marks, stable port), 5. The app opens fast |
 | [0008](0008-platform-and-web-instances.md) | Platform and web instances | Draft | not scheduled |
 | [0009](0009-personal-customization.md) | Personal customization | Draft | after 2 (proposed: Make it yours) |
 | [0010](0010-desktop-sandbox.md) | Desktop sandbox and supervision | Draft (answers: D19; question 2 open) | not scheduled |
-| [0011](0011-monorepo-parts-and-releases.md) | Monorepo parts and releases | Accepted (imports merged: #190, #203, #210) | n/a (process) |
+| [0011](0011-monorepo-parts-and-releases.md) | Monorepo parts and releases | Accepted (herdr import merged: #190; herdr lane: #210; Pocket import merged: #203) | n/a (process) |
 | [0012](0012-am-cli-and-parts.md) | am, one CLI and parts | Accepted (delivery 2 partly merged: #254, #258; 1 is #263, open) | none (ships outside the five milestones) |
 | [0013](0013-work-code-switch.md) | The work and code switch | Accepted (deliveries 1-6 merged: #211, #238, #237, #259, #265, #272) | none (ships outside the five milestones) |
 | [0014](0014-shared-bot-registry.md) | Shared Bot registry | Accepted (delivery 1 merged: #260) | none (ships outside the five milestones) |
