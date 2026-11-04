@@ -75,6 +75,24 @@ test("the app's own home and the preload the CLIs write are in Automagik's home"
   assert.equal(preloadOf({ home: automagikHome({ AUTOMAGIK_HOME: root }), argv: ['/opt/Automagik/automagik'] }), 'genie')
 })
 
+test("macOS asks for the microphone and the local network with the app's own lines", () => {
+  // The keys under mac.extendInfo, which electron-builder writes into Contents/Info.plist.
+  const lines = builder.split('\n')
+  const start = lines.indexOf('  extendInfo:', lines.indexOf('mac:'))
+  assert.ok(start > lines.indexOf('mac:'), 'mac has extendInfo')
+  const info = {}
+  for (const line of lines.slice(start + 1)) {
+    const match = line.match(/^ {4}(\w+):\s*(.+)$/)
+    if (!match) break
+    info[match[1]] = match[2].trim()
+  }
+  assert.equal(info.NSMicrophoneUsageDescription,
+    'Automagik listens to you only while voice chat is on, to hear what you say to your Bots.')
+  // Without it macOS never asks, and a LAN-hosted Omni fails with EHOSTUNREACH (#96).
+  assert.equal(info.NSLocalNetworkUsageDescription,
+    'Automagik connects to Omni and other services on your local network.')
+})
+
 test('the artifacts are named Automagik, and the CLIs and the update feeds still find them', () => {
   const linux = setting('artifactName', 'linux')
   const mac = setting('artifactName', 'mac')

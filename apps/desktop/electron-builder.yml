@@ -97,8 +97,11 @@ mac:
   hardenedRuntime: true
   entitlements: assets/entitlements.mac.plist
   # Voice chat: macOS asks once, with this line, the first time a chat listens.
+  # Local network: without this line macOS never asks, and every connection to a LAN address
+  # (an Omni on this network) fails with EHOSTUNREACH (#96).
   extendInfo:
     NSMicrophoneUsageDescription: Automagik listens to you only while voice chat is on, to hear what you say to your Bots.
+    NSLocalNetworkUsageDescription: Automagik connects to Omni and other services on your local network.
   entitlementsInherit: assets/entitlements.mac.plist
   artifactName: Automagik-${version}-mac-${arch}.${ext}
 dmg:
