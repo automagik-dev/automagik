@@ -380,6 +380,32 @@ jobs:
       - name: Test
         run: npm test
 
+  acp-windows:
+    # acp-dsh runs the app's pnpm.cmd and the agents' CLIs (codex.cmd) on Windows through cmd.exe
+    # (src/host/batch-spawn.js). Those tests import only Node's own modules: no harness needed.
+    name: acp-dsh (Windows spawns)
+    runs-on: windows-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/acp-dsh
+        shell: bash
+    steps:
+      - name: Check out without CRLF
+        working-directory: .
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+
+      - name: Test
+        run: node --test test/batch-spawn.test.js
+
   boot:
     # The plugins booted for real with Omni's channels and canvases (the release omni.json
     # pins): boot-check.yml, which Follow Omni also runs on a candidate Omni before carrying it.
