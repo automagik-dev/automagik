@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "categories": [],
+  "bots": [
+    {
+      "id": "b-xzrwondddr",
+      "kind": "main",
+      "name": "Automagik Orchestrator",
+      "role": "Orchestrates automagik (DSH desktop): non-coding work; leads bot-system unification with Herdr",
+      "instructions": "",
+      "agent": "claude",
+      "look": {
+        "character": "kitty",
+        "colour": "yellow"
+      }
+    }
+  ]
+}

@@ -11,12 +11,12 @@ import { createPets, sheetVersion, webpSize } from '../src/host/pets.js'
 
 // The player is client code: bundled with a stand-in React, like the marks' tests.
 const bundle = await build({
-  stdin: { contents: "export { CELL, ROWS, cellOf, directionOf, petRowOf } from './src/client/pet.js'", resolveDir: dirname(dirname(fileURLToPath(import.meta.url))) },
+  stdin: { contents: "export { CELL, ONCE, STATE_ROWS, EVENT_ROWS, ROWS, SLEEP, cellOf, directionOf, petRowOf } from './src/client/pet.js'", resolveDir: dirname(dirname(fileURLToPath(import.meta.url))) },
   bundle: true, format: 'cjs', platform: 'node', write: false, logLevel: 'silent', external: ['react'],
 })
 const player = { exports: {} }
 runInNewContext(bundle.outputFiles[0].text, { module: player, exports: player.exports, require: () => ({ createElement: () => null, useEffect: () => {}, useRef: () => ({}), useState: v => [v, () => {}] }) })
-const { CELL, ROWS, cellOf, directionOf, petRowOf } = player.exports
+const { CELL, ONCE, STATE_ROWS, EVENT_ROWS, ROWS, SLEEP, cellOf, directionOf, petRowOf } = player.exports
 
 // A WebP header of a given size, in each of the three encodings (the bytes past it are not read).
 function vp8x(width, height) {
@@ -63,20 +63,20 @@ test('the plugin ships Genie as a v2 pet with its sleep strip, and lists Codex\'
   const list = await pets.list()
   // Directory order is filesystem-dependent: compare by identity, not by readdir order.
   const shapes = list.map(pet => [pet.source, pet.id, pet.version, pet.sleep]).sort((a, b) => `${a[0]}:${a[1]}`.localeCompare(`${b[0]}:${b[1]}`))
-  assert.deepEqual(shapes, [['builtin', 'automagik', 2, true], ['builtin', 'genie-cosmic', 2, true], ['builtin', 'unfold', 2, true], ['builtin', 'wisp', 2, false], ['codex', 'fox', 1, false]])
-  assert.equal(sheetVersion(await pets.file('builtin', 'genie-cosmic')), 2)
-  assert.ok((await pets.file('builtin', 'genie-cosmic', 'sleep')).length > 0)
+  assert.deepEqual(shapes, [['builtin', 'automagik', 2, true], ['builtin', 'genie-clay', 1, true], ['builtin', 'unfold', 2, true], ['builtin', 'wisp', 2, false], ['codex', 'fox', 1, false]])
+  assert.equal(sheetVersion(await pets.file('builtin', 'genie-clay')), 1)
+  assert.ok((await pets.file('builtin', 'genie-clay', 'sleep')).length > 0)
   assert.equal(await pets.file('builtin', '../etc'), undefined)
   // Picked from Codex, a pet is copied to the team, which then lists it as its own.
   const kept = await pets.adopt('codex', 'fox')
   assert.deepEqual([kept.source, kept.id, kept.version], ['team', 'fox', 1])
-  assert.deepEqual((await pets.list()).map(pet => `${pet.source}:${pet.id}`).sort(), ['builtin:automagik', 'builtin:genie-cosmic', 'builtin:unfold', 'builtin:wisp', 'team:fox'])
+  assert.deepEqual((await pets.list()).map(pet => `${pet.source}:${pet.id}`).sort(), ['builtin:automagik', 'builtin:genie-clay', 'builtin:unfold', 'builtin:wisp', 'team:fox'])
 })
 
 test('Unfold\'s pet is listed only in Unfold\'s own instance', async () => {
   const ids = async options => (await createPets({ ...await homes(), fetch: () => { throw new Error('no network') }, ...options }).list()).filter(pet => pet.source === 'builtin').map(pet => pet.id).sort()
-  assert.deepEqual(await ids({ unfold: () => false }), ['automagik', 'genie-cosmic', 'wisp'])
-  assert.deepEqual(await ids({ unfold: () => true }), ['automagik', 'genie-cosmic', 'unfold', 'wisp'])
+  assert.deepEqual(await ids({ unfold: () => false }), ['automagik', 'genie-clay', 'wisp'])
+  assert.deepEqual(await ids({ unfold: () => true }), ['automagik', 'genie-clay', 'unfold', 'wisp'])
   // By default the host decides, from AUTOMAGIK_HOST or AUTOMAGIK_PRELOAD.
   const before = { AUTOMAGIK_HOST: process.env.AUTOMAGIK_HOST, AUTOMAGIK_PRELOAD: process.env.AUTOMAGIK_PRELOAD }
   try {
@@ -143,6 +143,28 @@ test('a Bot\'s states play the rows the adoption contract maps them to', () => {
   // The rows and their cells, as Codex lays them out.
   assert.deepEqual(Object.entries(ROWS).map(([name, row]) => [name, row.row, row.ms.length]), [['idle', 0, 6], ['running-right', 1, 8], ['running-left', 2, 8], ['waving', 3, 4], ['jumping', 4, 5], ['failed', 5, 8], ['waiting', 6, 6], ['running', 7, 6], ['review', 8, 6]])
   assert.deepEqual([CELL.width, CELL.height, CELL.columns], [192, 208, 8])
+})
+
+test('the poses shared with Herdr name rows the player has, and play once only what plays once', () => {
+  assert.deepEqual(Object.keys(STATE_ROWS), ['working', 'idle', 'needs-you', 'done', 'failed', 'asleep'])
+  assert.deepEqual(Object.keys(EVENT_ROWS), ['merged'])
+  for (const [state, pose] of Object.entries(STATE_ROWS)) {
+    assert.ok(pose.row in ROWS || (pose.row === 'sleep' && SLEEP.ms.length > 0), `${state} rests in ${pose.row}`)
+    assert.ok(!ONCE.includes(pose.row), `${state} rests in a loop, not a once-row`)
+    if (pose.once !== undefined) assert.ok(pose.once in ROWS && ONCE.includes(pose.once), `${state} plays ${pose.once} once`)
+  }
+  for (const [event, pose] of Object.entries(EVENT_ROWS)) {
+    assert.equal(pose.row, undefined, `${event} has no loop of its own`)
+    assert.ok(pose.once in ROWS && ONCE.includes(pose.once), `${event} plays ${pose.once} once`)
+  }
+  // Copied out of the bundle's realm, whose Object.prototype is another one.
+  assert.deepEqual({ ...STATE_ROWS['needs-you'] }, { once: 'waving', row: 'waiting' })
+  assert.deepEqual({ ...EVENT_ROWS.merged }, { once: 'jumping' })
+  // Frozen all the way down: neither side can change the other's animation.
+  for (const map of [STATE_ROWS, EVENT_ROWS]) {
+    assert.ok(Object.isFrozen(map))
+    for (const pose of Object.values(map)) assert.ok(Object.isFrozen(pose))
+  }
 })
 
 test('a pet looks toward the pointer in sixteen directions, up first and clockwise', () => {

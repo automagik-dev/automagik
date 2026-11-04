@@ -5,9 +5,10 @@
 // run on this app (the same 3.N line, at or past their base) and on its DSH (their engines.dsh),
 // are newer than what the profile has, and were never found bad. It downloads and checks each
 // tarball (sha256, sha512 integrity, size) and unpacks it beside the profile, staged; the next
-// start of the app puts them in place, before DSH starts. That start is a trial: the page must
+// start of DSH puts them in place, before DSH starts. That start is a trial: the page must
 // draw the Bot team within a while, or the previous plugins come back and that version is
-// marked bad. Restart (the sidebar), a quit, or a start while away is that start.
+// marked bad. A restart of DSH alone once no agent is at work (auto-apply.js), the sidebar's
+// notice, a quit, or a start of the app is that start.
 //
 // pnpm must see what the lane put in: a plugin manager install (pnpm add in the profile) resolves
 // from the profile's package.json and lock, and would put the profile's own version back. So the
@@ -21,11 +22,13 @@
 // staged/<name>@<version>, and each replaced plugin as <its folder>.lane-prev until the trial
 // passes. Each lane keeps its own sequence and failures: Genie's numbers are not Automagik's.
 import { createHash, createPublicKey, verify } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { promisify } from 'node:util'
 import { compareVersions } from './update.js'
 import { LANE_KEYS } from './lane-keys.js'
+import { tarOf } from './tar.js'
 
 export const LANE_URL = 'https://github.com/automagik-dev/automagik/releases/download/plugin-lane/lane.json'
 // Each publisher's lane, the keys it is signed with, and the plugins it may replace: a lane never
@@ -33,9 +36,17 @@ export const LANE_URL = 'https://github.com/automagik-dev/automagik/releases/dow
 // 3.N line (Automagik's plugins are built against one app). Genie's plugin follows its own
 // versions, and its base is the oldest app it runs on. Automagik's lane also carries the add-ons
 // the profile pins that have no dependencies of their own (its `addons`, scripts/lane.ts
-// LANE_ADDONS), so a pin move needs no new app either.
+// LANE_ADDONS), so a pin move needs no new app either. Besides the profile's own three, it updates
+// the Automagik plugins a person added from the market (Portuguese, Unfold's), as Genie's lane does
+// Genie; a plugin that is not installed is never taken. Swapping a plugin's folder is safe because
+// a lane patch never changes what a plugin is installed by: scripts/lane.ts (kindOf, INSTALL_FIELDS)
+// makes any change to a plugin's dependencies, peers, engines or entry points a full release, a new
+// app, and never a plugin-only patch. So the dependencies pnpm laid out for the installed version
+// are the new version's too.
+export const AUTOMAGIK_PLUGINS = Object.freeze(['@automagik/bots-dsh', '@automagik/welcome-dsh', '@automagik/acp-dsh', '@automagik/locale-pt-br-dsh',
+  ...['bot', 'bridge', 'capabilities', 'events', 'mind', 'session', 'settings', 'sse', 'trajectory'].map(name => `@automagik/unfold-${name}-dsh`)])
 export const PUBLISHERS = Object.freeze([
-  { publisher: 'automagik', url: LANE_URL, keys: LANE_KEYS.automagik, sameLine: true, plugins: ['@automagik/bots-dsh', '@automagik/welcome-dsh', 'dsh-oh-my-claude'] },
+  { publisher: 'automagik', url: LANE_URL, keys: LANE_KEYS.automagik, sameLine: true, plugins: AUTOMAGIK_PLUGINS },
   { publisher: 'genie', url: 'https://raw.githubusercontent.com/automagik-dev/genie/lane/lane.json', keys: LANE_KEYS.genie, sameLine: false, plugins: ['@automagik/genie-dsh'] },
 ])
 const SCHEMA_VERSION = 1
@@ -108,6 +119,7 @@ export function installedVersions(target, names) {
   return Object.fromEntries(names.map(name => [name, readJson(join(target, 'node_modules', name, 'package.json'), {})?.version]).filter(([, version]) => typeof version === 'string'))
 }
 
+const unpack = promisify(execFile)
 const integrityOf = bytes => `sha512-${createHash('sha512').update(bytes).digest('base64')}`
 
 /**
@@ -115,7 +127,7 @@ const integrityOf = bytes => `sha512-${createHash('sha512').update(bytes).digest
  * waits, beside what another lane staged. `onProgress(percent)` follows the download, by bytes
  * when the lane names sizes.
  */
-export async function stage(update, { home, fetch = globalThis.fetch, tar = 'tar', onProgress = () => {} }) {
+export async function stage(update, { home, fetch = globalThis.fetch, tar = tarOf(), onProgress = () => {} }) {
   const { dir, staged } = files(home)
   const publisher = update.publisher ?? 'automagik'
   const ready = []
@@ -134,8 +146,9 @@ export async function stage(update, { home, fetch = globalThis.fetch, tar = 'tar
     // The tarball stays: it goes into the profile's vendor/ with the plugin.
     const archive = `${into}.tgz`
     writeFileSync(archive, bytes)
-    // npm pack puts everything under package/.
-    execFileSync(tar, ['-xzf', archive, '-C', into, '--strip-components=1'], { stdio: 'ignore' })
+    // npm pack puts everything under package/. Unpacked off the main process's thread: the
+    // window and dsh's page stay live while a lane update is staged.
+    await unpack(tar, ['-xzf', archive, '-C', into, '--strip-components=1'])
     if (readJson(join(into, 'package.json'), {})?.version !== plugin.version) throw fail(`${plugin.name}: the tarball holds another version`)
     ready.push({ publisher, name: plugin.name, version: plugin.version, dir: into, archive, integrity: plugin.integrity })
     done += plugin.size || 0

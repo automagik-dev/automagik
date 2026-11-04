@@ -165,3 +165,51 @@ test('the chat-room rule is installed through installStyles, so it is owned too'
   assert.match(pane, /installStyles\(.*'chat-room'/)
   assert.equal(pane.includes("dataset.dshBot = 'chat-room'"), false)
 })
+
+// A shell stylesheet as the page has them: hashed CSS-module classes, one inside @media.
+const shellSheet = (document, css) => {
+  const style = document.createElement('style')
+  style.textContent = css
+  document.head.appendChild(style)
+  return style.sheet
+}
+// Counts how often a sheet's rules are read, which is what a class-name scan does first.
+const countReads = (sheet) => {
+  const rules = sheet.cssRules
+  const reads = { count: 0 }
+  Object.defineProperty(sheet, 'cssRules', { get: () => { reads.count += 1; return rules } })
+  return reads
+}
+const compiledText = (document, tag) => tagged(document, tag)[0].textContent
+
+test('compiled styles name the shell classes their fragments match, and unmatched ones keep the fragment', () => {
+  const { window, module } = bench([])
+  const { installCompiledStyles } = module.exports
+  const { document } = window
+  shellSheet(document, '._bubble_12mhf_1{color:red} .hem6sG_footArea{margin:0} @media (min-width:1px){._bubble_12mhf_2 .x{color:blue}}')
+  installCompiledStyles('[class*="_bubble"]{padding:1px} [class*="_footArea"] b{gap:0} [class*="_absent"]{top:0}', 'shell')
+  installCompiledStyles('[class*="_footArea"]{left:0}', 'sidebar')
+  assert.equal(compiledText(document, 'shell'),
+    ':is(._bubble_12mhf_1,._bubble_12mhf_2){padding:1px} :is(.hem6sG_footArea) b{gap:0} [class*="_absent"]{top:0}')
+  assert.equal(compiledText(document, 'sidebar'), ':is(.hem6sG_footArea){left:0}')
+})
+
+test('every compiled style shares one scan of each shell sheet, and a later sheet is read once too', async () => {
+  const { window, module } = bench([])
+  const { installCompiledStyles } = module.exports
+  const { document } = window
+  const first = countReads(shellSheet(document, '._bubble_12mhf_1{color:red}'))
+  const disposers = ['shell', 'sidebar', 'models', 'usage'].map(tag => installCompiledStyles('[class*="_bubble"]{padding:1px} [class*="_late"]{top:0}', tag))
+  assert.equal(first.count, 1, 'four installers, one walk of the sheet')
+  for (const tag of ['shell', 'sidebar', 'models', 'usage']) assert.equal(compiledText(document, tag), ':is(._bubble_12mhf_1){padding:1px} [class*="_late"]{top:0}')
+
+  // A lazily loaded shell feature adds its sheet: every installer recompiles with it, past the
+  // 120 ms debounce, and that sheet too is walked once, the first one not again.
+  const late = shellSheet(document, '._late_9zz_3{top:1px}')
+  const lateReads = countReads(late)
+  await new Promise(resolve => setTimeout(resolve, 200))
+  for (const tag of ['shell', 'sidebar', 'models', 'usage']) assert.equal(compiledText(document, tag), ':is(._bubble_12mhf_1){padding:1px} :is(._late_9zz_3){top:0}')
+  assert.equal(lateReads.count, 1)
+  assert.equal(first.count, 1)
+  for (const dispose of disposers) dispose()
+})

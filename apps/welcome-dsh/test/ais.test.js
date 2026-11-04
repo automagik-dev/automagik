@@ -1,35 +1,20 @@
 import { test } from 'node:test'
+import { resolveConfig } from '@deepseek-ai/cordis'
+import * as piAi from '@deepseek-ai/dsh-llm-pi-ai'
 import assert from 'node:assert/strict'
-import { EventEmitter } from 'node:events'
 import { COVERED, OLLAMA_KEY_REF, SUBSCRIPTION_ONLY, VENDORS } from '../src/host/ais.js'
 import { install } from '../src/host/endpoint.js'
-import { CANCELLED, loginCommand } from '../src/host/terminal.js'
 import { fakeContext } from './fake-ctx.js'
 
 const SECRET = 'sk-never-leaves-0123456789'
 const offline = async () => { throw new Error('offline') }
-const noClaude = async () => ({ plugin: false, installed: false, loggedIn: false })
-const signedIn = async () => ({ plugin: true, installed: true, path: '/usr/local/bin/claude', reachable: true, loggedIn: true, email: 'owner@example.com', plan: 'max' })
-const tick = () => new Promise(resolve => setTimeout(resolve, 0))
 
-// DSH's plugin manager, holding the Claude Code plugin's row.
-function fakeManager(enabled = true) {
-  const calls = []
-  const row = { entryId: 'e-omc', moduleName: 'dsh-oh-my-claude', enabled }
-  return {
-    calls,
-    row,
-    listPlugins: async () => [{ entryId: 'e-other', moduleName: 'other', enabled: true }, { ...row }],
-    async setPluginEnabled(id, on) {
-      calls.push([id, on])
-      row.enabled = on
-    },
-  }
-}
+// DSH's authorization service, offering the sign-ins pi-ai registers here.
+const flows = (keys = ['llm-pi-ai/anthropic', 'llm-pi-ai/openai-codex']) => ({ describe: key => (keys.includes(key) ? { key, label: key, methods: [{ id: 'oauth' }] } : undefined) })
 
-function host({ providers = {}, entries = {}, checkClaude = noClaude, fetch = offline, services = {}, ...rest } = {}) {
-  const fake = fakeContext({ entries: { 'omni-ai': {}, 'llm-pi-ai': { providers }, ...entries }, services, ...rest })
-  const { handle } = install(fake.ctx, { fetch, checkClaude, ...(rest.terminal ? { terminal: rest.terminal } : {}) })
+function host({ providers = {}, entries = {}, fetch = offline, services = {}, ...rest } = {}) {
+  const fake = fakeContext({ entries: { 'omni-ai': {}, 'llm-pi-ai': { providers }, ...entries }, services: { authorization: flows(), ...services }, ...rest })
+  const { handle } = install(fake.ctx, { fetch })
   const rows = async () => (await handle('ais')).value
   const row = async id => (await rows()).rows.find(item => item.id === id)
   return { ...fake, handle, rows, row }
@@ -37,10 +22,10 @@ function host({ providers = {}, entries = {}, checkClaude = noClaude, fetch = of
 
 test('one row per AI, and no row reaches a vendor another row already covers', () => {
   const ids = VENDORS.map(vendor => vendor.id)
-  assert.deepEqual(ids, ['claude', 'chatgpt', 'deepseek', 'kimi', 'copilot', 'grok', 'openai', 'anthropic', 'openrouter', 'zai', 'moonshot', 'opencode', 'cliproxy', 'ollama'])
-  // Claude only through Claude Code: no row signs in to Anthropic.
-  assert.equal(VENDORS.find(vendor => vendor.id === 'claude').kind, 'claude')
-  assert.ok(!VENDORS.some(vendor => vendor.kind === 'signin' && vendor.provider === 'anthropic'))
+  assert.deepEqual(ids, ['claude', 'chatgpt', 'deepseek', 'kimi', 'copilot', 'grok', 'openai', 'openrouter', 'zai', 'moonshot', 'opencode', 'cliproxy', 'ollama'])
+  // Claude is pi-ai's anthropic route, signed in or on a key: one row, no Anthropic API row beside it.
+  assert.deepEqual(VENDORS.find(vendor => vendor.id === 'claude'), { id: 'claude', name: 'Claude', via: 'Your Claude Pro or Max plan, or an Anthropic API key', kind: 'signin', provider: 'anthropic', envRefs: ['ANTHROPIC_API_KEY'], keyUrl: 'https://console.anthropic.com/settings/keys' })
+  assert.equal(VENDORS.filter(vendor => vendor.provider === 'anthropic').length, 1)
   // pi-ai's own DeepSeek route is not offered: DeepSeek is DSH's key and account.
   assert.ok(!VENDORS.some(vendor => vendor.provider === 'deepseek' && vendor.route !== false))
   // The dsh-subscriptions vendors Omni offers are only the ones nothing else covers.
@@ -49,18 +34,16 @@ test('one row per AI, and no row reaches a vendor another row already covers', (
 
 test('what this computer has is found: names and states only, never a key', async () => {
   const fake = host({
-    providers: { openai: { apiKeyEnv: 'OPENAI_API_KEY' } },
+    providers: { openai: { apiKeyEnv: 'OPENAI_API_KEY' }, anthropic: {} },
     credentials: { OPENAI_API_KEY: SECRET },
     env: { DEEPSEEK_API_KEY: SECRET, XAI_API_KEY: SECRET },
-    records: ['llm-pi-ai/kimi-coding'],
-    checkClaude: signedIn,
-    services: { pluginManager: fakeManager() },
+    records: ['llm-pi-ai/kimi-coding', 'llm-pi-ai/anthropic'],
     fetch: async url => (String(url).endsWith('/api/tags') ? new Response('{"models":[]}') : new Response('', { status: 404 })),
   })
   const reply = await fake.rows()
   assert.ok(!JSON.stringify(reply).includes(SECRET))
   const by = Object.fromEntries(reply.rows.map(row => [row.id, row]))
-  assert.deepEqual([by.claude.found, by.claude.on, by.claude.detail], ['Signed in to Claude Code', true, 'owner@example.com'])
+  assert.deepEqual([by.claude.found, by.claude.on, by.claude.signIn], ['Signed in to Claude', true, true])
   assert.deepEqual([by.deepseek.found, by.deepseek.on], ['DEEPSEEK_API_KEY found', true])
   assert.deepEqual([by.openai.found, by.openai.on], ['Key saved', true])
   // Signed in but no route: ready, not on until switched.
@@ -70,15 +53,50 @@ test('what this computer has is found: names and states only, never a key', asyn
   assert.deepEqual([by.openrouter.found, by.openrouter.ready], [null, false])
 })
 
-test('Claude is on only once Claude Code is signed in, and says what is missing', async () => {
-  assert.equal((await host({ checkClaude: async () => ({ plugin: true, installed: true, loggedIn: false }) }).row('claude')).needs, 'login')
-  assert.equal((await host({ checkClaude: async () => ({ plugin: true, installed: false, loggedIn: false }) }).row('claude')).needs, 'install')
-  assert.equal((await host({ checkClaude: async () => ({ plugin: false, installed: true, loggedIn: true }) }).row('claude')).needs, 'plugin')
-  const out = await host({ checkClaude: async () => ({ plugin: true, installed: true, loggedIn: false }) }).row('claude')
-  assert.deepEqual([out.ready, out.on, out.found], [false, false, 'Claude Code found, not signed in'])
-  // Turning it on before then is refused; the page opens the login instead.
-  const fake = host({ checkClaude: async () => ({ plugin: true, installed: true, loggedIn: false }) })
-  assert.equal((await fake.handle('ai-switch', { id: 'claude', on: true })).error.code, 'omni-ai/refused')
+test('Claude signs in through pi-ai\'s anthropic flow and runs on it with a route that names no key', async () => {
+  // Not signed in, no key: not set up, the page opens the sign-in, and on is refused.
+  const fresh = host()
+  const before = await fresh.row('claude')
+  assert.deepEqual([before.ready, before.on, before.signIn, before.keyUrl], [false, false, true, 'https://console.anthropic.com/settings/keys'])
+  assert.equal((await fresh.handle('ai-switch', { id: 'claude', on: true })).error.code, 'omni-ai/refused')
+  assert.equal(fresh.valueOf('llm-pi-ai').providers.anthropic, undefined)
+  // Signed in (the record llm-pi-ai/anthropic): on writes a route that names no key, and does
+  // not retry the plan's 429 (SIGNIN_ROUTES), also after off and on again.
+  const fake = host({ records: ['llm-pi-ai/anthropic'] })
+  assert.deepEqual([(await fake.row('claude')).ready, (await fake.row('claude')).on], [true, false])
+  assert.equal((await fake.handle('ai-switch', { id: 'claude', on: true })).value.on, true)
+  assert.deepEqual(fake.valueOf('llm-pi-ai').providers.anthropic, { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } })
+  // Turning it on again (the page's dedupe after a sign-in) never takes the route away.
+  await fake.handle('ai-dedupe', { id: 'claude' })
+  assert.deepEqual(fake.valueOf('llm-pi-ai').providers.anthropic, { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } })
+  assert.equal((await fake.row('claude')).duplicates, undefined)
+  assert.equal((await fake.handle('ai-switch', { id: 'claude', on: false })).value.on, false)
+  assert.equal(fake.valueOf('llm-pi-ai').providers.anthropic, undefined)
+  assert.equal((await fake.row('claude')).ready, true)
+  assert.equal((await fake.handle('ai-switch', { id: 'claude', on: true })).value.on, true)
+  assert.deepEqual(fake.valueOf('llm-pi-ai').providers.anthropic, { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } })
+})
+
+test('Claude on an Anthropic API key: the same row, on the key the route names', async () => {
+  const saved = host({ providers: { anthropic: { apiKeyEnv: 'ANTHROPIC_API_KEY' } }, credentials: { ANTHROPIC_API_KEY: SECRET } })
+  assert.deepEqual([(await saved.row('claude')).found, (await saved.row('claude')).on], ['Key saved', true])
+  const fromEnv = host({ env: { ANTHROPIC_API_KEY: SECRET } })
+  assert.deepEqual([(await fromEnv.row('claude')).found, (await fromEnv.row('claude')).on], ['ANTHROPIC_API_KEY found', false])
+  assert.equal((await fromEnv.handle('ai-switch', { id: 'claude', on: true })).value.on, true)
+  assert.deepEqual(fromEnv.valueOf('llm-pi-ai').providers.anthropic, { apiKeyEnv: 'ANTHROPIC_API_KEY' })
+  // A route left on a key that is gone is off; signed in, on moves it to the sign-in.
+  const stale = host({ providers: { anthropic: { apiKeyEnv: 'ANTHROPIC_API_KEY', reasoning: 'high' } }, records: ['llm-pi-ai/anthropic'] })
+  assert.equal((await stale.row('claude')).on, false)
+  assert.equal((await stale.handle('ai-switch', { id: 'claude', on: true })).value.on, true)
+  assert.deepEqual(stale.valueOf('llm-pi-ai').providers.anthropic, { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] }, reasoning: 'high' })
+  // A route a sign-in made, turned on with a key instead: the key's route, with DSH's retries.
+  // The route as DSH describes it: pi-ai's Config resolved through Cordis, defaults filled in.
+  const signinRoute = resolveConfig(piAi, { providers: { anthropic: { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } } } }).providers.get().anthropic
+  const signedOut = host({ providers: { anthropic: signinRoute }, env: { ANTHROPIC_API_KEY: SECRET } })
+  assert.equal((await signedOut.handle('ai-switch', { id: 'claude', on: true })).value.on, true)
+  const keyed = signedOut.valueOf('llm-pi-ai').providers.anthropic
+  assert.deepEqual([keyed.apiKeyEnv, keyed.retryPolicy], ['ANTHROPIC_API_KEY', undefined])
+  assert.ok(!JSON.stringify([saved.updates, fromEnv.updates, stale.updates, signedOut.updates]).includes(SECRET))
 })
 
 test('off stops using an AI and keeps its key or sign-in; on brings it back', async () => {
@@ -95,27 +113,18 @@ test('off stops using an AI and keeps its key or sign-in; on brings it back', as
   assert.equal((await fake.handle('ai-switch', { id: 'chatgpt', on: false })).value.on, false)
   assert.equal((await fake.row('chatgpt')).ready, true)
   // What is not set up is refused, and nothing is written for it.
-  assert.equal((await fake.handle('ai-switch', { id: 'anthropic', on: true })).error.code, 'omni-ai/refused')
-  assert.equal(fake.valueOf('llm-pi-ai').providers.anthropic, undefined)
+  assert.equal((await fake.handle('ai-switch', { id: 'openai', on: true })).error.code, 'omni-ai/refused')
+  assert.equal(fake.valueOf('llm-pi-ai').providers.openai, undefined)
   assert.equal((await fake.handle('ai-switch', { id: 'nope', on: true })).error.code, 'omni-ai/invalid')
   assert.equal((await fake.handle('ai-switch', { id: 'openrouter' })).error.code, 'omni-ai/invalid')
 })
 
 test('an environment key turns on by naming its variable; DeepSeek, DSH\'s own route, cannot be switched off here', async () => {
-  const fake = host({ env: { ANTHROPIC_API_KEY: SECRET, DEEPSEEK_API_KEY: SECRET } })
-  await fake.handle('ai-switch', { id: 'anthropic', on: true })
-  assert.deepEqual(fake.valueOf('llm-pi-ai').providers.anthropic, { apiKeyEnv: 'ANTHROPIC_API_KEY' })
+  const fake = host({ env: { OPENAI_API_KEY: SECRET, DEEPSEEK_API_KEY: SECRET } })
+  await fake.handle('ai-switch', { id: 'openai', on: true })
+  assert.deepEqual(fake.valueOf('llm-pi-ai').providers.openai, { apiKeyEnv: 'OPENAI_API_KEY' })
   assert.equal((await fake.handle('ai-switch', { id: 'deepseek', on: false })).error.code, 'omni-ai/refused')
   assert.ok(!JSON.stringify(fake.updates).includes(SECRET))
-})
-
-test('Claude on and off goes through DSH\'s plugin manager, never the account', async () => {
-  const manager = fakeManager(false)
-  const fake = host({ checkClaude: signedIn, services: { pluginManager: manager } })
-  assert.equal((await fake.row('claude')).on, false)
-  assert.equal((await fake.handle('ai-switch', { id: 'claude', on: true })).value.on, true)
-  assert.equal((await fake.handle('ai-switch', { id: 'claude', on: false })).value.on, false)
-  assert.deepEqual(manager.calls, [['e-omc', true], ['e-omc', false]])
 })
 
 test('Ollama on lists its models into a local route; off removes the route', async () => {
@@ -137,36 +146,28 @@ test('Ollama on lists its models into a local route; off removes the route', asy
 const subsEntry = (slots, hiddenModels = []) => ({ 'dsh-subscriptions': { slots, hiddenModels } })
 const llmWith = models => ({ listProviders: () => [], listModels: async provider => models[provider] ?? [] })
 
-test('turning Claude on hides the duplicates of it, and deletes none of their accounts', async () => {
+test('turning Claude on hides dsh-subscriptions\' Claude, deletes none of its accounts, and keeps Claude\'s route', async () => {
   const fake = host({
-    checkClaude: signedIn,
     providers: { anthropic: {} },
     records: ['llm-pi-ai/anthropic'],
     entries: subsEntry([{ provider: 'claude', index: 1 }, { provider: 'cursor', index: 1 }]),
     credentials: { CLAUDE_OAUTH_1: SECRET, CURSOR_OAUTH_1: SECRET },
-    services: { pluginManager: fakeManager(false), llm: llmWith({ claude: [{ id: 'claude-opus-5-5' }, { id: 'claude-sonnet-5-5' }], cursor: [{ id: 'auto' }] }) },
+    services: { llm: llmWith({ claude: [{ id: 'claude-opus-5-5' }, { id: 'claude-sonnet-5-5' }], cursor: [{ id: 'auto' }] }) },
   })
   const before = await fake.row('claude')
-  assert.deepEqual(before.duplicates.map(duplicate => [duplicate.via, duplicate.provider, duplicate.hidden]), [['dsh-subscriptions', 'claude', false], ['DSH\'s Claude sign-in', 'anthropic', false]])
+  assert.deepEqual(before.duplicates.map(duplicate => [duplicate.via, duplicate.provider, duplicate.hidden]), [['dsh-subscriptions', 'claude', false]])
   await fake.handle('ai-switch', { id: 'claude', on: true })
   const subs = fake.valueOf('dsh-subscriptions')
   assert.deepEqual(subs.hiddenModels, [{ provider: 'claude', id: 'claude-opus-5-5' }, { provider: 'claude', id: 'claude-sonnet-5-5' }])
   // The accounts stay: their slots and credentials are untouched, cursor's models too.
   assert.deepEqual(subs.slots, [{ provider: 'claude', index: 1 }, { provider: 'cursor', index: 1 }])
   assert.equal(fake.secrets.get('CLAUDE_OAUTH_1'), SECRET)
-  // DSH's Claude sign-in loses its route; its stored sign-in is not touched.
-  assert.equal(fake.valueOf('llm-pi-ai').providers.anthropic, undefined)
+  // Claude's own route is the row's, never a duplicate of it.
+  assert.deepEqual(fake.valueOf('llm-pi-ai').providers.anthropic, { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } })
   const after = await fake.row('claude')
+  assert.equal(after.on, true)
   assert.deepEqual(after.duplicates.map(duplicate => duplicate.hidden), [true])
   assert.ok(!JSON.stringify(fake.updates).includes(SECRET))
-})
-
-test('an Anthropic route on a key is the Anthropic API row, never counted as a Claude duplicate', async () => {
-  const fake = host({ checkClaude: signedIn, providers: { anthropic: { apiKeyEnv: 'ANTHROPIC_API_KEY' } }, credentials: { ANTHROPIC_API_KEY: SECRET }, services: { pluginManager: fakeManager() } })
-  assert.equal((await fake.row('claude')).duplicates, undefined)
-  await fake.handle('ai-dedupe', { id: 'claude' })
-  assert.deepEqual(fake.valueOf('llm-pi-ai').providers.anthropic, { apiKeyEnv: 'ANTHROPIC_API_KEY' })
-  assert.equal((await fake.row('anthropic')).on, true)
 })
 
 test('a subscription only dsh-subscriptions has: off hides its models, on shows them again', async () => {
@@ -186,94 +187,4 @@ test('a subscription only dsh-subscriptions has: off hides its models, on shows 
   // A covered vendor is not a subscription row.
   assert.equal((await fake.handle('ai-subscription', { provider: 'claude', on: false })).error.code, 'omni-ai/invalid')
   assert.equal((await host().handle('ai-subscription', { provider: 'cursor', on: false })).error.code, 'omni-ai/refused')
-})
-
-// DSH's process service: one terminal, whose output and end the test drives.
-function fakeTerminalService() {
-  const spawned = []
-  return {
-    spawned,
-    resolveExecutable: async shell => `/bin/${shell}`,
-    async spawnTerminal(spec) {
-      const output = new EventEmitter()
-      let settle
-      const handle = { spec, output, writes: [], done: new Promise((resolve) => { settle = resolve }), write: async (data) => { handle.writes.push(data) }, resize: async () => {}, terminate: async () => { settle({ exitCode: null, signal: 'SIGTERM' }) }, settle: outcome => settle(outcome) }
-      spawned.push(handle)
-      return handle
-    },
-  }
-}
-
-test('the Claude Code login waits typed at the prompt and runs only after Enter', async () => {
-  let loggedIn = false
-  const checkClaude = async () => ({ plugin: true, installed: true, path: '/usr/local/bin/claude', reachable: true, loggedIn })
-  const service = fakeTerminalService()
-  const fake = host({ checkClaude, terminal: { subprocess: service, env: { PATH: '/usr/local/bin:/usr/bin' }, home: '/tmp', platform: 'darwin' } })
-  const opened = (await fake.handle('ai-terminal-open', { kind: 'claude-login', cols: 80, rows: 10 })).value
-  assert.equal(opened.state, 'ready')
-  assert.equal(opened.command, 'claude auth login')
-  const [terminal] = service.spawned
-  // zsh's vared holds the command from the environment; nothing is interpolated into the script.
-  assert.equal(terminal.spec.argv[0], '/bin/zsh')
-  assert.equal(terminal.spec.env.OMNI_TERMINAL_COMMAND, 'claude auth login')
-  assert.ok(!terminal.spec.argv.join(' ').includes('claude auth login'))
-  terminal.output.emit('data', '~ $ claude auth login')
-  assert.equal((await fake.handle('ai-terminal-read', { terminal: opened.terminal })).value.data, '~ $ claude auth login')
-  await fake.handle('ai-terminal-write', { terminal: opened.terminal, data: '\r' })
-  assert.deepEqual(terminal.writes, ['\r'])
-  loggedIn = true
-  terminal.settle({ exitCode: 0 })
-  await tick()
-  await tick()
-  const done = (await fake.handle('ai-terminal-read', { terminal: opened.terminal })).value
-  assert.deepEqual([done.state, done.exitCode], ['done', 0])
-  // Signed in already: nothing to open.
-  assert.equal((await fake.handle('ai-terminal-open', { kind: 'claude-login' })).error.code, 'omni-ai/refused')
-})
-
-test('a login that fails or is backed out of leaves the terminal open with its end', async () => {
-  const checkClaude = async () => ({ plugin: true, installed: true, path: '/usr/local/bin/claude', reachable: true, loggedIn: false })
-  const service = fakeTerminalService()
-  const fake = host({ checkClaude, terminal: { subprocess: service, env: { PATH: '/usr/bin' }, home: '/tmp', platform: 'linux' } })
-  const first = (await fake.handle('ai-terminal-open', { kind: 'claude-login' })).value
-  // Not on DSH's PATH: the command names the CLI by its path.
-  assert.equal(first.command, "'/usr/local/bin/claude' auth login")
-  assert.equal(service.spawned[0].spec.argv[0], '/bin/bash')
-  service.spawned[0].settle({ exitCode: 1 })
-  await tick()
-  await tick()
-  assert.deepEqual([(await fake.handle('ai-terminal-read', { terminal: first.terminal })).value.state], ['failed'])
-  const second = (await fake.handle('ai-terminal-open', { kind: 'claude-login' })).value
-  service.spawned[1].settle({ exitCode: null, signal: 'SIGINT' })
-  await tick()
-  const cancelled = (await fake.handle('ai-terminal-read', { terminal: second.terminal })).value
-  assert.deepEqual([cancelled.state, cancelled.exitCode], ['cancelled', CANCELLED])
-  assert.equal(loginCommand("/opt/it's/claude", { PATH: '' }), "'/opt/it'\\''s/claude' auth login")
-})
-
-test('without a terminal the command shows at a prompt and runs on pipes only after Enter', async () => {
-  const runs = []
-  const spawn = (file, args, options) => {
-    const child = new EventEmitter()
-    child.stdout = new EventEmitter()
-    child.stderr = new EventEmitter()
-    child.kill = () => {}
-    runs.push({ file, args, command: options.env.OMNI_TERMINAL_COMMAND, shell: options.shell, child })
-    return child
-  }
-  const checkClaude = async () => ({ plugin: true, installed: true, path: '/usr/local/bin/claude', reachable: true, loggedIn: false })
-  const fake = host({ checkClaude, terminal: { subprocess: null, spawn, env: { PATH: '/usr/local/bin' }, home: '/tmp' } })
-  const opened = (await fake.handle('ai-terminal-open', { kind: 'claude-login' })).value
-  assert.match((await fake.handle('ai-terminal-read', { terminal: opened.terminal })).value.data, /claude auth login$/)
-  await fake.handle('ai-terminal-write', { terminal: opened.terminal, data: 'x' })
-  assert.equal(runs.length, 0)
-  await fake.handle('ai-terminal-write', { terminal: opened.terminal, data: '\r' })
-  assert.deepEqual(runs.map(run => [run.file, run.args, run.command, run.shell]), [['/bin/sh', ['-c', 'eval "$OMNI_TERMINAL_COMMAND"'], 'claude auth login', false]])
-})
-
-test('the terminal opens only for the Claude login, and only where Claude Code is installed', async () => {
-  const fake = host({ terminal: { subprocess: fakeTerminalService() } })
-  assert.equal((await fake.handle('ai-terminal-open', { kind: 'update' })).error.code, 'omni-ai/invalid')
-  assert.equal((await fake.handle('ai-terminal-open', { kind: 'claude-login' })).error.code, 'omni-ai/refused')
-  assert.equal((await fake.handle('ai-terminal-read', { terminal: '00000000-0000-4000-8000-000000000000' })).error.code, 'omni-ai/refused')
 })

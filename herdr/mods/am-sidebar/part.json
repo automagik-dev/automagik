@@ -1,0 +1,47 @@
+{
+  "id": "herdr.am-sidebar",
+  "title": "Automagik Sidebar (the bots sidebar)",
+  "kind": "herdr-mod",
+  "paths": [
+    "herdr/mods/am-sidebar/**"
+  ],
+  "provides": [
+    "bots.sidebar@1"
+  ],
+  "requires": [
+    {
+      "cap": "herdr.pack",
+      "major": 1
+    }
+  ],
+  "os": [
+    "macos"
+  ],
+  "targets": "local",
+  "artifact": "automagik-herdr-pack-{version}.tgz",
+  "select": "am-sidebar/",
+  "entry": {
+    "install": [
+      "node",
+      "pack/part.mjs",
+      "install",
+      "herdr.am-sidebar"
+    ],
+    "uninstall": [
+      "node",
+      "pack/part.mjs",
+      "uninstall",
+      "herdr.am-sidebar"
+    ],
+    "doctor": [
+      "node",
+      "pack/part.mjs",
+      "doctor",
+      "herdr.am-sidebar"
+    ]
+  },
+  "writes": [],
+  "set": [
+    "code"
+  ]
+}

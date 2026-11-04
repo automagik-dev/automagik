@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "workspaceId": "ws-1",
+  "mainBotIds": ["session-0b3c1f9e-4d1a-4c55-9a7e-2f6b8d1e0a77"],
+  "bots": {
+    "session-0b3c1f9e-4d1a-4c55-9a7e-2f6b8d1e0a77": {
+      "id": "session-0b3c1f9e-4d1a-4c55-9a7e-2f6b8d1e0a77",
+      "name": "Omni",
+      "role": "Main Bot",
+      "advanced": false,
+      "color": "teal",
+      "avatar": { "shape": "octopus", "pet": { "source": "builtin", "id": "genie-clay", "version": 1, "sleep": true } },
+      "model": "deepseek/deepseek-v4",
+      "effort": "high",
+      "permission": "full",
+      "kind": "omni",
+      "instructions": "Answer on WhatsApp.",
+      "createdAt": 1793000000000,
+      "createdBy": null,
+      "capabilities": ["cap-1"],
+      "sessionId": "session-9a8b7c6d-0000-4000-8000-000000000001",
+      "memory": { "notes": "private" }
+    },
+    "session-5e6f7a8b-1c2d-4e3f-9a0b-c1d2e3f4a5b6": {
+      "id": "session-5e6f7a8b-1c2d-4e3f-9a0b-c1d2e3f4a5b6",
+      "name": "Writer",
+      "role": "",
+      "advanced": false,
+      "avatar": { "image": "data:image/png;base64,AAAA" },
+      "workDir": "/Users/me/notes",
+      "instructions": "",
+      "createdAt": 1793000000001,
+      "createdBy": "session-0b3c1f9e-4d1a-4c55-9a7e-2f6b8d1e0a77",
+      "capabilities": []
+    },
+    "unfold-root": {
+      "id": "unfold-root",
+      "name": "Unfold",
+      "role": "",
+      "advanced": false,
+      "sessionPinned": true,
+      "kind": "unfold",
+      "instructions": "",
+      "createdAt": 1793000000002,
+      "createdBy": null,
+      "capabilities": []
+    },
+    "host-chat": {
+      "id": "host-chat",
+      "name": "Hosted",
+      "role": "",
+      "instructions": "",
+      "capabilities": []
+    }
+  },
+  "rooms": {},
+  "agents": {},
+  "capabilities": { "items": { "cap-1": { "secret": "never exported" } } },
+  "exchanges": [],
+  "exchangeTurns": {},
+  "prefs": { "permission": "full" },
+  "revision": 7
+}

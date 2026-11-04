@@ -1,13 +1,12 @@
 import { CliproxyPayload, DonePayload, RequestBody, Secret, parse } from './payloads.js'
 import { createAiActions } from './ais.js'
-import { checkClaudeCode, createProviderActions, saveRoute, unsetRoute } from './providers.js'
-import { createTerminalActions } from './terminal.js'
+import { createProviderActions, saveRoute, unsetRoute } from './providers.js'
 import { createCompanionActions } from './companion.js'
 import { createBotTypeActions } from './bot-types.js'
+import { createAcpActions } from './acp.js'
 import { hostOf } from './host.js'
 import { preloadOf } from './preload.js'
 import { UNFOLD_BOT } from './companion.js'
-import { hintsFile, seedStarterOff } from './starter.js'
 
 // The host endpoint the onboarding steps call: POST /api/omni-ai with
 // { endpoint, payload }, answered { ok: true, value } or { ok: false, error }.
@@ -16,9 +15,7 @@ import { hintsFile, seedStarterOff } from './starter.js'
 //                      the desktop app was opened for (preload, src/host/preload.js) and the
 //                      host kind, when there is one (host, src/host/host.js)
 //   done { stepId, connected? }
-//                      keeps a step finished, in this plugin's own settings entry (the first
-//                      one on a fresh install also hides dsh-oh-my-claude's starter hint,
-//                      starter.js); Connect
+//                      keeps a step finished, in this plugin's own settings entry; Connect
 //                      AI finished with an AI on (`connected`) gives the companion, the Omni
 //                      Bot and the Genie Bot their model (companion.js assignModels)
 //   cliproxy { baseURL, apiKey }
@@ -28,13 +25,15 @@ import { hintsFile, seedStarterOff } from './starter.js'
 //                      the rows' own connections (src/host/providers.js)
 //   ais, ai-switch, ai-dedupe
 //                      the rows themselves: what is found, set up and on (src/host/ais.js)
-//   ai-terminal-*      the terminal that signs Claude Code in (src/host/terminal.js)
 //   companion, companion-generate, companion-save, companion-image, team-save
 //                      the person's own companion and team (src/host/companion.js)
 //   omni-plugins, omni-plugins-install, genie-plugin, genie-plugin-install,
 //   unfold-plugin, unfold-plugin-install, bot-type
 //                      the Omni plugins, Genie's and Unfold's, installed through DSH's plugin
 //                      manager, and what a Bot type starts with (src/host/bot-types.js)
+//   acp, acp-switch, acp-retry
+//                      Claude Code and Codex through @automagik/acp-dsh: its acpAgents
+//                      service's status, and its claude/codex settings (src/host/acp.js)
 //
 // The key never enters settings, a reply or a log line: the route names it by the
 // env-shaped reference OMNI_AI_CLIPROXY_API_KEY, which DSH resolves per request.
@@ -175,7 +174,7 @@ export function createActions(ctx, { fetch: fetchImpl = globalThis.fetch, anyOn,
         connectOmniSkipped: own.connectOmniSkipped === true,
         deepseek,
         piAiRoutes,
-        // Really on: a route that is set up, Claude Code signed in, or a subscription account.
+        // Really on: a route that is set up, or a subscription account.
         aiConnected: anyOn ? await anyOn().catch(() => false) : deepseek || piAiRoutes.length > 0,
         preload,
         ...(host ? { host } : {}),
@@ -219,11 +218,8 @@ export function createActions(ctx, { fetch: fetchImpl = globalThis.fetch, anyOn,
 }
 
 export function install(ctx, deps = {}) {
-  const checkClaude = deps.checkClaude ?? (() => checkClaudeCode(ctx))
-  const ai = createAiActions(ctx, { fetch: deps.fetch, host: hostOf(deps.env ?? process.env), claudeCode: checkClaude, saveRoute: (provider, patch) => saveRoute(ctx, provider, patch), unsetRoute: provider => unsetRoute(ctx, provider) })
-  const terminal = createTerminalActions(ctx, { checkClaude, ...deps.terminal })
+  const ai = createAiActions(ctx, { fetch: deps.fetch, saveRoute: (provider, patch) => saveRoute(ctx, provider, patch), unsetRoute: provider => unsetRoute(ctx, provider) })
   const { anyOn, ...aiEndpoints } = ai
-  const { closeAll, ...terminalEndpoints } = terminal
   const { team, omniProjectOf, assignModels, joinOmni, ...companion } = createCompanionActions(ctx, { env: deps.env ?? process.env, ...deps.companion })
   // A deleted Omni Bot comes back from the Bot team's New menu (Add Omni), made the way the
   // team step makes it: while the Bot team and Omni's channels run, the team view says
@@ -240,26 +236,14 @@ export function install(ctx, deps = {}) {
       }), 'omni-ai: Add Omni')
     })
   }
-  const actions = { ...createActions(ctx, { ...deps, anyOn }), ...createProviderActions(ctx), ...aiEndpoints, ...terminalEndpoints, ...companion, ...createBotTypeActions(ctx, { team, omniProjectOf, env: deps.env ?? process.env, ...(deps.checkGit ? { checkGit: deps.checkGit } : {}), ...(deps.genieSkills ? { genieSkills: deps.genieSkills } : {}), ...(deps.genieCli ? { genieCli: deps.genieCli } : {}), ...(deps.release ? { release: deps.release } : {}), ...(deps.offersUnfold !== undefined ? { offersUnfold: deps.offersUnfold } : {}) }) }
+  const actions = { ...createActions(ctx, { ...deps, anyOn }), ...createProviderActions(ctx), ...aiEndpoints, ...createAcpActions(ctx), ...companion, ...createBotTypeActions(ctx, { team, omniProjectOf, env: deps.env ?? process.env, ...(deps.checkGit ? { checkGit: deps.checkGit } : {}), ...(deps.genieSkills ? { genieSkills: deps.genieSkills } : {}), ...(deps.genieCli ? { genieCli: deps.genieCli } : {}), ...(deps.release ? { release: deps.release } : {}), ...(deps.offersUnfold !== undefined ? { offersUnfold: deps.offersUnfold } : {}) }) }
   // Connect AI finished with an AI on: the companion, the Omni Bot and the Genie Bot get their model, and
   // their held greetings go out. The step waits for that a little (ASSIGN_HOLD_MS), so the
   // chat opens on the greeting rather than on the model card; a provider that registers
   // later is still waited for in the background, up to ASSIGN_WAIT_MS.
-  // On a fresh install (no step finished before), the first step finished hides
-  // dsh-oh-my-claude's starter hint, once (starter.js); `starterSeeded` keeps it from coming
-  // back after the person turns it on, and an install that finished a step before is left
-  // as it is.
-  const seedStarter = async (before) => {
-    if (before.starterSeeded === true || Object.values(FLAGS).some(flag => before[flag] === true)) return
-    await ctx.settings.update(ENTRY, { starterSeeded: true })
-    await seedStarterOff(deps.hintsFile ?? hintsFile(deps.env ?? process.env))
-      .catch(error => ctx.logger?.warn?.('omni-ai: the starter hint stays: %s', error?.message ?? error))
-  }
   const markDone = actions.done
   actions.done = async (payload, signal) => {
-    const before = entryOf(describeAll(ctx), ENTRY)?.value ?? {}
     const result = await markDone(payload, signal)
-    await seedStarter(before)
     const fields = parse(DonePayload, payload)
     const rt = team()
     if (fields?.stepId === 'omni-connect-ai' && fields.connected === true && rt !== undefined) {
@@ -269,7 +253,6 @@ export function install(ctx, deps = {}) {
     }
     return result
   }
-  if (deps.checkClaude) actions['claude-code'] = () => checkClaude()
   const handle = async (endpoint, payload, signal) => {
     if (!Object.hasOwn(actions, endpoint)) return { ok: false, error: { code: 'omni-ai/not-found', message: `Unknown endpoint ${endpoint.slice(0, 40)}` } }
     try {
@@ -296,6 +279,5 @@ export function install(ctx, deps = {}) {
       return new Response(JSON.stringify(result), { status: 200, headers: { 'content-type': 'application/json' } })
     },
   }), 'omni-ai: api route')
-  ctx.effect(() => closeAll, 'omni-ai: close terminals')
   return { actions, handle }
 }

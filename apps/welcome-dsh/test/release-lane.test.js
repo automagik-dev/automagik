@@ -15,7 +15,6 @@ import { fakeContext } from './fake-ctx.js'
 import { EVERYTHING, KEYS, RELEASE, V, entryOf, filesOf, laneOf, release, signatureOf, tarballOf, urlOf } from './lane-fixture.js'
 
 const PKG = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-const noClaude = async () => ({ plugin: false, installed: false, loggedIn: false })
 
 function rig(t, files, { homeAs } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'welcome-lane-'))
@@ -37,7 +36,7 @@ function rig(t, files, { homeAs } = {}) {
   const team = { state: { bots: {} }, async load() {} }
   const fake = fakeContext({ entries: { 'omni-ai': {} }, services: { pluginManager: manager, omniTeam: team } })
   const env = { AUTOMAGIK_HOME: homeAs ?? home }
-  const { handle } = install(fake.ctx, { env, checkClaude: noClaude, checkGit: async () => null, genieSkills: () => false, release: { fetch: net.fetch, keys: KEYS }, offersUnfold: true })
+  const { handle } = install(fake.ctx, { env, checkGit: async () => null, genieSkills: () => false, release: { fetch: net.fetch, keys: KEYS }, offersUnfold: true })
   const dir = join(home, 'welcome', 'tarballs')
   const run = async (flow = 'unfold-plugin') => {
     const started = await handle(`${flow}-install`, {})

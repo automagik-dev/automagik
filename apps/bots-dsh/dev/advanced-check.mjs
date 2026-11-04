@@ -24,7 +24,7 @@ const manifest = JSON.parse(await readFile(join(dirname(dirname(cli)), 'package.
 // silent upgrade: moving it is a change to dev/harness/package.json, not to this file.
 const declared = JSON.parse(await readFile(join(plugin, 'dev/harness/package.json'), 'utf8')).dependencies['@deepseek-ai/dsh']
 const shipped = JSON.parse(await readFile(join(root, 'apps/desktop/runtime/package.json'), 'utf8')).dependencies['@deepseek-ai/dsh']
-assert.equal(declared, shipped, 'The harness and the desktop runtime declare different DSH versions')
+assert.equal(declared, shipped, 'The harness and the desktop runtime must declare the same DSH')
 assert.equal(manifest.version, declared, 'Installed harness is not the declared runtime: run bun run harness')
 const { chromium } = await import('playwright-core')
 const parent = join(root, '.tools/advanced-fixture')

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { apply } from '../index.js'
 import { install } from '../src/host/permissions.js'
+import { narrowerLevel, narrowestOffered } from '../src/host/permission-rank.js'
 import { fakeContext } from './fake-ctx.js'
 
 const PRESETS = { 'workspace-write': {}, 'danger-full-access': {} }
@@ -65,39 +66,10 @@ test('a preset the Bot\'s own chat refuses is not kept', async () => {
   assert.equal(bot.permission, 'workspace-write')
 })
 
-// The whole team over a fake DSH presets service and fake dsh-oh-my-claude adapters, all
-// writing to one log. As in DSH, a Session's first open fires session/created inside the
-// resolve ("announced" follows the listeners' synchronous part), and a preset that does
-// not change appends nothing. As in dsh-oh-my-claude, the adapters share one override
-// Map, save each write to a file of their own (`io`) and clamp an override to the ceiling
-// of the access mode; `config` stands for its permissionMode setting. A Session in
+// The whole team over a fake DSH presets service writing to one log. As in DSH, a Session's
+// first open fires session/created inside the resolve ("announced" follows the listeners'
+// synchronous part), and a preset that does not change appends nothing. A Session in
 // `closed` holds Auto that DSH will not restore.
-const RANK = { plan: 0, default: 1, acceptEdits: 2, auto: 3, bypassPermissions: 4 }
-const CEILING = { 'read-only': 'default', 'workspace-write': 'acceptEdits', 'danger-full-access': 'bypassPermissions' }
-function claudeAdapter(log, overrides, { config = 'dsh', io = async () => {} } = {}) {
-  return {
-    async restorePermissionMode(sessionId, mode) {
-      await io()
-      overrides.set(sessionId, mode)
-      log.push(`${sessionId} override ${mode}`)
-    },
-    async setPermissionMode(sessionId, mode) {
-      await io()
-      if (mode === null) overrides.delete(sessionId)
-      else overrides.set(sessionId, mode)
-      log.push(`${sessionId} override ${mode}`)
-    },
-    permissionModeInfo: sessionId => ({ override: overrides.get(sessionId) ?? null }),
-    getPermissionMode(sessionId, access) {
-      const ceiling = config === 'dsh' ? CEILING[access] ?? 'acceptEdits' : config
-      const override = overrides.get(sessionId)
-      const mode = override !== undefined && RANK[override] <= RANK[ceiling] ? override : ceiling
-      log.push(`${sessionId} reads ${mode}`)
-      return mode
-    },
-  }
-}
-
 const TEAM = {
   version: 1,
   mainBotIds: ['m1'],
@@ -112,19 +84,29 @@ const TEAM = {
   questions: {},
 }
 
-function team(t, { auto = true, adapters = () => [], bots = {}, loaded = [], saved = {}, closed = [] } = {}) {
+// DSH's stock catalog (dsh-permission-presets): workspace-write and danger-full-access, and
+// Auto while its layer is loaded; no read-only. `custom` adds presets a profile configures.
+const STOCK = {
+  'workspace-write': { sandbox: 'workspace-write', approval: 'ask' },
+  'danger-full-access': { sandbox: 'danger-full-access', approval: 'never' },
+}
+const AUTO_SPEC = { sandbox: 'danger-full-access', approval: 'ask' }
+
+function team(t, { auto = true, bots = {}, loaded = [], closed = [], tasks, rooms = {}, custom = {}, defaultPreset = 'workspace-write' } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-permissions-'))
-  writeFileSync(join(home, 'state.json'), JSON.stringify({ ...TEAM, bots: { m1: TEAM.bots.m1, b2: { ...TEAM.bots.b2, ...bots.b2 } } }))
+  writeFileSync(join(home, 'state.json'), JSON.stringify({ ...TEAM, bots: { m1: { ...TEAM.bots.m1, ...bots.m1 }, b2: { ...TEAM.bots.b2, ...bots.b2 } }, rooms: { r1: { ...TEAM.rooms.r1, ...rooms.r1 } }, ...(tasks ? { tasks } : {}) }))
   const log = []
   const opened = []
   const open = new Set(loaded)
   const presetOf = new Map()
-  const overrides = new Map(Object.entries(saved))
   const service = {
     auto,
-    names: () => ['read-only', 'workspace-write', 'danger-full-access', ...(service.auto ? ['auto'] : [])],
-    catalog: () => ({ options: service.names().map(value => ({ value, name: value })), defaultOptions: [], defaultPreset: 'workspace-write' }),
-    resolve: (name) => { if (!service.names().includes(name)) throw new Error(`permission: unknown preset "${name}"`); return {} },
+    names: () => [...Object.keys(STOCK), ...Object.keys(custom), ...(service.auto ? ['auto'] : [])],
+    catalog: () => ({ options: service.names().map(value => ({ value, name: value })), defaultOptions: [], defaultPreset }),
+    resolve: (name) => {
+      if (!service.names().includes(name)) throw new Error(`permission: unknown preset "${name}"`)
+      return name === 'auto' ? AUTO_SPEC : STOCK[name] ?? custom[name]
+    },
     current: session => presetOf.get(session.id),
     set: (session, name) => {
       service.resolve(name)
@@ -158,15 +140,13 @@ function team(t, { auto = true, adapters = () => [], bots = {}, loaded = [], sav
       selectModel: async () => {},
     },
     sessionTitle: { rename: async () => {} },
-    sessions: { flush: async () => {}, list: () => loaded.map(id => ({ id })) },
+    sessions: { flush: async (session) => { log.push(`${session.id} first turn`) }, list: () => loaded.map(id => ({ id })) },
   })
-  globalThis[Symbol.for('dsh-oh-my-claude.adapter')] = new Map(adapters(log, overrides).map((adapter, index) => [`claude-code-${index}`, adapter]))
   let route
   const register = ctx.connection.fetch.register
   ctx.connection.fetch.register = (options) => { route = options; return register(options) }
   apply(ctx, { home })
   t.after(async () => {
-    delete globalThis[Symbol.for('dsh-oh-my-claude.adapter')]
     await ctx.dispose()
     rmSync(home, { recursive: true, force: true, maxRetries: 5 })
   })
@@ -175,24 +155,23 @@ function team(t, { auto = true, adapters = () => [], bots = {}, loaded = [], sav
   const presets = sessionId => of(sessionId).filter(line => line.includes(' preset ')).map(line => line.split(' preset ')[1])
   // Settles the session/created re-applies a step left queued.
   const settle = () => new Promise(resolve => setTimeout(resolve, 20))
-  return { ctx, rt: ctx.provided.get('omniTeam'), service, call, of, presets, opened, overrides, settle }
-}
-
-// Every `preset auto` follows both adapters reading back auto since the preset before it.
-function autoAfterReadBack(lines) {
-  let reads = 0
-  for (const line of lines) {
-    if (line.endsWith(' reads auto')) reads += 1
-    else if (line.includes(' preset ')) {
-      if (line.endsWith(' preset auto')) assert.ok(reads >= 2, `${line} came before both adapters read back auto`)
-      reads = 0
+  // As DSH does, a new Session is announced while it is made, before startTask knows it
+  // as a task.
+  const announceOnCreate = () => {
+    const create = ctx.sessionController.create
+    ctx.sessionController.create = async (options) => {
+      const created = await create(options)
+      open.add(created.sessionId)
+      for (const listener of ctx.listeners.get('session/created') ?? []) void listener({ id: created.sessionId })
+      log.push(`${created.sessionId} announced`)
+      return created
     }
   }
+  return { ctx, rt: ctx.provided.get('omniTeam'), service, call, of, presets, opened, settle, announceOnCreate }
 }
 
-test('Auto is set only after every Claude Code adapter reads back auto; a lower level clears it after', async (t) => {
-  const two = (log, overrides) => [claudeAdapter(log, overrides), claudeAdapter(log, overrides)]
-  const { rt, call, of, presets, overrides, settle } = team(t, { adapters: two })
+test('Auto is DSH\'s own Auto on every Session of the Bot or group; a lower level replaces it', async (t) => {
+  const { rt, call, presets, settle } = team(t)
   assert.equal((await call('update-bot', { id: 'b2', permission: 'auto' })).ok, true)
   assert.equal((await call('update-room', { id: 'r1', permission: 'auto' })).ok, true)
   await rt.applyPermission(rt.botOf('b2'), 'fresh')
@@ -201,42 +180,27 @@ test('Auto is set only after every Claude Code adapter reads back auto; a lower 
   const created = await call('create-bot', { name: 'Nova' })
   assert.equal(created.value.permission, 'auto')
   await settle()
-  for (const id of ['b2', 'g2', 'fresh', created.value.id]) {
-    // Until Claude Code confirms auto, the Session runs as workspace-write.
-    assert.deepEqual(presets(id), ['workspace-write', 'auto'], id)
-    autoAfterReadBack(of(id))
-    assert.equal(overrides.get(id), 'auto')
-  }
-  // Below Auto the preset goes first, then the auto override is cleared.
+  for (const id of ['b2', 'g2', 'fresh', created.value.id]) assert.deepEqual(presets(id), ['auto'], id)
   await call('update-bot', { id: 'b2', permission: 'workspace-write' })
   await settle()
-  const lowered = of('b2')
-  assert.deepEqual(presets('b2'), ['workspace-write', 'auto', 'workspace-write'])
-  assert.ok(lowered.lastIndexOf('b2 preset workspace-write') < lowered.indexOf('b2 override null'))
-  // Each adapter clears it, so each one's saved file drops it.
-  assert.equal(lowered.filter(line => line === 'b2 override null').length, 2)
-  assert.equal(overrides.get('b2'), undefined)
+  assert.deepEqual(presets('b2'), ['auto', 'workspace-write'])
 
   // An idle Auto Bot: opening a Session sets its first preset within the announce, and
   // lowering the Bot opens its chat, whose session/created re-apply finds the new level.
-  const idle = team(t, { adapters: two, bots: { b2: { permission: 'auto' } }, saved: { b2: 'auto', g2: 'auto' } })
+  const idle = team(t, { bots: { b2: { permission: 'auto' } } })
   await idle.call('state', {})
   await idle.rt.resolveAgent('g2')
-  assert.deepEqual(idle.of('g2').slice(0, 2), ['g2 preset workspace-write', 'g2 announced'])
+  assert.deepEqual(idle.of('g2').slice(0, 2), ['g2 preset auto', 'g2 announced'])
   assert.equal((await idle.call('update-bot', { id: 'b2', permission: 'workspace-write' })).ok, true)
   await idle.settle()
   assert.deepEqual(idle.presets('b2'), ['workspace-write'])
-  assert.equal(idle.overrides.get('b2'), undefined)
 
-  // Applies to one Session run in turn: Auto still waiting on Claude Code's files does
-  // not land after a lower level picked meanwhile.
-  const slow = (log, saved) => [claudeAdapter(log, saved, { io: () => new Promise(resolve => setTimeout(resolve, 5)) })]
-  const racing = team(t, { adapters: slow })
+  // Applies to one Session run in turn: a lower level picked meanwhile lands last.
+  const racing = team(t)
   await racing.call('state', {})
   await Promise.all([racing.call('update-bot', { id: 'b2', permission: 'auto' }), racing.call('update-bot', { id: 'b2', permission: 'workspace-write' })])
   await racing.settle()
   assert.equal(racing.service.current({ id: 'b2' }), 'workspace-write')
-  assert.equal(racing.overrides.get('b2'), undefined)
 })
 
 test('a saved Auto that cannot hold runs as workspace-write and says so', async (t) => {
@@ -250,22 +214,25 @@ test('a saved Auto that cannot hold runs as workspace-write and says so', async 
     assert.equal(bot.permission, 'auto')
     assert.equal(bot.permissionFallback, 'workspace-write')
   }
-  const pickAuto = ({ call }) => call('update-bot', { id: 'b2', permission: 'auto' })
   // Without the layer DSH offers no Auto; a Bot saved on it before runs below it.
   await runsAsFallback({ auto: false, bots: { b2: { permission: 'auto' } } }, async ({ rt }) => {
     await rt.load()
     await rt.applyPermission(rt.botOf('b2'), 'b2')
   })
-  // dsh-oh-my-claude set to its own mode, not 'dsh'.
-  await runsAsFallback({ adapters: (log, overrides) => [claudeAdapter(log, overrides, { config: 'acceptEdits' })] }, pickAuto)
-  // An adapter without the methods, and one whose write fails.
-  await runsAsFallback({ adapters: (log, overrides) => [claudeAdapter(log, overrides), {}] }, pickAuto)
-  await runsAsFallback({ adapters: (log, overrides) => [claudeAdapter(log, overrides, { io: async () => { throw new Error('disk full') } })] }, pickAuto)
-  // The layer unloads: every loaded Auto Session moves to workspace-write at once, even
-  // while another's override clear waits on its file, and no Session is opened. The
-  // windows learn of it through modelsKey, with no save.
-  const hung = { adapters: (log, overrides) => [claudeAdapter(log, overrides, { io: () => new Promise(() => {}) })] }
-  const { ctx, call, service, presets, opened, settle } = team(t, { ...hung, bots: { b2: { permission: 'auto' } }, loaded: ['b2', 'g2'], saved: { b2: 'auto', g2: 'auto' } })
+  // DSH refuses its own Auto when it comes to set it.
+  const refusing = team(t)
+  const set = refusing.service.set
+  refusing.service.set = (session, name) => {
+    if (name === 'auto') throw new Error('permission: Auto is not ready')
+    set(session, name)
+  }
+  assert.equal((await refusing.call('update-bot', { id: 'b2', permission: 'auto' })).ok, true)
+  await refusing.settle()
+  assert.deepEqual(refusing.presets('b2'), ['workspace-write'])
+  assert.equal((await refusing.call('state', {})).value.bots.find(entry => entry.id === 'b2').permissionFallback, 'workspace-write')
+  // The layer unloads: every loaded Auto Session moves to workspace-write at once, and no
+  // Session is opened. The windows learn of it through modelsKey, with no save.
+  const { ctx, call, service, presets, opened, settle } = team(t, { bots: { b2: { permission: 'auto' } }, loaded: ['b2', 'g2'] })
   const before = (await call('state', {})).value
   service.auto = false
   for (const listener of ctx.listeners.get('permission-presets/catalog-changed')) void listener()
@@ -280,4 +247,256 @@ test('a saved Auto that cannot hold runs as workspace-write and says so', async 
   const shut = team(t, { auto: false, bots: { b2: { permission: 'auto' } }, closed: ['b2'] })
   assert.equal((await shut.call('update-bot', { id: 'b2', permission: 'workspace-write' })).ok, true)
   assert.equal(shut.rt.botOf('b2').permission, 'workspace-write')
+})
+
+test('a task starts at the level of the Bot that asked, before its first turn', async (t) => {
+  const { rt, call, of, presets, settle, announceOnCreate } = team(t, { bots: { m1: { permission: 'danger-full-access' } } })
+  await call('state', {})
+  announceOnCreate()
+  const sessionId = await rt.startTask({ title: 'Wish', text: 'Do it', from: 'm1' })
+  await settle()
+  assert.deepEqual(presets(sessionId), ['danger-full-access'])
+  const lines = of(sessionId)
+  assert.ok(lines.indexOf(`${sessionId} preset danger-full-access`) < lines.indexOf(`${sessionId} first turn`), lines.join(' | '))
+
+  // A Bot without a level of its own gives its task the catalog default.
+  const plain = team(t)
+  await plain.call('state', {})
+  plain.announceOnCreate()
+  const task = await plain.rt.startTask({ title: 'Chore', text: 'Do it', from: 'm1' })
+  await plain.settle()
+  assert.deepEqual(plain.presets(task), ['workspace-write'])
+
+  // A task asked for in a group takes the group's level over the Bot's own, as the Bot's
+  // Session in that group does.
+  const grouped = team(t, { bots: { m1: { permission: 'workspace-write' } }, rooms: { r1: { permission: 'danger-full-access' } } })
+  await grouped.call('state', {})
+  grouped.announceOnCreate()
+  const inGroup = await grouped.rt.startTask({ title: 'Wish', text: 'Do it', from: 'm1', roomId: 'r1' })
+  await grouped.settle()
+  assert.deepEqual(grouped.presets(inGroup), ['danger-full-access'])
+})
+
+test('a task gets its Bot\'s level again when DSH reopens it after a restart', async (t) => {
+  const tasks = { t1: { title: 'Wish', from: 'm1', at: 1, status: 'working' }, t2: { title: 'Chore', from: 'b2', at: 2, status: 'working' } }
+  const { rt, of, presets, settle } = team(t, { bots: { m1: { permission: 'danger-full-access' } }, tasks })
+  await rt.load()
+  await rt.resolveAgent('t1')
+  await rt.resolveAgent('t2')
+  await settle()
+  // Once the team is loaded the level lands within DSH's announce, before anything runs.
+  assert.deepEqual(of('t1').slice(0, 2), ['t1 preset danger-full-access', 't1 announced'])
+  assert.deepEqual(presets('t2'), ['workspace-write'])
+  // A loaded task of an Auto Bot runs as workspace-write when Auto review's layer unloads.
+  const { ctx, service, call, presets: presetsOf, settle: settled } = team(t, { bots: { m1: { permission: 'auto' } }, tasks, loaded: ['t1'] })
+  await call('state', {})
+  service.auto = false
+  for (const listener of ctx.listeners.get('permission-presets/catalog-changed')) void listener()
+  await settled()
+  assert.deepEqual(presetsOf('t1'), ['workspace-write'])
+})
+
+test('a running task follows its Bot when the Bot\'s level is lowered', async (t) => {
+  const { rt, call, presets, settle, announceOnCreate } = team(t, { bots: { m1: { permission: 'danger-full-access' } } })
+  await call('state', {})
+  announceOnCreate()
+  const task = await rt.startTask({ title: 'Wish', text: 'Do it', from: 'm1' })
+  await settle()
+  assert.deepEqual(presets(task), ['danger-full-access'])
+  assert.equal((await call('update-bot', { id: 'm1', permission: 'workspace-write' })).ok, true)
+  await settle()
+  assert.equal(presets(task).at(-1), 'workspace-write', `task still at ${presets(task).join(' -> ')}`)
+
+  // A task asked for in a group with a level of its own keeps the group's.
+  const grouped = team(t, { bots: { m1: { permission: 'danger-full-access' } }, rooms: { r1: { permission: 'danger-full-access' } } })
+  await grouped.call('state', {})
+  grouped.announceOnCreate()
+  const inGroup = await grouped.rt.startTask({ title: 'Wish', text: 'Do it', from: 'm1', roomId: 'r1' })
+  assert.equal((await grouped.call('update-bot', { id: 'm1', permission: 'workspace-write' })).ok, true)
+  await grouped.settle()
+  assert.deepEqual(grouped.presets(inGroup), ['danger-full-access'])
+})
+
+test('a running group task follows the group when the group\'s level is lowered or cleared', async (t) => {
+  const { rt, call, presets, settle, announceOnCreate } = team(t, { bots: { m1: { permission: 'workspace-write' } }, rooms: { r1: { permission: 'danger-full-access' } } })
+  await call('state', {})
+  announceOnCreate()
+  const task = await rt.startTask({ title: 'Wish', text: 'Do it', from: 'm1', roomId: 'r1' })
+  await settle()
+  assert.deepEqual(presets(task), ['danger-full-access'])
+  assert.equal((await call('update-room', { id: 'r1', permission: null })).ok, true)
+  await settle()
+  assert.equal(presets(task).at(-1), 'workspace-write', `task still at ${presets(task).join(' -> ')}`)
+})
+
+test('the task of a deleted Bot goes to the catalog default, now and after a restart', async (t) => {
+  const tasks = { t1: { title: 'Wish', from: 'b2', at: 1, status: 'working' } }
+  const { rt, call, presets, settle } = team(t, { bots: { b2: { permission: 'danger-full-access' } }, tasks })
+  await rt.load()
+  await rt.resolveAgent('t1')
+  await settle()
+  assert.deepEqual(presets('t1'), ['danger-full-access'])
+  assert.equal((await call('delete-bot', { id: 'b2' })).ok, true)
+  await settle()
+  assert.deepEqual(presets('t1'), ['danger-full-access', 'workspace-write'])
+  // Its task record outlives the Bot: a restart reopens it at the default too.
+  const restarted = team(t, { tasks })
+  await restarted.rt.load()
+  delete restarted.rt.state.bots.b2
+  await restarted.rt.resolveAgent('t1')
+  await restarted.settle()
+  assert.deepEqual(restarted.presets('t1'), ['workspace-write'])
+})
+
+test('a task startTask no longer remembers goes to the catalog default', async (t) => {
+  // 60 remembered tasks; the oldest ran at its Bot's full access.
+  const tasks = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`t${i}`, { title: 'Old', from: 'm1', at: i + 1, status: 'done' }]))
+  const { rt, call, presets, settle, announceOnCreate } = team(t, { bots: { m1: { permission: 'danger-full-access' } }, tasks })
+  await call('state', {})
+  await rt.resolveAgent('t0')
+  await settle()
+  assert.deepEqual(presets('t0'), ['danger-full-access'])
+  announceOnCreate()
+  await rt.startTask({ title: 'New', text: 'Do it', from: 'm1' })
+  await settle()
+  assert.equal(rt.state.tasks.t0, undefined)
+  assert.deepEqual(presets('t0'), ['danger-full-access', 'workspace-write'])
+})
+
+test('levels rank by what their preset allows, and what cannot be ranked gives the narrowest offered', () => {
+  const custom = {
+    builder: { sandbox: 'danger-full-access', approval: 'never' },
+    careful: { sandbox: 'read-only', approval: 'ask' },
+    odd: { sandbox: 'container', approval: 'ask' },
+  }
+  const catalogOf = names => ({
+    catalog: () => ({ options: names.map(value => ({ value, name: value })), defaultPreset: 'workspace-write' }),
+    resolve: (name) => {
+      if (!names.includes(name)) throw new Error(`permission: unknown preset "${name}"`)
+      return name === 'auto' ? AUTO_SPEC : STOCK[name] ?? custom[name]
+    },
+  })
+  const stock = catalogOf(['workspace-write', 'danger-full-access', 'auto', 'builder', 'odd'])
+  // Sandbox first, then approval: workspace-write < Auto < full access.
+  assert.equal(narrowerLevel(stock, 'danger-full-access', 'workspace-write'), 'workspace-write')
+  assert.equal(narrowerLevel(stock, 'auto', 'workspace-write'), 'workspace-write')
+  assert.equal(narrowerLevel(stock, 'auto', 'danger-full-access'), 'auto')
+  assert.equal(narrowerLevel(stock, 'builder', 'auto'), 'auto')
+  assert.equal(narrowerLevel(stock, 'danger-full-access', 'danger-full-access'), 'danger-full-access')
+  // Unknown, unresolvable or unrankable: the narrowest level this catalog offers.
+  assert.equal(narrowerLevel(stock, 'read-only', 'danger-full-access'), 'workspace-write')
+  assert.equal(narrowerLevel(stock, 'odd', 'danger-full-access'), 'workspace-write')
+  assert.equal(narrowerLevel(stock, undefined, 'workspace-write'), 'workspace-write')
+  assert.equal(narrowestOffered(stock), 'workspace-write')
+  // A catalog with a narrower preset of its own offers that one.
+  assert.equal(narrowerLevel(catalogOf(['workspace-write', 'careful', 'odd']), 'odd', 'workspace-write'), 'careful')
+})
+
+test('deleting a Bot never widens its running task, on the stock catalog', async (t) => {
+  // A profile whose default is full access: the Bot's narrower level stays.
+  const tasks = { t1: { title: 'Wish', from: 'b2', at: 1, status: 'working' } }
+  const { rt, call, presets, settle } = team(t, { defaultPreset: 'danger-full-access', bots: { b2: { permission: 'workspace-write' } }, tasks, loaded: ['t1'] })
+  await rt.load()
+  await rt.applyTaskPermission('t1', { id: 't1' })
+  await settle()
+  assert.deepEqual(presets('t1'), ['workspace-write'])
+  assert.equal((await call('delete-bot', { id: 'b2' })).ok, true)
+  await settle()
+  assert.deepEqual(presets('t1'), ['workspace-write'])
+  // The cap is kept with the task: a re-apply (as after a restart) does not raise it.
+  assert.equal(rt.state.tasks.t1.permissionCap, 'workspace-write')
+  await rt.reapplyTasks(() => true)
+  assert.deepEqual(presets('t1'), ['workspace-write'])
+})
+
+test('a deleted Bot on a custom preset leaves its task at a level the catalog offers', async (t) => {
+  // A custom full-access preset ranks as what it allows: the default is narrower.
+  const tasks = { t1: { title: 'Wish', from: 'b2', at: 1, status: 'working' } }
+  const builder = team(t, { custom: { builder: { sandbox: 'danger-full-access', approval: 'never' } }, bots: { b2: { permission: 'builder' } }, tasks, loaded: ['t1'] })
+  await builder.rt.load()
+  await builder.rt.applyTaskPermission('t1', { id: 't1' })
+  assert.equal((await builder.call('delete-bot', { id: 'b2' })).ok, true)
+  await builder.settle()
+  assert.deepEqual(builder.presets('t1'), ['builder', 'workspace-write'])
+  // One that cannot be ranked fails closed to the narrowest offered, even with a wide default.
+  const odd = team(t, { defaultPreset: 'danger-full-access', custom: { odd: { sandbox: 'container', approval: 'ask' } }, bots: { b2: { permission: 'odd' } }, tasks, loaded: ['t1'] })
+  await odd.rt.load()
+  await odd.rt.applyTaskPermission('t1', { id: 't1' })
+  assert.equal((await odd.call('delete-bot', { id: 'b2' })).ok, true)
+  await odd.settle()
+  assert.deepEqual(odd.presets('t1'), ['odd', 'workspace-write'])
+})
+
+test('pruning an old task never widens it, on the stock catalog', async (t) => {
+  const tasks = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`t${i}`, { title: 'Old', from: 'm1', at: i + 1, status: 'done' }]))
+  const pruned = async (options, expected) => {
+    const { rt, call, presets, settle, announceOnCreate } = team(t, { ...options, tasks })
+    await call('state', {})
+    await rt.resolveAgent('t0')
+    await settle()
+    announceOnCreate()
+    await rt.startTask({ title: 'New', text: 'Do it', from: 'm1' })
+    await settle()
+    assert.equal(rt.state.tasks.t0, undefined)
+    assert.deepEqual(presets('t0'), expected)
+  }
+  // A full-access default does not raise a workspace-write task.
+  await pruned({ defaultPreset: 'danger-full-access', bots: { m1: { permission: 'workspace-write' } } }, ['workspace-write'])
+  // A custom level that cannot be ranked goes to the narrowest offered.
+  await pruned({ defaultPreset: 'danger-full-access', custom: { odd: { sandbox: 'container', approval: 'ask' } }, bots: { m1: { permission: 'odd' } } }, ['odd', 'workspace-write'])
+})
+
+test('deleting a group moves its running task to its Bot\'s own level, never above the group\'s', async (t) => {
+  const tasks = { t1: { title: 'Wish', from: 'm1', at: 1, status: 'working', roomId: 'r1' } }
+  const { rt, call, presets, settle } = team(t, { bots: { m1: { permission: 'workspace-write' } }, rooms: { r1: { permission: 'danger-full-access' } }, tasks, loaded: ['t1'] })
+  await rt.load()
+  await rt.applyTaskPermission('t1', { id: 't1' })
+  await settle()
+  assert.deepEqual(presets('t1'), ['danger-full-access'])
+  const res = await call('delete-room', { id: 'r1' })
+  assert.equal(res.ok, true, JSON.stringify(res))
+  await settle()
+  assert.equal(presets('t1').at(-1), 'workspace-write', `task after group deleted: ${presets('t1').join(' -> ')}`)
+
+  // A group narrower than its Bot: the task stays at the group's level, and still follows
+  // the Bot down.
+  const narrow = team(t, { bots: { m1: { permission: 'danger-full-access' } }, rooms: { r1: { permission: 'auto' } }, tasks, loaded: ['t1'] })
+  await narrow.rt.load()
+  await narrow.rt.applyTaskPermission('t1', { id: 't1' })
+  assert.equal((await narrow.call('delete-room', { id: 'r1' })).ok, true)
+  await narrow.settle()
+  assert.deepEqual(narrow.presets('t1'), ['auto'])
+  assert.equal((await narrow.call('update-bot', { id: 'm1', permission: 'workspace-write' })).ok, true)
+  await narrow.settle()
+  assert.deepEqual(narrow.presets('t1'), ['auto', 'workspace-write'])
+
+  // A custom group level: ranked as what it allows, or failed closed when it cannot be.
+  const customRoom = async (custom, expected) => {
+    const room = team(t, { defaultPreset: 'danger-full-access', custom, bots: { m1: { permission: 'danger-full-access' } }, rooms: { r1: { permission: Object.keys(custom)[0] } }, tasks, loaded: ['t1'] })
+    await room.rt.load()
+    await room.rt.applyTaskPermission('t1', { id: 't1' })
+    assert.equal((await room.call('delete-room', { id: 'r1' })).ok, true)
+    await room.settle()
+    assert.deepEqual(room.presets('t1'), expected)
+  }
+  await customRoom({ reviewed: { sandbox: 'workspace-write', approval: 'ask' } }, ['reviewed'])
+  await customRoom({ odd: { sandbox: 'container', approval: 'ask' } }, ['odd', 'workspace-write'])
+})
+
+test('when no level ranks, deleting a Bot leaves its task\'s level as it is and warns', async (t) => {
+  const tasks = { t1: { title: 'Wish', from: 'b2', at: 1, status: 'working' } }
+  const { rt, call, service, presets, settle } = team(t, { bots: { b2: { permission: 'danger-full-access' } }, tasks, loaded: ['t1'] })
+  await rt.load()
+  await rt.applyTaskPermission('t1', { id: 't1' })
+  assert.deepEqual(presets('t1'), ['danger-full-access'])
+  // A catalog whose presets resolve to nothing this ranking knows.
+  const resolve = service.resolve
+  service.resolve = (name) => { resolve(name); return {} }
+  const warnings = []
+  const warn = rt.warn
+  rt.warn = (...args) => { warnings.push(args.join(' ')); return warn(...args) }
+  assert.equal((await call('delete-bot', { id: 'b2' })).ok, true)
+  await settle()
+  assert.deepEqual(presets('t1'), ['danger-full-access'])
+  assert.ok(warnings.some(line => line.includes('can be ranked') && line.includes('t1')), warnings.join(' | '))
 })

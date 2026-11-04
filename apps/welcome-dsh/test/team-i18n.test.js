@@ -165,7 +165,8 @@ test('under a pt-BR locale, the team step renders in Brazilian Portuguese', () =
 })
 
 // Every literal the team step passes to t() has its Portuguese text, with the same placeholders.
-const source = readFileSync(new URL('../src/client/team.js', import.meta.url), 'utf8')
+// The team step and the Claude Code and Codex rows share the namespace.
+const source = ['team.js', 'acp-agents.js'].map(file => readFileSync(new URL(`../src/client/${file}`, import.meta.url), 'utf8')).join('\n')
 const keysOf = text => [...text.matchAll(/\bt\(\s*(['"`])((?:\\.|(?!\1).)*)\1/g)].map(match => match[2].replace(/\\(['"`\\])/g, '$1'))
 const placeholders = text => [...text.matchAll(/\{(\w+)\}/g)].map(match => match[1]).sort().join(',')
 

@@ -8,6 +8,10 @@ const { contextBridge, ipcRenderer } = require('electron')
 const updates = Object.freeze({
   status: () => ipcRenderer.invoke('automagik-updates-status'),
   open: () => ipcRenderer.invoke('automagik-updates-open'),
+  // The plugins the lane staged: put them in now (DSH restarts, the window stays), and whether
+  // they go in by themselves once no agent is at work.
+  applyPlugins: () => ipcRenderer.invoke('automagik-updates-apply-plugins'),
+  setAutoApply: on => ipcRenderer.invoke('automagik-updates-auto-apply', on === true),
   subscribe(listener) {
     const handle = (_event, presentation) => listener(presentation)
     ipcRenderer.on('automagik-updates', handle)
@@ -15,7 +19,24 @@ const updates = Object.freeze({
   },
 })
 
-contextBridge.exposeInMainWorld('omniDesktop', Object.freeze({ app: 'omni-desktop', platform: process.platform, updates }))
+// Code mode (RFC 0013): Herdr's state, and bringing its window forward. The page sends a Bot
+// id and, to an offer of a newer Herdr (`reason: 'update'`), `update: true` or `false`; nothing
+// else, and only during a real click; main finds everything else, the update included, itself.
+// User activation is the page's, shared by every script in it (the RFC's threat model).
+const herdr = Object.freeze({
+  status: () => ipcRenderer.invoke('automagik-herdr-status'),
+  open(options) {
+    if (globalThis.navigator?.userActivation?.isActive !== true) {
+      return Promise.reject(new Error('Herdr opens only on a click'))
+    }
+    const botId = options?.botId
+    const request = { botId: typeof botId === 'string' ? botId : null }
+    if (typeof options?.update === 'boolean') request.update = options.update
+    return ipcRenderer.invoke('automagik-herdr-open', request)
+  },
+})
+
+contextBridge.exposeInMainWorld('omniDesktop', Object.freeze({ app: 'omni-desktop', platform: process.platform, updates, herdr }))
 
 // The Bot browsers (main.js, bot-views.js), in the shape the Bot team's panel drives
 // (bots-dsh src/client/bot-browsers.js `bridge.views`): each tab is a view the app lays over

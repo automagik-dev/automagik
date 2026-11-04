@@ -24,20 +24,20 @@ fields (`welcomeDone`, `connectAiDone`, `connectOmniSkipped`), so the step does 
 back after a restart. A step whose flag is already set completes without showing.
 
 Connect AI is a list of switches, and several can be on. What this computer already has
-comes first, under **Found on this computer**: Claude Code signed in, a key in DSH's store
+comes first, under **Found on this computer**: a key in DSH's store
 or in the environment, a sign-in DSH already holds, a CLIProxyAPI route, Ollama answering
 on `127.0.0.1:11434`. **Add another** shows four more, then the rest on demand. Continue
 needs one AI really on; Skip finishes the step either way.
 
 Flipping a switch on turns on what is set up, or opens its setup in the row: a key field,
-the provider's own sign-in in DSH, or a terminal for Claude Code's own login. Off stops
+the provider's own sign-in in DSH, or, for a provider that takes both (Claude, Grok), a
+choice of the sign-in or a key. Off stops
 using an AI and keeps its key, sign-in or account:
 
 | Kind | On | Off |
 |---|---|---|
 | Key | writes the pi-ai route that names the key | removes the route; the key stays |
-| Sign-in | the route is written once the sign-in succeeds | removes the route; the sign-in stays |
-| Claude | enables the Claude Code plugin (`dsh-oh-my-claude`) in DSH's plugin manager | disables that plugin |
+| Sign-in | the route is written once the sign-in succeeds; with no sign-in, a key the row also takes | removes the route; the sign-in and the key stay |
 | CLIProxyAPI | the gateway form writes its route | removes the route; the key stays |
 | Ollama | lists its models into a local OpenAI-compatible route | removes the route |
 | dsh-subscriptions | shows the vendor's models again | hides them in that plugin's picker settings; the account stays |
@@ -45,15 +45,6 @@ using an AI and keeps its key, sign-in or account:
 DeepSeek is DSH's own route: its row turns on with a key or a DeepSeek account, and its key
 is removed in Settings → Models. Every other provider DSH knows stays one link away, in
 Settings → Models.
-
-On a fresh install (no step finished before), the first step finished also hides the hint
-above the composer, "Type a prompt to start. Save it here…": that is the starter card of
-the Claude Code plugin (`dsh-oh-my-claude`), and its `starterOff` hint hides it. The hint
-lives in the plugin's `hints.json` (`$DSH_OMC_STATE_DIR`, default
-`~/.local/state/dsh-oh-my-claude`), one file for every DSH profile on the computer, so the
-welcome adds `starterOff: true` only when the file has no `starterOff` yet, changes no key
-that is there, and does it once (`starterSeeded` in its own entry). The plugin's own
-setting turns the card back on.
 
 Continue gives the companion and the Omni Bot their model. Both are made without one, so
 joining the team sends nothing anywhere; once Connect AI finishes with an AI on, each gets
@@ -83,9 +74,8 @@ plugin. Unfold's own Automagik instance starts DSH with `AUTOMAGIK_HOST=unfold` 
 team's and the Unfold Bot's). There Unfold's card comes first and is on the team from the start,
 because the Unfold Bot is the instance's Main Bot, so the companion step is done (Unfold leads)
 and no other Bot is made. `state` reports it as `host`, and Omni and Genie come with the
-instance: Omni's card offers no new Omni of its own, Genie's names the command line the
-instance brought instead of the line that installs one, and no row carries Claude Code's install
-line.
+instance: Omni's card offers no new Omni of its own, and Genie's names the command line the
+instance brought instead of the line that installs one.
 
 The team step follows the DSH language. Its copy is the `welcome.team` namespace
 (`src/client/i18n.js`): the keys are the English text, registered in English and in Brazilian
@@ -114,7 +104,7 @@ Omni's version: they install as a git source from Omni's repository at the relea
 
 | AI | Through | Not offered |
 |---|---|---|
-| Claude | the Claude Code app (`dsh-oh-my-claude`), signed in with `claude auth login` | DSH's own Claude sign-in and dsh-subscriptions' `claude`: both present as Claude Code |
+| Claude | pi-ai's `anthropic` route: DSH's Claude Pro/Max sign-in (`llm-pi-ai/anthropic`), or an Anthropic API key (`ANTHROPIC_API_KEY`) | dsh-subscriptions' `claude` |
 | ChatGPT | DSH's sign-in (`openai-codex`) | dsh-subscriptions' `codex` |
 | Kimi | DSH's sign-in (`kimi-coding`) | dsh-subscriptions' `kimi` |
 | Copilot | DSH's sign-in (`github-copilot`) | dsh-subscriptions' `copilot` |
@@ -122,11 +112,38 @@ Omni's version: they install as a git source from Omni's repository at the relea
 | DeepSeek | DSH's key or account | pi-ai's `deepseek` route |
 | Ollama | a local pi-ai route | dsh-subscriptions' `ollama` |
 
+The route a Claude sign-in adds does not retry a 429 (`retryPolicy` without `RATE_LIMIT`):
+a plan at its limit answers with one, and the Bot team's fallback model takes the turn at once
+instead of after DSH's five retries. A route on an API key keeps DSH's
+default retries, also one a sign-in made before the key: saving the key drops the sign-in's
+policy (a policy set by hand stays). Turning Claude off and on again in Connect AI writes the
+sign-in's policy back.
+
 dsh-subscriptions keeps the vendors nothing else reaches (Cursor, Kiro, GLM, Qwen,
 Perplexity, JetBrains, Cody, Replit and the rest). When an AI is turned on, the other ways
-it is connected stop showing: their models are hidden and DSH's Claude sign-in loses its
-route, and no account or stored sign-in is deleted. A row says when its AI is also
+it is connected stop showing: their models are hidden, and no account or stored sign-in is
+deleted. A row says when its AI is also
 connected another way.
+
+### Claude Code and Codex
+
+With [`@automagik/acp-dsh`](../acp-dsh) in the DSH, Connect AI has a **Coding agents** section
+after what was found, and DSH's Settings (and the Bot team's) have a **Claude Code and Codex**
+page with the same rows. Without acp-dsh Connect AI shows nothing of it, and the Settings page
+says the ACP agents plugin is not running. Each row says:
+
+- whether the agent's CLI (`claude`, `codex`) is on this computer, with its install link and
+  **Check again** when it is not;
+- whether the CLI is signed in, as the CLI itself says (`claude auth status`, `codex login
+  status`; only yes or no is read), and the command to sign in when it is not;
+- the connector acp-dsh installs in the background: installing, failed with its last error and
+  **Retry**, or ready with its version;
+- once ready, *Ready: pick Claude Code in the model picker*. The model appears without a restart;
+  a DSH that has not loaded acp-dsh's routes says to restart instead.
+
+The switch is acp-dsh's own `claude` or `codex` setting, written through DSH's settings service.
+These rows are not counted as an AI on: the companions' model comes from the rows above. Their
+copy is in the `welcome.team` namespace, in English and pt-BR.
 
 ### Subscription sign-ins and vendor terms
 
@@ -194,20 +211,21 @@ The shape was read from DSH 0.2.1-rc.2:
 | `state` | none | The flags; `deepseek` (a `DEEPSEEK_API_KEY` or a DeepSeek account sign-in is stored); `piAiRoutes`; `aiConnected`; `preload` (`omni`, `genie`, `unfold` or null); `host` (`unfold`, only when set). |
 | `done` | `{ stepId, connected? }` | Sets the flag for `omni-welcome`, `omni-connect-ai` or `omni-connect`. Connect AI's Continue sends `connected: true`: the companion and the Omni Bot, made without a model, then get the team's default model (DSH's default model when it is served and has its key, else the first model that can run), and their held greetings go out. Skip sets nothing. |
 | `cliproxy` | `{ baseURL, apiKey }` | The route above; answers `{ route, baseURL, models }`. |
-| `ais` | none | Every row: `{ id, name, via, kind, ready, on, found, needs?, detail?, duplicates? }`, and dsh-subscriptions' accounts and hidden vendors. Names and states only. |
+| `ais` | none | Every row: `{ id, name, via, kind, ready, on, found, signIn?, keyUrl?, needs?, duplicates? }`, and dsh-subscriptions' accounts and hidden vendors. Names and states only. |
 | `ai-switch` | `{ id, on }` | Turns a row that is set up on or off (table above). |
 | `ai-dedupe` | `{ id }` | Stops the other ways that row's AI is connected. |
 | `ai-subscription` | `{ provider, on }` | Shows or hides a dsh-subscriptions vendor's models. |
 | `provider-key`, `signin-*` | see `src/host/providers.js` | A key, or a sign-in run through DSH's authorization service. |
-| `ai-terminal-open`, `-read`, `-write`, `-resize`, `-close` | `{ kind: 'claude-login' }`, then the terminal id | The terminal that runs `claude auth login`, typed at a prompt and run with Enter. |
 | `omni-plugins` | none | The Omni plugins (`@automagik/bots-dsh`, `@automagik/omni-channels-dsh`, `-canvas-dsh`): each one's version and whether it is installed, `ready` once they run here, and the install in progress. |
 | `omni-plugins-install` | none | Installs the missing ones in order through DSH's plugin manager (`installBundle`: the Bot team from this plugin's own source pointed at its sibling, else this release's tarball; Omni's from Omni's repository at the pinned release), switching on any that are off. Pressing Omni's power button in the team step calls it. |
+| `acp` | `{ refresh? }` | Claude Code and Codex, from acp-dsh's `acpAgents` service: `{ available, agents: [{ id, key, name, on, cli: { found, installUrl? }, connector: { state, version?, error? }, signedIn?, listed, restartNeeded }] }`. `refresh` looks for the CLIs again and asks each whether it is signed in. `{ available: false }` without acp-dsh. |
+| `acp-switch` | `{ id, on }` | Writes acp-dsh's `claude` or `codex` setting in the entry its service names (`settingsEntry`, else `acp-dsh`) at the revision `describe()` gave. |
+| `acp-retry` | `{ id }` | Starts a failed connector install again. |
 | `bot-type` | `{ type: 'omni' }` | What the Omni Bot starts with, as groups: model and thinking (DSH's default), plugins with versions, tool groups with their switches, skills, folder and permissions. |
 
 The host declares `inject: ['settings', 'credentials', 'connection']`; `connection` serves
 the route. It reads DSH's `llm`, `authorization`, `pluginManager`, `agentDefaultModel`, `tools`, `skills`
-and `permissionPresets` services and its process
-service (`subprocess`, for the terminal) when they are there.
+and `permissionPresets` services when they are there, and acp-dsh's `acpAgents`.
 
 ## Develop
 

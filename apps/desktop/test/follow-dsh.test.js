@@ -44,10 +44,58 @@ test('follow-omni follows only an Omni release tested on the dsh the desktop run
   const text = readFileSync(new URL('../../../.github/workflows/follow-omni.yml', import.meta.url), 'utf8')
   assert.match(text, /apps\/omni-channels-dsh\/dev\/harness\/package\.json/)
   assert.match(text, /require\('\.\/apps\/desktop\/runtime\/package\.json'\)/)
-  assert.ok(text.indexOf('not following it until the Bot team moves') < text.indexOf('git commit -qam'), 'a mismatch stops before the commit')
+  assert.ok(text.indexOf('not following it until the Bot team moves') < text.indexOf('git commit -qa'), 'a mismatch stops before the commit')
   // The welcome installs the same Omni release in a plain DSH: both pins move in one commit.
-  assert.ok(text.indexOf('apps/welcome-dsh/package.json') < text.indexOf('git commit -qam'))
+  assert.ok(text.indexOf('apps/welcome-dsh/package.json') < text.indexOf('git commit -qa'))
   assert.match(text, /pkg\.automagik\.omni = \{ \.\.\.pkg\.automagik\.omni, version, commit \}/)
+})
+
+test('follow-omni carries an Omni only after it booted, on the dev commit that booted', () => {
+  const text = readFileSync(new URL('../../../.github/workflows/follow-omni.yml', import.meta.url), 'utf8')
+  const carry = text.slice(text.indexOf('\n  carry:\n'), text.indexOf('\n  release:\n'))
+  // The bump is pushed with GITHUB_TOKEN, so CI never boots it: the gate is here or nowhere.
+  assert.match(text, /\n {2}boot:\n[\s\S]*?uses: \.\/\.github\/workflows\/boot-check\.yml[\s\S]*?ref: \$\{\{ needs\.follow\.outputs\.dev \}\}/)
+  assert.match(carry, /needs: \[follow, boot\]/)
+  assert.match(carry, /ref: \$\{\{ needs\.follow\.outputs\.dev \}\}/)
+  // Only a fast-forward from the commit that booted: a dev that moved is refused, not overwritten.
+  assert.doesNotMatch(carry, /--force|\+HEAD/)
+  assert.match(carry, /dev moved from/)
+  assert.match(text, /\n {2}release:\n {4}name: Release\n {4}needs: carry\n/)
+})
+
+test('follow-omni runs on Omni\'s dispatch, takes its payload only as a logged hint', () => {
+  const text = readFileSync(new URL('../../../.github/workflows/follow-omni.yml', import.meta.url), 'utf8')
+  assert.match(text, /\n {2}repository_dispatch:\n(?: {4}#[^\n]*\n)* {4}types: \[omni-release\]\n/)
+  // The schedule stays as the fallback, and every run queues behind a running follow.
+  assert.match(text, /\n {2}schedule:\n[\s\S]*?- cron: '/)
+  assert.match(text, /\nconcurrency:\n {2}group: follow-omni\n {2}cancel-in-progress: false\n/)
+  // The payload reaches the job only through env, never a run script or another expression.
+  const uses = text.split('\n').filter(line => line.includes('client_payload') && !line.trim().startsWith('#'))
+  assert.deepEqual(uses.map(line => line.trim()), [
+    'HINT_VERSION: ${{ github.event.client_payload.version }}',
+    'HINT_TAG: ${{ github.event.client_payload.tag }}',
+    'HINT_SHA: ${{ github.event.client_payload.sha }}',
+  ])
+  // The hint is printed, only in a shape check, and never chooses what is booted or carried.
+  const hints = [...text.matchAll(/\$\{HINT_\w+\}/g)].map(match => match.index)
+  assert.equal(hints.length, 3)
+  for (const at of hints) assert.match(text.slice(text.lastIndexOf('\n', at), text.indexOf('\n', at)), /\$\(hint "/)
+  const output = text.slice(text.indexOf('commit="${WANT_COMMIT:-'), text.indexOf('} >> "$GITHUB_OUTPUT"'))
+  assert.doesNotMatch(output, /HINT_|client_payload/)
+  assert.doesNotMatch(text, /(?:WANT_\w+|newest|commit)=\S*HINT_/)
+  // A release the list lags on is looked up again, a bounded number of times, then warned about;
+  // what is followed is still only what the lookup lists (or a dry run's omni_version).
+  assert.match(text, /for try in 1 2 3 4 5 6; do\n\s+unlisted \|\| break\n[\s\S]*?sleep 20\n\s+lookup\n\s+done\n/)
+  assert.match(text, /if unlisted; then\n\s+echo "::warning ::Omni dispatched \$\{wanted\}/)
+  assert.deepEqual([...text.matchAll(/\bnewest=(.*)/g)].map(match => match[1]), ['"${WANT_VERSION}"', '$(sort -V releases.txt | tail -1)'])
+})
+
+test('the boot gate boots the candidate exactly as carry writes it, both pins', () => {
+  const read = name => readFileSync(new URL(`../../../.github/workflows/${name}`, import.meta.url), 'utf8')
+  const bump = text => text.match(/\n {10}node -e '\n([\s\S]*?)\n {10}' "\$\{(?:OMNI_)?VERSION\}" "\$\{(?:OMNI_)?COMMIT\}"/)?.[1]
+  const carried = bump(read('follow-omni.yml'))
+  assert.ok(carried?.includes('apps/welcome-dsh/package.json'), 'carry moves the welcome too')
+  assert.equal(bump(read('boot-check.yml')), carried)
 })
 
 
@@ -86,7 +134,7 @@ test('all runtime patch version guards track the desktop DSH pin', () => {
 })
 
 test('all shipped plugin harnesses track the exact desktop DSH pin', () => {
-  assert.deepEqual([...PLUGINS].sort(), ['bots-dsh', 'locale-pt-br-dsh', 'unfold-bot-dsh', 'unfold-bridge-dsh', 'unfold-capabilities-dsh', 'unfold-events-dsh', 'unfold-mind-dsh', 'unfold-session-dsh', 'unfold-settings-dsh', 'unfold-sse-dsh', 'unfold-trajectory-dsh', 'welcome-dsh'])
+  assert.deepEqual([...PLUGINS].sort(), ['acp-dsh', 'bots-dsh', 'locale-pt-br-dsh', 'unfold-bot-dsh', 'unfold-bridge-dsh', 'unfold-capabilities-dsh', 'unfold-events-dsh', 'unfold-mind-dsh', 'unfold-session-dsh', 'unfold-settings-dsh', 'unfold-sse-dsh', 'unfold-trajectory-dsh', 'welcome-dsh'])
   const pinned = JSON.parse(readFileSync(new URL('../runtime/package.json', import.meta.url), 'utf8')).dependencies['@deepseek-ai/dsh']
   for (const name of PLUGINS) {
     const tested = JSON.parse(readFileSync(new URL(`../../${name}/dev/harness/package.json`, import.meta.url), 'utf8')).dependencies['@deepseek-ai/dsh']

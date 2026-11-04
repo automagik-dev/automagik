@@ -43,6 +43,25 @@ export function modelOf(bot, roster) {
   return { ref, name: served?.name ?? rest.join('/'), provider: served?.providerName ?? provider, served: served !== undefined }
 }
 
+// The line under a Bot's model in its settings.
+export function modelHint(bot, roster) {
+  // A Bot whose model its plugin owns: the DSH model saved on it answers nothing. The hint
+  // names what answers now, from the plugin's menu, or says nothing.
+  const host = roster.hostModels?.[bot.id]
+  if (host !== undefined) {
+    const answering = host.entries?.find(entry => entry.answering)?.label
+    return answering ? t('{model} answers now.', { model: answering }) : null
+  }
+  const shown = modelOf(bot, roster)
+  if (shown === undefined) return t('Pick the model this Bot runs on.')
+  if (!shown.served && (roster.models ?? []).length > 0) return t('This model is not available now. Pick another one.')
+  if (bot.appliedModel && bot.appliedModel === bot.model) return t('Every message of this Bot runs on it.')
+  return t('Applies from the next message.')
+}
+
+// A Bot that waits for a model pick: none chosen, and no plugin answers for it.
+export const needsModelPick = (bot, roster) => modelOf(bot, roster) === undefined && roster.hostModels?.[bot.id] === undefined
+
 // The thinking levels of one model, `{efforts, defaultEffort?}` or undefined when it
 // has none. The catalog carries them for models Bots use; any other ref asks the host.
 const effortCache = new Map()
@@ -85,8 +104,12 @@ function EffortRows({ reasoning, current, onPick }) {
     h('span', { className: 'bt-model-tick', 'aria-hidden': true }, (row.effort ?? null) === (current ?? null) ? h(CheckIcon) : null))))
 }
 
+// A model a newer one of its family replaces (`superseded`, Claude's older versions) is left
+// out of the menu, unless the Bot is on it.
+export const offeredModels = (models, current) => (models ?? []).filter(model => model.superseded !== true || model.ref === current)
+
 function ModelRows({ roster, current, onPick }) {
-  return groupModels(roster.models).map(([provider, list]) => h(Fragment, { key: list[0].provider ?? provider },
+  return groupModels(offeredModels(roster.models, current)).map(([provider, list]) => h(Fragment, { key: list[0].provider ?? provider },
     h('div', { className: 'bt-model-group', role: 'presentation' }, provider),
     list.map(model => h('button', {
       key: model.ref, type: 'button', role: 'menuitemradio', 'aria-checked': model.ref === current, title: model.ref,
@@ -218,14 +241,15 @@ function modelWords(roster, ref) {
 }
 
 // One line naming the model a Bot runs on and its provider, with "change" opening the
-// model menu (which also leads to the providers): "Using Claude Opus 5.5 · Oh My Claude ·
-// change". `ref` and `onPick` stand in for a model the Bot does not have yet.
-export function ModelLine({ bot, roster, actions, run, ref, onPick }) {
-  const words = modelWords(roster, ref ?? bot.model ?? bot.appliedModel)
+// model menu (which also leads to the providers): "Using Claude Opus 5.5 · Anthropic ·
+// change". `modelRef` and `onPick` stand in for a model the Bot does not have yet (not
+// `ref`: React keeps that prop for itself, issue #153).
+export function ModelLine({ bot, roster, actions, run, modelRef, onPick }) {
+  const words = modelWords(roster, modelRef ?? bot.model ?? bot.appliedModel)
   return h('div', { className: 'bt-model-line' },
     h('span', { className: 'bt-model-line-text' }, t('Using {model} · {provider}', words)),
     h('span', { className: 'bt-model-line-sep', 'aria-hidden': true }, '·'),
-    h(ModelMenu, { bot: ref ? { ...bot, model: ref } : bot, roster, actions, run, link: true, onPick }))
+    h(ModelMenu, { bot: modelRef ? { ...bot, model: modelRef } : bot, roster, actions, run, link: true, onPick }))
 }
 
 const outlineOf = (list, sessionId) => list.projectionsBySession?.[sessionId]?.values?.turnOutline ?? list.byId?.[sessionId]?.projectionValues?.turnOutline
@@ -281,7 +305,7 @@ export function ModelChoiceDock({ sessionId, useRoster, actions }) {
   // it would get (DSH's default when it can run, else the first that can), one press
   // starts it, and "change" picks another.
   if (!lost && usable.length > 0) {
-    const suggested = usable.find(model => model.ref === roster.defaultModel)?.ref ?? (usable.find(model => model.id !== 'default') ?? usable[0]).ref
+    const suggested = usable.find(model => model.ref === roster.defaultModel)?.ref ?? (usable.find(model => model.id !== 'default' && model.superseded !== true) ?? usable.find(model => model.id !== 'default') ?? usable[0]).ref
     return h('div', { className: 'bt-model-dock' },
       h('div', { className: 'bt-astack', 'data-lead': '' },
         h('div', { className: 'bt-msg' },
@@ -293,7 +317,7 @@ export function ModelChoiceDock({ sessionId, useRoster, actions }) {
           type: 'button', className: 'bt-model-chip bt-model-start', disabled: busy !== '', 'aria-busy': busy === suggested || undefined,
           onClick: () => pick(suggested),
         }, t('Start'), busy === suggested ? h('span', { className: 'bt-model-spin', 'aria-label': t('Saving…') }) : null),
-        h(ModelLine, { bot, roster, actions, run, ref: suggested, onPick: pick })),
+        h(ModelLine, { bot, roster, actions, run, modelRef: suggested, onPick: pick })),
       error ? h('div', { className: 'bt-secret-error bt-model-error', role: 'alert' }, error) : null)
   }
   // The recovery cases: the model went away, a key is missing, or nothing is set up. The

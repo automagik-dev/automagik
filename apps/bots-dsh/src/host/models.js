@@ -1,42 +1,13 @@
 // Models. Every Bot runs on one model of its own, fixed when it is created and changed
 // only in its settings or by a Main Bot. The team's first Main Bot has none until the
 // user picks one in its chat. The Session keeps the selection durably.
-import { isClaudeCode } from '../shared/permission-levels.js'
+import { piAiRoutes, routeOf } from '../shared/routes.js'
 import { normalize, splitRef } from './text.js'
 import { install as installHostModels } from './host-models.js'
+import { PI_AI_CLAUDE, supersededClaude } from './claude-models.js'
 
 const CATALOG_TTL_MS = 10_000
 const ROUTE_WAIT_MS = 30_000
-
-// Claude through Claude Code (dsh-oh-my-claude, provider claude-code or claude-code-<box>)
-// lists the CLI's own lineup and then every model the plugin has known, so a Session stored
-// on an older id still resolves. Omni offers the newest of each family: a model that a newer
-// one of its family, or the CLI's alias for the family (opus, sonnet, haiku), supersedes is
-// left out, and the 1M variant stands in for its plain twin. A model a Bot runs on stays.
-const VERSIONED = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?(\[1m\])?$/
-const versionOf = (id) => {
-  const match = VERSIONED.exec(id)
-  return match ? { family: match[1], version: Number(match[2]) + Number(match[3] ?? 0) / 100, wide: match[4] !== undefined } : undefined
-}
-export function currentClaudeModels(entries, keep = new Set()) {
-  const providers = new Map()
-  for (const entry of entries) {
-    if (!isClaudeCode(entry.provider)) continue
-    const seen = providers.get(entry.provider) ?? { aliases: new Set(), newest: new Map() }
-    providers.set(entry.provider, seen)
-    if (/^[a-z]+$/.test(entry.id) && entry.id !== 'default') seen.aliases.add(entry.id)
-    const at = versionOf(entry.id)
-    const best = at && seen.newest.get(at.family)
-    if (at && (!best || at.version > best.version || (at.version === best.version && at.wide && !best.wide))) seen.newest.set(at.family, at)
-  }
-  return entries.filter((entry) => {
-    const at = isClaudeCode(entry.provider) && !keep.has(entry.ref) ? versionOf(entry.id) : undefined
-    if (at === undefined) return true
-    const seen = providers.get(entry.provider)
-    const best = seen.newest.get(at.family)
-    return !seen.aliases.has(at.family) && at.version === best.version && at.wide === best.wide
-  })
-}
 
 export function install(rt) {
   const { ctx, state } = rt
@@ -73,6 +44,9 @@ export function install(rt) {
   async function catalog({ fresh = false } = {}) {
     if (!fresh && Date.now() - catalogCache.at < CATALOG_TTL_MS && catalogCache.value.length > 0) return catalogCache.value
     const listed = []
+    let directory = []
+    try { directory = ctx.llm.listConfigurableProviders?.() ?? [] } catch {}
+    const piAi = piAiRoutes(directory)
     for (const provider of ctx.llm.listProviders()) {
       let models = []
       try { models = await ctx.llm.listModels(provider.id) } catch { continue }
@@ -83,12 +57,17 @@ export function install(rt) {
           providerName: provider.name ?? provider.id,
           id: model.id,
           name: model.name ?? model.id,
+          route: routeOf(provider.id, { piAi }),
           ...(model.inputModalities ? { input: [...model.inputModalities] } : {}),
         })
       }
     }
     const used = new Set(Object.values(state.bots ?? {}).filter(onDsh).flatMap(bot => [bot.model, bot.appliedModel].filter(Boolean)))
-    const entries = currentClaudeModels(listed, used)
+    const entries = listed
+    // Claude on pi-ai's anthropic route: the menu offers each family's newest model.
+    const claude = entries.filter(entry => entry.provider === PI_AI_CLAUDE)
+    const superseded = supersededClaude(claude.map(entry => entry.id))
+    for (const entry of claude) if (superseded.has(entry.id)) entry.superseded = true
     // DSH serves a provider's models whether or not its key is set; without one, every
     // turn on them fails.
     const missing = await rt.missingKeys?.([...new Set(entries.map(entry => entry.provider))]) ?? new Set()
@@ -119,23 +98,39 @@ export function install(rt) {
   }
   // The profile default model of DSH (DeepSeek, unless the user chose another there), when
   // it is served and can run (its provider has its key); else a model of the first account
-  // connected here; Claude Code last, since it can run from the start on the credentials of
-  // a Claude Code already on this computer, not an account connected here. Within a
-  // provider, its `default` alias (Claude Code's "Default (recommended)") comes after the
-  // models it names. Nothing can run: none, and a Bot made then waits for one.
+  // connected here. Within a provider, a `default` alias comes after the models it names, and
+  // a superseded model (an older Claude) after the current ones.
+  // Nothing can run: none, and a Bot made then waits for one.
   function pickDefault(entries) {
     const usable = entries.filter(entry => !entry.needsKey)
     const ref = defaultRef()
     const chosen = usable.find(entry => entry.ref === ref)
     if (chosen) return chosen.ref
     const seen = Array.isArray(state.providersSeen) ? state.providersSeen : []
-    const rank = entry => (isClaudeCode(entry.provider) ? 1 : 0) * 1e6 + (seen.includes(entry.provider) ? seen.indexOf(entry.provider) : seen.length)
+    const rank = entry => (seen.includes(entry.provider) ? seen.indexOf(entry.provider) : seen.length)
     const ordered = usable.map((entry, index) => ({ entry, index })).sort((a, b) => rank(a.entry) - rank(b.entry) || a.index - b.index).map(({ entry }) => entry)
     const first = ordered[0]?.provider
     const own = ordered.filter(entry => entry.provider === first)
-    return (own.find(entry => entry.id !== 'default') ?? own[0])?.ref
+    return (own.find(entry => entry.id !== 'default' && entry.superseded !== true) ?? own.find(entry => entry.id !== 'default') ?? own[0])?.ref
   }
   const defaultModel = async () => pickDefault(await catalog())
+
+  // The model of the jobs that run beside the chats (memory review, the memory panel, a part's
+  // note or checkpoint when its chat is on an agent): one that answers a request on its own. An
+  // agent over ACP answers only in its own chat, so it is never one. The team's pick
+  // (prefs.backgroundModel, in Settings) when it is served and can run; else DSH's default
+  // model (DeepSeek, unless the person chose another there) when that can; else the first
+  // account connected here, as for a Bot's default.
+  const answersAside = entry => routeOf(entry.provider).connectedBy !== 'acp'
+  function pickBackground(entries) {
+    const aside = entries.filter(answersAside)
+    const chosen = state.prefs?.backgroundModel
+    if (typeof chosen === 'string' && aside.some(entry => entry.ref === chosen && !entry.needsKey)) return chosen
+    return pickDefault(aside)
+  }
+  const backgroundModel = async () => pickBackground(await catalog())
+  /** Whether a `provider/model` ref can answer a job beside the chats (not an ACP agent). */
+  const answersAsideRef = ref => typeof ref === 'string' && ref.includes('/') && routeOf(ref.split('/')[0]).connectedBy !== 'acp'
 
   // A full `provider/model` ref, or a model id or name that only one provider serves.
   async function resolveModel(text) {
@@ -276,6 +271,7 @@ export function install(rt) {
   Object.assign(rt, {
     catalog, cachedCatalog: () => catalogCache.value, cachedDefault: () => pickDefault(catalogCache.value),
     defaultRef, defaultModel, defaultEffort, resolveModel, desiredModel, reasoningOf, resolveEffort, desiredEffort,
+    backgroundModel, cachedBackground: () => pickBackground(catalogCache.value), answersAside: answersAsideRef,
     selectSessionModel, applyModel, waitForModel, syncModels,
     dropCatalog: () => { catalogCache = { at: 0, value: [] } },
   })

@@ -46,11 +46,11 @@ test('the installed identity is Automagik\'s', () => {
 
 test("Electron's data is filed under Automagik, on every platform", () => {
   assert.equal(DATA_NAME, 'Automagik')
-  assert.deepEqual(dataPathsOf('/Users/me/Library/Application Support'), {
-    userData: '/Users/me/Library/Application Support/Automagik',
-    sessionData: '/Users/me/Library/Application Support/Automagik',
-  })
-  assert.deepEqual(dataPathsOf('/home/me/.config'), { userData: '/home/me/.config/Automagik', sessionData: '/home/me/.config/Automagik' })
+  // appData as Electron gives it on each platform; the folder joins it in the platform's own form.
+  for (const appData of ['/Users/me/Library/Application Support', '/home/me/.config', 'C:\\Users\\me\\AppData\\Roaming']) {
+    const folder = join(appData, 'Automagik')
+    assert.deepEqual(dataPathsOf(appData), { userData: folder, sessionData: folder })
+  }
 })
 
 test('main.js pins that folder before anything reads it', () => {
@@ -73,6 +73,24 @@ test("the app's own home and the preload the CLIs write are in Automagik's home"
   // `omni desktop` and `genie desktop` write $AUTOMAGIK_HOME/preload before opening the app.
   writeFileSync(join(root, 'preload'), 'genie\n')
   assert.equal(preloadOf({ home: automagikHome({ AUTOMAGIK_HOME: root }), argv: ['/opt/Automagik/automagik'] }), 'genie')
+})
+
+test("macOS asks for the microphone and the local network with the app's own lines", () => {
+  // The keys under mac.extendInfo, which electron-builder writes into Contents/Info.plist.
+  const lines = builder.split('\n')
+  const start = lines.indexOf('  extendInfo:', lines.indexOf('mac:'))
+  assert.ok(start > lines.indexOf('mac:'), 'mac has extendInfo')
+  const info = {}
+  for (const line of lines.slice(start + 1)) {
+    const match = line.match(/^ {4}(\w+):\s*(.+)$/)
+    if (!match) break
+    info[match[1]] = match[2].trim()
+  }
+  assert.equal(info.NSMicrophoneUsageDescription,
+    'Automagik listens to you only while voice chat is on, to hear what you say to your Bots.')
+  // Without it macOS never asks, and a LAN-hosted Omni fails with EHOSTUNREACH (#96).
+  assert.equal(info.NSLocalNetworkUsageDescription,
+    'Automagik connects to Omni and other services on your local network.')
 })
 
 test('the artifacts are named Automagik, and the CLIs and the update feeds still find them', () => {

@@ -18,6 +18,8 @@ const team = (extra = {}) => ({
   whaleStored: true,
   // Omni's whale-to-octopus migration already ran, so loading saves nothing.
   octopusStored: true,
+  genieClayStored: true,
+  claudeCodeMoved: true,
   revision: 3,
   bots: {
     b1: {

@@ -1,7 +1,7 @@
 // Composer packs: the composer of a Bot's chat changes with the AI the Bot runs on. Swap
-// the Bot to Claude Code and the composer offers Claude Code's own controls (the ones
-// the dsh-oh-my-claude plugin brings); swap it to a model with thinking levels and the
-// composer offers those. Omni's own Bot pieces (+, voice, members, questions, @) stay in
+// the Bot to a model with thinking levels and the composer offers those; a plugin that runs
+// an agent registers a pack of its own, so the composer offers that agent's controls (its
+// permission modes, say). Omni's own Bot pieces (+, voice, members, questions, @) stay in
 // every pack.
 //
 // A pack, registered with registerComposerPack (extend.js):
@@ -30,16 +30,16 @@
 //   'model'   Omni's own model and thinking menu, which saves to the Bot.
 //
 // The plan cell and the activity and usage docks are not pack cells: they stay Omni's in
-// every pack (Claude Code's plan mode is one of its permission modes).
-import { isClaudeCode } from '../shared/permission-levels.js'
+// every pack (an agent's plan mode is one of its permission modes).
 import { composerPacks } from './extend.js'
+import { routeOf } from '../shared/routes.js'
 
 export const PACK_CELLS = ['permission', 'model']
 
 // The pack every Bot gets when none matches: today's composer, cell for cell.
 export const DEFAULT_PACK = Object.freeze({ id: 'omni', cells: Object.freeze({ permission: 'hidden', model: 'hidden' }) })
 
-// The provider a model ref names (`claude-code/claude-opus-5-5` → `claude-code`).
+// The provider a model ref names (`anthropic/claude-opus-5-5` → `anthropic`).
 export const providerOfRef = ref => (typeof ref === 'string' && ref.includes('/') ? ref.split('/')[0] : undefined)
 
 // The AI a Session's composer is for: the Bot it belongs to and the model that Bot runs
@@ -79,31 +79,6 @@ export function cellChoice(pack, cell, target) {
 // -------------------------------------------------------------------------
 // The packs Omni brings.
 
-// dsh-oh-my-claude (upstream or a fork of it) registers composer pieces under its own
-// fiber, so its name shows in the registrant of what it put in the composer.
-const OH_MY_CLAUDE = /oh-my-claude/i
-const CLAUDE_KEYS = ['conversation.input.permission', 'conversation.input.left', 'conversation.input.dock', 'conversation.composer.dock']
-export const hasOhMyClaude = env => CLAUDE_KEYS.some(key => (env.registrants?.(key) ?? []).some(name => OH_MY_CLAUDE.test(name ?? '')))
-
-// Claude Code: its permission modes, model and thinking. A Bot or group with its own
-// permission preset keeps it: dsh-oh-my-claude's mode picker writes the Session's DSH
-// preset (plan is read-only, bypassPermissions is full access), so letting it show would
-// let a mode go past the Bot's own permissions. Those Bots keep Omni's empty cell, and
-// their preset decides Claude Code's mode, as the plugin's 'dsh' mode does. A group
-// Session has no single AI, so it never gets a pack.
-export const CLAUDE_CODE_PACK = Object.freeze({
-  id: 'claude-code',
-  order: -200,
-  match: isClaudeCode,
-  available: hasOhMyClaude,
-  cells: Object.freeze({
-    permission: target => (target?.bot?.permission ? 'hidden' : 'host'),
-    model: 'model',
-  }),
-  // Without its permission control (an older DSH puts it elsewhere), DSH's own would show.
-  hostFor: Object.freeze({ permission: OH_MY_CLAUDE }),
-})
-
 // Any model that serves thinking levels: its model and thinking menu in the composer.
 export const THINKING_PACK = Object.freeze({
   id: 'thinking',
@@ -120,7 +95,19 @@ export const HOST_MODEL_PACK = Object.freeze({
   cells: Object.freeze({ model: 'model' }),
 })
 
-export const BUILTIN_PACKS = [HOST_MODEL_PACK, CLAUDE_CODE_PACK, THINKING_PACK]
+// An agent over ACP (acp-claude, acp-codex): Omni's model menu, so the Bot can move off the
+// agent or onto another. A model the agent offers efforts for (its thought_level) carries
+// them as `reasoning`, so the thinking pack, which comes first, draws the menu with its
+// levels; this pack covers an agent model with none, or none read yet. A pack the agent's own
+// plugin registers comes first (a lower order).
+export const AGENT_MODEL_PACK = Object.freeze({
+  id: 'agent-model',
+  order: -50,
+  match: provider => provider !== undefined && routeOf(provider).connectedBy === 'acp',
+  cells: Object.freeze({ model: 'model' }),
+})
+
+export const BUILTIN_PACKS = [HOST_MODEL_PACK, THINKING_PACK, AGENT_MODEL_PACK]
 
 // Whether Omni steps aside from a cell of the Session in the main view: its pack says
 // 'host', and the control the pack steps aside for is registered there.

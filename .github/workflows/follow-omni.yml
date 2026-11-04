@@ -1,19 +1,64 @@
 name: Follow Omni
 
 # The desktop app carries Omni's channels and canvases from one Omni release
-# (apps/desktop/omni.json). Every 30 minutes (or when dispatched) this looks for the newest
-# Omni release (`v<version>`, prereleases included) above the one omni.json pins (and the
-# welcome's package.json, which installs the same release in a plain DSH). Each of Omni's
+# (apps/desktop/omni.json). When Omni publishes a release (its release workflow sends an
+# `omni-release` repository_dispatch), every 30 minutes as a fallback, or when dispatched by
+# hand, this looks for the newest Omni release (`v<version>`, prereleases included) above the
+# one omni.json pins (and the welcome's package.json, which installs the same release in a
+# plain DSH). Each of Omni's
 # plugins carries the Omni release of its own last change (omni#1356), so a plugin may be
 # behind the release but never ahead of it. When the channels and canvas plugins are at or
 # below its version and admit the desktop runtime in the same DSH patch series as their
-# harness, it moves omni.json on dev and cuts an Automagik release (release.yml). Downgrades
-# and a different patch series wait for a coordinated harness move.
+# harness, it boots that Omni with dev's plugins (boot-check.yml, the check CI runs), and only
+# when it boots does it move omni.json on dev and cut an Automagik release (release.yml): the
+# bump is pushed with GITHUB_TOKEN, so CI never boots it before installed apps update. An Omni
+# that fails the boot is not followed and the run fails; the next run tries it again. The bump
+# commit is built on exactly the dev commit that booted and pushed without force: when dev
+# moved during the boot, the push is refused, nothing is carried, and the next run boots the
+# new dev. Nothing untested rides along.
+# Downgrades and a different patch series wait for a coordinated harness move.
+#
+# Dispatched with dry_run, it boots and builds the bump but only rehearses the push
+# (`git push --dry-run`) and cuts no release. omni_version (and omni_commit) put a given Omni
+# through the gate, also one that is not newer; dev_sha boots and builds on an older dev
+# commit, as if dev moved during the boot. All three are only taken with dry_run.
+#
+# Omni's dispatch carries {version, tag, sha} as a hint only: the run still reads Omni's
+# releases itself and follows what it finds, through the same checks and boot as the
+# schedule, and only logs the hint next to it. Nothing from the payload is carried. While the
+# list does not show the hinted release yet, it looks again every 20s for up to 2 minutes,
+# then warns and goes on with what the list shows. The token that sends the dispatch lives
+# in Omni (AUTOMAGIK_DISPATCH_TOKEN). Runs share one concurrency
+# group: a dispatch during a follow waits for it, and a later one replaces the waiting one,
+# which loses nothing because every run looks for the newest release itself.
 
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    # Off the top and the half of the hour, where GitHub delays and drops scheduled runs. A
+    # change to this line also makes its committer the schedule's actor (GitHub's documented
+    # way to bring back a schedule that stopped firing).
+    - cron: '11,41 * * * *'
+  repository_dispatch:
+    # Sent by Omni's release workflow when it publishes a release.
+    types: [omni-release]
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Boot the candidate and rehearse the push; push nothing, release nothing
+        type: boolean
+        default: false
+      omni_version:
+        description: Put this Omni release through the gate (dry_run only)
+        type: string
+        default: ''
+      omni_commit:
+        description: The commit to boot for omni_version (its tag's commit when empty; dry_run only)
+        type: string
+        default: ''
+      dev_sha:
+        description: Boot and build on this dev commit instead of dev's tip, as if dev moved (dry_run only)
+        type: string
+        default: ''
 
 permissions: {}
 
@@ -27,29 +72,88 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      contents: write
+      contents: read
     outputs:
-      sha: ${{ steps.bump.outputs.sha }}
+      version: ${{ steps.newest.outputs.version }}
+      commit: ${{ steps.newest.outputs.commit }}
+      dev: ${{ steps.newest.outputs.dev }}
     env:
       GH_TOKEN: ${{ github.token }}
       OMNI: automagik-dev/omni
+      DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
+      WANT_VERSION: ${{ inputs.omni_version }}
+      WANT_COMMIT: ${{ inputs.omni_commit }}
+      WANT_DEV: ${{ inputs.dev_sha }}
+      # Omni's dispatch payload: logged next to what the run finds, never followed.
+      HINT_VERSION: ${{ github.event.client_payload.version }}
+      HINT_TAG: ${{ github.event.client_payload.tag }}
+      HINT_SHA: ${{ github.event.client_payload.sha }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: dev
+          persist-credentials: false
 
       - name: The newest Omni release
         id: newest
         run: |
           set -euo pipefail
+          if [[ -n "${WANT_VERSION}${WANT_COMMIT}${WANT_DEV}" && "${DRY_RUN}" != true ]]; then
+            echo "::error ::omni_version, omni_commit and dev_sha are only taken with dry_run: a chosen Omni or dev is never carried"
+            exit 1
+          fi
+          # Dispatch inputs reach GITHUB_OUTPUT: only a release version and full shas pass.
+          if [[ -n "${WANT_VERSION}" && ! "${WANT_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error ::omni_version is not a release version (x.y.z)"
+            exit 1
+          fi
+          if [[ -n "${WANT_COMMIT}" && ! "${WANT_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error ::omni_commit is not a full commit sha"
+            exit 1
+          fi
+          if [[ -n "${WANT_DEV}" && ! "${WANT_DEV}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error ::dev_sha '${WANT_DEV}' is not a full commit sha"
+            exit 1
+          fi
           current=$(node -p "require('./apps/desktop/omni.json').version")
-          gh api "repos/${OMNI}/releases?per_page=30" \
-            --jq '.[] | select(.draft | not) | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) | .tag_name | ltrimstr("v")' \
-            > releases.txt
-          newest=$(sort -V releases.txt | tail -1)
-          if [[ -z "${newest}" || "${newest}" == "${current}" || "$(printf '%s\n%s\n' "${current}" "${newest}" | sort -V | tail -1)" != "${newest}" ]]; then
-            echo "Omni ${newest:-none}: omni.json is at ${current}, nothing to follow"
-            exit 0
+          if [[ -n "${WANT_VERSION}" ]]; then
+            newest="${WANT_VERSION}"
+          else
+            lookup() {
+              gh api "repos/${OMNI}/releases?per_page=30" \
+                --jq '.[] | select(.draft | not) | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) | .tag_name | ltrimstr("v")' \
+                > releases.txt
+              newest=$(sort -V releases.txt | tail -1)
+            }
+            # above A B: version A is higher than B, or B is empty.
+            above() { [[ "$1" != "$2" && "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" == "$1" ]]; }
+            lookup
+            if [[ "${GITHUB_EVENT_NAME}" == repository_dispatch ]]; then
+              # The hint is only printed, and only what has the shape of a version, tag and sha.
+              hint() { [[ "$1" =~ $2 ]] && echo "$1" || echo '(malformed)'; }
+              wanted=$(hint "${HINT_VERSION}" '^[0-9]+\.[0-9]+\.[0-9]+$')
+              # Omni dispatches as it publishes, and the releases list may lag: look again until
+              # it lists the hinted release. Still only what the lookup lists is followed.
+              unlisted() { [[ "${wanted}" != '(malformed)' ]] && above "${wanted}" "${newest}"; }
+              for try in 1 2 3 4 5 6; do
+                unlisted || break
+                echo "Omni ${wanted} is not listed yet (newest ${newest:-none}): again in 20s (${try}/6)"
+                sleep 20
+                lookup
+              done
+              line="Omni dispatched ${wanted} ($(hint "${HINT_TAG}" '^v[0-9]+\.[0-9]+\.[0-9]+$')"
+              line+=" $(hint "${HINT_SHA}" '^[0-9a-f]{40}$'))"
+              line+="; the newest release is ${newest:-none}"
+              echo "${line}"
+              echo "### ${line}" >> "$GITHUB_STEP_SUMMARY"
+              if unlisted; then
+                echo "::warning ::Omni dispatched ${wanted}, but its releases still list ${newest:-none} after 2 minutes"
+              fi
+            fi
+            if [[ -z "${newest}" || "${newest}" == "${current}" || "$(printf '%s\n%s\n' "${current}" "${newest}" | sort -V | tail -1)" != "${newest}" ]]; then
+              echo "Omni ${newest:-none}: omni.json is at ${current}, nothing to follow"
+              exit 0
+            fi
           fi
           read_json() { gh api "repos/${OMNI}/contents/$1?ref=v${newest}" --jq .content 2>/dev/null | base64 -d 2>/dev/null || true; }
           for app in omni-channels-dsh omni-canvas-dsh; do
@@ -68,16 +172,52 @@ jobs:
               exit 0
             fi
           done
-          echo "version=${newest}" >> "$GITHUB_OUTPUT"
+          commit="${WANT_COMMIT:-$(gh api "repos/${OMNI}/commits/v${newest}" --jq .sha)}"
+          {
+            echo "version=${newest}"
+            echo "commit=${commit}"
+            echo "dev=${WANT_DEV:-$(git rev-parse HEAD)}"
+          } >> "$GITHUB_OUTPUT"
+          echo "### Candidate: Omni ${newest} (${commit:0:9}), omni.json is at ${current}$([[ "${DRY_RUN}" == true ]] && echo ', dry run: boot check only')" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Move to it
+  boot:
+    name: Boot the candidate
+    needs: follow
+    if: needs.follow.outputs.version != ''
+    uses: ./.github/workflows/boot-check.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ needs.follow.outputs.dev }}
+      omni_version: ${{ needs.follow.outputs.version }}
+      omni_commit: ${{ needs.follow.outputs.commit }}
+
+  carry:
+    # Only after the candidate booted: a failed boot fails the run here and nothing moves. The
+    # bump goes on the dev commit that booted, and only a fast-forward of dev is pushed.
+    name: Move to it
+    needs: [follow, boot]
+    if: needs.follow.outputs.version != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.bump.outputs.sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ needs.follow.outputs.dev }}
+
+      - name: Move omni.json and the welcome to it
         id: bump
-        if: steps.newest.outputs.version != ''
         env:
-          VERSION: ${{ steps.newest.outputs.version }}
+          VERSION: ${{ needs.follow.outputs.version }}
+          COMMIT: ${{ needs.follow.outputs.commit }}
+          BOOTED: ${{ needs.follow.outputs.dev }}
+          DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
         run: |
           set -euo pipefail
-          commit=$(gh api "repos/${OMNI}/commits/v${VERSION}" --jq .sha)
           node -e '
             const fs = require("node:fs")
             const [version, commit] = process.argv.slice(1)
@@ -89,17 +229,42 @@ jobs:
             const pkg = JSON.parse(fs.readFileSync(welcome, "utf8"))
             pkg.automagik.omni = { ...pkg.automagik.omni, version, commit }
             fs.writeFileSync(welcome, JSON.stringify(pkg, null, 2) + "\n")
-          ' "${VERSION}" "${commit}"
+          ' "${VERSION}" "${COMMIT}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -qam "chore(desktop): carry Omni ${VERSION}"
-          git push -q origin HEAD:refs/heads/dev
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          empty=()
+          if git diff --quiet; then
+            # A dry run may rehearse the Omni dev already carries; a real run never carries nothing.
+            [[ "${DRY_RUN}" == true ]] || { echo "::error ::Omni ${VERSION} changes nothing on dev ${BOOTED:0:9}"; exit 1; }
+            empty=(--allow-empty)
+          fi
+          git commit -qa "${empty[@]}" -m "chore(desktop): carry Omni ${VERSION}"
+          [[ "$(git rev-parse HEAD^)" == "${BOOTED}" ]] || { echo "::error ::the bump is not on the dev commit that booted (${BOOTED})"; exit 1; }
+          rehearse=()
+          [[ "${DRY_RUN}" == true ]] && rehearse=(--dry-run)
+          # No force: dev only fast-forwards from the commit that booted.
+          if git push "${rehearse[@]}" origin HEAD:refs/heads/dev; then
+            if [[ "${DRY_RUN}" == true ]]; then
+              echo "### Dry run: Omni ${VERSION} would fast-forward dev ${BOOTED:0:9} -> $(git rev-parse --short=9 HEAD); not pushed, no release" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+          tip=$(git ls-remote origin refs/heads/dev | cut -f1)
+          if [[ -n "${tip}" && "${tip}" != "${BOOTED}" ]]; then
+            line="dev moved from ${BOOTED:0:9} to ${tip:0:9} while Omni ${VERSION} booted: not carried, no release; retrying next schedule"
+            echo "::notice ::${line}"
+            echo "### ${line}" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "::error ::the push to dev was refused and dev is still at ${BOOTED:0:9}"
+          exit 1
 
   release:
     name: Release
-    needs: follow
-    if: needs.follow.outputs.sha != ''
+    needs: carry
+    if: needs.carry.outputs.sha != '' && !inputs.dry_run
     uses: ./.github/workflows/release.yml
     permissions:
       contents: write

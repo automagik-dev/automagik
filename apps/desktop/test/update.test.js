@@ -34,19 +34,46 @@ test("the update is the newest release above this one with this platform's feed;
   })
   assert.equal(pickUpdate(releases, { current: '2.261019.10-labs.14', platform: 'linux' }).version, '2.261025.1')
   assert.equal(pickUpdate(releases, { current: '2.261025.1', platform: 'linux' }), null)
+  // No release here carries latest.yml, Windows' feed: none is a Windows update.
   assert.equal(pickUpdate(releases, { current: '2.261019.10', platform: 'win32' }), null)
+  assert.equal(pickUpdate([...releases, release('v2.261022.2', ['latest.yml']), release('v2.261024.1', ['latest.json'])], { current: '2.261019.10', platform: 'win32' }).version, '2.261022.2')
+  assert.equal(pickUpdate([release('v2.261022.2', ['latest.yml'])], { current: '2.261019.10', platform: 'darwin' }), null)
   assert.equal(pickUpdate({ message: 'rate limited' }, { current: '2.261019.10', platform: 'darwin' }), null)
 })
 
-test('only a packaged build updates itself: on macOS, or from an AppImage; OMNI_DESKTOP_UPDATES=off turns it off', () => {
+// The rolling lane releases (docs/rfcs/0011-monorepo-parts-and-releases.md): plugin-lane, herdr-lane and
+// Pocket's pocket-lane are newer than any version and hold small files, but their tags are not v*, so
+// the app never takes one for a build of its own, on either channel, even with a feed file on it.
+test('the rolling lanes, pocket-lane included, are never an update', () => {
+  const releases = [
+    release('pocket-lane', ['latest.json', 'latest-mac.yml', 'latest-linux.yml'], { prerelease: true }),
+    release('herdr-lane', ['pack.json', 'pack.json.sig'], { prerelease: true }),
+    release('plugin-lane', ['lane.json', 'lane.json.sig'], { prerelease: true }),
+    release('v3.58.1', ['automagik-pocket-3.58.1.apk', 'latest.json']),
+    release('v3.58.0'),
+  ]
+  for (const channel of ['stable', 'prerelease']) {
+    assert.equal(pickUpdate(releases, { current: '3.57.0', platform: 'darwin', channel }).version, '3.58.0')
+  }
+  // A Pocket-only release carries no desktop feed: nothing to take when the app is already on 3.58.0.
+  assert.equal(pickUpdate(releases, { current: '3.58.0', platform: 'linux' }), null)
+})
+
+test('only a packaged build updates itself: on macOS or Windows, or from an AppImage; OMNI_DESKTOP_UPDATES=off turns it off', () => {
   assert.equal(updatesEnabled({ packaged: true, platform: 'darwin', env: {} }), true)
   assert.equal(updatesEnabled({ packaged: true, platform: 'darwin', env: { OMNI_DESKTOP_UPDATES: 'off' } }), false)
   assert.equal(updatesEnabled({ packaged: false, platform: 'darwin', env: {} }), false)
   assert.equal(updatesEnabled({ packaged: true, platform: 'linux', env: { APPIMAGE: '/home/u/Omni.AppImage' } }), true)
   assert.equal(updatesEnabled({ packaged: true, platform: 'linux', env: {} }), false)
-  assert.equal(updatesEnabled({ packaged: true, platform: 'win32', env: {} }), false)
+  assert.equal(updatesEnabled({ packaged: true, platform: 'win32', env: {} }), true)
+  assert.equal(updatesEnabled({ packaged: true, platform: 'win32', env: { OMNI_DESKTOP_UPDATES: 'off' } }), false)
+  assert.equal(updatesEnabled({ packaged: false, platform: 'win32', env: {} }), false)
+  assert.equal(updatesEnabled({ packaged: true, platform: 'freebsd', env: {} }), false)
   assert.equal(feedFileOf('darwin'), 'latest-mac.yml')
   assert.equal(feedFileOf('linux'), 'latest-linux.yml')
+  // electron-updater's NSIS updater reads latest.yml, the name electron-builder gives Windows' feed.
+  assert.equal(feedFileOf('win32'), 'latest.yml')
+  assert.equal(feedFileOf('freebsd'), null)
 })
 
 test('a feed override is https, or http on loopback only', () => {
@@ -114,6 +141,26 @@ test('on macOS the update is ready only once Squirrel has it, since quitting ear
   assert.deepEqual(states.at(-1), { version: '2.261022.1', state: 'ready' })
 })
 
+// Windows: electron-updater's NSIS updater downloads the installer latest.yml names and checks its
+// sha512; there is no Squirrel step, so the update is ready once downloaded, and Restart now runs
+// the installer, which opens the app again.
+test('on Windows the update comes from the release with latest.yml and is ready once downloaded', async () => {
+  const updater = fakeUpdater()
+  const states = []
+  const updates = startUpdates({
+    updater, current: '3.65.0', platform: 'win32', env: {}, log: quiet, timers: noTimers,
+    onState: state => states.push(state),
+    releases: async () => [release('v3.66.0', ['latest-mac.yml', 'latest-linux.yml']), release('v3.65.1', ['latest.yml', 'latest-mac.yml'])],
+  })
+  assert.deepEqual(await updates.check(), { result: 'found', version: '3.65.1' })
+  assert.deepEqual(updater.feeds, [{ provider: 'generic', url: 'https://github.com/automagik-dev/automagik/releases/download/v3.65.1/', useMultipleRangeRequest: false }])
+  updater.emit('update-downloaded', { version: '3.65.1' })
+  assert.equal(updates.ready, '3.65.1')
+  assert.deepEqual(states.at(-1), { version: '3.65.1', state: 'ready' })
+  updates.install()
+  assert.deepEqual(updater.installs, [[false, true]])
+})
+
 test('no newer release is logged as up to date; GitHub failing is a warning and a sooner retry', async () => {
   const updater = fakeUpdater()
   const infos = []
@@ -177,6 +224,7 @@ test('a deb build only says a release is out: no feed, no download, and its page
   assert.equal(updateMode({ packaged: true, platform: 'linux', env: {} }), 'notify')
   assert.equal(updateMode({ packaged: true, platform: 'linux', env: { APPIMAGE: '/x' } }), 'auto')
   assert.equal(updateMode({ packaged: true, platform: 'darwin', env: {} }), 'auto')
+  assert.equal(updateMode({ packaged: true, platform: 'win32', env: {} }), 'auto')
   assert.equal(updateMode({ packaged: true, platform: 'linux', env: { OMNI_DESKTOP_UPDATES: 'off' } }), null)
   assert.equal(updateMode({ packaged: false, platform: 'linux', env: {} }), null)
   const updater = fakeUpdater()

@@ -1,20 +1,38 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join, resolve } from 'node:path'
 import { EventEmitter } from 'node:events'
+import { createServer } from 'node:net'
 import { test } from 'node:test'
-import { appHome, dshEnv, forgetDshLogins, freePort, guardContents, installProfile, launchUrlOf, mergeProfilePackage, mergeProfilePatch, migrateRenamed, navigationOf, pinProfileStore, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, scrubBuildPaths, SHIPPED_STORE, startDsh, stopDsh, storeLayoutOf, writeTools } from '../src/dsh.js'
+import { appHome, dshEnv, dshRun, forgetDshLogins, freePort, guardContents, installProfile, keepPort, launchPort, launchUrlOf, listenFailed, mergeProfilePackage, mergeProfilePatch, migrateRenamed, migrateRetired, navigationOf, pageUrlOf, pinProfileStore, portFileOf, portFree, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, RETIRED, retirePatch, scrubBuildPaths, serveDsh, servesOrigin, SHIPPED_STORE, startDsh, startDshOnPort, stopDsh, storedPort, storeLayoutOf, toolFileOf, writeTools } from '../src/dsh.js'
+import { batchSafe } from '../scripts/batch-spawn.mjs'
+
+const posixOnly = { skip: process.platform === 'win32' ? 'the tools are sh scripts here' : false }
+const windowsOnly = { skip: process.platform === 'win32' ? false : 'Windows only' }
+
+// Windows cannot remove a folder a process still runs in, and t.after runs its hooks in the order
+// they were added: the folder goes in one hook, after `stop` (set once the test starts its dsh),
+// retrying while a stopped process is still on its way out.
+function scratch(t, prefix) {
+  const scope = { root: mkdtempSync(join(tmpdir(), prefix)), stop: async () => {} }
+  t.after(async () => {
+    await scope.stop()
+    rmSync(scope.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  })
+  return scope
+}
 
 test('the app keeps everything in one folder under ~/.automagik, apart from a dsh you already run', () => {
   assert.equal(appHome({}), join(homedir(), '.automagik', 'desktop'))
-  assert.equal(appHome({ AUTOMAGIK_HOME: '/srv/automagik' }), '/srv/automagik/desktop')
+  // Paths in the platform's own form: on Windows /srv/automagik is D:\srv\automagik.
+  assert.equal(appHome({ AUTOMAGIK_HOME: '/srv/automagik' }), join(resolve('/srv/automagik'), 'desktop'))
   assert.equal(appHome({ AUTOMAGIK_HOME: '~/apps/automagik' }), join(homedir(), 'apps', 'automagik', 'desktop'))
   assert.equal(appHome({ AUTOMAGIK_HOME: ' ', OMNI_HOME: '/srv/omni', OMNI_DESKTOP_HOME: '/srv/old' }), join(homedir(), '.automagik', 'desktop'))
   const env = dshEnv({ base: { PATH: '/bin', DSH_HOME: '/home/me/.dsh' }, home: '/a/desktop', electronAsNode: true })
-  assert.equal(env.DSH_HOME, '/a/desktop/dsh')
-  assert.equal(env.AUTOMAGIK_BOTS_HOME, '/a/desktop/bots')
+  assert.equal(env.DSH_HOME, join('/a/desktop', 'dsh'))
+  assert.equal(env.AUTOMAGIK_BOTS_HOME, join('/a/desktop', 'bots'))
   // Omni's own folder is Omni's: the app names none, so its sandbox and downloads land in ~/.omni.
   assert.equal(env.OMNI_HOME, undefined)
   assert.equal(env.ELECTRON_RUN_AS_NODE, '1')
@@ -22,7 +40,7 @@ test('the app keeps everything in one folder under ~/.automagik, apart from a ds
   assert.equal(env.OMNI_CLIENT_ID, 'omni-desktop')
   // Nothing is reported: DSH's own opt-out (it does not read DO_NOT_TRACK), and the CLIs it runs.
   for (const name of ['DO_NOT_TRACK', 'DSH_TELEMETRY_DISABLED', 'DISABLE_TELEMETRY', 'OPENUI_TELEMETRY_DISABLED']) assert.equal(env[name], '1', name)
-  assert.equal(env.AUTOMAGIK_PRIVACY_FILE, '/a/desktop/privacy.json')
+  assert.equal(env.AUTOMAGIK_PRIVACY_FILE, join('/a/desktop', 'privacy.json'))
   // A share the person switched on drops its own opt-out, and only its own.
   const sharing = dshEnv({ base: {}, home: '/a', privacy: { 'deepseek-feedback': true } })
   assert.equal(sharing.DSH_TELEMETRY_DISABLED, undefined)
@@ -30,22 +48,22 @@ test('the app keeps everything in one folder under ~/.automagik, apart from a ds
   // Chosen nothing: Claude Code's own error reports work (not training data).
   assert.equal(env.DISABLE_ERROR_REPORTING, undefined)
   // The welcome counts the agents at work there, for an update while the person is away.
-  assert.equal(env.AUTOMAGIK_BUSY_FILE, '/a/desktop/busy.json')
+  assert.equal(env.AUTOMAGIK_BUSY_FILE, join('/a/desktop', 'busy.json'))
   // The person's PATH comes first; the usual tool folders follow (see toolDirs below).
-  assert.ok(env.PATH.startsWith('/bin:'))
+  assert.ok(env.PATH.startsWith(`/bin${delimiter}`))
   assert.equal(dshEnv({ base: {}, home: '/a' }).ELECTRON_RUN_AS_NODE, undefined)
 })
 
 test('resources come from the app when packaged and from build/ in a checkout', () => {
   assert.deepEqual(resourcesOf({ packaged: true, resourcesPath: '/opt/Omni/resources', appPath: '/x' }), {
-    bin: '/opt/Omni/resources/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js',
-    pnpm: '/opt/Omni/resources/runtime/node_modules/pnpm/bin/pnpm.cjs',
-    profile: '/opt/Omni/resources/profile',
+    bin: join('/opt/Omni/resources', 'runtime', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+    pnpm: join('/opt/Omni/resources', 'runtime', 'node_modules', 'pnpm', 'bin', 'pnpm.cjs'),
+    profile: join('/opt/Omni/resources', 'profile'),
   })
-  assert.equal(resourcesOf({ packaged: false, resourcesPath: '/x', appPath: '/src/apps/omni-desktop' }).profile, '/src/apps/omni-desktop/build/profile')
+  assert.equal(resourcesOf({ packaged: false, resourcesPath: '/x', appPath: '/src/apps/omni-desktop' }).profile, join('/src/apps/omni-desktop', 'build', 'profile'))
 })
 
-test('the shipped profile seeds a new home, and a new build replaces only its packages', (t) => {
+test('the shipped profile seeds a new home, and a new build replaces only its packages', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'omni-desktop-profile-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const source = join(root, 'shipped')
@@ -55,7 +73,7 @@ test('the shipped profile seeds a new home, and a new build replaces only its pa
   writeFileSync(join(source, 'node_modules', '@automagik', 'omni-dsh', 'index.js'), 'v1')
   const dshHome = join(root, 'dsh')
 
-  const first = installProfile({ dshHome, source })
+  const first = await installProfile({ dshHome, source })
   assert.equal(first.installed, true)
   assert.equal(first.target, join(dshHome, 'profiles', 'omni'))
   assert.equal(readFileSync(join(first.target, 'node_modules', '@automagik', 'omni-dsh', 'index.js'), 'utf8'), 'v1')
@@ -65,7 +83,7 @@ test('the shipped profile seeds a new home, and a new build replaces only its pa
   writeFileSync(join(first.target, 'cordis.patch.yml'), '- id: llm-pi-ai  # the user\'s models')
   mkdirSync(join(first.target, '.plugin-manager'))
   writeFileSync(join(first.target, '.plugin-manager', 'state.json'), '{}')
-  assert.equal(installProfile({ dshHome, source }).installed, false)
+  assert.equal((await installProfile({ dshHome, source })).installed, false)
   assert.equal(existsSync(join(first.target, 'cordis.yml')), true)
 
   writeFileSync(join(source, 'package.json'), '{"dependencies":{"@automagik/omni-dsh":"0.1.8"}}')
@@ -73,7 +91,7 @@ test('the shipped profile seeds a new home, and a new build replaces only its pa
   // pnpm resolves the plugin manager's installs from the lock: the new build's comes with its packages.
   writeFileSync(join(source, 'pnpm-lock.yaml'), 'omni-dsh 0.1.8')
   writeFileSync(join(first.target, 'pnpm-lock.yaml'), 'omni-dsh 0.1.7')
-  assert.equal(installProfile({ dshHome, source }).installed, true)
+  assert.equal((await installProfile({ dshHome, source })).installed, true)
   assert.equal(readFileSync(join(first.target, 'pnpm-lock.yaml'), 'utf8'), 'omni-dsh 0.1.8')
   assert.equal(readFileSync(join(first.target, 'node_modules', '@automagik', 'omni-dsh', 'index.js'), 'utf8'), 'v2')
   assert.deepEqual(JSON.parse(readFileSync(join(first.target, 'package.json'), 'utf8')), { dependencies: { '@automagik/omni-dsh': '0.1.8' } })
@@ -82,14 +100,43 @@ test('the shipped profile seeds a new home, and a new build replaces only its pa
 
   // A build id, when the build stamped one, decides even with the same package.json.
   writeFileSync(join(source, '.build-id'), '0.1.8+one')
-  assert.equal(installProfile({ dshHome, source }).installed, true)
-  assert.equal(installProfile({ dshHome, source }).installed, false)
+  assert.equal((await installProfile({ dshHome, source })).installed, true)
+  assert.equal((await installProfile({ dshHome, source })).installed, false)
   writeFileSync(join(source, 'node_modules', '@automagik', 'omni-dsh', 'index.js'), 'v3')
   writeFileSync(join(source, '.build-id'), '0.1.8+two')
-  assert.equal(installProfile({ dshHome, source }).installed, true)
+  assert.equal((await installProfile({ dshHome, source })).installed, true)
   assert.equal(readFileSync(join(first.target, 'node_modules', '@automagik', 'omni-dsh', 'index.js'), 'utf8'), 'v3')
   assert.equal(readFileSync(join(first.target, 'cordis.patch.yml'), 'utf8'), '- id: llm-pi-ai  # the user\'s models')
   assert.equal(readFileSync(join(first.target, '.plugin-manager', 'state.json'), 'utf8'), '{}')
+})
+
+test('a first copy cut short leaves no profile behind, and the next start copies it whole', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-profile-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const source = join(root, 'shipped')
+  mkdirSync(join(source, 'node_modules', 'a'), { recursive: true })
+  writeFileSync(join(source, 'package.json'), '{"dependencies":{"a":"1.0.0"}}')
+  writeFileSync(join(source, 'cordis.patch.yml'), '- id: seed\n  config: {}\n')
+  writeFileSync(join(source, 'node_modules', 'a', 'index.js'), 'a')
+  const dshHome = join(root, 'dsh')
+  const target = join(dshHome, 'profiles', 'omni')
+  // A quit while the copy ran left half of it: a short root file, no packages.
+  mkdirSync(`${target}.installing`, { recursive: true })
+  writeFileSync(join(`${target}.installing`, 'cordis.patch.yml'), '- id: se')
+  // A copy that fails on the way (an unreadable file stands in for the quit) puts nothing in place.
+  // Windows has no unreadable mode (chmod sets read-only there), nor does root.
+  if (process.platform !== 'win32' && process.getuid?.() !== 0) {
+    chmodSync(join(source, 'node_modules', 'a', 'index.js'), 0o000)
+    await assert.rejects(installProfile({ dshHome, source }))
+    assert.equal(existsSync(target), false, 'no profile until the copy is whole')
+    chmodSync(join(source, 'node_modules', 'a', 'index.js'), 0o644)
+  }
+  const { installed } = await installProfile({ dshHome, source })
+  assert.equal(installed, true)
+  assert.equal(readFileSync(join(target, 'cordis.patch.yml'), 'utf8'), '- id: seed\n  config: {}\n')
+  assert.equal(readFileSync(join(target, 'node_modules', 'a', 'index.js'), 'utf8'), 'a')
+  assert.equal(existsSync(`${target}.installing`), false)
+  assert.equal((await installProfile({ dshHome, source })).installed, false)
 })
 
 // pnpm refuses to change node_modules linked from another store (ERR_PNPM_UNEXPECTED_STORE),
@@ -158,9 +205,10 @@ test('a profile without node_modules yet still gets the store, and the layout fo
 
 // The app opens on the Omni octopus (@automagik/welcome-dsh), not on DSH's own welcome
 // notice and credential step.
-test('the shipped profile bundles the Bot team first, Omni\'s plugins, the welcome and the plugin market, and switches DSH\'s own onboarding off', () => {
+test('the shipped profile bundles the Bot team first, Omni\'s plugins, the welcome, ACP agents and the plugin market, and switches DSH\'s own onboarding off', () => {
   const profile = JSON.parse(readFileSync(new URL('../profile/package.json', import.meta.url), 'utf8'))
-  const omni = ['@automagik/bots-dsh', '@automagik/omni-channels-dsh', '@automagik/omni-canvas-dsh', '@automagik/welcome-dsh']
+  // ACP agents (RFC 0003) are on by default here: Claude Code and Codex as models when their CLIs are installed.
+  const omni = ['@automagik/bots-dsh', '@automagik/omni-channels-dsh', '@automagik/omni-canvas-dsh', '@automagik/welcome-dsh', '@automagik/acp-dsh']
   // Omni's plugins first, then the add-ons that connect AI subscriptions, each a reviewed fork at
   // a pinned commit (the build checks it holds the version addonVersions names), bundled after.
   const addons = Object.keys(profile.omni.addonVersions)
@@ -273,18 +321,62 @@ setInterval(() => {}, 1000)
   assert.notEqual(child.exitCode ?? child.signalCode, null)
 })
 
-test('a dsh that exits before it is ready is reported, and one that never says so times out', async (t) => {
-  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-fail-'))
-  t.after(() => rmSync(root, { recursive: true, force: true }))
-  const dies = join(root, 'dies.mjs')
-  writeFileSync(dies, 'process.exit(3)')
-  await assert.rejects(startDsh({ node: process.execPath, bin: dies, env: process.env, port: await freePort(), cwd: root }), /exited before it was ready \(3\)/)
-  const silent = join(root, 'silent.mjs')
-  writeFileSync(silent, 'setInterval(() => {}, 1000)')
-  await assert.rejects(startDsh({ node: process.execPath, bin: silent, env: process.env, port: await freePort(), cwd: root, timeoutMs: 300 }), /did not start within/)
+// Windows: dsh's whole tree ends, so nothing it started keeps files of the app's folder open
+// under an update's installer.
+test('on Windows stopping dsh ends its whole process tree with taskkill', async () => {
+  const child = Object.assign(new EventEmitter(), { pid: 4242, exitCode: null, signalCode: null, kills: [] })
+  child.kill = signal => child.kills.push(signal ?? 'default')
+  const calls = []
+  const run = (file, args, options, done) => { calls.push([file, ...args]); setImmediate(() => { done(null); child.emit('exit', 1, null) }) }
+  await stopDsh(child, 8_000, { platform: 'win32', env: { SystemRoot: 'C:\\Windows' }, run })
+  assert.deepEqual(calls, [['C:\\Windows\\System32\\taskkill.exe', '/pid', '4242', '/T', '/F']])
+  assert.deepEqual(child.kills, [])
+  // taskkill failing: dsh alone, as before.
+  const lone = Object.assign(new EventEmitter(), { pid: 7, exitCode: null, signalCode: null })
+  lone.kill = () => setImmediate(() => lone.emit('exit', 1, null))
+  await stopDsh(lone, 8_000, { platform: 'win32', env: {}, run: (file, args, options, done) => done(new Error('denied')) })
+  // A dsh that has started nothing yet ends at once, without taskkill.
+  const fresh = Object.assign(new EventEmitter(), { pid: 8, exitCode: null, signalCode: null })
+  fresh.kill = () => setImmediate(() => fresh.emit('exit', 1, null))
+  await stopDsh(fresh, 8_000, { platform: 'win32', env: {}, tree: false, run: () => assert.fail('no taskkill') })
 })
 
-test('dsh gets node and pnpm on its PATH, both on the app\'s own Node', (t) => {
+test('on Windows a dsh\'s own children are gone once it is stopped', windowsOnly, async (t) => {
+  const scope = scratch(t, 'omni-desktop-tree-')
+  const parent = join(scope.root, 'parent.cjs')
+  writeFileSync(parent, `const { spawn } = require('node:child_process')
+const kid = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+console.log(String(kid.pid))
+setInterval(() => {}, 1000)
+`)
+  const { spawn } = await import('node:child_process')
+  const child = spawn(process.execPath, [parent], { cwd: scope.root, stdio: ['ignore', 'pipe', 'ignore'] })
+  const kid = Number(await new Promise(resolvePid => child.stdout.once('data', chunk => resolvePid(String(chunk).trim()))))
+  const alive = pid => { try { process.kill(pid, 0); return true } catch { return false } }
+  assert.equal(alive(kid), true)
+  await stopDsh(child)
+  // taskkill /T ends the tree before it returns; give Windows a moment to reap.
+  for (let i = 0; i < 20 && alive(kid); i++) await new Promise(r => setTimeout(r, 100))
+  assert.equal(alive(kid), false, 'the grandchild outlived dsh')
+})
+
+test('a dsh that exits before it is ready is reported, and one that never says so times out', async (t) => {
+  const scope = scratch(t, 'omni-desktop-fail-')
+  const { root } = scope
+  // startDsh stops a dsh that timed out without waiting for it to go: the test waits for both.
+  const children = []
+  scope.stop = () => Promise.all(children.map(child => stopDsh(child)))
+  const onSpawn = child => children.push(child)
+  const dies = join(root, 'dies.mjs')
+  writeFileSync(dies, 'process.exit(3)')
+  await assert.rejects(startDsh({ node: process.execPath, bin: dies, env: process.env, port: await freePort(), cwd: root, onSpawn }), /exited before it was ready \(3\)/)
+  const silent = join(root, 'silent.mjs')
+  writeFileSync(silent, 'setInterval(() => {}, 1000)')
+  await assert.rejects(startDsh({ node: process.execPath, bin: silent, env: process.env, port: await freePort(), cwd: root, timeoutMs: 300, onSpawn }), /did not start within/)
+})
+
+
+test('dsh gets node and pnpm on its PATH, both on the app\'s own Node', posixOnly, (t) => {
   const root = mkdtempSync(join(tmpdir(), 'omni-desktop-tools-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const script = join(root, "it's pnpm.cjs")
@@ -292,11 +384,66 @@ test('dsh gets node and pnpm on its PATH, both on the app\'s own Node', (t) => {
   const dir = writeTools({ dir: join(root, 'bin'), node: process.execPath, pnpm: script })
   assert.deepEqual(JSON.parse(execFileSync(join(dir, 'pnpm'), ['add', 'a b'], { encoding: 'utf8' })), ['1', 'add', 'a b'])
   assert.equal(execFileSync(join(dir, 'node'), ['-p', '6*7'], { encoding: 'utf8' }).trim(), '42')
-  const tools = '/u/.local/bin:/u/.claude/local:/opt/homebrew/bin:/usr/local/bin'
-  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', binDir: dir, userHome: '/u' }).PATH, `/bin:${tools}:${dir}`)
-  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', userHome: '/u' }).PATH, `/bin:${tools}`)
+})
+
+test('on Windows node and pnpm are batch files that run on the app\'s own Node', windowsOnly, (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni desktop tools-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const script = join(root, "it's pnpm.cjs")
+  writeFileSync(script, 'console.log(JSON.stringify([process.env.ELECTRON_RUN_AS_NODE, ...process.argv.slice(2)]))')
+  const dir = writeTools({ dir: join(root, 'bin'), node: process.execPath, pnpm: script })
+  const run = (name, args) => execFileSync(...batchSafe(join(dir, `${name}.cmd`), args, { encoding: 'utf8', env: { ...process.env, ELECTRON_RUN_AS_NODE: '' } }))
+  assert.deepEqual(JSON.parse(run('pnpm', ['add', 'a b'])), ['1', 'add', 'a b'])
+  assert.equal(run('node', ['-p', '6*7']).trim(), '42')
+  assert.equal(existsSync(join(dir, 'pnpm')), false, 'no sh script beside the batch files')
+})
+
+test('dsh\'s PATH ends with the tool folders and then the app\'s own node and pnpm', () => {
+  const dir = join('/app', 'bin')
+  const tools = [join('/u', '.local', 'bin'), join('/u', '.claude', 'local'), '/opt/homebrew/bin', '/usr/local/bin']
+  const path = (...dirs) => dirs.join(delimiter)
+  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', binDir: dir, userHome: '/u' }).PATH, path('/bin', ...tools, dir))
+  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', userHome: '/u' }).PATH, path('/bin', ...tools))
+  // acp-dsh installs its adapters with the app's own pnpm, whatever pnpm comes first on PATH.
+  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', binDir: dir, userHome: '/u', platform: 'linux' }).AUTOMAGIK_PNPM, join(dir, 'pnpm'))
+  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', binDir: dir, userHome: '/u', platform: 'win32' }).AUTOMAGIK_PNPM, join(dir, 'pnpm.cmd'))
+  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', userHome: '/u' }).AUTOMAGIK_PNPM, undefined)
   // A folder already on the person's PATH keeps its place and is not repeated.
-  assert.equal(dshEnv({ base: { PATH: '/usr/local/bin:/bin' }, home: '/a', userHome: '/u' }).PATH, '/usr/local/bin:/bin:/u/.local/bin:/u/.claude/local:/opt/homebrew/bin')
+  assert.equal(dshEnv({ base: { PATH: path('/usr/local/bin', '/bin') }, home: '/a', userHome: '/u' }).PATH, path('/usr/local/bin', '/bin', ...tools.slice(0, 3)))
+})
+
+test('a start leaves node and pnpm as they are when they already say the same, and rewrites them when not', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-tools-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const dir = join(root, 'bin')
+  const file = name => toolFileOf(dir, name)
+  writeTools({ dir, node: '/app/one/node', pnpm: '/app/one/pnpm.cjs' })
+  const old = new Date(Math.floor(Date.now() / 1000) * 1000 - 60_000)
+  for (const name of ['node', 'pnpm']) utimesSync(file(name), old, old)
+  const unchanged = name => statSync(file(name)).mtimeMs === old.getTime()
+  writeTools({ dir, node: '/app/one/node', pnpm: '/app/one/pnpm.cjs' })
+  assert.ok(unchanged('node') && unchanged('pnpm'), 'nothing is written when nothing changed')
+  if (process.platform !== 'win32') {
+    // A tool that lost its execute bit is written again (Windows keeps no execute bit).
+    chmodSync(file('pnpm'), 0o644)
+    writeTools({ dir, node: '/app/one/node', pnpm: '/app/one/pnpm.cjs' })
+    assert.equal(statSync(file('pnpm')).mode & 0o777, 0o755)
+    assert.ok(unchanged('node'))
+  }
+  // The app moved (a new install): both name the new path.
+  writeTools({ dir, node: '/app/two/node', pnpm: '/app/one/pnpm.cjs' })
+  assert.ok(!unchanged('node') && readFileSync(file('node'), 'utf8').includes('/app/two/node'))
+  assert.ok(readFileSync(file('pnpm'), 'utf8').includes('/app/two/node'))
+})
+
+test('a Windows batch tool quotes its paths and doubles a %', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-tools-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const dir = writeTools({ dir: join(root, 'bin'), node: 'C:\\Users\\Ana 100%\\Automagik.exe', pnpm: 'C:\\A\\pnpm.cjs', platform: 'win32' })
+  const text = readFileSync(join(dir, 'pnpm.cmd'), 'utf8')
+  assert.match(text, /^@echo off\r\n/)
+  assert.match(text, /\r\nset ELECTRON_RUN_AS_NODE=1\r\n"C:\\Users\\Ana 100%%\\Automagik\.exe" "C:\\A\\pnpm\.cjs" %\*\r\n$/)
+  assert.equal(existsSync(join(dir, 'pnpm')), false)
 })
 
 test('an update adds the settings a newer build ships and keeps every one the user has', () => {
@@ -323,7 +470,7 @@ test('an update adds the settings a newer build ships and keeps every one the us
   assert.equal(mergeProfilePatch(shipped, shipped), null)
 })
 
-test('an existing profile gets pnpm settings and the newer build\'s settings on update', (t) => {
+test('an existing profile gets pnpm settings and the newer build\'s settings on update', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'omni-desktop-migrate-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const source = join(root, 'shipped')
@@ -332,14 +479,14 @@ test('an existing profile gets pnpm settings and the newer build\'s settings on 
   writeFileSync(join(source, '.build-id'), 'one')
   writeFileSync(join(source, 'cordis.patch.yml'), '- id: web\n  config:\n    searchProvider: auto\n')
   const dshHome = join(root, 'dsh')
-  const { target } = installProfile({ dshHome, source })
+  const { target } = await installProfile({ dshHome, source })
   // An install from before pnpm-workspace.yaml shipped, with the user's own search.
   rmSync(join(target, 'pnpm-workspace.yaml'), { force: true })
   writeFileSync(join(target, 'cordis.patch.yml'), '- id: web\n  config:\n    searchProvider: brave\n')
   writeFileSync(join(source, 'pnpm-workspace.yaml'), 'nodeLinker: hoisted\n')
   writeFileSync(join(source, 'cordis.patch.yml'), '- id: web\n  config:\n    searchProvider: auto\n- id: plugin-market\n  config:\n    indexes: []\n')
   writeFileSync(join(source, '.build-id'), 'two')
-  installProfile({ dshHome, source })
+  await installProfile({ dshHome, source })
   assert.equal(readFileSync(join(target, 'pnpm-workspace.yaml'), 'utf8'), 'nodeLinker: hoisted\n')
   assert.equal(
     readFileSync(join(target, 'cordis.patch.yml'), 'utf8'),
@@ -347,7 +494,7 @@ test('an existing profile gets pnpm settings and the newer build\'s settings on 
   )
 })
 
-test('an update replaces the packages the app ships and keeps the plugins the user installed', (t) => {
+test('an update replaces the packages the app ships and keeps the plugins the user installed', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'omni-desktop-keep-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const source = join(root, 'shipped')
@@ -358,7 +505,7 @@ test('an update replaces the packages the app ships and keeps the plugins the us
   writeFileSync(join(source, 'cordis.patch.yml'), '[]\n')
   writeFileSync(join(source, '.build-id'), 'one')
   const dshHome = join(root, 'dsh')
-  const { target } = installProfile({ dshHome, source })
+  const { target } = await installProfile({ dshHome, source })
   // The user installs a market plugin: dsh's pnpm adds it, and its own dependency, beside Omni's.
   mkdirSync(join(target, 'node_modules', 'dsh-kimi-subscription'), { recursive: true })
   mkdirSync(join(target, 'node_modules', '@automagik', 'their-plugin'), { recursive: true })
@@ -380,7 +527,7 @@ test('an update replaces the packages the app ships and keeps the plugins the us
   writeFileSync(join(source, 'pnpm-lock.yaml'), 'shipped')
   writeFileSync(join(target, 'pnpm-lock.yaml'), 'stale')
   writeFileSync(join(source, '.build-id'), 'two')
-  installProfile({ dshHome, source })
+  await installProfile({ dshHome, source })
   assert.deepEqual(readdirSync(join(target, 'vendor')).sort(), ['omni-dsh-2.tgz', 'their-plugin-1.0.0.tgz'])
   assert.equal(existsSync(join(target, 'pnpm-lock.yaml')), false)
   assert.equal(readFileSync(join(target, 'node_modules', '@automagik', 'omni-dsh', 'index.js'), 'utf8'), 'v2')
@@ -397,7 +544,7 @@ test('an update replaces the packages the app ships and keeps the plugins the us
 // as @automagik/omni-dsh and @automagik/omni-ai-dsh. An update into this app finds such a
 // profile: it must end with the new packages only, the user's rows naming them, and the
 // team's home untouched.
-test('an update moves a profile from the renamed packages to the new ones and keeps everything else', (t) => {
+test('an update moves a profile from the renamed packages to the new ones and keeps everything else', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'omni-desktop-rename-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const dshHome = join(root, 'dsh')
@@ -437,7 +584,7 @@ test('an update moves a profile from the renamed packages to the new ones and ke
   writeFileSync(join(source, 'cordis.patch.yml'), readFileSync(new URL('../profile/cordis.patch.yml', import.meta.url), 'utf8'))
   writeFileSync(join(source, '.build-id'), 'new build')
 
-  assert.equal(installProfile({ dshHome, source }).installed, true)
+  assert.equal((await installProfile({ dshHome, source })).installed, true)
   const merged = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8'))
   assert.deepEqual(Object.keys(merged.dependencies), [...fresh, 'dsh-kimi-subscription'])
   assert.deepEqual(merged.dsh.profile.bundles, ['@deepseek-ai/dsh-base', ...fresh, 'dsh-kimi-subscription'])
@@ -469,6 +616,77 @@ test('the rename touches only the old names, whole', () => {
   assert.deepEqual(JSON.parse(mergeProfilePackage({ dependencies: { '@automagik/omni-dsh': '1' } }, { dependencies: {} })).dependencies, { '@automagik/omni-dsh': '1' })
 })
 
+// Oh My Claude left the app (Claude comes through DSH's pi-ai route). An update of a profile
+// an earlier build installed with it must take it out whole: its folder, its dependency and
+// bundle, and its rows in both patch files, leaving every other row as the user has it.
+test('an update takes a package the app no longer ships out of the profile and keeps everything else', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-retire-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const dshHome = join(root, 'dsh')
+  const target = join(dshHome, 'profiles', 'omni')
+  const shipped = ['@automagik/bots-dsh', '@automagik/welcome-dsh', '@goodandready/dsh-subscriptions']
+  for (const name of [...shipped, 'dsh-oh-my-claude', 'dsh-kimi-subscription']) {
+    mkdirSync(join(target, 'node_modules', ...name.split('/')), { recursive: true })
+    writeFileSync(join(target, 'node_modules', ...name.split('/'), 'index.js'), 'old')
+  }
+  writeFileSync(join(target, 'package.json'), JSON.stringify({
+    dependencies: { ...Object.fromEntries(shipped.map(name => [name, '*'])), 'dsh-oh-my-claude': 'github:automagik-genie/dsh-oh-my-claude#eb9d1cdad58472ebe34abd194309a60fc22c40d1', 'dsh-kimi-subscription': '1.3.10' },
+    dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', ...shipped, 'dsh-oh-my-claude', 'dsh-kimi-subscription'] } },
+  }))
+  writeFileSync(join(target, 'cordis.patch.yml'), [
+    '- insert:', '    - id: web-search-auto', "      name: '@automagik/bots-dsh/web-search'",
+    '    - id: oh-my-claude-tools', '      name: dsh-oh-my-claude # the Claude Code tools',
+    '# Claude Code, as the person set it up',
+    '- id: oh-my-claude', '  config:', '    permissionMode: auto', '',
+    '- id: omni-ai', "  name: '@automagik/welcome-dsh'", '  config:', '    welcomeDone: true',
+    '- id: llm-pi-ai', '  config:', '    providers:', '      anthropic: {}', '',
+  ].join('\n'))
+  writeFileSync(join(target, '.omni-desktop-profile'), 'old build')
+  writeFileSync(join(dshHome, 'cordis.patch.yml'), '- insert:\n    - id: omc\n      name: "dsh-oh-my-claude"\n- id: omc-ui\n  name: dsh-oh-my-claude\n  config:\n    hints: false\n')
+
+  const source = join(root, 'shipped')
+  for (const name of shipped) {
+    mkdirSync(join(source, 'node_modules', ...name.split('/')), { recursive: true })
+    writeFileSync(join(source, 'node_modules', ...name.split('/'), 'index.js'), 'new')
+  }
+  writeFileSync(join(source, 'package.json'), JSON.stringify({ dependencies: Object.fromEntries(shipped.map(name => [name, '*'])), dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', ...shipped] } } }))
+  writeFileSync(join(source, 'cordis.patch.yml'), readFileSync(new URL('../profile/cordis.patch.yml', import.meta.url), 'utf8'))
+  writeFileSync(join(source, '.build-id'), 'new build')
+
+  assert.equal((await installProfile({ dshHome, source })).installed, true)
+  const merged = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8'))
+  assert.deepEqual(Object.keys(merged.dependencies), [...shipped, 'dsh-kimi-subscription'])
+  assert.deepEqual(merged.dsh.profile.bundles, ['@deepseek-ai/dsh-base', ...shipped, 'dsh-kimi-subscription'])
+  assert.equal(existsSync(join(target, 'node_modules', 'dsh-oh-my-claude')), false)
+  assert.equal(readFileSync(join(target, 'node_modules', 'dsh-kimi-subscription', 'index.js'), 'utf8'), 'old')
+  const patch = readFileSync(join(target, 'cordis.patch.yml'), 'utf8')
+  assert.doesNotMatch(patch, /oh-my-claude|Claude Code/)
+  assert.match(patch, /^- insert:\n {4}- id: web-search-auto\n {6}name: '@automagik\/bots-dsh\/web-search'\n\n?- id: omni-ai\n/m)
+  assert.match(patch, /^- id: omni-ai\n {2}name: '@automagik\/welcome-dsh'\n {2}config:\n {4}welcomeDone: true\n- id: llm-pi-ai\n {2}config:\n {4}providers:\n {6}anthropic: \{\}\n/m)
+  // DSH's own patch held nothing else: it is the empty template again.
+  assert.equal(readFileSync(join(dshHome, 'cordis.patch.yml'), 'utf8'), '[]\n')
+  // The next launch of the same build: nothing left to take out.
+  assert.deepEqual(migrateRetired({ target, dshHome, shipped: JSON.parse(readFileSync(join(source, 'package.json'), 'utf8')) }), [])
+})
+
+test('the retirement takes only the retired package\'s rows, and none while the app still ships it', () => {
+  assert.deepEqual(RETIRED, { 'dsh-oh-my-claude': ['oh-my-claude'] })
+  // A name that only starts like it, a nested config key and a comment elsewhere stay.
+  const others = "- id: x\n  name: dsh-oh-my-claude-extra\n- id: y\n  config:\n    name: dsh-oh-my-claude\n# about dsh-oh-my-claude\n- id: web\n"
+  assert.equal(retirePatch(others), null)
+  assert.equal(retirePatch("- id: 'oh-my-claude'\n  config:\n    a: 1\n- id: web\n"), '- id: web\n')
+  assert.equal(retirePatch('- id: a\n  name: "dsh-oh-my-claude"   # theirs\n'), '[]\n')
+  assert.equal(retirePatch('[]\n'), null)
+  // Another package's insert item whose nested config names it stays, whole; only the
+  // item that is the package goes.
+  const nested = "- insert:\n    - id: router\n      name: '@automagik/bots-dsh/router'\n      config:\n        name: dsh-oh-my-claude\n    - id: omc\n      name: dsh-oh-my-claude\n- id: web\n"
+  assert.equal(retirePatch(nested), "- insert:\n    - id: router\n      name: '@automagik/bots-dsh/router'\n      config:\n        name: dsh-oh-my-claude\n- id: web\n")
+  assert.equal(retirePatch("- insert:\n    - id: router\n      config:\n        name: dsh-oh-my-claude\n"), null)
+  // The rows stay, and so does the package, in a build that still ships it.
+  const shipping = { dependencies: { 'dsh-oh-my-claude': '1' } }
+  assert.deepEqual(JSON.parse(mergeProfilePackage({ dependencies: { 'dsh-oh-my-claude': '1' }, dsh: { profile: { bundles: ['dsh-oh-my-claude'] } } }, { ...shipping, dsh: { profile: { bundles: [] } } })).dsh.profile.bundles, ['dsh-oh-my-claude'])
+})
+
 test('a preload comes from the launch and stays in the app\'s home; none is no preference', (t) => {
   const home = mkdtempSync(join(tmpdir(), 'omni-desktop-preload-'))
   t.after(() => rmSync(home, { recursive: true, force: true }))
@@ -490,3 +708,236 @@ test('a preload comes from the launch and stays in the app\'s home; none is no p
   assert.equal('AUTOMAGIK_PRELOAD' in dshEnv({ base: {}, home: '/a' }), false)
 })
 
+
+// A stand-in dsh that binds its port as dsh's webserver does: it prints its launch line once
+// it listens, and exits 1 with the listen error when it cannot (dsh-host-webserver listen).
+const LISTENING_DSH = `
+import { createServer } from 'node:net'
+const args = process.argv.slice(2)
+const port = Number(args[args.indexOf('--port') + 1])
+const server = createServer(socket => socket.end())
+server.once('error', (error) => { console.error('Error: listen ' + error.code + ': address already in use 127.0.0.1:' + port); process.exit(1) })
+server.listen(port, args[args.indexOf('--host') + 1], () => console.log('dsh web: http://127.0.0.1:' + port + '/?token=' + process.pid))
+`
+// Something else listening on 127.0.0.1:`port` (or a fresh port), until the test ends.
+const squat = async (t, port = 0) => {
+  const server = createServer()
+  await new Promise((done, fail) => { server.once('error', fail); server.listen(port, '127.0.0.1', done) })
+  t.after(() => new Promise(done => server.close(done)))
+  return server.address().port
+}
+
+test('the port dsh served on is kept in the app home; a missing, garbled or privileged one reads as none', (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'omni-desktop-port-'))
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const file = portFileOf(home)
+  assert.equal(file, join(home, 'dsh-port'))
+  assert.equal(storedPort(file), null)
+  keepPort(file, 41149)
+  assert.equal(readFileSync(file, 'utf8'), '41149\n')
+  assert.equal(storedPort(file), 41149)
+  assert.deepEqual(readdirSync(home), ['dsh-port'], 'no temporary file is left beside it')
+  for (const text of ['', 'abc', '41149x', '-5', '80', '1023', '65536', '999999', '4.5', '0x1f90']) {
+    writeFileSync(file, text)
+    assert.equal(storedPort(file), null, JSON.stringify(text))
+  }
+  writeFileSync(file, ' 50000 \n')
+  assert.equal(storedPort(file), 50000)
+})
+
+test('a start takes the stored port while it is free, and a fresh one when it is taken or the file is stale', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'omni-desktop-port-'))
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const file = portFileOf(home)
+  let fresh = 0
+  const counted = () => { fresh += 1; return freePort() }
+
+  // No file yet: a fresh port.
+  const first = await launchPort(file, counted)
+  assert.equal(fresh, 1)
+  // The stored port, while nothing listens on it.
+  keepPort(file, first)
+  assert.equal(await portFree(first), true)
+  assert.equal(await launchPort(file, counted), first)
+  assert.equal(fresh, 1)
+  // Something else took it: a fresh port, never the taken one.
+  const taken = await squat(t)
+  keepPort(file, taken)
+  assert.equal(await portFree(taken), false)
+  const instead = await launchPort(file, counted)
+  assert.notEqual(instead, taken)
+  assert.equal(fresh, 2)
+  // A stale file (garbled by a crash, or hand-edited): a fresh port.
+  writeFileSync(file, 'not a port')
+  await launchPort(file, counted)
+  assert.equal(fresh, 3)
+})
+
+test('the page\'s origin stays the same from one start to the next, and moves only when its port is taken', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-origin-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const bin = join(root, 'fake-dsh.mjs')
+  writeFileSync(bin, LISTENING_DSH)
+  const file = portFileOf(root)
+  // A start as main.js makes it: the port, dsh on it, the port kept once dsh serves on it.
+  const start = async () => {
+    const running = await startDshOnPort({ node: process.execPath, bin, env: process.env, port: await launchPort(file), cwd: root })
+    keepPort(file, Number(new URL(running.url).port))
+    const { origin } = new URL(running.url)
+    assert.equal(servesOrigin(running, origin), true)
+    await stopDsh(running.child)
+    return { origin, token: new URL(running.url).searchParams.get('token') }
+  }
+  const one = await start()
+  const two = await start()
+  const three = await start()
+  assert.equal(two.origin, one.origin)
+  assert.equal(three.origin, one.origin)
+  // Each launch still signs in with its own dsh's token.
+  assert.notEqual(two.token, one.token)
+  // The port taken while the app was closed: this start moves, and the next keeps the new origin.
+  await squat(t, Number(new URL(one.origin).port))
+  const moved = await start()
+  assert.notEqual(moved.origin, one.origin)
+  assert.equal((await start()).origin, moved.origin)
+})
+
+test('a port taken after the app looked: dsh exits on the listen error and starts once more on a fresh port', async (t) => {
+  const scope = scratch(t, 'omni-desktop-race-')
+  const { root } = scope
+  const bin = join(root, 'fake-dsh.mjs')
+  writeFileSync(bin, LISTENING_DSH)
+  const taken = await squat(t)
+  // startDsh alone says why it failed.
+  await assert.rejects(startDsh({ node: process.execPath, bin, env: process.env, port: taken, cwd: root }), error => error.code === 'EADDRINUSE' && /exited before it was ready \(1\)/.test(error.message))
+
+  const told = []
+  const running = await startDshOnPort({ node: process.execPath, bin, env: process.env, port: taken, cwd: root, onPort: next => told.push(next) })
+  scope.stop = () => stopDsh(running.child)
+  const { port } = new URL(running.url)
+  assert.notEqual(Number(port), taken)
+  assert.deepEqual(told, [Number(port)], 'the app hears the new port before dsh is ready on it')
+  assert.equal(servesOrigin(running, `http://127.0.0.1:${port}`), true)
+  assert.equal(servesOrigin(running, `http://127.0.0.1:${taken}`), false, 'never the taken port\'s origin')
+
+  // Any other failure is not retried.
+  const dies = join(root, 'dies.mjs')
+  writeFileSync(dies, 'process.exit(3)')
+  let spawned = 0
+  await assert.rejects(startDshOnPort({ node: process.execPath, bin: dies, env: process.env, port: await freePort(), cwd: root, onSpawn: () => { spawned += 1 } }), error => error.code === undefined)
+  assert.equal(spawned, 1)
+})
+
+test('the page is loaded only from the dsh this start spawned, while it runs, on the guarded origin', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-serves-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const bin = join(root, 'fake-dsh.mjs')
+  writeFileSync(bin, LISTENING_DSH)
+  const running = await startDsh({ node: process.execPath, bin, env: process.env, port: await freePort(), cwd: root })
+  const { origin } = new URL(running.url)
+  assert.equal(servesOrigin(running, origin), true)
+  assert.equal(servesOrigin(running, 'http://127.0.0.1:1'), false)
+  assert.equal(servesOrigin({ child: running.child, url: 'not a url' }, origin), false)
+  assert.equal(servesOrigin(undefined, origin), false)
+  await stopDsh(running.child)
+  assert.equal(servesOrigin(running, origin), false, 'a dsh that has stopped serves nothing')
+})
+
+test('the navigation guard follows dsh\'s origin when dsh moves to another port after the guard is in place', () => {
+  let origin = 'http://127.0.0.1:41149'
+  const contents = new EventEmitter()
+  contents.setWindowOpenHandler = () => {}
+  guardContents(contents, { origin: () => origin, openExternal: () => {} })
+  const refused = (url) => {
+    let refusedIt = false
+    contents.emit('will-navigate', { preventDefault: () => { refusedIt = true } }, url)
+    return refusedIt
+  }
+  assert.equal(refused('http://127.0.0.1:41149/'), false)
+  origin = 'http://127.0.0.1:50000'
+  assert.equal(refused('http://127.0.0.1:50000/'), false)
+  assert.equal(refused('http://127.0.0.1:41149/'), true, 'the old origin is off-origin now')
+})
+
+test('only dsh\'s own listen error for the port it was given counts as a taken port', async (t) => {
+  const line = 'Error: listen EADDRINUSE: address already in use 127.0.0.1:50927'
+  assert.equal(listenFailed(`booting\n    ${line}\n        at Server.setupListenHandle\n`, 50927), true, 'as dsh logs it, indented under its logger')
+  assert.equal(listenFailed(line, 50928), false, 'another port')
+  assert.equal(listenFailed('Error: listen EADDRINUSE: address already in use 0.0.0.0:50927', 50927), false, 'another address')
+  assert.equal(listenFailed('mcp: upstream said EADDRINUSE on 127.0.0.1:50927, retrying', 50927), false, 'other log text naming the code')
+  assert.equal(listenFailed(`plugin note: ${line}`, 50927), false, 'quoted inside another line')
+
+  // A dsh that dies for another reason after logging such text is not started again.
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-noise-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const noisy = join(root, 'noisy.mjs')
+  writeFileSync(noisy, "console.error('mcp: upstream said EADDRINUSE on 127.0.0.1:' + process.argv[process.argv.indexOf('--port') + 1]); process.exit(1)")
+  let spawned = 0
+  await assert.rejects(startDshOnPort({ node: process.execPath, bin: noisy, env: process.env, port: await freePort(), cwd: root, onSpawn: () => { spawned += 1 } }), error => error.code === undefined)
+  assert.equal(spawned, 1)
+})
+
+test('a quit between the first dsh\'s exit and the retry spawns no second dsh', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-quit-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const bin = join(root, 'fake-dsh.mjs')
+  writeFileSync(bin, LISTENING_DSH)
+  const run = dshRun()
+  const spawned = []
+  // The quit comes while the fresh port is being found, after the first dsh has exited.
+  const fresh = async () => { await run.stop(); return freePort() }
+  await assert.rejects(serveDsh({ run, portFile: portFileOf(root), node: process.execPath, bin, env: process.env, port: await squat(t), fresh, cwd: root, onSpawn: child => spawned.push(child) }), error => error.code === 'EADDRINUSE')
+  assert.equal(spawned.length, 1)
+  assert.notEqual(spawned[0].exitCode, null)
+  assert.equal(storedPort(portFileOf(root)), null, 'nothing kept')
+})
+
+test('a quit after the retry spawned stops the retry\'s dsh, and one spawned after a quit is stopped at once', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-quit-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const bin = join(root, 'fake-dsh.mjs')
+  writeFileSync(bin, LISTENING_DSH)
+  const exited = child => (child.exitCode !== null || child.signalCode !== null)
+
+  // The retry's dsh is the current one from its spawn: a quit stops it, not the first, dead one.
+  const run = dshRun()
+  const spawned = []
+  const taken = await squat(t)
+  const running = await serveDsh({ run, portFile: portFileOf(root), node: process.execPath, bin, env: process.env, port: taken, cwd: root, onSpawn: child => spawned.push(child) })
+  assert.equal(spawned.length, 2)
+  assert.equal(run.child, spawned[1])
+  assert.equal(running.child, spawned[1])
+  assert.equal(exited(spawned[0]), true)
+  assert.equal(storedPort(portFileOf(root)), Number(new URL(running.url).port), 'the retry\'s port is kept, not the taken one')
+  await run.stop()
+  assert.equal(exited(spawned[1]), true)
+
+  // A quit before anything spawned: what spawns afterwards is stopped as soon as it is tracked.
+  const late = dshRun()
+  await late.stop()
+  await assert.rejects(startDsh({ node: process.execPath, bin, env: process.env, port: await freePort(), cwd: root, onSpawn: child => late.track(child) }), /exited before it was ready/)
+  assert.equal(exited(late.child), true)
+})
+
+test('a port that cannot be kept is reported and the start goes on; the page URL is refused off the origin', async (t) => {
+  const scope = scratch(t, 'omni-desktop-unkept-')
+  const { root } = scope
+  const bin = join(root, 'fake-dsh.mjs')
+  writeFileSync(bin, LISTENING_DSH)
+  const run = dshRun()
+  const unkept = []
+  const running = await serveDsh({ run, portFile: join(root, 'missing', 'dsh-port'), node: process.execPath, bin, env: process.env, port: await freePort(), cwd: root, onUnkept: error => unkept.push(error.code) })
+  scope.stop = () => run.stop()
+  assert.deepEqual(unkept, ['ENOENT'])
+  const { origin } = new URL(running.url)
+  assert.equal(pageUrlOf(running, origin), running.url)
+  assert.throws(() => pageUrlOf(running, 'http://127.0.0.1:1'), /not on http:\/\/127\.0\.0\.1:1/)
+})
+
+test('main.js guards the origin as it is now, and loads only the URL pageUrlOf hands it', () => {
+  const main = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8')
+  assert.match(main, /guard: \(\) => harden\(\(\) => dshOrigin\)/)
+  assert.match(main, /const url = pageUrlOf\(running, dshOrigin\)[\s\S]{0,120}loadURL\(url\)/)
+  assert.match(main, /serveDsh\(\{ run: dshProcess,/)
+  assert.equal(/stopDsh\(|dshChild/.test(main), false, 'every way out stops dshProcess, the current dsh')
+})
