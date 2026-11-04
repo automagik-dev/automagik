@@ -123,7 +123,13 @@ otherwise, and a removed phone's chats end within 2 seconds. Its header line is 
   resubscribes with its cursor. A CLOSE from the phone ends the subscription.
 - Rows are kept in memory only, the last 500 per terminal, while a phone watches and 10 minutes
   after; a restarted bridge numbers them again, so a phone's cursor gets `reset`. Row text is
-  never logged.
+  never logged. A message held for a terminal goes with the phone that wrote it: once that
+  phone stops watching (or is removed), it is dropped, never typed later.
+- **What one phone can hold:** every frame from it is at most 256 KiB; 16 requests at once (more
+  are answered `busy`); 4 MiB written and not yet taken (then the connection ends); credit never
+  above the window (an event bigger than the window goes when credit is full); 8 subscriptions
+  per connection; 2 hc sessions per phone at once; 16 terminals per session. Session names are
+  hc's (letters, digits, `_`, `.`, `-`), never only dots.
 
 ## For other mods
 
