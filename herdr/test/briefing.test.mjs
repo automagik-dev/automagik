@@ -35,6 +35,7 @@ const SCRIPT = new URL("../mods/am-sidebar/briefing.mjs", import.meta.url).pathn
 // each fake hc call is a node process, which a loaded machine can take seconds to start, and the
 // real 2 s budget would then cut answers the test expects. A hung call hangs HANG_MS, far past the
 // scaled per-call limit, so "unreachable" still comes from the timeout and never from luck.
+// HANG_MS is the fake's own hang: no assertion measures elapsed time against it.
 const SCALE = 10;
 const HANG_MS = 120_000;
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", tester: "b-dddddddddd", plan: "b-eeeeeeeeee", solo: "b-ffffffffff" };
@@ -279,14 +280,19 @@ else if (a[0] === "label" && fx.terminals[a[1]]) {
   const t = fx.terminals[a[1]];
   for (const kv of a.slice(2)) t.labels[kv.slice(0, kv.indexOf("="))] = kv.slice(kv.indexOf("=") + 1);
   (fx.labelled ??= []).push(a.slice(1));
-  require("fs").writeFileSync(process.env.FAKE_HC, JSON.stringify(fx));
+  // Replaced whole, never truncated in place: the hook's other hc calls read it at the same time.
+  const tmp = process.env.FAKE_HC + "." + process.pid + ".tmp";
+  require("fs").writeFileSync(tmp, JSON.stringify(fx));
+  require("fs").renameSync(tmp, process.env.FAKE_HC);
   out({ address: t.address, labels: t.labels });
 }
 else { process.stderr.write("not_found"); process.exit(1); }
 };
-// fx.slow: addresses or label values whose calls hang (a machine that doesn't answer).
+// fx.slow: addresses or label values whose calls hang (a machine that doesn't answer). Each hung
+// call logs "hung" when it starts and "answered" if it is ever let finish (FAKE_HC + ".slow").
 const slow = (fx.slow ?? []).some((x) => a.includes(x) || a.some((y) => y.endsWith("=" + x)));
-if (slow) setTimeout(answer, Number(process.env.FAKE_HC_HANG_MS)); else answer();
+const log = (what) => require("fs").appendFileSync(process.env.FAKE_HC + ".slow", what + " " + a.join(" ") + "\\n");
+if (slow) { log("hung"); setTimeout(() => { log("answered"); answer(); }, Number(process.env.FAKE_HC_HANG_MS)); } else answer();
 `;
 const term = (address, labels, extra = {}) => ({ address, labels, created_ms: 1000, parent: null, foreground: { argv: ["claude"], cwd: "/" }, status: { app: "claude-code", state: "idle" }, ...extra });
 const FIXTURE = {
@@ -440,6 +446,30 @@ test("briefing.mjs: a new Claude session is labelled on its terminal and logged 
   assert.equal(broken.stderr, "");
 });
 
+// A starved machine, on purpose: the hook's first git call (started in the same turn as the
+// 300 ms stdin timer) holds the process 600 ms, so the timer is due before stdin is first read.
+// Claude Code's JSON has been in the pipe all along: it must still be read, not dropped.
+test("briefing.mjs: stdin already sent is read even when the 300 ms window passes before the first read", async (t) => {
+  if (!/^node/.test(RUNTIME.split("/").pop())) return t.skip("the stall is a node --import preload");
+  const { root, tree, brief } = await scratch(t);
+  const stall = join(root, "stall.mjs");
+  writeFileSync(stall, `import cp from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+const real = cp.execFile;
+let once = false;
+cp.execFile = function (command, ...rest) {
+  if (command === "git" && !once) { once = true; const end = Date.now() + 600; while (Date.now() < end); }
+  return real.call(this, command, ...rest);
+};
+syncBuiltinESMExports();
+`);
+  const input = JSON.stringify({ session_id: "s-late", hook_event_name: "UserPromptSubmit" });
+  const r = await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree, NODE_OPTIONS: `--import ${stall}` }, input);
+  assert.match(r.stdout, /You are Genie/);
+  const fx = JSON.parse(readFileSync(join(root, "hc.json"), "utf8"));
+  assert.equal(fx.terminals.t1.labels["agent.session"], "s-late", "the session in the input was joined");
+});
+
 test("briefing.mjs: agent.transcript only in ~/.claude/projects; no second row", async (t) => {
   const { root, tree, brief } = await scratch(t);
   const app = join(root, "app");
@@ -544,11 +574,13 @@ test("briefing.mjs: a member whose machine doesn't answer shows unreachable, and
   const fx = JSON.parse(readFileSync(join(root, "hc.json"), "utf8"));
   fx.slow = [ID.solo, "t2"]; // Solo's label query hangs; so does every call naming the captain's pane
   writeFileSync(join(root, "hc.json"), JSON.stringify(fx));
-  const started = Date.now();
   const { stdout } = await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: main });
-  const took = Date.now() - started;
-  // Within the (scaled) guard plus node's start, never waiting out the hung calls.
-  assert.ok(took < GUARD_MS * SCALE + 30_000 && took < HANG_MS, `took ${took} ms`);
+  // Checked on what happened, not on a clock a loaded machine can stretch: Solo's call really
+  // hung, and the script returned before any hung call was let finish (it never waited one
+  // out). The block printed whole is the guard's part: past it the script exits with nothing.
+  const slowLog = readFileSync(join(root, "hc.json.slow"), "utf8");
+  assert.match(slowLog, /^hung ls --label bot=b-ffffffffff$/m);
+  assert.doesNotMatch(slowLog, /^answered/m);
   assert.match(stdout, /Solo \(bot b-ffffffffff, Docs\): unreachable \(hc gave no answer in time\)\./);
   assert.match(stdout, /Captain \(bot b-bbbbbbbbbb, Squad lead\): unreachable/);
   assert.ok(stdout.trimEnd().endsWith("</herdr-bot>"));

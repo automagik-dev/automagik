@@ -283,14 +283,26 @@ async function helpersOf(all, address, known, ask) {
 // The hook's stdin (Claude Code's JSON, with session_id and transcript_path), or "" when
 // none comes within `ms` (a caller that never closes stdin can't hold the hook). Claude Code
 // closes it at once, so INPUT_MS is never scaled: it only bounds such a caller.
+// When the time is up, what is already in the pipe is still read first: on a starved machine
+// the timer can come due before the event loop has polled stdin once (timers run before the
+// poll), and Claude Code's JSON, sitting there since the start, would be dropped. setImmediate
+// runs after the next poll, so only a caller that really sent nothing in `ms` gets "".
 const INPUT_MS = 300;
 function readInput(ms) {
   if (process.stdin.isTTY) return Promise.resolve("");
   return new Promise((resolve) => {
     let text = "";
     let timer = null;
-    const done = () => { clearTimeout(timer); process.stdin.removeAllListeners("data"); process.stdin.destroy(); resolve(text); };
-    timer = setTimeout(done, ms);
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      process.stdin.removeAllListeners("data");
+      process.stdin.destroy();
+      resolve(text);
+    };
+    timer = setTimeout(() => setImmediate(done), ms);
     process.stdin.setEncoding("utf8");
     process.stdin.on("data", (d) => { text += d; if (text.length > 1_000_000) done(); });
     process.stdin.on("end", done);
