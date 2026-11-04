@@ -726,11 +726,11 @@ const QUOTED_SECRET = [
 ]
 
 // Where a YAML block scalar under a credential name opens (`password: |`, then its indented
-// lines), as in SECRET_TEXT: a cut lands before it or after it, never inside. Its lines end in \n,
-// \r\n or a lone \r, as there.
+// lines), as in SECRET_TEXT: a cut lands before it or after it, never inside. Only the key line's
+// own line end ends a block line, as there.
 const YAML_SECRET = [
-  /(^|\r\n|\r(?!\n)|\n)(?=[^\r\n]*:[ \t]*[>|][-+0-9]*[ \t]*(?:[\r\n]|$))(?=([ \t]*))\2([^\r\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))([ \t]*:[ \t]*[>|][-+0-9]*[ \t]*)(?=[\r\n]|$)((?:(?:\r\n|\r(?!\n)|\n)(?:\2[ \t]+[^\r\n]*|[ \t]*(?=[\r\n]|$)))*)/gi,
-  /(^|\r\n|\r(?!\n)|\n)(?=[^\r\n]*:[ \t]*[>|][-+0-9]*[ \t]*(?:[\r\n]|$))(?=([ \t]*))\2([^\r\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))([ \t]*:[ \t]*[>|][-+0-9]*[ \t]*)(?=[\r\n]|$)((?:(?:\r\n|\r(?!\n)|\n)(?:\2[ \t]+[^\r\n]*|[ \t]*(?=[\r\n]|$)))*)/g,
+  /(^|\r\n|\r(?!\n)|\n)(?=[^\r\n]*:[ \t]*[>|][-+0-9]*[ \t]*(?:[\r\n]|$))(?=([ \t]*))\2([^\r\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))([ \t]*:[ \t]*[>|][-+0-9]*[ \t]*)(?=[\r\n]|$)((?:(?=\r\n)(?:\r\n(?:(?:\n|\r(?!\n))*\2[ \t]+[^\r]*(?:\r(?!\n)[^\r]*)*|(?:[ \t\n]|\r(?!\n))*(?=\r\n|$)))*|(?=\r(?!\n))(?:\r(?:\n*\2[ \t]+[^\r]*|[ \t\n]*(?=\r|$)))*|(?=\n)(?:\n(?:\r*\2[ \t]+[^\n]*|[ \t\r]*(?=\n|$)))*)?)/gi,
+  /(^|\r\n|\r(?!\n)|\n)(?=[^\r\n]*:[ \t]*[>|][-+0-9]*[ \t]*(?:[\r\n]|$))(?=([ \t]*))\2([^\r\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))([ \t]*:[ \t]*[>|][-+0-9]*[ \t]*)(?=[\r\n]|$)((?:(?=\r\n)(?:\r\n(?:(?:\n|\r(?!\n))*\2[ \t]+[^\r]*(?:\r(?!\n)[^\r]*)*|(?:[ \t\n]|\r(?!\n))*(?=\r\n|$)))*|(?=\r(?!\n))(?:\r(?:\n*\2[ \t]+[^\r]*|[ \t\n]*(?=\r|$)))*|(?=\n)(?:\n(?:\r*\2[ \t]+[^\n]*|[ \t\r]*(?=\n|$)))*)?)/g,
 ]
 
 // Where JSON inside a JSON string opens a credential value (`{\"password\": \"`), as in SECRET_TEXT,
@@ -771,9 +771,10 @@ function quotedSpans(raw) {
       const start = m.index + m[1].length
       const end = m.index + m[0].length
       // An open block keeps its key line and a fresh block line, so the rest arrives under its key,
-      // after the block's own line end.
+      // after the block's own line end. A text that ends mid-line (on a stray \r or \n too) keeps an
+      // indented line, and one that ends on a CRLF's \r keeps the \r, so either next delta stays in it.
       const eol = m[6].match(/^(?:\r\n?|\n)/)?.[0] ?? '\n'
-      const keep = `${raw.slice(start, end - m[6].length)}${eol}${/[\r\n]$/.test(raw) ? '' : `${m[2]} `}`
+      const keep = `${raw.slice(start, end - m[6].length)}${eol}${raw.endsWith(eol) ? '' : `${m[2]} ${eol === '\r\n' && raw.endsWith('\r') ? '\r' : ''}`}`
       spans.push({ start, end, closed: end < raw.length, keep })
     }
   }

@@ -46,6 +46,11 @@ const ADVERSARIAL = {
   'line starts': '\n '.repeat(40_000),
   'escaped JSON run': '\\"token\\": \\"x\\" '.repeat(5_000),
   'YAML keys': '\npassword: |'.repeat(6_700),
+  'YAML block, LF, stray CRs': `password: |\n  ${'a line\r'.repeat(10_000)}`,
+  'YAML block, CRLF, stray CRs and LFs': `password: |\r\n  ${'a line\ra line\n'.repeat(5_000)}`,
+  'YAML block, CR, stray LFs': `password: |\r  ${'a line\n'.repeat(10_000)}`,
+  'YAML block, LF, stray CRs at line starts': `password: |\n${'\r  a line\n'.repeat(7_000)}`,
+  'YAML block, CR, stray LF blank lines': `password: |${'\r\n'.repeat(40_000)}`,
   'YAML block, CRLF': `password: |\r\n${'  a line of the block\r\n'.repeat(3_400)}`,
   'YAML block, CR': `password: |\r${'  a line of the block\r'.repeat(3_700)}`,
   'YAML keys, CRLF': '\r\npassword: |'.repeat(6_200),
@@ -93,6 +98,12 @@ const FORMS = [
   ...[['', '\n'], [', CRLF', '\r\n'], [', CR', '\r']].flatMap(([eol, n]) => [
     [`YAML >${eol}`, (k) => `${n}${k}: >${n}  ${PHRASE}${n}  ${PHRASE}${n}next: shown`],
     [`YAML |${eol}`, (k) => `${n}  ${k}: |-${n}    ${PHRASE}${n}${n}    ${PHRASE}${n}  next: shown`],
+  ]),
+  // A stray line end the key line does not use, inside the block: part of the value (#346).
+  ...[['LF', '\n', 'CR', '\r'], ['CRLF', '\r\n', 'CR', '\r'], ['CRLF', '\r\n', 'LF', '\n'], ['CR', '\r', 'LF', '\n']].flatMap(([eol, n, stray, s]) => [
+    [`YAML |, ${eol}, a stray ${stray} mid-line`, (k) => `${n}${k}: |${n}  ${PHRASE}${s}${PHRASE}${n}next: shown`],
+    [`YAML >, ${eol}, a stray ${stray} at a line start`, (k) => `${n}${k}: >${n}  ${PHRASE}${n}${s}  ${PHRASE}${n}next: shown`],
+    [`YAML |-, ${eol}, a stray ${stray} on a blank line`, (k) => `${n}  ${k}: |-${n}    ${PHRASE}${n}${s}${n}    ${PHRASE}${n}  next: shown`],
   ]),
   ['key = value', (k) => `${k} = ${JOINED}`], ['key : "value"', (k) => `${k} : "${PHRASE}"`], ['{"key" : "value"}', (k) => `{"${k}" : "${PHRASE}"}`],
 ]
@@ -181,6 +192,23 @@ test('a YAML block longer than the keep, streamed a line at a time: no word of i
       assert.deepEqual(leaked(r.served()), [], `${key}, ${eol}`)
       r.send('next: shown')
       assert.match(r.served(), /next: shown/, `${key}, ${eol}`)
+    }
+  }
+})
+
+// A stray line end the key line does not use is part of the value, also when a delta ends on one:
+// the cut keeps an indented block line, so the unindented rest of that line stays hidden (#346).
+test('a YAML block streamed past the keep with stray line ends: no word of it is served', () => {
+  for (const [eol, n, s] of [['LF', '\n', '\r'], ['CRLF', '\r\n', '\r'], ['CRLF', '\r\n', '\n'], ['CR', '\r', '\n']]) {
+    for (const key of ['password', 'dbPassword']) {
+      const what = `${key}, ${eol} key, a stray ${JSON.stringify(s)}`
+      const r = journal()
+      r.send(`config:${n}  ${key}: |${n}`)
+      for (const line of YAML_LINES) r.send(line.replace(/\n$/, s))
+      r.send(`${PHRASE}${n}`)
+      assert.deepEqual(leaked(r.served()), [], what)
+      r.send('next: shown')
+      assert.match(r.served(), /next: shown/, what)
     }
   }
 })

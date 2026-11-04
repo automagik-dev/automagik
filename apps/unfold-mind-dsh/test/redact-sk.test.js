@@ -409,6 +409,17 @@ test('every raw-field caller keeps a key out of its sentence when the clip lands
   }
 })
 
+// Every caller that quotes a raw field into its sentence.
+const RAW_CALLERS = [
+  ['log', (text) => sentence({ lane: 'agentd', kind: 'log', fields: { level: 'info', msg: text } }).sentence],
+  ['user_text', (text) => sentence({ lane: 'agentd', kind: 'user_text', fields: { request_id: 'c1', text } }).sentence],
+  ['command_submitted', (text) => sentence({ lane: 'agentd', kind: 'command_submitted', fields: { command_id: 'k1', text } }).sentence],
+  ['input_transcript', (text) => sentence({ lane: 'agentd', kind: 'input_transcript', fields: { text } }).sentence],
+  ['host input_transcript', (text) => sentence({ lane: 'host', kind: 'input_transcript', fields: { text } }).sentence],
+  ['reply_text', (text) => sentence({ lane: 'host', kind: 'reply_text', fields: { response_id: 'r1', text } }).sentence],
+  ['agent_delta', (text) => sentence({ lane: 'agentd', kind: 'agent_delta', fields: { response_id: 'r1', text } }).sentence],
+]
+
 // A YAML block scalar (`password: |`, `apiKey: >`, `db_password: |-`, then the value on the
 // indented lines under it) is redacted by rules that anchor on its line ends. quote() collapses
 // whitespace for the sentence, so it redacts the raw field first: collapsed, the name rule would
@@ -427,15 +438,7 @@ test('a YAML block-scalar secret never reaches a quoted sentence, from any raw-f
     ['db_password: |-', (n) => `db_password: |-${n}  ${SECRET}${n}  ${MORE}`],
   ]
   const EOLS = [['LF', '\n'], ['CRLF', '\r\n'], ['CR', '\r']]
-  const callers = [
-    ['log', (text) => sentence({ lane: 'agentd', kind: 'log', fields: { level: 'info', msg: text } }).sentence],
-    ['user_text', (text) => sentence({ lane: 'agentd', kind: 'user_text', fields: { request_id: 'c1', text } }).sentence],
-    ['command_submitted', (text) => sentence({ lane: 'agentd', kind: 'command_submitted', fields: { command_id: 'k1', text } }).sentence],
-    ['input_transcript', (text) => sentence({ lane: 'agentd', kind: 'input_transcript', fields: { text } }).sentence],
-    ['host input_transcript', (text) => sentence({ lane: 'host', kind: 'input_transcript', fields: { text } }).sentence],
-    ['reply_text', (text) => sentence({ lane: 'host', kind: 'reply_text', fields: { response_id: 'r1', text } }).sentence],
-    ['agent_delta', (text) => sentence({ lane: 'agentd', kind: 'agent_delta', fields: { response_id: 'r1', text } }).sentence],
-  ]
+  const callers = RAW_CALLERS
   for (const [label, block] of blocks) {
     for (const [eol, n] of EOLS) {
       const raw = block(n)
@@ -458,5 +461,53 @@ test('a YAML block-scalar secret never reaches a quoted sentence, from any raw-f
         }
       }
     }
+  }
+})
+
+// Only the key line's own line end ends a line of its block: any other \r or \n inside the block is
+// part of the value (#346). Each key line end runs with the stray characters it does not use, in
+// the middle of a value line, at the start of one and on an otherwise blank line, and the value
+// after the stray is hidden. Where the key's own line end comes first (an LF key's \r\n, a CR
+// key's \r\n), the line has ended: the unindented text after it is shown, like any line after the
+// block.
+test('a stray line end inside a YAML block is part of the value, from the raw text to every caller', () => {
+  const SECRET = ['velvet', 'lantern', 'harbor'].join('')
+  const MORE = ['orchard', 'meadow', 'pebble'].join('')
+  const masked = (t) => [SECRET, MORE].flatMap((v) => [v, ...fragmentsOf(v)]).reduce((m, f) => m.split(f).join('[secret]'), t)
+  const STRAYS = [['LF', '\n', 'CR', '\r'], ['CRLF', '\r\n', 'CR', '\r'], ['CRLF', '\r\n', 'LF', '\n'], ['CR', '\r', 'LF', '\n']]
+  const keys = [['password: |', 'password: |', ''], ['apiKey: >', 'apiKey: >', '  '], ['db_password: |-', 'db_password: |-', '']]
+  const shapes = [
+    ['mid-line', (n, s, key, i) => `${i}${key}${n}${i}  ${SECRET}${s}${MORE}${n}${i}next: shown`],
+    ['at a line start', (n, s, key, i) => `${i}${key}${n}${i}  ${SECRET}${n}${s}${i}  ${MORE}${n}${i}next: shown`],
+    ['on a blank line', (n, s, key, i) => `${i}${key}${n}${i}  ${SECRET}${n}${s}${n}${i}  ${MORE}${n}${i}next: shown`],
+  ]
+  for (const [keyEol, n, strayName, s] of STRAYS) {
+    for (const [label, key, indent] of keys) {
+      for (const [where, shape] of shapes) {
+        const raw = shape(n, s, key, indent)
+        const what = `${label}, ${keyEol} key, a stray ${strayName} ${where}`
+        for (const [form, out] of [['redactText', redactText(raw)], ['redact', redact({ text: raw }).text]]) {
+          assert.ok(out.includes(REDACTED), `${what}: ${form} redacts the block`)
+          for (const value of [SECRET, MORE]) assert.equal(fragmentIn(value, out), null, `${what}: ${form} ${JSON.stringify(masked(out))}`)
+          assert.ok(out.endsWith(`${n}${indent}next: shown`), `${what}: ${form} shows the line after the block ${JSON.stringify(masked(out))}`)
+        }
+        for (const [name, said] of RAW_CALLERS) {
+          for (const field of [raw, `${'w'.repeat(30)} ${raw}`]) {
+            const out = said(field)
+            const served = redact({ sentence: out }).sentence
+            for (const value of [SECRET, MORE]) {
+              assert.equal(fragmentIn(value, out), null, `${name}, ${what}: sentence ${JSON.stringify(masked(out))}`)
+              assert.equal(fragmentIn(value, served), null, `${name}, ${what}: served ${JSON.stringify(masked(served))}`)
+            }
+          }
+        }
+      }
+    }
+  }
+  // The key's own line end before the text: the value is hidden, the unindented line after it shown.
+  for (const [keyEol, n] of [['LF', '\n'], ['CR', '\r']]) {
+    const out = redactText(`password: |${n}  ${SECRET}\r\nnext: shown`)
+    assert.equal(fragmentIn(SECRET, out), null, `${keyEol} key, then \\r\\n: ${JSON.stringify(masked(out))}`)
+    assert.ok(out.endsWith('next: shown'), `${keyEol} key, then \\r\\n: the line after it is shown ${JSON.stringify(masked(out))}`)
   }
 })
