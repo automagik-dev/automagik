@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Accepted (delivery 3 merged: #190; 1-2, the labels and milestones, not done) |
 | Milestone | n/a (process) |
 | Lanes | none (docs and GitHub only) |
 | Created | 2026-10-30 |

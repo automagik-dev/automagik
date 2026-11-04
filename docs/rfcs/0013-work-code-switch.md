@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (owner's answers in: D27 and Decided) |
-| Milestone | not scheduled |
+| Status | Accepted (owner's answers in: D27 and Decided; deliveries 1-6 merged: #211, #238, #237, #259, #265, #272; 7 and 8 open) |
+| Milestone | none (ships outside the five milestones) |
 | Lanes | desktop (3.N), plugin (3.N.P), herdr (3.N.P, [RFC 0011](0011-monorepo-parts-and-releases.md)) |
 | Created | 2026-11-03 |
 
