@@ -1,6 +1,8 @@
 package ai.namastex.automagik
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -35,18 +37,39 @@ class HostReads(
         }.awaitAll()
     }
 
+    /** The linked layouts being read, if a refresh started a reading that hasn't finished. */
+    @Volatile private var linkedReading: Deferred<List<String>>? = null
+
     /**
-     * The spaces of the linked [machines], from their layouts: one that didn't answer keeps its spaces from [before].
-     * Also which machines answered, so only they count as read ([MachineState.layouts]).
+     * One refresh. The core's own [terminals] and spaces ([own]) land at once, with the linked machines' spaces as last
+     * read, and then [ownRead] runs (alerts, git): none of it waits for a linked machine. The linked machines' layouts
+     * ([names]) are read in [scope], each landing as it answers, in Herdr's order; one that doesn't answer keeps its
+     * spaces and isn't counted as read. One reading at a time: while one is still out, a refresh starts none (null),
+     * so a stalled machine never piles reads up. The reading answers which machines it laid out; [linkedRead] runs
+     * after it.
      */
-    suspend fun layouts(machines: List<String>, terminals: List<CoreTerminal>, before: List<PocketSpace>): Pair<List<PocketSpace>, List<String>> {
-        val spaces = ArrayList<PocketSpace>()
-        val answered = ArrayList<String>()
-        for ((name, doc) in docs("herdr-app", machines)) {
-            if (doc != null) { spaces.addAll(LayoutReader.spaces(doc.optJSONObject("value"), name, terminals)); answered += name }
-            else spaces.addAll(before.filter { it.machine == name })
-        }
-        return spaces to answered
+    suspend fun refresh(scope: CoroutineScope, terminals: List<CoreTerminal>, own: List<PocketSpace>, names: List<String>,
+                        linked: List<LinkedMachine>, now: Long, ownRead: suspend () -> Unit, linkedRead: suspend () -> Unit): Deferred<List<String>>? {
+        // The linked spaces taken inside the update, so a layout landing meanwhile is never overwritten.
+        update { m -> reading(m, terminals, own + m.spaces.filter { it.machine.isNotBlank() && it.machine in names }, linked, emptyList(), now) }
+        ownRead()
+        if (linkedReading?.isActive == true) return null
+        val session = machine()?.session ?: return null
+        return scope.async {
+            val answered = coroutineScope {
+                names.map { name ->
+                    async {
+                        val doc = timeBoxed(limits.doc) { call("doc.get", JSONObject().put("name", "herdr-app").put("on", name)) }
+                            ?: return@async null
+                        val spaces = LayoutReader.spaces(doc.optJSONObject("value"), name, terminals)
+                        update { laidOut(it, name, spaces, session, System.currentTimeMillis()) }
+                        name
+                    }
+                }.awaitAll().filterNotNull()
+            }
+            linkedRead()
+            answered
+        }.also { linkedReading = it }
     }
 
     /**
@@ -134,6 +157,19 @@ class HostReads(
             val layouts = if (m.readSession == m.session) m.layouts else emptyMap()
             return m.copy(terminals = terminals, spaces = spaces, linked = linked, error = null, readSession = m.session,
                 layouts = layouts + (laidOut + "").filter { it !in layouts }.associateWith { now })
+        }
+
+        /**
+         * [m] with linked machine [name]'s [spaces] from its layout, read in [session]: they replace its earlier ones,
+         * in Herdr's order of the linked machines, and it counts as read ([MachineState.layouts]) from [now]. Nothing
+         * changes if the connection moved on to another session, or [name] is no longer linked and up.
+         */
+        fun laidOut(m: MachineState, name: String, spaces: List<PocketSpace>, session: Int, now: Long): MachineState {
+            if (m.session != session || m.readSession != session || m.linked.none { it.name == name && it.connected }) return m
+            val order = m.linked.map { it.name }
+            val all = (m.spaces.filter { it.machine != name } + spaces)
+                .sortedBy { s -> if (s.machine.isBlank()) -1 else order.indexOf(s.machine).let { if (it < 0) Int.MAX_VALUE else it } }
+            return m.copy(spaces = all, layouts = if (name in m.layouts) m.layouts else m.layouts + (name to now))
         }
 
         /** [block]'s answer, or null if it failed or took longer than [ms]; a real cancel is passed on. */

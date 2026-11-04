@@ -81,6 +81,14 @@ const val PET_SLEEP_MAX = 2 * 1024 * 1024
 private val RECONNECT_DELAYS = listOf(2_000L, 5_000L, 15_000L, 30_000L, 60_000L)
 val FONT_SIZES = 8..24
 
+/**
+ * This state with machine [id] changed by [transform] (from a blank one if it has none yet), unless [id] is neither
+ * shown nor saved: a reading that finishes after its machine was removed must not bring it back.
+ */
+fun PocketState.withMachine(id: String, transform: (MachineState) -> MachineState): PocketState =
+    if (id !in machines && hosts.none { it.id == id }) this
+    else copy(machines = machines + (id to transform(machines[id] ?: MachineState())))
+
 class PocketViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = application.getSharedPreferences("pocket", 0)
     /** Null when the saved list couldn't be read: it then shows empty, but its SSH entries may still be in the preferences. */
@@ -104,9 +112,12 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     private val gitChecked = ConcurrentHashMap<String, Long>()
     /** At most [HostReads.POOL] machines read at once, across every saved machine. */
     private val hostPool = Semaphore(HostReads.POOL)
-    /** The Teams reads of saved machine [id] over [client] ([HostReads]). */
-    private fun reads(id: String, client: CoreClient) =
-        HostReads({ method, params -> client.call(method, params) }, { state.value.machines[id] }, { f -> updateMachine(id, f) }, hostPool)
+    private val hostReads = ConcurrentHashMap<String, Pair<CoreClient, HostReads>>()
+    /** The Teams reads of saved machine [id] over [client] ([HostReads]): one per connection, which keeps its linked reading. */
+    private fun reads(id: String, client: CoreClient): HostReads = hostReads.compute(id) { _, held ->
+        if (held?.first === client) held
+        else client to HostReads({ method, params -> client.call(method, params) }, { state.value.machines[id] }, { f -> updateMachine(id, f) }, hostPool)
+    }!!.second
     private val gitDirty: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val wasWorking = ConcurrentHashMap<String, Set<String>>()
     @Volatile private var gitShown = false
@@ -216,6 +227,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         // Its cached projects and bots go with it (TeamsSync), so Teams never shows a machine the phone no longer has.
         viewModelScope.launch(Dispatchers.IO) { runCatching { teamsSync.removed(id) } }
         disconnect(id)
+        hostReads.remove(id)
         saveHosts(state.value.hosts.filter { it.id != id })
         _state.update { it.copy(machines = it.machines - id, repairing = if (it.repairing == id) null else it.repairing) }
         dropSshKeyIfUnused()
@@ -388,7 +400,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         updateMachine(id) { it.copy(connected = false, connecting = false, error = null) }
     }
     private fun updateMachine(id: String, transform: (MachineState) -> MachineState) {
-        _state.update { it.copy(machines = it.machines + (id to transform(it.machines[id] ?: MachineState()))) }
+        _state.update { it.withMachine(id, transform) }
         syncWatch()
     }
     private val reconnects = ConcurrentHashMap<String, Job>()
@@ -571,32 +583,24 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         val own = LayoutReader.spaces(local.optJSONObject("value"), terminals = terminals, home = home)
         val names = list.optJSONArray("machines")?.objects().orEmpty().filter { it.clean("state") == "connected" }.map { it.getString("name") }
         val linked = LinkedMachine.list(list, terminals)
-        val before = state.value.machines[id]?.spaces.orEmpty().filter { it.machine in names }
         // Compared with this connection's previous read only, so connecting never replays what was already waiting.
         val previous = alertBase[id]?.takeIf { it.first === client }?.second
         alertBase[id] = client to terminals
-        suspend fun alerts(spaces: List<PocketSpace>, linkedOnes: Boolean) {
-            val paned = spaces.flatMap { it.addresses }.toSet()
-            fun mine(t: TerminalRef) = t.address in paned && t.address.contains('/') == linkedOnes
-            alert(Alerts.changes(previous, terminals, id, ::mine), client)
-            Alerts.resolved(previous, terminals, id, ::mine).forEach { Notify.cancel(getApplication(), it) }
-        }
-        val read = System.currentTimeMillis()
-        // The core's own terminals and spaces at once (the linked machines' as read before), and its own alerts: they
-        // never wait for a linked machine's layout.
-        updateMachine(id) { HostReads.reading(it, terminals, own + before, linked, emptyList(), read) }
-        alerts(own, linkedOnes = false)
+        // The core's own terminals and spaces at once, then its alerts and git: never behind a linked machine's layout,
+        // which is read in the background and lands as it answers ([HostReads.refresh]).
+        reads(id, client).refresh(CoroutineScope(viewModelScope.coroutineContext + Dispatchers.IO), terminals, own, names, linked,
+            System.currentTimeMillis(), ownRead = {
+                // One pass over every terminal: [paned] only tells a sub-agent without a pane of its own.
+                val paned = state.value.machines[id]?.spaces.orEmpty().flatMap { it.addresses }.toSet()
+                alert(Alerts.changes(previous, terminals, id) { it.address in paned }, client)
+                Alerts.resolved(previous, terminals, id) { it.address in paned }.forEach { Notify.cancel(getApplication(), it) }
+                gitWake.trySend(Unit)
+            }, linkedRead = { gitWake.trySend(Unit) })   // a linked machine's new spaces need git too
         rememberLinked(id, linked.map { it.name })
-        // Then the linked machines' layouts at once, each time-boxed: one slow machine no longer holds up the others. One
-        // that doesn't answer keeps the spaces read before, and isn't counted as read ([MachineState.layouts]).
-        val (linkedSpaces, laidOut) = reads(id, client).layouts(names, terminals, before)
-        updateMachine(id) { HostReads.reading(it, terminals, own + linkedSpaces, linked, laidOut, read) }
-        alerts(linkedSpaces, linkedOnes = true)
         // The desktop assigns colours as spaces appear; read them again now and then, never write them.
         val now = System.currentTimeMillis()
         if (now - (colorsRead[id] ?: 0L) > 30_000) { colorsRead[id] = now; runCatching { readColors(id, client) } }
         runCatching { fetchIcons(id, client, terminals) }
-        gitWake.trySend(Unit)
         // The meter publishes at most every 10 minutes: a read every 5 is plenty, and pull to refresh reads at once.
         if (now - (meterRead[id] ?: 0L) > 300_000) { meterRead[id] = now; runCatching { readMeter(id, client, linked) } }
     }

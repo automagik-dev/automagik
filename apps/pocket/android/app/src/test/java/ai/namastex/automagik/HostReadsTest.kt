@@ -137,11 +137,10 @@ class HostReadsTest {
         HostReads({ m, p -> client.call(m, p) }, { state.value }, { f -> state.update(f) }, pool, HostReads.Limits(limit, limit, limit))
 
     /** A refresh as the view model makes one: the linked layouts, then the reading. */
-    private suspend fun refresh(reads: HostReads, machines: List<String>): List<String> {
-        val (spaces, answered) = reads.layouts(machines, terminals, state.value.spaces)
-        state.update { HostReads.reading(it, terminals, listOf(own) + spaces, linked, answered, System.currentTimeMillis()) }
-        return answered
-    }
+    /** A refresh as the view model makes one, waiting for its linked reading: the machines that reading laid out. */
+    private suspend fun refresh(reads: HostReads, machines: List<String>): List<String> =
+        reads.refresh(scope, terminals, listOf(own), machines, linked, System.currentTimeMillis(), {}, {})?.await()
+            ?: error("a linked reading was still out")
     private fun folder(m: String) = m to (if (m.isBlank()) "/w/own" else "/srv/x")
     private fun ms(start: Long) = System.currentTimeMillis() - start
 
@@ -277,6 +276,57 @@ class HostReadsTest {
         assertTrue(ms(start) < SLACK)
         assertEquals("Kept", state.value.members["down|/srv/x"]?.single()?.name)
         assertNull(lost)
+    }
+
+    @Test fun theCoresOwnMachineReadsOutsideThePool() = bounded {
+        answer = { method, machine, params -> if (machine == "slow") Reply.Never else healthy(method, machine, params) }
+        val pool = Semaphore(1)
+        val reads = reads(pool)
+        val stallStart = System.currentTimeMillis()
+        val stalled = async(Dispatchers.IO) { reads.git(listOf(folder("slow"))) { _, _ -> } }
+        withTimeout(SLACK) { while (pool.availablePermits > 0) delay(10) }   // slow holds the only slot
+        // The core's own machine reads at once, while slow still holds it.
+        val start = System.currentTimeMillis()
+        reads.git(listOf(folder(""))) { _, _ -> }
+        assertTrue("own took ${ms(start)} ms", ms(start) < SLACK)
+        assertEquals(0, pool.availablePermits)
+        assertTrue(state.value.git.containsKey(Sidebar.gitKey("", "/w/own")))
+        // A linked machine waits for the slot: it can't finish before slow is given up.
+        reads.git(listOf(folder("fast"))) { _, _ -> }
+        assertTrue("fast finished ${ms(stallStart)} ms after the stall began", ms(stallStart) >= TIME_BOX)
+        stalled.await()
+        assertEquals(1, pool.availablePermits)
+    }
+
+    @Test fun aRefreshLandsTheCoresOwnFirstAndNeverWaitsForALinkedLayout() = bounded {
+        val slowDocs = AtomicInteger()
+        answer = { method, machine, params ->
+            if (machine == "slow" && method == "doc.get") { slowDocs.incrementAndGet(); Reply.Never } else healthy(method, machine, params)
+        }
+        val reads = reads()
+        val order = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val start = System.currentTimeMillis()
+        val reading = reads.refresh(scope, terminals, listOf(own), listOf("fast", "slow"), linked, start,
+            ownRead = {
+                // The core's own terminals and spaces are already in when its alerts and git run.
+                assertEquals(terminals, state.value.terminals)
+                assertTrue("" in state.value.layouts && state.value.spaces.any { it.id == own.id })
+                order += "own"
+            }, linkedRead = { order += "linked" })
+        assertTrue("refresh took ${ms(start)} ms", ms(start) < SLACK)
+        assertEquals(listOf("own"), order)
+        // fast lands as soon as it answers, while slow is still out.
+        withTimeout(SLACK) { state.first { "fast" in it.layouts } }
+        assertTrue(reading!!.isActive)
+        assertEquals(listOf("", "fast"), state.value.spaces.map { it.machine })
+        // A refresh meanwhile lands the core's own again, at once, and starts no second linked reading.
+        val again = System.currentTimeMillis()
+        assertNull(reads.refresh(scope, terminals, listOf(own), listOf("fast", "slow"), linked, again, { order += "own" }, { order += "linked" }))
+        assertTrue(ms(again) < SLACK)
+        assertEquals(listOf("fast"), reading.await())
+        assertEquals(listOf("own", "own", "linked"), order)
+        assertEquals(1, slowDocs.get())
+        assertTrue("slow" !in state.value.layouts)
     }
 
     private companion object {
