@@ -3,7 +3,9 @@
 // person's machine. It plays Electron (driver.mjs) against dsh-launch run in the container with
 // `docker exec -i`, as the WSLC helper will, and proves five things:
 //   1. the image starts: one long-lived container, as user automagik (uid 1000), with its tools;
-//   2. dsh-launch prints a valid `ready` (protocol major 1) for the real DSH on 41700, which serves;
+//   2. dsh-launch prints a valid `ready` (protocol major 1) carrying DSH's own launch URL on
+//      41700, and that URL signs a browser in (303 with DSH's cookie, then the page) while the
+//      bare page refuses one without it (401);
 //   3. a scripted browser-endpoint request goes round trip: an ipc frame to DSH (the fake DSH,
 //      which sends the Bot team's own ds-bot:browser-endpoint request), the framed answer back
 //      to it on the launcher's own port, and a connection there through the CDP tunnel; with the
@@ -11,6 +13,10 @@
 //   4. closing stdin stops DSH within 5 s (the real DSH; and the fake);
 //   5. a staged plugin tarball handed over in the exchange's lane/ is in the profile before DSH
 //      starts, with .lane-prev beside it, and a failed trial puts the previous one back.
+// Each check has a container and a volume of its own, so no DSH, port, lock or profile of one
+// check reaches the next. Within a check, one launcher runs at a time; after each the check waits
+// for the launcher and its DSH to be gone and 41700 to be free. Every container is removed at the
+// end of its check, whatever happened.
 // Usage: node smoke.mjs <image>
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -22,122 +28,200 @@ import { FakeElectron, RELAY_PORT, TOKEN } from './driver.mjs'
 
 const IMAGE = process.argv[2]
 if (!IMAGE) throw new Error('usage: node smoke.mjs <image>')
-const NAME = `automagik-smoke-${process.pid}`
-const VOLUME = `${NAME}-home`
 const SMOKE = dirname(fileURLToPath(import.meta.url))
 const HOME = '/home/automagik'
 const DESKTOP = `${HOME}/.automagik/desktop`
 const PROFILE = `${DESKTOP}/dsh/profiles/omni`
 const WELCOME = '@automagik/welcome-dsh'
+const DSH_PROCESS = '@deepseek-ai/dsh/lib/bin.js'
+const FAKE_PROCESS = '/opt/smoke/fake-dsh.mjs'
 const READY_MS = 240_000
 const STOP_LIMIT_MS = 5_000
-
-const work = mkdtempSync(join(tmpdir(), 'automagik-smoke-'))
-const exchange = join(work, 'exchange')
-for (const dir of [exchange, join(exchange, 'lane'), join(exchange, 'downloads')]) {
-  mkdirSync(dir, { recursive: true })
-  // The runner's user is not the guest's (uid 1000): the guest must write here too, as it will
-  // on the virtiofs mount.
-  chmodSync(dir, 0o777)
-}
+// How long a launcher that was asked to stop may take before the check kills it and fails.
+const REAP_MS = 10_000
+// dsh.js launchUrlOf's pattern, for port 41700.
+const LAUNCH_URL = /^http:\/\/127\.0\.0\.1:41700\/\S*token=\S+$/
 
 const say = line => console.log(`[smoke] ${line}`)
 const docker = (args, options = {}) => execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...options })
-const inGuest = (...command) => docker(['exec', NAME, ...command]).trim()
-const guestOk = (...command) => { try { inGuest(...command); return true } catch { return false } }
+const expect = (condition, message) => { if (!condition) throw new Error(message) }
+const masked = url => String(url).replace(/token=[^&\s]+/, 'token=<masked>')
+const work = mkdtempSync(join(tmpdir(), 'automagik-smoke-'))
 const results = []
+
+// One container on a volume of its own, with its own exchange folder, as WSLC will hold one.
+class Guest {
+  constructor(label) {
+    this.name = `automagik-smoke-${process.pid}-${label}`
+    this.volume = `${this.name}-home`
+    this.exchange = join(work, label, 'exchange')
+    for (const dir of [this.exchange, join(this.exchange, 'lane'), join(this.exchange, 'downloads')]) {
+      mkdirSync(dir, { recursive: true })
+      // The runner's user is not the guest's (uid 1000): the guest must write here too, as it
+      // will on the virtiofs mount.
+      chmodSync(dir, 0o777)
+    }
+    this.launches = new Set()
+    docker(['volume', 'create', this.volume])
+    docker(['run', '-d', '--name', this.name,
+      '-v', `${this.volume}:${HOME}`,
+      '-v', `${this.exchange}:/mnt/automagik-exchange`,
+      '-v', `${SMOKE}:/opt/smoke:ro`,
+      IMAGE])
+  }
+
+  run(...command) { return docker(['exec', this.name, ...command]).trim() }
+  ok(...command) { try { this.run(...command); return true } catch { return false } }
+  running(pattern) { return this.ok('pgrep', '-f', pattern) }
+  // Whether something accepts connections on the container's 127.0.0.1:41700.
+  portTaken() {
+    return this.run('node', '-e', `require('net').connect(41700, '127.0.0.1').on('connect', () => { console.log('taken'); process.exit(0) }).on('error', e => { console.log(e.code); process.exit(0) })`) === 'taken'
+  }
+
+  // One run of dsh-launch, as the helper runs it: `docker exec -i` with piped stdio. Only one at a
+  // time: a second is refused here rather than left to collide on the port.
+  launch({ fake = false } = {}) {
+    expect([...this.launches].every(electron => electron.done), 'a launcher still runs in this container')
+    const args = ['exec', '-i', ...(fake ? ['-e', `DSH_LAUNCH_BIN=${FAKE_PROCESS}`] : []), this.name, '/opt/automagik/bin/dsh-launch']
+    const child = spawn('docker', args, { stdio: ['pipe', 'pipe', 'pipe'] })
+    const electron = new FakeElectron(child)
+    electron.done = false
+    void electron.exited.then(() => { electron.done = true })
+    child.stderr.on('data', chunk => process.stderr.write(chunk.toString('utf8').replace(/^/gm, fake ? '  [fake dsh] ' : '  [dsh] ')))
+    this.launches.add(electron)
+    return electron
+  }
+
+  /**
+   * Closes `electron`'s stdin and checks the stop: the launcher exits 0 within STOP_LIMIT_MS, no
+   * process matching `pattern` is left, and 41700 is free. Answers how long the stop took.
+   */
+  async stop(electron, pattern) {
+    const { code, signal, ms } = await electron.close()
+    expect(code === 0, `dsh-launch exited with ${signal ?? code}, not 0`)
+    expect(ms < STOP_LIMIT_MS, `dsh-launch took ${ms} ms to stop, not under ${STOP_LIMIT_MS}`)
+    expect(!this.running(pattern), `a process matching ${pattern} still runs in the container`)
+    expect(!this.portTaken(), '127.0.0.1:41700 is still taken in the container after the stop')
+    return ms
+  }
+
+  // The end of a check: a launcher still running is asked to stop and, past REAP_MS, killed;
+  // then the container and its volume go. Answers what had to be forced, for the check's result.
+  async remove() {
+    const forced = []
+    for (const electron of this.launches) {
+      if (electron.done) continue
+      electron.child.stdin.end()
+      const stopped = await Promise.race([electron.exited.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), REAP_MS))])
+      if (!stopped) {
+        forced.push('a launcher did not stop within 10 s of its stdin closing')
+        electron.child.kill('SIGKILL')
+      }
+    }
+    try { say(`${this.name} log:\n${docker(['logs', this.name])}`) } catch {}
+    try { docker(['rm', '-f', this.name]) } catch {}
+    try { docker(['volume', 'rm', '-f', this.volume]) } catch {}
+    return forced
+  }
+}
 
 async function check(number, name, run) {
   const started = Date.now()
+  let guest
   try {
-    const detail = await run()
+    guest = new Guest(`check${number}`)
+    const detail = await run(guest)
+    const forced = await guest.remove()
+    guest = null
+    expect(forced.length === 0, forced.join('; '))
     results.push({ number, name, ok: true, detail })
     say(`CHECK ${number} PASS (${Date.now() - started} ms): ${name}: ${detail}`)
   } catch (error) {
+    if (guest) await guest.remove().catch(() => {})
     results.push({ number, name, ok: false, detail: error.message })
     say(`CHECK ${number} FAIL (${Date.now() - started} ms): ${name}: ${error.stack}`)
   }
 }
 
-const expect = (condition, message) => { if (!condition) throw new Error(message) }
-
-// One run of dsh-launch, as the helper runs it: `docker exec -i` with piped stdio.
-function launch({ fake = false } = {}) {
-  const args = ['exec', '-i', ...(fake ? ['-e', 'DSH_LAUNCH_BIN=/opt/smoke/fake-dsh.mjs'] : []), NAME, '/opt/automagik/bin/dsh-launch']
-  const child = spawn('docker', args, { stdio: ['pipe', 'pipe', 'pipe'] })
-  const electron = new FakeElectron(child)
-  child.stderr.on('data', chunk => process.stderr.write(chunk.toString('utf8').replace(/^/gm, fake ? '  [fake dsh] ' : '  [dsh] ')))
-  return electron
-}
-
 const readyOf = electron => electron.waitFor(frame => frame.type === 'ready', READY_MS, 'ready')
 const laneOf = electron => electron.waitFor(frame => frame.type === 'lane' && 'state' in frame, READY_MS, 'the lane frame')
-const welcomeVersion = (dir = `${PROFILE}/node_modules/@automagik/welcome-dsh`) => JSON.parse(inGuest('cat', `${dir}/package.json`)).version
-const dshRunning = pattern => guestOk('pgrep', '-f', pattern)
+const welcomeVersion = (guest, dir = `${PROFILE}/node_modules/@automagik/welcome-dsh`) => JSON.parse(guest.run('cat', `${dir}/package.json`)).version
 
-async function stopWithin(electron, pattern) {
-  const { code, signal, ms } = await electron.close()
-  expect(code === 0, `dsh-launch exited with ${signal ?? code}, not 0`)
-  expect(ms < STOP_LIMIT_MS, `dsh-launch took ${ms} ms to stop, not under ${STOP_LIMIT_MS}`)
-  expect(!dshRunning(pattern), `a process matching ${pattern} still runs in the container`)
-  return ms
+// The launch URL as a browser takes it, from inside the container: the URL verbatim, with no
+// redirect followed, must answer 303 with DSH's dsh-auth- cookie (dsh-client-connection
+// authorizeIndex); the page it points to answers 200 with that cookie and 401 without it.
+const SIGN_IN = `
+const url = process.argv[1]
+const page = new URL('./', url).href
+const main = async () => {
+  const first = await fetch(url, { redirect: 'manual' })
+  const cookie = (first.headers.get('set-cookie') ?? '').split(';')[0]
+  const signedIn = await fetch(page, { redirect: 'manual', headers: cookie ? { cookie } : {} })
+  const bare = await fetch(page, { redirect: 'manual' })
+  console.log(JSON.stringify({ first: first.status, location: first.headers.get('location'), cookie: cookie.split('=')[0], signedIn: signedIn.status, bare: bare.status }))
+}
+main().catch(error => { console.log(JSON.stringify({ error: error.message })) })
+`
+
+async function signIn(guest, url) {
+  const answer = JSON.parse(guest.run('node', '-e', SIGN_IN, url))
+  const shape = `${masked(url)} -> ${JSON.stringify(answer)}`
+  expect(!answer.error, `the launch URL could not be fetched: ${shape}`)
+  expect(answer.first === 303 && /^dsh-auth-/.test(answer.cookie), `the launch URL did not sign in (303 with a dsh-auth- cookie): ${shape}`)
+  expect(answer.signedIn === 200, `the page did not answer 200 with the cookie: ${shape}`)
+  expect(answer.bare === 401, `the page did not refuse a request with no cookie: ${shape}`)
+  return answer
 }
 
+let realStop
+let fakeStop
 try {
-  await check(1, 'the image starts', async () => {
-    docker(['volume', 'create', VOLUME])
-    docker(['run', '-d', '--name', NAME,
-      '-v', `${VOLUME}:${HOME}`,
-      '-v', `${exchange}:/mnt/automagik-exchange`,
-      '-v', `${SMOKE}:/opt/smoke:ro`,
-      IMAGE])
-    const user = `${inGuest('id', '-un')} ${inGuest('id', '-u')}`
+  await check(1, 'the image starts', async (guest) => {
+    const user = `${guest.run('id', '-un')} ${guest.run('id', '-u')}`
     expect(user === 'automagik 1000', `the guest user is ${user}, not automagik 1000`)
-    const node = inGuest('node', '--version')
+    const node = guest.run('node', '--version')
     const [major, minor] = node.slice(1).split('.').map(Number)
     expect(major > 22 || (major === 22 && minor >= 19), `Node ${node} is older than 22.19`)
-    const pnpm = inGuest('pnpm', '--version')
+    const pnpm = guest.run('pnpm', '--version')
     expect(/^10\./.test(pnpm), `pnpm ${pnpm} is not pnpm 10`)
     const tools = {
-      hc: inGuest('hc', '--version'),
-      git: inGuest('git', '--version'),
-      bash: inGuest('bash', '-c', 'echo $BASH_VERSION'),
-      rg: inGuest('rg', '--version').split('\n')[0],
-      bwrap: inGuest('bwrap', '--version'),
-      ssh: docker(['exec', NAME, 'sh', '-c', 'ssh -V 2>&1']).trim(),
-      tini: inGuest('sh', '-c', 'command -v tini'),
-      certificates: inGuest('sh', '-c', 'test -s /etc/ssl/certs/ca-certificates.crt && echo present'),
+      hc: guest.run('hc', '--version'),
+      git: guest.run('git', '--version'),
+      bash: guest.run('bash', '-c', 'echo $BASH_VERSION'),
+      rg: guest.run('rg', '--version').split('\n')[0],
+      bwrap: guest.run('bwrap', '--version'),
+      ssh: guest.run('sh', '-c', 'ssh -V 2>&1'),
+      tini: guest.run('sh', '-c', 'command -v tini'),
+      certificates: guest.run('sh', '-c', 'test -s /etc/ssl/certs/ca-certificates.crt && echo present'),
     }
-    expect(guestOk('test', '-x', '/opt/automagik/bin/dsh-launch'), 'no /opt/automagik/bin/dsh-launch')
-    expect(inGuest('sh', '-c', 'command -v xdg-open') === '/opt/automagik/bin/xdg-open', 'xdg-open is not the shim')
-    expect(guestOk('test', '-w', HOME), `${HOME} is not writable`)
-    expect(guestOk('test', '-d', '/mnt/automagik-exchange/lane'), 'no exchange lane/')
-    const versions = inGuest('cat', '/opt/automagik/versions.json').replace(/\s+/g, ' ')
+    expect(guest.ok('test', '-x', '/opt/automagik/bin/dsh-launch'), 'no /opt/automagik/bin/dsh-launch')
+    expect(guest.run('sh', '-c', 'command -v xdg-open') === '/opt/automagik/bin/xdg-open', 'xdg-open is not the shim')
+    expect(guest.ok('test', '-w', HOME), `${HOME} is not writable`)
+    expect(guest.ok('test', '-d', '/mnt/automagik-exchange/lane'), 'no exchange lane/')
+    const versions = guest.run('cat', '/opt/automagik/versions.json').replace(/\s+/g, ' ')
     return `${user}; node ${node}; pnpm ${pnpm}; ${Object.entries(tools).map(([name, value]) => `${name}: ${value}`).join('; ')}; versions ${versions}`
   })
 
-  let realStop
-  await check(2, 'dsh-launch prints a valid ready for the real DSH', async () => {
-    const electron = launch()
+  await check(2, 'dsh-launch prints a valid ready for the real DSH', async (guest) => {
+    const electron = guest.launch()
     const lane = await laneOf(electron)
     expect(lane.v === 1 && lane.state === 'none', `the first start's lane frame is ${JSON.stringify(lane)}`)
     const ready = await readyOf(electron)
     expect(ready.v === 1, `ready's v is ${ready.v}`)
     expect(ready.port === 41700, `ready's port is ${ready.port}`)
-    expect(/^http:\/\/127\.0\.0\.1:41700\/\S*token=\S+$/.test(ready.url), `ready's url is ${ready.url}`)
+    expect(LAUNCH_URL.test(ready.url), `ready's url ${masked(ready.url)} is not DSH's launch URL on 41700`)
+    // The URL is DSH's own launch line, verbatim.
+    expect(electron.stderr.includes(`dsh web: ${ready.url}`), `ready's url ${masked(ready.url)} is not the one DSH printed`)
     expect(electron.protocolError === null, `stdout carried something that is no frame: ${electron.protocolError?.message}`)
-    const status = inGuest('node', '-e', 'fetch(process.argv[1]).then(r => console.log(r.status), e => { console.log(e.message); process.exit(1) })', ready.url)
-    expect(status === '200', `DSH answered ${status} at its launch URL`)
-    const log = inGuest('cat', `${DESKTOP}/logs/dsh.log`)
-    expect(log.includes('dsh web: http://127.0.0.1:41700/'), 'the volume\'s dsh.log lacks DSH\'s launch line')
-    expect(electron.stderr.includes('dsh web: http://127.0.0.1:41700/'), 'the launcher\'s stderr lacks DSH\'s launch line')
-    realStop = await stopWithin(electron, '@deepseek-ai/dsh/lib/bin.js')
-    return `ready ${JSON.stringify({ ...ready, url: ready.url.replace(/token=[^&]+/, 'token=<redacted>') })}; GET 200; dsh.log ${log.split('\n').length} lines; stopped in ${realStop} ms`
+    const answer = await signIn(guest, ready.url)
+    const log = guest.run('cat', `${DESKTOP}/logs/dsh.log`)
+    expect(log.includes(`dsh web: ${ready.url}`), 'the volume\'s dsh.log lacks DSH\'s launch line')
+    realStop = await guest.stop(electron, DSH_PROCESS)
+    return `ready {v: 1, port: 41700, url: ${masked(ready.url)}} = DSH's launch line; launch URL ${answer.first} -> ${answer.location} with ${answer.cookie}…, page ${answer.signedIn} signed in, ${answer.bare} without; dsh.log in the volume and on stderr; stopped in ${realStop} ms`
   })
 
-  let fakeStop
-  await check(3, 'a scripted browser-endpoint request goes round trip (ipc relay, CDP tunnel, open)', async () => {
-    const electron = launch({ fake: true })
+  await check(3, 'a scripted browser-endpoint request goes round trip (ipc relay, CDP tunnel, open)', async (guest) => {
+    const electron = guest.launch({ fake: true })
     await readyOf(electron)
     electron.send({ type: 'ipc', message: { type: 'smoke:echo', payload: { text: 'ação', n: 3 } } })
     const echoed = await electron.ipc('smoke:echoed')
@@ -161,29 +245,35 @@ try {
     const refused = await electron.waitFor(frame => frame.type === 'ipc' && frame.message?.type === 'smoke:open-result' && frame.message.url === 'http://example.com/', 10_000, 'the refused open')
     expect(refused.message.code === 4, `xdg-open http: exited ${refused.message.code}`)
     expect(electron.frames.filter(frame => frame.type === 'open').length === before, 'an http: link reached Electron')
-    fakeStop = await stopWithin(electron, '/opt/smoke/fake-dsh.mjs')
+    fakeStop = await guest.stop(electron, FAKE_PROCESS)
     return `ipc echo both ways; DSH's endpoint ${url.protocol}//127.0.0.1:${url.port}${url.pathname.replace(TOKEN, '<token>')}; tunnel to ${RELAY_PORT} replied; https: opened, http: refused (exit 4); stopped in ${fakeStop} ms`
   })
 
   await check(4, 'closing stdin stops DSH within 5 s', async () => {
     expect(realStop !== undefined, 'the real DSH run did not get to its stop (check 2)')
     expect(fakeStop !== undefined, 'the fake DSH run did not get to its stop (check 3)')
-    return `real DSH ${realStop} ms, fake DSH ${fakeStop} ms, limit ${STOP_LIMIT_MS} ms; no DSH process left in the container`
+    return `real DSH ${realStop} ms, fake DSH ${fakeStop} ms, limit ${STOP_LIMIT_MS} ms; no DSH process left and 41700 free after each`
   })
 
-  await check(5, 'a staged plugin tarball is unpacked into the profile; a failed trial restores it', async () => {
-    const before = welcomeVersion()
+  await check(5, 'a staged plugin tarball is unpacked into the profile; a failed trial restores it', async (guest) => {
+    // The first start installs the profile in this check's volume.
+    const first = guest.launch({ fake: true })
+    expect((await laneOf(first)).state === 'none', 'the first start had a lane state')
+    await readyOf(first)
+    await guest.stop(first, FAKE_PROCESS)
+
+    const before = welcomeVersion(guest)
     const [major, minor, patch] = before.split('-')[0].split('.').map(Number)
     const next = `${major}.${minor}.${patch + 1}`
     const file = `automagik-welcome-dsh-${next}.tgz`
     // The welcome as the profile has it, at the next patch version, packed as npm packs it.
-    inGuest('sh', '-c', [
+    guest.run('sh', '-c', [
       'set -e', 'd=$(mktemp -d)',
       `cp -rL ${PROFILE}/node_modules/@automagik/welcome-dsh "$d/package"`,
       `node -e 'const f=process.argv[1];const p=JSON.parse(require("fs").readFileSync(f,"utf8"));p.version=process.argv[2];require("fs").writeFileSync(f,JSON.stringify(p,null,2))' "$d/package/package.json" ${next}`,
       `tar -czf /mnt/automagik-exchange/lane/${file} -C "$d" package`, 'rm -rf "$d"',
     ].join('; '))
-    const bytes = readFileSync(join(exchange, 'lane', file))
+    const bytes = readFileSync(join(guest.exchange, 'lane', file))
     const handoff = {
       v: 1,
       lanes: { automagik: { version: next, sequence: 1 } },
@@ -194,36 +284,34 @@ try {
       }],
     }
     // Electron writes the handoff last, whole.
-    writeFileSync(join(exchange, 'lane', 'handoff.json.tmp'), JSON.stringify(handoff))
-    execFileSync('mv', [join(exchange, 'lane', 'handoff.json.tmp'), join(exchange, 'lane', 'handoff.json')])
+    writeFileSync(join(guest.exchange, 'lane', 'handoff.json.tmp'), JSON.stringify(handoff))
+    execFileSync('mv', [join(guest.exchange, 'lane', 'handoff.json.tmp'), join(guest.exchange, 'lane', 'handoff.json')])
 
     // The trial start, on the real DSH.
-    const trial = launch()
+    const trial = guest.launch()
     const lane = await laneOf(trial)
     expect(lane.state === 'applied' && lane.version === next, `the lane frame is ${JSON.stringify(lane)}`)
-    expect(welcomeVersion() === next, `the profile's welcome is ${welcomeVersion()}, not ${next}`)
-    expect(welcomeVersion(`${PROFILE}/node_modules/@automagik/welcome-dsh.lane-prev`) === before, 'no .lane-prev with the previous welcome')
-    expect(!guestOk('test', '-e', '/mnt/automagik-exchange/lane/handoff.json'), 'the handoff was not taken')
-    await readyOf(trial)
+    expect(welcomeVersion(guest) === next, `the profile's welcome is ${welcomeVersion(guest)}, not ${next}`)
+    expect(welcomeVersion(guest, `${PROFILE}/node_modules/@automagik/welcome-dsh.lane-prev`) === before, 'no .lane-prev with the previous welcome')
+    expect(!guest.ok('test', '-e', '/mnt/automagik-exchange/lane/handoff.json'), 'the handoff was not taken')
+    const ready = await readyOf(trial)
+    expect(LAUNCH_URL.test(ready.url), `the trial's ready url ${masked(ready.url)} is not DSH's launch URL`)
     trial.send({ type: 'lane', trial: 'failed' })
     const judged = await trial.waitFor(frame => frame.type === 'lane' && frame.trial === 'failed', 10_000, 'the verdict\'s answer')
     expect(judged.recorded === true, `the failed trial was not recorded: ${JSON.stringify(judged)}`)
-    await stopWithin(trial, '@deepseek-ai/dsh/lib/bin.js')
+    const trialStop = await guest.stop(trial, DSH_PROCESS)
 
     // The next start puts the previous welcome back before DSH.
-    const after = launch({ fake: true })
+    const after = guest.launch({ fake: true })
     const back = await laneOf(after)
     expect(back.state === 'restored', `the next start's lane frame is ${JSON.stringify(back)}`)
-    expect(welcomeVersion() === before, `the profile's welcome is ${welcomeVersion()} after the restore, not ${before}`)
-    expect(!guestOk('test', '-e', `${PROFILE}/node_modules/@automagik/welcome-dsh.lane-prev`), '.lane-prev is still there after the restore')
+    expect(welcomeVersion(guest) === before, `the profile's welcome is ${welcomeVersion(guest)} after the restore, not ${before}`)
+    expect(!guest.ok('test', '-e', `${PROFILE}/node_modules/@automagik/welcome-dsh.lane-prev`), '.lane-prev is still there after the restore')
     await readyOf(after)
-    await stopWithin(after, '/opt/smoke/fake-dsh.mjs')
-    return `${before} -> ${next} applied before DSH (.lane-prev kept, handoff taken), real DSH ready on it; trial failed -> restored to ${before}, .lane-prev gone`
+    await guest.stop(after, FAKE_PROCESS)
+    return `${before} -> ${next} applied before DSH (.lane-prev kept, handoff taken), real DSH ready on it, stopped in ${trialStop} ms; trial failed -> restored to ${before}, .lane-prev gone`
   })
 } finally {
-  try { say(`container log:\n${docker(['logs', NAME], { stdio: ['ignore', 'pipe', 'pipe'] })}`) } catch {}
-  try { docker(['rm', '-f', NAME]) } catch {}
-  try { docker(['volume', 'rm', '-f', VOLUME]) } catch {}
   rmSync(work, { recursive: true, force: true })
 }
 
