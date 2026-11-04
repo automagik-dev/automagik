@@ -416,8 +416,9 @@ test('every raw-field caller keeps a key out of its sentence when the clip lands
 // LF, CRLF and lone CR line ends (#347), and is redacted exactly as with LF: the raw text the same
 // but for its own line ends, the sentence the same.
 test('a YAML block-scalar secret never reaches a quoted sentence, from any raw-field caller', () => {
-  const SECRET = 'Zq9Xw8Vv7Uu6Tt5blockline'
-  const MORE = 'Rr4Ss3Pp2Oo1Nn0nextline'
+  // Plain lowercase words, built at run time: the value only has to be findable, not key-shaped.
+  const SECRET = ['velvet', 'lantern', 'harbor'].join('')
+  const MORE = ['orchard', 'meadow', 'pebble'].join('')
   // A failure prints its text with every 5-char fragment of either value masked.
   const masked = (t) => [SECRET, MORE].flatMap((v) => [v, ...fragmentsOf(v)]).reduce((m, f) => m.split(f).join('[secret]'), t)
   const blocks = [
