@@ -21,6 +21,12 @@ row (Herdr mark, search, sidebar toggle) with the traffic-light padding macOS ne
   shows only New bot. No bot code lives here: the forms are the sidebar mod's own.
 - **Mods**: focuses the tab already showing the mod manager (`panes()` → `mod === "am-mods"`),
   else `tab.new {name: "Mods", mod: "am-mods"}`.
+- **Work** (tab id `work`, after Mods; tooltip "Open Automagik"): the way back to the Automagik
+  app (RFC 0013 delivery 6). `work.js` hands `automagik://open` to the OS's link opener through
+  `exec` with argv: `open` (macOS), `cmd /c start "" <url>` (Windows), `xdg-open` (else). An
+  opener that can't start or exits non-zero posts one notice, "Automagik isn't installed or
+  didn't register automagik://"; never an exception. `workUrl()` is where delivery 8 (RFC 0014)
+  adds `?bot=<id>`.
 - **Automations**: `layout.toggle {id: "automations-panel"}` — the panel lives in the left sidebar
   column; the tab shows `selected` while it is not hidden.
 - **Quota** (layers icon): `layout.toggle {id: "am-quota-panel"}`, `selected` while that block is
@@ -45,8 +51,8 @@ row (Herdr mark, search, sidebar toggle) with the traffic-light padding macOS ne
 `mods/am-footer/main.js`, `mod.json` (`place: none`; the lineage is this file's, not a `cloned_from`), `puzzle.svg`
 (Lucide's puzzle, `stroke-width 2`, `currentColor`), Herdr's other icons reused from
 `mods/workspace-chrome/`. Herdr API: `theme`, `run`, `props`, `window`, `layout`, `panes`,
-`updates`, `shared`, `setShared`, `readTextFile`, `appHome`, `exec`, `watchFolder`, `openOverlay`,
-`closeOverlay`. `circle.svg` is Lucide's circle, the contributed buttons' fallback glyph.
+`updates`, `shared`, `setShared`, `readTextFile`, `appHome`, `exec`, `notify`, `watchFolder`,
+`openOverlay`, `closeOverlay`. `briefcase.svg` is Lucide's briefcase, the Work tab's icon. `circle.svg` is Lucide's circle, the contributed buttons' fallback glyph.
 `bot.svg` is Lucide's bot, as Herdr ships it in `frame/welcome/`. Layout: the `sidebar-footer` block's `content.mod` is
 `am-footer` with `props: {footer: true}`, and its `size.px` is 42.
 
@@ -64,4 +70,4 @@ row (Herdr mark, search, sidebar toggle) with the traffic-light padding macOS ne
 
 `herdr-app check mods/am-footer` passes; the footer shows Bots first, then the other tabs, in one row; Bots' popup opens the
 Create form and the bot list, and with no bot defined offers New bot alone; Mods opens
-or focuses the Mods tab; the clock toggles the Automations panel in the sidebar.
+or focuses the Mods tab; Work brings the Automagik app forward; the clock toggles the Automations panel in the sidebar.

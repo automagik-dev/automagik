@@ -991,3 +991,22 @@ test("an update with a mod in both mods/ and mods-disabled/ updates mods/ and sa
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("a mod retired while it was off, then shipped again, comes back off (the kept set's off=)", async () => {
+  const { home, mods } = appHome("0.1.0");
+  mkdirSync(offDirOf(mods));
+  renameSync(join(mods, "am-tabs"), join(offDirOf(mods), "am-tabs"));
+  const t2 = tarball("0.2.0", { mods: ["am-sidebar"] });
+  const t3 = tarball("0.3.0");
+  try {
+    await applyUpdate({ tgzPath: t2.path, version: "0.2.0", modsDir: mods });
+    assert.ok(!existsSync(join(offDirOf(mods), "am-tabs")));
+    const r = await applyUpdate({ tgzPath: t3.path, version: "0.3.0", modsDir: mods });
+    assert.ok(r.off.includes("am-tabs"));
+    assert.ok(!existsSync(join(mods, "am-tabs")), "never back on by itself");
+    assert.equal(readFileSync(join(offDirOf(mods), "am-tabs", "main.js"), "utf8"), 'export const v = "0.3.0";\n');
+    assert.ok(readMarker(mods).mods.includes("am-tabs"));
+  } finally {
+    for (const d of [t2.src, t3.src, home]) rmSync(d, { recursive: true, force: true });
+  }
+});

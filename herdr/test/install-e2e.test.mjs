@@ -75,10 +75,11 @@ function files(dir, { skip = () => false } = {}) {
 }
 
 /**
- * The pack exactly as release.yml's Pack step builds it: its `git show` and `git archive` lines,
- * run by sh with the tag replaced by a tree of this working copy (the tag's tree in a release),
- * and that tree's VERSION set to RELEASE as the release commit does. Then release.yml's two
- * checks: mods/ (but pocket-link) is PACK_MODS, and the archive's top level is PACK_MODS + layouts.
+ * The pack exactly as release.yml's Pack step builds it: its `git show` of the tag's
+ * herdr/scripts/pack.mjs and the line that runs it, by sh with the tag replaced by a tree of this
+ * working copy (the tag's tree in a release), and that tree's VERSION set to RELEASE as the release
+ * commit does. pack.mjs checks mods/ (but pocket-link) is PACK_MODS and the archive's top level is
+ * PACK_MODS + layouts; both are checked here again.
  * `launcher`: undefined packs the tree as it is; false drops dev's launcher (bin/automagik-herdr
  * and bin/run.sh), as wish/am-pack had none before dev merged in; true adds it where missing;
  * "none" drops it and bin/automagik-herdr.mjs too (a pack with no command, which must not link).
@@ -97,19 +98,15 @@ function buildPack(dir, { launcher } = {}) {
     return line.replace(from, to);
   };
   assert.equal(only(/^tgz=/), 'tgz="automagik-herdr-pack-${VERSION}.tgz"');
-  // The folder list is the tag's PACK_MODS (bash-only lines, checked as text; the checks they
-  // feed are repeated below).
-  assert.equal(only(/^git show "v\$\{VERSION\}:herdr\/mods\//), 'git show "v${VERSION}:herdr/mods/am-sidebar/release.js" > "${RUNNER_TEMP}/release.mjs"');
-  assert.match(only(/^mapfile -t mods /), /const \{ PACK_MODS \} = await import\(process\.argv\[1\]\); for \(const m of PACK_MODS\) console\.log\(m\);' "\$\{RUNNER_TEMP\}\/release\.mjs"\)$/);
   assert.equal(only(/^\(cd release && sha256sum /), '(cd release && sha256sum -- "${tgz}" > "${tgz}.sha256")');
-  // The layout is its own entry at the top (herdr-layout/), so its line reads the whole tree.
-  const show = swap(only(/^git show "v\$\{VERSION\}:herdr-layout\//), '"v${VERSION}:', '"${TOPTREE}:');
-  const archive = swap(swap(swap(only(/^git archive /), '"v${VERSION}:herdr/mods"', '"${TREE}:mods"'), '"${mods[@]}"', '"$@"'), '-o "release/${tgz}"', '-o "${tgz}"');
+  // The tag's own pack.mjs, run on the tag (here: a tree of the whole working copy, from the top).
+  const show = swap(only(/^git show "v\$\{VERSION\}:herdr\/scripts\/pack\.mjs"/), '"v${VERSION}:', '"${TOPTREE}:');
+  const run = swap(swap(only(/^node "\$\{RUNNER_TEMP\}\/pack\.mjs" /), '--ref "v${VERSION}"', '--ref "${TOPTREE}"'), '--out "release/${tgz}"', '--out "${tgz}"');
 
   // A tree of the working copy (staged in a scratch index, never the repository's own index),
   // from the repository's top: the pack is its PREFIX (herdr/), and TREE that folder's tree.
   const idx = { GIT_INDEX_FILE: join(dir, "index") };
-  topGit(["add", "-A", "--", `${PREFIX}mods`, "herdr-layout"], idx);
+  topGit(["add", "-A", "--", `${PREFIX}mods`, `${PREFIX}scripts`, "herdr-layout"], idx);
   const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: ROOT, input: `${RELEASE}\n`, encoding: "utf8" }).trim();
   topGit(["update-index", "--cacheinfo", `100644,${blob},${PREFIX}mods/am-sidebar/VERSION`], idx);
   const staged = new Set(topGit(["ls-files", "--", ...LAUNCHER.map((path) => PREFIX + path)], idx).split("\n").filter(Boolean));
@@ -131,8 +128,8 @@ function buildPack(dir, { launcher } = {}) {
   const tgz = join(dir, "release", tarballName(RELEASE));
   mkdirSync(dirname(tgz), { recursive: true });
   mkdirSync(join(dir, "runner"));
-  execFileSync("sh", ["-euc", `${show}\n${archive}\n`, "sh", ...PACK_MODS], {
-    cwd: TOP, env: { ...process.env, TREE: tree, TOPTREE: top, tgz, RUNNER_TEMP: join(dir, "runner") }, stdio: "pipe",
+  execFileSync("sh", ["-euc", `${show}\n${run}\n`], {
+    cwd: TOP, env: { ...process.env, TOPTREE: top, tgz, RUNNER_TEMP: join(dir, "runner") }, stdio: "pipe",
   });
   const level = [...new Set(execFileSync("tar", ["-tzf", tgz], { encoding: "utf8" }).split("\n").filter(Boolean).map((p) => p.split("/")[0]))].sort();
   assert.deepEqual(level, [...PACK_MODS, "layouts"].sort(), "the archive's top level is PACK_MODS plus layouts, as release.yml checks");
@@ -305,11 +302,14 @@ test("e2e: release.yml's pack is the whole pack: every PACK_MODS folder plus the
   assert.deepEqual(readdirSync(x).sort(), [...PACK_MODS, "layouts"].sort());
   assert.deepEqual(readdirSync(join(x, "layouts")), ["automagik.json"]);
   assert.equal(readFileSync(join(x, "am-sidebar", "VERSION"), "utf8"), `${RELEASE}\n`);
-  // Each folder holds what git tracks under mods/<mod>, byte for byte.
+  // Each folder holds what git tracks under mods/<mod>; the sidebar's also the layout part's
+  // part.json (herdr-layout/part.json as am-sidebar/layout/part.json, scripts/pack.mjs).
   for (const mod of PACK_MODS) {
-    const tracked = git(["ls-files", "--", `mods/${mod}`]).split("\n").filter(Boolean).map((p) => p.slice(`mods/${mod}/`.length)).sort();
+    const tracked = git(["ls-files", "--", `mods/${mod}`]).split("\n").filter(Boolean).map((p) => p.slice(`mods/${mod}/`.length));
+    if (mod === "am-sidebar") tracked.push("layout/part.json");
     assert.deepEqual([...files(join(x, mod)).keys()].sort(), tracked.sort(), `${mod}: the archive holds every tracked file`);
   }
+  assert.equal(readFileSync(join(x, "am-sidebar", "layout", "part.json"), "utf8"), readFileSync(join(ROOT, "..", "herdr-layout", "part.json"), "utf8"));
 });
 
 test("e2e (a): a fresh home gets the whole pack, activated, from the public one-liner", { skip: !haveGit && "no git work tree" }, (t) => {

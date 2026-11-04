@@ -308,11 +308,14 @@ const RESUME = {
   omp: () => ["--continue"],
   kimi: () => ["--continue"],
   antigravity: () => ["--continue"],
-  hermes: () => ["--continue"],
+  hermes: (session) => (session ? ["--resume", session] : ["--continue"]),
 };
 
 /** True when Restart can resume `agentKey`'s conversation (RESUME lists it). */
 export const canResume = (agentKey) => Boolean(RESUME[agentKey]);
+
+/** True when `agentKey` resumes a known session by its id (its RESUME entry takes one: claude, hermes). */
+export const resumesById = (agentKey) => typeof RESUME[agentKey] === "function" && RESUME[agentKey].length > 0;
 
 /**
  * The words that resume `agentKey`'s last conversation, appended to its `run`: `session` is a
