@@ -8,6 +8,8 @@
 // observer feed or the agentd journal) and `host` (the host journal notes, which are NOT
 // in the events catalog; HOST_GLOSSARY below is this plugin's own reading of the host's notes).
 
+import { redactText } from './redact.js'
+
 export const CATEGORIES = {
   perceive: { icon: '👂', label: 'perceive', means: 'something arrived from a person, a sense or the provider' },
   decide: { icon: '⚖️', label: 'decide', means: 'the agent chose what to do' },
@@ -22,10 +24,19 @@ export const STATUSES = ['observed', 'pending', 'attempted', 'completed', 'stopp
 
 const U = 'unknown'
 const val = (x) => (x === undefined || x === null || x === '' ? U : Array.isArray(x) ? (x.length ? x.join(', ') : 'none') : typeof x === 'object' ? JSON.stringify(x) : String(x))
+// A field quoted in a sentence is redacted WHOLE, then clipped: a clip inside a credential leaves
+// a fragment too short for the text rules (an sk- key needs 20+ body characters), so redaction
+// after the clip would miss it. A clip that cuts a token (a run of [A-Za-z0-9_-]) drops the cut
+// run back to its start, so no part of a word the rules never saw whole is shown; a field that
+// is one such token renders “…”.
+const TOKEN = /[A-Za-z0-9_-]/
 const quote = (s, n = 90) => {
   if (typeof s !== 'string') return U
-  const t = s.replace(/\s+/g, ' ').trim()
-  return `“${t.length > n ? `${t.slice(0, n - 1)}…` : t}”`
+  const t = redactText(s.replace(/\s+/g, ' ').trim())
+  if (t.length <= n) return `“${t}”`
+  let head = t.slice(0, n - 1)
+  if (TOKEN.test(t[n - 1])) head = head.replace(/[A-Za-z0-9_-]+$/, '')
+  return `“${head.trimEnd()}…”`
 }
 const ms = (x) => (Number.isFinite(x) ? `${Math.round(x)} ms` : U)
 const db = (x) => (Number.isFinite(x) ? `${x.toFixed(1)} dBFS` : U)
