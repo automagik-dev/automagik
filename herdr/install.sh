@@ -632,11 +632,16 @@ install() {
     if [ "$os" = Darwin ]; then
       missing="Herdr (dev.herdr.app) is not in $HOME/Applications or $APPS"
       for app in "$HOME/Applications/Herdr.app" "$APPS/Herdr.app"; do
-        other=$(bundle_id "$app") || continue
-        say "$app is $other, a different app named Herdr, not dev.herdr.app (the Herdr this pack runs in); it is left alone."
-        # herdrdev's installer replaces ~/Applications/Herdr.app: never over another app.
+        [ -e "$app" ] || [ -L "$app" ] || continue
+        if other=$(bundle_id "$app") && [ -n "$other" ]; then
+          say "$app is $other, a different app named Herdr, not dev.herdr.app (the Herdr this pack runs in); it is left alone."
+        else
+          say "$app is not dev.herdr.app (the Herdr this pack runs in): its bundle id cannot be read; it is left alone."
+        fi
+        # herdrdev's installer rm -rf's ~/Applications/Herdr.app: only ever over dev.herdr.app,
+        # so anything else there (another app, an unreadable one, a plain file) stops the install.
         [ "$app" = "$HOME/Applications/Herdr.app" ] &&
-          fail "Herdr's installer would replace $app, which is that other app. Move it out of $HOME/Applications, then run this again."
+          fail "Herdr's installer would replace $app, which is not dev.herdr.app. Move it out of $HOME/Applications, then run this again."
       done
     else
       missing="Herdr is not installed (herdr-app is not on PATH or in $BIN_DIR)"
@@ -644,7 +649,7 @@ install() {
     if ask "$missing. Install it with Herdr's own installer ($HERDR_INSTALLER, no sudo)?"; then
       TMP=$(mktemp -d "${TMPDIR:-/tmp}/automagik-herdr.XXXXXX")
       # Downloaded whole before it runs; stdin may be this very installer.
-      curl -fsSL "$HERDR_INSTALLER" -o "$TMP/herdr-install.sh" --path-as-is </dev/null \
+      curl -fsSL "$HERDR_INSTALLER" -o "$TMP/herdr-install.sh" --path-as-is --proto '=https' </dev/null \
         || fail "could not download Herdr's installer. $herdr_hint"
       sh "$TMP/herdr-install.sh" </dev/null || fail "Herdr's installer failed (above). $herdr_hint"
       herdr_ok || fail "Herdr's installer finished, but $missing still. $herdr_hint"

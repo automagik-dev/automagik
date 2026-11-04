@@ -318,11 +318,36 @@ test("macOS: Herdr is found by its bundle id, never by its name", async (t) => {
     herdrInstaller(s, macInstaller(s));
     const r = s.run("--yes");
     assert.equal(r.code, 1);
-    assert.match(r.err, /Herdr's installer would replace .*Herdr\.app, which is that other app/);
+    assert.match(r.err, /Herdr's installer would replace .*Herdr\.app, which is not dev\.herdr\.app/);
     assert.deepEqual(s.herdrInstallerCalls(), []);
     assert.equal(readFileSync(join(s.home, "Applications", "Herdr.app", "Contents", "Info.plist"), "utf8"), plist(HERDR_UI_ID));
     assert.equal(existsSync(s.appHome), false);
   });
+  // Anything in ~/Applications/Herdr.app that is not positively dev.herdr.app stops the install:
+  // herdrdev's installer would rm -rf it.
+  const unreadable = {
+    "an empty Herdr.app folder": (app) => mkdirSync(app, { recursive: true }),
+    "an Info.plist with no CFBundleIdentifier": (app) => { mkdirSync(join(app, "Contents"), { recursive: true }); writeFileSync(join(app, "Contents", "Info.plist"), '<?xml version="1.0"?>\n<plist version="1.0"><dict><key>CFBundleName</key><string>Herdr</string></dict></plist>\n'); },
+    "an empty CFBundleIdentifier": (app) => appBundle(app, ""),
+    "a plain file named Herdr.app": (app) => { mkdirSync(dirname(app), { recursive: true }); writeFileSync(app, "not an app\n"); },
+  };
+  for (const [what, make] of Object.entries(unreadable)) {
+    await t.test(`${what} in ~/Applications: refused, untouched, herdrdev's installer never fetched`, (t) => {
+      const s = scratch(t, { herdr: false });
+      s.publish("9.9.0");
+      const app = join(s.home, "Applications", "Herdr.app");
+      make(app);
+      const before = treeSum(join(s.home, "Applications"));
+      herdrInstaller(s, macInstaller(s));
+      const r = s.run("--yes");
+      assert.equal(r.code, 1);
+      assert.match(r.out, /Herdr\.app is not dev\.herdr\.app .*: its bundle id cannot be read; it is left alone\./);
+      assert.match(r.err, /Herdr's installer would replace .*Herdr\.app, which is not dev\.herdr\.app/);
+      assert.deepEqual(s.herdrInstallerCalls(), []);
+      assert.equal(treeSum(join(s.home, "Applications")), before);
+      assert.equal(existsSync(s.appHome), false);
+    });
+  }
 });
 
 test("a tampered tarball (not the signed pointer's sha256, or not a --version release's .sha256) installs nothing", (t) => {
@@ -1122,6 +1147,8 @@ test("every download keeps the path as written (curl --path-as-is), including He
   const calls = readFileSync(INSTALL, "utf8").split("\n").filter((l) => /^\s+curl /.test(l));
   assert.equal(calls.length, 7);
   for (const l of calls) assert.match(l, /--path-as-is/);
+  // Herdr's installer, an https URL, is fetched over https only, never a redirect to another scheme.
+  assert.match(calls.find((line) => line.includes('"$HERDR_INSTALLER"')) ?? "", /--proto '=https'/);
   for (const l of calls.filter((line) => !line.includes('"$HERDR_INSTALLER"'))) {
     assert.match(l, /^\s+curl -fsSL --path-as-is "(\$u?base\/|\$POINTER(\.sig)?")/);
   }
