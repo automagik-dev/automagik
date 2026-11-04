@@ -101,6 +101,7 @@ export default class AmQuota extends View {
     this.quotaError = null;
     this.switched = {};     // provider → the last switch: { at, from, to, look, result }
     this.armed = null;      // "restart:<provider>" waiting for its second click
+    this.restarting = {};   // provider → true while its bots restart (lock.claim reads it)
     this.seen = 0;          // last render; a hidden copy stops polling
     this.hidden = false;
     this.sampler = new QuotaSampler();
@@ -369,7 +370,8 @@ export default class AmQuota extends View {
     }
     this.armed = null;
     s.restarting = true;
-    this.restarting = true;   // lock.claim refuses a switch until the restarts are done
+    // lock.claim refuses this provider's switch until its restarts are done; the other's is free.
+    this.restarting = { ...this.restarting, [provider]: true };
     s.result = null;
     cx.spawn(async (cx) => {
       wake(cx);
@@ -392,7 +394,7 @@ export default class AmQuota extends View {
         }
       }
       s.restarting = false;
-      this.restarting = false;
+      delete this.restarting[provider];
       s.done = done;
       s.result = { done, failed };
       // Only the ones that failed are left to restart.

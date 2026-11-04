@@ -11,7 +11,7 @@ import { gzipSync } from "node:zlib";
 import {
   POINTER_SIG_URL, POINTER_URL, applyUpdate, checkForUpdate, compareVersions, downloadUpdate, fetchPointer, installUpdate, noticeText, packKeys,
   packOfPointer, parseSums, verifyPointer,
-  checkMods, markerOf, offDirOf, pickUpdate, toCheck, prevSetOf, readMarker, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
+  checkMods, markerOf, offDirOf, pickUpdate, repairInstall, setupHome, toCheck, prevSetOf, readMarker, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
 } from "../mods/am-sidebar/update.mjs";
 import { formatMarker, parseMarker } from "../mods/am-sidebar/release.js";
 import { cmdUpdate } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
@@ -945,6 +945,47 @@ test("herdr-app check skips only a switched-off mod: one missing from mods/ and 
     assert.deepEqual(r.failed, ["am-footer"], "the missing mod fails the setup; the switched-off one is not checked");
   } finally {
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+/** A stand-in herdr-app: logs each `check <dir>` and fails a folder that isn't there, as the real one does. */
+function fakeHerdrApp(dir) {
+  const bin = join(dir, "herdr-app"), calls = join(dir, "herdr-app.log");
+  writeFileSync(bin, `#!/bin/sh\necho "$2" >> "${calls}"\n[ "$1" = check ] && [ -d "$2" ] && exit 0\nexit 1\n`);
+  chmodSync(bin, 0o755);
+  return { bin, checked: () => (existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n").filter(Boolean).map((p) => p.split("/").pop()) : []) };
+}
+
+test("setupHome checks the record's mods but a switched-off one: a mod missing from both folders fails", () => {
+  const { home, mods } = appHome("0.1.0", ["am-sidebar", "am-tabs", "am-quota"]);
+  try {
+    mkdirSync(offDirOf(mods));
+    renameSync(join(mods, "am-quota"), join(offDirOf(mods), "am-quota"));
+    rmSync(join(mods, "am-tabs"), { recursive: true });
+    const tgzDir = join(home, "empty");
+    mkdirSync(tgzDir);
+    const app = fakeHerdrApp(home);
+    const failed = setupHome({ modsDir: mods, tgzDir, record: { mods: ["am-sidebar", "am-tabs", "am-quota"] }, herdrApp: app.bin });
+    assert.deepEqual(failed, ["am-tabs"], "the missing one fails; the switched-off one is not checked");
+    assert.deepEqual(app.checked().sort(), ["am-sidebar", "am-tabs"]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("repairInstall checks every mod that is on, never the one that ships off", async () => {
+  const WITH = ["am-sidebar", "am-tabs", "am-quota"];
+  const t = tarball("0.2.0", { mods: WITH });
+  const { home, mods } = appHome(null);
+  try {
+    await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
+    assert.ok(existsSync(join(offDirOf(mods), "am-quota")), "am-quota starts off");
+    const app = fakeHerdrApp(home);
+    const r = await repairInstall({ tgzPath: t.path, version: "0.2.0", modsDir: mods, herdrApp: app.bin });
+    assert.deepEqual(r.checkFailed, []);
+    assert.deepEqual(app.checked().sort(), ["am-sidebar", "am-tabs"]);
+  } finally {
+    for (const d of [t.src, home]) rmSync(d, { recursive: true, force: true });
   }
 });
 

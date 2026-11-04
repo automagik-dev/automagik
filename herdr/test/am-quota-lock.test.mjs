@@ -30,10 +30,12 @@ test("a missing account name still names the switch", () => {
 });
 
 test("no switch while bots restart, and the busy line is the caller's", () => {
-  const state = { restarting: true };
+  const state = { restarting: { codex: true } };
   assert.equal(claim(state, "codex", { name: "codex-a.json" }), "bots are restarting: switch once they are done");
   assert.equal(state.busy, undefined, "nothing started");
-  state.restarting = false;
+  // Another provider's restart does not block this one.
+  assert.equal(claim({ restarting: { claude: true } }, "codex", { name: "codex-a.json" }), null);
+  delete state.restarting.codex;
   assert.equal(claim(state, "codex", { name: "codex-a.json" }, "switching Codex to ana@example.com · Pro…"), null);
   assert.equal(state.busy, "switching Codex to ana@example.com · Pro…");
 });

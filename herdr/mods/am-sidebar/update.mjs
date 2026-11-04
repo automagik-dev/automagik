@@ -493,8 +493,8 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     const kept = readSet(modsDir);
     const plan = { installed: [], replaced: [], renamed: [], left: [], adopted: [], retired: [], repaired: [], off: [], installedOff: [] };
     const keptOff = [];
-    const leftOff = [];
-    const keptBackOff = [];   // a kept copy that was off when kept, put back off   // a mods-disabled/ folder the record doesn't own, where an off-by-default mod would go
+    const leftOff = [];       // a mods-disabled/ folder the record doesn't own, where an off-by-default mod would go
+    const keptBackOff = [];   // a kept copy that was off when kept, put back off
     const both = [];
     const moves = [];
     // A folder the person owns moves to backup/ (never replaced) and is recorded, so --uninstall puts it back.

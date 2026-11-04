@@ -263,13 +263,13 @@ test("no switch while bots restart; a switch's busy line names the account by em
   const { view, cx, draw } = await panel();
   view.tool = "codex";
   draw();
-  view.restarting = true;
+  view.restarting = { codex: true };
   const before = installs.length;
   nodes.get("primary-codex").click(null, cx);
   await cx.settle();
   assert.equal(installs.length, before, "nothing installed");
   assert.match(text(draw()), /bots are restarting: switch once they are done/);
-  view.restarting = false;
+  view.restarting = {};
   view.switchError = null;
   let line = null;
   const busyAt = installs.length;
