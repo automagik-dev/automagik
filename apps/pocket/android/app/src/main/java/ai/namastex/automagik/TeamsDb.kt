@@ -49,6 +49,20 @@ interface TeamsDao {
         dropBots(hosts); dropTeams(hosts); insertTeams(teams); insertBots(bots)
     }
 
+    @Query("DELETE FROM bot WHERE teamId IN (SELECT id FROM team WHERE hostId = :host AND machine = :machine)")
+    suspend fun dropMachineBots(host: String, machine: String)
+    @Query("DELETE FROM team WHERE hostId = :host AND machine = :machine") suspend fun dropMachineTeams(host: String, machine: String)
+    /** The rows of [host]'s [machine] ("" its own core, else a linked machine) become [teams] and [bots], in one transaction. */
+    @Transaction suspend fun replaceMachine(host: String, machine: String, teams: List<TeamRow>, bots: List<BotRow>) {
+        dropMachineBots(host, machine); dropMachineTeams(host, machine); insertTeams(teams); insertBots(bots)
+    }
+
+    @Query("DELETE FROM bot WHERE teamId IN (SELECT id FROM team WHERE hostId = :host AND machine NOT IN (:keep))")
+    suspend fun dropBotsExcept(host: String, keep: List<String>)
+    @Query("DELETE FROM team WHERE hostId = :host AND machine NOT IN (:keep)") suspend fun dropTeamsExcept(host: String, keep: List<String>)
+    /** [host]'s rows of every machine but [keep] go: machines it no longer links to. */
+    @Transaction suspend fun keepMachines(host: String, keep: List<String>) { dropBotsExcept(host, keep); dropTeamsExcept(host, keep) }
+
     @Query("SELECT peak FROM day_stat WHERE day = :day AND scope = :scope") suspend fun peak(day: String, scope: String): Int?
     @Upsert suspend fun putDay(row: DayStatRow)
     @Query("DELETE FROM day_stat WHERE day < :day") suspend fun dropBefore(day: String)
@@ -97,27 +111,49 @@ object TeamsCache {
 
 /**
  * The one writer of the Teams cache. A reading of the machines replaces the rows of each machine read far enough
- * ([Teams.ready]), even when it has no project left, and writes nothing when its rows didn't change; it raises today's
- * peaks only above what it already wrote. A removed machine's rows go at once. It also keeps each feed's merges, so a
- * bot celebrates only a merge its own feed newly lists.
+ * ([Teams.ready]: a saved machine's own core and each machine it links to, on its own), even when it has no project
+ * left, and writes nothing when its rows didn't change; it raises today's peaks only above what it already wrote.
+ * Once a saved machine's own core is read, the rows of machines it no longer links to go. A removed machine's rows go
+ * at once, and a reading taken before the removal never writes them back. It also keeps each feed's merges, so a bot
+ * celebrates only a merge its own feed newly lists.
  */
 class TeamsSync(private val dao: TeamsDao) {
     private val lock = kotlinx.coroutines.sync.Mutex()
     private val written = HashMap<String, Pair<List<TeamRow>, List<BotRow>>>()
     private val peaks = HashMap<String, Int>()
     private val seen = HashMap<String, Set<String>>()
+    /** Each host's machines whose rows were last kept ([TeamsDao.keepMachines]). */
+    private val kept = HashMap<String, List<String>>()
+    /** Hosts removed from the phone: a reading taken before the removal must not write them back. */
+    private val gone = HashSet<String>()
 
     /** Writes what changed; returns the bots to celebrate, as "team id|bot id". */
-    suspend fun reading(machines: Map<String, MachineState>, now: Long): Set<String> = lock.withLock {
-        val ready = machines.filterValues { Teams.ready(it, now) }
-        val teams = Teams.build(ready, now)
-        for (host in ready.keys) {
-            val rows = TeamsCache.rows(teams.filter { it.hostId == host })
-            if (written[host] == rows) continue
-            dao.replace(listOf(host), rows.first, rows.second)
-            written[host] = rows
+    suspend fun reading(all: Map<String, MachineState>, now: Long): Set<String> = lock.withLock {
+        val machines = all.filterKeys { it !in gone }
+        val read = Teams.read(machines, now)
+        val teams = Teams.live(machines, read, now)
+        for ((host, m) in machines) {
+            // Positions across the host's live projects, so its machines keep Herdr's order between them.
+            val (hostTeams, hostBots) = TeamsCache.rows(teams.filter { it.hostId == host })
+            for (machine in m.layouts.keys) {
+                val scope = Teams.scope(host, machine)
+                if (scope !in read) continue
+                val rows = hostTeams.filter { it.machine == machine }.let { t -> t.map { it.id }.toSet().let { ids -> t to hostBots.filter { it.teamId in ids } } }
+                if (written[scope] == rows) continue
+                dao.replaceMachine(host, machine, rows.first, rows.second)
+                written[scope] = rows
+            }
+            // Its own core read: the machines it no longer links to go, rows and all (else they'd stay stale forever).
+            if (Teams.scope(host, "") in read) {
+                val keep = (listOf("") + m.linked.map { it.name }).distinct().sorted()
+                if (kept[host] != keep) {
+                    dao.keepMachines(host, keep)
+                    kept[host] = keep
+                    written.keys.removeAll { it.startsWith("$host|") && it.removePrefix("$host|") !in keep }
+                }
+            }
         }
-        if (ready.isNotEmpty()) {
+        if (read.isNotEmpty()) {
             val day = Teams.day(now)
             val higher = Teams.working(teams).filter { (scope, n) -> n > (peaks["$day|$scope"] ?: -1) }
             if (higher.isNotEmpty()) {
@@ -126,7 +162,8 @@ class TeamsSync(private val dao: TeamsDao) {
             }
         }
         val jump = HashSet<String>()
-        for ((feed, merges) in Teams.merges(ready)) {
+        // A feed is one machine's (hostId|machine, like a scope): only those read count.
+        for ((feed, merges) in Teams.merges(machines).filterKeys { it in read }) {
             jump += Teams.celebrations(seen[feed], merges)
             seen[feed] = merges
         }
@@ -135,8 +172,10 @@ class TeamsSync(private val dao: TeamsDao) {
 
     /** A machine removed from the phone: its cached projects and bots go, and its feeds' baselines. */
     suspend fun removed(host: String) = lock.withLock {
+        gone += host
+        kept.remove(host)
         dao.replace(listOf(host), emptyList(), emptyList())
-        written.remove(host)
+        written.keys.removeAll { it.startsWith("$host|") }
         seen.keys.removeAll { it.startsWith("$host|") }
     }
 }
