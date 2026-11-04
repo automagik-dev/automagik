@@ -87,3 +87,53 @@ test('the summary counts what needs you and what works', () => {
   assert.equal(liveSummary({ needs: [], working: [] }), 'nothing working')
   assert.equal(liveSummary({ needs: [{}], working: [{}, {}] }), '1 needs you · 2 working')
 })
+
+// #164. The rail lists ended tasks from the team's task records alone, three at most and
+// six hours at most; these cases pin that window. A record forgotten past the host's cap
+// (agents.js TASKS_KEPT, which now forgets ended tasks first and keeps the working ones)
+// leaves the rail, and its Session goes back under the Tasks row (task-card.js).
+const HOUR = 60 * 60 * 1000
+test('ended tasks stay three at most, newest end first, and six hours at most', () => {
+  const now = 10 * HOUR
+  const ended = (title, endedAt) => ({ from: 'genie', status: 'stopped', title, at: 0, endedAt })
+  const tasks = {
+    a: ended('Event-driven Omni 1', now - 1 * HOUR),
+    b: ended('Event-driven Omni 2', now - 2 * HOUR),
+    c: ended('Bug 2 at the source', now - 3 * HOUR),
+    wish: ended('Wish: Fix Claude wish permission denial reporting', now - 4 * HOUR),
+    stale: ended('Ended long ago', now - 7 * HOUR),
+  }
+  const live = liveOf({}, { ...roster, tasks }, now)
+  assert.deepEqual(plain(live.ended.map(item => [item.title, item.label])), [
+    ['Event-driven Omni 1', 'Stopped'], ['Event-driven Omni 2', 'Stopped'], ['Bug 2 at the source', 'Stopped'],
+  ])
+  // Fewer ended tasks: the fourth is listed again, the one past six hours never is.
+  delete tasks.a
+  assert.deepEqual(plain(liveOf({}, { ...roster, tasks }, now).ended.map(item => item.open)), ['b', 'c', 'wish'])
+})
+
+const cardBundle = await build({
+  entryPoints: [fileURLToPath(new URL('../src/client/task-card.js', import.meta.url))],
+  bundle: true, format: 'cjs', platform: 'node', write: false,
+  external: ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives'],
+})
+const cardModule = { exports: {} }
+runInNewContext(cardBundle.outputFiles[0].text, {
+  module: cardModule, exports: cardModule.exports,
+  require: (name) => {
+    if (name === 'react') return { createElement: () => null, useState: initial => [initial, () => {}], useEffect: () => {} }
+    if (name === 'react-dom' || name === '@deepseek-ai/dsh-client-ui-primitives') return {}
+    throw new Error(`no platform module ${name}`)
+  },
+  document: undefined, window: undefined, Date, Math, JSON, Intl, setTimeout, clearTimeout,
+})
+const { agentRowSessions } = cardModule.exports
+
+test('a task Session with no task record is not in the rail but stays under the Tasks row', () => {
+  const tasksRecord = { id: 'a:tasks', kind: 'tasks', sessions: ['kept', 'forgotten'] }
+  const tasks = { kept: { from: 'genie', status: 'stopped', title: 'Kept', at: 0, endedAt: 1_000 } }
+  const live = liveOf({}, { ...roster, tasks }, 2_000)
+  assert.deepEqual(plain(live.ended.map(item => item.open)), ['kept'])
+  // The kept task shows with its Bot (the rail, its chat); the forgotten one under Tasks.
+  assert.deepEqual(plain(agentRowSessions(tasksRecord, { ...roster, tasks })), ['forgotten'])
+})

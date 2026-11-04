@@ -1148,6 +1148,55 @@ test('a task that ends on an error is failed with its reason; one stopped is sto
   ])
 })
 
+// #164: 60 ended tasks, as a team that has run many, and one more record of the caller's.
+const endedTasks = count => Object.fromEntries(Array.from({ length: count }, (_, i) => [`d${i}`, { title: `Done ${i}`, from: 'm1', at: 10 + i, status: 'done', endedAt: 10 + i }]))
+
+test('the task cap never forgets a wish still working, so its stop is still written down', async (t) => {
+  // The wish started before the 60 others and is still at work when the next task starts.
+  const tasks = { wish: { title: 'Wish: Fix Claude wish permission denial reporting', from: 'm1', at: 1, status: 'working' }, ...endedTasks(60) }
+  const { call, stop, ctx } = start({ ...TEAM, tasks })
+  t.after(stop)
+  await call('state', {})
+  const rt = ctx.provided.get('omniTeam')
+  rt.deliver = async () => {}
+  await rt.startTask({ title: 'Next', text: 'Do it', from: 'm1' })
+  // The ended task that ended longest ago is the one forgotten; the count stays at 60.
+  assert.equal(rt.state.tasks.wish?.status, 'working')
+  assert.equal(rt.state.tasks.d0, undefined)
+  assert.equal(Object.keys(rt.state.tasks).length, 60)
+  // The user stops the wish: its record says so, for the Live rail and its Bot's chat.
+  for (const listener of ctx.listeners.get('session/event') ?? []) listener({ id: 'wish' }, { type: 'turn/end', data: { turn: 1, reason: { kind: 'aborted' } } })
+  await flush()
+  const { tasks: view } = (await call('state', {})).value
+  assert.equal(view.wish.status, 'stopped')
+  assert.equal(typeof view.wish.endedAt, 'number')
+})
+
+test('the task cap forgets the task that ended longest ago, not the one started first', async (t) => {
+  // A long wish started first and was stopped a moment ago: the freshest end of all.
+  const tasks = { long: { title: 'Wish: a long one', from: 'm1', at: 1, status: 'stopped', endedAt: Date.now() }, ...endedTasks(60) }
+  const { call, stop, ctx } = start({ ...TEAM, tasks })
+  t.after(stop)
+  await call('state', {})
+  const rt = ctx.provided.get('omniTeam')
+  await rt.startTask({ title: 'Next', text: 'Do it', from: 'm1' })
+  assert.equal(rt.state.tasks.long?.status, 'stopped')
+  assert.equal(rt.state.tasks.d0, undefined)
+  assert.equal(Object.keys(rt.state.tasks).length, 60)
+})
+
+test('the task cap stays a bound when 60 tasks never sent their end', async (t) => {
+  const tasks = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`w${i}`, { title: `Stuck ${i}`, from: 'm1', at: 10 + i, status: 'working' }]))
+  const { call, stop, ctx } = start({ ...TEAM, tasks })
+  t.after(stop)
+  await call('state', {})
+  const rt = ctx.provided.get('omniTeam')
+  const next = await rt.startTask({ title: 'Next', text: 'Do it', from: 'm1' })
+  assert.equal(Object.keys(rt.state.tasks).length, 60)
+  assert.equal(rt.state.tasks.w0, undefined)
+  assert.equal(rt.state.tasks[next]?.status, 'working')
+})
+
 test('a task started in a group reports back to that group, not the Bot\'s own chat', async (t) => {
   const team = {
     ...TEAM,
