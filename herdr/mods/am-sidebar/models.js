@@ -305,24 +305,29 @@ export function promptArgs(agentKey, task) {
 
 // How each agent picks up where it left off, for Restart: the words after its `run`. Each
 // was read from that agent's own --help on 2026-11-03 (claude, codex resume, pi, omp, kimi,
-// agy, hermes). Claude, codex, omp and pi resume a known session by id, else the latest one in
-// their folder (codex resume --last filters by folder unless --all); codex resume is a
-// subcommand, which still goes after `run` (its top-level options come before it). An agent
-// missing here has no resume this pack knows: Restart starts it fresh.
+// agy, hermes) and again on 2026-11-04 (omp 18.14.2 `-r, --resume=<value>` by ID prefix;
+// codex-cli 0.166.0 `resume [SESSION_ID]` / `--last`; pi 1.5.0 `--session <path|id>`; kimi
+// 2.5.0 `-S, --session [id]`; agy 1.5.0 `--conversation` by ID; hermes wasn't runnable then).
+// Each resumes a known session by id, else (--continue, resume --last) the latest one, in its
+// folder for most (codex resume --last filters by folder unless --all; agy's help says only "the
+// most recent conversation"), which may be another bot's: so with no id and another bot on that
+// agent in the folder, Restart starts fresh instead (#328). codex resume
+// is a subcommand, which still goes after `run` (its top-level options come before it). An
+// agent missing here has no resume this pack knows: Restart starts it fresh.
 const RESUME = {
   claude: (session) => (session ? ["--resume", session] : ["--continue"]),
   codex: (session) => ["resume", session ?? "--last"],
   pi: (session) => (session ? ["--session", session] : ["--continue"]),
   omp: (session) => (session ? [`--resume=${session}`] : ["--continue"]),
-  kimi: () => ["--continue"],
-  antigravity: () => ["--continue"],
+  kimi: (session) => (session ? [`--session=${session}`] : ["--continue"]),
+  antigravity: (session) => (session ? ["--conversation", session] : ["--continue"]),
   hermes: (session) => (session ? ["--resume", session] : ["--continue"]),
 };
 
 /** True when Restart can resume `agentKey`'s conversation (RESUME lists it). */
 export const canResume = (agentKey) => Boolean(RESUME[agentKey]);
 
-/** True when `agentKey` resumes a known session by its id (its RESUME entry takes one: claude, hermes). */
+/** True when `agentKey` resumes a known session by its id (its RESUME entry takes one: every agent RESUME lists). */
 export const resumesById = (agentKey) => typeof RESUME[agentKey] === "function" && RESUME[agentKey].length > 0;
 
 /**
@@ -338,14 +343,14 @@ export function resumeArgs(agentKey, session = null) {
 
 // The words an earlier resume left in a command line, per agent, so a reused command doesn't
 // resume twice: `flags` stand alone, `valued` take the next word (or `=value`), `inline` only
-// take `=value` (omp's --resume picks a session when bare). codex's is the `resume` subcommand
-// with its --last or session id. omp's and claude's -c is --continue; codex's -c is --config.
+// take `=value` (omp's --resume and kimi's --session pick a session when bare). codex's is the
+// `resume` subcommand with its --last or session id. -c is --continue (codex's is --config).
 const RESUMED = {
   claude: { flags: ["--continue", "-c"], valued: ["--resume", "-r"] },
   omp: { flags: ["--continue", "-c", "--resume", "-r"], inline: ["--resume", "-r", "--restore"] },
   pi: { flags: ["--continue", "-c", "--resume", "-r"], valued: ["--session"] },
-  kimi: { flags: ["--continue"] },
-  antigravity: { flags: ["--continue"] },
+  kimi: { flags: ["--continue", "-c", "--session", "-S"], inline: ["--session", "-S"] },
+  antigravity: { flags: ["--continue", "-c"], valued: ["--conversation", "-conversation"] },
   hermes: { flags: ["--continue"] },
 };
 

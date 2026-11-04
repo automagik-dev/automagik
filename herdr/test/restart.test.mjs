@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 
 import { AGENTS, canResume, resumeArgs, withoutModel, withoutResume } from "../mods/am-sidebar/models.js";
 import { carriedLabels, commandArgv, continueRefusal, helperArgs, helperPlan, ledgerSession, paneCommand, paneSession, planText, restartAnswer, restartArgs,
-  claudeSlug, restartPlan, restartRefusal, sameSessions, sessionId, sessionOf, sharedFolders, takesWords, withoutPrompt } from "../mods/am-sidebar/restart.js";
+  claudeSlug, restartPlan, restartRefusal, sameSessions, sessionId, sessionOf, sharedFolders, sharedFresh, takesWords, withoutPrompt } from "../mods/am-sidebar/restart.js";
 
 const SID = "0f3c2a4e-1b2d-4c5e-9f60-718293a4b5c6";
 const SID2 = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
@@ -118,6 +118,25 @@ test("session ids: only UUID-shaped ones resume; a flag-like value never reaches
   assert.equal(ledgerSession(null, "t5"), null);
 });
 
+test("ledgerSession per agent (#328): a row naming its agent feeds that agent, one safe word; an unnamed row is Claude's; never a flag", () => {
+  const rows = [{ event: "session", terminal: "t5", session: "omp-sess-1", agent: "omp" }, { event: "session", terminal: "t5", session: SID },
+    { event: "session", terminal: "t6", session: "-rf", agent: "omp" }, { event: "session", terminal: "t7", session: "pi-1", agent: "pi" }];
+  assert.deepEqual(ledgerSession(rows, "t5", "omp"), { session: "omp-sess-1", transcript: null });
+  assert.deepEqual(ledgerSession(rows, "t5", "claude"), { session: SID, transcript: null }, "an unnamed row is Claude's");
+  assert.deepEqual(ledgerSession(rows, "t5"), { session: SID, transcript: null });
+  assert.equal(ledgerSession(rows, "t6", "omp"), null, "a flag-like id never passes");
+  assert.equal(ledgerSession(rows, "t7", "omp"), null, "another agent's row doesn't feed omp");
+  assert.deepEqual(ledgerSession(rows, "t7", "pi"), { session: "pi-1", transcript: null });
+});
+
+test("sharedFresh (#328): null with no other bot there; else why the restart starts fresh, naming each sharer, the folder and the skipped resume", () => {
+  assert.equal(sharedFresh({ name: "Herdr Tester", old: { address: "t5" }, cwd: "/p", agent: "omp", words: "--continue" }), null);
+  assert.equal(sharedFresh({ name: "Herdr Tester", old: { address: "t5" }, cwd: "/p", sharers: [{ address: "t9", name: "Herdr Dev" }], agent: "omp", words: "--continue" }),
+    "no omp session id is known for t5, and Herdr Dev (t9) also runs omp in /p, so --continue could resume theirs instead of Herdr Tester's");
+  assert.match(sharedFresh({ name: "G", old: { address: "t5" }, cwd: "/p", sharers: [{ address: "t9", name: "A" }, { address: "t8", name: "B" }], agent: "Codex", words: "resume --last" }),
+    /A \(t9\), B \(t8\) also run Codex in \/p, so resume --last could resume theirs/);
+});
+
 test("continueRefusal: refused only when another bot's Claude shares the folder", () => {
   assert.equal(continueRefusal({ name: "Genie", old: { address: "t5" }, cwd: "/p" }), null);
   assert.match(continueRefusal({ name: "Genie", old: { address: "t5" }, cwd: "/p", sharers: [{ address: "t9", name: "Captain" }, { address: "t8", name: "Dev" }] }),
@@ -126,13 +145,15 @@ test("continueRefusal: refused only when another bot's Claude shares the folder"
 
 // ---- #213: the old pane's own command, resume by id, --tree ----
 
-test("resumeArgs by session id: codex resume <id>, omp --resume=<id>, pi --session <id>, hermes --resume <id>; kimi and agy only --continue", () => {
+test("resumeArgs by session id: codex resume <id>, omp --resume=<id>, pi --session <id>, hermes --resume <id>, kimi --session=<id>, agy --conversation <id>", () => {
   assert.deepEqual(resumeArgs("codex", SID), ["resume", SID]);
   assert.deepEqual(resumeArgs("omp", SID), [`--resume=${SID}`]);
   assert.deepEqual(resumeArgs("pi", SID), ["--session", SID]);
   assert.deepEqual(resumeArgs("hermes", SID), ["--resume", SID]);
-  for (const k of ["kimi", "antigravity"]) assert.deepEqual(resumeArgs(k, SID), ["--continue"], k);
+  assert.deepEqual(resumeArgs("kimi", SID), [`--session=${SID}`]);
+  assert.deepEqual(resumeArgs("antigravity", SID), ["--conversation", SID]);
   assert.deepEqual(resumeArgs("omp", "-x"), ["--continue"], "never a flag as an id");
+  assert.deepEqual(resumeArgs("kimi", "-x"), ["--continue"]);
 });
 
 test("withoutResume drops an earlier resume per agent (codex's -c is its config, kept); withoutModel drops the model flags", () => {
@@ -141,6 +162,8 @@ test("withoutResume drops an earlier resume per agent (codex's -c is its config,
   assert.deepEqual(withoutResume("codex", ["codex", "resume", SID]), ["codex"]);
   assert.deepEqual(withoutResume("omp", ["omp", "-c", "--resume=abc", "--model=k", "--restore=x"]), ["omp", "--model=k"]);
   assert.deepEqual(withoutResume("pi", ["pi", "--session", SID, "--continue", "--model", "p"]), ["pi", "--model", "p"]);
+  assert.deepEqual(withoutResume("kimi", ["kimi", "-c", "--session=abc", "-S", "--yolo"]), ["kimi", "--yolo"]);
+  assert.deepEqual(withoutResume("antigravity", ["agy", "-c", "--conversation", "abc", "--model", "m"]), ["agy", "--model", "m"]);
   assert.deepEqual(withoutModel("codex", ["codex", "-m", "a", "-mb", "--model=c", "-c", "model=d", "-c", "model_reasoning_effort=high"]),
     ["codex", "-c", "model_reasoning_effort=high"]);
   assert.deepEqual(withoutModel("omp", ["omp", "--model=k", "--thinking=high"]), ["omp", "--thinking=high"]);

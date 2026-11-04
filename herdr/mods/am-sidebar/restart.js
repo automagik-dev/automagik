@@ -154,14 +154,16 @@ export function paneSession(get, agentKey) {
 }
 
 /**
- * The last Claude session the workers ledger ties to `terminal` (its session rows, workers.js
- * readLedger): { session, transcript }, or null. For a pane whose label is missing.
+ * The last `agentKey` session the workers ledger ties to `terminal` (its session rows, workers.js
+ * readLedger): { session, transcript }, or null. For a pane whose label is missing. A row
+ * names its agent (`agent`), else it is Claude's (the briefing hook, Claude's only, writes
+ * them); its id passes as sessionFor passes a label: Claude's a UUID, another's one safe word.
  */
-export function ledgerSession(rows, terminal) {
+export function ledgerSession(rows, terminal, agentKey = "claude") {
   for (let i = (rows?.length ?? 0) - 1; i >= 0; i -= 1) {
     const r = rows[i];
-    if (r?.event !== "session" || r.terminal !== terminal) continue;
-    const session = sessionId(r.session);
+    if (r?.event !== "session" || r.terminal !== terminal || (r.agent ?? "claude") !== agentKey) continue;
+    const session = sessionFor(agentKey, r.session);
     if (session) return { session, transcript: typeof r.transcript === "string" ? r.transcript : null };
   }
   return null;
@@ -170,7 +172,8 @@ export function ledgerSession(rows, terminal) {
 /**
  * Why Restart won't resume with claude --continue, or null: it takes the folder's latest
  * conversation, which may be a teammate's when another bot's Claude pane runs in that folder.
- * `sharers`: those panes as { address, name }.
+ * `sharers`: those panes as { address, name }. A linked machine's restart refuses so; a local
+ * one starts fresh instead and says why (sharedFresh).
  */
 export function continueRefusal({ name, old, cwd, sharers = [], agent = "Claude" }) {
   if (!sharers.length) return null;
@@ -178,6 +181,19 @@ export function continueRefusal({ name, old, cwd, sharers = [], agent = "Claude"
   return `${name} has no recorded ${agent} session (${old.address} has no agent.session label and the ledger has no session row for it), `
     + `and ${who} also ${sharers.length === 1 ? "runs" : "run"} ${agent} in ${cwd}, so --continue could resume theirs. Nothing was started; `
     + `restart with --fresh for a new conversation.`;
+}
+
+/**
+ * Why Restart starts `name` on a new conversation instead of resuming the latest one in `cwd`
+ * (#328), or null: no session id is known for the old pane, and `sharers` (other bots on
+ * `agent` in that folder, { address, name }) could own that latest one. `words`: the resume
+ * it skips (--continue, resume --last); `agent`: the agent's name.
+ */
+export function sharedFresh({ name, old, cwd, sharers = [], agent, words }) {
+  if (!sharers.length) return null;
+  const who = sharers.map((x) => `${x.name} (${x.address})`).join(", ");
+  return `no ${agent} session id is known for ${old.address}, and ${who} also ${sharers.length === 1 ? "runs" : "run"} ${agent} in ${cwd}, `
+    + `so ${words} could resume theirs instead of ${name}'s`;
 }
 
 /** The helpers (hc get answers) that end with their parent's pane: live, die_with_parent. */

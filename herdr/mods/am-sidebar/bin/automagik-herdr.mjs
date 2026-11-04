@@ -33,7 +33,7 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
   SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, sessionRow, parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
   writesWorktree } from "../workers.js";
-import { carriedLabels, continueRefusal, doomedHelpers, helperArgs, helperPlan, ledgerSession, paneCommand, planText as restartText, restartPlan,
+import { carriedLabels, continueRefusal, doomedHelpers, helperArgs, helperPlan, ledgerSession, paneCommand, planText as restartText, restartPlan, sharedFresh,
   claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
 import { autoStatus, readAuto, binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, managedPack, readMarker, relinkCli, rollback as rollbackPack, writeAuto, writeMarker } from "../update.mjs";
 import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER, updatesOff } from "../release.js";
@@ -811,11 +811,13 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 template, model and effort flags): the new pane starts, and the
                                 old one ends only once the new one's agent has stayed up (prints
                                 the new terminal). It resumes the conversation in that folder
-                                (claude --resume <session>, or --continue when no other bot's
-                                Claude shares the folder; with the pane's agent.session label,
-                                codex resume <session>, omp --resume=<session>, pi --session
-                                <session>; else codex resume --last, --continue for pi, omp,
-                                kimi, agy and hermes);
+                                by the pane's session id (its agent.session label, or the
+                                ledger's row): claude --resume <session>, codex resume
+                                <session>, omp --resume=<session>, pi --session <session>,
+                                kimi --session=<session>, agy --conversation <session>, hermes
+                                --resume <session>; with no id, the folder's latest (codex
+                                resume --last, --continue for the rest), unless another bot
+                                on that agent runs there: then a new one, and why;
                                 --fresh: a new one; --agent/--model: a swap (always new;
                                 --save: also into ${BOTS_PATH}). Refused while the bot is
                                 working or has helpers that would end with it, unless --force
@@ -1799,12 +1801,20 @@ function workerLedgerRows() {
 }
 
 /**
- * Other bots' live Claude panes whose folder is `cwd`, by the attach ledger (`view`,
- * attachView): [{ address, name }].
+ * Other bots on `agentKey` in the folder `cwd`, by the attach ledger (`view`, attachView): each
+ * bound bot whose live pane runs that agent there, or whose terminal's last start row in the
+ * workers ledger (`ledger`) seated it there on that agent (#328). [{ address, name }].
  */
-function claudeBotsIn(view, cwd, botId, file) {
-  return [...view.live.values()].filter(({ binding, get }) => binding.bot !== botId && get && agentInForeground(get)
-    && (get.foreground?.cwd ?? get.cwd) === cwd && (isClaude(null, get) || agentKeyOfArgv(get.foreground?.argv) === "claude"))
+function botsOn(view, cwd, botId, file, agentKey, ledger = []) {
+  const real = realDir(cwd) ?? cwd;
+  const here = (dir) => typeof dir === "string" && dir !== "" && (dir === cwd || (realDir(dir) ?? dir) === real);
+  const runs = (get) => (agentKey === "claude" && isClaude(null, get)) || agentKeyOfArgv(get.foreground?.argv, agentTable()) === agentKey;
+  const seated = (terminal) => {
+    const row = ledger.findLast((r) => r?.event === "start" && r.terminal === terminal);
+    return Boolean(row && row.agent === agentKey && here(row.worktree));
+  };
+  return [...view.live.values()].filter(({ binding, get }) => binding.bot !== botId
+    && ((get && agentInForeground(get) && here(get.foreground?.cwd ?? get.cwd) && runs(get)) || seated(binding.terminal)))
     .map(({ binding }) => ({ address: binding.terminal, name: file.bots.find((b) => b.id === binding.bot)?.name ?? `bot ${binding.bot}` }));
 }
 
@@ -2142,20 +2152,24 @@ async function cmdRestart(opts, [ref]) {
   const agents = agentTable();
   const ledger = workerLedgerRows();
   const runningAgent = old ? agentKeyOfArgv(old.foreground?.argv, agents) : null;
+  // An agent as the restart's lines name it ("Claude", not "Claude Code").
+  const agentName = (k) => (k === "claude" ? "Claude" : agents[k]?.name ?? k);
   // The session to resume: the old pane's agent.session label (or a reviver's revive.session),
-  // else (a Claude pane, whose hook writes them) the ledger's last session row for that terminal.
+  // else the ledger's last session row for that terminal (the Claude hook writes them), for
+  // every agent that resumes by id.
   const knownSession = (get, agentKey) => {
     const id = paneSession(get, agentKey);
     if (id) return { session: id, transcript: null };
-    return agentKey === "claude" ? ledgerSession(ledger, get.address) : null;
+    return resumesById(agentKey) ? ledgerSession(ledger, get.address, agentKey) : null;
   };
   const known = old ? knownSession(old, runningAgent ?? bot.agent) : null;
-  const plan = restartPlan({
+  const planned = {
     bot, run: startableAgent(bot, entry?.agent ?? bot.agent).run,
     runningAgent, session: known?.session ?? null,
     fresh: opts.fresh || !old, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
     launch: old ? paneCommand(old) : null, runningModel: old && runningAgent ? detectModel(old.foreground?.argv, runningAgent) : null,
-  });
+  };
+  let plan = restartPlan(planned);
   // The old pane's folder (#213: a worktree too, where its conversation is), unless it is gone;
   // the same space and tab (its Herdr labels).
   const oldCwd = old?.foreground?.cwd ?? old?.cwd ?? null;
@@ -2170,10 +2184,13 @@ async function cmdRestart(opts, [ref]) {
   }
   const place = opts.space ? { space: opts.space, tab: opts.tab ?? null, from: null } : (old ? placementFrom([old]) ?? undefined : undefined);
   const resumeId = plan.mode === "resume" && resumesById(plan.agent) ? sessionFor(plan.agent, known?.session) : null;
-  // --continue takes the folder's latest conversation: never while another bot's Claude runs there.
-  if (plan.mode === "resume" && plan.agent === "claude" && !resumeId) {
-    const refusal = continueRefusal({ name: bot.name, old, cwd, sharers: claudeBotsIn(view, cwd, bot.id, file) });
-    if (refusal) throw new CliError(refusal);
+  // With no id, a resume takes the folder's latest conversation (--continue, codex resume
+  // --last), for every agent: beside another bot on that agent there, a new conversation, and
+  // why (#328: an omp --continue picked up a teammate's). Alone there, the resume as before.
+  if (plan.mode === "resume" && !resumeId) {
+    const note = sharedFresh({ name: bot.name, old, cwd, sharers: botsOn(view, cwd, bot.id, file, plan.agent, ledger),
+      agent: agentName(plan.agent), words: plan.resume.join(" ") });
+    if (note) plan = { ...restartPlan({ ...planned, fresh: true }), note };
   }
   const { tree, treeWarnings } = old && opts.tree
     ? await treePlans({ bot, old, helpers, view, ledger, agents, knownSession, force: opts.force, freshShared: opts["fresh-shared"],
@@ -2244,9 +2261,10 @@ async function cmdRestart(opts, [ref]) {
   }
   // A helper --tree couldn't run again: the command fails (the bot did restart; its line says how).
   if (rerun.some((h) => h.error)) exitAfter.code = 1;
-  if (plan.mode === "resume" && plan.agent === "claude" && !resumeId) {
-    say(`No Claude session id was known for ${old.address}, so ${seat.terminal} resumes the latest conversation in ${cwd} (--continue). `
-      + `No other bot's Claude runs there; if it isn't ${bot.name}'s, restart again with --fresh.`);
+  if (plan.mode === "resume" && !resumeId) {
+    const name = agentName(plan.agent);
+    say(`No ${name} session id was known for ${old.address}, so ${seat.terminal} resumes the latest conversation in ${cwd} (${plan.resume.join(" ")}). `
+      + `No other bot's ${name} runs there; if it isn't ${bot.name}'s, restart again with --fresh.`);
   }
   let saved = false;
   if (opts.save) {
