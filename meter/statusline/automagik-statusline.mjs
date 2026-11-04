@@ -11,7 +11,11 @@
 //   false; else CLAUDE_CODE_AUTO_COMPACT_WINDOW when it is a usable size (200000, 200k, 1M; held to
 //   100k-1M); else the first of .claude/settings.local.json, .claude/settings.json and the user
 //   settings.json that names a window: modelSettings["<model id>"].autoCompactWindow, or the
-//   top-level autoCompactWindow, the model's entry winning within one file. "auto" (the model's
+//   top-level autoCompactWindow, the model's entry winning within one file. The local file is
+//   read where Claude Code keeps it (code.claude.com/docs/en/settings, "Where Claude Code keeps
+//   the local file in a git repository"): at the repository root, the main checkout's root in a
+//   worktree, then one an older version left in the launch folder; the shared file in the launch
+//   folder (workspace.project_dir). "auto" (the model's
 //   tuned window) or no window anywhere leaves the distance out: no default is guessed. The window
 //   is capped at the context window, as Claude Code caps it. A one-launch --autocompact flag and
 //   managed settings are not visible to a status line.
@@ -24,10 +28,10 @@
 // so it runs under a bare PATH as long as the command names node by its absolute path. It wraps
 // cleanly in the limits logger: `node claude-limits-statusline.mjs -- node automagik-statusline.mjs`.
 // NO_COLOR turns the colours off. METER_STATE_DIR moves the cache (same folder as the logger's).
-import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, renameSync, mkdirSync, writeFileSync } from "node:fs";
+import { closeSync, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, renameSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir, platform } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const RED = "\x1b[31m", YELLOW = "\x1b[33m", DIM = "\x1b[2m", RESET = "\x1b[0m";
@@ -137,6 +141,48 @@ export function envWindow(value) {
 }
 
 /**
+ * The folder whose .claude/settings.local.json Claude Code reads for a session launched in
+ * `start`, or null when the file stays in `start`. Per code.claude.com/docs/en/settings: the
+ * repository root, and in a linked worktree the main checkout's root (its .git file names a
+ * gitdir whose commondir is the main .git); the file stays in `start` outside a git repository,
+ * on Windows, when the root is the home folder, or when the root, its .git or its .claude is not
+ * the user's. Reads the files git keeps, never runs git. Never throws.
+ */
+export function localSettingsRoot(start, { home = homedir(), os = platform(), uid = typeof process.getuid === "function" ? process.getuid() : null } = {}) {
+  try {
+    if (typeof start !== "string" || !start || os === "win32") return null;
+    for (let dir = resolve(start); ; dir = dirname(dir)) {
+      const git = join(dir, ".git");
+      let entry = null;
+      try { entry = statSync(git); } catch { /* not here: look one folder up */ }
+      if (entry) {
+        let root = dir;
+        if (entry.isFile()) {
+          const m = /^gitdir:[ \t]*(.+?)\s*$/m.exec(readFileSync(git, "utf8"));
+          if (!m) return null;
+          const gitdir = resolve(dir, m[1]);
+          let common = null;
+          try { common = resolve(gitdir, readFileSync(join(gitdir, "commondir"), "utf8").trim()); } catch { /* a submodule: its own root */ }
+          if (common) {
+            if (basename(common) !== ".git") return null; // a bare repository has no checkout to hold it
+            root = dirname(common);
+          }
+        }
+        if (root === resolve(home)) return null;
+        if (uid != null) {
+          if (statSync(root).uid !== uid || lstatSync(join(root, ".git")).uid !== uid) return null;
+          let claude = null;
+          try { claude = lstatSync(join(root, ".claude")); } catch { /* no .claude yet */ }
+          if (claude && claude.uid !== uid) return null;
+        }
+        return root;
+      }
+      if (dirname(dir) === dir) return null;
+    }
+  } catch { return null; }
+}
+
+/**
  * The auto-compact window this session runs at, in tokens, or null when auto-compact is off or
  * the window is Claude Code's own ("auto", or none set). Sources and order: the file header.
  */
@@ -144,8 +190,14 @@ export function autoCompactWindowFor(input, env = process.env) {
   if (flag(env.DISABLE_AUTO_COMPACT) || flag(env.DISABLE_COMPACT)) return null;
   const config = env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
   const project = input?.workspace?.project_dir;
-  const files = typeof project === "string" && project
-    ? [join(project, ".claude/settings.local.json"), join(project, ".claude/settings.json")] : [];
+  const files = [];
+  if (typeof project === "string" && project) {
+    const root = localSettingsRoot(project);
+    if (root) files.push(join(root, ".claude/settings.local.json"));
+    const here = join(resolve(project), ".claude/settings.local.json");
+    if (!files.includes(here)) files.push(here); // where a version before 2.1.211 kept it
+    files.push(join(project, ".claude/settings.json"));
+  }
   files.push(join(config, "settings.json"));
   const settings = files.map(readJson).filter(isObject);
   const enabled = settings.find((s) => typeof s.autoCompactEnabled === "boolean")?.autoCompactEnabled ?? true;

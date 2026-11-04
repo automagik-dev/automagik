@@ -9,7 +9,7 @@ import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { autoCompactWindowFor, countCompacts, envWindow, format, tokens, until } from "../automagik-statusline.mjs";
+import { autoCompactWindowFor, countCompacts, envWindow, format, localSettingsRoot, tokens, until } from "../automagik-statusline.mjs";
 
 const here = (p) => fileURLToPath(new URL(p, import.meta.url));
 const fixture = (name) => JSON.parse(readFileSync(here(`fixtures/${name}.json`), "utf8"));
@@ -128,6 +128,53 @@ test("auto-compact window: Claude Code's sources and order (review cases A-E)", 
     assert.equal(autoCompactWindowFor({ ...input, context_window: { context_window_size: 200000 } }, env), 200000);
     // A non-number window in the deciding file is no window.
     only([[user, perModel("500k")]]);
+    assert.equal(autoCompactWindowFor(input, env), null);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("local settings: read at the repository root, the main checkout's root for a worktree", () => {
+  const dir = temp();
+  try {
+    // main/ is a checkout; wt/ a linked worktree of it (a .git file, relative gitdir, commondir);
+    // main/sub a submodule (a .git file, no commondir); bare.git a bare repository's worktree.
+    const main = join(dir, "main"), wt = join(dir, "wt"), sub = join(main, "sub"), bareWt = join(dir, "bare-wt");
+    mkdirSync(join(main, ".git/worktrees/wt"), { recursive: true });
+    mkdirSync(join(main, ".git/modules/sub"), { recursive: true });
+    mkdirSync(join(wt, "deep/er"), { recursive: true });
+    mkdirSync(sub, { recursive: true });
+    mkdirSync(join(dir, "bare.git/worktrees/b"), { recursive: true });
+    mkdirSync(bareWt);
+    writeFileSync(join(wt, ".git"), "gitdir: ../main/.git/worktrees/wt\n");
+    writeFileSync(join(main, ".git/worktrees/wt/commondir"), "../..\n");
+    writeFileSync(join(sub, ".git"), `gitdir: ${join(main, ".git/modules/sub")}\n`);
+    writeFileSync(join(bareWt, ".git"), `gitdir: ${join(dir, "bare.git/worktrees/b")}\n`);
+    writeFileSync(join(dir, "bare.git/worktrees/b/commondir"), "../..\n");
+    assert.equal(localSettingsRoot(main), main);
+    assert.equal(localSettingsRoot(join(main, "sub")), sub);
+    assert.equal(localSettingsRoot(wt), main);
+    assert.equal(localSettingsRoot(join(wt, "deep/er")), main);
+    // The cases where the file stays in the launch folder.
+    assert.equal(localSettingsRoot(dir), null); // no repository
+    assert.equal(localSettingsRoot(bareWt), null);
+    assert.equal(localSettingsRoot(wt, { os: "win32" }), null);
+    assert.equal(localSettingsRoot(wt, { home: main }), null);
+    assert.equal(localSettingsRoot(wt, { uid: process.getuid() + 1 }), null);
+    for (const bad of [undefined, "", 42]) assert.equal(localSettingsRoot(bad), null);
+
+    // autoCompactWindowFor in the worktree: the root's local file first, then one an older
+    // version left in the launch folder, then the launch folder's shared file.
+    const config = join(dir, "config");
+    mkdirSync(config); mkdirSync(join(main, ".claude")); mkdirSync(join(wt, ".claude"));
+    const window = (n) => JSON.stringify({ modelSettings: { "claude-opus-5-5": { autoCompactWindow: n } } });
+    const input = { model: { id: "claude-opus-5-5" }, workspace: { project_dir: wt } };
+    const env = { CLAUDE_CONFIG_DIR: config };
+    writeFileSync(join(wt, ".claude/settings.json"), window(500000));
+    assert.equal(autoCompactWindowFor(input, env), 500000);
+    writeFileSync(join(wt, ".claude/settings.local.json"), window(400000));
+    assert.equal(autoCompactWindowFor(input, env), 400000);
+    writeFileSync(join(main, ".claude/settings.local.json"), window(300000));
+    assert.equal(autoCompactWindowFor(input, env), 300000);
+    writeFileSync(join(main, ".claude/settings.local.json"), JSON.stringify({ autoCompactEnabled: false }));
     assert.equal(autoCompactWindowFor(input, env), null);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
