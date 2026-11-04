@@ -230,3 +230,37 @@ export function parseSums(text) {
 /** The mod's notice for `update` (from pickUpdate). */
 export const noticeText = (update) =>
   `Automagik Herdr ${update.version} is out. Run \`automagik-herdr update\` to install it (${update.page}).`;
+
+// ---- Installing updates on their own (auto-update) ----
+
+/**
+ * The pack's own update setting and state, beside its record:
+ * `<app home>/automagik-herdr/auto-update.json`, `{ "auto": true | false, "skip": "X.Y.Z" }`.
+ * `auto`: install verified releases on their own (on unless it says false). `skip`: the version
+ * `automagik-herdr update --rollback` rolled away from; auto-update never installs it again and
+ * waits for a newer one. The mod, update.mjs and the CLI all read it through parseAuto.
+ */
+export const AUTO_FILE = "auto-update.json";
+
+/** The setting as `{ on, skip }`: on unless the file says `"auto": false`; skip a version or null. */
+export function parseAuto(text) {
+  let value = null;
+  try { value = JSON.parse(text); } catch {}
+  const o = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return { on: o.auto !== false, skip: typeof o.skip === "string" && /^\d+\.\d+\.\d+$/.test(o.skip) ? o.skip : null };
+}
+
+export const formatAuto = ({ on = true, skip = null } = {}) =>
+  `${JSON.stringify({ auto: on !== false, ...(skip ? { skip } : {}) }, null, 2)}\n`;
+
+/**
+ * Why auto-update leaves `version` alone, or null when it may install it. `auto`: `{ on, skip,
+ * managed, why }` (update.mjs autoStatus): a pack install.sh did not put in place through a signed
+ * release (a checkout, a hand-installed pack) keeps today's notice, and so does the setting off.
+ */
+export function autoHold(version, auto) {
+  if (!auto?.managed) return auto?.why ?? "this pack is not one install.sh installed";
+  if (auto.on === false) return "Install updates automatically is off";
+  if (auto.skip && !(compareVersions(version, auto.skip) > 0)) return `${auto.skip} was rolled back here: waiting for a newer release`;
+  return null;
+}

@@ -9,7 +9,7 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, machines, panes, agents, terminals, focused, setAgentOrder, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, nextCommand, readTextFile, appHome, home, knownAgents, notify, props } from "herdr";
+import { spaces, machines, panes, agents, terminals, focused, setAgentOrder, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, nextCommand, readTextFile, writeTextFile, appHome, home, knownAgents, notify, props } from "herdr";
 import * as fs from "fs/promises";
 import { isPng, keysFor, remote } from "./paste.js";
 import { command } from "./argv.js";
@@ -19,8 +19,7 @@ import { BotForm, FORM_SIZE } from "./create.js";
 import { SpaceIconDialog, spaceIconOverlay } from "./spaceIcon.js";
 import { ensureTheme, themeSettled } from "./theme.js";
 import { SHARED_RENAMES, carryShared } from "./migrate.js";
-import { FIRST_CHECK_MS, REQUEST_KEY, RETRY_MS, STATE_KEY, announce, applyNotice, applyPatch, applyRefusal, busyOf, checkPatch, claim,
-  coolingDown, finish, nextCheckIn, requestDue, runCheck, stateFrom } from "./updateCheck.js";
+import { Updater } from "./updater.js";
 import { METER_EVERY_MS, METER_FIRST_MS, meterBin, syncMeter, syncTargets } from "./meter.js";
 import { parseMarker } from "./release.js";
 import { meterScope } from "./meterFleet.js";
@@ -175,15 +174,18 @@ export default class Spaces extends View {
     });
     // `git status` walks the whole tree, on another machine a process there:
     // only when its answer could have changed (see `due`).
-    cx.timer.every(250, (cx) => { this.checkNew(cx); this.botTick(cx); this.updateRequest(cx); });
-    // Updates (A14): a look FIRST_CHECK_MS after load, then every CHECK_EVERY_MS; a failed
-    // look is "no update", tried again after RETRY_MS, never an error (updateCheck.js). The
-    // status bar (am-status) shows the answer and asks for a look or an install (REQUEST_KEY);
-    // a request saved before this load was someone else's to answer.
-    this.updates = { node: null, seen: stateFrom(shared(REQUEST_KEY)).id ?? null };
+    cx.timer.every(250, (cx) => { this.checkNew(cx); this.botTick(cx); this.updater.request(); });
+    // Updates (A14, updater.js): a look FIRST_CHECK_MS after load, then every CHECK_EVERY_MS; a
+    // failed look is "no update", tried again after RETRY_MS, never an error. A newer verified
+    // release installs on its own while "Install updates automatically" is on (the default). The
+    // status bar (am-status) shows the answer and asks for a look, an install or the switch
+    // (REQUEST_KEY). The timers are this init's: a reload (the install's own swap) stops them.
+    this.updater = new Updater({ exec, get: shared, set: setShared, notify, appHome: appHome(),
+      readText: (path) => readTextFile(path), writeText: (path, text, before) => writeTextFile(path, text, before),
+      after: (ms, fn) => cx.timer.after(ms, () => fn()), spawn: (fn) => cx.spawn(async () => { await fn(); }) });
     // The Automagik theme, selected once (theme.js): now, then on the 15-second timer until done.
     this.applyTheme(cx);
-    cx.timer.after(FIRST_CHECK_MS, (cx) => this.checkUpdates(cx));
+    this.updater.start();
     // usagemeter (Group 6c): `usagemeter sync` METER_FIRST_MS after load, then every
     // METER_EVERY_MS while Herdr is open, one run at a time (meter.js). No LaunchAgent, no daemon.
     this.meter = { busy: false };
@@ -448,83 +450,6 @@ export default class Spaces extends View {
       }
       this.themeBusy = false;
     });
-  }
-
-  // One update look through `node <pack>/update.mjs check` (Herdr's runtime has no fetch),
-  // one notice per new version, then the next look scheduled by what it found (`scheduled`;
-  // a look the status bar asked for schedules nothing). One look or install at a time across
-  // sidebar copies (claim): a timer that finds one running looks again after RETRY_MS.
-  checkUpdates(cx, scheduled = true, request = null) {
-    const id = claim(shared, setShared, "check", Date.now(), request ? { request } : {});
-    if (id === null) {
-      if (scheduled) cx.timer.after(RETRY_MS, (cx) => this.checkUpdates(cx));
-      return;
-    }
-    cx.spawn(async (cx) => {
-      let patch = { kind: "retry", why: "the check did not run", at: Date.now() };
-      try {
-        const sleep = (ms) => new Promise((done) => cx.timer.after(ms, () => done()));
-        const { node, result } = await runCheck(exec, `${appHome()}/mods/am-sidebar/update.mjs`, this.updates.node,
-          { mods: `${appHome()}/mods`, sleep });
-        if (node) this.updates.node = node;
-        patch = checkPatch(result, Date.now());
-      } catch {}
-      try { finish(shared, setShared, id, { ...patch, request }); } catch {}
-      // The version already announced is shared, so a reload or a second view stays quiet.
-      try { announce(patch, shared, setShared, notify); } catch {}
-      const wait = nextCheckIn(patch.kind);
-      if (scheduled && wait !== null) cx.timer.after(wait, (cx) => this.checkUpdates(cx));
-    });
-  }
-
-  // The status bar's install: `node <pack>/update.mjs apply`, the path `automagik-herdr update`
-  // takes (checksum checked, the replaced pack kept for --rollback), then a notice to reload.
-  // `to`: the version the person confirmed; update.mjs refuses when the latest is another by now.
-  applyUpdates(cx, request, to) {
-    const before = stateFrom(shared(STATE_KEY));
-    const id = claim(shared, setShared, "apply", Date.now(), { request, to });
-    if (id === null) return false;
-    cx.spawn(async (cx) => {
-      let patch = { applyError: "the install did not run", at: Date.now() };
-      try {
-        const { node, result } = await runCheck(exec, `${appHome()}/mods/am-sidebar/update.mjs`, this.updates.node,
-          { mods: `${appHome()}/mods`, command: "apply", extra: ["--expect", to] });
-        if (node) this.updates.node = node;
-        patch = applyPatch(result, before, Date.now());
-      } catch (e) { patch = { applyError: String(e?.message ?? e), at: Date.now() }; }
-      try { finish(shared, setShared, id, { ...patch, request }); } catch {}
-      const note = applyNotice(patch);
-      if (note) try { notify(note); } catch {}
-    });
-    return true;
-  }
-
-  // On the 250 ms timer: a new request from the status bar. A look asked for while one runs is
-  // answered by it, and one within a minute of the last by that one (GitHub's hourly limit); an
-  // install asked for while one runs is that one, one for a version no longer offered is refused
-  // (the bar asks again), and one waits for a running look (fresh for REQUEST_FRESH_MS).
-  updateRequest(cx) {
-    const value = shared(REQUEST_KEY);
-    const now = Date.now();
-    const what = requestDue(value, this.updates.seen, now);
-    if (!what) return;
-    const { id } = value;
-    const state = stateFrom(shared(STATE_KEY));
-    const busy = busyOf(state, now);
-    if (what === "check") {
-      this.updates.seen = id;
-      if (busy) return;
-      if (coolingDown(state, now)) finish(shared, setShared, null, { request: id });
-      else this.checkUpdates(cx, false, id);
-      return;
-    }
-    if (busy?.what === "apply") { this.updates.seen = id; return; }
-    if (busy) return;
-    const refused = applyRefusal(value, state);
-    if (refused) {
-      this.updates.seen = id;
-      finish(shared, setShared, null, { request: id, applyError: refused });
-    } else if (this.applyUpdates(cx, id, value.to)) this.updates.seen = id;
   }
 
   // One due `usagemeter sync` through Herdr's exec, here and then on each connected linked machine

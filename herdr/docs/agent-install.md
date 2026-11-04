@@ -1,4 +1,4 @@
-Install Automagik Herdr on this Mac and set up my first bot.
+Install Automagik Herdr on this macOS or Linux machine and set up my first bot.
 
 1. Run: curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash
    If it stops to ask something (install Node or Herdr), ask me; if I say yes, run it again

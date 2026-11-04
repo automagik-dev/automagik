@@ -18,10 +18,15 @@ const LAYOUT_SRC = join(ROOT, "..", "herdr-layout", "layouts", "automagik.json")
 const { OFF_BY_DEFAULT, OLD_PACK_NAME, PACK_MODS, USAGEMETER, V020_LAYOUT_SHA256, parseMarker } = await import("../mods/am-sidebar/release.js");
 /** The pack mods a fresh install turns on (herdr-app checks those); OFF_BY_DEFAULT ones start off. */
 const ON_MODS = PACK_MODS.filter((m) => !OFF_BY_DEFAULT.includes(m));
-const CASK = "penso/tap/herdr-gpui";
+/** herdrdev's installer (D27), the only Herdr install.sh offers; and the app's bundle ids. */
+const HERDR_INSTALLER = "https://releases.herdr.dev/app/install.sh";
+const HERDR_ID = "dev.herdr.app", HERDR_UI_ID = "so.pen.herdr-gpui";
 const { keys: TEST_KEYS, pointerBytes, signatureOf } = await import("./pointer.mjs");
 
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
+/** An app bundle at `app` with the bundle id `id`: only its Info.plist, as the check reads it. */
+const plist = (id) => `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>\n    <key>CFBundleExecutable</key><string>Herdr</string>\n    <key>CFBundleIdentifier</key><string>${id}</string>\n</dict></plist>\n`;
+const appBundle = (app, id = HERDR_ID) => { mkdirSync(join(app, "Contents"), { recursive: true }); writeFileSync(join(app, "Contents", "Info.plist"), plist(id)); };
 /** The command install.sh links (its cli_target): the sidebar's bin/automagik-herdr wrapper when the pack ships one, else the .mjs. */
 const cliTarget = (s) => join(s.pack, "bin", existsSync(join(s.pack, "bin", "automagik-herdr")) ? "automagik-herdr" : "automagik-herdr.mjs");
 const sha = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
@@ -41,21 +46,23 @@ const treeSum = (dir) => {
   return h.digest("hex");
 };
 
+/** herdr: true, an app with bundle id dev.herdr.app in the fake /Applications; a string, that bundle id. */
 function scratch(t, { herdr = true, os = "Darwin", arch = "arm64" } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ah-install-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, "home"), bin = join(root, "bin"), apps = join(root, "Applications"), rel = join(root, "release");
   for (const d of [home, bin, apps, rel]) mkdirSync(d, { recursive: true });
-  if (herdr) mkdirSync(join(apps, "Herdr.app"));
+  if (herdr) appBundle(join(apps, "Herdr.app"), herdr === true ? HERDR_ID : herdr);
   const brewLog = join(root, "brew.log");
   writeFileSync(brewLog, "");
   exe(join(bin, "uname"), `#!/bin/sh\ncase "$1" in -m) echo ${arch} ;; *) echo ${os} ;; esac\n`);
   // curl: logs each URL, then the real curl (file:// only: the release URL is a folder here).
+  // Herdr's installer is never fetched for real: herdrInstaller() stubs it, else it fails.
   const curlLog = join(root, "curl.log");
   writeFileSync(curlLog, "");
-  exe(join(bin, "curl"), `#!/bin/sh\nfor a; do case $a in file://*) echo "$a" >> "${curlLog}" ;; esac; done\nexec /usr/bin/curl "$@"\n`);
-  // Homebrew: logs its arguments; the cask "installs" Herdr into the fake Applications.
-  exe(join(bin, "brew"), `#!/bin/sh\necho "$*" >> "${brewLog}"\ncase "$*" in *--cask*) mkdir -p "${apps}/Herdr.app" ;; esac\n`);
+  exe(join(bin, "curl"), `#!/bin/sh\nfor a; do case $a in file://*|https://*) echo "$a" >> "${curlLog}" ;; esac; case $a in https://releases.herdr.dev/*) exit 22 ;; esac; done\nexec /usr/bin/curl "$@"\n`);
+  // Homebrew: only logs its arguments (install.sh offers it for Node on macOS, never for Herdr).
+  exe(join(bin, "brew"), `#!/bin/sh\necho "$*" >> "${brewLog}"\n`);
   // herdr-app, when a test puts it on PATH: logs its arguments; `status` prints the layout
   // `show(name)` set (as JSON), or fails while none is set.
   const herdrLog = join(root, "herdr-app.log"), shownFile = join(root, "herdr-shown");
@@ -148,6 +155,7 @@ fi
     extraEnv.AUTOMAGIK_HERDR_METER_PIN = pinFile;
   };
   const meterCalls = () => readFileSync(curlLog, "utf8").split("\n").filter((l) => l.includes("/usagemeter/"));
+  const herdrInstallerCalls = () => readFileSync(curlLog, "utf8").split("\n").filter((l) => l === HERDR_INSTALLER);
   const brewCalls = () => readFileSync(brewLog, "utf8").split("\n").filter(Boolean);
   /** herdr-app's calls other than `status` and `check`. */
   const herdrCalls = () => readFileSync(herdrLog, "utf8").split("\n").filter((l) => l && l !== "status" && l !== "ls" && !l.startsWith("check "));
@@ -159,7 +167,7 @@ fi
   /** Every pack folder's release (its VERSION), by name, on or off. */
   const versions = () => Object.fromEntries(PACK_MODS.map((m) => [m, /\/\/ release (\S+)\n$/.exec(readFileSync(join(where(m), "main.js"), "utf8"))?.[1]]));
   const all = (v) => Object.fromEntries(PACK_MODS.map((m) => [m, v]));
-  return { root, bin, home, apps, appHome, mods, state, where, pack, old, link, run, piped, publish, publishMeter, meterCalls, brewCalls, addHerdrApp, show, herdrCalls, checks, mark, versions, all, extraEnv, herdrLog };
+  return { root, bin, home, apps, appHome, mods, state, where, pack, old, link, run, piped, publish, publishMeter, meterCalls, herdrInstallerCalls, brewCalls, addHerdrApp, show, herdrCalls, checks, mark, versions, all, extraEnv, herdrLog };
 }
 
 test("install.sh is POSIX sh", () => {
@@ -186,7 +194,14 @@ test("a fresh install puts the pack and the command in place; a second run chang
   const version = spawnSync(s.link, ["--version"], { encoding: "utf8", env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` } });
   assert.equal(version.stdout.trim(), "automagik-herdr 9.9.0", version.stderr);
   // No node on PATH (a pane Herdr started): bin/run.sh finds one anyway.
-  const bare = { HOME: s.home, PATH: "/usr/bin:/bin", AUTOMAGIK_HERDR_RUNTIME_DIRS: dirname(process.execPath) };
+  // Linux may install node in /usr/bin: expose only the wrapper's shell utilities.
+  const bareBin = join(s.root, "bare-bin");
+  mkdirSync(bareBin);
+  for (const cmd of ["sh", "dirname", "readlink"]) {
+    const path = execFileSync("/bin/sh", ["-c", `command -v ${cmd}`], { encoding: "utf8" }).trim();
+    symlinkSync(path, join(bareBin, cmd));
+  }
+  const bare = { HOME: s.home, PATH: bareBin, AUTOMAGIK_HERDR_RUNTIME_DIRS: dirname(process.execPath) };
   const which = spawnSync("/bin/sh", ["-c", "command -v node"], { encoding: "utf8", env: bare });
   assert.notEqual(which.status, 0, `node must be absent from the test PATH, found ${which.stdout.trim()}`);
   const noNode = spawnSync(s.link, ["--version"], { encoding: "utf8", env: bare });
@@ -236,23 +251,103 @@ test("a newer release replaces the installed one; --version pins one", (t) => {
   assert.equal(s.run("--version", "1.0.0").code, 1, "a release that isn't there");
 });
 
-test("Herdr missing with no terminal and no --yes: stops, prints the brew command, never runs brew", (t) => {
+test("Herdr missing with no terminal and no --yes: stops, prints herdrdev's install command, runs nothing", (t) => {
   const s = scratch(t, { herdr: false });
   s.publish("9.9.0");
   const r = s.run();
   assert.notEqual(r.code, 0);
-  assert.match(r.err, /Herdr is not installed\. Run: brew install --cask penso\/tap\/herdr-gpui/);
+  assert.match(r.err, /Herdr \(dev\.herdr\.app\) is not in .*Install it with: curl -fsSL https:\/\/releases\.herdr\.dev\/app\/install\.sh \| sh/);
+  assert.deepEqual(s.herdrInstallerCalls(), []);
   assert.deepEqual(s.brewCalls(), []);
   assert.equal(existsSync(s.pack), false);
 });
 
-test("Herdr missing with --yes: installed with the Homebrew cask, then the pack", (t) => {
+test("macOS, Herdr missing with --yes: herdrdev's installer puts it in ~/Applications, then the pack", (t) => {
   const s = scratch(t, { herdr: false });
   s.publish("9.9.0");
+  herdrInstaller(s, macInstaller(s));
   const r = s.run("--yes");
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(s.brewCalls(), [`install --cask ${CASK}`]);
+  assert.deepEqual(s.herdrInstallerCalls(), [HERDR_INSTALLER]);
+  assert.deepEqual(s.brewCalls(), [], "Homebrew is never used for Herdr");
+  assert.ok(existsSync(join(s.home, "Applications", "Herdr.app", "Contents", "Info.plist")));
   assert.equal(readFileSync(join(s.pack, "VERSION"), "utf8").trim(), "9.9.0");
+  // herdr-app is only in ~/.local/bin, which PATH lacks here: the mod checks still run.
+  assert.equal(s.checks().length, ON_MODS.length);
+});
+
+test("macOS: Herdr is found by its bundle id, never by its name", async (t) => {
+  await t.test("dev.herdr.app in ~/Applications only (where herdrdev's installer puts it): ok", (t) => {
+    const s = scratch(t, { herdr: false });
+    s.publish("9.9.0");
+    appBundle(join(s.home, "Applications", "Herdr.app"));
+    const r = s.run("--yes");
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /Herdr: ok\./);
+    assert.deepEqual(s.herdrInstallerCalls(), []);
+  });
+  await t.test("a Herdr.app folder with no Info.plist, or herdr-app on PATH alone: not Herdr", (t) => {
+    const s = scratch(t, { herdr: false });
+    s.publish("9.9.0");
+    mkdirSync(join(s.apps, "Herdr.app"));
+    s.addHerdrApp();
+    const r = s.run();
+    assert.equal(r.code, 1);
+    assert.match(r.err, /Herdr \(dev\.herdr\.app\) is not in /);
+    assert.equal(existsSync(s.appHome), false);
+  });
+  await t.test("Herdr UI (so.pen.herdr-gpui) in /Applications: named, left alone, herdrdev's installed beside it", (t) => {
+    const s = scratch(t, { herdr: HERDR_UI_ID });
+    s.publish("9.9.0");
+    const theirs = join(s.apps, "Herdr.app", "Contents", "Info.plist");
+    const no = s.run();
+    assert.equal(no.code, 1);
+    assert.match(no.out, /Herdr\.app is so\.pen\.herdr-gpui, a different app named Herdr, not dev\.herdr\.app/);
+    assert.match(no.err, /releases\.herdr\.dev\/app\/install\.sh/);
+    herdrInstaller(s, macInstaller(s));
+    const r = s.run("--yes");
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(s.herdrInstallerCalls(), [HERDR_INSTALLER]);
+    assert.equal(readFileSync(theirs, "utf8"), plist(HERDR_UI_ID), "the other app is untouched");
+    assert.equal(readFileSync(join(s.pack, "VERSION"), "utf8").trim(), "9.9.0");
+  });
+  await t.test("Herdr UI in ~/Applications: refused before herdrdev's installer could replace it", (t) => {
+    const s = scratch(t, { herdr: false });
+    s.publish("9.9.0");
+    appBundle(join(s.home, "Applications", "Herdr.app"), HERDR_UI_ID);
+    herdrInstaller(s, macInstaller(s));
+    const r = s.run("--yes");
+    assert.equal(r.code, 1);
+    assert.match(r.err, /Herdr's installer would replace .*Herdr\.app, which is not dev\.herdr\.app/);
+    assert.deepEqual(s.herdrInstallerCalls(), []);
+    assert.equal(readFileSync(join(s.home, "Applications", "Herdr.app", "Contents", "Info.plist"), "utf8"), plist(HERDR_UI_ID));
+    assert.equal(existsSync(s.appHome), false);
+  });
+  // Anything in ~/Applications/Herdr.app that is not positively dev.herdr.app stops the install:
+  // herdrdev's installer would rm -rf it.
+  const unreadable = {
+    "an empty Herdr.app folder": (app) => mkdirSync(app, { recursive: true }),
+    "an Info.plist with no CFBundleIdentifier": (app) => { mkdirSync(join(app, "Contents"), { recursive: true }); writeFileSync(join(app, "Contents", "Info.plist"), '<?xml version="1.0"?>\n<plist version="1.0"><dict><key>CFBundleName</key><string>Herdr</string></dict></plist>\n'); },
+    "an empty CFBundleIdentifier": (app) => appBundle(app, ""),
+    "a plain file named Herdr.app": (app) => { mkdirSync(dirname(app), { recursive: true }); writeFileSync(app, "not an app\n"); },
+  };
+  for (const [what, make] of Object.entries(unreadable)) {
+    await t.test(`${what} in ~/Applications: refused, untouched, herdrdev's installer never fetched`, (t) => {
+      const s = scratch(t, { herdr: false });
+      s.publish("9.9.0");
+      const app = join(s.home, "Applications", "Herdr.app");
+      make(app);
+      const before = treeSum(join(s.home, "Applications"));
+      herdrInstaller(s, macInstaller(s));
+      const r = s.run("--yes");
+      assert.equal(r.code, 1);
+      assert.match(r.out, /Herdr\.app is not dev\.herdr\.app .*: its bundle id cannot be read; it is left alone\./);
+      assert.match(r.err, /Herdr's installer would replace .*Herdr\.app, which is not dev\.herdr\.app/);
+      assert.deepEqual(s.herdrInstallerCalls(), []);
+      assert.equal(treeSum(join(s.home, "Applications")), before);
+      assert.equal(existsSync(s.appHome), false);
+    });
+  }
 });
 
 test("a tampered tarball (not the signed pointer's sha256, or not a --version release's .sha256) installs nothing", (t) => {
@@ -395,17 +490,127 @@ test("a command link the person pointed elsewhere is never replaced or removed; 
   assert.equal(readdirSync(dirname(s.link)).includes("automagik-herdr"), false);
 });
 
-test("not macOS: explains and exits 1; Node too old with no brew: says where to get it", (t) => {
-  const linux = scratch(t, { os: "Linux" });
-  const r = linux.run("--yes");
+test("unsupported OS: explains and exits 1; Node too old with no brew: says where to get it", (t) => {
+  const unsupported = scratch(t, { os: "FreeBSD" });
+  const r = unsupported.run("--yes");
   assert.equal(r.code, 1);
-  assert.match(r.err, /runs on macOS .*this is Linux/);
+  assert.match(r.err, /supports macOS and Linux; this is FreeBSD/);
   const old = scratch(t);
   exe(join(old.root, "bin", "node"), "#!/bin/sh\nif [ \"$1\" = --version ]; then echo v18.0.0; exit 0; fi\nexit 1\n");
   rmSync(join(old.root, "bin", "brew"));
   const n = old.run("--yes");
   assert.equal(n.code, 1);
   assert.match(n.err, /Node 22\.7 or later is needed \(found: v18\.0\.0\)\. Install it from https:\/\/nodejs\.org/);
+});
+
+for (const arch of ["x86_64", "aarch64"]) {
+  test(`Linux ${arch}: installs all mods, checks them and installs the Linux meter without Homebrew`, (t) => {
+    const s = scratch(t, { os: "Linux", arch, herdr: false });
+    s.addHerdrApp();
+    s.publish("9.9.0");
+    s.publishMeter();
+    const r = s.piped("--yes");
+    assert.equal(r.code, 0, `${r.out}\n${r.err}`);
+    assert.match(r.out, /Linux: ok/);
+    assert.deepEqual(s.versions(), s.all("9.9.0"));
+    assert.equal(s.checks().length, ON_MODS.length);
+    assert.deepEqual(s.brewCalls(), []);
+    assert.ok(s.meterCalls().some((url) => url.endsWith(`/usagemeter-linux-${arch}`)));
+    assert.equal(s.run("--uninstall").code, 0);
+    assert.equal(existsSync(s.link), false);
+  });
+}
+
+test("Linux without herdr-app: asks before installing, ignores a Mac app folder and never uses brew", (t) => {
+  const s = scratch(t, { os: "Linux" });
+  const r = s.run();
+  assert.equal(r.code, 1);
+  assert.match(r.err, /herdr-app is not on PATH or in .*Install it with: curl -fsSL https:\/\/releases\.herdr\.dev\/app\/install\.sh \| sh/);
+  assert.deepEqual(s.herdrInstallerCalls(), []);
+  assert.deepEqual(s.brewCalls(), []);
+  assert.equal(existsSync(s.appHome), false);
+});
+
+// herdrdev's installer is fetched via the same curl as the pack. Stub that one URL only;
+// all pack and meter downloads remain real file:// downloads into the scratch home.
+function herdrInstaller(s, body, { downloadFails = false } = {}) {
+  const curl = join(s.bin, "curl");
+  const original = readFileSync(curl, "utf8");
+  exe(curl, `#!/bin/sh
+if [ "$2" = ${HERDR_INSTALLER} ]; then
+  echo "$2" >> "${join(s.root, "curl.log")}"
+  ${downloadFails ? "exit 22" : `cat > "$4" <<'HERDR_INSTALLER'\n${body}\nHERDR_INSTALLER\nexit 0`}
+fi
+${original.replace(/^#![^\n]*\n/, "")}`);
+}
+/** What herdrdev's installer does, without sudo: Linux, the app in ~/.local/share/herdr-app linked from ~/.local/bin. */
+function linuxInstaller(s) {
+  s.addHerdrApp();
+  const app = readFileSync(join(s.bin, "herdr-app"), "utf8");
+  rmSync(join(s.bin, "herdr-app"));
+  const data = join(s.home, ".local", "share", "herdr-app"), bin = join(s.home, ".local", "bin");
+  return `#!/bin/sh\nmkdir -p '${data}' '${bin}'\ncat > '${join(data, "herdr-app")}' <<'APP'\n${app}\nAPP\nchmod +x '${join(data, "herdr-app")}'\nln -sfn '${join(data, "herdr-app")}' '${join(bin, "herdr-app")}'`;
+}
+/** macOS: Herdr.app (dev.herdr.app) in ~/Applications, its binary linked from ~/.local/bin. */
+function macInstaller(s) {
+  s.addHerdrApp();
+  const app = readFileSync(join(s.bin, "herdr-app"), "utf8");
+  rmSync(join(s.bin, "herdr-app"));
+  const bundle = join(s.home, "Applications", "Herdr.app"), exeFile = join(bundle, "Contents", "MacOS", "Herdr"), bin = join(s.home, ".local", "bin");
+  return `#!/bin/sh\nmkdir -p '${dirname(exeFile)}' '${bin}'\ncat > '${join(bundle, "Contents", "Info.plist")}' <<'PLIST'\n${plist(HERDR_ID)}PLIST\ncat > '${exeFile}' <<'APP'\n${app}\nAPP\nchmod +x '${exeFile}'\nln -sfn '${exeFile}' '${join(bin, "herdr-app")}'`;
+}
+
+test("Linux with --yes: runs herdrdev's installer (no sudo) then installs the pack through piped stdin", (t) => {
+  const s = scratch(t, { os: "Linux", herdr: false });
+  s.publish("9.9.0");
+  s.publishMeter();
+  // A sudo that would be noticed: herdrdev's installer never needs it.
+  exe(join(s.bin, "sudo"), `#!/bin/sh\necho "$*" >> "${join(s.root, "sudo.log")}"\nexit 1\n`);
+  herdrInstaller(s, linuxInstaller(s));
+  const r = s.piped("--yes");
+  assert.equal(r.code, 0, `${r.out}\n${r.err}`);
+  assert.deepEqual(s.herdrInstallerCalls(), [HERDR_INSTALLER]);
+  assert.equal(existsSync(join(s.root, "sudo.log")), false, "no sudo");
+  assert.deepEqual(s.versions(), s.all("9.9.0"));
+  // herdr-app is only in ~/.local/bin, which PATH lacks here: found, and the mod checks run.
+  assert.equal(s.checks().length, ON_MODS.length);
+  assert.deepEqual(s.brewCalls(), []);
+});
+
+test("Linux: herdr-app in ~/.local/bin, not on PATH, counts as installed", (t) => {
+  const s = scratch(t, { os: "Linux", herdr: false });
+  s.publish("9.9.0");
+  s.publishMeter();
+  const body = linuxInstaller(s);
+  assert.equal(spawnSync("sh", ["-c", body]).status, 0);
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, `${r.out}\n${r.err}`);
+  assert.match(r.out, /Herdr: ok\./);
+  assert.deepEqual(s.herdrInstallerCalls(), []);
+  assert.equal(s.checks().length, ON_MODS.length);
+});
+
+for (const failure of ["download", "script", "missing-cli"]) {
+  test(`Linux installer ${failure} failure stops before writing the pack`, (t) => {
+    const s = scratch(t, { os: "Linux", herdr: false });
+    herdrInstaller(s, failure === "script" ? "exit 1" : "exit 0", { downloadFails: failure === "download" });
+    const r = s.piped("--yes");
+    assert.equal(r.code, 1);
+    assert.match(r.err, { download: /could not download Herdr's installer/, script: /Herdr's installer failed/, "missing-cli": /Herdr's installer finished, but Herdr is not installed/ }[failure]);
+    assert.equal(existsSync(s.appHome), false);
+    assert.deepEqual(s.brewCalls(), []);
+    assert.equal(readdirSync(s.root).some((name) => name.startsWith("automagik-herdr.")), false);
+  });
+}
+
+test("Linux with old Node: gives portable guidance and never invokes brew", (t) => {
+  const s = scratch(t, { os: "Linux" });
+  exe(join(s.bin, "node"), '#!/bin/sh\n[ "$1" = --version ] && echo v18.0.0\nexit 1\n');
+  const r = s.run("--yes");
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Install it from https:\/\/nodejs.org/);
+  assert.doesNotMatch(r.err, /brew/);
+  assert.deepEqual(s.brewCalls(), []);
 });
 
 test("--help and an unknown option", (t) => {
@@ -422,12 +627,14 @@ test("the README's agent prompt is docs/agent-install.md, word for word", () => 
   assert.ok(readFileSync(join(ROOT, "README.md"), "utf8").includes(`\`\`\`text\n${prompt}\`\`\`\n`));
 });
 
-test("piped into sh (curl | sh -s -- --yes), with Herdr from brew, the whole script runs", (t) => {
+test("piped into sh (curl | sh -s -- --yes), with Herdr from herdrdev's installer, the whole script runs", (t) => {
   const s = scratch(t, { herdr: false });
   s.publish("9.9.0");
+  herdrInstaller(s, macInstaller(s));
   const r = s.piped("--yes");
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(s.brewCalls(), [`install --cask ${CASK}`]);
+  assert.deepEqual(s.herdrInstallerCalls(), [HERDR_INSTALLER]);
+  assert.deepEqual(s.brewCalls(), []);
   assert.match(r.out, /Done: Automagik Herdr 9\.9\.0\./);
 });
 
@@ -936,11 +1143,27 @@ test("no downgrade: a re-posted older signed pointer is refused by version or se
   assert.match(s.mark(), /^sequence=100000$/m);
 });
 
-test("every download keeps the path as written (curl --path-as-is): the pointer and its signature, the pack's two, usagemeter's two", () => {
+test("every download keeps the path as written (curl --path-as-is), including Herdr's installer", () => {
   const calls = readFileSync(INSTALL, "utf8").split("\n").filter((l) => /^\s+curl /.test(l));
-  assert.equal(calls.length, 6);
-  for (const l of calls) assert.match(l, /^\s+curl -fsSL --path-as-is "(\$u?base\/|\$POINTER(\.sig)?")/);
+  assert.equal(calls.length, 7);
+  for (const l of calls) assert.match(l, /--path-as-is/);
+  // Herdr's installer, an https URL, is fetched over https only, never a redirect to another scheme.
+  assert.match(calls.find((line) => line.includes('"$HERDR_INSTALLER"')) ?? "", /--proto '=https'/);
+  for (const l of calls.filter((line) => !line.includes('"$HERDR_INSTALLER"'))) {
+    assert.match(l, /^\s+curl -fsSL --path-as-is "(\$u?base\/|\$POINTER(\.sig)?")/);
+  }
   assert.doesNotMatch(readFileSync(INSTALL, "utf8"), /api\.github\.com|releases\?per_page|MAX_PAGES/, "no search through the releases");
+});
+
+test("Herdr comes only from herdrdev (releases.herdr.dev): no Herdr UI, cask, sudo or system package manager", () => {
+  const script = readFileSync(INSTALL, "utf8"), readme = readFileSync(join(ROOT, "README.md"), "utf8");
+  assert.match(script, /^ {2}HERDR_INSTALLER=https:\/\/releases\.herdr\.dev\/app\/install\.sh$/m);
+  assert.match(script, /^ {2}HERDR_ID=dev\.herdr\.app$/m);
+  // The script runs no cask, sudo or package manager (its comments may say "no sudo").
+  assert.doesNotMatch(script, /herdrui\.dev|--cask|apt-get|\bdnf\b|pacman|^\s*\$?sudo\b/m);
+  for (const [name, text] of [["README.md", readme], ["agent-install.md", readFileSync(join(ROOT, "docs", "agent-install.md"), "utf8")]]) {
+    assert.doesNotMatch(text, /herdrui\.dev|--cask|\bsudo\b|apt-get|\bAPT\b|\bdnf\b|\bDNF\b|pacman|Herdr UI/, name);
+  }
 });
 
 test("the release the signed pointer names is installed, not a newer one it does not name", (t) => {
@@ -957,8 +1180,8 @@ test("the release the signed pointer names is installed, not a newer one it does
   assert.match(bad.err, /--version takes a version like 3\.58\.0/);
 });
 
-test("no override (the real curl | bash path): no unbound variable, no override line, up to the macOS check", (t) => {
-  const s = scratch(t, { os: "Linux" });
+test("no override (the real curl | bash path): no unbound variable, no override line, up to the OS check", (t) => {
+  const s = scratch(t, { os: "FreeBSD" });
   s.extraEnv.AUTOMAGIK_HERDR_RELEASE_URL = "";
   const r = s.run("--yes");
   assert.equal(r.code, 1, r.err);

@@ -12,14 +12,21 @@ last release line from the old `automagik-dev/automagik-herdr` repository.
 
 ## Install
 
-On a Mac with Node 22.7 or later:
+On macOS or Linux with Node 22.7 or later:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash
 ```
 
-The installer checks Node and Herdr, and offers to install Herdr with Homebrew if it is
-missing (it asks first). It reads the signed pack pointer (the `herdr-lane` release's `pack.json`,
+The installer checks Node and [Herdr](https://dev.herdr.app) (herdrdev's app, bundle id
+`dev.herdr.app`; another app named Herdr, penso/herdr-gpui, is a different app and does not load this pack).
+If Herdr is missing, it asks before running Herdr's own installer,
+`curl -fsSL https://releases.herdr.dev/app/install.sh | sh`, which needs no root: on macOS (Apple
+silicon) it puts `Herdr.app` in `~/Applications`; on Linux (x86_64 or ARM64) the app in
+`~/.local/share/herdr-app`. Both link `herdr-app` into `~/.local/bin` and add `herdr-core` and
+`hc` when there are none. Install Node from [nodejs.org](https://nodejs.org) first on Linux;
+Node installation through Homebrew is offered only on macOS.
+It reads the signed pack pointer (the `herdr-lane` release's `pack.json`,
 checked against the keys the installer carries), downloads the pack it names
 (`automagik-herdr-pack-<v>.tgz`: every mod below and the `automagik` layout; a desktop-only release
 has none), checks it against the sha256 the pointer names before writing
@@ -80,7 +87,7 @@ Automagik release (one that carries the pack), `--adopt` takes over same-named m
 the installer added it and you haven't changed it.
 
 It also installs [usagemeter](https://github.com/automagik-dev/usagemeter) 0.3.0, the token
-meter, to `~/.local/bin/usagemeter`: that release's build for your Mac, checked against its
+meter, to `~/.local/bin/usagemeter`: that release's build for your OS and architecture, checked against its
 `SHA256SUMS` and against the sha256 the pack pins for that build, written atomically. It skips the download when that version is already there and
 never replaces a newer one (Pocket Link installs the same binary). While Herdr is open, the
 sidebar runs `usagemeter sync` 30 seconds after it loads and then every 10 minutes, one run at a
@@ -148,7 +155,7 @@ The installer:
 Or let a coding agent do it. The prompt lives in [docs/agent-install.md](docs/agent-install.md):
 
 ```text
-Install Automagik Herdr on this Mac and set up my first bot.
+Install Automagik Herdr on this macOS or Linux machine and set up my first bot.
 
 1. Run: curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash
    If it stops to ask something (install Node or Herdr), ask me; if I say yes, run it again
@@ -510,12 +517,26 @@ still places panes by the walk-up, so a folder joins its own project once it has
 automagik-herdr update --check      # the installed and the latest version
 automagik-herdr update              # download, verify against the signed pointer, install
 automagik-herdr update --rollback   # put the replaced set of mods back
+automagik-herdr update --auto off   # Install updates automatically: on (default), off, or status
 ```
+
+**Install updates automatically** is on by default: when the sidebar's check finds a newer
+release, it installs it the same way `automagik-herdr update` does (the signed pointer, the
+sha256, the replaced set kept for `--rollback`), Herdr reloads the mods, and one notice says
+"Automagik Herdr updated to X". Your bots keep running: they live in herdr-core, not in the mods.
+A version you rolled back with `--rollback` is never installed on its own again; it waits for a
+newer one. A failed install posts one notice with the reason, changes nothing, and tries again
+4 hours later; each further failure of that release waits longer (8, 16, then 24 hours, then
+daily), with no second notice. Turn it off with `automagik-herdr update --auto off` or the switch
+in the status bar; then a new release is only announced, as before. It applies only to a pack
+`install.sh` installed from a signed release (its record in `<app home>/automagik-herdr/` has a
+`sequence=`); the setting lives beside it, in `auto-update.json`.
 
 Updates come from the Automagik monorepo's GitHub releases, through one signed pointer: the
 `herdr-lane` release's `pack.json` names the newest pack release (not GitHub's "latest", often a
 desktop or plugin release without it), and `pack.json.sig` signs it. The sidebar looks 20 seconds after it
-loads and then every 4 hours, and shows one notice per new version with the command to run.
+loads and then every 4 hours, and installs a newer one (or, with the switch off, shows one notice
+per new version with the command to run).
 When it can't look (no network, no `node`), it says nothing and tries again in 30 minutes.
 Set `AUTOMAGIK_HERDR_NO_UPDATE=1` to turn both off. A pack installed as a link to a checkout
 is never replaced: update it with git.
