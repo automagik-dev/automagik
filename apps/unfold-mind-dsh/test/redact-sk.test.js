@@ -45,10 +45,11 @@ const DIGEST = /\b[0-9a-f]{64}\b/g
 const fragmentIn = (s, text) => fragmentsOf(s).find((f) => text.replace(DIGEST, '<sha256>').includes(f)) ?? null
 const fixed = (mind) => ((mind.life = 'lifeZ'), mind)
 // A failure's own evidence, without the secret: every run of characters covered by the whole
-// canary or a 5-char fragment of it reads "[canary]", so a report never carries its bytes.
+// canary or a 5-char fragment of it reads "[canary]", so a report never carries its bytes. The
+// text is redacted first, so an excerpt cannot print another secret's bytes either.
 const maskCanary = (raw) => {
-  const s = raw.replace(DIGEST, '<sha256>')
-  const hidden = new Array(s.length).fill(false)
+  const s = redactText(raw).replace(DIGEST, '<sha256>')
+  const hidden = Array.from({ length: s.length }, () => false)
   for (const f of [CANARY, ...fragmentsOf(CANARY)]) {
     for (let at = s.indexOf(f); at >= 0; at = s.indexOf(f, at + 1)) hidden.fill(true, at, at + f.length)
   }
@@ -365,4 +366,25 @@ test('a field clipped for its sentence never shows part of a key the clip cut, i
     await fiber.dispose()
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+// The mid-token clip rule (src/sentences.js quote()): a clip that cuts a [A-Za-z0-9_-] run drops
+// the whole run, so no part of a word the text rules never saw whole is shown.
+test('a clip that cuts a token drops the whole token; a clip at a word boundary keeps the word', () => {
+  const said = (msg) => sentence({ lane: 'agentd', kind: 'log', fields: { level: 'info', msg } }).sentence // n = 140
+  const typed = (text) => sentence({ lane: 'agentd', kind: 'user_text', fields: { request_id: 'c1', text } }).sentence // n = 90
+  // A field that is one long token renders an empty clip.
+  assert.ok(said('x'.repeat(200)).endsWith(': “…”'), said('x'.repeat(200)))
+  assert.ok(typed('y'.repeat(200)).endsWith(': “…”'), typed('y'.repeat(200)))
+  // A benign sk- run at the boundary: 139 kept characters end in "sk-l"; the run goes, "see" stays.
+  const benign = `${'b'.repeat(130)} see sk-learn-pipeline-v2 tail`
+  assert.ok(said(benign).endsWith(`${'b'.repeat(130)} see…”`), said(benign))
+  assert.ok(!said(benign).includes('sk-l'))
+  // A key inside a longer word is not a start to the sk- rule ("task-sk-…"), so only this rule
+  // keeps its cut run out of the sentence.
+  const inWord = `${'c'.repeat(110)} task-${CANARY}`
+  assert.equal(fragmentIn(CANARY, said(inWord)), null, maskCanary(said(inWord)))
+  assert.ok(said(inWord).endsWith(`${'c'.repeat(110)}…”`), maskCanary(said(inWord)))
+  // A clip that lands on a space keeps the whole word before it.
+  assert.ok(said(`${'d'.repeat(139)} tail`).endsWith(`${'d'.repeat(139)}…”`))
 })
