@@ -7,8 +7,8 @@
 // Accepted limits (review of #267), for the engine (RFC 0015 delivery 3) to keep in mind:
 // - A hard link inside the folder to a file elsewhere passes: realpath cannot see it. Writing one
 //   needs the account that owns the folder, which can already read the target.
-// - The rule checks a path; the engine opens it later. It runs the rule again at every read, and
-//   should compare the opened file's fstat (dev, inode) with the checked one before trusting it.
+// - The rule checks a path; the engine opens it later. tail.js opens first, runs the rule again,
+//   and reads only if the open handle's dev and inode are those of the rule's real path.
 // - Case is compared as text, so on macOS's case-insensitive disk a path spelled with other case
 //   than the folder (`.Claude/projects`) is refused, never wrongly accepted.
 // - Remote paths are text only: a name with a leading `-` passes. The engine hands the path to hc

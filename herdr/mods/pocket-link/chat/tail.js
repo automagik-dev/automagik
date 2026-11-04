@@ -1,47 +1,99 @@
 // Following a transcript as the agent writes it (RFC 0015, "Tailing"). Ours.
 //   LocalTail: this computer. fs.watch plus a one-second poll (the poll is what counts; watch only
 //   wakes it sooner), reading from the last byte offset, holding a partial last line until its
-//   newline. A file that shrinks or is replaced starts again from line 1 (onReset).
+//   newline. A file that shrinks or is replaced starts again (onReset).
 //   RemoteTail: another machine, through `file.read` with a line `offset`, every 2 s while the
 //   agent works and every 10 s when idle, paging by `limit`. `on` is fixed at construction (the
 //   caller takes it from the terminal's address) and no `cwd` is ever sent, so a home-relative
 //   path is read from that machine's home.
-// Both hand over complete lines as { n, text } (n counts from 1; text is null for a line too long
-// to keep) and never log a line's text.
+// Both start `window` lines before the end (older lines are read again on a backfill), hand over
+// complete lines as { n, text } (n counts from 1; text is null for a line too long to keep) and
+// never log a line's text.
+//
+// The folder rule is asked again every time a local file is opened, after the open: `admit(path)`
+// returns the rule's resolved real path, and the open handle must be that file (same dev and
+// inode). A symlink swapped in before or after the open, pointing out of the folder, is refused.
 import { open, stat } from 'node:fs/promises'
-/** Every this many lines, LocalTail notes where the line starts, for readLines. */
-export const INDEX_EVERY = 256
 import { watch as fsWatch } from 'node:fs'
 import { StringDecoder } from 'node:string_decoder'
 
 /** A line longer than this is counted but not kept (text: null). */
 export const MAX_LINE = 16 * 1024 * 1024
+/** Every this many lines, LocalTail notes where the line starts, for readLocalLines. */
+export const INDEX_EVERY = 256
 const CHUNK = 1024 * 1024
 const realTimers = { setTimeout, clearTimeout, setInterval, clearInterval }
+
+/**
+ * Open `path` for reading only if it is the file the folder rule resolves it to now.
+ * @param {string} path @param {(p: string) => string | null} admit
+ * @returns {Promise<import('node:fs/promises').FileHandle | null>}
+ */
+export async function openAdmitted(path, admit) {
+  let fh
+  try { fh = await open(path, 'r') } catch { return null }
+  try {
+    const real = admit(path)
+    if (typeof real === 'string') {
+      const [opened, checked] = await Promise.all([fh.stat(), stat(real)])
+      if (opened.isFile() && opened.dev === checked.dev && opened.ino === checked.ino) return fh
+    }
+  } catch {}
+  await fh.close().catch(() => {})
+  return null
+}
+
+/**
+ * Count a file's lines from its bytes (nothing decoded): the sparse index, and where the window's
+ * first line, max(1, lines - window + 1), starts.
+ */
+async function scan(fh, window, buf) {
+  const index = [0]
+  const starts = [] // where each of the last window + 1 lines after a newline starts
+  let lines = 0
+  let at = 0
+  for (;;) {
+    const { bytesRead } = await fh.read(buf, 0, buf.length, at)
+    if (bytesRead === 0) break
+    let from = 0
+    let nl
+    while ((nl = buf.indexOf(10, from)) !== -1 && nl < bytesRead) {
+      lines += 1
+      const next = at + nl + 1
+      if (lines % INDEX_EVERY === 0) index[lines / INDEX_EVERY] = next
+      if (Number.isFinite(window)) { starts.push(next); if (starts.length > window + 1) starts.shift() }
+      from = nl + 1
+    }
+    at += bytesRead
+  }
+  if (!Number.isFinite(window) || lines <= window) return { index, firstLine: 1, offset: 0 }
+  // starts[0] follows newline number lines - window: it is where line lines - window + 1 starts.
+  return { index, firstLine: lines - window + 1, offset: starts[0] }
+}
 
 export class LocalTail {
   /**
    * @param {string} path  a path the folder rule accepted
    * @param {{ onLines(lines: { n: number, text: string | null }[]): void, onReset?(): void,
-   *   onError?(e: Error): void, admit?(path: string): boolean, pollMs?: number, watch?: typeof fsWatch | null,
-   *   timers?: typeof realTimers }} options
-   *   admit: the folder rule, asked again every time the file is opened (never trusted from before)
+   *   onError?(e: Error): void, admit?(path: string): string | null, window?: number, maxLine?: number,
+   *   pollMs?: number, watch?: typeof fsWatch | null, timers?: typeof realTimers }} options
+   *   admit: the folder rule, asked at every open, returning the resolved real path or null
    */
-  constructor(path, { onLines, onReset = () => {}, onError = () => {}, admit = () => true, pollMs = 1000, watch = fsWatch, timers = realTimers }) {
-    Object.assign(this, { path, onLines, onReset, onError, admit, pollMs, watchFn: watch, timers })
-    /** Byte offset where line INDEX_EVERY * k + 1 starts, at [k]. */
-    this.index = [0]
-    this.pos = 0
+  constructor(path, { onLines, onReset = () => {}, onError = () => {}, admit = (p) => p, window = Infinity, maxLine = MAX_LINE, pollMs = 1000, watch = fsWatch, timers = realTimers }) {
+    Object.assign(this, { path, onLines, onReset, onError, admit, window, maxLine, pollMs, watchFn: watch, timers })
+    this.buf = Buffer.alloc(CHUNK)
     this.fh = null
     this.ino = null
-    this.offset = 0
-    this.line = 0
-    this.partial = ''
-    this.skipping = false
-    this.decoder = new StringDecoder('utf8')
+    /** The first line read (older ones come from readLocalLines). */
+    this.first = 1
+    this.fresh()
     this.busy = null
     this.again = false
     this.stopped = false
+  }
+
+  fresh() {
+    Object.assign(this, { offset: 0, line: 0, partial: '', skipping: false, decoder: new StringDecoder('utf8'), index: [0], pos: 0 })
   }
 
   start() {
@@ -54,13 +106,14 @@ export class LocalTail {
     return this.tick()
   }
 
-  stop() {
+  async stop() {
     this.stopped = true
     this.timers.clearInterval(this.timer)
     try { this.watcher?.close() } catch {}
+    try { await this.busy } catch {}
     const fh = this.fh
     this.fh = null
-    return (this.busy ?? Promise.resolve()).then(() => fh?.close()).catch(() => {})
+    await fh?.close().catch(() => {})
   }
 
   /** Read whatever is new. Concurrent calls collapse into one more pass. */
@@ -77,9 +130,9 @@ export class LocalTail {
   }
 
   async reset() {
-    try { await this.fh?.close() } catch {}
+    await this.fh?.close().catch(() => {})
     this.fh = null
-    Object.assign(this, { offset: 0, line: 0, partial: '', skipping: false, decoder: new StringDecoder('utf8'), index: [0], pos: 0 })
+    this.fresh()
     this.onReset()
   }
 
@@ -87,24 +140,23 @@ export class LocalTail {
     let onDisk
     try { onDisk = await stat(this.path) } catch { return } // gone for now: keep what was read
     if (this.fh && (onDisk.ino !== this.ino || onDisk.size < this.offset)) await this.reset()
+    if (this.fh && onDisk.size === this.offset) return
     if (!this.fh) {
-      if (!this.admit(this.path)) return
-      const fh = await open(this.path, 'r')
-      const opened = await fh.stat()
-      // The file opened must be the one the rule just checked, not one swapped in since.
-      let checked
-      try { checked = await stat(this.path) } catch { checked = null }
-      if (!checked || checked.ino !== opened.ino || checked.dev !== opened.dev || !opened.isFile()) { await fh.close(); return }
+      const fh = await openAdmitted(this.path, this.admit)
+      if (!fh) return
+      if (this.stopped) { await fh.close().catch(() => {}); return }
       this.fh = fh
-      this.ino = opened.ino
+      this.ino = (await fh.stat()).ino
+      const { index, firstLine, offset } = await scan(fh, this.window, this.buf)
+      if (this.stopped) return
+      Object.assign(this, { index, first: firstLine, line: firstLine - 1, offset, pos: offset })
     }
-    const buf = Buffer.alloc(CHUNK)
     for (;;) {
       if (this.stopped) return
-      const { bytesRead } = await this.fh.read(buf, 0, CHUNK, this.offset)
+      const { bytesRead } = await this.fh.read(this.buf, 0, CHUNK, this.offset)
       if (bytesRead === 0) return
       this.offset += bytesRead
-      this.take(this.decoder.write(buf.subarray(0, bytesRead)))
+      this.take(this.decoder.write(this.buf.subarray(0, bytesRead)))
     }
   }
 
@@ -124,13 +176,13 @@ export class LocalTail {
       if (this.skipping) { this.skipping = false; this.partial = ''; out.push({ n: this.line, text: null }); continue }
       const whole = (this.partial + piece).replace(/\r$/, '')
       this.partial = ''
-      out.push({ n: this.line, text: whole })
+      out.push({ n: this.line, text: whole.length > this.maxLine ? null : whole })
     }
     const rest = text.slice(from)
     this.pos += Buffer.byteLength(rest, 'utf8')
     if (!this.skipping) {
       this.partial += rest
-      if (this.partial.length > MAX_LINE) { this.skipping = true; this.partial = '' }
+      if (this.partial.length > this.maxLine) { this.skipping = true; this.partial = '' }
     }
     if (out.length) this.onLines(out)
   }
@@ -138,17 +190,17 @@ export class LocalTail {
 
 /**
  * Lines `from`..`to` (from 1) of a file LocalTail has indexed, as { n, text }: for a backfill.
- * Starts at the nearest indexed line before `from`; the folder rule is asked again first.
+ * The file is opened through the folder rule again (openAdmitted).
  * @param {LocalTail} tail
  */
 export async function readLocalLines(tail, from, to) {
-  if (from < 1 || to < from || !tail.admit(tail.path)) return []
+  if (from < 1 || to < from) return []
   const k = Math.min(Math.floor((from - 1) / INDEX_EVERY), tail.index.length - 1)
   let n = k * INDEX_EVERY
-  let fh
+  const fh = await openAdmitted(tail.path, tail.admit)
+  if (!fh) return []
   const out = []
   try {
-    fh = await open(tail.path, 'r')
     const decoder = new StringDecoder('utf8')
     const buf = Buffer.alloc(CHUNK)
     let at = tail.index[k]
@@ -161,23 +213,25 @@ export async function readLocalLines(tail, from, to) {
       partial = parts.pop()
       for (const p of parts) {
         n += 1
-        if (n >= from) out.push({ n, text: p.length > MAX_LINE ? null : p.replace(/\r$/, '') })
+        if (n >= from) out.push({ n, text: p.length > tail.maxLine ? null : p.replace(/\r$/, '') })
         if (n >= to) return out
       }
-      if (partial.length > MAX_LINE) return out
+      if (partial.length > tail.maxLine) return out
     }
-  } catch { return out } finally { await fh?.close() }
+  } catch { return out } finally { await fh.close().catch(() => {}) }
 }
 
 export class RemoteTail {
   /**
    * @param {{ hc: { call(m: string, p: object): Promise<any> }, on: string, path: string,
    *   onLines(lines: { n: number, text: string | null }[]): void, onReset?(): void, onError?(e: Error): void,
-   *   working?(): boolean, page?: number, workingMs?: number, idleMs?: number, timers?: typeof realTimers }} options
+   *   working?(): boolean, window?: number, page?: number, workingMs?: number, idleMs?: number, timers?: typeof realTimers }} options
    */
-  constructor({ hc, on, path, onLines, onReset = () => {}, onError = () => {}, working = () => false, page = 2000, workingMs = 2000, idleMs = 10_000, timers = realTimers }) {
-    Object.assign(this, { hc, on, path, onLines, onReset, onError, working, page, workingMs, idleMs, timers })
+  constructor({ hc, on, path, onLines, onReset = () => {}, onError = () => {}, working = () => false, window = Infinity, page = 2000, workingMs = 2000, idleMs = 10_000, timers = realTimers }) {
+    Object.assign(this, { hc, on, path, onLines, onReset, onError, working, window, page, workingMs, idleMs, timers })
     this.next = 1
+    this.first = 1
+    this.counted = false
     this.stopped = false
     this.busy = null
   }
@@ -204,25 +258,37 @@ export class RemoteTail {
     return this.busy
   }
 
-  /** Lines `from`..`to` for a backfill: whole lines only, with the same `on` and no cwd. */
-  async readLines(from, to) {
-    if (from < 1 || to < from) return []
-    try {
-      const r = await this.hc.call('file.read', { path: this.path, on: this.on, offset: from, limit: to - from + 1 })
-      const pieces = (r.text.match(/[^\n]*\n|[^\n]+$/g) ?? []).filter((p) => p.endsWith('\n'))
-      return pieces.map((p, i) => ({ n: r.first + i, text: p.slice(0, -1).replace(/\r$/, '') }))
-    } catch (e) { this.onError(e); return [] }
+  /** How many lines the file has: offset 1 with limit 0 is valid even for an empty file. */
+  async count() {
+    // Never a cwd: the path is home-relative and `on` is the terminal's own machine.
+    const r = await this.hc.call('file.read', { path: this.path, on: this.on, offset: 1, limit: 0 })
+    return r.lines
   }
 
   async readPages() {
+    try {
+      if (!this.counted) {
+        const lines = await this.count()
+        this.counted = true
+        if (Number.isFinite(this.window) && lines > this.window) this.next = this.first = lines - this.window + 1
+      }
+    } catch (e) { this.onError(e); return }
     for (;;) {
       if (this.stopped) return
       let r
       try {
-        // Never a cwd: the path is home-relative and `on` is the terminal's own machine.
         r = await this.hc.call('file.read', { path: this.path, on: this.on, offset: this.next, limit: this.page })
-      } catch (e) { this.onError(e); return }
-      if (r.lines < this.next - 1) { this.next = 1; this.onReset(); continue }
+      } catch (e) {
+        // herdr-core refuses an offset past the last line: caught up, or the file shrank.
+        if (e?.kind !== 'invalid_params') { this.onError(e); return }
+        let lines
+        try { lines = await this.count() } catch (e2) { this.onError(e2); return }
+        if (lines >= this.next - 1) return
+        this.next = this.first = 1
+        this.onReset()
+        continue
+      }
+      if (r.lines < this.next - 1) { this.next = this.first = 1; this.onReset(); continue }
       if (r.last < r.first) {
         // Nothing given although the file has more: one line past the 8 MB a read gives.
         if (r.lines >= this.next) { this.onLines([{ n: this.next, text: null }]); this.next += 1; continue }
@@ -237,5 +303,15 @@ export class RemoteTail {
       if (out.length) { this.next = r.first + out.length; this.onLines(out) }
       if (!out.length || r.last >= r.lines) return
     }
+  }
+
+  /** Lines `from`..`to` for a backfill: whole lines only, with the same `on` and no cwd. */
+  async readLines(from, to) {
+    if (from < 1 || to < from) return []
+    try {
+      const r = await this.hc.call('file.read', { path: this.path, on: this.on, offset: from, limit: to - from + 1 })
+      const pieces = (r.text.match(/[^\n]*\n|[^\n]+$/g) ?? []).filter((p) => p.endsWith('\n'))
+      return pieces.map((p, i) => ({ n: r.first + i, text: p.slice(0, -1).replace(/\r$/, '') }))
+    } catch (e) { this.onError(e); return [] }
   }
 }

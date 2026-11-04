@@ -2,10 +2,11 @@
 // machine (the fake hc). The poll path is what is tested; fs.watch only wakes it sooner.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { appendFileSync, mkdtempSync, renameSync, truncateSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, symlinkSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { LocalTail, RemoteTail } from './tail.js'
+import { LocalTail, openAdmitted, readLocalLines as readLines2, RemoteTail } from './tail.js'
+import { localTranscriptPath } from './folder-rule.js'
 import { createFakeHc } from './fake-hc.mjs'
 
 const noTimers = { setTimeout: () => ({}), clearTimeout: () => {}, setInterval: () => ({}), clearInterval: () => {} }
@@ -98,11 +99,12 @@ test('remote: reads by offset with on from the address and no cwd, paging by lim
   await tail.start()
   assert.deepEqual(got.map((l) => l.text), ['a', 'b', 'c', 'd', 'e'])
   const reads = hc.calls.filter((c) => c.method === 'file.read').map((c) => c.params)
-  assert.deepEqual(reads.map((p) => p.offset), [1, 3, 5])
+  assert.deepEqual(reads.filter((p) => p.limit !== 0).map((p) => p.offset), [1, 3, 5])
+  assert.deepEqual(reads[0], { path: '.claude/projects/p/s.jsonl', on: 'box', offset: 1, limit: 0 }, 'first, how many lines')
   for (const p of reads) {
     assert.equal(p.on, 'box')
     assert.equal(p.path, '.claude/projects/p/s.jsonl')
-    assert.equal(p.limit, 2)
+    assert.ok(p.limit === 2 || p.limit === 0)
     assert.ok(!('cwd' in p), 'no cwd: the base is that machine home')
   }
   hc.append('box', '.claude/projects/p/s.jsonl', 'f\n')
@@ -154,7 +156,7 @@ test('local: the folder rule is asked at every open; a refused file is not read'
   writeFileSync(p, 'a\n')
   let allow = false
   const got = []
-  const tail = new LocalTail(p, { onLines: (l) => got.push(...l), admit: () => allow, watch: null, timers: noTimers })
+  const tail = new LocalTail(p, { onLines: (l) => got.push(...l), admit: (q) => (allow ? q : null), watch: null, timers: noTimers })
   await tail.start()
   assert.deepEqual(got, [])
   allow = true
@@ -185,4 +187,122 @@ test('remote: readLines reads a range with on and no cwd', async () => {
   assert.deepEqual(await tail.readLines(2, 3), [{ n: 2, text: 'b' }, { n: 3, text: 'c' }])
   const last = hc.calls.at(-1).params
   assert.deepEqual(last, { path: '.claude/projects/p/s.jsonl', on: 'box', offset: 2, limit: 2 })
+})
+
+// ---------------------------------------------------------------- review of #280
+
+/** A temp home with a transcript inside .claude/projects and a secret outside it. */
+function swapHome() {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'chat-swap-')))
+  mkdirSync(join(home, '.claude/projects/p'), { recursive: true })
+  mkdirSync(join(home, '.ssh'), { recursive: true })
+  const inside = join(home, '.claude/projects/p/s.jsonl')
+  const secret = join(home, '.ssh/secret.jsonl')
+  writeFileSync(inside, '{"ok":1}\n')
+  writeFileSync(secret, '{"SECRET":1}\n')
+  const rule = (q) => { const r = localTranscriptPath('claude', q, home); return r.ok ? r.path : null }
+  const swap = () => { unlinkSync(inside); symlinkSync(secret, inside) }
+  const unswap = () => { unlinkSync(inside); writeFileSync(inside, '{"ok":1}\n') }
+  return { home, inside, secret, rule, swap, unswap }
+}
+
+test('swap probe: a symlink out of the folder swapped in after the open is refused', async () => {
+  const { inside, rule, swap } = swapHome()
+  const got = []
+  const tail = new LocalTail(inside, { onLines: (l) => got.push(...l), admit: (q) => { swap(); return rule(q) }, watch: null, timers: noTimers })
+  await tail.start()
+  assert.deepEqual(got, [])
+  await tail.stop()
+})
+
+test('swap probe: a file opened while swapped, then swapped back before the rule, is refused (dev+inode)', async () => {
+  const { inside, rule, swap, unswap } = swapHome()
+  swap()
+  const got = []
+  const tail = new LocalTail(inside, { onLines: (l) => got.push(...l), admit: (q) => { unswap(); return rule(q) }, watch: null, timers: noTimers })
+  await tail.start()
+  assert.ok(!JSON.stringify(got).includes('SECRET'), 'read the file outside the folder')
+  assert.deepEqual(got, [])
+  await tail.stop()
+})
+
+test('swap probe: readLocalLines and openAdmitted check the open handle too', async () => {
+  const { inside, rule, swap, unswap } = swapHome()
+  const tail = new LocalTail(inside, { onLines: () => {}, admit: rule, watch: null, timers: noTimers })
+  await tail.start()
+  await tail.stop()
+  assert.deepEqual(await readLines2(tail, 1, 1), [{ n: 1, text: '{"ok":1}' }])
+  swap()
+  tail.admit = (q) => { unswap(); return rule(q) }
+  assert.deepEqual(await readLines2(tail, 1, 1), [])
+  tail.admit = () => null
+  assert.deepEqual(await readLines2(tail, 1, 1), [], 'the rule is asked: refused, nothing read')
+  assert.equal(await openAdmitted(join(inside, 'missing'), rule), null)
+})
+
+const openFds = () => { try { return readdirSync('/dev/fd').length } catch { return -1 } }
+
+test('stop() during the first open leaves no file open', async () => {
+  const p = tmp()
+  writeFileSync(p, 'a\n')
+  const before = openFds()
+  for (let i = 0; i < 50; i++) {
+    const tail = new LocalTail(p, { onLines: () => {}, watch: null, timers: noTimers })
+    tail.start()
+    await tail.stop()
+  }
+  // Let any open still in flight finish: a leaked handle shows only then.
+  await new Promise((r) => setTimeout(r, 100))
+  if (before >= 0) assert.ok(openFds() <= before + 1, `${openFds() - before} files left open`)
+})
+
+test('a line longer than maxLine is counted but not kept, here and in readLocalLines', async () => {
+  const p = tmp()
+  writeFileSync(p, `short\n${'x'.repeat(50)}\nafter\n`)
+  const got = []
+  const tail = new LocalTail(p, { onLines: (l) => got.push(...l), maxLine: 20, watch: null, timers: noTimers })
+  await tail.start()
+  assert.deepEqual(got, [{ n: 1, text: 'short' }, { n: 2, text: null }, { n: 3, text: 'after' }])
+  assert.deepEqual(await readLines2(tail, 2, 2), [{ n: 2, text: null }])
+  await tail.stop()
+})
+
+test('a long line split across reads is skipped whole', async () => {
+  const p = tmp()
+  writeFileSync(p, 'x'.repeat(30))
+  const got = []
+  const tail = new LocalTail(p, { onLines: (l) => got.push(...l), maxLine: 20, watch: null, timers: noTimers })
+  await tail.start()
+  appendFileSync(p, 'y'.repeat(30) + '\nok\n')
+  await tail.tick()
+  assert.deepEqual(got, [{ n: 1, text: null }, { n: 2, text: 'ok' }])
+  await tail.stop()
+})
+
+test('local: the first read starts window lines before the end; numbers stay right', async () => {
+  const p = tmp()
+  writeFileSync(p, Array.from({ length: 10 }, (_, i) => `l${i + 1}`).join('\n') + '\n')
+  const got = []
+  const tail = new LocalTail(p, { onLines: (l) => got.push(...l), window: 3, watch: null, timers: noTimers })
+  await tail.start()
+  assert.equal(tail.first, 8)
+  assert.deepEqual(got, [{ n: 8, text: 'l8' }, { n: 9, text: 'l9' }, { n: 10, text: 'l10' }])
+  assert.deepEqual(await readLines2(tail, 2, 3), [{ n: 2, text: 'l2' }, { n: 3, text: 'l3' }])
+  appendFileSync(p, 'l11\n')
+  await tail.tick()
+  assert.deepEqual(got.at(-1), { n: 11, text: 'l11' })
+  await tail.stop()
+})
+
+test('remote: the first read starts window lines before the end; caught up is not an error', async () => {
+  const hc = createFakeHc({ files: { box: { '.claude/projects/p/s.jsonl': 'a\nb\nc\nd\ne\n' } } })
+  const errors = []
+  const { tail, got } = remoteTail(hc, { window: 2, onError: (e) => errors.push(e.message) })
+  await tail.start()
+  assert.equal(tail.first, 4)
+  assert.deepEqual(got, [{ n: 4, text: 'd' }, { n: 5, text: 'e' }])
+  assert.deepEqual(hc.calls[0].params, { path: '.claude/projects/p/s.jsonl', on: 'box', offset: 1, limit: 0 })
+  await tail.tick()
+  await tail.tick()
+  assert.deepEqual(errors, [], 'an offset past the end means caught up')
 })
