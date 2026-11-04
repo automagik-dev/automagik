@@ -1,5 +1,5 @@
-// Every redaction path stays fast on a seeded fuzz of mixed inputs: the text rules, the values a
-// cut tail still masks, and Mind's stream.
+// Every redaction path hides a planted secret and stays fast on a seeded fuzz of mixed inputs: the
+// text rules, the values a cut tail still masks, and Mind's stream.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { MindStream } from '../src/mind.js'
@@ -55,29 +55,35 @@ function fuzzCases(seed = SEED, count = 200) {
   })
 }
 
-// A run under FAST_MS passes as it is. A slower run is judged against the same path on BASE_TEXT,
-// 84k characters no rule backtracks on, timed right after it: a slow or busy runner, and the
-// garbage the stream makes, slow both alike, so their ratio holds; a quadratic rule does not. Five
-// tries of each, the best of each kept: noise only slows a run, a quadratic rule is slow every
-// time. Measured on Node 22 and 24, 20 runs each: idle, every case stays under FAST_MS; under 36
-// busy loops the slowest healthy case (the stream on 80k random pieces) reaches 23 times on Node
-// 22 and 33 on Node 24. The backtracking KEY= rule that 110ccf82 replaced, put back, reaches at
-// least 109 times idle and 366 under load (40k `APIKEY` then `= x`), so 60 sits between the two.
-const FAST_MS = 50
-const SLOW_RATIO = 60
+// Each text ends with two planted credentials: `SVCTOKEN=`, which only the upper-case KEY= rule
+// knows (no `_` or `-` before its TOKEN), and a lower-case `db_password=`. Every path must hide
+// both (redactText's output and the stream's snapshot never hold them) and secretsIn must find
+// both, so a rule that stops matching fails here on any case. They are bare: after a text's own
+// open quote they are part of its value, and hidden with it.
+const [UPPER, LOWER] = ['s3cretPlantedUpper9', 's3cretPlantedLower9']
+const PLANTED = ` SVCTOKEN=${UPPER} db_password=${LOWER}`
+
+// Speed is one catastrophic ceiling, CEILING_MS, on the best of TRIES runs of each path: noise
+// only slows a run, and a rule gone catastrophic is slow every time. It sits far above any healthy
+// run: on Node 22 and 24, idle and under 16 and 36 busy loops, the slowest healthy case (the
+// stream on 80k random pieces) took at most 227 ms, 22 times under it. The ratio to the same path
+// on BASE_TEXT (84k characters no rule backtracks on) is only reported, never asserted.
+// The backtracking KEY= rule that 110ccf82 replaced hides the same text, so it is a speed-only
+// regression, and shared runners cannot tell it from load: put back, 40k `APIKEY` then `= x`
+// takes 504 ms on the stream idle and 952 ms in secretsIn under 36 loops, both under the ceiling,
+// and only the ratio line shows it (over 100 times the baseline). key-names.test.js times that
+// shape at 80k and 160k against 50 ms.
+const TRIES = 10
+const CEILING_MS = 5_000
 const BASE_TEXT = 'word x9 = "a" \\t token\n'.repeat(3_500)
-const timed = (run, text) => {
-  let [ms, base] = [Infinity, Infinity]
-  for (let i = 0; i < 5; i++) {
+const best = (run, text) => {
+  let ms = Infinity
+  for (let i = 0; i < TRIES; i++) {
     const t0 = performance.now()
     run(text)
-    const t1 = performance.now()
-    if (t1 - t0 < FAST_MS) return { ms: t1 - t0, ratio: 0 }
-    run(BASE_TEXT)
-    ms = Math.min(ms, t1 - t0)
-    base = Math.min(base, performance.now() - t1)
+    ms = Math.min(ms, performance.now() - t0)
   }
-  return { ms, ratio: ms / base }
+  return ms
 }
 
 function push(text) {
@@ -85,18 +91,31 @@ function push(text) {
   mind.life = 'lifeZ'
   mind.agentd({ v: 2, id: 'g:0', producer: 'g', seq: 0, t_ns: 0, source: 'guest', kind: 'response_started', response_id: 'rK' }, { via: 'agentd journal', file: '/j', offset: 0 })
   mind.agentd({ v: 2, id: 'g:1', producer: 'g', seq: 1, t_ns: 1, source: 'guest', kind: 'agent_delta', response_id: 'rK', text }, { via: 'agentd journal', file: '/j', offset: 1 })
+  return mind
 }
-const PATHS = [['redactText', redactText], ['secretsIn', secretsIn], ['the stream', push]]
+const PATHS = [
+  ['redactText', redactText, (out) => [out]],
+  ['secretsIn', secretsIn, null],
+  ['the stream', push, (mind) => [JSON.stringify(mind.snapshot())]],
+]
 
-test('a seeded fuzz of 200 mixed texts up to 80k characters stays fast on every path', (t) => {
-  let slowest = { ratio: 0, note: 'every case under FAST_MS' }
-  for (const [shape, text] of fuzzCases()) {
-    for (const [path, run] of PATHS) {
-      const { ms, ratio } = timed(run, text)
-      const note = `${path}: ${shape} (${ms.toFixed(0)} ms, ${ratio.toFixed(1)} times the baseline)`
-      assert.ok(ratio < SLOW_RATIO, note)
-      if (ratio > slowest.ratio) slowest = { ratio, note }
+test('a seeded fuzz of 200 mixed texts up to 80k characters hides every planted secret, fast, on every path', (t) => {
+  for (const [path, run, shown] of PATHS) {
+    const base = best(run, BASE_TEXT)
+    let slowest = { ms: 0, note: '' }
+    for (const [shape, plain] of fuzzCases()) {
+      const text = plain + PLANTED
+      const note = `${path}: ${shape}`
+      if (shown) {
+        for (const out of shown(run(text))) for (const secret of [UPPER, LOWER]) assert.ok(!out.includes(secret), `${note} shows ${secret}`)
+      } else {
+        const found = run(text)
+        for (const secret of [UPPER, LOWER]) assert.ok(found.some((v) => v.includes(secret)), `${note} misses ${secret}`)
+      }
+      const ms = best(run, text)
+      assert.ok(ms < CEILING_MS, `${note} took ${ms.toFixed(1)} ms, over the ${CEILING_MS} ms ceiling`)
+      if (ms > slowest.ms) slowest = { ms, note }
     }
+    t.diagnostic(`${slowest.note}: slowest, ${slowest.ms.toFixed(1)} ms, ${(slowest.ms / base).toFixed(1)} times the baseline's ${base.toFixed(1)} ms`)
   }
-  t.diagnostic(`slowest: ${slowest.note}`)
 })
