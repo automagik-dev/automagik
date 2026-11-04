@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   ASLEEP_MS, liveFrom, poseOf, nextWake, helpersOf, buildTree, placeTrees, placesOf, withSpaceless, visibleRows, botFold, categoryFold, knownBots, projectId,
-  secondLine, argvToAsk, argvEntry, argvAfter, argvReader, heldClickOf,
+  secondLine, argvToAsk, argvEntry, argvAfter, argvReader, heldClickOf, heldTerminalOf, liveOf, paneCounts, listedKeyOf,
 } from "../mods/am-sidebar/rows.js";
 import { parseBots } from "../mods/am-sidebar/model.js";
 
@@ -468,4 +468,93 @@ test("heldClickOf: decided at click time; nothing when the bot holds no live ter
   assert.deepEqual(heldClickOf("b-a", rows, []), { command: "terminal.peek", args: { terminal: "t1" } });
   assert.equal(heldClickOf("b-a", [{ ...rows[0], state: "exited" }], []), null, "gone since the render");
   assert.equal(heldClickOf("b-a", [], null), null);
+});
+
+// automagik#227 (RFC 0014 Q16): a clone or second checkout carries the same .herdr/bots.json ids,
+// so a pane counts for a project by project and id. keyOf maps a pane to its project key (main.js
+// reads it from the pane's folder with model.js paneKeyOf); null: no project, counts everywhere.
+const MAIN = "/repo/proj", CLONE = "/repo/proj-clone";
+const keyByCwd = { "/repo/proj": MAIN, "/repo/proj-wt": MAIN, "/repo/proj-clone": CLONE };
+const keyOf = (t) => keyByCwd[t.cwd] ?? null;
+const twoCheckouts = [{ key: MAIN, file, spaces: ["s1"] }, { key: CLONE, file, spaces: ["s2"] }];
+const mainBotIn = (trees, key) => trees.find((x) => x.key === key).main;
+
+test("#227: the main checkout's pane is live under main only; the clone with the same ids is not running", () => {
+  const terms = [T("t1", { labels: { bot: "b-mainmainma" }, cwd: "/repo/proj", status: "working" })];
+  const live = liveFrom(terms, knownBots(twoCheckouts), undefined, keyOf);
+  const trees = buildTree({ projects: twoCheckouts, live, terminals: terms, now: NOW });
+  assert.equal(mainBotIn(trees, MAIN).live.terminal, "t1");
+  assert.equal(mainBotIn(trees, MAIN).pose, "working");
+  assert.equal(mainBotIn(trees, CLONE).live, null);
+  assert.equal(mainBotIn(trees, CLONE).pose, "asleep");
+  assert.equal(liveOf(live, { key: CLONE }, "b-mainmainma"), null);
+});
+
+test("#227: each checkout keeps its own pane, picked newest within the project; a worktree is main's", () => {
+  const terms = [
+    T("t1", { labels: { bot: "b-mainmainma" }, cwd: "/repo/proj", created_ms: 1 }),
+    T("t2", { labels: { bot: "b-mainmainma" }, cwd: "/repo/proj-clone", created_ms: 9 }),
+    T("t3", { labels: { bot: "b-captaincap" }, cwd: "/repo/proj-wt" }),
+  ];
+  const trees = buildTree({ projects: twoCheckouts, live: liveFrom(terms, knownBots(twoCheckouts), undefined, keyOf), terminals: terms, now: NOW });
+  assert.deepEqual([mainBotIn(trees, MAIN).live, mainBotIn(trees, CLONE).live],
+    [{ terminal: "t1", duplicate: false, parent: null }, { terminal: "t2", duplicate: false, parent: null }]);
+  const cap = (key) => trees.find((x) => x.key === key).categories.find((c) => c.id === "eng").bots.find((n) => n.bot.id === "b-captaincap");
+  assert.equal(cap(MAIN).live.terminal, "t3", "the worktree's pane counts for its main checkout");
+  assert.equal(cap(CLONE).live, null);
+});
+
+test("#227: a pane with no project (no folder, not in git, not read yet) still counts for every project", () => {
+  const terms = [
+    T("t1", { labels: { bot: "b-mainmainma" }, cwd: "/repo/proj", created_ms: 1 }),
+    T("t4", { labels: { bot: "b-mainmainma" }, cwd: "/elsewhere", created_ms: 5 }),
+    T("t5", { labels: { bot: "b-captaincap" } }),
+  ];
+  const trees = buildTree({ projects: twoCheckouts, live: liveFrom(terms, knownBots(twoCheckouts), undefined, keyOf), terminals: terms, now: NOW });
+  // Main has its own pane and the unknown one: the newest is shown, flagged duplicate.
+  assert.deepEqual(mainBotIn(trees, MAIN).live, { terminal: "t4", duplicate: true, parent: null });
+  assert.deepEqual(mainBotIn(trees, CLONE).live, { terminal: "t4", duplicate: false, parent: null });
+  for (const key of [MAIN, CLONE]) {
+    assert.equal(trees.find((x) => x.key === key).categories.find((c) => c.id === "eng").bots.find((n) => n.bot.id === "b-captaincap").live.terminal, "t5");
+  }
+  // With no keyOf (every older caller) nothing changes: the map is by id, as before.
+  assert.deepEqual(Object.keys(liveFrom(terms, knownBots(twoCheckouts))).sort(), ["b-captaincap", "b-mainmainma"]);
+  assert.equal(paneCounts(terms[1], { key: CLONE }, keyOf), true);
+  assert.equal(paneCounts(terms[0], { key: CLONE }, keyOf), false);
+  // A project on another machine with the same key is another project.
+  assert.equal(paneCounts(terms[0], { key: MAIN, machine: "box" }, keyOf), false);
+});
+
+test("#227: a held bot row's click goes to a terminal of its own project only", () => {
+  const terms = [T("t1", { labels: { bot: "b-mainmainma" }, cwd: "/repo/proj", program: { key: "shell", agent: false } })];
+  assert.equal(heldTerminalOf("b-mainmainma", terms, [], { key: MAIN }, keyOf), "t1");
+  assert.equal(heldTerminalOf("b-mainmainma", terms, [], { key: CLONE }, keyOf), null);
+  assert.equal(heldClickOf("b-mainmainma", terms, [], { key: CLONE }, keyOf), null);
+  assert.equal(heldTerminalOf("b-mainmainma", [{ ...terms[0], cwd: undefined }], [], { key: CLONE }, keyOf), "t1", "no project: as before");
+  assert.equal(heldTerminalOf("b-mainmainma", terms), "t1", "no project given: as before");
+});
+
+test("#227: a pane keyed to a project no listed checkout of its bot is (restart --cwd elsewhere, an unlisted clone) counts as before", () => {
+  const onlyMain = [{ key: MAIN, file, spaces: ["s1"] }];
+  const other = { "/repo/proj": MAIN, "/elsewhere/repo": "/elsewhere/repo", "/repo/proj-clone": CLONE };
+  const folderKeyOf = (t) => other[t.cwd] ?? null;
+  const terms = [
+    T("t1", { labels: { bot: "b-mainmainma" }, cwd: "/elsewhere/repo" }),
+    T("t2", { labels: { bot: "b-captaincap" }, cwd: "/repo/proj-clone" }),
+    T("t3", { labels: { bot: "b-devdevdevd" }, cwd: "/repo/proj" }),
+  ];
+  const keyOf = listedKeyOf(onlyMain, folderKeyOf);
+  assert.deepEqual(terms.map(keyOf), [null, null, MAIN]);
+  const [tree] = buildTree({ projects: onlyMain, live: liveFrom(terms, knownBots(onlyMain), undefined, keyOf), terminals: terms, now: NOW });
+  assert.equal(tree.main.live.terminal, "t1", "a pane in another repository still shows under main");
+  const eng = tree.categories.find((c) => c.id === "eng").bots;
+  assert.equal(eng.find((n) => n.bot.id === "b-captaincap").live.terminal, "t2", "a pane in an unlisted clone still shows");
+  // Listed, but that project doesn't define the pane's bot: no key either.
+  const lone = { version: 1, categories: [], bots: [file.bots.find((b) => b.id === "b-mainmainma")] };
+  assert.equal(listedKeyOf([{ key: MAIN, file: lone }], folderKeyOf)(terms[2]), null);
+  // Once the clone is listed, its pane is the clone's alone.
+  assert.equal(listedKeyOf(twoCheckouts, folderKeyOf)(terms[1]), CLONE);
+  // A pane on another machine pairs with that machine's project of the key, never this computer's.
+  assert.equal(listedKeyOf(onlyMain, () => MAIN)({ ...terms[2], address: "box/t3" }), null);
+  assert.equal(listedKeyOf([{ key: MAIN, machine: "box", file }], () => MAIN)({ ...terms[2], address: "box/t3" }), MAIN);
 });

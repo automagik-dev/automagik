@@ -7,11 +7,16 @@ import assert from "node:assert/strict";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { checkBots, parseBots } from "../mods/am-sidebar/model.js";
 import { writeBotsFile, findBot, CliError, listProject } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { ledgerPath, readLedger } from "../mods/am-sidebar/workers.js";
+import { withoutBriefing } from "../mods/am-sidebar/models.js";
+// Start and Restart put each bot's briefing in its agent's command (models.js withBriefing);
+// the tests on the rest of the command compare it with those words out.
+const strip = (words) => withoutBriefing("codex", withoutBriefing("claude", words));
+const plain = (argv) => { const i = argv.indexOf("--"); return i < 0 ? strip(argv) : [...argv.slice(0, i + 1), ...strip(argv.slice(i + 1))]; };
 import { attachPath as attachFile, foldAttach as foldRows, readAttach as readRows } from "../mods/am-sidebar/attach.js";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
@@ -54,6 +59,7 @@ function scene(t, { terminals = [], briefing = true, window = { down: true } } =
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
     HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog };
   delete env.HC_TERMINAL_ID;
+  delete env.HERMES_HOME; // a runner's own hermes home must not decide the hermes tests
   const cli = (args, { cwd = project, input, env: extra = {} } = {}) => {
     const r = spawnSync(RUNTIME, [CLI, ...args], { cwd, env: { ...env, ...extra }, input, encoding: "utf8" });
     return { code: r.status, out: r.stdout, err: r.stderr, json: () => JSON.parse(r.stdout) };
@@ -466,6 +472,38 @@ test("ls by the ledger: a shell pane shows no agent in front; the import takes t
   assert.deepEqual(all.map((p) => p.project), [s.project, other]);
 });
 
+// automagik#227 (RFC 0014 Q16): a clone carries the main checkout's bot ids; a pane counts for
+// its own project only, and an older ledger row with no project still counts by id alone.
+test("ls and show (#227): the main checkout's pane is not the clone's; a row with no project counts by id", (t) => {
+  const s = scene(t);
+  // The pane runs in the main checkout (scene() makes the folder, so the terminal comes after).
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify({ ...s.hcState(),
+    terminals: [term("t5", { bot: ID.cap, cwd: s.project, created: 7, status: "working" })] }));
+  s.seed(team());
+  const rows = () => readRows(readFileSync(attachFile(s.app), "utf8")).rows;
+  const clone = join(s.root, "proj-clone");
+  git(s.root, "clone", "-q", s.project, clone);
+  mkdirSync(join(clone, ".herdr"));
+  writeFileSync(join(clone, ".herdr/bots.json"), readFileSync(s.botsPath, "utf8"));
+  const captain = (cwd) => s.cli(["ls", "--json"], { cwd }).json().projects[0].bots.find((b) => b.id === ID.cap);
+  // The first ls imports t5 into the ledger, bound to the main checkout that defines the bot.
+  assert.deepEqual([captain(s.project).terminal, captain(s.project).status], ["t5", "working"]);
+  assert.equal(rows().at(-1).project, s.project);
+  assert.deepEqual([captain(clone).terminal, captain(clone).status], [null, "not running"]);
+  const show = s.cli(["show", "Captain", "--json"], { cwd: clone }).json();
+  assert.deepEqual([show.terminal, show.status], [null, "not running"]);
+  assert.match(s.cli(["show", "Captain"], { cwd: s.project }).out, /t5/);
+  // Start in the clone still refuses a second pane (the fold binds a bot once here) and says whose it is.
+  const start = s.cli(["start", "Captain"], { cwd: clone });
+  assert.equal(start.code, 0, start.err);
+  assert.equal(start.out.trim(), `Captain is already running in t5, for ${s.project}.`);
+  assert.equal(s.cli(["start", "Captain"], { cwd: s.project }).out.trim(), "Captain is already running in t5.");
+  // An older row with no project: the pane counts for both checkouts, as before.
+  writeFileSync(attachFile(s.app), `${JSON.stringify({ ...rows().at(-1), project: null })}\n`);
+  assert.deepEqual([captain(clone).terminal, captain(clone).status], ["t5", "working"]);
+  assert.deepEqual([captain(s.project).terminal, captain(s.project).status], ["t5", "working"]);
+});
+
 test("create, edit, category, start and attach list their project for the sidebar; ls --all reads the list", (t) => {
   const s = scene(t, { terminals: [term("t9", { cwd: "/x" })] });
   const list = join(s.app, "am-sidebar-projects.json");
@@ -550,7 +588,10 @@ test("start a main bot: hc run --bg with the label, name, cwd, --no-parent, the 
   assert.deepEqual(run.slice(0, run.indexOf("--") + 2), ["run", "--bg", "--json", "--name", "genie", "--cwd", s.project, "--label", `bot=${ID.main}`, "--label", "role=main", "--no-parent",
     "--", "/usr/bin/env"]);
   assert.ok(run[run.indexOf("--") + 2].startsWith("PATH="), run.join(" "));
-  assert.deepEqual(agentWords(run), ["claude", "--model", "claude-opus-5-5"]);
+  assert.deepEqual(plain(agentWords(run)), ["claude", "--model", "claude-opus-5-5"]);
+  const words = agentWords(run);
+  assert.equal(words[1], "--append-system-prompt-file", "the briefing in its system prompt, right after the executable");
+  assert.match(readFileSync(words[2], "utf8"), /^<herdr-bot>\nAutomagik Herdr briefing, written from \.herdr\/bots\.json/);
   assert.equal(run.includes("--no-notify"), false);
   assert.equal(run.some((a) => a.startsWith("herdr.space=") || a.startsWith("herdr.tab=")), false, "no placement labels unless asked");
   const settings = JSON.parse(readFileSync(join(s.project, ".claude/settings.local.json"), "utf8"));
@@ -564,7 +605,7 @@ test("start a main bot: hc run --bg with the label, name, cwd, --no-parent, the 
   assert.equal(s.calls().filter((c) => c[0] === "run").length, 1);
 });
 
-test("start (#56) lands in the project's space: a project terminal's tab only when its space shows the project", (t) => {
+test("start (#56) lands in the project's space, a project terminal's only when it shows the project; in a tab of its own", (t) => {
   // The window: the caller's space on another folder, and the project's, its second tab selected.
   const startIn = (callerLabels, { projectSpace = true } = {}) => {
     const s = scene(t);
@@ -581,19 +622,24 @@ test("start (#56) lands in the project's space: a project terminal's tab only wh
     const r = s.cli(["start", "Genie", "--json"]);
     assert.equal(r.code, 0, r.err);
     r.appCalls = s.appCalls();
+    r.calls = s.calls();
     return r;
   };
-  // The caller's tab is in another space: the bot goes to the project's space, in its selected tab,
-  // with one herdr-app ls for the whole start (placementOf and windowPlace share it).
+  // The caller's tab is in another space: the bot goes to the project's space, never its selected
+  // tab, with one herdr-app ls for the whole start (placementOf and windowPlace share it).
   const away = startIn({ "herdr.space": "sp-caller", "herdr.tab": "tb-c" });
-  assert.deepEqual([away.json().space, away.json().tab], ["sp-proj", "tb-b"]);
+  assert.deepEqual([away.json().space, away.json().tab], ["sp-proj", null]);
   assert.deepEqual(away.appCalls, [["ls"]]);
-  // The caller's tab is in the project's space: it takes the bot.
+  // The caller's tab is in the project's space: its space takes the bot, never its tab (an
+  // orchestrator's), so Herdr opens the bot in a tab of its own.
   const home = startIn({ "herdr.space": "sp-proj", "herdr.tab": "tb-a" });
-  assert.deepEqual([home.json().space, home.json().tab], ["sp-proj", "tb-a"]);
+  assert.deepEqual([home.json().space, home.json().tab], ["sp-proj", null]);
+  const labels = runCall(home.calls);
+  assert.ok(labels.includes("herdr.space=sp-proj"), labels.join(" "));
+  assert.equal(labels.some((a) => a.startsWith("herdr.tab=")), false, labels.join(" "));
   // No space shows the project: never the caller's tab; a new space on the project is opened (#71).
   const none = startIn({ "herdr.space": "sp-caller", "herdr.tab": "tb-c" }, { projectSpace: false });
-  assert.deepEqual([none.json().space, none.json().tab], ["sp-new1", "tb-new1"]);
+  assert.deepEqual([none.json().space, none.json().tab], ["sp-new1", null]);
   assert.deepEqual(none.appCalls.map((c) => c.slice(0, 2)), [["ls"], ["do", "space.new"], ["ls"]]);
 });
 
@@ -779,9 +825,9 @@ test("start places the pane in the space of a live terminal in the project; with
   writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [elsewhere, placed], next: 100 }));
   const r = s.cli(["start", "Genie", "--json"]);
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual([r.json().space, r.json().tab], ["sp9", "tb3"]);
+  assert.deepEqual([r.json().space, r.json().tab], ["sp9", null]);
   const run = runCall(s.calls());
-  assert.ok(run.includes("herdr.space=sp9") && run.includes("herdr.tab=tb3"));
+  assert.ok(run.includes("herdr.space=sp9") && !run.some((a) => a.startsWith("herdr.tab=")), run.join(" "));
   assert.doesNotMatch(r.err, /unseen/);
   // No terminal of the project carries a space and no window answers: started, with the warning.
   const s2 = scene(t);
@@ -799,9 +845,9 @@ test("start with no space showing the project opens one on its folder and starts
   assert.equal(r.code, 0, r.err);
   const made = s.appCalls().find((c) => c[0] === "do");
   assert.deepEqual(made && [made[1], JSON.parse(made[2])], ["space.new", { name: "proj", folder: s.project, machine: "" }]);
-  assert.deepEqual([r.json().space, r.json().tab], ["sp-new1", "tb-new1"]);
+  assert.deepEqual([r.json().space, r.json().tab], ["sp-new1", null]);
   const run = runCall(s.calls());
-  assert.ok(run.includes("herdr.space=sp-new1") && run.includes("herdr.tab=tb-new1"));
+  assert.ok(run.includes("herdr.space=sp-new1") && !run.some((a) => a.startsWith("herdr.tab=")), run.join(" "));
   assert.doesNotMatch(r.err, /unseen/);
   // That space is open now: the next bot starts in it, and no second space is made.
   assert.equal(s.cli(["start", "Captain"]).code, 0);
@@ -817,7 +863,7 @@ test("start with no space showing the project opens one on its folder and starts
   writeFileSync(join(s3.root, "hc.json"), JSON.stringify({ terminals: [stale], next: 100 }));
   const r3 = s3.cli(["start", "Genie", "--json"]);
   assert.equal(r3.code, 0, r3.err);
-  assert.deepEqual([r3.json().space, r3.json().tab], ["sp-new1", "tb-new1"]);
+  assert.deepEqual([r3.json().space, r3.json().tab], ["sp-new1", null]);
   // Another start opened a space on the folder at the same time: the first one is used and
   // the space this start opened is closed, so one space shows the project.
   const s4 = scene(t, { window: { spaces: [], rival: true } });
@@ -1116,7 +1162,8 @@ test("restart: the new pane resumes the session in the old one's space and tab, 
   assert.match(r.err, new RegExp(`Genie: t100 replaces t5, resuming session ${SID}\\.`));
   const calls = s.calls();
   const run = runCall(calls);
-  assert.deepEqual(agentWords(run), ["claude", "--resume", SID]);
+  assert.deepEqual(plain(agentWords(run)), ["claude", "--resume", SID]);
+  assert.equal(agentWords(run).filter((w) => w === "--append-system-prompt-file").length, 1, "a restart starts with it too, once");
   assert.ok(["herdr.space=sp9", "herdr.tab=tb3", `bot=${ID.main}`, "role=main", "squad=core", `agent.session=${SID}`].every((l) => run.includes(l)), run.join(" "));
   assert.equal(run[run.indexOf("--cwd") + 1], s.project);
   // Started, seen live at several checks (hc get of the new pane), and only then the old one killed.
@@ -1144,7 +1191,7 @@ test("restart: the new pane resumes the session in the old one's space and tab, 
   // A second restart resumes the same conversation: the label went with it (t100 is mid-turn in the fake).
   const again = s.cli(["restart", "Genie", "--force"]);
   assert.equal(again.code, 0, again.err);
-  assert.deepEqual(s.calls().filter((c) => c[0] === "run")[1].slice(-3), ["claude", "--resume", SID]);
+  assert.deepEqual(plain(s.calls().filter((c) => c[0] === "run")[1]).slice(-3), ["claude", "--resume", SID]);
 });
 
 test("restart refuses a working bot (nothing started or ended) unless --force", (t) => {
@@ -1206,13 +1253,13 @@ test("restart with no session id known: claude --continue, with a warning; --fre
   const r = s.cli(["restart", "Genie", "--json"]);
   assert.equal(r.code, 0, r.err);
   assert.deepEqual([r.json().mode, r.json().replaced, r.json().terminal], ["resume", "t5", "t100"]);
-  assert.deepEqual(runCall(s.calls()).slice(-2), ["claude", "--continue"]);
+  assert.deepEqual(plain(runCall(s.calls())).slice(-2), ["claude", "--continue"]);
   assert.match(r.err, /No Claude session id was known for t5, so t100 resumes the latest conversation in .* \(--continue\)/);
   const s2 = restartScene(t);
   const fresh = s2.cli(["restart", "Genie", "--fresh", "--json"]);
   assert.equal(fresh.code, 0, fresh.err);
   assert.equal(fresh.json().mode, "fresh");
-  assert.deepEqual(agentWords(runCall(s2.calls())), ["claude"]);
+  assert.deepEqual(plain(agentWords(runCall(s2.calls()))), ["claude"]);
 });
 
 test("restart --agent swaps fresh without touching bots.json; --save writes the agent and drops the old pin; --save alone is a usage mistake", (t) => {
@@ -1221,7 +1268,7 @@ test("restart --agent swaps fresh without touching bots.json; --save writes the 
   const r = s.cli(["restart", "Genie", "--agent", "codex", "--json"]);
   assert.equal(r.code, 0, r.err);
   assert.deepEqual([r.json().mode, r.json().agent, r.json().saved], ["swap", "codex", false]);
-  assert.deepEqual(agentWords(runCall(s.calls())), ["codex"]);
+  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["codex"]);
   assert.equal(readFileSync(s.botsPath, "utf8"), before, "bots.json untouched");
   // Again from the claude pin, written down this time (t100 is mid-turn in the fake: --force).
   const f = team();
@@ -1244,13 +1291,13 @@ test("restart a codex bot resumes with codex resume --last; a bot not running is
   s.seed(f);
   const r = s.cli(["restart", "Captain", "--json"]);
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(runCall(s.calls()).slice(-3), ["codex", "resume", "--last"]);
+  assert.deepEqual(plain(runCall(s.calls())).slice(-3), ["codex", "resume", "--last"]);
   assert.equal(r.json().replaced, "t6");
   // Genie isn't running: a plain start, nothing killed but t6.
   const started = s.cli(["restart", "Genie", "--json"]);
   assert.equal(started.code, 0, started.err);
   assert.deepEqual([started.json().mode, started.json().replaced], ["start", null]);
-  assert.deepEqual(agentWords(s.calls().filter((c) => c[0] === "run")[1]), ["claude"]);
+  assert.deepEqual(plain(agentWords(s.calls().filter((c) => c[0] === "run")[1])), ["claude"]);
   assert.deepEqual(s.calls().filter((c) => c[0] === "kill").map((c) => c[1]), ["t6"]);
 });
 
@@ -1261,7 +1308,7 @@ test("restart: the ledger's session row for the old pane stands in for a missing
     .map((x) => `${JSON.stringify(x)}\n`).join(""));
   const r = s.cli(["restart", "Genie"]);
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(runCall(s.calls()).slice(-3), ["claude", "--resume", SID2]);
+  assert.deepEqual(plain(runCall(s.calls())).slice(-3), ["claude", "--resume", SID2]);
   assert.deepEqual(ledgerOf(s).filter((x) => x.terminal === "t100" && x.event === "session").map((x) => [x.session, x.transcript]), [[SID2, "/x.jsonl"]]);
   // No label, no ledger row, and Captain's Claude in the same folder: refused, nothing started.
   const mate = term("t9", { bot: ID.cap, cwd: "" });
@@ -1405,7 +1452,7 @@ test("restart #213: a hand-started codex bot keeps its flags and resumes its ses
   const r = s.cli(["restart", "Captain", "--json"]);
   assert.equal(r.code, 0, r.err);
   const run = runCall(s.calls());
-  assert.deepEqual(agentWords(run), ["codex", "-m", "gpt-a", "-c", "model_reasoning_effort=high", "resume", SID]);
+  assert.deepEqual(plain(agentWords(run)), ["codex", "-m", "gpt-a", "-c", "model_reasoning_effort=high", "resume", SID], "a person's own -c stays");
   assert.equal(r.json().session, SID);
   assert.equal(run[run.indexOf("--cwd") + 1], s.project);
   assert.match(r.err, /t6's folder \/gone\/folder isn't there now, so t100 runs in .*; its conversation may not be found there\./);
@@ -1423,7 +1470,7 @@ test("restart #213: the pane always gets the CLI's PATH, so a bare codex (#!/usr
   assert.equal(r.code, 0, r.err);
   const run = runCall(s.calls());
   // Before #213 nothing was passed here (this PATH already had node), and the pane got herdr-core's.
-  assert.deepEqual(run.slice(run.indexOf("--") + 1), ["/usr/bin/env", `PATH=${path}`, "codex", "resume", "--last"]);
+  assert.deepEqual(plain(run.slice(run.indexOf("--") + 1)), ["/usr/bin/env", `PATH=${path}`, "codex", "resume", "--last"]);
 });
 
 /** Genie in t5 with two helpers that end with it (a worker on omp, a template on omp) and a member bot that outlives it. */
@@ -1811,7 +1858,7 @@ test("restart --cwd: a folder of the same Claude slug resumes the session by id 
   assert.equal(r.code, 0, r.err);
   const run = runCall(s.calls());
   assert.equal(run[run.indexOf("--cwd") + 1], to);
-  assert.deepEqual(agentWords(run), ["claude", "--resume", SID]);
+  assert.deepEqual(plain(agentWords(run)), ["claude", "--resume", SID]);
   assert.deepEqual([r.json().mode, r.json().session, r.json().replaced], ["resume", SID, "t5"]);
   // Another slug: refused, nothing started or ended; --fresh starts a new conversation there.
   const s2 = restartScene(t);
@@ -1828,7 +1875,7 @@ test("restart --cwd: a folder of the same Claude slug resumes the session by id 
   assert.equal(fresh.code, 0, fresh.err);
   const run2 = runCall(s2.calls());
   assert.equal(run2[run2.indexOf("--cwd") + 1], other);
-  assert.deepEqual([agentWords(run2), fresh.json().mode], [["claude"], "fresh"]);
+  assert.deepEqual([plain(agentWords(run2)), fresh.json().mode], [["claude"], "fresh"]);
   // Not a folder: a usage mistake.
   assert.equal(s2.cli(["restart", "Genie", "--cwd", join(s2.root, "nope")]).code, 2);
   // --tree --cwd: the bot moves, its helpers run again in their own folders.
@@ -1855,7 +1902,7 @@ test("restart --cwd: a non-Claude resume into another folder is said; --cwd with
   assert.equal(r.code, 0, r.err);
   assert.match(r.err, new RegExp(`t100 runs in ${b}, not ${a}: codex finds its last conversation by folder, so it may not find it there\\.`));
   const run = runCall(s.calls());
-  assert.deepEqual([run[run.indexOf("--cwd") + 1], ...agentWords(run)], [b, "codex", "resume", "--last"]);
+  assert.deepEqual([run[run.indexOf("--cwd") + 1], ...plain(agentWords(run))], [b, "codex", "resume", "--last"]);
   // --machine: refused before anything is read or started, whatever DIR is.
   const m = s.cli(["restart", "Captain", "--machine", "box", "--cwd", b]);
   assert.equal(m.code, 2);
@@ -1869,4 +1916,75 @@ test("restart --cwd: a non-Claude resume into another folder is said; --cwd with
   assert.equal(moved.code, 0, moved.err);
   const hook = JSON.parse(readFileSync(join(dir, ".claude/settings.local.json"), "utf8"));
   assert.match(hook.hooks.UserPromptSubmit[0].hooks[0].command, /briefing\.mjs/);
+});
+
+// ---- the briefing in each agent's command: once, right after the executable ----
+
+/** A scene whose main bot runs `agent` (a stand-in executable on PATH), started once. */
+function agentScene(t, agent, { config = null } = {}) {
+  const s = scene(t);
+  exe(join(s.root, "bin", agent), "#!/bin/sh\nexit 0\n");
+  if (config) { mkdirSync(join(s.home, dirname(config.path)), { recursive: true }); writeFileSync(join(s.home, config.path), config.text); }
+  const file = team();
+  file.bots[0].agent = agent;
+  s.seed(file);
+  return s;
+}
+const briefingWords = (words) => words.map((w, i) => [w, i]).filter(([w]) => w.includes("<herdr-bot>"));
+
+test("start: omp, pi and grok get the briefing once, as the word or value right after their executable", (t) => {
+  for (const [agent, flag] of [["omp", null], ["pi", "--append-system-prompt"], ["grok", "--rules"]]) {
+    const s = agentScene(t, agent);
+    const r = s.cli(["start", "Genie", "--json"]);
+    assert.equal(r.code, 0, r.err);
+    const words = agentWords(runCall(s.calls()));
+    assert.equal(words[0], agent);
+    const found = briefingWords(words);
+    assert.equal(found.length, 1, `${agent}: one copy`);
+    if (flag) assert.deepEqual([words[1], found[0][1]], [flag, 2], `${agent}: ${flag} <text> first`);
+    else assert.deepEqual([found[0][1], found[0][0].startsWith("--append-system-prompt=<herdr-bot>\n")], [1, true]);
+    assert.match(found[0][0], /You are Genie, this project's main bot/);
+  }
+});
+
+test("restart: an omp bot's command reused keeps one briefing, the new one, and its own flags", (t) => {
+  const s = agentScene(t, "omp");
+  assert.equal(s.cli(["start", "Genie", "--json"]).code, 0);
+  const first = agentWords(runCall(s.calls()));
+  const st = s.hcState();
+  const pane = st.terminals.find((x) => x.labels?.bot === ID.main);
+  pane.argv = ["/usr/bin/env", "PATH=/bin", "omp", "--thinking=high", ...first.slice(1)];
+  pane.foreground = { argv: ["omp", "--thinking=high", ...first.slice(1)], cwd: s.project };
+  pane.status = { app: "omp", state: "idle" };
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const file = s.bots();
+  file.bots[0].instructions = "Edited.";
+  s.seed(file);
+  const r = s.cli(["restart", "Genie", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const words = agentWords(s.calls().filter((c) => c[0] === "run").at(-1));
+  const found = briefingWords(words);
+  assert.equal(found.length, 1, "never twice");
+  assert.equal(found[0][1], 1, "right after the executable");
+  assert.match(found[0][0], /Edited\./, "the new text, not the old");
+  assert.ok(words.includes("--thinking=high"), "its own flag kept");
+});
+
+test("start: hermes gets the briefing in its environment, unless its config sets its own prompt (then a warning)", (t) => {
+  const plainStart = agentScene(t, "hermes");
+  const r = plainStart.cli(["start", "Genie", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const run = runCall(plainStart.calls());
+  const w = run.slice(run.indexOf("--") + 1);
+  assert.equal(w[0], "/usr/bin/env");
+  assert.match(w[1], /^PATH=/);
+  assert.match(w[2], /^HERMES_EPHEMERAL_SYSTEM_PROMPT=<herdr-bot>\n/);
+  assert.equal(w[3], "hermes");
+  for (const text of ["agent:\n  system_prompt: Be terse.\n", "display:\n  personality: pirate\n"]) {
+    const own = agentScene(t, "hermes", { config: { path: ".hermes/config.yaml", text } });
+    const o = own.cli(["start", "Genie", "--json"]);
+    assert.equal(o.code, 0, o.err);
+    assert.ok(!runCall(own.calls()).some((x) => x.startsWith("HERMES_EPHEMERAL_SYSTEM_PROMPT=")), text);
+    assert.match(o.json().warnings.join("\n"), /hermes' config\.yaml sets a personality or agent\.system_prompt/);
+  }
 });

@@ -32,26 +32,88 @@ const agentInFront = (t, readArgv) => rowIsAgent(t) === true
  * `created_ms` counts, flagged `duplicate`. `argv`: the pane's foreground command line when
  * the row carries it (`foreground.argv`), else what `argvOf(address, created_ms)` gives (the
  * command line the view read with `hc get` for that very pane: see argvReader), else null. `parent`: the hc parent of that terminal (null:
- * none), where its click opens a tab.
+ * none), where its click opens a tab. By project and id (paneCounts): `keyOf(row)` gives a
+ * pane's project key or null; a pane with one is at liveKey(id, its projectId), the newest of
+ * that project's panes and those with none; a bot's panes with none at its bare id. Read it
+ * with liveOf.
  */
-export function liveFrom(terminals, known = null, argvOf = () => null) {
+export function liveFrom(terminals, known = null, argvOf = () => null, keyOf = () => null) {
   const readArgv = (t) => { const v = argvOf(addressOf(t), t.created_ms ?? null); return Array.isArray(v) ? v : null; };
+  // id -> { any: the panes with no project, at: Map project id -> that project's panes }
   const holders = new Map();
   for (const t of terminals ?? []) {
     const id = t?.labels?.[BOT_LABEL];
     if (!id || (known && !known.has(id)) || t.state !== "live" || !addressOf(t) || !agentInFront(t, readArgv)) continue;
-    holders.set(id, [...(holders.get(id) ?? []), t]);
+    if (!holders.has(id)) holders.set(id, { any: [], at: new Map() });
+    const h = holders.get(id), pid = paneProject(t, keyOf);
+    if (pid === null) h.any.push(t);
+    else h.at.set(pid, [...(h.at.get(pid) ?? []), t]);
   }
-  const live = {};
-  for (const [id, rows] of holders) {
+  const entry = (rows) => {
     const pick = rows.reduce((a, b) => ((b.created_ms ?? -1) > (a.created_ms ?? -1) ? b : a));
-    live[id] = {
+    return {
       terminal: addressOf(pick), duplicate: rows.length > 1, parent: pick.parent ?? null, status: pick.status ?? null,
       status_ms: typeof pick.status_ms === "number" ? pick.status_ms : null, program: pick.program ?? null,
       argv: Array.isArray(pick.foreground?.argv) ? pick.foreground.argv : readArgv(pick),
     };
+  };
+  // A project's holders are its own panes and the panes with no project (paneCounts).
+  const live = {};
+  for (const [id, { any, at }] of holders) {
+    if (any.length) live[id] = entry(any);
+    for (const [pid, rows] of at) live[liveKey(id, pid)] = entry([...rows, ...any]);
   }
   return live;
+}
+
+/**
+ * The live map's key for bot `botId`'s pane in the project `pid` (projectId), or, with no
+ * `pid`, for its pane with no project: liveOf reads either.
+ */
+export const liveKey = (botId, pid = null) => (pid === null ? botId : `${pid}\n${botId}`);
+
+/** Bot `botId`'s live pane for `project` in liveFrom()'s map (paneCounts), or null. */
+export const liveOf = (live, project, botId) => live?.[liveKey(botId, projectId(project))] ?? live?.[botId] ?? null;
+
+const machineOfAddress = (a) => (typeof a === "string" && a.includes("/") ? a.slice(0, a.indexOf("/")) : null);
+// A pane's project id (projectId: its address's machine and the key `keyOf(row)` gives), or
+// null when keyOf gives none.
+const paneProject = (t, keyOf) => {
+  const key = keyOf(t);
+  return typeof key === "string" && key ? projectId({ machine: machineOfAddress(addressOf(t)), key }) : null;
+};
+
+/**
+ * Whether a bot's pane counts for `project` (automagik#227, RFC 0014 Q16): a clone or second
+ * checkout carries the same bot ids, so a pane counts by project and id. `keyOf(row)`: the
+ * project key of the pane's folder (git's main checkout, so a worktree is its main
+ * checkout's), or null. A pane with no project (no folder, not in git, git failing, not read
+ * yet) counts for every project defining its bot, as before, so an older pane never drops off.
+ */
+export function paneCounts(t, project, keyOf = () => null) {
+  const pid = paneProject(t, keyOf);
+  return pid === null || pid === projectId(project);
+}
+
+/**
+ * liveFrom's `keyOf` from `folderKeyOf(row)` (the project key of the pane's folder): that key
+ * only when one of `projects` (discoverProjects' entries) with that key, on the pane's
+ * machine, defines the pane's bot; else null, paneCounts' fallback. So a bot pane whose folder
+ * is another repository (a restart --cwd there, a clone the sidebar doesn't list) still
+ * counts as before, never shown nowhere.
+ */
+export function listedKeyOf(projects, folderKeyOf = () => null) {
+  const defines = new Map(); // projectId -> its bot ids
+  for (const p of projects ?? []) {
+    const pid = projectId(p);
+    if (!defines.has(pid)) defines.set(pid, new Set());
+    for (const b of p.file?.bots ?? []) defines.get(pid).add(b.id);
+  }
+  return (t) => {
+    const key = folderKeyOf(t);
+    if (typeof key !== "string" || !key) return null;
+    return defines.get(projectId({ machine: machineOfAddress(addressOf(t)), key }))?.has(t?.labels?.[BOT_LABEL]) ? key : null;
+  };
 }
 
 /**
@@ -129,7 +191,7 @@ export function buildTree({ projects, live = {}, terminals = [], now = Date.now(
     const node = (bot) => {
       placed.add(bot.id);
       const planned = Boolean(bot.planned);
-      const l = planned ? null : live[bot.id] ?? null;
+      const l = planned ? null : liveOf(live, p, bot.id);
       const members = planned ? [] : file.bots.filter((b) => !placed.has(b.id) && b !== main && leads.get(b.id)?.lead === bot.id).map(node);
       const n = {
         bot, planned, pose: poseOf(l, now), members,
@@ -437,10 +499,12 @@ export function clickActionOf(terminal, panes) {
  * front yet: the `sh -c` wrapper, a command line not read yet, a shell): the bot row's click
  * still goes to it (clickActionOf), never nowhere. Of several, one a pane shows (`panes`:
  * panes() rows) first, then the newest by `created_ms`. Null when the bot has no live terminal.
+ * With `project`, only the terminals that count for it (paneCounts, `keyOf` as liveFrom's).
  */
-export function heldTerminalOf(botId, terminals, panes = []) {
+export function heldTerminalOf(botId, terminals, panes = [], project = null, keyOf = () => null) {
   const shown = new Set((panes ?? []).map((p) => p?.terminal).filter(Boolean));
-  const held = (terminals ?? []).filter((t) => botId && t?.labels?.[BOT_LABEL] === botId && t.state === "live" && addressOf(t));
+  const held = (terminals ?? []).filter((t) => botId && t?.labels?.[BOT_LABEL] === botId && t.state === "live" && addressOf(t)
+    && (!project || paneCounts(t, project, keyOf)));
   if (!held.length) return null;
   const rank = (t) => [shown.has(addressOf(t)) ? 1 : 0, t.created_ms ?? -1];
   const pick = held.reduce((a, b) => {
@@ -454,7 +518,7 @@ export function heldTerminalOf(botId, terminals, panes = []) {
  * A held bot row's click, decided at click time from fresh `terminals` and `panes`: focus or
  * peek its live terminal (clickActionOf), or null when it holds none any more (do nothing).
  */
-export function heldClickOf(botId, terminals, panes) {
-  const held = heldTerminalOf(botId, terminals, panes);
+export function heldClickOf(botId, terminals, panes, project = null, keyOf = () => null) {
+  const held = heldTerminalOf(botId, terminals, panes, project, keyOf);
   return held ? clickActionOf(held, panes) : null;
 }

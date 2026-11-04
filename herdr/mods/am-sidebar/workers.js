@@ -197,7 +197,7 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
  * with no `--` (neither starts with a dash: both are refused before): it sets its own command.
  */
 export function workerArgs({ botId, branch, role, name, cwd, parent, agent, model, effort, argv, task, template, path,
-  taskId, project, lead }) {
+  taskId, project, lead, space }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
   args.push("--cwd", cwd, "--label", `${WORKER_OF_LABEL}=${botId}`);
@@ -207,6 +207,8 @@ export function workerArgs({ botId, branch, role, name, cwd, parent, agent, mode
   }
   args.push("--label", `${BRANCH_LABEL}=${branch}`);
   if (role) args.push("--label", `${WORKER_ROLE_LABEL}=${role}`);
+  // The bot's Herdr space and no tab: the worker opens in a tab of its own there.
+  if (space) args.push("--label", `herdr.space=${space}`);
   if (template) return [...args, "--label", `${WORKER_TEMPLATE_LABEL}=${template}`, "--parent", parent, template, task];
   if (model) args.push("--label", `${WORKER_MODEL_LABEL}=${model}`);
   if (effort) args.push("--label", `${WORKER_EFFORT_LABEL}=${effort}`);

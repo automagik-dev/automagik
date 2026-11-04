@@ -880,7 +880,7 @@ export class BotForm {
           .child(Textarea.new(this.instructions).w_full().text_size(13)))
         .child(div().text_size(11).text_color(tone === "over" ? t.ansi1 : t.muted).child(tone === "over"
           ? `${thousands(n - MAX_INSTRUCTIONS)} characters over the limit; it can't be saved like this.`
-          : "Given to the bot before every turn, with its team's status.")))
+          : "Given to the bot when it starts, in its system prompt; an edit reaches it at its next restart.")))
       .child(this.runsOn(v))
       .child(this.team(v));
   }

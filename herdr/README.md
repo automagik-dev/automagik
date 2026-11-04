@@ -189,9 +189,12 @@ a place in a team, and keeps that team in front of every agent and of you.
 - **A role and a lead.** Every bot has a name, a role, instructions and a lead. The project has
   one main bot; captains lead squads; members report to their captain or to the main bot.
   The team lives in `.herdr/bots.json`, committed with the project.
-- **A briefing every turn.** Before each prompt, a Claude bot gets its own instructions and
-  its team's state: a lead sees each member's status and latest report, and a member sees
-  its lead and the terminal to report to.
+- **A briefing at launch.** Start and Restart hand a bot its name, role, instructions, lead and
+  team as part of its agent's system prompt (Claude Code, Codex, Oh My Pi, Pi, Grok, Hermes),
+  once, never again each turn. Its team's live state, each member's status and latest report,
+  is `automagik-herdr brief <bot>`. A Claude pane attached while running gets the briefing
+  once, from its hook, on its first turn and again after an edit or a compaction. An edit to a
+  bot's instructions reaches it at its next `automagik-herdr restart`.
 - **Typed notes when blocked.** A member started under its lead's pane makes herdr-core type
   its `blocked`, `error` and exit notes into the lead's pane, so the lead wakes up.
 - **Any harness.** Bots run Claude Code, Codex, Antigravity, Kimi, Oh My Pi or any agent Herdr
@@ -300,8 +303,9 @@ automagik-herdr update [--check | --rollback]
 - `start` runs the bot's agent in a new pane with `hc run`, labelled `bot=<id>`, and records it
   in the [attach ledger](#the-attach-ledger). A member whose lead is running gets the lead's
   pane as its parent. A running bot is not started twice.
-  The pane opens in the space showing the project; with none open, `start` opens one on the
-  project folder (`--space`/`--tab` pick the place instead).
+  The pane opens in a tab of its own in the space showing the project, never in another
+  pane's tab; with none open, `start` opens one on the project folder (`--space` picks the
+  space instead, `--tab` a tab in it). The sidebar's Start passes the space only.
 - `restart` runs the bot's agent again in its pane's place: the new pane starts in the same
   space, tab and folder with the same labels, and the old one is ended (`hc kill`) only once the
   new one has kept its agent in front at every check for 5 seconds (1.5 once the agent reports
@@ -461,7 +465,9 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
 - **Spawn:** `hc run --bg --parent <bot pane> --cwd <worktree>`, labelled `worker.of=<bot id>`,
   `branch=<branch>`, `worker.role=<role>` (a template too), `worker.model` and `worker.effort`;
   with `--task`, also `task=<id>`, `task.project=<main checkout>` and `task.lead=<lead>`
-  (without it, no `task` label at all). A worker started before this release has no `branch`
+  (without it, no `task` label at all). When the bot's pane is in a Herdr space, also
+  `herdr.space=<that space>` and no `herdr.tab`, so the worker opens in a tab of its own there
+  as it starts. A worker started before this release has no `branch`
   label: its `task` label holds the branch, and Herdr's readers fall back to it. Then
   `-- /usr/bin/env PATH=<the calling pane's PATH> <agent argv> <task text>`. The agent gets the
   bot's pane's PATH, not herdr-core's, so programs in `~/.bun/bin` (omp, and the `bun` it runs
@@ -478,7 +484,7 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
 - **Output:** the worker's terminal, then its role, worktree, branch, and agent, model and
   effort, or its template (`--json`: the same as data, with `role` and `template`).
 - **Lifecycle:** the bot checks the worker's result, and ends it with `hc kill <terminal>`
-  once the task merges. The bot's briefing says so every turn. As an hc child, a worker
+  once the task merges. The bot's briefing says so. As an hc child, a worker
   also ends when its bot's program ends; its worktree and branch stay.
 - **Ledger:** `worker`, `start` and `attach` append one row per terminal to
   `<app home>/automagik-herdr/workers.jsonl`: `{ event: "start", kind: "worker" | "seat",

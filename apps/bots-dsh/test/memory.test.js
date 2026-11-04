@@ -659,7 +659,9 @@ test('when a turn ends, the memory review keeps what the user said, through the 
   assert.deepEqual(journal().slice(1).map(record => [record.op, record.actorName, record.auto]), [
     ['add', 'Writer', true], ['add', 'Writer', true], ['replace', 'Writer', true],
   ])
-  // The review's tokens count as the Bot's memory use, not as "Other".
+  // The review's tokens count as the Bot's memory use, not as "Other" and not as
+  // compaction: the usage tag wins over the auxiliary purpose.
+  assert.deepEqual([requests[0].purpose, requests[0].tools], ['compaction', []])
   const meter = ctx.listeners.get('llm/stream').find(listener => /tags\.get/.test(String(listener)))
   for await (const chunk of meter(requests[0], async function* () { yield { type: 'usage', usage: { inputTokens: 40, outputTokens: 2 } } })) assert.equal(chunk.type, 'usage')
   const usage = (await call('usage', { timeZone: 'UTC' })).value
@@ -1208,7 +1210,7 @@ test('a memory summary names the Bot chat on both of its tries', async (t) => {
   const view = (await call('memory-view', { botId: 'b2' })).value
   assert.equal(view.error, null)
   assert.equal(view.summary?.text, 'You like tea.')
-  assert.deepEqual(requests.map(request => [request.sessionId, request.maxTokens, request.purpose]), [['b2', 2048, undefined], ['b2', 8192, undefined]])
+  assert.deepEqual(requests.map(request => [request.sessionId, request.maxTokens, request.purpose, request.tools]), [['b2', 2048, 'compaction', []], ['b2', 8192, 'compaction', []]])
 })
 
 test('a memory panel question names the Bot chat', async (t) => {
@@ -1245,7 +1247,110 @@ test('a memory review of a group names the group chat', async (t) => {
   await reviewed(call)
   assert.equal(requests.length, 1)
   assert.equal(requests[0].sessionId, 'r1')
+  assert.deepEqual([requests[0].purpose, requests[0].tools], ['compaction', []])
   assert.match(read('groups', 'r1', 'MEMORY.md'), /Keep replies under one page/)
+})
+
+// The pinned Claude Code route (dsh-oh-my-claude): a request that names a live Session
+// and no auxiliary purpose resumes that Session's conversation, with its own instructions
+// and tools, and answers as the Bot would; a session-title request answers the title from
+// that Session. Only a compaction request runs on its own, with the system prompt it was
+// given; an empty tool list is the second guarantee that no tool is offered.
+function sessionReusingAdapter(ctx) {
+  const isolated = ctx.llm.stream
+  const seen = { foreground: 0, title: 0 }
+  ctx.llm.stream = async function* (request) {
+    const aside = request.purpose === 'compaction'
+      && Array.isArray(request.tools) && request.tools.length === 0
+    if (request.sessionId === undefined || aside) {
+      yield* isolated(request)
+      return
+    }
+    seen[request.purpose === 'session-title' ? 'title' : 'foreground'] += 1
+    yield { type: 'text-delta', index: 0, text: 'Sure, I will call remember to save that for you.' }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+  return seen
+}
+
+test('a memory review on a session-reusing adapter runs on its own, never in the Bot\'s conversation', async (t) => {
+  const { ctx, call, read, journal, requests, stop } = start({
+    config: { memoryReviewDelayMs: 0 },
+    replies: [JSON.stringify({ changes: [{ op: 'add', text: 'The user wants this remembered' }] })],
+  })
+  t.after(() => stop())
+  const adapter = sessionReusingAdapter(ctx)
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2', session: idleSession }, status: 'idle' })
+  await reviewed(call)
+  assert.deepEqual([adapter.foreground, adapter.title], [0, 0])
+  assert.equal(requests.length, 1)
+  const [request] = requests
+  // The route, the budget, the effort, the timeout and the chat it is counted for stay.
+  assert.deepEqual(
+    [request.provider, request.model, request.sessionId, request.purpose, request.tools, request.maxTokens, request.reasoningEffort],
+    ['deepseek', 'v4', 'b2', 'compaction', [], 2048, 'off'],
+  )
+  // No history rides along: the request is its system prompt and this one user message.
+  assert.deepEqual(request.messages.map(message => message.role), ['user'])
+  assert.ok(request.signal instanceof AbortSignal)
+  assert.match(request.system, /^You keep the long-term memory of one Bot/)
+  assert.match(read('bots', 'b2', 'MEMORY.md'), /- The user wants this remembered \[source: part 1 #10;/)
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  // Reviewed once: the next idle asks nothing and writes nothing.
+  const rows = journal().length
+  ctx.emit('agent/status', { agent: { id: 'b2', session: idleSession }, status: 'idle' })
+  await reviewed(call)
+  assert.deepEqual([adapter.foreground, requests.length, journal().length], [0, 1, rows])
+})
+
+test('a memory summary, a panel question and the fallback to the Bot\'s own model run on their own too', async (t) => {
+  const replies = [
+    { text: '', finish: 'error', failure: '403 Forbidden' }, { text: 'Half', finish: 'max-tokens' }, 'You like tea.',
+    JSON.stringify({ reply: 'You like tea.', changes: [] }),
+  ]
+  const { ctx, tool, call, requests, stop } = start({ replies, models: ['v4', 'flash'], defaultModel: 'flash' })
+  t.after(() => stop())
+  const adapter = sessionReusingAdapter(ctx)
+  await tool('remember', { text: 'Likes tea' }, 'b2')
+  await call('memory-view', { botId: 'b2', summarize: true })
+  await summarized(call)
+  const view = (await call('memory-view', { botId: 'b2' })).value
+  const answer = await call('memory-ask', { botId: 'b2', text: 'What do I like?' })
+  assert.deepEqual([adapter.foreground, adapter.title], [0, 0])
+  assert.equal(view.summary?.text, 'You like tea.')
+  assert.equal(answer.value?.reply, 'You like tea.')
+  assert.deepEqual(routes(requests), ['deepseek/flash@2048', 'deepseek/v4@2048', 'deepseek/v4@8192', 'deepseek/flash@2048'])
+  for (const request of requests) {
+    assert.deepEqual([request.sessionId, request.purpose, request.tools], ['b2', 'compaction', []])
+    assert.deepEqual(request.messages.map(message => message.role), ['user'])
+  }
+})
+
+// A failed write leaves its change pending; the next read finishes it, and the next
+// review reads the same lines again, now with the entry listed.
+test('a review whose write fails keeps its place, and its change is finished before the next review', async (t) => {
+  const replies = [JSON.stringify({ changes: [{ op: 'add', text: 'The user wants this remembered' }] }), JSON.stringify({ changes: [] })]
+  const { ctx, home, call, read, requests, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  // A directory where the write's temporary file goes fails the write, not the read.
+  const blocked = join(home, 'memory', 'bots', 'b2', `MEMORY.md.${process.pid}.tmp`)
+  mkdirSync(blocked, { recursive: true })
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2', session: idleSession }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+  assert.equal(existsSync(join(home, 'memory', 'bots', 'b2', 'MEMORY.md')), false)
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 9 })
+  rmSync(blocked, { recursive: true })
+  ctx.emit('agent/status', { agent: { id: 'b2', session: idleSession }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 2)
+  const fresh = text => text.slice(text.indexOf('New in its own chat'))
+  assert.equal(fresh(requests[1].messages[0].content[0].text), fresh(requests[0].messages[0].content[0].text))
+  assert.match(requests[1].messages[0].content[0].text, /\[1\] \(own\) The user wants this remembered\n/)
+  assert.deepEqual(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text), ['The user wants this remembered'])
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
 })
 
 test('a memory call names the current part of the Bot chat', async (t) => {

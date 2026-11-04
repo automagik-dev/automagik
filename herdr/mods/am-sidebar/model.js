@@ -348,6 +348,20 @@ export async function projectKeyOf(folder, git, exists) {
   return (await projectOf(folder, git, exists)).key;
 }
 
+/**
+ * The project a bot's pane runs in, from its folder (automagik#227, RFC 0014 Q16): projectOf's
+ * `key` when git or a `.herdr/bots.json` above the folder gave it, else null (not in git, git
+ * missing or failing, no bots file above: the folder names no project). A worktree keys to its
+ * main checkout, a clone to itself. Rejects as projectOf does.
+ */
+export async function paneKeyOf(folder, git, exists) {
+  let told = false;
+  const { key } = await projectOf(folder,
+    async (args, cwd) => { const out = await git(args, cwd); if (out?.trim()) told = true; return out; },
+    async (path) => { const there = await exists(path); if (there) told = true; return there; });
+  return told ? key : null;
+}
+
 /** The bots under `botId` at any depth (by effective lead): none of them can be its lead. */
 export function descendantsOf(file, botId) {
   const out = new Set();

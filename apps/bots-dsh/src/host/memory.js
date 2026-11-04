@@ -1258,6 +1258,15 @@ export function install(rt) {
         provider: route.provider,
         model: route.model,
         ...(tag?.sessionId === undefined ? {} : { sessionId: tag.sessionId }),
+        // The Session names the chat for routes that need one and for usage; the purpose
+        // and the empty tool list keep its conversation out. A session-reusing adapter
+        // (the Claude Code route) resumes that conversation, its instructions and tools,
+        // for a request with a Session and no purpose. DSH offers two purposes:
+        // 'session-title' swaps in a title model and answers from the Session, while
+        // 'compaction' runs the requested model once, on this system prompt, without
+        // tools or resume. The usage tag still counts these tokens as memory.
+        purpose: 'compaction',
+        tools: [],
         ...(effort === undefined ? {} : { reasoningEffort: effort }),
         system,
         messages,

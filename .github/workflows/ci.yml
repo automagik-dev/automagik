@@ -247,6 +247,46 @@ jobs:
         if: steps.changed.outputs.link == 'true'
         run: node --test bridge/*.test.mjs chat/*.test.mjs find-node.test.mjs
 
+  meter:
+    # Meter's local tools (meter/statusline: the Claude Code status line and the limits logger that
+    # runs it as `claude-limits-statusline.mjs -- <status line>`): syntax and their dependency-free
+    # tests, the formatter against fixture stdin objects included. No release ships them
+    # (scripts/lane.ts NEVER_SHIPPED).
+    name: Meter status line
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Whether meter/ changed
+        id: changed
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            echo "meter=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(meter/|\.github/workflows/ci\.yml$)'; then
+            echo "meter=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "meter/ did not change: nothing to test"
+          fi
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        if: steps.changed.outputs.meter == 'true'
+        with:
+          node-version: '22'
+
+      - name: Syntax and tests
+        if: steps.changed.outputs.meter == 'true'
+        run: |
+          set -euo pipefail
+          for f in meter/statusline/*.mjs; do node --check "$f"; done
+          node --test 'meter/statusline/test/*.test.mjs'
+
   plugin:
     # The Bot team and the welcome run on Node, as DSH does: Bun installs each and the DSH
     # release it pins in dev/harness/package.json, which its tests run against.

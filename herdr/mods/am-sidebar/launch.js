@@ -49,12 +49,14 @@ export async function botOfTerminal(terminal) {
 }
 
 /**
- * The per-turn briefing for a Claude bot (DESIGN Approach "Group 3", Decision 9): merges the
+ * The briefing hook for a Claude bot (DESIGN Approach "Group 3", Decision 9): it ties the session
+ * to its pane, and gives the briefing once to a pane whose agent wasn't started with it (the CLI's
+ * Start and Restart put it in the agent's system prompt). Merges the
  * hook entry, if absent, into `<sessionFolder>/.claude/settings.local.json` (never the shared
  * settings.json) and keeps that file out of git through the clone's exclude file. Writes
  * nothing, and tells the owner the README fix, when the pack's briefing.mjs isn't at the path
- * computed from appHome(). `claude`: whether the session is Claude Code (other agents get
- * nothing). Never throws: a failure is a notification, never a refused Start or Attach.
+ * computed from appHome(). `claude`: whether the session is Claude Code (no other agent runs
+ * these hooks). Never throws: a failure is a notification, never a refused Start or Attach.
  * Resolves with { written } (true when the hook entry was added or updated).
  */
 export async function afterBind(bot, sessionFolder, claude = bot?.agent === "claude") {
@@ -114,7 +116,7 @@ async function openSpace(projectKey, sleep, { waitMs = 5000, stepMs = 100 } = {}
 
 // Where a started bot opens: the first space of this computer whose folder keys to the
 // project, else a space opened on it (only with a `sleep` to wait for it by, so a space
-// is never left behind empty), else the shown space; in that space's active tab.
+// is never left behind empty), else the shown space; in a tab of its own there (no --tab).
 async function placeFor(projectKey, { sleep = null, ...wait } = {}) {
   let space = await keyedSpace(localSpaces(), projectKey);
   if (!space && sleep) {
@@ -125,8 +127,7 @@ async function placeFor(projectKey, { sleep = null, ...wait } = {}) {
   }
   const mine = localSpaces();
   space ??= mine.find((s) => s.id === focused()?.space) ?? mine.find((s) => s.active) ?? null;
-  const tab = space?.tabs?.find((t) => t.active) ?? null;
-  return { space: space?.id ?? null, tab: tab?.id ?? null };
+  return { space: space?.id ?? null };
 }
 
 // Bots being started now: a second click waits for nothing and is refused.
@@ -158,8 +159,8 @@ async function startOn(projectKey, botId, machine) {
 }
 
 async function startOnce(projectKey, botId, place) {
-  const { space, tab } = await placeFor(projectKey, place);
-  const where = space ? ["--space", space, ...(tab ? ["--tab", tab] : [])] : [];
+  const { space } = await placeFor(projectKey, place);
+  const where = space ? ["--space", space] : [];
   const r = await runCli(["start", botId, "--project", projectKey, ...where]);
   if (r.code !== 0) return refusedBy(r, "start");
   if (r.out?.running) {

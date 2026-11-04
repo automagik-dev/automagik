@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -12,6 +12,7 @@ import { promisify } from "node:util";
 import { state } from "./use-stubs.mjs";
 import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, isClaude, newest, attachRefusal, parseCommand, unwrapKeep } from "../mods/am-sidebar/launchArgs.js";
 const { startBot, attachBot, liveTerminalOf, botOfTerminal } = await import("../mods/am-sidebar/launch.js");
+import { briefingFilePath } from "../mods/am-sidebar/briefingText.mjs";
 
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", plan: "b-eeeeeeeeee" };
 const bot = (id, kind, extra = {}) => ({ id, name: `Bot ${id.slice(2, 4)}`, kind, look: { character: "star", colour: "blue" }, role: "r", instructions: "i", agent: "claude", ...extra });
@@ -47,6 +48,14 @@ test("start args: a member whose lead is down gets --no-parent; a lead that fall
   const f = team();
   f.bots[2].lead = ID.plan; // a planned lead: A1 falls back to the main bot
   assert.deepEqual(parentArgs(f, ID.dev, (id) => (id === ID.main ? "t1" : "t8")), ["--parent", "t1", "--outlive-parent"]);
+});
+
+test("start args: briefing variables (hermes) go after PATH in the one env prefix; none and no PATH: no env at all", () => {
+  const base = { botId: ID.main, cwd: "/p", parent: ["--no-parent"], argv: ["hermes"] };
+  const both = startArgs({ ...base, path: "/bin", env: { HERMES_EPHEMERAL_SYSTEM_PROMPT: "<herdr-bot>\nx\n</herdr-bot>" } });
+  assert.deepEqual(both.slice(both.indexOf("--") + 1), ["/usr/bin/env", "PATH=/bin", "HERMES_EPHEMERAL_SYSTEM_PROMPT=<herdr-bot>\nx\n</herdr-bot>", "hermes"]);
+  const bare = startArgs(base);
+  assert.deepEqual(bare.slice(bare.indexOf("--") + 1), ["hermes"]);
 });
 
 test("start: a planned bot, one with no agent, or a member with no main bot is refused", () => {
@@ -158,14 +167,16 @@ test("the fake hc is the one the CLI runs here: never the real one", async (t) =
   assert.match(stdout.trim(), /automagik-herdr-.*\/bin\/hc\n.*automagik-herdr-.*\/bin\/herdr-app$/);
 });
 
-test("startBot runs the CLI: hc run in the project's space and tab, an attach row by start; the sidebar sets no label", async (t) => {
+test("startBot runs the CLI: hc run in the project's space, a tab of its own, an attach row by start; the sidebar sets no label", async (t) => {
   const w = await world(t, { terminals: (main) => [term("t7", { bot: ID.cap, cwd: main })] });
   state.spaces = [{ id: "s0", folder: "/elsewhere", machine: null, active: true, tabs: [{ id: "x", active: true }] },
     { id: "s1", folder: w.main, machine: null, active: false, tabs: [{ id: "a", active: false }, { id: "b", active: true }] }];
   const r = await startBot(w.main, ID.dev);
   assert.deepEqual(r, { terminal: "t100" });
   const runArgs = w.calls().find((a) => a[0] === "run");
-  assert.ok(runArgs.includes(`bot=${ID.dev}`) && runArgs.includes("herdr.space=s1") && runArgs.includes("herdr.tab=b"));
+  assert.ok(runArgs.includes(`bot=${ID.dev}`) && runArgs.includes("herdr.space=s1"), runArgs.join(" "));
+  // Never the active tab (b): Herdr opens the bot in a tab of its own.
+  assert.equal(runArgs.some((a) => a.startsWith("herdr.tab=")), false, runArgs.join(" "));
   assert.deepEqual(runArgs.slice(runArgs.indexOf("--parent"), runArgs.indexOf("--parent") + 3), ["--parent", "t7", "--outlive-parent"]);
   const rows = w.ledger();
   assert.deepEqual(rows.map((x) => [x.event, x.bot, x.terminal, x.by]), [["attach", ID.cap, "t7", "import"], ["attach", ID.dev, "t100", "start"]]);
@@ -176,6 +187,24 @@ test("startBot runs the CLI: hc run in the project's space and tab, an attach ro
   assert.deepEqual(state.runs, [["agent.focus", { terminal: "t100" }]]);
   assert.equal(w.calls().filter((a) => a[0] === "run").length, 1);
   assert.match((await startBot(w.main, ID.plan)).refused, /planned/);
+});
+
+test("startBot: a Claude bot starts with its briefing file, written under the app home before hc run, nothing live in it", async (t) => {
+  const w = await world(t, { terminals: (main) => [term("t7", { bot: ID.cap, cwd: main })] });
+  state.spaces = [{ id: "s1", folder: w.main, machine: null, active: true, tabs: [{ id: "a", active: true }] }];
+  assert.deepEqual(await startBot(w.main, ID.dev), { terminal: "t100" });
+  const runArgs = w.calls().find((a) => a[0] === "run");
+  const path = briefingFilePath(w.app, w.main, ID.dev);
+  const at = runArgs.lastIndexOf("claude");
+  assert.deepEqual(runArgs.slice(at, at + 3), ["claude", "--append-system-prompt-file", path], "right after the executable");
+  assert.equal(runArgs.filter((a) => a === "--append-system-prompt-file").length, 1);
+  const text = readFileSync(path, "utf8");
+  assert.match(text, /^<herdr-bot>\n/);
+  assert.match(text, new RegExp(`You are Dev, a team member \\(bot ${ID.dev}\\)`));
+  assert.match(text, /Instructions:\ni\n/);
+  assert.match(text, new RegExp(`hc ls --label bot=${ID.cap}`), "its lead, found by label, never a stored address");
+  assert.doesNotMatch(text, /t7|idle|working/, "no terminal and no status: those change while it runs");
+  assert.equal(statSync(path).mode & 0o077, 0, "the owner's alone");
 });
 
 test("startBot: no space shows the project -> space.new on its folder, waited for and matched by project key", async (t) => {
@@ -192,7 +221,7 @@ test("startBot: no space shows the project -> space.new on its folder, waited fo
   assert.deepEqual(await startBot(w.main, ID.main, { sleep }), { terminal: "t100" });
   assert.deepEqual(state.runs, [["space.new", { name: "proj", folder: w.main, machine: "" }]]);
   const runArgs = w.calls().find((a) => a[0] === "run");
-  assert.ok(runArgs.includes("herdr.space=s5") && runArgs.includes("herdr.tab=t5"));
+  assert.ok(runArgs.includes("herdr.space=s5") && !runArgs.some((a) => a.startsWith("herdr.tab=")), runArgs.join(" "));
   // With no sleep to wait by, no space is opened (none left behind empty): the shown space.
   state.spaces = [{ id: "s0", folder: "/elsewhere", machine: null, active: true, tabs: [{ id: "x", active: true }] }];
   state.runs = [];
