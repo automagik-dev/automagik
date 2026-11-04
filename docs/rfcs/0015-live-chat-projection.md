@@ -163,8 +163,10 @@ The transcript of terminal `t`, first match wins:
 4. **Discovered, this computer only.** A pane with no label (t22n: plain `hc run … claude` panes
    have none): the newest transcript in the agent's folder for the pane's `cwd`, written after the
    pane started. Used only when exactly one candidate fits; two panes in one folder are never
-   guessed between. Orca looks in the same folders
-   (`src/main/native-chat/session-file-resolver.ts:35-40`).
+   guessed between, and a pane whose start time herdr-core does not give is not guessed for. Orca
+   looks in the same folders (`src/main/native-chat/session-file-resolver.ts:35-40`). Its limit:
+   only panes herdr-core lists count as a second pane, so a Claude started outside Herdr in the
+   same folder can be taken for the pane's own; labels (deliveries 2 and 6) close this.
 5. **None.** The chat is screen only (see "Unlabeled panes and other machines").
 
 **The folder rule** (t2x5). A path from any of these is used only if it is inside the agent's own
@@ -226,8 +228,13 @@ the transcript yet".
 
 ### The row model
 
-Every row: `id` (stable: the transcript's own id, else `<file>:<line>`), `turn`, `at`, `source`
-(`transcript`, `status`, `screen`), `kind`, and the kind's fields:
+Every row: `id`, `turn`, `at`, `source` (`transcript`, `status`, `screen`), `kind`, and the kind's
+fields. The `id` is `<segment>:<line>.<block>` (amended in delivery 3a; first drafted as the
+transcript's own id, else `<file>:<line>`): a segment is one transcript file of the pane, numbered
+from 1 in each engine process, so ids are ordered and never carry a path. A restarted bridge
+numbers again, so a client's cursor gets `reset` and the latest page ("Reconnect"). Screen rows are
+`screen:<n>`, replaced as the screen changes. Turns are counted within the rows the engine read;
+rows a backfill reads from before them count back (0, -1, ...). The kinds:
 
 - `text`: `role` (`user` or `assistant`), `text` (markdown);
 - `tool-call`: `tool`, `summary`, `input` (a short preview);
