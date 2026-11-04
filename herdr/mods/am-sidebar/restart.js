@@ -3,7 +3,8 @@
 // the replacement carries over from the old pane. The CLI's `restart` runs it with hc; the
 // sidebar's Restart runs the CLI. Pure: no `herdr`, so `node --test` runs it. Apache-2.0.
 
-import { agentKeyOfArgv, canResume, detectModel, effortArgs, modelArgs, resumeArgs, resumesById, withoutModel, withoutResume } from "./models.js";
+import { agentKeyOfArgv, canResume, detectModel, effortArgs, modelArgs, resumeArgs, resumesById, withoutBriefing, withoutModel, withoutResume }
+  from "./models.js";
 import { SQUAD_LABEL, SQUAD_MARK } from "./launchArgs.js";
 import { ENV, WORKER_EFFORT_LABEL, WORKER_MODEL_LABEL, WORKER_OF_LABEL, WORKER_TEMPLATE_LABEL } from "./workers.js";
 
@@ -121,7 +122,8 @@ export function restartPlan({ bot, run, runningAgent = null, session = null, fre
 function reusable(launch, key) {
   if (launch.shell !== undefined) return launch;
   if (agentKeyOfArgv(launch.argv) !== key) return null;
-  return { argv: withoutPrompt(withoutResume(key, launch.argv)) };
+  // Its old briefing words go first: the launch puts this start's own in (models.js withBriefing).
+  return { argv: withoutPrompt(withoutResume(key, withoutBriefing(key, launch.argv))) };
 }
 
 /**

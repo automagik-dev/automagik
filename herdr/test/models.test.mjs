@@ -5,6 +5,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { AGENTS, LEGACY_AGENTS, agentArgv, agentKeyOfArgv, configPaths, defaultModel, defaultModelFrom, detectModel, knownModels, knownModelsFrom, modelArgs, resolveAgent, shownModel, withOverrides } from "../mods/am-sidebar/models.js";
+import { BRIEFINGS_DIR, briefingFileOf, briefingLaunch, briefingWay, resumesConversation, withBriefing, withoutBriefing }
+  from "../mods/am-sidebar/models.js";
+import { restartPlan } from "../mods/am-sidebar/restart.js";
 
 const files = (map) => ({ home: "/h", read: (p) => map[p] ?? null });
 
@@ -145,4 +148,62 @@ test("antigravity replaces gemini: agy argv is antigravity, gemini resolves to i
     "a programs.json that adds gemini back keeps it");
   assert.equal(configPaths("/h").antigravitySettings, "/h/.gemini/antigravity-cli/settings.json");
   assert.equal(configPaths("/h").geminiSettings, undefined);
+});
+
+// ---- the briefing at launch (each agent's own system-prompt mechanism) ----
+
+const BRIEF = "<herdr-bot>\nYou are Genie.\n</herdr-bot>";
+const FILE = `/app/${BRIEFINGS_DIR}/0123456789-b-aaaaaaaaaa.md`;
+
+test("briefing at launch: each agent's verified way; the others get none, never a guessed flag", () => {
+  assert.deepEqual(briefingLaunch("claude", { path: FILE, text: BRIEF }), { args: ["--append-system-prompt-file", FILE], env: {} });
+  assert.equal(briefingLaunch("claude", { text: BRIEF }), null, "no file written: no flag (a missing file stops Claude Code)");
+  assert.deepEqual(briefingLaunch("codex", { text: BRIEF }).args, ["-c", `developer_instructions=${JSON.stringify(BRIEF)}`]);
+  assert.deepEqual(briefingLaunch("omp", { text: BRIEF }).args, [`--append-system-prompt=${BRIEF}`]);
+  assert.deepEqual(briefingLaunch("pi", { text: BRIEF }).args, ["--append-system-prompt", BRIEF]);
+  assert.deepEqual(briefingLaunch("grok", { text: BRIEF }).args, ["--rules", BRIEF]);
+  assert.deepEqual(briefingLaunch("hermes", { text: BRIEF }), { args: [], env: { HERMES_EPHEMERAL_SYSTEM_PROMPT: BRIEF } });
+  for (const key of ["antigravity", "cursor", "opencode", "kimi", "copilot", "amp", "kiro", "qoder", "crush"]) {
+    assert.equal(briefingWay(key), null, key);
+    assert.equal(briefingLaunch(key, { path: FILE, text: BRIEF }), null, key);
+  }
+});
+
+test("withBriefing: right after the executable (codex's -c before resume), an old copy replaced, a person's own words kept", () => {
+  const claude = briefingLaunch("claude", { path: FILE });
+  assert.deepEqual(withBriefing("claude", ["claude", "--model", "m", "--resume", "s"], claude),
+    ["claude", "--append-system-prompt-file", FILE, "--model", "m", "--resume", "s"]);
+  const again = withBriefing("claude", withBriefing("claude", ["claude", `--append-system-prompt-file=${FILE}`], claude), claude);
+  assert.deepEqual(again, ["claude", "--append-system-prompt-file", FILE], "never twice");
+  assert.deepEqual(withBriefing("claude", ["claude", "--append-system-prompt-file", "/mine.md"], claude),
+    ["claude", "--append-system-prompt-file", FILE, "--append-system-prompt-file", "/mine.md"], "a person's own file stays");
+  const codex = briefingLaunch("codex", { text: BRIEF });
+  const old = ["node", "/x/codex.js", "-c", `developer_instructions=${JSON.stringify("<herdr-bot>old")}`, "-c", "model=o3", "resume", "--last"];
+  assert.deepEqual(withBriefing("codex", old, codex), ["node", "/x/codex.js", ...codex.args, "-c", "model=o3", "resume", "--last"]);
+  assert.deepEqual(withBriefing("codex", ["codex", "-c", "developer_instructions=\"mine\""], codex),
+    ["codex", ...codex.args, "-c", "developer_instructions=\"mine\""]);
+  assert.deepEqual(withBriefing("grok", ["grok", "--rules", "<herdr-bot>old"], briefingLaunch("grok", { text: BRIEF })), ["grok", "--rules", BRIEF]);
+  // Taken out when this start has none (a file that couldn't be written): never a stale path.
+  assert.deepEqual(withBriefing("claude", ["claude", "--append-system-prompt-file", FILE, "-c"], null), ["claude", "-c"]);
+  // A command that doesn't run the agent (a shell line) is left as it is.
+  assert.deepEqual(withBriefing("claude", ["sh", "-c", "claude --x"], claude), ["sh", "-c", "claude --x"]);
+  assert.deepEqual(withoutBriefing("claude", ["--", "--append-system-prompt-file", FILE]), ["--", "--append-system-prompt-file", FILE]);
+});
+
+test("briefingFileOf and resumesConversation: what the hook reads from a pane's command", () => {
+  assert.equal(briefingFileOf(["claude", "--append-system-prompt-file", FILE, "--continue"]), FILE);
+  assert.equal(briefingFileOf(["/usr/local/bin/claude", `--append-system-prompt-file=${FILE}`]), FILE);
+  assert.equal(briefingFileOf(["claude", "--append-system-prompt-file", "/mine.md"]), null);
+  assert.equal(briefingFileOf(["codex", "--append-system-prompt-file", FILE]), null);
+  assert.equal(briefingFileOf(["claude"]), null);
+  assert.equal(resumesConversation("claude", ["claude", "--append-system-prompt-file", FILE, "--resume", "s"]), true);
+  assert.equal(resumesConversation("claude", ["claude", "-c"]), true);
+  assert.equal(resumesConversation("claude", ["claude", "--append-system-prompt-file", FILE]), false);
+});
+
+test("restartPlan reusing a pane's command drops its old briefing words before the prompt and resume rules", () => {
+  const bot = { agent: "omp" };
+  const launch = { argv: ["omp", "--thinking=high", `--append-system-prompt=${BRIEF}`] };
+  const plan = restartPlan({ bot, run: ["omp"], runningAgent: "omp", session: null, launch });
+  assert.deepEqual(plan.argv, ["omp", "--thinking=high", "--continue"]);
 });
