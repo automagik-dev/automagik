@@ -60,6 +60,9 @@ export class Engine {
     this.refused = new Set()
     /** @type {Map<string, any>} address -> entry */
     this.entries = new Map()
+    /** client -> its private key: message ids are the client's own, never shared between clients */
+    this.keys = new WeakMap()
+    this.nextKey = 1
   }
 
   /** Live terminals with a decoder (Claude, Codex, omp): what a client can open as a chat. */
@@ -75,6 +78,27 @@ export class Engine {
   }
 
   watching(client, address) { return this.entries.get(address)?.clients.has(client) ?? false }
+
+  /**
+   * A message id as the engine keeps it: the client's own id under that client's key, so another
+   * client using the same id has a different message, and can neither move, send nor cancel it.
+   */
+  own(client, id) {
+    let key = this.keys.get(client)
+    if (!key) this.keys.set(client, (key = String(this.nextKey++)))
+    return `${key}\u0000${id}`
+  }
+
+  /** Back to the id the client gave. */
+  static theirs(internal) { return internal.slice(internal.indexOf('\u0000') + 1) }
+
+  /** An event about one message: to the client that wrote it, with its own id; to no other. */
+  toAuthor(entry, internal, e) {
+    const author = entry.authors.get(internal)
+    const listener = author && entry.clients.get(author)
+    if (!listener) return
+    try { listener({ ...e, id: Engine.theirs(internal) }) } catch {}
+  }
 
   /**
    * A client opens a terminal's chat. `listener` gets its events; the handle reads rows. Null when
@@ -102,21 +126,26 @@ export class Engine {
       backfill: (before, limit) => entry.projection.backfill(before, limit),
       status: () => entry.projection.status,
       approval: () => entry.approval,
-      held: () => entry.input.held.map(({ id, why }) => ({ id, why })),
+      // Only this client's own held messages, by its own ids.
+      held: () => entry.input.held.filter((h) => entry.authors.get(h.id) === client).map(({ id, why }) => ({ id: Engine.theirs(id), why })),
       close: () => this.leave(address, client)
     }
   }
 
   /**
    * A client stops watching. Its held messages go with it: a message is typed only while the
-   * person who wrote it still watches (a phone removed or gone types nothing later). The last
-   * client leaving drops every held message and stops looking; the rows are kept 10 minutes.
+   * person who wrote it still watches (a phone removed or gone types nothing later). Every message
+   * is its author's own (own()), so when the last client leaves none is left; looking stops, and
+   * the rows are kept 10 minutes.
    */
   leave(address, client) {
     const entry = this.entries.get(address)
     if (!entry || !entry.clients.delete(client)) return
-    for (const [id, owner] of entry.owners) {
-      if (owner === client || !entry.clients.size) { entry.owners.delete(id); entry.input.cancelHeld({ id }) }
+    for (const [id, author] of entry.authors) {
+      if (author !== client) continue
+      entry.authors.delete(id)
+      entry.pending.delete(id)
+      entry.input.cancelHeld({ id })
     }
     if (entry.clients.size) return
     this.timers.clearInterval(entry.flusher)
@@ -148,21 +177,25 @@ export class Engine {
   open(address) {
     const projection = new Projection(address, { hc: this.hc, hub: this.hub, home: this.home, appHome: this.appHome, log: this.log, refused: this.refused, timers: this.timers, ...this.projectionOptions })
     const entry = { address, projection, clients: new Map(), linger: null, approval: null, question: null, pending: new Map(), checking: null, flusher: null,
-      answering: null, answered: new Set(), owners: new Map() }
+      answering: null, answered: new Set(), authors: new Map() }
     const emit = (e) => { for (const l of [...entry.clients.values()]) { try { l(e) } catch {} } }
     entry.emit = emit
     entry.read = () => this.read(entry)
     entry.input = new Input({ hc: this.hc, address, read: entry.read })
+    // input.js's events are about one message each: only its author hears them.
     entry.input.on((e) => {
       if (e.type === 'sent') {
-        // The text stays here, to find the transcript's row for it; clients already have it.
+        // The text stays here, to find the transcript's row for it; the author already has it.
         const { text, ...rest } = e
-        emit(rest)
-        entry.owners.delete(e.id)
+        this.toAuthor(entry, e.id, rest)
         entry.pending.set(e.id, text)
-        if (entry.pending.size > MAX_PENDING) entry.pending.delete(entry.pending.keys().next().value)
-        emit({ type: 'sending', id: e.id })
-      } else emit(e)
+        if (entry.pending.size > MAX_PENDING) {
+          const oldest = entry.pending.keys().next().value
+          entry.pending.delete(oldest)
+          entry.authors.delete(oldest)
+        }
+        this.toAuthor(entry, e.id, { type: 'sending' })
+      } else this.toAuthor(entry, e.id, e)
       this.flushing(entry)
     })
     projection.on((e) => {
@@ -203,7 +236,8 @@ export class Engine {
       for (const [id, text] of entry.pending) {
         if (typeof text === 'string' && r.text.trim() === text.trim()) {
           entry.pending.delete(id)
-          entry.emit({ type: 'matched', id, row: r.id })
+          this.toAuthor(entry, id, { type: 'matched', row: r.id })
+          entry.authors.delete(id)
           break
         }
       }
@@ -258,23 +292,32 @@ export class Engine {
 
   async send(client, address, { text, id }) {
     if (!this.watching(client, address)) return refused()
+    if (typeof id !== 'string' || !id) return { state: 'refused', id, reason: 'id' }
     const entry = this.entries.get(address)
-    const answer = await entry.input.send({ text, id })
-    // Held: it belongs to this client, and goes with it if it leaves.
-    if (answer.state === 'held' && entry.clients.has(client)) entry.owners.set(id, client)
-    else if (answer.state === 'held') entry.input.cancelHeld({ id })
-    else entry.owners.delete(id)
-    return answer
+    const internal = this.own(client, id)
+    entry.authors.set(internal, client)
+    const answer = await entry.input.send({ text, id: internal })
+    // Held, and its author left meanwhile: it goes with them, never typed later.
+    if (answer.state === 'held' && !entry.clients.has(client)) {
+      entry.input.cancelHeld({ id: internal })
+      entry.authors.delete(internal)
+    } else if (answer.state === 'refused') entry.authors.delete(internal)
+    return { ...answer, id }
   }
 
-  sendHeld(client, address, { id }) {
+  async sendHeld(client, address, { id }) {
     if (!this.watching(client, address)) return refused()
-    return this.entries.get(address).input.sendHeld({ id })
+    const answer = await this.entries.get(address).input.sendHeld({ id: this.own(client, id) })
+    return { ...answer, id }
   }
 
   cancelHeld(client, address, { id }) {
     if (!this.watching(client, address)) return refused()
-    return this.entries.get(address).input.cancelHeld({ id })
+    const entry = this.entries.get(address)
+    const internal = this.own(client, id)
+    const answer = entry.input.cancelHeld({ id: internal })
+    if (answer.ok) entry.authors.delete(internal)
+    return answer
   }
 
   /**

@@ -312,3 +312,60 @@ test('an engine holds at most maxTerminals: a held one goes first; all watched, 
   void one
   engine.close()
 })
+
+test("another phone using the same id has its own message: removing the first types only the second's", async () => {
+  const { engine, hc, timers, writes } = setup({ view: 'claude-draft' })
+  const a = client(engine)
+  const b = client(engine)
+  await settle()
+  assert.equal((await engine.send(a.me, 't1', { text: 'from a', id: 'm1' })).why, 'draft')
+  assert.equal((await engine.send(b.me, 't1', { text: 'from b', id: 'm1' })).why, 'behind', 'a new message, behind a\'s')
+  a.handle.close() // a removed
+  hc.screens.t1 = screen('claude-idle')
+  await timers.intervals.find((h) => h.ms === 1500).fn()
+  await settle()
+  assert.deepEqual(writes().map((c) => c.params.text), ['from b'])
+  engine.close()
+})
+
+test("a phone can neither send nor cancel another phone's held message", async () => {
+  const { engine, writes } = setup({ view: 'claude-draft' })
+  const a = client(engine)
+  const b = client(engine)
+  await settle()
+  await engine.send(a.me, 't1', { text: 'from a', id: 'm1' })
+  assert.equal((await engine.sendHeld(b.me, 't1', { id: 'm1' })).reason, 'not-held')
+  assert.deepEqual(engine.cancelHeld(b.me, 't1', { id: 'm1' }), { ok: false, reason: 'not-held' })
+  assert.deepEqual(a.handle.held(), [{ id: 'm1', why: 'draft' }])
+  assert.deepEqual(b.handle.held(), [], "b does not see a's held message")
+  assert.equal(writes().length, 0)
+  assert.deepEqual(engine.cancelHeld(a.me, 't1', { id: 'm1' }), { ok: true })
+  engine.close()
+})
+
+test("a message's events reach only the phone that wrote it, by its own id", async () => {
+  const { engine } = setup()
+  const a = client(engine)
+  const b = client(engine)
+  await settle()
+  assert.deepEqual(await engine.send(a.me, 't1', { text: 'mine', id: 'm1' }), { state: 'sent', id: 'm1' })
+  assert.deepEqual(a.events.filter((e) => ['sent', 'sending'].includes(e.type)).map((e) => [e.type, e.id]), [['sent', 'm1'], ['sending', 'm1']])
+  assert.equal(b.events.filter((e) => ['held', 'sent', 'sending', 'matched', 'cancelled'].includes(e.type)).length, 0)
+  engine.close()
+})
+
+test('a message held while its author left during the send is dropped, never typed', async () => {
+  const { engine, hc, timers, writes } = setup({ view: 'claude-draft' })
+  const a = client(engine)
+  await settle()
+  const sending = engine.send(a.me, 't1', { text: 'left mid-send', id: 'm1' })
+  a.handle.close() // gone before the send has read the screen and held it
+  assert.equal((await sending).state, 'held')
+  const back = client(engine)
+  assert.deepEqual(back.handle.held(), [])
+  hc.screens.t1 = screen('claude-idle')
+  for (const h of timers.intervals) await h.fn()
+  await settle()
+  assert.equal(writes().length, 0)
+  engine.close()
+})
