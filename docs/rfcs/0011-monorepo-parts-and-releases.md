@@ -58,8 +58,9 @@ herdr-mod entry folder is any folder holding `mods/<name>/main.js`, as the mod m
 package. `herdr/scripts/entries.mjs --check` fails when one holds `layouts/`; CI runs it on every
 pull request and the release with the pack's gates. The probe's layout test
 settled the shape: herdr.dev lists a layout only from its entry folder's `layouts/<name>.json`
-and skips a `.json` at the folder's root, and the entry needs no `mods/` of its own (its RECIPE
-tells people to add `herdr/` first). `entries.mjs --check` also fails when `herdr-layout/` loses
+and ignores a `.json` at the folder's root (e2 went unlisted for want of `layouts/`, not because of
+its root `.json`: 60 listed layout entries hold one), and the entry needs no `mods/` of its own
+(its RECIPE tells people to add `herdr/` first). `entries.mjs --check` also fails when `herdr-layout/` loses
 that shape. Until then the mod manager,
 which installs a package's own `layouts/`, no longer installs the layout with the pack from the
 catalog; `install.sh` and the updater still do, from the tarball.

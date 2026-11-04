@@ -30,11 +30,19 @@ test("herdr/ must stay a mod entry with no layouts/; herdr-layout/ a layout entr
   assert.deepEqual(problemsOf(files), [], "part.json at the layout entry's root is its manifest, not a layout");
   assert.match(problemsOf([...files, "herdr/layouts/automagik.json"]).join("\n"), /^herdr\/layouts\/: a herdr-mod entry folder holds layouts\//);
   assert.match(problemsOf(files.filter((f) => !f.startsWith("herdr/mods/"))).join("\n"), /^herdr\/: no mods\/<name>\/main\.js/);
-  // The crawler probe's e2: a layout .json at the entry's root, no layouts/, is not listed.
-  const e2 = files.map((f) => f.replace("herdr-layout/layouts/", "herdr-layout/"));
+  // The crawler probe's e2: no layouts/, so nothing to list; the root .json is named as the likely
+  // layout, but not part.json or keys.json.
+  const e2 = [...files, "herdr-layout/keys.json"].map((f) => f.replace("herdr-layout/layouts/", "herdr-layout/"));
   assert.deepEqual(layoutEntryProblems(e2), [
     "herdr-layout/layouts/<name>.json: missing; herdr.dev lists a layout only from its entry's layouts/",
-    "herdr-layout/automagik.json: herdr.dev skips a layout .json at the entry's root; move it to herdr-layout/layouts/",
+    "herdr-layout/automagik.json: herdr.dev ignores a .json at the entry's root; move it to herdr-layout/layouts/",
+  ]);
+  // With layouts/<name>.json in place a root .json is ignored, as in 60 listed layout entries.
+  assert.deepEqual(problemsOf([...files, "herdr-layout/keys.json", "herdr-layout/extra.json"]), []);
+  // mods/ in the layout entry: one problem naming it, not "move the layout out of herdr-layout/".
+  const withMods = [...files, "herdr-layout/mods/am-sidebar/main.js"];
+  assert.deepEqual(problemsOf(withMods), [
+    "herdr-layout/mods/: the layout entry keeps no mods of its own; the pack's mods are herdr/'s, which its RECIPE adds first, so remove this copy",
   ]);
   assert.deepEqual(layoutEntryProblems(files.filter((f) => !f.endsWith(".png"))), ["herdr-layout/preview.png: missing; a layout entry needs it"]);
   assert.deepEqual(layoutEntryProblems([...files, "herdr-layout/layouts/nested/x.json"]), [], "a layout of its own beside it is fine");

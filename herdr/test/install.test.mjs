@@ -993,7 +993,7 @@ test("every pack mod docks nowhere by itself; the shipped layout names only pack
   assert.ok(named.includes("am-sidebar"));
   assert.deepEqual(named.filter((m) => !PACK_MODS.includes(m) && !stock.has(m)), []);
   // One layout (D8), in its own entry beside herdr/: none in herdr/ (herdr.dev would skip the repo) or the sidebar.
-  // herdr.dev lists a layout only from its entry's layouts/, and skips a .json at the entry's root.
+  // herdr.dev lists a layout only from its entry's layouts/ (a .json at the entry's root is ignored).
   assert.deepEqual(readdirSync(join(ROOT, "..", "herdr-layout", "layouts")), ["automagik.json"]);
   assert.ok(!readdirSync(join(ROOT, "..", "herdr-layout")).includes("automagik.json"));
   assert.equal(existsSync(join(ROOT, "layouts")), false, "no layouts/ in the herdr/ entry");

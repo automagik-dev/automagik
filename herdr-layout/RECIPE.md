@@ -8,9 +8,15 @@ first, or the layout opens with empty blocks.
 
 1. Add the Automagik Herdr mod entry first:
    https://github.com/automagik-dev/automagik/tree/dev/herdr
-   Read its `RECIPE.md` and install the pack as it says. That puts every mod this layout names in
-   `~/.config/herdr-app/mods/`, and the pack's install also puts this layout in
-   `~/.config/herdr-app/layouts/automagik.json`.
+   On a Mac with Node 22.7 or later, its install line
+   ([herdr/README.md](https://github.com/automagik-dev/automagik/blob/dev/herdr/README.md#install)) is:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash
+   ```
+
+   That puts every mod this layout names in `~/.config/herdr-app/mods/`, and also puts this layout
+   in `~/.config/herdr-app/layouts/automagik.json`.
 2. If `~/.config/herdr-app/layouts/automagik.json` is still missing, copy this folder's
    `layouts/automagik.json` there.
 3. Switch Herdr to it: `herdr-app do layout.switch '{"name":"automagik"}'`.
