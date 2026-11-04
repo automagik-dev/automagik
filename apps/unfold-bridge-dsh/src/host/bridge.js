@@ -142,7 +142,10 @@ async function readJson(req, maxBody) {
 // Unfold calls DeepSeek directly, so DeepSeek is one row in Unfold, never a second one through
 // here. A chat to such a route is still served, for an app that saved one before this.
 export const isDeepSeekRoute = id => /^deepseek(?:-|$)/i.test(String(id))
-export const isDeepSeekModel = id => /deepseek/i.test(String(id))
+// A DeepSeek model of another route has a `deepseek` segment in its id, the vendor part an
+// aggregator puts first (`deepseek/deepseek-chat`, or `openrouter/deepseek/deepseek-chat` with
+// its route). Only a whole segment counts: `notdeepseek-x` or `foo/deepseekish` is not one.
+export const isDeepSeekModel = id => String(id).split('/').some(segment => segment.toLowerCase() === 'deepseek')
 // The level ids that mean no thinking, in the vocabularies DSH's adapters use.
 const OFF = new Set(['off', 'none'])
 

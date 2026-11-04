@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { request } from 'node:http'
-import { startBridge, takePort } from '../src/host/bridge.js'
+import { isDeepSeekModel, startBridge, takePort } from '../src/host/bridge.js'
 import { TEXT, assistant, failure, fakeLlm } from './fake-llm.js'
 import { hold, onFreePort } from './ports.js'
 
@@ -409,16 +409,31 @@ test('/v1/models leaves out DeepSeek models another route serves; a chat to a De
   const llm = fakeLlm({
     providers: [{ id: 'openrouter', name: 'OpenRouter' }, { id: 'deepseek-official', name: 'DeepSeek' }],
     models: {
-      openrouter: [{ id: 'deepseek/deepseek-chat', name: 'DeepSeek V4' }, { id: 'anthropic/claude-x', name: 'Claude X' }],
+      openrouter: [{ id: 'deepseek/deepseek-chat', name: 'DeepSeek V4' }, { id: 'anthropic/claude-x', name: 'Claude X' }, { id: 'notdeepseek-x', name: 'Not DeepSeek' }, { id: 'foo/deepseekish', name: 'DeepSeekish' }],
       'deepseek-official': [{ id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' }],
     },
   })
   const b = await bridge(llm)
   try {
-    assert.deepEqual(JSON.parse((await call(b.port)).text).data.map(model => model.id), ['openrouter/anthropic/claude-x'])
+    // Only a whole `deepseek` segment leaves the list; a name that merely holds the word stays.
+    assert.deepEqual(JSON.parse((await call(b.port)).text).data.map(model => model.id), ['openrouter/anthropic/claude-x', 'openrouter/notdeepseek-x', 'openrouter/foo/deepseekish'])
     // An app that saved a DeepSeek route before this still gets its answer.
     const res = await call(b.port, { method: 'POST', path: '/v1/chat/completions', body: chat() })
     assert.equal(res.status, 200)
     assert.equal(llm.calls.at(-1).provider, 'deepseek-official')
   } finally { await b.close() }
+})
+
+test('a DeepSeek model is one with a whole `deepseek` segment in its id, never a substring', () => {
+  // The form the listing passes: a provider's own model id, before its route is put in front.
+  assert.equal(isDeepSeekModel('deepseek/deepseek-chat'), true)
+  // The same model as the menu shows it, with its route.
+  assert.equal(isDeepSeekModel('openrouter/deepseek/deepseek-chat'), true)
+  assert.equal(isDeepSeekModel('DeepSeek/DeepSeek-V4'), true)
+  // A name that only holds the word is not one.
+  assert.equal(isDeepSeekModel('notdeepseek-x'), false)
+  assert.equal(isDeepSeekModel('foo/deepseekish'), false)
+  assert.equal(isDeepSeekModel('openrouter/notdeepseek/model'), false)
+  assert.equal(isDeepSeekModel('anthropic/claude-x'), false)
+  assert.equal(isDeepSeekModel('openrouter/anthropic/claude-x'), false)
 })

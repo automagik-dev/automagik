@@ -8,7 +8,7 @@ The routes are whatever your DSH has: an API key, DSH's own sign-ins, or a provi
 
 | Route | What |
 |---|---|
-| `GET /v1/models` | Every model of every provider route except DeepSeek (Unfold calls DeepSeek directly): no route of DeepSeek's own (`deepseek`, `deepseek-official`, …) and no DeepSeek model another route serves (an aggregator's `openrouter/deepseek/…`), as `provider/model`. Each entry has the model's and the provider's display names, `ready` (false when its provider's API key is not set in DSH, so every call would fail) and `levels` (the thinking levels its adapter really has, least first; empty when it has none), and nothing else. |
+| `GET /v1/models` | Every model of every provider route except DeepSeek (Unfold calls DeepSeek directly): no route of DeepSeek's own (`deepseek`, `deepseek-official`, …) and no DeepSeek model another route serves (one whose id has a whole `deepseek` segment, an aggregator's `openrouter/deepseek/…`; `foo/deepseekish` stays), as `provider/model`. Each entry has the model's and the provider's display names, `ready` (false when its provider's API key is not set in DSH, so every call would fail) and `levels` (the thinking levels its adapter really has, least first; empty when it has none), and nothing else. |
 | `POST /v1/chat/completions` | One model call, streamed (`stream: true`, OpenAI SSE, with `stream_options.include_usage`) or whole. |
 
 **A request may carry:**
