@@ -299,6 +299,9 @@ fn move_file(
         if !(adopt && same_file(&src, &dst)?) {
             return Ok(Step::Kept);
         }
+        // An interrupted run may have placed it and stopped before the fsync.
+        File::open(&dst)?.sync_all()?;
+        sync_dir(new)?;
     } else {
         match place(&src, &dst, force_copy) {
             Ok(()) => {}
@@ -502,13 +505,18 @@ pub fn migrate_with(old: &Path, new: &Path, force_copy: bool) -> io::Result<Migr
 
     if moving {
         // Every file is durably in `new` before any old name goes, so until then `old` still has
-        // the whole generation. Then the old names go, sidecars first, the database last.
+        // the whole generation. Files an interrupted run already put there are fsynced again, with
+        // the directory: that run may have stopped before its fsync. Then the old names go,
+        // sidecars first, the database last.
         for f in DB_UNIT {
             let (src, dst) = (old.join(f), new.join(f));
-            if exists(&src) && !exists(&dst) {
+            if exists(&dst) {
+                File::open(&dst)?.sync_all()?;
+            } else if exists(&src) {
                 place(&src, &dst, force_copy)?;
             }
         }
+        sync_dir(new)?;
         for f in DB_UNIT {
             let src = old.join(f);
             if exists(&src) {

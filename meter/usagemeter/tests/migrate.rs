@@ -513,3 +513,60 @@ fn a_failed_directory_fsync_keeps_the_source() {
     assert_eq!(fs::read(old.join("meter.db")).unwrap(), b"db");
     assert_eq!(fs::read(old.join("meter.db-wal")).unwrap(), b"wal");
 }
+
+/// A move marker recording these unit files, as `migrate` writes it.
+fn marker_of(files: &[(&str, &[u8])]) -> Vec<u8> {
+    let files: serde_json::Map<String, serde_json::Value> = files
+        .iter()
+        .map(|(f, b)| {
+            let print = serde_json::json!({"len": b.len(), "sha256": sha256_hex(b)});
+            (f.to_string(), print)
+        })
+        .collect();
+    serde_json::to_vec(&serde_json::json!({"v": 1, "files": files})).unwrap()
+}
+
+/// Round 2, finding 1: a resumed move adopts the files an earlier run already linked into the new
+/// directory. It fsyncs them and the directory before it removes an old name, so a directory that
+/// cannot be fsynced stops the run with the source database still in place.
+#[cfg(unix)]
+#[test]
+fn a_resumed_move_fsyncs_what_it_adopts_before_removing_the_source() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = tempfile::tempdir().unwrap();
+    let (old, new) = (t.path().join("old"), t.path().join("new"));
+    fs::create_dir_all(&old).unwrap();
+    meter::paths::ensure_dir(&new).unwrap();
+    let db = old.join("meter.db");
+    {
+        let c = rusqlite::Connection::open(&db).unwrap();
+        c.execute_batch(
+            "CREATE TABLE usage (id TEXT PRIMARY KEY); INSERT INTO usage VALUES('base');",
+        )
+        .unwrap();
+    }
+    assert!(
+        !old.join("meter.db-wal").exists(),
+        "a rollback journal leaves no wal"
+    );
+    // The earlier run wrote its marker and linked the database, then stopped before the fsync.
+    let bytes = fs::read(&db).unwrap();
+    fs::write(
+        new.join(".meter-migrating"),
+        marker_of(&[("meter.db", &bytes)]),
+    )
+    .unwrap();
+    fs::hard_link(&db, new.join("meter.db")).unwrap();
+    // Writable and searchable but not readable: the files inside open, the directory does not.
+    fs::set_permissions(&new, fs::Permissions::from_mode(0o300)).unwrap();
+    if fs::File::open(&new).is_ok() {
+        // Running as root: the mode does not stop the open.
+        fs::set_permissions(&new, fs::Permissions::from_mode(0o700)).unwrap();
+        return;
+    }
+    let r = meter::paths::migrate(&old, &new);
+    fs::set_permissions(&new, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(r.is_err(), "{r:?}");
+    assert!(db.exists(), "the source database stays");
+    assert!(later_row(&db, "base"), "with its row");
+}
