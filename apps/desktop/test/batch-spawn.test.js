@@ -16,6 +16,7 @@ test('only a Windows batch file goes through cmd.exe, with every argument quoted
   // A path cmd.exe would split is quoted; one it would read into is refused.
   assert.deepEqual(batchSafe('C:\\My Tools\\run.cmd', [], {}, 'win32'), ['"C:\\My Tools\\run.cmd"', [], { shell: true }])
   assert.throws(() => batchSafe('C:\\100%\\run.cmd', [], {}, 'win32'), /refusing to pass/)
+  assert.deepEqual(batchSafe('scripts/run.cmd', [], {}, 'win32'), ['"scripts/run.cmd"', [], { shell: true }])
 })
 
 test('a quoted argument reads back as it was, and one cmd.exe would expand is refused', () => {

@@ -7,10 +7,11 @@
 
 const BATCH = /\.(cmd|bat)$/i
 const UNSAFE = /["%\r\n\0]/
-// A name or path cmd.exe reads as one word. The batch file itself is quoted only when it is not
-// one: started by a quoted bare name ("npm.cmd"), a batch file finds itself in the current
-// folder (%~dp0) instead of its own, and npm.cmd then looks for npm there.
-const PLAIN = /^[\w.:\\/-]+$/
+// A name or a backslashed path cmd.exe reads as one word. The batch file itself is quoted only
+// when it is not one: started by a quoted bare name ("npm.cmd"), a batch file finds itself in
+// the current folder (%~dp0) instead of its own, and npm.cmd then looks for npm there. A `/`
+// path is quoted too: unquoted, cmd.exe reads `./x.cmd` as the command `.`.
+const PLAIN = /^[\w.:\\-]+$/
 
 /** One argument as cmd.exe and the C runtime behind it read it back, unchanged. */
 export function quoteForCmd(arg) {

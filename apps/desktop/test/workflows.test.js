@@ -54,7 +54,9 @@ test('every release builds Windows, publishes its installer and feed, and never 
   const text = readFileSync(new URL('../../../.github/workflows/desktop-build.yml', import.meta.url), 'utf8')
   assert.match(text, /- target: windows\r?\n {12}os: windows-latest\r?\n/)
   assert.match(text, /npx --no-install electron-builder --win nsis --x64 --publish never/)
-  assert.match(text, /if \[\[ -z "\$\{WIN_CSC_LINK\}" \]\]; then\r?\n {12}echo "::warning ::No Windows code-signing certificate: the installer is unsigned"\r?\n {12}unset WIN_CSC_LINK WIN_CSC_KEY_PASSWORD\r?\n/)
+  assert.match(text, /if \[\[ -z "\$\{WIN_CSC_LINK\}" \]\]; then\r?\n {12}\[\[ "\$\{signed\}" == true \]\] \|\| echo "::warning ::No Windows code-signing certificate: the installer is unsigned"\r?\n {12}unset WIN_CSC_LINK WIN_CSC_KEY_PASSWORD\r?\n/)
+  // A build meant to be signed (a certificate, or Azure Trusted Signing) fails unless it is.
+  assert.match(text, /if \[\[ "\$\{signed\}" == true && "\$\{status\}" != Valid\* \]\]; then/)
   assert.match(text, /node scripts\/check-feed\.mjs dist\/latest\.yml/)
   assert.match(text, /need\+=\("Automagik-\$\{VERSION\}-win-x64\.exe" latest\.yml\)/)
   assert.match(text, /apps\/desktop\/dist\/latest\.yml\r?\n/)

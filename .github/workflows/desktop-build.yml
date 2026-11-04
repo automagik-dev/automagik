@@ -204,20 +204,25 @@ jobs:
         env:
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          # Azure Trusted Signing, once electron-builder.yml has its azureSignOptions.
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
         run: |
           set -euo pipefail
           # Only the Windows certificate signs here, never one meant for another platform.
           unset CSC_LINK CSC_KEY_PASSWORD
+          signed=false
+          [[ -n "${WIN_CSC_LINK}" || -n "${AZURE_CLIENT_ID}" ]] && signed=true
           if [[ -z "${WIN_CSC_LINK}" ]]; then
-            echo "::warning ::No Windows code-signing certificate: the installer is unsigned"
+            [[ "${signed}" == true ]] || echo "::warning ::No Windows code-signing certificate: the installer is unsigned"
             unset WIN_CSC_LINK WIN_CSC_KEY_PASSWORD
           fi
+          [[ -n "${AZURE_CLIENT_ID}" ]] || unset AZURE_CLIENT_ID
           npx --no-install electron-builder --win nsis --x64 --publish never
           ls -l dist
           exe=$(ls dist/*-win-x64.exe)
           status=$(powershell -NoProfile -Command "(Get-AuthenticodeSignature -LiteralPath '${exe}').Status")
           echo "${exe}: ${status}"
-          if [[ -n "${WIN_CSC_LINK:-}" && "${status}" != Valid* ]]; then
+          if [[ "${signed}" == true && "${status}" != Valid* ]]; then
             echo "::error ::${exe} is not validly signed (${status})"
             exit 1
           fi
