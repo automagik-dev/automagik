@@ -39,6 +39,7 @@ TypeScript became JavaScript with JSDoc types; the code is otherwise as upstream
 | `paste.js` | `src/shared/native-chat/input/native-chat-paste-bytes.ts` | `7b9cd53f5f719a233c96b7a7b23d281a5c5b4696` | Image-path paste left out |
 | | `src/shared/terminal-bracketed-paste-text.ts` | `425dcbd8d5853d3cf7213b770bc15695f16445d7` | — |
 | | `src/shared/terminal-input.ts` | `bdaa410d04b6f0c64e1f764d142f50df8dd2b62f` | Only `getTerminalInputByteLength`, measured with `Buffer.byteLength` |
+| `screen.js` | `src/renderer/src/components/native-chat/native-chat-scrape-fallback.ts` | `d40db3b76c0b713d9a1cbeb9c2434328be82e1d4` | `screenMessages` added (ours): herdr-core's `terminal.read` in |
 
 Tests ported to `node:test` (cases that exercise Orca code not taken are left out; fixtures are our
 own, synthetic):
@@ -53,16 +54,17 @@ own, synthetic):
 | | `src/main/native-chat/transcript-line-decoders-claude-queued-prompt.test.ts` | `543d923f84551cafecb18b053c41ce16821218c3` |
 | | `src/main/native-chat/transcript-line-decoders-claude-stop-hook.test.ts` | `733baa0602bec79dd40f3fbd3f6553b1690bb179` |
 
-`decode-codex.test.mjs` is ours: Orca has no direct test of that decoder.
+`decode-codex.test.mjs` and `screen.test.mjs` are ours: Orca has no direct test of those files.
 
 ## Ours, not Orca's
 
 `folder-rule.js` (the transcript folder rule, t2x5's), `cleanChatText` in `paste.js` (RFC 0015's
-cleaning rule) and the RFC's row model in `types.js`. The folder rule's cases live in
+cleaning rule), the RFC's row model in `types.js`, and the engine's read side (delivery 3a):
+`hc.js` (the seam to herdr-core), `find.js`, `tail.js`, `status.js`, `rows.js`, `projection.js`,
+with `fake-hc.mjs` for tests. The folder rule's cases live in
 `herdr/test/fixtures/transcript-folder-rule.json`, shared with am-sidebar's copy of the rule.
 
-## Still to port (RFC 0015 delivery 3)
+## Still to port (RFC 0015 delivery 3b)
 
-`screen.js` from `src/renderer/src/components/native-chat/native-chat-scrape-fallback.ts`;
 `answer.js` from `src/shared/native-chat/input/native-chat-{approval-envelope,answer-stepping}.ts`
-and `src/shared/native-chat/native-chat-agent-support.ts`. They will be added to the tables above.
+and `src/shared/native-chat/native-chat-agent-support.ts`. It will be added to the tables above.

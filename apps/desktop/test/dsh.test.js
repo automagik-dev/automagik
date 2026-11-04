@@ -2,20 +2,37 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join, resolve } from 'node:path'
 import { EventEmitter } from 'node:events'
 import { createServer } from 'node:net'
 import { test } from 'node:test'
-import { appHome, dshEnv, dshRun, forgetDshLogins, freePort, guardContents, installProfile, keepPort, launchPort, launchUrlOf, listenFailed, mergeProfilePackage, mergeProfilePatch, migrateRenamed, migrateRetired, navigationOf, pageUrlOf, pinProfileStore, portFileOf, portFree, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, RETIRED, retirePatch, scrubBuildPaths, serveDsh, servesOrigin, SHIPPED_STORE, startDsh, startDshOnPort, stopDsh, storedPort, storeLayoutOf, writeTools } from '../src/dsh.js'
+import { appHome, dshEnv, dshRun, forgetDshLogins, freePort, guardContents, installProfile, keepPort, launchPort, launchUrlOf, listenFailed, mergeProfilePackage, mergeProfilePatch, migrateRenamed, migrateRetired, navigationOf, pageUrlOf, pinProfileStore, portFileOf, portFree, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, RETIRED, retirePatch, scrubBuildPaths, serveDsh, servesOrigin, SHIPPED_STORE, startDsh, startDshOnPort, stopDsh, storedPort, storeLayoutOf, toolFileOf, writeTools } from '../src/dsh.js'
+import { batchSafe } from '../scripts/batch-spawn.mjs'
+
+const posixOnly = { skip: process.platform === 'win32' ? 'the tools are sh scripts here' : false }
+const windowsOnly = { skip: process.platform === 'win32' ? false : 'Windows only' }
+
+// Windows cannot remove a folder a process still runs in, and t.after runs its hooks in the order
+// they were added: the folder goes in one hook, after `stop` (set once the test starts its dsh),
+// retrying while a stopped process is still on its way out.
+function scratch(t, prefix) {
+  const scope = { root: mkdtempSync(join(tmpdir(), prefix)), stop: async () => {} }
+  t.after(async () => {
+    await scope.stop()
+    rmSync(scope.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  })
+  return scope
+}
 
 test('the app keeps everything in one folder under ~/.automagik, apart from a dsh you already run', () => {
   assert.equal(appHome({}), join(homedir(), '.automagik', 'desktop'))
-  assert.equal(appHome({ AUTOMAGIK_HOME: '/srv/automagik' }), '/srv/automagik/desktop')
+  // Paths in the platform's own form: on Windows /srv/automagik is D:\srv\automagik.
+  assert.equal(appHome({ AUTOMAGIK_HOME: '/srv/automagik' }), join(resolve('/srv/automagik'), 'desktop'))
   assert.equal(appHome({ AUTOMAGIK_HOME: '~/apps/automagik' }), join(homedir(), 'apps', 'automagik', 'desktop'))
   assert.equal(appHome({ AUTOMAGIK_HOME: ' ', OMNI_HOME: '/srv/omni', OMNI_DESKTOP_HOME: '/srv/old' }), join(homedir(), '.automagik', 'desktop'))
   const env = dshEnv({ base: { PATH: '/bin', DSH_HOME: '/home/me/.dsh' }, home: '/a/desktop', electronAsNode: true })
-  assert.equal(env.DSH_HOME, '/a/desktop/dsh')
-  assert.equal(env.AUTOMAGIK_BOTS_HOME, '/a/desktop/bots')
+  assert.equal(env.DSH_HOME, join('/a/desktop', 'dsh'))
+  assert.equal(env.AUTOMAGIK_BOTS_HOME, join('/a/desktop', 'bots'))
   // Omni's own folder is Omni's: the app names none, so its sandbox and downloads land in ~/.omni.
   assert.equal(env.OMNI_HOME, undefined)
   assert.equal(env.ELECTRON_RUN_AS_NODE, '1')
@@ -23,7 +40,7 @@ test('the app keeps everything in one folder under ~/.automagik, apart from a ds
   assert.equal(env.OMNI_CLIENT_ID, 'omni-desktop')
   // Nothing is reported: DSH's own opt-out (it does not read DO_NOT_TRACK), and the CLIs it runs.
   for (const name of ['DO_NOT_TRACK', 'DSH_TELEMETRY_DISABLED', 'DISABLE_TELEMETRY', 'OPENUI_TELEMETRY_DISABLED']) assert.equal(env[name], '1', name)
-  assert.equal(env.AUTOMAGIK_PRIVACY_FILE, '/a/desktop/privacy.json')
+  assert.equal(env.AUTOMAGIK_PRIVACY_FILE, join('/a/desktop', 'privacy.json'))
   // A share the person switched on drops its own opt-out, and only its own.
   const sharing = dshEnv({ base: {}, home: '/a', privacy: { 'deepseek-feedback': true } })
   assert.equal(sharing.DSH_TELEMETRY_DISABLED, undefined)
@@ -31,19 +48,19 @@ test('the app keeps everything in one folder under ~/.automagik, apart from a ds
   // Chosen nothing: Claude Code's own error reports work (not training data).
   assert.equal(env.DISABLE_ERROR_REPORTING, undefined)
   // The welcome counts the agents at work there, for an update while the person is away.
-  assert.equal(env.AUTOMAGIK_BUSY_FILE, '/a/desktop/busy.json')
+  assert.equal(env.AUTOMAGIK_BUSY_FILE, join('/a/desktop', 'busy.json'))
   // The person's PATH comes first; the usual tool folders follow (see toolDirs below).
-  assert.ok(env.PATH.startsWith('/bin:'))
+  assert.ok(env.PATH.startsWith(`/bin${delimiter}`))
   assert.equal(dshEnv({ base: {}, home: '/a' }).ELECTRON_RUN_AS_NODE, undefined)
 })
 
 test('resources come from the app when packaged and from build/ in a checkout', () => {
   assert.deepEqual(resourcesOf({ packaged: true, resourcesPath: '/opt/Omni/resources', appPath: '/x' }), {
-    bin: '/opt/Omni/resources/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js',
-    pnpm: '/opt/Omni/resources/runtime/node_modules/pnpm/bin/pnpm.cjs',
-    profile: '/opt/Omni/resources/profile',
+    bin: join('/opt/Omni/resources', 'runtime', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+    pnpm: join('/opt/Omni/resources', 'runtime', 'node_modules', 'pnpm', 'bin', 'pnpm.cjs'),
+    profile: join('/opt/Omni/resources', 'profile'),
   })
-  assert.equal(resourcesOf({ packaged: false, resourcesPath: '/x', appPath: '/src/apps/omni-desktop' }).profile, '/src/apps/omni-desktop/build/profile')
+  assert.equal(resourcesOf({ packaged: false, resourcesPath: '/x', appPath: '/src/apps/omni-desktop' }).profile, join('/src/apps/omni-desktop', 'build', 'profile'))
 })
 
 test('the shipped profile seeds a new home, and a new build replaces only its packages', async (t) => {
@@ -107,7 +124,8 @@ test('a first copy cut short leaves no profile behind, and the next start copies
   mkdirSync(`${target}.installing`, { recursive: true })
   writeFileSync(join(`${target}.installing`, 'cordis.patch.yml'), '- id: se')
   // A copy that fails on the way (an unreadable file stands in for the quit) puts nothing in place.
-  if (process.getuid?.() !== 0) {
+  // Windows has no unreadable mode (chmod sets read-only there), nor does root.
+  if (process.platform !== 'win32' && process.getuid?.() !== 0) {
     chmodSync(join(source, 'node_modules', 'a', 'index.js'), 0o000)
     await assert.rejects(installProfile({ dshHome, source }))
     assert.equal(existsSync(target), false, 'no profile until the copy is whole')
@@ -303,18 +321,62 @@ setInterval(() => {}, 1000)
   assert.notEqual(child.exitCode ?? child.signalCode, null)
 })
 
-test('a dsh that exits before it is ready is reported, and one that never says so times out', async (t) => {
-  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-fail-'))
-  t.after(() => rmSync(root, { recursive: true, force: true }))
-  const dies = join(root, 'dies.mjs')
-  writeFileSync(dies, 'process.exit(3)')
-  await assert.rejects(startDsh({ node: process.execPath, bin: dies, env: process.env, port: await freePort(), cwd: root }), /exited before it was ready \(3\)/)
-  const silent = join(root, 'silent.mjs')
-  writeFileSync(silent, 'setInterval(() => {}, 1000)')
-  await assert.rejects(startDsh({ node: process.execPath, bin: silent, env: process.env, port: await freePort(), cwd: root, timeoutMs: 300 }), /did not start within/)
+// Windows: dsh's whole tree ends, so nothing it started keeps files of the app's folder open
+// under an update's installer.
+test('on Windows stopping dsh ends its whole process tree with taskkill', async () => {
+  const child = Object.assign(new EventEmitter(), { pid: 4242, exitCode: null, signalCode: null, kills: [] })
+  child.kill = signal => child.kills.push(signal ?? 'default')
+  const calls = []
+  const run = (file, args, options, done) => { calls.push([file, ...args]); setImmediate(() => { done(null); child.emit('exit', 1, null) }) }
+  await stopDsh(child, 8_000, { platform: 'win32', env: { SystemRoot: 'C:\\Windows' }, run })
+  assert.deepEqual(calls, [['C:\\Windows\\System32\\taskkill.exe', '/pid', '4242', '/T', '/F']])
+  assert.deepEqual(child.kills, [])
+  // taskkill failing: dsh alone, as before.
+  const lone = Object.assign(new EventEmitter(), { pid: 7, exitCode: null, signalCode: null })
+  lone.kill = () => setImmediate(() => lone.emit('exit', 1, null))
+  await stopDsh(lone, 8_000, { platform: 'win32', env: {}, run: (file, args, options, done) => done(new Error('denied')) })
+  // A dsh that has started nothing yet ends at once, without taskkill.
+  const fresh = Object.assign(new EventEmitter(), { pid: 8, exitCode: null, signalCode: null })
+  fresh.kill = () => setImmediate(() => fresh.emit('exit', 1, null))
+  await stopDsh(fresh, 8_000, { platform: 'win32', env: {}, tree: false, run: () => assert.fail('no taskkill') })
 })
 
-test('dsh gets node and pnpm on its PATH, both on the app\'s own Node', (t) => {
+test('on Windows a dsh\'s own children are gone once it is stopped', windowsOnly, async (t) => {
+  const scope = scratch(t, 'omni-desktop-tree-')
+  const parent = join(scope.root, 'parent.cjs')
+  writeFileSync(parent, `const { spawn } = require('node:child_process')
+const kid = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+console.log(String(kid.pid))
+setInterval(() => {}, 1000)
+`)
+  const { spawn } = await import('node:child_process')
+  const child = spawn(process.execPath, [parent], { cwd: scope.root, stdio: ['ignore', 'pipe', 'ignore'] })
+  const kid = Number(await new Promise(resolvePid => child.stdout.once('data', chunk => resolvePid(String(chunk).trim()))))
+  const alive = pid => { try { process.kill(pid, 0); return true } catch { return false } }
+  assert.equal(alive(kid), true)
+  await stopDsh(child)
+  // taskkill /T ends the tree before it returns; give Windows a moment to reap.
+  for (let i = 0; i < 20 && alive(kid); i++) await new Promise(r => setTimeout(r, 100))
+  assert.equal(alive(kid), false, 'the grandchild outlived dsh')
+})
+
+test('a dsh that exits before it is ready is reported, and one that never says so times out', async (t) => {
+  const scope = scratch(t, 'omni-desktop-fail-')
+  const { root } = scope
+  // startDsh stops a dsh that timed out without waiting for it to go: the test waits for both.
+  const children = []
+  scope.stop = () => Promise.all(children.map(child => stopDsh(child)))
+  const onSpawn = child => children.push(child)
+  const dies = join(root, 'dies.mjs')
+  writeFileSync(dies, 'process.exit(3)')
+  await assert.rejects(startDsh({ node: process.execPath, bin: dies, env: process.env, port: await freePort(), cwd: root, onSpawn }), /exited before it was ready \(3\)/)
+  const silent = join(root, 'silent.mjs')
+  writeFileSync(silent, 'setInterval(() => {}, 1000)')
+  await assert.rejects(startDsh({ node: process.execPath, bin: silent, env: process.env, port: await freePort(), cwd: root, timeoutMs: 300, onSpawn }), /did not start within/)
+})
+
+
+test('dsh gets node and pnpm on its PATH, both on the app\'s own Node', posixOnly, (t) => {
   const root = mkdtempSync(join(tmpdir(), 'omni-desktop-tools-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const script = join(root, "it's pnpm.cjs")
@@ -322,35 +384,66 @@ test('dsh gets node and pnpm on its PATH, both on the app\'s own Node', (t) => {
   const dir = writeTools({ dir: join(root, 'bin'), node: process.execPath, pnpm: script })
   assert.deepEqual(JSON.parse(execFileSync(join(dir, 'pnpm'), ['add', 'a b'], { encoding: 'utf8' })), ['1', 'add', 'a b'])
   assert.equal(execFileSync(join(dir, 'node'), ['-p', '6*7'], { encoding: 'utf8' }).trim(), '42')
-  const tools = '/u/.local/bin:/u/.claude/local:/opt/homebrew/bin:/usr/local/bin'
-  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', binDir: dir, userHome: '/u' }).PATH, `/bin:${tools}:${dir}`)
-  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', userHome: '/u' }).PATH, `/bin:${tools}`)
+})
+
+test('on Windows node and pnpm are batch files that run on the app\'s own Node', windowsOnly, (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni desktop tools-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const script = join(root, "it's pnpm.cjs")
+  writeFileSync(script, 'console.log(JSON.stringify([process.env.ELECTRON_RUN_AS_NODE, ...process.argv.slice(2)]))')
+  const dir = writeTools({ dir: join(root, 'bin'), node: process.execPath, pnpm: script })
+  const run = (name, args) => execFileSync(...batchSafe(join(dir, `${name}.cmd`), args, { encoding: 'utf8', env: { ...process.env, ELECTRON_RUN_AS_NODE: '' } }))
+  assert.deepEqual(JSON.parse(run('pnpm', ['add', 'a b'])), ['1', 'add', 'a b'])
+  assert.equal(run('node', ['-p', '6*7']).trim(), '42')
+  assert.equal(existsSync(join(dir, 'pnpm')), false, 'no sh script beside the batch files')
+})
+
+test('dsh\'s PATH ends with the tool folders and then the app\'s own node and pnpm', () => {
+  const dir = join('/app', 'bin')
+  const tools = [join('/u', '.local', 'bin'), join('/u', '.claude', 'local'), '/opt/homebrew/bin', '/usr/local/bin']
+  const path = (...dirs) => dirs.join(delimiter)
+  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', binDir: dir, userHome: '/u' }).PATH, path('/bin', ...tools, dir))
+  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', userHome: '/u' }).PATH, path('/bin', ...tools))
   // acp-dsh installs its adapters with the app's own pnpm, whatever pnpm comes first on PATH.
-  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', binDir: dir, userHome: '/u' }).AUTOMAGIK_PNPM, join(dir, 'pnpm'))
+  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', binDir: dir, userHome: '/u', platform: 'linux' }).AUTOMAGIK_PNPM, join(dir, 'pnpm'))
+  assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', binDir: dir, userHome: '/u', platform: 'win32' }).AUTOMAGIK_PNPM, join(dir, 'pnpm.cmd'))
   assert.equal(dshEnv({ base: { PATH: '/bin' }, home: '/a', userHome: '/u' }).AUTOMAGIK_PNPM, undefined)
   // A folder already on the person's PATH keeps its place and is not repeated.
-  assert.equal(dshEnv({ base: { PATH: '/usr/local/bin:/bin' }, home: '/a', userHome: '/u' }).PATH, '/usr/local/bin:/bin:/u/.local/bin:/u/.claude/local:/opt/homebrew/bin')
+  assert.equal(dshEnv({ base: { PATH: path('/usr/local/bin', '/bin') }, home: '/a', userHome: '/u' }).PATH, path('/usr/local/bin', '/bin', ...tools.slice(0, 3)))
 })
 
 test('a start leaves node and pnpm as they are when they already say the same, and rewrites them when not', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'omni-desktop-tools-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const dir = join(root, 'bin')
+  const file = name => toolFileOf(dir, name)
   writeTools({ dir, node: '/app/one/node', pnpm: '/app/one/pnpm.cjs' })
   const old = new Date(Math.floor(Date.now() / 1000) * 1000 - 60_000)
-  for (const name of ['node', 'pnpm']) utimesSync(join(dir, name), old, old)
-  const unchanged = name => statSync(join(dir, name)).mtimeMs === old.getTime()
+  for (const name of ['node', 'pnpm']) utimesSync(file(name), old, old)
+  const unchanged = name => statSync(file(name)).mtimeMs === old.getTime()
   writeTools({ dir, node: '/app/one/node', pnpm: '/app/one/pnpm.cjs' })
   assert.ok(unchanged('node') && unchanged('pnpm'), 'nothing is written when nothing changed')
-  // A tool that lost its execute bit is written again.
-  chmodSync(join(dir, 'pnpm'), 0o644)
-  writeTools({ dir, node: '/app/one/node', pnpm: '/app/one/pnpm.cjs' })
-  assert.equal(statSync(join(dir, 'pnpm')).mode & 0o777, 0o755)
-  assert.ok(unchanged('node'))
+  if (process.platform !== 'win32') {
+    // A tool that lost its execute bit is written again (Windows keeps no execute bit).
+    chmodSync(file('pnpm'), 0o644)
+    writeTools({ dir, node: '/app/one/node', pnpm: '/app/one/pnpm.cjs' })
+    assert.equal(statSync(file('pnpm')).mode & 0o777, 0o755)
+    assert.ok(unchanged('node'))
+  }
   // The app moved (a new install): both name the new path.
   writeTools({ dir, node: '/app/two/node', pnpm: '/app/one/pnpm.cjs' })
-  assert.ok(!unchanged('node') && readFileSync(join(dir, 'node'), 'utf8').includes("'/app/two/node'"))
-  assert.ok(readFileSync(join(dir, 'pnpm'), 'utf8').includes("'/app/two/node'"))
+  assert.ok(!unchanged('node') && readFileSync(file('node'), 'utf8').includes('/app/two/node'))
+  assert.ok(readFileSync(file('pnpm'), 'utf8').includes('/app/two/node'))
+})
+
+test('a Windows batch tool quotes its paths and doubles a %', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-tools-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const dir = writeTools({ dir: join(root, 'bin'), node: 'C:\\Users\\Ana 100%\\Automagik.exe', pnpm: 'C:\\A\\pnpm.cjs', platform: 'win32' })
+  const text = readFileSync(join(dir, 'pnpm.cmd'), 'utf8')
+  assert.match(text, /^@echo off\r\n/)
+  assert.match(text, /\r\nset ELECTRON_RUN_AS_NODE=1\r\n"C:\\Users\\Ana 100%%\\Automagik\.exe" "C:\\A\\pnpm\.cjs" %\*\r\n$/)
+  assert.equal(existsSync(join(dir, 'pnpm')), false)
 })
 
 test('an update adds the settings a newer build ships and keeps every one the user has', () => {
@@ -710,8 +803,8 @@ test('the page\'s origin stays the same from one start to the next, and moves on
 })
 
 test('a port taken after the app looked: dsh exits on the listen error and starts once more on a fresh port', async (t) => {
-  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-race-'))
-  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const scope = scratch(t, 'omni-desktop-race-')
+  const { root } = scope
   const bin = join(root, 'fake-dsh.mjs')
   writeFileSync(bin, LISTENING_DSH)
   const taken = await squat(t)
@@ -720,7 +813,7 @@ test('a port taken after the app looked: dsh exits on the listen error and start
 
   const told = []
   const running = await startDshOnPort({ node: process.execPath, bin, env: process.env, port: taken, cwd: root, onPort: next => told.push(next) })
-  t.after(() => stopDsh(running.child))
+  scope.stop = () => stopDsh(running.child)
   const { port } = new URL(running.url)
   assert.notEqual(Number(port), taken)
   assert.deepEqual(told, [Number(port)], 'the app hears the new port before dsh is ready on it')
@@ -827,14 +920,14 @@ test('a quit after the retry spawned stops the retry\'s dsh, and one spawned aft
 })
 
 test('a port that cannot be kept is reported and the start goes on; the page URL is refused off the origin', async (t) => {
-  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-unkept-'))
-  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const scope = scratch(t, 'omni-desktop-unkept-')
+  const { root } = scope
   const bin = join(root, 'fake-dsh.mjs')
   writeFileSync(bin, LISTENING_DSH)
   const run = dshRun()
   const unkept = []
   const running = await serveDsh({ run, portFile: join(root, 'missing', 'dsh-port'), node: process.execPath, bin, env: process.env, port: await freePort(), cwd: root, onUnkept: error => unkept.push(error.code) })
-  t.after(() => run.stop())
+  scope.stop = () => run.stop()
   assert.deepEqual(unkept, ['ENOENT'])
   const { origin } = new URL(running.url)
   assert.equal(pageUrlOf(running, origin), running.url)

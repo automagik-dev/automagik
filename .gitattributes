@@ -1,0 +1,3 @@
+# The runtime patches are applied line by line to files npm installs with LF endings
+# (apps/desktop/scripts/runtime-patches.mjs): a Windows checkout keeps them as they are.
+apps/desktop/runtime/patches/*.patch -text

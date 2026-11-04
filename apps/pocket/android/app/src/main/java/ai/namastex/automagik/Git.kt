@@ -20,19 +20,37 @@ data class GitInfo(val branch: String?, val ahead: Int, val behind: Int, val top
     }
 
     companion object {
-        /** The fixed git commands the phone runs, each with `--no-optional-locks`, never through a shell. */
-        val STATUS = listOf("status", "--porcelain=v2", "--branch")
-        val REV_PARSE = listOf("rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir")
+        /*
+         * The phone runs only fixed, read-only git commands, each with `--no-optional-locks`: `status --porcelain=v2
+         * --branch`, `rev-parse --path-format=absolute --show-toplevel --git-common-dir`, and `config --get
+         * remote.origin.url` (exit 1 with no output: no origin). They go through a shell in one way only: the constant
+         * script [HostBatch.GIT], run as `sh -c <script> sh <folder>...`, so that one call reads every folder of a machine
+         * (one round trip per folder made the Teams tab take a minute on a desktop with many projects and machines). The
+         * script is never built from data; a folder reaches it only as a quoted positional parameter.
+         */
 
-        /** Reads the origin's URL; exit 1 with no output means the repository has no origin. */
-        val REMOTE = listOf("config", "--get", "remote.origin.url")
-
-        /** From [STATUS], [REV_PARSE] and [REMOTE] output, all run in [cwd]; null if rev-parse said too little. */
+        /** From `status`, `rev-parse` and the origin URL, all run in [cwd]; null if rev-parse said too little. */
         fun parse(status: String, revParse: String, cwd: String, remote: String = ""): GitInfo? {
             // git before 2.31 doesn't know --path-format: rev-parse echoes it, and the common dir may come back relative.
             val lines = revParse.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("--") }
             val top = lines.getOrNull(0)?.trimEnd('/')?.takeIf { it.startsWith("/") } ?: return null
             val common = lines.getOrNull(1)?.let { absolute(it, cwd) } ?: return null
+            return info(status, top, common, remote)
+        }
+
+        /**
+         * From `status`, and the top level and common dir each read by a `rev-parse` of its own (so a folder name holding
+         * a newline can't shift one into the other), all run in [cwd]; null if rev-parse said too little.
+         */
+        fun of(status: String, top: String, common: String, cwd: String, remote: String = ""): GitInfo? {
+            // git before 2.31 doesn't know --path-format: rev-parse echoes it, and the common dir may come back relative.
+            fun answer(s: String) = s.removePrefix("--path-format=absolute\n").trimEnd('\n')
+            val t = answer(top).trimEnd('/').takeIf { it.startsWith("/") } ?: return null
+            val c = answer(common).ifEmpty { return null }.let { absolute(it, cwd) }
+            return info(status, t, c, remote)
+        }
+
+        private fun info(status: String, top: String, common: String, remote: String): GitInfo {
             var branch: String? = null; var ahead = 0; var behind = 0
             for (line in status.lineSequence()) {
                 if (line.startsWith("# branch.head ")) branch = line.removePrefix("# branch.head ").trim()
