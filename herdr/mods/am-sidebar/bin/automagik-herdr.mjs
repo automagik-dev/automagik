@@ -831,9 +831,11 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   doc get <name> [--machine M]  a herdr-core doc's value, as one line of JSON on stdout (hc's
                                 doc.get through hc connect; read-only, 10 s at most); --machine:
                                 that linked machine's doc. Exit 0 with the JSON; 3: no such doc
-                                (never written, or deleted); 1: anything else, on stderr (a name
-                                is 1-128 of A-Z a-z 0-9 . _ -, and hc's own rule may refuse more).
-                                For a mod: it can exec this, and herdr-core's API needs stdin
+                                (never written, or deleted); 2: a usage mistake; 1: any other
+                                failure (a bad name, hc down, no answer). A message on stderr for
+                                every exit but 0: anything but 0 or 3 is a failure. A name is
+                                1-128 of A-Z a-z 0-9 . _ -, not . or .. (hc may refuse more).
+                                Made for mods: their exec has no stdin to speak hc connect with.
 
 --rank R sets the pane's role= label, one of: ${RANKS.join(", ")}.
 The main bot's pane is role=main, and a bot that leads others is role=captain, whatever their
@@ -3078,12 +3080,12 @@ export async function meterAfterUpdate(io) {
 /**
  * `doc get <name> [--machine M]`: a herdr-core doc's value as JSON on stdout (docGet.mjs: doc.get
  * through hc connect, read-only), for a mod that can only exec a program. Exit 3 when the doc is
- * not there; any other failure, a usage mistake included, exits 1.
+ * not there, 2 for a usage mistake, 1 for any other failure.
  */
 export async function cmdDoc(opts, [verb, name, ...rest]) {
-  if (verb !== "get") throw new CliError(`doc needs get${verb ? `, not "${verb}"` : ""}: doc get <name> [--machine M].`);
-  if (name === undefined) throw new CliError("doc get needs a doc name.");
-  if (rest.length) throw new CliError(`doc get takes one name (got ${[name, ...rest].join(" ")}).`);
+  if (verb !== "get") throw new CliError(`doc needs get${verb ? `, not "${verb}"` : ""}: doc get <name> [--machine M].`, 2);
+  if (name === undefined) throw new CliError("doc get needs a doc name.", 2);
+  if (rest.length) throw new CliError(`doc get takes one name (got ${[name, ...rest].join(" ")}).`, 2);
   let value;
   try {
     value = await docGet(name, { machine: opts.machine, hc: programPath("hc") ?? "hc" });

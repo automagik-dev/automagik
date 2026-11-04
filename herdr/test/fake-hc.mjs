@@ -14,6 +14,8 @@
 // machine's docs with `on`): { name: { value, version } }, absent { value: null, version: 0 }.
 // Every request is kept in state.connectRequests; doc.set (or anything else) fails the call
 // (exit 2), and state.connectHang answers nothing and runs on (its pid in state.connectPid).
+// state.connectBefore: raw lines printed before any answer (a notification, a broken line);
+// state.connectAnswer: a raw line printed in place of every answer.
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
@@ -299,8 +301,10 @@ switch (words[0]) {
       break;
     }
     save();
+    for (const raw of state.connectBefore ?? []) process.stdout.write(`${raw}\n`);
     for (const line of lines) {
       const { id, method, params } = JSON.parse(line);
+      if (state.connectAnswer !== undefined) { process.stdout.write(`${state.connectAnswer}\n`); continue; }
       if (method !== "doc.get") fail(`fake hc: connect refuses ${method}`, 2);
       const error = (kind, message) => out({ jsonrpc: "2.0", id, error: { code: -32000, message, data: { kind } } });
       let docs = state.docs ?? {};

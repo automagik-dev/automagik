@@ -81,21 +81,22 @@ test("doc get --machine: herdr-core's on param names the machine; its own docs a
 
 test("doc get: a bad name exits 1 before hc is asked", (t) => {
   const s = scene(t);
-  for (const name of ["", "a b", "../meter", "x".repeat(129), "doc;rm", "naïve"]) {
+  for (const name of ["", ".", "..", "a b", "../meter", "x".repeat(129), "doc;rm", "naïve"]) {
     const r = s.cli(["doc", "get", name]);
     assert.equal(r.code, 1, `${name}: ${r.err}`);
     assert.equal(r.out, "");
     assert.match(r.err, /not a doc name/);
   }
   assert.equal(s.cli(["doc", "get", "x".repeat(128)]).code, 3);
-  assert.deepEqual(s.calls(), [["connect"]]);
+  assert.equal(s.cli(["doc", "get", "...meter"]).code, 3);
+  assert.deepEqual(s.calls(), [["connect"], ["connect"]]);
 });
 
-test("doc: usage mistakes and hc failing exit 1 with a plain message", (t) => {
+test("doc: a usage mistake exits 2, hc failing 1, each with a plain message", (t) => {
   const s = scene(t, { fail: ["connect"] });
   for (const args of [["doc"], ["doc", "set", "x"], ["doc", "get"], ["doc", "get", "a", "b"]]) {
     const r = s.cli(args);
-    assert.equal(r.code, 1, `${args.join(" ")}: ${r.err}`);
+    assert.equal(r.code, 2, `${args.join(" ")}: ${r.err}`);
     assert.equal(r.out, "");
     assert.match(r.err, /^automagik-herdr: doc/);
   }
@@ -103,6 +104,27 @@ test("doc: usage mistakes and hc failing exit 1 with a plain message", (t) => {
   const down = s.cli(["doc", "get", "herdr-meter"]);
   assert.equal(down.code, 1);
   assert.match(down.err, /without an answer.*can't reach the server/);
+});
+
+test("doc get: a notification and a broken line before the answer are skipped", (t) => {
+  const s = scene(t, {
+    docs: { "herdr-meter": { value: METER, version: 7 } },
+    connectBefore: ["not json {", JSON.stringify({ jsonrpc: "2.0", method: "doc", params: { name: "herdr-meter", version: 8 } }),
+      JSON.stringify({ jsonrpc: "2.0", id: 2, result: { value: "someone else's", version: 1 } })],
+  });
+  const r = s.cli(["doc", "get", "herdr-meter"]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.out, `${JSON.stringify(METER)}\n`);
+});
+
+test("doc get: malformed JSON from hc, or an answer with no value, exits 1 with nothing on stdout", (t) => {
+  for (const answer of ['{"jsonrpc":"2.0","id":1,"result":{"value":', '{"jsonrpc":"2.0","id":1,"result":{"version":3}}', "[]"]) {
+    const s = scene(t, { docs: { "herdr-meter": { value: METER, version: 7 } }, connectAnswer: answer });
+    const r = s.cli(["doc", "get", "herdr-meter"]);
+    assert.equal(r.code, 1, `${answer}: ${r.err}`);
+    assert.equal(r.out, "");
+    assert.match(r.err, /^automagik-herdr: hc/);
+  }
 });
 
 test("docGet: no answer in time is a failure (1), and hc connect is ended", async (t) => {

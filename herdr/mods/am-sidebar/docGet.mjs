@@ -4,7 +4,7 @@
 // the one method this file ever sends. Apache-2.0.
 import { spawn } from "node:child_process";
 
-/** The names `doc get` accepts (herdr-core's own rule is narrower; it refuses the rest itself). */
+/** The names `doc get` accepts, but . and .. (herdr-core's own rule is narrower; it refuses the rest). */
 export const DOC_NAME = /^[A-Za-z0-9._-]{1,128}$/;
 export const DOC_TIMEOUT_MS = 10_000;
 
@@ -16,12 +16,12 @@ export class DocError extends Error {
 /**
  * The doc `name` holds (on `machine`, herdr-core's `on`, when given): its value. Throws a
  * DocError: 3 when it was never written or was deleted (herdr-core answers value null), 1 for a
- * bad name, hc missing or failing, an error answer, or no answer within `timeoutMs` (hc connect
+ * bad name (. and .. too), hc missing or failing, an error answer, or no answer within `timeoutMs` (hc connect
  * is then ended). `hc` is the program's path.
  */
 export function docGet(name, { machine, hc = "hc", timeoutMs = DOC_TIMEOUT_MS, env = process.env } = {}) {
-  if (typeof name !== "string" || !DOC_NAME.test(name)) {
-    return Promise.reject(new DocError(`"${name ?? ""}" is not a doc name: use 1-128 of A-Z a-z 0-9 . _ -.`));
+  if (typeof name !== "string" || !DOC_NAME.test(name) || name === "." || name === "..") {
+    return Promise.reject(new DocError(`"${name ?? ""}" is not a doc name: use 1-128 of A-Z a-z 0-9 . _ -, not . or ..`));
   }
   const params = machine === undefined ? { name } : { name, on: machine };
   const request = { jsonrpc: "2.0", id: 1, method: "doc.get", params };
