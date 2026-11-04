@@ -1251,20 +1251,22 @@ test('a memory review of a group names the group chat', async (t) => {
   assert.match(read('groups', 'r1', 'MEMORY.md'), /Keep replies under one page/)
 })
 
-// A session-reusing adapter, as the Claude Code route is: a request that names a live
-// Session and no auxiliary purpose resumes that Session's conversation, with its own
-// instructions and tools, and answers as the Bot would. Only a request with a purpose
-// and an empty tool list runs on its own, with the system prompt it was given.
+// The pinned Claude Code route (dsh-oh-my-claude): a request that names a live Session
+// and no auxiliary purpose resumes that Session's conversation, with its own instructions
+// and tools, and answers as the Bot would; a session-title request answers the title from
+// that Session. Only a compaction request runs on its own, with the system prompt it was
+// given; an empty tool list is the second guarantee that no tool is offered.
 function sessionReusingAdapter(ctx) {
   const isolated = ctx.llm.stream
-  const seen = { foreground: 0 }
+  const seen = { foreground: 0, title: 0 }
   ctx.llm.stream = async function* (request) {
-    const aside = request.purpose !== undefined && Array.isArray(request.tools) && request.tools.length === 0
+    const aside = request.purpose === 'compaction'
+      && Array.isArray(request.tools) && request.tools.length === 0
     if (request.sessionId === undefined || aside) {
       yield* isolated(request)
       return
     }
-    seen.foreground += 1
+    seen[request.purpose === 'session-title' ? 'title' : 'foreground'] += 1
     yield { type: 'text-delta', index: 0, text: 'Sure, I will call remember to save that for you.' }
     yield { type: 'finish', reason: { kind: 'stop' } }
   }
@@ -1281,7 +1283,7 @@ test('a memory review on a session-reusing adapter runs on its own, never in the
   await call('state', {})
   ctx.emit('agent/status', { agent: { id: 'b2', session: idleSession }, status: 'idle' })
   await reviewed(call)
-  assert.equal(adapter.foreground, 0)
+  assert.deepEqual([adapter.foreground, adapter.title], [0, 0])
   assert.equal(requests.length, 1)
   const [request] = requests
   // The route, the budget, the effort, the timeout and the chat it is counted for stay.
@@ -1289,6 +1291,8 @@ test('a memory review on a session-reusing adapter runs on its own, never in the
     [request.provider, request.model, request.sessionId, request.purpose, request.tools, request.maxTokens, request.reasoningEffort],
     ['deepseek', 'v4', 'b2', 'compaction', [], 2048, 'off'],
   )
+  // No history rides along: the request is its system prompt and this one user message.
+  assert.deepEqual(request.messages.map(message => message.role), ['user'])
   assert.ok(request.signal instanceof AbortSignal)
   assert.match(request.system, /^You keep the long-term memory of one Bot/)
   assert.match(read('bots', 'b2', 'MEMORY.md'), /- The user wants this remembered \[source: part 1 #10;/)
@@ -1313,11 +1317,14 @@ test('a memory summary, a panel question and the fallback to the Bot\'s own mode
   await summarized(call)
   const view = (await call('memory-view', { botId: 'b2' })).value
   const answer = await call('memory-ask', { botId: 'b2', text: 'What do I like?' })
-  assert.equal(adapter.foreground, 0)
+  assert.deepEqual([adapter.foreground, adapter.title], [0, 0])
   assert.equal(view.summary?.text, 'You like tea.')
   assert.equal(answer.value?.reply, 'You like tea.')
   assert.deepEqual(routes(requests), ['deepseek/flash@2048', 'deepseek/v4@2048', 'deepseek/v4@8192', 'deepseek/flash@2048'])
-  for (const request of requests) assert.deepEqual([request.sessionId, request.purpose, request.tools], ['b2', 'compaction', []])
+  for (const request of requests) {
+    assert.deepEqual([request.sessionId, request.purpose, request.tools], ['b2', 'compaction', []])
+    assert.deepEqual(request.messages.map(message => message.role), ['user'])
+  }
 })
 
 // A failed write leaves its change pending; the next read finishes it, and the next
