@@ -19,11 +19,12 @@ const MAX_REQUEST = 4096
 // A running bridge whose socket refuses (its backlog full): try again for this long, then fail.
 export const BUSY_RETRIES = 10
 export const BUSY_WAIT = 200
-// A Unix socket's path, its closing NUL byte included, fits in sun_path: 104 bytes on macOS, 108 on
-// Linux. A longer one fails to connect on Node 24; Node 22 cuts it short and binds the shorter path,
-// outside the state folder. So neither end uses a path that does not fit.
-export const SOCKET_MAX = process.platform === 'darwin' ? 104 : 108
-export const fits = (path) => Buffer.byteLength(path) < SOCKET_MAX
+// The longest Unix socket path, in bytes, that binds where it was asked. macOS, measured on Node 22
+// and 24: 104 binds; 105 fails with EINVAL on Node 24, and on Node 22 listen() reports success but
+// binds the path cut short, outside the state folder. Linux: not measured here; 107, from the classic
+// 108-byte sun_path less its NUL, kept on the safe side. Neither end uses a path that does not fit.
+export const SOCKET_MAX = process.platform === 'darwin' ? 104 : 107
+export const fits = (path) => Buffer.byteLength(path) <= SOCKET_MAX
 
 const readJson = (path, fallback) => { try { return JSON.parse(readFileSync(path, 'utf8')) } catch { return fallback } }
 
@@ -62,7 +63,7 @@ export function store(path, { held = () => {} } = {}) {
  * the server once it listens; the socket is the owner's only (and the state folder is 0700).
  */
 export function listen(path, { forget, log = () => {} }) {
-  if (!fits(path)) return Promise.reject(new Error(`${path} is ${Buffer.byteLength(path)} bytes, too long for a socket (under ${SOCKET_MAX})`))
+  if (!fits(path)) return Promise.reject(new Error(`${path} is ${Buffer.byteLength(path)} bytes, too long for a socket (at most ${SOCKET_MAX})`))
   try { unlinkSync(path) } catch {}
   const server = createServer((sock) => {
     sock.setEncoding('utf8')

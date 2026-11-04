@@ -185,8 +185,8 @@ test('a state folder too long for a socket: the bridge binds none, and forget wr
   const sock = join(dir, SOCKET)
   assert.equal(fits(sock), false)
   assert.equal(fits(join(base, SOCKET)), true)
-  assert.equal(fits('/'.padEnd(SOCKET_MAX - 1, 'x')), true, 'one byte under the limit fits')
-  assert.equal(fits('/'.padEnd(SOCKET_MAX, 'x')), false, 'the NUL byte needs the last one')
+  assert.equal(fits('/'.padEnd(SOCKET_MAX, 'x')), true, 'exactly SOCKET_MAX bytes fits')
+  assert.equal(fits('/'.padEnd(SOCKET_MAX + 1, 'x')), false, 'one byte more does not')
   await assert.rejects(listen(sock, { forget: () => true }), /too long for a socket/)
   assert.equal(await ask(sock, { forget: A.id }), null)
   store(join(dir, FILE)).add(A); store(join(dir, FILE)).add(B)
@@ -194,6 +194,32 @@ test('a state folder too long for a socket: the bridge binds none, and forget wr
   assert.deepEqual(await forget({ dir, id: A.id }), { ok: true, removed: true, via: 'file' })
   assert.deepEqual(ids(dir), [B.id])
   assert.deepEqual(sockets(base), [], 'no socket anywhere, not even at a path cut short')
+})
+
+test('a socket path of exactly SOCKET_MAX bytes binds and answers; one byte more is refused', async (t) => {
+  assert.equal(fits('/'.padEnd(SOCKET_MAX, 'x')), true)
+  assert.equal(fits('/'.padEnd(SOCKET_MAX + 1, 'x')), false)
+  // Only macOS's 104 was measured. Linux's 107 (108-byte sun_path less its NUL) is unverified.
+  if (process.platform !== 'darwin') return t.skip('the Linux bound (107 of 108) is not measured')
+  const base = tmp()
+  /** A state folder in `base` whose bridge.sock path is `bytes` long. */
+  const sized = (bytes) => {
+    const dir = join(base, ''.padEnd(bytes - Buffer.byteLength(base) - 2 - SOCKET.length, String(bytes % 10)))
+    mkdirSync(dir, { mode: 0o700 })
+    const sock = join(dir, SOCKET)
+    assert.equal(Buffer.byteLength(sock), bytes)
+    return sock
+  }
+  const at = sized(SOCKET_MAX)
+  const server = await listen(at, { forget: () => true })
+  try {
+    assert.ok(existsSync(at), 'bound at the path asked for')
+    assert.deepEqual(await ask(at, { forget: A.id }), { ok: true, removed: true })
+  } finally { server.close() }
+  // Node 22 would report this bind a success and make a shorter path instead, so only listen() refusing counts.
+  const over = sized(SOCKET_MAX + 1)
+  await assert.rejects(listen(over, { forget: () => true }), /too long for a socket/)
+  assert.equal(existsSync(over), false)
 })
 
 test('a bridge that starts while forget writes the file is told too', async () => {

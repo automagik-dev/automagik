@@ -69,8 +69,9 @@ Pairings live outside the mod folder and stay.
     (`bridge.mjs forget <id>`) hands the phone to it over `bridge.sock`, a socket in this folder,
     and waits for its answer, so a removed phone can't be written back by a session updating its
     "last seen" time. With no bridge running, `forget` writes the file itself. So it does when
-    this folder's path is too long for a socket (`bridge.sock`'s full path must be under 104 bytes
-    on macOS, 108 on Linux): the bridge then runs without `bridge.sock`.
+    this folder's path is too long for a socket: `bridge.sock`'s full path must be 104 bytes or
+    fewer on macOS (measured) and 107 or fewer on Linux (a safe bound, not measured), or the bridge
+    runs without `bridge.sock`.
 
 - **Before a phone is paired** (`bridge/guard.mjs`, `bridge/pairing.mjs`):
   - A connection from a source address that isn't validated yet gets a QUIC retry first, so a
