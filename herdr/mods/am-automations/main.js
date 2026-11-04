@@ -272,7 +272,8 @@ export default class Automations extends View {
       .when(Boolean(this.list), (el) => el
         .child(div().text_size(11).text_color(paused ? t.blocked : t.dim).child(paused ? "All paused" : "Active"))
         .child(this.switch_("pause-all", !paused, t, (cx) => this.act(cx, [paused ? "resume" : "pause", "--all"]))))
-      .when(!back, (el) => el.child(this.button("new", "+", t, (cx) => this.edit(null, cx), { px: 8 })));
+      // No scheduler, no form: its preview and Save both need the CLI.
+      .when(!back && !this.missing, (el) => el.child(this.button("new", "+", t, (cx) => this.edit(null, cx), { px: 8 })));
   }
 
   banner(t, cx) {
@@ -302,7 +303,7 @@ export default class Automations extends View {
   }
 
   renderList(t, cx) {
-    if (!this.list) return div().p(14).text_color(t.dim).child(this.error ? "" : "Loading…");
+    if (!this.list) return div().p(14).text_color(t.dim).child(this.error || this.missing ? "" : "Loading…");
     const inbox = this.runs.filter((r) => FINISHED.has(r.status) && !r.seen).slice(0, 20);
     const section = (label, n) => h_flex().px(14).pt(12).pb(4).gap(6).items_center().text_size(11).font_semibold().text_color(t.dim)
       .child(label).when(n > 0, (el) => el.child(div().px(5).rounded(4).bg(t.raised).child(String(n))));

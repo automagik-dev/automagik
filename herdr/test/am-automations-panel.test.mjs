@@ -68,6 +68,8 @@ test("no scheduler: one line says what is missing, the command is shown, Copy co
   assert.match(textOf(n.get("scheduler-missing")), /Missing the scheduler: herdr-automations is not on PATH or in ~\/\.local\/bin\./);
   assert.equal(textOf(n.get("repair-command")), repairCommand("x86_64"));
   assert.equal(view.error, null, "no 'no such file' error under it");
+  assert.doesNotMatch(textOf(view.render(cx)), /Loading/, "the repair block is all the body says");
+  assert.ok(!n.has("new"), "no + while there is no scheduler to save to");
   n.get("copy-repair").click({}, cx);
   assert.deepEqual(cx.clipboard, [repairCommand("x86_64")]);
   assert.equal(textOf(draw().get("copy-repair")), "Copied");
@@ -86,7 +88,9 @@ test("installed later: the next refresh finds it in ~/.local/bin and the repair 
   await cx.settle();
   assert.equal(view.bin, local);
   assert.equal(view.missing, null);
-  assert.ok(!draw().has("scheduler-missing"));
+  const after = draw();
+  assert.ok(!after.has("scheduler-missing"));
+  assert.ok(after.has("new"), "+ is back");
   assert.deepEqual(view.list.automations, []);
 });
 
