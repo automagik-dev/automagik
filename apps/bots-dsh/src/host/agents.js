@@ -739,6 +739,10 @@ export function install(rt) {
     await rt.save()
     await askersModel(sessionId, state.bots?.[from])
     const live = await rt.resolveAgent(sessionId)
+    // And at its Bot's permission level: DSH announced the Session before it was a task,
+    // so its session/created listener could not. Before the first turn, as the model is.
+    await rt.applyTaskPermission(sessionId, live.session)
+      .catch(error => rt.warn('ds-bot: the task keeps the default permission, %s\'s was not applied: %s', caller?.name ?? from, error?.message ?? error))
     // DSH's turn loop reads every input's source: the instructions arrive as the user's.
     live.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))
     await ctx.sessions.flush(live.session)

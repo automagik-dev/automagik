@@ -83,9 +83,9 @@ const TEAM = {
   questions: {},
 }
 
-function team(t, { auto = true, bots = {}, loaded = [], closed = [] } = {}) {
+function team(t, { auto = true, bots = {}, loaded = [], closed = [], tasks, rooms = {} } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-permissions-'))
-  writeFileSync(join(home, 'state.json'), JSON.stringify({ ...TEAM, bots: { m1: TEAM.bots.m1, b2: { ...TEAM.bots.b2, ...bots.b2 } } }))
+  writeFileSync(join(home, 'state.json'), JSON.stringify({ ...TEAM, bots: { m1: { ...TEAM.bots.m1, ...bots.m1 }, b2: { ...TEAM.bots.b2, ...bots.b2 } }, rooms: { r1: { ...TEAM.rooms.r1, ...rooms.r1 } }, ...(tasks ? { tasks } : {}) }))
   const log = []
   const opened = []
   const open = new Set(loaded)
@@ -128,7 +128,7 @@ function team(t, { auto = true, bots = {}, loaded = [], closed = [] } = {}) {
       selectModel: async () => {},
     },
     sessionTitle: { rename: async () => {} },
-    sessions: { flush: async () => {}, list: () => loaded.map(id => ({ id })) },
+    sessions: { flush: async (session) => { log.push(`${session.id} first turn`) }, list: () => loaded.map(id => ({ id })) },
   })
   let route
   const register = ctx.connection.fetch.register
@@ -143,7 +143,19 @@ function team(t, { auto = true, bots = {}, loaded = [], closed = [] } = {}) {
   const presets = sessionId => of(sessionId).filter(line => line.includes(' preset ')).map(line => line.split(' preset ')[1])
   // Settles the session/created re-applies a step left queued.
   const settle = () => new Promise(resolve => setTimeout(resolve, 20))
-  return { ctx, rt: ctx.provided.get('omniTeam'), service, call, of, presets, opened, settle }
+  // As DSH does, a new Session is announced while it is made, before startTask knows it
+  // as a task.
+  const announceOnCreate = () => {
+    const create = ctx.sessionController.create
+    ctx.sessionController.create = async (options) => {
+      const created = await create(options)
+      open.add(created.sessionId)
+      for (const listener of ctx.listeners.get('session/created') ?? []) void listener({ id: created.sessionId })
+      log.push(`${created.sessionId} announced`)
+      return created
+    }
+  }
+  return { ctx, rt: ctx.provided.get('omniTeam'), service, call, of, presets, opened, settle, announceOnCreate }
 }
 
 test('Auto is DSH\'s own Auto on every Session of the Bot or group; a lower level replaces it', async (t) => {
@@ -223,4 +235,51 @@ test('a saved Auto that cannot hold runs as workspace-write and says so', async 
   const shut = team(t, { auto: false, bots: { b2: { permission: 'auto' } }, closed: ['b2'] })
   assert.equal((await shut.call('update-bot', { id: 'b2', permission: 'workspace-write' })).ok, true)
   assert.equal(shut.rt.botOf('b2').permission, 'workspace-write')
+})
+
+test('a task starts at the level of the Bot that asked, before its first turn', async (t) => {
+  const { rt, call, of, presets, settle, announceOnCreate } = team(t, { bots: { m1: { permission: 'danger-full-access' } } })
+  await call('state', {})
+  announceOnCreate()
+  const sessionId = await rt.startTask({ title: 'Wish', text: 'Do it', from: 'm1' })
+  await settle()
+  assert.deepEqual(presets(sessionId), ['danger-full-access'])
+  const lines = of(sessionId)
+  assert.ok(lines.indexOf(`${sessionId} preset danger-full-access`) < lines.indexOf(`${sessionId} first turn`), lines.join(' | '))
+
+  // A Bot without a level of its own gives its task the catalog default.
+  const plain = team(t)
+  await plain.call('state', {})
+  plain.announceOnCreate()
+  const task = await plain.rt.startTask({ title: 'Chore', text: 'Do it', from: 'm1' })
+  await plain.settle()
+  assert.deepEqual(plain.presets(task), ['workspace-write'])
+
+  // A task asked for in a group takes the group's level over the Bot's own, as the Bot's
+  // Session in that group does.
+  const grouped = team(t, { bots: { m1: { permission: 'workspace-write' } }, rooms: { r1: { permission: 'danger-full-access' } } })
+  await grouped.call('state', {})
+  grouped.announceOnCreate()
+  const inGroup = await grouped.rt.startTask({ title: 'Wish', text: 'Do it', from: 'm1', roomId: 'r1' })
+  await grouped.settle()
+  assert.deepEqual(grouped.presets(inGroup), ['danger-full-access'])
+})
+
+test('a task gets its Bot\'s level again when DSH reopens it after a restart', async (t) => {
+  const tasks = { t1: { title: 'Wish', from: 'm1', at: 1, status: 'working' }, t2: { title: 'Chore', from: 'b2', at: 2, status: 'working' } }
+  const { rt, of, presets, settle } = team(t, { bots: { m1: { permission: 'danger-full-access' } }, tasks })
+  await rt.load()
+  await rt.resolveAgent('t1')
+  await rt.resolveAgent('t2')
+  await settle()
+  // Once the team is loaded the level lands within DSH's announce, before anything runs.
+  assert.deepEqual(of('t1').slice(0, 2), ['t1 preset danger-full-access', 't1 announced'])
+  assert.deepEqual(presets('t2'), ['workspace-write'])
+  // A loaded task of an Auto Bot runs as workspace-write when Auto review's layer unloads.
+  const { ctx, service, call, presets: presetsOf, settle: settled } = team(t, { bots: { m1: { permission: 'auto' } }, tasks, loaded: ['t1'] })
+  await call('state', {})
+  service.auto = false
+  for (const listener of ctx.listeners.get('permission-presets/catalog-changed')) void listener()
+  await settled()
+  assert.deepEqual(presetsOf('t1'), ['workspace-write'])
 })

@@ -86,9 +86,30 @@ export function install(rt) {
     })
   }
 
-  // A Session of a Bot's own chat or of a group, as DSH opens it or as the presets change.
+  // A task a Bot started (state.tasks, `from`) runs at that Bot's level, as the Bot's own
+  // chat does; a task asked for in a group (`roomId`) at the group's level when it has one,
+  // as the Bot's Session there does. A Bot without a level gives its task the catalog
+  // default, set explicitly so a restart or a catalog change cannot leave it elsewhere. A
+  // task whose Bot is gone keeps what it has. Resolves whether the Session is a task.
+  const taskOf = sessionId => rt.state?.tasks?.[sessionId]
+  async function applyTaskPermission(sessionId, session) {
+    const task = taskOf(sessionId)
+    if (task === undefined) return false
+    const service = presets()
+    const bot = rt.botOf(task.from)
+    if (rt.readOnly() !== undefined || service === undefined || bot === undefined) return true
+    const room = task.roomId ? rt.roomOf(task.roomId) : undefined
+    const level = room?.permission ?? bot.permission ?? service.catalog().defaultPreset
+    await applyPermission({ ...bot, permission: level }, sessionId, room ?? null, session)
+    return true
+  }
+
+  // A Session of a Bot's own chat, of a group or of a task, as DSH opens it or as the
+  // presets change.
   async function reapply(session) {
     if (rt.readOnly() !== undefined) return
+    // Not awaited first: the first preset must still land within DSH's announce.
+    if (taskOf(session.id) !== undefined) return applyTaskPermission(session.id, session)
     const group = rt.groupOwners.get(session.id)
     const bot = rt.botOf(group?.botId ?? rt.chatOwners.get(session.id))
     if (bot === undefined) return
@@ -102,7 +123,7 @@ export function install(rt) {
   ctx.on('session/created', (session) => {
     if (presets() === undefined) return undefined
     const run = () => reapply(session).catch(warnNotApplied(session.id))
-    return rt.chatOwners.has(session.id) || rt.groupOwners.has(session.id) ? run() : rt.load().then(run)
+    return rt.chatOwners.has(session.id) || rt.groupOwners.has(session.id) || taskOf(session.id) !== undefined ? run() : rt.load().then(run)
   })
   // Auto review's layer loaded or unloaded: the loaded Sessions get their level again, all
   // in one tick, so one DSH moved off Auto runs as workspace-write, not full access. An
@@ -180,5 +201,5 @@ export function install(rt) {
     return true
   }
 
-  Object.assign(rt, { permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, checkPreset, setPermission, cleanRoomPermission, setRoomPermission })
+  Object.assign(rt, { permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, checkPreset, setPermission, cleanRoomPermission, setRoomPermission })
 }
