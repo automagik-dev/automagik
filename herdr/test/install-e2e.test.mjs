@@ -257,7 +257,7 @@ function assertFullPack(m, r) {
   assert.ok(said, r.out);
   assert.equal(said[1], RELEASE);
   // A mod that ships off is named, marked off.
-  assert.deepEqual(said[2].split(", ").sort(), PACK_MODS.map((mod) => (OFF_BY_DEFAULT.includes(mod) ? `${mod} (off: turn it on in the Mods panel)` : mod)).sort());
+  assert.deepEqual(said[2].split(", ").sort(), PACK_MODS.map((mod) => (OFF_BY_DEFAULT.includes(mod) ? `${mod} (off; turn it on in the Mods panel)` : mod)).sort());
   // herdr-app check on every pack mod that is on (one switched off is not loaded).
   assert.deepEqual(m.herdrLog().filter((l) => l.startsWith("check ")).map((l) => l.slice(6)).sort(), ON_MODS.map((mod) => join(m.mods, mod)).sort());
   // The pack layout (the archive's), and the pack's copy kept for later comparisons.

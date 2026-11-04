@@ -264,7 +264,7 @@ mods_said() {
   old_ifs=$IFS
   IFS=,
   for m in $(mark_get mods); do
-    if [ ! -d "$MODS/$m" ] && [ -d "$APP_HOME/mods-disabled/$m" ]; then m="$m (off: turn it on in the Mods panel)"; fi
+    if [ ! -d "$MODS/$m" ] && [ -d "$APP_HOME/mods-disabled/$m" ]; then m="$m (off; turn it on in the Mods panel)"; fi
     said=${said:+$said, }$m
   done
   IFS=$old_ifs
