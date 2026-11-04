@@ -577,3 +577,65 @@ test('the user can still change an inherited level', async (t) => {
   await settle()
   assert.deepEqual(presets(writer.id), ['danger-full-access', 'workspace-write'])
 })
+
+// #315: the level buildBot stores is what every later Session reads: its chat, a part
+// opened afterwards, and the tasks the Bot asks for.
+test('a made Bot\'s inherited level reaches its chat, a later Session and its tasks', async (t) => {
+  const { ctx, rt, call, of, presets, settle, announceOnCreate } = team(t, { bots: { m1: { permission: 'danger-full-access' } } })
+  assert.equal((await call('set-prefs', { permission: 'workspace-write' })).ok, true)
+  await call('state', {})
+  assert.match(await createBotTool(ctx, { name: 'Writer' }), /Permission inherited from Omni \(danger-full-access\)/)
+  const writer = await botNamed(call, 'Writer')
+  await settle()
+  const chatPresets = of(writer.id).filter(line => line.includes(' preset '))
+  assert.deepEqual(chatPresets, [`${writer.id} preset danger-full-access`])
+
+  // A fresh part goes through applyPermission (parts.js), which reads the stored level.
+  await rt.applyPermission(writer, 'writer-part')
+  assert.deepEqual(presets('writer-part'), ['danger-full-access'])
+  // So does a task the Bot starts.
+  announceOnCreate()
+  const task = await rt.startTask({ title: 'Wish', text: 'Do it', from: writer.id })
+  await settle()
+  assert.deepEqual(presets(task), ['danger-full-access'])
+  const taskLines = of(task)
+  assert.ok(taskLines.indexOf(`${task} preset danger-full-access`) < taskLines.indexOf(`${task} first turn`), taskLines.join(' | '))
+})
+
+// #315: the user's create and a copy keep the team default; create_bot has no level
+// parameter, and one passed in its arguments is not read.
+test('a copy and a user create keep the team default, and create_bot ignores a level argument', async (t) => {
+  const { ctx, call } = team(t, { bots: { m1: { permission: 'danger-full-access' }, b2: { permission: 'danger-full-access' } } })
+  assert.equal((await call('set-prefs', { permission: 'workspace-write' })).ok, true)
+  assert.equal((await call('duplicate-bot', { id: 'b2' })).value.permission, 'workspace-write')
+  assert.equal(ctx.registeredTools.get('create_bot').parameters.properties.permission, undefined)
+  // The creator's level wins over the one handed in with the call.
+  assert.match(await createBotTool(ctx, { name: 'Ignored', permission: 'workspace-write' }), /\(danger-full-access\)/)
+  assert.equal((await botNamed(call, 'Ignored')).permission, 'danger-full-access')
+})
+
+// #315: when nothing rankable is offered, the create fails before any Session is made,
+// never starting the Bot at DSH's default.
+test('a create with no rankable level refuses before making a Session', async (t) => {
+  const { ctx, call, service, opened } = team(t, { bots: { m1: { permission: 'odd' } } })
+  service.catalog = () => ({ options: [{ value: 'odd', name: 'odd' }], defaultOptions: [], defaultPreset: 'odd' })
+  service.resolve = () => ({ sandbox: 'container', approval: 'ask' })
+  const answer = await createBotTool(ctx, { name: 'Doomed' })
+  assert.equal(answer, 'Could not create the Bot: no permission level of Omni can be given to a new Bot')
+  assert.deepEqual(opened, [])
+  assert.equal((await call('state', {})).value.bots.some(bot => bot.name === 'Doomed'), false)
+})
+
+// #315: a Session adopted from a host keeps the level it already runs at.
+test('an adopted Session keeps its own level', async (t) => {
+  const { rt, call, service, presets, settle } = team(t, { bots: { m1: { permission: 'danger-full-access' } } })
+  assert.equal((await call('set-prefs', { permission: 'workspace-write' })).ok, true)
+  service.set({ id: 'adopted' }, 'danger-full-access')
+  const bot = await rt.createBot({ name: 'Adopted', existingSessionId: 'adopted', createdBy: 'm1', pickModel: true })
+  assert.equal(bot.permission, undefined)
+  await settle()
+  assert.deepEqual(presets('adopted'), ['danger-full-access'])
+  await rt.applyPermission(bot, 'adopted')
+  assert.deepEqual(presets('adopted'), ['danger-full-access'])
+  assert.equal(service.current({ id: 'adopted' }), 'danger-full-access')
+})
