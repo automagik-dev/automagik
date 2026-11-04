@@ -26,6 +26,7 @@
     ".": "./index.js",
     "./client": "./client.js",
     "./web-search": "./web-search.js",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "files": [
@@ -33,6 +34,7 @@
     "src/host/",
     "src/shared/",
     "client.js",
+    "locale/",
     "web-search.js",
     "cordis.patch.yml",
     "README.md",
