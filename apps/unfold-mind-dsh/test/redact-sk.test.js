@@ -425,11 +425,13 @@ const RAW_CALLERS = [
 // sentence, so it redacts the raw field first: collapsed, the name rule would take the `|` or `>`
 // as the value and quote the real value line in clear. The key line's own line end (\n, \r\n or a
 // lone \r, each one line end; an LF or CR key's \r\n too) ends a block line; any other \r or \n
-// is a stray inside the value. A line is value when it is blank, more indented than its key, or
-// has a stray before its first other character (a partial indent then \r or \n); the first other
-// line ends the block and is shown. One table, every repro of the review rounds, each row through
-// the raw text (mind's redaction, the served field, the window's copy) and every raw-field caller
-// (its sentence and its served form).
+// is a stray inside the value. A line ends the block, shown, only when its first other character
+// comes after spaces alone, no more of them than its key's indent; any other line is value (blank,
+// deeper, or a tab, a stray or a character that prints nothing before its first other character).
+// The key line is untrusted text: a quoted key, an anchor and a tag, a comment after the
+// indicator and an explicit key are key lines too. One table, every repro of the review rounds,
+// each row through the raw text (mind's redaction, the served field, the window's copy) and every
+// raw-field caller (its sentence and its served form).
 const SECRET = ['velvet', 'lantern', 'harbor'].join('') // plain words built at run time: findable, not key-shaped
 const MORE = ['orchard', 'meadow', 'pebble'].join('')
 // A failure prints its text with every 5-char fragment of either value masked.
@@ -478,6 +480,56 @@ const YAML_ROWS = [
     raw: `config:${n}  password: |${n}    ${SECRET}${n}${n}    ${MORE}${n}next: shown`,
     exact: `config:${n}  password: |${n}    ${REDACTED}${n}next: shown`,
   })),
+  // Round 6: the key line is untrusted text, not validated YAML (the reviewer's repros): a quoted
+  // key, an anchor and a tag in either order, a comment after the indicator, an explicit key.
+  ...[
+    ['a double-quoted key', `"password": |\n  ${SECRET}`],
+    ['a single-quoted key', `'password': |\n  ${SECRET}`],
+    ['an indented quoted key', `  "password": |\n    ${SECRET}`],
+    ['a quoted key in a list', `- "password": |\n    ${SECRET}`],
+    ['a quoted key with an anchor', `"password": &a |\n  ${SECRET}`],
+    ['an anchored key', `password: &a |\n  ${SECRET}`],
+    ['a tag', `password: !!str |\n  ${SECRET}`],
+    ['an anchor then a tag', `password: &a !!str |\n  ${SECRET}`],
+    ['a tag then an anchor', `password: !!str &a |\n  ${SECRET}`],
+    ['a comment after the indicator', `password: | # note\n  ${SECRET}`],
+    ['a comment with no space', `password: |#note\n  ${SECRET}`],
+    ['an explicit key', `? password\n: |\n  ${SECRET}`],
+  ].map(([name, raw]) => ({ name, raw })),
+  // Round 6 (t2x5): a tab in a line's indent is value, never a terminator, and a NUL or another
+  // character that prints nothing on the key line does not stop the key from matching.
+  { name: 'a tab as the indent under a nested key', raw: `  password: |\n\t${SECRET}\n  next: 1`, after: '\n  next: 1' },
+  { name: 'a space then a tab under a nested key', raw: `  password: |\n \t${SECRET}\n  next: 1`, after: '\n  next: 1' },
+  { name: 'a tab-indented line after the value', raw: `  password: |\n    ${SECRET}\n\t${MORE}\n  next: 1`, after: '\n  next: 1' },
+  { name: 'a tab-indented key, a space-indented value', raw: `\tpassword: |\n    ${SECRET}\nnext: 1`, after: '\nnext: 1' },
+  { name: 'a NUL before the colon', raw: `password\0: |\n  ${SECRET}` },
+  { name: 'a NUL after a quoted key', raw: `"password"\0: |\n  ${SECRET}` },
+  { name: 'a NUL between the colon and the indicator', raw: `password:\0|\n  ${SECRET}` },
+  { name: 'a NUL after the indicator', raw: `password: |\0\n  ${SECRET}` },
+  { name: 'a DEL after the indicator', raw: `password: |\x7f\n  ${SECRET}` },
+  { name: 'a zero-width space before the colon', raw: `password​: |\n  ${SECRET}` },
+  { name: 'a BOM after the colon', raw: `password:﻿|\n  ${SECRET}` },
+  { name: 'a NUL before a value line', raw: `  password: |\n\0   ${SECRET}\n  next: 1`, after: '\n  next: 1' },
+  { name: 'a NUL before the key', raw: `\0password: |\n  ${SECRET}` },
+  // Kept from rounds 1-5 (pinned): every indicator, the spacing around the colon, the name forms.
+  ...[
+    ['|+', `password: |+\n  ${SECRET}`],
+    ['>', `password: >\n  ${SECRET}`],
+    ['>-', `password: >-\n  ${SECRET}`],
+    ['>+', `password: >+\n  ${SECRET}`],
+    ['|2', `password: |2\n  ${SECRET}`],
+    ['|2-', `password: |2-\n  ${SECRET}`],
+    ['|-2', `password: |-2\n  ${SECRET}`],
+    ['a space before the colon', `password : |\n  ${SECRET}`],
+    ['a tab before the indicator', `password:\t|\n  ${SECRET}`],
+    ['UPPER', `PASSWORD: |\n  ${SECRET}`],
+    ['DB_Password', `DB_Password: |\n  ${SECRET}`],
+    ['api-key', `api-key: |\n  ${SECRET}`],
+    ['db.password', `db.password: |\n  ${SECRET}`],
+    ['db/password', `db/password: |\n  ${SECRET}`],
+    ['--- before the key', `---\npassword: |\n  ${SECRET}`],
+    ['two spaces around the colon', `password  :  |\n  ${SECRET}`],
+  ].map(([name, raw]) => ({ name: `pinned: ${name}`, raw })),
 ]
 
 for (const row of YAML_ROWS) {
