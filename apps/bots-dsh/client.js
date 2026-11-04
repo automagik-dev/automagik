@@ -9018,12 +9018,16 @@ function Nothing() {
   return null;
 }
 var SEPARATOR_GAP_MS = 30 * 60 * 1e3;
-function nextTurnStart(turns, turn) {
+function nextTurnOf(turns, turn) {
   let next;
   for (const key in turns) {
     const candidate = Number(key);
     if (candidate > turn && turns[key].first !== void 0 && (next === void 0 || candidate < next)) next = candidate;
   }
+  return next;
+}
+function nextTurnStart(turns, turn) {
+  const next = nextTurnOf(turns, turn);
   return next === void 0 ? void 0 : turns[next].first;
 }
 function openingTurn(turns, firstTurns, hiddenTurns) {
@@ -9036,23 +9040,30 @@ function openingTurn(turns, firstTurns, hiddenTurns) {
   return listed.includes(turn) && earlier.every((entry) => hiddenTurns?.includes(entry)) ? { turn, start: start2 } : null;
 }
 var unseenSince = (visit, time) => typeof visit?.seen === "number" && time > visit.seen && time <= visit.entered;
-function TurnTailCell({ turn: location2, sessionId, useTurnClock, useUi, actions }) {
+function TurnTailCell({ turn: location2, sessionId, useRoster, useTurnClock, useUi, actions }) {
   const turn = location2.turn;
+  const hidden = useRoster((roster) => isHiddenTurn(roster, sessionId, turn));
+  const exchangeTurns = useRoster((roster) => roster.exchangeTurns[sessionId]);
+  const nextStart = (turns) => {
+    const next = nextTurnOf(turns, turn);
+    if (next === void 0 || hidden && exchangeTurns?.includes(next)) return void 0;
+    return turns[next].first;
+  };
   const time = location2.end.time;
   (0, import_react22.useEffect)(() => {
     actions.noteTurnTime(sessionId, turn, "end", time);
   }, [sessionId, turn, time]);
   const label = useTurnClock((state) => {
-    const start2 = nextTurnStart(state[sessionId] ?? {}, turn);
+    const start2 = nextStart(state[sessionId] ?? {});
     return start2 !== void 0 && start2 - time >= SEPARATOR_GAP_MS ? clockLabel(start2) : "";
   });
   const visit = useUi((state) => state.visits?.[sessionId]);
   const fresh = useTurnClock((state) => {
     if (typeof visit?.seen !== "number" || time > visit.seen) return false;
-    const start2 = nextTurnStart(state[sessionId] ?? {}, turn);
+    const start2 = nextStart(state[sessionId] ?? {});
     return start2 !== void 0 && start2 > visit.seen && start2 <= visit.entered;
   });
-  const ended = (0, import_react22.createElement)("time", { className: "bt-turn-time", dateTime: new Date(time).toISOString() }, new Date(time).toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" }));
+  const ended = hidden ? null : (0, import_react22.createElement)("time", { className: "bt-turn-time", dateTime: new Date(time).toISOString() }, new Date(time).toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" }));
   return (0, import_react22.createElement)(
     import_react22.Fragment,
     null,
