@@ -27,13 +27,13 @@ const executablePath = process.env.CHROME_BIN ?? (process.platform === 'darwin'
 
 // This is a layout fixture, NOT an end-to-end replacement for the shell's editor.
 // Bot mode installs CONVERSATION_CSS and ComposerPlus; a native wish installs neither.
-function fixture(bot, running, stage = STAGE_CSS) {
+function fixture(bot, running, stage = STAGE_CSS, hero = false) {
   const cls = name => `${prefix}_${name}`
   return `<style>
     :root{--dsh-composer-card-max-width:748px;--dsh-composer-text-max-height:240px;--dsw-font-family:Arial}
     *{box-sizing:border-box}body{margin:0}main{height:600px;display:flex;flex-direction:column;justify-content:flex-end;padding:16px}
     ${hostCss}\n${bot ? botCss : ''}\n${stage}
-  </style><main><aside>To-dos · Ongoing Goal</aside><div class="${cls('root')} fixture_composerStack">
+  </style><main><aside>To-dos · Ongoing Goal</aside><div class="${cls('root')}${hero ? ` ${cls('hero')}` : ''} fixture_composerStack">
     <div data-composer-card class="${cls('card')}">
       <div data-slot="conversation.input.attachments"></div>
       <div data-input-scroll class="${cls('scroll')}"><div class="${cls('grow')}">
@@ -143,5 +143,31 @@ test('stage leaves native wish geometry intact; Bot controls keep their two-row 
         }
       })
     }
+  }
+  // DSH's welcome composer is the same column at variant="hero", where its own sheet floors
+  // the draft at 52px; the Bot rules forced 40px and the row growth on it as well.
+  for (const width of [390, 1200]) {
+    await t.test(`native hero composer keeps its own draft floor at ${width}px`, async () => {
+      await page.setViewportSize({ width, height: 720 })
+      const editor = page.locator('[data-composer-input]')
+      const scroll = page.locator('[data-input-scroll]')
+      await page.setContent(fixture(false, false, UNSCOPED, true))
+      assert.equal(await editor.evaluate(el => getComputedStyle(el).minHeight), '40px', 'dev rules floor the hero draft')
+      assert.equal(await scroll.evaluate(el => getComputedStyle(el).flexGrow), '1', 'dev rules grow the hero draft by height')
+      t.diagnostic(`unscoped hero ${width}px: empty card ${(await page.locator('[data-composer-card]').boundingBox()).height}px, draft floor 40px`)
+      await page.setContent(fixture(false, false, STAGE_CSS, true))
+      const card = page.locator('[data-composer-card]')
+      const before = await card.boundingBox()
+      assert.equal(await editor.evaluate(el => getComputedStyle(el).minHeight), '52px', 'the hero keeps DSH\'s draft floor')
+      assert.equal(await scroll.evaluate(el => getComputedStyle(el).flexGrow), '0')
+      assert.ok(before.height < 160, `empty hero must be content-sized, got ${before.height}px`)
+      assert.ok((await scroll.boundingBox()).width >= before.width - 16, 'the hero draft keeps the full column width')
+      const footer = await page.locator('footer').boundingBox()
+      assert.ok(footer.y >= before.y + before.height - 1, 'footer stays below the hero card')
+      await editor.fill('First line\nSecond line\nThird line\nFourth line')
+      const multiline = (await card.boundingBox()).height
+      assert.ok(multiline > before.height, 'the hero grows with the draft')
+      t.diagnostic(`hero ${width}px: empty card ${before.height}px, multiline ${multiline}px`)
+    })
   }
 })
