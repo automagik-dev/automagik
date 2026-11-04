@@ -364,6 +364,29 @@ class HostReadsTest {
         assertTrue(reads.refresh(scope, terminals, listOf(own), listOf("fast"), linked, System.currentTimeMillis(), {}, {}) != null)
     }
 
+    @Test fun aFailedReadingStillRunsTheRefreshKeptMeanwhile() = bounded {
+        val fastName = java.util.concurrent.atomic.AtomicReference("Old")
+        val fastDocs = AtomicInteger()
+        answer = { method, machine, params ->
+            when {
+                method == "doc.get" && machine == "fast" -> { fastDocs.incrementAndGet(); Reply.Now(layout(fastName.get())) }
+                method == "doc.get" && machine == "slow" -> Reply.Never
+                else -> healthy(method, machine, params)
+            }
+        }
+        val reads = reads()
+        // The reading fails at its end (its after-step throws); a refresh came while it was out.
+        val failing = reads.refresh(scope, terminals, listOf(own), listOf("fast", "slow"), linked, System.currentTimeMillis(), {},
+            { error("after-step failed") })!!
+        withTimeout(SLACK) { state.first { "fast" in it.layouts } }
+        fastName.set("Fresh")
+        assertNull(reads.refresh(scope, terminals, listOf(own), listOf("fast"), linked, System.currentTimeMillis(), {}, {}))
+        assertTrue(runCatching { failing.await() }.isFailure)
+        // The kept refresh still gets its pass.
+        withTimeout(3 * SLACK) { state.first { s -> s.spaces.any { it.machine == "fast" && it.name == "Fresh" } } }
+        assertEquals(2, fastDocs.get())
+    }
+
     private companion object {
         const val TIME_BOX = 1_500L
         /** Room for a slow test machine; still far below the client's own 30 s. */

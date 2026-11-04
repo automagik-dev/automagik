@@ -59,7 +59,11 @@ class HostReads(
         // The linked spaces taken inside the update, so a layout landing meanwhile is never overwritten.
         update { m -> reading(m, terminals, own + m.spaces.filter { it.machine.isNotBlank() && it.machine in names }, linked, emptyList(), now) }
         ownRead()
-        val inputs = LinkedInputs(terminals, names, linkedRead)
+        return startLinked(scope, LinkedInputs(terminals, names, linkedRead))
+    }
+
+    /** Starts a linked reading with [inputs], or keeps them for one more pass if one is out (null). */
+    private fun startLinked(scope: CoroutineScope, inputs: LinkedInputs): Deferred<List<String>>? {
         // Checked and claimed at once: refreshes come from more than one coroutine (the connection's, pull to refresh).
         val starts = synchronized(lock) { if (running) { next = inputs; false } else { running = true; true } }
         if (!starts) return null
@@ -73,8 +77,13 @@ class HostReads(
             }
             answered
         }.also { reading ->
-            // Failed or cancelled (even before it started): the next refresh starts afresh.
-            reading.invokeOnCompletion { cause -> if (cause != null) synchronized(lock) { running = false; next = null } }
+            // Failed or cancelled (even before it started): freed. A refresh kept meanwhile still gets its pass, unless
+            // the reading was cancelled (the connection or the app is going).
+            reading.invokeOnCompletion { cause ->
+                if (cause == null) return@invokeOnCompletion
+                val kept = synchronized(lock) { running = false; next.also { next = null } }
+                if (kept != null && cause !is CancellationException) startLinked(scope, kept)
+            }
         }
     }
 
@@ -198,4 +207,22 @@ class HostReads(
         suspend fun <T> timeBoxed(ms: Long, block: suspend () -> T): T? = try { withTimeout(ms) { block() } }
             catch (_: TimeoutCancellationException) { null } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
     }
+}
+
+/**
+ * The reads kept per saved machine, one per live connection: they hold its linked reading ([HostReads.refresh]), so
+ * only the live connection's are kept. A connection that isn't the live one (closed, or replaced by a reconnect) gets
+ * reads of its own, never kept, and its late loss never drops the live connection's.
+ */
+class KeptReads<C : Any, R : Any> {
+    private val kept = java.util.concurrent.ConcurrentHashMap<String, Pair<C, R>>()
+    /** [client]'s reads of [id], kept if it is the [live] connection; [make] makes new ones. */
+    fun get(id: String, client: C, live: C?, make: () -> R): R {
+        if (live !== client) return make()
+        return kept.compute(id) { _, held -> if (held?.first === client) held else client to make() }!!.second
+    }
+    /** [client]'s connection to [id] was lost: its reads go, never another connection's. */
+    fun lost(id: String, client: C) { kept.computeIfPresent(id) { _, held -> if (held.first === client) null else held } }
+    /** [id] was disconnected or removed: whatever was kept goes. */
+    fun drop(id: String) { kept.remove(id) }
 }
