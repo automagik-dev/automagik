@@ -42,7 +42,7 @@ holds nine mod folders and one layout, and nothing else:
 | `am-mods` | the mod manager (`⌘⇧M`) |
 | `am-automations` | the automations panel |
 | `am-quota` | the Accounts panel (your own CLIProxyAPI's accounts); installed switched off, turn it on in the Mods panel |
-| `../herdr-layout/automagik.json` | the layout that shows all of the above (its own folder: herdr.dev skips a pack folder that holds `layouts/`) |
+| `../herdr-layout/layouts/automagik.json` | the layout that shows all of the above (its own folder: herdr.dev skips a pack folder that holds `layouts/`) |
 
 Releases up to v0.4.x shipped `automagik-herdr-<v>.tgz` instead: the sidebar alone (under its
 old folder name, see [From v0.2 to v0.4.x](#from-v02-to-v04x)), with no footer, tab bar, `+` menu, Markdown menu, mod manager, automations or quota. A
@@ -639,7 +639,7 @@ of the pack (for the rest, copy each folder of the table above the same way, and
 ```bash
 cp -R mods/am-sidebar ~/.config/herdr-app/mods/
 mkdir -p ~/.config/herdr-app/layouts ~/.local/bin
-cp ../herdr-layout/automagik.json ~/.config/herdr-app/layouts/
+cp ../herdr-layout/layouts/automagik.json ~/.config/herdr-app/layouts/
 herdr-app do layout.switch '{"name":"automagik"}'
 ln -s ~/.config/herdr-app/mods/am-sidebar/bin/automagik-herdr ~/.local/bin/automagik-herdr
 ```
@@ -780,7 +780,7 @@ keys.json    the keys the pack asks for
 test/        the bot work's pure-module tests (node --test)
 ```
 
-The one layout the pack ships is `../herdr-layout/automagik.json`, beside this folder, not in it.
+The one layout the pack ships is `../herdr-layout/layouts/automagik.json`, beside this folder, not in it.
 
 ## Develop
 
