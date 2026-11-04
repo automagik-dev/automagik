@@ -55,37 +55,29 @@ function fuzzCases(seed = SEED, count = 200) {
   })
 }
 
-// A run under FAST_MS passes as it is. A slower run is judged against the machine as it is at that
-// moment: a fixed, linear piece of work that never touches the rules, timed right after the run. A
-// shared runner that is slow or busy slows both alike, so their ratio holds; a quadratic rule does
-// not. Healthy cases stay near 2 times the baseline (the stream on 80k random pieces), and the
-// backtracking KEY= rule that 110ccf82 replaced, put back, reaches 50 times on the stream and 13 on
-// the rules. Up to three tries, the best kept: noise only slows a run, a quadratic rule is slow
-// every time.
+// A run under FAST_MS passes as it is. A slower run is judged against the same path on BASE_TEXT,
+// 84k characters no rule backtracks on, timed right after it: a slow or busy runner, and the
+// garbage the stream makes, slow both alike, so their ratio holds; a quadratic rule does not. Five
+// tries of each, the best of each kept: noise only slows a run, a quadratic rule is slow every
+// time. Measured on Node 22 and 24, 20 runs each: idle, every case stays under FAST_MS; under 36
+// busy loops the slowest healthy case (the stream on 80k random pieces) reaches 23 times on Node
+// 22 and 33 on Node 24. The backtracking KEY= rule that 110ccf82 replaced, put back, reaches at
+// least 109 times idle and 366 under load (40k `APIKEY` then `= x`), so 60 sits between the two.
 const FAST_MS = 50
-const SLOW_RATIO = 15
+const SLOW_RATIO = 60
 const BASE_TEXT = 'word x9 = "a" \\t token\n'.repeat(3_500)
-const baselineMs = () => {
-  let best = Infinity
+const timed = (run, text) => {
+  let [ms, base] = [Infinity, Infinity]
   for (let i = 0; i < 5; i++) {
     const t0 = performance.now()
-    for (let n = 0; n < 20; n++) BASE_TEXT.replace(/x9/g, 'y8').match(/\w+/g)
-    best = Math.min(best, performance.now() - t0)
+    run(text)
+    const t1 = performance.now()
+    if (t1 - t0 < FAST_MS) return { ms: t1 - t0, ratio: 0 }
+    run(BASE_TEXT)
+    ms = Math.min(ms, t1 - t0)
+    base = Math.min(base, performance.now() - t1)
   }
-  return best
-}
-const timed = (fn) => {
-  let best = { ms: Infinity, ratio: Infinity }
-  for (let i = 0; i < 3; i++) {
-    const t0 = performance.now()
-    fn()
-    const ms = performance.now() - t0
-    if (ms < FAST_MS) return { ms, ratio: 0 }
-    const ratio = ms / baselineMs()
-    if (ratio < best.ratio) best = { ms, ratio }
-    if (ratio < SLOW_RATIO) break
-  }
-  return best
+  return { ms, ratio: ms / base }
 }
 
 function push(text) {
@@ -96,11 +88,15 @@ function push(text) {
 }
 const PATHS = [['redactText', redactText], ['secretsIn', secretsIn], ['the stream', push]]
 
-test('a seeded fuzz of 200 mixed texts up to 80k characters stays fast on every path', () => {
+test('a seeded fuzz of 200 mixed texts up to 80k characters stays fast on every path', (t) => {
+  let slowest = { ratio: 0, note: 'every case under FAST_MS' }
   for (const [shape, text] of fuzzCases()) {
     for (const [path, run] of PATHS) {
-      const { ms, ratio } = timed(() => run(text))
-      assert.ok(ratio < SLOW_RATIO, `${path}: ${shape} (${ms.toFixed(0)} ms, ${ratio.toFixed(1)} times the baseline)`)
+      const { ms, ratio } = timed(run, text)
+      const note = `${path}: ${shape} (${ms.toFixed(0)} ms, ${ratio.toFixed(1)} times the baseline)`
+      assert.ok(ratio < SLOW_RATIO, note)
+      if (ratio > slowest.ratio) slowest = { ratio, note }
     }
   }
+  t.diagnostic(`slowest: ${slowest.note}`)
 })
