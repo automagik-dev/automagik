@@ -75,3 +75,8 @@ test('the tool a blocked Claude names in its status message', () => {
   assert.equal(statusTool('Thinking'), null)
   assert.equal(statusTool(null), null)
 })
+
+test('a dialog without its footer as the last row is not taken (printed options alone)', () => {
+  const noFooter = screen('claude-dialog').replace(' Esc to cancel · Tab to amend\n', '')
+  assert.equal(readDialog('claude', noFooter), null)
+})
