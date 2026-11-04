@@ -1723,3 +1723,32 @@ test("restart --cwd: a folder of the same Claude slug resumes the session by id 
   assert.deepEqual([bot, w, v].map((c) => c[c.indexOf("--cwd") + 1]), [moved, wt1, wt2]);
   onePanePerSession(tr);
 });
+
+test("restart --cwd: a non-Claude resume into another folder is said; --cwd with --machine is refused; a Claude bot's briefing hook goes into DIR", (t) => {
+  const from = "/never/used";
+  const s = captainScene(t, { agent: "codex", over: { foreground: { argv: ["codex"], cwd: from }, argv: ["codex"], cwd: from } });
+  const a = join(s.root, "a"), b = join(s.root, "b");
+  mkdirSync(a);
+  mkdirSync(b);
+  const st = s.hcState();
+  Object.assign(st.terminals.find((x) => x.address === "t6"), { cwd: a, foreground: { argv: ["codex"], cwd: a } });
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["restart", "Captain", "--cwd", b, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, new RegExp(`t100 runs in ${b}, not ${a}: codex finds its last conversation by folder, so it may not find it there\\.`));
+  const run = runCall(s.calls());
+  assert.deepEqual([run[run.indexOf("--cwd") + 1], ...agentWords(run)], [b, "codex", "resume", "--last"]);
+  // --machine: refused before anything is read or started, whatever DIR is.
+  const m = s.cli(["restart", "Captain", "--machine", "box", "--cwd", b]);
+  assert.equal(m.code, 2);
+  assert.match(m.err, /--cwd is a folder on this computer; a restart on a linked machine keeps the old pane's\./);
+  assert.equal(runs(s).length, 1, "nothing more started");
+  // Claude: the briefing hook is written into DIR, as the help says.
+  const c = restartScene(t);
+  const dir = join(c.root, "moved");
+  mkdirSync(dir);
+  const moved = c.cli(["restart", "Genie", "--cwd", dir, "--fresh"]);
+  assert.equal(moved.code, 0, moved.err);
+  const hook = JSON.parse(readFileSync(join(dir, ".claude/settings.local.json"), "utf8"));
+  assert.match(hook.hooks.UserPromptSubmit[0].hooks[0].command, /briefing\.mjs/);
+});
