@@ -7,6 +7,7 @@
 //   node bridge.mjs status           print {running, id, ticket, devices, pairing, login, state}
 //   node bridge.mjs start | stop     start the bridge detached; stop it (and its login service)
 //   node bridge.mjs cancel           end the pairing code, if one is live (the dialog does on close)
+//   node bridge.mjs copied           the code's link was copied: it ends 2 minutes from now, print {expires}
 //   node bridge.mjs forget <id>      remove a paired phone
 //   node bridge.mjs install|uninstall   start at login (LaunchAgent on macOS, systemd user unit on Linux)
 //
@@ -22,7 +23,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import QRCode from 'qrcode'
 import { acceptOne, slots, throttle, rotateLog } from './guard.mjs'
-import { judgeCode, cancelCode, fingerprint } from './pairing.mjs'
+import { judgeCode, cancelCode, shortenCode, fingerprint } from './pairing.mjs'
 import { open as openState } from './state.mjs'
 import { presence, publicStatus, writePublic, HEARTBEAT } from './presence.mjs'
 
@@ -245,6 +246,11 @@ try {
   else if (command === 'cancel') {
     const cancelled = cancelCode(files.pairing); clearQr()
     out({ ok: true, cancelled, devices: devices().map(({ id, name, paired }) => ({ id, name, fingerprint: fingerprint(id), paired })) })
+  }
+  else if (command === 'copied') {
+    // The serving bridge reads pairing.json on every try, so a shorter `expires` there is enough.
+    const expires = shortenCode(files.pairing)
+    out(expires ? { ok: true, expires } : { ok: false, error: 'This pairing code was already used or has expired. Make a new one.' })
   }
   else if (command === 'start') {
     // Without the login service: a detached bridge that lives until stopped or logout.

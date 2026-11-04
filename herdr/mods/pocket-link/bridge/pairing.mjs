@@ -1,7 +1,8 @@
-// The one-time pairing code: what a try does to it, cancelling it, and the short key fingerprint
-// the dialog shows next to each phone. No iroh here, so `node --test` runs it without npm.
+// The one-time pairing code: what a try does to it, cancelling it, shortening it once its link is
+// copied, and the short key fingerprint the dialog shows next to each phone. No iroh here, so
+// `node --test` runs it without npm.
 import { createHash, timingSafeEqual } from 'node:crypto'
-import { unlinkSync, readFileSync } from 'node:fs'
+import { unlinkSync, readFileSync, openSync, readSync, writeSync, ftruncateSync, fstatSync, closeSync } from 'node:fs'
 
 /** Wrong tries one phone key gets at a code; after that its tries are refused and not counted. */
 export const TRIES_PER_PHONE = 3
@@ -36,6 +37,50 @@ export function judgeCode(pending, phone, code, now = Date.now()) {
   const failures = (pending.failures ?? 0) + 1
   if (failures >= TRIES_PER_CODE) return { verdict: 'wrong', next: null }
   return { verdict: 'wrong', next: { ...pending, failures, tries: { ...pending.tries, [phone]: tries + 1 } } }
+}
+
+/**
+ * How long a code lives once the dialog copies its link: the clipboard may sync to the person's
+ * other devices (macOS Universal Clipboard), so a copied link must not stay good for 10 minutes.
+ */
+export const COPIED_LIFE = 2 * 60_000
+
+/**
+ * The pending code with at most `life` left from `now`, or undefined when there is no live code.
+ * It never lengthens a code, and keeps its tries, so copying twice doesn't reset anything.
+ */
+export function shorten(pending, life = COPIED_LIFE, now = Date.now()) {
+  if (!pending || !(now <= pending.expires)) return undefined
+  return { ...pending, expires: Math.min(pending.expires, now + life) }
+}
+
+/**
+ * Shortens the live code in `path` (pairing.json) in place. Returns its new expiry, or null when
+ * there is no live code.
+ *
+ * Not the bridge's write-a-temp-and-rename: a phone can use the code, and the bridge delete the
+ * file, between this read and this write, and a rename would bring the used code back. Here the
+ * open fails once the file is gone, and a write after the bridge deletes it lands in the deleted
+ * file, so a used or cancelled code stays gone.
+ */
+export function shortenCode(path, life = COPIED_LIFE, now = Date.now()) {
+  let fd
+  try { fd = openSync(path, 'r+') } catch { return null }
+  try { return shortenOpen(fd, life, now) } finally { closeSync(fd) }
+}
+
+/** shortenCode's read and write, on pairing.json already open for both. */
+export function shortenOpen(fd, life = COPIED_LIFE, now = Date.now()) {
+  const buf = Buffer.alloc(fstatSync(fd).size)
+  readSync(fd, buf, 0, buf.length, 0)
+  let pending = null
+  try { pending = JSON.parse(buf.toString('utf8')) } catch {}
+  const next = shorten(pending, life, now)
+  if (!next) return null
+  const out = Buffer.from(JSON.stringify(next, null, 2) + '\n')
+  writeSync(fd, out, 0, out.length, 0)
+  ftruncateSync(fd, out.length)
+  return next.expires
 }
 
 /** Ends the live code, if any. True when there was one that still worked. */

@@ -1,11 +1,12 @@
 // node --test bridge/pairing.test.mjs: what each try does to the pairing code, per phone and in
-// total; cancelling it (the dialog does on close); the key fingerprint.
+// total; cancelling it (the dialog does on close); shortening it when its link is copied; the key
+// fingerprint.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, unlinkSync, openSync, closeSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { judgeCode, cancelCode, fingerprint, TRIES_PER_PHONE, TRIES_PER_CODE } from './pairing.mjs'
+import { judgeCode, cancelCode, shorten, shortenCode, shortenOpen, fingerprint, TRIES_PER_PHONE, TRIES_PER_CODE, COPIED_LIFE } from './pairing.mjs'
 
 const NOW = 1_000_000
 const code = (extra = {}) => ({ code: 'right', expires: NOW + 60_000, name: 'desk', ...extra })
@@ -72,6 +73,55 @@ test('cancel ends a live code, and says whether there was one', () => {
   assert.equal(cancelCode(path, NOW), false) // closing again is harmless
   writeFileSync(path, JSON.stringify(code({ expires: NOW - 1 })))
   assert.equal(cancelCode(path, NOW), false)
+  assert.equal(existsSync(path), false)
+})
+
+test('a copied code ends 2 minutes later, keeps its tries, and is never lengthened', () => {
+  assert.equal(COPIED_LIFE, 2 * 60_000)
+  const tried = code({ expires: NOW + 10 * 60_000, failures: 2, tries: { 'phone-a': 2 } })
+  const cut = shorten(tried, COPIED_LIFE, NOW)
+  assert.deepEqual(cut, { ...tried, expires: NOW + COPIED_LIFE })
+  assert.equal(judgeCode(cut, 'phone-b', 'right', NOW + COPIED_LIFE).verdict, 'ok')
+  assert.equal(judgeCode(cut, 'phone-b', 'right', NOW + COPIED_LIFE + 1).verdict, 'gone')
+  // Copying again later doesn't give it more time, nor does copying a code with less than 2 minutes.
+  assert.equal(shorten(cut, COPIED_LIFE, NOW + 30_000).expires, NOW + COPIED_LIFE)
+  assert.equal(shorten(code({ expires: NOW + 30_000 }), COPIED_LIFE, NOW).expires, NOW + 30_000)
+  assert.equal(shorten(code({ expires: NOW - 1 }), COPIED_LIFE, NOW), undefined)
+  assert.equal(shorten(null, COPIED_LIFE, NOW), undefined)
+})
+
+test('copied rewrites pairing.json in place, and never brings back a used or cancelled code', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pocket-pairing-test-'))
+  const path = join(dir, 'pairing.json')
+  writeFileSync(path, JSON.stringify(code({ expires: NOW + 10 * 60_000 })), { mode: 0o600 })
+  assert.equal(shortenCode(path, COPIED_LIFE, NOW), NOW + COPIED_LIFE)
+  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), code({ expires: NOW + COPIED_LIFE }))
+  assert.equal(statSync(path).mode & 0o777, 0o600)
+  // Used (the bridge deleted it), cancelled, expired or unreadable: nothing to shorten, nothing made.
+  unlinkSync(path)
+  assert.equal(shortenCode(path, COPIED_LIFE, NOW), null)
+  assert.equal(existsSync(path), false)
+  writeFileSync(path, JSON.stringify(code({ expires: NOW - 1 })))
+  assert.equal(shortenCode(path, COPIED_LIFE, NOW), null)
+  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), code({ expires: NOW - 1 }))
+  writeFileSync(path, '{not json')
+  assert.equal(shortenCode(path, COPIED_LIFE, NOW), null)
+  // A longer record shrinking to a shorter one leaves no tail behind.
+  writeFileSync(path, JSON.stringify({ ...code({ expires: NOW + 10 * 60_000 }), pad: 'x'.repeat(500) }))
+  assert.equal(shortenCode(path, COPIED_LIFE, NOW), NOW + COPIED_LIFE)
+  assert.equal(JSON.parse(readFileSync(path, 'utf8')).expires, NOW + COPIED_LIFE)
+})
+
+test('a code used while copied is shortening stays gone: the write lands in the deleted file', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pocket-pairing-test-'))
+  const path = join(dir, 'pairing.json')
+  writeFileSync(path, JSON.stringify(code({ expires: NOW + 10 * 60_000 })))
+  // shortenCode has opened the file; a phone pairs and the bridge deletes it before the write.
+  const fd = openSync(path, 'r+')
+  unlinkSync(path)
+  try { assert.equal(shortenOpen(fd, COPIED_LIFE, NOW), NOW + COPIED_LIFE) } finally { closeSync(fd) }
+  assert.equal(existsSync(path), false)
+  assert.equal(shortenCode(path, COPIED_LIFE, NOW), null)
   assert.equal(existsSync(path), false)
 })
 
