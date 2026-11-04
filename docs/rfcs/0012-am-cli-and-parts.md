@@ -122,10 +122,19 @@ change.
 - **As built in delivery 1** (t30j, agreed with t22n and t259, 2026-11-03):
   - The secret is `AM_LANE_KEY` (rotation slot `AM_LANE_KEY_NEXT`, picked by the variable
     `AM_LANE_SIGNER`), the public keys `am/am-keys.json`, made by `bun scripts/am-lane.ts
-    keygen`. Amending the bullet above: while the secret is not set at all, a release attaches
-    am, posts no `am-lane` and says so in a `::warning::` (the key is the owner's to add; a
-    release never fails over its absence). A secret that is set but not listed in
-    `am-keys.json` stops the release before the tag, as written.
+    keygen`. Amending the bullet above: while `am-keys.json` lists no key, or the secret is not
+    set, a release attaches am, posts no `am-lane` and says so in a `::warning::` (the key is
+    the owner's to add; a release never fails over its absence, nor in the window between
+    keygen and its `am-keys.json` reaching dev). Once keys are listed, a secret that is none of
+    them stops the release before the tag, as written. The post is a job of its own (`am-lane`,
+    after the cut), so its fail-closed refusals stop neither the plugin lane nor any other job
+    (t259's review).
+  - Until a release ships a key, an installed am cannot update itself; so the briefing entry
+    runs am's copy first only when its `VERSION` is at least the installed sidebar's, and a
+    stale am never shadows a newer pack's briefing (t259's review). A self install records its
+    version's sequence, so an older signed pointer is refused after it; one install, update,
+    rollback or uninstall runs at a time (`parts/automagik.am/.lock`); a reinstall of the
+    linked version goes into a fresh folder, so `current` never names a missing one.
   - am reads `am-lane` with its installed `am-keys.json`. For tests only, `AM_RELEASE_URL` (a
     `file://` folder) and, with a `file://` one only, `AM_TRUSTED_KEYS`.
   - Links: am creates `~/.local/bin/am`, and takes `~/.local/bin/automagik-herdr` only when it is
