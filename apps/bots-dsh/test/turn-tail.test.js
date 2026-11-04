@@ -93,6 +93,7 @@ test('the turn tail entry notes when the turn ended and shows the pause before t
   const out = TurnTailCell({
     turn: finished,
     sessionId: 'b',
+    useRoster: select => select(roster),
     useTurnClock: select => select(clock),
     useUi: () => undefined,
     actions: { noteTurnTime: (...args) => noted.push(args) },
@@ -100,6 +101,43 @@ test('the turn tail entry notes when the turn ended and shows the pause before t
   for (const run of effects) run()
   assert.deepEqual(noted, [['b', 3, 'end', 2_000]])
   assert.equal(find(out, node => node.props?.className === 'bt-time-sep').length, 1)
+  assert.equal(find(out, node => node.props?.className === 'bt-turn-time').length, 1)
+})
+
+// #161: a Bot-to-Bot exchange turn hides its reply under the "N messages with" line, so a
+// reply time under it stood alone, and a run of them read as a history of blank messages.
+test('a hidden exchange turn shows no reply time, and still notes when it ended', () => {
+  effects.length = 0
+  const noted = []
+  const clock = { b: { 3: { first: 1_000, end: 2_000 }, 4: { first: 2_000 + 60 * 1000 } } }
+  const out = TurnTailCell({
+    turn: finished,
+    sessionId: 'b',
+    useRoster: select => select({ ...roster, exchangeTurns: { b: [3] } }),
+    useTurnClock: select => select(clock),
+    useUi: () => undefined,
+    actions: { noteTurnTime: (...args) => noted.push(args) },
+  })
+  for (const run of effects) run()
+  assert.deepEqual(noted, [['b', 3, 'end', 2_000]])
+  assert.equal(find(out, node => node.props?.className === 'bt-turn-time').length, 0)
+})
+
+test('no pause separator stands before a hidden turn that folds into the one before it', () => {
+  const clock = { b: { 3: { first: 1_000, end: 2_000 }, 4: { first: 2_000 + 60 * 60 * 1000 } } }
+  const tail = exchangeTurns => TurnTailCell({
+    turn: finished,
+    sessionId: 'b',
+    useRoster: select => select({ ...roster, exchangeTurns: { b: exchangeTurns } }),
+    useTurnClock: select => select(clock),
+    useUi: () => undefined,
+    actions: { noteTurnTime() {} },
+  })
+  const separators = out => find(out, node => node.props?.className === 'bt-time-sep').length
+  assert.equal(separators(tail([3, 4])), 0)
+  // A hidden turn after a shown one opens its own line, so the pause before it shows.
+  assert.equal(separators(tail([4])), 1)
+  assert.equal(separators(tail([3])), 1)
 })
 
 // #206: the user reads a Bot's reply in its own chat, so it folds only where rendering

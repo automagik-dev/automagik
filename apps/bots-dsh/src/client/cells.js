@@ -703,12 +703,16 @@ export function Nothing() { return null }
 
 // A pause longer than this splits the transcript with a time separator.
 const SEPARATOR_GAP_MS = 30 * 60 * 1000
-function nextTurnStart(turns, turn) {
+function nextTurnOf(turns, turn) {
   let next
   for (const key in turns) {
     const candidate = Number(key)
     if (candidate > turn && turns[key].first !== undefined && (next === undefined || candidate < next)) next = candidate
   }
+  return next
+}
+function nextTurnStart(turns, turn) {
+  const next = nextTurnOf(turns, turn)
   return next === undefined ? undefined : turns[next].first
 }
 // The first turn the transcript shows: the earliest rendered start, with only hidden
@@ -728,13 +732,23 @@ export const unseenSince = (visit, time) => typeof visit?.seen === 'number' && t
 // An entry in DSH's own turn tail, after what other plugins put there (the cards of
 // the files a turn delivered). The tail sits right before the next turn's first row,
 // so the separator for a pause between turns renders here.
-export function TurnTailCell({ turn: location, sessionId, useTurnClock, useUi, actions }) {
+export function TurnTailCell({ turn: location, sessionId, useRoster, useTurnClock, useUi, actions }) {
   const turn = location.turn
+  // A Bot-to-Bot exchange turn shows no reply here, only its fold line (#161).
+  const hidden = useRoster(roster => isHiddenTurn(roster, sessionId, turn))
+  const exchangeTurns = useRoster(roster => roster.exchangeTurns[sessionId])
+  // After a hidden turn, a hidden next turn folds into the same line and shows
+  // nothing, so no pause or unread divider stands before it.
+  const nextStart = (turns) => {
+    const next = nextTurnOf(turns, turn)
+    if (next === undefined || (hidden && exchangeTurns?.includes(next))) return undefined
+    return turns[next].first
+  }
   // DSH builds the tail from the turn's end, so it is there.
   const time = location.end.time
   useEffect(() => { actions.noteTurnTime(sessionId, turn, 'end', time) }, [sessionId, turn, time])
   const label = useTurnClock((state) => {
-    const start = nextTurnStart(state[sessionId] ?? {}, turn)
+    const start = nextStart(state[sessionId] ?? {})
     return start !== undefined && start - time >= SEPARATOR_GAP_MS ? clockLabel(start) : ''
   })
   // The unread divider sits before the first turn that began after the last visit;
@@ -742,11 +756,11 @@ export function TurnTailCell({ turn: location, sessionId, useTurnClock, useUi, a
   const visit = useUi(state => state.visits?.[sessionId])
   const fresh = useTurnClock((state) => {
     if (typeof visit?.seen !== 'number' || time > visit.seen) return false
-    const start = nextTurnStart(state[sessionId] ?? {}, turn)
+    const start = nextStart(state[sessionId] ?? {})
     return start !== undefined && start > visit.seen && start <= visit.entered
   })
   // Every reply says when it ended, under its last line.
-  const ended = h('time', { className: 'bt-turn-time', dateTime: new Date(time).toISOString() }, new Date(time).toLocaleTimeString(dateLocale(), { hour: 'numeric', minute: '2-digit' }))
+  const ended = hidden ? null : h('time', { className: 'bt-turn-time', dateTime: new Date(time).toISOString() }, new Date(time).toLocaleTimeString(dateLocale(), { hour: 'numeric', minute: '2-digit' }))
   return h(Fragment, null,
     ended,
     label ? h('div', { className: 'bt-time-sep', role: 'separator' }, label) : null,
