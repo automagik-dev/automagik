@@ -639,3 +639,71 @@ test('an adopted Session keeps its own level', async (t) => {
   assert.deepEqual(presets('adopted'), ['danger-full-access'])
   assert.equal(service.current({ id: 'adopted' }), 'danger-full-access')
 })
+
+// #343 F1: create_bot passes createBot only the parameters it declares. An undeclared
+// argument a model adds is dropped, so it never reaches the host's own options.
+const READ_ONLY = { careful: { sandbox: 'read-only', approval: 'ask' } }
+
+test('an undeclared existingSessionId cannot adopt a live Session: the Bot gets its own', async (t) => {
+  const { ctx, rt, call, service, presets, opened, settle } = team(t, { custom: READ_ONLY, bots: { m1: { permission: 'careful' } } })
+  service.set({ id: 'live' }, 'danger-full-access')
+  assert.match(await createBotTool(ctx, { name: 'Sneak', existingSessionId: 'live' }), /^Created Sneak\. Permission inherited from Omni \(careful\)\./)
+  const sneak = await botNamed(call, 'Sneak')
+  assert.notEqual(sneak.id, 'live')
+  assert.equal(sneak.sessionPinned, undefined)
+  assert.equal(rt.botOf('live'), undefined)
+  assert.equal(opened.includes('live'), false)
+  await settle()
+  // The live Session is untouched, and the Bot's fresh one runs at its creator's level.
+  assert.deepEqual(presets('live'), ['danger-full-access'])
+  assert.deepEqual(presets(sneak.id), ['careful'])
+})
+
+test('an undeclared main cannot make the created Bot a Main Bot', async (t) => {
+  const { ctx, rt, call } = team(t)
+  assert.match(await createBotTool(ctx, { name: 'Boss', main: true }), /^Created Boss\./)
+  const boss = await botNamed(call, 'Boss')
+  assert.deepEqual((await call('state', {})).value.mainBotIds, ['m1'])
+  assert.equal(rt.isMain(boss.id), false)
+})
+
+test('an undeclared pickModel cannot alter the model choice', async (t) => {
+  const { ctx, call } = team(t)
+  Object.assign(ctx.llm, {
+    listProviders: () => [{ id: 'deepseek', name: 'DeepSeek' }],
+    listModels: async () => [{ id: 'v4' }],
+    resolveModelInfo: async () => ({}),
+  })
+  await createBotTool(ctx, { name: 'Plain' })
+  await createBotTool(ctx, { name: 'Picky', pickModel: true })
+  const plain = await botNamed(call, 'Plain')
+  const picky = await botNamed(call, 'Picky')
+  // Without pickModel the Bot takes the served default and greets at once; with it read,
+  // it would have no model and hold its greeting for a pick.
+  assert.equal(plain.model, 'deepseek/v4')
+  assert.equal(picky.model, plain.model)
+  assert.equal(picky.waiting, undefined)
+})
+
+// The Reviewer's probe: a read-only creator hands every undeclared option at once, a live
+// full-access Session among them. The Bot still starts read-only, on a Session of its own.
+test('a read-only creator\'s create_bot yields a read-only Bot whatever else it passes', async (t) => {
+  const { ctx, rt, call, service, presets, settle } = team(t, { custom: READ_ONLY, bots: { m1: { permission: 'careful' } } })
+  service.set({ id: 'live' }, 'danger-full-access')
+  const answer = await createBotTool(ctx, {
+    name: 'Probe', existingSessionId: 'live', main: true, copyOf: 'b2', pickModel: true,
+    kind: 'omni', color: 'red', permission: 'danger-full-access', createdBy: 'b2',
+  })
+  assert.equal(answer, 'Created Probe. Permission inherited from Omni (careful). It is greeting the user now.')
+  const probe = await botNamed(call, 'Probe')
+  assert.equal(probe.permission, 'careful')
+  assert.notEqual(probe.id, 'live')
+  assert.equal(probe.createdBy, 'm1')
+  assert.equal(probe.kind, undefined)
+  assert.equal(probe.color, undefined)
+  assert.equal(rt.isMain(probe.id), false)
+  await settle()
+  assert.deepEqual(presets(probe.id), ['careful'])
+  assert.equal(presets(probe.id).includes('danger-full-access'), false)
+  assert.equal(service.current({ id: probe.id }), 'careful')
+})

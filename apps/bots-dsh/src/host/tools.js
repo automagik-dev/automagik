@@ -323,8 +323,20 @@ export function install(rt) {
         const creator = callerBot(exec)
         const served = creator?.model && (await rt.catalog()).some(entry => entry.ref === creator.model)
         const model = args.model || (served ? creator.model : undefined)
-        // A kind is the onboarding's to give (a plugin's own team member), never a model's.
-        const bot = await rt.createBot({ ...args, kind: undefined, avatar: avatar === undefined ? undefined : { image: avatar }, model, workDir, effort: args.effort, createdBy: creator?.id })
+        // Only the parameters declared above reach createBot. Its other options (an
+        // existing Session to adopt, a Main Bot, a copy, a held model, a kind) are the
+        // host's and the user's to give, never a model's: an undeclared argument is dropped.
+        const bot = await rt.createBot({
+          name: args.name,
+          role: args.role,
+          instructions: args.instructions,
+          brief: args.brief,
+          model,
+          effort: args.effort,
+          workDir,
+          avatar: avatar === undefined ? undefined : { image: avatar },
+          createdBy: creator?.id,
+        })
         // A level taken from the creator is said, so the creator knows what the Bot may do.
         const inherited = creator && rt.permissionCatalog() && bot.permission ? ` Permission inherited from ${creator.name} (${bot.permission}).` : ''
         return `Created ${bot.name}${workDir ? `, working in ${workDir}` : ''}.${inherited} It is greeting the user now.`
