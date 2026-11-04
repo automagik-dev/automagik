@@ -335,6 +335,10 @@ test('on Windows stopping dsh ends its whole process tree with taskkill', async 
   const lone = Object.assign(new EventEmitter(), { pid: 7, exitCode: null, signalCode: null })
   lone.kill = () => setImmediate(() => lone.emit('exit', 1, null))
   await stopDsh(lone, 8_000, { platform: 'win32', env: {}, run: (file, args, options, done) => done(new Error('denied')) })
+  // A dsh that has started nothing yet ends at once, without taskkill.
+  const fresh = Object.assign(new EventEmitter(), { pid: 8, exitCode: null, signalCode: null })
+  fresh.kill = () => setImmediate(() => fresh.emit('exit', 1, null))
+  await stopDsh(fresh, 8_000, { platform: 'win32', env: {}, tree: false, run: () => assert.fail('no taskkill') })
 })
 
 test('on Windows a dsh\'s own children are gone once it is stopped', windowsOnly, async (t) => {

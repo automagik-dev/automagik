@@ -626,7 +626,9 @@ export function dshRun() {
     get stopped() { return stopped },
     track(next) {
       child = next
-      if (stopped) void stopDsh(next)
+      // Just spawned, it has started nothing yet: it ends at once, before it can say it is ready
+      // (taskkill, on Windows, would come too late).
+      if (stopped) void stopDsh(next, undefined, { tree: false })
     },
     stop(graceMs) {
       stopped = true
@@ -793,9 +795,10 @@ export function startDsh({ node, bin, env, port, cwd, log, privacy, timeoutMs = 
  * Stop dsh: SIGTERM, then SIGKILL if it is still there after the grace period. Windows has no
  * signals, and ending dsh alone there leaves its children (a terminal's OpenConsole.exe, rg.exe,
  * pnpm's node) running from the app's folder, where they hold files an update must replace: there
- * the whole tree ends at once (taskkill /T /F), and dsh alone only when taskkill cannot.
+ * the whole tree ends at once (taskkill /T /F), and dsh alone only when taskkill cannot, or with
+ * `tree: false`, for a dsh that has started nothing yet.
  */
-export function stopDsh(child, graceMs = STOP_GRACE_MS, { platform = process.platform, env = process.env, run = execFile } = {}) {
+export function stopDsh(child, graceMs = STOP_GRACE_MS, { platform = process.platform, env = process.env, run = execFile, tree = true } = {}) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
   return new Promise((done) => {
     const timer = setTimeout(() => { try { child.kill('SIGKILL') } catch {} }, graceMs)
@@ -803,7 +806,7 @@ export function stopDsh(child, graceMs = STOP_GRACE_MS, { platform = process.pla
       clearTimeout(timer)
       done()
     })
-    if (platform === 'win32' && child.pid) {
+    if (tree && platform === 'win32' && child.pid) {
       run(taskkillOf(env), ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, (error) => {
         if (error) try { child.kill() } catch {}
       })
