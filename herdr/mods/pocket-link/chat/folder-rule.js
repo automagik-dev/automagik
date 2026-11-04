@@ -3,6 +3,16 @@
 // agent's own transcript folder under the machine's home and ends in .jsonl. Labels are free-form,
 // so this is what stops one pointing a chat at ~/.ssh. Ours, not Orca's. The cases both copies of
 // the rule must pass are herdr/test/fixtures/transcript-folder-rule.json.
+//
+// Accepted limits (review of #267), for the engine (RFC 0015 delivery 3) to keep in mind:
+// - A hard link inside the folder to a file elsewhere passes: realpath cannot see it. Writing one
+//   needs the account that owns the folder, which can already read the target.
+// - The rule checks a path; the engine opens it later. It runs the rule again at every read, and
+//   should compare the opened file's fstat (dev, inode) with the checked one before trusting it.
+// - Case is compared as text, so on macOS's case-insensitive disk a path spelled with other case
+//   than the folder (`.Claude/projects`) is refused, never wrongly accepted.
+// - Remote paths are text only: a name with a leading `-` passes. The engine hands the path to hc
+//   as an API argument, never on a command line, and takes `home` from hc, never from a label.
 import { realpathSync, statSync } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
 
@@ -27,7 +37,7 @@ function textual(agent, path) {
   if (typeof agent !== 'string' || !Object.hasOwn(TRANSCRIPT_FOLDERS, agent)) return refuse('agent')
   const folder = TRANSCRIPT_FOLDERS[/** @type {keyof typeof TRANSCRIPT_FOLDERS} */ (agent)]
   if (typeof path !== 'string' || path === '') return refuse('empty', folder)
-  if (path.includes('\0')) return refuse('nul', folder)
+  if (/[\u0000-\u001f\u007f]/.test(path)) return refuse('control', folder)
   if (path.includes('\\')) return refuse('backslash', folder)
   if (!path.endsWith('.jsonl')) return refuse('extension', folder)
   return { folder }
@@ -64,6 +74,8 @@ export function localTranscriptPath(agent, path, home) {
   }
   const rel = relative(root, real)
   if (rel === '' || isAbsolute(rel) || rel.split(sep).includes('..')) return refuse('outside', folder)
+  // A s.jsonl link to an s.txt inside the folder: the name that is read must be a transcript's too.
+  if (!real.endsWith('.jsonl')) return refuse('extension', folder)
   try {
     if (!statSync(real).isFile()) return refuse('not-file', folder)
   } catch {

@@ -12,6 +12,12 @@ import { localTranscriptPath, remoteTranscriptPath, TRANSCRIPT_FOLDERS } from '.
 const here = dirname(fileURLToPath(import.meta.url))
 const vectors = JSON.parse(readFileSync(join(here, '../../../test/fixtures/transcript-folder-rule.json'), 'utf8'))
 
+test('every refusal names the reason it expects', () => {
+  for (const c of vectors.cases) {
+    if (c.expect === 'refuse') assert.equal(typeof c.reason, 'string', c.name)
+  }
+})
+
 test('the vectors name the same folders as the rule', () => {
   assert.equal(vectors.version, 1)
   assert.deepEqual(vectors.folders, { ...TRANSCRIPT_FOLDERS })
@@ -21,6 +27,7 @@ test('the vectors name the same folders as the rule', () => {
 function homeFor(c) {
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'chat-folder-rule-')))
   const fill = (s) => s.replaceAll('{home}', home)
+  for (const d of c.setup?.dirs ?? []) mkdirSync(fill(d), { recursive: true })
   for (const f of c.setup?.files ?? []) {
     mkdirSync(dirname(fill(f)), { recursive: true })
     writeFileSync(fill(f), '')
@@ -38,11 +45,11 @@ for (const c of vectors.cases) {
       const { home, fill } = homeFor(c)
       const got = localTranscriptPath(c.agent, fill(c.path), home)
       if (c.expect === 'accept') assert.deepEqual(got, { ok: true, path: fill(c.resolved) })
-      else assert.equal(got.ok, false, `accepted ${JSON.stringify(got)}`)
+      else assert.equal(got.reason, c.reason, `want ${c.reason}, got ${JSON.stringify(got)}`)
     } else {
       const got = remoteTranscriptPath(c.agent, c.path, c.home)
       if (c.expect === 'accept') assert.deepEqual(got, { ok: true, path: c.relative })
-      else assert.equal(got.ok, false, `accepted ${JSON.stringify(got)}`)
+      else assert.equal(got.reason, c.reason, `want ${c.reason}, got ${JSON.stringify(got)}`)
     }
   })
 }
