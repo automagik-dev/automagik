@@ -561,7 +561,7 @@ check passes on all three OSes.
 6. **Windows via WSLC** (herdr, and am where needed; amended by RFC 0016). The guest runs `am
    install code` as on Linux; the desktop app installs herdr-app and the pack's mods on the
    Windows side and reports them into the guest's parts.json. am-quota reads the guest's Claude
-   Code credentials through the machine, not a Windows credential store (0016, question 9).
+   Code credentials through the machine, not a Windows credential store (0016, Q9).
    The desktop app is the only writer of the pack's mods on Windows; the guest's `am doctor`
    shows its last report for those parts, and a missing or failing report fails them.
    *Check:* on RFC 0016's Windows runner (GitHub's hosted runners have no nested
