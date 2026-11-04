@@ -37,39 +37,61 @@ class HostReads(
         }.awaitAll()
     }
 
-    /** The linked layouts being read, if a refresh started a reading that hasn't finished. */
-    @Volatile private var linkedReading: Deferred<List<String>>? = null
+    /** What a linked reading reads: the machines ([names]), the terminals that name their spaces, and what runs after. */
+    private class LinkedInputs(val terminals: List<CoreTerminal>, val names: List<String>, val linkedRead: suspend () -> Unit)
+    private val lock = Any()
+    /** A linked reading is out (guarded by [lock]). */
+    private var running = false
+    /** The newest inputs of a refresh that came while a reading was out: one more reading runs with them (by [lock]). */
+    private var next: LinkedInputs? = null
 
     /**
      * One refresh. The core's own [terminals] and spaces ([own]) land at once, with the linked machines' spaces as last
      * read, and then [ownRead] runs (alerts, git): none of it waits for a linked machine. The linked machines' layouts
      * ([names]) are read in [scope], each landing as it answers, in Herdr's order; one that doesn't answer keeps its
-     * spaces and isn't counted as read. One reading at a time: while one is still out, a refresh starts none (null),
-     * so a stalled machine never piles reads up. The reading answers which machines it laid out; [linkedRead] runs
-     * after it.
+     * spaces and isn't counted as read; [linkedRead] runs after. One reading at a time, so a stalled machine never piles
+     * reads up: a refresh that comes while one is out starts none (null) but is kept, and when the reading ends one more
+     * runs with the newest such inputs, so no linked change waits for the next event. The reading answers which
+     * machines its last pass laid out.
      */
     suspend fun refresh(scope: CoroutineScope, terminals: List<CoreTerminal>, own: List<PocketSpace>, names: List<String>,
                         linked: List<LinkedMachine>, now: Long, ownRead: suspend () -> Unit, linkedRead: suspend () -> Unit): Deferred<List<String>>? {
         // The linked spaces taken inside the update, so a layout landing meanwhile is never overwritten.
         update { m -> reading(m, terminals, own + m.spaces.filter { it.machine.isNotBlank() && it.machine in names }, linked, emptyList(), now) }
         ownRead()
-        if (linkedReading?.isActive == true) return null
-        val session = machine()?.session ?: return null
+        val inputs = LinkedInputs(terminals, names, linkedRead)
+        // Checked and claimed at once: refreshes come from more than one coroutine (the connection's, pull to refresh).
+        val starts = synchronized(lock) { if (running) { next = inputs; false } else { running = true; true } }
+        if (!starts) return null
         return scope.async {
-            val answered = coroutineScope {
-                names.map { name ->
-                    async {
-                        val doc = timeBoxed(limits.doc) { call("doc.get", JSONObject().put("name", "herdr-app").put("on", name)) }
-                            ?: return@async null
-                        val spaces = LayoutReader.spaces(doc.optJSONObject("value"), name, terminals)
-                        update { laidOut(it, name, spaces, session, System.currentTimeMillis()) }
-                        name
-                    }
-                }.awaitAll().filterNotNull()
+            var pass = inputs
+            var answered: List<String>
+            while (true) {
+                answered = readLinked(pass)
+                pass.linkedRead()
+                pass = synchronized(lock) { next.also { next = null; if (it == null) running = false } } ?: break
             }
-            linkedRead()
             answered
-        }.also { linkedReading = it }
+        }.also { reading ->
+            // Failed or cancelled (even before it started): the next refresh starts afresh.
+            reading.invokeOnCompletion { cause -> if (cause != null) synchronized(lock) { running = false; next = null } }
+        }
+    }
+
+    /** One pass over [pass]'s linked machines, each landing as it answers: the ones laid out. */
+    private suspend fun readLinked(pass: LinkedInputs): List<String> {
+        val session = machine()?.session ?: return emptyList()
+        return coroutineScope {
+            pass.names.map { name ->
+                async {
+                    val doc = timeBoxed(limits.doc) { call("doc.get", JSONObject().put("name", "herdr-app").put("on", name)) }
+                        ?: return@async null
+                    val spaces = LayoutReader.spaces(doc.optJSONObject("value"), name, pass.terminals)
+                    update { laidOut(it, name, spaces, session, System.currentTimeMillis()) }
+                    name
+                }
+            }.awaitAll().filterNotNull()
+        }
     }
 
     /**

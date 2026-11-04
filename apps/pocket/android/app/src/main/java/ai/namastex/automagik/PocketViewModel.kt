@@ -113,11 +113,16 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     /** At most [HostReads.POOL] machines read at once, across every saved machine. */
     private val hostPool = Semaphore(HostReads.POOL)
     private val hostReads = ConcurrentHashMap<String, Pair<CoreClient, HostReads>>()
-    /** The Teams reads of saved machine [id] over [client] ([HostReads]): one per connection, which keeps its linked reading. */
-    private fun reads(id: String, client: CoreClient): HostReads = hostReads.compute(id) { _, held ->
-        if (held?.first === client) held
-        else client to HostReads({ method, params -> client.call(method, params) }, { state.value.machines[id] }, { f -> updateMachine(id, f) }, hostPool)
-    }!!.second
+    /**
+     * The Teams reads of saved machine [id] over [client] ([HostReads]): one per live connection, which keeps its linked
+     * reading. A connection that closed or was replaced (a pass still finishing after a disconnect or removal) gets
+     * reads of its own, never kept.
+     */
+    private fun reads(id: String, client: CoreClient): HostReads {
+        fun fresh() = HostReads({ method, params -> client.call(method, params) }, { state.value.machines[id] }, { f -> updateMachine(id, f) }, hostPool)
+        if (clients[id] !== client) return fresh()
+        return hostReads.compute(id) { _, held -> if (held?.first === client) held else client to fresh() }!!.second
+    }
     private val gitDirty: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val wasWorking = ConcurrentHashMap<String, Set<String>>()
     @Volatile private var gitShown = false
@@ -227,7 +232,6 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         // Its cached projects and bots go with it (TeamsSync), so Teams never shows a machine the phone no longer has.
         viewModelScope.launch(Dispatchers.IO) { runCatching { teamsSync.removed(id) } }
         disconnect(id)
-        hostReads.remove(id)
         saveHosts(state.value.hosts.filter { it.id != id })
         _state.update { it.copy(machines = it.machines - id, repairing = if (it.repairing == id) null else it.repairing) }
         dropSshKeyIfUnused()
@@ -310,6 +314,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     private fun lost(profile: HostProfile, reason: String) {
         val unexpected = jobs[profile.id]?.isActive == true
         clients.remove(profile.id)
+        hostReads.remove(profile.id)
         if (unexpected) reconnectLater(profile, 1)
         updateMachine(profile.id) { it.copy(connected = false, connecting = false, error = "Disconnected: $reason") }
         if (state.value.selected?.hostId == profile.id) _state.update { it.copy(terminalStatus = "Disconnected") }
@@ -396,6 +401,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         if (state.value.selected?.hostId == id) detach()
         jobs.remove(id)?.cancel()
         clients.remove(id)?.close()
+        hostReads.remove(id)
         // A deliberate disconnect is not an error to surface or retry.
         updateMachine(id) { it.copy(connected = false, connecting = false, error = null) }
     }
