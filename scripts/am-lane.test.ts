@@ -48,10 +48,14 @@ describe('the am lane', () => {
     const key = pair();
     const keys = [{ keyId: KEY_ID, publicKey: key.pub }];
     expect(keyVerdict(undefined, keys).verdict).toBe('skip');
+    expect(keyVerdict(undefined, keys).message).toMatch(/^AM_LANE_KEY is not set: this release attaches/);
     expect(keyVerdict('', []).verdict).toBe('skip');
     expect(keyVerdict(key.priv, keys)).toEqual({ verdict: 'sign', message: `AM_LANE_KEY is ${KEY_ID}, listed in am/am-keys.json` });
     expect(keyVerdict(pair().priv, keys)).toEqual({ verdict: 'fail', message: 'AM_LANE_KEY\'s public key is not in am/am-keys.json' });
-    expect(keyVerdict(key.priv, []).verdict).toBe('fail');
+    // No key listed yet (keygen ran, its am-keys.json not merged): skipped, never a failed release.
+    expect(keyVerdict(key.priv, []).verdict).toBe('skip');
+    expect(keyVerdict(key.priv, []).message).toMatch(/^am\/am-keys\.json lists no key yet/);
+    expect(keyVerdict('not a key', []).verdict).toBe('skip');
     expect(keyVerdict('not a key', keys)).toEqual({ verdict: 'fail', message: 'AM_LANE_KEY is not a private key (PEM)' });
   });
 
@@ -62,13 +66,14 @@ describe('the am lane', () => {
     delete (env as Record<string, string | undefined>).AM_LANE_KEY;
     const absent = spawnSync('bun', [SCRIPT, 'check-key'], { encoding: 'utf8', env });
     expect(absent.status).toBe(0);
-    expect(absent.stdout).toMatch(/^::warning::am lane: AM_LANE_KEY is not set: this release attaches automagik-am-<v>\.tgz but posts no am-lane pointer/);
+    expect(absent.stdout).toMatch(/^::warning::am lane: am\/am-keys\.json lists no key yet: this release attaches automagik-am-<v>\.tgz but posts no am-lane pointer/);
     expect(readFileSync(out, 'utf8')).toBe('sign=no\n');
-    // A key that am-keys.json does not list (it lists none yet, or another) stops the run.
-    const wrong = spawnSync('bun', [SCRIPT, 'check-key'], { encoding: 'utf8', env: { ...env, AM_LANE_KEY: pair().priv } });
-    expect(wrong.status).toBe(1);
-    expect(wrong.stderr).toMatch(/AM_LANE_KEY's public key is not in am\/am-keys\.json/);
-    expect(readFileSync(out, 'utf8')).toBe('sign=no\n');
+    // The secret set while am-keys.json lists no key (between keygen and its merge): still a
+    // warning and no post, never a stopped release.
+    const early = spawnSync('bun', [SCRIPT, 'check-key'], { encoding: 'utf8', env: { ...env, AM_LANE_KEY: pair().priv } });
+    expect(early.status).toBe(0);
+    expect(early.stdout).toMatch(/^::warning::am lane: am\/am-keys\.json lists no key yet/);
+    expect(readFileSync(out, 'utf8')).toBe('sign=no\nsign=no\n');
   });
 
   test('keygen never writes the slot releases sign with: the first key to AM_LANE_KEY, a rotation to the other', () => {

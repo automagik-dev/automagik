@@ -21,10 +21,11 @@
  *       pointer (am.json, am.json.sig), it verifies, and its sequence is higher; or when <dir> holds
  *       a posted pointer that does not verify, unless AM_LANE_REPLACE_UNVERIFIED=true (the
  *       release's replace_unverified_am_pointer input)
- *   bun scripts/am-lane.ts check-key                  before the tag, on every release: AM_LANE_KEY
- *       unset is a ::warning:: and `sign=no` (the release attaches am but posts no am-lane: the key
- *       is the owner's to add); set but not a key am-keys.json lists fails; listed is `sign=yes`.
- *       `sign=` goes to $GITHUB_OUTPUT when it is set.
+ *   bun scripts/am-lane.ts check-key                  before the tag, on every release: while
+ *       am-keys.json lists no key, or AM_LANE_KEY is unset, a ::warning:: and `sign=no` (the
+ *       release attaches am but posts no am-lane: the key is the owner's to add, and the window
+ *       between keygen and its am-keys.json reaching dev stops nothing); a key that is set but is
+ *       none of the listed ones fails; a listed one is `sign=yes`. `sign=` goes to $GITHUB_OUTPUT.
  *   bun scripts/am-lane.ts keygen [--repo <owner/repo>] [--key-id <id>]
  *       make a key: an ed25519 pair generated in memory; the private key goes straight to `gh secret
  *       set` on its stdin (never printed, never written to disk), and only then is the public key
@@ -91,10 +92,15 @@ export const verify = (bytes: Buffer, signature: string, keys: AmKey[]): AmPoint
 
 /**
  * What check-key decides: `sign` when AM_LANE_KEY is a key am-keys.json lists; `skip` (with the
- * warning to show) when it is unset, since am-lane's key is the owner's to add and a release never
- * fails over its absence; `fail` (with why) when it is set but cannot sign pointers am trusts.
+ * warning to show) while am-keys.json lists no key or the secret is unset, since am-lane's key is
+ * the owner's to add and a release never fails over its absence (nor in the window between keygen
+ * and its am-keys.json reaching dev); `fail` (with why) once keys are listed and the secret, set,
+ * is none of them.
  */
 export function keyVerdict(privatePem: string | undefined, keys: AmKey[]): { verdict: 'sign' | 'skip' | 'fail'; message: string } {
+  if (keys.length === 0) {
+    return { verdict: 'skip', message: 'am/am-keys.json lists no key yet: this release attaches automagik-am-<v>.tgz but posts no am-lane pointer, so installed ams do not update to it. Make the key and commit am-keys.json (bun scripts/am-lane.ts keygen; RFC 0012)' };
+  }
   if (!privatePem) {
     return { verdict: 'skip', message: 'AM_LANE_KEY is not set: this release attaches automagik-am-<v>.tgz but posts no am-lane pointer, so installed ams do not update to it. Add the key (bun scripts/am-lane.ts keygen; RFC 0012)' };
   }
