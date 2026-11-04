@@ -27,7 +27,7 @@ export const CALL_MS = 30_000
  * One `hc connect` child speaking JSON-RPC lines. `onLine` gets every parsed message; `onExit`
  * runs once. Writes before the child is up are queued by the pipe.
  */
-function line({ hcPath, env, spawn, onLine, onExit }) {
+function line({ hcPath, env, spawn, onLine, onExit, maxLine = MAX_LINE }) {
   const child = spawn(hcPath, ['connect'], { stdio: ['pipe', 'pipe', 'ignore'], env })
   let buffered = ''
   let ended = false
@@ -40,7 +40,7 @@ function line({ hcPath, env, spawn, onLine, onExit }) {
   child.stdout.setEncoding('utf8')
   child.stdout.on('data', (chunk) => {
     buffered += chunk
-    if (buffered.length > MAX_LINE) return end('line too long')
+    if (buffered.length > maxLine) return end('line too long')
     let at
     while ((at = buffered.indexOf('\n')) !== -1) {
       const text = buffered.slice(0, at)
@@ -65,10 +65,10 @@ function line({ hcPath, env, spawn, onLine, onExit }) {
 
 /**
  * The real seam: `hc connect` children. `env` is passed as is (the bridge picks HC_SESSION).
- * @param {{ hcPath?: string, env?: NodeJS.ProcessEnv, spawn?: typeof nodeSpawn, callMs?: number }} [options]
+ * @param {{ hcPath?: string, env?: NodeJS.ProcessEnv, spawn?: typeof nodeSpawn, callMs?: number, maxLine?: number }} [options]
  * @returns {Hc}
  */
-export function connectHc({ hcPath = 'hc', env = process.env, spawn = nodeSpawn, callMs = CALL_MS } = {}) {
+export function connectHc({ hcPath = 'hc', env = process.env, spawn = nodeSpawn, callMs = CALL_MS, maxLine = MAX_LINE } = {}) {
   /** @type {null | { write(m: object): boolean, close(): void }} */
   let calls = null
   let nextId = 1
@@ -80,7 +80,7 @@ export function connectHc({ hcPath = 'hc', env = process.env, spawn = nodeSpawn,
     for (const [id, p] of pending) { clearTimeout(p.timer); pending.delete(id); p.reject(new Error(reason)) }
   }
   const callLine = () => calls ??= line({
-    hcPath, env, spawn,
+    hcPath, env, spawn, maxLine,
     onLine: (m) => {
       if (typeof m?.id !== 'number' || m.id === 0) return
       const p = pending.get(m.id)
@@ -112,7 +112,7 @@ export function connectHc({ hcPath = 'hc', env = process.env, spawn = nodeSpawn,
     subscribe(params, onMessage) {
       let closed = false
       const conn = line({
-        hcPath, env, spawn,
+        hcPath, env, spawn, maxLine,
         onLine: (m) => {
           if (closed) return
           if (m.id === 1) {

@@ -134,7 +134,8 @@ export class RowStore {
         if (interrupted) this.open = []
         row({ kind: 'status', state: interrupted ? 'interrupted' : b.presentation === 'compaction' ? 'compacted' : 'notice', msg: b.text })
       }
-    } else if (message.role !== 'reasoning') {
+    } else {
+      // Text rows are the user's and the assistant's only: reasoning is not shown (no row kind).
       for (const b of message.blocks) {
         if (b.type === 'text' && (message.role === 'user' || message.role === 'assistant')) row({ kind: 'text', role: message.role, text: b.text })
         else if (b.type === 'image-ref' && (message.role === 'user' || message.role === 'assistant')) row({ kind: 'text', role: message.role, text: imageText(b) })

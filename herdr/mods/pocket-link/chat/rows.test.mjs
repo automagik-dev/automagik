@@ -117,3 +117,10 @@ test('images are links the person taps, never inline data', () => {
   store.addMessage({ id: 'u', role: 'user', blocks: [{ type: 'image-ref', url: 'https://example.invalid/a.png' }, { type: 'image-ref', url: 'data:image/png;base64,AAAA' }, { type: 'image-ref', path: '/tmp/a.png' }], timestamp: null, source: 'transcript' }, { line: 1 })
   assert.deepEqual(store.rows.map((r) => r.text), ['[image](https://example.invalid/a.png)', '[image]', '[image]'])
 })
+
+test('reasoning is not a row: a thinking-only message adds nothing', () => {
+  const store = new RowStore()
+  const added = store.addMessage({ id: 'r', role: 'reasoning', blocks: [{ type: 'text', text: 'private chain of thought' }], timestamp: null, source: 'transcript' }, { line: 1 })
+  assert.deepEqual(added, [])
+  assert.deepEqual(store.rows, [])
+})

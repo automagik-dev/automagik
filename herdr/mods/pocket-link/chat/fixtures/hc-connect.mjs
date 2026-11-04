@@ -10,6 +10,7 @@ rl.on('line', (text) => {
   if (m.method === 'terminal.get') return out({ jsonrpc: '2.0', id: m.id, result: { address: m.params.terminal, env: process.env.HC_SESSION ?? null } })
   if (m.method === 'boom') return out({ jsonrpc: '2.0', id: m.id, error: { code: -32000, message: 'not_found', data: { kind: 'not_found' } } })
   if (m.method === 'silent') return
+  if (m.method === 'long') return out({ jsonrpc: '2.0', id: m.id, result: 'x'.repeat(5000) })
   if (m.method === 'die') return process.exit(3)
   if (m.method === 'events.subscribe') {
     out({ jsonrpc: '2.0', id: m.id, result: { channel: null, seq: 5, terminals: [{ address: 't1' }] } })

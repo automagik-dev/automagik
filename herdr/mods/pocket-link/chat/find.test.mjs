@@ -120,7 +120,7 @@ test('a discovered file that is a link out of the folder is refused', () => {
   const dir = join(home, `.claude/projects/${claudeSlug(cwd)}`)
   mkdirSync(dir, { recursive: true })
   symlinkSync(secret, join(dir, 'evil.jsonl'))
-  const t = fakeTerminal('t1', { cwd, created: 0 })
+  const t = fakeTerminal('t1', { cwd, created: 1 })
   assert.deepEqual(findTranscript(t, { home }), { agent: 'claude', source: 'none', reason: 'refused' })
 })
 
@@ -142,4 +142,14 @@ test('another machine: label or derived, as a home-relative path read with on fr
   assert.deepEqual(findTranscript(bare, { home }), { agent: 'claude', source: 'none', reason: 'remote-unlabelled' })
   const wrongFolder = fakeTerminal('box/t3', { labels: { 'agent.transcript': '/home/u/.ssh/s.jsonl' } })
   assert.equal(findTranscript(wrongFolder, { home }).source, 'none')
+})
+
+test('no discovery without when the pane started: every file would look fresh', () => {
+  const { home, file } = sandbox()
+  const cwd = join(home, 'proj')
+  file(`.claude/projects/${claudeSlug(cwd)}/s.jsonl`)
+  for (const created of [undefined, 0, -5, Number.NaN, '2026']) {
+    const t = { ...fakeTerminal('t1', { cwd }), created_ms: created }
+    assert.deepEqual(findTranscript(t, { home }), { agent: 'claude', source: 'none', reason: 'no-start' }, String(created))
+  }
 })

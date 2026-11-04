@@ -69,7 +69,7 @@ test('status changes are relayed; a new agent.transcript label is a new session 
 
 test('no transcript: the screen fills the chat; once the transcript covers the turn the screen rows go', async () => {
   const { hc, events, make, write } = setup({
-    terminals: () => [fakeTerminal('t1', { cwd: '/home/u/proj', created: 0 })],
+    terminals: () => [fakeTerminal('t1', { cwd: '/home/u/proj', created: 1 })],
     screens: { t1: '❯ hello\n\nWorking on it…\n' }
   })
   const p = make('t1')
@@ -109,7 +109,7 @@ test('a pane on another machine is tailed with file.read, on from its address, n
 test('two panes in one folder: discovery never guesses, both are screen only', async () => {
   const { make, events } = setup({ terminals: (home, write) => {
     write(`.claude/projects/${join(home, 'proj').replace(/[^A-Za-z0-9]/g, '-')}/s.jsonl`, user('u', 'x'))
-    return [fakeTerminal('t1', { cwd: join(home, 'proj'), created: 0 }), fakeTerminal('t2', { cwd: join(home, 'proj'), created: 0 })]
+    return [fakeTerminal('t1', { cwd: join(home, 'proj'), created: 1 }), fakeTerminal('t2', { cwd: join(home, 'proj'), created: 1 })]
   } })
   const p = make('t1')
   await settle()
@@ -147,4 +147,37 @@ test('compareIds orders by segment, line, block', () => {
   assert.ok(compareIds('2:0.0', '1:99.9') > 0)
   assert.ok(compareIds('1:5.1', '1:5.0') > 0)
   assert.equal(compareIds('1:5.0', '1:5.0'), 0)
+})
+
+test('lines from a tail that is no longer the current one are ignored', async () => {
+  let second
+  const { hc, make } = setup({ terminals: (home, write) => {
+    const first = write('.claude/projects/p/a.jsonl', user('a1', 'first'))
+    second = write('.claude/projects/p/b.jsonl', user('b1', 'second'))
+    return [fakeTerminal('t1', { labels: { 'agent.transcript': first } })]
+  } })
+  const p = make('t1')
+  await settle(); await p.ready
+  const old = p.tail
+  hc.change('t1', 'labels', { labels: { 'agent.transcript': second } })
+  await p.ready
+  const held = p.rows().length
+  p.onLines(old, 'claude', [{ n: 2, text: user('late', 'from the old file').trim() }])
+  assert.equal(p.rows().length, held)
+  assert.ok(!p.rows().some((r) => r.text === 'from the old file'))
+  await p.stop()
+})
+
+test('the first read starts near the end; backfill before it gets exact turns, counted back', async () => {
+  // 10 turns of question + answer: lines 1..20. A window of 4 lines holds turns 9 and 10.
+  const lines = Array.from({ length: 20 }, (_, i) => (i % 2 ? reply(`a${i}`, `answer ${(i + 1) / 2}`) : user(`u${i}`, `question ${i / 2 + 1}`))).join('')
+  const { make } = setup({ terminals: (home, write) => [fakeTerminal('t1', { labels: { 'agent.transcript': write('.claude/projects/p/s.jsonl', lines) } })] })
+  const p = make('t1', { window: 4 })
+  await settle(); await p.ready
+  assert.deepEqual(p.rows().map((r) => [r.id, r.turn, r.text]), [['1:17.0', 1, 'question 9'], ['1:18.0', 1, 'answer 9'], ['1:19.0', 2, 'question 10'], ['1:20.0', 2, 'answer 10']])
+  const older = await p.backfill('1:17.0', 4)
+  assert.deepEqual(older.map((r) => [r.id, r.turn, r.text]), [['1:13.0', -1, 'question 7'], ['1:14.0', -1, 'answer 7'], ['1:15.0', 0, 'question 8'], ['1:16.0', 0, 'answer 8']])
+  const oldest = await p.backfill('1:3.0', 2)
+  assert.deepEqual(oldest.map((r) => [r.id, r.turn]), [['1:1.0', -7], ['1:2.0', -7]])
+  await p.stop()
 })

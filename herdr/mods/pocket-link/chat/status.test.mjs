@@ -106,3 +106,15 @@ test('the last watcher leaving closes the subscription', async () => {
   stop()
   assert.equal(hc.subscriptions, 0)
 })
+
+test('a listener that throws stops neither the others nor the hub', async () => {
+  const hc = createFakeHc({ terminals: [fakeTerminal('t1')] })
+  const hub = new StatusHub(hc, { timers: manualTimers() })
+  const got = []
+  hub.watch('t1', () => { throw new Error('listener bug') })
+  hub.watch('t1', (e) => got.push(e.change))
+  await settle()
+  hc.change('t1', 'status', { status: { state: 'working' } })
+  assert.deepEqual(got, ['snapshot', 'status'])
+  hub.close()
+})

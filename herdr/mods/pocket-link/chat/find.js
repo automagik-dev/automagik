@@ -8,6 +8,10 @@
 //   5. none: the chat is screen only.
 // Every path passes the folder rule (folder-rule.js). A refusal is logged once per folder, never
 // with the path.
+//
+// Discovery's limit: it counts only the panes herdr-core lists. A Claude started outside Herdr
+// in the same folder is not a sibling, so its transcript can be the one fresh file and be taken
+// for the pane's. Labels (delivery 2, and delivery 6's hook for every pane) close this.
 import { closeSync, openSync, readdirSync, readSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { addressParts } from './hc.js'
@@ -193,7 +197,10 @@ export function findTranscript(terminal, { home, appHome, siblings = 0, now = Da
   if (machine) return { agent, source: 'none', reason: 'remote-unlabelled' }
   if (siblings > 0) return { agent, source: 'none', reason: 'shared-folder' }
   if (typeof terminal.cwd !== 'string') return { agent, source: 'none', reason: 'no-cwd' }
-  const found = discoverCandidates(agent, { cwd: terminal.cwd, created: terminal.created_ms ?? 0, home, now })
+  // Without when the pane started, every file would look fresh: discovery would be a guess.
+  const created = terminal.created_ms
+  if (typeof created !== 'number' || !Number.isFinite(created) || created <= 0) return { agent, source: 'none', reason: 'no-start' }
+  const found = discoverCandidates(agent, { cwd: terminal.cwd, created, home, now })
   if (found.length !== 1) return { agent, source: 'none', reason: found.length ? 'ambiguous' : 'not-found' }
   const r = check(found[0])
   return r ? { agent, source: 'discovered', ...r } : { agent, source: 'none', reason: 'refused' }

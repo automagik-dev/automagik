@@ -1,7 +1,8 @@
 // A stand-in for herdr-core behind the chat seam (hc.js), for tests only: never a live Herdr.
 // Terminals, screens and files are in memory; every call is recorded so a test can check what
-// was asked (a remote read's `on`, that no `cwd` was sent). file.read follows herdr-core: lines
-// from `offset` (1-based), at most `limit`, line ends kept, and how many lines the file has.
+// was asked (a remote read's `on`, that no `cwd` was sent). file.read follows herdr-core (checked
+// against a real one): lines from `offset` (1-based), at most `limit` (0: none, just the count),
+// line ends kept, how many lines the file has, and invalid_params for an offset past the last line.
 
 /**
  * @param {{ terminals?: object[], screens?: Record<string, string>, files?: Record<string, Record<string, string>> }} [state]
@@ -32,6 +33,8 @@ export function createFakeHc({ terminals = [], screens = {}, files = {} } = {}) 
       if (text === undefined) throw Object.assign(new Error('not_found'), { kind: 'not_found' })
       const all = splitLines(text)
       const first = Math.max(1, offset ?? 1)
+      // As herdr-core: offset 1 is always valid; past the last line is invalid_params.
+      if (first > 1 && first > all.length) throw Object.assign(new Error(`offset ${first}: the file has ${all.length} lines`), { kind: 'invalid_params' })
       const given = all.slice(first - 1, limit == null ? undefined : first - 1 + limit)
       return { text: given.join(''), first, last: first + given.length - 1, lines: all.length }
     }

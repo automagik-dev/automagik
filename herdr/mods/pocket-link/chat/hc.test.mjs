@@ -58,3 +58,10 @@ test('addressParts splits a machine off the address', () => {
   assert.deepEqual(addressParts('t7'), { machine: null, id: 't7' })
   assert.deepEqual(addressParts('box/t7'), { machine: 'box', id: 't7' })
 })
+
+test('a line from hc longer than the cap ends the connection; pending calls reject', async () => {
+  const hc = connectHc({ spawn: fakeSpawn, maxLine: 1000 })
+  try {
+    await assert.rejects(hc.call('long'), /line too long/)
+  } finally { hc.close() }
+})

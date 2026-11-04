@@ -71,7 +71,8 @@ export class StatusHub {
 
   close() { this.closed = true; this.shut() }
 
-  emit(address, e) { for (const l of [...(this.listeners.get(address) ?? [])]) l(e) }
+  /** A listener that throws never stops the others, or the hub. */
+  emit(address, e) { for (const l of [...(this.listeners.get(address) ?? [])]) { try { l(e) } catch {} } }
 
   open() {
     if (this.closed) return

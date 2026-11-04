@@ -26,6 +26,10 @@ const DECODERS = { claude: decodeClaudeTranscriptLine, codex: decodeCodexTranscr
 const realTimers = { setTimeout, clearTimeout, setInterval, clearInterval }
 const ACTIVE = new Set(['working', 'blocked'])
 const ID = /^(\d+):(\d+)\.(\d+)$/
+/** Lines read at first, from the end; enough for KEEP_ROWS rows. Older lines come on a backfill. */
+export const WINDOW_LINES = 2 * KEEP_ROWS
+/** A user message with text opens a turn (rows.js). */
+const opensTurn = (m) => m?.role === 'user' && m.blocks.some((b) => b.type === 'text')
 
 /** Order of two row ids (`<segment>:<line>.<block>`). */
 export function compareIds(a, b) {
@@ -41,11 +45,12 @@ export class Projection {
    * @param {string} address  `t7` or `machine/t7`
    * @param {{ hc: any, hub: import('./status.js').StatusHub, home: string, appHome?: string,
    *   log?: (l: string) => void, refused?: Set<string>, timers?: typeof realTimers,
-   *   screenMs?: number, keep?: number, pollMs?: number, watch?: any, now?: () => number, relocateMs?: number }} options
+   *   screenMs?: number, keep?: number, pollMs?: number, watch?: any, now?: () => number, relocateMs?: number,
+   *   window?: number }} options
    *   relocateMs: with no transcript yet, how often a status event may look again (labels always do)
    */
-  constructor(address, { hc, hub, home, appHome, log = () => {}, refused = new Set(), timers = realTimers, screenMs = 2000, keep = KEEP_ROWS, pollMs, watch, now = Date.now, relocateMs = 5000 }) {
-    Object.assign(this, { address, hc, hub, home, appHome, log, refused, timers, screenMs, pollMs, watch, now, relocateMs })
+  constructor(address, { hc, hub, home, appHome, log = () => {}, refused = new Set(), timers = realTimers, screenMs = 2000, keep = KEEP_ROWS, pollMs, watch, now = Date.now, relocateMs = 5000, window = WINDOW_LINES }) {
+    Object.assign(this, { address, hc, hub, home, appHome, log, refused, timers, screenMs, pollMs, watch, now, relocateMs, window })
     this.lastLocate = -Infinity
     this.machine = addressParts(address).machine
     this.store = new RowStore({ keep })
@@ -137,11 +142,13 @@ export class Projection {
     if (found.local) {
       tail = new LocalTail(found.local, {
         onLines, onReset,
-        admit: (p) => localTranscriptPath(agent, p, this.home).ok,
+        // Asked at every open; the handle must be the real path it returns (tail.js openAdmitted).
+        admit: (p) => { const r = localTranscriptPath(agent, p, this.home); return r.ok ? r.path : null },
+        window: this.window,
         ...(this.pollMs ? { pollMs: this.pollMs } : {}), ...(this.watch !== undefined ? { watch: this.watch } : {}), timers: this.timers
       })
     } else {
-      tail = new RemoteTail({ hc: this.hc, on: found.remote.on, path: found.remote.path, onLines, onReset, working: () => ACTIVE.has(this.status.state), timers: this.timers })
+      tail = new RemoteTail({ hc: this.hc, on: found.remote.on, path: found.remote.path, onLines, onReset, working: () => ACTIVE.has(this.status.state), window: this.window, timers: this.timers })
     }
     this.tail = tail
     this.segments.set(this.store.segment, { agent, tail, remote: !found.local, gone: false })
@@ -193,11 +200,38 @@ export class Projection {
     } finally { this.readingScreen = false }
   }
 
-  /** The turn in effect just before `line` of a segment. */
-  turnBefore(seg, line) {
-    let turn = 0
-    for (const [l, t] of this.turnStarts.get(seg) ?? []) { if (l < line) turn = t; else break }
-    return turn
+  /** Read `from`..`to` of a segment's file again (local through the folder rule, or remote). */
+  readSegment(entry, from, to) {
+    return entry.remote ? entry.tail.readLines(from, to) : readLocalLines(entry.tail, from, to)
+  }
+
+  /**
+   * The turn of a row at `line`. In the window tailed live, from where its turns started. Before
+   * it (rows only a backfill reads), counted back from the window: the last turn opened before it
+   * is 0, the one before -1, and so on, from user rows found by scanning those lines (ensureOlder).
+   */
+  turnAt(seg, entry, line) {
+    if (line >= entry.tail.first) {
+      let turn = 0
+      for (const [l, t] of this.turnStarts.get(seg) ?? []) { if (l <= line) turn = t; else break }
+      return turn
+    }
+    const back = entry.older.users.filter((u) => u > line).length
+    return back ? -back : 0
+  }
+
+  /** Scan back from the window to `from`, noting the lines where a turn opens. */
+  async ensureOlder(entry, from) {
+    entry.older ??= { from: entry.tail.first, users: [] }
+    while (entry.older.from > from) {
+      const lo = Math.max(1, from, entry.older.from - 500)
+      const lines = await this.readSegment(entry, lo, entry.older.from - 1)
+      if (!lines.length) break
+      for (const { n, text } of lines) {
+        if (text !== null && opensTurn(DECODERS[entry.agent](text, `${n}`))) entry.older.users.push(n)
+      }
+      entry.older.from = lo
+    }
   }
 
   /**
@@ -215,16 +249,21 @@ export class Projection {
     let to = line
     while (to >= 1 && out.length < limit) {
       const from = Math.max(1, to - Math.max(limit, 20) + 1)
-      const lines = entry.remote ? await entry.tail.readLines(from, to) : await readLocalLines(entry.tail, from, to)
+      if (from < entry.tail.first) await this.ensureOlder(entry, from)
+      const lines = await this.readSegment(entry, from, to)
+      if (!lines.length) break
       const scratch = new RowStore({ keep: Infinity })
       scratch.segment = seg
-      scratch.turn = this.turnBefore(seg, from)
       const rows = []
       for (const { n, text } of lines) {
         if (text === null) continue
         const msg = DECODERS[entry.agent](text, `${seg}:${n}`)
         const tokens = tokensFromLine(entry.agent, text)
-        if (msg || tokens) rows.push(...scratch.addMessage(msg ?? { id: `${seg}:${n}`, role: 'assistant', blocks: [], timestamp: null, source: 'transcript' }, { line: n, tokens }))
+        if (!msg && !tokens) continue
+        const turn = this.turnAt(seg, entry, n)
+        for (const r of scratch.addMessage(msg ?? { id: `${seg}:${n}`, role: 'assistant', blocks: [], timestamp: null, source: 'transcript' }, { line: n, tokens })) {
+          rows.push({ ...r, turn })
+        }
       }
       out.unshift(...rows.filter((r) => compareIds(r.id, before) < 0))
       to = from - 1
