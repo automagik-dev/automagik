@@ -249,8 +249,10 @@ try {
   }
   else if (command === 'copied') {
     // The serving bridge reads pairing.json on every try, so a shorter `expires` there is enough.
-    const expires = shortenCode(files.pairing)
-    out(expires ? { ok: true, expires } : { ok: false, error: 'This pairing code was already used or has expired. Make a new one.' })
+    const { expires, error } = shortenCode(files.pairing)
+    out(expires ? { ok: true, expires }
+      : error === 'gone' ? { ok: false, error: 'This pairing code was already used or has expired. Make a new one.' }
+        : { ok: false, error: "The pairing code kept changing, so the link wasn't copied. Try again." })
   }
   else if (command === 'start') {
     // Without the login service: a detached bridge that lives until stopped or logout.

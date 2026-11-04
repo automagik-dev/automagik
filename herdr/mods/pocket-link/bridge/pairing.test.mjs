@@ -3,7 +3,7 @@
 // fingerprint.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, unlinkSync, openSync, closeSync, statSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, unlinkSync, openSync, closeSync, statSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { judgeCode, cancelCode, shorten, shortenCode, shortenOpen, fingerprint, TRIES_PER_PHONE, TRIES_PER_CODE, COPIED_LIFE } from './pairing.mjs'
@@ -90,39 +90,88 @@ test('a copied code ends 2 minutes later, keeps its tries, and is never lengthen
   assert.equal(shorten(null, COPIED_LIFE, NOW), undefined)
 })
 
+const LONG = NOW + 10 * 60_000
+const FAST = { settle: 0 }
+const read = path => JSON.parse(readFileSync(path, 'utf8'))
+/** The bridge's own write (writeJson in bridge.mjs): a temporary file renamed over pairing.json. */
+const bridgeWrite = (path, value) => { writeFileSync(`${path}.tmp`, JSON.stringify(value, null, 2) + '\n'); renameSync(`${path}.tmp`, path) }
+const tempCode = () => join(mkdtempSync(join(tmpdir(), 'pocket-pairing-test-')), 'pairing.json')
+
 test('copied rewrites pairing.json in place, and never brings back a used or cancelled code', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'pocket-pairing-test-'))
-  const path = join(dir, 'pairing.json')
-  writeFileSync(path, JSON.stringify(code({ expires: NOW + 10 * 60_000 })), { mode: 0o600 })
-  assert.equal(shortenCode(path, COPIED_LIFE, NOW), NOW + COPIED_LIFE)
-  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), code({ expires: NOW + COPIED_LIFE }))
+  const path = tempCode()
+  writeFileSync(path, JSON.stringify(code({ expires: LONG })), { mode: 0o600 })
+  assert.deepEqual(shortenCode(path, COPIED_LIFE, NOW, FAST), { expires: NOW + COPIED_LIFE })
+  assert.deepEqual(read(path), code({ expires: NOW + COPIED_LIFE }))
   assert.equal(statSync(path).mode & 0o777, 0o600)
   // Used (the bridge deleted it), cancelled, expired or unreadable: nothing to shorten, nothing made.
   unlinkSync(path)
-  assert.equal(shortenCode(path, COPIED_LIFE, NOW), null)
+  assert.deepEqual(shortenCode(path, COPIED_LIFE, NOW, FAST), { error: 'gone' })
   assert.equal(existsSync(path), false)
   writeFileSync(path, JSON.stringify(code({ expires: NOW - 1 })))
-  assert.equal(shortenCode(path, COPIED_LIFE, NOW), null)
-  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), code({ expires: NOW - 1 }))
+  assert.deepEqual(shortenCode(path, COPIED_LIFE, NOW, FAST), { error: 'gone' })
+  assert.deepEqual(read(path), code({ expires: NOW - 1 }))
   writeFileSync(path, '{not json')
-  assert.equal(shortenCode(path, COPIED_LIFE, NOW), null)
-  // A longer record shrinking to a shorter one leaves no tail behind.
-  writeFileSync(path, JSON.stringify({ ...code({ expires: NOW + 10 * 60_000 }), pad: 'x'.repeat(500) }))
-  assert.equal(shortenCode(path, COPIED_LIFE, NOW), NOW + COPIED_LIFE)
-  assert.equal(JSON.parse(readFileSync(path, 'utf8')).expires, NOW + COPIED_LIFE)
+  assert.deepEqual(shortenCode(path, COPIED_LIFE, NOW, FAST), { error: 'gone' })
+})
+
+test('a rewrite shorter than the file it replaces leaves no tail behind', () => {
+  const path = tempCode()
+  const before = JSON.stringify(code({ expires: LONG }), null, 12) + '\n'.repeat(40)
+  writeFileSync(path, before)
+  assert.deepEqual(shortenCode(path, COPIED_LIFE, NOW, FAST), { expires: NOW + COPIED_LIFE })
+  const after = JSON.stringify(code({ expires: NOW + COPIED_LIFE }), null, 2) + '\n'
+  assert.ok(after.length < before.length)
+  assert.equal(readFileSync(path, 'utf8'), after)
 })
 
 test('a code used while copied is shortening stays gone: the write lands in the deleted file', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'pocket-pairing-test-'))
-  const path = join(dir, 'pairing.json')
-  writeFileSync(path, JSON.stringify(code({ expires: NOW + 10 * 60_000 })))
+  const path = tempCode()
+  writeFileSync(path, JSON.stringify(code({ expires: LONG })))
   // shortenCode has opened the file; a phone pairs and the bridge deletes it before the write.
   const fd = openSync(path, 'r+')
   unlinkSync(path)
-  try { assert.equal(shortenOpen(fd, COPIED_LIFE, NOW), NOW + COPIED_LIFE) } finally { closeSync(fd) }
+  try { assert.equal(shortenOpen(fd, COPIED_LIFE, NOW).expires, NOW + COPIED_LIFE) } finally { closeSync(fd) }
   assert.equal(existsSync(path), false)
-  assert.equal(shortenCode(path, COPIED_LIFE, NOW), null)
+  // And when it goes just after the write: gone, not brought back.
+  writeFileSync(path, JSON.stringify(code({ expires: LONG })))
+  assert.deepEqual(shortenCode(path, COPIED_LIFE, NOW, { ...FAST, written: () => unlinkSync(path) }), { error: 'gone' })
   assert.equal(existsSync(path), false)
+})
+
+test('a wrong try the bridge renames over the shortened file is shortened again, tries kept', () => {
+  const path = tempCode()
+  writeFileSync(path, JSON.stringify(code({ expires: LONG })))
+  // The bridge read the code before the write and renames its copy, with a wrong try, after it.
+  const tried = code({ expires: LONG, failures: 1, tries: { 'phone-x': 1 } })
+  let once = true
+  const written = () => { if (once) { once = false; bridgeWrite(path, tried) } }
+  assert.deepEqual(shortenCode(path, COPIED_LIFE, NOW, { ...FAST, written }), { expires: NOW + COPIED_LIFE })
+  assert.deepEqual(read(path), { ...tried, expires: NOW + COPIED_LIFE })
+})
+
+test('a wrong try renamed over it after the check is caught by the second look', () => {
+  const path = tempCode()
+  writeFileSync(path, JSON.stringify(code({ expires: LONG })))
+  const tried = code({ expires: LONG, failures: 1, tries: { 'phone-x': 1 } })
+  let once = true
+  const settled = () => { if (once) { once = false; bridgeWrite(path, tried) } }
+  assert.deepEqual(shortenCode(path, COPIED_LIFE, NOW, { settle: 1, settled }), { expires: NOW + COPIED_LIFE })
+  assert.deepEqual(read(path), { ...tried, expires: NOW + COPIED_LIFE })
+})
+
+test('a file that keeps being replaced fails closed: nothing to copy', () => {
+  const path = tempCode()
+  writeFileSync(path, JSON.stringify(code({ expires: LONG })))
+  const written = () => bridgeWrite(path, code({ expires: LONG }))
+  assert.deepEqual(shortenCode(path, COPIED_LIFE, NOW, { ...FAST, written }), { error: 'changing' })
+})
+
+test('a different code in its place is not shortened in the copied one\'s name', () => {
+  const path = tempCode()
+  writeFileSync(path, JSON.stringify(code({ expires: LONG })))
+  const written = () => bridgeWrite(path, code({ code: 'other', expires: LONG }))
+  assert.deepEqual(shortenCode(path, COPIED_LIFE, NOW, { ...FAST, written }), { error: 'gone' })
+  assert.deepEqual(read(path), code({ code: 'other', expires: LONG }))
 })
 
 test('the fingerprint is the key\'s first 12 hex characters in fours', () => {
