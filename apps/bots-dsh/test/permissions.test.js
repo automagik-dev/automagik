@@ -580,7 +580,7 @@ test('the user can still change an inherited level', async (t) => {
 
 // #315: the level buildBot stores is what every later Session reads: its chat, a part
 // opened afterwards, and the tasks the Bot asks for.
-test('a made Bot\'s inherited level reaches its chat, a later Session and its tasks', async (t) => {
+test('a made Bot\'s inherited level reaches its chat, a group Session, a fresh part and its tasks', async (t) => {
   const { ctx, rt, call, of, presets, settle, announceOnCreate } = team(t, { bots: { m1: { permission: 'danger-full-access' } } })
   assert.equal((await call('set-prefs', { permission: 'workspace-write' })).ok, true)
   await call('state', {})
@@ -590,6 +590,10 @@ test('a made Bot\'s inherited level reaches its chat, a later Session and its ta
   const chatPresets = of(writer.id).filter(line => line.includes(' preset '))
   assert.deepEqual(chatPresets, [`${writer.id} preset danger-full-access`])
 
+  // A group Session the Bot speaks in reads the same level (groups.js); the group has none
+  // of its own, so the Bot's stands.
+  await rt.applyPermission(writer, 'writer-group', { id: 'r2', name: 'Later' })
+  assert.deepEqual(presets('writer-group'), ['danger-full-access'])
   // A fresh part goes through applyPermission (parts.js), which reads the stored level.
   await rt.applyPermission(writer, 'writer-part')
   assert.deepEqual(presets('writer-part'), ['danger-full-access'])
@@ -706,4 +710,25 @@ test('a read-only creator\'s create_bot yields a read-only Bot whatever else it 
   assert.deepEqual(presets(probe.id), ['careful'])
   assert.equal(presets(probe.id).includes('danger-full-access'), false)
   assert.equal(service.current({ id: probe.id }), 'careful')
+})
+
+// #343 F1: the declared parameters are the whole of what createBot receives. An
+// undeclared option a model adds — an adoption, a Main Bot, a held model, a copy, a level,
+// a color, a kind — is dropped at the boundary, alone and all at once.
+test('create_bot hands createBot only its declared parameters', async (t) => {
+  const { ctx, rt } = team(t, { custom: READ_ONLY, bots: { m1: { permission: 'careful' } } })
+  const calls = []
+  const create = rt.createBot
+  rt.createBot = async options => { calls.push(options); return create(options) }
+  const declared = ['avatar', 'brief', 'createdBy', 'effort', 'instructions', 'model', 'name', 'role', 'workDir']
+  const undeclared = {
+    existingSessionId: 'live', main: true, pickModel: true, copyOf: 'b2',
+    permission: 'danger-full-access', color: 'red', kind: 'omni',
+  }
+  for (const [index, [key, value]] of Object.entries(undeclared).entries()) {
+    await createBotTool(ctx, { name: `Alone ${index}`, [key]: value })
+  }
+  await createBotTool(ctx, { name: 'Together', ...undeclared })
+  assert.equal(calls.length, Object.keys(undeclared).length + 1)
+  for (const options of calls) assert.deepEqual(Object.keys(options).sort(), declared)
 })
