@@ -1210,20 +1210,25 @@ test("restart: the ledger's session row for the old pane stands in for a missing
 
 // ---- #328: two bots on one agent in one folder ----
 
-/** Genie (t5) and Captain (t9) on `agent` in the project folder; `labels`: each pane's agent.session (null: none). */
-function shareScene(t, agent, { labels = [null, null], ledger = [], captain = {} } = {}) {
+/**
+ * Genie (t5) and Captain (t9) on `agent` in the project folder; `labels`: each pane's agent.session
+ * (null: none); `captain`: over Captain's hc get, null for no pane at all; `extra`: more terminals.
+ */
+function shareScene(t, agent, { labels = [null, null], ledger = [], captain = {}, extra = [] } = {}) {
   const s = scene(t);
-  if (agent !== "claude" && agent !== "codex") exe(join(s.root, "bin", agent), "#!/bin/sh\nexit 0\n");
+  const program = agent === "antigravity" ? "agy" : agent;
+  if (agent !== "claude" && agent !== "codex") exe(join(s.root, "bin", program), "#!/bin/sh\nexit 0\n");
   const f = team();
   f.bots[0].agent = agent;
   f.bots[1].agent = agent;
   s.seed(f);
   const pane = (address, b, label, over = {}) => {
-    const x = term(address, { bot: b, argv: [agent], app: agent, cwd: s.project, ...over });
+    const x = term(address, { bot: b, argv: [program], app: agent, cwd: s.project, ...over });
     if (label) x.labels = { ...x.labels, "agent.session": label };
     return x;
   };
-  writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [pane("t5", ID.main, labels[0]), pane("t9", ID.cap, labels[1], captain)], next: 100 }));
+  const terminals = [pane("t5", ID.main, labels[0]), ...(captain === null ? [] : [pane("t9", ID.cap, labels[1], captain)]), ...extra];
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals, next: 100 }));
   if (ledger.length) {
     mkdirSync(join(s.app, "automagik-herdr"), { recursive: true });
     writeFileSync(ledgerPath(s.app), ledger.map((x) => `${JSON.stringify(x)}\n`).join(""));
@@ -1289,6 +1294,79 @@ test("restart (#328): omp with no session id beside another bot's omp (its pane,
   // --fresh is untouched: a new conversation, no note.
   const f = shareScene(t, "omp").cli(["restart", "Genie", "--fresh", "--json"]);
   assert.deepEqual([f.code, f.json().mode, f.json().note], [0, "fresh", null]);
+});
+
+/** Genie's restart in `s`: fresh, no --continue; its note. */
+const freshNote = (s) => {
+  const r = s.cli(["restart", "Genie", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json().mode, "fresh", r.err);
+  assert.deepEqual(ownWords(runCall(s.calls())), ["omp"], "no --continue");
+  return r.json().note;
+};
+const fresh = freshNote;
+
+test("restart (#328 review): an ended teammate's seat row in the folder is a sharer; one elsewhere or on another agent isn't", (t) => {
+  // Captain's pane is gone (not in hc at all); its last seat row put it here on omp.
+  const ended = shareScene(t, "omp", { captain: null,
+    ledger: [{ event: "start", kind: "seat", terminal: "t9", botId: ID.cap, worktree: "", agent: "omp" }] });
+  writeFileSync(ledgerPath(ended.app), `${JSON.stringify({ event: "start", kind: "seat", terminal: "t9", botId: ID.cap, worktree: ended.project, agent: "omp" })}\n`);
+  assert.match(fresh(ended), /Captain \(t9, ended\) also ran Oh My Pi in .*, so --continue could resume theirs instead of Genie's/);
+  // A seat row elsewhere, or on another agent, isn't one.
+  for (const row of [{ worktree: "/elsewhere", agent: "omp" }, { agent: "codex" }]) {
+    const other = shareScene(t, "omp", { captain: null, ledger: [{ event: "start", kind: "seat", terminal: "t9", botId: ID.cap, worktree: "", agent: "omp" }] });
+    writeFileSync(ledgerPath(other.app), `${JSON.stringify({ event: "start", kind: "seat", terminal: "t9", botId: ID.cap, worktree: other.project, ...row })}\n`);
+    assert.equal(other.cli(["restart", "Genie", "--json"]).json().mode, "resume", JSON.stringify(row));
+  }
+});
+
+test("restart (#328 review): a teammate's omp inside the keep wrapper is a sharer", (t) => {
+  // Captain's omp runs inside the keep wrapper (launchArgs.js unwrapKeep).
+  const wrapped = shareScene(t, "omp", { captain: { argv: ["sh", "-c", '"$@"; exec "${SHELL:-sh}" -i', "sh", "omp"] } });
+  assert.match(fresh(wrapped), /Captain \(t9\) also runs Oh My Pi/);
+});
+
+test("restart (#328 review): an omp started by hand in the folder (no bot) is a sharer", (t) => {
+  // No bot label on t12; Captain elsewhere.
+  const byHand = shareScene(t, "omp", { captain: { cwd: "/elsewhere" }, extra: [term("t12", { argv: ["omp"], app: "omp", cwd: "" })] });
+  const st = byHand.hcState();
+  for (const x of st.terminals.filter((x) => x.address === "t12")) { x.cwd = byHand.project; x.foreground.cwd = byHand.project; }
+  writeFileSync(join(byHand.root, "hc.json"), JSON.stringify(st));
+  assert.match(fresh(byHand), /a pane \(t12\) also runs Oh My Pi in /);
+});
+
+test("restart (#328 review): agy's --continue isn't limited to the folder, so another bot's agy anywhere is a sharer", (t) => {
+  const s = shareScene(t, "antigravity", { captain: { cwd: "/elsewhere" } });
+  const r = s.cli(["restart", "Genie", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json().mode, "fresh", r.err);
+  assert.equal(r.json().note, "no Antigravity session id is known for t5, and Captain (t9) also runs Antigravity, so --continue could resume theirs "
+    + "instead of Genie's (Antigravity's --continue isn't limited to one folder)");
+  assert.deepEqual(ownWords(runCall(s.calls())), ["agy"]);
+  // Alone on agy: --continue, as before.
+  const alone = shareScene(t, "antigravity", { captain: { argv: ["codex"], app: "codex", cwd: "/elsewhere" } });
+  const a = alone.cli(["restart", "Genie", "--json"]);
+  assert.equal(a.json().mode, "resume", a.err);
+  assert.deepEqual(ownWords(runCall(alone.calls())), ["agy", "--continue"]);
+});
+
+test("restart (#328 review): a ledger session row from an earlier pane at a reused address is never resumed", (t) => {
+  // t5 was created at created_ms 5000; a row stamped before then is another pane's.
+  const row = (at) => ({ event: "session", terminal: "t5", session: "old-pane", agent: "omp", at });
+  const reused = shareScene(t, "omp", { captain: { argv: ["codex"], app: "codex" }, ledger: [row("1970-01-01T00:00:01.000Z")] });
+  const st = reused.hcState();
+  st.terminals.find((x) => x.address === "t5").created_ms = 5000;
+  writeFileSync(join(reused.root, "hc.json"), JSON.stringify(st));
+  const r = reused.cli(["restart", "Genie", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual([r.json().mode, r.json().session], ["resume", null]);
+  assert.deepEqual(ownWords(runCall(reused.calls())), ["omp", "--continue"], "no --resume=old-pane");
+  // Stamped after the pane was created: its own, resumed.
+  const own = shareScene(t, "omp", { captain: { argv: ["codex"], app: "codex" }, ledger: [row("1970-01-01T00:00:09.000Z")] });
+  const st2 = own.hcState();
+  st2.terminals.find((x) => x.address === "t5").created_ms = 5000;
+  writeFileSync(join(own.root, "hc.json"), JSON.stringify(st2));
+  assert.equal(own.cli(["restart", "Genie", "--json"]).json().session, "old-pane");
 });
 
 test("restart (#328): an agent with no resume starts fresh as before, a teammate beside it or not", (t) => {

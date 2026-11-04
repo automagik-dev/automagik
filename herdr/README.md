@@ -310,8 +310,10 @@ automagik-herdr update [--check | --rollback]
   `codex resume <id>`, `omp --resume=<id>`, `pi --session <id>`, `kimi --session=<id>`,
   `agy --conversation <id>`, `hermes --resume <id>`). With no id it takes the latest
   conversation in the bot's folder (`--continue`, `codex resume --last`), which could be a
-  teammate's: while another bot on that agent runs in that folder (its pane, or its seat row in
-  the workers ledger), the restart starts a new conversation instead and says why (#328). Only
+  teammate's: while another pane or bot on that agent is in that folder (a live pane, a bot's or
+  one started by hand, or another bot's last seat row in the workers ledger, its pane ended or
+  not; for agy, whose `--continue` isn't limited to a folder, any folder), the restart starts a
+  new conversation instead and says why (#328; the quota panel's restart lists those too). Only
   Claude's hook records an id today; on another agent, set the pane's `agent.session` label to
   keep its own conversation in a shared folder. An agent with no resume here starts fresh, and
   says so.

@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { AGENTS, canResume, resumeArgs, withoutModel, withoutResume } from "../mods/am-sidebar/models.js";
+import { AGENTS, canResume, continuesAnywhere, resumeArgs, withoutModel, withoutResume } from "../mods/am-sidebar/models.js";
 import { carriedLabels, commandArgv, continueRefusal, helperArgs, helperPlan, ledgerSession, paneCommand, paneSession, planText, restartAnswer, restartArgs,
   claudeSlug, restartPlan, restartRefusal, sameSessions, sessionId, sessionOf, sharedFolders, sharedFresh, takesWords, withoutPrompt } from "../mods/am-sidebar/restart.js";
 
@@ -129,12 +129,29 @@ test("ledgerSession per agent (#328): a row naming its agent feeds that agent, o
   assert.deepEqual(ledgerSession(rows, "t7", "pi"), { session: "pi-1", transcript: null });
 });
 
+test("ledgerSession on a reused address (#328 review): an earlier pane's row there never counts, by created_ms or a later start row", () => {
+  const old = { event: "session", terminal: "t5", session: "old-pane", agent: "omp", at: "2026-11-04T10:00:00.000Z" };
+  const born = Date.parse("2026-11-04T12:00:00.000Z");
+  assert.equal(ledgerSession([old], "t5", "omp", born), null, "stamped before this pane was created");
+  assert.deepEqual(ledgerSession([old], "t5", "omp", Date.parse("2026-11-04T09:00:00.000Z")), { session: "old-pane", transcript: null });
+  // No created_ms: a start row for t5 after the session row is a new pane there.
+  assert.equal(ledgerSession([old, { event: "start", kind: "seat", terminal: "t5" }], "t5", "omp"), null);
+  assert.deepEqual(ledgerSession([{ event: "start", kind: "seat", terminal: "t5" }, old], "t5", "omp"), { session: "old-pane", transcript: null });
+});
+
 test("sharedFresh (#328): null with no other bot there; else why the restart starts fresh, naming each sharer, the folder and the skipped resume", () => {
   assert.equal(sharedFresh({ name: "Herdr Tester", old: { address: "t5" }, cwd: "/p", agent: "omp", words: "--continue" }), null);
   assert.equal(sharedFresh({ name: "Herdr Tester", old: { address: "t5" }, cwd: "/p", sharers: [{ address: "t9", name: "Herdr Dev" }], agent: "omp", words: "--continue" }),
     "no omp session id is known for t5, and Herdr Dev (t9) also runs omp in /p, so --continue could resume theirs instead of Herdr Tester's");
   assert.match(sharedFresh({ name: "G", old: { address: "t5" }, cwd: "/p", sharers: [{ address: "t9", name: "A" }, { address: "t8", name: "B" }], agent: "Codex", words: "resume --last" }),
     /A \(t9\), B \(t8\) also run Codex in \/p, so resume --last could resume theirs/);
+  // One known only by its seat row (its pane ended) ran there; agy's --continue isn't limited to the folder.
+  assert.match(sharedFresh({ name: "G", old: { address: "t5" }, cwd: "/p", sharers: [{ address: "t9", name: "A", ended: true }], agent: "Oh My Pi", words: "--continue" }),
+    /A \(t9, ended\) also ran Oh My Pi in \/p, so --continue/);
+  assert.equal(sharedFresh({ name: "G", old: { address: "t5" }, cwd: "/p", sharers: [{ address: "t9", name: "A" }], agent: "Antigravity", words: "--continue", anywhere: true }),
+    "no Antigravity session id is known for t5, and A (t9) also runs Antigravity, so --continue could resume theirs instead of G's (Antigravity's --continue isn't limited to one folder)");
+  assert.equal(continuesAnywhere("antigravity"), true);
+  for (const k of ["claude", "codex", "omp", "pi", "kimi", "hermes"]) assert.equal(continuesAnywhere(k), false, k);
 });
 
 test("continueRefusal: refused only when another bot's Claude shares the folder", () => {
@@ -163,6 +180,10 @@ test("withoutResume drops an earlier resume per agent (codex's -c is its config,
   assert.deepEqual(withoutResume("omp", ["omp", "-c", "--resume=abc", "--model=k", "--restore=x"]), ["omp", "--model=k"]);
   assert.deepEqual(withoutResume("pi", ["pi", "--session", SID, "--continue", "--model", "p"]), ["pi", "--model", "p"]);
   assert.deepEqual(withoutResume("kimi", ["kimi", "-c", "--session=abc", "-S", "--yolo"]), ["kimi", "--yolo"]);
+  // -S, --session [id]: its value goes with it (#328 review), a flag after it doesn't.
+  assert.deepEqual(withoutResume("kimi", ["kimi", "-S", "abc", "--yolo"]), ["kimi", "--yolo"]);
+  assert.deepEqual(withoutResume("kimi", ["kimi", "--session", "abc"]), ["kimi"]);
+  assert.deepEqual(withoutResume("kimi", ["kimi", "--session", "--plan"]), ["kimi", "--plan"]);
   assert.deepEqual(withoutResume("antigravity", ["agy", "-c", "--conversation", "abc", "--model", "m"]), ["agy", "--model", "m"]);
   assert.deepEqual(withoutModel("codex", ["codex", "-m", "a", "-mb", "--model=c", "-c", "model=d", "-c", "model_reasoning_effort=high"]),
     ["codex", "-c", "model_reasoning_effort=high"]);

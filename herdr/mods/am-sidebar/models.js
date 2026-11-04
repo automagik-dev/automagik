@@ -324,6 +324,12 @@ const RESUME = {
   hermes: (session) => (session ? ["--resume", session] : ["--continue"]),
 };
 
+// The agents whose id-less resume isn't limited to the folder (agy 1.5.0: "Continue the most
+// recent conversation"): any other bot on that agent, wherever it runs, may own that one.
+const CONTINUES_ANYWHERE = new Set(["antigravity"]);
+/** True when `agentKey`'s id-less resume may take a conversation from any folder (CONTINUES_ANYWHERE). */
+export const continuesAnywhere = (agentKey) => CONTINUES_ANYWHERE.has(agentKey);
+
 /** True when Restart can resume `agentKey`'s conversation (RESUME lists it). */
 export const canResume = (agentKey) => Boolean(RESUME[agentKey]);
 
@@ -343,13 +349,14 @@ export function resumeArgs(agentKey, session = null) {
 
 // The words an earlier resume left in a command line, per agent, so a reused command doesn't
 // resume twice: `flags` stand alone, `valued` take the next word (or `=value`), `inline` only
-// take `=value` (omp's --resume and kimi's --session pick a session when bare). codex's is the
-// `resume` subcommand with its --last or session id. -c is --continue (codex's is --config).
+// take `=value` (omp's --resume picks a session when bare), `optional` take `=value` or the next
+// word unless it is a flag (kimi's -S, --session [id]). codex's is the `resume` subcommand with
+// its --last or session id. -c is --continue (codex's is --config).
 const RESUMED = {
   claude: { flags: ["--continue", "-c"], valued: ["--resume", "-r"] },
   omp: { flags: ["--continue", "-c", "--resume", "-r"], inline: ["--resume", "-r", "--restore"] },
   pi: { flags: ["--continue", "-c", "--resume", "-r"], valued: ["--session"] },
-  kimi: { flags: ["--continue", "-c", "--session", "-S"], inline: ["--session", "-S"] },
+  kimi: { flags: ["--continue", "-c"], optional: ["--session", "-S"] },
   antigravity: { flags: ["--continue", "-c"], valued: ["--conversation", "-conversation"] },
   hermes: { flags: ["--continue"] },
 };
@@ -375,8 +382,9 @@ export function withoutResume(agentKey, args) {
     if (w === "--") { out.push(...words.slice(i)); break; }
     const eq = w.startsWith("-") ? w.indexOf("=") : -1;
     const name = eq > 0 ? w.slice(0, eq) : w;
-    if (eq > 0 && ((r.valued ?? []).includes(name) || (r.inline ?? []).includes(name))) continue;
+    if (eq > 0 && ((r.valued ?? []).includes(name) || (r.inline ?? []).includes(name) || (r.optional ?? []).includes(name))) continue;
     if (eq < 0 && (r.valued ?? []).includes(w)) { i += 1; continue; }
+    if (eq < 0 && (r.optional ?? []).includes(w)) { if (i + 1 < words.length && !words[i + 1].startsWith("-")) i += 1; continue; }
     if (eq < 0 && (r.flags ?? []).includes(w)) continue;
     out.push(w);
   }

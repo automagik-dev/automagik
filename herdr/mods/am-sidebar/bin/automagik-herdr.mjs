@@ -27,7 +27,7 @@ import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, co
 import { interpreterPath } from "../agentPath.mjs";
 import { briefingFilePath, installHook, launchBriefingText, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
-import { agentKeyOfArgv, briefingLaunch, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, ownPromptIn, resolveAgent, resumesById,
+import { agentKeyOfArgv, continuesAnywhere, briefingLaunch, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, ownPromptIn, resolveAgent, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKTREES_EXCLUDE,
   SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, sessionRow, parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
@@ -1811,21 +1811,41 @@ function workerLedgerRows() {
 }
 
 /**
- * Other bots on `agentKey` in the folder `cwd`, by the attach ledger (`view`, attachView): each
- * bound bot whose live pane runs that agent there, or whose terminal's last start row in the
- * workers ledger (`ledger`) seated it there on that agent (#328). [{ address, name }].
+ * Who else may own the latest `agentKey` conversation in the folder `cwd` (#328), the panes and
+ * bots a restart with no session id must not take it from: [{ address, name, ended }]. Over-
+ * counting is safe (the restart then starts fresh and says why), so all three count: the live
+ * panes on this computer running that agent there (a bot's, or one started by hand: hc ls), the
+ * bound bots there by the attach ledger (`view`), and each other bot whose last seat row in the
+ * workers ledger (`ledger`) put it there on that agent, its pane since ended or not. `old`:
+ * the pane being replaced (never counted); `anywhere`: the agent's id-less resume isn't
+ * limited to one folder (models.js continuesAnywhere), so any folder counts.
  */
-function botsOn(view, cwd, botId, file, agentKey, ledger = []) {
+async function sharersOf({ view, cwd, botId, file, agentKey, ledger = [], old, anywhere = false }) {
   const real = realDir(cwd) ?? cwd;
-  const here = (dir) => typeof dir === "string" && dir !== "" && (dir === cwd || (realDir(dir) ?? dir) === real);
-  const runs = (get) => (agentKey === "claude" && isClaude(null, get)) || agentKeyOfArgv(get.foreground?.argv, agentTable()) === agentKey;
-  const seated = (terminal) => {
-    const row = ledger.findLast((r) => r?.event === "start" && r.terminal === terminal);
-    return Boolean(row && row.agent === agentKey && here(row.worktree));
-  };
-  return [...view.live.values()].filter(({ binding, get }) => binding.bot !== botId
-    && ((get && agentInForeground(get) && here(get.foreground?.cwd ?? get.cwd) && runs(get)) || seated(binding.terminal)))
-    .map(({ binding }) => ({ address: binding.terminal, name: file.bots.find((b) => b.id === binding.bot)?.name ?? `bot ${binding.bot}` }));
+  const here = (dir) => anywhere || (typeof dir === "string" && dir !== "" && (dir === cwd || (realDir(dir) ?? dir) === real));
+  const agents = agentTable();
+  // The agent in front, past the keep wrapper (launchArgs.js unwrapKeep) a pane may run it in.
+  const runs = (get) => agentInForeground(get) && ((agentKey === "claude" && isClaude(null, get))
+    || agentKeyOfArgv(unwrapKeep(get.foreground?.argv), agents) === agentKey);
+  const nameOf = (id) => (id ? file.bots.find((b) => b.id === id)?.name ?? `bot ${id}` : null);
+  const out = new Map();
+  const add = (address, name, ended = false) => { if (address && address !== old?.address && !out.has(address)) out.set(address, { address, name, ended }); };
+  for (const { binding, get } of view.live.values()) {
+    if (binding.bot !== botId && get && runs(get) && here(get.foreground?.cwd ?? get.cwd)) add(binding.terminal, nameOf(binding.bot));
+  }
+  let rows = [];
+  try { rows = rowsOf(await hcJson(["ls"])).filter((r) => local(r?.address) && r.state === "live" && r.address !== old?.address && !out.has(r.address)); }
+  catch { rows = []; }
+  for (const get of (await Promise.all(rows.map((r) => hcGet(r.address).catch(() => null)))).filter(Boolean)) {
+    if (get.labels?.[BOT_LABEL] === botId || !runs(get) || !here(get.foreground?.cwd ?? get.cwd)) continue;
+    add(get.address, nameOf(get.labels?.[BOT_LABEL]) ?? "a pane");
+  }
+  const lastSeat = new Map();
+  for (const r of ledger) if (r?.event === "start" && r.kind === "seat" && typeof r.botId === "string" && r.botId !== botId) lastSeat.set(r.botId, r);
+  for (const r of lastSeat.values()) {
+    if (r.agent === agentKey && here(r.worktree)) add(r.terminal, nameOf(r.botId), !(view.live.get(r.botId)?.binding.terminal === r.terminal));
+  }
+  return [...out.values()];
 }
 
 /**
@@ -2170,7 +2190,7 @@ async function cmdRestart(opts, [ref]) {
   const knownSession = (get, agentKey) => {
     const id = paneSession(get, agentKey);
     if (id) return { session: id, transcript: null };
-    return resumesById(agentKey) ? ledgerSession(ledger, get.address, agentKey) : null;
+    return resumesById(agentKey) ? ledgerSession(ledger, get.address, agentKey, get.created_ms) : null;
   };
   const known = old ? knownSession(old, runningAgent ?? bot.agent) : null;
   const planned = {
@@ -2199,8 +2219,9 @@ async function cmdRestart(opts, [ref]) {
   // why (#328: an omp --continue picked up a teammate's). Alone there, the resume as before.
   let sharedNote = null;
   if (plan.mode === "resume" && !resumeId) {
-    const note = sharedFresh({ name: bot.name, old, cwd, sharers: botsOn(view, cwd, bot.id, file, plan.agent, ledger),
-      agent: agentName(plan.agent), words: plan.resume.join(" ") });
+    const anywhere = continuesAnywhere(plan.agent);
+    const sharers = await sharersOf({ view, cwd, botId: bot.id, file, agentKey: plan.agent, ledger, old, anywhere });
+    const note = sharedFresh({ name: bot.name, old, cwd, sharers, agent: agentName(plan.agent), words: plan.resume.join(" "), anywhere });
     if (note) { plan = { ...restartPlan({ ...planned, fresh: true }), note }; sharedNote = note; }
   }
   const { tree, treeWarnings } = old && opts.tree

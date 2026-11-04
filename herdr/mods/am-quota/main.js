@@ -377,6 +377,9 @@ export default class AmQuota extends View {
       wake(cx);
       const failed = [];
       const left = [];
+      // The ones that restarted on a new conversation, and why (#328: no session id known and a
+      // teammate on that agent in the folder): the CLI's --json note.
+      const fresh = [];
       let done = (s.done ?? 0);
       // One at a time: each restart waits for the new pane's agent to stay up.
       for (const bot of bots) {
@@ -384,6 +387,7 @@ export default class AmQuota extends View {
         try {
           const r = await this.cli(["restart", bot.id, "--project", bot.project]);
           if (r?.code !== 0) why = (r?.err ?? "").split("\n")[0] || `exit ${r?.code ?? "?"}`;
+          else if (r.out?.mode === "fresh" && typeof r.out.note === "string" && r.out.note) fresh.push(`${bot.name}: ${r.out.note}`);
         } catch (err) {
           why = message(err);
         }
@@ -396,7 +400,7 @@ export default class AmQuota extends View {
       s.restarting = false;
       delete this.restarting[provider];
       s.done = done;
-      s.result = { done, failed };
+      s.result = { done, failed, fresh };
       // Only the ones that failed are left to restart.
       s.look = { bots: left, reliable: left.length ? s.look.reliable : true };
       wake(cx);
@@ -486,11 +490,15 @@ export default class AmQuota extends View {
       const armed = this.armed === `restart:${provider}`;
       const what = `Restart ${n} bot${n === 1 ? "" : "s"}`;
       box.child(this.button(t, `restart-${provider}`, s.restarting ? "Restarting…" : armed ? `${what}? Press again to confirm` : what,
-        (_e, cx) => this.restartBots(provider, cx), { primary: true, small: "Each one resumes its conversation on the new account" }));
+        (_e, cx) => this.restartBots(provider, cx), { primary: true, small: "Each one resumes its conversation on the new account where it can" }));
       if (s.result?.failed.length) {
         hint(`Restarted ${s.result.done} of ${s.result.done + s.result.failed.length}. Not restarted:`);
         for (const f of s.result.failed) box.child(div().text_size(10.5).text_color(t.working).child(f));
       }
+    }
+    if (s.result?.fresh?.length) {
+      hint("Started on a new conversation instead of resuming it:");
+      for (const f of s.result.fresh) box.child(div().text_size(10.5).text_color(t.working).child(f));
     }
     if (provider === "claude") {
       box.child(div().text_size(10.5).text_color(t.dim).child(`This Mac now shares that sign-in with ${instanceName(this.config)}: if one side refreshes it, the other may have to sign in again.`));
