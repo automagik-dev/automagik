@@ -5,12 +5,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ledgerPath } from "../mods/am-sidebar/workers.js";
-import { OURS, commandFor, directHookCommand, hookCommand, legacyHookCommand, mergeHook, stableBriefingPath } from "../mods/am-sidebar/briefingText.mjs";
+import { BRIEFED_DIR, OURS, commandFor, directHookCommand, hookCommand, legacyHookCommand, mergeHook, stableBriefingPath } from "../mods/am-sidebar/briefingText.mjs";
 import {
   BACKUP_SUFFIX, HOOKS_JOURNAL, botPaneFolders, foldersOf, hooksNotice, knownProjects, ledgerFolders, migrateHooks, relink, retargetHooks, revertHooks, syncHooks,
   toStable,
@@ -323,6 +323,175 @@ test("acceptance: a v0.2.0 hook is moved and backed up; through the new command 
   const bare = s.hook(command, { appHome: false, input: JSON.stringify({ session_id: "s-1" }) });
   assert.match(bare.stdout, /You are Genie/);
   assert.match(read(ledgerPath(s.app)), /"session":"s-1"/);
+});
+
+test("the entry point runs am's copy first; a missing or broken am copy falls back to the sidebar's", (t) => {
+  const s = botHome(t);
+  syncHooks({ modsDir: s.mods });
+  const command = commands(settings(s.proj))[1];
+  // The am part's store (RFC 0012): <HOME>/.automagik/parts/automagik.am/<version>/, `current` on it.
+  const part = join(s.root, ".automagik", "parts", "automagik.am");
+  const sidebar = join(s.mods, "spaces-agents", "briefing.mjs");
+  const working = read(sidebar);
+
+  // No am yet (no store, then a dangling `current`): the sidebar's copy runs, silently.
+  assert.match(s.hook(command).stdout, /You are Genie/);
+  mkdirSync(part, { recursive: true });
+  symlinkSync("3.0.0", join(part, "current"));
+  const dangling = s.hook(command);
+  assert.match(dangling.stdout, /You are Genie/);
+  assert.equal(dangling.stderr, "");
+
+  // A working am copy runs, not the sidebar's (broken here to prove it), and with no
+  // HERDR_APP_HOME it is told the entry point's app home: its session lands in that ledger.
+  cpSync(PACK, join(part, "3.0.0"), { recursive: true });
+  writeFileSync(sidebar, "throw new Error('the sidebar copy ran');\n");
+  const am = s.hook(command, { appHome: false, input: JSON.stringify({ session_id: "s-am" }) });
+  assert.equal(am.status, 0, am.stderr);
+  assert.match(am.stdout, /You are Genie/);
+  assert.equal(am.stderr, "");
+  assert.match(read(ledgerPath(s.app)), /"session":"s-am"/);
+
+  // The entry point as am places it: a link to am's own copy. Run through the link with no
+  // HERDR_APP_HOME, it still knows its app home from the path the hook named (node resolves the
+  // link for the module itself), so am's briefing runs and the session lands in this app home.
+  const entry = stableBriefingPath(s.app);
+  rmSync(entry);
+  symlinkSync(join(part, "current", "briefingEntry.mjs"), entry);
+  const linked = s.hook(command, { appHome: false, input: JSON.stringify({ session_id: "s-linked" }) });
+  assert.equal(linked.status, 0, linked.stderr);
+  assert.match(linked.stdout, /You are Genie/);
+  assert.equal(linked.stderr, "");
+  assert.match(read(ledgerPath(s.app)), /"session":"s-linked"/);
+  process.env.AM_HOME = join(s.root, ".automagik");
+  try { assert.equal(syncHooks({ modsDir: s.mods }).direction, "forward", "the pack's sync leaves am's link and goes on"); } finally { delete process.env.AM_HOME; }
+  assert.ok(lstatSync(entry).isSymbolicLink());
+
+  // A broken am copy (its import throws) never silences the briefing: the sidebar's runs.
+  writeFileSync(sidebar, working);
+  writeFileSync(join(part, "3.0.0", "briefing.mjs"), "throw new Error('broken am');\n");
+  const broken = s.hook(command);
+  assert.equal(broken.status, 0, broken.stderr);
+  assert.match(broken.stdout, /^<herdr-bot>\n/);
+  assert.match(broken.stdout, /You are Genie/);
+  assert.match(broken.stderr, /broken am/);
+});
+
+test("an am copy older than the sidebar's never shadows it; one at least as new runs first", (t) => {
+  const s = botHome(t);
+  syncHooks({ modsDir: s.mods });
+  const command = commands(settings(s.proj))[1];
+  const amDir = join(s.root, ".automagik", "parts", "automagik.am", "3.0.0");
+  mkdirSync(amDir, { recursive: true });
+  symlinkSync("3.0.0", join(dirname(amDir), "current"));
+  writeFileSync(join(amDir, "briefing.mjs"), "process.stdout.write('am ran\\n');\n");
+  const sidebarVersion = read(join(PACK, "VERSION")).trim();
+  const [major, minor] = sidebarVersion.split(".").map(Number);
+  const runs = (version) => {
+    if (version === null) rmSync(join(amDir, "VERSION"), { force: true });
+    else writeFileSync(join(amDir, "VERSION"), `${version}\n`);
+    return s.hook(command);
+  };
+  // Older (an am that stopped updating), or with no VERSION: the sidebar's briefing runs, am's never.
+  for (const version of [`${major}.${minor - 1}.999`, null]) {
+    const r = runs(version);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /You are Genie/, `am at ${version}`);
+    assert.doesNotMatch(r.stdout, /am ran/);
+  }
+  // The same version, or newer: am's runs first.
+  for (const version of [sidebarVersion, `${major}.${minor + 1}.0`]) assert.equal(runs(version).stdout, "am ran\n", `am at ${version}`);
+});
+
+test("an am copy that throws after printing, reading stdin or joining: one briefing, the sidebar's, the whole input, one session row", (t) => {
+  const s = botHome(t);
+  syncHooks({ modsDir: s.mods });
+  const command = commands(settings(s.proj))[1];
+  const amDir = join(s.root, ".automagik", "parts", "automagik.am", "3.0.0");
+  mkdirSync(amDir, { recursive: true });
+  symlinkSync("3.0.0", join(dirname(amDir), "current"));
+  // The sidebar's own version: am's copy goes first only when it is not older.
+  cpSync(join(PACK, "VERSION"), join(amDir, "VERSION"));
+  const once = (out) => assert.equal(out.split("<herdr-bot>").length - 1, 1, `exactly one briefing:\n${out}`);
+
+  // It printed part of a briefing, then threw: none of it reaches the hook's output.
+  writeFileSync(join(amDir, "briefing.mjs"), "process.stdout.write('<herdr-bot>\\npartial from am\\n');\nthrow new Error('am broke after printing');\n");
+  const printed = s.hook(command, { input: JSON.stringify({ session_id: "s-printed" }) });
+  assert.equal(printed.status, 0, printed.stderr);
+  assert.match(printed.stdout, /^<herdr-bot>\n/);
+  assert.match(printed.stdout, /You are Genie/);
+  assert.doesNotMatch(printed.stdout, /partial from am/);
+  once(printed.stdout);
+  assert.match(printed.stderr, /am broke after printing/);
+  assert.match(read(ledgerPath(s.app)), /"session":"s-printed"/);
+
+  // It read the whole of stdin, then threw: the sidebar's copy still gets all of it.
+  writeFileSync(join(amDir, "briefing.mjs"), [
+    "let text = '';",
+    "for await (const chunk of process.stdin) text += chunk;",
+    "process.stdout.write(`am read ${text.length} bytes\\n`);",
+    "throw new Error('am broke after reading stdin');",
+  ].join("\n"));
+  const consumed = s.hook(command, { input: JSON.stringify({ session_id: "s-consumed" }) });
+  assert.equal(consumed.status, 0, consumed.stderr);
+  assert.match(consumed.stdout, /You are Genie/);
+  assert.doesNotMatch(consumed.stdout, /am read/);
+  once(consumed.stdout);
+  assert.match(consumed.stderr, /am broke after reading stdin/);
+  assert.match(read(ledgerPath(s.app)), /"session":"s-consumed"/, "the sidebar's copy saw the hook's whole input");
+
+  // A real am copy that joined the session and marked it briefed, then threw: the sidebar's attempt
+  // still prints the briefing (the entry put back the record am wrote) and joins too, but the
+  // ledger gets one session row. hc label fails here (the fake has none), so the next turn tries
+  // again: still one row.
+  rmSync(amDir, { recursive: true });
+  cpSync(PACK, amDir, { recursive: true });
+  writeFileSync(join(amDir, "briefing.mjs"), `${read(join(PACK, "briefing.mjs"))}\nthrow new Error('am broke after joining');\n`);
+  const rows = () => read(ledgerPath(s.app)).split("\n").filter((l) => l.includes('"session":"s-joined"')).length;
+  for (const turn of [1, 2]) {
+    const joined = s.hook(command, { input: JSON.stringify({ session_id: "s-joined" }) });
+    assert.equal(joined.status, 0, joined.stderr);
+    once(joined.stdout);
+    assert.match(joined.stderr, /am broke after joining/);
+    assert.equal(rows(), 1, `turn ${turn}: one session row for s-joined`);
+  }
+  // The entry can't import briefingText.mjs (a copy of it sits outside mods/): it names the folder itself.
+  assert.equal(BRIEFED_DIR, "automagik-herdr/briefed");
+  assert.match(read(join(PACK, "briefingEntry.mjs")), /join\(process\.env\.HERDR_APP_HOME \|\| appHome, "automagik-herdr", "briefed"\)/);
+});
+
+test("an am copy that keeps failing: one briefing in three turns of one conversation; other panes' records stay as they were", (t) => {
+  const s = botHome(t);
+  syncHooks({ modsDir: s.mods });
+  const command = commands(settings(s.proj))[1];
+  const amDir = join(s.root, ".automagik", "parts", "automagik.am", "3.0.0");
+  mkdirSync(dirname(amDir), { recursive: true });
+  cpSync(PACK, amDir, { recursive: true });
+  symlinkSync("3.0.0", join(dirname(amDir), "current"));
+  const briefed = join(s.app, BRIEFED_DIR);
+  const prints = (o) => { assert.equal(o.status, 0, o.stderr); return o.stdout.split("<herdr-bot>").length - 1; };
+  const turns = (input) => [1, 2, 3].map(() => prints(s.hook(command, { input, keep: true })));
+
+  // The control: a working am copy prints once in three turns.
+  assert.deepEqual(turns(JSON.stringify({ session_id: "s-ok" })), [1, 0, 0]);
+
+  // A real am copy that briefs (and records it), then throws, every turn. While it runs, another
+  // pane writes its own records (a conversation's, its pane records, a temp file mid-write): none
+  // of those is this hook's to put back.
+  const other = { "s-other.json": "{\"hash\":\"B\",\"offset\":0}\n", "t9_5.json": "{\"hash\":\"C\",\"offset\":0}\n",
+    "pane-t9_5.json": "{\"session\":\"s-other\"}\n", "s-other.json.4242.tmp": "mid-write" };
+  writeFileSync(join(amDir, "briefing.mjs"), [
+    read(join(PACK, "briefing.mjs")),
+    "const fs = process.getBuiltinModule('node:fs');",
+    `for (const [name, text] of Object.entries(${JSON.stringify(other)})) fs.writeFileSync(${JSON.stringify(briefed)} + '/' + name, text);`,
+    "throw new Error('am broke after briefing');",
+  ].join("\n"));
+  for (const input of [JSON.stringify({ session_id: "s-bad" }), "{}"]) {
+    assert.deepEqual(turns(input), [1, 0, 0], `a failing am copy, input ${input}`);
+    for (const [name, text] of Object.entries(other)) assert.equal(read(join(briefed, name)), text, `${name} survives`);
+  }
+  // The working conversation's record is no business of the failing hooks either: still seen.
+  assert.equal(prints(s.hook(command, { input: JSON.stringify({ session_id: "s-ok" }), keep: true })), 0);
 });
 
 test("migration: a hook installed before the briefing moved to launch prints it once in three turns, its settings file untouched", (t) => {
