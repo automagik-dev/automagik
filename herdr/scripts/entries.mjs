@@ -4,11 +4,14 @@
 // repository that holds `mods/<name>/main.js` (the repo root included), as am-mods' findPackages
 // reads a package. The layout lives in its own top-level folder instead (herdr-layout/), which
 // herdr.dev lists as a layout entry only in its documented shape: layouts/<name>.json beside
-// RECIPE.md and preview.png. A layout .json at that folder's own root is skipped (the crawler
-// probe's e2).
+// RECIPE.md and preview.png. A .json at that folder's own root is ignored, neither listed nor a
+// reason to skip (60 listed layout entries hold one); the crawler probe's e2 went unlisted because
+// it had no layouts/<name>.json. The layout entry keeps no mods/ of its own: the pack's mods are
+// herdr/'s, and its RECIPE adds that entry first.
 //
 //   node scripts/entries.mjs --check    exit 1, naming each problem: an entry folder holds layouts/,
-//                                       herdr/ is no entry, or herdr-layout/ is not a layout entry
+//                                       herdr/ is no entry, herdr-layout/ is not a layout entry, or
+//                                       herdr-layout/ holds mods/
 //
 // It reads the files git tracks, from the repository's top, wherever it runs.
 import { execFileSync } from "node:child_process";
@@ -36,22 +39,34 @@ export function layoutsInEntries(files) {
     .filter((dir) => files.some((f) => f.startsWith(dir)));
 }
 
-/** What keeps `folder` from being listed as a layout entry, one line each; [] when it would be. */
+/** Root files of a layout entry that are no layout: the part's manifest (RFC 0012) and a keys snippet. */
+const NOT_LAYOUTS = Object.freeze(["part.json", "keys.json"]);
+
+/**
+ * What keeps `folder` from being listed as a layout entry, one line each; [] when it would be.
+ * herdr.dev ignores a .json at the entry's root, so one is named only as the likely layout when
+ * layouts/<name>.json is missing.
+ */
 export function layoutEntryProblems(files, folder = LAYOUT_ENTRY) {
   const inside = files.filter((f) => f.startsWith(`${folder}/`)).map((f) => f.slice(folder.length + 1));
   const problems = [];
-  if (!inside.some((f) => /^layouts\/[^/]+\.json$/.test(f))) problems.push(`${folder}/layouts/<name>.json: missing; herdr.dev lists a layout only from its entry's layouts/`);
+  if (!inside.some((f) => /^layouts\/[^/]+\.json$/.test(f))) {
+    problems.push(`${folder}/layouts/<name>.json: missing; herdr.dev lists a layout only from its entry's layouts/`);
+    for (const f of inside.filter((p) => /^[^/]+\.json$/.test(p) && !NOT_LAYOUTS.includes(p))) {
+      problems.push(`${folder}/${f}: herdr.dev ignores a .json at the entry's root; move it to ${folder}/layouts/`);
+    }
+  }
   for (const f of ["RECIPE.md", "preview.png"]) if (!inside.includes(f)) problems.push(`${folder}/${f}: missing; a layout entry needs it`);
-  // part.json is the layout part's manifest (RFC 0012), not a layout.
-  for (const f of inside.filter((p) => /^[^/]+\.json$/.test(p) && p !== "part.json")) {
-    problems.push(`${folder}/${f}: herdr.dev skips a layout .json at the entry's root; move it to ${folder}/layouts/`);
+  if (inside.some((f) => f.startsWith("mods/"))) {
+    problems.push(`${folder}/mods/: the layout entry keeps no mods of its own; the pack's mods are ${MOD_ENTRY}/'s, which its RECIPE adds first, so remove this copy`);
   }
   return problems;
 }
 
 /** Every problem `files` (git's tracked paths) have, one line each. */
 export function problemsOf(files) {
-  const problems = layoutsInEntries(files).map((dir) => `${dir}: a herdr-mod entry folder holds layouts/, and herdr.dev skips the whole repository for it; move the layout to its own top-level folder (${LAYOUT_ENTRY}/layouts/)`);
+  // herdr-layout/ with mods/ is its own problem (layoutEntryProblems), not a mod entry to move out of.
+  const problems = layoutsInEntries(files).filter((dir) => dir !== `${LAYOUT_ENTRY}/layouts/`).map((dir) => `${dir}: a herdr-mod entry folder holds layouts/, and herdr.dev skips the whole repository for it; move the layout to its own top-level folder (${LAYOUT_ENTRY}/layouts/)`);
   if (!entryFolders(files).includes(MOD_ENTRY)) problems.push(`${MOD_ENTRY}/: no mods/<name>/main.js, so it is no herdr-mod entry`);
   return [...problems, ...layoutEntryProblems(files)];
 }
