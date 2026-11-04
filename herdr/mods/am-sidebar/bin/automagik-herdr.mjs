@@ -789,7 +789,9 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 --cwd DIR: the new pane starts in DIR, not the old pane's folder
                                 (helpers keep theirs). Claude finds a conversation by folder slug
                                 (the path, every non-alphanumeric as "-"): a resume into a DIR of
-                                another slug is refused unless --fresh.
+                                another slug is refused unless --fresh. A Claude bot's briefing
+                                hook is written into DIR (.claude/settings.local.json), as start
+                                writes it into the project folder.
   attach <bot> <terminal> [--move]   tie a running pane to the bot; a bot attached elsewhere
                                 is refused unless --move (its old pane is detached first)
   detach <bot>                  untie the bot from its pane (a removed bot: by its id)
@@ -2039,6 +2041,9 @@ async function cmdRestart(opts, [ref]) {
   if (opts["fresh-shared"] && !opts.tree) throw new CliError("--fresh-shared picks how --tree restarts helpers; it goes with --tree.", 2);
   // --cwd DIR: the folder the new pane starts in (a real path, as Claude Code and hc see it).
   let wanted = null;
+  if (opts.cwd !== undefined && opts.machine !== undefined) {
+    throw new CliError("--cwd is a folder on this computer; a restart on a linked machine keeps the old pane's.", 2);
+  }
   if (opts.cwd !== undefined) {
     const dir = opts.cwd ? realDir(resolvePath(opts.cwd)) : null;
     if (!dir || !isDir(dir)) throw new CliError(`--cwd ${opts.cwd || '""'} isn't a folder on this computer.`, 2);
@@ -2063,10 +2068,7 @@ async function cmdRestart(opts, [ref]) {
     throw new CliError(`${bot.name} is pinned to "${bot.model}", which isn't a ${bot.agent} model this computer lists. `
       + `Pick one with automagik-herdr edit ${bot.id} --model <model>, restart it on one with --model <model>, or clear the pin with --no-model.`);
   }
-  if (project.machine) {
-    if (wanted) throw new CliError("--cwd is a folder on this computer; a restart on a linked machine keeps the old pane's.", 2);
-    return restartOnMachine(opts, project, bot, entry);
-  }
+  if (project.machine) return restartOnMachine(opts, project, bot, entry);
   // The old pane: the one the attach ledger names for the bot, as hc confirms it.
   const view = await attachView();
   const held = view.live.get(bot.id) ?? null;
