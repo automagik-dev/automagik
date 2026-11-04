@@ -37,7 +37,7 @@ bun scripts/upgrade.ts --to v3.49.0   # an explicit release (still verifies ever
 and is covered by `bun test scripts` (`scripts/upgrade.test.ts`). Keeping it in TypeScript reuses
 the repository's lane verification (`plugin-lane/keys.json`, the same keys `bun scripts/lane.ts
 verify` uses) and lets the hand-edit checks be unit-tested instead of re-implementing ed25519 and
-YAML in shell. The host has Bun 1.3.x; the script needs Bun >= 1.2.21 (`Bun.YAML`,
+YAML in shell. The script needs Bun >= 1.4.0, the Bun line CI and the release build on (`Bun.YAML`,
 `Bun.semver`), `node`, `gh` and passwordless `sudo`.
 
 ## What an upgrade is

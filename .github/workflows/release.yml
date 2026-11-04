@@ -148,7 +148,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Anything new since the last release
         id: new
@@ -472,7 +472,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       # The keystore is written to the runner's temp folder for this one build and removed after it.
       - name: Build the release APK
@@ -595,7 +595,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       # A herdr or pocket patch moved no plugin: the index stays on the release that last packed them.
       - name: Pin the index to the release
