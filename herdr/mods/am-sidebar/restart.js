@@ -124,6 +124,13 @@ function reusable(launch, key) {
   return { argv: withoutPrompt(withoutResume(key, launch.argv)) };
 }
 
+/**
+ * The folder name Claude Code keeps a folder's conversations under (~/.claude/projects/<slug>):
+ * the path with every character that isn't a letter or digit made "-". Two folders with one
+ * slug share their conversations, so a session resumes in either.
+ */
+export const claudeSlug = (folder) => String(folder ?? "").replace(/[^A-Za-z0-9]/g, "-");
+
 /** The old pane's Claude session id (its agent.session label, UUID-shaped), or null. */
 export const sessionOf = (get) => sessionId(get?.labels?.[SESSION]);
 

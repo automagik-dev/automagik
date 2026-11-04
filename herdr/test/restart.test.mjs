@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 
 import { AGENTS, canResume, resumeArgs, withoutModel, withoutResume } from "../mods/am-sidebar/models.js";
 import { carriedLabels, commandArgv, continueRefusal, helperArgs, helperPlan, ledgerSession, paneCommand, paneSession, planText, restartAnswer, restartArgs,
-  restartPlan, restartRefusal, sameSessions, sessionId, sessionOf, sharedFolders, takesWords, withoutPrompt } from "../mods/am-sidebar/restart.js";
+  claudeSlug, restartPlan, restartRefusal, sameSessions, sessionId, sessionOf, sharedFolders, takesWords, withoutPrompt } from "../mods/am-sidebar/restart.js";
 
 const SID = "0f3c2a4e-1b2d-4c5e-9f60-718293a4b5c6";
 const SID2 = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
@@ -260,4 +260,11 @@ test("restartPlan: Hermes resumes a known session by id (--resume), as Claude do
   }
   // Claude keeps its UUID rule: a word isn't a Claude session id.
   assert.deepEqual(restartPlan({ bot: { agent: "claude" }, run: ["claude"], runningAgent: "claude", session: "atlas-sess-1" }).resume, ["--continue"]);
+});
+
+test("claudeSlug: the path with every non-alphanumeric character as -, so automagik-herdr and automagik/herdr share one", () => {
+  assert.equal(claudeSlug("/Users/me/workspace/repos/automagik-herdr"), "-Users-me-workspace-repos-automagik-herdr");
+  assert.equal(claudeSlug("/Users/me/workspace/repos/automagik-herdr"), claudeSlug("/Users/me/workspace/repos/automagik/herdr"));
+  assert.equal(claudeSlug("/a/.claude/worktrees/x_y"), "-a--claude-worktrees-x-y");
+  assert.notEqual(claudeSlug("/a/b"), claudeSlug("/a/c"));
 });

@@ -34,6 +34,29 @@ const callNo = readFileSync(process.env.HC_FAKE_LOG, "utf8").split("\n").filter(
     if (panes.length > 1) appendFileSync(`${process.env.HC_FAKE_STATE}.doubles`, `${JSON.stringify({ call: callNo, word: words[0], session, panes })}\n`);
   }
 }
+// endTurnOn: { word, nth } on a terminal: its turn ends when the nth `hc <word>` call happens
+// (this one counted), whatever that call is about: a turn that ends on its own clock, not when
+// the CLI looks at it. As hc does, the end types a note into its parent (state.notes) when that
+// parent still runs, and the parent's agent takes a short turn of its own.
+{
+  const lines = readFileSync(process.env.HC_FAKE_LOG, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  let changed = false;
+  for (const t of state.terminals) {
+    const due = t.endTurnOn;
+    if (!due || lines.filter((a) => a.filter((w) => w !== "--json")[0] === due.word).length < due.nth) continue;
+    delete t.endTurnOn;
+    changed = true;
+    if (t.state !== "live" || t.status?.state !== "working") continue;
+    t.status.state = "idle";
+    const up = t.parent ? find(t.parent) : null;
+    if (up?.state === "live") {
+      state.notes = [...(state.notes ?? []), { to: up.address, from: t.address, call: callNo }];
+      up.status = { ...(up.status ?? {}), state: "working" };
+      up.idleAfterGets = 1;
+    }
+  }
+  if (changed) save();
+}
 // state.fail: commands that fail as a server that is down would (exit 1).
 if ((state.fail ?? []).includes(words[0])) fail(`hc: can't reach the server (${words[0]})`);
 // A linked machine's terminal ("vm/t8") on a machine that isn't connected: unavailable, as hc says.

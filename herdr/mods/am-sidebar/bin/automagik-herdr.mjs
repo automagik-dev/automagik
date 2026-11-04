@@ -33,7 +33,7 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
   writesWorktree } from "../workers.js";
 import { carriedLabels, continueRefusal, doomedHelpers, helperArgs, helperPlan, ledgerSession, paneCommand, planText as restartText, restartPlan,
-  paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
+  claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
 import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, readMarker, relinkCli, rollback as rollbackPack, writeMarker } from "../update.mjs";
 import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER } from "../release.js";
 import { MACHINE_NAME, OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
@@ -732,6 +732,7 @@ const OPTIONS = {
   branch: { type: "string" }, worktree: { type: "string" }, base: { type: "string" }, effort: { type: "string" },
   task: { type: "string" }, bot: { type: "string" }, move: { type: "boolean" },
   fresh: { type: "boolean" }, force: { type: "boolean" }, save: { type: "boolean" }, tree: { type: "boolean" }, "fresh-shared": { type: "boolean" },
+  cwd: { type: "string" },
   machine: { type: "string" }, linked: { type: "boolean" }, local: { type: "boolean" },
 };
 
@@ -759,7 +760,7 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   category ls | add --title T [--sub S] [--id ID] | edit <id> [--title T] [--sub S]
            | rm <id> | order <id>...
   start <bot> [--space ID] [--tab ID]   a new pane on this computer (prints its terminal)
-  restart <bot> [--fresh] [--agent A] [--model M [--save]] [--tree [--fresh-shared]] [--force]
+  restart <bot> [--fresh] [--agent A] [--model M [--save]] [--tree [--fresh-shared]] [--force] [--cwd DIR]
                                 the bot's agent again in its pane's place (same space and tab,
                                 same folder, labels kept, and the old pane's own command: its
                                 template, model and effort flags): the new pane starts, and the
@@ -785,6 +786,10 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 reported with the hc run line that resumes it by hand, exit 1;
                                 one that won't end is said and never run twice). Not from inside
                                 the old pane. A bot not running is started.
+                                --cwd DIR: the new pane starts in DIR, not the old pane's folder
+                                (helpers keep theirs). Claude finds a conversation by folder slug
+                                (the path, every non-alphanumeric as "-"): a resume into a DIR of
+                                another slug is refused unless --fresh.
   attach <bot> <terminal> [--move]   tie a running pane to the bot; a bot attached elsewhere
                                 is refused unless --move (its old pane is detached first)
   detach <bot>                  untie the bot from its pane (a removed bot: by its id)
@@ -2032,6 +2037,13 @@ async function cmdRestart(opts, [ref]) {
   const swap = opts.agent !== undefined || opts.model !== undefined;
   if (opts.save && !swap) throw new CliError("--save keeps a swap in the bot's definition; it goes with --agent or --model.", 2);
   if (opts["fresh-shared"] && !opts.tree) throw new CliError("--fresh-shared picks how --tree restarts helpers; it goes with --tree.", 2);
+  // --cwd DIR: the folder the new pane starts in (a real path, as Claude Code and hc see it).
+  let wanted = null;
+  if (opts.cwd !== undefined) {
+    const dir = opts.cwd ? realDir(resolvePath(opts.cwd)) : null;
+    if (!dir || !isDir(dir)) throw new CliError(`--cwd ${opts.cwd || '""'} isn't a folder on this computer.`, 2);
+    wanted = dir;
+  }
   const project = await projectFor(opts);
   const { file, key } = project;
   if (project.text === null) throw new CliError(`No ${BOTS_PATH} in ${key}.`);
@@ -2051,7 +2063,10 @@ async function cmdRestart(opts, [ref]) {
     throw new CliError(`${bot.name} is pinned to "${bot.model}", which isn't a ${bot.agent} model this computer lists. `
       + `Pick one with automagik-herdr edit ${bot.id} --model <model>, restart it on one with --model <model>, or clear the pin with --no-model.`);
   }
-  if (project.machine) return restartOnMachine(opts, project, bot, entry);
+  if (project.machine) {
+    if (wanted) throw new CliError("--cwd is a folder on this computer; a restart on a linked machine keeps the old pane's.", 2);
+    return restartOnMachine(opts, project, bot, entry);
+  }
   // The old pane: the one the attach ledger names for the bot, as hc confirms it.
   const view = await attachView();
   const held = view.live.get(bot.id) ?? null;
@@ -2081,7 +2096,15 @@ async function cmdRestart(opts, [ref]) {
   // The old pane's folder (#213: a worktree too, where its conversation is), unless it is gone;
   // the same space and tab (its Herdr labels).
   const oldCwd = old?.foreground?.cwd ?? old?.cwd ?? null;
-  const cwd = oldCwd && isDir(oldCwd) ? oldCwd : key;
+  const cwd = wanted ?? (oldCwd && isDir(oldCwd) ? oldCwd : key);
+  // --cwd: Claude resumes only within one folder slug (~/.claude/projects/<slug>), by id or --continue.
+  const movedFrom = wanted && old && oldCwd ? (realDir(oldCwd) ?? oldCwd) : null;
+  const slugMoved = movedFrom && claudeSlug(movedFrom) !== claudeSlug(wanted);
+  if (slugMoved && plan.mode === "resume" && plan.agent === "claude") {
+    throw new CliError(`Claude keeps ${bot.name}'s conversation under its folder's slug, ${claudeSlug(movedFrom)} (${movedFrom}); ${wanted} is `
+      + `${claudeSlug(wanted)}, so a resume there would find nothing. Nothing was started. Restart with --fresh for a new conversation in ${wanted}, `
+      + `or pick a folder whose slug is the same.`);
+  }
   const place = opts.space ? { space: opts.space, tab: opts.tab ?? null, from: null } : (old ? placementFrom([old]) ?? undefined : undefined);
   const resumeId = plan.mode === "resume" && resumesById(plan.agent) ? sessionFor(plan.agent, known?.session) : null;
   // --continue takes the folder's latest conversation: never while another bot's Claude runs there.
@@ -2103,7 +2126,10 @@ async function cmdRestart(opts, [ref]) {
   if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
   const warnings = seat.hook.warnings;
   const say = (w) => { warnings.push(w); report([w]); };
-  if (oldCwd && cwd !== oldCwd) say(`${old.address}'s folder ${oldCwd} isn't there now, so ${seat.terminal} runs in ${key}${plan.mode === "resume" ? "; its conversation may not be found there" : ""}.`);
+  if (movedFrom && movedFrom !== wanted && plan.mode === "resume" && plan.agent !== "claude") {
+    say(`${seat.terminal} runs in ${wanted}, not ${movedFrom}: ${plan.agent} finds its last conversation by folder${resumeId ? "" : ", so it may not find it there"}.`);
+  }
+  if (!wanted && oldCwd && cwd !== oldCwd) say(`${old.address}'s folder ${oldCwd} isn't there now, so ${seat.terminal} runs in ${key}${plan.mode === "resume" ? "; its conversation may not be found there" : ""}.`);
   for (const w of [...treeWarnings, ...early]) say(w);
   let rerun = [];
   let oldEnded = false;
