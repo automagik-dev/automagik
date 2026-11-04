@@ -422,6 +422,55 @@ test("a focused folder with its own bots.json, or in a git worktree, is keyed wi
   assert.ok(!nodes.has("bot-project-own"));
 });
 
+// #234, RFC 0014 Q16: a focused worktree space's edit is written in that worktree; the project
+// (and what the sidebar reads) stays its main checkout.
+test("from a focused worktree space, the form saves into the worktree's bots.json, never the main checkout's", async (t) => {
+  const repo = join(root, "repo");
+  const wt = join(root, "repo-wt");
+  const g = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, encoding: "utf8" });
+  mkdirSync(join(repo, ".herdr"), { recursive: true });
+  const mainPath = join(repo, ".herdr/bots.json");
+  writeFileSync(mainPath, `${JSON.stringify({ version: 1, categories: [], bots: [MAIN] }, null, 2)}\n`);
+  g("init", "-q");
+  g("add", ".");
+  g("commit", "-q", "-m", "bots");
+  g("worktree", "add", "-q", "-b", "wt", wt);
+  const mainText = readFileSync(mainPath, "utf8");
+  const wtPath = join(wt, ".herdr/bots.json");
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const first = await open({ form: "create", project: undefined });
+  first.draw();
+  assert.equal(first.form.key, repo, "the project is the main checkout");
+  assert.equal(first.form.dir, wt, "the edit is written in the worktree");
+  first.form.inputs.name.type("qa", first.cx);
+  first.draw();
+  await first.click("bot-save");
+  assert.equal(first.form.error, null);
+  assert.deepEqual(JSON.parse(readFileSync(wtPath, "utf8")).bots.map((b) => b.name), ["orch", "qa"]);
+  assert.equal(readFileSync(mainPath, "utf8"), mainText, "the main checkout's file is untouched");
+  assert.equal(g("status", "--porcelain"), "");
+  // A second form from the same space starts from the worktree's file, whose text the save checks.
+  const second = await open({ form: "create", project: undefined });
+  second.form.inputs.name.type("ops", second.cx);
+  second.draw();
+  // Create & start: saved in the worktree, not started (bots start from the main checkout's file).
+  await second.click("bot-save-start");
+  assert.match(second.form.error, /^Saved, not started: it was written in .*repo-wt\/\.herdr\/bots\.json/);
+  assert.deepEqual(JSON.parse(readFileSync(wtPath, "utf8")).bots.map((b) => b.name), ["orch", "qa", "ops"]);
+  assert.equal(readFileSync(mainPath, "utf8"), mainText);
+  // The main checkout's own space: its file, as before.
+  state.spaces = [{ id: "s3", name: "repo", folder: repo }];
+  state.focused = { space: "s3" };
+  const home = await open({ form: "create", project: undefined });
+  assert.equal(home.form.dir, repo);
+  home.form.inputs.name.type("dev", home.cx);
+  home.draw();
+  await home.click("bot-save");
+  assert.equal(home.form.error, null);
+  assert.deepEqual(JSON.parse(readFileSync(mainPath, "utf8")).bots.map((b) => b.name), ["orch", "dev"]);
+});
+
 // ---- #85: the pick and attach lists draw the sidebar's known bots at once ----
 
 test("Bot settings (pick) draws the sidebar's known bots before discovery answers, then the fresh list", async () => {

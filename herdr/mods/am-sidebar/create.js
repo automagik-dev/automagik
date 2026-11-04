@@ -22,7 +22,7 @@ import { LEGACY_AGENTS, configPaths, detectModel } from "./models.js";
 import { INKS, characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { UI_ICONS, uiIconFile, NEW_CATEGORY, MAX_WAVE, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, omniLook, placeOf, problemOf, rowLineOf, thousands } from "./formModel.js";
 import { restartAnswer, restartArgs } from "./restart.js";
-import { discoverProjects, folderExists, keyOf, ownKeyOf, projectOfFolder, writeBots } from "./bots.js";
+import { discoverProjects, editFolderOf, folderExists, keyOf, ownKeyOf, projectOfFolder, writeBots } from "./bots.js";
 import { attachBot, startBot, liveTerminalOf, runCli, sleepOf } from "./launch.js";
 import { historyLines, menuItems } from "./inspect.js";
 import { clickActionOf } from "./rows.js";
@@ -166,13 +166,28 @@ export class BotForm {
     cx.notify();
   }
 
+  // Where this form's edit to `key` is written, and the snapshots (RFC 0014 Q16, #234): from a
+  // focused space that is a worktree of the project, that worktree's file, which the edit
+  // starts from (the key's where the worktree has none yet); else the key's, as before.
+  // { dir, text: the text the edit starts from, expected: the text at dir }.
+  async target(key, machine) {
+    const shown = spaces().find((s) => s.id === focused()?.space);
+    let dir = key;
+    if (shown?.folder && (shown.machine || null) === machine) {
+      try { if (shown.folder === key || await keyOf(shown.folder, machine) === key) dir = await editFolderOf(shown.folder, key, machine); } catch {}
+    }
+    const expected = await readTextFile(`${dir}/${BOTS_PATH}`, { on: machine });
+    const text = dir === key || expected !== null ? expected : await readTextFile(`${key}/${BOTS_PATH}`, { on: machine });
+    return { dir, text, expected };
+  }
+
   async load(key, machine = null) {
     this.key = key;
     this.machine = machine;
     this.choice = null;
     this.loadError = null;
     if (this.agentsOn !== machine) await this.loadAgents(machine);
-    this.text = await readTextFile(`${key}/${BOTS_PATH}`, { on: machine });
+    ({ dir: this.dir, text: this.text, expected: this.expected } = await this.target(key, machine));
     let file = { version: 1, categories: [], bots: [] };
     this.raw = null;
     if (this.text !== null) {
@@ -319,10 +334,10 @@ export class BotForm {
     this.error = null;
     cx.spawn(async (cx) => {
       try {
-        await writeBots(this.key, applyBotEdit(this.raw, entry, newCategory), this.text, this.machine);
+        await writeBots(this.key, applyBotEdit(this.raw, entry, newCategory), this.expected, this.machine, { dir: this.dir, before: this.text });
       } catch (e) {
         const msg = String(e?.message ?? e);
-        this.error = notSaved(/stale/i.test(msg) ? `${this.fileName()} changed since this form opened; close it and open it again.` : msg);
+        this.error = notSaved(/stale/i.test(msg) ? `${this.fileName(this.dir)} changed since this form opened; close it and open it again.` : msg);
         this.busy = false;
         cx.notify();
         return;
@@ -332,7 +347,10 @@ export class BotForm {
         // Saved either way from here: a refused or failed Start says so, and the form
         // stops offering to create the bot a second time.
         let refused = null;
-        try { refused = (await startBot(this.key, entry.id, { sleep: sleepOf(cx) }, this.machine))?.refused ?? null; } catch (e) { refused = String(e?.message ?? e); }
+        // Bots start from the key's file (reads stay there, Q16): an edit saved in a worktree
+        // reaches it once merged, so it isn't started from here.
+        if (this.dir !== this.key) refused = `it was written in ${this.fileName(this.dir)}, and bots start from ${this.fileName()}, which gets it once this worktree's change is merged.`;
+        else try { refused = (await startBot(this.key, entry.id, { sleep: sleepOf(cx) }, this.machine))?.refused ?? null; } catch (e) { refused = String(e?.message ?? e); }
         if (refused) {
           this.error = `Saved, not started: ${refused}`;
           this.saved = true;
@@ -453,12 +471,12 @@ export class BotForm {
   // read is the save's snapshot, the raw entry what the save edits.
   async loadPrompt() {
     const key = this.p.project;
-    const text = await readTextFile(`${key}/${BOTS_PATH}`, { on: this.machine });
+    const { dir, text, expected } = await this.target(key, this.machine ?? null);
     if (text === null) throw new Error(`${this.fileName(key)} is gone.`);
     const { file, raw } = parseBots(text);
     const b = raw?.bots?.find((x) => x?.id === this.p.bot) ?? file.bots.find((x) => x.id === this.p.bot);
-    if (!b) throw new Error(`${this.fileName(key)} has no bot ${this.p.bot}.`);
-    this.promptBase = { text, raw, file, state: formFrom({ mode: "edit", bot: b }) };
+    if (!b) throw new Error(`${this.fileName(dir)} has no bot ${this.p.bot}.`);
+    this.promptBase = { dir, text, expected, raw, file, state: formFrom({ mode: "edit", bot: b }) };
     this.prompt.set_value(this.promptBase.state.instructions ?? "");
   }
 
@@ -466,7 +484,7 @@ export class BotForm {
   // (problemOf), entry (entryOf) and stale-snapshot write.
   savePrompt(cx) {
     if (this.busy || !this.promptBase) return;
-    const { text, raw, file, state: initial } = this.promptBase;
+    const { dir, text, expected, raw, file, state: initial } = this.promptBase;
     const key = this.p.project;
     const state = { ...initial, instructions: this.prompt.value() };
     const why = problemOf(state, { key, file });
@@ -477,10 +495,10 @@ export class BotForm {
     this.error = null;
     cx.spawn(async (cx) => {
       try {
-        await writeBots(key, applyBotEdit(raw, entry, newCategory), text, this.machine);
+        await writeBots(key, applyBotEdit(raw, entry, newCategory), expected, this.machine, { dir, before: text });
       } catch (e) {
         const msg = String(e?.message ?? e);
-        this.error = notSaved(/stale/i.test(msg) ? `${this.fileName(key)} changed since this menu opened; close it and open it again.` : msg);
+        this.error = notSaved(/stale/i.test(msg) ? `${this.fileName(dir)} changed since this menu opened; close it and open it again.` : msg);
         this.busy = false;
         cx.notify();
         return;
@@ -688,7 +706,7 @@ export class BotForm {
     const live = this.live && this.live.model ? this.live : null;
     const model = modelLine({ agentName: agent?.name ?? state.agent, pin: state.pin, info, detected: live?.model ?? null, terminal: live?.terminal ?? null });
     const place = placeOf(state, file);
-    const cli = commandOf(state, { key: this.key, file, initial: this.initial, machine: this.machine });
+    const cli = commandOf(state, { key: this.dir ?? this.key, file, initial: this.initial, machine: this.machine });
     const pinKept = this.initial && state.pin === this.initial.pin && state.agent === this.initial.agent;
     const refusal = problemOf(state, { key: this.key, loadError: this.loadError, file, info: pinKept ? null : info });
     const v = { t, state, agent, info, model, place, cli, refusal, mono: settings()?.font_family ?? "JetBrains Mono" };

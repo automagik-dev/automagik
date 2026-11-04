@@ -120,15 +120,77 @@ test("create: the first bot must be main; then the main bot is written with an i
   assert.match(twoMains.err, /already has a main bot, Genie/);
 });
 
-test("create from a worktree writes the main checkout's file (Decision 15); --project picks another folder", (t) => {
+// #234, RFC 0014 Q16: an edit made from a worktree is written in that worktree, so the main
+// checkout stays clean for the merge's git pull; reads (ls, the project key) stay on the main checkout.
+test("create and edit from a worktree write that worktree's file; the main checkout stays clean and is still what ls reads", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  git(s.project, "add", ".herdr/bots.json");
+  git(s.project, "commit", "-q", "-m", "bots");
+  const mainText = readFileSync(s.botsPath, "utf8");
+  const wt = join(s.root, "wt");
+  git(s.project, "worktree", "add", "-q", wt);
+  const wtPath = join(wt, ".herdr/bots.json");
+  const wtBots = () => JSON.parse(readFileSync(wtPath, "utf8")).bots;
+  // From the worktree's folder (a subfolder of it too): its file, the project still the main checkout.
+  mkdirSync(join(wt, "src"));
+  const r = s.cli(["create", "--name", "Scout", "--agent", "claude", "--lead", ID.cap, "--json"], { cwd: join(wt, "src") });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json().project, s.project);
+  assert.match(r.err, new RegExp(`saved in ${wtPath}.*read ${s.botsPath}`));
+  const scout = r.json().id;
+  assert.deepEqual(wtBots().map((b) => b.name), ["Genie", "Captain", "Dev", "Studio", "Scout"]);
+  assert.equal(readFileSync(s.botsPath, "utf8"), mainText, "the main checkout's file is untouched");
+  assert.equal(git(s.project, "status", "--porcelain"), "", "the main checkout stays clean for git pull");
+  // Reads stay on the main checkout: ls from the worktree shows its file, without Scout.
+  const ls = s.cli(["ls", "--json"], { cwd: wt }).json().projects[0];
+  assert.equal(ls.project, s.project);
+  assert.ok(!ls.bots.some((b) => b.id === scout));
+  // A second edit from the same worktree starts from (and checks) the worktree's file: Scout is kept.
+  const e = s.cli(["edit", scout, "--role", "scouting"], { cwd: wt });
+  assert.equal(e.code, 0, e.err);
+  const again = s.cli(["create", "--name", "Ranger", "--agent", "claude", "--lead", ID.cap], { cwd: wt });
+  assert.equal(again.code, 0, again.err);
+  assert.deepEqual(wtBots().map((b) => b.name), ["Genie", "Captain", "Dev", "Studio", "Scout", "Ranger"], "both worktree edits kept");
+  assert.equal(wtBots().find((b) => b.id === scout).role, "scouting");
+  // --project <worktree>, run from elsewhere: the worktree's file too.
+  const named = s.cli(["category", "add", "ops", "--title", "Ops", "--project", wt], { cwd: s.root });
+  assert.equal(named.code, 0, named.err);
+  assert.ok(JSON.parse(readFileSync(wtPath, "utf8")).categories.some((c) => c.title === "Ops"));
+  assert.equal(readFileSync(s.botsPath, "utf8"), mainText);
+  assert.equal(git(s.project, "status", "--porcelain"), "");
+  // From the main checkout: its own file, as before, with no note.
+  const home = s.cli(["edit", ID.dev, "--role", "builds"]);
+  assert.equal(home.code, 0, home.err);
+  assert.doesNotMatch(home.err, /saved in/);
+  assert.equal(s.bots().bots.find((b) => b.id === ID.dev).role, "builds");
+  assert.ok(!wtBots().some((b) => b.id === ID.dev && b.role === "builds"), "the worktree's file is left alone");
+});
+
+test("a worktree with no bots.json of its own: the first edit starts from the main checkout's, written whole in the worktree", (t) => {
   const s = scene(t);
   const wt = join(s.root, "wt");
   git(s.project, "worktree", "add", "-q", wt);
-  const r = s.cli(["create", "--name", "Genie", "--agent", "claude", "--json"], { cwd: wt });
+  s.seed(team()); // the main checkout's file, not committed: the worktree has none
+  const mainText = readFileSync(s.botsPath, "utf8");
+  const wtPath = join(wt, ".herdr/bots.json");
+  const r = s.cli(["create", "--name", "Scout", "--agent", "claude", "--lead", ID.cap, "--project", wt, "--json"]);
   assert.equal(r.code, 0, r.err);
   assert.equal(r.json().project, s.project);
-  assert.ok(existsSync(s.botsPath));
-  assert.equal(existsSync(join(wt, ".herdr/bots.json")), false);
+  const written = readFileSync(wtPath, "utf8");
+  assert.deepEqual(JSON.parse(written).bots.map((b) => b.name), ["Genie", "Captain", "Dev", "Studio", "Scout"]);
+  assert.deepEqual(JSON.parse(written).categories, team().categories);
+  assert.equal(written, `${JSON.stringify(JSON.parse(written), null, 2)}\n`, "the same format as any save");
+  assert.equal(readFileSync(s.botsPath, "utf8"), mainText);
+  // The second edit's guard checks the worktree's file (now there), not the main checkout's text.
+  const e = s.cli(["edit", r.json().id, "--role", "scouting"], { cwd: wt });
+  assert.equal(e.code, 0, e.err);
+  assert.equal(JSON.parse(readFileSync(wtPath, "utf8")).bots.find((b) => b.name === "Scout").role, "scouting");
+  assert.equal(readFileSync(s.botsPath, "utf8"), mainText);
+});
+
+test("outside git, --project names the folder written, as before", (t) => {
+  const s = scene(t);
   const other = join(s.root, "plain");
   mkdirSync(other);
   assert.equal(s.cli(["create", "--name", "Solo", "--agent", "claude", "--project", other]).code, 0);

@@ -268,6 +268,11 @@ automagik-herdr update [--check | --rollback]
   folder at or above it holding `.herdr/bots.json`. A folder named with `--project` is the
   project itself outside git, never a parent folder's project; in git it is still the main
   checkout. A `--project` folder that isn't there is a usage mistake.
+- An edit (`create`, `edit`, `rm`, `category`, `restart --save`) run in a git worktree, or with
+  `--project` naming one, is written in that worktree's `.herdr/bots.json` (from the main
+  checkout's when the worktree has none yet), so the main checkout stays clean for the merge's
+  `git pull`. Reads stay on the main checkout: `ls`, `show`, `whois`, Start and the sidebar show
+  the change once it is merged there (RFC 0014 Q16).
 - `ls`, `show`, `create`, `edit`, `rm` and `category` also take `--machine M --project <folder>`:
   the project on linked machine M (`hc machine ls`), `--project` an absolute folder there, keyed
   there by the same rule. The file is read and written there through hc by the same
@@ -502,7 +507,9 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
 its name, look, role and instructions (at most 4,000 characters), the agent it runs on, the
 model it uses, whom it reports to, its category, and whether it is planned for a later wave.
 The footer shows the matching `automagik-herdr create …` line, ready to copy. The form writes
-`.herdr/bots.json` in the project's main checkout.
+`.herdr/bots.json` in the project's main checkout, or, from a focused worktree space, in that
+worktree (read back from the main checkout once merged; Create & start saves it there and
+starts nothing).
 
 The form starts on the focused space's project. A folder picked from the project chip is the
 project itself outside git, and with no `.herdr/bots.json` yet it is a new project whose

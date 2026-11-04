@@ -1,7 +1,7 @@
 // bots.js over stand-ins for Herdr's `herdr` and `fs/promises` modules (herdr-stub.mjs,
 // fs-stub.mjs) and real scratch repositories: discovery keys worktree spaces to one project,
-// writes land in the main checkout only, another machine is asked with `on`, and a
-// remembered project is forgotten on a null read, never on a rejected one.
+// writes land in the main checkout unless given a worktree's dir (#234), another machine is
+// asked with `on`, and a remembered project is forgotten on a null read, never on a rejected one.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -13,7 +13,7 @@ import { promisify } from "node:util";
 import { state } from "./use-stubs.mjs";
 import { hcFileOps } from "./hc-file-ops.mjs";
 import { PROJECTS_FILE } from "../mods/am-sidebar/model.js";
-const { discoverProjects, discoverySnapshot, writeBots, rememberProject, keyOf } = await import("../mods/am-sidebar/bots.js");
+const { discoverProjects, discoverySnapshot, editFolderOf, writeBots, rememberProject, keyOf } = await import("../mods/am-sidebar/bots.js");
 
 const run = promisify(execFile);
 const ID = { main: "b-aaaaaaaaaa", dev: "b-cccccccccc" };
@@ -58,6 +58,34 @@ test("writeBots from a worktree's key writes the main checkout only, and remembe
   const two = sample();
   two.bots[1].kind = "main";
   await assert.rejects(writeBots(key, two, written), /exactly one/);
+});
+
+test("writeBots with a worktree's dir writes there (Q16, #234): the main checkout is untouched, the key remembered", async (t) => {
+  reset();
+  const { main, tree } = await repo(t);
+  put(main, sample());
+  const mainText = readFileSync(join(main, ".herdr", "bots.json"), "utf8");
+  assert.equal(await editFolderOf(tree, main), tree);
+  assert.equal(await editFolderOf(main, main), main, "the main checkout writes itself");
+  assert.equal(await editFolderOf(tree, main, "box"), main, "another machine: the key, as before");
+  // The first edit starts from the key's text (checkBots' before) and creates the worktree's file.
+  const edit = sample();
+  edit.bots[1].role = "builds";
+  await writeBots(main, edit, null, null, { dir: tree, before: mainText });
+  const written = readFileSync(join(tree, ".herdr", "bots.json"), "utf8");
+  assert.deepEqual(JSON.parse(written), edit);
+  assert.equal(readFileSync(join(main, ".herdr", "bots.json"), "utf8"), mainText);
+  assert.deepEqual(state.shared.get("am.sidebar.projects"), [{ key: main, machine: null }]);
+  // The next edit's snapshot is the worktree's text: the main checkout's would be stale there.
+  await assert.rejects(writeBots(main, sample(), mainText, null, { dir: tree }), /stale/);
+  await writeBots(main, sample(), written, null, { dir: tree });
+  assert.deepEqual(JSON.parse(readFileSync(join(tree, ".herdr", "bots.json"), "utf8")), sample());
+  // Discovery still reads the main checkout's file.
+  state.spaces = [{ id: "w", name: "wt", folder: tree }];
+  const found = await discoverProjects();
+  assert.equal(found.length, 1);
+  assert.equal(found[0].key, main);
+  assert.equal(found[0].file.bots.find((b) => b.id === ID.dev).role, "r");
 });
 
 test("discoverProjects: a project open as two spaces (checkout and worktree) comes back once", async (t) => {

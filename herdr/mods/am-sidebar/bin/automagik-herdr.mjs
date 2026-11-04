@@ -19,7 +19,7 @@ import { parseArgs } from "node:util";
 
 import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMNI_LOOK, applyBotEdit, checkBots,
   CATEGORY_ID, PROJECTS_FILE, RANKS, defaultLook, descendantsOf, effectiveLead, listedProjects, mainBotOf, newBotId, newCategoryId,
-  parseBots, plannedOf, projectKeyOf, projectOf, withListedProject } from "../model.js";
+  parseBots, plannedOf, projectKeyOf, projectOf, withListedProject, writeFolderOf } from "../model.js";
 import { UNANSWERED, agentInForeground, attachRefusal, attachWords, detachWords, hcName, isClaude, leadIdOf, leadPane, newest,
   paneLabels, paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWarning, relabelWords, rowsOf, spacePlace,
   startArgs, startRefusal, unwrapKeep } from "../launchArgs.js";
@@ -184,19 +184,27 @@ function launchPath(program, cwd = null) {
 
 const EMPTY = () => ({ version: 1, categories: [], bots: [] });
 
-/** A project's definitions: { key, machine: null, text (null: no file), raw, file, warnings }. */
-export function loadProject(key) {
-  return projectFrom(key, null, readText(under(key, BOTS_PATH)));
+/**
+ * A project's definitions: { key, machine: null, dir, text (null: no file), expected, raw,
+ * file, warnings }. `dir` is where an edit is written (key unless given): an edit made from a
+ * worktree is written in that worktree, reads stay on the key (RFC 0014 Q16, #234). With a
+ * `dir` other than the key, the edit starts from dir's file, or the key's where dir has none;
+ * `expected` is the text at dir (the write's snapshot), `text` the one the edit started from.
+ */
+export function loadProject(key, dir = key) {
+  const text = readText(under(key === dir ? key : dir, BOTS_PATH));
+  if (dir === key || text !== null) return projectFrom(key, null, text, dir);
+  return { ...projectFrom(key, null, readText(under(key, BOTS_PATH))), dir, expected: null };
 }
 
-function projectFrom(key, machine, text) {
-  if (text === null) return { key, machine, text, raw: EMPTY(), file: EMPTY(), warnings: [] };
+function projectFrom(key, machine, text, dir = key) {
+  if (text === null) return { key, machine, dir, text, expected: text, raw: EMPTY(), file: EMPTY(), warnings: [] };
   let parsedFile;
-  try { parsedFile = parseBots(text); } catch (e) { throw new CliError(`${fileName({ key, machine })}: ${e?.message ?? e}`); }
-  return { key, machine, text, raw: parsedFile.raw, file: parsedFile.file, warnings: parsedFile.warnings };
+  try { parsedFile = parseBots(text); } catch (e) { throw new CliError(`${fileName({ key, machine, dir })}: ${e?.message ?? e}`); }
+  return { key, machine, dir, text, expected: text, raw: parsedFile.raw, file: parsedFile.file, warnings: parsedFile.warnings };
 }
-/** A project's file, named for people: `<key>/.herdr/bots.json`, `… on <machine>` for a linked one's. */
-const fileName = ({ key, machine }) => `${under(key, BOTS_PATH)}${machine ? ` on ${machine}` : ""}`;
+/** A project's file, named for people: `<dir>/.herdr/bots.json`, `… on <machine>` for a linked one's. */
+const fileName = ({ key, machine, dir = key }) => `${under(dir, BOTS_PATH)}${machine ? ` on ${machine}` : ""}`;
 
 // ---- a project on a linked machine (--machine M --project DIR; automagik#206) ----
 
@@ -300,9 +308,13 @@ async function writeRemoteBots(project, raw) {
  */
 async function saveProject(project, raw, { list = true } = {}) {
   if (project.machine) return writeRemoteBots(project, raw);
-  writeBotsFile(project.key, raw, project.text);
+  writeBotsFile(project.dir, raw, project.expected, fsIo, project.text);
   if (list) listProject(project.key);
+  if (project.dir !== project.key) report([worktreeNote(project)]);
 }
+// Said after an edit written in a worktree: where it went, and what the readers show meanwhile.
+const worktreeNote = ({ key, dir }) => `saved in ${under(dir, BOTS_PATH)} (this worktree); ls, whois and the `
+  + `sidebar read ${under(key, BOTS_PATH)} until that change is merged there.`;
 
 const fsIo = {
   read: readText,
@@ -321,13 +333,14 @@ const fsIo = {
  * checkBots, and the file must still hold `expected`, the text the edit started from (null:
  * no file yet), else nothing is written. A new file gets its `.herdr/` folder first and is
  * created exclusively; an existing one is replaced whole (written beside, then renamed).
- * `raw === null` deletes the file (the project's last bot removed).
+ * `raw === null` deletes the file (the project's last bot removed). `before`, for checkBots, is
+ * the text the edit started from when that isn't the file written (a worktree's first edit).
  */
-export function writeBotsFile(key, raw, expected, io = fsIo) {
+export function writeBotsFile(key, raw, expected, io = fsIo, before = expected) {
   if (expected === undefined) throw new Error("writeBotsFile: pass the text the edit started from (null for a new file)");
   const path = under(key, BOTS_PATH);
   if (raw !== null) {
-    const errors = checkBots(raw, expected);
+    const errors = checkBots(raw, before);
     if (errors.length) throw new CliError(`Not saved: ${errors.join("; ")}`);
   }
   let now;
@@ -1016,6 +1029,22 @@ async function projectFor(opts) {
   if (opts.machine !== undefined) return loadRemoteProject(await remoteKeyOf(opts), opts.machine);
   return loadProject(await commandKeyOf(opts));
 }
+/**
+ * Where this command's edit is written (RFC 0014 Q16, #234): the git top level of the folder
+ * it was run in or named with --project (a worktree's own folder), else the project key (a
+ * main checkout's top level is its key; outside git the key, as before). A linked machine's:
+ * its key, as before.
+ */
+async function writeDirOf(opts, key) {
+  if (opts.machine !== undefined) return key;
+  return (await writeFolderOf(resolvePath(opts.project ?? process.cwd()), git)) ?? key;
+}
+/** projectFor for a command that edits the file: read from, and written to, writeDirOf's folder. */
+async function editProjectFor(opts) {
+  if (opts.machine !== undefined) return projectFor(opts);
+  const key = await commandKeyOf(opts);
+  return loadProject(key, await writeDirOf(opts, key));
+}
 // The commands that take --machine: the definitions ones (and meter's own --machine).
 const ON_MACHINE = new Set(["ls", "show", "create", "edit", "rm", "category", "start", "restart", "attach", "detach", "whois", "meter", "doc"]);
 // A project's place in --json answers: `machine` only for a linked machine's.
@@ -1128,7 +1157,7 @@ async function relabelAfter(beforeFile, afterRaw) {
 }
 
 async function cmdCreate(opts) {
-  const project = await projectFor(opts);
+  const project = await editProjectFor(opts);
   const id = newBotId();
   const entry = entryFrom(opts, { id, kind: mainBotOf(project.file) ? "member" : "main" }, project, { creating: true });
   const raw = applyBotEdit(project.raw, entry);
@@ -1139,7 +1168,7 @@ async function cmdCreate(opts) {
 }
 
 async function cmdEdit(opts, [ref]) {
-  const project = await projectFor(opts);
+  const project = await editProjectFor(opts);
   const bot = findBot(project.file, ref);
   const stored = project.raw.bots.find((b) => b?.id === bot.id);
   const entry = entryFrom(opts, stored, project, { creating: false });
@@ -1150,7 +1179,7 @@ async function cmdEdit(opts, [ref]) {
 }
 
 async function cmdRm(opts, [ref]) {
-  const project = await projectFor(opts);
+  const project = await editProjectFor(opts);
   const { file } = project;
   const bot = findBot(file, ref);
   // Its pane by the ledger, read before the write (the import, on a first run, needs the bot
@@ -1175,6 +1204,11 @@ async function cmdRm(opts, [ref]) {
   // Only an empty list deletes the file; anything else must pass checkBots (a file left
   // with members and no main bot is refused, never deleted).
   const last = raw.bots.length === 0;
+  // A worktree with no file of its own holds nothing to delete: its edit would only show the key's.
+  if (last && project.expected === null) {
+    throw new CliError(`${bot.name} is the project's last bot and ${fileName(project)} isn't there, so nothing was removed; `
+      + `remove it from ${project.key}.`);
+  }
   await saveProject(project, last ? null : raw, { list: false });
   if (!last && !project.machine) await relabelAfter(file, raw); // its lead may stop being a captain
   const notes = [];
@@ -1185,7 +1219,8 @@ async function cmdRm(opts, [ref]) {
 }
 
 async function cmdCategory(opts, [verb, ...rest]) {
-  const project = await projectFor(opts);
+  // Listing reads the project's file; the other verbs edit, in writeDirOf's folder.
+  const project = verb === "ls" || verb === undefined ? await projectFor(opts) : await editProjectFor(opts);
   const raw = JSON.parse(JSON.stringify(project.raw));
   raw.categories = Array.isArray(raw.categories) ? raw.categories : [];
   const save = async () => {
@@ -2202,10 +2237,11 @@ async function cmdRestart(opts, [ref]) {
   }
   let saved = false;
   if (opts.save) {
-    const now = loadProject(key);
+    // Written where the command runs (writeDirOf: a worktree's own file, #234).
+    const now = loadProject(key, await writeDirOf(opts, key));
     const stored = now.raw.bots.find((b) => b?.id === bot.id);
     if (stored) {
-      writeBotsFile(key, applyBotEdit(now.raw, { ...stored, agent: entry.agent, ...(entry.model ? { model: entry.model } : { model: undefined }) }), now.text);
+      await saveProject(now, applyBotEdit(now.raw, { ...stored, agent: entry.agent, ...(entry.model ? { model: entry.model } : { model: undefined }) }), { list: false });
       saved = true;
     }
   }
