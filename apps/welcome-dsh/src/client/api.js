@@ -1,5 +1,8 @@
 // Calls the host endpoint (src/host/endpoint.js). Document-relative, so DSH's web UI keeps
-// working under a mounted base path.
+// working under a mounted base path. Its own errors read in the DSH language (i18n.js); the
+// host's come as the host words them.
+import { t } from './i18n.js'
+
 const ROUTE = 'api/omni-ai'
 // The Omni plugins' endpoint, which @automagik/omni-channels-dsh extends with discovery and
 // linking (omni-discover, omni-link…). It answers only once those plugins run here.
@@ -18,10 +21,10 @@ async function callRoute(route, endpoint, payload) {
       body: JSON.stringify({ endpoint, payload: payload ?? null }),
     })
   } catch {
-    throw Object.assign(new Error('Could not reach DSH. Check that it is still running.'), { code: 'NETWORK' })
+    throw Object.assign(new Error(t('Could not reach DSH. Check that it is still running.')), { code: 'NETWORK' })
   }
-  if (!response.ok) throw Object.assign(new Error(`DSH answered HTTP ${response.status}`), { code: `HTTP_${response.status}` })
+  if (!response.ok) throw Object.assign(new Error(t('DSH answered HTTP {status}', { status: response.status })), { code: `HTTP_${response.status}` })
   const result = await response.json()
-  if (!result.ok) throw Object.assign(new Error(result.error?.message ?? 'Request failed'), { code: result.error?.code ?? 'omni-ai/error' })
+  if (!result.ok) throw Object.assign(new Error(result.error?.message ?? t('Request failed')), { code: result.error?.code ?? 'omni-ai/error' })
   return result.value
 }

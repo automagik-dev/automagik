@@ -33,7 +33,7 @@ function installStyles() {
 
 export function apply(ctx) {
   ctx.effect(installStyles, 'omni-ai: stage styles')
-  // The team step's copy, in the DSH language (i18n.js).
+  // The welcome's copy, in the DSH language (i18n.js).
   ctx.effect(() => installLocale(ctx.get('locale')), 'omni-ai: team step copy')
   ctx.effect(() => installVeil(), 'omni-ai: the table over DSH\'s first frame')
   // ui-settings declares the slot in its own apply, which may run after this one.

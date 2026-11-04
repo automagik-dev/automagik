@@ -3,6 +3,7 @@ import { characterMarkup, PICKER_SHAPES, CHARACTER_COLORS } from './vendor/chara
 import { INKS, GRADIENTS } from './vendor/inks.js'
 import { omniHero, unfoldHero } from './octopus.js'
 import { call } from './api.js'
+import { t } from './i18n.js'
 
 // The companion's picture: one of Omni's characters (shape and color, drawn the way the app
 // draws Bots), or the image generated for it. It stands where the octopus used to, on every
@@ -54,7 +55,7 @@ export function useCompanion() {
 
 export function Hero({ look, hatching }) {
   const cls = `oai-hero${hatching ? ' oai-hatch' : ''}`
-  if (look?.src) return h('div', { className: cls }, h('img', { className: 'oai-hero-img', src: look.src, alt: look.name ? `${look.name}, your companion` : 'Your companion' }))
+  if (look?.src) return h('div', { className: cls }, h('img', { className: 'oai-hero-img', src: look.src, alt: look.name ? t('{name}, your companion', { name: look.name }) : t('Your companion') }))
   if (look?.shape) return h('div', { className: cls, dangerouslySetInnerHTML: { __html: characterSvg(look.shape, look.color, 132) } })
   if (look?.unfold) return h('div', { className: cls, dangerouslySetInnerHTML: { __html: unfoldHero() } })
   return h('div', { className: cls, dangerouslySetInnerHTML: { __html: omniHero() } })

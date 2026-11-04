@@ -3,6 +3,7 @@ import { call } from './api.js'
 import { Stage, useFinish, useGate, useGlitch } from './stage.js'
 import { SUBSCRIPTION_TILES, SubscriptionSignIn, signedInCount } from './subscriptions.js'
 import { AcpAgents, useAcp } from './acp-agents.js'
+import { t } from './i18n.js'
 
 // Step omni-connect-ai (order -200): every AI is a row with a switch, and several can be on.
 // What this computer already has comes first, on (src/host/ais.js finds it). A row that is not
@@ -17,6 +18,9 @@ import { AcpAgents, useAcp } from './acp-agents.js'
 // One way to reach each AI: DSH's own sign-ins and keys (Claude: pi-ai's anthropic route, a
 // Claude Pro or Max sign-in or an Anthropic API key), and dsh-subscriptions for what nothing
 // else covers.
+//
+// The copy follows the DSH language (i18n.js). The host's rows stay English (src/host/ais.js)
+// and read in the DSH language here, through aiText.
 
 export const VENDOR_TERMS = 'Personal use under the vendor\'s terms'
 // How many "Add another" rows show before "Show N more".
@@ -41,6 +45,24 @@ export function sections(rows) {
 }
 
 export const onCount = rows => rows.filter(row => row.on).length
+
+// What the host and subscriptionRows say about a row, in the DSH language: each part between
+// ' · ', with the value kept where a row names one.
+const AI_ROWS = [
+  [/^Signed in to (.+)$/, name => t('Signed in to {name}', { name })],
+  [/^(\S+) found$/, ref => t('{ref} found', { ref })],
+  [/^(\d+) accounts$/, count => t('{count} accounts', { count })],
+]
+export function aiText(text) {
+  if (typeof text !== 'string') return text
+  return text.split(' · ').map((part) => {
+    for (const [pattern, of] of AI_ROWS) {
+      const match = pattern.exec(part)
+      if (match) return of(match[1])
+    }
+    return t(part)
+  }).join(' · ')
+}
 
 // What a switch does when flipped: turn it off, turn on what is set up, or open its setup.
 export function flipAction(row) {
@@ -67,9 +89,9 @@ function KeyForm({ row, provider, onSaved }) {
   }
   return h('form', { onSubmit: submit, className: 'oai-setup-form' },
     h('div', { className: 'oai-field' },
-      h('input', { type: 'password', required: true, autoComplete: 'off', spellCheck: false, autoFocus: true, placeholder: `Paste your ${row.name} key`, 'aria-label': `${row.name} key`, value: apiKey, onChange: e => setApiKey(e.target.value) }),
-      h('button', { type: 'submit', className: 'oai-primary', disabled: busy }, busy ? 'Turning on…' : 'Turn on')),
-    h('p', { className: 'oai-muted' }, 'It stays on this computer, in DSH\'s own credential store.', row.keyUrl ? [' ', h('a', { key: 'k', className: 'oai-link', href: row.keyUrl, target: '_blank', rel: 'noreferrer' }, `Get a ${row.name} key`)] : null),
+      h('input', { type: 'password', required: true, autoComplete: 'off', spellCheck: false, autoFocus: true, placeholder: t('Paste your {name} key', { name: row.name }), 'aria-label': t('{name} key', { name: row.name }), value: apiKey, onChange: e => setApiKey(e.target.value) }),
+      h('button', { type: 'submit', className: 'oai-primary', disabled: busy }, busy ? t('Turning on…') : t('Turn on'))),
+    h('p', { className: 'oai-muted' }, t('It stays on this computer, in DSH\'s own credential store.'), row.keyUrl ? [' ', h('a', { key: 'k', className: 'oai-link', href: row.keyUrl, target: '_blank', rel: 'noreferrer' }, t('Get a {name} key', { name: row.name }))] : null),
     problem ? h('p', { className: 'oai-error', role: 'alert' }, problem) : null)
 }
 
@@ -117,25 +139,29 @@ function SignIn({ row, provider, onSaved, onCancel }) {
   const notice = attempt?.notice
   const prompt = attempt?.prompt
   const ended = attempt && ['cancelled', 'failed', 'none'].includes(attempt.status)
-  const endedText = { failed: `The sign-in did not finish: ${attempt?.error}`, cancelled: 'The sign-in was cancelled. Nothing was turned on.', none: 'The sign-in stopped before it finished. Flip the switch to start again.' }
+  const endedText = {
+    failed: () => t('The sign-in did not finish: {error}', { error: attempt?.error }),
+    cancelled: () => t('The sign-in was cancelled. Nothing was turned on.'),
+    none: () => t('The sign-in stopped before it finished. Flip the switch to start again.'),
+  }
   return h('div', { className: 'oai-signin' },
-    !attempt && !problem ? h('p', { className: 'oai-muted' }, `Starting the ${row.name} sign-in…`) : null,
+    !attempt && !problem ? h('p', { className: 'oai-muted' }, t('Starting the {name} sign-in…', { name: row.name })) : null,
     notice?.message ? h('p', null, notice.message) : null,
     notice?.code ? h('div', { className: 'oai-code' },
       h('code', null, notice.code),
-      h('button', { type: 'button', className: 'oai-ghost', onClick: () => navigator.clipboard?.writeText(notice.code).then(() => setCopied(true)) }, copied ? 'Copied' : 'Copy code')) : null,
-    notice?.url ? h('a', { className: 'oai-primary oai-button', href: notice.url, target: '_blank', rel: 'noreferrer' }, `Sign in with ${row.name}`) : null,
+      h('button', { type: 'button', className: 'oai-ghost', onClick: () => navigator.clipboard?.writeText(notice.code).then(() => setCopied(true)) }, copied ? t('Copied') : t('Copy code'))) : null,
+    notice?.url ? h('a', { className: 'oai-primary oai-button', href: notice.url, target: '_blank', rel: 'noreferrer' }, t('Sign in with {name}', { name: row.name })) : null,
     prompt?.kind === 'select' ? h('div', { className: 'oai-choices', role: 'group', 'aria-label': prompt.message },
       h('p', null, prompt.message),
       prompt.options.map(option => h('button', { key: option.id, type: 'button', onClick: () => reply(option.id) }, h('strong', null, option.label), option.description ? h('span', null, option.description) : null))) : null,
     prompt && prompt.kind !== 'select' ? h('form', { onSubmit: (event) => { event.preventDefault(); reply(answer) } },
       h('label', { htmlFor: `oai-answer-${row.id}` }, prompt.message),
       h('input', { id: `oai-answer-${row.id}`, type: prompt.kind === 'secret' ? 'password' : 'text', required: true, autoComplete: 'off', spellCheck: false, autoFocus: true, placeholder: prompt.placeholder, value: answer, onChange: e => setAnswer(e.target.value) }),
-      h('button', { type: 'submit', className: 'oai-primary' }, 'Continue')) : null,
-    attempt?.status === 'running' && !prompt ? h('p', { className: 'oai-muted oai-waiting' }, 'Finish signing in on their page…') : null,
-    ended ? h('p', { className: 'oai-error', role: 'alert' }, endedText[attempt.status]) : null,
+      h('button', { type: 'submit', className: 'oai-primary' }, t('Continue'))) : null,
+    attempt?.status === 'running' && !prompt ? h('p', { className: 'oai-muted oai-waiting' }, t('Finish signing in on their page…')) : null,
+    ended ? h('p', { className: 'oai-error', role: 'alert' }, endedText[attempt.status]()) : null,
     problem ? h('p', { className: 'oai-error', role: 'alert' }, problem) : null,
-    !ended && !problem ? h('button', { type: 'button', className: 'oai-quiet', onClick: cancel }, 'Cancel') : null)
+    !ended && !problem ? h('button', { type: 'button', className: 'oai-quiet', onClick: cancel }, t('Cancel')) : null)
 }
 
 function CliproxyForm({ onSaved }) {
@@ -157,11 +183,11 @@ function CliproxyForm({ onSaved }) {
     }
   }
   return h('form', { onSubmit: submit, className: 'oai-setup-form' },
-    h('input', { type: 'url', required: true, placeholder: 'http://localhost:8317/v1', 'aria-label': 'Gateway address', autoComplete: 'off', value: baseURL, onChange: e => setBaseURL(e.target.value) }),
+    h('input', { type: 'url', required: true, placeholder: 'http://localhost:8317/v1', 'aria-label': t('Gateway address'), autoComplete: 'off', value: baseURL, onChange: e => setBaseURL(e.target.value) }),
     h('div', { className: 'oai-field' },
-      h('input', { type: 'password', required: true, placeholder: 'Gateway key', 'aria-label': 'Gateway key', autoComplete: 'off', spellCheck: false, value: apiKey, onChange: e => setApiKey(e.target.value) }),
-      h('button', { type: 'submit', className: 'oai-primary', disabled: busy }, busy ? 'Turning on…' : 'Turn on')),
-    h('p', { className: 'oai-muted' }, 'Omni lists the gateway\'s models with your key and keeps the key in DSH\'s credential store.'),
+      h('input', { type: 'password', required: true, placeholder: t('Gateway key'), 'aria-label': t('Gateway key'), autoComplete: 'off', spellCheck: false, value: apiKey, onChange: e => setApiKey(e.target.value) }),
+      h('button', { type: 'submit', className: 'oai-primary', disabled: busy }, busy ? t('Turning on…') : t('Turn on'))),
+    h('p', { className: 'oai-muted' }, t('Omni lists the gateway\'s models with your key and keeps the key in DSH\'s credential store.')),
     problem ? h('p', { className: 'oai-error', role: 'alert' }, problem) : null)
 }
 
@@ -171,9 +197,9 @@ function SignInOrKey({ row, provider, onSaved, onClose }) {
   const [way, setWay] = useState(null)
   if (way === 'signin') return h(SignIn, { row, provider, onSaved, onCancel: onClose })
   if (way === 'key') return h(KeyForm, { row, provider, onSaved })
-  return h('div', { className: 'oai-choices', role: 'group', 'aria-label': `How to connect ${row.name}` },
-    h('button', { type: 'button', onClick: () => setWay('signin') }, h('strong', null, `Sign in to ${row.name}`), h('span', null, 'With your plan, in the browser')),
-    h('button', { type: 'button', onClick: () => setWay('key') }, h('strong', null, 'Use an API key'), h('span', null, 'Billed per use')))
+  return h('div', { className: 'oai-choices', role: 'group', 'aria-label': t('How to connect {name}', { name: row.name }) },
+    h('button', { type: 'button', onClick: () => setWay('signin') }, h('strong', null, t('Sign in to {name}', { name: row.name })), h('span', null, t('With your plan, in the browser'))),
+    h('button', { type: 'button', onClick: () => setWay('key') }, h('strong', null, t('Use an API key')), h('span', null, t('Billed per use'))))
 }
 
 function Setup({ row, onSaved, onClose }) {
@@ -182,10 +208,10 @@ function Setup({ row, onSaved, onClose }) {
     if (row.signIn && row.keyUrl) return h(SignInOrKey, { row, provider: providerOf(row), onSaved, onClose })
     if (row.signIn) return h(SignIn, { row, provider: providerOf(row), onSaved, onCancel: onClose })
     if (row.keyUrl) return h(KeyForm, { row, provider: providerOf(row), onSaved })
-    return h('p', null, `This DSH offers no ${row.name} sign-in.`)
+    return h('p', null, t('This DSH offers no {name} sign-in.', { name: row.name }))
   }
   if (row.kind === 'gateway') return h(CliproxyForm, { onSaved })
-  if (row.kind === 'local') return h('p', { className: 'oai-muted' }, 'Ollama is not running on this computer. Start it, then flip this again.')
+  if (row.kind === 'local') return h('p', { className: 'oai-muted' }, t('Ollama is not running on this computer. Start it, then flip this again.'))
   if (row.kind === 'subscription') return h(SubscriptionSignIn, { tile: row.tile, onBack: onClose, onSaved, glitch: () => {} })
   return null
 }
@@ -199,20 +225,20 @@ function Duplicates({ row, onDedupe }) {
   const shown = row.duplicates.filter(duplicate => !duplicate.hidden)
   return h('div', { className: 'oai-dupes' },
     row.duplicates.map(duplicate => h('p', { key: `${duplicate.via}:${duplicate.provider}`, className: 'oai-muted' },
-      `Also connected through ${duplicate.via}; Omni uses ${row.name} here.`,
-      duplicate.hidden ? ' Its models are hidden.' : null)),
-    shown.length && row.on ? h('button', { type: 'button', className: 'oai-ghost', onClick: onDedupe }, `Use only this ${row.name}`) : null)
+      t('Also connected through {via}; Omni uses {name} here.', { via: duplicate.via, name: row.name }),
+      duplicate.hidden ? t(' Its models are hidden.') : null)),
+    shown.length && row.on ? h('button', { type: 'button', className: 'oai-ghost', onClick: onDedupe }, t('Use only this {name}', { name: row.name })) : null)
 }
 
-function Row({ row, open, busy, problem, onFlip, onSaved, onClose, onDedupe }) {
+export function Row({ row, open, busy, problem, onFlip, onSaved, onClose, onDedupe }) {
   const logo = LOGOS[row.id] ?? row.name.slice(0, 1)
   return h('div', { className: `oai-ai${row.on ? ' oai-ai-on' : ''}` },
     h('div', { className: 'oai-ai-row' },
       h('div', { className: 'oai-logo', 'aria-hidden': true }, logo),
       h('div', { className: 'oai-ai-what' },
         h('strong', null, row.name),
-        h('span', null, row.detail ? `${row.via} · ${row.detail}` : row.via)),
-      row.found ? h('em', { className: 'oai-found' }, row.found) : null,
+        h('span', null, aiText(row.detail ? `${row.via} · ${row.detail}` : row.via))),
+      row.found ? h('em', { className: 'oai-found' }, aiText(row.found)) : null,
       h('button', { type: 'button', role: 'switch', className: 'oai-switch', 'aria-checked': row.on ? 'true' : 'false', 'aria-label': row.name, disabled: busy, onClick: onFlip })),
     open && !row.on ? h('div', { className: 'oai-ai-setup' }, h(Setup, { row, onSaved, onClose })) : null,
     problem ? h('p', { className: 'oai-error oai-ai-problem', role: 'alert' }, problem) : null,
@@ -242,7 +268,6 @@ export function ConnectAiStep(props) {
   useEffect(() => { if (state) glitch() }, [state, glitch])
   if (!state) return null
 
-  const all = rows === null ? null : [...rows, ...subscriptionRows(subs)]
   const say = (id, message) => setProblems(previous => ({ ...previous, [id]: message }))
 
   const flip = async (row) => {
@@ -280,31 +305,52 @@ export function ConnectAiStep(props) {
     }
   }
 
+  return h(ConnectAiView, {
+    state,
+    rows,
+    subscriptions: subs,
+    acp,
+    open,
+    showAll,
+    glitching,
+    rowProps: row => ({ busy: busy !== null, problem: problems[row.id], onFlip: () => flip(row), onSaved: saved(row), onClose: () => setOpen(null), onDedupe: dedupe(row) }),
+    onShowAll: () => setShowAll(true),
+    onSkip: () => finish(),
+    onModels: () => finish('models'),
+    onContinue: () => proceed(),
+  })
+}
+
+// What the step draws, from its state: `rows` is null while the host looks, `rowProps` a row's
+// handlers.
+export function ConnectAiView({ state, rows, subscriptions, acp, open, showAll, glitching, rowProps, onShowAll, onSkip, onModels, onContinue }) {
+  const all = rows === null ? null : [...rows, ...subscriptionRows(subscriptions)]
   const count = all ? onCount(all) : 0
   const { found, others } = sections(all ?? [])
   const visible = showAll ? others : others.slice(0, FIRST_OTHERS)
-  const rowOf = row => h(Row, { key: row.id, row, open: open === row.id, busy: busy !== null, problem: problems[row.id], onFlip: () => flip(row), onSaved: saved(row), onClose: () => setOpen(null), onDedupe: dedupe(row) })
+  const rowOf = row => h(Row, { key: row.id, row, open: open === row.id, ...rowProps(row) })
+  const another = found.length ? t('Add another') : t('Your AIs')
 
   return h(Stage, {
-    title: 'Turn on your AIs',
-    speech: count > 0 ? `Turn on everything you have. More brains, more ${state.companionName ?? 'Omni'}.` : 'Now give me a brain. Turn on every AI you have; you can change it any time.',
+    title: t('Turn on your AIs'),
+    speech: count > 0 ? t('Turn on everything you have. More brains, more {name}.', { name: state.companionName ?? 'Omni' }) : t('Now give me a brain. Turn on every AI you have; you can change it any time.'),
     at: 'omni-connect-ai',
     glitching,
   },
-  all === null ? h('p', { className: 'oai-muted' }, 'Looking at what this computer has…') : [
-    found.length ? h('section', { key: 'found', className: 'oai-group', 'aria-label': 'Found on this computer' },
-      h('h2', null, 'Found on this computer'),
+  all === null ? h('p', { className: 'oai-muted' }, t('Looking at what this computer has…')) : [
+    found.length ? h('section', { key: 'found', className: 'oai-group', 'aria-label': t('Found on this computer') },
+      h('h2', null, t('Found on this computer')),
       h('div', { className: 'oai-list' }, found.map(rowOf))) : null,
     h(AcpAgents, { key: 'acp', acp }),
-    h('section', { key: 'others', className: 'oai-group', 'aria-label': found.length ? 'Add another' : 'Your AIs' },
-      h('h2', null, found.length ? 'Add another' : 'Your AIs'),
-      h('p', { className: 'oai-terms oai-muted' }, `Subscriptions: ${VENDOR_TERMS.toLowerCase()}.`),
+    h('section', { key: 'others', className: 'oai-group', 'aria-label': another },
+      h('h2', null, another),
+      h('p', { className: 'oai-terms oai-muted' }, t('Subscriptions: {terms}.', { terms: t(VENDOR_TERMS).toLowerCase() })),
       h('div', { className: 'oai-list' }, visible.map(rowOf),
-        !showAll && others.length > FIRST_OTHERS ? h('button', { type: 'button', className: 'oai-more', onClick: () => setShowAll(true) }, `Show ${others.length - FIRST_OTHERS} more`) : null)),
-    h('p', { key: 'more', className: 'oai-muted oai-every' }, 'Every other provider DSH knows is in ', h('button', { type: 'button', className: 'oai-inline', onClick: () => finish('models') }, 'Settings → Models'), '.'),
+        !showAll && others.length > FIRST_OTHERS ? h('button', { type: 'button', className: 'oai-more', onClick: onShowAll }, t('Show {count} more', { count: others.length - FIRST_OTHERS })) : null)),
+    h('p', { key: 'more', className: 'oai-muted oai-every' }, t('Every other provider DSH knows is in '), h('button', { type: 'button', className: 'oai-inline', onClick: onModels }, t('Settings → Models')), '.'),
   ],
   h('div', { className: 'oai-actions' },
-    h('button', { type: 'button', className: 'oai-quiet', onClick: () => finish() }, 'Skip for now'),
-    h('span', { className: 'oai-count' }, count > 0 ? `${count} on` : 'Turn on at least one'),
-    h('button', { type: 'button', className: 'oai-primary', disabled: count === 0, onClick: () => proceed() }, count > 0 ? 'Continue →' : 'Continue')))
+    h('button', { type: 'button', className: 'oai-quiet', onClick: onSkip }, t('Skip for now')),
+    h('span', { className: 'oai-count' }, count > 0 ? t('{count} on', { count }) : t('Turn on at least one')),
+    h('button', { type: 'button', className: 'oai-primary', disabled: count === 0, onClick: onContinue }, count > 0 ? t('Continue →') : t('Continue'))))
 }

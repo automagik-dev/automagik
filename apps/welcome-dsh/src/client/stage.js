@@ -2,6 +2,7 @@ import { createElement as h, useCallback, useEffect, useRef, useState } from 're
 import { createPortal } from 'react-dom'
 import { call } from './api.js'
 import { Hero, useCompanion } from './companion-art.js'
+import { t } from './i18n.js'
 
 // What every Omni onboarding step shares: the done-flag gate, the finish, and the stage
 // (octopus, speech bubble, step rail, card). The settings shell paints no chrome for a
@@ -9,7 +10,8 @@ import { Hero, useCompanion } from './companion-art.js'
 
 // Every Omni onboarding step, in order. Each plugin that brings one announces it as it
 // applies (this one: Welcome and Connect AI; @automagik/omni-channels-dsh: Connect Omni),
-// so the rail names only the steps this DSH will show.
+// so the rail names only the steps this DSH will show. Labels are English keys, read in the DSH
+// language as the rail draws them (i18n.js).
 export const RAIL = [['omni-companion', 'Your companion'], ['omni-team', 'Your team'], ['omni-connect', 'Connect Omni'], ['omni-connect-ai', 'Connect AI']]
 const ANNOUNCED = Symbol.for('automagik.omni.onboarding-steps')
 
@@ -120,12 +122,12 @@ function useTypewriter(text) {
 function Rail({ at }) {
   const steps = railSteps(at)
   const here = steps.findIndex(([id]) => id === at)
-  return h('ol', { className: 'oai-rail', 'aria-label': 'Setup steps' },
+  return h('ol', { className: 'oai-rail', 'aria-label': t('Setup steps') },
     steps.map(([id, label], index) => h('li', {
       key: id,
       className: index < here ? 'oai-done' : index === here ? 'oai-on' : '',
       'aria-current': index === here ? 'step' : undefined,
-    }, label)))
+    }, t(label))))
 }
 
 // While a step shows, it counts itself here, so the Omni channels plugin (which the team
