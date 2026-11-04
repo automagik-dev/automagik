@@ -4,11 +4,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { store, listen, ask, forget, unlinkOwn, SOCKET, FILE } from './devices.mjs'
+import { store, listen, ask, forget, unlinkOwn, fits, SOCKET, FILE, SOCKET_MAX } from './devices.mjs'
 
 const A = { id: 'phone-key-a', name: 'Pixel 9', paired: 1_000, seen: 1_000 }
 const B = { id: 'phone-key-b', name: 'Galaxy S24', paired: 2_000, seen: 2_000 }
@@ -22,6 +22,21 @@ function refusing(path) {
   const r = spawnSync(process.execPath, ['-e', `require('node:net').createServer().listen(${JSON.stringify(path)}, () => process.kill(process.pid, 'SIGKILL'))`])
   assert.equal(r.signal, 'SIGKILL')
   assert.ok(existsSync(path))
+}
+/** A state folder inside `base` whose bridge.sock path is over 110 bytes, too long for a socket. */
+function longDir() {
+  const base = tmp()
+  const dir = join(base, 'state-'.padEnd(120, 'x'))
+  mkdirSync(dir, { mode: 0o700 })
+  assert.ok(Buffer.byteLength(join(dir, SOCKET)) > 110)
+  return { base, dir }
+}
+/** Every socket file under `dir`: Node 22 binds a too-long path cut short, beside the state folder. */
+function sockets(dir) {
+  return readdirSync(dir).flatMap((name) => {
+    const path = join(dir, name), st = lstatSync(path)
+    return st.isDirectory() ? sockets(path) : st.isSocket() ? [path] : []
+  })
 }
 /** Blocks this thread, as a synchronous read-then-write does, until `done()` or `ms` pass. */
 function block(done, ms) {
@@ -163,6 +178,22 @@ test('a running bridge without the socket (an older one a mod update left runnin
   running(dir)
   assert.deepEqual(await forget({ dir, id: A.id }), { ok: true, removed: true, via: 'file' })
   assert.deepEqual(ids(dir), [])
+})
+
+test('a state folder too long for a socket: the bridge binds none, and forget writes the file', async () => {
+  const { base, dir } = longDir()
+  const sock = join(dir, SOCKET)
+  assert.equal(fits(sock), false)
+  assert.equal(fits(join(base, SOCKET)), true)
+  assert.equal(fits('/'.padEnd(SOCKET_MAX - 1, 'x')), true, 'one byte under the limit fits')
+  assert.equal(fits('/'.padEnd(SOCKET_MAX, 'x')), false, 'the NUL byte needs the last one')
+  await assert.rejects(listen(sock, { forget: () => true }), /too long for a socket/)
+  assert.equal(await ask(sock, { forget: A.id }), null)
+  store(join(dir, FILE)).add(A); store(join(dir, FILE)).add(B)
+  running(dir)
+  assert.deepEqual(await forget({ dir, id: A.id }), { ok: true, removed: true, via: 'file' })
+  assert.deepEqual(ids(dir), [B.id])
+  assert.deepEqual(sockets(base), [], 'no socket anywhere, not even at a path cut short')
 })
 
 test('a bridge that starts while forget writes the file is told too', async () => {

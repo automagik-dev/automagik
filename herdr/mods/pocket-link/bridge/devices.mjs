@@ -19,6 +19,11 @@ const MAX_REQUEST = 4096
 // A running bridge whose socket refuses (its backlog full): try again for this long, then fail.
 export const BUSY_RETRIES = 10
 export const BUSY_WAIT = 200
+// A Unix socket's path, its closing NUL byte included, fits in sun_path: 104 bytes on macOS, 108 on
+// Linux. A longer one fails to connect on Node 24; Node 22 cuts it short and binds the shorter path,
+// outside the state folder. So neither end uses a path that does not fit.
+export const SOCKET_MAX = process.platform === 'darwin' ? 104 : 108
+export const fits = (path) => Buffer.byteLength(path) < SOCKET_MAX
 
 const readJson = (path, fallback) => { try { return JSON.parse(readFileSync(path, 'utf8')) } catch { return fallback } }
 
@@ -57,6 +62,7 @@ export function store(path, { held = () => {} } = {}) {
  * the server once it listens; the socket is the owner's only (and the state folder is 0700).
  */
 export function listen(path, { forget, log = () => {} }) {
+  if (!fits(path)) return Promise.reject(new Error(`${path} is ${Buffer.byteLength(path)} bytes, too long for a socket (under ${SOCKET_MAX})`))
   try { unlinkSync(path) } catch {}
   const server = createServer((sock) => {
     sock.setEncoding('utf8')
@@ -100,10 +106,11 @@ export function unlinkOwn(server, path) {
 
 /**
  * Sends one request to the bridge and resolves to its answer, or to null when nothing took it:
- * no socket, or one that refuses (a bridge that died, or one too busy to accept: `forget` tells
- * these apart). Rejects when a bridge took the request but gives no answer within `timeout`.
+ * no socket, a path too long for one (no bridge can listen there), or one that refuses (a bridge
+ * that died, or one too busy to accept: `forget` tells these apart). Rejects when a bridge took the request but gives no answer within `timeout`.
  */
 export function ask(path, request, { timeout = TIMEOUT } = {}) {
+  if (!fits(path)) return Promise.resolve(null)
   return new Promise((resolve, reject) => {
     const sock = createConnection(path)
     let buf = '', connected = false, done = false
@@ -118,7 +125,7 @@ export function ask(path, request, { timeout = TIMEOUT } = {}) {
       try { finish(resolve, JSON.parse(buf.slice(0, nl))) } catch { finish(reject, new Error('The bridge gave an answer it could not read.')) }
     })
     sock.on('error', (e) => {
-      if (!connected && ['ENOENT', 'ECONNREFUSED', 'ENOTSOCK', 'EAGAIN'].includes(e.code)) finish(resolve, null)
+      if (!connected && ['ENOENT', 'ECONNREFUSED', 'ENOTSOCK', 'EAGAIN', 'EINVAL', 'ENAMETOOLONG'].includes(e.code)) finish(resolve, null)
       else finish(reject, new Error(`The bridge did not answer: ${e.message}`))
     })
     sock.on('close', () => finish(reject, new Error('The bridge hung up without an answer.')))
@@ -132,8 +139,8 @@ const defaultAlive = (pid) => { try { process.kill(pid, 0); return true } catch 
  * - A bridge runs (status.json's pid is alive): it removes the phone and ends its sessions; this
  *   waits for its answer and never writes the file itself. A socket that is there but refuses (a
  *   busy bridge) is tried again for BUSY_RETRIES x BUSY_WAIT ms, then this fails.
- * - None answers on bridge.sock (none runs, or an older one without the socket that a mod update
- *   left running): this writes the file, then tells a bridge that started meanwhile too.
+ * - None answers on bridge.sock (none runs, an older one without the socket that a mod update left
+ *   running, or a state folder whose bridge.sock path does not `fit`): this writes the file, then tells a bridge that started meanwhile too.
  * Resolves to {ok: true, removed, via: 'bridge' | 'file'}; rejects when the bridge refuses or
  * gives no answer, and then nothing was written.
  */
@@ -148,8 +155,8 @@ export async function forget({ dir, id, alive = defaultAlive, timeout = TIMEOUT,
         if (!answer.ok) throw new Error(answer.error || 'The bridge refused.')
         return { ok: true, removed: Boolean(answer.removed), via: 'bridge' }
       }
-      // No socket at all: an older bridge without one. Below, the file.
-      if (!existsSync(sock)) break
+      // No socket at all (an older bridge without one, or a path too long for one): the file, below.
+      if (!fits(sock) || !existsSync(sock)) break
       if (i >= retries) throw new Error('The bridge is busy and did not take the removal. Try again.')
       await new Promise((resolve) => setTimeout(resolve, wait))
     }
