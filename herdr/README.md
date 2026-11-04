@@ -18,12 +18,14 @@ On macOS or Linux with Node 22.7 or later:
 curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash
 ```
 
-The installer checks Node and Herdr UI. If Herdr UI is missing, it asks before using
-Homebrew on macOS or the [official Linux installer](https://herdrui.dev/install.sh) on Linux.
-The Linux installer uses APT, DNF or pacman, may require sudo, and needs glibc 2.39 or later
-on x86_64 or ARM64. Linux needs `herdr-app` on PATH; the Herdr terminal client alone does not
-provide the UI that loads this pack. Install Node from [nodejs.org](https://nodejs.org) first
-on Linux; Node installation through Homebrew is offered only on macOS.
+The installer checks Node and [Herdr](https://dev.herdr.app) (herdrdev's app, bundle id
+`dev.herdr.app`; another app named Herdr, penso/herdr-gpui, is a different app and does not load this pack).
+If Herdr is missing, it asks before running Herdr's own installer,
+`curl -fsSL https://releases.herdr.dev/app/install.sh | sh`, which needs no root: on macOS (Apple
+silicon) it puts `Herdr.app` in `~/Applications`; on Linux (x86_64 or ARM64) the app in
+`~/.local/share/herdr-app`. Both link `herdr-app` into `~/.local/bin` and add `herdr-core` and
+`hc` when there are none. Install Node from [nodejs.org](https://nodejs.org) first on Linux;
+Node installation through Homebrew is offered only on macOS.
 It reads the signed pack pointer (the `herdr-lane` release's `pack.json`,
 checked against the keys the installer carries), downloads the pack it names
 (`automagik-herdr-pack-<v>.tgz`: every mod below and the `automagik` layout; a desktop-only release
@@ -156,7 +158,7 @@ Or let a coding agent do it. The prompt lives in [docs/agent-install.md](docs/ag
 Install Automagik Herdr on this macOS or Linux machine and set up my first bot.
 
 1. Run: curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash
-   If it stops to ask something (install Node or Herdr UI), ask me; if I say yes, run it again
+   If it stops to ask something (install Node or Herdr), ask me; if I say yes, run it again
    with: ... | bash -s -- --yes. If it stops for anything else, tell me what it printed and stop.
    If the output has a layout.switch command, ask me before running that exact command. If
    it names a layout of mine that lacks pack pieces, tell me which; edit it only if I ask.

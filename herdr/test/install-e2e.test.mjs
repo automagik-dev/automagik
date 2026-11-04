@@ -155,12 +155,19 @@ function machine(t, { launcher, os = "Darwin", arch = "arm64" } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ah-e2e-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, "home"), bin = join(root, "bin"), apps = join(root, "Applications"), rel = join(root, "release");
-  for (const d of [home, bin, ...(os === "Darwin" ? [join(apps, "Herdr.app")] : [])]) mkdirSync(d, { recursive: true });
+  for (const d of [home, bin]) mkdirSync(d, { recursive: true });
+  // macOS: Herdr is the app whose bundle id is dev.herdr.app (only its Info.plist here).
+  if (os === "Darwin") {
+    mkdirSync(join(apps, "Herdr.app", "Contents"), { recursive: true });
+    writeFileSync(join(apps, "Herdr.app", "Contents", "Info.plist"), '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>\n    <key>CFBundleIdentifier</key><string>dev.herdr.app</string>\n</dict></plist>\n');
+  }
   const log = join(root, "herdr-app.log"), shown = join(root, "herdr-shown"), brew = join(root, "brew.log"), spaces = join(root, "herdr-spaces.json");
   writeFileSync(log, "");
   writeFileSync(brew, "");
   exe(join(bin, "uname"), `#!/bin/sh\ncase $1 in -m) echo ${arch} ;; *) echo ${os} ;; esac\n`);
   exe(join(bin, "brew"), `#!/bin/sh\necho "$*" >> "${brew}"\nexit 1\n`);
+  // Herdr's own installer is never fetched: Herdr is already here.
+  exe(join(bin, "curl"), `#!/bin/sh\nfor a; do case $a in https://releases.herdr.dev/*) echo "no network in tests: $a" >&2; exit 22 ;; esac; done\nexec /usr/bin/curl "$@"\n`);
   // herdr-app: logs its arguments; `status` prints the layout show() set, or fails with none;
   // `ls` prints the spaces openSpace() opened, or nothing.
   exe(join(bin, "herdr-app"), `#!/bin/sh
