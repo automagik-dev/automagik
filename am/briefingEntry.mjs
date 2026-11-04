@@ -11,13 +11,16 @@
 // silences a briefing. So that the next one starts clean, the hook's stdin (Claude Code's JSON) is
 // read once here and replayed to each attempt, and each attempt's stdout is held and printed only
 // when its import succeeds: a failed attempt prints nothing, whatever it wrote before it threw.
+// Nor does it leave a mark that the conversation saw its briefing (the records under
+// <app home>/automagik-herdr/briefed/, BRIEFED_DIR): the ones it wrote are removed, so the next
+// copy prints the briefing it would have missed; a record lost that way only means one print more.
 // am's copy lives outside the app home, so it is told the app home (HERDR_APP_HOME, when unset)
 // that a sidebar copy finds from its own place. briefing.mjs runs only as the program node
 // started, so the script becomes argv[1] before it is imported (env and exit code stay this
 // process's). Fail-open like briefing.mjs: none found, nothing printed, exit 0. The installer, the
 // updater and am replace the copy; edits to it are lost. Apache-2.0.
 
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
@@ -70,6 +73,17 @@ function replay() {
   return stream;
 }
 
+/** Removes the briefed records written since `since` (ms): what a failed attempt marked as seen. */
+function unmark(since) {
+  const dir = join(process.env.HERDR_APP_HOME || appHome, "automagik-herdr", "briefed");
+  let names;
+  try { names = readdirSync(dir); } catch { return; }
+  for (const name of names) {
+    const path = join(dir, name);
+    try { if (statSync(path).mtimeMs >= since) rmSync(path, { force: true }); } catch { /* gone already */ }
+  }
+}
+
 const write = process.stdout.write;
 for (const copy of copies) {
   let target;
@@ -86,11 +100,13 @@ for (const copy of copies) {
     return true;
   };
   let ok = false;
+  const since = Date.now() - 2;
   try {
     await import(pathToFileURL(target).href);
     ok = true;
   } catch (e) {
     process.stderr.write(`automagik-herdr briefing: ${firstLine(e)}\n`);
+    unmark(since);
     if (copy.am && !before) delete process.env.HERDR_APP_HOME;
     process.exitCode = 0;
   } finally {

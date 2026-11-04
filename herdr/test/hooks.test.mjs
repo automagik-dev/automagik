@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ledgerPath } from "../mods/am-sidebar/workers.js";
-import { OURS, commandFor, directHookCommand, hookCommand, legacyHookCommand, mergeHook, stableBriefingPath } from "../mods/am-sidebar/briefingText.mjs";
+import { BRIEFED_DIR, OURS, commandFor, directHookCommand, hookCommand, legacyHookCommand, mergeHook, stableBriefingPath } from "../mods/am-sidebar/briefingText.mjs";
 import {
   BACKUP_SUFFIX, HOOKS_JOURNAL, botPaneFolders, foldersOf, hooksNotice, knownProjects, ledgerFolders, migrateHooks, relink, retargetHooks, revertHooks, syncHooks,
   toStable,
@@ -440,7 +440,8 @@ test("an am copy that throws after printing, reading stdin or joining: one brief
   assert.match(consumed.stderr, /am broke after reading stdin/);
   assert.match(read(ledgerPath(s.app)), /"session":"s-consumed"/, "the sidebar's copy saw the hook's whole input");
 
-  // A real am copy that joined the session, then threw: the sidebar's attempt joins too, but the
+  // A real am copy that joined the session and marked it briefed, then threw: the sidebar's attempt
+  // still prints the briefing (the entry removed the record am wrote) and joins too, but the
   // ledger gets one session row. hc label fails here (the fake has none), so the next turn tries
   // again: still one row.
   rmSync(amDir, { recursive: true });
@@ -454,6 +455,9 @@ test("an am copy that throws after printing, reading stdin or joining: one brief
     assert.match(joined.stderr, /am broke after joining/);
     assert.equal(rows(), 1, `turn ${turn}: one session row for s-joined`);
   }
+  // The entry can't import briefingText.mjs (a copy of it sits outside mods/): it names the folder itself.
+  assert.equal(BRIEFED_DIR, "automagik-herdr/briefed");
+  assert.match(read(join(PACK, "briefingEntry.mjs")), /join\(process\.env\.HERDR_APP_HOME \|\| appHome, "automagik-herdr", "briefed"\)/);
 });
 
 test("migration: a hook installed before the briefing moved to launch prints it once in three turns, its settings file untouched", (t) => {
