@@ -8,7 +8,7 @@
 //   node bridge.mjs start | stop     start the bridge detached; stop it (and its login service)
 //   node bridge.mjs cancel           end the pairing code, if one is live (the dialog does on close)
 //   node bridge.mjs copied           the code's link was copied: it ends 2 minutes from now, print {expires}
-//   node bridge.mjs forget <id>      remove a paired phone
+//   node bridge.mjs forget <id>      remove a paired phone (the running bridge does, over bridge.sock: devices.mjs)
 //   node bridge.mjs install|uninstall   start at login (LaunchAgent on macOS, systemd user unit on Linux)
 //
 // What a stranger can make it do before pairing is bounded in guard.mjs; the code itself in pairing.mjs.
@@ -26,6 +26,7 @@ import { acceptOne, slots, throttle, rotateLog } from './guard.mjs'
 import { judgeCode, cancelCode, shortenCode, fingerprint } from './pairing.mjs'
 import { open as openState } from './state.mjs'
 import { presence, publicStatus, writePublic, HEARTBEAT } from './presence.mjs'
+import { store, listen, unlinkOwn, forget, SOCKET } from './devices.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SESSION = [...Buffer.from('herdr-pocket/1')]
@@ -40,7 +41,7 @@ const log = (...args) => { const line = `${new Date().toISOString()} ${args.join
 const { dir: STATE, target: STATE_HOME } = openState({ env: process.env, home: homedir(), modRoot: join(HERE, '..'), log })
 files = {
   key: join(STATE, 'secret.key'), status: join(STATE, 'status.json'), devices: join(STATE, 'devices.json'),
-  pairing: join(STATE, 'pairing.json'), log: join(STATE, 'bridge.log'),
+  pairing: join(STATE, 'pairing.json'), log: join(STATE, 'bridge.log'), socket: join(STATE, SOCKET),
 }
 // Lines any peer can cause, before it is trusted: at most a few of each kind a minute.
 const refused = throttle(log)
@@ -48,6 +49,8 @@ const readJson = (path, fallback) => { try { return JSON.parse(readFileSync(path
 // Atomic, owner-only writes: a reader never sees half a file.
 const writeJson = (path, value) => { const tmp = `${path}.${process.pid}.tmp`; writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 }); renameSync(tmp, path) }
 const devices = () => readJson(files.devices, [])
+// devices.json's writes, all in the running bridge; `forget` asks it over bridge.sock (devices.mjs).
+const phoneList = store(files.devices)
 // Older versions wrote QR files here; clean them up.
 const clearQr = () => { for (const f of readdirSync(STATE)) if (/^qr-\d+\.svg$/.test(f)) try { unlinkSync(join(STATE, f)) } catch {} }
 const alive = pid => { try { process.kill(pid, 0); return true } catch { return false } }
@@ -78,7 +81,7 @@ async function pairPhone({ bi, value, peer: phone }) {
   if (verdict === 'locked') { refused('pair', 'too many wrong codes from', fingerprint(phone)); return reply({ ok: false, error: 'Too many wrong codes from this phone. Make a new code on the desktop.' }) }
   if (verdict === 'wrong') { refused('pair', 'wrong code from', fingerprint(phone)); return reply({ ok: false, error: 'That code is not the one on the desktop.' }) }
   const name = String(value.device ?? 'Phone').replace(/[\u0000-\u001f]/g, '').slice(0, 60) || 'Phone'
-  writeJson(files.devices, [...devices().filter(d => d.id !== phone), { id: phone, name, paired: Date.now(), seen: Date.now() }])
+  phoneList.add({ id: phone, name, paired: Date.now(), seen: Date.now() })
   clearQr()
   log('pair: added', name, fingerprint(phone))
   return reply({ ok: true, name: pending.name })
@@ -104,7 +107,7 @@ async function session({ conn, bi, value, rest, peer: phone }) {
   if (!device) { conn.close(1n, [...Buffer.from('not paired')]); return } // removed since it was admitted
   const name = typeof value?.session === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(value.session) ? value.session : 'default'
   // Read again: a phone removed meanwhile must stay removed.
-  writeJson(files.devices, devices().map(d => d.id === phone ? { ...d, seen: Date.now() } : d))
+  phoneList.touch(phone)
   log('session:', device.name, 'session', name)
   const hc = spawn(hcPath(), ['connect'], { stdio: ['pipe', 'pipe', 'ignore'], env: { ...process.env, HC_SESSION: name } })
   if (rest.length) hc.stdin.write(rest)
@@ -136,6 +139,12 @@ async function serve() {
   const ep = await Endpoint.bind({ secretKey: secretKey(), alpns: [SESSION, PAIR] })
   const publish = () => writeJson(files.status, { pid: process.pid, id: ep.id().toString(), ticket: EndpointTicket.fromAddr(ep.addr()).toString(),
     name: hostname().replace(/\.local$/, ''), started: Date.now() })
+  // Remove (`forget`) arrives here, before status.json names this bridge: it removes the phone and
+  // ends its sessions now. Without the socket (a path too long for one), forget writes the file.
+  try {
+    const control = await listen(files.socket, { forget: id => { const removed = phoneList.remove(id); revoke(); if (removed) log('forget: removed', fingerprint(id)); return removed }, log })
+    process.on('exit', () => unlinkOwn(control, files.socket))
+  } catch (e) { log('serve: no control socket:', e.message) }
   publish()
   ep.online().then(() => { publish(); log('serve: online as', ep.id().fmtShort()) }, e => log('serve: no relay yet:', e.message))
   ep.watchAddr(() => publish())
@@ -271,7 +280,7 @@ try {
     cancelCode(files.pairing); clearQr()
     out({ ok: true })
   }
-  else if (command === 'forget') { writeJson(files.devices, devices().filter(d => d.id !== arg)); out({ ok: true }) }
+  else if (command === 'forget') out(await forget({ dir: STATE, id: arg }))
   else if (command === 'install') { const s = loginService(); mkdirSync(dirname(s.path), { recursive: true }); writeFileSync(s.path, s.body); s.on(); recordNode(); out({ ok: true, path: s.path }) }
   else if (command === 'uninstall') { const s = loginService(); s.off(); try { unlinkSync(s.path) } catch {}; out({ ok: true }) }
   else { out({ ok: false, error: `unknown command ${command}` }); process.exit(2) }
