@@ -11,16 +11,19 @@
 // silences a briefing. So that the next one starts clean, the hook's stdin (Claude Code's JSON) is
 // read once here and replayed to each attempt, and each attempt's stdout is held and printed only
 // when its import succeeds: a failed attempt prints nothing, whatever it wrote before it threw.
-// Nor does it leave a mark that the conversation saw its briefing (the records under
-// <app home>/automagik-herdr/briefed/, BRIEFED_DIR): the ones it wrote are removed, so the next
-// copy prints the briefing it would have missed; a record lost that way only means one print more.
+// Nor does it change what this conversation's records say it has seen (under
+// <app home>/automagik-herdr/briefed/, BRIEFED_DIR): this hook's own records (its session_id's,
+// and this terminal's pane records) are read before an attempt and put back byte for byte after
+// it fails, or removed when they were not there before. The next copy then decides as the turn
+// began: it prints the briefing a failed attempt dropped, and nothing when it was seen already.
+// Other panes' records are never touched.
 // am's copy lives outside the app home, so it is told the app home (HERDR_APP_HOME, when unset)
 // that a sidebar copy finds from its own place. briefing.mjs runs only as the program node
 // started, so the script becomes argv[1] before it is imported (env and exit code stay this
 // process's). Fail-open like briefing.mjs: none found, nothing printed, exit 0. The installer, the
 // updater and am replace the copy; edits to it are lost. Apache-2.0.
 
-import { existsSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
@@ -73,14 +76,45 @@ function replay() {
   return stream;
 }
 
-/** Removes the briefed records written since `since` (ms): what a failed attempt marked as seen. */
-function unmark(since) {
+// This hook's own records, as briefing.mjs names them (briefedPath): its conversation's
+// (<session_id>.json) and this terminal's pane records (<terminal>@<created>.json when the hook
+// has no session_id, pane-<terminal>@<created>.json), every character outside [A-Za-z0-9._-] an _.
+const recordName = (key) => String(key).replace(/[^A-Za-z0-9._-]/g, "_");
+const session = (() => {
+  try { const x = JSON.parse(input.toString("utf8")); return typeof x?.session_id === "string" && x.session_id ? x.session_id : null; }
+  catch { return null; }
+})();
+const terminal = process.env.HC_TERMINAL_ID ? recordName(process.env.HC_TERMINAL_ID) : null;
+function ownRecords(dir) {
+  const names = session ? [`${recordName(session)}.json`] : [];
+  if (!terminal) return names;
+  let all = [];
+  try { all = readdirSync(dir); } catch { /* none yet */ }
+  const prefixes = session ? [`pane-${terminal}_`] : [`${terminal}_`, `pane-${terminal}_`];
+  return names.concat(all.filter((n) => n.endsWith(".json") && prefixes.some((p) => n.startsWith(p))));
+}
+/** This hook's records as they are now: name → bytes, null for one not there. */
+function keep() {
   const dir = join(process.env.HERDR_APP_HOME || appHome, "automagik-herdr", "briefed");
-  let names;
-  try { names = readdirSync(dir); } catch { return; }
-  for (const name of names) {
-    const path = join(dir, name);
-    try { if (statSync(path).mtimeMs >= since) rmSync(path, { force: true }); } catch { /* gone already */ }
+  const kept = new Map();
+  for (const name of ownRecords(dir)) {
+    try { kept.set(name, readFileSync(join(dir, name))); } catch { kept.set(name, null); }
+  }
+  return { dir, kept };
+}
+/** Puts this hook's records back as `keep` found them (whole files, tmp then rename, like writeSeen). */
+function putBack({ dir, kept }) {
+  for (const name of new Set([...kept.keys(), ...ownRecords(dir)])) {
+    const path = join(dir, name), tmp = `${path}.${process.pid}.tmp`, was = kept.get(name) ?? null;
+    try {
+      rmSync(tmp, { force: true });
+      if (was === null) { rmSync(path, { force: true }); continue; }
+      let now = null;
+      try { now = readFileSync(path); } catch { /* gone */ }
+      if (now?.equals(was)) continue;
+      writeFileSync(tmp, was, { mode: 0o600 });
+      renameSync(tmp, path);
+    } catch { /* fail open: at worst the briefing comes again next turn */ }
   }
 }
 
@@ -100,13 +134,13 @@ for (const copy of copies) {
     return true;
   };
   let ok = false;
-  const since = Date.now() - 2;
+  const kept = keep();
   try {
     await import(pathToFileURL(target).href);
     ok = true;
   } catch (e) {
     process.stderr.write(`automagik-herdr briefing: ${firstLine(e)}\n`);
-    unmark(since);
+    putBack(kept);
     if (copy.am && !before) delete process.env.HERDR_APP_HOME;
     process.exitCode = 0;
   } finally {

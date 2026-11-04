@@ -441,7 +441,7 @@ test("an am copy that throws after printing, reading stdin or joining: one brief
   assert.match(read(ledgerPath(s.app)), /"session":"s-consumed"/, "the sidebar's copy saw the hook's whole input");
 
   // A real am copy that joined the session and marked it briefed, then threw: the sidebar's attempt
-  // still prints the briefing (the entry removed the record am wrote) and joins too, but the
+  // still prints the briefing (the entry put back the record am wrote) and joins too, but the
   // ledger gets one session row. hc label fails here (the fake has none), so the next turn tries
   // again: still one row.
   rmSync(amDir, { recursive: true });
@@ -458,6 +458,40 @@ test("an am copy that throws after printing, reading stdin or joining: one brief
   // The entry can't import briefingText.mjs (a copy of it sits outside mods/): it names the folder itself.
   assert.equal(BRIEFED_DIR, "automagik-herdr/briefed");
   assert.match(read(join(PACK, "briefingEntry.mjs")), /join\(process\.env\.HERDR_APP_HOME \|\| appHome, "automagik-herdr", "briefed"\)/);
+});
+
+test("an am copy that keeps failing: one briefing in three turns of one conversation; other panes' records stay as they were", (t) => {
+  const s = botHome(t);
+  syncHooks({ modsDir: s.mods });
+  const command = commands(settings(s.proj))[1];
+  const amDir = join(s.root, ".automagik", "parts", "automagik.am", "3.0.0");
+  mkdirSync(dirname(amDir), { recursive: true });
+  cpSync(PACK, amDir, { recursive: true });
+  symlinkSync("3.0.0", join(dirname(amDir), "current"));
+  const briefed = join(s.app, BRIEFED_DIR);
+  const prints = (o) => { assert.equal(o.status, 0, o.stderr); return o.stdout.split("<herdr-bot>").length - 1; };
+  const turns = (input) => [1, 2, 3].map(() => prints(s.hook(command, { input, keep: true })));
+
+  // The control: a working am copy prints once in three turns.
+  assert.deepEqual(turns(JSON.stringify({ session_id: "s-ok" })), [1, 0, 0]);
+
+  // A real am copy that briefs (and records it), then throws, every turn. While it runs, another
+  // pane writes its own records (a conversation's, its pane records, a temp file mid-write): none
+  // of those is this hook's to put back.
+  const other = { "s-other.json": "{\"hash\":\"B\",\"offset\":0}\n", "t9_5.json": "{\"hash\":\"C\",\"offset\":0}\n",
+    "pane-t9_5.json": "{\"session\":\"s-other\"}\n", "s-other.json.4242.tmp": "mid-write" };
+  writeFileSync(join(amDir, "briefing.mjs"), [
+    read(join(PACK, "briefing.mjs")),
+    "const fs = process.getBuiltinModule('node:fs');",
+    `for (const [name, text] of Object.entries(${JSON.stringify(other)})) fs.writeFileSync(${JSON.stringify(briefed)} + '/' + name, text);`,
+    "throw new Error('am broke after briefing');",
+  ].join("\n"));
+  for (const input of [JSON.stringify({ session_id: "s-bad" }), "{}"]) {
+    assert.deepEqual(turns(input), [1, 0, 0], `a failing am copy, input ${input}`);
+    for (const [name, text] of Object.entries(other)) assert.equal(read(join(briefed, name)), text, `${name} survives`);
+  }
+  // The working conversation's record is no business of the failing hooks either: still seen.
+  assert.equal(prints(s.hook(command, { input: JSON.stringify({ session_id: "s-ok" }), keep: true })), 0);
 });
 
 test("migration: a hook installed before the briefing moved to launch prints it once in three turns, its settings file untouched", (t) => {
