@@ -78,7 +78,9 @@ export function patchRuntime(nodeModules, dir, { versions = true, write = true }
   for (const entry of readJson(join(dir, 'patches.json'))) {
     const label = `runtime patch ${entry.patch}`
     if (versions && entry.dsh !== dsh) throw new Error(`${label} is for dsh ${entry.dsh}, but the runtime is dsh ${dsh}: delete it if this dsh has the change, else port it (docs/DEVELOPMENT.md)`)
-    const sections = parsePatch(readFileSync(join(dir, entry.patch), 'utf8'), label)
+    // A Windows checkout with core.autocrlf gives the patch CRLF lines (.gitattributes keeps it
+    // LF in this repository's clones); the files it patches come from npm with LF.
+    const sections = parsePatch(readFileSync(join(dir, entry.patch), 'utf8').replaceAll('\r\n', '\n'), label)
     const named = entry.files.map(file => `${file.package}/${file.file}`)
     if (sections.length !== named.length || sections.some(section => !named.includes(section.path))) throw new Error(`${label} changes ${sections.map(section => section.path).join(', ')}, but patches.json lists ${named.join(', ')}`)
     for (const file of entry.files) {

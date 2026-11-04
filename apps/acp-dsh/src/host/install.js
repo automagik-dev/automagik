@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { findCommand, isExecutable } from './agents.js'
+import { batchSafe } from './batch-spawn.js'
 
 const REGISTRY = 'https://registry.npmjs.org'
 export const CHECK_EVERY_MS = 24 * 60 * 60 * 1000
@@ -98,7 +99,9 @@ export function killTree(pid) {
 export function runInstall(command, args, { cwd, env, signal: abort, timeoutMs = INSTALL_TIMEOUT_MS, kill = killTree }) {
   return new Promise((resolve, reject) => {
     if (abort?.aborted) return reject(new Error('install stopped: DSH is quitting'))
-    const child = spawn(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' })
+    // On Windows the package manager is a batch file (the app's pnpm.cmd, npm.cmd): through
+    // cmd.exe, whose tree killTree's taskkill /T ends with it.
+    const child = spawn(...batchSafe(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' }))
     let output = ''
     let stopped
     const keep = (chunk) => { output = (output + chunk).slice(-16_384) }

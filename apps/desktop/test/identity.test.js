@@ -46,11 +46,11 @@ test('the installed identity is Automagik\'s', () => {
 
 test("Electron's data is filed under Automagik, on every platform", () => {
   assert.equal(DATA_NAME, 'Automagik')
-  assert.deepEqual(dataPathsOf('/Users/me/Library/Application Support'), {
-    userData: '/Users/me/Library/Application Support/Automagik',
-    sessionData: '/Users/me/Library/Application Support/Automagik',
-  })
-  assert.deepEqual(dataPathsOf('/home/me/.config'), { userData: '/home/me/.config/Automagik', sessionData: '/home/me/.config/Automagik' })
+  // appData as Electron gives it on each platform; the folder joins it in the platform's own form.
+  for (const appData of ['/Users/me/Library/Application Support', '/home/me/.config', 'C:\\Users\\me\\AppData\\Roaming']) {
+    const folder = join(appData, 'Automagik')
+    assert.deepEqual(dataPathsOf(appData), { userData: folder, sessionData: folder })
+  }
 })
 
 test('main.js pins that folder before anything reads it', () => {
