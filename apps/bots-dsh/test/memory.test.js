@@ -843,6 +843,108 @@ test('an entry too long for memory is left out with one warning, and the rest of
   assert.equal(requests.length, 1)
 })
 
+test('a batch with two changes memory cannot keep logs one warning each, and keeps the rest', async (t) => {
+  const seeded = mkdtempSync(join(tmpdir(), 'ds-bot-memory-'))
+  mkdirSync(join(seeded, 'memory', 'bots', 'b2'), { recursive: true })
+  const filler = Array.from({ length: 13 }, (_, at) => `- Filler fact number ${at + 1} ${'y'.repeat(280)}`)
+  writeFileSync(join(seeded, 'memory', 'bots', 'b2', 'MEMORY.md'), `# Memory\n\n${filler.join('\n')}\n\n## Index\n`)
+  const long = `The user tells a story: ${'x'.repeat(316)}`
+  const answer = JSON.stringify({ changes: [
+    { op: 'add', text: long },
+    { op: 'add', text: 'The user flies with Air China' },
+    { op: 'add', text: 'I use hunter2 as my password' },
+    { op: 'edit', entry: 13, text: 'Filler fact number 13 is short now' },
+  ] })
+  const { ctx, home, call, read, journal, requests, stop } = start({ home: seeded, replies: [answer], config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  const left = await warnedTimes(home, 'left out a change', 2)
+  assert.match(left[0], /^memory review of Writer left out a change \(add "The user tells a story: x+ …\(cut\)"\): An entry holds at most 300 characters; this one has 340\./)
+  assert.match(left[1], /^memory review of Writer left out a change \(add "The user flies with Air China"\): Your memory's MEMORY\.md would have \d+ of its 4000 characters\./)
+  assert.deepEqual(warnings(home, 'memory review of chat:b2 failed'), [])
+  const entries = parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text)
+  assert.ok(entries.includes('Filler fact number 13 is short now'), JSON.stringify(entries))
+  assert.ok(!entries.includes('The user flies with Air China'))
+  // A secret-shaped entry is left out silently: no log entry holds it.
+  assert.ok(!entries.some(entry => entry.includes('hunter2')))
+  await settle()
+  const log = readFileSync(join(home, 'logs', 'diagnostics.jsonl'), 'utf8')
+  assert.ok(!log.includes('hunter2'), log)
+  assert.deepEqual(journal().map(record => record.op), ['replace'])
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  // The lines are passed, so the next turn end asks the model nothing.
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+})
+
+test('the 40-topic limit is left out with one warning, and the rest of the answer is kept', async (t) => {
+  const seeded = mkdtempSync(join(tmpdir(), 'ds-bot-memory-'))
+  const dir = join(seeded, 'memory', 'bots', 'b2')
+  mkdirSync(dir, { recursive: true })
+  const topics = Array.from({ length: MEMORY_LIMITS.topics }, (_, at) => `t${at + 1}`)
+  writeFileSync(join(dir, 'MEMORY.md'), `# Memory\n\n## Index\n${topics.map(topic => `- [[${topic}]]`).join('\n')}\n`)
+  for (const topic of topics) writeFileSync(join(dir, `${topic}.md`), `# ${topic}\n`)
+  const answer = JSON.stringify({ changes: [
+    { op: 'add', text: 'The user flies with Air China', topic: 'new' },
+    { op: 'add', text: 'The user likes tea' },
+  ] })
+  const { ctx, home, call, read, journal, requests, stop } = start({ home: seeded, replies: [answer], config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  const [left] = await warnedTimes(home, 'left out a change', 1)
+  assert.match(left, /^memory review of Writer left out a change \(add "The user flies with Air China"\): Your memory already has 40 topics, the most it holds\./)
+  assert.deepEqual(warnings(home, 'memory review of chat:b2 failed'), [])
+  assert.equal(existsSync(join(dir, 'new.md')), false)
+  assert.ok(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.some(entry => entry.text === 'The user likes tea'))
+  assert.deepEqual(journal().map(record => record.op), ['add'])
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+})
+
+test('a usable answer that moves the cursor gives the new position its own two answers', async (t) => {
+  const history = { b2: [...ownChat] }
+  const replies = ['Nothing new.', JSON.stringify({ changes: [] }), 'Nothing new.', 'Nothing new.']
+  const { ctx, home, call, read, requests, stop } = start({ history, replies, config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  // Position 9: the first unusable answer keeps the place, the next one is a
+  // valid no-op and moves the cursor to 11, clearing the count.
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 9 })
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 2)
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  // New lines at position 11 get two answers of their own, not one.
+  history.b2.push(
+    { event: { seq: 12, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'I always fly Air China' }] } } },
+    { event: { seq: 13, type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'Noted.' }] } } } },
+  )
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 3)
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  assert.deepEqual(warnings(home, 'passed the lines'), [])
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 4)
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 13 })
+  const [passed] = await warnedTimes(home, 'passed the lines', 1)
+  assert.match(passed, /^memory review of Writer passed the lines through #13 after 2 answers it could not use: the model's answer is not a list of changes: Nothing new\.$/)
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 4)
+})
+
 test('an answer that changes nothing passes the lines, and the next turn end asks nothing (characterization)', async (t) => {
   const { ctx, home, call, read, requests, stop } = start({ replies: [JSON.stringify({ changes: [] })], config: { memoryReviewDelayMs: 0 } })
   t.after(() => stop())
