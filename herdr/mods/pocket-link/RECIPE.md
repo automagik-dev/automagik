@@ -114,7 +114,7 @@ Before the bridge can run, the dialog shows one of two other screens in place of
     - `pair [minutes]` prints `{link, expires, rows}`, where `rows` holds the QR modules as strings of `1`/`0`
     - `status` prints `{running, id, name, ticket, devices, pairing, login, state}`; each device has `fingerprint`
     - `cancel` deletes the live code and prints `{ok, cancelled, devices}`
-    - `forget <id>` prints `{ok, removed, via}`: `via` is `bridge` when the running bridge removed the phone, `file` when no bridge answered on `bridge.sock` and `forget` wrote `devices.json` itself (`bridge/devices.mjs`). A bridge that refuses or gives no answer within 10s is an error, and nothing is written.
+    - `forget <id>` prints `{ok, removed, via}`: `via` is `bridge` when the running bridge removed the phone, `file` when no bridge answered on `bridge.sock` and `forget` wrote `devices.json` itself (`bridge/devices.mjs`). A bridge that refuses or gives no answer within 10s is an error, and so is a socket that is there but refuses connections (a busy bridge) after 2s of tries; nothing is written then.
     - `start`, `stop`, `install` and `uninstall`
   - **Serving:**
     1. It binds an iroh `Endpoint` with the n0 preset, a persistent secret key and two ALPNs: `herdr-pocket/1` and `herdr-pocket/pair/1`.
@@ -126,8 +126,8 @@ Before the bridge can run, the dialog shows one of two other screens in place of
 - **The state folder,** `${XDG_STATE_HOME:-~/.local/state}/automagik-pocket-link/` (`bridge/state.mjs`), mode 0700, outside the mod so a reinstall keeps it, files written atomically, all mode 0600 but one:
   - `secret.key`
   - `status.json`
-  - `devices.json`, written only by the running bridge (or by `forget` when none runs)
-  - `bridge.sock`, the running bridge's socket, where `forget` hands it a removal
+  - `devices.json`, written only by the running bridge (or by `forget` when none runs), and flushed to disk (`fsync`) before the rename and the folder after it, so a crash leaves the old list or the new one
+  - `bridge.sock`, the running bridge's socket, where `forget` hands it a removal. The bridge removes it on exit only while it is still its own (same inode), never a later bridge's
   - `pairing.json`
   - `bridge.log`, and `bridge.log.1` once it has filled
   - `public-status.json`, mode 0644: whether the bridge runs and which phones are connected, for other mods ([README](README.md#for-other-mods)). No ticket, id or secret. The dialog's folder watch skips it.
@@ -148,7 +148,7 @@ Before the bridge can run, the dialog shows one of two other screens in place of
 - **Herdr's PATH isn't the terminal's:** opened from the Dock, Herdr has no nvm, volta, fnm or asdf on PATH, so `exec("node", …)` fails where the terminal works. Find Node yourself (above), and give npm the same folder.
 - **The Homebrew Cellar path breaks:** `process.execPath` under Homebrew is a versioned Cellar path that disappears on upgrade. Write the `opt/<formula>/bin/node` link into the service.
 - **Log lines appear twice:** under launchd, stderr already is `bridge.log`. Append to the file yourself only when stderr is a terminal.
-- **A removed phone would come back with two writers:** a session's "seen" update reads `devices.json` and writes it back, so a separate `forget` process writing between the two is overwritten. Keep one writer: `forget` asks the running bridge over `bridge.sock`, and the bridge's reads and writes of the file are synchronous, so they never interleave. `forget` writes the file only when no bridge answers there (none runs, an older one that a mod update left running, or a state folder whose path is too long for a socket, over about 100 bytes), then asks the socket once more for a bridge that started meanwhile. `bridge/devices.test.mjs` holds a "seen" update open while `forget` runs as its own process.
+- **A removed phone would come back with two writers:** a session's "seen" update reads `devices.json` and writes it back, so a separate `forget` process writing between the two is overwritten. Keep one writer: `forget` asks the running bridge over `bridge.sock`, and the bridge's reads and writes of the file are synchronous, so they never interleave. `forget` writes the file only when no bridge runs, or one runs without a socket (an older one that a mod update left running, or a state folder whose path is too long for a socket, over about 100 bytes); a socket that is there but refuses means a busy bridge, so it tries again and then fails rather than write. After its own write it asks the socket once more for a bridge that started meanwhile. `bridge/devices.test.mjs` holds a "seen" update open while `forget` runs as its own process.
 - **The pairing link is a capability:** anyone holding the link (or the QR) within its 10 minutes can pair, because the code is the secret. Don't screenshot a live one. This preview's QR encodes a made-up link.
 - **The phone's code must match:**
   - The phone accepts only `v=1`, `t` matching `^endpoint[a-z2-7]{20,2000}$` and `c` matching `^[A-Za-z0-9_-]{16,64}$`.

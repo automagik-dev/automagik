@@ -3,12 +3,12 @@
 // and names are made up.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { store, listen, ask, forget, SOCKET, FILE } from './devices.mjs'
+import { store, listen, ask, forget, unlinkOwn, SOCKET, FILE } from './devices.mjs'
 
 const A = { id: 'phone-key-a', name: 'Pixel 9', paired: 1_000, seen: 1_000 }
 const B = { id: 'phone-key-b', name: 'Galaxy S24', paired: 2_000, seen: 2_000 }
@@ -17,6 +17,12 @@ const tmp = () => mkdtempSync(join(tmpdir(), 'pl-'))
 const ids = (dir) => JSON.parse(readFileSync(join(dir, FILE), 'utf8')).map((d) => d.id)
 /** status.json naming a running bridge: this test process. */
 const running = (dir) => writeFileSync(join(dir, 'status.json'), JSON.stringify({ pid: process.pid }))
+/** A socket file whose listener is gone: connecting to it is refused, as a bridge with a full backlog refuses. */
+function refusing(path) {
+  const r = spawnSync(process.execPath, ['-e', `require('node:net').createServer().listen(${JSON.stringify(path)}, () => process.kill(process.pid, 'SIGKILL'))`])
+  assert.equal(r.signal, 'SIGKILL')
+  assert.ok(existsSync(path))
+}
 /** Blocks this thread, as a synchronous read-then-write does, until `done()` or `ms` pass. */
 function block(done, ms) {
   const cell = new Int32Array(new SharedArrayBuffer(4))
@@ -101,8 +107,9 @@ test('a bridge that refuses or gives no answer: forget fails and writes nothing'
   running(dir)
   const before = readFileSync(join(dir, FILE), 'utf8')
   let server = await listen(join(dir, SOCKET), { forget: () => { throw new Error('busy') } })
-  await assert.rejects(forget({ dir, id: A.id }), /busy/)
-  server.close()
+  try {
+    await assert.rejects(forget({ dir, id: A.id }), /busy/)
+  } finally { server.close() }
   // Takes the connection, never answers.
   server = createServer(() => {})
   await new Promise((resolve) => server.listen(join(dir, SOCKET), resolve))
@@ -110,6 +117,32 @@ test('a bridge that refuses or gives no answer: forget fails and writes nothing'
     await assert.rejects(forget({ dir, id: A.id, timeout: 200 }), /did not answer/)
   } finally { server.close() }
   assert.equal(readFileSync(join(dir, FILE), 'utf8'), before)
+})
+
+test('a running bridge whose socket refuses (busy): forget tries again, then fails and writes nothing', async () => {
+  const dir = tmp()
+  store(join(dir, FILE)).add(A)
+  running(dir)
+  refusing(join(dir, SOCKET))
+  const before = readFileSync(join(dir, FILE), 'utf8')
+  const started = Date.now()
+  await assert.rejects(forget({ dir, id: A.id, retries: 3, wait: 50 }), /busy/)
+  assert.ok(Date.now() - started >= 150, 'it tried again before giving up')
+  assert.equal(readFileSync(join(dir, FILE), 'utf8'), before, 'nothing written')
+})
+
+test('a busy bridge that takes the removal while forget tries again', async () => {
+  const dir = tmp()
+  const path = join(dir, FILE)
+  store(path).add(A)
+  running(dir)
+  refusing(join(dir, SOCKET))
+  let server = null
+  const later = setTimeout(async () => { server = await listen(join(dir, SOCKET), { forget: (id) => store(path).remove(id) }) }, 100)
+  try {
+    assert.deepEqual(await forget({ dir, id: A.id, retries: 20, wait: 50 }), { ok: true, removed: true, via: 'bridge' })
+    assert.deepEqual(ids(dir), [])
+  } finally { clearTimeout(later); server?.close() }
 })
 
 test('no bridge running: forget writes the file itself', async () => {
@@ -158,5 +191,23 @@ test('the socket: replaces a stale one, owner-only, and refuses what is not a fo
     assert.deepEqual(await ask(sock, { forget: A.id }), { ok: true, removed: true })
   } finally { server.close() }
   assert.equal(await ask(join(dir, 'nothing.sock'), { forget: A.id }), null, 'nothing listening: null')
+  refusing(join(dir, 'dead.sock'))
+  assert.equal(await ask(join(dir, 'dead.sock'), { forget: A.id }), null, 'a refusing socket: null')
   await assert.rejects(forget({ dir }), /needs the id/)
+})
+
+test('on exit a bridge removes bridge.sock only while it is still its own', async () => {
+  const dir = tmp()
+  const sock = join(dir, SOCKET)
+  const first = await listen(sock, { forget: () => true })
+  // A later bridge puts its own socket in place.
+  const second = await listen(sock, { forget: () => true })
+  try {
+    unlinkOwn(first, sock)
+    assert.ok(existsSync(sock), 'the first bridge leaves the later one\'s socket')
+    assert.deepEqual(await ask(sock, { forget: A.id }), { ok: true, removed: true })
+    unlinkOwn(second, sock)
+    assert.equal(existsSync(sock), false)
+    unlinkOwn(null, sock)
+  } finally { second.close(); first.close() }
 })

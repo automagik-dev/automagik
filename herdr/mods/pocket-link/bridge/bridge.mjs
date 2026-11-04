@@ -25,7 +25,7 @@ import { acceptOne, slots, throttle, rotateLog } from './guard.mjs'
 import { judgeCode, cancelCode, fingerprint } from './pairing.mjs'
 import { open as openState } from './state.mjs'
 import { presence, publicStatus, writePublic, HEARTBEAT } from './presence.mjs'
-import { store, listen, forget, SOCKET } from './devices.mjs'
+import { store, listen, unlinkOwn, forget, SOCKET } from './devices.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SESSION = [...Buffer.from('herdr-pocket/1')]
@@ -141,8 +141,8 @@ async function serve() {
   // Remove (`forget`) arrives here, before status.json names this bridge: it removes the phone and
   // ends its sessions now. Without the socket (a path too long for one), forget writes the file.
   try {
-    await listen(files.socket, { forget: id => { const removed = phoneList.remove(id); revoke(); if (removed) log('forget: removed', fingerprint(id)); return removed }, log })
-    process.on('exit', () => { try { unlinkSync(files.socket) } catch {} })
+    const control = await listen(files.socket, { forget: id => { const removed = phoneList.remove(id); revoke(); if (removed) log('forget: removed', fingerprint(id)); return removed }, log })
+    process.on('exit', () => unlinkOwn(control, files.socket))
   } catch (e) { log('serve: no control socket:', e.message) }
   publish()
   ep.online().then(() => { publish(); log('serve: online as', ep.id().fmtShort()) }, e => log('serve: no relay yet:', e.message))

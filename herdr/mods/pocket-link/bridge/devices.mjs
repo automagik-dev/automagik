@@ -7,8 +7,8 @@
 //
 // No dependencies, so node --test runs it without the bridge's packages.
 import { createConnection, createServer } from 'node:net'
-import { chmodSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { chmodSync, closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 
 export const SOCKET = 'bridge.sock'
 export const FILE = 'devices.json'
@@ -16,18 +16,30 @@ export const FILE = 'devices.json'
 // bridge for a request line. Under the dialog's 30s exec limit.
 export const TIMEOUT = 10_000
 const MAX_REQUEST = 4096
+// A running bridge whose socket refuses (its backlog full): try again for this long, then fail.
+export const BUSY_RETRIES = 10
+export const BUSY_WAIT = 200
 
 const readJson = (path, fallback) => { try { return JSON.parse(readFileSync(path, 'utf8')) } catch { return fallback } }
 
 /**
- * The phones in devices.json. Every change reads the file again and writes it whole (tmp + rename),
- * synchronously, so changes within one process never interleave. `held` runs between a change's
+ * The phones in devices.json. Every change reads the file again and writes it whole, synchronously,
+ * so changes within one process never interleave. Atomic and durable: the temp file is flushed to
+ * disk before the rename, and the folder after it, so a crash leaves the old list or the new one. `held` runs between a change's
  * read and its write: the moment another process's write would be lost (devices.test.mjs).
  */
 export function store(path, { held = () => {} } = {}) {
   const list = () => { const v = readJson(path, []); return Array.isArray(v) ? v : [] }
   const read = () => { const all = list(); held(); return all }
-  const write = (value) => { const tmp = `${path}.${process.pid}.tmp`; writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 }); renameSync(tmp, path) }
+  const write = (value) => {
+    const tmp = `${path}.${process.pid}.tmp`
+    const fd = openSync(tmp, 'w', 0o600)
+    try { writeSync(fd, JSON.stringify(value, null, 2) + '\n'); fsyncSync(fd) } finally { closeSync(fd) }
+    renameSync(tmp, path)
+    // The rename itself; a filesystem that can't fsync a folder still has the flushed file.
+    let dirFd = null
+    try { dirFd = openSync(dirname(path), 'r'); fsyncSync(dirFd) } catch {} finally { if (dirFd !== null) closeSync(dirFd) }
+  }
   return {
     list,
     /** Adds the phone, replacing one with the same id. */
@@ -72,15 +84,24 @@ export function listen(path, { forget, log = () => {} }) {
       server.off('error', reject)
       server.on('error', (e) => log('control:', e.message))
       try { chmodSync(path, 0o600) } catch {}
+      try { server.socketIno = statSync(path).ino } catch {}
       resolve(server)
     })
   })
 }
 
 /**
- * Sends one request to the bridge and resolves to its answer, or to null when nothing listens
- * there (no bridge, one that died, or an older bridge without the socket). Rejects when a bridge
- * listens but gives no answer within `timeout`.
+ * For the bridge's exit: removes bridge.sock only while it is still this server's, never one a
+ * later bridge has put in its place.
+ */
+export function unlinkOwn(server, path) {
+  try { if (server?.socketIno !== undefined && statSync(path).ino === server.socketIno) unlinkSync(path) } catch {}
+}
+
+/**
+ * Sends one request to the bridge and resolves to its answer, or to null when nothing took it:
+ * no socket, or one that refuses (a bridge that died, or one too busy to accept: `forget` tells
+ * these apart). Rejects when a bridge took the request but gives no answer within `timeout`.
  */
 export function ask(path, request, { timeout = TIMEOUT } = {}) {
   return new Promise((resolve, reject) => {
@@ -97,7 +118,7 @@ export function ask(path, request, { timeout = TIMEOUT } = {}) {
       try { finish(resolve, JSON.parse(buf.slice(0, nl))) } catch { finish(reject, new Error('The bridge gave an answer it could not read.')) }
     })
     sock.on('error', (e) => {
-      if (!connected && ['ENOENT', 'ECONNREFUSED', 'ENOTSOCK'].includes(e.code)) finish(resolve, null)
+      if (!connected && ['ENOENT', 'ECONNREFUSED', 'ENOTSOCK', 'EAGAIN'].includes(e.code)) finish(resolve, null)
       else finish(reject, new Error(`The bridge did not answer: ${e.message}`))
     })
     sock.on('close', () => finish(reject, new Error('The bridge hung up without an answer.')))
@@ -109,21 +130,28 @@ const defaultAlive = (pid) => { try { process.kill(pid, 0); return true } catch 
 /**
  * `bridge.mjs forget <id>`: removes a paired phone from the state folder `dir`.
  * - A bridge runs (status.json's pid is alive): it removes the phone and ends its sessions; this
- *   waits for its answer and never writes the file itself.
+ *   waits for its answer and never writes the file itself. A socket that is there but refuses (a
+ *   busy bridge) is tried again for BUSY_RETRIES x BUSY_WAIT ms, then this fails.
  * - None answers on bridge.sock (none runs, or an older one without the socket that a mod update
  *   left running): this writes the file, then tells a bridge that started meanwhile too.
  * Resolves to {ok: true, removed, via: 'bridge' | 'file'}; rejects when the bridge refuses or
  * gives no answer, and then nothing was written.
  */
-export async function forget({ dir, id, alive = defaultAlive, timeout = TIMEOUT }) {
+export async function forget({ dir, id, alive = defaultAlive, timeout = TIMEOUT, retries = BUSY_RETRIES, wait = BUSY_WAIT }) {
   if (typeof id !== 'string' || id === '') throw new Error('forget needs the id of a paired phone')
   const sock = join(dir, SOCKET)
   const status = readJson(join(dir, 'status.json'), {})
   if (Number.isInteger(status?.pid) && alive(status.pid)) {
-    const answer = await ask(sock, { forget: id }, { timeout })
-    if (answer) {
-      if (!answer.ok) throw new Error(answer.error || 'The bridge refused.')
-      return { ok: true, removed: Boolean(answer.removed), via: 'bridge' }
+    for (let i = 0; ; i++) {
+      const answer = await ask(sock, { forget: id }, { timeout })
+      if (answer) {
+        if (!answer.ok) throw new Error(answer.error || 'The bridge refused.')
+        return { ok: true, removed: Boolean(answer.removed), via: 'bridge' }
+      }
+      // No socket at all: an older bridge without one. Below, the file.
+      if (!existsSync(sock)) break
+      if (i >= retries) throw new Error('The bridge is busy and did not take the removal. Try again.')
+      await new Promise((resolve) => setTimeout(resolve, wait))
     }
   }
   const removed = store(join(dir, FILE)).remove(id)
