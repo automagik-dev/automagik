@@ -137,3 +137,17 @@ test('a task Session with no task record is not in the rail but stays under the 
   // The kept task shows with its Bot (the rail, its chat); the forgotten one under Tasks.
   assert.deepEqual(plain(agentRowSessions(tasksRecord, { ...roster, tasks })), ['forgotten'])
 })
+
+test('the rail keeps a working wish past the host cap, newest ends first, three at most', () => {
+  const now = 10 * HOUR
+  const tasks = { wish: { from: 'genie', status: 'working', title: 'Wish: Fix Claude wish permission denial reporting', at: 1 } }
+  for (let index = 0; index < 60; index += 1) {
+    const endedAt = now - (index + 1) * 60_000
+    tasks[`e${index}`] = { from: 'genie', status: 'stopped', title: `Ended ${index}`, at: 10 + index, endedAt }
+  }
+  const live = liveOf({}, { ...roster, tasks }, now)
+  assert.deepEqual(plain(live.ended.map(item => item.title)), ['Ended 0', 'Ended 1', 'Ended 2'])
+  assert.deepEqual(plain(live.working.filter(item => item.task).map(item => [item.open, item.phrase])), [
+    ['wish', 'Wish: Fix Claude wish permission denial reporting'],
+  ])
+})
