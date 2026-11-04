@@ -44,8 +44,10 @@ export const POCKET_LINK = "pocket-link";
  * from a release that did not ship it) it goes to <app home>/mods-disabled/, where Herdr never
  * looks, and the person turns it on in the Mods panel. A copy already installed keeps its state,
  * on or off. am-quota is a personal tool for people who run their own CLIProxyAPI.
+ * am-automations needs the herdr-automations scheduler, which the pack does not install (#220):
+ * its panel names what is missing and the command that installs it.
  */
-export const OFF_BY_DEFAULT = Object.freeze(["am-quota"]);
+export const OFF_BY_DEFAULT = Object.freeze(["am-automations", "am-quota"]);
 /**
  * The usagemeter release install.sh installs to ~/.local/bin/usagemeter (Group 6c): the binary for
  * `<os>-<arch>`, checked against that release's SHA256SUMS and against the sha256 pinned here (the

@@ -68,7 +68,7 @@ row (Herdr mark, search, sidebar toggle) with the traffic-light padding macOS ne
   268 px sidebar; the contributed group clips, the built-in tabs keep their place.
 - The pack's layout names neither panel block. Herdr shows plain Herdr instead of a layout that
   names a mod missing from `mods/` ("needs mods that aren't here. Showing Herdr instead."), even
-  in a hidden block, and both mods can be off (am-quota ships off). `test/am-footer.test.mjs`
+  in a hidden block, and both mods ship off (`OFF_BY_DEFAULT`). `test/am-footer.test.mjs`
   fails if the layout names a mod in `OFF_BY_DEFAULT` or either panel.
 
 ## Done when

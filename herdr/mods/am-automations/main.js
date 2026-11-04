@@ -21,6 +21,27 @@ const PRESETS = [
 const WORKSPACES = [["worktree", "New worktree"], ["root", "Repo root"], ["existing", "Existing space"]];
 const FINISHED = new Set(["done", "failed", "cancelled"]);
 
+// The scheduler this panel drives is a separate program the pack does not install (#220). When it
+// is missing, the panel says so and offers this release's install line to copy; it never runs it.
+// The sha256s are the release's checksums.txt, pinned here (macOS only, as part.json says).
+export const SCHEDULER = Object.freeze({
+  repo: "DnzzL/herdr-automations",
+  version: "0.11.3",
+  sha256: Object.freeze({
+    arm64: "e2fd68c52900fb966e4a28f171c68239de63d4a7068416af949b5f078167254b",
+    amd64: "16ead837e85aa3c9b29d3912d7183a70a44d8741e4eff1e8ae0229821221cfa5",
+  }),
+});
+/** The command that installs the scheduler to ~/.local/bin, hash-checked, for this Mac's `uname -m`
+ * (a subshell, so the terminal it is pasted in stays where it was). */
+export function repairCommand(machine) {
+  const arch = machine === "x86_64" ? "amd64" : "arm64";
+  const url = `https://github.com/${SCHEDULER.repo}/releases/download/v${SCHEDULER.version}/herdr-automations_darwin_${arch}`;
+  return `(mkdir -p ~/.local/bin && cd "$(mktemp -d)" && curl -fsSLo herdr-automations ${url}`
+    + ` && echo "${SCHEDULER.sha256[arch]}  herdr-automations" | shasum -a 256 -c`
+    + " && chmod 755 herdr-automations && mv herdr-automations ~/.local/bin/)";
+}
+
 const human = (cron) => PRESETS.find(([, c]) => c === cron)?.[0] ?? cron;
 const tilde = (p) => (p && p.startsWith(home()) ? "~" + p.slice(home().length) : p ?? "");
 function ago(iso) {
@@ -51,19 +72,25 @@ export default class Automations extends View {
     this.view = { kind: "list" }; // list | detail {name} | form {original}
     this.error = null; this.note = null;
     this.known = null; // run ids already seen by this copy, to toast only new failures
+    this.missing = null; // the repair command while the scheduler is not installed, else null
+    this.copied = false;
     this.handle = cx.focus_handle();
-    cx.spawn(async (cx) => {
-      this.bin = await this.locate();
-      await this.refresh(cx);
-      this.watch(cx);
-    });
+    this.bin = null; this.watching = false;
+    cx.spawn((cx) => this.refresh(cx));
     cx.timer.every(30000, (cx) => this.refresh(cx)); // next-run times and the scheduler's pid
   }
 
-  // The CLI on PATH, else where install.sh and the dev symlink put it.
+  // The CLI on PATH, else ~/.local/bin (where its install line and the dev symlink put it). Neither:
+  // null, and the panel shows the command that installs it (looked for again on every refresh).
   async locate() {
-    try { if ((await exec("herdr-automations", ["version"])).code === 0) return "herdr-automations"; } catch {}
-    return `${home()}/.local/bin/herdr-automations`;
+    const answers = async (bin) => { try { return (await exec(bin, ["version"])).code === 0; } catch { return false; } };
+    if (await answers("herdr-automations")) return "herdr-automations";
+    const local = `${home()}/.local/bin/herdr-automations`;
+    if (await answers(local)) return local;
+    let machine = "";
+    try { machine = (await exec("uname", ["-m"])).stdout.trim(); } catch {}
+    this.missing = repairCommand(machine);
+    return null;
   }
 
   async cli(args) {
@@ -73,12 +100,17 @@ export default class Automations extends View {
   }
 
   async refresh(cx) {
-    if (!this.bin) return;
+    if (!this.bin) {
+      this.bin = await this.locate();
+      if (!this.bin) { this.list = null; this.error = null; cx.notify(); return; }
+      this.missing = null; this.copied = false;
+    }
     try {
       this.list = JSON.parse(await this.cli(["ls", "--json"]));
       this.runs = JSON.parse(await this.cli(["history", "--json"]));
       this.error = null;
       this.announce();
+      if (!this.watching) { this.watching = true; this.watch(cx); }
     } catch (e) { this.error = String(e.message ?? e); }
     cx.notify();
   }
@@ -203,6 +235,7 @@ export default class Automations extends View {
     return v_flex().id("automations").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background)
       .border_1().border_color(t.border).text_color(t.foreground).text_size(13).track_focus(this.handle)
       .child(this.header(t, cx))
+      .when(Boolean(this.missing), (el) => el.child(this.repair(t, cx)))
       .when(Boolean(this.list && !this.list.scheduler), (el) => el.child(this.banner(t, cx)))
       .when(Boolean(this.error || this.note), (el) => el.child(div().px(14).py(6).text_size(12).text_color(t.ansi1).child(this.error || this.note)))
       .child(div().id("automations-body").flex_1().min_h(0).overflow_y_scrollbar().child(body));
@@ -246,6 +279,19 @@ export default class Automations extends View {
     return h_flex().px(14).py(8).gap(8).items_center().bg(t.blocked + "22").border_b(1).border_color(t.border)
       .child(div().flex_1().text_size(12).child("Scheduler stopped: nothing will run on time."))
       .child(this.button("start", "Start", t, (cx) => this.act(cx, ["service", "install"]), { solid: true }));
+  }
+
+  // One line for what is missing, the exact command, and Copy. Nothing here runs it.
+  repair(t, cx) {
+    return v_flex().id("scheduler-missing").px(14).py(8).gap(6).bg(t.blocked + "22").border_b(1).border_color(t.border)
+      .child(div().text_size(12).child("Missing the scheduler: herdr-automations is not on PATH or in ~/.local/bin."))
+      .child(h_flex().gap(8).items_start()
+        .child(div().id("repair-command").flex_1().min_w(0).p(6).rounded(6).bg(t.input).font_family("JetBrains Mono")
+          .text_size(11).text_color(t.muted).child(this.missing))
+        .child(this.button("copy-repair", this.copied ? "Copied" : "Copy", t, (cx) => {
+          cx.write_to_clipboard(this.missing); this.copied = true; cx.notify();
+        })))
+      .child(div().text_size(11).text_color(t.dim).child("Run it in a terminal; this panel finds it within 30 s."));
   }
 
   dot(a, t) {
