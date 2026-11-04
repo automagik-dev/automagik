@@ -1444,8 +1444,11 @@ test("restart --tree waits, before anything starts, for helpers and the old pane
 test("restart --tree: a helper whose turn starts and ends once the new pane is up types into no pane older than it (the old one has ended)", (t) => {
   const s = treeScene(t).s;
   const st = s.hcState();
-  st.workingOnRun = ["t8"]; // t8 starts a turn as the bot's new pane starts …
-  st.terminals.find((x) => x.address === "t8").idleAfterGets = 0; // … and ends it at the next look
+  // t8 starts a turn as the bot's new pane starts (the 1st hc run) and ends it on its own clock at
+  // the 2nd hc run (the first helper's), looked at or not. Had the old pane still run then (a
+  // tree that runs helpers again before ending it), the note would go into t5.
+  st.workingOnRun = ["t8"];
+  st.terminals.find((x) => x.address === "t8").endTurnOn = { word: "run", nth: 2 };
   writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
   const r = s.cli(["restart", "Genie", "--tree", "--json"]);
   assert.equal(r.code, 0, r.err);
@@ -1674,4 +1677,49 @@ test("attach by a pane's name writes hc's terminal id, so whois by id finds it (
   const w = s.cli(["whois", "t4", "--json"]);
   assert.equal(w.json().bot, ID.main);
   assert.equal(w.json().terminal, "t4");
+});
+
+test("restart --cwd: a folder of the same Claude slug resumes the session by id there; another slug is refused unless --fresh; helpers keep their folders", (t) => {
+  const s = restartScene(t);
+  const from = join(s.root, "repos", "automagik-herdr"), to = join(s.root, "repos", "automagik", "herdr"), other = join(s.root, "elsewhere");
+  for (const d of [from, to, other]) mkdirSync(d, { recursive: true });
+  const st = s.hcState();
+  const t5 = st.terminals.find((x) => x.address === "t5");
+  t5.cwd = from;
+  t5.foreground.cwd = from;
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  // automagik-herdr and automagik/herdr: one slug, so Claude finds the session in the new folder.
+  const r = s.cli(["restart", "Genie", "--cwd", to, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const run = runCall(s.calls());
+  assert.equal(run[run.indexOf("--cwd") + 1], to);
+  assert.deepEqual(agentWords(run), ["claude", "--resume", SID]);
+  assert.deepEqual([r.json().mode, r.json().session, r.json().replaced], ["resume", SID, "t5"]);
+  // Another slug: refused, nothing started or ended; --fresh starts a new conversation there.
+  const s2 = restartScene(t);
+  const st2 = s2.hcState();
+  Object.assign(st2.terminals.find((x) => x.address === "t5"), { cwd: from, foreground: { ...st2.terminals[0].foreground, cwd: from } });
+  writeFileSync(join(s2.root, "hc.json"), JSON.stringify(st2));
+  const refused = s2.cli(["restart", "Genie", "--cwd", other]);
+  assert.equal(refused.code, 1);
+  assert.match(refused.err, new RegExp(`Claude keeps Genie's conversation under its folder's slug, .*automagik-herdr \\(.*\\); .*elsewhere is .*-elsewhere, `
+    + `so a resume there would find nothing\\. Nothing was started\\. Restart with --fresh`));
+  assert.equal(runCall(s2.calls()), undefined);
+  assert.equal(at(s2.calls(), "kill"), -1);
+  const fresh = s2.cli(["restart", "Genie", "--cwd", other, "--fresh", "--json"]);
+  assert.equal(fresh.code, 0, fresh.err);
+  const run2 = runCall(s2.calls());
+  assert.equal(run2[run2.indexOf("--cwd") + 1], other);
+  assert.deepEqual([agentWords(run2), fresh.json().mode], [["claude"], "fresh"]);
+  // Not a folder: a usage mistake.
+  assert.equal(s2.cli(["restart", "Genie", "--cwd", join(s2.root, "nope")]).code, 2);
+  // --tree --cwd: the bot moves, its helpers run again in their own folders.
+  const { s: tr, wt1, wt2 } = treeScene(t);
+  const moved = join(tr.root, "moved");
+  mkdirSync(moved);
+  const tree = tr.cli(["restart", "Genie", "--tree", "--cwd", moved, "--fresh", "--json"]);
+  assert.equal(tree.code, 0, tree.err);
+  const [bot, w, v] = runs(tr);
+  assert.deepEqual([bot, w, v].map((c) => c[c.indexOf("--cwd") + 1]), [moved, wt1, wt2]);
+  onePanePerSession(tr);
 });
