@@ -1525,8 +1525,9 @@ export function install(rt) {
     return { texts: kept, count: kept.length }
   }
 
-  // One warning per change the review leaves out, naming it.
-  const leftOut = (name, op, text, why) => rt.warn('ds-bot: memory review of %s left out a change (%s "%s"): %s', name, op, clip(text, 80), why)
+  // One warning per change the review leaves out, by its kind and length: the text
+  // is the model's, and may hold a secret no redactor knows.
+  const leftOut = (name, op, text, why) => rt.warn('ds-bot: memory review of %s left out a change (%s, %d chars): %s', name, op, text.length, why)
 
   // `home` is the memory the review keeps what it finds in: the keeper's own, or its
   // group's. `teamWrites` says whether the keeper may also write the team's.
@@ -1662,8 +1663,8 @@ export function install(rt) {
       // No answer text goes in the message: it is thrown to the review's catch and
       // logged there or below, and an answer can hold a secret no redactor knows.
       const unusable = parsed === undefined ? `the model's answer is not a list of changes (${reply.length} chars)`
-        : unknown !== undefined ? `the model's answer names entry ${unknown.entry}, which is not listed`
-          : badTopic !== undefined ? `the model's answer names the topic "${clip(badTopic.topic, 60)}", which cannot be a topic name`
+        : unknown !== undefined ? `the model's answer names entry ${Number(unknown.entry)}, which is not listed`
+          : badTopic !== undefined ? `the model's answer names an entry topic that cannot be a topic name (${badTopic.topic.length} chars)`
             : undefined
       // An answer the review cannot use changes nothing. The same lines are read
       // again at the next turn end, and after REVIEW_TRIES_MAX such answers they

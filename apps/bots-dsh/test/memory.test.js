@@ -819,6 +819,42 @@ test('lines passed after unusable answers log no word of either answer', async (
   assert.equal(passed, `memory review of Writer passed the lines through #11 after 2 answers it could not use: the model's answer is not a list of changes (${secretAnswers[1].length} chars)`)
 })
 
+test('a topic that cannot be a topic name is logged by its length, at the failure and at the pass', async (t) => {
+  const topics = ['pw: hunter2', 'pw: hunter3']
+  const replies = topics.map(topic => JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea', topic }] }))
+  const { ctx, home, call, read, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  for (let turn = 0; turn < 2; turn += 1) {
+    ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+    await reviewed(call)
+  }
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  const [failed] = await warnedTimes(home, 'memory review of chat:b2 failed', 1)
+  const [passed] = await warnedTimes(home, 'passed the lines', 1)
+  const log = diagnosticsLog(home)
+  for (const secret of ['hunter2', 'hunter3']) assert.ok(!log.includes(secret), log)
+  const why = `the model's answer names an entry topic that cannot be a topic name (${topics[0].length} chars)`
+  assert.equal(failed, `memory review of chat:b2 failed: ${why}`)
+  assert.equal(passed, `memory review of Writer passed the lines through #11 after 2 answers it could not use: ${why}`)
+})
+
+test('an entry left out for its length is logged by its kind and length, never its text', async (t) => {
+  const long = `The user tells a story about hunter2: ${'x'.repeat(302)}`
+  assert.equal(long.length, 340)
+  const replies = [JSON.stringify({ changes: [{ op: 'add', text: long }, { op: 'add', text: 'The user likes tea' }] })]
+  const { ctx, home, call, read, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.deepEqual(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text), ['The user likes tea'])
+  const [left] = await warnedTimes(home, 'left out a change', 1)
+  const log = diagnosticsLog(home)
+  assert.ok(!log.includes('hunter2'), log)
+  assert.match(left, /^memory review of Writer left out a change \(add, 340 chars\): An entry holds at most 300 characters; this one has 340\./)
+})
+
 test('an answer with a malformed change, an unlisted entry, or a bad topic changes nothing, and is asked for once more', async (t) => {
   for (const bad of [{ op: 'add' }, { op: 'remove', entry: 7 }, { op: 'add', text: 'The user writes C++', topic: 'C++' }]) {
     const answer = JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }, bad] })
@@ -868,7 +904,7 @@ test('an entry too long for memory is left out with one warning, and the rest of
   assert.deepEqual(journal().map(record => record.op), ['add'])
   assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
   const [left] = await warnedTimes(home, 'left out a change', 1)
-  assert.match(left, /^memory review of Writer left out a change \(add "The user tells a story: x+ …\(cut\)"\): An entry holds at most 300 characters; this one has 340\./)
+  assert.match(left, /^memory review of Writer left out a change \(add, 340 chars\): An entry holds at most 300 characters; this one has 340\./)
   assert.deepEqual(warnings(home, 'memory review of chat:b2 failed'), [])
   // The lines are passed, so the next turn end asks the model nothing.
   ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
@@ -894,8 +930,8 @@ test('a batch with two changes memory cannot keep logs one warning each, and kee
   ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
   await reviewed(call)
   const left = await warnedTimes(home, 'left out a change', 2)
-  assert.match(left[0], /^memory review of Writer left out a change \(add "The user tells a story: x+ …\(cut\)"\): An entry holds at most 300 characters; this one has 340\./)
-  assert.match(left[1], /^memory review of Writer left out a change \(add "The user flies with Air China"\): Your memory's MEMORY\.md would have \d+ of its 4000 characters\./)
+  assert.match(left[0], /^memory review of Writer left out a change \(add, 340 chars\): An entry holds at most 300 characters; this one has 340\./)
+  assert.match(left[1], /^memory review of Writer left out a change \(add, 29 chars\): Your memory's MEMORY\.md would have \d+ of its 4000 characters\./)
   assert.deepEqual(warnings(home, 'memory review of chat:b2 failed'), [])
   const entries = parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text)
   assert.ok(entries.includes('Filler fact number 13 is short now'), JSON.stringify(entries))
@@ -930,7 +966,7 @@ test('the 40-topic limit is left out with one warning, and the rest of the answe
   ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
   await reviewed(call)
   const [left] = await warnedTimes(home, 'left out a change', 1)
-  assert.match(left, /^memory review of Writer left out a change \(add "The user flies with Air China"\): Your memory already has 40 topics, the most it holds\./)
+  assert.match(left, /^memory review of Writer left out a change \(add, 29 chars\): Your memory already has 40 topics, the most it holds\./)
   assert.deepEqual(warnings(home, 'memory review of chat:b2 failed'), [])
   assert.equal(existsSync(join(dir, 'new.md')), false)
   assert.ok(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.some(entry => entry.text === 'The user likes tea'))
@@ -1110,7 +1146,7 @@ test('a full MEMORY.md leaves out the add with one warning and passes the lines,
   assert.deepEqual(journal().map(record => record.op), ['replace'])
   assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
   const [left] = await warnedTimes(home, 'left out a change', 1)
-  assert.match(left, /^memory review of Writer left out a change \(add "The user flies with Air China"\): Your memory's MEMORY\.md would have 40\d\d of its 4000 characters\./)
+  assert.match(left, /^memory review of Writer left out a change \(add, 29 chars\): Your memory's MEMORY\.md would have 40\d\d of its 4000 characters\./)
   assert.deepEqual(warnings(home, 'memory review of chat:b2 failed'), [])
   // The lines are passed, so the next turn end asks the model nothing.
   ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
