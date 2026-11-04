@@ -40,6 +40,7 @@ import { MACHINE_NAME, OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
 import { RemoteFileError, StaleSnapshot, readRemoteText, removeRemoteText, writeRemoteText } from "../remoteFile.js";
 import { botHistory, historyLines } from "../inspect.js";
+import { DocError, docGet } from "../docGet.mjs";
 import { hooksNotice } from "../migrateHooks.mjs";
 import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
 import { fixNonVisual, readState, spacesOf } from "./state.mjs";
@@ -827,6 +828,12 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 it records your yes (--local: this computer only) for updates
   meter uninstall               remove it from the linked machines the pack put it on (the
                                 install record says which), only where it is still that version
+  doc get <name> [--machine M]  a herdr-core doc's value, as one line of JSON on stdout (hc's
+                                doc.get through hc connect; read-only, 10 s at most); --machine:
+                                that linked machine's doc. Exit 0 with the JSON; 3: no such doc
+                                (never written, or deleted); 1: anything else, on stderr (a name
+                                is 1-128 of A-Z a-z 0-9 . _ -, and hc's own rule may refuse more).
+                                For a mod: it can exec this, and herdr-core's API needs stdin
 
 --rank R sets the pane's role= label, one of: ${RANKS.join(", ")}.
 The main bot's pane is role=main, and a bot that leads others is role=captain, whatever their
@@ -1004,7 +1011,7 @@ async function projectFor(opts) {
   return loadProject(await commandKeyOf(opts));
 }
 // The commands that take --machine: the definitions ones (and meter's own --machine).
-const ON_MACHINE = new Set(["ls", "show", "create", "edit", "rm", "category", "start", "restart", "attach", "detach", "whois", "meter"]);
+const ON_MACHINE = new Set(["ls", "show", "create", "edit", "rm", "category", "start", "restart", "attach", "detach", "whois", "meter", "doc"]);
 // A project's place in --json answers: `machine` only for a linked machine's.
 const placeOf = (project) => ({ project: project.key, ...(project.machine ? { machine: project.machine } : {}) });
 
@@ -3068,9 +3075,29 @@ export async function meterAfterUpdate(io) {
   }
 }
 
+/**
+ * `doc get <name> [--machine M]`: a herdr-core doc's value as JSON on stdout (docGet.mjs: doc.get
+ * through hc connect, read-only), for a mod that can only exec a program. Exit 3 when the doc is
+ * not there; any other failure, a usage mistake included, exits 1.
+ */
+export async function cmdDoc(opts, [verb, name, ...rest]) {
+  if (verb !== "get") throw new CliError(`doc needs get${verb ? `, not "${verb}"` : ""}: doc get <name> [--machine M].`);
+  if (name === undefined) throw new CliError("doc get needs a doc name.");
+  if (rest.length) throw new CliError(`doc get takes one name (got ${[name, ...rest].join(" ")}).`);
+  let value;
+  try {
+    value = await docGet(name, { machine: opts.machine, hc: programPath("hc") ?? "hc" });
+  } catch (e) {
+    if (e instanceof DocError) throw new CliError(e.message, e.code);
+    throw e;
+  }
+  process.stdout.write(`${JSON.stringify(value)}\n`);
+  return PRINTED;
+}
+
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
   start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, whois: cmdWhois, history: cmdHistory, brief: cmdBrief, update: cmdUpdate,
-  tidy: cmdTidy, worker: cmdWorker, meter: cmdMeter };
+  tidy: cmdTidy, worker: cmdWorker, meter: cmdMeter, doc: cmdDoc };
 const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "restart", "attach", "detach", "history", "brief"]);
 
 /** Runs one command line; resolves with the exit code. Output goes to stdout, problems to stderr. */
@@ -3097,7 +3124,7 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     if (NEEDS_BOT.has(command) && !rest[0]) throw new CliError(`${command} needs a bot (its id or name).`, 2);
     if (opts.machine !== undefined && !ON_MACHINE.has(command)) {
-      throw new CliError(`${command} works on this computer only for now; --machine goes with ls, show, create, edit, rm, category, start, restart, attach, detach and whois.`, 2);
+      throw new CliError(`${command} works on this computer only for now; --machine goes with ls, show, create, edit, rm, category, start, restart, attach, detach, whois, meter and doc.`, 2);
     }
     exitAfter.code = 0;
     const out = await run(opts, rest);

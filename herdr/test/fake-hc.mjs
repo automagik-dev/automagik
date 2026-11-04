@@ -9,7 +9,11 @@
 // path?, temporary? }]: a linked machine is a scratch home folder; its `uname -sm` is `uname`,
 // anything else runs here with HOME=home and `path` (a folder of fakes) first on PATH, in
 // --cwd or its home), and file read|edit --on (its files are paths here; hc's answers: exit 3
-// not_found, 1 edit_failed or unavailable, 4 machine_unknown, errors as JSON on stderr).
+// not_found, 1 edit_failed or unavailable, 4 machine_unknown, errors as JSON on stderr), and
+// connect: JSON-RPC lines on stdin, answered on stdout. Only doc.get, from state.docs (or the
+// machine's docs with `on`): { name: { value, version } }, absent { value: null, version: 0 }.
+// Every request is kept in state.connectRequests; doc.set (or anything else) fails the call
+// (exit 2), and state.connectHang answers nothing and runs on (its pid in state.connectPid).
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
@@ -283,6 +287,31 @@ switch (words[0]) {
     // state.loseEditAnswer: the edit lands, then the link drops: hc's real answer, unavailable.
     if (state.loseEditAnswer) { delete state.loseEditAnswer; save(); fail(JSON.stringify({ error: { kind: "unavailable", message: `${on} stopped answering` } })); }
     out({ bytes: now.length, path });
+    break;
+  }
+  case "connect": {
+    if (state.connectHang) { state.connectPid = process.pid; save(); }
+    const lines = readFileSync(0, "utf8").split("\n").filter((l) => l.trim());
+    state.connectRequests = [...(state.connectRequests ?? []), ...lines.map((l) => JSON.parse(l))];
+    if (state.connectHang) {
+      save();
+      setInterval(() => {}, 1000);
+      break;
+    }
+    save();
+    for (const line of lines) {
+      const { id, method, params } = JSON.parse(line);
+      if (method !== "doc.get") fail(`fake hc: connect refuses ${method}`, 2);
+      const error = (kind, message) => out({ jsonrpc: "2.0", id, error: { code: -32000, message, data: { kind } } });
+      let docs = state.docs ?? {};
+      if (params.on !== undefined && params.on !== null) {
+        const m = (state.machines ?? []).find((x) => x.name === params.on);
+        if (!m) { error("machine_unknown", `unknown machine "${params.on}"`); continue; }
+        if (m.state !== "connected") { error("unavailable", `${params.on} isn't connected`); continue; }
+        docs = m.docs ?? {};
+      }
+      out({ jsonrpc: "2.0", id, result: docs[params.name] ?? { value: null, version: 0 } });
+    }
     break;
   }
   default:
