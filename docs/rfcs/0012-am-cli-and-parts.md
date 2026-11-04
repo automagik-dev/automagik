@@ -119,6 +119,49 @@ change.
 - `am update` updates am first: it verifies the new tarball against `am-lane`, stages it beside
   the installed copy, swaps by rename, and keeps the previous one for `am rollback automagik.am`.
   It updates apart from the pack: a pack release does not wait for am, nor the reverse.
+- **As built in delivery 1** (t30j, agreed with t22n and t259, 2026-11-03):
+  - The secret is `AM_LANE_KEY` (rotation slot `AM_LANE_KEY_NEXT`, picked by the variable
+    `AM_LANE_SIGNER`), the public keys `am/am-keys.json`, made by `bun scripts/am-lane.ts
+    keygen`. Amending the bullet above: while `am-keys.json` lists no key, or the secret is not
+    set, a release attaches am, posts no `am-lane` and says so in a `::warning::` (the key is
+    the owner's to add; a release never fails over its absence, nor in the window between
+    keygen and its `am-keys.json` reaching dev). Once keys are listed, a secret that is none of
+    them stops the release before the tag, as written. The post is a job of its own (`am-lane`,
+    after the cut), so its fail-closed refusals stop neither the plugin lane nor any other job
+    (t259's review).
+  - Until a release ships a key, an installed am cannot update itself; so the briefing entry
+    runs am's copy first only when its `VERSION` is at least the installed sidebar's, and a
+    stale am never shadows a newer pack's briefing (t259's review). A self install records its
+    version's sequence, so an older signed pointer is refused after it; one install, update,
+    rollback or uninstall runs at a time (`parts/automagik.am/.lock`); a reinstall of the
+    linked version goes into a fresh folder, so `current` never names a missing one.
+  - am reads `am-lane` with its installed `am-keys.json`. For tests only, `AM_RELEASE_URL` (a
+    `file://` folder) and, with a `file://` one only, `AM_TRUSTED_KEYS`.
+  - Links: am creates `~/.local/bin/am`, and takes `~/.local/bin/automagik-herdr` only when it is
+    missing, am's, or one of the pack's own links (`mods/am-sidebar/bin/automagik-herdr[.mjs]`,
+    or the old `spaces-agents` folder's). The pack already leaves a link that points elsewhere
+    alone (`relinkCli`, `install.sh`), so it never takes it back. `am self uninstall` hands
+    `automagik-herdr` back to the pack's entry when a pack is installed. Both links go through
+    `parts/automagik.am/current/`, so an update or rollback needs no relink.
+  - The briefing entry point: am replaces the pack's plain copy with a link,
+    `<app home>/automagik-herdr/briefing.mjs` -> `$AM_HOME/parts/automagik.am/current/
+    briefingEntry.mjs`, so it resolves into am's parts store (the sidebar guard's test) and an
+    update or rollback needs no relink. The pack's placement leaves such a link alone; `am self
+    uninstall` puts the pack's copy back. `briefingEntry.mjs` takes the app home from the path the
+    hook ran (`argv[1]`: node resolves the link for the module itself), runs am's copy first,
+    telling it the app home, then the sidebar's, then `spaces-agents`'s. A copy that is missing,
+    or whose import throws, is passed over: a broken am never silences a briefing (t22n). Each
+    attempt gets the hook's whole stdin, read once and replayed, and its output is printed only
+    when it succeeds; a session is joined in the ledger once, however many attempts or turns.
+  - The copies are the import closure of the CLI, `briefing.mjs` and `briefingEntry.mjs`, plus
+    the CLI's wrapper, `run.sh`, `pack-keys.json` and the plugin lane's `keys.json`
+    (`plugin-lane-keys.json`). `scripts/am-copies.mjs --check` runs in herdr's gate too, so a
+    herdr pull request that drifts fails in its own CI; `--write` resyncs them.
+  - `am` runs every verb but its own (`update`, `rollback`, `self`, `help`) through the CLI
+    copy in its own process, and `automagik-herdr` runs the copy directly: both print the pack's
+    bytes. A pack verb run from am's copy (`automagik-herdr update`) checks the pack pointer
+    against am's copy of `pack-keys.json`, equal to the pack's at the same release.
+  - Windows (links, the launcher) waits for delivery 6; delivery 1 runs on macOS and Linux.
 - The pack's CLI verbs that act on the pack itself (update, rollback) become `am update` and
   `am rollback` of `herdr.pack`, through its entries.
 - The briefing (`brief`, D22) moves with them. Today the hooks' fixed entry point,
@@ -168,20 +211,41 @@ need. All are `targets: local`, `set: ["code"]`, artifact `automagik-herdr-pack-
   `am-sidebar/bin/`), `select` `am-sidebar/pack/`. `herdr.am-sidebar` then provides only
   `bots.sidebar@1`, requires `herdr.pack@1` like every other member, and is switched off like
   them. Entries run from the extracted tarball (rule (a)), never from the installed folder, so a
-  switched-off sidebar does not stop the pack's install, update or uninstall. Only the sidebar's
+  switched-off sidebar does not stop the pack's install, update or uninstall. `herdr.pack`'s and
+  `herdr.layout`'s entries act on the app home (the marker, `mods/`, `mods-disabled/`,
+  `layouts/`), never on their own folder, so they work whether or not `am-sidebar/` is switched
+  off; switching `herdr.am-sidebar` off moves the whole folder, as Herdr's mod manager does
+  (t22n, 2026-11-03). Only the sidebar's
   own in-app update offer goes quiet; `am update` still updates the pack.
-- **`herdr.cli` is retired before it ships.** Its files leave `am-sidebar/bin/` for the am part
-  (`automagik-herdr`, `automagik-herdr.mjs`, `state.mjs`, `run.sh`, and the briefing), and its
-  capabilities go with them. The pack stops linking `automagik-herdr` in the first release after
-  am ships, so the alias never disappears. No herdr manifest declares `~/.local/bin/am` or
-  `automagik-herdr`: only am's does. The pack's installer hands the link over by leaving one
-  that points at am, and am takes one that points into the pack.
-- Until am carries the CLI and the briefing (delivery 1 released), `am uninstall
-  herdr.am-sidebar` refuses and says why: switching the sidebar off would leave
-  `automagik-herdr` pointing at nothing and stop every briefing (t2zx).
-- `herdr.layout` (`herdr-layout`) at `herdr-layout/part.json`, `select` `am-sidebar/layout/`: in
-  the tarball `herdr-layout/layouts/automagik.json` is `layouts/automagik.json`. One function,
-  `repoPathOf` in `herdr/scripts/parts.mjs`, maps tarball paths to the repository's.
+- **`herdr.cli` is retired before it ships.** Agreed by t30j and t22n (2026-11-03): in delivery 1
+  nothing leaves the pack; am ships byte-equal copies. In delivery 2 exactly three files leave
+  `am-sidebar/bin/` for the am part, which becomes their source: `automagik-herdr`,
+  `automagik-herdr.mjs` and `state.mjs`. `bin/run.sh` stays in the pack (`launch.js`,
+  `launchArgs.js`, `agentPath.mjs`, `formModel.js` and am-mods' `core.js` run it), and so do
+  `briefing.mjs`, `briefingText.mjs`, `briefingEntry.mjs` and the modules they import, until the
+  bridge ends; am keeps copies of them. The capabilities go with the CLI. The pack stops linking
+  `automagik-herdr` in the first release after am ships, so the alias never disappears. No herdr
+  manifest declares `~/.local/bin/am` or `automagik-herdr`: only am's does. The pack's
+  installer hands the link over by leaving one that points at am, and am takes one that points
+  into the pack.
+- Until am's own CLI and briefing copies are installed on the machine (delivery 1 released and
+  `automagik.am` installed), `am uninstall herdr.am-sidebar` refuses and says why: switching
+  the sidebar off would leave `automagik-herdr` pointing at nothing and stop every briefing
+  (t2zx). The guard reads what is installed: it lifts only once the briefing entry point
+  resolves into `$AM_HOME/parts/` (am places a link there, never a copy), `automagik-herdr` no
+  longer resolves into the sidebar, and no project hook calls the sidebar's `briefing.mjs` or
+  starts through its `bin/run.sh` (the pack's own hook command does, so the guard holds until
+  am runs the hooks, delivery 3).
+- **Every herdr manifest sits inside an existing pack mod folder** (t259 and t22n, 2026-11-03).
+  An installed pack's `update.mjs`, old ones included, refuses a tarball with any `layouts/`
+  file but `automagik.json` and any top-level folder that is not a pack mod, so a manifest
+  anywhere else would make every installed pack refuse the release. `herdr.layout`'s manifest
+  ships as `am-sidebar/layout/part.json`, `select` `am-sidebar/layout/` (in the repository it is
+  `herdr-layout/part.json`: `herdr/scripts/pack.mjs` puts it there in the tarball), and
+  `herdr.pack`'s is `am-sidebar/pack/part.json`, `select` `am-sidebar/pack/`. The layout itself
+  is `layouts/automagik.json` in the tarball (`herdr-layout/layouts/automagik.json` in the
+  repository). One function, `repoPathOf` in `herdr/scripts/parts.mjs`, maps tarball paths to
+  the repository's.
 - Entries: `["node", "part.mjs", "<verb>", "herdr.pack"]` for the pack, `["node",
   "pack/part.mjs", …]` for the sidebar, `["node", "../am-sidebar/pack/part.mjs", …]` for the
   other mods and the layout. The relative path works because the whole tarball is extracted. No
@@ -194,12 +258,13 @@ need. All are `targets: local`, `set: ["code"]`, artifact `automagik-herdr-pack-
   plus its links in `~/.local/bin`. Proposed: a `writes` path may start with
   `$HERDR_APP_HOME/`, which am resolves (else `~/.config/herdr-app`). Code gap: the gate accepts
   only `~/` and `**/`, and the manifests spell `~/.config/herdr-app/` out.
-- The gate, `herdr/scripts/parts.mjs --check`, checks every `part.json` under `herdr/` and
-  `herdr-layout/`: the fields, `paths` against tracked files, `select` as the part's own
-  folder, entry scripts shipping in the tarball, and `writes` (it refuses `shared.json`, `data/`,
-  pocket-link, LaunchAgents). Every `PACK_MODS` folder must have one.
-- Every herdr part lists only `macos` today, and `part.mjs` exits 2 on any other platform
-  (`bin/part.mjs:44`). The Linux and Windows ports are deliveries 5 and 6 (D27).
+- The gate, `herdr/scripts/parts.mjs --check`, checks every `part.json` under `herdr/` (the
+  layout's included, in `am-sidebar/layout/`): the fields, `paths` against tracked files,
+  `select` as the part's own folder, entry scripts shipping in the tarball, and `writes` (it
+  refuses `shared.json`, `data/`, pocket-link, LaunchAgents). Every `PACK_MODS` folder must have
+  one.
+- Every herdr part lists only `macos` today, and `part.mjs` exits 2 on any other platform.
+  The Linux and Windows ports are deliveries 5 and 6 (D27).
 - None declares `~/.local/bin/usagemeter`: that becomes usagemeter's own part (t22b);
   `install.sh` and `am meter` keep handling it until then.
 - Pocket Link (`herdr/mods/pocket-link`) is on the herdr lane but is not a pack member (it is
@@ -371,8 +436,18 @@ RFC 0013's switch reads it to show "Set up".
 (rule 3). For each part: id, version, source (release, path or git), sha256, signed, and
 (proposed) state (`installed` or `disabled`), lane and sequence, provides, the kept artifact's
 path, who confirmed an unsigned source and where, and when. Proposed: writes go through one lock
-file (an exclusive create, as RFC 0014's registry does) and an atomic rename; kept artifacts live
-in `~/.automagik/parts/`, named by sha256, so one pack tarball is kept once for all its members.
+file (an exclusive create, as RFC 0014's registry does) and an atomic rename.
+
+**The parts store** (t22n and t259, 2026-11-03). am keeps the whole verified extract of each
+installed artifact, not only its manifest, at `~/.automagik/parts/<id>/<version>/` (a pack's
+members share `herdr.pack`'s: one tarball, kept once), with `current` and `previous` links
+swapped by one rename, and prunes every other version, so the store holds exactly what rollback
+needs. Every later `uninstall`, `doctor` and `rollback` entry runs from that stored copy and
+its stored `part.json`, never from the live mods folder: am never re-reads a manifest from a mod
+folder after the install, so a switched-off or edited folder cannot change what am runs. am's
+own part is the first in the store (delivery 1): `parts/automagik.am/` with a `record.json`
+(the current and previous versions, each with its sequence, source, sha256 and `part.json`, and
+the highest sequence taken) that delivery 3 folds into parts.json.
 
 **One install authority at a time (rule 2).** During the bridge cycle the pack marker,
 `<app home>/automagik-herdr/installed-by-install.sh` (version, mods, sequence, usagemeter
@@ -540,9 +615,15 @@ check passes on all three OSes.
    across an update and a rollback; after the update, `automagik-herdr` resolves to am's.
    *Rollback:* revert the pack. An older pack relinks its own CLI on install.
 3. **Parts, local, release source** (am). Resolver, parts.json, install, uninstall, doctor,
-   rollback and update; reads the marker during the bridge.
+   rollback and update; reads the marker during the bridge. am takes the briefing hooks over
+   (t22n, 2026-11-03): their command starts through am's own runner
+   (`parts/automagik.am/current/bin/run.sh`) instead of the sidebar's `bin/run.sh`, and am
+   migrates every project's hook to it the way `migrateHooks` moves them today (each settings
+   file backed up, the journal kept), and back on `am uninstall automagik.am`. The sidebar
+   guard's last reason then lifts by itself.
    *Check:* on a temp home with `file://` pointers signed by per-run keys: `am install code` then
-   doctor exits 0; a doctor forced to fail rolls back; a lower sequence is refused; `am uninstall
+   doctor exits 0; after it, no project hook names `mods/am-sidebar/bin/run.sh`; a doctor forced
+   to fail rolls back; a lower sequence is refused; `am uninstall
    herdr.am-quota` switches it off, an update keeps it off, `am install` puts it back; `am
    uninstall herdr.am-sidebar` switches the sidebar off while am, the pack and a Bot's briefing
    keep working; `am uninstall herdr.pack` removes the pack, keeps user data and leaves am.
