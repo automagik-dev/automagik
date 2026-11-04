@@ -55,18 +55,38 @@ function fuzzCases(seed = SEED, count = 200) {
   })
 }
 
-// One run, or the best of three when it is slow: noise only slows a run, and a quadratic rule is
-// slow every time.
-const timed = (fn) => {
+// A run under FAST_MS passes as it is. A slower run is judged against the machine as it is at that
+// moment: a fixed, linear piece of work that never touches the rules, timed right after the run. A
+// shared runner that is slow or busy slows both alike, so their ratio holds; a quadratic rule does
+// not. Healthy cases stay near 2 times the baseline (the stream on 80k random pieces), and the
+// backtracking KEY= rule that 110ccf82 replaced, put back, reaches 50 times on the stream and 13 on
+// the rules. Up to three tries, the best kept: noise only slows a run, a quadratic rule is slow
+// every time.
+const FAST_MS = 50
+const SLOW_RATIO = 15
+const BASE_TEXT = 'word x9 = "a" \\t token\n'.repeat(3_500)
+const baselineMs = () => {
   let best = Infinity
-  for (let i = 0; i < 3 && best >= FAST_MS; i++) {
+  for (let i = 0; i < 5; i++) {
     const t0 = performance.now()
-    fn()
+    for (let n = 0; n < 20; n++) BASE_TEXT.replace(/x9/g, 'y8').match(/\w+/g)
     best = Math.min(best, performance.now() - t0)
   }
   return best
 }
-const FAST_MS = 50
+const timed = (fn) => {
+  let best = { ms: Infinity, ratio: Infinity }
+  for (let i = 0; i < 3; i++) {
+    const t0 = performance.now()
+    fn()
+    const ms = performance.now() - t0
+    if (ms < FAST_MS) return { ms, ratio: 0 }
+    const ratio = ms / baselineMs()
+    if (ratio < best.ratio) best = { ms, ratio }
+    if (ratio < SLOW_RATIO) break
+  }
+  return best
+}
 
 function push(text) {
   const mind = new MindStream({ now: () => 1 })
@@ -78,6 +98,9 @@ const PATHS = [['redactText', redactText], ['secretsIn', secretsIn], ['the strea
 
 test('a seeded fuzz of 200 mixed texts up to 80k characters stays fast on every path', () => {
   for (const [shape, text] of fuzzCases()) {
-    for (const [path, run] of PATHS) assert.ok(timed(() => run(text)) < FAST_MS, `${path}: ${shape}`)
+    for (const [path, run] of PATHS) {
+      const { ms, ratio } = timed(() => run(text))
+      assert.ok(ratio < SLOW_RATIO, `${path}: ${shape} (${ms.toFixed(0)} ms, ${ratio.toFixed(1)} times the baseline)`)
+    }
   }
 })
