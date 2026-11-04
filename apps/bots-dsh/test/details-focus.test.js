@@ -158,6 +158,41 @@ test('over a narrow window Details is a modal that contains Tab and focus, and n
   focused(composer, 'unmounting removes the containment listeners')
 })
 
+test('narrow Details mounts a focused dialog, and a view switch never yanks focus', async (t) => {
+  const { window, document, root, focused, BotPanel } = mount(t)
+  window.innerWidth = 390
+  const bot = { id: 'omni', name: 'Omni', sessionId: 'omni' }
+  const withBot = {
+    ...roster, byId: { omni: bot }, bots: [bot], browser: true,
+    sideChats: { omni: [{ id: 'side-1' }] },
+  }
+  let pane = { id: 'omni', view: 'details' }, leaving = false
+  const actions = new Proxy({ closeOverlay() {} },
+    { get: (known, name) => known[name] ?? (async () => {}) })
+  const render = () => root.render(React.createElement(BotPanel, {
+    pane, leaving, roster: withBot, actions, ...panelProps,
+  }))
+  document.querySelector('#composer').focus()
+  await act(render)
+  const panel = document.querySelector('.bt-panel')
+  assert.equal(panel.getAttribute('tabindex'), '-1', 'the panel is programmatically focusable')
+  assert.equal(panel.getAttribute('role'), 'dialog', 'a narrow Details pane starts modal')
+  assert.equal(panel.getAttribute('aria-modal'), 'true')
+  focused(panel, 'opening on a narrow window moves focus into the dialog')
+
+  await act(() => { pane = { id: 'omni', view: 'browser' }; render() })
+  assert.equal(panel.dataset.view, 'browser')
+  assert.equal(panel.getAttribute('role'), null, 'the browser view is not the Details dialog')
+  assert.equal(panel.getAttribute('aria-modal'), null)
+  focused(panel, 'changing the pane view does not return focus to the Details trigger')
+
+  await act(() => { pane = { id: 'omni', view: 'side', side: 'side-1' }; render() })
+  assert.equal(panel.dataset.view, 'side')
+  assert.equal(panel.getAttribute('role'), null, 'a side chat is not the Details dialog either')
+  assert.equal(panel.getAttribute('aria-modal'), null)
+  focused(panel, 'the side chat keeps the panel focus')
+})
+
 test('the browser and a native thread keep their own panels: no modal Details, no parent Bot', async (t) => {
   const { window, document, root, focused, BotPanel } = mount(t)
   window.innerWidth = 390
