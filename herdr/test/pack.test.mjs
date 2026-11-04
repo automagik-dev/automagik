@@ -52,6 +52,10 @@ for (const worktree of [true, false]) {
     execFileSync("tar", ["-xzf", out, "-C", x]);
     const files = execFileSync("git", ["-C", TOP, "ls-files", ...(worktree ? ["--cached", "--others", "--exclude-standard"] : [])], { encoding: "utf8" }).split("\n").filter(Boolean);
     const at = (f) => (worktree ? readFileSync(join(TOP, f), "utf8") : execFileSync("git", ["-C", TOP, "show", `HEAD:${f}`], { encoding: "utf8" }));
+    // The tarball's layout is where every installed updater reads it, layouts/automagik.json, alone in
+    // layouts/, whatever herdr-layout/ holds it under (herdr-layout/layouts/, for herdr.dev).
+    assert.deepEqual(names.filter((n) => n.startsWith("layouts/") && !n.endsWith("/")), ["layouts/automagik.json"]);
+    assert.equal(readFileSync(join(x, "layouts", "automagik.json"), "utf8"), at("herdr-layout/layouts/automagik.json"));
     const herdrParts = files.filter((f) => /^(herdr|herdr-layout)\/(.*\/)?part\.json$/.test(f));
     assert.ok(herdrParts.length >= PACK_MODS.length + 2);
     for (const f of herdrParts) {
