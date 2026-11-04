@@ -233,7 +233,7 @@ export default class WorkspaceChrome extends View {
           .child(tab("work", "briefcase", "Work", false, false,
             () => openWork({ exec, notify, platform: window()?.platform }))
             .tooltip("Open Automagik"))
-          .children(panels)
+          .when(panels.length > 0, el => el.children(panels))
           .when(this.pocket, el => el.child(tab("pocket", "smartphone", "Pocket Link", false, false, () => run("mod.open", { name: "pocket-link" }))
             .when(this.phone, el => el.child(div().size(6).rounded_full().bg(t.done)))))
           // Their own group, which gives up its width first and clips: the rail's own tabs never do.
