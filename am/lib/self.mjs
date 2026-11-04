@@ -4,7 +4,10 @@
 //   <AM_HOME, else ~/.automagik>/parts/automagik.am/
 //     <version>/      a whole verified extract of automagik-am-<version>.tgz (or the folder
 //                     `am self install` ran from); only `current` and `previous` are kept
-//     current, previous   links to a <version>/, each swapped by one rename
+//     current, previous   links to a <version>/ (or <version>-<hex>/ when that version is already
+//                     linked: a reinstall never pulls a folder out from under a link), each
+//                     swapped by one rename
+//     .lock           held while am installs, updates, rolls back or uninstalls itself
 //     record.json     { current, previous, seen }: each { version, sequence, signed, source,
 //                     sha256, installed, part (its part.json) }; `seen` the highest sequence taken
 //   ~/.local/bin/am                -> parts/automagik.am/current/bin/am
@@ -24,12 +27,12 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync,
-  statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, openSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync,
+  statSync, symlinkSync, writeFileSync, writeSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { LANE_RELEASE, PART, POINTER, RELEASES, REPOSITORY, SIGNATURE, verifyPointer } from "./lane.mjs";
+import { LANE_RELEASE, PART, POINTER, RELEASES, REPOSITORY, SIGNATURE, VERSION, sequenceOf, verifyPointer } from "./lane.mjs";
 
 /** This am's own folder (the extract it runs from). */
 export const OWN_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -97,6 +100,38 @@ function writeRecord(store, record) {
   renameSync(tmp, join(store, "record.json"));
 }
 
+const LOCK = ".lock";
+const LOCK_STALE_MS = 10 * 60_000;
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; } };
+
+/**
+ * Takes the store's lock (an exclusive create), so one am installs, updates, rolls back or
+ * uninstalls itself at a time; returns its release. A lock whose process is gone, or that is over
+ * ten minutes old, is taken over; a live one is refused.
+ */
+export function lockStore(store) {
+  mkdirSync(store, { recursive: true });
+  const path = join(store, LOCK);
+  for (let tries = 0; tries < 2; tries++) {
+    try {
+      const fd = openSync(path, "wx");
+      try { writeSync(fd, JSON.stringify({ pid: process.pid, at: Date.now() })); } finally { closeSync(fd); }
+      return () => rmSync(path, { force: true });
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+      const held = readJson(path);
+      if (held && Number.isSafeInteger(held.pid) && alive(held.pid) && Date.now() - (held.at ?? 0) < LOCK_STALE_MS) {
+        throw new Error(`another am (pid ${held.pid}) is installing or updating am: try again once it is done`);
+      }
+      rmSync(path, { force: true });
+    }
+  }
+  throw new Error("could not take am's store lock");
+}
+
+const sequenceOrNull = (version) => (VERSION.test(version) ? sequenceOf(version) : null);
+const dirOf = (entry) => entry?.dir ?? entry?.version;
+
 /** Points the link `name` in `store` at `target` (a folder name in it) by one rename. */
 function swapLink(store, name, target) {
   const tmp = join(store, `.${name}-${randomBytes(4).toString("hex")}`);
@@ -119,43 +154,54 @@ export function extractProblems(dir, version) {
 }
 
 /**
- * Installs the am extract in `dir` as current: copies it into the store as <version>/ (unless it is
- * that folder already), keeps the one it replaces as previous, prunes the rest, records it, links
- * and writes the briefing entry. Returns { version, from, links, entry }.
+ * Installs the am extract in `dir` as current, holding the store's lock (placeExtract).
  */
-export function installExtract(dir, { env = process.env, sequence = null, signed = false, source, sha256 = null, now = () => new Date() } = {}) {
+export function installExtract(dir, options = {}) {
+  const release = lockStore(storeOf(options.env ?? process.env));
+  try { return placeExtract(dir, options); } finally { release(); }
+}
+
+/**
+ * Installs the am extract in `dir` as current, the store's lock already held: copies it into the
+ * store as <version>/ (unless it is a folder of the store already), keeps the one it replaces as
+ * previous, prunes the rest, records it, links and links the briefing entry. A version already
+ * linked (a reinstall) goes into a fresh <version>-<hex>/, so `current` always names a whole
+ * folder. With no pointer's `sequence` (am self install), the version's own is recorded, so an
+ * older signed pointer is refused after it too. Returns { version, from, links, entry }.
+ */
+function placeExtract(dir, { env = process.env, sequence = null, signed = false, source, sha256 = null, now = () => new Date() } = {}) {
   const problems = extractProblems(dir);
   if (problems.length) throw new Error(`not an am to install (${dir}): ${problems.join("; ")}`);
   const version = readText(join(dir, "VERSION")).trim();
   const store = storeOf(env);
   mkdirSync(store, { recursive: true });
-  const target = join(store, version);
   const record = readRecord(store);
   const from = record.current?.version ?? null;
-  if (!(exists(target) && realpathSync(target) === realpathSync(dir))) {
+  const real = realpathSync(dir);
+  const linked = new Set(["current", "previous"].map((n) => linkOf(join(store, n))).filter(Boolean));
+  let name;
+  if (dirname(real) === realpathSync(store) && !basename(real).startsWith(".")) {
+    name = basename(real); // a folder of the store already (am self install run from it)
+  } else {
+    name = linked.has(version) ? `${version}-${randomBytes(3).toString("hex")}` : version;
     // An update's extract is already staged in the store: it moves in; any other folder is copied.
-    const staged = dirname(realpathSync(dir)) === realpathSync(store) && basename(dir).startsWith(".staging-");
+    const staged = dirname(real) === realpathSync(store) && basename(real).startsWith(".staging-");
     const staging = staged ? dir : mkdtempSync(join(store, ".staging-"));
     if (!staged) cpSync(dir, staging, { recursive: true, verbatimSymlinks: true });
     chmodSync(staging, 0o755);
-    if (exists(target)) {
-      const old = join(store, `.old-${randomBytes(4).toString("hex")}`);
-      renameSync(target, old);
-      renameSync(staging, target);
-      rmSync(old, { recursive: true, force: true });
-    } else {
-      renameSync(staging, target);
-    }
+    rmSync(join(store, name), { recursive: true, force: true }); // a stray folder no link names
+    renameSync(staging, join(store, name));
   }
+  const seq = sequence ?? sequenceOrNull(version);
   const entry = {
-    version, sequence, signed, source: source ?? dir, sha256, installed: now().toISOString(),
-    part: readJson(join(target, "part.json")),
+    version, dir: name, sequence: seq, signed, source: source ?? dir, sha256, installed: now().toISOString(),
+    part: readJson(join(store, name, "part.json")),
   };
   const previous = from && from !== version ? record.current : record.previous?.version === version ? null : record.previous;
-  if (previous) swapLink(store, "previous", previous.version);
+  if (previous) swapLink(store, "previous", dirOf(previous));
   else rmSync(join(store, "previous"), { force: true });
-  swapLink(store, "current", version);
-  const seen = [record.seen, sequence].filter(Number.isSafeInteger);
+  swapLink(store, "current", name);
+  const seen = [record.seen, seq].filter(Number.isSafeInteger);
   writeRecord(store, { current: entry, previous, seen: seen.length ? Math.max(...seen) : null });
   prune(store);
   return { version, from, links: linkCommands(env), entry: writeEntry(env) };
@@ -163,7 +209,7 @@ export function installExtract(dir, { env = process.env, sequence = null, signed
 
 /** Removes every folder in the store but current's and previous's (and stray staging). */
 export function prune(store) {
-  const keep = new Set(["record.json", "current", "previous"]);
+  const keep = new Set(["record.json", "current", "previous", LOCK]);
   for (const name of ["current", "previous"]) { const to = linkOf(join(store, name)); if (to) keep.add(to); }
   for (const name of readdirSync(store)) if (!keep.has(name)) rmSync(join(store, name), { recursive: true, force: true });
 }
@@ -245,6 +291,11 @@ function unlinkEntry(env) {
 export function uninstallSelf({ env = process.env, purge = false } = {}) {
   const bin = binDirOf(env);
   const store = storeOf(env);
+  const release = existsSync(store) ? lockStore(store) : () => {};
+  try { return unplace({ env, purge, bin, store }); } finally { if (!purge) release(); }
+}
+
+function unplace({ env, purge, bin, store }) {
   const lines = [];
   for (const name of ["am", "automagik-herdr"]) {
     const link = join(bin, name);
@@ -270,12 +321,15 @@ export function uninstallSelf({ env = process.env, purge = false } = {}) {
 /** Swaps current and previous; returns { from, to }. */
 export function rollbackSelf({ env = process.env } = {}) {
   const store = storeOf(env);
-  const record = readRecord(store);
-  if (!record.previous || !existsSync(join(store, record.previous.version))) throw new Error("am has no previous version to roll back to");
-  swapLink(store, "current", record.previous.version);
-  swapLink(store, "previous", record.current.version);
-  writeRecord(store, { current: record.previous, previous: record.current, seen: record.seen });
-  return { from: record.current.version, to: record.previous.version, links: linkCommands(env), entry: writeEntry(env) };
+  const release = lockStore(store);
+  try {
+    const record = readRecord(store);
+    if (!record.previous || !existsSync(join(store, dirOf(record.previous)))) throw new Error("am has no previous version to roll back to");
+    swapLink(store, "current", dirOf(record.previous));
+    swapLink(store, "previous", dirOf(record.current));
+    writeRecord(store, { current: record.previous, previous: record.current, seen: record.seen });
+    return { from: record.current.version, to: record.previous.version, links: linkCommands(env), entry: writeEntry(env) };
+  } finally { release(); }
 }
 
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -313,6 +367,18 @@ export async function updateSelf({ env = process.env, keys = ownKeys(), fetch, c
   }
   if (record.current?.sequence === pointer.sequence && existsSync(join(store, "current"))) return { state: "current", from, to: pointer.version };
   if (check) return { state: "available", from, to: pointer.version };
+  // One update at a time: the record is read again under the lock, and the sequence checked again.
+  const release = lockStore(store);
+  try { return await fetchAndPlace({ env, keys, fetch, store, pointer }); } finally { release(); }
+}
+
+async function fetchAndPlace({ env, keys, fetch, store, pointer }) {
+  const record = readRecord(store);
+  const from = record.current?.version ?? null;
+  if (record.seen !== null && pointer.sequence < record.seen) {
+    throw new Error(`am lane: it names ${pointer.version} (sequence ${pointer.sequence}), older than the newest this machine took (sequence ${record.seen}): refusing it`);
+  }
+  if (record.current?.sequence === pointer.sequence && existsSync(join(store, "current"))) return { state: "current", from, to: pointer.version };
   const { releases } = sourceOf(env, keys);
   const bytes = await fetchBytes(`${releases}/download/${pointer.tag}/${pointer.tarball.name}`, { fetch, timeoutMs: DOWNLOAD_TIMEOUT_MS });
   if (bytes === null) throw new Error(`${pointer.tarball.name} is not on ${pointer.tag}`);
@@ -331,7 +397,7 @@ export async function updateSelf({ env = process.env, keys = ownKeys(), fetch, c
     execFileSync("tar", ["-xzf", tgz, "-C", staging], { stdio: ["ignore", "ignore", "pipe"] });
     const problems = extractProblems(staging, pointer.version);
     if (problems.length) { rmSync(staging, { recursive: true, force: true }); throw new Error(`${pointer.tarball.name}: ${problems.join("; ")}: refusing it`); }
-    const done = installExtract(staging, { env, sequence: pointer.sequence, signed: true, source: LANE_RELEASE, sha256: got });
+    const done = placeExtract(staging, { env, sequence: pointer.sequence, signed: true, source: LANE_RELEASE, sha256: got });
     return { state: "updated", from, to: pointer.version, links: done.links, entry: done.entry };
   } finally {
     rmSync(work, { recursive: true, force: true });

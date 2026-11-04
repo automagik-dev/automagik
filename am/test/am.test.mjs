@@ -250,6 +250,59 @@ test("a machine with no pack (work only): am update is am's alone, and herdr.pac
   assert.equal(existsSync(join(s.app, "mods")), false, "nothing of the pack was installed");
 });
 
+test("a self install records its version's sequence: an older signed pointer is refused after it", (t) => {
+  const s = scratch(t);
+  const version = readFileSync(join(AM, "VERSION"), "utf8").trim();
+  assert.equal(s.am("self", "install").status, 0);
+  assert.deepEqual([record(s).current.sequence, record(s).seen], [sequenceOf(version), sequenceOf(version)]);
+  const [major, minor] = version.split(".").map(Number);
+  const older = `${major}.${minor - 1}.0`;
+  tarball(s, older);
+  post(s, older);
+  const r = s.installed("update", "automagik.am");
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /older than the newest this machine took/);
+  assert.equal(s.installed("--version").stdout.trim(), `automagik-herdr ${version}`);
+});
+
+test("one am at a time: a live lock refuses an update, a stale one is taken over", (t) => {
+  const s = scratch(t);
+  tarball(s, "3.70.1");
+  post(s, "3.70.1");
+  mkdirSync(s.store, { recursive: true });
+  // A live process (this test) holds it: refused, nothing installed.
+  writeFileSync(join(s.store, ".lock"), JSON.stringify({ pid: process.pid, at: Date.now() }));
+  const held = s.am("update", "automagik.am");
+  assert.equal(held.status, 1);
+  assert.match(held.stderr, new RegExp(`another am \\(pid ${process.pid}\\) is installing or updating am`));
+  assert.equal(existsSync(join(s.store, "current")), false);
+  assert.equal(s.am("self", "install").status, 1, "a self install waits for the lock too");
+  // Its process is gone: the lock is taken over, and released after.
+  writeFileSync(join(s.store, ".lock"), JSON.stringify({ pid: 2 ** 22 + 12345, at: Date.now() }));
+  const r = s.am("update", "automagik.am", "--json");
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(json(r).am.to, "3.70.1");
+  assert.equal(existsSync(join(s.store, ".lock")), false);
+});
+
+test("reinstalling the current version goes into a fresh folder: current never names a missing one", (t) => {
+  const s = scratch(t);
+  const version = readFileSync(join(AM, "VERSION"), "utf8").trim();
+  assert.equal(s.am("self", "install").status, 0);
+  const first = readlinkSync(join(s.store, "current"));
+  assert.equal(first, version);
+  assert.equal(s.am("self", "install").status, 0);
+  const second = readlinkSync(join(s.store, "current"));
+  assert.match(second, new RegExp(`^${version.replaceAll(".", "\\.")}-[0-9a-f]{6}$`));
+  assert.equal(record(s).current.dir, second);
+  assert.ok(existsSync(join(s.store, "current", "bin", "am.mjs")));
+  assert.deepEqual(readdirSync(s.store).filter((n) => !n.startsWith(".") && /^\d/.test(n)), [second], "the replaced folder is pruned");
+  assert.equal(s.installed("--version").stdout.trim(), `automagik-herdr ${version}`);
+  // Run from the store itself, it is that folder: nothing is copied.
+  assert.equal(s.installed("self", "install").status, 0);
+  assert.equal(readlinkSync(join(s.store, "current")), second);
+});
+
 test("usage: exit 2 for an id am does not handle and an unknown option", (t) => {
   const s = scratch(t);
   assert.equal(s.am("rollback", "herdr.am-quota").status, 2);
