@@ -3,7 +3,7 @@
 // mod's own forms. Not Herdr itself: the in-app check in the mod's RECIPE still applies.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerHooks } from "node:module";
@@ -17,7 +17,8 @@ registerHooks({
 });
 
 const { state, ui } = await import(stubs.herdr);
-const { default: Footer, BOT_FORMS, botsMenuItems } = await import("../mods/am-footer/main.js");
+const { default: Footer, BOT_FORMS, PANELS, PANEL_POPUP, botsMenuItems, panelShown } = await import("../mods/am-footer/main.js");
+const { OFF_BY_DEFAULT } = await import("../mods/am-sidebar/release.js");
 const { all, index, nodes, textOf } = await import(stubs["gpui-kit"]);
 
 const TABS = new Set(["bots", "mods", "automations", "quota", "pocket", "settings", "machine"]);
@@ -29,11 +30,12 @@ function makeCx() {
   return cx;
 }
 
-async function footer({ sidebar, quota = true, files = {} }) {
+async function footer({ sidebar, quota = true, automations = true, files = {} }) {
   const root = mkdtempSync(join(tmpdir(), "hb-footer-"));
   state.appHome = root;
   if (sidebar) { mkdirSync(join(root, "mods/am-sidebar"), { recursive: true }); writeFileSync(join(root, "mods/am-sidebar/mod.json"), "{}\n"); }
   if (quota) { mkdirSync(join(root, "mods/am-quota"), { recursive: true }); writeFileSync(join(root, "mods/am-quota/mod.json"), "{}\n"); }
+  if (automations) { mkdirSync(join(root, "mods/am-automations"), { recursive: true }); writeFileSync(join(root, "mods/am-automations/mod.json"), "{}\n"); }
   for (const [path, body] of Object.entries(files)) { mkdirSync(join(root, path, ".."), { recursive: true }); writeFileSync(join(root, path), body); }
   ui.props = { footer: true };
   const cx = makeCx();
@@ -71,6 +73,107 @@ test("am-quota off: an Accounts panel left open is hidden; one already hidden, o
     assert.deepEqual(state.runs.filter(([n]) => n.startsWith("layout.")), want, `quota ${quota}, hidden ${hidden}`);
   }
   ui.layout = null;
+});
+
+test("the rail: no Automations tab while am-automations is off (in mods-disabled/) or not installed", async () => {
+  assert.deepEqual(await footer({ sidebar: true, automations: false }), ["bots", "mods", "quota", "settings", "machine"]);
+  const off = { "mods-disabled/am-automations/mod.json": "{}\n" };
+  assert.deepEqual(await footer({ sidebar: false, automations: false, quota: false, files: off }), ["mods", "settings", "machine"]);
+});
+
+test("am-automations off: an Automations panel left open is hidden; one already hidden, or the mod on, is left alone", async () => {
+  const tree = (hidden) => ({ id: "root", children: [{ id: "automations-panel", hidden, children: [] }] });
+  for (const [automations, hidden, want] of [[false, false, [["layout.hide", { id: "automations-panel" }]]], [false, undefined, [["layout.hide", { id: "automations-panel" }]]], [false, true, []], [true, false, []]]) {
+    ui.layout = tree(hidden);
+    state.runs = [];
+    await footer({ sidebar: true, automations });
+    assert.deepEqual(state.runs.filter(([n]) => n.startsWith("layout.")), want, `automations ${automations}, hidden ${hidden}`);
+  }
+  ui.layout = null;
+});
+
+test("a panel is active only while its block is in the layout and not hidden: a missing block never is", async () => {
+  const block = (id, extra) => ({ id, type: "block", children: [], ...extra });
+  assert.equal(panelShown({ id: "root", children: [] }, "am-quota-panel"), false, "no block");
+  assert.equal(panelShown({}, "am-quota-panel"), false, "an empty layout");
+  assert.equal(panelShown(null, "am-quota-panel"), false, "no layout at all");
+  assert.equal(panelShown({ id: "root", children: [block("am-quota-panel", { hidden: true })] }, "am-quota-panel"), false, "hidden");
+  assert.equal(panelShown({ id: "root", children: [block("am-quota-panel", { hidden: false })] }, "am-quota-panel"), true, "shown");
+  assert.equal(panelShown({ id: "root", children: [block("am-quota-panel")] }, "am-quota-panel"), true, "no hidden key: shown");
+  // Drawn: with neither block in the layout, both tabs show unselected.
+  ui.layout = { id: "root", children: [] };
+  await footer({ sidebar: false });
+  for (const id of ["automations", "quota"]) assert.deepEqual(nodes.get(id).calls.find(([n]) => n === "bg"), ["bg", ui.theme.chrome], `${id} is not active`);
+  ui.layout = { id: "root", children: [block("am-quota-panel", { hidden: false }), block("automations-panel", { hidden: true })] };
+  await footer({ sidebar: false });
+  assert.deepEqual(nodes.get("quota").calls.find(([n]) => n === "bg"), ["bg", ui.theme.selected], "Accounts showing");
+  assert.deepEqual(nodes.get("automations").calls.find(([n]) => n === "bg"), ["bg", ui.theme.chrome], "Automations hidden");
+  ui.layout = null;
+});
+
+test("a panel tab toggles its block when the layout has one, else opens the mod as a popup", async () => {
+  for (const p of PANELS) {
+    ui.layout = { id: "root", children: [{ id: p.node, hidden: true, children: [] }] };
+    await footer({ sidebar: false });
+    state.runs = [];
+    ui.overlays = [];
+    nodes.get(p.tab).click(null, makeCx());
+    assert.deepEqual(state.runs, [["layout.toggle", { id: p.node }]], `${p.tab} with its block`);
+    assert.deepEqual(ui.overlays, []);
+    ui.layout = { id: "root", children: [] };
+    await footer({ sidebar: false });
+    state.runs = [];
+    nodes.get(p.tab).click(null, makeCx());
+    assert.deepEqual(state.runs, [], `${p.tab} without its block toggles nothing`);
+    assert.deepEqual(ui.overlays, [{ mod: p.mod, ...PANEL_POPUP }], `${p.tab} without its block opens ${p.mod}`);
+  }
+  ui.layout = null;
+});
+
+test("turned off, then on again: the tab and its click go and come back, once", async () => {
+  const root = mkdtempSync(join(tmpdir(), "hb-footer-"));
+  state.appHome = root;
+  const on = join(root, "mods/am-automations"), off = join(root, "mods-disabled/am-automations");
+  mkdirSync(on, { recursive: true });
+  mkdirSync(join(root, "mods-disabled"));
+  writeFileSync(join(on, "mod.json"), "{}\n");
+  ui.props = { footer: true };
+  ui.layout = { id: "root", children: [] };
+  // The 30 s look, run by hand after each move the Mods panel makes.
+  const cx = makeCx();
+  cx.timer = { every: (_ms, fn) => { cx.look = fn; } };
+  const view = new Footer();
+  const rail = async () => { await cx.settle(); const d = view.render(); index(d); return all(d).map((n) => n.id).filter((id) => id === "automations"); };
+  try {
+    view.init({}, cx);
+    assert.deepEqual(await rail(), ["automations"], "on");
+    renameSync(on, off);
+    cx.look(cx);
+    assert.deepEqual(await rail(), [], "off");
+    renameSync(off, on);
+    cx.look(cx);
+    assert.deepEqual(await rail(), ["automations"], "on again: one tab");
+    ui.overlays = [];
+    nodes.get("automations").click(null, makeCx());
+    assert.deepEqual(ui.overlays, [{ mod: "am-automations", ...PANEL_POPUP }], "and it opens the panel");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    ui.layout = null;
+  }
+});
+
+// Herdr shows plain Herdr instead of a layout that names a mod missing from mods/ ("<layout> needs
+// mods that aren't here. Showing Herdr instead."), hidden block or not (issue #221). The pack's
+// layout must not name a mod that can be off: one that ships off, or a panel the rail opens.
+test("the pack's layout names no mod that ships off, and no panel block the rail opens itself", () => {
+  const layout = JSON.parse(readFileSync(new URL("../../herdr-layout/layouts/automagik.json", import.meta.url), "utf8"));
+  const named = [], ids = [];
+  const walk = (n) => { if (n.content?.mod) named.push(n.content.mod); if (n.id) ids.push(n.id); for (const f of n.floating ?? []) walk(f); (n.children ?? []).forEach(walk); };
+  walk(layout);
+  assert.ok(named.includes("am-footer"), "the walk reaches the blocks");
+  for (const mod of [...OFF_BY_DEFAULT, ...PANELS.map((p) => p.mod)]) assert.ok(!named.includes(mod), `the layout names ${mod}`);
+  for (const p of PANELS) assert.ok(!ids.includes(p.node), `the layout has ${p.node}`);
+  if (layout.terminal_menu) assert.ok(!OFF_BY_DEFAULT.includes(layout.terminal_menu));
 });
 
 test("the Bots tab opens this mod's popup", async () => {

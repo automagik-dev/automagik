@@ -240,12 +240,16 @@ layout_notes() {
     if [ ! -f "$f" ] || [ "$f" = "$LAYOUT" ]; then continue; fi
     grep -q '"mod"[[:space:]]*:[[:space:]]*"am-sidebar"' "$f" || continue
     lacks=
+    # The Automations and Accounts panels aren't listed: the footer opens them itself, and the
+    # pack's layout names neither (Herdr shows plain Herdr instead of a layout naming a mod that is
+    # off, and either can be).
     for s in 'am-footer:the footer rail (am-footer)' 'am-tabs:the tab bar (am-tabs)' \
       'am-status:the status bar with the pack version (am-status)' \
-      'am-markdown:the Markdown menu (am-markdown)' 'am-automations:the automations panel (am-automations)' 'am-quota:the Accounts panel (am-quota)'; do
+      'am-markdown:the Markdown menu (am-markdown)'; do
       # A block naming the mod ("mod": …), or for am-markdown the root's "terminal_menu": an id like
-      # "am-quota-panel" or a mention elsewhere doesn't count.
-      # A mod that is off (mods-disabled/, as am-quota ships) isn't missed: its block would be empty.
+      # "am-tabs-bar" or a mention elsewhere doesn't count.
+      # A mod that is off (mods-disabled/) isn't missed: a block naming it would make Herdr show
+      # plain Herdr instead of the layout.
       if [ ! -d "$MODS/${s%%:*}" ] && [ -d "$APP_HOME/mods-disabled/${s%%:*}" ]; then continue; fi
       grep -Eq "\"(mod|terminal_menu)\"[[:space:]]*:[[:space:]]*\"${s%%:*}\"" "$f" || lacks=${lacks:+$lacks, }${s#*:}
     done
