@@ -59,6 +59,7 @@ function scene(t, { terminals = [], briefing = true, window = { down: true } } =
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
     HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog };
   delete env.HC_TERMINAL_ID;
+  delete env.HERMES_HOME; // a runner's own hermes home must not decide the hermes tests
   const cli = (args, { cwd = project, input, env: extra = {} } = {}) => {
     const r = spawnSync(RUNTIME, [CLI, ...args], { cwd, env: { ...env, ...extra }, input, encoding: "utf8" });
     return { code: r.status, out: r.stdout, err: r.stderr, json: () => JSON.parse(r.stdout) };

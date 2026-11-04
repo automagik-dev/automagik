@@ -247,3 +247,11 @@ test("restart of a hermes bot fed the whole command Start gave it (env PATH, bri
   // A person's own env line (not this pack's PATH prefix) is left as it is.
   assert.deepEqual(paneCommand({ argv: ["/usr/bin/env", "FOO=1", "hermes"] }), { argv: ["/usr/bin/env", "FOO=1", "hermes"] });
 });
+
+test("ownPromptIn, hermes: a value on the lines below the key counts; a key followed by a sibling doesn't", () => {
+  assert.equal(ownPromptIn("hermes", "agent:\n  system_prompt:\n    Be terse,\n    always.\n"), true);
+  assert.equal(ownPromptIn("hermes", "agent:\n  system_prompt: # mine\n    Be terse.\n"), true);
+  assert.equal(ownPromptIn("hermes", "display:\n  personality: pirate # arr\n"), true);
+  assert.equal(ownPromptIn("hermes", "agent:\n  system_prompt:\n  model: x\n"), false, "empty: null in YAML");
+  assert.equal(ownPromptIn("hermes", "agent:\n  system_prompt:\n"), false);
+});

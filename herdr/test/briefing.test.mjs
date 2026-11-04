@@ -896,3 +896,31 @@ test("hook, what it printed can't be kept (the app home is a file): it prints ev
   assert.equal(count(outs), 2);
   for (const o of outs) assert.equal(o.stderr, "");
 });
+
+test("hook, a launched pane whose briefing file was deleted since: once, never every turn", async (t) => {
+  const sc = await turns(t, (app, main) => ["claude", "--append-system-prompt-file", briefingFilePath(app, main, ID.main)]);
+  assert.equal(count([await sc.turn(1)]), 0);
+  rmSync(briefingFilePath(sc.app, sc.main, ID.main));
+  const outs = [];
+  for (let n = 2; n <= 6; n++) outs.push(await sc.turn(n));
+  assert.equal(count(outs), 0, "the conversation's record has this launch text already");
+  // Deleted before its first turn: nothing recorded, so the once-only rule: one print in five.
+  const early = await turns(t, (app, main) => ["claude", "--append-system-prompt-file", briefingFilePath(app, main, ID.main)]);
+  rmSync(briefingFilePath(early.app, early.main, ID.main));
+  const five = [];
+  for (let n = 1; n <= 5; n++) five.push(await early.turn(n));
+  assert.equal(count(five), 1, "the bot still gets it, once");
+  // A restart that resumed, its file deleted: once, never every turn.
+  const resumed = await turns(t, (app, main) => ["claude", "--append-system-prompt-file", briefingFilePath(app, main, ID.main), "--resume", "s-1"]);
+  rmSync(briefingFilePath(resumed.app, resumed.main, ID.main));
+  const again = [];
+  for (let n = 1; n <= 5; n++) again.push(await resumed.turn(n));
+  assert.equal(count(again), 1);
+});
+
+test("hook, a launched --continue pane: once for the conversation it resumed, none after /clear", async (t) => {
+  const sc = await turns(t, (app, main) => ["claude", "--append-system-prompt-file", briefingFilePath(app, main, ID.main), "--continue"],
+    { input: (n) => JSON.stringify({ session_id: n < 3 ? "s-1" : "s-2" }) });
+  assert.equal(count([await sc.turn(1), await sc.turn(2)]), 1, "the resumed one, recorded before the file");
+  assert.equal(count([await sc.turn(3), await sc.turn(4)]), 0, "/clear: a new conversation, its prompt has the file");
+});

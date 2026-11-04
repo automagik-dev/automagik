@@ -159,17 +159,22 @@ async function main(mePending, inputPending, appHome) {
   const botId = ledger ? ledger.botAt({ ...me, address: terminal }) : me.labels?.[BOT_LABEL];
   if (!botId) return null;
   // Started with this bot's own briefing file: its text is what the system prompt was given.
-  const covered = Boolean(started) && botOfBriefingFile(started) === botId;
-  const startedHash = covered ? launchedHash(started) : null;
+  // A file gone since (deleted) says nothing about that text: the pane counts as not started with it.
+  const own = Boolean(started) && botOfBriefingFile(started) === botId;
+  const startedHash = own ? launchedHash(started) : null;
+  const covered = startedHash !== null;
   const input = await inputPending;
   const session = typeof input.session_id === "string" && input.session_id ? input.session_id : null;
-  // Resumed: the command resumes this very conversation (--resume <its id>, or --continue).
-  // Claude Code keeps a resumed conversation's id (`--fork-session` makes a new one, with the
-  // old record): another id means a new conversation since (/clear), with a new prompt.
+  const paneKey = `${terminal}@${me.created_ms ?? 0}`;
+  // Resumed: the command resumes this very conversation. Claude Code keeps a resumed
+  // conversation's id (`--fork-session` makes a new one, with the old record): another id is a
+  // new conversation since (/clear), with a new prompt. --continue names no id, so the one it
+  // resumed is the first this pane saw.
   const was = covered ? resumedSessionOf("claude", argv) : undefined;
   const forked = Array.isArray(argv) && argv.includes("--fork-session");
-  const resumed = was !== undefined && (was === null || session === null || was === session || forked);
-  const recordKey = session ?? `${terminal}@${me.created_ms ?? 0}`;
+  const resumed = was === undefined ? false : forked || session === null ? true
+    : was !== null ? was === session : firstSession(appHome, paneKey, session) === session;
+  const recordKey = session ?? paneKey;
   const seen = readSeen(appHome, recordKey);
   // A new conversation started with the file needs no bots.json read: nothing prints.
   if (covered && !resumed && seen?.hash === startedHash) return null;
@@ -188,6 +193,18 @@ async function main(mePending, inputPending, appHome) {
   }
   const text = await gatherBriefing({ file, bot, address: terminal, ask: hcJson, ...(ledger ? { locate: ledger.locate } : {}) });
   return { text, record };
+}
+
+// The first conversation a pane's hook saw (recorded on its first call, under its own key), or
+// `session` when it can't be read or kept: then each conversation counts as the first.
+function firstSession(appHome, paneKey, session) {
+  const key = `pane-${paneKey}`;
+  try {
+    const kept = JSON.parse(readFileSync(briefedPath(appHome, key), "utf8"))?.session;
+    if (typeof kept === "string" && kept) return kept;
+  } catch { /* none yet */ }
+  writeSeen(appHome, key, { session });
+  return session;
 }
 
 // The hash of the launch text in a briefing file (as briefedLaunch wrote it), null when unreadable.

@@ -427,7 +427,23 @@ export function tomlString(text) {
 export function ownPromptIn(agentKey, text) {
   const t = typeof text === "string" ? text : "";
   if (agentKey === "codex") return /^\s*developer_instructions\s*=/m.test(t);
-  if (agentKey === "hermes") return /^\s*(system_prompt|personality)\s*:[ \t]*(?!$|#|""|''|null\b|~)\S/m.test(t);
+  if (agentKey === "hermes") return hermesPromptIn(t);
+  return false;
+}
+
+// Hermes' display.personality or agent.system_prompt with a value: inline (not "", '', null or
+// ~), or on the lines below the key, more indented (a plain or block scalar). Unsure reads as set.
+function hermesPromptIn(text) {
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const m = /^([ \t]*)(system_prompt|personality)[ \t]*:(.*)$/.exec(lines[i]);
+    if (!m) continue;
+    const inline = m[3].replace(/(^|[ \t])#.*$/, "").trim();
+    if (inline && !/^(""|''|null|~|Null|NULL)$/.test(inline)) return true;
+    if (inline) continue;
+    const next = lines.slice(i + 1).find((l) => l.trim() && !/^[ \t]*#/.test(l));
+    if (next !== undefined && /^[ \t]*/.exec(next)[0].length > m[1].length) return true;
+  }
   return false;
 }
 
