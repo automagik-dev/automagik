@@ -325,7 +325,9 @@ export function install(rt) {
         const model = args.model || (served ? creator.model : undefined)
         // A kind is the onboarding's to give (a plugin's own team member), never a model's.
         const bot = await rt.createBot({ ...args, kind: undefined, avatar: avatar === undefined ? undefined : { image: avatar }, model, workDir, effort: args.effort, createdBy: creator?.id })
-        return `Created ${bot.name}${workDir ? `, working in ${workDir}` : ''}. It is greeting the user now.`
+        // A level taken from the creator is said, so the creator knows what the Bot may do.
+        const inherited = creator && rt.permissionCatalog() && bot.permission ? ` Permission inherited from ${creator.name} (${bot.permission}).` : ''
+        return `Created ${bot.name}${workDir ? `, working in ${workDir}` : ''}.${inherited} It is greeting the user now.`
       } catch (error) {
         return `Could not create the Bot: ${error.message}`
       }
