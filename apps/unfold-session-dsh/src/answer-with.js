@@ -116,7 +116,9 @@ export class AnswerWith {
           if (this.pending && (facts.answering === this.pending.choice || facts.chosen !== this.pending.choice)) this.pending = null
         } else {
           this.stats.failed++
-          this.error = r.status === 0 ? 'Unfold is not reachable from here right now' : `Unfold's model list could not be read (${r.body?.refused ?? r.body?.error ?? r.status})`
+          // One fixed sentence each, so a language pack can word it; the code goes to the log.
+          if (r.status !== 0) this.log(`unfold-session: answer-with read refused (${r.body?.refused ?? r.body?.error ?? r.status})`)
+          this.error = r.status === 0 ? 'Unfold is not reachable from here right now' : "Unfold's model list could not be read right now"
         }
       } finally {
         this.reading = null

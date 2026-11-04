@@ -58,6 +58,7 @@ var ZH = {
   "Low": "低",
   "High": "高",
   "Max": "最高",
+  "{model} answers now.": "现在由 {model} 回答。",
   // Per-Bot Advanced, native sidebar and honest accounting.
   "{tokens} tok · Cache reporting unavailable": "{tokens} token · 缓存统计不可用",
   "Cache reporting": "缓存统计",
@@ -1602,6 +1603,10 @@ function t(key, params) {
   return bound ? bound(key, params) : fill(key, params);
 }
 function hostText(message) {
+  if (bound && typeof message === "string") {
+    const worded = t(message);
+    if (worded !== message) return worded;
+  }
   if (!language().startsWith("zh")) return message;
   if (Object.hasOwn(ZH, message)) return t(message);
   for (const [pattern, template] of HOST_ERRORS) {
@@ -4144,6 +4149,19 @@ function modelOf(bot, roster) {
   const [provider, ...rest2] = ref.split("/");
   return { ref, name: served?.name ?? rest2.join("/"), provider: served?.providerName ?? provider, served: served !== void 0 };
 }
+function modelHint(bot, roster) {
+  const host = roster.hostModels?.[bot.id];
+  if (host !== void 0) {
+    const answering = host.entries?.find((entry) => entry.answering)?.label;
+    return answering ? t("{model} answers now.", { model: answering }) : null;
+  }
+  const shown = modelOf(bot, roster);
+  if (shown === void 0) return t("Pick the model this Bot runs on.");
+  if (!shown.served && (roster.models ?? []).length > 0) return t("This model is not available now. Pick another one.");
+  if (bot.appliedModel && bot.appliedModel === bot.model) return t("Every message of this Bot runs on it.");
+  return t("Applies from the next message.");
+}
+var needsModelPick = (bot, roster) => modelOf(bot, roster) === void 0 && roster.hostModels?.[bot.id] === void 0;
 var effortCache = /* @__PURE__ */ new Map();
 function useEfforts(served, ref, actions) {
   const [fetched, setFetched] = (0, import_react11.useState)(void 0);
@@ -15683,13 +15701,6 @@ function SwitchRow({ label, hint, on, disabled, onChange }) {
     (0, import_react40.createElement)(Switch, { on, label, disabled, onChange })
   );
 }
-function modelHint(bot, roster) {
-  const shown = modelOf(bot, roster);
-  if (shown === void 0) return t("Pick the model this Bot runs on.");
-  if (!shown.served && (roster.models ?? []).length > 0) return t("This model is not available now. Pick another one.");
-  if (bot.appliedModel && bot.appliedModel === bot.model) return t("Every message of this Bot runs on it.");
-  return t("Applies from the next message.");
-}
 function ShapeRing({ shape, size }) {
   const maskId = (0, import_react40.useRef)("");
   if (maskId.current === "") maskId.current = `bt-ring-${nextMarkSerial()}`;
@@ -21118,7 +21129,7 @@ function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, roster, a
           { key: "model", className: "bt-drawer-model" },
           (0, import_react62.createElement)("div", { className: "bt-section-title" }, t("Model")),
           (0, import_react62.createElement)(ModelMenu, { bot, roster, actions, run: run2, wide: true }),
-          modelOf(bot, roster) ? null : (0, import_react62.createElement)("div", { className: "bt-note" }, t("Pick a model and {name} can start.", { name: bot.name }))
+          needsModelPick(bot, roster) ? (0, import_react62.createElement)("div", { className: "bt-note" }, t("Pick a model and {name} can start.", { name: bot.name })) : null
         ),
         (0, import_react62.createElement)(PermissionRow, { key: "permission", bot, roster, actions, run: run2 }),
         (0, import_react62.createElement)(

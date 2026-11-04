@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { request } from 'node:http'
-import { startBridge, takePort } from '../src/host/bridge.js'
+import { isDeepSeekModel, startBridge, takePort } from '../src/host/bridge.js'
 import { TEXT, assistant, failure, fakeLlm } from './fake-llm.js'
 import { hold, onFreePort } from './ports.js'
 
@@ -365,8 +365,8 @@ test('the thinking level goes through as asked; none asked is the off level, nev
     assert.equal((await effortOf({ reasoning_effort: 'none' })).effort, 'off')
     // Thinking off the chat-template way wins over a level.
     assert.equal((await effortOf({ reasoning_effort: 'high', chat_template_kwargs: { enable_thinking: false } })).effort, 'off')
-    // A model without an off level gets no level at all, not its least.
-    assert.equal((await effortOf({}, 'codex/gpt-5.5')).effort, 'unset')
+    // A model without an off level gets its lowest, explicitly: never the adapter's default.
+    assert.equal((await effortOf({}, 'codex/gpt-5.5')).effort, 'minimal')
     // A level the model does not have is refused before any call.
     const refused = await effortOf({ reasoning_effort: 'medium' })
     assert.equal(refused.status, 400)
@@ -382,7 +382,7 @@ test('the thinking level goes through as asked; none asked is the off level, nev
   } finally { await plain.close() }
 })
 
-test('"none", what Unfold\'s agent always sends on this route, is the model\'s off level, or no level; never a 400', async () => {
+test('"none", what Unfold\'s agent always sends on this route, is the model\'s off level, else its lowest; never a 400', async () => {
   const levels = {
     // A DeepSeek-style adapter: off is one of its levels, and its default thinks.
     'deepseek-official/deepseek-v4-flash': ['off', 'low', 'high', 'max'],
@@ -401,6 +401,44 @@ test('"none", what Unfold\'s agent always sends on this route, is the model\'s o
       const options = b.llm.calls.at(-1)
       sent.push([model, Object.hasOwn(options, 'reasoningEffort') ? options.reasoningEffort : 'unset'])
     }
-    assert.deepEqual(sent, [['deepseek-official/deepseek-v4-flash', 'off'], ['codex/gpt-5.5', 'none'], ['codex/gpt-5.5-mini', 'unset']])
+    assert.deepEqual(sent, [['deepseek-official/deepseek-v4-flash', 'off'], ['codex/gpt-5.5', 'none'], ['codex/gpt-5.5-mini', 'minimal']])
   } finally { await b.close() }
+})
+
+test('/v1/models leaves out DeepSeek models another route serves; a chat to a DeepSeek route is still served', async () => {
+  const llm = fakeLlm({
+    providers: [{ id: 'openrouter', name: 'OpenRouter' }, { id: 'deepseek-official', name: 'DeepSeek' }, { id: 'cloudflare-workers-ai', name: 'Workers AI' }, { id: 'amazon-bedrock', name: 'Bedrock' }],
+    models: {
+      openrouter: [{ id: 'deepseek/deepseek-chat', name: 'DeepSeek V4' }, { id: 'anthropic/claude-x', name: 'Claude X' }, { id: 'notdeepseek-x', name: 'Not DeepSeek' }, { id: 'foo/deepseekish', name: 'DeepSeekish' }],
+      'deepseek-official': [{ id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' }],
+      // The catalog's other shapes of a DeepSeek model, under providers that are not DeepSeek.
+      'cloudflare-workers-ai': [{ id: '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b', name: 'DeepSeek R1 Distill' }],
+      'amazon-bedrock': [{ id: 'deepseek.v3.2', name: 'DeepSeek V3.2' }],
+    },
+  })
+  const b = await bridge(llm)
+  try {
+    // A DeepSeek model leaves the list in every shape; a name that merely holds the letters stays.
+    assert.deepEqual(JSON.parse((await call(b.port)).text).data.map(model => model.id), ['openrouter/anthropic/claude-x', 'openrouter/notdeepseek-x', 'openrouter/foo/deepseekish'])
+    // An app that saved a DeepSeek route before this still gets its answer.
+    const res = await call(b.port, { method: 'POST', path: '/v1/chat/completions', body: chat() })
+    assert.equal(res.status, 200)
+    assert.equal(llm.calls.at(-1).provider, 'deepseek-official')
+  } finally { await b.close() }
+})
+
+test('a DeepSeek model is one whose own id has `deepseek` as a word, never a substring', () => {
+  // The listing passes a provider's bare model id, before its route is put in front: an
+  // aggregator's, and the shapes DSH's catalog has under other providers.
+  assert.equal(isDeepSeekModel('deepseek/deepseek-chat'), true)
+  assert.equal(isDeepSeekModel('DeepSeek/DeepSeek-V4'), true)
+  assert.equal(isDeepSeekModel('deepseek-ai/DeepSeek-V4-Flash'), true)
+  assert.equal(isDeepSeekModel('deepseek.v3.2'), true)
+  assert.equal(isDeepSeekModel('@cf/deepseek-ai/deepseek-r1-distill-qwen-32b'), true)
+  assert.equal(isDeepSeekModel('deepseek-v4-flash'), true)
+  // A name that only holds the word is not one.
+  assert.equal(isDeepSeekModel('notdeepseek-x'), false)
+  assert.equal(isDeepSeekModel('foo/deepseekish'), false)
+  assert.equal(isDeepSeekModel('openrouter/notdeepseek/model'), false)
+  assert.equal(isDeepSeekModel('anthropic/claude-x'), false)
 })
