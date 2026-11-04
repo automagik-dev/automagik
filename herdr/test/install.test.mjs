@@ -162,7 +162,7 @@ fi
   const checks = () => readFileSync(herdrLog, "utf8").split("\n").filter((l) => l.startsWith("check "));
   const mark = () => readFileSync(join(appHome, "automagik-herdr", "installed-by-install.sh"), "utf8");
   const mods = join(appHome, "mods"), state = join(appHome, "automagik-herdr");
-  /** Where a pack folder is: mods/<m>, or mods-disabled/<m> while it is off (am-quota ships off). */
+  /** Where a pack folder is: mods/<m>, or mods-disabled/<m> while it is off (am-automations and am-quota ship off). */
   const where = (m) => (existsSync(join(mods, m)) ? join(mods, m) : join(appHome, "mods-disabled", m));
   /** Every pack folder's release (its VERSION), by name, on or off. */
   const versions = () => Object.fromEntries(PACK_MODS.map((m) => [m, /\/\/ release (\S+)\n$/.exec(readFileSync(join(where(m), "main.js"), "utf8"))?.[1]]));
@@ -1233,23 +1233,25 @@ test("rollback, or --uninstall, then a reinstall: a mod's .state comes back from
   s.publish("9.9.0");
   assert.equal(s.run("--yes").code, 0);
   const off = join(s.appHome, "mods-disabled");
-  assert.ok(existsSync(join(off, "am-quota", "mod.json")), "am-quota ships off");
-  for (const m of ["am-quota", "am-tabs"]) {
+  for (const m of OFF_BY_DEFAULT) assert.ok(existsSync(join(off, m, "mod.json")), `${m} ships off`);
+  for (const m of [...OFF_BY_DEFAULT, "am-tabs"]) {
     mkdirSync(join(s.where(m), ".state"));
     writeFileSync(join(s.where(m), ".state", "cred"), `${m} secret\n`);
   }
   assert.equal(s.run("--uninstall").code, 0);
   assert.equal(existsSync(join(s.mods, "am-tabs")), false);
-  assert.equal(existsSync(join(off, "am-quota")), false, "the switched-off copy is kept too, not stranded");
-  assert.match(readFileSync(join(s.state, ".prev", ".pack"), "utf8"), /^off=am-quota$/m);
+  for (const m of OFF_BY_DEFAULT) assert.equal(existsSync(join(off, m)), false, `${m}: the switched-off copy is kept too, not stranded`);
+  assert.match(readFileSync(join(s.state, ".prev", ".pack"), "utf8"), new RegExp(`^off=${[...OFF_BY_DEFAULT].sort().join(",")}$`, "m"));
   const again = s.run("--yes");
   assert.equal(again.code, 0, again.err);
-  for (const m of ["am-quota", "am-tabs"]) assert.equal(readFileSync(join(s.where(m), ".state", "cred"), "utf8"), `${m} secret\n`, m);
-  assert.equal(existsSync(join(s.mods, "am-quota")), false, "it comes back off");
-  assert.match(again.out, /mods-disabled\/am-quota: it (stays off|was off when it was kept, so it stays off)/);
-  assert.match(again.out, /am-quota \(off; turn it on in the Mods panel\)/);
-  assert.doesNotMatch(again.out, /am-quota: it ships off/, "not a first install");
-  assert.ok(existsSync(join(off, "am-quota", "main.js")));
+  for (const m of [...OFF_BY_DEFAULT, "am-tabs"]) assert.equal(readFileSync(join(s.where(m), ".state", "cred"), "utf8"), `${m} secret\n`, m);
+  for (const m of OFF_BY_DEFAULT) {
+    assert.equal(existsSync(join(s.mods, m)), false, `${m} comes back off`);
+    assert.match(again.out, new RegExp(`mods-disabled/${m}: it (stays off|was off when it was kept, so it stays off)`));
+    assert.match(again.out, new RegExp(`${m} \\(off; turn it on in the Mods panel\\)`));
+    assert.doesNotMatch(again.out, new RegExp(`${m}: it ships off`), "not a first install");
+    assert.ok(existsSync(join(off, m, "main.js")));
+  }
 });
 
 test("--uninstall never glob-expands the record, and moves only backup/<name> paths it adopted", (t) => {

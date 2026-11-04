@@ -14,7 +14,7 @@ import {
   checkMods, markerOf, offDirOf, pickUpdate, repairInstall, setupHome, toCheck, prevSetOf, readMarker, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
   autoFileOf, autoStatus, lockOf, managedPack, olderSequence, overtaken, readAuto, takeLock, writeAuto,
 } from "../mods/am-sidebar/update.mjs";
-import { formatMarker, parseMarker } from "../mods/am-sidebar/release.js";
+import { formatMarker, OFF_BY_DEFAULT, parseMarker } from "../mods/am-sidebar/release.js";
 import { cmdUpdate } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { keys, pointerBytes, signatureOf } from "./pointer.mjs";
 
@@ -873,8 +873,8 @@ test("a pack mod switched off (mods-disabled/) is updated where it is and stays 
   }
 });
 
-test("am-quota ships off: a fresh install puts it in mods-disabled/; an installed copy keeps its state", async () => {
-  const WITH = ["am-sidebar", "am-tabs", "am-quota"];
+for (const mod of OFF_BY_DEFAULT) test(`${mod} ships off: a fresh install puts it in mods-disabled/; an installed copy keeps its state`, async () => {
+  const WITH = ["am-sidebar", "am-tabs", mod];
   const t = tarball("0.2.0", { mods: WITH });
   const homes = [];
   try {
@@ -884,50 +884,62 @@ test("am-quota ships off: a fresh install puts it in mods-disabled/; an installe
     const lines = [];
     const r = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: fresh.mods, log: (l) => lines.push(l) });
     const off = offDirOf(fresh.mods);
-    assert.equal(existsSync(join(fresh.mods, "am-quota")), false, "not on");
-    assert.equal(readFileSync(join(off, "am-quota", "main.js"), "utf8"), 'export const v = "0.2.0";\n');
+    assert.equal(existsSync(join(fresh.mods, mod)), false, "not on");
+    assert.equal(readFileSync(join(off, mod, "main.js"), "utf8"), 'export const v = "0.2.0";\n');
     assert.ok(existsSync(join(fresh.mods, "am-tabs", "main.js")), "the other mods are on");
-    assert.deepEqual(r.installedOff, ["am-quota"]);
+    assert.deepEqual(r.installedOff, [mod]);
     assert.deepEqual(readMarker(fresh.mods).mods.sort(), [...WITH].sort(), "the record owns it, so updates keep it off");
-    assert.ok(lines.includes("installed mods-disabled/am-quota: it ships off; turn it on in the Mods panel"));
+    assert.ok(lines.includes(`installed mods-disabled/${mod}: it ships off; turn it on in the Mods panel`));
     // ...and the next update keeps it off.
     const t3 = tarball("0.3.0", { mods: WITH });
     try {
       const again = await applyUpdate({ tgzPath: t3.path, version: "0.3.0", modsDir: fresh.mods });
-      assert.deepEqual(again.off, ["am-quota"]);
-      assert.equal(existsSync(join(fresh.mods, "am-quota")), false);
+      assert.deepEqual(again.off, [mod]);
+      assert.equal(existsSync(join(fresh.mods, mod)), false);
     } finally { rmSync(t3.src, { recursive: true, force: true }); }
 
     // An update from a release that did not ship it: arriving for the first time, it comes off.
     const older = appHome("0.1.0");
     homes.push(older.home);
     await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: older.mods });
-    assert.equal(existsSync(join(older.mods, "am-quota")), false);
-    assert.ok(existsSync(join(offDirOf(older.mods), "am-quota", "main.js")));
+    assert.equal(existsSync(join(older.mods, mod)), false);
+    assert.ok(existsSync(join(offDirOf(older.mods), mod, "main.js")));
+    // Rolled back to the release without it, then forward: it is still off, never turned on.
+    assert.equal(rollback({ modsDir: older.mods }).version, "0.1.0");
+    assert.equal(existsSync(join(older.mods, mod)), false);
+    assert.equal(rollback({ modsDir: older.mods }).version, "0.2.0");
+    assert.equal(existsSync(join(older.mods, mod)), false, "still off after rolling forward");
+    assert.ok(existsSync(join(offDirOf(older.mods), mod, "main.js")));
 
     // Installed and on (the record lists it, in mods/): updated in place, still on.
     const on = appHome("0.1.0", WITH);
     homes.push(on.home);
     const u = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: on.mods });
-    assert.equal(readFileSync(join(on.mods, "am-quota", "main.js"), "utf8"), 'export const v = "0.2.0";\n');
-    assert.equal(existsSync(join(offDirOf(on.mods), "am-quota")), false);
+    assert.equal(readFileSync(join(on.mods, mod, "main.js"), "utf8"), 'export const v = "0.2.0";\n');
+    assert.equal(existsSync(join(offDirOf(on.mods), mod)), false);
     assert.deepEqual(u.installedOff, []);
+    // Rollback and forward again: it stays on both ways, never moved to mods-disabled/.
+    assert.equal(rollback({ modsDir: on.mods }).version, "0.1.0");
+    assert.equal(readFileSync(join(on.mods, mod, "main.js"), "utf8"), 'export const v = "0.1.0";\n');
+    assert.equal(rollback({ modsDir: on.mods }).version, "0.2.0");
+    assert.equal(readFileSync(join(on.mods, mod, "main.js"), "utf8"), 'export const v = "0.2.0";\n');
+    assert.equal(existsSync(join(offDirOf(on.mods), mod)), false);
 
     // A repair of a missing one the record lists reinstalls it on, as it was.
-    rmSync(join(on.mods, "am-quota"), { recursive: true, force: true });
-    await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: on.mods, repair: ["am-quota"] });
-    assert.ok(existsSync(join(on.mods, "am-quota", "main.js")));
+    rmSync(join(on.mods, mod), { recursive: true, force: true });
+    await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: on.mods, repair: [mod] });
+    assert.ok(existsSync(join(on.mods, mod, "main.js")));
 
     // A folder already in mods-disabled/ that the record does not own is left alone.
     const theirs = appHome(null);
     homes.push(theirs.home);
-    mkdirSync(join(offDirOf(theirs.mods), "am-quota"), { recursive: true });
-    writeFileSync(join(offDirOf(theirs.mods), "am-quota", "main.js"), "// mine\n");
+    mkdirSync(join(offDirOf(theirs.mods), mod), { recursive: true });
+    writeFileSync(join(offDirOf(theirs.mods), mod, "main.js"), "// mine\n");
     const said = [];
     const l = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: theirs.mods, log: (x) => said.push(x) });
-    assert.equal(readFileSync(join(offDirOf(theirs.mods), "am-quota", "main.js"), "utf8"), "// mine\n");
-    assert.equal(l.mods.includes("am-quota"), false);
-    assert.ok(said.some((x) => /left alone: mods-disabled\/am-quota/.test(x)));
+    assert.equal(readFileSync(join(offDirOf(theirs.mods), mod, "main.js"), "utf8"), "// mine\n");
+    assert.equal(l.mods.includes(mod), false);
+    assert.ok(said.some((x) => x.includes(`left alone: mods-disabled/${mod}`)));
   } finally {
     for (const d of [t.src, ...homes]) rmSync(d, { recursive: true, force: true });
   }
