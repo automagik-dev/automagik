@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import {
-  BOT_LABEL, MAX_INSTRUCTIONS, CHARACTERS, COLOURS, projectKeyOf, projectOf, parseBots, checkBots, effectiveLead, newBotId, defaultLook,
+  BOT_LABEL, MAX_INSTRUCTIONS, CHARACTERS, COLOURS, projectKeyOf, projectOf, paneKeyOf, parseBots, checkBots, effectiveLead, newBotId, defaultLook,
   listedProjects, withListedProject, MAX_LISTED_PROJECTS,
 } from "../mods/am-sidebar/model.js";
 
@@ -479,4 +479,34 @@ test("schema: a gemini bot (retired agent) is read as antigravity with one warni
   assert.equal(raw.bots[1].agent, "gemini", "the file on disk is not rewritten by reading it");
   assert.equal(raw.bots[2].worker.agent, "gemini");
   assert.deepEqual(checkBots(file), []);
+});
+
+// automagik#227 (RFC 0014 Q16): a bot pane counts by project and id, its project from its folder.
+test("pane key (#227): a worktree is its main checkout's project, a clone its own", async (t) => {
+  const { root, main, tree } = await repo(t);
+  const clone = join(root, "proj-clone");
+  await run("git", ["clone", "-q", main, clone]);
+  assert.equal(await paneKeyOf(main, git, exists), main);
+  assert.equal(await paneKeyOf(tree, git, exists), main);
+  assert.equal(await paneKeyOf(join(main, "src", "deep"), git, exists), main);
+  assert.equal(await paneKeyOf(clone, git, exists), clone);
+});
+
+test("pane key (#227): a folder that names no project gives null; a bots.json above it, that folder", async (t) => {
+  const root = scratch(t);
+  const deep = join(root, "a", "b");
+  mkdirSync(deep, { recursive: true });
+  // Not in git, nothing above: no project (projectKeyOf would say the folder itself).
+  assert.equal(await projectKeyOf(deep, git, exists), deep);
+  assert.equal(await paneKeyOf(deep, git, exists), null);
+  // git missing or failing, a folder gone: the same.
+  assert.equal(await paneKeyOf(deep, noGit, exists), null);
+  assert.equal(await paneKeyOf(deep, missingGit, exists), null);
+  assert.equal(await paneKeyOf(join(root, "gone"), git, exists), null);
+  // A project outside git: the walk-up finds it.
+  mkdirSync(join(root, "a", ".herdr"));
+  writeFileSync(join(root, "a", ".herdr", "bots.json"), "{}");
+  assert.equal(await paneKeyOf(deep, noGit, exists), join(root, "a"));
+  // A machine that can't be asked still rejects (the caller reads that as no project).
+  await assert.rejects(paneKeyOf("/srv/x", unreachable, async () => false), /unreachable/);
 });

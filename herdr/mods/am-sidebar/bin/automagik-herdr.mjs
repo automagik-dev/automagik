@@ -606,9 +606,14 @@ const coreOfName = (machines, name) => { for (const [id, m] of machines ?? []) i
 /**
  * A bot's live binding for a project, as the view has it: on this computer, or on the linked
  * machine `project.machine` (its core) and in that project there, never a same-id bot elsewhere.
+ * On this computer too (automagik#227, RFC 0014 Q16: a clone carries the same ids): a binding
+ * counts for its own project; one with no project (an older row) counts by id alone.
  */
 function liveFor(view, botId, project) {
-  if (!project?.machine) return view.live.get(botId) ?? null;
+  if (!project?.machine) {
+    const l = view.live.get(botId);
+    return l && (l.binding.project == null || l.binding.project === project?.key) ? l : null;
+  }
   const l = view.liveAt.get(atKey(botId, coreOfName(view.machines, project.machine)));
   return l && l.binding.project === project.key ? l : null;
 }
@@ -1384,8 +1389,11 @@ async function cmdStart(opts, [ref]) {
   // One terminal plays a bot: the one the attach ledger names is reported, never a second
   // start (decided again under the ledger's lock, below, with hc run).
   const view = await attachView();
+  // By id alone, whatever the project (the fold binds a bot once per place): a clone's start
+  // names the checkout whose pane it is (automagik#227).
   const held = view.live.get(bot.id);
-  if (held) return opts.json ? { id: bot.id, running: held.binding.terminal } : `${bot.name} is already running in ${held.binding.terminal}.`;
+  const elsewhere = held?.binding.project && held.binding.project !== key ? `, for ${held.binding.project}` : "";
+  if (held) return opts.json ? { id: bot.id, running: held.binding.terminal } : `${bot.name} is already running in ${held.binding.terminal}${elsewhere}.`;
   const seat = await launchSeat(project, bot, { place: opts.space ? { space: opts.space, tab: opts.tab ?? null, from: null } : undefined });
   if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
   return opts.json ? seatJson(bot, seat) : seat.terminal;
