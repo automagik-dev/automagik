@@ -297,24 +297,47 @@ test("Attach with no bot keeps its message (the New bot line is the pick list's 
   assert.match(textOf(nodes.get("bot-form-body")), /No bots on this computer yet/);
 });
 
-// ---- #239: the list popups keep their content's height ----
+// ---- #239, #241: the list popups keep their content's height and paint a scrollbar ----
 
 // A popup is as tall as its content, its height only the most (Herdr's openOverlay). Live,
 // overflow_y_scrollbar's wrapper gave the body no height there, so the menu, pick and attach
-// popups drew only their title and Cancel; overflow_y_scroll keeps the items' height. The stub
-// lays nothing out, so this checks how the body is built, the part a stub can see.
+// popups drew only their title and Cancel; overflow_y_scroll keeps the items' height (#239).
+// The bar is placed beside the body instead (#241): a relative wrapper that shrinks to the
+// popup holds the scroll area, in flow, and a Scrollbar paired with it by name, the only
+// absolute element. The stub lays nothing out, so this checks how the body is built, the part
+// a stub can see; the look is checked live.
 const builds = (node) => node.calls.map(([name]) => name);
 for (const [mode, extra] of [["menu", { bot: OMP.id, name: OMP.name, terminal: "t3" }], ["pick", {}], ["attach", { terminal: "t1" }]]) {
-  test(`${mode} popup: the body scrolls without the scrollbar wrapper, so its items have a height (#239)`, async () => {
+  test(`${mode} popup: the body scrolls in flow with a bar paired by name, so its items have a height (#239, #241)`, async () => {
     state.spaces = [{ id: "s1", folder: project, machine: null }];
     seed([MAIN, OMP]);
     const { draw } = await open({ form: mode, planned: false, machine: null, live: null, ...extra });
-    draw();
-    const body = builds(nodes.get("bot-form-body"));
+    const tree = all(draw());
+    const area = nodes.get("bot-form-body");
+    assert.equal(area.kind, "div", "the scroll area, not the bar, carries the id");
+    const body = builds(area);
     assert.ok(body.includes("overflow_y_scroll"), "the body scrolls past the popup's height");
     assert.ok(!body.includes("overflow_y_scrollbar"), "no scrollbar wrapper: it collapses to 0 in a popup");
-    assert.ok(body.includes("min_h"), "it can still shrink to the popup's height");
-    assert.ok(textOf(nodes.get("bot-form-body")).length > 0, "items are drawn in the body");
+    assert.ok(body.includes("size_full"), "the area fills its wrapper");
+    assert.ok(!body.includes("absolute"), "the area stays in flow, so its items' height reaches the popup");
+    assert.ok(textOf(area).length > 0, "items are drawn in the body");
+
+    const bars = tree.filter((n) => n.kind.startsWith("scrollbar"));
+    assert.equal(bars.length, 1, "one bar");
+    const [bar] = bars;
+    assert.equal(bar.kind, "scrollbar-y", "a vertical bar");
+    assert.equal(bar.arg, "bot-form-body", "keyed to the scroll area");
+    assert.equal(bar.id, undefined, "the bar takes no id, so the name stays the area's");
+    assert.ok(builds(bar).includes("absolute") && builds(bar).includes("inset_0"), "the bar fills its wrapper");
+
+    const wrapper = tree.find((n) => n.kids.some((k) => k?.__node === area));
+    assert.ok(wrapper.kids.some((k) => k?.__node === bar), "the bar sits beside the area");
+    const wraps = builds(wrapper);
+    for (const call of ["relative", "flex_1", "min_h"]) assert.ok(wraps.includes(call), `the wrapper has ${call}`);
+    assert.ok(!wraps.includes("absolute"), "the wrapper stays in flow");
+    const form = nodes.get("bot-form");
+    assert.ok(form.kids.some((k) => k?.__node === wrapper), "the wrapper is the popup's body, between title and footer");
+    assert.equal(form.kids.length, 3, "title, body, footer");
   });
 }
 
