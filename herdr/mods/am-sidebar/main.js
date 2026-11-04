@@ -27,7 +27,7 @@ import { startBot, attachBot, botOfTerminal, modelTexts, sleepOf } from "./launc
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { workerClick, rowWorker, openWorkerTab } from "./workerTab.js";
-import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, argvToAsk, argvAfter, argvReader, spaceRowOrder, clickActionOf, heldTerminalOf, heldClickOf } from "./rows.js";
+import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, argvToAsk, argvAfter, argvReader, spaceRowOrder, clickActionOf, heldTerminalOf, heldClickOf, listedKeyOf } from "./rows.js";
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
@@ -255,7 +255,8 @@ export default class Spaces extends View {
     this.modelTexts = {};
     this.argvOf = new Map();
     // Each live bot pane's project key on this computer (automagik#227: by project and id), by
-    // address ({ cwd, created, key }), read after each bot discovery (readPaneKeys).
+    // address ({ cwd, created, key }), read after each bot discovery and when the bot panes
+    // change (readPaneKeys).
     this.paneKeys = new Map();
     // Workers whose tab is on its way (openWorker): a second click waits for it.
     this.opening = new Set();
@@ -438,7 +439,12 @@ export default class Spaces extends View {
   prepareBots() {
     const now = Date.now();
     const known = knownBots(this.bots);
-    const live = liveFrom(this.all, known, argvReader(this.argvOf), this.paneKeyReader());
+    this.keyOf = listedKeyOf(this.bots, this.paneKeyReader());
+    const live = liveFrom(this.all, known, argvReader(this.argvOf), this.keyOf);
+    // The bot panes as readPaneKeys asks for them: a new one, or one in another folder, is
+    // read on the next tick (botTick), not only after the next discovery.
+    this.paneSig = JSON.stringify(this.all.filter((k) => k.state === "live" && !String(k.address).includes("/") && known.has(k.labels?.[BOT_LABEL]))
+      .map((k) => [k.address, k.created_ms ?? null, paneFolder(k)]));
     this.botOf = new Map(this.all.filter((k) => known.has(k.labels?.[BOT_LABEL])).map((k) => [k.address, k.labels[BOT_LABEL]]));
     this.trees = buildTree({ projects: this.bots, live, terminals: this.all, now });
     this.wakeAt = nextWake(live, now);
@@ -486,6 +492,10 @@ export default class Spaces extends View {
   botTick(cx) {
     if (this.wakeAt !== null && Date.now() >= this.wakeAt) { this.wakeAt = null; cx.notify(); }
     if (this.petsWanted.size && !this.petsBusy) this.writePets(cx);
+    if (this.paneSig !== undefined && this.paneSig !== this.paneSigRead && !this.paneKeysBusy) {
+      this.paneSigRead = this.paneSig;
+      this.readPaneKeys(cx);
+    }
   }
 
   // A character picture is a file under the app home outside mods/ (a write inside a mod
@@ -649,10 +659,10 @@ export default class Spaces extends View {
     const project = { key: tree.key, machine: tree.machine };
     // Not counted live but holding a live terminal (no agent seen in front yet): its pane, or
     // a peek, rather than nothing; read again at click time (panes() too), nothing if it is gone.
-    const held = live || planned ? null : heldTerminalOf(b.id, this.all, [], project, this.paneKeyReader());
+    const held = live || planned ? null : heldTerminalOf(b.id, this.all, [], project, this.keyOf);
     const onClick = live
       ? (cx) => this.openWorker(r, cx)
-      : held ? () => { const a = heldClickOf(b.id, terminals(), panes(), project, this.paneKeyReader()); if (a) run(a.command, a.args); }
+      : held ? () => { const a = heldClickOf(b.id, terminals(), panes(), project, this.keyOf); if (a) run(a.command, a.args); }
         : r.foldable ? (cx) => this.toggle(r.id, r.open, cx) : null;
     // live: its own pane, or the terminal it holds before an agent shows (Focus goes where the
     // row's click goes; Detach); worker: what the row's own click opens (Focus, as openWorker);
@@ -894,8 +904,9 @@ export default class Spaces extends View {
     });
   }
 
-  // rows.js liveFrom's `keyOf`: a pane's project key as readPaneKeys found it for the same
-  // pane (created_ms) in the same folder, else null (counts for every project: paneCounts).
+  // The project key of a pane's folder as readPaneKeys found it for the same pane (created_ms)
+  // in the same folder, else null (counts for every project: paneCounts). rows.js listedKeyOf
+  // keeps it only for a listed project defining the pane's bot (prepareBots).
   paneKeyReader() {
     return (t) => {
       const e = this.paneKeys.get(t?.address);
@@ -905,8 +916,9 @@ export default class Spaces extends View {
 
   // automagik#227: the project key of each live pane on this computer labelled with a known bot
   // (bots.js paneKeyOfFolder: git's main checkout, cached a minute), asked after each discovery,
-  // never while drawing; a pane gone is dropped. A remote pane, or one with no folder, is never
-  // asked: it has no key, so it counts as before. Redraws on a change only.
+  // and when the bot panes change (botTick), never while drawing; a pane gone is dropped. A
+  // remote pane, or one with no folder, is never asked: it has no key, so it counts as before.
+  // Redraws on a change only.
   readPaneKeys(cx) {
     if (this.paneKeysBusy) return;
     const known = knownBots(this.bots);

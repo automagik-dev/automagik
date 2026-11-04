@@ -369,6 +369,11 @@ test("ls and show (#227): the main checkout's pane is not the clone's; a row wit
   const show = s.cli(["show", "Captain", "--json"], { cwd: clone }).json();
   assert.deepEqual([show.terminal, show.status], [null, "not running"]);
   assert.match(s.cli(["show", "Captain"], { cwd: s.project }).out, /t5/);
+  // Start in the clone still refuses a second pane (the fold binds a bot once here) and says whose it is.
+  const start = s.cli(["start", "Captain"], { cwd: clone });
+  assert.equal(start.code, 0, start.err);
+  assert.equal(start.out.trim(), `Captain is already running in t5, for ${s.project}.`);
+  assert.equal(s.cli(["start", "Captain"], { cwd: s.project }).out.trim(), "Captain is already running in t5.");
   // An older row with no project: the pane counts for both checkouts, as before.
   writeFileSync(attachFile(s.app), `${JSON.stringify({ ...rows().at(-1), project: null })}\n`);
   assert.deepEqual([captain(clone).terminal, captain(clone).status], ["t5", "working"]);

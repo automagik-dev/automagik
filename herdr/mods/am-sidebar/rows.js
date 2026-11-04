@@ -96,6 +96,27 @@ export function paneCounts(t, project, keyOf = () => null) {
 }
 
 /**
+ * liveFrom's `keyOf` from `folderKeyOf(row)` (the project key of the pane's folder): that key
+ * only when one of `projects` (discoverProjects' entries) with that key, on the pane's
+ * machine, defines the pane's bot; else null, paneCounts' fallback. So a bot pane whose folder
+ * is another repository (a restart --cwd there, a clone the sidebar doesn't list) still
+ * counts as before, never shown nowhere.
+ */
+export function listedKeyOf(projects, folderKeyOf = () => null) {
+  const defines = new Map(); // projectId -> its bot ids
+  for (const p of projects ?? []) {
+    const pid = projectId(p);
+    if (!defines.has(pid)) defines.set(pid, new Set());
+    for (const b of p.file?.bots ?? []) defines.get(pid).add(b.id);
+  }
+  return (t) => {
+    const key = folderKeyOf(t);
+    if (typeof key !== "string" || !key) return null;
+    return defines.get(projectId({ machine: machineOfAddress(addressOf(t)), key }))?.has(t?.labels?.[BOT_LABEL]) ? key : null;
+  };
+}
+
+/**
  * A bot's pose from herdr-core's status (Decision 7): working, blocked -> needs you, error ->
  * failed, done, idle -> idle or asleep once its status is ASLEEP_MS old. A live bot with no
  * status yet is idle with no asleep timer; a stopped or planned bot (no live pane) is asleep.
