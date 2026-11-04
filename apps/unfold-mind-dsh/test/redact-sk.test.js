@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
 import { loadCatalog } from './support/catalog.js'
-import { EventWindow } from './support/window.js'
+import { EventWindow, redactText as windowRedactText } from './support/window.js'
 import * as plugin from '../index.js'
 import { loadDefinitions } from '../src/definitions.js'
 import { MindStream } from '../src/mind.js'
@@ -420,94 +420,87 @@ const RAW_CALLERS = [
   ['agent_delta', (text) => sentence({ lane: 'agentd', kind: 'agent_delta', fields: { response_id: 'r1', text } }).sentence],
 ]
 
-// A YAML block scalar (`password: |`, `apiKey: >`, `db_password: |-`, then the value on the
-// indented lines under it) is redacted by rules that anchor on its line ends. quote() collapses
-// whitespace for the sentence, so it redacts the raw field first: collapsed, the name rule would
-// take the `|` or `>` as the value and quote the real value line in clear. Every block runs with
-// LF, CRLF and lone CR line ends (#347), and is redacted exactly as with LF: the raw text the same
-// but for its own line ends, the sentence the same.
-test('a YAML block-scalar secret never reaches a quoted sentence, from any raw-field caller', () => {
-  // Plain lowercase words, built at run time: the value only has to be findable, not key-shaped.
-  const SECRET = ['velvet', 'lantern', 'harbor'].join('')
-  const MORE = ['orchard', 'meadow', 'pebble'].join('')
-  // A failure prints its text with every 5-char fragment of either value masked.
-  const masked = (t) => [SECRET, MORE].flatMap((v) => [v, ...fragmentsOf(v)]).reduce((m, f) => m.split(f).join('[secret]'), t)
-  const blocks = [
+// A YAML block scalar (`password: |`, `apiKey: >`, `db_password: |-`, then the value on the lines
+// under it) is hidden whole by a line scanner (#346, #347). quote() collapses whitespace for the
+// sentence, so it redacts the raw field first: collapsed, the name rule would take the `|` or `>`
+// as the value and quote the real value line in clear. The key line's own line end (\n, \r\n or a
+// lone \r, each one line end; an LF or CR key's \r\n too) ends a block line; any other \r or \n
+// is a stray inside the value. A line is value when it is blank, more indented than its key, or
+// has a stray before its first other character (a partial indent then \r or \n); the first other
+// line ends the block and is shown. One table, every repro of the review rounds, each row through
+// the raw text (mind's redaction, the served field, the window's copy) and every raw-field caller
+// (its sentence and its served form).
+const SECRET = ['velvet', 'lantern', 'harbor'].join('') // plain words built at run time: findable, not key-shaped
+const MORE = ['orchard', 'meadow', 'pebble'].join('')
+// A failure prints its text with every 5-char fragment of either value masked.
+const masked = (t) => [SECRET, MORE].flatMap((v) => [v, ...fragmentsOf(v)]).reduce((m, f) => m.split(f).join('[secret]'), t)
+const EOLS = [['LF', '\n'], ['CRLF', '\r\n'], ['CR', '\r']]
+// Each key line end with a stray line end it does not use.
+const STRAYS = [['LF', '\n', 'CR', '\r'], ['CRLF', '\r\n', 'CR', '\r'], ['CRLF', '\r\n', 'LF', '\n'], ['CR', '\r', 'LF', '\n']]
+// A row: its raw text; `after`, the text after the block, shown; `exact`, the whole redaction; `lf`,
+// the same text with LF line ends, whose redaction and sentences it must equal but for them.
+const YAML_ROWS = [
+  // Rounds 1-2: a block with LF, CRLF or lone CR line ends is the LF block, its own line ends kept.
+  ...[
     ['password: |', (n) => `config:${n}  password: |${n}    ${SECRET}${n}  next: 1`],
     ['apiKey: >', (n) => `creds:${n}  apiKey: >${n}    ${SECRET}${n}    ${MORE}${n}`],
     ['db_password: |-', (n) => `db_password: |-${n}  ${SECRET}${n}  ${MORE}`],
-  ]
-  const EOLS = [['LF', '\n'], ['CRLF', '\r\n'], ['CR', '\r']]
-  const callers = RAW_CALLERS
-  for (const [label, block] of blocks) {
-    for (const [eol, n] of EOLS) {
-      const raw = block(n)
-      const what = `${label}, ${eol}`
-      // The raw text, as a string and as a served field.
-      for (const [form, out] of [['redactText', redactText(raw)], ['redact', redact({ text: raw }).text]]) {
-        assert.ok(out.includes(REDACTED), `${what}: ${form} redacts the block`)
-        for (const value of [SECRET, MORE]) assert.equal(fragmentIn(value, out), null, `${what}: ${form} ${JSON.stringify(masked(out))}`)
-        assert.equal(out, redactText(block('\n')).split('\n').join(n), `${what}: ${form} is the LF redaction`)
-      }
-      for (const [name, said] of callers) {
-        for (const field of [raw, `${'w'.repeat(30)} ${raw}`]) {
-          const out = said(field)
-          const served = redact({ sentence: out }).sentence
-          for (const value of [SECRET, MORE]) {
-            assert.equal(fragmentIn(value, out), null, `${name}, ${what}: sentence ${JSON.stringify(masked(out))}`)
-            assert.equal(fragmentIn(value, served), null, `${name}, ${what}: served ${JSON.stringify(masked(served))}`)
-          }
-          assert.equal(out, said(field.split(n).join('\n')), `${name}, ${what}: the LF sentence`)
-        }
-      }
-    }
-  }
-})
+  ].flatMap(([label, block]) => EOLS.map(([eol, n]) => ({ name: `${label}, a ${eol} block`, raw: block(n), lf: block('\n'), n }))),
+  // Round 3: a lone CR inside an LF block is value (the reviewer's repro).
+  { name: 'a lone CR inside an LF block', raw: `password: |\n  ${SECRET}\r${MORE}\nnext: 1`, after: '\nnext: 1' },
+  // Round 4: each key line end with each stray it does not use, mid-line, at a line start, on a
+  // blank line; the unindented line after the block is shown.
+  ...STRAYS.flatMap(([keyEol, n, strayName, s]) =>
+    [['password: |', ''], ['apiKey: >', '  '], ['db_password: |-', '']].flatMap(([key, i]) =>
+      [
+        ['mid-line', `${i}${key}${n}${i}  ${SECRET}${s}${MORE}${n}${i}next: shown`],
+        ['at a line start', `${i}${key}${n}${i}  ${SECRET}${n}${s}${i}  ${MORE}${n}${i}next: shown`],
+        ['on a blank line', `${i}${key}${n}${i}  ${SECRET}${n}${s}${n}${i}  ${MORE}${n}${i}next: shown`],
+      ].map(([where, raw]) => ({ name: `${key}, ${keyEol} key, a stray ${strayName} ${where}`, raw, after: `${n}${i}next: shown` })),
+    ),
+  ),
+  // Round 4: the key's own line end comes first (an LF or CR key's \r\n): the line has ended.
+  ...[['LF', '\n'], ['CR', '\r']].map(([keyEol, n]) => ({ name: `${keyEol} key, then \\r\\n`, raw: `password: |${n}  ${SECRET}\r\nnext: shown`, after: 'next: shown' })),
+  // Round 5: a stray after part of a nested key's indent (the reviewer's repros, then 5 indents
+  // around a stray for each of the 4 key/stray pairs).
+  { name: 'nested key, a space then a stray CR then 3 spaces', raw: `  password: |\n \r   ${SECRET}\nnext: 1`, after: '\nnext: 1' },
+  { name: 'nested key, its indent then a stray CR then 3 spaces, at the end', raw: `  password: |\n  \r   ${SECRET}` },
+  ...STRAYS.flatMap(([keyEol, n, strayName, s]) =>
+    [[' ', '   '], ['  ', '   '], [' ', ''], [' ', ' '], ['\t', '  ']].map(([pre, post]) => ({
+      name: `nested key, ${keyEol} key, ${JSON.stringify(pre)} then a stray ${strayName} then ${JSON.stringify(post)}`,
+      raw: `  password: |${n}${pre}${s}${post}${SECRET}${n}  next: 1`,
+      after: `${n}  next: 1`,
+    })),
+  ),
+  // The value ends at a less-indented key, its blank lines with it.
+  ...EOLS.map(([eol, n]) => ({
+    name: `the value ends at a less-indented key, ${eol}`,
+    raw: `config:${n}  password: |${n}    ${SECRET}${n}${n}    ${MORE}${n}next: shown`,
+    exact: `config:${n}  password: |${n}    ${REDACTED}${n}next: shown`,
+  })),
+]
 
-// Only the key line's own line end ends a line of its block: any other \r or \n inside the block is
-// part of the value (#346). Each key line end runs with the stray characters it does not use, in
-// the middle of a value line, at the start of one and on an otherwise blank line, and the value
-// after the stray is hidden. Where the key's own line end comes first (an LF key's \r\n, a CR
-// key's \r\n), the line has ended: the unindented text after it is shown, like any line after the
-// block.
-test('a stray line end inside a YAML block is part of the value, from the raw text to every caller', () => {
-  const SECRET = ['velvet', 'lantern', 'harbor'].join('')
-  const MORE = ['orchard', 'meadow', 'pebble'].join('')
-  const masked = (t) => [SECRET, MORE].flatMap((v) => [v, ...fragmentsOf(v)]).reduce((m, f) => m.split(f).join('[secret]'), t)
-  const STRAYS = [['LF', '\n', 'CR', '\r'], ['CRLF', '\r\n', 'CR', '\r'], ['CRLF', '\r\n', 'LF', '\n'], ['CR', '\r', 'LF', '\n']]
-  const keys = [['password: |', 'password: |', ''], ['apiKey: >', 'apiKey: >', '  '], ['db_password: |-', 'db_password: |-', '']]
-  const shapes = [
-    ['mid-line', (n, s, key, i) => `${i}${key}${n}${i}  ${SECRET}${s}${MORE}${n}${i}next: shown`],
-    ['at a line start', (n, s, key, i) => `${i}${key}${n}${i}  ${SECRET}${n}${s}${i}  ${MORE}${n}${i}next: shown`],
-    ['on a blank line', (n, s, key, i) => `${i}${key}${n}${i}  ${SECRET}${n}${s}${n}${i}  ${MORE}${n}${i}next: shown`],
-  ]
-  for (const [keyEol, n, strayName, s] of STRAYS) {
-    for (const [label, key, indent] of keys) {
-      for (const [where, shape] of shapes) {
-        const raw = shape(n, s, key, indent)
-        const what = `${label}, ${keyEol} key, a stray ${strayName} ${where}`
-        for (const [form, out] of [['redactText', redactText(raw)], ['redact', redact({ text: raw }).text]]) {
-          assert.ok(out.includes(REDACTED), `${what}: ${form} redacts the block`)
-          for (const value of [SECRET, MORE]) assert.equal(fragmentIn(value, out), null, `${what}: ${form} ${JSON.stringify(masked(out))}`)
-          assert.ok(out.endsWith(`${n}${indent}next: shown`), `${what}: ${form} shows the line after the block ${JSON.stringify(masked(out))}`)
+for (const row of YAML_ROWS) {
+  test(`YAML block: ${row.name}`, () => {
+    const { raw, after, exact, lf, n } = row
+    for (const [form, rt] of [['redactText', redactText], ['redact', (t) => redact({ text: t }).text], ['window', windowRedactText]]) {
+      const out = rt(raw)
+      assert.ok(out.includes(REDACTED), `${form} redacts the block ${JSON.stringify(masked(out))}`)
+      for (const value of [SECRET, MORE]) assert.equal(fragmentIn(value, out), null, `${form} ${JSON.stringify(masked(out))}`)
+      if (after !== undefined) assert.ok(out.endsWith(after), `${form} shows the line after the block ${JSON.stringify(masked(out))}`)
+      if (exact !== undefined) assert.equal(out, exact, `${form} ${JSON.stringify(masked(out))}`)
+      if (lf !== undefined) assert.equal(out, rt(lf).split('\n').join(n), `${form} is the LF redaction ${JSON.stringify(masked(out))}`)
+    }
+    for (const [name, said] of RAW_CALLERS) {
+      for (const field of [raw, `${'w'.repeat(30)} ${raw}`]) {
+        const out = said(field)
+        const served = redact({ sentence: out }).sentence
+        for (const value of [SECRET, MORE]) {
+          assert.equal(fragmentIn(value, out), null, `${name}: sentence ${JSON.stringify(masked(out))}`)
+          assert.equal(fragmentIn(value, served), null, `${name}: served ${JSON.stringify(masked(served))}`)
         }
-        for (const [name, said] of RAW_CALLERS) {
-          for (const field of [raw, `${'w'.repeat(30)} ${raw}`]) {
-            const out = said(field)
-            const served = redact({ sentence: out }).sentence
-            for (const value of [SECRET, MORE]) {
-              assert.equal(fragmentIn(value, out), null, `${name}, ${what}: sentence ${JSON.stringify(masked(out))}`)
-              assert.equal(fragmentIn(value, served), null, `${name}, ${what}: served ${JSON.stringify(masked(served))}`)
-            }
-          }
-        }
+        if (lf !== undefined) assert.equal(out, said(field.split(n).join('\n')), `${name}: the LF sentence`)
       }
     }
-  }
-  // The key's own line end before the text: the value is hidden, the unindented line after it shown.
-  for (const [keyEol, n] of [['LF', '\n'], ['CR', '\r']]) {
-    const out = redactText(`password: |${n}  ${SECRET}\r\nnext: shown`)
-    assert.equal(fragmentIn(SECRET, out), null, `${keyEol} key, then \\r\\n: ${JSON.stringify(masked(out))}`)
-    assert.ok(out.endsWith('next: shown'), `${keyEol} key, then \\r\\n: the line after it is shown ${JSON.stringify(masked(out))}`)
-  }
-})
+  })
+}

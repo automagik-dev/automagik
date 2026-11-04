@@ -43,17 +43,22 @@ const BLOCKS: [string, string, string[]][] = [
   ['const SECRET_TEXT = [', 'unfold-mind-dsh/src/redact.js', ['unfold-events-dsh/src/client/redact.js', 'unfold-events-dsh/src/window.js', 'unfold-settings-dsh/src/redact.js']],
   ['const SECRET_VALUES = [', 'unfold-mind-dsh/src/redact.js', ['unfold-events-dsh/src/client/redact.js']],
   ['const QUOTED_SECRET = [', 'unfold-events-dsh/src/window.js', ['unfold-mind-dsh/src/mind.js']],
-  ['const YAML_SECRET = [', 'unfold-events-dsh/src/window.js', ['unfold-mind-dsh/src/mind.js']],
+  ['const YAML_KEY = [', 'unfold-mind-dsh/src/redact.js', ['unfold-events-dsh/src/client/redact.js', 'unfold-events-dsh/src/window.js', 'unfold-settings-dsh/src/redact.js', 'unfold-mind-dsh/src/mind.js']],
+  ['function yamlBlockEnd(', 'unfold-mind-dsh/src/redact.js', ['unfold-events-dsh/src/client/redact.js', 'unfold-events-dsh/src/window.js', 'unfold-settings-dsh/src/redact.js', 'unfold-mind-dsh/src/mind.js']],
+  ['function redactYamlBlocks(', 'unfold-mind-dsh/src/redact.js', ['unfold-events-dsh/src/client/redact.js', 'unfold-events-dsh/src/window.js', 'unfold-settings-dsh/src/redact.js']],
   ['const ESCAPED_SECRET = [', 'unfold-events-dsh/src/window.js', ['unfold-mind-dsh/src/mind.js']],
   ['const ESCAPED_END =', 'unfold-events-dsh/src/window.js', ['unfold-mind-dsh/src/mind.js']],
 ];
 
-/** The block `declaration` opens in `file`: one line, or through the `]` that closes its list. */
+/**
+ * The block `declaration` opens in `file`: one line, through the `]` that closes its list, or a
+ * function through its closing `}`.
+ */
 function block(file: string, declaration: string): string {
   const lines = readFileSync(join(APPS, file), 'utf8').split('\n');
   const start = lines.findIndex((line) => line.startsWith(declaration));
   if (start < 0) return `${declaration} is not in ${file}`;
-  const end = declaration.endsWith('[') ? lines.indexOf(']', start) : start;
+  const end = declaration.endsWith('[') ? lines.indexOf(']', start) : declaration.startsWith('function ') ? lines.indexOf('}', start) : start;
   return lines.slice(start, end + 1).join('\n');
 }
 

@@ -28,14 +28,11 @@ const SECRET_TEXT = [
   // streamed `KEY="…` is hidden until its quote arrives). The `=` is found first and the name
   // looked for behind it, so a long word of names is one pass, with or without a value after it.
   [/\b([A-Z0-9_]+)=(?<=(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=)("(?:[^"\\]|\\[\s\S]|\\$)*(?:"|$)|'(?:[^'\\]|\\[\s\S]|\\$)*(?:'|$)|`(?:[^`\\]|\\[\s\S]|\\$)*(?:`|$)|\S+)/g, (_, name) => `${name}=${REDACTED}`, /=/],
-  // A YAML block scalar under a name (`password: |` or `>`, then the lines indented under it) is
-  // hidden whole, its key line kept, text before the name on that line too. These run first, so
-  // the name rules leave its `|` or `>` alone. The indent is taken whole (a lookahead and its
-  // backreference), so a long one is one pass. The key line's own line end (\n, \r\n or a lone \r)
-  // is the only one that ends a block line: any other \r or \n in the block is part of the value
-  // (a stray \r in an LF block hides what follows it), and the redacted line keeps that line end.
-  [/(^|\r\n|\r(?!\n)|\n)(?=[^\r\n]*:[ \t]*[>|][-+0-9]*[ \t]*(?:[\r\n]|$))(?=([ \t]*))\2([^\r\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))([ \t]*:[ \t]*[>|][-+0-9]*[ \t]*)(?=[\r\n]|$)((?:(?=\r\n)(?:\r\n(?:(?:\n|\r(?!\n))*\2[ \t]+[^\r]*(?:\r(?!\n)[^\r]*)*|(?:[ \t\n]|\r(?!\n))*(?=\r\n|$)))*|(?=\r(?!\n))(?:\r(?:\n*\2[ \t]+[^\r]*|[ \t\n]*(?=\r|$)))*|(?=\n)(?:\n(?:\r*\2[ \t]+[^\n]*|[ \t\r]*(?=\n|$)))*)?)/gi, (_, nl, indent, before, name, sep, block) => `${nl}${indent}${before}${name}${sep}${/\S/.test(block) ? `${block.match(/^(?:\r\n?|\n)/)[0]}${indent}  ${REDACTED}` : block}`, /:[ \t]*[>|]/],
-  [/(^|\r\n|\r(?!\n)|\n)(?=[^\r\n]*:[ \t]*[>|][-+0-9]*[ \t]*(?:[\r\n]|$))(?=([ \t]*))\2([^\r\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))([ \t]*:[ \t]*[>|][-+0-9]*[ \t]*)(?=[\r\n]|$)((?:(?=\r\n)(?:\r\n(?:(?:\n|\r(?!\n))*\2[ \t]+[^\r]*(?:\r(?!\n)[^\r]*)*|(?:[ \t\n]|\r(?!\n))*(?=\r\n|$)))*|(?=\r(?!\n))(?:\r(?:\n*\2[ \t]+[^\r]*|[ \t\n]*(?=\r|$)))*|(?=\n)(?:\n(?:\r*\2[ \t]+[^\n]*|[ \t\r]*(?=\n|$)))*)?)/g, (_, nl, indent, before, name, sep, block) => `${nl}${indent}${before}${name}${sep}${/\S/.test(block) ? `${block.match(/^(?:\r\n?|\n)/)[0]}${indent}  ${REDACTED}` : block}`, /:[ \t]*[>|]/],
+  // A YAML block scalar under a name (`password: |` or `>`, then the lines under it) is hidden
+  // whole, its key line kept, text before the name on that line too: YAML_KEY finds its key line
+  // and yamlBlockEnd where the block ends. It runs before the name rules, so they leave its `|`
+  // or `>` alone.
+  [redactYamlBlocks, null, /:[ \t]*[>|]/],
   // `name: value` / `name=value`, in JSON too. A quoted value ("…", '…' or `…`; spaces and escapes
   // included) runs to its unescaped closing quote, or to the end while open. After a name, an
   // authorization scheme in any case (`authorization: bearer x`) keeps its word and hides what
@@ -67,9 +64,61 @@ const SECRET_TEXT = [
   [/(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt]))sk-[A-Za-z0-9_-]+$/, () => REDACTED],
 ]
 
+// A YAML key line under a credential name: from the line end before it (group 1), its indent (2),
+// the text before the name on that line (3), the name (4) and the `:` and `|` or `>` after it (5),
+// up to its own line end. The indent is taken whole (a lookahead and its backreference), so a
+// long one is one pass.
+const YAML_KEY = [
+  /(^|\r\n|\r(?!\n)|\n)(?=[^\r\n]*:[ \t]*[>|][-+0-9]*[ \t]*(?:[\r\n]|$))(?=([ \t]*))\2([^\r\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))([ \t]*:[ \t]*[>|][-+0-9]*[ \t]*)(?=[\r\n]|$)/gi,
+  /(^|\r\n|\r(?!\n)|\n)(?=[^\r\n]*:[ \t]*[>|][-+0-9]*[ \t]*(?:[\r\n]|$))(?=([ \t]*))\2([^\r\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))([ \t]*:[ \t]*[>|][-+0-9]*[ \t]*)(?=[\r\n]|$)/g,
+]
+
+/**
+ * Where the block under a YAML key line ends: `at` is the key line's own line end, `indent` its
+ * indent. A line scanner. The key line's line end (\n, \r\n or a lone \r, each one line end; an
+ * LF or CR key's \r\n too) ends a block line, and any other \r or \n is a stray inside the value.
+ * A line is value when it is blank, more indented than its key, or has a stray before its first
+ * other character (a partial indent then \r or \n is never the line after the block). The block
+ * ends before the line end of the first other line, the less-indented line after it, shown.
+ */
+function yamlBlockEnd(s, at, indent) {
+  const eol = s.startsWith('\r\n', at) ? '\r\n' : s.charAt(at)
+  let end = at
+  while (eol && s.startsWith(eol, end)) {
+    let from = end + eol.length
+    if (eol === '\r' && s[from] === '\n') from++
+    let next = s.indexOf(eol, from)
+    if (next < 0) next = s.length
+    const lead = /^[ \t\r\n]*/.exec(s.slice(from, next))[0]
+    if (from + lead.length < next && !/[\r\n]/.test(lead) && !(lead.startsWith(indent) && lead.length > indent.length)) break
+    end = next
+  }
+  return end
+}
+
+// The YAML rule of SECRET_TEXT: a block with more than whitespace becomes one line under its key,
+// the key line's own line end and indent then `  [redacted]`.
+function redactYamlBlocks(s) {
+  let out = s
+  for (const re of YAML_KEY) {
+    let done = ''
+    let from = 0
+    re.lastIndex = 0
+    for (let m = re.exec(out); m; m = re.exec(out)) {
+      const at = m.index + m[0].length
+      const end = yamlBlockEnd(out, at, m[2])
+      const block = out.slice(at, end)
+      done += `${out.slice(from, at)}${/\S/.test(block) ? `${block.match(/^(?:\r\n?|\n)/)[0]}${m[2]}  ${REDACTED}` : block}`
+      from = re.lastIndex = end
+    }
+    out = `${done}${out.slice(from)}`
+  }
+  return out
+}
+
 export function redactText(s) {
   let out = s
-  for (const [re, fn, gate] of SECRET_TEXT) if (!gate || gate.test(out)) out = out.replace(re, fn)
+  for (const [re, fn, gate] of SECRET_TEXT) if (!gate || gate.test(out)) out = typeof re === 'function' ? re(out) : out.replace(re, fn)
   return out
 }
 
