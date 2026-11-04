@@ -192,9 +192,11 @@ export const servesBridge = (command) => /(^|[\s/])bridge\.mjs\s+serve(\s|$)/.te
  *   or one too busy to accept), so the pid decides. Gone, or `self` (a serve given the pid an
  *   earlier bridge had): none runs. Alive: its start time must be the one the bridge recorded in
  *   status.json (`pidStart`); a status.json from before that field goes by the command line.
- *   Either one unreadable counts as the bridge, as before this check. Otherwise it is not.
- * Resolves to {running, pid, stale}: `pid` is the one that may be signalled (null when no pid is
- * known to be the bridge's); `stale` when status.json names a pid that is not a running bridge.
+ *   Either one unreadable still counts as running, as before this check (never a second bridge),
+ *   but that pid is not given to be signalled. Otherwise it is not the bridge.
+ * Resolves to {running, pid, stale}: `pid` is the one that may be signalled, only one the ping
+ * gave or the start time or command line verified, else null; `stale` when status.json names a
+ * pid that is not a running bridge.
  */
 export async function bridgeState({ dir, self = null, alive = defaultAlive, started = startedAt, command = commandOf, timeout = PING_TIMEOUT }) {
   const status = readJson(join(dir, STATUS), {})
@@ -210,17 +212,20 @@ export async function bridgeState({ dir, self = null, alive = defaultAlive, star
     const line = command(named)
     return line === null ? null : servesBridge(line)
   }
+  // Only a pid verified as the bridge's may be signalled; an unreadable check (null) is not.
+  const verified = () => (ours() === true ? named : null)
   const sock = join(dir, SOCKET)
   const socketId = fileId(sock)
   let answer
   try { answer = await ask(sock, { ping: true }, { timeout }) } catch {
     // Something listens on the bridge's socket but did not answer in time: a busy bridge.
-    return { running: true, pid: ours() === false ? null : named, stale: false }
+    return { running: true, pid: verified(), stale: false }
   }
-  if (answer) return { running: true, pid: Number.isInteger(answer.pid) && answer.pid > 0 ? answer.pid : ours() === false ? null : named, stale: false }
+  if (answer) return { running: true, pid: Number.isInteger(answer.pid) && answer.pid > 0 ? answer.pid : verified(), stale: false }
+  const own = ours()
   // Nothing took the ping and the pid is not the bridge: bridge.sock, if any, is a dead bridge's.
-  if (ours() === false) return { running: false, pid: null, stale: true, stalePid: named, socketId }
-  return { running: true, pid: named, stale: false }
+  if (own === false) return { running: false, pid: null, stale: true, stalePid: named, socketId }
+  return { running: true, pid: own === true ? named : null, stale: false }
 }
 
 /**

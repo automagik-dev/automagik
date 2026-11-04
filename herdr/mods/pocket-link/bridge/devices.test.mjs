@@ -346,10 +346,10 @@ test('status.running: a genuine bridge is found by its ping, by its start time, 
   running(dir)
   refusing(join(dir, SOCKET))
   assert.deepEqual(await bridgeState({ dir }), { running: true, pid: process.pid, stale: false })
-  // ps can't say: counted as the bridge, as before the check.
+  // ps can't say: running, as before the check, but no pid to signal.
   dir = tmp()
   reused(dir)
-  assert.equal((await bridgeState({ dir, started: () => null })).running, true)
+  assert.deepEqual(await bridgeState({ dir, started: () => null }), { running: true, pid: null, stale: false })
   // No status.json, or a pid that is gone: none.
   dir = tmp()
   assert.deepEqual(await bridgeState({ dir }), { running: false, pid: null, stale: false })
@@ -541,5 +541,46 @@ test('on exit a bridge keeps a later socket given its own socket\'s inode number
     assert.deepEqual(await ask(sock, { ping: true }), { ok: true, pid: process.pid })
     unlinkOwn(server, sock)
     assert.equal(existsSync(sock), false, 'its own socket goes')
+  } finally { server.close() }
+})
+
+test('a start time or command line that can\'t be read: running, but its pid is never signalled', async () => {
+  // status.json with a start time ps can't read now, and one without the field whose command line can't be read.
+  const unreadable = [
+    { pidStart: startedAt(process.pid), options: { started: () => null } },
+    { pidStart: null, options: { command: () => null } },
+  ]
+  for (const { pidStart, options } of unreadable) {
+    for (const socket of ['none', 'refusing', 'quiet']) {
+      const dir = tmp()
+      store(join(dir, FILE)).add(A); store(join(dir, FILE)).add(B)
+      reused(dir, pidStart)
+      let server = null
+      if (socket === 'refusing') refusing(join(dir, SOCKET))
+      if (socket === 'quiet') {
+        server = createServer(() => {})
+        await new Promise((resolve) => server.listen(join(dir, SOCKET), resolve))
+      }
+      const label = `pidStart ${pidStart ? 'unreadable' : 'absent, command unreadable'}, ${socket} socket`
+      try {
+        assert.deepEqual(await bridgeState({ dir, ...options, timeout: 100 }), { running: true, pid: null, stale: false }, label)
+        const signalled = []
+        assert.deepEqual(await stopBridge({ dir, ...options, timeout: 100, kill: (pid) => signalled.push(pid) }), { stopped: null, running: true }, label)
+        assert.deepEqual(signalled, [], `${label}: nothing signalled`)
+        // forget never uses the pid: the file without a socket, the socket (fail closed) with one.
+        if (socket === 'none') assert.deepEqual(await forget({ dir, id: A.id, ...options }), { ok: true, removed: true, via: 'file' }, label)
+        else await assert.rejects(forget({ dir, id: A.id, ...options, timeout: 100, retries: 1, wait: 10 }), /^Error: The bridge (is busy|did not answer)[^]*still paired/, label)
+        assert.ok(existsSync(join(dir, STATUS)), `${label}: status.json kept`)
+      } finally { server?.close() }
+    }
+  }
+  // Its socket answers: the ping's pid, which is the bridge's own word, is the one to signal.
+  const dir = tmp()
+  reused(dir, startedAt(process.pid))
+  const server = await listen(join(dir, SOCKET), { forget: () => true, pid: 4242 })
+  try {
+    const signalled = []
+    assert.deepEqual(await stopBridge({ dir, started: () => null, kill: (pid) => signalled.push(pid) }), { stopped: 4242, running: true })
+    assert.deepEqual(signalled, [4242])
   } finally { server.close() }
 })
