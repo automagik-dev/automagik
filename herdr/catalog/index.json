@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-03T23:39:47.899Z",
+  "generatedAt": "2026-11-04T00:43:09.841Z",
   "modCount": 11,
   "repositoryCount": 4,
   "source": "automagik-herdr",
@@ -12,7 +12,7 @@
       "url": "https://github.com/automagik-dev/automagik",
       "defaultBranch": "dev",
       "stars": 0,
-      "pushedAt": "2026-11-03T20:37:43-03:00",
+      "pushedAt": "2026-11-03T21:40:37-03:00",
       "headCommit": "",
       "path": "herdr",
       "name": "Automagik Herdr",
@@ -30,7 +30,7 @@
       ],
       "hasKeys": true,
       "hasPreview": false,
-      "recipeBytes": 5287,
+      "recipeBytes": 5290,
       "previewUrl": "",
       "license": "Apache-2.0",
       "mods": [
@@ -42,7 +42,7 @@
         {
           "name": "am-footer",
           "title": "Automagik Footer",
-          "blurb": "The sidebar's footer as a rail of tabs instead of a stack of rows — robot **Bots** (first), puzzle **Mods**, clock **Automations**, gear **Settings**, plus **Add machine** — and the brand bar above it. Derived from Herdr's shipped `workspace-chrome` 0.1.11."
+          "blurb": "The sidebar's footer as a rail of tabs instead of a stack of rows — robot **Bots** (first), puzzle **Mods**, clock **Automations**, layers **Accounts** (while am-quota is on), gear **Settings**, plus **Add machine** — and the brand bar above it. Derived from Herdr's shipped `work"
         },
         {
           "name": "am-markdown",
@@ -61,8 +61,8 @@
         },
         {
           "name": "am-quota",
-          "title": "Automagik Quota",
-          "blurb": "One account per client, and the handoff before a window runs dry. The left sidebar panel lists every Claude Code and Codex account the CLIProxyAPI knows, with its window, and switches the *local* credentials so the clients use the one you pick — no proxy in the traffic path, no r"
+          "title": "Automagik Accounts",
+          "blurb": "**Accounts** keeps your bots working when a plan hits its limit: it shows how long the Claude Code or Codex account this computer uses will last, and moves the tool to another account on your own CLIProxyAPI before it runs out. A personal tool for people who run one; accounts are"
         },
         {
           "name": "am-sidebar",

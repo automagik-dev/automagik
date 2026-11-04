@@ -189,9 +189,33 @@ test("a refused restart is named, and the others still run", async () => {
   nodes.get("restart-codex").click(null, cx);
   nodes.get("restart-codex").click(null, cx);
   await cx.settle();
-  const root = draw();
+  let root = draw();
   assert.match(text(root), /Restarted 1 of 2\. Not restarted:/);
   assert.match(text(root), /A: A is working; restart it when it is idle, or pass --force/);
+  // Pressing again retries only the one that failed.
+  assert.match(text(root), /Restart 1 bot/);
+  state.calls = [];
+  state.exec = () => ({ code: 0, stdout: "{}", stderr: "" });
+  nodes.get("restart-codex").click(null, cx);
+  nodes.get("restart-codex").click(null, cx);
+  await cx.settle();
+  assert.deepEqual(state.calls.map((c) => c.slice(5, 7)), [["restart", "a"]]);
+  root = draw();
+  assert.match(text(root), /Restarted 2: every Codex bot is on the new account/);
+});
+
+test("no restart while a switch is running", async () => {
+  const { view, cx, draw } = await panel();
+  view.tool = "codex";
+  view.switched.codex = { at: NOW, from: "ana@example.com · Pro", to: "bo@example.com · Pro",
+    look: { bots: [{ id: "a", name: "A", project: "/p" }], reliable: true } };
+  view.busy = "switching Codex…";
+  draw();
+  state.calls = [];
+  nodes.get("restart-codex").click(null, cx);
+  await cx.settle();
+  assert.deepEqual(state.calls, []);
+  assert.match(text(draw()), /a switch is running: restart the bots once it is done/);
 });
 
 test("no sidebar mod: the banner says how to restart, with no button", async () => {

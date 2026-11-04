@@ -80,16 +80,34 @@ export function usage(account, now, { unit = false } = {}) {
   };
 }
 
-/** Why the policy's pick is the one: its use and reset, and the rule in one phrase. */
-function why(pick, others, now) {
+/** The accounts a switch could go to: policy's own pool (bestCandidate), as its facts. */
+const pool = (verdict, activeId) => verdict.facts.filter((f) => f.usable && f.window !== null
+  && f.headroom !== null && f.headroom > DEFAULTS.floorHeadroom && f.id !== activeId);
+
+/**
+ * Why the policy's pick is the one, in its own terms: its use and reset, then the rule that chose
+ * it. bestCandidate puts accounts about to reset (`held`) last, then takes the soonest reset, then
+ * the most headroom; the phrase says which of those decided, never "soonest" for a pick that only
+ * won because sooner ones were held back.
+ */
+export function why(pick, verdict, activeId, now) {
   const u = usage(pick, now);
-  const rule = others <= 1 ? "the only other account with room" : "resets soonest, so none of its hours go to waste";
+  const all = pool(verdict, activeId);
+  const me = all.find((f) => f.id === pick.id);
+  const at = (f) => f.minutesToReset ?? Number.POSITIVE_INFINITY;
+  let rule;
+  if (!me || all.length <= 1) rule = "the only other account with room";
+  else if (me.held) rule = "every account with room resets within minutes; this one resets first";
+  else {
+    const fresh = all.filter((f) => !f.held && f.id !== me.id);
+    const skipped = all.some((f) => f.held && at(f) < at(me));
+    const tied = fresh.some((f) => at(f) === at(me));
+    if (tied) rule = "resets as soon as another, and has more room";
+    else if (skipped) rule = "resets soonest of the accounts not about to reset";
+    else rule = "resets soonest, so none of its hours go to waste";
+  }
   return [u.tracked ? u.text : null, u.reset, rule].filter(Boolean).join(" · ");
 }
-
-/** The accounts a switch could go to (policy's own pool), for the "why" phrase. */
-const candidates = (verdict, activeId) => verdict.facts.filter((f) => f.usable && f.window !== null
-  && f.headroom !== null && f.headroom > DEFAULTS.floorHeadroom && f.id !== activeId).length;
 
 /**
  * One tool's card. `accounts`: the sampled proxy accounts of this provider (proxy.js shape);
@@ -130,7 +148,7 @@ export function toolView({ provider, accounts = [], record = null, badge = null,
       text = `The account the panel installed for ${label} is no longer on ${source}, so it can't tell how long it lasts.`;
     }
     if (!mine.length) text += ` ${source} has no ${label} account yet.`;
-    if (pick) out.primary = { account: pick, label: `Use ${pick.email || "this account"}`, why: why(pick, candidates(verdict, null), now) };
+    if (pick) out.primary = { account: pick, label: `Use ${pick.email || "this account"}`, why: why(pick, verdict, null, now) };
     return { ...out, state: "new", dot: "none", headline, pill: { text: "Not managed", tone: "none" },
       sentence: { text, tone: "none" }, others: mine.map((a) => row(a)) };
   }
@@ -145,7 +163,7 @@ export function toolView({ provider, accounts = [], record = null, badge = null,
   const nextId = ahead?.action === "switch" ? ahead.to : null;
   out.others = others.map((a) => row(a, a.id === nextId));
   if (pick) {
-    out.primary = { account: pick, label: `Switch to ${pick.email || "the next account"}`, why: why(pick, candidates(verdict, current.id), now) };
+    out.primary = { account: pick, label: `Switch to ${pick.email || "the next account"}`, why: why(pick, verdict, current.id, now) };
   }
 
   if (!fact.usable) {
@@ -171,7 +189,8 @@ export function toolView({ provider, accounts = [], record = null, badge = null,
     return { ...out, state: "ok", dot: u.hot ? "warn" : "good", pill: { text: "In use", tone: "good" },
       sentence: { text: "Measuring its pace; the panel says in a minute whether it lasts", tone: "none" } };
   }
-  return { ...out, state: "ok", dot: "good", pill: { text: "In use", tone: "good" },
+  // The dot follows the bar: amber at 85% used even while the pace says it lasts.
+  return { ...out, state: "ok", dot: u.hot ? "warn" : "good", pill: { text: "In use", tone: "good" },
     sentence: { text: "Lasts until it resets", tone: "good" } };
 }
 

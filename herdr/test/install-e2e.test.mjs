@@ -408,7 +408,7 @@ test(`e2e (b): a v0.4.0 sidebar-only install is replaced by the whole pack (${la
   const lines = r.out.split("\n"), at = lines.findIndex((l) => l.includes("Your layout") && l.includes(personal));
   assert.ok(at >= 0, `the output names ${personal}:\n${r.out}`);
   const note = `${lines[at]}\n${lines[at + 1]}`;
-  for (const what of ["footer rail (am-footer)", "tab bar (am-tabs)", "Markdown menu (am-markdown)", "automations panel", "quota panel (am-quota)"]) {
+  for (const what of ["footer rail (am-footer)", "tab bar (am-tabs)", "Markdown menu (am-markdown)", "automations panel", "Accounts panel (am-quota)"]) {
     assert.ok(note.includes(what), `it names the ${what}: ${note}`);
   }
   assert.ok(note.includes(join(m.state, "automagik.json")), `it points at the pack's layout to copy from: ${note}`);

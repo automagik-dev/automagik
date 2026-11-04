@@ -34,7 +34,7 @@ holds nine mod folders and one layout, and nothing else:
 | Folder | What you get |
 |---|---|
 | `am-sidebar` | the sidebar: spaces, bots, workers, the Create form, the `automagik-herdr` command |
-| `am-footer` | the footer rail (Bots, Mods, Automations, Quota, Settings, Add machine) |
+| `am-footer` | the footer rail (Bots, Mods, Automations, Accounts, Settings, Add machine) |
 | `am-status` | the bottom status bar, with the pack's version and its update check |
 | `am-tabs` | the tab bar |
 | `am-new-menu` | the `+` menu (a space row's `+` and the tab bar's `+`) |
@@ -697,14 +697,14 @@ with its own `RECIPE.md`:
 
 | Mod | Derived from | What it does |
 |---|---|---|
-| `am-footer` | Herdr's `workspace-chrome` | The sidebar's brand bar and a footer rail of icon tabs — Bots, Mods, Automations, Quota, Settings, Add machine, and up to 4 buttons other mods add — so tabs never stack up. |
+| `am-footer` | Herdr's `workspace-chrome` | The sidebar's brand bar and a footer rail of icon tabs — Bots, Mods, Automations, Accounts (while am-quota is on), Settings, Add machine, and up to 4 buttons other mods add — so tabs never stack up. |
 | `am-status` | Herdr's `workspace-status` | The window's bottom status bar (machine, branch, agents, `⌘⇧P commands`) plus the installed Automagik Herdr version beside "commands": click it to check now; when a release is out, `0.8.0 → 0.8.1 · update` installs it after a confirm, the same way `automagik-herdr update` does. |
 | `am-tabs` | Herdr's `tabs` | The tab bar: pills named from the agent's own title, close ✕ on hover, middle-click to close, drag to reorder, per-space side-panel memory. Scrolling never switches tabs. Its `+` opens `am-new-menu`. |
 | `am-automations` | `DnzzL/herdr-automations` (MIT) | Scheduled agent prompts as a side panel: inbox of finished runs, run now, pause all, and a form that previews the next runs. The panel draws and asks; the `herdr-automations` scheduler launches the work. |
 | `am-markdown` | Herdr's `menu` + `ohneda/herdr-markdown-browser` (MIT) | Right-click a terminal: under Herdr's own items, the Markdown files that terminal printed. Pick one and it renders in a preview pane — live reload on save, `Default app` — that the next pick replaces in place. |
 | `am-new-menu` | Herdr's `new-menu` | The `+` menu (the sidebar's and the tab bar's, in place of Herdr's own): terminal, the agents actually installed (per machine), new space, worktree dialogs; `⌘1…9`/`⌘T`/`⌘N`. |
 | `am-mods` | `jacksonpires/herdr-app-mod-manager` (MIT) | The table over every installed mod — on/off, check result, version, source, drift — install, update, remove; `⌘⇧M`. |
-| `am-quota` | clean-room | **Accounts**, for people who run their own CLIProxyAPI: per tool (Claude Code or Codex), the account this computer uses and whether it lasts until its window resets, one button to switch to the next account on the proxy, and a restart of the bots still on the old one. **Ships switched off** (a fresh install puts it in `mods-disabled/`): turn it on in the Mods panel, and the rail's Quota tab then toggles it. An install that already has it keeps its state. |
+| `am-quota` | clean-room | **Accounts**, for people who run their own CLIProxyAPI: per tool (Claude Code or Codex), the account this computer uses and whether it lasts until its window resets, one button to switch to the next account on the proxy, and a restart of the bots still on the old one. **Ships switched off** (a fresh install puts it in `mods-disabled/`): turn it on in the Mods panel (*Automagik Accounts*), and the rail's Accounts tab then toggles it. An install that already has it keeps its state. |
 
 **Not in this pack, on purpose:** Pocket Link ([mods/pocket-link](mods/pocket-link/README.md)) sits
 beside the pack's mods but belongs to Pocket (`apps/pocket/`), which owns its mod, its LaunchAgent and
@@ -750,7 +750,7 @@ copy these from `~/.config/herdr-app/automagik-herdr/automagik.json` (the pack's
 5. a block `{ "id": "automations-panel", "content": { "mod": "am-automations" }, "size":
    { "weight": 1 }, "min": 140, "hidden": true }` in the sidebar's column — the rail's clock toggles
    it;
-6. the same block for `am-quota` (`"id": "am-quota-panel"`), which the rail's Quota tab toggles;
+6. the same block for `am-quota` (`"id": "am-quota-panel"`), which the rail's Accounts tab toggles (hidden by default, and hidden again while am-quota is off);
 7. the status bar block (`"id": "status"`, `"size": { "px": 28 }`): `"mod": "am-status"` in place of
    `workspace-status`.
 
