@@ -44,8 +44,13 @@ here). No Windows machine was used for it, so every number below is a source's o
 - **D39** (Felipe 2026-11-04): WSLC, WSL 3.0.1+; only the Electron window and herdr-app run
   natively; one UAC prompt at first run, plus a restart only if Virtual Machine Platform was
   off; no WSL means explain and stop; projects live inside the Linux disk (`\\wsl.localhost`).
-- **Spike venue** (Felipe 2026-11-04): the spike runs on a coworker's own Windows x86_64 PC. An
-  ARM VM on the Mac would measure the wrong hardware.
+- **Spike venue and the Windows deliveries** (Felipe 2026-11-04, answering where the spike
+  runs): "i got a coworker with windows, one we can hand off this specific task to, for him to
+  finish. hes currently using automagik herdr via wsl", and later "the pr with context and
+  handoff for my windows dev to finish the wslc". So the spike (delivery 1) runs on that
+  coworker's own Windows x86_64 PC, not on a VM on the Mac (an ARM VM there would measure the
+  wrong hardware). The Windows deliveries go to the same developer: 3, the desktop half of 4,
+  and 5 ([the handoff](0016-windows-handoff.md)).
 
 D39 overrides the research on two points. The research ranked a private WSL2 distro first and
 WSLC second, and it kept native Windows as the last rung of a fallback ladder. D39 takes WSLC
@@ -422,10 +427,12 @@ Lanes per RFC 0011. Desktop items are 3.N. Each lists its check and its rollback
 3. **The Windows boundary** (desktop). `automagik-wslc.exe`; the WSLC implementation of RFC
    0010's boundary API (`start`, `stop`, `status`, `events`); the first-run and failure
    screens; the caps; the image's download and trial. Windows builds stay unpublished.
-   *Check:* on a Windows runner (by hand on the coworker's PC until a self-hosted runner
-   exists; the runner is the owner's call), from a snapshot with no WSL: install, one UAC,
-   restart, resume, the Bot team draws; from a snapshot with WSL 3.0.1: no prompt at all; each
-   policy gate set by registry shows its screen.
+   *Check:* on a Windows runner, from a snapshot with no WSL: install, one UAC, restart,
+   resume, the Bot team draws; from a snapshot with WSL 3.0.1: no prompt at all; each policy
+   gate set by registry shows its screen. Until a self-hosted runner exists (the owner's call),
+   the WSL 3.0.1 run is done by hand on the coworker's PC. The no-WSL run and the policy gates
+   are not: they remove or turn off the WSL that PC's own distro needs. The owner says where
+   they run.
    *Rollback:* revert; nothing was published.
 4. **herdr on Windows** (desktop for the bridge `hc` and the Windows mod writer; herdr lane for
    the guest's updater limited to the CLI half and mods reading through the machine; the CLI
@@ -459,7 +466,8 @@ Options:
 Decided (Felipe, 2026-11-04, "Spike venue"): the spike runs on a coworker's own Windows x86_64
 PC (the handoff, [0016-windows-handoff.md](0016-windows-handoff.md)). Recommended for CI: a
 self-hosted box, with Azure as the spare. Not decided: the CI runner is the owner's call (its
-cost and registration). Until it exists, the Windows checks run by hand on the coworker's PC.
+cost and registration). Until it exists, the Windows checks run by hand on the coworker's PC,
+except those that remove or turn off WSL (delivery 3's check).
 The guest half (delivery 2) runs on hosted Linux runners and gates every PR.
 
 ## Amendments

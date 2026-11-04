@@ -8,8 +8,9 @@ yours, in which order, and how to work with the team.
 ## How to reach us
 
 Ask questions as a comment on your own PR, or as an issue in
-[automagik-dev/automagik](https://github.com/automagik-dev/automagik/issues). Send them to Felipe
-directly too. Wherever this page says "ask", it means this.
+[automagik-dev/automagik](https://github.com/automagik-dev/automagik/issues), and mention Felipe
+there (`@namastex888`). Send them to Felipe directly too. Wherever this page says "ask", it means
+this.
 
 ## What exists
 
@@ -20,7 +21,7 @@ directly too. Wherever this page says "ask", it means this.
   its framed stdio (`ready`, `ipc`, `tunnel`, `open`, `log`). It is not merged yet; ask for its
   PR.
 - **`am`, not on `dev` yet.** Its first PR is open (#263, RFC 0012 delivery 1). Its Windows part
-  is RFC 0012 delivery 6. Delivery 4 needs both.
+  is RFC 0012 delivery 6, which nobody is assigned to yet. Delivery 4 needs both.
 - **Not started:** delivery 1 (the spike), 3 (the Windows boundary), 4 (herdr on Windows),
   5 (uninstall) and 6 (Windows ships). There is no `automagik-wslc.exe` yet.
 - **No Windows CI runner.** Whether to have one, and where, is Felipe's call (see "Owner-held").
@@ -29,14 +30,15 @@ directly too. Wherever this page says "ask", it means this.
 
 ## Your part, in order
 
-Each delivery is one PR to `dev`, except delivery 4 (two PRs, one per lane). The check and the
-rollback are the RFC's own ("Deliveries").
+Felipe gave you the spike and the Windows deliveries (RFC, Decided, 2026-11-04): 1, 3, 4a and
+5, in that order. 4b, on the herdr lane, is the team's; it is below so you know what 4a meets.
+Each delivery is one PR to `dev`. The check and the rollback are the RFC's own ("Deliveries").
 
 ### 1. The spike (no lane; docs only)
 
-Felipe decided where it runs (2026-11-04): on your own Windows x86_64 PC. An ARM VM on his Mac
-would measure the wrong hardware. Measure what the RFC marks **[unverified]**. Nothing is merged
-except the findings note. Write each number and how you took it.
+It runs on your own Windows x86_64 PC (Felipe's answer, in the RFC's Decided). An ARM VM on the
+Mac would measure the wrong hardware. Measure what the RFC marks **[unverified]**. Write each
+number and how you took it.
 
 **First step: a minimal WSLC client.** The RFC names no ready client for the spike. It names
 the WSLC flat C API: NuGet `Microsoft.WSL.Containers` (`wslcsdk.dll`), documented in the
@@ -47,6 +49,13 @@ a named VHD volume (`WslcCreateSessionVhdVolume`); import an OCI image tarball
 Call it `automagik-wslc.exe` with an `exec` verb, so the RFC's link works unchanged (item 4). It
 is throwaway; delivery 3 builds the real one. The RFC also mentions a `wslc.exe` CLI, but not
 its commands; if you use it for a step, say so in that row.
+
+The RFC names three of the calls above. Find the session, container and process calls in the
+API reference, and name each call you used in the findings note. Use any language that can call
+a C API; the RFC does not pick one. The client's source goes in its own folder in the spike PR,
+kept out of shipped paths until delivery 3: `docs/rfcs/0016-spike/`, since `scripts/lane.ts`
+ships nothing under `docs/`. Not under `apps/`: a change there can cut a desktop release. Its
+README says how to build it and run each step.
 
 1. WSLC on this Windows: does `WslcGetMissingComponents` pass, and does a session start?
    Windows 11 is the target (Q4). If you also have a Windows 10 22H2 PC, run this item there
@@ -77,8 +86,8 @@ What each item needs:
 - Items 5 and 6 need delivery 2's image and `dsh-launch`. If they are not ready, measure the
   session alone now, mark the rest "waits for delivery 2", and add them in a second commit.
 
-*Check:* a PR adding `docs/rfcs/0016-spike-findings.md` (see "Report back").
-*Rollback:* revert that PR.
+*Check:* a PR adding `docs/rfcs/0016-spike-findings.md` (see "Report back") and the client's
+folder. *Rollback:* revert that PR.
 
 ### 3. The Windows boundary (desktop lane)
 
@@ -91,36 +100,50 @@ image's download (Q5) and its trial.
 - *Check:* from a machine with no WSL: install, one UAC, restart, resume, the Bot team draws.
   From a machine with WSL 3.0.1: no prompt at all. Each policy gate set by registry shows its
   screen.
-- *Where the check runs:* by hand on your Windows PC, until a self-hosted Windows runner exists.
-  Write in the PR what you ran and what you saw. Your PC keeps WSL for your distro, so it cannot
-  give the "no WSL" run, and a policy gate can turn WSL off for that distro. Ask Felipe where
-  those runs happen before you try them.
+- *Where the check runs:* until a self-hosted Windows runner exists, the WSL 3.0.1 run is by
+  hand on your PC; write in the PR what you ran and what you saw. The no-WSL run and the policy
+  gates are not for your PC: they remove or turn off the WSL your distro needs. Felipe says
+  where they run (the RFC says the same).
 - *Rollback:* revert; nothing was published.
 
-### 4. herdr on Windows (desktop lane, then herdr lane)
+### 4a. herdr on Windows, the desktop half (desktop lane)
 
 The RFC's Design ("The pack splits") has three writers. On Windows, the **desktop app** is the
 only writer of the pack's mods: Windows has no `sh` for `install.sh`. In the guest, **`am`** is
 the only writer of the pack's CLI half (its CLI, hooks and `run.sh`). The pack's updater in the
-guest updates only that half. A PR never mixes lanes, so this is two PRs:
+guest updates only that half. A PR never mixes lanes, so delivery 4 is two PRs; 4a is yours.
 
-- **4a, desktop lane:** the bridge `hc` on Windows (Q3), with `linux` as its default machine and
-  no terminals; and the desktop app's mod writer. It reads the `herdr-lane` pointer, checks it
-  against `herdr/mods/am-sidebar/pack-keys.json` and the tarball against its sha256, as
-  `install.sh` does, and never downgrades.
-- **4b, herdr lane:** the pack's updater, in the guest, updates only the CLI half; mods that read
-  local files read them through the machine. On macOS and Linux this PR changes nothing:
-  the pack's tests pass as they are. It follows [herdr/AGENTS.md](../../herdr/AGENTS.md) and
-  runs its gate.
+4a is the bridge `hc` on Windows (Q3), with `linux` as its default machine and no terminals;
+and the desktop app's mod writer. The writer reads the `herdr-lane` pointer, checks it against
+`herdr/mods/am-sidebar/pack-keys.json` and the tarball against its sha256, as `install.sh`
+does, and never downgrades.
 
 - *You need first:* delivery 3's helper (`automagik-wslc.exe exec`), which the `hc --via` link
-  uses. For the guest's CLI half, `am` on `dev` (#263) and RFC 0012 delivery 6, where the guest
-  runs `am install code`.
+  uses; 4b merged; and for the guest's CLI half, `am` on `dev` (#263) and RFC 0012 delivery 6
+  (the guest runs `am install code`).
+- *Not in 4a:* the desktop app's report of the mods into the guest's `parts.json`. That is RFC
+  0012 delivery 6, with no owner yet; ask before you take it. Until it lands, the guest's
+  `am doctor` fails those parts and names the desktop app, as RFC 0012 says for a missing
+  report.
 - *Check:* the Code switch opens herdr-app on a space on machine `linux`; a terminal there
   prints `Linux` for `uname`; the sidebar lists the Bots from the guest. For 4a alone: the app
   refuses a pointer that fails `pack-keys.json`, a tarball that fails its sha256, and a lower
   version.
-- *Rollback:* revert the pack; herdr-app stays installed.
+- *Rollback:* revert; herdr-app stays installed.
+
+### 4b. herdr on Windows, the guest half (herdr lane; the team's)
+
+The pack's updater, in the guest, updates only the CLI half; mods that read local files read
+them through the machine. It follows [herdr/AGENTS.md](../../herdr/AGENTS.md) and runs its
+gate.
+
+- *Guest signal:* the RFC names none. One candidate is the image's launcher,
+  `/opt/automagik/bin/dsh-launch`, a contract path the image puts in the guest. The 4b PR
+  proposes a signal, shows macOS and Linux installs never have it, and the review settles it.
+- *Check:* with the signal set (a temp home in the pack's tests), the updater leaves the mods
+  alone and updates the CLI half. Without it, the pack's tests pass unchanged: macOS and Linux
+  see no change.
+- *Rollback:* revert the pack.
 
 ### 5. Uninstall (desktop lane)
 
@@ -162,7 +185,7 @@ last image.
 - Each PR gets an independent review from the team. You never merge.
 - A merge into `dev` releases to installed macOS and Linux apps. A desktop PR keeps them working
   as they are: Windows code stays off their path.
-- **Owner-held** (Felipe's; ask him before anything that touches them): signing keys, release
+- **Owner-held** (Felipe's; ask Felipe before anything that touches them): signing keys, release
   publishing, Pocket's versionCodes, every secret, and the Windows CI runner (whether to have
   one, its cost, and its registration; not decided).
 - Nothing is published to npm.
