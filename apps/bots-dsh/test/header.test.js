@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { build } from 'esbuild'
 import { headerNavigation, installHeaderNavigation } from '../src/client/header-navigation.js'
@@ -9,6 +11,10 @@ const bundle = await build({
   entryPoints: [fileURLToPath(new URL('../src/client/header.js', import.meta.url))],
   bundle: true, format: 'cjs', platform: 'node', write: false,
   external: ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives'],
+  // ISSUE89_BASELINE=<dir> bundles <dir>/header.js instead, to show the Details tests fail on it.
+  plugins: process.env.ISSUE89_BASELINE ? [{ name: 'baseline', setup(build) {
+    build.onLoad({ filter: /src\/client\/header\.js$/ }, args => ({ contents: readFileSync(join(process.env.ISSUE89_BASELINE, 'header.js'), 'utf8'), resolveDir: dirname(args.path), loader: 'js' }))
+  } }] : [],
 })
 const module = { exports: {} }
 runInNewContext(bundle.outputFiles[0].text, {
@@ -123,7 +129,7 @@ test('a Bot in another Conversation View can return to chat without changing its
   assert.equal(details, 0)
   const restored = header(actions, navigation)
   assert.equal(byClass(restored, 'bt-pill'), null)
-  byClass(restored, 'bt-head-details').props.onClick()
+  byClass(restored, 'bt-head-details').props.onClick({ currentTarget: { focus() {} } })
   assert.equal(details, 1)
 })
 
@@ -138,6 +144,36 @@ test('the header does not repeat the open chat\'s name; a small button opens its
   assert.equal(byClass(plain, 'bt-pill'), null)
   assert.equal(byClass(plain, 'bt-pill-name'), null)
   assert.equal(byClass(plain, 'bt-head-details').props['aria-expanded'], false)
+})
+
+test('Details is labeled, names the panel and expands only while it shows this subject\'s details', () => {
+  const cases = [['a', 'details', true], ['a', 'browser', false], ['a', 'side', false], ['b', 'details', false], [null, 'details', false]]
+  for (const [details, view, expanded] of cases) {
+    const button = byClass(header({}, { useUi: hook({ details, view }) }), 'bt-head-details')
+    assert.equal(button.props['aria-expanded'], expanded, `${details}/${view}`)
+  }
+  for (const [details, view] of cases) {
+    const button = byClass(header({}, { useUi: hook({ details, view }) }), 'bt-head-details')
+    assert.equal(button.props['aria-controls'], 'bt-conversation-panel')
+    assert.ok(button.children.includes('Details'), 'the label is visible text, not only a tooltip')
+  }
+})
+
+test('Details toggles the current Bot or group, never a plain or native wish thread', () => {
+  const calls = []
+  let focused = 0
+  const actions = { toggleDetails: id => calls.push(id) }
+  for (const sessionId of ['a', 'group', 'wish', 'plain']) {
+    const head = header(actions, { sessionId, useRoster: hook({ ...roster, roomsById: { group: { id: 'group', name: 'Team', members: ['a'] } } }) })
+    const button = byClass(head, 'bt-head-details')
+    if (sessionId === 'wish' || sessionId === 'plain') assert.equal(button, null)
+    else {
+      assert.equal(button.props['data-details-subject'], sessionId)
+      button.props.onClick({ currentTarget: { focus() { focused += 1 } } })
+    }
+  }
+  assert.deepEqual(calls, ['a', 'group'])
+  assert.equal(focused, 2, 'the trigger takes focus before toggling, so closing can return it')
 })
 
 test('the replacement header shares DSH\'s store and navigation injection without declaring its children again', () => {

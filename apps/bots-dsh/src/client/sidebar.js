@@ -806,6 +806,9 @@ html[data-automagik-desktop=darwin] .bt-side-top{-webkit-app-region:drag}
 html[data-automagik-desktop=darwin] .bt-side-top>*{-webkit-app-region:no-drag}
 html[data-automagik-desktop=darwin] header[class*="_header"]{-webkit-app-region:drag}
 html[data-automagik-desktop=darwin] header[class*="_header"] :is(button,a,input,textarea,select,[role=button],[tabindex]){-webkit-app-region:no-drag}
+/* The fixed details panel overlaps that header but is not its descendant. Native drag
+   regions ignore DOM z-index/pointer-events: subtract the panel so its top actions click. */
+html[data-automagik-desktop=darwin] .bt-panel{-webkit-app-region:no-drag}
 /* The collapsed sidebar is a 56px rail, and DSH's card around it left its content 12px: the
    marks were cut. It keeps a 6px margin and no side padding, everything centred in it. */
 [class*="_root"][class*="_collapsed"]{margin:6px!important;padding-left:0!important;padding-right:0!important}
