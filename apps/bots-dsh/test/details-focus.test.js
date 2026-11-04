@@ -244,7 +244,7 @@ function partsApp(t) {
   const render = () => root.render(h(App))
   // overlays.js keeps a closed pane for PANEL_LINGER_MS, then unmounts it.
   const settle = () => { last = null; render() }
-  return { ...env, ui, actions, render, settle, toggle: () => document.querySelector('[aria-controls="bt-conversation-panel"]') }
+  return { ...env, ui, actions, team, render, settle, toggle: () => document.querySelector('[aria-controls="bt-conversation-panel"]') }
 }
 
 test('a multi-part Bot\'s Details opened from its part header expands it and returns focus to it', async (t) => {
@@ -272,7 +272,7 @@ test('a multi-part Bot\'s Details opened from its part header expands it and ret
 })
 
 test('a multi-part Bot\'s Details opened via Rename expands the part header, and closing returns focus to it', async (t) => {
-  const { document, ui, actions, render, settle, toggle, key, focused } = partsApp(t)
+  const { document, ui, actions, team, render, settle, toggle, key, focused } = partsApp(t)
   await act(render)
   // The context menu's Rename item has focus, then closes as it opens the Bot id's details.
   const item = document.createElement('button')
@@ -280,6 +280,9 @@ test('a multi-part Bot\'s Details opened via Rename expands the part header, and
   item.focus()
   await act(() => { item.remove(); actions.renameBot('bot') })
   assert.equal(ui.getSnapshot().details, 'bot', 'Rename opens the Bot id, not the part\'s Session id')
+  assert.equal(toggle().dataset.detailsSubject, 'part-2', 'the header names its own part')
+  assert.equal(team.byId[toggle().dataset.detailsSubject].id, ui.getSnapshot().details,
+    'the part id normalizes to the Bot id the details opened')
   const panel = document.querySelector('.bt-panel')
   assert.equal(toggle().getAttribute('aria-expanded'), 'true', 'the part header shows its Bot\'s details open')
   focused(panel.querySelector('input[aria-label="Bot name"]'), 'the rename field takes focus')
@@ -300,4 +303,28 @@ test('a multi-part Bot\'s Details opened via Rename expands the part header, and
   assert.equal(ui.getSnapshot().details, null, 'Escape closes the details')
   assert.equal(toggle().getAttribute('aria-expanded'), 'false')
   focused(toggle(), 'closing by Escape returns focus to the part\'s toggle, not <body>')
+})
+
+test('a multi-part Bot\'s memory pill follows its Bot id, not the part', async (t) => {
+  const { document, root, HeaderPill, createSource, indexRoster } = mount(t)
+  const h = React.createElement
+  const team = indexRoster({ bots: [{ id: 'bot', name: 'Omni', sessionId: 'part-2', parts: ['bot', 'part-2'] }], rooms: [] })
+  const shown = { ...roster, ...team, memory: true }
+  const news = { bot: { seen: Date.now(), at: Date.now() } }
+  const ui = createSource({ visits: {}, details: null, view: 'details', renaming: false, tab: null })
+  const useUi = select => React.useSyncExternalStore(ui.subscribe, () => select(ui.getSnapshot()))
+  const opened = [], toggled = []
+  const actions = new Proxy({ beginVisit() {}, endVisit() {}, openMemory: id => opened.push(id), toggleDetails: id => toggled.push(id) },
+    { get: (known, name) => known[name] ?? (() => {}) })
+  await act(() => root.render(h(HeaderPill, {
+    sessionId: 'part-2', useRoster: hook(shown), useSessions: hook({ byId: {} }), useSessionStatus: hook(new Map()),
+    useSession: hook({}), useActivity: hook({}), useMemoryNews: hook(news), useTurnClock: hook({}), useUi,
+    useLive: hook({}), useWork: hook({}), actions,
+  })))
+  const pill = document.querySelector('[data-memory="updated"]')
+  assert.ok(pill, 'the part header shows its Bot\'s memory news')
+  assert.match(pill.getAttribute('aria-label'), /Omni/, 'the news names the Bot, not its part')
+  await act(() => pill.click())
+  assert.deepEqual(opened, ['bot'], 'the pill opens the Bot\'s memory')
+  assert.deepEqual(toggled, [], 'and never toggles the details')
 })
