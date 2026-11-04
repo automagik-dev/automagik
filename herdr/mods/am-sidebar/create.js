@@ -166,28 +166,29 @@ export class BotForm {
     cx.notify();
   }
 
-  // Where this form's edit to `key` is written, and the snapshots (RFC 0014 Q16, #234): from a
-  // focused space that is a worktree of the project, that worktree's file, which the edit
-  // starts from (the key's where the worktree has none yet); else the key's, as before.
-  // { dir, text: the text the edit starts from, expected: the text at dir }.
-  async target(key, machine) {
+  // Where this form's edit to `key` is written, and the snapshots (RFC 0014 Q16, #234): made
+  // from a worktree of the project (the folder picked, `from`, else the focused space's), that
+  // worktree's file, which the edit starts from (the key's where the worktree has none yet);
+  // else the key's, as before. { dir, text: the text the edit starts from, expected: dir's }.
+  async target(key, machine, from = undefined) {
     const shown = spaces().find((s) => s.id === focused()?.space);
+    const folder = from !== undefined ? from : (shown?.machine || null) === machine ? shown?.folder : null;
     let dir = key;
-    if (shown?.folder && (shown.machine || null) === machine) {
-      try { if (shown.folder === key || await keyOf(shown.folder, machine) === key) dir = await editFolderOf(shown.folder, key, machine); } catch {}
+    if (folder) {
+      try { if (folder === key || await keyOf(folder, machine) === key) dir = await editFolderOf(folder, key, machine); } catch {}
     }
     const expected = await readTextFile(`${dir}/${BOTS_PATH}`, { on: machine });
     const text = dir === key || expected !== null ? expected : await readTextFile(`${key}/${BOTS_PATH}`, { on: machine });
     return { dir, text, expected };
   }
 
-  async load(key, machine = null) {
+  async load(key, machine = null, from = undefined) {
     this.key = key;
     this.machine = machine;
     this.choice = null;
     this.loadError = null;
     if (this.agentsOn !== machine) await this.loadAgents(machine);
-    ({ dir: this.dir, text: this.text, expected: this.expected } = await this.target(key, machine));
+    ({ dir: this.dir, text: this.text, expected: this.expected } = await this.target(key, machine, from));
     let file = { version: 1, categories: [], bots: [] };
     this.raw = null;
     if (this.text !== null) {
@@ -752,7 +753,7 @@ export class BotForm {
           const dir = await pickFolder({ prompt: "Use this project" });
           if (dir) {
             // A picked folder is the project itself outside git (its git main checkout in it).
-            try { await this.load(await ownKeyOf(dir), null); this.error = null; this.ensurePets(cx); } catch (e) { this.error = String(e?.message ?? e); }
+            try { await this.load(await ownKeyOf(dir), null, dir); this.error = null; this.ensurePets(cx); } catch (e) { this.error = String(e?.message ?? e); }
           }
           cx.notify();
         })))

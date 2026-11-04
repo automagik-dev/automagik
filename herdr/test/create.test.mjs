@@ -469,6 +469,15 @@ test("from a focused worktree space, the form saves into the worktree's bots.jso
   await home.click("bot-save");
   assert.equal(home.form.error, null);
   assert.deepEqual(JSON.parse(readFileSync(mainPath, "utf8")).bots.map((b) => b.name), ["orch", "dev"]);
+  // A folder picked from the project chip decides, over the focused worktree space.
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const picked = await open({ form: "create", project: undefined });
+  state.pickFolder = repo;
+  picked.draw();
+  await picked.click("bot-project");
+  assert.equal(picked.form.key, repo);
+  assert.equal(picked.form.dir, repo, "the main checkout, picked: written there");
 });
 
 // ---- #85: the pick and attach lists draw the sidebar's known bots at once ----

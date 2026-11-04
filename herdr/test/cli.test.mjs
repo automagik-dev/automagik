@@ -189,6 +189,19 @@ test("a worktree with no bots.json of its own: the first edit starts from the ma
   assert.equal(readFileSync(s.botsPath, "utf8"), mainText);
 });
 
+test("rm of the last bot from a worktree with no bots.json of its own is refused, and nothing is written", (t) => {
+  const s = scene(t);
+  const wt = join(s.root, "wt");
+  git(s.project, "worktree", "add", "-q", wt);
+  s.seed({ version: 1, categories: [], bots: [bot(ID.main, "main", { name: "Genie" })] });
+  const mainText = readFileSync(s.botsPath, "utf8");
+  const r = s.cli(["rm", ID.main], { cwd: wt });
+  assert.equal(r.code, 1, r.err);
+  assert.match(r.err, /last bot and .*wt\/\.herdr\/bots\.json isn't there, so nothing was removed/);
+  assert.equal(existsSync(join(wt, ".herdr")), false);
+  assert.equal(readFileSync(s.botsPath, "utf8"), mainText);
+});
+
 test("outside git, --project names the folder written, as before", (t) => {
   const s = scene(t);
   const other = join(s.root, "plain");
