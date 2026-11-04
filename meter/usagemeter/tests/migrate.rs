@@ -468,7 +468,7 @@ fn a_source_changed_after_an_interrupted_move_is_never_deleted() {
             );
             // A recorded snapshot is read and found stale; an empty marker proves nothing.
             let why = if valid_marker {
-                "changed since, so"
+                "changed since, so each may hold rows the other lacks"
             } else {
                 "cannot be verified"
             };
@@ -569,4 +569,97 @@ fn a_resumed_move_fsyncs_what_it_adopts_before_removing_the_source() {
     assert!(r.is_err(), "{r:?}");
     assert!(db.exists(), "the source database stays");
     assert!(later_row(&db, "base"), "with its row");
+}
+
+fn ids(db: &Path) -> Vec<String> {
+    let c = rusqlite::Connection::open(db).unwrap();
+    let mut st = c.prepare("SELECT id FROM usage ORDER BY id").unwrap();
+    st.query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+}
+
+/// Round 2, finding 2: an interrupted move left a whole copied generation in the new directory
+/// (its database and the wal holding a committed row), the old sidecars were gone, and an older
+/// meter then committed another row to the old database. Old: base + later. New: base +
+/// in-the-wal. The meter cannot tell which to keep, so it keeps both exactly as they are, uses
+/// neither, and says so; all three rows survive every sync.
+#[test]
+fn two_stores_that_grew_apart_are_both_kept_and_neither_is_used() {
+    let h = Home::new();
+    h.old_store();
+    let (old, new) = (h.old_dir(), h.new_dir());
+    let db = old.join("meter.db");
+    let base = ids(&db);
+    assert!(!base.is_empty());
+    let reader = rusqlite::Connection::open(&db).unwrap();
+    reader
+        .query_row("SELECT count(*) FROM usage", [], |r| r.get::<_, i64>(0))
+        .unwrap();
+    let writer = rusqlite::Connection::open(&db).unwrap();
+    insert_row(&writer, "in-the-wal");
+    drop(writer);
+    let snap: Vec<(&str, Vec<u8>)> = ["meter.db", "meter.db-wal", "meter.db-shm"]
+        .into_iter()
+        .map(|f| (f, fs::read(old.join(f)).unwrap()))
+        .collect();
+    assert!(!snap[1].1.is_empty(), "the row is in the wal");
+    drop(reader);
+
+    // The crash: every unit file was copied into the new dir and the old sidecars were removed;
+    // the old database was not.
+    meter::paths::ensure_dir(&new).unwrap();
+    let marker = marker_of(&snap.iter().map(|(f, b)| (*f, &b[..])).collect::<Vec<_>>());
+    fs::write(new.join(".meter-migrating"), &marker).unwrap();
+    fs::write(&db, &snap[0].1).unwrap();
+    for (f, b) in &snap {
+        fs::write(new.join(f), b).unwrap();
+    }
+    for (f, _) in &snap[1..] {
+        let _ = fs::remove_file(old.join(f));
+    }
+    {
+        let _held = meter::paths::try_lock(&old).unwrap().unwrap();
+        let c = rusqlite::Connection::open(&db).unwrap();
+        insert_row(&c, "later");
+    }
+    let old_db = fs::read(&db).unwrap();
+
+    for _ in 0..2 {
+        let err = stderr(&h.sync(None));
+        assert_eq!(err.lines().count(), 1, "{err}");
+        for want in [
+            "each may hold rows the other lacks",
+            "nothing was overwritten or deleted",
+            "neither store is used",
+            "nothing syncs until both are saved and one is chosen",
+        ] {
+            assert!(err.contains(want), "{want}: {err}");
+        }
+        assert!(!err.contains("store to keep"), "{err}");
+        assert_eq!(fs::read(&db).unwrap(), old_db, "the old store stays");
+        for (f, b) in &snap {
+            assert_eq!(&fs::read(new.join(f)).unwrap(), b, "{f} stays as it was");
+        }
+        assert_eq!(fs::read(new.join(".meter-migrating")).unwrap(), marker);
+    }
+
+    // Read the new generation from a copy: opening it in place would replay and remove its wal.
+    let saved = tempfile::tempdir().unwrap();
+    for (f, _) in &snap {
+        fs::copy(new.join(f), saved.path().join(f)).unwrap();
+    }
+    let with = |extra: &str| {
+        let mut v = base.clone();
+        v.push(extra.to_string());
+        v.sort();
+        v
+    };
+    assert_eq!(ids(&db), with("later"), "old: base and later");
+    assert_eq!(
+        ids(&saved.path().join("meter.db")),
+        with("in-the-wal"),
+        "new: base and in-the-wal"
+    );
 }

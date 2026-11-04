@@ -566,23 +566,30 @@ pub fn migrate_with(old: &Path, new: &Path, force_copy: bool) -> io::Result<Migr
             Why::Store => format!("{n} already has a meter.db"),
             Why::Sidecars => format!("{n} already has sidecars of another store"),
             Why::Changed => format!(
-                "a move to {n} was interrupted and {o} changed since, so {o} has the store to keep"
+                "a move to {n} was interrupted and {o} changed since, so each may hold rows the \
+                 other lacks"
             ),
-            Why::Unproven => {
-                format!("{n} has files of an interrupted move that cannot be verified")
-            }
+            Why::Unproven => format!(
+                "{n} has files of an interrupted move that cannot be verified, so each may hold \
+                 rows the other lacks"
+            ),
         };
         let left = if m.kept.is_empty() {
             String::new()
         } else {
             format!("left {} in {o}: ", m.kept.join(", "))
         };
-        let after = if m.stop {
-            format!(
+        // Two generations cannot be merged (rows are rollups that grew apart) and neither is
+        // known to be complete, so the meter picks neither: the person saves both and chooses.
+        let after = match why {
+            Why::Sidecars => format!(
                 ", and nothing syncs until the meter.db files and {MOVING} in {n} are moved away"
-            )
-        } else {
-            String::new()
+            ),
+            Why::Changed | Why::Unproven => "; neither store is used, and nothing syncs until \
+                                             both are saved and one is chosen \
+                                             (README: \"An interrupted move\")"
+                .to_string(),
+            Why::Store => String::new(),
         };
         eprintln!("meter: {left}{reason}; nothing was overwritten or deleted{after}");
     } else if !m.kept.is_empty() {

@@ -149,11 +149,22 @@ is opened, and the folder itself stays.
   dir records the length and SHA-256 of each of `meter.db`, `meter.db-wal` and `meter.db-shm`;
   then all of them are placed in the new dir, and only then are the old names removed. The next
   run finishes an interrupted move only if every file is still exactly what the marker recorded.
-- If the old files changed after an interrupted move (an older meter wrote to them), or the
-  marker cannot be read, nothing is moved, overwritten or deleted: both copies stay, the old dir
-  has the store to keep, and each `sync` prints one line to stderr and syncs nothing. Move the
-  `meter.db*` files and `.meter-migrating` out of the new dir and the next `sync` moves the old
-  store again.
+- An interrupted move whose old files changed since (an older meter wrote to them), or whose
+  marker cannot be read, leaves two stores that may each hold rows the other lacks. The meter
+  cannot merge them (rows are hourly rollups whose counts add up, so one row can have grown
+  differently in each) and never decides which one is complete. Nothing is moved, overwritten or
+  deleted, neither store is used, and each `sync` prints one line to stderr and syncs nothing.
+  To go on:
+  1. Stop every meter, then copy both stores with `cp` (not `mv`) into folders of your own: the
+     old dir's `meter.db*`, and the new dir's `meter.db*` and `.meter-migrating`. The two
+     `meter.db` names can be one hard-linked file, and opening a store in place replays and
+     removes its WAL, so read the copies, not the originals.
+  2. Compare the copies and choose the store to go on with. Remove the other one's `meter.db*`,
+     and `.meter-migrating` from the new dir. The next `sync` moves the old store, or uses the
+     new one.
+  3. Keep the copy of the store you did not choose: the rows only it has are there and nowhere
+     else. `sync --backfill` rebuilds every row from the logs still on disk, counting each event
+     once whichever store had it, but it drops the rows whose logs are gone.
 - If the new dir already has a `meter.db` this move did not put there (even a byte-identical
   copy), the old files all stay and `sync` uses the new dir's store, printing one stderr line. If
   it has a `meter.db-wal` or `meter.db-shm` but no `meter.db`, nothing is created, moved or
