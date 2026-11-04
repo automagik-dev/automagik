@@ -605,9 +605,14 @@ const coreOfName = (machines, name) => { for (const [id, m] of machines ?? []) i
 /**
  * A bot's live binding for a project, as the view has it: on this computer, or on the linked
  * machine `project.machine` (its core) and in that project there, never a same-id bot elsewhere.
+ * On this computer too (automagik#227, RFC 0014 Q16: a clone carries the same ids): a binding
+ * counts for its own project; one with no project (an older row) counts by id alone.
  */
 function liveFor(view, botId, project) {
-  if (!project?.machine) return view.live.get(botId) ?? null;
+  if (!project?.machine) {
+    const l = view.live.get(botId);
+    return l && (l.binding.project == null || l.binding.project === project?.key) ? l : null;
+  }
   const l = view.liveAt.get(atKey(botId, coreOfName(view.machines, project.machine)));
   return l && l.binding.project === project.key ? l : null;
 }

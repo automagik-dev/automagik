@@ -348,6 +348,33 @@ test("ls by the ledger: a shell pane shows no agent in front; the import takes t
   assert.deepEqual(all.map((p) => p.project), [s.project, other]);
 });
 
+// automagik#227 (RFC 0014 Q16): a clone carries the main checkout's bot ids; a pane counts for
+// its own project only, and an older ledger row with no project still counts by id alone.
+test("ls and show (#227): the main checkout's pane is not the clone's; a row with no project counts by id", (t) => {
+  const s = scene(t);
+  // The pane runs in the main checkout (scene() makes the folder, so the terminal comes after).
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify({ ...s.hcState(),
+    terminals: [term("t5", { bot: ID.cap, cwd: s.project, created: 7, status: "working" })] }));
+  s.seed(team());
+  const rows = () => readRows(readFileSync(attachFile(s.app), "utf8")).rows;
+  const clone = join(s.root, "proj-clone");
+  git(s.root, "clone", "-q", s.project, clone);
+  mkdirSync(join(clone, ".herdr"));
+  writeFileSync(join(clone, ".herdr/bots.json"), readFileSync(s.botsPath, "utf8"));
+  const captain = (cwd) => s.cli(["ls", "--json"], { cwd }).json().projects[0].bots.find((b) => b.id === ID.cap);
+  // The first ls imports t5 into the ledger, bound to the main checkout that defines the bot.
+  assert.deepEqual([captain(s.project).terminal, captain(s.project).status], ["t5", "working"]);
+  assert.equal(rows().at(-1).project, s.project);
+  assert.deepEqual([captain(clone).terminal, captain(clone).status], [null, "not running"]);
+  const show = s.cli(["show", "Captain", "--json"], { cwd: clone }).json();
+  assert.deepEqual([show.terminal, show.status], [null, "not running"]);
+  assert.match(s.cli(["show", "Captain"], { cwd: s.project }).out, /t5/);
+  // An older row with no project: the pane counts for both checkouts, as before.
+  writeFileSync(attachFile(s.app), `${JSON.stringify({ ...rows().at(-1), project: null })}\n`);
+  assert.deepEqual([captain(clone).terminal, captain(clone).status], ["t5", "working"]);
+  assert.deepEqual([captain(s.project).terminal, captain(s.project).status], ["t5", "working"]);
+});
+
 test("create, edit, category, start and attach list their project for the sidebar; ls --all reads the list", (t) => {
   const s = scene(t, { terminals: [term("t9", { cwd: "/x" })] });
   const list = join(s.app, "am-sidebar-projects.json");

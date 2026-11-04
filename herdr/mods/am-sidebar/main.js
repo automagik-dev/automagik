@@ -13,7 +13,7 @@ import { spaces, machines, panes, agents, terminals, focused, setAgentOrder, run
 import * as fs from "fs/promises";
 import { isPng, keysFor, remote } from "./paste.js";
 import { command } from "./argv.js";
-import { discoverProjects, discoverySnapshot, restoreDiscovery, watchProject } from "./bots.js";
+import { discoverProjects, discoverySnapshot, restoreDiscovery, watchProject, paneKeyOfFolder } from "./bots.js";
 import { BOT_LABEL } from "./model.js";
 import { BotForm, FORM_SIZE } from "./create.js";
 import { SpaceIconDialog, spaceIconOverlay } from "./spaceIcon.js";
@@ -109,6 +109,13 @@ function place(s, ps) {
 }
 const rowHeight = ({ tree }) => (tree ? 28 : 30);
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
+// A terminals() row's folder as an absolute path ("~" is the home folder), or null.
+function paneFolder(t) {
+  const f = t?.cwd ?? t?.foreground?.cwd;
+  if (typeof f !== "string") return null;
+  const full = f === "~" || f.startsWith("~/") ? `${home()}${f.slice(1)}` : f;
+  return full.startsWith("/") ? full : null;
+}
 const base = (path) => path.replace(/\/+$/, "").split("/").pop();
 // Changes made outside Herdr (an editor's save, a commit in another app): looked
 // for this often, in repos the list shows, while the window is in front.
@@ -247,6 +254,9 @@ export default class Spaces extends View {
     // didn't carry it.
     this.modelTexts = {};
     this.argvOf = new Map();
+    // Each live bot pane's project key on this computer (automagik#227: by project and id), by
+    // address ({ cwd, created, key }), read after each bot discovery (readPaneKeys).
+    this.paneKeys = new Map();
     // Workers whose tab is on its way (openWorker): a second click waits for it.
     this.opening = new Set();
     this.loadModelTexts(cx);
@@ -428,7 +438,7 @@ export default class Spaces extends View {
   prepareBots() {
     const now = Date.now();
     const known = knownBots(this.bots);
-    const live = liveFrom(this.all, known, argvReader(this.argvOf));
+    const live = liveFrom(this.all, known, argvReader(this.argvOf), this.paneKeyReader());
     this.botOf = new Map(this.all.filter((k) => known.has(k.labels?.[BOT_LABEL])).map((k) => [k.address, k.labels[BOT_LABEL]]));
     this.trees = buildTree({ projects: this.bots, live, terminals: this.all, now });
     this.wakeAt = nextWake(live, now);
@@ -639,10 +649,10 @@ export default class Spaces extends View {
     const project = { key: tree.key, machine: tree.machine };
     // Not counted live but holding a live terminal (no agent seen in front yet): its pane, or
     // a peek, rather than nothing; read again at click time (panes() too), nothing if it is gone.
-    const held = live || planned ? null : heldTerminalOf(b.id, this.all);
+    const held = live || planned ? null : heldTerminalOf(b.id, this.all, [], project, this.paneKeyReader());
     const onClick = live
       ? (cx) => this.openWorker(r, cx)
-      : held ? () => { const a = heldClickOf(b.id, terminals(), panes()); if (a) run(a.command, a.args); }
+      : held ? () => { const a = heldClickOf(b.id, terminals(), panes(), project, this.paneKeyReader()); if (a) run(a.command, a.args); }
         : r.foldable ? (cx) => this.toggle(r.id, r.open, cx) : null;
     // live: its own pane, or the terminal it holds before an agent shows (Focus goes where the
     // row's click goes; Detach); worker: what the row's own click opens (Focus, as openWorker);
@@ -880,6 +890,44 @@ export default class Spaces extends View {
         if (saved !== this.botsSaved) { this.botsSaved = saved; localStorage.setItem(BOTS_SAVED, saved); }
       } catch {}
       this.readBotArgv(cx);
+      this.readPaneKeys(cx);
+    });
+  }
+
+  // rows.js liveFrom's `keyOf`: a pane's project key as readPaneKeys found it for the same
+  // pane (created_ms) in the same folder, else null (counts for every project: paneCounts).
+  paneKeyReader() {
+    return (t) => {
+      const e = this.paneKeys.get(t?.address);
+      return e && e.created === (t.created_ms ?? null) && e.cwd === paneFolder(t) ? e.key : null;
+    };
+  }
+
+  // automagik#227: the project key of each live pane on this computer labelled with a known bot
+  // (bots.js paneKeyOfFolder: git's main checkout, cached a minute), asked after each discovery,
+  // never while drawing; a pane gone is dropped. A remote pane, or one with no folder, is never
+  // asked: it has no key, so it counts as before. Redraws on a change only.
+  readPaneKeys(cx) {
+    if (this.paneKeysBusy) return;
+    const known = knownBots(this.bots);
+    const rows = terminals().filter((t) => t?.state === "live" && typeof t.address === "string" && !t.address.includes("/")
+      && known.has(t.labels?.[BOT_LABEL]));
+    const here = new Set(rows.map((t) => t.address));
+    let changed = false;
+    for (const a of [...this.paneKeys.keys()]) if (!here.has(a)) { this.paneKeys.delete(a); changed = true; }
+    const ask = rows.map((t) => ({ address: t.address, created: t.created_ms ?? null, cwd: paneFolder(t) })).filter((r) => r.cwd);
+    if (!ask.length) { if (changed) cx.notify(); return; }
+    this.paneKeysBusy = true;
+    cx.spawn(async (cx) => {
+      try {
+        for (const r of ask) {
+          const key = await paneKeyOfFolder(r.cwd);
+          const old = this.paneKeys.get(r.address);
+          if (!old || old.key !== key || old.cwd !== r.cwd || old.created !== r.created) changed = true;
+          this.paneKeys.set(r.address, { ...r, key });
+        }
+      } catch {} finally { this.paneKeysBusy = false; }
+      if (changed) cx.notify();
     });
   }
 
