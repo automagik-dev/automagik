@@ -63,8 +63,12 @@ Two parts of D39 the design cannot promise yet, both for Felipe to confirm:
 
 - **`\\wsl.localhost`.** That share lists WSL distros, and a WSLC session is not one, so the
   projects volume may not show there (Design, "Projects"; open question 1).
-- **Only two native programs.** herdr-app may need an `hc` on Windows to reach the guest's core.
-  That would be a third native process, though it holds no terminals (open question 3).
+- **Only two native programs.** The design already needs app-internal processes on Windows:
+  `automagik-wslc.exe` stays alive while it holds `dsh-launch`'s stdio, plus one per
+  `hc --via` link. herdr-app may also need a bridge `hc` on Windows to reach the guest's core.
+  This RFC reads D39 as: **app-internal helpers that hold no terminals and run no tools count
+  as the app.** Both the helper and a bridge `hc` pass that test; every terminal, agent, shell
+  and tool still runs in Linux. Felipe confirms the reading (open question 3).
 
 ## Design
 
@@ -108,8 +112,13 @@ browser bridge over the `ipc` channel (`answerDsh`, `ds-bot:browser-endpoint`,
    with a port mapping from Windows `127.0.0.1:<host port>` to it; the default bind is
    127.0.0.1 **[doc]** ([WSL container][wslc]).
    The host port is today's stable one (`portFileOf`, RFC 0007), so the page's origin and
-   storage stay the same across launches. If it is taken, the container is recreated on a fresh
-   one; the volume is untouched. DSH may have to bind the container's interface rather than
+   storage stay the same across launches. A taken port is today's behaviour, unchanged: the app
+   checks the kept port before it starts (`launchPort`), and on DSH's `EADDRINUSE` it starts
+   once more on a fresh one and keeps that (`startDshOnPort`, `apps/desktop/src/dsh.js:593-604`).
+   Here the start on a fresh port also recreates the container's mapping; the volume is
+   untouched. As today, the page's origin changes with the port, so that origin's
+   localStorage (unsent drafts) is not carried over; the Bot team's data lives in DSH, not in
+   the page, and survives. DSH may have to bind the container's interface rather than
    127.0.0.1 for the mapping to reach it **[unverified]**: the spike checks. The launcher sends
    one framed `ready` message with the in-guest URL; Electron swaps in the host port and keeps
    the token. Every token check stays: any Windows process of this user can reach a mapped
@@ -131,9 +140,18 @@ browser bridge over the `ipc` channel (`answerDsh`, `ds-bot:browser-endpoint`,
    `downloads/` is where a Bot's browser downloads land: the relay's `downloadRoots` are paths,
    and the launcher translates them both ways. `lane/` is where Electron hands over verified
    plugin tarballs (see "The image").
-6. **Links out.** Claude Code's and Codex's sign-in flows open a browser. `xdg-open` in the
-   guest has nowhere to go. The launcher's `open` message asks Electron to open the URL with
-   `shell.openExternal`, for `https:` URLs only.
+6. **Links out and sign-in callbacks.** Claude Code's and Codex's sign-in flows open a browser.
+   `xdg-open` in the guest has nowhere to go, so the image puts an `xdg-open` (and `BROWSER`)
+   shim on PATH that hands the URL to the launcher. The launcher's `open` message asks Electron
+   to open it with `shell.openExternal`, for `https:` URLs only. A browser OAuth flow then
+   redirects to a listener on `localhost:<port>` inside the container, and only 41700 is
+   mapped. So when the opened URL's `redirect_uri` names `localhost` or `127.0.0.1`, the
+   launcher asks Electron for a **reverse tunnel**, the mirror of the CDP one: Electron listens
+   on Windows `127.0.0.1:<that port>` and carries each connection over the framed stdio to the
+   guest's `127.0.0.1:<that port>`. It closes after the first callback or 10 minutes. If the
+   port is taken on Windows, the sign-in falls back to the CLI's no-callback path: Claude
+   Code's paste-the-code prompt, and Codex's device-code login **[unverified for both; the
+   spike checks]**.
 7. **Parent death.** When Electron dies, the helper's process ends and the launcher's stdin
    closes. The launcher stops DSH on stdin EOF (RFC 0010 delivery 1's watch, done here by
    construction).
@@ -158,12 +176,16 @@ guest. Other mods that read local files read them through the machine too (deliv
 Whether herdr-app can attach to a core that is not local, without an `hc` on Windows, is a
 question for herdrdev (open question 3). Until it can, the only way with today's `hc` is a
 local `hc` on Windows as the bridge, with `linux` as its default machine and no terminals of
-its own. That is a third native process, against D39's wording.
+its own. It passes the reading in Decided (no terminals, no tools), as the helper does.
 
 **The pack splits.** Mod `.js` files are loaded by herdr-app, so they install on Windows into
 herdr-app's home. The pack's CLI, hooks and `run.sh` run in panes, so they install in the
-guest. The pack installer gains a Windows mode that writes the mods on Windows and asks the
-guest's `am` for the rest (herdr lane).
+guest. Each half has one writer. **On Windows the desktop app is the only writer of the mods**:
+Windows has no `sh` for `install.sh`, and the pack's updater runs in the guest. The app reads
+the `herdr-lane` pointer, checks it against `herdr/mods/am-sidebar/pack-keys.json` and the
+tarball against its sha256, as `install.sh` does, and never downgrades. **In the guest, `am` is
+the only writer** of the CLI half, from the same tarball. The pack's updater in the guest
+updates only that half.
 
 ### The image
 
@@ -253,6 +275,15 @@ no herdr-app and no live `hc` terminal, the session stops after 15 minutes idle.
 session outlives the process that created it is **[unverified]** (the spike measures it); the
 design wants terminals to survive a closed window, as they do on macOS.
 
+**When the session ends under a running app.** `wsl --shutdown`, a WSL update, or sleep and
+hibernate may end the session **[unverified; the spike checks each]**. Electron sees the
+launcher's stdio close without a stop it asked for. It shows "Restarting the Linux workspace",
+starts the container again on the same volume, and reloads the page once `ready` comes back, as
+its restart of DSH alone does today. A crash loop stops after RFC 0010 delivery 1's backoff,
+with a Retry. Terminals in the guest end with the VM; kept ones (`hc keep`) come back as shells.
+The bridge `hc` sees machine `linux` as away and reconnects through the helper on its next call,
+so herdr-app's spaces there come back without the person adding the machine again.
+
 ### The fence inside
 
 The VM is the outer fence, and it is the strongest one the product has on any OS. The guest
@@ -310,7 +341,9 @@ The boundary is new: a VM between the agents and Windows.
   app's own trust. The mapped port is reachable by any Windows process of this user, so DSH's
   per-launch token stays the gate, as on macOS. The CDP tunnel carries the relay's per-Bot
   token, and the relay's own checks run on Windows. The exchange folder is the only Windows
-  path the guest can write; nothing on Windows runs what lands there.
+  path the guest can write; nothing on Windows runs what lands there. A sign-in's reverse
+  tunnel opens a Windows loopback port for at most 10 minutes; the CLI's OAuth `state` check
+  is what refuses a callback from any other local process, as it does on macOS.
 - **Out of the guest.** Agents can no longer read the Windows user's files, credentials or
   browser profiles. They can read everything on the volume, including the CLIs' logins and
   provider keys passed to DSH (D19, unchanged). Egress stays allow-all (D19). The `open` message
@@ -337,9 +370,12 @@ Lanes per RFC 0011. Desktop items are 3.N. Each lists its check and its rollback
    - idle RAM (session alone; session with DSH up and the Bot team drawn);
    - cold start (from no session to the launcher's `ready`; from a stopped container);
    - `pnpm install` and `git status` on a large repo, on the volume against a virtiofs folder;
-   - and the three this RFC adds: guest to Windows-host loopback under Consommé; whether the
+   - and the ones this RFC adds: guest to Windows-host loopback under Consommé; whether the
      volume shows at `\\wsl.localhost`; whether a session outlives its creating process; and
-     that interop cannot run a Windows `.exe` from the container.
+     that interop cannot run a Windows `.exe` from the container;
+   - Claude Code and Codex sign-in completes from inside the container, through the reverse
+     tunnel and through each CLI's no-callback fallback;
+   - whether `wsl --shutdown`, a WSL update, and sleep or hibernate end a running WSLC session.
    *Check:* a findings note in the handoffs folder with each number and how it was taken.
    *Rollback:* delete it.
 2. **The image and the launcher** (desktop). The image build in CI and `dsh-launch`: the ipc
@@ -406,7 +442,11 @@ The guest half (delivery 2) runs on hosted Linux runners and gates every PR.
   `%USERPROFILE%\.automagik`. There are no `.cmd` shims and no Windows PATH entry.
 - Delivery 6 ("Windows port") becomes "Windows via WSLC": the guest runs `am install code`, and
   the desktop app installs herdr-app and the pack's mods on the Windows side and reports them
-  into the guest's parts.json. *Check:* on delivery 3's Windows runner, `am install code` in
+  into the guest's parts.json. The guest's `am doctor` cannot see Windows. For those parts it
+  shows the desktop's last report, marked with when it came, as 0012 already does for a remote
+  machine's entry. A report that says ok counts as ok. A missing report, or one that says not
+  ok, fails that part, naming the desktop app as the fixer. *Check:* on delivery 3's Windows
+  runner, `am install code` in
   the guest, then `am doctor` exits 0, Herdr opens with the pack, and its spaces are on
   `linux`. *Rollback:* revert; Windows goes back to "not applicable".
 - am-quota's Keychain reads become the guest's Claude Code credentials file, read through the
@@ -425,11 +465,12 @@ The guest half (delivery 2) runs on hosted Linux runners and gates every PR.
    *Recommended:* the helper exe against the flat C API (NuGet `Microsoft.WSL.Containers`,
    4.5 MB). The C API is the documented contract and the CLI's output is not; a helper keeps
    native code out of Electron and is the one thing UAC elevates.
-3. **herdr-app's core.** A local `hc` on Windows would be a third native process, against
-   D39's wording. *Recommended:* that `hc` as a bridge only, with the guest
-   added `--via` the helper and set as the default machine, since it works with today's `hc`.
-   Ask herdrdev for herdr-app attaching to a core over a command, and drop the Windows `hc`
-   when that ships.
+3. **Native helpers under D39.** Two app-internal processes run on Windows beside Electron and
+   herdr-app: `automagik-wslc.exe` (one per held stdio: `dsh-launch`, each `hc --via` link) and
+   a bridge `hc` with no terminals. *Recommended:* confirm Decided's reading (helpers with no
+   terminals and no tools count as the app), and keep both. The bridge `hc` works with today's
+   `hc`; herdr-app attaching to a core over a command (ask herdrdev) would remove it, which is
+   a nicety, not a blocker.
 4. **Windows 10.** It reached end of support on 2025-10-14 **[press]**, and WSLC on it is
    press-only. *Recommended:* Windows 11 only, unless the spike passes on Windows 10 22H2.
 5. **The image: downloaded or bundled.** *Recommended:* downloaded at first run and on change,
