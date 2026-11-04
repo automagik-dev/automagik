@@ -101,7 +101,7 @@ test("guard: the patterns catch the incident's own lines", () => {
   assert.ok(runsOutsideStandIn('sh(keychainScript(), "svc", "/nonexistent");'));
   assert.ok(runsOutsideStandIn('spawnSync("sh", ["-c", keychainReadScript(), "sh", svc]);'));
   assert.ok(runsOutsideStandIn('execWith(env)("sh", ["-c", keychainBackupScript(), "sh", svc, b]);'));
-  assert.ok(runsOutsideStandIn('spawnSync("sh", ["-c", keychainForgetScript(), "sh", svc]);'), "saved.js's delete script too");
+  assert.ok(runsOutsideStandIn('spawnSync("sh", ["-c", keychainForgetScript(), "sh", svc]);'), "a delete script too");
   assert.ok(SECURITY_PATH.test('const SEC = "/usr/bin/security";'));
   assert.ok(SECURITY_PATH.test("const SEC = `${root}/bin/security`;"));
   for (const ok of ['kc.sh(keychainScript(), svc, p);', 'await kc.exec({ A: 1 })("sh", ["-c", keychainReadScript(), "sh", s]);',

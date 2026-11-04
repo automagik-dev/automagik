@@ -29,10 +29,11 @@ function makeCx() {
   return cx;
 }
 
-async function footer({ sidebar, files = {} }) {
+async function footer({ sidebar, quota = true, files = {} }) {
   const root = mkdtempSync(join(tmpdir(), "hb-footer-"));
   state.appHome = root;
   if (sidebar) { mkdirSync(join(root, "mods/am-sidebar"), { recursive: true }); writeFileSync(join(root, "mods/am-sidebar/mod.json"), "{}\n"); }
+  if (quota) { mkdirSync(join(root, "mods/am-quota"), { recursive: true }); writeFileSync(join(root, "mods/am-quota/mod.json"), "{}\n"); }
   for (const [path, body] of Object.entries(files)) { mkdirSync(join(root, path, ".."), { recursive: true }); writeFileSync(join(root, path), body); }
   ui.props = { footer: true };
   const cx = makeCx();
@@ -53,6 +54,12 @@ test("the rail: Bots first, ahead of Mods, Automations and Quota, while the side
 
 test("the rail: no Bots tab without mods/am-sidebar/mod.json", async () => {
   assert.deepEqual(await footer({ sidebar: false }), ["mods", "automations", "quota", "settings", "machine"]);
+});
+
+test("the rail: no Quota tab while am-quota is off (in mods-disabled/) or not installed", async () => {
+  assert.deepEqual(await footer({ sidebar: true, quota: false }), ["bots", "mods", "automations", "settings", "machine"]);
+  const off = { "mods-disabled/am-quota/mod.json": "{}\n" };
+  assert.deepEqual(await footer({ sidebar: false, quota: false, files: off }), ["mods", "automations", "settings", "machine"]);
 });
 
 test("the Bots tab opens this mod's popup", async () => {
