@@ -223,13 +223,14 @@ function modelWords(roster, ref) {
 
 // One line naming the model a Bot runs on and its provider, with "change" opening the
 // model menu (which also leads to the providers): "Using Claude Opus 5.5 · Anthropic ·
-// change". `ref` and `onPick` stand in for a model the Bot does not have yet.
-export function ModelLine({ bot, roster, actions, run, ref, onPick }) {
-  const words = modelWords(roster, ref ?? bot.model ?? bot.appliedModel)
+// change". `modelRef` and `onPick` stand in for a model the Bot does not have yet (not
+// `ref`: React keeps that prop for itself, issue #153).
+export function ModelLine({ bot, roster, actions, run, modelRef, onPick }) {
+  const words = modelWords(roster, modelRef ?? bot.model ?? bot.appliedModel)
   return h('div', { className: 'bt-model-line' },
     h('span', { className: 'bt-model-line-text' }, t('Using {model} · {provider}', words)),
     h('span', { className: 'bt-model-line-sep', 'aria-hidden': true }, '·'),
-    h(ModelMenu, { bot: ref ? { ...bot, model: ref } : bot, roster, actions, run, link: true, onPick }))
+    h(ModelMenu, { bot: modelRef ? { ...bot, model: modelRef } : bot, roster, actions, run, link: true, onPick }))
 }
 
 const outlineOf = (list, sessionId) => list.projectionsBySession?.[sessionId]?.values?.turnOutline ?? list.byId?.[sessionId]?.projectionValues?.turnOutline
@@ -297,7 +298,7 @@ export function ModelChoiceDock({ sessionId, useRoster, actions }) {
           type: 'button', className: 'bt-model-chip bt-model-start', disabled: busy !== '', 'aria-busy': busy === suggested || undefined,
           onClick: () => pick(suggested),
         }, t('Start'), busy === suggested ? h('span', { className: 'bt-model-spin', 'aria-label': t('Saving…') }) : null),
-        h(ModelLine, { bot, roster, actions, run, ref: suggested, onPick: pick })),
+        h(ModelLine, { bot, roster, actions, run, modelRef: suggested, onPick: pick })),
       error ? h('div', { className: 'bt-secret-error bt-model-error', role: 'alert' }, error) : null)
   }
   // The recovery cases: the model went away, a key is missing, or nothing is set up. The

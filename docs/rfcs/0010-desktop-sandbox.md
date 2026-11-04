@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Draft (owner's answers in: D19; question 2 still open) |
 | Milestone | not scheduled |
 | Lanes | desktop (3.N); plugin (3.N.P) for the secrets broker; Omni upstream |
 | Created | 2026-11-03 |

@@ -4345,14 +4345,14 @@ function modelWords(roster, ref) {
   const [provider, ...rest2] = String(ref ?? "").split("/");
   return { model: served?.name ?? rest2.join("/"), provider: served?.providerName ?? served?.provider ?? provider };
 }
-function ModelLine({ bot, roster, actions, run: run2, ref, onPick }) {
-  const words = modelWords(roster, ref ?? bot.model ?? bot.appliedModel);
+function ModelLine({ bot, roster, actions, run: run2, modelRef, onPick }) {
+  const words = modelWords(roster, modelRef ?? bot.model ?? bot.appliedModel);
   return (0, import_react11.createElement)(
     "div",
     { className: "bt-model-line" },
     (0, import_react11.createElement)("span", { className: "bt-model-line-text" }, t("Using {model} · {provider}", words)),
     (0, import_react11.createElement)("span", { className: "bt-model-line-sep", "aria-hidden": true }, "·"),
-    (0, import_react11.createElement)(ModelMenu, { bot: ref ? { ...bot, model: ref } : bot, roster, actions, run: run2, link: true, onPick })
+    (0, import_react11.createElement)(ModelMenu, { bot: modelRef ? { ...bot, model: modelRef } : bot, roster, actions, run: run2, link: true, onPick })
   );
 }
 var outlineOf = (list, sessionId) => list.projectionsBySession?.[sessionId]?.values?.turnOutline ?? list.byId?.[sessionId]?.projectionValues?.turnOutline;
@@ -4439,7 +4439,7 @@ function ModelChoiceDock({ sessionId, useRoster, actions }) {
           "aria-busy": busy === suggested || void 0,
           onClick: () => pick2(suggested)
         }, t("Start"), busy === suggested ? (0, import_react11.createElement)("span", { className: "bt-model-spin", "aria-label": t("Saving…") }) : null),
-        (0, import_react11.createElement)(ModelLine, { bot, roster, actions, run: run2, ref: suggested, onPick: pick2 })
+        (0, import_react11.createElement)(ModelLine, { bot, roster, actions, run: run2, modelRef: suggested, onPick: pick2 })
       ),
       error ? (0, import_react11.createElement)("div", { className: "bt-secret-error bt-model-error", role: "alert" }, error) : null
     );
