@@ -10,7 +10,6 @@ import { fakeContext } from './fake-ctx.js'
 const ACCESS = `x.${Buffer.from(JSON.stringify({ 'https://api.openai.com/auth': { chatgpt_account_id: 'acct-7' } })).toString('base64url')}.sig`
 const KEY = 'sk-openai-secret-0123456789'
 const PNG = Buffer.from('a tiny png').toString('base64')
-const noClaude = async () => ({ plugin: false, installed: false, loggedIn: false })
 
 // The Omni team service (@automagik/bots-dsh's omniTeam), as far as onboarding uses it.
 function fakeTeam({ mainName = 'Omni', folder } = {}) {
@@ -45,7 +44,7 @@ function host({ entries = { 'omni-ai': {} }, team, fetch, env = {}, ...rest } = 
     requests.push({ url: String(url), init })
     return new Response(JSON.stringify({ data: [{ b64_json: PNG }] }), { status: 200, headers: { 'content-type': 'application/json' } })
   })
-  const { handle } = install(fake.ctx, { checkClaude: noClaude, companion: { fetch: fetchImpl, env, now: () => 1_000_000 } })
+  const { handle } = install(fake.ctx, { companion: { fetch: fetchImpl, env, now: () => 1_000_000 } })
   return { ...fake, handle, requests }
 }
 
@@ -205,7 +204,7 @@ test('a deleted Omni Bot comes back from the Bot team\'s Add Omni, made as the t
     const fake = fakeContext({ entries: { 'omni-ai': {} }, services: { omniTeam: team } })
     // While the Bot team and Omni's channels run (cordis ctx.inject).
     fake.ctx.inject = (names, callback) => callback({ omniTeam: team, omniChannels: {}, effect: fn => fn() })
-    install(fake.ctx, { checkClaude: noClaude })
+    install(fake.ctx, {})
     const addable = () => Object.assign({}, ...views.map(fn => fn())).omniAddable
     assert.equal(addable(), true)
     const bot = await endpoints.get('omni-add')()
@@ -249,41 +248,41 @@ function withModels(team, served) {
 }
 
 test('Connect AI finished with an AI on gives the companion, the Omni Bot and the Genie Bot a model', async () => {
-  const team = withModels(fakeTeam({ mainName: 'Pip' }), ['claude-code/opus'])
+  const team = withModels(fakeTeam({ mainName: 'Pip' }), ['anthropic/claude-opus-5-5'])
   team.state.bots.omni = { id: 'omni', name: 'Omni', kind: 'omni' }
   team.state.bots.genie = { id: 'genie', name: 'Genie', kind: 'genie' }
   team.state.bots.other = { id: 'other', name: 'Writer' }
   const fake = host({ team })
   const reply = await fake.handle('done', { stepId: 'omni-connect-ai', connected: true })
   assert.deepEqual(reply.value, { connectAiDone: true })
-  assert.deepEqual(team.calls, [['updateBot', 'main', { model: 'claude-code/opus' }], ['updateBot', 'omni', { model: 'claude-code/opus' }], ['updateBot', 'genie', { model: 'claude-code/opus' }]])
+  assert.deepEqual(team.calls, [['updateBot', 'main', { model: 'anthropic/claude-opus-5-5' }], ['updateBot', 'omni', { model: 'anthropic/claude-opus-5-5' }], ['updateBot', 'genie', { model: 'anthropic/claude-opus-5-5' }]])
   assert.equal(team.state.bots.other.model, undefined)
 })
 
 test('a skipped Connect AI, a Bot with a model, or no model that can run sets nothing', async () => {
-  const skipped = withModels(fakeTeam(), ['claude-code/opus'])
+  const skipped = withModels(fakeTeam(), ['anthropic/claude-opus-5-5'])
   await host({ team: skipped }).handle('done', { stepId: 'omni-connect-ai' })
   assert.deepEqual(skipped.calls, [])
-  const chosen = withModels(fakeTeam(), ['claude-code/opus'])
+  const chosen = withModels(fakeTeam(), ['anthropic/claude-opus-5-5'])
   chosen.state.bots.main.model = 'deepseek/deepseek-v4-pro'
   await host({ team: chosen }).handle('done', { stepId: 'omni-connect-ai', connected: true })
   assert.deepEqual(chosen.calls, [])
   const none = withModels(fakeTeam(), [undefined])
   const fake = host({ team: none })
   const { install: installAgain } = await import('../src/host/endpoint.js')
-  const quick = installAgain(fake.ctx, { checkClaude: noClaude, assignWaitMs: 0 })
+  const quick = installAgain(fake.ctx, { assignWaitMs: 0 })
   assert.equal((await quick.handle('done', { stepId: 'omni-connect-ai', connected: true })).ok, true)
   assert.deepEqual(none.calls, [])
   // Another step's done never assigns.
-  const other = withModels(fakeTeam(), ['claude-code/opus'])
+  const other = withModels(fakeTeam(), ['anthropic/claude-opus-5-5'])
   await host({ team: other }).handle('done', { stepId: 'omni-team', connected: true })
   assert.deepEqual(other.calls, [])
 })
 
 test('a provider Connect AI just turned on is waited for', async () => {
-  const team = withModels(fakeTeam(), [undefined, undefined, 'claude-code/opus'])
+  const team = withModels(fakeTeam(), [undefined, undefined, 'anthropic/claude-opus-5-5'])
   const fake = host({ team })
   const { assignModels } = await import('../src/host/companion.js').then(({ createCompanionActions }) => createCompanionActions(fake.ctx))
   assert.deepEqual(await assignModels(team, { waitMs: 5_000, pauseMs: 1 }), ['Omni'])
-  assert.deepEqual(team.calls, [['updateBot', 'main', { model: 'claude-code/opus' }]])
+  assert.deepEqual(team.calls, [['updateBot', 'main', { model: 'anthropic/claude-opus-5-5' }]])
 })

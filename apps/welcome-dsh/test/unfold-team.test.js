@@ -83,7 +83,7 @@ function unfoldHost(answers) {
 
 test('the team step\'s cards, from the state the host serves: Unfold only in Unfold\'s own instance', async () => {
   const cards = async (env) => {
-    const { handle } = install(fakeContext({ entries: { 'omni-ai': {} } }).ctx, { env, checkClaude: async () => ({ plugin: false, installed: false, loggedIn: false }) })
+    const { handle } = install(fakeContext({ entries: { 'omni-ai': {} } }).ctx, { env })
     const state = (await handle('state')).value
     return plain(team.cardsOf(state.preload))
   }
@@ -128,7 +128,7 @@ test('Unfold\'s card: its box, its name, and what it starts with; on the team on
 test('the stage mascot above every step is Unfold in its instance (host or preload unfold), else the octopus', async () => {
   // The look the stage draws, from the state the host serves the steps.
   const mascot = async (env) => {
-    const { handle } = install(fakeContext({ entries: { 'omni-ai': {} } }).ctx, { env, checkClaude: async () => ({ plugin: false, installed: false, loggedIn: false }) })
+    const { handle } = install(fakeContext({ entries: { 'omni-ai': {} } }).ctx, { env })
     const state = (await handle('state')).value
     return JSON.stringify(render(art.Hero({ look: art.companionLook(state) })))
   }

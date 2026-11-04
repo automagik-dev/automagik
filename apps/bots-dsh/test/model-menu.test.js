@@ -35,7 +35,7 @@ runInNewContext(bundle.outputFiles[0].text, {
     return platform[name]
   },
 })
-const { groupModels, greetingOnly, ModelChoiceDock, ModelLine, ModelLineTail, ModelMenu, effortRows } = module.exports
+const { groupModels, greetingOnly, ModelChoiceDock, ModelLine, ModelLineTail, ModelMenu, effortRows, offeredModels } = module.exports
 
 // ModelMenu picks the menu a Bot gets (DSH's models, or its plugin's): draw the one it picked.
 const drawMenu = (props) => {
@@ -84,10 +84,10 @@ test('with models that can run and none chosen, one press starts the Bot: no gri
 })
 
 test('the model line names the model and its provider, and "change" opens the model menu', () => {
-  const bot = { id: 'chief', name: 'Pip', model: 'claude-code/opus' }
-  const roster = { models: [{ ref: 'claude-code/opus', provider: 'claude-code', providerName: 'Oh My Claude', name: 'Claude Opus 5.5' }, ...models] }
+  const bot = { id: 'chief', name: 'Pip', model: 'anthropic/claude-opus-5-5' }
+  const roster = { models: [{ ref: 'anthropic/claude-opus-5-5', provider: 'anthropic', providerName: 'Anthropic', name: 'Claude Opus 5.5' }, ...models] }
   const line = ModelLine({ bot, roster, actions: {}, run: () => {} })
-  assert.equal(nodes(line, node => node.props.className === 'bt-model-line-text')[0].children[0], 'Using Claude Opus 5.5 · Oh My Claude')
+  assert.equal(nodes(line, node => node.props.className === 'bt-model-line-text')[0].children[0], 'Using Claude Opus 5.5 · Anthropic')
   const [menu] = nodes(line, node => node.type === ModelMenu)
   assert.equal(menu.props.link, true)
   // Closed, the trigger is the "change" link.
@@ -100,7 +100,7 @@ test('the model line names the model and its provider, and "change" opens the mo
   try {
     const open = drawMenu({ ...menu.props, actions: { openHarnessSettings: () => {} } })
     const items = nodes(open, node => node.type === 'button').map(button => button.children.map(child => (typeof child === 'string' ? child : nodes(child, n => n.props.className === 'bt-menu-label')[0]?.children[0] ?? '')).join(''))
-    assert.equal(nodes(open, node => node.type?.name === 'ModelRows')[0].props.current, 'claude-code/opus')
+    assert.equal(nodes(open, node => node.type?.name === 'ModelRows')[0].props.current, 'anthropic/claude-opus-5-5')
     assert.ok(items.includes('Models and providers…'))
   } finally {
     menuOpen = false
@@ -299,4 +299,16 @@ test('a host-owned Bot\'s settings and details name what answers now, never the 
   const bare = { id: 'unfold', name: 'Unfold', kind: 'unfold' }
   assert.equal(needsModelPick(bare, { ...plain, byId: { unfold: bare } }), true)
   assert.equal(needsModelPick(bare, { ...hosted, byId: { unfold: bare } }), false)
+})
+
+test('the menu leaves out a superseded model, unless the Bot is on it', () => {
+  const models = [
+    { ref: 'anthropic/claude-opus-5-5', provider: 'anthropic' },
+    { ref: 'anthropic/claude-opus-4-7', provider: 'anthropic', superseded: true },
+    { ref: 'acp-claude/default', provider: 'acp-claude' },
+  ]
+  assert.deepEqual(Array.from(offeredModels(models, 'acp-claude/default'), model => model.ref), ['anthropic/claude-opus-5-5', 'acp-claude/default'])
+  // A Bot saved on an older Claude still sees, and keeps, the model it is on.
+  assert.deepEqual(Array.from(offeredModels(models, 'anthropic/claude-opus-4-7'), model => model.ref), ['anthropic/claude-opus-5-5', 'anthropic/claude-opus-4-7', 'acp-claude/default'])
+  assert.equal(offeredModels(undefined, undefined).length, 0)
 })

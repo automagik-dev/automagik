@@ -13,20 +13,14 @@
 //                                 its latest notice (message, url, code) and open question
 //   signin-answer { provider, promptId, value }
 //   signin-cancel { provider }
-//   claude-code                   Claude through the person's own Claude Code: whether the
-//                                 `claude` CLI is installed and signed in (`claude auth
-//                                 status`), as the dsh-oh-my-claude plugin drives it. Claude has
-//                                 no sign-in of ours: Anthropic allows its subscriptions in
-//                                 other apps through Claude Code, not through a login of theirs
+//
+// Claude is pi-ai's anthropic route: its Claude Pro/Max sign-in (pi-ai's OAuth, the flow
+// llm-pi-ai/anthropic) or an Anthropic API key (ANTHROPIC_API_KEY), one route either way.
 //
 // The browser never sees a key or a token: it sees the flow's notices and answers its
 // questions. A sign-in lives in this process; reloading the page leaves it running, and
 // signin-status picks it up again.
-import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { accessSync, constants, readdirSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { delimiter, join } from 'node:path'
 import { Answer, AnswerPayload, KeyPayload, ProviderPayload, Secret, parse } from './payloads.js'
 
 export const PI_AI = 'llm-pi-ai'
@@ -43,50 +37,23 @@ export const KEY_PROVIDERS = {
   moonshotai: { label: 'Moonshot (Kimi API)' },
   xai: { label: 'xAI' },
 }
-// Providers a subscription sign-in can connect, by pi-ai's provider id. Claude is not one:
-// see claude-code.
+// Providers a subscription sign-in can connect, by pi-ai's provider id.
 export const SIGNIN_PROVIDERS = {
+  anthropic: { label: 'Claude (Pro/Max)' },
   'openai-codex': { label: 'ChatGPT (Codex)' },
   'kimi-coding': { label: 'Kimi Code' },
   'github-copilot': { label: 'GitHub Copilot' },
   xai: { label: 'Grok' },
 }
+// What a sign-in's route holds beyond its provider. A Claude plan at its limit answers with a
+// 429 (rate_limit_error), which DSH's default policy retries five times, about 16 s, before
+// the Bot team's fallback model gets the turn: here the plan's 429 is not retried, so the turn
+// moves on at once. The rest of DSH's default retry set stays.
+export const SIGNIN_ROUTES = {
+  anthropic: { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } },
+}
 // A finished attempt is kept this long, so a page that comes back still learns how it ended.
 const KEEP_MS = 10 * 60 * 1000
-
-// dsh-oh-my-claude's model route, and where Claude Code installs itself when not on PATH (an
-// app opened from the Dock or a launcher does not get the shell's PATH).
-export const CLAUDE_CODE_ROUTE = 'claude-code'
-const CLAUDE_STATUS_MS = 15_000
-export function claudeCandidates(env = process.env, home = homedir()) {
-  const onPath = String(env.PATH ?? '').split(delimiter).filter(Boolean).map(dir => join(dir, 'claude'))
-  const nvm = join(home, '.nvm', 'versions', 'node')
-  let nvmBins = []
-  try {
-    nvmBins = readdirSync(nvm).map(version => join(nvm, version, 'bin', 'claude'))
-  } catch {}
-  return [...onPath, join(home, '.local', 'bin', 'claude'), join(home, '.claude', 'local', 'claude'), '/opt/homebrew/bin/claude', '/usr/local/bin/claude', join(home, '.bun', 'bin', 'claude'), join(home, '.npm-global', 'bin', 'claude'), ...nvmBins]
-}
-const executable = (path) => {
-  try {
-    accessSync(path, constants.X_OK)
-    return true
-  } catch {
-    return false
-  }
-}
-// `claude auth status`: JSON from a current CLI; an older one prints prose.
-export function parseClaudeStatus(text) {
-  try {
-    const status = JSON.parse(text)
-    return { loggedIn: status?.loggedIn === true, email: typeof status?.email === 'string' ? status.email : null, plan: typeof status?.subscriptionType === 'string' ? status.subscriptionType : null, method: typeof status?.authMethod === 'string' ? status.authMethod : null }
-  } catch {
-    return { loggedIn: /logged in/i.test(text) && !/not logged in/i.test(text), email: null, plan: null, method: null }
-  }
-}
-const runStatus = (path, env) => new Promise((resolve) => {
-  execFile(path, ['auth', 'status'], { timeout: CLAUDE_STATUS_MS, env, maxBuffer: 256 * 1024 }, (error, stdout) => resolve(error && !stdout ? null : String(stdout)))
-})
 
 const failure = (code, message) => Object.assign(new Error(message), { code })
 const invalid = message => failure('omni-ai/invalid', message)
@@ -110,13 +77,40 @@ const piAiEntry = (ctx) => {
   }
 }
 
+// DSH's retry defaults (dsh-llm resolveRetryPolicy). DSH's settings describe a route as its
+// schema resolved it, so a stored policy carries these filled in.
+const RETRY_DEFAULTS = Object.freeze({ maxRetries: 5, backoff: Object.freeze({ initialDelayMs: 500, maxDelayMs: 10_000, jitterRatio: 0.1 }) })
+const sameCodes = (a, b) => Array.isArray(a) && Array.isArray(b) && new Set(a).size === new Set(b).size && b.every(code => a.includes(code))
+const unsetOr = (value, fallback) => value === undefined || value === fallback
+
+/**
+ * Whether a stored retry policy is the sign-in's (SIGNIN_ROUTES), as written or as DSH's
+ * schema resolved it: the same mode and codes, and every other field absent or DSH's default.
+ */
+export function isSigninPolicy(stored, signin) {
+  if (stored === null || typeof stored !== 'object' || signin === undefined) return false
+  const { mode, retryableCodes, maxRetries, backoff, ...other } = stored
+  if (Object.keys(other).length > 0 || mode !== signin.mode || !sameCodes(retryableCodes, signin.retryableCodes)) return false
+  if (!unsetOr(maxRetries, RETRY_DEFAULTS.maxRetries)) return false
+  if (backoff === undefined) return true
+  if (backoff === null || typeof backoff !== 'object') return false
+  const { initialDelayMs, maxDelayMs, jitterRatio, ...more } = backoff
+  const d = RETRY_DEFAULTS.backoff
+  return Object.keys(more).length === 0 && unsetOr(initialDelayMs, d.initialDelayMs) && unsetOr(maxDelayMs, d.maxDelayMs) && unsetOr(jitterRatio, d.jitterRatio)
+}
+
 // Write one route under llm-pi-ai.providers, keeping what it already holds. A route that
-// does not exist yet is added; DSH checks it before the change applies.
+// does not exist yet is added; DSH checks it before the change applies. A route that takes a
+// key leaves the sign-in's retry policy (isSigninPolicy): a key's 429 is DSH's to retry. A
+// policy someone set by hand stays.
 export async function saveRoute(ctx, provider, patch) {
   const entry = piAiEntry(ctx)
   if (entry === undefined) throw refused('This DSH has no pi-ai entry (llm-pi-ai) to connect providers with.')
   const current = entry.value?.providers?.[provider]
   const route = { ...(current && typeof current === 'object' ? current : {}), ...patch }
+  if (patch.apiKeyEnv !== undefined && !Object.hasOwn(patch, 'retryPolicy') && isSigninPolicy(route.retryPolicy, SIGNIN_ROUTES[provider]?.retryPolicy)) {
+    delete route.retryPolicy
+  }
   try {
     await ctx.settings.mutate(PI_AI, [{ op: 'set', path: ['providers', provider], value: route }], entry.revision)
   } catch (error) {
@@ -155,20 +149,6 @@ const authorizationOf = (ctx) => {
   }
 }
 
-// Claude through Claude Code: the plugin's route, the CLI, its sign-in, and whether DSH's own
-// PATH reaches the CLI (the plugin starts a plain `claude`).
-export async function checkClaudeCode(ctx, { env = process.env, home = homedir() } = {}) {
-  let plugin = false
-  try {
-    plugin = (ctx.get?.('llm')?.listProviders?.() ?? []).some(provider => provider?.id === CLAUDE_CODE_ROUTE)
-  } catch {}
-  const path = claudeCandidates(env, home).find(executable) ?? null
-  if (path === null) return { plugin, installed: false, loggedIn: false }
-  const status = parseClaudeStatus((await runStatus(path, env)) ?? '')
-  const reachable = String(env.PATH ?? '').split(delimiter).filter(Boolean).some(dir => executable(join(dir, 'claude')))
-  return { plugin, installed: true, path, reachable, loggedIn: status.loggedIn, email: status.email, plan: status.plan }
-}
-
 export function createProviderActions(ctx) {
   // One attempt per provider: { id, status, notice, prompt, error, answer, finishedAt }.
   const attempts = new Map()
@@ -185,10 +165,6 @@ export function createProviderActions(ctx) {
   }
 
   return {
-    async 'claude-code'() {
-      return checkClaudeCode(ctx)
-    },
-
     async providers() {
       const providers = piAiEntry(ctx)?.value?.providers ?? {}
       const out = {}
@@ -263,9 +239,17 @@ export function createProviderActions(ctx) {
             return
           }
           // Only a finished sign-in gets a route. A sign-in sits beneath a key: a route with
-          // apiKeyEnv uses the key, so the route this adds names none, and one that exists
-          // already (keyed or not) is left as it is.
-          if (!Object.hasOwn(piAiEntry(ctx)?.value?.providers ?? {}, provider)) await saveRoute(ctx, provider, {})
+          // apiKeyEnv uses the key, so the route this adds names none, and a keyed one is left
+          // as it is. A route on the sign-in alone takes what the sign-in's route holds
+          // (SIGNIN_ROUTES) when it has none of it yet.
+          const routes = piAiEntry(ctx)?.value?.providers ?? {}
+          const extra = SIGNIN_ROUTES[provider] ?? {}
+          if (!Object.hasOwn(routes, provider)) await saveRoute(ctx, provider, extra)
+          else {
+            const route = routes[provider] ?? {}
+            const missing = Object.fromEntries(Object.entries(extra).filter(([field]) => route[field] === undefined))
+            if (route.apiKeyEnv === undefined && Object.keys(missing).length > 0) await saveRoute(ctx, provider, missing)
+          }
           attempt.status = 'authorized'
         })
         .catch((error) => {

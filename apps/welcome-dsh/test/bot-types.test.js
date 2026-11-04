@@ -6,7 +6,6 @@ import { GENIE_PLUGIN, GENIE_RELEASE, OMNI_PLUGINS, OMNI_RELEASE, OMNI_TOOLS, ge
 import { fakeContext } from './fake-ctx.js'
 
 const PKG = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-const noClaude = async () => ({ plugin: false, installed: false, loggedIn: false })
 const OWN_LINK = 'link:/home/someone/automagik/apps/welcome-dsh'
 const OMNI_GIT = dir => `git+https://github.com/automagik-dev/omni.git#${OMNI_RELEASE.commit}&path:/apps/${dir}`
 const expectedSpec = plugin => (plugin.from === 'omni' ? OMNI_GIT(plugin.dir) : `link:/home/someone/automagik/apps/${plugin.dir}`)
@@ -44,7 +43,7 @@ function fakeManager({ bundles = [{ name: PKG.name, availability: 'profile', ena
 
 function host({ manager, team, services = {}, checkGit = async () => null, genieSkills = () => true } = {}) {
   const fake = fakeContext({ entries: { 'omni-ai': {} }, services: { ...(manager ? { pluginManager: manager } : {}), ...(team ? { omniTeam: team } : {}), ...services } })
-  const { handle } = install(fake.ctx, { checkClaude: noClaude, checkGit, genieSkills })
+  const { handle } = install(fake.ctx, { checkGit, genieSkills })
   return { ...fake, handle }
 }
 const value = async (fake, endpoint, payload) => {

@@ -1,0 +1,49 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- After the phone restarts and is unlocked: bring Watch in background back if it was on (WatchResumeReceiver). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Speaking a message in the assistant panel. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Self-update from the GitHub releases: Android asks once to allow installs; on Android 12+ an app updating itself then
+         installs without asking (UPDATE_PACKAGES_WITHOUT_USER_ACTION, targetSdk 35). Older Android asks each time. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
+    <!-- Whether the network is metered: an automatic update downloads only on Wi-Fi and other unmetered networks. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <application android:name=".PocketApplication" android:label="Automagik" android:theme="@style/Theme.Herdr" android:icon="@mipmap/ic_launcher" android:allowBackup="false" android:dataExtractionRules="@xml/data_extraction_rules" android:supportsRtl="true" android:usesCleartextTraffic="false">
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask" android:windowSoftInputMode="adjustResize" android:configChanges="orientation|screenSize|keyboardHidden|keyboard">
+            <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+            <!-- Pocket Link: a QR or link from Herdr desktop pairs this phone. -->
+            <intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="herdr-pocket" android:host="pair"/></intent-filter>
+        </activity>
+        <!-- The phone's assistant: holding the side button opens this panel, on the lock screen too. -->
+        <activity android:name=".AssistActivity" android:exported="true" android:theme="@style/Theme.Herdr.Assist" android:excludeFromRecents="true"
+            android:taskAffinity="" android:launchMode="singleTask" android:windowSoftInputMode="adjustResize">
+            <intent-filter><action android:name="android.intent.action.ASSIST"/><category android:name="android.intent.category.DEFAULT"/></intent-filter>
+        </activity>
+        <!-- The QR scanner follows the phone: the library locks it to landscape, so portrait scanning needs this. -->
+        <activity android:name="com.journeyapps.barcodescanner.CaptureActivity" android:screenOrientation="fullSensor" tools:replace="screenOrientation" />
+        <receiver android:name=".UpdateReceiver" android:exported="false" />
+        <!-- Android starts the new build right after an update, so "Updated to" shows without waiting for the next open. -->
+        <receiver android:name=".UpdatedReceiver" android:exported="false">
+            <intent-filter><action android:name="android.intent.action.MY_PACKAGE_REPLACED" /></intent-filter>
+        </receiver>
+        <receiver android:name=".Notify$ReplyReceiver" android:exported="false" />
+        <receiver android:name=".Notify$ChoiceReceiver" android:exported="false" />
+        <!-- Keeps the person's own machines connected while they're away from the app, so agent alerts reach them. -->
+        <service android:name=".WatchService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Keeps the user's connections to their own computers open so a coding agent that needs them or finishes reaches them as a notification they can reply to." />
+        </service>
+        <!-- An update, from GitHub or Play, or a phone restart ends the process: this brings Watch in background back if it
+             was on. BOOT_COMPLETED comes after the first unlock, when the keys and preferences can be read. -->
+        <receiver android:name=".WatchResumeReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

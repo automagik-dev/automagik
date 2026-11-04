@@ -60,7 +60,7 @@ const FIDGETS = ['hop', 'sway', 'stretch', 'look']
 
 // Pets (pet.js) in the Codex format: a pet the team installed or ships, served by the host
 // (pets.js), or a character baked into one (pet-bake.js) for the marks that move.
-export const GENIE_PET = Object.freeze({ source: 'builtin', id: 'genie-cosmic', version: 2, sleep: true })
+export const GENIE_PET = Object.freeze({ source: 'builtin', id: 'genie-clay', version: 1, sleep: true })
 export const UNFOLD_PET = Object.freeze({ source: 'builtin', id: 'unfold', version: 2, sleep: true })
 const petUrl = (pet, part) => `api/omni-ui/pet?${new URLSearchParams({ source: pet.source, id: pet.id, ...(part ? { part } : {}) })}`
 export const servedPet = pet => ({ sheet: petUrl(pet), sleep: pet.sleep ? petUrl(pet, 'sleep') : undefined, version: pet.version })

@@ -7,15 +7,10 @@ import { absoluteLinks } from './links.js'
 import { textOf } from './text.js'
 import { reminderText } from './schedules.js'
 
-// Turns that open with no person or Bot asking: a goal round, and Claude Code's own notices
-// (dsh-oh-my-claude: reattached after a restart, woke, a limit lifted), which carry a reply
-// the person waits for. A Bot's request that lands inside one joins it rather than claiming
-// it, so its reply stays in the chat (issue #62). Its v3 logs name the plugin inside a
-// `plugin` source; v4 in the kind.
-const SELF_OPENING_PLUGINS = new Set(['dsh-oh-my-claude', 'claude-code'])
+// Turns that open with no person or Bot asking: a goal round, which carries a reply the
+// person waits for. A Bot's request that lands inside one joins it rather than claiming it,
+// so its reply stays in the chat (issue #62).
 export const opensByItself = source => source?.kind === 'goal'
-  || (typeof source?.kind === 'string' && source.kind.startsWith('plugin:') && SELF_OPENING_PLUGINS.has(source.kind.slice('plugin:'.length)))
-  || (source?.kind === 'plugin' && SELF_OPENING_PLUGINS.has(source.plugin))
 
 // A failed turn's `LlmFailure`, kept to what can be shown and logged. Like DSH's own
 // error row, an AUTH failure loses its message: providers may echo part of the key.

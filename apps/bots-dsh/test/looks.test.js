@@ -34,7 +34,7 @@ test('only a DSH identity defaults to the blue whale, and a stored look wins', (
   assert.equal(lookOf({ ...writer, color: 'magenta', avatar: { shape: 'star' } }).shape, 'star')
 })
 
-test('a Genie keeps its own art: the genie-cosmic pet, and the id look under it', () => {
+test('a Genie keeps its own art: the genie-clay pet, and the id look under it', () => {
   const genie = { id: 'g1', kind: 'genie', name: 'cogna-cx-kb', createdAt: 3 }
   const look = lookOf(genie)
   assert.deepEqual(look, { shape: defaultShape('g1'), color: defaultColor('g1'), image: undefined, pet: undefined })

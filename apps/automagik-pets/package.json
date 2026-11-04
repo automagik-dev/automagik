@@ -1,0 +1,30 @@
+{
+  "name": "@automagik/pets",
+  "version": "3.70.0",
+  "private": true,
+  "description": "automagik-pets: bakes the Bot team's characters into Codex v2 pet folders without a browser, for DSH and Automagik Herdr",
+  "homepage": "https://github.com/automagik-dev/automagik/tree/dev/apps/automagik-pets#readme",
+  "bugs": {
+    "url": "https://github.com/automagik-dev/automagik/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/automagik-dev/automagik.git",
+    "directory": "apps/automagik-pets"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "automagik-pets": "bin/automagik-pets.js"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "bake-all": "node scripts/bake-all.mjs"
+  },
+  "dependencies": {
+    "sharp": "0.35.5"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

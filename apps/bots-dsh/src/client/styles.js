@@ -1206,6 +1206,17 @@ export function installStyles(text, tag) {
 const FRAGMENT_SELECTOR = /\[class\*="(_[\w-]+)"\]/g
 const CLASS_TOKEN = /\.((?:\\.|[\w-])+)/g
 
+// The class names each loaded sheet defines, kept for every installer together: the 28 of
+// them would otherwise each walk every sheet's rules (~85 ms of the page's load). A sheet's
+// rules don't change in place; a reloaded <link> is a new sheet, so it is read afresh.
+const sheetNames = new WeakMap()
+
+function classNamesOf(sheet) {
+  let names = sheetNames.get(sheet)
+  if (!names) { names = sheetClassNames(sheet); sheetNames.set(sheet, names) }
+  return names
+}
+
 function sheetClassNames(sheet) {
   const names = []
   const visit = (rules) => {
@@ -1233,7 +1244,6 @@ function compileFragmentSelectors(text, names) {
 export function installCompiledStyles(text, tag) {
   const style = installStyles('', tag)
   let disposed = false
-  const cache = new WeakMap()
   const render = () => {
     if (disposed) return
     // A tag removed out from under us (not by the module system, which owns it) goes back.
@@ -1241,9 +1251,7 @@ export function installCompiledStyles(text, tag) {
     const names = new Set()
     for (const sheet of document.styleSheets) {
       if (sheet.ownerNode?.dataset?.dshBot) continue
-      let list = cache.get(sheet)
-      if (!list) { list = sheetClassNames(sheet); cache.set(sheet, list) }
-      for (const name of list) names.add(name)
+      for (const name of classNamesOf(sheet)) names.add(name)
     }
     const next = compileFragmentSelectors(text, names)
     if (style.textContent !== next) style.textContent = next

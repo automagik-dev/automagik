@@ -14,13 +14,32 @@
  * Omni's market serves them without an Omni release. The signature is ed25519 over the exact
  * bytes of lane.json, detached, base64; the public keys are plugin-lane/keys.json.
  *
- *   bun scripts/lane.ts kind <last-full-tag>                    plugins | full: what the commits since it need
+ *   bun scripts/lane.ts kind <last-full-tag> [<last-tag>]       herdr | pocket | plugins | full: what the commits since need
+ *   bun scripts/lane.ts herdr <last-tag>                         yes | no: whether the release rebuilds the herdr pack
+ *   bun scripts/lane.ts pocket <tag>                             yes | no: whether the release rebuilds Pocket's app
+ *   bun scripts/lane.ts pocket-since <last-tag> [<lane-version>] the tag Pocket's changes are measured from
  *   bun scripts/lane.ts ships <last-tag>                         yes | no: whether anything since it reaches an install
  *   bun scripts/lane.ts next-patch                               the next patch release: 3.N.(P+1) on the newest 3.N
  *   bun scripts/lane.ts pack-addons <dir>                          pack the add-ons the lane carries into dir, with addons.json
  *   bun scripts/lane.ts manifest <plugins.json> <base> <issuedAt> [addons.json]  print lane.json for a release's plugins.json
  *   bun scripts/lane.ts sign <lane.json>                         print its signature (the key in PLUGIN_LANE_KEY, PEM)
  *   bun scripts/lane.ts verify <lane.json> <lane.json.sig>       check it against plugin-lane/keys.json
+ *
+ * The herdr pack (herdr/, docs/rfcs/0011-monorepo-parts-and-releases.md) is a part of its own: no
+ * desktop build or plugin reads it, and Herdr installs it from its own tarball. A release whose
+ * shipping changes since the last release (any tag) are all under herdr/ is a `herdr` patch, 3.N.P
+ * with the pack alone: no desktop build, no plugin tarballs, no new lane. Any release that has a
+ * shipping herdr/ change since the last release attaches the pack (`herdr`), whatever its kind.
+ *
+ * Pocket's phone app (apps/pocket/, same RFC, "Pocket") is a part the same way: no desktop build or
+ * plugin reads it, and phones update from latest.json on the rolling pocket-lane release. A release
+ * whose shipping changes since the last release are all under apps/pocket/, or under apps/pocket/ and
+ * herdr/, is a `pocket` patch: the app (and the pack, when herdr/ shipped too), no desktop build, no
+ * plugin tarballs, no new lane. Any release with a shipping apps/pocket/ change since the build phones
+ * have (the version pocket-lane names, `pocket-since`) builds the signed APK and its latest.json
+ * (`pocket`), whatever its kind: a Pocket change that shipped only in a prerelease, or whose lane post
+ * failed, is built again by the next release. Pocket Link
+ * (herdr/mods/pocket-link) is under herdr/ and goes with the pack's lane.
  */
 import { createHash, createPrivateKey, createPublicKey, sign as signBytes, verify as verifyBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -28,26 +47,43 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { ReleasePlugins } from './release-plugins';
-import { FIELDS } from './version';
+import { FIELDS, MAX_PART, VERSION } from './version';
 
 export const ROOT = join(import.meta.dir, '..');
 export const LANE_RELEASE = 'plugin-lane';
 export const SCHEMA_VERSION = 1;
 export const KEY_ID = 'automagik-2026-10';
 const DOWNLOADS = 'https://github.com/automagik-dev/automagik/releases/download/';
-const PLUGINS = ['bots-dsh', 'locale-pt-br-dsh', 'unfold-bot-dsh', 'unfold-bridge-dsh', 'unfold-capabilities-dsh', 'unfold-events-dsh', 'unfold-mind-dsh', 'unfold-session-dsh', 'unfold-settings-dsh', 'unfold-sse-dsh', 'unfold-trajectory-dsh', 'welcome-dsh'];
+const PLUGINS = ['acp-dsh', 'bots-dsh', 'locale-pt-br-dsh', 'unfold-bot-dsh', 'unfold-bridge-dsh', 'unfold-capabilities-dsh', 'unfold-events-dsh', 'unfold-mind-dsh', 'unfold-session-dsh', 'unfold-settings-dsh', 'unfold-sse-dsh', 'unfold-trajectory-dsh', 'welcome-dsh'];
 const PROFILE = 'apps/desktop/profile/package.json';
 // The add-ons the desktop profile pins that the lane carries too, so a pin move is a patch: each
 // a reviewed fork with no dependencies of its own (its folder alone is the add-on) that declares
 // engines.dsh. They go in lane.json's `addons`, apart from `plugins` (the ones Omni serves).
-export const LANE_ADDONS = ['dsh-oh-my-claude'];
+// None today: Oh My Claude, the one it carried, left the profile (Claude comes through pi-ai),
+// and dsh-subscriptions has dependencies of its own.
+export const LANE_ADDONS: string[] = [];
 // What a plugin's own package.json may change in a plugin-only release: nothing it is
 // installed or admitted by.
 const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDependencies', 'bundleDependencies', 'engines', 'dsh', 'main', 'exports', 'files'];
 // What no build of the desktop app reads (its build reads apps/desktop and the plugins
 // alone): the repository's release tooling and CI, the lane's own keys and notes, tests,
-// and the notes at the root. A change there ships nothing to an installed app.
-const NEVER_SHIPPED = [/^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/];
+// and the notes at the root. A change there ships nothing to an installed app. The headless pet
+// bake (apps/automagik-pets) is no plugin and no app build reads it; it ships on its own.
+// The RFCs and notes under docs/ ship nothing either. In the herdr part: its notes (*.md at its top,
+// docs/, .genie/ plans, the mockup) and its catalog, which installed mod managers read from dev
+// directly, not from a release; and the layout entry's RECIPE.md and preview.png.
+// In Pocket: its notes (*.md at its top) and docs/, and the Android project's scripts (the terminal
+// page's test and the vendoring script), which no APK carries.
+const NEVER_SHIPPED = [/^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/, /^apps\/automagik-pets\//, /^docs\//,
+  /^herdr\/[^/]+\.md$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr-layout\/(RECIPE\.md|preview\.png)$/,
+  /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//];
+/**
+ * The herdr part: everything under herdr/ (the pack's mods, installer and tooling) and its layout's
+ * own entry folder, herdr-layout/ (the pack ships its automagik.json; RFC 0011).
+ */
+export const HERDR = /^herdr(-layout)?\//;
+/** The Pocket part: the phone app and its docs. Pocket Link is under herdr/. */
+export const POCKET = /^apps\/pocket\//;
 
 export interface LanePlugin {
   name: string;
@@ -113,16 +149,41 @@ export function unpackedIn(files: Record<string, string[]>) {
 /** Whether any of `changed` reaches an install: one that is neither never shipped nor `inert`. */
 export const ships = (changed: string[], inert: (path: string) => boolean) => changed.some(path => !neverShipped(path) && !inert(path));
 
+/** Whether any of `changed` (since the last release) ships in the herdr pack: the release rebuilds it. */
+export const herdrShips = (changed: string[], inert: (path: string) => boolean = () => false) =>
+  changed.some(path => HERDR.test(path) && !neverShipped(path) && !inert(path));
+
+/** Whether any of `changed` (since the last release) ships in Pocket's app: the release rebuilds it. */
+export const pocketShips = (changed: string[], inert: (path: string) => boolean = () => false) =>
+  changed.some(path => POCKET.test(path) && !neverShipped(path) && !inert(path));
+
 /**
- * Whether the changes since the last full release are the plugins' alone: every changed path
- * inside a plugin, or one no app build reads (the market index and the version bumps the
- * releases themselves write, the release tooling, tests, `inert` ones), none in a plugin's
- * dev/harness (that moves DSH), no lockfile, and no field a plugin is installed or admitted by.
+ * The tag Pocket's changes are measured from: the release whose build phones have, the version
+ * pocket-lane's latest.json names, when that is a tag here; else `last`, the last release (before
+ * the first Pocket release, or when the lane can't be read). A prerelease never moves pocket-lane, so
+ * a Pocket change in one is still ahead of the lane and the next release builds it.
  */
-export function kindOf(changed: string[], installChanged: (plugin: string) => boolean, inert: (path: string) => boolean = () => false): 'plugins' | 'full' {
+export function pocketSince(last: string, laneVersion: string | undefined, tags: string[]): string {
+  const tag = laneVersion && VERSION.test(laneVersion) ? `v${laneVersion}` : '';
+  return tag && tags.includes(tag) ? tag : last;
+}
+
+/**
+ * `herdr` when everything shipping in `sinceLast` (the changes since the last release, any tag) is
+ * under herdr/: the pack alone, no app and no plugin. `pocket` when it is all under apps/pocket/,
+ * or under apps/pocket/ and the herdr part (herdr/, herdr-layout/): Pocket's app (the pack along when herdr/ shipped). Otherwise whether the changes since the last
+ * full release are the plugins' alone: every changed path inside a plugin, or under herdr/ or apps/pocket/ (no app
+ * build reads it), or one no app build reads (the market index and the version bumps the releases
+ * themselves write, the release tooling, tests, `inert` ones), none in a plugin's dev/harness (that
+ * moves DSH), no lockfile, and no field a plugin is installed or admitted by.
+ */
+export function kindOf(changed: string[], installChanged: (plugin: string) => boolean, inert: (path: string) => boolean = () => false, sinceLast?: string[]): 'herdr' | 'pocket' | 'plugins' | 'full' {
+  const shipping = (sinceLast ?? []).filter(path => !neverShipped(path) && !inert(path));
+  if (shipping.length > 0 && shipping.every(path => HERDR.test(path))) return 'herdr';
+  if (shipping.length > 0 && shipping.every(path => HERDR.test(path) || POCKET.test(path))) return 'pocket';
   if (changed.length === 0) return 'full';
   for (const path of changed) {
-    if (neverShipped(path) || inert(path)) continue;
+    if (neverShipped(path) || inert(path) || HERDR.test(path) || POCKET.test(path)) continue;
     const plugin = PLUGINS.find(name => path.startsWith(`apps/${name}/`));
     if (!plugin) return 'full';
     const inside = path.slice(`apps/${plugin}/`.length);
@@ -133,12 +194,16 @@ export function kindOf(changed: string[], installChanged: (plugin: string) => bo
 
 const pick = (json: Record<string, unknown>) => JSON.stringify(INSTALL_FIELDS.map(field => json[field] ?? null));
 
-/** The next patch: 3.N.(highest P of the newest 3.N + 1). */
+/**
+ * The next patch: 3.N.(highest P of the newest 3.N + 1). Refused past 3.N.999 (Pocket's versionCode,
+ * scripts/version.ts): the next release is then a full one, 3.(N+1).0.
+ */
 export function nextPatch(tags: string[]): string {
   const releases = tags.map(tag => /^v3\.(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,3})$/.exec(tag)).filter(match => match !== null).map(match => [Number(match[1]), Number(match[2])] as const);
   if (releases.length === 0) throw new Error('no release to patch');
   const minor = Math.max(...releases.map(([n]) => n));
   const patch = Math.max(...releases.filter(([n]) => n === minor).map(([, p]) => p));
+  if (patch + 1 > MAX_PART) throw new Error(`3.${minor}.${patch + 1}: a patch stops at ${MAX_PART} (Pocket's versionCode); cut 3.${minor + 1}.0 instead`);
   return `3.${minor}.${patch + 1}`;
 }
 
@@ -240,20 +305,25 @@ export function verifyLane(bytes: Buffer, signature: string, keys: { keyId: stri
   return lane;
 }
 
-const git = (...args: string[]) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8' });
+const git = (...args: string[]) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 
 if (import.meta.main) {
   const [command, ...args] = process.argv.slice(2);
-  if (command === 'kind' || command === 'ships') {
+  if (command === 'kind' || command === 'ships' || command === 'herdr' || command === 'pocket') {
     const last = args[0];
     if (!last) { console.log(command === 'kind' ? 'full' : 'yes'); process.exit(0); }
-    const changed = git('diff', '--name-only', `${last}..HEAD`).split('\n').filter(Boolean);
+    const diff = (from: string) => git('diff', '--name-only', `${from}..HEAD`).split('\n').filter(Boolean);
+    const changed = diff(last);
     const before = (path: string) => git('show', `${last}:${path}`);
     const unpacked = unpackedIn(Object.fromEntries(PLUGINS.map(plugin => [plugin, JSON.parse(readFileSync(join(ROOT, 'apps', plugin, 'package.json'), 'utf8')).files ?? []])));
     // A file only the version fields of changed in (a release's own bump).
     const versionOnly = (path: string) => {
       const fields = FIELDS.filter(field => field.file === path);
       if (fields.length === 0) return false;
+      // A plain-text field (the herdr pack's VERSION) is the version alone, before and after.
+      if (fields.some(field => field.path.length === 0)) {
+        try { return [before(path), readFileSync(join(ROOT, path), 'utf8')].every(text => /^\d+\.\d+\.\d+$/.test(text.trim())); } catch { return false; }
+      }
       const blank = (text: string) => {
         const json = JSON.parse(text);
         for (const { path: at } of fields) {
@@ -266,6 +336,10 @@ if (import.meta.main) {
     };
     if (command === 'ships') {
       console.log(ships(changed, path => versionOnly(path) || unpacked(path)) ? 'yes' : 'no');
+    } else if (command === 'herdr') {
+      console.log(herdrShips(changed, versionOnly) ? 'yes' : 'no');
+    } else if (command === 'pocket') {
+      console.log(pocketShips(changed, versionOnly) ? 'yes' : 'no');
     } else {
       const installChanged = (plugin: string) => {
         const path = `apps/${plugin}/package.json`;
@@ -277,8 +351,13 @@ if (import.meta.main) {
       const addonPins = (path: string) => {
         try { return path === PROFILE && addonPinsOnly(before(path), readFileSync(join(ROOT, path), 'utf8')); } catch { return false; }
       };
-      console.log(kindOf(changed, installChanged, path => versionOnly(path) || addonPins(path) || unpacked(path)));
+      // The changes since the last release of any kind: a herdr-only run of them is a herdr patch, and
+      // a run under apps/pocket/ (with herdr/ or alone) a pocket patch.
+      const sinceLast = args[1] ? diff(args[1]) : undefined;
+      console.log(kindOf(changed, installChanged, path => versionOnly(path) || addonPins(path) || unpacked(path), sinceLast));
     }
+  } else if (command === 'pocket-since' && (args.length === 1 || args.length === 2)) {
+    console.log(pocketSince(args[0], args[1], git('tag', '--list', 'v3.*').split('\n').filter(Boolean)));
   } else if (command === 'next-patch') {
     console.log(nextPatch(git('tag', '--list', 'v3.*').split('\n').filter(Boolean)));
   } else if (command === 'pack-addons' && args.length === 1) {
@@ -303,7 +382,7 @@ if (import.meta.main) {
     const lane = verifyLane(readFileSync(args[0]), readFileSync(args[1], 'utf8'), keys);
     console.log(`lane ${lane.version} (sequence ${lane.sequence}) is signed by ${lane.keyId}`);
   } else {
-    console.error('usage: bun scripts/lane.ts kind <last-full-tag> | ships <last-tag> | next-patch | pack-addons <dir> | manifest <plugins.json> <base> <issuedAt> [addons.json] | sign <lane.json> | verify <lane.json> <sig>');
+    console.error('usage: bun scripts/lane.ts kind <last-full-tag> [<last-tag>] | ships <last-tag> | herdr <last-tag> | pocket <tag> | pocket-since <last-tag> [<lane-version>] | next-patch | pack-addons <dir> | manifest <plugins.json> <base> <issuedAt> [addons.json] | sign <lane.json> | verify <lane.json> <sig>');
     process.exit(2);
   }
 }

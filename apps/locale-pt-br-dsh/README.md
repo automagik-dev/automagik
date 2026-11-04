@@ -23,7 +23,7 @@ A few `omni-ui` keys hold their English text on purpose rather than a poor trans
 
 A plugin can add its own words to `omni-ui` through the Bot team's `addStrings` (Unfold session's model-menu messages, `apps/unfold-session-dsh/src/client/strings.js`); `scripts/copy-check.mjs` lists those modules in `OMNI_PLUGIN_STRINGS`, so their keys are checked and covered like the Bot team's. The Bot team words a host message with any language pack's entry for it.
 
-The welcome (`@automagik/welcome-dsh`) has no namespace: its copy is written into its views, so this pack can't reach it.
+The welcome (`@automagik/welcome-dsh`) registers its own pt-BR, in its `welcome.team` namespace: the team step and the Claude Code and Codex rows (Connect AI and their Settings page). The rest of its copy is written into its views, so this pack can't reach it.
 
 ## Install
 

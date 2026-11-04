@@ -5,6 +5,7 @@
 // them: the pets this plugin ships (Genie), the team's own (<home>/pets: installed from
 // codex-pets.net, or copied from Codex's folder when picked), and Codex's folder, read only.
 // Nothing reaches codex-pets.net until the person opens the Pets tab or picks a pet there.
+import { existsSync } from 'node:fs'
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -25,6 +26,10 @@ const PAGE_SIZE = 24
 const TIMEOUT_MS = 15_000
 
 export const cleanPetId = id => (typeof id === 'string' && /^[a-z0-9][a-z0-9._-]{0,63}$/i.test(id) && !id.includes('..') ? id : undefined)
+/** Genie, the pet a Bot of kind genie wears (the client's GENIE_PET), and the one a Bot falls back to. */
+export const GENIE_CLAY = Object.freeze({ source: 'builtin', id: 'genie-clay', version: 1, sleep: true })
+/** Whether this plugin ships the builtin pet `id` (a folder of its own with a pet.json), whatever the instance lists. */
+export const shipsPet = id => cleanPetId(id) !== undefined && existsSync(join(BUILTIN, id, 'pet.json'))
 const fail = (message, code = 'bot/invalid') => Object.assign(new Error(message), { code })
 
 /** A WebP's width and height, from its header (VP8, VP8L or VP8X), or undefined. */

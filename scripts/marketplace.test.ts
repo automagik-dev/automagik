@@ -106,9 +106,9 @@ describe('market index', () => {
       metadata: { category: manifest.automagik.market.category, keywords: manifest.automagik.market.keywords, labels: ['official'] },
       versions: [{ version: manifest.version, source: { type: 'git', url: REPO_URL, commit: head, path: 'apps/locale-pt-br-dsh' }, engines: { dsh: manifest.engines.dsh } }],
     });
-    // only plugins with a market block join (the pt-BR pack; Unfold's have one but stay unlisted);
-    // the Bot team and the welcome are listed by hand
-    expect(pinned.plugins.map((plugin) => plugin.name)).toEqual(['@automagik/locale-pt-br-dsh']);
+    // only plugins with a market block join (ACP agents, the pt-BR pack; Unfold's have one but stay
+    // unlisted); the Bot team and the welcome are listed by hand
+    expect(pinned.plugins.map((plugin) => plugin.name)).toEqual(['@automagik/acp-dsh', '@automagik/locale-pt-br-dsh']);
     expect(checkIndex(pinned, repoDir)).toEqual([]);
   });
 

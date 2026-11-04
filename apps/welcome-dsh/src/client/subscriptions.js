@@ -3,7 +3,7 @@ import { createElement as h, useEffect, useState } from 'react'
 // The subscriptions only the dsh-subscriptions plugin (@goodandready/dsh-subscriptions)
 // brings: its own sign-in routes, called from this page (same origin, so they accept it).
 // The ones another row covers (ChatGPT, Kimi, Copilot and Grok through DSH's own sign-ins,
-// Claude through Claude Code) are not offered here: one way to reach each AI.
+// Claude through pi-ai's anthropic route) are not offered here: one way to reach each AI.
 // Every sign-in takes the provider's next free account slot, so accounts add up.
 const BASE = 'dsh-subscriptions'
 

@@ -180,7 +180,7 @@ let dsh = null
 let launchPath = null
 function startDsh() {
   // After the shell's own PATH: where CLIs that plugins drive install themselves (Claude Code
-  // in ~/.local/bin for dsh-oh-my-claude), so a launcher started without a login shell finds them.
+  // in ~/.local/bin), so a launcher started without a login shell finds them.
   const tools = [join(homedir(), '.local', 'bin'), join(homedir(), '.claude', 'local'), '/opt/homebrew/bin', '/usr/local/bin']
   // A plain DSH installs the Omni plugins with its plugin manager, which runs the pinned pnpm.
   const shims = options.plain ? [pnpmShim()] : []

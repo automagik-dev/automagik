@@ -29,7 +29,7 @@ const PICK_MS = 900
  */
 export function automagikRoster({ unfold = false } = {}) {
   return [
-    { key: 'pet:builtin:genie-cosmic', kind: 'pet', pet: { ...GENIE_PET, name: 'Genie' }, name: 'Genie', line: 'Automagik' },
+    { key: 'pet:builtin:genie-clay', kind: 'pet', pet: { ...GENIE_PET, name: 'Genie' }, name: 'Genie', line: 'Automagik' },
     { key: 'omni', kind: 'omni', name: 'Omni', line: 'Automagik' },
     { key: 'pet:builtin:automagik', kind: 'pet', pet: { source: 'builtin', id: 'automagik', name: 'Automagik', version: 2, sleep: true }, name: 'Automagik', line: 'Automagik' },
     ...(unfold ? [{ key: 'pet:builtin:unfold', kind: 'pet', pet: { ...UNFOLD_PET, name: 'Unfold' }, name: 'Unfold', line: 'Automagik' }] : []),
@@ -42,7 +42,7 @@ export function automagikRoster({ unfold = false } = {}) {
 export function currentKey(bot, look) {
   if (look.image) return 'photo'
   if (look.pet) return `pet:${look.pet.source}:${look.pet.id}`
-  if (bot?.kind === 'genie') return 'pet:builtin:genie-cosmic'
+  if (bot?.kind === 'genie') return 'pet:builtin:genie-clay'
   if (bot?.kind === 'unfold') return 'pet:builtin:unfold'
   if (look.shape === 'octopus' && look.color === 'deepseek') return 'omni'
   return `shape:${look.shape}`

@@ -2,9 +2,8 @@
 // Session it speaks from, so a fresh part or a new group Session keeps it. A group may
 // set one level for all its members there, in place of each member's own, as it may
 // set one working folder. A level is DSH's preset name; DSH's Auto review is one while
-// its layer is loaded, and a Claude Code Session at Auto runs Claude Code's own `auto`
-// (../shared/permission-levels.js).
-import { AUTO, AUTO_FALLBACK, pinClaudeMode } from '../shared/permission-levels.js'
+// its layer is loaded (../shared/permission-levels.js).
+import { AUTO, AUTO_FALLBACK } from '../shared/permission-levels.js'
 
 export function install(rt) {
   const { ctx } = rt
@@ -56,27 +55,21 @@ export function install(rt) {
   }
 
   // Sets a level on one Session; `session` spares the resolve where the caller holds it.
-  // Auto is set only once every dsh-oh-my-claude adapter has read back Claude Code's
-  // `auto` for the Session; until then, and when it cannot, it runs as workspace-write,
-  // never on what an earlier stop left (DSH moves Auto to full access when its layer
-  // closes). Any other level is set first, then an `auto` override is cleared.
-  // Resolves whether the level holds.
+  // Auto is DSH's own while its layer offers it; when it cannot be set the Session runs as
+  // workspace-write, never on what an earlier stop left (DSH moves Auto to full access when
+  // its layer closes). Resolves whether the level holds.
   async function applyLevel(sessionId, level, session) {
     const service = presets()
     const target = session ?? (await rt.resolveAgent(sessionId)).session
-    if (level === AUTO) {
-      if (service.current(target) !== AUTO) service.set(target, AUTO_FALLBACK)
-      if (autoOffered(service) && await pinClaudeMode(sessionId, AUTO)) {
-        try {
-          service.set(target, AUTO)
-          return true
-        } catch (error) {
-          rt.warn('ds-bot: Auto for %s not set: %s', sessionId, error)
-        }
+    if (level === AUTO && autoOffered(service)) {
+      try {
+        service.set(target, AUTO)
+        return true
+      } catch (error) {
+        rt.warn('ds-bot: Auto for %s not set: %s', sessionId, error)
       }
     }
     service.set(target, level === AUTO ? AUTO_FALLBACK : level)
-    if (!await pinClaudeMode(sessionId, null)) rt.warn('ds-bot: Claude Code\'s auto mode for %s not cleared', sessionId)
     return level !== AUTO
   }
 

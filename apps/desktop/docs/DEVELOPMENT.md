@@ -16,7 +16,8 @@ The app is **Automagik** wherever a person sees it: the bundle and its menu bar,
 | `~/.automagik` (`src/dsh.js` `automagikHome`, `$AUTOMAGIK_HOME`) | the preload, the builds the CLIs download, and the app's own `desktop/` folder (below). |
 | Electron's userData `…/Automagik` (`src/identity.js` `dataPathsOf`) | `main.js` pins it before anything reads it: the page's storage, each Bot browser's partition and the single-instance lock. |
 | Linux: executable `automagik`, desktop entry id `automagik.desktop` (`desktopName`), deb package `automagik` | the window's app id and WM class, `/usr/bin/automagik` and the AppArmor profile match, and a new deb upgrades the installed package. It installs to `/opt/Automagik`. |
-| the `omni://` scheme, the `omni-desktop` client id, `window.omniDesktop` | Omni's protocol names: what Omni's pages, its API and the plugins use. |
+| the `automagik://` scheme (`src/deeplink.js`) | Automagik's own links (RFC 0013): `automagik://open`, which Herdr's Work button opens. They only bring the app forward. |
+| the `omni://` scheme, the `omni-desktop` client id, `window.omniDesktop` | Omni's protocol names: what Omni's pages, its API and the plugins use. `omni://` is also `automagik://`'s alias; only it connects (`omni://connect`). |
 
 There are no keychain items to carry: Electron keeps its cookies unencrypted (the cookie-encryption fuse is off), the app uses no `safeStorage`, and its credentials are the files above.
 
@@ -73,7 +74,7 @@ npm run dist:linux      # dist/Automagik-<version>-linux-x86_64.AppImage and -am
 npm run dist:mac        # on macOS: dist/Automagik-<version>-mac-<arch>.dmg and .zip, signed and notarized (see macOS)
 ```
 
-The profile also ships the add-ons that connect AI subscriptions, each from Omni's reviewed fork at the commit `profile/package.json` pins (the version it holds is under `omni.addonVersions`, and the build checks it): `@goodandready/dsh-subscriptions` ([automagik-genie/dsh-subscriptions](https://github.com/automagik-genie/dsh-subscriptions), the plans DSH doesn't sign in to itself, with no updater of its own) and `dsh-oh-my-claude` (Claude through the person's own Claude Code). The profile is installed the way DSH installs any plugin, with the pinned dsh's own `dsh plugin --profile omni install` (pnpm, hoisted, no install scripts), so its pnpm lockfile ships with it.
+The profile also ships the add-on that connects AI subscriptions DSH does not sign in to, from Omni's reviewed fork at the commit `profile/package.json` pins (the version it holds is under `omni.addonVersions`, and the build checks it): `@goodandready/dsh-subscriptions` ([automagik-genie/dsh-subscriptions](https://github.com/automagik-genie/dsh-subscriptions), the plans DSH doesn't sign in to itself, with no updater of its own). Claude comes through DSH's own pi-ai route (a Claude Pro or Max sign-in, or an Anthropic API key, in Connect AI); an update takes Oh My Claude out of a profile an earlier build installed with it (`RETIRED` in `src/dsh.js`). The profile is installed the way DSH installs any plugin, with the pinned dsh's own `dsh plugin --profile omni install` (pnpm, hoisted, no install scripts), so its pnpm lockfile ships with it.
 
 `dist:*` first runs `scripts/prepare-runtime.mjs`: it packs the Bot team and the welcome from `../bots-dsh` and `../welcome-dsh`, fetches Omni at `omni.json`'s commit (only its plugin folders) into `build/omni`, installs the pinned dsh into `build/runtime`, and installs the packed plugins into `build/profile`, in one install. Set `OMNI_SOURCE` to a local Omni checkout to pack its channels and canvases instead. Native packages are per platform, so build each target on its own platform. Builds run with `DO_NOT_TRACK=1`.
 

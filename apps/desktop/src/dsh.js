@@ -11,11 +11,12 @@
 // It is apart from a dsh you already run (~/.dsh) and from the Bot team installed into that
 // one (~/.automagik/bots), so neither sees the other's Bots or Sessions. Omni's own folder
 // (~/.omni: its sandbox, the Bun its channels download) is Omni's.
-import { spawn } from 'node:child_process'
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { execFile, spawn } from 'node:child_process'
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cp, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { delimiter, join, resolve, win32 } from 'node:path'
 import { DEFAULTS as PRIVACY_DEFAULTS, privacyEnv } from './privacy.js'
 
 export const PROFILE = 'omni'
@@ -50,25 +51,49 @@ export function resourcesOf({ packaged, resourcesPath, appPath }) {
 }
 
 const shellQuote = text => `'${String(text).replaceAll("'", `'\\''`)}'`
+// In a batch file only a % is read inside double quotes (and a !, with delayed expansion, which the
+// tools switch off); a Windows path has no ".
+const batchQuote = text => `"${String(text).replaceAll('%', '%%')}"`
+
+/** The file a tool is written to: `pnpm.cmd` on Windows, which runs no `#!/bin/sh` script. */
+export const toolFileOf = (dir, name, platform = process.platform) => join(dir, platform === 'win32' ? `${name}.cmd` : name)
 
 /**
  * Write `node` and `pnpm` into `dir` for dsh's PATH: dsh's plugin manager installs plugins
  * (the market, Settings → Plugins) with pnpm, and nothing guarantees a machine has Node or
- * pnpm. Both run on `node`, the app's own binary as Node (ELECTRON_RUN_AS_NODE). Written at
- * every launch, since the app's path changes with each install.
+ * pnpm. Both run on `node`, the app's own binary as Node (ELECTRON_RUN_AS_NODE). Checked at
+ * every launch, since the app's path changes with each install; a file that already says the
+ * same, and can run, is left as it is. On Windows they are batch files, `node.cmd` and
+ * `pnpm.cmd`, which PATH finds by PATHEXT.
  */
-export function writeTools({ dir, node, pnpm }) {
+export function writeTools({ dir, node, pnpm, platform = process.platform }) {
   mkdirSync(dir, { recursive: true })
-  const tools = {
-    node: `ELECTRON_RUN_AS_NODE=1 exec ${shellQuote(node)} "$@"`,
-    pnpm: `ELECTRON_RUN_AS_NODE=1 exec ${shellQuote(node)} ${shellQuote(pnpm)} "$@"`,
-  }
+  const windows = platform === 'win32'
+  const tools = windows
+    ? { node: `${batchQuote(node)} %*`, pnpm: `${batchQuote(node)} ${batchQuote(pnpm)} %*` }
+    : {
+        node: `ELECTRON_RUN_AS_NODE=1 exec ${shellQuote(node)} "$@"`,
+        pnpm: `ELECTRON_RUN_AS_NODE=1 exec ${shellQuote(node)} ${shellQuote(pnpm)} "$@"`,
+      }
   for (const [name, line] of Object.entries(tools)) {
-    const file = join(dir, name)
-    writeFileSync(file, `#!/bin/sh\n# Written by the Automagik desktop app at launch (src/dsh.js writeTools).\n${line}\n`)
+    const file = toolFileOf(dir, name, platform)
+    const text = windows
+      ? `@echo off\r\nrem Written by the Automagik desktop app at launch (src/dsh.js writeTools).\r\nsetlocal DisableDelayedExpansion\r\nset ELECTRON_RUN_AS_NODE=1\r\n${line}\r\n`
+      : `#!/bin/sh\n# Written by the Automagik desktop app at launch (src/dsh.js writeTools).\n${line}\n`
+    if (sameTool(file, text, windows)) continue
+    writeFileSync(file, text)
     chmodSync(file, 0o755)
   }
   return dir
+}
+
+// Windows keeps no execute bit: there only the text counts.
+const sameTool = (file, text, windows) => {
+  try {
+    return (windows || (statSync(file).mode & 0o777) === 0o755) && readFileSync(file, 'utf8') === text
+  } catch {
+    return false
+  }
 }
 
 // The top-level entries of a cordis patch file (a YAML list): each starts with "- " at the
@@ -146,6 +171,133 @@ function renamedIn(shipped, renamed = RENAMED) {
 }
 
 /**
+ * Packages earlier builds shipped that this one dropped, each with the profile row ids its
+ * own patch used. Oh My Claude (Claude through the person's Claude Code) is gone: Claude
+ * comes through DSH's pi-ai route now. Left in a profile, an update would keep it as a plugin
+ * the person installed. An update takes it out of node_modules, package.json and both patch
+ * files (retirePatch): DSH skips a settings row for a row id nobody inserts, but an insert row
+ * naming a package that is gone fails to activate.
+ */
+export const RETIRED = Object.freeze({
+  'dsh-oh-my-claude': Object.freeze(['oh-my-claude']),
+})
+
+const retiredIn = (shipped, retired = RETIRED) => Object.keys(retired).filter(name => !Object.hasOwn(shipped?.dependencies ?? {}, name))
+
+// A YAML scalar as a patch line holds it: `name: 'x'`, `name: "x"` or `name: x`, then an
+// optional comment.
+const scalarLine = (key, values) => new RegExp(`^[\\s-]*${key}:\\s*(['"]?)(?:${values.map(escapeRegExp).join('|')})\\1\\s*(?:#.*)?$`)
+
+/**
+ * A cordis patch file's text without the rows of the retired packages, or null when it has
+ * none: a top-level row whose id is one of theirs or whose `name` is the package, and an
+ * `insert` item naming the package (an insert left empty goes whole). Comment lines right
+ * above a dropped row go with it; everything else stays as written.
+ */
+export function retirePatch(text, retired = RETIRED) {
+  const names = Object.keys(retired)
+  if (names.length === 0) return null
+  const ids = Object.values(retired).flat()
+  const named = scalarLine('name', names)
+  const owned = scalarLine('id', ids)
+  const lines = String(text).split('\n')
+  // Blocks: a top-level row (from its "- " line through its indented and blank lines) with
+  // the comment lines right above it; anything else is a block of its own and stays.
+  const blocks = []
+  let comments = []
+  for (const line of lines) {
+    if (line.startsWith('- ')) {
+      blocks.push({ row: true, head: comments, lines: [line] })
+      comments = []
+    } else if (line.startsWith('#')) {
+      comments.push(line)
+    } else if (blocks.at(-1)?.row && comments.length === 0 && (line.trim() === '' || /^\s/.test(line))) {
+      blocks.at(-1).lines.push(line)
+    } else {
+      blocks.push({ row: false, head: comments, lines: [line] })
+      comments = []
+    }
+  }
+  if (comments.length > 0) blocks.push({ row: false, head: comments, lines: [] })
+  let changed = false
+  const out = []
+  for (const block of blocks) {
+    if (!block.row) {
+      out.push(...block.head, ...block.lines)
+      continue
+    }
+    const [first, ...rest] = block.lines
+    if (/^-\s+insert:\s*(?:#.*)?$/.test(first)) {
+      // Its items: each starts at the indent of the first "- " under it.
+      const indent = rest.find(line => /^\s+-\s/.test(line))?.match(/^\s+/)[0]
+      if (indent === undefined) {
+        out.push(...block.head, ...block.lines)
+        continue
+      }
+      const items = []
+      const lead = []
+      for (const line of rest) {
+        if (line.startsWith(`${indent}- `)) items.push([line])
+        else if (items.length > 0) items.at(-1).push(line)
+        else lead.push(line)
+      }
+      // An item's own keys: its "- " line and the lines at the indent right under it; its
+      // nested config is left alone, as for a row below.
+      const ownKey = new RegExp(`^${indent} {2}\\S`)
+      const kept = items.filter(([head, ...lines]) => ![head, ...lines.filter(line => ownKey.test(line))].some(line => named.test(line)))
+      if (kept.length === items.length) {
+        out.push(...block.head, ...block.lines)
+        continue
+      }
+      changed = true
+      if (kept.length > 0) out.push(...block.head, first, ...lead, ...kept.flat())
+      else if (block.lines.at(-1) === '') out.push('')
+      continue
+    }
+    // A row's own keys sit at its first indent; nested config keys are left alone.
+    const own = [first, ...rest.filter(line => /^ {2}\S/.test(line))]
+    if (own.some(line => named.test(line) || owned.test(line))) {
+      changed = true
+      if (block.lines.at(-1) === '') out.push('')
+      continue
+    }
+    out.push(...block.head, ...block.lines)
+  }
+  if (!changed) return null
+  const next = out.join('\n')
+  // A file left with no rows is DSH's empty template.
+  return next.trim() === '' ? '[]\n' : next
+}
+
+/**
+ * Take the retired packages out of a profile an earlier build installed: their folders in
+ * node_modules and their rows in the profile's patch and DSH's own. package.json follows in
+ * mergeProfilePackage. Returns what changed.
+ */
+export function migrateRetired({ target, dshHome, shipped, retired = RETIRED }) {
+  const gone = retiredIn(shipped, retired)
+  if (gone.length === 0) return []
+  const changed = []
+  for (const name of gone) {
+    const dir = join(target, 'node_modules', ...name.split('/'))
+    if (existsSync(dir)) {
+      rmSync(dir, { recursive: true, force: true })
+      changed.push(dir)
+    }
+  }
+  const only = Object.fromEntries(gone.map(name => [name, retired[name]]))
+  for (const file of [join(target, 'cordis.patch.yml'), join(dshHome, 'cordis.patch.yml')]) {
+    if (!existsSync(file)) continue
+    const next = retirePatch(readFileSync(file, 'utf8'), only)
+    if (next !== null) {
+      writeFileSync(file, next)
+      changed.push(file)
+    }
+  }
+  return changed
+}
+
+/**
  * Move a profile from the renamed packages to their new names: the old packages leave
  * node_modules (the new ones arrive with the shipped packages), and the profile's patch and
  * DSH's own (DSH_HOME/cordis.patch.yml) name the new ones. Bots, chats, memory and the Omni
@@ -182,8 +334,13 @@ export function migrateRenamed({ target, dshHome, shipped, renamed = RENAMED }) 
  * (node_modules, package.json) and nothing else: dsh keeps the user's settings in that
  * folder too (models and preferences in cordis.patch.yml, .plugin-manager/), and an
  * update must not take them away. The shipped cordis.patch.yml only seeds a new profile.
+ * The copies are asynchronous, so the window stays live while a new build's packages go in;
+ * dsh must not start before the returned promise resolves. A quit can cut a copy short (the app
+ * lets it through while dsh is not spawned yet): a new profile is copied beside its place and
+ * moved in whole, with its marker, so a cut-short one never looks like a profile; an update
+ * writes the marker last, so the next start does it again.
  */
-export function installProfile({ dshHome, source }) {
+export async function installProfile({ dshHome, source }) {
   const target = join(dshHome, 'profiles', PROFILE)
   const id = join(source, '.build-id')
   const stamp = existsSync(id) ? readFileSync(id, 'utf8') : readFileSync(join(source, 'package.json'), 'utf8')
@@ -191,15 +348,22 @@ export function installProfile({ dshHome, source }) {
   if (existsSync(marker) && readFileSync(marker, 'utf8') === stamp) return { target, installed: false }
   if (!existsSync(target)) {
     mkdirSync(join(dshHome, 'profiles'), { recursive: true })
-    cpSync(source, target, { recursive: true })
+    const fresh = `${target}.installing`
+    await rm(fresh, { recursive: true, force: true })
+    await cp(source, fresh, { recursive: true })
+    writeFileSync(join(fresh, '.omni-desktop-profile'), stamp)
+    renameSync(fresh, target)
+    return { target, installed: true }
   } else {
     // A profile from a build that shipped the Bot team or the welcome under its old name.
     migrateRenamed({ target, dshHome, shipped: readJson(join(source, 'package.json')) })
+    // A profile with a package this build no longer ships (RETIRED).
+    migrateRetired({ target, dshHome, shipped: readJson(join(source, 'package.json')) })
     // Only the packages the app ships are replaced: a plugin the user installed (the market,
     // Settings → Plugins) stays, with its dependencies, and in package.json.
     for (const name of packagesIn(join(source, 'node_modules'))) {
-      rmSync(join(target, 'node_modules', name), { recursive: true, force: true })
-      cpSync(join(source, 'node_modules', name), join(target, 'node_modules', name), { recursive: true })
+      await rm(join(target, 'node_modules', name), { recursive: true, force: true })
+      await cp(join(source, 'node_modules', name), join(target, 'node_modules', name), { recursive: true })
     }
     // The tarballs in vendor/ are the app's (file:vendor/… in the shipped package.json), except
     // those a plugin the person installed names.
@@ -210,7 +374,7 @@ export function installProfile({ dshHome, source }) {
     for (const file of existsSync(join(target, 'vendor')) ? readdirSync(join(target, 'vendor')) : []) {
       if (!kept.has(file)) rmSync(join(target, 'vendor', file), { recursive: true, force: true })
     }
-    if (existsSync(join(source, 'vendor'))) cpSync(join(source, 'vendor'), join(target, 'vendor'), { recursive: true })
+    if (existsSync(join(source, 'vendor'))) await cp(join(source, 'vendor'), join(target, 'vendor'), { recursive: true })
     writeFileSync(join(target, 'package.json'), mergeProfilePackage(user, shipped))
     replaceLocks({ target, source, ownPlugins: own.length > 0 })
     if (existsSync(join(source, '.build-id'))) cpSync(join(source, '.build-id'), join(target, '.build-id'))
@@ -319,17 +483,18 @@ function packagesIn(dir) {
 
 // The dependencies the person added: neither shipped nor a shipped package under its old name.
 function ownDependencies(user, shipped) {
-  const replaced = new Set(renamedIn(shipped))
+  const replaced = new Set([...renamedIn(shipped), ...retiredIn(shipped)])
   return Object.entries(user?.dependencies ?? {}).filter(([name]) => !Object.hasOwn(shipped?.dependencies ?? {}, name) && !replaced.has(name))
 }
 
 /**
  * The shipped profile package.json with what the user added on top: dependencies and
- * bundles the shipped one does not name keep their place after the shipped ones.
+ * bundles the shipped one does not name keep their place after the shipped ones, except a
+ * shipped package's old name (RENAMED) and a package the app no longer ships (RETIRED).
  */
 export function mergeProfilePackage(user, shipped) {
   const merged = structuredClone(shipped)
-  const replaced = new Set(renamedIn(shipped))
+  const replaced = new Set([...renamedIn(shipped), ...retiredIn(shipped)])
   const extraDependencies = ownDependencies(user, shipped)
   if (extraDependencies.length > 0) merged.dependencies = { ...shipped.dependencies, ...Object.fromEntries(extraDependencies) }
   const shippedBundles = shipped.dsh?.profile?.bundles ?? []
@@ -389,6 +554,131 @@ export function freePort() {
   })
 }
 
+// The port dsh served on last time, in the app's home. A new port each launch made the page's
+// URL new to Chromium's HTTP cache and V8's code cache, so the 19 MB page bundle was fetched
+// and compiled again on every start, and the page's origin (its localStorage: the composer's
+// unsent drafts) changed with it. Only the port is reused, never a server: dsh still binds it
+// itself, and the page still signs in with the launch URL its own output carries.
+export const portFileOf = home => join(home, 'dsh-port')
+
+/** The port in `file`, or null when there is none or it is not an unprivileged port. */
+export function storedPort(file) {
+  let text
+  try { text = readFileSync(file, 'utf8').trim() } catch { return null }
+  if (!/^\d{1,5}$/.test(text)) return null
+  const port = Number(text)
+  return port >= 1024 && port <= 65535 ? port : null
+}
+
+/** Keep `port` in `file` for the next launch; written whole, so a crash never leaves half of it. */
+export function keepPort(file, port) {
+  const temporary = `${file}.${process.pid}.tmp`
+  writeFileSync(temporary, `${port}\n`)
+  renameSync(temporary, file)
+}
+
+/** Whether nothing listens on 127.0.0.1:`port`, the address dsh binds: binds it a moment, as dsh would. */
+export function portFree(port) {
+  return new Promise((done) => {
+    const server = createServer()
+    server.once('error', () => done(false))
+    server.listen(port, '127.0.0.1', () => server.close(() => done(true)))
+  })
+}
+
+/**
+ * The port to start dsh on: the one it served on last time (`file`) while nothing else
+ * listens there, else a new free one. `fresh` finds the new one (freePort).
+ */
+export async function launchPort(file, fresh = freePort) {
+  const stored = storedPort(file)
+  if (stored !== null && await portFree(stored)) return stored
+  return fresh()
+}
+
+/**
+ * Start dsh on `port` (startDsh); when something took the port before dsh could bind it, start
+ * it once more on a fresh one (`fresh`), told first through `onPort`, unless `stopped()` says the
+ * start was given up meanwhile (a quit). Resolves as startDsh does.
+ */
+export async function startDshOnPort({ port, fresh = freePort, onPort, stopped = () => false, ...options }) {
+  try {
+    return await startDsh({ ...options, port })
+  } catch (error) {
+    if (error.code !== 'EADDRINUSE' || stopped()) throw error
+    const next = await fresh()
+    if (stopped()) throw error
+    onPort?.(next)
+    return startDsh({ ...options, port: next })
+  }
+}
+
+/**
+ * The dsh a start runs, whichever process that is now: `track` takes each one as it spawns (the
+ * first, then a retry's). `stop` stops the current one, and any spawned after it was called is
+ * stopped at once, so a quit between the first dsh's exit and the retry leaves none behind.
+ */
+export function dshRun() {
+  let child = null
+  let stopped = false
+  return {
+    get child() { return child },
+    get stopped() { return stopped },
+    track(next) {
+      child = next
+      // Just spawned, it has started nothing yet: it ends at once, before it can say it is ready
+      // (taskkill, on Windows, would come too late).
+      if (stopped) void stopDsh(next, undefined, { tree: false })
+    },
+    stop(graceMs) {
+      stopped = true
+      return stopDsh(child, graceMs)
+    },
+  }
+}
+
+/**
+ * A start's dsh as main.js runs it: startDshOnPort, every process tracked by `run` (dshRun) from
+ * its spawn, no retry once `run` is stopped, and the port kept in `portFile` once dsh serves on
+ * it. A port that cannot be kept goes to `onUnkept(error)`; the start goes on. `onSpawn` also
+ * gets each process.
+ */
+export async function serveDsh({ run, portFile, onSpawn, onUnkept = () => {}, ...options }) {
+  const running = await startDshOnPort({
+    ...options,
+    stopped: () => run.stopped,
+    onSpawn: (child) => {
+      run.track(child)
+      onSpawn?.(child)
+    },
+  })
+  try { keepPort(portFile, Number(new URL(running.url).port)) } catch (error) { onUnkept(error) }
+  return running
+}
+
+/**
+ * Whether `running` (startDsh's answer) serves `origin`: its launch URL is on that origin and the
+ * dsh that printed it still runs. The app loads no other page into its window.
+ */
+export function servesOrigin(running, origin) {
+  if (!running?.child || running.child.exitCode !== null || running.child.signalCode !== null) return false
+  try { return new URL(running.url).origin === origin } catch { return false }
+}
+
+/** The URL to load into the window: `running`'s launch URL, only when it serves `origin`. */
+export function pageUrlOf(running, origin) {
+  if (!servesOrigin(running, origin)) throw new Error(`dsh's launch URL is not on ${origin}.`)
+  return running.url
+}
+
+/**
+ * Whether dsh's output says its listener could not bind 127.0.0.1:`port`: Node's listen error,
+ * `Error: listen EADDRINUSE: address already in use 127.0.0.1:<port>`, at the start of a line.
+ */
+export function listenFailed(text, port) {
+  return String(text).split(/\r?\n/).some(line => line.trim() === `Error: listen EADDRINUSE: address already in use 127.0.0.1:${port}`)
+}
+
 /** The launch URL (with dsh's per-launch token) in a line of dsh's output, or null. */
 export function launchUrlOf(text, port) {
   const match = String(text).match(/dsh web: (http:\/\/127\.0\.0\.1:(\d+)\/\S*token=\S+)/)
@@ -413,12 +703,12 @@ export async function forgetDshLogins(cookies, origin) {
 /** The environment dsh runs with: its own home, Omni's, and nothing that phones home. */
 /**
  * Where command-line tools that plugins drive install themselves. An app opened from the Dock
- * or a desktop launcher gets a bare PATH without them, so dsh-oh-my-claude could not start
- * Claude Code (which installs to ~/.local/bin) although it works in the person's terminal.
+ * or a desktop launcher gets a bare PATH without them, so a plugin that starts an agent CLI
+ * (Claude Code installs to ~/.local/bin) would not find one that works in the person's terminal.
  */
 export const toolDirs = (userHome = homedir()) => [join(userHome, '.local', 'bin'), join(userHome, '.claude', 'local'), '/opt/homebrew/bin', '/usr/local/bin']
 
-export function dshEnv({ base = process.env, home, electronAsNode = false, binDir, userHome = homedir(), preload = null, privacy = PRIVACY_DEFAULTS }) {
+export function dshEnv({ base = process.env, home, electronAsNode = false, binDir, userHome = homedir(), preload = null, privacy = PRIVACY_DEFAULTS, platform = process.platform }) {
   // After the machine's own: a project's commands keep the user's node and pnpm, and then the
   // usual tool folders, then the app's own node and pnpm.
   const PATH = [...String(base.PATH ?? '').split(delimiter), ...toolDirs(userHome), ...(binDir ? [binDir] : [])]
@@ -445,6 +735,9 @@ export function dshEnv({ base = process.env, home, electronAsNode = false, binDi
     AUTOMAGIK_BUSY_FILE: busyFileOf(home),
     // The welcome reads it (welcome-dsh src/host/preload.js); none is no preference.
     ...(preload ? { AUTOMAGIK_PRELOAD: preload } : {}),
+    // The pnpm acp-dsh installs its ACP adapters with: the app's own pnpm 10, never a newer one
+    // the person has first on PATH, which installs the adapters' bundled CLIs anyway (~1.4 GB).
+    ...(binDir ? { AUTOMAGIK_PNPM: toolFileOf(binDir, 'pnpm', platform) } : {}),
     ...(electronAsNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
   }
 }
@@ -480,7 +773,12 @@ export function startDsh({ node, bin, env, port, cwd, log, privacy, timeoutMs = 
     child.stderr.on('data', onData)
     child.once('exit', (code, signal) => {
       clearTimeout(timer)
-      fail(new Error(`dsh exited before it was ready (${signal ?? code})`))
+      const error = new Error(`dsh exited before it was ready (${signal ?? code})`)
+      // Its listener could not bind the port: something took it after the app looked. Only
+      // dsh's own listen error for this very address counts (dsh-host-webserver listen), never
+      // other log text that names the code.
+      if (listenFailed(seen, port)) error.code = 'EADDRINUSE'
+      fail(error)
     })
     child.once('error', (error) => {
       clearTimeout(timer)
@@ -493,8 +791,14 @@ export function startDsh({ node, bin, env, port, cwd, log, privacy, timeoutMs = 
   })
 }
 
-/** Stop dsh: SIGTERM, then SIGKILL if it is still there after the grace period. */
-export function stopDsh(child, graceMs = STOP_GRACE_MS) {
+/**
+ * Stop dsh: SIGTERM, then SIGKILL if it is still there after the grace period. Windows has no
+ * signals, and ending dsh alone there leaves its children (a terminal's OpenConsole.exe, rg.exe,
+ * pnpm's node) running from the app's folder, where they hold files an update must replace: there
+ * the whole tree ends at once (taskkill /T /F), and dsh alone only when taskkill cannot, or with
+ * `tree: false`, for a dsh that has started nothing yet.
+ */
+export function stopDsh(child, graceMs = STOP_GRACE_MS, { platform = process.platform, env = process.env, run = execFile, tree = true } = {}) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
   return new Promise((done) => {
     const timer = setTimeout(() => { try { child.kill('SIGKILL') } catch {} }, graceMs)
@@ -502,9 +806,17 @@ export function stopDsh(child, graceMs = STOP_GRACE_MS) {
       clearTimeout(timer)
       done()
     })
+    if (tree && platform === 'win32' && child.pid) {
+      run(taskkillOf(env), ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, (error) => {
+        if (error) try { child.kill() } catch {}
+      })
+      return
+    }
     try { child.kill('SIGTERM') } catch { done() }
   })
 }
+
+const taskkillOf = env => win32.join(env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows', 'System32', 'taskkill.exe')
 
 /**
  * The app's rules for every webContents it makes (main.js harden, on 'web-contents-created'):
@@ -514,19 +826,22 @@ export function stopDsh(child, graceMs = STOP_GRACE_MS) {
  */
 export function guardContents(contents, { origin, openExternal, isBotView = () => false }) {
   if (isBotView(contents)) return false
+  // dsh's origin, or a function answering it as it is now: a dsh that could not bind its port
+  // starts again on another (startDshOnPort) after the guard is in place.
+  const current = typeof origin === 'function' ? origin : () => origin
   contents.setWindowOpenHandler(({ url }) => {
-    if (navigationOf(url, origin) === 'external') void openExternal(url)
+    if (navigationOf(url, current()) === 'external') void openExternal(url)
     return { action: 'deny' }
   })
   contents.on('will-navigate', (event, url) => {
-    const verdict = navigationOf(url, origin)
+    const verdict = navigationOf(url, current())
     if (verdict === 'allow') return
     event.preventDefault()
     if (verdict === 'external') void openExternal(url)
   })
   // A server redirect is a navigation too.
   contents.on('will-redirect', (event, url) => {
-    if (navigationOf(url, origin) !== 'allow') event.preventDefault()
+    if (navigationOf(url, current()) !== 'allow') event.preventDefault()
   })
   contents.on('will-attach-webview', event => event.preventDefault())
   return true
