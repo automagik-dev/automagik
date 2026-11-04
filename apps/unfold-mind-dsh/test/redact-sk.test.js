@@ -408,3 +408,39 @@ test('every raw-field caller keeps a key out of its sentence when the clip lands
     }
   }
 })
+
+// A YAML block scalar (`password: |`, `apiKey: >`, `db_password: |-`, then the value on the
+// indented lines under it) is redacted by rules that anchor on its newlines. quote() collapses
+// whitespace for the sentence, so it redacts the raw field first: collapsed, the name rule would
+// take the `|` or `>` as the value and quote the real value line in clear.
+test('a YAML block-scalar secret never reaches a quoted sentence, from any raw-field caller', () => {
+  const SECRET = 'Zq9Xw8Vv7Uu6Tt5blockline'
+  const MORE = 'Rr4Ss3Pp2Oo1Nn0nextline'
+  const blocks = [
+    ['password: |', `config:\n  password: |\n    ${SECRET}\n  next: 1`],
+    ['apiKey: >', `creds:\n  apiKey: >\n    ${SECRET}\n    ${MORE}\n`],
+    ['db_password: |-', `db_password: |-\n  ${SECRET}\n  ${MORE}`],
+  ]
+  const callers = [
+    ['log', (text) => sentence({ lane: 'agentd', kind: 'log', fields: { level: 'info', msg: text } }).sentence],
+    ['user_text', (text) => sentence({ lane: 'agentd', kind: 'user_text', fields: { request_id: 'c1', text } }).sentence],
+    ['command_submitted', (text) => sentence({ lane: 'agentd', kind: 'command_submitted', fields: { command_id: 'k1', text } }).sentence],
+    ['input_transcript', (text) => sentence({ lane: 'agentd', kind: 'input_transcript', fields: { text } }).sentence],
+    ['host input_transcript', (text) => sentence({ lane: 'host', kind: 'input_transcript', fields: { text } }).sentence],
+    ['reply_text', (text) => sentence({ lane: 'host', kind: 'reply_text', fields: { response_id: 'r1', text } }).sentence],
+    ['agent_delta', (text) => sentence({ lane: 'agentd', kind: 'agent_delta', fields: { response_id: 'r1', text } }).sentence],
+  ]
+  for (const [label, raw] of blocks) {
+    assert.ok(redactText(raw).includes(REDACTED), `${label}: the raw block is redacted`)
+    for (const [name, said] of callers) {
+      for (const field of [raw, `${'w'.repeat(30)} ${raw}`]) {
+        const out = said(field)
+        const served = redact({ sentence: out }).sentence
+        for (const value of [SECRET, MORE]) {
+          assert.equal(fragmentIn(value, out), null, `${name}, ${label}: sentence ${JSON.stringify(out)}`)
+          assert.equal(fragmentIn(value, served), null, `${name}, ${label}: served ${JSON.stringify(served)}`)
+        }
+      }
+    }
+  }
+})

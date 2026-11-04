@@ -28,11 +28,13 @@ const val = (x) => (x === undefined || x === null || x === '' ? U : Array.isArra
 // a fragment too short for the text rules (an sk- key needs 20+ body characters), so redaction
 // after the clip would miss it. A clip that cuts a token (a run of [A-Za-z0-9_-]) drops the cut
 // run back to its start, so no part of a word the rules never saw whole is shown; a field that
-// is one such token renders “…”.
+// is one such token renders “…”. The raw field is redacted before its whitespace is collapsed
+// too: the YAML block-scalar rules (`password: |` then an indented value line) anchor on the
+// newlines the collapse removes. The second pass catches what only the collapsed text shows.
 const TOKEN = /[A-Za-z0-9_-]/
 const quote = (s, n = 90) => {
   if (typeof s !== 'string') return U
-  const t = redactText(s.replace(/\s+/g, ' ').trim())
+  const t = redactText(redactText(s).replace(/\s+/g, ' ').trim())
   if (t.length <= n) return `“${t}”`
   let head = t.slice(0, n - 1)
   if (TOKEN.test(t[n - 1])) head = head.replace(/[A-Za-z0-9_-]+$/, '')
