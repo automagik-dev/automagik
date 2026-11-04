@@ -5,7 +5,7 @@ import { isMainOf } from './sources.js'
 import { PencilIcon, ChevronRightIcon } from './icons.js'
 import { BotMark } from './mark.js'
 import { CharacterSelect } from './character-select.js'
-import { ModelMenu, modelOf } from './model-menu.js'
+import { ModelMenu, modelHint } from './model-menu.js'
 import { FolderMenu } from './folder-menu.js'
 import { BotSchedules } from './schedules.js'
 import { BotCapabilitiesCard } from './capability-settings.js'
@@ -62,14 +62,6 @@ export function SwitchRow({ label, hint, on, disabled, onChange }) {
   return h('div', { className: 'bt-set-row bt-bs-row' },
     h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, label), hint ? h('span', { className: 'bt-set-hint' }, hint) : null),
     h(Switch, { on, label, disabled, onChange }))
-}
-
-function modelHint(bot, roster) {
-  const shown = modelOf(bot, roster)
-  if (shown === undefined) return t('Pick the model this Bot runs on.')
-  if (!shown.served && (roster.models ?? []).length > 0) return t('This model is not available now. Pick another one.')
-  if (bot.appliedModel && bot.appliedModel === bot.model) return t('Every message of this Bot runs on it.')
-  return t('Applies from the next message.')
 }
 
 // The selection ring of a picker cell follows the shape: a 1px line 3px outside it.

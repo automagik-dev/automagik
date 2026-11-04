@@ -420,8 +420,8 @@ test("herdr.pack and herdr.layout run from am's stored extract, outside the app 
   assert.deepEqual(ls(m.mods), []);
   assert.deepEqual(ls(m.off), [], "the switched-off mods leave with the pack");
   const kept = readFileSync(join(m.app, "automagik-herdr", ".prev", ".pack"), "utf8");
-  // am-quota ships off, so it is among them (OFF_BY_DEFAULT).
-  assert.match(kept, /^off=am-quota,am-sidebar,am-tabs$/m, "the kept set says which were off");
+  // am-automations and am-quota ship off, so they are among them (OFF_BY_DEFAULT).
+  assert.match(kept, /^off=am-automations,am-quota,am-sidebar,am-tabs$/m, "the kept set says which were off");
   assert.equal(readFileSync(entry, "utf8"), "// am's briefing entry point\n", "am's briefing entry point stays");
   assert.equal(readlinkSync(link), join(am, "am.mjs"), "am's command stays");
   assert.equal(readMarker(m.mods), null);

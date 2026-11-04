@@ -12,14 +12,21 @@ last release line from the old `automagik-dev/automagik-herdr` repository.
 
 ## Install
 
-On a Mac with Node 22.7 or later:
+On macOS or Linux with Node 22.7 or later:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash
 ```
 
-The installer checks Node and Herdr, and offers to install Herdr with Homebrew if it is
-missing (it asks first). It reads the signed pack pointer (the `herdr-lane` release's `pack.json`,
+The installer checks Node and [Herdr](https://dev.herdr.app) (herdrdev's app, bundle id
+`dev.herdr.app`; another app named Herdr, penso/herdr-gpui, is a different app and does not load this pack).
+If Herdr is missing, it asks before running Herdr's own installer,
+`curl -fsSL https://releases.herdr.dev/app/install.sh | sh`, which needs no root: on macOS (Apple
+silicon) it puts `Herdr.app` in `~/Applications`; on Linux (x86_64 or ARM64) the app in
+`~/.local/share/herdr-app`. Both link `herdr-app` into `~/.local/bin` and add `herdr-core` and
+`hc` when there are none. Install Node from [nodejs.org](https://nodejs.org) first on Linux;
+Node installation through Homebrew is offered only on macOS.
+It reads the signed pack pointer (the `herdr-lane` release's `pack.json`,
 checked against the keys the installer carries), downloads the pack it names
 (`automagik-herdr-pack-<v>.tgz`: every mod below and the `automagik` layout; a desktop-only release
 has none), checks it against the sha256 the pointer names before writing
@@ -40,7 +47,7 @@ holds nine mod folders and one layout, and nothing else:
 | `am-new-menu` | the `+` menu (a space row's `+` and the tab bar's `+`) |
 | `am-markdown` | the terminal's right-click menu with its Markdown files |
 | `am-mods` | the mod manager (`⌘⇧M`) |
-| `am-automations` | the automations panel |
+| `am-automations` | the automations panel; installed switched off (it needs the `herdr-automations` scheduler, which the pack does not install: the panel shows the command that does), turn it on in the Mods panel |
 | `am-quota` | the Accounts panel (your own CLIProxyAPI's accounts); installed switched off, turn it on in the Mods panel |
 | `../herdr-layout/layouts/automagik.json` | the layout that shows all of the above (its own folder: herdr.dev skips a pack folder that holds `layouts/`) |
 
@@ -80,7 +87,7 @@ Automagik release (one that carries the pack), `--adopt` takes over same-named m
 the installer added it and you haven't changed it.
 
 It also installs [usagemeter](https://github.com/automagik-dev/usagemeter) 0.3.0, the token
-meter, to `~/.local/bin/usagemeter`: that release's build for your Mac, checked against its
+meter, to `~/.local/bin/usagemeter`: that release's build for your OS and architecture, checked against its
 `SHA256SUMS` and against the sha256 the pack pins for that build, written atomically. It skips the download when that version is already there and
 never replaces a newer one (Pocket Link installs the same binary). While Herdr is open, the
 sidebar runs `usagemeter sync` 30 seconds after it loads and then every 10 minutes, one run at a
@@ -148,7 +155,7 @@ The installer:
 Or let a coding agent do it. The prompt lives in [docs/agent-install.md](docs/agent-install.md):
 
 ```text
-Install Automagik Herdr on this Mac and set up my first bot.
+Install Automagik Herdr on this macOS or Linux machine and set up my first bot.
 
 1. Run: curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash
    If it stops to ask something (install Node or Herdr), ask me; if I say yes, run it again
@@ -159,7 +166,7 @@ Install Automagik Herdr on this Mac and set up my first bot.
    automagik-herdr --version prints 0.5.0 or later (0.4.x and older are the sidebar alone);
    sed -n 's/^mods=//p' ~/.config/herdr-app/automagik-herdr/installed-by-install.sh prints
    am-automations,am-footer,am-markdown,am-mods,am-new-menu,am-quota,am-sidebar,am-status,am-tabs;
-   herdr-app check ~/.config/herdr-app/mods/<mod> succeeds for each of those nine mods.
+   herdr-app check ~/.config/herdr-app/mods/<mod> succeeds for each on (am-automations, am-quota ship off).
    If anything is missing or fails, report the install as incomplete. If automagik-herdr is not
    found, use ~/.local/bin/automagik-herdr and tell me to add ~/.local/bin to my PATH.
 3. Ask me for: the project folder, and the main bot's name, character and coding agent
@@ -510,12 +517,26 @@ still places panes by the walk-up, so a folder joins its own project once it has
 automagik-herdr update --check      # the installed and the latest version
 automagik-herdr update              # download, verify against the signed pointer, install
 automagik-herdr update --rollback   # put the replaced set of mods back
+automagik-herdr update --auto off   # Install updates automatically: on (default), off, or status
 ```
+
+**Install updates automatically** is on by default: when the sidebar's check finds a newer
+release, it installs it the same way `automagik-herdr update` does (the signed pointer, the
+sha256, the replaced set kept for `--rollback`), Herdr reloads the mods, and one notice says
+"Automagik Herdr updated to X". Your bots keep running: they live in herdr-core, not in the mods.
+A version you rolled back with `--rollback` is never installed on its own again; it waits for a
+newer one. A failed install posts one notice with the reason, changes nothing, and tries again
+4 hours later; each further failure of that release waits longer (8, 16, then 24 hours, then
+daily), with no second notice. Turn it off with `automagik-herdr update --auto off` or the switch
+in the status bar; then a new release is only announced, as before. It applies only to a pack
+`install.sh` installed from a signed release (its record in `<app home>/automagik-herdr/` has a
+`sequence=`); the setting lives beside it, in `auto-update.json`.
 
 Updates come from the Automagik monorepo's GitHub releases, through one signed pointer: the
 `herdr-lane` release's `pack.json` names the newest pack release (not GitHub's "latest", often a
 desktop or plugin release without it), and `pack.json.sig` signs it. The sidebar looks 20 seconds after it
-loads and then every 4 hours, and shows one notice per new version with the command to run.
+loads and then every 4 hours, and installs a newer one (or, with the switch off, shows one notice
+per new version with the command to run).
 When it can't look (no network, no `node`), it says nothing and tries again in 30 minutes.
 Set `AUTOMAGIK_HERDR_NO_UPDATE=1` to turn both off. A pack installed as a link to a checkout
 is never replaced: update it with git.
@@ -700,7 +721,7 @@ with its own `RECIPE.md`:
 | `am-footer` | Herdr's `workspace-chrome` | The sidebar's brand bar and a footer rail of icon tabs — Bots, Mods, Automations, Accounts (while am-quota is on), Settings, Add machine, and up to 4 buttons other mods add — so tabs never stack up. |
 | `am-status` | Herdr's `workspace-status` | The window's bottom status bar (machine, branch, agents, `⌘⇧P commands`) plus the installed Automagik Herdr version beside "commands": click it to check now; when a release is out, `0.8.0 → 0.8.1 · update` installs it after a confirm, the same way `automagik-herdr update` does. |
 | `am-tabs` | Herdr's `tabs` | The tab bar: pills named from the agent's own title, close ✕ on hover, middle-click to close, drag to reorder, per-space side-panel memory. Scrolling never switches tabs. Its `+` opens `am-new-menu`. |
-| `am-automations` | `DnzzL/herdr-automations` (MIT) | Scheduled agent prompts as a side panel: inbox of finished runs, run now, pause all, and a form that previews the next runs. The panel draws and asks; the `herdr-automations` scheduler launches the work. |
+| `am-automations` | `DnzzL/herdr-automations` (MIT) | Scheduled agent prompts as a side panel: inbox of finished runs, run now, pause all, and a form that previews the next runs. The panel draws and asks; the `herdr-automations` scheduler launches the work. **Ships switched off** (#220): the pack does not install the scheduler, so a fresh install puts the mod in `mods-disabled/`; turn it on in the Mods panel (*Automagik Automations*), and the rail's Automations tab then opens it. Without the scheduler, the panel shows the hash-checked command that installs it, to copy. An install that already has it keeps its state. |
 | `am-markdown` | Herdr's `menu` + `ohneda/herdr-markdown-browser` (MIT) | Right-click a terminal: under Herdr's own items, the Markdown files that terminal printed. Pick one and it renders in a preview pane — live reload on save, `Default app` — that the next pick replaces in place. |
 | `am-new-menu` | Herdr's `new-menu` | The `+` menu (the sidebar's and the tab bar's, in place of Herdr's own): terminal, the agents actually installed (per machine), new space, worktree dialogs; `⌘1…9`/`⌘T`/`⌘N`. |
 | `am-mods` | `jacksonpires/herdr-app-mod-manager` (MIT) | The table over every installed mod — on/off, check result, version, source, drift — install, update, remove; `⌘⇧M`. |
@@ -747,15 +768,15 @@ copy these from `~/.config/herdr-app/automagik-herdr/automagik.json` (the pack's
 3. the `spaces` block: `"mod": "am-sidebar"`;
 4. the footer block: `"mod": "am-footer"` with `"props": { "footer": true }` and
    `"size": { "px": 42 }`;
-5. a block `{ "id": "automations-panel", "content": { "mod": "am-automations" }, "size":
-   { "weight": 1 }, "min": 140, "hidden": true }` in the sidebar's column — the rail's clock toggles
-   it;
-6. the same block for `am-quota` (`"id": "am-quota-panel"`), which the rail's Accounts tab toggles (hidden by default, and hidden again while am-quota is off);
-7. the status bar block (`"id": "status"`, `"size": { "px": 28 }`): `"mod": "am-status"` in place of
+5. the status bar block (`"id": "status"`, `"size": { "px": 28 }`): `"mod": "am-status"` in place of
    `workspace-status`.
 
-`am-new-menu` (opened by the sidebar's and the tab bar's `+`) and `am-mods` (`⌘⇧M`, the rail's
-Mods tab) need no block.
+`am-new-menu` (opened by the sidebar's and the tab bar's `+`), `am-mods` (`⌘⇧M`, the rail's
+Mods tab), `am-automations` and `am-quota` need no block. The rail's clock and Accounts tabs open
+those two as a popup over the rail. Don't give them a block: Herdr shows plain Herdr instead of a
+layout that names a mod that is off ("needs mods that aren't here"), even in a hidden block, and
+both ship off. A layout that already has an `automations-panel` or `am-quota-panel` block
+keeps working: while the mod is on, its tab shows and hides that block instead.
 
 ## One installer
 

@@ -61,7 +61,8 @@ All taken by the Pocket orchestrator on 2026-11-03, from the owner's answers.
   project registry there (re-read every 5 minutes). Linked machines are read at once, at most six
   (the core's own machine outside that pool), each time-boxed (layouts 8 s, batches 15 s remote
   and 20 s on the core's own machine); one that doesn't answer is given up for that pass after
-  one wait. A refresh shows the core's own terminals and spaces before the linked layouts. Before,
+  one wait. A refresh lands the core's own terminals, spaces, alerts and git at once; the linked
+  layouts are read in the background, one reading at a time, each landing as it answers. Before,
   there was one call per folder and command, one machine after another. On a desktop with 19
   spaces on 7 machines that took about a minute (~280-320 calls); now it fills in within ~10 s
   (~50-70 calls, the refreshes meanwhile included).

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Draft (owner's answers in: D19; question 2 still open) |
 | Milestone | not scheduled |
 | Lanes | desktop (3.N); plugin (3.N.P) for the secrets broker; Omni upstream |
 | Created | 2026-11-03 |
@@ -136,6 +136,12 @@ does not change this table.
   Windows is not planned. A guest gives egress deny and secret swap for free, but costs about
   9-10 s of boot against 3 s (`council/31-dsh-in-guest.md:232-261`) and needs a mount contract
   for `~/.automagik/bots`.
+- **Windows** (amended by [0016](0016-windows-wslc.md), D38 and D39). Windows has no host
+  supervisor: every server runs in a WSL container guest, which implements the boundary API
+  there, and the VM is the server fence that delivery 4 builds by hand on macOS and Linux.
+  Only the Electron window and herdr-app run natively. The parent-death watch and the handshake
+  off `process.send` (delivery 1) come on Windows from 0016's guest launcher (stdin EOF, framed
+  stdio).
 
 ## Deliveries
 
@@ -212,6 +218,8 @@ Bot can read a key and send it out. D19 accepts this for now.
    fixes: `npm.cmd` run through a shell, a code-signing certificate, a Windows build and its
    update feed, and the `#!/bin/sh` tool shims in `src/dsh.js`. Recommended: now. The fence and
    the fuses both want DSH to be its own binary, and both shells need the same Node ≥ 22.19.
+   *Answered for Windows* by [0016](0016-windows-wslc.md): DSH runs on the guest image's own
+   Node, and the four native Windows fixes are dropped (D38); signing stays open (D36).
 3. **Per-Bot OS processes or policy-only?** Recommended: policy-only (deliveries 4 and 5)
    until a measured need appears. One process per Bot multiplies RSS.
 4. **Apple `container` floor.** Apple's README asks for Apple silicon and macOS 26 (not verified
@@ -225,6 +233,7 @@ Bot can read a key and send it out. D19 accepts this for now.
 - Handoff: `~/.config/herdr-app/handoffs/bot-system-unification.md` (D12, D13, D18, Arca and
   Unfold notes, 2026-11-03); council: `council-desktop-shell-2026-11-02.md` (synthesis).
 - [0006](0006-herdr-terminal-mode.md) Herdr terminal mode, [0007](0007-desktop-speed.md)
-  desktop speed, [0008](0008-platform-and-web-instances.md) platforms.
+  desktop speed, [0008](0008-platform-and-web-instances.md) platforms,
+  [0016](0016-windows-wslc.md) Windows on a Linux sandbox (amends this RFC).
 - Decisions: D19 (2026-11-03) in the handoff above. Cross-OS spike: #191.
 - Omni `origin/dev` `0c388fae3`: `docs/cli/sandbox.md`, `.genie/brainstorms/omni-local-daemon/DESIGN.md`.

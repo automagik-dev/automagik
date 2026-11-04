@@ -34,8 +34,8 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
   writesWorktree } from "../workers.js";
 import { carriedLabels, continueRefusal, doomedHelpers, helperArgs, helperPlan, ledgerSession, paneCommand, planText as restartText, restartPlan,
   claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
-import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, readMarker, relinkCli, rollback as rollbackPack, writeMarker } from "../update.mjs";
-import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER } from "../release.js";
+import { autoStatus, readAuto, binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, managedPack, readMarker, relinkCli, rollback as rollbackPack, writeAuto, writeMarker } from "../update.mjs";
+import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER, updatesOff } from "../release.js";
 import { MACHINE_NAME, OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
 import { RemoteFileError, StaleSnapshot, readRemoteText, removeRemoteText, writeRemoteText } from "../remoteFile.js";
@@ -727,7 +727,7 @@ const OPTIONS = {
   "planned-wave": { type: "string" }, "planned-note": { type: "string" }, unplanned: { type: "boolean" },
   space: { type: "string" }, tab: { type: "string" },
   title: { type: "string" }, sub: { type: "string" }, id: { type: "string" },
-  check: { type: "boolean" }, rollback: { type: "boolean" },
+  check: { type: "boolean" }, rollback: { type: "boolean" }, auto: { type: "string" },
   "worker-agent": { type: "string" }, "worker-model": { type: "string" }, "worker-effort": { type: "string" },
   "worker-template": { type: "string" }, template: { type: "string" },
   branch: { type: "string" }, worktree: { type: "string" }, base: { type: "string" }, effort: { type: "string" },
@@ -819,6 +819,10 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 current and latest (--check), or put the replaced pack back;
                                 an update then runs meter install where you agreed to it
                                 (install.sh, or an earlier meter install); nobody asked: nowhere
+  update --auto on|off|status   Install updates automatically (on by default): Herdr installs
+                                each newer verified release on its own; a version you rolled
+                                back is skipped until a newer one is out. Only for a pack
+                                install.sh put in place, never a checkout
   meter install [--machine M | --linked | --local]
                                 the pinned usagemeter (v${USAGEMETER.version}, hash-checked on each
                                 machine, never a downgrade) in ~/.local/bin on this computer and
@@ -2897,6 +2901,7 @@ const hooksLines = (hooks) => { const lines = hooksNotice(hooks); return lines.l
  * the open spaces are looked at only for this computer's own pack: with `io.modsDir`, only `io.binDir`.
  */
 export async function cmdUpdate(opts, _rest = [], io = {}) {
+  if (opts.auto !== undefined) return autoSetting(opts, io);
   if (opts.check && opts.rollback) throw new CliError("Give --check or --rollback, not both.", 2);
   const host = io.modsDir ? { binDir: io.binDir ?? null, window: false }
     : { binDir: io.binDir ?? binDirOf(io.env ?? process.env), window: liveHome(`${appHome(io.env ?? process.env)}/mods`) };
@@ -2928,7 +2933,7 @@ export async function cmdUpdate(opts, _rest = [], io = {}) {
     try { r = rollbackPack({ ...(io.modsDir ? { modsDir: io.modsDir } : {}), ...host }); } catch (e) { throw failed("Nothing rolled back", e); }
     const { relinked, note } = relink(before);
     const warned = r.warnings?.length ? ` Warning: ${r.warnings.join("; ")}.` : "";
-    return opts.json ? { rolledBack: r, relinked } : `Rolled back to Automagik Herdr ${r.version ?? "(no VERSION)"} at ${r.pack}. Reload Herdr's mods to use it.${warned}${note}${hooksLines(r.hooks?.hooks)}`;
+    return opts.json ? { rolledBack: r, relinked } : `Rolled back to Automagik Herdr ${r.version ?? "(no VERSION)"} at ${r.pack}. Herdr reloads its mods on its own.${r.from && readAuto(io.modsDir ?? defaultModsDir(io.env ?? process.env)).on ? ` Updates installed automatically skip ${r.from} and wait for a newer release.` : ""}${warned}${note}${hooksLines(r.hooks?.hooks)}`;
   }
   let r;
   try { r = opts.check ? await checkForUpdate(where) : await installUpdate(where); } catch (e) {
@@ -2940,10 +2945,28 @@ export async function cmdUpdate(opts, _rest = [], io = {}) {
   const current = r.current ?? "not installed";
   if (r.disabled) return `Automagik Herdr ${current} is installed. Updates are off (${NO_UPDATE_ENV}=1).${note}`;
   if (r.installed) {
-    return `Updated Automagik Herdr ${current} → ${r.installed.version}. The replaced pack is kept: \`automagik-herdr update --rollback\` puts it back. Reload Herdr's mods to use it.${note}${hooksLines(r.installed.hooks?.hooks)}${meter.lines.map((l) => `\n${l}`).join("")}`;
+    return `Updated Automagik Herdr ${current} → ${r.installed.version}. The replaced pack is kept: \`automagik-herdr update --rollback\` puts it back. Herdr reloads its mods on its own.${note}${hooksLines(r.installed.hooks?.hooks)}${meter.lines.map((l) => `\n${l}`).join("")}`;
   }
   if (r.update) return `Automagik Herdr ${current} is installed; ${r.update.version} is out (${r.update.page}). Run \`automagik-herdr update\` to install it.`;
   return `Automagik Herdr ${current} is installed; the latest release is ${r.latest ?? "none yet"}. Up to date.${note}`;
+}
+
+/** `update --auto on|off|status`: the pack's own setting (update.mjs writeAuto), and whether it applies here. */
+function autoSetting(opts, io) {
+  if (opts.check || opts.rollback) throw new CliError("Give --auto alone, without --check or --rollback.", 2);
+  if (!["on", "off", "status"].includes(opts.auto)) throw new CliError("--auto takes on, off or status.", 2);
+  const env = io.env ?? process.env;
+  const modsDir = io.modsDir ?? defaultModsDir(env);
+  let s;
+  try { s = opts.auto === "status" ? autoStatus(modsDir) : { ...writeAuto(modsDir, { on: opts.auto === "on" }), ...managedPack(modsDir) }; } catch (e) {
+    throw new CliError(`The setting was not saved: ${String(e?.message ?? e).split("\n")[0]}`);
+  }
+  if (opts.json) return { ...s, checks: !updatesOff(env) };
+  const lines = [`Install updates automatically: ${s.on ? "on" : "off"}.`];
+  if (!s.managed) lines.push(`It doesn't apply to this pack (${s.why}): updates stay a notice and \`automagik-herdr update\`.`);
+  else if (s.on && s.skip) lines.push(`${s.skip} was rolled back here: it waits for a release newer than ${s.skip}.`);
+  if (updatesOff(env)) lines.push(`Update checks are off (${NO_UPDATE_ENV}=1), so nothing is installed.`);
+  return lines.join("\n");
 }
 
 // ---- tidy (sidebar-rules Group 2) ----

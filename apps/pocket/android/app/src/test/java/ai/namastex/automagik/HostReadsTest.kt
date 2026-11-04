@@ -137,11 +137,10 @@ class HostReadsTest {
         HostReads({ m, p -> client.call(m, p) }, { state.value }, { f -> state.update(f) }, pool, HostReads.Limits(limit, limit, limit))
 
     /** A refresh as the view model makes one: the linked layouts, then the reading. */
-    private suspend fun refresh(reads: HostReads, machines: List<String>): List<String> {
-        val (spaces, answered) = reads.layouts(machines, terminals, state.value.spaces)
-        state.update { HostReads.reading(it, terminals, listOf(own) + spaces, linked, answered, System.currentTimeMillis()) }
-        return answered
-    }
+    /** A refresh as the view model makes one, waiting for its linked reading: the machines that reading laid out. */
+    private suspend fun refresh(reads: HostReads, machines: List<String>): List<String> =
+        reads.refresh(scope, terminals, listOf(own), machines, linked, System.currentTimeMillis(), {}, {})?.await()
+            ?: error("a linked reading was still out")
     private fun folder(m: String) = m to (if (m.isBlank()) "/w/own" else "/srv/x")
     private fun ms(start: Long) = System.currentTimeMillis() - start
 
@@ -177,17 +176,21 @@ class HostReadsTest {
 
         // One git pass, as the view model makes it: slow has 21 folders (two batches) and never answers in time.
         start = System.currentTimeMillis()
+        val unsure = ConcurrentHashMap.newKeySet<Pair<String, String>>()
+        // When the core's own and fast are cached, and whether slow had been given up by then.
         val cachedIn = async {
             while (cached().map { it.id }.toSet().let { "h1||/w/own" !in it || "h1|fast|/srv/x" !in it }) {
                 sync.reading(mapOf("h1" to state.value), System.currentTimeMillis()); delay(20)
             }
-            ms(start)
+            ms(start) to unsure.any { it.first == "slow" }
         }
-        val unsure = ConcurrentHashMap.newKeySet<Pair<String, String>>()
         reads.git(listOf(folder(""), folder("fast"), folder("slow")) + (1..20).map { "slow" to "/srv/x$it" }) { m, f -> unsure += m to f }
         val pass = ms(start)
-        // (1) the core's own and fast are live and cached within the limit, without waiting for slow.
-        assertTrue("cached after ${cachedIn.await()} ms", cachedIn.await() < TIME_BOX)
+        // (1) the core's own and fast are live and cached before slow is given up (an order, so a loaded test machine
+        // can't flake it), and within the limit plus slack.
+        val (cachedMs, slowGivenUp) = cachedIn.await()
+        assertTrue("cached only after slow was given up ($cachedMs ms)", !slowGivenUp)
+        assertTrue("cached after $cachedMs ms", cachedMs < TIME_BOX + SLACK)
         // (3) slow: one call and one wait for its 21 folders, then given up; the pool is whole again.
         assertEquals(1, slowExecs.get())
         assertEquals(21, unsure.count { it.first == "slow" })
@@ -277,6 +280,111 @@ class HostReadsTest {
         assertTrue(ms(start) < SLACK)
         assertEquals("Kept", state.value.members["down|/srv/x"]?.single()?.name)
         assertNull(lost)
+    }
+
+    @Test fun theCoresOwnMachineReadsOutsideThePool() = bounded {
+        answer = { method, machine, params -> if (machine == "slow") Reply.Never else healthy(method, machine, params) }
+        val pool = Semaphore(1)
+        val reads = reads(pool)
+        val stallStart = System.currentTimeMillis()
+        val stalled = async(Dispatchers.IO) { reads.git(listOf(folder("slow"))) { _, _ -> } }
+        withTimeout(SLACK) { while (pool.availablePermits > 0) delay(10) }   // slow holds the only slot
+        // The core's own machine reads at once, while slow still holds it.
+        val start = System.currentTimeMillis()
+        reads.git(listOf(folder(""))) { _, _ -> }
+        assertTrue("own took ${ms(start)} ms", ms(start) < SLACK)
+        assertEquals(0, pool.availablePermits)
+        assertTrue(state.value.git.containsKey(Sidebar.gitKey("", "/w/own")))
+        // A linked machine waits for the slot: it can't finish before slow is given up.
+        reads.git(listOf(folder("fast"))) { _, _ -> }
+        assertTrue("fast finished ${ms(stallStart)} ms after the stall began", ms(stallStart) >= TIME_BOX)
+        stalled.await()
+        assertEquals(1, pool.availablePermits)
+    }
+
+    @Test fun aRefreshLandsTheCoresOwnFirstAndNeverWaitsForALinkedLayout() = bounded {
+        val slowDocs = AtomicInteger()
+        answer = { method, machine, params ->
+            if (machine == "slow" && method == "doc.get") { slowDocs.incrementAndGet(); Reply.Never } else healthy(method, machine, params)
+        }
+        val reads = reads()
+        val order = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val start = System.currentTimeMillis()
+        val reading = reads.refresh(scope, terminals, listOf(own), listOf("fast", "slow"), linked, start,
+            ownRead = {
+                // The core's own terminals and spaces are already in when its alerts and git run.
+                assertEquals(terminals, state.value.terminals)
+                assertTrue("" in state.value.layouts && state.value.spaces.any { it.id == own.id })
+                order += "own"
+            }, linkedRead = { order += "linked" })
+        assertTrue("refresh took ${ms(start)} ms", ms(start) < SLACK)
+        assertEquals(listOf("own"), order)
+        // fast lands as soon as it answers, while slow is still out.
+        withTimeout(SLACK) { state.first { "fast" in it.layouts } }
+        assertTrue(reading!!.isActive)
+        assertEquals(listOf("", "fast"), state.value.spaces.map { it.machine })
+        // A refresh meanwhile lands the core's own again, at once, and starts no second reading alongside: it runs
+        // one more pass when this one ends.
+        val again = System.currentTimeMillis()
+        assertNull(reads.refresh(scope, terminals, listOf(own), listOf("fast", "slow"), linked, again, { order += "own" }, { order += "linked" }))
+        assertTrue(ms(again) < SLACK)
+        assertEquals(listOf("fast"), reading.await())
+        assertEquals(listOf("own", "own", "linked", "linked"), order)
+        assertEquals(2, slowDocs.get())
+        assertTrue("slow" !in state.value.layouts)
+    }
+
+    @Test fun refreshesDuringALinkedReadingRunExactlyOneMoreWithTheNewestInputs() = bounded {
+        val fastDocs = AtomicInteger(); val slowDocs = AtomicInteger()
+        val fastName = java.util.concurrent.atomic.AtomicReference("Old")
+        answer = { method, machine, params ->
+            when {
+                method == "doc.get" && machine == "fast" -> { fastDocs.incrementAndGet(); Reply.Now(layout(fastName.get())) }
+                method == "doc.get" && machine == "slow" -> { slowDocs.incrementAndGet(); Reply.Never }
+                else -> healthy(method, machine, params)
+            }
+        }
+        val reads = reads()
+        // Twenty refreshes at once from different threads (the connection's loop and pull to refresh): exactly one
+        // starts a reading.
+        val started = (1..20).map {
+            async(Dispatchers.IO) { reads.refresh(scope, terminals, listOf(own), listOf("fast", "slow"), linked, System.currentTimeMillis(), {}, {}) }
+        }.map { it.await() }.filterNotNull()
+        assertEquals(1, started.size)
+        // fast changes while slow holds the reading up; a refresh with the newest inputs (slow no longer listed) comes.
+        withTimeout(SLACK) { state.first { "fast" in it.layouts } }
+        fastName.set("Fresh")
+        assertNull(reads.refresh(scope, terminals, listOf(own), listOf("fast"), linked, System.currentTimeMillis(), {}, {}))
+        // When the reading ends, one more pass runs, with those inputs: fast is read again (no event needed), slow isn't.
+        assertEquals(listOf("fast"), started.single().await())
+        assertEquals("Fresh", state.value.spaces.single { it.machine == "fast" }.name)
+        assertEquals(2, fastDocs.get())
+        assertEquals(1, slowDocs.get())
+        // Nothing is left out: the next refresh starts a reading again.
+        assertTrue(reads.refresh(scope, terminals, listOf(own), listOf("fast"), linked, System.currentTimeMillis(), {}, {}) != null)
+    }
+
+    @Test fun aFailedReadingStillRunsTheRefreshKeptMeanwhile() = bounded {
+        val fastName = java.util.concurrent.atomic.AtomicReference("Old")
+        val fastDocs = AtomicInteger()
+        answer = { method, machine, params ->
+            when {
+                method == "doc.get" && machine == "fast" -> { fastDocs.incrementAndGet(); Reply.Now(layout(fastName.get())) }
+                method == "doc.get" && machine == "slow" -> Reply.Never
+                else -> healthy(method, machine, params)
+            }
+        }
+        val reads = reads()
+        // The reading fails at its end (its after-step throws); a refresh came while it was out.
+        val failing = reads.refresh(scope, terminals, listOf(own), listOf("fast", "slow"), linked, System.currentTimeMillis(), {},
+            { error("after-step failed") })!!
+        withTimeout(SLACK) { state.first { "fast" in it.layouts } }
+        fastName.set("Fresh")
+        assertNull(reads.refresh(scope, terminals, listOf(own), listOf("fast"), linked, System.currentTimeMillis(), {}, {}))
+        assertTrue(runCatching { failing.await() }.isFailure)
+        // The kept refresh still gets its pass.
+        withTimeout(3 * SLACK) { state.first { s -> s.spaces.any { it.machine == "fast" && it.name == "Fresh" } } }
+        assertEquals(2, fastDocs.get())
     }
 
     private companion object {

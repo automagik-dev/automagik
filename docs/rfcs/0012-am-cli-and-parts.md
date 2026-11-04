@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (owner's answers in: D35) |
-| Milestone | not scheduled |
+| Status | Accepted (owner's answers in: D35; delivery 2 partly merged: #254, #258; delivery 1 is #263, open) |
+| Milestone | none (ships outside the five milestones) |
 | Lanes | am (3.N.P, D35), herdr (3.N.P), plugin (3.N.P), pocket (3.N.P), desktop (3.N) |
 | Created | 2026-11-03 |
 
@@ -404,14 +404,19 @@ keyed by hc's machine name. Proposed:
 
 ### Operating systems
 
-Supported targets are D28's: macOS arm64, Linux x86_64 and aarch64, Windows x86_64, all three at
-once (D27). Intel Macs and Windows on ARM are not supported: the code set is refused there, and
-RFC 0013's switch never shows. am refuses a part whose `os` does not list this one, and its
-doctor reports 2. The herdr parts list only `macos` today; deliveries 5 (Linux) and 6 (Windows)
-port them, and "Set up" ships only when `am install code` passes on all three. Argv entries and
-running `node` by am's own path keep entries portable. Proposed for Windows: `~/.automagik` is
-`%USERPROFILE%\.automagik`, and the `am` and `automagik-herdr` links are `.cmd` shims in a folder
-am adds to the user's PATH.
+Supported targets are D28's: macOS arm64, Linux x86_64 and aarch64, and Windows x86_64 via WSLC
+(amended by [RFC 0016](0016-windows-wslc.md), D38 and D39), all three at once (D27). Intel Macs
+and Windows on ARM are not supported: the code set is refused there, and RFC 0013's switch never
+shows. am refuses a part whose `os` does not list this one, and its doctor reports 2. The herdr
+parts list only `macos` today; deliveries 5 (Linux) and 6 (Windows via WSLC) port them, and "Set
+up" ships only when `am install code` passes on all three. Argv entries and running `node` by
+am's own path keep entries portable.
+
+On Windows, `am` and every part whose `os` lists `linux` run inside the WSL container guest,
+where am sees Linux; `os` stays OS-only (D35). Only the desktop app, herdr-app and the pack's mod
+files (loaded by herdr-app) live on Windows; the desktop app installs those and reports them
+into the guest's parts.json. `~/.automagik` is the guest's (`/home/automagik/.automagik`). There
+are no `.cmd` shims and no Windows PATH entry.
 
 ### The sandbox
 
@@ -553,11 +558,15 @@ check passes on all three OSes.
    *Check:* `am install code` on a fresh Linux x86_64 and aarch64 runner (#191's harness), then
    doctor exits 0 and Herdr opens with the pack.
    *Rollback:* revert; Linux goes back to "not applicable".
-6. **Windows port** (herdr, and am where needed). `os` gains `windows`; the launcher and the
-   links (`.cmd` shims, the PATH entry); am-quota's Keychain reads replaced by Windows' own
-   credential store.
-   *Check:* `am install code` on a fresh Windows x86_64 runner, then doctor exits 0 and Herdr
-   opens with the pack.
+6. **Windows via WSLC** (herdr, and am where needed; amended by RFC 0016). The guest runs `am
+   install code` as on Linux; the desktop app installs herdr-app and the pack's mods on the
+   Windows side and reports them into the guest's parts.json. am-quota reads the guest's Claude
+   Code credentials through the machine, not a Windows credential store (0016, question 9).
+   The desktop app is the only writer of the pack's mods on Windows; the guest's `am doctor`
+   shows its last report for those parts, and a missing or failing report fails them.
+   *Check:* on RFC 0016's Windows runner (GitHub's hosted runners have no nested
+   virtualization), `am install code` in the guest, then `am doctor` exits 0 and Herdr opens
+   with the pack, its spaces on the `linux` machine.
    *Rollback:* revert; Windows goes back to "not applicable".
 7. **Unsigned sources** (am, then desktop). Path and git sources, `--version`, `replaces`; the
    confirmation prompt outside Herdr terminals (am), and the Automagik window's dialog (desktop,
@@ -599,7 +608,8 @@ Felipe answered the rest on 2026-11-03 (D35 additions, under Decided). One quest
   `herdr-parts-questions-t2zx.md` and `herdr-parts-for-rfc-0012.md` (t2zx).
 - RFCs: [0010](0010-desktop-sandbox.md) sandbox, [0011](0011-monorepo-parts-and-releases.md)
   parts and releases, [0013](0013-work-code-switch.md) the switch (delivery 7),
-  [0014](0014-shared-bot-registry.md) the Bot registry.
+  [0014](0014-shared-bot-registry.md) the Bot registry, [0016](0016-windows-wslc.md) Windows
+  via WSLC (amends the Windows target and delivery 6).
 - Code: `herdr/install.sh`, `herdr/mods/am-sidebar/update.mjs` (`stagePack`, `verifyInstall`),
   `release.js` (`PACK_MODS`), `herdr/mods/am-mods/core.js` (`OFF_DIR`), `scripts/herdr-lane.ts`,
   `scripts/lane.ts`; `apps/desktop/src/herdr-update.js` (#238). Branch `feat/herdr-parts` (t2zx,

@@ -735,10 +735,20 @@ export function install(rt) {
     tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}) }
     // Only the newest tasks are remembered for their reports.
     const kept = Object.entries(tasks()).sort(([, a], [, b]) => b.at - a.at)
-    for (const [id] of kept.slice(TASKS_KEPT)) delete tasks()[id]
+    // The level each forgotten task ran at is read while it is still a task.
+    const forgotten = kept.slice(TASKS_KEPT).map(([id]) => [id, rt.taskLevelOf(id)])
+    for (const [id] of forgotten) delete tasks()[id]
     await rt.save()
+    for (const [id, ranAt] of forgotten) {
+      await rt.forgetTaskPermission(id, ranAt)
+        .catch(error => rt.warn('ds-bot: the old task %s keeps its permission, the default was not applied: %s', id, error?.message ?? error))
+    }
     await askersModel(sessionId, state.bots?.[from])
     const live = await rt.resolveAgent(sessionId)
+    // And at its Bot's permission level: DSH announced the Session before it was a task,
+    // so its session/created listener could not. Before the first turn, as the model is.
+    await rt.applyTaskPermission(sessionId, live.session)
+      .catch(error => rt.warn('ds-bot: the task keeps the default permission, %s\'s was not applied: %s', caller?.name ?? from, error?.message ?? error))
     // DSH's turn loop reads every input's source: the instructions arrive as the user's.
     live.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))
     await ctx.sessions.flush(live.session)

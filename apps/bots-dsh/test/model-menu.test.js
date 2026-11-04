@@ -76,7 +76,7 @@ test('with models that can run and none chosen, one press starts the Bot: no gri
   assert.match(nodes(tree, node => node.props.className === 'bt-bubble')[0].children[0], /Say when, and I'll start/)
   // It offers DSH's default, named with its provider; "change" picks another.
   const [line] = nodes(tree, node => node.type === ModelLine)
-  assert.equal(line.props.ref, 'official/flash')
+  assert.equal(line.props.modelRef, 'official/flash')
   line.props.onPick('local/flash')
   const [start] = nodes(tree, node => node.type === 'button' && node.children.includes('Start'))
   start.props.onClick()
@@ -195,7 +195,7 @@ test('models that need an API key are no choice', () => {
   // DSH's default needs a key: the Bot offers the model that can run.
   const offer = dock([...keyless, models[1]], { harness: false }).tree
   assert.deepEqual(buttons(offer), ['Start'])
-  assert.equal(nodes(offer, node => node.type === ModelLine)[0].props.ref, 'local/flash')
+  assert.equal(nodes(offer, node => node.type === ModelLine)[0].props.modelRef, 'local/flash')
   // Where DSH's own settings are, they take the key; Omni's Connect AI step comes first.
   assert.deepEqual(buttons(dock(keyless).tree), ['Connect an AI: ChatGPT, Claude, Kimi or an API key', 'Enter a DeepSeek API key', 'Open settings to set up a custom model'])
 })
@@ -284,6 +284,21 @@ test('the trigger names the picked entry, its group and level, and a fallback sa
   assert.deepEqual(trigger({ ...HOST, status: undefined }), ['DeepSeek V4.1 Flash', 'Unfold · Auto'])
   assert.deepEqual(trigger({ ...HOST, status: { kind: 'fallback', answering: 'Granite 4.1 3B' } }), ['DeepSeek V4.1 Flash', 'Granite 4.1 3B answers for now'])
   assert.deepEqual(trigger({ entries: [], loading: true }), ['Choose a model'])
+})
+
+test('a host-owned Bot\'s settings and details name what answers now, never the DSH model saved on it', () => {
+  const { modelHint, needsModelPick } = module.exports
+  const saved = { id: 'unfold', name: 'Unfold', kind: 'unfold', model: 'luna/gpt-5.6', appliedModel: 'luna/gpt-5.6' }
+  const plain = { ready: true, byId: { unfold: saved }, models: [{ ref: 'luna/gpt-5.6', provider: 'luna', providerName: 'Luna', name: 'GPT-5.6 Luna' }] }
+  // Without the plugin's menu it is an ordinary Bot.
+  assert.equal(modelHint(saved, plain), 'Every message of this Bot runs on it.')
+  const hosted = { ...plain, hostModels: { unfold: HOST } }
+  assert.equal(modelHint(saved, hosted), 'Granite 4.1 3B answers now.')
+  assert.equal(modelHint(saved, { ...plain, hostModels: { unfold: { entries: [], loading: true } } }), null)
+  // No "Pick a model" note under the plugin's menu, even with no DSH model saved.
+  const bare = { id: 'unfold', name: 'Unfold', kind: 'unfold' }
+  assert.equal(needsModelPick(bare, { ...plain, byId: { unfold: bare } }), true)
+  assert.equal(needsModelPick(bare, { ...hosted, byId: { unfold: bare } }), false)
 })
 
 test('the menu leaves out a superseded model, unless the Bot is on it', () => {

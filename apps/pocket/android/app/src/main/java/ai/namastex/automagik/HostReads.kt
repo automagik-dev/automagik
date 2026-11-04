@@ -1,6 +1,8 @@
 package ai.namastex.automagik
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -35,18 +37,70 @@ class HostReads(
         }.awaitAll()
     }
 
+    /** What a linked reading reads: the machines ([names]), the terminals that name their spaces, and what runs after. */
+    private class LinkedInputs(val terminals: List<CoreTerminal>, val names: List<String>, val linkedRead: suspend () -> Unit)
+    private val lock = Any()
+    /** A linked reading is out (guarded by [lock]). */
+    private var running = false
+    /** The newest inputs of a refresh that came while a reading was out: one more reading runs with them (by [lock]). */
+    private var next: LinkedInputs? = null
+
     /**
-     * The spaces of the linked [machines], from their layouts: one that didn't answer keeps its spaces from [before].
-     * Also which machines answered, so only they count as read ([MachineState.layouts]).
+     * One refresh. The core's own [terminals] and spaces ([own]) land at once, with the linked machines' spaces as last
+     * read, and then [ownRead] runs (alerts, git): none of it waits for a linked machine. The linked machines' layouts
+     * ([names]) are read in [scope], each landing as it answers, in Herdr's order; one that doesn't answer keeps its
+     * spaces and isn't counted as read; [linkedRead] runs after. One reading at a time, so a stalled machine never piles
+     * reads up: a refresh that comes while one is out starts none (null) but is kept, and when the reading ends one more
+     * runs with the newest such inputs, so no linked change waits for the next event. The reading answers which
+     * machines its last pass laid out.
      */
-    suspend fun layouts(machines: List<String>, terminals: List<CoreTerminal>, before: List<PocketSpace>): Pair<List<PocketSpace>, List<String>> {
-        val spaces = ArrayList<PocketSpace>()
-        val answered = ArrayList<String>()
-        for ((name, doc) in docs("herdr-app", machines)) {
-            if (doc != null) { spaces.addAll(LayoutReader.spaces(doc.optJSONObject("value"), name, terminals)); answered += name }
-            else spaces.addAll(before.filter { it.machine == name })
+    suspend fun refresh(scope: CoroutineScope, terminals: List<CoreTerminal>, own: List<PocketSpace>, names: List<String>,
+                        linked: List<LinkedMachine>, now: Long, ownRead: suspend () -> Unit, linkedRead: suspend () -> Unit): Deferred<List<String>>? {
+        // The linked spaces taken inside the update, so a layout landing meanwhile is never overwritten.
+        update { m -> reading(m, terminals, own + m.spaces.filter { it.machine.isNotBlank() && it.machine in names }, linked, emptyList(), now) }
+        ownRead()
+        return startLinked(scope, LinkedInputs(terminals, names, linkedRead))
+    }
+
+    /** Starts a linked reading with [inputs], or keeps them for one more pass if one is out (null). */
+    private fun startLinked(scope: CoroutineScope, inputs: LinkedInputs): Deferred<List<String>>? {
+        // Checked and claimed at once: refreshes come from more than one coroutine (the connection's, pull to refresh).
+        val starts = synchronized(lock) { if (running) { next = inputs; false } else { running = true; true } }
+        if (!starts) return null
+        return scope.async {
+            var pass = inputs
+            var answered: List<String>
+            while (true) {
+                answered = readLinked(pass)
+                pass.linkedRead()
+                pass = synchronized(lock) { next.also { next = null; if (it == null) running = false } } ?: break
+            }
+            answered
+        }.also { reading ->
+            // Failed or cancelled (even before it started): freed. A refresh kept meanwhile still gets its pass, unless
+            // the reading was cancelled (the connection or the app is going).
+            reading.invokeOnCompletion { cause ->
+                if (cause == null) return@invokeOnCompletion
+                val kept = synchronized(lock) { running = false; next.also { next = null } }
+                if (kept != null && cause !is CancellationException) startLinked(scope, kept)
+            }
         }
-        return spaces to answered
+    }
+
+    /** One pass over [pass]'s linked machines, each landing as it answers: the ones laid out. */
+    private suspend fun readLinked(pass: LinkedInputs): List<String> {
+        val session = machine()?.session ?: return emptyList()
+        return coroutineScope {
+            pass.names.map { name ->
+                async {
+                    val doc = timeBoxed(limits.doc) { call("doc.get", JSONObject().put("name", "herdr-app").put("on", name)) }
+                        ?: return@async null
+                    val spaces = LayoutReader.spaces(doc.optJSONObject("value"), name, pass.terminals)
+                    update { laidOut(it, name, spaces, session, System.currentTimeMillis()) }
+                    name
+                }
+            }.awaitAll().filterNotNull()
+        }
     }
 
     /**
@@ -136,8 +190,39 @@ class HostReads(
                 layouts = layouts + (laidOut + "").filter { it !in layouts }.associateWith { now })
         }
 
+        /**
+         * [m] with linked machine [name]'s [spaces] from its layout, read in [session]: they replace its earlier ones,
+         * in Herdr's order of the linked machines, and it counts as read ([MachineState.layouts]) from [now]. Nothing
+         * changes if the connection moved on to another session, or [name] is no longer linked and up.
+         */
+        fun laidOut(m: MachineState, name: String, spaces: List<PocketSpace>, session: Int, now: Long): MachineState {
+            if (m.session != session || m.readSession != session || m.linked.none { it.name == name && it.connected }) return m
+            val order = m.linked.map { it.name }
+            val all = (m.spaces.filter { it.machine != name } + spaces)
+                .sortedBy { s -> if (s.machine.isBlank()) -1 else order.indexOf(s.machine).let { if (it < 0) Int.MAX_VALUE else it } }
+            return m.copy(spaces = all, layouts = if (name in m.layouts) m.layouts else m.layouts + (name to now))
+        }
+
         /** [block]'s answer, or null if it failed or took longer than [ms]; a real cancel is passed on. */
         suspend fun <T> timeBoxed(ms: Long, block: suspend () -> T): T? = try { withTimeout(ms) { block() } }
             catch (_: TimeoutCancellationException) { null } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
     }
+}
+
+/**
+ * The reads kept per saved machine, one per live connection: they hold its linked reading ([HostReads.refresh]), so
+ * only the live connection's are kept. A connection that isn't the live one (closed, or replaced by a reconnect) gets
+ * reads of its own, never kept, and its late loss never drops the live connection's.
+ */
+class KeptReads<C : Any, R : Any> {
+    private val kept = java.util.concurrent.ConcurrentHashMap<String, Pair<C, R>>()
+    /** [client]'s reads of [id], kept if it is the [live] connection; [make] makes new ones. */
+    fun get(id: String, client: C, live: C?, make: () -> R): R {
+        if (live !== client) return make()
+        return kept.compute(id) { _, held -> if (held?.first === client) held else client to make() }!!.second
+    }
+    /** [client]'s connection to [id] was lost: its reads go, never another connection's. */
+    fun lost(id: String, client: C) { kept.computeIfPresent(id) { _, held -> if (held.first === client) null else held } }
+    /** [id] was disconnected or removed: whatever was kept goes. */
+    fun drop(id: String) { kept.remove(id) }
 }

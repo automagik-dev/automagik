@@ -1,5 +1,5 @@
 #!/bin/sh
-# Automagik Herdr installer (A17): turns a plain Herdr into Automagik Herdr on a Mac.
+# Automagik Herdr installer (A17): turns a plain Herdr into Automagik Herdr on macOS or Linux.
 #
 #   curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash
 #   ... | bash -s -- --yes            answer yes to every question (for agents)
@@ -9,7 +9,8 @@
 #   ... | bash -s -- --no-usagemeter  leave usagemeter alone everywhere (install and --uninstall)
 #   ... | bash -s -- --usagemeter-local-only  usagemeter on this computer only, no linked machine
 #
-# It checks macOS, Node and Herdr (offering Homebrew for the missing ones, asking first),
+# It checks the OS, Node and Herdr (herdrdev's, dev.herdr.app: offering its own installer from
+# releases.herdr.dev, no sudo, asking first),
 # reads the signed pointer to the newest pack (the herdr-lane release's pack.json and its ed25519
 # signature, checked against the keys embedded below: a desktop or plugin release carries no
 # pack, so nothing searches the releases), downloads its pack tarball (automagik-herdr-pack-<v>.tgz: every pack mod
@@ -38,7 +39,7 @@
 # For tests: AUTOMAGIK_HERDR_RELEASE_URL, a file:// folder (files at <url>/download/<tag>/<file>,
 # the pointer at <url>/download/herdr-lane/pack.json) or a page of this repository on github.com;
 # with a file:// one also AUTOMAGIK_HERDR_TTY (default /dev/tty), AUTOMAGIK_HERDR_APPS (default
-# /Applications) and AUTOMAGIK_HERDR_PACK_KEYS (the trusted keys, as TRUSTED_KEYS: a test's own;
+# /Applications; ~/Applications is read too) and AUTOMAGIK_HERDR_PACK_KEYS (the trusted keys, as TRUSTED_KEYS: a test's own;
 # never honoured for a GitHub URL). HERDR_APP_HOME as Herdr reads it. A file:// release folder also serves usagemeter's
 # releases from <url>/usagemeter/download/v<version>/, so a test never reaches the network.
 
@@ -69,7 +70,11 @@ main() {
   BIN_DIR=$HOME/.local/bin
   LINK=$BIN_DIR/automagik-herdr
   NODE_MIN=22.7
-  CASK=penso/tap/herdr-gpui
+  # The Herdr this pack runs in is herdrdev's (D27): bundle id dev.herdr.app on macOS, herdr-app on
+  # Linux, installed by its own installer. Another app named Herdr (Herdr UI, penso/herdr-gpui:
+  # so.pen.herdr-gpui) is a different app and never counts.
+  HERDR_ID=dev.herdr.app
+  HERDR_INSTALLER=https://releases.herdr.dev/app/install.sh
   # usagemeter (Group 6c): release.js USAGEMETER.version, kept equal by a test. One shared path.
   METER_VERSION=0.3.0
   METER_RELEASES=https://github.com/automagik-dev/usagemeter/releases
@@ -130,8 +135,8 @@ Automagik Herdr installer
   install.sh --uninstall [--yes]       move the pack out of mods/, put back what was there before
   install.sh --help
 
---yes answers yes to every question (installing Node or Herdr with Homebrew, switching
-Herdr to the automagik layout). --version installs that Automagik release; it must carry the
+--yes answers yes to every question (installing Node on macOS, Herdr from releases.herdr.dev,
+switching Herdr to the automagik layout). --version installs that Automagik release; it must carry the
 pack (automagik-herdr-pack-<v>.tgz): not every release does.
 --adopt replaces a pack-named mod this installer did not install, after moving it to
 <app home>/automagik-herdr/backup/; without it such a folder is reported and left alone.
@@ -240,12 +245,16 @@ layout_notes() {
     if [ ! -f "$f" ] || [ "$f" = "$LAYOUT" ]; then continue; fi
     grep -q '"mod"[[:space:]]*:[[:space:]]*"am-sidebar"' "$f" || continue
     lacks=
+    # The Automations and Accounts panels aren't listed: the footer opens them itself, and the
+    # pack's layout names neither (Herdr shows plain Herdr instead of a layout naming a mod that is
+    # off, and either can be).
     for s in 'am-footer:the footer rail (am-footer)' 'am-tabs:the tab bar (am-tabs)' \
       'am-status:the status bar with the pack version (am-status)' \
-      'am-markdown:the Markdown menu (am-markdown)' 'am-automations:the automations panel (am-automations)' 'am-quota:the Accounts panel (am-quota)'; do
+      'am-markdown:the Markdown menu (am-markdown)'; do
       # A block naming the mod ("mod": …), or for am-markdown the root's "terminal_menu": an id like
-      # "am-quota-panel" or a mention elsewhere doesn't count.
-      # A mod that is off (mods-disabled/, as am-quota ships) isn't missed: its block would be empty.
+      # "am-tabs-bar" or a mention elsewhere doesn't count.
+      # A mod that is off (mods-disabled/) isn't missed: a block naming it would make Herdr show
+      # plain Herdr instead of the layout.
       if [ ! -d "$MODS/${s%%:*}" ] && [ -d "$APP_HOME/mods-disabled/${s%%:*}" ]; then continue; fi
       grep -Eq "\"(mod|terminal_menu)\"[[:space:]]*:[[:space:]]*\"${s%%:*}\"" "$f" || lacks=${lacks:+$lacks, }${s#*:}
     done
@@ -565,18 +574,47 @@ node_ok() {
   command -v node >/dev/null 2>&1 || return 1
   node -e 'const [a, b] = process.versions.node.split(".").map(Number); const [x, y] = process.argv[1].split(".").map(Number); process.exit(a > x || (a === x && b >= y) ? 0 : 1)' "$NODE_MIN" </dev/null 2>/dev/null
 }
-herdr_ok() { [ -d "$APPS/Herdr.app" ] || command -v herdr-app >/dev/null 2>&1; }
+# The CFBundleIdentifier of the app at $1, from its Info.plist: node reads an XML one (Herdr's
+# is), PlistBuddy a binary one. Node is checked before this runs.
+bundle_id() {
+  [ -f "$1/Contents/Info.plist" ] || return 1
+  rc=0
+  node -e '
+    const s = require("fs").readFileSync(process.argv[1], "latin1");
+    if (s.startsWith("bplist")) process.exit(2);
+    const m = /<key>CFBundleIdentifier<\/key>\s*<string>([^<]*)<\/string>/.exec(s);
+    if (!m) process.exit(1);
+    console.log(m[1]);
+  ' "$1/Contents/Info.plist" </dev/null 2>/dev/null || rc=$?
+  [ "$rc" = 2 ] || return "$rc"
+  [ -x /usr/libexec/PlistBuddy ] && /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$1/Contents/Info.plist" </dev/null 2>/dev/null
+}
+# macOS: an app with bundle id dev.herdr.app (where herdrdev's installer puts it, ~/Applications,
+# or /Applications), never just a folder named Herdr.app. Linux:
+# herdr-app on PATH, or in ~/.local/bin where herdrdev's installer links it.
+herdr_ok() {
+  if [ "$os" = Darwin ]; then
+    for app in "$HOME/Applications/Herdr.app" "$APPS/Herdr.app"; do
+      [ "$(bundle_id "$app")" = "$HERDR_ID" ] && return 0
+    done
+    return 1
+  fi
+  command -v herdr-app >/dev/null 2>&1 || [ -x "$BIN_DIR/herdr-app" ]
+}
 
 install() {
-  # ---- a. macOS ----
+  # ---- a. supported OS ----
   os=$(uname -s)
-  [ "$os" = Darwin ] || fail "Automagik Herdr runs on macOS (Herdr is a Mac app); this is $os."
-  say "macOS: ok."
+  case $os in
+    Darwin) say "macOS: ok." ;;
+    Linux) say "Linux: ok." ;;
+    *) fail "Automagik Herdr supports macOS and Linux; this is $os." ;;
+  esac
 
   # ---- b. Node ----
   if ! node_ok; then
     have=$(node --version 2>/dev/null || echo none)
-    if command -v brew >/dev/null 2>&1; then
+    if [ "$os" = Darwin ] && command -v brew >/dev/null 2>&1; then
       if ask "Node $NODE_MIN or later is needed (found: $have). Install it with 'brew install node'?"; then
         brew install node </dev/null
         node_ok || fail "Node is still older than $NODE_MIN after brew; open a new terminal and run this again."
@@ -584,23 +622,51 @@ install() {
         fail "Node $NODE_MIN or later is needed (found: $have). Run: brew install node   then run this again."
       fi
     else
-      fail "Node $NODE_MIN or later is needed (found: $have). Install it from https://nodejs.org (or Homebrew: brew install node), then run this again."
+      fail "Node $NODE_MIN or later is needed (found: $have). Install it from https://nodejs.org, then run this again."
     fi
   fi
   say "Node $(node --version): ok."
 
   # ---- c. Herdr ----
+  # herdrdev's own installer, run only after asking: no sudo, no package manager. Linux: the app
+  # in ~/.local/share/herdr-app; macOS: ~/Applications/Herdr.app. Both link herdr-app into
+  # ~/.local/bin, and it adds herdr-core and hc when there are none.
   if ! herdr_ok; then
-    if command -v brew >/dev/null 2>&1; then
-      if ask "Herdr is not installed. Install it with 'brew install --cask $CASK'?"; then
-        brew install --cask "$CASK" </dev/null
-        herdr_ok || fail "Herdr still isn't in $APPS after brew; install it from https://herdrui.dev and run this again."
-      else
-        fail "Herdr is not installed. Run: brew install --cask $CASK   (or get it from https://herdrui.dev), then run this again."
-      fi
+    herdr_hint="Install it with: curl -fsSL $HERDR_INSTALLER | sh   then run this again."
+    if [ "$os" = Darwin ]; then
+      missing="Herdr (dev.herdr.app) is not in $HOME/Applications or $APPS"
+      for app in "$HOME/Applications/Herdr.app" "$APPS/Herdr.app"; do
+        [ -e "$app" ] || [ -L "$app" ] || continue
+        if other=$(bundle_id "$app") && [ -n "$other" ]; then
+          say "$app is $other, a different app named Herdr, not dev.herdr.app (the Herdr this pack runs in); it is left alone."
+        else
+          say "$app is not dev.herdr.app (the Herdr this pack runs in): its bundle id cannot be read; it is left alone."
+        fi
+        # herdrdev's installer rm -rf's ~/Applications/Herdr.app: only ever over dev.herdr.app,
+        # so anything else there (another app, an unreadable one, a plain file) stops the install.
+        [ "$app" = "$HOME/Applications/Herdr.app" ] &&
+          fail "Herdr's installer would replace $app, which is not dev.herdr.app. Move it out of $HOME/Applications, then run this again."
+      done
     else
-      fail "Herdr is not installed. Get it from https://herdrui.dev (or install Homebrew, then: brew install --cask $CASK), then run this again."
+      missing="Herdr is not installed (herdr-app is not on PATH or in $BIN_DIR)"
     fi
+    if ask "$missing. Install it with Herdr's own installer ($HERDR_INSTALLER, no sudo)?"; then
+      TMP=$(mktemp -d "${TMPDIR:-/tmp}/automagik-herdr.XXXXXX")
+      # Downloaded whole before it runs; stdin may be this very installer.
+      curl -fsSL "$HERDR_INSTALLER" -o "$TMP/herdr-install.sh" --path-as-is --proto '=https' </dev/null \
+        || fail "could not download Herdr's installer. $herdr_hint"
+      sh "$TMP/herdr-install.sh" </dev/null || fail "Herdr's installer failed (above). $herdr_hint"
+      herdr_ok || fail "Herdr's installer finished, but $missing still. $herdr_hint"
+      rm -rf "$TMP"
+      TMP=
+    else
+      fail "$missing. $herdr_hint"
+    fi
+  fi
+  # herdr-app's link is in ~/.local/bin, which PATH may lack: the mod checks below need it.
+  if ! command -v herdr-app >/dev/null 2>&1 && [ -x "$BIN_DIR/herdr-app" ]; then
+    PATH=$PATH:$BIN_DIR
+    export PATH
   fi
   say "Herdr: ok."
 
