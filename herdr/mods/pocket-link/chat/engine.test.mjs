@@ -266,3 +266,49 @@ test('a held terminal (no client left) accepts no writes; the engine says when n
   assert.deepEqual([engine.empty, emptied], [true, 1])
   engine.close()
 })
+
+test('a held message is never typed once its client left (closed, or a removed phone)', async () => {
+  const { engine, hc, timers, writes } = setup({ view: 'claude-draft' })
+  const a = client(engine)
+  await settle()
+  assert.equal((await engine.send(a.me, 't1', { text: 'queued behind a draft', id: 'm1' })).why, 'draft')
+  a.handle.close() // what endRemoved -> the chat connection's close does
+  hc.screens.t1 = screen('claude-idle')
+  for (const h of timers.intervals) await h.fn() // any flusher left would fire now
+  hc.change('t1', 'status', { status: { app: 'claude-code', state: 'done' } })
+  await settle()
+  assert.equal(writes().length, 0, 'nothing typed for a client that left')
+  assert.equal(timers.intervals.filter((h) => h.ms === 1500).length, 0, 'the flusher stopped')
+  const back = client(engine)
+  assert.deepEqual(back.handle.held(), [], 'its held message went with it')
+  engine.close()
+})
+
+test('with two clients, the one leaving takes only its own held messages', async () => {
+  const { engine, hc, timers, writes } = setup({ view: 'claude-draft' })
+  const a = client(engine)
+  const b = client(engine)
+  await settle()
+  await engine.send(a.me, 't1', { text: 'from a', id: 'ma' })
+  await engine.send(b.me, 't1', { text: 'from b', id: 'mb' })
+  a.handle.close()
+  assert.deepEqual(b.handle.held().map((h) => h.id), ['mb'])
+  hc.screens.t1 = screen('claude-idle')
+  await timers.intervals.find((h) => h.ms === 1500).fn()
+  await settle()
+  assert.deepEqual(writes().map((c) => c.params.text), ['from b'])
+  engine.close()
+})
+
+test('an engine holds at most maxTerminals: a held one goes first; all watched, watch is refused', async () => {
+  const { engine } = setup()
+  engine.maxTerminals = 2
+  const one = engine.watch('t1', {}, () => {})
+  const two = engine.watch('t2', {}, () => {})
+  assert.equal(engine.watch('t3', {}, () => {}), null, 'all watched: refused')
+  two.close() // held now
+  assert.ok(engine.watch('t3', {}, () => {}), 'the held one made room')
+  assert.equal(engine.entries.has('t2'), false)
+  void one
+  engine.close()
+})
