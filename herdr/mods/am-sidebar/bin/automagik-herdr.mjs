@@ -21,7 +21,7 @@ import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMN
   CATEGORY_ID, PROJECTS_FILE, RANKS, defaultLook, descendantsOf, effectiveLead, listedProjects, mainBotOf, newBotId, newCategoryId,
   parseBots, plannedOf, projectKeyOf, projectOf, withListedProject } from "../model.js";
 import { UNANSWERED, agentInForeground, attachRefusal, attachWords, detachWords, hcName, isClaude, leadIdOf, leadPane, newest,
-  paneLabels, paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWarning, relabelWords, rowsOf, spacePlace,
+  paneLabels, paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWarning, relabelWords, rowsOf, spaceOnly, spacePlace,
   startArgs, startRefusal, unwrapKeep } from "../launchArgs.js";
 import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, confirmBindings, foldAttach, heldIn, machinesById, modeProblem, placeOf as placeOfRow, readAttach } from "../attach.js";
 import { interpreterPath } from "../agentPath.mjs";
@@ -606,9 +606,14 @@ const coreOfName = (machines, name) => { for (const [id, m] of machines ?? []) i
 /**
  * A bot's live binding for a project, as the view has it: on this computer, or on the linked
  * machine `project.machine` (its core) and in that project there, never a same-id bot elsewhere.
+ * On this computer too (automagik#227, RFC 0014 Q16: a clone carries the same ids): a binding
+ * counts for its own project; one with no project (an older row) counts by id alone.
  */
 function liveFor(view, botId, project) {
-  if (!project?.machine) return view.live.get(botId) ?? null;
+  if (!project?.machine) {
+    const l = view.live.get(botId);
+    return l && (l.binding.project == null || l.binding.project === project?.key) ? l : null;
+  }
   const l = view.liveAt.get(atKey(botId, coreOfName(view.machines, project.machine)));
   return l && l.binding.project === project.key ? l : null;
 }
@@ -1386,8 +1391,11 @@ async function cmdStart(opts, [ref]) {
   // One terminal plays a bot: the one the attach ledger names is reported, never a second
   // start (decided again under the ledger's lock, below, with hc run).
   const view = await attachView();
+  // By id alone, whatever the project (the fold binds a bot once per place): a clone's start
+  // names the checkout whose pane it is (automagik#227).
   const held = view.live.get(bot.id);
-  if (held) return opts.json ? { id: bot.id, running: held.binding.terminal } : `${bot.name} is already running in ${held.binding.terminal}.`;
+  const elsewhere = held?.binding.project && held.binding.project !== key ? `, for ${held.binding.project}` : "";
+  if (held) return opts.json ? { id: bot.id, running: held.binding.terminal } : `${bot.name} is already running in ${held.binding.terminal}${elsewhere}.`;
   const seat = await launchSeat(project, bot, { place: opts.space ? { space: opts.space, tab: opts.tab ?? null, from: null } : undefined });
   if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
   return opts.json ? seatJson(bot, seat) : seat.terminal;
@@ -1459,7 +1467,8 @@ async function seatOnMachine(project, bot, over = {}) {
   const carry = over.carry ?? {};
   const labels = { ...paneLabels(file, bot.id, carry, null), ...carry };
   const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
-  const place = over.place !== undefined ? over.place : await windowPlaceOn(machine, key);
+  // A start: that space only, the bot in a tab of its own (as launchSeat).
+  const place = over.place !== undefined ? over.place : spaceOnly(await windowPlaceOn(machine, key));
   const name = hcName(bot.name, bot.id, taken);
   const args = startArgs({ botId: bot.id, name, cwd: over.cwd ?? key, space: place?.space, tab: place?.tab,
     // No hc parent: hc run's default is the terminal it is started from, and the pane would end with it.
@@ -1692,11 +1701,12 @@ async function launchSeat(project, bot, over = {}) {
   const path = runPath.path;
   // A restart's own place (the old pane's space and tab) stands; a start asks the window too:
   // one herdr-app ls, shared by placementOf (a label whose space doesn't show the project is
-  // dropped) and windowPlace (an open space on the project, else a new one).
+  // dropped) and windowPlace (an open space on the project, else a new one). The space only:
+  // the bot opens in a tab of its own, never another pane's (start --tab picks one).
   let place = over.place;
   if (place === undefined) {
     const seen = await windowSpaces();
-    place = await windowPlace(key, await placementOf(key, seen), seen);
+    place = spaceOnly(await windowPlace(key, await placementOf(key, seen), seen));
   }
   const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd, space: place?.space, tab: place?.tab, parent, argv, labels, path,
     env: briefed.env });
@@ -2924,7 +2934,9 @@ async function cmdWorker(opts, rest) {
     }
     const taken = new Set(rowsOf(ls).map((r) => r?.name).filter(Boolean));
     const name = taskName ?? hcName(opts.name ?? branchSlug(place.branch), bot.id, taken);
-    const args = workerArgs({ botId: bot.id, branch: place.branch, role, name, cwd: place.worktree, parent: me.address,
+    // The bot's space, no tab: Herdr opens the worker in a tab of its own there, at hc run.
+    const space = placementFrom([me])?.space ?? null;
+    const args = workerArgs({ botId: bot.id, branch: place.branch, role, name, cwd: place.worktree, parent: me.address, space,
       agent: plan.agent, model: plan.model, effort: plan.effort, argv: plan.argv, task, template: plan.template,
       path: runPath?.path ?? process.env.PATH, taskId, project: project.key, lead });
     const r = await hc(args);

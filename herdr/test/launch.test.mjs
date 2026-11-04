@@ -167,14 +167,16 @@ test("the fake hc is the one the CLI runs here: never the real one", async (t) =
   assert.match(stdout.trim(), /automagik-herdr-.*\/bin\/hc\n.*automagik-herdr-.*\/bin\/herdr-app$/);
 });
 
-test("startBot runs the CLI: hc run in the project's space and tab, an attach row by start; the sidebar sets no label", async (t) => {
+test("startBot runs the CLI: hc run in the project's space, a tab of its own, an attach row by start; the sidebar sets no label", async (t) => {
   const w = await world(t, { terminals: (main) => [term("t7", { bot: ID.cap, cwd: main })] });
   state.spaces = [{ id: "s0", folder: "/elsewhere", machine: null, active: true, tabs: [{ id: "x", active: true }] },
     { id: "s1", folder: w.main, machine: null, active: false, tabs: [{ id: "a", active: false }, { id: "b", active: true }] }];
   const r = await startBot(w.main, ID.dev);
   assert.deepEqual(r, { terminal: "t100" });
   const runArgs = w.calls().find((a) => a[0] === "run");
-  assert.ok(runArgs.includes(`bot=${ID.dev}`) && runArgs.includes("herdr.space=s1") && runArgs.includes("herdr.tab=b"));
+  assert.ok(runArgs.includes(`bot=${ID.dev}`) && runArgs.includes("herdr.space=s1"), runArgs.join(" "));
+  // Never the active tab (b): Herdr opens the bot in a tab of its own.
+  assert.equal(runArgs.some((a) => a.startsWith("herdr.tab=")), false, runArgs.join(" "));
   assert.deepEqual(runArgs.slice(runArgs.indexOf("--parent"), runArgs.indexOf("--parent") + 3), ["--parent", "t7", "--outlive-parent"]);
   const rows = w.ledger();
   assert.deepEqual(rows.map((x) => [x.event, x.bot, x.terminal, x.by]), [["attach", ID.cap, "t7", "import"], ["attach", ID.dev, "t100", "start"]]);
@@ -219,7 +221,7 @@ test("startBot: no space shows the project -> space.new on its folder, waited fo
   assert.deepEqual(await startBot(w.main, ID.main, { sleep }), { terminal: "t100" });
   assert.deepEqual(state.runs, [["space.new", { name: "proj", folder: w.main, machine: "" }]]);
   const runArgs = w.calls().find((a) => a[0] === "run");
-  assert.ok(runArgs.includes("herdr.space=s5") && runArgs.includes("herdr.tab=t5"));
+  assert.ok(runArgs.includes("herdr.space=s5") && !runArgs.some((a) => a.startsWith("herdr.tab=")), runArgs.join(" "));
   // With no sleep to wait by, no space is opened (none left behind empty): the shown space.
   state.spaces = [{ id: "s0", folder: "/elsewhere", machine: null, active: true, tabs: [{ id: "x", active: true }] }];
   state.runs = [];

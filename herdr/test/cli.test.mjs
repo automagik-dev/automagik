@@ -354,6 +354,38 @@ test("ls by the ledger: a shell pane shows no agent in front; the import takes t
   assert.deepEqual(all.map((p) => p.project), [s.project, other]);
 });
 
+// automagik#227 (RFC 0014 Q16): a clone carries the main checkout's bot ids; a pane counts for
+// its own project only, and an older ledger row with no project still counts by id alone.
+test("ls and show (#227): the main checkout's pane is not the clone's; a row with no project counts by id", (t) => {
+  const s = scene(t);
+  // The pane runs in the main checkout (scene() makes the folder, so the terminal comes after).
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify({ ...s.hcState(),
+    terminals: [term("t5", { bot: ID.cap, cwd: s.project, created: 7, status: "working" })] }));
+  s.seed(team());
+  const rows = () => readRows(readFileSync(attachFile(s.app), "utf8")).rows;
+  const clone = join(s.root, "proj-clone");
+  git(s.root, "clone", "-q", s.project, clone);
+  mkdirSync(join(clone, ".herdr"));
+  writeFileSync(join(clone, ".herdr/bots.json"), readFileSync(s.botsPath, "utf8"));
+  const captain = (cwd) => s.cli(["ls", "--json"], { cwd }).json().projects[0].bots.find((b) => b.id === ID.cap);
+  // The first ls imports t5 into the ledger, bound to the main checkout that defines the bot.
+  assert.deepEqual([captain(s.project).terminal, captain(s.project).status], ["t5", "working"]);
+  assert.equal(rows().at(-1).project, s.project);
+  assert.deepEqual([captain(clone).terminal, captain(clone).status], [null, "not running"]);
+  const show = s.cli(["show", "Captain", "--json"], { cwd: clone }).json();
+  assert.deepEqual([show.terminal, show.status], [null, "not running"]);
+  assert.match(s.cli(["show", "Captain"], { cwd: s.project }).out, /t5/);
+  // Start in the clone still refuses a second pane (the fold binds a bot once here) and says whose it is.
+  const start = s.cli(["start", "Captain"], { cwd: clone });
+  assert.equal(start.code, 0, start.err);
+  assert.equal(start.out.trim(), `Captain is already running in t5, for ${s.project}.`);
+  assert.equal(s.cli(["start", "Captain"], { cwd: s.project }).out.trim(), "Captain is already running in t5.");
+  // An older row with no project: the pane counts for both checkouts, as before.
+  writeFileSync(attachFile(s.app), `${JSON.stringify({ ...rows().at(-1), project: null })}\n`);
+  assert.deepEqual([captain(clone).terminal, captain(clone).status], ["t5", "working"]);
+  assert.deepEqual([captain(s.project).terminal, captain(s.project).status], ["t5", "working"]);
+});
+
 test("create, edit, category, start and attach list their project for the sidebar; ls --all reads the list", (t) => {
   const s = scene(t, { terminals: [term("t9", { cwd: "/x" })] });
   const list = join(s.app, "am-sidebar-projects.json");
@@ -455,7 +487,7 @@ test("start a main bot: hc run --bg with the label, name, cwd, --no-parent, the 
   assert.equal(s.calls().filter((c) => c[0] === "run").length, 1);
 });
 
-test("start (#56) lands in the project's space: a project terminal's tab only when its space shows the project", (t) => {
+test("start (#56) lands in the project's space, a project terminal's only when it shows the project; in a tab of its own", (t) => {
   // The window: the caller's space on another folder, and the project's, its second tab selected.
   const startIn = (callerLabels, { projectSpace = true } = {}) => {
     const s = scene(t);
@@ -472,19 +504,24 @@ test("start (#56) lands in the project's space: a project terminal's tab only wh
     const r = s.cli(["start", "Genie", "--json"]);
     assert.equal(r.code, 0, r.err);
     r.appCalls = s.appCalls();
+    r.calls = s.calls();
     return r;
   };
-  // The caller's tab is in another space: the bot goes to the project's space, in its selected tab,
-  // with one herdr-app ls for the whole start (placementOf and windowPlace share it).
+  // The caller's tab is in another space: the bot goes to the project's space, never its selected
+  // tab, with one herdr-app ls for the whole start (placementOf and windowPlace share it).
   const away = startIn({ "herdr.space": "sp-caller", "herdr.tab": "tb-c" });
-  assert.deepEqual([away.json().space, away.json().tab], ["sp-proj", "tb-b"]);
+  assert.deepEqual([away.json().space, away.json().tab], ["sp-proj", null]);
   assert.deepEqual(away.appCalls, [["ls"]]);
-  // The caller's tab is in the project's space: it takes the bot.
+  // The caller's tab is in the project's space: its space takes the bot, never its tab (an
+  // orchestrator's), so Herdr opens the bot in a tab of its own.
   const home = startIn({ "herdr.space": "sp-proj", "herdr.tab": "tb-a" });
-  assert.deepEqual([home.json().space, home.json().tab], ["sp-proj", "tb-a"]);
+  assert.deepEqual([home.json().space, home.json().tab], ["sp-proj", null]);
+  const labels = runCall(home.calls);
+  assert.ok(labels.includes("herdr.space=sp-proj"), labels.join(" "));
+  assert.equal(labels.some((a) => a.startsWith("herdr.tab=")), false, labels.join(" "));
   // No space shows the project: never the caller's tab; a new space on the project is opened (#71).
   const none = startIn({ "herdr.space": "sp-caller", "herdr.tab": "tb-c" }, { projectSpace: false });
-  assert.deepEqual([none.json().space, none.json().tab], ["sp-new1", "tb-new1"]);
+  assert.deepEqual([none.json().space, none.json().tab], ["sp-new1", null]);
   assert.deepEqual(none.appCalls.map((c) => c.slice(0, 2)), [["ls"], ["do", "space.new"], ["ls"]]);
 });
 
@@ -670,9 +707,9 @@ test("start places the pane in the space of a live terminal in the project; with
   writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [elsewhere, placed], next: 100 }));
   const r = s.cli(["start", "Genie", "--json"]);
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual([r.json().space, r.json().tab], ["sp9", "tb3"]);
+  assert.deepEqual([r.json().space, r.json().tab], ["sp9", null]);
   const run = runCall(s.calls());
-  assert.ok(run.includes("herdr.space=sp9") && run.includes("herdr.tab=tb3"));
+  assert.ok(run.includes("herdr.space=sp9") && !run.some((a) => a.startsWith("herdr.tab=")), run.join(" "));
   assert.doesNotMatch(r.err, /unseen/);
   // No terminal of the project carries a space and no window answers: started, with the warning.
   const s2 = scene(t);
@@ -690,9 +727,9 @@ test("start with no space showing the project opens one on its folder and starts
   assert.equal(r.code, 0, r.err);
   const made = s.appCalls().find((c) => c[0] === "do");
   assert.deepEqual(made && [made[1], JSON.parse(made[2])], ["space.new", { name: "proj", folder: s.project, machine: "" }]);
-  assert.deepEqual([r.json().space, r.json().tab], ["sp-new1", "tb-new1"]);
+  assert.deepEqual([r.json().space, r.json().tab], ["sp-new1", null]);
   const run = runCall(s.calls());
-  assert.ok(run.includes("herdr.space=sp-new1") && run.includes("herdr.tab=tb-new1"));
+  assert.ok(run.includes("herdr.space=sp-new1") && !run.some((a) => a.startsWith("herdr.tab=")), run.join(" "));
   assert.doesNotMatch(r.err, /unseen/);
   // That space is open now: the next bot starts in it, and no second space is made.
   assert.equal(s.cli(["start", "Captain"]).code, 0);
@@ -708,7 +745,7 @@ test("start with no space showing the project opens one on its folder and starts
   writeFileSync(join(s3.root, "hc.json"), JSON.stringify({ terminals: [stale], next: 100 }));
   const r3 = s3.cli(["start", "Genie", "--json"]);
   assert.equal(r3.code, 0, r3.err);
-  assert.deepEqual([r3.json().space, r3.json().tab], ["sp-new1", "tb-new1"]);
+  assert.deepEqual([r3.json().space, r3.json().tab], ["sp-new1", null]);
   // Another start opened a space on the folder at the same time: the first one is used and
   // the space this start opened is closed, so one space shows the project.
   const s4 = scene(t, { window: { spaces: [], rival: true } });
