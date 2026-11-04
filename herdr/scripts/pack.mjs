@@ -8,19 +8,19 @@
 // --worktree: the same tracked files, read from disk (a checkout's uncommitted edits included).
 // The tarball's top level is exactly the ref's PACK_MODS (mods/am-sidebar/release.js), each folder of
 // herdr/mods/ (every one but pocket-link must be listed), plus layouts/automagik.json (from
-// herdr-layout/, the layout's own top-level entry). The layout part's part.json rides inside the
-// sidebar's folder, as am-sidebar/layout/part.json: every installed updater (update.mjs
-// unsafeEntries and stagePack, back to v0.15.0) refuses any other new entry, and a pointer must never
-// send an install a tarball it refuses.
+// herdr-layout/layouts/, the layout's own top-level entry, at the same path inside it). The layout
+// part's part.json rides inside the sidebar's folder, as am-sidebar/layout/part.json: every
+// installed updater (update.mjs unsafeEntries and stagePack, back to v0.15.0) refuses any other new
+// entry, and a pointer must never send an install a tarball it refuses.
 // Self-contained (node: imports only), so release.yml runs the tag's own copy. Apache-2.0.
 import { execFileSync } from "node:child_process";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-/** herdr-layout/<file> → its path in the tarball. */
-export const LAYOUT_FILES = Object.freeze({ "automagik.json": "layouts/automagik.json", "part.json": "am-sidebar/layout/part.json" });
+/** herdr-layout/<file> → its path in the tarball (unchanged: old updaters refuse any other). */
+export const LAYOUT_FILES = Object.freeze({ "layouts/automagik.json": "layouts/automagik.json", "part.json": "am-sidebar/layout/part.json" });
 const POCKET_LINK = "pocket-link";
 
 const git = (repo, args, opts = {}) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", maxBuffer: 64 << 20, ...opts });
@@ -46,13 +46,15 @@ export async function pack({ repo, out, ref = "HEAD", worktree = false }) {
   const tmp = mkdtempSync(join(tmpdir(), "herdr-pack-"));
   try {
     const mods = await packMods(repo, worktree ? null : ref, tmp);
-    // Each layout file under its own name in a folder of its own, for git archive --add-file.
+    // Each layout file under its tarball name in a folder of its own, for git archive --add-file
+    // (which takes the file's basename under the last --prefix).
     const extra = Object.entries(LAYOUT_FILES).map(([f, to], i) => {
       const dir = join(tmp, `add-${i}`);
+      const file = join(dir, basename(to));
       mkdirSync(dir);
-      if (worktree) copyFileSync(join(repo, "herdr-layout", f), join(dir, f));
-      else writeFileSync(join(dir, f), git(repo, ["show", `${ref}:herdr-layout/${f}`]));
-      return { file: join(dir, f), to };
+      if (worktree) copyFileSync(join(repo, "herdr-layout", f), file);
+      else writeFileSync(file, git(repo, ["show", `${ref}:herdr-layout/${f}`]));
+      return { file, to };
     });
     mkdirSync(dirname(out), { recursive: true });
     if (!worktree) {

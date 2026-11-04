@@ -28,6 +28,7 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { compareVersions } from './update.js'
 import { LANE_KEYS } from './lane-keys.js'
+import { tarOf } from './tar.js'
 
 export const LANE_URL = 'https://github.com/automagik-dev/automagik/releases/download/plugin-lane/lane.json'
 // Each publisher's lane, the keys it is signed with, and the plugins it may replace: a lane never
@@ -126,7 +127,7 @@ const integrityOf = bytes => `sha512-${createHash('sha512').update(bytes).digest
  * waits, beside what another lane staged. `onProgress(percent)` follows the download, by bytes
  * when the lane names sizes.
  */
-export async function stage(update, { home, fetch = globalThis.fetch, tar = 'tar', onProgress = () => {} }) {
+export async function stage(update, { home, fetch = globalThis.fetch, tar = tarOf(), onProgress = () => {} }) {
   const { dir, staged } = files(home)
   const publisher = update.publisher ?? 'automagik'
   const ready = []

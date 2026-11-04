@@ -3,7 +3,9 @@
 // (up to 2.261023.x) reach these through that repository's last release, which is this app. A newer one downloads in the background and installs when
 // the app quits, or at once from the title bar's Restart now. electron-updater downloads
 // it, checks its sha512 and installs it (on macOS through Squirrel, which also requires the
-// update to carry the running app's signature). This module picks the release: the newest
+// update to carry the running app's signature; on Windows by running the release's NSIS
+// installer, which checks a signature only once the app names a publisher, see
+// electron-builder.yml `win`). This module picks the release: the newest
 // one above this version, on this build's channel, that carries this platform's feed.
 // A deb is the system package manager's to replace, so there the app only says a release is out.
 
@@ -24,18 +26,19 @@ export const isTransient = error => /net::ERR_|ECONNRESET|ETIMEDOUT|ENOTFOUND|EA
 export function feedFileOf(platform) {
   if (platform === 'darwin') return 'latest-mac.yml'
   if (platform === 'linux') return 'latest-linux.yml'
+  if (platform === 'win32') return 'latest.yml'
   return null
 }
 
 /**
- * How this copy of the app updates: `auto` (a packaged build on macOS, or run from an
- * AppImage), `notify` (a packaged Linux build installed from the deb, which belongs to the
+ * How this copy of the app updates: `auto` (a packaged build on macOS or Windows, or run from
+ * an AppImage), `notify` (a packaged Linux build installed from the deb, which belongs to the
  * system's package manager: the app only says a release is out), or null (a dev run, another
  * platform, or OMNI_DESKTOP_UPDATES=off).
  */
 export function updateMode({ packaged, platform, env }) {
   if (!packaged || env.OMNI_DESKTOP_UPDATES === 'off') return null
-  if (platform === 'darwin') return 'auto'
+  if (platform === 'darwin' || platform === 'win32') return 'auto'
   if (platform === 'linux') return env.APPIMAGE ? 'auto' : 'notify'
   return null
 }
