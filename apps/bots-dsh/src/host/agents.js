@@ -727,18 +727,36 @@ export function install(rt) {
   }
 
   const tasks = () => (state.tasks ??= {})
+  // When a task ended, for which ended task is forgotten first; an older record has only `at`.
+  const endOf = task => task.endedAt ?? task.at ?? 0
   // `roomId`: the group whose Session asked for the task. Its result goes back to that
   // group, where the user saw the request, not to the Bot's own chat.
   async function startTask({ title, text, from, cwd, agentPreset, roomId }) {
     const caller = state.bots?.[from]
     const sessionId = await createTaskSession(title, { cwd: cwd ?? caller?.workDir, agentPreset: agentPreset ?? caller?.profile })
     tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}) }
-    // Only the newest tasks are remembered for their reports.
-    const kept = Object.entries(tasks()).sort(([, a], [, b]) => b.at - a.at)
-    for (const [id] of kept.slice(TASKS_KEPT)) delete tasks()[id]
+    // Only TASKS_KEPT tasks are remembered for their reports. The ended ones go first, the
+    // one that ended longest ago first: a long task that just ended is fresh news, and a
+    // task still working keeps its record, without which its end is never written down
+    // and it never reads "Stopped" (#164). A working task goes only past TASKS_KEPT
+    // newer working ones, so a task that never sent its end cannot grow the list for ever.
+    const all = Object.entries(tasks())
+    const ended = all.filter(([, task]) => task.status !== 'working').sort(([, a], [, b]) => endOf(a) - endOf(b))
+    const working = all.filter(([, task]) => task.status === 'working').sort(([, a], [, b]) => (a.at ?? 0) - (b.at ?? 0))
+    // The level each forgotten task ran at is read while it is still a task.
+    const forgotten = [...ended, ...working].slice(0, Math.max(0, all.length - TASKS_KEPT)).map(([id]) => [id, rt.taskLevelOf(id)])
+    for (const [id] of forgotten) delete tasks()[id]
     await rt.save()
+    for (const [id, ranAt] of forgotten) {
+      await rt.forgetTaskPermission(id, ranAt)
+        .catch(error => rt.warn('ds-bot: the old task %s keeps its permission, the default was not applied: %s', id, error?.message ?? error))
+    }
     await askersModel(sessionId, state.bots?.[from])
     const live = await rt.resolveAgent(sessionId)
+    // And at its Bot's permission level: DSH announced the Session before it was a task,
+    // so its session/created listener could not. Before the first turn, as the model is.
+    await rt.applyTaskPermission(sessionId, live.session)
+      .catch(error => rt.warn('ds-bot: the task keeps the default permission, %s\'s was not applied: %s', caller?.name ?? from, error?.message ?? error))
     // DSH's turn loop reads every input's source: the instructions arrive as the user's.
     live.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))
     await ctx.sessions.flush(live.session)

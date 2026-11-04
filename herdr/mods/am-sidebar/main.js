@@ -9,18 +9,17 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, machines, panes, agents, terminals, focused, setAgentOrder, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, nextCommand, readTextFile, appHome, home, knownAgents, notify, props } from "herdr";
+import { spaces, machines, panes, agents, terminals, focused, setAgentOrder, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, nextCommand, readTextFile, writeTextFile, appHome, home, knownAgents, notify, props } from "herdr";
 import * as fs from "fs/promises";
 import { isPng, keysFor, remote } from "./paste.js";
 import { command } from "./argv.js";
-import { discoverProjects, discoverySnapshot, restoreDiscovery, watchProject } from "./bots.js";
+import { discoverProjects, discoverySnapshot, restoreDiscovery, watchProject, paneKeyOfFolder } from "./bots.js";
 import { BOT_LABEL } from "./model.js";
 import { BotForm, FORM_SIZE } from "./create.js";
 import { SpaceIconDialog, spaceIconOverlay } from "./spaceIcon.js";
 import { ensureTheme, themeSettled } from "./theme.js";
 import { SHARED_RENAMES, carryShared } from "./migrate.js";
-import { FIRST_CHECK_MS, REQUEST_KEY, RETRY_MS, STATE_KEY, announce, applyNotice, applyPatch, applyRefusal, busyOf, checkPatch, claim,
-  coolingDown, finish, nextCheckIn, requestDue, runCheck, stateFrom } from "./updateCheck.js";
+import { Updater } from "./updater.js";
 import { METER_EVERY_MS, METER_FIRST_MS, meterBin, syncMeter, syncTargets } from "./meter.js";
 import { parseMarker } from "./release.js";
 import { meterScope } from "./meterFleet.js";
@@ -28,7 +27,7 @@ import { startBot, attachBot, botOfTerminal, modelTexts, sleepOf } from "./launc
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { workerClick, rowWorker, openWorkerTab } from "./workerTab.js";
-import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, argvToAsk, argvAfter, argvReader, spaceRowOrder, clickActionOf, heldTerminalOf, heldClickOf } from "./rows.js";
+import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, argvToAsk, argvAfter, argvReader, spaceRowOrder, clickActionOf, heldTerminalOf, heldClickOf, listedKeyOf } from "./rows.js";
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
@@ -110,6 +109,13 @@ function place(s, ps) {
 }
 const rowHeight = ({ tree }) => (tree ? 28 : 30);
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
+// A terminals() row's folder as an absolute path ("~" is the home folder), or null.
+function paneFolder(t) {
+  const f = t?.cwd ?? t?.foreground?.cwd;
+  if (typeof f !== "string") return null;
+  const full = f === "~" || f.startsWith("~/") ? `${home()}${f.slice(1)}` : f;
+  return full.startsWith("/") ? full : null;
+}
 const base = (path) => path.replace(/\/+$/, "").split("/").pop();
 // Changes made outside Herdr (an editor's save, a commit in another app): looked
 // for this often, in repos the list shows, while the window is in front.
@@ -175,15 +181,18 @@ export default class Spaces extends View {
     });
     // `git status` walks the whole tree, on another machine a process there:
     // only when its answer could have changed (see `due`).
-    cx.timer.every(250, (cx) => { this.checkNew(cx); this.botTick(cx); this.updateRequest(cx); });
-    // Updates (A14): a look FIRST_CHECK_MS after load, then every CHECK_EVERY_MS; a failed
-    // look is "no update", tried again after RETRY_MS, never an error (updateCheck.js). The
-    // status bar (am-status) shows the answer and asks for a look or an install (REQUEST_KEY);
-    // a request saved before this load was someone else's to answer.
-    this.updates = { node: null, seen: stateFrom(shared(REQUEST_KEY)).id ?? null };
+    cx.timer.every(250, (cx) => { this.checkNew(cx); this.botTick(cx); this.updater.request(); });
+    // Updates (A14, updater.js): a look FIRST_CHECK_MS after load, then every CHECK_EVERY_MS; a
+    // failed look is "no update", tried again after RETRY_MS, never an error. A newer verified
+    // release installs on its own while "Install updates automatically" is on (the default). The
+    // status bar (am-status) shows the answer and asks for a look, an install or the switch
+    // (REQUEST_KEY). The timers are this init's: a reload (the install's own swap) stops them.
+    this.updater = new Updater({ exec, get: shared, set: setShared, notify, appHome: appHome(),
+      readText: (path) => readTextFile(path), writeText: (path, text, before) => writeTextFile(path, text, before),
+      after: (ms, fn) => cx.timer.after(ms, () => fn()), spawn: (fn) => cx.spawn(async () => { await fn(); }) });
     // The Automagik theme, selected once (theme.js): now, then on the 15-second timer until done.
     this.applyTheme(cx);
-    cx.timer.after(FIRST_CHECK_MS, (cx) => this.checkUpdates(cx));
+    this.updater.start();
     // usagemeter (Group 6c): `usagemeter sync` METER_FIRST_MS after load, then every
     // METER_EVERY_MS while Herdr is open, one run at a time (meter.js). No LaunchAgent, no daemon.
     this.meter = { busy: false };
@@ -245,6 +254,10 @@ export default class Spaces extends View {
     // didn't carry it.
     this.modelTexts = {};
     this.argvOf = new Map();
+    // Each live bot pane's project key on this computer (automagik#227: by project and id), by
+    // address ({ cwd, created, key }), read after each bot discovery and when the bot panes
+    // change (readPaneKeys).
+    this.paneKeys = new Map();
     // Workers whose tab is on its way (openWorker): a second click waits for it.
     this.opening = new Set();
     this.loadModelTexts(cx);
@@ -426,7 +439,12 @@ export default class Spaces extends View {
   prepareBots() {
     const now = Date.now();
     const known = knownBots(this.bots);
-    const live = liveFrom(this.all, known, argvReader(this.argvOf));
+    this.keyOf = listedKeyOf(this.bots, this.paneKeyReader());
+    const live = liveFrom(this.all, known, argvReader(this.argvOf), this.keyOf);
+    // The bot panes as readPaneKeys asks for them: a new one, or one in another folder, is
+    // read on the next tick (botTick), not only after the next discovery.
+    this.paneSig = JSON.stringify(this.all.filter((k) => k.state === "live" && !String(k.address).includes("/") && known.has(k.labels?.[BOT_LABEL]))
+      .map((k) => [k.address, k.created_ms ?? null, paneFolder(k)]));
     this.botOf = new Map(this.all.filter((k) => known.has(k.labels?.[BOT_LABEL])).map((k) => [k.address, k.labels[BOT_LABEL]]));
     this.trees = buildTree({ projects: this.bots, live, terminals: this.all, now });
     this.wakeAt = nextWake(live, now);
@@ -448,83 +466,6 @@ export default class Spaces extends View {
       }
       this.themeBusy = false;
     });
-  }
-
-  // One update look through `node <pack>/update.mjs check` (Herdr's runtime has no fetch),
-  // one notice per new version, then the next look scheduled by what it found (`scheduled`;
-  // a look the status bar asked for schedules nothing). One look or install at a time across
-  // sidebar copies (claim): a timer that finds one running looks again after RETRY_MS.
-  checkUpdates(cx, scheduled = true, request = null) {
-    const id = claim(shared, setShared, "check", Date.now(), request ? { request } : {});
-    if (id === null) {
-      if (scheduled) cx.timer.after(RETRY_MS, (cx) => this.checkUpdates(cx));
-      return;
-    }
-    cx.spawn(async (cx) => {
-      let patch = { kind: "retry", why: "the check did not run", at: Date.now() };
-      try {
-        const sleep = (ms) => new Promise((done) => cx.timer.after(ms, () => done()));
-        const { node, result } = await runCheck(exec, `${appHome()}/mods/am-sidebar/update.mjs`, this.updates.node,
-          { mods: `${appHome()}/mods`, sleep });
-        if (node) this.updates.node = node;
-        patch = checkPatch(result, Date.now());
-      } catch {}
-      try { finish(shared, setShared, id, { ...patch, request }); } catch {}
-      // The version already announced is shared, so a reload or a second view stays quiet.
-      try { announce(patch, shared, setShared, notify); } catch {}
-      const wait = nextCheckIn(patch.kind);
-      if (scheduled && wait !== null) cx.timer.after(wait, (cx) => this.checkUpdates(cx));
-    });
-  }
-
-  // The status bar's install: `node <pack>/update.mjs apply`, the path `automagik-herdr update`
-  // takes (checksum checked, the replaced pack kept for --rollback), then a notice to reload.
-  // `to`: the version the person confirmed; update.mjs refuses when the latest is another by now.
-  applyUpdates(cx, request, to) {
-    const before = stateFrom(shared(STATE_KEY));
-    const id = claim(shared, setShared, "apply", Date.now(), { request, to });
-    if (id === null) return false;
-    cx.spawn(async (cx) => {
-      let patch = { applyError: "the install did not run", at: Date.now() };
-      try {
-        const { node, result } = await runCheck(exec, `${appHome()}/mods/am-sidebar/update.mjs`, this.updates.node,
-          { mods: `${appHome()}/mods`, command: "apply", extra: ["--expect", to] });
-        if (node) this.updates.node = node;
-        patch = applyPatch(result, before, Date.now());
-      } catch (e) { patch = { applyError: String(e?.message ?? e), at: Date.now() }; }
-      try { finish(shared, setShared, id, { ...patch, request }); } catch {}
-      const note = applyNotice(patch);
-      if (note) try { notify(note); } catch {}
-    });
-    return true;
-  }
-
-  // On the 250 ms timer: a new request from the status bar. A look asked for while one runs is
-  // answered by it, and one within a minute of the last by that one (GitHub's hourly limit); an
-  // install asked for while one runs is that one, one for a version no longer offered is refused
-  // (the bar asks again), and one waits for a running look (fresh for REQUEST_FRESH_MS).
-  updateRequest(cx) {
-    const value = shared(REQUEST_KEY);
-    const now = Date.now();
-    const what = requestDue(value, this.updates.seen, now);
-    if (!what) return;
-    const { id } = value;
-    const state = stateFrom(shared(STATE_KEY));
-    const busy = busyOf(state, now);
-    if (what === "check") {
-      this.updates.seen = id;
-      if (busy) return;
-      if (coolingDown(state, now)) finish(shared, setShared, null, { request: id });
-      else this.checkUpdates(cx, false, id);
-      return;
-    }
-    if (busy?.what === "apply") { this.updates.seen = id; return; }
-    if (busy) return;
-    const refused = applyRefusal(value, state);
-    if (refused) {
-      this.updates.seen = id;
-      finish(shared, setShared, null, { request: id, applyError: refused });
-    } else if (this.applyUpdates(cx, id, value.to)) this.updates.seen = id;
   }
 
   // One due `usagemeter sync` through Herdr's exec, here and then on each connected linked machine
@@ -551,6 +492,10 @@ export default class Spaces extends View {
   botTick(cx) {
     if (this.wakeAt !== null && Date.now() >= this.wakeAt) { this.wakeAt = null; cx.notify(); }
     if (this.petsWanted.size && !this.petsBusy) this.writePets(cx);
+    if (this.paneSig !== undefined && this.paneSig !== this.paneSigRead && !this.paneKeysBusy) {
+      this.paneSigRead = this.paneSig;
+      this.readPaneKeys(cx);
+    }
   }
 
   // A character picture is a file under the app home outside mods/ (a write inside a mod
@@ -714,10 +659,10 @@ export default class Spaces extends View {
     const project = { key: tree.key, machine: tree.machine };
     // Not counted live but holding a live terminal (no agent seen in front yet): its pane, or
     // a peek, rather than nothing; read again at click time (panes() too), nothing if it is gone.
-    const held = live || planned ? null : heldTerminalOf(b.id, this.all);
+    const held = live || planned ? null : heldTerminalOf(b.id, this.all, [], project, this.keyOf);
     const onClick = live
       ? (cx) => this.openWorker(r, cx)
-      : held ? () => { const a = heldClickOf(b.id, terminals(), panes()); if (a) run(a.command, a.args); }
+      : held ? () => { const a = heldClickOf(b.id, terminals(), panes(), project, this.keyOf); if (a) run(a.command, a.args); }
         : r.foldable ? (cx) => this.toggle(r.id, r.open, cx) : null;
     // live: its own pane, or the terminal it holds before an agent shows (Focus goes where the
     // row's click goes; Detach); worker: what the row's own click opens (Focus, as openWorker);
@@ -955,6 +900,46 @@ export default class Spaces extends View {
         if (saved !== this.botsSaved) { this.botsSaved = saved; localStorage.setItem(BOTS_SAVED, saved); }
       } catch {}
       this.readBotArgv(cx);
+      this.readPaneKeys(cx);
+    });
+  }
+
+  // The project key of a pane's folder as readPaneKeys found it for the same pane (created_ms)
+  // in the same folder, else null (counts for every project: paneCounts). rows.js listedKeyOf
+  // keeps it only for a listed project defining the pane's bot (prepareBots).
+  paneKeyReader() {
+    return (t) => {
+      const e = this.paneKeys.get(t?.address);
+      return e && e.created === (t.created_ms ?? null) && e.cwd === paneFolder(t) ? e.key : null;
+    };
+  }
+
+  // automagik#227: the project key of each live pane on this computer labelled with a known bot
+  // (bots.js paneKeyOfFolder: git's main checkout, cached a minute), asked after each discovery,
+  // and when the bot panes change (botTick), never while drawing; a pane gone is dropped. A
+  // remote pane, or one with no folder, is never asked: it has no key, so it counts as before.
+  // Redraws on a change only.
+  readPaneKeys(cx) {
+    if (this.paneKeysBusy) return;
+    const known = knownBots(this.bots);
+    const rows = terminals().filter((t) => t?.state === "live" && typeof t.address === "string" && !t.address.includes("/")
+      && known.has(t.labels?.[BOT_LABEL]));
+    const here = new Set(rows.map((t) => t.address));
+    let changed = false;
+    for (const a of [...this.paneKeys.keys()]) if (!here.has(a)) { this.paneKeys.delete(a); changed = true; }
+    const ask = rows.map((t) => ({ address: t.address, created: t.created_ms ?? null, cwd: paneFolder(t) })).filter((r) => r.cwd);
+    if (!ask.length) { if (changed) cx.notify(); return; }
+    this.paneKeysBusy = true;
+    cx.spawn(async (cx) => {
+      try {
+        for (const r of ask) {
+          const key = await paneKeyOfFolder(r.cwd);
+          const old = this.paneKeys.get(r.address);
+          if (!old || old.key !== key || old.cwd !== r.cwd || old.created !== r.created) changed = true;
+          this.paneKeys.set(r.address, { ...r, key });
+        }
+      } catch {} finally { this.paneKeysBusy = false; }
+      if (changed) cx.notify();
     });
   }
 

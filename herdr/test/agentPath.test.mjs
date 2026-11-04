@@ -9,6 +9,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { besideDirs, envInterpreter, interpreterPath, safe } from "../mods/am-sidebar/agentPath.mjs";
 import { workerArgs } from "../mods/am-sidebar/workers.js";
+import { withoutBriefing } from "../mods/am-sidebar/models.js";
+// Start and Restart put each bot's briefing in its agent's command (models.js withBriefing);
+// the tests on the rest of the command compare it with those words out.
+const strip = (words) => withoutBriefing("codex", withoutBriefing("claude", words));
+const plain = (argv) => { const i = argv.indexOf("--"); return i < 0 ? strip(argv) : [...argv.slice(0, i + 1), ...strip(argv.slice(i + 1))]; };
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
@@ -281,8 +286,10 @@ test("start CLI (#56): a codex bot whose node is only in nvm starts under env PA
   assert.equal(r.status, 0, r.stderr);
   const run = runCall();
   const argv = run.slice(run.indexOf("--") + 1);
-  assert.deepEqual(argv, ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}:/usr/bin:/bin`, "codex"]);
-  assert.deepEqual(JSON.parse(r.stdout).argv, ["codex"]);
+  assert.deepEqual(plain(argv), ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}:/usr/bin:/bin`, "codex"]);
+  assert.match(argv[3], /^-c$/);
+  assert.match(argv[4], /^developer_instructions="<herdr-bot>\\nAutomagik Herdr briefing/, "codex takes it as a TOML string");
+  assert.deepEqual(plain(JSON.parse(r.stdout).argv), ["codex"]);
   assert.match(r.stderr, new RegExp(`automagik-herdr: codex runs under node, which isn't on its PATH: ${join(prefix, "bin")} put first on it\\.`));
   // The seat's command as hc would run it: with the caller's PATH alone, env finds no node (127); as started, it runs.
   const bare = spawnSync("codex", [], { env: { PATH: path }, encoding: "utf8" });
@@ -301,7 +308,9 @@ test("restart CLI (#56): restarting a codex bot whose node is only in nvm runs u
   assert.equal(JSON.parse(r.stdout).replaced, "t7");
   const run = runCall();
   const argv = run.slice(run.indexOf("--") + 1);
-  assert.deepEqual(argv, ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}:/usr/bin:/bin`, "codex", "resume", "--last"]);
+  assert.deepEqual(plain(argv), ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}:/usr/bin:/bin`, "codex", "resume", "--last"]);
+  assert.ok(argv.findIndex((w) => w.startsWith("developer_instructions=")) < argv.indexOf("resume"), "its -c before the subcommand");
+  assert.equal(argv.filter((w) => w.startsWith("developer_instructions=")).length, 1, "never twice after a restart");
   const seat = spawnSync(argv[0], argv.slice(1), { env: {}, encoding: "utf8" });
   assert.equal(seat.status, 0, seat.stderr);
 });

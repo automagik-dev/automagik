@@ -171,5 +171,7 @@ test("the program: update --check --json with updates off touches no network", (
   const { root } = mods(t);
   const r = run("automagik-herdr.mjs", ["update", "--check", "--json"], { HERDR_APP_HOME: root, AUTOMAGIK_HERDR_NO_UPDATE: "1" });
   assert.equal(r.status, 0, r.stderr);
-  assert.deepEqual(JSON.parse(r.stdout), { current: "0.1.0", latest: null, update: null, disabled: true });
+  const { auto, ...answer } = JSON.parse(r.stdout);
+  assert.deepEqual(answer, { current: "0.1.0", latest: null, update: null, disabled: true });
+  assert.equal(auto.on, true, "Install updates automatically is on by default");
 });

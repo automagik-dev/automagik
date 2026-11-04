@@ -24,7 +24,6 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // src/client/index.jsx
 var index_exports = {};
 __export(index_exports, {
-  ANSWER_WITH_ZH: () => ANSWER_WITH_ZH,
   BOT_OVERRIDES_CSS: () => BOT_OVERRIDES_CSS,
   LIVE_CSS: () => LIVE_CSS,
   ListeningDock: () => ListeningDock,
@@ -39,6 +38,17 @@ __export(index_exports, {
 });
 module.exports = __toCommonJS(index_exports);
 var import_react = require("react");
+
+// src/client/strings.js
+var ANSWER_WITH_ZH = {
+  "Unfold is not reachable from here right now": "现在无法从这里连接 Unfold",
+  "Unfold's model list could not be read right now": "现在无法读取 Unfold 的模型列表",
+  "Unfold does not offer that model or level now": "Unfold 现在不提供这个模型或级别",
+  "Unfold needs your confirmation before it sends your messages there": "需要你确认后，Unfold 才会把你的消息发送到那里",
+  "The pick may not have reached Unfold; open the menu again to see": "这次选择可能没有送达 Unfold，请重新打开菜单查看"
+};
+
+// src/client/index.jsx
 var import_jsx_runtime = require("react/jsx-runtime");
 var STATUS_ID = "@automagik/unfold-session-dsh";
 var STATUS_KIND = "unfold.status";
@@ -85,12 +95,6 @@ var LIVE_CSS = [
   ".unfold-tabs[data-compact] .unfold-tab-btn{padding:0 5px}",
   ".bt-head.unfold-head-compact [data-unfold=trajectory-toggle] span{display:none}"
 ].join("\n");
-var ANSWER_WITH_ZH = {
-  "Unfold is not reachable from here right now": "现在无法从这里连接 Unfold",
-  "Unfold does not offer that model or level now": "Unfold 现在不提供这个模型或级别",
-  "Unfold needs your confirmation before it sends your messages there": "需要你确认后，Unfold 才会把你的消息发送到那里",
-  "The pick may not have reached Unfold; open the menu again to see": "这次选择可能没有送达 Unfold，请重新打开菜单查看"
-};
 function barsOf(dbfs) {
   if (!Number.isFinite(dbfs)) return 0;
   return Math.max(0, Math.min(5, Math.round((dbfs + 50) / 8)));

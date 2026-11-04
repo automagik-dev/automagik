@@ -12,8 +12,9 @@ import {
   POINTER_SIG_URL, POINTER_URL, applyUpdate, checkForUpdate, compareVersions, downloadUpdate, fetchPointer, installUpdate, noticeText, packKeys,
   packOfPointer, parseSums, verifyPointer,
   checkMods, markerOf, offDirOf, pickUpdate, repairInstall, setupHome, toCheck, prevSetOf, readMarker, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
+  autoFileOf, autoStatus, lockOf, managedPack, olderSequence, overtaken, readAuto, takeLock, writeAuto,
 } from "../mods/am-sidebar/update.mjs";
-import { formatMarker, parseMarker } from "../mods/am-sidebar/release.js";
+import { formatMarker, OFF_BY_DEFAULT, parseMarker } from "../mods/am-sidebar/release.js";
 import { cmdUpdate } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { keys, pointerBytes, signatureOf } from "./pointer.mjs";
 
@@ -250,7 +251,9 @@ test("checkForUpdate and installUpdate against a fake release", async () => {
   const table = { ...served("0.2.0", { url, body: t.buf }), [url]: t.buf };
   try {
     const off = await checkForUpdate({ fetch: fakeFetch(table), env: { AUTOMAGIK_HERDR_NO_UPDATE: "1" }, modsDir: mods, keys });
-    assert.deepEqual(off, { current: "0.1.0", latest: null, update: null, disabled: true });
+    const { auto, ...rest } = off;
+    assert.deepEqual(rest, { current: "0.1.0", latest: null, update: null, disabled: true });
+    assert.equal(auto.managed, false, "an install record without sequence= (before signed releases) stays manual");
     const found = await checkForUpdate({ fetch: fakeFetch(table), env: {}, modsDir: mods, keys });
     assert.equal(found.current, "0.1.0");
     assert.equal(found.latest, "0.2.0");
@@ -273,7 +276,9 @@ test("node update.mjs: one JSON line, no network with AUTOMAGIK_HERDR_NO_UPDATE=
     // HOME too: a rollback looks at $HOME/.local/bin, which must be a scratch one.
     const env = { ...process.env, HOME: home, HERDR_APP_HOME: home, AUTOMAGIK_HERDR_NO_UPDATE: "1" };
     const out = execFileSync(process.execPath, [UPDATE, "check"], { env, encoding: "utf8" });
-    assert.deepEqual(JSON.parse(out), { current: "0.1.0", latest: null, update: null, disabled: true });
+    const { auto, ...answer } = JSON.parse(out);
+    assert.deepEqual(answer, { current: "0.1.0", latest: null, update: null, disabled: true });
+    assert.deepEqual(Object.keys(auto).sort(), ["managed", "on", "skip", "why"], "the setting rides along for the mod");
     let failed;
     try { execFileSync(process.execPath, [UPDATE, "rollback", "--mods", mods], { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); } catch (error) { failed = error; }
     assert.equal(failed.status, 1);
@@ -868,8 +873,8 @@ test("a pack mod switched off (mods-disabled/) is updated where it is and stays 
   }
 });
 
-test("am-quota ships off: a fresh install puts it in mods-disabled/; an installed copy keeps its state", async () => {
-  const WITH = ["am-sidebar", "am-tabs", "am-quota"];
+for (const mod of OFF_BY_DEFAULT) test(`${mod} ships off: a fresh install puts it in mods-disabled/; an installed copy keeps its state`, async () => {
+  const WITH = ["am-sidebar", "am-tabs", mod];
   const t = tarball("0.2.0", { mods: WITH });
   const homes = [];
   try {
@@ -879,50 +884,62 @@ test("am-quota ships off: a fresh install puts it in mods-disabled/; an installe
     const lines = [];
     const r = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: fresh.mods, log: (l) => lines.push(l) });
     const off = offDirOf(fresh.mods);
-    assert.equal(existsSync(join(fresh.mods, "am-quota")), false, "not on");
-    assert.equal(readFileSync(join(off, "am-quota", "main.js"), "utf8"), 'export const v = "0.2.0";\n');
+    assert.equal(existsSync(join(fresh.mods, mod)), false, "not on");
+    assert.equal(readFileSync(join(off, mod, "main.js"), "utf8"), 'export const v = "0.2.0";\n');
     assert.ok(existsSync(join(fresh.mods, "am-tabs", "main.js")), "the other mods are on");
-    assert.deepEqual(r.installedOff, ["am-quota"]);
+    assert.deepEqual(r.installedOff, [mod]);
     assert.deepEqual(readMarker(fresh.mods).mods.sort(), [...WITH].sort(), "the record owns it, so updates keep it off");
-    assert.ok(lines.includes("installed mods-disabled/am-quota: it ships off; turn it on in the Mods panel"));
+    assert.ok(lines.includes(`installed mods-disabled/${mod}: it ships off; turn it on in the Mods panel`));
     // ...and the next update keeps it off.
     const t3 = tarball("0.3.0", { mods: WITH });
     try {
       const again = await applyUpdate({ tgzPath: t3.path, version: "0.3.0", modsDir: fresh.mods });
-      assert.deepEqual(again.off, ["am-quota"]);
-      assert.equal(existsSync(join(fresh.mods, "am-quota")), false);
+      assert.deepEqual(again.off, [mod]);
+      assert.equal(existsSync(join(fresh.mods, mod)), false);
     } finally { rmSync(t3.src, { recursive: true, force: true }); }
 
     // An update from a release that did not ship it: arriving for the first time, it comes off.
     const older = appHome("0.1.0");
     homes.push(older.home);
     await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: older.mods });
-    assert.equal(existsSync(join(older.mods, "am-quota")), false);
-    assert.ok(existsSync(join(offDirOf(older.mods), "am-quota", "main.js")));
+    assert.equal(existsSync(join(older.mods, mod)), false);
+    assert.ok(existsSync(join(offDirOf(older.mods), mod, "main.js")));
+    // Rolled back to the release without it, then forward: it is still off, never turned on.
+    assert.equal(rollback({ modsDir: older.mods }).version, "0.1.0");
+    assert.equal(existsSync(join(older.mods, mod)), false);
+    assert.equal(rollback({ modsDir: older.mods }).version, "0.2.0");
+    assert.equal(existsSync(join(older.mods, mod)), false, "still off after rolling forward");
+    assert.ok(existsSync(join(offDirOf(older.mods), mod, "main.js")));
 
     // Installed and on (the record lists it, in mods/): updated in place, still on.
     const on = appHome("0.1.0", WITH);
     homes.push(on.home);
     const u = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: on.mods });
-    assert.equal(readFileSync(join(on.mods, "am-quota", "main.js"), "utf8"), 'export const v = "0.2.0";\n');
-    assert.equal(existsSync(join(offDirOf(on.mods), "am-quota")), false);
+    assert.equal(readFileSync(join(on.mods, mod, "main.js"), "utf8"), 'export const v = "0.2.0";\n');
+    assert.equal(existsSync(join(offDirOf(on.mods), mod)), false);
     assert.deepEqual(u.installedOff, []);
+    // Rollback and forward again: it stays on both ways, never moved to mods-disabled/.
+    assert.equal(rollback({ modsDir: on.mods }).version, "0.1.0");
+    assert.equal(readFileSync(join(on.mods, mod, "main.js"), "utf8"), 'export const v = "0.1.0";\n');
+    assert.equal(rollback({ modsDir: on.mods }).version, "0.2.0");
+    assert.equal(readFileSync(join(on.mods, mod, "main.js"), "utf8"), 'export const v = "0.2.0";\n');
+    assert.equal(existsSync(join(offDirOf(on.mods), mod)), false);
 
     // A repair of a missing one the record lists reinstalls it on, as it was.
-    rmSync(join(on.mods, "am-quota"), { recursive: true, force: true });
-    await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: on.mods, repair: ["am-quota"] });
-    assert.ok(existsSync(join(on.mods, "am-quota", "main.js")));
+    rmSync(join(on.mods, mod), { recursive: true, force: true });
+    await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: on.mods, repair: [mod] });
+    assert.ok(existsSync(join(on.mods, mod, "main.js")));
 
     // A folder already in mods-disabled/ that the record does not own is left alone.
     const theirs = appHome(null);
     homes.push(theirs.home);
-    mkdirSync(join(offDirOf(theirs.mods), "am-quota"), { recursive: true });
-    writeFileSync(join(offDirOf(theirs.mods), "am-quota", "main.js"), "// mine\n");
+    mkdirSync(join(offDirOf(theirs.mods), mod), { recursive: true });
+    writeFileSync(join(offDirOf(theirs.mods), mod, "main.js"), "// mine\n");
     const said = [];
     const l = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: theirs.mods, log: (x) => said.push(x) });
-    assert.equal(readFileSync(join(offDirOf(theirs.mods), "am-quota", "main.js"), "utf8"), "// mine\n");
-    assert.equal(l.mods.includes("am-quota"), false);
-    assert.ok(said.some((x) => /left alone: mods-disabled\/am-quota/.test(x)));
+    assert.equal(readFileSync(join(offDirOf(theirs.mods), mod, "main.js"), "utf8"), "// mine\n");
+    assert.equal(l.mods.includes(mod), false);
+    assert.ok(said.some((x) => x.includes(`left alone: mods-disabled/${mod}`)));
   } finally {
     for (const d of [t.src, ...homes]) rmSync(d, { recursive: true, force: true });
   }
@@ -1070,4 +1087,346 @@ test("a mod retired while it was off, then shipped again, comes back off (the ke
   } finally {
     for (const d of [t2.src, t3.src, home]) rmSync(d, { recursive: true, force: true });
   }
+});
+
+// ---- Installing updates on their own: update.mjs's side (temp homes, a fake release) ----
+
+/** A temp app home at 0.1.0 installed by install.sh from a signed release (sequence=), and a release table. */
+function autoHome(served_ = ["0.2.0"]) {
+  const { home, mods } = appHome("0.1.0");
+  writeFileSync(markerOf(mods), "version=0.1.0\nmods=am-sidebar,am-tabs\nbefore=none\nsequence=10000\n");
+  const made = [];
+  const table = {};
+  const serve = (version) => {
+    const t = tarball(version);
+    made.push(t.src);
+    const url = `https://dl.test/v${version}/automagik-herdr-pack-${version}.tgz`;
+    Object.assign(table, served(version, { url, body: t.buf }), { [url]: t.buf });
+  };
+  served_.forEach(serve);
+  const done = () => { for (const d of [...made, home]) rmSync(d, { recursive: true, force: true }); };
+  return { home, mods, table, serve, done };
+}
+
+test("managedPack: only a pack install.sh put in place from a signed release; never a checkout or a hand install", () => {
+  const h = autoHome([]);
+  try {
+    assert.deepEqual(managedPack(h.mods), { managed: true, why: null });
+    writeFileSync(markerOf(h.mods), "version=0.1.0\nmods=am-sidebar,am-tabs\nbefore=none\n");
+    assert.match(managedPack(h.mods).why, /before signed releases: run `automagik-herdr update` once/);
+    rmSync(markerOf(h.mods));
+    assert.match(managedPack(h.mods).why, /not installed by install.sh/);
+    // A dev checkout: mods/am-sidebar is a link.
+    const checkout = mkdtempSync(join(tmpdir(), "checkout-"));
+    renameSync(join(h.mods, "am-sidebar"), join(checkout, "am-sidebar"));
+    symlinkSync(join(checkout, "am-sidebar"), join(h.mods, "am-sidebar"));
+    writeFileSync(markerOf(h.mods), "version=0.1.0\nmods=am-sidebar,am-tabs\nbefore=none\nsequence=10000\n");
+    assert.match(managedPack(h.mods).why, /is a link to a checkout/);
+    rmSync(checkout, { recursive: true, force: true });
+  } finally { h.done(); }
+});
+
+test("the setting: on by default, written whole beside the record, read by check; garbage reads as on", async () => {
+  const h = autoHome();
+  try {
+    assert.deepEqual(readAuto(h.mods), { on: true, skip: null });
+    assert.equal(autoFileOf(h.mods), join(h.home, "automagik-herdr", "auto-update.json"));
+    writeAuto(h.mods, { on: false });
+    assert.deepEqual(JSON.parse(readFileSync(autoFileOf(h.mods), "utf8")), { auto: false });
+    const found = await checkForUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, keys });
+    assert.deepEqual(found.auto, { on: false, skip: null, managed: true, why: null });
+    writeFileSync(autoFileOf(h.mods), "{ not json");
+    assert.deepEqual(readAuto(h.mods), { on: true, skip: null });
+    assert.deepEqual(readdirSync(join(h.home, "automagik-herdr")).filter((f) => f.startsWith(".auto-update")), [], "no temp file left");
+  } finally { h.done(); }
+});
+
+test("a rollback sticks: the version rolled away from is never installed on its own; a newer one is", async () => {
+  const h = autoHome();
+  try {
+    const first = await installUpdate({ keys, fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, expect: "0.2.0", auto: true });
+    assert.equal(first.installed.version, "0.2.0");
+    rollback({ modsDir: h.mods });
+    assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.1.0");
+    assert.equal(readAuto(h.mods).skip, "0.2.0", "the rollback recorded the version it rolled away from");
+    assert.equal(autoStatus(h.mods).managed, true, "the rolled-to pack is still install.sh's");
+    const calls = [];
+    const held = await installUpdate({ keys, fetch: fakeFetch(h.table, calls), env: {}, modsDir: h.mods, expect: "0.2.0", auto: true });
+    assert.equal(held.installed, null);
+    assert.match(held.held, /0\.2\.0 was rolled back here/);
+    assert.deepEqual(calls.map((c) => c.url), [POINTER_URL, POINTER_SIG_URL], "nothing downloaded");
+    assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.1.0");
+    // The person can still install it by hand.
+    const asked = await installUpdate({ keys, fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, expect: "0.2.0" });
+    assert.equal(asked.installed.version, "0.2.0");
+    rollback({ modsDir: h.mods });
+    h.serve("0.3.0");
+    const newer = await installUpdate({ keys, fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, expect: "0.3.0", auto: true });
+    assert.equal(newer.installed.version, "0.3.0");
+  } finally { h.done(); }
+});
+
+test("apply --auto holds, downloading nothing: the switch off, a checkout, another update or rollback running", async () => {
+  const h = autoHome();
+  try {
+    const calls = [];
+    writeAuto(h.mods, { on: false });
+    const off = await installUpdate({ keys, fetch: fakeFetch(h.table, calls), env: {}, modsDir: h.mods, expect: "0.2.0", auto: true });
+    assert.equal(off.installed, null);
+    assert.match(off.held, /is off/);
+    writeAuto(h.mods, { on: true });
+    const free = takeLock(h.mods);
+    const busy = await installUpdate({ keys, fetch: fakeFetch(h.table, calls), env: {}, modsDir: h.mods, expect: "0.2.0", auto: true });
+    assert.match(busy.held, /another update or rollback is running/);
+    await assert.rejects(installUpdate({ keys, fetch: fakeFetch(h.table), env: {}, modsDir: h.mods }), /another update or rollback is running/,
+      "asked for by hand: an error, not a silent hold");
+    assert.throws(() => rollback({ modsDir: h.mods }), /another update or rollback is running/);
+    free();
+    assert.equal(existsSync(lockOf(h.mods)), false);
+    assert.ok(calls.every((c) => c.url === POINTER_URL || c.url === POINTER_SIG_URL), "no tarball fetched");
+    assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.1.0");
+    // A lock left by a run that died (older than LOCK_STALE_MS) is taken over.
+    mkdirSync(lockOf(h.mods));
+    const later = takeLock(h.mods, Date.now() + 11 * 60_000);
+    later();
+    // The released lock lets it through.
+    const ok = await installUpdate({ keys, fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, expect: "0.2.0", auto: true });
+    assert.equal(ok.installed.version, "0.2.0");
+    assert.equal(existsSync(lockOf(h.mods)), false, "freed after the install");
+  } finally { h.done(); }
+});
+
+test("a failed swap leaves the installed pack whole (no half-installed pack) and the lock free", async () => {
+  const h = autoHome();
+  try {
+    let n = 0;
+    const rename = (from, to) => { if (++n === 3) throw new Error("disk full"); renameSync(from, to); };
+    const t = tarball("0.2.0");
+    try {
+      await assert.rejects(applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: h.mods, rename }), /disk full/);
+    } finally { rmSync(t.src, { recursive: true, force: true }); }
+    assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.1.0");
+    assert.equal(readFileSync(join(h.mods, "am-tabs", "main.js"), "utf8"), 'export const v = "0.1.0";\n');
+    assert.equal(readMarker(h.mods).version, "0.1.0");
+    assert.deepEqual(readdirSync(stateDirOf(h.mods)).filter((f) => f.startsWith("staging-") || f.startsWith(".prev-next-")), []);
+  } finally { h.done(); }
+});
+
+test("automagik-herdr update --auto on|off|status, and apply --auto in update.mjs's arguments", async () => {
+  const h = autoHome([]);
+  try {
+    assert.match(await cmdUpdate({ auto: "status" }, [], { modsDir: h.mods, env: {} }), /^Install updates automatically: on\.$/);
+    assert.match(await cmdUpdate({ auto: "off" }, [], { modsDir: h.mods, env: {} }), /^Install updates automatically: off\.$/);
+    assert.equal(readAuto(h.mods).on, false);
+    writeAuto(h.mods, { skip: "0.2.0" });
+    assert.equal(await cmdUpdate({ auto: "on" }, [], { modsDir: h.mods, env: {} }),
+      "Install updates automatically: on.\n0.2.0 was rolled back here: it waits for a release newer than 0.2.0.");
+    assert.deepEqual(await cmdUpdate({ auto: "status", json: true }, [], { modsDir: h.mods, env: {} }),
+      { on: true, skip: "0.2.0", managed: true, why: null, checks: true });
+    rmSync(markerOf(h.mods));
+    assert.match(await cmdUpdate({ auto: "status" }, [], { modsDir: h.mods, env: {} }), /It doesn't apply to this pack \(this pack was not installed by install.sh/);
+    await assert.rejects(cmdUpdate({ auto: "maybe" }, [], { modsDir: h.mods }), /--auto takes on, off or status/);
+    await assert.rejects(cmdUpdate({ auto: "on", check: true }, [], { modsDir: h.mods }), /--auto alone/);
+    const { parseArgs } = await import("../mods/am-sidebar/update.mjs");
+    assert.deepEqual(parseArgs(["apply", "--expect", "0.2.0", "--auto"]), { command: "apply", opts: { expect: "0.2.0", auto: true } });
+    assert.throws(() => parseArgs(["check", "--auto"]), /usage/);
+  } finally { h.done(); }
+});
+
+// ---- Review of #271: races between runs (the reviewer's zz-race scenarios, with assertions) ----
+
+/** fetch that runs `between()` once, right after the signed pointer is read: another run lands then. */
+const racing = (fetch, between) => {
+  let raced = false;
+  return async (url, init) => {
+    const r = await fetch(url, init);
+    if (!raced && String(url).endsWith(".sig")) { raced = true; await between(); }
+    return r;
+  };
+};
+
+test("race: a CLI update lands between the auto check and its lock: no reinstall over itself, the rollback target kept", async () => {
+  const h = autoHome(["0.2.0"]);
+  try {
+    const base = fakeFetch(h.table);
+    const fetch = racing(base, () => installUpdate({ fetch: base, env: {}, modsDir: h.mods, keys }));
+    const r = await installUpdate({ fetch, env: {}, modsDir: h.mods, keys, expect: "0.2.0", auto: true });
+    assert.equal(r.installed, null);
+    assert.equal(r.update, null);
+    assert.equal(r.current, "0.2.0");
+    assert.equal(parseMarker(readFileSync(join(prevSetOf(h.mods), ".pack"), "utf8")).version, "0.1.0", "rollback still goes to 0.1.0");
+    // The same for an update asked for by hand.
+    rollback({ modsDir: h.mods });
+    writeAuto(h.mods, { skip: null });
+    const manual = racing(base, () => installUpdate({ fetch: base, env: {}, modsDir: h.mods, keys }));
+    const m = await installUpdate({ fetch: manual, env: {}, modsDir: h.mods, keys });
+    assert.equal(m.installed, null);
+    assert.equal(parseMarker(readFileSync(join(prevSetOf(h.mods), ".pack"), "utf8")).version, "0.1.0");
+  } finally { h.done(); }
+});
+
+test("race: a newer release installed between the auto check and its lock is never downgraded", async () => {
+  const h = autoHome(["0.2.0"]);
+  const t3 = autoHome(["0.3.0"]);
+  try {
+    const newer = fakeFetch({ ...h.table, ...t3.table });
+    const fetch = racing(fakeFetch(h.table), () => installUpdate({ fetch: newer, env: {}, modsDir: h.mods, keys }));
+    const r = await installUpdate({ fetch, env: {}, modsDir: h.mods, keys, expect: "0.2.0", auto: true });
+    assert.equal(r.installed, null);
+    assert.equal(readMarker(h.mods).version, "0.3.0");
+    assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.3.0");
+  } finally { h.done(); t3.done(); }
+});
+
+test("an auto install whose record can't be written is a failure (no reinstall loop); asked for by hand it warns", async () => {
+  const h = autoHome(["0.2.0"]);
+  try {
+    mkdirSync(`${markerOf(h.mods)}.tmp`); // writeMarker's temp path is taken: the record can't be written
+    await assert.rejects(installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, keys, expect: "0.2.0", auto: true }),
+      /0\.2\.0 went in, but the install record could not be written/);
+    assert.equal(existsSync(lockOf(h.mods)), false, "the lock is freed");
+    rollback({ modsDir: h.mods });
+    writeAuto(h.mods, { skip: null });
+    const manual = await installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, keys });
+    assert.equal(manual.installed.recorded, false);
+    assert.ok(manual.installed.warnings.some((w) => /ownership record could not be written/.test(w)));
+  } finally { h.done(); }
+});
+
+test("lock: a run whose stale lock was taken over never frees the new holder's; a second taker is refused", () => {
+  const h = autoHome([]);
+  try {
+    const old = takeLock(h.mods, Date.now());
+    const later = Date.now() + 11 * 60_000;
+    const a = takeLock(h.mods, later); // the old one looks dead: taken over
+    assert.throws(() => takeLock(h.mods, Date.now()), /another update or rollback is running/, "A's lock is fresh");
+    old(); // the slow old holder finishes
+    assert.equal(existsSync(lockOf(h.mods)), true, "A still holds it");
+    assert.throws(() => takeLock(h.mods, Date.now()), /another update or rollback is running/);
+    a();
+    assert.equal(existsSync(lockOf(h.mods)), false);
+    assert.deepEqual(readdirSync(stateDirOf(h.mods)).filter((f) => f.startsWith(".update.lock")), [], "nothing left aside");
+  } finally { h.done(); }
+});
+
+test("lock: the setting is written under it, so a switch never wipes a rollback's skip; rollback records it while holding", async () => {
+  const h = autoHome(["0.2.0"]);
+  try {
+    await installUpdate({ fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, keys });
+    const free = takeLock(h.mods);
+    assert.throws(() => writeAuto(h.mods, { on: false }), /another update or rollback is running/);
+    await assert.rejects(cmdUpdate({ auto: "off" }, [], { modsDir: h.mods, env: {} }), /The setting was not saved: another update/);
+    assert.equal(readAuto(h.mods).on, true);
+    free();
+    rollback({ modsDir: h.mods });
+    assert.equal(readAuto(h.mods).skip, "0.2.0");
+    writeAuto(h.mods, { on: false });
+    assert.deepEqual(readAuto(h.mods), { on: false, skip: "0.2.0" });
+  } finally { h.done(); }
+});
+
+// ---- The pointer's sequence (#207 L2) and #276's off-by-default, through an install on its own ----
+
+test("a pointer whose sequence is below the record's is never offered or installed, whatever version it names", async () => {
+  const h = autoHome([]);
+  const t = tarball("0.2.0");
+  try {
+    const url = "https://dl.test/v0.2.0/automagik-herdr-pack-0.2.0.tgz";
+    const table = { ...served("0.2.0", { url, body: t.buf, sequence: 5000 }), [url]: t.buf }; // the record says 10000
+    const found = await checkForUpdate({ fetch: fakeFetch(table), env: {}, modsDir: h.mods, keys });
+    assert.equal(found.update, null);
+    assert.deepEqual(found.olderSequence, { sequence: 5000, recorded: 10000 });
+    const calls = [];
+    for (const auto of [true, false]) {
+      const r = await installUpdate({ fetch: fakeFetch(table, calls), env: {}, modsDir: h.mods, keys, auto });
+      assert.equal(r.installed, null);
+    }
+    assert.ok(calls.every((c) => c.url !== url), "no tarball downloaded");
+    assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.1.0");
+    assert.equal(olderSequence({ sequence: 10000 }, { sequence: 10000 }), false, "the same sequence is not older");
+    assert.equal(olderSequence({ sequence: null }, { sequence: 1 }), false, "a record without one compares nothing");
+  } finally { rmSync(t.src, { recursive: true, force: true }); h.done(); }
+});
+
+test("under the lock: a record that moved to a higher sequence since the check stops the install", async () => {
+  const h = autoHome(["0.2.0"]); // pointer 0.2.0 at sequence 20000; record 0.1.0 at 10000
+  try {
+    // Between the check and the lock, the record now came through sequence 30000 (same version).
+    const fetch = racing(fakeFetch(h.table), async () => {
+      writeFileSync(markerOf(h.mods), "version=0.1.0\nmods=am-sidebar,am-tabs\nbefore=none\nsequence=30000\n");
+    });
+    const r = await installUpdate({ fetch, env: {}, modsDir: h.mods, keys, expect: "0.2.0", auto: true });
+    assert.equal(r.installed, null);
+    assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.1.0");
+    assert.equal(readMarker(h.mods).sequence, 30000);
+  } finally { h.done(); }
+});
+
+test("an install on its own keeps #276's off-by-default: am-quota arriving first lands in mods-disabled/, an on copy stays on", async () => {
+  const h = autoHome([]);
+  const withQuota = [...MODS, "am-quota"];
+  const t2 = tarball("0.2.0", { mods: withQuota });
+  const t3 = tarball("0.3.0", { mods: withQuota });
+  const table = {};
+  for (const [v, t] of [["0.2.0", t2], ["0.3.0", t3]]) {
+    const url = `https://dl.test/v${v}/automagik-herdr-pack-${v}.tgz`;
+    Object.assign(table, { [url]: t.buf });
+  }
+  const at = (v, t) => ({ ...table, ...served(v, { url: `https://dl.test/v${v}/automagik-herdr-pack-${v}.tgz`, body: t.buf }) });
+  try {
+    const r = await installUpdate({ fetch: fakeFetch(at("0.2.0", t2)), env: {}, modsDir: h.mods, keys, expect: "0.2.0", auto: true });
+    assert.equal(r.installed.version, "0.2.0");
+    assert.equal(existsSync(join(h.mods, "am-quota")), false, "Herdr doesn't load it");
+    assert.equal(existsSync(join(offDirOf(h.mods), "am-quota", "main.js")), true);
+    // The person turns it on; the next install on its own keeps it on.
+    renameSync(join(offDirOf(h.mods), "am-quota"), join(h.mods, "am-quota"));
+    const r3 = await installUpdate({ fetch: fakeFetch(at("0.3.0", t3)), env: {}, modsDir: h.mods, keys, expect: "0.3.0", auto: true });
+    assert.equal(r3.installed.version, "0.3.0");
+    assert.equal(readFileSync(join(h.mods, "am-quota", "main.js"), "utf8"), 'export const v = "0.3.0";\n');
+    assert.equal(existsSync(join(offDirOf(h.mods), "am-quota")), false);
+  } finally { for (const t of [t2, t3]) rmSync(t.src, { recursive: true, force: true }); h.done(); }
+});
+
+// ---- Re-review of #271: the lock's takeover and the re-check under it, each pinned ----
+
+test("lock: two runs that both find it stale: the second to move it aside gets the first's fresh lock back and is refused", () => {
+  const h = autoHome([]);
+  try {
+    takeLock(h.mods, Date.now()); // a holder that died: its lock goes stale
+    const later = Date.now() + 11 * 60_000;
+    let b = null;
+    // A looked and found it stale; before A moves it aside, B takes it over completely.
+    assert.throws(() => takeLock(h.mods, later, { beforeTakeover: () => { b = takeLock(h.mods, later); } }),
+      /another update or rollback is running/);
+    assert.ok(b, "B holds it");
+    assert.equal(existsSync(lockOf(h.mods)), true, "A put B's lock back");
+    assert.throws(() => takeLock(h.mods, Date.now()), /another update or rollback is running/, "and B's lock is fresh");
+    b();
+    assert.equal(existsSync(lockOf(h.mods)), false);
+    assert.deepEqual(readdirSync(stateDirOf(h.mods)).filter((f) => f.startsWith(".update.lock")), []);
+  } finally { h.done(); }
+});
+
+test("lock: a takeover that loses the folder to another run between the move and the mkdir is 'locked', not a raw EEXIST", () => {
+  const h = autoHome([]);
+  try {
+    takeLock(h.mods, Date.now());
+    const later = Date.now() + 11 * 60_000;
+    assert.throws(() => takeLock(h.mods, later, { beforeRetake: () => mkdirSync(lockOf(h.mods)) }),
+      (e) => e.locked === true && /another update or rollback is running/.test(e.message));
+  } finally { h.done(); }
+});
+
+test("overtaken (under the lock): the version installed since the check, or a record that came through a higher sequence", () => {
+  const h = autoHome([]);
+  try {
+    const update = { version: "0.2.0", sequence: 20000 };
+    assert.equal(overtaken(h.mods, update), null, "0.1.0 at sequence 10000: 0.2.0 at 20000 goes in");
+    writeFileSync(markerOf(h.mods), "version=0.1.0\nmods=am-sidebar,am-tabs\nbefore=none\nsequence=30000\n");
+    assert.match(overtaken(h.mods, update).why, /sequence 20000 is below the record's 30000/);
+    writeFileSync(markerOf(h.mods), "version=0.2.0\nmods=am-sidebar,am-tabs\nbefore=none\nsequence=20000\n");
+    assert.deepEqual(overtaken(h.mods, update), { current: "0.2.0", why: "0.2.0 is installed now" });
+    writeFileSync(markerOf(h.mods), "version=0.3.0\nmods=am-sidebar,am-tabs\nbefore=none\nsequence=30000\n");
+    assert.equal(overtaken(h.mods, update).current, "0.3.0", "never a downgrade");
+  } finally { h.done(); }
 });

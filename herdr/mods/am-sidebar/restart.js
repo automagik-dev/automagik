@@ -3,7 +3,8 @@
 // the replacement carries over from the old pane. The CLI's `restart` runs it with hc; the
 // sidebar's Restart runs the CLI. Pure: no `herdr`, so `node --test` runs it. Apache-2.0.
 
-import { agentKeyOfArgv, canResume, detectModel, effortArgs, modelArgs, resumeArgs, resumesById, withoutModel, withoutResume } from "./models.js";
+import { agentKeyOfArgv, canResume, detectModel, effortArgs, modelArgs, resumeArgs, resumesById, withoutBriefing, withoutModel, withoutResume }
+  from "./models.js";
 import { SQUAD_LABEL, SQUAD_MARK } from "./launchArgs.js";
 import { ENV, WORKER_EFFORT_LABEL, WORKER_MODEL_LABEL, WORKER_OF_LABEL, WORKER_TEMPLATE_LABEL } from "./workers.js";
 
@@ -31,12 +32,17 @@ const ARGS = ' "$@"';
  * The command an hc pane was started with (`get.argv`, hc get's launch argv), ready to be run
  * again: { shell } for a `sh -c <command>` (an hc template, which hc runs that way, or a
  * replacement of one: its ` "$@"` and arguments dropped), else { argv } (this pack's
- * `/usr/bin/env PATH=…` prefix dropped: the CLI puts its own on). Null when hc gave none.
+ * `/usr/bin/env PATH=… [NAME=value…]` prefix dropped whole: the CLI puts its own on, a
+ * briefing variable included, launchArgs.js startArgs). Null when hc gave none.
  */
 export function paneCommand(get) {
   let argv = Array.isArray(get?.argv) && get.argv.length && get.argv.every((w) => typeof w === "string") ? [...get.argv] : null;
   if (!argv) return null;
-  if (argv[0] === ENV && argv[1]?.startsWith("PATH=") && argv.length > 2) argv = argv.slice(2);
+  if (argv[0] === ENV && argv[1]?.startsWith("PATH=")) {
+    let i = 1;
+    while (i < argv.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[i])) i += 1;
+    if (i < argv.length) argv = argv.slice(i);
+  }
   if (SHELLS.has(base(argv[0])) && argv[1] === "-c" && typeof argv[2] === "string" && argv[2].trim()) {
     const cmd = argv[2];
     return { shell: argv.length > 3 && cmd.endsWith(ARGS) ? cmd.slice(0, -ARGS.length) : cmd };
@@ -121,7 +127,8 @@ export function restartPlan({ bot, run, runningAgent = null, session = null, fre
 function reusable(launch, key) {
   if (launch.shell !== undefined) return launch;
   if (agentKeyOfArgv(launch.argv) !== key) return null;
-  return { argv: withoutPrompt(withoutResume(key, launch.argv)) };
+  // Its old briefing words go first: the launch puts this start's own in (models.js withBriefing).
+  return { argv: withoutPrompt(withoutResume(key, withoutBriefing(key, launch.argv))) };
 }
 
 /**

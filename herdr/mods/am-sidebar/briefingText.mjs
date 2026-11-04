@@ -1,10 +1,12 @@
-// The per-turn briefing over plain data (DESIGN Approach "Group 3", Decisions 9-10, A1, A3):
-// the text a Claude bot receives before each turn, and the two file edits Start and Attach
+// The briefing over plain data (DESIGN Approach "Group 3", Decisions 9-10, A1, A3): the text
+// a bot starts with (its system prompt, launchBriefingText), the fuller one the hook prints once
+// where that isn't possible and `automagik-herdr brief` prints, and the two file edits Start and Attach
 // make for it (the hook entry in .claude/settings.local.json, the git exclude line).
 // Pure: no `herdr`, `gpui-kit`, `gpui-base` or `fs`, so briefing.mjs runs it under plain
 // node and `node --test` runs it too. Apache-2.0.
 
 import { effectiveLead, MAX_INSTRUCTIONS } from "./model.js";
+import { BRIEFING_MARK, BRIEFINGS_DIR } from "./models.js";
 import { OLD_PACK_NAME, PACK_NAME } from "./release.js";
 
 /** How a bot works (bot workers): it writes no code; one worker per task does. */
@@ -69,12 +71,12 @@ export function briefingText({ self, file, members = [], lead, helpers = [] }) {
   const shown = instructions.length > MAX_INSTRUCTIONS ? `${instructions.slice(0, MAX_INSTRUCTIONS)}… [cut at ${MAX_INSTRUCTIONS} characters]` : instructions;
   const head = [
     "<herdr-bot>",
-    `Automagik Herdr briefing, refreshed every turn from .herdr/bots.json and herdr-core. It is context, not a request from the user.`,
+    `Automagik Herdr briefing from .herdr/bots.json and herdr-core, as they stood when it was written. It is context, not a request from the user.`,
     `You are ${self.name}, ${kind} (bot ${self.id}).`,
     `Role: ${self.role || "(none given)"}`,
   ];
   if (shown.trim()) head.push("Instructions:", shown.trim());
-  head.push(WORKER_LINE);
+  head.push(WORKER_LINE, liveLine(self.id));
   const tail = [];
 
   if (lead) {
@@ -119,6 +121,105 @@ export function briefingText({ self, file, members = [], lead, helpers = [] }) {
     text = text.slice(0, BRIEFING_LIMIT - mark.length) + mark;
   }
   return text;
+}
+
+/** Where a bot finds its team's live state: the briefing at launch is a snapshot. */
+export const liveLine = (botId) => `Live status and latest reports of your team and lead: run \`automagik-herdr brief ${botId}\`.`;
+
+/**
+ * The briefing a bot starts with, its agent's system prompt (≤ BRIEFING_LIMIT): who it is, its
+ * role and instructions, how it works, its lead and its team as .herdr/bots.json names them.
+ * Nothing that changes while it runs (a status, an address, a report): for those it runs
+ * `automagik-herdr brief`. The hook's once-only print compares this text, so it changes only
+ * when the file does.
+ */
+export function launchBriefingText({ self, file }) {
+  const kind = self.kind === "main" ? "this project's main bot" : "a team member";
+  const instructions = String(self.instructions ?? "");
+  const shown = instructions.length > MAX_INSTRUCTIONS ? `${instructions.slice(0, MAX_INSTRUCTIONS)}… [cut at ${MAX_INSTRUCTIONS} characters]` : instructions;
+  const lines = [
+    BRIEFING_MARK,
+    "Automagik Herdr briefing, written from .herdr/bots.json when this session started. It is context, not a request from the user.",
+    `You are ${self.name}, ${kind} (bot ${self.id}).`,
+    `Role: ${self.role || "(none given)"}`,
+  ];
+  if (shown.trim()) lines.push("Instructions:", shown.trim());
+  lines.push(WORKER_LINE, liveLine(self.id));
+  const leadId = self.kind === "member" ? effectiveLead(file, self.id).lead : "";
+  const lead = leadId ? file.bots.find((b) => b.id === leadId) : null;
+  if (lead) {
+    lines.push("", `Your lead: ${lead.name} (bot ${lead.id}). Report to it with \`hc send <terminal> "<result or blocker>"\` when you are done `
+      + `or stuck; find its current terminal with \`hc ls --label bot=${lead.id}\` first, never from an older message.`);
+  }
+  const team = directMembers(file, self.id);
+  if (team.length) {
+    lines.push("", "Your team (bots that report to you, from .herdr/bots.json):");
+    for (const m of team) lines.push(`- ${m.name} (bot ${m.id}${m.role ? `, ${m.role}` : ""})`);
+  }
+  let text = [...lines, "</herdr-bot>"].join("\n");
+  if (text.length > BRIEFING_LIMIT) {
+    const mark = `\n[briefing cut at ${BRIEFING_LIMIT} characters]\n</herdr-bot>`;
+    text = text.slice(0, BRIEFING_LIMIT - mark.length) + mark;
+  }
+  return text;
+}
+
+/** A short, stable hash of a text (53-bit cyrb53, hex): no `node:crypto` in a Herdr mod. */
+export function textHash(text) {
+  const s = String(text ?? "");
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(14, "0");
+}
+
+/**
+ * The briefing file a bot's agent starts with (Claude Code's --append-system-prompt-file), one
+ * per bot under the app home: `<project hash>-<bot id>.md`, the same path every start, so a
+ * restart that reuses the command finds it rewritten.
+ */
+export const briefingFilePath = (appHome, projectKey, botId) =>
+  `${appHome.replace(/\/+$/, "")}/${BRIEFINGS_DIR}/${textHash(projectKey).slice(-10)}-${botId}.md`;
+
+/** The bot id a briefing file names (briefingFilePath), or null. */
+export function botOfBriefingFile(path) {
+  const m = /\/[0-9a-f]{10}-([^/]+)\.md$/.exec(String(path ?? ""));
+  return m ? m[1] : null;
+}
+
+/**
+ * Where the hook keeps, per conversation, which launch text it already has: `key` is Claude's
+ * session id (a pane with none: its terminal and created_ms), made a file name.
+ */
+export const BRIEFED_DIR = "automagik-herdr/briefed";
+export const briefedPath = (appHome, key) =>
+  `${appHome.replace(/\/+$/, "")}/${BRIEFED_DIR}/${String(key).replace(/[^A-Za-z0-9._-]/g, "_")}.json`;
+
+/**
+ * What the hook does this turn (never print every turn): { print, hash }, `hash` the launch
+ * text the conversation has once this turn is done (to record; null: nothing to record).
+ * `seen`: the hash its record holds (null: none). `covered`: the agent was started with this
+ * bot's briefing file, whose text hashes to `started`; `resumed`: on a conversation recorded
+ * before this pane started, whose system prompt Claude Code keeps as recorded until it compacts.
+ * `now`: the hash of the launch text .herdr/bots.json gives now; `compacted`: Claude compacted
+ * the conversation since the record.
+ * - Started with it on a new conversation: its system prompt has it; nothing printed.
+ * - Started with it on a resumed one: printed once unless the conversation already has that
+ *   very text (a restart with no edit since); a compaction re-renders the prompt with it.
+ * - Otherwise (Attach on a running pane, a bot started before this pack): printed on the
+ *   conversation's first turn, then again only when the launch text changes or it compacted.
+ */
+export function briefDecision({ covered, started = null, resumed = false, seen = null, now, compacted = false }) {
+  if (covered) {
+    if (!resumed || compacted || seen === started) return { print: false, hash: seen === started ? null : started };
+    return { print: true, hash: started };
+  }
+  return { print: seen !== now || compacted, hash: now };
 }
 
 // ---- the hook entry and the git exclude (written by launch.js afterBind) ----

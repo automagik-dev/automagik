@@ -6,7 +6,7 @@
 // Files go through readTextFile/writeTextFile, folders through exec.
 
 import { spaces, exec, readTextFile, writeTextFile, watchFolder, shared, setShared, home, appHome, hc, terminals, notify } from "herdr";
-import { BOT_LABEL, BOTS_PATH, PROJECTS_FILE, projectOf, parseBots, checkBots, listedProjects } from "./model.js";
+import { BOT_LABEL, BOTS_PATH, PROJECTS_FILE, projectOf, paneKeyOf, parseBots, checkBots, listedProjects } from "./model.js";
 import { relabel, relabelPlan, relabelWarning } from "./launchArgs.js";
 import { TimedOut, discover, machineGate } from "./discover.js";
 import { writeRemoteText } from "./remoteFile.js";
@@ -23,6 +23,7 @@ const SAVED_MS = 24 * 3600_000;
 const SAVED_RUNS = 3;
 
 const keys = new Map(); // JSON [machine, folder] -> { key, own, at, used } (model.js projectOf)
+const paneKeys = new Map(); // folder on this computer -> { key, at } (model.js paneKeyOf)
 // JSON [machine, key] -> { file, warnings, seen, saved? }: seen when it was read, saved when
 // it came from the last run of Herdr (restoreDiscovery) and wasn't read again since.
 const lastGood = new Map();
@@ -88,6 +89,19 @@ export async function projectOfFolder(folder, machine = null, { sleep = null } =
 /** The project key of a folder seen in passing (a pane's, a space's): the walk-up rule. */
 export async function keyOf(folder, machine = null) {
   return (await projectOfFolder(folder, machine)).key;
+}
+
+/**
+ * The project key of a bot pane's folder on this computer (model.js paneKeyOf: null when the
+ * folder names no project, or can't be read), cached for a minute like projectOfFolder.
+ */
+export async function paneKeyOfFolder(folder) {
+  const hit = paneKeys.get(folder);
+  if (hit && Date.now() - hit.at < KEY_TTL) return hit.key;
+  let key = null;
+  try { key = await paneKeyOf(folder, gitOn(null), existsOn(null)); } catch { /* unreadable: no project */ }
+  paneKeys.set(folder, { key, at: Date.now() });
+  return key;
 }
 
 /** The project of a folder someone picked as the project: its git main checkout, else itself. */

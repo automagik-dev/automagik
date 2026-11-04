@@ -58,6 +58,7 @@ var ZH = {
   "Low": "低",
   "High": "高",
   "Max": "最高",
+  "{model} answers now.": "现在由 {model} 回答。",
   // Per-Bot Advanced, native sidebar and honest accounting.
   "{tokens} tok · Cache reporting unavailable": "{tokens} token · 缓存统计不可用",
   "Cache reporting": "缓存统计",
@@ -1602,6 +1603,10 @@ function t(key, params) {
   return bound ? bound(key, params) : fill(key, params);
 }
 function hostText(message) {
+  if (bound && typeof message === "string") {
+    const worded = t(message);
+    if (worded !== message) return worded;
+  }
   if (!language().startsWith("zh")) return message;
   if (Object.hasOwn(ZH, message)) return t(message);
   for (const [pattern, template] of HOST_ERRORS) {
@@ -4144,6 +4149,19 @@ function modelOf(bot, roster) {
   const [provider, ...rest2] = ref.split("/");
   return { ref, name: served?.name ?? rest2.join("/"), provider: served?.providerName ?? provider, served: served !== void 0 };
 }
+function modelHint(bot, roster) {
+  const host = roster.hostModels?.[bot.id];
+  if (host !== void 0) {
+    const answering = host.entries?.find((entry) => entry.answering)?.label;
+    return answering ? t("{model} answers now.", { model: answering }) : null;
+  }
+  const shown = modelOf(bot, roster);
+  if (shown === void 0) return t("Pick the model this Bot runs on.");
+  if (!shown.served && (roster.models ?? []).length > 0) return t("This model is not available now. Pick another one.");
+  if (bot.appliedModel && bot.appliedModel === bot.model) return t("Every message of this Bot runs on it.");
+  return t("Applies from the next message.");
+}
+var needsModelPick = (bot, roster) => modelOf(bot, roster) === void 0 && roster.hostModels?.[bot.id] === void 0;
 var effortCache = /* @__PURE__ */ new Map();
 function useEfforts(served, ref, actions) {
   const [fetched, setFetched] = (0, import_react11.useState)(void 0);
@@ -4345,14 +4363,14 @@ function modelWords(roster, ref) {
   const [provider, ...rest2] = String(ref ?? "").split("/");
   return { model: served?.name ?? rest2.join("/"), provider: served?.providerName ?? served?.provider ?? provider };
 }
-function ModelLine({ bot, roster, actions, run: run2, ref, onPick }) {
-  const words = modelWords(roster, ref ?? bot.model ?? bot.appliedModel);
+function ModelLine({ bot, roster, actions, run: run2, modelRef, onPick }) {
+  const words = modelWords(roster, modelRef ?? bot.model ?? bot.appliedModel);
   return (0, import_react11.createElement)(
     "div",
     { className: "bt-model-line" },
     (0, import_react11.createElement)("span", { className: "bt-model-line-text" }, t("Using {model} · {provider}", words)),
     (0, import_react11.createElement)("span", { className: "bt-model-line-sep", "aria-hidden": true }, "·"),
-    (0, import_react11.createElement)(ModelMenu, { bot: ref ? { ...bot, model: ref } : bot, roster, actions, run: run2, link: true, onPick })
+    (0, import_react11.createElement)(ModelMenu, { bot: modelRef ? { ...bot, model: modelRef } : bot, roster, actions, run: run2, link: true, onPick })
   );
 }
 var outlineOf = (list, sessionId) => list.projectionsBySession?.[sessionId]?.values?.turnOutline ?? list.byId?.[sessionId]?.projectionValues?.turnOutline;
@@ -4439,7 +4457,7 @@ function ModelChoiceDock({ sessionId, useRoster, actions }) {
           "aria-busy": busy === suggested || void 0,
           onClick: () => pick2(suggested)
         }, t("Start"), busy === suggested ? (0, import_react11.createElement)("span", { className: "bt-model-spin", "aria-label": t("Saving…") }) : null),
-        (0, import_react11.createElement)(ModelLine, { bot, roster, actions, run: run2, ref: suggested, onPick: pick2 })
+        (0, import_react11.createElement)(ModelLine, { bot, roster, actions, run: run2, modelRef: suggested, onPick: pick2 })
       ),
       error ? (0, import_react11.createElement)("div", { className: "bt-secret-error bt-model-error", role: "alert" }, error) : null
     );
@@ -8087,12 +8105,12 @@ html body :is(.bt-state,.bt-token){border:1px solid var(--st-line);background:va
 html body .bt-state[aria-pressed=true]{background:var(--st-lilac);color:var(--st-lilac-ink)}
 html body [class*="_composerStack"] [data-composer-card][data-composer-card]{max-width:min(760px,100%)!important;margin-inline:auto!important}
 html body [data-composer-card]{background:var(--st-raised)!important;border:1px solid var(--st-line)!important;border-radius:18px!important;box-shadow:var(--st-hollow)!important}
-html body [data-composer-card][data-composer-card]{flex-wrap:wrap!important;row-gap:6px!important;padding:10px 10px 8px 12px!important;border-radius:18px!important;min-height:0!important}
-html body [data-composer-card][data-composer-card]>[data-input-scroll]{order:0!important;flex:1 1 100%!important;padding:2px 4px 4px!important}
-html body [data-composer-card][data-composer-card] [data-composer-input]{min-height:40px!important}
-html body [data-composer-card][data-composer-card] [class*="_tools"]{order:1!important;align-self:center!important;display:flex;align-items:center;gap:6px}
-html body [data-composer-card][data-composer-card] [class*="_trailing"]{order:2!important;align-self:center!important;margin-left:auto!important;display:flex;align-items:center;gap:6px}
-html body [data-composer-card][data-composer-card]>[data-slot="conversation.input.attachments"]{order:-1!important}
+html body [data-composer-card][data-composer-card]:has(.bt-plus){flex-wrap:wrap!important;row-gap:6px!important;padding:10px 10px 8px 12px!important;border-radius:18px!important;min-height:0!important}
+html body [data-composer-card][data-composer-card]:has(.bt-plus)>[data-input-scroll]{order:0!important;flex:1 1 100%!important;padding:2px 4px 4px!important}
+html body [data-composer-card][data-composer-card]:has(.bt-plus) [data-composer-input]{min-height:40px!important}
+html body [data-composer-card][data-composer-card]:has(.bt-plus) [class*="_tools"]{order:1!important;align-self:center!important;display:flex;align-items:center;gap:6px}
+html body [data-composer-card][data-composer-card]:has(.bt-plus) [class*="_trailing"]{order:2!important;align-self:center!important;margin-left:auto!important;display:flex;align-items:center;gap:6px}
+html body [data-composer-card][data-composer-card]:has(.bt-plus)>[data-slot="conversation.input.attachments"]{order:-1!important}
 html body [data-composer-card]:focus-within{border-color:var(--st-ring)!important;box-shadow:0 0 0 3px color-mix(in srgb,var(--st-ring) 14%,transparent)!important}
 html body [data-composer-card] button[class*="_primary"],html body .bt-voice{background:var(--st-cyan)!important;color:var(--st-cyan-ink)!important;box-shadow:var(--st-clay)!important;border:0!important}
 html body :is(.bt-plus,.bt-mic){background:transparent;box-shadow:none;color:var(--bt-ink-2)}
@@ -9000,12 +9018,16 @@ function Nothing() {
   return null;
 }
 var SEPARATOR_GAP_MS = 30 * 60 * 1e3;
-function nextTurnStart(turns, turn) {
+function nextTurnOf(turns, turn) {
   let next;
   for (const key in turns) {
     const candidate = Number(key);
     if (candidate > turn && turns[key].first !== void 0 && (next === void 0 || candidate < next)) next = candidate;
   }
+  return next;
+}
+function nextTurnStart(turns, turn) {
+  const next = nextTurnOf(turns, turn);
   return next === void 0 ? void 0 : turns[next].first;
 }
 function openingTurn(turns, firstTurns, hiddenTurns) {
@@ -9018,23 +9040,30 @@ function openingTurn(turns, firstTurns, hiddenTurns) {
   return listed.includes(turn) && earlier.every((entry) => hiddenTurns?.includes(entry)) ? { turn, start: start2 } : null;
 }
 var unseenSince = (visit, time) => typeof visit?.seen === "number" && time > visit.seen && time <= visit.entered;
-function TurnTailCell({ turn: location2, sessionId, useTurnClock, useUi, actions }) {
+function TurnTailCell({ turn: location2, sessionId, useRoster, useTurnClock, useUi, actions }) {
   const turn = location2.turn;
+  const hidden = useRoster((roster) => isHiddenTurn(roster, sessionId, turn));
+  const exchangeTurns = useRoster((roster) => roster.exchangeTurns[sessionId]);
+  const nextStart = (turns) => {
+    const next = nextTurnOf(turns, turn);
+    if (next === void 0 || hidden && exchangeTurns?.includes(next)) return void 0;
+    return turns[next].first;
+  };
   const time = location2.end.time;
   (0, import_react22.useEffect)(() => {
     actions.noteTurnTime(sessionId, turn, "end", time);
   }, [sessionId, turn, time]);
   const label = useTurnClock((state) => {
-    const start2 = nextTurnStart(state[sessionId] ?? {}, turn);
+    const start2 = nextStart(state[sessionId] ?? {});
     return start2 !== void 0 && start2 - time >= SEPARATOR_GAP_MS ? clockLabel(start2) : "";
   });
   const visit = useUi((state) => state.visits?.[sessionId]);
   const fresh = useTurnClock((state) => {
     if (typeof visit?.seen !== "number" || time > visit.seen) return false;
-    const start2 = nextTurnStart(state[sessionId] ?? {}, turn);
+    const start2 = nextStart(state[sessionId] ?? {});
     return start2 !== void 0 && start2 > visit.seen && start2 <= visit.entered;
   });
-  const ended = (0, import_react22.createElement)("time", { className: "bt-turn-time", dateTime: new Date(time).toISOString() }, new Date(time).toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" }));
+  const ended = hidden ? null : (0, import_react22.createElement)("time", { className: "bt-turn-time", dateTime: new Date(time).toISOString() }, new Date(time).toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" }));
   return (0, import_react22.createElement)(
     import_react22.Fragment,
     null,
@@ -15683,13 +15712,6 @@ function SwitchRow({ label, hint, on, disabled, onChange }) {
     (0, import_react40.createElement)(Switch, { on, label, disabled, onChange })
   );
 }
-function modelHint(bot, roster) {
-  const shown = modelOf(bot, roster);
-  if (shown === void 0) return t("Pick the model this Bot runs on.");
-  if (!shown.served && (roster.models ?? []).length > 0) return t("This model is not available now. Pick another one.");
-  if (bot.appliedModel && bot.appliedModel === bot.model) return t("Every message of this Bot runs on it.");
-  return t("Applies from the next message.");
-}
 function ShapeRing({ shape, size }) {
   const maskId = (0, import_react40.useRef)("");
   if (maskId.current === "") maskId.current = `bt-ring-${nextMarkSerial()}`;
@@ -21118,7 +21140,7 @@ function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, roster, a
           { key: "model", className: "bt-drawer-model" },
           (0, import_react62.createElement)("div", { className: "bt-section-title" }, t("Model")),
           (0, import_react62.createElement)(ModelMenu, { bot, roster, actions, run: run2, wide: true }),
-          modelOf(bot, roster) ? null : (0, import_react62.createElement)("div", { className: "bt-note" }, t("Pick a model and {name} can start.", { name: bot.name }))
+          needsModelPick(bot, roster) ? (0, import_react62.createElement)("div", { className: "bt-note" }, t("Pick a model and {name} can start.", { name: bot.name })) : null
         ),
         (0, import_react62.createElement)(PermissionRow, { key: "permission", bot, roster, actions, run: run2 }),
         (0, import_react62.createElement)(

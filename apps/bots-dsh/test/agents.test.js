@@ -1148,6 +1148,55 @@ test('a task that ends on an error is failed with its reason; one stopped is sto
   ])
 })
 
+// #164: 60 ended tasks, as a team that has run many, and one more record of the caller's.
+const endedTasks = count => Object.fromEntries(Array.from({ length: count }, (_, i) => [`d${i}`, { title: `Done ${i}`, from: 'm1', at: 10 + i, status: 'done', endedAt: 10 + i }]))
+
+test('the task cap never forgets a wish still working, so its stop is still written down', async (t) => {
+  // The wish started before the 60 others and is still at work when the next task starts.
+  const tasks = { wish: { title: 'Wish: Fix Claude wish permission denial reporting', from: 'm1', at: 1, status: 'working' }, ...endedTasks(60) }
+  const { call, stop, ctx } = start({ ...TEAM, tasks })
+  t.after(stop)
+  await call('state', {})
+  const rt = ctx.provided.get('omniTeam')
+  rt.deliver = async () => {}
+  await rt.startTask({ title: 'Next', text: 'Do it', from: 'm1' })
+  // The ended task that ended longest ago is the one forgotten; the count stays at 60.
+  assert.equal(rt.state.tasks.wish?.status, 'working')
+  assert.equal(rt.state.tasks.d0, undefined)
+  assert.equal(Object.keys(rt.state.tasks).length, 60)
+  // The user stops the wish: its record says so, for the Live rail and its Bot's chat.
+  for (const listener of ctx.listeners.get('session/event') ?? []) listener({ id: 'wish' }, { type: 'turn/end', data: { turn: 1, reason: { kind: 'aborted' } } })
+  await flush()
+  const { tasks: view } = (await call('state', {})).value
+  assert.equal(view.wish.status, 'stopped')
+  assert.equal(typeof view.wish.endedAt, 'number')
+})
+
+test('the task cap forgets the task that ended longest ago, not the one started first', async (t) => {
+  // A long wish started first and was stopped a moment ago: the freshest end of all.
+  const tasks = { long: { title: 'Wish: a long one', from: 'm1', at: 1, status: 'stopped', endedAt: Date.now() }, ...endedTasks(60) }
+  const { call, stop, ctx } = start({ ...TEAM, tasks })
+  t.after(stop)
+  await call('state', {})
+  const rt = ctx.provided.get('omniTeam')
+  await rt.startTask({ title: 'Next', text: 'Do it', from: 'm1' })
+  assert.equal(rt.state.tasks.long?.status, 'stopped')
+  assert.equal(rt.state.tasks.d0, undefined)
+  assert.equal(Object.keys(rt.state.tasks).length, 60)
+})
+
+test('the task cap stays a bound when 60 tasks never sent their end', async (t) => {
+  const tasks = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`w${i}`, { title: `Stuck ${i}`, from: 'm1', at: 10 + i, status: 'working' }]))
+  const { call, stop, ctx } = start({ ...TEAM, tasks })
+  t.after(stop)
+  await call('state', {})
+  const rt = ctx.provided.get('omniTeam')
+  const next = await rt.startTask({ title: 'Next', text: 'Do it', from: 'm1' })
+  assert.equal(Object.keys(rt.state.tasks).length, 60)
+  assert.equal(rt.state.tasks.w0, undefined)
+  assert.equal(rt.state.tasks[next]?.status, 'working')
+})
+
 test('a task started in a group reports back to that group, not the Bot\'s own chat', async (t) => {
   const team = {
     ...TEAM,
@@ -1177,3 +1226,125 @@ test('a task started in a group reports back to that group, not the Bot\'s own c
     [own, undefined, undefined],
   ])
 })
+
+// #164, the cap's boundary: exactly TASK_CAP records are kept; a start past it forgets as
+// many records as the overflow, never a working one while an ended one is there to go.
+const TASK_CAP = 60
+
+test('the task cap forgets nothing at exactly 60 tasks', async (t) => {
+  const { call, stop, ctx } = start({ ...TEAM, tasks: endedTasks(TASK_CAP - 1) })
+  t.after(stop)
+  await call('state', {})
+  const rt = ctx.provided.get('omniTeam')
+  const next = await rt.startTask({ title: 'Next', text: 'Do it', from: 'm1' })
+  assert.equal(Object.keys(rt.state.tasks).length, TASK_CAP)
+  for (let index = 0; index < TASK_CAP - 1; index += 1) assert.ok(rt.state.tasks[`d${index}`], `d${index} is kept`)
+  assert.equal(rt.state.tasks[next].status, 'working')
+})
+
+test('the 61st task evicts exactly one record, the ended task that ended longest ago', async (t) => {
+  const { call, stop, ctx } = start({ ...TEAM, tasks: endedTasks(TASK_CAP) })
+  t.after(stop)
+  await call('state', {})
+  const rt = ctx.provided.get('omniTeam')
+  const seeded = Object.keys(rt.state.tasks)
+  const next = await rt.startTask({ title: 'Next', text: 'Do it', from: 'm1' })
+  assert.equal(Object.keys(rt.state.tasks).length, TASK_CAP)
+  assert.deepEqual(seeded.filter(id => rt.state.tasks[id] === undefined), ['d0'])
+  assert.equal(rt.state.tasks[next].status, 'working')
+})
+
+test('a working wish older than 59 ended tasks keeps its record at the 61st start', async (t) => {
+  const tasks = { wish: { title: 'Wish: still at work', from: 'm1', at: 1, status: 'working' }, ...endedTasks(TASK_CAP - 1) }
+  const { call, stop, ctx } = start({ ...TEAM, tasks })
+  t.after(stop)
+  await call('state', {})
+  const rt = ctx.provided.get('omniTeam')
+  await rt.startTask({ title: 'Next', text: 'Do it', from: 'm1' })
+  assert.equal(rt.state.tasks.wish?.status, 'working')
+  assert.equal(rt.state.tasks.d0, undefined)
+  assert.equal(Object.keys(rt.state.tasks).length, TASK_CAP)
+})
+
+test('ended tasks are forgotten before any working one, even the oldest', async (t) => {
+  // 61 records seeded, one of them the oldest start of all: two go at the next start, and
+  // both must be ended records, though the working one is the oldest.
+  const tasks = { wish: { title: 'Wish: still at work', from: 'm1', at: 1, status: 'working' }, ...endedTasks(TASK_CAP) }
+  const { call, stop, ctx } = start({ ...TEAM, tasks })
+  t.after(stop)
+  await call('state', {})
+  const rt = ctx.provided.get('omniTeam')
+  await rt.startTask({ title: 'Next', text: 'Do it', from: 'm1' })
+  assert.equal(rt.state.tasks.wish?.status, 'working')
+  assert.equal(rt.state.tasks.d0, undefined)
+  assert.equal(rt.state.tasks.d1, undefined)
+  assert.equal(rt.state.tasks.d2?.status, 'done')
+  assert.equal(Object.keys(rt.state.tasks).length, TASK_CAP)
+})
+
+test('with 60 working tasks the oldest working one goes and the newest are kept', async (t) => {
+  const tasks = Object.fromEntries(Array.from({ length: TASK_CAP }, (_, index) => [`w${index}`, { title: `Stuck ${index}`, from: 'm1', at: 10 + index, status: 'working' }]))
+  const { call, stop, ctx } = start({ ...TEAM, tasks })
+  t.after(stop)
+  await call('state', {})
+  const rt = ctx.provided.get('omniTeam')
+  const next = await rt.startTask({ title: 'Next', text: 'Do it', from: 'm1' })
+  assert.equal(Object.keys(rt.state.tasks).length, TASK_CAP)
+  assert.equal(rt.state.tasks.w0, undefined)
+  assert.equal(Object.keys(rt.state.tasks).filter(id => id !== next && rt.state.tasks[id] === undefined).length, 0)
+  assert.equal(rt.state.tasks[`w${TASK_CAP - 1}`]?.status, 'working')
+  assert.equal(rt.state.tasks[next]?.status, 'working')
+})
+
+test('the cap forgets by when a task ended, not when it started', async (t) => {
+  const endedSince = count => Object.fromEntries(Array.from({ length: count }, (_, index) => [`e${index}`, { title: `Ended ${index}`, from: 'm1', at: 10 + index, status: 'done', endedAt: 1_000 + index }]))
+  const tasks = {
+    long: { title: 'Wish: started first, stopped just now', from: 'm1', at: 1, status: 'stopped', endedAt: 5_000 },
+    earlyEnd: { title: 'Started late, ended first', from: 'm1', at: 900, status: 'done', endedAt: 100 },
+    ...endedSince(TASK_CAP - 2),
+  }
+  const { call, stop, ctx } = start({ ...TEAM, tasks })
+  t.after(stop)
+  await call('state', {})
+  const rt = ctx.provided.get('omniTeam')
+  await rt.startTask({ title: 'Next', text: 'Do it', from: 'm1' })
+  // The one that ended first is the one forgotten; the first started but freshest end stays.
+  assert.equal(rt.state.tasks.earlyEnd, undefined)
+  assert.equal(rt.state.tasks.long?.status, 'stopped')
+  assert.equal(rt.state.tasks.e0?.status, 'done')
+  assert.equal(Object.keys(rt.state.tasks).length, TASK_CAP)
+})
+
+test('a task list already past the cap is trimmed by its overflow on the next start', async (t) => {
+  const { call, stop, ctx } = start({ ...TEAM, tasks: endedTasks(TASK_CAP + 1) })
+  t.after(stop)
+  await call('state', {})
+  const rt = ctx.provided.get('omniTeam')
+  await rt.startTask({ title: 'Next', text: 'Do it', from: 'm1' })
+  assert.equal(Object.keys(rt.state.tasks).length, TASK_CAP)
+  assert.deepEqual([rt.state.tasks.d0, rt.state.tasks.d1, rt.state.tasks.d2?.status], [undefined, undefined, 'done'])
+})
+
+test('a stop after an eviction is written down and reported to the Bot that asked', async (t) => {
+  const tasks = { wish: { title: 'Wish: still at work', from: 'm1', at: 1, status: 'working' }, ...endedTasks(TASK_CAP - 1) }
+  const { call, stop, ctx } = start({ ...TEAM, tasks })
+  t.after(stop)
+  await call('state', {})
+  const rt = ctx.provided.get('omniTeam')
+  const reports = []
+  rt.deliver = async message => { reports.push(message) }
+  await rt.startTask({ title: 'Next', text: 'Do it', from: 'm1' })
+  assert.equal(rt.state.tasks.wish?.status, 'working')
+  for (const listener of ctx.listeners.get('session/event') ?? []) listener({ id: 'wish' }, { type: 'turn/end', data: { turn: 1, reason: { kind: 'aborted' } } })
+  await flush()
+  const { tasks: view } = (await call('state', {})).value
+  assert.equal(view.wish.status, 'stopped')
+  assert.equal(typeof view.wish.endedAt, 'number')
+  assert.deepEqual(reports.map(report => [report.taskSessionId, report.text]), [['wish', 'It was stopped before it finished.']])
+})
+
+// #164's residual limits of the bound, documented not tested. A working task the cap does
+// evict past 60 newer working ones still loses its stop: agents.js:747-748 deletes the
+// record and agents.js:770-771 returns for a Session that has none. The drop also names
+// nothing: agents.js:751-752 warns only when forgetTaskPermission fails. Both go past this
+// PR's stated contract, so pinning them here would hold CI on a design question.

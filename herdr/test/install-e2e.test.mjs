@@ -151,16 +151,23 @@ const pack = (launcher) => {
 };
 
 /** A scratch machine: a home, the release folder (file://), and fake uname, brew and herdr-app. */
-function machine(t, { launcher } = {}) {
+function machine(t, { launcher, os = "Darwin", arch = "arm64" } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ah-e2e-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, "home"), bin = join(root, "bin"), apps = join(root, "Applications"), rel = join(root, "release");
-  for (const d of [home, bin, join(apps, "Herdr.app")]) mkdirSync(d, { recursive: true });
+  for (const d of [home, bin]) mkdirSync(d, { recursive: true });
+  // macOS: Herdr is the app whose bundle id is dev.herdr.app (only its Info.plist here).
+  if (os === "Darwin") {
+    mkdirSync(join(apps, "Herdr.app", "Contents"), { recursive: true });
+    writeFileSync(join(apps, "Herdr.app", "Contents", "Info.plist"), '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>\n    <key>CFBundleIdentifier</key><string>dev.herdr.app</string>\n</dict></plist>\n');
+  }
   const log = join(root, "herdr-app.log"), shown = join(root, "herdr-shown"), brew = join(root, "brew.log"), spaces = join(root, "herdr-spaces.json");
   writeFileSync(log, "");
   writeFileSync(brew, "");
-  exe(join(bin, "uname"), "#!/bin/sh\ncase $1 in -m) echo arm64 ;; *) echo Darwin ;; esac\n");
+  exe(join(bin, "uname"), `#!/bin/sh\ncase $1 in -m) echo ${arch} ;; *) echo ${os} ;; esac\n`);
   exe(join(bin, "brew"), `#!/bin/sh\necho "$*" >> "${brew}"\nexit 1\n`);
+  // Herdr's own installer is never fetched: Herdr is already here.
+  exe(join(bin, "curl"), `#!/bin/sh\nfor a; do case $a in https://releases.herdr.dev/*) echo "no network in tests: $a" >&2; exit 22 ;; esac; done\nexec /usr/bin/curl "$@"\n`);
   // herdr-app: logs its arguments; `status` prints the layout show() set, or fails with none;
   // `ls` prints the spaces openSpace() opened, or nothing.
   exe(join(bin, "herdr-app"), `#!/bin/sh
@@ -264,14 +271,17 @@ function assertFullPack(m, r) {
   const shipped = readFileSync(join(x, PACK_LAYOUT));
   assert.deepEqual(readFileSync(join(m.appHome, PACK_LAYOUT)), shipped, "the automagik layout is the pack's");
   assert.deepEqual(readFileSync(join(m.state, "automagik.json")), shipped);
-  // Activation: the layout shows the sidebar, the footer rail, the tab bar, both panels and the
-  // Markdown menu; the sidebar's + opens am-new-menu; every pack mod it names is installed.
+  // Activation: the layout shows the sidebar, the footer rail, the tab bar and the Markdown menu;
+  // the sidebar's + opens am-new-menu; every pack mod it names is installed. It names no panel the
+  // footer opens itself (Automations, Accounts): Herdr shows plain Herdr instead of a layout that
+  // names a mod that is off (#221).
   const layout = JSON.parse(shipped);
   const blocks = [];
   const walk = (n) => { if (n.content?.mod) blocks.push(n.content); (n.children ?? []).forEach(walk); };
   walk(layout);
   const named = blocks.map((c) => c.mod);
-  for (const mod of ["am-sidebar", "am-tabs", "am-automations", "am-quota"]) assert.ok(named.includes(mod), `the layout names ${mod}`);
+  for (const mod of ["am-sidebar", "am-tabs", "am-footer", "am-status"]) assert.ok(named.includes(mod), `the layout names ${mod}`);
+  for (const mod of ["am-automations", "am-quota", ...OFF_BY_DEFAULT]) assert.ok(!named.includes(mod), `the layout does not name ${mod}`);
   assert.deepEqual(blocks.find((c) => c.mod === "am-footer")?.props, { footer: true }, "the footer rail");
   assert.equal(layout.terminal_menu, "am-markdown");
   assert.match(readFileSync(join(m.mods, "am-sidebar", "main.js"), "utf8"), /openOverlay\(\{ mod: "am-new-menu"/, "the sidebar's + opens am-new-menu");
@@ -296,6 +306,13 @@ function assertFullPack(m, r) {
   assert.equal(v.code, 0, `automagik-herdr --version: ${v.out}${v.err}`);
   assert.equal(v.out, `automagik-herdr ${RELEASE}\n`);
   return keys;
+}
+
+for (const arch of ["x86_64", "aarch64"]) {
+  test(`e2e: Linux ${arch} installs the signed release pack and runs its CLI`, { skip: !haveGit && "no git work tree" }, (t) => {
+    const m = machine(t, { os: "Linux", arch });
+    assertFullPack(m, m.oneLiner("--yes"));
+  });
 }
 
 test("e2e: release.yml's pack is the whole pack: every PACK_MODS folder plus the layout, nothing else", { skip: !haveGit && "no git work tree" }, () => {
@@ -409,11 +426,11 @@ test(`e2e (b): a v0.4.0 sidebar-only install is replaced by the whole pack (${la
   const lines = r.out.split("\n"), at = lines.findIndex((l) => l.includes("Your layout") && l.includes(personal));
   assert.ok(at >= 0, `the output names ${personal}:\n${r.out}`);
   const note = `${lines[at]}\n${lines[at + 1]}`;
-  for (const what of ["footer rail (am-footer)", "tab bar (am-tabs)", "Markdown menu (am-markdown)", "automations panel"]) {
+  for (const what of ["footer rail (am-footer)", "tab bar (am-tabs)", "Markdown menu (am-markdown)"]) {
     assert.ok(note.includes(what), `it names the ${what}: ${note}`);
   }
-  // am-quota ships off: its block is not missed until it is turned on.
-  assert.ok(!note.includes("Accounts panel"), `a mod that is off is not named: ${note}`);
+  // The panels the footer opens itself are never missed: the pack's layout has no block for them.
+  for (const what of ["automations panel", "Accounts panel"]) assert.ok(!note.includes(what), `${what} is not named: ${note}`);
   assert.ok(note.includes(join(m.state, "automagik.json")), `it points at the pack's layout to copy from: ${note}`);
 });
 }

@@ -285,7 +285,8 @@ test("Start in Bot settings with no space on the project: one space opened, wait
   } finally { state.runFault = null; state.shared.delete("am.sidebar.projects"); }
   assert.equal(state.runs.filter(([name]) => name === "space.new").length, 1);
   const cli = state.calls.find((c) => c.kind === "exec" && c.args.includes("start")).args;
-  assert.deepEqual(cli.slice(cli.indexOf("--space"), cli.indexOf("--space") + 4), ["--space", "s5", "--tab", "t5"]);
+  assert.deepEqual(cli.slice(cli.indexOf("--space"), cli.indexOf("--space") + 2), ["--space", "s5"]);
+  assert.equal(cli.includes("--tab"), false, "a tab of its own: no --tab");
 });
 
 test("Attach with no bot keeps its message (the New bot line is the pick list's alone)", async () => {

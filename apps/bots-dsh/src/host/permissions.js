@@ -4,6 +4,7 @@
 // set one working folder. A level is DSH's preset name; DSH's Auto review is one while
 // its layer is loaded (../shared/permission-levels.js).
 import { AUTO, AUTO_FALLBACK } from '../shared/permission-levels.js'
+import { narrowerLevel } from './permission-rank.js'
 
 export function install(rt) {
   const { ctx } = rt
@@ -86,9 +87,93 @@ export function install(rt) {
     })
   }
 
-  // A Session of a Bot's own chat or of a group, as DSH opens it or as the presets change.
+  // A task a Bot started (state.tasks, `from`) runs at that Bot's level, as the Bot's own
+  // chat does; a task asked for in a group (`roomId`) at the group's level when it has one,
+  // as the Bot's Session there does. A Bot without a level gives its task the catalog
+  // default, set explicitly so a restart or a catalog change cannot leave it elsewhere. A
+  // task no Bot asked for keeps DSH's default. When its Bot or its group is deleted, the
+  // task keeps the level it ran at as a cap (`permissionCap`, capTasks): what governs it
+  // afterwards (the default, the Bot's own level) can lower it, never raise it.
+  const taskOf = sessionId => rt.state?.tasks?.[sessionId]
+  function taskLevel(task, service) {
+    if (task.from === undefined) return undefined
+    const bot = rt.botOf(task.from)
+    const room = task.roomId ? rt.roomOf(task.roomId) : undefined
+    const level = bot === undefined ? service.catalog().defaultPreset : room?.permission ?? bot.permission ?? service.catalog().defaultPreset
+    if (level === undefined || task.permissionCap === undefined) return level
+    return narrowerLevel(service, level, task.permissionCap)
+  }
+  // Before a Bot or a group leaves the state: each task `match` picks keeps the level it
+  // runs at now as its cap. Saved with the deletion.
+  function capTasks(match) {
+    const service = presets()
+    if (service === undefined) return
+    for (const task of Object.values(rt.state?.tasks ?? {})) {
+      if (!match(task)) continue
+      const level = taskLevel(task, service)
+      if (level !== undefined) task.permissionCap = level
+    }
+  }
+  // The level a remembered task runs at, read before startTask forgets it.
+  const taskLevelOf = (sessionId) => {
+    const task = taskOf(sessionId)
+    const service = presets()
+    return task === undefined || service === undefined ? undefined : taskLevel(task, service)
+  }
+  // Sets a task Session's level, read when the apply runs, not when it is queued, so a
+  // lower level picked meanwhile lands last. The fallback mark stays the Bot's and the
+  // group's own: a task does not mark them. Resolves whether the Session is a task.
+  async function applyTaskPermission(sessionId, session) {
+    if (taskOf(sessionId) === undefined) return false
+    const service = presets()
+    if (rt.readOnly() !== undefined || service === undefined) return true
+    await serial(sessionId, async () => {
+      const task = taskOf(sessionId)
+      const level = task === undefined ? service.catalog().defaultPreset : taskLevel(task, service)
+      if (level) await applyLevel(sessionId, level, session)
+      // No level could be ranked: the task keeps its own, not a default that may be wider.
+      else if (task?.from !== undefined) rt.warn('ds-bot: no permission level for the task %s can be ranked; it keeps its own', sessionId)
+    })
+    return true
+  }
+  // The tasks `match` picks take their level again now, after a level changes or their Bot
+  // goes: a loaded one, and a working one even if DSH has to open it. Any other takes it
+  // from the session/created re-apply when DSH opens it next.
+  async function reapplyTasks(match) {
+    const picked = Object.entries(rt.state?.tasks ?? {}).filter(([, task]) => match(task))
+    if (picked.length === 0 || rt.readOnly() !== undefined || presets() === undefined) return
+    const loaded = new Map((ctx.sessions?.list?.() ?? []).map(session => [session.id, session]))
+    for (const [sessionId, task] of picked) {
+      if (!loaded.has(sessionId) && task.status !== 'working') continue
+      await applyTaskPermission(sessionId, loaded.get(sessionId))
+        .catch(error => rt.warn('ds-bot: permission for the task %s not applied: %s', sessionId, error))
+    }
+  }
+  // A task startTask no longer remembers (past TASKS_KEPT) goes now to the narrower of the
+  // catalog default and `ranAt`, the level it ran at (taskLevelOf before the forget): when
+  // DSH opens it again nothing tells it was a task, so it must not keep a level its Bot has
+  // lowered since, and forgetting it must not raise it either. An unloaded one is opened
+  // in DSH for this: one old Session per startTask past TASKS_KEPT, before the new task's
+  // first turn.
+  async function forgetTaskPermission(sessionId, ranAt) {
+    const service = presets()
+    if (rt.readOnly() !== undefined || service === undefined) return
+    const fallback = service.catalog().defaultPreset
+    const level = ranAt === undefined ? fallback : fallback === undefined ? ranAt : narrowerLevel(service, fallback, ranAt)
+    if (!level) {
+      rt.warn('ds-bot: no permission level for the forgotten task %s can be ranked; it keeps its own', sessionId)
+      return
+    }
+    const loaded = (ctx.sessions?.list?.() ?? []).find(session => session.id === sessionId)
+    await serial(sessionId, () => applyLevel(sessionId, level, loaded))
+  }
+
+  // A Session of a Bot's own chat, of a group or of a task, as DSH opens it or as the
+  // presets change.
   async function reapply(session) {
     if (rt.readOnly() !== undefined) return
+    // Not awaited first: the first preset must still land within DSH's announce.
+    if (taskOf(session.id) !== undefined) return applyTaskPermission(session.id, session)
     const group = rt.groupOwners.get(session.id)
     const bot = rt.botOf(group?.botId ?? rt.chatOwners.get(session.id))
     if (bot === undefined) return
@@ -102,7 +187,7 @@ export function install(rt) {
   ctx.on('session/created', (session) => {
     if (presets() === undefined) return undefined
     const run = () => reapply(session).catch(warnNotApplied(session.id))
-    return rt.chatOwners.has(session.id) || rt.groupOwners.has(session.id) ? run() : rt.load().then(run)
+    return rt.chatOwners.has(session.id) || rt.groupOwners.has(session.id) || taskOf(session.id) !== undefined ? run() : rt.load().then(run)
   })
   // Auto review's layer loaded or unloaded: the loaded Sessions get their level again, all
   // in one tick, so one DSH moved off Auto runs as workspace-write, not full access. An
@@ -155,6 +240,8 @@ export function install(rt) {
       await applyPermission(bot, sessionId)
         .catch(error => rt.warn('ds-bot: permission for %s in a group not applied: %s', bot.name, error))
     }
+    // Its tasks too, but one asked for in a group with a level of its own keeps that one.
+    await reapplyTasks(task => task.from === bot.id && !(task.roomId && rt.roomOf(task.roomId)?.permission))
   }
 
   // A group's level, or null when each member uses its own.
@@ -177,8 +264,10 @@ export function install(rt) {
       await applyPermission({ ...bot, permission: bot.permission ?? service.catalog().defaultPreset }, sessionId, room)
         .catch(error => rt.warn('ds-bot: permission for %s in %s not applied: %s', bot.name, room.name, error))
     }
+    // The tasks asked for in the group: its level, or now their Bot's own.
+    await reapplyTasks(task => task.roomId === room.id)
     return true
   }
 
-  Object.assign(rt, { permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, checkPreset, setPermission, cleanRoomPermission, setRoomPermission })
+  Object.assign(rt, { permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, reapplyTasks, capTasks, taskLevelOf, forgetTaskPermission, checkPreset, setPermission, cleanRoomPermission, setRoomPermission })
 }

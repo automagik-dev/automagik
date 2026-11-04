@@ -2,10 +2,9 @@ name: Desktop build
 
 # Builds the Automagik desktop app (apps/desktop) at one commit of this repository and adds it
 # to the release `v<version>`, where `omni desktop` (Omni's CLI) and `genie desktop` find it:
-# the Linux AppImage and deb, the macOS arm64 dmg, the Windows x86_64 installer, and
-# SHA256SUMS, which the CLIs check every download against. Installed apps update from the same
-# release (apps/desktop/src/update.js): latest-linux.yml for the AppImage, latest-mac.yml with
-# the zip for macOS, and latest.yml with the installer for Windows.
+# the Linux AppImage and deb, the macOS arm64 dmg, and SHA256SUMS, which the CLIs check every
+# download against. Installed apps update from the same release (apps/desktop/src/update.js):
+# latest-linux.yml for the AppImage and latest-mac.yml with the zip for macOS.
 #
 # The version is Automagik's (package.json), which the app and every plugin here carry; the
 # release already holds the plugins (release.yml makes it and calls this). Dispatch it by hand
@@ -18,8 +17,14 @@ name: Desktop build
 # Without them the dmg is unsigned, and the release carries no macOS update: a signed app
 # accepts only an update signed like itself, and an unsigned one cannot update.
 #
-# Windows is unsigned for now (D36): the installer and its update feed ship without a
-# signature, and SmartScreen warns on the first download. The WIN_CSC_LINK and
+# The native Windows app is off (2026-11-04): it did not work well enough to ship, and Windows
+# is to come back as a Linux-sandboxed build. Its build and its files (the x86_64 installer, its
+# blockmap, latest.yml, Automagik-Windows.exe) stay behind the `windows` input, false unless a
+# dispatch sets it; release.yml never does. A release without latest.yml offers installed
+# Windows apps no update (update.js skips it). The app's Windows code from #269 stays.
+#
+# With `windows` on, Windows is unsigned for now (D36): the installer and its update feed ship
+# without a signature, and SmartScreen warns on the first download. The WIN_CSC_LINK and
 # WIN_CSC_KEY_PASSWORD secrets (a code-signing certificate as a base64 .pfx) sign it once they
 # exist; apps/desktop/electron-builder.yml `win` has the Azure Trusted Signing alternative.
 
@@ -41,6 +46,11 @@ on:
         required: false
         type: boolean
         default: true
+      windows:
+        description: 'Also build and publish the native Windows app (off since 2026-11-04)'
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       ref:
@@ -57,6 +67,11 @@ on:
         required: false
         type: boolean
         default: true
+      windows:
+        description: 'Also build and publish the native Windows app (off since 2026-11-04)'
+        required: false
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -70,6 +85,7 @@ jobs:
     outputs:
       version: ${{ steps.read.outputs.version }}
       sha: ${{ steps.read.outputs.sha }}
+      matrix: ${{ steps.targets.outputs.matrix }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -87,6 +103,19 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      # Mac and Linux always; the Windows leg only with the `windows` input on.
+      - name: The builds to run
+        id: targets
+        env:
+          WINDOWS: ${{ inputs.windows }}
+        run: |
+          set -euo pipefail
+          include='{"target":"linux","os":"ubuntu-24.04"},{"target":"mac","os":"macos-14"}'
+          if [[ "${WINDOWS}" == true ]]; then
+            include+=',{"target":"windows","os":"windows-latest"}'
+          fi
+          echo "matrix={\"include\":[${include}]}" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build (${{ matrix.target }})
     needs: version
@@ -95,14 +124,7 @@ jobs:
       cancel-in-progress: false
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - target: linux
-            os: ubuntu-24.04
-          - target: mac
-            os: macos-14
-          - target: windows
-            os: windows-latest
+      matrix: ${{ fromJSON(needs.version.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     permissions:
@@ -110,7 +132,7 @@ jobs:
     defaults:
       run:
         working-directory: apps/desktop
-        # Git Bash on Windows: every step is the same bash on the three runners.
+        # Git Bash on Windows: every step is the same bash on every runner.
         shell: bash
     env:
       DO_NOT_TRACK: '1'
@@ -265,6 +287,7 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       SHA: ${{ needs.version.outputs.sha }}
       PRERELEASE: ${{ inputs.prerelease }}
+      WINDOWS: ${{ inputs.windows }}
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -274,8 +297,9 @@ jobs:
 
       # A Mac or Linux build that finished without one of its files must not publish: a release
       # without latest-linux.yml or latest-mac.yml leaves every installed app without its update.
-      # The macOS zip and feed are only made when the app is signed. Windows (D37) never stops
-      # a release: without its installer and latest.yml, both, the release goes out without
+      # The macOS zip and feed are only made when the app is signed. With `windows` off, no
+      # Windows file publishes, and nothing warns. With it on, Windows (D37) never stops a
+      # release: without its installer and latest.yml, both, the release goes out without
       # Windows, says so, and Windows users get the next one. A latest.yml never ships without
       # the installer it names.
       - name: Every download is there
@@ -293,7 +317,10 @@ jobs:
           done
           [[ "${missing}" == 0 ]] || exit 1
           exe="Automagik-${VERSION}-win-x64.exe"
-          if [[ -s "${exe}" && -s latest.yml ]]; then
+          if [[ "${WINDOWS}" != true ]]; then
+            rm -f -- *-win-x64.exe *-win-x64.exe.blockmap latest.yml
+            echo "windows=false" >> "${GITHUB_OUTPUT}"
+          elif [[ -s "${exe}" && -s latest.yml ]]; then
             echo "windows=true" >> "${GITHUB_OUTPUT}"
           else
             rm -f -- "${exe}" "${exe}.blockmap" latest.yml
@@ -305,8 +332,9 @@ jobs:
 
       # A rebuild of a release whose Windows build fails this time keeps the Windows files the
       # release already has, rather than sweeping them away below; they go into SHA256SUMS too.
+      # With `windows` off it keeps none: the sweep removes the ones a rebuilt release had.
       - name: Windows files the release already has
-        if: steps.files.outputs.windows == 'false'
+        if: steps.files.outputs.windows == 'false' && inputs.windows == true
         working-directory: assets
         run: |
           set -euo pipefail
@@ -334,7 +362,9 @@ jobs:
             for name in Automagik Omni; do cp -- "${file}" "${name}-${pair##*:}"; done
           done
           file=$(ls -- *-win-x64.exe 2>/dev/null | head -1 || true)
-          [[ -n "${file}" ]] && cp -- "${file}" Automagik-Windows.exe
+          if [[ "${WINDOWS}" == true && -n "${file}" ]]; then
+            cp -- "${file}" Automagik-Windows.exe
+          fi
           ls -l
 
       - name: Checksums
@@ -371,7 +401,7 @@ jobs:
             flags=(--latest)
             [[ "${PRERELEASE}" == "true" ]] && flags=(--prerelease)
             windows=""
-            [[ -s assets/Automagik-Windows.exe ]] && windows=" · Windows (x64): **Automagik-Windows.exe** (not signed yet: SmartScreen asks you to confirm, under More info)"
+            [[ "${WINDOWS}" == true && -s assets/Automagik-Windows.exe ]] && windows=" · Windows (x64): **Automagik-Windows.exe** (not signed yet: SmartScreen asks you to confirm, under More info)"
             gh release create "${TAG}" assets/* "${flags[@]}" \
               --repo "${GITHUB_REPOSITORY}" \
               --target "${SHA}" \

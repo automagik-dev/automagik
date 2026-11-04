@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Accepted (deliveries 1-3 merged: #187, #189; 4 and 5 open) |
 | Milestone | 2. One message box (route descriptor); 3. Other agents in the same chat (ACP) |
 | Lanes | plugin (3.N.P), desktop (3.N) |
 | Created | 2026-10-30 |

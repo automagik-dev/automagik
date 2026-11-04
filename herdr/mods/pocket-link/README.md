@@ -50,14 +50,16 @@ updates Pocket Link by itself, so updating it as above is what turns the chat on
   a LaunchAgent on macOS, or a systemd user unit on Linux.
 - **Network:** [iroh](https://iroh.computer). Phones dial this computer by its public key.
   Connections are direct when they can be, otherwise through n0's public relays,
-  and always end to end encrypted. The bridge also publishes its address to n0's lookup service.
+  and always end to end encrypted. The bridge and the phone each publish their public key and the
+  n0 relay they currently use (no IP addresses) to n0's address lookup, so phones find this
+  computer after an IP change.
 - **Programs it runs:** `node`, `npm` (setup), `hc connect`, `launchctl` / `systemctl --user`, `sh`,
   `ls`, and your login shell, once, to find `node`.
 - **Files it writes:** its state folder (below), the one login service file, and `.node` in the
   mod folder (the path of the Node it runs with).
 - **Where its state lives:** `${XDG_STATE_HOME:-~/.local/state}/automagik-pocket-link/`, mode 0700,
   outside the mod folder: this computer's key (`secret.key`, the identity phones pair with), the
-  paired phones, the current pairing code, the bridge's address and its log (`bridge.log`, and
+  paired phones (`devices.json`), the current pairing code, the bridge's address and its log (`bridge.log`, and
   `bridge.log.1` once it has filled), each 0600; and `public-status.json` (0644), which says only whether phones are connected
   ([For other mods](#for-other-mods)).
   - **Reinstalling the mod is safe.** Deleting `mods/pocket-link/` and copying it again keeps every
@@ -68,6 +70,13 @@ updates Pocket Link by itself, so updating it as above is what turns the chat on
     `automagik-pocket-link-<hash>/`, so a test window never sees your phones.
     `POCKET_LINK_STATE_DIR` sets the folder outright; the login service is given it.
   - Deleting this folder unpairs every phone.
+  - **One writer for the paired phones.** Only the running bridge writes `devices.json`. Remove
+    (`bridge.mjs forget <id>`) hands the phone to it over `bridge.sock`, a socket in this folder,
+    and waits for its answer, so a removed phone can't be written back by a session updating its
+    "last seen" time. With no bridge running, `forget` writes the file itself. So it does when
+    this folder's path is too long for a socket: `bridge.sock`'s full path must be 104 bytes or
+    fewer on macOS (measured) and 107 or fewer on Linux (a safe bound, not measured), or the bridge
+    runs without `bridge.sock`.
 
 - **Before a phone is paired** (`bridge/guard.mjs`, `bridge/pairing.mjs`):
   - A connection from a source address that isn't validated yet gets a QUIC retry first, so a
@@ -96,7 +105,9 @@ updates Pocket Link by itself, so updating it as above is what turns the chat on
   ([decision](../../../apps/pocket/docs/decisions/pocket-link-no-meter-installer.md)).
 
 A paired phone can use every herdr-core session on this computer, just like a terminal running `hc`.
-Pair only your own phones. Remove one in the dialog and it's disconnected at once.
+Pair only your own phones. Remove one in the dialog and its new connections are refused; the
+bridge checks its list every 2 seconds and then closes that phone's open sessions. Agents it
+started keep running on the computer.
 
 ## The chat route
 

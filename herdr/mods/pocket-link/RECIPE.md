@@ -8,7 +8,8 @@ SSH, no password and no port to open. A small Node bridge answers the phone
 over [iroh](https://iroh.computer). Connections are end to end encrypted and
 direct when possible, or go through a relay that can't read them. The bridge
 hands each paired phone a herdr-core session. The dialog also lists paired
-phones, so you can remove one, and that disconnects it at once.
+phones, so you can remove one: its new connections are refused, and its open
+sessions close within 2 seconds. Agents it started keep running.
 
 ![Pocket Link](preview.png)
 
@@ -34,8 +35,8 @@ The dialog is 460px wide, from `mod.json` `{ "kind": "dialog", "width": 460 }`, 
      - The QR code: black modules on a white card with an 8px radius and a 3-module quiet zone. Each module is `floor(224 / modules)` px, which is 3px for the usual 73 modules, so about 237px square.
      - "Scan with Herdr Pocket" in 12.5px.
      - "Expires in 9:41 · works once" in 12px `dim`, counting down every second.
-     - Two outlined buttons: **Copy link** (reads "Copied" after a click) and **New code**.
-     - "On the phone itself? Copy the link and paste it in Pocket." in 11.5px `dim`.
+     - Two outlined buttons: **Copy link** (reads "Copied" once the link is on the clipboard) and **New code**. Both are disabled while the dialog is busy.
+     - Under them, centred, in 11.5px/16px `dim`, the clipboard warning: "Can't scan? Copy the link and paste it in Pocket. Your clipboard may sync to your other devices, so a copied code ends 2 minutes later." After a copy it reads "Copied. Your clipboard may sync to your other devices, so this code ends 2 minutes after the copy; then a new one appears here."
 5. **Phones:** the section title is "Paired phones", or "No phones paired yet". Each phone is a row, 40px tall with a 10px side padding and an 8px radius, that turns `hover` under the pointer. The row has:
    - a 15px phone icon in `muted`
    - the phone's name in 13px, truncated
@@ -43,7 +44,7 @@ The dialog is 460px wide, from `mod.json` `{ "kind": "dialog", "width": 460 }`, 
    - "Last seen 3 min ago" in 11.5px `dim`
    - an outlined **Remove** button
 6. **Errors:** when there is one, it shows in 12px `blocked`.
-7. **Footer:** in 11.5px/17px `dim`: "Phones connect directly when they can, and otherwise through a public iroh relay that passes along encrypted bytes it can't read. Removing a phone disconnects it at once."
+7. **Footer:** in 11.5px/17px `dim`: "Phones connect directly when they can, and otherwise through a public iroh relay that passes along encrypted bytes it can't read. A removed phone's sessions close within 2 seconds; agents it started keep running."
 
 Buttons are 30px tall with 12px side padding, a 7px radius and 12.5px medium text.
 - **Primary:** `solid` with `solid_foreground` text.
@@ -70,12 +71,18 @@ Before the bridge can run, the dialog shows one of two other screens in place of
   - The bridge makes a one-time code: 16 random bytes, base64url, valid for 10 minutes.
   - The dialog draws the QR of `herdr-pocket://pair?v=1&n=<host>&c=<code>&t=<iroh endpoint ticket>`.
   - **New code** replaces the old code, so the old one stops working.
+  - **Copy link** is for a phone that can't scan. The clipboard may sync to other devices (macOS Universal Clipboard), so a copied link must not stay good for 10 minutes:
+    - The dialog first runs `bridge.mjs copied`, which cuts the live code's `expires` in `pairing.json` to 2 minutes from now (`COPIED_LIFE` in `bridge/pairing.mjs`). It never lengthens a code and keeps its wrong-try counts. The serving bridge reads `pairing.json` on every try, so this needs no change to the phones' protocol, and a bridge already running honours it.
+    - Only then does the link go on the clipboard, and the countdown jumps to 2:00. If the bridge can't shorten it (the code was just used or expired), nothing is copied and the error shows.
+    - `copied` rewrites `pairing.json` in place, not with a temporary file and a rename, so a code a phone used (and the bridge deleted) a moment before is never brought back.
+    - The bridge still saves a wrong try with a rename, which can land over that write with the old expiry. So `copied` checks that `pairing.json` is still the file it wrote, with the same code and the shorter expiry, right away and again 50 ms later; if not, it shortens the new file. A different code is left alone, and after 5 tries it gives up ("The pairing code kept changing, so the link wasn't copied. Try again."). The dialog's own new code at 0:00 also ends a copied code, whatever the file says.
+    - When the copied code reaches 0:00, the dialog makes a new code, once: the new one isn't copied, so at its own 0:00 the card goes back to the button. **New code** or closing the dialog ends a copied code at once, the same as any other.
   - At 0:00 the card goes back to the button.
 - **When a phone pairs** with the code:
   - The bridge stores the phone's iroh public key and deletes the code.
   - The dialog posts a "Phone paired" toast (`notify`, success, 8s) with the phone's name and key fingerprint, puts the card away, and lists the phone. If the phone paired while the dialog was closing, the toast comes from what `cancel` returns.
   - Pairing again from a phone that's already listed refreshes its entry and also shows the toast.
-- **Remove:** forgets the phone. The running bridge checks its list every 2s and closes that phone's open sessions with "not paired". On the phone, Pocket says to pair again.
+- **Remove:** forgets the phone. `forget` hands the removal to the running bridge over `bridge.sock` and waits for its answer; the bridge takes the phone out of `devices.json` and closes its open sessions with "not paired" at once (it also checks its list every 2s). With no bridge running, or a state folder whose path is too long for `bridge.sock`, `forget` writes the file itself. On the phone, Pocket says to pair again.
 - **Wrong codes:** one phone key gets 3 wrong codes, then its tries are refused and not counted; only a flood, 1000 wrong codes in all, ends the code. A used or expired code is refused, and with no live code a pairing connection is closed after its handshake ("No pairing code is live. Make a new one on the desktop.").
 - **Closing the dialog ends the code:** Esc runs `bridge.mjs cancel` and closes it; the view's `close(cx)` runs `cancel` too, for any other way the host closes it. A code still being made when the dialog closes is cancelled as it arrives.
 - **Esc** closes the dialog. **⌘⌥P** on macOS, or **Ctrl+Alt+P** on Linux, opens it (see `keys.json`).
@@ -114,7 +121,8 @@ Before the bridge can run, the dialog shows one of two other screens in place of
     - `pair [minutes]` prints `{link, expires, rows}`, where `rows` holds the QR modules as strings of `1`/`0`
     - `status` prints `{running, id, name, ticket, devices, pairing, login, state}`; each device has `fingerprint`
     - `cancel` deletes the live code and prints `{ok, cancelled, devices}`
-    - `start`, `stop`, `forget <id>`, `install` and `uninstall`
+    - `forget <id>` prints `{ok, removed, via}`: `via` is `bridge` when the running bridge removed the phone, `file` when no bridge answered on `bridge.sock` and `forget` wrote `devices.json` itself (`bridge/devices.mjs`). A bridge that refuses or gives no answer within 10s is an error, and so is a socket that is there but refuses connections (a busy bridge) after 2s of tries; nothing is written then.
+    - `start`, `stop`, `install` and `uninstall`
   - **Serving:**
     1. It binds an iroh `Endpoint` with the n0 preset, a persistent secret key and two ALPNs: `herdr-pocket/1` and `herdr-pocket/pair/1`.
     2. It writes its ticket (`EndpointTicket.fromAddr(ep.addr())`) to `status.json`, and again whenever its address changes.
@@ -125,7 +133,8 @@ Before the bridge can run, the dialog shows one of two other screens in place of
 - **The state folder,** `${XDG_STATE_HOME:-~/.local/state}/automagik-pocket-link/` (`bridge/state.mjs`), mode 0700, outside the mod so a reinstall keeps it, files written atomically, all mode 0600 but one:
   - `secret.key`
   - `status.json`
-  - `devices.json`
+  - `devices.json`, written only by the running bridge (or by `forget` when none runs), and flushed to disk (`fsync`) before the rename and the folder after it, so a crash leaves the old list or the new one
+  - `bridge.sock`, the running bridge's socket, where `forget` hands it a removal. The bridge removes it on exit only while it is still its own (same inode), never a later bridge's. Neither end uses a path that does not fit a socket address (`fits` in `bridge/devices.mjs`): 104 bytes or fewer on macOS, measured (105 fails on Node 24, and Node 22 binds it cut short, outside this folder), and 107 or fewer on Linux, a safe bound from the 108-byte `sun_path` less its NUL, not measured. With a longer one the bridge serves without the socket and logs `serve: no control socket`
   - `pairing.json`
   - `bridge.log`, and `bridge.log.1` once it has filled
   - `public-status.json`, mode 0644: whether the bridge runs and which phones are connected, for other mods ([README](README.md#for-other-mods)). No ticket, id or secret. The dialog's folder watch skips it.
@@ -133,7 +142,7 @@ Before the bridge can run, the dialog shows one of two other screens in place of
   - **Moving from `mods/pocket-link/.state/`:** when the new folder has no `secret.key`, the bridge moves each old file with `link()` and `unlink()` (atomic, never over an existing file, the mode kept), then logs one line. While an older bridge still runs from `.state/` (its `status.json` pid is alive), it uses `.state/` for that run instead and moves nothing.
 - **The phone side:** [Automagik Pocket](../../../apps/pocket/README.md), with `computer.iroh:iroh-android:1.2.0`. It opens the `herdr-pocket://pair` link from a scan, a paste or a tapped link, asks before pairing, and keeps its own key in no-backup storage.
 - **What it touches on the computer:**
-  - **Network:** iroh's n0 preset. It keeps a connection to n0's public relays and publishes the bridge's public key and current addresses to n0's address lookup, so phones find it after an IP change. Phones connect in over QUIC/UDP.
+  - **Network:** iroh's n0 preset. It keeps a connection to n0's public relays and publishes the bridge's public key and the n0 relay it currently uses to n0's address lookup, so phones find it after an IP change. iroh's publisher sends no IP addresses by default (`AddrFilter::relay_only`); the phone's iroh publishes the same way. Phones connect in over QUIC/UDP.
   - **Programs:** `node`, `npm` (setup only), `hc connect`, `launchctl` or `systemctl --user`, `ls` (to list Node versions), `sh` (to find `hc` and run setup) and the user's login shell (to find `node`).
   - **Files outside the folder:** the state folder above, and the login service file, `~/Library/LaunchAgents/dev.herdr.pocket-link.plist` or `~/.config/systemd/user/herdr-pocket-link.service`.
 
@@ -146,7 +155,7 @@ Before the bridge can run, the dialog shows one of two other screens in place of
 - **Herdr's PATH isn't the terminal's:** opened from the Dock, Herdr has no nvm, volta, fnm or asdf on PATH, so `exec("node", …)` fails where the terminal works. Find Node yourself (above), and give npm the same folder.
 - **The Homebrew Cellar path breaks:** `process.execPath` under Homebrew is a versioned Cellar path that disappears on upgrade. Write the `opt/<formula>/bin/node` link into the service.
 - **Log lines appear twice:** under launchd, stderr already is `bridge.log`. Append to the file yourself only when stderr is a terminal.
-- **A phone removed mid-session would come back:** it can be re-added by a session that read `devices.json` earlier. Read the file again just before updating a phone's "seen" time.
+- **A removed phone would come back with two writers:** a session's "seen" update reads `devices.json` and writes it back, so a separate `forget` process writing between the two is overwritten. Keep one writer: `forget` asks the running bridge over `bridge.sock`, and the bridge's reads and writes of the file are synchronous, so they never interleave. `forget` writes the file only when no bridge runs, or one runs without a socket (an older one that a mod update left running, or a state folder too long for one: `bridge.sock`'s full path over 104 bytes on macOS or over 107 on Linux; there a "seen" update racing the write can still bring the phone back); a socket that is there but refuses means a busy bridge, so it tries again and then fails rather than write. After its own write it asks the socket once more for a bridge that started meanwhile. `bridge/devices.test.mjs` holds a "seen" update open while `forget` runs as its own process.
 - **The pairing link is a capability:** anyone holding the link (or the QR) within its 10 minutes can pair, because the code is the secret. Don't screenshot a live one. This preview's QR encodes a made-up link.
 - **The phone's code must match:**
   - The phone accepts only `v=1`, `t` matching `^endpoint[a-z2-7]{20,2000}$` and `c` matching `^[A-Za-z0-9_-]{16,64}$`.
@@ -165,6 +174,7 @@ Before the bridge can run, the dialog shows one of two other screens in place of
   - A QR appears and decodes, with any QR reader, to the same link `bridge.mjs pair` printed.
   - Its `c=` equals the code in `pairing.json` in the state folder.
   - The countdown falls each second.
+- **Copy link:** the countdown reads 2:00 or less, `expires` in `pairing.json` is now about 2 minutes away (the code is unchanged), and the clipboard holds the link. The code still pairs within those 2 minutes; at 0:00 a new QR appears, and the copied link is refused with "That code is not the one on the desktop."
 - **Pairing with Herdr Pocket** (scan, or `adb shell am start -a android.intent.action.VIEW -d '<link>'`):
   - The phone shows "Pair with <host>?". Pair connects it and lists the agents.
   - The dialog shows a "Phone paired" toast and lists the phone.
