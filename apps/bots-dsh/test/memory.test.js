@@ -855,6 +855,52 @@ test('an entry left out for its length is logged by its kind and length, never i
   assert.match(left, /^memory review of Writer left out a change \(add, 340 chars\): An entry holds at most 300 characters; this one has 340\./)
 })
 
+test('an unlisted entry number is logged without its digits, at the failure and at the pass', async (t) => {
+  const numbers = ['6222021234567890', '4111111111111111']
+  const replies = numbers.map(entry => JSON.stringify({ changes: [{ op: 'remove', entry }] }))
+  const { ctx, home, call, read, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  for (let turn = 0; turn < 2; turn += 1) {
+    ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+    await reviewed(call)
+  }
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  const [failed] = await warnedTimes(home, 'memory review of chat:b2 failed', 1)
+  const [passed] = await warnedTimes(home, 'passed the lines', 1)
+  const log = diagnosticsLog(home)
+  for (const number of numbers) assert.ok(!log.includes(number), log)
+  const why = "the model's answer names an entry that is not listed"
+  assert.equal(failed, `memory review of chat:b2 failed: ${why}`)
+  assert.equal(passed, `memory review of Writer passed the lines through #11 after 2 answers it could not use: ${why}`)
+})
+
+test('a full topic is left out with a warning that does not name the topic', async (t) => {
+  const seeded = mkdtempSync(join(tmpdir(), 'ds-bot-memory-'))
+  const dir = join(seeded, 'memory', 'bots', 'b2')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'MEMORY.md'), '# Memory\n\n## Index\n- [[hunter3]]\n')
+  const filler = Array.from({ length: 54 }, (_, at) => `- Filler fact number ${at + 1} ${'y'.repeat(270)}`)
+  writeFileSync(join(dir, 'hunter3.md'), `# hunter3\n\n${filler.join('\n')}\n`)
+  assert.ok(readFileSync(join(dir, 'hunter3.md'), 'utf8').length > MEMORY_LIMITS.topic - 300)
+  assert.ok(readFileSync(join(dir, 'hunter3.md'), 'utf8').length < MEMORY_LIMITS.topic)
+  const answer = JSON.stringify({ changes: [
+    { op: 'add', text: `The user flies with Air China ${'z'.repeat(200)}`, topic: 'hunter3' },
+    { op: 'add', text: 'The user likes tea' },
+  ] })
+  const { ctx, home, call, read, stop } = start({ home: seeded, replies: [answer], config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  const [left] = await warnedTimes(home, 'left out a change', 1)
+  assert.match(left, /^memory review of Writer left out a change \(add, 230 chars\): The topic in your memory would have \d+ of its 16000 characters\./)
+  assert.ok(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.some(entry => entry.text === 'The user likes tea'))
+  await settle()
+  const log = diagnosticsLog(home)
+  assert.ok(!log.includes('hunter3'), log)
+})
+
 test('an answer with a malformed change, an unlisted entry, or a bad topic changes nothing, and is asked for once more', async (t) => {
   for (const bad of [{ op: 'add' }, { op: 'remove', entry: 7 }, { op: 'add', text: 'The user writes C++', topic: 'C++' }]) {
     const answer = JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }, bad] })

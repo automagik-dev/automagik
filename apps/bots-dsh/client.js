@@ -1502,7 +1502,7 @@ var HOST_ERRORS = [
   [/^This looks like a key, token, or password[\s\S]*$/, "看起来像密钥、令牌或密码，记忆不会保存这类内容"],
   [/^An entry holds at most (\d+) characters; this one has (\d+)\.[\s\S]*$/, "一条记忆最多 $1 个字符，这条有 $2 个"],
   [/^[\s\S]*'s MEMORY\.md would have (\d+) of its (\d+) characters\.[\s\S]*$/, "主记忆会超过 $2 个字符的上限，请先删掉一些"],
-  [/^The topic \[\[(.+?)\]\] in [\s\S]* would have (\d+) of its (\d+) characters\.[\s\S]*$/, "主题 $1 会超过 $3 个字符的上限"],
+  [/^The topic in [\s\S]* would have (\d+) of its (\d+) characters\.[\s\S]*$/, "主题会超过 $2 个字符的上限"],
   [/^[\s\S]* already has (\d+) topics, the most it holds\.[\s\S]*$/, "主题已经有 $1 个，不能再加新主题"],
   [/^There is no entry (.+)\.$/, "没有第 $1 条"],
   [/^No entry in [\s\S]* matches "([\s\S]*)"\.[\s\S]*$/, "找不到「$1」这条记忆"],

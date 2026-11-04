@@ -735,7 +735,7 @@ export function install(rt) {
     if (next.length <= limit || next.length <= file.content.length) return
     throw Object.assign(new Error(file.topic === undefined
       ? `${capital(label)}'s MEMORY.md would have ${next.length} of its ${limit} characters. Make room first: move details into a topic (remember with topic, then forget them here), merge entries with replace, or forget what no longer matters.`
-      : `The topic [[${file.topic}]] in ${label} would have ${next.length} of its ${limit} characters. Put the rest in another topic, or forget old entries.`), { code: FULL })
+      : `The topic in ${label} would have ${next.length} of its ${limit} characters. Put the rest in another topic, or forget old entries.`), { code: FULL })
   }
   const capital = text => text[0].toUpperCase() + text.slice(1)
   const sizeNote = (file, size) => `${file.file}: ${size} of ${limitOf(file)} characters`
@@ -1663,7 +1663,7 @@ export function install(rt) {
       // No answer text goes in the message: it is thrown to the review's catch and
       // logged there or below, and an answer can hold a secret no redactor knows.
       const unusable = parsed === undefined ? `the model's answer is not a list of changes (${reply.length} chars)`
-        : unknown !== undefined ? `the model's answer names entry ${Number(unknown.entry)}, which is not listed`
+        : unknown !== undefined ? `the model's answer names an entry that is not listed`
           : badTopic !== undefined ? `the model's answer names an entry topic that cannot be a topic name (${badTopic.topic.length} chars)`
             : undefined
       // An answer the review cannot use changes nothing. The same lines are read
