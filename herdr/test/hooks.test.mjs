@@ -375,6 +375,32 @@ test("the entry point runs am's copy first; a missing or broken am copy falls ba
   assert.match(broken.stderr, /broken am/);
 });
 
+test("an am copy older than the sidebar's never shadows it; one at least as new runs first", (t) => {
+  const s = botHome(t);
+  syncHooks({ modsDir: s.mods });
+  const command = commands(settings(s.proj))[1];
+  const amDir = join(s.root, ".automagik", "parts", "automagik.am", "3.0.0");
+  mkdirSync(amDir, { recursive: true });
+  symlinkSync("3.0.0", join(dirname(amDir), "current"));
+  writeFileSync(join(amDir, "briefing.mjs"), "process.stdout.write('am ran\\n');\n");
+  const sidebarVersion = read(join(PACK, "VERSION")).trim();
+  const [major, minor] = sidebarVersion.split(".").map(Number);
+  const runs = (version) => {
+    if (version === null) rmSync(join(amDir, "VERSION"), { force: true });
+    else writeFileSync(join(amDir, "VERSION"), `${version}\n`);
+    return s.hook(command);
+  };
+  // Older (an am that stopped updating), or with no VERSION: the sidebar's briefing runs, am's never.
+  for (const version of [`${major}.${minor - 1}.999`, null]) {
+    const r = runs(version);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /You are Genie/, `am at ${version}`);
+    assert.doesNotMatch(r.stdout, /am ran/);
+  }
+  // The same version, or newer: am's runs first.
+  for (const version of [sidebarVersion, `${major}.${minor + 1}.0`]) assert.equal(runs(version).stdout, "am ran\n", `am at ${version}`);
+});
+
 test("an am copy that throws after printing, reading stdin or joining: one briefing, the sidebar's, the whole input, one session row", (t) => {
   const s = botHome(t);
   syncHooks({ modsDir: s.mods });
@@ -382,6 +408,8 @@ test("an am copy that throws after printing, reading stdin or joining: one brief
   const amDir = join(s.root, ".automagik", "parts", "automagik.am", "3.0.0");
   mkdirSync(amDir, { recursive: true });
   symlinkSync("3.0.0", join(dirname(amDir), "current"));
+  // The sidebar's own version: am's copy goes first only when it is not older.
+  cpSync(join(PACK, "VERSION"), join(amDir, "VERSION"));
   const once = (out) => assert.equal(out.split("<herdr-bot>").length - 1, 1, `exactly one briefing:\n${out}`);
 
   // It printed part of a briefing, then threw: none of it reaches the hook's output.

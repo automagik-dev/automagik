@@ -3,7 +3,9 @@
 // hook runs that copy; the am part (RFC 0012) puts a link there to its own copy instead, so the
 // app home is the folder the hook named (argv[1]), never this file's real place. It
 // runs the first briefing.mjs it can: am's (<AM_HOME, else ~/.automagik>/parts/automagik.am/
-// current/), then the installed sidebar folder's (mods/am-sidebar, else mods/spaces-agents), so a
+// current/) when its VERSION is at least the installed sidebar's, then the sidebar folder's
+// (mods/am-sidebar, else mods/spaces-agents), and am's last when it is older: an am that stopped
+// updating never shadows a newer pack's briefing (t259's review). So a
 // hook survives the sidebar being switched off, the folder's rename and a rollback across it. A
 // copy that is missing, or whose import throws, is passed over for the next one: a broken am never
 // silences a briefing. So that the next one starts clean, the hook's stdin (Claude Code's JSON) is
@@ -15,7 +17,7 @@
 // process's). Fail-open like briefing.mjs: none found, nothing printed, exit 0. The installer, the
 // updater and am replace the copy; edits to it are lost. Apache-2.0.
 
-import { realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
@@ -29,6 +31,23 @@ const copies = [
   ...["am-sidebar", "spaces-agents"].map((m) => ({ path: join(appHome, "mods", m, "briefing.mjs"), am: false })),
 ];
 const firstLine = (e) => String(e?.message ?? e).split("\n")[0];
+
+/** A copy's VERSION as [major, minor, patch], or null when it has none it can read. */
+const versionOf = (script) => {
+  try {
+    const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(readFileSync(join(dirname(script), "VERSION"), "utf8").trim());
+    return m ? m.slice(1).map(Number) : null;
+  } catch { return null; }
+};
+/** Whether `a` is at least `b`: an unknown sidebar version never outranks am, an unknown am's always loses. */
+const atLeast = (a, b) => {
+  if (!b) return true;
+  if (!a) return false;
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i];
+  return true;
+};
+const sidebar = copies.slice(1).find((c) => existsSync(c.path));
+if (sidebar && existsSync(copies[0].path) && !atLeast(versionOf(copies[0].path), versionOf(sidebar.path))) copies.push(copies.shift());
 
 // The hook's stdin, all of it, as briefing.mjs reads it: none from a terminal, at most 300 ms for a
 // caller that never closes it (Claude Code closes it at once), at most 1 MB.
