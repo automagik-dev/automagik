@@ -217,7 +217,7 @@ test('remember saves one entry with its source, and forget removes it, both in t
   assert.match(replaced.before, /^- User prefers short replies \[/)
   assert.match(replaced.after, /^- User prefers detailed replies \[/)
   assert.match(removed.before, /^- User prefers detailed replies \[/)
-  await assert.rejects(tool('forget', { entry: 'nothing like it' }, 'b2'), /No entry in your memory matches "nothing like it"\. recall shows what is saved\.$/)
+  await assert.rejects(tool('forget', { entry: 'nothing like it' }, 'b2'), /: No entry in your memory matches the text given \(15 chars\)\. recall shows what is saved\.$/)
 })
 
 test('topics hold details, linked from MEMORY.md, and go when their last entry does', async (t) => {
@@ -271,7 +271,7 @@ test('keys, long entries, and full files are refused with what to do instead', a
   await assert.rejects(tool('remember', { text: 'One more' }, 'b2'), /MEMORY\.md would have \d+ of its 4000 characters\. Make room first: move details into a topic/)
   assert.match(await tool('remember', { text: 'Fact 3 is short now', replace: 'Fact 3 ' }, 'b2'), /is now "Fact 3 is short now"/)
   assert.match(read('bots', 'b2', 'MEMORY.md'), /- Fact 3 is short now \[/)
-  await assert.rejects(tool('forget', { entry: 'Fact 1' }, 'b2'), /matches \d+ entries in your memory; quote more of the one you mean:\n- Fact 1 y+ \(MEMORY\.md\)\n- Fact 10/)
+  await assert.rejects(tool('forget', { entry: 'Fact 1' }, 'b2'), /: The text given \(6 chars\) matches \d+ entries in your memory; quote more of the one you mean\. recall shows what is saved\.$/)
 })
 
 test('a write that changed nothing fails the call with a code, and a saved one keeps its answer', async (t) => {
@@ -294,7 +294,7 @@ test('a write that changed nothing fails the call with a code, and a saved one k
   // A failure from the write keeps the kind it came with.
   await assert.rejects(tool('forget', { entry: 'nothing like it' }, 'b2'), (error) => {
     assert.equal(error.code, 'memory/no-match')
-    assert.match(error.message, /No entry in your memory matches "nothing like it"/)
+    assert.match(error.message, /^No entry in your memory matches the text given \(15 chars\)\./)
     return true
   })
 })
@@ -899,6 +899,35 @@ test('a full topic is left out with a warning that does not name the topic', asy
   await settle()
   const log = diagnosticsLog(home)
   assert.ok(!log.includes('hunter3'), log)
+})
+
+// The entries are numbered once, before the changes: a second change to an entry
+// the first one edited looks for the old text, which no entry has now.
+test('a change that matches no entry, or many, is logged without the topic or any entry text', async (t) => {
+  const seeded = mkdtempSync(join(tmpdir(), 'ds-bot-memory-'))
+  const dir = join(seeded, 'memory', 'bots', 'b2')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'MEMORY.md'), '# Memory\n\n## Index\n- [[hunter3]]\n')
+  const stored = ['The staging server takes hunter2', 'The staging server takes hunter2 at noon', 'The staging server takes hunter2 at night', 'Deploys sign with hunter2']
+  writeFileSync(join(dir, 'hunter3.md'), `# hunter3\n\n${stored.map(text => `- ${text}`).join('\n')}\n`)
+  const answer = JSON.stringify({ changes: [
+    { op: 'edit', entry: 1, text: 'The user likes tea' },
+    { op: 'remove', entry: 1 },
+    { op: 'edit', entry: 4, text: 'The user deploys on Fridays' },
+    { op: 'remove', entry: 4 },
+  ] })
+  const { ctx, home, call, read, stop } = start({ home: seeded, replies: [answer], config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  const lefts = await warnedTimes(home, 'left out a change', 2)
+  assert.match(lefts[0], /^memory review of Writer left out a change \(remove, 32 chars\): The text given \(32 chars\) matches 2 entries in your memory; quote more of the one you mean\./)
+  assert.match(lefts[1], /^memory review of Writer left out a change \(remove, 25 chars\): No entry in your memory in that topic matches the text given \(25 chars\)\./)
+  assert.deepEqual(parseMemory(read('bots', 'b2', 'hunter3.md')).entries.map(entry => entry.text), ['The user likes tea', ...stored.slice(1, 3), 'The user deploys on Fridays'])
+  await settle()
+  const log = diagnosticsLog(home)
+  for (const secret of ['hunter2', 'hunter3']) assert.ok(!log.includes(secret), log)
 })
 
 test('an answer with a malformed change, an unlisted entry, or a bad topic changes nothing, and is asked for once more', async (t) => {

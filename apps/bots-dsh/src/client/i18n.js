@@ -1460,8 +1460,9 @@ const HOST_ERRORS = [
   [/^The topic in [\s\S]* would have (\d+) of its (\d+) characters\.[\s\S]*$/, '主题会超过 $2 个字符的上限'],
   [/^[\s\S]* already has (\d+) topics, the most it holds\.[\s\S]*$/, '主题已经有 $1 个，不能再加新主题'],
   [/^There is no entry (.+)\.$/, '没有第 $1 条'],
-  [/^No entry in [\s\S]* matches "([\s\S]*)"\.[\s\S]*$/, '找不到「$1」这条记忆'],
-  [/^"([\s\S]*)" matches (\d+) entries in [\s\S]*$/, '「$1」对应了 $2 条记忆，请说得更具体'],
+  [/^[\s\S]* has no such topic \(\d+ chars\)\.[\s\S]*$/, '没有这个主题'],
+  [/^No entry in [\s\S]* matches the text given \(\d+ chars\)\.[\s\S]*$/, '找不到这条记忆'],
+  [/^The text given \(\d+ chars\) matches (\d+) entries in [\s\S]*$/, '对应了 $1 条记忆，请说得更具体'],
   [/^Memory cannot change now: [\s\S]*$/, '现在不能修改记忆：另一个 dsh 正在使用这个 Bot 团队'],
 ]
 const HOST_ZH = {

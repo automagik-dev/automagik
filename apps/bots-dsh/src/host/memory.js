@@ -787,14 +787,16 @@ export function install(rt) {
   }
 
   // `topic` narrows where to look; undefined looks in every file of the scope.
+  // The messages name the topic and the text by their length only: the memory
+  // review logs them, and an entry, a topic or the text asked for can hold a secret.
   function findOne(files, topic, wanted, label) {
     const pool = topic === undefined ? files : files.filter(file => file.topic === topic)
     const missing = message => Object.assign(new Error(message), { code: NO_MATCH })
-    if (topic !== undefined && pool.length === 0) throw missing(`${capital(label)} has no topic [[${topic}]].`)
+    if (topic !== undefined && pool.length === 0) throw missing(`${capital(label)} has no such topic (${topic.length} chars). recall shows what is saved.`)
     const found = matchEntries(allEntries(pool), wanted)
-    const shown = String(wanted ?? '').slice(0, 80)
-    if (found.length === 0) throw missing(`No entry in ${label}${topic ? ` (topic [[${topic}]])` : ''} matches "${shown}". recall shows what is saved.`)
-    if (found.length > 1) throw missing(`"${shown}" matches ${found.length} entries in ${label}; quote more of the one you mean:\n${found.slice(0, 8).map(entry => `- ${entry.text} (${fileName(entry.file)})`).join('\n')}`)
+    const given = `the text given (${String(wanted ?? '').length} chars)`
+    if (found.length === 0) throw missing(`No entry in ${label}${topic !== undefined ? ' in that topic' : ''} matches ${given}. recall shows what is saved.`)
+    if (found.length > 1) throw missing(`${capital(given)} matches ${found.length} entries in ${label}; quote more of the one you mean. recall shows what is saved.`)
     return found[0]
   }
 
