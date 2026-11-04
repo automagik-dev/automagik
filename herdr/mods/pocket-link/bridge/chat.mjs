@@ -27,10 +27,14 @@ export const ROW_TEXT_MAX = 64 * 1024
 export const BACKFILL_ROWS = 200
 export const BACKFILL_BYTES = 1024 * 1024
 export const SEND_TEXT_MAX = 32 * 1024
-/** A request on channel 0 is small; a frame bigger than this ends the connection. */
+/** No frame from the phone is bigger (a request is small, CREDIT 4 bytes, CLOSE none): past it, the connection ends. */
 export const MAX_REQUEST = 256 * 1024
-/** A frame of any kind bigger than this ends the connection (herdr-core's own cap). */
-export const MAX_FRAME = 16 * 1024 * 1024
+/** Requests answered at once; more get `busy`. */
+export const MAX_IN_FLIGHT = 16
+/** Bytes written but not yet taken by the phone; past this the connection ends ('slow'). */
+export const MAX_UNSENT = 4 * 1024 * 1024
+/** Engines one paired phone may use at once (so one phone cannot take every session). */
+export const MAX_ENGINES_PER_DEVICE = 2
 /** Events waiting for credit past this: the subscription is closed ('slow'); the phone resubscribes with its cursor. */
 export const MAX_QUEUED = 2 * 1024 * 1024
 /** Sessions (hc session names) with an engine at once. */
@@ -73,14 +77,19 @@ const errorOf = (id, kind, message = kind) => ({ jsonrpc: '2.0', id, error: { co
 
 /**
  * One phone connection on the chat route.
- * @param {{ engine: any, write(bytes: Buffer): void, end(reason: string): void, log?: (l: string) => void,
- *   window?: number, maxQueued?: number }} options
- *   write: bytes to the phone, in order; end: close the connection
+ * @param {{ engine: any, write(bytes: Buffer): (Promise<void> | void), end(reason: string): void, log?: (l: string) => void,
+ *   window?: number, maxQueued?: number, maxUnsent?: number }} options
+ *   write: bytes to the phone, in order; a promise that settles once they are taken counts them
+ *   as unsent until then. end: close the connection
  */
 export class ChatConnection {
-  constructor({ engine, write, end, log = () => {}, window = CREDIT_WINDOW, maxQueued = MAX_QUEUED }) {
-    Object.assign(this, { engine, write, endConn: end, log, window, maxQueued })
-    this.buffer = Buffer.alloc(0)
+  constructor({ engine, write, end, log = () => {}, window = CREDIT_WINDOW, maxQueued = MAX_QUEUED, maxUnsent = MAX_UNSENT }) {
+    Object.assign(this, { engine, sendBytes: write, endConn: end, log, window, maxQueued, maxUnsent })
+    /** What the phone sent and is not read yet: chunks, joined only as far as a frame needs. */
+    this.chunks = []
+    this.length = 0
+    this.unsent = 0
+    this.inFlight = 0
     this.framed = false
     this.closed = false
     /** channel -> { terminal, handle, credit, queue: Buffer[], queued } */
@@ -91,21 +100,54 @@ export class ChatConnection {
     this.client = { connection: this }
   }
 
+  /** Bytes to the phone, counted until taken: a phone that stops reading cannot grow memory. */
+  write(bytes) {
+    if (this.closed) return
+    this.unsent += bytes.length
+    if (this.unsent > this.maxUnsent) { this.close('slow'); return }
+    const done = () => { this.unsent -= bytes.length }
+    const p = this.sendBytes(bytes)
+    if (p && typeof p.then === 'function') p.then(done, done)
+    else done()
+  }
+
+  /** The first `n` bytes read and not yet taken, as one buffer (joins only those chunks). */
+  peek(n) {
+    if (this.chunks[0]?.length >= n) return this.chunks[0].subarray(0, n)
+    const parts = []
+    let got = 0
+    for (const c of this.chunks) { parts.push(c); got += c.length; if (got >= n) break }
+    const joined = Buffer.concat(parts)
+    this.chunks.splice(0, parts.length, joined)
+    return joined.subarray(0, n)
+  }
+
+  /** Take the first `n` bytes. */
+  take(n) {
+    const out = Buffer.from(this.peek(n))
+    const first = this.chunks[0]
+    if (first.length === n) this.chunks.shift()
+    else this.chunks[0] = first.subarray(n)
+    this.length -= n
+    return out
+  }
+
   /** Bytes from the phone. */
   feed(bytes) {
     if (this.closed) return
-    this.buffer = Buffer.concat([this.buffer, Buffer.from(bytes)])
+    const b = Buffer.from(bytes)
+    if (b.length) { this.chunks.push(b); this.length += b.length }
     try {
       if (!this.framed) this.readHello()
-      while (this.framed && !this.closed && this.buffer.length >= 9) {
-        const channel = this.buffer.readUInt32LE(0)
-        const kind = this.buffer.readUInt8(4)
-        const length = this.buffer.readUInt32LE(5)
-        if (length > MAX_FRAME || (channel === 0 && kind === DATA && length > MAX_REQUEST)) return this.close('frame too big')
-        if (this.buffer.length < 9 + length) return
-        const payload = this.buffer.subarray(9, 9 + length)
-        this.buffer = this.buffer.subarray(9 + length)
-        this.onFrame(channel, kind, Buffer.from(payload))
+      while (this.framed && !this.closed && this.length >= 9) {
+        const head = this.peek(9)
+        const channel = head.readUInt32LE(0)
+        const kind = head.readUInt8(4)
+        const length = head.readUInt32LE(5)
+        if (length > MAX_REQUEST) return this.close('frame too big')
+        if (this.length < 9 + length) return
+        this.take(9)
+        this.onFrame(channel, kind, this.take(length))
       }
     } catch (e) {
       this.log(`chat: bad input: ${e.message}`)
@@ -114,10 +156,11 @@ export class ChatConnection {
   }
 
   readHello() {
-    const at = this.buffer.indexOf(10)
-    if (at === -1) { if (this.buffer.length > MAX_REQUEST) this.close('hello too long'); return }
-    const line = this.buffer.subarray(0, at).toString('utf8')
-    this.buffer = this.buffer.subarray(at + 1)
+    if (!this.length) return
+    const all = this.peek(Math.min(this.length, MAX_REQUEST + 1))
+    const at = all.indexOf(10)
+    if (at === -1) { if (this.length > MAX_REQUEST) this.close('hello too long'); return }
+    const line = this.take(at + 1).subarray(0, at).toString('utf8')
     let m
     try { m = JSON.parse(line) } catch { return this.close('bad hello') }
     if (m?.method !== 'hello' || m.params?.generation !== 1 || m.params?.framed !== true) {
@@ -137,12 +180,17 @@ export class ChatConnection {
       if (kind !== DATA) return
       let m
       try { m = JSON.parse(payload.toString('utf8')) } catch { return this.close('bad request') }
-      this.request(m).then((answer) => this.reply(answer), (e) => { this.log(`chat: ${e.message}`); this.reply(errorOf(m?.id ?? null, 'failed')) })
+      if (this.inFlight >= MAX_IN_FLIGHT) { this.reply(errorOf(m?.id ?? null, 'busy', `at most ${MAX_IN_FLIGHT} requests at once`)); return }
+      this.inFlight += 1
+      this.request(m)
+        .then((answer) => this.reply(answer), (e) => { this.log(`chat: ${e.message}`); this.reply(errorOf(m?.id ?? null, 'failed')) })
+        .finally(() => { this.inFlight -= 1 })
       return
     }
     const sub = this.subs.get(channel)
     if (!sub) return
-    if (kind === CREDIT && payload.length >= 4) { sub.credit += payload.readUInt32LE(0); this.pump(channel) }
+    // Credit never grows past the window: a phone cannot ask for more than it was given.
+    if (kind === CREDIT && payload.length >= 4) { sub.credit = Math.min(sub.credit + payload.readUInt32LE(0), this.window); this.pump(channel) }
     else if (kind === CLOSE) this.unsubscribe(channel, { answer: true })
   }
 
@@ -160,7 +208,8 @@ export class ChatConnection {
         if (!terminal) return errorOf(id, 'invalid_params', 'terminal')
         if (this.byTerminal.has(terminal)) return ok({ channel: this.byTerminal.get(terminal) })
         if (this.subs.size >= MAX_SUBSCRIPTIONS) return errorOf(id, 'too_many', `at most ${MAX_SUBSCRIPTIONS} subscriptions`)
-        return ok({ channel: this.subscribe(terminal, typeof p.after === 'string' ? p.after : null) })
+        const channel = this.subscribe(terminal, typeof p.after === 'string' ? p.after : null)
+        return channel === null ? errorOf(id, 'too_many', 'this session holds too many terminals') : ok({ channel })
       }
       case 'chat.backfill': {
         const sub = terminal && this.subs.get(this.byTerminal.get(terminal))
@@ -194,9 +243,10 @@ export class ChatConnection {
   subscribe(terminal, after) {
     const channel = this.nextChannel++
     const sub = { terminal, handle: null, credit: this.window, queue: [], queued: 0 }
+    sub.handle = this.engine.watch(terminal, this.client, (e) => this.event(channel, e))
+    if (!sub.handle) return null
     this.subs.set(channel, sub)
     this.byTerminal.set(terminal, channel)
-    sub.handle = this.engine.watch(terminal, this.client, (e) => this.event(channel, e))
     // First: where the chat stands. A cursor still held gets what it missed; one that is not (the
     // bridge restarted, or it fell out of the last 500 rows) gets reset and the latest page.
     const missed = after ? sub.handle.rows(after) : null
@@ -223,7 +273,9 @@ export class ChatConnection {
 
   pump(channel) {
     const sub = this.subs.get(channel)
-    while (sub && sub.queue.length && sub.queue[0].length <= sub.credit) {
+    // An event bigger than the whole window (a full snapshot page) goes when the credit is at the
+    // window; the credit goes below zero and the phone's grants bring it back.
+    while (sub && sub.queue.length && (sub.queue[0].length <= sub.credit || sub.credit >= this.window)) {
       const bytes = sub.queue.shift()
       sub.queued -= bytes.length
       sub.credit -= bytes.length
@@ -255,15 +307,20 @@ export class ChatConnection {
  * an engine no connection uses is closed first; if every one is in use, the new one is refused.
  */
 export class ChatEngines {
-  /** @param {{ make(name: string): any, max?: number }} options  make: a new engine for a session name */
-  constructor({ make, max = MAX_ENGINES }) {
-    Object.assign(this, { make, max })
+  /** @param {{ make(name: string): any, max?: number, perDevice?: number }} options  make: a new engine for a session name */
+  constructor({ make, max = MAX_ENGINES, perDevice = MAX_ENGINES_PER_DEVICE }) {
+    Object.assign(this, { make, max, perDevice })
     /** name -> { engine, connections: Set } */
     this.byName = new Map()
   }
 
-  /** The engine for a session, for one more connection; null when every engine is in use. */
-  acquire(name, connection) {
+  /**
+   * The engine for a session, for one more connection of `device`; null when every engine is in
+   * use, or when that device already uses `perDevice` other sessions.
+   */
+  acquire(name, connection, device = connection) {
+    const others = [...this.byName.entries()].filter(([n, x]) => n !== name && [...x.connections].some((c) => x.devices.get(c) === device))
+    if (others.length >= this.perDevice) return null
     let e = this.byName.get(name)
     if (!e) {
       if (this.byName.size >= this.max) {
@@ -271,11 +328,12 @@ export class ChatEngines {
         if (!idle) return null
         this.closeEngine(idle[0])
       }
-      e = { engine: this.make(name), connections: new Set() }
+      e = { engine: this.make(name), connections: new Set(), devices: new Map() }
       e.engine.onEmpty = () => { if (!e.connections.size && this.byName.get(name) === e) this.closeEngine(name) }
       this.byName.set(name, e)
     }
     e.connections.add(connection)
+    e.devices.set(connection, device)
     return e.engine
   }
 
@@ -283,6 +341,7 @@ export class ChatEngines {
     const e = this.byName.get(name)
     if (!e) return
     e.connections.delete(connection)
+    e.devices.delete(connection)
     if (!e.connections.size && e.engine.empty) this.closeEngine(name)
   }
 

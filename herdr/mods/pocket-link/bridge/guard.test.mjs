@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, statSync, openSync, writeSync, closeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { acceptOne, slots, throttle, rotateLog, readLine, addressOf, MAX_LINE, routesFor, endRemoved, ALPN } from './guard.mjs'
+import { acceptOne, slots, throttle, rotateLog, readLine, addressOf, MAX_LINE, routesFor, endRemoved, sessionName, ALPN } from './guard.mjs'
 
 const never = () => new Promise(() => {})
 const later = (ms, value) => new Promise(r => setTimeout(() => r(value), ms))
@@ -272,4 +272,12 @@ test("a removed phone's chat and terminal sessions are ended; a paired phone's s
   assert.equal(endRemoved(live, new Set(['kept'])), 2)
   assert.deepEqual(ended.sort(), ['gone chat', 'gone session'])
   assert.deepEqual([...live].map(s => s.phone), ['kept'])
+})
+
+test('a session name: hc-safe characters, never only dots, else default (both routes)', () => {
+  for (const [given, want] of [['work', 'work'], ['a.b_c-1', 'a.b_c-1'], ['.', 'default'], ['..', 'default'], ['...', 'default'], ['.hidden', '.hidden'],
+    ['a/b', 'default'], ['', 'default'], ['x'.repeat(65), 'default'], [7, 'default'], [undefined, 'default']]) {
+    assert.equal(sessionName({ session: given }), want, String(given))
+  }
+  assert.equal(sessionName(null), 'default')
 })

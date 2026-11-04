@@ -21,7 +21,7 @@ import { homedir, hostname, platform } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import QRCode from 'qrcode'
-import { acceptOne, slots, throttle, rotateLog, routesFor, endRemoved, ALPN } from './guard.mjs'
+import { acceptOne, slots, throttle, rotateLog, routesFor, endRemoved, sessionName, ALPN } from './guard.mjs'
 import { ChatConnection, ChatEngines } from './chat.mjs'
 import { createEngine } from '../chat/engine.js'
 import { judgeCode, cancelCode, fingerprint } from './pairing.mjs'
@@ -100,7 +100,7 @@ function revoke() { endRemoved(live, new Set(devices().map(d => d.id)), log) }
 async function session({ conn, bi, value, rest, peer: phone }) {
   const device = devices().find(d => d.id === phone)
   if (!device) { conn.close(1n, [...Buffer.from('not paired')]); return } // removed since it was admitted
-  const name = typeof value?.session === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(value.session) ? value.session : 'default'
+  const name = sessionName(value)
   // Read again: a phone removed meanwhile must stay removed.
   writeJson(files.devices, devices().map(d => d.id === phone ? { ...d, seen: Date.now() } : d))
   log('session:', device.name, 'session', name)
@@ -139,18 +139,19 @@ const engines = new ChatEngines({
 async function chatRoute({ conn, bi, value, rest, peer: phone }) {
   const device = devices().find(d => d.id === phone)
   if (!device) { conn.close(1n, [...Buffer.from('not paired')]); return } // removed since it was admitted
-  const name = typeof value?.session === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(value.session) ? value.session : 'default'
+  const name = sessionName(value)
   log('chat:', device.name, 'session', name)
   let writing = Promise.resolve()
   let chat = null
   const open = { phone, conn, end: () => { chat?.close('not paired'); try { conn.close(1n, [...Buffer.from('not paired')]) } catch {} } }
-  const engine = engines.acquire(name, open)
+  const engine = engines.acquire(name, open, phone)
   if (!engine) { conn.close(3n, [...Buffer.from('too many chat sessions')]); return }
   live.add(open)
   const close = phones.open(phone, device.name)
   chat = new ChatConnection({
     engine,
-    write: bytes => { writing = writing.then(() => bi.send.writeAll([...bytes])).catch(() => chat.close('write failed')) },
+    // The promise lets chat.mjs count bytes not yet taken (MAX_UNSENT).
+    write: bytes => (writing = writing.then(() => bi.send.writeAll([...bytes])).catch(() => chat.close('write failed'))),
     end: () => { writing.then(() => bi.send.finish()).catch(() => {}) },
     log,
   })

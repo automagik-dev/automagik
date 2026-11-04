@@ -217,3 +217,12 @@ export function endRemoved(live, paired, log = () => {}) {
   }
   return n
 }
+
+/**
+ * The hc session a phone's header names, for the terminal session and the chat alike: letters,
+ * digits, `_`, `.` and `-`, 1 to 64, but never only dots (`.` and `..` are no names). Else 'default'.
+ */
+export function sessionName(value) {
+  const s = value?.session
+  return typeof s === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(s) && !/^\.+$/.test(s) ? s : 'default'
+}

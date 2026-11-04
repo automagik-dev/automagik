@@ -313,3 +313,86 @@ test('the 32 KiB send limit is on what the phone sent, before any cleaning', asy
   assert.equal(hc.calls.filter(c => c.method === 'terminal.send').length, 0)
   engine.close()
 })
+
+test('credit is clamped to the window; an event bigger than the window still goes once credit is full', async () => {
+  const { engine, path } = world()
+  const p = phone(engine, { window: 300 })
+  p.hello()
+  await p.call('chat.subscribe', { terminal: 't1' })
+  await engine.entries.get('t1').projection.ready
+  const sub = p.conn.subs.get(1)
+  const grant = n => { const c = Buffer.alloc(4); c.writeUInt32LE(n, 0); p.conn.feed(frame(1, CREDIT, c)) }
+  grant(10_000_000)
+  assert.ok(sub.credit <= 300, `credit ${sub.credit} past the window`)
+  appendFileSync(path, user('big', 'w'.repeat(2000)))
+  await engine.entries.get('t1').projection.tail.tick()
+  grant(300)
+  const rows = p.events(1).filter(e => e.type === 'rows').flatMap(e => e.rows)
+  assert.ok(rows.some(r => r.text === 'w'.repeat(2000)), 'the big event went at full credit')
+  engine.close()
+})
+
+test('at most 16 requests at once: more are answered busy', async () => {
+  const { engine } = world()
+  const waiting = []
+  engine.interrupt = () => new Promise(r => waiting.push(r))
+  const p = phone(engine)
+  p.hello()
+  for (let i = 1; i <= 17; i++) p.conn.feed(frame(0, DATA, Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: i, method: 'chat.interrupt', params: { terminal: 't1' } }))))
+  await settle()
+  const answers = p.frames().filter(f => f.channel === 0).map(f => JSON.parse(f.payload))
+  assert.deepEqual(answers.map(a => [a.id, a.error?.data?.kind]), [[17, 'busy']])
+  for (const r of waiting) r({ ok: true })
+  await settle()
+  p.conn.feed(frame(0, DATA, Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 18, method: 'chat.list' }))))
+  await settle()
+  assert.ok(p.frames().map(f => JSON.parse(f.payload)).find(m => m.id === 18)?.result, 'room again once answered')
+  engine.close()
+})
+
+test('a phone that stops taking bytes is closed, not buffered without end', () => {
+  const { engine } = world()
+  const ended = []
+  const conn = new ChatConnection({ engine, write: () => new Promise(() => {}), end: r => ended.push(r), maxUnsent: 1000 })
+  conn.feed(Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'hello', params: { generation: 1, framed: true } }) + '\n'))
+  for (let i = 0; i < 20 && !conn.closed; i++) conn.reply({ jsonrpc: '2.0', id: i, result: 'x'.repeat(200) })
+  assert.deepEqual(ended, ['slow'])
+  engine.close()
+})
+
+test('every frame from the phone is capped, CREDIT and CLOSE included; frames split across reads are read whole', async () => {
+  const { engine } = world()
+  const p = phone(engine)
+  p.hello()
+  const head = Buffer.alloc(9); head.writeUInt32LE(5, 0); head.writeUInt8(CREDIT, 4); head.writeUInt32LE(300 * 1024, 5)
+  p.conn.feed(head)
+  assert.deepEqual(p.ended, ['frame too big'])
+  const q = phone(engine)
+  q.hello()
+  const req = frame(0, DATA, Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 9, method: 'chat.list' })))
+  for (const byte of req) q.conn.feed(Buffer.from([byte])) // one byte per read
+  await settle()
+  assert.equal(q.frames().map(f => JSON.parse(f.payload)).find(m => m.id === 9)?.result?.terminals?.length, 0)
+  engine.close()
+})
+
+test('a session holding too many terminals refuses a new subscription', async () => {
+  const { engine } = world()
+  engine.maxTerminals = 1
+  const p = phone(engine)
+  p.hello()
+  assert.ok((await p.call('chat.subscribe', { terminal: 't1' })).result.channel)
+  assert.equal((await p.call('chat.subscribe', { terminal: 't2' })).error.data.kind, 'too_many')
+  engine.close()
+})
+
+test('one device uses at most two sessions at once; others still get theirs', () => {
+  const { engines } = fakeEngines(8)
+  assert.ok(engines.acquire('s1', 'c1', 'phone-a'))
+  assert.ok(engines.acquire('s2', 'c2', 'phone-a'))
+  assert.equal(engines.acquire('s3', 'c3', 'phone-a'), null, 'a third session for the same phone')
+  assert.ok(engines.acquire('s1', 'c4', 'phone-a'), 'another connection to a session it already uses')
+  assert.ok(engines.acquire('s3', 'c5', 'phone-b'), 'another phone is not held back')
+  engines.release('s2', 'c2')
+  assert.ok(engines.acquire('s3', 'c6', 'phone-a'), 'room again once it left one')
+})
