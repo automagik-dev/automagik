@@ -250,3 +250,19 @@ test('a keys call that failed or timed out still marks the call answered: no sec
   assert.equal(writes().filter((c) => c.method === 'terminal.keys').length, 1)
   engine.close()
 })
+
+test('a held terminal (no client left) accepts no writes; the engine says when nothing is held', async () => {
+  const { engine, timers, writes } = setup()
+  const a = client(engine)
+  await settle()
+  let emptied = 0
+  engine.onEmpty = () => { emptied += 1 }
+  a.handle.close()
+  assert.equal(engine.empty, false, 'held for 10 minutes')
+  assert.equal((await engine.send(a.me, 't1', { text: 'x', id: 'm1' })).reason, 'not-watching')
+  assert.equal((await engine.interrupt(a.me, 't1')).reason, 'not-watching')
+  assert.equal(writes().length, 0)
+  timers.timeouts.find((h) => h.ms === 600_000).fn()
+  assert.deepEqual([engine.empty, emptied], [true, 1])
+  engine.close()
+})

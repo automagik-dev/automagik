@@ -38,7 +38,10 @@ export function chatEnv(env = process.env) {
 
 /** An engine with its own hc (the bridge passes hcPath and its environment). */
 export function createEngine({ home, appHome, hcPath, env = process.env, log } = {}) {
-  return new Engine({ hc: connectHc({ hcPath, env: chatEnv(env) }), home, appHome, log })
+  const engine = new Engine({ hc: connectHc({ hcPath, env: chatEnv(env) }), home, appHome, log })
+  // Its own hc: closed with it.
+  engine.ownsHc = true
+  return engine
 }
 
 const refused = (reason = 'not-watching') => ({ state: 'refused', ok: false, reason })
@@ -106,9 +109,18 @@ export class Engine {
     this.timers.clearTimeout(entry.linger)
     this.timers.clearInterval(entry.flusher)
     entry.projection.stop()
+    if (!this.entries.size) this.onEmpty?.()
   }
 
-  close() { for (const a of [...this.entries.keys()]) this.drop(a); this.hub.close() }
+  /** No terminal held any more (every client gone and every hold over): the owner may close it. */
+  get empty() { return this.entries.size === 0 }
+
+  close() {
+    this.onEmpty = null
+    for (const a of [...this.entries.keys()]) this.drop(a)
+    this.hub.close()
+    if (this.ownsHc) this.hc.close()
+  }
 
   open(address) {
     const projection = new Projection(address, { hc: this.hc, hub: this.hub, home: this.home, appHome: this.appHome, log: this.log, refused: this.refused, timers: this.timers, ...this.projectionOptions })
