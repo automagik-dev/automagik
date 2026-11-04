@@ -363,7 +363,15 @@ test("herdr.am-sidebar switches off like any member only once the command and th
   writeFileSync(settings, hooked(directHookCommand(m.app)));
   writeFileSync(join(m.app, "am-sidebar-projects.json"), JSON.stringify([project]));
   assert.throws(() => uninstall(m.ctx(), P("herdr.am-sidebar")), /the briefing hook in 1 project .* call mods\/am-sidebar\/briefing.mjs/);
+  // The pack's own hook (hookCommand) starts through the sidebar's bin/run.sh: switched off, it
+  // would run nothing, so it keeps the sidebar on too, until am runs the hooks (delivery 3).
   writeFileSync(settings, hooked(hookCommand(m.app)));
+  assert.equal(sidebarCarries(m.ctx()).length, 1);
+  assert.throws(() => uninstall(m.ctx(), P("herdr.am-sidebar")),
+    /the briefing hook in 1 project .*, which starts through mods\/am-sidebar\/bin\/run\.sh: with the sidebar off, that hook would run nothing/);
+  assert.ok(existsSync(join(m.mods, "am-sidebar")), "nothing moved");
+  // A hook through am's own runner (delivery 3's shape) does not need the sidebar.
+  writeFileSync(settings, hooked(`sh '${join(m.dir, ".automagik", "parts", "automagik.am", "current", "bin", "run.sh")}' '${entry}'`));
   assert.deepEqual(sidebarCarries(m.ctx()), []);
   assert.match(doctorOf(m, "herdr.am-sidebar").checks.find((c) => c.check === "switch-off").detail, /can be switched off/);
   assert.equal(doctorOf(m, "herdr.pack").checks.find((c) => c.check === "command").ok, true, "am's link is not the pack's to fix");

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -217,7 +217,7 @@ test('remember saves one entry with its source, and forget removes it, both in t
   assert.match(replaced.before, /^- User prefers short replies \[/)
   assert.match(replaced.after, /^- User prefers detailed replies \[/)
   assert.match(removed.before, /^- User prefers detailed replies \[/)
-  await assert.rejects(tool('forget', { entry: 'nothing like it' }, 'b2'), /No entry in your memory matches "nothing like it"\. recall shows what is saved\.$/)
+  await assert.rejects(tool('forget', { entry: 'nothing like it' }, 'b2'), /: No entry in your memory matches the text given \(15 chars\)\. recall shows what is saved\.$/)
 })
 
 test('topics hold details, linked from MEMORY.md, and go when their last entry does', async (t) => {
@@ -271,7 +271,7 @@ test('keys, long entries, and full files are refused with what to do instead', a
   await assert.rejects(tool('remember', { text: 'One more' }, 'b2'), /MEMORY\.md would have \d+ of its 4000 characters\. Make room first: move details into a topic/)
   assert.match(await tool('remember', { text: 'Fact 3 is short now', replace: 'Fact 3 ' }, 'b2'), /is now "Fact 3 is short now"/)
   assert.match(read('bots', 'b2', 'MEMORY.md'), /- Fact 3 is short now \[/)
-  await assert.rejects(tool('forget', { entry: 'Fact 1' }, 'b2'), /matches \d+ entries in your memory; quote more of the one you mean:\n- Fact 1 y+ \(MEMORY\.md\)\n- Fact 10/)
+  await assert.rejects(tool('forget', { entry: 'Fact 1' }, 'b2'), /: The text given \(6 chars\) matches \d+ entries in your memory; quote more of the one you mean\. recall shows what is saved\.$/)
 })
 
 test('a write that changed nothing fails the call with a code, and a saved one keeps its answer', async (t) => {
@@ -294,7 +294,7 @@ test('a write that changed nothing fails the call with a code, and a saved one k
   // A failure from the write keeps the kind it came with.
   await assert.rejects(tool('forget', { entry: 'nothing like it' }, 'b2'), (error) => {
     assert.equal(error.code, 'memory/no-match')
-    assert.match(error.message, /No entry in your memory matches "nothing like it"/)
+    assert.match(error.message, /^No entry in your memory matches the text given \(15 chars\)\./)
     return true
   })
 })
@@ -332,7 +332,7 @@ test('a memory file that cannot be read is left alone, and the section says so',
   t.after(() => stop())
   // A directory reads as EISDIR on every platform; no chmod games needed.
   mkdirSync(join(home, 'memory', 'bots', 'b2', 'MEMORY.md'), { recursive: true })
-  await assert.rejects(tool('remember', { text: 'Likes tea' }, 'b2'), /Memory file .*MEMORY\.md could not be read \(EISDIR\)\. Omni leaves it as it is/)
+  await assert.rejects(tool('remember', { text: 'Likes tea' }, 'b2'), /A memory file could not be read \(EISDIR\)\. Omni leaves it as it is/)
   assert.deepEqual(readdirSync(join(home, 'memory', 'bots', 'b2')), ['MEMORY.md'])
   // The prompt shows the failure instead of looking empty, and nothing is frozen.
   assert.match(section('b2'), /\(this memory could not be read: EISDIR\)/)
@@ -411,7 +411,7 @@ test('the memory panel shows every entry and a summary the Bot\'s model writes o
   assert.equal((await call('memory-view', { botId: 'b2', summarize: true })).value.fresh, false)
   await summarized(call)
   const failed = (await call('memory-view', { botId: 'b2', summarize: true })).value
-  assert.deepEqual([failed.summary.text, failed.fresh, failed.error], ['## Overview\nYou like tea.', false, 'provider down'])
+  assert.deepEqual([failed.summary.text, failed.fresh, failed.error], ['## Overview\nYou like tea.', false, 'The model could not answer (provider error).'])
   assert.equal(requests.length, 2)
   replies.push('## Overview\nYou like tea and live in Hangzhou.')
   await call('memory-view', { botId: 'b2', regenerate: true })
@@ -509,7 +509,8 @@ test('a summary that failed on both models is tried again once the Bot has anoth
   await call('memory-view', { botId: 'b2', summarize: true })
   await summarized(call)
   const failed = (await call('memory-view', { botId: 'b2', summarize: true })).value
-  assert.equal(failed.error, 'deepseek/flash: 401: Unauthorized; deepseek/v4: 503 Service Unavailable')
+  // The provider's words are not kept, only that a provider failed and which one.
+  assert.equal(failed.error, 'deepseek/flash: provider error; deepseek/v4: provider error')
   assert.equal(failed.summarizing, false)
   assert.equal(requests.length, 2)
 
@@ -595,7 +596,7 @@ test('a host that only reads the team shows memory but changes none of it', asyn
   const { tool, call, section, stop } = start({ home })
   t.after(() => stop())
   await call('state', {})
-  await assert.rejects(tool('remember', { text: 'Likes tea' }, 'b2'), /Memory cannot change now: The Bot team in .* is open in another dsh/)
+  await assert.rejects(tool('remember', { text: 'Likes tea' }, 'b2'), /^MemoryWriteError: Memory cannot change now: this window cannot change the Bot team\./)
   assert.equal((await call('memory-view', { botId: 'b2' })).ok, true)
   assert.equal((await call('memory-ask', { botId: 'b2', text: 'hi' })).error.code, 'bot/read-only')
   assert.match(section('b2'), /^# Your memory/)
@@ -609,6 +610,22 @@ async function reviewed(call) {
     if ((await call('state', {})).value.memoryReviews === 0) return
   }
   throw new Error('the memory review did not finish')
+}
+
+// The host's warnings that hold `text`, from its diagnostics log.
+const warnings = (home, text) => {
+  const path = join(home, 'logs', 'diagnostics.jsonl')
+  if (!existsSync(path)) return []
+  return readFileSync(path, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
+    .filter(entry => entry.level === 'warn' && entry.text.includes(text))
+    .map(entry => entry.text)
+}
+// Exactly `count` of them, once the log has caught up.
+async function warnedTimes(home, text, count) {
+  await until(() => warnings(home, text).length >= count)
+  await settle()
+  assert.equal(warnings(home, text).length, count, `warnings with "${text}": ${JSON.stringify(warnings(home, text))}`)
+  return warnings(home, text)
 }
 
 test('when a turn ends, the memory review keeps what the user said, through the same rules', async (t) => {
@@ -747,29 +764,392 @@ test('an answer that is no list of changes keeps the review\'s place, and the ne
   assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
 })
 
-test('an answer with a malformed change, an unlisted entry, an entry too long, or a bad topic changes nothing and keeps the review\'s place', async (t) => {
-  const replies = [
-    JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }, { op: 'add' }] }),
-    JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }, { op: 'remove', entry: 7 }] }),
-    JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }, { op: 'add', text: `The user tells ${'a long story '.repeat(30)}` }] }),
-    JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }, { op: 'add', text: 'The user writes C++', topic: 'C++' }] }),
-    JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }, { op: 'add', text: 'I use hunter2 as my password' }] }),
-  ]
-  const { ctx, call, read, requests, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
+test('an answer the review cannot use is asked for once more, then the lines are passed with one warning', async (t) => {
+  const replies = ['Nothing new.', 'Nothing new.']
+  const { ctx, home, call, read, requests, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
   t.after(() => stop())
   await call('state', {})
-  for (let tries = 0; tries < 4; tries += 1) {
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 9 })
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 2)
+  assert.equal(requests[1].messages[0].content[0].text, requests[0].messages[0].content[0].text)
+  // Two answers for the same lines that were no list of changes: the review moves on.
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  const [passed] = await warnedTimes(home, 'passed the lines', 1)
+  assert.match(passed, /^memory review of Writer passed the lines through #11 after 2 answers it could not use: the model's answer is not a list of changes \(12 chars\)$/)
+  await warnedTimes(home, 'memory review of chat:b2 failed', 1)
+  // The same lines are not read a third time.
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 2)
+  assert.throws(() => read('bots', 'b2', 'MEMORY.md'), { code: 'ENOENT' })
+})
+
+// Answers with secrets no redactor knows: the log may say what kind of answer
+// it was and how long, never what it said.
+const secretAnswers = ['I use hunter2 as my password', 'hunter3 is my password']
+const diagnosticsLog = home => readFileSync(join(home, 'logs', 'diagnostics.jsonl'), 'utf8')
+
+test('a review that fails on an unusable answer logs no word of the answer', async (t) => {
+  const { ctx, home, call, read, stop } = start({ replies: [...secretAnswers], config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 9 })
+  const [failed] = await warnedTimes(home, 'memory review of chat:b2 failed', 1)
+  const log = diagnosticsLog(home)
+  for (const secret of ['hunter2', 'hunter3']) assert.ok(!log.includes(secret), log)
+  assert.equal(failed, `memory review of chat:b2 failed: the model's answer is not a list of changes (${secretAnswers[0].length} chars)`)
+})
+
+test('lines passed after unusable answers log no word of either answer', async (t) => {
+  const { ctx, home, call, read, stop } = start({ replies: [...secretAnswers], config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  for (let turn = 0; turn < 2; turn += 1) {
+    ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+    await reviewed(call)
+  }
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  const [passed] = await warnedTimes(home, 'passed the lines', 1)
+  const log = diagnosticsLog(home)
+  for (const secret of ['hunter2', 'hunter3']) assert.ok(!log.includes(secret), log)
+  assert.equal(passed, `memory review of Writer passed the lines through #11 after 2 answers it could not use: the model's answer is not a list of changes (${secretAnswers[1].length} chars)`)
+})
+
+test('a topic that cannot be a topic name is logged by its length, at the failure and at the pass', async (t) => {
+  const topics = ['pw: hunter2', 'pw: hunter3']
+  const replies = topics.map(topic => JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea', topic }] }))
+  const { ctx, home, call, read, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  for (let turn = 0; turn < 2; turn += 1) {
+    ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+    await reviewed(call)
+  }
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  const [failed] = await warnedTimes(home, 'memory review of chat:b2 failed', 1)
+  const [passed] = await warnedTimes(home, 'passed the lines', 1)
+  const log = diagnosticsLog(home)
+  for (const secret of ['hunter2', 'hunter3']) assert.ok(!log.includes(secret), log)
+  const why = `the model's answer names an entry topic that cannot be a topic name (${topics[0].length} chars)`
+  assert.equal(failed, `memory review of chat:b2 failed: ${why}`)
+  assert.equal(passed, `memory review of Writer passed the lines through #11 after 2 answers it could not use: ${why}`)
+})
+
+test('an entry left out for its length is logged by its kind and length, never its text', async (t) => {
+  const long = `The user tells a story about hunter2: ${'x'.repeat(302)}`
+  assert.equal(long.length, 340)
+  const replies = [JSON.stringify({ changes: [{ op: 'add', text: long }, { op: 'add', text: 'The user likes tea' }] })]
+  const { ctx, home, call, read, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.deepEqual(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text), ['The user likes tea'])
+  const [left] = await warnedTimes(home, 'left out a change', 1)
+  const log = diagnosticsLog(home)
+  assert.ok(!log.includes('hunter2'), log)
+  assert.match(left, /^memory review of Writer left out a change \(add, 340 chars\): An entry holds at most 300 characters; this one has 340\./)
+})
+
+test('an unlisted entry number is logged without its digits, at the failure and at the pass', async (t) => {
+  const numbers = ['6222021234567890', '4111111111111111']
+  const replies = numbers.map(entry => JSON.stringify({ changes: [{ op: 'remove', entry }] }))
+  const { ctx, home, call, read, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  for (let turn = 0; turn < 2; turn += 1) {
+    ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+    await reviewed(call)
+  }
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  const [failed] = await warnedTimes(home, 'memory review of chat:b2 failed', 1)
+  const [passed] = await warnedTimes(home, 'passed the lines', 1)
+  const log = diagnosticsLog(home)
+  for (const number of numbers) assert.ok(!log.includes(number), log)
+  const why = "the model's answer names an entry that is not listed"
+  assert.equal(failed, `memory review of chat:b2 failed: ${why}`)
+  assert.equal(passed, `memory review of Writer passed the lines through #11 after 2 answers it could not use: ${why}`)
+})
+
+test('a full topic is left out with a warning that does not name the topic', async (t) => {
+  const seeded = mkdtempSync(join(tmpdir(), 'ds-bot-memory-'))
+  const dir = join(seeded, 'memory', 'bots', 'b2')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'MEMORY.md'), '# Memory\n\n## Index\n- [[hunter3]]\n')
+  const filler = Array.from({ length: 54 }, (_, at) => `- Filler fact number ${at + 1} ${'y'.repeat(270)}`)
+  writeFileSync(join(dir, 'hunter3.md'), `# hunter3\n\n${filler.join('\n')}\n`)
+  assert.ok(readFileSync(join(dir, 'hunter3.md'), 'utf8').length > MEMORY_LIMITS.topic - 300)
+  assert.ok(readFileSync(join(dir, 'hunter3.md'), 'utf8').length < MEMORY_LIMITS.topic)
+  const answer = JSON.stringify({ changes: [
+    { op: 'add', text: `The user flies with Air China ${'z'.repeat(200)}`, topic: 'hunter3' },
+    { op: 'add', text: 'The user likes tea' },
+  ] })
+  const { ctx, home, call, read, stop } = start({ home: seeded, replies: [answer], config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  const [left] = await warnedTimes(home, 'left out a change', 1)
+  assert.match(left, /^memory review of Writer left out a change \(add, 230 chars\): The topic in your memory would have \d+ of its 16000 characters\./)
+  assert.ok(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.some(entry => entry.text === 'The user likes tea'))
+  await settle()
+  const log = diagnosticsLog(home)
+  assert.ok(!log.includes('hunter3'), log)
+})
+
+// The entries are numbered once, before the changes: a second change to an entry
+// the first one edited looks for the old text, which no entry has now.
+test('a change that matches no entry, or many, is logged without the topic or any entry text', async (t) => {
+  const seeded = mkdtempSync(join(tmpdir(), 'ds-bot-memory-'))
+  const dir = join(seeded, 'memory', 'bots', 'b2')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'MEMORY.md'), '# Memory\n\n## Index\n- [[hunter3]]\n')
+  const stored = ['The staging server takes hunter2', 'The staging server takes hunter2 at noon', 'The staging server takes hunter2 at night', 'Deploys sign with hunter2']
+  writeFileSync(join(dir, 'hunter3.md'), `# hunter3\n\n${stored.map(text => `- ${text}`).join('\n')}\n`)
+  const answer = JSON.stringify({ changes: [
+    { op: 'edit', entry: 1, text: 'The user likes tea' },
+    { op: 'remove', entry: 1 },
+    { op: 'edit', entry: 4, text: 'The user deploys on Fridays' },
+    { op: 'remove', entry: 4 },
+  ] })
+  const { ctx, home, call, read, stop } = start({ home: seeded, replies: [answer], config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  const lefts = await warnedTimes(home, 'left out a change', 2)
+  assert.match(lefts[0], /^memory review of Writer left out a change \(remove, 32 chars\): The text given \(32 chars\) matches 2 entries in your memory; quote more of the one you mean\./)
+  assert.match(lefts[1], /^memory review of Writer left out a change \(remove, 25 chars\): No entry in your memory in that topic matches the text given \(25 chars\)\./)
+  assert.deepEqual(parseMemory(read('bots', 'b2', 'hunter3.md')).entries.map(entry => entry.text), ['The user likes tea', ...stored.slice(1, 3), 'The user deploys on Fridays'])
+  await settle()
+  const log = diagnosticsLog(home)
+  for (const secret of ['hunter2', 'hunter3']) assert.ok(!log.includes(secret), log)
+})
+
+test('an answer with a malformed change, an unlisted entry, or a bad topic changes nothing, and is asked for once more', async (t) => {
+  for (const bad of [{ op: 'add' }, { op: 'remove', entry: 7 }, { op: 'add', text: 'The user writes C++', topic: 'C++' }]) {
+    const answer = JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }, bad] })
+    const { ctx, home, call, read, requests, stop } = start({ replies: [answer, answer], config: { memoryReviewDelayMs: 0 } })
+    t.after(() => stop())
+    await call('state', {})
     ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
     await reviewed(call)
     assert.throws(() => read('bots', 'b2', 'MEMORY.md'), { code: 'ENOENT' })
+    assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 9 }, JSON.stringify(bad))
+    ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+    await reviewed(call)
+    assert.throws(() => read('bots', 'b2', 'MEMORY.md'), { code: 'ENOENT' })
+    assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 }, JSON.stringify(bad))
+    await warnedTimes(home, 'passed the lines', 1)
+    ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+    await reviewed(call)
+    assert.equal(requests.length, 2, JSON.stringify(bad))
+  }
+})
+
+test('a password in an answer is only left out, with no warning that shows it', async (t) => {
+  const replies = [JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }, { op: 'add', text: 'I use hunter2 as my password' }] })]
+  const { ctx, home, call, read, requests, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+  assert.deepEqual(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text), ['The user likes tea'])
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  await settle()
+  assert.deepEqual(warnings(home, 'hunter2'), [])
+  assert.deepEqual(warnings(home, 'memory review'), [])
+})
+
+test('an entry too long for memory is left out with one warning, and the rest of the answer is kept', async (t) => {
+  const long = `The user tells a story: ${'x'.repeat(316)}`
+  assert.equal(long.length, 340)
+  const replies = [JSON.stringify({ changes: [{ op: 'add', text: long }, { op: 'add', text: 'The user likes tea' }] })]
+  const { ctx, home, call, read, requests, journal, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.deepEqual(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text), ['The user likes tea'])
+  assert.deepEqual(journal().map(record => record.op), ['add'])
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  const [left] = await warnedTimes(home, 'left out a change', 1)
+  assert.match(left, /^memory review of Writer left out a change \(add, 340 chars\): An entry holds at most 300 characters; this one has 340\./)
+  assert.deepEqual(warnings(home, 'memory review of chat:b2 failed'), [])
+  // The lines are passed, so the next turn end asks the model nothing.
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+})
+
+test('a batch with two changes memory cannot keep logs one warning each, and keeps the rest', async (t) => {
+  const seeded = mkdtempSync(join(tmpdir(), 'ds-bot-memory-'))
+  mkdirSync(join(seeded, 'memory', 'bots', 'b2'), { recursive: true })
+  const filler = Array.from({ length: 13 }, (_, at) => `- Filler fact number ${at + 1} ${'y'.repeat(280)}`)
+  writeFileSync(join(seeded, 'memory', 'bots', 'b2', 'MEMORY.md'), `# Memory\n\n${filler.join('\n')}\n\n## Index\n`)
+  const long = `The user tells a story: ${'x'.repeat(316)}`
+  const answer = JSON.stringify({ changes: [
+    { op: 'add', text: long },
+    { op: 'add', text: 'The user flies with Air China' },
+    { op: 'add', text: 'I use hunter2 as my password' },
+    { op: 'edit', entry: 13, text: 'Filler fact number 13 is short now' },
+  ] })
+  const { ctx, home, call, read, journal, requests, stop } = start({ home: seeded, replies: [answer], config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  const left = await warnedTimes(home, 'left out a change', 2)
+  assert.match(left[0], /^memory review of Writer left out a change \(add, 340 chars\): An entry holds at most 300 characters; this one has 340\./)
+  assert.match(left[1], /^memory review of Writer left out a change \(add, 29 chars\): Your memory's MEMORY\.md would have \d+ of its 4000 characters\./)
+  assert.deepEqual(warnings(home, 'memory review of chat:b2 failed'), [])
+  const entries = parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text)
+  assert.ok(entries.includes('Filler fact number 13 is short now'), JSON.stringify(entries))
+  assert.ok(!entries.includes('The user flies with Air China'))
+  // A secret-shaped entry is left out silently: no log entry holds it.
+  assert.ok(!entries.some(entry => entry.includes('hunter2')))
+  await settle()
+  const log = readFileSync(join(home, 'logs', 'diagnostics.jsonl'), 'utf8')
+  assert.ok(!log.includes('hunter2'), log)
+  assert.deepEqual(journal().map(record => record.op), ['replace'])
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  // The lines are passed, so the next turn end asks the model nothing.
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+})
+
+test('the 40-topic limit is left out with one warning, and the rest of the answer is kept', async (t) => {
+  const seeded = mkdtempSync(join(tmpdir(), 'ds-bot-memory-'))
+  const dir = join(seeded, 'memory', 'bots', 'b2')
+  mkdirSync(dir, { recursive: true })
+  const topics = Array.from({ length: MEMORY_LIMITS.topics }, (_, at) => `t${at + 1}`)
+  writeFileSync(join(dir, 'MEMORY.md'), `# Memory\n\n## Index\n${topics.map(topic => `- [[${topic}]]`).join('\n')}\n`)
+  for (const topic of topics) writeFileSync(join(dir, `${topic}.md`), `# ${topic}\n`)
+  const answer = JSON.stringify({ changes: [
+    { op: 'add', text: 'The user flies with Air China', topic: 'new' },
+    { op: 'add', text: 'The user likes tea' },
+  ] })
+  const { ctx, home, call, read, journal, requests, stop } = start({ home: seeded, replies: [answer], config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  const [left] = await warnedTimes(home, 'left out a change', 1)
+  assert.match(left, /^memory review of Writer left out a change \(add, 29 chars\): Your memory already has 40 topics, the most it holds\./)
+  assert.deepEqual(warnings(home, 'memory review of chat:b2 failed'), [])
+  assert.equal(existsSync(join(dir, 'new.md')), false)
+  assert.ok(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.some(entry => entry.text === 'The user likes tea'))
+  assert.deepEqual(journal().map(record => record.op), ['add'])
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+})
+
+test('a usable answer that moves the cursor gives the new position its own two answers', async (t) => {
+  const history = { b2: [...ownChat] }
+  const replies = ['Nothing new.', JSON.stringify({ changes: [] }), 'Nothing new.', 'Nothing new.']
+  const { ctx, home, call, read, requests, stop } = start({ history, replies, config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  // Position 9: the first unusable answer keeps the place, the next one is a
+  // valid no-op and moves the cursor to 11, clearing the count.
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 9 })
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 2)
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  // New lines at position 11 get two answers of their own, not one.
+  history.b2.push(
+    { event: { seq: 12, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'I always fly Air China' }] } } },
+    { event: { seq: 13, type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'Noted.' }] } } } },
+  )
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 3)
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  assert.deepEqual(warnings(home, 'passed the lines'), [])
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 4)
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 13 })
+  const [passed] = await warnedTimes(home, 'passed the lines', 1)
+  assert.match(passed, /^memory review of Writer passed the lines through #13 after 2 answers it could not use: the model's answer is not a list of changes \(12 chars\)$/)
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 4)
+})
+
+test('an answer that changes nothing passes the lines, and the next turn end asks nothing (characterization)', async (t) => {
+  const { ctx, home, call, read, requests, stop } = start({ replies: [JSON.stringify({ changes: [] })], config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  assert.equal(existsSync(join(home, 'memory', 'bots', 'b2', 'MEMORY.md')), false)
+  assert.equal(existsSync(join(home, 'memory', 'journal.jsonl')), false)
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+  await settle()
+  assert.deepEqual(warnings(home, 'memory review'), [])
+})
+
+test('a model call that fails keeps the review\'s place for as long as it fails', async (t) => {
+  const broke = () => new Error('503 Service Unavailable')
+  const replies = [broke(), broke(), broke(), JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }] })]
+  const { ctx, call, read, requests, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  for (let tries = 0; tries < 3; tries += 1) {
+    ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+    await reviewed(call)
     assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 9 })
   }
   ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
   await reviewed(call)
-  // A password is only left out: the rest is written and the place moves on.
-  assert.equal(requests.length, 5)
+  assert.equal(requests.length, 4)
   assert.deepEqual(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text), ['The user likes tea'])
   assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+})
+
+test('a write that fails keeps the review\'s place, and the next review finishes it', async (t) => {
+  const answer = JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }] })
+  const { ctx, home, call, read, journal, requests, stop } = start({ replies: [answer, answer, answer, answer], config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  // The change log cannot be written: a directory stands where it belongs.
+  mkdirSync(join(home, 'memory', 'journal.jsonl'), { recursive: true })
+  // More times than an answer the review cannot use is asked for: a broken write
+  // is no reason to pass the lines.
+  for (let tries = 0; tries < 3; tries += 1) {
+    ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+    await reviewed(call)
+    assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 9 })
+  }
+  rmSync(join(home, 'memory', 'journal.jsonl'), { recursive: true })
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.deepEqual(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text), ['The user likes tea'])
+  assert.deepEqual(journal().map(record => record.op), ['add'])
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  // While the change waits to be finished, memory cannot be read, so the reviews
+  // between ask the model nothing.
+  assert.equal(requests.length, 2)
 })
 
 test('a backlog past the text limit is reviewed in passes, oldest first', async (t) => {
@@ -820,25 +1200,48 @@ test('an answer that reaches the change limit exactly is followed by another pas
   assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
 })
 
-test('a full MEMORY.md keeps the review\'s place, and an add with a topic lands there', async (t) => {
+test('a full MEMORY.md leaves out the add with one warning and passes the lines, and an add with a topic lands there', async (t) => {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-memory-'))
   mkdirSync(join(home, 'memory', 'bots', 'b2'), { recursive: true })
   const filler = Array.from({ length: 13 }, (_, at) => `- Filler fact number ${at + 1} ${'y'.repeat(280)}`)
   writeFileSync(join(home, 'memory', 'bots', 'b2', 'MEMORY.md'), `# Memory\n\n${filler.join('\n')}\n\n## Index\n`)
-  const replies = [JSON.stringify({ changes: [{ op: 'add', text: 'The user flies with Air China' }] }), JSON.stringify({ changes: [{ op: 'add', text: 'The user flies with Air China', topic: '出行' }] })]
-  const { ctx, call, read, requests, stop } = start({ home, replies, config: { memoryReviewDelayMs: 0 } })
+  const history = { b2: [...ownChat] }
+  const replies = [
+    // The add does not fit; the edit after it makes room, and is kept.
+    JSON.stringify({ changes: [{ op: 'add', text: 'The user flies with Air China' }, { op: 'edit', entry: 13, text: 'Filler fact number 13 is short now' }] }),
+    JSON.stringify({ changes: [{ op: 'add', text: 'The user flies with Air China', topic: '出行' }] }),
+  ]
+  const { ctx, call, read, requests, journal, stop } = start({ home, replies, history, config: { memoryReviewDelayMs: 0 } })
   t.after(() => stop())
   await call('state', {})
   ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
   await reviewed(call)
   assert.match(requests[0].messages[0].content[0].text, /MEMORY\.md has 3\d{3} of 4000 characters \(own\)/)
   assert.match(requests[0].system, /"topic": "travel"/)
-  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 9 })
+  const entries = parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text)
+  assert.equal(entries.at(-1), 'Filler fact number 13 is short now')
+  assert.ok(!entries.includes('The user flies with Air China'))
+  assert.deepEqual(journal().map(record => record.op), ['replace'])
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  const [left] = await warnedTimes(home, 'left out a change', 1)
+  assert.match(left, /^memory review of Writer left out a change \(add, 29 chars\): Your memory's MEMORY\.md would have 40\d\d of its 4000 characters\./)
+  assert.deepEqual(warnings(home, 'memory review of chat:b2 failed'), [])
+  // The lines are passed, so the next turn end asks the model nothing.
   ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
   await reviewed(call)
+  assert.equal(requests.length, 1)
+
+  // The user says it again: this time the model puts it in a topic.
+  history.b2.push(
+    { event: { seq: 12, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'I always fly Air China' }] } } },
+    { event: { seq: 13, type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'Noted.' }] } } } },
+  )
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 2)
   assert.match(read('bots', 'b2', '出行.md'), /- The user flies with Air China \[/)
   assert.match(read('bots', 'b2', 'MEMORY.md'), /\[\[出行\]\]/)
-  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 13 })
 })
 
 test('topic entries that share words with the user\'s new lines come first', () => {
@@ -1389,4 +1792,215 @@ test('the team\'s background model runs memory, and the pick is checked', async 
   await call('memory-view', { botId: 'b2', summarize: true })
   await summarized(call)
   assert.deepEqual(routes(requests), ['deepseek/v4@2048', 'deepseek/flash@2048'])
+})
+
+// ---------------------------------------------------------------------------
+// Error objects are model data. A failure from the file system names a path, and a
+// path names a topic; a provider's failure may quote the request. Memory logs and
+// throws only a code for those, and its own messages hold no data at all.
+
+test('a write that fails on a locked folder logs no topic name and no memory path', async (t) => {
+  const { home, tool, stop } = start()
+  const dir = join(home, 'memory', 'bots', 'b2')
+  await tool('remember', { text: 'Likes tea' }, 'b2')
+  chmodSync(dir, 0o555)
+  t.after(async () => {
+    chmodSync(dir, 0o755)
+    await stop()
+  })
+  await assert.rejects(tool('remember', { text: 'The user likes green tea', topic: 'hunter3' }, 'b2'), (error) => {
+    assert.equal(error.code, 'memory/failed')
+    assert.equal(error.message, 'The memory could not be changed (EACCES).')
+    return true
+  })
+  await warnedTimes(home, 'is pending', 1)
+  const log = diagnosticsLog(home)
+  assert.ok(!log.includes('hunter3'), log)
+  assert.ok(!log.includes(join(home, 'memory')), log)
+})
+
+test('a marker planted in every input memory reads reaches no log line and no thrown message', async (t) => {
+  // Shaped like no key or password, so no redactor knows it and every path takes it.
+  const MARKER = 'qzcanary7731'
+  const NUMBER = '7731990077318'
+  assert.equal(looksSecret(MARKER) || looksLikeKey(MARKER), false)
+  assert.equal(cleanTopic(MARKER), MARKER)
+  // The marker is in the home's name, so it is in every path memory has.
+  const home = mkdtempSync(join(tmpdir(), `ds-bot-${MARKER}-`))
+  const said = []
+  const history = Object.fromEntries(['b2', 'b3', 'm1'].map(id => [id, [
+    { event: { seq: 10, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: `Please remember ${MARKER}` }] } } },
+    { event: { seq: 11, type: 'assistant/message', data: { message: { content: [{ type: 'text', text: `Saved ${MARKER}.` }] } } } },
+  ]]))
+  const replies = []
+  const { ctx, call, tool, section, stop } = start({ home, replies, history, config: { memoryReviewDelayMs: 0 } })
+  const locked = []
+  t.after(async () => {
+    for (const path of locked) chmodSync(path, 0o755)
+    await stop()
+  })
+  const attempt = async (promise) => {
+    try {
+      const value = await promise
+      if (typeof value === 'string') said.push(value)
+      return value
+    } catch (error) {
+      said.push(String(error?.message), String(error))
+      return error
+    }
+  }
+  const review = async (botId, reply) => {
+    replies.push(reply)
+    ctx.emit('agent/status', { agent: { id: botId }, status: 'idle' })
+    await reviewed(call)
+  }
+  const memory = (...path) => join(home, 'memory', ...path)
+  await call('state', {})
+
+  // The model's answers: one that is no list, one with a bad topic, one naming an
+  // unlisted entry, one with an entry too long and a write that fails.
+  await review('b2', `I keep ${MARKER} for you`)
+  await review('b2', JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea', topic: `pw: ${MARKER}` }] }))
+  await review('b3', JSON.stringify({ changes: [{ op: 'remove', entry: NUMBER }] }))
+  mkdirSync(memory('bots', 'm1'), { recursive: true })
+  writeFileSync(memory('bots', 'm1', 'MEMORY.md'), '# Memory\n\n## Index\n')
+  chmodSync(memory('bots', 'm1'), 0o555)
+  locked.push(memory('bots', 'm1'))
+  const long = `The user tells a story about ${MARKER}: ${'x'.repeat(300)}`
+  await review('m1', JSON.stringify({ changes: [{ op: 'add', text: long }, { op: 'add', text: 'The user likes tea', topic: MARKER }] }))
+  await warnedTimes(home, 'is pending', 1)
+  // The pending change cannot be finished while the folder is locked.
+  assert.match(section('m1'), /Memory is unavailable until its pending change has been recovered/)
+  await until(() => warnings(home, 'memory recovery failed').length > 0)
+  chmodSync(memory('bots', 'm1'), 0o755)
+  locked.pop()
+  // Unlocked, the change is finished; what recall lists is the memory, not a failure.
+  assert.match(await tool('recall', {}, 'm1'), /topics \[\[/)
+
+  // The tools, given the marker: an entry that is not there, a topic that is not
+  // there, and a topic file that cannot be read.
+  await attempt(tool('remember', { text: 'Likes tea' }, 'b2'))
+  await attempt(tool('forget', { entry: MARKER }, 'b2'))
+  await attempt(tool('forget', { entry: 'tea', topic: MARKER }, 'b2'))
+  mkdirSync(memory('bots', 'b2', `${MARKER}.md`))
+  await attempt(tool('remember', { text: 'Likes green tea', topic: MARKER }, 'b2'))
+  await attempt(tool('recall', { topic: MARKER }, 'b2'))
+  rmSync(memory('bots', 'b2', `${MARKER}.md`), { recursive: true })
+  // A MEMORY.md that cannot be read, in the prompt section, and a snapshot that
+  // cannot be saved.
+  mkdirSync(memory('bots', 'b4', 'MEMORY.md'), { recursive: true })
+  said.push(section('b4'))
+  rmSync(memory('snapshots'), { recursive: true, force: true })
+  writeFileSync(memory('snapshots'), MARKER)
+  said.push(section('b3'))
+  rmSync(memory('snapshots'))
+
+  // A change record that does not parse, and one whose path leaves the folder.
+  writeFileSync(memory('pending.json'), `{"id": "${MARKER}`)
+  said.push(section('b2'))
+  await attempt(tool('recall', {}, 'b2'))
+  await attempt(tool('remember', { text: 'Likes coffee' }, 'b2'))
+  writeFileSync(memory('pending.json'), JSON.stringify({ id: MARKER, time: MARKER, op: 'add', scope: 'bot:b2', steps: [{ action: 'write', path: `../../${MARKER}/x.md`, text: MARKER }], row: { id: MARKER } }))
+  said.push(section('b2'))
+  await attempt(tool('recall', {}, 'b2'))
+  rmSync(memory('pending.json'))
+
+  // The provider's failures, in the summary and in the panel.
+  replies.push(new Error(`401: ${MARKER}`))
+  await call('memory-view', { botId: 'b2', summarize: true })
+  await summarized(call)
+  said.push(String((await call('memory-view', { botId: 'b2' })).value.error))
+  replies.push({ text: '', finish: 'error', failure: `503 ${MARKER}` })
+  await call('memory-view', { botId: 'b2', regenerate: true })
+  await summarized(call)
+  said.push(String((await call('memory-view', { botId: 'b2' })).value.error))
+
+  // The panel's ask, given an entry number that is not listed.
+  replies.push(JSON.stringify({ reply: 'Done.', changes: [{ op: 'edit', entry: NUMBER, text: 'The user likes tea' }] }))
+  const asked = (await call('memory-ask', { botId: 'b2', text: 'Change that one' })).value
+  assert.deepEqual(asked.changes.map(change => change.error), ['There is no such entry.'])
+
+  // An archive that cannot be made, for deleted Bots (b4's MEMORY.md is still the
+  // folder from above) and a deleted group.
+  mkdirSync(memory('bots', 'b3'), { recursive: true })
+  writeFileSync(memory('bots', 'b3', 'MEMORY.md'), `# Memory\n\n- ${MARKER} [added: 2026-11-04]\n`)
+  mkdirSync(memory('groups', 'r1'), { recursive: true })
+  writeFileSync(memory('groups', 'r1', 'MEMORY.md'), `# Memory\n\n- ${MARKER} [added: 2026-11-04]\n`)
+  writeFileSync(memory('archive'), MARKER)
+  await call('delete-room', { id: 'r1' })
+  await call('delete-bot', { id: 'b4' })
+  await call('delete-bot', { id: 'b3' })
+
+  // Every path above was taken, so the marker had its chance to show.
+  for (const kind of ['memory review of chat:b2 failed', 'passed the lines', 'memory review of chat:b3 failed', 'left out a change',
+    'memory review of chat:m1 failed', 'is pending', 'memory recovery failed', 'unreadable memory file', 'memory change record',
+    'snapshot for', 'memory of Temp not archived', 'memory of Coder not archived', 'memory of group Launch not archived',
+    'memory summary for Writer failed']) {
+    await until(() => warnings(home, kind).length > 0)
+  }
+  const lines = diagnosticsLog(home).split('\n').filter(Boolean)
+  for (const line of lines) {
+    assert.ok(!line.includes(MARKER), line)
+    assert.ok(!line.includes(NUMBER), line)
+  }
+  assert.ok(said.length >= 15, `${said.length} answers`)
+  for (const text of said) assert.ok(!text.includes(MARKER), text)
+})
+
+test('a marker in a topic, an entry or a provider failure reaches no log line, panel reply or thrown message', async (t) => {
+  const MARKER = 'qzcanary7731'
+  // The marker is in the home's name too, so it is in every path a file error names.
+  const home = mkdtempSync(join(tmpdir(), `ds-bot-${MARKER}-`))
+  const replies = []
+  const { call, tool, stop } = start({ home, replies })
+  const memory = (...path) => join(home, 'memory', ...path)
+  const locked = []
+  t.after(async () => {
+    for (const path of locked) chmodSync(path, 0o755)
+    await stop()
+  })
+  // What a failed panel call answers: its whole reply, whose message is the one thrown.
+  const failures = []
+  const failing = async (endpoint, payload) => {
+    const answer = await call(endpoint, payload)
+    assert.equal(answer.ok, false, `${endpoint}: ${JSON.stringify(answer)}`)
+    failures.push({ endpoint, code: answer.error.code, message: answer.error.message, text: JSON.stringify(answer) })
+    return answer
+  }
+  await call('state', {})
+  const entry = `The user keeps ${MARKER} in a drawer`
+  assert.match(await tool('remember', { text: entry, topic: MARKER }, 'b2'), /^Saved/)
+
+  // The file system fails: the forget cannot write its topic file, and the view and
+  // the ask cannot finish the change it left pending.
+  chmodSync(memory('bots', 'b2'), 0o555)
+  locked.push(memory('bots', 'b2'))
+  await failing('memory-forget', { botId: 'b2', scope: 'own', topic: MARKER, text: entry })
+  await failing('memory-view', { botId: 'b2' })
+  await failing('memory-ask', { botId: 'b2', text: `Forget ${MARKER}` })
+  chmodSync(memory('bots', 'b2'), 0o755)
+  locked.pop()
+  // Unlocked, the pending forget is finished and the view answers again.
+  assert.equal((await call('memory-view', { botId: 'b2' })).ok, true)
+
+  // The provider fails: by throwing, and by ending the stream with an error.
+  replies.push(new Error(`401: ${MARKER} in ${entry}`))
+  await failing('memory-ask', { botId: 'b2', text: `What about ${MARKER}?` })
+  replies.push({ text: '', finish: 'error', failure: `503 ${MARKER}` })
+  await failing('memory-ask', { botId: 'b2', text: `What about ${MARKER}?` })
+
+  assert.deepEqual(failures.map(item => item.endpoint), ['memory-forget', 'memory-view', 'memory-ask', 'memory-ask', 'memory-ask'])
+  const lines = diagnosticsLog(home).split('\n').filter(Boolean)
+  const leaks = [...lines, ...failures.map(item => item.text)].filter(text => text.includes(MARKER))
+  // Memory said each failure itself, with a fixed sentence and a code: none reached
+  // the channel as an internal error, whose kind alone the channel would have said.
+  assert.deepEqual(failures.map(item => item.message), [
+    'The memory could not be changed (EACCES).',
+    'The memory could not be read (EACCES).',
+    'The memory could not be read (EACCES).',
+    'The model could not answer (provider error).',
+    'The model could not answer (provider error).',
+  ])
+  assert.deepEqual(failures.map(item => item.code), Array(5).fill('bot/refused'))
+  assert.deepEqual(leaks, [])
 })

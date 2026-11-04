@@ -31,7 +31,7 @@ import { attachKey, attachPath, confirmBindings, foldAttach, modeProblem, readAt
 import { botOfBriefingFile, briefDecision, briefedPath, briefingText, directMembers, latestReport, launchBriefingText, textHash }
   from "./briefingText.mjs";
 import { briefingFileOf, resumedSessionOf } from "./models.js";
-import { SESSION_LABEL, TRANSCRIPT_LABEL, ledgerLine, ledgerPath, sessionChange, sessionRow }
+import { SESSION_LABEL, TRANSCRIPT_LABEL, ledgerLine, ledgerPath, readLedger, sessionChange, sessionRow }
   from "./workers.js";
 import { transcriptRealPath } from "./transcriptFolder.mjs";
 
@@ -310,14 +310,27 @@ function readInput(ms) {
   });
 }
 
+const TAIL_BYTES = 65_536;
+
+/** The session `terminal`'s last session row names, from the ledger's tail (open as `fd`), or null. */
+function lastSessionOf(fd, terminal) {
+  const size = fstatSync(fd).size;
+  const length = Math.min(size, TAIL_BYTES);
+  const buf = Buffer.alloc(length);
+  readSync(fd, buf, 0, length, size - length);
+  // A first line cut by the tail is not JSON: readLedger skips it.
+  const rows = readLedger(buf.toString("utf8")).filter((r) => r.event === "session" && r.terminal === terminal);
+  return rows.at(-1)?.session ?? null;
+}
+
 /**
  * Ties the Claude session in the hook's `input` to terminal `me` (its `hc get`) once per
  * change: a session row appended to the ledger under `appHome`, then the agent.session label
- * set (a failed label means the row comes again next turn, never a lost one). The
- * agent.transcript label (the hook's transcript_path, once Claude's folder under `home`
- * holds its real path) goes in the same `hc label` call whenever it is missing or differs:
- * a known session gets it with no row.
- * Never rejects; resolves with whether the session was new.
+ * set (a failed label is tried again next turn; the row is written once, never lost: a session
+ * the terminal's last row already names is not appended again). The agent.transcript label
+ * (the hook's transcript_path, once Claude's folder under `home` holds its real path) goes in
+ * the same `hc label` call whenever it is missing or differs: a known session gets it with no
+ * row. Never rejects; resolves with whether the session was new.
  */
 export async function joinSession(self, me, input, appHome, home = homedir()) {
   try {
@@ -328,9 +341,12 @@ export async function joinSession(self, me, input, appHome, home = homedir()) {
     if (change.fresh) {
       const path = ledgerPath(appHome);
       mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true });
-      const fd = openSync(path, "a");
+      // Once per session: when the terminal's last session row already names it (the entry point's
+      // first attempt joined, then failed; or a label that did not stick), no second row. The read
+      // and the append are one synchronous step, so two attempts in one hook cannot both append.
+      const fd = openSync(path, "a+");
       const row = sessionRow({ terminal, session: change.session, transcript: change.transcript });
-      try { writeSync(fd, ledgerLine(row)); } finally { closeSync(fd); }
+      try { if (lastSessionOf(fd, terminal) !== change.session) writeSync(fd, ledgerLine(row)); } finally { closeSync(fd); }
     }
     const labels = [
       ...(change.fresh ? [`${SESSION_LABEL}=${change.session}`] : []),

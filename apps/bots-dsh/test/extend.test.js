@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -24,7 +24,7 @@ function start() {
     await ctx.dispose()
     rmSync(home, { recursive: true, force: true, maxRetries: 5 })
   }
-  return { rt: ctx.provided.get('omniTeam'), call, stop }
+  return { rt: ctx.provided.get('omniTeam'), home, call, stop }
 }
 
 test('apply provides the runtime as omniTeam, with the hooks other Omni plugins add through', async (t) => {
@@ -54,6 +54,60 @@ test('an added endpoint is served until its disposer runs, and the view and live
   assert.equal('extra' in after, false)
   assert.equal('pulse' in after, false)
   assert.deepEqual(asked, [{ name: 'Ana' }])
+})
+
+// A fault inside an endpoint is a host fault: its message can name a path, a topic or a
+// model's words, so neither the log nor the answer repeats it.
+test('an added endpoint\'s fault logs the endpoint and kind, never its message', async (t) => {
+  const { rt, home, call, stop } = start()
+  const marker = 'qzsink-canary-7731'
+  const off = rt.hooks.endpoint('sink-probe', () => {
+    throw new TypeError(`boom ${marker} at /tmp/${marker}.md`)
+  })
+  const offFs = rt.hooks.endpoint('sink-probe-fs', () => {
+    throw Object.assign(new Error(`EACCES: cannot open ${marker}`), { code: 'EACCES' })
+  })
+  const offRefused = rt.hooks.endpoint('sink-probe-refused', () => {
+    throw Object.assign(new Error(`Refused: ${marker}`), { code: 'bot/invalid' })
+  })
+  t.after(async () => {
+    off()
+    offFs()
+    offRefused()
+    await stop()
+  })
+  assert.deepEqual(await call('sink-probe', {}), {
+    ok: false,
+    error: { code: 'bot/internal', message: 'Something went wrong (TypeError).', details: {} },
+  })
+  assert.deepEqual(await call('sink-probe-fs', {}), {
+    ok: false,
+    error: { code: 'bot/internal', message: 'Something went wrong (EACCES).', details: {} },
+  })
+  // A coded refusal is not a host fault: its message is the answer, as before.
+  assert.deepEqual(await call('sink-probe-refused', {}), {
+    ok: false, error: { code: 'bot/invalid', message: `Refused: ${marker}`, details: {} },
+  })
+  const log = join(home, 'logs', 'diagnostics.jsonl')
+  const apiEntries = () => (existsSync(log)
+    ? readFileSync(log, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line))
+      .filter(entry => entry.source === 'api')
+    : [])
+  for (let tries = 0; tries < 100 && apiEntries().length < 2; tries += 1) {
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+  const entries = apiEntries()
+  assert.deepEqual(entries.map(entry => [entry.text, entry.code]), [
+    ['sink-probe: TypeError', 'TypeError'],
+    ['sink-probe-fs: EACCES', 'EACCES'],
+  ])
+  for (const entry of entries) {
+    assert.ok(!JSON.stringify(entry).includes(marker), JSON.stringify(entry))
+    // Frames only: the first line, the message, is not kept.
+    assert.ok(entry.stack.split('\n').every(line => line.startsWith('at ')), entry.stack)
+  }
+  assert.ok(!readFileSync(log, 'utf8').includes(`Refused: ${marker}`))
+  assert.equal(entries.length, 2)
 })
 
 test('an added endpoint says whether a host that only reads the team may answer it', () => {

@@ -296,8 +296,9 @@ automagik-herdr update [--check | --rollback]
 - `start` runs the bot's agent in a new pane with `hc run`, labelled `bot=<id>`, and records it
   in the [attach ledger](#the-attach-ledger). A member whose lead is running gets the lead's
   pane as its parent. A running bot is not started twice.
-  The pane opens in the space showing the project; with none open, `start` opens one on the
-  project folder (`--space`/`--tab` pick the place instead).
+  The pane opens in a tab of its own in the space showing the project, never in another
+  pane's tab; with none open, `start` opens one on the project folder (`--space` picks the
+  space instead, `--tab` a tab in it). The sidebar's Start passes the space only.
 - `restart` runs the bot's agent again in its pane's place: the new pane starts in the same
   space, tab and folder with the same labels, and the old one is ended (`hc kill`) only once the
   new one has kept its agent in front at every check for 5 seconds (1.5 once the agent reports
@@ -457,7 +458,9 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
 - **Spawn:** `hc run --bg --parent <bot pane> --cwd <worktree>`, labelled `worker.of=<bot id>`,
   `branch=<branch>`, `worker.role=<role>` (a template too), `worker.model` and `worker.effort`;
   with `--task`, also `task=<id>`, `task.project=<main checkout>` and `task.lead=<lead>`
-  (without it, no `task` label at all). A worker started before this release has no `branch`
+  (without it, no `task` label at all). When the bot's pane is in a Herdr space, also
+  `herdr.space=<that space>` and no `herdr.tab`, so the worker opens in a tab of its own there
+  as it starts. A worker started before this release has no `branch`
   label: its `task` label holds the branch, and Herdr's readers fall back to it. Then
   `-- /usr/bin/env PATH=<the calling pane's PATH> <agent argv> <task text>`. The agent gets the
   bot's pane's PATH, not herdr-core's, so programs in `~/.bun/bin` (omp, and the `bun` it runs

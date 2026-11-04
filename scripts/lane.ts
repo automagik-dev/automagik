@@ -14,7 +14,7 @@
  * Omni's market serves them without an Omni release. The signature is ed25519 over the exact
  * bytes of lane.json, detached, base64; the public keys are plugin-lane/keys.json.
  *
- *   bun scripts/lane.ts kind <last-full-tag> [<last-tag>]       herdr | pocket | plugins | full: what the commits since need
+ *   bun scripts/lane.ts kind <last-full-tag> [<last-tag>]       am | herdr | pocket | plugins | full: what the commits since need
  *   bun scripts/lane.ts herdr <last-tag>                         yes | no: whether the release rebuilds the herdr pack
  *   bun scripts/lane.ts pocket <tag>                             yes | no: whether the release rebuilds Pocket's app
  *   bun scripts/lane.ts pocket-since <last-tag> [<lane-version>] the tag Pocket's changes are measured from
@@ -40,6 +40,13 @@
  * (`pocket`), whatever its kind: a Pocket change that shipped only in a prerelease, or whose lane post
  * failed, is built again by the next release. Pocket Link
  * (herdr/mods/pocket-link) is under herdr/ and goes with the pack's lane.
+ *
+ * am, the one command (am/, docs/rfcs/0012-am-cli-and-parts.md), is the part every release carries:
+ * every kind attaches automagik-am-<v>.tgz. A release whose shipping changes since the last release
+ * are all am's (its part.json `paths`) is an `am` patch, 3.N.P with am alone. am's changes never
+ * make a release more than it is otherwise: herdr/ and am/ together (a herdr change resyncing
+ * am's copies of the pack's CLI) is a `herdr` patch, and an am change beside plugin changes is
+ * still a plugin patch.
  */
 import { createHash, createPrivateKey, createPublicKey, sign as signBytes, verify as verifyBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -75,7 +82,7 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // In Pocket: its notes (*.md at its top) and docs/, and the Android project's scripts (the terminal
 // page's test and the vendoring script), which no APK carries. Meter's local tools (meter/: the Claude
 // status line and the limits logger it wraps) run from a checkout on the owner's machine; no release carries them.
-const NEVER_SHIPPED = [/^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/, /^apps\/automagik-pets\//, /^docs\//,
+const NEVER_SHIPPED = [/^am\/[^/]+\.md$/, /^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/, /^apps\/automagik-pets\//, /^docs\//,
   /^herdr\/[^/]+\.md$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr-layout\/(RECIPE\.md|preview\.png)$/,
   /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//, /^meter\//];
 /**
@@ -83,6 +90,13 @@ const NEVER_SHIPPED = [/^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)tes
  * own entry folder, herdr-layout/ (the pack ships its automagik.json; RFC 0011).
  */
 export const HERDR = /^herdr(-layout)?\//;
+/** A part.json `paths` glob as a pattern: `**` any path, `*` any name. */
+export const globPattern = (glob: string) =>
+  new RegExp(`^${glob.split('**').map(part => part.split('*').map(text => text.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')).join('.*')}$`);
+/** The am part (RFC 0012): the paths its part.json names. */
+export const amPaths = (manifest = JSON.parse(readFileSync(join(ROOT, 'am', 'part.json'), 'utf8')) as { paths: string[] }) => manifest.paths.map(globPattern);
+const AM_PATHS = amPaths();
+export const AM = { test: (path: string) => AM_PATHS.some(pattern => pattern.test(path)) };
 /** The Pocket part: the phone app and its docs. Pocket Link is under herdr/. */
 export const POCKET = /^apps\/pocket\//;
 
@@ -178,13 +192,14 @@ export function pocketSince(last: string, laneVersion: string | undefined, tags:
  * themselves write, the release tooling, tests, `inert` ones), none in a plugin's dev/harness (that
  * moves DSH), no lockfile, and no field a plugin is installed or admitted by.
  */
-export function kindOf(changed: string[], installChanged: (plugin: string) => boolean, inert: (path: string) => boolean = () => false, sinceLast?: string[]): 'herdr' | 'pocket' | 'plugins' | 'full' {
+export function kindOf(changed: string[], installChanged: (plugin: string) => boolean, inert: (path: string) => boolean = () => false, sinceLast?: string[]): 'am' | 'herdr' | 'pocket' | 'plugins' | 'full' {
   const shipping = (sinceLast ?? []).filter(path => !neverShipped(path) && !inert(path));
-  if (shipping.length > 0 && shipping.every(path => HERDR.test(path))) return 'herdr';
-  if (shipping.length > 0 && shipping.every(path => HERDR.test(path) || POCKET.test(path))) return 'pocket';
+  if (shipping.length > 0 && shipping.every(path => AM.test(path))) return 'am';
+  if (shipping.length > 0 && shipping.every(path => HERDR.test(path) || AM.test(path))) return 'herdr';
+  if (shipping.length > 0 && shipping.every(path => HERDR.test(path) || POCKET.test(path) || AM.test(path))) return 'pocket';
   if (changed.length === 0) return 'full';
   for (const path of changed) {
-    if (neverShipped(path) || inert(path) || HERDR.test(path) || POCKET.test(path)) continue;
+    if (neverShipped(path) || inert(path) || HERDR.test(path) || POCKET.test(path) || AM.test(path)) continue;
     const plugin = PLUGINS.find(name => path.startsWith(`apps/${name}/`));
     if (!plugin) return 'full';
     const inside = path.slice(`apps/${plugin}/`.length);

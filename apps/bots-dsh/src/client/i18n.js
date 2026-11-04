@@ -1457,11 +1457,13 @@ const HOST_ERRORS = [
   [/^This looks like a key, token, or password[\s\S]*$/, '看起来像密钥、令牌或密码，记忆不会保存这类内容'],
   [/^An entry holds at most (\d+) characters; this one has (\d+)\.[\s\S]*$/, '一条记忆最多 $1 个字符，这条有 $2 个'],
   [/^[\s\S]*'s MEMORY\.md would have (\d+) of its (\d+) characters\.[\s\S]*$/, '主记忆会超过 $2 个字符的上限，请先删掉一些'],
-  [/^The topic \[\[(.+?)\]\] in [\s\S]* would have (\d+) of its (\d+) characters\.[\s\S]*$/, '主题 $1 会超过 $3 个字符的上限'],
+  [/^The topic in [\s\S]* would have (\d+) of its (\d+) characters\.[\s\S]*$/, '主题会超过 $2 个字符的上限'],
   [/^[\s\S]* already has (\d+) topics, the most it holds\.[\s\S]*$/, '主题已经有 $1 个，不能再加新主题'],
+  [/^There is no such entry\.$/, '没有这一条'],
   [/^There is no entry (.+)\.$/, '没有第 $1 条'],
-  [/^No entry in [\s\S]* matches "([\s\S]*)"\.[\s\S]*$/, '找不到「$1」这条记忆'],
-  [/^"([\s\S]*)" matches (\d+) entries in [\s\S]*$/, '「$1」对应了 $2 条记忆，请说得更具体'],
+  [/^[\s\S]* has no such topic \(\d+ chars\)\.[\s\S]*$/, '没有这个主题'],
+  [/^No entry in [\s\S]* matches the text given \(\d+ chars\)\.[\s\S]*$/, '找不到这条记忆'],
+  [/^The text given \(\d+ chars\) matches (\d+) entries in [\s\S]*$/, '对应了 $1 条记忆，请说得更具体'],
   [/^Memory cannot change now: [\s\S]*$/, '现在不能修改记忆：另一个 dsh 正在使用这个 Bot 团队'],
 ]
 const HOST_ZH = {

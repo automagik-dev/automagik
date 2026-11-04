@@ -1,0 +1,42 @@
+{
+  "capturedBy": "node apps/landing/capture/capture.mjs --run",
+  "checkout": "98191cfbf875e9b589284a80e1654ef063448e2f",
+  "captureScriptsClean": true,
+  "runtime": {
+    "package": "@deepseek-ai/dsh",
+    "version": "0.2.1-rc.5"
+  },
+  "model": "apps/landing/capture/scripted-model.mjs (scripted replies; no AI provider was called)",
+  "plugins": {
+    "@automagik/bots-dsh": {
+      "version": "3.52.1",
+      "repository": "https://github.com/automagik-dev/automagik",
+      "commit": "9f81aeed5740953b8b8ba41cad747d2cfc036f22",
+      "path": "apps/bots-dsh",
+      "tree": "3a1055c45e408545b2c7a833c53e5f7e77691870"
+    },
+    "@automagik/welcome-dsh": {
+      "version": "3.52.1",
+      "repository": "https://github.com/automagik-dev/automagik",
+      "commit": "9f81aeed5740953b8b8ba41cad747d2cfc036f22",
+      "path": "apps/welcome-dsh",
+      "tree": "9c7cafa10fd0987bd4a781df643361d751657732"
+    },
+    "@automagik/genie-dsh": {
+      "version": "0.1.4",
+      "repository": "https://github.com/automagik-dev/genie",
+      "commit": "39402fb18dd29e33f7c18cb9eb7d5d757c3a7273",
+      "path": "plugins/genie-dsh",
+      "tree": "e000b32f11cdb1f71770d117e49a2e6de33261c6"
+    }
+  },
+  "images": {
+    "genie-report-phone.png": "2c717664c3380b5a69cc55dfb2d856c90622c40439c8a58cb9fd2a1b44572ae1",
+    "genie-report.png": "1c7c934b1e22df8b384b6f5a153ee5da8eeca18e15706c9d236bb3ce4d743e7d",
+    "pip-delegates-phone.png": "19f61a9a641eaa52ab80d5762d4a16716864bb79311abec340126cc18b1df772",
+    "pip-delegates.png": "5621587264b57581d0604f2f7b2e7bd277a59052d1416f081c08aef8a4a29510",
+    "team-step.png": "fe5dd8a9750845b2b8b9d5f484703177114d0bd135de5317ecaf9848508f1d1f",
+    "wish-checks.png": "f70f49db400ff16df291cb1c1e48dd359def6b767eb471c3761f96180c5cbb06",
+    "wish-diff.png": "964eeee4ecb776574e0a41de574a67c1c2027993ca06969d1eff9e612be46c59"
+  }
+}

@@ -405,7 +405,10 @@ const within = (p, dir) => { const r = realOf(p), d = realOf(dir); return Boolea
  *   - the briefing hooks' entry point not being positively am's: it must resolve into am's parts
  *     store (amStoreOf), or every bot's hook would run the sidebar's briefing.mjs, or nothing;
  *   - a project hook calling mods/am-sidebar/briefing.mjs directly (written when the entry point could
- *     not be placed), wherever syncHooks looks.
+ *     not be placed), wherever syncHooks looks;
+ *   - a project hook running through mods/am-sidebar/bin/run.sh (hookCommand's shape, every hook
+ *     the pack writes): switched off, that hook runs nothing. It lifts once am runs the hooks
+ *     through its own runner (RFC 0012, delivery 3).
  */
 export function sidebarCarries(ctx) {
   const reasons = [];
@@ -418,6 +421,11 @@ export function sidebarCarries(ctx) {
   if (!within(entry, amStoreOf(ctx.env))) reasons.push(`every bot's briefing (${entry} is not am's: it ${isFile(entry) ? "runs the sidebar's briefing.mjs" : "is missing"})`);
   const direct = hooksRunning(knownProjects(ctx.appHome), { scripts: [join(folder, "briefing.mjs")], also: ledgerFolders(ctx.appHome) });
   if (direct.length) reasons.push(`the briefing hook in ${direct.length} project${direct.length === 1 ? "" : "s"} (${direct.slice(0, 3).join(", ")}${direct.length > 3 ? ", …" : ""} call mods/${PACK_NAME}/briefing.mjs)`);
+  const runner = hooksRunning(knownProjects(ctx.appHome), { runners: [join(folder, "bin", "run.sh")], also: ledgerFolders(ctx.appHome) })
+    .filter((f) => !direct.includes(f));
+  if (runner.length) {
+    reasons.push(`the briefing hook in ${runner.length} project${runner.length === 1 ? "" : "s"} (${runner.slice(0, 3).join(", ")}${runner.length > 3 ? ", …" : ""}), which starts through mods/${PACK_NAME}/bin/run.sh: with the sidebar off, that hook would run nothing`);
+  }
   return reasons;
 }
 const carriesText = (reasons) => `mods/${PACK_NAME} still carries ${reasons.join(" and ")}: switched off, they would stop working. `
