@@ -42,6 +42,8 @@ export function spacesOf(ls) {
     tabs: (s.tabs ?? []).map((t) => ({
       id: t.id, name: t.name ?? "", selected: Boolean(t.active),
       panes: (t.terminals ?? []).filter((p) => p?.terminal).map((p) => ({ pane: p.pane ?? null, terminal: p.terminal })),
+      // Every pane the tab holds, a mod pane (no terminal) too: `panes` lists terminals only.
+      paneCount: Math.max((t.terminals ?? []).filter(Boolean).length, Number.isSafeInteger(t.panes) ? t.panes : 0),
     })),
   }));
 }

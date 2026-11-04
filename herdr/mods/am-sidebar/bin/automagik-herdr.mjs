@@ -22,7 +22,7 @@ import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMN
   parseBots, plannedOf, projectKeyOf, projectOf, withListedProject } from "../model.js";
 import { UNANSWERED, agentInForeground, attachRefusal, attachWords, detachWords, hcName, isClaude, leadIdOf, leadPane, newest,
   paneLabels, paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWarning, relabelWords, rowsOf, spaceOnly, spacePlace,
-  spareTab, startArgs, startRefusal, unwrapKeep } from "../launchArgs.js";
+  shellIdle, spareTab, startArgs, startRefusal, unwrapKeep } from "../launchArgs.js";
 import { tabSteps, workerSpace, workerTabName } from "../workerTab.js";
 import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, confirmBindings, foldAttach, heldIn, machinesById, modeProblem, placeOf as placeOfRow, readAttach } from "../attach.js";
 import { interpreterPath } from "../agentPath.mjs";
@@ -1383,8 +1383,15 @@ async function windowPlace(key, labelled = null, seen = null) {
   return shell && typeof out.terminal === "string" ? { ...place, spare: { space: ours.id, tab: shell.id, terminal: out.terminal } } : place;
 }
 
-/** How long a start or worker waits for Herdr to show its new pane before its tab setup is left out. */
-const TAB_WAIT_MS = Number(process.env.AUTOMAGIK_HERDR_TAB_WAIT_MS) || 5000;
+/**
+ * How long a start or worker waits for Herdr to show its new pane before its tab setup is left
+ * out (AUTOMAGIK_HERDR_TAB_WAIT_MS; 0 turns the setup off: no wait, no tab moved or closed).
+ */
+const TAB_WAIT_MS = (() => {
+  const raw = process.env.AUTOMAGIK_HERDR_TAB_WAIT_MS;
+  const ms = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
+  return Number.isFinite(ms) && ms >= 0 ? ms : 5000;
+})();
 const TAB_STEP_MS = 200;
 
 /**
@@ -1398,7 +1405,8 @@ async function windowShows(terminal, ms = TAB_WAIT_MS) {
   for (;;) {
     const read = await windowRead();
     if (!read) return null;
-    const spaces = read.map((s) => ({ ...s, tabs: s.tabs.map((t, i) => ({ ...t, index: i + 1, terminals: t.panes.map((p) => p.terminal) })) }));
+    const spaces = read.map((s) => ({ ...s, tabs: s.tabs.map((t, i) => ({ ...t, index: i + 1, terminals: t.panes.map((p) => p.terminal),
+      count: t.paneCount })) }));
     for (const space of spaces.filter((x) => !x.machine)) {
       const tab = space.tabs.find((t) => t.terminals.includes(terminal));
       if (tab) return { spaces, space, tab };
@@ -1786,7 +1794,7 @@ async function launchSeat(project, bot, over = {}) {
     if (unlogged) { hook.warnings.push(unlogged); report([unlogged]); }
   };
   if (!over.replacing) await logSeat();
-  if (place?.spare) {
+  if (place?.spare && TAB_WAIT_MS > 0) {
     const why = await closeSpare(place.spare, terminal);
     if (why) { hook.warnings.push(why); report([why]); }
   }
@@ -1815,15 +1823,18 @@ async function launchSeat(project, bot, over = {}) {
 /**
  * Closes the spare shell's tab of a space this start made (windowPlace's `spare`) once the
  * window shows the bot's pane (`terminal`) in another tab there: never before, so the space
- * always keeps a tab, and only while that tab holds the shell alone (spareTab). Null, or a
- * warning when the close failed.
+ * always keeps a tab, and only while that tab holds the shell alone, one pane, with nothing
+ * but the shell itself in front (spareTab, shellIdle). Never `confirmed`: should Herdr see
+ * anything worth asking about, the person is asked. Null, or a warning when the close failed.
  */
 async function closeSpare(spare, terminal) {
   const shown = await windowShows(terminal);
   if (!shown || shown.space.id !== spare.space) return null;
-  const tab = spareTab(spare, shown.space.tabs, terminal);
+  if (!spareTab(spare, shown.space.tabs, terminal, true)) return null;
+  const idle = shellIdle(await hcGet(spare.terminal).catch(() => null));
+  const tab = spareTab(spare, shown.space.tabs, terminal, idle);
   if (!tab) return null;
-  const why = await windowDo("tab.close", { id: tab, confirmed: true });
+  const why = await windowDo("tab.close", { id: tab });
   return why ? `The new space's spare shell tab (${tab}) wasn't closed: ${why}` : null;
 }
 
@@ -3009,17 +3020,18 @@ async function cmdWorker(opts, rest) {
     return { address, name };
   }).catch((e) => { throw e instanceof CliError ? e : new CliError(e?.message ?? String(e)); });
   const terminal = started.address;
-  // Herdr shows a labelled worker at once, so the sidebar's tab setup (workerTab.js) never
-  // runs for it: its tab is named and moved after the bot's tab here, as a click would.
-  if (space && window) {
-    const why = await workerTabSetup(terminal, me.address, workerTabName({ branch: place.branch, name: started.name }));
-    if (why) warnings.push(why);
-  }
+  // The ledger row first, as launchSeat writes its rows before anything waits on the window.
   const pid = await pidOf(terminal);
   const unlogged = appendLedger(startRow({ kind: "worker", terminal, pid, botId: bot.id, task: taskId, branch: place.branch,
     project: project.key, lead, worktree, base, created: place.created, agent: plan.agent, model: plan.model, effort: plan.effort,
     template: plan.template, role, swap, override, overrideRequested }));
   if (unlogged) warnings.push(unlogged);
+  // Herdr shows a labelled worker at once, so the sidebar's tab setup (workerTab.js) never
+  // runs for it: its tab is named and moved after the bot's tab here, as a click would.
+  if (space && window && TAB_WAIT_MS > 0) {
+    const why = await workerTabSetup(terminal, me.address, workerTabName({ branch: place.branch, name: started.name }));
+    if (why) warnings.push(why);
+  }
   report(warnings);
   const out = { terminal, bot: bot.id, role, parent: me.address, worktree: place.worktree, branch: place.branch, created: place.created,
     base: place.base, template: plan.template, agent: plan.agent, model: plan.model, effort: plan.effort, pid, argv: plan.argv, warnings,

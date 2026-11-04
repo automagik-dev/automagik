@@ -291,8 +291,11 @@ test("planText groups the plan: non-visual, visual, reports", () => {
 test("spacesOf turns herdr-app ls into State spaces", () => {
   assert.deepEqual(spacesOf({ spaces: [{ id: "s1", name: "a", folder: "/r/a", machine: null, active: true,
     tabs: [{ id: "tb", name: "t", active: false, terminals: [{ terminal: "t1", pane: "p1", app: "codex" }] }] }] }), [
-    { id: "s1", name: "a", machine: null, folder: "/r/a", selected: true, tabs: [{ id: "tb", name: "t", selected: false, panes: [{ pane: "p1", terminal: "t1" }] }] },
+    { id: "s1", name: "a", machine: null, folder: "/r/a", selected: true, tabs: [{ id: "tb", name: "t", selected: false, panes: [{ pane: "p1", terminal: "t1" }], paneCount: 1 }] },
   ]);
+  // A mod pane (no terminal) isn't one of `panes`, but paneCount counts it.
+  const [mod] = spacesOf({ spaces: [{ id: "s2", tabs: [{ id: "tb2", terminals: [{ terminal: "t-sh", pane: "p2" }, { terminal: null, pane: "p3", mod: "board" }] }] }] });
+  assert.deepEqual([mod.tabs[0].panes.map((p) => p.terminal), mod.tabs[0].paneCount], [["t-sh"], 2]);
 });
 
 // ---- the CLI, against fakes ----

@@ -774,7 +774,7 @@ test("start in a space it opened leaves no lone shell tab: closed once the bot s
   assert.deepEqual([r.json().space, r.json().tab], ["sp-new1", null]);
   // space.new left its shell (t-sh1) alone in tb-new1; Herdr showed the bot (t100) in tb-t100.
   assert.deepEqual(s.appCalls().filter((c) => c[0] === "do").map((c) => [c[1], JSON.parse(c[2])]),
-    [["space.new", { name: "proj", folder: s.project, machine: "" }], ["tab.close", { id: "tb-new1", confirmed: true }]]);
+    [["space.new", { name: "proj", folder: s.project, machine: "" }], ["tab.close", { id: "tb-new1" }]]);
   assert.deepEqual(s.windowNow().spaces.map((x) => [x.id, x.tabs.map((tb) => tb.id)]), [["sp-new1", ["tb-t100"]]]);
   // The next bot starts in that space: nothing else is closed.
   assert.equal(s.cli(["start", "Captain"]).code, 0);
@@ -785,6 +785,19 @@ test("start in a space it opened leaves no lone shell tab: closed once the bot s
   assert.equal(n.cli(["start", "Genie"]).code, 0);
   assert.deepEqual(n.appCalls().filter((c) => c[0] === "do").map((c) => c[1]), ["space.new"]);
   assert.deepEqual(n.windowNow().spaces[0].tabs.map((tb) => tb.id), ["tb-new1"]);
+  // Something other than the shell in front of it (vim): kept. A mod pane beside it in its tab: kept.
+  for (const extra of [{ shellBusy: true }, { modInSpare: true }]) {
+    const k = scene(t, { window: { spaces: [], place: true, ...extra } });
+    k.seed(team());
+    assert.equal(k.cli(["start", "Genie"]).code, 0);
+    assert.deepEqual(k.appCalls().filter((c) => c[0] === "do").map((c) => c[1]), ["space.new"], JSON.stringify(extra));
+    assert.deepEqual(k.windowNow().spaces[0].tabs.map((tb) => tb.id), ["tb-new1", "tb-t100"], JSON.stringify(extra));
+  }
+  // AUTOMAGIK_HERDR_TAB_WAIT_MS=0 turns it off: no wait for the bot's tab, nothing closed.
+  const off = scene(t, { window: { spaces: [], place: true } });
+  off.seed(team());
+  assert.equal(off.cli(["start", "Genie"], { env: { AUTOMAGIK_HERDR_TAB_WAIT_MS: "0" } }).code, 0);
+  assert.deepEqual(off.appCalls().map((c) => c.slice(0, 2)), [["ls"], ["do", "space.new"], ["ls"]]);
 });
 
 test("start refuses an old free-text model pin, naming the fix; a pane started under a minute ago counts as running", (t) => {

@@ -103,10 +103,20 @@ async function keyedSpace(list, projectKey) {
 // Spaces being opened now, one per project: a second Start in that project waits for it.
 const opening = new Map(); // project key -> Promise<space | null>
 
-// A space's tabs as spareTab reads them: each tab's id and the terminals its panes show.
+// A space's tabs as spareTab reads them: each tab's id, the terminals its panes show and
+// `count`, every pane in it (a mod pane too: panes() lists it with no terminal).
 const tabsOf = (space) => {
   const ps = panes() ?? [];
-  return (space?.tabs ?? []).map((t) => ({ id: t.id, terminals: ps.filter((p) => p?.tab === t.id && p.terminal).map((p) => p.terminal) }));
+  return (space?.tabs ?? []).map((t) => {
+    const mine = ps.filter((p) => p?.tab === t.id);
+    return { id: t.id, terminals: mine.filter((p) => p.terminal).map((p) => p.terminal),
+      count: Math.max(mine.length, Number.isSafeInteger(t.panes) ? t.panes : 0) };
+  });
+};
+// The spare shell has the shell itself in front (panes()' program), nothing else running.
+const shellIdleIn = (terminal) => {
+  const program = (panes() ?? []).find((p) => p?.terminal === terminal)?.program;
+  return program?.shell === true && program.agent !== true;
 };
 
 // A new space on the project, named after its folder: space.new, then (run() answers
@@ -119,7 +129,8 @@ async function openSpace(projectKey, sleep, { waitMs = 5000, stepMs = 100 } = {}
     const space = await keyedSpace(localSpaces().filter((s) => !before.has(s.id)), projectKey);
     if (space) {
       const [first] = tabsOf(space);
-      return { space, spare: first?.terminals.length === 1 ? { space: space.id, tab: first.id, terminal: first.terminals[0] } : null };
+      const alone = first?.terminals.length === 1 && first.count === 1;
+      return { space, spare: alone ? { space: space.id, tab: first.id, terminal: first.terminals[0] } : null };
     }
     if (waited >= waitMs) return null;
     await sleep(stepMs);
@@ -127,16 +138,17 @@ async function openSpace(projectKey, sleep, { waitMs = 5000, stepMs = 100 } = {}
 }
 
 // Once the bot just started (`terminal`) shows in its own tab of the space openSpace made, that
-// space's spare shell tab is closed (spareTab: only while it holds that shell alone). Looked
-// for every stepMs for up to waitMs; a bot that doesn't show in time leaves the shell be.
+// space's spare shell tab is closed (spareTab: only while it holds that shell alone, one pane,
+// with nothing but the shell in front), never `confirmed`, so Herdr asks the person whenever it
+// would. Looked for every stepMs for up to waitMs; a bot that doesn't show in time leaves it.
 async function closeSpare(spare, terminal, sleep, { waitMs = 5000, stepMs = 100 } = {}) {
   for (let waited = 0; ; waited += stepMs) {
     const space = localSpaces().find((s) => s.id === spare.space);
     if (!space) return;
     const tabs = tabsOf(space);
     if (tabs.some((t) => t.terminals.includes(terminal))) {
-      const tab = spareTab(spare, tabs, terminal);
-      if (tab) try { run("tab.close", { id: tab, confirmed: true }); } catch { /* the shell tab stays: nothing lost */ }
+      const tab = spareTab(spare, tabs, terminal, shellIdleIn(spare.terminal));
+      if (tab) try { run("tab.close", { id: tab }); } catch { /* the shell tab stays: nothing lost */ }
       return;
     }
     if (waited >= waitMs) return;

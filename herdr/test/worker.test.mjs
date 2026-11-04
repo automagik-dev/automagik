@@ -313,7 +313,7 @@ test("worker: a bot's space label the window no longer has is left out; a moved 
 test("worker: once Herdr shows its pane, its tab is moved right after its bot's and named after it; never focused", (t) => {
   const s = scene(t);
   labelBot(s, { "herdr.space": "sp-bot", "herdr.tab": "tb-bot" });
-  s.setWindow(botWindow({ place: true }));
+  s.setWindow(botWindow({ place: true, probe: join(s.app, "automagik-herdr/workers.jsonl") }));
   const r = s.cli(["worker", "fix the login form", "--branch", "feat/login", "--json"]);
   assert.equal(r.code, 0, r.err);
   assert.equal(r.json().terminal, "t100");
@@ -321,6 +321,9 @@ test("worker: once Herdr shows its pane, its tab is moved right after its bot's 
   // Herdr put t100 in a tab of its own at the end (tb-t100, position 4): moved to 3, after tb-bot.
   assert.deepEqual(s.appDos(), [["tab.move", { id: "tb-t100", index: 3 }], ["tab.rename", { id: "tb-t100", name: "feat/login" }]]);
   assert.deepEqual(s.windowNow().spaces[0].tabs.map((x) => [x.id, x.name]), [["tb-a", "1"], ["tb-bot", "Dev"], ["tb-t100", "feat/login"], ["tb-c", "3"]]);
+  // The workers.jsonl row was written before the tab setup, as launchSeat writes its rows first.
+  assert.deepEqual(s.windowNow().probed, [["tab.move", true], ["tab.rename", true]]);
+  assert.deepEqual(s.ledger().map((row) => [row.kind, row.terminal]), [["worker", "t100"]]);
   // No window to ask (worker.test's default): no tab setup, as before.
   const d = scene(t);
   labelBot(d, { "herdr.space": "sp-bot" });
