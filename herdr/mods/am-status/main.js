@@ -6,7 +6,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { spaces, agents, theme, run, window, keys, shared, setShared, openOverlay, readTextFile, appHome, nextCommand } from "herdr";
-import { REQUEST_KEY, STATE_KEY, confirmText, offered, statusLabel } from "./label.js";
+import { REQUEST_KEY, STATE_KEY, autoLabel, confirmText, offered, statusLabel } from "./label.js";
 
 export default class AmStatus extends View {
   init(_props, cx) {
@@ -43,9 +43,17 @@ export default class AmStatus extends View {
   }
 
   // `to`: for an install, the version the dialog named; the sidebar refuses any other.
-  ask(what, to = null) {
+  ask(what, to = null, extra = {}) {
     const at = Date.now();
-    setShared(REQUEST_KEY, { id: `${what}-${at}-${Math.random().toString(36).slice(2, 8)}`, what, at, ...(to ? { to } : {}) });
+    setShared(REQUEST_KEY, { id: `${what}-${at}-${Math.random().toString(36).slice(2, 8)}`, what, at, ...(to ? { to } : {}), ...extra });
+  }
+
+  // "Install updates automatically": the sidebar writes the setting (am-sidebar/updater.js).
+  autoPart(t) {
+    const l = autoLabel({ state: shared(STATE_KEY), request: shared(REQUEST_KEY), now: Date.now() });
+    if (!l) return null;
+    return div().id("am-auto-update").text_color(t.dim).cursor_pointer().hover((s) => s.opacity(0.8)).tooltip(l.tooltip)
+      .on_click(() => this.ask("auto", null, { on: !l.on })).child(l.text);
   }
 
   click(what) {
@@ -90,6 +98,7 @@ export default class AmStatus extends View {
         .when(needs > 0, el => el.child(div().text_color(t.blocked).child(`· ${needs} needs you`))))
       .child(div().flex_1())
       .child(div().id("palette").text_color(t.dim).on_click(() => run("app.palette")).child(this.hint(t)))
+      .children([this.autoPart(t)].filter(Boolean))
       .child(this.versionPart(t));
   }
 }
