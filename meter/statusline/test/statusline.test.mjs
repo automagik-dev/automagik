@@ -201,9 +201,29 @@ test("the command under a bare PATH, alone and wrapped by the limits logger", ()
     assert.equal(alone.stdout, expected);
     assert.equal(alone.stderr, "");
 
-    const wrapped = run([here("../claude-limits-statusline.mjs"), "--", `'${process.execPath}' '${statusline}'`], JSON.stringify(input));
+    const logger = here("../claude-limits-statusline.mjs");
+    const wrapped = run([logger, "--", process.execPath, statusline], JSON.stringify(input));
     assert.equal(wrapped.status, 0, wrapped.stderr);
     assert.equal(wrapped.stdout, expected);
+
+    // The settings.json form, run through a shell as Claude Code runs it: node X -- node Y.
+    const q = (s) => `'${s.replaceAll("'", "'\\''")}'`;
+    const settingsForm = `${q(process.execPath)} ${q(logger)} -- ${q(process.execPath)} ${q(statusline)}`;
+    const viaShell = spawnSync("/bin/sh", ["-c", settingsForm], { input: JSON.stringify(input), env, encoding: "utf8" });
+    assert.equal(viaShell.status, 0, viaShell.stderr);
+    assert.equal(viaShell.stdout, expected);
+
+    // Each word after -- stays one argument: no second shell splits "a b" or reads "$HOME".
+    const echo = "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>{console.log(JSON.stringify([process.argv.slice(1),s]));process.exit(3)})";
+    const args = run([logger, "--", process.execPath, "-e", echo, "a b", "$HOME", "it's"], "stdin");
+    assert.equal(args.status, 3, args.stderr);
+    assert.deepEqual(JSON.parse(args.stdout), [["a b", "$HOME", "it's"], "stdin"]);
+    // No command after --, or one that does not exist: the logger still exits quietly.
+    for (const tail of [[], ["--"], ["--", join(dir, "no such program")]]) {
+      const r = run([logger, ...tail], JSON.stringify(input));
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(r.stdout, "");
+    }
 
     for (const garbage of ["", "not json", "[]", "null"]) {
       const r = run([statusline], garbage);
