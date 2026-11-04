@@ -82,10 +82,18 @@ export class Engine {
   /**
    * A message id as the engine keeps it: the client's own id under that client's key, so another
    * client using the same id has a different message, and can neither move, send nor cancel it.
+   * The key is the authenticated device (`client.device`, the paired key the bridge admitted,
+   * nothing the phone sends) when there is one, so a Retry after a reconnect finds the message it
+   * already sent and never types it twice; else a key of this client object alone. Who wrote a
+   * message is still the connection (authors), so a phone leaving drops its held messages.
    */
   own(client, id) {
-    let key = this.keys.get(client)
-    if (!key) this.keys.set(client, (key = String(this.nextKey++)))
+    let key
+    if (typeof client?.device === 'string' && client.device) key = `d:${client.device}`
+    else {
+      key = this.keys.get(client)
+      if (!key) this.keys.set(client, (key = `c:${this.nextKey++}`))
+    }
     return `${key}\u0000${id}`
   }
 

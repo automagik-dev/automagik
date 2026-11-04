@@ -150,6 +150,8 @@ async function chatRoute({ conn, bi, value, rest, peer: phone }) {
   const close = phones.open(phone, device.name)
   chat = new ChatConnection({
     engine,
+    // The paired key guard.mjs admitted: a Retry after a reconnect is the same message, typed once.
+    device: phone,
     // The promise lets chat.mjs count bytes not yet taken (MAX_UNSENT).
     write: bytes => (writing = writing.then(() => bi.send.writeAll([...bytes])).catch(() => chat.close('write failed'))),
     end: () => { writing.then(() => bi.send.finish()).catch(() => {}) },

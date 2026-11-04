@@ -78,12 +78,13 @@ const errorOf = (id, kind, message = kind) => ({ jsonrpc: '2.0', id, error: { co
 /**
  * One phone connection on the chat route.
  * @param {{ engine: any, write(bytes: Buffer): (Promise<void> | void), end(reason: string): void, log?: (l: string) => void,
- *   window?: number, maxQueued?: number, maxUnsent?: number }} options
+ *   device?: string, window?: number, maxQueued?: number, maxUnsent?: number }} options
+ *   device: the paired key guard.mjs admitted (stable across reconnects): message ids are kept under it
  *   write: bytes to the phone, in order; a promise that settles once they are taken counts them
  *   as unsent until then. end: close the connection
  */
 export class ChatConnection {
-  constructor({ engine, write, end, log = () => {}, window = CREDIT_WINDOW, maxQueued = MAX_QUEUED, maxUnsent = MAX_UNSENT }) {
+  constructor({ engine, write, end, log = () => {}, device, window = CREDIT_WINDOW, maxQueued = MAX_QUEUED, maxUnsent = MAX_UNSENT }) {
     Object.assign(this, { engine, sendBytes: write, endConn: end, log, window, maxQueued, maxUnsent })
     /** What the phone sent and is not read yet: chunks, joined only as far as a frame needs. */
     this.chunks = []
@@ -97,7 +98,7 @@ export class ChatConnection {
     /** terminal -> channel */
     this.byTerminal = new Map()
     this.nextChannel = 1
-    this.client = { connection: this }
+    this.client = { connection: this, device }
   }
 
   /** Bytes to the phone, counted until taken: a phone that stops reading cannot grow memory. */

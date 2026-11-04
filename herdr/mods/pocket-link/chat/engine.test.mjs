@@ -369,3 +369,49 @@ test('a message held while its author left during the send is dropped, never typ
   assert.equal(writes().length, 0)
   engine.close()
 })
+
+test('a Retry after a reconnect (same device, new connection) is the same message: typed once', async () => {
+  const { engine, writes } = setup()
+  const first = { device: 'phone-a' }
+  const h1 = engine.watch('t1', first, () => {})
+  await settle()
+  assert.deepEqual(await engine.send(first, 't1', { text: 'once', id: 'm1' }), { state: 'sent', id: 'm1' })
+  h1.close()
+  const again = { device: 'phone-a' } // the phone reconnected: a new connection, the same paired key
+  engine.watch('t1', again, () => {})
+  assert.deepEqual(await engine.send(again, 't1', { text: 'once', id: 'm1' }), { state: 'sent', id: 'm1' })
+  assert.equal(writes().length, 1)
+  engine.close()
+})
+
+test('two devices using the same id have two messages', async () => {
+  const { engine, writes } = setup()
+  const a = { device: 'phone-a' }
+  const b = { device: 'phone-b' }
+  engine.watch('t1', a, () => {})
+  engine.watch('t1', b, () => {})
+  await settle()
+  await engine.send(a, 't1', { text: 'from a', id: 'm1' })
+  await engine.send(b, 't1', { text: 'from b', id: 'm1' })
+  assert.deepEqual(writes().map((c) => c.params.text), ['from a', 'from b'])
+  engine.close()
+})
+
+test('a device that reconnects does not get back a held message its old connection took away', async () => {
+  const { engine, hc, timers, writes } = setup({ view: 'claude-draft' })
+  const first = { device: 'phone-a' }
+  const h1 = engine.watch('t1', first, () => {})
+  await settle()
+  assert.equal((await engine.send(first, 't1', { text: 'held', id: 'm1' })).why, 'draft')
+  h1.close() // left: dropped
+  const again = { device: 'phone-a' }
+  const h2 = engine.watch('t1', again, () => {})
+  assert.deepEqual(h2.held(), [])
+  hc.screens.t1 = screen('claude-idle')
+  for (const h of timers.intervals) await h.fn()
+  await settle()
+  assert.equal(writes().length, 0, 'never typed by itself')
+  assert.equal((await engine.send(again, 't1', { text: 'held', id: 'm1' })).state, 'sent', 'the person retries: typed once')
+  assert.equal(writes().length, 1)
+  engine.close()
+})

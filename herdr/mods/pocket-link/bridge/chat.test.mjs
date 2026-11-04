@@ -2,7 +2,7 @@
 // engine and a temp home (never a live Herdr, never iroh).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
@@ -395,4 +395,25 @@ test('one device uses at most two sessions at once; others still get theirs', ()
   assert.ok(engines.acquire('s3', 'c5', 'phone-b'), 'another phone is not held back')
   engines.release('s2', 'c2')
   assert.ok(engines.acquire('s3', 'c6', 'phone-a'), 'room again once it left one')
+})
+
+test('through the route: a phone that reconnects and retries an id has it typed once', async () => {
+  const { engine, hc } = world()
+  hc.screens.t1 = readFileSync(new URL('../chat/fixtures/screens/claude-idle.txt', import.meta.url), 'utf8')
+  const first = phone(engine, { device: 'paired-key-a' })
+  first.hello()
+  await first.call('chat.subscribe', { terminal: 't1' })
+  assert.equal((await first.call('chat.send', { terminal: 't1', text: 'hi', id: 'm1' })).result.state, 'sent')
+  first.conn.close('hung up')
+  const again = phone(engine, { device: 'paired-key-a' })
+  again.hello()
+  await again.call('chat.subscribe', { terminal: 't1' })
+  assert.equal((await again.call('chat.send', { terminal: 't1', text: 'hi', id: 'm1' })).result.state, 'sent')
+  assert.equal(hc.calls.filter(c => c.method === 'terminal.send').length, 1)
+  const other = phone(engine, { device: 'paired-key-b' })
+  other.hello()
+  await other.call('chat.subscribe', { terminal: 't1' })
+  await other.call('chat.send', { terminal: 't1', text: 'hi', id: 'm1' })
+  assert.equal(hc.calls.filter(c => c.method === 'terminal.send').length, 2, 'another device: its own message')
+  engine.close()
 })
