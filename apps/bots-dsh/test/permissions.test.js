@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { apply } from '../index.js'
 import { install } from '../src/host/permissions.js'
-import { narrowerLevel } from '../src/host/permission-rank.js'
+import { narrowerLevel, narrowestOffered } from '../src/host/permission-rank.js'
 import { fakeContext } from './fake-ctx.js'
 
 const PRESETS = { 'workspace-write': {}, 'danger-full-access': {} }
@@ -84,7 +84,15 @@ const TEAM = {
   questions: {},
 }
 
-function team(t, { auto = true, bots = {}, loaded = [], closed = [], tasks, rooms = {} } = {}) {
+// DSH's stock catalog (dsh-permission-presets): workspace-write and danger-full-access, and
+// Auto while its layer is loaded; no read-only. `custom` adds presets a profile configures.
+const STOCK = {
+  'workspace-write': { sandbox: 'workspace-write', approval: 'ask' },
+  'danger-full-access': { sandbox: 'danger-full-access', approval: 'never' },
+}
+const AUTO_SPEC = { sandbox: 'danger-full-access', approval: 'ask' }
+
+function team(t, { auto = true, bots = {}, loaded = [], closed = [], tasks, rooms = {}, custom = {}, defaultPreset = 'workspace-write' } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-permissions-'))
   writeFileSync(join(home, 'state.json'), JSON.stringify({ ...TEAM, bots: { m1: { ...TEAM.bots.m1, ...bots.m1 }, b2: { ...TEAM.bots.b2, ...bots.b2 } }, rooms: { r1: { ...TEAM.rooms.r1, ...rooms.r1 } }, ...(tasks ? { tasks } : {}) }))
   const log = []
@@ -93,9 +101,12 @@ function team(t, { auto = true, bots = {}, loaded = [], closed = [], tasks, room
   const presetOf = new Map()
   const service = {
     auto,
-    names: () => ['read-only', 'workspace-write', 'danger-full-access', ...(service.auto ? ['auto'] : [])],
-    catalog: () => ({ options: service.names().map(value => ({ value, name: value })), defaultOptions: [], defaultPreset: 'workspace-write' }),
-    resolve: (name) => { if (!service.names().includes(name)) throw new Error(`permission: unknown preset "${name}"`); return {} },
+    names: () => [...Object.keys(STOCK), ...Object.keys(custom), ...(service.auto ? ['auto'] : [])],
+    catalog: () => ({ options: service.names().map(value => ({ value, name: value })), defaultOptions: [], defaultPreset }),
+    resolve: (name) => {
+      if (!service.names().includes(name)) throw new Error(`permission: unknown preset "${name}"`)
+      return name === 'auto' ? AUTO_SPEC : STOCK[name] ?? custom[name]
+    },
     current: session => presetOf.get(session.id),
     set: (session, name) => {
       service.resolve(name)
@@ -292,18 +303,18 @@ test('a running task follows its Bot when the Bot\'s level is lowered', async (t
   const task = await rt.startTask({ title: 'Wish', text: 'Do it', from: 'm1' })
   await settle()
   assert.deepEqual(presets(task), ['danger-full-access'])
-  assert.equal((await call('update-bot', { id: 'm1', permission: 'read-only' })).ok, true)
+  assert.equal((await call('update-bot', { id: 'm1', permission: 'workspace-write' })).ok, true)
   await settle()
-  assert.equal(presets(task).at(-1), 'read-only', `task still at ${presets(task).join(' -> ')}`)
+  assert.equal(presets(task).at(-1), 'workspace-write', `task still at ${presets(task).join(' -> ')}`)
 
   // A task asked for in a group with a level of its own keeps the group's.
-  const grouped = team(t, { bots: { m1: { permission: 'danger-full-access' } }, rooms: { r1: { permission: 'workspace-write' } } })
+  const grouped = team(t, { bots: { m1: { permission: 'danger-full-access' } }, rooms: { r1: { permission: 'danger-full-access' } } })
   await grouped.call('state', {})
   grouped.announceOnCreate()
   const inGroup = await grouped.rt.startTask({ title: 'Wish', text: 'Do it', from: 'm1', roomId: 'r1' })
-  assert.equal((await grouped.call('update-bot', { id: 'm1', permission: 'read-only' })).ok, true)
+  assert.equal((await grouped.call('update-bot', { id: 'm1', permission: 'workspace-write' })).ok, true)
   await grouped.settle()
-  assert.deepEqual(grouped.presets(inGroup), ['workspace-write'])
+  assert.deepEqual(grouped.presets(inGroup), ['danger-full-access'])
 })
 
 test('a running group task follows the group when the group\'s level is lowered or cleared', async (t) => {
@@ -352,64 +363,92 @@ test('a task startTask no longer remembers goes to the catalog default', async (
   assert.deepEqual(presets('t0'), ['danger-full-access', 'workspace-write'])
 })
 
-test('the narrower of two levels ranks read-only, workspace-write, Auto, full access, and fails closed', () => {
-  assert.equal(narrowerLevel('workspace-write', 'read-only'), 'read-only')
-  assert.equal(narrowerLevel('danger-full-access', 'workspace-write'), 'workspace-write')
-  assert.equal(narrowerLevel('auto', 'workspace-write'), 'workspace-write')
-  assert.equal(narrowerLevel('auto', 'danger-full-access'), 'auto')
-  assert.equal(narrowerLevel('danger-full-access', 'danger-full-access'), 'danger-full-access')
-  // A custom preset cannot be ranked: read-only, whichever side it is on.
-  assert.equal(narrowerLevel('tight', 'danger-full-access'), 'read-only')
-  assert.equal(narrowerLevel('workspace-write', 'tight'), 'read-only')
-  assert.equal(narrowerLevel(undefined, 'workspace-write'), 'read-only')
+test('levels rank by what their preset allows, and what cannot be ranked gives the narrowest offered', () => {
+  const custom = {
+    builder: { sandbox: 'danger-full-access', approval: 'never' },
+    careful: { sandbox: 'read-only', approval: 'ask' },
+    odd: { sandbox: 'container', approval: 'ask' },
+  }
+  const catalogOf = names => ({
+    catalog: () => ({ options: names.map(value => ({ value, name: value })), defaultPreset: 'workspace-write' }),
+    resolve: (name) => {
+      if (!names.includes(name)) throw new Error(`permission: unknown preset "${name}"`)
+      return name === 'auto' ? AUTO_SPEC : STOCK[name] ?? custom[name]
+    },
+  })
+  const stock = catalogOf(['workspace-write', 'danger-full-access', 'auto', 'builder', 'odd'])
+  // Sandbox first, then approval: workspace-write < Auto < full access.
+  assert.equal(narrowerLevel(stock, 'danger-full-access', 'workspace-write'), 'workspace-write')
+  assert.equal(narrowerLevel(stock, 'auto', 'workspace-write'), 'workspace-write')
+  assert.equal(narrowerLevel(stock, 'auto', 'danger-full-access'), 'auto')
+  assert.equal(narrowerLevel(stock, 'builder', 'auto'), 'auto')
+  assert.equal(narrowerLevel(stock, 'danger-full-access', 'danger-full-access'), 'danger-full-access')
+  // Unknown, unresolvable or unrankable: the narrowest level this catalog offers.
+  assert.equal(narrowerLevel(stock, 'read-only', 'danger-full-access'), 'workspace-write')
+  assert.equal(narrowerLevel(stock, 'odd', 'danger-full-access'), 'workspace-write')
+  assert.equal(narrowerLevel(stock, undefined, 'workspace-write'), 'workspace-write')
+  assert.equal(narrowestOffered(stock), 'workspace-write')
+  // A catalog with a narrower preset of its own offers that one.
+  assert.equal(narrowerLevel(catalogOf(['workspace-write', 'careful', 'odd']), 'odd', 'workspace-write'), 'careful')
 })
 
-test('deleting a read-only Bot does not widen its running task', async (t) => {
+test('deleting a Bot never widens its running task, on the stock catalog', async (t) => {
+  // A profile whose default is full access: the Bot's narrower level stays.
   const tasks = { t1: { title: 'Wish', from: 'b2', at: 1, status: 'working' } }
-  const { rt, call, presets, settle } = team(t, { bots: { b2: { permission: 'read-only' } }, tasks, loaded: ['t1'] })
+  const { rt, call, presets, settle } = team(t, { defaultPreset: 'danger-full-access', bots: { b2: { permission: 'workspace-write' } }, tasks, loaded: ['t1'] })
   await rt.load()
   await rt.applyTaskPermission('t1', { id: 't1' })
   await settle()
-  assert.deepEqual(presets('t1'), ['read-only'])
+  assert.deepEqual(presets('t1'), ['workspace-write'])
   assert.equal((await call('delete-bot', { id: 'b2' })).ok, true)
   await settle()
-  assert.equal(presets('t1').at(-1), 'read-only', `deleted Bot's task: ${presets('t1').join(' -> ')}`)
-  // The cap is kept with the task: a restart does not raise it to the default either.
-  assert.equal(rt.state.tasks.t1.permissionCap, 'read-only')
+  assert.deepEqual(presets('t1'), ['workspace-write'])
+  // The cap is kept with the task: a re-apply (as after a restart) does not raise it.
+  assert.equal(rt.state.tasks.t1.permissionCap, 'workspace-write')
   await rt.reapplyTasks(() => true)
-  assert.deepEqual(presets('t1'), ['read-only'])
+  assert.deepEqual(presets('t1'), ['workspace-write'])
 })
 
-test('deleting a Bot on a custom preset leaves its task read-only', async (t) => {
+test('a deleted Bot on a custom preset leaves its task at a level the catalog offers', async (t) => {
+  // A custom full-access preset ranks as what it allows: the default is narrower.
   const tasks = { t1: { title: 'Wish', from: 'b2', at: 1, status: 'working' } }
-  const { rt, call, service, presets, settle } = team(t, { tasks, loaded: ['t1'] })
-  const names = service.names
-  service.names = () => [...names(), 'tight']
-  await rt.load()
-  rt.botOf('b2').permission = 'tight'
-  await rt.applyTaskPermission('t1', { id: 't1' })
-  assert.equal((await call('delete-bot', { id: 'b2' })).ok, true)
-  await settle()
-  assert.deepEqual(presets('t1'), ['tight', 'read-only'])
+  const builder = team(t, { custom: { builder: { sandbox: 'danger-full-access', approval: 'never' } }, bots: { b2: { permission: 'builder' } }, tasks, loaded: ['t1'] })
+  await builder.rt.load()
+  await builder.rt.applyTaskPermission('t1', { id: 't1' })
+  assert.equal((await builder.call('delete-bot', { id: 'b2' })).ok, true)
+  await builder.settle()
+  assert.deepEqual(builder.presets('t1'), ['builder', 'workspace-write'])
+  // One that cannot be ranked fails closed to the narrowest offered, even with a wide default.
+  const odd = team(t, { defaultPreset: 'danger-full-access', custom: { odd: { sandbox: 'container', approval: 'ask' } }, bots: { b2: { permission: 'odd' } }, tasks, loaded: ['t1'] })
+  await odd.rt.load()
+  await odd.rt.applyTaskPermission('t1', { id: 't1' })
+  assert.equal((await odd.call('delete-bot', { id: 'b2' })).ok, true)
+  await odd.settle()
+  assert.deepEqual(odd.presets('t1'), ['odd', 'workspace-write'])
 })
 
-test('pruning a read-only Bot\'s old task does not widen it', async (t) => {
+test('pruning an old task never widens it, on the stock catalog', async (t) => {
   const tasks = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`t${i}`, { title: 'Old', from: 'm1', at: i + 1, status: 'done' }]))
-  const { rt, call, presets, settle, announceOnCreate } = team(t, { bots: { m1: { permission: 'read-only' } }, tasks })
-  await call('state', {})
-  await rt.resolveAgent('t0')
-  await settle()
-  assert.deepEqual(presets('t0'), ['read-only'])
-  announceOnCreate()
-  await rt.startTask({ title: 'New', text: 'Do it', from: 'm1' })
-  await settle()
-  assert.equal(rt.state.tasks.t0, undefined)
-  assert.equal(presets('t0').at(-1), 'read-only', `pruned task: ${presets('t0').join(' -> ')}`)
+  const pruned = async (options, expected) => {
+    const { rt, call, presets, settle, announceOnCreate } = team(t, { ...options, tasks })
+    await call('state', {})
+    await rt.resolveAgent('t0')
+    await settle()
+    announceOnCreate()
+    await rt.startTask({ title: 'New', text: 'Do it', from: 'm1' })
+    await settle()
+    assert.equal(rt.state.tasks.t0, undefined)
+    assert.deepEqual(presets('t0'), expected)
+  }
+  // A full-access default does not raise a workspace-write task.
+  await pruned({ defaultPreset: 'danger-full-access', bots: { m1: { permission: 'workspace-write' } } }, ['workspace-write'])
+  // A custom level that cannot be ranked goes to the narrowest offered.
+  await pruned({ defaultPreset: 'danger-full-access', custom: { odd: { sandbox: 'container', approval: 'ask' } }, bots: { m1: { permission: 'odd' } } }, ['odd', 'workspace-write'])
 })
 
 test('deleting a group moves its running task to its Bot\'s own level, never above the group\'s', async (t) => {
   const tasks = { t1: { title: 'Wish', from: 'm1', at: 1, status: 'working', roomId: 'r1' } }
-  const { rt, call, presets, settle } = team(t, { bots: { m1: { permission: 'read-only' } }, rooms: { r1: { permission: 'danger-full-access' } }, tasks, loaded: ['t1'] })
+  const { rt, call, presets, settle } = team(t, { bots: { m1: { permission: 'workspace-write' } }, rooms: { r1: { permission: 'danger-full-access' } }, tasks, loaded: ['t1'] })
   await rt.load()
   await rt.applyTaskPermission('t1', { id: 't1' })
   await settle()
@@ -417,17 +456,29 @@ test('deleting a group moves its running task to its Bot\'s own level, never abo
   const res = await call('delete-room', { id: 'r1' })
   assert.equal(res.ok, true, JSON.stringify(res))
   await settle()
-  assert.equal(presets('t1').at(-1), 'read-only', `task after group deleted: ${presets('t1').join(' -> ')}`)
+  assert.equal(presets('t1').at(-1), 'workspace-write', `task after group deleted: ${presets('t1').join(' -> ')}`)
 
-  // A narrower group than its Bot: the task stays at the group's level, and later follows
-  // the Bot only down.
-  const narrow = team(t, { bots: { m1: { permission: 'danger-full-access' } }, rooms: { r1: { permission: 'workspace-write' } }, tasks, loaded: ['t1'] })
+  // A group narrower than its Bot: the task stays at the group's level, and still follows
+  // the Bot down.
+  const narrow = team(t, { bots: { m1: { permission: 'danger-full-access' } }, rooms: { r1: { permission: 'auto' } }, tasks, loaded: ['t1'] })
   await narrow.rt.load()
   await narrow.rt.applyTaskPermission('t1', { id: 't1' })
   assert.equal((await narrow.call('delete-room', { id: 'r1' })).ok, true)
   await narrow.settle()
-  assert.deepEqual(narrow.presets('t1'), ['workspace-write'])
-  assert.equal((await narrow.call('update-bot', { id: 'm1', permission: 'read-only' })).ok, true)
+  assert.deepEqual(narrow.presets('t1'), ['auto'])
+  assert.equal((await narrow.call('update-bot', { id: 'm1', permission: 'workspace-write' })).ok, true)
   await narrow.settle()
-  assert.deepEqual(narrow.presets('t1'), ['workspace-write', 'read-only'])
+  assert.deepEqual(narrow.presets('t1'), ['auto', 'workspace-write'])
+
+  // A custom group level: ranked as what it allows, or failed closed when it cannot be.
+  const customRoom = async (custom, expected) => {
+    const room = team(t, { defaultPreset: 'danger-full-access', custom, bots: { m1: { permission: 'danger-full-access' } }, rooms: { r1: { permission: Object.keys(custom)[0] } }, tasks, loaded: ['t1'] })
+    await room.rt.load()
+    await room.rt.applyTaskPermission('t1', { id: 't1' })
+    assert.equal((await room.call('delete-room', { id: 'r1' })).ok, true)
+    await room.settle()
+    assert.deepEqual(room.presets('t1'), expected)
+  }
+  await customRoom({ reviewed: { sandbox: 'workspace-write', approval: 'ask' } }, ['reviewed'])
+  await customRoom({ odd: { sandbox: 'container', approval: 'ask' } }, ['odd', 'workspace-write'])
 })

@@ -101,7 +101,7 @@ export function install(rt) {
     const room = task.roomId ? rt.roomOf(task.roomId) : undefined
     const level = bot === undefined ? service.catalog().defaultPreset : room?.permission ?? bot.permission ?? service.catalog().defaultPreset
     if (level === undefined || task.permissionCap === undefined) return level
-    return narrowerLevel(level, task.permissionCap)
+    return narrowerLevel(service, level, task.permissionCap)
   }
   // Before a Bot or a group leaves the state: each task `match` picks keeps the level it
   // runs at now as its cap. Saved with the deletion.
@@ -157,7 +157,7 @@ export function install(rt) {
     const service = presets()
     if (rt.readOnly() !== undefined || service === undefined) return
     const fallback = service.catalog().defaultPreset
-    const level = ranAt === undefined ? fallback : fallback === undefined ? ranAt : narrowerLevel(fallback, ranAt)
+    const level = ranAt === undefined ? fallback : fallback === undefined ? ranAt : narrowerLevel(service, fallback, ranAt)
     if (!level) return
     const loaded = (ctx.sessions?.list?.() ?? []).find(session => session.id === sessionId)
     await serial(sessionId, () => applyLevel(sessionId, level, loaded))
