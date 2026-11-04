@@ -66,10 +66,17 @@ const REVIEW_USER_LINE_MAX = 3_000
 const REVIEW_OTHER_LINE_MAX = 800
 const REVIEW_CHANGES_MAX = 8
 const REVIEW_PASSES_MAX = 4
+// Answers the review could not use (no list of changes, an unlisted entry, a bad
+// topic) for the same lines, before it passes them: a model that answers so twice
+// for the same input mostly keeps doing so, and every try is a model call.
+const REVIEW_TRIES_MAX = 2
 // A change whose entry is gone; any other failure keeps the review's place.
 const NO_MATCH = 'memory/no-match'
 const GONE = 'memory/bot-gone'
 const DENIED = 'memory/denied'
+// A change that does not fit in its file, or a topic past the most there are. The
+// memory review leaves it out and goes on; the tools still answer it as a failure.
+const FULL = 'memory/full'
 // The codes the memory review routes on. A failure that carries one keeps it.
 const ROUTED = new Set([NO_MATCH, GONE, DENIED])
 // A write the tools refused, and a write that broke. The code says which, so
@@ -726,9 +733,9 @@ export function install(rt) {
     const limit = limitOf(file)
     // A file already past its size (edited by hand) may still shrink.
     if (next.length <= limit || next.length <= file.content.length) return
-    throw new Error(file.topic === undefined
+    throw Object.assign(new Error(file.topic === undefined
       ? `${capital(label)}'s MEMORY.md would have ${next.length} of its ${limit} characters. Make room first: move details into a topic (remember with topic, then forget them here), merge entries with replace, or forget what no longer matters.`
-      : `The topic [[${file.topic}]] in ${label} would have ${next.length} of its ${limit} characters. Put the rest in another topic, or forget old entries.`)
+      : `The topic [[${file.topic}]] in ${label} would have ${next.length} of its ${limit} characters. Put the rest in another topic, or forget old entries.`), { code: FULL })
   }
   const capital = text => text[0].toUpperCase() + text.slice(1)
   const sizeNote = (file, size) => `${file.file}: ${size} of ${limitOf(file)} characters`
@@ -758,7 +765,7 @@ export function install(rt) {
       let target = topic === undefined ? main : files.find(file => file.topic === topic)
       const fresh = target === undefined
       if (fresh) {
-        if (files.length - 1 >= MEMORY_LIMITS.topics) throw new Error(`${capital(label)} already has ${MEMORY_LIMITS.topics} topics, the most it holds. Add to one of them (recall lists them), or forget one.`)
+        if (files.length - 1 >= MEMORY_LIMITS.topics) throw Object.assign(new Error(`${capital(label)} already has ${MEMORY_LIMITS.topics} topics, the most it holds. Add to one of them (recall lists them), or forget one.`), { code: FULL })
         target = { topic, file: `${topic}.md`, path: join(dirOf(scope), `${topic}.md`), content: '', ...parseMemory(`# ${topic}\n`) }
       }
       const base = target.lines.length > 0 ? target.lines : parseMemory(target === main ? EMPTY_MAIN : `# ${topic}\n`).lines
@@ -1518,6 +1525,9 @@ export function install(rt) {
     return { texts: kept, count: kept.length }
   }
 
+  // One warning per change the review leaves out, naming it.
+  const leftOut = (name, op, text, why) => rt.warn('ds-bot: memory review of %s left out a change (%s "%s"): %s', name, op, clip(text, 80), why)
+
   // `home` is the memory the review keeps what it finds in: the keeper's own, or its
   // group's. `teamWrites` says whether the keeper may also write the team's.
   async function applyReview({ keeper, name, home, numbered, changes, source, teamWrites }) {
@@ -1545,12 +1555,13 @@ export function install(rt) {
         else if (op === 'remove') done.push(await removeEntry({ scope, topic: target.file.topic, match: target.text, actor, label }))
       } catch (failure) {
         if (failure?.code === GONE) return 0
-        rt.warn('ds-bot: memory review of %s left out a change: %s', name, failure?.message ?? failure)
-        if (failure?.code !== NO_MATCH && failure?.code !== DENIED) failed ??= failure
+        leftOut(name, op, op === 'remove' ? target?.text ?? '' : text, failure?.message ?? failure)
+        if (failure?.code !== NO_MATCH && failure?.code !== DENIED && failure?.code !== FULL) failed ??= failure
       }
     }
-    // A full file or a failed write is no reason to pass the lines: the next
-    // review reads them again, and its request shows how full MEMORY.md is.
+    // A change that does not fit is left out for good: the same answer to the same
+    // lines would not fit the next time either. A failed write is no reason to pass
+    // the lines: the next review reads them again.
     if (failed !== undefined) throw failed
     return done.filter(result => result.changed).length
   }
@@ -1643,17 +1654,37 @@ export function install(rt) {
       const earlier = batch.earlier.map(line => reviewLine(line.who, line.text, keeper))
       const language = writtenIn(read.filter(line => line.who === 'user').map(line => line.text.replace(/^User: /, '')), languageNow())
       const reply = await botShot(keeper, reviewSystem({ teamWrites: teamWrites(), group }), reviewRequest({ who, tag: tagged, numbered, left, sizes, where: batch.where, earlier, fresh: fresh.texts, more, language }), tag)
-      const changes = parseReview(reply)
-      if (changes === undefined) throw new Error(`the model's answer is not a list of changes: ${clip(reply.replace(/\s+/g, ' '), 120)}`)
+      const parsed = parseReview(reply)
+      const changes = parsed ?? []
       const unknown = changes.find(change => change.op !== 'add' && numbered[Number(change.entry) - 1] === undefined)
-      if (unknown !== undefined) throw new Error(`the model's answer names entry ${unknown.entry}, which is not listed`)
-      // A secret is left out for good; any other entry memory cannot keep (one too
-      // long, say) fails the answer, so the next review reads the lines again.
-      const applied = changes.slice(0, REVIEW_CHANGES_MAX)
-      const unfit = applied.filter(change => change.op !== 'remove').map(change => cleanEntry(change.text)).find(text => !secretEntry(text) && entryProblem(text) !== undefined)
-      if (unfit !== undefined) throw new Error(`the model's answer holds an entry memory cannot keep: ${entryProblem(unfit)}`)
-      const badTopic = applied.find(change => change.op === 'add' && typeof change.topic === 'string' && change.topic.trim() !== '' && cleanTopic(change.topic) === undefined)
-      if (badTopic !== undefined) throw new Error(`the model's answer names the topic "${clip(badTopic.topic, 60)}", which cannot be a topic name`)
+      const kept = changes.slice(0, REVIEW_CHANGES_MAX)
+      const badTopic = kept.find(change => change.op === 'add' && typeof change.topic === 'string' && change.topic.trim() !== '' && cleanTopic(change.topic) === undefined)
+      const unusable = parsed === undefined ? `the model's answer is not a list of changes: ${clip(reply.replace(/\s+/g, ' '), 120)}`
+        : unknown !== undefined ? `the model's answer names entry ${unknown.entry}, which is not listed`
+          : badTopic !== undefined ? `the model's answer names the topic "${clip(badTopic.topic, 60)}", which cannot be a topic name`
+            : undefined
+      // An answer the review cannot use changes nothing. The same lines are read
+      // again at the next turn end, and after REVIEW_TRIES_MAX such answers they
+      // are passed, so one answer cannot hold the review in place for good.
+      const place = cursorsNow()[key]
+      const before = unusableAnswers.get(key)
+      const tries = unusable === undefined ? 0 : (before !== undefined && before.place === place ? before.tries : 0) + 1
+      if (unusable !== undefined && tries < REVIEW_TRIES_MAX) {
+        unusableAnswers.set(key, { place, tries })
+        throw new Error(unusable)
+      }
+      unusableAnswers.delete(key)
+      if (unusable !== undefined) rt.warn('ds-bot: memory review of %s passed the lines through #%d after %d answers it could not use: %s', name, through, tries, unusable)
+      // A secret is left out for good, and silently, so no log shows it. Any other
+      // entry memory cannot keep (one too long, say) is left out with a warning,
+      // and the rest of the answer is kept.
+      const applied = unusable !== undefined ? [] : kept.filter((change) => {
+        if (change.op === 'remove') return true
+        const text = cleanEntry(change.text)
+        if (secretEntry(text) || entryProblem(text) === undefined) return true
+        leftOut(name, change.op, text, entryProblem(text))
+        return false
+      })
       if (!alive()) return
       const changed = await applyReview({ keeper, name, home, numbered, changes: applied, source: batch.source(read), teamWrites })
       if (!alive()) return
@@ -1678,6 +1709,9 @@ export function install(rt) {
   }
   /** @type {Map<string, {since: number | undefined, passes: number}>} */
   const overflowed = new Map()
+  // Answers the review could not use, by conversation, for the lines from `place`.
+  /** @type {Map<string, {place: number | undefined, tries: number}>} */
+  const unusableAnswers = new Map()
 
   /** @type {Map<string, ReturnType<typeof setTimeout>>} */
   const reviewTimers = new Map()

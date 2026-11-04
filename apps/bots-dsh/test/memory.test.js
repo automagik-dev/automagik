@@ -611,6 +611,22 @@ async function reviewed(call) {
   throw new Error('the memory review did not finish')
 }
 
+// The host's warnings that hold `text`, from its diagnostics log.
+const warnings = (home, text) => {
+  const path = join(home, 'logs', 'diagnostics.jsonl')
+  if (!existsSync(path)) return []
+  return readFileSync(path, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
+    .filter(entry => entry.level === 'warn' && entry.text.includes(text))
+    .map(entry => entry.text)
+}
+// Exactly `count` of them, once the log has caught up.
+async function warnedTimes(home, text, count) {
+  await until(() => warnings(home, text).length >= count)
+  await settle()
+  assert.equal(warnings(home, text).length, count, `warnings with "${text}": ${JSON.stringify(warnings(home, text))}`)
+  return warnings(home, text)
+}
+
 test('when a turn ends, the memory review keeps what the user said, through the same rules', async (t) => {
   const history = {
     b2: [
@@ -745,29 +761,146 @@ test('an answer that is no list of changes keeps the review\'s place, and the ne
   assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
 })
 
-test('an answer with a malformed change, an unlisted entry, an entry too long, or a bad topic changes nothing and keeps the review\'s place', async (t) => {
-  const replies = [
-    JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }, { op: 'add' }] }),
-    JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }, { op: 'remove', entry: 7 }] }),
-    JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }, { op: 'add', text: `The user tells ${'a long story '.repeat(30)}` }] }),
-    JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }, { op: 'add', text: 'The user writes C++', topic: 'C++' }] }),
-    JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }, { op: 'add', text: 'I use hunter2 as my password' }] }),
-  ]
-  const { ctx, call, read, requests, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
+test('an answer the review cannot use is asked for once more, then the lines are passed with one warning', async (t) => {
+  const replies = ['Nothing new.', 'Nothing new.']
+  const { ctx, home, call, read, requests, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
   t.after(() => stop())
   await call('state', {})
-  for (let tries = 0; tries < 4; tries += 1) {
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 9 })
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 2)
+  assert.equal(requests[1].messages[0].content[0].text, requests[0].messages[0].content[0].text)
+  // Two answers for the same lines that were no list of changes: the review moves on.
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  const [passed] = await warnedTimes(home, 'passed the lines', 1)
+  assert.match(passed, /^memory review of Writer passed the lines through #11 after 2 answers it could not use: the model's answer is not a list of changes: Nothing new\.$/)
+  await warnedTimes(home, 'memory review of chat:b2 failed', 1)
+  // The same lines are not read a third time.
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 2)
+  assert.throws(() => read('bots', 'b2', 'MEMORY.md'), { code: 'ENOENT' })
+})
+
+test('an answer with a malformed change, an unlisted entry, or a bad topic changes nothing, and is asked for once more', async (t) => {
+  for (const bad of [{ op: 'add' }, { op: 'remove', entry: 7 }, { op: 'add', text: 'The user writes C++', topic: 'C++' }]) {
+    const answer = JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }, bad] })
+    const { ctx, home, call, read, requests, stop } = start({ replies: [answer, answer], config: { memoryReviewDelayMs: 0 } })
+    t.after(() => stop())
+    await call('state', {})
     ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
     await reviewed(call)
     assert.throws(() => read('bots', 'b2', 'MEMORY.md'), { code: 'ENOENT' })
+    assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 9 }, JSON.stringify(bad))
+    ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+    await reviewed(call)
+    assert.throws(() => read('bots', 'b2', 'MEMORY.md'), { code: 'ENOENT' })
+    assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 }, JSON.stringify(bad))
+    await warnedTimes(home, 'passed the lines', 1)
+    ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+    await reviewed(call)
+    assert.equal(requests.length, 2, JSON.stringify(bad))
+  }
+})
+
+test('a password in an answer is only left out, with no warning that shows it', async (t) => {
+  const replies = [JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }, { op: 'add', text: 'I use hunter2 as my password' }] })]
+  const { ctx, home, call, read, requests, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+  assert.deepEqual(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text), ['The user likes tea'])
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  await settle()
+  assert.deepEqual(warnings(home, 'hunter2'), [])
+  assert.deepEqual(warnings(home, 'memory review'), [])
+})
+
+test('an entry too long for memory is left out with one warning, and the rest of the answer is kept', async (t) => {
+  const long = `The user tells a story: ${'x'.repeat(316)}`
+  assert.equal(long.length, 340)
+  const replies = [JSON.stringify({ changes: [{ op: 'add', text: long }, { op: 'add', text: 'The user likes tea' }] })]
+  const { ctx, home, call, read, requests, journal, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.deepEqual(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text), ['The user likes tea'])
+  assert.deepEqual(journal().map(record => record.op), ['add'])
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  const [left] = await warnedTimes(home, 'left out a change', 1)
+  assert.match(left, /^memory review of Writer left out a change \(add "The user tells a story: x+ …\(cut\)"\): An entry holds at most 300 characters; this one has 340\./)
+  assert.deepEqual(warnings(home, 'memory review of chat:b2 failed'), [])
+  // The lines are passed, so the next turn end asks the model nothing.
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+})
+
+test('an answer that changes nothing passes the lines, and the next turn end asks nothing (characterization)', async (t) => {
+  const { ctx, home, call, read, requests, stop } = start({ replies: [JSON.stringify({ changes: [] })], config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  assert.equal(existsSync(join(home, 'memory', 'bots', 'b2', 'MEMORY.md')), false)
+  assert.equal(existsSync(join(home, 'memory', 'journal.jsonl')), false)
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+  await settle()
+  assert.deepEqual(warnings(home, 'memory review'), [])
+})
+
+test('a model call that fails keeps the review\'s place for as long as it fails', async (t) => {
+  const broke = () => new Error('503 Service Unavailable')
+  const replies = [broke(), broke(), broke(), JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }] })]
+  const { ctx, call, read, requests, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  for (let tries = 0; tries < 3; tries += 1) {
+    ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+    await reviewed(call)
     assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 9 })
   }
   ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
   await reviewed(call)
-  // A password is only left out: the rest is written and the place moves on.
-  assert.equal(requests.length, 5)
+  assert.equal(requests.length, 4)
   assert.deepEqual(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text), ['The user likes tea'])
   assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+})
+
+test('a write that fails keeps the review\'s place, and the next review finishes it', async (t) => {
+  const answer = JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }] })
+  const { ctx, home, call, read, journal, requests, stop } = start({ replies: [answer, answer, answer, answer], config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  // The change log cannot be written: a directory stands where it belongs.
+  mkdirSync(join(home, 'memory', 'journal.jsonl'), { recursive: true })
+  // More times than an answer the review cannot use is asked for: a broken write
+  // is no reason to pass the lines.
+  for (let tries = 0; tries < 3; tries += 1) {
+    ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+    await reviewed(call)
+    assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 9 })
+  }
+  rmSync(join(home, 'memory', 'journal.jsonl'), { recursive: true })
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.deepEqual(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text), ['The user likes tea'])
+  assert.deepEqual(journal().map(record => record.op), ['add'])
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  // While the change waits to be finished, memory cannot be read, so the reviews
+  // between ask the model nothing.
+  assert.equal(requests.length, 2)
 })
 
 test('a backlog past the text limit is reviewed in passes, oldest first', async (t) => {
@@ -818,25 +951,48 @@ test('an answer that reaches the change limit exactly is followed by another pas
   assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
 })
 
-test('a full MEMORY.md keeps the review\'s place, and an add with a topic lands there', async (t) => {
+test('a full MEMORY.md leaves out the add with one warning and passes the lines, and an add with a topic lands there', async (t) => {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-memory-'))
   mkdirSync(join(home, 'memory', 'bots', 'b2'), { recursive: true })
   const filler = Array.from({ length: 13 }, (_, at) => `- Filler fact number ${at + 1} ${'y'.repeat(280)}`)
   writeFileSync(join(home, 'memory', 'bots', 'b2', 'MEMORY.md'), `# Memory\n\n${filler.join('\n')}\n\n## Index\n`)
-  const replies = [JSON.stringify({ changes: [{ op: 'add', text: 'The user flies with Air China' }] }), JSON.stringify({ changes: [{ op: 'add', text: 'The user flies with Air China', topic: '出行' }] })]
-  const { ctx, call, read, requests, stop } = start({ home, replies, config: { memoryReviewDelayMs: 0 } })
+  const history = { b2: [...ownChat] }
+  const replies = [
+    // The add does not fit; the edit after it makes room, and is kept.
+    JSON.stringify({ changes: [{ op: 'add', text: 'The user flies with Air China' }, { op: 'edit', entry: 13, text: 'Filler fact number 13 is short now' }] }),
+    JSON.stringify({ changes: [{ op: 'add', text: 'The user flies with Air China', topic: '出行' }] }),
+  ]
+  const { ctx, call, read, requests, journal, stop } = start({ home, replies, history, config: { memoryReviewDelayMs: 0 } })
   t.after(() => stop())
   await call('state', {})
   ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
   await reviewed(call)
   assert.match(requests[0].messages[0].content[0].text, /MEMORY\.md has 3\d{3} of 4000 characters \(own\)/)
   assert.match(requests[0].system, /"topic": "travel"/)
-  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 9 })
+  const entries = parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text)
+  assert.equal(entries.at(-1), 'Filler fact number 13 is short now')
+  assert.ok(!entries.includes('The user flies with Air China'))
+  assert.deepEqual(journal().map(record => record.op), ['replace'])
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  const [left] = await warnedTimes(home, 'left out a change', 1)
+  assert.match(left, /^memory review of Writer left out a change \(add "The user flies with Air China"\): Your memory's MEMORY\.md would have 40\d\d of its 4000 characters\./)
+  assert.deepEqual(warnings(home, 'memory review of chat:b2 failed'), [])
+  // The lines are passed, so the next turn end asks the model nothing.
   ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
   await reviewed(call)
+  assert.equal(requests.length, 1)
+
+  // The user says it again: this time the model puts it in a topic.
+  history.b2.push(
+    { event: { seq: 12, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'I always fly Air China' }] } } },
+    { event: { seq: 13, type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'Noted.' }] } } } },
+  )
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 2)
   assert.match(read('bots', 'b2', '出行.md'), /- The user flies with Air China \[/)
   assert.match(read('bots', 'b2', 'MEMORY.md'), /\[\[出行\]\]/)
-  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 13 })
 })
 
 test('topic entries that share words with the user\'s new lines come first', () => {
