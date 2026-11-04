@@ -73,10 +73,11 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // docs/, .genie/ plans, the mockup) and its catalog, which installed mod managers read from dev
 // directly, not from a release; and the layout entry's RECIPE.md and preview.png.
 // In Pocket: its notes (*.md at its top) and docs/, and the Android project's scripts (the terminal
-// page's test and the vendoring script), which no APK carries.
+// page's test and the vendoring script), which no APK carries. Meter's local tools (meter/: the Claude
+// status line and the limits logger it wraps) run from a checkout on the owner's machine; no release carries them.
 const NEVER_SHIPPED = [/^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/, /^apps\/automagik-pets\//, /^docs\//,
   /^herdr\/[^/]+\.md$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr-layout\/(RECIPE\.md|preview\.png)$/,
-  /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//];
+  /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//, /^meter\//];
 /**
  * The herdr part: everything under herdr/ (the pack's mods, installer and tooling) and its layout's
  * own entry folder, herdr-layout/ (the pack ships its automagik.json; RFC 0011).
