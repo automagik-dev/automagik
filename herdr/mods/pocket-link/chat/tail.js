@@ -231,6 +231,8 @@ export class RemoteTail {
     Object.assign(this, { hc, on, path, onLines, onReset, onError, working, window, page, workingMs, idleMs, timers })
     this.next = 1
     this.first = 1
+    /** The text of line next - 1 as read (undefined: none yet; null: too long to keep). */
+    this.held = undefined
     this.counted = false
     this.stopped = false
     this.busy = null
@@ -265,42 +267,60 @@ export class RemoteTail {
     return r.lines
   }
 
+  /** The file is not the one read: start again, window lines before its end. */
+  restart() {
+    Object.assign(this, { next: 1, first: 1, held: undefined, counted: false })
+    this.onReset()
+  }
+
+  /**
+   * Every poll reads again from the last line held and compares it: a file truncated and written
+   * again past the old offset is a new file (restart), not more lines to splice on.
+   */
   async readPages() {
-    try {
+    for (;;) {
+      if (this.stopped) return
       if (!this.counted) {
-        const lines = await this.count()
+        let lines
+        try { lines = await this.count() } catch (e) { this.onError(e); return }
         this.counted = true
         if (Number.isFinite(this.window) && lines > this.window) this.next = this.first = lines - this.window + 1
       }
-    } catch (e) { this.onError(e); return }
-    for (;;) {
-      if (this.stopped) return
+      const overlap = this.held !== undefined && this.next > 1
+      const offset = overlap ? this.next - 1 : this.next
       let r
       try {
-        r = await this.hc.call('file.read', { path: this.path, on: this.on, offset: this.next, limit: this.page })
+        r = await this.hc.call('file.read', { path: this.path, on: this.on, offset, limit: this.page + (overlap ? 1 : 0) })
       } catch (e) {
-        // herdr-core refuses an offset past the last line: caught up, or the file shrank.
         if (e?.kind !== 'invalid_params') { this.onError(e); return }
+        // herdr-core refuses an offset past the last line. Exactly at the end: caught up. Fewer
+        // lines than were read: a new file. More: not something to guess at, so it is reported.
         let lines
         try { lines = await this.count() } catch (e2) { this.onError(e2); return }
-        if (lines >= this.next - 1) return
-        this.next = this.first = 1
-        this.onReset()
-        continue
+        if (lines === offset - 1) return
+        if (lines < offset - 1) { this.restart(); continue }
+        this.onError(e)
+        return
       }
-      if (r.lines < this.next - 1) { this.next = this.first = 1; this.onReset(); continue }
+      if (r.lines < offset - 1) { this.restart(); continue }
       if (r.last < r.first) {
         // Nothing given although the file has more: one line past the 8 MB a read gives.
-        if (r.lines >= this.next) { this.onLines([{ n: this.next, text: null }]); this.next += 1; continue }
+        if (!overlap && r.lines >= this.next) { this.onLines([{ n: this.next, text: null }]); this.next += 1; this.held = null; continue }
         return
       }
       const pieces = r.text.match(/[^\n]*\n|[^\n]+$/g) ?? []
+      if (overlap) {
+        const again = pieces.shift()
+        const same = again !== undefined && again.endsWith('\n') && (this.held === null || again.slice(0, -1).replace(/\r$/, '') === this.held)
+        if (!same) { this.restart(); continue }
+      }
+      const base = overlap ? r.first + 1 : r.first
       const out = []
       for (const piece of pieces) {
         if (!piece.endsWith('\n')) break // the last line, still being written: read again next time
-        out.push({ n: r.first + out.length, text: piece.slice(0, -1).replace(/\r$/, '') })
+        out.push({ n: base + out.length, text: piece.slice(0, -1).replace(/\r$/, '') })
       }
-      if (out.length) { this.next = r.first + out.length; this.onLines(out) }
+      if (out.length) { this.next = base + out.length; this.held = out.at(-1).text; this.onLines(out) }
       if (!out.length || r.last >= r.lines) return
     }
   }

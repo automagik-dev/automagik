@@ -99,17 +99,18 @@ test('remote: reads by offset with on from the address and no cwd, paging by lim
   await tail.start()
   assert.deepEqual(got.map((l) => l.text), ['a', 'b', 'c', 'd', 'e'])
   const reads = hc.calls.filter((c) => c.method === 'file.read').map((c) => c.params)
-  assert.deepEqual(reads.filter((p) => p.limit !== 0).map((p) => p.offset), [1, 3, 5])
+  // Pages after the first read again from the last line held (the overlap check).
+  assert.deepEqual(reads.filter((p) => p.limit !== 0).map((p) => [p.offset, p.limit]), [[1, 2], [2, 3], [4, 3]])
   assert.deepEqual(reads[0], { path: '.claude/projects/p/s.jsonl', on: 'box', offset: 1, limit: 0 }, 'first, how many lines')
   for (const p of reads) {
     assert.equal(p.on, 'box')
     assert.equal(p.path, '.claude/projects/p/s.jsonl')
-    assert.ok(p.limit === 2 || p.limit === 0)
+    assert.ok([0, 2, 3].includes(p.limit))
     assert.ok(!('cwd' in p), 'no cwd: the base is that machine home')
   }
   hc.append('box', '.claude/projects/p/s.jsonl', 'f\n')
   await tail.tick()
-  assert.equal(hc.calls.filter((c) => c.method === 'file.read').at(-1).params.offset, 6)
+  assert.equal(hc.calls.filter((c) => c.method === 'file.read').at(-1).params.offset, 5)
   assert.deepEqual(got.at(-1), { n: 6, text: 'f' })
   await tail.stop()
 })
@@ -305,4 +306,75 @@ test('remote: the first read starts window lines before the end; caught up is no
   await tail.tick()
   await tail.tick()
   assert.deepEqual(errors, [], 'an offset past the end means caught up')
+})
+
+// ---------------------------------------------------------------- re-review of #280
+
+test('remote: a file truncated and written again past the old offset is a new file, not spliced', async () => {
+  const path = '.claude/projects/p/s.jsonl'
+  const hc = createFakeHc({ files: { box: { [path]: 'old1\nold2\nold3\n' } } })
+  const { tail, got, resets } = remoteTail(hc)
+  await tail.start()
+  hc.files.box[path] = 'new1\nnew2\nnew3\nnew4\nnew5\n'
+  await tail.tick()
+  assert.equal(resets(), 1)
+  assert.deepEqual(got.slice(3), [1, 2, 3, 4, 5].map((n) => ({ n, text: `new${n}` })))
+  await tail.stop()
+})
+
+test('remote: caught up means no reset, no line twice and no error, poll after poll', async () => {
+  const path = '.claude/projects/p/s.jsonl'
+  const hc = createFakeHc({ files: { box: { [path]: 'a\nb\n' } } })
+  const errors = []
+  const { tail, got, resets } = remoteTail(hc, { onError: (e) => errors.push(e.message) })
+  await tail.start()
+  for (let i = 0; i < 3; i++) await tail.tick()
+  assert.deepEqual(got, [{ n: 1, text: 'a' }, { n: 2, text: 'b' }])
+  assert.equal(resets(), 0)
+  assert.deepEqual(errors, [])
+  hc.append('box', path, 'c\n')
+  await tail.tick()
+  assert.deepEqual(got.at(-1), { n: 3, text: 'c' })
+  assert.equal(got.length, 3)
+  await tail.stop()
+})
+
+/** An hc whose file.read pages fail with `kind` while counting works (`lines`: one count, or each in turn). */
+function failingPages(kind, lines) {
+  const counts = [lines].flat()
+  return {
+    async call(method, params) {
+      if (params.limit === 0) return { text: '', first: 1, last: 0, lines: counts.length > 1 ? counts.shift() : counts[0] }
+      throw Object.assign(new Error(kind), { kind })
+    }
+  }
+}
+
+test('remote: an error that is not past-the-end is reported, never taken for caught up', async () => {
+  const errors = []
+  // An empty file: had the error been taken for past-the-end, 0 lines would read as caught up.
+  const hc = failingPages('machine_unknown', 0)
+  const { tail, resets } = remoteTail(hc, { onError: (e) => errors.push(e.kind) })
+  await tail.start()
+  assert.deepEqual(errors, ['machine_unknown'])
+  assert.equal(resets(), 0)
+})
+
+test('remote: invalid_params while the file has lines not yet read is reported, not a silent stall', async () => {
+  const errors = []
+  const hc = failingPages('invalid_params', 5)
+  const { tail, resets } = remoteTail(hc, { onError: (e) => errors.push(e.kind) })
+  await tail.start()
+  assert.deepEqual(errors, ['invalid_params'])
+  assert.equal(resets(), 0)
+})
+
+test('remote: past-the-end with exactly the lines already read is caught up, silently', async () => {
+  // Counted 10 (window 3: start at line 8), then the file is 7 lines when the page is read.
+  const errors = []
+  const hc = failingPages('invalid_params', [10, 7])
+  const { tail, got, resets } = remoteTail(hc, { window: 3, onError: (e) => errors.push(e.kind) })
+  await tail.start()
+  assert.equal(tail.first, 8)
+  assert.deepEqual([errors, got, resets()], [[], [], 0])
 })
