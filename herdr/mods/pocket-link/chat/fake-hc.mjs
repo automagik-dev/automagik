@@ -48,10 +48,43 @@ export function createFakeHc({ terminals = [], screens = {}, files = {}, readCap
     }
   }
 
+  // Write methods, as herdr-core: send refuses a blocked program unless forced, and a status that
+  // is not exactly `if`; keys and interrupt answer like it. `react` lets a test change the terminal
+  // after a key or a send (a dialog going away, a turn starting).
+  const reactions = []
+  const react = (method, params) => { for (const r of reactions) r(method, params) }
+  Object.assign(methods, {
+    'terminal.send'(params) {
+      const t = byAddress.get(params.terminal)
+      if (!t) throw Object.assign(new Error('not_found'), { kind: 'not_found' })
+      const state = t.status?.state ?? null
+      if (state === 'blocked' && !params.force) throw Object.assign(new Error('blocked'), { kind: 'blocked' })
+      if (params.if != null && params.if !== state) throw Object.assign(new Error('status_mismatch'), { kind: 'status_mismatch' })
+      react('terminal.send', params)
+      return { started: true, status: state, turn: t.turn ?? 0 }
+    },
+    'terminal.keys'(params) {
+      const t = byAddress.get(params.terminal)
+      if (!t) throw Object.assign(new Error('not_found'), { kind: 'not_found' })
+      react('terminal.keys', params)
+      return { status: t.status?.state ?? null, turn: t.turn ?? 0 }
+    },
+    'terminal.interrupt'(params) {
+      const t = byAddress.get(params.terminal)
+      if (!t) throw Object.assign(new Error('not_found'), { kind: 'not_found' })
+      react('terminal.interrupt', params)
+      return { outcome: 'stopped', key: t.status ? 'esc' : 'ctrl+c' }
+    }
+  })
+
   return {
     calls,
     files,
     screens,
+    /** Run `fn(method, params)` after each send, keys or interrupt. */
+    onWrite(fn) { reactions.push(fn) },
+    /** Set a terminal's facts without an event (as if read fresh). */
+    set(address, data) { Object.assign(byAddress.get(address), data) },
     async call(method, params = {}) {
       calls.push({ method, params: structuredClone(params) })
       const fn = methods[method]
