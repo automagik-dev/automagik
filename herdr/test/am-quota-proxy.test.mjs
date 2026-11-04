@@ -79,6 +79,7 @@ test("mergeAccounts joins the two lists into what choose() reads", () => {
   const signin = accounts.find((a) => a.id === "codex-signin.json");
   assert.deepEqual(signin.windows, []);
   assert.equal(signin.requires_sign_in, true);
+  assert.equal(signin.email, null, "no email field: none invented");
 
   // And the policy reads them without further shaping: the exhausted claude hands off to codex.
   const d = choose(accounts.filter((a) => a.provider === "claude" && a.windows.length).map((a) => ({
@@ -233,4 +234,29 @@ test("a window that reset between polls is a new window, not a negative burn", (
   assert.equal(second[0].previous, undefined, "the old reading belongs to a window that is gone");
   const d = choose(second, { provider: "claude", now: Date.parse("2026-11-02T12:01:00Z"), activeId: "x.json" });
   assert.equal(d.action, "keep", "no projection from a stale window");
+});
+
+test("the email and plan the panel shows come from the proxy's fields, never the file name", () => {
+  const quotas = { accounts: [
+    { name: "codex-0a0a0a0a-ana-pro.json", provider: "codex", email: "ana@example.com", plan: "pro",
+      windows: [{ id: "primary", used_percent: 10, reset_at: "2026-11-04T06:42:00Z" }] },
+    { name: "claude-0b0b0b0b-bo.json", provider: "claude", email: "bo@example.com",
+      windows: [{ id: "seven_day", used_percent: 20, reset_at: "2026-11-05T09:00:00Z" }] },
+  ] };
+  const credentials = { files: [
+    { name: "codex-0a0a0a0a-ana-pro.json", provider: "codex", email: "ana@example.com",
+      id_token: { plan_type: "pro", chatgpt_account_id: "not-kept" } },
+    { name: "claude-0b0b0b0b-bo.json", provider: "claude", label: "bo@example.com" },
+    { name: "codex-only-listed.json", provider: "codex", label: "cy@example.com", id_token: { plan_type: "plus" } },
+    { name: "claude-labelled.json", provider: "claude", label: "work" },
+  ] };
+  const parsed = parseCredentials(credentials);
+  assert.equal(parsed.find((c) => c.id === "claude-0b0b0b0b-bo.json").email, "bo@example.com", "an email label is an email");
+  assert.equal(parsed.find((c) => c.id === "claude-labelled.json").email, null, "a label that is no email is not one");
+  assert.ok(!JSON.stringify(parsed).includes("not-kept"), "nothing else of id_token is kept");
+  const accounts = mergeAccounts(parseQuotas(quotas), parsed);
+  const by = (id) => accounts.find((a) => a.id === id);
+  assert.deepEqual([by("codex-0a0a0a0a-ana-pro.json").email, by("codex-0a0a0a0a-ana-pro.json").plan], ["ana@example.com", "pro"]);
+  assert.deepEqual([by("claude-0b0b0b0b-bo.json").email, by("claude-0b0b0b0b-bo.json").plan], ["bo@example.com", null]);
+  assert.deepEqual([by("codex-only-listed.json").email, by("codex-only-listed.json").plan], ["cy@example.com", "plus"]);
 });

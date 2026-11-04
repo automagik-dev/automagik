@@ -5,11 +5,12 @@
 //
 // Shapes, measured against a live proxy (2026-11-01):
 //   GET <base>/v0/management/plugins/cpa-quota-api-extension/v1/quotas
-//     { accounts: [{ auth_index, name, provider, credential_state, status, supported,
-//                    windows: [{ id, used_percent, remaining_percent, reset_at }] }] }
+//     { accounts: [{ auth_index, name, provider, email, plan (Codex only), credential_state,
+//                    status, supported, windows: [{ id, used_percent, remaining_percent, reset_at }] }] }
 //   GET <base>/v8/management/credentials
-//     { files: [{ name, provider, status, disabled, requires_sign_in, failed, path,
-//                 access_token_expires_at, quota: { signals } }] }
+//     { files: [{ name, provider, email, label, status, disabled, requires_sign_in, failed, path,
+//                 access_token_expires_at, id_token: { plan_type } (Codex), quota: { signals } }] }
+// The file name (`name`) is the credential's id; the email and plan are only what the panel shows.
 //   GET <base>/v8/management/credentials/download?name=<file>   → the credential JSON itself
 
 export const QUOTA_EXTENSION = "/v0/management/plugins/cpa-quota-api-extension/v1";
@@ -23,6 +24,8 @@ export function safeName(name) {
 }
 
 const share = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+/** A short display string, or null: the proxy's email, label and plan fields. */
+const text = (v) => (typeof v === "string" && v.trim() && v.length <= 200 ? v.trim() : null);
 
 /** The quota extension's list → one entry per credential, windows normalized. */
 export function parseQuotas(json) {
@@ -31,6 +34,8 @@ export function parseQuotas(json) {
     id: safeName(row?.name) ?? row?.auth_index ?? null,
     name: row?.name ?? null,
     provider: row?.provider ?? null,
+    email: text(row?.email),
+    plan: text(row?.plan),
     authIndex: row?.auth_index ?? null,
     credentialState: row?.credential_state ?? null,
     status: row?.status ?? null,
@@ -52,6 +57,9 @@ export function parseCredentials(json) {
     id: safeName(row?.name) ?? null,
     name: row?.name ?? null,
     provider: row?.provider ?? null,
+    email: text(row?.email) ?? (String(row?.label ?? "").includes("@") ? text(row.label) : null),
+    // Only the plan claim of the listing's id_token summary is read; nothing else of it is kept.
+    plan: text(row?.id_token?.plan_type),
     status: row?.status ?? null,
     disabled: Boolean(row?.disabled),
     failed: Boolean(row?.failed),
@@ -76,6 +84,8 @@ export function mergeAccounts(quotas, credentials) {
       id: q.id,
       name: q.name ?? c.name ?? q.id,
       provider: q.provider ?? c.provider ?? null,
+      email: q.email ?? c.email ?? null,
+      plan: q.plan ?? c.plan ?? null,
       status: c.status ?? q.status ?? null,
       disabled: Boolean(c.disabled),
       failed: Boolean(c.failed),
@@ -93,6 +103,8 @@ export function mergeAccounts(quotas, credentials) {
       id: c.id,
       name: c.name ?? c.id,
       provider: c.provider ?? null,
+      email: c.email ?? null,
+      plan: c.plan ?? null,
       status: c.status ?? null,
       disabled: c.disabled,
       failed: c.failed,

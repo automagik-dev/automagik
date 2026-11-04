@@ -56,8 +56,8 @@ chmod 700 "$1"`;
 export const keychainBackupPath = (appHome, provider, stamp) => `${payloadDir(appHome)}/keychain-${provider}-${stamp}.hex`;
 
 /** Empties a directory of payloads and item backups older than an hour (an interrupted switch
- *  leaves one behind). Only those names: the panel's own records (`active.json`, `saved.json`)
- *  live in the same folder and must outlive the hour. */
+ *  leaves one behind). Only those names: the panel's records (`active.json`, and the `saved.json`
+ *  an older version kept) live in the same folder and must outlive the hour. */
 export function sweepScript() {
   return `set -eu
 find "$1" -maxdepth 1 -type f \\( -name "claude-*.json" -o -name "codex-*.json" -o -name "keychain-*.hex" \\) -mmin +60 -delete 2>/dev/null || true`;
@@ -92,22 +92,6 @@ for old in "$2".bak-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*; do
   [ "$i" -le $((count - 3)) ] && rm -f "$old" 2>/dev/null || true
 done
 true`;
-}
-
-/**
- * Installs the payload file as a saved login's own copy where there is no Keychain: the folder
- * `0700`, a sibling temp file `0600`, an atomic `mv`, the payload removed. No dated backup — a
- * saved copy is replaced by a newer one of the same login, and an old one is only exposure.
- */
-export function privateFileScript(stamp) {
-  return `set -eu
-trap 'rm -f "$2.tmp-${stamp}"' EXIT
-mkdir -p "$(dirname "$2")"
-chmod 700 "$(dirname "$2")"
-cp "$1" "$2.tmp-${stamp}"
-chmod 600 "$2.tmp-${stamp}"
-mv "$2.tmp-${stamp}" "$2"
-rm -f "$1"`;
 }
 
 /**

@@ -11,7 +11,7 @@
 // add (exit 75) is left alone, because it never changed.
 import * as fs from "fs/promises";
 import { credentialTarget, itemText, keychainService, mergeCredentialItem, problems, TARGETS, tokenIdentity } from "./translate.js";
-import { installScript, KEYCHAIN_BYTES, keychainBackupPath, keychainBackupScript, keychainRestoreScript, keychainScript, payload as credentialPayload, payloadDir, payloadPath, prepareScript, privateFileScript } from "./write.js";
+import { installScript, KEYCHAIN_BYTES, keychainBackupPath, keychainBackupScript, keychainRestoreScript, keychainScript, payload as credentialPayload, payloadDir, payloadPath, prepareScript } from "./write.js";
 
 const message = (err) => String(err?.message ?? err);
 
@@ -56,17 +56,12 @@ export async function install({ api, provider, account, ...rest }) {
 }
 
 /**
- * Puts one client-shaped credential body in place: the client's own Keychain item and/or file, or
- * — with `to` — one saved login's own copy (`saved.js`), merged with nothing and with no client
- * file beside it. The same backup → merge → one `security -i` add → read-back → put-back-on-failure
- * as a proxy switch; the body is never logged, and the answer is a label and a fingerprint.
- *
- * `to` is `{ service }` (macOS: a saved login's own Keychain item) or `{ file }` (elsewhere: its
- * own `0600` file). The caller builds either from a validated name, so the client's own item or
- * file cannot be named here by accident. Where there is no Keychain, the client's file is merged
- * like the item is, so its other keys (`mcpOAuth`, …) survive a switch.
+ * Puts one client-shaped credential body in place: the client's own Keychain item and/or file.
+ * Backup → merge → one `security -i` add → read-back → put-back-on-failure; the body is never
+ * logged, and the answer is a label and a fingerprint. Where there is no Keychain, the client's
+ * file is merged like the item is, so its other keys (`mcpOAuth`, …) survive a switch.
  */
-export async function place({ provider, body: given, to = null, home, appHome, env = {}, platform = "macos", exec, readTextFile, writeTextFile, unlink = (p) => fs.unlink(p) }) {
+export async function place({ provider, body: given, home, appHome, env = {}, platform = "macos", exec, readTextFile, writeTextFile, unlink = (p) => fs.unlink(p) }) {
   const target = TARGETS[provider];
   if (!target) throw new Error("no writer for that provider");
   let scratch = null;
@@ -76,17 +71,8 @@ export async function place({ provider, body: given, to = null, home, appHome, e
   let plan = null;
   let service = null;
   try {
-    if (to) {
-      // One saved copy and nothing else: it holds only `claudeAiOauth`, so it is replaced whole
-      // rather than merged, and it is written without the client file's dated backups.
-      plan = to.service
-        ? { keychain: to.service, skipFile: true, merge: false }
-        : { keychain: null, file: to.file, skipFile: false, merge: false, private: true };
-      service = to.service ?? null;
-    } else {
-      plan = { ...credentialTarget(provider, { home, env, keychainWritten: true, platform }), merge: provider === "claude" };
-    }
-    if (plan.keychain && !to) {
+    plan = { ...credentialTarget(provider, { home, env, keychainWritten: true, platform }), merge: provider === "claude" };
+    if (plan.keychain) {
       // A separate profile's item is the suffixed one; without it there is no correct item to
       // write, and the default profile's login must not be replaced instead.
       service = await keychainService(plan, { exec });
@@ -142,8 +128,7 @@ export async function place({ provider, body: given, to = null, home, appHome, e
     // the item first, and a stale .credentials.json plus its backups are pure exposure.
     if (!plan.skipFile) {
       // Backup, then 0600, then an atomic rename — never a partial credential on disk.
-      const script = plan.private ? privateFileScript(stamp) : installScript(stamp);
-      const done = await exec("sh", ["-c", script, "sh", scratch, plan.file]);
+      const done = await exec("sh", ["-c", installScript(stamp), "sh", scratch, plan.file]);
       if (done.code !== 0) throw new Error(`could not write ${displayPath(plan.file, home)}: ${(done.stderr || done.stdout).trim().slice(0, 120)}`);
     }
 
