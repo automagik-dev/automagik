@@ -4,14 +4,21 @@
 // Two writers each reading, changing and writing the file could put a removed phone back.
 //
 //   bridge.sock   one JSON line in, {"forget": "<id>"}; one line out, {"ok", "removed"} or {"ok": false, "error"}
+//                 or {"ping": true}; one line out, {"ok": true, "pid"}: bridgeState() below
+//
+// status.json's pid alone does not say a bridge runs: after a crash the pid can belong to another
+// process. bridgeState() asks the socket, then checks the pid's start time against the one the
+// bridge recorded, and serve, start, stop, status, pair and forget all go by it (issue #301).
 //
 // No dependencies, so node --test runs it without the bridge's packages.
+import { execFileSync } from 'node:child_process'
 import { createConnection, createServer } from 'node:net'
-import { chmodSync, closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs'
+import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 export const SOCKET = 'bridge.sock'
 export const FILE = 'devices.json'
+export const STATUS = 'status.json'
 // How long `forget` waits for the bridge (its loop can be busy finding hc for a session), and the
 // bridge for a request line. Under the dialog's 30s exec limit.
 export const TIMEOUT = 10_000
@@ -19,6 +26,11 @@ const MAX_REQUEST = 4096
 // A running bridge whose socket refuses (its backlog full): try again for this long, then fail.
 export const BUSY_RETRIES = 10
 export const BUSY_WAIT = 200
+// How long bridgeState() waits for a ping's answer. A bridge whose loop is busy past this still
+// counts as running: its socket took the connection.
+export const PING_TIMEOUT = 2_000
+// What Remove's error tells the person to do when a running bridge did not take the removal.
+const STILL_PAIRED = 'The phone is still paired: Remove it again, or Turn off Pocket Link, Remove it, then Turn on.'
 // The longest Unix socket path, in bytes, that binds where it was asked. macOS, measured on Node 22
 // and 24: 104 binds; 105 fails with EINVAL on Node 24, and on Node 22 listen() reports success but
 // binds the path cut short, outside the state folder. Linux: not measured here; 107, from the classic
@@ -62,7 +74,7 @@ export function store(path, { held = () => {} } = {}) {
  * returns whether it was listed. A stale socket from a bridge that died is replaced. Resolves to
  * the server once it listens; the socket is the owner's only (and the state folder is 0700).
  */
-export function listen(path, { forget, log = () => {} }) {
+export function listen(path, { forget, log = () => {}, pid = process.pid }) {
   if (!fits(path)) return Promise.reject(new Error(`${path} is ${Buffer.byteLength(path)} bytes, too long for a socket (at most ${SOCKET_MAX})`))
   try { unlinkSync(path) } catch {}
   const server = createServer((sock) => {
@@ -78,8 +90,9 @@ export function listen(path, { forget, log = () => {} }) {
       let answer
       try {
         const request = JSON.parse(buf.slice(0, nl))
-        if (typeof request?.forget !== 'string' || request.forget === '') throw new Error('unknown request')
-        answer = { ok: true, removed: Boolean(forget(request.forget)) }
+        if (request?.ping === true) answer = { ok: true, pid }
+        else if (typeof request?.forget !== 'string' || request.forget === '') throw new Error('unknown request')
+        else answer = { ok: true, removed: Boolean(forget(request.forget)) }
       } catch (e) { answer = { ok: false, error: e.message } }
       sock.end(JSON.stringify(answer) + '\n')
     }
@@ -116,7 +129,7 @@ export function ask(path, request, { timeout = TIMEOUT } = {}) {
     const sock = createConnection(path)
     let buf = '', connected = false, done = false
     const finish = (fn, value) => { if (done) return; done = true; clearTimeout(timer); sock.destroy(); fn(value) }
-    const timer = setTimeout(() => finish(reject, new Error('The bridge did not answer. Try again.')), timeout)
+    const timer = setTimeout(() => finish(reject, new Error('The bridge did not answer.')), timeout)
     sock.setEncoding('utf8')
     sock.on('connect', () => { connected = true; sock.write(JSON.stringify(request) + '\n') })
     sock.on('data', (chunk) => {
@@ -135,30 +148,134 @@ export function ask(path, request, { timeout = TIMEOUT } = {}) {
 
 const defaultAlive = (pid) => { try { process.kill(pid, 0); return true } catch { return false } }
 
+// ps in UTC and the C locale: the bridge (a login service) and the dialog's commands may run with
+// another TZ or LANG, and lstart is printed in local time.
+const ps = (pid, field) => {
+  try {
+    const out = execFileSync('ps', ['-p', String(pid), '-o', `${field}=`], {
+      encoding: 'utf8', timeout: 2_000, stdio: ['ignore', 'pipe', 'ignore'],
+      env: { PATH: process.env.PATH || '/usr/bin:/bin', TZ: 'UTC', LC_ALL: 'C' },
+    }).trim()
+    return out === '' ? null : out
+  } catch { return null }
+}
+
+/** When process `pid` started, as ps prints it (to the second, UTC); null when ps can't say. */
+export const startedAt = (pid) => ps(pid, 'lstart')
+
+/** Process `pid`'s command line; null when it can't be read. */
+export function commandOf(pid) {
+  try { return readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').join(' ').trim() || null } catch {}
+  return ps(pid, 'command')
+}
+
+/** A command line that runs the bridge: `<node> …/bridge.mjs serve`. */
+export const servesBridge = (command) => /(^|[\s/])bridge\.mjs\s+serve(\s|$)/.test(command)
+
+/**
+ * Whether a bridge runs for the state folder `dir`. status.json names the bridge's pid; that pid
+ * still alive is not enough, since after a crash it can be another process's. So:
+ * - No status.json, or no pid in it: none runs.
+ * - bridge.sock answers a ping, or takes the connection without answering in time (a busy loop):
+ *   a bridge runs. A bridge from before the ping answers {ok: false} and runs too.
+ * - Nothing takes it (no socket, a path too long for one, or one that refuses: a bridge that died,
+ *   or one too busy to accept), so the pid decides. Gone, or `self` (a serve given the pid an
+ *   earlier bridge had): none runs. Alive: its start time must be the one the bridge recorded in
+ *   status.json (`pidStart`); a status.json from before that field goes by the command line.
+ *   Either one unreadable counts as the bridge, as before this check. Otherwise it is not.
+ * Resolves to {running, pid, stale}: `pid` is the one that may be signalled (null when no pid is
+ * known to be the bridge's); `stale` when status.json names a pid that is not a running bridge.
+ */
+export async function bridgeState({ dir, self = null, alive = defaultAlive, started = startedAt, command = commandOf, timeout = PING_TIMEOUT }) {
+  const status = readJson(join(dir, STATUS), {})
+  const named = Number.isInteger(status?.pid) && status.pid > 0 ? status.pid : null
+  if (named === null) return { running: false, pid: null, stale: false }
+  const live = named !== self && alive(named)
+  const ours = () => {
+    if (!live) return false
+    if (typeof status.pidStart === 'string' && status.pidStart !== '') {
+      const now = started(named)
+      return now === null ? null : now === status.pidStart
+    }
+    const line = command(named)
+    return line === null ? null : servesBridge(line)
+  }
+  const sock = join(dir, SOCKET)
+  let socketIno = null
+  try { socketIno = lstatSync(sock).ino } catch {}
+  let answer
+  try { answer = await ask(sock, { ping: true }, { timeout }) } catch {
+    // Something listens on the bridge's socket but did not answer in time: a busy bridge.
+    return { running: true, pid: ours() === false ? null : named, stale: false }
+  }
+  if (answer) return { running: true, pid: Number.isInteger(answer.pid) && answer.pid > 0 ? answer.pid : ours() === false ? null : named, stale: false }
+  // Nothing took the ping and the pid is not the bridge: bridge.sock, if any, is a dead bridge's.
+  if (ours() === false) return { running: false, pid: null, stale: true, stalePid: named, socketIno }
+  return { running: true, pid: named, stale: false }
+}
+
+/**
+ * Removes what a stale bridgeState() found: bridge.sock while it is still the one that refused the
+ * ping (a bridge starting now binds a new one), and status.json while it still names the stale pid.
+ */
+export function clearStale(dir, state) {
+  if (!state?.stale) return
+  const sock = join(dir, SOCKET), status = join(dir, STATUS)
+  if (state.socketIno !== null && state.socketIno !== undefined) try { if (lstatSync(sock).ino === state.socketIno) unlinkSync(sock) } catch {}
+  try { if (readJson(status, {}).pid === state.stalePid) unlinkSync(status) } catch {}
+}
+
+/**
+ * For `serve` and `start`: whether a bridge already runs. When none does, what a stale one left
+ * is cleared first, so a new bridge binds a fresh socket and status.json.
+ */
+export async function claim(options) {
+  const state = await bridgeState(options)
+  if (!state.running) clearStale(options.dir, state)
+  return state
+}
+
+/**
+ * `bridge.mjs stop`: signals the bridge, only a pid bridgeState() verified, never one a crash left
+ * to another process; then that process's stale socket and status.json are cleared instead.
+ * Resolves to {stopped: pid or null, running}.
+ */
+export async function stopBridge({ kill = (pid) => process.kill(pid, 'SIGTERM'), ...options }) {
+  const state = await bridgeState(options)
+  if (!state.running) { clearStale(options.dir, state); return { stopped: null, running: false } }
+  if (state.pid === null) return { stopped: null, running: true }
+  try { kill(state.pid) } catch {}
+  return { stopped: state.pid, running: true }
+}
+
 /**
  * `bridge.mjs forget <id>`: removes a paired phone from the state folder `dir`.
- * - A bridge runs (status.json's pid is alive): it removes the phone and ends its sessions; this
+ * - A bridge runs (bridgeState()): it removes the phone and ends its sessions; this
  *   waits for its answer and never writes the file itself. A socket that is there but refuses (a
  *   busy bridge) is tried again for BUSY_RETRIES x BUSY_WAIT ms, then this fails.
  * - None answers on bridge.sock (none runs, an older one without the socket that a mod update left
- *   running, or a state folder whose bridge.sock path does not `fit`): this writes the file, then tells a bridge that started meanwhile too.
+ *   running, or a state folder whose bridge.sock path does not `fit`), or status.json's pid is
+ *   another process's now (bridgeState()): this writes the file, then tells a bridge that started
+ *   meanwhile too.
  * Resolves to {ok: true, removed, via: 'bridge' | 'file'}; rejects when the bridge refuses or
  * gives no answer, and then nothing was written.
  */
-export async function forget({ dir, id, alive = defaultAlive, timeout = TIMEOUT, retries = BUSY_RETRIES, wait = BUSY_WAIT }) {
+export async function forget({ dir, id, alive = defaultAlive, started = startedAt, command = commandOf, timeout = TIMEOUT, retries = BUSY_RETRIES, wait = BUSY_WAIT }) {
   if (typeof id !== 'string' || id === '') throw new Error('forget needs the id of a paired phone')
   const sock = join(dir, SOCKET)
-  const status = readJson(join(dir, 'status.json'), {})
-  if (Number.isInteger(status?.pid) && alive(status.pid)) {
+  const state = await bridgeState({ dir, alive, started, command, timeout: Math.min(timeout, PING_TIMEOUT) })
+  if (state.running) {
+    const who = state.pid ? ` (pid ${state.pid})` : ''
     for (let i = 0; ; i++) {
-      const answer = await ask(sock, { forget: id }, { timeout })
+      let answer
+      try { answer = await ask(sock, { forget: id }, { timeout }) } catch (e) { throw new Error(`${e.message.replace(/^The bridge/, `The bridge${who}`)} ${STILL_PAIRED}`) }
       if (answer) {
-        if (!answer.ok) throw new Error(answer.error || 'The bridge refused.')
+        if (!answer.ok) throw new Error(`The bridge${who} refused the removal: ${answer.error || 'no reason given'}. ${STILL_PAIRED}`)
         return { ok: true, removed: Boolean(answer.removed), via: 'bridge' }
       }
       // No socket at all (an older bridge without one, or a path too long for one): the file, below.
       if (!fits(sock) || !existsSync(sock)) break
-      if (i >= retries) throw new Error('The bridge is busy and did not take the removal. Try again.')
+      if (i >= retries) throw new Error(`The bridge${who} is busy and did not take the removal. ${STILL_PAIRED}`)
       await new Promise((resolve) => setTimeout(resolve, wait))
     }
   }
