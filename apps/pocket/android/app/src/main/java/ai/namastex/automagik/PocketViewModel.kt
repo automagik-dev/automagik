@@ -8,7 +8,6 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -79,12 +78,6 @@ const val DEFAULT_FONT_SIZE = 13
 const val ICON_MAX = 5 * 1024 * 1024
 const val PET_SHEET_MAX = 6 * 1024 * 1024
 const val PET_SLEEP_MAX = 2 * 1024 * 1024
-// Reads across a desktop and the machines it links to: each linked machine's doc, and a batched call ([HostBatch]) on
-// the core's own machine or a linked one, give up after these; at most [HOST_POOL] machines are read at once.
-private const val LINKED_READ_MS = 8_000L
-private const val HOST_LOCAL_MS = 20_000L
-private const val HOST_REMOTE_MS = 15_000L
-private const val HOST_POOL = 6
 private val RECONNECT_DELAYS = listOf(2_000L, 5_000L, 15_000L, 30_000L, 60_000L)
 val FONT_SIZES = 8..24
 
@@ -109,7 +102,11 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     // shows repositories or branches is open. Only in the foreground, and only reading: the phone never changes a repo.
     private val gitWake = Channel<Unit>(Channel.CONFLATED)
     private val gitChecked = ConcurrentHashMap<String, Long>()
-    private val hostPool = Semaphore(HOST_POOL)
+    /** At most [HostReads.POOL] machines read at once, across every saved machine. */
+    private val hostPool = Semaphore(HostReads.POOL)
+    /** The Teams reads of saved machine [id] over [client] ([HostReads]). */
+    private fun reads(id: String, client: CoreClient) =
+        HostReads({ method, params -> client.call(method, params) }, { state.value.machines[id] }, { f -> updateMachine(id, f) }, hostPool)
     private val gitDirty: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val wasWorking = ConcurrentHashMap<String, Set<String>>()
     @Volatile private var gitShown = false
@@ -575,26 +572,15 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         // The linked machines' layouts at once, each time-boxed: one slow machine no longer holds up the others. One that
         // doesn't answer keeps the spaces read before, and isn't counted as read ([MachineState.layouts]).
         val names = list.optJSONArray("machines")?.objects().orEmpty().filter { it.clean("state") == "connected" }.map { it.getString("name") }
-        val docs = coroutineScope {
-            names.map { name -> async { name to timeBoxed(LINKED_READ_MS) { client.call("doc.get", JSONObject().put("name", "herdr-app").put("on", name)) } } }.awaitAll()
-        }
-        val before = state.value.machines[id]?.spaces.orEmpty()
-        val laidOut = mutableListOf("")
-        for ((name, doc) in docs) {
-            if (doc != null) { spaces.addAll(LayoutReader.spaces(doc.optJSONObject("value"), name, terminals)); laidOut += name }
-            else spaces.addAll(before.filter { it.machine == name })
-        }
+        val (linkedSpaces, laidOut) = reads(id, client).layouts(names, terminals, state.value.machines[id]?.spaces.orEmpty())
+        spaces.addAll(linkedSpaces)
         val linked = LinkedMachine.list(list, terminals)
         // Compared with this connection's previous read only, so connecting never replays what was already waiting.
         val previous = alertBase[id]?.takeIf { it.first === client }?.second
         alertBase[id] = client to terminals
         val paned = spaces.flatMap { it.addresses }.toSet()
         val read = System.currentTimeMillis()
-        updateMachine(id) {
-            val layouts = if (it.readSession == it.session) it.layouts else emptyMap()
-            it.copy(terminals = terminals, spaces = spaces, linked = linked, error = null, readSession = it.session,
-                layouts = layouts + laidOut.filter { m -> m !in layouts }.associateWith { read })
-        }
+        updateMachine(id) { HostReads.reading(it, terminals, spaces, linked, laidOut, read) }
         alert(Alerts.changes(previous, terminals, id) { it.address in paned }, client)
         Alerts.resolved(previous, terminals, id) { it.address in paned }.forEach { Notify.cancel(getApplication(), it) }
         rememberLinked(id, linked.map { it.name })
@@ -616,12 +602,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         val own = state.value.hosts.find { it.id == id }?.name ?: "Machine"
         // Every machine's doc at once, each time-boxed: a slow machine keeps its last doc without delaying the others.
         val machines = listOf("") + linked.filter { it.connected }.map { it.name }
-        val docs = coroutineScope {
-            machines.map { m -> async { m to timeBoxed(LINKED_READ_MS) {
-                client.call("doc.get", JSONObject().put("name", Spend.DOC).apply { if (m.isNotBlank()) put("on", m) })
-            } } }.awaitAll()
-        }
-        for ((m, doc) in docs) if (doc != null) {
+        for ((m, doc) in reads(id, client).docs(Spend.DOC, machines)) if (doc != null) {
             val v = doc.optJSONObject("value"); read[m] = Spend.parse(m.ifBlank { own }, v); feeds[m] = SpaceFeed.parse(v)
         }
         updateMachine(id) { m -> m.copy(meter = (m.meter - read.filterValues { it == null }.keys) + read.mapNotNull { (k, v) -> v?.let { k to it } },
@@ -638,48 +619,10 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun readBots(id: String, client: CoreClient) {
         val m = state.value.machines[id] ?: return
         val byAddress = m.terminals.associateBy { it.address }
-        val keys = m.spaces.mapNotNull { s -> SpaceFeed.projectKey(m.git[Sidebar.gitKey(s.machine, Sidebar.place(s, byAddress))])?.let { s.machine to it } }
-        coroutineScope {
-            keys.distinct().groupBy({ it.first }, { it.second }).map { (machine, projects) ->
-                async { hostPool.withPermit { readRegistries(id, client, machine, projects) } }
-            }.awaitAll()
-        }
+        reads(id, client).registries(m.spaces.mapNotNull { s ->
+            SpaceFeed.projectKey(m.git[Sidebar.gitKey(s.machine, Sidebar.place(s, byAddress))])?.let { s.machine to it }
+        })
     }
-    /** [projects]' registries on [machine], [HostBatch.CHUNK] to a call. */
-    private suspend fun readRegistries(id: String, client: CoreClient, machine: String, projects: List<String>) {
-        val m = state.value.machines[id] ?: return
-        if (machine.isNotBlank() && m.linked.find { it.name == machine }?.connected != true) return
-        for (chunk in projects.filter { it.startsWith("/") }.distinct().chunked(HostBatch.CHUNK)) {
-            val files = hostExec(client, machine, HostBatch.argv(HostBatch.FILES, chunk.map(Teams.registry::path)))
-                ?.let { HostBatch.files(it, chunk.size) } ?: List(chunk.size) { HostBatch.File.Unreadable }
-            val names = HashMap<String, SpaceFeed.Names>()
-            val members = HashMap<String, List<Teams.Member>>()
-            chunk.zip(files).forEach { (key, file) ->
-                val k = "$machine|$key"
-                when (file) {
-                    is HostBatch.File.Found -> { names[k] = SpaceFeed.names(file.text); members[k] = Teams.registry.parse(file.text) }
-                    HostBatch.File.Missing -> { names[k] = SpaceFeed.Names(); members[k] = emptyList() }
-                    // A read that failed keeps the bots read before.
-                    HostBatch.File.Unreadable -> { names[k] = m.bots[k] ?: SpaceFeed.Names(); members[k] = m.members[k].orEmpty() }
-                }
-            }
-            updateMachine(id) { it.copy(bots = it.bots + names, members = it.members + members) }
-        }
-    }
-    /**
-     * [argv] run on [machine] ("" the core's own), time-boxed: its output, or null if it failed, timed out or exited
-     * non-zero. A real cancel is passed on.
-     */
-    private suspend fun hostExec(client: CoreClient, machine: String, argv: List<String>): ByteArray? {
-        val params = JSONObject().put("argv", JSONArray(argv))
-        if (machine.isNotBlank()) params.put("on", machine)
-        val r = timeBoxed(if (machine.isBlank()) HOST_LOCAL_MS else HOST_REMOTE_MS) { client.call("machine.exec", params) } ?: return null
-        if (r.optBoolean("timed_out") || r.optInt("code", -1) != 0) return null
-        return runCatching { java.util.Base64.getDecoder().decode(r.optString("stdout")) }.getOrNull()
-    }
-    /** [block]'s answer, or null if it failed or took longer than [ms]; a real cancel is passed on. */
-    private suspend fun <T> timeBoxed(ms: Long, block: suspend () -> T): T? = try { withTimeout(ms) { block() } }
-        catch (_: TimeoutCancellationException) { null } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
     /** Herdr desktop's config folder on the core's machine (it may have none: a core running without the desktop app). */
     private suspend fun herdrHome(id: String, client: CoreClient): String? = herdrHomes[id] ?: exec(client, "printenv", "HERDR_APP_HOME")
         .ifBlank { (homes[id] ?: exec(client, "printenv", "HOME")).ifBlank { return null } + "/.config/herdr-app" }.also { herdrHomes[id] = it }
@@ -725,35 +668,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
             due += where
         }
         // Each machine on its own and at once (a slow or unreachable one holds back only its own folders), the space
-        // folders first (they come first in [places]), one call per [HostBatch.CHUNK] folders.
-        coroutineScope {
-            due.groupBy({ it.first }, { it.second }).map { (machine, folders) ->
-                async { hostPool.withPermit { gitMachine(id, client, machine, folders) } }
-            }.awaitAll()
-        }
-    }
-    private suspend fun gitMachine(id: String, client: CoreClient, machine: String, folders: List<String>) {
-        for (chunk in folders.chunked(HostBatch.CHUNK)) {
-            val answers = hostExec(client, machine, HostBatch.argv(HostBatch.GIT, chunk))?.let { HostBatch.git(it, chunk) }
-                ?: List(chunk.size) { HostBatch.Git.Unsure }
-            val now = System.currentTimeMillis()
-            val found = HashMap<String, GitInfo?>()
-            chunk.zip(answers).forEach { (place, answer) ->
-                val key = Sidebar.gitKey(machine, place)
-                when (answer) {
-                    is HostBatch.Git.Repo -> found[key] = answer.info
-                    HostBatch.Git.NotRepo -> found[key] = null
-                    // Unsure (machine away, odd error): keep the last answer, retry in 15 s.
-                    HostBatch.Git.Unsure -> gitChecked["$id|$key"] = now - 45_000
-                }
-            }
-            if (found.isEmpty()) continue
-            val named = state.value.machines[id]?.bots.orEmpty()
-            updateMachine(id) { it.copy(git = it.git + found) }
-            // Projects first seen after the meter read: their bot names now, once (a missing file is stored as empty).
-            val fresh = found.values.mapNotNull(SpaceFeed::projectKey).distinct().filter { "$machine|$it" !in named }
-            if (fresh.isNotEmpty()) readRegistries(id, client, machine, fresh)
-        }
+        // folders first (they come first in [places]). Unsure (machine away, odd error): keep the last answer, retry in 15 s.
+        reads(id, client).git(due) { machine, place -> gitChecked["$id|${Sidebar.gitKey(machine, place)}"] = System.currentTimeMillis() - 45_000 }
     }
     /** Space colours and icons from the desktop's shared.json ([Teams.looks]: the am.* keys, else the old ones), read only. */
     private suspend fun readColors(id: String, client: CoreClient) {
