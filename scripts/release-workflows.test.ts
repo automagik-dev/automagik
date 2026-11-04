@@ -363,9 +363,24 @@ describe('every release carries am (RFC 0012)', () => {
     expect(at('Pack am')).toBeLessThan(at('Publish the release'));
   });
 
-  test('am-lane is posted only when check-key said sign=yes, after the publish', () => {
-    expect(ifOf('Sign and post the am lane')).toBe("if: steps.cut.outputs.version != '' && steps.amkey.outputs.sign == 'yes'");
-    expect(at('Sign and post the am lane')).toBeGreaterThan(at('Publish the release'));
+  test('am-lane is posted in a job of its own, after the cut, only when check-key said sign=yes', () => {
+    // A refusal there (it fails closed) must not skip the plugin lane or any job that needs the cut.
+    const jobAt = (name: string) => lines.findIndex(line => line === `  ${name}:`);
+    const job = jobAt('am-lane');
+    const cutEnds = lines.findIndex((line, i) => i > jobAt('cut') && /^  [a-z-]+:$/.test(line));
+    expect(job).toBeGreaterThan(-1);
+    expect(at('Sign and post the am lane')).toBeGreaterThan(job);
+    expect(at('Sign and post the am lane')).toBeGreaterThan(cutEnds);
+    const header = lines.slice(job, at('Sign and post the am lane')).map(line => line.trim());
+    expect(header).toContain('needs: cut');
+    expect(header).toContain("if: needs.cut.outputs.version != '' && needs.cut.outputs.am_sign == 'yes'");
+    expect(lines.slice(jobAt('cut'), cutEnds).map(line => line.trim())).toContain('am_sign: ${{ steps.amkey.outputs.sign }}');
+    // No job waits on it: nothing else stops when it does.
+    expect(lines.filter(line => /needs: .*am-lane/.test(line))).toEqual([]);
+    // It signs the tarball the release published, checked against its .sha256 first.
+    const step = lines.slice(at('Sign and post the am lane')).join('\n');
+    expect(step.indexOf('sha256sum -c "automagik-am-${VERSION}.tgz.sha256"')).toBeGreaterThan(-1);
+    expect(step.indexOf('sha256sum -c')).toBeLessThan(step.indexOf('bun scripts/am-lane.ts manifest'));
   });
 
   test('an am patch packs no plugins, posts no plugin lane, builds no app and lists nothing', () => {

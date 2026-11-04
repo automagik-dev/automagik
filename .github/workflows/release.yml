@@ -42,9 +42,10 @@ name: Release
 # and, on every release, it signs am.json (the newest am: its release, tarball URL and sha256; ed25519,
 # the AM_LANE_KEY secret, am's own key, the slot AM_LANE_SIGNER names; the public keys are
 # am/am-keys.json) and puts it with am.json.sig on the rolling `am-lane` release, which holds nothing
-# else: `am update` reads only that. While AM_LANE_KEY is not set the release attaches am, posts no
-# am-lane and says so in a warning; a key set that am-keys.json does not list stops it before the tag
-# (scripts/am-lane.ts check-key).
+# else: `am update` reads only that, posted by a job of its own (am-lane) so its refusals stop
+# nothing else. While am-keys.json lists no key, or AM_LANE_KEY is not set, the release attaches
+# am, posts no am-lane and says so in a warning; once keys are listed, a secret that is none of
+# them stops the release before the tag (scripts/am-lane.ts check-key).
 #
 # and, when it built Pocket on a release that is not a prerelease, it replaces latest.json on the
 # rolling `pocket-lane` release, which holds nothing else and is never Latest: installed phones read
@@ -155,6 +156,7 @@ jobs:
       herdr: ${{ steps.lane.outputs.herdr }}
       pocket: ${{ steps.lane.outputs.pocket }}
       pocket_since: ${{ steps.lane.outputs.pocket_since }}
+      am_sign: ${{ steps.amkey.outputs.sign }}
     env:
       DO_NOT_TRACK: '1'
       GH_TOKEN: ${{ github.token }}
@@ -262,10 +264,10 @@ jobs:
           done
           shellcheck -s sh bin/am bin/run.sh bin/automagik-herdr
 
-      # Before the cut, on every release, since every release carries am: AM_LANE_KEY (the slot
-      # AM_LANE_SIGNER names) must be a key am-keys.json lists, or the run stops before it tags.
-      # While it is not set at all the release warns, attaches am and posts no am-lane (sign=no):
-      # the key is the owner's to add (scripts/am-lane.ts keygen).
+      # Before the cut, on every release, since every release carries am: once am-keys.json lists
+      # keys, AM_LANE_KEY (the slot AM_LANE_SIGNER names) must be one of them, or the run stops
+      # before it tags. While none is listed, or the secret is not set, the release warns, attaches
+      # am and posts no am-lane (sign=no): the key is the owner's to add (am-lane.ts keygen).
       - name: The am lane's signing key
         id: amkey
         if: steps.new.outputs.release == 'true'
@@ -469,42 +471,6 @@ jobs:
           # signature that do not match, or neither: both fail closed (refused, or no update yet).
           gh release upload herdr-lane herdr-lane/pack.json.sig herdr-lane/pack.json --clobber --repo "${GITHUB_REPOSITORY}"
 
-      # Every release that has am's key (check-key said sign=yes). Never back, and fail closed, as
-      # the herdr lane: a posted pointer that does not verify is replaced only when the run was
-      # dispatched with replace_unverified_am_pointer.
-      - name: Sign and post the am lane
-        if: steps.cut.outputs.version != '' && steps.amkey.outputs.sign == 'yes'
-        env:
-          VERSION: ${{ steps.cut.outputs.version }}
-          SHA: ${{ steps.cut.outputs.sha }}
-          AM_LANE_KEY: ${{ vars.AM_LANE_SIGNER == 'AM_LANE_KEY_NEXT' && secrets.AM_LANE_KEY_NEXT || secrets.AM_LANE_KEY }}
-          AM_LANE_REPLACE_UNVERIFIED: ${{ inputs.replace_unverified_am_pointer }}
-        run: |
-          set -euo pipefail
-          mkdir -p am-lane
-          bun scripts/am-lane.ts manifest "release/automagik-am-${VERSION}.tgz" "${VERSION}" "${SHA}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > am-lane/am.json
-          bun scripts/am-lane.ts sign am-lane/am.json > am-lane/am.json.sig
-          bun scripts/am-lane.ts verify am-lane/am.json am-lane/am.json.sig
-          if ! gh release view am-lane --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release create am-lane --repo "${GITHUB_REPOSITORY}" --target dev --prerelease --latest=false \
-              --title "Automagik am lane" \
-              --notes "am.json names the newest am, the Automagik command (its tarball stays on its own versioned release); am.json.sig is its ed25519 signature, checked against am/am-keys.json. See scripts/am-lane.ts."
-          fi
-          mkdir -p am-lane/posted
-          if ! gh release download am-lane --repo "${GITHUB_REPOSITORY}" -p am.json -p am.json.sig -D am-lane/posted --clobber 2> am-lane/download.err; then
-            if grep -qE '^(release not found|no assets match the file pattern|no assets to download)$' am-lane/download.err; then
-              echo "am lane: nothing posted on am-lane yet"
-            else
-              cat am-lane/download.err >&2
-              echo "::error::am lane: could not read the posted pointer; refusing to post blind (re-run the job)"
-              exit 1
-            fi
-          fi
-          bun scripts/am-lane.ts posted am-lane/am.json am-lane/posted
-          # --clobber replaces each asset in turn: a reader that sees a pointer and a signature that
-          # do not match, or neither, refuses it (no update yet).
-          gh release upload am-lane am-lane/am.json.sig am-lane/am.json --clobber --repo "${GITHUB_REPOSITORY}"
-
       # A herdr or pocket patch packs no plugins: the lane stays on the release that last did.
       - name: Sign and post the plugin lane
         if: steps.cut.outputs.version != '' && steps.lane.outputs.kind != 'herdr' && steps.lane.outputs.kind != 'pocket' && steps.lane.outputs.kind != 'am'
@@ -660,6 +626,71 @@ jobs:
             exit 0
           fi
           gh release upload pocket-lane pocket/latest.json --clobber --repo "${GITHUB_REPOSITORY}"
+
+  am-lane:
+    # Every release that has am's key (check-key said sign=yes), in a job of its own: a refusal here
+    # (an unreadable or unverifiable posted pointer, a lower sequence: it fails closed, as the herdr
+    # lane) fails this job alone, so the plugin lane, the app, Pocket and the listing still go out.
+    # It signs the tarball the release published, checked against its .sha256 first. A posted
+    # pointer that does not verify is replaced only when the run was dispatched with
+    # replace_unverified_am_pointer.
+    name: Post the signed am lane
+    needs: cut
+    if: needs.cut.outputs.version != '' && needs.cut.outputs.am_sign == 'yes'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: am-lane
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      DO_NOT_TRACK: '1'
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ needs.cut.outputs.sha }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Sign and post the am lane
+        env:
+          VERSION: ${{ needs.cut.outputs.version }}
+          SHA: ${{ needs.cut.outputs.sha }}
+          AM_LANE_KEY: ${{ vars.AM_LANE_SIGNER == 'AM_LANE_KEY_NEXT' && secrets.AM_LANE_KEY_NEXT || secrets.AM_LANE_KEY }}
+          AM_LANE_REPLACE_UNVERIFIED: ${{ inputs.replace_unverified_am_pointer }}
+        run: |
+          set -euo pipefail
+          mkdir -p release am-lane
+          gh release download "v${VERSION}" --repo "${GITHUB_REPOSITORY}" -p "automagik-am-${VERSION}.tgz" -p "automagik-am-${VERSION}.tgz.sha256" -D release
+          (cd release && sha256sum -c "automagik-am-${VERSION}.tgz.sha256")
+          bun scripts/am-lane.ts manifest "release/automagik-am-${VERSION}.tgz" "${VERSION}" "${SHA}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > am-lane/am.json
+          bun scripts/am-lane.ts sign am-lane/am.json > am-lane/am.json.sig
+          bun scripts/am-lane.ts verify am-lane/am.json am-lane/am.json.sig
+          if ! gh release view am-lane --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create am-lane --repo "${GITHUB_REPOSITORY}" --target dev --prerelease --latest=false \
+              --title "Automagik am lane" \
+              --notes "am.json names the newest am, the Automagik command (its tarball stays on its own versioned release); am.json.sig is its ed25519 signature, checked against am/am-keys.json. See scripts/am-lane.ts."
+          fi
+          mkdir -p am-lane/posted
+          if ! gh release download am-lane --repo "${GITHUB_REPOSITORY}" -p am.json -p am.json.sig -D am-lane/posted --clobber 2> am-lane/download.err; then
+            if grep -qE '^(release not found|no assets match the file pattern|no assets to download)$' am-lane/download.err; then
+              echo "am lane: nothing posted on am-lane yet"
+            else
+              cat am-lane/download.err >&2
+              echo "::error::am lane: could not read the posted pointer; refusing to post blind (re-run the job)"
+              exit 1
+            fi
+          fi
+          bun scripts/am-lane.ts posted am-lane/am.json am-lane/posted
+          # --clobber replaces each asset in turn: a reader that sees a pointer and a signature that
+          # do not match, or neither, refuses it (no update yet).
+          gh release upload am-lane am-lane/am.json.sig am-lane/am.json --clobber --repo "${GITHUB_REPOSITORY}"
+
 
   desktop:
     name: Desktop
