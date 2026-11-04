@@ -5,7 +5,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync,
+  symlinkSync, writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -407,6 +410,7 @@ test("briefing.mjs: a new Claude session is labelled on its terminal and logged 
   assert.equal(first.stderr, "");
   const fx = () => JSON.parse(readFileSync(join(root, "hc.json"), "utf8"));
   assert.equal(fx().terminals.t1.labels["agent.session"], "s-1");
+  assert.equal(fx().terminals.t1.labels["agent.transcript"], undefined, "/tmp: not Claude's");
   const rows = () => readFileSync(ledger, "utf8").trim().split("\n").map((l) => JSON.parse(l));
   assert.deepEqual({ ...rows()[0], at: undefined }, { event: "session", terminal: "t1", session: "s-1", transcript: "/tmp/s-1.jsonl", at: undefined });
   // The same session next turn: no label call, no row. A new one (after /clear): both again.
@@ -425,6 +429,76 @@ test("briefing.mjs: a new Claude session is labelled on its terminal and logged 
   const broken = await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree, HERDR_APP_HOME: join(root, "blocked") }, JSON.stringify({ session_id: "s-3" }));
   assert.equal(broken.stdout, plain.stdout);
   assert.equal(broken.stderr, "");
+});
+
+test("briefing.mjs: agent.transcript only in ~/.claude/projects; no second row", async (t) => {
+  const { root, tree, brief } = await scratch(t);
+  const app = join(root, "app");
+  const ledger = join(app, "automagik-herdr", "workers.jsonl");
+  const rows = () => (existsSync(ledger)
+    ? readFileSync(ledger, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : []);
+  const fxPath = join(root, "hc.json");
+  const fx = () => JSON.parse(readFileSync(fxPath, "utf8"));
+  const env = (id) => ({ HC_TERMINAL_ID: id, CLAUDE_PROJECT_DIR: tree, HERDR_APP_HOME: app });
+  const prompt = (terminal, session, transcript_path) => brief(env(terminal),
+    JSON.stringify({ session_id: session, transcript_path, hook_event_name: "UserPromptSubmit" }));
+  const label = (terminal, key) => fx().terminals[terminal].labels[key];
+  // HOME is root: Claude's transcripts live under root/.claude/projects.
+  const folder = join(root, ".claude", "projects", "-proj");
+  mkdirSync(folder, { recursive: true });
+  const s1 = join(folder, "s-1.jsonl");
+  writeFileSync(s1, "");
+  // A new pane, one prompt: both labels, one row.
+  const first = await prompt("t1", "s-1", s1);
+  assert.equal(first.stderr, "");
+  assert.equal(label("t1", "agent.session"), "s-1");
+  assert.equal(label("t1", "agent.transcript"), s1);
+  assert.deepEqual(rows().map((r) => [r.terminal, r.session, r.transcript]), [["t1", "s-1", s1]]);
+  assert.deepEqual(fx().labelled, [["t1", "agent.session=s-1", `agent.transcript=${s1}`]]);
+  await prompt("t1", "s-1", s1);
+  assert.equal(fx().labelled.length, 1, "both labels hold: no call");
+  // A pane labelled by an older pack (agent.session, no agent.transcript, its row logged):
+  // the next prompt adds the label and no second row for the same session.
+  const old = fx();
+  old.terminals.t5.labels = { "agent.session": "s-5" };
+  writeFileSync(fxPath, JSON.stringify(old));
+  const oldRow = { event: "session", terminal: "t5", session: "s-5", transcript: null,
+    at: "2026-11-01T00:00:00.000Z" };
+  writeFileSync(ledger, `${JSON.stringify(oldRow)}\n`, { flag: "a" });
+  // A transcript not written yet: no label this prompt, the next one sets it (still no row).
+  const s5 = join(folder, "s-5.jsonl");
+  await prompt("t5", "s-5", s5);
+  assert.equal(label("t5", "agent.transcript"), undefined, "no file yet");
+  writeFileSync(s5, "");
+  await prompt("t5", "s-5", s5);
+  assert.equal(label("t5", "agent.transcript"), s5);
+  assert.equal(label("t5", "agent.session"), "s-5");
+  assert.equal(rows().filter((r) => r.session === "s-5").length, 1, "no second row");
+  assert.deepEqual(fx().labelled.at(-1), ["t5", `agent.transcript=${s5}`]);
+  // Refused: a path outside the folder, ../ out of it, a symlink out of it. Each is a new
+  // session (its row comes, with the path as given); none gets a transcript label.
+  writeFileSync(join(root, "outside.jsonl"), "");
+  symlinkSync(join(root, "outside.jsonl"), join(folder, "link.jsonl"));
+  mkdirSync(join(root, ".ssh"));
+  writeFileSync(join(root, ".ssh", "id_ed25519"), "secret");
+  const refused = [join(root, ".ssh", "id_ed25519"), `${folder}/../../../outside.jsonl`,
+    join(folder, "link.jsonl"), join(root, "outside.jsonl")];
+  const panes = fx();
+  refused.forEach((_, i) => {
+    panes.terminals[`t${i + 20}`] = { ...panes.terminals.t5, address: `t${i + 20}`, labels: {} };
+  });
+  writeFileSync(fxPath, JSON.stringify(panes));
+  for (const [i, path] of refused.entries()) {
+    const at = `t${i + 20}`;
+    await prompt(at, `r-${i}`, path);
+    assert.equal(label(at, "agent.session"), `r-${i}`, path);
+    assert.equal(label(at, "agent.transcript"), undefined, path);
+    assert.equal(rows().at(-1).transcript, path, "the row keeps the hook's path, as before");
+  }
+  // A new session whose path is refused drops the old session's transcript label.
+  await prompt("t1", "s-2", join(root, "outside.jsonl"));
+  assert.equal(label("t1", "agent.session"), "s-2");
+  assert.ok(!label("t1", "agent.transcript"), "the stale label is removed");
 });
 
 test("briefing.mjs: no hc on PATH: nothing printed, one stderr line, exit 0", async (t) => {

@@ -86,6 +86,11 @@ const term = (address, { bot: b, argv = ["claude"], cwd = "/x", app = "claude-co
   foreground: { argv, cwd }, status: { app, state: status, ...(msg ? { msg } : {}) },
 });
 const runCall = (calls) => calls.find((c) => c[0] === "run");
+/** What an hc run call runs: the words after `--`, past the `/usr/bin/env PATH=…` every pane gets (#213). */
+const agentWords = (run) => {
+  const w = run.slice(run.indexOf("--") + 1);
+  return w[0] === "/usr/bin/env" && w[1]?.startsWith("PATH=") ? w.slice(2) : w;
+};
 const labelCalls = (calls) => calls.filter((c) => c[0] === "label");
 
 // ---- create ----
@@ -422,10 +427,12 @@ test("start a main bot: hc run --bg with the label, name, cwd, --no-parent, the 
   assert.equal(r.code, 0, r.err);
   assert.equal(r.json().terminal, "t100");
   const run = runCall(s.calls());
-  // A claude needs no interpreter: PATH isn't changed, so the seat isn't wrapped in /usr/bin/env PATH=… (#56).
-  assert.deepEqual(run, ["run", "--bg", "--json", "--name", "genie", "--cwd", s.project, "--label", `bot=${ID.main}`, "--label", "role=main", "--no-parent",
-    "--", "claude", "--model", "claude-opus-5-5"]);
-  assert.equal(run.some((a) => a === "/usr/bin/env" || a.startsWith("PATH=")), false);
+  // Every seat runs as /usr/bin/env PATH=<this PATH> <agent>, as a worker does (#213): without it
+  // the pane would get herdr-core's PATH, which may have no node for an npm agent.
+  assert.deepEqual(run.slice(0, run.indexOf("--") + 2), ["run", "--bg", "--json", "--name", "genie", "--cwd", s.project, "--label", `bot=${ID.main}`, "--label", "role=main", "--no-parent",
+    "--", "/usr/bin/env"]);
+  assert.ok(run[run.indexOf("--") + 2].startsWith("PATH="), run.join(" "));
+  assert.deepEqual(agentWords(run), ["claude", "--model", "claude-opus-5-5"]);
   assert.equal(run.includes("--no-notify"), false);
   assert.equal(run.some((a) => a.startsWith("herdr.space=") || a.startsWith("herdr.tab=")), false, "no placement labels unless asked");
   const settings = JSON.parse(readFileSync(join(s.project, ".claude/settings.local.json"), "utf8"));
@@ -539,7 +546,7 @@ test("attach refuses another bot's pane and a pane that isn't live; a planned bo
   assert.match(s.cli(["attach", "Genie", "t4"]).err, /t4 already plays Captain \(b-bbbbbbbbbb\)/);
   assert.match(s.cli(["attach", "Genie", "t5"]).err, /t5 isn't a live terminal/);
   assert.match(s.cli(["attach", "Studio", "t4"]).err, /Studio is planned/);
-  assert.match(s.cli(["attach", "Genie", "vps/t4"]).err, /this computer's panes only/);
+  assert.match(s.cli(["attach", "Genie", "vps/t4"]).err, /vps\/t4 is on vps; name the bot's project there: --machine vps/);
   assert.deepEqual(labelCalls(s.calls()), []);
 });
 
@@ -991,7 +998,7 @@ test("restart: the new pane resumes the session in the old one's space and tab, 
   assert.match(r.err, new RegExp(`Genie: t100 replaces t5, resuming session ${SID}\\.`));
   const calls = s.calls();
   const run = runCall(calls);
-  assert.deepEqual(run.slice(run.indexOf("--")), ["--", "claude", "--resume", SID]);
+  assert.deepEqual(agentWords(run), ["claude", "--resume", SID]);
   assert.ok(["herdr.space=sp9", "herdr.tab=tb3", `bot=${ID.main}`, "role=main", "squad=core", `agent.session=${SID}`].every((l) => run.includes(l)), run.join(" "));
   assert.equal(run[run.indexOf("--cwd") + 1], s.project);
   // Started, seen live at several checks (hc get of the new pane), and only then the old one killed.
@@ -1040,7 +1047,7 @@ test("restart refuses while a helper would end with the pane; a member bot that 
   const s = restartScene(t, { extra: [worker, member] });
   const r = s.cli(["restart", "Genie"]);
   assert.equal(r.code, 1);
-  assert.match(r.err, /t5 has a helper that ends with it: t7\. Let it finish, or pass --force/);
+  assert.match(r.err, /t5 has a helper that ends with it: t7\. Let it finish, pass --tree to restart it too \(resumed, under the new pane\), or pass --force to end it with the pane\./);
   assert.equal(runCall(s.calls()), undefined);
 });
 
@@ -1087,7 +1094,7 @@ test("restart with no session id known: claude --continue, with a warning; --fre
   const fresh = s2.cli(["restart", "Genie", "--fresh", "--json"]);
   assert.equal(fresh.code, 0, fresh.err);
   assert.equal(fresh.json().mode, "fresh");
-  assert.deepEqual(runCall(s2.calls()).slice(-2), ["--", "claude"]);
+  assert.deepEqual(agentWords(runCall(s2.calls())), ["claude"]);
 });
 
 test("restart --agent swaps fresh without touching bots.json; --save writes the agent and drops the old pin; --save alone is a usage mistake", (t) => {
@@ -1096,7 +1103,7 @@ test("restart --agent swaps fresh without touching bots.json; --save writes the 
   const r = s.cli(["restart", "Genie", "--agent", "codex", "--json"]);
   assert.equal(r.code, 0, r.err);
   assert.deepEqual([r.json().mode, r.json().agent, r.json().saved], ["swap", "codex", false]);
-  assert.deepEqual(runCall(s.calls()).slice(-2), ["--", "codex"]);
+  assert.deepEqual(agentWords(runCall(s.calls())), ["codex"]);
   assert.equal(readFileSync(s.botsPath, "utf8"), before, "bots.json untouched");
   // Again from the claude pin, written down this time (t100 is mid-turn in the fake: --force).
   const f = team();
@@ -1125,7 +1132,7 @@ test("restart a codex bot resumes with codex resume --last; a bot not running is
   const started = s.cli(["restart", "Genie", "--json"]);
   assert.equal(started.code, 0, started.err);
   assert.deepEqual([started.json().mode, started.json().replaced], ["start", null]);
-  assert.deepEqual(s.calls().filter((c) => c[0] === "run")[1].slice(-2), ["--", "claude"]);
+  assert.deepEqual(agentWords(s.calls().filter((c) => c[0] === "run")[1]), ["claude"]);
   assert.deepEqual(s.calls().filter((c) => c[0] === "kill").map((c) => c[1]), ["t6"]);
 });
 
@@ -1227,4 +1234,521 @@ test("history: no ledgers is an empty history; a removed bot by its bare id; an 
   assert.deepEqual(gone.json(), { id: "b-zzzzzzzzzz", name: null, bot: "b-zzzzzzzzzz", attach: [], starts: [], workers: [], sessions: [], transcript: null });
   assert.match(s.cli(["history", "nobody"]).err, /No bot "nobody"/);
   assert.equal(s.cli(["history"]).code, 2);
+});
+
+// ---- restart #213: the old pane's folder, command and session; PATH; --tree ----
+
+/** Captain on `agent` in pane t6 (hc get fields `over`), in project folder `cwd`, with an `omp` on PATH. */
+function captainScene(t, { agent = "omp", over = {}, extra = [] } = {}) {
+  const s = scene(t);
+  const f = team();
+  f.bots[1].agent = agent;
+  s.seed(f);
+  exe(join(s.root, "bin", "omp"), "#!/bin/sh\nexit 0\n");
+  const old = { ...term("t6", { bot: ID.cap, app: agent }), ...over };
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [old, ...extra], next: 100 }));
+  return s;
+}
+const runs = (s) => s.calls().filter((c) => c[0] === "run");
+
+test("restart #213: an omp bot from a template, in a worktree, comes back in that folder on the template's command, resumed", (t) => {
+  const s0 = scene(t);
+  const wt = join(s0.root, "proj.worktrees", "rust-cap");
+  mkdirSync(wt, { recursive: true });
+  const cmd = 'env PATH="$HOME/.bun/bin:$PATH" omp --auto-approve --model kimi/k3';
+  const s = captainScene(t, { over: { cwd: wt, foreground: { argv: ["bun", "/h/.bun/bin/omp", "--auto-approve", "--model", "kimi/k3"], cwd: wt },
+    argv: ["sh", "-c", cmd], template: "dev-kimi" } });
+  const r = s.cli(["restart", "Captain", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual([r.json().replaced, r.json().mode, r.json().agent], ["t6", "resume", "omp"]);
+  const run = runCall(s.calls());
+  assert.equal(run[run.indexOf("--cwd") + 1], wt, "the old pane's folder, not the project's");
+  // The template's own command (its env, flags and model), with --continue as a real argument.
+  assert.deepEqual(agentWords(run), ["sh", "-c", `${cmd} "$@"`, "sh", "--continue"]);
+  // Again (t100 is mid-turn in the fake: --force), now with an omp session id on the pane: the
+  // command isn't wrapped twice and the old --continue is dropped.
+  const st = s.hcState();
+  st.terminals.find((x) => x.address === "t100").labels["agent.session"] = SID2;
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const again = s.cli(["restart", "Captain", "--force", "--json"]);
+  assert.equal(again.code, 0, again.err);
+  assert.equal(again.json().session, SID2);
+  const next = runs(s)[1];
+  assert.equal(next[next.indexOf("--cwd") + 1], wt);
+  assert.deepEqual(agentWords(next), ["sh", "-c", `${cmd} "$@"`, "sh", `--resume=${SID2}`]);
+  assert.ok(next.includes(`agent.session=${SID2}`), "the session label goes with it");
+});
+
+test("restart #213: a hand-started codex bot keeps its flags and resumes its session by id; the old pane's folder gone: the project's, said", (t) => {
+  const s = captainScene(t, { agent: "codex", over: {
+    cwd: "/gone/folder", foreground: { argv: ["codex", "-m", "gpt-a", "-c", "model_reasoning_effort=high", "resume", "--last"], cwd: "/gone/folder" },
+    argv: ["/usr/bin/env", "PATH=/old", "codex", "-m", "gpt-a", "-c", "model_reasoning_effort=high", "resume", "--last"],
+    labels: { bot: ID.cap, "agent.session": SID } } });
+  const r = s.cli(["restart", "Captain", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const run = runCall(s.calls());
+  assert.deepEqual(agentWords(run), ["codex", "-m", "gpt-a", "-c", "model_reasoning_effort=high", "resume", SID]);
+  assert.equal(r.json().session, SID);
+  assert.equal(run[run.indexOf("--cwd") + 1], s.project);
+  assert.match(r.err, /t6's folder \/gone\/folder isn't there now, so t100 runs in .*; its conversation may not be found there\./);
+  assert.equal(ledgerOf(s).some((x) => x.event === "session"), false, "session rows stay Claude's");
+});
+
+test("restart #213: the pane always gets the CLI's PATH, so a bare codex (#!/usr/bin/env node) finds the node this PATH has", (t) => {
+  const s = captainScene(t, { agent: "codex", over: { foreground: { argv: ["codex"], cwd: "/x" }, argv: ["codex"] } });
+  const nodeDir = join(s.root, "node-bin");
+  mkdirSync(nodeDir);
+  exe(join(nodeDir, "node"), "#!/bin/sh\necho v24.1.0\n");
+  exe(join(s.root, "bin", "codex"), "#!/usr/bin/env node\n");
+  const path = `${nodeDir}:${join(s.root, "bin")}:/usr/bin:/bin`;
+  const r = s.cli(["restart", "Captain", "--json"], { env: { PATH: path } });
+  assert.equal(r.code, 0, r.err);
+  const run = runCall(s.calls());
+  // Before #213 nothing was passed here (this PATH already had node), and the pane got herdr-core's.
+  assert.deepEqual(run.slice(run.indexOf("--") + 1), ["/usr/bin/env", `PATH=${path}`, "codex", "resume", "--last"]);
+});
+
+/** Genie in t5 with two helpers that end with it (a worker on omp, a template on omp) and a member bot that outlives it. */
+const SID3 = "3c3c3c3c-1b2d-4c5e-9f60-718293a4b5c6";
+
+/**
+ * The invariant --tree keeps (#256 reviews), at every fake hc call (the fake's .doubles file) and
+ * at the end: no session id (agent.session or revive.session) is on two live panes, but for the
+ * bot's own while its new pane proves itself (`bot`: [old, new], both idle then: a restart
+ * without --tree has that window too, so a failed new pane leaves the old one running).
+ */
+function onePanePerSession(s, { bot = ["t5", "t100"] } = {}) {
+  const live = new Map();
+  for (const x of s.hcState().terminals.filter((y) => y.state === "live")) {
+    const id = x.labels?.["agent.session"] ?? x.labels?.["revive.session"];
+    if (id) live.set(id, [...(live.get(id) ?? []), x.address]);
+  }
+  for (const [id, panes] of live) assert.equal(panes.length, 1, `session ${id} is live in ${panes.join(", ")} at the end`);
+  const file = join(s.root, "hc.json.doubles");
+  const doubles = existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
+  for (const d of doubles) assert.deepEqual(d.panes, bot, `call ${d.call} (${d.word}): session ${d.session} live in ${d.panes.join(", ")}`);
+  // The bot's pair only between the new pane's run and the old pane's kill.
+  const calls = s.calls();
+  const ran = calls.findIndex((c) => c[0] === "run" && c.includes(`agent.session=${SID}`));
+  const killed = calls.findIndex((c) => c[0] === "kill" && c[1] === bot[0]);
+  // d.call counts the fake's calls from 1, itself included, and sees the state before it acts: call ran+1 is the run itself.
+  for (const d of doubles) assert.ok(d.call - 1 > ran && d.call - 1 <= killed, `call ${d.call} (${d.word}) outside the up-check (run ${ran}, kill ${killed})`);
+}
+
+/** treeScene with `third`: a codex helper t10 ("probe", session SID3) in a third folder, after t7 and t8. */
+function treeScene(t, { workerStatus = "idle", third = false } = {}) {
+  const s = restartScene(t);
+  exe(join(s.root, "bin", "omp"), "#!/bin/sh\nexit 0\n");
+  const wt1 = join(s.root, "proj.worktrees", "fix-213"), wt2 = join(s.root, "proj.worktrees", "review");
+  mkdirSync(wt1, { recursive: true });
+  mkdirSync(wt2, { recursive: true });
+  const worker = { ...term("t7", { argv: ["bun", "/h/.bun/bin/omp", "--model=kimi/k3", "--thinking=high", "do the task"], app: "omp", cwd: wt1, parent: "t5", status: workerStatus }),
+    name: "fix-213-dev", die_with_parent: true, argv: ["/usr/bin/env", "PATH=/x", "omp", "--model=kimi/k3", "--thinking=high", "do the task"],
+    labels: { "worker.of": ID.main, branch: "fix/213", "worker.role": "dev", "worker.model": "kimi/k3", "worker.effort": "high" } };
+  const reviewer = { ...term("t8", { argv: ["omp", "--auto-approve", "--model", "deepseek/flash"], app: "omp", cwd: wt2, parent: "t5" }),
+    name: "rev-1", die_with_parent: true, argv: ["sh", "-c", "omp --auto-approve --model deepseek/flash"], template: "reviewer-flash",
+    labels: { where: "Brain / review", "revive.agent": "omp", "revive.session": SID2 } };
+  const member = { ...term("t9", { bot: ID.cap, parent: "t5" }), die_with_parent: false };
+  const st = s.hcState();
+  st.terminals.push(worker, reviewer, member);
+  const wt3 = join(s.root, "proj.worktrees", "probe");
+  if (third) {
+    mkdirSync(wt3, { recursive: true });
+    st.terminals.push({ ...term("t10", { argv: ["codex", "-m", "gpt-a"], app: "codex", cwd: wt3, parent: "t5" }), name: "probe", die_with_parent: true,
+      argv: ["codex", "-m", "gpt-a"], labels: { "agent.session": SID3 } });
+  }
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  mkdirSync(join(s.app, "automagik-herdr"), { recursive: true });
+  writeFileSync(ledgerPath(s.app), `${JSON.stringify({ event: "start", kind: "worker", terminal: "t7", pid: 1, botId: ID.main, task: "fix-213", branch: "fix/213",
+    project: s.project, lead: ID.main, worktree: wt1, agent: "omp", model: "kimi/k3", effort: "high", template: null, role: "dev" })}\n`);
+  return { s, wt1, wt2, wt3 };
+}
+
+test("restart --tree: the helpers that end with the bot run again under its new pane, each in its folder, on its command, resumed", (t) => {
+  const { s, wt1, wt2 } = treeScene(t);
+  const r = s.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json().terminal, "t100");
+  assert.deepEqual(r.json().helpers.map((h) => [h.name, h.replaced, h.terminal, h.agent, h.mode, h.up, h.error]),
+    [["fix-213-dev", "t7", "t101", "omp", "resume", true, null], ["rev-1", "t8", "t102", "omp", "resume", true, null]]);
+  const [, w, v] = runs(s);
+  // The worker: rebuilt from its ledger row, so its task isn't sent again; its name, folder and labels kept.
+  assert.deepEqual([w[w.indexOf("--name") + 1], w[w.indexOf("--cwd") + 1], w[w.indexOf("--parent") + 1]], ["fix-213-dev", wt1, "t100"]);
+  assert.ok(["worker.of=b-aaaaaaaaaa", "branch=fix/213", "worker.role=dev"].every((l) => w.includes(l)), w.join(" "));
+  assert.deepEqual(agentWords(w), ["omp", "--model=kimi/k3", "--thinking=high", "--continue"]);
+  // The template helper: its own command, resumed.
+  assert.deepEqual([v[v.indexOf("--name") + 1], v[v.indexOf("--cwd") + 1], v[v.indexOf("--parent") + 1]], ["rev-1", wt2, "t100"]);
+  // The template helper: its own command, resumed by the session a reviver keeps in revive.session.
+  assert.deepEqual(agentWords(v), ["sh", "-c", 'omp --auto-approve --model deepseek/flash "$@"', "sh", `--resume=${SID2}`]);
+  // The old helpers end before their replacements start; the old pane last.
+  const calls = s.calls();
+  const killAt = (x) => at(calls, "kill", x), runAt = (name) => calls.findIndex((c) => c[0] === "run" && c.includes(name));
+  // The old pane ends (its helpers with it) before any helper runs again; none is killed on its own.
+  assert.ok(killAt("t5") > 0 && killAt("t5") < runAt("fix-213-dev") && runAt("fix-213-dev") < runAt("rev-1"), JSON.stringify(calls));
+  assert.deepEqual([killAt("t7"), killAt("t8")], [-1, -1]);
+  const state = s.hcState();
+  assert.deepEqual(["t5", "t7", "t8", "t9", "t101", "t102"].map((x) => state.terminals.find((y) => y.address === x).state),
+    ["finished", "finished", "finished", "live", "live", "live"], "the member bot that outlives the pane is left alone");
+  // The worker's ledger row goes to its new terminal; helpers get no attach rows (they are no bots).
+  assert.deepEqual(ledgerOf(s).filter((x) => x.terminal === "t101").map((x) => [x.kind, x.task, x.agent, x.model, x.effort]), [["worker", "fix-213", "omp", "kimi/k3", "high"]]);
+  assert.equal(attachOf(s).some((x) => ["t101", "t102"].includes(x.terminal)), false);
+  onePanePerSession(s);
+  const text = treeScene(t).s.cli(["restart", "Genie", "--tree"]);
+  assert.equal(text.code, 0, text.err);
+  const lines = text.err.split("\n");
+  assert.ok(lines.includes(`automagik-herdr: Genie's helper fix-213-dev: t101 replaces t7, resuming its last conversation (--continue).`), text.err);
+  assert.ok(lines.includes(`automagik-herdr: Genie's helper rev-1: t102 replaces t8, resuming session ${SID2} (--resume=${SID2}).`), text.err);
+  assert.equal(text.code, 0);
+});
+
+test("restart --tree waits, before anything starts, for helpers and the old pane to be idle: a turn's note types into the old pane only then; still mid-turn after the wait refuses", (t) => {
+  const busy = treeScene(t, { workerStatus: "working" }).s;
+  const st = busy.hcState();
+  st.terminals.find((x) => x.address === "t7").idleAfterGets = 2; // its turn ends during the wait: a note into t5, whose agent takes a turn
+  writeFileSync(join(busy.root, "hc.json"), JSON.stringify(st));
+  const r = busy.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.json().helpers.map((h) => [h.replaced, h.up]), [["t7", true], ["t8", true]]);
+  const calls = busy.calls();
+  const ran = calls.findIndex((c) => c[0] === "run");
+  const notes = busy.hcState().notes ?? [];
+  assert.deepEqual(notes.map((n) => [n.to, n.from]), [["t5", "t7"]]);
+  assert.ok(notes.every((n) => n.call < ran), "the note went in, and t5's turn ended, before the new pane started");
+  assert.ok(calls.slice(0, ran).filter((c) => c[0] === "get" && c[1] === "t5").length >= 3, "t5's own turn was waited for too");
+  onePanePerSession(busy);
+  // Still mid-turn when the wait runs out: refused, nothing started or ended.
+  const stays = treeScene(t, { workerStatus: "working" }).s;
+  const w = stays.cli(["restart", "Genie", "--tree"], { env: { AUTOMAGIK_HERDR_TREE_TURN_WAIT_MS: "1000" } });
+  assert.equal(w.code, 1);
+  assert.match(w.err, /t7 was still mid-turn 1s later\. Nothing was started: restart once it is idle, or pass --force to cut its turn\./);
+  assert.equal(runCall(stays.calls()), undefined);
+  assert.equal(at(stays.calls(), "kill"), -1);
+  // From inside a helper, or inside the old pane (which --tree ends before its helpers run again): refused.
+  const inside = treeScene(t).s;
+  const me = inside.cli(["restart", "Genie", "--tree"], { env: { HC_TERMINAL_ID: "t7" } });
+  assert.equal(me.code, 1);
+  assert.match(me.err, /This runs in t7, one of t5's helpers, which --tree ends and runs again: run it from another terminal\./);
+  const self = inside.cli(["restart", "Genie", "--tree"], { env: { HC_TERMINAL_ID: "t5" } });
+  assert.equal(self.code, 1);
+  assert.match(self.err, /This runs in t5, the pane --tree ends before its helpers run again: run restart --tree from another terminal\./);
+  assert.equal(runCall(inside.calls()), undefined);
+  // --force alone (no --tree): the helpers end with the pane, as before.
+  const forced = treeScene(t).s;
+  const f = forced.cli(["restart", "Genie", "--force", "--json"]);
+  assert.equal(f.code, 0, f.err);
+  assert.equal(runs(forced).length, 1, "only the bot runs again");
+  assert.equal("helpers" in f.json(), false);
+  assert.deepEqual(["t7", "t8"].map((x) => forced.hcState().terminals.find((y) => y.address === x).state), ["finished", "finished"]);
+});
+
+test("restart --tree: a helper whose turn starts and ends once the new pane is up types into no pane older than it (the old one has ended)", (t) => {
+  const s = treeScene(t).s;
+  const st = s.hcState();
+  // t8 starts a turn as the bot's new pane starts (the 1st hc run) and ends it on its own clock at
+  // the 2nd hc run (the first helper's), looked at or not. Had the old pane still run then (a
+  // tree that runs helpers again before ending it), the note would go into t5.
+  st.workingOnRun = ["t8"];
+  st.terminals.find((x) => x.address === "t8").endTurnOn = { word: "run", nth: 2 };
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const calls = s.calls();
+  const ran = calls.findIndex((c) => c[0] === "run");
+  const notes = (s.hcState().notes ?? []).filter((n) => n.call - 1 > ran);
+  assert.deepEqual(notes.filter((n) => !["t100", "t101", "t102"].includes(n.to)), [], `a note went into an old pane: ${JSON.stringify(notes)}`);
+  assert.deepEqual(r.json().helpers.map((h) => [h.replaced, h.up]), [["t7", true], ["t8", true]]);
+  onePanePerSession(s);
+});
+
+test("restart --tree: a helper that is itself a bot (started under the pane, then attached) keeps its binding: moved to its new terminal", (t) => {
+  const s = restartScene(t);
+  const wt = join(s.root, "proj.worktrees", "dev");
+  mkdirSync(wt, { recursive: true });
+  const dev = { ...term("t8", { bot: ID.dev, parent: "t5", cwd: wt }), die_with_parent: true, argv: ["claude", "--model", "m"] };
+  const st = s.hcState();
+  st.terminals.push(dev);
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  assert.equal(s.cli(["whois", "--bot", ID.dev, "--json"]).json().terminal, "t8", "the ledger imported t8 for Dev");
+  const r = s.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.json().helpers.map((h) => [h.replaced, h.terminal, h.bot, h.up]), [["t8", "t101", ID.dev, true]]);
+  assert.deepEqual(agentWords(runs(s)[1]), ["claude", "--model", "m", "--continue"]);
+  const rows = attachOf(s).filter((x) => x.bot === ID.dev);
+  assert.deepEqual(rows.slice(-2).map((x) => [x.event, x.terminal, x.by, x.reason ?? null]), [["detach", "t8", "start", "moved"], ["attach", "t101", "start", null]]);
+  assert.equal(s.cli(["whois", "--bot", ID.dev, "--json"]).json().terminal, "t101");
+  assert.deepEqual(ledgerOf(s).filter((x) => x.terminal === "t101").map((x) => [x.kind, x.botId, x.worktree]), [["seat", ID.dev, wt]]);
+});
+
+// ---- restart --tree: shared folders and failure paths (#256 review) ----
+
+/** Genie's t5 with six codex helpers of one template in one folder (as t2p6's integrators), each with `labels(n)`. */
+function sixScene(t, labels = () => ({})) {
+  const s = restartScene(t);
+  const wt = join(s.root, "proj.worktrees", "integration");
+  mkdirSync(wt, { recursive: true });
+  const cmd = 'env PATH="$HOME/.bun/bin:$PATH" codex --no-daemon -m gpt-6.1-sol -c model_reasoning_effort=high';
+  const names = ["acc-262", "acc-261b", "acc-218", "acc-264b", "acc-265", "e8-v16b"];
+  const st = s.hcState();
+  names.forEach((name, n) => st.terminals.push({ ...term(`t${20 + n}`, { argv: ["codex", "--no-daemon", "-m", "gpt-6.1-sol"], app: "codex", cwd: wt, parent: "t5" }),
+    name, die_with_parent: true, argv: ["sh", "-c", cmd], template: "integrator", labels: { where: "Brain / Integrator", ...labels(n) } }));
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  return { s, wt, cmd, names };
+}
+const idOf = (n) => `01a1a160-cb95-74a2-b6ad-6b0a3ae94f1${n}`;
+
+test("restart --tree: six codex helpers in one folder resume each its own session (revive.session); with none known, refused, or fresh with --fresh-shared", (t) => {
+  const { s, wt, cmd, names } = sixScene(t, (n) => ({ "revive.agent": "codex", "revive.session": idOf(n), "revive.cwd": "x" }));
+  const r = s.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.json().helpers.map((h) => [h.name, h.session, h.mode, h.up]), names.map((name, n) => [name, idOf(n), "resume", true]));
+  assert.deepEqual(runs(s).slice(1).map((w) => [w[w.indexOf("--cwd") + 1], ...agentWords(w).slice(-2)]), names.map((_, n) => [wt, "resume", idOf(n)]));
+  assert.ok(runs(s).slice(1).every((w) => agentWords(w)[2] === `${cmd} "$@"`));
+  onePanePerSession(s);
+  // None known: every one of them would take the folder's latest. Refused before anything starts.
+  const bare = sixScene(t).s;
+  const refused = bare.cli(["restart", "Genie", "--tree"]);
+  assert.equal(refused.code, 1);
+  assert.match(refused.err, new RegExp(`${names.join(", ")} would resume the latest codex conversation in .*integration \\(no session id\\), `
+    + `which ${names.join(", ")} all use: one could pick up another's\\. Nothing was started\\. Give each an agent\\.session label, or pass --fresh-shared`));
+  assert.equal(runCall(bare.calls()), undefined);
+  assert.equal(at(bare.calls(), "kill"), -1);
+  // --fresh-shared: each starts its own new conversation, with its command, and says why.
+  const fresh = bare.cli(["restart", "Genie", "--tree", "--fresh-shared", "--json"]);
+  assert.equal(fresh.code, 0, fresh.err);
+  assert.deepEqual(fresh.json().helpers.map((h) => [h.mode, h.session]), names.map(() => ["fresh", null]));
+  assert.match(fresh.json().helpers[0].note, /no session id, and its folder .*integration has other codex sessions \(--fresh-shared\)/);
+  assert.ok(runs(bare).slice(1).every((w) => JSON.stringify(agentWords(w)) === JSON.stringify(["sh", "-c", cmd])));
+  assert.equal(s.cli(["restart", "Genie", "--fresh-shared"]).code, 2, "--fresh-shared goes with --tree");
+});
+
+/** The resume line --tree printed (its hc run line), checked to parse as sh, then run as sh would split it. */
+function pastedLine(t, line) {
+  const r = spawnSync("sh", ["-n", "-c", line], { encoding: "utf8" });
+  assert.equal(r.status, 0, `sh -n rejects: ${line}\n${r.stderr}`);
+  const words = spawnSync("sh", ["-c", `for w in ${line.replace(/^hc /, "")}; do printf '%s\\0' "$w"; done`], { encoding: "utf8" });
+  return words.stdout.split("\0").slice(0, -1);
+}
+
+test("restart --tree: hc run failing for helper 2 of 3: helpers 1 and 3 run again, the old pane ends, helper 2's line runs as pasted, exit 1", (t) => {
+  const { s, wt2 } = treeScene(t, { third: true });
+  const st = s.hcState();
+  st.failRun = ["rev-1"];
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(r.code, 1, "the bot and two helpers restarted, one didn't");
+  assert.equal(r.json().terminal, "t100");
+  assert.deepEqual(r.json().helpers.map((h) => [h.replaced, h.terminal, h.up, Boolean(h.error)]), [["t7", "t101", true, false], ["t8", null, false, true], ["t10", "t102", true, false]]);
+  const line = r.json().helpers[1].by_hand;
+  // The same words the restart ran for it: its name, folder, labels, parent, the seat's PATH and its command, resumed.
+  const tried = s.calls().find((c) => c[0] === "run" && c.includes("rev-1"));
+  assert.deepEqual(pastedLine(t, line), tried);
+  assert.deepEqual([tried[tried.indexOf("--cwd") + 1], tried[tried.indexOf("--parent") + 1]], [wt2, "t100"]);
+  assert.ok(tried.includes(`revive.session=${SID2}`) && tried.includes("/usr/bin/env") && tried.some((w) => w.startsWith("PATH=")), tried.join(" "));
+  assert.deepEqual(agentWords(tried).slice(-2), ["sh", `--resume=${SID2}`]);
+  assert.ok(r.err.includes(`t8 (rev-1) wasn't run again: hc run failed (hc: can't start rev-1). Its conversation is kept; to run it again by hand:\n`
+    + `automagik-herdr:   ${line}\n`) || r.err.includes(`  ${line}\n  # resumes session ${SID2}`), r.err);
+  assert.match(r.err, new RegExp(`# resumes session ${SID2}`));
+  assert.deepEqual(agentWords(runs(s).at(-1)), ["codex", "-m", "gpt-a", "resume", SID3], "helper 3 resumed by its id");
+  const state = s.hcState();
+  assert.deepEqual(["t5", "t7", "t8", "t10", "t100", "t101", "t102"].map((x) => state.terminals.find((y) => y.address === x).state),
+    ["finished", "finished", "finished", "finished", "live", "live", "live"], "the old pane always ends");
+  onePanePerSession(s);
+});
+
+test("restart --tree: a helper that survives its parent's end (and its kill) is said, never run twice nor offered by hand; one never up, or that hc can't read, is reported", (t) => {
+  // t7 outlives t5's end and its own kill fails: it holds its session, so no second pane and no hand line.
+  const stuck = treeScene(t).s;
+  const st = stuck.hcState();
+  st.surviveParent = ["t7"];
+  st.failKill = "t7";
+  writeFileSync(join(stuck.root, "hc.json"), JSON.stringify(st));
+  const k = stuck.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(k.code, 1);
+  assert.match(k.err, /t7 \(fix-213-dev\) it still runs after its parent ended \(hc kill t7 failed: kill refused on t7\): it holds its session, so it isn't run again/);
+  assert.deepEqual(k.json().helpers.map((h) => [h.replaced, h.up, h.still_running, h.by_hand]), [["t7", false, true, null], ["t8", true, false, null]]);
+  assert.equal(runs(stuck).filter((c) => c.includes("fix-213-dev")).length, 0, "t7 never started twice");
+  assert.deepEqual(["t5", "t7"].map((x) => stuck.hcState().terminals.find((y) => y.address === x).state), ["finished", "live"]);
+  onePanePerSession(stuck);
+  // A helper that survives its parent but ends on its own kill: run again.
+  const once = treeScene(t).s;
+  const st1 = once.hcState();
+  st1.surviveParent = ["t7"];
+  writeFileSync(join(once.root, "hc.json"), JSON.stringify(st1));
+  const o = once.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(o.code, 0, o.err);
+  assert.ok(at(once.calls(), "kill", "t7") > at(once.calls(), "kill", "t5"));
+  assert.deepEqual(o.json().helpers.map((h) => h.up), [true, true]);
+  // Never up: reported with its line, which parses.
+  process.env.AUTOMAGIK_HERDR_RESTART_WAIT_MS = "400";
+  t.after(() => { delete process.env.AUTOMAGIK_HERDR_RESTART_WAIT_MS; });
+  const late = treeScene(t).s;
+  const st2 = late.hcState();
+  st2.runAsFor = { "fix-213-dev": "shell" };
+  writeFileSync(join(late.root, "hc.json"), JSON.stringify(st2));
+  const r = late.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /t7 \(fix-213-dev\) wasn't run again: t101 didn't keep an agent in front within 0\.4s, so it was ended\. Its conversation is kept/);
+  assert.match(r.err, /# a worker: its workers-ledger row \(task fix-213\) isn't copied/);
+  pastedLine(t, r.json().helpers[0].by_hand);
+  assert.deepEqual(["t101", "t102", "t5"].map((x) => late.hcState().terminals.find((y) => y.address === x).state), ["finished", "live", "finished"]);
+  onePanePerSession(late);
+  // hc get of t7 fails once the bot's pane starts: unknown is not gone; no second copy.
+  const blind = treeScene(t).s;
+  const st3 = blind.hcState();
+  st3.failGetOnRun = ["t7"];
+  writeFileSync(join(blind.root, "hc.json"), JSON.stringify(st3));
+  const b = blind.cli(["restart", "Genie", "--tree"]);
+  assert.equal(b.code, 1);
+  assert.match(b.err, /t7 \(fix-213-dev\) wasn't run again: hc get t7 failed \(hc: server error reading t7\), so it may still run; with it possibly running, a second copy would share its session\./);
+  assert.equal(runs(blind).filter((c) => c.includes("fix-213-dev")).length, 0);
+  assert.equal(blind.hcState().terminals.find((y) => y.address === "t5").state, "finished");
+});
+
+test("restart --tree refuses before anything starts: a gone folder, a helper hc can't read, a helper's own helpers, one session named twice", (t) => {
+  const { s: gone, wt2 } = treeScene(t);
+  rmSync(wt2, { recursive: true });
+  const g = gone.cli(["restart", "Genie", "--tree"]);
+  assert.equal(g.code, 1);
+  assert.match(g.err, new RegExp(`t8's folder ${wt2} isn't there\\. Nothing was started\\.`));
+  assert.equal(runCall(gone.calls()), undefined);
+  const blind = treeScene(t).s;
+  const st = blind.hcState();
+  st.failGet = ["t8"];
+  writeFileSync(join(blind.root, "hc.json"), JSON.stringify(st));
+  const b = blind.cli(["restart", "Genie", "--tree"]);
+  assert.equal(b.code, 1);
+  assert.match(b.err, /hc get t8 failed \(hc: server error reading t8\): --tree can't check t5's helper\. Nothing was started\./);
+  assert.equal(runCall(blind.calls()), undefined);
+  const nest = treeScene(t).s;
+  const st4 = nest.hcState();
+  st4.terminals.push({ ...term("t30", { argv: ["codex"], app: "codex", parent: "t7" }), die_with_parent: true });
+  writeFileSync(join(nest.root, "hc.json"), JSON.stringify(st4));
+  const n = nest.cli(["restart", "Genie", "--tree"]);
+  assert.equal(n.code, 1);
+  assert.match(n.err, /--tree restarts t5's helpers, not theirs: t30 \(under t7\) would end with its parent and not run again\. Nothing was started\./);
+  assert.equal(runCall(nest.calls()), undefined);
+  const f = nest.cli(["restart", "Genie", "--tree", "--force"]);
+  assert.equal(f.code, 0, f.err);
+  assert.match(f.err, /--force: t30 \(under t7\) ends with its parent and isn't run again\./);
+  // t8 labelled with Genie's own session: two panes would run it.
+  const dup = treeScene(t).s;
+  const st5 = dup.hcState();
+  st5.terminals.find((x) => x.address === "t8").labels["revive.session"] = SID;
+  writeFileSync(join(dup.root, "hc.json"), JSON.stringify(st5));
+  const d = dup.cli(["restart", "Genie", "--tree"]);
+  assert.equal(d.code, 1);
+  assert.match(d.err, new RegExp(`Genie and rev-1 would all resume session ${SID}: one session runs in one pane\\. Nothing was started\\.`));
+  assert.equal(runCall(dup.calls()), undefined);
+});
+
+test("restart --tree: a helper bot whose attach row can't be written runs, and is named with the attach to run; exit 1", (t) => {
+  const s = restartScene(t);
+  const wt = join(s.root, "proj.worktrees", "dev");
+  mkdirSync(wt, { recursive: true });
+  const st = s.hcState();
+  st.terminals.push({ ...term("t8", { bot: ID.dev, parent: "t5", cwd: wt }), die_with_parent: true, argv: ["claude"] });
+  st.noCreated = ["t8"]; // its replacement (named t8 too) has no created_ms: attachMoved can't be given one
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  assert.equal(s.cli(["whois", "--bot", ID.dev, "--json"]).json().terminal, "t8");
+  const r = s.cli(["restart", "Genie", "--tree"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /t8 runs again in t101, but bot b-cccccccccc's attach row wasn't written \(hc get gave no created_ms for t101\): automagik-herdr attach b-cccccccccc t101\./);
+  assert.equal(s.hcState().terminals.find((y) => y.address === "t101").state, "live");
+});
+
+test("restart: the pane's PATH leaves out the caller's venv, node_modules/.bin and folders under the project, and always has /usr/bin and /bin", (t) => {
+  const s = captainScene(t, { agent: "codex", over: { foreground: { argv: ["codex"], cwd: "/x" }, argv: ["codex"] } });
+  const bin = join(s.root, "bin");
+  const path = [join(s.project, ".venv/bin"), join(s.project, "node_modules/.bin"), "/opt/tool/node_modules/.bin", "/v/env/bin", bin].join(":");
+  const r = s.cli(["restart", "Captain", "--json"], { env: { PATH: path, VIRTUAL_ENV: "/v/env" } });
+  assert.equal(r.code, 0, r.err);
+  const run = runCall(s.calls());
+  assert.equal(run[run.indexOf("--") + 2], `PATH=${bin}:/usr/bin:/bin`);
+});
+
+test("attach by a pane's name writes hc's terminal id, so whois by id finds it (#261 review)", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  const st = JSON.parse(readFileSync(join(s.root, "hc.json"), "utf8"));
+  st.terminals = [{ ...term("t4", { cwd: s.project }), name: "mypane" }];
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["attach", "Genie", "mypane", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const w = s.cli(["whois", "t4", "--json"]);
+  assert.equal(w.json().bot, ID.main);
+  assert.equal(w.json().terminal, "t4");
+});
+
+test("restart --cwd: a folder of the same Claude slug resumes the session by id there; another slug is refused unless --fresh; helpers keep their folders", (t) => {
+  const s = restartScene(t);
+  const from = join(s.root, "repos", "automagik-herdr"), to = join(s.root, "repos", "automagik", "herdr"), other = join(s.root, "elsewhere");
+  for (const d of [from, to, other]) mkdirSync(d, { recursive: true });
+  const st = s.hcState();
+  const t5 = st.terminals.find((x) => x.address === "t5");
+  t5.cwd = from;
+  t5.foreground.cwd = from;
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  // automagik-herdr and automagik/herdr: one slug, so Claude finds the session in the new folder.
+  const r = s.cli(["restart", "Genie", "--cwd", to, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const run = runCall(s.calls());
+  assert.equal(run[run.indexOf("--cwd") + 1], to);
+  assert.deepEqual(agentWords(run), ["claude", "--resume", SID]);
+  assert.deepEqual([r.json().mode, r.json().session, r.json().replaced], ["resume", SID, "t5"]);
+  // Another slug: refused, nothing started or ended; --fresh starts a new conversation there.
+  const s2 = restartScene(t);
+  const st2 = s2.hcState();
+  Object.assign(st2.terminals.find((x) => x.address === "t5"), { cwd: from, foreground: { ...st2.terminals[0].foreground, cwd: from } });
+  writeFileSync(join(s2.root, "hc.json"), JSON.stringify(st2));
+  const refused = s2.cli(["restart", "Genie", "--cwd", other]);
+  assert.equal(refused.code, 1);
+  assert.match(refused.err, new RegExp(`Claude keeps Genie's conversation under its folder's slug, .*automagik-herdr \\(.*\\); .*elsewhere is .*-elsewhere, `
+    + `so a resume there would find nothing\\. Nothing was started\\. Restart with --fresh`));
+  assert.equal(runCall(s2.calls()), undefined);
+  assert.equal(at(s2.calls(), "kill"), -1);
+  const fresh = s2.cli(["restart", "Genie", "--cwd", other, "--fresh", "--json"]);
+  assert.equal(fresh.code, 0, fresh.err);
+  const run2 = runCall(s2.calls());
+  assert.equal(run2[run2.indexOf("--cwd") + 1], other);
+  assert.deepEqual([agentWords(run2), fresh.json().mode], [["claude"], "fresh"]);
+  // Not a folder: a usage mistake.
+  assert.equal(s2.cli(["restart", "Genie", "--cwd", join(s2.root, "nope")]).code, 2);
+  // --tree --cwd: the bot moves, its helpers run again in their own folders.
+  const { s: tr, wt1, wt2 } = treeScene(t);
+  const moved = join(tr.root, "moved");
+  mkdirSync(moved);
+  const tree = tr.cli(["restart", "Genie", "--tree", "--cwd", moved, "--fresh", "--json"]);
+  assert.equal(tree.code, 0, tree.err);
+  const [bot, w, v] = runs(tr);
+  assert.deepEqual([bot, w, v].map((c) => c[c.indexOf("--cwd") + 1]), [moved, wt1, wt2]);
+  onePanePerSession(tr);
+});
+
+test("restart --cwd: a non-Claude resume into another folder is said; --cwd with --machine is refused; a Claude bot's briefing hook goes into DIR", (t) => {
+  const from = "/never/used";
+  const s = captainScene(t, { agent: "codex", over: { foreground: { argv: ["codex"], cwd: from }, argv: ["codex"], cwd: from } });
+  const a = join(s.root, "a"), b = join(s.root, "b");
+  mkdirSync(a);
+  mkdirSync(b);
+  const st = s.hcState();
+  Object.assign(st.terminals.find((x) => x.address === "t6"), { cwd: a, foreground: { argv: ["codex"], cwd: a } });
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["restart", "Captain", "--cwd", b, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, new RegExp(`t100 runs in ${b}, not ${a}: codex finds its last conversation by folder, so it may not find it there\\.`));
+  const run = runCall(s.calls());
+  assert.deepEqual([run[run.indexOf("--cwd") + 1], ...agentWords(run)], [b, "codex", "resume", "--last"]);
+  // --machine: refused before anything is read or started, whatever DIR is.
+  const m = s.cli(["restart", "Captain", "--machine", "box", "--cwd", b]);
+  assert.equal(m.code, 2);
+  assert.match(m.err, /--cwd is a folder on this computer; a restart on a linked machine keeps the old pane's\./);
+  assert.equal(runs(s).length, 1, "nothing more started");
+  // Claude: the briefing hook is written into DIR, as the help says.
+  const c = restartScene(t);
+  const dir = join(c.root, "moved");
+  mkdirSync(dir);
+  const moved = c.cli(["restart", "Genie", "--cwd", dir, "--fresh"]);
+  assert.equal(moved.code, 0, moved.err);
+  const hook = JSON.parse(readFileSync(join(dir, ".claude/settings.local.json"), "utf8"));
+  assert.match(hook.hooks.UserPromptSubmit[0].hooks[0].command, /briefing\.mjs/);
 });

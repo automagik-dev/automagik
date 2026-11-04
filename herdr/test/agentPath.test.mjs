@@ -271,7 +271,7 @@ test("worker CLI: a codex the pane reaches without node starts under env PATH=<n
   const r = cli("worker", "fix it", "--branch", "feat/x");
   assert.equal(r.status, 0, r.stderr);
   const run = runCall();
-  assert.deepEqual(run.slice(run.indexOf("--") + 1, run.indexOf("--") + 4), ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}`, "codex"]);
+  assert.deepEqual(run.slice(run.indexOf("--") + 1, run.indexOf("--") + 4), ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}:/usr/bin:/bin`, "codex"]);
   assert.match(r.stderr, new RegExp(`automagik-herdr: codex runs under node, which isn't on its PATH: ${join(prefix, "bin")} put first on it\\.`));
 });
 
@@ -281,7 +281,7 @@ test("start CLI (#56): a codex bot whose node is only in nvm starts under env PA
   assert.equal(r.status, 0, r.stderr);
   const run = runCall();
   const argv = run.slice(run.indexOf("--") + 1);
-  assert.deepEqual(argv, ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}`, "codex"]);
+  assert.deepEqual(argv, ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}:/usr/bin:/bin`, "codex"]);
   assert.deepEqual(JSON.parse(r.stdout).argv, ["codex"]);
   assert.match(r.stderr, new RegExp(`automagik-herdr: codex runs under node, which isn't on its PATH: ${join(prefix, "bin")} put first on it\\.`));
   // The seat's command as hc would run it: with the caller's PATH alone, env finds no node (127); as started, it runs.
@@ -301,7 +301,7 @@ test("restart CLI (#56): restarting a codex bot whose node is only in nvm runs u
   assert.equal(JSON.parse(r.stdout).replaced, "t7");
   const run = runCall();
   const argv = run.slice(run.indexOf("--") + 1);
-  assert.deepEqual(argv, ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}`, "codex", "resume", "--last"]);
+  assert.deepEqual(argv, ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}:/usr/bin:/bin`, "codex", "resume", "--last"]);
   const seat = spawnSync(argv[0], argv.slice(1), { env: {}, encoding: "utf8" });
   assert.equal(seat.status, 0, seat.stderr);
 });

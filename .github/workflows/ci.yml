@@ -264,7 +264,9 @@ jobs:
     # Pocket Link's bridge (herdr/mods/pocket-link, Pocket's, never in the pack): syntax and its
     # dependency-free tests (the pre-pairing limits, the pairing code, where its state lives,
     # public-status.json, how the dialog finds Node), on Linux and macOS. The pack's own gate above
-    # does not run them: they live beside the mod, not in herdr/test/.
+    # does not run them: they live beside the mod, not in herdr/test/. Also the chat projection in
+    # chat/ (RFC 0015): its decoders, cleaner and transcript folder rule, whose cases it shares with
+    # am-sidebar in herdr/test/fixtures/transcript-folder-rule.json.
     name: Pocket Link bridge (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
@@ -290,7 +292,7 @@ jobs:
           set -euo pipefail
           if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
             echo "link=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(herdr/mods/pocket-link/|\.github/workflows/ci\.yml$)'; then
+          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(herdr/mods/pocket-link/|herdr/test/fixtures/transcript-folder-rule\.json$|\.github/workflows/ci\.yml$)'; then
             echo "link=true" >> "$GITHUB_OUTPUT"
           else
             echo "herdr/mods/pocket-link/ did not change: nothing to test"
@@ -305,11 +307,11 @@ jobs:
         if: steps.changed.outputs.link == 'true'
         run: |
           set -euo pipefail
-          for f in bridge/*.mjs find-node.js main.js; do node --check "$f"; done
+          for f in bridge/*.mjs chat/*.js chat/*.mjs find-node.js main.js; do node --check "$f"; done
 
       - name: Test
         if: steps.changed.outputs.link == 'true'
-        run: node --test bridge/*.test.mjs find-node.test.mjs
+        run: node --test bridge/*.test.mjs chat/*.test.mjs find-node.test.mjs
 
   plugin:
     # The Bot team and the welcome run on Node, as DSH does: Bun installs each and the DSH

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-03T23:19:22.089Z",
+  "generatedAt": "2026-11-04T01:41:10.691Z",
   "modCount": 11,
   "repositoryCount": 4,
   "source": "automagik-herdr",
@@ -12,7 +12,7 @@
       "url": "https://github.com/automagik-dev/automagik",
       "defaultBranch": "dev",
       "stars": 0,
-      "pushedAt": "2026-11-03T20:14:58-03:00",
+      "pushedAt": "2026-11-03T22:28:58-03:00",
       "headCommit": "",
       "path": "herdr",
       "name": "Automagik Herdr",
@@ -42,7 +42,7 @@
         {
           "name": "am-footer",
           "title": "Automagik Footer",
-          "blurb": "The sidebar's footer as a rail of tabs instead of a stack of rows — robot **Bots** (first), puzzle **Mods**, clock **Automations**, gear **Settings**, plus **Add machine** — and the brand bar above it. Derived from Herdr's shipped `workspace-chrome` 0.1.11."
+          "blurb": "The sidebar's footer as a rail of tabs instead of a stack of rows — robot **Bots** (first), puzzle **Mods**, clock **Automations**, layers **Quota** (while am-quota is on), gear **Settings**, plus **Add machine** — and the brand bar above it. Derived from Herdr's shipped `workspa"
         },
         {
           "name": "am-markdown",
@@ -62,7 +62,7 @@
         {
           "name": "am-quota",
           "title": "Automagik Quota",
-          "blurb": "One account per client, and the handoff before a window runs dry. The left sidebar panel lists every Claude Code and Codex account the CLIProxyAPI knows, with its window, and switches the *local* credentials so the clients use the one you pick — no proxy in the traffic path, no r"
+          "blurb": "**Accounts**, a personal tool for people who run their own [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI). Your bots stop when a subscription hits its limit; this panel shows how long the Claude Code or Codex account this computer uses will last, and moves the tool t"
         },
         {
           "name": "am-sidebar",

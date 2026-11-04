@@ -41,8 +41,8 @@ holds nine mod folders and one layout, and nothing else:
 | `am-markdown` | the terminal's right-click menu with its Markdown files |
 | `am-mods` | the mod manager (`⌘⇧M`) |
 | `am-automations` | the automations panel |
-| `am-quota` | the quota panel |
-| `../herdr-layout/automagik.json` | the layout that shows all of the above (its own folder: herdr.dev skips a pack folder that holds `layouts/`) |
+| `am-quota` | the Accounts panel (your own CLIProxyAPI's accounts) |
+| `../herdr-layout/layouts/automagik.json` | the layout that shows all of the above (its own folder: herdr.dev skips a pack folder that holds `layouts/`) |
 
 Releases up to v0.4.x shipped `automagik-herdr-<v>.tgz` instead: the sidebar alone (under its
 old folder name, see [From v0.2 to v0.4.x](#from-v02-to-v04x)), with no footer, tab bar, `+` menu, Markdown menu, mod manager, automations or quota. A
@@ -209,13 +209,17 @@ now. A planned bot's menu has no Run items. A restart refused because the bot is
 "Restart anyway". The Bots list and the Attach picker open on the bots the sidebar already
 knows and refresh behind.
 
-A project on a linked machine (`hc machine ls`) is configured from here too: its bots' menu has
-Configure and Prompt, the Bots list names the project with its machine and offers Edit, and
-New bot on a focused space of that machine creates the bot in that machine's project. The file
-is read and written on that machine through herdr-core (`hc file edit` with the text read, an
-exclusive create for a new file), so an edit made there since the form opened is refused, never
-overwritten. Start, Attach and What happened for those bots are not in the menu yet. A machine
-that isn't answering shows its bots as last seen, dimmed, and its menu says so.
+A project on a linked machine (`hc machine ls`) is managed from here too. Its bots' menu has
+Configure, Prompt and Run (Start, Focus, Restart, Attach to a focused pane of that machine,
+Detach). The Bots list names the project with its machine, and New bot on a focused space of
+that machine creates the bot in that machine's project. The file is read and written on that
+machine through herdr-core (`hc file edit` with the text read, an exclusive create for a new
+file), so an edit made there since the form opened is refused, never overwritten. Its panes run
+there (`hc run --on`, addressed `machine/tN`) and show in this window, in a space of that
+machine on the project. The command a bot starts with is built here, from Herdr's agent table
+and your `programs.json`. What happened isn't shown for those bots yet, and a Claude bot there
+starts without its per-turn briefing until automagik-herdr is installed on that machine. A
+machine that isn't answering shows its bots as last seen, dimmed, and its menu says so.
 
 On its first load the pack switches Herdr to the Automagik theme, light or dark following the
 system. Both halves are listed in Herdr's Settings, and a theme you pick later stays: the pack
@@ -262,8 +266,21 @@ automagik-herdr update [--check | --rollback]
   there by the same rule. The file is read and written there through hc by the same
   compare-and-swap rule, and the `--json` answers carry `machine`. A write whose answer is lost
   (a timeout, or the link dropping, which hc reports as `unavailable`) is read back: saved if the file holds it, else `State unknown`, so check the file
-  before trying again. One write carries at most 96 KiB. Its panes aren't tracked from
-  this computer yet (`status` is `unknown`), and the commands on panes refuse `--machine`.
+  before trying again. One write carries at most 96 KiB.
+- `start`, `restart`, `attach`, `detach` and `whois` take `--machine` too: the pane runs on that
+  machine (`attach <bot> M/tN`, or a bare `tN` with `--machine`). The attach ledger's row keeps
+  the bare `tN`, `machine` and that machine's core id. `whois --json` keeps its shape: its
+  `terminal` is the bare `tN` and `core` that machine's, never `M/tN`. While the machine isn't
+  connected, its rows stay as they were (`status` `unknown`), never ended. A project's checkouts on two
+  machines share their bots' ids, so a bot is per machine: `--machine` acts only on that machine's
+  pane in that project, never on this computer's same-id bot, and `whois --bot <bot>` answers for
+  this computer unless given `--machine M`. A session id the pane carries is resumed by id
+  (`--resume`); with none, `restart` refuses unless `--force`, as the agent's own "latest" may be a
+  conversation started there by hand. A pane that reports
+  no status to hc (Hermes) can't say whether it is waiting for an approval, so `restart` refuses
+  it unless `--force`. No command ever sends a pane keys: `--force` starts the new pane and ends
+  the old one only once the new one is up. `worker`, `brief`, `history` and `tidy` stay this
+  computer's.
 - A bot is named by its id or by its name. A refusal exits 1, a usage mistake (such as a
   missing `--project` folder) exits 2, and nothing is written.
 - `start` runs the bot's agent in a new pane with `hc run`, labelled `bot=<id>`, and records it
@@ -622,7 +639,7 @@ of the pack (for the rest, copy each folder of the table above the same way, and
 ```bash
 cp -R mods/am-sidebar ~/.config/herdr-app/mods/
 mkdir -p ~/.config/herdr-app/layouts ~/.local/bin
-cp ../herdr-layout/automagik.json ~/.config/herdr-app/layouts/
+cp ../herdr-layout/layouts/automagik.json ~/.config/herdr-app/layouts/
 herdr-app do layout.switch '{"name":"automagik"}'
 ln -s ~/.config/herdr-app/mods/am-sidebar/bin/automagik-herdr ~/.local/bin/automagik-herdr
 ```
@@ -687,7 +704,7 @@ with its own `RECIPE.md`:
 | `am-markdown` | Herdr's `menu` + `ohneda/herdr-markdown-browser` (MIT) | Right-click a terminal: under Herdr's own items, the Markdown files that terminal printed. Pick one and it renders in a preview pane — live reload on save, `Default app` — that the next pick replaces in place. |
 | `am-new-menu` | Herdr's `new-menu` | The `+` menu (the sidebar's and the tab bar's, in place of Herdr's own): terminal, the agents actually installed (per machine), new space, worktree dialogs; `⌘1…9`/`⌘T`/`⌘N`. |
 | `am-mods` | `jacksonpires/herdr-app-mod-manager` (MIT) | The table over every installed mod — on/off, check result, version, source, drift — install, update, remove; `⌘⇧M`. |
-| `am-quota` | clean-room | A sidebar panel listing every Claude Code and Codex account the CLIProxyAPI knows, with its window, and switching the local credentials to the one you pick; the rail's Quota tab toggles it. |
+| `am-quota` | clean-room | **Accounts**, for people who run their own CLIProxyAPI: per tool (Claude Code or Codex), the account this computer uses and whether it lasts until its window resets, one button to switch to the next account on the proxy, and a restart of the bots still on the old one. Turned on and off in the Mods panel; the rail's Quota tab toggles it while it is on. |
 
 **Not in this pack, on purpose:** Pocket Link ([mods/pocket-link](mods/pocket-link/README.md)) sits
 beside the pack's mods but belongs to Pocket (`apps/pocket/`), which owns its mod, its LaunchAgent and
@@ -763,7 +780,7 @@ keys.json    the keys the pack asks for
 test/        the bot work's pure-module tests (node --test)
 ```
 
-The one layout the pack ships is `../herdr-layout/automagik.json`, beside this folder, not in it.
+The one layout the pack ships is `../herdr-layout/layouts/automagik.json`, beside this folder, not in it.
 
 ## Develop
 

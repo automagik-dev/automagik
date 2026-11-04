@@ -8,19 +8,24 @@
 // writes it); before the CLI's first run has made one, the `bot` label stands in.
 // It also ties a Claude session to its terminal for usagemeter, bot or worker alike: when the
 // hook's stdin names a session_id the terminal's agent.session label doesn't hold yet, it
-// appends a session row to the workers ledger and sets the label (once per change). That part
-// never fails the hook and never changes the briefing.
+// appends a session row to the workers ledger and sets the label (once per change). Beside it
+// goes agent.transcript, the hook's transcript_path, only when it is inside Claude's own
+// transcript folder (transcriptFolder.mjs); a pane labelled before that gets it at its next
+// prompt, with no second row. That part never fails the hook and never changes the briefing.
 // Apache-2.0.
 
 import { execFile } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
 import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, writeSync } from "node:fs";
+import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { BOT_LABEL, BOTS_PATH, effectiveLead, parseBots, projectKeyOf } from "./model.js";
 import { UNANSWERED, paneOf, rowsOf } from "./launchArgs.js";
 import { attachKey, attachPath, confirmBindings, foldAttach, modeProblem, readAttach, verdictOf } from "./attach.js";
 import { briefingText, directMembers, latestReport } from "./briefingText.mjs";
-import { SESSION_LABEL, ledgerLine, ledgerPath, readLedger, sessionChange, sessionRow } from "./workers.js";
+import { SESSION_LABEL, TRANSCRIPT_LABEL, ledgerLine, ledgerPath, readLedger, sessionChange, sessionRow }
+  from "./workers.js";
+import { transcriptRealPath } from "./transcriptFolder.mjs";
 
 // About two seconds in all (the hook's limit is five): no hc call waits more than 1.5 s,
 // none starts after the 2 s budget, a call that runs out counts as unreachable, and a last
@@ -196,26 +201,33 @@ function lastSessionOf(fd, terminal) {
  * Ties the Claude session in the hook's `input` to terminal `me` (its `hc get`) once per
  * change: a session row appended to the ledger under `appHome`, then the agent.session label
  * set (a failed label is tried again next turn; the row is written once, never lost: a session
- * the terminal's last row already names is not appended again). Never rejects; resolves with
- * whether the session was new to the label.
+ * the terminal's last row already names is not appended again). The agent.transcript label
+ * (the hook's transcript_path, once Claude's folder under `home` holds its real path) goes in
+ * the same `hc label` call whenever it is missing or differs: a known session gets it with no
+ * row. Never rejects; resolves with whether the session was new.
  */
-export async function joinSession(self, me, input, appHome) {
+export async function joinSession(self, me, input, appHome, home = homedir()) {
   try {
     if (!me || me === UNANSWERED) return false;
-    const change = sessionChange(me, input);
+    const change = sessionChange(me, input, (path) => transcriptRealPath(path, "claude", home));
     if (!change) return false;
     const terminal = me.address ?? self;
-    const path = ledgerPath(appHome);
-    mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true });
-    // Once per session: when the terminal's last session row already names it (the entry point's
-    // first attempt joined, then failed; or a label that did not stick), no second row. The read
-    // and the append are one synchronous step, so two attempts in one hook cannot both append.
-    const fd = openSync(path, "a+");
-    try {
-      if (lastSessionOf(fd, terminal) !== change.session) writeSync(fd, ledgerLine(sessionRow({ terminal, ...change })));
-    } finally { closeSync(fd); }
-    await run("hc", ["label", terminal, `${SESSION_LABEL}=${change.session}`]);
-    return true;
+    if (change.fresh) {
+      const path = ledgerPath(appHome);
+      mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true });
+      // Once per session: when the terminal's last session row already names it (the entry point's
+      // first attempt joined, then failed; or a label that did not stick), no second row. The read
+      // and the append are one synchronous step, so two attempts in one hook cannot both append.
+      const fd = openSync(path, "a+");
+      const row = sessionRow({ terminal, session: change.session, transcript: change.transcript });
+      try { if (lastSessionOf(fd, terminal) !== change.session) writeSync(fd, ledgerLine(row)); } finally { closeSync(fd); }
+    }
+    const labels = [
+      ...(change.fresh ? [`${SESSION_LABEL}=${change.session}`] : []),
+      ...(change.label === null ? [] : [`${TRANSCRIPT_LABEL}=${change.label}`]),
+    ];
+    await run("hc", ["label", terminal, ...labels]);
+    return change.fresh;
   } catch { return false; }
 }
 

@@ -22,8 +22,8 @@ name: Release
 #   addons.json                           (scripts/lane.ts LANE_ADDONS), and what each one is
 #   automagik-herdr-pack-<version>.tgz    the herdr pack, when herdr/ shipped something since the
 #   automagik-herdr-pack-<version>.tgz.sha256  last release: every PACK_MODS folder of the tag's
-#                                         herdr/mods/ (never pocket-link) plus herdr-layout/automagik.json
-#                                         as layouts/automagik.json,
+#                                         herdr/mods/ (never pocket-link) plus
+#                                         herdr-layout/layouts/automagik.json as layouts/automagik.json,
 #                                         and its sha256 (docs/rfcs/0011-monorepo-parts-and-releases.md)
 #
 #   automagik-am-<version>.tgz           am, the one command (am/, docs/rfcs/0012-am-cli-and-parts.md), on

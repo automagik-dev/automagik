@@ -240,11 +240,12 @@ need. All are `targets: local`, `set: ["code"]`, artifact `automagik-herdr-pack-
   An installed pack's `update.mjs`, old ones included, refuses a tarball with any `layouts/`
   file but `automagik.json` and any top-level folder that is not a pack mod, so a manifest
   anywhere else would make every installed pack refuse the release. `herdr.layout`'s manifest
-  is `am-sidebar/layout/part.json`, `select` `am-sidebar/layout/`, and `herdr.pack`'s is
-  `am-sidebar/pack/part.json`, `select` `am-sidebar/pack/`. The layout itself stays
-  `layouts/automagik.json` in the tarball (`herdr-layout/automagik.json` in the repository).
-  One function, `repoPathOf` in `herdr/scripts/parts.mjs`, maps tarball paths to the
-  repository's.
+  ships as `am-sidebar/layout/part.json`, `select` `am-sidebar/layout/` (in the repository it is
+  `herdr-layout/part.json`: `herdr/scripts/pack.mjs` puts it there in the tarball), and
+  `herdr.pack`'s is `am-sidebar/pack/part.json`, `select` `am-sidebar/pack/`. The layout itself
+  is `layouts/automagik.json` in the tarball (`herdr-layout/layouts/automagik.json` in the
+  repository). One function, `repoPathOf` in `herdr/scripts/parts.mjs`, maps tarball paths to
+  the repository's.
 - Entries: `["node", "part.mjs", "<verb>", "herdr.pack"]` for the pack, `["node",
   "pack/part.mjs", …]` for the sidebar, `["node", "../am-sidebar/pack/part.mjs", …]` for the
   other mods and the layout. The relative path works because the whole tarball is extracted. No

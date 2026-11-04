@@ -16,14 +16,14 @@ const modPart = (m, extra = {}) => ({
   entry: argv(m === "am-sidebar" ? "pack/part.mjs" : "../am-sidebar/pack/part.mjs", `herdr.${m}`), writes: [], set: ["code"], ...extra,
 });
 const layoutPart = (extra = {}) => ({
-  id: "herdr.layout", title: "layout", kind: "herdr-layout", paths: ["herdr-layout/automagik.json"], provides: ["herdr.layout@1"],
-  requires: [{ cap: "herdr.am-tabs", major: 1 }], os: ["macos"], targets: "local", artifact: PACK_ARTIFACT, select: "layouts/",
-  entry: argv("../am-sidebar/pack/part.mjs", "herdr.layout"), writes: ["$HERDR_APP_HOME/layouts/automagik.json"], set: ["code"], ...extra,
+  id: "herdr.layout", title: "layout", kind: "herdr-layout", paths: ["herdr-layout/layouts/automagik.json"], provides: ["herdr.layout@1"],
+  requires: [{ cap: "herdr.am-tabs", major: 1 }], os: ["macos"], targets: "local", artifact: PACK_ARTIFACT, select: "am-sidebar/layout/",
+  entry: argv("../pack/part.mjs", "herdr.layout"), writes: ["$HERDR_APP_HOME/layouts/automagik.json"], set: ["code"], ...extra,
 });
 
 /** A tree as git lists it: each mod's main.js, the entry script, the layout, and these part.json bodies. */
 function tree(parts) {
-  const files = { "herdr/mods/am-sidebar/main.js": "", "herdr/mods/am-tabs/main.js": "", "herdr/mods/am-sidebar/pack/part.mjs": "", "herdr-layout/automagik.json": "{}" };
+  const files = { "herdr/mods/am-sidebar/main.js": "", "herdr/mods/am-tabs/main.js": "", "herdr/mods/am-sidebar/pack/part.mjs": "", "herdr-layout/layouts/automagik.json": "{}" };
   for (const [path, part] of Object.entries(parts)) files[path] = typeof part === "string" ? part : JSON.stringify(part);
   return { files: Object.keys(files), read: (f) => { if (!(f in files)) throw new Error(`ENOENT ${f}`); return files[f]; }, packMods: MODS };
 }
@@ -37,8 +37,12 @@ const problemsOf = (parts) => validateParts(tree(parts)).problems;
 test("repoPathOf maps the tarball's paths to the repository's; globRe matches as paths globs do", () => {
   assert.equal(repoPathOf("am-footer/"), "herdr/mods/am-footer/");
   assert.equal(repoPathOf("am-sidebar/pack/part.mjs"), "herdr/mods/am-sidebar/pack/part.mjs");
-  assert.equal(repoPathOf("layouts/"), "herdr-layout/");
-  assert.equal(repoPathOf("layouts/automagik.json"), "herdr-layout/automagik.json");
+  // herdr.dev lists a layout only from its entry's layouts/: the tarball's path, under herdr-layout/.
+  assert.equal(repoPathOf("layouts/"), "herdr-layout/layouts/");
+  assert.equal(repoPathOf("layouts/automagik.json"), "herdr-layout/layouts/automagik.json");
+  // The layout part's own folder: its part.json rides in the sidebar's folder in the tarball.
+  assert.equal(repoPathOf("am-sidebar/layout/"), "herdr-layout/");
+  assert.equal(repoPathOf("am-sidebar/layout/part.json"), "herdr-layout/part.json");
   assert.ok(globRe("herdr/mods/am-tabs/**").test("herdr/mods/am-tabs/a/b.js"));
   assert.ok(!globRe("herdr/mods/am-tabs/*").test("herdr/mods/am-tabs/a/b.js"));
   assert.ok(globRe("herdr/**/x.js").test("herdr/x.js"));

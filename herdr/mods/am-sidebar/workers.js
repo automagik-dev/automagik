@@ -29,6 +29,8 @@ export const WORKER_EFFORT_LABEL = "worker.effort";
 export const WORKER_TEMPLATE_LABEL = "worker.template";
 /** The Claude session a terminal runs, set by the briefing hook when it changes. */
 export const SESSION_LABEL = "agent.session";
+/** The pane label the briefing hook sets to the session's transcript path (RFC 0015 delivery 2). */
+export const TRANSCRIPT_LABEL = "agent.transcript";
 
 /** A worker's roles. Dev, test and fix write to the worktree; review never does. */
 export const ROLES = ["dev", "test", "review", "fix"];
@@ -321,14 +323,25 @@ export function readLedger(text) {
 
 /**
  * What the briefing hook does about a Claude session: `get` is `hc get` of its terminal,
- * `input` the hook's stdin text. { session, transcript } when the input names a session the
- * terminal's SESSION_LABEL doesn't hold yet (label it, append a row); else null.
+ * `input` the hook's stdin text, `resolve(path)` the transcript folder rule: a real path when
+ * the path passes, else null (none given: no path passes). Null when there is nothing to do;
+ * else { session, transcript, fresh, label }: `fresh` when SESSION_LABEL doesn't hold the
+ * session yet (label it, append a row); `label` the TRANSCRIPT_LABEL value to set (the hook's
+ * transcript_path as given, once the rule passes it, when the label is missing or differs; ""
+ * removes a new session's stale one) or null to leave it. The row's `transcript` is the
+ * hook's path as given, as before.
  */
-export function sessionChange(get, input) {
+export function sessionChange(get, input, resolve = () => null) {
   let data = null;
   try { data = typeof input === "string" && input.trim() ? JSON.parse(input) : null; } catch { data = null; }
   const session = data?.session_id;
   if (typeof session !== "string" || !session.trim() || !get || typeof get !== "object") return null;
-  if (get.labels?.[SESSION_LABEL] === session) return null;
-  return { session, transcript: typeof data.transcript_path === "string" ? data.transcript_path : null };
+  const transcript = typeof data.transcript_path === "string" ? data.transcript_path : null;
+  const fresh = get.labels?.[SESSION_LABEL] !== session;
+  const had = get.labels?.[TRANSCRIPT_LABEL];
+  const real = transcript === null ? null : resolve(transcript);
+  const ok = typeof real === "string" && real !== "";
+  const label = ok ? (had === transcript ? null : transcript) : (fresh && had ? "" : null);
+  if (!fresh && label === null) return null;
+  return { session, transcript, fresh, label };
 }
