@@ -183,3 +183,37 @@ export async function acceptOne(incoming, { routes, cap, refused, log = refused,
     slot.done()
   }
 }
+
+/** The routes the bridge serves, by ALPN. */
+export const ALPN = Object.freeze({ session: 'herdr-pocket/1', pair: 'herdr-pocket/pair/1', chat: 'herdr-pocket/chat/1' })
+
+/**
+ * The bridge's route table: pairing while a code is live (timed), and the terminal session and
+ * the chat for paired keys only (untimed once the header is in). The chat is admitted by the very
+ * same check as the session: a key not in devices.json is closed before anything is read.
+ * @param {{ paired(id: string): boolean, codeLive(): boolean, pair: Function, session: Function, chat: Function }} r
+ */
+export function routesFor({ paired, codeLive, pair, session, chat }) {
+  return {
+    [ALPN.pair]: { admit: () => codeLive(), closing: 'No pairing code is live. Make a new one on the desktop.', run: pair, timed: true },
+    [ALPN.session]: { admit: (id) => paired(id), closing: 'not paired', run: session, timed: false },
+    [ALPN.chat]: { admit: (id) => paired(id), closing: 'not paired', run: chat, timed: false },
+  }
+}
+
+/**
+ * End what removed phones still have open: every entry of `live` ({ phone, end() }) whose phone
+ * is not among `paired` ids. bridge.mjs runs it every 2 s, for terminal sessions and chats alike.
+ * @returns {number} how many were ended
+ */
+export function endRemoved(live, paired, log = () => {}) {
+  let n = 0
+  for (const s of [...live]) {
+    if (paired.has(s.phone)) continue
+    live.delete(s)
+    log('session: ended for a removed phone', String(s.phone).slice(0, 10))
+    try { s.end() } catch {}
+    n += 1
+  }
+  return n
+}
