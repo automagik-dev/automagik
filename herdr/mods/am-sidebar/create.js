@@ -22,7 +22,7 @@ import { LEGACY_AGENTS, configPaths, detectModel } from "./models.js";
 import { INKS, characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { UI_ICONS, uiIconFile, NEW_CATEGORY, MAX_WAVE, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, omniLook, placeOf, problemOf, rowLineOf, thousands } from "./formModel.js";
 import { restartAnswer, restartArgs } from "./restart.js";
-import { discoverProjects, editFolderOf, folderExists, keyOf, ownKeyOf, projectOfFolder, writeBots } from "./bots.js";
+import { discoverProjects, editFolderOf, folderExists, keyOf, ownKeyOf, projectOfFolder, untrackedIn, writeBots } from "./bots.js";
 import { attachBot, startBot, liveTerminalOf, runCli, sleepOf } from "./launch.js";
 import { historyLines, menuItems } from "./inspect.js";
 import { clickActionOf } from "./rows.js";
@@ -179,7 +179,28 @@ export class BotForm {
     }
     const expected = await readTextFile(`${dir}/${BOTS_PATH}`, { on: machine });
     const text = dir === key || expected !== null ? expected : await readTextFile(`${key}/${BOTS_PATH}`, { on: machine });
-    return { dir, text, expected };
+    // readFrom: the file `text` came from; untracked: the key's file a pull would stop on.
+    const readFrom = dir === key || expected !== null ? dir : key;
+    return { dir, text, expected, readFrom, untracked: dir !== key && await untrackedIn(key) };
+  }
+
+  // A worktree edit (dir isn't the key): where it is saved, and when the sidebar shows it.
+  worktreeNote(dir, key, untracked, saved = false) {
+    const where = `${saved ? "Saved" : "Saves"} in ${this.fileName(dir)}, this worktree's file. The sidebar reads `
+      + `${this.fileName(key)}, so this shows there once the worktree's change is merged and pulled.`;
+    return untracked ? `${where} ${this.fileName(key)} isn't committed: commit or remove it before pulling, or the pull stops on it.` : where;
+  }
+
+  // An edit's bot missing from the file read: named with the other file when that one has it.
+  async noBot(id, dir, key, readFrom) {
+    const plain = `${this.fileName(readFrom)} has no bot ${id}.`;
+    if (dir === key || readFrom !== dir) return plain;
+    let text = null;
+    try { text = await readTextFile(`${key}/${BOTS_PATH}`); } catch { return plain; }
+    let has = false;
+    try { has = text !== null && parseBots(text).file.bots.some((b) => b.id === id); } catch { return plain; }
+    return has ? `${this.fileName(dir)}, this worktree's file, has no bot ${id}; ${this.fileName(key)} has it. `
+      + `Update this worktree from the main checkout's branch first, or edit it from there.` : plain;
   }
 
   async load(key, machine = null, from = undefined) {
@@ -188,12 +209,12 @@ export class BotForm {
     this.choice = null;
     this.loadError = null;
     if (this.agentsOn !== machine) await this.loadAgents(machine);
-    ({ dir: this.dir, text: this.text, expected: this.expected } = await this.target(key, machine, from));
+    ({ dir: this.dir, text: this.text, expected: this.expected, readFrom: this.readFrom, untracked: this.untracked } = await this.target(key, machine, from));
     let file = { version: 1, categories: [], bots: [] };
     this.raw = null;
     if (this.text !== null) {
       try { ({ file, raw: this.raw } = parseBots(this.text)); } catch (e) {
-        this.loadError = `${this.fileName()} can't be read (${e?.message ?? e}); fix it by hand before adding bots.`;
+        this.loadError = `${this.fileName(this.readFrom)} can't be read (${e?.message ?? e}); fix it by hand before adding bots.`;
       }
     }
     this.file = file;
@@ -205,7 +226,7 @@ export class BotForm {
     if (this.mode === "edit") {
       // The entry as stored (raw), so a field the form leaves alone is written back as it was.
       const b = this.raw?.bots?.find((x) => x?.id === this.p.bot) ?? file.bots.find((x) => x.id === this.p.bot);
-      if (!b) throw new Error(`${this.fileName()} has no bot ${this.p.bot}.`);
+      if (!b) throw new Error(await this.noBot(this.p.bot, this.dir, key, this.readFrom));
       this.fill(formFrom({ mode: "edit", bot: b }));
       this.initial = this.snapshot();
       // The model a running pane shows, read from its pane where it runs (machine/tN there).
@@ -344,14 +365,19 @@ export class BotForm {
         return;
       }
       run("am-sidebar.refresh");
+      if (this.dir !== this.key) {
+        // The sidebar reads the main checkout (Q16): closing would look like nothing was saved.
+        this.notice = this.worktreeNote(this.dir, this.key, this.untracked, true);
+        this.saved = true;
+        this.busy = false;
+        cx.notify();
+        return;
+      }
       if (andStart) {
         // Saved either way from here: a refused or failed Start says so, and the form
         // stops offering to create the bot a second time.
         let refused = null;
-        // Bots start from the key's file (reads stay there, Q16): an edit saved in a worktree
-        // reaches it once merged, so it isn't started from here.
-        if (this.dir !== this.key) refused = `it was written in ${this.fileName(this.dir)}, and bots start from ${this.fileName()}, which gets it once this worktree's change is merged.`;
-        else try { refused = (await startBot(this.key, entry.id, { sleep: sleepOf(cx) }, this.machine))?.refused ?? null; } catch (e) { refused = String(e?.message ?? e); }
+        try { refused = (await startBot(this.key, entry.id, { sleep: sleepOf(cx) }, this.machine))?.refused ?? null; } catch (e) { refused = String(e?.message ?? e); }
         if (refused) {
           this.error = `Saved, not started: ${refused}`;
           this.saved = true;
@@ -472,12 +498,12 @@ export class BotForm {
   // read is the save's snapshot, the raw entry what the save edits.
   async loadPrompt() {
     const key = this.p.project;
-    const { dir, text, expected } = await this.target(key, this.machine ?? null);
-    if (text === null) throw new Error(`${this.fileName(key)} is gone.`);
+    const { dir, text, expected, readFrom, untracked } = await this.target(key, this.machine ?? null);
+    if (text === null) throw new Error(`${this.fileName(readFrom)} is gone.`);
     const { file, raw } = parseBots(text);
     const b = raw?.bots?.find((x) => x?.id === this.p.bot) ?? file.bots.find((x) => x.id === this.p.bot);
-    if (!b) throw new Error(`${this.fileName(dir)} has no bot ${this.p.bot}.`);
-    this.promptBase = { dir, text, expected, raw, file, state: formFrom({ mode: "edit", bot: b }) };
+    if (!b) throw new Error(await this.noBot(this.p.bot, dir, key, readFrom));
+    this.promptBase = { dir, text, expected, untracked, raw, file, state: formFrom({ mode: "edit", bot: b }) };
     this.prompt.set_value(this.promptBase.state.instructions ?? "");
   }
 
@@ -485,7 +511,7 @@ export class BotForm {
   // (problemOf), entry (entryOf) and stale-snapshot write.
   savePrompt(cx) {
     if (this.busy || !this.promptBase) return;
-    const { dir, text, expected, raw, file, state: initial } = this.promptBase;
+    const { dir, text, expected, untracked, raw, file, state: initial } = this.promptBase;
     const key = this.p.project;
     const state = { ...initial, instructions: this.prompt.value() };
     const why = problemOf(state, { key, file });
@@ -505,6 +531,17 @@ export class BotForm {
         return;
       }
       run("am-sidebar.refresh");
+      if (dir !== key) {
+        // The row shows the main checkout's file (Q16): the menu stays, saying where it went.
+        // Its snapshot is now the text written, so another Save works.
+        const saved = applyBotEdit(raw, entry, newCategory);
+        const now = `${JSON.stringify(saved, null, 2)}\n`;
+        this.promptBase = { ...this.promptBase, text: now, expected: now, raw: saved, file: parseBots(now).file, state };
+        this.promptNotice = this.worktreeNote(dir, key, untracked, true);
+        this.busy = false;
+        cx.notify();
+        return;
+      }
       closeOverlay(this.p.overlay);
       this.busy = false;
       cx.notify();
@@ -640,7 +677,9 @@ export class BotForm {
         .child(Textarea.new(this.prompt).w_full().text_size(12)))
       .child(h_flex().gap(8).items_center()
         .child(div().flex_1().text_size(11).text_color(n > MAX_INSTRUCTIONS ? t.ansi1 : t.dim).child(`${thousands(n)} / ${thousands(MAX_INSTRUCTIONS)}`))
-        .child(this.button("menu-prompt-save", this.busy === "prompt" ? "Saving…" : "Save", t, (cx) => this.savePrompt(cx), { h: 24, solid: true })));
+        .child(this.button("menu-prompt-save", this.busy === "prompt" ? "Saving…" : "Save", t, (cx) => this.savePrompt(cx), { h: 24, solid: true })))
+      .when(this.promptBase.dir !== this.p.project, (el) => el.child(div().id("menu-prompt-where").text_size(11).text_color(t.muted)
+        .child(this.promptNotice ?? this.worktreeNote(this.promptBase.dir, this.p.project, this.promptBase.untracked))));
   }
 
   // What happened (`automagik-herdr history`): its panes, starts and sessions newest first,
@@ -1022,7 +1061,9 @@ export class BotForm {
   footer(v) {
     const { t, state, cli, refusal } = v;
     const creating = this.mode === "create";
-    const done = this.saved === true; // created, Start refused: nothing left to create
+    const done = this.saved === true; // created, Start refused (or saved in a worktree): nothing left to create
+    // Saved in a worktree (RFC 0014 Q16): bots start from the main checkout's file, so no Create & start.
+    const worktree = Boolean(this.key && this.dir && this.dir !== this.key);
     const save = creating ? (state.planned ? "Create planned bot" : "Create") : "Save";
     const btn = (id, text, onClick, kind) => h_flex().id(id).h(38).px(16).flex_none().items_center().rounded(8).text_size(13)
       .cursor_pointer().hover((s) => s.opacity(0.85)).on_click((_e, cx) => onClick(cx))
@@ -1032,6 +1073,8 @@ export class BotForm {
       .child(text);
     return v_flex().flex_none().gap(8).px(20).py(14).border_t(1).border_color(t.border).bg(t.chrome ?? t.surface ?? t.background)
       .when(Boolean(this.error), (el) => el.child(div().text_size(12).text_color(t.ansi1).child(this.error)))
+      .when(worktree, (el) => el.child(div().id("bot-where").text_size(12).text_color(t.muted)
+        .child(this.notice ?? this.worktreeNote(this.dir, this.key, this.untracked))))
       .child(h_flex().gap(12).items_center()
         .child(h_flex().flex_1().min_w(0).gap(8).py(6).pl(10).pr(6).items_center().rounded(8).border_1().border_color(t.border).bg(t.background)
           .child(div().flex_none().font_family(v.mono).text_size(11).text_color(t.muted).child("$"))
@@ -1046,6 +1089,6 @@ export class BotForm {
             .child(this.glyph("copy", 12, t.foreground)).child(this.copied ? "Copied" : "Copy")))
         .child(btn("bot-cancel", done ? "Close" : "Cancel", () => closeOverlay(this.p.overlay), "ghost"))
         .when(!done, (el) => el.child(btn("bot-save", this.busy ? "Saving…" : save, (cx) => this.save(cx), "raised")))
-        .when(!done && creating && !state.planned, (el) => el.child(btn("bot-save-start", this.busy ? "Starting…" : "Create & start", (cx) => this.save(cx, true), "solid"))));
+        .when(!done && creating && !state.planned && !worktree, (el) => el.child(btn("bot-save-start", this.busy ? "Starting…" : "Create & start", (cx) => this.save(cx, true), "solid"))));
   }
 }

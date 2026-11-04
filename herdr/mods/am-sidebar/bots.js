@@ -315,6 +315,14 @@ export async function editFolderOf(folder, key, machine = null) {
 }
 
 /**
+ * Whether `key`'s .herdr/bots.json (this machine) is there and untracked by git: a pull that
+ * brings a worktree's committed file stops on it (#234). False when git can't say.
+ */
+export async function untrackedIn(key) {
+  try { return ((await gitOn(null)(["status", "--porcelain", "--", BOTS_PATH], key)) ?? "").startsWith("??"); } catch { return false; }
+}
+
+/**
  * A16: after an edit (the form's save, any writeBots), the live panes on this computer of
  * every bot whose labels changed (rank, lead, category, a lead's captain status) get them
  * rewritten by launchArgs.js relabel. Another machine's panes are never touched. Never

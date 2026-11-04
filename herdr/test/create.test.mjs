@@ -445,8 +445,18 @@ test("from a focused worktree space, the form saves into the worktree's bots.jso
   assert.equal(first.form.dir, wt, "the edit is written in the worktree");
   first.form.inputs.name.type("qa", first.cx);
   first.draw();
+  // Before saving: where it goes and when the sidebar shows it; no Create & start (bots start
+  // from the main checkout's file, which gets the bot only once merged).
+  assert.match(textOf(nodes.get("bot-where")), /^Saves in .*repo-wt\/\.herdr\/bots\.json, this worktree's file\. The sidebar reads .*repo\/\.herdr\/bots\.json, so this shows there once the worktree's change is merged and pulled\.$/);
+  assert.ok(nodes.has("bot-save") && !nodes.has("bot-save-start"));
   await first.click("bot-save");
   assert.equal(first.form.error, null);
+  // After: the form stays open, saying so, with only Close (the sidebar won't show qa yet).
+  assert.deepEqual(state.closed, []);
+  first.draw();
+  assert.match(textOf(nodes.get("bot-where")), /^Saved in .*repo-wt\/\.herdr\/bots\.json, this worktree's file\./);
+  assert.equal(textOf(nodes.get("bot-cancel")), "Close");
+  assert.ok(!nodes.has("bot-save"), "not offered a second time");
   assert.deepEqual(JSON.parse(readFileSync(wtPath, "utf8")).bots.map((b) => b.name), ["orch", "qa"]);
   assert.equal(readFileSync(mainPath, "utf8"), mainText, "the main checkout's file is untouched");
   assert.equal(g("status", "--porcelain"), "");
@@ -454,9 +464,8 @@ test("from a focused worktree space, the form saves into the worktree's bots.jso
   const second = await open({ form: "create", project: undefined });
   second.form.inputs.name.type("ops", second.cx);
   second.draw();
-  // Create & start: saved in the worktree, not started (bots start from the main checkout's file).
-  await second.click("bot-save-start");
-  assert.match(second.form.error, /^Saved, not started: it was written in .*repo-wt\/\.herdr\/bots\.json/);
+  await second.click("bot-save");
+  assert.equal(second.form.error, null);
   assert.deepEqual(JSON.parse(readFileSync(wtPath, "utf8")).bots.map((b) => b.name), ["orch", "qa", "ops"]);
   assert.equal(readFileSync(mainPath, "utf8"), mainText);
   // The main checkout's own space: its file, as before.
@@ -478,6 +487,32 @@ test("from a focused worktree space, the form saves into the worktree's bots.jso
   await picked.click("bot-project");
   assert.equal(picked.form.key, repo);
   assert.equal(picked.form.dir, repo, "the main checkout, picked: written there");
+  picked.draw();
+  assert.ok(!nodes.has("bot-where") && nodes.has("bot-save-start"), "the main checkout's form is as before");
+  // Edit, from the worktree space, of a bot the main checkout has and the worktree's file hasn't:
+  // the refusal names both files.
+  const late = { ...MAIN, id: "b-lateaaaaaa", name: "late", kind: "member" };
+  writeFileSync(mainPath, `${JSON.stringify({ version: 1, categories: [], bots: [MAIN, late] }, null, 2)}\n`);
+  const edit = await open({ form: "edit", bot: late.id, project: repo });
+  assert.match(edit.form.error, new RegExp(`repo-wt/\\.herdr/bots\\.json, this worktree's file, has no bot ${late.id}; .*repo/\\.herdr/bots\\.json has it`));
+});
+
+test("a worktree space whose main checkout's bots.json isn't committed: the form warns its pull would stop on it", async (t) => {
+  const repo = join(root, "repo");
+  const wt = join(root, "repo-wt");
+  const g = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, encoding: "utf8" });
+  mkdirSync(repo);
+  g("init", "-q");
+  g("commit", "-q", "--allow-empty", "-m", "init");
+  g("worktree", "add", "-q", "-b", "wt", wt);
+  mkdirSync(join(repo, ".herdr"));
+  writeFileSync(join(repo, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots: [MAIN] }, null, 2)}\n`);
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const f = await open({ form: "create", project: undefined });
+  f.draw();
+  assert.equal(f.form.dir, wt);
+  assert.match(textOf(nodes.get("bot-where")), /repo\/\.herdr\/bots\.json isn't committed: commit or remove it before pulling, or the pull stops on it\.$/);
 });
 
 // ---- #85: the pick and attach lists draw the sidebar's known bots at once ----
@@ -854,4 +889,42 @@ test("Create from a focused space on a linked machine: that machine's project, c
   assert.ok(state.calls.some((c) => c.kind === "exec" && c.command === "sh" && c.on === "vm"), "made there");
   assert.equal(state.calls.filter((c) => c.kind === "write").length, 0);
   assert.deepEqual(state.shared.get("am.sidebar.projects")?.at(-1), { key: project, machine: "vm" });
+});
+
+// #234: the menu's Prompt from a focused worktree space writes the worktree and says so.
+test("menu Prompt from a worktree space: saved in the worktree, the menu stays saying where, and saves again", async () => {
+  const repo = join(root, "repo");
+  const wt = join(root, "repo-wt");
+  const g = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, encoding: "utf8" });
+  mkdirSync(join(repo, ".herdr"), { recursive: true });
+  const mainPath = join(repo, ".herdr/bots.json");
+  writeFileSync(mainPath, `${JSON.stringify({ version: 1, categories: [], bots: [MAIN, OMP] }, null, 2)}\n`);
+  g("init", "-q");
+  g("add", ".");
+  g("commit", "-q", "-m", "bots");
+  g("worktree", "add", "-q", "-b", "wt", wt);
+  const mainText = readFileSync(mainPath, "utf8");
+  const wtPath = join(wt, ".herdr/bots.json");
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const { form, cx, draw, click } = await menu({ project: repo });
+  draw();
+  await click("menu-prompt");
+  draw();
+  assert.match(textOf(nodes.get("menu-prompt-where")), /^Saves in .*repo-wt\/\.herdr\/bots\.json, this worktree's file\./);
+  form.prompt.type("new words", cx);
+  draw();
+  await click("menu-prompt-save");
+  assert.equal(form.error, null);
+  assert.deepEqual(state.closed, [], "the menu stays: the row reads the main checkout's file");
+  draw();
+  assert.match(textOf(nodes.get("menu-prompt-where")), /^Saved in .*repo-wt\/\.herdr\/bots\.json/);
+  assert.equal(JSON.parse(readFileSync(wtPath, "utf8")).bots.find((b) => b.id === OMP.id).instructions, "new words");
+  assert.equal(readFileSync(mainPath, "utf8"), mainText);
+  form.prompt.type("newer words", cx);
+  draw();
+  await click("menu-prompt-save");
+  assert.equal(form.error, null, "the snapshot followed the save");
+  assert.equal(JSON.parse(readFileSync(wtPath, "utf8")).bots.find((b) => b.id === OMP.id).instructions, "newer words");
+  assert.equal(g("status", "--porcelain"), "");
 });

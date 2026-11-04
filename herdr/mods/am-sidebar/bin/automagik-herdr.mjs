@@ -310,11 +310,20 @@ async function saveProject(project, raw, { list = true } = {}) {
   if (project.machine) return writeRemoteBots(project, raw);
   writeBotsFile(project.dir, raw, project.expected, fsIo, project.text);
   if (list) listProject(project.key);
-  if (project.dir !== project.key) report([worktreeNote(project)]);
+  if (project.dir !== project.key) report([worktreeNote(project, await untrackedIn(project.key))]);
 }
-// Said after an edit written in a worktree: where it went, and what the readers show meanwhile.
-const worktreeNote = ({ key, dir }) => `saved in ${under(dir, BOTS_PATH)} (this worktree); ls, whois and the `
-  + `sidebar read ${under(key, BOTS_PATH)} until that change is merged there.`;
+/**
+ * Said after an edit written in a worktree: where it went, what the readers show meanwhile, and,
+ * when the main checkout's file was never committed, that its pull would stop on it (git won't
+ * overwrite an untracked file with the merged one).
+ */
+const worktreeNote = ({ key, dir }, untracked = false) => `saved in ${under(dir, BOTS_PATH)} (this worktree); ls, `
+  + `whois and the sidebar read ${under(key, BOTS_PATH)} until that change is merged there.`
+  + (untracked ? ` ${under(key, BOTS_PATH)} isn't committed: commit or remove it before pulling, or git pull stops on it.` : "");
+/** Whether `key`'s .herdr/bots.json is there and untracked by git (`git status` says ??). */
+async function untrackedIn(key) {
+  return ((await git(["status", "--porcelain", "--", BOTS_PATH], key)) ?? "").startsWith("??");
+}
 
 const fsIo = {
   read: readText,
@@ -448,6 +457,31 @@ export function findBot(file, ref) {
     if (hits.length > 1) throw new CliError(`${hits.length} bots are named "${ref}" (${hits.map((b) => b.id).join(", ")}); use the id.`);
   }
   throw new CliError(`No bot "${ref}" in this project.`);
+}
+
+/**
+ * findBot in a project's file, for a command run from `opts`' folder. When the bot isn't
+ * there but is in the other file of a worktree edit (RFC 0014 Q16: edits are written in the
+ * worktree, reads stay on the main checkout), the refusal names both files and why.
+ */
+async function botIn(project, ref, opts) {
+  try { return findBot(project.file, ref); } catch (e) {
+    if (!(e instanceof CliError) || !e.message.startsWith("No bot ") || project.machine) throw e;
+    const editing = project.dir !== project.key;
+    const dir = editing ? project.dir : await writeDirOf(opts, project.key).catch(() => project.key);
+    if (dir === project.key) throw e;
+    let other = null;
+    try { other = editing ? loadProject(project.key) : projectFrom(project.key, null, readText(under(dir, BOTS_PATH)), dir); } catch { throw e; }
+    let found = null;
+    try { found = other.text === null ? null : findBot(other.file, ref); } catch { /* not there either */ }
+    if (!found) throw e;
+    const main = under(project.key, BOTS_PATH), wt = under(dir, BOTS_PATH);
+    throw new CliError(editing
+      ? `No bot "${ref}" in ${wt}, this worktree's file, which edits change; ${main} has it. Update this worktree from `
+        + `the main checkout's branch first, or run the edit in ${project.key}.`
+      : `No bot "${ref}" in ${main}, which this command reads; it is in ${wt} (this worktree) and shows here once that `
+        + `change is merged into ${project.key}.`);
+  }
 }
 
 function findCategory(file, ref) {
@@ -1112,7 +1146,7 @@ const workerText = (w) => (w ? ["template", "agent", "model", "effort"].filter((
 
 async function cmdShow(opts, [ref]) {
   const project = await projectFor(opts);
-  const bot = findBot(project.file, ref);
+  const bot = await botIn(project, ref, opts);
   const { view, hcError } = await viewOrError();
   const info = { ...describe(project, bot, view, hcError), instructions: bot.instructions };
   if (opts.json) return info;
@@ -1169,7 +1203,7 @@ async function cmdCreate(opts) {
 
 async function cmdEdit(opts, [ref]) {
   const project = await editProjectFor(opts);
-  const bot = findBot(project.file, ref);
+  const bot = await botIn(project, ref, opts);
   const stored = project.raw.bots.find((b) => b?.id === bot.id);
   const entry = entryFrom(opts, stored, project, { creating: false });
   const raw = applyBotEdit(project.raw, entry);
@@ -1181,7 +1215,7 @@ async function cmdEdit(opts, [ref]) {
 async function cmdRm(opts, [ref]) {
   const project = await editProjectFor(opts);
   const { file } = project;
-  const bot = findBot(file, ref);
+  const bot = await botIn(project, ref, opts);
   // Its pane by the ledger, read before the write (the import, on a first run, needs the bot
   // still defined). hc missing or failing only drops the note.
   let holders = [];
@@ -1365,7 +1399,7 @@ async function cmdStart(opts, [ref]) {
   const project = await projectFor(opts);
   const { file, key } = project;
   if (project.text === null) throw new CliError(`No ${BOTS_PATH} in ${key}.`);
-  const bot = findBot(file, ref);
+  const bot = await botIn(project, ref, opts);
   const why = startRefusal(file, bot.id);
   if (why) throw new CliError(why);
   // launch.js checks the folder Start launches in against the project (attachRefusal on
@@ -2100,7 +2134,7 @@ async function cmdRestart(opts, [ref]) {
   const project = await projectFor(opts);
   const { file, key } = project;
   if (project.text === null) throw new CliError(`No ${BOTS_PATH} in ${key}.`);
-  const bot = findBot(file, ref);
+  const bot = await botIn(project, ref, opts);
   const why = startRefusal(file, bot.id);
   if (why) throw new CliError(why);
   // A swap's agent and model are checked as an edit checks them (entryFrom); a new agent
@@ -2243,6 +2277,10 @@ async function cmdRestart(opts, [ref]) {
     if (stored) {
       await saveProject(now, applyBotEdit(now.raw, { ...stored, agent: entry.agent, ...(entry.model ? { model: entry.model } : { model: undefined }) }), { list: false });
       saved = true;
+    } else {
+      // A worktree branched before the bot was added: its file has no entry to change.
+      say(`--save: ${fileName(now)}, this worktree's file, has no ${bot.name} (${bot.id}), so ${plan.agent} wasn't saved; `
+        + `update this worktree from the main checkout's branch, or restart with --save in ${key}.`);
     }
   }
   const what = old ? `${seat.terminal} replaces ${old.address}, ${restartText(plan, resumeId)}` : `${bot.name} wasn't running; started in ${seat.terminal}${swap ? ` on ${plan.agent}` : ""}`;
@@ -2305,7 +2343,7 @@ async function cmdAttach(opts, [ref, terminal]) {
   const project = await projectFor(opts);
   const { file, key } = project;
   const at = await terminalPlace(terminal, project);
-  const bot = findBot(file, ref);
+  const bot = await botIn(project, ref, opts);
   if (bot.planned) throw new CliError(`${bot.name} is planned (wave ${bot.planned.wave}); clear "planned" before attaching it.`);
   const get = await hcGet(at.address);
   if (!get || get.state !== "live") throw new CliError(`${at.address} isn't a live terminal.`);
@@ -2479,7 +2517,7 @@ async function cmdHistory(opts, [ref]) {
 
 async function cmdBrief(opts, [ref]) {
   const project = await projectFor(opts);
-  const bot = findBot(project.file, ref);
+  const bot = await botIn(project, ref, opts);
   if (bot.planned) {
     if (opts.json) return { id: bot.id, briefing: null, reason: "planned bots get no briefing" };
     process.stderr.write(`automagik-herdr: ${bot.name} is planned; planned bots get no briefing.\n`);

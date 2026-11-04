@@ -146,6 +146,13 @@ test("create and edit from a worktree write that worktree's file; the main check
   const ls = s.cli(["ls", "--json"], { cwd: wt }).json().projects[0];
   assert.equal(ls.project, s.project);
   assert.ok(!ls.bots.some((b) => b.id === scout));
+  // show and start read the main checkout, which hasn't Scout yet: the refusal names both files.
+  for (const cmd of ["show", "start"]) {
+    const no = s.cli([cmd, scout], { cwd: wt });
+    assert.equal(no.code, 1, `${cmd}: ${no.err}`);
+    assert.match(no.err, new RegExp(`No bot "${scout}" in ${s.botsPath}, which this command reads; it is in ${wtPath} \\(this worktree\\)`));
+  }
+  assert.equal(git(s.project, "status", "--porcelain"), "", "the main checkout stays clean");
   // A second edit from the same worktree starts from (and checks) the worktree's file: Scout is kept.
   const e = s.cli(["edit", scout, "--role", "scouting"], { cwd: wt });
   assert.equal(e.code, 0, e.err);
@@ -182,10 +189,46 @@ test("a worktree with no bots.json of its own: the first edit starts from the ma
   assert.deepEqual(JSON.parse(written).categories, team().categories);
   assert.equal(written, `${JSON.stringify(JSON.parse(written), null, 2)}\n`, "the same format as any save");
   assert.equal(readFileSync(s.botsPath, "utf8"), mainText);
+  // The main checkout's file was never committed: the note says its pull would stop on it.
+  assert.match(r.err, new RegExp(`${s.botsPath} isn't committed: commit or remove it before pulling, or git pull stops on it`));
   // The second edit's guard checks the worktree's file (now there), not the main checkout's text.
   const e = s.cli(["edit", r.json().id, "--role", "scouting"], { cwd: wt });
   assert.equal(e.code, 0, e.err);
   assert.equal(JSON.parse(readFileSync(wtPath, "utf8")).bots.find((b) => b.name === "Scout").role, "scouting");
+  assert.equal(readFileSync(s.botsPath, "utf8"), mainText);
+  // The worktree's change merged: as warned, git stops on the untracked file; removed first, it goes in.
+  git(wt, "add", ".herdr/bots.json");
+  git(wt, "commit", "-q", "-m", "bots");
+  assert.throws(() => execFileSync("git", ["merge", "-q", "wt"], { cwd: s.project, encoding: "utf8", stdio: "pipe" }),
+    (err) => /untracked working tree files would be overwritten/.test(String(err.stderr)));
+  rmSync(s.botsPath);
+  git(s.project, "merge", "-q", "wt");
+  assert.equal(git(s.project, "status", "--porcelain"), "");
+  assert.equal(JSON.parse(readFileSync(s.botsPath, "utf8")).bots.find((b) => b.name === "Scout").role, "scouting");
+  // Committed, the main checkout's file draws no warning.
+  const after = s.cli(["edit", r.json().id, "--role", "ranging"], { cwd: wt });
+  assert.equal(after.code, 0, after.err);
+  assert.match(after.err, /saved in /);
+  assert.doesNotMatch(after.err, /isn't committed/);
+});
+
+test("from a worktree branched before a bot was added: edit names both files, restart --save says why nothing was saved", (t) => {
+  const s = restartScene(t);
+  const wt = join(s.root, "wt");
+  git(s.project, "worktree", "add", "-q", wt);
+  // The worktree's own file, from before Genie: another main bot only.
+  const wtText = `${JSON.stringify({ version: 1, categories: [], bots: [bot(ID.plan, "main", { name: "Old" })] }, null, 2)}\n`;
+  mkdirSync(join(wt, ".herdr"));
+  writeFileSync(join(wt, ".herdr/bots.json"), wtText);
+  const mainText = readFileSync(s.botsPath, "utf8");
+  const e = s.cli(["edit", "Genie", "--role", "x"], { cwd: wt });
+  assert.equal(e.code, 1, e.err);
+  assert.match(e.err, new RegExp(`No bot "Genie" in ${join(wt, ".herdr/bots.json")}, this worktree's file, which edits change; ${s.botsPath} has it`));
+  const r = s.cli(["restart", "Genie", "--agent", "codex", "--save", "--force", "--json"], { cwd: wt });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json().saved, false);
+  assert.match(r.err, /--save: .*wt\/\.herdr\/bots\.json, this worktree's file, has no Genie \(b-aaaaaaaaaa\), so codex wasn't saved/);
+  assert.equal(readFileSync(join(wt, ".herdr/bots.json"), "utf8"), wtText);
   assert.equal(readFileSync(s.botsPath, "utf8"), mainText);
 });
 

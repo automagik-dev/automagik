@@ -272,7 +272,9 @@ automagik-herdr update [--check | --rollback]
   `--project` naming one, is written in that worktree's `.herdr/bots.json` (from the main
   checkout's when the worktree has none yet), so the main checkout stays clean for the merge's
   `git pull`. Reads stay on the main checkout: `ls`, `show`, `whois`, Start and the sidebar show
-  the change once it is merged there (RFC 0014 Q16).
+  the change once it is merged there (RFC 0014 Q16); a bot one of them can't find in its file is
+  named with the other file when that one has it. When the main checkout's `bots.json` was never
+  committed, the note says to commit or remove it before pulling: git won't overwrite it.
 - `ls`, `show`, `create`, `edit`, `rm` and `category` also take `--machine M --project <folder>`:
   the project on linked machine M (`hc machine ls`), `--project` an absolute folder there, keyed
   there by the same rule. The file is read and written there through hc by the same
@@ -508,8 +510,9 @@ its name, look, role and instructions (at most 4,000 characters), the agent it r
 model it uses, whom it reports to, its category, and whether it is planned for a later wave.
 The footer shows the matching `automagik-herdr create …` line, ready to copy. The form writes
 `.herdr/bots.json` in the project's main checkout, or, from a focused worktree space, in that
-worktree (read back from the main checkout once merged; Create & start saves it there and
-starts nothing).
+worktree. The form then says where it saves and that the sidebar shows the bot once the change
+is merged, stays open after saving, offers no Create & start (bots start from the main
+checkout's file), and warns when the main checkout's `bots.json` isn't committed.
 
 The form starts on the focused space's project. A folder picked from the project chip is the
 project itself outside git, and with no `.herdr/bots.json` yet it is a new project whose
