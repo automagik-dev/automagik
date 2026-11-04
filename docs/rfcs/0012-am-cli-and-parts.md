@@ -179,9 +179,9 @@ need. All are `targets: local`, `set: ["code"]`, artifact `automagik-herdr-pack-
 - Until am carries the CLI and the briefing (delivery 1 released), `am uninstall
   herdr.am-sidebar` refuses and says why: switching the sidebar off would leave
   `automagik-herdr` pointing at nothing and stop every briefing (t2zx).
-- `herdr.layout` (`herdr-layout`) at `herdr-layout/part.json`, `select` `layouts/`: in the
-  tarball `herdr-layout/automagik.json` is `layouts/automagik.json`. One function, `repoPathOf`
-  in `herdr/scripts/parts.mjs`, maps tarball paths to the repository's.
+- `herdr.layout` (`herdr-layout`) at `herdr-layout/part.json`, `select` `am-sidebar/layout/`: in
+  the tarball `herdr-layout/layouts/automagik.json` is `layouts/automagik.json`. One function,
+  `repoPathOf` in `herdr/scripts/parts.mjs`, maps tarball paths to the repository's.
 - Entries: `["node", "part.mjs", "<verb>", "herdr.pack"]` for the pack, `["node",
   "pack/part.mjs", …]` for the sidebar, `["node", "../am-sidebar/pack/part.mjs", …]` for the
   other mods and the layout. The relative path works because the whole tarball is extracted. No

@@ -27,11 +27,11 @@ const SHELL = new RegExp(String.raw`(?:^|[;&|(]\s*|\$\(\s*|["'\x60]\s*)${TOOL}\s
 const SECURITY_PATH = /\/usr\/bin\/security|["'\x60][^"'\x60\s]*\/security["'\x60]/;
 // A product Keychain script handed to something that runs it: `X(script(` or `X("sh", ["-c",
 // script(`. X must be the stand-in's kc.sh or kc.exec(...), or an assert.* that only reads text.
-const RUN_SCRIPT = /((?:[\w.]+)(?:\([^()]*\))?)\(\s*(?:["'](?:\/bin\/)?sh["']\s*,\s*\[\s*["']-c["']\s*,\s*)?keychain(?:Backup|Restore|Read|Forget)?Script\(/g;
+const RUN_SCRIPT = /((?:[\w.]+)(?:\([^()]*\))?)\(\s*(?:["'](?:\/bin\/)?sh["']\s*,\s*\[\s*["']-c["']\s*,\s*)?keychain(?:Backup|Restore|Read)?Script\(/g;
 const RUN_OK = /^(?:(?:w\.)?kc\.(?:sh|exec\([^()]*\))|assert\.\w+)$/;
 const runsOutsideStandIn = (line) => [...line.matchAll(RUN_SCRIPT)].some((m) => !RUN_OK.test(m[1]));
 // The product's Keychain scripts: a test that runs one must take its env from the stand-in.
-const KEYCHAIN_SCRIPTS = /\b(?:keychainScript|keychainBackupScript|keychainRestoreScript|keychainReadScript|keychainForgetScript|install|place|saveLogin|useSaved|resaveActive|restorePrevious|forgetSaved|readLogin)\b/;
+const KEYCHAIN_SCRIPTS = /\b(?:keychainScript|keychainBackupScript|keychainRestoreScript|keychainReadScript|install|place)\b/;
 
 test("guard: no test spawns security, launchctl, defaults or osascript directly", () => {
   assert.ok(files.length > 10, `found the test files (${files.length})`);
@@ -101,7 +101,6 @@ test("guard: the patterns catch the incident's own lines", () => {
   assert.ok(runsOutsideStandIn('sh(keychainScript(), "svc", "/nonexistent");'));
   assert.ok(runsOutsideStandIn('spawnSync("sh", ["-c", keychainReadScript(), "sh", svc]);'));
   assert.ok(runsOutsideStandIn('execWith(env)("sh", ["-c", keychainBackupScript(), "sh", svc, b]);'));
-  assert.ok(runsOutsideStandIn('spawnSync("sh", ["-c", keychainForgetScript(), "sh", svc]);'), "saved.js's delete script too");
   assert.ok(SECURITY_PATH.test('const SEC = "/usr/bin/security";'));
   assert.ok(SECURITY_PATH.test("const SEC = `${root}/bin/security`;"));
   for (const ok of ['kc.sh(keychainScript(), svc, p);', 'await kc.exec({ A: 1 })("sh", ["-c", keychainReadScript(), "sh", s]);',

@@ -97,6 +97,10 @@ export default class WorkspaceChrome extends View {
     carryShared();
     this.pocket = false;
     this.bots = false;     // the Bots tab: only while the sidebar mod (am-sidebar) is installed
+    // The Accounts tab (the am-quota mod): only while it is installed and on. Off moves its
+    // folder to mods-disabled/, so its mod.json in mods/ is the whole test; hidden means no tab at
+    // all, and its sidebar block is hidden too, so an open panel doesn't outlive the mod.
+    this.quota = false;
     this.phone = false;
     this.statusPath = null;
     this.hovered = null;   // the name of the tab under the pointer, shown dim in the rail
@@ -106,6 +110,10 @@ export default class WorkspaceChrome extends View {
       let bots = false;
       try { bots = (await readTextFile(`${appHome()}/mods/am-sidebar/mod.json`)) !== null; } catch { bots = false; }
       if (bots !== this.bots) { this.bots = bots; cx.notify(); }
+      let quota = false;
+      try { quota = (await readTextFile(`${appHome()}/mods/am-quota/mod.json`)) !== null; } catch { quota = false; }
+      if (quota !== this.quota) { this.quota = quota; cx.notify(); }
+      if (footer && !quota && find(layout(), "am-quota-panel")?.hidden === false) run("layout.hide", { id: "am-quota-panel" });
       let found = false;
       try { found = (await readTextFile(`${appHome()}/mods/pocket-link/mod.json`)) !== null; } catch { found = false; }
       let phone = false;
@@ -138,7 +146,9 @@ export default class WorkspaceChrome extends View {
     if (footer) cx.spawn(async (cx) => {
       const dir = `${appHome()}/mods`;
       try {
-        for (;;) if (touchesFooter(await watchFolder(dir), dir)) await scan(cx);
+        // A mod turned on or off in the Mods panel moves its folder: look again (the Bots and
+        // Accounts tabs), which rescans the contributed buttons too.
+        for (;;) if (touchesFooter(await watchFolder(dir), dir)) await look(cx);
       } catch (e) { console.log("footer: not watching the mods folder", String(e?.message ?? e)); }
     });
   }
@@ -195,7 +205,7 @@ export default class WorkspaceChrome extends View {
             () => openWork({ exec, notify, platform: window()?.platform }))
             .tooltip("Open Automagik"))
           .child(tab("automations", "clock", "Automations", automations, false, () => run("layout.toggle", { id: "automations-panel" })))
-          .child(tab("quota", "layers", "Quota", quota, false, () => run("layout.toggle", { id: "am-quota-panel" })))
+          .when(this.quota, el => el.child(tab("quota", "layers", "Accounts", quota, false, () => run("layout.toggle", { id: "am-quota-panel" }))))
           .when(this.pocket, el => el.child(tab("pocket", "smartphone", "Pocket Link", false, false, () => run("mod.open", { name: "pocket-link" }))
             .when(this.phone, el => el.child(div().size(6).rounded_full().bg(t.done)))))
           // Their own group, which gives up its width first and clips: the rail's own tabs never do.

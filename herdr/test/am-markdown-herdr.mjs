@@ -19,7 +19,8 @@ export const panes = () => ui.panes;
 export const theme = () => ui.theme;
 export const keys = () => [];
 export const window = () => ({ platform: "macos" });
-export const layout = () => ({});
+// A test can set ui.layout to the tree Herdr would answer (the footer reads block ids from it).
+export const layout = () => ui.layout ?? ({});
 // No key press in these tests: the command loop waits, as a real pane's would until a binding fires.
 export const nextCommand = () => new Promise(() => {});
 export const closeOverlay = () => { ui.closed += 1; };

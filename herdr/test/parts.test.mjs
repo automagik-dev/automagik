@@ -15,7 +15,7 @@ import { PART_IDS, contextOf, doctor, install, packSource, partOf, runCommand, s
 import { main, parseArgs } from "../mods/am-sidebar/pack/part.mjs";
 import { ownHook, withoutHooks } from "../mods/am-sidebar/migrateHooks.mjs";
 import { directHookCommand, hookCommand } from "../mods/am-sidebar/briefingText.mjs";
-import { PACK_MODS } from "../mods/am-sidebar/release.js";
+import { OFF_BY_DEFAULT, PACK_MODS } from "../mods/am-sidebar/release.js";
 import { placeLayout, readMarker, readVersion } from "../mods/am-sidebar/update.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -85,7 +85,8 @@ test("install from a checkout: the whole pack once, the record its marker; a sec
   const record = readMarker(m.mods);
   assert.equal(record.version, VERSION);
   assert.deepEqual([...record.mods].sort(), [...PACK_MODS].sort());
-  assert.deepEqual(ls(m.mods), [...PACK_MODS].sort(), "every pack mod, and nothing else");
+  assert.deepEqual(ls(m.mods), PACK_MODS.filter((x) => !OFF_BY_DEFAULT.includes(x)).sort(), "every pack mod that ships on, and nothing else");
+  assert.deepEqual(ls(m.off), [...OFF_BY_DEFAULT].sort(), "the ones that ship off are in mods-disabled/");
   assert.ok(existsSync(join(m.app, "layouts", "automagik.json")), "the layout placed");
   assert.ok(existsSync(join(m.mods, "am-footer", "part.json")), "part.json ships in the mod folder");
   assert.equal(readFileSync(join(m.app, "keys.json"), "utf8").includes("cmd-shift-m"), true);
@@ -96,8 +97,10 @@ test("install from a checkout: the whole pack once, the record its marker; a sec
   assert.equal(install(m.ctx({ AM_VERSION: VERSION }), P("herdr.pack"), packSource).changed, true);
   for (const id of PART_IDS) {
     const r = install(m.ctx({ AM_VERSION: VERSION }), P(id), packSource);
-    assert.equal(r.changed, false, id);
+    // Installing a mod that ships off by name switches it on: that is the one change.
+    assert.equal(r.changed, OFF_BY_DEFAULT.includes(P(id).mod), id);
   }
+  assert.deepEqual(ls(m.off), [], "named, it is on");
   assert.equal(m.calls.filter((c) => c.some((a) => a.endsWith("update.mjs"))).length, 1, "the same version never reinstalls");
 });
 
@@ -133,7 +136,7 @@ test("one mod: uninstall switches it off, an update keeps it off, doctor says no
 
   assert.equal(install(m.ctx(), P("herdr.am-tabs"), packSource).changed, true);
   assert.ok(existsSync(join(m.mods, "am-tabs", "main.js")));
-  assert.deepEqual(ls(m.off), []);
+  assert.deepEqual(ls(m.off), [...OFF_BY_DEFAULT].sort(), "only the mods that ship off are left off");
 });
 
 test("am-mods: its key goes with it while it is the pack's, a rebound one stays, and install puts it back", (t) => {
@@ -278,6 +281,12 @@ test("doctor reads only: a healthy pack passes every part, a broken one names th
   const before = execFileSync("find", [m.dir, "-print"], { encoding: "utf8" });
   for (const id of PART_IDS) {
     const r = doctorOf(m, id, { AM_VERSION: VERSION });
+    if (OFF_BY_DEFAULT.includes(P(id).mod)) {
+      // Shipped off: not applicable until it is turned on, like a mod switched off.
+      assert.equal(r.code, 2, id);
+      assert.deepEqual(r.checks.map((c) => c.check), ["record", "switched-off"], id);
+      continue;
+    }
     assert.equal(r.code, 0, `${id}: ${JSON.stringify(r.checks.filter((c) => !c.ok))}`);
     for (const c of r.checks) {
       assert.deepEqual(Object.keys(c), ["part", "check", "ok", "detail", "fix"]);
@@ -411,7 +420,8 @@ test("herdr.pack and herdr.layout run from am's stored extract, outside the app 
   assert.deepEqual(ls(m.mods), []);
   assert.deepEqual(ls(m.off), [], "the switched-off mods leave with the pack");
   const kept = readFileSync(join(m.app, "automagik-herdr", ".prev", ".pack"), "utf8");
-  assert.match(kept, /^off=am-sidebar,am-tabs$/m, "the kept set says which were off");
+  // am-quota ships off, so it is among them (OFF_BY_DEFAULT).
+  assert.match(kept, /^off=am-quota,am-sidebar,am-tabs$/m, "the kept set says which were off");
   assert.equal(readFileSync(entry, "utf8"), "// am's briefing entry point\n", "am's briefing entry point stays");
   assert.equal(readlinkSync(link), join(am, "am.mjs"), "am's command stays");
   assert.equal(readMarker(m.mods), null);

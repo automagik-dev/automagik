@@ -198,7 +198,9 @@ jobs:
     # Pocket Link's bridge (herdr/mods/pocket-link, Pocket's, never in the pack): syntax and its
     # dependency-free tests (the pre-pairing limits, the pairing code, where its state lives,
     # public-status.json, how the dialog finds Node), on Linux and macOS. The pack's own gate above
-    # does not run them: they live beside the mod, not in herdr/test/.
+    # does not run them: they live beside the mod, not in herdr/test/. Also the chat projection in
+    # chat/ (RFC 0015): its decoders, cleaner and transcript folder rule, whose cases it shares with
+    # am-sidebar in herdr/test/fixtures/transcript-folder-rule.json.
     name: Pocket Link bridge (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
@@ -224,7 +226,7 @@ jobs:
           set -euo pipefail
           if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
             echo "link=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(herdr/mods/pocket-link/|\.github/workflows/ci\.yml$)'; then
+          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(herdr/mods/pocket-link/|herdr/test/fixtures/transcript-folder-rule\.json$|\.github/workflows/ci\.yml$)'; then
             echo "link=true" >> "$GITHUB_OUTPUT"
           else
             echo "herdr/mods/pocket-link/ did not change: nothing to test"
@@ -239,11 +241,11 @@ jobs:
         if: steps.changed.outputs.link == 'true'
         run: |
           set -euo pipefail
-          for f in bridge/*.mjs find-node.js main.js; do node --check "$f"; done
+          for f in bridge/*.mjs chat/*.js chat/*.mjs find-node.js main.js; do node --check "$f"; done
 
       - name: Test
         if: steps.changed.outputs.link == 'true'
-        run: node --test bridge/*.test.mjs find-node.test.mjs
+        run: node --test bridge/*.test.mjs chat/*.test.mjs find-node.test.mjs
 
   plugin:
     # The Bot team and the welcome run on Node, as DSH does: Bun installs each and the DSH
@@ -343,17 +345,29 @@ jobs:
   desktop:
     # The desktop app's main-process logic in plain Node (home layout, profile install and the
     # move from the old package names, the preload, dsh supervision, navigation, updates), so
-    # the Electron binary itself is not downloaded here.
-    name: Desktop (main-process tests)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # the Electron binary itself is not downloaded here. On Linux and on Windows, which the app
+    # ships on too (desktop-build.yml).
+    name: Desktop (main-process tests${{ matrix.os == 'windows-latest' && ', windows' || '' }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: apps/desktop
+        shell: bash
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
       DO_NOT_TRACK: '1'
     steps:
+      # As the Windows build checks out (desktop-build.yml): the files as the commit holds them.
+      - name: Check out without CRLF
+        if: runner.os == 'Windows'
+        working-directory: .
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
@@ -367,6 +381,32 @@ jobs:
 
       - name: Test
         run: npm test
+
+  acp-windows:
+    # acp-dsh runs the app's pnpm.cmd and the agents' CLIs (codex.cmd) on Windows through cmd.exe
+    # (src/host/batch-spawn.js). Those tests import only Node's own modules: no harness needed.
+    name: acp-dsh (Windows spawns)
+    runs-on: windows-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/acp-dsh
+        shell: bash
+    steps:
+      - name: Check out without CRLF
+        working-directory: .
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+
+      - name: Test
+        run: node --test test/batch-spawn.test.js
 
   boot:
     # The plugins booted for real with Omni's channels and canvases (the release omni.json

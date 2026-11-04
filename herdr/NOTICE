@@ -10,7 +10,7 @@ sidebar-chrome, md-menu, auto-tabs, new-menu-tui, mod-manager and automations, i
   mods/am-sidebar       from Herdr's `spaces` 0.1.7 — modified throughout; see its own NOTICE,
                         LICENSE-automagik and LICENSE-herdr (the bot view, characters, form,
                         Start/Attach, briefing and the space icon dialog are this pack's). Its layout is the root
-                        herdr-layout/automagik.json, so Herdr does not dock a second sidebar.
+                        herdr-layout/layouts/automagik.json, so Herdr does not dock a second sidebar.
   mods/am-footer        from Herdr's `workspace-chrome` 0.1.11 — changed: main.js, mod.json; added: puzzle.svg, bot.svg and layers.svg (Lucide, ISC; bot.svg as Herdr ships it in frame/welcome)
   mods/am-status        from Herdr's `workspace-status` 0.1.12 — changed: main.js, mod.json; added: label.js,
                         RECIPE.md; monitor.svg, server.svg and branch.svg copied unchanged from
@@ -32,6 +32,12 @@ repeated here, as MIT requires — that file, not the mod's Apache LICENSE, is t
   mods/am-automations   from DnzzL/herdr-automations — changed: main.js (fork header; agent list
                         in agents.js), mod.json (title "Automagik Automations"); added: RECIPE.md,
                         agents.js (retired agents hidden). Code otherwise upstream.
+  mods/pocket-link/chat Pocket Link's live chat projection (RFC 0015), ported from stablyai/orca at
+                        e1dfc022 (TypeScript to JavaScript, behaviour unchanged except as noted in
+                        chat/UPSTREAM.md): decode-claude.js, decode-codex.js, decode-omp.js,
+                        decode-shared.js, types.js, screen.js, answer.js, and the paste framing in
+                        paste.js, with their tests. chat/UPSTREAM.md lists each upstream path and
+                        blob id. Pocket Link is Pocket's and never part of the pack.
 
   jacksonpires/herdr-app-mod-manager:
 
@@ -87,6 +93,30 @@ repeated here, as MIT requires — that file, not the mod's Apache LICENSE, is t
   MIT License
 
   Copyright (c) 2026 Yuichi Ohneda
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+  pocket-link/chat — the live chat projection, from stablyai/orca:
+
+  MIT License
+
+  Copyright (c) 2026 Lovecast Inc.
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal

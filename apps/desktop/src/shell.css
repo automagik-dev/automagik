@@ -57,7 +57,7 @@ body.darwin .bar{padding-left:84px}
 .spacer{flex:1}
 
 [hidden]{display:none!important}
-body.darwin .controls{display:flex;gap:8px;margin-bottom:2px;-webkit-app-region:no-drag}
+body.linux .controls{display:flex;gap:8px;margin-bottom:2px;-webkit-app-region:no-drag}
 body.darwin .controls{display:none}
 .controls button{--fill:var(--cream);width:26px;height:26px;padding:0;border-radius:50%;display:grid;place-items:center;color:var(--ink2)}
 .controls button:hover{color:var(--ink)}

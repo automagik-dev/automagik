@@ -522,8 +522,30 @@ test("workers.js: hc run arguments, slugs, worktree list, base order, ledger row
   assert.deepEqual(readLedger('{"a":1}\n{torn\n\n[1]\n{"b":2}\n'), [{ a: 1 }, { b: 2 }]);
   const get = { labels: { "agent.session": "s1" } };
   assert.equal(sessionChange(get, JSON.stringify({ session_id: "s1" })), null, "same session: nothing");
-  assert.deepEqual(sessionChange(get, JSON.stringify({ session_id: "s2", transcript_path: "/x.jsonl" })), { session: "s2", transcript: "/x.jsonl" });
+  const s2 = JSON.stringify({ session_id: "s2", transcript_path: "/x.jsonl" });
+  assert.deepEqual(sessionChange(get, s2),
+    { session: "s2", transcript: "/x.jsonl", fresh: true, label: null }, "no folder rule: no path");
   assert.equal(sessionChange(get, "not json"), null);
+  // The transcript label (RFC 0015 delivery 2): set beside a new session, set alone for a known
+  // session that lacks it or holds another, never for a path the rule refuses.
+  const yes = (path) => path;
+  const no = () => null;
+  const at = (session, transcript_path) => JSON.stringify({ session_id: session, transcript_path });
+  assert.deepEqual(sessionChange({ labels: {} }, at("s1", "/x.jsonl"), yes),
+    { session: "s1", transcript: "/x.jsonl", fresh: true, label: "/x.jsonl" });
+  assert.deepEqual(sessionChange(get, at("s1", "/x.jsonl"), yes),
+    { session: "s1", transcript: "/x.jsonl", fresh: false, label: "/x.jsonl" }, "labelled before");
+  const both = { labels: { "agent.session": "s1", "agent.transcript": "/x.jsonl" } };
+  assert.equal(sessionChange(both, at("s1", "/x.jsonl"), yes), null, "both labels hold: nothing");
+  assert.deepEqual(sessionChange(both, at("s1", "/y.jsonl"), yes).label, "/y.jsonl", "stale");
+  assert.equal(sessionChange(get, at("s1", "/x.jsonl"), no), null, "refused, same session");
+  assert.deepEqual(sessionChange(get, at("s1", "/l.jsonl"), () => "/real.jsonl").label, "/l.jsonl",
+    "the path as given (the textual check on another machine passes it), not the real one");
+  assert.equal(sessionChange(get, at("s1", "/x.jsonl"), () => true), null, "only a path accepts");
+  assert.deepEqual(sessionChange(both, at("s2", "/z.jsonl"), no),
+    { session: "s2", transcript: "/z.jsonl", fresh: true, label: "" }, "a new session drops it");
+  assert.deepEqual(sessionChange(get, at("s2", "/z.jsonl"), no).label, null, "none to drop");
+  assert.equal(sessionChange(both, JSON.stringify({ session_id: "s2" }), yes).label, "", "no path");
   // The template form: `<template> <task>` after the options, no `--`, the template label, no env and no model labels.
   assert.deepEqual(workerArgs({ botId: ID.dev, branch: "feat/a", name: null, cwd: "/p/wt", parent: "t1", model: null, effort: null,
     argv: null, task: "do it", template: "dev-sol", path: "/x/bin" }),

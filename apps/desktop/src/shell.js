@@ -1,7 +1,7 @@
 // The frame page's script: window buttons, and the window state main.js sends.
 const { platform, act, onState } = window.omniWindow
 const body = document.body
-body.classList.add(platform === 'darwin' ? 'darwin' : 'linux')
+body.classList.add(platform)
 for (const button of document.querySelectorAll('.controls [data-act]')) button.addEventListener('click', () => act(button.dataset.act))
 onState((state) => {
   body.classList.toggle('max', state.maximized === true)

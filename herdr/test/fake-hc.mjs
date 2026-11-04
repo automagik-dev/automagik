@@ -1,13 +1,21 @@
 // A stand-in for herdr-core's `hc`, for the CLI tests: every call is appended to
 // $HC_FAKE_LOG as one JSON argv line, and answers come from the terminals in
 // $HC_FAKE_STATE ({ terminals: [hc get objects], next: number }), which `label` and `run`
-// change. Only the calls automagik-herdr makes: ls [--label k=v], get, read, label, run,
-// server status (state.core), kill (the terminal finishes), templates (state.templates:
+// change. Only the calls automagik-herdr makes: ls [--label k=v], get, read, label, run (its
+// launch argv kept as `argv`, `sh -c <command>` for a template, as hc's own get shows), server
+// status (state.core), kill (the terminal finishes, and its live die_with_parent children with
+// it, as hc ends them), templates (state.templates:
 // [{ name, command }]), machine ls and exec --on (state.machines: [{ name, state, uname, home,
 // path?, temporary? }]: a linked machine is a scratch home folder; its `uname -sm` is `uname`,
 // anything else runs here with HOME=home and `path` (a folder of fakes) first on PATH, in
 // --cwd or its home), and file read|edit --on (its files are paths here; hc's answers: exit 3
-// not_found, 1 edit_failed or unavailable, 4 machine_unknown, errors as JSON on stderr).
+// not_found, 1 edit_failed or unavailable, 4 machine_unknown, errors as JSON on stderr), and
+// connect: JSON-RPC lines on stdin, answered on stdout. Only doc.get, from state.docs (or the
+// machine's docs with `on`): { name: { value, version } }, absent { value: null, version: 0 }.
+// Every request is kept in state.connectRequests; doc.set (or anything else) fails the call
+// (exit 2), and state.connectHang answers nothing and runs on (its pid in state.connectPid).
+// state.connectBefore: raw lines printed before any answer (a notification, a broken line);
+// state.connectAnswer: a raw line printed in place of every answer.
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
@@ -19,12 +27,62 @@ const out = (x) => process.stdout.write(`${JSON.stringify(x)}\n`);
 const fail = (msg, code = 1) => { process.stderr.write(`${msg}\n`); process.exit(code); };
 const words = args.filter((a) => a !== "--json");
 const find = (t) => state.terminals.find((x) => x.address === t || x.name === t);
+// The call's number (lines in the log so far), and at every call the sessions (agent.session or
+// revive.session labels) live in more than one pane then, appended to $HC_FAKE_STATE.doubles.
+const callNo = readFileSync(process.env.HC_FAKE_LOG, "utf8").split("\n").filter(Boolean).length;
+{
+  const by = new Map();
+  for (const x of state.terminals.filter((y) => y.state === "live")) {
+    const id = x.labels?.["agent.session"] ?? x.labels?.["revive.session"];
+    if (id) by.set(id, [...(by.get(id) ?? []), x.address]);
+  }
+  for (const [session, panes] of by) {
+    if (panes.length > 1) appendFileSync(`${process.env.HC_FAKE_STATE}.doubles`, `${JSON.stringify({ call: callNo, word: words[0], session, panes })}\n`);
+  }
+}
+// endTurnOn: { word, nth } on a terminal: its turn ends when the nth `hc <word>` call happens
+// (this one counted), whatever that call is about: a turn that ends on its own clock, not when
+// the CLI looks at it. As hc does, the end types a note into its parent (state.notes) when that
+// parent still runs, and the parent's agent takes a short turn of its own.
+{
+  const lines = readFileSync(process.env.HC_FAKE_LOG, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  let changed = false;
+  for (const t of state.terminals) {
+    const due = t.endTurnOn;
+    if (!due || lines.filter((a) => a.filter((w) => w !== "--json")[0] === due.word).length < due.nth) continue;
+    delete t.endTurnOn;
+    changed = true;
+    if (t.state !== "live" || t.status?.state !== "working") continue;
+    t.status.state = "idle";
+    const up = t.parent ? find(t.parent) : null;
+    if (up?.state === "live") {
+      state.notes = [...(state.notes ?? []), { to: up.address, from: t.address, call: callNo }];
+      up.status = { ...(up.status ?? {}), state: "working" };
+      up.idleAfterGets = 1;
+    }
+  }
+  if (changed) save();
+}
 // state.fail: commands that fail as a server that is down would (exit 1).
 if ((state.fail ?? []).includes(words[0])) fail(`hc: can't reach the server (${words[0]})`);
 // A linked machine's terminal ("vm/t8") on a machine that isn't connected: unavailable, as hc says.
 if (["get", "label", "kill", "read", "send", "keys", "interrupt"].includes(words[0]) && words[1]?.includes("/")) {
   const m = (state.machines ?? []).find((x) => x.name === words[1].split("/")[0]);
   if (!m || m.state !== "connected") fail(JSON.stringify({ error: { kind: m ? "unavailable" : "machine_unknown", message: `${words[1].split("/")[0]} isn't connected` } }), m ? 1 : 4);
+}
+
+/**
+ * What a launch argv has in front once it runs: `sh -c <command> [$0 args…]` (behind any
+ * `env K=V`) is the command's words and the args (sh execs a simple command, as the real one
+ * does); anything else is itself.
+ */
+function foregroundOf(launch) {
+  let w = [...launch];
+  if (/(^|\/)env$/.test(w[0] ?? "")) { let j = 1; while (j < w.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(w[j])) j += 1; w = w.slice(j); }
+  if (/(^|\/)(sh|bash)$/.test(w[0] ?? "") && w[1] === "-c" && typeof w[2] === "string") {
+    return [...w[2].replace(/ "\$@"$/, "").split(/\s+/).filter(Boolean), ...w.slice(4)];
+  }
+  return launch;
 }
 
 switch (words[0]) {
@@ -40,9 +98,27 @@ switch (words[0]) {
     break;
   }
   case "get": {
+    // state.failGet: terminals hc can't answer for (a server error, not "no such terminal").
+    if ((state.failGet ?? []).includes(words[1])) fail(`hc: server error reading ${words[1]}`);
     const t = find(words[1]);
     // Like the real one: exit 3 and a not_found error on stderr.
     if (!t) fail(JSON.stringify({ error: { kind: "not_found", message: `no terminal "${words[1]}"` } }), 3);
+    // idleAfterGets: while mid-turn, answered that many times, then its turn ends (idle). As hc
+    // does, the turn's end types a note into its parent (state.notes), whose agent then takes a
+    // short turn of its own (one more look).
+    if (typeof t.idleAfterGets === "number" && t.status?.state === "working") {
+      if (t.idleAfterGets <= 0) {
+        t.status.state = "idle";
+        delete t.idleAfterGets;
+        const up = t.parent ? find(t.parent) : null;
+        if (up?.state === "live") {
+          state.notes = [...(state.notes ?? []), { to: up.address, from: t.address, call: callNo }];
+          up.status = { ...(up.status ?? {}), state: "working" };
+          up.idleAfterGets = 1;
+        }
+      } else t.idleAfterGets -= 1;
+      save();
+    }
     // exitAfterGets: answered live that many times, then the program exits (a failed resume).
     if (typeof t.exitAfterGets === "number") {
       if (t.exitAfterGets <= 0) { t.state = "finished"; delete t.exitAfterGets; } else t.exitAfterGets -= 1;
@@ -90,7 +166,12 @@ switch (words[0]) {
       else if (words[i] === "--outlive-parent") outlive = true;
       else if (words[i] === "--no-parent") noParent = true;
     }
-    const argv = words.slice(words[i] === "--" ? i + 1 : i);
+    const given = words.slice(words[i] === "--" ? i + 1 : i);
+    // A template (no `--`, a name state.templates lists): hc runs its command through sh -c
+    // and types the task in as the first message; its foreground is the command's program.
+    const template = words[i] !== "--" ? (state.templates ?? []).find((x) => x.name === given[0]) ?? null : null;
+    const launch = template ? ["sh", "-c", template.command] : given;
+    const argv = foregroundOf(launch);
     // Like the real one: with no --parent and no --no-parent, the calling terminal is its parent.
     if (!parent && !noParent && process.env.HC_TERMINAL_ID) parent = process.env.HC_TERMINAL_ID;
     // `env K=V … program …`: the program is the first word after the assignments.
@@ -101,16 +182,28 @@ switch (words[0]) {
       if (!m) fail(JSON.stringify({ error: { kind: "machine_unknown", message: `unknown machine "${on}"` } }), 4);
       if (m.state !== "connected") fail(JSON.stringify({ error: { kind: "unavailable", message: `${on} isn't connected` } }));
     }
+    // state.failRun: names whose hc run fails (a name taken, the server refusing).
+    if ((state.failRun ?? []).includes(name)) fail(`hc: can't start ${name}`);
     const n = state.next ?? 100;
     const address = on ? `${on}/t${n}` : `t${n}`;
     state.next = n + 1;
     // state.runAs: "shell" (the agent never comes in front), "exit" (it ends at once) or
-    // "flaky" (its agent is in front for one hc get, then it exits).
-    const shell = state.runAs === "shell";
-    state.terminals.push({ address, name, cwd, labels, parent, die_with_parent: Boolean(parent) && !outlive, state: state.runAs === "exit" ? "finished" : "live", created_ms: Date.now(),
+    // "flaky" (its agent is in front for one hc get, then it exits); state.runAsFor[name]: the
+    // same, for the run of that name only.
+    const runAs = state.runAsFor?.[name] ?? state.runAs;
+    const shell = runAs === "shell";
+    // state.workingOnRun: terminals whose agent starts a turn when this run happens (once).
+    for (const a of state.workingOnRun ?? []) { const w = find(a); if (w) w.status = { ...(w.status ?? {}), state: "working" }; }
+    delete state.workingOnRun;
+    // state.failGetOnRun: terminals whose hc get starts failing when this run happens.
+    if (state.failGetOnRun) { state.failGet = [...(state.failGet ?? []), ...state.failGetOnRun]; delete state.failGetOnRun; }
+    // state.noCreated: names whose hc get gives no created_ms.
+    state.terminals.push({ address, name, cwd, labels, parent, die_with_parent: Boolean(parent) && !outlive, state: runAs === "exit" ? "finished" : "live",
+      ...((state.noCreated ?? []).includes(name) ? {} : { created_ms: Date.now() }),
+      argv: launch, template: template?.name ?? null,
       pid: 9000 + n, foreground: { argv: shell ? ["zsh"] : argv, cwd, pid: 5000 + n }, // state.noStatus: programs that report no status to hc (hermes): status null.
       status: (state.noStatus ?? []).includes(program) ? null : { app: program === "claude" ? "claude-code" : program, state: "working" },
-      ...(state.runAs === "flaky" ? { exitAfterGets: 1 } : {}) });
+      ...(runAs === "flaky" ? { exitAfterGets: 1 } : {}) });
     // state.onRunWrite: { path, text }: a file edit that lands while this run happens.
     if (state.onRunWrite) writeFileSync(state.onRunWrite.path, state.onRunWrite.text);
     save();
@@ -124,6 +217,8 @@ switch (words[0]) {
     if (!t) fail(`no terminal ${words[1]}`);
     if (state.failKill === words[1]) fail(`kill refused on ${words[1]}`);
     t.state = "finished";
+    // state.surviveParent: children that outlive their parent's end anyway (a kill that didn't take).
+    for (const c of state.terminals) if (c.parent === t.address && c.state === "live" && c.die_with_parent && !(state.surviveParent ?? []).includes(c.address)) c.state = "finished";
     save();
     out({ address: t.address, state: t.state });
     // Killing the caller's own terminal ends the caller (this fake runs exec'd by the wrapper,
@@ -194,6 +289,33 @@ switch (words[0]) {
     // state.loseEditAnswer: the edit lands, then the link drops: hc's real answer, unavailable.
     if (state.loseEditAnswer) { delete state.loseEditAnswer; save(); fail(JSON.stringify({ error: { kind: "unavailable", message: `${on} stopped answering` } })); }
     out({ bytes: now.length, path });
+    break;
+  }
+  case "connect": {
+    if (state.connectHang) { state.connectPid = process.pid; save(); }
+    const lines = readFileSync(0, "utf8").split("\n").filter((l) => l.trim());
+    state.connectRequests = [...(state.connectRequests ?? []), ...lines.map((l) => JSON.parse(l))];
+    if (state.connectHang) {
+      save();
+      setInterval(() => {}, 1000);
+      break;
+    }
+    save();
+    for (const raw of state.connectBefore ?? []) process.stdout.write(`${raw}\n`);
+    for (const line of lines) {
+      const { id, method, params } = JSON.parse(line);
+      if (state.connectAnswer !== undefined) { process.stdout.write(`${state.connectAnswer}\n`); continue; }
+      if (method !== "doc.get") fail(`fake hc: connect refuses ${method}`, 2);
+      const error = (kind, message) => out({ jsonrpc: "2.0", id, error: { code: -32000, message, data: { kind } } });
+      let docs = state.docs ?? {};
+      if (params.on !== undefined && params.on !== null) {
+        const m = (state.machines ?? []).find((x) => x.name === params.on);
+        if (!m) { error("machine_unknown", `unknown machine "${params.on}"`); continue; }
+        if (m.state !== "connected") { error("unavailable", `${params.on} isn't connected`); continue; }
+        docs = m.docs ?? {};
+      }
+      out({ jsonrpc: "2.0", id, result: docs[params.name] ?? { value: null, version: 0 } });
+    }
     break;
   }
   default:

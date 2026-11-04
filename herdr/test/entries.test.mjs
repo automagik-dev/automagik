@@ -5,12 +5,12 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { entryFolders, layoutsInEntries } from "../scripts/entries.mjs";
+import { entryFolders, layoutEntryProblems, layoutsInEntries, problemsOf } from "../scripts/entries.mjs";
 
 test("an entry folder is any folder holding mods/<name>/main.js; its layouts/ is refused", () => {
   const files = [
     "herdr/mods/am-sidebar/main.js", "herdr/mods/am-tabs/main.js", "herdr/install.sh",
-    "herdr-layout/automagik.json", "herdr-layout/RECIPE.md",
+    "herdr-layout/layouts/automagik.json", "herdr-layout/RECIPE.md", "herdr-layout/preview.png", "herdr-layout/part.json",
     "apps/x/mods/y/main.js", "apps/x/README.md",
     "mods/root/main.js",
     "docs/layouts/note.md",
@@ -22,9 +22,35 @@ test("an entry folder is any folder holding mods/<name>/main.js; its layouts/ is
   assert.deepEqual(layoutsInEntries(["mods/a/main.js", "mods/a/layouts/x.json"]), [], "a mod's own folder is not the entry's layouts/");
 });
 
+test("herdr/ must stay a mod entry with no layouts/; herdr-layout/ a layout entry in herdr.dev's shape", () => {
+  const files = [
+    "herdr/mods/am-sidebar/main.js", "herdr/RECIPE.md",
+    "herdr-layout/layouts/automagik.json", "herdr-layout/RECIPE.md", "herdr-layout/preview.png", "herdr-layout/part.json",
+  ];
+  assert.deepEqual(problemsOf(files), [], "part.json at the layout entry's root is its manifest, not a layout");
+  assert.match(problemsOf([...files, "herdr/layouts/automagik.json"]).join("\n"), /^herdr\/layouts\/: a herdr-mod entry folder holds layouts\//);
+  assert.match(problemsOf(files.filter((f) => !f.startsWith("herdr/mods/"))).join("\n"), /^herdr\/: no mods\/<name>\/main\.js/);
+  // The crawler probe's e2: no layouts/, so nothing to list; the root .json is named as the likely
+  // layout, but not part.json or keys.json.
+  const e2 = [...files, "herdr-layout/keys.json"].map((f) => f.replace("herdr-layout/layouts/", "herdr-layout/"));
+  assert.deepEqual(layoutEntryProblems(e2), [
+    "herdr-layout/layouts/<name>.json: missing; herdr.dev lists a layout only from its entry's layouts/",
+    "herdr-layout/automagik.json: herdr.dev ignores a .json at the entry's root; move it to herdr-layout/layouts/",
+  ]);
+  // With layouts/<name>.json in place a root .json is ignored, as in 60 listed layout entries.
+  assert.deepEqual(problemsOf([...files, "herdr-layout/keys.json", "herdr-layout/extra.json"]), []);
+  // mods/ in the layout entry: one problem naming it, not "move the layout out of herdr-layout/".
+  const withMods = [...files, "herdr-layout/mods/am-sidebar/main.js"];
+  assert.deepEqual(problemsOf(withMods), [
+    "herdr-layout/mods/: the layout entry keeps no mods of its own; the pack's mods are herdr/'s, which its RECIPE adds first, so remove this copy",
+  ]);
+  assert.deepEqual(layoutEntryProblems(files.filter((f) => !f.endsWith(".png"))), ["herdr-layout/preview.png: missing; a layout entry needs it"]);
+  assert.deepEqual(layoutEntryProblems([...files, "herdr-layout/layouts/nested/x.json"]), [], "a layout of its own beside it is fine");
+});
+
 test("this repository: no herdr-mod entry folder holds layouts/", () => {
   const script = fileURLToPath(new URL("../scripts/entries.mjs", import.meta.url));
   const r = spawnSync(process.execPath, [script, "--check"], { encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /no herdr-mod entry folder holds layouts\/: .*herdr/);
+  assert.match(r.stdout, /no herdr-mod entry folder holds layouts\/: .*herdr; herdr-layout\/ is a layout entry/);
 });

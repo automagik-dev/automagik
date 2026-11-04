@@ -3,7 +3,7 @@
   "title": "The automagik layout",
   "kind": "herdr-layout",
   "paths": [
-    "herdr-layout/automagik.json"
+    "herdr-layout/layouts/automagik.json"
   ],
   "provides": [
     "herdr.layout@1"

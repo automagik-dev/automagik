@@ -95,10 +95,11 @@ object SpaceIcons {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
     return remember(state.machines, state.hosts, state.demo, cached, now) {
-        // Live only for a machine read far enough (as the cache is written); until then, its cached projects.
-        val read = state.machines.filterValues { Teams.ready(it, now) }
-        val live = Teams.build(read, now)
-        if (state.demo) live else Teams.merge(live, cached, read.keys, state.hosts.map { it.id }.toSet())
+        // Live only for a machine read far enough (as the cache is written), each linked machine on its own; until then,
+        // its cached projects, stale: shown at once, never answered from.
+        val read = Teams.read(state.machines, now)
+        val live = Teams.live(state.machines, read, now)
+        if (state.demo) live else Teams.merge(live, cached, read, state.hosts.map { it.id }.toSet())
     }
 }
 

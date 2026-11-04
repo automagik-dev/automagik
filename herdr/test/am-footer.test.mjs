@@ -29,10 +29,11 @@ function makeCx() {
   return cx;
 }
 
-async function footer({ sidebar, files = {} }) {
+async function footer({ sidebar, quota = true, files = {} }) {
   const root = mkdtempSync(join(tmpdir(), "hb-footer-"));
   state.appHome = root;
   if (sidebar) { mkdirSync(join(root, "mods/am-sidebar"), { recursive: true }); writeFileSync(join(root, "mods/am-sidebar/mod.json"), "{}\n"); }
+  if (quota) { mkdirSync(join(root, "mods/am-quota"), { recursive: true }); writeFileSync(join(root, "mods/am-quota/mod.json"), "{}\n"); }
   for (const [path, body] of Object.entries(files)) { mkdirSync(join(root, path, ".."), { recursive: true }); writeFileSync(join(root, path), body); }
   ui.props = { footer: true };
   const cx = makeCx();
@@ -46,13 +47,30 @@ async function footer({ sidebar, files = {} }) {
   return all(drawn).map((n) => n.id).filter((id) => TABS.has(id) || (typeof id === "string" && id.includes("/") && !id.includes("#")));
 }
 
-test("the rail: Bots first, ahead of Mods, Automations and Quota, while the sidebar mod is installed", async () => {
+test("the rail: Bots first, ahead of Mods, Automations and Accounts, while the sidebar mod is installed", async () => {
   assert.deepEqual(await footer({ sidebar: true }), ["bots", "mods", "automations", "quota", "settings", "machine"]);
   assert.equal(nodes.get("bots").kids[0].__node.arg, "mods/am-footer/bot.svg");
 });
 
 test("the rail: no Bots tab without mods/am-sidebar/mod.json", async () => {
   assert.deepEqual(await footer({ sidebar: false }), ["mods", "automations", "quota", "settings", "machine"]);
+});
+
+test("the rail: no Accounts tab while am-quota is off (in mods-disabled/) or not installed", async () => {
+  assert.deepEqual(await footer({ sidebar: true, quota: false }), ["bots", "mods", "automations", "settings", "machine"]);
+  const off = { "mods-disabled/am-quota/mod.json": "{}\n" };
+  assert.deepEqual(await footer({ sidebar: false, quota: false, files: off }), ["mods", "automations", "settings", "machine"]);
+});
+
+test("am-quota off: an Accounts panel left open is hidden; one already hidden, or the mod on, is left alone", async () => {
+  const tree = (hidden) => ({ id: "root", children: [{ id: "am-quota-panel", hidden, children: [] }] });
+  for (const [quota, hidden, want] of [[false, false, [["layout.hide", { id: "am-quota-panel" }]]], [false, true, []], [true, false, []]]) {
+    ui.layout = tree(hidden);
+    state.runs = [];
+    await footer({ sidebar: true, quota });
+    assert.deepEqual(state.runs.filter(([n]) => n.startsWith("layout.")), want, `quota ${quota}, hidden ${hidden}`);
+  }
+  ui.layout = null;
 });
 
 test("the Bots tab opens this mod's popup", async () => {

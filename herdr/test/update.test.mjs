@@ -11,8 +11,8 @@ import { gzipSync } from "node:zlib";
 import {
   POINTER_SIG_URL, POINTER_URL, applyUpdate, checkForUpdate, compareVersions, downloadUpdate, fetchPointer, installUpdate, noticeText, packKeys,
   packOfPointer, parseSums, verifyPointer,
-  markerOf, offDirOf, pickUpdate, prevSetOf, readMarker, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
-  autoFileOf, autoStatus, lockOf, managedPack, readAuto, takeLock, writeAuto,
+  checkMods, markerOf, offDirOf, pickUpdate, repairInstall, setupHome, toCheck, prevSetOf, readMarker, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
+  autoFileOf, autoStatus, lockOf, managedPack, olderSequence, readAuto, takeLock, writeAuto,
 } from "../mods/am-sidebar/update.mjs";
 import { formatMarker, parseMarker } from "../mods/am-sidebar/release.js";
 import { cmdUpdate } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
@@ -390,13 +390,13 @@ test("a pack made as release.yml makes it (git archive of the tag's mods/am-side
   const tgz = join(home, "pack.tgz");
   try {
     // release.yml's "Pack the herdr pack" step: the tag's PACK_MODS folders of herdr/mods/ plus
-    // the pack's layout (herdr-layout/ at the top), from the repository's top (archive in a
+    // the pack's layout (herdr-layout/layouts/ at the top), from the repository's top (archive in a
     // subfolder lists only its paths).
     const { PACK_MODS } = await import("../mods/am-sidebar/release.js");
     const topDir = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: repo, encoding: "utf8" }).trim();
     const prefix = execFileSync("git", ["rev-parse", "--show-prefix"], { cwd: repo, encoding: "utf8" }).trim();
     const layout = join(home, "automagik.json");
-    writeFileSync(layout, execFileSync("git", ["show", "HEAD:herdr-layout/automagik.json"], { cwd: topDir }));
+    writeFileSync(layout, execFileSync("git", ["show", "HEAD:herdr-layout/layouts/automagik.json"], { cwd: topDir }));
     execFileSync("git", ["archive", "--format=tar.gz", "-o", tgz, "--prefix=layouts/", `--add-file=${layout}`, "--prefix=", `HEAD:${prefix}mods`, "--", ...PACK_MODS], { cwd: topDir });
     const top = [...new Set(execFileSync("tar", ["-tzf", tgz], { encoding: "utf8" }).split("\n").filter(Boolean).map((n) => n.split("/")[0]))].sort();
     assert.deepEqual(top, [...PACK_MODS, "layouts"].sort());
@@ -873,6 +873,127 @@ test("a pack mod switched off (mods-disabled/) is updated where it is and stays 
   }
 });
 
+test("am-quota ships off: a fresh install puts it in mods-disabled/; an installed copy keeps its state", async () => {
+  const WITH = ["am-sidebar", "am-tabs", "am-quota"];
+  const t = tarball("0.2.0", { mods: WITH });
+  const homes = [];
+  try {
+    // A fresh install: no record, nothing in mods/.
+    const fresh = appHome(null);
+    homes.push(fresh.home);
+    const lines = [];
+    const r = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: fresh.mods, log: (l) => lines.push(l) });
+    const off = offDirOf(fresh.mods);
+    assert.equal(existsSync(join(fresh.mods, "am-quota")), false, "not on");
+    assert.equal(readFileSync(join(off, "am-quota", "main.js"), "utf8"), 'export const v = "0.2.0";\n');
+    assert.ok(existsSync(join(fresh.mods, "am-tabs", "main.js")), "the other mods are on");
+    assert.deepEqual(r.installedOff, ["am-quota"]);
+    assert.deepEqual(readMarker(fresh.mods).mods.sort(), [...WITH].sort(), "the record owns it, so updates keep it off");
+    assert.ok(lines.includes("installed mods-disabled/am-quota: it ships off; turn it on in the Mods panel"));
+    // ...and the next update keeps it off.
+    const t3 = tarball("0.3.0", { mods: WITH });
+    try {
+      const again = await applyUpdate({ tgzPath: t3.path, version: "0.3.0", modsDir: fresh.mods });
+      assert.deepEqual(again.off, ["am-quota"]);
+      assert.equal(existsSync(join(fresh.mods, "am-quota")), false);
+    } finally { rmSync(t3.src, { recursive: true, force: true }); }
+
+    // An update from a release that did not ship it: arriving for the first time, it comes off.
+    const older = appHome("0.1.0");
+    homes.push(older.home);
+    await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: older.mods });
+    assert.equal(existsSync(join(older.mods, "am-quota")), false);
+    assert.ok(existsSync(join(offDirOf(older.mods), "am-quota", "main.js")));
+
+    // Installed and on (the record lists it, in mods/): updated in place, still on.
+    const on = appHome("0.1.0", WITH);
+    homes.push(on.home);
+    const u = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: on.mods });
+    assert.equal(readFileSync(join(on.mods, "am-quota", "main.js"), "utf8"), 'export const v = "0.2.0";\n');
+    assert.equal(existsSync(join(offDirOf(on.mods), "am-quota")), false);
+    assert.deepEqual(u.installedOff, []);
+
+    // A repair of a missing one the record lists reinstalls it on, as it was.
+    rmSync(join(on.mods, "am-quota"), { recursive: true, force: true });
+    await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: on.mods, repair: ["am-quota"] });
+    assert.ok(existsSync(join(on.mods, "am-quota", "main.js")));
+
+    // A folder already in mods-disabled/ that the record does not own is left alone.
+    const theirs = appHome(null);
+    homes.push(theirs.home);
+    mkdirSync(join(offDirOf(theirs.mods), "am-quota"), { recursive: true });
+    writeFileSync(join(offDirOf(theirs.mods), "am-quota", "main.js"), "// mine\n");
+    const said = [];
+    const l = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: theirs.mods, log: (x) => said.push(x) });
+    assert.equal(readFileSync(join(offDirOf(theirs.mods), "am-quota", "main.js"), "utf8"), "// mine\n");
+    assert.equal(l.mods.includes("am-quota"), false);
+    assert.ok(said.some((x) => /left alone: mods-disabled\/am-quota/.test(x)));
+  } finally {
+    for (const d of [t.src, ...homes]) rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test("herdr-app check skips only a switched-off mod: one missing from mods/ and mods-disabled/ still fails", () => {
+  const { home, mods } = appHome("0.1.0", ["am-sidebar", "am-tabs", "am-quota", "am-footer"]);
+  try {
+    const off = offDirOf(mods);
+    mkdirSync(off);
+    renameSync(join(mods, "am-quota"), join(off, "am-quota"));       // switched off (or shipped off)
+    rmSync(join(mods, "am-footer"), { recursive: true });             // should be on, and is gone
+    assert.deepEqual(toCheck(mods, ["am-sidebar", "am-tabs", "am-quota", "am-footer"]), ["am-sidebar", "am-tabs", "am-footer"]);
+    // A stand-in herdr-app that fails a folder that isn't there, as the real check does.
+    const bin = join(home, "herdr-app");
+    writeFileSync(bin, '#!/bin/sh\n[ "$1" = check ] && [ -d "$2" ] && exit 0\necho "no mod at $2" >&2\nexit 1\n');
+    chmodSync(bin, 0o755);
+    const lines = [];
+    const r = checkMods({ modsDir: mods, mods: toCheck(mods, readMarker(mods).mods), log: (l) => lines.push(l), herdrApp: bin });
+    assert.deepEqual(r.failed, ["am-footer"], "the missing mod fails the setup; the switched-off one is not checked");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+/** A stand-in herdr-app: logs each `check <dir>` and fails a folder that isn't there, as the real one does. */
+function fakeHerdrApp(dir) {
+  const bin = join(dir, "herdr-app"), calls = join(dir, "herdr-app.log");
+  writeFileSync(bin, `#!/bin/sh\necho "$2" >> "${calls}"\n[ "$1" = check ] && [ -d "$2" ] && exit 0\nexit 1\n`);
+  chmodSync(bin, 0o755);
+  return { bin, checked: () => (existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n").filter(Boolean).map((p) => p.split("/").pop()) : []) };
+}
+
+test("setupHome checks the record's mods but a switched-off one: a mod missing from both folders fails", () => {
+  const { home, mods } = appHome("0.1.0", ["am-sidebar", "am-tabs", "am-quota"]);
+  try {
+    mkdirSync(offDirOf(mods));
+    renameSync(join(mods, "am-quota"), join(offDirOf(mods), "am-quota"));
+    rmSync(join(mods, "am-tabs"), { recursive: true });
+    const tgzDir = join(home, "empty");
+    mkdirSync(tgzDir);
+    const app = fakeHerdrApp(home);
+    const failed = setupHome({ modsDir: mods, tgzDir, record: { mods: ["am-sidebar", "am-tabs", "am-quota"] }, herdrApp: app.bin });
+    assert.deepEqual(failed, ["am-tabs"], "the missing one fails; the switched-off one is not checked");
+    assert.deepEqual(app.checked().sort(), ["am-sidebar", "am-tabs"]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("repairInstall checks every mod that is on, never the one that ships off", async () => {
+  const WITH = ["am-sidebar", "am-tabs", "am-quota"];
+  const t = tarball("0.2.0", { mods: WITH });
+  const { home, mods } = appHome(null);
+  try {
+    await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
+    assert.ok(existsSync(join(offDirOf(mods), "am-quota")), "am-quota starts off");
+    const app = fakeHerdrApp(home);
+    const r = await repairInstall({ tgzPath: t.path, version: "0.2.0", modsDir: mods, herdrApp: app.bin });
+    assert.deepEqual(r.checkFailed, []);
+    assert.deepEqual(app.checked().sort(), ["am-sidebar", "am-tabs"]);
+  } finally {
+    for (const d of [t.src, home]) rmSync(d, { recursive: true, force: true });
+  }
+});
+
 test("rollback keeps a switched-off mod off: one a release retired (a), and one new in the rolled-out release (b)", async () => {
   const off = (mods) => offDirOf(mods);
   const at = (mods, m) => (existsSync(join(mods, m)) ? "on" : existsSync(join(off(mods), m)) ? "off" : "gone");
@@ -1190,4 +1311,66 @@ test("lock: the setting is written under it, so a switch never wipes a rollback'
     writeAuto(h.mods, { on: false });
     assert.deepEqual(readAuto(h.mods), { on: false, skip: "0.2.0" });
   } finally { h.done(); }
+});
+
+// ---- The pointer's sequence (#207 L2) and #276's off-by-default, through an install on its own ----
+
+test("a pointer whose sequence is below the record's is never offered or installed, whatever version it names", async () => {
+  const h = autoHome([]);
+  const t = tarball("0.2.0");
+  try {
+    const url = "https://dl.test/v0.2.0/automagik-herdr-pack-0.2.0.tgz";
+    const table = { ...served("0.2.0", { url, body: t.buf, sequence: 5000 }), [url]: t.buf }; // the record says 10000
+    const found = await checkForUpdate({ fetch: fakeFetch(table), env: {}, modsDir: h.mods, keys });
+    assert.equal(found.update, null);
+    assert.deepEqual(found.olderSequence, { sequence: 5000, recorded: 10000 });
+    const calls = [];
+    for (const auto of [true, false]) {
+      const r = await installUpdate({ fetch: fakeFetch(table, calls), env: {}, modsDir: h.mods, keys, auto });
+      assert.equal(r.installed, null);
+    }
+    assert.ok(calls.every((c) => c.url !== url), "no tarball downloaded");
+    assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.1.0");
+    assert.equal(olderSequence({ sequence: 10000 }, { sequence: 10000 }), false, "the same sequence is not older");
+    assert.equal(olderSequence({ sequence: null }, { sequence: 1 }), false, "a record without one compares nothing");
+  } finally { rmSync(t.src, { recursive: true, force: true }); h.done(); }
+});
+
+test("under the lock: a record that moved to a higher sequence since the check stops the install", async () => {
+  const h = autoHome(["0.2.0"]); // pointer 0.2.0 at sequence 20000; record 0.1.0 at 10000
+  try {
+    // Between the check and the lock, the record now came through sequence 30000 (same version).
+    const fetch = racing(fakeFetch(h.table), async () => {
+      writeFileSync(markerOf(h.mods), "version=0.1.0\nmods=am-sidebar,am-tabs\nbefore=none\nsequence=30000\n");
+    });
+    const r = await installUpdate({ fetch, env: {}, modsDir: h.mods, keys, expect: "0.2.0", auto: true });
+    assert.equal(r.installed, null);
+    assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.1.0");
+    assert.equal(readMarker(h.mods).sequence, 30000);
+  } finally { h.done(); }
+});
+
+test("an install on its own keeps #276's off-by-default: am-quota arriving first lands in mods-disabled/, an on copy stays on", async () => {
+  const h = autoHome([]);
+  const withQuota = [...MODS, "am-quota"];
+  const t2 = tarball("0.2.0", { mods: withQuota });
+  const t3 = tarball("0.3.0", { mods: withQuota });
+  const table = {};
+  for (const [v, t] of [["0.2.0", t2], ["0.3.0", t3]]) {
+    const url = `https://dl.test/v${v}/automagik-herdr-pack-${v}.tgz`;
+    Object.assign(table, { [url]: t.buf });
+  }
+  const at = (v, t) => ({ ...table, ...served(v, { url: `https://dl.test/v${v}/automagik-herdr-pack-${v}.tgz`, body: t.buf }) });
+  try {
+    const r = await installUpdate({ fetch: fakeFetch(at("0.2.0", t2)), env: {}, modsDir: h.mods, keys, expect: "0.2.0", auto: true });
+    assert.equal(r.installed.version, "0.2.0");
+    assert.equal(existsSync(join(h.mods, "am-quota")), false, "Herdr doesn't load it");
+    assert.equal(existsSync(join(offDirOf(h.mods), "am-quota", "main.js")), true);
+    // The person turns it on; the next install on its own keeps it on.
+    renameSync(join(offDirOf(h.mods), "am-quota"), join(h.mods, "am-quota"));
+    const r3 = await installUpdate({ fetch: fakeFetch(at("0.3.0", t3)), env: {}, modsDir: h.mods, keys, expect: "0.3.0", auto: true });
+    assert.equal(r3.installed.version, "0.3.0");
+    assert.equal(readFileSync(join(h.mods, "am-quota", "main.js"), "utf8"), 'export const v = "0.3.0";\n');
+    assert.equal(existsSync(join(offDirOf(h.mods), "am-quota")), false);
+  } finally { for (const t of [t2, t3]) rmSync(t.src, { recursive: true, force: true }); h.done(); }
 });
