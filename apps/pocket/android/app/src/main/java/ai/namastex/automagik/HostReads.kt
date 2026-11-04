@@ -54,19 +54,26 @@ class HostReads(
      * call per [HostBatch.CHUNK] folders. A folder with no clear answer goes to [unsure] and keeps its last answer.
      */
     suspend fun git(folders: List<Pair<String, String>>, unsure: (machine: String, folder: String) -> Unit) = coroutineScope {
-        folders.groupBy({ it.first }, { it.second }).map { (m, list) -> async { pool.withPermit { gitMachine(m, list, unsure) } } }.awaitAll()
+        folders.groupBy({ it.first }, { it.second }).map { (m, list) -> async { slot(m) { gitMachine(m, list, unsure) } } }.awaitAll()
         Unit
     }
 
     /** Bot names and registries ([Teams.registry]) of [projects] ((machine, project key) pairs), each machine at once. */
     suspend fun registries(projects: List<Pair<String, String>>) = coroutineScope {
-        projects.distinct().groupBy({ it.first }, { it.second }).map { (m, keys) -> async { pool.withPermit { readRegistries(m, keys) } } }.awaitAll()
+        projects.distinct().groupBy({ it.first }, { it.second }).map { (m, keys) -> async { slot(m) { readRegistries(m, keys) } } }.awaitAll()
         Unit
     }
 
+    /** The core's own machine reads at once; a linked one waits for one of the [pool]'s slots, so stalled ones can't crowd it out. */
+    private suspend fun <T> slot(m: String, block: suspend () -> T): T = if (m.isBlank()) block() else pool.withPermit { block() }
+
     private suspend fun gitMachine(m: String, folders: List<String>, unsure: (String, String) -> Unit) {
-        for (chunk in folders.chunked(HostBatch.CHUNK)) {
-            val answers = exec(m, HostBatch.argv(HostBatch.GIT, chunk))?.let { HostBatch.git(it, chunk) } ?: List(chunk.size) { HostBatch.Git.Unsure }
+        val chunks = folders.chunked(HostBatch.CHUNK)
+        for ((i, chunk) in chunks.withIndex()) {
+            // A machine that didn't answer (timed out, unreachable) is given up for this pass: one wait, not one per batch.
+            val out = exec(m, HostBatch.argv(HostBatch.GIT, chunk))
+                ?: return chunks.drop(i).flatten().forEach { unsure(m, it) }
+            val answers = HostBatch.git(out, chunk)
             val found = HashMap<String, GitInfo?>()
             chunk.zip(answers).forEach { (folder, answer) ->
                 when (answer) {
@@ -88,8 +95,8 @@ class HostReads(
         val state = machine() ?: return
         if (m.isNotBlank() && state.linked.find { it.name == m }?.connected != true) return
         for (chunk in projects.filter { it.startsWith("/") }.distinct().chunked(HostBatch.CHUNK)) {
-            val files = exec(m, HostBatch.argv(HostBatch.FILES, chunk.map(Teams.registry::path)))?.let { HostBatch.files(it, chunk.size) }
-                ?: List(chunk.size) { HostBatch.File.Unreadable }
+            // One that didn't answer is given up for this pass; the projects not read keep what they had.
+            val files = exec(m, HostBatch.argv(HostBatch.FILES, chunk.map(Teams.registry::path)))?.let { HostBatch.files(it, chunk.size) } ?: return
             val names = HashMap<String, SpaceFeed.Names>()
             val members = HashMap<String, List<Teams.Member>>()
             chunk.zip(files).forEach { (key, file) ->

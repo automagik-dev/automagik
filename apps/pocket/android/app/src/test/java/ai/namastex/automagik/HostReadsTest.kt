@@ -22,6 +22,11 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import androidx.room.Room
+import androidx.test.core.app.ApplicationProvider
 import java.io.Closeable
 import java.io.DataInputStream
 import java.nio.channels.Channels
@@ -35,6 +40,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * way: at once, never, only after the time-box, or with an error at once. A stalled or unreachable machine must hold
  * back only its own rows, never wedge the pool or a refresh, and a late answer must never land.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
 class HostReadsTest {
     /** How the fake core answers one call. */
     private sealed interface Reply {
@@ -84,7 +91,16 @@ class HostReadsTest {
         withTimeout(5_000) { client.start() }
         Unit
     }
-    @After fun close() { client.close(); scope.cancel() }
+    @After fun close() { client.close(); scope.cancel(); db.close() }
+
+    // The Teams cache on a real SQLite (Robolectric's), written by the one writer the view model uses.
+    private val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), TeamsDb::class.java).allowMainThreadQueries().build()
+    private val dao = db.teams()
+    private val sync = TeamsSync(dao)
+    private suspend fun cached() = TeamsCache.teams(dao.teams().first(), dao.bots().first())
+
+    /** A test body that fails, never hangs, past [TEST_LIMIT]. */
+    private fun bounded(block: suspend CoroutineScope.() -> Unit) = runBlocking { withTimeout(TEST_LIMIT) { block() } }
 
     // ---- what the fake core serves
 
@@ -129,53 +145,90 @@ class HostReadsTest {
     private fun folder(m: String) = m to (if (m.isBlank()) "/w/own" else "/srv/x")
     private fun ms(start: Long) = System.currentTimeMillis() - start
 
-    @Test fun aStalledMachineHoldsBackOnlyItsOwnRowsAndNeverWedgesThePoolOrARefresh() = runBlocking {
-        answer = { method, machine, params -> if (machine == "slow") Reply.Never else healthy(method, machine, params) }
-        val reads = reads(pool = Semaphore(2))
-        // A refresh while slow never answers: it gives up at the time-box (not the client's 30 s), every time.
-        repeat(2) {
-            val start = System.currentTimeMillis()
-            assertEquals(listOf("fast"), refresh(reads, listOf("fast", "slow")))
-            assertTrue("refresh took ${ms(start)} ms", ms(start) in TIME_BOX..(TIME_BOX + SLACK))
+    /**
+     * slow: its first layout and every git batch answer only after the time-box; fast and the core's own answer at once.
+     * The review's five points, in order: (1) the core's own and fast go live and cached within the limit while slow
+     * stays stale with no card; (2) slow's late answers never land; (3) slow costs one pool slot for one timeout, not one
+     * per batch; (4) a machine removed during a reading leaves no rows; (5) an unlinked machine's rows go.
+     */
+    @Test fun aStalledMachineHoldsBackOnlyItsOwnRows() = bounded {
+        val docs = AtomicInteger(); val slowExecs = AtomicInteger()
+        val late = ConcurrentHashMap.newKeySet<CompletableDeferred<Unit>>()
+        answer = { method, machine, params ->
+            when {
+                machine != "slow" -> healthy(method, machine, params)
+                method == "doc.get" && docs.getAndIncrement() == 0 -> Reply.After(TIME_BOX + 600, layout("Late"), CompletableDeferred<Unit>().also { late += it })
+                method == "doc.get" -> Reply.Now(layout("New"))
+                else -> { slowExecs.incrementAndGet(); Reply.After(TIME_BOX + 600, git(params, "late"), CompletableDeferred<Unit>().also { late += it }) }
+            }
         }
-        // Now slow's layout answers but its git stalls (what a slow linked machine did): its space waits for git,
-        // and must not hold fast back. Git: fast and the core's own fill in without waiting for slow, which holds a
-        // pool permit until its time-box.
-        answer = { method, machine, params -> if (machine == "slow" && method != "doc.get") Reply.Never else healthy(method, machine, params) }
-        assertEquals(listOf("fast", "slow"), refresh(reads, listOf("fast", "slow")))
-        val start = System.currentTimeMillis()
-        // Bounded: a regression must fail here, not hang the suite.
-        val fastLive = async { withTimeout(3 * TIME_BOX) { state.first { Teams.read(mapOf("h1" to it), System.currentTimeMillis()).contains("h1|fast") } }; ms(start) }
-        val unsure = ConcurrentHashMap.newKeySet<Pair<String, String>>()
-        val stalled = async { reads.git(listOf(folder("slow"))) { m, f -> unsure += m to f } }
-        reads.git(listOf(folder(""), folder("fast"))) { m, f -> unsure += m to f }
-        assertTrue("fast went live after ${fastLive.await()} ms", fastLive.await() < TIME_BOX)
-        stalled.await()
-        assertEquals(setOf("slow" to "/srv/x"), unsure.toSet())
-        assertTrue("the stall was given up at ${ms(start)} ms", ms(start) in TIME_BOX..(TIME_BOX + SLACK))
-        // The pool is whole again: a pass now takes no time.
-        val again = System.currentTimeMillis()
-        reads.git(listOf(folder("fast"))) { _, _ -> }
-        assertTrue(ms(again) < SLACK)
+        // The cache from an earlier run: slow's project waiting on the person, and "old", a machine no longer linked.
+        fun cachedTeam(m: String) = Teams.Team("h1|$m|/srv/x", "h1", m, "/srv/x", m, Teams.Icon.Letter, null,
+            listOf(Teams.Bot("b-$m", "Bot", true, null, Teams.NEEDS_YOU, "Run it?", 7, TerminalRef("h1", "$m/t1"), "permission")))
+        for (m in listOf("slow", "old")) TeamsCache.rows(listOf(cachedTeam(m))).let { (t, b) -> dao.replaceMachine("h1", m, t, b) }
+        val pool = Semaphore(2)
+        val reads = reads(pool)
 
-        // What the Teams tab shows: fast and the core's own live and answerable; slow from the cache, stale, no card.
+        // A refresh while slow's layout is late gives up at the time-box (not the client's 30 s); the next one has it.
+        var start = System.currentTimeMillis()
+        assertEquals(listOf("fast"), refresh(reads, listOf("fast", "slow")))
+        assertTrue("refresh took ${ms(start)} ms", ms(start) in TIME_BOX..(TIME_BOX + SLACK))
+        assertEquals(listOf("fast", "slow"), refresh(reads, listOf("fast", "slow")))
+
+        // One git pass, as the view model makes it: slow has 21 folders (two batches) and never answers in time.
+        start = System.currentTimeMillis()
+        val cachedIn = async {
+            while (cached().map { it.id }.toSet().let { "h1||/w/own" !in it || "h1|fast|/srv/x" !in it }) {
+                sync.reading(mapOf("h1" to state.value), System.currentTimeMillis()); delay(20)
+            }
+            ms(start)
+        }
+        val unsure = ConcurrentHashMap.newKeySet<Pair<String, String>>()
+        reads.git(listOf(folder(""), folder("fast"), folder("slow")) + (1..20).map { "slow" to "/srv/x$it" }) { m, f -> unsure += m to f }
+        val pass = ms(start)
+        // (1) the core's own and fast are live and cached within the limit, without waiting for slow.
+        assertTrue("cached after ${cachedIn.await()} ms", cachedIn.await() < TIME_BOX)
+        // (3) slow: one call and one wait for its 21 folders, then given up; the pool is whole again.
+        assertEquals(1, slowExecs.get())
+        assertEquals(21, unsure.count { it.first == "slow" })
+        assertTrue("the pass took $pass ms", pass in TIME_BOX..(TIME_BOX + SLACK))
+        assertEquals(2, pool.availablePermits)
         val now = System.currentTimeMillis()
         val read = Teams.read(mapOf("h1" to state.value), now)
         assertEquals(setOf("h1|", "h1|fast"), read)
-        val cachedSlow = Teams.Team("h1|slow|/srv/x", "h1", "slow", "/srv/x", "Slow", Teams.Icon.Letter, null,
-            listOf(Teams.Bot("b-slow", "Bot", true, null, Teams.NEEDS_YOU, "Run it?", 7, TerminalRef("h1", "slow/t1"), "permission")))
-        val shown = Teams.merge(Teams.live(mapOf("h1" to state.value), read, now), listOf(cachedSlow), read, setOf("h1"))
+        sync.reading(mapOf("h1" to state.value), now)
+        val shown = Teams.merge(Teams.live(mapOf("h1" to state.value), read, now), cached(), read, setOf("h1"))
         assertEquals(setOf("b-own", "b-fast"), Teams.deck(shown).map { it.second.id }.toSet())
         assertEquals(TerminalRef("h1", "fast/t1"), shown.single { it.machine == "fast" }.bots.single().ref)
-        assertTrue(state.value.spaces.any { it.machine == "slow" })   // laid out, but its git never answered
         val slow = shown.single { it.machine == "slow" }
         assertTrue(slow.stale)
         assertNull(slow.bots.single().ref)
-        assertEquals("Bot", shown.single { it.machine == "fast" }.bots.single().name)   // fast's registry was read too
+        assertTrue(state.value.spaces.any { it.machine == "slow" })   // laid out, but its git never answered
+
+        // (2) slow's late layout and git answers arrive now: nothing changes, and the connection carries on.
+        withTimeout(5_000) { late.toList().forEach { it.await() } }
+        delay(200)
+        assertEquals("New", state.value.spaces.single { it.machine == "slow" }.name)
+        assertTrue(state.value.git.keys.none { it.startsWith("slow|") })
         assertNull(lost)
+        assertEquals(listOf("fast", "slow"), refresh(reads, listOf("fast", "slow")))
+
+        // (5) "old" went with the first reading of the core's own; slow's row stays while slow is linked, then goes.
+        assertEquals(setOf("", "fast", "slow"), cached().map { it.machine }.toSet())
+        state.update { it.copy(linked = it.linked.filter { l -> l.name != "slow" }) }
+        sync.reading(mapOf("h1" to state.value), System.currentTimeMillis())
+        assertEquals(setOf("", "fast"), cached().map { it.machine }.toSet())
+
+        // (4) a reading taken before the machine was removed, whichever runs first, leaves nothing.
+        val taken = mapOf("h1" to state.value)
+        val racing = async(Dispatchers.IO) { sync.reading(taken, System.currentTimeMillis()) }
+        sync.removed("h1")
+        racing.await()
+        sync.reading(taken, System.currentTimeMillis())
+        assertEquals(emptyList<Teams.Team>(), cached())
     }
 
-    @Test fun aLateAnswerNeverOverwritesWhatWasReadSince() = runBlocking {
+    @Test fun aLateAnswerNeverOverwritesWhatWasReadSince() = bounded {
         val calls = ConcurrentHashMap<String, AtomicInteger>()
         val lateDoc = CompletableDeferred<Unit>(); val lateGit = CompletableDeferred<Unit>()
         answer = { method, machine, params ->
@@ -204,7 +257,7 @@ class HostReadsTest {
         assertEquals(listOf("slow"), refresh(reads, listOf("slow")))
     }
 
-    @Test fun anUnreachableMachineErrsFastAndHoldsBackNothing() = runBlocking {
+    @Test fun anUnreachableMachineErrsFastAndHoldsBackNothing() = bounded {
         answer = { method, machine, params -> if (machine == "down") Reply.Fail("down: connection refused") else healthy(method, machine, params) }
         // A long time-box: an error must come back at once, not wait it out.
         val reads = reads(limit = 10_000)
@@ -230,5 +283,7 @@ class HostReadsTest {
         const val TIME_BOX = 1_500L
         /** Room for a slow test machine; still far below the client's own 30 s. */
         const val SLACK = 1_000L
+        /** No test here may run longer: a regression fails instead of hanging the suite. */
+        const val TEST_LIMIT = 30_000L
     }
 }

@@ -568,22 +568,30 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         val terminals = list.optJSONArray("terminals")?.objects()?.map(CoreTerminal::parse).orEmpty()
         val local = client.call("doc.get", JSONObject().put("name", "herdr-app"))
         val home = homes.getOrPut(id) { exec(client, "printenv", "HOME") }
-        val spaces = LayoutReader.spaces(local.optJSONObject("value"), terminals = terminals, home = home).toMutableList()
-        // The linked machines' layouts at once, each time-boxed: one slow machine no longer holds up the others. One that
-        // doesn't answer keeps the spaces read before, and isn't counted as read ([MachineState.layouts]).
+        val own = LayoutReader.spaces(local.optJSONObject("value"), terminals = terminals, home = home)
         val names = list.optJSONArray("machines")?.objects().orEmpty().filter { it.clean("state") == "connected" }.map { it.getString("name") }
-        val (linkedSpaces, laidOut) = reads(id, client).layouts(names, terminals, state.value.machines[id]?.spaces.orEmpty())
-        spaces.addAll(linkedSpaces)
         val linked = LinkedMachine.list(list, terminals)
+        val before = state.value.machines[id]?.spaces.orEmpty().filter { it.machine in names }
         // Compared with this connection's previous read only, so connecting never replays what was already waiting.
         val previous = alertBase[id]?.takeIf { it.first === client }?.second
         alertBase[id] = client to terminals
-        val paned = spaces.flatMap { it.addresses }.toSet()
+        suspend fun alerts(spaces: List<PocketSpace>, linkedOnes: Boolean) {
+            val paned = spaces.flatMap { it.addresses }.toSet()
+            fun mine(t: TerminalRef) = t.address in paned && t.address.contains('/') == linkedOnes
+            alert(Alerts.changes(previous, terminals, id, ::mine), client)
+            Alerts.resolved(previous, terminals, id, ::mine).forEach { Notify.cancel(getApplication(), it) }
+        }
         val read = System.currentTimeMillis()
-        updateMachine(id) { HostReads.reading(it, terminals, spaces, linked, laidOut, read) }
-        alert(Alerts.changes(previous, terminals, id) { it.address in paned }, client)
-        Alerts.resolved(previous, terminals, id) { it.address in paned }.forEach { Notify.cancel(getApplication(), it) }
+        // The core's own terminals and spaces at once (the linked machines' as read before), and its own alerts: they
+        // never wait for a linked machine's layout.
+        updateMachine(id) { HostReads.reading(it, terminals, own + before, linked, emptyList(), read) }
+        alerts(own, linkedOnes = false)
         rememberLinked(id, linked.map { it.name })
+        // Then the linked machines' layouts at once, each time-boxed: one slow machine no longer holds up the others. One
+        // that doesn't answer keeps the spaces read before, and isn't counted as read ([MachineState.layouts]).
+        val (linkedSpaces, laidOut) = reads(id, client).layouts(names, terminals, before)
+        updateMachine(id) { HostReads.reading(it, terminals, own + linkedSpaces, linked, laidOut, read) }
+        alerts(linkedSpaces, linkedOnes = true)
         // The desktop assigns colours as spaces appear; read them again now and then, never write them.
         val now = System.currentTimeMillis()
         if (now - (colorsRead[id] ?: 0L) > 30_000) { colorsRead[id] = now; runCatching { readColors(id, client) } }

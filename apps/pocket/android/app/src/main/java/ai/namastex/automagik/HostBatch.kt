@@ -24,7 +24,8 @@ object HostBatch {
      * and the origin URL, each with `--no-optional-locks`, read only. Answers: position, then a code and an answer for
      * each of status, top level, common dir and origin; each NUL-terminated.
      */
-    const val GIT = "i=0\n" +
+    const val GIT = "LC_ALL=C; export LC_ALL\n" +   // git's messages in English: "not a git repository" is matched
+        "i=0\n" +
         "for p in \"\$@\"; do\n" +
         "  s=\$(git -C \"\$p\" --no-optional-locks status --porcelain=v2 --branch --untracked-files=no 2>&1); sc=\$?\n" +
         "  if [ \"\$sc\" -eq 0 ]; then s=\$(printf '%s\\n' \"\$s\" | grep '^# '); fi\n" +

@@ -51,13 +51,17 @@ All taken by the Pocket orchestrator on 2026-11-03, from the owner's answers.
     first read). Its rows are then replaced, even with no project left, while a machine still
     being read (or one whose layout timed out) keeps its cached rows. Nothing is written when
     the rows didn't change.
-  - Removing a machine purges its rows. Cached rows of a machine that is saved but not read show
-    as last known. They can't be opened or answered, and the deck says "Offline: can't answer".
+  - Removing a machine purges its rows, and a reading taken before the removal never writes them
+    back. Once a saved machine's own core is read, the rows of machines it no longer links to go.
+    Cached rows of a machine that is saved but not read show as last known. They can't be opened
+    or answered, and the deck says "Offline: can't answer".
   - A bot celebrates a merge only when its own feed newly lists it. Each feed keeps its own
     baseline.
 - Reads (`HostBatch`): git for every folder of a machine is one `machine.exec`, as is every
-  project registry there (re-read every 5 minutes). The machines are read at once, at most six,
-  each time-boxed (layouts 8 s, batches 15 s remote and 20 s on the core's own machine). Before,
+  project registry there (re-read every 5 minutes). Linked machines are read at once, at most six
+  (the core's own machine outside that pool), each time-boxed (layouts 8 s, batches 15 s remote
+  and 20 s on the core's own machine); one that doesn't answer is given up for that pass after
+  one wait. A refresh shows the core's own terminals and spaces before the linked layouts. Before,
   there was one call per folder and command, one machine after another. On a desktop with 19
   spaces on 7 machines that took about a minute (~280-320 calls); now it fills in within ~10 s
   (~50-70 calls, the refreshes meanwhile included).
