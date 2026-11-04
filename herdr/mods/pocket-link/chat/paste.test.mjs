@@ -94,3 +94,32 @@ test('frames single-line text over 1 KiB of UTF-8 so agents keep every read', ()
   // Each ESC becomes a 3-byte ␛, so the sent length, not the typed one, decides.
   assert.equal(buildNativeChatPasteBytes('\x1b'.repeat(400)), `${BEGIN}${'␛'.repeat(400)}${END}`)
 })
+
+// ---------------------------------------------------------------- the cleaner stays linear
+
+test('hostile input is cleaned in linear time', () => {
+  const MB = 1024 * 1024
+  const inputs = [
+    '\x1b]'.repeat(MB / 2),
+    '\u009d'.repeat(MB),
+    '\x1bP'.repeat(MB / 2),
+    `\x1b]${'a'.repeat(MB)}`,
+    `${'\x1b]x'.repeat(MB / 4)}\x07`,
+    `\x1b[${'0'.repeat(MB)}`,
+    '\x1b['.repeat(MB / 2),
+    '\u009b'.repeat(MB),
+    `\x1b${' '.repeat(MB)}`
+  ]
+  for (const input of inputs) {
+    const started = performance.now()
+    cleanChatText(input)
+    const ms = performance.now() - started
+    // Linear is a few ms per MB; the old lazy body took seconds at 100 KB and minutes at 1 MB.
+    assert.ok(ms < 500, `${JSON.stringify(input.slice(0, 6))}…: ${ms.toFixed(0)} ms`)
+  }
+})
+
+test('an unterminated string opener keeps the text after it', () => {
+  assert.deepEqual(cleanChatText('a\x1b]never closed\x1b[31mred'), { ok: true, text: 'anever closedred' })
+  assert.deepEqual(cleanChatText('a\x1b]0;t\x07b\x1b]0;u'), { ok: true, text: 'ab0;u' })
+})

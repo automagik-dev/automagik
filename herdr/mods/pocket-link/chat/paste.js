@@ -11,16 +11,21 @@ const ESC = '\u001b'
 // ---------------------------------------------------------------- ours: the cleaner
 
 // Escape sequences, 7-bit and 8-bit: CSI (ESC [ or 0x9b) with its parameters; OSC, DCS, SOS, PM
-// and APC strings up to their terminator (BEL or ST); any other ESC-introduced sequence.
+// and APC strings up to their terminator (BEL or ST); any other ESC-introduced sequence. A
+// string's body cannot hold ESC, BEL or another string opener, so each scan stops at the next
+// one: linear time, where a lazy `[\s\S]*?` rescanned to the end for every unterminated opener.
 const CSI = /(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]/g
-const STRING = /(?:\u001b[\]PX^_]|[\u0090\u0098\u009d\u009e\u009f])[\s\S]*?(?:\u0007|\u001b\\|\u009c)/g
+const STRING = /(?:\u001b[\]PX^_]|[\u0090\u0098\u009d\u009e\u009f])[^\u0007\u001b\u0090\u0098\u009c-\u009f]*(?:\u0007|\u001b\\|\u009c)/g
 const OTHER = /\u001b[ -/]*[0-~]/g
 // Every C0 control but tab and newline, DEL, and C1. Runs last, so stray ESCs and unterminated
 // sequence starts go too.
 const CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g
 
 /**
- * Clean a message the person wrote in a chat before it is typed into a terminal. `ESC[200~` and
+ * Clean a message the person wrote in a chat before it is typed into a terminal. Text can be lost,
+ * never let through: an OSC/DCS string goes whole only when its terminator follows, else just its
+ * opener goes and the rest is kept as text; a stray ESC
+ * takes the next character with it when that character can end a sequence; a lone CR is dropped. `ESC[200~` and
  * `ESC[201~` go first, then every other escape sequence, every C0 control but newline and tab, DEL
  * and C1 controls; CRLF becomes LF. Empty (or only whitespace) after cleaning is refused.
  * @param {unknown} text
