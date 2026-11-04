@@ -487,10 +487,12 @@ export function removeHooks(projects, { appHome, git = runGit, also = [], log } 
 
 /**
  * The settings.local.json files, where syncHooks looks, whose UserPromptSubmit runs one of `scripts`
- * (absolute paths) through a hook of the pack's shapes. Reads only.
+ * (absolute paths) through a hook of the pack's shapes, or whose hook command names one of
+ * `runners` (absolute paths: a runner such as the sidebar's bin/run.sh). Reads only.
  */
-export function hooksRunning(projects, { scripts, git = runGit, also = [], log } = {}) {
+export function hooksRunning(projects, { scripts = [], runners = [], git = runGit, also = [], log } = {}) {
   const want = new Set(scripts.map((s) => resolve(s)));
+  const via = runners.map((r) => resolve(r));
   const found = [];
   for (const folder of foldersOf(projects, { git, also, log })) {
     const s = settingsOf(folder);
@@ -498,7 +500,7 @@ export function hooksRunning(projects, { scripts, git = runGit, also = [], log }
     let settings;
     try { settings = JSON.parse(readFileSync(s.file, "utf8")); } catch { continue; }
     const list = isObject(settings) && isObject(settings.hooks) ? settings.hooks.UserPromptSubmit : null;
-    const runs = (h) => isObject(h) && typeof h.command === "string" && want.has(scriptOf(h.command) ?? "");
+    const runs = (h) => isObject(h) && typeof h.command === "string" && (want.has(scriptOf(h.command) ?? "") || via.some((r) => h.command.includes(r)));
     if ((Array.isArray(list) ? list : []).some((g) => (Array.isArray(g?.hooks) ? g.hooks : []).some(runs))) found.push(s.file);
   }
   return found;
@@ -537,12 +539,23 @@ export const sidebarOf = (modsDir) => SIDEBARS.find((m) => existsSync(join(modsD
  * A link there, or a link for its folder, is the person's: an error, nothing written.
  * Returns true when it wrote.
  */
+/** Whether `path` resolves into am's parts store ($AM_HOME, else $AUTOMAGIK_HOME, else ~/.automagik; parts.mjs amStoreOf). */
+function intoAmStore(path, env = process.env) {
+  const home = env.AM_HOME || env.AUTOMAGIK_HOME || join(env.HOME || homedir(), ".automagik");
+  try {
+    const store = realpathSync(join(home, "parts"));
+    return realpathSync(path).startsWith(`${store}/`);
+  } catch { return false; }
+}
+
 export function placeEntry(appHome, sidebar) {
   const body = readFileSync(join(appHome, "mods", sidebar, ENTRY_SOURCE));
   const path = stableBriefingPath(appHome);
   if (isLink(dirname(path))) throw new Error(`${dirname(path)} is a link: the hook's entry point was not placed`);
   mkdirSync(dirname(path), { recursive: true });
   const st = lstat(path);
+  // The am part's link (RFC 0012): am owns the entry point once it has placed one; the pack leaves it.
+  if (st?.isSymbolicLink() && intoAmStore(path)) return false;
   if (st && (st.isSymbolicLink() || !st.isFile())) throw new Error(`${path} is a link or not a file: left as it is`);
   if (st && readFileSync(path).equals(body)) return false;
   writeAtomic(path, body, 0o644);
