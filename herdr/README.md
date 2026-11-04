@@ -747,15 +747,15 @@ copy these from `~/.config/herdr-app/automagik-herdr/automagik.json` (the pack's
 3. the `spaces` block: `"mod": "am-sidebar"`;
 4. the footer block: `"mod": "am-footer"` with `"props": { "footer": true }` and
    `"size": { "px": 42 }`;
-5. a block `{ "id": "automations-panel", "content": { "mod": "am-automations" }, "size":
-   { "weight": 1 }, "min": 140, "hidden": true }` in the sidebar's column — the rail's clock toggles
-   it;
-6. the same block for `am-quota` (`"id": "am-quota-panel"`), which the rail's Accounts tab toggles (hidden by default, and hidden again while am-quota is off);
-7. the status bar block (`"id": "status"`, `"size": { "px": 28 }`): `"mod": "am-status"` in place of
+5. the status bar block (`"id": "status"`, `"size": { "px": 28 }`): `"mod": "am-status"` in place of
    `workspace-status`.
 
-`am-new-menu` (opened by the sidebar's and the tab bar's `+`) and `am-mods` (`⌘⇧M`, the rail's
-Mods tab) need no block.
+`am-new-menu` (opened by the sidebar's and the tab bar's `+`), `am-mods` (`⌘⇧M`, the rail's
+Mods tab), `am-automations` and `am-quota` need no block. The rail's clock and Accounts tabs open
+those two as a popup over the rail. Don't give them a block: Herdr shows plain Herdr instead of a
+layout that names a mod that is off ("needs mods that aren't here"), even in a hidden block, and
+am-quota ships off. A layout that already has an `automations-panel` or `am-quota-panel` block
+keeps working: while the mod is on, its tab shows and hides that block instead.
 
 ## One installer
 

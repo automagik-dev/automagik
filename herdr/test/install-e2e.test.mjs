@@ -264,14 +264,17 @@ function assertFullPack(m, r) {
   const shipped = readFileSync(join(x, PACK_LAYOUT));
   assert.deepEqual(readFileSync(join(m.appHome, PACK_LAYOUT)), shipped, "the automagik layout is the pack's");
   assert.deepEqual(readFileSync(join(m.state, "automagik.json")), shipped);
-  // Activation: the layout shows the sidebar, the footer rail, the tab bar, both panels and the
-  // Markdown menu; the sidebar's + opens am-new-menu; every pack mod it names is installed.
+  // Activation: the layout shows the sidebar, the footer rail, the tab bar and the Markdown menu;
+  // the sidebar's + opens am-new-menu; every pack mod it names is installed. It names no panel the
+  // footer opens itself (Automations, Accounts): Herdr shows plain Herdr instead of a layout that
+  // names a mod that is off (#221).
   const layout = JSON.parse(shipped);
   const blocks = [];
   const walk = (n) => { if (n.content?.mod) blocks.push(n.content); (n.children ?? []).forEach(walk); };
   walk(layout);
   const named = blocks.map((c) => c.mod);
-  for (const mod of ["am-sidebar", "am-tabs", "am-automations", "am-quota"]) assert.ok(named.includes(mod), `the layout names ${mod}`);
+  for (const mod of ["am-sidebar", "am-tabs", "am-footer", "am-status"]) assert.ok(named.includes(mod), `the layout names ${mod}`);
+  for (const mod of ["am-automations", "am-quota", ...OFF_BY_DEFAULT]) assert.ok(!named.includes(mod), `the layout does not name ${mod}`);
   assert.deepEqual(blocks.find((c) => c.mod === "am-footer")?.props, { footer: true }, "the footer rail");
   assert.equal(layout.terminal_menu, "am-markdown");
   assert.match(readFileSync(join(m.mods, "am-sidebar", "main.js"), "utf8"), /openOverlay\(\{ mod: "am-new-menu"/, "the sidebar's + opens am-new-menu");
@@ -409,11 +412,11 @@ test(`e2e (b): a v0.4.0 sidebar-only install is replaced by the whole pack (${la
   const lines = r.out.split("\n"), at = lines.findIndex((l) => l.includes("Your layout") && l.includes(personal));
   assert.ok(at >= 0, `the output names ${personal}:\n${r.out}`);
   const note = `${lines[at]}\n${lines[at + 1]}`;
-  for (const what of ["footer rail (am-footer)", "tab bar (am-tabs)", "Markdown menu (am-markdown)", "automations panel"]) {
+  for (const what of ["footer rail (am-footer)", "tab bar (am-tabs)", "Markdown menu (am-markdown)"]) {
     assert.ok(note.includes(what), `it names the ${what}: ${note}`);
   }
-  // am-quota ships off: its block is not missed until it is turned on.
-  assert.ok(!note.includes("Accounts panel"), `a mod that is off is not named: ${note}`);
+  // The panels the footer opens itself are never missed: the pack's layout has no block for them.
+  for (const what of ["automations panel", "Accounts panel"]) assert.ok(!note.includes(what), `${what} is not named: ${note}`);
   assert.ok(note.includes(join(m.state, "automagik.json")), `it points at the pack's layout to copy from: ${note}`);
 });
 }

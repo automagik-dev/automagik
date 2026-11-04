@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (owner's answers in: D35) |
-| Milestone | not scheduled |
+| Status | Accepted (owner's answers in: D35; delivery 2 partly merged: #254, #258; delivery 1 is #263, open) |
+| Milestone | none (ships outside the five milestones) |
 | Lanes | am (3.N.P, D35), herdr (3.N.P), plugin (3.N.P), pocket (3.N.P), desktop (3.N) |
 | Created | 2026-11-03 |
 
