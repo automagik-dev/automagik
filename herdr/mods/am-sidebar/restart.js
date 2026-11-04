@@ -174,7 +174,8 @@ export const doomedHelpers = (helpers = []) => helpers.filter((h) => h?.state ==
  * bot's name; `helpers`: hc get answers of the live terminals whose parent is the old pane.
  * A pane mid-turn would have the turn cut in half; a helper hc ends with its parent
  * (die_with_parent, as a worker is) would end with it. --tree (`tree`) restarts those helpers
- * under the new pane, so only one mid-turn refuses then. --force (`force`) overrides all.
+ * under the new pane (one mid-turn is waited for before anything starts: the CLI's treeIdle).
+ * --force (`force`) overrides all.
  */
 export function restartRefusal({ name, old, helpers = [], force = false, tree = false }) {
   if (force) return null;
@@ -182,13 +183,7 @@ export function restartRefusal({ name, old, helpers = [], force = false, tree = 
     return `${name} is working in ${old.address}; restarting now would cut its turn in half. Wait until it is idle, or pass --force.`;
   }
   const doomed = doomedHelpers(helpers);
-  if (tree) {
-    const busy = doomed.filter((h) => h.status?.state === "working").map((h) => h.address);
-    if (!busy.length) return null;
-    const one = busy.length === 1;
-    return `${old.address}'s ${one ? "helper" : "helpers"} ${busy.join(", ")} ${one ? "is" : "are"} working; restarting ${one ? "it" : "them"} now would cut `
-      + `${one ? "its turn" : "their turns"} in half. Wait until ${one ? "it is" : "they are"} idle, or pass --force.`;
-  }
+  if (tree) return null;
   if (doomed.length) {
     const one = doomed.length === 1;
     return `${old.address} has ${one ? "a helper that ends" : "helpers that end"} with it: ${doomed.map((h) => h.address).join(", ")}. `

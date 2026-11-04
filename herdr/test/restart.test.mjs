@@ -174,7 +174,7 @@ test("restartPlan reuses the old pane's command when it runs the bot's agent: a 
   assert.deepEqual([swap.mode, swap.reused, swap.argv], ["swap", false, ["codex"]]);
 });
 
-test("restartRefusal --tree: helpers that end with the pane don't refuse unless one is mid-turn; without it the refusal names --tree and --force", () => {
+test("restartRefusal --tree: helpers that end with the pane don't refuse, mid-turn or not (waited for); without it the refusal names --tree and --force", () => {
   const idle = { address: "t5", status: { state: "idle" } };
   const helper = { address: "t7", state: "live", die_with_parent: true, status: { state: "idle" } };
   const without = restartRefusal({ name: "Genie", old: idle, helpers: [helper] });
@@ -182,7 +182,7 @@ test("restartRefusal --tree: helpers that end with the pane don't refuse unless 
   assert.equal(restartAnswer({ code: 1, err: without }).forceable, true, "the sidebar still offers --force");
   assert.equal(restartRefusal({ name: "Genie", old: idle, helpers: [helper], tree: true }), null);
   const busy = { ...helper, status: { state: "working" } };
-  assert.match(restartRefusal({ name: "Genie", old: idle, helpers: [busy], tree: true }), /t5's helper t7 is working; .* or pass --force\./);
+  assert.equal(restartRefusal({ name: "Genie", old: idle, helpers: [busy], tree: true }), null, "--tree waits for it before anything starts (the CLI)");
   assert.equal(restartRefusal({ name: "Genie", old: idle, helpers: [busy], tree: true, force: true }), null);
 });
 

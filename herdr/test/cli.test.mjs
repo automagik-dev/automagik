@@ -1312,16 +1312,27 @@ test("restart #213: the pane always gets the CLI's PATH, so a bare codex (#!/usr
 const SID3 = "3c3c3c3c-1b2d-4c5e-9f60-718293a4b5c6";
 
 /**
- * The invariant --tree keeps (#256 review): once the command exits, no session id (agent.session
- * or revive.session) is on more than one live pane.
+ * The invariant --tree keeps (#256 reviews), at every fake hc call (the fake's .doubles file) and
+ * at the end: no session id (agent.session or revive.session) is on two live panes, but for the
+ * bot's own while its new pane proves itself (`bot`: [old, new], both idle then: a restart
+ * without --tree has that window too, so a failed new pane leaves the old one running).
  */
-function onePanePerSession(s) {
-  const by = new Map();
+function onePanePerSession(s, { bot = ["t5", "t100"] } = {}) {
+  const live = new Map();
   for (const x of s.hcState().terminals.filter((y) => y.state === "live")) {
     const id = x.labels?.["agent.session"] ?? x.labels?.["revive.session"];
-    if (id) by.set(id, [...(by.get(id) ?? []), x.address]);
+    if (id) live.set(id, [...(live.get(id) ?? []), x.address]);
   }
-  for (const [id, panes] of by) assert.equal(panes.length, 1, `session ${id} is live in ${panes.join(", ")}`);
+  for (const [id, panes] of live) assert.equal(panes.length, 1, `session ${id} is live in ${panes.join(", ")} at the end`);
+  const file = join(s.root, "hc.json.doubles");
+  const doubles = existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
+  for (const d of doubles) assert.deepEqual(d.panes, bot, `call ${d.call} (${d.word}): session ${d.session} live in ${d.panes.join(", ")}`);
+  // The bot's pair only between the new pane's run and the old pane's kill.
+  const calls = s.calls();
+  const ran = calls.findIndex((c) => c[0] === "run" && c.includes(`agent.session=${SID}`));
+  const killed = calls.findIndex((c) => c[0] === "kill" && c[1] === bot[0]);
+  // d.call counts the fake's calls from 1, itself included, and sees the state before it acts: call ran+1 is the run itself.
+  for (const d of doubles) assert.ok(d.call - 1 > ran && d.call - 1 <= killed, `call ${d.call} (${d.word}) outside the up-check (run ${ran}, kill ${killed})`);
 }
 
 /** treeScene with `third`: a codex helper t10 ("probe", session SID3) in a third folder, after t7 and t8. */
@@ -1372,8 +1383,9 @@ test("restart --tree: the helpers that end with the bot run again under its new 
   // The old helpers end before their replacements start; the old pane last.
   const calls = s.calls();
   const killAt = (x) => at(calls, "kill", x), runAt = (name) => calls.findIndex((c) => c[0] === "run" && c.includes(name));
-  assert.ok(killAt("t7") < runAt("fix-213-dev") && killAt("t8") < runAt("rev-1"), JSON.stringify(calls));
-  assert.ok(runAt("rev-1") < killAt("t5"), JSON.stringify(calls));
+  // The old pane ends (its helpers with it) before any helper runs again; none is killed on its own.
+  assert.ok(killAt("t5") > 0 && killAt("t5") < runAt("fix-213-dev") && runAt("fix-213-dev") < runAt("rev-1"), JSON.stringify(calls));
+  assert.deepEqual([killAt("t7"), killAt("t8")], [-1, -1]);
   const state = s.hcState();
   assert.deepEqual(["t5", "t7", "t8", "t9", "t101", "t102"].map((x) => state.terminals.find((y) => y.address === x).state),
     ["finished", "finished", "finished", "live", "live", "live"], "the member bot that outlives the pane is left alone");
@@ -1389,23 +1401,60 @@ test("restart --tree: the helpers that end with the bot run again under its new 
   assert.equal(text.code, 0);
 });
 
-test("restart --tree refuses a helper mid-turn (unless --force) and a run from inside a helper; --force alone still ends the helpers with the pane", (t) => {
+test("restart --tree waits, before anything starts, for helpers and the old pane to be idle: a turn's note types into the old pane only then; still mid-turn after the wait refuses", (t) => {
   const busy = treeScene(t, { workerStatus: "working" }).s;
-  const r = busy.cli(["restart", "Genie", "--tree"]);
-  assert.equal(r.code, 1);
-  assert.match(r.err, /t5's helper t7 is working; restarting it now would cut its turn in half\. Wait until it is idle, or pass --force\./);
-  assert.equal(runCall(busy.calls()), undefined);
+  const st = busy.hcState();
+  st.terminals.find((x) => x.address === "t7").idleAfterGets = 2; // its turn ends during the wait: a note into t5, whose agent takes a turn
+  writeFileSync(join(busy.root, "hc.json"), JSON.stringify(st));
+  const r = busy.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.json().helpers.map((h) => [h.replaced, h.up]), [["t7", true], ["t8", true]]);
+  const calls = busy.calls();
+  const ran = calls.findIndex((c) => c[0] === "run");
+  const notes = busy.hcState().notes ?? [];
+  assert.deepEqual(notes.map((n) => [n.to, n.from]), [["t5", "t7"]]);
+  assert.ok(notes.every((n) => n.call < ran), "the note went in, and t5's turn ended, before the new pane started");
+  assert.ok(calls.slice(0, ran).filter((c) => c[0] === "get" && c[1] === "t5").length >= 3, "t5's own turn was waited for too");
+  onePanePerSession(busy);
+  // Still mid-turn when the wait runs out: refused, nothing started or ended.
+  const stays = treeScene(t, { workerStatus: "working" }).s;
+  const w = stays.cli(["restart", "Genie", "--tree"], { env: { AUTOMAGIK_HERDR_TREE_TURN_WAIT_MS: "1000" } });
+  assert.equal(w.code, 1);
+  assert.match(w.err, /t7 was still mid-turn 1s later\. Nothing was started: restart once it is idle, or pass --force to cut its turn\./);
+  assert.equal(runCall(stays.calls()), undefined);
+  assert.equal(at(stays.calls(), "kill"), -1);
+  // From inside a helper, or inside the old pane (which --tree ends before its helpers run again): refused.
   const inside = treeScene(t).s;
   const me = inside.cli(["restart", "Genie", "--tree"], { env: { HC_TERMINAL_ID: "t7" } });
   assert.equal(me.code, 1);
   assert.match(me.err, /This runs in t7, one of t5's helpers, which --tree ends and runs again: run it from another terminal\./);
+  const self = inside.cli(["restart", "Genie", "--tree"], { env: { HC_TERMINAL_ID: "t5" } });
+  assert.equal(self.code, 1);
+  assert.match(self.err, /This runs in t5, the pane --tree ends before its helpers run again: run restart --tree from another terminal\./);
   assert.equal(runCall(inside.calls()), undefined);
+  // --force alone (no --tree): the helpers end with the pane, as before.
   const forced = treeScene(t).s;
   const f = forced.cli(["restart", "Genie", "--force", "--json"]);
   assert.equal(f.code, 0, f.err);
   assert.equal(runs(forced).length, 1, "only the bot runs again");
   assert.equal("helpers" in f.json(), false);
   assert.deepEqual(["t7", "t8"].map((x) => forced.hcState().terminals.find((y) => y.address === x).state), ["finished", "finished"]);
+});
+
+test("restart --tree: a helper whose turn starts and ends once the new pane is up types into no pane older than it (the old one has ended)", (t) => {
+  const s = treeScene(t).s;
+  const st = s.hcState();
+  st.workingOnRun = ["t8"]; // t8 starts a turn as the bot's new pane starts …
+  st.terminals.find((x) => x.address === "t8").idleAfterGets = 0; // … and ends it at the next look
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const calls = s.calls();
+  const ran = calls.findIndex((c) => c[0] === "run");
+  const notes = (s.hcState().notes ?? []).filter((n) => n.call - 1 > ran);
+  assert.deepEqual(notes.filter((n) => !["t100", "t101", "t102"].includes(n.to)), [], `a note went into an old pane: ${JSON.stringify(notes)}`);
+  assert.deepEqual(r.json().helpers.map((h) => [h.replaced, h.up]), [["t7", true], ["t8", true]]);
+  onePanePerSession(s);
 });
 
 test("restart --tree: a helper that is itself a bot (started under the pane, then attached) keeps its binding: moved to its new terminal", (t) => {
@@ -1469,7 +1518,15 @@ test("restart --tree: six codex helpers in one folder resume each its own sessio
   assert.equal(s.cli(["restart", "Genie", "--fresh-shared"]).code, 2, "--fresh-shared goes with --tree");
 });
 
-test("restart --tree: hc run failing for helper 2 of 3: helpers 1 and 3 run again, the old pane ends, helper 2's resume line is printed, exit 1", (t) => {
+/** The resume line --tree printed (its hc run line), checked to parse as sh, then run as sh would split it. */
+function pastedLine(t, line) {
+  const r = spawnSync("sh", ["-n", "-c", line], { encoding: "utf8" });
+  assert.equal(r.status, 0, `sh -n rejects: ${line}\n${r.stderr}`);
+  const words = spawnSync("sh", ["-c", `for w in ${line.replace(/^hc /, "")}; do printf '%s\\0' "$w"; done`], { encoding: "utf8" });
+  return words.stdout.split("\0").slice(0, -1);
+}
+
+test("restart --tree: hc run failing for helper 2 of 3: helpers 1 and 3 run again, the old pane ends, helper 2's line runs as pasted, exit 1", (t) => {
   const { s, wt2 } = treeScene(t, { third: true });
   const st = s.hcState();
   st.failRun = ["rev-1"];
@@ -1478,9 +1535,16 @@ test("restart --tree: hc run failing for helper 2 of 3: helpers 1 and 3 run agai
   assert.equal(r.code, 1, "the bot and two helpers restarted, one didn't");
   assert.equal(r.json().terminal, "t100");
   assert.deepEqual(r.json().helpers.map((h) => [h.replaced, h.terminal, h.up, Boolean(h.error)]), [["t7", "t101", true, false], ["t8", null, false, true], ["t10", "t102", true, false]]);
-  const line = `hc run --bg --name rev-1 --cwd ${wt2} --parent t100 -- sh -c 'omp --auto-approve --model deepseek/flash "$@"' sh --resume=${SID2} (session ${SID2})`;
-  assert.equal(r.json().helpers[1].by_hand, line);
-  assert.ok(r.err.includes(`t8 (rev-1) wasn't run again: hc run failed (hc: can't start rev-1). It ends with the old pane; its conversation is kept, so run it again by hand: ${line}.`), r.err);
+  const line = r.json().helpers[1].by_hand;
+  // The same words the restart ran for it: its name, folder, labels, parent, the seat's PATH and its command, resumed.
+  const tried = s.calls().find((c) => c[0] === "run" && c.includes("rev-1"));
+  assert.deepEqual(pastedLine(t, line), tried);
+  assert.deepEqual([tried[tried.indexOf("--cwd") + 1], tried[tried.indexOf("--parent") + 1]], [wt2, "t100"]);
+  assert.ok(tried.includes(`revive.session=${SID2}`) && tried.includes("/usr/bin/env") && tried.some((w) => w.startsWith("PATH=")), tried.join(" "));
+  assert.deepEqual(agentWords(tried).slice(-2), ["sh", `--resume=${SID2}`]);
+  assert.ok(r.err.includes(`t8 (rev-1) wasn't run again: hc run failed (hc: can't start rev-1). Its conversation is kept; to run it again by hand:\n`
+    + `automagik-herdr:   ${line}\n`) || r.err.includes(`  ${line}\n  # resumes session ${SID2}`), r.err);
+  assert.match(r.err, new RegExp(`# resumes session ${SID2}`));
   assert.deepEqual(agentWords(runs(s).at(-1)), ["codex", "-m", "gpt-a", "resume", SID3], "helper 3 resumed by its id");
   const state = s.hcState();
   assert.deepEqual(["t5", "t7", "t8", "t10", "t100", "t101", "t102"].map((x) => state.terminals.find((y) => y.address === x).state),
@@ -1488,67 +1552,53 @@ test("restart --tree: hc run failing for helper 2 of 3: helpers 1 and 3 run agai
   onePanePerSession(s);
 });
 
-test("restart --tree: a helper that never comes up, whose kill fails, or that hc can't read is reported and never started twice; the rest go on, the old pane ends", (t) => {
+test("restart --tree: a helper that survives its parent's end (and its kill) is said, never run twice nor offered by hand; one never up, or that hc can't read, is reported", (t) => {
+  // t7 outlives t5's end and its own kill fails: it holds its session, so no second pane and no hand line.
+  const stuck = treeScene(t).s;
+  const st = stuck.hcState();
+  st.surviveParent = ["t7"];
+  st.failKill = "t7";
+  writeFileSync(join(stuck.root, "hc.json"), JSON.stringify(st));
+  const k = stuck.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(k.code, 1);
+  assert.match(k.err, /t7 \(fix-213-dev\) it still runs after its parent ended \(hc kill t7 failed: kill refused on t7\): it holds its session, so it isn't run again/);
+  assert.deepEqual(k.json().helpers.map((h) => [h.replaced, h.up, h.still_running, h.by_hand]), [["t7", false, true, null], ["t8", true, false, null]]);
+  assert.equal(runs(stuck).filter((c) => c.includes("fix-213-dev")).length, 0, "t7 never started twice");
+  assert.deepEqual(["t5", "t7"].map((x) => stuck.hcState().terminals.find((y) => y.address === x).state), ["finished", "live"]);
+  onePanePerSession(stuck);
+  // A helper that survives its parent but ends on its own kill: run again.
+  const once = treeScene(t).s;
+  const st1 = once.hcState();
+  st1.surviveParent = ["t7"];
+  writeFileSync(join(once.root, "hc.json"), JSON.stringify(st1));
+  const o = once.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(o.code, 0, o.err);
+  assert.ok(at(once.calls(), "kill", "t7") > at(once.calls(), "kill", "t5"));
+  assert.deepEqual(o.json().helpers.map((h) => h.up), [true, true]);
+  // Never up: reported with its line, which parses.
   process.env.AUTOMAGIK_HERDR_RESTART_WAIT_MS = "400";
   t.after(() => { delete process.env.AUTOMAGIK_HERDR_RESTART_WAIT_MS; });
   const late = treeScene(t).s;
-  const st = late.hcState();
-  st.runAsFor = { "fix-213-dev": "shell" };
-  writeFileSync(join(late.root, "hc.json"), JSON.stringify(st));
-  const r = late.cli(["restart", "Genie", "--tree"]);
+  const st2 = late.hcState();
+  st2.runAsFor = { "fix-213-dev": "shell" };
+  writeFileSync(join(late.root, "hc.json"), JSON.stringify(st2));
+  const r = late.cli(["restart", "Genie", "--tree", "--json"]);
   assert.equal(r.code, 1);
-  assert.match(r.err, /t7 \(fix-213-dev\) wasn't run again: t101 didn't keep an agent in front within 0\.4s, so it was ended\. It ends with the old pane; .* run it again by hand: hc run --bg --name fix-213-dev .* -- omp --model=kimi\/k3 --thinking=high --continue \(no session id known\)\./);
-  assert.deepEqual(["t101", "t102", "t5"].map((x) => late.hcState().terminals.find((y) => y.address === x).state), ["finished", "live", "finished"], "t8 still ran again");
+  assert.match(r.err, /t7 \(fix-213-dev\) wasn't run again: t101 didn't keep an agent in front within 0\.4s, so it was ended\. Its conversation is kept/);
+  assert.match(r.err, /# a worker: its workers-ledger row \(task fix-213\) isn't copied/);
+  pastedLine(t, r.json().helpers[0].by_hand);
+  assert.deepEqual(["t101", "t102", "t5"].map((x) => late.hcState().terminals.find((y) => y.address === x).state), ["finished", "live", "finished"]);
   onePanePerSession(late);
-  // hc kill refused for t7: t7 is never run twice; t8 runs again; t5 ends (and t7 with it).
-  const stuck = treeScene(t).s;
-  const st2 = stuck.hcState();
-  st2.failKill = "t7";
-  writeFileSync(join(stuck.root, "hc.json"), JSON.stringify(st2));
-  const k = stuck.cli(["restart", "Genie", "--tree", "--json"]);
-  assert.equal(k.code, 1);
-  assert.match(k.err, /t7 \(fix-213-dev\) wasn't run again: hc kill t7 failed \(kill refused on t7\)\. It ends with the old pane/);
-  assert.equal(runs(stuck).filter((c) => c.includes("fix-213-dev")).length, 0, "t7 never started twice");
-  assert.deepEqual(k.json().helpers.map((h) => [h.replaced, h.up]), [["t7", false], ["t8", true]]);
-  assert.deepEqual(["t5", "t7"].map((x) => stuck.hcState().terminals.find((y) => y.address === x).state), ["finished", "finished"]);
-  onePanePerSession(stuck);
-  // hc get of t7 fails once the bot's pane starts: unknown is not gone.
+  // hc get of t7 fails once the bot's pane starts: unknown is not gone; no second copy.
   const blind = treeScene(t).s;
   const st3 = blind.hcState();
   st3.failGetOnRun = ["t7"];
   writeFileSync(join(blind.root, "hc.json"), JSON.stringify(st3));
   const b = blind.cli(["restart", "Genie", "--tree"]);
   assert.equal(b.code, 1);
-  assert.match(b.err, /t7 \(fix-213-dev\) wasn't run again: hc get t7 failed \(hc: server error reading t7\), so it may still run\./);
-  assert.equal(at(blind.calls(), "kill", "t7"), -1, "never killed blind");
+  assert.match(b.err, /t7 \(fix-213-dev\) wasn't run again: hc get t7 failed \(hc: server error reading t7\), so it may still run; with it possibly running, a second copy would share its session\./);
   assert.equal(runs(blind).filter((c) => c.includes("fix-213-dev")).length, 0);
   assert.equal(blind.hcState().terminals.find((y) => y.address === "t5").state, "finished");
-});
-
-test("restart --tree: a helper that starts a turn after the bot's pane is up is waited for, then run again; one still mid-turn at the end of the wait is reported", (t) => {
-  const busy = treeScene(t).s;
-  const st = busy.hcState();
-  st.workingOnRun = ["t7"]; // t7 starts a turn while the bot's new pane comes up
-  st.terminals.find((x) => x.address === "t7").idleAfterGets = 2;
-  writeFileSync(join(busy.root, "hc.json"), JSON.stringify(st));
-  const r = busy.cli(["restart", "Genie", "--tree", "--json"]);
-  assert.equal(r.code, 0, r.err);
-  assert.deepEqual(r.json().helpers.map((h) => [h.replaced, h.terminal, h.up]), [["t7", "t101", true], ["t8", "t102", true]]);
-  const calls = busy.calls();
-  const kill7 = at(calls, "kill", "t7");
-  assert.ok(calls.slice(0, kill7).filter((c) => c[0] === "get" && c[1] === "t7").length >= 3, "t7 was watched until its turn ended, then ended");
-  onePanePerSession(busy);
-  // Still mid-turn when the wait runs out: reported with its line, not cut; the old pane ends.
-  const stays = treeScene(t).s;
-  const st2 = stays.hcState();
-  st2.workingOnRun = ["t7"];
-  writeFileSync(join(stays.root, "hc.json"), JSON.stringify(st2));
-  const w = stays.cli(["restart", "Genie", "--tree"], { env: { AUTOMAGIK_HERDR_TREE_TURN_WAIT_MS: "1000" } });
-  assert.equal(w.code, 1);
-  assert.match(w.err, /t7 \(fix-213-dev\) wasn't run again: it was still mid-turn 1s later\. It ends with the old pane; .* run it again by hand: hc run --bg --name fix-213-dev/);
-  assert.equal(at(stays.calls(), "kill", "t7"), -1, "its turn was never cut by --tree");
-  assert.equal(stays.hcState().terminals.find((y) => y.address === "t5").state, "finished");
-  onePanePerSession(stays);
 });
 
 test("restart --tree refuses before anything starts: a gone folder, a helper hc can't read, a helper's own helpers, one session named twice", (t) => {

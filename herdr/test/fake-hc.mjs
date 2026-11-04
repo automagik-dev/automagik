@@ -21,6 +21,19 @@ const out = (x) => process.stdout.write(`${JSON.stringify(x)}\n`);
 const fail = (msg, code = 1) => { process.stderr.write(`${msg}\n`); process.exit(code); };
 const words = args.filter((a) => a !== "--json");
 const find = (t) => state.terminals.find((x) => x.address === t || x.name === t);
+// The call's number (lines in the log so far), and at every call the sessions (agent.session or
+// revive.session labels) live in more than one pane then, appended to $HC_FAKE_STATE.doubles.
+const callNo = readFileSync(process.env.HC_FAKE_LOG, "utf8").split("\n").filter(Boolean).length;
+{
+  const by = new Map();
+  for (const x of state.terminals.filter((y) => y.state === "live")) {
+    const id = x.labels?.["agent.session"] ?? x.labels?.["revive.session"];
+    if (id) by.set(id, [...(by.get(id) ?? []), x.address]);
+  }
+  for (const [session, panes] of by) {
+    if (panes.length > 1) appendFileSync(`${process.env.HC_FAKE_STATE}.doubles`, `${JSON.stringify({ call: callNo, word: words[0], session, panes })}\n`);
+  }
+}
 // state.fail: commands that fail as a server that is down would (exit 1).
 if ((state.fail ?? []).includes(words[0])) fail(`hc: can't reach the server (${words[0]})`);
 // A linked machine's terminal ("vm/t8") on a machine that isn't connected: unavailable, as hc says.
@@ -61,9 +74,20 @@ switch (words[0]) {
     const t = find(words[1]);
     // Like the real one: exit 3 and a not_found error on stderr.
     if (!t) fail(JSON.stringify({ error: { kind: "not_found", message: `no terminal "${words[1]}"` } }), 3);
-    // idleAfterGets: while mid-turn, answered that many times, then its turn ends (idle).
+    // idleAfterGets: while mid-turn, answered that many times, then its turn ends (idle). As hc
+    // does, the turn's end types a note into its parent (state.notes), whose agent then takes a
+    // short turn of its own (one more look).
     if (typeof t.idleAfterGets === "number" && t.status?.state === "working") {
-      if (t.idleAfterGets <= 0) { t.status.state = "idle"; delete t.idleAfterGets; } else t.idleAfterGets -= 1;
+      if (t.idleAfterGets <= 0) {
+        t.status.state = "idle";
+        delete t.idleAfterGets;
+        const up = t.parent ? find(t.parent) : null;
+        if (up?.state === "live") {
+          state.notes = [...(state.notes ?? []), { to: up.address, from: t.address, call: callNo }];
+          up.status = { ...(up.status ?? {}), state: "working" };
+          up.idleAfterGets = 1;
+        }
+      } else t.idleAfterGets -= 1;
       save();
     }
     // exitAfterGets: answered live that many times, then the program exits (a failed resume).
@@ -164,7 +188,8 @@ switch (words[0]) {
     if (!t) fail(`no terminal ${words[1]}`);
     if (state.failKill === words[1]) fail(`kill refused on ${words[1]}`);
     t.state = "finished";
-    for (const c of state.terminals) if (c.parent === t.address && c.state === "live" && c.die_with_parent) c.state = "finished";
+    // state.surviveParent: children that outlive their parent's end anyway (a kill that didn't take).
+    for (const c of state.terminals) if (c.parent === t.address && c.state === "live" && c.die_with_parent && !(state.surviveParent ?? []).includes(c.address)) c.state = "finished";
     save();
     out({ address: t.address, state: t.state });
     // Killing the caller's own terminal ends the caller (this fake runs exec'd by the wrapper,
