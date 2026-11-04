@@ -59,13 +59,20 @@ support is reported only by the press **[press]**
 The research's `wsl.exe -d automagik` commands belong to the distro design and are not used
 here.
 
+Two parts of D39 the design cannot promise yet, both for Felipe to confirm:
+
+- **`\\wsl.localhost`.** That share lists WSL distros, and a WSLC session is not one, so the
+  projects volume may not show there (Design, "Projects"; open question 1).
+- **Only two native programs.** herdr-app may need an `hc` on Windows to reach the guest's core.
+  That would be a third native process, though it holds no terminals (open question 3).
+
 ## Design
 
 ### Processes and where each runs
 
 | Where | What |
 |---|---|
-| Windows, as the user | Electron (window, updater, Bot browser views, the CDP relay `bot-relay.js`, the WSLC boundary); `automagik-wslc.exe`, the app's helper for the WSLC API; herdr-app and the pack's mod files it loads; a local `hc` with no terminals, only as herdr-app's bridge (open question 3) |
+| Windows, as the user | Electron (window, updater, Bot browser views, the CDP relay `bot-relay.js`, the WSLC boundary); `automagik-wslc.exe`, the app's helper for the WSLC API; herdr-app and the pack's mod files it loads; only if open question 3 is answered yes, a local `hc` with no terminals, as herdr-app's bridge |
 | Windows, elevated once | `automagik-wslc.exe install`, the first-run component install (the UAC prompt) |
 | WSL service (Microsoft's) | `wslservice.exe` (privileged) creates the VM through HCS and hands it to a per-user `wslcsession.exe` **[doc]** ([architecture](https://devblogs.microsoft.com/commandline/wslc-architecture-deep-dive/)) |
 | WSLC session `automagik`, one container `automagik`, user `automagik` (uid 1000) | `dsh-launch` (the guest launcher), DSH on the image's Node, pnpm, plugins, Claude Code, Codex, ACP adapters, git, bash, `hc` and all its terminals, `am` and the pack's CLI (`automagik-herdr`, hooks, `run.sh`); Omni later |
@@ -118,10 +125,12 @@ browser bridge over the `ipc` channel (`answerDsh`, `ds-bot:browser-endpoint`,
    connection over the framed stdio to Electron, which connects to the relay from 127.0.0.1. The
    relay's checks (a loopback peer, no Origin, a 64-hex token per Bot) hold unchanged. The URL
    handed to DSH names the launcher's port.
-5. **Downloads.** The relay's `downloadRoots` are paths. A Bot's downloads land in a Windows
-   folder (`%LOCALAPPDATA%\Automagik\downloads`) that the session mounts into the container over
-   virtiofs (volumes are virtiofs **[doc]**) at `/mnt/automagik-downloads`. The launcher
-   translates the paths both ways. This is the only Windows folder mounted.
+5. **The exchange folder.** One Windows folder, `%LOCALAPPDATA%\Automagik\exchange`, is
+   mounted into the container over virtiofs (volumes are virtiofs **[doc]**) at
+   `/mnt/automagik-exchange`. It is the only Windows folder mounted. It has two parts.
+   `downloads/` is where a Bot's browser downloads land: the relay's `downloadRoots` are paths,
+   and the launcher translates them both ways. `lane/` is where Electron hands over verified
+   plugin tarballs (see "The image").
 6. **Links out.** Claude Code's and Codex's sign-in flows open a browser. `xdg-open` in the
    guest has nowhere to go. The launcher's `open` message asks Electron to open the URL with
    `shell.openExternal`, for `https:` URLs only.
@@ -141,13 +150,15 @@ both ways untouched and ask nothing" (`hc machine add --help`). The link is ther
 `hc machine add --via "automagik-wslc.exe exec --" --name linux`: the helper runs the given
 shell line in the container with byte-clean stdio. Whether WSLC's process stdio is byte-clean
 for the framed protocol is **[unverified]**, the spike's first herdr check. To herdr-app the
-guest is a machine like any remote one. The pack already handles spaces on other machines
-(`remoteFile.js`, RFC 0013 Decided 4), so mods that read Bot files read them through the
-machine.
+guest is a machine like any remote one. The pack already reads and writes a linked machine's
+`.herdr/bots.json` through herdr-core (`hc file read --on <machine>` and `hc file edit`,
+`herdr/mods/am-sidebar/remoteFile.js`), so the sidebar's Bot list works the same against the
+guest. Other mods that read local files read them through the machine too (delivery 4).
 
 Whether herdr-app can attach to a core that is not local, without an `hc` on Windows, is a
-question for herdrdev (open question 3). Until it can, a local `hc` runs on Windows as the
-bridge only, with `linux` as its default machine and no terminals of its own.
+question for herdrdev (open question 3). Until it can, the only way with today's `hc` is a
+local `hc` on Windows as the bridge, with `linux` as its default machine and no terminals of
+its own. That is a third native process, against D39's wording.
 
 **The pack splits.** Mod `.js` files are loaded by herdr-app, so they install on Windows into
 herdr-app's home. The pack's CLI, hooks and `run.sh` run in panes, so they install in the
@@ -168,10 +179,14 @@ guest's `am` for the rest (herdr lane).
   acp-dsh's pnpm installs), so a new CLI never needs a new image.
 - **Code updates ride the signed plugin lane.** `lane.js` keeps every check it has (ed25519
   pointer, sha256 and sha512, size, the 3.N line, engines.dsh, bad versions) and stays in
-  Electron. Only its last step moves: the verified tarball is written into the volume's
-  `lane/staged`, and `dsh-launch` puts it in place before DSH starts. Electron verifies,
-  so the trust root stays in the signed app. The guest unpacks, because the profile and pnpm's
-  records are Linux paths and the unpack is the code that already does it (`pinLanePackage`).
+  Electron, with its state files (`staged.json`, `applied.json`, `bad.json`). Only its last
+  step moves: Electron writes the verified tarball into the exchange folder's `lane/`, and
+  `dsh-launch` unpacks it into the profile before DSH starts, and puts `.lane-prev` back when
+  Electron reports a failed trial. Electron verifies, so the trust root stays in the signed
+  app. An agent in the guest could write into `lane/` too, but it can already write its own
+  profile; the lane guards the download, not the guest from itself. The guest unpacks, because
+  the profile and pnpm's records are Linux paths and the unpack is the code that already does
+  it (`pinLanePackage`).
   The trial and its rollback are unchanged: the page must draw the Bot team, or the previous
   plugins come back.
 - **The base image updates with the desktop lane.** Each desktop release (3.N) that changes an
@@ -241,7 +256,7 @@ design wants terminals to survive a closed window, as they do on macOS.
 ### The fence inside
 
 The VM is the outer fence, and it is the strongest one the product has on any OS. The guest
-sees its image, its volume and the downloads folder, and nothing else of Windows: not
+sees its image, its volume and the exchange folder, and nothing else of Windows: not
 `C:\Users`, not the credential stores, not the browser profiles. WSL distros run Windows `.exe`
 files through interop; a WSLC container must not, and the spike checks that it cannot.
 
@@ -279,11 +294,11 @@ them, and removing them would need another UAC prompt.
 |---|---|
 | WSLC session name `automagik`, container `automagik`, guest user `automagik` (uid 1000) | New. Fixed once shipped: renaming orphans a person's data. |
 | Storage folder `%LOCALAPPDATA%\Automagik\wslc` (the session's `storagePath`) | New. Uninstall's Delete removes it; nothing else does. |
-| Volume at `/home/automagik`; `~/.automagik` and `~/.automagik/bots` inside it | The same public paths as macOS and Linux, inside the guest. Windows installs had native data until D38; none of it is migrated (open question 8). |
+| Volume at `/home/automagik`; `~/.automagik` and `~/.automagik/bots` inside it | The same public paths as macOS and Linux, inside the guest. Windows installs had native data until D38; it is not migrated automatically (open question 8). |
 | `/opt/automagik/bin/dsh-launch` and its framed stdio messages (`ready`, `ipc`, `tunnel`, `open`, `log`) | New, versioned by a `v` field; Electron refuses a launcher with an unknown major version. |
 | Container port 41700 for DSH; the host port stays `dsh-port` | New container port; the host port's rule is RFC 0007's. |
 | Release asset `automagik-linux-image-<v>.tar` and `.sha256`, desktop lane | New. An image is attached only when its inputs changed; the app pins the hash of the one it runs. RFC 0011 gets one line for it. |
-| `%LOCALAPPDATA%\Automagik\downloads`, mounted at `/mnt/automagik-downloads` | New. The only Windows folder in the guest. |
+| `%LOCALAPPDATA%\Automagik\exchange` (`downloads/`, `lane/`), mounted at `/mnt/automagik-exchange` | New. The only Windows folder in the guest. |
 | hc machine name `linux` on Windows | New. Spaces recorded on it keep working across updates. |
 | `automagik-wslc.exe` verbs: `status`, `install`, `start`, `exec`, `stop`, `uninstall` | Internal to the app; argv in, JSON out, stdio passed through for `exec`. |
 
@@ -294,8 +309,8 @@ The boundary is new: a VM between the agents and Windows.
 - **Into the guest.** Electron, through the helper, can start processes there; that is the
   app's own trust. The mapped port is reachable by any Windows process of this user, so DSH's
   per-launch token stays the gate, as on macOS. The CDP tunnel carries the relay's per-Bot
-  token, and the relay's own checks run on Windows. The downloads folder is the only Windows
-  path the guest can write.
+  token, and the relay's own checks run on Windows. The exchange folder is the only Windows
+  path the guest can write; nothing on Windows runs what lands there.
 - **Out of the guest.** Agents can no longer read the Windows user's files, credentials or
   browser profiles. They can read everything on the volume, including the CLIs' logins and
   provider keys passed to DSH (D19, unchanged). Egress stays allow-all (D19). The `open` message
@@ -410,7 +425,8 @@ The guest half (delivery 2) runs on hosted Linux runners and gates every PR.
    *Recommended:* the helper exe against the flat C API (NuGet `Microsoft.WSL.Containers`,
    4.5 MB). The C API is the documented contract and the CLI's output is not; a helper keeps
    native code out of Electron and is the one thing UAC elevates.
-3. **herdr-app's core.** *Recommended:* a local `hc` on Windows as a bridge only, with the guest
+3. **herdr-app's core.** A local `hc` on Windows would be a third native process, against
+   D39's wording. *Recommended:* that `hc` as a bridge only, with the guest
    added `--via` the helper and set as the default machine, since it works with today's `hc`.
    Ask herdrdev for herdr-app attaching to a core over a command, and drop the Windows `hc`
    when that ships.
