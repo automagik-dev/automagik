@@ -16,7 +16,8 @@
 //   is capped at the context window, as Claude Code caps it. A one-launch --autocompact flag and
 //   managed settings are not visible to a status line.
 // - compacts: compact_boundary records in the session's transcript, counted incrementally (only
-//   the bytes appended since the last turn are read) and cached in the Meter state folder.
+//   the bytes appended since the last turn are read, plus a 4 KiB check that the counted bytes are
+//   still there) and cached in the Meter state folder.
 // - 5h / 7d: rate_limits used % and the time until each window resets.
 //
 // Node, no dependencies, never throws: any field it cannot read is left out. It reads stdin only,
@@ -24,6 +25,7 @@
 // cleanly in the limits logger: `node claude-limits-statusline.mjs -- node automagik-statusline.mjs`.
 // NO_COLOR turns the colours off. METER_STATE_DIR moves the cache (same folder as the logger's).
 import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, renameSync, mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { homedir, platform } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +34,7 @@ const RED = "\x1b[31m", YELLOW = "\x1b[33m", DIM = "\x1b[2m", RESET = "\x1b[0m";
 const BOUNDARY = Buffer.from('"subtype":"compact_boundary"');
 const CHUNK = 4 << 20;
 const KEEP = 16;
+const SEEN = 4096;
 
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
@@ -165,8 +168,11 @@ export function autoCompactWindowFor(input, env = process.env) {
 
 /**
  * How many times the session compacted: compact_boundary records in its transcript. Only the
- * bytes appended since the last count are read; a shorter or replaced file is counted again from
- * the start. The cache is best effort: unreadable, it is rebuilt.
+ * bytes appended since the last count are read. The file is counted again from the start when it
+ * is shorter than the counted offset, when a new file has taken the path (another inode), or when
+ * it was rewritten in place: the cache keeps a short hash of the last 4 KiB before the offset, and
+ * a different hash (or none, from an older cache) means the counted bytes changed. The cache is
+ * best effort: unreadable, it is rebuilt.
  */
 export function countCompacts(transcript, dir = stateDir()) {
   if (typeof transcript !== "string" || !transcript) return null;
@@ -178,7 +184,8 @@ export function countCompacts(transcript, dir = stateDir()) {
   try {
     const st = fstatSync(fd);
     let prev = entries[transcript];
-    if (!prev || prev.ino !== st.ino || !(prev.offset <= st.size) || typeof prev.count !== "number") prev = { offset: 0, count: 0 };
+    if (!prev || prev.ino !== st.ino || !(prev.offset <= st.size) || typeof prev.count !== "number"
+      || prev.hash !== seen(fd, prev.offset)) prev = { offset: 0, count: 0 };
     if (prev.size === st.size && prev.offset <= st.size) return prev.count;
     let offset = prev.offset, count = prev.count, carry = Buffer.alloc(0);
     while (offset + carry.length < st.size) {
@@ -192,10 +199,23 @@ export function countCompacts(transcript, dir = stateDir()) {
       offset += end + 1;
       carry = data.subarray(end + 1);
     }
-    entries[transcript] = { ino: st.ino, size: st.size, offset, count, at: Date.now() };
+    entries[transcript] = { ino: st.ino, size: st.size, offset, count, hash: seen(fd, offset), at: Date.now() };
     save(cacheFile, dir, entries);
     return count;
   } catch { return null; } finally { try { closeSync(fd); } catch { /* closed */ } }
+}
+
+/** A short hash of the SEEN bytes before `offset`: what the cached count was read from. */
+function seen(fd, offset) {
+  const start = Math.max(0, offset - SEEN);
+  const buf = Buffer.alloc(offset - start);
+  let n = 0;
+  while (n < buf.length) {
+    const r = readSync(fd, buf, n, buf.length - n, start + n);
+    if (r <= 0) break;
+    n += r;
+  }
+  return createHash("sha256").update(buf.subarray(0, n)).digest("hex").slice(0, 16);
 }
 
 function save(cacheFile, dir, entries) {

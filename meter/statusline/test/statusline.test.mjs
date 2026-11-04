@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -157,6 +157,23 @@ test("compacts: counted from compact_boundary records, then only from the append
     assert.equal(countCompacts(file, state), 3);
     // A shorter file (replaced or rewritten) is counted again from the start.
     writeFileSync(file, boundary(9));
+    assert.equal(countCompacts(file, state), 1);
+    // Rewritten in place (same inode) and grown past the cached offset: counted again from the
+    // start, not from the old offset. The same goes for a rewrite that keeps the size.
+    writeFileSync(file, `${boundary(1)}${boundary(2)}${boundary(3)}`);
+    assert.equal(countCompacts(file, state), 3);
+    const ino = statSync(file).ino;
+    const longer = `${JSON.stringify({ type: "user", message: { content: "x".repeat(600) } })}\n${boundary(4)}`;
+    writeFileSync(file, longer);
+    assert.equal(statSync(file).ino, ino);
+    assert.equal(countCompacts(file, state), 1);
+    writeFileSync(file, longer.replace('"subtype":"compact_boundary"', '"subtype":"compact_boundarY"'));
+    assert.equal(statSync(file).ino, ino);
+    assert.equal(countCompacts(file, state), 0);
+    // A cache entry from before the check (no hash) is counted again once.
+    writeFileSync(file, boundary(9));
+    const stale = { [file]: { ino: statSync(file).ino, size: 0, offset: 0, count: 5, at: Date.now() } };
+    writeFileSync(join(state, "statusline-compacts.json"), JSON.stringify(stale));
     assert.equal(countCompacts(file, state), 1);
     // A corrupt cache is rebuilt; a missing transcript has no count.
     writeFileSync(join(state, "statusline-compacts.json"), "garbage");
