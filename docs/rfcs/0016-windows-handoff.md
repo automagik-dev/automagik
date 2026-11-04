@@ -93,8 +93,9 @@ Keep, backup and Delete.
 
 ### 6. Windows ships again (owner-gated)
 
-Felipe decides when. It needs signed Windows builds (Q6), and signing is owner-held. You do not start
-it. *Check:* a release's Windows asset installs on a clean machine through delivery 3's check.
+Felipe decides when. It needs signed Windows builds (Q6), and signing is owner-held. You do
+not start it. *Check:* a release's Windows asset installs on a clean machine through delivery
+3's check.
 *Rollback:* turn the Windows build off again; installed apps keep running on the last image.
 
 ## Setup
