@@ -407,15 +407,18 @@ test('"none", what Unfold\'s agent always sends on this route, is the model\'s o
 
 test('/v1/models leaves out DeepSeek models another route serves; a chat to a DeepSeek route is still served', async () => {
   const llm = fakeLlm({
-    providers: [{ id: 'openrouter', name: 'OpenRouter' }, { id: 'deepseek-official', name: 'DeepSeek' }],
+    providers: [{ id: 'openrouter', name: 'OpenRouter' }, { id: 'deepseek-official', name: 'DeepSeek' }, { id: 'cloudflare-workers-ai', name: 'Workers AI' }, { id: 'amazon-bedrock', name: 'Bedrock' }],
     models: {
       openrouter: [{ id: 'deepseek/deepseek-chat', name: 'DeepSeek V4' }, { id: 'anthropic/claude-x', name: 'Claude X' }, { id: 'notdeepseek-x', name: 'Not DeepSeek' }, { id: 'foo/deepseekish', name: 'DeepSeekish' }],
       'deepseek-official': [{ id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' }],
+      // The catalog's other shapes of a DeepSeek model, under providers that are not DeepSeek.
+      'cloudflare-workers-ai': [{ id: '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b', name: 'DeepSeek R1 Distill' }],
+      'amazon-bedrock': [{ id: 'deepseek.v3.2', name: 'DeepSeek V3.2' }],
     },
   })
   const b = await bridge(llm)
   try {
-    // Only a whole `deepseek` segment leaves the list; a name that merely holds the word stays.
+    // A DeepSeek model leaves the list in every shape; a name that merely holds the letters stays.
     assert.deepEqual(JSON.parse((await call(b.port)).text).data.map(model => model.id), ['openrouter/anthropic/claude-x', 'openrouter/notdeepseek-x', 'openrouter/foo/deepseekish'])
     // An app that saved a DeepSeek route before this still gets its answer.
     const res = await call(b.port, { method: 'POST', path: '/v1/chat/completions', body: chat() })
@@ -424,16 +427,18 @@ test('/v1/models leaves out DeepSeek models another route serves; a chat to a De
   } finally { await b.close() }
 })
 
-test('a DeepSeek model is one with a whole `deepseek` segment in its id, never a substring', () => {
-  // The form the listing passes: a provider's own model id, before its route is put in front.
+test('a DeepSeek model is one whose own id has `deepseek` as a word, never a substring', () => {
+  // The listing passes a provider's bare model id, before its route is put in front: an
+  // aggregator's, and the shapes DSH's catalog has under other providers.
   assert.equal(isDeepSeekModel('deepseek/deepseek-chat'), true)
-  // The same model as the menu shows it, with its route.
-  assert.equal(isDeepSeekModel('openrouter/deepseek/deepseek-chat'), true)
   assert.equal(isDeepSeekModel('DeepSeek/DeepSeek-V4'), true)
+  assert.equal(isDeepSeekModel('deepseek-ai/DeepSeek-V4-Flash'), true)
+  assert.equal(isDeepSeekModel('deepseek.v3.2'), true)
+  assert.equal(isDeepSeekModel('@cf/deepseek-ai/deepseek-r1-distill-qwen-32b'), true)
+  assert.equal(isDeepSeekModel('deepseek-v4-flash'), true)
   // A name that only holds the word is not one.
   assert.equal(isDeepSeekModel('notdeepseek-x'), false)
   assert.equal(isDeepSeekModel('foo/deepseekish'), false)
   assert.equal(isDeepSeekModel('openrouter/notdeepseek/model'), false)
   assert.equal(isDeepSeekModel('anthropic/claude-x'), false)
-  assert.equal(isDeepSeekModel('openrouter/anthropic/claude-x'), false)
 })
