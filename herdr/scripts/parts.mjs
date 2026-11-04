@@ -35,14 +35,15 @@ const PROVIDED = /^([a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)+)@([1-9]\d*)$/;
 
 /**
  * Where a path inside the pack tarball lives in the repository (scripts/pack.mjs packs it so):
- * `layouts/automagik.json` and the layout part's folder `am-sidebar/layout/` are `herdr-layout/`
+ * `layouts/automagik.json` is `herdr-layout/layouts/automagik.json` (herdr.dev lists a layout only
+ * from its entry's layouts/), the layout part's folder `am-sidebar/layout/` is `herdr-layout/`
  * (the layout's part.json rides inside the sidebar's folder, the only place every installed
  * updater accepts a new file), and every other `<mod>/…` is `herdr/mods/<mod>/…`. The one place to
  * change when the layout entry's shape does.
  */
 export const LAYOUT_PART_DIR = "am-sidebar/layout/";
 export function repoPathOf(inPack) {
-  if (inPack === "layouts" || inPack.startsWith("layouts/")) return `herdr-layout${inPack.slice("layouts".length)}`;
+  if (inPack === "layouts" || inPack.startsWith("layouts/")) return `herdr-layout/${inPack}`;
   if (inPack === LAYOUT_PART_DIR.slice(0, -1) || inPack.startsWith(LAYOUT_PART_DIR)) return `herdr-layout/${inPack.slice(LAYOUT_PART_DIR.length)}`;
   return `herdr/mods/${inPack}`;
 }

@@ -10,7 +10,7 @@ sidebar-chrome, md-menu, auto-tabs, new-menu-tui, mod-manager and automations, i
   mods/am-sidebar       from Herdr's `spaces` 0.1.7 — modified throughout; see its own NOTICE,
                         LICENSE-automagik and LICENSE-herdr (the bot view, characters, form,
                         Start/Attach, briefing and the space icon dialog are this pack's). Its layout is the root
-                        herdr-layout/automagik.json, so Herdr does not dock a second sidebar.
+                        herdr-layout/layouts/automagik.json, so Herdr does not dock a second sidebar.
   mods/am-footer        from Herdr's `workspace-chrome` 0.1.11 — changed: main.js, mod.json; added: puzzle.svg, bot.svg and layers.svg (Lucide, ISC; bot.svg as Herdr ships it in frame/welcome)
   mods/am-status        from Herdr's `workspace-status` 0.1.12 — changed: main.js, mod.json; added: label.js,
                         RECIPE.md; monitor.svg, server.svg and branch.svg copied unchanged from
