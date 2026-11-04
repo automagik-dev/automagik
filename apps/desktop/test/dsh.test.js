@@ -37,7 +37,7 @@ test('the app keeps everything in one folder under ~/.automagik, apart from a ds
   assert.equal(env.OMNI_CLIENT_ID, 'omni-desktop')
   // Nothing is reported: DSH's own opt-out (it does not read DO_NOT_TRACK), and the CLIs it runs.
   for (const name of ['DO_NOT_TRACK', 'DSH_TELEMETRY_DISABLED', 'DISABLE_TELEMETRY', 'OPENUI_TELEMETRY_DISABLED']) assert.equal(env[name], '1', name)
-  assert.equal(env.AUTOMAGIK_PRIVACY_FILE, '/a/desktop/privacy.json')
+  assert.equal(env.AUTOMAGIK_PRIVACY_FILE, join('/a/desktop', 'privacy.json'))
   // A share the person switched on drops its own opt-out, and only its own.
   const sharing = dshEnv({ base: {}, home: '/a', privacy: { 'deepseek-feedback': true } })
   assert.equal(sharing.DSH_TELEMETRY_DISABLED, undefined)
@@ -45,9 +45,9 @@ test('the app keeps everything in one folder under ~/.automagik, apart from a ds
   // Chosen nothing: Claude Code's own error reports work (not training data).
   assert.equal(env.DISABLE_ERROR_REPORTING, undefined)
   // The welcome counts the agents at work there, for an update while the person is away.
-  assert.equal(env.AUTOMAGIK_BUSY_FILE, '/a/desktop/busy.json')
+  assert.equal(env.AUTOMAGIK_BUSY_FILE, join('/a/desktop', 'busy.json'))
   // The person's PATH comes first; the usual tool folders follow (see toolDirs below).
-  assert.ok(env.PATH.startsWith('/bin:'))
+  assert.ok(env.PATH.startsWith(`/bin${delimiter}`))
   assert.equal(dshEnv({ base: {}, home: '/a' }).ELECTRON_RUN_AS_NODE, undefined)
 })
 
@@ -319,13 +319,18 @@ setInterval(() => {}, 1000)
 })
 
 test('a dsh that exits before it is ready is reported, and one that never says so times out', async (t) => {
-  const { root } = scratch(t, 'omni-desktop-fail-')
+  const scope = scratch(t, 'omni-desktop-fail-')
+  const { root } = scope
+  // startDsh stops a dsh that timed out without waiting for it to go: the test waits for both.
+  const children = []
+  scope.stop = () => Promise.all(children.map(child => stopDsh(child)))
+  const onSpawn = child => children.push(child)
   const dies = join(root, 'dies.mjs')
   writeFileSync(dies, 'process.exit(3)')
-  await assert.rejects(startDsh({ node: process.execPath, bin: dies, env: process.env, port: await freePort(), cwd: root }), /exited before it was ready \(3\)/)
+  await assert.rejects(startDsh({ node: process.execPath, bin: dies, env: process.env, port: await freePort(), cwd: root, onSpawn }), /exited before it was ready \(3\)/)
   const silent = join(root, 'silent.mjs')
   writeFileSync(silent, 'setInterval(() => {}, 1000)')
-  await assert.rejects(startDsh({ node: process.execPath, bin: silent, env: process.env, port: await freePort(), cwd: root, timeoutMs: 300 }), /did not start within/)
+  await assert.rejects(startDsh({ node: process.execPath, bin: silent, env: process.env, port: await freePort(), cwd: root, timeoutMs: 300, onSpawn }), /did not start within/)
 })
 
 const posixOnly = { skip: process.platform === 'win32' ? 'the tools are sh scripts here' : false }
