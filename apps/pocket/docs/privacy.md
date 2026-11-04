@@ -19,7 +19,8 @@ before 2026-11, [automagik-dev/automagik-pocket](https://github.com/automagik-de
 - **No analytics, no ads, no tracking.** The app contains no analytics or advertising library.
 - The only other services it contacts: **GitHub**, to check for updates, and **n0's iroh
   services**: relays, which carry Pocket Link traffic they cannot read, and an address lookup,
-  where the Pocket Link bridge on your computer publishes its public key and current addresses.
+  where the phone and the Pocket Link bridge on your computer each publish their public key and
+  the n0 relay they currently use (no IP addresses).
 - What it keeps stays on the phone, is not backed up, and is deleted when you uninstall.
 
 ## What the app handles, and where it goes
@@ -43,9 +44,10 @@ Nothing else is collected. We, the developers, receive none of this data.
 1. **Your machines over Pocket Link.** iroh connections, end-to-end encrypted, dialled by public
    key. When no direct path exists, the encrypted traffic passes through relay servers run by n0
    (the iroh project). Relays forward the encrypted bytes; they can't read them, though they do
-   see the network addresses involved. The Pocket Link bridge on your computer also publishes its
-   public key and current addresses to n0's address lookup, so the phone finds it after its IP
-   address changes.
+   see the network addresses involved. The phone and the Pocket Link bridge on your computer each
+   publish their public key and the n0 relay they currently use to n0's address lookup, iroh's
+   default, so the phone finds the computer after its IP address changes. No IP addresses are
+   published, though n0's servers see the address each request comes from.
 2. **GitHub.** When the app opens (at most every 15 minutes), every 6 hours while it or **Watch in
    background** runs, and when you tap **Settings → About → Check for updates**, the app downloads
    `latest.json` from this repo's latest GitHub release. When a newer version is out it downloads

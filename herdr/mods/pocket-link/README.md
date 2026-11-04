@@ -45,8 +45,9 @@ Pairings live outside the mod folder and stay.
   a LaunchAgent on macOS, or a systemd user unit on Linux.
 - **Network:** [iroh](https://iroh.computer). Phones dial this computer by its public key.
   Connections are direct when they can be, otherwise through n0's public relays,
-  and always end to end encrypted. The bridge also publishes its public key and current addresses
-  to n0's address lookup, so phones find it after an IP change.
+  and always end to end encrypted. The bridge and the phone each publish their public key and the
+  n0 relay they currently use (no IP addresses) to n0's address lookup, so phones find this
+  computer after an IP change.
 - **Programs it runs:** `node`, `npm` (setup), `hc connect`, `launchctl` / `systemctl --user`, `sh`,
   `ls`, and your login shell, once, to find `node`.
 - **Files it writes:** its state folder (below), the one login service file, and `.node` in the

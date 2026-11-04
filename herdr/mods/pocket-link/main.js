@@ -391,7 +391,7 @@ export default class PocketLink extends View {
           .text_size(11.5)
           .line_height("17px")
           .text_color(t.dim)
-          .child("Phones connect directly when they can, and otherwise through a public iroh relay that passes along encrypted bytes it can't read. Removing a phone disconnects it at once."),
+          .child("Phones connect directly when they can, and otherwise through a public iroh relay that passes along encrypted bytes it can't read. A removed phone's sessions close within 2 seconds; agents it started keep running."),
       );
   }
 }
