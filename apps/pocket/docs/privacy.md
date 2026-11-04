@@ -2,12 +2,12 @@
 title: "Privacy policy"
 type: policy
 created: 2026-11-01
-updated: 2026-11-03
+updated: 2026-11-04
 tags: [privacy, policy, play]
 ---
 # Automagik Pocket privacy policy
 
-Effective 2026-11-03. Applies to the Android app **Automagik Pocket** (app ID
+Effective 2026-11-04. Applies to the Android app **Automagik Pocket** (app ID
 `ai.namastex.automagik`), published from
 [automagik-dev/automagik](https://github.com/automagik-dev/automagik/tree/dev/apps/pocket) (`apps/pocket/`;
 before 2026-11, [automagik-dev/automagik-pocket](https://github.com/automagik-dev/automagik-pocket)).
@@ -17,8 +17,9 @@ before 2026-11, [automagik-dev/automagik-pocket](https://github.com/automagik-de
 - The app connects your phone to **your own computers**. We run no server for it and have no
   account system.
 - **No analytics, no ads, no tracking.** The app contains no analytics or advertising library.
-- The only other services it contacts: **GitHub**, to check for updates, and **n0's iroh relays**,
-  which carry Pocket Link traffic they cannot read.
+- The only other services it contacts: **GitHub**, to check for updates, and **n0's iroh
+  services**: relays, which carry Pocket Link traffic they cannot read, and an address lookup,
+  where the Pocket Link bridge on your computer publishes its public key and current addresses.
 - What it keeps stays on the phone, is not backed up, and is deleted when you uninstall.
 
 ## What the app handles, and where it goes
@@ -42,7 +43,9 @@ Nothing else is collected. We, the developers, receive none of this data.
 1. **Your machines over Pocket Link.** iroh connections, end-to-end encrypted, dialled by public
    key. When no direct path exists, the encrypted traffic passes through relay servers run by n0
    (the iroh project). Relays forward the encrypted bytes; they can't read them, though they do
-   see the network addresses involved.
+   see the network addresses involved. The Pocket Link bridge on your computer also publishes its
+   public key and current addresses to n0's address lookup, so the phone finds it after its IP
+   address changes.
 2. **GitHub.** When the app opens (at most every 15 minutes), every 6 hours while it or **Watch in
    background** runs, and when you tap **Settings → About → Check for updates**, the app downloads
    `latest.json` from this repo's latest GitHub release. When a newer version is out it downloads
@@ -100,7 +103,7 @@ phone. No picture is stored or sent.
 
 | Permission | Why |
 |---|---|
-| Internet | Connect to your machines, Pocket Link relays, and GitHub for updates |
+| Internet | Connect to your machines, n0's Pocket Link relays and address lookup, and GitHub for updates |
 | Notifications | Alert you when an agent needs you or finishes |
 | Foreground service (special use) | **Watch in background**: keep connections open while you're away, with a "Watching" notification you can stop |
 | Run at startup | **Watch in background**: after the phone restarts and you unlock it, reconnect the machines it was watching, only if watching was on ([RFC 0007](rfcs/0007-watch-after-reboot.md)) |
