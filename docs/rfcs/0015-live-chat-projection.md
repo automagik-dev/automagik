@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (every question answered: see Decided and proposed) |
-| Milestone | not scheduled |
+| Status | Accepted (every question answered: see Decided and proposed; deliveries 1-3 merged: #267, #273, #280, #282; delivery 4 is #286, open) |
+| Milestone | none (ships outside the five milestones) |
 | Lanes | herdr (3.N.P, Pocket Link included), plugin (3.N.P), pocket (3.N.P, [RFC 0011](0011-monorepo-parts-and-releases.md)) |
 | Created | 2026-11-03 |
 

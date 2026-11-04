@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (prototype read-only first) |
+| Status | Superseded (by RFC 0013 under D27, and RFC 0015) |
 | Milestone | not scheduled |
 | Lanes | plugin (3.N.P), desktop (3.N) for the pinned binary |
 | Created | 2026-10-30 |
