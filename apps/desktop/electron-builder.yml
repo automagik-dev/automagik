@@ -62,8 +62,27 @@ deb:
   packageName: automagik
   packageCategory: net
   appArmorProfile: scripts/apparmor-profile.tpl
-# Windows has no build yet (#191's fixes come first). When it does, its installer registers the
-# links' schemes, which electron-builder's NSIS leaves out of `protocols`.
+# Windows x86_64: an NSIS installer, which installs for the person (no administrator) into
+# %LOCALAPPDATA%\Programs and is also what an installed app updates from (latest.yml,
+# src/update.js). Unsigned for now: SmartScreen warns on the first download. Signing later is
+# one of these, with nothing else to change (desktop-build.yml, "Build Windows installer"):
+#   - a code-signing certificate: the WIN_CSC_LINK and WIN_CSC_KEY_PASSWORD secrets, which
+#     electron-builder reads by those names;
+#   - Azure Trusted Signing: an `azureSignOptions` block here (publisherName, endpoint,
+#     certificateProfileName, codeSigningAccountName) and AZURE_TENANT_ID, AZURE_CLIENT_ID and
+#     AZURE_CLIENT_SECRET in the build's environment.
+# A signed build writes its publisher into app-update.yml, and from then on electron-updater
+# installs only updates signed by that publisher. An unsigned build names none, so it takes the
+# first signed one as well: leave publisherName unset until the builds are signed.
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: assets/icon.png
+  artifactName: Automagik-${version}-win-${arch}.${ext}
+# The installer registers the links' schemes, which electron-builder's NSIS leaves out of
+# `protocols`.
 nsis:
   include: assets/installer.nsh
 mac:
@@ -78,8 +97,11 @@ mac:
   hardenedRuntime: true
   entitlements: assets/entitlements.mac.plist
   # Voice chat: macOS asks once, with this line, the first time a chat listens.
+  # Local network: without this line macOS never asks, and every connection to a LAN address
+  # (an Omni on this network) fails with EHOSTUNREACH (#96).
   extendInfo:
     NSMicrophoneUsageDescription: Automagik listens to you only while voice chat is on, to hear what you say to your Bots.
+    NSLocalNetworkUsageDescription: Automagik connects to Omni and other services on your local network.
   entitlementsInherit: assets/entitlements.mac.plist
   artifactName: Automagik-${version}-mac-${arch}.${ext}
 dmg:
@@ -101,7 +123,7 @@ dmg:
   # The dmg is signed too (electron-builder signs only the app by default), and release.yml
   # notarizes and staples it, so a downloaded dmg opens without a warning.
   sign: true
-# Where the update feeds (latest-mac.yml, latest-linux.yml) say the builds are. The builds
+# Where the update feeds (latest-mac.yml, latest-linux.yml, latest.yml) say the builds are. The builds
 # never publish themselves (--publish never): desktop-build.yml uploads them to this
 # repository's release `v<version>`, and the app reads that release's feed (src/update.js).
 publish:

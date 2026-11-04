@@ -62,7 +62,14 @@ One scrolling column, `chrome` background, 13 px text.
   every 4 hours, `node update.mjs check --mods <app home>/mods` (node on PATH, else Homebrew's)
   asks GitHub for the latest release; a newer one gets one notice per version (shared
   `am.sidebar.update-shown`) naming `automagik-herdr update`. A failed look is silent and
-  retried in 30 minutes. `AUTOMAGIK_HERDR_NO_UPDATE=1` turns it off.
+  retried in 30 minutes. `AUTOMAGIK_HERDR_NO_UPDATE=1` turns it off. **Install updates
+  automatically** (`updater.js`; on unless `<app home>/automagik-herdr/auto-update.json` says
+  `"auto": false`): a newer release from a check goes in through the same claim and `update.mjs
+  apply --expect <v> --auto`, which reads the setting, the install record (`sequence=`, no link)
+  and the rollback's `skip` again under its lock before any download. The new build posts
+  "Automagik Herdr updated to X"; a failure posts once and retries 4 h, then 8 h, 16 h and 24 h
+  after each failure, then daily. A release that moved on mid-install is no failure: the next
+  check installs the newer one. One sidebar copy writes the status bar's switch (its request id).
 - **Theme** (`theme.js`, `themes/`): the Automagik light and dark themes are copied into
   `<app home>/themes/` when absent and selected with `app.theme` once, recorded in shared
   `am.sidebar.theme-selected`; a theme picked later is never overridden.

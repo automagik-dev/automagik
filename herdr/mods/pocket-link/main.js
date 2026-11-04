@@ -44,6 +44,10 @@ function ago(ms) {
 // When the newest phone in a status paired.
 const newest = (devices) => Math.max(0, ...(devices ?? []).map((d) => d.paired ?? 0));
 
+// Next to Copy link: the clipboard may sync to other devices, so copying shortens the code.
+const COPY = "Can't scan? Copy the link and paste it in Pocket. Your clipboard may sync to your other devices, so a copied code ends 2 minutes later.";
+const COPIED = "Copied. Your clipboard may sync to your other devices, so this code ends 2 minutes after the copy; then a new one appears here.";
+
 const left = (ms) => {
   const s = Math.max(0, Math.round((ms - Date.now()) / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -57,8 +61,7 @@ export default class PocketLink extends View {
     this.checked = null; // where it looked, when it found none
     this.busy = null; // what a button is doing
     this.error = null;
-    this.pairing = null; // { link, qr, expires }
-    this.copied = false;
+    this.pairing = null; // { link, rows, expires, copied }
     this.closed = false;
     this.cancelling = null;
     this.handle = cx.focus_handle();
@@ -79,7 +82,13 @@ export default class PocketLink extends View {
     });
     cx.timer.every(1000, (cx) => {
       if (!this.pairing) return;
-      if (Date.now() > this.pairing.expires) this.pairing = null;
+      if (Date.now() > this.pairing.expires) {
+        const copied = this.pairing.copied;
+        this.pairing = null;
+        // A copied code ends 2 minutes after the copy; whoever is still pairing gets a new one,
+        // once (the new code isn't copied, so at its own end the card goes back to the button).
+        if (copied && !this.closed && this.status?.running) this.act("pair", ["pair"], cx, (r) => this.showCode(r));
+      }
       cx.notify();
     });
   }
@@ -283,8 +292,30 @@ export default class PocketLink extends View {
   // A code made while the dialog was closing must not outlive it.
   async showCode(r) {
     if (this.closed) return this.bridge(["cancel"]);
-    this.pairing = r;
-    this.copied = false;
+    this.pairing = { ...r, copied: false };
+  }
+
+  // The clipboard may sync to other devices (macOS Universal Clipboard), so the link only goes on
+  // it once the bridge has cut its code to 2 minutes (`copied`, pairing.mjs COPIED_LIFE). If the
+  // bridge can't, nothing is copied.
+  copyLink(cx) {
+    const p = this.pairing;
+    if (this.busy || !p) return;
+    this.busy = "copy";
+    this.error = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await this.bridge(["copied"]);
+      if (r.ok === false) this.error = r.error === "node" ? "Pocket Link needs Node.js 20.3 or newer." : r.error;
+      else if (this.pairing === p && !this.closed) {
+        p.expires = Math.min(p.expires, r.expires);
+        p.copied = true;
+        cx.write_to_clipboard(p.link);
+      }
+      await this.reload();
+      this.busy = null;
+      cx.notify();
+    });
   }
 
   pairCard(t) {
@@ -308,10 +339,10 @@ export default class PocketLink extends View {
       .child(
         h_flex()
           .gap(8)
-          .child(this.button(t, "pl-copy", this.copied ? "Copied" : "Copy link", (cx) => { cx.write_to_clipboard(p.link); this.copied = true; cx.notify(); }))
+          .child(this.button(t, "pl-copy", p.copied ? "Copied" : "Copy link", (cx) => this.copyLink(cx), { disabled: Boolean(this.busy), spinning: this.busy === "copy" }))
           .child(this.button(t, "pl-new", "New code", (cx) => this.act("pair", ["pair"], cx, (r) => this.showCode(r)), { disabled: Boolean(this.busy) })),
       )
-      .child(div().text_size(11.5).text_color(t.dim).child("On the phone itself? Copy the link and paste it in Pocket."));
+      .child(div().w_full().text_center().text_size(11.5).line_height("16px").text_color(t.dim).child(p.copied ? COPIED : COPY));
   }
 
   // Drawn from its modules, each row as runs of dark and light; the white
@@ -391,7 +422,7 @@ export default class PocketLink extends View {
           .text_size(11.5)
           .line_height("17px")
           .text_color(t.dim)
-          .child("Phones connect directly when they can, and otherwise through a public iroh relay that passes along encrypted bytes it can't read. Removing a phone disconnects it at once."),
+          .child("Phones connect directly when they can, and otherwise through a public iroh relay that passes along encrypted bytes it can't read. A removed phone's sessions close within 2 seconds; agents it started keep running."),
       );
   }
 }

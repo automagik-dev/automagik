@@ -1,7 +1,7 @@
 # am-footer
 
 The sidebar's footer as a rail of tabs instead of a stack of rows — robot **Bots** (first), puzzle
-**Mods**, clock **Automations**, layers **Quota** (while am-quota is on), gear **Settings**, plus **Add machine** — and the brand bar above it. Derived from
+**Mods**, clock **Automations**, layers **Accounts** (while am-quota is on), gear **Settings**, plus **Add machine** — and the brand bar above it. Derived from
 Herdr's shipped `workspace-chrome` 0.1.11.
 
 ## What you see
@@ -27,22 +27,25 @@ row (Herdr mark, search, sidebar toggle) with the traffic-light padding macOS ne
   opener that can't start or exits non-zero posts one notice, "Automagik isn't installed or
   didn't register automagik://"; never an exception. `workUrl()` is where delivery 8 (RFC 0014)
   adds `?bot=<id>`.
-- **Automations**: `layout.toggle {id: "automations-panel"}` — the panel lives in the left sidebar
-  column; the tab shows `selected` while it is not hidden.
-- **Quota** (layers icon): `layout.toggle {id: "am-quota-panel"}`, `selected` while that block is
-  not hidden. Shown only while `<app home>/mods/am-quota/mod.json` exists: the Mods panel turns a
-  mod off by moving its folder to `mods-disabled/`, and then there is no Quota tab at all (not a
-  dimmed one). Looked up on the 30 s look and again on a `watchFolder` batch under `mods/`.
+- **Automations** (clock icon, the am-automations mod) and **Accounts** (layers icon, the am-quota
+  mod), `PANELS` in `main.js`: each shown only while `<app home>/mods/<mod>/mod.json` exists. The
+  Mods panel turns a mod off by moving its folder to `mods-disabled/`, and then there is no tab at
+  all (not a dimmed one). Looked up on the 30 s look and again on a `watchFolder` batch under
+  `mods/`. A press toggles the mod's block (`automations-panel`, `am-quota-panel`) when the shown
+  layout has one (`layout.toggle`), else opens the mod as a popup (`PANEL_POPUP`: 320 px wide,
+  0.6 of the window high). The tab is `selected` only while that block is in the layout and not
+  hidden: a block that isn't there is never active. While a mod is off, a block of it left
+  showing is hidden (`layout.hide`), so the panel does not outlive the mod.
 - **Settings** / **Add machine**: `app.settings`, `mod.open:machine-add`.
 - **Other mods' buttons** (`contributions.js`): a mod's `mod.json` can declare
   `automagik.footer` entries (`id`, `label`, `command`, optional `args`, `icon`, `badge`; README,
   "Add a sidebar button from your mod"). The footer lists `<app home>/mods` with `find` (as
   am-mods does), reads each `mod.json`, keeps at most 4 valid entries in mod-name order and draws
-  them after Quota and Pocket Link, before the rule, in their own group that shrinks and clips
+  them after Accounts and Pocket Link, before the rule, in their own group that shrinks and clips
   first (`min_w(0)`, `overflow_hidden`): same tab, same hover name, `run(command, args)`
   on press, and a count while `shared(badge)` is a number above 0. A missing or invalid icon draws
   `circle.svg`. Rescanned on the 30 s look and on a `watchFolder` batch that touches a `mod.json`, a
-  mod folder or an SVG (the batch runs the whole look, so Bots and Quota follow too); Pocket Link's folder is never read by this scan.
+  mod folder or an SVG (the batch runs the whole look, so Bots and Accounts follow too); Pocket Link's folder is never read by this scan.
 - **Rail**: follows the sidebar's width (`layout()`'s `sidebar.size.px < 160`), not a flag; labels
   are tooltips, so a fifth tab costs no height.
 
@@ -63,11 +66,13 @@ row (Herdr mark, search, sidebar toggle) with the traffic-light padding macOS ne
 - The footer's height is part of the layout (`size.px: 42`); a fifth tab still fits, a bigger row
   would not. Width too: every built-in tab plus 4 contributed ones (about 340 px) is wider than the
   268 px sidebar; the contributed group clips, the built-in tabs keep their place.
-- `Automations` needs the `am-automations` mod and a block with id `automations-panel` in the layout;
-  without them the toggle does nothing visible.
+- The pack's layout names neither panel block. Herdr shows plain Herdr instead of a layout that
+  names a mod missing from `mods/` ("needs mods that aren't here. Showing Herdr instead."), even
+  in a hidden block, and both mods ship off (`OFF_BY_DEFAULT`). `test/am-footer.test.mjs`
+  fails if the layout names a mod in `OFF_BY_DEFAULT` or either panel.
 
 ## Done when
 
 `herdr-app check mods/am-footer` passes; the footer shows Bots first, then the other tabs, in one row; Bots' popup opens the
 Create form and the bot list, and with no bot defined offers New bot alone; Mods opens
-or focuses the Mods tab; Work brings the Automagik app forward; the clock toggles the Automations panel in the sidebar.
+or focuses the Mods tab; Work brings the Automagik app forward; the clock and Accounts tabs open their panel, and show only while their mod is on.

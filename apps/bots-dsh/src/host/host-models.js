@@ -115,5 +115,15 @@ export function install(rt) {
     await source.pick(bot, pick)
   }
 
-  Object.assign(rt, { hostOwned, hostModelsView, refreshHostModels, pickHostModel })
+  // The label of the entry that answers now for a host-owned Bot, from its last menu; undefined
+  // when it is not one, or the menu says none.
+  function hostAnsweringOf(bot) {
+    const source = sourceOf(bot)
+    if (source === undefined) return undefined
+    let menu
+    try { menu = cleanMenu(source.snapshot(bot)) } catch { return undefined }
+    return menu.entries.find(entry => entry.answering)?.label
+  }
+
+  Object.assign(rt, { hostOwned, hostModelsView, refreshHostModels, pickHostModel, hostAnsweringOf })
 }

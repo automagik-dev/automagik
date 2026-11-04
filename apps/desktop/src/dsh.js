@@ -11,12 +11,12 @@
 // It is apart from a dsh you already run (~/.dsh) and from the Bot team installed into that
 // one (~/.automagik/bots), so neither sees the other's Bots or Sessions. Omni's own folder
 // (~/.omni: its sandbox, the Bun its channels download) is Omni's.
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { cp, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { delimiter, join, resolve, win32 } from 'node:path'
 import { DEFAULTS as PRIVACY_DEFAULTS, privacyEnv } from './privacy.js'
 
 export const PROFILE = 'omni'
@@ -51,33 +51,46 @@ export function resourcesOf({ packaged, resourcesPath, appPath }) {
 }
 
 const shellQuote = text => `'${String(text).replaceAll("'", `'\\''`)}'`
+// In a batch file only a % is read inside double quotes (and a !, with delayed expansion, which the
+// tools switch off); a Windows path has no ".
+const batchQuote = text => `"${String(text).replaceAll('%', '%%')}"`
+
+/** The file a tool is written to: `pnpm.cmd` on Windows, which runs no `#!/bin/sh` script. */
+export const toolFileOf = (dir, name, platform = process.platform) => join(dir, platform === 'win32' ? `${name}.cmd` : name)
 
 /**
  * Write `node` and `pnpm` into `dir` for dsh's PATH: dsh's plugin manager installs plugins
  * (the market, Settings → Plugins) with pnpm, and nothing guarantees a machine has Node or
  * pnpm. Both run on `node`, the app's own binary as Node (ELECTRON_RUN_AS_NODE). Checked at
  * every launch, since the app's path changes with each install; a file that already says the
- * same, and can run, is left as it is.
+ * same, and can run, is left as it is. On Windows they are batch files, `node.cmd` and
+ * `pnpm.cmd`, which PATH finds by PATHEXT.
  */
-export function writeTools({ dir, node, pnpm }) {
+export function writeTools({ dir, node, pnpm, platform = process.platform }) {
   mkdirSync(dir, { recursive: true })
-  const tools = {
-    node: `ELECTRON_RUN_AS_NODE=1 exec ${shellQuote(node)} "$@"`,
-    pnpm: `ELECTRON_RUN_AS_NODE=1 exec ${shellQuote(node)} ${shellQuote(pnpm)} "$@"`,
-  }
+  const windows = platform === 'win32'
+  const tools = windows
+    ? { node: `${batchQuote(node)} %*`, pnpm: `${batchQuote(node)} ${batchQuote(pnpm)} %*` }
+    : {
+        node: `ELECTRON_RUN_AS_NODE=1 exec ${shellQuote(node)} "$@"`,
+        pnpm: `ELECTRON_RUN_AS_NODE=1 exec ${shellQuote(node)} ${shellQuote(pnpm)} "$@"`,
+      }
   for (const [name, line] of Object.entries(tools)) {
-    const file = join(dir, name)
-    const text = `#!/bin/sh\n# Written by the Automagik desktop app at launch (src/dsh.js writeTools).\n${line}\n`
-    if (sameTool(file, text)) continue
+    const file = toolFileOf(dir, name, platform)
+    const text = windows
+      ? `@echo off\r\nrem Written by the Automagik desktop app at launch (src/dsh.js writeTools).\r\nsetlocal DisableDelayedExpansion\r\nset ELECTRON_RUN_AS_NODE=1\r\n${line}\r\n`
+      : `#!/bin/sh\n# Written by the Automagik desktop app at launch (src/dsh.js writeTools).\n${line}\n`
+    if (sameTool(file, text, windows)) continue
     writeFileSync(file, text)
     chmodSync(file, 0o755)
   }
   return dir
 }
 
-const sameTool = (file, text) => {
+// Windows keeps no execute bit: there only the text counts.
+const sameTool = (file, text, windows) => {
   try {
-    return (statSync(file).mode & 0o777) === 0o755 && readFileSync(file, 'utf8') === text
+    return (windows || (statSync(file).mode & 0o777) === 0o755) && readFileSync(file, 'utf8') === text
   } catch {
     return false
   }
@@ -613,7 +626,9 @@ export function dshRun() {
     get stopped() { return stopped },
     track(next) {
       child = next
-      if (stopped) void stopDsh(next)
+      // Just spawned, it has started nothing yet: it ends at once, before it can say it is ready
+      // (taskkill, on Windows, would come too late).
+      if (stopped) void stopDsh(next, undefined, { tree: false })
     },
     stop(graceMs) {
       stopped = true
@@ -693,7 +708,7 @@ export async function forgetDshLogins(cookies, origin) {
  */
 export const toolDirs = (userHome = homedir()) => [join(userHome, '.local', 'bin'), join(userHome, '.claude', 'local'), '/opt/homebrew/bin', '/usr/local/bin']
 
-export function dshEnv({ base = process.env, home, electronAsNode = false, binDir, userHome = homedir(), preload = null, privacy = PRIVACY_DEFAULTS }) {
+export function dshEnv({ base = process.env, home, electronAsNode = false, binDir, userHome = homedir(), preload = null, privacy = PRIVACY_DEFAULTS, platform = process.platform }) {
   // After the machine's own: a project's commands keep the user's node and pnpm, and then the
   // usual tool folders, then the app's own node and pnpm.
   const PATH = [...String(base.PATH ?? '').split(delimiter), ...toolDirs(userHome), ...(binDir ? [binDir] : [])]
@@ -722,7 +737,7 @@ export function dshEnv({ base = process.env, home, electronAsNode = false, binDi
     ...(preload ? { AUTOMAGIK_PRELOAD: preload } : {}),
     // The pnpm acp-dsh installs its ACP adapters with: the app's own pnpm 10, never a newer one
     // the person has first on PATH, which installs the adapters' bundled CLIs anyway (~1.4 GB).
-    ...(binDir ? { AUTOMAGIK_PNPM: join(binDir, 'pnpm') } : {}),
+    ...(binDir ? { AUTOMAGIK_PNPM: toolFileOf(binDir, 'pnpm', platform) } : {}),
     ...(electronAsNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
   }
 }
@@ -776,8 +791,14 @@ export function startDsh({ node, bin, env, port, cwd, log, privacy, timeoutMs = 
   })
 }
 
-/** Stop dsh: SIGTERM, then SIGKILL if it is still there after the grace period. */
-export function stopDsh(child, graceMs = STOP_GRACE_MS) {
+/**
+ * Stop dsh: SIGTERM, then SIGKILL if it is still there after the grace period. Windows has no
+ * signals, and ending dsh alone there leaves its children (a terminal's OpenConsole.exe, rg.exe,
+ * pnpm's node) running from the app's folder, where they hold files an update must replace: there
+ * the whole tree ends at once (taskkill /T /F), and dsh alone only when taskkill cannot, or with
+ * `tree: false`, for a dsh that has started nothing yet.
+ */
+export function stopDsh(child, graceMs = STOP_GRACE_MS, { platform = process.platform, env = process.env, run = execFile, tree = true } = {}) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
   return new Promise((done) => {
     const timer = setTimeout(() => { try { child.kill('SIGKILL') } catch {} }, graceMs)
@@ -785,9 +806,17 @@ export function stopDsh(child, graceMs = STOP_GRACE_MS) {
       clearTimeout(timer)
       done()
     })
+    if (tree && platform === 'win32' && child.pid) {
+      run(taskkillOf(env), ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, (error) => {
+        if (error) try { child.kill() } catch {}
+      })
+      return
+    }
     try { child.kill('SIGTERM') } catch { done() }
   })
 }
+
+const taskkillOf = env => win32.join(env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows', 'System32', 'taskkill.exe')
 
 /**
  * The app's rules for every webContents it makes (main.js harden, on 'web-contents-created'):

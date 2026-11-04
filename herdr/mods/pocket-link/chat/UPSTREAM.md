@@ -39,6 +39,10 @@ TypeScript became JavaScript with JSDoc types; the code is otherwise as upstream
 | `paste.js` | `src/shared/native-chat/input/native-chat-paste-bytes.ts` | `7b9cd53f5f719a233c96b7a7b23d281a5c5b4696` | Image-path paste left out |
 | | `src/shared/terminal-bracketed-paste-text.ts` | `425dcbd8d5853d3cf7213b770bc15695f16445d7` | — |
 | | `src/shared/terminal-input.ts` | `bdaa410d04b6f0c64e1f764d142f50df8dd2b62f` | Only `getTerminalInputByteLength`, measured with `Buffer.byteLength` |
+| `answer.js` | `src/shared/native-chat/native-chat-agent-support.ts` | `4220a883a31cd8afcccdb7632a76e30938e1fdc1` | Only the predicates the engine uses and `resolveNativeChatTranscriptAgent`; Orca's TUI agent list left out. `approvalKeys` (ours) maps its bytes to herdr-core key names |
+| | `src/shared/native-chat/input/native-chat-approval-envelope.ts` | `1a979c9af0b8b1ce55bb4b30e507e5e8a7c442de` | — (read by delivery 8's hook) |
+| | `src/shared/native-chat/input/native-chat-answer-stepping.ts` | `849698260ea58a211d517d2c3710b6fe680e411a` | `scheduleNativeChatAnswer` takes the timers to use |
+| `screen.js` | `src/renderer/src/components/native-chat/native-chat-scrape-fallback.ts` | `d40db3b76c0b713d9a1cbeb9c2434328be82e1d4` | `screenMessages` added (ours): herdr-core's `terminal.read` in |
 
 Tests ported to `node:test` (cases that exercise Orca code not taken are left out; fixtures are our
 own, synthetic):
@@ -47,22 +51,20 @@ own, synthetic):
 |---|---|---|
 | `paste.test.mjs` | `src/shared/native-chat/input/native-chat-paste-bytes.test.ts` | `bb7c5cad6701dec09793584b8937becff83eec1e` |
 | `decode-omp.test.mjs` | `src/main/native-chat/transcript-line-decoders.omp.test.ts` | `4fc0f03e1ab881dff540c12e5a7afada21691d3a` |
+| `answer.test.mjs` | `src/shared/native-chat/input/native-chat-approval-envelope.test.ts` | `48c21300b2af750a14b22d8a52cd8d1734fd2415` |
 | `decode-claude.test.mjs` | `src/main/native-chat/transcript-line-decoders-claude-control-bytes.test.ts` | `404c3b403ce5317ddda7cae671fb45ac099f2037` |
 | | `src/main/native-chat/transcript-line-decoders-claude-image-companion.test.ts` | `0e6e66413093d30779ac1883ffc32cd0fad22a96` |
 | | `src/main/native-chat/transcript-line-decoders-claude-pasted-content.test.ts` | `84dc3c68ed1455be4bd7975c22057de6ad9f6879` |
 | | `src/main/native-chat/transcript-line-decoders-claude-queued-prompt.test.ts` | `543d923f84551cafecb18b053c41ce16821218c3` |
 | | `src/main/native-chat/transcript-line-decoders-claude-stop-hook.test.ts` | `733baa0602bec79dd40f3fbd3f6553b1690bb179` |
 
-`decode-codex.test.mjs` is ours: Orca has no direct test of that decoder.
+`decode-codex.test.mjs` and `screen.test.mjs` are ours: Orca has no direct test of those files.
 
 ## Ours, not Orca's
 
 `folder-rule.js` (the transcript folder rule, t2x5's), `cleanChatText` in `paste.js` (RFC 0015's
-cleaning rule) and the RFC's row model in `types.js`. The folder rule's cases live in
+cleaning rule), the RFC's row model in `types.js`, and the engine's read side (delivery 3a):
+`hc.js` (the seam to herdr-core), `find.js`, `tail.js`, `status.js`, `rows.js`, `projection.js`,
+with `fake-hc.mjs` for tests; and its write side (delivery 3b): `dialog.js`, `approve.js`,
+`input.js`, `engine.js`. The folder rule's cases live in
 `herdr/test/fixtures/transcript-folder-rule.json`, shared with am-sidebar's copy of the rule.
-
-## Still to port (RFC 0015 delivery 3)
-
-`screen.js` from `src/renderer/src/components/native-chat/native-chat-scrape-fallback.ts`;
-`answer.js` from `src/shared/native-chat/input/native-chat-{approval-envelope,answer-stepping}.ts`
-and `src/shared/native-chat/native-chat-agent-support.ts`. They will be added to the tables above.

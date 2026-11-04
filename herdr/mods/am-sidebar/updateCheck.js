@@ -4,7 +4,7 @@
 // "no update", tried again after RETRY_MS. Pure: no `herdr` import (exec is passed in), so
 // `node --test` runs it; main.js wires it to Herdr's exec, timer and notify. Apache-2.0.
 
-import { CHECK_EVERY_MS, FIRST_CHECK_MS, RETRY_MS, noticeText } from "./release.js";
+import { CHECK_EVERY_MS, FIRST_CHECK_MS, RETRY_MS, autoHold, noticeText } from "./release.js";
 
 export { CHECK_EVERY_MS, FIRST_CHECK_MS, RETRY_MS };
 
@@ -119,7 +119,9 @@ export function announce(check, get, set, notify) {
 // shared value can't interleave). REQUEST_KEY (written by am-status): "check now" or "install".
 
 /** The last check or install, and `busy` while one runs: `{ kind, current, latest, update, why,
- *  at, request, applyError, from, busy: { what, since, id, request?, to? } | null }`. */
+ *  at, request, applyError, from, auto, autoFailed, autoHeld, landed, announced,
+ *  busy: { what, since, id, request?, to?, from?, auto? } | null }`. auto: the setting as the last
+ *  check read it (`{ on, skip, managed, why, at? }`); the rest: autoPlan and landing below. */
 export const STATE_KEY = "am.update.state";
 /** What am-status asks for: `{ id, what: "check" | "apply", at }`. */
 export const REQUEST_KEY = "am.update.request";
@@ -172,7 +174,14 @@ export function checkPatch(result, now) {
   const answer = answerOf(result?.stdout) ?? {};
   const version = (v) => (typeof v === "string" && v !== "" ? v : null);
   return { kind: check.kind, update: check.update ?? null, why: check.why ?? null, current: version(answer.current),
-    latest: version(answer.latest), at: now, applyError: null };
+    latest: version(answer.latest), at: now, applyError: null, ...(autoOf(answer.auto) ? { auto: autoOf(answer.auto) } : {}) };
+}
+
+/** update.mjs's autoStatus answer, checked, or null (an older update.mjs gives none). */
+function autoOf(value) {
+  const a = objectOr(value, null);
+  if (!a || typeof a.on !== "boolean" || typeof a.managed !== "boolean") return null;
+  return { on: a.on, managed: a.managed, skip: typeof a.skip === "string" ? a.skip : null, why: typeof a.why === "string" ? a.why : null };
 }
 
 /**
@@ -186,11 +195,15 @@ export function applyPatch(result, state, now) {
   const version = answer?.installed?.version;
   if (result?.code === 0 && typeof version === "string") {
     return { kind: "installed", from: answer.current ?? state.current ?? null, current: version, latest: version, update: null,
-      why: null, applyError: null, at: now };
+      why: null, applyError: null, at: now, restartBots: Array.isArray(answer.notice) && answer.notice.length > 0 };
   }
+  // An install on its own that update.mjs held back (the setting, a rollback's skip, another run):
+  // nothing happened and nothing is wrong; the check's answer stands.
+  if (result?.code === 0 && typeof answer?.held === "string") return { autoHeld: answer.held, at: now };
   if (result?.code === 0 && answer?.refused) {
     // The latest moved on after the confirm: offer the new one, nothing installed.
-    return { ...checkPatch(result, now), applyError: `${answer.refused.latest} is out now, not ${answer.refused.expected}: confirm again` };
+    return { ...checkPatch(result, now), refused: answer.refused,
+      applyError: `${answer.refused.latest} is out now, not ${answer.refused.expected}: confirm again` };
   }
   if (result?.code === 0 && answer && !answer.error && answer.installed === null) return checkPatch(result, now);
   const why = typeof answer?.error === "string" ? answer.error : result ? `exit ${result.code}` : "node not found";
@@ -201,7 +214,7 @@ export function applyPatch(result, state, now) {
 export function applyNotice(patch) {
   if (patch.kind === "installed") {
     return { title: "Automagik Herdr updated", level: "success", body: `${patch.from ?? "?"} → ${patch.current}. The replaced pack is kept`
-      + " (`automagik-herdr update --rollback` puts it back). Reload Herdr's mods to use it." };
+      + " (`automagik-herdr update --rollback` puts it back). Herdr reloads its mods on its own." };
   }
   if (patch.applyError) return { title: "Automagik Herdr not updated", level: "error", body: patch.applyError };
   return null;
@@ -228,11 +241,126 @@ export function applyRefusal(request, state) {
   return null;
 }
 
-/** What a request asks for ("check" | "apply") when it is new to this copy (`seen`: the last id it
+/** What a request asks for ("check" | "apply" | "auto", the setting's switch) when it is new to this copy (`seen`: the last id it
  *  handled) and fresh at `now`, else null. */
 export function requestDue(value, seen, now) {
   const r = objectOr(value, null);
   if (!r || typeof r.id !== "string" || r.id === seen || typeof r.at !== "number") return null;
-  if (r.what !== "check" && r.what !== "apply") return null;
+  if (r.what !== "check" && r.what !== "apply" && r.what !== "auto") return null;
   return now - r.at <= REQUEST_FRESH_MS && r.at - now <= 5_000 ? r.what : null;
+}
+
+// ---- Installing on its own (auto-update) ----
+// After a check that found a newer release, the sidebar installs it through the same applyUpdates
+// path a click takes (the claim, `update.mjs apply --expect <v>`), adding `--auto` so update.mjs
+// reads the setting and the rollback skip again under its lock before any download.
+
+/** A failed install on its own waits this long before the same version is tried again, doubling
+ *  after each failure up to AUTO_BACKOFF_MAX_MS; the person hears of it once per version. The
+ *  checks come every CHECK_EVERY_MS, so the tries land 4 h, 8 h, 16 h and 24 h after each failure,
+ *  then daily: BACKOFF_SLACK_MS lets the check due at the end of a wait make the try. */
+export const AUTO_BACKOFF_MS = CHECK_EVERY_MS;
+export const AUTO_BACKOFF_MAX_MS = 24 * 60 * 60 * 1000;
+export const BACKOFF_SLACK_MS = 10 * 60_000;
+export const backoffOf = (count) => Math.min(AUTO_BACKOFF_MS * 2 ** Math.max(0, count - 1), AUTO_BACKOFF_MAX_MS);
+
+/**
+ * What to do after a check (`state`: STATE_KEY with the check's answer): `{ apply: version }` to
+ * install it now, `{ hold: why }` when it is held back (the reason the status bar shows), or null
+ * when there is no update or the check carried no setting (an older update.mjs: today's notice).
+ */
+export function autoPlan(state, now) {
+  if (state?.kind !== "update" || typeof state.update?.version !== "string") return null;
+  const auto = objectOr(state.auto, null);
+  if (!auto) return null;
+  const version = state.update.version;
+  const hold = autoHold(version, auto);
+  if (hold) return { hold, manual: !auto.managed || auto.on === false };
+  // Just installed (the record may say otherwise only when it failed): never the same one again.
+  const landed = objectOr(state.landed, null);
+  if (landed?.version === version && typeof landed.at === "number" && now - landed.at < LANDING_MS) {
+    return { hold: `${version} was just installed` };
+  }
+  const failed = objectOr(state.autoFailed, null);
+  if (failed?.version === version && typeof failed.at === "number" && now - failed.at < backoffOf(failed.count ?? 1) - BACKOFF_SLACK_MS) {
+    return { hold: `the last try failed (${failed.why}): next try after ${new Date(failed.at + backoffOf(failed.count ?? 1)).toISOString()}` };
+  }
+  return { apply: version };
+}
+
+/** The notice for a held update, once per version (SHOWN_KEY): today's when the setting is off or
+ *  doesn't apply here, the rollback's own when the version was rolled back. */
+export function heldNotice(plan, update) {
+  if (plan?.manual) return { title: "Automagik Herdr update", body: noticeText(update), level: "info" };
+  if (plan?.hold?.includes("was rolled back")) {
+    return { title: "Automagik Herdr update", level: "info", body: `${update.version} is out, but you rolled it back here, so it`
+      + " won't install on its own: the next newer release will. Click update in the status bar to install it anyway." };
+  }
+  return null;
+}
+
+/** STATE_KEY fields after an install on its own failed for `version`: counts the failures. */
+export function autoFailure(state, version, why, now) {
+  const before = objectOr(state?.autoFailed, null);
+  const count = before?.version === version ? (before.count ?? 1) + 1 : 1;
+  return { autoFailed: { version, why, at: now, count } };
+}
+
+/** The one notice for a failed install on its own (the first failure of a version), else null. */
+export function autoFailedNotice(failed) {
+  if (!failed || failed.count !== 1) return null;
+  const hours = Math.round(backoffOf(1) / 3_600_000);
+  // update.mjs: the swap happened but the install record wasn't written (it still names the old version).
+  if (/went in, but the install record could not be written/.test(failed.why)) {
+    return { title: "Automagik Herdr update not finished", level: "error",
+      body: `${failed.version} was put in place, but its install record could not be saved (${failed.why}). It tries again in ${hours} h.` };
+  }
+  return { title: "Automagik Herdr not updated", level: "error",
+    body: `Installing ${failed.version} failed: ${failed.why}. Nothing was changed; it tries again in ${hours} h.` };
+}
+
+// ---- After an install: the notice from the new build ----
+// The swap replaces mods/am-sidebar, and Herdr reloads every copy of a mod whose files change (its
+// AGENTS.md, "Mods": "Saving any file reloads every copy in place"; the old build's timers stop).
+// So the build that ran the install usually never hears back: the new build, at init, finds the
+// install in STATE_KEY and posts "Automagik Herdr updated to X". The old build waits
+// RELOAD_GRACE_MS: if it is still running then, no reload happened and its notice says what to do.
+
+/** An install is announced by the new build at most this long after it started. */
+export const LANDING_MS = APPLY_STALE_MS;
+/** How long the new build waits for the old one to record the install (whether bots need a restart). */
+export const LANDING_WAIT_MS = 60_000;
+export const RELOAD_GRACE_MS = 30_000;
+
+/**
+ * At a build's init, what its own VERSION means for the last install: `{ ready: true, from,
+ * restartBots }` to announce now (the old build recorded it), `{ ready: false, from, id }` while
+ * the old build's lock is on it (wait for its answer, up to LANDING_WAIT_MS), or null.
+ */
+export function landing(state, version, now) {
+  if (typeof version !== "string" || version === "" || state?.announced === version) return null;
+  const landed = objectOr(state?.landed, null);
+  if (landed?.version === version && typeof landed.at === "number" && now - landed.at < LANDING_MS) {
+    return { ready: true, from: landed.from ?? null, restartBots: landed.restartBots === true };
+  }
+  const busy = objectOr(state?.busy, null);
+  if (busy?.what === "apply" && busy.announce === true && busy.to === version && typeof busy.since === "number" && now - busy.since < LANDING_MS) {
+    return { ready: false, from: busy.from ?? null, id: busy.id };
+  }
+  return null;
+}
+
+/** The notice after Herdr reloaded the mods into `version`. Bots are herdr-core's terminals: a mod
+ *  reload doesn't touch them. A moved briefing hook (rare: the sidebar's folder renamed) does. */
+export function landedNotice(version, from, restartBots = false) {
+  const back = from ? ` \`automagik-herdr update --rollback\` puts ${from} back.` : "";
+  return { title: `Automagik Herdr updated to ${version}`, level: "success",
+    body: (restartBots ? "Your bots kept running; restart each Claude bot (automagik-herdr restart <bot>) so it gets its briefing again."
+      : "Your bots kept running.") + back };
+}
+
+/** The old build's notice when Herdr did not reload the mods within RELOAD_GRACE_MS. */
+export function noReloadNotice(version) {
+  return { title: `Automagik Herdr updated to ${version}`, level: "success",
+    body: "Herdr did not reload its mods: quit Herdr (⌘Q) and open it again to use the new version." };
 }

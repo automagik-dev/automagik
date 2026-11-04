@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-04T01:41:10.691Z",
+  "generatedAt": "2026-11-04T13:00:20.531Z",
   "modCount": 11,
   "repositoryCount": 4,
   "source": "automagik-herdr",
@@ -12,7 +12,7 @@
       "url": "https://github.com/automagik-dev/automagik",
       "defaultBranch": "dev",
       "stars": 0,
-      "pushedAt": "2026-11-03T22:28:58-03:00",
+      "pushedAt": "2026-11-04T09:57:10-03:00",
       "headCommit": "",
       "path": "herdr",
       "name": "Automagik Herdr",
@@ -30,7 +30,7 @@
       ],
       "hasKeys": true,
       "hasPreview": false,
-      "recipeBytes": 5287,
+      "recipeBytes": 5290,
       "previewUrl": "",
       "license": "Apache-2.0",
       "mods": [
@@ -42,7 +42,7 @@
         {
           "name": "am-footer",
           "title": "Automagik Footer",
-          "blurb": "The sidebar's footer as a rail of tabs instead of a stack of rows — robot **Bots** (first), puzzle **Mods**, clock **Automations**, layers **Quota** (while am-quota is on), gear **Settings**, plus **Add machine** — and the brand bar above it. Derived from Herdr's shipped `workspa"
+          "blurb": "The sidebar's footer as a rail of tabs instead of a stack of rows — robot **Bots** (first), puzzle **Mods**, clock **Automations**, layers **Accounts** (while am-quota is on), gear **Settings**, plus **Add machine** — and the brand bar above it. Derived from Herdr's shipped `work"
         },
         {
           "name": "am-markdown",
@@ -61,8 +61,8 @@
         },
         {
           "name": "am-quota",
-          "title": "Automagik Quota",
-          "blurb": "**Accounts**, a personal tool for people who run their own [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI). Your bots stop when a subscription hits its limit; this panel shows how long the Claude Code or Codex account this computer uses will last, and moves the tool t"
+          "title": "Automagik Accounts",
+          "blurb": "**Accounts** keeps your bots working when a plan hits its limit: it shows how long the Claude Code or Codex account this computer uses will last, and moves the tool to another account on your own CLIProxyAPI before it runs out. A personal tool for people who run one; accounts are"
         },
         {
           "name": "am-sidebar",

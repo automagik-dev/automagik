@@ -13,7 +13,7 @@ Create/Edit form, Start/Attach, the per-turn briefing, and `bin/automagik-herdr.
 (the footer rail), `am-status` (the bottom status bar, with the pack's version and update
 check), `am-tabs` (the tab bar), `am-new-menu` (the `+` menu), `am-markdown`
 (Markdown straight from a terminal — the menu and the preview in one mod), `am-automations`
-(scheduled agent prompts), `am-quota` (the quota panel) — and **`am-mods`**, the table at
+(scheduled agent prompts), `am-quota` (the Accounts panel) — and **`am-mods`**, the table at
 `⌘⇧M` that lists every installed mod with on/off switches, `herdr-app check` results, versions,
 sources from our catalog and paths, plus the marketplace (`m`) and the review before any copy.
 

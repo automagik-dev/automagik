@@ -28,16 +28,19 @@ import { pruneNodeModules } from './prune-runtime.mjs'
 import { acceptsHarness } from './follow-dsh.mjs'
 import { patchRuntime } from './runtime-patches.mjs'
 import { devClientBundles } from './client-bundles.mjs'
+import { batchSafe } from './batch-spawn.mjs'
 import { compareVersions } from '../src/update.js'
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = resolve(APP, '..', '..')
 const BUILD = join(APP, 'build')
 const VENDOR = 'vendor'
-const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+// On Windows npm is a batch file, which Node runs only through cmd.exe (batch-spawn.mjs).
+const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+const npm = (args, options) => execFileSync(...batchSafe(NPM, args, options))
 // @openuidev/lang-core and others phone home from install scripts unless told not to.
 const env = { ...process.env, DO_NOT_TRACK: '1', npm_config_fund: 'false', npm_config_audit: 'false', npm_config_update_notifier: 'false' }
-const run = (args, cwd) => execFileSync(npm, args, { cwd, env, stdio: ['ignore', 'inherit', 'inherit'] })
+const run = (args, cwd) => npm(args, { cwd, env, stdio: ['ignore', 'inherit', 'inherit'] })
 const git = (args, cwd) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] })
 const say = message => console.log(`[prepare-runtime] ${message}`)
 const readJson = file => JSON.parse(readFileSync(file, 'utf8'))
@@ -130,7 +133,7 @@ const packs = join(BUILD, 'packs')
 rmSync(packs, { recursive: true, force: true })
 mkdirSync(packs, { recursive: true })
 const packed = Object.entries(PLUGINS).map(([name, { dir, version, upTo }]) => {
-  const [info] = JSON.parse(execFileSync(npm, ['pack', '--json', '--pack-destination', packs], { cwd: dir, env, encoding: 'utf8' }))
+  const [info] = JSON.parse(npm(['pack', '--json', '--pack-destination', packs], { cwd: dir, env, encoding: 'utf8' }))
   if (info.name !== name) throw new Error(`${dir} packs ${info.name}, not ${name}`)
   if (upTo ? !(compareVersions(info.version, version) <= 0) : info.version !== version) {
     throw new Error(`${name} is ${info.version}, not ${upTo ? 'at or below ' : ''}${version}`)

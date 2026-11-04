@@ -52,7 +52,9 @@ More detail: [docs/guides/using.md](docs/guides/using.md).
 ## Privacy and safety
 
 - The app talks only to your own machines, plus GitHub to check for updates. Pocket Link traffic
-  is end-to-end encrypted, even through n0's relays.
+  is end-to-end encrypted, even through n0's relays. The phone and your computer's Pocket Link
+  bridge each publish their public key and the n0 relay they use (no IP addresses) to n0's
+  address lookup, so they can find each other.
 - No analytics, no ads, no account.
 - Answering from the lock screen is off until you turn it on.
 - Full policy: [docs/privacy.md](docs/privacy.md). Report a vulnerability: [SECURITY.md](SECURITY.md).

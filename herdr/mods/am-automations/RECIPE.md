@@ -2,7 +2,16 @@
 
 Scheduled agent prompts, as a side panel: a prompt, a cron line and a repo — every weekday at 09:00
 an agent starts in a fresh worktree and works. The panel is where you find what ran while you were
-away, start one now, pause them all, or write a new one with its next runs previewed.
+away, start one now, pause them all, or write a new one with its next runs previewed. It needs
+the `herdr-automations` scheduler, a separate program the pack does not install.
+
+**It ships switched off**, footer tab included (#220): a fresh install puts it in
+`<app home>/mods-disabled/am-automations`, where Herdr does not load it. To turn it on, open the
+**Mods** panel, find *Automagik Automations* and switch it on; the footer's **Automations** tab then
+appears. Without the scheduler the panel says what is missing and shows the command that installs
+it (the pinned release, hash-checked, into `~/.local/bin`), with **Copy**; it never runs it. An
+install that already has the mod keeps its state through updates, on or off (`OFF_BY_DEFAULT` in
+`am-sidebar/release.js`; `am install herdr.am-automations` also switches it on).
 
 Our fork of `DnzzL/herdr-automations` (MIT, kept verbatim in `LICENSE-upstream`, credited in
 `NOTICE`): the pack owns this copy, upstream's two files are otherwise unchanged apart from this
@@ -13,9 +22,11 @@ pack.
 ## What you see
 
 A card filling its block (`rounded(10)`, 1 px `border`, `background`), three parts top to bottom:
-a 42 px header — "Automations", "Active" / "All paused", a switch, and `+`; a `blocked`-tinted
-banner with a solid **Start** button while no scheduler holds the lock; and a scrolling body in one
-of three views:
+a 42 px header — "Automations", "Active" / "All paused", a switch, and `+`; while the scheduler
+binary is missing, a `blocked`-tinted block with one line ("Missing the scheduler: herdr-automations
+is not on PATH or in ~/.local/bin."), the install command and **Copy**; a `blocked`-tinted banner
+with a solid **Start** button while no scheduler holds the lock; and a scrolling body in one of
+three views:
 
 - **List**: `INBOX` (finished runs not yet seen, with "Mark all read" and "Nothing new."), then
   `AUTOMATIONS` — per entry a dot, the name, `▶`, its schedule and next run, and "agent · model ·
@@ -28,6 +39,12 @@ of three views:
 
 ## How it behaves
 
+- **Finding the scheduler**: `herdr-automations version` on PATH, then
+  `~/.local/bin/herdr-automations`. Neither answers: the repair block shows `repairCommand()` for
+  this Mac's `uname -m` (`SCHEDULER` pins the release and its sha256s, from its `checksums.txt`),
+  and every 30 s refresh looks again, so a scheduler installed meanwhile is picked up. Copy writes
+  the command to the clipboard; the panel never runs it and never installs a login service (only
+  **Start**, pressed by you, runs `service install`).
 - Every read and write goes through the CLI (`ls --json`, `history --json`, `put [--dry-run]`,
   `rm`, `seen`, `run --bg`, `pause|resume`, `service install`); the panel never edits
   `automations.yaml` or `history.jsonl` itself. Config and state folders are watched to know when to
@@ -59,8 +76,9 @@ templates, `sh`, and the agents a run starts (`claude`, `codex`, `pi`).
 
 - **It runs programs**: `herdr-automations` on every action, `hc templates` for the form, and it
   starts agents. It reaches no network and writes no file itself.
-- Without the scheduler binary the panel shows an error banner and disables nothing else; a run
-  started by `▶` still needs it.
+- Without the scheduler binary the panel shows the repair block instead of the list. Shipping the
+  scheduler with the pack (an RFC 0012 part, installed by `am install`) comes later; until then a
+  new scheduler release means updating `SCHEDULER` (version and both sha256s) by hand.
 - `exec` has no stdin and a 30 s limit: both are worked around (shell printf, `--bg`), and a very
   slow `ls`/`history` would show as an error rather than a hang.
 - The fork means upstream changes arrive by hand; `LICENSE-upstream` and the NOTICE entry must stay.

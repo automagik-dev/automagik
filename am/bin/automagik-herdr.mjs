@@ -34,12 +34,13 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
   writesWorktree } from "../workers.js";
 import { carriedLabels, continueRefusal, doomedHelpers, helperArgs, helperPlan, ledgerSession, paneCommand, planText as restartText, restartPlan,
   claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
-import { binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, readMarker, relinkCli, rollback as rollbackPack, writeMarker } from "../update.mjs";
-import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER } from "../release.js";
+import { autoStatus, readAuto, binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, managedPack, readMarker, relinkCli, rollback as rollbackPack, writeAuto, writeMarker } from "../update.mjs";
+import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER, updatesOff } from "../release.js";
 import { MACHINE_NAME, OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
 import { RemoteFileError, StaleSnapshot, readRemoteText, removeRemoteText, writeRemoteText } from "../remoteFile.js";
 import { botHistory, historyLines } from "../inspect.js";
+import { DocError, docGet } from "../docGet.mjs";
 import { hooksNotice } from "../migrateHooks.mjs";
 import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
 import { fixNonVisual, readState, spacesOf } from "./state.mjs";
@@ -726,7 +727,7 @@ const OPTIONS = {
   "planned-wave": { type: "string" }, "planned-note": { type: "string" }, unplanned: { type: "boolean" },
   space: { type: "string" }, tab: { type: "string" },
   title: { type: "string" }, sub: { type: "string" }, id: { type: "string" },
-  check: { type: "boolean" }, rollback: { type: "boolean" },
+  check: { type: "boolean" }, rollback: { type: "boolean" }, auto: { type: "string" },
   "worker-agent": { type: "string" }, "worker-model": { type: "string" }, "worker-effort": { type: "string" },
   "worker-template": { type: "string" }, template: { type: "string" },
   branch: { type: "string" }, worktree: { type: "string" }, base: { type: "string" }, effort: { type: "string" },
@@ -818,6 +819,10 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 current and latest (--check), or put the replaced pack back;
                                 an update then runs meter install where you agreed to it
                                 (install.sh, or an earlier meter install); nobody asked: nowhere
+  update --auto on|off|status   Install updates automatically (on by default): Herdr installs
+                                each newer verified release on its own; a version you rolled
+                                back is skipped until a newer one is out. Only for a pack
+                                install.sh put in place, never a checkout
   meter install [--machine M | --linked | --local]
                                 the pinned usagemeter (v${USAGEMETER.version}, hash-checked on each
                                 machine, never a downgrade) in ~/.local/bin on this computer and
@@ -827,6 +832,14 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 it records your yes (--local: this computer only) for updates
   meter uninstall               remove it from the linked machines the pack put it on (the
                                 install record says which), only where it is still that version
+  doc get <name> [--machine M]  a herdr-core doc's value, as one line of JSON on stdout (hc's
+                                doc.get through hc connect; read-only, 10 s at most); --machine:
+                                that linked machine's doc. Exit 0 with the JSON; 3: no such doc
+                                (never written, or deleted); 2: a usage mistake; 1: any other
+                                failure (a bad name, hc down, no answer). A message on stderr for
+                                every exit but 0: anything but 0 or 3 is a failure. A name is
+                                1-128 of A-Z a-z 0-9 . _ -, not . or .. (hc may refuse more).
+                                Made for mods: their exec has no stdin to speak hc connect with.
 
 --rank R sets the pane's role= label, one of: ${RANKS.join(", ")}.
 The main bot's pane is role=main, and a bot that leads others is role=captain, whatever their
@@ -1004,7 +1017,7 @@ async function projectFor(opts) {
   return loadProject(await commandKeyOf(opts));
 }
 // The commands that take --machine: the definitions ones (and meter's own --machine).
-const ON_MACHINE = new Set(["ls", "show", "create", "edit", "rm", "category", "start", "restart", "attach", "detach", "whois", "meter"]);
+const ON_MACHINE = new Set(["ls", "show", "create", "edit", "rm", "category", "start", "restart", "attach", "detach", "whois", "meter", "doc"]);
 // A project's place in --json answers: `machine` only for a linked machine's.
 const placeOf = (project) => ({ project: project.key, ...(project.machine ? { machine: project.machine } : {}) });
 
@@ -2888,6 +2901,7 @@ const hooksLines = (hooks) => { const lines = hooksNotice(hooks); return lines.l
  * the open spaces are looked at only for this computer's own pack: with `io.modsDir`, only `io.binDir`.
  */
 export async function cmdUpdate(opts, _rest = [], io = {}) {
+  if (opts.auto !== undefined) return autoSetting(opts, io);
   if (opts.check && opts.rollback) throw new CliError("Give --check or --rollback, not both.", 2);
   const host = io.modsDir ? { binDir: io.binDir ?? null, window: false }
     : { binDir: io.binDir ?? binDirOf(io.env ?? process.env), window: liveHome(`${appHome(io.env ?? process.env)}/mods`) };
@@ -2919,7 +2933,7 @@ export async function cmdUpdate(opts, _rest = [], io = {}) {
     try { r = rollbackPack({ ...(io.modsDir ? { modsDir: io.modsDir } : {}), ...host }); } catch (e) { throw failed("Nothing rolled back", e); }
     const { relinked, note } = relink(before);
     const warned = r.warnings?.length ? ` Warning: ${r.warnings.join("; ")}.` : "";
-    return opts.json ? { rolledBack: r, relinked } : `Rolled back to Automagik Herdr ${r.version ?? "(no VERSION)"} at ${r.pack}. Reload Herdr's mods to use it.${warned}${note}${hooksLines(r.hooks?.hooks)}`;
+    return opts.json ? { rolledBack: r, relinked } : `Rolled back to Automagik Herdr ${r.version ?? "(no VERSION)"} at ${r.pack}. Herdr reloads its mods on its own.${r.from && readAuto(io.modsDir ?? defaultModsDir(io.env ?? process.env)).on ? ` Updates installed automatically skip ${r.from} and wait for a newer release.` : ""}${warned}${note}${hooksLines(r.hooks?.hooks)}`;
   }
   let r;
   try { r = opts.check ? await checkForUpdate(where) : await installUpdate(where); } catch (e) {
@@ -2931,10 +2945,28 @@ export async function cmdUpdate(opts, _rest = [], io = {}) {
   const current = r.current ?? "not installed";
   if (r.disabled) return `Automagik Herdr ${current} is installed. Updates are off (${NO_UPDATE_ENV}=1).${note}`;
   if (r.installed) {
-    return `Updated Automagik Herdr ${current} → ${r.installed.version}. The replaced pack is kept: \`automagik-herdr update --rollback\` puts it back. Reload Herdr's mods to use it.${note}${hooksLines(r.installed.hooks?.hooks)}${meter.lines.map((l) => `\n${l}`).join("")}`;
+    return `Updated Automagik Herdr ${current} → ${r.installed.version}. The replaced pack is kept: \`automagik-herdr update --rollback\` puts it back. Herdr reloads its mods on its own.${note}${hooksLines(r.installed.hooks?.hooks)}${meter.lines.map((l) => `\n${l}`).join("")}`;
   }
   if (r.update) return `Automagik Herdr ${current} is installed; ${r.update.version} is out (${r.update.page}). Run \`automagik-herdr update\` to install it.`;
   return `Automagik Herdr ${current} is installed; the latest release is ${r.latest ?? "none yet"}. Up to date.${note}`;
+}
+
+/** `update --auto on|off|status`: the pack's own setting (update.mjs writeAuto), and whether it applies here. */
+function autoSetting(opts, io) {
+  if (opts.check || opts.rollback) throw new CliError("Give --auto alone, without --check or --rollback.", 2);
+  if (!["on", "off", "status"].includes(opts.auto)) throw new CliError("--auto takes on, off or status.", 2);
+  const env = io.env ?? process.env;
+  const modsDir = io.modsDir ?? defaultModsDir(env);
+  let s;
+  try { s = opts.auto === "status" ? autoStatus(modsDir) : { ...writeAuto(modsDir, { on: opts.auto === "on" }), ...managedPack(modsDir) }; } catch (e) {
+    throw new CliError(`The setting was not saved: ${String(e?.message ?? e).split("\n")[0]}`);
+  }
+  if (opts.json) return { ...s, checks: !updatesOff(env) };
+  const lines = [`Install updates automatically: ${s.on ? "on" : "off"}.`];
+  if (!s.managed) lines.push(`It doesn't apply to this pack (${s.why}): updates stay a notice and \`automagik-herdr update\`.`);
+  else if (s.on && s.skip) lines.push(`${s.skip} was rolled back here: it waits for a release newer than ${s.skip}.`);
+  if (updatesOff(env)) lines.push(`Update checks are off (${NO_UPDATE_ENV}=1), so nothing is installed.`);
+  return lines.join("\n");
 }
 
 // ---- tidy (sidebar-rules Group 2) ----
@@ -3068,9 +3100,29 @@ export async function meterAfterUpdate(io) {
   }
 }
 
+/**
+ * `doc get <name> [--machine M]`: a herdr-core doc's value as JSON on stdout (docGet.mjs: doc.get
+ * through hc connect, read-only), for a mod that can only exec a program. Exit 3 when the doc is
+ * not there, 2 for a usage mistake, 1 for any other failure.
+ */
+export async function cmdDoc(opts, [verb, name, ...rest]) {
+  if (verb !== "get") throw new CliError(`doc needs get${verb ? `, not "${verb}"` : ""}: doc get <name> [--machine M].`, 2);
+  if (name === undefined) throw new CliError("doc get needs a doc name.", 2);
+  if (rest.length) throw new CliError(`doc get takes one name (got ${[name, ...rest].join(" ")}).`, 2);
+  let value;
+  try {
+    value = await docGet(name, { machine: opts.machine, hc: programPath("hc") ?? "hc" });
+  } catch (e) {
+    if (e instanceof DocError) throw new CliError(e.message, e.code);
+    throw e;
+  }
+  process.stdout.write(`${JSON.stringify(value)}\n`);
+  return PRINTED;
+}
+
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
   start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, whois: cmdWhois, history: cmdHistory, brief: cmdBrief, update: cmdUpdate,
-  tidy: cmdTidy, worker: cmdWorker, meter: cmdMeter };
+  tidy: cmdTidy, worker: cmdWorker, meter: cmdMeter, doc: cmdDoc };
 const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "restart", "attach", "detach", "history", "brief"]);
 
 /** Runs one command line; resolves with the exit code. Output goes to stdout, problems to stderr. */
@@ -3097,7 +3149,7 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     if (NEEDS_BOT.has(command) && !rest[0]) throw new CliError(`${command} needs a bot (its id or name).`, 2);
     if (opts.machine !== undefined && !ON_MACHINE.has(command)) {
-      throw new CliError(`${command} works on this computer only for now; --machine goes with ls, show, create, edit, rm, category, start, restart, attach, detach and whois.`, 2);
+      throw new CliError(`${command} works on this computer only for now; --machine goes with ls, show, create, edit, rm, category, start, restart, attach, detach, whois, meter and doc.`, 2);
     }
     exitAfter.code = 0;
     const out = await run(opts, rest);

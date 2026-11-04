@@ -172,14 +172,30 @@ object Teams {
     /** Waiting this long after the first reading, a space whose git never answers no longer holds its machine back. */
     const val READ_GRACE_MS = 30_000L
     /**
-     * A machine read far enough to replace its cached projects: connected, its terminals and spaces read this session,
-     * and git answered for every space (or [READ_GRACE_MS] passed since that first reading).
+     * What Teams reads, shows and caches as one: a saved machine's own core ([machine] "") or one machine it links to.
+     * Each goes live on its own, so a slow or unreachable linked machine never holds the others back.
      */
-    fun ready(m: MachineState, now: Long): Boolean {
+    fun scope(hostId: String, machine: String) = "$hostId|$machine"
+    val Team.scope get() = scope(hostId, machine)
+    /**
+     * [machine] of [m] read far enough to replace its cached projects: connected, its terminals read this session, its
+     * spaces read this session ([MachineState.layouts]), up, and git answered for each of its spaces (or [READ_GRACE_MS]
+     * passed since its spaces were first read).
+     */
+    fun ready(m: MachineState, machine: String, now: Long): Boolean {
         if (!m.connected || m.readSession != m.session) return false
+        val since = m.layouts[machine] ?: return false
+        if (machine.isNotBlank() && m.linked.find { it.name == machine }?.connected != true) return false
         val byAddress = m.terminals.associateBy { it.address }
-        return now - m.readMs >= READ_GRACE_MS || m.spaces.none { spaceKey(m, it, byAddress) == SpaceKey.Pending }
+        return now - since >= READ_GRACE_MS || m.spaces.none { it.machine == machine && spaceKey(m, it, byAddress) == SpaceKey.Pending }
     }
+    /** Every [scope] read far enough ([ready]): the only ones whose projects are live, cached and answered from. */
+    fun read(machines: Map<String, MachineState>, now: Long): Set<String> = machines.flatMap { (hostId, m) ->
+        m.layouts.keys.filter { ready(m, it, now) }.map { scope(hostId, it) }
+    }.toSet()
+    /** The projects of the [read] scopes only ([build] of the rest would show a machine still being read). */
+    fun live(machines: Map<String, MachineState>, read: Set<String>, now: Long): List<Team> =
+        build(machines.filterKeys { h -> read.any { it.startsWith("$h|") } }, now).filter { it.scope in read }
 
     fun build(hostId: String, m: MachineState, now: Long): List<Team> {
         val byAddress = m.terminals.associateBy { it.address }
@@ -270,12 +286,12 @@ object Teams {
     fun sent(outcome: String) = outcome.startsWith("You chose")
 
     /**
-     * Live projects of the machines read this session ([read]), plus the cached ones of every other saved machine
-     * ([known]): marked stale, with no terminal to open, until their machine is read again. Machines no longer saved
-     * show nothing.
+     * Live projects of the scopes read this session ([read], [scope]s), plus the cached ones of every other scope of a
+     * saved machine ([known], host ids): marked stale, with no terminal to open, until their machine is read again.
+     * Machines no longer saved show nothing.
      */
     fun merge(live: List<Team>, cached: List<Team>, read: Set<String>, known: Set<String>): List<Team> =
-        live + cached.filter { it.hostId !in read && it.hostId in known }.map { c ->
+        live + cached.filter { it.scope !in read && it.hostId in known }.map { c ->
             c.copy(stale = true, bots = sortBots(c.bots.map { it.copy(ref = null) }))
         }
 

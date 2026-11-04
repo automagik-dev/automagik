@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
-| Milestone | 1 (marks, stable port as the #141 fix); 5. The app opens fast |
+| Status | Accepted (delivery 2 merged: #184; delivery 4's async profile copy merged: #179) |
+| Milestone | 1 (marks, stable port, toward the #141 fix); 5. The app opens fast |
 | Lanes | desktop (3.N) |
 | Created | 2026-10-30 |
 

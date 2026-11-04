@@ -1,6 +1,6 @@
 {
   "id": "herdr.am-quota",
-  "title": "Automagik Quota",
+  "title": "Automagik Accounts",
   "kind": "herdr-mod",
   "paths": [
     "herdr/mods/am-quota/**"

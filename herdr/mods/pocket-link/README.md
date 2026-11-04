@@ -45,7 +45,9 @@ Pairings live outside the mod folder and stay.
   a LaunchAgent on macOS, or a systemd user unit on Linux.
 - **Network:** [iroh](https://iroh.computer). Phones dial this computer by its public key.
   Connections are direct when they can be, otherwise through n0's public relays,
-  and always end to end encrypted. The bridge also publishes its address to n0's lookup service.
+  and always end to end encrypted. The bridge and the phone each publish their public key and the
+  n0 relay they currently use (no IP addresses) to n0's address lookup, so phones find this
+  computer after an IP change.
 - **Programs it runs:** `node`, `npm` (setup), `hc connect`, `launchctl` / `systemctl --user`, `sh`,
   `ls`, and your login shell, once, to find `node`.
 - **Files it writes:** its state folder (below), the one login service file, and `.node` in the
@@ -91,7 +93,9 @@ Pairings live outside the mod folder and stay.
   ([decision](../../../apps/pocket/docs/decisions/pocket-link-no-meter-installer.md)).
 
 A paired phone can use every herdr-core session on this computer, just like a terminal running `hc`.
-Pair only your own phones. Remove one in the dialog and it's disconnected at once.
+Pair only your own phones. Remove one in the dialog and its new connections are refused; the
+bridge checks its list every 2 seconds and then closes that phone's open sessions. Agents it
+started keep running on the computer.
 
 ## For other mods
 

@@ -653,9 +653,12 @@ export function install(rt) {
     // Before the group's Sessions leave the state, which the archive reads.
     const archived = rt.archiveGroupMemory(room)
     for (const botId of Object.keys(room.sessions ?? {})) rt.dropGroupSession(room, botId)
+    // Its tasks keep the level they run at as a cap, then take their Bot's own or lower.
+    rt.capTasks(task => task.roomId === id)
     delete state.rooms[id]
     rt.roomInbox.delete(id)
     rt.dropGroupLines(id)
+    await rt.reapplyTasks(task => task.roomId === id)
     await archived
     const failed = await saveForDelete()
     // Armed scheduled tasks refuse a plain archive and would keep delivering into
@@ -707,6 +710,8 @@ export function install(rt) {
     // Questions and exchange turns are kept per Session, so every part of the chat is cleared.
     const parts = new Set([id, current, ...(bot.segments ?? []).map(segment => segment.sessionId)])
     await rt.releaseBot(id, [...parts, ...rt.groupSessionsOf(id)])
+    // Its tasks keep the level they run at as a cap, so the default cannot raise them.
+    rt.capTasks(task => task.from === id)
     delete state.bots[id]
     for (const part of parts) {
       delete state.questions[part]
@@ -723,6 +728,8 @@ export function install(rt) {
       touched.push(room)
     }
     await followMemberNames(touched)
+    // Its tasks go on as Sessions of their own, at the catalog default or lower.
+    await rt.reapplyTasks(task => task.from === id)
     await rt.forgetBotSecrets(id)
     await archived
     const failed = await saveForDelete()

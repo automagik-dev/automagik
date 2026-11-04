@@ -77,7 +77,7 @@ export function statusLabel({ state = null, request = null, version = null, now 
       tooltip: `Couldn't check for updates${checked}: ${str(s.why) ?? "no answer"}. Click to try again.` };
   }
   if (s.kind === "installed" && str(s.from)) {
-    return { parts: [dim(name, "check")], tooltip: `Updated from ${s.from}. Reload Herdr's mods if anything still looks old. Click to check again.` };
+    return { parts: [dim(name, "check")], tooltip: `Updated from ${s.from}; Herdr reloaded its mods. If anything still looks old, quit and reopen Herdr. Click to check again.` };
   }
   if (s.kind === "current" || s.kind === "update" || s.kind === "installed") {
     return { parts: [dim(name, "check")], tooltip: `Up to date${checked}. Click to check now.` };
@@ -90,7 +90,7 @@ export function confirmText(current, latest) {
   return {
     title: `Update Automagik Herdr to ${latest}?`,
     detail: `Installs ${latest} in place of ${current ?? "the installed pack"}: the release's checksum is checked first, and `
-      + `${current ?? "the installed pack"} is kept, so \`automagik-herdr update --rollback\` puts it back. Reload Herdr's mods afterwards.`,
+      + `${current ?? "the installed pack"} is kept, so \`automagik-herdr update --rollback\` puts it back. Herdr reloads its mods on its own.`,
   };
 }
 
@@ -100,4 +100,26 @@ export function offered(state, current) {
   if (s?.kind !== "update") return null;
   const latest = str(s.update?.version) ?? str(s.latest);
   return latest && latest !== current ? latest : null;
+}
+
+/**
+ * The switch beside the version: "Install updates automatically: on" (or off), `{ text, on, tooltip }`,
+ * or null when the sidebar's last check says it doesn't apply here (a checkout, a hand-installed
+ * pack: the update stays a notice) or no check carried it yet. A click asks the sidebar to flip it
+ * (REQUEST_KEY `{ what: "auto", on }`); until it answers, the bar shows what was asked.
+ */
+export function autoLabel({ state = null, request = null, now = 0 } = {}) {
+  const s = obj(state) ?? {};
+  const auto = obj(s.auto);
+  if (!auto || auto.managed !== true) return null;
+  const r = obj(request);
+  const pending = r?.what === "auto" && typeof r.on === "boolean" && s.request !== r.id && typeof r.at === "number" && now - r.at < ANSWER_MS;
+  const on = pending ? r.on : auto.on !== false;
+  const lines = [on
+    ? "Verified releases install on their own; the replaced pack is kept (`automagik-herdr update --rollback`). Click to turn off."
+    : "New releases are only announced; click update to install one. Click to turn on."];
+  if (on && str(auto.skip)) lines.push(`${auto.skip} was rolled back here: it waits for a newer release.`);
+  if (on && str(s.autoHeld) && !str(s.autoHeld).includes("was rolled back")) lines.push(`Not installed yet: ${s.autoHeld}.`);
+  if (str(s.autoError)) lines.push(`The setting was not saved: ${s.autoError}.`);
+  return { text: `Install updates automatically: ${on ? "on" : "off"}`, on, tooltip: lines.join(" ") };
 }
