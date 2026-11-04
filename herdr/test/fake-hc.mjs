@@ -17,12 +17,18 @@
 // state.connectBefore: raw lines printed before any answer (a notification, a broken line);
 // state.connectAnswer: a raw line printed in place of every answer.
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
 appendFileSync(process.env.HC_FAKE_LOG, `${JSON.stringify(args)}\n`);
 const state = JSON.parse(readFileSync(process.env.HC_FAKE_STATE, "utf8"));
-const save = () => writeFileSync(process.env.HC_FAKE_STATE, JSON.stringify(state, null, 2));
+// The CLI runs several hc calls at once: a save writes a file of its own beside the state and
+// renames it over it (atomic in one folder), so another call never reads one half written.
+const save = () => {
+  const tmp = `${process.env.HC_FAKE_STATE}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(state, null, 2));
+  renameSync(tmp, process.env.HC_FAKE_STATE);
+};
 const out = (x) => process.stdout.write(`${JSON.stringify(x)}\n`);
 const fail = (msg, code = 1) => { process.stderr.write(`${msg}\n`); process.exit(code); };
 const words = args.filter((a) => a !== "--json");
