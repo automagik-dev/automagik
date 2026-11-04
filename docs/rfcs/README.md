@@ -57,8 +57,8 @@ Milestones, in the owner's order:
 
 Personal customization (0009) is scheduled after milestone 2; it is Draft until then. Herdr,
 Genie Publish, Platform, Desktop sandbox, `am` and parts, the work and code switch, the shared
-Bot registry and the live chat projection stay at the RFC stage until their questions are
-answered.
+Bot registry, the live chat projection and Windows on WSL containers stay at the RFC stage until
+their questions are answered.
 Milestones and one issue per delivery are created after the PR that lands these RFCs merges.
 
 ### Fixes without an RFC
