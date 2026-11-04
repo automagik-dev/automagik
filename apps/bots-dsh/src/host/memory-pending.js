@@ -31,7 +31,7 @@ export function pendingPath(root) {
 export function inside(root, path) {
   const base = resolve(root)
   const full = resolve(base, path)
-  if (full !== base && !full.startsWith(base + sep)) throw new Error(`the path ${path} is outside the memory folder`)
+  if (full !== base && !full.startsWith(base + sep)) throw Object.assign(new Error('a path in the memory change record is outside the memory folder'), { code: PENDING })
   return full
 }
 
@@ -68,7 +68,7 @@ export function read(root) {
     text = readFileSync(path, 'utf8')
   } catch (error) {
     if (error?.code === 'ENOENT') return undefined
-    throw Object.assign(new Error(`${PENDING_FILE} could not be read (${error?.code ?? error?.message})`), { code: PENDING })
+    throw Object.assign(new Error(`${PENDING_FILE} could not be read (${typeof error?.code === 'string' ? error.code : 'error'})`), { code: PENDING })
   }
   if (Buffer.byteLength(text) > MAX_BYTES) {
     throw Object.assign(new Error(`${PENDING_FILE} is larger than a memory change record`), { code: PENDING })
@@ -77,7 +77,8 @@ export function read(root) {
   try {
     value = JSON.parse(text)
   } catch (error) {
-    throw Object.assign(new Error(`${PENDING_FILE} is not readable (${error.message})`), { code: PENDING })
+    // The parser's message quotes the record, which holds entry text: it is not kept.
+    throw Object.assign(new Error(`${PENDING_FILE} is not readable (${error?.name ?? 'error'})`), { code: PENDING })
   }
   if (!wellFormed(value)) throw Object.assign(new Error(`${PENDING_FILE} is not a memory change record`), { code: PENDING })
   return value

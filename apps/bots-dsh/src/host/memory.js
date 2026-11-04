@@ -66,10 +66,17 @@ const REVIEW_USER_LINE_MAX = 3_000
 const REVIEW_OTHER_LINE_MAX = 800
 const REVIEW_CHANGES_MAX = 8
 const REVIEW_PASSES_MAX = 4
+// Answers the review could not use (no list of changes, an unlisted entry, a bad
+// topic) for the same lines, before it passes them: a model that answers so twice
+// for the same input mostly keeps doing so, and every try is a model call.
+const REVIEW_TRIES_MAX = 2
 // A change whose entry is gone; any other failure keeps the review's place.
 const NO_MATCH = 'memory/no-match'
 const GONE = 'memory/bot-gone'
 const DENIED = 'memory/denied'
+// A change that does not fit in its file, or a topic past the most there are. The
+// memory review leaves it out and goes on; the tools still answer it as a failure.
+const FULL = 'memory/full'
 // The codes the memory review routes on. A failure that carries one keeps it.
 const ROUTED = new Set([NO_MATCH, GONE, DENIED])
 // A write the tools refused, and a write that broke. The code says which, so
@@ -78,6 +85,18 @@ const REFUSED = 'memory/refused'
 const FAILED = 'memory/failed'
 // A call to save nothing at all.
 const EMPTY = 'memory/empty'
+// A review answer memory cannot use.
+const UNUSABLE = 'memory/unusable-answer'
+
+// What memory says of a failure, in a log, a thrown message or the panel. An error
+// memory makes itself carries a memory/ code and a message that holds no data: no
+// path, no topic name, no entry text, no word of a model's answer. (A tool's refusal
+// may repeat the call's own arguments to the model that made it; no log holds one.)
+// Any other error, from the file system or a provider, may hold all of those, so
+// only its code is said, or `kind` when it has none.
+const failureCode = (error, kind) => (typeof error?.code === 'string' && /^[\w./-]{1,40}$/.test(error.code) ? error.code : kind)
+const ownFailure = error => typeof error?.code === 'string' && error.code.startsWith('memory/')
+const failureText = (error, kind = 'error') => (ownFailure(error) ? String(error.message) : failureCode(error, kind))
 // What a review shows of memory, in characters of entry text.
 const REVIEW_MEMORY_MAX = 16_000
 const NEWS_TEXT_MAX = 160
@@ -483,16 +502,16 @@ export function install(rt) {
 
   // An unreadable memory is not an empty one: callers that change it fail instead of
   // writing over what could not be read, the way store.js treats a broken state.json.
-  const unreadable = (path, error) => {
-    rt.warn('ds-bot: unreadable memory file %s: %s', path, error)
-    throw Object.assign(new Error(`Memory file ${path} could not be read (${error?.code ?? error?.message}). Omni leaves it as it is; fix or move the file.`), { code: 'memory/unreadable' })
+  const unreadable = (error) => {
+    rt.warn('ds-bot: unreadable memory file: %s', failureCode(error, 'error'))
+    throw Object.assign(new Error(`A memory file could not be read (${failureCode(error, 'error')}). Omni leaves it as it is; fix or move the file.`), { code: 'memory/unreadable' })
   }
   const readText = (path) => {
     try {
       return readFileSync(path, 'utf8')
     } catch (error) {
       if (error?.code === 'ENOENT') return ''
-      return unreadable(path, error)
+      return unreadable(error)
     }
   }
   const topicNames = (scope) => {
@@ -501,7 +520,7 @@ export function install(rt) {
       return readdirSync(dir).filter(name => name.endsWith('.md') && name !== MAIN).map(name => name.slice(0, -3)).sort()
     } catch (error) {
       if (error?.code === 'ENOENT') return []
-      return unreadable(dir, error)
+      return unreadable(error)
     }
   }
   // MEMORY.md first, then the topics by name.
@@ -562,7 +581,7 @@ export function install(rt) {
       return readFileSync(journalPath, 'utf8')
     } catch (error) {
       if (error?.code === 'ENOENT') return ''
-      unreadable(journalPath, error)
+      unreadable(error)
     }
   }
 
@@ -632,7 +651,7 @@ export function install(rt) {
       await journalRow(record.row)
       await unlink(pendingPath(root)).catch(error => { if (error?.code !== 'ENOENT') throw error })
     } catch (error) {
-      rt.warn('ds-bot: memory change %s is pending: %s', id, error)
+      rt.warn('ds-bot: memory change %s is pending: %s', id, failureText(error))
       throw error
     }
   }
@@ -652,15 +671,22 @@ export function install(rt) {
   // The recovery runs in the writer's line, so it never runs beside a change that is
   // being published.
   const recover = () => queued(recoverPending)
-  // A read waits for the writer's line, so it reads files that are whole.
+  // A read waits for the writer's line, so it reads files that are whole. A file error
+  // there (a pending change that cannot be finished, say) names a path, which holds
+  // topic names, so only its code is said.
   const settled = (read) => queued(async () => {
-    await recoverPending()
-    return read()
+    try {
+      await recoverPending()
+      return read()
+    } catch (error) {
+      if (ownFailure(error)) throw error
+      throw Object.assign(new Error(`The memory could not be read (${failureCode(error, 'error')}).`), { code: FAILED })
+    }
   })
 
   // A change that was interrupted is finished when the host starts.
   ctx.effect(() => {
-    void rt.load().then(() => recover()).catch(error => rt.warn('ds-bot: memory recovery failed: %s', error?.message ?? error))
+    void rt.load().then(() => recover()).catch(error => rt.warn('ds-bot: memory recovery failed: %s', failureText(error)))
   }, 'ds-bot: memory recovery')
 
   // Checked when the write runs: a Bot or group chat deleted after the write was
@@ -669,7 +695,8 @@ export function install(rt) {
   // admin, or a group's memory once it has left the group.
   const writable = (scope, actor) => {
     const readOnly = rt.readOnly()
-    if (readOnly !== undefined) throw new Error(`Memory cannot change now: ${readOnly}`)
+    // The store's reason names a path, so it is not repeated here; the window shows it.
+    if (readOnly !== undefined) throw Object.assign(new Error('Memory cannot change now: this window cannot change the Bot team. Close the other dsh window, or fix the team file, and reload.'), { code: 'memory/read-only' })
     const botActor = actor?.id === 'user' ? undefined : actor?.id
     const gone = [scope.kind === 'bot' ? scope.botId : undefined, botActor].some(id => id !== undefined && rt.botOf(id) === undefined)
     if (gone) throw Object.assign(new Error('That Bot has been deleted'), { code: GONE })
@@ -726,9 +753,9 @@ export function install(rt) {
     const limit = limitOf(file)
     // A file already past its size (edited by hand) may still shrink.
     if (next.length <= limit || next.length <= file.content.length) return
-    throw new Error(file.topic === undefined
+    throw Object.assign(new Error(file.topic === undefined
       ? `${capital(label)}'s MEMORY.md would have ${next.length} of its ${limit} characters. Make room first: move details into a topic (remember with topic, then forget them here), merge entries with replace, or forget what no longer matters.`
-      : `The topic [[${file.topic}]] in ${label} would have ${next.length} of its ${limit} characters. Put the rest in another topic, or forget old entries.`)
+      : `The topic in ${label} would have ${next.length} of its ${limit} characters. Put the rest in another topic, or forget old entries.`), { code: FULL })
   }
   const capital = text => text[0].toUpperCase() + text.slice(1)
   const sizeNote = (file, size) => `${file.file}: ${size} of ${limitOf(file)} characters`
@@ -758,7 +785,7 @@ export function install(rt) {
       let target = topic === undefined ? main : files.find(file => file.topic === topic)
       const fresh = target === undefined
       if (fresh) {
-        if (files.length - 1 >= MEMORY_LIMITS.topics) throw new Error(`${capital(label)} already has ${MEMORY_LIMITS.topics} topics, the most it holds. Add to one of them (recall lists them), or forget one.`)
+        if (files.length - 1 >= MEMORY_LIMITS.topics) throw Object.assign(new Error(`${capital(label)} already has ${MEMORY_LIMITS.topics} topics, the most it holds. Add to one of them (recall lists them), or forget one.`), { code: FULL })
         target = { topic, file: `${topic}.md`, path: join(dirOf(scope), `${topic}.md`), content: '', ...parseMemory(`# ${topic}\n`) }
       }
       const base = target.lines.length > 0 ? target.lines : parseMemory(target === main ? EMPTY_MAIN : `# ${topic}\n`).lines
@@ -780,14 +807,16 @@ export function install(rt) {
   }
 
   // `topic` narrows where to look; undefined looks in every file of the scope.
+  // The messages name the topic and the text by their length only: the memory
+  // review logs them, and an entry, a topic or the text asked for can hold a secret.
   function findOne(files, topic, wanted, label) {
     const pool = topic === undefined ? files : files.filter(file => file.topic === topic)
     const missing = message => Object.assign(new Error(message), { code: NO_MATCH })
-    if (topic !== undefined && pool.length === 0) throw missing(`${capital(label)} has no topic [[${topic}]].`)
+    if (topic !== undefined && pool.length === 0) throw missing(`${capital(label)} has no such topic (${topic.length} chars). recall shows what is saved.`)
     const found = matchEntries(allEntries(pool), wanted)
-    const shown = String(wanted ?? '').slice(0, 80)
-    if (found.length === 0) throw missing(`No entry in ${label}${topic ? ` (topic [[${topic}]])` : ''} matches "${shown}". recall shows what is saved.`)
-    if (found.length > 1) throw missing(`"${shown}" matches ${found.length} entries in ${label}; quote more of the one you mean:\n${found.slice(0, 8).map(entry => `- ${entry.text} (${fileName(entry.file)})`).join('\n')}`)
+    const given = `the text given (${String(wanted ?? '').length} chars)`
+    if (found.length === 0) throw missing(`No entry in ${label}${topic !== undefined ? ' in that topic' : ''} matches ${given}. recall shows what is saved.`)
+    if (found.length > 1) throw missing(`${capital(given)} matches ${found.length} entries in ${label}; quote more of the one you mean. recall shows what is saved.`)
     return found[0]
   }
 
@@ -860,7 +889,7 @@ export function install(rt) {
       await mkdir(join(root, 'archive'), { recursive: true })
       await rename(dir, join(root, 'archive', name))
       await journalRow({ id: randomUUID(), time: new Date().toISOString(), op: 'archive', scope: scopeKey(ownScope(botId)), actor: 'user', actorName: 'user', botName: bot?.name, to: `archive/${name}` })
-    }).catch(error => rt.warn('ds-bot: memory of %s not archived: %s', bot?.name ?? botId, error))
+    }).catch(error => rt.warn('ds-bot: memory of %s not archived: %s', bot?.name ?? botId, failureText(error)))
   }
 
   // A deleted group chat's memory moves to the archive, whole. Called before the
@@ -881,7 +910,7 @@ export function install(rt) {
       await mkdir(join(root, 'archive'), { recursive: true })
       await rename(dir, join(root, 'archive', name))
       await journalRow({ id: randomUUID(), time: new Date().toISOString(), op: 'archive', scope: scopeKey(groupScope(room.id)), actor: 'user', actorName: 'user', groupName: room.name, to: `archive/${name}` })
-    }).catch(error => rt.warn('ds-bot: memory of group %s not archived: %s', room.name, error))
+    }).catch(error => rt.warn('ds-bot: memory of group %s not archived: %s', room.name, failureText(error)))
   }
 
   // ---------------------------------------------------------------------------
@@ -902,8 +931,8 @@ export function install(rt) {
       return { text: readFileSync(path, 'utf8') }
     } catch (error) {
       if (error?.code === 'ENOENT') return { text: '' }
-      rt.warn('ds-bot: unreadable memory file %s: %s', path, error)
-      return { text: '', failed: `(this memory could not be read: ${error?.code ?? error?.name ?? 'error'})` }
+      rt.warn('ds-bot: unreadable memory file: %s', failureCode(error, 'error'))
+      return { text: '', failed: `(this memory could not be read: ${failureCode(error, 'error')})` }
     }
   }
   const sectionEntries = read => (read.failed === undefined ? shownEntries(parseMemory(read.text)) : [read.failed])
@@ -960,7 +989,7 @@ export function install(rt) {
     try {
       return { pending: readPending(root) !== undefined }
     } catch (error) {
-      rt.warn('ds-bot: %s', error?.message ?? error)
+      rt.warn('ds-bot: memory change record: %s', failureText(error))
       return { failed: true }
     }
   }
@@ -984,7 +1013,7 @@ export function install(rt) {
     const path = snapshotPath(sessionId)
     const snap = existsSync(path) ? sectionRead(path) : { text: '' }
     if (pending.pending === true || pending.failed === true) {
-      if (pending.pending === true) void recover().catch(error => rt.warn('ds-bot: memory recovery failed: %s', error?.message ?? error))
+      if (pending.pending === true) void recover().catch(error => rt.warn('ds-bot: memory recovery failed: %s', failureText(error)))
       // Only a previously committed snapshot is safe while files may be half-written.
       if (snap.text !== '' && holds(snap.text)) return snap.text
       return ['# Your memory', memoryRules(reviewOn), ...marks, '', 'Memory is unavailable until its pending change has been recovered. Use recall after recovery.'].join('\n')
@@ -1004,7 +1033,7 @@ export function install(rt) {
           writeFileSync(`${path}.tmp`, text, 'utf8')
           renameSync(`${path}.tmp`, path)
         } catch (error) {
-          rt.warn('ds-bot: memory snapshot for %s not saved: %s', bot.name, error)
+          rt.warn('ds-bot: memory snapshot for %s not saved: %s', bot.name, failureCode(error, 'error'))
         }
       }
     }
@@ -1079,7 +1108,7 @@ export function install(rt) {
   const topicArg = (raw) => {
     if (raw === undefined || raw === null || String(raw).trim() === '') return {}
     const topic = cleanTopic(raw)
-    return topic === undefined ? { error: `"${String(raw).slice(0, 60)}" cannot be a topic name: use a short word or two, such as "travel" or "project-x".` } : { topic }
+    return topic === undefined ? { error: `That topic (${String(raw).length} chars) cannot be a topic name: use a short word or two, such as "travel" or "project-x".` } : { topic }
   }
 
   // A write that did not happen. The tools answer with a sentence when they
@@ -1090,10 +1119,10 @@ export function install(rt) {
 
   const refused = message => new MemoryWriteError(message, REFUSED)
   // A failure from the write keeps the code it came with; anything else is a
-  // write that broke.
+  // write that broke, said by its code alone when memory did not make it.
   const writeFailure = failure => failure instanceof MemoryWriteError
     ? failure
-    : new MemoryWriteError(failure?.message ?? String(failure), ROUTED.has(failure?.code) ? failure.code : FAILED)
+    : new MemoryWriteError(ownFailure(failure) ? failureText(failure) : `The memory could not be changed (${failureText(failure)}).`, ROUTED.has(failure?.code) ? failure.code : FAILED)
 
   ctx.tools.register(defineTool({
     name: 'remember',
@@ -1184,7 +1213,7 @@ export function install(rt) {
       try {
         loaded = await settled(() => scopes.map(scope => ({ scope, tag: tagOf(scope, self), label: labelOf(scope, self), files: loadScope(scope) })))
       } catch (failure) {
-        return failure.message
+        return failureText(failure)
       }
       if (args.topic !== undefined && String(args.topic).trim() !== '') {
         const topic = cleanTopic(args.topic)
@@ -1239,7 +1268,7 @@ export function install(rt) {
   // agent over ACP, which answers only in its own chat.
   async function modelFor() {
     const route = splitRef(await rt.backgroundModel())
-    if (route === undefined) throw new Error('No model can run memory review. Pick a background model in Settings, or add a model in Harness settings.')
+    if (route === undefined) throw Object.assign(new Error('No model can run memory review. Pick a background model in Settings, or add a model in Harness settings.'), { code: 'memory/no-model' })
     return route
   }
   // The panel's model calls belong to the Bot or group whose memory they serve;
@@ -1274,18 +1303,22 @@ export function install(rt) {
         signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
       })) assembler.push(chunk)
       const finish = assembler.finish
-      if (finish.kind === 'error' || finish.kind === 'aborted') throw new Error(finish.failure?.message ?? finish.kind)
+      // The provider's message is not kept: it may quote the request. Its code is.
+      if (finish.kind === 'error' || finish.kind === 'aborted') throw Object.assign(new Error(`The model call ended (${finish.kind})`), { code: finish.failure?.code ?? (finish.kind === 'aborted' ? 'aborted' : undefined) })
       const reply = assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('\n').trim()
       if (finish.kind !== 'max-tokens' && reply !== '') return reply
       // A reply cut off at the limit — all of it thinking, or a half-written
       // answer — is dropped, never used; the retry gives it room once.
-      if (finish.kind !== 'max-tokens' && maxTokens === SUMMARY_MAX_TOKENS) throw new Error('The model wrote nothing')
+      if (finish.kind !== 'max-tokens' && maxTokens === SUMMARY_MAX_TOKENS) throw Object.assign(new Error('The model wrote nothing'), { code: 'memory/model-empty' })
     }
-    throw new Error(`The model's reasoning used up the output budget (${SUMMARY_MAX_TOKENS} and ${SUMMARY_RETRY_MAX_TOKENS} tokens); no complete answer was written`)
+    throw Object.assign(new Error(`The model's reasoning used up the output budget (${SUMMARY_MAX_TOKENS} and ${SUMMARY_RETRY_MAX_TOKENS} tokens); no complete answer was written`), { code: 'memory/model-budget' })
   }
 
   // A served model can still refuse the call (a key without access, say), so a failed call
   // is tried once more on the Bot's own model, when that one answers beside its chat.
+  // The provider's own error is not passed on: its message may quote the request.
+  const modelFailure = error => (ownFailure(error) ? error
+    : Object.assign(new Error(`The model could not answer (${failureCode(error, 'provider error')}).`), { code: 'memory/model-failed' }))
   async function botShot(bot, system, text, tag) {
     const first = await modelFor()
     try {
@@ -1293,12 +1326,12 @@ export function install(rt) {
     } catch (error) {
       const mine = await rt.desiredModel(bot)
       const fallback = rt.answersAside(mine) ? splitRef(mine) : undefined
-      if (fallback === undefined || (fallback.provider === first.provider && fallback.model === first.model)) throw error
+      if (fallback === undefined || (fallback.provider === first.provider && fallback.model === first.model)) throw modelFailure(error)
       try {
         return await oneShot(fallback, system, text, tag)
       } catch (again) {
-        const said = failure => failure?.message ?? String(failure)
-        throw new Error(`${first.provider}/${first.model}: ${said(error)}; ${fallback.provider}/${fallback.model}: ${said(again)}`)
+        const said = failure => failureText(failure, 'provider error')
+        throw Object.assign(new Error(`${first.provider}/${first.model}: ${said(error)}; ${fallback.provider}/${fallback.model}: ${said(again)}`), { code: 'memory/model-failed' })
       }
     }
   }
@@ -1353,8 +1386,8 @@ export function install(rt) {
       summaryFailures.delete(panel.id)
       if (rt.readOnly() === undefined) await writeText(summaryPath(panel.id), JSON.stringify(value, null, 2))
     })().catch((error) => {
-      summaryFailures.set(panel.id, { hash, models, message: error?.message ?? String(error) })
-      rt.warn('ds-bot: memory summary for %s failed: %s', panel.name, error)
+      summaryFailures.set(panel.id, { hash, models, message: failureText(error, 'provider error') })
+      rt.warn('ds-bot: memory summary for %s failed: %s', panel.name, failureText(error, 'provider error'))
     }).finally(() => summarizing.delete(panel.id))
     summarizing.set(panel.id, job)
   }
@@ -1404,10 +1437,10 @@ export function install(rt) {
       const label = panelLabel(panel, scope)
       const next = cleanEntry(change?.text)
       try {
-        if (op !== 'add' && target === undefined) throw new Error(`There is no entry ${change?.entry}.`)
+        if (op !== 'add' && target === undefined) throw Object.assign(new Error(`There is no ${/^\d{1,3}$/.test(String(change?.entry ?? '')) ? `entry ${change.entry}` : 'such entry'}.`), { code: REFUSED })
         if (op === 'add' || op === 'edit') {
           const problem = entryProblem(next)
-          if (problem) throw new Error(problem)
+          if (problem) throw Object.assign(new Error(problem), { code: REFUSED })
         }
         if (op === 'add') await addEntry({ scope, text: next, meta, actor: USER, label })
         else if (op === 'edit') await replaceEntry({ scope, topic: target.file.topic, match: target.text, text: next, meta, actor: USER, label })
@@ -1415,7 +1448,7 @@ export function install(rt) {
         else continue
         changes.push({ op, scope: tag, text: op === 'remove' ? target.text : next, ...(op === 'edit' ? { before: target.text } : {}), ok: true })
       } catch (failure) {
-        changes.push({ op, scope: tag, text: next || target?.text || '', ok: false, error: failure.message })
+        changes.push({ op, scope: tag, text: next || target?.text || '', ok: false, error: failureText(failure) })
       }
     }
     return { reply: answer.reply, changes, view: await memoryView(panelBody(panel)) }
@@ -1426,7 +1459,11 @@ export function install(rt) {
     const panel = panelOf(body)
     const scope = panel.scopes[body.scope] ?? panel.scopes[panel.group ? 'group' : 'own']
     const topic = body.topic === null || body.topic === undefined ? undefined : cleanTopic(body.topic)
-    await removeEntry({ scope, topic, match: String(body.text ?? ''), actor: USER, label: panelLabel(panel, scope) })
+    try {
+      await removeEntry({ scope, topic, match: String(body.text ?? ''), actor: USER, label: panelLabel(panel, scope) })
+    } catch (failure) {
+      throw writeFailure(failure)
+    }
     return await memoryView(panelBody(panel))
   }
 
@@ -1527,6 +1564,10 @@ export function install(rt) {
     return { texts: kept, count: kept.length }
   }
 
+  // One warning per change the review leaves out, by its kind and length: the text
+  // is the model's, and may hold a secret no redactor knows.
+  const leftOut = (name, op, text, why) => rt.warn('ds-bot: memory review of %s left out a change (%s, %d chars): %s', name, op, text.length, why)
+
   // `home` is the memory the review keeps what it finds in: the keeper's own, or its
   // group's. `teamWrites` says whether the keeper may also write the team's.
   async function applyReview({ keeper, name, home, numbered, changes, source, teamWrites }) {
@@ -1554,12 +1595,13 @@ export function install(rt) {
         else if (op === 'remove') done.push(await removeEntry({ scope, topic: target.file.topic, match: target.text, actor, label }))
       } catch (failure) {
         if (failure?.code === GONE) return 0
-        rt.warn('ds-bot: memory review of %s left out a change: %s', name, failure?.message ?? failure)
-        if (failure?.code !== NO_MATCH && failure?.code !== DENIED) failed ??= failure
+        leftOut(name, op, op === 'remove' ? target?.text ?? '' : text, failureText(failure))
+        if (failure?.code !== NO_MATCH && failure?.code !== DENIED && failure?.code !== FULL) failed ??= failure
       }
     }
-    // A full file or a failed write is no reason to pass the lines: the next
-    // review reads them again, and its request shows how full MEMORY.md is.
+    // A change that does not fit is left out for good: the same answer to the same
+    // lines would not fit the next time either. A failed write is no reason to pass
+    // the lines: the next review reads them again.
     if (failed !== undefined) throw failed
     return done.filter(result => result.changed).length
   }
@@ -1652,17 +1694,39 @@ export function install(rt) {
       const earlier = batch.earlier.map(line => reviewLine(line.who, line.text, keeper))
       const language = writtenIn(read.filter(line => line.who === 'user').map(line => line.text.replace(/^User: /, '')), languageNow())
       const reply = await botShot(keeper, reviewSystem({ teamWrites: teamWrites(), group }), reviewRequest({ who, tag: tagged, numbered, left, sizes, where: batch.where, earlier, fresh: fresh.texts, more, language }), tag)
-      const changes = parseReview(reply)
-      if (changes === undefined) throw new Error(`the model's answer is not a list of changes: ${clip(reply.replace(/\s+/g, ' '), 120)}`)
+      const parsed = parseReview(reply)
+      const changes = parsed ?? []
       const unknown = changes.find(change => change.op !== 'add' && numbered[Number(change.entry) - 1] === undefined)
-      if (unknown !== undefined) throw new Error(`the model's answer names entry ${unknown.entry}, which is not listed`)
-      // A secret is left out for good; any other entry memory cannot keep (one too
-      // long, say) fails the answer, so the next review reads the lines again.
-      const applied = changes.slice(0, REVIEW_CHANGES_MAX)
-      const unfit = applied.filter(change => change.op !== 'remove').map(change => cleanEntry(change.text)).find(text => !secretEntry(text) && entryProblem(text) !== undefined)
-      if (unfit !== undefined) throw new Error(`the model's answer holds an entry memory cannot keep: ${entryProblem(unfit)}`)
-      const badTopic = applied.find(change => change.op === 'add' && typeof change.topic === 'string' && change.topic.trim() !== '' && cleanTopic(change.topic) === undefined)
-      if (badTopic !== undefined) throw new Error(`the model's answer names the topic "${clip(badTopic.topic, 60)}", which cannot be a topic name`)
+      const kept = changes.slice(0, REVIEW_CHANGES_MAX)
+      const badTopic = kept.find(change => change.op === 'add' && typeof change.topic === 'string' && change.topic.trim() !== '' && cleanTopic(change.topic) === undefined)
+      // No answer text goes in the message: it is thrown to the review's catch and
+      // logged there or below, and an answer can hold a secret no redactor knows.
+      const unusable = parsed === undefined ? `the model's answer is not a list of changes (${reply.length} chars)`
+        : unknown !== undefined ? `the model's answer names an entry that is not listed`
+          : badTopic !== undefined ? `the model's answer names an entry topic that cannot be a topic name (${badTopic.topic.length} chars)`
+            : undefined
+      // An answer the review cannot use changes nothing. The same lines are read
+      // again at the next turn end, and after REVIEW_TRIES_MAX such answers they
+      // are passed, so one answer cannot hold the review in place for good.
+      const place = cursorsNow()[key]
+      const before = unusableAnswers.get(key)
+      const tries = unusable === undefined ? 0 : (before !== undefined && before.place === place ? before.tries : 0) + 1
+      if (unusable !== undefined && tries < REVIEW_TRIES_MAX) {
+        unusableAnswers.set(key, { place, tries })
+        throw Object.assign(new Error(unusable), { code: UNUSABLE })
+      }
+      unusableAnswers.delete(key)
+      if (unusable !== undefined) rt.warn('ds-bot: memory review of %s passed the lines through #%d after %d answers it could not use: %s', name, through, tries, unusable)
+      // A secret is left out for good, and silently, so no log shows it. Any other
+      // entry memory cannot keep (one too long, say) is left out with a warning,
+      // and the rest of the answer is kept.
+      const applied = unusable !== undefined ? [] : kept.filter((change) => {
+        if (change.op === 'remove') return true
+        const text = cleanEntry(change.text)
+        if (secretEntry(text) || entryProblem(text) === undefined) return true
+        leftOut(name, change.op, text, entryProblem(text))
+        return false
+      })
       if (!alive()) return
       const changed = await applyReview({ keeper, name, home, numbered, changes: applied, source: batch.source(read), teamWrites })
       if (!alive()) return
@@ -1687,6 +1751,9 @@ export function install(rt) {
   }
   /** @type {Map<string, {since: number | undefined, passes: number}>} */
   const overflowed = new Map()
+  // Answers the review could not use, by conversation, for the lines from `place`.
+  /** @type {Map<string, {place: number | undefined, tries: number}>} */
+  const unusableAnswers = new Map()
 
   /** @type {Map<string, ReturnType<typeof setTimeout>>} */
   const reviewTimers = new Map()
@@ -1723,7 +1790,7 @@ export function install(rt) {
       try {
         if (rt.readOnly() === undefined && reviewEnabled(waited)) await (waited.roomId === undefined ? reviewChat(waited) : reviewGroup(waited))
       } catch (error) {
-        rt.warn('ds-bot: memory review of %s failed: %s', waited.key, error?.message ?? error)
+        rt.warn('ds-bot: memory review of %s failed: %s', waited.key, failureText(error, 'provider error'))
       } finally {
         runningReviews.delete(waited.key)
         reviewsRunning -= 1
