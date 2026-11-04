@@ -44,6 +44,8 @@ here). No Windows machine was used for it, so every number below is a source's o
 - **D39** (Felipe 2026-11-04): WSLC, WSL 3.0.1+; only the Electron window and herdr-app run
   natively; one UAC prompt at first run, plus a restart only if Virtual Machine Platform was
   off; no WSL means explain and stop; projects live inside the Linux disk (`\\wsl.localhost`).
+- **Spike venue** (Felipe 2026-11-04): the spike runs on a coworker's own Windows x86_64 PC. An
+  ARM VM on the Mac would measure the wrong hardware.
 
 D39 overrides the research on two points. The research ranked a private WSL2 distro first and
 WSLC second, and it kept native Windows as the last rung of a fallback ladder. D39 takes WSLC
@@ -70,8 +72,9 @@ Two parts of D39 the design could not promise. Felipe settled both:
   as the app.** Both the helper and a bridge `hc` pass that test; every terminal, agent, shell
   and tool still runs in Linux. Felipe confirmed the reading (Q3 below).
 
-**Answers to the open questions** (Felipe, 2026-11-04, each as the draft recommended). The
-numbers are the draft's question numbers.
+**Answers to the open questions** (Felipe, 2026-11-04, each as the draft recommended; Q3 also
+says the helpers ship on the app's lane and version). The numbers are the draft's question
+numbers.
 
 - **Q1. `\\wsl.localhost` if the volume does not show there.** (a) or (b), whichever the spike's
   measurements support. (a): projects stay on the volume, and Windows reaches them only through
@@ -205,8 +208,9 @@ guest. Other mods that read local files read them through the machine too (deliv
 
 Whether herdr-app can attach to a core that is not local, without an `hc` on Windows, is a
 question for herdrdev (Q3: a nicety, not a blocker). Until it can, the only way with today's
-`hc` is a local `hc` on Windows as the bridge, with `linux` as its default machine and no terminals of
-its own. It passes the reading in Decided (no terminals, no tools), as the helper does.
+`hc` is a local `hc` on Windows as the bridge, with `linux` as its default machine and no
+terminals of its own. It passes the reading in Decided (no terminals, no tools), as the helper
+does.
 
 **The pack splits.** Mod `.js` files are loaded by herdr-app, so they install on Windows into
 herdr-app's home. The pack's CLI, hooks and `run.sh` run in panes, so they install in the
@@ -299,11 +303,11 @@ The enterprise gates come from the research's table (Intune's baseline disables 
 
 A session gets its `CpuCount` and `MemoryMB` in code, and `.wslconfig` does not apply **[doc]**.
 Defaults (Q7): half the logical CPUs (at least 2), and half the RAM capped at 8 GB (at least
-4 GB). Settings gets a "Linux workspace" row for both; a change applies at the next session start. The
-volume grows on demand **[unverified: whether the API sets a maximum]**. With no Electron window,
-no herdr-app and no live `hc` terminal, the session stops after 15 minutes idle. Whether a
-session outlives the process that created it is **[unverified]** (the spike measures it); the
-design wants terminals to survive a closed window, as they do on macOS.
+4 GB). Settings gets a "Linux workspace" row for both; a change applies at the next session
+start. The volume grows on demand **[unverified: whether the API sets a maximum]**. With no
+Electron window, no herdr-app and no live `hc` terminal, the session stops after 15 minutes
+idle. Whether a session outlives the process that created it is **[unverified]** (the spike
+measures it); the design wants terminals to survive a closed window, as they do on macOS.
 
 **When the session ends under a running app.** `wsl --shutdown`, a WSL update, or sleep and
 hibernate may end the session **[unverified; the spike checks each]**. Electron sees the
@@ -390,9 +394,10 @@ The boundary is new: a VM between the agents and Windows.
 
 Lanes per RFC 0011. Desktop items are 3.N. Each lists its check and its rollback.
 
-1. **Spike** (no lane, throwaway; on a team member's own Windows x86_64 PC, see "Where it
-   runs"). Measure and answer, on Windows 11, and on Windows 10 22H2 if one is at hand (Q4):
-   - WSLC on Windows 10: does `WslcGetMissingComponents` pass, and does a session start;
+1. **Spike** (no lane, throwaway; on a coworker's own Windows x86_64 PC, Decided "Spike
+   venue"). Measure and answer, on Windows 11 (Q4):
+   - WSLC on Windows 11, and on Windows 10 22H2 if one is at hand (Windows 10 is supported only
+     if it passes): does `WslcGetMissingComponents` pass, and does a session start;
    - whether each WSLC session boots its own VM, apart from the user's WSL2 distro VM;
    - bwrap inside an unprivileged WSLC container; Landlock in WSL's kernel;
    - whether WSLC process stdio is byte-clean for `hc connect` (`hc machine add --via` against
@@ -417,11 +422,14 @@ Lanes per RFC 0011. Desktop items are 3.N. Each lists its check and its rollback
 3. **The Windows boundary** (desktop). `automagik-wslc.exe`; the WSLC implementation of RFC
    0010's boundary API (`start`, `stop`, `status`, `events`); the first-run and failure
    screens; the caps; the image's download and trial. Windows builds stay unpublished.
-   *Check:* on the Windows runner, from a snapshot with no WSL: install, one UAC, restart,
-   resume, the Bot team draws; from a snapshot with WSL 3.0.1: no prompt at all; each policy
-   gate set by registry shows its screen.
+   *Check:* on a Windows runner (by hand on the coworker's PC until a self-hosted runner
+   exists; the runner is the owner's call), from a snapshot with no WSL: install, one UAC,
+   restart, resume, the Bot team draws; from a snapshot with WSL 3.0.1: no prompt at all; each
+   policy gate set by registry shows its screen.
    *Rollback:* revert; nothing was published.
-4. **herdr on Windows** (herdr lane for the pack's split install; desktop for the bridge `hc`).
+4. **herdr on Windows** (desktop for the bridge `hc` and the Windows mod writer; herdr lane for
+   the guest's updater limited to the CLI half and mods reading through the machine; the CLI
+   half itself is written by `am`, RFC 0012 delivery 6).
    *Check:* the Code switch opens herdr-app on a space on machine `linux`; a terminal there
    prints `Linux` for `uname`; the sidebar lists the Bots from the guest.
    *Rollback:* revert the pack; herdr-app stays installed.
@@ -438,7 +446,7 @@ Lanes per RFC 0011. Desktop items are 3.N. Each lists its check and its rollback
 GitHub's hosted Windows runners have no nested virtualization, so WSLC cannot start there.
 Options:
 
-- **A team member's own Windows x86_64 PC.** No cost and real hardware, but by hand and not
+- **A coworker's own Windows x86_64 PC.** No cost and real hardware, but by hand and not
   for CI. Best for the spike, since it measures the hardware people have. Not Felipe's Mac: a
   Windows on ARM VM there would measure the wrong hardware.
 - **A self-hosted Windows box** registered as a runner, with snapshot restore for the "no WSL"
@@ -448,9 +456,10 @@ Options:
   check before buying]**). On demand and scriptable, with timings from a VM inside a VM, so
   RAM and cold-start numbers read high.
 
-Decided: the spike runs on a team member's own Windows x86_64 PC (the handoff,
-[0016-windows-handoff.md](0016-windows-handoff.md)). Recommended for CI: a self-hosted box,
-with Azure as the spare.
+Decided (Felipe, 2026-11-04, "Spike venue"): the spike runs on a coworker's own Windows x86_64
+PC (the handoff, [0016-windows-handoff.md](0016-windows-handoff.md)). Recommended for CI: a
+self-hosted box, with Azure as the spare. Not decided: the CI runner is the owner's call (its
+cost and registration). Until it exists, the Windows checks run by hand on the coworker's PC.
 The guest half (delivery 2) runs on hosted Linux runners and gates every PR.
 
 ## Amendments

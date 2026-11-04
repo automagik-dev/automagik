@@ -5,35 +5,58 @@ keeps two programs native: the Electron window and herdr-app. Everything else ru
 inside a WSL container (WSLC). Read the RFC first, whole. This page says what exists, what is
 yours, in which order, and how to work with the team.
 
+## How to reach us
+
+Ask questions as a comment on your own PR, or as an issue in
+[automagik-dev/automagik](https://github.com/automagik-dev/automagik/issues). Send them to Felipe
+directly too. Wherever this page says "ask", it means this.
+
 ## What exists
 
 - **The RFC.** Accepted by Felipe on 2026-11-04. Its open questions are answered (Q1-Q9 under
   "Decided"). Where this page and the RFC disagree, the RFC wins; tell us.
 - **Delivery 2, the image and the launcher.** The DSH squad is building it, on GitHub's Linux
   runners, with no Windows. It makes the Linux image and `dsh-launch`, the guest launcher with
-  its framed stdio (`ready`, `ipc`, `tunnel`, `open`, `log`). Ask the team for its PR; it is
-  not merged yet.
+  its framed stdio (`ready`, `ipc`, `tunnel`, `open`, `log`). It is not merged yet; ask for its
+  PR.
+- **`am`, not on `dev` yet.** Its first PR is open (#263, RFC 0012 delivery 1). Its Windows part
+  is RFC 0012 delivery 6. Delivery 4 needs both.
 - **Not started:** delivery 1 (the spike), 3 (the Windows boundary), 4 (herdr on Windows),
-  5 (uninstall) and 6 (Windows ships). There is no `automagik-wslc.exe` yet, and no Windows
-  runner.
+  5 (uninstall) and 6 (Windows ships). There is no `automagik-wslc.exe` yet.
+- **No Windows CI runner.** Whether to have one, and where, is Felipe's call (see "Owner-held").
+  Until one exists, Windows checks run by hand on your PC.
 - **Windows publishing is off** (D38). No Windows build reaches users until delivery 6.
 
 ## Your part, in order
 
-Each delivery is one PR to `dev` (delivery 4 is two, one per lane). The check and the rollback
-are the RFC's own ("Deliveries").
+Each delivery is one PR to `dev`, except delivery 4 (two PRs, one per lane). The check and the
+rollback are the RFC's own ("Deliveries").
 
 ### 1. The spike (no lane; docs only)
 
-Measure, on your Windows 11 PC, what the RFC marks **[unverified]**. Nothing is merged except
-the findings note. Write each number and how you took it.
+Felipe decided where it runs (2026-11-04): on your own Windows x86_64 PC. An ARM VM on his Mac
+would measure the wrong hardware. Measure what the RFC marks **[unverified]**. Nothing is merged
+except the findings note. Write each number and how you took it.
+
+**First step: a minimal WSLC client.** The RFC names no ready client for the spike. It names
+the WSLC flat C API: NuGet `Microsoft.WSL.Containers` (`wslcsdk.dll`), documented in the
+[API reference](https://wsl.dev/api-reference/). Write a small client against it that can:
+check components (`WslcGetMissingComponents`); create a session with its CPU and memory; create
+a named VHD volume (`WslcCreateSessionVhdVolume`); import an OCI image tarball
+(`WslcImportSessionImageFromFile`); start a container; and run a process in it with piped stdio.
+Call it `automagik-wslc.exe` with an `exec` verb, so the RFC's link works unchanged (item 4). It
+is throwaway; delivery 3 builds the real one. The RFC also mentions a `wslc.exe` CLI, but not
+its commands; if you use it for a step, say so in that row.
 
 1. WSLC on this Windows: does `WslcGetMissingComponents` pass, and does a session start?
-   Windows 10 22H2 too, if you have one; if not, say so (Q4 depends on it).
+   Windows 11 is the target (Q4). If you also have a Windows 10 22H2 PC, run this item there
+   too: Windows 10 is supported only if it passes. If you have none, say so.
 2. Does each WSLC session boot its own VM, apart from your WSL2 distro's VM?
 3. Inside an unprivileged WSLC container: does bwrap work? Is Landlock in WSL's kernel?
-4. Is WSLC process stdio byte-clean for `hc connect`? Run `hc machine add --via` against the
-   container, then a terminal running `cat` of a binary file, then a full-screen TUI.
+4. Is WSLC process stdio byte-clean for `hc connect`? Link the container with the RFC's line,
+   `hc machine add --via "automagik-wslc.exe exec --" --name linux`. Your `exec` runs the given
+   shell line in the container, passes bytes both ways untouched, and asks nothing. Then open a
+   terminal there running `cat` of a binary file, then a full-screen TUI.
 5. Idle RAM: the session alone; then with DSH up and the Bot team drawn.
 6. Cold start: from no session to the launcher's `ready`; from a stopped container.
 7. `pnpm install` and `git status` on a large repo: on the container volume, and on a virtiofs
@@ -48,8 +71,8 @@ the findings note. Write each number and how you took it.
 
 What each item needs:
 
-- Items 1-3, 7-11 and 13 run now, against any Debian slim image.
-- Item 4 needs `hc` in the container. Ask the team for a Linux `hc` build.
+- Items 1-3, 7-11 and 13 need only your client and a Debian slim OCI image tarball.
+- Item 4 needs `hc` on Windows and `hc` in the container. Ask for both builds.
 - Item 12 needs Claude Code and Codex in the container, signed in with your own accounts.
 - Items 5 and 6 need delivery 2's image and `dsh-launch`. If they are not ready, measure the
   session alone now, mark the rest "waits for delivery 2", and add them in a second commit.
@@ -64,23 +87,39 @@ What each item needs:
 image's download (Q5) and its trial.
 
 - *You need first:* the spike's findings merged; delivery 2's image (`.tar` and `.sha256`) and
-  the launcher's framed protocol; a Windows test machine with snapshots ("no WSL" and "WSL
-  3.0.1"). Agree the helper's language and build with the team before you write it.
-- *Check:* on the Windows runner, from a snapshot with no WSL: install, one UAC, restart,
-  resume, the Bot team draws. From a snapshot with WSL 3.0.1: no prompt at all. Each policy gate
-  set by registry shows its screen.
+  the launcher's framed protocol. Agree the helper's language and build before you write it.
+- *Check:* from a machine with no WSL: install, one UAC, restart, resume, the Bot team draws.
+  From a machine with WSL 3.0.1: no prompt at all. Each policy gate set by registry shows its
+  screen.
+- *Where the check runs:* by hand on your Windows PC, until a self-hosted Windows runner exists.
+  Write in the PR what you ran and what you saw. Your PC keeps WSL for your distro, so it cannot
+  give the "no WSL" run, and a policy gate can turn WSL off for that distro. Ask Felipe where
+  those runs happen before you try them.
 - *Rollback:* revert; nothing was published.
 
-### 4. herdr on Windows (herdr lane and desktop lane)
+### 4. herdr on Windows (desktop lane, then herdr lane)
 
-The pack's split install (herdr lane) and the bridge `hc` (desktop lane). A PR never mixes
-lanes, so this is two PRs. The herdr one follows [herdr/AGENTS.md](../../herdr/AGENTS.md) and
-runs its gate.
+The RFC's Design ("The pack splits") has three writers. On Windows, the **desktop app** is the
+only writer of the pack's mods: Windows has no `sh` for `install.sh`. In the guest, **`am`** is
+the only writer of the pack's CLI half (its CLI, hooks and `run.sh`). The pack's updater in the
+guest updates only that half. A PR never mixes lanes, so this is two PRs:
+
+- **4a, desktop lane:** the bridge `hc` on Windows (Q3), with `linux` as its default machine and
+  no terminals; and the desktop app's mod writer. It reads the `herdr-lane` pointer, checks it
+  against `herdr/mods/am-sidebar/pack-keys.json` and the tarball against its sha256, as
+  `install.sh` does, and never downgrades.
+- **4b, herdr lane:** the pack's updater, in the guest, updates only the CLI half; mods that read
+  local files read them through the machine. On macOS and Linux this PR changes nothing:
+  the pack's tests pass as they are. It follows [herdr/AGENTS.md](../../herdr/AGENTS.md) and
+  runs its gate.
 
 - *You need first:* delivery 3's helper (`automagik-wslc.exe exec`), which the `hc --via` link
-  uses.
+  uses. For the guest's CLI half, `am` on `dev` (#263) and RFC 0012 delivery 6, where the guest
+  runs `am install code`.
 - *Check:* the Code switch opens herdr-app on a space on machine `linux`; a terminal there
-  prints `Linux` for `uname`; the sidebar lists the Bots from the guest.
+  prints `Linux` for `uname`; the sidebar lists the Bots from the guest. For 4a alone: the app
+  refuses a pointer that fails `pack-keys.json`, a tarball that fails its sha256, and a lower
+  version.
 - *Rollback:* revert the pack; herdr-app stays installed.
 
 ### 5. Uninstall (desktop lane)
@@ -89,14 +128,15 @@ Keep, backup and Delete.
 
 - *You need first:* delivery 3 (the storage folder and the session exist).
 - *Check:* Keep then reinstall finds the projects; Delete leaves no `%LOCALAPPDATA%\Automagik`.
+  It runs by hand on your PC, as delivery 3's does.
 - *Rollback:* revert; the older uninstaller leaves the storage in place, which is safe.
 
 ### 6. Windows ships again (owner-gated)
 
 Felipe decides when. It needs signed Windows builds (Q6), and signing is owner-held. You do
 not start it. *Check:* a release's Windows asset installs on a clean machine through delivery
-3's check.
-*Rollback:* turn the Windows build off again; installed apps keep running on the last image.
+3's check. *Rollback:* turn the Windows build off again; installed apps keep running on the
+last image.
 
 ## Setup
 
@@ -106,9 +146,12 @@ not start it. *Check:* a release's Windows asset installs on a clean machine thr
   `wsl --version`, and what runs in it. A WSL update and `wsl --shutdown` (item 13) stop
   running distros; save your work there first. If anything would change or remove that distro,
   stop and ask.
-- **Repo tooling:** git with `core.autocrlf false` (CI checks out that way), Bun, and Node 22
-  for the desktop tests (`npm ci` and `npm test` in `apps/desktop`, as `ci.yml`'s desktop job
-  runs them).
+- **Repo tooling:** git with `core.autocrlf false` (CI checks out that way); Bun 1.4.4, the
+  version CI pins; Node 22 for the desktop tests (`npm ci` and `npm test` in `apps/desktop`, as
+  `ci.yml`'s desktop job runs them).
+- **The herdr gate** ([herdr/AGENTS.md](../../herdr/AGENTS.md)) uses `sh` and `shellcheck`, and
+  its tests need Node 22.15 or later, or 24. Run it in a Linux shell, such as your WSL2 distro.
+  Its tests use temp homes; never point them, the installer or `herdr-app` at your live Herdr.
 
 ## How to work with the team
 
@@ -119,8 +162,9 @@ not start it. *Check:* a release's Windows asset installs on a clean machine thr
 - Each PR gets an independent review from the team. You never merge.
 - A merge into `dev` releases to installed macOS and Linux apps. A desktop PR keeps them working
   as they are: Windows code stays off their path.
-- Owner-held: signing keys, release publishing, Pocket's versionCodes, and every secret. Ask
-  Felipe before anything that touches them.
+- **Owner-held** (Felipe's; ask him before anything that touches them): signing keys, release
+  publishing, Pocket's versionCodes, every secret, and the Windows CI runner (whether to have
+  one, its cost, and its registration; not decided).
 - Nothing is published to npm.
 - One version for everything, set by `bun scripts/version.ts` at release. Never edit a version
   by hand.
@@ -145,6 +189,7 @@ Stop and ask Felipe before you:
 - change or remove your existing WSL2 distro, or do anything that might;
 - make an admin policy or registry change you are unsure about, on your own PC;
 - touch signing, secrets, release publishing, versionCodes or the Windows build switch;
+- set up, register or pay for a Windows CI runner;
 - make a container privileged (the RFC never does, even for bwrap);
 - change a contract in the RFC's "Contracts introduced" table, or a public path, id or route;
 - run the herdr pack's tests, its installer or `herdr-app` against your live Herdr install (they
