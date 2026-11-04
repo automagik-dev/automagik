@@ -4,7 +4,7 @@
 |---|---|
 | Status | Accepted (the owner OKd one version and the jump, 2026-11-03) |
 | Milestone | n/a (process) |
-| Lanes | herdr (3.N.P), added here; pocket (3.N.P), added by Pocket's import |
+| Lanes | herdr (3.N.P), added here; pocket (3.N.P), added by Pocket's import; usagemeter (3.N.P), proposed |
 | Created | 2026-11-03 |
 
 ## Summary
@@ -20,6 +20,8 @@ release never offers a pack update, and a pack-only release never cuts a desktop
 This RFC covers the herdr part, imported from `automagik-dev/automagik-herdr` with its history,
 and Pocket, imported from `automagik-dev/automagik-pocket` with its history ("Pocket" below: its
 lane, the versionCode guard, `latest.json` on `pocket-lane`, the signing secrets, the bridge).
+It also proposes importing usagemeter, the token meter, from `automagik-dev/usagemeter` with its
+history ("Usagemeter" below: a plan with four open questions; nothing is built yet).
 
 **Amended by [RFC 0012](0012-am-cli-and-parts.md) (D35, 2026-11-03).** `am` is its own part,
 in a top-level `am/` folder, and the one exception to "a release attaches only the parts it
@@ -46,6 +48,7 @@ and updaters that find their asset among releases that are mostly someone else's
 | Plugins | `apps/<plugin>/` | `automagik-<plugin>-<v>.tgz`, `plugins.json`, `PLUGINS.SHA256SUMS`, `lane.json` | the rolling `plugin-lane` release (`scripts/lane.ts`) |
 | Herdr pack | `herdr/`, `herdr-layout/` | `automagik-herdr-pack-<v>.tgz` and `automagik-herdr-pack-<v>.tgz.sha256`; the `herdr-lane` pointer is re-signed | the rolling `herdr-lane` release (`scripts/herdr-lane.ts`), checked against the pack's `pack-keys.json` |
 | Pocket | `apps/pocket/` (Pocket Link, `herdr/mods/pocket-link`, is on the herdr lane) | `automagik-pocket-<v>.apk` and `latest.json`; `latest.json` on the rolling `pocket-lane` release is replaced | `latest.json` on `pocket-lane` (`apps/pocket/android/app/build.gradle.kts`, `UPDATE_URL`) |
+| Usagemeter (proposed, "Usagemeter") | `apps/usagemeter/` | `usagemeter-<os>-<arch>` (four builds), `usagemeter.SHA256SUMS`, `usagemeter-install.sh`; the rolling `usagemeter-lane` release's assets and `usagemeter.json` are replaced | no updater of its own: the herdr pack installs the version and sha256 values `herdr/mods/am-sidebar/release.js` pins; `usagemeter-install.sh` alone reads `usagemeter-lane` |
 
 `herdr/` is a top-level folder because Herdr's crawler (herdr.dev) indexes top-level folders. The
 herdr.dev listing waits on the owner's gate: no `herdr-mod` or `herdr-layout` topic is set on this
@@ -412,6 +415,188 @@ No `part.json` comes with this import. The names it adds are the lane kind `pock
 `parts.json` field or an `am` verb, so `apps/pocket/part.json` can take its own id and name this
 artifact later.
 
+## Usagemeter
+
+**Status: proposed (2026-11-04). Nothing is built or merged.** This section is the agreed import
+plan made exact; deliveries 2 to 4 below make the code changes, and until they ship, today's code
+differs where noted. Four questions are open for the owner ("Open questions (usagemeter)" below).
+
+usagemeter is the token meter: a small Rust program (Cargo crate `usagemeter`, binary
+`usagemeter`, library `meter`) that each machine runs from `~/.local/bin/usagemeter`
+(`herdr/mods/am-sidebar/meter.js:42`). Its CLI noun stays `am meter` (RFC 0012). It comes from
+`automagik-dev/usagemeter`, whose `dev` is `fd0ba4c`, v0.3.0, with two open pull requests: #6
+(ledger tagging) and #7 (the state folder `~/.automagik/meter`). It goes to `apps/usagemeter/`,
+which RFC 0012 calls the meter part.
+
+The import follows "Importing a repository with its history": `scripts/import-usagemeter.sh`,
+copied from `import-pocket.sh`, clones usagemeter's `dev` into a temporary folder, runs
+`git filter-repo --to-subdirectory-filter apps/usagemeter` there and merges with `--no-ff
+--allow-unrelated-histories`, without tags. It drops `.github/` (CI moves to the root) and
+`.herdr/`, keeps usagemeter's LICENSE inside the part only if it differs from the root's, and
+refuses a database, a key or an `.env` anywhere in the history (none is in its 34 historical
+paths). The import pull request lands as a merge commit, never squashed or rebased (as #190 and
+#203 did), so the imported commits keep their history; commitlint already skips an import
+merge's second-parent history. #6 and #7 merge upstream first (each cuts an upstream 0.N.0); the
+final import is then pinned to upstream `dev`'s last commit, as #190's second, pinned run was, and
+upstream is frozen after it. Whether the import takes all 25 commits is Q1.
+
+Deliveries, one pull request each, each with an independent review and the owner's OK:
+
+1. Docs: this section (a draft pull request).
+2. Import and CI, which ships nothing: the import merge, with `apps/usagemeter/**` in
+   `scripts/lane.ts`'s `NEVER_SHIPPED` for now; a path-gated Rust job in `ci.yml`; `version.ts`
+   writing the crate's version; `AGENTS.md` naming cargo as the one exception to "Bun for the
+   repository's tooling". The pull request's root edits (`.github/`, `scripts/`, `AGENTS.md`) are
+   never shipped either, so its merge cuts no tag, as #203's did not.
+3. The release lane: the `usagemeter` kind, the assets on `vX.Y.Z`, the rolling `usagemeter-lane`
+   release and the installer's new base URL.
+4. The cutover: the herdr pack's pin, the bridge release, the archive.
+
+### Lane
+
+- `usagemeter` (`apps/usagemeter/**`), named after its folder and its binary, as `herdr` and
+  `pocket` are. A release whose shipping changes since the last release are all under
+  `apps/usagemeter/` is a `usagemeter` patch: 3.N.P, the meter's assets, no desktop build, no
+  plugin tarballs, no new plugin lane, no market pin, not Latest.
+- Today `apps/usagemeter/` matches no plugin, so `kindOf` (`scripts/lane.ts:180-195`) would return
+  `full`, a desktop build and 3.(N+1).0. That is why delivery 2 lists the folder in
+  `NEVER_SHIPPED` (`scripts/lane.ts:77-79`). Delivery 3 takes it out and adds a `USAGEMETER` regex
+  beside `HERDR` and `POCKET` (`scripts/lane.ts:84`, `:86`), a `kindOf` branch, and the `usagemeter`
+  kind to every `release.yml` condition that today reads `!= 'herdr' && != 'pocket'` (`:261`,
+  `:318`, `:406`, `:564`, `:602`), with `release-workflows` tests.
+- Delivery 3 also settles what this plan does not: the tag the kind is measured from (Pocket's
+  reason for `pocket-since`, a prerelease that never moves the rolling release, applies the same
+  way), whether usagemeter and the herdr part together make one patch, as Pocket and herdr do, and
+  which of the part's files never ship.
+
+### Version
+
+- One version. The part jumps from usagemeter's 0.3.0 to the monorepo's 3.N.P on its first
+  release here. No old tags are imported (`v0.1.0` to `v0.3.0` are not releases of this one).
+- Cargo keeps the version in `Cargo.toml`'s `[package]` and repeats it in `Cargo.lock`; the binary
+  prints `CARGO_PKG_VERSION`. `scripts/version.ts` writes only JSON fields and plain-text files
+  today (`FIELDS`, `scripts/version.ts:41-62`), so delivery 2 teaches it the crate's two places,
+  and the import sets them to the current 3.N.P, so `dev` never holds a 0.3.0 crate. A test, and
+  CI's `cargo metadata --locked`, check that they agree. The release's version guard reads only
+  `version.ts`'s fields, so this does not repeat #190's failed release.
+- The jump is safe for installs. usagemeter's `install.sh` never downgrades and compares versions
+  field by field (`automagik-dev/usagemeter` `fd0ba4c`, `install.sh:59-79`); any X.Y.Z above
+  0.3.0 passes, and its "want 0.N.P" messages (`:34`, `:36`) are cosmetic. The herdr installer's
+  "not older" check (`herdr/install.sh:451`) compares the same way.
+- #7's README says "Before 0.4.0 …", a 0.4.0 the jump never produces; delivery 3 rewords it when
+  the version scheme changes.
+
+### Release
+
+- CI (delivery 2): a Rust job in `ci.yml`, gated on `apps/usagemeter/` like the other parts' jobs:
+  `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --locked` on Ubuntu and macOS,
+  shellcheck, and the installer's test. Its actions are pinned by SHA, as every action here is
+  (usagemeter's own workflows use `@v4`).
+- On a release that rebuilt the meter (delivery 3), it builds the four targets from the tag and
+  attaches them to `vX.Y.Z`: `usagemeter-darwin-arm64`, `usagemeter-darwin-x86_64`,
+  `usagemeter-linux-x86_64`, `usagemeter-linux-aarch64` (the Linux builds musl, checked static),
+  with `usagemeter.SHA256SUMS` and `usagemeter-install.sh`.
+- The binaries keep their names: the herdr pack's pins and `herdr/scripts/usagemeter-pin.mjs`
+  (`:25-26`, `usagemeter-[a-z0-9_-]+`) name them. The other two are renamed. usagemeter's release
+  writes `SHA256SUMS` and attaches `install.sh` (its `release.yml:124`, `:145`), but a full
+  release's desktop build writes its own `SHA256SUMS` to the same release
+  (`.github/workflows/desktop-build.yml:374`), and its sweep deletes any asset it does not list
+  (`:390`). The sweep is taught to keep the meter's six assets, as it keeps Pocket's.
+- Then, unless the run is a prerelease, a `usagemeter-lane` job replaces the rolling release's
+  assets (below).
+
+### Updater: the rolling `usagemeter-lane` release
+
+usagemeter has no updater of its own. Three things install it, and installed copies move only when
+one of them moves:
+
+- The herdr pack's `install.sh` (`herdr/install.sh:73-75`, `:396-399`, `:457-463`, `:475-484`) and
+  its fleet install, `am meter install` (`herdr/mods/am-sidebar/meterFleet.js:18-20`), install the
+  version `release.js` pins (`USAGEMETER`, `herdr/mods/am-sidebar/release.js:57-70`): one version,
+  four assets and four sha256 values. They check the download against the release's checksums,
+  then against the pin. A pack install moves the meter only when the pack's pin moves.
+- usagemeter's own `install.sh`, the one-liner, reads `releases/latest/download` when no version is
+  given (`fd0ba4c`, `install.sh:89-93`). That cannot work here: a usagemeter patch is never Latest,
+  and the Latest release is usually a desktop build without the meter (Pocket's reason).
+
+So delivery 3 adds a rolling `usagemeter-lane` release, made like `pocket-lane`: created once with
+`--prerelease --latest=false`, never edited, never Latest, written only with
+`gh release upload --clobber`, its tag not `v*` so no updater or tag lookup takes it for a
+release. It holds `usagemeter.json` (`version`, `tag`, the sha256 of each asset) and, unlike
+`pocket-lane`, which holds only its pointer, the newest assets themselves. `usagemeter-install.sh`
+reads its base URL from this repository's releases: with no version it reads `usagemeter-lane`;
+with one it downloads from `v3.N.P`. It still never downgrades.
+
+Trust (RFC 0012's question 5, Q3 below): the herdr pack is signed through `herdr-lane`, and it
+pins the meter's four sha256 values, so a pack install proves who published the meter, not only
+that the download is whole. The standalone `usagemeter-install.sh` checks only
+`usagemeter.SHA256SUMS` or `usagemeter.json`, from the same place as the binary: integrity, not
+who published it, as today. The proposal adds no key now; later, the meter becomes its own
+`binary` part with its own lane key (RFC 0012, delivery 8).
+
+### Targets
+
+The four built today: macOS arm64, macOS x86_64, Linux x86_64 and aarch64. D28 dropped Intel Mac
+for the app, and `usagemeter-darwin-x86_64` is kept only through the bridge, for installs that
+already have it (Q2). No Windows build: the 2026-11-04 direction runs Windows inside a Linux
+sandbox, where `usagemeter-linux-x86_64` already works.
+
+### Bridge and cutover
+
+1. #6 and #7 merge upstream, and the final import is pinned to upstream `dev`'s last commit
+   (above). Until the cutover, the pack keeps pinning upstream's release; whether it moves once,
+   to #7's release, before the import is Q4.
+2. The monorepo publishes the first release that carries the meter's assets (delivery 3), which
+   creates `usagemeter-lane`.
+3. The herdr pack's pin moves to that tag, in the same step as the renamed assets
+   (`usagemeter.SHA256SUMS`, `usagemeter-install.sh`), so the bridge is cut once: `release.js`'s
+   `USAGEMETER`, `herdr/install.sh` (`METER_VERSION`, `METER_RELEASES`, the pins, the asset URL,
+   the checksums file), `meterFleet.js`, `usagemeter-pin.mjs`, and the tests that hold the old
+   version (`herdr/test/install.test.mjs:1066-1074`). That is the pack's code (t22n). The nine doc
+   links to the old repository are repointed: `herdr/README.md:82`,
+   `herdr/mods/pocket-link/README.md:89`, `apps/pocket/AGENTS.md:13`, and six under
+   `apps/pocket/docs/`.
+4. automagik-dev/usagemeter cuts one bridge release whose `install.sh` and README point at this
+   repository.
+5. An install is seen updating from the monorepo; then automagik-dev/usagemeter is archived, never
+   deleted, with a README pointer here. Its releases stay: a pack that still pins v0.3.0 downloads
+   it from there.
+6. The bridge ends there, and `usagemeter-darwin-x86_64` with it: later releases build three
+   targets and the pack's pins drop it. Intel Macs keep the binary they have.
+
+Until the cutover, installed packs keep installing the meter from automagik-dev/usagemeter.
+
+### Names and the Parts manifest (RFC 0012)
+
+No `part.json` comes with this import. The names it adds are the folder `apps/usagemeter/`, the
+lane kind `usagemeter`, the release `usagemeter-lane`, its `usagemeter.json`, and the assets
+`usagemeter-<os>-<arch>`, `usagemeter.SHA256SUMS` and `usagemeter-install.sh`. The installed path
+`~/.local/bin/usagemeter` and the noun `am meter` are unchanged. None is a part id, a capability,
+a `parts.json` field or a new `am` verb, so `apps/usagemeter/part.json` (kind `binary`) can take
+its own id later (RFC 0012, delivery 8, t22b).
+
+### Open questions (usagemeter)
+
+For the owner (Felipe), through t2x5. Each has the plan's recommendation; none is decided here.
+
+1. **Q1. Import all 25 commits?** usagemeter's first 9 commits (`d56295e`..`aea4fe7`) were split
+   from automagik-pocket's `meter/`, and they are already here as `apps/pocket/meter/`, with other
+   ids, deleted since by `5e990c27`. A full import repeats them under `apps/usagemeter/`.
+   Recommended: yes. "With its history" means usagemeter's whole log; the ids stay deterministic for
+   the pinned re-run; and the copies live under a different path. Cutting at `aea4fe7` instead
+   rewrites parents and loses blame for the first files.
+2. **Q2. Keep the Intel Mac meter binary?** D28 dropped Intel Mac. The `darwin-x86_64` meter
+   binary is kept only through the bridge, for existing installs, and ends with the bridge. It
+   costs one CI job. Recommended: yes, on those terms.
+3. **Q3. Trust, slice 1: the signed herdr pack keeps pinning the meter's hashes, no new key?** This
+   is RFC 0012's question 5 for its first step. Recommended: yes; the meter gets its own lane key
+   later, as a `binary` part (RFC 0012, delivery 8).
+4. **Q4. Raise the herdr pin once, to #7's release, before the import?** #6 and #7 each cut an
+   upstream release (0.4.0, then 0.5.0 with the state folder). Recommended: yes. Once #7's
+   release is out, t22n raises the pack's pin once to it, so the fix for the collision with
+   Electron's userData folder and the statusline repoint do not wait for the import; the cutover
+   then moves the pin a second time, to the first monorepo tag.
+
 ## Open questions
 
 1. `herdr/catalog/repos.json` lists Pocket Link as an external entry at `automagik-dev/automagik-pocket`,
@@ -421,6 +606,7 @@ artifact later.
    a change to the pack's catalog and manager, so it is left to the pack. (t22n)
 2. The Play build (automagik-pocket PR #31) is the Play session's call; if it moves, it moves into
    `apps/pocket/`. (t16r)
+3. Usagemeter's import: Q1 to Q4 under "Usagemeter", "Open questions (usagemeter)". (the owner)
 
 Resolved (t259's review, t22n's rulings, 2026-11-03):
 - Commitlint skips only what an import merge's second parent brought, and keeps working across the

@@ -201,7 +201,8 @@ need. All are `targets: local`, `set: ["code"]`, artifact `automagik-herdr-pack-
 - Every herdr part lists only `macos` today, and `part.mjs` exits 2 on any other platform
   (`bin/part.mjs:44`). The Linux and Windows ports are deliveries 5 and 6 (D27).
 - None declares `~/.local/bin/usagemeter`: that becomes usagemeter's own part (t22b);
-  `install.sh` and `am meter` keep handling it until then.
+  `install.sh` and `am meter` keep handling it until then. Its import, lane and release are
+  proposed in [RFC 0011](0011-monorepo-parts-and-releases.md), "Usagemeter" (open there).
 - Pocket Link (`herdr/mods/pocket-link`) is on the herdr lane but is not a pack member (it is
   never in `PACK_MODS`, and the pack never writes it). Proposed: its own part, owned by Pocket.
   Pocket itself (`android-app`) installs nothing on a computer: proposed, its doctor reports 2
@@ -590,7 +591,8 @@ Felipe answered the rest on 2026-11-03 (D35 additions, under Decided). One quest
 
 5. **usagemeter's trust** (owner: t22b). Its `SHA256SUMS` proves integrity, not provenance
    (handoff). Recommended: sign a usagemeter pointer as `herdr-lane` does, or pin its hash in
-   the part.
+   the part. Its first step is proposed in [RFC 0011](0011-monorepo-parts-and-releases.md),
+   "Usagemeter" (trust, and its open question Q3); still open.
 
 ## Links
 
