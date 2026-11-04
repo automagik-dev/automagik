@@ -8,7 +8,7 @@
  * @param {{ terminals?: object[], screens?: Record<string, string>, files?: Record<string, Record<string, string>> }} [state]
  *   files: { [machine or '']: { [path]: text } } ('' is this computer)
  */
-export function createFakeHc({ terminals = [], screens = {}, files = {} } = {}) {
+export function createFakeHc({ terminals = [], screens = {}, files = {}, readCap = 8 * 1024 * 1024 } = {}) {
   const calls = []
   const subs = new Set()
   let seq = 1
@@ -35,7 +35,15 @@ export function createFakeHc({ terminals = [], screens = {}, files = {} } = {}) 
       const first = Math.max(1, offset ?? 1)
       // As herdr-core: offset 1 is always valid; past the last line is invalid_params.
       if (first > 1 && first > all.length) throw Object.assign(new Error(`offset ${first}: the file has ${all.length} lines`), { kind: 'invalid_params' })
-      const given = all.slice(first - 1, limit == null ? undefined : first - 1 + limit)
+      const wanted = all.slice(first - 1, limit == null ? undefined : first - 1 + limit)
+      // As herdr-core: a read stops before the line that would pass its cap (8 MB).
+      const given = []
+      let bytes = 0
+      for (const l of wanted) {
+        bytes += Buffer.byteLength(l)
+        if (bytes > readCap) break
+        given.push(l)
+      }
       return { text: given.join(''), first, last: first + given.length - 1, lines: all.length }
     }
   }

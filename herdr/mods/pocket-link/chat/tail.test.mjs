@@ -378,3 +378,31 @@ test('remote: past-the-end with exactly the lines already read is caught up, sil
   assert.equal(tail.first, 8)
   assert.deepEqual([errors, got, resets()], [[], [], 0])
 })
+
+// ---------------------------------------------------------------- second re-review of #280
+
+test('remote: a line past the read cap is reported as too long, and the lines after it are read', async () => {
+  const path = '.claude/projects/p/s.jsonl'
+  const hc = createFakeHc({ files: { box: { [path]: `a\n${'x'.repeat(9 * 1024 * 1024)}\nb\nc\n` } } })
+  const { tail, got, resets } = remoteTail(hc)
+  await tail.start()
+  assert.deepEqual(got, [{ n: 1, text: 'a' }, { n: 2, text: null }, { n: 3, text: 'b' }, { n: 4, text: 'c' }])
+  assert.equal(resets(), 0)
+  hc.append('box', path, 'd\n')
+  await tail.tick()
+  assert.deepEqual(got.at(-1), { n: 5, text: 'd' })
+  await tail.stop()
+})
+
+test('remote: a caught-up poll only counts; the last line is not carried again', async () => {
+  const path = '.claude/projects/p/s.jsonl'
+  const hc = createFakeHc({ files: { box: { [path]: `a\n${'y'.repeat(1000)}\n` } } })
+  const { tail } = remoteTail(hc)
+  await tail.start()
+  const before = hc.calls.length
+  for (let i = 0; i < 5; i++) await tail.tick()
+  const polls = hc.calls.slice(before).map((c) => c.params)
+  assert.equal(polls.length, 5)
+  assert.ok(polls.every((p) => p.offset === 1 && p.limit === 0), JSON.stringify(polls))
+  await tail.stop()
+})

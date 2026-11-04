@@ -274,19 +274,34 @@ export class RemoteTail {
   }
 
   /**
-   * Every poll reads again from the last line held and compares it: a file truncated and written
-   * again past the old offset is a new file (restart), not more lines to splice on.
+   * A poll counts the file's lines first (limit 0: nothing carried). The same count as read is
+   * caught up and reads nothing more. Otherwise it reads again from the last line held and
+   * compares it: a file truncated and written again past the old offset is a new file (restart),
+   * not more lines to splice on. Not detected: a rewrite to the same line count, or a new file
+   * whose line at that place is identical; transcript lines carry their own ids, so neither is
+   * expected.
    */
   async readPages() {
+    let polled = false
     for (;;) {
       if (this.stopped) return
       if (!this.counted) {
         let lines
         try { lines = await this.count() } catch (e) { this.onError(e); return }
         this.counted = true
+        polled = true
         if (Number.isFinite(this.window) && lines > this.window) this.next = this.first = lines - this.window + 1
       }
-      const overlap = this.held !== undefined && this.next > 1
+      if (!polled && this.held !== undefined) {
+        polled = true
+        let lines
+        try { lines = await this.count() } catch (e) { this.onError(e); return }
+        if (lines === this.next - 1) return
+        if (lines < this.next - 1) { this.restart(); continue }
+      }
+      polled = true
+      // A held line too long to keep (null) cannot be compared, nor read again under the cap.
+      const overlap = typeof this.held === 'string' && this.next > 1
       const offset = overlap ? this.next - 1 : this.next
       let r
       try {
@@ -313,6 +328,14 @@ export class RemoteTail {
         const again = pieces.shift()
         const same = again !== undefined && again.endsWith('\n') && (this.held === null || again.slice(0, -1).replace(/\r$/, '') === this.held)
         if (!same) { this.restart(); continue }
+        if (!pieces.length && r.last === offset && r.lines > offset) {
+          // Only the held line came back though the file has more: the next line is past the
+          // 8 MB a read gives. It is counted, not kept, and reading goes on after it.
+          this.onLines([{ n: this.next, text: null }])
+          this.next += 1
+          this.held = null
+          continue
+        }
       }
       const base = overlap ? r.first + 1 : r.first
       const out = []
