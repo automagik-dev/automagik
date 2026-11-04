@@ -76,7 +76,7 @@ test('with models that can run and none chosen, one press starts the Bot: no gri
   assert.match(nodes(tree, node => node.props.className === 'bt-bubble')[0].children[0], /Say when, and I'll start/)
   // It offers DSH's default, named with its provider; "change" picks another.
   const [line] = nodes(tree, node => node.type === ModelLine)
-  assert.equal(line.props.ref, 'official/flash')
+  assert.equal(line.props.modelRef, 'official/flash')
   line.props.onPick('local/flash')
   const [start] = nodes(tree, node => node.type === 'button' && node.children.includes('Start'))
   start.props.onClick()
@@ -195,7 +195,7 @@ test('models that need an API key are no choice', () => {
   // DSH's default needs a key: the Bot offers the model that can run.
   const offer = dock([...keyless, models[1]], { harness: false }).tree
   assert.deepEqual(buttons(offer), ['Start'])
-  assert.equal(nodes(offer, node => node.type === ModelLine)[0].props.ref, 'local/flash')
+  assert.equal(nodes(offer, node => node.type === ModelLine)[0].props.modelRef, 'local/flash')
   // Where DSH's own settings are, they take the key; Omni's Connect AI step comes first.
   assert.deepEqual(buttons(dock(keyless).tree), ['Connect an AI: ChatGPT, Claude, Kimi or an API key', 'Enter a DeepSeek API key', 'Open settings to set up a custom model'])
 })
