@@ -2,7 +2,7 @@
 title: "Using Automagik Pocket"
 type: guide
 created: 2026-11-01
-updated: 2026-11-03
+updated: 2026-11-04
 tags: [guide, users]
 ---
 # Using Automagik Pocket
@@ -16,8 +16,10 @@ Everything the [README](../../README.md) keeps short. Install and first connecti
 - **Pocket Link:** the phone dials the desktop by its public key over iroh. The connection is
   direct on the same network or through hole punching, and otherwise through n0's public relays.
   It is end-to-end encrypted either way. No port is opened on the computer. Removing the phone in
-  the desktop's Pocket Link dialog disconnects it at once. The QR scanner is bundled, so it works
-  without Google Play services; the app asks for the camera the first time.
+  the desktop's Pocket Link dialog refuses its new connections; the bridge checks its list every
+  2 seconds and then closes that phone's open sessions. Agents the phone started keep running on
+  the computer. The QR scanner is bundled, so it works without Google Play services; the app asks
+  for the camera the first time.
 - **No SSH.** The app no longer connects over SSH ([RFC 0008](../rfcs/0008-drop-ssh.md)). A
   machine saved over SSH in an older version stays in **Machines**, greyed, with one button:
   **Pair with QR**. It opens the scanner; scan that computer's Pocket Link code and the old entry

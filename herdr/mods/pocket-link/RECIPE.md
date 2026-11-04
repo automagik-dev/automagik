@@ -8,7 +8,8 @@ SSH, no password and no port to open. A small Node bridge answers the phone
 over [iroh](https://iroh.computer). Connections are end to end encrypted and
 direct when possible, or go through a relay that can't read them. The bridge
 hands each paired phone a herdr-core session. The dialog also lists paired
-phones, so you can remove one, and that disconnects it at once.
+phones, so you can remove one: its new connections are refused, and its open
+sessions close within 2 seconds. Agents it started keep running.
 
 ![Pocket Link](preview.png)
 
@@ -43,7 +44,7 @@ The dialog is 460px wide, from `mod.json` `{ "kind": "dialog", "width": 460 }`, 
    - "Last seen 3 min ago" in 11.5px `dim`
    - an outlined **Remove** button
 6. **Errors:** when there is one, it shows in 12px `blocked`.
-7. **Footer:** in 11.5px/17px `dim`: "Phones connect directly when they can, and otherwise through a public iroh relay that passes along encrypted bytes it can't read. Removing a phone disconnects it at once."
+7. **Footer:** in 11.5px/17px `dim`: "Phones connect directly when they can, and otherwise through a public iroh relay that passes along encrypted bytes it can't read. A removed phone's sessions close within 2 seconds; agents it started keep running."
 
 Buttons are 30px tall with 12px side padding, a 7px radius and 12.5px medium text.
 - **Primary:** `solid` with `solid_foreground` text.
@@ -133,7 +134,7 @@ Before the bridge can run, the dialog shows one of two other screens in place of
   - **Moving from `mods/pocket-link/.state/`:** when the new folder has no `secret.key`, the bridge moves each old file with `link()` and `unlink()` (atomic, never over an existing file, the mode kept), then logs one line. While an older bridge still runs from `.state/` (its `status.json` pid is alive), it uses `.state/` for that run instead and moves nothing.
 - **The phone side:** [Automagik Pocket](../../../apps/pocket/README.md), with `computer.iroh:iroh-android:1.2.0`. It opens the `herdr-pocket://pair` link from a scan, a paste or a tapped link, asks before pairing, and keeps its own key in no-backup storage.
 - **What it touches on the computer:**
-  - **Network:** iroh's n0 preset. It keeps a connection to n0's public relays and publishes the bridge's public key and current addresses to n0's address lookup, so phones find it after an IP change. Phones connect in over QUIC/UDP.
+  - **Network:** iroh's n0 preset. It keeps a connection to n0's public relays and publishes the bridge's public key and the n0 relay it currently uses to n0's address lookup, so phones find it after an IP change. iroh's publisher sends no IP addresses by default (`AddrFilter::relay_only`); the phone's iroh publishes the same way. Phones connect in over QUIC/UDP.
   - **Programs:** `node`, `npm` (setup only), `hc connect`, `launchctl` or `systemctl --user`, `ls` (to list Node versions), `sh` (to find `hc` and run setup) and the user's login shell (to find `node`).
   - **Files outside the folder:** the state folder above, and the login service file, `~/Library/LaunchAgents/dev.herdr.pocket-link.plist` or `~/.config/systemd/user/herdr-pocket-link.service`.
 
