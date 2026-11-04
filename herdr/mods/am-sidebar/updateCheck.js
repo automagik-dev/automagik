@@ -309,8 +309,14 @@ export function autoFailure(state, version, why, now) {
 /** The one notice for a failed install on its own (the first failure of a version), else null. */
 export function autoFailedNotice(failed) {
   if (!failed || failed.count !== 1) return null;
+  const hours = Math.round(backoffOf(1) / 3_600_000);
+  // update.mjs: the swap happened but the install record wasn't written (it still names the old version).
+  if (/went in, but the install record could not be written/.test(failed.why)) {
+    return { title: "Automagik Herdr update not finished", level: "error",
+      body: `${failed.version} was put in place, but its install record could not be saved (${failed.why}). It tries again in ${hours} h.` };
+  }
   return { title: "Automagik Herdr not updated", level: "error",
-    body: `Installing ${failed.version} failed: ${failed.why}. Nothing was changed; it tries again in ${Math.round(backoffOf(1) / 3_600_000)} h.` };
+    body: `Installing ${failed.version} failed: ${failed.why}. Nothing was changed; it tries again in ${hours} h.` };
 }
 
 // ---- After an install: the notice from the new build ----

@@ -288,7 +288,13 @@ test("the switch is written by one sidebar copy, not by each", async () => {
 
 test("failure retries land 4 h, then 8 h, 16 h and 24 h after each failure, then daily", async () => {
   const h = herdr();
-  h.answer = (args) => (args[1] === "check" ? h.check() : { code: 1, stdout: '{"error":"network down"}\n', stderr: "" });
+  // A failed install takes a while (the download's timeout): its failure is recorded after the
+  // check that started it, so the check due at the end of the wait comes a little early.
+  h.answer = (args) => {
+    if (args[1] === "check") return h.check();
+    h.now += 2 * 60_000;
+    return { code: 1, stdout: '{"error":"network down"}\n', stderr: "" };
+  };
   h.build().u.start();
   await h.tick(FIRST_CHECK_MS);
   const tries = [h.now];
@@ -300,4 +306,14 @@ test("failure retries land 4 h, then 8 h, 16 h and 24 h after each failure, then
   const gaps = tries.slice(1).map((t, i) => Math.round((t - tries[i]) / 3_600_000));
   assert.deepEqual(gaps.slice(0, 6), [4, 8, 16, 24, 24, 24]);
   assert.equal(h.notes.length, 1, "one notice for the version, however many tries");
+});
+
+test("a failed record write is not 'nothing was changed': the notice says the release went in", async () => {
+  const { autoFailedNotice } = await import("../mods/am-sidebar/updateCheck.js");
+  const note = autoFailedNotice({ version: "0.8.1", count: 1, at: NOW,
+    why: "0.8.1 went in, but the install record could not be written (/x/installed-by-install.sh)" });
+  assert.equal(note.title, "Automagik Herdr update not finished");
+  assert.doesNotMatch(note.body, /Nothing was changed/);
+  assert.match(note.body, /0\.8\.1 was put in place, but its install record could not be saved/);
+  assert.match(autoFailedNotice({ version: "0.8.1", count: 1, at: NOW, why: "network down" }).body, /Nothing was changed/);
 });

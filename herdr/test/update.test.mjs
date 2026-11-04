@@ -12,7 +12,7 @@ import {
   POINTER_SIG_URL, POINTER_URL, applyUpdate, checkForUpdate, compareVersions, downloadUpdate, fetchPointer, installUpdate, noticeText, packKeys,
   packOfPointer, parseSums, verifyPointer,
   checkMods, markerOf, offDirOf, pickUpdate, repairInstall, setupHome, toCheck, prevSetOf, readMarker, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
-  autoFileOf, autoStatus, lockOf, managedPack, olderSequence, readAuto, takeLock, writeAuto,
+  autoFileOf, autoStatus, lockOf, managedPack, olderSequence, overtaken, readAuto, takeLock, writeAuto,
 } from "../mods/am-sidebar/update.mjs";
 import { formatMarker, parseMarker } from "../mods/am-sidebar/release.js";
 import { cmdUpdate } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
@@ -1373,4 +1373,48 @@ test("an install on its own keeps #276's off-by-default: am-quota arriving first
     assert.equal(readFileSync(join(h.mods, "am-quota", "main.js"), "utf8"), 'export const v = "0.3.0";\n');
     assert.equal(existsSync(join(offDirOf(h.mods), "am-quota")), false);
   } finally { for (const t of [t2, t3]) rmSync(t.src, { recursive: true, force: true }); h.done(); }
+});
+
+// ---- Re-review of #271: the lock's takeover and the re-check under it, each pinned ----
+
+test("lock: two runs that both find it stale: the second to move it aside gets the first's fresh lock back and is refused", () => {
+  const h = autoHome([]);
+  try {
+    takeLock(h.mods, Date.now()); // a holder that died: its lock goes stale
+    const later = Date.now() + 11 * 60_000;
+    let b = null;
+    // A looked and found it stale; before A moves it aside, B takes it over completely.
+    assert.throws(() => takeLock(h.mods, later, { beforeTakeover: () => { b = takeLock(h.mods, later); } }),
+      /another update or rollback is running/);
+    assert.ok(b, "B holds it");
+    assert.equal(existsSync(lockOf(h.mods)), true, "A put B's lock back");
+    assert.throws(() => takeLock(h.mods, Date.now()), /another update or rollback is running/, "and B's lock is fresh");
+    b();
+    assert.equal(existsSync(lockOf(h.mods)), false);
+    assert.deepEqual(readdirSync(stateDirOf(h.mods)).filter((f) => f.startsWith(".update.lock")), []);
+  } finally { h.done(); }
+});
+
+test("lock: a takeover that loses the folder to another run between the move and the mkdir is 'locked', not a raw EEXIST", () => {
+  const h = autoHome([]);
+  try {
+    takeLock(h.mods, Date.now());
+    const later = Date.now() + 11 * 60_000;
+    assert.throws(() => takeLock(h.mods, later, { beforeRetake: () => mkdirSync(lockOf(h.mods)) }),
+      (e) => e.locked === true && /another update or rollback is running/.test(e.message));
+  } finally { h.done(); }
+});
+
+test("overtaken (under the lock): the version installed since the check, or a record that came through a higher sequence", () => {
+  const h = autoHome([]);
+  try {
+    const update = { version: "0.2.0", sequence: 20000 };
+    assert.equal(overtaken(h.mods, update), null, "0.1.0 at sequence 10000: 0.2.0 at 20000 goes in");
+    writeFileSync(markerOf(h.mods), "version=0.1.0\nmods=am-sidebar,am-tabs\nbefore=none\nsequence=30000\n");
+    assert.match(overtaken(h.mods, update).why, /sequence 20000 is below the record's 30000/);
+    writeFileSync(markerOf(h.mods), "version=0.2.0\nmods=am-sidebar,am-tabs\nbefore=none\nsequence=20000\n");
+    assert.deepEqual(overtaken(h.mods, update), { current: "0.2.0", why: "0.2.0 is installed now" });
+    writeFileSync(markerOf(h.mods), "version=0.3.0\nmods=am-sidebar,am-tabs\nbefore=none\nsequence=30000\n");
+    assert.equal(overtaken(h.mods, update).current, "0.3.0", "never a downgrade");
+  } finally { h.done(); }
 });

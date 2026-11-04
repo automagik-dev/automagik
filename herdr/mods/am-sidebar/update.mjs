@@ -158,7 +158,7 @@ const tokenOf = (lock) => { try { return readFileSync(join(lock, LOCK_TOKEN), "u
  * removes it only while the token is still this run's, so a run whose stale lock was taken over
  * never frees the newer holder's. A stale lock is renamed aside (one taker wins the rename).
  */
-export function takeLock(modsDir, now = Date.now()) {
+export function takeLock(modsDir, now = Date.now(), hooks = {}) {
   const lock = lockOf(modsDir);
   mkdirSync(stateDirOf(modsDir), { recursive: true });
   try { mkdirSync(lock); } catch (error) {
@@ -166,9 +166,19 @@ export function takeLock(modsDir, now = Date.now()) {
     let age = Infinity;
     try { age = now - statSync(lock).mtimeMs; } catch {}
     if (age < LOCK_STALE_MS) throw lockedError();
+    // Two runs may both find it stale: the one that moves it aside first takes it. The token tells
+    // whether what was moved is the stale lock looked at, or a lock another taker made since: that
+    // one goes back where it was, and this run is refused. (`hooks`: tests' interleavings.)
+    const seen = tokenOf(lock);
+    hooks.beforeTakeover?.();
     const aside = freshPath(stateDirOf(modsDir), ".update.lock-stale-");
     try { renameSync(lock, aside); } catch { throw lockedError(); }
+    if (tokenOf(aside) !== seen) {
+      try { renameSync(aside, lock); } catch {}
+      throw lockedError();
+    }
     rmSync(aside, { recursive: true, force: true });
+    hooks.beforeRetake?.();
     try { mkdirSync(lock); } catch (again) { if (again?.code === "EEXIST") throw lockedError(); throw again; }
   }
   const token = `${process.pid}-${randomBytes(8).toString("hex")}`;
@@ -1125,6 +1135,19 @@ export async function checkForUpdate({ fetch = globalThis.fetch, env = process.e
 }
 
 /**
+ * Read under the lock: why `update` is no longer one to install, or null. Another run installed it,
+ * or a newer one, since the check (never the same release over itself, which would drop the
+ * rollback target, and never a downgrade), or the record came through a higher sequence since.
+ */
+export function overtaken(modsDir, update) {
+  const current = installedVersion({ modsDir });
+  if (!pickUpdate(current, update)) return { current, why: `${current} is installed now` };
+  const record = readMarker(modsDir);
+  if (olderSequence(record, update)) return { current, why: `the pointer's sequence ${update.sequence} is below the record's ${record.sequence}` };
+  return null;
+}
+
+/**
  * True when the signed pointer's sequence is below the one the install record holds (#207 L2): a
  * re-posted older pointer, whatever version it names. install.sh refuses the same; nothing installs it.
  */
@@ -1152,11 +1175,8 @@ export async function installUpdate({ fetch = globalThis.fetch, env = process.en
     // Another run may have installed it, or a newer one, between the check and the lock: nothing
     // to do then (never the same release over itself, which would drop the rollback target, and
     // never a downgrade).
-    // The sequence too: never a pointer older than the one the record came through.
-    const now = installedVersion({ modsDir });
-    if (!pickUpdate(now, found.update) || olderSequence(readMarker(modsDir), found.update)) {
-      return { ...found, current: now, update: null, installed: null };
-    }
+    const late = overtaken(modsDir, found.update);
+    if (late) return { ...found, current: late.current, update: null, installed: null };
     const hold = auto ? autoHold(found.update.version, autoStatus(modsDir)) : null;
     if (hold) return { ...found, auto: autoStatus(modsDir), installed: null, held: hold };
     const done = await downloadAndApply(found, { fetch, modsDir, log, binDir, window });
