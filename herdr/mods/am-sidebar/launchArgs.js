@@ -354,6 +354,9 @@ export function placementFrom(gets) {
   return g ? { space: g.labels["herdr.space"], tab: g.labels["herdr.tab"] || null, from: g.address } : null;
 }
 
+/** A start's place with its space only: Herdr then opens the pane in a tab of its own there. */
+export const spaceOnly = (place) => (place ? { ...place, tab: null } : place);
+
 /**
  * The same from the window (`herdr-app ls` as state.mjs spacesOf has it): the first space of
  * this computer whose folder keys to the project (`keys`: Map<folder, key>), in its selected

@@ -278,6 +278,28 @@ test("worker: hc run --bg as a child of the bot's pane, in the worktree, with th
   assert.ok(!Number.isNaN(Date.parse(row.at)));
 });
 
+test("worker opens in a tab of its own in its bot's space: herdr.space at hc run, never herdr.tab; no space, no label", (t) => {
+  const s = scene(t);
+  // The bot's pane (t1) is in tab tb-bot of space sp-bot.
+  const st = s.hcState();
+  Object.assign(st.terminals.find((x) => x.address === "t1").labels, { "herdr.space": "sp-bot", "herdr.tab": "tb-bot" });
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  assert.equal(s.cli(["worker", "fix the login form", "--branch", "feat/login"]).code, 0);
+  assert.equal(s.cli(["worker", "review it", "--branch", "feat/review", "--template", "dev-sol", "--role", "review"]).code, 0);
+  for (const run of s.runs()) {
+    const labels = labelsOf(run);
+    assert.ok(labels.includes("herdr.space=sp-bot"), labels.join(" "));
+    assert.equal(labels.some((l) => l.startsWith("herdr.tab=")), false, labels.join(" "));
+  }
+  // Set by hc run itself, so the worker never shows in the bot's tab first: no hc label after.
+  assert.equal(s.calls().some((c) => c[0] === "label"), false);
+  assert.equal(s.hcState().terminals.find((x) => x.address === "t100").labels["herdr.space"], "sp-bot");
+  // A bot whose pane has no space label: the worker gets no placement label, as before.
+  const bare = scene(t);
+  assert.equal(bare.cli(["worker", "fix it", "--branch", "feat/bare"]).code, 0);
+  assert.equal(labelsOf(bare.runs()[0]).some((l) => l.startsWith("herdr.")), false, labelsOf(bare.runs()[0]).join(" "));
+});
+
 test("start and attach append a seat row to the ledger", (t) => {
   const s = scene(t);
   assert.equal(s.cli(["start", "Genie"], { from: null }).code, 0);
