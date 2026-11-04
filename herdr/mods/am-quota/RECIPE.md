@@ -1,13 +1,18 @@
 # am-quota
 
-**Accounts**, a personal tool for people who run their own
-[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI). Your bots stop when a subscription
-hits its limit; this panel shows how long the Claude Code or Codex account this computer uses will
-last, and moves the tool to another account on your proxy before it runs out. Accounts are added
-on the proxy (sign in there), never on this computer.
+**Accounts** keeps your bots working when a plan hits its limit: it shows how long the Claude
+Code or Codex account this computer uses will last, and moves the tool to another account on your
+own CLIProxyAPI before it runs out. A personal tool for people who run one; accounts are added on
+the proxy (sign in there), never on this computer.
 
-Turn it on or off in the **Mods** panel (the puzzle tab in the footer): *Automagik Quota*. The
-footer's **Quota** tab, which opens the panel, shows only while it is on.
+CLIProxyAPI: <https://github.com/router-for-me/CLIProxyAPI>.
+
+**It ships switched off**, footer tab included: a fresh install puts it in
+`<app home>/mods-disabled/am-quota`, where Herdr does not load it. To turn it on, open the **Mods**
+panel (the puzzle tab in the footer), find *Automagik Accounts* and switch it on; the footer's
+**Accounts** tab then appears and opens the panel. Switching it off again hides both. An install that
+already has it keeps its state through updates, on or off (`OFF_BY_DEFAULT` in
+`am-sidebar/release.js`; `am install herdr.am-quota` also switches it on).
 
 ## Setup
 

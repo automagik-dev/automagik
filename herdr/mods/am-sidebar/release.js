@@ -40,6 +40,13 @@ export const PACK_MODS = Object.freeze(["am-automations", "am-footer", "am-markd
   "am-sidebar", "am-status", "am-tabs"]);
 export const POCKET_LINK = "pocket-link";
 /**
+ * Pack mods that ship switched off: the first time one arrives (a fresh install, or an update
+ * from a release that did not ship it) it goes to <app home>/mods-disabled/, where Herdr never
+ * looks, and the person turns it on in the Mods panel. A copy already installed keeps its state,
+ * on or off. am-quota is a personal tool for people who run their own CLIProxyAPI.
+ */
+export const OFF_BY_DEFAULT = Object.freeze(["am-quota"]);
+/**
  * The usagemeter release install.sh installs to ~/.local/bin/usagemeter (Group 6c): the binary for
  * `<os>-<arch>`, checked against that release's SHA256SUMS and against the sha256 pinned here (the
  * release's SHA256SUMS proves the download is whole, `sha256` that it is the build this pack

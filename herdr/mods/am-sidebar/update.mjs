@@ -51,7 +51,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
-  CATALOG_URL, OLD_PACK_NAME, PACK_CATALOG_URLS, PACK_KEYS, PACK_KEYS_FILE, PACK_LAYOUT, PACK_NAME, POCKET_LINK, POINTER_SIG_URL, POINTER_URL,
+  CATALOG_URL, OFF_BY_DEFAULT, OLD_PACK_NAME, PACK_CATALOG_URLS, PACK_KEYS, PACK_KEYS_FILE, PACK_LAYOUT, PACK_NAME, POCKET_LINK, POINTER_SIG_URL, POINTER_URL,
   TIMEOUT_MS, V020_LAYOUT_SHA256, formatMarker, packOfPointer, parseMarker, parseSums, pickUpdate, updatesOff,
 } from "./release.js";
 import { ABSORBED, RENAMES, editTarget, own, renamedFrom } from "./migrate.js";
@@ -491,8 +491,10 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     };
     const owned = new Set(before?.mods ?? []);
     const kept = readSet(modsDir);
-    const plan = { installed: [], replaced: [], renamed: [], left: [], adopted: [], retired: [], repaired: [], off: [] };
+    const plan = { installed: [], replaced: [], renamed: [], left: [], adopted: [], retired: [], repaired: [], off: [], installedOff: [] };
     const keptOff = [];
+    const leftOff = [];       // a mods-disabled/ folder the record doesn't own, where an off-by-default mod would go
+    const keptBackOff = [];   // a kept copy that was off when kept, put back off
     const both = [];
     const moves = [];
     // A folder the person owns moves to backup/ (never replaced) and is recorded, so --uninstall puts it back.
@@ -538,6 +540,22 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
         // Across the rename: the old-named folder's private paths come into its am-* folder. The
         // record's leaves with the kept set (below); a person's own is left, or adopted.
         const old = own(OLD_OF, m), oldLive = old && join(modsDir, old);
+        // Into mods-disabled/ instead of mods/: a kept copy coming back (a rollback's, or one
+        // --uninstall moved out) that was off when kept, or a mod that ships off arriving for the
+        // first time. Never the record's own, one renamed from an old folder, or a repair. A
+        // folder already in mods-disabled/ that is not the record's is left alone.
+        const wasKept = Boolean(kept?.mods.includes(m));
+        const startsOff = !repair && !owned.has(m) && !(old && exists(oldLive))
+          && (wasKept ? kept.off.includes(m) : OFF_BY_DEFAULT.includes(m));
+        if (startsOff) {
+          if (exists(off) || isLink(off)) { leftOff.push(m); continue; }
+          if (wasKept) carryPrivate(join(prevSetOf(modsDir), m), fresh);
+          moves.push([fresh, off]);
+          plan.installed.push(m);
+          (wasKept ? keptBackOff : plan.installedOff).push(m);
+          record.mods.push(m);
+          continue;
+        }
         if (old && exists(oldLive) && !isLink(oldLive)) {
           if (owned.has(old)) { carryPrivate(oldLive, fresh); plan.renamed.push([old, m]); }
           else if (adopt) { carryPrivate(oldLive, fresh); adoptFolder(old); }
@@ -610,6 +628,9 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     if (keep.length) keepLayout(modsDir, next, warnings);
     keepSet(modsDir, next, keep, before, old, rename, warnings, keptOff);
     for (const m of plan.off) log(`updated mods-disabled/${m}: it stays off`);
+    for (const m of plan.installedOff) log(`installed mods-disabled/${m}: it ships off; turn it on in the Mods panel`);
+    for (const m of keptBackOff) log(`installed mods-disabled/${m}: it was off when it was kept, so it stays off`);
+    for (const m of leftOff) log(`left alone: mods-disabled/${m} (not installed by automagik-herdr), so ${m} was not installed`);
     for (const m of both) log(`warning: mods/${m} and mods-disabled/${m} both exist: mods/${m} was updated, the switched-off copy is left as it is`);
     for (const m of plan.left) {
       const why = Object.hasOwn(ABSORBED, m) ? "the pack's sidebar or Markdown mod does its job now" : "--adopt moves it to backup/ and installs the pack's";
@@ -886,7 +907,7 @@ export function setupHome({ modsDir, tgzDir, record, log = () => {}, herdrApp = 
   }
 
   placeLayout({ modsDir, tgzDir, record, log });
-  return checkMods({ modsDir, mods: record.mods, log, herdrApp }).failed;
+  return checkMods({ modsDir, mods: toCheck(modsDir, record.mods), log, herdrApp }).failed;
 }
 
 /**
@@ -932,6 +953,13 @@ export function placeLayout({ modsDir, tgzDir, record, log = () => {} }) {
  * `herdr-app check` on each of `mods`, its whole output shown on a failure. Returns `{ failed,
  * checked }`: the mods whose check failed, and false when herdr-app is not on PATH (said once).
  */
+/**
+ * The record's mods `herdr-app check` should load: all but the ones switched off (in
+ * mods-disabled/ and not in mods/, as a mod that ships off starts). A mod missing from both stays
+ * in the list, so its check fails and the setup says so, instead of passing it over.
+ */
+export const toCheck = (modsDir, mods) => mods.filter((m) => exists(join(modsDir, m)) || !exists(join(offDirOf(modsDir), m)));
+
 export function checkMods({ modsDir, mods, log = () => {}, herdrApp = "herdr-app" }) {
   const failed = [];
   let haveHerdr = true;
@@ -1044,7 +1072,7 @@ export async function repairInstall({ tgzPath, version, modsDir = defaultModsDir
     const record = readMarker(modsDir);
     const layout = placeLayout({ modsDir, tgzDir, record, log });
     // A mod switched off (in mods-disabled/, not mods/) has no folder here to check.
-    const { failed: checkFailed, checked } = checkMods({ modsDir, mods: record.mods.filter((m) => exists(join(modsDir, m))), log, herdrApp });
+    const { failed: checkFailed, checked } = checkMods({ modsDir, mods: toCheck(modsDir, record.mods), log, herdrApp });
     const changed = Boolean(repaired) || layout === "added" || layout === "replaced";
     const warnings = repaired?.warnings ?? [];
     // The hooks too, so a rerun moves those of a project opened (or listed) since the install.

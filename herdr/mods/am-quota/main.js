@@ -101,6 +101,7 @@ export default class AmQuota extends View {
     this.quotaError = null;
     this.switched = {};     // provider → the last switch: { at, from, to, look, result }
     this.armed = null;      // "restart:<provider>" waiting for its second click
+    this.restarting = {};   // provider → true while its bots restart (lock.claim reads it)
     this.seen = 0;          // last render; a hidden copy stops polling
     this.hidden = false;
     this.sampler = new QuotaSampler();
@@ -244,7 +245,8 @@ export default class AmQuota extends View {
       wake(cx);
       return;
     }
-    const refused = claim(this, provider, account);   // a second click starts nothing
+    // A second click starts nothing; the busy line names the account by email, never its file.
+    const refused = claim(this, provider, account, `switching ${TOOLS[provider]} to ${who(account)}…`);
     if (refused) {
       this.switchError = refused;
       wake(cx);
@@ -339,11 +341,21 @@ export default class AmQuota extends View {
     });
   }
 
-  /** Restart N bots: the first click arms it, a second within five seconds runs each restart. */
+  /**
+   * Restart N bots: the first click arms it, a second within five seconds runs each restart. Not
+   * while a switch runs (the bots would restart onto a login that is still being written). After a
+   * run only the bots that failed stay listed, so pressing again retries those alone.
+   */
   restartBots(provider, cx) {
     const s = this.switched[provider];
     const bots = s?.look?.bots ?? [];
     if (!bots.length || s.restarting) return;
+    if (this.busy) {
+      this.armed = null;
+      this.switchError = "a switch is running: restart the bots once it is done";
+      wake(cx);
+      return;
+    }
     const key = `restart:${provider}`;
     if (this.armed !== key) {
       this.armed = key;
@@ -358,24 +370,35 @@ export default class AmQuota extends View {
     }
     this.armed = null;
     s.restarting = true;
+    // lock.claim refuses this provider's switch until its restarts are done; the other's is free.
+    this.restarting = { ...this.restarting, [provider]: true };
     s.result = null;
     cx.spawn(async (cx) => {
       wake(cx);
       const failed = [];
-      let done = 0;
+      const left = [];
+      let done = (s.done ?? 0);
       // One at a time: each restart waits for the new pane's agent to stay up.
       for (const bot of bots) {
+        let why = null;
         try {
           const r = await this.cli(["restart", bot.id, "--project", bot.project]);
-          if (r?.code === 0) done += 1;
-          else failed.push(`${bot.name}: ${(r?.err ?? "").split("\n")[0] || `exit ${r?.code ?? "?"}`}`);
+          if (r?.code !== 0) why = (r?.err ?? "").split("\n")[0] || `exit ${r?.code ?? "?"}`;
         } catch (err) {
-          failed.push(`${bot.name}: ${message(err)}`);
+          why = message(err);
+        }
+        if (why === null) done += 1;
+        else {
+          failed.push(`${bot.name}: ${why}`);
+          left.push(bot);
         }
       }
       s.restarting = false;
+      delete this.restarting[provider];
+      s.done = done;
       s.result = { done, failed };
-      if (!failed.length) s.look = { bots: [], reliable: true };
+      // Only the ones that failed are left to restart.
+      s.look = { bots: left, reliable: left.length ? s.look.reliable : true };
       wake(cx);
     });
   }

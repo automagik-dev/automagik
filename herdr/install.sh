@@ -242,9 +242,11 @@ layout_notes() {
     lacks=
     for s in 'am-footer:the footer rail (am-footer)' 'am-tabs:the tab bar (am-tabs)' \
       'am-status:the status bar with the pack version (am-status)' \
-      'am-markdown:the Markdown menu (am-markdown)' 'am-automations:the automations panel (am-automations)' 'am-quota:the quota panel (am-quota)'; do
+      'am-markdown:the Markdown menu (am-markdown)' 'am-automations:the automations panel (am-automations)' 'am-quota:the Accounts panel (am-quota)'; do
       # A block naming the mod ("mod": …), or for am-markdown the root's "terminal_menu": an id like
       # "am-quota-panel" or a mention elsewhere doesn't count.
+      # A mod that is off (mods-disabled/, as am-quota ships) isn't missed: its block would be empty.
+      if [ ! -d "$MODS/${s%%:*}" ] && [ -d "$APP_HOME/mods-disabled/${s%%:*}" ]; then continue; fi
       grep -Eq "\"(mod|terminal_menu)\"[[:space:]]*:[[:space:]]*\"${s%%:*}\"" "$f" || lacks=${lacks:+$lacks, }${s#*:}
     done
     [ -n "$lacks" ] || continue
@@ -252,6 +254,22 @@ layout_notes() {
     say "Your layout ${name%.json} ($f) shows the Automagik sidebar, but not the rest of the pack: $lacks."
     say "  It is left as it is. To add them, copy their blocks (and \"terminal_menu\": \"am-markdown\") from the pack's layout, $REF, into it; or use the automagik layout instead."
   done
+}
+
+# The record's mods as the install summary names them: one switched off (in mods-disabled/, as
+# am-quota ships) says so, and where to turn it on.
+mods_said() {
+  said=
+  set -f
+  old_ifs=$IFS
+  IFS=,
+  for m in $(mark_get mods); do
+    if [ ! -d "$MODS/$m" ] && [ -d "$APP_HOME/mods-disabled/$m" ]; then m="$m (off; turn it on in the Mods panel)"; fi
+    said=${said:+$said, }$m
+  done
+  IFS=$old_ifs
+  set +f
+  printf '%s' "$said"
 }
 
 switch_hint() {
@@ -290,20 +308,30 @@ uninstall() {
   # The record's values are split on commas only, never glob-expanded (set -f).
   set -f
   IFS=,
+  off=
   for m in $mods; do
     case $m in ''|pocket-link|*[!a-z0-9-]*) continue ;; esac
     if [ -L "$MODS/$m" ]; then say "Left $MODS/$m: it is a link, not a folder this script installed."; continue; fi
-    [ -d "$MODS/$m" ] || continue
-    mv "$MODS/$m" "$next/$m"
-    moved=${moved:+$moved,}$m
+    if [ -d "$MODS/$m" ]; then
+      mv "$MODS/$m" "$next/$m"
+      moved=${moved:+$moved,}$m
+    elif [ -d "$APP_HOME/mods-disabled/$m" ] && [ ! -L "$APP_HOME/mods-disabled/$m" ]; then
+      # Switched off (the Mods panel, or a mod that ships off): kept as well, marked off, so a
+      # reinstall or a rollback puts it back off.
+      mv "$APP_HOME/mods-disabled/$m" "$next/$m"
+      moved=${moved:+$moved,}$m
+      off=${off:+$off,}$m
+    fi
   done
   # A folder already kept (one a rollback moved out, with its state) stays kept beside them.
   if [ -n "$moved" ] && [ -f "$STATE/.prev/.pack" ]; then
+    was_off=,$(sed -n 's/^off=//p' "$STATE/.prev/.pack" | head -n 1),
     for m in $(sed -n 's/^mods=//p' "$STATE/.prev/.pack" | head -n 1); do
       case $m in ''|pocket-link|*[!a-z0-9-]*) continue ;; esac
       if [ -d "$STATE/.prev/$m" ] && [ ! -L "$STATE/.prev/$m" ] && [ ! -e "$next/$m" ]; then
         mv "$STATE/.prev/$m" "$next/$m"
         moved=$moved,$m
+        case $was_off in *",$m,"*) off=${off:+$off,}$m ;; esac
       fi
     done
   fi
@@ -311,6 +339,7 @@ uninstall() {
   set +f
   if [ -n "$moved" ]; then
     printf 'version=%s\nmods=%s\nbefore=none\n' "$(mark_get version)" "$moved" >"$next/.pack"
+    if [ -n "$off" ]; then printf 'off=%s\n' "$off" >>"$next/.pack"; fi
     # The old set is set aside first and removed last: a failure never loses the folders just moved.
     old=$(mktemp -d "$STATE/.prev-old.XXXXXX")
     if [ -e "$STATE/.prev" ]; then mv "$STATE/.prev" "$old/set"; fi
@@ -669,7 +698,7 @@ install() {
     sed -e '/^notice: /d' -e 's/^/  /' "$TMP/log"
     # The briefing hooks' notice (update.mjs): kept for the end of the run, where it is read.
     sed -n 's/^notice: //p' "$TMP/log" >"$TMP/notice"
-    say "Installed the pack $VERSION in $MODS: $(mark_get mods | sed 's/,/, /g')."
+    say "Installed the pack $VERSION in $MODS: $(mods_said)."
     if [ -f "$STATE/.prev/.pack" ] && [ "$installed" != none ]; then
       say "The folders it replaced ($installed) are kept in $STATE/.prev: 'automagik-herdr update --rollback' swaps them back."
     fi

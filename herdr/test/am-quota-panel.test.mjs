@@ -189,9 +189,33 @@ test("a refused restart is named, and the others still run", async () => {
   nodes.get("restart-codex").click(null, cx);
   nodes.get("restart-codex").click(null, cx);
   await cx.settle();
-  const root = draw();
+  let root = draw();
   assert.match(text(root), /Restarted 1 of 2\. Not restarted:/);
   assert.match(text(root), /A: A is working; restart it when it is idle, or pass --force/);
+  // Pressing again retries only the one that failed.
+  assert.match(text(root), /Restart 1 bot/);
+  state.calls = [];
+  state.exec = () => ({ code: 0, stdout: "{}", stderr: "" });
+  nodes.get("restart-codex").click(null, cx);
+  nodes.get("restart-codex").click(null, cx);
+  await cx.settle();
+  assert.deepEqual(state.calls.map((c) => c.slice(5, 7)), [["restart", "a"]]);
+  root = draw();
+  assert.match(text(root), /Restarted 2: every Codex bot is on the new account/);
+});
+
+test("no restart while a switch is running", async () => {
+  const { view, cx, draw } = await panel();
+  view.tool = "codex";
+  view.switched.codex = { at: NOW, from: "ana@example.com · Pro", to: "bo@example.com · Pro",
+    look: { bots: [{ id: "a", name: "A", project: "/p" }], reliable: true } };
+  view.busy = "switching Codex…";
+  draw();
+  state.calls = [];
+  nodes.get("restart-codex").click(null, cx);
+  await cx.settle();
+  assert.deepEqual(state.calls, []);
+  assert.match(text(draw()), /a switch is running: restart the bots once it is done/);
 });
 
 test("no sidebar mod: the banner says how to restart, with no button", async () => {
@@ -233,4 +257,25 @@ test("colours: suggestions are never red; running out is amber", async () => {
 test("active.json from before: a bare name is a record, a saved-login record is none", () => {
   assert.deepEqual(records({ codex: "codex-a.json", claude: { name: "saved:work", fingerprint: "f", saved: "work" } }),
     { codex: { name: "codex-a.json", fingerprint: null } });
+});
+
+test("no switch while bots restart; a switch's busy line names the account by email", async () => {
+  const { view, cx, draw } = await panel();
+  view.tool = "codex";
+  draw();
+  view.restarting = { codex: true };
+  const before = installs.length;
+  nodes.get("primary-codex").click(null, cx);
+  await cx.settle();
+  assert.equal(installs.length, before, "nothing installed");
+  assert.match(text(draw()), /bots are restarting: switch once they are done/);
+  view.restarting = {};
+  view.switchError = null;
+  let line = null;
+  const busyAt = installs.length;
+  nodes.get("primary-codex").click(null, cx);
+  line = view.busy;
+  await cx.settle();
+  assert.equal(line, "switching Codex to bo@example.com · Pro…");
+  assert.equal(installs.length, busyAt + 1);
 });

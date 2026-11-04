@@ -18,7 +18,9 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const INSTALL = join(ROOT, "install.sh");
 // The monorepo's release workflow: its "Pack the herdr pack" step builds the pack from herdr/.
 const RELEASE_YML = join(ROOT, "..", ".github", "workflows", "release.yml");
-const { PACK_MODS, PACK_KEYS, PACK_LAYOUT, CATALOG_URL, POCKET_LINK, USAGEMETER, V020_LAYOUT_SHA256, sumsName, tarballName } = await import("../mods/am-sidebar/release.js");
+const { OFF_BY_DEFAULT, PACK_MODS, PACK_KEYS, PACK_LAYOUT, CATALOG_URL, POCKET_LINK, USAGEMETER, V020_LAYOUT_SHA256, sumsName, tarballName } = await import("../mods/am-sidebar/release.js");
+/** The pack mods a fresh install turns on; the rest (OFF_BY_DEFAULT) land in mods-disabled/. */
+const ON_MODS = PACK_MODS.filter((m) => !OFF_BY_DEFAULT.includes(m));
 const { hookCommand, legacyHookCommand } = await import("../mods/am-sidebar/briefingText.mjs");
 const { keys: TEST_KEYS, pointerBytes, signatureOf } = await import("./pointer.mjs");
 /** The release this branch becomes (a monorepo release that carries the pack); release.yml sets VERSION to it in the commit it tags. */
@@ -237,10 +239,13 @@ function assertFullPack(m, r) {
   assert.equal(r.code, 0, `${r.out}\n${r.err}`);
   assert.deepEqual(m.brewCalls(), [], "Homebrew is never run");
   // Every PACK_MODS folder installed, byte-identical to the archive (exec bits too); only the
-  // private paths update.mjs carries over (.state, dotfiles, node_modules) may be added.
+  // private paths update.mjs carries over (.state, dotfiles, node_modules) may be added. The ones
+  // that ship off (am-quota) are installed in mods-disabled/, where Herdr does not load them.
   for (const mod of PACK_MODS) {
-    assert.ok(existsSync(join(m.mods, mod, "mod.json")), `${mod} is installed`);
-    assert.deepEqual(files(join(m.mods, mod), { skip: PRIVATE }), files(join(x, mod)), `${mod} is byte-identical to the archive`);
+    const dir = OFF_BY_DEFAULT.includes(mod) ? join(m.appHome, "mods-disabled", mod) : join(m.mods, mod);
+    assert.ok(existsSync(join(dir, "mod.json")), `${mod} is installed`);
+    if (OFF_BY_DEFAULT.includes(mod)) assert.ok(!existsSync(join(m.mods, mod)), `${mod} ships off`);
+    assert.deepEqual(files(dir, { skip: PRIVATE }), files(join(x, mod)), `${mod} is byte-identical to the archive`);
   }
   assert.equal(readFileSync(join(m.mods, "am-sidebar", "VERSION"), "utf8"), `${RELEASE}\n`);
   // The ownership record lists every pack folder, and the output names them all: never a
@@ -251,9 +256,10 @@ function assertFullPack(m, r) {
   const said = /Installed the pack (\S+) in .*: (.*)\.$/m.exec(r.out);
   assert.ok(said, r.out);
   assert.equal(said[1], RELEASE);
-  assert.deepEqual(said[2].split(", ").sort(), [...PACK_MODS].sort());
-  // herdr-app check on every pack mod.
-  assert.deepEqual(m.herdrLog().filter((l) => l.startsWith("check ")).map((l) => l.slice(6)).sort(), PACK_MODS.map((mod) => join(m.mods, mod)).sort());
+  // A mod that ships off is named, marked off.
+  assert.deepEqual(said[2].split(", ").sort(), PACK_MODS.map((mod) => (OFF_BY_DEFAULT.includes(mod) ? `${mod} (off; turn it on in the Mods panel)` : mod)).sort());
+  // herdr-app check on every pack mod that is on (one switched off is not loaded).
+  assert.deepEqual(m.herdrLog().filter((l) => l.startsWith("check ")).map((l) => l.slice(6)).sort(), ON_MODS.map((mod) => join(m.mods, mod)).sort());
   // The pack layout (the archive's), and the pack's copy kept for later comparisons.
   const shipped = readFileSync(join(x, PACK_LAYOUT));
   assert.deepEqual(readFileSync(join(m.appHome, PACK_LAYOUT)), shipped, "the automagik layout is the pack's");
@@ -273,12 +279,12 @@ function assertFullPack(m, r) {
   const tabs = readFileSync(join(m.mods, "am-tabs", "main.js"), "utf8");
   assert.match(tabs, /button\("tab-new", "\+", \(\) => openOverlay\(\{ mod: "am-new-menu"/, "the tab bar's + opens am-new-menu");
   assert.doesNotMatch(tabs, /mod: "new-menu"/, "never the stock new-menu");
-  for (const mod of [...named, layout.terminal_menu].filter((n) => PACK_MODS.includes(n))) assert.ok(existsSync(join(m.mods, mod, "mod.json")), `${mod} (in the layout) is installed`);
+  for (const mod of [...named, layout.terminal_menu].filter((n) => ON_MODS.includes(n))) assert.ok(existsSync(join(m.mods, mod, "mod.json")), `${mod} (in the layout) is installed`);
   // The mod manager: its catalog and its key (merged only where free).
   assert.deepEqual(JSON.parse(readFileSync(join(m.appHome, "data", "am-mods", "catalog.json"), "utf8")), { url: CATALOG_URL });
   const keys = JSON.parse(readFileSync(join(m.appHome, "keys.json"), "utf8"));
   for (const [section, entries] of Object.entries(PACK_KEYS)) for (const [key, action] of Object.entries(entries)) assert.equal(keys[section]?.[key], action, `key ${key}`);
-  for (const mod of PACK_MODS) assert.ok(existsSync(join(m.mods, mod)), mod);
+  for (const mod of ON_MODS) assert.ok(existsSync(join(m.mods, mod)), mod);
   // The command, linked to the entry the installed sidebar ships (the launcher's wrapper, else
   // the .mjs), and it runs.
   const entry = existsSync(join(x, "am-sidebar", "bin", "automagik-herdr")) ? "automagik-herdr" : "automagik-herdr.mjs";
@@ -403,9 +409,11 @@ test(`e2e (b): a v0.4.0 sidebar-only install is replaced by the whole pack (${la
   const lines = r.out.split("\n"), at = lines.findIndex((l) => l.includes("Your layout") && l.includes(personal));
   assert.ok(at >= 0, `the output names ${personal}:\n${r.out}`);
   const note = `${lines[at]}\n${lines[at + 1]}`;
-  for (const what of ["footer rail (am-footer)", "tab bar (am-tabs)", "Markdown menu (am-markdown)", "automations panel", "quota panel (am-quota)"]) {
+  for (const what of ["footer rail (am-footer)", "tab bar (am-tabs)", "Markdown menu (am-markdown)", "automations panel"]) {
     assert.ok(note.includes(what), `it names the ${what}: ${note}`);
   }
+  // am-quota ships off: its block is not missed until it is turned on.
+  assert.ok(!note.includes("Accounts panel"), `a mod that is off is not named: ${note}`);
   assert.ok(note.includes(join(m.state, "automagik.json")), `it points at the pack's layout to copy from: ${note}`);
 });
 }
@@ -431,7 +439,7 @@ test("e2e (c): a personal layout and an unrelated mod (sheepdog) stay as they we
   assert.deepEqual(files(sheepdog), dogBefore, "sheepdog is byte-identical, its state too");
   assert.equal(readFileSync(personal, "utf8"), mine, "the personal layout is untouched");
   assert.deepEqual(readdirSync(join(m.appHome, "layouts")).sort(), ["automagik.json", "pasture.json"]);
-  assert.deepEqual(readdirSync(m.mods).sort(), [...PACK_MODS, "sheepdog"].sort(), "nothing else in mods/");
+  assert.deepEqual(readdirSync(m.mods).sort(), [...ON_MODS, "sheepdog"].sort(), "nothing else in mods/");
   // A layout that doesn't show the sidebar gets no note: --yes switches to the pack's layout.
   assert.ok(!r.out.includes(personal), r.out);
   assert.deepEqual(m.herdrLog().filter((l) => l.startsWith("do ")), ['do layout.switch {"name":"automagik"}']);
