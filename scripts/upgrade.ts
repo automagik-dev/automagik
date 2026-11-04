@@ -29,7 +29,7 @@
  * Bun (AGENTS.md: "Bun for the repository's tooling (`scripts/`, `bun test`)"), and because
  * the lane verification and the hand-edit checks are shared, tested code (scripts/upgrade.test.ts)
  * rather than another copy of ed25519/YAML logic. It needs `gh`, passwordless `sudo`, `node`
- * and Bun >= 1.4.0 (Bun.YAML, Bun.semver).
+ * and Bun >= 1.2.21 (Bun.YAML, Bun.semver).
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -224,14 +224,14 @@ export function deepEqual(left: unknown, right: unknown): boolean {
 /** Parse a YAML document through Bun's parser, with a clear message when Bun is too old. */
 export function parseYaml(text: string): unknown {
   const bun = (globalThis as unknown as { Bun?: { YAML?: { parse(document: string): unknown } } }).Bun;
-  if (!bun?.YAML?.parse) throw new Error('bun: Bun.YAML is unavailable; upgrade Bun to >= 1.4.0');
+  if (!bun?.YAML?.parse) throw new Error('bun: Bun.YAML is unavailable; upgrade Bun to >= 1.2.21');
   return bun.YAML.parse(text);
 }
 
 /** npm-style semver range check through Bun, with a clear message when Bun is too old. */
 export function semverSatisfies(version: string, range: string): boolean {
   const bun = (globalThis as unknown as { Bun?: { semver?: { satisfies(version: string, range: string): boolean } } }).Bun;
-  if (!bun?.semver?.satisfies) throw new Error('bun: Bun.semver is unavailable; upgrade Bun to >= 1.4.0');
+  if (!bun?.semver?.satisfies) throw new Error('bun: Bun.semver is unavailable; upgrade Bun to >= 1.2.21');
   return bun.semver.satisfies(version, range);
 }
 
