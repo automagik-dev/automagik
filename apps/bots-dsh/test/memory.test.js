@@ -411,7 +411,7 @@ test('the memory panel shows every entry and a summary the Bot\'s model writes o
   assert.equal((await call('memory-view', { botId: 'b2', summarize: true })).value.fresh, false)
   await summarized(call)
   const failed = (await call('memory-view', { botId: 'b2', summarize: true })).value
-  assert.deepEqual([failed.summary.text, failed.fresh, failed.error], ['## Overview\nYou like tea.', false, 'provider error'])
+  assert.deepEqual([failed.summary.text, failed.fresh, failed.error], ['## Overview\nYou like tea.', false, 'The model could not answer (provider error).'])
   assert.equal(requests.length, 2)
   replies.push('## Overview\nYou like tea and live in Hangzhou.')
   await call('memory-view', { botId: 'b2', regenerate: true })
@@ -1840,4 +1840,62 @@ test('a marker planted in every input memory reads reaches no log line and no th
   }
   assert.ok(said.length >= 15, `${said.length} answers`)
   for (const text of said) assert.ok(!text.includes(MARKER), text)
+})
+
+test('a marker in a topic, an entry or a provider failure reaches no log line, panel reply or thrown message', async (t) => {
+  const MARKER = 'qzcanary7731'
+  // The marker is in the home's name too, so it is in every path a file error names.
+  const home = mkdtempSync(join(tmpdir(), `ds-bot-${MARKER}-`))
+  const replies = []
+  const { call, tool, stop } = start({ home, replies })
+  const memory = (...path) => join(home, 'memory', ...path)
+  const locked = []
+  t.after(async () => {
+    for (const path of locked) chmodSync(path, 0o755)
+    await stop()
+  })
+  // What a failed panel call answers: its whole reply, whose message is the one thrown.
+  const failures = []
+  const failing = async (endpoint, payload) => {
+    const answer = await call(endpoint, payload)
+    assert.equal(answer.ok, false, `${endpoint}: ${JSON.stringify(answer)}`)
+    failures.push({ endpoint, code: answer.error.code, message: answer.error.message, text: JSON.stringify(answer) })
+    return answer
+  }
+  await call('state', {})
+  const entry = `The user keeps ${MARKER} in a drawer`
+  assert.match(await tool('remember', { text: entry, topic: MARKER }, 'b2'), /^Saved/)
+
+  // The file system fails: the forget cannot write its topic file, and the view and
+  // the ask cannot finish the change it left pending.
+  chmodSync(memory('bots', 'b2'), 0o555)
+  locked.push(memory('bots', 'b2'))
+  await failing('memory-forget', { botId: 'b2', scope: 'own', topic: MARKER, text: entry })
+  await failing('memory-view', { botId: 'b2' })
+  await failing('memory-ask', { botId: 'b2', text: `Forget ${MARKER}` })
+  chmodSync(memory('bots', 'b2'), 0o755)
+  locked.pop()
+  // Unlocked, the pending forget is finished and the view answers again.
+  assert.equal((await call('memory-view', { botId: 'b2' })).ok, true)
+
+  // The provider fails: by throwing, and by ending the stream with an error.
+  replies.push(new Error(`401: ${MARKER} in ${entry}`))
+  await failing('memory-ask', { botId: 'b2', text: `What about ${MARKER}?` })
+  replies.push({ text: '', finish: 'error', failure: `503 ${MARKER}` })
+  await failing('memory-ask', { botId: 'b2', text: `What about ${MARKER}?` })
+
+  assert.deepEqual(failures.map(item => item.endpoint), ['memory-forget', 'memory-view', 'memory-ask', 'memory-ask', 'memory-ask'])
+  const lines = diagnosticsLog(home).split('\n').filter(Boolean)
+  const leaks = [...lines, ...failures.map(item => item.text)].filter(text => text.includes(MARKER))
+  // Memory said each failure itself, with a fixed sentence and a code: none reached
+  // the channel as an internal error, whose kind alone the channel would have said.
+  assert.deepEqual(failures.map(item => item.message), [
+    'The memory could not be changed (EACCES).',
+    'The memory could not be read (EACCES).',
+    'The memory could not be read (EACCES).',
+    'The model could not answer (provider error).',
+    'The model could not answer (provider error).',
+  ])
+  assert.deepEqual(failures.map(item => item.code), Array(5).fill('bot/refused'))
+  assert.deepEqual(leaks, [])
 })

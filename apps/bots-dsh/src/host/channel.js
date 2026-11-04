@@ -650,9 +650,12 @@ export function install(rt) {
       }
     } catch (error) {
       const code = errorCode(error)
-      const message = error?.message ?? String(error)
-      if (code === 'bot/internal') rt.noteFailure({ source: 'api', text: `${endpoint}: ${message}`, code: error?.code ?? error?.name, stack: error?.stack })
-      return fail(message, code)
+      if (code !== 'bot/internal') return fail(error?.message ?? String(error), code)
+      // An internal error's message can name a path, a topic or a model's words, so
+      // neither the log nor the reply says it: only its kind, and the stack's frames.
+      const kind = [error?.code, error?.name].find(value => typeof value === 'string' && /^[\w./-]{1,40}$/.test(value)) ?? 'error'
+      rt.noteFailure({ source: 'api', text: `${endpoint}: ${kind}`, code: kind, stack: error?.stack })
+      return fail(`Something went wrong (${kind}).`, code)
     }
   }
 

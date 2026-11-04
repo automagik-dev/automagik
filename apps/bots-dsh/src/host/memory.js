@@ -671,10 +671,17 @@ export function install(rt) {
   // The recovery runs in the writer's line, so it never runs beside a change that is
   // being published.
   const recover = () => queued(recoverPending)
-  // A read waits for the writer's line, so it reads files that are whole.
+  // A read waits for the writer's line, so it reads files that are whole. A file error
+  // there (a pending change that cannot be finished, say) names a path, which holds
+  // topic names, so only its code is said.
   const settled = (read) => queued(async () => {
-    await recoverPending()
-    return read()
+    try {
+      await recoverPending()
+      return read()
+    } catch (error) {
+      if (ownFailure(error)) throw error
+      throw Object.assign(new Error(`The memory could not be read (${failureCode(error, 'error')}).`), { code: FAILED })
+    }
   })
 
   // A change that was interrupted is finished when the host starts.
@@ -1300,6 +1307,9 @@ export function install(rt) {
 
   // A served model can still refuse the call (a key without access, say), so a failed call
   // is tried once more on the Bot's own model, when that one answers beside its chat.
+  // The provider's own error is not passed on: its message may quote the request.
+  const modelFailure = error => (ownFailure(error) ? error
+    : Object.assign(new Error(`The model could not answer (${failureCode(error, 'provider error')}).`), { code: 'memory/model-failed' }))
   async function botShot(bot, system, text, tag) {
     const first = await modelFor()
     try {
@@ -1307,7 +1317,7 @@ export function install(rt) {
     } catch (error) {
       const mine = await rt.desiredModel(bot)
       const fallback = rt.answersAside(mine) ? splitRef(mine) : undefined
-      if (fallback === undefined || (fallback.provider === first.provider && fallback.model === first.model)) throw error
+      if (fallback === undefined || (fallback.provider === first.provider && fallback.model === first.model)) throw modelFailure(error)
       try {
         return await oneShot(fallback, system, text, tag)
       } catch (again) {
@@ -1440,7 +1450,11 @@ export function install(rt) {
     const panel = panelOf(body)
     const scope = panel.scopes[body.scope] ?? panel.scopes[panel.group ? 'group' : 'own']
     const topic = body.topic === null || body.topic === undefined ? undefined : cleanTopic(body.topic)
-    await removeEntry({ scope, topic, match: String(body.text ?? ''), actor: USER, label: panelLabel(panel, scope) })
+    try {
+      await removeEntry({ scope, topic, match: String(body.text ?? ''), actor: USER, label: panelLabel(panel, scope) })
+    } catch (failure) {
+      throw writeFailure(failure)
+    }
     return await memoryView(panelBody(panel))
   }
 
