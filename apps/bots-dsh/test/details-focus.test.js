@@ -29,7 +29,11 @@ const { createPortal, flushSync } = nativeRequire('react-dom')
 const tick = () => new Promise(resolve => setTimeout(resolve, 10))
 const act = async fn => { flushSync(fn); await tick() }
 const { outputFiles } = await build({
-  stdin: { contents: "export { BotPanel } from './src/client/browser-pane.js'; export { useEscape } from './src/client/overlay-hooks.js'", resolveDir: plugin },
+  stdin: { contents: [
+    "export { BotPanel } from './src/client/browser-pane.js'; export { useEscape } from './src/client/overlay-hooks.js'",
+    "export { HeaderPill } from './src/client/header.js'; export { teamActions } from './src/client/team-actions.js'",
+    "export { createSource, indexRoster } from './src/client/sources.js'",
+  ].join('\n'), resolveDir: plugin },
   bundle: true, format: 'cjs', platform: 'browser', write: false, logLevel: 'silent',
   external: ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives'],
   // ISSUE89_BASELINE=<dir> bundles <dir>/browser-pane.js instead, to show these tests fail on it.
@@ -209,4 +213,91 @@ test('the browser and a native thread keep their own panels: no modal Details, n
   await act(() => render({ id: 'native-thread', view: 'details' }))
   assert.equal(panel.dataset.view, 'details')
   assert.doesNotMatch(panel.textContent, /Omni/, 'a native thread never shows its parent Bot\'s details')
+})
+
+// A multi-part Bot: its header names the current part's Session id, while Rename (the
+// context menu) opens the Bot id. The real header, actions and panel share one ui store.
+function partsApp(t) {
+  const env = mount(t)
+  const { document, root, BotPanel, HeaderPill, teamActions, createSource, indexRoster } = env
+  const h = React.createElement
+  const team = indexRoster({ bots: [{ id: 'bot', name: 'Omni', sessionId: 'part-2', parts: ['bot', 'part-2'] }], rooms: [] })
+  const shown = { ...roster, ...team }
+  const ui = createSource({ details: null, view: 'details', renaming: false, tab: null })
+  const base = teamActions({ ui, roster: createSource(shown), live: createSource({}) })
+  // The real Details actions; the panel's server calls do nothing here.
+  const real = new Set(['toggleDetails', 'renameBot', 'showDetails', 'closeOverlay', 'closePanel'])
+  const actions = new Proxy(base, { get: (known, name) => (real.has(name) ? known[name] : async () => {}) })
+  const useUi = select => React.useSyncExternalStore(ui.subscribe, () => select(ui.getSnapshot()))
+  let last = null
+  function App() {
+    const state = useUi(value => value)
+    if (state.details) last = { id: state.details, view: state.view, renaming: state.renaming, tab: state.tab }
+    return h(React.Fragment, null,
+      h(HeaderPill, {
+        sessionId: 'part-2', useRoster: hook(shown), useSessions: hook({ byId: {} }), useSessionStatus: hook(new Map()),
+        useSession: hook({}), useActivity: hook({}), useMemoryNews: hook({}), useTurnClock: hook({}), useUi,
+        useLive: hook({}), useWork: hook({}), actions,
+      }),
+      last ? h(BotPanel, { pane: last, leaving: !state.details, roster: shown, actions, ...panelProps }) : null)
+  }
+  const render = () => root.render(h(App))
+  // overlays.js keeps a closed pane for PANEL_LINGER_MS, then unmounts it.
+  const settle = () => { last = null; render() }
+  return { ...env, ui, actions, render, settle, toggle: () => document.querySelector('[aria-controls="bt-conversation-panel"]') }
+}
+
+test('a multi-part Bot\'s Details opened from its part header expands it and returns focus to it', async (t) => {
+  const { document, ui, render, settle, toggle, key, focused } = partsApp(t)
+  await act(render)
+  assert.equal(toggle().dataset.detailsSubject, 'part-2', 'the header names the current part')
+  assert.equal(toggle().getAttribute('aria-expanded'), 'false')
+  await act(() => toggle().click())
+  assert.equal(ui.getSnapshot().details, 'part-2')
+  const panel = document.querySelector('.bt-panel')
+  assert.equal(toggle().getAttribute('aria-expanded'), 'true', 'the part header shows its Bot\'s details open')
+  focused(panel, 'opening moves focus into the panel')
+  await act(() => toggle().click())
+  assert.equal(ui.getSnapshot().details, null, 'a second press closes the details')
+  assert.equal(toggle().getAttribute('aria-expanded'), 'false')
+  focused(toggle(), 'closing by the toggle returns focus to it')
+
+  await act(settle)
+  await act(() => toggle().click())
+  focused(document.querySelector('.bt-panel'), 'reopening focuses the panel again')
+  await act(() => key('Escape'))
+  assert.equal(ui.getSnapshot().details, null, 'Escape closes the details')
+  assert.equal(toggle().getAttribute('aria-expanded'), 'false')
+  focused(toggle(), 'closing by Escape returns focus to the part\'s toggle, not <body>')
+})
+
+test('a multi-part Bot\'s Details opened via Rename expands the part header, and closing returns focus to it', async (t) => {
+  const { document, ui, actions, render, settle, toggle, key, focused } = partsApp(t)
+  await act(render)
+  // The context menu's Rename item has focus, then closes as it opens the Bot id's details.
+  const item = document.createElement('button')
+  document.body.append(item)
+  item.focus()
+  await act(() => { item.remove(); actions.renameBot('bot') })
+  assert.equal(ui.getSnapshot().details, 'bot', 'Rename opens the Bot id, not the part\'s Session id')
+  const panel = document.querySelector('.bt-panel')
+  assert.equal(toggle().getAttribute('aria-expanded'), 'true', 'the part header shows its Bot\'s details open')
+  focused(panel.querySelector('input[aria-label="Bot name"]'), 'the rename field takes focus')
+  await act(() => toggle().click())
+  assert.equal(ui.getSnapshot().details, null, 'the expanded part toggle closes the Bot\'s details')
+  assert.equal(toggle().getAttribute('aria-expanded'), 'false')
+  focused(toggle(), 'closing by the toggle returns focus to it')
+
+  await act(settle)
+  await act(() => actions.renameBot('bot'))
+  const reopened = document.querySelector('.bt-panel')
+  focused(reopened.querySelector('input[aria-label="Bot name"]'), 'Rename again focuses the name field')
+  await act(() => key('Escape'))
+  assert.equal(ui.getSnapshot().details, 'bot', 'Escape in the rename field cancels editing, not the details')
+  assert.equal(toggle().getAttribute('aria-expanded'), 'true')
+  reopened.focus()
+  await act(() => key('Escape'))
+  assert.equal(ui.getSnapshot().details, null, 'Escape closes the details')
+  assert.equal(toggle().getAttribute('aria-expanded'), 'false')
+  focused(toggle(), 'closing by Escape returns focus to the part\'s toggle, not <body>')
 })

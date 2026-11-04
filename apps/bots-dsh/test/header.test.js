@@ -228,6 +228,18 @@ test('a native Agent thread gets no Bot Details pill, while a Bot part opens its
   assert.equal(byClass(part, 'bt-head-details').props['data-details-subject'], 'part-2')
 })
 
+test('a multi-part Bot\'s part header reads expanded whether Details opened by the part or the Bot id', () => {
+  const indexed = indexRoster({
+    bots: [{ id: 'bot', name: 'Omni', sessionId: 'part-2', parts: ['bot', 'part-2'] }, { id: 'other', name: 'Other' }],
+    rooms: [{ id: 'group', name: 'Team', members: ['bot'] }],
+  })
+  const cases = [['part-2', 'details', true], ['bot', 'details', true], ['bot', 'browser', false], ['other', 'details', false], ['group', 'details', false], [null, 'details', false]]
+  for (const [details, view, expanded] of cases) {
+    const part = header({}, { sessionId: 'part-2', useRoster: hook(indexed), useUi: hook({ details, view }) })
+    assert.equal(byClass(part, 'bt-head-details').props['aria-expanded'], expanded, `${details}/${view}`)
+  }
+})
+
 test('the replacement header shares DSH\'s store and navigation injection without declaring its children again', () => {
   const store = {}
   const views = { getSnapshot: () => [{ id: 'chat' }] }

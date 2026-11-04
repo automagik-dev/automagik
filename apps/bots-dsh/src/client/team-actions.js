@@ -1,4 +1,4 @@
-import { countCards, heldCardKey } from './sources.js'
+import { countCards, detailsSubject, heldCardKey } from './sources.js'
 import { noteClientError } from './diagnostics.js'
 
 // The actions every window that draws the Bot views shares: dialogs and panels (the `ui`
@@ -22,7 +22,10 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     closeVoice: () => { ui.set(state => (state.voice ? { ...state, voice: null } : state)) },
     toggleDetails: (id, force) => {
       ui.set((state) => {
-        const details = force || state.details !== id || state.view !== 'details' ? id : null
+        // Any part of the open Bot closes it, as its header shows it expanded.
+        const snap = roster?.getSnapshot?.()
+        const same = state.details != null && detailsSubject(snap, state.details) === detailsSubject(snap, id)
+        const details = force || !same || state.view !== 'details' ? id : null
         return { ...state, renaming: false, tab: null, details, view: 'details' }
       })
     },

@@ -16,6 +16,7 @@ import { panelHasStrip, sideChatsOf, stripMenuKeys } from './side-model.js'
 import { DotsIcon, FolderIcon, SideIcon, TerminalIcon } from './icons.js'
 import { t } from './i18n.js'
 import { rectsOverlap } from './browser-overlap.js'
+import { detailsSubject } from './sources.js'
 
 export const PANEL_LINGER_MS = 300
 const WIDTH_KEY = STORAGE.browserWidth
@@ -595,7 +596,10 @@ export function BotPanel({ pane, leaving, roster, actions, useSessions, useSessi
     return () => {
       // Never take focus from a dialog opened over the panel or from another conversation.
       if (!panel.contains(document.activeElement) && document.activeElement !== document.body) return
-      const trigger = [...document.querySelectorAll('[data-details-subject]')].find(node => node.dataset.detailsSubject === pane.id)
+      // A Bot part's trigger names its Session id, Rename the Bot id: compare their subjects.
+      const subject = detailsSubject(roster, pane.id)
+      const trigger = [...document.querySelectorAll('[data-details-subject]')]
+        .find(node => detailsSubject(roster, node.dataset.detailsSubject) === subject)
       const target = trigger ?? (opener?.isConnected && !panel.contains(opener) ? opener : null)
       // Layout cleanup runs before the DOM changes: wait until the closing panel is hidden,
       // or its still-active containment would catch the returning focus.

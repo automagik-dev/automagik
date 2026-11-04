@@ -2069,6 +2069,7 @@ function indexRoster(value) {
   }
   return { ...value, agents: value.agents ?? [], byId, roomsById, agentsById, agentOf, ready: true };
 }
+var detailsSubject = (roster, id) => roster?.byId?.[id]?.id ?? roster?.roomsById?.[id]?.id ?? id;
 function isAgentSession(roster, cache, sessionId) {
   if (sessionId === void 0 || sessionId === null || sessionId === "") return false;
   if (roster.roomsById?.[sessionId] !== void 0) return false;
@@ -9750,7 +9751,9 @@ function teamActions({ call: call2, after, partFor, roster, ui: ui2, live, cards
     },
     toggleDetails: (id, force) => {
       ui2.set((state) => {
-        const details = force || state.details !== id || state.view !== "details" ? id : null;
+        const snap = roster?.getSnapshot?.();
+        const same = state.details != null && detailsSubject(snap, state.details) === detailsSubject(snap, id);
+        const details = force || !same || state.view !== "details" ? id : null;
         return { ...state, renaming: false, tab: null, details, view: "details" };
       });
     },
@@ -12669,7 +12672,7 @@ function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSe
   const bot = roster.byId[sessionId];
   const room2 = roster.roomsById[sessionId];
   const approval = useApproval(useWork, (entry) => bot !== void 0 && entry.botId === bot.id);
-  const detailsOpen = useUi((state) => state.details === sessionId && state.view === "details");
+  const detailsOpen = useUi((state) => state.view === "details" && state.details != null && detailsSubject(roster, state.details) === detailsSubject(roster, sessionId));
   const name = bot?.name ?? room2?.name ?? "";
   const useNews = useMemoryNews ?? noNews;
   const memoryIds = bot ? [bot.id] : room2 ? [room2.id, ...room2.members] : [];
@@ -21898,7 +21901,8 @@ function BotPanel({ pane, leaving, roster, actions, useSessions, useSessionStatu
     if (!panel.contains(opener)) panel.focus({ preventScroll: true });
     return () => {
       if (!panel.contains(document.activeElement) && document.activeElement !== document.body) return;
-      const trigger = [...document.querySelectorAll("[data-details-subject]")].find((node) => node.dataset.detailsSubject === pane.id);
+      const subject = detailsSubject(roster, pane.id);
+      const trigger = [...document.querySelectorAll("[data-details-subject]")].find((node) => detailsSubject(roster, node.dataset.detailsSubject) === subject);
       const target = trigger ?? (opener?.isConnected && !panel.contains(opener) ? opener : null);
       queueMicrotask(() => {
         if (panel.isConnected && panel.getAttribute("aria-hidden") !== "true") return;

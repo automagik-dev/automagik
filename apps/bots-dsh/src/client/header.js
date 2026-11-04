@@ -9,6 +9,7 @@ import { ActivityIndicator } from './activity-row.js'
 import { clockLabel, openingTurn, unseenSince } from './cells.js'
 import { viewBottom } from './motion.js'
 import { t } from './i18n.js'
+import { detailsSubject } from './sources.js'
 
 // -------------------------------------------------------------------------
 // Conversation header
@@ -96,7 +97,9 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
   const room = roster.roomsById[sessionId]
   const approval = useApproval(useWork, entry => bot !== undefined && entry.botId === bot.id)
   // Open only while the panel shows this subject's details, not its browser or side chat.
-  const detailsOpen = useUi(state => state.details === sessionId && state.view === 'details')
+  // Rename opens a multi-part Bot by its Bot id, the header by the part's Session id.
+  const detailsOpen = useUi(state => state.view === 'details' && state.details != null
+    && detailsSubject(roster, state.details) === detailsSubject(roster, sessionId))
   const name = bot?.name ?? room?.name ?? ''
   const useNews = useMemoryNews ?? noNews
   const memoryIds = bot ? [bot.id] : room ? [room.id, ...room.members] : []

@@ -50,3 +50,22 @@ test('an open pane follows the selected Bot, group or native thread without anot
   actions.closePanel()
   assert.equal(ui.getSnapshot().details, null)
 })
+
+test('a multi-part Bot\'s part toggle closes the details Rename opened by its Bot id', () => {
+  const ui = createSource({ details: null, view: 'details', renaming: false, tab: null })
+  const roster = createSource({ byId: { bot: { id: 'bot' }, 'part-2': { id: 'bot' }, other: { id: 'other' } }, roomsById: {} })
+  const actions = teamActions({ ui, roster })
+  actions.renameBot('bot')
+  actions.toggleDetails('part-2')
+  assert.equal(ui.getSnapshot().details, null, 'the expanded part toggle closes its Bot\'s details')
+  actions.toggleDetails('part-2')
+  actions.toggleDetails('bot')
+  assert.equal(ui.getSnapshot().details, null, 'and the Bot id closes what its part opened')
+  actions.toggleDetails('part-2')
+  actions.toggleDetails('other')
+  assert.equal(ui.getSnapshot().details, 'other', 'another Bot still switches the subject')
+  ui.set({ details: 'bot', view: 'browser', renaming: false, tab: null })
+  actions.toggleDetails('part-2')
+  assert.deepEqual(ui.getSnapshot(), { details: 'part-2', view: 'details', renaming: false, tab: null },
+    'a part of the Bot whose browser shows switches to details first')
+})
