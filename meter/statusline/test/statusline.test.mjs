@@ -9,7 +9,7 @@ import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFile
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { autoCompactWindowFor, countCompacts, format, tokens, until } from "../automagik-statusline.mjs";
+import { autoCompactWindowFor, countCompacts, envWindow, format, tokens, until } from "../automagik-statusline.mjs";
 
 const here = (p) => fileURLToPath(new URL(p, import.meta.url));
 const fixture = (name) => JSON.parse(readFileSync(here(`fixtures/${name}.json`), "utf8"));
@@ -83,6 +83,58 @@ test("auto-compact window: the model's entry in user settings, the project overr
     writeFileSync(join(project, ".claude/settings.local.json"), JSON.stringify({ autoCompactEnabled: false }));
     assert.equal(autoCompactWindowFor(input, env), null);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("auto-compact window: Claude Code's sources and order (review cases A-E)", () => {
+  const dir = temp();
+  try {
+    const config = join(dir, "config"), project = join(dir, "project");
+    mkdirSync(config); mkdirSync(join(project, ".claude"), { recursive: true });
+    const user = join(config, "settings.json"), shared = join(project, ".claude/settings.json"), local = join(project, ".claude/settings.local.json");
+    const input = { model: { id: "claude-opus-5-5" }, workspace: { project_dir: project } };
+    const env = { CLAUDE_CONFIG_DIR: config };
+    const only = (files) => {
+      for (const f of [user, shared, local]) rmSync(f, { force: true });
+      for (const [f, o] of files) writeFileSync(f, JSON.stringify(o));
+    };
+    const perModel = (w) => ({ modelSettings: { "claude-opus-5-5": { autoCompactWindow: w } } });
+    // A: a top-level window (what /autocompact saved before 2.1.288) applies to every model.
+    only([[user, { autoCompactWindow: 400000 }]]);
+    assert.equal(autoCompactWindowFor(input, env), 400000);
+    // B: a higher file's top-level window beats a lower file's model entry.
+    only([[user, perModel(500000)], [shared, { autoCompactWindow: 300000 }]]);
+    assert.equal(autoCompactWindowFor(input, env), 300000);
+    // C: "auto" in a higher file is the model's tuned window: not known here, so no distance.
+    only([[user, perModel(500000)], [local, perModel("auto")]]);
+    assert.equal(autoCompactWindowFor(input, env), null);
+    // D: CLAUDE_CODE_AUTO_COMPACT_WINDOW beats every settings file.
+    only([[user, perModel(500000)]]);
+    assert.equal(autoCompactWindowFor(input, { ...env, CLAUDE_CODE_AUTO_COMPACT_WINDOW: "200000" }), 200000);
+    // E: DISABLE_AUTO_COMPACT turns auto-compact off whatever else is set; DISABLE_COMPACT too.
+    assert.equal(autoCompactWindowFor(input, { ...env, DISABLE_AUTO_COMPACT: "1" }), null);
+    assert.equal(autoCompactWindowFor(input, { ...env, DISABLE_COMPACT: "1", CLAUDE_CODE_AUTO_COMPACT_WINDOW: "200k" }), null);
+    assert.equal(autoCompactWindowFor(input, { ...env, DISABLE_AUTO_COMPACT: "0" }), 500000);
+    // Within one file the model's entry beats the top-level key; another model falls back to it.
+    only([[user, { autoCompactWindow: 400000, ...perModel(500000) }]]);
+    assert.equal(autoCompactWindowFor(input, env), 500000);
+    assert.equal(autoCompactWindowFor({ model: { id: "claude-sonnet-5-5" } }, env), 400000);
+    // An unusable variable is ignored, as Claude Code ignores it, and the settings decide.
+    assert.equal(autoCompactWindowFor(input, { ...env, CLAUDE_CODE_AUTO_COMPACT_WINDOW: "auto" }), 500000);
+    // autoCompactEnabled false in any file turns it off, the variable included; the window is
+    // capped at the context window.
+    only([[user, perModel(500000)], [shared, { autoCompactEnabled: false }]]);
+    assert.equal(autoCompactWindowFor(input, { ...env, CLAUDE_CODE_AUTO_COMPACT_WINDOW: "200000" }), null);
+    only([[user, perModel(500000)]]);
+    assert.equal(autoCompactWindowFor({ ...input, context_window: { context_window_size: 200000 } }, env), 200000);
+    // A non-number window in the deciding file is no window.
+    only([[user, perModel("500k")]]);
+    assert.equal(autoCompactWindowFor(input, env), null);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLAUDE_CODE_AUTO_COMPACT_WINDOW reads counts and k/M, held to 100k-1M", () => {
+  assert.deepEqual(["200000", "200k", " 1M ", "1.5M", "200", "0", "-5", "auto", "", undefined].map(envWindow),
+    [200000, 200000, 1000000, 1000000, 100000, null, null, null, null, null]);
 });
 
 test("compacts: counted from compact_boundary records, then only from the appended bytes", () => {

@@ -5,9 +5,16 @@
 //
 //   Opus 5.5 · my-repo | ctx 40% 400k/1M · 100k to compact · 2 compacts | 5h 23% ↺2h10m · 7d 58% ↺3d4h
 //
-// - ctx: used % and tokens of the context window, then the distance to the auto-compact window
-//   (modelSettings["<model id>"].autoCompactWindow in Claude Code's settings; left out when it is
-//   not set or autoCompactEnabled is false: no default is guessed).
+// - ctx: used % and tokens of the context window, then the distance to the auto-compact window,
+//   found the way Claude Code finds it (code.claude.com/docs/en/model-config, "Set the auto-compact
+//   window"): none when DISABLE_AUTO_COMPACT or DISABLE_COMPACT is set or autoCompactEnabled is
+//   false; else CLAUDE_CODE_AUTO_COMPACT_WINDOW when it is a usable size (200000, 200k, 1M; held to
+//   100k-1M); else the first of .claude/settings.local.json, .claude/settings.json and the user
+//   settings.json that names a window: modelSettings["<model id>"].autoCompactWindow, or the
+//   top-level autoCompactWindow, the model's entry winning within one file. "auto" (the model's
+//   tuned window) or no window anywhere leaves the distance out: no default is guessed. The window
+//   is capped at the context window, as Claude Code caps it. A one-launch --autocompact flag and
+//   managed settings are not visible to a status line.
 // - compacts: compact_boundary records in the session's transcript, counted incrementally (only
 //   the bytes appended since the last turn are read) and cached in the Meter state folder.
 // - 5h / 7d: rate_limits used % and the time until each window resets.
@@ -110,27 +117,50 @@ export function stateDir(env = process.env) {
 
 const readJson = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return null; } };
 
+const MIN_WINDOW = 100_000, MAX_WINDOW = 1_000_000;
+const isObject = (v) => v != null && typeof v === "object" && !Array.isArray(v);
+const flag = (v) => typeof v === "string" && v.trim() !== "" && !/^(0|false|no|off)$/i.test(v.trim());
+
 /**
- * The auto-compact window for this model from Claude Code's settings (user, then the project's
- * shared and local settings, later ones winning), or null when it is unset or auto-compact is off.
+ * A CLAUDE_CODE_AUTO_COMPACT_WINDOW value in tokens: a count ("200000") or with k or M ("200k",
+ * "1M"), held to 100k-1M as Claude Code holds it; null when it is no usable size, which Claude
+ * Code ignores (the settings decide then).
+ */
+export function envWindow(value) {
+  const m = typeof value === "string" ? /^\s*(\d+(?:\.\d+)?)\s*([kKmM]?)\s*$/.exec(value) : null;
+  if (!m) return null;
+  const n = Number(m[1]) * (m[2] === "" ? 1 : /k/i.test(m[2]) ? 1e3 : 1e6);
+  return n > 0 ? Math.min(MAX_WINDOW, Math.max(MIN_WINDOW, Math.round(n))) : null;
+}
+
+/**
+ * The auto-compact window this session runs at, in tokens, or null when auto-compact is off or
+ * the window is Claude Code's own ("auto", or none set). Sources and order: the file header.
  */
 export function autoCompactWindowFor(input, env = process.env) {
-  const id = input?.model?.id;
-  if (typeof id !== "string" || !id) return null;
+  if (flag(env.DISABLE_AUTO_COMPACT) || flag(env.DISABLE_COMPACT)) return null;
   const config = env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
   const project = input?.workspace?.project_dir;
-  const files = [join(config, "settings.json")];
-  if (typeof project === "string" && project) files.push(join(project, ".claude/settings.json"), join(project, ".claude/settings.local.json"));
-  let window = null, enabled = true;
-  for (const file of files) {
-    const s = readJson(file);
-    if (!s || typeof s !== "object") continue;
-    if (typeof s.autoCompactEnabled === "boolean") enabled = s.autoCompactEnabled;
-    const ms = s.modelSettings;
-    const entry = ms?.[id] ?? ms?.[id.replace(/\[.*\]$/, "")];
-    if (num(entry?.autoCompactWindow) != null) window = entry.autoCompactWindow;
+  const files = typeof project === "string" && project
+    ? [join(project, ".claude/settings.local.json"), join(project, ".claude/settings.json")] : [];
+  files.push(join(config, "settings.json"));
+  const settings = files.map(readJson).filter(isObject);
+  const enabled = settings.find((s) => typeof s.autoCompactEnabled === "boolean")?.autoCompactEnabled ?? true;
+  if (!enabled) return null;
+  let window = envWindow(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW);
+  if (window == null) {
+    const id = typeof input?.model?.id === "string" ? input.model.id : "";
+    for (const s of settings) {
+      const models = isObject(s.modelSettings) ? s.modelSettings : {};
+      const entry = id ? (models[id] ?? models[id.replace(/\[.*\]$/, "")]) : undefined;
+      const value = isObject(entry) && entry.autoCompactWindow !== undefined ? entry.autoCompactWindow : s.autoCompactWindow;
+      if (value === undefined) continue;
+      window = num(value) > 0 ? value : null; // "auto" or no number: the model's tuned window, not known here
+      break;
+    }
   }
-  return enabled && window > 0 ? window : null;
+  const size = num(input?.context_window?.context_window_size);
+  return window && size ? Math.min(window, size) : window;
 }
 
 /**

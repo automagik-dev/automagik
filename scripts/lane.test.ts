@@ -20,7 +20,7 @@ describe('the plugin lane', () => {
     expect(kindOf([], none)).toBe('full');
     expect(kindOf(['apps/automagik-pets/src/bake.js', 'apps/automagik-pets/bun.lock', 'apps/bots-dsh/client.js'], none)).toBe('plugins');
     // Meter's local tools ship nothing: a meter/ change beside a plugin is still a plugin patch.
-    expect(kindOf(['meter/statusline/automagik-statusline.mjs', 'meter/statusline/test/format.test.mjs', 'apps/bots-dsh/client.js'], none)).toBe('plugins');
+    expect(kindOf(['meter/statusline/automagik-statusline.mjs', 'meter/statusline/test/statusline.test.mjs', 'apps/bots-dsh/client.js'], none)).toBe('plugins');
   });
 
   test('a herdr-only change is a herdr patch: no desktop build, no plugins, the pack alone', () => {
