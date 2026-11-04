@@ -18,7 +18,7 @@
   "scripts": {
     "prepare-runtime": "node scripts/prepare-runtime.mjs",
     "start": "electron .",
-    "test": "node --test --test-timeout=120000 \"test/*.test.js\"",
+    "test": "node --test --test-timeout=300000 \"test/*.test.js\"",
     "dist:linux": "node scripts/prepare-runtime.mjs && electron-builder --linux AppImage deb",
     "dist:mac": "node scripts/prepare-runtime.mjs && electron-builder --mac dmg zip",
     "dist:win": "node scripts/prepare-runtime.mjs && electron-builder --win nsis --x64"

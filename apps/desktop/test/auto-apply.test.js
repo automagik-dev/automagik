@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { APPLY_IDLE_MS, applyNow, applyStaged, appStopped, causeOf, changesOf, stillIdle, readAutoApply, settingsFileOf, writeAutoApply } from '../src/auto-apply.js'
 import { updatePresentation } from '../src/frame.js'
@@ -112,7 +113,8 @@ function appOf({ home, target, crash = false }) {
   const startDsh = async () => {
     // DSH loads the Bot team from the profile, as it does at every start.
     const entry = join(target, 'node_modules', BOTS, 'index.js')
-    const { stdout } = await run(process.execPath, ['--input-type=module', '-e', `const m = await import(${JSON.stringify(entry)}); console.log(JSON.stringify({ version: m.version, draws: m.draws }))`])
+    // By URL: import() takes no Windows path (D:\...).
+    const { stdout } = await run(process.execPath, ['--input-type=module', '-e', `const m = await import(${JSON.stringify(pathToFileURL(entry).href)}); console.log(JSON.stringify({ version: m.version, draws: m.draws }))`])
     const loaded = JSON.parse(stdout)
     if (crash && loaded.version !== '3.58.1') throw new Error('dsh exited before it was ready (1)')
     return loaded

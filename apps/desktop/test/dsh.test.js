@@ -2,21 +2,34 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { delimiter, join, resolve } from 'node:path'
 import { EventEmitter } from 'node:events'
 import { createServer } from 'node:net'
 import { test } from 'node:test'
 import { appHome, dshEnv, dshRun, forgetDshLogins, freePort, guardContents, installProfile, keepPort, launchPort, launchUrlOf, listenFailed, mergeProfilePackage, mergeProfilePatch, migrateRenamed, migrateRetired, navigationOf, pageUrlOf, pinProfileStore, portFileOf, portFree, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, RETIRED, retirePatch, scrubBuildPaths, serveDsh, servesOrigin, SHIPPED_STORE, startDsh, startDshOnPort, stopDsh, storedPort, storeLayoutOf, toolFileOf, writeTools } from '../src/dsh.js'
 import { batchSafe } from '../scripts/batch-spawn.mjs'
 
+// Windows cannot remove a folder a process still runs in, and t.after runs its hooks in the order
+// they were added: the folder goes in one hook, after `stop` (set once the test starts its dsh),
+// retrying while a stopped process is still on its way out.
+function scratch(t, prefix) {
+  const scope = { root: mkdtempSync(join(tmpdir(), prefix)), stop: async () => {} }
+  t.after(async () => {
+    await scope.stop()
+    rmSync(scope.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  })
+  return scope
+}
+
 test('the app keeps everything in one folder under ~/.automagik, apart from a dsh you already run', () => {
   assert.equal(appHome({}), join(homedir(), '.automagik', 'desktop'))
-  assert.equal(appHome({ AUTOMAGIK_HOME: '/srv/automagik' }), '/srv/automagik/desktop')
+  // Paths in the platform's own form: on Windows /srv/automagik is D:\srv\automagik.
+  assert.equal(appHome({ AUTOMAGIK_HOME: '/srv/automagik' }), join(resolve('/srv/automagik'), 'desktop'))
   assert.equal(appHome({ AUTOMAGIK_HOME: '~/apps/automagik' }), join(homedir(), 'apps', 'automagik', 'desktop'))
   assert.equal(appHome({ AUTOMAGIK_HOME: ' ', OMNI_HOME: '/srv/omni', OMNI_DESKTOP_HOME: '/srv/old' }), join(homedir(), '.automagik', 'desktop'))
   const env = dshEnv({ base: { PATH: '/bin', DSH_HOME: '/home/me/.dsh' }, home: '/a/desktop', electronAsNode: true })
-  assert.equal(env.DSH_HOME, '/a/desktop/dsh')
-  assert.equal(env.AUTOMAGIK_BOTS_HOME, '/a/desktop/bots')
+  assert.equal(env.DSH_HOME, join('/a/desktop', 'dsh'))
+  assert.equal(env.AUTOMAGIK_BOTS_HOME, join('/a/desktop', 'bots'))
   // Omni's own folder is Omni's: the app names none, so its sandbox and downloads land in ~/.omni.
   assert.equal(env.OMNI_HOME, undefined)
   assert.equal(env.ELECTRON_RUN_AS_NODE, '1')
@@ -40,11 +53,11 @@ test('the app keeps everything in one folder under ~/.automagik, apart from a ds
 
 test('resources come from the app when packaged and from build/ in a checkout', () => {
   assert.deepEqual(resourcesOf({ packaged: true, resourcesPath: '/opt/Omni/resources', appPath: '/x' }), {
-    bin: '/opt/Omni/resources/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js',
-    pnpm: '/opt/Omni/resources/runtime/node_modules/pnpm/bin/pnpm.cjs',
-    profile: '/opt/Omni/resources/profile',
+    bin: join('/opt/Omni/resources', 'runtime', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+    pnpm: join('/opt/Omni/resources', 'runtime', 'node_modules', 'pnpm', 'bin', 'pnpm.cjs'),
+    profile: join('/opt/Omni/resources', 'profile'),
   })
-  assert.equal(resourcesOf({ packaged: false, resourcesPath: '/x', appPath: '/src/apps/omni-desktop' }).profile, '/src/apps/omni-desktop/build/profile')
+  assert.equal(resourcesOf({ packaged: false, resourcesPath: '/x', appPath: '/src/apps/omni-desktop' }).profile, join('/src/apps/omni-desktop', 'build', 'profile'))
 })
 
 test('the shipped profile seeds a new home, and a new build replaces only its packages', async (t) => {
@@ -306,8 +319,7 @@ setInterval(() => {}, 1000)
 })
 
 test('a dsh that exits before it is ready is reported, and one that never says so times out', async (t) => {
-  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-fail-'))
-  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const { root } = scratch(t, 'omni-desktop-fail-')
   const dies = join(root, 'dies.mjs')
   writeFileSync(dies, 'process.exit(3)')
   await assert.rejects(startDsh({ node: process.execPath, bin: dies, env: process.env, port: await freePort(), cwd: root }), /exited before it was ready \(3\)/)
@@ -746,8 +758,8 @@ test('the page\'s origin stays the same from one start to the next, and moves on
 })
 
 test('a port taken after the app looked: dsh exits on the listen error and starts once more on a fresh port', async (t) => {
-  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-race-'))
-  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const scope = scratch(t, 'omni-desktop-race-')
+  const { root } = scope
   const bin = join(root, 'fake-dsh.mjs')
   writeFileSync(bin, LISTENING_DSH)
   const taken = await squat(t)
@@ -756,7 +768,7 @@ test('a port taken after the app looked: dsh exits on the listen error and start
 
   const told = []
   const running = await startDshOnPort({ node: process.execPath, bin, env: process.env, port: taken, cwd: root, onPort: next => told.push(next) })
-  t.after(() => stopDsh(running.child))
+  scope.stop = () => stopDsh(running.child)
   const { port } = new URL(running.url)
   assert.notEqual(Number(port), taken)
   assert.deepEqual(told, [Number(port)], 'the app hears the new port before dsh is ready on it')
@@ -863,14 +875,14 @@ test('a quit after the retry spawned stops the retry\'s dsh, and one spawned aft
 })
 
 test('a port that cannot be kept is reported and the start goes on; the page URL is refused off the origin', async (t) => {
-  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-unkept-'))
-  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const scope = scratch(t, 'omni-desktop-unkept-')
+  const { root } = scope
   const bin = join(root, 'fake-dsh.mjs')
   writeFileSync(bin, LISTENING_DSH)
   const run = dshRun()
   const unkept = []
   const running = await serveDsh({ run, portFile: join(root, 'missing', 'dsh-port'), node: process.execPath, bin, env: process.env, port: await freePort(), cwd: root, onUnkept: error => unkept.push(error.code) })
-  t.after(() => run.stop())
+  scope.stop = () => run.stop()
   assert.deepEqual(unkept, ['ENOENT'])
   const { origin } = new URL(running.url)
   assert.equal(pageUrlOf(running, origin), running.url)

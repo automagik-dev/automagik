@@ -14,6 +14,8 @@ import {
 } from '../src/herdr-update.js'
 
 const posixOnly = { skip: process.platform === 'win32' ? 'the fake herdr-app is a sh script' : false }
+// The macOS install is checked on a real file system in macOS's own paths (/Users/…/Applications).
+const posixMac = { skip: process.platform === 'win32' ? 'macOS paths on a POSIX file system' : false }
 const OLD = '0.1.11'
 const NEW = '0.1.12'
 const TAR_URL = `https://releases.herdr.dev/app/${NEW}/herdr-app-linux-x86_64.tar.gz`
@@ -323,7 +325,7 @@ test('a download is bounded in size, and its file is gone when its sha256 is wro
 
 // macOS without a Mac: the file system is real (a temp ~/Applications), every program is a fake
 // execFile, so the argv herdrdev's installer steps would run is what is checked.
-test('macOS: an ad hoc build gets the installer\'s PATH and an ad hoc signature, then lsregister', async () => {
+test('macOS: an ad hoc build gets the installer\'s PATH and an ad hoc signature, then lsregister', posixMac, async () => {
   const home = mkdtempSync(join(tmpdir(), 'herdr-mac-'))
   const app = join(home, 'Applications', 'Herdr.app')
   mkdirSync(join(app, 'Contents', 'MacOS'), { recursive: true })

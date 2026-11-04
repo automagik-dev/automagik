@@ -179,7 +179,7 @@ test('each lane keeps its own sequence, failures and staging: Genie\'s still goe
     mkdirSync(dir, { recursive: true })
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version }))
     const file = join(root, 'pack', `${name.replace('/', '+')}-${version}.tgz`)
-    execFileSync('tar', ['-czf', file, '-C', join(dir, '..'), 'package'])
+    execFileSync(tarOf(), ['-czf', file, '-C', join(dir, '..'), 'package'])
     const bytes = readFileSync(file)
     return { bytes, plugin: { name, version, url: `https://github.com/x/${version}.tgz`, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}` } }
   }
