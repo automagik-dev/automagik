@@ -204,6 +204,8 @@ export class ChatConnection {
     const terminal = typeof p.terminal === 'string' && p.terminal.length <= 128 ? p.terminal : null
     switch (m?.method) {
       case 'chat.list':
+        // A just-made engine has not heard from herdr-core yet: wait for its first snapshot.
+        await this.engine.ready()
         return ok({ terminals: this.engine.list() })
       case 'chat.subscribe': {
         if (!terminal) return errorOf(id, 'invalid_params', 'terminal')

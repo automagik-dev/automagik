@@ -1,7 +1,7 @@
 // node --test chat/status.test.mjs: herdr-core's status for watched terminals, from the fake hc.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { StatusHub, statusOf } from './status.js'
+import { READY_MS, StatusHub, statusOf } from './status.js'
 import { createFakeHc, fakeTerminal } from './fake-hc.mjs'
 
 /** Timers a test fires by hand. */
@@ -105,6 +105,56 @@ test('the last watcher leaving closes the subscription', async () => {
   assert.equal(hc.subscriptions, 1)
   stop()
   assert.equal(hc.subscriptions, 0)
+})
+
+test('a held hub is subscribed with nothing watched, stays so after the last watcher, and reopens', async () => {
+  const timers = manualTimers()
+  const hc = createFakeHc({ terminals: [fakeTerminal('t1'), fakeTerminal('t2')] })
+  const hub = new StatusHub(hc, { timers })
+  const release = hub.hold()
+  await settle()
+  assert.deepEqual(hub.all().map((t) => t.address), ['t1', 't2'], 'cold: the snapshot is there')
+  const stop = hub.watch('t1', () => {})
+  stop()
+  assert.equal(hc.subscriptions, 1, 'the last watcher leaving keeps a held subscription')
+  hc.drop()
+  assert.equal(timers.timeouts.length, 1, 'an ended one is retried while held')
+  timers.timeouts.shift().fn()
+  await settle()
+  assert.equal(hc.calls.filter((c) => c.method === 'events.subscribe').length, 2)
+  const other = hub.hold()
+  release()
+  release()
+  assert.equal(hc.subscriptions, 1, 'one release twice is still one: the other hold keeps it')
+  other()
+  assert.equal(hc.subscriptions, 0, 'every hold released: closed')
+  hub.close()
+})
+
+test('ready waits for the first snapshot; an hc that never answers ends the wait at READY_MS', async () => {
+  const hc = createFakeHc({ terminals: [fakeTerminal('t1')] })
+  const hub = new StatusHub(hc, { timers: manualTimers() })
+  hub.hold()
+  assert.deepEqual(hub.all(), [], 'nothing yet: the snapshot is on its way')
+  await hub.ready()
+  assert.deepEqual(hub.all().map((t) => t.address), ['t1'])
+  await hub.ready() // already in: at once
+  hub.close()
+
+  const timers = manualTimers()
+  const silent = new StatusHub({ subscribe: () => ({ close() {} }) }, { timers })
+  silent.hold()
+  let done = false
+  silent.ready().then(() => { done = true })
+  await settle()
+  assert.equal(done, false)
+  const wait = timers.timeouts.find((h) => h.ms === READY_MS)
+  assert.ok(wait, 'bounded by READY_MS')
+  wait.fn()
+  await settle()
+  assert.equal(done, true, 'answers with what it has, empty')
+  assert.equal(silent.waiting.size, 0)
+  silent.close()
 })
 
 test('a listener that throws stops neither the others nor the hub', async () => {

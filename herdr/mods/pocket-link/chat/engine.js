@@ -57,6 +57,9 @@ export class Engine {
   constructor({ hc, home, appHome, log = () => {}, timers = realTimers, lingerMs = LINGER_MS, flushMs = FLUSH_MS, maxTerminals = MAX_TERMINALS, hub, projection = {} }) {
     Object.assign(this, { hc, home, appHome, log, timers, lingerMs, flushMs, maxTerminals, projectionOptions: projection })
     this.hub = hub ?? new StatusHub(hc, { timers })
+    // Held for the engine's life: list() reads the hub, cold (nothing watched yet) and after the
+    // last client leaves alike. close() ends it.
+    this.hub.hold()
     this.refused = new Set()
     /** @type {Map<string, any>} address -> entry */
     this.entries = new Map()
@@ -64,6 +67,9 @@ export class Engine {
     this.keys = new WeakMap()
     this.nextKey = 1
   }
+
+  /** The hub's first snapshot is in (or it waited READY_MS): list() then answers what is live. */
+  ready() { return this.hub.ready() }
 
   /** Live terminals with a decoder (Claude, Codex, omp): what a client can open as a chat. */
   list() {

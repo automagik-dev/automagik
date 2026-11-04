@@ -5,11 +5,14 @@
 // report: a gate, never proof of what a dialog asks.
 //
 // A `missed` snapshot replaces everything (events at or below its seq are dropped); a subscription
-// that goes quiet past the heartbeat (15 s) for `staleMs`, or ends, is opened again.
+// that goes quiet past the heartbeat (15 s) for `staleMs`, or ends, is opened again. It stays open
+// while anything watches a terminal or holds the hub (the engine does, for its list).
 
 const realTimers = { setTimeout, clearTimeout, setInterval, clearInterval }
 /** Event data fields that are not terminal facts. */
 const NOT_FACTS = new Set(['records', 'reported'])
+/** How long ready() waits for the first snapshot before answering with what it has. */
+export const READY_MS = 3_000
 
 /**
  * The chat's status fields from a herdr-core Terminal.
@@ -42,6 +45,48 @@ export class StatusHub {
     this.floor = 0
     this.seen = 0
     this.closed = false
+    this.holds = 0
+    /** A snapshot has arrived since the hub was made. */
+    this.fresh = false
+    /** @type {Set<() => void>} */
+    this.waiting = new Set()
+  }
+
+  /**
+   * Resolves once the first snapshot is in (at once if it is), or after `ms`: a just-made engine's
+   * list waits for herdr-core's answer, and never hangs on an hc that does not give one.
+   * @returns {Promise<void>}
+   */
+  ready(ms = READY_MS) {
+    if (this.fresh || this.closed || !this.wanted()) return Promise.resolve()
+    return new Promise((resolve) => {
+      const done = () => { this.timers.clearTimeout(timer); this.waiting.delete(done); resolve() }
+      const timer = this.timers.setTimeout(done, ms)
+      timer?.unref?.()
+      this.waiting.add(done)
+    })
+  }
+
+  wake() { for (const done of [...this.waiting]) done() }
+
+  /** Something still needs the subscription: a watcher, or a hold. */
+  wanted() { return this.listeners.size > 0 || this.holds > 0 }
+
+  /**
+   * Keep the subscription open with no terminal watched, so all() stays current (the engine's
+   * list, before any client watches and after the last one leaves).
+   * @returns {() => void} release
+   */
+  hold() {
+    this.holds++
+    if (!this.sub) this.open()
+    let held = true
+    return () => {
+      if (!held) return
+      held = false
+      this.holds--
+      if (!this.wanted()) this.shut()
+    }
   }
 
   /**
@@ -59,7 +104,7 @@ export class StatusHub {
     return () => {
       set.delete(listener)
       if (!set.size) this.listeners.delete(address)
-      if (!this.listeners.size) this.shut()
+      if (!this.wanted()) this.shut()
     }
   }
 
@@ -69,7 +114,7 @@ export class StatusHub {
   /** Every terminal in the latest snapshot (for siblings: other panes in one folder). */
   all() { return [...this.terminals.values()] }
 
-  close() { this.closed = true; this.shut() }
+  close() { this.closed = true; this.shut(); this.wake() }
 
   /** A listener that throws never stops the others, or the hub. */
   emit(address, e) { for (const l of [...(this.listeners.get(address) ?? [])]) { try { l(e) } catch {} } }
@@ -88,7 +133,7 @@ export class StatusHub {
   reopen() {
     try { this.sub?.close() } catch {}
     this.sub = null
-    if (this.listeners.size) this.open()
+    if (this.wanted()) this.open()
   }
 
   shut() {
@@ -103,6 +148,8 @@ export class StatusHub {
     if (m.type === 'snapshot' || m.type === 'missed') {
       this.floor = m.seq ?? 0
       this.terminals = new Map((m.terminals ?? []).filter((t) => typeof t?.address === 'string').map((t) => [t.address, t]))
+      this.fresh = true
+      this.wake()
       for (const address of this.listeners.keys()) {
         const t = this.terminals.get(address)
         this.emit(address, t ? { type: 'terminal', terminal: t, change: 'snapshot' } : { type: 'gone' })
@@ -132,8 +179,8 @@ export class StatusHub {
     if (m.type === 'closed') {
       this.sub = null
       for (const address of this.listeners.keys()) this.emit(address, { type: 'offline' })
-      if (this.listeners.size && !this.closed) {
-        this.retry = this.timers.setTimeout(() => { if (!this.sub && this.listeners.size) this.open() }, this.retryMs)
+      if (this.wanted() && !this.closed) {
+        this.retry = this.timers.setTimeout(() => { if (!this.sub && this.wanted()) this.open() }, this.retryMs)
         this.retry.unref?.()
       }
     }

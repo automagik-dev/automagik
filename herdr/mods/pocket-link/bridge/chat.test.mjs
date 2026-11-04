@@ -8,20 +8,20 @@ import { dirname, join } from 'node:path'
 import {
   BACKFILL_ROWS, CLOSE, CREDIT, ChatConnection, ChatEngines, CREDIT_WINDOW, DATA, frame, MAX_SUBSCRIPTIONS, ROW_TEXT_MAX, SEND_TEXT_MAX
 } from './chat.mjs'
-import { Engine } from '../chat/engine.js'
+import { Engine, LINGER_MS } from '../chat/engine.js'
 import { createFakeHc, fakeTerminal } from '../chat/fake-hc.mjs'
 
 const settle = async () => { for (let i = 0; i < 8; i++) await new Promise(r => setImmediate(r)) }
 const noTimers = { setTimeout: () => ({}), clearTimeout: () => {}, setInterval: () => ({}), clearInterval: () => {} }
 const user = (uuid, text) => JSON.stringify({ type: 'user', uuid, message: { role: 'user', content: text } }) + '\n'
 
-function world({ lines = user('u1', 'hello'), terminals } = {}) {
+function world({ lines = user('u1', 'hello'), terminals, timers = noTimers } = {}) {
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'chat-route-')))
   const path = join(home, '.claude/projects/p/s.jsonl')
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, lines)
   const hc = createFakeHc({ terminals: terminals ?? [fakeTerminal('t1', { labels: { 'agent.transcript': path } }), fakeTerminal('t2', { labels: { 'agent.transcript': path } })], screens: { t1: '', t2: '' } })
-  const engine = new Engine({ hc, home, timers: noTimers, projection: { watch: null } })
+  const engine = new Engine({ hc, home, timers, projection: { watch: null } })
   return { home, path, hc, engine }
 }
 
@@ -96,14 +96,35 @@ test('a hello that is not generation 1 and framed is refused and the connection 
 })
 
 test('chat.list answers the live terminals with a decoder, from the fake hc', async () => {
+  // A cold engine: nothing watched yet. t2 is a shell, with no decoder, so it is not a chat.
   const { engine } = world({ terminals: [fakeTerminal('t1'), fakeTerminal('t2', { app: 'zsh', argv: ['zsh'] })] })
-  engine.hub.watch('t1', () => {}) // the hub's snapshot is what list reads
-  await settle()
   const p = phone(engine)
   p.hello()
   const answer = await p.call('chat.list')
   assert.deepEqual(answer.result.terminals.map(t => [t.terminal, t.agent]), [['t1', 'claude']])
   engine.close()
+})
+
+test('chat.list after the last subscriber stops still answers the live terminals', async () => {
+  // Timeouts kept, fired by hand: the 10-minute linger after the last client is what ends the watch.
+  const timeouts = []
+  const timers = { ...noTimers, setTimeout: (fn, ms) => { const h = { fn, ms }; timeouts.push(h); return h }, clearTimeout: h => { const i = timeouts.indexOf(h); if (i >= 0) timeouts.splice(i, 1) } }
+  const { engine, hc } = world({ timers })
+  const p = phone(engine)
+  p.hello()
+  await p.call('chat.subscribe', { terminal: 't1' })
+  p.conn.feed(frame(1, CLOSE))
+  p.events(1)
+  assert.equal(p.conn.subs.size, 0)
+  timeouts.find(h => h.ms === LINGER_MS).fn()
+  assert.equal(engine.entries.size, 0, 'nothing watched any more')
+  assert.equal(hc.subscriptions, 1, 'the engine keeps its one events subscription')
+  const answer = await p.call('chat.list')
+  assert.deepEqual(answer.result.terminals.map(t => [t.terminal, t.agent]), [['t1', 'claude'], ['t2', 'claude']])
+  hc.change('t2', 'status', { state: 'finished' })
+  assert.deepEqual((await p.call('chat.list')).result.terminals.map(t => t.terminal), ['t1'], 'and stays current')
+  engine.close()
+  assert.equal(hc.subscriptions, 0, 'closing the engine ends it')
 })
 
 test('chat.subscribe streams a snapshot then rows on its own channel', async () => {
@@ -372,7 +393,7 @@ test('every frame from the phone is capped, CREDIT and CLOSE included; frames sp
   const req = frame(0, DATA, Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 9, method: 'chat.list' })))
   for (const byte of req) q.conn.feed(Buffer.from([byte])) // one byte per read
   await settle()
-  assert.equal(q.frames().map(f => JSON.parse(f.payload)).find(m => m.id === 9)?.result?.terminals?.length, 0)
+  assert.deepEqual(q.frames().map(f => JSON.parse(f.payload)).find(m => m.id === 9)?.result?.terminals?.map(t => t.terminal), ['t1', 't2'])
   engine.close()
 })
 
