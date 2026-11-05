@@ -19,6 +19,7 @@ import { restartAnswer } from "../mods/am-sidebar/restart.js";
 const strip = (words) => withoutBriefing("codex", withoutBriefing("claude", words));
 const plain = (argv) => { const i = argv.indexOf("--"); return i < 0 ? strip(argv) : [...argv.slice(0, i + 1), ...strip(argv.slice(i + 1))]; };
 import { attachPath as attachFile, foldAttach as foldRows, readAttach as readRows } from "../mods/am-sidebar/attach.js";
+import { readJsonLines } from "./log-lines.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 // AUTOMAGIK_HERDR_TEST_RUNTIME=<bun or node path> runs the CLI with that runtime instead.
@@ -68,9 +69,9 @@ function scene(t, { terminals = [], briefing = true, window = { down: true } } =
     const r = spawnSync(RUNTIME, [CLI, ...args], { cwd, env: { ...env, ...extra }, input, encoding: "utf8" });
     return { code: r.status, out: r.stdout, err: r.stderr, json: () => JSON.parse(r.stdout) };
   };
-  const calls = () => readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const calls = () => readJsonLines(logPath);
   const hcState = () => JSON.parse(readFileSync(statePath, "utf8"));
-  const appCalls = () => readFileSync(appLog, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const appCalls = () => readJsonLines(appLog);
   const windowNow = () => JSON.parse(readFileSync(appState, "utf8"));
   const botsPath = join(project, ".herdr/bots.json");
   const bots = () => JSON.parse(readFileSync(botsPath, "utf8"));
@@ -1745,7 +1746,7 @@ function onePanePerSession(s, { bot = ["t5", "t100"] } = {}) {
   }
   for (const [id, panes] of live) assert.equal(panes.length, 1, `session ${id} is live in ${panes.join(", ")} at the end`);
   const file = join(s.root, "hc.json.doubles");
-  const doubles = existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
+  const doubles = existsSync(file) ? readJsonLines(file) : [];
   for (const d of doubles) assert.deepEqual(d.panes, bot, `call ${d.call} (${d.word}): session ${d.session} live in ${d.panes.join(", ")}`);
   // The bot's pair only between the new pane's run and the old pane's kill.
   const calls = s.calls();

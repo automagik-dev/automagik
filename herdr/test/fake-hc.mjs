@@ -17,10 +17,11 @@
 // state.connectBefore: raw lines printed before any answer (a notification, a broken line);
 // state.connectAnswer: a raw line printed in place of every answer.
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendLine, readJsonLines } from "./log-lines.mjs";
 
 const args = process.argv.slice(2);
-appendFileSync(process.env.HC_FAKE_LOG, `${JSON.stringify(args)}\n`);
+appendLine(process.env.HC_FAKE_LOG, JSON.stringify(args));
 const state = JSON.parse(readFileSync(process.env.HC_FAKE_STATE, "utf8"));
 // The CLI runs several hc calls at once: a save writes a file of its own beside the state and
 // renames it over it (atomic in one folder), so another call never reads one half written.
@@ -33,9 +34,12 @@ const out = (x) => process.stdout.write(`${JSON.stringify(x)}\n`);
 const fail = (msg, code = 1) => { process.stderr.write(`${msg}\n`); process.exit(code); };
 const words = args.filter((a) => a !== "--json");
 const find = (t) => state.terminals.find((x) => x.address === t || x.name === t);
+// The log, read once: other calls append to it at the same time, so only its complete lines
+// (log-lines.mjs, #421). This call's own line is among them: it was written whole above.
+const logged = readJsonLines(process.env.HC_FAKE_LOG);
 // The call's number (lines in the log so far), and at every call the sessions (agent.session or
 // revive.session labels) live in more than one pane then, appended to $HC_FAKE_STATE.doubles.
-const callNo = readFileSync(process.env.HC_FAKE_LOG, "utf8").split("\n").filter(Boolean).length;
+const callNo = logged.length;
 {
   const by = new Map();
   for (const x of state.terminals.filter((y) => y.state === "live")) {
@@ -43,7 +47,7 @@ const callNo = readFileSync(process.env.HC_FAKE_LOG, "utf8").split("\n").filter(
     if (id) by.set(id, [...(by.get(id) ?? []), x.address]);
   }
   for (const [session, panes] of by) {
-    if (panes.length > 1) appendFileSync(`${process.env.HC_FAKE_STATE}.doubles`, `${JSON.stringify({ call: callNo, word: words[0], session, panes })}\n`);
+    if (panes.length > 1) appendLine(`${process.env.HC_FAKE_STATE}.doubles`, JSON.stringify({ call: callNo, word: words[0], session, panes }));
   }
 }
 // endTurnOn: { word, nth } on a terminal: its turn ends when the nth `hc <word>` call happens
@@ -51,11 +55,10 @@ const callNo = readFileSync(process.env.HC_FAKE_LOG, "utf8").split("\n").filter(
 // the CLI looks at it. As hc does, the end types a note into its parent (state.notes) when that
 // parent still runs, and the parent's agent takes a short turn of its own.
 {
-  const lines = readFileSync(process.env.HC_FAKE_LOG, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
   let changed = false;
   for (const t of state.terminals) {
     const due = t.endTurnOn;
-    if (!due || lines.filter((a) => a.filter((w) => w !== "--json")[0] === due.word).length < due.nth) continue;
+    if (!due || logged.filter((a) => a.filter((w) => w !== "--json")[0] === due.word).length < due.nth) continue;
     delete t.endTurnOn;
     changed = true;
     if (t.state !== "live" || t.status?.state !== "working") continue;

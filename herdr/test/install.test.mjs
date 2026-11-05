@@ -9,6 +9,7 @@ import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readF
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readJsonLines } from "./log-lines.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const INSTALL = join(ROOT, "install.sh");
@@ -1596,7 +1597,7 @@ const linkMachines = (s) => {
     { name: "lin", state: "connected", uname: "Linux x86_64", home: lin }, { name: "off", state: "disconnected", uname: "Linux aarch64", home: lin }] }));
   return {
     meter: join(lin, ".local", "bin", "usagemeter"),
-    execs: () => readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((a) => a[0] === "exec"),
+    execs: () => readJsonLines(log).filter((a) => a[0] === "exec"),
   };
 };
 
