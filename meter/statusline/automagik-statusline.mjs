@@ -1,46 +1,59 @@
 #!/usr/bin/env node
 // Automagik Meter's Claude Code status line. Claude Code pipes a JSON status object to its
-// statusline command on every turn; this prints one short line from it (two when the terminal is
-// too narrow for one):
+// statusline command on every turn; this prints one line from it (two when the terminal is too
+// narrow for one: the quota moves to the second):
 //
-//   Opus 5.5 · my-repo | ctx 40% 400k/1M · 100k to compact · 2 compacts | 5h 23% ↺2h10m · 7d 58% ↺3d4h
+//   🤖 Meter Captain  🧠 Opus 5.5 ⚡high  ┃  📁 my-app  ┃  💬 Context ▰▰▰▰▱▱▱▱▱▱ 400k/1M  ┃
+//   Quota 5h ▰▱▱▱▱ 24%  Resets 2h14m  ┃  Quota 7d ▰▰▰▱▱ 58%  Left 1d2h  Resets 4d2h
 //
-// - ctx: used % and tokens of the context window, then the distance to the auto-compact window,
-//   found the way Claude Code finds it (code.claude.com/docs/en/model-config, "Set the auto-compact
-//   window"): none when DISABLE_AUTO_COMPACT or DISABLE_COMPACT is set or autoCompactEnabled is
-//   false; else CLAUDE_CODE_AUTO_COMPACT_WINDOW when it is a usable size (200000, 200k, 1M; held to
+// - 🤖: the bot this Herdr pane plays (HC_TERMINAL_ID set): `automagik-herdr whois --json`, run
+//   by its absolute path (~/.local/bin/automagik-herdr, a sh launcher that finds its own node),
+//   then the name in <project>/.herdr/bots.json. Cached 10 minutes per terminal in the Meter
+//   state folder (statusline-bots.json), a miss included; whois gets 1.5 s. No pane, no bot.
+// - ⚡: effort.level from stdin. Claude Code sends none when the model has no effort setting.
+// - Context: a 10-cell bar of the context window used, then the tokens used and the window. Its
+//   colour is measured against the auto-compact window, found the way Claude Code finds it
+//   (code.claude.com/docs/en/model-config, "Set the auto-compact window"): none when
+//   DISABLE_AUTO_COMPACT or DISABLE_COMPACT is set or autoCompactEnabled is false; else
+//   CLAUDE_CODE_AUTO_COMPACT_WINDOW when it is a usable size (200000, 200k, 1M; held to
 //   100k-1M); else the first of .claude/settings.local.json, .claude/settings.json and the user
 //   settings.json that names a window: modelSettings["<model id>"].autoCompactWindow, or the
 //   top-level autoCompactWindow, the model's entry winning within one file. The local file is
 //   read where Claude Code keeps it (code.claude.com/docs/en/settings, "Where Claude Code keeps
 //   the local file in a git repository"): at the repository root, the main checkout's root in a
 //   worktree, then one an older version left in the launch folder; the shared file in the launch
-//   folder (workspace.project_dir). "auto" (the model's
-//   tuned window) or no window anywhere leaves the distance out: no default is guessed. The window
-//   is capped at the context window, as Claude Code caps it. A one-launch --autocompact flag and
+//   folder (workspace.project_dir). "auto" (the model's tuned window) or no window anywhere: the
+//   colour is measured against the context window instead; no default is guessed. The window is
+//   capped at the context window, as Claude Code caps it. A one-launch --autocompact flag and
 //   managed settings are not visible to a status line.
-// - compacts: compact_boundary records in the session's transcript, counted incrementally (only
-//   the bytes appended since the last turn are read, plus a 4 KiB check that the counted bytes are
-//   still there) and cached in the Meter state folder.
-// - 5h / 7d: rate_limits used % and the time until each window resets.
+// - Quota 5h / 7d: a 5-cell bar and the used % of each rate_limits window, the time until it
+//   resets, and before that, in red, "Left": when the window runs out at the current rate, shown
+//   only when that comes before the reset. The rate is the rise over the last hour (5h) or six
+//   hours (7d) in the limits logger's log (claude-limits.jsonl, its last 256 KiB only, readings
+//   of the same window), else the used % over the time since the window started.
+// - Green under 70%, yellow from 70%, red from 90%. NO_COLOR turns the colours off.
 //
-// Node, no dependencies, never throws: any field it cannot read is left out. It reads stdin only,
-// so it runs under a bare PATH as long as the command names node by its absolute path. It wraps
-// cleanly in the limits logger: `node claude-limits-statusline.mjs -- node automagik-statusline.mjs`.
-// NO_COLOR turns the colours off. METER_STATE_DIR moves the cache (same folder as the logger's).
-import { closeSync, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, renameSync, mkdirSync, statSync, writeFileSync } from "node:fs";
-import { createHash } from "node:crypto";
+// Node, no dependencies, never throws: a field it cannot read drops its segment. Run it with
+// node's absolute path (Claude Code's PATH can be bare). It wraps cleanly in the limits logger:
+// `node claude-limits-statusline.mjs -- node automagik-statusline.mjs`. METER_STATE_DIR moves
+// the state folder (the logger's too).
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, lstatSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { homedir, platform } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const RED = "\x1b[31m", YELLOW = "\x1b[33m", DIM = "\x1b[2m", RESET = "\x1b[0m";
-const BOUNDARY = Buffer.from('"subtype":"compact_boundary"');
-const CHUNK = 4 << 20;
+const GREEN = "\x1b[32m", YELLOW = "\x1b[33m", RED = "\x1b[31m", CYAN = "\x1b[36m", BOLD = "\x1b[1m", DIM = "\x1b[2m", RESET = "\x1b[0m";
 const KEEP = 16;
-const SEEN = 4096;
+const TAIL = 256 << 10;
+const BOT_TTL = 10 * 60 * 1000;
+// Each quota window: its length and how far back the log's rate looks (seconds).
+const WINDOWS = { five_hour: { label: "Quota 5h", span: 5 * 3600, look: 3600 }, seven_day: { label: "Quota 7d", span: 7 * 86400, look: 6 * 3600 } };
 
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const isObject = (v) => v != null && typeof v === "object" && !Array.isArray(v);
+/** A string from stdin or a file, safe to print: control characters (escapes, newlines) removed. */
+const clean = (v) => (typeof v === "string" ? v.replace(/[\x00-\x1f\x7f-\x9f]/g, "").trim() : "");
 
 /** 0 → "0", 78400 → "78k", 1000000 → "1M", 1250000 → "1.3M". */
 export function tokens(n) {
@@ -50,7 +63,7 @@ export function tokens(n) {
   return `${m}M`;
 }
 
-/** Seconds until a reset as "45m", "2h10m" or "3d4h"; null once it has passed. */
+/** Seconds as "45m", "2h10m" or "3d4h"; null once it has passed. */
 export function until(seconds) {
   if (seconds == null || seconds <= 0) return null;
   const m = Math.ceil(seconds / 60);
@@ -60,59 +73,105 @@ export function until(seconds) {
   return `${Math.floor(h / 24)}d${h % 24}h`;
 }
 
+/** A bar of `cells` cells, `pct` of them filled: bar(40, 10) → "▰▰▰▰▱▱▱▱▱▱". */
+export function bar(pct, cells) {
+  const fill = Math.max(0, Math.min(cells, Math.round(((num(pct) ?? 0) / 100) * cells)));
+  return "▰".repeat(fill) + "▱".repeat(cells - fill);
+}
+
 /**
- * The status line for one stdin object. Pure: `now` (ms), the auto-compact window, the compact
- * count and the terminal width come in through `opts`, so a fixture gives the same line every time.
+ * Seconds until a quota window runs out at the current rate, or null when it does not run out
+ * before it resets. `key` is five_hour or seven_day, `w` its stdin reading, `now` in ms, `rows`
+ * the limits log's readings. The rate is the rise since the oldest reading of this same window
+ * (same resets_at) within the lookback, when that reading is at least a quarter of the lookback
+ * old; a measured rise of nothing means no run-out. Without one, the rate is the used % over the
+ * time since the window started (once it is 10 minutes old).
+ */
+export function runOut(key, w, now, rows) {
+  const spec = WINDOWS[key];
+  const used = num(w?.used_percentage), reset = num(w?.resets_at), t = num(now) / 1000;
+  if (!spec || used == null || reset == null || !(reset > t) || used >= 100) return null;
+  let oldest = null;
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const x = r?.[key], ts = typeof r?.ts === "string" ? Date.parse(r.ts) / 1000 : NaN;
+    if (!isObject(x) || num(x.used_percentage) == null || x.resets_at !== reset) continue;
+    if (!(ts >= t - spec.look && ts <= t)) continue;
+    if (!oldest || ts < oldest[0]) oldest = [ts, x.used_percentage];
+  }
+  let rate = null; // % per second
+  if (oldest && t - oldest[0] >= spec.look / 4) rate = Math.max(0, used - oldest[1]) / (t - oldest[0]);
+  else {
+    const elapsed = t - (reset - spec.span);
+    if (elapsed > 600 && used > 0) rate = used / elapsed;
+  }
+  if (!(rate > 0)) return null;
+  const left = (100 - used) / rate;
+  return left < reset - t ? left : null;
+}
+
+/**
+ * The status line for one stdin object. Pure: `now` (ms), the auto-compact window, the bot's
+ * name, the limits log's readings and the terminal width come in through `opts`, so a fixture
+ * gives the same line every time.
  */
 export function format(input, opts = {}) {
-  const { now = Date.now(), autoCompactWindow = null, compacts = null, columns = null, color = true } = opts;
+  const { now = Date.now(), autoCompactWindow = null, bot = null, limits = null, columns = null, color = true } = opts;
   const paint = (code, text) => (color && code ? `${code}${text}${RESET}` : text);
-  const level = (pct) => (pct == null ? null : pct >= 90 ? RED : pct >= 70 ? YELLOW : null);
-  const i = input && typeof input === "object" ? input : {};
+  const dim = (text) => paint(DIM, text);
+  const level = (pct) => (pct == null ? null : pct >= 90 ? RED : pct >= 70 ? YELLOW : GREEN);
+  const i = isObject(input) ? input : {};
+  const groups = [];
 
-  const head = [];
-  const model = i.model?.display_name || i.model?.id;
-  if (typeof model === "string" && model) head.push(model);
-  const dir = i.workspace?.current_dir || i.cwd;
-  if (typeof dir === "string" && dir) head.push(basename(dir) || dir);
+  const who = [];
+  const name = clean(bot);
+  if (name) who.push(`🤖 ${paint(CYAN + BOLD, name)}`);
+  const model = clean(i.model?.display_name) || clean(i.model?.id);
+  const effort = clean(i.effort?.level);
+  const brain = [model && `🧠 ${paint(BOLD, model)}`, effort && `⚡${effort}`].filter(Boolean).join(" ");
+  if (brain) who.push(brain);
+  if (who.length) groups.push(who.join("  "));
 
-  const ctx = [];
-  const cw = i.context_window ?? {};
+  const dir = clean(i.workspace?.current_dir) || clean(i.cwd);
+  if (dir) groups.push(`📁 ${basename(dir) || dir}`);
+
+  const cw = isObject(i.context_window) ? i.context_window : {};
   const size = num(cw.context_window_size);
   let used = num(cw.total_input_tokens);
-  if (used == null && cw.current_usage && typeof cw.current_usage === "object") {
+  if (used == null && isObject(cw.current_usage)) {
     const u = cw.current_usage;
     used = (num(u.input_tokens) ?? 0) + (num(u.cache_creation_input_tokens) ?? 0) + (num(u.cache_read_input_tokens) ?? 0);
   }
   let pct = num(cw.used_percentage);
-  if (pct == null && used != null && size) pct = (used / size) * 100;
-  const window = num(autoCompactWindow);
-  // Colour the context by how close it is to compacting when that is known, else to the window.
-  const pressure = window && used != null ? (used / window) * 100 : pct;
-  const parts = [];
-  if (pct != null) parts.push(`${Math.round(pct)}%`);
-  if (used != null) parts.push(size ? `${tokens(used)}/${tokens(size)}` : tokens(used));
-  if (parts.length) ctx.push(paint(level(pressure), `ctx ${parts.join(" ")}`));
-  if (window && used != null) ctx.push(paint(level(pressure), used >= window ? "compact due" : `${tokens(window - used)} to compact`));
-  if (num(compacts) && compacts > 0) ctx.push(`${compacts} compact${compacts === 1 ? "" : "s"}`);
+  if (used == null && pct != null && size) used = (pct / 100) * size;
+  if (used != null && size) pct = (used / size) * 100;
+  if (pct != null) {
+    // The bar fills against the context window; its colour is measured against the compact window.
+    const window = num(autoCompactWindow);
+    const tint = level(window && used != null ? (used / window) * 100 : pct);
+    const count = used == null ? `${Math.round(pct)}%` : paint(tint, tokens(used)) + (size ? dim(`/${tokens(size)}`) : "");
+    groups.push(`💬 ${dim("Context")} ${paint(tint, bar(pct, 10))} ${count}`);
+  }
 
   const quota = [];
-  for (const [key, label] of [["five_hour", "5h"], ["seven_day", "7d"]]) {
+  for (const [key, spec] of Object.entries(WINDOWS)) {
     const w = i.rate_limits?.[key];
     const p = num(w?.used_percentage);
     if (p == null) continue;
-    const left = num(w.resets_at) != null ? until(w.resets_at - now / 1000) : null;
-    quota.push(paint(level(p), `${label} ${Math.round(p)}%`) + (left ? ` ↺${left}` : ""));
+    const reset = num(w.resets_at) != null ? until(w.resets_at - now / 1000) : null;
+    const left = runOut(key, w, now, limits);
+    quota.push(`${dim(spec.label)} ${paint(level(p), bar(p, 5))} ${paint(level(p), `${Math.round(p)}%`)}`
+      + (left != null ? `  ${dim("Left")} ${paint(RED, until(left))}` : "")
+      + (reset ? `  ${dim("Resets")} ${reset}` : ""));
   }
 
-  const dot = paint(DIM, " · "), bar = paint(DIM, " | ");
-  const groups = [head, ctx, quota].filter((g) => g.length).map((g) => g.join(dot));
-  const one = groups.join(bar);
-  if (!columns || visible(one) <= columns - 2 || quota.length === 0 || groups.length < 2) return one;
-  return [groups.slice(0, -1).join(bar), groups.at(-1)].join("\n");
+  const sep = dim("  ┃  ");
+  const one = [...groups, ...quota].join(sep);
+  if (!columns || visible(one) <= columns - 2 || !quota.length || !groups.length) return one;
+  return `${groups.join(sep)}\n${quota.join(sep)}`;
 }
 
-const visible = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").length;
+// Columns a line takes: colours take none; the emoji take two each.
+const visible = (s) => [...s.replace(/\x1b\[[0-9;]*m/g, "")].reduce((n, c) => n + (/\p{Extended_Pictographic}/u.test(c) ? 2 : 1), 0);
 
 /** Where Meter keeps its state; the limits logger uses the same folder. */
 export function stateDir(env = process.env) {
@@ -125,7 +184,6 @@ export function stateDir(env = process.env) {
 const readJson = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return null; } };
 
 const MIN_WINDOW = 100_000, MAX_WINDOW = 1_000_000;
-const isObject = (v) => v != null && typeof v === "object" && !Array.isArray(v);
 const flag = (v) => typeof v === "string" && v.trim() !== "" && !/^(0|false|no|off)$/i.test(v.trim());
 
 /**
@@ -218,68 +276,80 @@ export function autoCompactWindowFor(input, env = process.env) {
   return window && size ? Math.min(window, size) : window;
 }
 
+
 /**
- * How many times the session compacted: compact_boundary records in its transcript. Only the
- * bytes appended since the last count are read. The file is counted again from the start when it
- * is shorter than the counted offset, when a new file has taken the path (another inode), or when
- * it was rewritten in place: the cache keeps a short hash of the last 4 KiB before the offset, and
- * a different hash (or none, from an older cache) means the counted bytes changed. The cache is
- * best effort: unreadable, it is rebuilt.
+ * The limits logger's readings from the last 256 KiB of claude-limits.jsonl in `dir` (a line cut
+ * at the start of the tail is skipped), or [] when there is no log. Never throws.
  */
-export function countCompacts(transcript, dir = stateDir()) {
-  if (typeof transcript !== "string" || !transcript) return null;
-  const cacheFile = join(dir, "statusline-compacts.json");
-  const cache = readJson(cacheFile);
-  const entries = cache && typeof cache === "object" && !Array.isArray(cache) ? cache : {};
+export function readLimitsTail(dir = stateDir()) {
   let fd;
-  try { fd = openSync(transcript, "r"); } catch { return null; }
+  try { fd = openSync(join(dir, "claude-limits.jsonl"), "r"); } catch { return []; }
   try {
-    const st = fstatSync(fd);
-    let prev = entries[transcript];
-    // A negative or non-integer offset or count (a corrupt or hand-edited cache) counts again from 0.
-    if (!prev || prev.ino !== st.ino || !Number.isSafeInteger(prev.offset) || prev.offset < 0
-      || prev.offset > st.size || !Number.isSafeInteger(prev.count) || prev.count < 0
-      || prev.hash !== seen(fd, prev.offset)) prev = { offset: 0, count: 0 };
-    if (prev.size === st.size && prev.offset <= st.size) return prev.count;
-    let offset = prev.offset, count = prev.count, carry = Buffer.alloc(0);
-    while (offset + carry.length < st.size) {
-      const buf = Buffer.alloc(Math.min(CHUNK, st.size - offset - carry.length));
-      const n = readSync(fd, buf, 0, buf.length, offset + carry.length);
-      if (n <= 0) break;
-      const data = carry.length ? Buffer.concat([carry, buf.subarray(0, n)]) : buf.subarray(0, n);
-      const end = data.lastIndexOf(10);
-      if (end < 0) { carry = data; continue; }
-      for (let at = data.indexOf(BOUNDARY); at >= 0 && at < end; at = data.indexOf(BOUNDARY, at + BOUNDARY.length)) count++;
-      offset += end + 1;
-      carry = data.subarray(end + 1);
+    const size = fstatSync(fd).size, n = Math.min(size, TAIL);
+    const buf = Buffer.alloc(n);
+    let got = 0;
+    while (got < n) {
+      const r = readSync(fd, buf, got, n - got, size - n + got);
+      if (r <= 0) break;
+      got += r;
     }
-    entries[transcript] = { ino: st.ino, size: st.size, offset, count, hash: seen(fd, offset), at: Date.now() };
-    save(cacheFile, dir, entries);
-    return count;
-  } catch { return null; } finally { try { closeSync(fd); } catch { /* closed */ } }
+    const lines = buf.subarray(0, got).toString("utf8").split("\n");
+    if (size > n) lines.shift();
+    const rows = [];
+    for (const line of lines) {
+      if (!line) continue;
+      try { const r = JSON.parse(line); if (isObject(r)) rows.push(r); } catch { /* a bad line */ }
+    }
+    return rows;
+  } catch { return []; } finally { try { closeSync(fd); } catch { /* closed */ } }
 }
 
-/** A short hash of the SEEN bytes before `offset`: what the cached count was read from. */
-function seen(fd, offset) {
-  const start = Math.max(0, offset - SEEN);
-  const buf = Buffer.alloc(offset - start);
-  let n = 0;
-  while (n < buf.length) {
-    const r = readSync(fd, buf, n, buf.length - n, start + n);
-    if (r <= 0) break;
-    n += r;
-  }
-  return createHash("sha256").update(buf.subarray(0, n)).digest("hex").slice(0, 16);
+/**
+ * The name of the bot this Herdr pane plays, or null outside a pane (no HC_TERMINAL_ID) or when
+ * it plays none. Asks `automagik-herdr whois --json <terminal>` (the launcher at its absolute
+ * path, run with /bin/sh, `timeout` ms), then reads the name from <project>/.herdr/bots.json.
+ * The answer, a miss or a failure included, is cached for 10 minutes per terminal in
+ * statusline-bots.json. Never throws.
+ */
+export function botName(env = process.env, { dir = stateDir(env), home = homedir(), launcher = join(home, ".local/bin/automagik-herdr"), now = Date.now(), timeout = 1500 } = {}) {
+  try {
+    const terminal = clean(env.HC_TERMINAL_ID);
+    if (!terminal) return null;
+    const key = `${env.HC_TERMINAL_SOCKET ?? ""}#${terminal}`;
+    const cacheFile = join(dir, "statusline-bots.json");
+    const cache = readJson(cacheFile);
+    const entries = isObject(cache) ? cache : {};
+    const hit = entries[key];
+    if (isObject(hit) && num(hit.at) != null && hit.at <= now && now - hit.at < BOT_TTL) return clean(hit.name) || null;
+    let name = "";
+    try {
+      if (existsSync(launcher)) {
+        const out = execFileSync("/bin/sh", [launcher, "whois", "--json", terminal], {
+          encoding: "utf8", timeout, stdio: ["ignore", "pipe", "ignore"],
+          env: { ...env, PATH: [join(home, ".local/bin"), env.PATH, "/usr/bin:/bin"].filter(Boolean).join(":") },
+        });
+        const who = JSON.parse(out);
+        if (isObject(who) && typeof who.bot === "string" && typeof who.project === "string" && who.project.startsWith("/")) {
+          const bots = readJson(join(who.project, ".herdr/bots.json"))?.bots;
+          const found = Array.isArray(bots) ? bots.find((b) => isObject(b) && b.id === who.bot) : null;
+          name = clean(found?.name);
+        }
+      }
+    } catch { /* no answer: cached as none */ }
+    entries[key] = { name, at: now };
+    save(cacheFile, dir, entries);
+    return name || null;
+  } catch { return null; }
 }
 
 function save(cacheFile, dir, entries) {
   try {
-    const kept = Object.fromEntries(Object.entries(entries).sort(([, a], [, b]) => (b.at ?? 0) - (a.at ?? 0)).slice(0, KEEP));
+    const kept = Object.fromEntries(Object.entries(entries).sort(([, a], [, b]) => (b?.at ?? 0) - (a?.at ?? 0)).slice(0, KEEP));
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const tmp = `${cacheFile}.${process.pid}.tmp`;
     writeFileSync(tmp, JSON.stringify(kept), { mode: 0o600 });
     renameSync(tmp, cacheFile);
-  } catch { /* the next turn counts again */ }
+  } catch { /* asked again next turn */ }
 }
 
 function main() {
@@ -292,9 +362,11 @@ function main() {
       let input = null;
       try { input = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { /* print what there is */ }
       const safe = (f) => { try { return f(); } catch { return null; } };
+      const quota = isObject(input?.rate_limits) && Object.keys(WINDOWS).some((k) => isObject(input.rate_limits[k]));
       line = format(input, {
         autoCompactWindow: safe(() => autoCompactWindowFor(input)),
-        compacts: safe(() => countCompacts(input?.transcript_path)),
+        bot: safe(() => botName()),
+        limits: quota ? safe(() => readLimitsTail()) : null,
         columns: Number(process.env.COLUMNS) || null,
         color: !process.env.NO_COLOR,
       });
