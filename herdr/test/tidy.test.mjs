@@ -13,6 +13,7 @@ import { plan, applyNonVisual, planText, folderFacts, displayName } from "../mod
 import { readState, spacesOf } from "../mods/am-sidebar/bin/state.mjs";
 import { runProgram } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { fixtures, golden, view } from "./sidebar-fixture.mjs";
+import { readJsonLines, readLines } from "./log-lines.mjs";
 
 const NOW = Date.parse("2026-11-02T12:00:00Z");
 const TIDY = new URL("./fixtures/tidy/", import.meta.url);
@@ -361,8 +362,8 @@ function scene(t) {
   delete env.HC_TERMINAL_ID;
   const cli = (args) => { const r = spawnSync(process.execPath, [CLI, ...args], { cwd: alpha, env, encoding: "utf8" }); return { code: r.status, out: r.stdout, err: r.stderr }; };
   const read = (p) => readFileSync(p, "utf8");
-  const hcCalls = () => read(hcLog).split("\n").filter(Boolean).map((l) => JSON.parse(l));
-  const appCalls = () => read(appLog).split("\n").filter(Boolean);
+  const hcCalls = () => readJsonLines(hcLog);
+  const appCalls = () => readLines(appLog);
   const snapshot = () => [read(list), read(hcState), read(join(alpha, ".herdr/bots.json")), read(join(beta, ".herdr/bots.json"))];
   return { root, alpha, beta, worktree, app, list, cli, hcCalls, appCalls, snapshot, hcState, env };
 }

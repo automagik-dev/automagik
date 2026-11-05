@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { besideDirs, envInterpreter, interpreterPath, safe } from "../mods/am-sidebar/agentPath.mjs";
 import { workerArgs } from "../mods/am-sidebar/workers.js";
 import { withoutBriefing } from "../mods/am-sidebar/models.js";
+import { readJsonLines } from "./log-lines.mjs";
 // Start and Restart put each bot's briefing in its agent's command (models.js withBriefing);
 // the tests on the rest of the command compare it with those words out.
 const strip = (words) => withoutBriefing("codex", withoutBriefing("claude", words));
@@ -267,7 +268,7 @@ function codexProject(t, extra = [], { terminals = [], env: more = {} } = {}) {
   const path = `${bin}:${s.empty}`;
   const env = { ...s.env, PATH: path, HERDR_APP_HOME: app, HC_FAKE_STATE: state, HC_FAKE_LOG: log, HC_TERMINAL_ID: "t1", ...more };
   const cli = (...args) => spawnSync(process.execPath, [CLI, ...args], { cwd: project, env, encoding: "utf8" });
-  const run = () => readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).find((c) => c[0] === "run");
+  const run = () => readJsonLines(log).find((c) => c[0] === "run");
   return { s, prefix, path, cli, run };
 }
 
