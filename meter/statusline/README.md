@@ -4,7 +4,7 @@ Automagik Meter's Claude Code status line, and the limits logger it runs behind.
 tools: no release ships them (`scripts/lane.ts`, `NEVER_SHIPPED`).
 
 ```
-🤖 Meter Captain  🧠 Opus 5.5 ⚡high  ┃  📁 my-app  ┃  💬 Context ▰▰▰▰▱▱▱▱▱▱ 400k/1M  ┃  Quota 5h ▰▰▰▰▰ 94%  Left 16m  Resets 59m  ┃  Quota 7d ▰▰▱▱▱ 31%  Resets 4d2h
+🤖 Meter Captain  🧠 Opus 5.5 ⚡high  ┃  📁 my-app  ┃  💬 ▰▰▰▰▱▱▱▱▱▱ 400k/1M  ┃  Quota 5h ▰▰▰▰▰ 94%  Left 16m  Resets 59m  ┃  Quota 7d ▰▰▱▱▱ 31%  Resets 4d2h
 ```
 
 Each segment is left out when its field is missing. Separators and labels are dim; green under

@@ -3,7 +3,7 @@
 // statusline command on every turn; this prints one line from it (two when the terminal is too
 // narrow for one: the quota moves to the second):
 //
-//   🤖 Meter Captain  🧠 Opus 5.5 ⚡high  ┃  📁 my-app  ┃  💬 Context ▰▰▰▰▱▱▱▱▱▱ 400k/1M  ┃
+//   🤖 Meter Captain  🧠 Opus 5.5 ⚡high  ┃  📁 my-app  ┃  💬 ▰▰▰▰▱▱▱▱▱▱ 400k/1M  ┃
 //   Quota 5h ▰▱▱▱▱ 24%  Resets 2h14m  ┃  Quota 7d ▰▰▰▱▱ 58%  Left 1d2h  Resets 4d2h
 //
 // - 🤖: the bot this Herdr pane plays (HC_TERMINAL_ID set): `automagik-herdr whois --json`, run
@@ -12,7 +12,7 @@
 //   state folder (statusline-bots.json), a miss included, every live pane kept; whois gets 1.5 s,
 //   then SIGKILL. No pane, no bot.
 // - ⚡: effort.level from stdin. Claude Code sends none when the model has no effort setting.
-// - Context: a 10-cell bar of the context window used, then the tokens used and the window. Its
+// - 💬: a 10-cell bar of the context window used, then the tokens used and the window. Its
 //   colour is measured against the auto-compact window, found the way Claude Code finds it
 //   (code.claude.com/docs/en/model-config, "Set the auto-compact window"): none when
 //   DISABLE_AUTO_COMPACT or DISABLE_COMPACT is set or autoCompactEnabled is false; else
@@ -184,7 +184,7 @@ export function format(input, opts = {}) {
     const window = num(autoCompactWindow);
     const tint = level(window && used != null ? (used / window) * 100 : pct);
     const count = used == null ? `${Math.round(pct)}%` : paint(tint, tokens(used)) + (size ? dim(`/${tokens(size)}`) : "");
-    groups.push(`💬 ${dim("Context")} ${paint(tint, bar(pct, 10))} ${count}`);
+    groups.push(`💬 ${paint(tint, bar(pct, 10))} ${count}`);
   }
 
   const quota = [];

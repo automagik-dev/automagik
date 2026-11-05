@@ -21,18 +21,18 @@ const iso = (s) => new Date(s * 1000).toISOString();
 
 test("fixtures (NO_COLOR): fresh session, mid session with quota, outside Herdr, near the limits", () => {
   assert.equal(format(fixture("fresh-session"), plain),
-    "🧠 Opus 5.5 ⚡medium  ┃  📁 my-app  ┃  💬 Context ▱▱▱▱▱▱▱▱▱▱ 0/1M");
+    "🧠 Opus 5.5 ⚡medium  ┃  📁 my-app  ┃  💬 ▱▱▱▱▱▱▱▱▱▱ 0/1M");
   assert.equal(format(fixture("mid-session-quota"), { ...plain, bot: "Meter Captain" }),
-    "🤖 Meter Captain  🧠 Opus 5.5 ⚡high  ┃  📁 api  ┃  💬 Context ▰▰▰▰▱▱▱▱▱▱ 400k/1M"
+    "🤖 Meter Captain  🧠 Opus 5.5 ⚡high  ┃  📁 api  ┃  💬 ▰▰▰▰▱▱▱▱▱▱ 400k/1M"
     + "  ┃  Quota 5h ▰▱▱▱▱ 24%  Resets 2h14m  ┃  Quota 7d ▰▰▱▱▱ 31%  Resets 4d2h");
   // Outside a Herdr pane there is no bot: the line starts at the model.
   assert.equal(format(fixture("mid-session-quota"), plain),
-    "🧠 Opus 5.5 ⚡high  ┃  📁 api  ┃  💬 Context ▰▰▰▰▱▱▱▱▱▱ 400k/1M"
+    "🧠 Opus 5.5 ⚡high  ┃  📁 api  ┃  💬 ▰▰▰▰▱▱▱▱▱▱ 400k/1M"
     + "  ┃  Quota 5h ▰▱▱▱▱ 24%  Resets 2h14m  ┃  Quota 7d ▰▰▱▱▱ 31%  Resets 4d2h");
   // Near the limits, no log: 94% after 4h01m of the 5h window runs out in 16m, before its reset
   // in 59m; 91% after 5d22h of the 7d window in 13h47m, before 1d1h.
   assert.equal(format(fixture("quota-near-limit"), { ...plain, bot: "Meter Captain" }),
-    "🤖 Meter Captain  🧠 Opus 5.5 ⚡xhigh  ┃  📁 my-app  ┃  💬 Context ▰▰▰▰▰▱▱▱▱▱ 472k/1M"
+    "🤖 Meter Captain  🧠 Opus 5.5 ⚡xhigh  ┃  📁 my-app  ┃  💬 ▰▰▰▰▰▱▱▱▱▱ 472k/1M"
     + "  ┃  Quota 5h ▰▰▰▰▰ 94%  Left 16m  Resets 59m  ┃  Quota 7d ▰▰▰▰▰ 91%  Left 13h47m  Resets 1d1h");
 });
 
@@ -41,7 +41,7 @@ test("colour: green under 70, yellow from 70, red from 90; Left in red; context 
   const sep = dim("  ┃  ");
   assert.equal(format(fixture("quota-near-limit"), { now: NOW, autoCompactWindow: 500_000, bot: "Meter Captain" }),
     `🤖 ${E(36)}${E(1)}Meter Captain${R}  🧠 ${E(1)}Opus 5.5${R} ⚡xhigh${sep}📁 my-app${sep}`
-    + `💬 ${dim("Context")} ${red("▰▰▰▰▰▱▱▱▱▱")} ${red("472k")}${dim("/1M")}${sep}` // 94% of the 500k window
+    + `💬 ${red("▰▰▰▰▰▱▱▱▱▱")} ${red("472k")}${dim("/1M")}${sep}` // 94% of the 500k window
     + `${dim("Quota 5h")} ${red("▰▰▰▰▰")} ${red("94%")}  ${dim("Left")} ${red("16m")}  ${dim("Resets")} 59m${sep}`
     + `${dim("Quota 7d")} ${red("▰▰▰▰▰")} ${red("91%")}  ${dim("Left")} ${red("13h47m")}  ${dim("Resets")} 1d1h`);
   // 400k is 80% of a 500k compact window (yellow) though the bar is 40% of the context window.
@@ -56,7 +56,7 @@ test("colour: green under 70, yellow from 70, red from 90; Left in red; context 
 
 test("a narrow terminal gets two lines: the quota moves to the second", () => {
   assert.equal(format(fixture("mid-session-quota"), { ...plain, columns: 120 }),
-    "🧠 Opus 5.5 ⚡high  ┃  📁 api  ┃  💬 Context ▰▰▰▰▱▱▱▱▱▱ 400k/1M\n"
+    "🧠 Opus 5.5 ⚡high  ┃  📁 api  ┃  💬 ▰▰▰▰▱▱▱▱▱▱ 400k/1M\n"
     + "Quota 5h ▰▱▱▱▱ 24%  Resets 2h14m  ┃  Quota 7d ▰▰▱▱▱ 31%  Resets 4d2h");
   assert.equal(format(fixture("mid-session-quota"), { ...plain, columns: 200 }).includes("\n"), false);
 });
@@ -69,15 +69,15 @@ test("missing fields drop their segment, and it never throws", () => {
   // No effort (a model without the setting): no effort word.
   const { effort, ...noEffort } = fixture("fresh-session");
   assert.equal(effort.level, "medium");
-  assert.equal(format(noEffort, plain), "🧠 Opus 5.5  ┃  📁 my-app  ┃  💬 Context ▱▱▱▱▱▱▱▱▱▱ 0/1M");
+  assert.equal(format(noEffort, plain), "🧠 Opus 5.5  ┃  📁 my-app  ┃  💬 ▱▱▱▱▱▱▱▱▱▱ 0/1M");
   // One window only, as Claude Code sends once the other has reset; a passed reset shows no timer.
   const real = { model: { id: "claude-opus-5-5", display_name: "Opus 5.5" }, rate_limits: { seven_day: { used_percentage: 58, resets_at: 1_793_700_000 } } };
   assert.equal(format(real, plain), "🧠 Opus 5.5  ┃  Quota 7d ▰▰▰▱▱ 58%");
   // Tokens worked out from current_usage when the totals are absent; from the % when only it is there.
   const usage = { context_window: { context_window_size: 200_000, current_usage: { input_tokens: 10, cache_creation_input_tokens: 990, cache_read_input_tokens: 49_000 } } };
-  assert.equal(format(usage, plain), "💬 Context ▰▰▰▱▱▱▱▱▱▱ 50k/200k");
-  assert.equal(format({ context_window: { context_window_size: 1_000_000, used_percentage: 52 } }, plain), "💬 Context ▰▰▰▰▰▱▱▱▱▱ 520k/1M");
-  assert.equal(format({ context_window: { used_percentage: 52 } }, plain), "💬 Context ▰▰▰▰▰▱▱▱▱▱ 52%");
+  assert.equal(format(usage, plain), "💬 ▰▰▰▱▱▱▱▱▱▱ 50k/200k");
+  assert.equal(format({ context_window: { context_window_size: 1_000_000, used_percentage: 52 } }, plain), "💬 ▰▰▰▰▰▱▱▱▱▱ 520k/1M");
+  assert.equal(format({ context_window: { used_percentage: 52 } }, plain), "💬 ▰▰▰▰▰▱▱▱▱▱ 52%");
   // Text from stdin or bots.json is printed without its control characters.
   assert.equal(format({ model: { display_name: "Opus\x1b[2J 5.5\n" }, workspace: { current_dir: "/x/a\x07b" } }, { ...plain, bot: "\x1b]0;t\x07Bot" }),
     "🤖 ]0;tBot  🧠 Opus[2J 5.5  ┃  📁 ab");
@@ -416,7 +416,7 @@ test("the command under a bare PATH, alone and wrapped by the limits logger", ()
     const env = { PATH: "/usr/bin:/bin", HOME: dir, CLAUDE_CONFIG_DIR: config, METER_STATE_DIR: state, NO_COLOR: "1", COLUMNS: "200" };
     const run = (args, stdin, extra = {}) => spawnSync(process.execPath, args, { input: stdin, env: { ...env, ...extra }, encoding: "utf8" });
     const statusline = here("../automagik-statusline.mjs");
-    const expected = "🧠 Opus 5.5 ⚡high  ┃  📁 api  ┃  💬 Context ▰▰▰▰▱▱▱▱▱▱ 400k/1M\n";
+    const expected = "🧠 Opus 5.5 ⚡high  ┃  📁 api  ┃  💬 ▰▰▰▰▱▱▱▱▱▱ 400k/1M\n";
 
     // Outside Herdr: no bot, and the launcher is not run.
     const alone = run([statusline], JSON.stringify(input));
