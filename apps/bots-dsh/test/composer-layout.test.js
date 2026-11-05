@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { runInNewContext } from 'node:vm'
 import { build } from 'esbuild'
 import { CONVERSATION_MARK, STAGE_CSS } from '../src/client/stage.js'
+import { browserGuard } from './browser-guard.js'
 
 // Requires the dev/harness dependency install; reads its supported DSH InputBar CSS,
 // not a second layout model. This does not inspect or modify the installed GUI.
@@ -22,8 +23,6 @@ const { outputFiles } = await build({
 const module = { exports: {} }
 runInNewContext(outputFiles[0].text, { module, exports: module.exports, require: () => ({}) })
 const botCss = module.exports.CONVERSATION_CSS
-const executablePath = process.env.CHROME_BIN ?? (process.platform === 'darwin'
-  ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : '/usr/bin/chromium')
 
 // This is a layout fixture, NOT an end-to-end replacement for the shell's editor.
 // Bot mode's conversation group marks the page and installs CONVERSATION_CSS and ComposerPlus;
@@ -64,19 +63,10 @@ test('all six structural stage rules require the Bot conversation group marker',
 })
 
 test('stage leaves native wish geometry intact; Bot controls keep their two-row layout', async t => {
-  // CI must run the browser half (#323): its job sets CHROME_BIN and installs playwright-core
-  // (a dependency of this package), so a missing browser or module there is a broken job.
-  if (!existsSync(executablePath)) {
-    if (process.env.CI) assert.fail(`Browser layout check found no browser at ${executablePath} (CHROME_BIN=${process.env.CHROME_BIN ?? 'unset'}); CI must run it`)
-    return t.skip('Browser layout check requires CHROME_BIN; structural check still runs')
-  }
-  let chromium
-  try { ({ chromium } = await import('playwright-core')) } catch (error) {
-    if (error.code !== 'ERR_MODULE_NOT_FOUND') throw error
-    if (process.env.CI) assert.fail(`Browser layout check cannot import playwright-core (${error.message}); CI's bun install must provide it`)
-    return t.skip('Browser layout check requires the root bun install (playwright-core)')
-  }
-  const browser = await chromium.launch({ executablePath, headless: true })
+  // CI must run the browser half (#323, #364): the shared guard fails there, never skips.
+  const guard = await browserGuard()
+  if (guard.skip) return t.skip(guard.skip)
+  const browser = await guard.chromium.launch({ executablePath: guard.executablePath, headless: true })
   t.after(() => browser.close())
   const page = await browser.newPage()
   for (const width of [390, 1200]) {

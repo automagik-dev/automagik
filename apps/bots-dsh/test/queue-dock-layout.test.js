@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { runInNewContext } from 'node:vm'
 import { build } from 'esbuild'
 import { STAGE_CSS } from '../src/client/stage.js'
+import { browserGuard } from './browser-guard.js'
 
 // #91: DSH's queued-message dock under the Stage theme. Requires the dev/harness install;
 // reads the supported DSH InputBar, ConversationRoot and QueueDock CSS, not a second layout
@@ -34,8 +35,6 @@ const botCss = module.exports.CONVERSATION_CSS
 const BOT_RULE = botCss.split('\n').find(line => line.includes('[data-queue-dock]'))
 // dev before #91: the Bot sheet without the dock's axis rule.
 const BOT_BASELINE = botCss.replace(`${BOT_RULE}\n`, '')
-const executablePath = process.env.CHROME_BIN ?? (process.platform === 'darwin'
-  ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : '/usr/bin/chromium')
 
 const RULE = STAGE_CSS.split('\n').find(line => line.includes('[data-queue-dock]'))
 // dev before #91: the same theme without the dock rule.
@@ -150,13 +149,10 @@ const CASES = [
 ]
 
 test('the queued-message dock shares the Stage composer column without overlapping it', async t => {
-  if (!existsSync(executablePath)) return t.skip('Browser layout check requires CHROME_BIN; structural check still runs')
-  let chromium
-  try { ({ chromium } = await import('playwright-core')) } catch (error) {
-    if (error.code !== 'ERR_MODULE_NOT_FOUND') throw error
-    return t.skip('Browser layout check requires the root bun install (playwright-core)')
-  }
-  const browser = await chromium.launch({ executablePath, headless: true })
+  // CI must run the browser half (#364): the shared guard fails there, never skips.
+  const guard = await browserGuard()
+  if (guard.skip) return t.skip(guard.skip)
+  const browser = await guard.chromium.launch({ executablePath: guard.executablePath, headless: true })
   t.after(() => browser.close())
   const evidence = process.env.QUEUE_EVIDENCE_DIR
   for (const shape of CASES) {
