@@ -3561,7 +3561,7 @@ function githubTokenUrl(work) {
   for (const { name, level } of githubPermissions(work)) params.set(name, level);
   return `${GITHUB_TOKEN_PAGE}?${params}`;
 }
-var GITHUB_TOKEN_NAME = /^(?:GITHUB|GH)_(?:TOKEN|PAT|ACCESS_TOKEN|PERSONAL_ACCESS_TOKEN)$/;
+var GITHUB_TOKEN_NAME = /^(?:GITHUB|GH)_(?:TOKEN|PAT|ACCESS_TOKEN|PERSONAL_ACCESS_TOKEN|API_TOKEN|OAUTH_TOKEN)$/;
 var isGitHubTokenName = (name) => GITHUB_TOKEN_NAME.test(String(name ?? ""));
 
 // src/client/secret-card.js

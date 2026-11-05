@@ -54,6 +54,7 @@ test('declared work is a closed list of tags', () => {
 })
 
 test('a GitHub token is recognized by its usual names only', () => {
-  for (const name of ['GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_PAT', 'GH_PAT', 'GITHUB_ACCESS_TOKEN', 'GITHUB_PERSONAL_ACCESS_TOKEN']) assert.equal(isGitHubTokenName(name), true, name)
-  for (const name of ['GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GHOST_TOKEN', 'MY_GITHUB_TOKEN', 'GITHUB_WEBHOOK_SECRET', 'DEMO_TOKEN']) assert.equal(isGitHubTokenName(name), false, name)
+  for (const name of ['GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_PAT', 'GH_PAT', 'GITHUB_ACCESS_TOKEN', 'GITHUB_PERSONAL_ACCESS_TOKEN',
+    'GITHUB_API_TOKEN', 'GH_API_TOKEN', 'GITHUB_OAUTH_TOKEN']) assert.equal(isGitHubTokenName(name), true, name)
+  for (const name of ['GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_ENTERPRISE_API_TOKEN', 'GITLAB_TOKEN', 'GHOST_TOKEN', 'MY_GITHUB_TOKEN', 'GITHUB_WEBHOOK_SECRET', 'DEMO_TOKEN']) assert.equal(isGitHubTokenName(name), false, name)
 })

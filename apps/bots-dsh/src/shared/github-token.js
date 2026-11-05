@@ -63,6 +63,7 @@ export function githubTokenUrl(work) {
 }
 
 // The names a Bot gives a github.com token. A request under one of them must say its work;
-// an Enterprise host's token (GH_ENTERPRISE_TOKEN) is another site and not matched.
-const GITHUB_TOKEN_NAME = /^(?:GITHUB|GH)_(?:TOKEN|PAT|ACCESS_TOKEN|PERSONAL_ACCESS_TOKEN)$/
+// the API_TOKEN and OAUTH_TOKEN forms (GITHUB_API_TOKEN, GH_API_TOKEN, GITHUB_OAUTH_TOKEN) count
+// too. An Enterprise host's token (GH_ENTERPRISE_TOKEN) is another site and not matched.
+const GITHUB_TOKEN_NAME = /^(?:GITHUB|GH)_(?:TOKEN|PAT|ACCESS_TOKEN|PERSONAL_ACCESS_TOKEN|API_TOKEN|OAUTH_TOKEN)$/
 export const isGitHubTokenName = name => GITHUB_TOKEN_NAME.test(String(name ?? ''))

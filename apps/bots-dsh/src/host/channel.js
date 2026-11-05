@@ -14,6 +14,9 @@ import { COLORS, EXTRA_COLORS, IMAGE_ROUTE, PET_CODEX_ROUTE, PET_ROUTE, ROUTE } 
 
 const LANGUAGES = { zh: 'Chinese (简体中文)', en: 'English' }
 const RUN_STATS = ['sessionStats', 'tokenUsage', 'contextPressure']
+// Where the English interface allows an MCP server: the words the Bot names until a browser
+// reports its own (rt.allowPlace below).
+const DEFAULT_ALLOW_PLACE = 'Settings > Capabilities > Allow'
 
 const invalid = message => Object.assign(new Error(message), { code: 'bot/invalid' })
 // Programming and file system errors are DS Bot's own faults, logged with their stack;
@@ -36,8 +39,15 @@ export function install(rt) {
   // Where the user allows an MCP server, in that browser's words (places.js builds it from the
   // interface's own strings, "Configurações > Recursos > Permitir" in pt-BR), so the Bot names
   // the place as the user sees it. Until a browser says, the English interface's words.
+  // The reported words are stripped, not rewritten: invisible format marks (Cf: zero-width
+  // spaces, bidi controls such as U+202E, the BOM; also U+200D, so an emoji ZWJ sequence
+  // splits) and line and paragraph separators (Zl U+2028, Zp U+2029) are removed and nothing
+  // is put in their place; the rest is trimmed. Text that still holds a control character (Cc,
+  // a newline or tab) is not one short line and is ignored whole, keeping the previous words;
+  // so is anything empty or over 120 characters after the strip. So allowPlace() never holds
+  // a Cc, Cf, Zl or Zp character.
   let uiAllowPlace
-  rt.allowPlace = () => uiAllowPlace ?? 'Settings > Capabilities > Allow'
+  rt.allowPlace = () => uiAllowPlace ?? DEFAULT_ALLOW_PLACE
 
   const ok = value => ({ ok: true, value })
   const fail = (message, code = 'bot/error') => ({ ok: false, error: { code, message, details: {} } })
@@ -198,7 +208,10 @@ export function install(rt) {
       switch (endpoint) {
         case 'state':
           if (typeof body.locale === 'string' && /^[a-z]{2,3}(-[\w-]+)?$/i.test(body.locale)) uiLocale = body.locale
-          if (typeof body.allowPlace === 'string' && /^[^\p{Cc}]{1,120}$/u.test(body.allowPlace.trim())) uiAllowPlace = body.allowPlace.trim()
+          if (typeof body.allowPlace === 'string') {
+            const place = body.allowPlace.replace(/[\p{Cf}\p{Zl}\p{Zp}]/gu, '').trim()
+            if (/^[^\p{Cc}]{1,120}$/u.test(place)) uiAllowPlace = place
+          }
           if (readOnly === undefined) await rt.bootstrap()
           await rt.catalog()
           await rt.loadSecrets()
