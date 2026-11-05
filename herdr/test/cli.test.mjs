@@ -1320,6 +1320,28 @@ test("restart (#328 review): an ended teammate's seat row in the folder is a sha
   }
 });
 
+test("restart (#341): a teammate re-seated in a worktree still left its omp conversation here; Genie starts fresh, never --continue", (t) => {
+  // Captain sat here on omp (t7), then was re-seated in a worktree of the project (same bot ids).
+  const seats = (s, wt, last) => {
+    mkdirSync(wt, { recursive: true });
+    writeFileSync(ledgerPath(s.app), [{ terminal: "t7", worktree: s.project }, { terminal: last, worktree: wt }]
+      .map((x) => `${JSON.stringify({ event: "start", kind: "seat", botId: ID.cap, agent: "omp", ...x })}\n`).join(""));
+  };
+  const seed = [{ event: "start", kind: "seat", terminal: "t0", botId: ID.cap, worktree: "/elsewhere", agent: "omp" }];
+  // Both of Captain's panes ended: its old omp session here can still be the folder's latest.
+  const gone = shareScene(t, "omp", { captain: null, ledger: seed });
+  seats(gone, join(gone.root, "wt"), "t12");
+  assert.match(fresh(gone), /^no Oh My Pi session id is known for t5, and Captain \(t7, ended\) also ran Oh My Pi in /);
+  // Captain live in the worktree (t9): that pane isn't here, its old seat row here still is.
+  const wt = join(mkdtempSync(join(tmpdir(), "herdr-341-")), "wt");
+  t.after(() => rmSync(dirname(wt), { recursive: true, force: true }));
+  const moved = shareScene(t, "omp", { captain: { cwd: wt }, ledger: seed });
+  seats(moved, wt, "t9");
+  const note = fresh(moved);
+  assert.match(note, /Captain \(t7, ended\) also ran Oh My Pi in /);
+  assert.doesNotMatch(note, /t9/, "the worktree pane isn't in this folder");
+});
+
 test("restart (#328 review): a teammate's omp inside the keep wrapper is a sharer", (t) => {
   // Captain's omp runs inside the keep wrapper (launchArgs.js unwrapKeep).
   const wrapped = shareScene(t, "omp", { captain: { argv: ["sh", "-c", '"$@"; exec "${SHELL:-sh}" -i', "sh", "omp"] } });
