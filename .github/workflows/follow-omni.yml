@@ -18,10 +18,20 @@ name: Follow Omni
 # new dev. Nothing untested rides along.
 # Downgrades and a different patch series wait for a coordinated harness move.
 #
+# It carries at most one Omni a UTC day (#371): when the commit by which dev last moved omni.json
+# (along its first parents: a squash, this workflow's push, or a true merge, at its merge time) was
+# committed today (UTC), a newer Omni is held. It still boots (a
+# failing boot fails the run) but nothing is carried or released; the first run after 00:00 UTC
+# carries the newest Omni then. The bump and the release wait together: a carry left on dev would
+# make the next merge's release, of any lane, a full one (scripts/lane.ts kindOf). Dispatched by
+# hand with skip_daily_hold, it carries anyway and says so in a warning.
+#
 # Dispatched with dry_run, it boots and builds the bump but only rehearses the push
-# (`git push --dry-run`) and cuts no release. omni_version (and omni_commit) put a given Omni
+# (`git push --dry-run`) and cuts no release. A dry run is never held; it reports whether a real
+# run would be. omni_version (and omni_commit) put a given Omni
 # through the gate, also one that is not newer; dev_sha boots and builds on an older dev
-# commit, as if dev moved during the boot. All three are only taken with dry_run.
+# commit, as if dev moved during the boot. All three are only taken with dry_run, and
+# skip_daily_hold never is.
 #
 # Omni's dispatch carries {version, tag, sha} as a hint only: the run still reads Omni's
 # releases itself and follows what it finds, through the same checks and boot as the
@@ -59,6 +69,10 @@ on:
         description: Boot and build on this dev commit instead of dev's tip, as if dev moved (dry_run only)
         type: string
         default: ''
+      skip_daily_hold:
+        description: Carry even though omni.json already moved today (UTC); never with dry_run
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -77,6 +91,7 @@ jobs:
       version: ${{ steps.newest.outputs.version }}
       commit: ${{ steps.newest.outputs.commit }}
       dev: ${{ steps.newest.outputs.dev }}
+      held: ${{ steps.hold.outputs.held }}
     env:
       GH_TOKEN: ${{ github.token }}
       OMNI: automagik-dev/omni
@@ -84,6 +99,7 @@ jobs:
       WANT_VERSION: ${{ inputs.omni_version }}
       WANT_COMMIT: ${{ inputs.omni_commit }}
       WANT_DEV: ${{ inputs.dev_sha }}
+      SKIP_HOLD: ${{ inputs.skip_daily_hold && 'true' || 'false' }}
       # Omni's dispatch payload: logged next to what the run finds, never followed.
       HINT_VERSION: ${{ github.event.client_payload.version }}
       HINT_TAG: ${{ github.event.client_payload.tag }}
@@ -92,6 +108,9 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: dev
+          # The whole history: on a shallow one, the oldest commit fetched looks as if it moved
+          # omni.json (the Once a UTC day step).
+          fetch-depth: 0
           persist-credentials: false
 
       - name: The newest Omni release
@@ -100,6 +119,10 @@ jobs:
           set -euo pipefail
           if [[ -n "${WANT_VERSION}${WANT_COMMIT}${WANT_DEV}" && "${DRY_RUN}" != true ]]; then
             echo "::error ::omni_version, omni_commit and dev_sha are only taken with dry_run: a chosen Omni or dev is never carried"
+            exit 1
+          fi
+          if [[ "${SKIP_HOLD}" == true && "${DRY_RUN}" == true ]]; then
+            echo "::error ::skip_daily_hold is not taken with dry_run: a dry run is never held"
             exit 1
           fi
           # Dispatch inputs reach GITHUB_OUTPUT: only a release version and full shas pass.
@@ -180,6 +203,47 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "### Candidate: Omni ${newest} (${commit:0:9}), omni.json is at ${current}$([[ "${DRY_RUN}" == true ]] && echo ', dry run: boot check only')" >> "$GITHUB_STEP_SUMMARY"
 
+      # Once a UTC day (#371): when a commit that moved omni.json on dev was committed today (UTC),
+      # by this workflow or by hand, the candidate is held: it still boots, so a bad Omni still
+      # fails the run, but it is not carried or released. Nothing is stored: the first run after
+      # 00:00 UTC (the 00:11 schedule) looks for the newest Omni itself and carries that.
+      - name: Once a UTC day
+        id: hold
+        if: steps.newest.outputs.version != ''
+        env:
+          VERSION: ${{ steps.newest.outputs.version }}
+        run: |
+          set -euo pipefail
+          # The checkout is dev's tip with its whole history (never dev_sha). Along dev's first
+          # parents, the commit that last moved omni.json is the one dev made: a squash or a push
+          # by this workflow, or a true merge, dated when it was merged, never its branch commit.
+          # An error here fails the run: a day is never assumed free.
+          last=$(TZ=UTC git log --first-parent -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ --format='%H %cd' HEAD -- apps/desktop/omni.json)
+          sha="${last%% *}"
+          at="${last#* }"
+          today=$(date -u +%F)
+          held=false
+          if [[ -n "${last}" && "${at:0:10}" == "${today}" ]]; then
+            moved="omni.json moved today at ${at:11:5}Z (${sha:0:9})"
+            if [[ "${DRY_RUN}" == true ]]; then
+              line="Dry run: a real run would hold Omni ${VERSION}: ${moved}"
+            elif [[ "${SKIP_HOLD}" == true ]]; then
+              line="Daily hold skipped by hand: carrying Omni ${VERSION} although ${moved}"
+              echo "::warning ::${line}"
+            else
+              held=true
+              line="Omni ${VERSION} held: ${moved}; it boots but is not carried."
+              line+=" The first run after 00:00 UTC (the 00:11 schedule) carries the newest Omni"
+            fi
+          else
+            line="omni.json last moved ${at:0:10}${last:+ at ${at:11:5}Z (${sha:0:9})}, not today (${today} UTC):"
+            [[ -n "${last}" ]] || line="omni.json was never moved on dev:"
+            line+=" $([[ "${DRY_RUN}" == true ]] && echo 'a real run would carry' || echo 'carrying') Omni ${VERSION} once it boots"
+          fi
+          echo "held=${held}" >> "$GITHUB_OUTPUT"
+          echo "${line}"
+          echo "### ${line}" >> "$GITHUB_STEP_SUMMARY"
+
   boot:
     name: Boot the candidate
     needs: follow
@@ -194,10 +258,11 @@ jobs:
 
   carry:
     # Only after the candidate booted: a failed boot fails the run here and nothing moves. The
-    # bump goes on the dev commit that booted, and only a fast-forward of dev is pushed.
+    # bump goes on the dev commit that booted, and only a fast-forward of dev is pushed. A held
+    # candidate (omni.json already moved today, UTC) is not carried, so nothing is released.
     name: Move to it
     needs: [follow, boot]
-    if: needs.follow.outputs.version != ''
+    if: needs.follow.outputs.version != '' && needs.follow.outputs.held != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
