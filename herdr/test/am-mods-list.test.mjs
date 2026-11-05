@@ -132,3 +132,33 @@ test("groupMods: the pack, yours, then built-in folded to one row; the counts ar
   assert.deepEqual(bare.groups.map((g) => g.key), ["yours", "herdr"]);
   assert.deepEqual(bare.counts, ["2 yours", "2 built-in"], "no count for a group that is not drawn");
 });
+
+// #305: Herdr drops a layout whose block names a mod missing from mods/, so the switch reads what
+// the stock layout names. The tree is the repo's own herdr-layout file, never an app home's.
+const STOCK_LAYOUT = JSON.parse(readFileSync(new URL("../../herdr-layout/layouts/automagik.json", import.meta.url), "utf8"));
+
+test("layoutNeeds: the stock layout's blocks (header and floating ones too) and its right-click menu", () => {
+  const { blocks, menu } = core.layoutNeeds(STOCK_LAYOUT);
+  assert.deepEqual([...blocks].sort(), ["am-footer", "am-sidebar", "am-status", "am-tabs", "changes", "files", "pane", "workspace-chrome"]);
+  assert.equal(menu, "am-markdown");
+  const floating = { id: "root", children: [{ id: "a", floating: [{ id: "f", content: { mod: "float-mod" } }] }] };
+  assert.deepEqual([...core.layoutNeeds(floating).blocks], ["float-mod"]);
+  assert.deepEqual(core.layoutNeeds(null), { blocks: new Set(), menu: null });
+  assert.deepEqual(core.layoutNeeds({}), { blocks: new Set(), menu: null });
+});
+
+test("layoutGuard: a block's mod is refused with the layout's name; the menu's only noted; others pass", () => {
+  for (const mod of ["am-sidebar", "am-footer", "am-tabs", "am-status"]) {
+    const g = core.layoutGuard({ name: "automagik", tree: STOCK_LAYOUT, mod });
+    assert.match(g?.refuse ?? "", new RegExp(`^${mod} stays on: the automagik layout shows it`));
+    assert.match(g.refuse, /ctrl-shift-l/);
+  }
+  const menu = core.layoutGuard({ name: "automagik", tree: STOCK_LAYOUT, mod: "am-markdown" });
+  assert.equal(menu?.refuse, undefined);
+  assert.match(menu?.note ?? "", /the automagik layout's right-click menu/);
+  for (const mod of ["am-quota", "am-automations", "am-new-menu", "scratch"]) {
+    assert.equal(core.layoutGuard({ name: "automagik", tree: STOCK_LAYOUT, mod }), null, mod);
+  }
+  assert.match(core.layoutGuard({ tree: STOCK_LAYOUT, mod: "am-tabs" }).refuse, /the shown layout shows it/);
+  assert.equal(core.layoutGuard({ name: "main", tree: {}, mod: "am-sidebar" }), null, "no tree: nothing to guard");
+});
