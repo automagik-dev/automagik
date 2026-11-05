@@ -38,6 +38,20 @@ describe('the plugin lane', () => {
     expect(kindOf([...wslc, 'apps/desktop/electron-builder.yml'], none)).toBe('full');
   });
 
+  test('the landing page (apps/landing/) ships from the site, never from a release', () => {
+    const none = () => false;
+    const landing = ['apps/landing/index.html', 'apps/landing/styles.css', 'apps/landing/assets/hero.png',
+      'apps/landing/landing.test.mjs', 'apps/landing/verify-browser.mjs', 'apps/landing/README.md'];
+    // Alone: no release at all.
+    expect(ships(landing, none)).toBe(false);
+    // Beside a plugin: a plugin patch, no desktop build.
+    expect(ships([...landing, 'apps/bots-dsh/src/host/turns.js'], none)).toBe(true);
+    expect(kindOf([...landing, 'apps/bots-dsh/src/host/turns.js'], none)).toBe('plugins');
+    expect(kindOf([...landing, 'apps/bots-dsh/src/host/turns.js'], none, none, [...landing, 'apps/bots-dsh/src/host/turns.js'])).toBe('plugins');
+    // Beside the app's own code: still a full release.
+    expect(kindOf([...landing, 'apps/desktop/src/main.js'], none)).toBe('full');
+  });
+
   test('a herdr-only change is a herdr patch: no desktop build, no plugins, the pack alone', () => {
     const none = () => false;
     const pack = ['herdr/mods/am-sidebar/main.js', 'herdr-layout/layouts/automagik.json', 'herdr/install.sh'];

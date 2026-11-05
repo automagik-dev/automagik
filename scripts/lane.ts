@@ -86,9 +86,12 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // dsh-launch, the CI smoke and their tests; RFC 0016 delivery 2) are built by CI alone, and no
 // shipped app reads them yet: the desktop build packages src/ and the build/ resources only. When
 // Windows ships the helper (RFC 0016 delivery 6) this rule changes on purpose.
+// The landing page (apps/landing: the page, its styles, assets and checks; #177) is static and
+// ships from the site, never from a release: no app build and no plugin reads it (#370).
 const NEVER_SHIPPED = [/^am\/[^/]+\.md$/, /^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/, /^apps\/automagik-pets\//, /^docs\//,
   /^herdr\/[^/]+\.md$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr-layout\/(RECIPE\.md|preview\.png)$/,
-  /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//, /^meter\//, /^apps\/desktop\/wslc\//];
+  /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//, /^meter\//, /^apps\/desktop\/wslc\//,
+  /^apps\/landing\//];
 /**
  * The herdr part: everything under herdr/ (the pack's mods, installer and tooling) and its layout's
  * own entry folder, herdr-layout/ (the pack ships its automagik.json; RFC 0011).
