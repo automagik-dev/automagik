@@ -22,7 +22,10 @@ for (const [what, input, want] of TABLE.object) test(`object: ${what}`, () => as
 // hidden), a more indented mapping line is a child key, and a line at the key's indent or less is a
 // sibling. The key line and each blank, comment, anchor and tag line are kept as written. The rows
 // hold placeholders, filled here from pieces, so no credential-shaped text is committed.
-const FILL = { '{name}': ['pass', 'word'].join(''), '{camel}': ['api', 'Key'].join(''), '{parent}': ['sec', 'ret'].join(''), '{value}': ['hunter', 2].join('') }
-const fill = (s) => s.replace(/\{(?:name|camel|parent|value)\}/g, (k) => FILL[k])
+const FILL = { '{name}': ['pass', 'word'].join(''), '{camel}': ['api', 'Key'].join(''), '{parent}': ['sec', 'ret'].join(''), '{value}': ['hunter', 2].join(''), '{pass}': 'pass', '{word}': 'word' }
+const fill = (s) => s.replace(/\{(?:name|camel|parent|value|pass|word)\}/g, (k) => FILL[k])
 
 for (const [what, input, want] of TABLE.continuation) test(`continuation: ${what}`, () => assert.equal(redactText(fill(input)), fill(want)))
+
+// #406, the table's `partial_key` rows read whole (`{cut}` marks where a stream's first part stops).
+for (const [what, input, want] of TABLE.partial_key) test(`partial key: ${what}`, () => assert.equal(redactText(fill(input).split('{cut}').join('')), fill(want)))

@@ -45,7 +45,7 @@ function journal() {
   const send = (text) => mind.agentd({ v: 2, id: `g:${++seq}`, producer: 'g', seq, t_ns: seq, source: 'guest', kind: 'agent_delta', response_id: 'rK', text }, { via: 'agentd journal', file: '/j', offset: seq })
   mind.agentd({ v: 2, id: 'g:0', producer: 'g', seq: 0, t_ns: 0, source: 'guest', kind: 'response_started', response_id: 'rK' }, { via: 'agentd journal', file: '/j', offset: 0 })
   const served = () => [JSON.stringify(mind.snapshot()), ...mind.rows.map((x) => JSON.stringify(mind.detail(x.id, loadDefinitions())))].join('\n')
-  return { send, served }
+  return { send, served, row: () => mind.rows.find((x) => x.kind === 'agent_delta') }
 }
 
 test('served: every row the table hides stays hidden in the stream, whole and a character at a time', () => {
@@ -115,8 +115,8 @@ test('served: a blank run past the 4096 keep between a key line and its block in
 // hidden), a more indented mapping line is a child key, and a line at the key's indent or less is a
 // sibling. The key line and each blank, comment, anchor and tag line are kept as written. The rows
 // hold placeholders, filled here from pieces, so no credential-shaped text is committed.
-const FILL = { '{name}': ['pass', 'word'].join(''), '{camel}': ['api', 'Key'].join(''), '{parent}': ['sec', 'ret'].join(''), '{value}': ['hunter', 2].join('') }
-const fill = (s) => s.replace(/\{(?:name|camel|parent|value)\}/g, (k) => FILL[k])
+const FILL = { '{name}': ['pass', 'word'].join(''), '{camel}': ['api', 'Key'].join(''), '{parent}': ['sec', 'ret'].join(''), '{value}': ['hunter', 2].join(''), '{pass}': 'pass', '{word}': 'word' }
+const fill = (s) => s.replace(/\{(?:name|camel|parent|value|pass|word)\}/g, (k) => FILL[k])
 const SECRET = FILL['{value}']
 const CONTINUED = TABLE.continuation.map(([what, input, want]) => [what, fill(input), fill(want)])
 const CONTINUED_HIDDEN = CONTINUED.filter(([, input, want]) => input.includes(SECRET) && !want.includes(SECRET))
@@ -139,13 +139,15 @@ const cutsOf = (input) => {
 
 for (const [what, input, want] of CONTINUED) test(`continuation: ${what}`, () => assert.equal(redactText(input), want))
 
+// A value on a later line is remembered once its line has ended (#406): a blank after it is not
+// enough, as a key may hold one and a cut pads with them, so each row ends at a line break here.
 test('continuation: a hidden value is remembered, and no anchor, tag, indicator or kept value is', () => {
   for (const [what, input] of CONTINUED_HIDDEN) {
-    const kept = secretsIn(`${input} `)
+    const kept = secretsIn(`${input}\n`)
     assert.ok(!kept.some((v) => /^[&!|>]/.test(v)), what)
     if (!LATER_BLOCK.test(input)) assert.ok(kept.some((v) => v.includes(SECRET)), what)
   }
-  for (const [what, input] of KEPT) assert.ok(!secretsIn(`${input} `).some((v) => v.includes(SECRET)), what)
+  for (const [what, input] of KEPT) assert.ok(!secretsIn(`${input}\n`).some((v) => v.includes(SECRET)), what)
 })
 
 test('served: a value on a later line stays hidden in the stream, whole and a character at a time; a kept one is served', () => {
@@ -179,6 +181,44 @@ test('served: a cut after a key line, in the lines under it or before its value 
       for (const ch of `${input.slice(at)}\nand goes on`) r.send(ch)
       assert.ok(!r.served().includes(SECRET), `${what}, cut at ${at}`)
       assert.ok(r.served().includes(nameOf(input)), `${what}, cut at ${at}: the key is still served`)
+    }
+  }
+})
+
+// #406, the table's `partial_key` rows: in the stream, a line more indented than a key line with no
+// colon on it yet (a child key still arriving; `{cut}` marks where the first part stops) is never
+// remembered as the key's value, so later text that names a credential is served as written, and
+// once the rest arrives the row is served as its whole text is. Each row is sent whole, a character
+// at a time, in two parts split at the cut, and past the 4096 keep (filler before it, so the keep's
+// cut lands in the filler, then the rest a character at a time). A blank run past the keep at the cut
+// pads the partial line with blanks: nothing on it is remembered either (the padded text is no longer
+// the row's, so its value is not checked).
+const LATER = fill('\nlater the {name}, {parent} and user words stay')
+const PARTIAL = TABLE.partial_key.map(([what, input, want]) => [what, fill(input).split('{cut}'), fill(want)])
+const FILLER = 'filler words here\n'.repeat(Math.ceil(4096 / 18))
+
+for (const [what, [head, tail], want] of PARTIAL) test(`partial key: ${what}`, () => assert.equal(redactText(`${head}${tail}`), want))
+
+test('served: a child key still arriving under a key line is never remembered as its value, whole, in parts and past the 4096 keep', () => {
+  for (const [what, [head, tail], want] of PARTIAL) {
+    const whole = `${head}${tail}${LATER}`
+    const partial = head.slice(head.search(/[^\r\n]*$/)).trim()
+    const runs = {
+      whole: (r) => r.send(whole),
+      'a character at a time': (r) => { for (const ch of whole) r.send(ch) },
+      'in two parts at the cut': (r) => { r.send(head); r.send(`${tail}${LATER}`) },
+      'past the 4096 keep': (r) => { r.send(`${FILLER}${head}`); for (const ch of `${tail}${LATER}`) r.send(ch) },
+      'a blank run past the keep at the cut': (r) => { r.send(`${head}${' '.repeat(17_000)}`); for (const ch of `${tail}${LATER}`) r.send(ch) },
+    }
+    for (const [how, run] of Object.entries(runs)) {
+      const r = journal()
+      run(r)
+      const { secrets, text } = r.row()
+      assert.ok(!secrets.some((v) => LATER.includes(v) || (partial && partial.includes(v))), `${what}, ${how}: remembered ${JSON.stringify(secrets)}`)
+      assert.ok(text.endsWith(LATER), `${what}, ${how}: the later text is served as written`)
+      if (how.startsWith('a blank run')) continue
+      assert.ok(text.endsWith(`${want}${LATER}`), `${what}, ${how}: served as the whole text`)
+      if (!want.includes(SECRET)) assert.ok(!r.served().includes(SECRET), `${what}, ${how}: the value is hidden`)
     }
   }
 })

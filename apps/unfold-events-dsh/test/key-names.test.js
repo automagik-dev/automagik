@@ -49,6 +49,8 @@ const ADVERSARIAL = {
   'escaped JSON run': '\\"token\\": \\"x\\" '.repeat(5_000),
   'YAML keys': '\npassword: |'.repeat(6_700),
   'names mid-line': 'a password: '.repeat(6_700),
+  'an explicit key line of names, then its colon line': `? ${'a password '.repeat(6_700)}\n:\n`,
+  'explicit key lines': '? password\n:\n'.repeat(8_000),
   'camelCase names mid-line': 'x dbPassword: '.repeat(5_700),
   'bearer runs': 'bearer x '.repeat(9_000),
   'bearer long run': `bearer ${'a'.repeat(80_000)}`,

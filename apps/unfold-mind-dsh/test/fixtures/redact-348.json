@@ -925,6 +925,83 @@
    "earlier guard: a plain name, then an anchor and prose",
    "notes:\n  &a {value} is a word",
    "notes:\n  &a {value} is a word"
+  ],
+  [
+   "FA1: an explicit key, its ':' line, then the value more indented",
+   "? {name}\n:\n    {value}",
+   "? {name}\n:\n    [redacted]"
+  ],
+  [
+   "FA2: an explicit key, blanks after the colon of its ':' line, then the value",
+   "? {name}\n:  \n    {value}",
+   "? {name}\n:  \n    [redacted]"
+  ],
+  [
+   "FA3, camelCase: an explicit key, its ':' line, then the value",
+   "? {camel}\n:\n  {value}",
+   "? {camel}\n:\n  [redacted]"
+  ],
+  [
+   "FA4: a nested explicit key, its ':' line, the value, then a sibling",
+   "config:\n  ? {name}\n  :\n    {value}\n  next: shown",
+   "config:\n  ? {name}\n  :\n    [redacted]\n  next: shown"
+  ],
+  [
+   "FA5: an explicit key, a comment ends its ':' line, then the value",
+   "? {name}\n: # note\n  {value}",
+   "? {name}\n: # note\n  [redacted]"
+  ],
+  [
+   "FG1: an explicit plain key, its ':' line, then an indented line",
+   "? notes\n:\n    {value}",
+   "? notes\n:\n    {value}"
+  ],
+  [
+   "FG2: an explicit key, its ':' line, then a sibling at the same indent",
+   "? {name}\n:\nnext: {value}",
+   "? {name}\n:\nnext: {value}"
+  ]
+ ],
+ "partial_key": [
+  [
+   "key/value split: a parent anchor, a credential child, the cut after its colon",
+   "{parent}: &d\n  {name}:{cut} {value}",
+   "{parent}: &d\n  {name}: [redacted]"
+  ],
+  [
+   "key/value split: a bare parent, a credential child, a blank line between its key and value",
+   "{parent}:\n  {name}:\n{cut}\n    {value}",
+   "{parent}:\n  {name}:\n\n    [redacted]"
+  ],
+  [
+   "mid-property: the cut inside the parent's anchor, then a credential child",
+   "{parent}: &{cut}d\n  {name}: {value}",
+   "{parent}: &d\n  {name}: [redacted]"
+  ],
+  [
+   "mid-property: an anchor line under the parent, the cut inside a credential child key",
+   "{parent}:\n  &d\n  {pass}{cut}{word}: {value}",
+   "{parent}:\n  &d\n  {name}: [redacted]"
+  ],
+  [
+   "mid-block: the cut inside a later-line block body under a parent",
+   "{parent}:\n  |\n    {value} one\n    {pass}{cut}{word} two\nnext: shown",
+   "{parent}:\n  |\n    [redacted]\nnext: shown"
+  ],
+  [
+   "mid-child-key: a parent anchor, the cut inside a credential child key",
+   "{parent}: &d\n  {pass}{cut}{word}: {value}",
+   "{parent}: &d\n  {name}: [redacted]"
+  ],
+  [
+   "mid-child-key: a parent anchor, the cut after the first word of a spaced credential child key",
+   "{parent}: &d\n  user {cut}{name}: {value}",
+   "{parent}: &d\n  user {name}: [redacted]"
+  ],
+  [
+   "mid-child-key guard: a parent anchor, the cut inside a plain child key",
+   "{parent}: &d\n  user{cut}_id: {value}",
+   "{parent}: &d\n  user_id: {value}"
   ]
  ]
 }
