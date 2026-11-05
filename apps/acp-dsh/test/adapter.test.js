@@ -8,7 +8,7 @@ import { test } from 'node:test'
 import { isAgentLoopRequest, markAgentLoopRequest } from '@deepseek-ai/dsh-llm'
 import { apply } from '../index.js'
 import { optionFor, TOOL_NAME } from '../src/host/tool.js'
-import { aside, choose, promptOf, SIDE_MODEL } from '../src/host/adapter.js'
+import { aside, choose, NOTICE_KIND, promptOf, SIDE_MODEL } from '../src/host/adapter.js'
 
 const FAKE = join(import.meta.dirname, '..', 'dev', 'fake-agent.mjs')
 
@@ -18,7 +18,15 @@ function host({ answer = 'allowed-once' } = {}) {
   const asked = []
   const disposers = []
   const tools = new Map()
-  const agent = { session: { id: 's1', header: { cwd } }, ctx: { tools: { register: (def) => { assert.ok(!tools.has(def.name), 'registered once'); tools.set(def.name, def); return () => tools.delete(def.name) } } } }
+  // What the adapter writes to the Session's log itself: DSH's session.append, recorded. A test
+  // that sets `h.log` gets each message there too, where DSH would put it in the chat.
+  const appended = []
+  const append = (type, data, options) => {
+    appended.push({ type, data, options })
+    h.log?.push(data)
+    return { seq: appended.length }
+  }
+  const agent = { session: { id: 's1', header: { cwd }, append }, ctx: { tools: { register: (def) => { assert.ok(!tools.has(def.name), 'registered once'); tools.set(def.name, def); return () => tools.delete(def.name) } } } }
   const ctx = {
     llm: { registerAdapter: (providers, adapter) => { for (const id of providers) registered[id] = adapter; return () => {} } },
     agents: { get: id => (id === 's1' ? agent : undefined) },
@@ -28,7 +36,8 @@ function host({ answer = 'allowed-once' } = {}) {
   }
   apply(ctx, { fakeAgent: FAKE, claude: false, codex: false })
   const close = () => { for (const fn of disposers) fn(); rmSync(cwd, { recursive: true, force: true }) }
-  return { adapter: registered['acp-fake'], agent, tools, asked, close, registered }
+  const h = { adapter: registered['acp-fake'], agent, tools, asked, appended, close, registered }
+  return h
 }
 
 async function step(adapter, messages, { signal, onChunk, model = 'default', effort } = {}) {
@@ -273,6 +282,71 @@ test('the prompt is what the person said this turn, not DSH context notes', () =
     { role: 'user', source: { kind: 'context' }, content: [{ type: 'text', text: 'Current DSH file policy: ...' }] },
   ]
   assert.deepEqual(promptOf(messages), [{ type: 'text', text: 'new question' }])
+})
+
+// An earlier answer in the chat, from another model or an earlier agent process.
+const earlier = () => [
+  { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'earlier question' }] },
+  { role: 'assistant', source: { kind: 'model', provider: 'deepseek-official', model: 'deepseek-flash' }, content: [{ type: 'text', text: 'earlier answer' }] },
+]
+const notices = h => h.appended.filter(entry => entry.data?.source?.kind === NOTICE_KIND)
+
+test('a new agent session in a chat with earlier answers says so once in a notice row, never in the reply', async () => {
+  const h = host()
+  try {
+    const messages = earlier()
+    h.log = messages
+    const first = await turn(h, messages, 'hi')
+    // The reply is the agent's own words only: no text block carries the notice.
+    for (const chunks of first.steps) assert.doesNotMatch(textIn(chunks), /does not see|new Fake agent session/i)
+    assert.equal(textIn(first.steps[0]), 'Fake agent, turn 1: you said "hi".')
+    for (const chunks of first.steps) {
+      for (const block of chunks.filter(chunk => chunk.type === 'block-end').map(chunk => chunk.block)) {
+        if (block.type === 'text') assert.doesNotMatch(block.text, /does not see/)
+      }
+    }
+    // The notice: one user-role row in the Session's log, of DSH's notice form, outside the reply.
+    assert.equal(notices(h).length, 1)
+    const [{ type, data, options }] = notices(h)
+    assert.equal(type, 'user/message')
+    assert.deepEqual(options, { surfaceOp: 'append' })
+    assert.equal(data.role, 'user')
+    assert.equal(data.source.form, 'notice')
+    assert.equal(data.source.summary, "A new Fake agent session: it does not see this chat's earlier messages")
+    assert.deepEqual(data.content, [{ type: 'text', text: "[A new Fake agent session: it does not see this chat's earlier messages.]" }])
+    // It lands before the reply, never as assistant content.
+    const at = messages.indexOf(data)
+    assert.equal(messages[at - 1].content[0].text, 'hi')
+    assert.equal(messages[at + 1].role, 'assistant')
+    assert.ok(messages.filter(message => message.role === 'assistant').every(message => message.content.every(block => !/does not see/.test(block.text ?? ''))))
+    // The same session's next turn writes none, and the agent is prompted with the person's words only.
+    const second = await turn(h, messages, 'again')
+    assert.equal(notices(h).length, 1)
+    assert.equal(textIn(second.steps[0]), 'Fake agent, turn 2: you said "again".')
+  } finally {
+    h.close()
+  }
+})
+
+test('a new agent session in a chat with no answers yet writes no notice', async () => {
+  const h = host()
+  try {
+    const { steps } = await turn(h, [], 'hi')
+    assert.equal(textIn(steps[0]), 'Fake agent, turn 1: you said "hi".')
+    assert.equal(h.appended.length, 0)
+  } finally {
+    h.close()
+  }
+})
+
+test('the new-session notice never reaches the agent, even in a turn with no message of the person', () => {
+  const notice = { role: 'user', source: { kind: NOTICE_KIND, form: 'notice', summary: 'A new Fake agent session' }, content: [{ type: 'text', text: '[A new Fake agent session.]' }] }
+  const reply = { role: 'assistant', content: [{ type: 'text', text: 'reply' }] }
+  const own = { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'new question' }] }
+  const relay = { role: 'user', source: { kind: 'relay-producer', form: 'relay' }, content: [{ type: 'text', text: 'go on' }] }
+  assert.deepEqual(promptOf([reply, notice, own]), [{ type: 'text', text: 'new question' }])
+  assert.deepEqual(promptOf([reply, notice, relay]), [{ type: 'text', text: 'go on' }])
+  assert.deepEqual(promptOf([reply, notice]), [{ type: 'text', text: '' }])
 })
 
 test("DSH's answer maps to the option the agent offered", () => {
