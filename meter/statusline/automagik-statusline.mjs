@@ -236,7 +236,9 @@ export function countCompacts(transcript, dir = stateDir()) {
   try {
     const st = fstatSync(fd);
     let prev = entries[transcript];
-    if (!prev || prev.ino !== st.ino || !(prev.offset <= st.size) || typeof prev.count !== "number"
+    // A negative or non-integer offset or count (a corrupt or hand-edited cache) counts again from 0.
+    if (!prev || prev.ino !== st.ino || !Number.isSafeInteger(prev.offset) || prev.offset < 0
+      || prev.offset > st.size || !Number.isSafeInteger(prev.count) || prev.count < 0
       || prev.hash !== seen(fd, prev.offset)) prev = { offset: 0, count: 0 };
     if (prev.size === st.size && prev.offset <= st.size) return prev.count;
     let offset = prev.offset, count = prev.count, carry = Buffer.alloc(0);

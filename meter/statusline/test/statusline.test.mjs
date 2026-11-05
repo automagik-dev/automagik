@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -222,6 +223,32 @@ test("compacts: counted from compact_boundary records, then only from the append
     const stale = { [file]: { ino: statSync(file).ino, size: 0, offset: 0, count: 5, at: Date.now() } };
     writeFileSync(join(state, "statusline-compacts.json"), JSON.stringify(stale));
     assert.equal(countCompacts(file, state), 1);
+    // A negative or non-integer cached offset or count (a corrupt or hand-edited cache) is not
+    // trusted: the file is counted again from the start and the entry is rewritten. Each entry
+    // carries the hash the counter computes for those bytes, so the hash check alone would keep it.
+    const bytes = readFileSync(file), size = bytes.length, fileIno = statSync(file).ino;
+    const hashOf = (from, to) => createHash("sha256").update(bytes.subarray(from, to)).digest("hex").slice(0, 16);
+    const cacheWith = (entry) => writeFileSync(join(state, "statusline-compacts.json"),
+      JSON.stringify({ [file]: { ino: fileIno, at: Date.now(), ...entry } }));
+    // The hash is the counter's own: a sound entry with it is served from the cache as it is.
+    cacheWith({ size, offset: size, count: 5, hash: hashOf(0, size) });
+    assert.equal(countCompacts(file, state), 5);
+    const bad = [
+      { offset: -5, count: 5, hash: hashOf(0, 0) },
+      { offset: -1, count: 5, hash: hashOf(0, 0) },
+      { offset: 1.5, count: 5, hash: hashOf(0, 1) }, // seen() reads the 1 whole byte before 1.5
+      { offset: "0", count: 5, hash: hashOf(0, 0) },
+      { offset: null, count: 5, hash: hashOf(0, 0) },
+      { size, offset: size, count: -3, hash: hashOf(0, size) },
+      { size, offset: size, count: 2.5, hash: hashOf(0, size) },
+    ];
+    for (const entry of bad) {
+      cacheWith(entry);
+      assert.equal(countCompacts(file, state), 1, JSON.stringify(entry));
+      const saved = JSON.parse(readFileSync(join(state, "statusline-compacts.json"), "utf8"))[file];
+      assert.equal(saved.offset, size);
+      assert.equal(saved.count, 1);
+    }
     // A corrupt cache is rebuilt; a missing transcript has no count.
     writeFileSync(join(state, "statusline-compacts.json"), "garbage");
     assert.equal(countCompacts(file, state), 1);
