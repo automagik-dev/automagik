@@ -21,7 +21,9 @@
 # lists every folder it put in mods/; only those are ever replaced. Any other folder is left
 # alone, or with --adopt moved to automagik-herdr/backup/ first. Pocket Link is never touched.
 # It merges the pack's free keys, points the mod manager at the catalog, adds the `automagik`
-# layout (replacing only v0.2's unchanged copy), runs `herdr-app check` on each mod, and links
+# layout (replacing only v0.2's unchanged copy; in a kept one, or one of the person's own showing
+# the sidebar, Herdr's workspace-status block becomes am-status, and it says so), runs
+# `herdr-app check` on each mod, and links
 # the `automagik-herdr` command into ~/.local/bin. It installs the pinned usagemeter release (the
 # token meter the sidebar runs every 10 minutes) to ~/.local/bin/usagemeter, hash-checked and never
 # over a newer one, and the same release on every connected linked machine (`hc machine ls`, through

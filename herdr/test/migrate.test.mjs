@@ -683,3 +683,31 @@ test("a layout block of an absorbed mod is reported as removable", (t) => {
   const r = migrateRefs({ modsDir: s.mods });
   assert.ok(r.skipped.some((x) => /icons\.json: space-icon$/.test(x.item) && /space-icon is part of am-sidebar now, so this shows nothing: you can remove it/.test(x.reason)));
 });
+
+test("#387: workspace-status becomes am-status only in a layout showing the pack, placed once, while am-status is on", (t) => {
+  const s = scratch(t);
+  for (const m of ["am-sidebar", "am-status"]) modFolder(join(s.mods, m));
+  write(join(s.state, "installed-by-install.sh"), "version=1.0.0\nmods=am-sidebar,am-status\nlayout=kept\nbefore=none\n");
+  const sidebar = { id: "spaces", type: "block", content: { mod: "am-sidebar" } };
+  const herdr = (id = "status") => ({ id, type: "block", content: { mod: "workspace-status" } });
+  const layouts = {
+    "automagik.json": { id: "root", children: [herdr()] }, // the pack's own name: swapped even without the sidebar
+    "one.json": { id: "root", children: [sidebar, herdr()] },
+    "twice.json": { id: "root", children: [sidebar, herdr("a"), herdr("b")] }, // which one? left
+    "plain.json": { id: "root", children: [herdr()] }, // plain Herdr's: left
+    "both.json": { id: "root", children: [sidebar, herdr(), { id: "am", content: { mod: "am-status" } }] }, // already placed
+  };
+  for (const [name, layout] of Object.entries(layouts)) writeJson(join(s.home, "layouts", name), layout);
+  writeJson(join(s.home, "keys.json"), { global: { "cmd-s": "workspace-status.toggle" } });
+  const p = plan(s.home);
+  assert.deepEqual(p.layouts.map((l) => l.file.split("/").at(-1)), ["automagik.json", "one.json"]);
+  assert.deepEqual(p.layouts[1].edits, [
+    { pointer: "/children/1/content/mod", id: "status", field: "content.mod", before: "workspace-status", after: "am-status", dropIn: true },
+  ]);
+  assert.equal(p.keysFile, null, "keys.json never follows a drop-in");
+  assert.deepEqual(p.left, [], "nothing to report: workspace-status is Herdr's, not a renamed folder");
+  // Switched off (mods-disabled/, not mods/): a layout naming it would show plain Herdr.
+  rmSync(join(s.mods, "am-status"), { recursive: true });
+  modFolder(join(s.home, "mods-disabled", "am-status"));
+  assert.deepEqual(plan(s.home).layouts, []);
+});

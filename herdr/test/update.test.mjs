@@ -720,14 +720,14 @@ test("any CLI start moves our link from the .mjs to the installed pack's wrapper
 const LAYOUT_V1 = '{ "id": "root", "children": [{ "id": "status", "content": { "mod": "workspace-status" } }] }\n';
 const LAYOUT_V2 = '{ "id": "root", "children": [{ "id": "status", "content": { "mod": "am-status" } }] }\n';
 /** A release tarball at `version` carrying layouts/automagik.json = `layout`, as release.yml packs it. */
-function tarballWithLayout(version, layout) {
+function tarballWithLayout(version, layout, mods = MODS) {
   const src = mkdtempSync(join(tmpdir(), "pack-src-"));
   const tree = join(src, "tree");
-  packDir(tree, version);
+  packDir(tree, version, { mods });
   mkdirSync(join(tree, "layouts"));
   writeFileSync(join(tree, "layouts", "automagik.json"), layout);
   const out = join(src, `automagik-herdr-pack-${version}.tgz`);
-  execFileSync("tar", ["czf", out, "-C", tree, ...MODS, "layouts"], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
+  execFileSync("tar", ["czf", out, "-C", tree, ...mods, "layouts"], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
   return { path: out, buf: readFileSync(out), src };
 }
 /** An app home at 0.1.0 whose pack placed LAYOUT_V1 (live and reference), and a 0.2.0 release with LAYOUT_V2. */
@@ -775,6 +775,36 @@ test("installUpdate keeps a layout the person edited (D8), and adds one that is 
     assert.equal(r.installed.layout, "added");
     assert.equal(g.live(), LAYOUT_V2);
   } finally { g.done(); }
+});
+
+test("#387: an update swaps a kept layout's workspace-status for am-status and says so; a rollback to a pack without am-status puts it back", async () => {
+  const h = layoutHome();
+  const withStatus = tarballWithLayout("0.2.0", LAYOUT_V2, [...MODS, "am-status"]);
+  const url = "https://dl.test/v0.2.0/automagik-herdr-pack-0.2.0.tgz";
+  const table = { ...served("0.2.0", { url, body: withStatus.buf }), [url]: withStatus.buf };
+  try {
+    // Both shown with the sidebar and the status block still Herdr's; automagik.json edited (kept, D8).
+    const mine = '{\n    "id": "mine",\n    "children": [\n        { "id": "spaces", "content": { "mod": "am-sidebar" } },\n        { "id": "status", "content": { "mod": "workspace-status" } }\n    ]\n}\n';
+    const agents = JSON.stringify({ id: "root", children: [{ id: "spaces", content: { mod: "am-sidebar" } }, { id: "status", content: { mod: "workspace-status" } }] });
+    writeFileSync(join(h.home, "layouts", "automagik.json"), mine);
+    writeFileSync(join(h.home, "layouts", "main-agents.json"), agents);
+    const lines = [];
+    const r = await installUpdate({ keys, fetch: fakeFetch(table), env: {}, modsDir: h.mods, log: (l) => lines.push(l) });
+    assert.equal(r.installed.version, "0.2.0");
+    assert.equal(r.installed.layout, "kept");
+    assert.equal(h.live(), mine.replace('"workspace-status"', '"am-status"'), "that block only, the rest byte for byte");
+    const agentsNow = readFileSync(join(h.home, "layouts", "main-agents.json"), "utf8");
+    assert.equal(agentsNow, agents.replace('"workspace-status"', '"am-status"'));
+    for (const name of ["automagik", "main-agents"]) {
+      assert.ok(lines.some((l) => l.startsWith(`swapped Herdr's workspace-status for am-status in ${join(h.home, "layouts", `${name}.json`)}`)), lines.join("\n"));
+    }
+    // 0.1.0's pack has no am-status: a layout naming it would show plain Herdr, so the swap is undone.
+    const back = rollback({ modsDir: h.mods });
+    assert.equal(back.version, "0.1.0");
+    for (const [name, before] of [["automagik", mine], ["main-agents", agents]]) {
+      assert.deepEqual(JSON.parse(readFileSync(join(h.home, "layouts", `${name}.json`), "utf8")), JSON.parse(before));
+    }
+  } finally { h.done(); rmSync(withStatus.src, { recursive: true, force: true }); }
 });
 
 test("rollback puts the rolled-to pack's layout back (no layout naming a missing am-status), and a second rollback undoes it", async () => {
