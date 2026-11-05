@@ -142,6 +142,8 @@ test('a Bot whose deletion has begun is not added by a folder change that goes o
   await release.entered
   folderCheck.open()
   const moved = await moving
+  // The folder change's own save does not write the Bot back while the deletion goes on.
+  assert.deepEqual(saved().rooms.r1.members, ['a', 'b'])
   release.open()
   await deleting
   assert.deepEqual(moved.changes, [`every member now works in ${folder} here`])
@@ -165,6 +167,54 @@ test('a Bot deleted while a change waits for its folder is not added back', asyn
   assert.deepEqual(moved.room.members, ['a', 'b'])
   assert.deepEqual(saved().rooms.r1.members, ['a', 'b'])
   assert.equal(saved().rooms.r1.workDir, folder)
+  assert.equal(saved().bots.c, undefined)
+})
+
+// The deletion begins after the change added the Bot, while that change is being saved.
+test('a Bot deleted while the change that added it is saved is not reported as added', async (t) => {
+  const { rt, saved, stop } = await start()
+  t.after(stop)
+  const saving = gate(t, rt, 'save')
+  const adding = rt.updateRoom('r1', { add: ['c'], notice: 'Ship on Friday' })
+  await saving.entered
+  assert.deepEqual(rt.state.rooms.r1.members, ['a', 'b', 'c'])
+  const deleting = rt.deleteBot('c')
+  saving.open()
+  const [added] = await Promise.all([adding, deleting])
+  assert.deepEqual(added.changes, ['updated the notice'])
+  assert.deepEqual(saved().rooms.r1.members, ['a', 'b'])
+  assert.equal(saved().bots.c, undefined)
+})
+
+test('a Bot added with a folder change and no deletion is added and reported', async (t) => {
+  const { rt, folder, saved, stop } = await start()
+  t.after(stop)
+  const moved = await rt.updateRoom('r1', { add: ['c'], workDir: folder })
+  assert.deepEqual(moved.changes, ['added Coder', `every member now works in ${folder} here`])
+  assert.deepEqual(saved().rooms.r1.members, ['a', 'b', 'c'])
+})
+
+test('a deletion whose release fails puts the Bot back and keeps a change made meanwhile', async (t) => {
+  const team = { ...TEAM, rooms: { r1: { ...TEAM.rooms.r1, members: ['a', 'c', 'b'], admin: 'c' } } }
+  const { rt, saved, stop } = await start(team)
+  t.after(stop)
+  const releaseBot = rt.releaseBot
+  let fail
+  rt.releaseBot = () => new Promise((resolve, reject) => { fail = reject })
+  t.after(() => { rt.releaseBot = releaseBot })
+  const deleting = rt.deleteBot('c')
+  // While its Sessions are released, the Bot is out of the group and cannot lead it.
+  assert.deepEqual([rt.state.rooms.r1.members, rt.state.rooms.r1.admin], [['a', 'b'], null])
+  assert.deepEqual((await rt.updateRoom('r1', { add: ['d'] })).changes, ['added Tester'])
+  fail(new Error('release failed'))
+  await assert.rejects(deleting, /release failed/)
+  assert.deepEqual([rt.state.rooms.r1.members, rt.state.rooms.r1.admin], [['a', 'c', 'b', 'd'], 'c'])
+  assert.ok(rt.botOf('c'))
+  // The deletion is over, so the Bot can be changed, and deleted, again.
+  rt.releaseBot = releaseBot
+  assert.deepEqual((await rt.updateRoom('r1', { remove: ['d'] })).changes, ['removed Tester'])
+  await rt.deleteBot('c')
+  assert.deepEqual([saved().rooms.r1.members, saved().rooms.r1.admin], [['a', 'b'], null])
   assert.equal(saved().bots.c, undefined)
 })
 

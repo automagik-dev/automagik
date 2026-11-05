@@ -143,6 +143,16 @@ export function install(rt) {
   const held = { bot: new Set(), room: new Set() }
   const heldSessions = new Set()
   const isHeld = (kind, name) => held[kind].has(normalize(name))
+  // Bots whose deletion has begun but whose record is still in the team (deleteBot waits
+  // on their Sessions first). A group change counts them as gone, whichever call goes on
+  // first, so it never adds one back or reports it added (#366).
+  const deleting = new Set()
+  const isLive = id => rt.botOf(id) !== undefined && !deleting.has(id)
+  // What other modules clear of a Bot as it is deleted (btw cards, side chats). They run
+  // inside deleteBot, after its checks and after the Bot left its groups, so a refused
+  // deletion clears nothing and no wait of theirs comes before the Bot is out (#366).
+  const deleteSteps = []
+  const beforeBotDelete = (step) => { deleteSteps.push(step) }
   async function holdName(kind, name, work) {
     const key = normalize(name)
     if (key === '') return work()
@@ -488,7 +498,7 @@ export function install(rt) {
   const defaultAdmin = (members, createdBy) => (members.includes(createdBy) ? createdBy : members.find(rt.isMain) ?? null)
 
   async function createRoom({ members: memberIds = [], name: roomName, notice, mode, admin, createdBy } = {}) {
-    const members = [...new Set(memberIds)].filter(id => rt.botOf(id))
+    const members = [...new Set(memberIds)].filter(isLive)
     checkMembers(members)
     const custom = cleanRoomName(roomName ?? '')
     const adminId = admin !== undefined ? admin : defaultAdmin(members, createdBy)
@@ -505,7 +515,7 @@ export function install(rt) {
     try {
       // A member deleted while the Session was made stays out, and the group is checked
       // again as it is written.
-      const live = members.filter(member => rt.botOf(member))
+      const live = members.filter(isLive)
       checkMembers(live)
       const lead = adminId === null || live.includes(adminId) ? adminId : defaultAdmin(live, createdBy)
       const name = custom || autoRoomName(live)
@@ -544,9 +554,9 @@ export function install(rt) {
     if (!byMain && !byAdmin) throw new Error(`Only the user, a Main Bot, or the admin of "${room.name}" can change it`)
     let members = Array.isArray(patch.members) ? [...new Set(patch.members)] : [...room.members]
     for (const member of patch.add ?? []) if (!members.includes(member)) members.push(member)
-    members = members.filter(member => !(patch.remove ?? []).includes(member) && rt.botOf(member))
+    members = members.filter(member => !(patch.remove ?? []).includes(member) && isLive(member))
     // A group left with one Bot by a deletion can still change its other settings.
-    const current = room.members.filter(member => rt.botOf(member))
+    const current = room.members.filter(isLive)
     if (members.length !== current.length || members.some(member => !current.includes(member))) checkMembers(members)
     let admin = room.admin ?? null
     if (patch.admin !== undefined) {
@@ -595,6 +605,7 @@ export function install(rt) {
     const names = ids => ids.map(member => rt.botOf(member)?.name).filter(Boolean).join(', ')
     const added = members.filter(member => !room.members.includes(member))
     const removed = room.members.filter(member => !members.includes(member))
+    const addedAt = changes.length
     if (added.length > 0) changes.push(`added ${names(added)}`)
     // A deleted Bot still listed goes without a word.
     if (names(removed) !== '') changes.push(`removed ${names(removed)}`)
@@ -644,6 +655,10 @@ export function install(rt) {
       await retitleRoom(room)
     }
     await rt.save()
+    // The words say what the group holds now: a Bot whose deletion began during the
+    // awaits above has left it again, so it is not reported as added.
+    const kept = added.filter(member => room.members.includes(member) && isLive(member))
+    if (kept.length < added.length) changes.splice(addedAt, 1, ...(kept.length > 0 ? [`added ${names(kept)}`] : []))
     return { room, changes }
   }
 
@@ -701,15 +716,46 @@ export function install(rt) {
 
   async function deleteBot(id) {
     const bot = rt.botOf(id)
-    if (bot === undefined) throw new Error('Unknown Bot')
+    if (bot === undefined || deleting.has(id)) throw new Error('Unknown Bot')
     if (rt.isMain(id)) throw new Error('A Main Bot cannot be deleted; remove its Main Bot role first')
     if (bot.dshAgentId !== undefined) throw new Error('Roll back DSH adoption before deleting the original DSH bot')
-    // Before the Bot and its group Sessions leave the state, which the archive reads.
-    const archived = rt.archiveBotMemory(id)
     const current = rt.chatOf(id)
     // Questions and exchange turns are kept per Session, so every part of the chat is cleared.
     const parts = new Set([id, current, ...(bot.segments ?? []).map(segment => segment.sessionId)])
-    await rt.releaseBot(id, [...parts, ...rt.groupSessionsOf(id)])
+    // Read before the Bot leaves its groups' Sessions: releaseBot tells who waits on them.
+    const sessions = [...parts, ...rt.groupSessionsOf(id)]
+    // #366: the Bot leaves its groups, and its admin roles, before the first await, so a
+    // group change that goes on meanwhile sees it gone whichever call resumes first. Its
+    // record stays until releaseBot is done: the archive and releaseBot read it (the Bots
+    // told of the deletion hear its name), and a failure up to there leaves it in the
+    // team, where `left` puts it back in its groups.
+    deleting.add(id)
+    const left = []
+    for (const room of Object.values(state.rooms)) {
+      const index = room.members.indexOf(id)
+      if (index === -1) continue
+      left.push({ room, index, admin: room.admin === id })
+      room.members = room.members.filter(member => member !== id)
+      if (room.admin === id) room.admin = null
+    }
+    let archived
+    try {
+      for (const step of deleteSteps) await step(id)
+      // Before the Bot and its group Sessions leave the state, which the archive reads.
+      archived = rt.archiveBotMemory(id)
+      await rt.releaseBot(id, sessions)
+    } catch (error) {
+      // Only this Bot's place is restored, so a change made meanwhile stays. A save in
+      // the window wrote its groups without it; the next save writes them back.
+      for (const { room, index, admin } of left) {
+        if (state.rooms[room.id] !== room) continue
+        if (!room.members.includes(id)) room.members = room.members.toSpliced(Math.min(index, room.members.length), 0, id)
+        if (admin && (room.admin ?? null) === null) room.admin = id
+      }
+      throw error
+    } finally {
+      deleting.delete(id)
+    }
     // Its tasks keep the level they run at as a cap, so the default cannot raise them.
     rt.capTasks(task => task.from === id)
     delete state.bots[id]
@@ -720,8 +766,9 @@ export function install(rt) {
       delete state.switching[part]
     }
     const touched = []
+    // Every group is checked again, not only those it left above, so none keeps it.
     for (const room of Object.values(state.rooms)) {
-      if (!room.members.includes(id)) continue
+      if (!room.members.includes(id) && !left.some(entry => entry.room === room)) continue
       room.members = room.members.filter(member => member !== id)
       if (room.admin === id) room.admin = null
       rt.dropGroupSession(room, id)
@@ -804,6 +851,6 @@ export function install(rt) {
   Object.assign(rt, {
     ensureWorkspace, keepTeamFolder, createSession, createBot, duplicateBot, updateBot, setFlags,
     roomBusy, autoRoomName, retitleRoom, createRoom, updateRoom, deleteRoom,
-    setMain, deleteBot, bootstrap, dropKickoff,
+    setMain, deleteBot, beforeBotDelete, bootstrap, dropKickoff,
   })
 }
