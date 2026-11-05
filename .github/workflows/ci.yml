@@ -407,6 +407,12 @@ jobs:
           git -C "${dir}" checkout -q FETCH_HEAD
           echo "OMNI_CHECKOUT=${dir}" >> "$GITHUB_ENV"
 
+      - name: Chrome for the Bot team's layout check
+        # The Ubuntu image ships Google Chrome at this path. Under CI the composer layout test
+        # fails, rather than skips, when it finds no browser (#323).
+        if: matrix.app == 'bots-dsh'
+        run: echo "CHROME_BIN=/usr/bin/google-chrome" >> "$GITHUB_ENV"
+
       - name: Generated files are current
         # A package with no browser half has no client to build.
         run: '[ ! -f scripts/build-client.mjs ] || node scripts/build-client.mjs --check'
