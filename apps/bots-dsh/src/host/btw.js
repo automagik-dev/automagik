@@ -359,14 +359,9 @@ export function install(rt) {
   }
 
   // Channel can be installed without the roster (the thinking route test). The
-  // full runtime always has deleteBot, and that is the path that must drop cards.
-  if (typeof rt.deleteBot === 'function') {
-    const originalDelete = rt.deleteBot.bind(rt)
-    rt.deleteBot = async (id) => {
-      if (rt.botOf(id) !== undefined && !rt.isMain(id)) await dropBot(id)
-      return originalDelete(id)
-    }
-  }
+  // full runtime always has deleteBot, and that is the path that must drop cards: the
+  // roster runs this after its checks, once the Bot is out of its groups (#366).
+  if (typeof rt.beforeBotDelete === 'function') rt.beforeBotDelete(dropBot)
 
   Object.assign(rt, { btwDelete, btwDispose, btwView, btwPartCards: readPart })
 }

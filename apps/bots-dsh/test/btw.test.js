@@ -357,6 +357,19 @@ test('deleting a Bot removes its card files', async (t) => {
   assert.equal(saved.bots.b1.id, 'b1')
 })
 
+// #366: the cards are dropped only once the roster has accepted the deletion.
+// On dev an adopted original lost its cards before the roster refused to delete it.
+test('a refused deletion keeps the Bot\'s card files', async (t) => {
+  const state = team()
+  state.bots.b2 = { id: 'b2', sessionId: 's-b2', name: 'Side', capabilities: [], color: 'deepseek', createdAt: 2, dshAgentId: 'dsh-side' }
+  const card = { id: 'kept', botId: 'b2', partId: 's-b2', atSeq: 1, question: 'Old?', answer: 'Yes.', status: 'done', createdAt: 5, finishedAt: 6 }
+  const env = await setup({ state, btw: { b2: { 's-b2': [card] } } })
+  t.after(() => env.stop())
+  await assert.rejects(env.rt.deleteBot('b2'), /Roll back DSH adoption/)
+  assert.equal(existsSync(join(env.home, 'btw', 'b2')), true)
+  assert.deepEqual(env.rt.btwView().b2?.map(kept => kept.id), ['kept'])
+})
+
 test('the team view carries only the current part\'s cards', async (t) => {
   const env = await setup({
     btw: {
