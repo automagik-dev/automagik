@@ -34,9 +34,9 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { stableBriefingPath, ENTRY_SOURCE } from "./briefingText.mjs";
 import { CLI_LINK, hooksRunning, knownProjects, ledgerFolders, removeHooks } from "./migrateHooks.mjs";
-import { inPlace } from "./migrateHome.mjs";
 import {
   OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker, layoutGuard, layoutNeeds,
 } from "./release.js";
@@ -353,11 +353,12 @@ function replacedBy(ctx, part) {
 }
 
 /**
- * A fork swapping in (#420): the shown layout's block naming the member names the fork instead, so
- * the layout keeps working once the member is off, edited where it stands (migrateHome inPlace, as
- * #387's drop-ins: the rest of the file stays byte for byte) after its original is kept in
- * <app home>/automagik-herdr/fork-swaps/. Refused, with nothing changed, when the edit cannot be
- * made exactly (more than one block names the member, or a link). Herdr's own menu note as off's.
+ * A fork swapping in (#420): each block of the shown layout naming the member names the fork
+ * instead, so the layout keeps working once the member is off. Edited where it stands, as #387's
+ * drop-ins are (the rest of the file stays byte for byte), its original kept in <app
+ * home>/automagik-herdr/fork-swaps/. Refused, with nothing changed, only when that edit cannot be
+ * made exactly (a link, or a file whose text does not read back as the edit). The other layouts
+ * whose blocks name the member are said, never edited; the right-click menu's note is off's.
  */
 function swapForFork(ctx, part, fork) {
   const shown = shownLayout(ctx);
@@ -371,26 +372,33 @@ function swapForFork(ctx, part, fork) {
   }
   const guard = layoutGuard({ name: shown.name, tree: shown.tree, mod: part.mod, then: "uninstall it" });
   if (guard?.note) ctx.log(`${part.mod} was ${guard.note}`);
+  const others = layoutsNaming(ctx, [part.mod], [`${shown.name}.json`]).map((l) => l.name);
+  if (others.length) {
+    ctx.log(`${others.join(", ")} still ${others.length === 1 ? "names" : "name"} ${part.mod}: Herdr drops a layout whose mod is off, so name ${fork} in its block before showing it`);
+  }
   if (!guard?.refuse) return;
   const file = join(ctx.appHome, "layouts", `${shown.name}.json`);
   const want = JSON.parse(JSON.stringify(shown.tree));
-  let blocks = 0;
   const walk = (node) => {
     if (!node || typeof node !== "object") return;
-    if (node.content?.mod === part.mod) { node.content.mod = fork; blocks++; }
+    if (node.content?.mod === part.mod) node.content.mod = fork;
     for (const value of Object.values(node)) walk(value);
   };
   walk(want);
-  const text = blocks === 1 && !isLink(file) ? inPlace(readFileSync(file, "utf8"), [{ before: part.mod, after: fork }], want) : null;
-  if (text === null) {
-    throw new Error(`${guard.refuse}: ${fork} replaces it, but ${file} ${blocks === 1 ? "could not be edited exactly" : `has ${blocks} blocks naming it`}; `
-      + `name ${fork} in it by hand, or switch layouts first`);
+  // Both names are plain folder names (packFolder, PACK_MODS): nothing to escape in the pattern.
+  const text = readFileSync(file, "utf8").replace(new RegExp(`("mod"\\s*:\\s*)"${part.mod}"`, "g"), (_, key) => `${key}"${fork}"`);
+  let exact = false;
+  try { exact = !isLink(file) && isDeepStrictEqual(JSON.parse(text), want); } catch {}
+  if (!exact) {
+    throw new Error(`${guard.refuse}: ${fork} replaces it, but ${file} could not be edited exactly; name ${fork} in it by hand, or switch layouts first`);
   }
   const keep = join(stateDirOf(ctx.modsDir), "fork-swaps");
   mkdirSync(keep, { recursive: true });
   const kept = fresh(keep, `${shown.name}.json.`);
   cpSync(file, kept);
-  writeFileSync(file, text);
+  const stage = fresh(keep, ".next-");
+  writeFileSync(stage, text);
+  renameSync(stage, file);
   ctx.log(`swapped ${part.mod} for ${fork} in ${file}, so the ${shown.name} layout keeps working; the original is ${kept}`);
 }
 

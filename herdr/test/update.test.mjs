@@ -1510,6 +1510,46 @@ test("a retired mod a layout's block names is held in mods/ and said; once no la
   }
 });
 
+test("a held mod survives a repair and a rollback: still in mods/, still the record's", async () => {
+  const { home, mods } = appHome("0.1.0", ["am-sidebar", "old-mod"]);
+  const t = tarball("0.2.0", { mods: ["am-sidebar"] });
+  try {
+    mkdirSync(join(home, "layouts"));
+    writeFileSync(join(home, "layouts", "mine.json"), JSON.stringify({ id: "root", children: [{ id: "o", content: { mod: "old-mod" } }] }));
+    writeFileSync(join(mods, "old-mod", ".state"), "mine\n");
+    const held = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
+    assert.deepEqual(held.held, [{ mod: "old-mod", layouts: ["mine"] }]);
+    await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods, repair: ["am-sidebar"] });
+    assert.deepEqual(readMarker(mods).mods.sort(), ["am-sidebar", "old-mod"], "a repair keeps it on the record");
+    const back = rollback({ modsDir: mods });
+    assert.equal(back.version, "0.1.0");
+    assert.ok(existsSync(join(mods, "old-mod", "main.js")), "a rollback leaves the layout its mod");
+    assert.equal(readFileSync(join(mods, "old-mod", ".state"), "utf8"), "mine\n");
+    assert.deepEqual(readMarker(mods).mods.sort(), ["am-sidebar", "old-mod"]);
+  } finally {
+    rmSync(t.src, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("the pack's unedited automagik.json holds nothing (the release replaces it); an edited one does", async () => {
+  const body = JSON.stringify({ id: "root", children: [{ id: "o", content: { mod: "old-mod" } }] });
+  for (const [edited, retired, layouts] of [[false, ["old-mod"], []], [true, [], ["automagik"]]]) {
+    const { home, mods } = appHome("0.1.0", ["am-sidebar", "old-mod"]);
+    const t = tarball("0.2.0", { mods: ["am-sidebar"] });
+    try {
+      mkdirSync(join(home, "layouts"));
+      writeFileSync(join(home, "automagik-herdr", "automagik.json"), body);
+      writeFileSync(join(home, "layouts", "automagik.json"), edited ? `${body}\n` : body);
+      const r = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
+      assert.deepEqual([r.retired, r.held.flatMap((h) => h.layouts)], [retired, layouts]);
+    } finally {
+      rmSync(t.src, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+});
+
 test("a renamed mod's old folder a layout names still leaves: the migration moves the layout onto the new name", async () => {
   const { home, mods } = appHome("0.1.0", ["am-sidebar", "auto-tabs"]);
   const t = tarball("0.2.0");

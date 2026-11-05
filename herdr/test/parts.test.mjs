@@ -607,19 +607,32 @@ test("a fork replacing a member the shown layout names: the block names the fork
   assert.ok(m.logs.some((l) => l.startsWith(`swapped am-footer for my-footer in ${layout}, so the automagik layout keeps working`)), m.logs.join("\n"));
 });
 
-test("a fork whose block can't be swapped exactly is refused; a layout that doesn't name the member needs no swap", (t) => {
+test("a fork fills every block of the member; only a layout it can't edit exactly refuses; others are named", (t) => {
   const m = machine(t);
   install(m.ctx(), P("herdr.pack"), packSource);
   const twice = { id: "root", children: [{ id: "a", content: { mod: "am-status" } }, { id: "b", content: { mod: "am-status" } }] };
   writeFileSync(join(m.app, "layouts", "two.json"), JSON.stringify(twice));
   showing(m, "two");
   fork(m, "my-status");
-  assert.throws(() => uninstall(m.ctx({ AM_REPLACED_BY: "my-status" }), P("herdr.am-status")), /^Error: am-status stays on: the two layout shows it, .*: my-status replaces it, but .*two\.json has 2 blocks naming it; name my-status in it by hand/);
+  // A link is never written through: refused, nothing changed.
+  const elsewhere = join(m.dir, "linked.json");
+  writeFileSync(elsewhere, JSON.stringify(twice));
+  rmSync(join(m.app, "layouts", "two.json"));
+  symlinkSync(elsewhere, join(m.app, "layouts", "two.json"));
+  assert.throws(() => uninstall(m.ctx({ AM_REPLACED_BY: "my-status" }), P("herdr.am-status")), /^Error: am-status stays on: the two layout shows it, .*: my-status replaces it, but .*two\.json could not be edited exactly; name my-status in it by hand/);
   assert.ok(existsSync(join(m.mods, "am-status", "main.js")));
-  assert.deepEqual(JSON.parse(readFileSync(join(m.app, "layouts", "two.json"), "utf8")), twice);
+  assert.deepEqual(JSON.parse(readFileSync(elsewhere, "utf8")), twice);
+  // A plain file: both blocks name the fork, and the pack's layout, not shown, is named.
+  rmSync(join(m.app, "layouts", "two.json"));
+  writeFileSync(join(m.app, "layouts", "two.json"), JSON.stringify(twice));
+  assert.equal(uninstall(m.ctx({ AM_REPLACED_BY: "my-status" }), P("herdr.am-status")).changed, true);
+  assert.ok(isOff(m, "am-status"));
+  assert.deepEqual([...JSON.parse(readFileSync(join(m.app, "layouts", "two.json"), "utf8")).children.map((c) => c.content.mod)], ["my-status", "my-status"]);
+  assert.ok(m.logs.includes("automagik still names am-status: Herdr drops a layout whose mod is off, so name my-status in its block before showing it"), m.logs.join("\n"));
   writeFileSync(join(m.app, "layouts", "mine.json"), JSON.stringify({ id: "root", children: [{ id: "p", content: { mod: "pane" } }] }));
   showing(m, "mine");
+  const swaps = ls(join(m.app, "automagik-herdr", "fork-swaps"));
   fork(m, "my-menu");
   assert.equal(uninstall(m.ctx({ AM_REPLACED_BY: "my-menu" }), P("herdr.am-new-menu")).changed, true);
-  assert.ok(!existsSync(join(m.app, "automagik-herdr", "fork-swaps")), "no layout touched");
+  assert.deepEqual(ls(join(m.app, "automagik-herdr", "fork-swaps")), swaps, "a layout that doesn't name the member is not touched");
 });

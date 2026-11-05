@@ -134,7 +134,8 @@ Automagik Herdr installer
 
   install.sh [--yes] [--version <v>] [--adopt] [--no-usagemeter | --usagemeter-local-only]
                                        install or update the pack and the automagik-herdr command
-  install.sh --uninstall [--yes]       move the pack out of mods/, put back what was there before
+  install.sh --uninstall [--yes]       move the pack out of mods/, put back what was there before;
+                                       refused while the layout Herdr shows names a pack mod
   install.sh --help
 
 --yes answers yes to every question (installing Node on macOS, Herdr from releases.herdr.dev,

@@ -566,13 +566,23 @@ export async function verifyInstall({ tgzPath, version, modsDir = defaultModsDir
   }
 }
 
-/** The layouts in <app home>/layouts/ (names, sorted) whose blocks name `mod` (release.js layoutNeeds); an unreadable one names none. */
+/**
+ * The layouts in <app home>/layouts/ (names, sorted) whose blocks name `mod` (release.js
+ * layoutNeeds); an unreadable one names none. The pack's automagik.json counts only when placeLayout
+ * would keep it: an unedited copy gets the release's.
+ */
 function layoutsShowing(modsDir, mod) {
   const dir = join(dirname(resolve(modsDir)), "layouts");
+  const ref = layoutRefOf(modsDir);
+  const replaced = (body) => sha256(body) === V020_LAYOUT_SHA256 || (isFile(ref) && body.equals(readFileSync(ref)));
   let names = [];
   try { names = readdirSync(dir).filter((n) => n.endsWith(".json")).sort(); } catch { return []; }
   return names.filter((n) => {
-    try { return isFile(join(dir, n)) && layoutNeeds(JSON.parse(readFileSync(join(dir, n), "utf8"))).blocks.has(mod); } catch { return false; }
+    try {
+      const file = join(dir, n);
+      if (!isFile(file) || (n === basename(PACK_LAYOUT) && replaced(readFileSync(file)))) return false;
+      return layoutNeeds(JSON.parse(readFileSync(file, "utf8"))).blocks.has(mod);
+    } catch { return false; }
   }).map((n) => n.slice(0, -".json".length));
 }
 
@@ -713,11 +723,14 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     // a layout's block names it (#420): Herdr would drop that layout for plain Herdr on the next
     // launch. Then it stays in mods/, still the record's, and an update after the layout changes
     // retires it. A rename's old folder leaves anyway (migrateRefs moves the layout onto the new
-    // name), and so does one switched off (a layout naming it shows plain Herdr already).
-    for (const m of repair ? [] : owned) {
+    // name), and so does one switched off (a layout naming it shows plain Herdr already). A held
+    // mod's copy goes into the kept set too, so a rollback swaps it like any folder and it stays in
+    // mods/ and the record. A repair moves none of them; a held one stays the record's.
+    for (const m of owned) {
       if (folders.includes(m) || !packFolder(m)) continue;
       const at = placeOf(modsDir, m);
       if (!at) continue;
+      if (repair) { record.mods.push(m); continue; }
       const showing = at === join(modsDir, m) && !folders.includes(own(RENAMES, m)) ? layoutsShowing(modsDir, m) : [];
       if (showing.length) {
         plan.held.push({ mod: m, layouts: showing });
@@ -729,7 +742,8 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
       if (at !== join(modsDir, m)) keptOff.push(m);
     }
     mkdirSync(modsDir, { recursive: true });
-    const keep = [...plan.replaced, ...plan.retired];
+    for (const h of plan.held) cpSync(join(modsDir, h.mod), join(next, h.mod), { recursive: true, verbatimSymlinks: true });
+    const keep = [...plan.replaced, ...plan.retired, ...plan.held.map((h) => h.mod)];
     const old = keep.length ? setAside(modsDir) : null;
     try {
       swapAll(moves, rename);

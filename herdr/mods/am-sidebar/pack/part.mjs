@@ -13,8 +13,8 @@
 // AM_HOME, AM_PART_DIR (`<extracted pack>/<select>`), AM_ARTIFACT (the verified tarball), AM_VERSION,
 // AM_SEQUENCE (the signed pointer's, recorded in the marker) and AM_JSON (parts.mjs packSource reads
 // the artifact; contextOf the rest). A fork swapping in for a member (RFC 0012 `replaces`) runs its
-// uninstall with AM_REPLACED_BY=<the fork's mod folder>, installed first: the shown layout's block
-// then names the fork instead of being refused (parts.mjs swapForFork, #420). Apache-2.0.
+// uninstall with AM_REPLACED_BY=<the fork's mod folder>, installed first: the shown layout's blocks
+// then name the fork instead of being refused (parts.mjs swapForFork, #420). Apache-2.0.
 
 import { fileURLToPath } from "node:url";
 import { realpathSync } from "node:fs";
