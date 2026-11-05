@@ -18,6 +18,7 @@ registerHooks({
 const { state } = await import(stubs.herdr);
 const { nodes, textOf, index, all } = await import(stubs["gpui-kit"]);
 const { BotForm, FORM_SIZE } = await import("../mods/am-sidebar/create.js");
+const { layoutPopup } = await import("./popup-layout.mjs");
 const { hcFileOps } = await import("./hc-file-ops.mjs");
 
 const look = (character, colour) => ({ character, colour });
@@ -298,15 +299,15 @@ test("Attach with no bot keeps its message (the New bot line is the pick list's 
   assert.match(textOf(nodes.get("bot-form-body")), /No bots on this computer yet/);
 });
 
-// ---- #239, #241: the list popups keep their content's height and paint a scrollbar ----
+// ---- #239, #241, #397: the list popups keep their content's height and paint a scrollbar ----
 
 // A popup is as tall as its content, its height only the most (Herdr's openOverlay). Live,
-// overflow_y_scrollbar's wrapper gave the body no height there, so the menu, pick and attach
-// popups drew only their title and Cancel; overflow_y_scroll keeps the items' height (#239).
-// The bar is placed beside the body instead (#241): a relative wrapper that shrinks to the
-// popup holds the scroll area, in flow, and a Scrollbar paired with it by name, the only
-// absolute element. The stub lays nothing out, so this checks how the body is built, the part
-// a stub can see; the look is checked live.
+// a size_full scroll area measured 0 there: overflow_y_scrollbar's wrapper (#239) and #327's
+// relative wrapper (#397) drew only the title and Cancel. A flex_1().min_h(0) scroll area,
+// a flex item itself, keeps the items' height (#239's fix). The bar is placed beside it (#241):
+// a relative flex column that shrinks to the popup holds the area, in flow, and a Scrollbar
+// paired with it by name, the only absolute element. This checks how the body is built; the
+// layout tests below lay it out (popup-layout.mjs).
 const builds = (node) => node.calls.map(([name]) => name);
 for (const [mode, extra] of [["menu", { bot: OMP.id, name: OMP.name, terminal: "t3" }], ["pick", {}], ["attach", { terminal: "t1" }]]) {
   test(`${mode} popup: the body scrolls in flow with a bar paired by name, so its items have a height (#239, #241)`, async () => {
@@ -319,7 +320,8 @@ for (const [mode, extra] of [["menu", { bot: OMP.id, name: OMP.name, terminal: "
     const body = builds(area);
     assert.ok(body.includes("overflow_y_scroll"), "the body scrolls past the popup's height");
     assert.ok(!body.includes("overflow_y_scrollbar"), "no scrollbar wrapper: it collapses to 0 in a popup");
-    assert.ok(body.includes("size_full"), "the area fills its wrapper");
+    for (const call of ["flex_1", "min_h"]) assert.ok(body.includes(call), `the area has ${call}: a flex item, sized by its items`);
+    assert.ok(!body.includes("size_full") && !body.includes("h_full"), "no percentage height: it measures 0 in a popup (#397)");
     assert.ok(!body.includes("absolute"), "the area stays in flow, so its items' height reaches the popup");
     assert.ok(textOf(area).length > 0, "items are drawn in the body");
 
@@ -333,6 +335,7 @@ for (const [mode, extra] of [["menu", { bot: OMP.id, name: OMP.name, terminal: "
 
     const wrapper = tree.find((n) => n.kids.some((k) => k?.__node === area));
     assert.ok(wrapper.kids.some((k) => k?.__node === bar), "the bar sits beside the area");
+    assert.equal(wrapper.kind, "v_flex", "a flex column, so the area's flex_1 and min_h(0) apply");
     const wraps = builds(wrapper);
     for (const call of ["relative", "flex_1", "min_h"]) assert.ok(wraps.includes(call), `the wrapper has ${call}`);
     assert.ok(!wraps.includes("absolute"), "the wrapper stays in flow");
@@ -341,6 +344,68 @@ for (const [mode, extra] of [["menu", { bot: OMP.id, name: OMP.name, terminal: "
     assert.equal(form.kids.length, 3, "title, body, footer");
   });
 }
+
+// ---- #397: laid out, the popups show every item of a short list and scroll a long one ----
+
+// Herdr's popup sizes (main.js openBotForm): the menu 380 x 640, the Bots list and Attach 360
+// high at the most; the Attach dialog from the command palette is a set 0.85 of the window.
+const MAX = { menu: 640, pick: 360, attach: 360 };
+const ROWS = { menu: /^menu-/, pick: /^pick-b-/, attach: /^pick-b-/ };
+const rowIds = (mode) => [...nodes.keys()].filter((id) => ROWS[mode].test(id));
+const many = Array.from({ length: 20 }, (_, i) => ({ ...OMP, id: `b-many${String(i).padStart(6, "0")}`, name: `bot-${i}` }));
+async function laidOut(mode, extra, bots, size) {
+  state.spaces = [{ id: "s1", folder: project, machine: null }];
+  seed(bots);
+  const { draw } = await open({ form: mode, planned: false, machine: null, live: null, ...extra });
+  const root = draw();
+  return layoutPopup(root, size, nodes);
+}
+const MODES = [["menu", { bot: OMP.id, name: OMP.name, terminal: "t3" }], ["pick", {}], ["attach", { terminal: "t1" }]];
+
+for (const [mode, extra] of MODES) {
+  test(`${mode} popup, short list: as tall as its items, and every item row has its height (#397)`, async () => {
+    const pop = await laidOut(mode, extra, [MAIN, OMP], { height: MAX[mode] });
+    const ids = rowIds(mode);
+    assert.ok(ids.length > 0, "the list has item rows");
+    const area = pop.box("bot-form-body");
+    assert.ok(area.h > 0, `the scroll area has a height (got ${area.h})`);
+    assert.equal(area.h, pop.contentOf("bot-form-body"), "the area is as tall as its items: nothing scrolls");
+    assert.ok(pop.height < MAX[mode], `the popup is as tall as its content, under ${MAX[mode]} (got ${pop.height})`);
+    for (const id of ids) assert.equal(pop.box(id).visible, 30, `${id} shows its 30 px`);
+  });
+}
+
+test("pick popup, long list: held at 360, the area scrolls and the bar spans it (#241, #397)", async () => {
+  const pop = await laidOut("pick", {}, [MAIN, ...many], { height: MAX.pick });
+  assert.equal(pop.height, MAX.pick, "the popup stops at its height");
+  const area = pop.box("bot-form-body");
+  const form = nodes.get("bot-form");
+  const [title, wrapper, footer] = form.kids.map((k) => pop.box(k));
+  assert.equal(title.h, 42);
+  assert.ok(footer.h > 0, "the footer and its Cancel stay");
+  assert.equal(area.h, MAX.pick - 2 - title.h - footer.h, "the area takes what the title and footer leave");
+  assert.ok(pop.contentOf("bot-form-body") > area.h, "its items are taller than it: it scrolls");
+  const ids = rowIds("pick");
+  assert.equal(pop.box(ids[0]).visible, 30, "the first rows show");
+  assert.equal(pop.box(ids.at(-1)).visible, 0, "the last rows are scrolled to, not squeezed");
+  const bar = all(form.kids[1]).find((n) => n.kind === "scrollbar-y");
+  assert.deepEqual([pop.box(bar).y, pop.box(bar).h], [wrapper.y, wrapper.h], "the bar spans the area's wrapper");
+  assert.equal(wrapper.h, area.h);
+});
+
+test("menu popup lower than its items: the area shrinks to it and scrolls (#397)", async () => {
+  const pop = await laidOut("menu", MODES[0][1], [MAIN, OMP], { height: 150 });
+  assert.equal(pop.height, 150);
+  const area = pop.box("bot-form-body");
+  assert.ok(area.h > 0 && area.h < pop.contentOf("bot-form-body"), `it scrolls (area ${area.h}, items ${pop.contentOf("bot-form-body")})`);
+  assert.equal(pop.box("menu-configure").visible, 30, "the first item shows");
+});
+
+test("Attach as a dialog of a set height: the area fills it (#239)", async () => {
+  const pop = await laidOut("attach", { terminal: "t1" }, [MAIN, OMP], { height: 700, fixed: true });
+  const [title, , footer] = nodes.get("bot-form").kids.map((k) => pop.box(k));
+  assert.equal(pop.box("bot-form-body").h, 700 - 2 - title.h - footer.h);
+});
 
 test("pick popup: a long bot name truncates, so Edit / Start / Restart stay in the popup (#239)", async () => {
   state.spaces = [{ id: "s1", folder: project, machine: null }];
