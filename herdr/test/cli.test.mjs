@@ -1341,11 +1341,25 @@ test("restart that exits before its agent is up names the agent's own last line,
   const k = s3.cli(["restart", "Genie", "--json"]);
   assert.match(k.err, /t100 exited before its agent was up \(hc read t100 says why\); t5 still runs Genie/);
   assert.equal(k.json().cause, null);
-  // A refusal carries no detail: stderr only, stdout empty as before.
-  const s4 = restartScene(t, { status: "working" });
-  const w = s4.cli(["restart", "Genie", "--json"]);
+  // Another failure carries no detail: stderr only, stdout empty as before.
+  const n = s3.cli(["restart", "Nobody", "--json"]);
+  assert.notEqual(n.code, 0);
+  assert.equal(n.out, "");
+});
+
+test("restart --json: a busy refusal says it is one, working or helpers, with the pane to wait on (#413)", (t) => {
+  const s = restartScene(t, { status: "working" });
+  const w = s.cli(["restart", "Genie", "--json"]);
   assert.equal(w.code, 1);
-  assert.equal(w.out, "");
+  assert.deepEqual(w.json(), { error: "Genie is working in t5; restarting now would cut its turn in half. Wait until it is idle, or pass --force.",
+    refused: "working", terminal: "t5" });
+  const worker = { ...term("t7", { argv: ["codex"], app: "codex", parent: "t5" }), die_with_parent: true };
+  const s2 = restartScene(t, { extra: [worker] });
+  const h = s2.cli(["restart", "Genie", "--json"]);
+  assert.equal(h.code, 1);
+  assert.deepEqual([h.json().refused, h.json().terminal], ["helpers", "t5"]);
+  assert.match(h.json().error, /^t5 has a helper that ends with it: t7./);
+  assert.equal(runCall(s2.calls()), undefined, "nothing started");
 });
 
 test("restart with no session id known: claude --continue, with a warning; --fresh starts a new conversation", (t) => {

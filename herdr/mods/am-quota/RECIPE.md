@@ -123,9 +123,16 @@ never red. Red is kept for errors (a failed read or switch).
   (`since`) before the switch. If any of them has no start time the panel can't split them
   reliably: it lists every running bot of that tool and says so. **Restart N bots** asks for a
   second press within five seconds, then runs `automagik-herdr restart <bot> --project <project>`
-  for each, one at a time (each resumes its conversation), and names any it refused (a working
-  bot is refused rather than forced). Without the sidebar mod there is no CLI: the banner says to
-  run `automagik-herdr restart <bot>` instead.
+  for each, one at a time (each resumes its conversation), and names any it refused, with the
+  CLI's reason: a new pane that exited before its agent was up says what its agent printed last
+  (codex's `modelProviderNotConfigured`, say). A Codex thread begun on a model provider no longer
+  configured can't be resumed: that bot starts on a new conversation, listed with the old thread's
+  id. A busy bot (mid-turn, or with helpers that would end with its pane) is refused rather than
+  forced and shown as busy, with **Restart <bot> when idle**: one `hc wait` on its pane (at most
+  30 minutes; with helpers, until none of them works), then one restart, refused again if it is
+  still busy. Pressing it again cancels; the panel keeps the wait in memory only, so a reload
+  drops it. Without the sidebar mod there is no CLI: the banner says to run
+  `automagik-herdr restart <bot>` instead.
 - **The refresh token is shared with the proxy.** Both sides hold the same one, and Anthropic rotates
   it on use, so whichever side refreshes first can sign the other out. Expect to re-import or sign in
   on the side that lost it; the banner after a Claude switch says so too.

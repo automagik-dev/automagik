@@ -8,6 +8,9 @@ export const state = {
   files: new Map(),
   calls: [],
   exec: () => ({ code: 0, stdout: "", stderr: "" }),
+  // hc: recorded in hcCalls, answered by state.hc (a promise the test resolves, to hold a wait).
+  hcCalls: [],
+  hc: () => ({ code: 0, stdout: "{}", stderr: "" }),
 };
 
 export const appHome = () => state.appHome;
@@ -22,6 +25,10 @@ export async function writeTextFile(path, text, expected) {
   const now = state.files.has(path) ? state.files.get(path) : null;
   if ((expected ?? null) !== now) throw new Error(`stale write to ${path}`);
   state.files.set(path, text);
+}
+export async function hc(args) {
+  state.hcCalls.push(args);
+  return state.hc(args);
 }
 export async function exec(command, args = []) {
   state.calls.push([command, ...args]);

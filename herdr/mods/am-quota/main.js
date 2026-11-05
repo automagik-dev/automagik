@@ -11,7 +11,7 @@
 // once the person confirms.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, theme, appHome, home, readTextFile, window as appWindow, writeTextFile } from "herdr";
+import { exec, hc, theme, appHome, home, readTextFile, window as appWindow, writeTextFile } from "herdr";
 import { client, QuotaSampler } from "./proxy.js";
 import { credentialTarget, keychainReadScript, keychainService, tokenIdentity, TARGETS } from "./translate.js";
 import { install } from "./switch.js";
@@ -28,6 +28,9 @@ const KEY_ENV = "CLIPROXY_MGMT_KEY";
 const STATE = "am-quota/active.json";
 /** How long the Restart button stays armed for its confirming second click. */
 const ARMED = 5000;
+// "Restart when idle" waits once, in hc wait, at most this long (seconds) for a busy bot's turn
+// (or its helpers' work) to end; then it restarts the bot once, refused again if still busy.
+const IDLE_WAIT_S = 1800;
 /** The bot CLI, run the way the sidebar runs it (am-sidebar/launch.js runCli). */
 const SIDEBAR = "am-sidebar";
 
@@ -385,31 +388,100 @@ export default class AmQuota extends View {
       const failed = [];
       const left = [];
       // The ones that restarted on a new conversation, and why (#328: no session id known and a
-      // teammate on that agent in the folder): the CLI's --json note.
+      // teammate on that agent in the folder; #413: codex can't resume the thread): the CLI's note.
       const fresh = [];
+      // The ones refused as busy (#413): { bot, why, refused, terminal }, each with Restart when idle.
+      const busy = [];
       let done = (s.done ?? 0);
       // One at a time: each restart waits for the new pane's agent to stay up.
       for (const bot of bots) {
-        let why = null;
-        try {
-          const r = await this.cli(["restart", bot.id, "--project", bot.project]);
-          if (r?.code !== 0) why = refusal(r) || `exit ${r?.code ?? "?"}`;
-          else if (r.out?.mode === "fresh" && typeof r.out.note === "string" && r.out.note) fresh.push(`${bot.name}: ${r.out.note}`);
-        } catch (err) {
-          why = message(err);
-        }
-        if (why === null) done += 1;
-        else {
-          failed.push(`${bot.name}: ${why}`);
-          left.push(bot);
-        }
+        const one = await this.restartOne(bot);
+        if (one.note) fresh.push(`${bot.name}: ${one.note}`);
+        if (one.busy) busy.push(one.busy);
+        else if (one.why !== null) failed.push(`${bot.name}: ${one.why}`);
+        if (one.why === null) done += 1;
+        else left.push(bot);
       }
       s.restarting = false;
       delete this.restarting[provider];
       s.done = done;
-      s.result = { done, failed, fresh };
+      s.waiting = {};
+      s.result = { done, failed, fresh, busy };
       // Only the ones that failed are left to restart.
       s.look = { bots: left, reliable: left.length ? s.look.reliable : true };
+      wake(cx);
+    });
+  }
+
+  /**
+   * One bot's restart through the CLI: { why: null | the reason it wasn't, note: a fresh start's
+   * note or null, busy: { bot, why, refused, terminal } when the CLI refused it as busy (its
+   * --json `refused`: "working", or "helpers" that would end with its pane) }.
+   */
+  async restartOne(bot) {
+    try {
+      const r = await this.cli(["restart", bot.id, "--project", bot.project]);
+      if (r?.code === 0) return { why: null, note: r.out?.mode === "fresh" && typeof r.out.note === "string" && r.out.note ? r.out.note : null, busy: null };
+      const why = refusal(r) || `exit ${r?.code ?? "?"}`;
+      const refused = r?.out?.refused;
+      const busy = (refused === "working" || refused === "helpers") && typeof r.out.terminal === "string"
+        ? { bot, why, refused, terminal: r.out.terminal } : null;
+      return { why, note: null, busy };
+    } catch (err) {
+      return { why: message(err), note: null, busy: null };
+    }
+  }
+
+  /**
+   * Restart when idle (#413): one `hc wait` on the busy bot's pane (its turn; with helpers, until
+   * none of them works), bounded by IDLE_WAIT_S, then one restart. No loop: still busy, it is
+   * refused and listed again. A second press cancels: the wait's answer is then dropped (hc wait
+   * itself ends by its timeout). Kept in this panel only, so a reload of the panel clears it.
+   */
+  restartWhenIdle(provider, botId, cx) {
+    const s = this.switched[provider];
+    const entry = s?.result?.busy?.find((b) => b.bot.id === botId);
+    if (!entry) return;
+    s.waiting ??= {};
+    if (s.waiting[botId]) {
+      delete s.waiting[botId];
+      wake(cx);
+      return;
+    }
+    const token = {};
+    s.waiting[botId] = token;
+    const live = () => this.switched[provider] === s && s.waiting?.[botId] === token;
+    cx.spawn(async (cx) => {
+      wake(cx);
+      try {
+        await hc(["wait", entry.terminal, ...(entry.refused === "helpers" ? ["--children", "all"] : []), "--timeout", String(IDLE_WAIT_S), "--json"]);
+      } catch {}
+      if (!live()) return;
+      // A switch or another restart running now: this one waits for no second turn.
+      if (this.busy || s.restarting) {
+        delete s.waiting[botId];
+        this.switchError = `${entry.bot.name}'s turn ended while ${this.busy ? "a switch" : "a restart"} ran: press Restart when idle again`;
+        wake(cx);
+        return;
+      }
+      s.restarting = true;
+      this.restarting = { ...this.restarting, [provider]: true };
+      wake(cx);
+      const one = await this.restartOne(entry.bot);
+      s.restarting = false;
+      delete this.restarting[provider];
+      delete s.waiting[botId];
+      const r = s.result;
+      r.busy = r.busy.filter((b) => b.bot.id !== botId);
+      if (one.note) r.fresh = [...r.fresh, `${entry.bot.name}: ${one.note}`];
+      if (one.busy) r.busy = [...r.busy, one.busy];
+      else if (one.why !== null) r.failed = [...r.failed, `${entry.bot.name}: ${one.why}`];
+      if (one.why === null) {
+        r.done += 1;
+        s.done = r.done;
+        const left = (s.look?.bots ?? []).filter((b) => b.id !== botId);
+        s.look = { bots: left, reliable: left.length ? s.look.reliable : true };
+      }
       wake(cx);
     });
   }
@@ -498,9 +570,18 @@ export default class AmQuota extends View {
       const what = `Restart ${n} bot${n === 1 ? "" : "s"}`;
       box.child(this.button(t, `restart-${provider}`, s.restarting ? "Restarting…" : armed ? `${what}? Press again to confirm` : what,
         (_e, cx) => this.restartBots(provider, cx), { primary: true, small: "Each one resumes its conversation on the new account where it can" }));
-      if (s.result?.failed.length) {
-        hint(`Restarted ${s.result.done} of ${s.result.done + s.result.failed.length}. Not restarted:`);
+      const busy = s.result?.busy ?? [];
+      if (s.result?.failed.length || busy.length) {
+        hint(`Restarted ${s.result.done} of ${s.result.done + s.result.failed.length + busy.length}. Not restarted:`);
         for (const f of s.result.failed) box.child(div().text_size(10.5).text_color(t.working).child(f));
+        // Busy (#413): its refusal as the CLI words it, and Restart when idle (pressed: Cancel).
+        for (const b of busy) {
+          const waiting = Boolean(s.waiting?.[b.bot.id]);
+          box.child(div().text_size(10.5).text_color(t.working).child(`${b.bot.name} is busy: ${b.why}`));
+          box.child(this.button(t, `idle-${provider}-${b.bot.id}`,
+            waiting ? `Waiting for ${b.bot.name} to be idle · Cancel` : `Restart ${b.bot.name} when idle`,
+            (_e, cx) => this.restartWhenIdle(provider, b.bot.id, cx)));
+        }
       }
     }
     if (s.result?.fresh?.length) {

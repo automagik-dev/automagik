@@ -242,6 +242,75 @@ test("a busy bot's refusal (working, or with helpers) is shown as the CLI words 
   assert.ok(!text(root).includes("a warning first"));
 });
 
+// #413: the CLI's --json refusal of a busy bot, as cmdRestart prints it.
+const WORKING = "A is working in t5; restarting now would cut its turn in half. Wait until it is idle, or pass --force.";
+const busyAnswer = (refused = "working", error = WORKING) => ({ code: 1, stdout: JSON.stringify({ error, refused, terminal: "t5" }), stderr: `automagik-herdr: ${error}\n` });
+const ticks = async () => { for (let i = 0; i < 20; i += 1) await new Promise((go) => setImmediate(go)); };
+async function busyPanel(answer = busyAnswer()) {
+  const p = await panel();
+  p.view.tool = "codex";
+  p.view.switched.codex = { at: NOW, from: "ana@example.com · Pro", to: "bo@example.com · Pro",
+    look: { bots: [{ id: "a", name: "A", project: "/p" }], reliable: true } };
+  state.hcCalls = [];
+  state.hc = () => ({ code: 0, stdout: "{}", stderr: "" });
+  state.exec = () => answer;
+  p.draw();
+  nodes.get("restart-codex").click(null, p.cx);
+  nodes.get("restart-codex").click(null, p.cx);
+  await p.cx.settle();
+  state.calls = [];
+  p.draw(); // the busy row's button, drawn
+  return p;
+}
+const restarts = () => state.calls.filter((c) => c[0] === "env" && c.includes("restart"));
+
+test("a busy bot shows busy with Restart when idle: one hc wait on its pane, then one restart (#413)", async () => {
+  const { cx, draw } = await busyPanel();
+  let root = draw();
+  assert.match(text(root), /Restarted 0 of 1\. Not restarted:/);
+  assert.ok(text(root).includes(`A is busy: ${WORKING}`), text(root));
+  assert.match(text(root), /Restart A when idle/);
+  state.exec = () => ({ code: 0, stdout: "{}", stderr: "" });
+  nodes.get("idle-codex-a").click(null, cx);
+  await cx.settle();
+  assert.deepEqual(state.hcCalls, [["wait", "t5", "--timeout", "1800", "--json"]], "one bounded wait on the bot's pane, never a loop");
+  assert.deepEqual(restarts().map((c) => c.slice(5)), [["restart", "a", "--project", "/p", "--json"]], "then one restart");
+  root = draw();
+  assert.match(text(root), /Restarted 1: every Codex bot is on the new account/);
+});
+
+test("Restart when idle for a bot with helpers waits on them (hc wait --children all); still busy: refused once, listed again (#413)", async () => {
+  const helpers = "t5 has a helper that ends with it: t7. Let it finish, pass --tree to restart it too (resumed, under the new pane), or pass --force to end it with the pane.";
+  const { cx, draw } = await busyPanel(busyAnswer("helpers", helpers));
+  nodes.get("idle-codex-a").click(null, cx);
+  await cx.settle();
+  assert.deepEqual(state.hcCalls, [["wait", "t5", "--children", "all", "--timeout", "1800", "--json"]]);
+  assert.equal(restarts().length, 1, "one restart, no second wait");
+  const root = draw();
+  assert.ok(text(root).includes(`A is busy: ${helpers}`), text(root));
+  assert.match(text(root), /Restart A when idle/, "the action is offered again, not run again");
+  assert.equal(state.hcCalls.length, 1);
+});
+
+test("Restart when idle is cancelable: pressed again while it waits, the wait's end restarts nothing (#413)", async () => {
+  const { view, cx, draw } = await busyPanel();
+  let done;
+  state.hc = () => new Promise((go) => { done = go; });
+  nodes.get("idle-codex-a").click(null, cx);
+  await ticks();
+  assert.equal(state.hcCalls.length, 1);
+  assert.match(text(draw()), /Waiting for A to be idle · Cancel/);
+  nodes.get("idle-codex-a").click(null, cx);
+  assert.match(text(draw()), /Restart A when idle/);
+  done({ code: 0, stdout: "{}", stderr: "" });
+  await cx.settle();
+  assert.equal(restarts().length, 0, "canceled: no restart");
+  assert.deepEqual(view.switched.codex.waiting, {});
+  // A reloaded panel holds no wait at all: it is this panel's memory only.
+  const again = await panel();
+  assert.equal(again.view.switched.codex, undefined);
+});
+
 test("a restart that started fresh says which bot and why (#328: no session id, a teammate in the folder)", async () => {
   const { view, cx, draw } = await panel();
   view.tool = "codex";

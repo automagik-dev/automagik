@@ -1707,7 +1707,7 @@ async function restartOnMachine(opts, project, bot, entry) {
   const old = held ? { ...held.get, address: addressOf(held.binding, view.machines) } : null;
   if (old) {
     const refusal = restartRefusal({ name: bot.name, old, helpers: await helpersOf(old.address), force: opts.force });
-    if (refusal) throw new CliError(refusal);
+    if (refusal) throw busyRefusal(refusal, old);
     if (!old.status && !opts.force) {
       throw new CliError(`${old.address} doesn't tell hc whether ${bot.name}'s agent is busy or waiting for an approval, so a restart `
         + `could end it mid-turn. Nothing was restarted. Look at the pane first, then pass --force to restart anyway `
@@ -2050,6 +2050,12 @@ async function exitedWhy(terminal) {
   const cause = await endedCause(terminal);
   return { cause, text: `${terminal} exited before its agent was up${cause ? `; its agent said: "${cause}" (hc read ${terminal} shows the rest)` : ` (hc read ${terminal} says why)`}` };
 }
+
+/**
+ * restartRefusal's refusal of a busy pane: --json prints `refused` ("working": mid-turn;
+ * "helpers": helpers that end with it) and its `terminal`, so a caller can wait for it (#413).
+ */
+const busyRefusal = (refusal, old) => new CliError(refusal, 1, { refused: old?.status?.state === "working" ? "working" : "helpers", terminal: old.address });
 
 // Codex refusing a thread whose model provider is no longer in its config (#413: threads begun
 // on a provider since removed, Juice say): that thread can't be resumed, only left behind.
@@ -2450,7 +2456,7 @@ async function cmdRestart(opts, [ref]) {
   const helpers = old ? await helpersOf(old.address, { strict: Boolean(opts.tree) }) : [];
   if (old) {
     const refusal = restartRefusal({ name: bot.name, old, helpers, force: opts.force, tree: opts.tree });
-    if (refusal) throw new CliError(refusal);
+    if (refusal) throw busyRefusal(refusal, old);
   }
   const agents = agentTable();
   const ledger = workerLedgerRows();
