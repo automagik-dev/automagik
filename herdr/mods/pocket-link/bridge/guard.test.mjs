@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, statSync, openSync, writeSync, closeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { acceptOne, slots, throttle, rotateLog, readLine, addressOf, MAX_LINE } from './guard.mjs'
+import { acceptOne, slots, throttle, rotateLog, readLine, addressOf, MAX_LINE, routesFor, endRemoved, sessionName, ALPN } from './guard.mjs'
 
 const never = () => new Promise(() => {})
 const later = (ms, value) => new Promise(r => setTimeout(() => r(value), ms))
@@ -231,4 +231,53 @@ test('a header line longer than the limit is refused', async () => {
   const { value, rest } = await readLine(recv(['{"a":', '1}\nmore']))
   assert.deepEqual(value, { a: 1 })
   assert.equal(Buffer.from(rest).toString(), 'more')
+})
+
+// ---------------------------------------------------------------- the chat route (RFC 0015 delivery 4)
+
+const table = (pairedIds, runs = {}) => routesFor({
+  paired: id => pairedIds.includes(id), codeLive: () => false,
+  pair: runs.pair ?? (() => {}), session: runs.session ?? (() => {}), chat: runs.chat ?? (() => {}),
+})
+
+test('the chat route: an unpaired key is closed before its header is read', async () => {
+  let read = false
+  const { conn, incoming } = peer({ alpn: ALPN.chat, acceptBi: async () => { read = true; return { recv: recv([]) } } })
+  const refused = logged()
+  await acceptOne(incoming, { routes: table([]), cap: slots(), refused, ms: 1000 })
+  assert.equal(conn.closedWith, 'not paired')
+  assert.equal(read, false)
+  assert.match(refused.lines[0], /^refused not paired/)
+})
+
+test('the chat route admits a paired key by the same check as the terminal session, untimed', async () => {
+  const id = 'b'.repeat(64)
+  let ran = null
+  const { incoming } = peer({ alpn: ALPN.chat, id, lines: ['{"session":"default"}\n'] })
+  await acceptOne(incoming, { routes: table([id], { chat: job => { ran = job } }), cap: slots(), refused: logged(), ms: 1000 })
+  assert.equal(ran?.peer, id)
+  assert.deepEqual(ran?.value, { session: 'default' })
+  const routes = table([id])
+  assert.equal(routes[ALPN.chat].timed, false)
+  for (const who of [id, 'c'.repeat(64)]) assert.equal(routes[ALPN.chat].admit(who), routes[ALPN.session].admit(who))
+})
+
+test("a removed phone's chat and terminal sessions are ended; a paired phone's stay", () => {
+  const ended = []
+  const live = new Set([
+    { phone: 'gone', end: () => ended.push('gone chat') },
+    { phone: 'gone', end: () => ended.push('gone session') },
+    { phone: 'kept', end: () => ended.push('kept') },
+  ])
+  assert.equal(endRemoved(live, new Set(['kept'])), 2)
+  assert.deepEqual(ended.sort(), ['gone chat', 'gone session'])
+  assert.deepEqual([...live].map(s => s.phone), ['kept'])
+})
+
+test('a session name: hc-safe characters, never only dots, else default (both routes)', () => {
+  for (const [given, want] of [['work', 'work'], ['a.b_c-1', 'a.b_c-1'], ['.', 'default'], ['..', 'default'], ['...', 'default'], ['.hidden', '.hidden'],
+    ['a/b', 'default'], ['', 'default'], ['x'.repeat(65), 'default'], [7, 'default'], [undefined, 'default']]) {
+    assert.equal(sessionName({ session: given }), want, String(given))
+  }
+  assert.equal(sessionName(null), 'default')
 })
