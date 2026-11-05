@@ -302,26 +302,34 @@ async function helpersOf(all, address, known, ask) {
 // the timer can come due before the event loop has polled stdin once (timers run before the
 // poll), and Claude Code's JSON, sitting there since the start, would be dropped. setImmediate
 // runs after the next poll, so only a caller that really sent nothing in `ms` gets "".
+// Once some of it has come, the rest is waited for until stdin ends: a JSON bigger than the pipe
+// buffer (64 KB, a large pasted prompt) comes in several reads, and on a starved machine the
+// window can close between them; read cut short, it would not parse. `limit` bounds a caller
+// that writes but never closes: the entry point clears its guard once main is done, and the
+// session join still waits for the input. Then what came is taken as it is (a cut JSON object
+// never parses). An input over INPUT_CAP is no input: "", so a cut one is never parsed.
 const INPUT_MS = 300;
-function readInput(ms) {
+const INPUT_CAP = 1_000_000;
+function readInput(ms, limit) {
   if (process.stdin.isTTY) return Promise.resolve("");
   return new Promise((resolve) => {
     let text = "";
-    let timer = null;
     let settled = false;
-    const done = () => {
+    const done = (result) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      clearTimeout(windowTimer);
+      clearTimeout(limitTimer);
       process.stdin.removeAllListeners("data");
       process.stdin.destroy();
-      resolve(text);
+      resolve(result);
     };
-    timer = setTimeout(() => setImmediate(done), ms);
+    const windowTimer = setTimeout(() => setImmediate(() => { if (text === "") done(text); }), ms);
+    const limitTimer = setTimeout(() => done(text), limit);
     process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (d) => { text += d; if (text.length > 1_000_000) done(); });
-    process.stdin.on("end", done);
-    process.stdin.on("error", done);
+    process.stdin.on("data", (d) => { text += d; if (text.length > INPUT_CAP) done(""); });
+    process.stdin.on("end", () => done(text));
+    process.stdin.on("error", () => done(text));
   });
 }
 
@@ -385,7 +393,7 @@ if (import.meta.url === invoked) {
   guard.unref();
   const self = process.env.HC_TERMINAL_ID;
   const me = self ? hcJson(["get", self]) : Promise.resolve(null);
-  const raw = self ? readInput(INPUT_MS) : Promise.resolve("");
+  const raw = self ? readInput(INPUT_MS, GUARD_MS * scale) : Promise.resolve("");
   const input = raw.then((text) => { try { const x = JSON.parse(text); return x && typeof x === "object" ? x : {}; } catch { return {}; } });
   const joined = self ? Promise.all([me, raw]).then(([get, text]) => joinSession(self, get, text, appHomeOf()), () => false)
     : Promise.resolve(false);
