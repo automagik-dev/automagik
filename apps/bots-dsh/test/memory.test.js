@@ -933,6 +933,59 @@ test('a change that matches no entry, or many, is logged without the topic or an
   for (const secret of ['hunter2', 'hunter3']) assert.ok(!log.includes(secret), log)
 })
 
+// The first change edits entry 1, so its old text is now only part of entry 2. A
+// second change to entry 1 is left out with one warning: it never lands on entry 2.
+async function staleEntryReview(t, second, left) {
+  const seeded = mkdtempSync(join(tmpdir(), 'ds-bot-memory-'))
+  const dir = join(seeded, 'memory', 'bots', 'b2')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'MEMORY.md'), '# Memory\n\n## Index\n- [[drinks]]\n')
+  writeFileSync(join(dir, 'drinks.md'), '# drinks\n\n- The user likes green tea\n- The user likes green tea with milk\n')
+  const answer = JSON.stringify({ changes: [{ op: 'edit', entry: 1, text: 'The user prefers oolong' }, second] })
+  const { ctx, home, call, read, journal, requests, stop } = start({ home: seeded, replies: [answer], config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  const [warned] = await warnedTimes(home, 'left out a change', 1)
+  assert.match(warned, left)
+  assert.deepEqual(parseMemory(read('bots', 'b2', 'drinks.md')).entries.map(entry => entry.text), ['The user prefers oolong', 'The user likes green tea with milk'])
+  assert.deepEqual(journal().map(record => record.op), ['replace'])
+  assert.deepEqual(warnings(home, 'memory review of chat:b2 failed'), [])
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+  await settle()
+  assert.ok(!diagnosticsLog(home).includes('green tea'))
+}
+
+test('a remove of an entry an earlier change edited never removes another entry holding its old text', async (t) => {
+  await staleEntryReview(t, { op: 'remove', entry: 1 }, /^memory review of Writer left out a change \(remove, 24 chars\): The entry the change names has changed since it was read; the text it had \(24 chars\) is only part of another entry now\./)
+})
+
+test('"ask or update" never moves a second change of an edited entry to another entry', async (t) => {
+  const replies = []
+  const { tool, call, journal, stop } = start({ replies })
+  t.after(() => stop())
+  await tool('remember', { text: 'The user likes green tea' }, 'b2')
+  await tool('remember', { text: 'The user likes green tea with milk' }, 'b2')
+  replies.push(JSON.stringify({ reply: 'Done.', changes: [
+    { op: 'edit', entry: 1, text: 'The user prefers oolong' },
+    { op: 'remove', entry: 1 },
+    { op: 'edit', entry: 1, text: 'The user prefers black coffee' },
+  ] }))
+  const answer = (await call('memory-ask', { botId: 'b2', text: 'I prefer oolong now' })).value
+  assert.deepEqual(answer.changes.map(change => [change.op, change.ok]), [['edit', true], ['remove', false], ['edit', false]])
+  assert.match(answer.changes[1].error, /has changed since it was read/)
+  assert.deepEqual(answer.view.entries.map(entry => entry.text), ['The user prefers oolong', 'The user likes green tea with milk'])
+  assert.deepEqual(journal().map(record => record.op), ['add', 'add', 'replace'])
+})
+
+test('a second edit of an entry an earlier change edited never edits another entry holding its old text', async (t) => {
+  await staleEntryReview(t, { op: 'edit', entry: 1, text: 'The user prefers black coffee' }, /^memory review of Writer left out a change \(edit, 29 chars\): The entry the change names has changed since it was read; the text it had \(24 chars\) is only part of another entry now\./)
+})
+
 test('an answer with a malformed change, an unlisted entry, or a bad topic changes nothing, and is asked for once more', async (t) => {
   for (const bad of [{ op: 'add' }, { op: 'remove', entry: 7 }, { op: 'add', text: 'The user writes C++', topic: 'C++' }]) {
     const answer = JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }, bad] })
