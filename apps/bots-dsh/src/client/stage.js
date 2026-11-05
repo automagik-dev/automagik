@@ -112,7 +112,12 @@ export function markConversation(root = document.documentElement) {
 // draft, tall enough for the row. A floor only: it never caps what grows.
 // The card is capped at 760px; DSH's queued-message dock sizes itself from the wider native
 // card variable, so it takes the same cap less its two insets, as natively (#91). Its panel
-// then sits 16px inside each card edge and keeps DSH's own 3px seam under the card.
+// then sits 16px inside each card edge and keeps DSH's own 3px seam under the card. The goal
+// bar, the todo panel and the Bot's side-question (btw) dock size from that variable too, with
+// no padding of their own: they take the cap less four insets, so each sits 16px inside each
+// card edge as natively, and their inner boxes follow, since the variable can be narrower or
+// wider than the card it no longer drives (#363). The variable itself is left alone: the hero
+// shell, the hero stack and the composer notice read it as well.
 const CONTROLS = `
 html body :is(.bt-soft,.bt-q-btn,.bt-pill,.bt-model-chip,.bt-head button){border:1px solid var(--st-line-2);border-radius:10px;background:transparent;box-shadow:none;font-weight:600;transition:background-color .16s ease}
 html body :is(.bt-soft,.bt-q-btn,.bt-pill,.bt-model-chip,.bt-head button):hover:not(:disabled){background:var(--bt-hover)}
@@ -123,6 +128,8 @@ html body :is(.bt-state,.bt-token){border:1px solid var(--st-line);background:va
 html body .bt-state[aria-pressed=true]{background:var(--st-lilac);color:var(--st-lilac-ink)}
 html body [class*="_composerStack"] [data-composer-card][data-composer-card]{max-width:min(760px,100%)!important;margin-inline:auto!important}
 html body [class*="_composerStack"] [data-queue-dock]{max-width:calc(760px - 2*var(--dsh-composer-dock-inset,8px))!important}
+html body [class*="_composerStack"] :is([data-goal-bar],[data-goal-bar]>*,[data-testid="todo-panel"],[data-composer-dock]:has(.bt-btw),.bt-btw-dock){max-width:calc(760px - 4*var(--dsh-composer-dock-inset,8px))}
+html body [class*="_composerStack"] [data-composer-dock]:has(.bt-btw){width:calc(100% - 4*var(--dsh-composer-dock-inset,8px))}
 html body [data-composer-card]{background:var(--st-raised)!important;border:1px solid var(--st-line)!important;border-radius:18px!important;box-shadow:var(--st-hollow)!important}
 html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card]{flex-wrap:wrap!important;row-gap:6px!important;padding:10px 10px 8px 12px!important;border-radius:18px!important;min-height:0!important}
 html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card]>[data-input-scroll]{order:0!important;flex:1 1 100%!important;padding:2px 4px 4px!important}
