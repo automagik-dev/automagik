@@ -130,9 +130,10 @@ test("Left: the rise over the time the log covers, idle gaps left out; else sinc
   // reading out; 2% in 5h, 10% left in 25h (1d1h), not 1h24m.
   const resumed = [row7(18000, 54), row7(17999, 88), ...every5(17700, 0, (ago) => 88 + 2 * (18000 - ago) / 18000, row7)];
   assert.equal(left("seven_day", w7, NOW, resumed), 90_000);
-  // A gap: one reading 11.5h ago (80%), idle, then 2% an hour over the last hour: 10% left in 5h.
-  // b65c385e started the rate at the old reading and counted the idle hours: 11h30m.
-  const gap = [row7(41_400, 80), ...every5(3600, 0, (ago) => 90 - 2 * ago / 3600, row7)];
+  // A gap: one reading 11.5h ago (80%), idle, then 2% an hour over the last 100 minutes (95
+  // covered, past the 90-minute floor): 10% left in 5h. b65c385e started the rate at the old
+  // reading and counted the idle hours: 11h30m.
+  const gap = [row7(41_400, 80), ...every5(6000, 0, (ago) => 90 - 2 * ago / 3600, row7)];
   assert.equal(left("seven_day", w7, NOW, gap), 18_000);
   assert.equal(until(18_000), "5h00m");
 
@@ -147,6 +148,33 @@ test("Left: the rise over the time the log covers, idle gaps left out; else sinc
   const input = { rate_limits: { five_hour: w(70) } };
   assert.equal(format(input, { ...plain, limits: steady }), "Quota 5h ▰▰▰▰▱ 70%  Left 30m  Resets 1h00m");
   assert.equal(format(input, plain), "Quota 5h ▰▰▰▰▱ 70%  Resets 1h00m");
+});
+
+test("Left on the owner's log shape after an overnight gap: none until 90 minutes are covered", () => {
+  // The 7d window on the owner's log, 2026-11-05: a last reading at 78% at 03:15Z, nothing for
+  // 8h24m, then readings from 11:39Z at 79%, whole-percent steps at the minutes below after it
+  // (the real step times), about 3.2% an hour. Readings every 5 minutes and at each step.
+  const resume = NOW / 1000 - 3 * 3600, reset7 = resume + 3 * 86400;
+  const steps = [[0, 79], [19, 80], [55, 81], [74, 82], [87, 83], [100, 84], [115, 85], [125, 86]];
+  const at = (s) => steps.filter(([m]) => m * 60 <= s).at(-1)[1];
+  const row7 = (ts, used) => ({ ts: iso(ts), seven_day: { used_percentage: used, resets_at: reset7 } });
+  const rowsTill = (s) => [row7(resume - 30_240, 78),
+    ...[...new Set([...Array.from({ length: Math.floor(s / 300) + 1 }, (_, n) => n * 300), ...steps.map(([m]) => m * 60).filter((x) => x <= s)])]
+      .sort((a, b) => a - b).map((x) => row7(resume + x, at(x)))];
+  const leftAt = (min) => {
+    const s = min * 60;
+    return runOut("seven_day", { used_percentage: at(s), resets_at: reset7 }, (resume + s) * 1000, rowsTill(s));
+  };
+  // Under 90 minutes covered (5 of them settling after the gap): no Left. ca8b3822 measured
+  // from 15 minutes on, and at 53 minutes, flat at 80% since minute 19, showed 16h00m (the real
+  // log: 6h09m at 12:04Z climbing to 15h29m at 12:32Z, then halving).
+  for (let min = 10; min <= 94; min += 1) assert.equal(leftAt(min), null, `minute ${min}`);
+  // From 95 minutes on, the pace the log covers: within 4.5 to 2.5% an hour, never 15h.
+  for (let min = 95; min <= 130; min += 1) {
+    const s = leftAt(min), used = at(min * 60);
+    assert.ok(s != null && s >= ((100 - used) / 4.5) * 3600 && s <= ((100 - used) / 2.5) * 3600, `minute ${min}: ${s}`);
+  }
+  assert.equal(until(leftAt(101)), "5h08m"); // 84%: 5% in 96 covered minutes
 });
 
 test("the limits log: only its last 256 KiB, a cut first line and bad lines skipped", () => {

@@ -50,8 +50,8 @@ Each segment is left out when its field is missing. Separators and labels are di
   6 h for 7d): only spans between consecutive readings at most 15 minutes apart (the logger
   writes at least every 5 minutes while a session runs). A longer span is idle and counts neither
   its time nor a rise across it, and the first 5 minutes after it are left out too (a resumed
-  session's stale first reading lands there). Under 15 minutes covered, or a measured rise of
-  nothing, shows no `Left`. With no reading of the window in the lookback at all, the rate is the
+  session's stale first reading lands there). Under 15 minutes or a quarter of the lookback
+  covered (15 minutes for 5h, 90 for 7d), or a measured rise of nothing, shows no `Left`. With no reading of the window in the lookback at all, the rate is the
   used % over the time since the window started.
 
 | File | What it is |

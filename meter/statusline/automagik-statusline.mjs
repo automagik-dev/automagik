@@ -100,10 +100,11 @@ export function bar(pct, cells) {
  * only the spans between consecutive readings at most 15 minutes apart (the logger writes at least
  * every 5 minutes while a session runs). A longer span is idle time, and counts neither its time
  * nor any rise across it. The first 5 minutes after each idle span are left out as well: a resumed
- * session's stale first reading lands there. Under 15 minutes covered measures too little (one 1%
- * step of a whole-number reading would read as a run), so there is no Left; a measured rise of
- * nothing means no run-out. With no reading of the window in the lookback at all, the rate is the
- * used % over the time since the window started (once it is 10 minutes old).
+ * session's stale first reading lands there. Under 15 minutes or a quarter of the lookback covered
+ * (15 minutes for 5h, 90 for 7d) measures too little (one 1% step of a whole-number reading would
+ * read as a run), so there is no Left; a measured rise of nothing means no run-out. With no
+ * reading of the window in the lookback at all, the rate is the used % over the time since the
+ * window started (once it is 10 minutes old).
  */
 export function runOut(key, w, now, rows) {
   const spec = WINDOWS[key];
@@ -132,7 +133,7 @@ export function runOut(key, w, now, rows) {
       covered += b - a;
       rise += vb - va;
     }
-    if (covered < MIN_COVERED) return null;
+    if (covered < Math.max(MIN_COVERED, spec.look / 4)) return null;
     rate = rise / covered;
   } else {
     const elapsed = t - (reset - spec.span);
