@@ -25,6 +25,7 @@ const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.ur
 const RUNTIME = process.env.AUTOMAGIK_HERDR_TEST_RUNTIME || process.execPath;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
 const FAKE_APP = new URL("./fake-herdr-app.mjs", import.meta.url).pathname;
+const FAKE_PGREP = new URL("./fake-pgrep.mjs", import.meta.url).pathname;
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", plan: "b-eeeeeeeeee" };
 
 const git = (cwd, ...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" });
@@ -42,6 +43,8 @@ function scene(t, { terminals = [], briefing = true, window = { down: true } } =
   mkdirSync(bin);
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
   exe(join(bin, "herdr-app"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_APP}" "$@"\n`);
+  // The spare shell's children: never the host's processes.
+  exe(join(bin, "pgrep"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_PGREP}" "$@"\n`);
   exe(join(bin, "claude"), "#!/bin/sh\nexit 0\n");
   exe(join(bin, "codex"), "#!/bin/sh\nexit 0\n");
   const home = join(root, "home");
@@ -885,36 +888,56 @@ test("start with no space showing the project opens one on its folder and starts
   assert.deepEqual(s2.appCalls(), []);
 });
 
-test("start in a space it opened closes its lone shell tab only when ls counts one pane there and the shell is idle", (t) => {
-  // ls with a pane count per tab: the shell (t-sh1) alone in tb-new1, idle; Herdr shows the bot (t100) in tb-t100.
-  const s = scene(t, { window: { spaces: [], place: true, paneCounts: true } });
+test("start in a space it opened closes its lone shell tab only while it is the fresh shell space.new made, bare and idle", (t) => {
+  // Herdr's real ls shape (no pane count): the shell (t-sh1) seen right after space.new as the
+  // space's one tab and that tab's one terminal, idle with no child; Herdr shows the bot (t100) in tb-t100.
+  const s = scene(t, { window: { spaces: [], place: true } });
   s.seed(team());
   const r = s.cli(["start", "Genie", "--json"]);
   assert.equal(r.code, 0, r.err);
   assert.deepEqual([r.json().space, r.json().tab], ["sp-new1", null]);
-  // Never `confirmed`: Herdr asks the person whenever it would.
+  // Never `confirmed`: Herdr asks the person only before closing a space's last tab.
   assert.deepEqual(s.appCalls().filter((c) => c[0] === "do").map((c) => [c[1], JSON.parse(c[2])]),
     [["space.new", { name: "proj", folder: s.project, machine: "" }], ["tab.close", { id: "tb-new1" }]]);
   assert.deepEqual(s.windowNow().spaces.map((x) => [x.id, x.tabs.map((tb) => tb.id)]), [["sp-new1", ["tb-t100"]]]);
   // The next bot starts in that space: nothing else is closed.
   assert.equal(s.cli(["start", "Captain"]).code, 0);
   assert.equal(s.appCalls().filter((c) => c[0] === "do").length, 2);
-  // Kept: Herdr's real ls shape (no pane count: a mod pane there can't be seen); a counted mod pane
-  // beside the shell; vim in front of the shell; and a bot Herdr doesn't show in time.
-  for (const extra of [{}, { paneCounts: true, modInSpare: true }, { paneCounts: true, shellBusy: true }]) {
+  // An ls that counts one pane there closes it too.
+  const c = scene(t, { window: { spaces: [], place: true, paneCounts: true } });
+  c.seed(team());
+  assert.equal(c.cli(["start", "Genie"]).code, 0);
+  assert.deepEqual(c.windowNow().spaces[0].tabs.map((tb) => tb.id), ["tb-t100"]);
+  // Kept: a counted mod pane beside the shell; vim in front of the shell; the shell at its
+  // prompt with a job left running (`sleep 99 &`: a child pgrep finds); its children unknown
+  // (pgrep failing with exit 3 or with exit 1 and an error, or killed before it exits, as at its timeout).
+  for (const extra of [{ paneCounts: true, modInSpare: true }, { shellBusy: true }, { shellJob: true }, { shellUnknown: true },
+    { shellPgrepError: true }, { shellPgrepKilled: true }]) {
     const k = scene(t, { window: { spaces: [], place: true, ...extra } });
     k.seed(team());
     assert.equal(k.cli(["start", "Genie"]).code, 0);
     assert.deepEqual(k.appCalls().filter((c) => c[0] === "do").map((c) => c[1]), ["space.new"], JSON.stringify(extra));
     assert.deepEqual(k.windowNow().spaces[0].tabs.map((tb) => tb.id), ["tb-new1", "tb-t100"], JSON.stringify(extra));
   }
-  const n = scene(t, { window: { spaces: [], paneCounts: true } });
+  // A bot Herdr doesn't show in time: the shell's tab is the space's only one, kept.
+  const n = scene(t, { window: { spaces: [] } });
   n.seed(team());
   assert.equal(n.cli(["start", "Genie"]).code, 0);
   assert.deepEqual(n.appCalls().filter((c) => c[0] === "do").map((c) => c[1]), ["space.new"]);
   assert.deepEqual(n.windowNow().spaces[0].tabs.map((tb) => tb.id), ["tb-new1"]);
+  // A space that was open already is never this start's: its tabs are left as they are.
+  const o = scene(t, { window: { place: true, spaces: [{ id: "sp1", name: "proj", folder: "", machine: null, active: true,
+    tabs: [{ id: "tb1", name: "1", active: true, terminals: [{ terminal: "t-sh9", pane: "p9" }] }] }] } });
+  o.seed(team());
+  const open = JSON.parse(readFileSync(join(o.root, "herdr-app.json"), "utf8"));
+  open.spaces[0].folder = o.project;
+  writeFileSync(join(o.root, "herdr-app.json"), JSON.stringify(open));
+  assert.equal(o.cli(["start", "Genie"]).code, 0);
+  assert.deepEqual(o.appCalls().filter((c) => c[0] === "do"), []);
+  // (No spare to close, so the window isn't read again: the fake never adds the bot's tab.)
+  assert.deepEqual(o.windowNow().spaces[0].tabs.map((tb) => tb.id), ["tb1"]);
   // AUTOMAGIK_HERDR_TAB_WAIT_MS=0 turns it off: no wait for the bot's tab, nothing closed.
-  const off = scene(t, { window: { spaces: [], place: true, paneCounts: true } });
+  const off = scene(t, { window: { spaces: [], place: true } });
   off.seed(team());
   assert.equal(off.cli(["start", "Genie"], { env: { AUTOMAGIK_HERDR_TAB_WAIT_MS: "0" } }).code, 0);
   assert.deepEqual(off.appCalls().map((c) => c.slice(0, 2)), [["ls"], ["do", "space.new"], ["ls"]]);

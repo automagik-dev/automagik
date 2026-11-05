@@ -140,8 +140,9 @@ async function openSpace(projectKey, sleep, { waitMs = 5000, stepMs = 100 } = {}
 
 // Once the bot just started (`terminal`) shows in its own tab of the space openSpace made, that
 // space's spare shell tab is closed (spareTab: only while it holds that shell alone, one pane,
-// with nothing but the shell in front), never `confirmed`, so Herdr asks the person whenever it
-// would. Looked for every stepMs for up to waitMs; a bot that doesn't show in time leaves it.
+// with nothing but the shell in front). Never `confirmed`: Herdr asks the person only before
+// closing a space's last tab, and this is never the last one (the bot's tab stays). Looked for
+// every stepMs for up to waitMs; a bot that doesn't show in time leaves it.
 async function closeSpare(spare, terminal, sleep, { waitMs = 5000, stepMs = 100 } = {}) {
   for (let waited = 0; ; waited += stepMs) {
     const space = localSpaces().find((s) => s.id === spare.space);
