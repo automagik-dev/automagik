@@ -9,7 +9,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import { exec, hc, home, theme, terminals, spaces, run, notify, pickFolder, watchFolder, knownAgents } from "herdr";
-import { offeredAgents } from "./agents.js";
+import { offeredAgents, RETIRED } from "./agents.js";
 
 const PRESETS = [
   ["Hourly", "0 * * * *"],
@@ -248,11 +248,13 @@ export default class Automations extends View {
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => onClick(cx)).child(label);
   }
 
+  // An option is [value, label] or [value, label, true]: the last draws it dimmed (a retired agent).
   pills(id, options, value, t, pick) {
-    return h_flex().flex_wrap().gap(5).children(options.map(([v, label]) =>
+    return h_flex().flex_wrap().gap(5).children(options.map(([v, label, dim]) =>
       h_flex().id(`${id}-${v}`).h(24).px(8).items_center().rounded(6).text_size(12).cursor_pointer()
-        .bg(v === value ? t.selected : t.raised).text_color(v === value ? t.foreground : t.muted)
+        .bg(v === value ? t.selected : t.raised).text_color(dim ? t.dim : v === value ? t.foreground : t.muted)
         .border_1().border_color(v === value ? t.accent : t.border).hover((s) => s.bg(t.hover))
+        .when(Boolean(dim), (el) => el.opacity(0.6))
         .on_click((_e, cx) => pick(v, cx)).child(label)));
   }
 
@@ -391,7 +393,10 @@ export default class Automations extends View {
     const preset = PRESETS.some(([, c]) => c === cron) ? cron : "custom";
     // Installed ones, and the entry's own agent even if it is not (any more).
     const offered = offeredAgents(this.installed, f.agent);
-    const agents = [...offered.map((a) => [a, a]), ...(this.templates ?? []).map((tp) => [`template:${tp.name}`, `${tp.name} (template)`])];
+    // A retired agent is never offered, but an entry saved with one shows it, dimmed, so the
+    // person sees what is set; the value is kept and saved back unchanged.
+    const retired = !f.template && RETIRED.has(f.agent) ? [[f.agent, `${f.agent} (retired)`, true]] : [];
+    const agents = [...offered.map((a) => [a, a]), ...retired, ...(this.templates ?? []).map((tp) => [`template:${tp.name}`, `${tp.name} (template)`])];
     const agentValue = f.template ? `template:${f.template}` : f.agent;
     const res = f.result;
     return v_flex().p(14).gap(4)

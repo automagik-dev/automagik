@@ -101,6 +101,8 @@ One scrolling column, `chrome` background, 13 px text.
 
 `main.js` (the column and its presses), `rows.js`, `characters.js` (21 Automagik characters, inks
 and poses as SVG text), `model.js`, `models.js` (agents, their models and the flags that pin one),
+`retired.js` (the retired agents and their replacements, the pack's one list; am-automations and
+am-new-menu carry byte-equal copies),
 `bots.js` (reading, writing and watching definitions, relabelling after an edit), `remoteFile.js`
 (a linked machine's bots.json read and written through herdr-core, compare-and-swap), `create.js` +
 `formModel.js` (the form and its rules), `launch.js` + `launchArgs.js` (Start, Attach, pane
