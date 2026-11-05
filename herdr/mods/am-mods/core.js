@@ -489,6 +489,37 @@ export async function setEnabled(io, { appHome, name, enabled }) {
   await run(io, "mv", [`${appHome}/${onOff(!enabled)}/${name}`, `${appHome}/${to}/${name}`]);
 }
 
+// The mods a layout tree (Herdr's `layout()`, the shown layouts/<name>.json) names. `blocks`: every
+// `content.mod` in it (blocks, floating ones, pane headers); Herdr refuses a layout whose block
+// names a mod missing from mods/ ("needs mods that aren't here") and shows plain Herdr instead.
+// `menu`: the root's `terminal_menu`, which Herdr only warns about and swaps for its own "menu".
+export function layoutNeeds(tree) {
+  const blocks = new Set();
+  const seen = new Set();
+  const walk = (node) => {
+    if (!node || typeof node !== "object" || seen.has(node)) return;
+    seen.add(node);
+    if (typeof node.content?.mod === "string") blocks.add(node.content.mod);
+    for (const value of Object.values(node)) walk(value);
+  };
+  walk(tree);
+  const menu = typeof tree?.terminal_menu === "string" ? tree.terminal_menu : null;
+  return { blocks, menu };
+}
+
+// Before a mod goes off: what the shown layout (`name`, `tree`) loses. `refuse` when a block names
+// it, since off would drop the whole layout; `note` when it is only the right-click menu.
+export function layoutGuard({ name, tree, mod }) {
+  const { blocks, menu } = layoutNeeds(tree);
+  const layout = name ? `the ${name} layout` : "the shown layout";
+  if (blocks.has(mod)) {
+    return { refuse: `${mod} stays on: ${layout} shows it, and Herdr drops a layout whose mod is off`
+      + ` (plain Herdr instead). Switch layouts first (ctrl-shift-l), then turn it off` };
+  }
+  if (menu === mod) return { note: `${layout}'s right-click menu: Herdr's own menu shows instead` };
+  return null;
+}
+
 // GitHub search for the topic, as herdr.dev lists Community. `gh api` carries the person's login
 // (30 searches a minute instead of 10); without `gh`, `anonymous(url)` fetches the same URL.
 export async function searchMarket(io, { query = "", sort = "stars", page = 1, perPage = 50 }, anonymous) {

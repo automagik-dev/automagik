@@ -301,13 +301,13 @@ export default class Spaces extends View {
   // The core terminal behind a pane: by address; else, for a machine renamed in the app
   // whose terminals still carry its old name (server/t2 behind host-b/t2), the one with
   // the same local id and the core's own herdr.tab label for that pane's tab.
-  // Looked up in maps prepareAgents builds from this.all (byAddress, remoteByLocal).
+  // Looked up in maps prepareAgents builds from this.all (byAddress, remoteByLocal, machineNames).
   coreTerminal(p) {
     if (!p?.terminal) return null;
     const exact = this.byAddress.get(p.terminal);
     if (exact || !p.terminal.includes("/")) return exact ?? null;
     const local = (id) => (id ?? "").split("/").pop();
-    this.machineNames ??= new Set(machines().map((m) => m.name).filter(Boolean));
+    this.machineNames ??= new Set(this.snap.machines.map((m) => m.name).filter(Boolean));
     const hits = (this.remoteByLocal.get(local(p.terminal))?.get(local(p.tab)) ?? [])
       .filter((k) => !this.machineNames.has(k.address.split("/")[0]));
     return hits.length === 1 ? hits[0] : null;
@@ -337,7 +337,7 @@ export default class Spaces extends View {
   aliased(ps) {
     const listed = new Set(this.agentList.map((a) => a.address));
     const listedPanes = new Set(this.agentList.map((a) => a.pane));
-    const spaceOf = new Map(spaces().flatMap((s) => (s.tabs ?? []).map((c) => [c.id, s])));
+    const spaceOf = new Map(this.snap.spaces.flatMap((s) => (s.tabs ?? []).map((c) => [c.id, s])));
     return ps.flatMap((p) => {
       if (!p.terminal || listed.has(p.terminal) || listedPanes.has(p.pane)) return [];
       const k = this.coreTerminal(p);
@@ -357,7 +357,7 @@ export default class Spaces extends View {
   extras(ps) {
     const listed = new Set(this.agentList.map((a) => a.address));
     const listedPanes = new Set(this.agentList.map((a) => a.pane));
-    const tabs = new Map(spaces().flatMap((s) => s.tabs ?? []).map((c) => [c.id, c]));
+    const tabs = new Map(this.snap.spaces.flatMap((s) => s.tabs ?? []).map((c) => [c.id, c]));
     const rows = ps.flatMap((p) => {
       if (!p.terminal || listed.has(p.terminal) || listedPanes.has(p.pane)) return [];
       const core = this.coreTerminal(p);
@@ -436,7 +436,7 @@ export default class Spaces extends View {
 
   // A plain agent's sub-agent, with the tree lines in front of it.
   subRow(k, lines, indent, t) {
-    const on = k.address === focused()?.agent;
+    const on = k.address === this.snap.focused?.agent;
     const kpic = icon(k.program, 13, t.foreground);
     return h_flex().id(`sub-${k.address}`).h(24).flex_none().pl(indent + 4).pr(8).items_center().rounded(8).text_size(12)
       .cursor_pointer()
@@ -454,17 +454,17 @@ export default class Spaces extends View {
   // The agents list's grouped-view name: a tab someone named or the agent's own
   // title; an automatic tab number only when two of a space's rows would read the same.
   prepareAgents() {
-    this.all = terminals();
+    this.all = this.snap.terminals;
     this.indexTerminals();
-    const ps = panes();
+    const ps = this.snap.panes;
     this.paneById = firstBy(ps, (p) => p.pane);
-    this.agentList = agents();
+    this.agentList = this.snap.agents;
     this.agentList = [...this.agentList, ...this.aliased(ps)];
     this.listed = new Map(this.agentList.map((a) => [a.address, a.status]));
     this.order = [];
     this.extraList = this.extras(ps);
     this.agentsByTab = groupBy([...this.agentList, ...this.extraList].map((a, i) => ({ a, i })), (x) => x.a.tab);
-    const tabs = firstBy(spaces().flatMap((s) => s.tabs ?? []), (tab) => tab.id);
+    const tabs = firstBy(this.snap.spaces.flatMap((s) => s.tabs ?? []), (tab) => tab.id);
     const byTab = groupBy(ps, (p) => p.tab, (p) => p.terminal);
     const label = (a) => {
       const tab = tabs.get(a.tab);
@@ -670,7 +670,7 @@ export default class Spaces extends View {
   helperRow(r, t) {
     const h = r.helper;
     this.order.push(h.terminal);
-    const shown = focused()?.agent === h.terminal;
+    const shown = this.snap.focused?.agent === h.terminal;
     const pic = icon(h.program, 14, t.foreground) ?? image("icons/shell.svg").size(14).flex_none();
     return h_flex().items_stretch()
       .children(this.guides(r.guides, t))
@@ -754,7 +754,7 @@ export default class Spaces extends View {
       : planned
         ? box.my(2).ml(18).py(5).px(8).border_1().border_color(t.border).border_dashed()
         : box.py(5).pl(2).pr(8).border_1().border_color(`${t.chrome}00`)
-          .when(Boolean(live) && focused()?.agent === live?.terminal, (el) => el.bg(t.selected)).hover((st) => st.bg(t.hover));
+          .when(Boolean(live) && this.snap.focused?.agent === live?.terminal, (el) => el.bg(t.selected)).hover((st) => st.bg(t.hover));
     return h_flex().items_stretch().children(this.guides(r.guides, t)).child(styled);
   }
 
@@ -795,9 +795,10 @@ export default class Spaces extends View {
 
   checkNew(cx) {
     const now = Date.now();
+    // Each key once per tick, as in render.
     const sp = spaces();
     for (const s of sp) if (!this.shown.has(s.id)) this.born[s.id] ??= now;
-    const due = this.due(now, sp, panes());
+    const due = this.due(now, sp, panes(), machines());
     if (due.size) this.refreshGit(due, cx);
     if (sp.some((s) => !this.shown.has(s.id))) cx.notify();
   }
@@ -805,7 +806,7 @@ export default class Spaces extends View {
   // Places whose git could have changed: new ones (a new space, a cd), where a
   // command or an agent's turn just ended (a checkout, a commit, edits), those on
   // a machine that is back, and repos in view whose fallback is due.
-  due(now, sp, ps) {
+  due(now, sp, ps, ms) {
     // Moved there: what it knew of that place may be old.
     const at = {};
     for (const s of sp) at[s.id] = where(s, ps);
@@ -822,7 +823,7 @@ export default class Spaces extends View {
       if (this.busy[p.pane] && !busy[p.pane]) this.sameRepo(at[spaceOf[p.tab].id], keys).forEach((k) => due.add(k));
     }
     this.busy = busy;
-    for (const m of machines()) {
+    for (const m of ms) {
       const ready = m.layout === "ready";
       if (ready && this.ready[m.name] === false) for (const k of keys) if (JSON.parse(k)[0] === m.name) due.add(k);
       this.ready[m.name] = ready;
@@ -1132,7 +1133,7 @@ export default class Spaces extends View {
 
   // Spaces in order, each worktree space moved under its main checkout's.
   ordered() {
-    const sp = spaces(), ps = panes();
+    const { spaces: sp, panes: ps } = this.snap;
     // Each space's where(), once per render.
     const first = firstFolders(ps);
     const at = new Map(sp.map((w) => [w, where(w, ps, first)]));
@@ -1191,9 +1192,9 @@ export default class Spaces extends View {
     };
     const remote = [...new Set([...rows.map(r => r.w.machine).filter(Boolean), ...this.machines.map(m => m.name)])].sort();
     const loading = m => {
-      const layout = machines().find(k => k.name === m)?.layout;
+      const layout = this.snap.machines.find(k => k.name === m)?.layout;
       return layout === "loading" || (!layout && this.machines.some(k => k.name === m && k.state === "connected"))
-        || spaces().some(s => (s.machine ?? null) === m && !this.shown.has(s.id));
+        || this.snap.spaces.some(s => (s.machine ?? null) === m && !this.shown.has(s.id));
     };
     const loadingRow = m => div().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(8).text_size(12).text_color(t.dim).child(collapsed ? "…" : "Loading…");
     const machineNames = [null, ...remote];
@@ -1347,7 +1348,11 @@ export default class Spaces extends View {
     const t = theme();
     const collapsed = shared("am.sidebar.collapsed") === true;
     const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
-    const sp = spaces();
+    // Each Herdr snapshot key read once per render (each read copies the whole key) and drawn
+    // from by every row: the main thread is the only one, so it can't change during a render.
+    // A click reads it again (the snapshot of that moment), never this one.
+    this.snap = { spaces: spaces(), panes: panes(), terminals: terminals(), agents: agents(), machines: machines(), focused: focused() };
+    const sp = this.snap.spaces;
     const ids = new Set(sp.map(p => p.id));
     const kept = Object.fromEntries(Object.entries(shared("am.space.colors") ?? {}).filter(([id]) => ids.has(id)));
     let changed = Object.keys(kept).length !== Object.keys(shared("am.space.colors") ?? {}).length;

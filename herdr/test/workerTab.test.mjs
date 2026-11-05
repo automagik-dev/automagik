@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { workerClick, workerTabName, keptSteps, openWorkerTab, rowWorker, tabSteps, workerSpace } from "../mods/am-sidebar/workerTab.js";
-import { helpersOf, visibleRows, buildTree, liveFrom, knownBots } from "../mods/am-sidebar/rows.js";
+import { helpersOf, visibleRows, buildTree, liveFrom, knownBots, clickActionOf } from "../mods/am-sidebar/rows.js";
 import { parseBots } from "../mods/am-sidebar/model.js";
 
 // A bot (t1, pane p1) in tab tb2 of space sp1; its worker t7 has no pane yet.
@@ -168,18 +168,20 @@ test("helpersOf and visibleRows: a worker row carries its branch, task id and it
   assert.equal(helper.helper.terminal, "t7");
 });
 
+// A bot in bots.json, and a terminals() row (a live agent).
+const look = { character: "star", colour: "blue" };
+const bot = (id, more) => ({ id, name: id, kind: "member", look, role: "r", instructions: "", agent: "claude", ...more });
+const T = (address, more) => ({ address, state: "live", labels: {}, parent: null, created_ms: 1,
+  program: { key: "claude", name: "Claude Code", agent: true }, ...more });
+
 // The owner's Brain on 2026-11-03: the main bot t1bw has a pane in tab "handoff" of space
 // "brain"; the captain t22w (a member bot, its own `bot=` label) and the helper t22x were
 // started by t1bw's agent and have no pane. A click on either row opens a tab after t1bw's.
 function brainView() {
-  const look = { character: "star", colour: "blue" };
-  const bot = (id, more) => ({ id, name: id, kind: "member", look, role: "r", instructions: "", agent: "claude", ...more });
   const file = parseBots(JSON.stringify({ version: 1, categories: [{ id: "quality", title: "Quality" }], bots: [
     bot("b-mvrr3pb5uj", { kind: "main", name: "Brain Orchestrator" }),
     bot("b-jcj4zzsb4u", { name: "Bench Captain", category: "quality" }),
   ] })).file;
-  const T = (address, more) => ({ address, state: "live", labels: {}, parent: null, created_ms: 1,
-    program: { key: "claude", name: "Claude Code", agent: true }, ...more });
   const terms = [
     T("t1bw", { labels: { bot: "b-mvrr3pb5uj" } }),
     T("t22w", { labels: { bot: "b-jcj4zzsb4u" }, parent: "t1bw", name: "bench-cap" }),
@@ -194,7 +196,7 @@ function brainView() {
   return { rows, panes, spaces, click };
 }
 
-test("REGRESSION: a helper row of a bot with a live pane in a space opens as a tab", () => {
+test("rowWorker: a helper row of a bot with a pane in a space opens as a tab after the bot's tab", () => {
   const { rows, click } = brainView();
   const helper = rows.find((r) => r.kind === "helper" && r.helper.terminal === "t22x");
   assert.ok(helper, "t22x shows as t1bw's helper");
@@ -221,4 +223,31 @@ test("rowWorker: a bot row with a pane is focused; one without a starter, or a p
   assert.equal(rowWorker({ kind: "bot", node: { bot: { id: "b" }, live: null } }), null);
   assert.equal(rowWorker({ kind: "planned", node: { bot: { id: "b" }, planned: true, live: { terminal: "t9" } } }), null);
   assert.equal(rowWorker({ kind: "category", id: "c" }), null);
+});
+
+// A bot on the linked machine "box": its captain box/t4 was started by box's main bot, so its
+// hc parent is "t1", bare, as hc on box names it. This computer has a t1 of its own, with a
+// pane (botPane): a click on box/t4 must not take that t1 for its starter and open a tab here.
+test("rowWorker: a remote bot row whose bare hc parent has a local pane peeks, never opens a local tab", () => {
+  const file = parseBots(JSON.stringify({ version: 1, categories: [], bots: [
+    bot("b-boxmainbot", { kind: "main", name: "Box Main" }),
+    bot("b-boxcaptain", { name: "Box Captain" }),
+  ] })).file;
+  const terms = [
+    T("box/t1", { labels: { bot: "b-boxmainbot" } }),
+    T("box/t4", { labels: { bot: "b-boxcaptain" }, parent: "t1", name: "box-cap" }),
+  ];
+  const projects = [{ key: "/srv/app", machine: "box", file, spaces: [] }];
+  const [tree] = buildTree({ projects, live: liveFrom(terms, knownBots(projects)), terminals: terms, now: 0 });
+  const rows = visibleRows(tree, new Map([["b:b-boxmainbot", true], ["b:b-boxcaptain", true]]));
+  const captain = rows.find((r) => r.node?.bot.id === "b-boxcaptain");
+  const w = rowWorker(captain);
+  // The trap is set: the row's starter is the bare t1, and a local t1 has a pane in sp1.
+  assert.deepEqual(w, { terminal: "box/t4", botTerminal: "t1", name: "Box Captain" });
+  const panes = [botPane], spaces = spaceRows();
+  assert.deepEqual(workerClick({ ...w, panes, spaces }), { kind: "peek", terminal: "box/t4" });
+  // The sidebar's click (main.js openWorker) on a plan other than "open": focusOrPeek's peek.
+  assert.deepEqual(clickActionOf(w.terminal, panes), { command: "terminal.peek", args: { terminal: "box/t4" } });
+  // The same row on this computer (t4) opens as a tab after t1's: only the machine tells them apart.
+  assert.equal(workerClick({ ...w, terminal: "t4", panes, spaces }).kind, "open");
 });
