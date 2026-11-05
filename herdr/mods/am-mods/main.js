@@ -233,7 +233,26 @@ export default class ModManager extends View {
     });
   }
 
+  // What the shown layout says about removing `mod` (every mod of its package that is on, as off
+  // asks of one, #305, #414): the first refusal, else the notes. No layout to read: nothing to guard.
+  removeGuard(mod) {
+    const tree = layout(), name = shared("layout");
+    const guards = (mod.record ? mod.record.mods : [mod.name])
+      .filter((m) => this.mods.some((x) => x.name === m && x.enabled))
+      .map((m) => ({ m, ...core.layoutGuard({ name, tree, mod: m, then: "remove it" }) }));
+    const refused = guards.find((g) => g.refuse);
+    if (refused) return { refuse: refused.refuse };
+    const notes = guards.filter((g) => g.note).map((g) => `${mod.record ? g.m : "it"} was ${g.note}`);
+    return notes.length ? { note: notes.join(" · ") } : null;
+  }
+
   async remove(cx, mod) {
+    const guard = this.removeGuard(mod);
+    if (guard?.refuse) {
+      this.message = guard.refuse;
+      cx.notify();
+      return;
+    }
     await this.work(cx, `removing ${mod.name}…`, async () => {
       if (mod.record) {
         await core.uninstall(io, { appHome: appHome(), record: mod.record });
@@ -243,6 +262,7 @@ export default class ModManager extends View {
         await core.removeLocal(io, { appHome: appHome(), name: mod.name, symlink: mod.symlink, path: mod.path });
         this.message = mod.symlink ? `link ${mod.name} removed (the folder it points to stays)` : `removed: ${mod.name}`;
       }
+      if (guard?.note) this.message += ` · ${guard.note}`;
       await this.reloadMods();
     });
   }
@@ -350,8 +370,11 @@ export default class ModManager extends View {
     } else if (ch === "x") {
       if (mod.kind === "herdr") this.message = "built-in mods are not removed; to change one, use mod.clone";
       else {
+        // Refused before the question: a mod the shown layout's blocks name stays (removeGuard).
+        const guard = this.removeGuard(mod);
         const what = mod.record ? `${mod.record.mods.join(", ")} and the keys it added` : mod.symlink ? `the link ${mod.name} (the folder it points to stays)` : `the folder mods/${mod.name}`;
-        this.confirm = { text: `remove ${what}? (y/n)`, run: (cx) => this.remove(cx, mod) };
+        if (guard?.refuse) this.message = guard.refuse;
+        else this.confirm = { text: `remove ${what}? (y/n)`, run: (cx) => this.remove(cx, mod) };
       }
     } else if (ch === "o") {
       const url = mod.name === core.POCKET_LINK

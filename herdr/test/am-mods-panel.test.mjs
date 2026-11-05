@@ -179,3 +179,56 @@ test("a mod the layout names that is already off turns on; the right-click menu'
   assert.ok(off("am-markdown"));
   assert.match(view.message, /^am-markdown off · its folder moved to mods-disabled\/ · it was the automagik layout's right-click menu: Herdr's own menu shows instead$/);
 });
+
+// #414: remove (x) asks the shown layout as off does, before its y/n question: a mod a block names
+// stays where it is; the right-click menu's goes, with the note; the rest go as before.
+const removeKey = async (view, cx, name) => { select(view, name); await key(view, cx, "x"); };
+
+test("x on a mod the shown layout's blocks name is refused before the question; the folder stays", async (t) => {
+  const { view, on } = await shownLayout(t);
+  const cx = makeCx();
+  for (const name of ["am-sidebar", "am-footer", "am-status"]) {
+    await removeKey(view, cx, name);
+    assert.equal(view.confirm, null, `${name}: no y/n question`);
+    assert.match(view.message, new RegExp(`^${name} stays on: the automagik layout shows it`));
+    assert.match(view.message, /Switch layouts first \(ctrl-shift-l\), then remove it$/);
+    assert.ok(on(name), `${name} stays in mods/`);
+  }
+  // A layout switched while the question was open: remove() asks again.
+  await removeKey(view, cx, "scratch");
+  ui.layout = { id: "root", children: [{ id: "s", content: { mod: "scratch" } }] };
+  state.shared.set("layout", "mine");
+  await key(view, cx, "y");
+  assert.match(view.message, /^scratch stays on: the mine layout shows it/);
+  assert.ok(on("scratch"));
+});
+
+test("x on a mod the shown layout doesn't name removes it as before; the menu's mod goes with a note", async (t) => {
+  const { view, on } = await shownLayout(t);
+  const cx = makeCx();
+  for (const name of ["scratch", "am-quota"]) {
+    await removeKey(view, cx, name);
+    assert.equal(view.confirm?.text, `remove the folder mods/${name}? (y/n)`);
+    await key(view, cx, "y");
+    assert.ok(!on(name), `${name} left mods/`);
+    assert.equal(view.message, `removed: ${name}`);
+  }
+  // terminal_menu: Herdr warns and falls back to its own menu; the layout stays.
+  await removeKey(view, cx, "am-markdown");
+  await key(view, cx, "y");
+  assert.ok(!on("am-markdown"));
+  assert.equal(view.message, "removed: am-markdown · it was the automagik layout's right-click menu: Herdr's own menu shows instead");
+  // A mod that is already off is not in the layout's way: am-tabs, a block of it, goes.
+  await removeKey(view, cx, "am-tabs");
+  assert.match(view.confirm?.text ?? "", /^remove /);
+});
+
+test("x with no layout to read (layout() gives nothing) removes as before", async (t) => {
+  const { view, on } = await shownLayout(t);
+  ui.layout = null;
+  const cx = makeCx();
+  await removeKey(view, cx, "am-footer");
+  await key(view, cx, "y");
+  assert.ok(!on("am-footer"));
+  assert.equal(view.message, "removed: am-footer");
+});

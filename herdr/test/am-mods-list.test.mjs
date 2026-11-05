@@ -8,6 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync,
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import * as core from "../mods/am-mods/core.js";
+import * as release from "../mods/am-sidebar/release.js";
 import { PACK_MODS, formatMarker, parseMarker } from "../mods/am-sidebar/release.js";
 
 const io = {
@@ -161,4 +162,20 @@ test("layoutGuard: a block's mod is refused with the layout's name; the menu's o
   }
   assert.match(core.layoutGuard({ tree: STOCK_LAYOUT, mod: "am-tabs" }).refuse, /the shown layout shows it/);
   assert.equal(core.layoutGuard({ name: "main", tree: {}, mod: "am-sidebar" }), null, "no tree: nothing to guard");
+});
+
+// #414: `am uninstall herdr.<mod>` (parts.mjs) asks with release.js's copy, since the pack's entries
+// never load another mod's files: both functions byte for byte as the mod manager's.
+test("layoutNeeds and layoutGuard: release.js's copies are core.js's, byte for byte", () => {
+  assert.equal(String(release.layoutNeeds), String(core.layoutNeeds));
+  assert.equal(String(release.layoutGuard), String(core.layoutGuard));
+});
+
+test("layoutGuard: `then` names what follows the switch; off is the default", () => {
+  const off = core.layoutGuard({ name: "automagik", tree: STOCK_LAYOUT, mod: "am-footer" }).refuse;
+  assert.match(off, /Switch layouts first \(ctrl-shift-l\), then turn it off$/);
+  for (const then of ["remove it", "uninstall it"]) {
+    const g = core.layoutGuard({ name: "automagik", tree: STOCK_LAYOUT, mod: "am-footer", then });
+    assert.equal(g.refuse, off.replace(/turn it off$/, then));
+  }
 });

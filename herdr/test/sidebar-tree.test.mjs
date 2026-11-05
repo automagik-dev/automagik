@@ -6,6 +6,9 @@
 //   git archive ebe68f59 herdr/mods | tar -x -C <dir>
 //   node test/sidebar-tree.mjs <dir>/herdr/mods/am-sidebar/main.js
 // and equal for 21dba9ec (#409). A difference: write both with --full and diff them.
+// Re-recorded for #231's parent mark: the owner fixture's two cases add one parent-<bot> node
+// on each of three bots (hc parent t1m, lead's pane t201); with those nodes left out, every
+// case's --full tree equals dev's before #231, and the other cases' sha256 are unchanged.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

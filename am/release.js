@@ -72,6 +72,38 @@ export const USAGEMETER = Object.freeze({
 });
 /** The one layout the pack ships, beside the mod folders in the tarball. */
 export const PACK_LAYOUT = "layouts/automagik.json";
+
+// `am uninstall herdr.<mod>` (parts.mjs switchOff) asks the shown layout as the mod manager does
+// before a mod goes off or out (#305, #414): these two are mods/am-mods/core.js's, byte for byte (a
+// test keeps them equal), since the pack's entries never load another mod's files. `layoutNeeds`:
+// the mods a layout tree names, `blocks` (Herdr drops a layout whose block names a mod missing from
+// mods/) and the root's `terminal_menu` (Herdr only warns and shows its own menu). `layoutGuard`:
+// `refuse` for a block's mod, `note` for the menu's, null for the rest.
+export function layoutNeeds(tree) {
+  const blocks = new Set();
+  const seen = new Set();
+  const walk = (node) => {
+    if (!node || typeof node !== "object" || seen.has(node)) return;
+    seen.add(node);
+    if (typeof node.content?.mod === "string") blocks.add(node.content.mod);
+    for (const value of Object.values(node)) walk(value);
+  };
+  walk(tree);
+  const menu = typeof tree?.terminal_menu === "string" ? tree.terminal_menu : null;
+  return { blocks, menu };
+}
+
+export function layoutGuard({ name, tree, mod, then = "turn it off" }) {
+  const { blocks, menu } = layoutNeeds(tree);
+  const layout = name ? `the ${name} layout` : "the shown layout";
+  if (blocks.has(mod)) {
+    return { refuse: `${mod} stays on: ${layout} shows it, and Herdr drops a layout whose mod is off`
+      + ` (plain Herdr instead). Switch layouts first (ctrl-shift-l), then ${then}` };
+  }
+  if (menu === mod) return { note: `${layout}'s right-click menu: Herdr's own menu shows instead` };
+  return null;
+}
+
 /** sha256 of the bots-only layout v0.2.0–v0.2.2 installed: only that copy is replaced (D8). */
 export const V020_LAYOUT_SHA256 = "5a479f72db788826acb2413df7d32721fbbb9fd070caaf1c7096c6b84778a8a3";
 /** The pack's keys (the repository's keys.json, which a test keeps equal): merged only where free. */
