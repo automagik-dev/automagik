@@ -137,7 +137,10 @@ never red. Red is kept for errors (a failed read or switch).
   (those panes only, the same way) and reading them all again just before the restart. A pane or
   helper waiting for an answer, gone or unreadable, or a helper in error or with helpers of its
   own, is not restarted: the bot stays listed with why. Pressing the button while it waits cancels;
-  the panel keeps the wait in memory only, so a reload drops it. The panel never names a CLI flag:
+  the panel keeps the wait in memory only, so a reload drops it. On a Herdr that ignores `exec`'s
+  `timeout` (every release so far), which ends a restart at 30 s, the panel restarts a bot by itself
+  only with two helpers or fewer, an estimate, not a measured limit. With more it restarts nothing,
+  says why, and the bot can be restarted from a terminal. The panel never names a CLI flag:
   a refusal is shown without the clause that offers one. Without the sidebar mod there is no CLI: the banner says to run
   `automagik-herdr restart <bot>` instead.
 - **The refresh token is shared with the proxy.** Both sides hold the same one, and Anthropic rotates

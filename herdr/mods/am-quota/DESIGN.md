@@ -165,8 +165,11 @@ are added there, never on the Mac; the panel is a personal tool for people who r
   says what it waited, never promises a time. `--tree` runs with `exec`'s timeout at 600 s (about 13
   helpers at worst) and the CLI's own turn wait at 10 s, a race guard only; it exits 1 with a new
   `terminal` when a helper wasn't run again, which counts as restarted. On released Herdr `exec`
-  ends that CLI at 30 s, which can be after the old pane ended; the panel then says it may have
-  stopped part-way. Canceled by a press, held in the panel's memory only. The
+  ends that CLI at 30 s, which can be after the old pane ended, so there `--tree` runs only with two
+  helpers or fewer (an estimate: about 8 s plus 7 s per helper, never measured). `exec("true", [],
+  { timeout: "probe" })` tells them apart: a Herdr with the option refuses it, one without runs
+  it, and any other answer counts as without. A kill anyway says it may have stopped part-way and
+  what to check. Canceled by a press, held in the panel's memory only. The
   CLI is run as the sidebar runs it (`env HERDR_APP_HOME=… sh <sidebar>/bin/run.sh …`); with no
   sidebar mod there is no CLI and the banner gives the command instead.
 

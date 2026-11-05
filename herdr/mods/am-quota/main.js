@@ -42,6 +42,10 @@ const RESTART_EXEC_MS = 300_000;
 // already, so the CLI's own wait for a turn (10 min unless told) is only a guard against a race.
 const TREE_EXEC_MS = 600_000;
 const TREE_TURN_WAIT_MS = 10_000;
+// On a Herdr that ignores exec's timeout, exec ends the CLI at 30 s, which can be mid-restart: the
+// most helpers an automatic restart may carry there. An estimate, never measured: about 8 s plus
+// 7 s per helper, so three would be 29 s of the 30.
+const SHORT_LIMIT_HELPERS = 2;
 /** The bot CLI, run the way the sidebar runs it (am-sidebar/launch.js runCli). */
 const SIDEBAR = "am-sidebar";
 
@@ -478,7 +482,7 @@ export default class AmQuota extends View {
       return { why, note: null, busy, helpers };
     } catch (err) {
       // Herdr ended the CLI at its limit: a tree restart may have stopped part-way.
-      const why = tree ? `${message(err)}; it may have stopped part-way, so check ${bot.name} and its helpers before pressing Restart again` : message(err);
+      const why = tree ? `${message(err)}. It may have stopped part-way: check whether ${bot.name} and its helpers are back, then restart what is missing from a terminal, not from here` : message(err);
       return { why, note: null, busy: null, helpers: [] };
     }
   }
@@ -519,9 +523,9 @@ export default class AmQuota extends View {
     const token = s.waiting?.[id];
     if (!token) return;
     const live = () => this.switched[provider] === s && s.waiting?.[id] === token;
-    const stop = (why) => {
+    const stop = (why, next = "") => {
       delete s.waiting[id];
-      entry.why = `${why}; nothing was restarted`;
+      entry.why = `${why}; nothing was restarted${next}`;
       wake(cx);
     };
     const started = Date.now();
@@ -532,6 +536,10 @@ export default class AmQuota extends View {
       const now = await this.lookAt(entry.terminal);
       if (!live()) return;
       if (now.stop) return stop(now.stop);
+      if (now.helpers > SHORT_LIMIT_HELPERS && !(await this.honoursTimeout())) {
+        if (!live()) return;
+        return stop(`this Herdr stops a restart at 30 s, too soon to bring back ${now.helpers} helpers`, `. Restart ${entry.bot.name} from a terminal`);
+      }
       helpers = now.helpers;
       if (!now.working.length) break;
       most ??= IDLE_WAITS + now.helpers;
@@ -573,6 +581,23 @@ export default class AmQuota extends View {
       s.look = { bots: left, reliable: left.length ? s.look.reliable : true };
     }
     wake(cx);
+  }
+
+  /**
+   * Whether the running Herdr honours exec's `timeout`: one that does refuses a timeout that isn't a
+   * number, before it runs anything; one that doesn't runs the harmless program. Any other answer
+   * counts as not, the safe side. Asked once: the running Herdr doesn't change under a panel.
+   */
+  async honoursTimeout() {
+    if (this.timeoutHonoured === undefined) {
+      try {
+        await exec("true", [], { timeout: "probe" });
+        this.timeoutHonoured = false;
+      } catch (err) {
+        this.timeoutHonoured = /timeout must be/.test(message(err));
+      }
+    }
+    return this.timeoutHonoured;
   }
 
   /** `hc get` of `terminal`: { state: live, finished…, status, get }, or null when hc has no such pane. */

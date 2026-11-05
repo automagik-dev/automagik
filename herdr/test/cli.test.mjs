@@ -1917,6 +1917,30 @@ test("restart --tree: the helpers that end with the bot run again under its new 
   assert.equal(text.code, 0);
 });
 
+test("restart --tree #413: refused before anything starts while a pane waits for an answer or reports no status; --force still goes", (t) => {
+  const asking = treeScene(t, { workerStatus: "blocked" }).s;
+  const r = asking.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /t7 is waiting for an answer\. Nothing was started: answer it first, or pass --force to end it\./);
+  assert.equal(runCall(asking.calls()), undefined);
+  assert.equal(at(asking.calls(), "kill"), -1);
+  const bot = treeScene(t).s;
+  const held = bot.hcState();
+  held.terminals.find((x) => x.address === "t5").status = { app: "claude-code", state: "blocked" };
+  writeFileSync(join(bot.root, "hc.json"), JSON.stringify(held));
+  assert.match(bot.cli(["restart", "Genie", "--tree"]).err, /t5 is waiting for an answer\./);
+  assert.equal(runCall(bot.calls()), undefined);
+  const plainHelper = treeScene(t).s;
+  const st = plainHelper.hcState();
+  st.terminals.find((x) => x.address === "t8").status = null;
+  writeFileSync(join(plainHelper.root, "hc.json"), JSON.stringify(st));
+  const w = plainHelper.cli(["restart", "Genie", "--tree"]);
+  assert.equal(w.code, 1);
+  assert.match(w.err, /t8 doesn't tell hc whether it is busy, so --tree can't tell whether it has finished\. Nothing was started\. Look at it first, then pass --force to restart anyway\./);
+  assert.equal(runCall(plainHelper.calls()), undefined);
+  assert.equal(asking.cli(["restart", "Genie", "--tree", "--force"]).code, 0, "--force is the hand-run way past it");
+});
+
 test("restart --tree waits, before anything starts, for helpers and the old pane to be idle: a turn's note types into the old pane only then; still mid-turn after the wait refuses", (t) => {
   const busy = treeScene(t, { workerStatus: "working" }).s;
   const st = busy.hcState();

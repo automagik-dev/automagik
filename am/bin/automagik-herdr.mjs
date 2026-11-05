@@ -2196,7 +2196,9 @@ const TREE_TURN_WAIT_MS = Number(process.env.AUTOMAGIK_HERDR_TREE_TURN_WAIT_MS) 
 const TREE_TURN_POLL_MS = Math.min(2000, Math.max(100, Math.floor(TREE_TURN_WAIT_MS / 10)));
 
 /**
- * --tree, before the bot's new pane starts: waits (TREE_TURN_WAIT_MS) until the old pane and every
+ * --tree, before the bot's new pane starts: refused (unless --force) while the old pane or a helper
+ * in `plans` waits for an answer or reports no status to hc, since it may not be finished (#413);
+ * else waits (TREE_TURN_WAIT_MS) until the old pane and every
  * helper in `plans` are idle at one look, so no turn ends (and types its note into the old pane)
  * once two panes could hold the bot's session. A helper's note can start the old pane's turn, so
  * all are looked at again each time. Refused (CliError), nothing started, when one is still
@@ -2210,7 +2212,19 @@ async function treeIdle(old, plans, say, { force = false } = {}) {
     const states = await Promise.all([old.address, ...plans.map((q) => q.replaced)].map((a) => hcState(a)));
     const unread = states.filter((x) => x.state === "unknown").map((x) => x.why);
     if (unread.length) throw new CliError(`${unread.join("; ")}: --tree can't tell whether it is mid-turn. Nothing was started.`);
-    const busy = [old.address, ...plans.map((q) => q.replaced)].filter((_, i) => states[i].state === "live" && states[i].get?.status?.state === "working");
+    const panes = [old.address, ...plans.map((q) => q.replaced)].map((address, i) => ({ address, live: states[i].state === "live", status: states[i].get?.status?.state }));
+    const asking = panes.filter((p) => p.live && p.status === "blocked").map((p) => p.address);
+    if (asking.length) {
+      const one = asking.length === 1;
+      throw new CliError(`${asking.join(", ")} ${one ? "is" : "are"} waiting for an answer. Nothing was started: answer ${one ? "it" : "them"} first, or pass --force to end ${one ? "it" : "them"}.`);
+    }
+    const silent = panes.filter((p) => p.live && typeof p.status !== "string").map((p) => p.address);
+    if (silent.length) {
+      const one = silent.length === 1;
+      throw new CliError(`${silent.join(", ")} ${one ? "doesn't" : "don't"} tell hc whether ${one ? "it is" : "they are"} busy, so --tree can't tell whether ${one ? "it has" : "they have"} finished. `
+        + `Nothing was started. Look at ${one ? "it" : "them"} first, then pass --force to restart anyway.`);
+    }
+    const busy = panes.filter((p) => p.live && p.status === "working").map((p) => p.address);
     if (!busy.length) {
       const live = plans.filter((_, i) => states[i + 1].state === "live");
       for (const q of plans.filter((_, i) => states[i + 1].state !== "live")) say(`${q.replaced} ended by itself before the restart, so it isn't run again.`);

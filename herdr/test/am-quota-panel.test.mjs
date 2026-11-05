@@ -269,7 +269,9 @@ const fakeHc = (panes, { outlives = [] } = {}) => (args) => {
   return { code: 0, stdout: JSON.stringify({ address: args[1], state: "live", status: st === null ? null : { state: st }, die_with_parent: !outlives.includes(args[1]) }), stderr: "" };
 };
 // A panel with A refused as `answer`. Its restart again answers `then`, and hc wait `wait(terminal)`.
-async function busyPanel({ answer = busyAnswer(), panes = { t5: "done" }, outlives = [], then = OK, wait = () => ({ code: 0, stdout: "{}", stderr: "" }), press = true } = {}) {
+// `probe`: how this Herdr answers an exec timeout that isn't a number: "runs" it (ignores the option,
+// like every release so far), "refuses" it (honours the option), or "fails" some other way.
+async function busyPanel({ answer = busyAnswer(), panes = { t5: "done" }, outlives = [], then = OK, wait = () => ({ code: 0, stdout: "{}", stderr: "" }), press = true, probe = "runs" } = {}) {
   const p = await panel();
   p.view.tool = "codex";
   p.view.switched.codex = { at: NOW, from: "ana@example.com · Pro", to: "bo@example.com · Pro",
@@ -281,6 +283,11 @@ async function busyPanel({ answer = busyAnswer(), panes = { t5: "done" }, outliv
   let refused = false;
   state.exec = (command, args) => {
     if (command === "hc") return wait(args[1]);
+    if (command === "true") {
+      if (probe === "refuses") throw new Error("timeout must be a positive number of milliseconds");
+      if (probe === "fails") throw new Error("cannot run true");
+      return { code: 0, stdout: "", stderr: "" };
+    }
     if (!refused) { refused = true; return answer; }
     return typeof then === "function" ? then(args) : then;
   };
@@ -439,7 +446,41 @@ test("--tree exits 1 for a helper not run again though the bot restarted: restar
 test("--tree ended by Herdr's limit says it may have stopped part-way (#413)", async () => {
   const then = () => { throw new Error("env took longer than 30 s and was stopped"); };
   const { draw } = await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: { t5: "idle", t7: "done" }, then });
-  assert.ok(text(draw()).includes("A: env took longer than 30 s and was stopped; it may have stopped part-way, so check A and its helpers before pressing Restart again"), text(draw()));
+  assert.ok(text(draw()).includes("A: env took longer than 30 s and was stopped. It may have stopped part-way: check whether A and its helpers are back, then restart what is missing from a terminal, not from here"), text(draw()));
+});
+
+const probes = () => state.calls.filter((c) => c[0] === "true");
+const THREE = { t5: "idle", t7: "done", t8: "idle", t9: "done" };
+
+test("cap: a Herdr that ignores exec's timeout restarts by itself with 2 helpers, not 3: it says why and how, never a flag (#413)", async () => {
+  const { draw } = await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: THREE });
+  assert.deepEqual(probes(), [["true"]], "a real read of the running Herdr, once");
+  assert.deepEqual(state.execOptions[state.calls.indexOf(probes()[0])], { timeout: "probe" });
+  assert.equal(restarts().length, 1, "above the cap: no restart");
+  const shown = text(draw());
+  assert.ok(shown.includes("A is busy: this Herdr stops a restart at 30 s, too soon to bring back 3 helpers; nothing was restarted. Restart A from a terminal"), shown);
+  assert.doesNotMatch(shown, /--[a-z]/);
+  await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: { t5: "idle", t7: "done", t8: "idle" } });
+  assert.equal(probes().length, 0, "at the cap: nothing to ask");
+  assert.ok(secondRestart().includes("--tree"));
+});
+
+test("cap: a Herdr that honours exec's timeout has none; one that can't be read counts as ignoring it (#413)", async () => {
+  await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: THREE, probe: "refuses" });
+  assert.ok(secondRestart().includes("--tree"));
+  await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: THREE, probe: "fails" });
+  assert.equal(restarts().length, 1, "unreadable: the safe side");
+});
+
+test("cap: above it there is no wait either; no helpers, no probe: today's restart (#413)", async () => {
+  await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: { ...THREE, t7: "working" } });
+  assert.equal(waits().length, 0, "nothing to wait for if it can't restart");
+  assert.equal(restarts().length, 1);
+  const { cx } = await busyPanel({ panes: { t5: "done" } });
+  nodes.get("idle-codex-a").click(null, cx);
+  await cx.settle();
+  assert.equal(probes().length, 0);
+  assert.equal(restarts().length, 2);
 });
 
 test("the wait is cancelable: pressed again, the wait's end restarts nothing; a retry press works; a reload holds no wait (#413)", async () => {
