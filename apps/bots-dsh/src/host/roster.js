@@ -198,6 +198,12 @@ export function install(rt) {
       : effort === null || effort === '' ? undefined
       : (await rt.resolveEffort(modelRef, effort)) ?? await rt.defaultEffort(modelRef)
     const dir = workDir === undefined || workDir === null ? undefined : await rt.cleanWorkDir(workDir)
+    // A Bot made by another Bot takes its creator's level, before its Session is made; else
+    // the team default. A Session adopted from a host keeps its own.
+    const creator = rt.botOf(createdBy)
+    const permission = existingSessionId !== undefined ? undefined
+      : creator !== undefined ? rt.inheritedPermission(creator) ?? state.prefs.permission
+        : state.prefs.permission
     // A host adapter may already own a configured root Session. Adopt it without creating
     // another Session or moving its workspace; this option is internal, not a user payload.
     const id = existingSessionId ?? await createSession(cleanName, { dir })
@@ -218,8 +224,7 @@ export function install(rt) {
         ...(modelRef ? { model: modelRef } : {}),
         ...(effortId ? { effort: effortId } : {}),
         ...(dir ? { workDir: dir } : {}),
-        // The team default; a Session adopted from a host keeps its own.
-        ...(state.prefs.permission && existingSessionId === undefined ? { permission: state.prefs.permission } : {}),
+        ...(permission ? { permission } : {}),
         // The host runs an adopted Session, so the Bot never moves to a fresh part (parts.js).
         ...(existingSessionId !== undefined ? { sessionPinned: true } : {}),
         // What a team member brought in by its own plugin is for (omni: Omni's channels).
@@ -230,7 +235,6 @@ export function install(rt) {
         capabilities: [],
       }
       if (main) state.mainBotIds.push(id)
-      const creator = rt.botOf(createdBy)
       const original = rt.botOf(copyOf)
       const language = rt.uiLanguage?.()
       // The kickoff arrives as a user message, so it outranks the Bot's instructions

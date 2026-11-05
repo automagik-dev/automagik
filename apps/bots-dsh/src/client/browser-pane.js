@@ -16,6 +16,7 @@ import { panelHasStrip, sideChatsOf, stripMenuKeys } from './side-model.js'
 import { DotsIcon, FolderIcon, SideIcon, TerminalIcon } from './icons.js'
 import { t } from './i18n.js'
 import { rectsOverlap } from './browser-overlap.js'
+import { detailsSubject } from './sources.js'
 
 export const PANEL_LINGER_MS = 300
 const WIDTH_KEY = STORAGE.browserWidth
@@ -585,7 +586,66 @@ export function BotPanel({ pane, leaving, roster, actions, useSessions, useSessi
   const instant = dragging || resizing
   const [reading, setReading] = useState(false)
 
+  // Details keeps the drawer's Escape stack (useEscape), so newer dialogs close first.
+  // Focus moves only when the details open or change subject, never on rename or tab renders.
+  useLayoutEffect(() => {
+    const panel = root.current
+    if (view !== 'details' || leaving || !panel) return undefined
+    const opener = document.activeElement
+    if (!panel.contains(opener)) panel.focus({ preventScroll: true })
+    return () => {
+      // Never take focus from a dialog opened over the panel or from another conversation.
+      if (!panel.contains(document.activeElement) && document.activeElement !== document.body) return
+      // A Bot part's trigger names its Session id, Rename the Bot id: compare their subjects.
+      const subject = detailsSubject(roster, pane.id)
+      const trigger = [...document.querySelectorAll('[data-details-subject]')]
+        .find(node => detailsSubject(roster, node.dataset.detailsSubject) === subject)
+      const target = trigger ?? (opener?.isConnected && !panel.contains(opener) ? opener : null)
+      // Layout cleanup runs before the DOM changes: wait until the closing panel is hidden,
+      // or its still-active containment would catch the returning focus.
+      queueMicrotask(() => {
+        // A rapid reopen or subject switch owns focus now; never return it to the old trigger.
+        if (panel.isConnected && panel.getAttribute('aria-hidden') !== 'true') return
+        if (target?.isConnected && (document.activeElement === document.body || panel.contains(document.activeElement))) target.focus({ preventScroll: true })
+      })
+    }
+  }, [pane.id, view, leaving])
+
   const overlay = overlayAt(view, viewport)
+  // Over a narrow window the details cover the chat: a modal dialog that holds Tab and focus.
+  useEffect(() => {
+    const panel = root.current
+    if (!overlay || view !== 'details' || leaving || !panel) return undefined
+    const shown = node => getComputedStyle(node).display !== 'none' && getComputedStyle(node).visibility !== 'hidden'
+    // Portalled dialogs, menus and lists are their own layers: their autofocus and Escape win.
+    const otherLayer = () => [...document.querySelectorAll('[role="dialog"],[role="menu"],[role="listbox"]')]
+      .some(node => node !== panel && !panel.contains(node) && !node.closest('[data-leaving],[hidden],[inert],[aria-hidden="true"]') && shown(node))
+    const focusable = () => [...panel.querySelectorAll('button,a[href],input,textarea,select,[tabindex]')]
+      .filter(node => node.tabIndex >= 0 && !node.disabled && !node.closest('[hidden],[inert],[aria-hidden="true"]') && shown(node))
+    const contain = (event) => {
+      if (!panel.isConnected || panel.getAttribute('aria-hidden') === 'true' || otherLayer()) return
+      if (event.type === 'focusin') {
+        if (!panel.contains(event.target)) panel.focus({ preventScroll: true })
+        return
+      }
+      if (event.key !== 'Tab' || event.defaultPrevented) return
+      const nodes = focusable()
+      const first = nodes[0] ?? panel
+      const last = nodes.at(-1) ?? panel
+      const edge = event.shiftKey ? first : last
+      if (document.activeElement === edge || document.activeElement === panel) {
+        event.preventDefault()
+        ;(event.shiftKey ? last : first).focus()
+      }
+    }
+    if (!panel.contains(document.activeElement) && !otherLayer()) panel.focus({ preventScroll: true })
+    document.addEventListener('keydown', contain)
+    document.addEventListener('focusin', contain)
+    return () => {
+      document.removeEventListener('keydown', contain)
+      document.removeEventListener('focusin', contain)
+    }
+  }, [overlay, view, leaving])
   const panelWidth = fitWidth(width ?? (view === 'browser' ? DEFAULT_WIDTH : DETAILS_WIDTH), widthRange(view, viewport))
   // Once the browser has shown, the Bot page keeps its width (up to DETAILS_MAX).
   useLayoutEffect(() => { if (view === 'browser' && width === null) setWidth(DEFAULT_WIDTH) }, [view, width])
@@ -763,7 +823,10 @@ export function BotPanel({ pane, leaving, roster, actions, useSessions, useSessi
 
   const hasStrip = panelHasStrip(canBrowse, tabState.ids.length, sideChats.length)
   return h('aside', {
-    ref: root, className: 'bt-panel', 'data-view': view,
+    ref: root, id: 'bt-conversation-panel', className: 'bt-panel', tabIndex: -1, 'data-view': view,
+    // React 18 drops a boolean inert; the empty string sets the attribute.
+    role: overlay && view === 'details' ? 'dialog' : undefined, 'aria-modal': overlay && view === 'details' && !leaving ? true : undefined,
+    inert: leaving ? '' : undefined,
     'aria-label': view === 'browser' && bot ? t("{name}'s browser", { name: bot.name }) : view === 'side' ? t('Side chat') : t('Conversation details'),
     'data-leaving': leaving || undefined, 'aria-hidden': leaving || undefined, 'data-settling': settling || undefined,
     'data-instant': instant || undefined, 'data-dragging': dragging || undefined, 'data-overlay': overlay || undefined, style: { '--bt-panel-w': `${panelWidth}px` },

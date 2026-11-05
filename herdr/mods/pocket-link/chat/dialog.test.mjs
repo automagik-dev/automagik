@@ -88,3 +88,14 @@ test('the recorded layout exactly: two dashed rules, and Yes first', () => {
   const notYes = d.replace(' ❯ 1. Yes', ' ❯ 1. No').replace('   4. No', '   4. Yes')
   assert.equal(readDialog('claude', notYes), null, 'option 1 is not Yes')
 })
+
+test('a long option wrapped onto an indented line is read as one option (recorded)', () => {
+  const wrapped = screen('claude-dialog').replace('   2. Yes, and don’t ask again for: ls *\n', '   2. Yes, and always allow access to /home/u/proj\n      from this project\n')
+  assert.deepEqual(readDialog('claude', wrapped)?.options, ['Yes', 'Yes, and always allow access to /home/u/proj from this project', 'Yes, and switch to auto mode', 'No'])
+})
+
+test('anything but options between the question and the footer: no dialog', () => {
+  const d = screen('claude-dialog')
+  assert.equal(readDialog('claude', d.replace('   3. Yes, and switch to auto mode\n', 'unindented text\n')), null)
+  assert.equal(readDialog('claude', d.replace(' ❯ 1. Yes\n', '   from nothing\n ❯ 1. Yes\n')), null, 'a continuation line with no option above it')
+})

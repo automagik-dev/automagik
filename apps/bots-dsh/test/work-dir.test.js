@@ -7,6 +7,7 @@ import { apply } from '../index.js'
 import { dshHomeOf } from '../src/host/folders.js'
 import { escapeRegExp } from '../src/host/text.js'
 import { fakeContext } from './fake-ctx.js'
+import { until } from './until.js'
 import { createRuntime as createUnfold } from '../../unfold-bot-dsh/index.js'
 
 // A Main Bot and a Bot, with the Bot in the group Ops through its group Session 'gb'.
@@ -128,13 +129,17 @@ async function start({ services = {}, workspaces = [], llm, team: saved = TEAM, 
 }
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
-const until = async (check) => {
-  const end = Date.now() + 2000
-  while (!check()) {
-    if (Date.now() > end) throw new Error('until: the condition did not hold within 2 s')
-    await settle()
-  }
-}
+// #354's harness knob: WORK_DIR_TEST_DELAY_MS=2500 stalls the fresh part's model hook in
+// the model-during-handoff test, as a loaded runner does. Unset, nothing waits.
+const INJECTED_DELAY_MS = Number(process.env.WORK_DIR_TEST_DELAY_MS ?? 0)
+
+test('until fails at its ceiling when the condition never holds', async () => {
+  await assert.rejects(until(() => false, { label: 'never', ms: 50 }),
+    /^Error: until: never did not hold within 50 ms \(waited \d+ ms\)$/)
+  // Without a label, the failure names the check by its source.
+  await assert.rejects(until(() => false, { ms: 50 }),
+    /^Error: until: `\(\) => false` did not hold within 50 ms \(waited \d+ ms\)$/)
+})
 const textOf = message => message.content.map(block => block.text ?? '').join('\n')
 const handoffOf = agent => agent.calls.filter(([kind, message]) => kind === 'followup' && message.source?.role === 'handoff').map(([, message]) => textOf(message)).at(-1)
 
@@ -621,14 +626,16 @@ test('a model the user picks while the fresh part is made reaches the fresh part
   env.ctx.sessionController.selectModel = async (request) => {
     await select(request)
     if (request.sessionId !== 's1' || selected.length > 1) return
+    if (INJECTED_DELAY_MS > 0) await new Promise(resolve => setTimeout(resolve, INJECTED_DELAY_MS))
     // The user switches models after the fresh part got the old one, before it is the Bot's.
     void env.call('update-bot', { id: 'b', model: 'deepseek/v4-pro' })
-    await until(() => env.state().bots.b.model === 'deepseek/v4-pro')
+    await until(() => env.state().bots.b.model === 'deepseek/v4-pro', { label: 'the Bot saved v4-pro', t })
   }
   assert.equal((await env.call('update-bot', { id: 'b', workDir: env.project })).ok, true)
-  await until(() => env.state().bots.b.sessionId === 's1')
-  await until(() => selected.some(([sessionId, model]) => sessionId === 'b' && model === 'v4-pro'))
-  await until(() => handoffOf(env.agentOf('s1')) !== undefined)
+  await until(() => env.state().bots.b.sessionId === 's1', { label: 's1 is the Bot\'s part', t })
+  await until(() => selected.some(([sessionId, model]) => sessionId === 'b' && model === 'v4-pro'),
+    { label: 'v4-pro selected on b', t })
+  await until(() => handoffOf(env.agentOf('s1')) !== undefined, { label: 's1 got the handoff', t })
   assert.deepEqual(selected.filter(([sessionId]) => sessionId === 's1'), [['s1', 'flash'], ['s1', 'v4-pro']])
 })
 

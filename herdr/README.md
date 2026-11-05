@@ -271,6 +271,13 @@ automagik-herdr update [--check | --rollback]
   folder at or above it holding `.herdr/bots.json`. A folder named with `--project` is the
   project itself outside git, never a parent folder's project; in git it is still the main
   checkout. A `--project` folder that isn't there is a usage mistake.
+- An edit (`create`, `edit`, `rm`, `category`, `restart --save`) run in a git worktree, or with
+  `--project` naming one, is written in that worktree's `.herdr/bots.json` (from the main
+  checkout's when the worktree has none yet), so the main checkout stays clean for the merge's
+  `git pull`. Reads stay on the main checkout: `ls`, `show`, `whois`, Start and the sidebar show
+  the change once it is merged there (RFC 0014 Q16); a bot one of them can't find in its file is
+  named with the other file when that one has it. When the main checkout's `bots.json` was never
+  committed, the note says to commit or remove it before pulling: git won't overwrite it.
 - `ls`, `show`, `create`, `edit`, `rm` and `category` also take `--machine M --project <folder>`:
   the project on linked machine M (`hc machine ls`), `--project` an absolute folder there, keyed
   there by the same rule. The file is read and written there through hc by the same
@@ -298,17 +305,33 @@ automagik-herdr update [--check | --rollback]
   pane as its parent. A running bot is not started twice.
   The pane opens in a tab of its own in the space showing the project, never in another
   pane's tab; with none open, `start` opens one on the project folder (`--space` picks the
-  space instead, `--tab` a tab in it). The sidebar's Start passes the space only.
+  space instead, `--tab` a tab in it). The sidebar's Start passes the space only. A space
+  opened this way (by `start` or the sidebar's Start) comes with a shell in its first tab:
+  that tab is closed (`tab.close`, never confirmed for the person) once the bot shows in its
+  own tab there, and only while that shell is known to be the tab's one pane (a mod pane
+  counts) with the shell itself in front, idle, so the space is never left empty and nothing
+  else is closed. The sidebar's Start knows the panes; `start` from the command line only
+  when `herdr-app ls` gives a tab's pane count, which it doesn't today, so the tab is left for
+  now. `AUTOMAGIK_HERDR_TAB_WAIT_MS` sets how long `start` and `worker` wait for Herdr to show
+  the new pane (5000 by default); `0` turns this tab setup off.
 - `restart` runs the bot's agent again in its pane's place: the new pane starts in the same
   space, tab and folder with the same labels, and the old one is ended (`hc kill`) only once the
   new one has kept its agent in front at every check for 5 seconds (1.5 once the agent reports
   its status to hc), so an agent that exits at startup (a stale resume, a failed swap) never
   leaves the space empty. A replacement that doesn't make it is ended, and the old pane keeps
-  running. It resumes the conversation: Claude by the session id on the pane (`agent.session`,
-  carried to the new pane), else the workers ledger's last session row for that terminal, else
-  `--continue` in the bot's folder, which is refused while another bot's Claude runs in that
-  folder (it could resume theirs; `--fresh` starts a new one); `codex resume --last`;
-  `--continue` for pi, omp, kimi, agy and hermes. Any other agent starts fresh, and says so.
+  running. It resumes the conversation by its session id, for every agent that resumes one: the
+  id on the pane (`agent.session`, carried to the new pane, or a reviver's `revive.session`),
+  else the workers ledger's last session row for that terminal (`claude --resume <id>`,
+  `codex resume <id>`, `omp --resume=<id>`, `pi --session <id>`, `kimi --session=<id>`,
+  `agy --conversation <id>`, `hermes --resume <id>`). With no id it takes the latest
+  conversation in the bot's folder (`--continue`, `codex resume --last`), which could be a
+  teammate's: while another pane or bot on that agent is in that folder (a live pane, a bot's or
+  one started by hand, or another bot's last seat row in the workers ledger, its pane ended or
+  not; for agy, whose `--continue` isn't limited to a folder, any folder), the restart starts a
+  new conversation instead and says why (#328; the quota panel's restart lists those too). Only
+  Claude's hook records an id today; on another agent, set the pane's `agent.session` label to
+  keep its own conversation in a shared folder. An agent with no resume here starts fresh, and
+  says so.
   `--fresh` starts a new conversation. `--agent` / `--model` swap the agent or model (always a new
   conversation: they don't cross agents); `bots.json` keeps the old ones unless `--save` is given.
   A bot that isn't running is started. It is refused while the bot is working (it would cut the
@@ -460,7 +483,11 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
   with `--task`, also `task=<id>`, `task.project=<main checkout>` and `task.lead=<lead>`
   (without it, no `task` label at all). When the bot's pane is in a Herdr space, also
   `herdr.space=<that space>` and no `herdr.tab`, so the worker opens in a tab of its own there
-  as it starts. A worker started before this release has no `branch`
+  as it starts: the space where the window shows the bot's pane, else its pane's
+  `herdr.space` label while the window still has that space (none once it was closed).
+  Once Herdr shows the worker (within 5 seconds), its tab is moved right after the bot's
+  tab and named after its branch, as a click on its row does; it is never focused.
+  A worker started before this release has no `branch`
   label: its `task` label holds the branch, and Herdr's readers fall back to it. Then
   `-- /usr/bin/env PATH=<the calling pane's PATH> <agent argv> <task text>`. The agent gets the
   bot's pane's PATH, not herdr-core's, so programs in `~/.bun/bin` (omp, and the `bun` it runs
@@ -508,7 +535,10 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
 its name, look, role and instructions (at most 4,000 characters), the agent it runs on, the
 model it uses, whom it reports to, its category, and whether it is planned for a later wave.
 The footer shows the matching `automagik-herdr create …` line, ready to copy. The form writes
-`.herdr/bots.json` in the project's main checkout.
+`.herdr/bots.json` in the project's main checkout, or, from a focused worktree space, in that
+worktree. The form then says where it saves and that the sidebar shows the bot once the change
+is merged, stays open after saving, offers no Create & start (bots start from the main
+checkout's file), and warns when the main checkout's `bots.json` isn't committed.
 
 The form starts on the focused space's project. A folder picked from the project chip is the
 project itself outside git, and with no `.herdr/bots.json` yet it is a new project whose

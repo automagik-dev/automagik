@@ -154,14 +154,22 @@ export function paneSession(get, agentKey) {
 }
 
 /**
- * The last Claude session the workers ledger ties to `terminal` (its session rows, workers.js
- * readLedger): { session, transcript }, or null. For a pane whose label is missing.
+ * The last `agentKey` session the workers ledger ties to `terminal` (its session rows, workers.js
+ * readLedger): { session, transcript }, or null. For a pane whose label is missing. A row
+ * names its agent (`agent`), else it is Claude's (the briefing hook, Claude's only, writes
+ * them); its id passes as sessionFor passes a label: Claude's a UUID, another's one safe word.
+ * hc reuses an address once its pane is gone, so a row from an earlier pane there never
+ * counts: one stamped (`at`) before `created_ms` (the pane's, from hc get), or, with no
+ * created_ms known, one older than a later start row for that terminal.
  */
-export function ledgerSession(rows, terminal) {
+export function ledgerSession(rows, terminal, agentKey = "claude", created_ms = null) {
+  const born = Number.isSafeInteger(created_ms) ? created_ms : null;
   for (let i = (rows?.length ?? 0) - 1; i >= 0; i -= 1) {
     const r = rows[i];
-    if (r?.event !== "session" || r.terminal !== terminal) continue;
-    const session = sessionId(r.session);
+    if (born === null && r?.event === "start" && r.terminal === terminal) return null;
+    if (r?.event !== "session" || r.terminal !== terminal || (r.agent ?? "claude") !== agentKey) continue;
+    if (born !== null && typeof r.at === "string" && Date.parse(r.at) < born) return null;
+    const session = sessionFor(agentKey, r.session);
     if (session) return { session, transcript: typeof r.transcript === "string" ? r.transcript : null };
   }
   return null;
@@ -170,7 +178,8 @@ export function ledgerSession(rows, terminal) {
 /**
  * Why Restart won't resume with claude --continue, or null: it takes the folder's latest
  * conversation, which may be a teammate's when another bot's Claude pane runs in that folder.
- * `sharers`: those panes as { address, name }.
+ * `sharers`: those panes as { address, name }. A linked machine's restart refuses so; a local
+ * one starts fresh instead and says why (sharedFresh).
  */
 export function continueRefusal({ name, old, cwd, sharers = [], agent = "Claude" }) {
   if (!sharers.length) return null;
@@ -178,6 +187,22 @@ export function continueRefusal({ name, old, cwd, sharers = [], agent = "Claude"
   return `${name} has no recorded ${agent} session (${old.address} has no agent.session label and the ledger has no session row for it), `
     + `and ${who} also ${sharers.length === 1 ? "runs" : "run"} ${agent} in ${cwd}, so --continue could resume theirs. Nothing was started; `
     + `restart with --fresh for a new conversation.`;
+}
+
+/**
+ * Why Restart starts `name` on a new conversation instead of resuming the latest one in `cwd`
+ * (#328), or null: no session id is known for the old pane, and `sharers` (other bots or panes
+ * on `agent` in that folder, { address, name, ended }: `ended`, known only by its seat row)
+ * could own that latest one. `words`: the resume it skips (--continue, resume --last);
+ * `agent`: the agent's name; `anywhere`: that resume isn't limited to the folder
+ * (models.js continuesAnywhere), so `sharers` run that agent anywhere.
+ */
+export function sharedFresh({ name, old, cwd, sharers = [], agent, words, anywhere = false }) {
+  if (!sharers.length) return null;
+  const who = sharers.map((x) => `${x.name} (${x.address}${x.ended ? ", ended" : ""})`).join(", ");
+  const verb = sharers.some((x) => x.ended) ? "ran" : sharers.length === 1 ? "runs" : "run";
+  return `no ${agent} session id is known for ${old.address}, and ${who} also ${verb} ${agent}${anywhere ? "" : ` in ${cwd}`}, `
+    + `so ${words} could resume theirs instead of ${name}'s${anywhere ? ` (${agent}'s ${words} isn't limited to one folder)` : ""}`;
 }
 
 /** The helpers (hc get answers) that end with their parent's pane: live, die_with_parent. */

@@ -19,21 +19,22 @@ import { parseArgs } from "node:util";
 
 import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMNI_LOOK, applyBotEdit, checkBots,
   CATEGORY_ID, PROJECTS_FILE, RANKS, defaultLook, descendantsOf, effectiveLead, listedProjects, mainBotOf, newBotId, newCategoryId,
-  parseBots, plannedOf, projectKeyOf, projectOf, withListedProject } from "../model.js";
+  parseBots, plannedOf, projectKeyOf, projectOf, withListedProject, writeFolderOf } from "../model.js";
 import { UNANSWERED, agentInForeground, attachRefusal, attachWords, detachWords, hcName, isClaude, leadIdOf, leadPane, newest,
   paneLabels, paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWarning, relabelWords, rowsOf, spaceOnly, spacePlace,
-  startArgs, startRefusal, unwrapKeep } from "../launchArgs.js";
+  shellIdle, spareTab, startArgs, startRefusal, unwrapKeep } from "../launchArgs.js";
+import { tabSteps, workerSpace, workerTabName } from "../workerTab.js";
 import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, confirmBindings, foldAttach, heldIn, machinesById, modeProblem, placeOf as placeOfRow, readAttach } from "../attach.js";
 import { interpreterPath } from "../agentPath.mjs";
 import { briefingFilePath, installHook, launchBriefingText, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
-import { agentKeyOfArgv, briefingLaunch, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, ownPromptIn, resolveAgent, resumesById,
+import { agentKeyOfArgv, continuesAnywhere, briefingLaunch, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, ownPromptIn, resolveAgent, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKTREES_EXCLUDE,
   SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, sessionRow, parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
   writesWorktree } from "../workers.js";
-import { carriedLabels, continueRefusal, doomedHelpers, helperArgs, helperPlan, ledgerSession, paneCommand, planText as restartText, restartPlan,
+import { carriedLabels, continueRefusal, doomedHelpers, helperArgs, helperPlan, ledgerSession, paneCommand, planText as restartText, restartPlan, sharedFresh,
   claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
 import { autoStatus, readAuto, binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, managedPack, readMarker, relinkCli, rollback as rollbackPack, writeAuto, writeMarker } from "../update.mjs";
 import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER, updatesOff } from "../release.js";
@@ -185,19 +186,27 @@ function launchPath(program, cwd = null) {
 
 const EMPTY = () => ({ version: 1, categories: [], bots: [] });
 
-/** A project's definitions: { key, machine: null, text (null: no file), raw, file, warnings }. */
-export function loadProject(key) {
-  return projectFrom(key, null, readText(under(key, BOTS_PATH)));
+/**
+ * A project's definitions: { key, machine: null, dir, text (null: no file), expected, raw,
+ * file, warnings }. `dir` is where an edit is written (key unless given): an edit made from a
+ * worktree is written in that worktree, reads stay on the key (RFC 0014 Q16, #234). With a
+ * `dir` other than the key, the edit starts from dir's file, or the key's where dir has none;
+ * `expected` is the text at dir (the write's snapshot), `text` the one the edit started from.
+ */
+export function loadProject(key, dir = key) {
+  const text = readText(under(key === dir ? key : dir, BOTS_PATH));
+  if (dir === key || text !== null) return projectFrom(key, null, text, dir);
+  return { ...projectFrom(key, null, readText(under(key, BOTS_PATH))), dir, expected: null };
 }
 
-function projectFrom(key, machine, text) {
-  if (text === null) return { key, machine, text, raw: EMPTY(), file: EMPTY(), warnings: [] };
+function projectFrom(key, machine, text, dir = key) {
+  if (text === null) return { key, machine, dir, text, expected: text, raw: EMPTY(), file: EMPTY(), warnings: [] };
   let parsedFile;
-  try { parsedFile = parseBots(text); } catch (e) { throw new CliError(`${fileName({ key, machine })}: ${e?.message ?? e}`); }
-  return { key, machine, text, raw: parsedFile.raw, file: parsedFile.file, warnings: parsedFile.warnings };
+  try { parsedFile = parseBots(text); } catch (e) { throw new CliError(`${fileName({ key, machine, dir })}: ${e?.message ?? e}`); }
+  return { key, machine, dir, text, expected: text, raw: parsedFile.raw, file: parsedFile.file, warnings: parsedFile.warnings };
 }
-/** A project's file, named for people: `<key>/.herdr/bots.json`, `… on <machine>` for a linked one's. */
-const fileName = ({ key, machine }) => `${under(key, BOTS_PATH)}${machine ? ` on ${machine}` : ""}`;
+/** A project's file, named for people: `<dir>/.herdr/bots.json`, `… on <machine>` for a linked one's. */
+const fileName = ({ key, machine, dir = key }) => `${under(dir, BOTS_PATH)}${machine ? ` on ${machine}` : ""}`;
 
 // ---- a project on a linked machine (--machine M --project DIR; automagik#206) ----
 
@@ -301,8 +310,21 @@ async function writeRemoteBots(project, raw) {
  */
 async function saveProject(project, raw, { list = true } = {}) {
   if (project.machine) return writeRemoteBots(project, raw);
-  writeBotsFile(project.key, raw, project.text);
+  writeBotsFile(project.dir, raw, project.expected, fsIo, project.text);
   if (list) listProject(project.key);
+  if (project.dir !== project.key) report([worktreeNote(project, await untrackedIn(project.key))]);
+}
+/**
+ * Said after an edit written in a worktree: where it went, what the readers show meanwhile, and,
+ * when the main checkout's file was never committed, that its pull would stop on it (git won't
+ * overwrite an untracked file with the merged one).
+ */
+const worktreeNote = ({ key, dir }, untracked = false) => `saved in ${under(dir, BOTS_PATH)} (this worktree); ls, `
+  + `whois and the sidebar read ${under(key, BOTS_PATH)} until that change is merged there.`
+  + (untracked ? ` ${under(key, BOTS_PATH)} isn't committed: commit or remove it before pulling, or git pull stops on it.` : "");
+/** Whether `key`'s .herdr/bots.json is there and untracked by git (`git status` says ??). */
+async function untrackedIn(key) {
+  return ((await git(["status", "--porcelain", "--", BOTS_PATH], key)) ?? "").startsWith("??");
 }
 
 const fsIo = {
@@ -322,13 +344,14 @@ const fsIo = {
  * checkBots, and the file must still hold `expected`, the text the edit started from (null:
  * no file yet), else nothing is written. A new file gets its `.herdr/` folder first and is
  * created exclusively; an existing one is replaced whole (written beside, then renamed).
- * `raw === null` deletes the file (the project's last bot removed).
+ * `raw === null` deletes the file (the project's last bot removed). `before`, for checkBots, is
+ * the text the edit started from when that isn't the file written (a worktree's first edit).
  */
-export function writeBotsFile(key, raw, expected, io = fsIo) {
+export function writeBotsFile(key, raw, expected, io = fsIo, before = expected) {
   if (expected === undefined) throw new Error("writeBotsFile: pass the text the edit started from (null for a new file)");
   const path = under(key, BOTS_PATH);
   if (raw !== null) {
-    const errors = checkBots(raw, expected);
+    const errors = checkBots(raw, before);
     if (errors.length) throw new CliError(`Not saved: ${errors.join("; ")}`);
   }
   let now;
@@ -436,6 +459,31 @@ export function findBot(file, ref) {
     if (hits.length > 1) throw new CliError(`${hits.length} bots are named "${ref}" (${hits.map((b) => b.id).join(", ")}); use the id.`);
   }
   throw new CliError(`No bot "${ref}" in this project.`);
+}
+
+/**
+ * findBot in a project's file, for a command run from `opts`' folder. When the bot isn't
+ * there but is in the other file of a worktree edit (RFC 0014 Q16: edits are written in the
+ * worktree, reads stay on the main checkout), the refusal names both files and why.
+ */
+async function botIn(project, ref, opts) {
+  try { return findBot(project.file, ref); } catch (e) {
+    if (!(e instanceof CliError) || !e.message.startsWith("No bot ") || project.machine) throw e;
+    const editing = project.dir !== project.key;
+    const dir = editing ? project.dir : await writeDirOf(opts, project.key).catch(() => project.key);
+    if (dir === project.key) throw e;
+    let other = null;
+    try { other = editing ? loadProject(project.key) : projectFrom(project.key, null, readText(under(dir, BOTS_PATH)), dir); } catch { throw e; }
+    let found = null;
+    try { found = other.text === null ? null : findBot(other.file, ref); } catch { /* not there either */ }
+    if (!found) throw e;
+    const main = under(project.key, BOTS_PATH), wt = under(dir, BOTS_PATH);
+    throw new CliError(editing
+      ? `No bot "${ref}" in ${wt}, this worktree's file, which edits change; ${main} has it. Update this worktree from `
+        + `the main checkout's branch first, or run the edit in ${project.key}.`
+      : `No bot "${ref}" in ${main}, which this command reads; it is in ${wt} (this worktree) and shows here once that `
+        + `change is merged into ${project.key}.`);
+  }
 }
 
 function findCategory(file, ref) {
@@ -816,11 +864,13 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 template, model and effort flags): the new pane starts, and the
                                 old one ends only once the new one's agent has stayed up (prints
                                 the new terminal). It resumes the conversation in that folder
-                                (claude --resume <session>, or --continue when no other bot's
-                                Claude shares the folder; with the pane's agent.session label,
-                                codex resume <session>, omp --resume=<session>, pi --session
-                                <session>; else codex resume --last, --continue for pi, omp,
-                                kimi, agy and hermes);
+                                by the pane's session id (its agent.session label, or the
+                                ledger's row): claude --resume <session>, codex resume
+                                <session>, omp --resume=<session>, pi --session <session>,
+                                kimi --session=<session>, agy --conversation <session>, hermes
+                                --resume <session>; with no id, the folder's latest (codex
+                                resume --last, --continue for the rest), unless another bot
+                                on that agent runs there: then a new one, and why;
                                 --fresh: a new one; --agent/--model: a swap (always new;
                                 --save: also into ${BOTS_PATH}). Refused while the bot is
                                 working or has helpers that would end with it, unless --force
@@ -1065,6 +1115,22 @@ async function projectFor(opts) {
   if (opts.machine !== undefined) return loadRemoteProject(await remoteKeyOf(opts), opts.machine);
   return loadProject(await commandKeyOf(opts));
 }
+/**
+ * Where this command's edit is written (RFC 0014 Q16, #234): the git top level of the folder
+ * it was run in or named with --project (a worktree's own folder), else the project key (a
+ * main checkout's top level is its key; outside git the key, as before). A linked machine's:
+ * its key, as before.
+ */
+async function writeDirOf(opts, key) {
+  if (opts.machine !== undefined) return key;
+  return (await writeFolderOf(resolvePath(opts.project ?? process.cwd()), git)) ?? key;
+}
+/** projectFor for a command that edits the file: read from, and written to, writeDirOf's folder. */
+async function editProjectFor(opts) {
+  if (opts.machine !== undefined) return projectFor(opts);
+  const key = await commandKeyOf(opts);
+  return loadProject(key, await writeDirOf(opts, key));
+}
 // The commands that take --machine: the definitions ones (and meter's own --machine).
 const ON_MACHINE = new Set(["ls", "show", "create", "edit", "rm", "category", "start", "restart", "attach", "detach", "whois", "meter", "doc"]);
 // A project's place in --json answers: `machine` only for a linked machine's.
@@ -1132,7 +1198,7 @@ const workerText = (w) => (w ? ["template", "agent", "model", "effort"].filter((
 
 async function cmdShow(opts, [ref]) {
   const project = await projectFor(opts);
-  const bot = findBot(project.file, ref);
+  const bot = await botIn(project, ref, opts);
   const { view, hcError } = await viewOrError();
   const info = { ...describe(project, bot, view, hcError), instructions: bot.instructions };
   if (opts.json) return info;
@@ -1177,7 +1243,7 @@ async function relabelAfter(beforeFile, afterRaw) {
 }
 
 async function cmdCreate(opts) {
-  const project = await projectFor(opts);
+  const project = await editProjectFor(opts);
   const id = newBotId();
   const entry = entryFrom(opts, { id, kind: mainBotOf(project.file) ? "member" : "main" }, project, { creating: true });
   const raw = applyBotEdit(project.raw, entry);
@@ -1188,8 +1254,8 @@ async function cmdCreate(opts) {
 }
 
 async function cmdEdit(opts, [ref]) {
-  const project = await projectFor(opts);
-  const bot = findBot(project.file, ref);
+  const project = await editProjectFor(opts);
+  const bot = await botIn(project, ref, opts);
   const stored = project.raw.bots.find((b) => b?.id === bot.id);
   const entry = entryFrom(opts, stored, project, { creating: false });
   const raw = applyBotEdit(project.raw, entry);
@@ -1199,9 +1265,9 @@ async function cmdEdit(opts, [ref]) {
 }
 
 async function cmdRm(opts, [ref]) {
-  const project = await projectFor(opts);
+  const project = await editProjectFor(opts);
   const { file } = project;
-  const bot = findBot(file, ref);
+  const bot = await botIn(project, ref, opts);
   // Its pane by the ledger, read before the write (the import, on a first run, needs the bot
   // still defined). hc missing or failing only drops the note.
   let holders = [];
@@ -1224,6 +1290,11 @@ async function cmdRm(opts, [ref]) {
   // Only an empty list deletes the file; anything else must pass checkBots (a file left
   // with members and no main bot is refused, never deleted).
   const last = raw.bots.length === 0;
+  // A worktree with no file of its own holds nothing to delete: its edit would only show the key's.
+  if (last && project.expected === null) {
+    throw new CliError(`${bot.name} is the project's last bot and ${fileName(project)} isn't there, so nothing was removed; `
+      + `remove it from ${project.key}.`);
+  }
   await saveProject(project, last ? null : raw, { list: false });
   if (!last && !project.machine) await relabelAfter(file, raw); // its lead may stop being a captain
   const notes = [];
@@ -1234,7 +1305,8 @@ async function cmdRm(opts, [ref]) {
 }
 
 async function cmdCategory(opts, [verb, ...rest]) {
-  const project = await projectFor(opts);
+  // Listing reads the project's file; the other verbs edit, in writeDirOf's folder.
+  const project = verb === "ls" || verb === undefined ? await projectFor(opts) : await editProjectFor(opts);
   const raw = JSON.parse(JSON.stringify(project.raw));
   raw.categories = Array.isArray(raw.categories) ? raw.categories : [];
   const save = async () => {
@@ -1333,11 +1405,15 @@ async function placementOf(key, seen = null) {
   return null;
 }
 
+/** `herdr-app ls` as State spaces (spacesOf), or null: no herdr-app, no window. */
+async function windowRead() {
+  const r = await runProgram("herdr-app", ["ls"]);
+  try { return r.code === 0 ? spacesOf(JSON.parse(r.stdout)) : null; } catch { return null; }
+}
+
 /** `herdr-app ls` as State spaces (spacesOf) and each folder's key, or null: no herdr-app, no window. */
 async function windowSpaces() {
-  const r = await runProgram("herdr-app", ["ls"]);
-  let spaces;
-  try { spaces = r.code === 0 ? spacesOf(JSON.parse(r.stdout)) : null; } catch { spaces = null; }
+  const spaces = await windowRead();
   if (!spaces) return null;
   const keys = new Map();
   await Promise.all([...new Set(spaces.map((s) => s.folder).filter(Boolean))].map(async (f) => {
@@ -1371,7 +1447,50 @@ async function windowPlace(key, labelled = null, seen = null) {
   if (first && ours && ours.id !== first.space) {
     await runProgram("herdr-app", ["do", "space.close", JSON.stringify({ id: ours.id, confirmed: true })]);
   }
-  return first || (typeof out.space === "string" ? { space: out.space, tab: null, from: null } : null);
+  const place = first || (typeof out.space === "string" ? { space: out.space, tab: null, from: null } : null);
+  // The space is this start's: its first tab holds only the shell space.new started, closed
+  // once the bot shows in a tab of its own there (launchSeat, spareTab).
+  const shell = ours && place?.space === ours.id ? ours.tabs.find((t) => t.panes.some((p) => p.terminal === out.terminal)) : null;
+  return shell && typeof out.terminal === "string" ? { ...place, spare: { space: ours.id, tab: shell.id, terminal: out.terminal } } : place;
+}
+
+/**
+ * How long a start or worker waits for Herdr to show its new pane before its tab setup is left
+ * out (AUTOMAGIK_HERDR_TAB_WAIT_MS; 0 turns the setup off: no wait, no tab moved or closed).
+ */
+const TAB_WAIT_MS = (() => {
+  const raw = process.env.AUTOMAGIK_HERDR_TAB_WAIT_MS;
+  const ms = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
+  return Number.isFinite(ms) && ms >= 0 ? ms : 5000;
+})();
+const TAB_STEP_MS = 200;
+
+/**
+ * Waits for the window to show `terminal` (a terminal of this computer) in a pane: the window's
+ * spaces then, with each tab's `index` (its position, from 1, as tab.move counts) and
+ * `terminals`, and the space and tab showing it: { spaces, space, tab }. Null when no window
+ * answers, or the pane hasn't shown after TAB_WAIT_MS.
+ */
+async function windowShows(terminal, ms = TAB_WAIT_MS) {
+  const until = Date.now() + ms;
+  for (;;) {
+    const read = await windowRead();
+    if (!read) return null;
+    const spaces = read.map((s) => ({ ...s, tabs: s.tabs.map((t, i) => ({ ...t, index: i + 1, terminals: t.panes.map((p) => p.terminal),
+      count: t.paneCount })) }));
+    for (const space of spaces.filter((x) => !x.machine)) {
+      const tab = space.tabs.find((t) => t.terminals.includes(terminal));
+      if (tab) return { spaces, space, tab };
+    }
+    if (Date.now() >= until) return null;
+    await later(TAB_STEP_MS);
+  }
+}
+
+/** `herdr-app do <command> <args>`: null when it ran, else what it said. */
+async function windowDo(command, args) {
+  const r = await runProgram("herdr-app", ["do", command, JSON.stringify(args)]);
+  return r.code === 0 ? null : (r.stderr || r.stdout || `exit ${r.code}`).trim();
 }
 
 async function cmdStart(opts, [ref]) {
@@ -1379,7 +1498,7 @@ async function cmdStart(opts, [ref]) {
   const project = await projectFor(opts);
   const { file, key } = project;
   if (project.text === null) throw new CliError(`No ${BOTS_PATH} in ${key}.`);
-  const bot = findBot(file, ref);
+  const bot = await botIn(project, ref, opts);
   const why = startRefusal(file, bot.id);
   if (why) throw new CliError(why);
   // launch.js checks the folder Start launches in against the project (attachRefusal on
@@ -1746,6 +1865,10 @@ async function launchSeat(project, bot, over = {}) {
     if (unlogged) { hook.warnings.push(unlogged); report([unlogged]); }
   };
   if (!over.replacing) await logSeat();
+  if (place?.spare && TAB_WAIT_MS > 0) {
+    const why = await closeSpare(place.spare, terminal);
+    if (why) { hook.warnings.push(why); report([why]); }
+  }
   listProject(key);
   // An edit that landed while this Start ran: the file read again, its role and category
   // put on the new pane (relabelWords against the labels it started with).
@@ -1766,6 +1889,24 @@ async function launchSeat(project, bot, over = {}) {
     report(hook.warnings.slice(-1));
   }
   return { terminal, created_ms: started.created_ms, parent, argv, labels, place, hook, logSeat };
+}
+
+/**
+ * Closes the spare shell's tab of a space this start made (windowPlace's `spare`) once the
+ * window shows the bot's pane (`terminal`) in another tab there: never before, so the space
+ * always keeps a tab, and only while that tab holds the shell alone, one pane, with nothing
+ * but the shell itself in front (spareTab, shellIdle). Never `confirmed`: should Herdr see
+ * anything worth asking about, the person is asked. Null, or a warning when the close failed.
+ */
+async function closeSpare(spare, terminal) {
+  const shown = await windowShows(terminal);
+  if (!shown || shown.space.id !== spare.space) return null;
+  if (!spareTab(spare, shown.space.tabs, terminal, true)) return null;
+  const idle = shellIdle(await hcGet(spare.terminal).catch(() => null));
+  const tab = spareTab(spare, shown.space.tabs, terminal, idle);
+  if (!tab) return null;
+  const why = await windowDo("tab.close", { id: tab });
+  return why ? `The new space's spare shell tab (${tab}) wasn't closed: ${why}` : null;
 }
 
 // ---- restart: the bot's agent again, in its pane's place ----
@@ -1809,13 +1950,41 @@ function workerLedgerRows() {
 }
 
 /**
- * Other bots' live Claude panes whose folder is `cwd`, by the attach ledger (`view`,
- * attachView): [{ address, name }].
+ * Who else may own the latest `agentKey` conversation in the folder `cwd` (#328), the panes and
+ * bots a restart with no session id must not take it from: [{ address, name, ended }]. Over-
+ * counting is safe (the restart then starts fresh and says why), so all three count: the live
+ * panes on this computer running that agent there (a bot's, or one started by hand: hc ls), the
+ * bound bots there by the attach ledger (`view`), and each other bot whose last seat row in the
+ * workers ledger (`ledger`) put it there on that agent, its pane since ended or not. `old`:
+ * the pane being replaced (never counted); `anywhere`: the agent's id-less resume isn't
+ * limited to one folder (models.js continuesAnywhere), so any folder counts.
  */
-function claudeBotsIn(view, cwd, botId, file) {
-  return [...view.live.values()].filter(({ binding, get }) => binding.bot !== botId && get && agentInForeground(get)
-    && (get.foreground?.cwd ?? get.cwd) === cwd && (isClaude(null, get) || agentKeyOfArgv(get.foreground?.argv) === "claude"))
-    .map(({ binding }) => ({ address: binding.terminal, name: file.bots.find((b) => b.id === binding.bot)?.name ?? `bot ${binding.bot}` }));
+async function sharersOf({ view, cwd, botId, file, agentKey, ledger = [], old, anywhere = false }) {
+  const real = realDir(cwd) ?? cwd;
+  const here = (dir) => anywhere || (typeof dir === "string" && dir !== "" && (dir === cwd || (realDir(dir) ?? dir) === real));
+  const agents = agentTable();
+  // The agent in front, past the keep wrapper (launchArgs.js unwrapKeep) a pane may run it in.
+  const runs = (get) => agentInForeground(get) && ((agentKey === "claude" && isClaude(null, get))
+    || agentKeyOfArgv(unwrapKeep(get.foreground?.argv), agents) === agentKey);
+  const nameOf = (id) => (id ? file.bots.find((b) => b.id === id)?.name ?? `bot ${id}` : null);
+  const out = new Map();
+  const add = (address, name, ended = false) => { if (address && address !== old?.address && !out.has(address)) out.set(address, { address, name, ended }); };
+  for (const { binding, get } of view.live.values()) {
+    if (binding.bot !== botId && get && runs(get) && here(get.foreground?.cwd ?? get.cwd)) add(binding.terminal, nameOf(binding.bot));
+  }
+  let rows = [];
+  try { rows = rowsOf(await hcJson(["ls"])).filter((r) => local(r?.address) && r.state === "live" && r.address !== old?.address && !out.has(r.address)); }
+  catch { rows = []; }
+  for (const get of (await Promise.all(rows.map((r) => hcGet(r.address).catch(() => null)))).filter(Boolean)) {
+    if (get.labels?.[BOT_LABEL] === botId || !runs(get) || !here(get.foreground?.cwd ?? get.cwd)) continue;
+    add(get.address, nameOf(get.labels?.[BOT_LABEL]) ?? "a pane");
+  }
+  const lastSeat = new Map();
+  for (const r of ledger) if (r?.event === "start" && r.kind === "seat" && typeof r.botId === "string" && r.botId !== botId) lastSeat.set(r.botId, r);
+  for (const r of lastSeat.values()) {
+    if (r.agent === agentKey && here(r.worktree)) add(r.terminal, nameOf(r.botId), !(view.live.get(r.botId)?.binding.terminal === r.terminal));
+  }
+  return [...out.values()];
 }
 
 /**
@@ -2123,7 +2292,7 @@ async function cmdRestart(opts, [ref]) {
   const project = await projectFor(opts);
   const { file, key } = project;
   if (project.text === null) throw new CliError(`No ${BOTS_PATH} in ${key}.`);
-  const bot = findBot(file, ref);
+  const bot = await botIn(project, ref, opts);
   const why = startRefusal(file, bot.id);
   if (why) throw new CliError(why);
   // A swap's agent and model are checked as an edit checks them (entryFrom); a new agent
@@ -2152,20 +2321,24 @@ async function cmdRestart(opts, [ref]) {
   const agents = agentTable();
   const ledger = workerLedgerRows();
   const runningAgent = old ? agentKeyOfArgv(old.foreground?.argv, agents) : null;
+  // An agent as the restart's lines name it ("Claude", not "Claude Code").
+  const agentName = (k) => (k === "claude" ? "Claude" : agents[k]?.name ?? k);
   // The session to resume: the old pane's agent.session label (or a reviver's revive.session),
-  // else (a Claude pane, whose hook writes them) the ledger's last session row for that terminal.
+  // else the ledger's last session row for that terminal (the Claude hook writes them), for
+  // every agent that resumes by id.
   const knownSession = (get, agentKey) => {
     const id = paneSession(get, agentKey);
     if (id) return { session: id, transcript: null };
-    return agentKey === "claude" ? ledgerSession(ledger, get.address) : null;
+    return resumesById(agentKey) ? ledgerSession(ledger, get.address, agentKey, get.created_ms) : null;
   };
   const known = old ? knownSession(old, runningAgent ?? bot.agent) : null;
-  const plan = restartPlan({
+  const planned = {
     bot, run: startableAgent(bot, entry?.agent ?? bot.agent).run,
     runningAgent, session: known?.session ?? null,
     fresh: opts.fresh || !old, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
     launch: old ? paneCommand(old) : null, runningModel: old && runningAgent ? detectModel(old.foreground?.argv, runningAgent) : null,
-  });
+  };
+  let plan = restartPlan(planned);
   // The old pane's folder (#213: a worktree too, where its conversation is), unless it is gone;
   // the same space and tab (its Herdr labels).
   const oldCwd = old?.foreground?.cwd ?? old?.cwd ?? null;
@@ -2180,10 +2353,15 @@ async function cmdRestart(opts, [ref]) {
   }
   const place = opts.space ? { space: opts.space, tab: opts.tab ?? null, from: null } : (old ? placementFrom([old]) ?? undefined : undefined);
   const resumeId = plan.mode === "resume" && resumesById(plan.agent) ? sessionFor(plan.agent, known?.session) : null;
-  // --continue takes the folder's latest conversation: never while another bot's Claude runs there.
-  if (plan.mode === "resume" && plan.agent === "claude" && !resumeId) {
-    const refusal = continueRefusal({ name: bot.name, old, cwd, sharers: claudeBotsIn(view, cwd, bot.id, file) });
-    if (refusal) throw new CliError(refusal);
+  // With no id, a resume takes the folder's latest conversation (--continue, codex resume
+  // --last), for every agent: beside another bot on that agent there, a new conversation, and
+  // why (#328: an omp --continue picked up a teammate's). Alone there, the resume as before.
+  let sharedNote = null;
+  if (plan.mode === "resume" && !resumeId) {
+    const anywhere = continuesAnywhere(plan.agent);
+    const sharers = await sharersOf({ view, cwd, botId: bot.id, file, agentKey: plan.agent, ledger, old, anywhere });
+    const note = sharedFresh({ name: bot.name, old, cwd, sharers, agent: agentName(plan.agent), words: plan.resume.join(" "), anywhere });
+    if (note) { plan = { ...restartPlan({ ...planned, fresh: true }), note }; sharedNote = note; }
   }
   const { tree, treeWarnings } = old && opts.tree
     ? await treePlans({ bot, old, helpers, view, ledger, agents, knownSession, force: opts.force, freshShared: opts["fresh-shared"],
@@ -2199,6 +2377,9 @@ async function cmdRestart(opts, [ref]) {
   if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
   const warnings = seat.hook.warnings;
   const say = (w) => { warnings.push(w); report([w]); };
+  // The sidebar's Restart shows only --json's warnings: why it didn't resume goes there too
+  // (the text answer says it in its own line).
+  if (sharedNote) warnings.push(`${bot.name} starts on a new conversation: ${sharedNote}.`);
   if (movedFrom && movedFrom !== wanted && plan.mode === "resume" && plan.agent !== "claude") {
     say(`${seat.terminal} runs in ${wanted}, not ${movedFrom}: ${plan.agent} finds its last conversation by folder${resumeId ? "" : ", so it may not find it there"}.`);
   }
@@ -2254,17 +2435,23 @@ async function cmdRestart(opts, [ref]) {
   }
   // A helper --tree couldn't run again: the command fails (the bot did restart; its line says how).
   if (rerun.some((h) => h.error)) exitAfter.code = 1;
-  if (plan.mode === "resume" && plan.agent === "claude" && !resumeId) {
-    say(`No Claude session id was known for ${old.address}, so ${seat.terminal} resumes the latest conversation in ${cwd} (--continue). `
-      + `No other bot's Claude runs there; if it isn't ${bot.name}'s, restart again with --fresh.`);
+  if (plan.mode === "resume" && !resumeId) {
+    const name = agentName(plan.agent);
+    say(`No ${name} session id was known for ${old.address}, so ${seat.terminal} resumes the latest conversation in ${cwd} (${plan.resume.join(" ")}). `
+      + `No other bot's ${name} runs there; if it isn't ${bot.name}'s, restart again with --fresh.`);
   }
   let saved = false;
   if (opts.save) {
-    const now = loadProject(key);
+    // Written where the command runs (writeDirOf: a worktree's own file, #234).
+    const now = loadProject(key, await writeDirOf(opts, key));
     const stored = now.raw.bots.find((b) => b?.id === bot.id);
     if (stored) {
-      writeBotsFile(key, applyBotEdit(now.raw, { ...stored, agent: entry.agent, ...(entry.model ? { model: entry.model } : { model: undefined }) }), now.text);
+      await saveProject(now, applyBotEdit(now.raw, { ...stored, agent: entry.agent, ...(entry.model ? { model: entry.model } : { model: undefined }) }), { list: false });
       saved = true;
+    } else {
+      // A worktree branched before the bot was added: its file has no entry to change.
+      say(`--save: ${fileName(now)}, this worktree's file, has no ${bot.name} (${bot.id}), so ${plan.agent} wasn't saved; `
+        + `update this worktree from the main checkout's branch, or restart with --save in ${key}.`);
     }
   }
   const what = old ? `${seat.terminal} replaces ${old.address}, ${restartText(plan, resumeId)}` : `${bot.name} wasn't running; started in ${seat.terminal}${swap ? ` on ${plan.agent}` : ""}`;
@@ -2327,7 +2514,7 @@ async function cmdAttach(opts, [ref, terminal]) {
   const project = await projectFor(opts);
   const { file, key } = project;
   const at = await terminalPlace(terminal, project);
-  const bot = findBot(file, ref);
+  const bot = await botIn(project, ref, opts);
   if (bot.planned) throw new CliError(`${bot.name} is planned (wave ${bot.planned.wave}); clear "planned" before attaching it.`);
   const get = await hcGet(at.address);
   if (!get || get.state !== "live") throw new CliError(`${at.address} isn't a live terminal.`);
@@ -2501,7 +2688,7 @@ async function cmdHistory(opts, [ref]) {
 
 async function cmdBrief(opts, [ref]) {
   const project = await projectFor(opts);
-  const bot = findBot(project.file, ref);
+  const bot = await botIn(project, ref, opts);
   if (bot.planned) {
     if (opts.json) return { id: bot.id, briefing: null, reason: "planned bots get no briefing" };
     process.stderr.write(`automagik-herdr: ${bot.name} is planned; planned bots get no briefing.\n`);
@@ -2802,6 +2989,25 @@ async function baseCommit(place, key) {
   return log?.trim().split("\n").filter(Boolean).at(-1) ?? null;
 }
 
+/**
+ * A new worker's tab, once the window shows its pane (`terminal`): renamed `name` and moved
+ * after the tab of its bot's pane (`botTerminal`) when both are in one space (workerTab.js
+ * tabSteps, the setup a sidebar click gives a worker). Never focused: the person's focus
+ * stays where it is. Null, or a warning when the pane didn't show in time or a step failed.
+ */
+async function workerTabSetup(terminal, botTerminal, name) {
+  const shown = await windowShows(terminal);
+  if (!shown) return `Herdr hadn't shown ${terminal} after ${TAB_WAIT_MS / 1000}s, so its tab isn't named or moved beside its bot's.`;
+  const space = shown.spaces.find((s) => !s.machine && s.tabs.some((t) => t.terminals.includes(botTerminal)));
+  const botTab = space?.tabs.find((t) => t.terminals.includes(botTerminal)) ?? null;
+  const steps = tabSteps({ space: space?.id ?? null, tab: botTab?.id ?? null, name }, { tab: shown.tab.id }, shown.spaces);
+  for (const [command, args] of steps) {
+    const why = await windowDo(command, args);
+    if (why) return `${terminal}'s tab: ${command} failed: ${why}`;
+  }
+  return null;
+}
+
 async function cmdWorker(opts, rest) {
   const task = rest.join(" ").trim();
   if (!task) throw new CliError('worker needs the task text: automagik-herdr worker "<task>" --branch <name>.', 2);
@@ -2892,7 +3098,11 @@ async function cmdWorker(opts, rest) {
   const lockDir = ledgerPath(appHome()).replace(/\/[^/]*$/, "");
   try { mkdirSync(lockDir, { recursive: true }); } catch (e) { throw new CliError(`Can't make ${lockDir}: ${e?.message ?? e}`); }
   const worktree = realDir(place.worktree) ?? place.worktree;
-  const terminal = await withLockAsync(worktreeLock(lockDir, worktree), async () => {
+  // The bot's space, no tab: Herdr opens the worker in a tab of its own there, at hc run. The
+  // window is asked first (workerSpace): a label naming a space it no longer has is left out.
+  const window = await windowRead();
+  const space = workerSpace(placementFrom([me])?.space ?? null, window, me.address);
+  const started = await withLockAsync(worktreeLock(lockDir, worktree), async () => {
     const ls = await hcJson(["ls"]);
     // A task's worker is named exactly <id>-<role>: a live holder of that name is refused, never suffixed.
     // This computer's terminals only (hc names are unique per core), as workersIn sees them.
@@ -2916,8 +3126,6 @@ async function cmdWorker(opts, rest) {
     }
     const taken = new Set(rowsOf(ls).map((r) => r?.name).filter(Boolean));
     const name = taskName ?? hcName(opts.name ?? branchSlug(place.branch), bot.id, taken);
-    // The bot's space, no tab: Herdr opens the worker in a tab of its own there, at hc run.
-    const space = placementFrom([me])?.space ?? null;
     const args = workerArgs({ botId: bot.id, branch: place.branch, role, name, cwd: place.worktree, parent: me.address, space,
       agent: plan.agent, model: plan.model, effort: plan.effort, argv: plan.argv, task, template: plan.template,
       path: runPath?.path ?? process.env.PATH, taskId, project: project.key, lead });
@@ -2926,13 +3134,21 @@ async function cmdWorker(opts, rest) {
     let address = null;
     try { address = JSON.parse(r.stdout).address ?? null; } catch { address = null; }
     if (!address) throw new CliError(`hc run gave no terminal address: ${r.stdout.trim()}`);
-    return address;
+    return { address, name };
   }).catch((e) => { throw e instanceof CliError ? e : new CliError(e?.message ?? String(e)); });
+  const terminal = started.address;
+  // The ledger row first, as launchSeat writes its rows before anything waits on the window.
   const pid = await pidOf(terminal);
   const unlogged = appendLedger(startRow({ kind: "worker", terminal, pid, botId: bot.id, task: taskId, branch: place.branch,
     project: project.key, lead, worktree, base, created: place.created, agent: plan.agent, model: plan.model, effort: plan.effort,
     template: plan.template, role, swap, override, overrideRequested }));
   if (unlogged) warnings.push(unlogged);
+  // Herdr shows a labelled worker at once, so the sidebar's tab setup (workerTab.js) never
+  // runs for it: its tab is named and moved after the bot's tab here, as a click would.
+  if (space && window && TAB_WAIT_MS > 0) {
+    const why = await workerTabSetup(terminal, me.address, workerTabName({ branch: place.branch, name: started.name }));
+    if (why) warnings.push(why);
+  }
   report(warnings);
   const out = { terminal, bot: bot.id, role, parent: me.address, worktree: place.worktree, branch: place.branch, created: place.created,
     base: place.base, template: plan.template, agent: plan.agent, model: plan.model, effort: plan.effort, pid, argv: plan.argv, warnings,

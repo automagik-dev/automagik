@@ -9,6 +9,7 @@ import { ActivityIndicator } from './activity-row.js'
 import { clockLabel, openingTurn, unseenSince } from './cells.js'
 import { viewBottom } from './motion.js'
 import { t } from './i18n.js'
+import { detailsSubject } from './sources.js'
 
 // -------------------------------------------------------------------------
 // Conversation header
@@ -95,7 +96,10 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
   const bot = roster.byId[sessionId]
   const room = roster.roomsById[sessionId]
   const approval = useApproval(useWork, entry => bot !== undefined && entry.botId === bot.id)
-  const detailsOpen = useUi(state => state.details === sessionId)
+  // Open only while the panel shows this subject's details, not its browser or side chat.
+  // Rename opens a multi-part Bot by its Bot id, the header by the part's Session id.
+  const detailsOpen = useUi(state => state.view === 'details' && state.details != null
+    && detailsSubject(roster, state.details) === detailsSubject(roster, sessionId))
   const name = bot?.name ?? room?.name ?? ''
   const useNews = useMemoryNews ?? noNews
   const memoryIds = bot ? [bot.id] : room ? [room.id, ...room.members] : []
@@ -145,8 +149,10 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
       !native ? h('button', { type: 'button', className: 'bt-head-details', 'data-bt-right-sidebar': '', title: t('Right sidebar'), 'aria-label': t('Toggle right sidebar'), onClick: () => actions.toggleRightSidebar() }, h(GoArrow)) : null) : null,
     !away && (bot || room) ? h('button', {
       type: 'button', className: 'bt-head-details', 'aria-label': t('View conversation details'), title: t('Details'),
-      'aria-expanded': detailsOpen, onClick: () => actions.toggleDetails(sessionId),
-    }, h(InfoIcon)) : null,
+      'aria-expanded': detailsOpen, 'aria-controls': 'bt-conversation-panel', 'data-details-subject': sessionId,
+      // Focus the trigger first (Safari does not on click), so the panel returns focus to it.
+      onClick: (event) => { event.currentTarget.focus(); actions.toggleDetails(sessionId) },
+    }, h(InfoIcon), t('Details')) : null,
     h(NewMessagePills, { key: sessionId, sessionId, useSessions, useUi, useTurnClock }),
     h(ActivityIndicator, { key: `activity:${sessionId}`, sessionId, useRoster, useSessionStatus, useSession, useLive, useWork, actions }))
 }

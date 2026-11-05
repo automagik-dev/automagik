@@ -82,9 +82,13 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // In Pocket: its notes (*.md at its top) and docs/, and the Android project's scripts (the terminal
 // page's test and the vendoring script), which no APK carries. Meter's local tools (meter/: the Claude
 // status line and the limits logger it wraps) run from a checkout on the owner's machine; no release carries them.
+// The Windows helper's Linux image and its guest launcher (apps/desktop/wslc/: the Dockerfile,
+// dsh-launch, the CI smoke and their tests; RFC 0016 delivery 2) are built by CI alone, and no
+// shipped app reads them yet: the desktop build packages src/ and the build/ resources only. When
+// Windows ships the helper (RFC 0016 delivery 6) this rule changes on purpose.
 const NEVER_SHIPPED = [/^am\/[^/]+\.md$/, /^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/, /^apps\/automagik-pets\//, /^docs\//,
   /^herdr\/[^/]+\.md$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr-layout\/(RECIPE\.md|preview\.png)$/,
-  /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//, /^meter\//];
+  /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//, /^meter\//, /^apps\/desktop\/wslc\//];
 /**
  * The herdr part: everything under herdr/ (the pack's mods, installer and tooling) and its layout's
  * own entry folder, herdr-layout/ (the pack ships its automagik.json; RFC 0011).

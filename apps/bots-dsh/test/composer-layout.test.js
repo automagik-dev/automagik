@@ -60,10 +60,16 @@ test('all six structural stage rules require the Bot composer ownership marker',
 })
 
 test('stage leaves native wish geometry intact; Bot controls keep their two-row layout', async t => {
-  if (!existsSync(executablePath)) return t.skip('Browser layout check requires CHROME_BIN; structural check still runs')
+  // CI must run the browser half (#323): its job sets CHROME_BIN and installs playwright-core
+  // (a dependency of this package), so a missing browser or module there is a broken job.
+  if (!existsSync(executablePath)) {
+    if (process.env.CI) assert.fail(`Browser layout check found no browser at ${executablePath} (CHROME_BIN=${process.env.CHROME_BIN ?? 'unset'}); CI must run it`)
+    return t.skip('Browser layout check requires CHROME_BIN; structural check still runs')
+  }
   let chromium
   try { ({ chromium } = await import('playwright-core')) } catch (error) {
     if (error.code !== 'ERR_MODULE_NOT_FOUND') throw error
+    if (process.env.CI) assert.fail(`Browser layout check cannot import playwright-core (${error.message}); CI's bun install must provide it`)
     return t.skip('Browser layout check requires the root bun install (playwright-core)')
   }
   const browser = await chromium.launch({ executablePath, headless: true })

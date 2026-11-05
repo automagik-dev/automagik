@@ -77,11 +77,20 @@ export function readDialog(agent, text) {
   const rows = bottomRows(text)
   const footer = rows.length - 1
   if (footer < 0 || !rows[footer].trim().startsWith('Esc to cancel')) return null
+  // The question, then only numbered options up to the footer. A long option wraps onto indented
+  // lines under it (recorded: "Yes, and always allow access to <folder>" + "from this project").
   let i = footer - 1
+  while (i >= 0 && !/^Do you want to /.test(rows[i].trim())) i--
+  if (i < 0) return null
   const options = []
-  while (i >= 0 && OPTION.test(rows[i].trim())) { options.unshift(rows[i].trim().match(OPTION)[2]); i-- }
-  // As recorded: the first option is Yes (what `1` answers), and the dialog asks to proceed.
-  if (options.length < 2 || options[0] !== 'Yes' || !/^Do you want to /.test(rows[i]?.trim() ?? '')) return null
+  for (const r of rows.slice(i + 1, footer)) {
+    const m = r.trim().match(OPTION)
+    if (m) options.push(m[2])
+    else if (options.length && /^\s{3,}\S/.test(r) && !RULE.test(r.trim()) && !DASHED.test(r.trim())) options[options.length - 1] += ` ${r.trim()}`
+    else return null
+  }
+  // As recorded: the first option is Yes (what `1` answers).
+  if (options.length < 2 || options[0] !== 'Yes') return null
   // Up to the `─` rule that opens the dialog: the header follows it, the command sits between `╌` rules.
   let top = i
   while (top >= 0 && !RULE.test(rows[top].trim())) top--

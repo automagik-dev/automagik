@@ -79,7 +79,7 @@ function answering({ afterKeys = 'idle' } = {}) {
 test('allow presses 1 and deny presses esc, with no caller; the dialog going is seen', async () => {
   for (const [choice, want] of [['allow', ['1']], ['deny', ['esc']]]) {
     const a = answering()
-    assert.deepEqual(await answerApproval({ hc: a.hc, address: 't1', rowId: 'approval:1:4.1', choice, read: a.read }), { ok: true, pressed: 'done' })
+    assert.deepEqual(await answerApproval({ hc: a.hc, address: 't1', rowId: 'approval:1:4.1', choice, read: a.read }), { ok: true, pressed: 'done', sent: true })
     assert.deepEqual(a.keys().map((c) => c.params), [{ terminal: 't1', keys: want, caller: null }])
   }
 })
@@ -105,7 +105,7 @@ test('a stale approval presses nothing: dialog changed, another call, closed, or
 test('a key herdr-core has not typed yet is reported as uncertain, not as done', async () => {
   const a = answering({ afterKeys: null })
   const fast = { setTimeout: (fn) => setImmediate(fn) }
-  assert.deepEqual(await answerApproval({ hc: a.hc, address: 't1', rowId: 'approval:1:4.1', choice: 'deny', read: a.read, timers: fast, verifyMs: 30 }), { ok: true, pressed: 'uncertain' })
+  assert.deepEqual(await answerApproval({ hc: a.hc, address: 't1', rowId: 'approval:1:4.1', choice: 'deny', read: a.read, timers: fast, verifyMs: 30 }), { ok: true, pressed: 'uncertain', sent: true })
   assert.equal(a.keys().length, 1, 'pressed once, never again')
 })
 
@@ -113,7 +113,7 @@ test('herdr-core typed the key at another status or turn: uncertain, never done'
   for (const at of [{ status: { app: 'claude-code', state: 'working' }, turn: blocked.turn }, { status: { app: 'claude-code', ...blocked }, turn: blocked.turn + 1 }]) {
     const a = answering()
     a.hc.set('t1', at) // what herdr-core saw when it typed; our read was before
-    assert.deepEqual(await answerApproval({ hc: a.hc, address: 't1', rowId: 'approval:1:4.1', choice: 'allow', read: a.read }), { ok: true, pressed: 'uncertain' })
+    assert.deepEqual(await answerApproval({ hc: a.hc, address: 't1', rowId: 'approval:1:4.1', choice: 'allow', read: a.read }), { ok: true, pressed: 'uncertain', sent: true })
     assert.equal(a.keys().length, 1)
   }
 })

@@ -298,24 +298,47 @@ test("Attach with no bot keeps its message (the New bot line is the pick list's 
   assert.match(textOf(nodes.get("bot-form-body")), /No bots on this computer yet/);
 });
 
-// ---- #239: the list popups keep their content's height ----
+// ---- #239, #241: the list popups keep their content's height and paint a scrollbar ----
 
 // A popup is as tall as its content, its height only the most (Herdr's openOverlay). Live,
 // overflow_y_scrollbar's wrapper gave the body no height there, so the menu, pick and attach
-// popups drew only their title and Cancel; overflow_y_scroll keeps the items' height. The stub
-// lays nothing out, so this checks how the body is built, the part a stub can see.
+// popups drew only their title and Cancel; overflow_y_scroll keeps the items' height (#239).
+// The bar is placed beside the body instead (#241): a relative wrapper that shrinks to the
+// popup holds the scroll area, in flow, and a Scrollbar paired with it by name, the only
+// absolute element. The stub lays nothing out, so this checks how the body is built, the part
+// a stub can see; the look is checked live.
 const builds = (node) => node.calls.map(([name]) => name);
 for (const [mode, extra] of [["menu", { bot: OMP.id, name: OMP.name, terminal: "t3" }], ["pick", {}], ["attach", { terminal: "t1" }]]) {
-  test(`${mode} popup: the body scrolls without the scrollbar wrapper, so its items have a height (#239)`, async () => {
+  test(`${mode} popup: the body scrolls in flow with a bar paired by name, so its items have a height (#239, #241)`, async () => {
     state.spaces = [{ id: "s1", folder: project, machine: null }];
     seed([MAIN, OMP]);
     const { draw } = await open({ form: mode, planned: false, machine: null, live: null, ...extra });
-    draw();
-    const body = builds(nodes.get("bot-form-body"));
+    const tree = all(draw());
+    const area = nodes.get("bot-form-body");
+    assert.equal(area.kind, "div", "the scroll area, not the bar, carries the id");
+    const body = builds(area);
     assert.ok(body.includes("overflow_y_scroll"), "the body scrolls past the popup's height");
     assert.ok(!body.includes("overflow_y_scrollbar"), "no scrollbar wrapper: it collapses to 0 in a popup");
-    assert.ok(body.includes("min_h"), "it can still shrink to the popup's height");
-    assert.ok(textOf(nodes.get("bot-form-body")).length > 0, "items are drawn in the body");
+    assert.ok(body.includes("size_full"), "the area fills its wrapper");
+    assert.ok(!body.includes("absolute"), "the area stays in flow, so its items' height reaches the popup");
+    assert.ok(textOf(area).length > 0, "items are drawn in the body");
+
+    const bars = tree.filter((n) => n.kind.startsWith("scrollbar"));
+    assert.equal(bars.length, 1, "one bar");
+    const [bar] = bars;
+    assert.equal(bar.kind, "scrollbar-y", "a vertical bar");
+    assert.equal(bar.arg, "bot-form-body", "keyed to the scroll area");
+    assert.equal(bar.id, undefined, "the bar takes no id, so the name stays the area's");
+    assert.ok(builds(bar).includes("absolute") && builds(bar).includes("inset_0"), "the bar fills its wrapper");
+
+    const wrapper = tree.find((n) => n.kids.some((k) => k?.__node === area));
+    assert.ok(wrapper.kids.some((k) => k?.__node === bar), "the bar sits beside the area");
+    const wraps = builds(wrapper);
+    for (const call of ["relative", "flex_1", "min_h"]) assert.ok(wraps.includes(call), `the wrapper has ${call}`);
+    assert.ok(!wraps.includes("absolute"), "the wrapper stays in flow");
+    const form = nodes.get("bot-form");
+    assert.ok(form.kids.some((k) => k?.__node === wrapper), "the wrapper is the popup's body, between title and footer");
+    assert.equal(form.kids.length, 3, "title, body, footer");
   });
 }
 
@@ -421,6 +444,99 @@ test("a focused folder with its own bots.json, or in a git worktree, is keyed wi
   tree.draw();
   assert.equal(tree.form.key, repo);
   assert.ok(!nodes.has("bot-project-own"));
+});
+
+// #234, RFC 0014 Q16: a focused worktree space's edit is written in that worktree; the project
+// (and what the sidebar reads) stays its main checkout.
+test("from a focused worktree space, the form saves into the worktree's bots.json, never the main checkout's", async (t) => {
+  const repo = join(root, "repo");
+  const wt = join(root, "repo-wt");
+  const g = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, encoding: "utf8" });
+  mkdirSync(join(repo, ".herdr"), { recursive: true });
+  const mainPath = join(repo, ".herdr/bots.json");
+  writeFileSync(mainPath, `${JSON.stringify({ version: 1, categories: [], bots: [MAIN] }, null, 2)}\n`);
+  g("init", "-q");
+  g("add", ".");
+  g("commit", "-q", "-m", "bots");
+  g("worktree", "add", "-q", "-b", "wt", wt);
+  const mainText = readFileSync(mainPath, "utf8");
+  const wtPath = join(wt, ".herdr/bots.json");
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const first = await open({ form: "create", project: undefined });
+  first.draw();
+  assert.equal(first.form.key, repo, "the project is the main checkout");
+  assert.equal(first.form.dir, wt, "the edit is written in the worktree");
+  first.form.inputs.name.type("qa", first.cx);
+  first.draw();
+  // Before saving: where it goes and when the sidebar shows it; no Create & start (bots start
+  // from the main checkout's file, which gets the bot only once merged).
+  assert.match(textOf(nodes.get("bot-where")), /^Saves in .*repo-wt\/\.herdr\/bots\.json, this worktree's file\. The sidebar reads .*repo\/\.herdr\/bots\.json, so this shows there once the worktree's change is merged and pulled\.$/);
+  assert.ok(nodes.has("bot-save") && !nodes.has("bot-save-start"));
+  await first.click("bot-save");
+  assert.equal(first.form.error, null);
+  // After: the form stays open, saying so, with only Close (the sidebar won't show qa yet).
+  assert.deepEqual(state.closed, []);
+  first.draw();
+  assert.match(textOf(nodes.get("bot-where")), /^Saved in .*repo-wt\/\.herdr\/bots\.json, this worktree's file\./);
+  assert.equal(textOf(nodes.get("bot-cancel")), "Close");
+  assert.ok(!nodes.has("bot-save"), "not offered a second time");
+  assert.deepEqual(JSON.parse(readFileSync(wtPath, "utf8")).bots.map((b) => b.name), ["orch", "qa"]);
+  assert.equal(readFileSync(mainPath, "utf8"), mainText, "the main checkout's file is untouched");
+  assert.equal(g("status", "--porcelain"), "");
+  // A second form from the same space starts from the worktree's file, whose text the save checks.
+  const second = await open({ form: "create", project: undefined });
+  second.form.inputs.name.type("ops", second.cx);
+  second.draw();
+  await second.click("bot-save");
+  assert.equal(second.form.error, null);
+  assert.deepEqual(JSON.parse(readFileSync(wtPath, "utf8")).bots.map((b) => b.name), ["orch", "qa", "ops"]);
+  assert.equal(readFileSync(mainPath, "utf8"), mainText);
+  // The main checkout's own space: its file, as before.
+  state.spaces = [{ id: "s3", name: "repo", folder: repo }];
+  state.focused = { space: "s3" };
+  const home = await open({ form: "create", project: undefined });
+  assert.equal(home.form.dir, repo);
+  home.form.inputs.name.type("dev", home.cx);
+  home.draw();
+  await home.click("bot-save");
+  assert.equal(home.form.error, null);
+  assert.deepEqual(JSON.parse(readFileSync(mainPath, "utf8")).bots.map((b) => b.name), ["orch", "dev"]);
+  // A folder picked from the project chip decides, over the focused worktree space.
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const picked = await open({ form: "create", project: undefined });
+  state.pickFolder = repo;
+  picked.draw();
+  await picked.click("bot-project");
+  assert.equal(picked.form.key, repo);
+  assert.equal(picked.form.dir, repo, "the main checkout, picked: written there");
+  picked.draw();
+  assert.ok(!nodes.has("bot-where") && nodes.has("bot-save-start"), "the main checkout's form is as before");
+  // Edit, from the worktree space, of a bot the main checkout has and the worktree's file hasn't:
+  // the refusal names both files.
+  const late = { ...MAIN, id: "b-lateaaaaaa", name: "late", kind: "member" };
+  writeFileSync(mainPath, `${JSON.stringify({ version: 1, categories: [], bots: [MAIN, late] }, null, 2)}\n`);
+  const edit = await open({ form: "edit", bot: late.id, project: repo });
+  assert.match(edit.form.error, new RegExp(`repo-wt/\\.herdr/bots\\.json, this worktree's file, has no bot ${late.id}; .*repo/\\.herdr/bots\\.json has it`));
+});
+
+test("a worktree space whose main checkout's bots.json isn't committed: the form warns its pull would stop on it", async (t) => {
+  const repo = join(root, "repo");
+  const wt = join(root, "repo-wt");
+  const g = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, encoding: "utf8" });
+  mkdirSync(repo);
+  g("init", "-q");
+  g("commit", "-q", "--allow-empty", "-m", "init");
+  g("worktree", "add", "-q", "-b", "wt", wt);
+  mkdirSync(join(repo, ".herdr"));
+  writeFileSync(join(repo, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots: [MAIN] }, null, 2)}\n`);
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const f = await open({ form: "create", project: undefined });
+  f.draw();
+  assert.equal(f.form.dir, wt);
+  assert.match(textOf(nodes.get("bot-where")), /repo\/\.herdr\/bots\.json isn't committed: commit or remove it before pulling, or the pull stops on it\.$/);
 });
 
 // ---- #85: the pick and attach lists draw the sidebar's known bots at once ----
@@ -797,4 +913,42 @@ test("Create from a focused space on a linked machine: that machine's project, c
   assert.ok(state.calls.some((c) => c.kind === "exec" && c.command === "sh" && c.on === "vm"), "made there");
   assert.equal(state.calls.filter((c) => c.kind === "write").length, 0);
   assert.deepEqual(state.shared.get("am.sidebar.projects")?.at(-1), { key: project, machine: "vm" });
+});
+
+// #234: the menu's Prompt from a focused worktree space writes the worktree and says so.
+test("menu Prompt from a worktree space: saved in the worktree, the menu stays saying where, and saves again", async () => {
+  const repo = join(root, "repo");
+  const wt = join(root, "repo-wt");
+  const g = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, encoding: "utf8" });
+  mkdirSync(join(repo, ".herdr"), { recursive: true });
+  const mainPath = join(repo, ".herdr/bots.json");
+  writeFileSync(mainPath, `${JSON.stringify({ version: 1, categories: [], bots: [MAIN, OMP] }, null, 2)}\n`);
+  g("init", "-q");
+  g("add", ".");
+  g("commit", "-q", "-m", "bots");
+  g("worktree", "add", "-q", "-b", "wt", wt);
+  const mainText = readFileSync(mainPath, "utf8");
+  const wtPath = join(wt, ".herdr/bots.json");
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const { form, cx, draw, click } = await menu({ project: repo });
+  draw();
+  await click("menu-prompt");
+  draw();
+  assert.match(textOf(nodes.get("menu-prompt-where")), /^Saves in .*repo-wt\/\.herdr\/bots\.json, this worktree's file\./);
+  form.prompt.type("new words", cx);
+  draw();
+  await click("menu-prompt-save");
+  assert.equal(form.error, null);
+  assert.deepEqual(state.closed, [], "the menu stays: the row reads the main checkout's file");
+  draw();
+  assert.match(textOf(nodes.get("menu-prompt-where")), /^Saved in .*repo-wt\/\.herdr\/bots\.json/);
+  assert.equal(JSON.parse(readFileSync(wtPath, "utf8")).bots.find((b) => b.id === OMP.id).instructions, "new words");
+  assert.equal(readFileSync(mainPath, "utf8"), mainText);
+  form.prompt.type("newer words", cx);
+  draw();
+  await click("menu-prompt-save");
+  assert.equal(form.error, null, "the snapshot followed the save");
+  assert.equal(JSON.parse(readFileSync(wtPath, "utf8")).bots.find((b) => b.id === OMP.id).instructions, "newer words");
+  assert.equal(g("status", "--porcelain"), "");
 });

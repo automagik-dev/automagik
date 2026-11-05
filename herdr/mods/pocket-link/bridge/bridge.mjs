@@ -22,15 +22,19 @@ import { homedir, hostname, platform } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import QRCode from 'qrcode'
-import { acceptOne, slots, throttle, rotateLog } from './guard.mjs'
+import { acceptOne, slots, throttle, rotateLog, routesFor, endRemoved, sessionName, ALPN } from './guard.mjs'
+import { ChatConnection, ChatEngines } from './chat.mjs'
+import { createEngine } from '../chat/engine.js'
 import { judgeCode, cancelCode, shortenCode, fingerprint } from './pairing.mjs'
 import { open as openState } from './state.mjs'
 import { presence, publicStatus, writePublic, HEARTBEAT } from './presence.mjs'
 import { store, listen, unlinkOwn, forget, bridgeState, claim, stopBridge, startedAt, SOCKET } from './devices.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const SESSION = [...Buffer.from('herdr-pocket/1')]
-const PAIR = [...Buffer.from('herdr-pocket/pair/1')]
+const SESSION = [...Buffer.from(ALPN.session)]
+const PAIR = [...Buffer.from(ALPN.pair)]
+// The chat (RFC 0015): an older bridge does not offer it, and the phone falls back to the terminal.
+const CHAT = [...Buffer.from(ALPN.chat)]
 const LABEL = 'dev.herdr.pocket-link'
 
 // As a service, stderr already is the log file; in a terminal, write both.
@@ -92,25 +96,20 @@ const live = new Set()
 let serving = false
 const publishPublic = () => { try { writePublic(STATE, publicStatus({ running: serving, phones: phones.phones() })) } catch (e) { log('public status:', e.message) } }
 const phones = presence({ changed: () => { if (serving) publishPublic() } })
-function revoke() {
-  const ids = new Set(devices().map(d => d.id))
-  for (const s of live) if (!ids.has(s.phone)) {
-    live.delete(s); log('session: ended for a removed phone', s.phone.slice(0, 10))
-    s.hc.kill(); try { s.conn.close(1n, [...Buffer.from('not paired')]) } catch {}
-  }
-}
+// Terminal sessions and chats alike: a removed phone's are ended within 2 s (guard.mjs endRemoved).
+function revoke() { endRemoved(live, new Set(devices().map(d => d.id)), log) }
 
 // Admitted (a paired key) and its header read, by guard.mjs.
 async function session({ conn, bi, value, rest, peer: phone }) {
   const device = devices().find(d => d.id === phone)
   if (!device) { conn.close(1n, [...Buffer.from('not paired')]); return } // removed since it was admitted
-  const name = typeof value?.session === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(value.session) ? value.session : 'default'
+  const name = sessionName(value)
   // Read again: a phone removed meanwhile must stay removed.
   phoneList.touch(phone)
   log('session:', device.name, 'session', name)
   const hc = spawn(hcPath(), ['connect'], { stdio: ['pipe', 'pipe', 'ignore'], env: { ...process.env, HC_SESSION: name } })
   if (rest.length) hc.stdin.write(rest)
-  const open = { phone, conn, hc }
+  const open = { phone, conn, hc, end: () => { hc.kill(); try { conn.close(1n, [...Buffer.from('not paired')]) } catch {} } }
   live.add(open)
   // Counted from here until the phone hangs up or hc exits (a removed phone's hc is killed), whichever comes first.
   const close = phones.open(phone, device.name)
@@ -132,12 +131,56 @@ async function session({ conn, bi, value, rest, peer: phone }) {
   } finally { close() }
 }
 
+// The chat's engines, one per hc session name (chat.mjs), each reaching herdr-core through its
+// own `hc connect` with that session and no HC_TERMINAL_ID (chat/engine.js chatEnv).
+const appHome = () => (process.env.HERDR_APP_HOME?.startsWith('/') ? process.env.HERDR_APP_HOME : join(homedir(), '.config/herdr-app'))
+const engines = new ChatEngines({
+  make: name => createEngine({ home: homedir(), appHome: appHome(), hcPath: hcPath(), env: { ...process.env, HC_SESSION: name }, log }),
+})
+
+// Admitted (a paired key) and its header read, by guard.mjs, on the chat route.
+async function chatRoute({ conn, bi, value, rest, peer: phone }) {
+  const device = devices().find(d => d.id === phone)
+  if (!device) { conn.close(1n, [...Buffer.from('not paired')]); return } // removed since it was admitted
+  const name = sessionName(value)
+  log('chat:', device.name, 'session', name)
+  let writing = Promise.resolve()
+  let chat = null
+  const open = { phone, conn, end: () => { chat?.close('not paired'); try { conn.close(1n, [...Buffer.from('not paired')]) } catch {} } }
+  const engine = engines.acquire(name, open, phone)
+  if (!engine) { conn.close(3n, [...Buffer.from('too many chat sessions')]); return }
+  live.add(open)
+  const close = phones.open(phone, device.name)
+  chat = new ChatConnection({
+    engine,
+    // The paired key guard.mjs admitted: a Retry after a reconnect is the same message, typed once.
+    device: phone,
+    // The promise lets chat.mjs count bytes not yet taken (MAX_UNSENT).
+    write: bytes => (writing = writing.then(() => bi.send.writeAll([...bytes])).catch(() => chat.close('write failed'))),
+    end: () => { writing.then(() => bi.send.finish()).catch(() => {}) },
+    log,
+  })
+  try {
+    if (rest.length) chat.feed(Buffer.from(rest))
+    while (!chat.closed) {
+      const data = await bi.recv.read(65536).catch(() => null)
+      if (!data || data.length === 0) break
+      chat.feed(Buffer.from(data))
+    }
+  } finally {
+    chat.close('hung up')
+    live.delete(open)
+    engines.release(name, open)
+    close()
+  }
+}
+
 async function serve() {
   // Never two bridges; but a pid a crash left to another process is no bridge (devices.mjs).
   const other = await claim({ dir: STATE, self: process.pid })
   if (other.running) { log('serve: already running as', other.pid ?? 'an unknown pid'); process.exit(0) }
   if (other.stale) log('serve: status.json named pid', other.stalePid, 'which is not a bridge; replacing it')
-  const ep = await Endpoint.bind({ secretKey: secretKey(), alpns: [SESSION, PAIR] })
+  const ep = await Endpoint.bind({ secretKey: secretKey(), alpns: [SESSION, PAIR, CHAT] })
   // This process's start time, which tells it apart from a later process given the same pid.
   const pidStart = startedAt(process.pid)
   const publish = () => writeJson(files.status, { pid: process.pid, ...(pidStart ? { pidStart } : {}), id: ep.id().toString(),
@@ -157,7 +200,7 @@ async function serve() {
   const logs = [...new Set([files.log, join(STATE_HOME, 'bridge.log')])]
   const rotate = () => { for (const l of logs) try { rotateLog(l) } catch (e) { log('log:', e.message) } }
   rotate(); setInterval(rotate, 60_000).unref()
-  const stop = async () => { serving = false; publishPublic(); try { const s = readJson(files.status, {}); if (s.pid === process.pid) unlinkSync(files.status) } catch {}; await ep.close().catch(() => {}); process.exit(0) }
+  const stop = async () => { serving = false; engines.closeAll(); publishPublic(); try { const s = readJson(files.status, {}); if (s.pid === process.pid) unlinkSync(files.status) } catch {}; await ep.close().catch(() => {}); process.exit(0) }
   process.on('SIGTERM', stop); process.on('SIGINT', stop)
   // public-status.json: running from here (a stop now writes running: false), then `updated` every
   // HEARTBEAT and on each session open and close.
@@ -167,10 +210,7 @@ async function serve() {
   // Pairing: only while a code is live, and all of it within the handshake deadline; anyone with
   // the address may try then. Sessions: only paired keys. Others are closed before anything is read.
   const codeLive = () => { const p = readJson(files.pairing, null); return Boolean(p && Date.now() <= p.expires) }
-  const routes = {
-    'herdr-pocket/pair/1': { admit: codeLive, closing: 'No pairing code is live. Make a new one on the desktop.', run: pairPhone, timed: true },
-    'herdr-pocket/1': { admit: id => devices().some(d => d.id === id), closing: 'not paired', run: session, timed: false },
-  }
+  const routes = routesFor({ paired: id => devices().some(d => d.id === id), codeLive, pair: pairPhone, session, chat: chatRoute })
   const cap = slots()
   for (;;) {
     const incoming = await ep.acceptNext()

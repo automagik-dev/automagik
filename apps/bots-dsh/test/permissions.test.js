@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { apply } from '../index.js'
 import { install } from '../src/host/permissions.js'
-import { narrowerLevel, narrowestOffered } from '../src/host/permission-rank.js'
+import { narrowerLevel, narrowestOffered, rankOf } from '../src/host/permission-rank.js'
 import { fakeContext } from './fake-ctx.js'
 
 const PRESETS = { 'workspace-write': {}, 'danger-full-access': {} }
@@ -499,4 +499,236 @@ test('when no level ranks, deleting a Bot leaves its task\'s level as it is and 
   await settle()
   assert.deepEqual(presets('t1'), ['danger-full-access'])
   assert.ok(warnings.some(line => line.includes('can be ranked') && line.includes('t1')), warnings.join(' | '))
+})
+
+// #315: a Bot made by another Bot starts at its creator's level, never the team default
+// and never above the creator; the user's own create keeps the team default.
+const createBotTool = (ctx, args) => ctx.registeredTools.get('create_bot').execute({ role: 'Help', instructions: 'Help', ...args }, { agent: { id: 'm1' } })
+const botNamed = async (call, name) => (await call('state', {})).value.bots.find(bot => bot.name === name)
+
+test('a Bot made by a full-access Bot starts at full access and is told so', async (t) => {
+  const { ctx, call, presets, settle } = team(t, { bots: { m1: { permission: 'danger-full-access' } } })
+  assert.equal((await call('set-prefs', { permission: 'workspace-write' })).ok, true)
+  const answer = await createBotTool(ctx, { name: 'Writer' })
+  assert.equal(answer, 'Created Writer. Permission inherited from Omni (danger-full-access). It is greeting the user now.')
+  const writer = await botNamed(call, 'Writer')
+  assert.equal(writer.permission, 'danger-full-access')
+  await settle()
+  assert.deepEqual(presets(writer.id), ['danger-full-access'])
+})
+
+test('a Bot made by a read-only Bot starts read-only, and one by a Bot without a level at the default', async (t) => {
+  const custom = { careful: { sandbox: 'read-only', approval: 'ask' } }
+  const { ctx, call, presets, settle } = team(t, { custom, bots: { m1: { permission: 'careful' } } })
+  assert.equal(await createBotTool(ctx, { name: 'Reader' }), 'Created Reader. Permission inherited from Omni (careful). It is greeting the user now.')
+  const reader = await botNamed(call, 'Reader')
+  assert.equal(reader.permission, 'careful')
+  await settle()
+  assert.deepEqual(presets(reader.id), ['careful'])
+
+  // A creator on no level of its own runs at the catalog default: so does its Bot, even
+  // where the team default is wider.
+  const plain = team(t)
+  assert.equal((await plain.call('set-prefs', { permission: 'danger-full-access' })).ok, true)
+  assert.equal(await createBotTool(plain.ctx, { name: 'Helper' }), 'Created Helper. Permission inherited from Omni (workspace-write). It is greeting the user now.')
+  assert.equal((await botNamed(plain.call, 'Helper')).permission, 'workspace-write')
+})
+
+test('a Bot the user creates keeps the team default, or none', async (t) => {
+  const { call } = team(t, { bots: { m1: { permission: 'careful' } }, custom: { careful: { sandbox: 'read-only', approval: 'ask' } } })
+  assert.equal((await call('create-bot', { name: 'Free' })).value.permission, undefined)
+  assert.equal((await call('set-prefs', { permission: 'danger-full-access' })).ok, true)
+  assert.equal((await call('create-bot', { name: 'Wide' })).value.permission, 'danger-full-access')
+})
+
+test('a made Bot is never above its creator: unrankable levels and asked-for ones fail closed', async (t) => {
+  const custom = { careful: { sandbox: 'read-only', approval: 'ask' }, odd: { sandbox: 'container', approval: 'ask' } }
+  // A creator on a level DSH cannot rank gives the narrowest offered level, not the wider default.
+  const odd = team(t, { custom, bots: { m1: { permission: 'odd' } } })
+  assert.equal((await odd.call('set-prefs', { permission: 'danger-full-access' })).ok, true)
+  await createBotTool(odd.ctx, { name: 'Odd', permission: 'danger-full-access' })
+  const made = await botNamed(odd.call, 'Odd')
+  const ranks = odd.service.catalog().options.map(({ value }) => rankOf(odd.service, value)).filter(rank => rank !== undefined)
+  assert.equal(rankOf(odd.service, made.permission), Math.min(...ranks))
+
+  // A stale level (a preset the catalog no longer offers) likewise.
+  const stale = team(t, { bots: { m1: { permission: 'gone' } } })
+  await createBotTool(stale.ctx, { name: 'Stale' })
+  assert.equal(rankOf(stale.service, (await botNamed(stale.call, 'Stale')).permission), rankOf(stale.service, 'workspace-write'))
+
+  // A level the model passes to create_bot is not one it can grant.
+  const careful = team(t, { custom, bots: { m1: { permission: 'careful' } } })
+  await createBotTool(careful.ctx, { name: 'Asker', permission: 'danger-full-access' })
+  const asker = await botNamed(careful.call, 'Asker')
+  assert.ok(rankOf(careful.service, asker.permission) <= rankOf(careful.service, 'careful'))
+
+  // When no offered level ranks, the create fails instead of starting at DSH's default.
+  const { rt } = runtime()
+  assert.throws(() => rt.inheritedPermission({ name: 'Omni', permission: 'danger-full-access' }), /no permission level of Omni/)
+  assert.equal(runtime({ presets: false }).rt.inheritedPermission({ name: 'Omni' }), undefined)
+})
+
+test('the user can still change an inherited level', async (t) => {
+  const { ctx, call, presets, settle } = team(t, { bots: { m1: { permission: 'danger-full-access' } } })
+  await createBotTool(ctx, { name: 'Writer' })
+  const writer = await botNamed(call, 'Writer')
+  assert.equal((await call('update-bot', { id: writer.id, permission: 'workspace-write' })).ok, true)
+  assert.equal((await botNamed(call, 'Writer')).permission, 'workspace-write')
+  await settle()
+  assert.deepEqual(presets(writer.id), ['danger-full-access', 'workspace-write'])
+})
+
+// #315: the level buildBot stores is what every later Session reads: its chat, a part
+// opened afterwards, and the tasks the Bot asks for.
+test('a made Bot\'s inherited level reaches its chat, a group Session, a fresh part and its tasks', async (t) => {
+  const { ctx, rt, call, of, presets, settle, announceOnCreate } = team(t, { bots: { m1: { permission: 'danger-full-access' } } })
+  assert.equal((await call('set-prefs', { permission: 'workspace-write' })).ok, true)
+  await call('state', {})
+  assert.match(await createBotTool(ctx, { name: 'Writer' }), /Permission inherited from Omni \(danger-full-access\)/)
+  const writer = await botNamed(call, 'Writer')
+  await settle()
+  const chatPresets = of(writer.id).filter(line => line.includes(' preset '))
+  assert.deepEqual(chatPresets, [`${writer.id} preset danger-full-access`])
+
+  // A group Session the Bot speaks in reads the same level (groups.js); the group has none
+  // of its own, so the Bot's stands.
+  await rt.applyPermission(writer, 'writer-group', { id: 'r2', name: 'Later' })
+  assert.deepEqual(presets('writer-group'), ['danger-full-access'])
+  // A fresh part goes through applyPermission (parts.js), which reads the stored level.
+  await rt.applyPermission(writer, 'writer-part')
+  assert.deepEqual(presets('writer-part'), ['danger-full-access'])
+  // So does a task the Bot starts.
+  announceOnCreate()
+  const task = await rt.startTask({ title: 'Wish', text: 'Do it', from: writer.id })
+  await settle()
+  assert.deepEqual(presets(task), ['danger-full-access'])
+  const taskLines = of(task)
+  assert.ok(taskLines.indexOf(`${task} preset danger-full-access`) < taskLines.indexOf(`${task} first turn`), taskLines.join(' | '))
+})
+
+// #315: the user's create and a copy keep the team default; create_bot has no level
+// parameter, and one passed in its arguments is not read.
+test('a copy and a user create keep the team default, and create_bot ignores a level argument', async (t) => {
+  const { ctx, call } = team(t, { bots: { m1: { permission: 'danger-full-access' }, b2: { permission: 'danger-full-access' } } })
+  assert.equal((await call('set-prefs', { permission: 'workspace-write' })).ok, true)
+  assert.equal((await call('duplicate-bot', { id: 'b2' })).value.permission, 'workspace-write')
+  assert.equal(ctx.registeredTools.get('create_bot').parameters.properties.permission, undefined)
+  // The creator's level wins over the one handed in with the call.
+  assert.match(await createBotTool(ctx, { name: 'Ignored', permission: 'workspace-write' }), /\(danger-full-access\)/)
+  assert.equal((await botNamed(call, 'Ignored')).permission, 'danger-full-access')
+})
+
+// #315: when nothing rankable is offered, the create fails before any Session is made,
+// never starting the Bot at DSH's default.
+test('a create with no rankable level refuses before making a Session', async (t) => {
+  const { ctx, call, service, opened } = team(t, { bots: { m1: { permission: 'odd' } } })
+  service.catalog = () => ({ options: [{ value: 'odd', name: 'odd' }], defaultOptions: [], defaultPreset: 'odd' })
+  service.resolve = () => ({ sandbox: 'container', approval: 'ask' })
+  const answer = await createBotTool(ctx, { name: 'Doomed' })
+  assert.equal(answer, 'Could not create the Bot: no permission level of Omni can be given to a new Bot')
+  assert.deepEqual(opened, [])
+  assert.equal((await call('state', {})).value.bots.some(bot => bot.name === 'Doomed'), false)
+})
+
+// #315: a Session adopted from a host keeps the level it already runs at.
+test('an adopted Session keeps its own level', async (t) => {
+  const { rt, call, service, presets, settle } = team(t, { bots: { m1: { permission: 'danger-full-access' } } })
+  assert.equal((await call('set-prefs', { permission: 'workspace-write' })).ok, true)
+  service.set({ id: 'adopted' }, 'danger-full-access')
+  const bot = await rt.createBot({ name: 'Adopted', existingSessionId: 'adopted', createdBy: 'm1', pickModel: true })
+  assert.equal(bot.permission, undefined)
+  await settle()
+  assert.deepEqual(presets('adopted'), ['danger-full-access'])
+  await rt.applyPermission(bot, 'adopted')
+  assert.deepEqual(presets('adopted'), ['danger-full-access'])
+  assert.equal(service.current({ id: 'adopted' }), 'danger-full-access')
+})
+
+// #343 F1: create_bot passes createBot only the parameters it declares. An undeclared
+// argument a model adds is dropped, so it never reaches the host's own options.
+const READ_ONLY = { careful: { sandbox: 'read-only', approval: 'ask' } }
+
+test('an undeclared existingSessionId cannot adopt a live Session: the Bot gets its own', async (t) => {
+  const { ctx, rt, call, service, presets, opened, settle } = team(t, { custom: READ_ONLY, bots: { m1: { permission: 'careful' } } })
+  service.set({ id: 'live' }, 'danger-full-access')
+  assert.match(await createBotTool(ctx, { name: 'Sneak', existingSessionId: 'live' }), /^Created Sneak\. Permission inherited from Omni \(careful\)\./)
+  const sneak = await botNamed(call, 'Sneak')
+  assert.notEqual(sneak.id, 'live')
+  assert.equal(sneak.sessionPinned, undefined)
+  assert.equal(rt.botOf('live'), undefined)
+  assert.equal(opened.includes('live'), false)
+  await settle()
+  // The live Session is untouched, and the Bot's fresh one runs at its creator's level.
+  assert.deepEqual(presets('live'), ['danger-full-access'])
+  assert.deepEqual(presets(sneak.id), ['careful'])
+})
+
+test('an undeclared main cannot make the created Bot a Main Bot', async (t) => {
+  const { ctx, rt, call } = team(t)
+  assert.match(await createBotTool(ctx, { name: 'Boss', main: true }), /^Created Boss\./)
+  const boss = await botNamed(call, 'Boss')
+  assert.deepEqual((await call('state', {})).value.mainBotIds, ['m1'])
+  assert.equal(rt.isMain(boss.id), false)
+})
+
+test('an undeclared pickModel cannot alter the model choice', async (t) => {
+  const { ctx, call } = team(t)
+  Object.assign(ctx.llm, {
+    listProviders: () => [{ id: 'deepseek', name: 'DeepSeek' }],
+    listModels: async () => [{ id: 'v4' }],
+    resolveModelInfo: async () => ({}),
+  })
+  await createBotTool(ctx, { name: 'Plain' })
+  await createBotTool(ctx, { name: 'Picky', pickModel: true })
+  const plain = await botNamed(call, 'Plain')
+  const picky = await botNamed(call, 'Picky')
+  // Without pickModel the Bot takes the served default and greets at once; with it read,
+  // it would have no model and hold its greeting for a pick.
+  assert.equal(plain.model, 'deepseek/v4')
+  assert.equal(picky.model, plain.model)
+  assert.equal(picky.waiting, undefined)
+})
+
+// The Reviewer's probe: a read-only creator hands every undeclared option at once, a live
+// full-access Session among them. The Bot still starts read-only, on a Session of its own.
+test('a read-only creator\'s create_bot yields a read-only Bot whatever else it passes', async (t) => {
+  const { ctx, rt, call, service, presets, settle } = team(t, { custom: READ_ONLY, bots: { m1: { permission: 'careful' } } })
+  service.set({ id: 'live' }, 'danger-full-access')
+  const answer = await createBotTool(ctx, {
+    name: 'Probe', existingSessionId: 'live', main: true, copyOf: 'b2', pickModel: true,
+    kind: 'omni', color: 'red', permission: 'danger-full-access', createdBy: 'b2',
+  })
+  assert.equal(answer, 'Created Probe. Permission inherited from Omni (careful). It is greeting the user now.')
+  const probe = await botNamed(call, 'Probe')
+  assert.equal(probe.permission, 'careful')
+  assert.notEqual(probe.id, 'live')
+  assert.equal(probe.createdBy, 'm1')
+  assert.equal(probe.kind, undefined)
+  assert.equal(probe.color, undefined)
+  assert.equal(rt.isMain(probe.id), false)
+  await settle()
+  assert.deepEqual(presets(probe.id), ['careful'])
+  assert.equal(presets(probe.id).includes('danger-full-access'), false)
+  assert.equal(service.current({ id: probe.id }), 'careful')
+})
+
+// #343 F1: the declared parameters are the whole of what createBot receives. An
+// undeclared option a model adds — an adoption, a Main Bot, a held model, a copy, a level,
+// a color, a kind — is dropped at the boundary, alone and all at once.
+test('create_bot hands createBot only its declared parameters', async (t) => {
+  const { ctx, rt } = team(t, { custom: READ_ONLY, bots: { m1: { permission: 'careful' } } })
+  const calls = []
+  const create = rt.createBot
+  rt.createBot = async options => { calls.push(options); return create(options) }
+  const declared = ['avatar', 'brief', 'createdBy', 'effort', 'instructions', 'model', 'name', 'role', 'workDir']
+  const undeclared = {
+    existingSessionId: 'live', main: true, pickModel: true, copyOf: 'b2',
+    permission: 'danger-full-access', color: 'red', kind: 'omni',
+  }
+  for (const [index, [key, value]] of Object.entries(undeclared).entries()) {
+    await createBotTool(ctx, { name: `Alone ${index}`, [key]: value })
+  }
+  await createBotTool(ctx, { name: 'Together', ...undeclared })
+  assert.equal(calls.length, Object.keys(undeclared).length + 1)
+  for (const options of calls) assert.deepEqual(Object.keys(options).sort(), declared)
 })

@@ -34,7 +34,7 @@ Opus 5.5 · my-app | ctx 40% 400k/1M · 100k to compact · 2 compacts | 5h 24% �
 | File | What it is |
 | - | - |
 | `automagik-statusline.mjs` | The status line: stdin JSON in, one line out. Node, no dependencies, never throws. |
-| `claude-limits-statusline.mjs` | The limits logger (verbatim from the copy the owner ran): appends `rate_limits` readings to `claude-limits.jsonl`, then runs the command after `--` with the same stdin. |
+| `claude-limits-statusline.mjs` | The limits logger (imported from the copy the owner ran; since #313 it runs the command's argv directly, no second shell): appends `rate_limits` readings to `claude-limits.jsonl`, then runs the command after `--` with the same stdin. |
 
 ## Install
 

@@ -171,6 +171,8 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 
 .bt-head{position:relative;display:flex;justify-content:flex-end;align-items:center;gap:8px;height:40px;padding:0 16px;box-sizing:border-box;flex:none;pointer-events:none}
 .bt-head-details{pointer-events:auto;flex:none;display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;padding:0;border-radius:999px;background:var(--bt-main);border:.5px solid var(--bt-line-2);box-shadow:0 2px 8px -1px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);color:var(--bt-ink-2);cursor:pointer;transition:background-color .12s ease,color .12s ease}
+/* Details is the one labeled pill: its icon-only neighbours keep the 40px circle. */
+.bt-head-details[aria-controls]{width:auto;min-width:40px;gap:7px;padding:0 13px;color:var(--bt-ink);font:inherit;font-size:13px;font-weight:500;white-space:nowrap}
 .bt-head-details:hover,.bt-head-details[aria-expanded=true]{color:var(--bt-ink);background:color-mix(in srgb,var(--bt-main),var(--bt-ink) 6%)}
 .bt-head-details svg{width:18px;height:18px}
 .bt-head-details:focus-visible{outline:2px solid var(--bt-accent);outline-offset:2px}
@@ -1027,6 +1029,10 @@ body:not([data-bt-advanced]) [class*="_flowItem"][data-chat-flow-kind="turn-tail
 [data-composer-card]:hover,[data-composer-card]:focus-within{border-color:color-mix(in srgb,var(--bt-ink) 30%,transparent)!important}
 [data-composer-card]:has(> [data-slot="conversation.input.attachments"] *),[data-composer-card]:has([data-composer-input] br + *),[data-composer-card]:has([data-composer-input] > :nth-child(2)){border-radius:18px!important}
 [class*="_root"]:has(> [data-composer-card]){padding:0 11px 13px 16px!important}
+/* DSH centres its queued-message dock on the stack with a 16px clearance each side; the card
+   above sits in that 16/11 root, so the dock follows it: the card's width less the two insets,
+   moved onto the card's axis (#91). */
+[class*="_composerStack"]:has([class*="_root"]>[data-composer-card]) [data-queue-dock]{width:calc(100% - 27px - 2*var(--dsh-composer-dock-inset,8px));translate:2.5px 0}
 [class*="_root"]:has(> [data-composer-card])>[data-composer-card]{max-width:min(992px,100%)!important}
 [data-composer-card]>[class*="_row"]{display:contents!important}
 [data-composer-card] [class*="_tools"]{order:1!important;flex:none!important;align-self:flex-end!important;margin:0!important}
