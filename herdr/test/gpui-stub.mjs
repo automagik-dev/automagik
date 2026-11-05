@@ -69,6 +69,9 @@ export const Button = { new: (id) => element("button", id) };
 // A rendered Markdown body: its text is a child, so textOf/index find it like any other element.
 export class TextView { static markdown(_id, text) { return element("markdown").child(String(text)); } }
 export const Popover = { new: (id) => element("popover", id) };
+// A placed bar: its arg is the scroll area it pairs with by name, not an id of its own, so
+// index() keeps the area under that name.
+export const Scrollbar = { new: (id) => element("scrollbar", id), horizontal: (id) => element("scrollbar-x", id), vertical: (id) => element("scrollbar-y", id) };
 export const Input = { new: (state) => element("input", state) };
 export const Textarea = { new: (state) => element("textarea", state) };
 

@@ -14,7 +14,7 @@
 // What happened stays this computer's for now (automagik#206). Apache-2.0.
 
 import { div, svg, image } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, Popover, Button } from "gpui-base";
+import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, Popover, Button, Scrollbar } from "gpui-base";
 import { theme, readTextFile, pickFolder, knownAgents, openOverlay, closeOverlay, spaces, panes, focused, run, home, appHome, settings, hc, notify } from "herdr";
 import * as fs from "fs/promises";
 import { BOTS_PATH, CHARACTERS, MAX_INSTRUCTIONS, RANKS, parseBots, newBotId, applyBotEdit } from "./model.js";
@@ -604,12 +604,17 @@ export class BotForm {
     // The body scrolls with overflow_y_scroll, not overflow_y_scrollbar: a popup is as tall as
     // its content (its height only the most), and the scrollbar's wrapper gives the body no
     // height of its own there, so the menu, pick and attach popups drew only the title and
-    // Cancel (#239, seen in a live Herdr). Past the popup's height the body shrinks (min_h(0))
-    // and scrolls; in a dialog (Attach from the command palette) it still fills (flex_1).
+    // Cancel (#239, seen in a live Herdr). Its bar is placed beside it instead (#241): a
+    // relative wrapper holds the scroll area, in flow, and Scrollbar.vertical paired with it by
+    // name, the only absolute element, so the items' height still reaches the popup. Past the
+    // popup's height the wrapper shrinks (min_h(0)) and the area, its full size, scrolls with a
+    // painted bar; in a dialog (Attach from the command palette) it still fills (flex_1).
     return v_flex().id("bot-form").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background)
       .border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).items_center().border_b(1).border_color(t.border).child(div().font_semibold().child(title)))
-      .child(div().id("bot-form-body").flex_1().min_h(0).overflow_y_scroll().child(body))
+      .child(div().relative().flex_1().min_h(0)
+        .child(div().id("bot-form-body").size_full().overflow_y_scroll().child(body))
+        .child(Scrollbar.vertical("bot-form-body").absolute().inset_0()))
       .child(v_flex().flex_none().px(14).py(10).gap(8).border_t(1).border_color(t.border)
         .when(Boolean(this.error), (el) => el.child(div().text_size(12).text_color(t.ansi1).child(this.error)))
         .child(h_flex().gap(8).justify_end()
