@@ -1,0 +1,8 @@
+#!/bin/sh
+# A linked machine's login shell, for fake-hc's exec: called as `<shell> -lc <command>`. Stands for
+# the person's profile without reading any real one: it prints FAKE_LOGIN_NOISE, stops with
+# FAKE_LOGIN_EXIT, or runs the command with PATH set to FAKE_LOGIN_PATH.
+[ -n "$FAKE_LOGIN_NOISE" ] && printf '%s\n' "$FAKE_LOGIN_NOISE"
+[ -n "$FAKE_LOGIN_EXIT" ] && exit "$FAKE_LOGIN_EXIT"
+[ -n "$FAKE_LOGIN_PATH" ] && PATH=$FAKE_LOGIN_PATH
+exec /bin/sh -c "$2"

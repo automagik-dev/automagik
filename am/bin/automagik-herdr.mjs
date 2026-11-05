@@ -25,7 +25,7 @@ import { UNANSWERED, agentInForeground, attachRefusal, attachWords, detachWords,
   freshSpare, shellIdle, spareTab, startArgs, startRefusal, unwrapKeep } from "../launchArgs.js";
 import { tabSteps, workerSpace, workerTabName } from "../workerTab.js";
 import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, confirmBindings, foldAttach, heldIn, machinesById, modeProblem, placeOf as placeOfRow, readAttach } from "../attach.js";
-import { interpreterPath } from "../agentPath.mjs";
+import { agentOnMachine, interpreterPath } from "../agentPath.mjs";
 import { briefingFilePath, installHook, launchBriefingText, screenTail, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
 import { agentKeyOfArgv, continuesAnywhere, briefingLaunch, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, ownPromptIn, resolveAgent, resumesById,
@@ -216,8 +216,8 @@ const fileName = ({ key, machine, dir = key }) => `${under(dir, BOTS_PATH)}${mac
 // herdr-core there: its file ops (remoteFile.js) and one program, as `hc exec --on` runs it.
 const remoteIo = {
   hc,
-  exec: async (command, args, machine, { cwd } = {}) =>
-    decodeExec(await hc(["exec", "--json", "--on", machine, ...(cwd ? ["--cwd", cwd] : []), "--", command, ...args]), 60),
+  exec: async (command, args, machine, { cwd, timeout } = {}) =>
+    decodeExec(await hc(["exec", "--json", ...(timeout ? ["--timeout", String(timeout)] : []), "--on", machine, ...(cwd ? ["--cwd", cwd] : []), "--", command, ...args]), timeout ?? 60),
 };
 
 // What hc said: its error's message when it printed one as JSON.
@@ -1541,14 +1541,32 @@ async function cmdStart(opts, [ref]) {
 
 // ---- a bot's pane on a linked machine (automagik#206 part b): start and restart ----
 
+// How long one question to a linked machine may take, in seconds: a login shell runs the person's
+// profile, so this bounds it. Under runProgram's 15 s, which would otherwise end hc first.
+const AGENT_WAIT_S = 10;
+
 /**
- * The agent `argv` starts, checked on `machine` as hc runs programs there (`command -v`):
- * refused when it isn't there or the machine doesn't answer.
+ * The agent `argv` starts, looked for on `machine` under the PATH its pane will get
+ * (agentOnMachine: the login shell's, asked once, plus hc's and the user bin folders), so a
+ * check that passes is a launch that finds it: refused when it isn't there, when the interpreter
+ * its #! line names isn't, or when the machine doesn't answer. Resolves { path, warnings }:
+ * the PATH seatOnMachine starts it with.
  */
 async function agentThere(machine, argv, name) {
-  const r = await remoteIo.exec("sh", ["-c", 'command -v "$1"', "sh", argv[0]], machine);
-  if (r.code === -1) throw new CliError(`${machine} can't be reached: ${hcSaid(r.stderr)}`);
-  if (r.code !== 0) throw new CliError(`${name} (${argv[0]}) isn't installed on ${machine}, or isn't on the PATH hc runs programs with there.`);
+  const exec = (command, args, opts) => remoteIo.exec(command, args, machine, opts);
+  const seen = await agentOnMachine(exec, argv[0], { wait: AGENT_WAIT_S });
+  const quiet = seen.login === "timed out" ? `${machine}'s login shell didn't answer within ${AGENT_WAIT_S} s`
+    : seen.login === false ? `${machine}'s login shell gave no PATH` : null;
+  if (seen.state === "away") throw new CliError(`${machine} can't be reached: ${hcSaid(seen.why)}`);
+  if (seen.state === "missing") {
+    throw new CliError(`${name} (${argv[0]}) isn't installed on ${machine}, or isn't on the PATH hc runs programs with there, `
+      + `its login shell's PATH, ~/.local/bin or ~/.bun/bin${quiet ? ` (${quiet})` : ""}.`);
+  }
+  if (seen.state === "no-interpreter") {
+    throw new CliError(`${name} (${seen.file}) runs under ${seen.interpreter}, which isn't on the PATH a pane on ${machine} gets; `
+      + `it would fail with "env: ${seen.interpreter}: No such file or directory". Put ${seen.interpreter} on the PATH of ${machine}'s login shell.`);
+  }
+  return { path: seen.path, warnings: quiet ? [`${quiet}, so ${name} starts with the PATH hc runs programs with there and its user bin folders.`] : [] };
 }
 
 /**
@@ -1589,7 +1607,8 @@ async function windowPlaceOn(machine, key) {
 }
 
 /**
- * A bot's pane on the project's linked machine: `hc run --on` with Start's labels (--no-parent: no
+ * A bot's pane on the project's linked machine: `hc run --on` with Start's labels and the PATH
+ * agentThere checked the agent under, as /usr/bin/env PATH=<it> (hc run has no --env; --no-parent: no
  * lead as its hc parent there yet, and never the calling terminal), placed in the window on that machine's space. `over`: argv, cwd, place (the old
  * pane's, a restart), carry (labels kept), replacing (a restart: no "already running" check
  * and no attach row here; restartOnMachine writes them once the new pane is up). A Claude bot
@@ -1609,7 +1628,7 @@ async function seatOnMachine(project, bot, over = {}) {
   }
   // Herdr's table as this computer has it (programs.json applied): the Mac builds the command.
   const argv = over.argv ?? [...agent.run, ...modelArgs(bot.agent, bot.model)];
-  await agentThere(machine, argv, agent.name ?? agentKey);
+  const there = await agentThere(machine, argv, agent.name ?? agentKey);
   const carry = over.carry ?? {};
   const labels = { ...paneLabels(file, bot.id, carry, null), ...carry };
   const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
@@ -1618,9 +1637,9 @@ async function seatOnMachine(project, bot, over = {}) {
   const name = hcName(bot.name, bot.id, taken);
   const args = startArgs({ botId: bot.id, name, cwd: over.cwd ?? key, space: place?.space, tab: place?.tab,
     // No hc parent: hc run's default is the terminal it is started from, and the pane would end with it.
-    parent: ["--no-parent"], argv, labels });
+    parent: ["--no-parent"], argv, labels, path: there.path });
   args.splice(1, 0, "--on", machine);
-  const warnings = agentKey === "claude" ? [noHookThere(bot, machine)] : [];
+  const warnings = [...there.warnings, ...(agentKey === "claude" ? [noHookThere(bot, machine)] : [])];
   const run = async () => {
     const r = await hc(args);
     if (r.code !== 0) throw new CliError(`hc run on ${machine} failed: ${hcSaid((r.stderr || r.stdout).trim())}`);
