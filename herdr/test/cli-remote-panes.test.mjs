@@ -140,7 +140,8 @@ test("start --machine in a space it opened closes that space's shell tab only wh
   assert.ok(s.calls().some((c) => c[0] === "get" && c[1] === "vm/t-sh1"), JSON.stringify(s.calls()));
   assert.ok(s.calls().some((c) => c[0] === "exec" && c.includes("vm") && c.slice(-3).join(" ") === "pgrep -P 9001"));
   // Kept: vim in front of the shell, a job left running at its prompt, its children unknown.
-  for (const extra of [{ shellBusy: true }, { shellJob: true }, { shellUnknown: true }]) {
+  for (const extra of [{ shellBusy: true }, { shellJob: true }, { shellUnknown: true }, { shellPgrepError: true },
+    { shellPgrepKilled: true }]) {
     const k = scene(t);
     k.fakeWindow({ spaces: [], place: true, ...extra });
     const kr = k.cli(["start", "Atlas", ...k.on]);

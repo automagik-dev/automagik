@@ -1465,6 +1465,19 @@ const TAB_WAIT_MS = (() => {
 })();
 const TAB_STEP_MS = 200;
 
+/**
+ * `pgrep <args>` on this computer as pgrep exited: { code, stdout, stderr }, its own; null when
+ * it never exited by itself (not run, killed, past its 15 s): what it would have said is unknown.
+ */
+const pgrepHere = (args) => new Promise((done) => {
+  try {
+    execFile("pgrep", args, { timeout: 15000 }, (err, stdout, stderr) => {
+      if (!err) return done({ code: 0, stdout, stderr });
+      done(typeof err.code === "number" ? { code: err.code, stdout: stdout ?? "", stderr: stderr ?? "" } : null);
+    });
+  } catch { done(null); }
+});
+
 /** A terminal id without the machine name a linked machine's may come with (`vm/t5` -> `t5`). */
 const bareId = (t) => (typeof t === "string" ? t.slice(t.indexOf("/") + 1) : t);
 
@@ -1913,14 +1926,18 @@ async function launchSeat(project, bot, over = {}) {
 /**
  * The child processes of the shell `get` names (`pgrep -P` its pid, on `machine` through hc
  * for a linked one's): their pids, [] for none, or null when that can't be told (no pid, no
- * pgrep, an error, the machine not answering), and shellIdle then never counts it idle.
+ * pgrep, an error, the machine not answering), and shellIdle then never counts it idle. None
+ * only as pgrep itself says it: it exited 1 with nothing on stdout or stderr. Here pgrep runs
+ * through pgrepHere, never runProgram, which gives code 1 and its own message on stderr for a
+ * pgrep it couldn't run (EACCES) or killed at its timeout as well as for every failed exit.
  */
 async function shellChildren(get, machine = null) {
   if (!Number.isSafeInteger(get?.pid) || get.pid <= 0) return null;
   const args = ["-P", String(get.pid)];
-  const r = machine ? await remoteIo.exec("pgrep", args, machine) : await runProgram("pgrep", args);
+  const r = machine ? await remoteIo.exec("pgrep", args, machine) : await pgrepHere(args);
+  if (!r) return null;
   const pids = (r.stdout ?? "").split(/\s+/).filter(Boolean);
-  if (r.code === 1 && !pids.length) return [];
+  if (r.code === 1 && !pids.length && !(r.stderr ?? "").trim()) return [];
   return r.code === 0 && pids.length && pids.every((x) => /^\d+$/.test(x)) ? pids : null;
 }
 

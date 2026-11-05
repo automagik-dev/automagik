@@ -909,8 +909,10 @@ test("start in a space it opened closes its lone shell tab only while it is the 
   assert.equal(c.cli(["start", "Genie"]).code, 0);
   assert.deepEqual(c.windowNow().spaces[0].tabs.map((tb) => tb.id), ["tb-t100"]);
   // Kept: a counted mod pane beside the shell; vim in front of the shell; the shell at its
-  // prompt with a job left running (`sleep 99 &`: a child pgrep finds); its children unknown.
-  for (const extra of [{ paneCounts: true, modInSpare: true }, { shellBusy: true }, { shellJob: true }, { shellUnknown: true }]) {
+  // prompt with a job left running (`sleep 99 &`: a child pgrep finds); its children unknown
+  // (pgrep failing with exit 3 or with exit 1 and an error, or killed before it exits, as at its timeout).
+  for (const extra of [{ paneCounts: true, modInSpare: true }, { shellBusy: true }, { shellJob: true }, { shellUnknown: true },
+    { shellPgrepError: true }, { shellPgrepKilled: true }]) {
     const k = scene(t, { window: { spaces: [], place: true, ...extra } });
     k.seed(team());
     assert.equal(k.cli(["start", "Genie"]).code, 0);
