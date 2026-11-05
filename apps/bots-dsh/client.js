@@ -20485,7 +20485,7 @@ function ContextMenu({ menu, roster, actions, leaving = false }) {
   const adopted = bot?.dshAgentId !== void 0;
   const adoptedRoom = adopted ? Object.values(roster.roomsById ?? {}).find((room3) => (room3.members ?? []).includes(bot.id)) : void 0;
   const adoptedTask = adopted ? Object.values(roster.tasks ?? {}).some((task) => task.from === bot.id) : false;
-  const rollbackBlocked = isMainBot ? "main" : adoptedRoom !== void 0 ? "groups" : adoptedTask ? "tasks" : void 0;
+  const rollbackBlocked = isMainBot ? "main" : adoptedRoom !== void 0 ? "groups" : adoptedTask ? "tasks" : adopted && bot.adoptionHistoryMatches !== true ? "history" : void 0;
   const canRollback = adopted && rollbackBlocked === void 0;
   const groups = [
     [

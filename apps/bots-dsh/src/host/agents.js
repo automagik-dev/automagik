@@ -643,6 +643,18 @@ export function install(rt) {
     }
   }
 
+  // Rollback gives the original its Sessions back as they were, so it is possible only
+  // while the adopted Bot's parts are still exactly those Sessions: a New conversation
+  // adds a part and ends it. The view (channel.js) reports this same check per adopted
+  // Bot, so the menu offers rollback only then; a missing or mismatched original is false.
+  function adoptionHistoryMatches(botId) {
+    const bot = rt.own(state.bots, botId)
+    const original = rt.own(state.agents, bot?.dshAgentId)
+    if (original === undefined || original.adoptedBotId !== bot.id) return false
+    const parts = [ ...(bot.segments ?? []).map(part => part.sessionId), rt.chatOf(bot.id) ]
+    return JSON.stringify(parts) === JSON.stringify(original.sessions)
+  }
+
   // An explicit, non-destructive undo, not deleteBot (which archives conversations).
   // Refuse after new team history is created rather than silently discarding it.
   async function rollbackAdoption(agentId) {
@@ -650,9 +662,8 @@ export function install(rt) {
     const original = rt.own(state.agents, agentId)
     const bot = state.bots[original?.adoptedBotId]
     if (bot?.dshAgentId !== agentId) throw new Error('No adoption to roll back')
-    const parts = [ ...(bot.segments ?? []).map(part => part.sessionId), rt.chatOf(bot.id) ]
     if (rt.isMain(bot.id) || Object.values(state.rooms).some(room => room.members.includes(bot.id))
-      || JSON.stringify(parts) !== JSON.stringify(original.sessions)
+      || !adoptionHistoryMatches(bot.id)
       || Object.values(state.tasks ?? {}).some(task => task.from === bot.id)) {
       throw new Error('Remove Main Bot/group roles and resolve new team history before rolling back adoption')
     }
@@ -863,5 +874,5 @@ export function install(rt) {
     },
   }))
 
-  Object.assign(rt, { agentOf, addAgent, updateAgent, presets, createAgentSession, adoptAgentSession, adoptBotSession, adoptAsBot, rollbackAdoption, archiveAgentSession, renameAgentSession, removeAgent, createTaskSession, startTask })
+  Object.assign(rt, { agentOf, addAgent, updateAgent, presets, createAgentSession, adoptAgentSession, adoptBotSession, adoptAsBot, rollbackAdoption, adoptionHistoryMatches, archiveAgentSession, renameAgentSession, removeAgent, createTaskSession, startTask })
 }
