@@ -21,6 +21,12 @@ describe('the plugin lane', () => {
     expect(kindOf(['apps/automagik-pets/src/bake.js', 'apps/automagik-pets/bun.lock', 'apps/bots-dsh/client.js'], none)).toBe('plugins');
     // Meter's local tools ship nothing: a meter/ change beside a plugin is still a plugin patch.
     expect(kindOf(['meter/statusline/automagik-statusline.mjs', 'meter/statusline/test/statusline.test.mjs', 'apps/bots-dsh/client.js'], none)).toBe('plugins');
+    // The landing page ships from the site, not from a release (#370): alone it ships nothing,
+    // beside a plugin it is a plugin patch, and beside the desktop app it is still a full release.
+    const landing = ['apps/landing/index.html', 'apps/landing/styles.css', 'apps/landing/landing.test.mjs', 'apps/landing/assets/hero.png'];
+    expect(ships(landing, none)).toBe(false);
+    expect(kindOf([...landing, 'apps/bots-dsh/client.js'], none)).toBe('plugins');
+    expect(kindOf([...landing, 'apps/desktop/src/main.js'], none)).toBe('full');
   });
 
   test('a herdr-only change is a herdr patch: no desktop build, no plugins, the pack alone', () => {

@@ -75,7 +75,8 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // What no build of the desktop app reads (its build reads apps/desktop and the plugins
 // alone): the repository's release tooling and CI, the lane's own keys and notes, tests,
 // and the notes at the root. A change there ships nothing to an installed app. The headless pet
-// bake (apps/automagik-pets) is no plugin and no app build reads it; it ships on its own.
+// bake (apps/automagik-pets) is no plugin and no app build reads it; it ships on its own. Nor does
+// the landing page (apps/landing): it is static and ships from the site, never from a release.
 // The RFCs and notes under docs/ ship nothing either. In the herdr part: its notes (*.md at its top,
 // docs/, .genie/ plans, the mockup) and its catalog, which installed mod managers read from dev
 // directly, not from a release; and the layout entry's RECIPE.md and preview.png.
@@ -83,7 +84,7 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // page's test and the vendoring script), which no APK carries. Meter's local tools (meter/: the Claude
 // status line and the limits logger it wraps) run from a checkout on the owner's machine; no release carries them.
 const NEVER_SHIPPED = [/^am\/[^/]+\.md$/, /^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/, /^apps\/automagik-pets\//, /^docs\//,
-  /^herdr\/[^/]+\.md$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr-layout\/(RECIPE\.md|preview\.png)$/,
+  /^apps\/landing\//, /^herdr\/[^/]+\.md$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr-layout\/(RECIPE\.md|preview\.png)$/,
   /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//, /^meter\//];
 /**
  * The herdr part: everything under herdr/ (the pack's mods, installer and tooling) and its layout's
