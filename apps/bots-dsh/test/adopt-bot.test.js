@@ -256,6 +256,48 @@ test('after New conversation an adopted original reports changed history and rol
   assert.equal(view.agents.some(entry => entry.id === agent.id), false)
 })
 
+test('a drifted part makes the history flag false and rollback refuse', async (t) => {
+  const { call, stop, ctx } = start()
+  t.after(stop)
+  await call('state', {})
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'ds-bot-adopt-folder-')))
+  t.after(() => rmSync(project, { recursive: true, force: true }))
+  const rt = ctx.provided.get('omniTeam')
+  const agent = (await call('add-agent', { name: 'Cogna Brain', workDir: project })).value
+  const botId = (await call('agent-session', { agentId: agent.id })).value.sessionId
+  await call('agent-bot-adopt', { agentId: agent.id })
+  const flag = async () => (await call('state', {})).value.bots
+    .find(bot => bot.id === botId).adoptionHistoryMatches
+  const bot = rt.state.bots[botId]
+  const original = rt.state.agents[agent.id]
+  const segments = bot.segments
+  const sessions = original.sessions
+  assert.equal(await flag(), true)
+
+  // An extra part the original did not have is changed history too, even without a New
+  // conversation: the host refuses, and the view must say so.
+  bot.segments = [...segments, { sessionId: 'drifted-part', endedAt: Date.now() }]
+  assert.equal(await flag(), false)
+  const extra = await call('agent-bot-rollback', { agentId: agent.id })
+  assert.equal(extra.ok, false)
+  assert.match(extra.error.message, /Remove Main Bot\/group roles and resolve new team history/)
+
+  // So is an original that would hand back a different set of Sessions.
+  bot.segments = segments
+  original.sessions = [...sessions, 'extra-session']
+  assert.equal(await flag(), false)
+  const sessionsChanged = await call('agent-bot-rollback', { agentId: agent.id })
+  assert.equal(sessionsChanged.ok, false)
+  assert.match(sessionsChanged.error.message,
+    /Remove Main Bot\/group roles and resolve new team history/)
+
+  // Restoring the exact parts restores eligibility; nothing above wrote over the Bot.
+  original.sessions = sessions
+  assert.deepEqual(bot.segments, segments)
+  assert.equal(await flag(), true)
+  assert.equal((await call('state', {})).value.bots.some(entry => entry.id === botId), true)
+})
+
 test('the history flag fails closed when the original record is missing or names another Bot', async (t) => {
   const { call, stop, ctx } = start()
   t.after(stop)
