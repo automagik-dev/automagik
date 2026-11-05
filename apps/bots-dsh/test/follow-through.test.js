@@ -6,6 +6,7 @@ import { test } from 'node:test'
 import { setTimeout as realDelay } from 'node:timers/promises'
 import { apply } from '../index.js'
 import { fakeContext } from './fake-ctx.js'
+import { immediate, until } from './until.js'
 import { stripWrittenCalls, writesToolCall } from '../src/host/turns.js'
 
 // Omni in its own chat 'a'; Writer, the admin of group 'r1', speaks there from 'gb'.
@@ -95,11 +96,7 @@ const settleState = async (t, home, check) => {
   }
   assert.ok(check(), 'condition not reached')
 }
-const settle = async (check) => {
-  const until = Date.now() + 3000
-  while (!check() && Date.now() < until) await new Promise(resolve => setImmediate(resolve))
-  assert.ok(check(), 'condition not reached')
-}
+const settle = check => until(check, { poll: immediate })
 const text = message => message.content.map(block => block.text ?? '').join('\n')
 const notes = (home) => {
   try { return JSON.parse(readFileSync(join(home, 'inflight.json'), 'utf8')) } catch { return { turns: {}, queued: {} } }

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { apply } from '../index.js'
 import { fakeContext } from './fake-ctx.js'
+import { immediate, until } from './until.js'
 import { ROOM_REPLY_TIMEOUT_MS } from '../src/host/constants.js'
 
 // Omni in its own chat 'a'; Writer, the admin of group 'r1', speaks there from 'gb'.
@@ -77,11 +78,7 @@ async function start(extra = {}) {
 }
 
 // Waits on real I/O (state writes) without timers, which some tests mock.
-const settle = async (check) => {
-  const until = Date.now() + 3000
-  while (!check() && Date.now() < until) await new Promise(resolve => setImmediate(resolve))
-  assert.ok(check(), 'condition not reached')
-}
+const settle = check => until(check, { poll: immediate })
 const text = message => message.content.map(block => block.text ?? '').join('\n')
 
 // Starts a round in 'r1' and opens Writer's turn in 'gb'; the round stops with the test.

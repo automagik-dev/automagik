@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { createRuntime } from '../index.js'
 import { fakeContext } from './fake-ctx.js'
+import { until } from './until.js'
 
 const QUESTION = 'ask_user_question'
 
@@ -106,14 +107,6 @@ const startGoal = (ctx, goals, sessionId) => {
   for (const listener of ctx.listeners.get('session/event') ?? []) listener({ id: sessionId }, event)
 }
 
-const until = async (check) => {
-  const end = Date.now() + 2000
-  while (!check()) {
-    if (Date.now() > end) throw new Error('until: the condition did not hold within 2 s')
-    await new Promise(resolve => setTimeout(resolve, 20))
-  }
-}
-
 test('a Bot\'s own chat and its group Session lose dsh\'s blocking question tool; other Sessions keep it', async (t) => {
   const { agentFor, hidden, hiddenIn, stop } = await setup()
   t.after(stop)
@@ -182,7 +175,7 @@ test('a new Bot that rules out question tools opens without one and cannot block
   const { rt, hiddenIn, guard, sent, stop } = await setup()
   t.after(stop)
   const receiver = await rt.createBot({ name: 'Receiver', instructions: 'Never use ask_user or any question tool.', createdBy: 'chief' })
-  await until(() => sent.some(entry => entry.sessionId === receiver.id))
+  await until(() => sent.some(entry => entry.sessionId === receiver.id), { label: 'the new Bot got its kickoff', t })
   const kickoff = sent.find(entry => entry.sessionId === receiver.id).message.content[0].text
   assert.doesNotMatch(kickoff, /ask_user|allowCustom/)
   assert.match(kickoff, /Where your instructions say otherwise, follow them\./)
@@ -213,7 +206,7 @@ test('a goal started in a Bot chat or a group is blocked; one elsewhere runs', a
   for (const id of ids) startGoal(ctx, goals, id)
   // The block waits until DSH has handed the change to every listener.
   assert.deepEqual(goals.blocked, [])
-  await until(() => goals.blocked.length === 3)
+  await until(() => goals.blocked.length === 3, { label: 'the three Bot and group goals are blocked', t })
   await new Promise(resolve => setTimeout(resolve, 20))
   assert.deepEqual(goals.blocked.map(entry => entry.sessionId), ['writer', 'room', 'room-writer'])
   for (const entry of goals.blocked) assert.deepEqual([entry.code, entry.message], ['not-supported', 'Omni does not run goals. Ask the Bot in a message instead.'])

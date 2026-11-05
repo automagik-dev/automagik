@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { createRuntime } from '../index.js'
 import { fakeContext } from './fake-ctx.js'
+import { until } from './until.js'
 
 // #280: a switch that fails while the plugin is being unloaded must not lose the input
 // it carried — a turn's claimed messages and whatever the old part held. The old
@@ -165,13 +166,6 @@ async function start({ fail = {}, services = {}, home: reuse } = {}) {
 }
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
-const until = async (check, ms = 3000) => {
-  const end = Date.now() + ms
-  while (!check()) {
-    if (Date.now() > end) throw new Error('until: the condition did not hold')
-    await settle()
-  }
-}
 
 const text = message => message.content.map(block => block.text ?? '').join('\n')
 const inboxTexts = agent => [...agent.inbox.nextStep, ...agent.inbox.nextTurn].map(text)
