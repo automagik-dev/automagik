@@ -2243,3 +2243,56 @@ test("start: hermes gets the briefing in its environment, unless its config sets
     assert.match(o.json().warnings.join("\n"), /hermes' config\.yaml sets a personality or agent\.system_prompt/);
   }
 });
+
+// #230: a project's formatter may use tabs (Biome's default) or four spaces. Every write keeps
+// the indentation the file has; a new file is two spaces, as before.
+const indented = (file, indent) => `${JSON.stringify(file, null, indent)}\n`;
+const seedAs = (s, file, indent) => { mkdirSync(dirname(s.botsPath), { recursive: true }); writeFileSync(s.botsPath, indented(file, indent)); };
+test("create, edit, rm and category keep bots.json's indentation (#230): tabs and four spaces stay", (t) => {
+  for (const indent of ["\t", "    "]) {
+    const s = scene(t);
+    seedAs(s, team(), indent);
+    const steps = [
+      ["create", "--name", "Scout", "--agent", "claude"],
+      ["edit", "Dev", "--role", "builds"],
+      ["rm", "Scout"],
+      ["category", "add", "--title", "Quality"],
+      ["category", "edit", "quality", "--sub", "tests"],
+      ["category", "order", "quality", "eng"],
+      ["category", "rm", "quality"],
+    ];
+    for (const args of steps) {
+      const r = s.cli(args);
+      assert.equal(r.code, 0, `${args.join(" ")}: ${r.err}`);
+      const text = readFileSync(s.botsPath, "utf8");
+      assert.equal(text, indented(JSON.parse(text), indent), `${args.join(" ")} kept ${JSON.stringify(indent)}`);
+    }
+  }
+});
+
+test("a new bots.json is two spaces (#230); one from a worktree copies the main checkout's indentation", (t) => {
+  const s = scene(t);
+  const made = s.cli(["create", "--name", "Genie", "--agent", "claude"]);
+  assert.equal(made.code, 0, made.err);
+  const text = readFileSync(s.botsPath, "utf8");
+  assert.equal(text, indented(JSON.parse(text), 2));
+  const tabs = scene(t);
+  const wt = join(tabs.root, "wt");
+  git(tabs.project, "worktree", "add", "-q", wt);
+  seedAs(tabs, team(), "\t"); // the main checkout's file, not committed: the worktree has none
+  const e = tabs.cli(["edit", "Dev", "--role", "scouting"], { cwd: wt });
+  assert.equal(e.code, 0, e.err);
+  const wtText = readFileSync(join(wt, ".herdr/bots.json"), "utf8");
+  assert.equal(JSON.parse(wtText).bots.find((b) => b.name === "Dev").role, "scouting");
+  assert.equal(wtText, indented(JSON.parse(wtText), "\t"));
+});
+
+test("restart --save keeps bots.json's tabs (#230)", (t) => {
+  const s = restartScene(t);
+  seedAs(s, team(), "\t");
+  const r = s.cli(["restart", "Genie", "--agent", "codex", "--save", "--force"]);
+  assert.equal(r.code, 0, r.err);
+  const text = readFileSync(s.botsPath, "utf8");
+  assert.equal(JSON.parse(text).bots[0].agent, "codex");
+  assert.equal(text, indented(JSON.parse(text), "\t"));
+});

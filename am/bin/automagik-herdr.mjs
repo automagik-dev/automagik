@@ -19,7 +19,7 @@ import { parseArgs } from "node:util";
 
 import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMNI_LOOK, applyBotEdit, checkBots,
   CATEGORY_ID, PROJECTS_FILE, RANKS, defaultLook, descendantsOf, effectiveLead, listedProjects, mainBotOf, newBotId, newCategoryId,
-  parseBots, plannedOf, projectKeyOf, projectOf, withListedProject, writeFolderOf } from "../model.js";
+  botsText, parseBots, plannedOf, projectKeyOf, projectOf, withListedProject, writeFolderOf } from "../model.js";
 import { UNANSWERED, agentInForeground, attachRefusal, attachWords, detachWords, hcName, isClaude, leadIdOf, leadPane, newest,
   paneLabels, paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWarning, relabelWords, rowsOf, spaceOnly, spacePlace,
   freshSpare, shellIdle, spareTab, startArgs, startRefusal, unwrapKeep } from "../launchArgs.js";
@@ -292,7 +292,7 @@ async function writeRemoteBots(project, raw) {
   }
   try {
     if (raw === null) await removeRemoteText(remoteIo, machine, path, expected);
-    else await writeRemoteText(remoteIo, machine, path, `${JSON.stringify(raw, null, 2)}\n`, expected);
+    else await writeRemoteText(remoteIo, machine, path, botsText(raw, expected), expected);
   } catch (e) {
     if (e instanceof StaleSnapshot) throw new CliError(`Not saved: ${fileName(project)} changed since it was read (another edit landed first). Run the command again.`);
     // A write whose answer was lost and that the file doesn't show: said as it is.
@@ -359,7 +359,7 @@ export function writeBotsFile(key, raw, expected, io = fsIo, before = expected) 
   if (now !== expected) throw new CliError(`Not saved: ${path} changed since it was read (another edit landed first). Run the command again.`);
   try {
     if (raw === null) return io.remove(path);
-    const text = `${JSON.stringify(raw, null, 2)}\n`;
+    const text = botsText(raw, expected ?? before); // indented as the file is (#230)
     if (expected === null) { io.mkdir(under(key, ".herdr")); io.create(path, text); } else io.replace(path, text);
   } catch (e) {
     if (e?.code === "EEXIST") throw new CliError(`Not saved: ${path} appeared since it was read. Run the command again.`);
