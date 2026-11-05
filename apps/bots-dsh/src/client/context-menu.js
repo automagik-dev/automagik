@@ -34,11 +34,14 @@ export function ContextMenu({ menu, roster, actions, leaving = false }) {
   const adopted = bot?.dshAgentId !== undefined
   // The host also refuses rollback while the Bot is Main, remains a member of any group,
   // or owns tasks/new team history. Do not offer an action that is guaranteed to fail.
+  // Whether the history still matches (no New conversation since adoption) is the host's
+  // own check, sent as `adoptionHistoryMatches`; anything but true hides rollback.
   const adoptedRoom = adopted
     ? Object.values(roster.roomsById ?? {}).find(room => (room.members ?? []).includes(bot.id))
     : undefined
   const adoptedTask = adopted ? Object.values(roster.tasks ?? {}).some(task => task.from === bot.id) : false
-  const rollbackBlocked = isMainBot ? 'main' : adoptedRoom !== undefined ? 'groups' : adoptedTask ? 'tasks' : undefined
+  const rollbackBlocked = isMainBot ? 'main' : adoptedRoom !== undefined ? 'groups' : adoptedTask ? 'tasks'
+    : adopted && bot.adoptionHistoryMatches !== true ? 'history' : undefined
   const canRollback = adopted && rollbackBlocked === undefined
   const groups = [
     [
