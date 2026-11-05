@@ -17,7 +17,7 @@ installed ones dimmed with "not installed"), a divider, then **New space** and t
 - Agents come from `knownAgents({on: machine})` for the target space's machine, so a remote space
   lists what that machine has. Agent rows start `tab.new {name, space, argv}`; Hermes gets `--tui`
   appended when its run lacks it.
-- Retired agents (`RETIRED` in `agents.js`: `gemini`, which Antigravity replaces) are dropped
+- Retired agents (`RETIRED` from `retired.js`: `gemini`, which Antigravity replaces) are dropped
   before anything else: no row, no "not installed" suggestion, no number key.
 - Keys: the platform modifier (`⌘` on macOS, `Ctrl` elsewhere) + `1…9` starts the Nth installed
   agent, `T` a terminal, `N` a new space; each closes the menu first.
@@ -28,7 +28,8 @@ installed ones dimmed with "not installed"), a divider, then **New space** and t
 ## Built from
 
 `main.js` (rows, keys), `target.js` (which space, which folder), `agents.js` (which agents, retired
-ones hidden), `mod.json` (`place: none`).
+ones hidden), `retired.js` (a byte-equal copy of am-sidebar's, the pack's one list), `mod.json`
+(`place: none`).
 Herdr API: `knownAgents`, `spaces`, `panes`, `run`, `openOverlay`, `closeOverlay`, `props`,
 `theme`, `window`.
 

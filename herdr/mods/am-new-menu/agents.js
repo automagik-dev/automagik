@@ -1,6 +1,8 @@
-// Programs Herdr's agent table still lists but their makers retired: Google ended Gemini CLI for
-// individuals (Antigravity replaces it). Keyed by the knownAgents() entry's `key`.
-export const RETIRED = new Set(["gemini"]);
+import { RETIRED } from "./retired.js";
+
+// Programs Herdr's agent table still lists but their makers retired (retired.js, a byte-equal copy
+// of the pack's one list in am-sidebar).
+export { RETIRED };
 
 // The menu's agents from knownAgents(): retired ones dropped first, then the installed ones (what
 // ⌘1…9 count over, so the keys stay consecutive) and up to two not-installed suggestions.

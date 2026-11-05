@@ -18,11 +18,12 @@
 // each a `panes` count; `modInSpare: true` then counts a mod pane beside the shell (as a count
 // only). `probe: <path>` records, on every `do`, whether that file exists then (state.probed).
 // The real window is never touched.
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendLine } from "./log-lines.mjs";
 
 const [command, ...rest] = process.argv.slice(2);
 const statePath = process.env.HERDR_APP_FAKE_STATE;
-appendFileSync(process.env.HERDR_APP_FAKE_LOG, `${JSON.stringify([command, ...rest])}\n`);
+appendLine(process.env.HERDR_APP_FAKE_LOG, JSON.stringify([command, ...rest]));
 const state = JSON.parse(readFileSync(statePath, "utf8"));
 if (state.down) {
   process.stderr.write("herdr-app: no window is open\n");
