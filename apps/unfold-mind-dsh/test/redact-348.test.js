@@ -15,15 +15,17 @@ const TABLE = JSON.parse(readFileSync(new URL('./fixtures/redact-348.json', impo
 const VALUE = /hunter2/
 // The rows whose value the redaction hides.
 const HIDDEN = TABLE.text.filter(([, input, want]) => VALUE.test(input) && !VALUE.test(want))
+// A block scalar's key line: a name, its colon, up to two anchors or tags, then an indicator.
+const BLOCK = /:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[|>][-+0-9]*[ \t]*$/m
 
 for (const [what, input, want] of TABLE.text) test(`text: ${what}`, () => assert.equal(redactText(input), want))
 for (const [what, input, want] of TABLE.object) test(`object: ${what}`, () => assert.deepEqual(redact(input), want))
 
 test('a hidden value is remembered as the value, not as an anchor, a tag or a name', () => {
   for (const [what, input] of HIDDEN) {
-    if (/:[ \t]*[|>]/.test(input)) continue // a block scalar's lines are not remembered, as for its plain form
+    assert.ok(!secretsIn(`${input} `).some((v) => /^[&!|>]/.test(v)), what)
+    if (BLOCK.test(input)) continue // a block scalar's lines are not remembered, as for its plain form
     assert.ok(secretsIn(`${input} `).some((v) => VALUE.test(v)), what)
-    assert.ok(!secretsIn(`${input} `).some((v) => /^[&!]/.test(v)), what)
   }
 })
 
@@ -54,5 +56,20 @@ test('served: a value under an invisible name or an anchor that the 4096 cut swe
     r.send(`${head}"${'hunter2 '.repeat(800)}"`)
     r.send(' and goes on')
     assert.doesNotMatch(r.served(), VALUE, JSON.stringify(head))
+  }
+})
+
+// A block scalar under an anchor or tag before its indicator, longer than the bound, streamed a line
+// at a time: no line of it is served, and the text after it is.
+const BLOCK_HEADS = ['password: &a |', 'password: !!str >-', 'password: !<tag:yaml.org,2002:str> |', 'dbPassword: &a !!str |+']
+const BLOCK_LINES = Array.from({ length: 700 }, (_, i) => `    hunter2 line ${i}\n`)
+test('served: a block scalar under an anchor or tag longer than the 4096 keep, a line at a time, stays hidden', () => {
+  for (const head of BLOCK_HEADS) {
+    const r = journal()
+    r.send(`config:\n  ${head}\n`)
+    for (const line of BLOCK_LINES) r.send(line)
+    assert.doesNotMatch(r.served(), VALUE, head)
+    r.send('next: shown')
+    assert.match(r.served(), /next: shown/, head)
   }
 })

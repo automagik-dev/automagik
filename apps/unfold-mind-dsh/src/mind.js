@@ -727,11 +727,12 @@ const QUOTED_SECRET = [
   /(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key)["']?\s*[:=]\s*(?:(?<=:\s*)(?:[&!][^\s"'`]*\s+){1,2})?(["'`])/g, // camelCase
 ]
 
-// Where a YAML block scalar under a credential name opens (`password: |`, then its indented
-// lines), as in SECRET_TEXT: a cut lands before it or after it, never inside.
+// Where a YAML block scalar under a credential name opens (`password: |`, anchors and tags before
+// its indicator included, then its indented lines), as in SECRET_TEXT: a cut lands before it or
+// after it, never inside.
 const YAML_SECRET = [
-  /(^|\n)(?=[^\n]*:[ \t]*[>|][-+0-9]*[ \t]*(?:\n|$))(?=([ \t]*))\2([^\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))([ \t]*:[ \t]*[>|][-+0-9]*[ \t]*)(?=\n|$)((?:\n(?:\2[ \t]+[^\n]*|[ \t]*(?=\n|$)))*)/gi,
-  /(^|\n)(?=[^\n]*:[ \t]*[>|][-+0-9]*[ \t]*(?:\n|$))(?=([ \t]*))\2([^\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))([ \t]*:[ \t]*[>|][-+0-9]*[ \t]*)(?=\n|$)((?:\n(?:\2[ \t]+[^\n]*|[ \t]*(?=\n|$)))*)/g,
+  /(^|\n)(?=[^\n]*:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*[ \t]*(?:\n|$))(?=([ \t]*))\2([^\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))([ \t]*:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*[ \t]*)(?=\n|$)((?:\n(?:\2[ \t]+[^\n]*|[ \t]*(?=\n|$)))*)/gi,
+  /(^|\n)(?=[^\n]*:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*[ \t]*(?:\n|$))(?=([ \t]*))\2([^\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))([ \t]*:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*[ \t]*)(?=\n|$)((?:\n(?:\2[ \t]+[^\n]*|[ \t]*(?=\n|$)))*)/g,
 ]
 
 // Where JSON inside a JSON string opens a credential value (`{\"password\": \"`), as in SECRET_TEXT,
@@ -767,7 +768,7 @@ function quotedSpans(raw) {
       spans.push({ start: m.index, open, end: ESCAPED_END.lastIndex, closed, escaped: false, keep: closed ? undefined : `${raw.slice(m.index, open)}${'\\'.repeat(run % 4)}` })
     }
   }
-  if (/:[ \t]*[>|]/.test(raw)) for (const re of YAML_SECRET) {
+  if (/:[ \t]*[&!>|]/.test(raw)) for (const re of YAML_SECRET) {
     for (const m of raw.matchAll(re)) {
       const start = m.index + m[1].length
       const end = m.index + m[0].length

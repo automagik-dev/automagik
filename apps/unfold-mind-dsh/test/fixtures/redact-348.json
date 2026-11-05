@@ -87,6 +87,116 @@
    "config:\n  db_password: >\n    [redacted]\nnext: shown"
   ],
   [
+   "measured: an anchor before a block indicator",
+   "password: &a |\n  hunter2\nnext: shown",
+   "password: |\n  [redacted]\nnext: shown"
+  ],
+  [
+   "measured: a tag before a block indicator",
+   "password: !!str |\n  hunter2\nnext: shown",
+   "password: |\n  [redacted]\nnext: shown"
+  ],
+  [
+   "measured: a local tag before a block indicator",
+   "password: !secret |\n  hunter2\nnext: shown",
+   "password: |\n  [redacted]\nnext: shown"
+  ],
+  [
+   "measured: a verbatim tag before a block indicator",
+   "password: !<tag:yaml.org,2002:str> |\n  hunter2\nnext: shown",
+   "password: |\n  [redacted]\nnext: shown"
+  ],
+  [
+   "control: the plain block scalar",
+   "password: |\n  hunter2\nnext: shown",
+   "password: |\n  [redacted]\nnext: shown"
+  ],
+  [
+   "an anchor then a tag before a strip indicator, two lines",
+   "password: &a !!str |-\n  hunter2\n  hunter2 again\nnext: shown",
+   "password: |-\n  [redacted]\nnext: shown"
+  ],
+  [
+   "a tag then an anchor before a folded indicator",
+   "password: !!str &a >\n  hunter2\nnext: shown",
+   "password: >\n  [redacted]\nnext: shown"
+  ],
+  [
+   "an anchor before a keep indicator",
+   "password: &a |+\n  hunter2\nnext: shown",
+   "password: |+\n  [redacted]\nnext: shown"
+  ],
+  [
+   "a tag before a folded strip indicator",
+   "password: !!str >-\n  hunter2\nnext: shown",
+   "password: >-\n  [redacted]\nnext: shown"
+  ],
+  [
+   "an anchor before an indent indicator",
+   "password: &a |2\n    hunter2\nnext: shown",
+   "password: |2\n  [redacted]\nnext: shown"
+  ],
+  [
+   "a tag before a keep and indent indicator",
+   "password: !!str >+1\n  hunter2\nnext: shown",
+   "password: >+1\n  [redacted]\nnext: shown"
+  ],
+  [
+   "a tag then a tab before a block indicator",
+   "password: !!str\t|\n  hunter2\nnext: shown",
+   "password: |\n  [redacted]\nnext: shown"
+  ],
+  [
+   "an anchor before a block indicator, extra spaces",
+   "password:  &a  |  \n  hunter2\nnext: shown",
+   "password:  |  \n  [redacted]\nnext: shown"
+  ],
+  [
+   "an anchor before a block under a camelCase name",
+   "dbPassword: &a |\n  hunter2\nnext: shown",
+   "dbPassword: |\n  [redacted]\nnext: shown"
+  ],
+  [
+   "a tag before a block under an indented key",
+   "config:\n  db_password: !!str >-\n    hunter2\nnext: shown",
+   "config:\n  db_password: >-\n    [redacted]\nnext: shown"
+  ],
+  [
+   "an anchor before a block under an invisible name",
+   "pass\u200bword: &a |\n  hunter2\nnext: shown",
+   "password: |\n  [redacted]\nnext: shown"
+  ],
+  [
+   "a verbatim tag holding a name before a block, in a list item",
+   "- name: db\n  password: !<tag:example.com,2026:token> |\n    hunter2\nnext: shown",
+   "- name: db\n  password: |\n    [redacted]\nnext: shown"
+  ],
+  [
+   "an anchor before a block indicator at the end of the text",
+   "password: &a |",
+   "password: |"
+  ],
+  [
+   "control: an anchor before a scalar that ends in a pipe",
+   "password: &a hunter2 |",
+   "password: [redacted] |"
+  ],
+  [
+   "near miss: an anchor before a block under a plain key",
+   "email: &a |\n  hunter2\nnext: shown",
+   "email: &a |\n  hunter2\nnext: shown"
+  ],
+  [
+   "near miss: a tag before a block under a plain key",
+   "note: !important >\n  hunter2\nnext: shown",
+   "note: !important >\n  hunter2\nnext: shown"
+  ],
+  [
+   "near miss: a verbatim tag before a block under a plain key",
+   "type: !<tag:yaml.org,2002:str> |\n  hunter2\nnext: shown",
+   "type: !<tag:yaml.org,2002:str> |\n  hunter2\nnext: shown"
+  ],
+  [
    "BOM, word joiner, soft hyphen, bidi mark, DEL",
    "p\ufeffa\u2060s\u00ads\u202ew\u007ford: hunter2",
    "password: [redacted]"

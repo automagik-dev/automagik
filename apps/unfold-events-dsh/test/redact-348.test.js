@@ -16,6 +16,8 @@ const TABLE = JSON.parse(readFileSync(new URL('./fixtures/redact-348.json', impo
 const VALUE = /hunter2/
 // The rows whose value the redaction hides.
 const HIDDEN = TABLE.text.filter(([, input, want]) => VALUE.test(input) && !VALUE.test(want))
+// A block scalar's key line: a name, its colon, up to two anchors or tags, then an indicator.
+const BLOCK = /:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[|>][-+0-9]*[ \t]*$/m
 
 for (const [what, input, want] of TABLE.text) {
   test(`text: ${what}`, () => {
@@ -39,9 +41,9 @@ test('an envelope field under an invisible name is hidden, its key kept as writt
 
 test('the browser copy remembers the value, not an anchor, a tag or a name', () => {
   for (const [what, input] of HIDDEN) {
-    if (/:[ \t]*[|>]/.test(input)) continue // a block scalar's lines are not remembered, as for its plain form
+    assert.ok(!clientSecretsIn(`${input} `).some((v) => /^[&!|>]/.test(v)), what)
+    if (BLOCK.test(input)) continue // a block scalar's lines are not remembered, as for its plain form
     assert.ok(clientSecretsIn(`${input} `).some((v) => VALUE.test(v)), what)
-    assert.ok(!clientSecretsIn(`${input} `).some((v) => /^[&!]/.test(v)), what)
   }
 })
 
@@ -84,5 +86,20 @@ test('served: the 16 KiB bound cut between an anchor or tag and its value keeps 
     r.push(`${head}${' '.repeat(17_000)}hunter2`)
     r.push(' and goes on')
     assert.doesNotMatch(r.served(), VALUE, JSON.stringify(head))
+  }
+})
+
+// A block scalar under an anchor or tag before its indicator, longer than the bound, streamed a line
+// at a time: no line of it is served, and the text after it is.
+const BLOCK_HEADS = ['password: &a |', 'password: !!str >-', 'password: !<tag:yaml.org,2002:str> |', 'dbPassword: &a !!str |+']
+const BLOCK_LINES = Array.from({ length: 700 }, (_, i) => `    hunter2 line ${i}\n`)
+test('served: a block scalar under an anchor or tag longer than the 16 KiB bound, a line at a time, stays hidden', () => {
+  for (const head of BLOCK_HEADS) {
+    const r = rig()
+    r.push(`config:\n  ${head}\n`)
+    for (const line of BLOCK_LINES) r.push(line)
+    assert.doesNotMatch(r.served(), VALUE, head)
+    r.push('next: shown')
+    assert.match(r.served(), /next: shown/, head)
   }
 })
