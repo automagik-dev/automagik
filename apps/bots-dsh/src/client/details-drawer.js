@@ -185,6 +185,15 @@ export function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, ro
   const [view, setView] = useState(startTab === 'settings' && (owner || room) ? 'settings' : 'overview')
   const [editing, setEditing] = useState(Boolean(startRenaming && (roster.byId[sessionId] || roster.roomsById[sessionId])))
   const [draftName, setDraftName] = useState(roster.byId[sessionId]?.name ?? (roster.roomsById[sessionId]?.named ? roster.roomsById[sessionId].name : ''))
+  // Escape cancels a rename: it saves nothing (not even through the field's blur) and
+  // gives focus back to the name button that started it, never to <body>.
+  const cancelledRename = useRef(false)
+  const nameButton = useRef(null)
+  useEffect(() => {
+    if (editing || !cancelledRename.current) return
+    cancelledRename.current = false
+    nameButton.current?.focus()
+  }, [editing])
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState('')
   const glide = useGlide(tab)
@@ -262,10 +271,13 @@ export function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, ro
         ? h('input', {
             className: 'bt-drawer-name-input', autoFocus: true, value: draftName, 'aria-label': bot ? t('Bot name') : t('Group name'),
             placeholder: room ? t('Name after members') : undefined,
-            onChange: event => setDraftName(event.target.value), onBlur: saveName,
-            onKeyDown: (event) => { if (event.key === 'Enter') void saveName(); if (event.key === 'Escape') { event.stopPropagation(); setEditing(false) } },
+            onChange: event => setDraftName(event.target.value), onBlur: () => { if (!cancelledRename.current) void saveName() },
+            onKeyDown: (event) => {
+              if (event.key === 'Enter') void saveName()
+              if (event.key === 'Escape') { event.stopPropagation(); cancelledRename.current = true; setEditing(false) }
+            },
           })
-        : h('button', { type: 'button', className: 'bt-drawer-name', 'aria-label': t('Rename {name}', { name: current }), title: t('Rename'), onClick: () => { setDraftName(room && !room.named ? '' : current); setEditing(true) } }, current),
+        : h('button', { ref: nameButton, type: 'button', className: 'bt-drawer-name', 'aria-label': t('Rename {name}', { name: current }), title: t('Rename'), onClick: () => { setDraftName(room && !room.named ? '' : current); setEditing(true) } }, current),
       subtitle ? h('span', { className: 'bt-drawer-role' }, subtitle) : null),
     tabs.length > 1 ? h('div', { key: 'tabs', ref: glide.box, className: 'bt-tabs', role: 'tablist', 'data-move': side },
       h('span', { ref: glide.thumb, className: 'bt-thumb', 'aria-hidden': true }),
