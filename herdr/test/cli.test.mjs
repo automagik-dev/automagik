@@ -1319,6 +1319,7 @@ test("causeLine: the agent's last line that names a failure, past prompts, rules
   assert.equal(causeLine(CODEX_SCREEN), CODEX_GONE);
   assert.equal(causeLine("starting\nno conversation found\n$ "), "no conversation found", "no failure word: the last line");
   assert.equal(causeLine("Error: bad flag\nRun codex --help for usage\n"), "Error: bad flag");
+  assert.equal(causeLine("Error: bad flag\n(quit)\n"), "Error: bad flag", "a word in brackets is no failure code");
   assert.equal(causeLine("\n  \n% \n"), null);
   assert.equal(causeLine(""), null);
   assert.equal(causeLine(`error ${"x".repeat(400)}`).length, 300);

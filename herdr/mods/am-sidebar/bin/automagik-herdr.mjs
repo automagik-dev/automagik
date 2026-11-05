@@ -2019,7 +2019,9 @@ async function agentUp(terminal, ms = RESTART_WAIT_MS) {
 
 // A line that names a failure: an error word, or a code in brackets as codex gives one
 // ("model provider juice is no longer configured (modelProviderNotConfigured)").
-const FAILURE_LINE = /\b(error|fatal|failed|failure|panic|denied|invalid|unauthori[sz]ed|refused|cannot|can't|not configured|no longer)\b|\([a-z]+[A-Z][A-Za-z]*\)/i;
+const FAILURE_WORD = /\b(error|fatal|failed|failure|panic|denied|invalid|unauthori[sz]ed|refused|cannot|can't|not configured|no longer)\b/i;
+const FAILURE_CODE = /\([a-z]+[A-Z][A-Za-z]*\)/; // camelCase only: never "(quit)" or "(default)"
+const failureLine = (l) => FAILURE_WORD.test(l) || FAILURE_CODE.test(l);
 // A line with nothing to say: box drawing, rules, a bare shell prompt.
 const EMPTY_LINE = /^[\s\u2500-\u257f\u2580-\u259f\-_=*•·.:>❯›$%#]*$/;
 
@@ -2029,7 +2031,7 @@ const EMPTY_LINE = /^[\s\u2500-\u257f\u2580-\u259f\-_=*•·.:>❯›$%#]*$/;
  */
 export function causeLine(text) {
   const lines = screenTail(text, 40).split("\n").map((l) => l.trim()).filter((l) => l && !EMPTY_LINE.test(l));
-  const line = lines.findLast((l) => FAILURE_LINE.test(l)) ?? lines.at(-1);
+  const line = lines.findLast(failureLine) ?? lines.at(-1);
   if (!line) return null;
   return line.length > 300 ? `${line.slice(0, 299)}…` : line;
 }
@@ -2040,7 +2042,8 @@ async function endedCause(terminal) {
     const r = await hc(["read", terminal, "--lines", "40", "--json"]);
     if (r.code !== 0) return null;
     let text = r.stdout;
-    try { const j = JSON.parse(r.stdout); if (typeof j?.text === "string") text = j.text; } catch { /* plain text */ }
+    try { const j = JSON.parse(r.stdout); text = typeof j?.text === "string" ? j.text : null; } catch { /* plain text */ }
+    if (text === null) return null;
     return causeLine(text);
   } catch { return null; }
 }
