@@ -1,0 +1,78 @@
+name: Linux image
+
+# The Automagik Linux image and its guest launcher, dsh-launch (RFC 0016 delivery 2,
+# apps/desktop/wslc). The image is built and tested here only: built from the desktop's own
+# runtime and profile, then a smoke drives dsh-launch's piped stdio in the container as the
+# Windows helper will (apps/desktop/wslc/smoke/smoke.mjs, five checks). Nothing is pushed to a
+# registry and no release carries the image yet.
+#
+# Publishing anchor (not implemented): RFC 0016 attaches `automagik-linux-image-<v>.tar` and its
+# `.sha256` (`docker save` of this image) to a desktop release whose image inputs changed. That
+# step belongs to delivery 6 ("Windows ships again"), in desktop-build.yml's Publish job beside the
+# other desktop assets, once delivery 3's app pins the image's hash. Until then no shipped app
+# reads the image, so there is nothing to publish.
+
+on:
+  pull_request:
+    paths:
+      - apps/desktop/**
+      - apps/*-dsh/**
+      - package.json
+      - .github/workflows/linux-image.yml
+  push:
+    branches: [dev]
+    paths:
+      - apps/desktop/**
+      - apps/*-dsh/**
+      - package.json
+      - .github/workflows/linux-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    name: Linux image (build and smoke)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DO_NOT_TRACK: '1'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      # The runtime's native modules are built for this Node; the image runs Node 24 too.
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24'
+
+      - name: Launcher tests
+        working-directory: apps/desktop/wslc
+        run: |
+          set -euo pipefail
+          for file in bin/*.mjs lib/*.mjs smoke/*.mjs test/*.mjs; do node --check "${file}"; done
+          echo "launcher test files: $(ls test/*.test.mjs | wc -l)"
+          node --test 'test/*.test.mjs'
+
+      - name: Prepare the runtime and the plugins
+        working-directory: apps/desktop
+        run: node scripts/prepare-runtime.mjs
+
+      - name: Build the image
+        working-directory: apps/desktop
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require("../../package.json").version')"
+          docker build --file wslc/Dockerfile --build-arg "AUTOMAGIK_VERSION=${version}" \
+            --tag "automagik-linux:${version}-ci" .
+          docker image inspect "automagik-linux:${version}-ci" --format 'image {{.Id}} {{.Size}} bytes'
+          echo "IMAGE=automagik-linux:${version}-ci" >> "${GITHUB_ENV}"
+
+      - name: Smoke
+        run: node apps/desktop/wslc/smoke/smoke.mjs "${IMAGE}"

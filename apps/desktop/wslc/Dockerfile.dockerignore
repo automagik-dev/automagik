@@ -1,0 +1,14 @@
+# The image's build context is apps/desktop; only what the Dockerfile copies goes in.
+*
+!package.json
+!build/runtime
+!build/profile
+!build/versions.json
+!src/dsh.js
+!src/lane.js
+!src/lane-keys.js
+!src/privacy.js
+!src/tar.js
+!src/update.js
+!wslc/bin
+!wslc/lib
