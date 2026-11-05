@@ -28,16 +28,20 @@ const KEY_ENV = "CLIPROXY_MGMT_KEY";
 const STATE = "am-quota/active.json";
 /** How long the Restart button stays armed for its confirming second click. */
 const ARMED = 5000;
-// "Restart when idle" (#413): one hc wait at a time, each at most IDLE_WAIT_S (hc's own --timeout),
-// run through exec with IDLE_EXEC_MS, below Herdr's 10 min exec cap (hc() itself stops at 30 s);
-// at most IDLE_WAITS of them, IDLE_TOTAL_MIN in all (on a Herdr that cuts every exec at 30 s,
-// four short ones). Then one restart, only when the pane is live and not working.
+// Waiting for a busy bot (#413): one hc wait at a time, each at most IDLE_WAIT_S (hc's own
+// --timeout), through exec with IDLE_EXEC_MS, under Herdr's 10 min exec cap (hc() stops at 30 s, and
+// a Herdr with no exec timeout cuts each wait at 30 s). IDLE_WAITS waits at most, plus one for each
+// helper, and never past IDLE_WAITS * IDLE_WAIT_S in all. What it waited is said, never promised.
 const IDLE_WAIT_S = 450;
 const IDLE_EXEC_MS = 480_000;
 const IDLE_WAITS = 4;
-const IDLE_TOTAL_MIN = 30;
 // One bot's restart through exec: room for the CLI's own waits (a new pane's 30 s, twice).
 const RESTART_EXEC_MS = 300_000;
+// A --tree restart: 65 s for the bot at worst, then up to 40 s per helper, one at a time (its old
+// pane's end 10 s, its new one 30 s), so Herdr's cap covers about 13 helpers. The panel has waited
+// already, so the CLI's own wait for a turn (10 min unless told) is only a guard against a race.
+const TREE_EXEC_MS = 600_000;
+const TREE_TURN_WAIT_MS = 10_000;
 /** The bot CLI, run the way the sidebar runs it (am-sidebar/launch.js runCli). */
 const SIDEBAR = "am-sidebar";
 
@@ -45,13 +49,35 @@ const expand = (p) => (p.startsWith("~/") ? `${home()}${p.slice(1)}` : p);
 const slug = (s) => String(s ?? "").replace(/[^A-Za-z0-9_-]/g, "_");
 const wake = (context) => context.notify();
 const message = (err) => String(err?.message ?? err);
+const QUOTED = /"[^"]*"/g;
+/** A sentence up to the clause that names a flag ("Let it finish, or pass …": "Let it finish."). */
+const beforeFlag = (line) => {
+  const at = line.search(/(^|[\s(])--[a-z]/);
+  if (at < 0) return line;
+  const comma = line.slice(0, at).lastIndexOf(", ");
+  return comma > 0 ? `${line.slice(0, comma)}.` : "";
+};
+/**
+ * CLI text as the panel may show it (#413): no clause that names a flag, because the panel never
+ * offers one as a way out. What an agent said is in double quotes, kept as it said it.
+ */
+export function plain(text) {
+  const quotes = [];
+  const masked = String(text ?? "").replace(QUOTED, (q) => `\u0000${quotes.push(q) - 1}\u0000`);
+  const kept = masked.split(/(?<=[.!?])\s+/).map(beforeFlag).filter(Boolean).join(" ");
+  return kept.replace(/\u0000(\d+)\u0000/g, (_m, i) => quotes[Number(i)]);
+}
+/** A restart's note for the panel: its resume words ("resume --last") as words, not a flag. */
+const noteText = (note) => note.replace(/(resume )?--[a-z][a-z-]*/g, "a resume");
 /**
  * Why a bot CLI run failed, as cli() gives it (#413): the --json \`error\` when it printed one (a
  * restart whose new pane exited names its agent's own last line there), else stderr's last line.
  * The refusal is the CLI's last word: warnings come before it, so never its first line.
  */
-const refusal = (r) => (typeof r?.out?.error === "string" && r.out.error.trim()
+const refusal = (r) => plain(typeof r?.out?.error === "string" && r.out.error.trim()
   ? r.out.error.trim() : String(r?.err ?? "").split("\n").map((l) => l.trim()).filter(Boolean).at(-1) ?? "");
+/** "2 min", from ms: what a wait really took. */
+const waited = (ms) => (ms < 60000 ? "under a minute" : `${Math.round(ms / 60000)} min`);
 /** The platform the panel runs on: `security` exists on macOS only. */
 const platform = () => {
   try {
@@ -327,14 +353,14 @@ export default class AmQuota extends View {
   /**
    * The bot CLI with --json, as the sidebar runs it: { code, out, err }, or null when the sidebar
    * mod (which carries the CLI) is not installed. `timeout` (ms): exec's limit, which ends the
-   * CLI when passed (30 s unless given, Herdr's cap 10 min).
+   * CLI when passed (30 s unless given, Herdr's cap 10 min); `env`: more KEY=value words for it.
    */
-  async cli(args, { timeout } = {}) {
+  async cli(args, { timeout, env = [] } = {}) {
     const dir = appHome().replace(/\/+$/, "");
     const runner = `${dir}/mods/${SIDEBAR}/bin/run.sh`;
     const there = await readTextFile(runner).then((t) => t !== null, () => false);
     if (!there) return null;
-    const r = await exec("env", [`HERDR_APP_HOME=${dir}`, "sh", runner, `${dir}/mods/${SIDEBAR}/bin/automagik-herdr.mjs`, ...args, "--json"],
+    const r = await exec("env", [`HERDR_APP_HOME=${dir}`, ...env, "sh", runner, `${dir}/mods/${SIDEBAR}/bin/automagik-herdr.mjs`, ...args, "--json"],
       ...(timeout ? [{ timeout }] : []));
     let out = null;
     try {
@@ -392,6 +418,7 @@ export default class AmQuota extends View {
     // lock.claim refuses this provider's switch until its restarts are done; the other's is free.
     this.restarting = { ...this.restarting, [provider]: true };
     s.result = null;
+    s.waiting = {}; // this run replaces any wait still going
     cx.spawn(async (cx) => {
       wake(cx);
       const failed = [];
@@ -405,7 +432,7 @@ export default class AmQuota extends View {
       // One at a time: each restart waits for the new pane's agent to stay up.
       for (const bot of bots) {
         const one = await this.restartOne(bot);
-        if (one.note) fresh.push(`${bot.name}: ${one.note}`);
+        if (one.note) fresh.push(`${bot.name}: ${noteText(one.note)}`);
         if (one.busy) busy.push(one.busy);
         else if (one.why !== null) failed.push(`${bot.name}: ${one.why}`);
         if (one.why === null) done += 1;
@@ -414,41 +441,52 @@ export default class AmQuota extends View {
       s.restarting = false;
       delete this.restarting[provider];
       s.done = done;
-      s.waiting = {};
-      s.result = { done, failed, fresh, busy };
+      s.result = { done, failed, fresh, busy, helpers: [] };
       // Only the ones that failed are left to restart.
       s.look = { bots: left, reliable: left.length ? s.look.reliable : true };
+      // A bot held only by its helpers needs no second press (the owner's rule): the panel sees to it,
+      // one bot at a time, outside the restart lock, so a Cancel and a switch stay open meanwhile.
+      const held = busy.filter((b) => b.refused === "helpers");
+      for (const b of held) s.waiting[b.bot.id] = {};
       wake(cx);
+      for (const b of held) await this.whenReady(provider, s, b, cx);
     });
   }
 
   /**
    * One bot's restart through the CLI: { why: null | the reason it wasn't, note: a fresh start's
    * note or null, busy: { bot, why, refused, terminal } when the CLI refused it as busy (its
-   * --json `refused`: "working", or "helpers" that would end with its pane) }.
+   * --json `refused`: "working", or "helpers" that would end with its pane), helpers: the lines of
+   * helpers `tree` didn't run again }. `tree`: its helpers restart with it. Such a restart exits 1
+   * when a helper wasn't run again, though the bot did restart: its new `terminal` says so.
    */
-  async restartOne(bot) {
+  async restartOne(bot, { tree = false } = {}) {
     try {
+      const args = ["restart", bot.id, "--project", bot.project, ...(tree ? ["--tree"] : [])];
       // A restart waits up to 30 s for its new pane, twice when codex can't resume (#413): exec's
       // 30 s default would end the CLI mid-restart.
-      const r = await this.cli(["restart", bot.id, "--project", bot.project], { timeout: RESTART_EXEC_MS });
-      if (r?.code === 0) return { why: null, note: r.out?.mode === "fresh" && typeof r.out.note === "string" && r.out.note ? r.out.note : null, busy: null };
+      const r = await this.cli(args, tree ? { timeout: TREE_EXEC_MS, env: [`AUTOMAGIK_HERDR_TREE_TURN_WAIT_MS=${TREE_TURN_WAIT_MS}`] } : { timeout: RESTART_EXEC_MS });
+      const helpers = (Array.isArray(r?.out?.helpers) ? r.out.helpers : []).filter((h) => h?.error)
+        .map((h) => `${bot.name}'s helper ${h.name ?? h.replaced}: ${plain(h.error)}`);
+      if (r?.code === 0 || (tree && typeof r?.out?.terminal === "string")) {
+        return { why: null, note: r.out?.mode === "fresh" && typeof r.out.note === "string" && r.out.note ? r.out.note : null, busy: null, helpers };
+      }
       const why = refusal(r) || `exit ${r?.code ?? "?"}`;
       const refused = r?.out?.refused;
       const busy = (refused === "working" || refused === "helpers") && typeof r.out.terminal === "string"
         ? { bot, why, refused, terminal: r.out.terminal } : null;
-      return { why, note: null, busy };
+      return { why, note: null, busy, helpers };
     } catch (err) {
-      return { why: message(err), note: null, busy: null };
+      // Herdr ended the CLI at its limit: a tree restart may have stopped part-way.
+      const why = tree ? `${message(err)}; it may have stopped part-way, so check ${bot.name} and its helpers before pressing Restart again` : message(err);
+      return { why, note: null, busy: null, helpers: [] };
     }
   }
 
   /**
-   * Restart when idle (#413): `hc wait` on the busy bot's pane (its turn; with helpers, until
-   * none of them works), one at a time, at most IDLE_WAITS (IDLE_TOTAL_MIN in all), then one
-   * restart only if the wait ended and `hc get` says the pane is idle. Otherwise no restart: it
-   * is listed busy again with why. Refused by the CLI again, it is listed again. A second press cancels: the wait's answer is then dropped (hc wait
-   * itself ends by its timeout). Kept in this panel only, so a reload of the panel clears it.
+   * Restart when idle (#413): the button for a bot mid-turn, and the press that retries one the
+   * panel gave up on. A second press cancels: the wait's answer is dropped (hc wait itself ends by
+   * its timeout). Kept in this panel only, so a reload of the panel clears it.
    */
   restartWhenIdle(provider, botId, cx) {
     const s = this.switched[provider];
@@ -457,80 +495,130 @@ export default class AmQuota extends View {
     s.waiting ??= {};
     if (s.waiting[botId]) {
       delete s.waiting[botId];
+      entry.why = "canceled; nothing was restarted";
       wake(cx);
       return;
     }
-    const token = {};
-    s.waiting[botId] = token;
-    const live = () => this.switched[provider] === s && s.waiting?.[botId] === token;
+    s.waiting[botId] = {};
     cx.spawn(async (cx) => {
       wake(cx);
-      // One wait at a time; another only while the pane still works, never past IDLE_WAITS.
-      let still = null;
-      for (let n = 1; ; n += 1) {
-        let ended = false;
-        try {
-          const w = await exec("hc", ["wait", entry.terminal, ...(entry.refused === "helpers" ? ["--children", "all"] : []), "--timeout", String(IDLE_WAIT_S), "--json"],
-            { timeout: IDLE_EXEC_MS });
-          ended = w?.code === 0;
-        } catch {}
-        if (!live()) return;
-        const state = await this.paneState(entry.terminal);
-        if (!live()) return;
-        if (ended && state === "idle") break;
-        still = state === "working" ? `still working after ${n === IDLE_WAITS ? `the panel's ${IDLE_TOTAL_MIN} min wait` : "the wait"}`
-          : state === "gone" ? `its pane ${entry.terminal} is gone` : state === "unknown" ? `hc can't say how ${entry.terminal} is`
-          : state === "idle" ? "the wait was cut short" : `its pane is ${state}`;
-        if (state !== "working" && state !== "idle") break;
-        if (n >= IDLE_WAITS) break;
-        still = null;
-      }
-      if (still !== null) {
-        // Not idle: no restart. Listed busy again, with why, and the button to wait again.
-        delete s.waiting[botId];
-        entry.why = `${still}; nothing was restarted`;
-        wake(cx);
-        return;
-      }
-      // A switch or another restart running now: this one waits for no second turn.
-      if (this.busy || s.restarting) {
-        delete s.waiting[botId];
-        this.switchError = `${entry.bot.name}'s turn ended while ${this.busy ? "a switch" : "a restart"} ran: press Restart when idle again`;
-        wake(cx);
-        return;
-      }
-      s.restarting = true;
-      this.restarting = { ...this.restarting, [provider]: true };
-      wake(cx);
-      const one = await this.restartOne(entry.bot);
-      s.restarting = false;
-      delete this.restarting[provider];
-      delete s.waiting[botId];
-      const r = s.result;
-      r.busy = r.busy.filter((b) => b.bot.id !== botId);
-      if (one.note) r.fresh = [...r.fresh, `${entry.bot.name}: ${one.note}`];
-      if (one.busy) r.busy = [...r.busy, one.busy];
-      else if (one.why !== null) r.failed = [...r.failed, `${entry.bot.name}: ${one.why}`];
-      if (one.why === null) {
-        r.done += 1;
-        s.done = r.done;
-        const left = (s.look?.bots ?? []).filter((b) => b.id !== botId);
-        s.look = { bots: left, reliable: left.length ? s.look.reliable : true };
-      }
-      wake(cx);
+      await this.whenReady(provider, s, entry, cx);
     });
   }
 
-  /** How hc sees `terminal` now: its status ("idle", "working", "blocked", …), "gone" or "unknown". */
-  async paneState(terminal) {
+  /**
+   * Waits for a busy bot, then restarts it once. Each look re-reads hc: the bot's pane and every
+   * helper that would end with it. Its pane done, idle or in error and its helpers done or idle:
+   * one restart, with its helpers if it has any. Something working: one wait, on that pane only,
+   * then look again, within the bounds above. Anything else (a question waiting, gone, unreadable,
+   * a helper in error): no restart, and the bot stays listed with why. A look is what decides, not
+   * how a wait ended: Herdr may cut a wait, and the pane may be finished by then.
+   */
+  async whenReady(provider, s, entry, cx) {
+    const id = entry.bot.id;
+    const token = s.waiting?.[id];
+    if (!token) return;
+    const live = () => this.switched[provider] === s && s.waiting?.[id] === token;
+    const stop = (why) => {
+      delete s.waiting[id];
+      entry.why = `${why}; nothing was restarted`;
+      wake(cx);
+    };
+    const started = Date.now();
+    let waits = 0;
+    let most = null;
+    let helpers = 0;
+    for (;;) {
+      const now = await this.lookAt(entry.terminal);
+      if (!live()) return;
+      if (now.stop) return stop(now.stop);
+      helpers = now.helpers;
+      if (!now.working.length) break;
+      most ??= IDLE_WAITS + now.helpers;
+      if (waits >= most || Date.now() - started >= IDLE_WAITS * IDLE_WAIT_S * 1000) {
+        return stop(`${now.working.join(", ")} still working after ${waited(Date.now() - started)} of waiting`);
+      }
+      waits += 1;
+      entry.why = `waiting for ${now.working.join(", ")} to finish`;
+      wake(cx);
+      try {
+        await exec("hc", ["wait", now.working[0], "--timeout", String(IDLE_WAIT_S), "--json"], { timeout: IDLE_EXEC_MS });
+      } catch {}
+      if (!live()) return;
+    }
+    // A switch or another restart running now: this one does not wait for it.
+    if (this.busy || s.restarting) {
+      delete s.waiting[id];
+      entry.why = `${entry.bot.name} is ready, but ${this.busy ? "a switch" : "a restart"} was running; nothing was restarted`;
+      wake(cx);
+      return;
+    }
+    s.restarting = true;
+    this.restarting = { ...this.restarting, [provider]: true };
+    wake(cx);
+    const one = await this.restartOne(entry.bot, { tree: helpers > 0 });
+    s.restarting = false;
+    delete this.restarting[provider];
+    delete s.waiting[id];
+    const r = s.result;
+    r.busy = r.busy.filter((b) => b.bot.id !== id);
+    if (one.note) r.fresh = [...r.fresh, `${entry.bot.name}: ${noteText(one.note)}`];
+    r.helpers = [...r.helpers, ...one.helpers];
+    if (one.busy) r.busy = [...r.busy, one.busy];
+    else if (one.why !== null) r.failed = [...r.failed, `${entry.bot.name}: ${one.why}`];
+    if (one.why === null) {
+      r.done += 1;
+      s.done = r.done;
+      const left = (s.look?.bots ?? []).filter((b) => b.id !== id);
+      s.look = { bots: left, reliable: left.length ? s.look.reliable : true };
+    }
+    wake(cx);
+  }
+
+  /** `hc get` of `terminal`: { state: live, finished…, status, get }, or null when hc has no such pane. */
+  async paneGet(terminal) {
+    const r = await hc(["get", terminal, "--json"]);
+    if (r?.code !== 0) return null;
+    return JSON.parse(r.stdout);
+  }
+
+  /**
+   * How a bot's pane and the helpers that would end with it stand now: { stop: why nothing may
+   * restart, or null, working: the panes working, helpers: how many there are }.
+   */
+  async lookAt(terminal) {
+    const none = (stop) => ({ stop, working: [], helpers: 0 });
     try {
-      const r = await hc(["get", terminal, "--json"]);
-      if (r?.code !== 0) return "gone";
-      const g = JSON.parse(r.stdout);
-      if (g?.state && g.state !== "live") return "gone";
-      return typeof g?.status?.state === "string" ? g.status.state : "unknown";
+      const pane = await this.paneGet(terminal);
+      if (!pane || (pane.state && pane.state !== "live")) return none(`its pane ${terminal} is gone`);
+      const state = pane.status?.state;
+      if (typeof state !== "string") return none(`hc can't say how ${terminal} is`);
+      if (state === "blocked") return none(`its pane ${terminal} is waiting for an answer`);
+      const ls = await hc(["ls", "--json"]);
+      if (ls?.code !== 0) return none(`hc can't list ${terminal}'s helpers`);
+      const rows = JSON.parse(ls.stdout);
+      const list = Array.isArray(rows) ? rows : rows?.terminals ?? [];
+      const kids = list.filter((r) => r?.parent === terminal && r.state !== "finished" && r.address);
+      const gets = await Promise.all(kids.map((r) => this.paneGet(r.address)));
+      // A member bot outlives the pane, and one gone by now has nothing left to end.
+      const helpers = gets.filter((g) => g?.state === "live" && g.die_with_parent !== false);
+      const working = state === "working" ? [terminal] : [];
+      for (const h of helpers) {
+        // A restart runs a bot's helpers again, not theirs: those would end and stay ended.
+        const under = list.filter((r) => r?.parent === h.address && r.state !== "finished" && r.address);
+        const below = await Promise.all(under.map((r) => this.paneGet(r.address)));
+        if (below.some((g) => g?.state === "live" && g.die_with_parent !== false)) {
+          return none(`its helper ${h.address} has helpers of its own, which a restart wouldn't bring back`);
+        }
+        const st = h.status?.state;
+        if (st === "working") working.push(h.address);
+        else if (st === "blocked") return none(`its helper ${h.address} is waiting for an answer`);
+        else if (typeof st !== "string") return none(`hc can't say how its helper ${h.address} is`);
+        else if (st !== "idle" && st !== "done") return none(`its helper ${h.address} is in ${st}`);
+      }
+      return { stop: null, working, helpers: helpers.length };
     } catch {
-      return "unknown";
+      return none(`hc can't say how ${terminal} is`);
     }
   }
 
@@ -627,10 +715,14 @@ export default class AmQuota extends View {
           const waiting = Boolean(s.waiting?.[b.bot.id]);
           box.child(div().text_size(10.5).text_color(t.working).child(`${b.bot.name} is busy: ${b.why}`));
           box.child(this.button(t, `idle-${provider}-${b.bot.id}`,
-            waiting ? `Waiting for ${b.bot.name} to be idle · Cancel` : `Restart ${b.bot.name} when idle (waits up to ${IDLE_TOTAL_MIN} min)`,
+            waiting ? `Waiting for ${b.bot.name} · Cancel` : `Restart ${b.bot.name} when idle`,
             (_e, cx) => this.restartWhenIdle(provider, b.bot.id, cx)));
         }
       }
+    }
+    if (s.result?.helpers?.length) {
+      hint("Restarted, but a helper wasn't run again:");
+      for (const f of s.result.helpers) box.child(div().text_size(10.5).text_color(t.working).child(f));
     }
     if (s.result?.fresh?.length) {
       hint("Started on a new conversation instead of resuming it:");

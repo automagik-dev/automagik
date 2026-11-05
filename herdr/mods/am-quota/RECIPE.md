@@ -127,13 +127,18 @@ never red. Red is kept for errors (a failed read or switch).
   CLI's reason: a new pane that exited before its agent was up says what its agent printed last
   (codex's `modelProviderNotConfigured`, say). A Codex thread codex refuses with
   `modelProviderNotConfigured` can't be resumed: that bot starts on a new conversation, listed with
-  the old thread's id. A busy bot (mid-turn, or with helpers that would end with its pane) is
-  refused rather than forced and shown as busy, with **Restart <bot> when idle (waits up to 30
-  min)**: `hc wait` on its pane (with helpers, until none of them works), one at a time, at most
-  four of 7.5 minutes each, then one restart only if the pane is idle. A pane still working after
-  them, gone, or blocked is not restarted: it stays listed as busy, with why. Pressing it again
-  cancels; the panel keeps the wait in memory only, so a reload
-  drops it. Without the sidebar mod there is no CLI: the banner says to run
+  the old thread's id. A bot mid-turn is
+  refused rather than forced and shown as busy, with **Restart <bot> when idle**: one `hc wait` at
+  a time on its pane, a few at most, then one restart once its pane is done or idle. How long that
+  can run depends on Herdr: released versions cut each wait at 30 s, about 2 minutes in all; one
+  with `exec`'s `timeout` waits up to 30 minutes. If it gives up, the panel says how long it
+  really waited. A bot with helpers that would end with its pane needs no second press: once its
+  helpers are done or idle the panel restarts it with them, waiting first for any still working
+  (those panes only, the same way) and reading them all again just before the restart. A pane or
+  helper waiting for an answer, gone or unreadable, or a helper in error or with helpers of its
+  own, is not restarted: the bot stays listed with why. Pressing the button while it waits cancels;
+  the panel keeps the wait in memory only, so a reload drops it. The panel never names a CLI flag:
+  a refusal is shown without the clause that offers one. Without the sidebar mod there is no CLI: the banner says to run
   `automagik-herdr restart <bot>` instead.
 - **The refresh token is shared with the proxy.** Both sides hold the same one, and Anthropic rotates
   it on use, so whichever side refreshes first can sign the other out. Expect to re-import or sign in

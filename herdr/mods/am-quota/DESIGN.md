@@ -153,11 +153,20 @@ are added there, never on the Mac; the panel is a personal tool for people who r
   300 s (the default 30 s ends a restart mid-way); a refusal is shown per bot: the
   --json `error` (a new pane that exited names its agent's last line, `cause`), else stderr's
   last line, never its first (warnings come first). A busy refusal (--json `refused`: working or
-  helpers, and the `terminal`) offers Restart when idle: `hc wait --timeout 450` through
-  `exec(…, { timeout: 480000 })` (`hc()` stops at 30 s; exec allows 10 min), one at a time, at most
-  four (30 minutes), then `hc get`: one restart only when the wait ended and the pane is idle,
-  else none and the bot stays listed busy with why; canceled by a second press, held in the
-  panel's memory only. The
+  helpers, and the `terminal`) lists the bot as busy; `plain` takes any clause naming a flag out of
+  CLI text, because the panel never offers one. Working waits for the Restart when idle press;
+  helpers needs none (the owner's rule). Both go through `whenReady`: each look re-reads `hc get` of the
+  pane and `hc ls` plus `hc get` of the helpers that end with it. The look decides, not how a wait
+  ended. Pane done, idle or in error and helpers done or idle: one restart, `--tree` when it has
+  helpers. Something working: `hc wait <that pane> --timeout 450` through
+  `exec(…, { timeout: 480000 })` (`hc()` stops at 30 s; `exec` allows 10 min where Herdr has the
+  option, and released Herdr ignores it, so each wait is cut at 30 s), one at a time, at most four
+  plus one per helper and never past 30 minutes. Anything else: no restart, listed with why. It
+  says what it waited, never promises a time. `--tree` runs with `exec`'s timeout at 600 s (about 13
+  helpers at worst) and the CLI's own turn wait at 10 s, a race guard only; it exits 1 with a new
+  `terminal` when a helper wasn't run again, which counts as restarted. On released Herdr `exec`
+  ends that CLI at 30 s, which can be after the old pane ended; the panel then says it may have
+  stopped part-way. Canceled by a press, held in the panel's memory only. The
   CLI is run as the sidebar runs it (`env HERDR_APP_HOME=… sh <sidebar>/bin/run.sh …`); with no
   sidebar mod there is no CLI and the banner gives the command instead.
 
