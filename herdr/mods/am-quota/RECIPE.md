@@ -125,12 +125,14 @@ never red. Red is kept for errors (a failed read or switch).
   second press within five seconds, then runs `automagik-herdr restart <bot> --project <project>`
   for each, one at a time (each resumes its conversation), and names any it refused, with the
   CLI's reason: a new pane that exited before its agent was up says what its agent printed last
-  (codex's `modelProviderNotConfigured`, say). A Codex thread begun on a model provider no longer
-  configured can't be resumed: that bot starts on a new conversation, listed with the old thread's
-  id. A busy bot (mid-turn, or with helpers that would end with its pane) is refused rather than
-  forced and shown as busy, with **Restart <bot> when idle**: one `hc wait` on its pane (at most
-  30 minutes; with helpers, until none of them works), then one restart, refused again if it is
-  still busy. Pressing it again cancels; the panel keeps the wait in memory only, so a reload
+  (codex's `modelProviderNotConfigured`, say). A Codex thread codex refuses with
+  `modelProviderNotConfigured` can't be resumed: that bot starts on a new conversation, listed with
+  the old thread's id. A busy bot (mid-turn, or with helpers that would end with its pane) is
+  refused rather than forced and shown as busy, with **Restart <bot> when idle (waits up to 30
+  min)**: `hc wait` on its pane (with helpers, until none of them works), one at a time, at most
+  four of 7.5 minutes each, then one restart only if the pane is idle. A pane still working after
+  them, gone, or blocked is not restarted: it stays listed as busy, with why. Pressing it again
+  cancels; the panel keeps the wait in memory only, so a reload
   drops it. Without the sidebar mod there is no CLI: the banner says to run
   `automagik-herdr restart <bot>` instead.
 - **The refresh token is shared with the proxy.** Both sides hold the same one, and Anthropic rotates

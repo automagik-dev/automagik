@@ -245,38 +245,69 @@ test("a busy bot's refusal (working, or with helpers) is shown as the CLI words 
 // #413: the CLI's --json refusal of a busy bot, as cmdRestart prints it.
 const WORKING = "A is working in t5; restarting now would cut its turn in half. Wait until it is idle, or pass --force.";
 const busyAnswer = (refused = "working", error = WORKING) => ({ code: 1, stdout: JSON.stringify({ error, refused, terminal: "t5" }), stderr: `automagik-herdr: ${error}\n` });
+const paneIs = (status, state = "live") => ({ code: 0, stdout: JSON.stringify({ address: "t5", state, status: { state: status } }), stderr: "" });
 const ticks = async () => { for (let i = 0; i < 20; i += 1) await new Promise((go) => setImmediate(go)); };
-async function busyPanel(answer = busyAnswer()) {
+// A busy panel: A refused as `answer`; then hc wait (exec "hc") answers `wait`, and hc get the pane as `pane`.
+async function busyPanel(answer = busyAnswer(), { wait = () => ({ code: 0, stdout: "{}", stderr: "" }), pane = () => paneIs("idle") } = {}) {
   const p = await panel();
   p.view.tool = "codex";
   p.view.switched.codex = { at: NOW, from: "ana@example.com · Pro", to: "bo@example.com · Pro",
     look: { bots: [{ id: "a", name: "A", project: "/p" }], reliable: true } };
   state.hcCalls = [];
-  state.hc = () => ({ code: 0, stdout: "{}", stderr: "" });
-  state.exec = () => answer;
+  state.hc = (args) => (args[0] === "get" ? pane() : { code: 1, stdout: "", stderr: "unexpected" });
+  state.exec = (command) => (command === "hc" ? wait() : answer);
   p.draw();
   nodes.get("restart-codex").click(null, p.cx);
   nodes.get("restart-codex").click(null, p.cx);
   await p.cx.settle();
   state.calls = [];
+  state.execOptions = [];
   p.draw(); // the busy row's button, drawn
   return p;
 }
 const restarts = () => state.calls.filter((c) => c[0] === "env" && c.includes("restart"));
+const waits = () => state.calls.filter((c) => c[0] === "hc");
+const waitOptions = () => state.execOptions.filter((_o, i) => state.calls[i][0] === "hc");
 
-test("a busy bot shows busy with Restart when idle: one hc wait on its pane, then one restart (#413)", async () => {
+test("a busy bot shows busy with Restart when idle: hc wait through exec under its 10 min cap, then one restart (#413)", async () => {
   const { cx, draw } = await busyPanel();
   let root = draw();
   assert.match(text(root), /Restarted 0 of 1\. Not restarted:/);
   assert.ok(text(root).includes(`A is busy: ${WORKING}`), text(root));
-  assert.match(text(root), /Restart A when idle/);
-  state.exec = () => ({ code: 0, stdout: "{}", stderr: "" });
+  assert.match(text(root), /Restart A when idle \(waits up to 30 min\)/);
+  state.exec = (command) => (command === "hc" ? { code: 0, stdout: "{}", stderr: "" } : { code: 0, stdout: "{}", stderr: "" });
   nodes.get("idle-codex-a").click(null, cx);
   await cx.settle();
-  assert.deepEqual(state.hcCalls, [["wait", "t5", "--timeout", "1800", "--json"]], "one bounded wait on the bot's pane, never a loop");
+  assert.deepEqual(waits(), [["hc", "wait", "t5", "--timeout", "450", "--json"]], "one wait, through exec (hc() stops at 30 s)");
+  assert.deepEqual(waitOptions(), [{ timeout: 480000 }], "exec's own limit above hc's 450 s, below Herdr's 600 s cap");
+  assert.deepEqual(state.hcCalls, [["get", "t5", "--json"]], "then how the pane is");
   assert.deepEqual(restarts().map((c) => c.slice(5)), [["restart", "a", "--project", "/p", "--json"]], "then one restart");
+  assert.deepEqual(state.execOptions[state.calls.findIndex((c) => c[0] === "env" && c.includes("restart"))], { timeout: 300000 },
+    "a restart outlasts exec's 30 s default (its new pane's wait, twice for codex): its own limit");
   root = draw();
   assert.match(text(root), /Restarted 1: every Codex bot is on the new account/);
+});
+
+test("Restart when idle: a wait cut by Herdr's exec limit, the pane still working, restarts nothing: at most 4 waits, then still busy (#413)", async () => {
+  const { cx, draw } = await busyPanel(busyAnswer(), { wait: () => { throw new Error("hc timed out after 30s"); }, pane: () => paneIs("working") });
+  nodes.get("idle-codex-a").click(null, cx);
+  await cx.settle();
+  assert.equal(waits().length, 4, "one wait at a time, four at most (30 min in all), never a loop");
+  assert.equal(restarts().length, 0, "never restarted while it works");
+  const root = draw();
+  assert.ok(text(root).includes("A is busy: still working after the panel's 30 min wait; nothing was restarted"), text(root));
+  assert.match(text(root), /Restart A when idle/, "offered again");
+});
+
+test("Restart when idle: a wait that ends on a pane blocked or gone restarts nothing and says why (#413)", async () => {
+  for (const [pane, why] of [[paneIs("blocked"), "its pane is blocked"], [{ code: 1, stdout: "", stderr: "no terminal t5" }, "its pane t5 is gone"]]) {
+    const { cx, draw } = await busyPanel(busyAnswer(), { pane: () => pane });
+    nodes.get("idle-codex-a").click(null, cx);
+    await cx.settle();
+    assert.equal(waits().length, 1);
+    assert.equal(restarts().length, 0);
+    assert.ok(text(draw()).includes(`A is busy: ${why}; nothing was restarted`), text(draw()));
+  }
 });
 
 test("Restart when idle for a bot with helpers waits on them (hc wait --children all); still busy: refused once, listed again (#413)", async () => {
@@ -284,27 +315,27 @@ test("Restart when idle for a bot with helpers waits on them (hc wait --children
   const { cx, draw } = await busyPanel(busyAnswer("helpers", helpers));
   nodes.get("idle-codex-a").click(null, cx);
   await cx.settle();
-  assert.deepEqual(state.hcCalls, [["wait", "t5", "--children", "all", "--timeout", "1800", "--json"]]);
+  assert.deepEqual(waits(), [["hc", "wait", "t5", "--children", "all", "--timeout", "450", "--json"]]);
   assert.equal(restarts().length, 1, "one restart, no second wait");
   const root = draw();
   assert.ok(text(root).includes(`A is busy: ${helpers}`), text(root));
   assert.match(text(root), /Restart A when idle/, "the action is offered again, not run again");
-  assert.equal(state.hcCalls.length, 1);
+  assert.equal(waits().length, 1);
 });
 
 test("Restart when idle is cancelable: pressed again while it waits, the wait's end restarts nothing (#413)", async () => {
-  const { view, cx, draw } = await busyPanel();
   let done;
-  state.hc = () => new Promise((go) => { done = go; });
+  const { view, cx, draw } = await busyPanel(busyAnswer(), { wait: () => new Promise((go) => { done = go; }) });
   nodes.get("idle-codex-a").click(null, cx);
   await ticks();
-  assert.equal(state.hcCalls.length, 1);
+  assert.equal(waits().length, 1);
   assert.match(text(draw()), /Waiting for A to be idle · Cancel/);
   nodes.get("idle-codex-a").click(null, cx);
   assert.match(text(draw()), /Restart A when idle/);
   done({ code: 0, stdout: "{}", stderr: "" });
   await cx.settle();
   assert.equal(restarts().length, 0, "canceled: no restart");
+  assert.equal(waits().length, 1, "and no second wait");
   assert.deepEqual(view.switched.codex.waiting, {});
   // A reloaded panel holds no wait at all: it is this panel's memory only.
   const again = await panel();

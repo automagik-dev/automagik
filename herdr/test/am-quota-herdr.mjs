@@ -30,7 +30,9 @@ export async function hc(args) {
   state.hcCalls.push(args);
   return state.hc(args);
 }
-export async function exec(command, args = []) {
+// Each call's options (exec's { timeout }) in execOptions, beside its argv in calls.
+export async function exec(command, args = [], options) {
   state.calls.push([command, ...args]);
-  return state.exec(command, args);
+  (state.execOptions ??= []).push(options ?? null);
+  return state.exec(command, args, options);
 }

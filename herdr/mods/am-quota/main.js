@@ -28,9 +28,16 @@ const KEY_ENV = "CLIPROXY_MGMT_KEY";
 const STATE = "am-quota/active.json";
 /** How long the Restart button stays armed for its confirming second click. */
 const ARMED = 5000;
-// "Restart when idle" waits once, in hc wait, at most this long (seconds) for a busy bot's turn
-// (or its helpers' work) to end; then it restarts the bot once, refused again if still busy.
-const IDLE_WAIT_S = 1800;
+// "Restart when idle" (#413): one hc wait at a time, each at most IDLE_WAIT_S (hc's own --timeout),
+// run through exec with IDLE_EXEC_MS, below Herdr's 10 min exec cap (hc() itself stops at 30 s);
+// at most IDLE_WAITS of them, IDLE_TOTAL_MIN in all (on a Herdr that cuts every exec at 30 s,
+// four short ones). Then one restart, only when the pane is live and not working.
+const IDLE_WAIT_S = 450;
+const IDLE_EXEC_MS = 480_000;
+const IDLE_WAITS = 4;
+const IDLE_TOTAL_MIN = 30;
+// One bot's restart through exec: room for the CLI's own waits (a new pane's 30 s, twice).
+const RESTART_EXEC_MS = 300_000;
 /** The bot CLI, run the way the sidebar runs it (am-sidebar/launch.js runCli). */
 const SIDEBAR = "am-sidebar";
 
@@ -319,14 +326,16 @@ export default class AmQuota extends View {
 
   /**
    * The bot CLI with --json, as the sidebar runs it: { code, out, err }, or null when the sidebar
-   * mod (which carries the CLI) is not installed.
+   * mod (which carries the CLI) is not installed. `timeout` (ms): exec's limit, which ends the
+   * CLI when passed (30 s unless given, Herdr's cap 10 min).
    */
-  async cli(args) {
+  async cli(args, { timeout } = {}) {
     const dir = appHome().replace(/\/+$/, "");
     const runner = `${dir}/mods/${SIDEBAR}/bin/run.sh`;
     const there = await readTextFile(runner).then((t) => t !== null, () => false);
     if (!there) return null;
-    const r = await exec("env", [`HERDR_APP_HOME=${dir}`, "sh", runner, `${dir}/mods/${SIDEBAR}/bin/automagik-herdr.mjs`, ...args, "--json"]);
+    const r = await exec("env", [`HERDR_APP_HOME=${dir}`, "sh", runner, `${dir}/mods/${SIDEBAR}/bin/automagik-herdr.mjs`, ...args, "--json"],
+      ...(timeout ? [{ timeout }] : []));
     let out = null;
     try {
       out = JSON.parse(r?.stdout ?? "");
@@ -420,7 +429,9 @@ export default class AmQuota extends View {
    */
   async restartOne(bot) {
     try {
-      const r = await this.cli(["restart", bot.id, "--project", bot.project]);
+      // A restart waits up to 30 s for its new pane, twice when codex can't resume (#413): exec's
+      // 30 s default would end the CLI mid-restart.
+      const r = await this.cli(["restart", bot.id, "--project", bot.project], { timeout: RESTART_EXEC_MS });
       if (r?.code === 0) return { why: null, note: r.out?.mode === "fresh" && typeof r.out.note === "string" && r.out.note ? r.out.note : null, busy: null };
       const why = refusal(r) || `exit ${r?.code ?? "?"}`;
       const refused = r?.out?.refused;
@@ -433,9 +444,10 @@ export default class AmQuota extends View {
   }
 
   /**
-   * Restart when idle (#413): one `hc wait` on the busy bot's pane (its turn; with helpers, until
-   * none of them works), bounded by IDLE_WAIT_S, then one restart. No loop: still busy, it is
-   * refused and listed again. A second press cancels: the wait's answer is then dropped (hc wait
+   * Restart when idle (#413): `hc wait` on the busy bot's pane (its turn; with helpers, until
+   * none of them works), one at a time, at most IDLE_WAITS (IDLE_TOTAL_MIN in all), then one
+   * restart only if the wait ended and `hc get` says the pane is idle. Otherwise no restart: it
+   * is listed busy again with why. Refused by the CLI again, it is listed again. A second press cancels: the wait's answer is then dropped (hc wait
    * itself ends by its timeout). Kept in this panel only, so a reload of the panel clears it.
    */
   restartWhenIdle(provider, botId, cx) {
@@ -453,10 +465,33 @@ export default class AmQuota extends View {
     const live = () => this.switched[provider] === s && s.waiting?.[botId] === token;
     cx.spawn(async (cx) => {
       wake(cx);
-      try {
-        await hc(["wait", entry.terminal, ...(entry.refused === "helpers" ? ["--children", "all"] : []), "--timeout", String(IDLE_WAIT_S), "--json"]);
-      } catch {}
-      if (!live()) return;
+      // One wait at a time; another only while the pane still works, never past IDLE_WAITS.
+      let still = null;
+      for (let n = 1; ; n += 1) {
+        let ended = false;
+        try {
+          const w = await exec("hc", ["wait", entry.terminal, ...(entry.refused === "helpers" ? ["--children", "all"] : []), "--timeout", String(IDLE_WAIT_S), "--json"],
+            { timeout: IDLE_EXEC_MS });
+          ended = w?.code === 0;
+        } catch {}
+        if (!live()) return;
+        const state = await this.paneState(entry.terminal);
+        if (!live()) return;
+        if (ended && state === "idle") break;
+        still = state === "working" ? `still working after ${n === IDLE_WAITS ? `the panel's ${IDLE_TOTAL_MIN} min wait` : "the wait"}`
+          : state === "gone" ? `its pane ${entry.terminal} is gone` : state === "unknown" ? `hc can't say how ${entry.terminal} is`
+          : state === "idle" ? "the wait was cut short" : `its pane is ${state}`;
+        if (state !== "working" && state !== "idle") break;
+        if (n >= IDLE_WAITS) break;
+        still = null;
+      }
+      if (still !== null) {
+        // Not idle: no restart. Listed busy again, with why, and the button to wait again.
+        delete s.waiting[botId];
+        entry.why = `${still}; nothing was restarted`;
+        wake(cx);
+        return;
+      }
       // A switch or another restart running now: this one waits for no second turn.
       if (this.busy || s.restarting) {
         delete s.waiting[botId];
@@ -484,6 +519,19 @@ export default class AmQuota extends View {
       }
       wake(cx);
     });
+  }
+
+  /** How hc sees `terminal` now: its status ("idle", "working", "blocked", …), "gone" or "unknown". */
+  async paneState(terminal) {
+    try {
+      const r = await hc(["get", terminal, "--json"]);
+      if (r?.code !== 0) return "gone";
+      const g = JSON.parse(r.stdout);
+      if (g?.state && g.state !== "live") return "gone";
+      return typeof g?.status?.state === "string" ? g.status.state : "unknown";
+    } catch {
+      return "unknown";
+    }
   }
 
   // ---- drawing ----
@@ -579,7 +627,7 @@ export default class AmQuota extends View {
           const waiting = Boolean(s.waiting?.[b.bot.id]);
           box.child(div().text_size(10.5).text_color(t.working).child(`${b.bot.name} is busy: ${b.why}`));
           box.child(this.button(t, `idle-${provider}-${b.bot.id}`,
-            waiting ? `Waiting for ${b.bot.name} to be idle · Cancel` : `Restart ${b.bot.name} when idle`,
+            waiting ? `Waiting for ${b.bot.name} to be idle · Cancel` : `Restart ${b.bot.name} when idle (waits up to ${IDLE_TOTAL_MIN} min)`,
             (_e, cx) => this.restartWhenIdle(provider, b.bot.id, cx)));
         }
       }

@@ -149,11 +149,15 @@ are added there, never on the Mac; the panel is a personal tool for people who r
   tool whose pane started (`ls --all --json`'s `since`) before the switch; one running bot with no
   start time makes the split unreliable, so then all of that tool's running bots are listed and the
   banner says so. Restart is a second press within five seconds, then `automagik-herdr restart
-  <bot> --project <key>` per bot, sequentially, never `--force`; a refusal is shown per bot: the
+  <bot> --project <key>` per bot, sequentially, never `--force`, each with exec's `timeout` at
+  300 s (the default 30 s ends a restart mid-way); a refusal is shown per bot: the
   --json `error` (a new pane that exited names its agent's last line, `cause`), else stderr's
   last line, never its first (warnings come first). A busy refusal (--json `refused`: working or
-  helpers, and the `terminal`) offers Restart when idle: one `hc wait` bounded at 30 minutes,
-  then one restart, no loop; canceled by a second press, held in the panel's memory only. The
+  helpers, and the `terminal`) offers Restart when idle: `hc wait --timeout 450` through
+  `exec(…, { timeout: 480000 })` (`hc()` stops at 30 s; exec allows 10 min), one at a time, at most
+  four (30 minutes), then `hc get`: one restart only when the wait ended and the pane is idle,
+  else none and the bot stays listed busy with why; canceled by a second press, held in the
+  panel's memory only. The
   CLI is run as the sidebar runs it (`env HERDR_APP_HOME=… sh <sidebar>/bin/run.sh …`); with no
   sidebar mod there is no CLI and the banner gives the command instead.
 
