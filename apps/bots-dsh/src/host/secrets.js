@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto'
 import { chmod, copyFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { GITHUB_TOKEN_DAYS, GITHUB_WORK, cleanGitHubWork, githubPermissions, isGitHubTokenName } from '../shared/github-token.js'
 import { replaceFile } from './files.js'
 import { output } from './tools.js'
 
@@ -422,6 +423,10 @@ export function install(rt) {
     }
   }
 
+  // What the card asks GitHub for, so the Bot words the same ask and never a broader one.
+  const githubAsk = work => work.length === 0 ? ''
+    : ` It shows the steps to make a fine-grained GitHub token with ${githubPermissions(work).map(entry => `${entry.label}: ${entry.access}`).join(', ')}, for ${GITHUB_TOKEN_DAYS} days. Do not ask for other permissions.`
+
   const callerOf = exec => rt.selfOf(exec.agent?.session?.header?.id ?? exec.agent?.id)
 
   ctx.tools.register(defineTool({
@@ -429,7 +434,8 @@ export function install(rt) {
     description: 'Ask the user for a key, token, or password through a secure card in your own chat. The user types it into the card; you never see the value. It reaches your shell as an environment variable. When the key is already saved for you, this only tells you its variable. Showing a card ends your turn; a note arrives when the user saves or cancels.',
     parameters: {
       name: { type: 'string', required: true, description: 'Key name in capitals, digits, and underscores, e.g. GITHUB_TOKEN' },
-      purpose: { type: 'string', required: true, description: 'One short line for the user: what you need it for' },
+      purpose: { type: 'string', required: true, description: 'One short line for the user: what you need it for. For GitHub, leave the permissions out: the card lists them' },
+      github: { type: 'array', items: { type: 'string', enum: Object.keys(GITHUB_WORK) }, description: 'For a GitHub token (GITHUB_TOKEN, GH_TOKEN), required: the work you will do with it. edit_code to push commits, open_prs to open or update pull requests, read_code, read_prs, read_issues, edit_issues. The card shows the user how to make a fine-grained token with only the permissions this work needs' },
     },
     output,
     async execute(args, exec) {
@@ -440,8 +446,13 @@ export function install(rt) {
       if (bot === undefined) return 'Only Bots on the team can use request_secret.'
       const name = normalizeName(args.name)
       if (!SECRET_NAME.test(name)) return 'Name the key with capitals, digits, and underscores, starting with a letter (for example GITHUB_TOKEN).'
+      const { work, unknown } = cleanGitHubWork(args.github)
+      if (unknown.length > 0) return `Unknown GitHub work: ${unknown.join(', ')}. Pass github with ${Object.keys(GITHUB_WORK).join(', ')}.`
       const secret = secrets.get(name)
       if (canUse(secret, bot.id)) return `${name} is already saved and you may use it: ${usage(name)}. You cannot see the value; never print it.`
+      // A new GitHub token is made for declared work only (#316), so the card never asks for a
+      // broader one; a saved key is only allowed or replaced.
+      if (secret === undefined && work.length === 0 && isGitHubTokenName(name)) return `Say what you will do with ${name}: pass github with ${Object.keys(GITHUB_WORK).join(', ')} (edit_code and open_prs to push commits and open pull requests). The card then asks for only the permissions that work needs.`
       if (rt.groupOwners.has(id)) return 'Secret cards only work in your own chat. Tell the group you will ask the user in your own chat, and call request_secret there.'
       if (!rt.chatOwners.has(id)) return 'Secret cards only work in your current own chat.'
       const readOnly = rt.readOnly()
@@ -461,6 +472,7 @@ export function install(rt) {
         name,
         purpose: String(args.purpose ?? '').trim().slice(0, 300),
         kind: secret ? 'allow' : 'fill',
+        ...(work.length > 0 ? { github: work } : {}),
         status: 'pending',
         askedAt: now,
       })
@@ -469,7 +481,7 @@ export function install(rt) {
       exec.concludeTurn?.()
       return secret
         ? `The card asking the user to let you use ${name} is on screen. A note arrives when the user answers; you will not see the value.`
-        : `The card asking the user for ${name} is on screen. A note arrives when the user saves or cancels; you will not see the value.`
+        : `The card asking the user for ${name} is on screen.${githubAsk(work)} A note arrives when the user saves or cancels; you will not see the value.`
     },
   }))
 

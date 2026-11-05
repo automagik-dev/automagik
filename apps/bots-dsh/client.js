@@ -854,6 +854,12 @@ var ZH = {
   "This page is not on HTTPS: the key crosses the network unencrypted.": "这个页面不是 HTTPS：密钥会以明文经过网络。",
   "Let {bot} use {name}?": "允许 {bot} 使用 {name}？",
   "{name} needs a key": "{name} 需要一个密钥",
+  // The steps of a GitHub token card (#316); GitHub's own field names fill the slots.
+  "Open GitHub's new fine-grained token page.": "打开 GitHub 新建细粒度令牌的页面。",
+  "Under “{field}”, choose “{value}”.": "在“{field}”中选择“{value}”。",
+  "Under “{field}”, choose “{value}” and pick the ones {bot} works on.": "在“{field}”中选择“{value}”，并选出 {bot} 要处理的仓库。",
+  "Under “{field}”, set only these:": "在“{field}”中只设置这些：",
+  "Click “{button}”, copy it and paste it below.": "点击“{button}”，复制令牌并粘贴到下方。",
   "Saved for {scope}": "已保存，可用范围：{scope}",
   "Value of {name}": "{name} 的值",
   "{bot} never sees the value. It reaches {bot}'s shell as ": "{bot} 永远看不到这个值。它会作为下面的环境变量进入 {bot} 的 shell：",
@@ -3514,6 +3520,50 @@ function useDockHold(sessionId, kind, requestId, actions, inline) {
   };
 }
 
+// src/shared/github-token.js
+var GITHUB_TOKEN_PAGE = "https://github.com/settings/personal-access-tokens/new";
+var GITHUB_TOKEN_DAYS = 30;
+var GITHUB_FIELDS = {
+  expiration: "Expiration",
+  days: `${GITHUB_TOKEN_DAYS} days`,
+  repositoryAccess: "Repository access",
+  onlySelected: "Only select repositories",
+  permissions: "Permissions > Repository permissions",
+  generate: "Generate token"
+};
+var GITHUB_WORK = {
+  read_code: ["contents", "read"],
+  edit_code: ["contents", "write"],
+  read_prs: ["pull_requests", "read"],
+  open_prs: ["pull_requests", "write"],
+  read_issues: ["issues", "read"],
+  edit_issues: ["issues", "write"]
+};
+var PERMISSIONS = { contents: "Contents", pull_requests: "Pull requests", issues: "Issues" };
+var ACCESS = { read: "Read-only", write: "Read and write" };
+function cleanGitHubWork(raw) {
+  const given = raw === void 0 || raw === null ? [] : (Array.isArray(raw) ? raw : [raw]).map(String);
+  return {
+    work: Object.keys(GITHUB_WORK).filter((tag) => given.includes(tag)),
+    unknown: [...new Set(given.filter((tag) => !Object.hasOwn(GITHUB_WORK, tag)))]
+  };
+}
+function githubPermissions(work) {
+  const levels = /* @__PURE__ */ new Map();
+  for (const tag of cleanGitHubWork(work).work) {
+    const [name, level] = GITHUB_WORK[tag];
+    if (levels.get(name) !== "write") levels.set(name, level);
+  }
+  return Object.keys(PERMISSIONS).filter((name) => levels.has(name)).map((name) => ({ name, label: PERMISSIONS[name], level: levels.get(name), access: ACCESS[levels.get(name)] }));
+}
+function githubTokenUrl(work) {
+  const params = new URLSearchParams({ expires_in: String(GITHUB_TOKEN_DAYS) });
+  for (const { name, level } of githubPermissions(work)) params.set(name, level);
+  return `${GITHUB_TOKEN_PAGE}?${params}`;
+}
+var GITHUB_TOKEN_NAME = /^(?:GITHUB|GH)_(?:TOKEN|PAT|ACCESS_TOKEN|PERSONAL_ACCESS_TOKEN)$/;
+var isGitHubTokenName = (name) => GITHUB_TOKEN_NAME.test(String(name ?? ""));
+
 // src/client/secret-card.js
 var import_react9 = require("react");
 var MIN_VALUE = 4;
@@ -3599,6 +3649,27 @@ function SecretHead({ bot, title, detail, name, onClose }) {
     onClose ? (0, import_react9.createElement)("button", { type: "button", className: "bt-q-x", "aria-label": t("Cancel the request"), title: t("Cancel"), onClick: onClose }, (0, import_react9.createElement)(CloseIcon)) : null
   );
 }
+function GitHubSteps({ bot, work }) {
+  const field = (key, params) => (0, import_react9.createElement)("li", null, t(key, params));
+  return (0, import_react9.createElement)(
+    "div",
+    { className: "bt-secret-steps", role: "note" },
+    (0, import_react9.createElement)(
+      "ol",
+      null,
+      (0, import_react9.createElement)("li", null, (0, import_react9.createElement)("a", { href: githubTokenUrl(work), target: "_blank", rel: "noopener noreferrer" }, t("Open GitHub's new fine-grained token page."))),
+      field("Under “{field}”, choose “{value}”.", { field: GITHUB_FIELDS.expiration, value: GITHUB_FIELDS.days }),
+      field("Under “{field}”, choose “{value}” and pick the ones {bot} works on.", { field: GITHUB_FIELDS.repositoryAccess, value: GITHUB_FIELDS.onlySelected, bot: bot.name }),
+      (0, import_react9.createElement)(
+        "li",
+        null,
+        t("Under “{field}”, set only these:", { field: GITHUB_FIELDS.permissions }),
+        (0, import_react9.createElement)("ul", null, githubPermissions(work).map((entry) => (0, import_react9.createElement)("li", { key: entry.name }, (0, import_react9.createElement)("code", null, `${entry.label}: ${entry.access}`))))
+      ),
+      field("Click “{button}”, copy it and paste it below.", { button: GITHUB_FIELDS.generate })
+    )
+  );
+}
 function SecretCard({ sessionId, bot, request, roster, actions, inline = false }) {
   const [value, setValue] = (0, import_react9.useState)("");
   const [scope, setScope] = (0, import_react9.useState)("all");
@@ -3640,6 +3711,7 @@ function SecretCard({ sessionId, bot, request, roster, actions, inline = false }
       name: request.name,
       onClose: busy ? void 0 : cancel
     }),
+    filling && Array.isArray(request.github) && request.github.length > 0 ? (0, import_react9.createElement)(GitHubSteps, { bot, work: request.github }) : null,
     request.kind === "allow" ? (0, import_react9.createElement)("div", { className: "bt-secret-saved" }, (0, import_react9.createElement)(KeyIcon), t("Saved for {scope}", { scope: scopeLabel(secret?.scope, roster) })) : null,
     filling ? (0, import_react9.createElement)(
       "div",
@@ -3924,6 +3996,11 @@ var SECRET_CSS = `
 @keyframes bt-secret-in{from{opacity:0;transform:translateY(-2px)}}
 .bt-secret-saved{display:flex;align-items:center;gap:6px;font-size:13px;line-height:18px;color:var(--bt-ink-2)}
 .bt-secret-note{font-size:12px;line-height:17px;color:var(--bt-ink-3)}
+.bt-secret-steps{font-size:12.5px;line-height:18px;color:var(--bt-ink-2)}
+.bt-secret-steps ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:3px}
+.bt-secret-steps ul{margin:2px 0 0;padding-left:16px}
+.bt-secret-steps a{color:inherit;text-decoration:underline;text-underline-offset:2px}
+.bt-secret-steps code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
 .bt-secret-note code,.bt-secret-about code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
 .bt-secret-warn{display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;font-size:12px;line-height:16px;color:#b25e09;background:color-mix(in srgb,#f59e0b 12%,transparent)}
 .bt-secret-error{font-size:12px;line-height:16px;color:var(--bt-danger)}
@@ -14763,6 +14840,9 @@ var SCHEDULE_CSS = `
 }
 `;
 
+// src/client/places.js
+var allowPlace = () => [t("Settings"), t("Capabilities"), t("Allow")].join(" > ");
+
 // src/client/mcp-paste.js
 var SECRETISH = /(key|token|secret|password|passwd|pass|auth|bearer|credential|cookie)/i;
 var placeholder = (value) => /^\$|^\$\{|<.*>|your[-_ ]|xxx|\.\.\.|^(true|false|null)$/i.test(value) || value.length < 8 || /\s/.test(value);
@@ -14799,7 +14879,7 @@ var mcpRequest = (text2) => [
   "Add this MCP server as a shared capability with save_capability.",
   "Work out a short name, whether it is a local command (stdio) or a URL (streamable-http), and a one-line description from what I pasted.",
   "Keys are already saved as secrets and appear as $DSH_SECRET_<NAME>: keep those references exactly. If it needs a key I did not give, ask me for it with a secret card instead of guessing.",
-  "Then tell me in one line what you added, and whether I must allow it in settings.",
+  `Then tell me in one line what you added. If I must allow it, tell me to do it in ${allowPlace()}, in exactly those words.`,
   "",
   "<<<",
   text2.trim(),
@@ -23842,7 +23922,7 @@ function apply(ctx) {
   const pull = async () => {
     const order = ++pulls;
     const known = roster.getSnapshot();
-    const value = await call("state", { since: known.revision, models: known.modelsKey ?? "", locale: language() });
+    const value = await call("state", { since: known.revision, models: known.modelsKey ?? "", locale: language(), allowPlace: allowPlace() });
     if (order < applied) return;
     applied = order;
     const nextActivity = JSON.stringify(value.activity ?? {});

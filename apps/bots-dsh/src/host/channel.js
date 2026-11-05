@@ -33,6 +33,11 @@ export function install(rt) {
   // The DSH interface language of the last browser that asked for the team.
   let uiLocale
   rt.uiLanguage = () => (uiLocale === undefined ? undefined : LANGUAGES[uiLocale.split('-')[0].toLowerCase()] ?? uiLocale)
+  // Where the user allows an MCP server, in that browser's words (places.js builds it from the
+  // interface's own strings, "Configurações > Recursos > Permitir" in pt-BR), so the Bot names
+  // the place as the user sees it. Until a browser says, the English interface's words.
+  let uiAllowPlace
+  rt.allowPlace = () => uiAllowPlace ?? 'Settings > Capabilities > Allow'
 
   const ok = value => ({ ok: true, value })
   const fail = (message, code = 'bot/error') => ({ ok: false, error: { code, message, details: {} } })
@@ -193,6 +198,7 @@ export function install(rt) {
       switch (endpoint) {
         case 'state':
           if (typeof body.locale === 'string' && /^[a-z]{2,3}(-[\w-]+)?$/i.test(body.locale)) uiLocale = body.locale
+          if (typeof body.allowPlace === 'string' && /^[^\p{Cc}]{1,120}$/u.test(body.allowPlace.trim())) uiAllowPlace = body.allowPlace.trim()
           if (readOnly === undefined) await rt.bootstrap()
           await rt.catalog()
           await rt.loadSecrets()
