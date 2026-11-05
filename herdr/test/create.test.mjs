@@ -1017,3 +1017,61 @@ test("menu Prompt from a worktree space: saved in the worktree, the menu stays s
   assert.equal(JSON.parse(readFileSync(wtPath, "utf8")).bots.find((b) => b.id === OMP.id).instructions, "newer words");
   assert.equal(g("status", "--porcelain"), "");
 });
+
+// #230: a project's formatter may use tabs (Biome's default); the form's saves keep the file's
+// indentation, and a new file is two spaces, as before.
+const indented = (file, indent) => `${JSON.stringify(file, null, indent)}\n`;
+const botsText = () => readFileSync(join(project, ".herdr/bots.json"), "utf8");
+test("the form's Save and the menu's Prompt save keep bots.json's tabs (#230); a new file is two spaces", async () => {
+  writeFileSync(join(project, ".herdr/bots.json"), indented({ version: 1, categories: [], bots: [MAIN, OMP] }, "\t"));
+  const made = await open({ form: "create" });
+  made.form.inputs.name.type("qa", made.cx);
+  made.draw();
+  await made.click("bot-save");
+  assert.equal(made.form.error, null);
+  assert.deepEqual(stored().bots.map((b) => b.name), ["orch", "pi-bot", "qa"]);
+  assert.equal(botsText(), indented(stored(), "\t"));
+  const { form, cx, draw, click } = await menu();
+  draw();
+  await click("menu-prompt");
+  form.prompt.type("new words", cx);
+  draw();
+  await click("menu-prompt-save");
+  assert.equal(stored().bots.find((b) => b.id === OMP.id).instructions, "new words");
+  assert.equal(botsText(), indented(stored(), "\t"));
+  rmSync(join(project, ".herdr/bots.json"));
+  const fresh = await open({ form: "create" });
+  fresh.form.inputs.name.type("orch", fresh.cx);
+  fresh.draw();
+  await fresh.click("bot-save");
+  assert.equal(fresh.form.error, null);
+  assert.equal(botsText(), indented(stored(), 2));
+});
+
+test("the menu's Prompt saved twice in a worktree keeps the main checkout's tabs, the second save not stale (#230)", async () => {
+  const repo = join(root, "repo");
+  const wt = join(root, "repo-wt");
+  const g = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, encoding: "utf8" });
+  mkdirSync(join(repo, ".herdr"), { recursive: true });
+  writeFileSync(join(repo, ".herdr/bots.json"), indented({ version: 1, categories: [], bots: [MAIN, OMP] }, "\t"));
+  g("init", "-q");
+  g("add", ".");
+  g("commit", "-q", "-m", "bots");
+  g("worktree", "add", "-q", "-b", "wt", wt);
+  rmSync(join(wt, ".herdr/bots.json"));
+  const wtPath = join(wt, ".herdr/bots.json");
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const { form, cx, draw, click } = await menu({ project: repo });
+  draw();
+  await click("menu-prompt");
+  for (const words of ["first words", "second words"]) {
+    form.prompt.type(words, cx);
+    draw();
+    await click("menu-prompt-save");
+    assert.equal(form.error, null, words);
+    const text = readFileSync(wtPath, "utf8");
+    assert.equal(JSON.parse(text).bots.find((b) => b.id === OMP.id).instructions, words);
+    assert.equal(text, indented(JSON.parse(text), "\t"), `${words}: tabs kept`);
+  }
+});

@@ -17,7 +17,7 @@ import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, Popover, Button, Scrollbar } from "gpui-base";
 import { theme, readTextFile, pickFolder, knownAgents, openOverlay, closeOverlay, spaces, panes, focused, run, home, appHome, settings, hc, notify } from "herdr";
 import * as fs from "fs/promises";
-import { BOTS_PATH, CHARACTERS, MAX_INSTRUCTIONS, RANKS, parseBots, newBotId, applyBotEdit } from "./model.js";
+import { BOTS_PATH, CHARACTERS, MAX_INSTRUCTIONS, RANKS, botsText, parseBots, newBotId, applyBotEdit } from "./model.js";
 import { LEGACY_AGENTS, configPaths, detectModel } from "./models.js";
 import { INKS, characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { UI_ICONS, uiIconFile, NEW_CATEGORY, MAX_WAVE, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, omniLook, placeOf, problemOf, rowLineOf, thousands } from "./formModel.js";
@@ -535,7 +535,7 @@ export class BotForm {
         // The row shows the main checkout's file (Q16): the menu stays, saying where it went.
         // Its snapshot is now the text written, so another Save works.
         const saved = applyBotEdit(raw, entry, newCategory);
-        const now = `${JSON.stringify(saved, null, 2)}\n`;
+        const now = botsText(saved, expected ?? text); // the text writeBots wrote
         this.promptBase = { ...this.promptBase, text: now, expected: now, raw: saved, file: parseBots(now).file, state };
         this.promptNotice = this.worktreeNote(dir, key, untracked, true);
         this.busy = false;
