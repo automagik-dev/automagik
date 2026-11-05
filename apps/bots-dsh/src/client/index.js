@@ -14,6 +14,7 @@ import { CHARACTERS, DEFAULT_MASK, MAIN_LOOK, SHAPES, markupCache, maskOf } from
 import { createSource, EMPTY_ROSTER, indexRoster, isAgentSession } from './sources.js'
 import { teamActions } from './team-actions.js'
 import { themeCss, shellTokens, registry, registerShape, registerTheme, allThemes, layoutOf, widthOf, flatWidthOf } from './themes.js'
+import { markConversation } from './stage.js'
 import { MENTION_ORIGIN, currentPart, relativeShort } from './text.js'
 import { SHELL_CSS, CONVERSATION_CSS, installStyles, installCompiledStyles } from './styles.js'
 import { BotMark, lookOf } from './mark.js'
@@ -993,6 +994,9 @@ export function apply(ctx) {
     }
   }
   const installConversation = () => [
+    // First on, last off: the page mark the Stage composer rules key on (stage.js), so a Bot
+    // composer card is two-row from its first paint, before DSH mounts its input slots (#322).
+    () => markConversation(),
     () => installUserTimes(),
     () => installCompiledStyles(COMPOSER_PACK_CSS, 'composer-packs'),
     () => installCompiledStyles(CONVERSATION_CSS, 'conversation'),

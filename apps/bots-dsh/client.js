@@ -8098,6 +8098,11 @@ html body :is(.bt-connect,.bt-you){border:0;border-radius:var(--st-r-menu);backg
 html body .bt-connect:hover{background:var(--st-tag)}
 html body :is(.bt-menu-label,.bt-list-label,.bt-section-label){font-size:12px;line-height:16px;font-weight:600;color:var(--bt-ink-2)}
 `;
+var CONVERSATION_MARK = "data-bt-conversation";
+function markConversation(root = document.documentElement) {
+  root.setAttribute(CONVERSATION_MARK, "");
+  return () => root.removeAttribute(CONVERSATION_MARK);
+}
 var CONTROLS = `
 html body :is(.bt-soft,.bt-q-btn,.bt-pill,.bt-model-chip,.bt-head button){border:1px solid var(--st-line-2);border-radius:10px;background:transparent;box-shadow:none;font-weight:600;transition:background-color .16s ease}
 html body :is(.bt-soft,.bt-q-btn,.bt-pill,.bt-model-chip,.bt-head button):hover:not(:disabled){background:var(--bt-hover)}
@@ -8109,12 +8114,12 @@ html body .bt-state[aria-pressed=true]{background:var(--st-lilac);color:var(--st
 html body [class*="_composerStack"] [data-composer-card][data-composer-card]{max-width:min(760px,100%)!important;margin-inline:auto!important}
 html body [class*="_composerStack"] [data-queue-dock]{max-width:calc(760px - 2*var(--dsh-composer-dock-inset,8px))!important}
 html body [data-composer-card]{background:var(--st-raised)!important;border:1px solid var(--st-line)!important;border-radius:18px!important;box-shadow:var(--st-hollow)!important}
-html body [data-composer-card][data-composer-card]:has(.bt-plus){flex-wrap:wrap!important;row-gap:6px!important;padding:10px 10px 8px 12px!important;border-radius:18px!important;min-height:0!important}
-html body [data-composer-card][data-composer-card]:has(.bt-plus)>[data-input-scroll]{order:0!important;flex:1 1 100%!important;padding:2px 4px 4px!important}
-html body [data-composer-card][data-composer-card]:has(.bt-plus) [data-composer-input]{min-height:40px!important}
-html body [data-composer-card][data-composer-card]:has(.bt-plus) [class*="_tools"]{order:1!important;align-self:center!important;display:flex;align-items:center;gap:6px}
-html body [data-composer-card][data-composer-card]:has(.bt-plus) [class*="_trailing"]{order:2!important;align-self:center!important;margin-left:auto!important;display:flex;align-items:center;gap:6px}
-html body [data-composer-card][data-composer-card]:has(.bt-plus)>[data-slot="conversation.input.attachments"]{order:-1!important}
+html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card]{flex-wrap:wrap!important;row-gap:6px!important;padding:10px 10px 8px 12px!important;border-radius:18px!important;min-height:0!important}
+html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card]>[data-input-scroll]{order:0!important;flex:1 1 100%!important;padding:2px 4px 4px!important}
+html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card] [data-composer-input]{min-height:40px!important}
+html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card] [class*="_tools"]{order:1!important;align-self:center!important;display:flex;align-items:center;gap:6px;min-width:28px;min-height:28px}
+html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card] [class*="_trailing"]{order:2!important;align-self:center!important;margin-left:auto!important;display:flex;align-items:center;gap:6px}
+html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card]>[data-slot="conversation.input.attachments"]{order:-1!important}
 html body [data-composer-card]:focus-within{border-color:var(--st-ring)!important;box-shadow:0 0 0 3px color-mix(in srgb,var(--st-ring) 14%,transparent)!important}
 html body [data-composer-card] button[class*="_primary"],html body .bt-voice{background:var(--st-cyan)!important;color:var(--st-cyan-ink)!important;box-shadow:var(--st-clay)!important;border:0!important}
 html body :is(.bt-plus,.bt-mic){background:transparent;box-shadow:none;color:var(--bt-ink-2)}
@@ -24636,6 +24641,9 @@ function apply(ctx) {
     };
   };
   const installConversation = () => [
+    // First on, last off: the page mark the Stage composer rules key on (stage.js), so a Bot
+    // composer card is two-row from its first paint, before DSH mounts its input slots (#322).
+    () => markConversation(),
     () => installUserTimes(),
     () => installCompiledStyles(COMPOSER_PACK_CSS, "composer-packs"),
     () => installCompiledStyles(CONVERSATION_CSS, "conversation"),
