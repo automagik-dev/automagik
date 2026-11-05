@@ -75,6 +75,24 @@ async function start(team = TEAM) {
   return { rt, ctx, home, folder, archived, held, saved, stop }
 }
 
+// Holds the next call to `rt[method]` at its start until the test opens it, so two changes
+// meet in one chosen order with no timers: `entered` settles once the call is waiting.
+function gate(t, rt, method) {
+  const original = rt[method]
+  let enter
+  let open
+  const entered = new Promise(resolve => { enter = resolve })
+  const opened = new Promise(resolve => { open = resolve })
+  rt[method] = async (...args) => {
+    rt[method] = original
+    enter()
+    await opened
+    return original(...args)
+  }
+  t.after(() => { rt[method] = original })
+  return { entered, open }
+}
+
 test('a Bot deleted while its group is made stays out of it, and so does the admin role it was given', async (t) => {
   const { rt, held, stop } = await start()
   t.after(stop)
@@ -112,14 +130,42 @@ test('a change that waits for its folder keeps the member another change added m
   assert.deepEqual(saved().rooms.r1.members, ['a', 'b', 'd', 'c'])
 })
 
+// #366: the folder change goes on while the deletion still waits on the Bot's Sessions.
+test('a Bot whose deletion has begun is not added by a folder change that goes on first', async (t) => {
+  const { rt, folder, saved, stop } = await start()
+  t.after(stop)
+  const folderCheck = gate(t, rt, 'cleanWorkDir')
+  const release = gate(t, rt, 'releaseBot')
+  const moving = rt.updateRoom('r1', { add: ['c'], workDir: folder })
+  await folderCheck.entered
+  const deleting = rt.deleteBot('c')
+  await release.entered
+  folderCheck.open()
+  const moved = await moving
+  release.open()
+  await deleting
+  assert.deepEqual(moved.changes, [`every member now works in ${folder} here`])
+  assert.deepEqual(moved.room.members, ['a', 'b'])
+  assert.deepEqual(saved().rooms.r1.members, ['a', 'b'])
+  assert.equal(saved().rooms.r1.workDir, folder)
+  assert.equal(saved().bots.c, undefined)
+})
+
+// The deletion ends while the folder change still waits for its folder check.
 test('a Bot deleted while a change waits for its folder is not added back', async (t) => {
   const { rt, folder, saved, stop } = await start()
   t.after(stop)
+  const folderCheck = gate(t, rt, 'cleanWorkDir')
   const moving = rt.updateRoom('r1', { add: ['c'], workDir: folder })
-  const deleting = rt.deleteBot('c')
-  const [moved] = await Promise.all([moving, deleting])
+  await folderCheck.entered
+  await rt.deleteBot('c')
+  folderCheck.open()
+  const moved = await moving
   assert.deepEqual(moved.changes, [`every member now works in ${folder} here`])
+  assert.deepEqual(moved.room.members, ['a', 'b'])
   assert.deepEqual(saved().rooms.r1.members, ['a', 'b'])
+  assert.equal(saved().rooms.r1.workDir, folder)
+  assert.equal(saved().bots.c, undefined)
 })
 
 test('a group deleted while a change waits for its folder stays deleted', async (t) => {
