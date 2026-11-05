@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { checkBots, PROJECTS_FILE } from "../mods/am-sidebar/model.js";
+import { readJsonLines } from "./log-lines.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
@@ -44,7 +45,7 @@ function scene(t, { state = "connected" } = {}) {
   };
   const on = ["--machine", "vm", "--project", project];
   const botsPath = join(project, ".herdr/bots.json");
-  const calls = () => readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const calls = () => readJsonLines(logPath);
   const setState = (fn) => { const s = JSON.parse(readFileSync(statePath, "utf8")); fn(s); writeFileSync(statePath, JSON.stringify(s)); };
   return { root, project, local, app, cli, on, botsPath, calls, setState, bots: () => JSON.parse(readFileSync(botsPath, "utf8")) };
 }

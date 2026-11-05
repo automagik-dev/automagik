@@ -15,6 +15,7 @@ import { METER_RELEASES, OPT_IN, assetFor, decodeExec, hcExecArgs, linkedMachine
 import { METER_EVERY_MS, METER_EXEC_LIMIT_MS, METER_KEY, SYNC, syncMeter, syncTargets } from "../mods/am-sidebar/meter.js";
 import { USAGEMETER, formatMarker, parseMarker } from "../mods/am-sidebar/release.js";
 import { meterAfterUpdate } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
+import { readJsonLines } from "./log-lines.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CLI = join(ROOT, "mods", "am-sidebar", "bin", "automagik-herdr.mjs");
@@ -71,7 +72,7 @@ function fleet(t, { sums, pin, marker = true } = {}) {
   const says = (name) => spawnSync(meterOf(name), ["--version"], { encoding: "utf8" }).stdout.trim();
   const plant = (name, version) => { mkdirSync(dirname(meterOf(name)), { recursive: true }); exe(meterOf(name), `#!/bin/sh\necho "usagemeter ${version}"\n`); };
   const downloads = () => readFileSync(curlLog, "utf8").split("\n").filter(Boolean);
-  const execs = () => readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((a) => a[0] === "exec");
+  const execs = () => readJsonLines(logPath).filter((a) => a[0] === "exec");
   const mark = () => parseMarker(readFileSync(markPath, "utf8"));
   const leftovers = (name) => (existsSync(dirname(meterOf(name))) ? readdirSync(dirname(meterOf(name))).filter((n) => n.startsWith(".usagemeter")) : []);
   return { root, home, mods, dir, cli, meterOf, says, plant, downloads, execs, mark, leftovers, markPath };
