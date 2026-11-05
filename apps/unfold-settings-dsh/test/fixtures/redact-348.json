@@ -227,6 +227,56 @@
    "password: &a !!str !x &b >\n  hunter2\nnext: shown"
   ],
   [
+   "invalid YAML: three anchors and tags before a scalar, left as written",
+   "password: &a !!str !x hunter2",
+   "password: &a !!str !x hunter2"
+  ],
+  [
+   "invalid YAML: three anchors and tags before a scalar, a long third, left as written",
+   "password: &a !!str !!int hunter2",
+   "password: &a !!str !!int hunter2"
+  ],
+  [
+   "invalid YAML: four anchors and tags before a scalar, left as written",
+   "password: &a !!str !!int &bb hunter2",
+   "password: &a !!str !!int &bb hunter2"
+  ],
+  [
+   "invalid YAML: three anchors and tags before a camelCase scalar, left as written",
+   "dbPassword: &a !!str !!int hunter2",
+   "dbPassword: &a !!str !!int hunter2"
+  ],
+  [
+   "invalid YAML: four anchors and tags before a camelCase scalar, left as written",
+   "dbPassword: &a !!str !!int &bb hunter2",
+   "dbPassword: &a !!str !!int &bb hunter2"
+  ],
+  [
+   "invalid YAML: three anchors and tags before a quoted scalar, left as written",
+   "password: &a !!str !!int \"hunter2\"",
+   "password: &a !!str !!int \"hunter2\""
+  ],
+  [
+   "invalid YAML: three anchors and tags after an equals sign, left as written",
+   "password= &a !!str !!int hunter2",
+   "password= &a !!str !!int hunter2"
+  ],
+  [
+   "a comment glued to a block indicator",
+   "password: |#x\n  hunter2\nnext: shown",
+   "password: |#x\n  [redacted]\nnext: shown"
+  ],
+  [
+   "a comment glued to a strip folded indicator under a camelCase name",
+   "dbPassword: >-#x\n  hunter2\nnext: shown",
+   "dbPassword: >-#x\n  [redacted]\nnext: shown"
+  ],
+  [
+   "an anchor, then a comment glued to a block indicator",
+   "password: &a |#x\n  hunter2\nnext: shown",
+   "password: |#x\n  [redacted]\nnext: shown"
+  ],
+  [
    "a comment after a block indicator",
    "password: | # note\n  hunter2\nnext: shown",
    "password: | # note\n  [redacted]\nnext: shown"

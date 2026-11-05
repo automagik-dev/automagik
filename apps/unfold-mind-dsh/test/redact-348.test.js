@@ -16,10 +16,12 @@ const VALUE = /hunter2/
 // The rows whose value the redaction hides.
 const HIDDEN = TABLE.text.filter(([, input, want]) => VALUE.test(input) && !VALUE.test(want))
 // A block scalar's key line: a name, its colon, up to two anchors or tags, then an indicator, a
-// comment and a CR.
-const BLOCK = /:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[|>][-+0-9]*(?:[ \t]+#[^\r\n]*)?[ \t]*\r?$/m
+// comment (after a space or glued on) and a CR.
+const BLOCK = /:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[|>][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?$/m
 // The rows whose anchor or tag has no value on its line: the next line's key is never the value.
 const NEXT_LINE = TABLE.text.filter(([what]) => what.startsWith('next line:'))
+// The invalid YAML rows (three or more anchors and tags): left as written, nothing remembered.
+const INVALID = TABLE.text.filter(([what]) => what.startsWith('invalid YAML:'))
 
 for (const [what, input, want] of TABLE.text) test(`text: ${what}`, () => assert.equal(redactText(input), want))
 for (const [what, input, want] of TABLE.object) test(`object: ${what}`, () => assert.deepEqual(redact(input), want))
@@ -30,6 +32,10 @@ test('a hidden value is remembered as the value, not as an anchor, a tag or a na
     if (BLOCK.test(input)) continue // a block scalar's lines are not remembered, as for its plain form
     assert.ok(secretsIn(`${input} `).some((v) => VALUE.test(v)), what)
   }
+})
+
+test('an invalid YAML row is remembered as nothing', () => {
+  for (const [what, input] of INVALID) assert.deepEqual(secretsIn(`${input} `), [], what)
 })
 
 function journal() {
@@ -79,7 +85,7 @@ test('served: a block scalar under an anchor or tag longer than the 4096 keep, a
 
 test('an anchor or tag with no value on its line never makes the next line\'s key a remembered value', () => {
   for (const [what, input] of NEXT_LINE) {
-    assert.deepEqual(secretsIn(`${input} `).filter((v) => /username|bob/.test(v)), [], what)
+    assert.deepEqual(secretsIn(`${input} `).filter((v) => /username|bob|^[&!]/.test(v)), [], what)
     const r = journal()
     r.send(`${input}\n`)
     r.send('later username: carol')
