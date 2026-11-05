@@ -49,3 +49,13 @@ test('a partial child key padded by a cut is neither hidden nor served while its
     assert.ok(redactText(head).includes('[redacted]'), `${what}: a whole payload still hides it`)
   }
 })
+
+// #406 F-B: a line a cut padded with blanks is hidden whole, as its name cannot be read across the
+// pad (the parts of a credential name arrive apart). The same rule is in the window and the browser
+// copy, byte for byte (scripts/unfold-copies.test.ts).
+test('a padded line is hidden whole', () => {
+  const VALUE = /hunter2/
+  const padded = `${fill('{parent}: &d\n  {pass}')}${' '.repeat(17_000)}${fill('{word}: {value}')}\n`
+  assert.doesNotMatch(redactText(padded), VALUE, 'whole payload')
+  assert.doesNotMatch(redactText(padded, true), VALUE, 'growing buffer')
+})

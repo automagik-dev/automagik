@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { loadDefinitions } from '../src/definitions.js'
 import { MindStream } from '../src/mind.js'
-import { redact, redactText, secretsIn } from '../src/redact.js'
+import { REDACTED, redact, redactText, secretsIn } from '../src/redact.js'
 
 const TABLE = JSON.parse(readFileSync(new URL('./fixtures/redact-348.json', import.meta.url), 'utf8'))
 const VALUE = /hunter2/
@@ -234,8 +234,9 @@ test('served: a child key still arriving under a key line is never remembered as
       const { secrets, text } = r.row()
       assert.ok(!secrets.some((v) => LATER.includes(v) || (partial && partial.includes(v))), `${what}, ${how}: remembered ${JSON.stringify(secrets)}`)
       assert.ok(text.endsWith(LATER), `${what}, ${how}: the later text is served as written`)
-      if (how.startsWith('a blank run')) continue
-      assert.ok(text.endsWith(`${want}${LATER}`), `${what}, ${how}: served as the whole text`)
+      // The pad is the cut's, not the row's: the line it pads is hidden whole (fail-closed, as no
+      // name on it can be read), so only the runs without a pad serve the row's text as it reads.
+      if (!how.startsWith('a blank run')) assert.ok(text.endsWith(`${want}${LATER}`), `${what}, ${how}: served as the whole text`)
       if (!want.includes(SECRET)) assert.ok(!r.served().includes(SECRET), `${what}, ${how}: the value is hidden`)
     }
   }
@@ -260,5 +261,86 @@ test('served: a partial child key padded by a cut is neither hidden nor remember
     assert.ok(!out.includes(pending), `${what}: withheld, never served`)
     assert.ok(secretsIn(head, true).every((v) => !pending.includes(v)), `${what}: not remembered`)
     assert.ok(redactText(head).includes('[redacted]'), `${what}: a whole payload still hides it`)
+  }
+})
+
+// #406 F-B: the cut pads the unfinished line with blanks. Once the rest of that line arrives it can
+// read as anything (the pad hides where its name ended, so the parts of a credential name arrive
+// apart), so the line is hidden whole, fail-closed, and the value after the pad's first colon is
+// remembered: a later line that holds it bare is masked too. Rows: the padded completion, the same a
+// character at a time, and a later note line that holds the value bare.
+test('served: a partial child key completed after a cut\'s pad is hidden whole, and a later bare occurrence is masked', () => {
+  for (const [what, [head, tail]] of PARTIAL) {
+    const pad = `${head}${' '.repeat(17_000)}`
+    const runs = {
+      'the padded completion': [(r) => { r.send(pad); r.send(`${tail}${LATER}`) }, LATER],
+      'the padded completion, a character at a time': [(r) => { r.send(pad); for (const ch of `${tail}${LATER}`) r.send(ch) }, LATER],
+      'the padded completion, then a later note line': [(r) => { r.send(pad); r.send(tail); r.send(`\nlater ${SECRET} appears`) }, `later ${REDACTED} appears`],
+    }
+    for (const [how, [run, end]] of Object.entries(runs)) {
+      // A block's lines are not remembered (a later bare occurrence is served, as whole), so only
+      // the completion runs apply to a block body under the pad.
+      if (how.endsWith('later note line') && LATER_BLOCK.test(head)) continue
+      const r = journal()
+      run(r)
+      const { text } = r.row()
+      assert.ok(!r.served().includes(SECRET), `${what}, ${how}: no payload serves the value`)
+      assert.ok(text.endsWith(end), `${what}, ${how}: the text after it is served as written`)
+    }
+  }
+})
+
+// #406 FAIL 2: an explicit key's block (FB1) is remembered once its entry has ended even while the
+// buffer is still growing, as the continued form (FL1) is: a line break after the value, or a blank, a
+// tab or a comment that ends it at the end of the text, closes it. While the value is still the last
+// thing in the text it may still be arriving, and is not remembered.
+const ENDED = ['\nnext: shown', ' ', '\t', ' # note']
+test('continuation: an explicit key\'s block is remembered while the buffer grows once its value has ended', () => {
+  for (const input of [fill('? {name}\n: |\n  {value}'), fill('- ? {name}\n  :\n    {value}')]) {
+    assert.deepEqual(secretsIn(input, true), [], 'a value still arriving at the end of the text is not remembered')
+    for (const end of ENDED) {
+      const kept = secretsIn(`${input}${end}`, true)
+      assert.ok(kept.some((v) => v.includes(SECRET)), `remembered once ${JSON.stringify(end)} ended it`)
+      assert.ok(!masked(`later ${SECRET} stays`, kept).includes(SECRET), `a later bare occurrence is masked, ended by ${JSON.stringify(end)}`)
+    }
+  }
+  const r = journal()
+  r.send(`${fill('? {name}\n: |\n  {value}')}\nnext: shown\nlater ${SECRET} stays`)
+  assert.ok(!r.row().text.includes(SECRET), 'the value, and its later bare occurrence, are not served')
+})
+
+// #406 NARROW 4: an explicit key's continued value (F-C) whose line ends at the end of the text is
+// remembered there, with a blank, a tab or a comment after it as with a line break: the value has
+// ended either way. Only a text that stops at the value itself waits in a growing buffer.
+test('continuation: an explicit key\'s continued value is remembered when blanks, a tab or a comment end it at the end of the text', () => {
+  const input = fill('? {name}\n:\n    {value}')
+  for (const end of ['', ...ENDED]) assert.ok(secretsIn(`${input}${end}`).some((v) => v.includes(SECRET)), `remembered whole, ended by ${JSON.stringify(end)}`)
+  for (const end of ENDED) assert.ok(secretsIn(`${input}${end}`, true).some((v) => v.includes(SECRET)), `remembered in a growing buffer, ended by ${JSON.stringify(end)}`)
+  assert.deepEqual(secretsIn(input, true), [], 'a growing buffer still waits for the value to end')
+  const r = journal()
+  r.send(`${input} `)
+  r.send(`\nlater ${SECRET} stays`)
+  assert.ok(!r.served().includes(SECRET), 'the value, and its later bare occurrence, are not served')
+})
+
+// #406 FAIL 3: a pad between an explicit key's question line and its `:` line is longer than the tail
+// keep, so the `:` line is cut away with the rest of the text. The question line is a key line too,
+// and is kept, so the value that arrives under the `:` line stays hidden. Rows: the plain form, a
+// list item's (FL1) and one whose `:` line opens a block (FB1).
+const QUESTION_FILLER = 'k: v\n'.repeat(800)
+const BETWEEN = [
+  ['plain', (name) => `? ${name}\n`, (value) => `:\n  ${value}\n`],
+  ['FL1', (name) => `- ? ${name}\n`, (value) => `  :\n    ${value}\n`],
+  ['FB1', (name) => `? ${name}\n`, (value) => `: |\n  ${value}\n`],
+]
+test('served: a cut between a question line and its \':\' line keeps the question line and hides the value', () => {
+  for (const [what, head, body] of BETWEEN) {
+    const r = journal()
+    r.send(`${QUESTION_FILLER}${head(FILL['{name}'])}${' '.repeat(17_000)}\n`)
+    r.send(body(SECRET))
+    r.send('next: shown')
+    assert.ok(!r.served().includes(SECRET), `${what}: no payload serves the value`)
+    assert.ok(r.served().includes(`? ${FILL['{name}']}`), `${what}: the question line is still served`)
+    assert.ok(r.served().includes('next: shown'), `${what}: the later text is served`)
   }
 })

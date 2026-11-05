@@ -36,7 +36,7 @@ export class EventWindow {
     this.rev = 0
     this.listeners = new Set()
     this.raw = new Map() // row key -> raw joined text, open text rows only (private)
-    this.orphan = new Map() // row key -> what is still arriving after a dropped head: {token} | {quote}
+    this.orphan = new Map() // row key -> what is still arriving after a dropped head: {token} | {quote} | {line}
   }
 
   onChange(listener) {
@@ -174,13 +174,36 @@ export class EventWindow {
         if (close >= 0) this.orphan.delete(row.key)
         else this.orphan.set(row.key, { quote: pending.quote, escaped })
         add = close < 0 ? '' : add.slice(close + 1)
+      } else if (pending?.line) {
+        // The dropped head was a name's first part (a colon followed it): the rest of its line is a
+        // value it could have named, withheld to the line's end, however many deltas that takes.
+        const breakAt = add.search(/[\r\n]/)
+        if (breakAt < 0) add = ''
+        else {
+          this.orphan.delete(row.key)
+          add = add.slice(breakAt)
+        }
       } else if (pending) {
         // A run whose context was dropped is still arriving: discard any leading blanks and the
         // next whole token (it may span deltas), so its value can never be shown orphaned.
         const head = add.match(/^\s*\S*/)[0]
         const rest = add.slice(head.length)
-        if (rest) this.orphan.delete(row.key) // the token ended (whitespace follows)
-        add = rest
+        if (/^\s*:/.test(add) || head.endsWith(':')) {
+          // A colon right after the dropped token makes it a name's first part (#406 F-B): its line
+          // holds that name's value, so the rest of the line is withheld to its end.
+          const breakAt = rest.search(/[\r\n]/)
+          if (breakAt < 0) {
+            this.orphan.set(row.key, { line: true })
+            add = ''
+          } else {
+            this.orphan.delete(row.key)
+            add = rest.slice(breakAt)
+          }
+        } else if (!rest) add = '' // the token is still arriving
+        else {
+          this.orphan.delete(row.key) // the token ended (whitespace follows): the rest is prose
+          add = rest
+        }
       }
       const { raw, orphan } = boundRaw((this.raw.get(row.key) ?? row.text) + add)
       if (orphan) this.orphan.set(row.key, orphan)
@@ -309,6 +332,18 @@ function explicitBlock(_, nl, indent, before, name, sep, indicator, block) {
 // Each rule is [pattern, replacement, gate]: a rule with a gate runs only on a text the gate finds
 // something in, a literal its pattern cannot match without, so a text skips the rules it cannot meet.
 const SECRET_TEXT = [
+  // A line a cut padded with blanks (#406 F-B): a run of blanks as long as the keep is the cut's
+  // padding, not text. It hides where the line's head ended, so the name on it cannot be read (a
+  // child key arrives as "pass" and "word:"), and no later rule can be trusted on it. Once the line
+  // has ended it is hidden whole, the one fail-closed answer to a head that is gone; while it is
+  // still arriving (a growing buffer's last line, OPEN_END) the later-line rules keep withholding
+  // it instead. It runs first, as it hides the whole line, whatever the line turns out to hold.
+  [/^[^\n]*$/gm, (line, at, all) => {
+    if (!/[ \t]{4096,}/.test(line)) return line
+    // While the line is still arriving (a growing buffer's last line) the later-line rules withhold
+    // it instead, as no more of it can be read yet.
+    return OPEN_END && at + line.length === all.length ? line : REDACTED
+  }, /[ \t]{4096,}/],
   // Whole-value priority: a credential key's value is secret as ONE unit, whatever it
   // starts with ("Bearer ", "Basic ", even an already-redacted marker, which is untrusted input),
   // so the key rules run first and no inner pattern can split a value they recognise.
@@ -490,7 +525,8 @@ function contextBefore(raw, cut) {
 // anchor, tag and indicator lines, each indented one more than the key; the blank and comment lines
 // between are dropped, as they never hold the value, and the line the cut is in is kept as it reads
 // (a blank run cut to the key's indent and one more), so the value that arrives next is still read
-// under its key. A line ends at \n, \r\n or a lone \r; up to 64 lines and 4 KiB above it are read.
+// under its key. A line ends at \n, \r\n or a lone \r; up to 64 lines and 4 KiB above it are read,
+// a blank run at the cut not counted against the 4 KiB (it is the cut's padding, not text).
 const KEY_LINE_OPEN = /:[ \t]*(?:[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)*)?(?:[ \t]+#[^\r\n]*)?$/
 // An explicit key's colon line with a block indicator on it (`: |`, `: &a >-`, a comment after them).
 const EX_COLON = /^[ \t]*:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*$/
@@ -519,7 +555,11 @@ function openKeyLine(raw, max) {
   if (line.length < max && (KEY_LINE_OPEN.test(line.slice(-256)) || EX_COLON.test(line) || /^[ \t]*(?:-[ \t]+)?\?[ \t]/.test(line))) return `${end > 0 ? keyOf(line, lineAbove()) : ''}${line} `
   const under = (l) => PROPERTY_LINE.test(l.slice(-256)) || INDICATOR_LINE.test(l.slice(-256))
   if (end === 0 || (line && !SKIPPED_LINE.test(line) && !under(line))) return null
-  const start = Math.max(0, end - 4096)
+  // A blank run at the cut is the cut's padding, not text: the read starts 4 KiB back from the last
+  // text, not from the run, so a key or question line before a pad longer than the read is still read.
+  let blank = 0
+  while (end - blank > 0 && (raw[end - blank - 1] === ' ' || raw[end - blank - 1] === '\t' || raw[end - blank - 1] === '\r' || raw[end - blank - 1] === '\n')) blank++
+  const start = Math.max(0, end - blank - 4096)
   const lines = raw.slice(start, end).split(/\r\n|\r|\n/)
   lines.pop() // the empty text after the last line break
   const kept = []
@@ -532,7 +572,9 @@ function openKeyLine(raw, max) {
     }
     if (i === 0 && start > 0) return null // cut by the 4 KiB read: not a whole line
     const indent = /^[ \t]*/.exec(above)[0]
-    if (above.length >= max / 2 || !(KEY_LINE_OPEN.test(above.slice(-256)) || EX_COLON.test(above.slice(-256)))) return null
+    // A `? name` line (#406 FAIL 3) is a key line too: a pad between it and its `:` line drops the
+    // `:` line with the rest of the text, and the question line is what the value arrives under.
+    if (above.length >= max / 2 || !(KEY_LINE_OPEN.test(above.slice(-256)) || EX_COLON.test(above.slice(-256)) || /^[ \t]*(?:-[ \t]+)?\?[ \t]/.test(above))) return null
     const deeper = (l) => l.startsWith(indent) && /^[ \t]/.test(l.slice(indent.length))
     if (!kept.every(deeper) || (line && !SKIPPED_LINE.test(line) && !deeper(line))) return null
     const cutLine = !line ? last.slice(0, indent.length + 1) : SKIPPED_LINE.test(line) ? `${line} ` : `${indent} ${line.trimStart()} `

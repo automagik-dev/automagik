@@ -719,7 +719,19 @@ function keptTail(full) {
   if (full.length <= TEXT_KEEP) return full
   const at = full.length - TEXT_KEEP
   const span = quotedSpans(full).find((sp) => sp.start < at && at < sp.end)
-  if (!span && !/\S/.test(full.slice(at))) return openKeyLine(full, TEXT_KEEP) ?? full.slice(at)
+  if (!span && !/\S/.test(full.slice(at))) {
+    const line = openKeyLine(full, TEXT_KEEP)
+    if (line !== null) return line
+    // A pad (#406 F-B): a run of blanks as long as the keep, with no key line before it, is the
+    // cut's padding, not text. It is kept (its last TEXT_KEEP chars) with the rest of the line, so
+    // that line still reads as the cut's and is hidden whole once it ends.
+    const pad = /[ \t]{4096,}/.exec(full)
+    return pad ? `${pad[0].slice(-TEXT_KEEP)}${full.slice(pad.index + pad[0].length)}` : full.slice(at)
+  }
+  // The cut is not in the run, but a pad may still reach into the keep, and is kept as it is there:
+  // trimming it further would leave too little of it to read the line as the cut's.
+  const pad = /[ \t]{4096,}/.exec(full)
+  if (pad && pad.index + pad[0].length > at && !span) return `${pad[0].slice(-TEXT_KEEP)}${full.slice(pad.index + pad[0].length)}`
   if (!span) return full.slice(at)
   if (span.closed) return full.slice(span.end)
   return span.keep ?? `${full.slice(span.start, span.open)}${span.escaped ? '\\' : ''}`
@@ -733,7 +745,8 @@ function keptTail(full) {
 // the lines under it, as the window reads them: its blank, comment, anchor and tag lines and a block
 // indicator line, then the line the cut is in. The key line, its anchor, tag and indicator lines
 // (each indented one more than the key) and the line the cut is in are kept, so the value that
-// arrives next is still read under its key.
+// arrives next is still read under its key. A blank run at the cut is the cut's padding, not text,
+// and is not counted against the 4 KiB read.
 const KEY_LINE_OPEN = /:[ \t]*(?:[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)*)?(?:[ \t]+#[^\r\n]*)?$/
 const EX_COLON = /^[ \t]*:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*$/
 const PROPERTY_LINE = /^[ \t]+[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?(?:[ \t]+#[^\r\n]*)?$/
@@ -761,7 +774,11 @@ function openKeyLine(raw, max) {
   if (line.length < max && (KEY_LINE_OPEN.test(line.slice(-256)) || EX_COLON.test(line) || /^[ \t]*(?:-[ \t]+)?\?[ \t]/.test(line))) return `${end > 0 ? keyOf(line, lineAbove()) : ''}${line} `
   const under = (l) => PROPERTY_LINE.test(l.slice(-256)) || INDICATOR_LINE.test(l.slice(-256))
   if (end === 0 || (line && !SKIPPED_LINE.test(line) && !under(line))) return null
-  const start = Math.max(0, end - 4096)
+  // A blank run at the cut is the cut's padding, not text: the read starts 4 KiB back from the last
+  // text, not from the run, so a key or question line before a pad longer than the read is still read.
+  let blank = 0
+  while (end - blank > 0 && (raw[end - blank - 1] === ' ' || raw[end - blank - 1] === '\t' || raw[end - blank - 1] === '\r' || raw[end - blank - 1] === '\n')) blank++
+  const start = Math.max(0, end - blank - 4096)
   const lines = raw.slice(start, end).split(/\r\n|\r|\n/)
   lines.pop() // the empty text after the last line break
   const kept = []
@@ -774,7 +791,9 @@ function openKeyLine(raw, max) {
     }
     if (i === 0 && start > 0) return null // cut by the 4 KiB read: not a whole line
     const indent = /^[ \t]*/.exec(above)[0]
-    if (above.length >= max / 2 || !(KEY_LINE_OPEN.test(above.slice(-256)) || EX_COLON.test(above.slice(-256)))) return null
+    // A `? name` line (#406 FAIL 3) is a key line too: a pad between it and its `:` line drops the
+    // `:` line with the rest of the text, and the question line is what the value arrives under.
+    if (above.length >= max / 2 || !(KEY_LINE_OPEN.test(above.slice(-256)) || EX_COLON.test(above.slice(-256)) || /^[ \t]*(?:-[ \t]+)?\?[ \t]/.test(above))) return null
     const deeper = (l) => l.startsWith(indent) && /^[ \t]/.test(l.slice(indent.length))
     if (!kept.every(deeper) || (line && !SKIPPED_LINE.test(line) && !deeper(line))) return null
     const cutLine = !line ? last.slice(0, indent.length + 1) : SKIPPED_LINE.test(line) ? `${line} ` : `${indent} ${line.trimStart()} `

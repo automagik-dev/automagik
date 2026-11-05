@@ -63,7 +63,7 @@ function rig() {
   const seen = []
   w.onChange((change, payload) => seen.push(JSON.stringify(payload)))
   const push = (text) => w.push({ v: 2, id: `g:${++seq}`, producer: 'g', seq, t_ns: seq, source: 'guest', kind: 'agent_delta', response_id: 'rK', text })
-  return { push, served: () => [...seen, JSON.stringify(w.rows)].join('\n') }
+  return { push, served: () => [...seen, JSON.stringify(w.rows)].join('\n'), text: () => w.rows.at(-1).text }
 }
 
 test('served: every row the table hides stays hidden in the window, whole and a character at a time', () => {
@@ -302,5 +302,95 @@ test('served: a partial child key padded by a cut is neither hidden nor remember
     w.onChange((change, payload) => seen.push(JSON.stringify(payload)))
     w.push({ v: 2, id: `g:${++seq}`, producer: 'g', seq, t_ns: seq, source: 'guest', kind: 'agent_delta', response_id: 'rK', text: padded })
     assert.ok(![...seen, JSON.stringify(w.rows)].join('\n').includes('[redacted]'), `${what}: the window masks nothing while the line is open`)
+  }
+})
+
+// #406 F-B: the cut pads the unfinished line with blanks. The window withholds the rest of that line,
+// as the pad hides where its name ended (the parts of a credential name arrive apart), so no payload
+// serves the value and the text after it is served as written. The window keeps no memory of a value
+// (the browser copy is the memory Mind carries), so a later note line is served as it reads. Rows:
+// the padded completion, the same a character at a time, and one completed on a later note line.
+test('served: a partial child key completed after a cut\'s pad is withheld whole in the window', () => {
+  for (const [what, [head, tail]] of PARTIAL) {
+    const pad = `${head}${' '.repeat(17_000)}`
+    const runs = {
+      'the padded completion': (r) => { r.push(pad); r.push(`${tail}${LATER}`) },
+      'the padded completion, a character at a time': (r) => { r.push(pad); for (const ch of `${tail}${LATER}`) r.push(ch) },
+      'the padded completion, then a later note line': (r) => { r.push(pad); r.push(tail); assert.ok(!r.served().includes(SECRET), `${what}: no payload serves the value`); r.push(`\nlater ${SECRET} appears`) },
+    }
+    for (const [how, run] of Object.entries(runs)) {
+      const r = rig()
+      run(r)
+      if (!how.endsWith('later note line')) assert.ok(!r.served().includes(SECRET), `${what}, ${how}: no payload serves the value`)
+      // The bound's cut takes the line break before the later text with the pad, so the shown tail
+      // starts at that text.
+      const later = how.endsWith('later note line') ? `later ${SECRET} appears` : LATER.slice(1)
+      assert.ok(r.text().endsWith(later), `${what}, ${how}: the text after it is served as written`)
+    }
+  }
+})
+
+// #406 FAIL 2: an explicit key's block (FB1) is remembered once its entry has ended even while the
+// buffer is still growing, as the continued form (FL1) is: a line break after the value, or a blank, a
+// tab or a comment that ends it at the end of the text, closes it. While the value is still the last
+// thing in the text it may still be arriving, and is not remembered.
+const ENDED = ['\nnext: shown', ' ', '\t', ' # note']
+test('the browser copy remembers an explicit key\'s block while the buffer grows once its value has ended', () => {
+  for (const input of [fill('? {name}\n: |\n  {value}'), fill('- ? {name}\n  :\n    {value}')]) {
+    assert.deepEqual(clientSecretsIn(input, true), [], 'a value still arriving at the end of the text is not remembered')
+    for (const end of ENDED) {
+      const kept = clientSecretsIn(`${input}${end}`, true)
+      assert.ok(kept.some((v) => v.includes(SECRET)), `remembered once ${JSON.stringify(end)} ended it`)
+      assert.ok(!masked(`later ${SECRET} stays`, kept).includes(SECRET), `a later bare occurrence is masked, ended by ${JSON.stringify(end)}`)
+    }
+  }
+})
+
+// #406 NARROW 4: an explicit key's continued value (F-C) whose line ends at the end of the text is
+// remembered there, with a blank, a tab or a comment after it as with a line break: the value has
+// ended either way. Only a text that stops at the value itself waits in a growing buffer.
+test('the browser copy remembers an explicit key\'s continued value ended by blanks, a tab or a comment at the end of the text', () => {
+  const input = fill('? {name}\n:\n    {value}')
+  for (const end of ['', ...ENDED]) assert.ok(clientSecretsIn(`${input}${end}`).some((v) => v.includes(SECRET)), `remembered whole, ended by ${JSON.stringify(end)}`)
+  for (const end of ENDED) assert.ok(clientSecretsIn(`${input}${end}`, true).some((v) => v.includes(SECRET)), `remembered in a growing buffer, ended by ${JSON.stringify(end)}`)
+  assert.deepEqual(clientSecretsIn(input, true), [], 'a growing buffer still waits for the value to end')
+})
+
+// #406 FAIL 3: a pad between an explicit key's question line and its `:` line is longer than the 16 KiB
+// bound, so the `:` line is cut away with the rest of the text. The question line is a key line too,
+// and is kept, so the value that arrives under the `:` line stays hidden. Rows: the plain form, a list
+// item's (FL1) and one whose `:` line opens a block (FB1).
+const QUESTION_FILLER = 'k: v\n'.repeat(800)
+const BETWEEN = [
+  ['plain', (name) => `? ${name}\n`, (value) => `:\n  ${value}\n`],
+  ['FL1', (name) => `- ? ${name}\n`, (value) => `  :\n    ${value}\n`],
+  ['FB1', (name) => `? ${name}\n`, (value) => `: |\n  ${value}\n`],
+]
+test('served: a cut between a question line and its \':\' line keeps the question line and hides the value', () => {
+  for (const [what, head, body] of BETWEEN) {
+    const r = rig()
+    r.push(`${QUESTION_FILLER}${head(FILL['{name}'])}${' '.repeat(17_000)}\n`)
+    r.push(body(SECRET))
+    r.push('next: shown')
+    assert.ok(!r.served().includes(SECRET), `${what}: no payload serves the value`)
+    assert.ok(r.served().includes(`? ${FILL['{name}']}`), `${what}: the question line is still served`)
+    assert.ok(r.text().endsWith('next: shown'), `${what}: the later text is served`)
+  }
+})
+
+// #406 F-B: a line a cut padded with blanks is hidden whole once it has ended, as its name cannot be
+// read across the pad, and the value after the pad's first colon is remembered, so a later bare
+// occurrence is masked (the browser copy is the memory Mind carries). The same in the browser copy,
+// in a whole payload and a growing buffer.
+test('a padded line is hidden whole, the window and the browser copy', () => {
+  const padded = `${fill('{parent}: &d\n  {pass}')}${' '.repeat(17_000)}${fill('{word}: {value}')}\n`
+  assert.doesNotMatch(redactText(padded), VALUE, 'window')
+  assert.doesNotMatch(redactText(padded, true), VALUE, 'window, growing')
+  assert.doesNotMatch(clientRedactText(padded), VALUE, 'browser copy')
+  assert.doesNotMatch(clientRedactText(padded, true), VALUE, 'browser copy, growing')
+  for (const open of [false, true]) {
+    const kept = clientSecretsIn(padded, open)
+    assert.ok(kept.some((v) => v.includes(SECRET)), `browser copy remembers the value${open ? ' while growing' : ''}`)
+    assert.ok(!masked(`later ${SECRET} stays`, kept).includes(SECRET), `browser copy masks a later bare occurrence${open ? ' while growing' : ''}`)
   }
 })
