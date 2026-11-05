@@ -298,6 +298,7 @@ test('a multi-part Bot\'s Details opened via Rename expands the part header, and
   await act(() => key('Escape'))
   assert.equal(ui.getSnapshot().details, 'bot', 'Escape in the rename field cancels editing, not the details')
   assert.equal(toggle().getAttribute('aria-expanded'), 'true')
+  focused(reopened.querySelector('.bt-drawer-name'), 'Escape gives focus back to the Bot\'s name button, not the toggle')
   reopened.focus()
   await act(() => key('Escape'))
   assert.equal(ui.getSnapshot().details, null, 'Escape closes the details')
@@ -327,4 +328,53 @@ test('a multi-part Bot\'s memory pill follows its Bot id, not the part', async (
   await act(() => pill.click())
   assert.deepEqual(opened, ['bot'], 'the pill opens the Bot\'s memory')
   assert.deepEqual(toggled, [], 'and never toggles the details')
+})
+
+// #338: Escape in the Rename field cancels. It saves nothing (not through the field's blur
+// either), keeps the details open, and gives focus back to the name button, not <body> or
+// the Details trigger. Enter still saves the typed name.
+test('Escape cancels a rename and gives focus back to the name button; Enter still saves', async (t) => {
+  const { window, document, root, key, focused, BotPanel } = mount(t)
+  const named = { ...roster, roomsById: { ...roster.roomsById, group: { id: 'group', name: 'Team', named: true, members: [] } } }
+  const updates = []
+  let leaving = false
+  const actions = {
+    closeOverlay: () => { leaving = true; render() },
+    updateRoom: async (id, patch) => { updates.push(['room', id, { ...patch }]) },
+    updateBot: async (id, patch) => { updates.push(['bot', id, { ...patch }]) },
+  }
+  const render = () => root.render(React.createElement(BotPanel, { pane: { id: 'group', view: 'details' }, leaving, roster: named, actions, ...panelProps }))
+  const trigger = document.querySelector('[data-details-subject="group"]')
+  trigger.focus()
+  await act(render)
+  const panel = document.querySelector('.bt-panel')
+  const type = async (value) => {
+    const input = panel.querySelector('input[aria-label="Group name"]')
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(input, value)
+    await act(() => input.dispatchEvent(new window.Event('input', { bubbles: true })))
+  }
+  await act(() => panel.querySelector('.bt-drawer-name').click())
+  focused(panel.querySelector('input[aria-label="Group name"]'), 'Rename focuses the name field')
+  await type('Draft name')
+  await act(() => key('Escape'))
+  await tick()
+  assert.equal(panel.querySelector('input[aria-label="Group name"]'), null, 'Escape ends editing')
+  const button = panel.querySelector('.bt-drawer-name')
+  assert.ok(button, 'the name button is back')
+  assert.equal(button.textContent, 'Team', 'the shown name is unchanged')
+  assert.equal(leaving, false, 'Escape in the rename field does not close the details')
+  assert.ok(document.querySelector('.bt-panel') === panel && !panel.hasAttribute('inert'), 'the details stay open')
+  assert.notEqual(document.activeElement, document.body, 'focus does not fall to <body>')
+  assert.notEqual(document.activeElement, trigger, 'the Details trigger does not take the focus')
+  focused(button, 'Escape gives focus back to the name button')
+  await act(() => document.querySelector('#composer').focus())
+  assert.deepEqual(updates, [], 'a cancelled rename saves nothing, also after focus moves on')
+
+  await act(() => button.click())
+  await type('Renamed')
+  await act(() => key('Enter'))
+  await tick()
+  assert.equal(panel.querySelector('input[aria-label="Group name"]'), null, 'Enter ends editing')
+  assert.deepEqual(updates, [['room', 'group', { name: 'Renamed' }]], 'Enter saves the typed name once')
+  assert.equal(leaving, false, 'Enter does not close the details')
 })

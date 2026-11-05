@@ -21037,6 +21037,13 @@ function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, roster, a
   const [view, setView] = (0, import_react62.useState)(startTab === "settings" && (owner || room2) ? "settings" : "overview");
   const [editing, setEditing] = (0, import_react62.useState)(Boolean(startRenaming && (roster.byId[sessionId] || roster.roomsById[sessionId])));
   const [draftName, setDraftName] = (0, import_react62.useState)(roster.byId[sessionId]?.name ?? (roster.roomsById[sessionId]?.named ? roster.roomsById[sessionId].name : ""));
+  const cancelledRename = (0, import_react62.useRef)(false);
+  const nameButton = (0, import_react62.useRef)(null);
+  (0, import_react62.useEffect)(() => {
+    if (editing || !cancelledRename.current) return;
+    cancelledRename.current = false;
+    nameButton.current?.focus();
+  }, [editing]);
   const [copied, setCopied] = (0, import_react62.useState)(false);
   const [error, setError] = (0, import_react62.useState)("");
   const glide = useGlide(tab);
@@ -21129,15 +21136,18 @@ function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, roster, a
         "aria-label": bot ? t("Bot name") : t("Group name"),
         placeholder: room2 ? t("Name after members") : void 0,
         onChange: (event) => setDraftName(event.target.value),
-        onBlur: saveName,
+        onBlur: () => {
+          if (!cancelledRename.current) void saveName();
+        },
         onKeyDown: (event) => {
           if (event.key === "Enter") void saveName();
           if (event.key === "Escape") {
             event.stopPropagation();
+            cancelledRename.current = true;
             setEditing(false);
           }
         }
-      }) : (0, import_react62.createElement)("button", { type: "button", className: "bt-drawer-name", "aria-label": t("Rename {name}", { name: current }), title: t("Rename"), onClick: () => {
+      }) : (0, import_react62.createElement)("button", { ref: nameButton, type: "button", className: "bt-drawer-name", "aria-label": t("Rename {name}", { name: current }), title: t("Rename"), onClick: () => {
         setDraftName(room2 && !room2.named ? "" : current);
         setEditing(true);
       } }, current),
