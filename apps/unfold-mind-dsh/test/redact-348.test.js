@@ -290,6 +290,22 @@ test('served: a partial child key completed after a cut\'s pad is hidden whole, 
   }
 })
 
+// #406's last frame: the value that completes the token on a cut-padded line. While that line is
+// still arriving no rule can read it (its head is cut, so the name arrives in parts) and the value
+// is not remembered until its line ends, so the frame must withhold the rest of the line too: a
+// character at a time, no served payload (row, snapshot or detail record) ever holds the value.
+// The pad lands mid-line and at a line start (a blank line), hence every row is streamed.
+test('served: a cut-padded line never serves the value at the frame that completes it, a character at a time', () => {
+  for (const [what, [head, tail]] of PARTIAL) {
+    const r = journal()
+    r.send(`${head}${' '.repeat(17_000)}`)
+    for (const ch of `${tail}${LATER}`) {
+      r.send(ch)
+      assert.ok(!r.served().includes(SECRET), `${what}: no frame serves the value`)
+    }
+  }
+})
+
 // #406 FAIL 2: an explicit key's block (FB1) is remembered once its entry has ended even while the
 // buffer is still growing, as the continued form (FL1) is: a line break after the value, or a blank, a
 // tab or a comment that ends it at the end of the text, closes it. While the value is still the last

@@ -1396,11 +1396,14 @@ var SECRET_TEXT = [
   // padding, not text. It hides where the line's head ended, so the name on it cannot be read (a
   // child key arrives as "pass" and "word:"), and no later rule can be trusted on it. Once the line
   // has ended it is hidden whole, the one fail-closed answer to a head that is gone; while it is
-  // still arriving (a growing buffer's last line, OPEN_END) the later-line rules keep withholding
-  // it instead. It runs first, as it hides the whole line, whatever the line turns out to hold.
+  // still arriving (a growing buffer's last line, OPEN_END) its rest is withheld, as the value that
+  // completes it is not remembered yet (#406's last frame). It runs first, as it hides the line,
+  // whatever the line turns out to hold.
   [/^[^\n]*$/gm, (line2, at, all) => {
-    if (!/[ \t]{4096,}/.test(line2)) return line2;
-    return OPEN_END && at + line2.length === all.length ? line2 : REDACTED;
+    const pad = /[ \t]{4096,}/.exec(line2);
+    if (!pad) return line2;
+    if (!/[^ \t]/.test(line2)) return " ";
+    return OPEN_END && at + line2.length === all.length ? line2.slice(0, pad.index + pad[0].length) : REDACTED;
   }, /[ \t]{4096,}/],
   // Whole-value priority: a credential key's value is secret as ONE unit, whatever it
   // starts with ("Bearer ", "Basic ", even an already-redacted marker, which is untrusted input),

@@ -50,6 +50,21 @@ test('a partial child key padded by a cut is neither hidden nor served while its
   }
 })
 
+// #406's last frame: the value that completes the token on a cut-padded line. While that line is
+// still arriving no rule can read it (its head is cut, so the name arrives in parts) and the value
+// is not remembered until its line ends, so the frame must withhold the rest of the line too: on
+// every prefix of the growing buffer, the value is never served.
+test('a cut-padded line never serves the value at the frame that completes it', () => {
+  const VALUE = /hunter2/
+  for (const [what, [head, tail]] of PARTIAL) {
+    let grown = `${head}${' '.repeat(17_000)}`
+    for (const ch of `${tail}\nand goes on`) {
+      grown += ch
+      assert.doesNotMatch(redactText(grown, true), VALUE, `${what}: no frame serves the value`)
+    }
+  }
+})
+
 // #406 F-B: a line a cut padded with blanks is hidden whole, as its name cannot be read across the
 // pad (the parts of a credential name arrive apart). The same rule is in the window and the browser
 // copy, byte for byte (scripts/unfold-copies.test.ts).

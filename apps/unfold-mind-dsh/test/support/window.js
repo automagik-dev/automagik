@@ -336,13 +336,18 @@ const SECRET_TEXT = [
   // padding, not text. It hides where the line's head ended, so the name on it cannot be read (a
   // child key arrives as "pass" and "word:"), and no later rule can be trusted on it. Once the line
   // has ended it is hidden whole, the one fail-closed answer to a head that is gone; while it is
-  // still arriving (a growing buffer's last line, OPEN_END) the later-line rules keep withholding
-  // it instead. It runs first, as it hides the whole line, whatever the line turns out to hold.
+  // still arriving (a growing buffer's last line, OPEN_END) its rest is withheld, as the value that
+  // completes it is not remembered yet (#406's last frame). It runs first, as it hides the line,
+  // whatever the line turns out to hold.
   [/^[^\n]*$/gm, (line, at, all) => {
-    if (!/[ \t]{4096,}/.test(line)) return line
-    // While the line is still arriving (a growing buffer's last line) the later-line rules withhold
-    // it instead, as no more of it can be read yet.
-    return OPEN_END && at + line.length === all.length ? line : REDACTED
+    const pad = /[ \t]{4096,}/.exec(line)
+    if (!pad) return line
+    // A pad-only line is the blank line the cut padded: it holds nothing to hide, and the later
+    // rules must read it as the blank line it is (a key line skips it to its value).
+    if (!/[^ \t]/.test(line)) return ' '
+    // While the line is still arriving (a growing buffer's last line) everything after the pad is
+    // withheld: the head is cut, so the line cannot be read, and no later rule sees the value.
+    return OPEN_END && at + line.length === all.length ? line.slice(0, pad.index + pad[0].length) : REDACTED
   }, /[ \t]{4096,}/],
   // Whole-value priority: a credential key's value is secret as ONE unit, whatever it
   // starts with ("Bearer ", "Basic ", even an already-redacted marker, which is untrusted input),
