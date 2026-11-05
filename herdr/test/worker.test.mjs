@@ -68,10 +68,10 @@ function scene(t, { file = team(), branch = "main", briefing = true, templates =
   writeFileSync(appState, JSON.stringify({ down: true }));
   writeFileSync(appLog, "");
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
-    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog };
+    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog, AUTOMAGIK_HERDR_TAB_WAIT_MS: "300" };
   delete env.HC_TERMINAL_ID;
-  const cli = (args, { from = "t1", cwd = project } = {}) => {
-    const r = spawnSync(process.execPath, [CLI, ...args], { cwd, env: from ? { ...env, HC_TERMINAL_ID: from } : env, encoding: "utf8" });
+  const cli = (args, { from = "t1", cwd = project, env: extra = {} } = {}) => {
+    const r = spawnSync(process.execPath, [CLI, ...args], { cwd, env: { ...env, ...extra, ...(from ? { HC_TERMINAL_ID: from } : {}) }, encoding: "utf8" });
     return { code: r.status, out: r.stdout, err: r.stderr, json: () => JSON.parse(r.stdout) };
   };
   const cliAsync = (args, { from = "t1" } = {}) => new Promise((resolve) => {
@@ -80,6 +80,10 @@ function scene(t, { file = team(), branch = "main", briefing = true, templates =
   });
   const calls = () => readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
   const runs = () => calls().filter((c) => c[0] === "run");
+  const setWindow = (w) => writeFileSync(appState, JSON.stringify(w));
+  const windowNow = () => JSON.parse(readFileSync(appState, "utf8"));
+  const appDos = () => readFileSync(appLog, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((c) => c[0] === "do")
+    .map((c) => [c[1], JSON.parse(c[2])]);
   const hcState = () => JSON.parse(readFileSync(statePath, "utf8"));
   const ledger = () => { const p = join(app, "automagik-herdr/workers.jsonl"); return existsSync(p) ? readLedger(readFileSync(p, "utf8")) : []; };
   const bots = () => JSON.parse(readFileSync(join(project, ".herdr/bots.json"), "utf8"));
@@ -88,7 +92,7 @@ function scene(t, { file = team(), branch = "main", briefing = true, templates =
     st.terminals.find((x) => x.address === address).state = "finished";
     writeFileSync(statePath, JSON.stringify(st));
   };
-  return { root, project, app, path: env.PATH, cli, cliAsync, calls, runs, hcState, ledger, bots, finish };
+  return { root, project, app, path: env.PATH, cli, cliAsync, calls, runs, hcState, ledger, bots, finish, setWindow, windowNow, appDos };
 }
 /** hc's templates in the scenes: one Codex seat with its own provider, one hc can't place. */
 const TEMPLATES = [
@@ -111,6 +115,17 @@ const after = (args) => {
   return argv.slice(2);
 };
 const labelsOf = (args) => args.flatMap((a, i) => (args[i - 1] === "--label" ? [a] : []));
+
+/** A window whose space sp-bot shows a shell (t2, tab tb-a), the bot's pane (t1, tab tb-bot) and t3 (tab tb-c). */
+const botWindow = (extra = {}) => ({ spaces: [{ id: "sp-bot", name: "proj", folder: "/p", machine: null, active: true, tabs: [
+  { id: "tb-a", name: "1", active: false, terminals: [{ terminal: "t2", pane: "p2" }] },
+  { id: "tb-bot", name: "Dev", active: true, terminals: [{ terminal: "t1", pane: "p1" }] },
+  { id: "tb-c", name: "3", active: false, terminals: [{ terminal: "t3", pane: "p3" }] }] }], ...extra });
+const labelBot = (s, labels) => {
+  const st = s.hcState();
+  Object.assign(st.terminals.find((x) => x.address === "t1").labels, labels);
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+};
 
 // ---- the worker's program: defaults, overrides, fallback ----
 
@@ -276,6 +291,60 @@ test("worker: hc run --bg as a child of the bot's pane, in the worktree, with th
     branch: "feat/login", project: s.project, lead: ID.dev, base: git(s.project, "rev-parse", "main").trim(), created: true,
     swap: false, override: false, override_requested: null, at: undefined });
   assert.ok(!Number.isNaN(Date.parse(row.at)));
+});
+
+test("worker: a bot's space label the window no longer has is left out; a moved bot pane's space is used", (t) => {
+  // The bot's pane is labelled sp-gone, a space the window doesn't have, and isn't shown: no space label.
+  const s = scene(t);
+  labelBot(s, { "herdr.space": "sp-gone", "herdr.tab": "tb-gone" });
+  s.setWindow({ spaces: [{ id: "sp-other", name: "x", folder: "/x", machine: null, active: true, tabs: [{ id: "tb-x", name: "1", active: true, terminals: [] }] }] });
+  const r = s.cli(["worker", "fix it", "--branch", "feat/gone"]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(labelsOf(s.runs()[0]).some((l) => l.startsWith("herdr.")), false, labelsOf(s.runs()[0]).join(" "));
+  assert.equal(s.appDos().length, 0, "no space label: no tab to set up");
+  // Its pane moved into sp-bot while its label still says sp-old: the worker goes where the window shows the bot.
+  const m = scene(t);
+  labelBot(m, { "herdr.space": "sp-old", "herdr.tab": "tb-old" });
+  m.setWindow(botWindow());
+  assert.equal(m.cli(["worker", "fix it", "--branch", "feat/moved"]).code, 0);
+  assert.ok(labelsOf(m.runs()[0]).includes("herdr.space=sp-bot"), labelsOf(m.runs()[0]).join(" "));
+});
+
+test("worker: once Herdr shows its pane, its tab is moved right after its bot's and named after it; never focused", (t) => {
+  const s = scene(t);
+  labelBot(s, { "herdr.space": "sp-bot", "herdr.tab": "tb-bot" });
+  s.setWindow(botWindow({ place: true, probe: join(s.app, "automagik-herdr/workers.jsonl") }));
+  const r = s.cli(["worker", "fix the login form", "--branch", "feat/login", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json().terminal, "t100");
+  assert.deepEqual(r.json().warnings, []);
+  // Herdr put t100 in a tab of its own at the end (tb-t100, position 4): moved to 3, after tb-bot.
+  assert.deepEqual(s.appDos(), [["tab.move", { id: "tb-t100", index: 3 }], ["tab.rename", { id: "tb-t100", name: "feat/login" }]]);
+  assert.deepEqual(s.windowNow().spaces[0].tabs.map((x) => [x.id, x.name]), [["tb-a", "1"], ["tb-bot", "Dev"], ["tb-t100", "feat/login"], ["tb-c", "3"]]);
+  // The workers.jsonl row was written before the tab setup, as launchSeat writes its rows first.
+  assert.deepEqual(s.windowNow().probed, [["tab.move", true], ["tab.rename", true]]);
+  assert.deepEqual(s.ledger().map((row) => [row.kind, row.terminal]), [["worker", "t100"]]);
+  // No window to ask (worker.test's default): no tab setup, as before.
+  const d = scene(t);
+  labelBot(d, { "herdr.space": "sp-bot" });
+  assert.equal(d.cli(["worker", "fix it", "--branch", "feat/down"]).code, 0);
+  assert.deepEqual(d.appDos(), []);
+  // Herdr never shows the pane (within the wait): the worker runs, its tab untouched, and says so.
+  const n = scene(t);
+  labelBot(n, { "herdr.space": "sp-bot" });
+  n.setWindow(botWindow());
+  const late = n.cli(["worker", "fix it", "--branch", "feat/late", "--json"]);
+  assert.equal(late.code, 0, late.err);
+  assert.match(late.json().warnings.join("\n"), /Herdr hadn't shown t100 after 0\.3s, so its tab isn't named or moved beside its bot's/);
+  assert.deepEqual(n.appDos(), []);
+  // AUTOMAGIK_HERDR_TAB_WAIT_MS=0 turns the tab setup off: the space label stays, no wait, no tab command, no warning.
+  const off = scene(t);
+  labelBot(off, { "herdr.space": "sp-bot", "herdr.tab": "tb-bot" });
+  off.setWindow(botWindow({ place: true }));
+  const quiet = off.cli(["worker", "fix it", "--branch", "feat/off", "--json"], { env: { AUTOMAGIK_HERDR_TAB_WAIT_MS: "0" } });
+  assert.equal(quiet.code, 0, quiet.err);
+  assert.ok(labelsOf(off.runs()[0]).includes("herdr.space=sp-bot"));
+  assert.deepEqual([off.appDos(), quiet.json().warnings], [[], []]);
 });
 
 test("worker opens in a tab of its own in its bot's space: herdr.space at hc run, never herdr.tab; no space, no label", (t) => {

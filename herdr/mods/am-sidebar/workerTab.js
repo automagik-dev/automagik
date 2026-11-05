@@ -42,6 +42,37 @@ export function workerClick({ terminal, botTerminal, name, panes, spaces }) {
 }
 
 /**
+ * The tab setup a worker's pane gets once it is in the window (keptSteps, and the CLI's
+ * `worker` after hc run): its tab moved after the bot's tab (`plan.space` / `plan.tab`; that
+ * tab's index, from 1, read from `spaces` now; not when the pane landed in another space, as
+ * tab.move stays in one) and renamed `plan.name`. Neither when the pane is in the bot's own
+ * tab: that tab keeps its name. `pane.tab`: the tab the worker's pane is in.
+ */
+export function tabSteps(plan, pane, spaces) {
+  const steps = [];
+  if (!pane?.tab || pane.tab === plan.tab) return steps;
+  const holder = (spaces ?? []).find((s) => (s?.tabs ?? []).some((t) => t.id === pane.tab));
+  const botTab = holder?.id === plan.space ? holder.tabs.find((t) => t.id === plan.tab) : null;
+  if (botTab) steps.push(["tab.move", { id: pane.tab, index: botTab.index + 1 }]);
+  if (plan.name) steps.push(["tab.rename", { id: pane.tab, name: plan.name }]);
+  return steps;
+}
+
+/**
+ * The space a new worker of a bot opens in (the CLI's `worker`): where the window shows the
+ * bot's pane (`terminal`, a terminal of this computer), else the space its `herdr.space`
+ * label names (`label`) while the window still has it, else null: no space label, so the
+ * worker isn't sent to a space that was closed. `spaces`: the window's spaces (state.mjs
+ * spacesOf, panes as { terminal }); null (no window to ask): the label stands.
+ */
+export function workerSpace(label, spaces, terminal) {
+  if (!spaces) return label ?? null;
+  const shown = spaces.find((s) => !s?.machine && (s?.tabs ?? []).some((t) => (t?.panes ?? []).some((p) => p?.terminal === terminal)));
+  if (shown) return shown.id;
+  return label && spaces.some((s) => s?.id === label) ? label : null;
+}
+
+/**
  * The commands once the kept worker has its pane: its tab moved after the bot's tab (that
  * tab's index read again now; not when the pane landed in another space, as tab.move stays
  * in one), renamed, and the worker focused. Neither move nor rename when the pane landed in
@@ -51,12 +82,7 @@ export function workerClick({ terminal, botTerminal, name, panes, spaces }) {
  */
 export function keptSteps(plan, pane, spaces) {
   const holder = (spaces ?? []).find((s) => (s?.tabs ?? []).some((t) => t.id === pane.tab));
-  const steps = [];
-  if (pane.tab !== plan.tab) {
-    const botTab = holder?.id === plan.space ? holder.tabs.find((t) => t.id === plan.tab) : null;
-    if (botTab) steps.push(["tab.move", { id: pane.tab, index: botTab.index + 1 }]);
-    if (plan.name) steps.push(["tab.rename", { id: pane.tab, name: plan.name }]);
-  }
+  const steps = tabSteps(plan, pane, spaces);
   steps.push(["agent.focus", { terminal: plan.terminal }]);
   const label = holder ? ["label", plan.terminal, `herdr.space=${local(holder.id)}`, `herdr.tab=${local(pane.tab)}`] : null;
   return { steps, label };
