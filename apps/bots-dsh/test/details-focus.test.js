@@ -349,15 +349,24 @@ test('only the Details button exposes aria-expanded; the memory pill carries dat
       useSession: hook({}), useActivity: hook({}), useMemoryNews: hook(news), useTurnClock: hook({}), useUi,
       useLive: hook({}), useWork: hook({}), actions,
     })))
-    const pill = document.querySelector('[data-memory="updated"]')
+    const headerNode = document.querySelector('.bt-head')
+    assert.ok(headerNode, `${view}: the real header renders`)
+    const pill = headerNode.querySelector('.bt-pill[data-memory="updated"]')
     assert.ok(pill, `${view}: the memory notice shows`)
-    const details = document.querySelector('.bt-head-details[data-details-subject="bot"]')
+    const details = headerNode.querySelector('.bt-head-details[data-details-subject="bot"]')
     assert.ok(details, `${view}: the Details button shows beside it`)
-    const exposed = [...document.querySelectorAll('[aria-expanded]')]
-    assert.equal(exposed.length, 1, `${view}: exactly one element carries aria-expanded, not ${exposed.map(node => node.className).join(', ')}`)
+    const exposed = [...headerNode.querySelectorAll('[aria-expanded]')]
+    const names = exposed.map(node => node.className).join(', ')
+    assert.equal(exposed.length, 1,
+      `${view}: exactly one header element carries aria-expanded, not ${names}`)
     assert.ok(exposed[0] === details, `${view}: and it is the Details button`)
+    assert.equal(details.tagName, 'BUTTON',
+      `${view}: the expanded control is the real Details button`)
     assert.equal(details.getAttribute('aria-expanded'), expanded)
     assert.equal(details.getAttribute('aria-controls'), 'bt-conversation-panel')
+    assert.equal(headerNode.hasAttribute('aria-expanded'), false,
+      `${view}: the header itself exposes no expanded state`)
+    assert.equal(pill.tagName, 'BUTTON', `${view}: the memory pill is the button beside it`)
     assert.equal(pill.hasAttribute('aria-expanded'), false, `${view}: the memory pill exposes no expanded state`)
     assert.equal(pill.hasAttribute('aria-controls'), false, `${view}: the memory pill controls no pane`)
     assert.equal(pill.getAttribute('data-expanded'), expanded, `${view}: the pill's arrow still reads the Details state`)
