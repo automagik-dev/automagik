@@ -160,7 +160,8 @@ test("start --machine in a space it opened closes that space's shell tab only wh
     tabs: [{ id: "tb-a", name: "1", active: true, terminals: [{ terminal: "vm/t-sh9", pane: "p9" }] }] }] });
   assert.equal(o.cli(["start", "Atlas", ...o.on]).code, 0);
   assert.deepEqual(o.appCalls().filter((c) => c[0] === "do"), []);
-  assert.deepEqual(o.windowNow().spaces[0].tabs.map((tb) => tb.id), ["tb-a", "tb-vm/t100"]);
+  // (No spare to close, so the window isn't read again: the fake never adds the bot's tab.)
+  assert.deepEqual(o.windowNow().spaces[0].tabs.map((tb) => tb.id), ["tb-a"]);
 });
 
 test("start --machine: an agent not installed there is refused before anything runs; without the override, plain hermes", (t) => {

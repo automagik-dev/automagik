@@ -932,7 +932,8 @@ test("start in a space it opened closes its lone shell tab only while it is the 
   writeFileSync(join(o.root, "herdr-app.json"), JSON.stringify(open));
   assert.equal(o.cli(["start", "Genie"]).code, 0);
   assert.deepEqual(o.appCalls().filter((c) => c[0] === "do"), []);
-  assert.deepEqual(o.windowNow().spaces[0].tabs.map((tb) => tb.id), ["tb1", "tb-t100"]);
+  // (No spare to close, so the window isn't read again: the fake never adds the bot's tab.)
+  assert.deepEqual(o.windowNow().spaces[0].tabs.map((tb) => tb.id), ["tb1"]);
   // AUTOMAGIK_HERDR_TAB_WAIT_MS=0 turns it off: no wait for the bot's tab, nothing closed.
   const off = scene(t, { window: { spaces: [], place: true } });
   off.seed(team());
