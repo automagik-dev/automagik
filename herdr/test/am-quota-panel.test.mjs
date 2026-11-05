@@ -204,6 +204,24 @@ test("a refused restart is named, and the others still run", async () => {
   assert.match(text(root), /Restarted 2: every Codex bot is on the new account/);
 });
 
+test("a restart that started fresh says which bot and why (#328: no session id, a teammate in the folder)", async () => {
+  const { view, cx, draw } = await panel();
+  view.tool = "codex";
+  view.switched.codex = { at: NOW, from: "ana@example.com · Pro", to: "bo@example.com · Pro",
+    look: { bots: [{ id: "a", name: "A", project: "/p" }, { id: "b", name: "B", project: "/p" }], reliable: true } };
+  const note = "no Codex session id is known for t5, and B (t9) also runs Codex in /p, so resume --last could resume theirs instead of A's";
+  state.exec = (_c, args) => ({ code: 0, stdout: JSON.stringify(args.includes("a") ? { mode: "fresh", note } : { mode: "resume", note: null }), stderr: "" });
+  draw();
+  nodes.get("restart-codex").click(null, cx);
+  nodes.get("restart-codex").click(null, cx);
+  await cx.settle();
+  const root = draw();
+  assert.match(text(root), /Restarted 2: every Codex bot is on the new account/);
+  assert.match(text(root), /Started on a new conversation instead of resuming it:/);
+  assert.ok(text(root).includes(`A: ${note}`), text(root));
+  assert.ok(!text(root).includes("B: "), "a bot that resumed isn't listed");
+});
+
 test("no restart while a switch is running", async () => {
   const { view, cx, draw } = await panel();
   view.tool = "codex";

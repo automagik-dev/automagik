@@ -304,11 +304,19 @@ automagik-herdr update [--check | --rollback]
   new one has kept its agent in front at every check for 5 seconds (1.5 once the agent reports
   its status to hc), so an agent that exits at startup (a stale resume, a failed swap) never
   leaves the space empty. A replacement that doesn't make it is ended, and the old pane keeps
-  running. It resumes the conversation: Claude by the session id on the pane (`agent.session`,
-  carried to the new pane), else the workers ledger's last session row for that terminal, else
-  `--continue` in the bot's folder, which is refused while another bot's Claude runs in that
-  folder (it could resume theirs; `--fresh` starts a new one); `codex resume --last`;
-  `--continue` for pi, omp, kimi, agy and hermes. Any other agent starts fresh, and says so.
+  running. It resumes the conversation by its session id, for every agent that resumes one: the
+  id on the pane (`agent.session`, carried to the new pane, or a reviver's `revive.session`),
+  else the workers ledger's last session row for that terminal (`claude --resume <id>`,
+  `codex resume <id>`, `omp --resume=<id>`, `pi --session <id>`, `kimi --session=<id>`,
+  `agy --conversation <id>`, `hermes --resume <id>`). With no id it takes the latest
+  conversation in the bot's folder (`--continue`, `codex resume --last`), which could be a
+  teammate's: while another pane or bot on that agent is in that folder (a live pane, a bot's or
+  one started by hand, or another bot's last seat row in the workers ledger, its pane ended or
+  not; for agy, whose `--continue` isn't limited to a folder, any folder), the restart starts a
+  new conversation instead and says why (#328; the quota panel's restart lists those too). Only
+  Claude's hook records an id today; on another agent, set the pane's `agent.session` label to
+  keep its own conversation in a shared folder. An agent with no resume here starts fresh, and
+  says so.
   `--fresh` starts a new conversation. `--agent` / `--model` swap the agent or model (always a new
   conversation: they don't cross agents); `bots.json` keeps the old ones unless `--save` is given.
   A bot that isn't running is started. It is refused while the bot is working (it would cut the

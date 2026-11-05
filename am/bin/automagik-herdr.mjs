@@ -27,13 +27,13 @@ import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, co
 import { interpreterPath } from "../agentPath.mjs";
 import { briefingFilePath, installHook, launchBriefingText, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
-import { agentKeyOfArgv, briefingLaunch, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, ownPromptIn, resolveAgent, resumesById,
+import { agentKeyOfArgv, continuesAnywhere, briefingLaunch, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, ownPromptIn, resolveAgent, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKTREES_EXCLUDE,
   SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, sessionRow, parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
   writesWorktree } from "../workers.js";
-import { carriedLabels, continueRefusal, doomedHelpers, helperArgs, helperPlan, ledgerSession, paneCommand, planText as restartText, restartPlan,
+import { carriedLabels, continueRefusal, doomedHelpers, helperArgs, helperPlan, ledgerSession, paneCommand, planText as restartText, restartPlan, sharedFresh,
   claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
 import { autoStatus, readAuto, binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, managedPack, readMarker, relinkCli, rollback as rollbackPack, writeAuto, writeMarker } from "../update.mjs";
 import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER, updatesOff } from "../release.js";
@@ -816,11 +816,13 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 template, model and effort flags): the new pane starts, and the
                                 old one ends only once the new one's agent has stayed up (prints
                                 the new terminal). It resumes the conversation in that folder
-                                (claude --resume <session>, or --continue when no other bot's
-                                Claude shares the folder; with the pane's agent.session label,
-                                codex resume <session>, omp --resume=<session>, pi --session
-                                <session>; else codex resume --last, --continue for pi, omp,
-                                kimi, agy and hermes);
+                                by the pane's session id (its agent.session label, or the
+                                ledger's row): claude --resume <session>, codex resume
+                                <session>, omp --resume=<session>, pi --session <session>,
+                                kimi --session=<session>, agy --conversation <session>, hermes
+                                --resume <session>; with no id, the folder's latest (codex
+                                resume --last, --continue for the rest), unless another bot
+                                on that agent runs there: then a new one, and why;
                                 --fresh: a new one; --agent/--model: a swap (always new;
                                 --save: also into ${BOTS_PATH}). Refused while the bot is
                                 working or has helpers that would end with it, unless --force
@@ -1809,13 +1811,41 @@ function workerLedgerRows() {
 }
 
 /**
- * Other bots' live Claude panes whose folder is `cwd`, by the attach ledger (`view`,
- * attachView): [{ address, name }].
+ * Who else may own the latest `agentKey` conversation in the folder `cwd` (#328), the panes and
+ * bots a restart with no session id must not take it from: [{ address, name, ended }]. Over-
+ * counting is safe (the restart then starts fresh and says why), so all three count: the live
+ * panes on this computer running that agent there (a bot's, or one started by hand: hc ls), the
+ * bound bots there by the attach ledger (`view`), and each other bot whose last seat row in the
+ * workers ledger (`ledger`) put it there on that agent, its pane since ended or not. `old`:
+ * the pane being replaced (never counted); `anywhere`: the agent's id-less resume isn't
+ * limited to one folder (models.js continuesAnywhere), so any folder counts.
  */
-function claudeBotsIn(view, cwd, botId, file) {
-  return [...view.live.values()].filter(({ binding, get }) => binding.bot !== botId && get && agentInForeground(get)
-    && (get.foreground?.cwd ?? get.cwd) === cwd && (isClaude(null, get) || agentKeyOfArgv(get.foreground?.argv) === "claude"))
-    .map(({ binding }) => ({ address: binding.terminal, name: file.bots.find((b) => b.id === binding.bot)?.name ?? `bot ${binding.bot}` }));
+async function sharersOf({ view, cwd, botId, file, agentKey, ledger = [], old, anywhere = false }) {
+  const real = realDir(cwd) ?? cwd;
+  const here = (dir) => anywhere || (typeof dir === "string" && dir !== "" && (dir === cwd || (realDir(dir) ?? dir) === real));
+  const agents = agentTable();
+  // The agent in front, past the keep wrapper (launchArgs.js unwrapKeep) a pane may run it in.
+  const runs = (get) => agentInForeground(get) && ((agentKey === "claude" && isClaude(null, get))
+    || agentKeyOfArgv(unwrapKeep(get.foreground?.argv), agents) === agentKey);
+  const nameOf = (id) => (id ? file.bots.find((b) => b.id === id)?.name ?? `bot ${id}` : null);
+  const out = new Map();
+  const add = (address, name, ended = false) => { if (address && address !== old?.address && !out.has(address)) out.set(address, { address, name, ended }); };
+  for (const { binding, get } of view.live.values()) {
+    if (binding.bot !== botId && get && runs(get) && here(get.foreground?.cwd ?? get.cwd)) add(binding.terminal, nameOf(binding.bot));
+  }
+  let rows = [];
+  try { rows = rowsOf(await hcJson(["ls"])).filter((r) => local(r?.address) && r.state === "live" && r.address !== old?.address && !out.has(r.address)); }
+  catch { rows = []; }
+  for (const get of (await Promise.all(rows.map((r) => hcGet(r.address).catch(() => null)))).filter(Boolean)) {
+    if (get.labels?.[BOT_LABEL] === botId || !runs(get) || !here(get.foreground?.cwd ?? get.cwd)) continue;
+    add(get.address, nameOf(get.labels?.[BOT_LABEL]) ?? "a pane");
+  }
+  const lastSeat = new Map();
+  for (const r of ledger) if (r?.event === "start" && r.kind === "seat" && typeof r.botId === "string" && r.botId !== botId) lastSeat.set(r.botId, r);
+  for (const r of lastSeat.values()) {
+    if (r.agent === agentKey && here(r.worktree)) add(r.terminal, nameOf(r.botId), !(view.live.get(r.botId)?.binding.terminal === r.terminal));
+  }
+  return [...out.values()];
 }
 
 /**
@@ -2152,20 +2182,24 @@ async function cmdRestart(opts, [ref]) {
   const agents = agentTable();
   const ledger = workerLedgerRows();
   const runningAgent = old ? agentKeyOfArgv(old.foreground?.argv, agents) : null;
+  // An agent as the restart's lines name it ("Claude", not "Claude Code").
+  const agentName = (k) => (k === "claude" ? "Claude" : agents[k]?.name ?? k);
   // The session to resume: the old pane's agent.session label (or a reviver's revive.session),
-  // else (a Claude pane, whose hook writes them) the ledger's last session row for that terminal.
+  // else the ledger's last session row for that terminal (the Claude hook writes them), for
+  // every agent that resumes by id.
   const knownSession = (get, agentKey) => {
     const id = paneSession(get, agentKey);
     if (id) return { session: id, transcript: null };
-    return agentKey === "claude" ? ledgerSession(ledger, get.address) : null;
+    return resumesById(agentKey) ? ledgerSession(ledger, get.address, agentKey, get.created_ms) : null;
   };
   const known = old ? knownSession(old, runningAgent ?? bot.agent) : null;
-  const plan = restartPlan({
+  const planned = {
     bot, run: startableAgent(bot, entry?.agent ?? bot.agent).run,
     runningAgent, session: known?.session ?? null,
     fresh: opts.fresh || !old, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
     launch: old ? paneCommand(old) : null, runningModel: old && runningAgent ? detectModel(old.foreground?.argv, runningAgent) : null,
-  });
+  };
+  let plan = restartPlan(planned);
   // The old pane's folder (#213: a worktree too, where its conversation is), unless it is gone;
   // the same space and tab (its Herdr labels).
   const oldCwd = old?.foreground?.cwd ?? old?.cwd ?? null;
@@ -2180,10 +2214,15 @@ async function cmdRestart(opts, [ref]) {
   }
   const place = opts.space ? { space: opts.space, tab: opts.tab ?? null, from: null } : (old ? placementFrom([old]) ?? undefined : undefined);
   const resumeId = plan.mode === "resume" && resumesById(plan.agent) ? sessionFor(plan.agent, known?.session) : null;
-  // --continue takes the folder's latest conversation: never while another bot's Claude runs there.
-  if (plan.mode === "resume" && plan.agent === "claude" && !resumeId) {
-    const refusal = continueRefusal({ name: bot.name, old, cwd, sharers: claudeBotsIn(view, cwd, bot.id, file) });
-    if (refusal) throw new CliError(refusal);
+  // With no id, a resume takes the folder's latest conversation (--continue, codex resume
+  // --last), for every agent: beside another bot on that agent there, a new conversation, and
+  // why (#328: an omp --continue picked up a teammate's). Alone there, the resume as before.
+  let sharedNote = null;
+  if (plan.mode === "resume" && !resumeId) {
+    const anywhere = continuesAnywhere(plan.agent);
+    const sharers = await sharersOf({ view, cwd, botId: bot.id, file, agentKey: plan.agent, ledger, old, anywhere });
+    const note = sharedFresh({ name: bot.name, old, cwd, sharers, agent: agentName(plan.agent), words: plan.resume.join(" "), anywhere });
+    if (note) { plan = { ...restartPlan({ ...planned, fresh: true }), note }; sharedNote = note; }
   }
   const { tree, treeWarnings } = old && opts.tree
     ? await treePlans({ bot, old, helpers, view, ledger, agents, knownSession, force: opts.force, freshShared: opts["fresh-shared"],
@@ -2199,6 +2238,9 @@ async function cmdRestart(opts, [ref]) {
   if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
   const warnings = seat.hook.warnings;
   const say = (w) => { warnings.push(w); report([w]); };
+  // The sidebar's Restart shows only --json's warnings: why it didn't resume goes there too
+  // (the text answer says it in its own line).
+  if (sharedNote) warnings.push(`${bot.name} starts on a new conversation: ${sharedNote}.`);
   if (movedFrom && movedFrom !== wanted && plan.mode === "resume" && plan.agent !== "claude") {
     say(`${seat.terminal} runs in ${wanted}, not ${movedFrom}: ${plan.agent} finds its last conversation by folder${resumeId ? "" : ", so it may not find it there"}.`);
   }
@@ -2254,9 +2296,10 @@ async function cmdRestart(opts, [ref]) {
   }
   // A helper --tree couldn't run again: the command fails (the bot did restart; its line says how).
   if (rerun.some((h) => h.error)) exitAfter.code = 1;
-  if (plan.mode === "resume" && plan.agent === "claude" && !resumeId) {
-    say(`No Claude session id was known for ${old.address}, so ${seat.terminal} resumes the latest conversation in ${cwd} (--continue). `
-      + `No other bot's Claude runs there; if it isn't ${bot.name}'s, restart again with --fresh.`);
+  if (plan.mode === "resume" && !resumeId) {
+    const name = agentName(plan.agent);
+    say(`No ${name} session id was known for ${old.address}, so ${seat.terminal} resumes the latest conversation in ${cwd} (${plan.resume.join(" ")}). `
+      + `No other bot's ${name} runs there; if it isn't ${bot.name}'s, restart again with --fresh.`);
   }
   let saved = false;
   if (opts.save) {
