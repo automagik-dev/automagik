@@ -4,7 +4,7 @@ Automagik Meter's Claude Code status line, and the limits logger it runs behind.
 tools: no release ships them (`scripts/lane.ts`, `NEVER_SHIPPED`).
 
 ```
-🤖 Meter Captain  🧠 Opus 5.5 ⚡high  ┃  📁 my-app  ┃  💬 Context ▰▰▰▰▱▱▱▱▱▱ 400k/1M  ┃  Quota 5h ▰▰▰▰▰ 94%  Left 16m  Resets 59m  ┃  Quota 7d ▰▰▱▱▱ 31%  Resets 4d2h
+🤖 Meter Captain  🧠 Opus 5.5 ⚡high  ┃  📁 my-app  ┃  💬 ▰▰▰▰▱▱▱▱▱▱ 400k/1M  ┃  Quota 5h ▰▰▰▰▰ 94%  Left 16m  Resets 59m  ┃  Quota 7d ▰▰▱▱▱ 31%  Resets 4d2h
 ```
 
 Each segment is left out when its field is missing. Separators and labels are dim; green under
@@ -21,7 +21,7 @@ Each segment is left out when its field is missing. Separators and labels are di
   ([statusline](https://code.claude.com/docs/en/statusline)); Claude Code sends no effort when the
   model has no effort setting, and then no effort word is shown.
 - `📁`: the folder the session is in.
-- `Context`: a 10-cell bar of the context window used, then the tokens used and the window size.
+- `💬`: a 10-cell bar of the context window used, then the tokens used and the window size.
   The bar fills against the context window; its colour is measured against the auto-compact
   window, found where Claude Code takes it
   ([model-config](https://code.claude.com/docs/en/model-config), "Set the auto-compact window"),
