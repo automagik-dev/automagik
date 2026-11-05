@@ -244,6 +244,20 @@ export function install(rt) {
     await reapplyTasks(task => task.from === bot.id && !(task.roomId && rt.roomOf(task.roomId)?.permission))
   }
 
+  // The level a Bot made by another Bot starts at (#315): its creator's own, or else the
+  // default the creator's chat runs at; never the team default, which may be wider. A
+  // level DSH cannot rank (stale, custom) gives the narrowest level the catalog offers.
+  // When nothing ranks, no level is known to be no wider, so the create fails rather than
+  // start the Bot at DSH's default. Undefined without the presets service.
+  function inheritedPermission(creator) {
+    const service = presets()
+    if (service === undefined) return undefined
+    const own = creator.permission ?? service.catalog().defaultPreset
+    const level = narrowerLevel(service, own, own)
+    if (level === undefined) throw new Error(`no permission level of ${creator.name} can be given to a new Bot`)
+    return level
+  }
+
   // A group's level, or null when each member uses its own.
   const cleanRoomPermission = name => (name === null || name === '' ? null : checkPreset(name))
 
@@ -269,5 +283,5 @@ export function install(rt) {
     return true
   }
 
-  Object.assign(rt, { permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, reapplyTasks, capTasks, taskLevelOf, forgetTaskPermission, checkPreset, setPermission, cleanRoomPermission, setRoomPermission })
+  Object.assign(rt, { permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, reapplyTasks, capTasks, taskLevelOf, forgetTaskPermission, checkPreset, setPermission, inheritedPermission, cleanRoomPermission, setRoomPermission })
 }
