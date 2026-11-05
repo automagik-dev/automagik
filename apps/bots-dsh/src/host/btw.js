@@ -360,7 +360,8 @@ export function install(rt) {
 
   // Channel can be installed without the roster (the thinking route test). The
   // full runtime always has deleteBot, and that is the path that must drop cards: the
-  // roster runs this after its checks, once the Bot is out of its groups (#366).
+  // roster runs this after its checks, once the Bot is out of its groups (#366) and its
+  // Sessions are released, so a failed release keeps the cards (#376).
   if (typeof rt.beforeBotDelete === 'function') rt.beforeBotDelete(dropBot)
 
   Object.assign(rt, { btwDelete, btwDispose, btwView, btwPartCards: readPart })

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -216,6 +216,114 @@ test('a deletion whose release fails puts the Bot back and keeps a change made m
   await rt.deleteBot('c')
   assert.deepEqual([saved().rooms.r1.members, saved().rooms.r1.admin], [['a', 'b'], null])
   assert.equal(saved().bots.c, undefined)
+})
+
+// #376: Coder leads the group, and has btw cards and side chats on disk.
+const LEADS = { ...TEAM, rooms: { r1: { ...TEAM.rooms.r1, members: ['a', 'c', 'b'], admin: 'c' } } }
+function keptFiles(home) {
+  const card = { id: 'kept', botId: 'c', partId: 'c', atSeq: 1, question: 'Old?', answer: 'Yes.', status: 'done', createdAt: 5, finishedAt: 6 }
+  const cards = join(home, 'btw', 'c')
+  const chats = join(home, 'side', 'c.json')
+  mkdirSync(cards, { recursive: true })
+  writeFileSync(join(cards, 'c.json'), JSON.stringify([card]))
+  mkdirSync(join(home, 'side'))
+  writeFileSync(chats, '[]')
+  return [cards, chats]
+}
+
+// Holds the next call to `rt[method]` until the test fails it, with no timers: `entered`
+// settles once the call is waiting, and `fail` rejects it.
+function failing(t, rt, method) {
+  const original = rt[method]
+  let enter
+  let reject
+  const entered = new Promise(resolve => { enter = resolve })
+  rt[method] = () => new Promise((resolve, fail) => {
+    rt[method] = original
+    reject = fail
+    enter()
+  })
+  t.after(() => { rt[method] = original })
+  return { entered, fail: error => reject(error) }
+}
+
+// #376: the drop steps ran before releaseBot, so a failed release lost the files.
+test('a deletion whose release fails keeps the Bot\'s cards and side chats, and saves its place', async (t) => {
+  const { rt, home, saved, stop } = await start(LEADS)
+  t.after(stop)
+  const files = keptFiles(home)
+  const release = failing(t, rt, 'releaseBot')
+  const deleting = rt.deleteBot('c')
+  await release.entered
+  release.fail(new Error('release failed'))
+  await assert.rejects(deleting, /release failed/)
+  for (const file of files) assert.equal(existsSync(file), true, `${file} is kept`)
+  assert.deepEqual([rt.state.rooms.r1.members, rt.state.rooms.r1.admin], [['a', 'c', 'b'], 'c'])
+  // The restore is saved, not left for the next save to write.
+  assert.ok(saved().revision > LEADS.revision, 'the restore was saved')
+  assert.deepEqual([saved().rooms.r1.members, saved().rooms.r1.admin], [['a', 'c', 'b'], 'c'])
+  assert.ok(saved().bots.c)
+  // The Bot is usable: it can be changed, and deleted, which then drops its files.
+  assert.deepEqual((await rt.updateRoom('r1', { notice: 'Ship on Friday' })).changes, ['updated the notice'])
+  await rt.deleteBot('c')
+  for (const file of files) assert.equal(existsSync(file), false, `${file} is removed`)
+  assert.deepEqual([saved().rooms.r1.members, saved().rooms.r1.admin], [['a', 'b'], null])
+  assert.equal(saved().bots.c, undefined)
+})
+
+// #376: a save in the window wrote the group without the Bot, and the restore was memory only.
+test('a group saved while a deletion fails has the Bot and its admin role back on disk', async (t) => {
+  const { rt, saved, stop } = await start(LEADS)
+  t.after(stop)
+  const release = failing(t, rt, 'releaseBot')
+  const deleting = rt.deleteBot('c')
+  await release.entered
+  assert.deepEqual((await rt.updateRoom('r1', { add: ['d'] })).changes, ['added Tester'])
+  // That save wrote the group as it is while the Bot is released: without it.
+  assert.deepEqual([saved().rooms.r1.members, saved().rooms.r1.admin], [['a', 'b', 'd'], null])
+  release.fail(new Error('release failed'))
+  await assert.rejects(deleting, /release failed/)
+  assert.deepEqual([saved().rooms.r1.members, saved().rooms.r1.admin], [['a', 'c', 'b', 'd'], 'c'])
+  assert.deepEqual([rt.state.rooms.r1.members, rt.state.rooms.r1.admin], [['a', 'c', 'b', 'd'], 'c'])
+})
+
+// #376: a second deletion while the first ran threw Unknown Bot, though the Bot was there.
+test('a second deletion of a Bot being deleted ends with the first, which runs once', async (t) => {
+  const { rt, home, saved, stop } = await start(LEADS)
+  t.after(stop)
+  const files = keptFiles(home)
+  const releaseBot = rt.releaseBot
+  let releases = 0
+  rt.releaseBot = (...args) => { releases += 1; return releaseBot(...args) }
+  t.after(() => { rt.releaseBot = releaseBot })
+  const release = gate(t, rt, 'releaseBot')
+  const deleting = rt.deleteBot('c')
+  await release.entered
+  const again = rt.deleteBot('c')
+  release.open()
+  await Promise.all([deleting, again])
+  assert.equal(releases, 1)
+  assert.equal(rt.botOf('c'), undefined)
+  assert.equal(saved().bots.c, undefined)
+  assert.deepEqual([saved().rooms.r1.members, saved().rooms.r1.admin], [['a', 'b'], null])
+  for (const file of files) assert.equal(existsSync(file), false, `${file} is removed`)
+  // Once the deletion is over, the Bot is unknown.
+  await assert.rejects(rt.deleteBot('c'), /Unknown Bot/)
+})
+
+test('a second deletion of a Bot whose release then fails fails with it, and the Bot stays', async (t) => {
+  const { rt, saved, stop } = await start(LEADS)
+  t.after(stop)
+  const release = failing(t, rt, 'releaseBot')
+  const deleting = rt.deleteBot('c')
+  await release.entered
+  const again = rt.deleteBot('c')
+  release.fail(new Error('release failed'))
+  await assert.rejects(deleting, /release failed/)
+  await assert.rejects(again, /release failed/)
+  assert.ok(rt.botOf('c'))
+  assert.deepEqual([rt.state.rooms.r1.members, rt.state.rooms.r1.admin], [['a', 'c', 'b'], 'c'])
+  assert.deepEqual([saved().rooms.r1.members, saved().rooms.r1.admin], [['a', 'c', 'b'], 'c'])
 })
 
 test('a group deleted while a change waits for its folder stays deleted', async (t) => {
