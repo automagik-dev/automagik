@@ -262,8 +262,14 @@ switch (words[0]) {
     // state.execUnanswered: programs whose call gets no answer (the machine dropped mid-call).
     if ((state.execUnanswered ?? []).includes(argv[0])) fail(JSON.stringify({ error: { kind: "unavailable", message: `${on} stopped answering` } }));
     if (argv[0] === "uname") { out({ code: 0, stdout: b64(`${m.uname}\n`), stderr: "", timed_out: false }); break; }
+    // state.execTimedOut: words whose call hc ends at its --timeout (a login shell that never answers).
+    if ((state.execTimedOut ?? []).some((w) => argv.join(" ").includes(w))) { out({ code: null, stdout: "", stderr: "", timed_out: true }); break; }
+    // Its login shell is fake-login-shell, never the host's, and never reads a real profile:
+    // m.login { path, noise, exit }, the PATH it has (default: the one hc runs programs with).
     const r = spawnSync(argv[0], argv.slice(1), { cwd: cwd ?? m.home, encoding: "utf8",
-      env: { ...process.env, HOME: m.home, PATH: `${m.path ? `${m.path}:` : ""}/usr/bin:/bin:/usr/sbin:/sbin` } });
+      env: { ...process.env, HOME: m.home, PATH: `${m.path ? `${m.path}:` : ""}/usr/bin:/bin:/usr/sbin:/sbin`,
+        SHELL: new URL("./fake-login-shell", import.meta.url).pathname, FAKE_LOGIN_PATH: m.login?.path ?? "",
+        FAKE_LOGIN_NOISE: m.login?.noise ?? "", FAKE_LOGIN_EXIT: m.login?.exit ?? "" } });
     // state.loseExecAnswer: a program (by name) ran there, then the link dropped: unavailable, as hc says.
     if (state.loseExecAnswer && state.loseExecAnswer === argv[0]) { delete state.loseExecAnswer; save(); fail(JSON.stringify({ error: { kind: "unavailable", message: `${on} stopped answering` } })); }
     out({ code: r.status ?? -1, stdout: b64(r.stdout), stderr: b64(r.stderr), timed_out: false });

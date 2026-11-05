@@ -291,7 +291,12 @@ automagik-herdr update [--check | --rollback]
   connected, its rows stay as they were (`status` `unknown`), never ended. A project's checkouts on two
   machines share their bots' ids, so a bot is per machine: `--machine` acts only on that machine's
   pane in that project, never on this computer's same-id bot, and `whois --bot <bot>` answers for
-  this computer unless given `--machine M`. A session id the pane carries is resumed by id
+  this computer unless given `--machine M`. The pane's PATH comes from that machine's login shell,
+  asked once with a 10 s bound (herdr-core may run as a service that never read `~/.profile`), plus
+  the PATH hc runs programs with, `~/.local/bin` and `~/.bun/bin`. The agent and the interpreter on
+  its `#!/usr/bin/env` line are checked under that same PATH before anything starts. A login shell
+  that is slow or prints no PATH leaves a warning, not a refusal; profile output is only ever read as
+  text. A session id the pane carries is resumed by id
   (`--resume`); with none, `restart` refuses unless `--force`, as the agent's own "latest" may be a
   conversation started there by hand. A pane that reports
   no status to hc (Hermes) can't say whether it is waiting for an approval, so `restart` refuses
