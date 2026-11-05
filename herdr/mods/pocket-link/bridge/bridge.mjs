@@ -28,7 +28,7 @@ import { createEngine } from '../chat/engine.js'
 import { judgeCode, cancelCode, shortenCode, fingerprint } from './pairing.mjs'
 import { open as openState } from './state.mjs'
 import { presence, publicStatus, writePublic, HEARTBEAT } from './presence.mjs'
-import { store, listen, unlinkOwn, forget, SOCKET } from './devices.mjs'
+import { store, listen, unlinkOwn, forget, bridgeState, claim, stopBridge, startedAt, SOCKET } from './devices.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SESSION = [...Buffer.from(ALPN.session)]
@@ -57,7 +57,6 @@ const devices = () => readJson(files.devices, [])
 const phoneList = store(files.devices)
 // Older versions wrote QR files here; clean them up.
 const clearQr = () => { for (const f of readdirSync(STATE)) if (/^qr-\d+\.svg$/.test(f)) try { unlinkSync(join(STATE, f)) } catch {} }
-const alive = pid => { try { process.kill(pid, 0); return true } catch { return false } }
 
 function secretKey() {
   if (!existsSync(files.key)) writeFileSync(files.key, Buffer.from(SecretKey.generate().toBytes()), { mode: 0o600 })
@@ -177,11 +176,15 @@ async function chatRoute({ conn, bi, value, rest, peer: phone }) {
 }
 
 async function serve() {
-  const other = readJson(files.status, {})
-  if (other.pid && other.pid !== process.pid && alive(other.pid)) { log('serve: already running as', other.pid); process.exit(0) }
+  // Never two bridges; but a pid a crash left to another process is no bridge (devices.mjs).
+  const other = await claim({ dir: STATE, self: process.pid })
+  if (other.running) { log('serve: already running as', other.pid ?? 'an unknown pid'); process.exit(0) }
+  if (other.stale) log('serve: status.json named pid', other.stalePid, 'which is not a bridge; replacing it')
   const ep = await Endpoint.bind({ secretKey: secretKey(), alpns: [SESSION, PAIR, CHAT] })
-  const publish = () => writeJson(files.status, { pid: process.pid, id: ep.id().toString(), ticket: EndpointTicket.fromAddr(ep.addr()).toString(),
-    name: hostname().replace(/\.local$/, ''), started: Date.now() })
+  // This process's start time, which tells it apart from a later process given the same pid.
+  const pidStart = startedAt(process.pid)
+  const publish = () => writeJson(files.status, { pid: process.pid, ...(pidStart ? { pidStart } : {}), id: ep.id().toString(),
+    ticket: EndpointTicket.fromAddr(ep.addr()).toString(), name: hostname().replace(/\.local$/, ''), started: Date.now() })
   // Remove (`forget`) arrives here, before status.json names this bridge: it removes the phone and
   // ends its sessions now. Without the socket (a path too long for one), forget writes the file.
   try {
@@ -219,7 +222,7 @@ async function serve() {
 
 async function pair(minutes = 10) {
   const status = readJson(files.status, null)
-  if (!status?.ticket || !alive(status.pid)) throw new Error('The bridge is not running.')
+  if (!status?.ticket || !(await bridgeState({ dir: STATE })).running) throw new Error('The bridge is not running.')
   const code = randomBytes(16).toString('base64url')
   const expires = Date.now() + Math.max(1, Math.min(60, Number(minutes) || 10)) * 60_000
   writeJson(files.pairing, { code, expires, name: status.name })
@@ -288,7 +291,8 @@ try {
   else if (command === 'status') {
     const s = readJson(files.status, {})
     const p = readJson(files.pairing, null)
-    out({ running: Boolean(s.pid && alive(s.pid)), id: s.id ?? null, name: s.name ?? null, ticket: s.ticket ?? null,
+    const { running } = await bridgeState({ dir: STATE })
+    out({ running, id: s.id ?? null, name: s.name ?? null, ticket: s.ticket ?? null,
       devices: devices().map(({ id, name, paired, seen }) => ({ id, name, fingerprint: fingerprint(id), paired, seen })),
       pairing: p && Date.now() < p.expires ? { expires: p.expires } : null, login: existsSync(loginService().path), state: STATE })
   }
@@ -305,9 +309,10 @@ try {
   }
   else if (command === 'start') {
     // Without the login service: a detached bridge that lives until stopped or logout.
-    const s = readJson(files.status, {})
+    // A stale pid's socket and status.json are cleared first (devices.mjs claim).
+    const { running } = await claim({ dir: STATE })
     recordNode()
-    if (!(s.pid && alive(s.pid))) {
+    if (!running) {
       const err = openSync(files.log, 'a', 0o600)
       spawn(process.execPath, [join(HERE, 'bridge.mjs'), 'serve'], { detached: true, stdio: ['ignore', 'ignore', err] }).unref()
     }
@@ -315,10 +320,10 @@ try {
   }
   else if (command === 'stop') {
     const s = loginService(); s.off(); try { unlinkSync(s.path) } catch {}
-    const st = readJson(files.status, {})
-    if (st.pid && alive(st.pid)) try { process.kill(st.pid) } catch {}
+    // Only a pid verified as the bridge is signalled (devices.mjs stopBridge).
+    const { stopped } = await stopBridge({ dir: STATE })
     cancelCode(files.pairing); clearQr()
-    out({ ok: true })
+    out({ ok: true, stopped })
   }
   else if (command === 'forget') out(await forget({ dir: STATE, id: arg }))
   else if (command === 'install') { const s = loginService(); mkdirSync(dirname(s.path), { recursive: true }); writeFileSync(s.path, s.body); s.on(); recordNode(); out({ ok: true, path: s.path }) }
