@@ -32,7 +32,8 @@
 //   only when that comes before the reset. The rate is the rise over the last hour (5h) or six
 //   hours (7d) in the limits logger's log (claude-limits.jsonl, its last 256 KiB only, readings
 //   of the same window), the used % at a time being the highest reading up to it (a resumed
-//   session logs a stale lower one); else the used % over the time since the window started.
+//   session logs a stale lower one), over the time the readings cover (idle gaps over 15 minutes
+//   left out); with no reading in the lookback, the used % over the time since the window started.
 // - Green under 70%, yellow from 70%, red from 90%. NO_COLOR turns the colours off.
 //
 // Node, no dependencies, never throws: a field it cannot read drops its segment. Run it with
@@ -47,7 +48,7 @@ import { fileURLToPath } from "node:url";
 
 const GREEN = "\x1b[32m", YELLOW = "\x1b[33m", RED = "\x1b[31m", CYAN = "\x1b[36m", BOLD = "\x1b[1m", DIM = "\x1b[2m", RESET = "\x1b[0m";
 const BOTS_KEEP = 512;
-const SETTLE = 300;
+const SETTLE = 300, GAP = 900, MIN_COVERED = 900;
 const TAIL = 256 << 10;
 const BOT_TTL = 10 * 60 * 1000;
 export const WHOIS_TIMEOUT = 1500;
@@ -92,13 +93,17 @@ export function bar(pct, cells) {
  * logs its value from before the resume (lower than the truth, with a fresh ts) until its first
  * reply, and sessions side by side alternate between neighbouring values. Used % never falls
  * within a window, so the used % at a time is the highest reading of this same window (same
- * resets_at) up to it, and a stale low reading changes nothing. The rate is the rise from a
- * start to now. The start is the last reading at or before the lookback's start, when it is no
- * older than two lookbacks; else (the log does not reach back, or a gap with no readings) 5
- * minutes after the first reading inside the lookback, time for a stale first reading to be
- * overtaken. A start less than a quarter of the lookback ago measures nothing; a measured rise of
- * nothing means no run-out. With no measure, the rate is the used % over the time since the
- * window started (once it is 10 minutes old).
+ * resets_at) up to it, the stdin reading at `now` included, and a stale low reading changes
+ * nothing.
+ *
+ * The rate is the rise over the time the log covers in the lookback (1 h for 5h, 6 h for 7d):
+ * only the spans between consecutive readings at most 15 minutes apart (the logger writes at least
+ * every 5 minutes while a session runs). A longer span is idle time, and counts neither its time
+ * nor any rise across it. The first 5 minutes after each idle span are left out as well: a resumed
+ * session's stale first reading lands there. Under 15 minutes covered measures too little (one 1%
+ * step of a whole-number reading would read as a run), so there is no Left; a measured rise of
+ * nothing means no run-out. With no reading of the window in the lookback at all, the rate is the
+ * used % over the time since the window started (once it is 10 minutes old).
  */
 export function runOut(key, w, now, rows) {
   const spec = WINDOWS[key];
@@ -109,16 +114,26 @@ export function runOut(key, w, now, rows) {
     const x = r?.[key], ts = typeof r?.ts === "string" ? Date.parse(r.ts) / 1000 : NaN;
     if (isObject(x) && num(x.used_percentage) != null && x.resets_at === reset && ts <= t) pts.push([ts, x.used_percentage]);
   }
-  const current = Math.max(used, ...pts.map(([, v]) => v));
+  pts.sort((p, q) => p[0] - q[0]);
+  const edge = t - spec.look;
+  const logged = pts.some(([ts]) => ts > edge);
+  pts.push([t, used]);
+  let high = -Infinity;
+  const env = pts.map(([ts, v]) => [ts, (high = Math.max(high, v))]);
+  const current = high;
   if (current >= 100) return null;
   let rate = null; // % per second
-  const edge = t - spec.look;
-  const before = Math.max(...pts.filter(([ts]) => ts <= edge).map(([ts]) => ts));
-  const inside = Math.min(...pts.filter(([ts]) => ts > edge).map(([ts]) => ts));
-  const start = before >= t - 2 * spec.look ? before : inside + SETTLE;
-  if (Number.isFinite(start) && t - start >= spec.look / 4) {
-    const atStart = Math.max(...pts.filter(([ts]) => ts <= start).map(([, v]) => v));
-    rate = Math.max(0, current - atStart) / (t - start);
+  if (logged) {
+    let covered = 0, rise = 0, runStart = env[0][0];
+    for (let i = 1; i < env.length; i++) {
+      const [a, va] = env[i - 1], [b, vb] = env[i];
+      if (b - a > GAP) { runStart = b; continue; }
+      if (b <= edge || a < runStart + SETTLE) continue;
+      covered += b - a;
+      rise += vb - va;
+    }
+    if (covered < MIN_COVERED) return null;
+    rate = rise / covered;
   } else {
     const elapsed = t - (reset - spec.span);
     if (elapsed > 600 && current > 0) rate = current / elapsed;

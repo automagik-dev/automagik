@@ -90,42 +90,51 @@ test("tokens, times and bars read short", () => {
     ["▱▱▱▱▱▱▱▱▱▱", "▱▱▱▱▱▱▱▱▱▱", "▰▱▱▱▱▱▱▱▱▱", "▰▰▰▰▱▱▱▱▱▱", "▰▰▰▰▰▰▰▰▰▰", "▰▰▰▰▰", "▱▱▱▱▱", "▱▱▱▱▱", "▰▰▰▰▰"]);
 });
 
-test("Left: the rate from the limits log, same window, in the lookback; else since the window started", () => {
+test("Left: the rise over the time the log covers, idle gaps left out; else since the window started", () => {
   const t = NOW / 1000, reset = t + 3600; // a 5h window started 4h ago, 1h to its reset
   const w = (used) => ({ used_percentage: used, resets_at: reset });
   const row = (ago, used, resetsAt = reset) => ({ ts: iso(t - ago), five_hour: { used_percentage: used, resets_at: resetsAt } });
+  // Readings every 5 minutes (the logger's heartbeat), from `from` seconds ago to `to`.
+  const every5 = (from, to, at, make = row) => Array.from({ length: (from - to) / 300 + 1 }, (_, n) => make(from - n * 300, at(from - n * 300)));
   const left = (...a) => { const s = runOut(...a); return s == null ? null : Math.round(s); };
-  // The log reaches back past the 1h lookback: from its last reading before it, 10% → 70% in
-  // 4000 s, 30% left runs out in 2000 s, before the reset.
-  assert.equal(left("five_hour", w(70), NOW, [row(4000, 10), row(600, 45)]), 2000);
-  // The stdin reading can be a stale one too: the log's highest reading is the current used %.
-  assert.equal(left("five_hour", w(50), NOW, [row(4000, 10), row(60, 70)]), 2000);
-  // 60% → 70% in 4000 s runs out after the reset: no Left.
-  assert.equal(left("five_hour", w(70), NOW, [row(4000, 60), row(600, 66)]), null);
-  // No rise over the lookback: no Left, though the window's average would give one.
-  assert.equal(left("five_hour", w(90), NOW, [row(4000, 90)]), null);
-  // The average since the window started: 90% in 4h, 10% left in 1600 s.
+  // 1% a minute over the last 70 minutes: at 70%, 30% left runs out in 30 minutes.
+  const steady = every5(4200, 0, (ago) => 70 - ago / 60);
+  assert.equal(left("five_hour", w(70), NOW, steady), 1800);
+  // A stale stdin reading changes nothing: the log's highest reading is the current used %.
+  assert.equal(left("five_hour", w(50), NOW, steady), 1800);
+  // 0.1% a minute runs out after the reset: no Left. No rise at all: no Left, though the
+  // window's average would give one.
+  assert.equal(left("five_hour", w(70), NOW, every5(4200, 0, (ago) => 70 - ago / 600)), null);
+  assert.equal(left("five_hour", w(90), NOW, every5(4200, 0, () => 90)), null);
+  // An idle gap counts neither its time nor a rise across it: a reading at 20% 50 minutes ago,
+  // nothing, then 1% a minute over the last 20 minutes (less the 5 settling minutes after the
+  // gap): 20% left in 20 minutes.
+  assert.equal(left("five_hour", w(80), NOW, [row(3000, 20), ...every5(1200, 0, (ago) => 80 - ago / 60)]), 1200);
+  // A lone reading 10 minutes old covers too little to measure: no Left.
+  assert.equal(left("five_hour", w(90), NOW, [row(600, 10)]), null);
+  // No reading of the window in the lookback: the average since the window started, 90% in 4h,
+  // 10% left in 1600 s. Readings of another window (an older reset), from the future or
+  // malformed are none.
   assert.equal(left("five_hour", w(90), NOW, []), 1600);
-  // Readings that do not count: another window (an older reset), from the future, malformed;
-  // one only 10 minutes old measures too little (under a quarter of the lookback).
-  const ignored = [row(2400, 10, reset - 18000), row(-60, 10), { ts: "x", five_hour: { used_percentage: 10, resets_at: reset } }, null, 5, row(600, 10)];
+  const ignored = [row(2400, 10, reset - 18000), row(-60, 10), { ts: "x", five_hour: { used_percentage: 10, resets_at: reset } }, null, 5];
   assert.equal(left("five_hour", w(90), NOW, ignored), 1600);
 
-  // The 7d window looks back 6h. A resumed session logs its value from before the resume (54%)
-  // with a fresh ts, a second before its own current one: the shape of the owner's log.
+  // The 7d window looks back 6h. 2% in 6h at 90%: 10% left in 30h (1d6h).
   const reset7 = t + 2 * 86400, w7 = { used_percentage: 90, resets_at: reset7 };
   const row7 = (ago, used) => ({ ts: iso(t - ago), seven_day: { used_percentage: used, resets_at: reset7 } });
-  const resumed = [row7(5 * 3600, 54), row7(5 * 3600 - 1, 88), row7(3600, 89.5)];
-  // Reaching back 7h: 88% → 90% in 7h, 10% left in 35h (1d11h). Taking the stale 54% as the
-  // start, as cdd4e4b9 did, made it 5000 s (1h24m).
-  assert.equal(left("seven_day", w7, NOW, [row7(7 * 3600, 88), ...resumed]), 126_000);
-  assert.equal(until(126_000), "1d11h");
-  // Not reaching back: the start is 5 minutes after the first reading, by when the session's
-  // current 88% is in: 2% in 17700 s, 10% left in 88500 s (1d0h), not 1h24m.
-  assert.equal(left("seven_day", w7, NOW, resumed), 88_500);
-  // A gap: the only reading before the lookback is 3 days old, too old to start from (it would
-  // give 10h18m); one reading an hour old measures too little: the window's average.
-  assert.equal(left("seven_day", w7, NOW, [row7(3 * 86400, 20), row7(3600, 89)]), left("seven_day", w7, NOW, []));
+  // A resumed session logs its value from before the resume (54%) with a fresh ts, a second
+  // before its current one: the shape of the owner's log. It changes nothing.
+  assert.equal(left("seven_day", w7, NOW, [...every5(25200, 0, (ago) => 90 - ago / 10800, row7), row7(17999, 54)]), 108_000);
+  assert.equal(until(108_000), "1d6h");
+  // The log starts with that resumed session 5h ago: the 5 settling minutes keep its stale first
+  // reading out; 2% in 5h, 10% left in 25h (1d1h), not 1h24m.
+  const resumed = [row7(18000, 54), row7(17999, 88), ...every5(17700, 0, (ago) => 88 + 2 * (18000 - ago) / 18000, row7)];
+  assert.equal(left("seven_day", w7, NOW, resumed), 90_000);
+  // A gap: one reading 11.5h ago (80%), idle, then 2% an hour over the last hour: 10% left in 5h.
+  // b65c385e started the rate at the old reading and counted the idle hours: 11h30m.
+  const gap = [row7(41_400, 80), ...every5(3600, 0, (ago) => 90 - 2 * ago / 3600, row7)];
+  assert.equal(left("seven_day", w7, NOW, gap), 18_000);
+  assert.equal(until(18_000), "5h00m");
 
   // Nothing to show: a reset that passed, a full window (stdin or log), an unknown window, a
   // fresh window.
@@ -136,7 +145,7 @@ test("Left: the rate from the limits log, same window, in the lookback; else sin
   assert.equal(runOut("five_hour", { used_percentage: 90, resets_at: t + 18000 - 300 }, NOW, []), null);
   // format() shows the log's rate.
   const input = { rate_limits: { five_hour: w(70) } };
-  assert.equal(format(input, { ...plain, limits: [row(4000, 10)] }), "Quota 5h ▰▰▰▰▱ 70%  Left 34m  Resets 1h00m");
+  assert.equal(format(input, { ...plain, limits: steady }), "Quota 5h ▰▰▰▰▱ 70%  Left 30m  Resets 1h00m");
   assert.equal(format(input, plain), "Quota 5h ▰▰▰▰▱ 70%  Resets 1h00m");
 });
 

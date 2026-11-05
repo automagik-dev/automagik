@@ -46,12 +46,13 @@ Each segment is left out when its field is missing. Separators and labels are di
   only the log's last 256 KiB is read. Each session logs the value it last saw, so a resumed
   session logs a stale lower one with a fresh time, and sessions side by side alternate between
   neighbouring values. Used % never falls within a window, so the used % at a time is the highest
-  reading up to it. The rate is the rise from a start to now. The start is the last reading at or
-  before the lookback's start (1 h for 5h, 6 h for 7d), when it is no older than two lookbacks;
-  else (the log does not reach back, or a gap) 5 minutes after the first reading inside the
-  lookback. A start less than a quarter of the lookback ago measures nothing, and a measured rise
-  of nothing shows no `Left`. With no measure, the rate is the used % over the time since the
-  window started.
+  reading up to it. The rate is the rise over the time the log covers in the lookback (1 h for 5h,
+  6 h for 7d): only spans between consecutive readings at most 15 minutes apart (the logger
+  writes at least every 5 minutes while a session runs). A longer span is idle and counts neither
+  its time nor a rise across it, and the first 5 minutes after it are left out too (a resumed
+  session's stale first reading lands there). Under 15 minutes covered, or a measured rise of
+  nothing, shows no `Left`. With no reading of the window in the lookback at all, the rate is the
+  used % over the time since the window started.
 
 | File | What it is |
 | - | - |
