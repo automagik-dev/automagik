@@ -307,12 +307,16 @@ automagik-herdr update [--check | --rollback]
   pane's tab; with none open, `start` opens one on the project folder (`--space` picks the
   space instead, `--tab` a tab in it). The sidebar's Start passes the space only. A space
   opened this way (by `start` or the sidebar's Start) comes with a shell in its first tab:
-  that tab is closed (`tab.close`, never confirmed for the person) once the bot shows in its
-  own tab there, and only while that shell is known to be the tab's one pane (a mod pane
-  counts) with the shell itself in front, idle, so the space is never left empty and nothing
-  else is closed. The sidebar's Start knows the panes; `start` from the command line only
-  when `herdr-app ls` gives a tab's pane count, which it doesn't today, so the tab is left for
-  now. `AUTOMAGIK_HERDR_TAB_WAIT_MS` sets how long `start` and `worker` wait for Herdr to show
+  that tab is closed (`tab.close`, not `confirmed`: Herdr asks the person only before it
+  closes a space's last tab, and the bot's tab is always left) once the bot shows in its own
+  tab there, and only while that shell is known to be the tab's one pane (a mod pane counts)
+  with the shell itself in front, idle, and no job of its own running (`sleep 99 &` left at
+  the prompt keeps it: its child processes are asked with `pgrep -P`, and an answer that
+  can't be read keeps it too), so the space is never left empty and nothing else is closed.
+  The sidebar's Start knows the panes. `start` from the command line, `--machine` too, reads
+  them from `herdr-app ls`, which counts no mod pane: it closes the tab only when it saw that
+  shell, right after its own `space.new`, as the new space's one tab and that tab's one
+  terminal. `AUTOMAGIK_HERDR_TAB_WAIT_MS` sets how long `start` and `worker` wait for Herdr to show
   the new pane (5000 by default); `0` turns this tab setup off.
 - `restart` runs the bot's agent again in its pane's place: the new pane starts in the same
   space, tab and folder with the same labels, and the old one is ended (`hc kill`) only once the

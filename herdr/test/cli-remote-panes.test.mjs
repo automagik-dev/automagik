@@ -15,6 +15,8 @@ import { attachPath, readAttach } from "../mods/am-sidebar/attach.js";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
+const FAKE_APP = new URL("./fake-herdr-app.mjs", import.meta.url).pathname;
+const FAKE_PGREP = new URL("./fake-pgrep.mjs", import.meta.url).pathname;
 const CORE = "core-of-vm";
 const ATLAS = "b-atlasaaaaa", HEDGE = "b-hedgeaaaaa";
 const KEEP = ["sh", "-c", "\"$@\"; exec \"${SHELL:-sh}\" -i", "sh", "hermes", "--tui"];
@@ -31,6 +33,8 @@ function scene(t, { terminals = [], tui = true } = {}) {
   // On vm: hermes and claude are installed (what `command -v` finds there).
   exe(join(vmBin, "hermes"), "#!/bin/sh\nexit 0\n");
   exe(join(vmBin, "claude"), "#!/bin/sh\nexit 0\n");
+  // A shell's children there (pgrep -P through hc exec): never the host's processes.
+  exe(join(vmBin, "pgrep"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_PGREP}" "$@"\n`);
   // The owner's override, as programs.json holds it: Atlas runs the TUI.
   if (tui) writeFileSync(join(app, "programs.json"), JSON.stringify({ programs: { hermes: { run: ["hermes", "--tui"] } } }));
   const project = join(vm, "atlas");
@@ -46,8 +50,10 @@ function scene(t, { terminals = [], tui = true } = {}) {
   writeFileSync(statePath, JSON.stringify({ next: 100, noStatus: ["hermes"], terminals: terminals.map((x) => ({ cwd: project, ...x })),
     machines: [{ name: "vm", id: CORE, state: "connected", uname: "Linux x86_64", home: vm, path: vmBin }] }));
   writeFileSync(logPath, "");
+  const appState = join(root, "herdr-app.json"), appLog = join(root, "herdr-app.log");
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
-    AUTOMAGIK_HERDR_RESTART_STABLE_MS: "300", AUTOMAGIK_HERDR_RESTART_WAIT_MS: "4000" };
+    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog,
+    AUTOMAGIK_HERDR_RESTART_STABLE_MS: "300", AUTOMAGIK_HERDR_RESTART_WAIT_MS: "4000", AUTOMAGIK_HERDR_TAB_WAIT_MS: "300" };
   // Run from a pane (t1), as a bot would: hc run's default parent is the calling terminal.
   env.HC_TERMINAL_ID = "t1";
   const cli = (args) => {
@@ -64,7 +70,15 @@ function scene(t, { terminals = [], tui = true } = {}) {
     writeFileSync(join(root, "window.json"), JSON.stringify({ spaces }));
     exe(join(bin, "herdr-app"), `#!/bin/sh\n[ "$1" = ls ] && exec cat "${join(root, "window.json")}"\nexit 1\n`);
   };
-  return { root, project, app, home, cli, on, calls, hcState, setState, rows, windowShows };
+  // fake-herdr-app.mjs as the window, from `state` (its space.new, tab.close and `place`).
+  const fakeWindow = (state) => {
+    writeFileSync(appState, JSON.stringify(state));
+    writeFileSync(appLog, "");
+    exe(join(bin, "herdr-app"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_APP}" "$@"\n`);
+  };
+  const appCalls = () => readFileSync(appLog, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const windowNow = () => JSON.parse(readFileSync(appState, "utf8"));
+  return { root, project, app, home, cli, on, calls, hcState, setState, rows, windowShows, fakeWindow, appCalls, windowNow };
 }
 
 // The Atlas pane as lab/t8 is: live, under the keep wrapper, no status reported.
@@ -108,6 +122,45 @@ test("start --machine lands in that machine's space on the project, in a tab of 
   const run = s.calls().find((c) => c[0] === "run");
   assert.ok(run.includes("herdr.space=sp-vm"), run.join(" "));
   assert.equal(run.some((a) => a.startsWith("herdr.tab=")), false, run.join(" "));
+});
+
+test("start --machine in a space it opened closes that space's shell tab only while it is the fresh bare idle shell", (t) => {
+  // No space on the project there: space.new on vm makes one, its shell (vm/t-sh1, printed bare)
+  // the one tab's one terminal; Herdr shows the bot (vm/t100) in a tab of its own.
+  const s = scene(t);
+  s.fakeWindow({ spaces: [], place: true });
+  const r = s.cli(["start", "Atlas", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual([r.json().space, r.json().tab], ["sp-new1", null]);
+  // Never `confirmed`: Herdr asks the person only before closing a space's last tab.
+  assert.deepEqual(s.appCalls().filter((c) => c[0] === "do").map((c) => [c[1], JSON.parse(c[2])]),
+    [["space.new", { name: "atlas", folder: s.project, machine: "vm" }], ["tab.close", { id: "tb-new1" }]]);
+  assert.deepEqual(s.windowNow().spaces.map((x) => [x.id, x.tabs.map((tb) => tb.id)]), [["sp-new1", ["tb-vm/t100"]]]);
+  // Its shell was asked of hc there, and its children of that machine (pgrep -P through hc exec).
+  assert.ok(s.calls().some((c) => c[0] === "get" && c[1] === "vm/t-sh1"), JSON.stringify(s.calls()));
+  assert.ok(s.calls().some((c) => c[0] === "exec" && c.includes("vm") && c.slice(-3).join(" ") === "pgrep -P 9001"));
+  // Kept: vim in front of the shell, a job left running at its prompt, its children unknown.
+  for (const extra of [{ shellBusy: true }, { shellJob: true }, { shellUnknown: true }]) {
+    const k = scene(t);
+    k.fakeWindow({ spaces: [], place: true, ...extra });
+    const kr = k.cli(["start", "Atlas", ...k.on]);
+    assert.equal(kr.code, 0, kr.err);
+    assert.deepEqual(k.appCalls().filter((c) => c[0] === "do").map((c) => c[1]), ["space.new"], JSON.stringify(extra));
+    assert.deepEqual(k.windowNow().spaces[0].tabs.map((tb) => tb.id), ["tb-new1", "tb-vm/t100"], JSON.stringify(extra));
+  }
+  // A bot Herdr doesn't show in time: the shell's tab is the space's only one, kept.
+  const n = scene(t);
+  n.fakeWindow({ spaces: [] });
+  assert.equal(n.cli(["start", "Atlas", ...n.on]).code, 0);
+  assert.deepEqual(n.appCalls().filter((c) => c[0] === "do").map((c) => c[1]), ["space.new"]);
+  assert.deepEqual(n.windowNow().spaces[0].tabs.map((tb) => tb.id), ["tb-new1"]);
+  // A space of vm open on the project already is never this start's: nothing is closed there.
+  const o = scene(t);
+  o.fakeWindow({ place: true, spaces: [{ id: "sp-vm", name: "atlas", folder: o.project, machine: "vm", active: true,
+    tabs: [{ id: "tb-a", name: "1", active: true, terminals: [{ terminal: "vm/t-sh9", pane: "p9" }] }] }] });
+  assert.equal(o.cli(["start", "Atlas", ...o.on]).code, 0);
+  assert.deepEqual(o.appCalls().filter((c) => c[0] === "do"), []);
+  assert.deepEqual(o.windowNow().spaces[0].tabs.map((tb) => tb.id), ["tb-a", "tb-vm/t100"]);
 });
 
 test("start --machine: an agent not installed there is refused before anything runs; without the override, plain hermes", (t) => {
