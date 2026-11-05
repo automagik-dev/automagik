@@ -820,12 +820,26 @@ export function install(rt) {
     return found[0]
   }
 
+  // `expect` is the entry's text as a numbered list showed it. A change made against
+  // that list holds the entry it was read from, never another one: once an earlier
+  // change has edited it, its old text may be only part of another entry now.
+  // `expect` is already a parsed entry's text: cleaning it again would strip a bullet
+  // that text starts with, and no entry could then match itself.
+  function findExpected(files, topic, match, expect, label) {
+    const old = findOne(files, topic, match, label)
+    if (expect !== undefined && squash(old.text) !== squash(expect)) {
+      const message = `The entry the change names has changed since it was read; the text it had (${String(expect).length} chars) is only part of another entry now. recall shows what is saved.`
+      throw Object.assign(new Error(message), { code: NO_MATCH })
+    }
+    return old
+  }
+
   // The entry keeps its place; `topic` only narrows where to look.
-  function replaceEntry({ scope, topic, match, text, meta, actor, label }) {
+  function replaceEntry({ scope, topic, match, expect, text, meta, actor, label }) {
     return queued(async () => {
       await recoverPending()
       writable(scope, actor)
-      const old = findOne(loadScope(scope), topic, match, label)
+      const old = findExpected(loadScope(scope), topic, match, expect, label)
       const line = formatEntry(text, meta)
       const lines = [...old.file.lines]
       const before = lines[old.line]
@@ -843,12 +857,12 @@ export function install(rt) {
     })
   }
 
-  function removeEntry({ scope, topic, match, actor, label }) {
+  function removeEntry({ scope, topic, match, expect, actor, label }) {
     return queued(async () => {
       await recoverPending()
       writable(scope, actor)
       const files = loadScope(scope)
-      const old = findOne(files, topic, match, label)
+      const old = findExpected(files, topic, match, expect, label)
       const before = old.file.lines[old.line]
       const lines = old.file.lines.filter((_line, index) => index !== old.line)
       // A topic left with nothing but its title goes, and so does its link.
@@ -1443,8 +1457,8 @@ export function install(rt) {
           if (problem) throw Object.assign(new Error(problem), { code: REFUSED })
         }
         if (op === 'add') await addEntry({ scope, text: next, meta, actor: USER, label })
-        else if (op === 'edit') await replaceEntry({ scope, topic: target.file.topic, match: target.text, text: next, meta, actor: USER, label })
-        else if (op === 'remove') await removeEntry({ scope, topic: target.file.topic, match: target.text, actor: USER, label })
+        else if (op === 'edit') await replaceEntry({ scope, topic: target.file.topic, match: target.text, expect: target.text, text: next, meta, actor: USER, label })
+        else if (op === 'remove') await removeEntry({ scope, topic: target.file.topic, match: target.text, expect: target.text, actor: USER, label })
         else continue
         changes.push({ op, scope: tag, text: op === 'remove' ? target.text : next, ...(op === 'edit' ? { before: target.text } : {}), ok: true })
       } catch (failure) {
@@ -1591,8 +1605,8 @@ export function install(rt) {
         if (scope.kind === 'team' && !team) continue
         if ((op === 'add' || op === 'edit') && entryProblem(text) !== undefined) continue
         if (op === 'add') done.push(await addEntry({ scope, topic, text, meta, actor, label }))
-        else if (op === 'edit') done.push(await replaceEntry({ scope, topic: target.file.topic, match: target.text, text, meta, actor, label }))
-        else if (op === 'remove') done.push(await removeEntry({ scope, topic: target.file.topic, match: target.text, actor, label }))
+        else if (op === 'edit') done.push(await replaceEntry({ scope, topic: target.file.topic, match: target.text, expect: target.text, text, meta, actor, label }))
+        else if (op === 'remove') done.push(await removeEntry({ scope, topic: target.file.topic, match: target.text, expect: target.text, actor, label }))
       } catch (failure) {
         if (failure?.code === GONE) return 0
         leftOut(name, op, op === 'remove' ? target?.text ?? '' : text, failureText(failure))
