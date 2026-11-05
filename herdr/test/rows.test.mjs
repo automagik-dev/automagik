@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   ASLEEP_MS, liveFrom, poseOf, nextWake, helpersOf, buildTree, placeTrees, placesOf, withSpaceless, visibleRows, botFold, categoryFold, knownBots, projectId,
-  secondLine, argvToAsk, argvEntry, argvAfter, argvReader, heldClickOf, heldTerminalOf, liveOf, paneCounts, listedKeyOf,
+  secondLine, modelDefaultsFrom, modelTextsUpdate, argvToAsk, argvEntry, argvAfter, argvReader, heldClickOf, heldTerminalOf, liveOf, paneCounts, listedKeyOf,
 } from "../mods/am-sidebar/rows.js";
 import { parseBots } from "../mods/am-sidebar/model.js";
 
@@ -239,6 +239,46 @@ test("secondLine: the model a live pane runs (its command line, else the agent's
   const planned = file.bots.find((b) => b.id === "b-plannedpla");
   assert.equal(secondLine(row(planned, "planned"), tree, { texts }), "waits for auth v2");
   for (const kind of ["bot", "main"]) assert.doesNotMatch(secondLine(row(cap, kind, live), tree, { texts }), /GPT-6\.1 Terra/);
+});
+
+test("model defaults: the config texts are parsed once per change (main.js loadModelTexts), never per row drawn", () => {
+  const big = (model) => JSON.stringify({ model, permissions: { allow: Array.from({ length: 2000 }, (_, i) => `Bash(tool-${i}:*)`) } });
+  const files = (claude) => ({ claudeSettings: big(claude), codexConfig: 'model = "gpt-5.5"\n[profiles.x]\nmodel = "o9"\n', antigravitySettings: JSON.stringify({ model: "Gemini 3" }), hermesConfig: null });
+  const parse = JSON.parse;
+  let parses = 0;
+  JSON.parse = (...a) => { parses += 1; return parse(...a); };
+  try {
+    // Every 15 s the same texts come back: parsed on the first read only.
+    let seen, state;
+    for (let i = 0; i < 5; i += 1) {
+      const next = modelTextsUpdate(seen, files("sonnet"));
+      if (i === 0) assert.ok(next); else assert.equal(next, null);
+      if (next) ({ seen } = next), (state = next);
+    }
+    assert.equal(parses, 2, "claude's and antigravity's settings, once each");
+    assert.deepEqual(state.defaults, { claude: "sonnet", codex: "gpt-5.5", antigravity: "Gemini 3" });
+    assert.deepEqual(state.defaults, modelDefaultsFrom(state.texts));
+    parses = 0;
+    // Drawing: 3 agents x 50 live rows whose command line names no model read no text at all.
+    const untouchable = new Proxy({}, { get: (_, k) => { throw new Error(`texts.${String(k)} read while drawing`); } });
+    const tree = { key: "/repo/proj/" };
+    const row = (agent) => ({ kind: "bot", node: { bot: bot(`b-${agent}`, { agent, role: "Dev" }), live: { terminal: "t1" }, argv: [agent === "antigravity" ? "agy" : agent] } });
+    const want = { claude: "Dev · sonnet", codex: "Dev · gpt-5.5", antigravity: "Dev · Gemini 3" };
+    for (let i = 0; i < 50; i += 1) {
+      for (const agent of Object.keys(want)) assert.equal(secondLine(row(agent), tree, { texts: untouchable, defaults: state.defaults }), want[agent]);
+    }
+    assert.equal(parses, 0);
+    // A changed text: parsed once more, and the rows show the new default.
+    const changed = modelTextsUpdate(seen, files("opus"));
+    assert.equal(parses, 2);
+    assert.equal(secondLine(row("claude"), tree, { texts: untouchable, defaults: changed.defaults }), "Dev · opus");
+    // Without parsed defaults (other callers), the default is parsed only when the command line names no model.
+    parses = 0;
+    const named = { kind: "bot", node: { bot: bot("b-claude", { role: "Dev" }), live: { terminal: "t1" }, argv: ["claude", "--model", "haiku"] } };
+    assert.equal(secondLine(named, tree, { texts: untouchable }), "Dev · haiku");
+    assert.equal(secondLine(row("claude"), tree, { texts: changed.texts }), "Dev · opus");
+    assert.equal(parses, 1);
+  } finally { JSON.parse = parse; }
 });
 
 test("liveFrom and buildTree carry the live pane's foreground command line when the row has it", () => {

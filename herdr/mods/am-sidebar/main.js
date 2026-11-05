@@ -27,7 +27,7 @@ import { startBot, attachBot, botOfTerminal, modelTexts, sleepOf } from "./launc
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { workerClick, rowWorker, openWorkerTab } from "./workerTab.js";
-import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, argvToAsk, argvAfter, argvReader, spaceRowOrder, clickActionOf, heldTerminalOf, heldClickOf, listedKeyOf } from "./rows.js";
+import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, modelTextsUpdate, argvToAsk, argvAfter, argvReader, spaceRowOrder, clickActionOf, heldTerminalOf, heldClickOf, listedKeyOf } from "./rows.js";
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
@@ -253,6 +253,7 @@ export default class Spaces extends View {
     // address ({ argv, created }), read with hc get after each bot discovery when terminals()
     // didn't carry it.
     this.modelTexts = {};
+    this.modelDefaults = {}; // rows.js modelDefaultsFrom(this.modelTexts), parsed once per change
     this.argvOf = new Map();
     // Each live bot pane's project key on this computer (automagik#227: by project and id), by
     // address ({ cwd, created, key }), read after each bot discovery and when the bot panes
@@ -654,7 +655,7 @@ export default class Spaces extends View {
     const ink = inkOf(b.look?.colour, dark);
     const live = n.live;
     if (live) this.order.push(live.terminal);
-    const second = secondLine(r, tree, { texts: this.modelTexts, argvOf: (a) => this.argvOf.get(a)?.argv ?? null });
+    const second = secondLine(r, tree, { texts: this.modelTexts, defaults: this.modelDefaults, argvOf: (a) => this.argvOf.get(a)?.argv ?? null });
     const s = n.status === "error" ? "blocked" : n.status;
     const project = { key: tree.key, machine: tree.machine };
     // Not counted live but holding a live terminal (no agent seen in front yet): its pane, or
@@ -943,16 +944,17 @@ export default class Spaces extends View {
     });
   }
 
-  // The agents' config files (models.js configPaths) for each bot's default model; redraw on
-  // a change only.
+  // The agents' config files (models.js configPaths) for each bot's default model, parsed
+  // here once per change (rows.js modelTextsUpdate), never per row drawn; redraw on a change only.
   loadModelTexts(cx) {
     cx.spawn(async (cx) => {
       let texts;
       try { texts = await modelTexts(); } catch { return; }
-      const seen = JSON.stringify(texts);
-      if (seen === this.modelTextsSeen) return;
-      this.modelTextsSeen = seen;
-      this.modelTexts = texts;
+      const next = modelTextsUpdate(this.modelTextsSeen, texts);
+      if (!next) return;
+      this.modelTextsSeen = next.seen;
+      this.modelTexts = next.texts;
+      this.modelDefaults = next.defaults;
       cx.notify();
     });
   }
