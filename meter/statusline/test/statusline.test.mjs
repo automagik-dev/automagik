@@ -222,6 +222,16 @@ test("compacts: counted from compact_boundary records, then only from the append
     const stale = { [file]: { ino: statSync(file).ino, size: 0, offset: 0, count: 5, at: Date.now() } };
     writeFileSync(join(state, "statusline-compacts.json"), JSON.stringify(stale));
     assert.equal(countCompacts(file, state), 1);
+    // A negative or non-integer cached offset (a corrupt or hand-edited cache) is not trusted:
+    // the file is counted again from the start and the entry is rewritten.
+    for (const offset of [-5, -1, 1.5, "0", null]) {
+      const bad = { [file]: { ino: statSync(file).ino, size: 0, offset, count: 5, hash: "0", at: Date.now() } };
+      writeFileSync(join(state, "statusline-compacts.json"), JSON.stringify(bad));
+      assert.equal(countCompacts(file, state), 1, `offset ${JSON.stringify(offset)}`);
+      const entry = JSON.parse(readFileSync(join(state, "statusline-compacts.json"), "utf8"))[file];
+      assert.equal(entry.offset, statSync(file).size);
+      assert.equal(entry.count, 1);
+    }
     // A corrupt cache is rebuilt; a missing transcript has no count.
     writeFileSync(join(state, "statusline-compacts.json"), "garbage");
     assert.equal(countCompacts(file, state), 1);
