@@ -42,6 +42,10 @@ All of it in English (the rest of the pack is; there is no locale mechanism to s
 
 - **On/off** moves the folder between `mods/` and `mods-disabled/` (`core.setEnabled`): the app
   loads only `mods/`, so off is real and nothing is deleted. Herdr's own mods are refused.
+  So is off for a mod a block of the shown layout names (`layout()`, its name `shared("layout")`;
+  `core.layoutGuard`): Herdr drops a layout whose mod is missing and shows plain Herdr, so the
+  message names the layout and says to switch layouts first. Its `terminal_menu` mod may go off
+  (Herdr warns and falls back to its own menu); the message says so. Turning on is never blocked.
 - **Records** of what the manager installed live in shared `"am.mods.installed"` (copied once on load from its
   name before the rename, `migrate.js` SHARED_RENAMES; source,
   prefix, commit, mods, layouts, keys added, risks seen). Update and remove work off them.
