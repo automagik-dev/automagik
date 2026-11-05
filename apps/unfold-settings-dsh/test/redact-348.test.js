@@ -29,3 +29,23 @@ for (const [what, input, want] of TABLE.continuation) test(`continuation: ${what
 
 // #406, the table's `partial_key` rows read whole (`{cut}` marks where a stream's first part stops).
 for (const [what, input, want] of TABLE.partial_key) test(`partial key: ${what}`, () => assert.equal(redactText(fill(input).split('{cut}').join('')), fill(want)))
+
+// #406 F-B residual: a cut pads the unfinished line with blanks. In a growing buffer that line may
+// still be arriving, so a bare token on it is neither hidden nor remembered until its line ends (a
+// colon makes it a child key, a line end its parent's scalar); until then it is withheld, never
+// served. A whole payload keeps the old, fail-closed read of its last line.
+const PARTIAL = TABLE.partial_key.map(([what, input]) => [what, fill(input).split('{cut}')])
+const PADDED = PARTIAL.filter(([, [head]]) => {
+  const pending = head.slice(head.search(/[^\r\n]*$/)).trim()
+  return pending && !pending.includes(':') && !/^[ \t]*[|>]/m.test(head)
+})
+test('a partial child key padded by a cut is neither hidden nor served while its line is open', () => {
+  assert.equal(PADDED.length, 4, 'the anchor line, the anchored child, the spaced child and the plain guard')
+  for (const [what, [head]] of PADDED) {
+    const pending = head.slice(head.search(/[^\r\n]*$/)).trim()
+    const out = redactText(`${head}${' '.repeat(17_000)}`, true)
+    assert.ok(!out.includes('[redacted]'), `${what}: not masked while the line is open`)
+    assert.ok(!out.includes(pending), `${what}: withheld, never served`)
+    assert.ok(redactText(head).includes('[redacted]'), `${what}: a whole payload still hides it`)
+  }
+})

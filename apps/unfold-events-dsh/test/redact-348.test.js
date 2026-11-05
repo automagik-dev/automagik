@@ -261,3 +261,46 @@ test('served: a child key still arriving under a key line is never read as its v
     }
   }
 })
+
+// #406 F-C: an explicit key's continued value is remembered at the end of the text too (the browser
+// copy is the memory Mind carries), so a later bare occurrence of it is masked.
+const EXPLICIT = CONTINUED_HIDDEN.filter(([, input]) => /(?:^|\n)[ \t]*(?:-[ \t]+)?\?[ \t]/.test(input))
+const masked = (text, kept) => kept.reduce((t, v) => t.split(v).join('[redacted]'), text)
+test('the browser copy remembers an explicit key\'s continued value at the end of the text, and a later bare occurrence is masked', () => {
+  assert.equal(EXPLICIT.length, 7, 'FA1-FA5, FL1 and FB1')
+  for (const [what, input] of EXPLICIT) {
+    const kept = clientSecretsIn(input)
+    assert.ok(kept.some((v) => v.includes(SECRET)), `${what}: remembered`)
+    assert.ok(!masked(`later ${SECRET} stays`, kept).includes(SECRET), `${what}: a later bare occurrence is masked`)
+    // FA4's value line is closed by the sibling after it; the others end at the value, still arriving.
+    if (input.slice(input.lastIndexOf('\n') + 1).includes(SECRET)) assert.deepEqual(clientSecretsIn(input, true), [], `${what}: a growing buffer remembers nothing while that line is open`)
+  }
+})
+
+// #406 F-B residual: a cut pads the unfinished line with blanks. The window and the browser copy read
+// a growing buffer, so a bare token on that line is neither hidden nor remembered until its line ends
+// (a colon makes it a child key, a line end its parent's scalar); until then it is withheld, never
+// served, and a whole payload keeps the old, fail-closed read of its last line.
+const PADDED = PARTIAL.filter(([, [head]]) => {
+  const pending = head.slice(head.search(/[^\r\n]*$/)).trim()
+  return pending && !pending.includes(':') && !/^[ \t]*[|>]/m.test(head)
+})
+test('served: a partial child key padded by a cut is neither hidden nor remembered while its line is open', () => {
+  assert.equal(PADDED.length, 4, 'the anchor line, the anchored child, the spaced child and the plain guard')
+  for (const [what, [head]] of PARTIAL) assert.deepEqual(clientSecretsIn(`${head}${' '.repeat(17_000)}`, true), [], what)
+  for (const [what, [head]] of PADDED) {
+    const pending = head.slice(head.search(/[^\r\n]*$/)).trim()
+    const padded = `${head}${' '.repeat(17_000)}`
+    for (const [copy, text] of [['window', redactText], ['browser copy', clientRedactText]]) {
+      const out = text(padded, true)
+      assert.ok(!out.includes('[redacted]'), `${what}, ${copy}: not masked while the line is open`)
+      assert.ok(!out.includes(pending), `${what}, ${copy}: withheld, never served`)
+    }
+    assert.ok(redactText(head).includes('[redacted]'), `${what}: a whole payload still hides it`)
+    const w = new EventWindow(catalog, { limit: 20 })
+    const seen = []
+    w.onChange((change, payload) => seen.push(JSON.stringify(payload)))
+    w.push({ v: 2, id: `g:${++seq}`, producer: 'g', seq, t_ns: seq, source: 'guest', kind: 'agent_delta', response_id: 'rK', text: padded })
+    assert.ok(![...seen, JSON.stringify(w.rows)].join('\n').includes('[redacted]'), `${what}: the window masks nothing while the line is open`)
+  }
+})

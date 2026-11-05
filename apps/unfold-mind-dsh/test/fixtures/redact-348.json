@@ -960,6 +960,16 @@
    "FG2: an explicit key, its ':' line, then a sibling at the same indent",
    "? {name}\n:\nnext: {value}",
    "? {name}\n:\nnext: {value}"
+  ],
+  [
+   "FL1: an explicit key in a list item, its ':' line below, then the value",
+   "- ? {name}\n  :\n    {value}",
+   "- ? {name}\n  :\n    [redacted]"
+  ],
+  [
+   "FB1: an explicit key, a block indicator on its ':' line, then its lines",
+   "? {name}\n: |\n  {value}",
+   "? {name}\n: |\n  [redacted]"
   ]
  ],
  "partial_key": [

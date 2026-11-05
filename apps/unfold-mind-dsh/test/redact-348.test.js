@@ -150,6 +150,24 @@ test('continuation: a hidden value is remembered, and no anchor, tag, indicator 
   for (const [what, input] of KEPT) assert.ok(!secretsIn(`${input}\n`).some((v) => v.includes(SECRET)), what)
 })
 
+// #406 F-C: an explicit key's continued value is remembered where it is hidden, at the end of the
+// text too, so a later bare occurrence of it is masked (these rows end at the value; the inline
+// rows still need the line break that ends a value line, so a child key still arriving is never
+// remembered as its parent's value). A block's first line is remembered for the explicit-key form.
+const EXPLICIT = CONTINUED_HIDDEN.filter(([, input]) => /(?:^|\n)[ \t]*(?:-[ \t]+)?\?[ \t]/.test(input))
+const masked = (text, kept) => kept.reduce((t, v) => t.split(v).join('[redacted]'), text)
+
+test('continuation: an explicit key\'s continued value is remembered at the end of the text, so a later bare occurrence is masked', () => {
+  assert.equal(EXPLICIT.length, 7, 'FA1-FA5, FL1 and FB1')
+  for (const [what, input] of EXPLICIT) {
+    const kept = secretsIn(input)
+    assert.ok(kept.some((v) => v.includes(SECRET)), `${what}: remembered`)
+    assert.ok(!masked(`later ${SECRET} stays`, kept).includes(SECRET), `${what}: a later bare occurrence is masked`)
+    // FA4's value line is closed by the sibling after it; the others end at the value, still arriving.
+    if (input.slice(input.lastIndexOf('\n') + 1).includes(SECRET)) assert.deepEqual(secretsIn(input, true), [], `${what}: a growing buffer remembers nothing while that line is open`)
+  }
+})
+
 test('served: a value on a later line stays hidden in the stream, whole and a character at a time; a kept one is served', () => {
   for (const [what, input] of CONTINUED_HIDDEN) {
     const whole = journal()
@@ -220,5 +238,27 @@ test('served: a child key still arriving under a key line is never remembered as
       assert.ok(text.endsWith(`${want}${LATER}`), `${what}, ${how}: served as the whole text`)
       if (!want.includes(SECRET)) assert.ok(!r.served().includes(SECRET), `${what}, ${how}: the value is hidden`)
     }
+  }
+})
+
+// #406 F-B residual: the cut pads an unfinished line with blanks. In a growing buffer that line may
+// still be arriving, so a bare token on it is neither hidden nor remembered until its line ends: the
+// completion decision needs the colon (a child key) or the line end (its parent's scalar). Until
+// then the token is withheld, never served (the one place a pending line is not shown). A whole
+// payload keeps the old, fail-closed read of its last line.
+test('served: a partial child key padded by a cut is neither hidden nor remembered while its line is open', () => {
+  const PADDED = PARTIAL.filter(([, [head]]) => {
+    const pending = head.slice(head.search(/[^\r\n]*$/)).trim()
+    return pending && !pending.includes(':') && !/^[ \t]*[|>]/m.test(head)
+  })
+  assert.equal(PADDED.length, 4, 'the anchor line, the anchored child, the spaced child and the plain guard')
+  for (const [what, [head]] of PARTIAL) assert.deepEqual(secretsIn(`${head}${' '.repeat(17_000)}`, true), [], what)
+  for (const [what, [head]] of PADDED) {
+    const pending = head.slice(head.search(/[^\r\n]*$/)).trim()
+    const out = redactText(`${head}${' '.repeat(17_000)}`, true)
+    assert.ok(!out.includes('[redacted]'), `${what}: not masked while the line is open`)
+    assert.ok(!out.includes(pending), `${what}: withheld, never served`)
+    assert.ok(secretsIn(head, true).every((v) => !pending.includes(v)), `${what}: not remembered`)
+    assert.ok(redactText(head).includes('[redacted]'), `${what}: a whole payload still hides it`)
   }
 })

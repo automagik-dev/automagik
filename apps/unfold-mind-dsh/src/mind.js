@@ -686,19 +686,23 @@ export class MindStream {
 /**
  * Coalesced text: the raw join kept privately (bounded), only its redaction rendered. Credential
  * values found in the full text are remembered (privately, bounded) before anything is cut, so a
- * later tail that lost their context still masks them; a cut tail's first fragment is hidden.
+ * later tail that lost their context still masks them; a cut tail's first fragment is hidden. The
+ * join is a growing reply, so a later-line value whose line is still arriving is neither hidden nor
+ * remembered until it ends (#406): `open` tells the rules the text's end is not a line end.
  */
 function setText(row, raw, { cut = false } = {}) {
   // Names read without their invisible characters (#348), as redactText reads them, so the kept
   // tail, its quoted spans and the remembered values all match the served text.
   const full = nameText(String(raw ?? ''))
-  for (const v of secretsIn(full)) if (!row.secrets.includes(v)) row.secrets = [...row.secrets, v].slice(-SECRETS_KEPT)
+  // A growing reply: its last line may still be arriving, so a later-line value there is neither
+  // hidden nor remembered until its line ends (#406 F-B).
+  for (const v of secretsIn(full, true)) if (!row.secrets.includes(v)) row.secrets = [...row.secrets, v].slice(-SECRETS_KEPT)
   const truncated = cut || full.length > TEXT_KEEP
   row.rawText = keptTail(full)
   // Redacted whole, then cut: a value whose key falls before the cut is still recognised.
-  let text = redactText(full).slice(-TEXT_KEEP)
+  let text = redactText(full, true).slice(-TEXT_KEEP)
   if (truncated) text = hideAfterCut(text)
-  text = redactText(text)
+  text = redactText(text, true)
   for (const v of row.secrets) text = text.split(v).join(REDACTED)
   row.textCut = row.textCut || truncated
   row.text = text
@@ -731,6 +735,7 @@ function keptTail(full) {
 // (each indented one more than the key) and the line the cut is in are kept, so the value that
 // arrives next is still read under its key.
 const KEY_LINE_OPEN = /:[ \t]*(?:[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)*)?(?:[ \t]+#[^\r\n]*)?$/
+const EX_COLON = /^[ \t]*:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*$/
 const PROPERTY_LINE = /^[ \t]+[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?(?:[ \t]+#[^\r\n]*)?$/
 const INDICATOR_LINE = /^[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?$/
 const SKIPPED_LINE = /^[ \t]*(?:#[^\r\n]*)?$/
@@ -741,9 +746,11 @@ function openKeyLine(raw, max) {
   const line = last.trimEnd()
   // An explicit key (#406): a `? name` line is a key line, and a `:` line at its indent right under
   // it is kept with it, so the value that arrives under the `:` line is still read under its name.
+  // A list item's `- ? name` keeps the same way: its marker reaches the `:` line's column.
   const keyOf = (colon, key) => {
     const indent = /^[ \t]*/.exec(colon)[0]
-    return colon[indent.length] === ':' && key?.[indent.length] === '?' && key.startsWith(indent) && /^[ \t]/.test(key.slice(indent.length + 1)) && key.length + colon.length < max / 2 ? `${key}\n` : ''
+    const list = /^[ \t]*-[ \t]+$/.test(key?.slice(0, indent.length) ?? '')
+    return colon[indent.length] === ':' && key?.[indent.length] === '?' && (list || key.startsWith(indent)) && /^[ \t]/.test(key.slice(indent.length + 1)) && key.length + colon.length < max / 2 ? `${key}\n` : ''
   }
   const lineAbove = () => {
     const from = Math.max(0, end - 4096)
@@ -751,7 +758,7 @@ function openKeyLine(raw, max) {
     ls.pop()
     return ls.length > 1 || (ls.length === 1 && from === 0) ? ls.at(-1).trimEnd() : undefined
   }
-  if (line.length < max && (KEY_LINE_OPEN.test(line.slice(-256)) || /^[ \t]*\?[ \t]/.test(line))) return `${end > 0 ? keyOf(line, lineAbove()) : ''}${line} `
+  if (line.length < max && (KEY_LINE_OPEN.test(line.slice(-256)) || EX_COLON.test(line) || /^[ \t]*(?:-[ \t]+)?\?[ \t]/.test(line))) return `${end > 0 ? keyOf(line, lineAbove()) : ''}${line} `
   const under = (l) => PROPERTY_LINE.test(l.slice(-256)) || INDICATOR_LINE.test(l.slice(-256))
   if (end === 0 || (line && !SKIPPED_LINE.test(line) && !under(line))) return null
   const start = Math.max(0, end - 4096)
@@ -767,7 +774,7 @@ function openKeyLine(raw, max) {
     }
     if (i === 0 && start > 0) return null // cut by the 4 KiB read: not a whole line
     const indent = /^[ \t]*/.exec(above)[0]
-    if (above.length >= max / 2 || !KEY_LINE_OPEN.test(above.slice(-256))) return null
+    if (above.length >= max / 2 || !(KEY_LINE_OPEN.test(above.slice(-256)) || EX_COLON.test(above.slice(-256)))) return null
     const deeper = (l) => l.startsWith(indent) && /^[ \t]/.test(l.slice(indent.length))
     if (!kept.every(deeper) || (line && !SKIPPED_LINE.test(line) && !deeper(line))) return null
     const cutLine = !line ? last.slice(0, indent.length + 1) : SKIPPED_LINE.test(line) ? `${line} ` : `${indent} ${line.trimStart()} `
