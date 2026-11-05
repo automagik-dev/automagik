@@ -76,6 +76,27 @@ export const liveKey = (botId, pid = null) => (pid === null ? botId : `${pid}\n$
 export const liveOf = (live, project, botId) => live?.[liveKey(botId, projectId(project))] ?? live?.[botId] ?? null;
 
 const machineOfAddress = (a) => (typeof a === "string" && a.includes("/") ? a.slice(0, a.indexOf("/")) : null);
+// An address on `machine`: a bare id given for a pane there is that machine's, so two
+// addresses compare on the same machine (box/t1 and t1 reported by a box pane are one).
+const onMachine = (a, machine) => (machine && !a.includes("/") ? `${machine}/${a}` : a);
+
+/**
+ * The parent mark (automagik#231): `own`, a bot's live pane (liveOf), reports through an hc
+ * parent that is neither absent nor `leadPane`, its lead's live pane (liveOf: the newest when
+ * the lead has several). Returns { parent, leadPane, lead, leadName } with both addresses on
+ * their machine, or null: no parent, the lead's pane, or a lead with no live pane (nothing to
+ * compare with). Membership never follows the hc parent (buildTree); this only shows it.
+ */
+export function parentMarkOf(own, leadPane, lead = null, leadName = null) {
+  if (typeof own?.parent !== "string" || !own.parent || typeof leadPane?.terminal !== "string") return null;
+  const parent = onMachine(own.parent, machineOfAddress(own.terminal));
+  const theirs = leadPane.terminal;
+  return parent === theirs ? null : { parent, leadPane: theirs, lead, leadName };
+}
+
+/** The parent mark's tooltip: both addresses, the hc parent first. */
+export const parentMarkText = (m) =>
+  `Its hc parent is ${m.parent}, not its lead's pane ${m.leadPane}${m.leadName ? ` (${m.leadName})` : ""}`;
 // A pane's project id (projectId: its address's machine and the key `keyOf(row)` gives), or
 // null when keyOf gives none.
 const paneProject = (t, keyOf) => {
@@ -187,6 +208,7 @@ export function buildTree({ projects, live = {}, terminals = [], now = Date.now(
     const main = mainBotOf(file);
     const warnings = [...(p.warnings ?? [])];
     const leads = new Map(file.bots.map((b) => [b.id, b === main ? { lead: "" } : effectiveLead(file, b.id)]));
+    const names = new Map(file.bots.map((b) => [b.id, b.name]));
     const placed = new Set();
     const node = (bot) => {
       placed.add(bot.id);
@@ -201,6 +223,10 @@ export function buildTree({ projects, live = {}, terminals = [], now = Date.now(
       };
       const warning = leads.get(bot.id)?.warning;
       if (warning && bot !== main) n.warning = warning;
+      // A row's mark when its pane's hc parent is not its lead's pane (#231): two map reads.
+      const leadId = l && bot !== main ? leads.get(bot.id)?.lead : null;
+      const mark = leadId ? parentMarkOf(l, liveOf(live, p, leadId), leadId, names.get(leadId) ?? null) : null;
+      if (mark) n.parentMark = mark;
       return n;
     };
     if (!main) {

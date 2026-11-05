@@ -27,7 +27,7 @@ import { startBot, attachBot, botOfTerminal, modelTexts, sleepOf } from "./launc
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { workerClick, rowWorker, openWorkerTab } from "./workerTab.js";
-import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, modelTextsUpdate, argvToAsk, argvAfter, argvReader, spaceRowOrder, clickActionOf, heldTerminalOf, heldClickOf, listedKeyOf } from "./rows.js";
+import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, modelTextsUpdate, argvToAsk, argvAfter, argvReader, spaceRowOrder, clickActionOf, heldTerminalOf, heldClickOf, listedKeyOf, parentMarkText } from "./rows.js";
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
@@ -680,6 +680,8 @@ export default class Spaces extends View {
           .child(div().min_w(0).truncate().text_size(main ? 14 : 13).font_weight(main ? 700 : 600).text_color(planned ? t.muted : ink).child(b.name))
           .when(Boolean(live?.duplicate), (el) => el.child(div().id(`dup-${b.id}`).flex_none().text_size(10).text_color(t.blocked)
             .tooltip("More than one pane carries this bot; the newest counts").child("×2")))
+          .when(Boolean(n.parentMark), (el) => el.child(div().id(`parent-${b.id}`).flex_none().text_size(10).text_color(t.muted)
+            .tooltip(n.parentMark ? parentMarkText(n.parentMark) : "").child("↑")))
           .when(Boolean(n.warning), (el) => el.child(div().id(`warn-${b.id}`).flex_none().text_size(10).font_bold().text_color(t.blocked)
             .tooltip(n.warning).child("!"))))
         .child(div().min_w(0).truncate().text_size(11).text_color(planned ? t.dim : t.muted).child(second)))
