@@ -227,8 +227,9 @@ fi
     openSpace: (folder) => writeFileSync(spaces, JSON.stringify({ spaces: [{ id: "w1", folder, machine: null }] })),
     // The README's one-liner: `curl -fsSL …/install.sh | bash -s -- --yes`, the script on stdin.
     oneLiner: (...args) => {
+      const hadKeys = existsSync(join(appHome, "keys.json"));
       const r = spawnSync("bash", ["-s", "--", ...args], { cwd: root, env, encoding: "utf8", input: readFileSync(INSTALL) });
-      return { code: r.status, out: r.stdout, err: r.stderr };
+      return { code: r.status, out: r.stdout, err: r.stderr, hadKeys };
     },
     // The linked command, run as a person runs it.
     cli: (...args) => {
@@ -292,8 +293,13 @@ function assertFullPack(m, r) {
   for (const mod of [...named, layout.terminal_menu].filter((n) => ON_MODS.includes(n))) assert.ok(existsSync(join(m.mods, mod, "mod.json")), `${mod} (in the layout) is installed`);
   // The mod manager: its catalog and its key (merged only where free).
   assert.deepEqual(JSON.parse(readFileSync(join(m.appHome, "data", "am-mods", "catalog.json"), "utf8")), { url: CATALOG_URL });
-  const keys = JSON.parse(readFileSync(join(m.appHome, "keys.json"), "utf8"));
-  for (const [section, entries] of Object.entries(PACK_KEYS)) for (const [key, action] of Object.entries(entries)) assert.equal(keys[section]?.[key], action, `key ${key}`);
+  const keys = r.hadKeys ? JSON.parse(readFileSync(join(m.appHome, "keys.json"), "utf8")) : {};
+  if (r.hadKeys) {
+    for (const [section, entries] of Object.entries(PACK_KEYS)) for (const [key, action] of Object.entries(entries)) assert.equal(keys[section]?.[key], action, `key ${key}`);
+  } else {
+    assert.equal(existsSync(join(m.appHome, "keys.json")), false, "first launch still initializes native keybindings");
+    assert.match(r.out, /Open Herdr.*rerun/);
+  }
   for (const mod of ON_MODS) assert.ok(existsSync(join(m.mods, mod)), mod);
   // The command, linked to the entry the installed sidebar ships (the launcher's wrapper, else
   // the .mjs), and it runs.
@@ -337,6 +343,16 @@ test("e2e (a): a fresh home gets the whole pack, activated, from the public one-
   assert.match(r.out, /added the automagik layout/);
   assert.match(r.out, /To show the Automagik sidebar, switch Herdr to the automagik layout/, "no status: the switch command is printed");
   assert.match(readFileSync(join(m.state, "installed-by-install.sh"), "utf8"), /^layout=added$/m);
+  // Herdr's first launch creates native shortcuts only if keys.json is absent.
+  const native = { terminal: { "ctrl-shift-v": "terminal.paste", "shift-insert": "terminal.paste" } };
+  writeFileSync(join(m.appHome, "keys.json"), JSON.stringify(native), { flag: "wx" });
+  const rerun = m.oneLiner("--yes");
+  assert.equal(rerun.code, 0, `${rerun.out}\n${rerun.err}`);
+  const keys = JSON.parse(readFileSync(join(m.appHome, "keys.json"), "utf8"));
+  assert.deepEqual(keys.terminal, native.terminal);
+  for (const [section, entries] of Object.entries(PACK_KEYS)) {
+    for (const [key, action] of Object.entries(entries)) assert.equal(keys[section][key], action);
+  }
 });
 
 // (b) twice: the pack as wish/am-pack had it, without dev's launcher (the link moves to the .mjs),

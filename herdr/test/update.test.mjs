@@ -990,6 +990,23 @@ test("setupHome checks the record's mods but a switched-off one: a mod missing f
   }
 });
 
+test("repairInstall refuses unreadable keys before repairing a missing mod", async () => {
+  const { home, mods } = appHome("0.1.0");
+  const t = tarball("0.1.0");
+  try {
+    rmSync(join(mods, "am-tabs"), { recursive: true });
+    writeFileSync(join(home, "keys.json"), "{ invalid");
+    const before = readFileSync(markerOf(mods));
+    await assert.rejects(repairInstall({ tgzPath: t.path, version: "0.1.0", modsDir: mods }), /keys.json is unreadable.*nothing was installed/);
+    assert.equal(existsSync(join(mods, "am-tabs")), false);
+    assert.equal(readFileSync(join(home, "keys.json"), "utf8"), "{ invalid");
+    assert.deepEqual(readFileSync(markerOf(mods)), before);
+  } finally {
+    rmSync(t.src, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("repairInstall checks every mod that is on, never the one that ships off", async () => {
   const WITH = ["am-sidebar", "am-tabs", "am-quota"];
   const t = tarball("0.2.0", { mods: WITH });

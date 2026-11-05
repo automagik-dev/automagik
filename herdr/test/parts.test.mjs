@@ -89,7 +89,7 @@ test("install from a checkout: the whole pack once, the record its marker; a sec
   assert.deepEqual(ls(m.off), [...OFF_BY_DEFAULT].sort(), "the ones that ship off are in mods-disabled/");
   assert.ok(existsSync(join(m.app, "layouts", "automagik.json")), "the layout placed");
   assert.ok(existsSync(join(m.mods, "am-footer", "part.json")), "part.json ships in the mod folder");
-  assert.equal(readFileSync(join(m.app, "keys.json"), "utf8").includes("cmd-shift-m"), true);
+  assert.equal(existsSync(join(m.app, "keys.json")), false, "first launch must initialize Herdr's native shortcuts");
   const installs = m.calls.filter((c) => c.some((a) => a.endsWith("update.mjs"))).length;
   assert.equal(installs, 1);
 
@@ -142,7 +142,12 @@ test("one mod: uninstall switches it off, an update keeps it off, doctor says no
 test("am-mods: its key goes with it while it is the pack's, a rebound one stays, and install puts it back", (t) => {
   const m = machine(t);
   install(m.ctx(), P("herdr.am-mods"), packSource);
+  assert.equal(existsSync(join(m.app, "keys.json")), false, "the part entry must not recreate a pack-only key file");
+  const native = { terminal: { "ctrl-shift-v": "terminal.paste", "shift-insert": "terminal.paste" } };
+  writeFileSync(join(m.app, "keys.json"), JSON.stringify(native), { flag: "wx" });
+  install(m.ctx(), P("herdr.am-mods"), packSource);
   const keys = () => JSON.parse(readFileSync(join(m.app, "keys.json"), "utf8"));
+  assert.deepEqual(keys().terminal, native.terminal, "native paste bindings survive the post-launch install");
   uninstall(m.ctx(), P("herdr.am-mods"));
   assert.equal(keys().global["cmd-shift-m"], undefined);
   assert.deepEqual(failed(doctorOf(m, "herdr.am-mods")), [], "off: not checked");
@@ -228,6 +233,7 @@ test("herdr.layout: uninstall removes the pack's copy and no update puts it back
 
 test("herdr.pack uninstall: the whole pack out; hooks, entry point, keys and links go; Herdr's and Pocket's files stay", (t) => {
   const m = machine(t);
+  writeFileSync(join(m.app, "keys.json"), "{}\n"); // Herdr already initialized its key file.
   install(m.ctx(), P("herdr.pack"), packSource);
   uninstall(m.ctx(), P("herdr.am-quota"));
   assert.equal(doctorOf(m, "herdr.pack").code, 0, JSON.stringify(doctorOf(m, "herdr.pack").checks));
@@ -277,6 +283,7 @@ test("herdr.pack uninstall: the whole pack out; hooks, entry point, keys and lin
 
 test("doctor reads only: a healthy pack passes every part, a broken one names the check and its fix", (t) => {
   const m = machine(t);
+  writeFileSync(join(m.app, "keys.json"), "{}\n"); // This scene has completed native initialization.
   install(m.ctx(), P("herdr.pack"), packSource);
   const before = execFileSync("find", [m.dir, "-print"], { encoding: "utf8" });
   for (const id of PART_IDS) {
