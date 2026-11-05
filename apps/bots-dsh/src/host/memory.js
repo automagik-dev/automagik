@@ -823,9 +823,11 @@ export function install(rt) {
   // `expect` is the entry's text as a numbered list showed it. A change made against
   // that list holds the entry it was read from, never another one: once an earlier
   // change has edited it, its old text may be only part of another entry now.
+  // `expect` is already a parsed entry's text: cleaning it again would strip a bullet
+  // that text starts with, and no entry could then match itself.
   function findExpected(files, topic, match, expect, label) {
     const old = findOne(files, topic, match, label)
-    if (expect !== undefined && squash(old.text) !== squash(cleanEntry(expect))) {
+    if (expect !== undefined && squash(old.text) !== squash(expect)) {
       const message = `The entry the change names has changed since it was read; the text it had (${String(expect).length} chars) is only part of another entry now. recall shows what is saved.`
       throw Object.assign(new Error(message), { code: NO_MATCH })
     }

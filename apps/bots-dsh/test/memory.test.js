@@ -1012,6 +1012,31 @@ test('a second change to a different entry of the same review still applies', as
   assert.equal(requests.length, 1)
 })
 
+// A file line `- - - Nested note` is the entry `- - Nested note`: the bullets after
+// the first are its text. A change read from that entry still holds it.
+test('an edit of an entry whose text starts with a bullet applies to that entry', async (t) => {
+  const seeded = mkdtempSync(join(tmpdir(), 'ds-bot-memory-'))
+  const dir = join(seeded, 'memory', 'bots', 'b2')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'MEMORY.md'), '# Memory\n\n## Index\n- [[drinks]]\n')
+  writeFileSync(join(dir, 'drinks.md'), '# drinks\n\n- - - Nested note\n- The user likes green tea\n')
+  const answer = JSON.stringify({ changes: [
+    { op: 'edit', entry: 2, text: 'The user prefers oolong' },
+    { op: 'edit', entry: 1, text: 'The user keeps nested notes' },
+  ] })
+  const { ctx, home, call, read, journal, requests, stop } = start({ home: seeded, replies: [answer], config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  await settle()
+  assert.deepEqual(parseMemory(read('bots', 'b2', 'drinks.md')).entries.map(entry => entry.text), ['The user keeps nested notes', 'The user prefers oolong'])
+  assert.deepEqual(journal().map(record => record.op), ['replace', 'replace'])
+  assert.deepEqual(warnings(home, 'left out a change'), [])
+  assert.deepEqual(warnings(home, 'memory review of chat:b2 failed'), [])
+  assert.equal(requests.length, 1)
+})
+
 test('an answer with a malformed change, an unlisted entry, or a bad topic changes nothing, and is asked for once more', async (t) => {
   for (const bad of [{ op: 'add' }, { op: 'remove', entry: 7 }, { op: 'add', text: 'The user writes C++', topic: 'C++' }]) {
     const answer = JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }, bad] })
