@@ -2071,6 +2071,7 @@ function indexRoster(value) {
   }
   return { ...value, agents: value.agents ?? [], byId, roomsById, agentsById, agentOf, ready: true };
 }
+var detailsSubject = (roster, id) => roster?.byId?.[id]?.id ?? roster?.roomsById?.[id]?.id ?? id;
 function isAgentSession(roster, cache, sessionId) {
   if (sessionId === void 0 || sessionId === null || sessionId === "") return false;
   if (roster.roomsById?.[sessionId] !== void 0) return false;
@@ -9752,7 +9753,9 @@ function teamActions({ call: call2, after, partFor, roster, ui: ui2, live, cards
     },
     toggleDetails: (id, force) => {
       ui2.set((state) => {
-        const details = force || state.details !== id || state.view !== "details" ? id : null;
+        const snap = roster?.getSnapshot?.();
+        const same = state.details != null && detailsSubject(snap, state.details) === detailsSubject(snap, id);
+        const details = force || !same || state.view !== "details" ? id : null;
         return { ...state, renaming: false, tab: null, details, view: "details" };
       });
     },
@@ -10113,6 +10116,8 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 
 .bt-head{position:relative;display:flex;justify-content:flex-end;align-items:center;gap:8px;height:40px;padding:0 16px;box-sizing:border-box;flex:none;pointer-events:none}
 .bt-head-details{pointer-events:auto;flex:none;display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;padding:0;border-radius:999px;background:var(--bt-main);border:.5px solid var(--bt-line-2);box-shadow:0 2px 8px -1px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);color:var(--bt-ink-2);cursor:pointer;transition:background-color .12s ease,color .12s ease}
+/* Details is the one labeled pill: its icon-only neighbours keep the 40px circle. */
+.bt-head-details[aria-controls]{width:auto;min-width:40px;gap:7px;padding:0 13px;color:var(--bt-ink);font:inherit;font-size:13px;font-weight:500;white-space:nowrap}
 .bt-head-details:hover,.bt-head-details[aria-expanded=true]{color:var(--bt-ink);background:color-mix(in srgb,var(--bt-main),var(--bt-ink) 6%)}
 .bt-head-details svg{width:18px;height:18px}
 .bt-head-details:focus-visible{outline:2px solid var(--bt-accent);outline-offset:2px}
@@ -12479,6 +12484,9 @@ html[data-automagik-desktop=darwin] .bt-side-top{-webkit-app-region:drag}
 html[data-automagik-desktop=darwin] .bt-side-top>*{-webkit-app-region:no-drag}
 html[data-automagik-desktop=darwin] header[class*="_header"]{-webkit-app-region:drag}
 html[data-automagik-desktop=darwin] header[class*="_header"] :is(button,a,input,textarea,select,[role=button],[tabindex]){-webkit-app-region:no-drag}
+/* The fixed details panel overlaps that header but is not its descendant. Native drag
+   regions ignore DOM z-index/pointer-events: subtract the panel so its top actions click. */
+html[data-automagik-desktop=darwin] .bt-panel{-webkit-app-region:no-drag}
 /* The collapsed sidebar is a 56px rail, and DSH's card around it left its content 12px: the
    marks were cut. It keeps a 6px margin and no side padding, everything centred in it. */
 [class*="_root"][class*="_collapsed"]{margin:6px!important;padding-left:0!important;padding-right:0!important}
@@ -12666,7 +12674,7 @@ function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSe
   const bot = roster.byId[sessionId];
   const room2 = roster.roomsById[sessionId];
   const approval = useApproval(useWork, (entry) => bot !== void 0 && entry.botId === bot.id);
-  const detailsOpen = useUi((state) => state.details === sessionId);
+  const detailsOpen = useUi((state) => state.view === "details" && state.details != null && detailsSubject(roster, state.details) === detailsSubject(roster, sessionId));
   const name = bot?.name ?? room2?.name ?? "";
   const useNews = useMemoryNews ?? noNews;
   const memoryIds = bot ? [bot.id] : room2 ? [room2.id, ...room2.members] : [];
@@ -12725,8 +12733,14 @@ function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSe
       "aria-label": t("View conversation details"),
       title: t("Details"),
       "aria-expanded": detailsOpen,
-      onClick: () => actions.toggleDetails(sessionId)
-    }, (0, import_react28.createElement)(InfoIcon)) : null,
+      "aria-controls": "bt-conversation-panel",
+      "data-details-subject": sessionId,
+      // Focus the trigger first (Safari does not on click), so the panel returns focus to it.
+      onClick: (event) => {
+        event.currentTarget.focus();
+        actions.toggleDetails(sessionId);
+      }
+    }, (0, import_react28.createElement)(InfoIcon), t("Details")) : null,
     (0, import_react28.createElement)(NewMessagePills, { key: sessionId, sessionId, useSessions, useUi, useTurnClock }),
     (0, import_react28.createElement)(ActivityIndicator, { key: `activity:${sessionId}`, sessionId, useRoster, useSessionStatus, useSession, useLive, useWork, actions })
   );
@@ -21882,7 +21896,53 @@ function BotPanel({ pane, leaving, roster, actions, useSessions, useSessionStatu
   const [resizing, setResizing] = (0, import_react63.useState)(false);
   const instant = dragging || resizing;
   const [reading, setReading] = (0, import_react63.useState)(false);
+  (0, import_react63.useLayoutEffect)(() => {
+    const panel = root.current;
+    if (view !== "details" || leaving || !panel) return void 0;
+    const opener = document.activeElement;
+    if (!panel.contains(opener)) panel.focus({ preventScroll: true });
+    return () => {
+      if (!panel.contains(document.activeElement) && document.activeElement !== document.body) return;
+      const subject = detailsSubject(roster, pane.id);
+      const trigger = [...document.querySelectorAll("[data-details-subject]")].find((node) => detailsSubject(roster, node.dataset.detailsSubject) === subject);
+      const target = trigger ?? (opener?.isConnected && !panel.contains(opener) ? opener : null);
+      queueMicrotask(() => {
+        if (panel.isConnected && panel.getAttribute("aria-hidden") !== "true") return;
+        if (target?.isConnected && (document.activeElement === document.body || panel.contains(document.activeElement))) target.focus({ preventScroll: true });
+      });
+    };
+  }, [pane.id, view, leaving]);
   const overlay = overlayAt(view, viewport);
+  (0, import_react63.useEffect)(() => {
+    const panel = root.current;
+    if (!overlay || view !== "details" || leaving || !panel) return void 0;
+    const shown = (node) => getComputedStyle(node).display !== "none" && getComputedStyle(node).visibility !== "hidden";
+    const otherLayer = () => [...document.querySelectorAll('[role="dialog"],[role="menu"],[role="listbox"]')].some((node) => node !== panel && !panel.contains(node) && !node.closest('[data-leaving],[hidden],[inert],[aria-hidden="true"]') && shown(node));
+    const focusable = () => [...panel.querySelectorAll("button,a[href],input,textarea,select,[tabindex]")].filter((node) => node.tabIndex >= 0 && !node.disabled && !node.closest('[hidden],[inert],[aria-hidden="true"]') && shown(node));
+    const contain = (event) => {
+      if (!panel.isConnected || panel.getAttribute("aria-hidden") === "true" || otherLayer()) return;
+      if (event.type === "focusin") {
+        if (!panel.contains(event.target)) panel.focus({ preventScroll: true });
+        return;
+      }
+      if (event.key !== "Tab" || event.defaultPrevented) return;
+      const nodes = focusable();
+      const first = nodes[0] ?? panel;
+      const last2 = nodes.at(-1) ?? panel;
+      const edge = event.shiftKey ? first : last2;
+      if (document.activeElement === edge || document.activeElement === panel) {
+        event.preventDefault();
+        (event.shiftKey ? last2 : first).focus();
+      }
+    };
+    if (!panel.contains(document.activeElement) && !otherLayer()) panel.focus({ preventScroll: true });
+    document.addEventListener("keydown", contain);
+    document.addEventListener("focusin", contain);
+    return () => {
+      document.removeEventListener("keydown", contain);
+      document.removeEventListener("focusin", contain);
+    };
+  }, [overlay, view, leaving]);
   const panelWidth = fitWidth(width ?? (view === "browser" ? DEFAULT_WIDTH : DETAILS_WIDTH), widthRange(view, viewport));
   (0, import_react63.useLayoutEffect)(() => {
     if (view === "browser" && width === null) setWidth(DEFAULT_WIDTH);
@@ -22075,8 +22135,14 @@ function BotPanel({ pane, leaving, roster, actions, useSessions, useSessionStatu
     "aside",
     {
       ref: root,
+      id: "bt-conversation-panel",
       className: "bt-panel",
+      tabIndex: -1,
       "data-view": view,
+      // React 18 drops a boolean inert; the empty string sets the attribute.
+      role: overlay && view === "details" ? "dialog" : void 0,
+      "aria-modal": overlay && view === "details" && !leaving ? true : void 0,
+      inert: leaving ? "" : void 0,
       "aria-label": view === "browser" && bot ? t("{name}'s browser", { name: bot.name }) : view === "side" ? t("Side chat") : t("Conversation details"),
       "data-leaving": leaving || void 0,
       "aria-hidden": leaving || void 0,

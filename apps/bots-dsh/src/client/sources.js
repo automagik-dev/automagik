@@ -40,6 +40,10 @@ export function indexRoster(value) {
   return { ...value, agents: value.agents ?? [], byId, roomsById, agentsById, agentOf, ready: true }
 }
 
+// The Details subject an id names: any Bot part opens its Bot (Rename passes the Bot id,
+// the header a part's Session id), a group itself; any other id is its own subject.
+export const detailsSubject = (roster, id) => roster?.byId?.[id]?.id ?? roster?.roomsById?.[id]?.id ?? id
+
 // Whether a main-view Session id belongs to the team's DSH Agent: the conversation
 // group then stays withdrawn while the shell keeps the sidebar. Before the roster
 // arrives, the ids cached from the last pull answer.

@@ -1,14 +1,21 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { build } from 'esbuild'
 import { headerNavigation, installHeaderNavigation } from '../src/client/header-navigation.js'
+import { indexRoster } from '../src/client/sources.js'
 
 const bundle = await build({
   entryPoints: [fileURLToPath(new URL('../src/client/header.js', import.meta.url))],
   bundle: true, format: 'cjs', platform: 'node', write: false,
   external: ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives'],
+  // ISSUE89_BASELINE=<dir> bundles <dir>/header.js instead, to show the Details tests fail on it.
+  plugins: process.env.ISSUE89_BASELINE ? [{ name: 'baseline', setup(build) {
+    build.onLoad({ filter: /src\/client\/header\.js$/ }, args => ({ contents: readFileSync(join(process.env.ISSUE89_BASELINE, 'header.js'), 'utf8'), resolveDir: dirname(args.path), loader: 'js' }))
+  } }] : [],
 })
 const module = { exports: {} }
 runInNewContext(bundle.outputFiles[0].text, {
@@ -123,7 +130,7 @@ test('a Bot in another Conversation View can return to chat without changing its
   assert.equal(details, 0)
   const restored = header(actions, navigation)
   assert.equal(byClass(restored, 'bt-pill'), null)
-  byClass(restored, 'bt-head-details').props.onClick()
+  byClass(restored, 'bt-head-details').props.onClick({ currentTarget: { focus() {} } })
   assert.equal(details, 1)
 })
 
@@ -138,6 +145,101 @@ test('the header does not repeat the open chat\'s name; a small button opens its
   assert.equal(byClass(plain, 'bt-pill'), null)
   assert.equal(byClass(plain, 'bt-pill-name'), null)
   assert.equal(byClass(plain, 'bt-head-details').props['aria-expanded'], false)
+})
+
+test('Details is labeled, names the panel and expands only while it shows this subject\'s details', () => {
+  const cases = [['a', 'details', true], ['a', 'browser', false], ['a', 'side', false], ['b', 'details', false], [null, 'details', false]]
+  for (const [details, view, expanded] of cases) {
+    const button = byClass(header({}, { useUi: hook({ details, view }) }), 'bt-head-details')
+    assert.equal(button.props['aria-expanded'], expanded, `${details}/${view}`)
+  }
+  for (const [details, view] of cases) {
+    const button = byClass(header({}, { useUi: hook({ details, view }) }), 'bt-head-details')
+    assert.equal(button.props['aria-controls'], 'bt-conversation-panel')
+    assert.ok(button.children.includes('Details'), 'the label is visible text, not only a tooltip')
+  }
+})
+
+test('Details toggles the current Bot or group, never a plain or native wish thread', () => {
+  const calls = []
+  let focused = 0
+  const actions = { toggleDetails: id => calls.push(id) }
+  for (const sessionId of ['a', 'group', 'wish', 'plain']) {
+    const head = header(actions, { sessionId, useRoster: hook({ ...roster, roomsById: { group: { id: 'group', name: 'Team', members: ['a'] } } }) })
+    const button = byClass(head, 'bt-head-details')
+    if (sessionId === 'wish' || sessionId === 'plain') assert.equal(button, null)
+    else {
+      assert.equal(button.props['data-details-subject'], sessionId)
+      button.props.onClick({ currentTarget: { focus() { focused += 1 } } })
+    }
+  }
+  assert.deepEqual(calls, ['a', 'group'])
+  assert.equal(focused, 2, 'the trigger takes focus before toggling, so closing can return it')
+})
+
+const byClassAll = (node, className, found = []) => {
+  if (node === null || typeof node !== 'object') return found
+  if (node.props?.className === className) found.push(node)
+  for (const child of node.children ?? []) byClassAll(child, className, found)
+  return found
+}
+
+test('only the Details pill names the pane and takes focus before the icon buttons do', () => {
+  const calls = []
+  const actions = {
+    hasRightSidebar: () => true, toggleRightSidebar() { calls.push('sidebar') },
+    openLive() { calls.push('live') }, toggleDetails: id => calls.push(`toggle:${id}`),
+  }
+  const advanced = { ...roster.byId.a, advanced: true }
+  const head = header(actions, {
+    native: true, useRoster: hook({ ...roster, byId: { a: advanced } }),
+    useUi: hook({ details: 'a', view: 'browser' }),
+  })
+  const buttons = byClassAll(head, 'bt-head-details')
+  assert.equal(buttons.length, 3, 'Bot settings, Live and Details share the class')
+  const details = buttons.find(button => button.props['aria-controls'] === 'bt-conversation-panel')
+  assert.ok(details, 'the Details button controls the existing panel')
+  assert.equal(details.props['aria-label'], 'View conversation details')
+  assert.equal(details.props['data-details-subject'], 'a')
+  assert.equal(details.props['aria-expanded'], false, 'the Browser view is not the Details pane')
+  assert.deepEqual(details.children.slice(1), ['Details'], 'the visible label follows the icon')
+  for (const other of buttons.filter(button => button !== details)) {
+    assert.equal(other.props['aria-controls'], undefined,
+      `${other.props['aria-label']} controls no pane`)
+    assert.equal(other.props['data-details-subject'], undefined,
+      `${other.props['aria-label']} names no subject`)
+  }
+  details.props.onClick({ currentTarget: { focus() { calls.push('focus') } } })
+  assert.deepEqual(calls, ['focus', 'toggle:a'], 'the trigger takes focus before the panel opens')
+})
+
+test('a native Agent thread gets no Bot Details pill, while a Bot part opens its Bot', () => {
+  const indexed = indexRoster({
+    bots: [{ id: 'bot', name: 'Omni', sessionId: 'part-2', parts: ['bot', 'part-2'] }],
+    rooms: [],
+    agents: [{ id: 'agent', kind: 'dsh', name: 'Agent', sessions: ['wish-thread'] }],
+  })
+  assert.equal(indexed.agentOf['wish-thread'], 'agent')
+  assert.equal(indexed.byId['wish-thread'], undefined, 'the native thread is not a Bot subject')
+  const native = header({}, { sessionId: 'wish-thread', useRoster: hook(indexed) })
+  assert.equal(byClass(native, 'bt-head-details'), null, 'the native thread keeps its host Details')
+  const part = header({}, { sessionId: 'part-2', useRoster: hook(indexed) })
+  assert.equal(indexed.byId['part-2'], indexed.byId.bot, 'every Bot part resolves to its Bot')
+  assert.equal(byClass(part, 'bt-head-details').props['data-details-subject'], 'part-2')
+})
+
+test('a multi-part Bot\'s part header reads expanded whether Details opened by the part or the Bot id', () => {
+  const indexed = indexRoster({
+    bots: [{ id: 'bot', name: 'Omni', sessionId: 'part-2', parts: ['bot', 'part-2', 'part-3'] }, { id: 'other', name: 'Other' }],
+    rooms: [{ id: 'group', name: 'Team', members: ['bot'] }],
+  })
+  const cases = [['part-2', 'details', true], ['bot', 'details', true], ['part-3', 'details', true],
+    ['bot', 'browser', false], ['part-2', 'side', false], ['other', 'details', false],
+    ['group', 'details', false], [null, 'details', false]]
+  for (const [details, view, expanded] of cases) {
+    const part = header({}, { sessionId: 'part-2', useRoster: hook(indexed), useUi: hook({ details, view }) })
+    assert.equal(byClass(part, 'bt-head-details').props['aria-expanded'], expanded, `${details}/${view}`)
+  }
 })
 
 test('the replacement header shares DSH\'s store and navigation injection without declaring its children again', () => {
