@@ -1,6 +1,6 @@
 {
  "recorded owner fixture": {
-  "sha256": "522a586ac4eafd9bf2f9bdec38e59f1782343d567abec0b33fd2b7fed8fa6b90",
+  "sha256": "293caafc48fdc7dd6876116c3fb07aa92a90ba3fcfa7e6251459a197060951a4",
   "ids": [
    "space-new",
    "space-list",
@@ -61,12 +61,15 @@
    "fold-c:[null,\"~/workspace/repos/project-a\"]:category-1",
    "row-b:b-d6euvowxh3",
    "fold-b:b-d6euvowxh3",
+   "parent-b-d6euvowxh3",
    "row-c:[null,\"~/workspace/repos/project-a\"]:category-2",
    "fold-c:[null,\"~/workspace/repos/project-a\"]:category-2",
    "row-b:b-w6kmutwlxe",
    "fold-b:b-w6kmutwlxe",
+   "parent-b-w6kmutwlxe",
    "row-b:b-vuohqz2vby",
    "fold-b:b-vuohqz2vby",
+   "parent-b-vuohqz2vby",
    "space-spea78c8fb088b7856249fe52c41125af3",
    "space-icon-spea78c8fb088b7856249fe52c41125af3",
    "space-add-spea78c8fb088b7856249fe52c41125af3",
@@ -172,7 +175,7 @@
   ]
  },
  "recorded owner fixture, a bot's helper focused": {
-  "sha256": "bbd4dc29ac4c65c011038591a3a11dde99dcf196d4ba404c1ab2d68ca3398b12",
+  "sha256": "cb7a7d1f735b9d080c4147ba4bf1090b6f3734a0694f3aaf10836eb0a3abb37a",
   "ids": [
    "space-new",
    "space-list",
@@ -233,12 +236,15 @@
    "fold-c:[null,\"~/workspace/repos/project-a\"]:category-1",
    "row-b:b-d6euvowxh3",
    "fold-b:b-d6euvowxh3",
+   "parent-b-d6euvowxh3",
    "row-c:[null,\"~/workspace/repos/project-a\"]:category-2",
    "fold-c:[null,\"~/workspace/repos/project-a\"]:category-2",
    "row-b:b-w6kmutwlxe",
    "fold-b:b-w6kmutwlxe",
+   "parent-b-w6kmutwlxe",
    "row-b:b-vuohqz2vby",
    "fold-b:b-vuohqz2vby",
+   "parent-b-vuohqz2vby",
    "space-spea78c8fb088b7856249fe52c41125af3",
    "space-icon-spea78c8fb088b7856249fe52c41125af3",
    "space-add-spea78c8fb088b7856249fe52c41125af3",
