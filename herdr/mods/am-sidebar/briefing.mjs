@@ -36,8 +36,8 @@ import { SESSION_LABEL, TRANSCRIPT_LABEL, ledgerLine, ledgerPath, readLedger, se
 import { transcriptRealPath } from "./transcriptFolder.mjs";
 
 // About two seconds in all (the hook's limit is five): no hc call waits more than 1.5 s,
-// none starts after the 2 s budget, a call that runs out counts as unreachable, and a last
-// guard ends the process silently at 2.4 s. One away machine can't hold the prompt.
+// none starts after the 2 s budget, a call that runs out (or fails) counts as unreachable,
+// and a last guard ends the process silently at 2.4 s. One away machine can't hold the prompt.
 // The clock starts when the script runs as the hook, not when another program imports it.
 // HERDR_BRIEFING_TIME_SCALE (a whole number, 1 to 10) multiplies all three: the tests' slow
 // fakes run on loaded machines. It only ever lengthens them; unset, the times are as above.
@@ -51,25 +51,40 @@ let callMs = CALL_MS;
 const MAX_HELPERS = 30;
 let hcMissing = false;
 
-// A program's stdout; null when it failed or is missing; UNANSWERED when it ran out of time.
-function run(command, args, cwd) {
+// A program's run: { err, stdout, stderr } (err null when it exited 0), or UNANSWERED when it
+// ran out of time.
+function exec(command, args, cwd) {
   const timeout = Math.min(callMs, until - Date.now());
   if (timeout <= 0) return Promise.resolve(UNANSWERED);
   return new Promise((resolve) => {
     try {
-      execFile(command, args, { cwd, timeout, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
-        if (!err) return resolve(stdout);
-        if (err.killed || err.signal === "SIGTERM") return resolve(UNANSWERED);
-        if (err.code === "ENOENT" && command === "hc") hcMissing = true;
-        resolve(null);
+      execFile(command, args, { cwd, timeout, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
+        if (err && (err.killed || err.signal === "SIGTERM")) return resolve(UNANSWERED);
+        if (err?.code === "ENOENT" && command === "hc") hcMissing = true;
+        resolve({ err, stdout, stderr });
       });
-    } catch { resolve(null); }
+    } catch (err) { resolve({ err, stdout: "", stderr: "" }); }
   });
 }
+// A program's stdout; null when it failed or is missing; UNANSWERED when it ran out of time.
+async function run(command, args, cwd) {
+  const r = await exec(command, args, cwd);
+  return r === UNANSWERED ? r : r.err ? null : r.stdout;
+}
+// Whether a failed hc run is hc's own not_found (exit 3, or error.kind in its JSON), as the
+// CLI's hcLookup reads it: the one failure that says "no such terminal".
+function notFound({ err, stdout, stderr }) {
+  if (err.code === 3) return true;
+  try { return JSON.parse(stderr || stdout)?.error?.kind === "not_found"; } catch { return false; }
+}
+// `hc <args> --json`, parsed (launchArgs.js paneOf's `ask`): null only when hc answers
+// not_found (or is missing); any other failure, or no JSON, is UNANSWERED, as a run out of time
+// is: a failed read never reads as "no pane" (#345), the same as the CLI's `brief`.
 async function hcJson(args) {
-  const out = await run("hc", [...args, "--json"]);
-  if (out === null || out === UNANSWERED) return out;
-  try { return JSON.parse(out); } catch { return null; }
+  const r = await exec("hc", [...args, "--json"]);
+  if (r === UNANSWERED) return r;
+  if (r.err) return hcMissing || notFound(r) ? null : UNANSWERED;
+  try { return JSON.parse(r.stdout); } catch { return UNANSWERED; }
 }
 
 const git = async (args, cwd) => { const out = await run("git", args, cwd); return out === UNANSWERED ? null : out; };
