@@ -148,9 +148,13 @@ export function install(rt) {
   // first, so it never adds one back or reports it added (#366).
   const deleting = new Set()
   const isLive = id => rt.botOf(id) !== undefined && !deleting.has(id)
+  // Each deleteBot still running, by Bot. A second call for the same Bot gets that one,
+  // so it ends with it (#376): see deleteBot.
+  const deletions = new Map()
   // What other modules clear of a Bot as it is deleted (btw cards, side chats). They run
-  // inside deleteBot, after its checks and after the Bot left its groups, so a refused
-  // deletion clears nothing and no wait of theirs comes before the Bot is out (#366).
+  // inside deleteBot, after its checks, after the Bot left its groups and after its
+  // Sessions were released, so a refused deletion, or one whose release fails, clears
+  // nothing (#366, #376), and no wait of theirs comes before the Bot is out.
   const deleteSteps = []
   const beforeBotDelete = (step) => { deleteSteps.push(step) }
   async function holdName(kind, name, work) {
@@ -718,9 +722,23 @@ export function install(rt) {
     await rt.save()
   }
 
-  async function deleteBot(id) {
+  // #376: a second deleteBot of a Bot whose deletion still runs gets that deletion, so it
+  // ends with it: it resolves once the Bot is deleted, or rejects with the same error when
+  // the deletion fails and the Bot stays. Nothing runs twice. Once the first has ended,
+  // the Bot is unknown (deleted) or can be deleted again (failed).
+  function deleteBot(id) {
+    const running = deletions.get(id)
+    if (running !== undefined) return running
+    const run = deleteNow(id)
+    deletions.set(id, run)
+    const forget = () => { if (deletions.get(id) === run) deletions.delete(id) }
+    run.then(forget, forget)
+    return run
+  }
+
+  async function deleteNow(id) {
     const bot = rt.botOf(id)
-    if (bot === undefined || deleting.has(id)) throw new Error('Unknown Bot')
+    if (bot === undefined) throw new Error('Unknown Bot')
     if (rt.isMain(id)) throw new Error('A Main Bot cannot be deleted; remove its Main Bot role first')
     if (bot.dshAgentId !== undefined) throw new Error('Roll back DSH adoption before deleting the original DSH bot')
     const current = rt.chatOf(id)
@@ -732,7 +750,7 @@ export function install(rt) {
     // group change that goes on meanwhile sees it gone whichever call resumes first. Its
     // record stays until releaseBot is done: the archive and releaseBot read it (the Bots
     // told of the deletion hear its name), and a failure up to there leaves it in the
-    // team, where `left` puts it back in its groups.
+    // team, where putBack puts it back in the groups in `left`.
     deleting.add(id)
     const left = []
     for (const room of Object.values(state.rooms)) {
@@ -744,22 +762,26 @@ export function install(rt) {
     }
     let archived
     try {
-      for (const step of deleteSteps) await step(id)
+      await rt.releaseBot(id, sessions)
+      // #376: only once its Sessions are released, so a failed release keeps its memory.
       // Before the Bot and its group Sessions leave the state, which the archive reads.
       archived = rt.archiveBotMemory(id)
-      await rt.releaseBot(id, sessions)
     } catch (error) {
-      // Only this Bot's place is restored, so a change made meanwhile stays. A save in
-      // the window wrote its groups without it; the next save writes them back.
-      for (const { room, index, admin } of left) {
-        if (state.rooms[room.id] !== room) continue
-        if (!room.members.includes(id)) room.members = room.members.toSpliced(Math.min(index, room.members.length), 0, id)
-        if (admin && (room.admin ?? null) === null) room.admin = id
-      }
-      throw error
-    } finally {
       deleting.delete(id)
+      await putBack(id, left)
+      throw error
     }
+    // #376: only once its Sessions are released, so a failed release keeps the Bot's btw
+    // cards and side chats. From here the deletion goes on (the Bots waiting on it were
+    // told it was deleted), so a step that fails is warned and does not keep the Bot.
+    for (const step of deleteSteps) {
+      try {
+        await step(id)
+      } catch (error) {
+        rt.warn('ds-bot: clearing Bot %s failed: %s', bot.name, error)
+      }
+    }
+    deleting.delete(id)
     // Its tasks keep the level they run at as a cap, so the default cannot raise them.
     rt.capTasks(task => task.from === id)
     delete state.bots[id]
@@ -792,6 +814,28 @@ export function install(rt) {
         .catch(error => rt.warn('ds-bot: Bot %s not archived: %s', bot.name, error))
     }
     if (failed !== undefined) throw failed
+  }
+
+  // A deletion that fails puts the Bot back in the groups it left, as their member and
+  // admin again, and saves that (#376): a save in the window wrote them without it, and a
+  // restart before the next save would read them so. Only its place is put back, so a
+  // change made meanwhile stays, in memory and on disk. The Bot counts as live again
+  // before the save, so a group change that goes on meanwhile keeps it. A failed save is
+  // warned, and the caller hears the deletion's own error.
+  async function putBack(id, left) {
+    let back = false
+    for (const { room, index, admin } of left) {
+      if (state.rooms[room.id] !== room) continue
+      if (!room.members.includes(id)) room.members = room.members.toSpliced(Math.min(index, room.members.length), 0, id)
+      if (admin && (room.admin ?? null) === null) room.admin = id
+      back = true
+    }
+    if (!back) return
+    try {
+      await rt.save()
+    } catch (error) {
+      rt.warn('ds-bot: Bot %s is back in its groups, but that was not saved: %s', id, error)
+    }
   }
 
   // A deletion whose save fails stays in memory, and the next save writes it, so its
