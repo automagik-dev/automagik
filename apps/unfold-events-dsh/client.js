@@ -1366,6 +1366,17 @@ function slotLine(slot, now) {
 
 // src/client/redact.js
 var REDACTED = "[redacted]";
+var INVISIBLE_GATE = /[\0-\x08\x0e-\x1f\x7f\p{Cf}\u2065]|\\u/u;
+var INVISIBLE = /[\0-\x08\x0e-\x1f\x7f\p{Cf}\u2065]|\\{1,2}u(?:00(?:0[0-8EFef]|1[0-9A-Fa-f])|007[Ff]|00[Aa][Dd]|061[Cc]|180[Ee]|200[B-Fb-f]|202[A-Ea-e]|206[0-9A-Fa-f]|[Ff][Ee][Ff][Ff])/gu;
+var INVISIBLE_NAME = /(?<![A-Za-z0-9_-]|[\0-\x08\x0e-\x1f\x7f\p{Cf}\u2065]|\\{1,2}u(?:00(?:0[0-8EFef]|1[0-9A-Fa-f])|007[Ff]|00[Aa][Dd]|061[Cc]|180[Ee]|200[B-Fb-f]|202[A-Ea-e]|206[0-9A-Fa-f]|[Ff][Ee][Ff][Ff]))(?:(?<!\\)|(?=[nrt]))((?:[A-Za-z0-9_-]|[\0-\x08\x0e-\x1f\x7f\p{Cf}\u2065]|\\{1,2}u(?:00(?:0[0-8EFef]|1[0-9A-Fa-f])|007[Ff]|00[Aa][Dd]|061[Cc]|180[Ee]|200[B-Fb-f]|202[A-Ea-e]|206[0-9A-Fa-f]|[Ff][Ee][Ff][Ff]))+)((?:\\?["'])?[ \t]*[:=][ \t]*)((?:[\0-\x08\x0e-\x1f\x7f\p{Cf}\u2065]|\\{1,2}u(?:00(?:0[0-8EFef]|1[0-9A-Fa-f])|007[Ff]|00[Aa][Dd]|061[Cc]|180[Ee]|200[B-Fb-f]|202[A-Ea-e]|206[0-9A-Fa-f]|[Ff][Ee][Ff][Ff]))*)/gu;
+var NAME_STEM = /pass|secret|token|key|authorization/i;
+function nameText(s) {
+  if (!INVISIBLE_GATE.test(s)) return s;
+  return s.replace(INVISIBLE_NAME, (m, run, sep, after) => {
+    const name = run.replace(INVISIBLE, "");
+    return (name !== run || after) && NAME_STEM.test(name) ? `${name}${sep}` : m;
+  });
+}
 var SECRET_TEXT = [
   // Whole-value priority: a credential key's value is secret as ONE unit, whatever it
   // starts with ("Bearer ", "Basic ", even an already-redacted marker, which is untrusted input),
@@ -1391,12 +1402,15 @@ ${indent}  ${REDACTED}` : block}`, /:[ \t]*[>|]/],
   // key, private key or authorization, in any case, as a whole token with any prefix joined by _ or
   // - (db_password, x-api-key, aws_secret_access_key), also right after a - or -- (--api-key=x):
   // `bypass` and `tokenizer` are words, not names.
-  [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))(["']?\s*[:=]\s*)(?:(["'`])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+|(?![>|][-+0-9]*[ \t]*(?:\n|$))(?!Bearer\b|Basic\b|\[redacted\])[^\s"',}]+)/gi, (_, name, sep, q, close, scheme) => q ? `${name}${sep}${q}${REDACTED}${close}` : scheme ? `${name}${sep}${scheme} ${REDACTED}` : `${name}${sep}${REDACTED}`, /[:=]/],
+  // After a name and its colon, up to two YAML anchors and tags (`&a`, `!!str`, `!secret`, in either
+  // order, each followed by whitespace) come before the value: they are hidden with it, so
+  // `password: &a x` serves as `password: [redacted]`, the shape of the plain scalar.
+  [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))(["']?\s*[:=]\s*)(?:(?<=:\s*)(?:[&!][^\s"'`]*\s+){1,2})?(?:(["'`])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+|(?![>|][-+0-9]*[ \t]*(?:\n|$))(?!Bearer\b|Basic\b|\[redacted\])[^\s"',}]+)/gi, (_, name, sep, q, close, scheme) => q ? `${name}${sep}${q}${REDACTED}${close}` : scheme ? `${name}${sep}${scheme} ${REDACTED}` : `${name}${sep}${REDACTED}`, /[:=]/],
   // The same names in camelCase or PascalCase (accessToken, ClientSecret, dbPassword, DbPass,
   // apiKey, authToken), case sensitive and whole-token, so accessLevel, MaxTokens, passRate and
   // PassengerCount stay words.
   // A name is a key only with its value, so a firstPass in prose stays a word.
-  [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))(["']?\s*[:=]\s*)(?:(["'`])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(Bearer|bearer|BEARER|Basic|basic|BASIC)\s+[A-Za-z0-9._~+/=-]+|(?![>|][-+0-9]*[ \t]*(?:\n|$))(?!(?:Bearer|bearer|BEARER|Basic|basic|BASIC)\b|\[redacted\])[^\s"',}]+)/g, (_, name, sep, q, close, scheme) => q ? `${name}${sep}${q}${REDACTED}${close}` : scheme ? `${name}${sep}${scheme} ${REDACTED}` : `${name}${sep}${REDACTED}`, /Token|Secret|Pass|Key|Authorization/],
+  [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))(["']?\s*[:=]\s*)(?:(?<=:\s*)(?:[&!][^\s"'`]*\s+){1,2})?(?:(["'`])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(Bearer|bearer|BEARER|Basic|basic|BASIC)\s+[A-Za-z0-9._~+/=-]+|(?![>|][-+0-9]*[ \t]*(?:\n|$))(?!(?:Bearer|bearer|BEARER|Basic|basic|BASIC)\b|\[redacted\])[^\s"',}]+)/g, (_, name, sep, q, close, scheme) => q ? `${name}${sep}${q}${REDACTED}${close}` : scheme ? `${name}${sep}${scheme} ${REDACTED}` : `${name}${sep}${REDACTED}`, /Token|Secret|Pass|Key|Authorization/],
   // JSON inside a JSON string (`{\"password\": \"…\"}`): the value runs to its escaped closing
   // quote, its own escapes doubled, or to a bare quote that ends the outer string.
   [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))(\\"\s*:\s*)\\"((?:[^\\"]|\\[^\\"]|\\\\(?:\\[\s\S]|\\$|[^\\]|$)|\\$)*)(\\"|"|$)/gi, (_, name, sep, value, close) => `${name}${sep}\\"${REDACTED}${close}`, /\\"/],
@@ -1414,7 +1428,7 @@ ${indent}  ${REDACTED}` : block}`, /:[ \t]*[>|]/],
   [/(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt]))sk-[A-Za-z0-9_-]+$/, () => REDACTED]
 ];
 function redactText(s) {
-  let out = s;
+  let out = nameText(s);
   for (const [re, fn, gate] of SECRET_TEXT) if (!gate || gate.test(out)) out = out.replace(re, fn);
   return out;
 }

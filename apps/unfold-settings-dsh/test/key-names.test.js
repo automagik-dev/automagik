@@ -10,7 +10,9 @@ import { redact, redactText } from '../src/redact.js'
 const WORDS = ['correct', 'horse', 'battery', 'staple']
 const PHRASE = WORDS.join(' ')
 const JOINED = WORDS.join('')
-const KEYS = ['password', 'PASSWD', 'pass', 'Secret', 'client_secret', 'passphrase', 'TOKEN', 'api_key', 'private_key', 'db_password', 'DB_PASS', 'x-api-key', 'secret_key', 'SECRET_KEY', 'aws_secret_access_key', 'AWS_SECRET_ACCESS_KEY', 'accessToken', 'clientSecret', 'dbPassword', 'apiKey', 'privateKey', 'authToken', 'dbPass', 'userPass', 'adminPass', 'ClientSecret', 'AccessToken', 'DbPassword', 'DbPass']
+const KEYS = ['password', 'PASSWD', 'pass', 'Secret', 'client_secret', 'passphrase', 'TOKEN', 'api_key', 'private_key', 'db_password', 'DB_PASS', 'x-api-key', 'secret_key', 'SECRET_KEY', 'aws_secret_access_key', 'AWS_SECRET_ACCESS_KEY', 'accessToken', 'clientSecret', 'dbPassword', 'apiKey', 'privateKey', 'authToken', 'dbPass', 'userPass', 'adminPass', 'ClientSecret', 'AccessToken', 'DbPassword', 'DbPass',
+  // Invisible characters inside the name, read as the name (#348).
+  'pass\u200bword', 'pass\u0000word', 'db\u200bPassword', 'API\ufeff_KEY']
 const SCHEMES = [`authorization: bearer ${JOINED}`, `AUTHORIZATION: BEARER ${JOINED}`, `Authorization: basic ${JOINED}`, `{"authorization": "bearer ${PHRASE}"}`]
 // 80k characters of each input that could make a rule quadratic: a start after - or --, an open
 // quote, a camelCase run, a YAML block, an open escaped JSON value, a prefix run, many line starts,
@@ -68,6 +70,17 @@ const ADVERSARIAL = {
   'escaped quote pairs in an open value': `password: "${'\\"'.repeat(40_000)}`,
   'escaped quote pairs in an escaped value': `{\\"password\\": \\"${'\\"'.repeat(40_000)}`,
   ...Object.fromEntries(INDENTED),
+  // Invisible characters, raw and escaped, in and around names, and anchors after names (#348).
+  'invisibles inside a word': 'a\u200b'.repeat(40_000),
+  'invisibles before colons': '\u200b:'.repeat(40_000),
+  'a BOM run': '\ufeff'.repeat(80_000),
+  'a name, a BOM run, no separator': `pass\u200bword${'\ufeff'.repeat(80_000)}`,
+  'a name, then spaces': `pass\u200bword${' '.repeat(80_000)}`,
+  'escaped invisibles inside a word': 'a\\u0000'.repeat(13_000),
+  'escaped invisibles after backslashes': '\\\\u200b'.repeat(11_000),
+  'names with invisibles mid-line': 'a pass\u200bword: '.repeat(4_400),
+  'anchors after a name': 'password: & '.repeat(6_700),
+  'tags after a name, no value': 'password: !!str'.repeat(5_300),
 }
 const FORMS = [
   ['KEY=value', (k) => `${k}="${PHRASE}"`], ['JSON', (k) => `{"${k}": "${PHRASE}"}`], ['key: value', (k) => `${k}: '${PHRASE}'`],
@@ -77,6 +90,8 @@ const FORMS = [
   ['escaped JSON', (k) => `{\\"${k}\\": \\"${PHRASE}\\"}`],
   ['YAML >', (k) => `\n${k}: >\n  ${PHRASE}\n  ${PHRASE}\nnext: shown`], ['YAML |', (k) => `\n  ${k}: |-\n    ${PHRASE}\n\n    ${PHRASE}\n  next: shown`],
   ['key = value', (k) => `${k} = ${JOINED}`], ['key : "value"', (k) => `${k} : "${PHRASE}"`], ['{"key" : "value"}', (k) => `{"${k}" : "${PHRASE}"}`],
+  // YAML anchors and tags before the value (#348).
+  ['key: &a !!str "value"', (k) => `${k}: &a !!str "${PHRASE}"`], ['key: !!str value, bare', (k) => `${k}: !!str ${JOINED}`],
 ]
 const CASES = KEYS.flatMap((k) => FORMS.map(([form, text]) => [`${k} (${form})`, text(k)]))
 const leaked = (text) => [...new Set(text.match(/[a-z]{3,}/gi) ?? [])].filter((t) => WORDS.some((w) => w.includes(t.toLowerCase()) || t.toLowerCase().includes(w)))

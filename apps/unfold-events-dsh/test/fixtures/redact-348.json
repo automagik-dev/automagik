@@ -1,0 +1,291 @@
+{
+ "issue": 348,
+ "text": [
+  [
+   "measured: NUL inside the name",
+   "pass\u0000word: hunter2",
+   "password: [redacted]"
+  ],
+  [
+   "measured: ZWSP inside the name",
+   "pass\u200bword: hunter2",
+   "password: [redacted]"
+  ],
+  [
+   "measured: an anchor before the value",
+   "password: &a hunter2",
+   "password: [redacted]"
+  ],
+  [
+   "measured: a tag before the value",
+   "password: !!str hunter2",
+   "password: [redacted]"
+  ],
+  [
+   "control: the plain scalar",
+   "password: hunter2",
+   "password: [redacted]"
+  ],
+  [
+   "control: prose after the plain scalar",
+   "password: hunter2 is not safe",
+   "password: [redacted] is not safe"
+  ],
+  [
+   "NUL, name=value",
+   "pass\u0000word=hunter2",
+   "password=[redacted]"
+  ],
+  [
+   "ZWSP, upper-case NAME=value",
+   "DB_PASS\u200bWORD=hunter2",
+   "DB_PASSWORD=[redacted]"
+  ],
+  [
+   "ZWSP, --flag=value",
+   "tool --api\u200bkey=hunter2",
+   "tool --apikey=[redacted]"
+  ],
+  [
+   "ZWSP, camelCase name",
+   "dbPass\u200bword: hunter2",
+   "dbPassword: [redacted]"
+  ],
+  [
+   "ZWJ, PascalCase name",
+   "Client\u200dSecret: hunter2",
+   "ClientSecret: [redacted]"
+  ],
+  [
+   "ZWSP, a quoted JSON key",
+   "{\"pass\u200bword\": \"hunter2 two\"}",
+   "{\"password\": \"[redacted]\"}"
+  ],
+  [
+   "ZWSP, an escaped JSON key",
+   "{\\\"pass\u200bword\\\": \\\"hunter2 two\\\"}",
+   "{\\\"password\\\": \\\"[redacted]\\\"}"
+  ],
+  [
+   "a JSON \\u0000 escape inside a key",
+   "{\"pass\\u0000word\":\"hunter2\"}",
+   "{\"password\":\"[redacted]\"}"
+  ],
+  [
+   "a JSON \\u200b escape inside a key",
+   "{\"api\\u200bkey\":\"hunter2\"}",
+   "{\"apikey\":\"[redacted]\"}"
+  ],
+  [
+   "ZWSP, a YAML block key",
+   "pass\u200bword: |\n  hunter2\nnext: shown",
+   "password: |\n  [redacted]\nnext: shown"
+  ],
+  [
+   "NUL, a YAML block key",
+   "config:\n  db_pass\u0000word: >\n    hunter2\nnext: shown",
+   "config:\n  db_password: >\n    [redacted]\nnext: shown"
+  ],
+  [
+   "BOM, word joiner, soft hyphen, bidi mark, DEL",
+   "p\ufeffa\u2060s\u00ads\u202ew\u007ford: hunter2",
+   "password: [redacted]"
+  ],
+  [
+   "a run of invisible characters",
+   "pass\u200b\u200c\u200d\u0000word: hunter2",
+   "password: [redacted]"
+  ],
+  [
+   "ZWSP between the name and the colon",
+   "password\u200b: hunter2",
+   "password: [redacted]"
+  ],
+  [
+   "ZWSP after the colon",
+   "password:\u200b hunter2",
+   "password: [redacted]"
+  ],
+  [
+   "anchor then tag",
+   "password: &a !!str hunter2",
+   "password: [redacted]"
+  ],
+  [
+   "tag then anchor",
+   "password: !!str &a hunter2",
+   "password: [redacted]"
+  ],
+  [
+   "a local tag",
+   "password: !secret hunter2",
+   "password: [redacted]"
+  ],
+  [
+   "a verbatim tag",
+   "password: !<tag:yaml.org,2002:str> hunter2",
+   "password: [redacted]"
+  ],
+  [
+   "a tag then a tab",
+   "password: !!str\thunter2",
+   "password: [redacted]"
+  ],
+  [
+   "an anchor before a quoted value",
+   "password: &a \"hunter2 two\"",
+   "password: \"[redacted]\""
+  ],
+  [
+   "a tag before a scheme",
+   "authorization: !!str Bearer hunter2",
+   "authorization: Bearer [redacted]"
+  ],
+  [
+   "an anchor under a camelCase name",
+   "dbPassword: &a hunter2",
+   "dbPassword: [redacted]"
+  ],
+  [
+   "an anchor and an invisible name",
+   "pass\u200bword: &a hunter2",
+   "password: [redacted]"
+  ],
+  [
+   "an indented YAML key with a tag",
+   "db:\n  password: !!str hunter2\n  host: shown",
+   "db:\n  password: [redacted]\n  host: shown"
+  ],
+  [
+   "near miss: an invisible inside a word with no separator",
+   "the pass\u200bword is long",
+   "the pass\u200bword is long"
+  ],
+  [
+   "near miss: passport (key read whole, value kept)",
+   "pass\u200bport: AB123",
+   "passport: AB123"
+  ],
+  [
+   "near miss: a key with no credential stem",
+   "e\u200bmail: hunter2",
+   "e\u200bmail: hunter2"
+  ],
+  [
+   "near miss: an anchor under a plain key",
+   "email: &a hunter2",
+   "email: &a hunter2"
+  ],
+  [
+   "near miss: a tag in prose",
+   "note: !important hunter2",
+   "note: !important hunter2"
+  ],
+  [
+   "near miss: an emoji joiner",
+   "family \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67: home",
+   "family \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67: home"
+  ],
+  [
+   "near miss: a ZWNJ in Persian text",
+   "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645: \u0628\u0644\u0647",
+   "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645: \u0628\u0644\u0647"
+  ],
+  [
+   "near miss: tokenizer",
+   "tokenizer: gpt2",
+   "tokenizer: gpt2"
+  ]
+ ],
+ "object": [
+  [
+   "measured: NUL inside a key",
+   {
+    "pass\u0000word": "hunter2"
+   },
+   {
+    "pass\u0000word": "[redacted]"
+   }
+  ],
+  [
+   "ZWSP inside a key",
+   {
+    "pass\u200bword": "hunter2"
+   },
+   {
+    "pass\u200bword": "[redacted]"
+   }
+  ],
+  [
+   "BOM inside a nested key",
+   {
+    "config": {
+     "api\ufeff_key": "hunter2"
+    }
+   },
+   {
+    "config": {
+     "api\ufeff_key": "[redacted]"
+    }
+   }
+  ],
+  [
+   "a word joiner inside a key in a list",
+   [
+    {
+     "to\u2060ken": "hunter2"
+    }
+   ],
+   [
+    {
+     "to\u2060ken": "[redacted]"
+    }
+   ]
+  ],
+  [
+   "a value with an invisible name",
+   {
+    "note": "pass\u200bword: hunter2"
+   },
+   {
+    "note": "password: [redacted]"
+   }
+  ],
+  [
+   "a value with an anchor",
+   {
+    "note": "password: &a hunter2"
+   },
+   {
+    "note": "password: [redacted]"
+   }
+  ],
+  [
+   "control: a plain key",
+   {
+    "password": "hunter2"
+   },
+   {
+    "password": "[redacted]"
+   }
+  ],
+  [
+   "near miss: pass_rate with an invisible",
+   {
+    "pass\u200b_rate": 0.9
+   },
+   {
+    "pass\u200b_rate": 0.9
+   }
+  ],
+  [
+   "near miss: bypass with an invisible",
+   {
+    "by\u200bpass": "on"
+   },
+   {
+    "by\u200bpass": "on"
+   }
+  ]
+ ]
+}

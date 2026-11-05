@@ -42,7 +42,7 @@
 // and counts the rest; union-find keys are counted per retained row and pruned as rows leave, so
 // a long-lived episode holds keys only for the rows it still has.
 import { createHash, randomBytes } from 'node:crypto'
-import { REDACTED, redact, redactText, secretsIn } from './redact.js'
+import { REDACTED, nameText, redact, redactText, secretsIn } from './redact.js'
 import { sentence } from './sentences.js'
 
 export const HEARTBEAT_LEASE_MS = 5_000 // agentd heartbeats every 1 s; five missed is stale (unfold-events-dsh LEASE)
@@ -689,7 +689,9 @@ export class MindStream {
  * later tail that lost their context still masks them; a cut tail's first fragment is hidden.
  */
 function setText(row, raw, { cut = false } = {}) {
-  const full = String(raw ?? '')
+  // Names read without their invisible characters (#348), as redactText reads them, so the kept
+  // tail, its quoted spans and the remembered values all match the served text.
+  const full = nameText(String(raw ?? ''))
   for (const v of secretsIn(full)) if (!row.secrets.includes(v)) row.secrets = [...row.secrets, v].slice(-SECRETS_KEPT)
   const truncated = cut || full.length > TEXT_KEEP
   row.rawText = keptTail(full)
@@ -721,8 +723,8 @@ function keptTail(full) {
 // unfold-events-dsh's window.
 const QUOTED_SECRET = [
   /\b[A-Z0-9_]+=(?<=(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=)(["'`])/g,
-  /(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization)["']?\s*[:=]\s*(["'`])/gi, // any prefix
-  /(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key)["']?\s*[:=]\s*(["'`])/g, // camelCase
+  /(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization)["']?\s*[:=]\s*(?:(?<=:\s*)(?:[&!][^\s"'`]*\s+){1,2})?(["'`])/gi, // any prefix
+  /(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key)["']?\s*[:=]\s*(?:(?<=:\s*)(?:[&!][^\s"'`]*\s+){1,2})?(["'`])/g, // camelCase
 ]
 
 // Where a YAML block scalar under a credential name opens (`password: |`, then its indented
