@@ -97,7 +97,7 @@ export class Updater {
         patch = applyPatch(result, before, this.now());
       } catch (e) { patch = { applyError: String(e?.message ?? e), at: this.now() }; }
       if (patch.kind === "installed") {
-        const landed = { version: patch.current, from: patch.from, restartBots: patch.restartBots === true, at: this.now() };
+        const landed = { version: patch.current, from: patch.from, restartBots: patch.restartBots === true, held: patch.heldMods ?? [], at: this.now() };
         try { finish(this.get, this.set, id, { ...patch, request, autoFailed: null, landed }); } catch {}
         // Herdr reloads the mods as the folders swap, and the new build announces it (arrive).
         // Still here after the grace: no reload happened, so say what to do.
@@ -150,7 +150,7 @@ export class Updater {
         why: null, applyError: null, at: this.now() });
     }
     this.patch({ announced: version });
-    try { this.notify(landedNotice(version, step.from, step.restartBots === true)); } catch {}
+    try { this.notify(landedNotice(version, step.from, step.restartBots === true, step.held)); } catch {}
   }
 
   // "Install updates automatically", switched from the status bar: written to the pack's own

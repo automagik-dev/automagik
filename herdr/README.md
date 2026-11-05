@@ -84,7 +84,9 @@ their blocks from (see [Wiring](#wiring-your-layout)); or switch to the `automag
 Add options after `bash -s --`: `--yes` answers every question, `--version 3.58.0` installs that
 Automagik release (one that carries the pack), `--adopt` takes over same-named mods,
 `--uninstall` moves the pack out of `mods/`, puts back what it adopted and removes the layout if
-the installer added it and you haven't changed it.
+the installer added it and you haven't changed it. It is refused, with nothing moved, while the
+layout Herdr shows uses a pack mod: switch layouts first (ctrl-shift-l, or
+`herdr-app do layout.switch '{"name":"main"}'`).
 
 It also installs [usagemeter](https://github.com/automagik-dev/usagemeter) 0.3.0, the token
 meter, to `~/.local/bin/usagemeter`: that release's build for your OS and architecture, checked against its

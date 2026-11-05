@@ -317,3 +317,25 @@ test("a failed record write is not 'nothing was changed': the notice says the re
   assert.match(note.body, /0\.8\.1 was put in place, but its install record could not be saved/);
   assert.match(autoFailedNotice({ version: "0.8.1", count: 1, at: NOW, why: "network down" }).body, /Nothing was changed/);
 });
+
+test("a mod an install held for a layout reaches the new build's notice, with what retires it", async () => {
+  const h = herdr();
+  const old = h.build();
+  h.answer = (args) => {
+    if (args[1] === "check") return h.check();
+    const answer = line({ current: "0.8.0", latest: "0.8.1", update: update("0.8.1"), notice: [],
+      installed: { version: "0.8.1", held: [{ mod: "old-mod", layouts: ["mine", "work"] }] } });
+    h.swap(old, "0.8.1");
+    return answer;
+  };
+  old.u.start();
+  await h.tick(FIRST_CHECK_MS);
+  const fresh = h.build();
+  fresh.u.start();
+  await h.tick(1);
+  assert.equal(h.notes.length, 1);
+  assert.match(h.notes[0].body, /Kept mods\/old-mod: 0\.8\.1 no longer ships it, but the layouts mine, work show it/);
+  assert.match(h.notes[0].body, /Take its block out of each of those layouts, or remove them/);
+  assert.match(h.notes[0].body, /Switching layouts does not retire it/);
+  assert.match(h.notes[0].body, /`automagik-herdr update --rollback` puts 0\.8\.0 back/);
+});

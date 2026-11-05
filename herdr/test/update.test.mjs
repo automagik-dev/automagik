@@ -1496,13 +1496,30 @@ test("a retired mod a layout's block names is held in mods/ and said; once no la
     assert.deepEqual([held.retired, held.held], [[], [{ mod: "old-mod", layouts: ["mine"] }]]);
     assert.ok(existsSync(join(mods, "old-mod", "main.js")), "held in mods/");
     assert.ok(readMarker(mods).mods.includes("old-mod"), "still the record's");
-    assert.ok(logs.some((l) => /^kept mods\/old-mod: 0\.2\.0 no longer ships it, but the mine layout shows it, and Herdr drops a layout whose mod is gone/.test(l)), logs.join("\n"));
+    assert.ok(logs.some((l) => /^Kept mods\/old-mod: 0\.2\.0 no longer ships it, but the mine layout shows it, and Herdr drops a layout whose mod is gone/.test(l)), logs.join("\n"));
     // The layout changed: the next update retires it into the kept set.
     writeFileSync(mine, JSON.stringify({ id: "root", children: [{ id: "p", content: { mod: "pane" } }] }));
     const later = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
     assert.deepEqual([later.retired, later.held], [["old-mod"], []]);
     assert.equal(existsSync(join(mods, "old-mod")), false);
     assert.ok(existsSync(join(kept(mods, "old-mod"), "main.js")));
+    assert.ok(!readMarker(mods).mods.includes("old-mod"));
+  } finally {
+    rmSync(t.src, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a switched-off mod the release no longer ships retires even when a layout names it", async () => {
+  const { home, mods } = appHome("0.1.0", ["am-sidebar", "old-mod"]);
+  const t = tarball("0.2.0", { mods: ["am-sidebar"] });
+  try {
+    mkdirSync(offDirOf(mods));
+    renameSync(join(mods, "old-mod"), join(offDirOf(mods), "old-mod"));
+    mkdirSync(join(home, "layouts"));
+    writeFileSync(join(home, "layouts", "mine.json"), JSON.stringify({ id: "root", children: [{ id: "o", content: { mod: "old-mod" } }] }));
+    const r = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
+    assert.deepEqual([r.retired, r.held], [["old-mod"], []]);
     assert.ok(!readMarker(mods).mods.includes("old-mod"));
   } finally {
     rmSync(t.src, { recursive: true, force: true });

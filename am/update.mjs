@@ -52,7 +52,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
   AUTO_FILE, CATALOG_URL, OFF_BY_DEFAULT, OLD_PACK_NAME, PACK_CATALOG_URLS, PACK_KEYS, PACK_KEYS_FILE, PACK_LAYOUT, PACK_NAME, POCKET_LINK, POINTER_SIG_URL,
-  POINTER_URL, TIMEOUT_MS, V020_LAYOUT_SHA256, autoHold, formatAuto, formatMarker, layoutNeeds, packOfPointer, parseAuto, parseMarker, parseSums,
+  POINTER_URL, TIMEOUT_MS, V020_LAYOUT_SHA256, autoHold, formatAuto, formatMarker, heldModLine, layoutNeeds, packOfPointer, parseAuto, parseMarker, parseSums,
   pickUpdate, updatesOff,
 } from "./release.js";
 import { ABSORBED, RENAMES, editTarget, own, renamedFrom } from "./migrate.js";
@@ -760,11 +760,7 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     if (before?.v1) { try { carryV1(modsDir, record, log); writeMarker(modsDir, record); } catch (error) { warnings.push(`v0.2's kept copies stay where they were (${error.message})`); } }
     if (keep.length) keepLayout(modsDir, next, warnings);
     keepSet(modsDir, next, keep, before, old, rename, warnings, keptOff);
-    for (const h of plan.held) {
-      const which = h.layouts.length === 1 ? `the ${h.layouts[0]} layout shows it` : `the layouts ${h.layouts.join(", ")} show it`;
-      log(`kept mods/${h.mod}: ${version} no longer ships it, but ${which}, and Herdr drops a layout whose mod is gone `
-        + `(plain Herdr instead). Take its block out of the layout (or switch layouts); the next update retires it`);
-    }
+    for (const h of plan.held) log(heldModLine(h, version));
     for (const m of plan.off) log(`updated mods-disabled/${m}: it stays off`);
     for (const m of plan.installedOff) log(`installed mods-disabled/${m}: it ships off; turn it on in the Mods panel`);
     for (const m of keptBackOff) log(`installed mods-disabled/${m}: it was off when it was kept, so it stays off`);

@@ -72,6 +72,8 @@ main() {
   BIN_DIR=$HOME/.local/bin
   LINK=$BIN_DIR/automagik-herdr
   NODE_MIN=22.7
+  # How long `herdr-app status` may take: a Herdr that does not answer never holds up a run.
+  STATUS_SECONDS=10
   # The Herdr this pack runs in is herdrdev's (D27): bundle id dev.herdr.app on macOS, herdr-app on
   # Linux, installed by its own installer. Another app named Herdr (Herdr UI, penso/herdr-gpui:
   # so.pen.herdr-gpui) is a different app and never counts.
@@ -117,7 +119,7 @@ main() {
     esac
     say "Releases from $RELEASES (AUTOMAGIK_HERDR_RELEASE_URL)."
     case $RELEASES in
-      file://*) TTY=${AUTOMAGIK_HERDR_TTY:-$TTY}; APPS=${AUTOMAGIK_HERDR_APPS:-$APPS}; METER_RELEASES=$RELEASES/usagemeter; TRUSTED_KEYS=${AUTOMAGIK_HERDR_PACK_KEYS:-$TRUSTED_KEYS} ;;
+      file://*) TTY=${AUTOMAGIK_HERDR_TTY:-$TTY}; APPS=${AUTOMAGIK_HERDR_APPS:-$APPS}; STATUS_SECONDS=${AUTOMAGIK_HERDR_STATUS_SECONDS:-$STATUS_SECONDS}; METER_RELEASES=$RELEASES/usagemeter; TRUSTED_KEYS=${AUTOMAGIK_HERDR_PACK_KEYS:-$TRUSTED_KEYS} ;;
     esac
   fi
 
@@ -206,11 +208,21 @@ cli_target() {
 }
 
 # The layout Herdr shows ("layout" in `herdr-app status`); empty when herdr-app or its status
-# is unavailable.
+# is unavailable, or gives no answer within $STATUS_SECONDS (macOS has no `timeout`).
 shown_layout() {
   command -v herdr-app >/dev/null 2>&1 || return 0
-  st=$(herdr-app status </dev/null 2>/dev/null) || return 0
-  printf '%s\n' "$st" | sed -n 's/.*"layout"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
+  st=$(mktemp) || return 0
+  herdr-app status </dev/null >"$st" 2>/dev/null &
+  asked=$!
+  # Nothing of the watchdog's stays on stdout: callers read this function through $(…), which would
+  # wait for its sleep.
+  (sleep "$STATUS_SECONDS"; kill "$asked" 2>/dev/null) >/dev/null 2>&1 &
+  watchdog=$!
+  rc=0
+  wait "$asked" || rc=$?
+  kill "$watchdog" 2>/dev/null || true
+  if [ "$rc" = 0 ]; then sed -n 's/.*"layout"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$st" | head -n 1; fi
+  rm -f "$st"
 }
 
 # The sidebar mod has place "none": it shows only in a layout that names it. While Herdr shows
@@ -293,7 +305,7 @@ layout_guard() {
   shown=$(shown_layout)
   why=
   case $shown in
-    '') why="no layout from herdr-app status: no herdr-app, or Herdr is not running" ;;
+    '') why="no layout from herdr-app status: no herdr-app, Herdr is not running, or it did not answer in ${STATUS_SECONDS}s" ;;
     */*|.|..) why="Herdr shows the layout \"$shown\", a name with a path, so no file in $APP_HOME/layouts was read" ;;
     *) [ -f "$APP_HOME/layouts/$shown.json" ] || why="Herdr shows $shown, and $APP_HOME/layouts/$shown.json is not there" ;;
   esac
@@ -313,7 +325,7 @@ layout_guard() {
   unset IFS
   set +f
   if [ -n "$named" ]; then
-    fail "the pack stays: the $shown layout shows $named, and Herdr drops a layout whose mod is gone (plain Herdr instead). Switch layouts first (ctrl-shift-l), then uninstall the pack."
+    fail "the pack stays: the $shown layout shows $named, and Herdr drops a layout whose mod is gone (plain Herdr instead). Switch layouts first (ctrl-shift-l, or herdr-app do layout.switch '{\"name\":\"main\"}'), then uninstall the pack."
   fi
   [ -n "$why" ] && [ -n "$on" ] || return 0
   for f in "$APP_HOME"/layouts/*.json; do

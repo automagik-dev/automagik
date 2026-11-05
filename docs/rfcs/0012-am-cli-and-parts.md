@@ -406,12 +406,6 @@ records `layout=removed`, so no update or repair puts it back.
   pointer's sequence; a named version (`--version`) gets none. The herdr entry forwards it to
   `update.mjs install --sequence`, so the marker records `sequence=` on every am install and
   `install.sh`'s replay guard stays on (t2zx).
-- A swap (`replaces`, delivery 7) installs the fork first, then runs the replaced member's
-  uninstall with `AM_REPLACED_BY=<the fork's mod folder>`. The herdr entry then puts the fork in
-  each of the shown layout's blocks that name the member, so the member's switch-off leaves that
-  layout working. It edits only those blocks, keeps the original in
-  `automagik-herdr/fork-swaps/` and names any other layout that still shows the member (#420).
-  Without the variable, a member a block of the shown layout names is refused (#414).
 - install and uninstall are idempotent. Uninstall keeps user data unless `--purge`. They log to
   stderr and print one stdout line, `{part, ok, changed, detail}` with `AM_JSON=1`, else the
   detail.

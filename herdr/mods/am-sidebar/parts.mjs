@@ -18,9 +18,7 @@
 //                      The sidebar refuses while the CLI link or the briefing entry point still runs
 //                      code in its folder (sidebarCarries), and stops refusing once am's copies do.
 //                      Any of them refuses while a block of the layout Herdr shows names it (Herdr
-//                      would drop that layout for plain Herdr; guardLayouts, #414). A fork swapping
-//                      in (RFC 0012 `replaces`: am sets AM_REPLACED_BY to the fork's mod folder,
-//                      installed first) is not refused: that block names the fork instead (#420).
+//                      would drop that layout for plain Herdr; guardLayouts, #414).
 //   herdr.layout       install: the pack, then the automagik layout put back if it was removed.
 //                      uninstall: the layout removed while it is the pack's copy (layout=removed).
 // Never written: Herdr's shared.json or data/, Pocket Link (mods/pocket-link) or its LaunchAgent,
@@ -34,7 +32,6 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
 import { stableBriefingPath, ENTRY_SOURCE } from "./briefingText.mjs";
 import { CLI_LINK, hooksRunning, knownProjects, ledgerFolders, removeHooks } from "./migrateHooks.mjs";
 import {
@@ -62,7 +59,7 @@ export function runCommand(cmd, args, { env, cwd, timeout = 120_000 } = {}) {
 
 /**
  * Where everything is, from the environment am runs the entry with (AM_HOME, AM_PART_DIR,
- * AM_VERSION, AM_ARTIFACT, AM_JSON, AM_REPLACED_BY; HERDR_APP_HOME and HOME as the pack reads them). `exec` runs
+ * AM_VERSION, AM_ARTIFACT, AM_JSON; HERDR_APP_HOME and HOME as the pack reads them). `exec` runs
  * a program (runCommand's shape); tests pass their own, and an app home of their own.
  */
 export function contextOf({ env = process.env, exec = runCommand, log = (line) => process.stderr.write(`${line}\n`), platform = process.platform,
@@ -318,13 +315,16 @@ function layoutsNaming(ctx, mods, skip = []) {
  * the whole pack (`am uninstall herdr.pack`), `skip` leaving out the pack's own layout file when
  * this uninstall removes it; else the one mod switched off (`am uninstall herdr.<mod>`).
  */
-function guardLayouts(ctx, mods, { pack = false, skip = [], shown = shownLayout(ctx) } = {}) {
+function guardLayouts(ctx, mods, { pack = false, skip = [] } = {}) {
   if (!mods.length) return;
+  const shown = shownLayout(ctx);
   if (shown.tree) {
     const guards = mods.map((mod) => ({ mod, ...layoutGuard({ name: shown.name, tree: shown.tree, mod, then: pack ? "uninstall the pack" : "uninstall it" }) }));
     const refused = guards.filter((g) => g.refuse);
     const also = refused.slice(1).map((g) => g.mod);
-    if (refused.length) throw new Error(`${refused[0].refuse}${also.length ? ` (its blocks name ${also.join(", ")} too)` : ""}`);
+    if (refused.length) {
+      throw new Error(`${refused[0].refuse}${also.length ? ` (its blocks name ${also.join(", ")} too)` : ""}; from a terminal: herdr-app do layout.switch '{"name":"main"}'`);
+    }
     for (const g of guards) if (g.note) ctx.log(`${g.mod} was ${g.note}`);
     return;
   }
@@ -338,70 +338,6 @@ function guardLayouts(ctx, mods, { pack = false, skip = [], shown = shownLayout(
     + `Showing one? Switch layouts (ctrl-shift-l), or ${back}`);
 }
 
-/**
- * The fork am swaps in for a pack member (RFC 0012 `replaces`; am's runner sets AM_REPLACED_BY to the
- * fork's mod folder, installed first): its name, or null. A name that is no mod folder is refused.
- */
-function replacedBy(ctx, part) {
-  const fork = ctx.env.AM_REPLACED_BY;
-  if (fork === undefined || fork === "") return null;
-  if (!packFolder(fork) || fork === part.mod) throw new Error(`AM_REPLACED_BY=${fork} names no other mod folder: nothing switched off`);
-  if (!isDir(join(ctx.modsDir, fork)) || !isFile(join(ctx.modsDir, fork, "main.js"))) {
-    throw new Error(`${fork} replaces ${part.mod}, but mods/${fork} is not installed: install it first, then switch ${part.mod} off`);
-  }
-  return fork;
-}
-
-/**
- * A fork swapping in (#420): each block of the shown layout naming the member names the fork
- * instead, so the layout keeps working once the member is off. Edited where it stands, as #387's
- * drop-ins are (the rest of the file stays byte for byte), its original kept in <app
- * home>/automagik-herdr/fork-swaps/. Refused, with nothing changed, only when that edit cannot be
- * made exactly (a link, or a file whose text does not read back as the edit). The other layouts
- * whose blocks name the member are said, never edited; the right-click menu's note is off's.
- */
-function swapForFork(ctx, part, fork) {
-  const shown = shownLayout(ctx);
-  if (!shown.tree) {
-    const naming = layoutsNaming(ctx, [part.mod]).map((l) => l.name);
-    if (naming.length) {
-      ctx.log(`switching ${part.mod} off for ${fork} without knowing the layout Herdr shows (${shown.why}): ${naming.join(", ")} `
-        + `show${naming.length === 1 ? "s" : ""} ${part.mod}; in one Herdr shows, name ${fork} in its block, or switch layouts (ctrl-shift-l)`);
-    }
-    return;
-  }
-  const guard = layoutGuard({ name: shown.name, tree: shown.tree, mod: part.mod, then: "uninstall it" });
-  if (guard?.note) ctx.log(`${part.mod} was ${guard.note}`);
-  const others = layoutsNaming(ctx, [part.mod], [`${shown.name}.json`]).map((l) => l.name);
-  if (others.length) {
-    ctx.log(`${others.join(", ")} still ${others.length === 1 ? "names" : "name"} ${part.mod}: Herdr drops a layout whose mod is off, so name ${fork} in its block before showing it`);
-  }
-  if (!guard?.refuse) return;
-  const file = join(ctx.appHome, "layouts", `${shown.name}.json`);
-  const want = JSON.parse(JSON.stringify(shown.tree));
-  const walk = (node) => {
-    if (!node || typeof node !== "object") return;
-    if (node.content?.mod === part.mod) node.content.mod = fork;
-    for (const value of Object.values(node)) walk(value);
-  };
-  walk(want);
-  // Both names are plain folder names (packFolder, PACK_MODS): nothing to escape in the pattern.
-  const text = readFileSync(file, "utf8").replace(new RegExp(`("mod"\\s*:\\s*)"${part.mod}"`, "g"), (_, key) => `${key}"${fork}"`);
-  let exact = false;
-  try { exact = !isLink(file) && isDeepStrictEqual(JSON.parse(text), want); } catch {}
-  if (!exact) {
-    throw new Error(`${guard.refuse}: ${fork} replaces it, but ${file} could not be edited exactly; name ${fork} in it by hand, or switch layouts first`);
-  }
-  const keep = join(stateDirOf(ctx.modsDir), "fork-swaps");
-  mkdirSync(keep, { recursive: true });
-  const kept = fresh(keep, `${shown.name}.json.`);
-  cpSync(file, kept);
-  const stage = fresh(keep, ".next-");
-  writeFileSync(stage, text);
-  renameSync(stage, file);
-  ctx.log(`swapped ${part.mod} for ${fork} in ${file}, so the ${shown.name} layout keeps working; the original is ${kept}`);
-}
-
 /** A mod switched off: mods/<m> → mods-disabled/<m>, where Herdr never looks and an update keeps it. */
 function switchOff(ctx, part) {
   const record = readMarker(ctx.modsDir);
@@ -412,9 +348,7 @@ function switchOff(ctx, part) {
   if (isLink(live)) return { ok: true, changed: false, detail: `mods/${part.mod} is a link (a checkout?): left alone` };
   if (exists(live)) {
     if (exists(off)) throw new Error(`${off} is in the way: move it, then uninstall again`);
-    const fork = replacedBy(ctx, part);
-    if (fork) swapForFork(ctx, part, fork);
-    else guardLayouts(ctx, [part.mod]);
+    guardLayouts(ctx, [part.mod]);
     mkdirSync(ctx.offDir, { recursive: true });
     renameSync(live, off);
     ctx.log(`switched ${part.mod} off (mods/ → mods-disabled/): an update keeps it off; \`am install ${part.id}\` switches it back on`);

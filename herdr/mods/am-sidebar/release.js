@@ -104,6 +104,17 @@ export function layoutGuard({ name, tree, mod, then = "turn it off" }) {
   return null;
 }
 
+/**
+ * What an update says of a mod it held in mods/ because a layout names it (update.mjs applyUpdate
+ * `held`, #420): in its log, in `automagik-herdr update` and in the notice after an install.
+ */
+export function heldModLine({ mod, layouts }, version) {
+  const which = layouts.length === 1 ? `the ${layouts[0]} layout shows it` : `the layouts ${layouts.join(", ")} show it`;
+  return `Kept mods/${mod}: ${version} no longer ships it, but ${which}, and Herdr drops a layout whose mod is gone (plain Herdr instead). `
+    + "Take its block out of each of those layouts, or remove them, and the next update retires it. "
+    + "Switching layouts does not retire it: every file in layouts/ is scanned.";
+}
+
 /** sha256 of the bots-only layout v0.2.0–v0.2.2 installed: only that copy is replaced (D8). */
 export const V020_LAYOUT_SHA256 = "5a479f72db788826acb2413df7d32721fbbb9fd070caaf1c7096c6b84778a8a3";
 /** The pack's keys (the repository's keys.json, which a test keeps equal): merged only where free. */

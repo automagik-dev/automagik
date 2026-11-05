@@ -478,7 +478,7 @@ test("uninstall of a mod the shown layout's blocks name is refused, naming the l
   showing(m, "automagik");
   for (const mod of ["am-footer", "am-status", "am-tabs"]) {
     assert.throws(() => uninstall(m.ctx(), P(`herdr.${mod}`)),
-      new RegExp(`^Error: ${mod} stays on: the automagik layout shows it, .*Switch layouts first \\(ctrl-shift-l\\), then uninstall it$`));
+      new RegExp(`^Error: ${mod} stays on: the automagik layout shows it, .*Switch layouts first \\(ctrl-shift-l\\), then uninstall it; from a terminal: herdr-app do layout\\.switch`));
     assert.ok(existsSync(join(m.mods, mod, "main.js")) && !existsSync(join(m.off, mod)), `${mod} stays in mods/`);
   }
   // The same through the entry am runs: exit 1, the message on stdout.
@@ -541,12 +541,12 @@ test("uninstall of the pack while the shown layout's blocks name its mods is ref
   const marker = join(m.app, "automagik-herdr", "installed-by-install.sh");
   showing(m, "automagik");
   assert.throws(() => uninstall(m.ctx(), P("herdr.pack")),
-    /^Error: am-\S+ stays on: the automagik layout shows it, .*Switch layouts first \(ctrl-shift-l\), then uninstall the pack \(its blocks name .+ too\)$/);
+    /^Error: am-\S+ stays on: the automagik layout shows it, .*Switch layouts first \(ctrl-shift-l\), then uninstall the pack \(its blocks name .+ too\); from a terminal: herdr-app do layout\.switch/);
   assert.ok(packOn(m) && existsSync(layout) && existsSync(marker), "the pack, its layout and its record stay");
   // A layout of the person's that shows the sidebar: refused too, naming it.
   writeFileSync(join(m.app, "layouts", "main-agents.json"), JSON.stringify({ id: "root", children: [{ id: "s", content: { mod: "am-sidebar" } }] }));
   showing(m, "main-agents");
-  assert.throws(() => uninstall(m.ctx(), P("herdr.pack")), /^Error: am-sidebar stays on: the main-agents layout shows it, .*then uninstall the pack$/);
+  assert.throws(() => uninstall(m.ctx(), P("herdr.pack")), /^Error: am-sidebar stays on: the main-agents layout shows it, .*then uninstall the pack; from a terminal/);
   assert.ok(packOn(m));
   // One that names none of the pack: the pack goes.
   writeFileSync(join(m.app, "layouts", "mine.json"), JSON.stringify({ id: "root", children: [{ id: "p", content: { mod: "pane" } }] }));
@@ -578,61 +578,29 @@ test("one mod's uninstall with a shown layout name holding a path gives that rea
   assert.ok(m.logs.some((l) => l.startsWith('switching am-footer off without knowing the layout Herdr shows (Herdr shows the layout "sub/automagik", a name with a path')), m.logs.join("\n"));
 });
 
-// #420, RFC 0012 `replaces`: a fork swapping in for a member (am sets AM_REPLACED_BY to its mod
-// folder, installed first) is not refused: the shown layout's block names the fork instead.
-function fork(m, name) {
-  mkdirSync(join(m.mods, name), { recursive: true });
-  writeFileSync(join(m.mods, name, "main.js"), "// a fork\n");
-  writeFileSync(join(m.mods, name, "mod.json"), "{}\n");
-}
-
-test("a fork replacing a member the shown layout names: the block names the fork, the member goes off", (t) => {
+// RFC 0012 delivery 7 decides how a fork takes a member's place; until then its folder changes nothing.
+test("a fork's folder in mods/ doesn't lift the refusal: the member stays on, the layout's bytes don't change", (t) => {
   const m = machine(t);
   install(m.ctx(), P("herdr.pack"), packSource);
   showing(m, "automagik");
+  mkdirSync(join(m.mods, "my-footer"), { recursive: true });
+  writeFileSync(join(m.mods, "my-footer", "main.js"), "// a fork\n");
+  writeFileSync(join(m.mods, "my-footer", "mod.json"), "{}\n");
   const layout = join(m.app, "layouts", "automagik.json");
-  const before = readFileSync(layout, "utf8");
-  // Not installed yet: refused, nothing changed.
-  assert.throws(() => uninstall(m.ctx({ AM_REPLACED_BY: "my-footer" }), P("herdr.am-footer")), /my-footer replaces am-footer, but mods\/my-footer is not installed/);
-  assert.throws(() => uninstall(m.ctx({ AM_REPLACED_BY: "am-footer" }), P("herdr.am-footer")), /names no other mod folder/);
-  assert.equal(readFileSync(layout, "utf8"), before);
-  fork(m, "my-footer");
-  assert.equal(uninstall(m.ctx({ AM_REPLACED_BY: "my-footer" }), P("herdr.am-footer")).changed, true);
-  assert.ok(isOff(m, "am-footer"));
-  const after = readFileSync(layout, "utf8");
-  assert.equal(after, before.replace(/("mod"\s*:\s*)"am-footer"/, '$1"my-footer"'), "only that block changed, byte for byte");
-  const kept = ls(join(m.app, "automagik-herdr", "fork-swaps"));
-  assert.equal(kept.length, 1);
-  assert.equal(readFileSync(join(m.app, "automagik-herdr", "fork-swaps", kept[0]), "utf8"), before, "the original is kept");
-  assert.ok(m.logs.some((l) => l.startsWith(`swapped am-footer for my-footer in ${layout}, so the automagik layout keeps working`)), m.logs.join("\n"));
+  const before = readFileSync(layout);
+  assert.throws(() => uninstall(m.ctx(), P("herdr.am-footer")), /^Error: am-footer stays on: the automagik layout shows it/);
+  assert.ok(existsSync(join(m.mods, "am-footer", "main.js")));
+  assert.ok(readFileSync(layout).equals(before));
 });
 
-test("a fork fills every block of the member; only a layout it can't edit exactly refuses; others are named", (t) => {
+test("uninstall of the pack: a switched-off mod the shown layout names doesn't refuse it", (t) => {
   const m = machine(t);
   install(m.ctx(), P("herdr.pack"), packSource);
-  const twice = { id: "root", children: [{ id: "a", content: { mod: "am-status" } }, { id: "b", content: { mod: "am-status" } }] };
-  writeFileSync(join(m.app, "layouts", "two.json"), JSON.stringify(twice));
-  showing(m, "two");
-  fork(m, "my-status");
-  // A link is never written through: refused, nothing changed.
-  const elsewhere = join(m.dir, "linked.json");
-  writeFileSync(elsewhere, JSON.stringify(twice));
-  rmSync(join(m.app, "layouts", "two.json"));
-  symlinkSync(elsewhere, join(m.app, "layouts", "two.json"));
-  assert.throws(() => uninstall(m.ctx({ AM_REPLACED_BY: "my-status" }), P("herdr.am-status")), /^Error: am-status stays on: the two layout shows it, .*: my-status replaces it, but .*two\.json could not be edited exactly; name my-status in it by hand/);
-  assert.ok(existsSync(join(m.mods, "am-status", "main.js")));
-  assert.deepEqual(JSON.parse(readFileSync(elsewhere, "utf8")), twice);
-  // A plain file: both blocks name the fork, and the pack's layout, not shown, is named.
-  rmSync(join(m.app, "layouts", "two.json"));
-  writeFileSync(join(m.app, "layouts", "two.json"), JSON.stringify(twice));
-  assert.equal(uninstall(m.ctx({ AM_REPLACED_BY: "my-status" }), P("herdr.am-status")).changed, true);
-  assert.ok(isOff(m, "am-status"));
-  assert.deepEqual([...JSON.parse(readFileSync(join(m.app, "layouts", "two.json"), "utf8")).children.map((c) => c.content.mod)], ["my-status", "my-status"]);
-  assert.ok(m.logs.includes("automagik still names am-status: Herdr drops a layout whose mod is off, so name my-status in its block before showing it"), m.logs.join("\n"));
-  writeFileSync(join(m.app, "layouts", "mine.json"), JSON.stringify({ id: "root", children: [{ id: "p", content: { mod: "pane" } }] }));
+  showing(m, "automagik");
+  uninstall(m.ctx(), P("herdr.am-new-menu"));
+  assert.ok(isOff(m, "am-new-menu"));
+  writeFileSync(join(m.app, "layouts", "mine.json"), JSON.stringify({ id: "root", children: [{ id: "n", content: { mod: "am-new-menu" } }] }));
   showing(m, "mine");
-  const swaps = ls(join(m.app, "automagik-herdr", "fork-swaps"));
-  fork(m, "my-menu");
-  assert.equal(uninstall(m.ctx({ AM_REPLACED_BY: "my-menu" }), P("herdr.am-new-menu")).changed, true);
-  assert.deepEqual(ls(join(m.app, "automagik-herdr", "fork-swaps")), swaps, "a layout that doesn't name the member is not touched");
+  assert.equal(uninstall(m.ctx(), P("herdr.pack")).changed, true);
+  assert.ok(!existsSync(join(m.mods, "am-sidebar")));
 });

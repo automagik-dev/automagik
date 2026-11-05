@@ -1718,7 +1718,7 @@ test("--uninstall is refused while the shown layout's blocks name a pack mod; no
   const layout = join(s.appHome, "layouts", "automagik.json");
   const r = s.run("--uninstall");
   assert.equal(r.code, 1);
-  assert.match(r.err, /the pack stays: the automagik layout shows am-\S+(, am-\S+)+, and Herdr drops a layout whose mod is gone \(plain Herdr instead\)\. Switch layouts first \(ctrl-shift-l\), then uninstall the pack\./);
+  assert.match(r.err, /the pack stays: the automagik layout shows am-\S+(, am-\S+)+, and Herdr drops a layout whose mod is gone \(plain Herdr instead\)\. Switch layouts first \(ctrl-shift-l, or herdr-app do layout\.switch '\{"name":"main"\}'\), then uninstall the pack\./);
   assert.ok(existsSync(join(s.pack, "VERSION")) && existsSync(layout) && existsSync(join(s.state, "installed-by-install.sh")), "the pack, its layout and its record stay");
   // The person's own layout that shows the sidebar: refused too.
   writeFileSync(join(s.appHome, "layouts", "main-agents.json"), JSON.stringify({ id: "root", children: [{ id: "spaces", content: { mod: "am-sidebar" } }] }, null, 2));
@@ -1746,5 +1746,19 @@ test("--uninstall with no layout to read goes on, naming the person's layouts th
   assert.equal(r.code, 0, r.err);
   assert.match(r.out, /Uninstalling the pack without knowing the layout Herdr shows \(Herdr shows the layout "\.\.\/elsewhere", a name with a path, so no file in .*layouts was read\): your layout main-agents \(.*main-agents\.json\) shows am-sidebar, and Herdr drops/);
   assert.doesNotMatch(r.out, /your layout automagik /, "the pack's own copy, removed with it, is not listed");
+  assert.equal(existsSync(s.pack), false);
+});
+
+test("--uninstall doesn't wait for a herdr-app status that never answers", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  writeFileSync(join(s.bin, "herdr-app"), "#!/bin/sh\nexec sleep 30\n");
+  chmodSync(join(s.bin, "herdr-app"), 0o755);
+  s.extraEnv.AUTOMAGIK_HERDR_STATUS_SECONDS = "1";
+  const began = Date.now();
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.ok(Date.now() - began < 20_000, "well under the fake's 30 s");
   assert.equal(existsSync(s.pack), false);
 });
