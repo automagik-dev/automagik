@@ -5,11 +5,12 @@
 // DSH InputBar CSS, CONVERSATION_CSS and STAGE_CSS, as in test/composer-layout.test.js.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { runInNewContext } from 'node:vm'
 import { build } from 'esbuild'
 import { CONVERSATION_MARK, STAGE_CSS, markConversation } from '../src/client/stage.js'
+import { browserGuard } from './browser-guard.js'
 
 const requireHarness = createRequire(new URL('../dev/harness/package.json', import.meta.url))
 const nativeBundle = readFileSync(requireHarness.resolve('@deepseek-ai/dsh-client-ui-conversation/client'), 'utf8')
@@ -25,8 +26,6 @@ const { outputFiles } = await build({
 const module = { exports: {} }
 runInNewContext(outputFiles[0].text, { module, exports: module.exports, require: () => ({}) })
 const botCss = module.exports.CONVERSATION_CSS
-const executablePath = process.env.CHROME_BIN ?? (process.platform === 'darwin'
-  ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : '/usr/bin/chromium')
 
 const FLOOR = 'gap:6px;min-width:28px;min-height:28px}'
 // The same sheet without the floor: what the marker alone gives the first paint.
@@ -73,17 +72,10 @@ function fixture({ marked = true, controls = true, stage = STAGE_CSS, tall = fal
 }
 
 test('the Bot composer card has its settled height on first paint', async t => {
-  if (!existsSync(executablePath)) {
-    if (process.env.CI) assert.fail(`Browser layout check found no browser at ${executablePath} (CHROME_BIN=${process.env.CHROME_BIN ?? 'unset'}); CI must run it`)
-    return t.skip('Browser layout check requires CHROME_BIN; the structural check still runs')
-  }
-  let chromium
-  try { ({ chromium } = await import('playwright-core')) } catch (error) {
-    if (error.code !== 'ERR_MODULE_NOT_FOUND') throw error
-    if (process.env.CI) assert.fail(`Browser layout check cannot import playwright-core (${error.message}); CI's bun install must provide it`)
-    return t.skip('Browser layout check requires the root bun install (playwright-core)')
-  }
-  const browser = await chromium.launch({ executablePath, headless: true })
+  // CI must run the browser half (#323, #364): the shared guard fails there, never skips.
+  const guard = await browserGuard()
+  if (guard.skip) return t.skip(guard.skip)
+  const browser = await guard.chromium.launch({ executablePath: guard.executablePath, headless: true })
   t.after(() => browser.close())
   const page = await browser.newPage()
   const card = page.locator('[data-composer-card]')
