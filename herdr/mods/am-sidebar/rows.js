@@ -6,7 +6,7 @@
 
 import { BOT_LABEL, RANKS, mainBotOf, effectiveLead } from "./model.js";
 import { agentInForeground, rowIsAgent } from "./launchArgs.js";
-import { shownModel, defaultModelFrom } from "./models.js";
+import { detectModel, defaultModelFrom } from "./models.js";
 import { workerBranch, workerTaskId } from "./workers.js";
 
 /** Idle this long is asleep (Automagik's own threshold). */
@@ -322,6 +322,35 @@ export function visibleRows(tree, open = new Map()) {
   return rows;
 }
 
+// The agents whose default model is one cheap local file (models.js defaultModelFrom).
+const DEFAULTED = ["claude", "codex", "antigravity"];
+
+/**
+ * Each agent's configured default model (models.js defaultModelFrom) out of `texts`
+ * (configPaths' files), parsed once: { claude, codex, antigravity }, null where none.
+ */
+export function modelDefaultsFrom(texts = {}) {
+  const out = {};
+  for (const key of DEFAULTED) out[key] = defaultModelFrom(key, texts);
+  return out;
+}
+
+/**
+ * main.js loadModelTexts' step: null when `texts` reads as it did when `seen` was taken, else
+ * { seen, texts, defaults } with the defaults parsed once, so a row drawn parses nothing.
+ */
+export function modelTextsUpdate(seen, texts) {
+  const now = JSON.stringify(texts);
+  if (now === seen) return null;
+  return { seen: now, texts, defaults: modelDefaultsFrom(texts) };
+}
+
+// The default model secondLine shows for `agentKey`: from the parsed `defaults` when given.
+function defaultOf(agentKey, defaults, texts) {
+  if (defaults) return (Object.hasOwn(defaults, agentKey) ? defaults[agentKey] : null) || null;
+  return defaultModelFrom(agentKey, texts) || null;
+}
+
 const folderName = (key) => String(key ?? "").replace(/\/+$/, "").split("/").pop();
 
 /**
@@ -332,15 +361,18 @@ const folderName = (key) => String(key ?? "").replace(/\/+$/, "").split("/").pop
  * configPaths' files read by the caller). Never typed text: a stopped bot's line keeps A4's
  * shape with no model, and a live pane whose command line isn't known yet shows none rather
  * than a guess. `argvOf(terminal)`: the command line the caller read with `hc get` for a
- * row that didn't carry it.
+ * row that didn't carry it. `defaults`: modelDefaultsFrom(texts), parsed once by the caller
+ * (main.js loadModelTexts); without it the default is parsed from `texts` here. Either way
+ * only when the command line names no model.
  */
-export function secondLine(r, tree, { texts = {}, argvOf = () => null } = {}) {
+export function secondLine(r, tree, { texts = {}, defaults = null, argvOf = () => null } = {}) {
   const n = r.node, b = n.bot;
   if (r.kind === "planned") return b.planned?.note || "planned";
   let model = null;
   if (n.live) {
     const argv = n.argv ?? argvOf(n.live.terminal) ?? null;
-    if (argv) model = shownModel({ argv, agentKey: b.agent, pinned: b.model, fallback: defaultModelFrom(b.agent, texts) }).model;
+    // models.js shownModel for a live pane: what its command line names, else the default.
+    if (argv) model = detectModel(argv, b.agent) || defaultOf(b.agent, defaults, texts);
   }
   if (r.kind === "main") return ["Main bot", n.live ? model : "not running", folderName(tree.key)].filter(Boolean).join(" · ");
   return (n.live ? [b.role, model] : ["not running", b.role]).filter(Boolean).join(" · ");
