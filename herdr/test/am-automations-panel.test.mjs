@@ -101,3 +101,67 @@ test("on PATH: no repair line, and uname is never asked", async () => {
   assert.ok(!draw().has("scheduler-missing"));
   assert.ok(!state.calls.some(([c]) => c === "uname"));
 });
+
+/** The scheduler on PATH listing `automations`; every put (through `sh -c`) is kept and answers ok. */
+function listing(automations) {
+  const puts = [];
+  state.exec = async (command, args) => {
+    if (command === "sh") { puts.push({ entry: JSON.parse(args[4]), args: args.slice(5) }); return { code: 0, stdout: "{}", stderr: "" }; }
+    if (command !== "herdr-automations") return { code: 127, stdout: "", stderr: `cannot run ${command}: no such file` };
+    if (args[0] === "ls") return { code: 0, stdout: JSON.stringify({ automations, invalid: [], scheduler: { pid: 1 }, paused: false }), stderr: "" };
+    if (args[0] === "history") return { code: 0, stdout: "[]", stderr: "" };
+    return { code: 0, stdout: "0.11.3\n", stderr: "" };
+  };
+  return puts;
+}
+
+const nightly = (agent) => ({ name: "nightly", cron: "0 9 * * 1-5", repo: "/r", workspace: "worktree", agent, prompt: "p", timeout_minutes: 60 });
+const border = (node) => node.calls.filter(([m]) => m === "border_color").map(([, c]) => c).at(-1);
+
+test("an automation saved with gemini shows a dimmed, picked 'gemini (retired)' pill and saves gemini back (#224)", async () => {
+  const puts = listing([nightly("gemini")]);
+  state.agents = [{ key: "claude", installed: true }, { key: "gemini", installed: true }];
+  const { view, cx, draw } = await panel();
+  view.edit("nightly", cx);
+  await cx.settle();
+  const t = (await import(stubs.herdr)).theme();
+  const n = draw();
+  const pill = n.get("f-agent-gemini");
+  assert.ok(pill, "the saved agent has a pill");
+  assert.equal(textOf(pill), "gemini (retired)");
+  assert.equal(pill.props.color, t.dim, "dim text");
+  assert.equal(pill.props.opacity, 0.6, "dimmed");
+  assert.equal(border(pill), t.accent, "it is the picked one");
+  const claude = n.get("f-agent-claude");
+  assert.equal(claude.props.color, t.muted, "the offered agents are drawn as before");
+  assert.equal(claude.props.opacity, undefined);
+  assert.equal(border(claude), t.border);
+  assert.ok(![...n.keys()].some((id) => /^f-agent-(codex|pi)$/.test(id)), "only installed agents are offered");
+  assert.equal(view.form.agent, "gemini", "the value is kept");
+  assert.equal(view.entry().agent, "gemini");
+  view.save(cx);
+  await cx.settle();
+  const saved = puts.filter((p) => !p.args.includes("--dry-run"));
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].entry.agent, "gemini", "saved back unchanged");
+  assert.deepEqual(saved[0].args, ["put", "--original", "nightly"]);
+});
+
+test("a non-retired automation: no retired pill, its agent picked as before; a new one never offers gemini", async () => {
+  listing([nightly("claude")]);
+  state.agents = [{ key: "claude", installed: true }, { key: "gemini", installed: true }];
+  const { view, cx, draw } = await panel();
+  const t = (await import(stubs.herdr)).theme();
+  for (const name of ["nightly", undefined]) {
+    view.edit(name, cx);
+    await cx.settle();
+    const n = draw();
+    assert.ok(!n.has("f-agent-gemini"), `no gemini pill (${name ?? "new"})`);
+    assert.ok(![...n.values()].some((node) => /retired/.test(textOf(node))), "no retired label");
+    const claude = n.get("f-agent-claude");
+    assert.equal(claude.props.color, t.foreground);
+    assert.equal(claude.props.opacity, undefined);
+    assert.equal(border(claude), t.accent);
+    assert.equal(view.entry().agent, "claude");
+  }
+});
