@@ -1072,7 +1072,7 @@ test("#387: a kept layout placing workspace-status gets am-status in that block,
   assert.equal(k.read("main-agents"), k.agents, "only the status block changed, the compact form kept");
   assert.equal(k.read("main"), k.plain, "a layout that doesn't show the pack is left alone");
   assert.match(r.out, new RegExp(`${SWAPPED.source}\\S*/layouts/automagik\\.json`));
-  assert.match(r.out, new RegExp(`${SWAPPED.source}\\S*/layouts/main-agents\\.json`));
+  assert.match(r.out, new RegExp(`${SWAPPED.source}\\S*/layouts/main-agents\\.json: .*; nothing else in the file changed`));
   assert.doesNotMatch(r.out, new RegExp(`${SWAPPED.source}\\S*/layouts/main\\.json`));
   // The same release again (install.sh's repair run): nothing left to swap, nothing said.
   const again = s.run("--yes");
@@ -1119,6 +1119,27 @@ test("#387: a layout already placing am-status, or placing neither, is left byte
   assert.doesNotMatch(r.out, SWAPPED);
   // The layout with neither still gets the note naming what it lacks and where to copy it from.
   assert.match(r.out, /Your layout neither \(.*\) shows the Automagik sidebar, but not the rest of the pack: .*the status bar with the pack version \(am-status\)/);
+});
+
+test("#387: a kept layout placing workspace-status twice is left byte for byte, and the install says why, every run", (t) => {
+  const s = scratch(t);
+  const dir = join(s.appHome, "layouts");
+  mkdirSync(dir, { recursive: true });
+  const twice = (id) => `${JSON.stringify({ id, children: [{ id: "spaces", content: { mod: "am-sidebar" } },
+    { id: "a", content: { mod: "workspace-status" } }, { id: "b", content: { mod: "workspace-status" } }] }, null, 2)}\n`;
+  writeFileSync(join(dir, "automagik.json"), twice("mine"));
+  writeFileSync(join(dir, "main-agents.json"), twice("root"));
+  s.publish("9.9.0");
+  for (const run of [s.run("--yes"), s.run("--yes")]) {
+    assert.equal(run.code, 0, run.err);
+    assert.equal(readFileSync(join(dir, "automagik.json"), "utf8"), twice("mine"));
+    assert.equal(readFileSync(join(dir, "main-agents.json"), "utf8"), twice("root"));
+    assert.doesNotMatch(run.out, SWAPPED);
+    for (const name of ["automagik", "main-agents"]) {
+      assert.match(run.out, new RegExp(`left: \\S*/layouts/${name}\\.json \\(it places Herdr's workspace-status 2 times, so am-status \\(the status bar`));
+    }
+  }
+  assert.match(s.mark(), /^layout=kept$/m);
 });
 
 test("#387 audit: every layout the pack ships places am-status, and none places Herdr's workspace-status", () => {

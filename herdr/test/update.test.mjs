@@ -802,8 +802,26 @@ test("#387: an update swaps a kept layout's workspace-status for am-status and s
     const back = rollback({ modsDir: h.mods });
     assert.equal(back.version, "0.1.0");
     for (const [name, before] of [["automagik", mine], ["main-agents", agents]]) {
-      assert.deepEqual(JSON.parse(readFileSync(join(h.home, "layouts", `${name}.json`), "utf8")), JSON.parse(before));
+      assert.equal(readFileSync(join(h.home, "layouts", `${name}.json`), "utf8"), before, `${name}: back byte for byte`);
     }
+  } finally { h.done(); rmSync(withStatus.src, { recursive: true, force: true }); }
+});
+
+test("#387: an update leaves a kept layout placing workspace-status twice and says why", async () => {
+  const h = layoutHome();
+  const withStatus = tarballWithLayout("0.2.0", LAYOUT_V2, [...MODS, "am-status"]);
+  const url = "https://dl.test/v0.2.0/automagik-herdr-pack-0.2.0.tgz";
+  const table = { ...served("0.2.0", { url, body: withStatus.buf }), [url]: withStatus.buf };
+  try {
+    const twice = JSON.stringify({ id: "mine", children: [{ id: "a", content: { mod: "workspace-status" } }, { id: "b", content: { mod: "workspace-status" } }] });
+    writeFileSync(join(h.home, "layouts", "automagik.json"), twice);
+    const lines = [];
+    const r = await installUpdate({ keys, fetch: fakeFetch(table), env: {}, modsDir: h.mods, log: (l) => lines.push(l) });
+    assert.equal(r.installed.layout, "kept");
+    assert.equal(h.live(), twice, "left byte for byte");
+    const file = join(h.home, "layouts", "automagik.json");
+    assert.ok(lines.some((l) => l.startsWith(`left: ${file} (it places Herdr's workspace-status 2 times, so am-status`)), lines.join("\n"));
+    assert.ok(!lines.some((l) => l.startsWith("swapped")), lines.join("\n"));
   } finally { h.done(); rmSync(withStatus.src, { recursive: true, force: true }); }
 });
 

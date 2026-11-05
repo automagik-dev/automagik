@@ -159,7 +159,9 @@ const isNode = (n) => n !== null && typeof n === "object" && !Array.isArray(n);
  * for each old name met but not rewritten), or null when the structure is not a layout (a root object whose
  * `children`, where present, are arrays of objects). `dropIns` (DROP_INS' entries whose mod is
  * installed and on) then swap Herdr's block for the pack's in a layout that shows the pack (`pack`:
- * it is the pack's automagik.json); those edits carry `dropIn: true`.
+ * it is the pack's automagik.json); those edits carry `dropIn: true`. `held` lists `{from, to, count}`
+ * for a drop-in left out because the layout places Herdr's block more than once (which one is
+ * the person's to say), so the install and the update can say why the pack's is missing.
  */
 export function rewriteLayout(parsed, active, { dropIns = {}, pack = false } = {}) {
   if (!isNode(parsed)) return null;
@@ -189,15 +191,17 @@ export function rewriteLayout(parsed, active, { dropIns = {}, pack = false } = {
     } else if (oldModOf(menu)) left.set(menu, oldModOf(menu));
   }
   const placing = (mod) => blocks.filter((b) => b.node.content.mod === mod);
+  const held = [];
   if (pack || placing(SIDEBAR).length) {
     for (const [from, to] of Object.entries(DROP_INS)) {
       const at = placing(from);
-      if (own(dropIns, from) !== to || at.length !== 1 || placing(to).length) continue;
+      if (own(dropIns, from) !== to || at.length === 0 || placing(to).length) continue;
+      if (at.length > 1) { held.push({ from, to, count: at.length }); continue; }
       at[0].node.content.mod = to;
       edits.push({ pointer: `${at[0].pointer}/content/mod`, id: at[0].node.id ?? null, field: "content.mod", before: from, after: to, dropIn: true });
     }
   }
-  return { layout, edits, left: [...left].map(([ref, mod]) => ({ mod, ref })) };
+  return { layout, edits, held, left: [...left].map(([ref, mod]) => ({ mod, ref })) };
 }
 
 /**

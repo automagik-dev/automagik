@@ -59,16 +59,19 @@ function writable(home, file) {
 
 /**
  * What the migration would do on app home `home`, from what is on disk and the ownership record:
- * `{ home, folders, layouts, keys, shared, paths, left }`.
+ * `{ home, folders, layouts, keys, shared, paths, left, held }`.
  * - folders: [old, new] for record-listed old folders still in mods/ (update.mjs moves them when a
  *   release ships the new name; the migration itself never moves a mod);
- * - layouts: `{file, edits, body}` per layout naming a renamed folder, or showing the pack with
- *   Herdr's block a drop-in replaces (DROP_INS, #387: only while the pack's mod is in mods/);
+ * - layouts: `{file, edits, body, inPlace}` per layout naming a renamed folder, or showing the pack
+ *   with Herdr's block a drop-in replaces (DROP_INS, #387: only while the pack's mod is in mods/);
+ *   `inPlace`: the body is the file's own text with only the swapped values changed;
  * - keys: [before, after] actions and sections in keys.json (`edits` and `body` on `keysFile`);
  * - shared: [old, new] keys shared.json still has only under the old name (read, never written:
  *   the mods copy them on their first load);
  * - paths: [old, new] app-home paths to copy;
- * - left: `{item, reason}` for references not rewritten (a kept folder, a link, an unknown shape).
+ * - left: `{item, reason}` for references not rewritten (a kept folder, a link, an unknown shape);
+ * - held: `{item, reason}` for a drop-in not swapped in because the layout places Herdr's block
+ *   more than once (#387): said on every run until the person picks one.
  */
 export function plan(home) {
   home = resolve(home);
@@ -80,7 +83,7 @@ export function plan(home) {
   const { active } = activeRenames(owned, present);
   // Switched off (mods-disabled/) is not present: a layout naming an off mod shows plain Herdr.
   const dropIns = Object.fromEntries(Object.entries(DROP_INS).filter(([, to]) => owned.has(to) && present(to)));
-  const out = { home, folders: [], layouts: [], keys: [], keysFile: null, shared: [], paths: [], left: [] };
+  const out = { home, folders: [], layouts: [], keys: [], keysFile: null, shared: [], paths: [], left: [], held: [] };
   // A reference is reported only when its folder is someone else's or gone with no successor;
   // one naming a pack folder not renamed yet is simply not due.
   const report = (file) => ({ mod, ref }) => {
@@ -109,10 +112,14 @@ export function plan(home) {
       const result = parsed === undefined ? null : rewriteLayout(parsed, active, { dropIns, pack: name === PACK_LAYOUT_NAME });
       if (!result) { out.left.push({ item: file, reason: "not a layout this migration recognises: left as it is" }); continue; }
       result.left.forEach(report(file));
+      for (const h of result.held) {
+        const gains = own(DROP_IN_GAINS, h.to);
+        out.held.push({ item: file, reason: `it places Herdr's ${h.from} ${h.count} times, so ${h.to}${gains ? ` (${gains})` : ""} was not swapped in: keep one of them and run the install again, or name ${h.to} in the one you want` });
+      }
       if (result.edits.length) {
         const swapOnly = result.edits.every((e) => e.dropIn);
-        const body = (swapOnly && inPlace(readFileSync(file, "utf8"), result.edits, result.layout)) || json(result.layout);
-        out.layouts.push({ file, edits: result.edits, body });
+        const text = swapOnly ? inPlace(readFileSync(file, "utf8"), result.edits, result.layout) : null;
+        out.layouts.push({ file, edits: result.edits, body: text ?? json(result.layout), inPlace: text !== null });
       }
     } catch (error) {
       out.left.push({ item: file, reason: `could not be read as a layout (${why(error)}): left as it is` });
@@ -198,7 +205,8 @@ export function apply(p, { backupDir, onJournal = () => {} }) {
       if (renames) done.push(`rewrote ${f.file} (${renames} ${renames === 1 ? "edit" : "edits"}; the original is in ${backupDir})`);
       for (const e of swaps) {
         const gains = own(DROP_IN_GAINS, e.after);
-        done.push(`swapped Herdr's ${e.before} for ${e.after} in ${f.file}${gains ? `: ${gains}` : ""}; the rest of the layout is as it was (the original is in ${backupDir})`);
+        const rest = f.inPlace ? "; nothing else in the file changed" : "";
+        done.push(`swapped Herdr's ${e.before} for ${e.after} in ${f.file}${gains ? `: ${gains}` : ""}${rest} (the original is in ${backupDir})`);
       }
     } catch (error) {
       skipped.push({ item: f.file, reason: `not rewritten (${why(error)}): left as it was` });
@@ -252,16 +260,23 @@ export function revert(backupDir, { home = dirname(dirname(dirname(resolve(backu
       if (!layout || typeof layout !== "object") { skipped.push({ item: file, reason: "gone or unreadable" }); continue; }
       let changed = 0;
       const stay = [];
+      const undone = [];
       for (const e of Array.isArray(edits) ? edits : []) {
         if (typeof e?.before !== "string" || typeof e.after !== "string") continue;
         if (!due(e)) { stay.push(e); continue; }
         const node = nodeOf(layout, e);
         const holder = e.field === "content.mod" ? node?.content : node;
         const key = e.field === "content.mod" ? "mod" : "terminal_menu";
-        if (holder && typeof holder === "object" && holder[key] === e.after) { holder[key] = e.before; changed += 1; }
+        if (holder && typeof holder === "object" && holder[key] === e.after) { holder[key] = e.before; changed += 1; undone.push({ before: e.after, after: e.before, field: e.field }); }
         else skipped.push({ item: `${file}: ${e.pointer}`, reason: `no longer ${e.after}: left as it is` });
       }
-      if (changed) { writeAtomic(file, json(layout)); restored.push(file); }
+      if (changed) {
+        // Only content.mod values, each found once: edited in the text, so the rest of the file
+        // keeps its bytes (#387); anything else is written as JSON.
+        const text = undone.every((u) => u.field === "content.mod") ? inPlace(readFileSync(file, "utf8"), undone, layout) : null;
+        writeAtomic(file, text ?? json(layout));
+        restored.push(file);
+      }
       if (stay.length) kept.layouts.push({ file, edits: stay });
     } catch (error) {
       // Not written: every edit of this file stays in the journal for the next revert.

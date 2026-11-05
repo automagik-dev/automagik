@@ -870,16 +870,18 @@ function rollbackLocked({ modsDir, rename = renameSync, log = () => {}, binDir =
  * The rename migration after the folders (Group 6a): layouts and keys.json follow the folders
  * the record says were renamed, each rewritten file backed up into backup/layouts-<date>/ with a
  * journal the record lists (`migrated=`). A failure is a warning: the folders are already in place.
- * Returns migrateHome's `{ done, skipped, journal }`, or null when it failed.
+ * A drop-in it holds back (Herdr's block placed more than once, #387) is said on every run.
+ * Returns migrateHome's `{ done, skipped, journal }` and `held`, or null when it failed.
  */
 export function migrateRefs({ modsDir, log = () => {}, warnings = [] }) {
   const home = dirname(resolve(modsDir));
   try {
     const p = migrationPlan(home);
+    for (const h of p.held) log(`left: ${h.item} (${h.reason})`);
     if (!pending(p)) {
       const kept = p.left.length ? `; ${p.left.length} reference(s) stay as they are (--adopt takes the mods you kept)` : "";
       log(`rename migration: nothing to migrate${kept}`);
-      return { done: [], skipped: p.left, journal: null };
+      return { done: [], skipped: p.left, journal: null, held: p.held };
     }
     if (p.shared.length) log(`shared keys move to am.* when their mod next loads: ${p.shared.map(([o]) => o).join(", ")}`);
     // The journal goes into the record before the first rewrite, so a rollback reverts whatever
@@ -892,7 +894,7 @@ export function migrateRefs({ modsDir, log = () => {}, warnings = [] }) {
     const r = applyMigration(p, { backupDir: join(backupOf(modsDir), backupName(modsDir, "layouts")), onJournal });
     for (const line of r.done) log(line);
     for (const s of r.skipped) log(`left: ${s.item} (${s.reason})`);
-    return r;
+    return { ...r, held: p.held };
   } catch (error) {
     warnings.push(`layouts and keys were not migrated to the new names (${error.message}); the backups so far are in ${backupOf(modsDir)}`);
     return null;

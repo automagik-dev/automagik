@@ -693,21 +693,34 @@ test("#387: workspace-status becomes am-status only in a layout showing the pack
   const layouts = {
     "automagik.json": { id: "root", children: [herdr()] }, // the pack's own name: swapped even without the sidebar
     "one.json": { id: "root", children: [sidebar, herdr()] },
-    "twice.json": { id: "root", children: [sidebar, herdr("a"), herdr("b")] }, // which one? left
+    "twice.json": { id: "root", children: [sidebar, herdr("a"), herdr("b")] }, // which one? left, and said why
     "plain.json": { id: "root", children: [herdr()] }, // plain Herdr's: left
     "both.json": { id: "root", children: [sidebar, herdr(), { id: "am", content: { mod: "am-status" } }] }, // already placed
+    // A rename too: the file is written as JSON, so the swap line claims nothing about the rest.
+    "renamed.json": { id: "root", children: [{ id: "old", content: { mod: "spaces-agents" } }, herdr()] },
   };
   for (const [name, layout] of Object.entries(layouts)) writeJson(join(s.home, "layouts", name), layout);
   writeJson(join(s.home, "keys.json"), { global: { "cmd-s": "workspace-status.toggle" } });
   const p = plan(s.home);
-  assert.deepEqual(p.layouts.map((l) => l.file.split("/").at(-1)), ["automagik.json", "one.json"]);
+  assert.deepEqual(p.layouts.map((l) => l.file.split("/").at(-1)), ["automagik.json", "one.json", "renamed.json"]);
   assert.deepEqual(p.layouts[1].edits, [
     { pointer: "/children/1/content/mod", id: "status", field: "content.mod", before: "workspace-status", after: "am-status", dropIn: true },
   ]);
+  assert.deepEqual(p.layouts.map((l) => l.inPlace), [true, true, false]);
   assert.equal(p.keysFile, null, "keys.json never follows a drop-in");
   assert.deepEqual(p.left, [], "nothing to report: workspace-status is Herdr's, not a renamed folder");
-  // Switched off (mods-disabled/, not mods/): a layout naming it would show plain Herdr.
+  assert.deepEqual(p.held.map((h) => h.item.split("/").at(-1)), ["twice.json"]);
+  assert.match(p.held[0].reason, /^it places Herdr's workspace-status 2 times, so am-status \(the status bar .*\) was not swapped in/);
+  // Switched off first, on the same files (mods-disabled/, not mods/): a layout naming it would show plain Herdr.
   rmSync(join(s.mods, "am-status"), { recursive: true });
   modFolder(join(s.home, "mods-disabled", "am-status"));
-  assert.deepEqual(plan(s.home).layouts, []);
+  const off = plan(s.home);
+  assert.deepEqual(off.layouts.flatMap((l) => l.edits).filter((e) => e.dropIn), [], "no swap while am-status is off");
+  assert.deepEqual(off.held, [], "nothing held either: the pack's mod is off by choice");
+  // Then the planned rewrites (apply writes what plan read, whatever mods/ holds now).
+  const r = apply(p, { backupDir: join(s.state, "backup", "layouts-t") });
+  const said = (name) => r.done.filter((l) => l.includes(`/layouts/${name} `) || l.includes(`/layouts/${name}:`));
+  assert.match(said("one.json")[0], /^swapped Herdr's workspace-status for am-status in .*: .*; nothing else in the file changed \(the original is in /);
+  assert.equal(said("renamed.json").length, 2, "the rename's line and the swap's");
+  assert.ok(said("renamed.json").every((l) => !/nothing else in the file changed/.test(l)), said("renamed.json").join("\n"));
 });
