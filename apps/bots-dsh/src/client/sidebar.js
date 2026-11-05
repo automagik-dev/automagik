@@ -15,6 +15,7 @@ import { badges, botChildren, nav, useEntries } from './extend.js'
 import { agentRowSessions, approvalFor, runningTasksOf, taskState, waitsForUser } from './task-card.js'
 import { useApproval } from './approvals.js'
 import { WorkCodeSwitch } from './work-code-switch.js'
+import { BotPills, pillLabels } from './capability-pills.js'
 
 // -------------------------------------------------------------------------
 // Sidebar
@@ -82,7 +83,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   }
   const pinned = bot.pinned === true && !crowned
   const role = crowned ? bot.role : ''
-  const label = [bot.name, role, main ? t('Main Bot') : '', pinned ? t('Pinned') : '', running || away ? t('Working') : '', waitsFor, approval ? t('Waiting for your approval') : alert ? t('Waiting for your answer') : '', unread ? t('Unread activity') : ''].filter(Boolean).join(', ')
+  const label = [bot.name, role, main ? t('Main Bot') : '', ...pillLabels(roster, bot), pinned ? t('Pinned') : '', running || away ? t('Working') : '', waitsFor, approval ? t('Waiting for your approval') : alert ? t('Waiting for your answer') : '', unread ? t('Unread activity') : ''].filter(Boolean).join(', ')
   return h('button', {
     type: 'button', className: crowned ? 'bt-row bt-row-crowned' : 'bt-row', 'aria-label': label, 'aria-current': active ? 'page' : undefined,
     'data-bot-id': id, title: wide ? undefined : bot.name, onClick: () => actions.openSession(id), onContextMenu,
@@ -91,6 +92,8 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   pinned && !wide ? h(PinMark) : null,
   wide ? h('span', { className: 'bt-row-body' },
     h('span', { className: 'bt-row-name' }, h('span', { className: 'bt-row-title' }, bot.name), role ? h('span', { className: 'bt-role' }, role) : null, pinned ? h(PinMark) : null),
+    // What to ask this Bot for, on a line of its own: the name line has no room for it.
+    h(BotPills, { roster, bot, className: 'bt-row-caps' }),
     blockedLine ? h('span', { className: 'bt-row-preview bt-row-preview-ask' }, blockedLine)
       : runningLine ? h('span', { className: 'bt-row-preview' }, runningLine)
         : awayLine ? h('span', { className: 'bt-row-preview' }, awayLine)

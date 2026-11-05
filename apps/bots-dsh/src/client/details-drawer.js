@@ -17,6 +17,7 @@ import { useGlide, useMorph } from './motion.js'
 import { MemberApprovals, MemberState, StopMemberWork, useMemberWork, workState } from './member-status.js'
 import { PermissionFallback, PermissionPicker, presetDanger, presetName } from './permission-picker.js'
 import { t } from './i18n.js'
+import { BotPills } from './capability-pills.js'
 
 function transcriptOf(list, id, name, hiddenTurns = []) {
   const outline = list.projectionsBySession?.[id]?.values?.turnOutline ?? list.byId[id]?.projectionValues?.turnOutline
@@ -266,7 +267,8 @@ export function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, ro
             onKeyDown: (event) => { if (event.key === 'Enter') void saveName(); if (event.key === 'Escape') { event.stopPropagation(); setEditing(false) } },
           })
         : h('button', { type: 'button', className: 'bt-drawer-name', 'aria-label': t('Rename {name}', { name: current }), title: t('Rename'), onClick: () => { setDraftName(room && !room.named ? '' : current); setEditing(true) } }, current),
-      subtitle ? h('span', { className: 'bt-drawer-role' }, subtitle) : null),
+      subtitle ? h('span', { className: 'bt-drawer-role' }, subtitle) : null,
+      bot ? h(BotPills, { roster, bot, className: 'bt-drawer-caps' }) : null),
     tabs.length > 1 ? h('div', { key: 'tabs', ref: glide.box, className: 'bt-tabs', role: 'tablist', 'data-move': side },
       h('span', { ref: glide.thumb, className: 'bt-thumb', 'aria-hidden': true }),
       tabs.map(key => h('button', { key, type: 'button', role: 'tab', className: 'bt-tab', 'aria-selected': tab === key, onClick: () => setTab(key) }, t(TAB_LABELS[key])))) : null,
