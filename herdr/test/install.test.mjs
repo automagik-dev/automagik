@@ -1037,6 +1037,124 @@ test("a layout already showing the pack (the owner's main-agents): --yes switche
   assert.doesNotMatch(r.out, /layout\.switch|sidebar appears/);
 });
 
+// ---- #387: a kept layout still placing Herdr's workspace-status gets am-status in that block ----
+
+const SWAPPED = /swapped Herdr's workspace-status for am-status in /;
+/** The owner's kept layouts: automagik.json (4-space, the status block still Herdr's) and a compact main-agents. */
+const keptLayouts = (s) => {
+  const dir = join(s.appHome, "layouts");
+  mkdirSync(dir, { recursive: true });
+  const automagik = `${JSON.stringify(JSON.parse(readFileSync(LAYOUT_SRC, "utf8")), null, 4)}\n`.replace('"mod": "am-status"', '"mod": "workspace-status"');
+  const agents = JSON.stringify({ id: "root", type: "row", children: [
+    { id: "spaces", type: "block", content: { mod: "am-sidebar" } }, { id: "main", type: "block", content: { mod: "terminal" } },
+    { id: "status", type: "block", size: { px: 28 }, content: { mod: "workspace-status" } }] });
+  // Plain Herdr's own layout: it doesn't show the pack, so it stays Herdr's.
+  const plain = '{ "id": "root", "children": [{ "id": "status", "content": { "mod": "workspace-status" } }] }\n';
+  writeFileSync(join(dir, "automagik.json"), automagik);
+  writeFileSync(join(dir, "main-agents.json"), agents);
+  writeFileSync(join(dir, "main.json"), plain);
+  return {
+    read: (name) => readFileSync(join(dir, `${name}.json`), "utf8"),
+    automagik: automagik.replace('"mod": "workspace-status"', '"mod": "am-status"'),
+    agents: agents.replace('"mod":"workspace-status"', '"mod":"am-status"'),
+    plain,
+  };
+};
+
+test("#387: a kept layout placing workspace-status gets am-status in that block, said in the output; the rest stays byte for byte", (t) => {
+  const s = scratch(t);
+  const k = keptLayouts(s);
+  s.publish("9.9.0");
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.match(s.mark(), /^layout=kept$/m);
+  assert.equal(k.read("automagik"), k.automagik, "only the status block changed");
+  assert.equal(k.read("main-agents"), k.agents, "only the status block changed, the compact form kept");
+  assert.equal(k.read("main"), k.plain, "a layout that doesn't show the pack is left alone");
+  assert.match(r.out, new RegExp(`${SWAPPED.source}\\S*/layouts/automagik\\.json`));
+  assert.match(r.out, new RegExp(`${SWAPPED.source}\\S*/layouts/main-agents\\.json: .*; nothing else in the file changed`));
+  assert.doesNotMatch(r.out, new RegExp(`${SWAPPED.source}\\S*/layouts/main\\.json`));
+  // The same release again (install.sh's repair run): nothing left to swap, nothing said.
+  const again = s.run("--yes");
+  assert.equal(again.code, 0, again.err);
+  assert.equal(k.read("automagik"), k.automagik);
+  assert.equal(k.read("main-agents"), k.agents);
+  assert.equal(k.read("main"), k.plain);
+  assert.doesNotMatch(again.out, SWAPPED);
+});
+
+test("#387: rerunning the installed release swaps the block in a layout edited since the install", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  const k = keptLayouts(s);
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Checking the installed Automagik Herdr 9\.9\.0/);
+  assert.equal(k.read("automagik"), k.automagik);
+  assert.equal(k.read("main-agents"), k.agents);
+  assert.equal(k.read("main"), k.plain);
+  assert.match(r.out, new RegExp(`${SWAPPED.source}\\S*/layouts/main-agents\\.json`));
+});
+
+test("#387: a layout already placing am-status, or placing neither, is left byte for byte, with no swap said", (t) => {
+  const s = scratch(t);
+  const dir = join(s.appHome, "layouts");
+  mkdirSync(dir, { recursive: true });
+  const automagik = `${JSON.stringify(JSON.parse(readFileSync(LAYOUT_SRC, "utf8")), null, 4)}\n`;
+  const sidebar = { id: "spaces", type: "block", content: { mod: "am-sidebar" } };
+  const herdr = { id: "status", type: "block", content: { mod: "workspace-status" } };
+  const both = `${JSON.stringify({ id: "root", children: [sidebar, herdr, { id: "am", type: "block", content: { mod: "am-status" } }] })}\n`;
+  const neither = `${JSON.stringify({ id: "root", children: [sidebar] }, null, 2)}\n`;
+  writeFileSync(join(dir, "automagik.json"), automagik);
+  writeFileSync(join(dir, "both.json"), both);
+  writeFileSync(join(dir, "neither.json"), neither);
+  s.publish("9.9.0");
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.match(s.mark(), /^layout=kept$/m);
+  assert.equal(readFileSync(join(dir, "automagik.json"), "utf8"), automagik);
+  assert.equal(readFileSync(join(dir, "both.json"), "utf8"), both, "am-status is already placed: never swapped");
+  assert.equal(readFileSync(join(dir, "neither.json"), "utf8"), neither, "no block is added");
+  assert.doesNotMatch(r.out, SWAPPED);
+  // The layout with neither still gets the note naming what it lacks and where to copy it from.
+  assert.match(r.out, /Your layout neither \(.*\) shows the Automagik sidebar, but not the rest of the pack: .*the status bar with the pack version \(am-status\)/);
+});
+
+test("#387: a kept layout placing workspace-status twice is left byte for byte, and the install says why, every run", (t) => {
+  const s = scratch(t);
+  const dir = join(s.appHome, "layouts");
+  mkdirSync(dir, { recursive: true });
+  const twice = (id) => `${JSON.stringify({ id, children: [{ id: "spaces", content: { mod: "am-sidebar" } },
+    { id: "a", content: { mod: "workspace-status" } }, { id: "b", content: { mod: "workspace-status" } }] }, null, 2)}\n`;
+  writeFileSync(join(dir, "automagik.json"), twice("mine"));
+  writeFileSync(join(dir, "main-agents.json"), twice("root"));
+  s.publish("9.9.0");
+  for (const run of [s.run("--yes"), s.run("--yes")]) {
+    assert.equal(run.code, 0, run.err);
+    assert.equal(readFileSync(join(dir, "automagik.json"), "utf8"), twice("mine"));
+    assert.equal(readFileSync(join(dir, "main-agents.json"), "utf8"), twice("root"));
+    assert.doesNotMatch(run.out, SWAPPED);
+    for (const name of ["automagik", "main-agents"]) {
+      assert.match(run.out, new RegExp(`left: \\S*/layouts/${name}\\.json \\(it places Herdr's workspace-status 2 times, so am-status \\(the status bar`));
+    }
+  }
+  assert.match(s.mark(), /^layout=kept$/m);
+});
+
+test("#387 audit: every layout the pack ships places am-status, and none places Herdr's workspace-status", () => {
+  const dir = dirname(LAYOUT_SRC);
+  const names = readdirSync(dir).filter((n) => n.endsWith(".json"));
+  assert.deepEqual(names, ["automagik.json"], "the pack ships one layout; a new one joins this audit");
+  for (const name of names) {
+    const mods = [];
+    const walk = (n) => { if (n?.content?.mod) mods.push(n.content.mod); (n?.children ?? []).forEach(walk); };
+    walk(JSON.parse(readFileSync(join(dir, name), "utf8")));
+    assert.equal(mods.filter((m) => m === "am-status").length, 1, `${name} places am-status once`);
+    assert.equal(mods.includes("workspace-status"), false, `${name} places no workspace-status`);
+  }
+});
+
 test("no herdr-app, or no status from it: the command is printed and nothing else is tried", (t) => {
   const s = scratch(t);
   s.publish("9.9.0");
