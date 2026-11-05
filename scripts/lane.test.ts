@@ -21,11 +21,34 @@ describe('the plugin lane', () => {
     expect(kindOf(['apps/automagik-pets/src/bake.js', 'apps/automagik-pets/bun.lock', 'apps/bots-dsh/client.js'], none)).toBe('plugins');
     // Meter's local tools ship nothing: a meter/ change beside a plugin is still a plugin patch.
     expect(kindOf(['meter/statusline/automagik-statusline.mjs', 'meter/statusline/test/statusline.test.mjs', 'apps/bots-dsh/client.js'], none)).toBe('plugins');
-    // The landing page ships from the site, not from a release (#370): alone it ships nothing,
-    // beside a plugin it is a plugin patch, and beside the desktop app it is still a full release.
-    const landing = ['apps/landing/index.html', 'apps/landing/styles.css', 'apps/landing/landing.test.mjs', 'apps/landing/assets/hero.png'];
+  });
+
+  test('the Windows helper\'s image and launcher (apps/desktop/wslc/) ship nothing until Windows reads them', () => {
+    const none = () => false;
+    const wslc = ['apps/desktop/wslc/Dockerfile', 'apps/desktop/wslc/bin/dsh-launch.mjs', 'apps/desktop/wslc/lib/launcher.mjs',
+      'apps/desktop/wslc/smoke/smoke.mjs', 'apps/desktop/wslc/test/launcher.test.mjs', 'apps/desktop/wslc/README.md'];
+    // Alone: no release at all.
+    expect(ships(wslc, none)).toBe(false);
+    // Beside a plugin: a plugin patch, no desktop build.
+    expect(ships([...wslc, 'apps/bots-dsh/src/host/turns.js'], none)).toBe(true);
+    expect(kindOf([...wslc, 'apps/bots-dsh/src/host/turns.js'], none)).toBe('plugins');
+    expect(kindOf([...wslc, 'apps/bots-dsh/src/host/turns.js'], none, none, [...wslc, 'apps/bots-dsh/src/host/turns.js'])).toBe('plugins');
+    // The app's own code is still a full release, and so is its packaging.
+    expect(kindOf([...wslc, 'apps/desktop/src/main.js'], none)).toBe('full');
+    expect(kindOf([...wslc, 'apps/desktop/electron-builder.yml'], none)).toBe('full');
+  });
+
+  test('the landing page (apps/landing/) ships from the site, never from a release', () => {
+    const none = () => false;
+    const landing = ['apps/landing/index.html', 'apps/landing/styles.css', 'apps/landing/assets/hero.png',
+      'apps/landing/landing.test.mjs', 'apps/landing/verify-browser.mjs', 'apps/landing/README.md'];
+    // Alone: no release at all.
     expect(ships(landing, none)).toBe(false);
-    expect(kindOf([...landing, 'apps/bots-dsh/client.js'], none)).toBe('plugins');
+    // Beside a plugin: a plugin patch, no desktop build.
+    expect(ships([...landing, 'apps/bots-dsh/src/host/turns.js'], none)).toBe(true);
+    expect(kindOf([...landing, 'apps/bots-dsh/src/host/turns.js'], none)).toBe('plugins');
+    expect(kindOf([...landing, 'apps/bots-dsh/src/host/turns.js'], none, none, [...landing, 'apps/bots-dsh/src/host/turns.js'])).toBe('plugins');
+    // Beside the app's own code: still a full release.
     expect(kindOf([...landing, 'apps/desktop/src/main.js'], none)).toBe('full');
   });
 

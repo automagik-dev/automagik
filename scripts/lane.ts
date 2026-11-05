@@ -75,17 +75,23 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // What no build of the desktop app reads (its build reads apps/desktop and the plugins
 // alone): the repository's release tooling and CI, the lane's own keys and notes, tests,
 // and the notes at the root. A change there ships nothing to an installed app. The headless pet
-// bake (apps/automagik-pets) is no plugin and no app build reads it; it ships on its own. Nor does
-// the landing page (apps/landing): it is static and ships from the site, never from a release.
+// bake (apps/automagik-pets) is no plugin and no app build reads it; it ships on its own.
 // The RFCs and notes under docs/ ship nothing either. In the herdr part: its notes (*.md at its top,
 // docs/, .genie/ plans, the mockup) and its catalog, which installed mod managers read from dev
 // directly, not from a release; and the layout entry's RECIPE.md and preview.png.
 // In Pocket: its notes (*.md at its top) and docs/, and the Android project's scripts (the terminal
 // page's test and the vendoring script), which no APK carries. Meter's local tools (meter/: the Claude
 // status line and the limits logger it wraps) run from a checkout on the owner's machine; no release carries them.
+// The Windows helper's Linux image and its guest launcher (apps/desktop/wslc/: the Dockerfile,
+// dsh-launch, the CI smoke and their tests; RFC 0016 delivery 2) are built by CI alone, and no
+// shipped app reads them yet: the desktop build packages src/ and the build/ resources only. When
+// Windows ships the helper (RFC 0016 delivery 6) this rule changes on purpose.
+// The landing page (apps/landing: the page, its styles, assets and checks; #177) is static and
+// ships from the site, never from a release: no app build and no plugin reads it (#370).
 const NEVER_SHIPPED = [/^am\/[^/]+\.md$/, /^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/, /^apps\/automagik-pets\//, /^docs\//,
-  /^apps\/landing\//, /^herdr\/[^/]+\.md$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr-layout\/(RECIPE\.md|preview\.png)$/,
-  /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//, /^meter\//];
+  /^herdr\/[^/]+\.md$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr-layout\/(RECIPE\.md|preview\.png)$/,
+  /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//, /^meter\//, /^apps\/desktop\/wslc\//,
+  /^apps\/landing\//];
 /**
  * The herdr part: everything under herdr/ (the pack's mods, installer and tooling) and its layout's
  * own entry folder, herdr-layout/ (the pack ships its automagik.json; RFC 0011).

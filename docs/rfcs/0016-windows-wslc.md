@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (owner's answers in: D38, D39) |
+| Status | Accepted (2026-11-04, by Felipe; answers: D38, D39, Q1-Q9) |
 | Milestone | not scheduled |
 | Lanes | desktop (3.N); herdr (3.N.P) for the pack's split install; am (3.N.P) |
 | Created | 2026-11-04 |
@@ -44,6 +44,13 @@ here). No Windows machine was used for it, so every number below is a source's o
 - **D39** (Felipe 2026-11-04): WSLC, WSL 3.0.1+; only the Electron window and herdr-app run
   natively; one UAC prompt at first run, plus a restart only if Virtual Machine Platform was
   off; no WSL means explain and stop; projects live inside the Linux disk (`\\wsl.localhost`).
+- **Spike venue and the Windows deliveries** (Felipe 2026-11-04, answering where the spike
+  runs): "i got a coworker with windows, one we can hand off this specific task to, for him to
+  finish. hes currently using automagik herdr via wsl", and later "the pr with context and
+  handoff for my windows dev to finish the wslc". So the spike (delivery 1) runs on that
+  coworker's own Windows x86_64 PC, not on a VM on the Mac (an ARM VM there would measure the
+  wrong hardware). The Windows deliveries go to the same developer: 3, the desktop half of 4,
+  and 5 ([the handoff](0016-windows-handoff.md)).
 
 D39 overrides the research on two points. The research ranked a private WSL2 distro first and
 WSLC second, and it kept native Windows as the last rung of a fallback ladder. D39 takes WSLC
@@ -59,16 +66,47 @@ support is reported only by the press **[press]**
 The research's `wsl.exe -d automagik` commands belong to the distro design and are not used
 here.
 
-Two parts of D39 the design cannot promise yet, both for Felipe to confirm:
+Two parts of D39 the design could not promise. Felipe settled both:
 
 - **`\\wsl.localhost`.** That share lists WSL distros, and a WSLC session is not one, so the
-  projects volume may not show there (Design, "Projects"; open question 1).
+  projects volume may not show there (Design, "Projects"). Q1 below decides what happens then.
 - **Only two native programs.** The design already needs app-internal processes on Windows:
   `automagik-wslc.exe` stays alive while it holds `dsh-launch`'s stdio, plus one per
   `hc --via` link. herdr-app may also need a bridge `hc` on Windows to reach the guest's core.
   This RFC reads D39 as: **app-internal helpers that hold no terminals and run no tools count
   as the app.** Both the helper and a bridge `hc` pass that test; every terminal, agent, shell
-  and tool still runs in Linux. Felipe confirms the reading (open question 3).
+  and tool still runs in Linux. Felipe confirmed the reading (Q3 below).
+
+**Answers to the open questions** (Felipe, 2026-11-04, each as the draft recommended; Q3 also
+says the helpers ship on the app's lane and version). The numbers are the draft's question
+numbers.
+
+- **Q1. `\\wsl.localhost` if the volume does not show there.** (a) or (b), whichever the spike's
+  measurements support. (a): projects stay on the volume, and Windows reaches them only through
+  the app and Herdr. (b): projects move to a Windows folder mounted over virtiofs. The rule: (a)
+  if the spike's virtiofs `git status` and `pnpm install` are more than 2x slower than the
+  volume, else (b), which also keeps projects safe through an uninstall. (c), a companion
+  distro, is dropped. If the volume does show at `\\wsl.localhost`, nothing changes.
+- **Q2. How Electron drives WSLC.** A helper exe, `automagik-wslc.exe`, against the flat WSLC C
+  API (NuGet `Microsoft.WSL.Containers`). Not FFI to `wslcsdk.dll` from Electron, and not
+  `wslc.exe`'s output.
+- **Q3. Native helpers under D39.** Helpers with no terminals and no tools count as part of the
+  app: the same lane and the same version as the desktop app. Both stay: `automagik-wslc.exe`
+  and the bridge `hc`. herdr-app attaching to a core over a command (a herdrdev question) would
+  remove the bridge; that is a nicety, not a blocker.
+- **Q4. Windows 10.** Windows 11 only. Windows 10 22H2 is supported only if the spike passes
+  there.
+- **Q5. The image.** Downloaded at first run and when its pinned hash changes, not bundled in
+  the installer.
+- **Q6. Signing.** Windows builds (`automagik-wslc.exe` and the installer) are code-signed
+  before delivery 6. Signing is owner-held.
+- **Q7. Caps.** Half the logical CPUs (at least 2), and half the RAM up to 8 GB (at least
+  4 GB), until the spike's numbers say otherwise.
+- **Q8. Native Windows data from before D38.** No migration. First run offers once to copy
+  `%USERPROFILE%\.automagik\desktop\bots` into the guest, if it exists.
+- **Q9. am-quota on Windows.** am-quota runs through the machine (the guest): it reads the
+  guest's Claude Code credentials, as for any remote machine. It does not run natively and does
+  not use Windows' credential store.
 
 ## Design
 
@@ -76,7 +114,7 @@ Two parts of D39 the design cannot promise yet, both for Felipe to confirm:
 
 | Where | What |
 |---|---|
-| Windows, as the user | Electron (window, updater, Bot browser views, the CDP relay `bot-relay.js`, the WSLC boundary); `automagik-wslc.exe`, the app's helper for the WSLC API; herdr-app and the pack's mod files it loads; only if open question 3 is answered yes, a local `hc` with no terminals, as herdr-app's bridge |
+| Windows, as the user | Electron (window, updater, Bot browser views, the CDP relay `bot-relay.js`, the WSLC boundary); `automagik-wslc.exe`, the app's helper for the WSLC API; herdr-app and the pack's mod files it loads; a local `hc` with no terminals, as herdr-app's bridge (Q3) |
 | Windows, elevated once | `automagik-wslc.exe install`, the first-run component install (the UAC prompt) |
 | WSL service (Microsoft's) | `wslservice.exe` (privileged) creates the VM through HCS and hands it to a per-user `wslcsession.exe` **[doc]** ([architecture](https://devblogs.microsoft.com/commandline/wslc-architecture-deep-dive/)) |
 | WSLC session `automagik`, one container `automagik`, user `automagik` (uid 1000) | `dsh-launch` (the guest launcher), DSH on the image's Node, pnpm, plugins, Claude Code, Codex, ACP adapters, git, bash, `hc` and all its terminals, `am` and the pack's CLI (`automagik-herdr`, hooks, `run.sh`); Omni later |
@@ -174,9 +212,10 @@ guest is a machine like any remote one. The pack already reads and writes a link
 guest. Other mods that read local files read them through the machine too (delivery 4).
 
 Whether herdr-app can attach to a core that is not local, without an `hc` on Windows, is a
-question for herdrdev (open question 3). Until it can, the only way with today's `hc` is a
-local `hc` on Windows as the bridge, with `linux` as its default machine and no terminals of
-its own. It passes the reading in Decided (no terminals, no tools), as the helper does.
+question for herdrdev (Q3: a nicety, not a blocker). Until it can, the only way with today's
+`hc` is a local `hc` on Windows as the bridge, with `linux` as its default machine and no
+terminals of its own. It passes the reading in Decided (no terminals, no tools), as the helper
+does.
 
 **The pack splits.** Mod `.js` files are loaded by herdr-app, so they install on Windows into
 herdr-app's home. The pack's CLI, hooks and `run.sh` run in panes, so they install in the
@@ -241,8 +280,8 @@ The installer stays per-user NSIS with no admin. The app's first launch:
    restart, and any later launch resumes here too. Dev Home found that a first install stays
    unregistered until after the reboot **[issue]** ([devhome #3410][devhome]),
    so nothing past this step runs before it.
-5. **"Preparing your workspace."** A progress bar: the image is downloaded (or found in the
-   app), checked against its sha256, imported, the session and the volume are created, and
+5. **"Preparing your workspace."** A progress bar: the image is downloaded (Q5: it is not in the
+   installer), checked against its sha256, imported, the session and the volume are created, and
    the container starts. Then the usual splash, and the Bot team.
 
 After this no step asks anything. The policy is read again at every launch, since an admin can
@@ -268,12 +307,12 @@ The enterprise gates come from the research's table (Intune's baseline disables 
 ### Resource caps
 
 A session gets its `CpuCount` and `MemoryMB` in code, and `.wslconfig` does not apply **[doc]**.
-Defaults: half the logical CPUs (at least 2), and half the RAM capped at 8 GB (at least 4 GB).
-Settings gets a "Linux workspace" row for both; a change applies at the next session start. The
-volume grows on demand **[unverified: whether the API sets a maximum]**. With no Electron window,
-no herdr-app and no live `hc` terminal, the session stops after 15 minutes idle. Whether a
-session outlives the process that created it is **[unverified]** (the spike measures it); the
-design wants terminals to survive a closed window, as they do on macOS.
+Defaults (Q7): half the logical CPUs (at least 2), and half the RAM capped at 8 GB (at least
+4 GB). Settings gets a "Linux workspace" row for both; a change applies at the next session
+start. The volume grows on demand **[unverified: whether the API sets a maximum]**. With no
+Electron window, no herdr-app and no live `hc` terminal, the session stops after 15 minutes
+idle. Whether a session outlives the process that created it is **[unverified]** (the spike
+measures it); the design wants terminals to survive a closed window, as they do on macOS.
 
 **When the session ends under a running app.** `wsl --shutdown`, a WSL update, or sleep and
 hibernate may end the session **[unverified; the spike checks each]**. Electron sees the
@@ -307,7 +346,7 @@ D39 puts projects on the Linux disk, in `~/projects` on the volume, where git an
 [filesystems](https://learn.microsoft.com/en-us/windows/wsl/filesystems)). D39 also says they
 are visible at `\\wsl.localhost`. That share lists WSL distros, and a WSLC session is not a
 distro, so whether its volume shows there is **[unverified]** and may well be no. The spike
-checks. If it is no, the choice is open question 1.
+checks. If it is no, Q1 picks (a) or (b) from the spike's numbers.
 
 ### Uninstall
 
@@ -325,7 +364,7 @@ them, and removing them would need another UAC prompt.
 |---|---|
 | WSLC session name `automagik`, container `automagik`, guest user `automagik` (uid 1000) | New. Fixed once shipped: renaming orphans a person's data. |
 | Storage folder `%LOCALAPPDATA%\Automagik\wslc` (the session's `storagePath`) | New. Uninstall's Delete removes it; nothing else does. |
-| Volume at `/home/automagik`; `~/.automagik` and `~/.automagik/bots` inside it | The same public paths as macOS and Linux, inside the guest. Windows installs had native data until D38; it is not migrated automatically (open question 8). |
+| Volume at `/home/automagik`; `~/.automagik` and `~/.automagik/bots` inside it | The same public paths as macOS and Linux, inside the guest. Windows installs had native data until D38; it is not migrated; first run offers one copy of the Bots (Q8). |
 | `/opt/automagik/bin/dsh-launch` and its framed stdio messages (`ready`, `ipc`, `tunnel`, `open`, `log`) | New, versioned by a `v` field; Electron refuses a launcher with an unknown major version. |
 | Container port 41700 for DSH; the host port stays `dsh-port` | New container port; the host port's rule is RFC 0007's. |
 | Release asset `automagik-linux-image-<v>.tar` and `.sha256`, desktop lane | New. An image is attached only when its inputs changed; the app pins the hash of the one it runs. RFC 0011 gets one line for it. |
@@ -353,16 +392,17 @@ The boundary is new: a VM between the agents and Windows.
   not more.
 - **Policy.** The only elevated code is `install`, run once, through UAC. The app holds no
   service and no admin right after it. The UAC prompt shows the helper's publisher: unsigned
-  (D36) it shows "Unknown publisher" (open question 6).
+  (D36) it shows "Unknown publisher", so Windows builds are signed before delivery 6 (Q6).
 - **Undo.** Uninstall's Delete removes the storage folder; WSL itself stays.
 
 ## Deliveries
 
 Lanes per RFC 0011. Desktop items are 3.N. Each lists its check and its rollback.
 
-1. **Spike** (no lane, throwaway; on Felipe's machines, see "Where it runs"). Measure and
-   answer, on Windows 11 and Windows 10 22H2:
-   - WSLC on Windows 10: does `WslcGetMissingComponents` pass, and does a session start;
+1. **Spike** (no lane, throwaway; on a coworker's own Windows x86_64 PC, Decided "Spike
+   venue"). Measure and answer, on Windows 11 (Q4):
+   - WSLC on Windows 11, and on Windows 10 22H2 if one is at hand (Windows 10 is supported only
+     if it passes): does `WslcGetMissingComponents` pass, and does a session start;
    - whether each WSLC session boots its own VM, apart from the user's WSL2 distro VM;
    - bwrap inside an unprivileged WSLC container; Landlock in WSL's kernel;
    - whether WSLC process stdio is byte-clean for `hc connect` (`hc machine add --via` against
@@ -376,8 +416,8 @@ Lanes per RFC 0011. Desktop items are 3.N. Each lists its check and its rollback
    - Claude Code and Codex sign-in completes from inside the container, through the reverse
      tunnel and through each CLI's no-callback fallback;
    - whether `wsl --shutdown`, a WSL update, and sleep or hibernate end a running WSLC session.
-   *Check:* a findings note in the handoffs folder with each number and how it was taken.
-   *Rollback:* delete it.
+   *Check:* a PR adding `docs/rfcs/0016-spike-findings.md`, with each number, how it was taken
+   and the Windows build. *Rollback:* revert that PR.
 2. **The image and the launcher** (desktop). The image build in CI and `dsh-launch`: the ipc
    relay, the CDP tunnel, `open`, stdin-EOF stop, the lane's unpack step. This half needs no
    Windows: it runs on GitHub's Linux runners, under Docker, with stdio driven by a test.
@@ -387,11 +427,16 @@ Lanes per RFC 0011. Desktop items are 3.N. Each lists its check and its rollback
 3. **The Windows boundary** (desktop). `automagik-wslc.exe`; the WSLC implementation of RFC
    0010's boundary API (`start`, `stop`, `status`, `events`); the first-run and failure
    screens; the caps; the image's download and trial. Windows builds stay unpublished.
-   *Check:* on the Windows runner, from a snapshot with no WSL: install, one UAC, restart,
+   *Check:* on a Windows runner, from a snapshot with no WSL: install, one UAC, restart,
    resume, the Bot team draws; from a snapshot with WSL 3.0.1: no prompt at all; each policy
-   gate set by registry shows its screen.
+   gate set by registry shows its screen. Until a self-hosted runner exists (the owner's call),
+   the WSL 3.0.1 run is done by hand on the coworker's PC. The no-WSL run and the policy gates
+   are not: they remove or turn off the WSL that PC's own distro needs. The owner says where
+   they run.
    *Rollback:* revert; nothing was published.
-4. **herdr on Windows** (herdr lane for the pack's split install; desktop for the bridge `hc`).
+4. **herdr on Windows** (desktop for the bridge `hc` and the Windows mod writer; herdr lane for
+   the guest's updater limited to the CLI half and mods reading through the machine; the CLI
+   half itself is written by `am`, RFC 0012 delivery 6).
    *Check:* the Code switch opens herdr-app on a space on machine `linux`; a terminal there
    prints `Linux` for `uname`; the sidebar lists the Bots from the guest.
    *Rollback:* revert the pack; herdr-app stays installed.
@@ -408,8 +453,9 @@ Lanes per RFC 0011. Desktop items are 3.N. Each lists its check and its rollback
 GitHub's hosted Windows runners have no nested virtualization, so WSLC cannot start there.
 Options:
 
-- **Felipe's machines.** No cost and real hardware, but by hand and not for CI. Best for the
-  spike, since it measures the hardware people have.
+- **A coworker's own Windows x86_64 PC.** No cost and real hardware, but by hand and not
+  for CI. Best for the spike, since it measures the hardware people have. Not Felipe's Mac: a
+  Windows on ARM VM there would measure the wrong hardware.
 - **A self-hosted Windows box** registered as a runner, with snapshot restore for the "no WSL"
   state. Real timings and a stable CI venue. Costs one machine, and its runner must never take
   jobs from forks.
@@ -417,7 +463,11 @@ Options:
   check before buying]**). On demand and scriptable, with timings from a VM inside a VM, so
   RAM and cold-start numbers read high.
 
-Recommended: the spike on Felipe's machines; CI on a self-hosted box, with Azure as the spare.
+Decided (Felipe, 2026-11-04, "Spike venue"): the spike runs on a coworker's own Windows x86_64
+PC (the handoff, [0016-windows-handoff.md](0016-windows-handoff.md)). Recommended for CI: a
+self-hosted box, with Azure as the spare. Not decided: the CI runner is the owner's call (its
+cost and registration). Until it exists, the Windows checks run by hand on the coworker's PC,
+except those that remove or turn off WSL (delivery 3's check).
 The guest half (delivery 2) runs on hosted Linux runners and gates every PR.
 
 ## Amendments
@@ -428,8 +478,8 @@ The guest half (delivery 2) runs on hosted Linux runners and gates every PR.
   in a WSLC guest (RFC 0016)". On Windows the guest is the boundary API's implementation, and
   the VM is the server fence that 0010's delivery 4 builds by hand on macOS and Linux.
 - Open question 2 is answered for Windows: DSH runs on the image's own Node, not on Electron as
-  Node. The four native Windows fixes are dropped (D38). Signing stays a separate question
-  (D36, and 0016's open question 6).
+  Node. The four native Windows fixes are dropped (D38). Signing is decided for Windows:
+  builds are signed before 0016's delivery 6 (0016's Q6).
 - Delivery 1's parent-death watch and its handshake off `process.send` are done on Windows by
   the launcher's stdin EOF and framed stdio (0016's Design).
 
@@ -450,45 +500,16 @@ The guest half (delivery 2) runs on hosted Linux runners and gates every PR.
   the guest, then `am doctor` exits 0, Herdr opens with the pack, and its spaces are on
   `linux`. *Rollback:* revert; Windows goes back to "not applicable".
 - am-quota's Keychain reads become the guest's Claude Code credentials file, read through the
-  machine, not Windows' credential store (open question 9).
+  machine, not Windows' credential store (0016's Q9).
 
 ## Open questions
 
-1. **`\\wsl.localhost` if the volume does not show there.** Options: (a) projects stay on the
-   volume and Windows reaches them only through the app and Herdr; (b) projects move to a
-   Windows folder mounted over virtiofs ("about twice as fast" as 9P **[doc]**); (c) a small
-   companion distro holding the projects disk. *Recommended:* (a) if the spike's virtiofs
-   `git status` and `pnpm install` are more than 2x slower than the volume, else (b), which
-   also keeps projects safe through an uninstall.
-2. **How Electron drives WSLC.** Electron cannot load WinRT; the options are FFI to
-   `wslcsdk.dll`, a small helper exe, or shelling out to `wslc.exe` **[estimate]**.
-   *Recommended:* the helper exe against the flat C API (NuGet `Microsoft.WSL.Containers`,
-   4.5 MB). The C API is the documented contract and the CLI's output is not; a helper keeps
-   native code out of Electron and is the one thing UAC elevates.
-3. **Native helpers under D39.** Two app-internal processes run on Windows beside Electron and
-   herdr-app: `automagik-wslc.exe` (one per held stdio: `dsh-launch`, each `hc --via` link) and
-   a bridge `hc` with no terminals. *Recommended:* confirm Decided's reading (helpers with no
-   terminals and no tools count as the app), and keep both. The bridge `hc` works with today's
-   `hc`; herdr-app attaching to a core over a command (ask herdrdev) would remove it, which is
-   a nicety, not a blocker.
-4. **Windows 10.** It reached end of support on 2025-10-14 **[press]**, and WSLC on it is
-   press-only. *Recommended:* Windows 11 only, unless the spike passes on Windows 10 22H2.
-5. **The image: downloaded or bundled.** *Recommended:* downloaded at first run and on change,
-   so the installer and most app updates stay small; an offline installer that bundles it can
-   come later.
-6. **Signing.** D36 ships Windows unsigned, so the one UAC prompt shows "Unknown publisher".
-   *Recommended:* sign `automagik-wslc.exe` and the installer before delivery 6; the UAC
-   prompt is the one moment the person decides whether to trust us.
-7. **Caps.** *Recommended:* the defaults above (half the CPUs, half the RAM up to 8 GB) until the
-   spike's idle and build numbers say otherwise.
-8. **Native Windows data from before D38.** Windows builds shipped until v3.69.0.
-   *Recommended:* no migration; first run offers to copy `%USERPROFILE%\.automagik\desktop\bots`
-   into the guest once, if it exists.
-9. **am-quota on Windows.** *Recommended:* read the guest's Claude Code credentials through the
-   machine, as for any remote machine; no Windows credential store.
+None left. Felipe answered all nine on 2026-11-04, each as the draft recommended: Q1-Q9 in
+Decided. The spike's numbers still pick between Q1's (a) and (b), and decide Q4's Windows 10.
 
 ## Links
 
+- Handoff for the Windows developer: [0016-windows-handoff.md](0016-windows-handoff.md).
 - Handoffs: `~/.config/herdr-app/handoffs/bot-system-unification.md` (D19, D36-D39);
   `windows-linux-sandbox-research-2026-11-04.md` (the research and its sources).
 - RFCs: [0007](0007-desktop-speed.md) stable port, [0010](0010-desktop-sandbox.md) sandbox,

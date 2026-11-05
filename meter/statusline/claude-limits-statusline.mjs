@@ -13,6 +13,10 @@
 //
 // Usage (settings.json): "statusLine": {"type":"command","command":
 //   "node ~/.local/bin/claude-limits-statusline.mjs -- <the previous statusline command>"}
+// The words after `--` are the command's own argv, as the shell running the statusline split
+// them: the first is the program, the rest its arguments, run directly (no second shell), so an
+// argument holding a space stays one argument. A command that needs a shell (a pipe, `&&`) is
+// written as one: `-- sh -c '<command>'`.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync } from "node:fs";
@@ -66,9 +70,9 @@ function record(input) {
 
 function passThrough(raw) {
   const i = process.argv.indexOf("--");
-  const cmd = i >= 0 ? process.argv.slice(i + 1).join(" ") : "";
+  const [cmd, ...args] = i >= 0 ? process.argv.slice(i + 1) : [];
   if (!cmd) return;
-  const child = spawn(cmd, { shell: true, stdio: ["pipe", "inherit", "inherit"] });
+  const child = spawn(cmd, args, { stdio: ["pipe", "inherit", "inherit"] });
   child.on("error", () => {});
   child.stdin.on("error", () => {});
   child.stdin.end(raw);
