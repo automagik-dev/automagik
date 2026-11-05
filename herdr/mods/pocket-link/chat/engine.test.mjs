@@ -88,7 +88,7 @@ test('an approval: buttons from the guards, an answer re-checked and pressed, th
   assert.equal(writes().length, 0)
   const fast = { ...engine.timers, setTimeout: (fn) => setImmediate(fn) }
   engine.timers = fast
-  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: 'allow' }), { ok: true, pressed: 'done' })
+  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: 'allow' }), { ok: true, pressed: 'done', sent: true })
   assert.deepEqual(writes().map((c) => [c.method, c.params.keys]), [['terminal.keys', ['1']]])
   hc.change('t1', 'status', { status: { app: 'claude-code', state: 'working' } })
   await settle()
@@ -203,7 +203,7 @@ test('a double tap from one client presses once', async () => {
 
 test('a retry after uncertain is refused while the status stays blocked; the row loses its buttons', async () => {
   const { engine, a, row, writes } = await approvalSetup({ landing: null })
-  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: 'deny' }), { ok: true, pressed: 'uncertain' })
+  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: 'deny' }), { ok: true, pressed: 'uncertain', sent: true })
   await settle()
   assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: 'deny' }), { ok: false, reason: 'answered' })
   assert.equal(writes().length, 1)
@@ -239,5 +239,179 @@ test('the same call asked again after the status moved can be answered again', a
   assert.deepEqual([again.id, again.choices], [row.id, ['allow', 'deny']])
   assert.equal((await engine.answer(a.me, 't1', { row: row.id, choice: 'deny' })).ok, true)
   assert.equal(writes().length, 2)
+  engine.close()
+})
+
+test('a keys call that failed or timed out still marks the call answered: no second press on retry', async () => {
+  const { engine, hc, a, row, writes } = await approvalSetup({ landing: null })
+  hc.onWrite((m) => { if (m === 'terminal.keys') throw Object.assign(new Error('timed out'), { kind: 'timeout' }) })
+  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: 'deny' }), { ok: false, reason: 'timeout', sent: true })
+  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: 'deny' }), { ok: false, reason: 'answered' })
+  assert.equal(writes().filter((c) => c.method === 'terminal.keys').length, 1)
+  engine.close()
+})
+
+test('a held terminal (no client left) accepts no writes; the engine says when nothing is held', async () => {
+  const { engine, timers, writes } = setup()
+  const a = client(engine)
+  await settle()
+  let emptied = 0
+  engine.onEmpty = () => { emptied += 1 }
+  a.handle.close()
+  assert.equal(engine.empty, false, 'held for 10 minutes')
+  assert.equal((await engine.send(a.me, 't1', { text: 'x', id: 'm1' })).reason, 'not-watching')
+  assert.equal((await engine.interrupt(a.me, 't1')).reason, 'not-watching')
+  assert.equal(writes().length, 0)
+  timers.timeouts.find((h) => h.ms === 600_000).fn()
+  assert.deepEqual([engine.empty, emptied], [true, 1])
+  engine.close()
+})
+
+test('a held message is never typed once its client left (closed, or a removed phone)', async () => {
+  const { engine, hc, timers, writes } = setup({ view: 'claude-draft' })
+  const a = client(engine)
+  await settle()
+  assert.equal((await engine.send(a.me, 't1', { text: 'queued behind a draft', id: 'm1' })).why, 'draft')
+  a.handle.close() // what endRemoved -> the chat connection's close does
+  hc.screens.t1 = screen('claude-idle')
+  for (const h of timers.intervals) await h.fn() // any flusher left would fire now
+  hc.change('t1', 'status', { status: { app: 'claude-code', state: 'done' } })
+  await settle()
+  assert.equal(writes().length, 0, 'nothing typed for a client that left')
+  assert.equal(timers.intervals.filter((h) => h.ms === 1500).length, 0, 'the flusher stopped')
+  const back = client(engine)
+  assert.deepEqual(back.handle.held(), [], 'its held message went with it')
+  engine.close()
+})
+
+test('with two clients, the one leaving takes only its own held messages', async () => {
+  const { engine, hc, timers, writes } = setup({ view: 'claude-draft' })
+  const a = client(engine)
+  const b = client(engine)
+  await settle()
+  await engine.send(a.me, 't1', { text: 'from a', id: 'ma' })
+  await engine.send(b.me, 't1', { text: 'from b', id: 'mb' })
+  a.handle.close()
+  assert.deepEqual(b.handle.held().map((h) => h.id), ['mb'])
+  hc.screens.t1 = screen('claude-idle')
+  await timers.intervals.find((h) => h.ms === 1500).fn()
+  await settle()
+  assert.deepEqual(writes().map((c) => c.params.text), ['from b'])
+  engine.close()
+})
+
+test('an engine holds at most maxTerminals: a held one goes first; all watched, watch is refused', async () => {
+  const { engine } = setup()
+  engine.maxTerminals = 2
+  const one = engine.watch('t1', {}, () => {})
+  const two = engine.watch('t2', {}, () => {})
+  assert.equal(engine.watch('t3', {}, () => {}), null, 'all watched: refused')
+  two.close() // held now
+  assert.ok(engine.watch('t3', {}, () => {}), 'the held one made room')
+  assert.equal(engine.entries.has('t2'), false)
+  void one
+  engine.close()
+})
+
+test("another phone using the same id has its own message: removing the first types only the second's", async () => {
+  const { engine, hc, timers, writes } = setup({ view: 'claude-draft' })
+  const a = client(engine)
+  const b = client(engine)
+  await settle()
+  assert.equal((await engine.send(a.me, 't1', { text: 'from a', id: 'm1' })).why, 'draft')
+  assert.equal((await engine.send(b.me, 't1', { text: 'from b', id: 'm1' })).why, 'behind', 'a new message, behind a\'s')
+  a.handle.close() // a removed
+  hc.screens.t1 = screen('claude-idle')
+  await timers.intervals.find((h) => h.ms === 1500).fn()
+  await settle()
+  assert.deepEqual(writes().map((c) => c.params.text), ['from b'])
+  engine.close()
+})
+
+test("a phone can neither send nor cancel another phone's held message", async () => {
+  const { engine, writes } = setup({ view: 'claude-draft' })
+  const a = client(engine)
+  const b = client(engine)
+  await settle()
+  await engine.send(a.me, 't1', { text: 'from a', id: 'm1' })
+  assert.equal((await engine.sendHeld(b.me, 't1', { id: 'm1' })).reason, 'not-held')
+  assert.deepEqual(engine.cancelHeld(b.me, 't1', { id: 'm1' }), { ok: false, reason: 'not-held' })
+  assert.deepEqual(a.handle.held(), [{ id: 'm1', why: 'draft' }])
+  assert.deepEqual(b.handle.held(), [], "b does not see a's held message")
+  assert.equal(writes().length, 0)
+  assert.deepEqual(engine.cancelHeld(a.me, 't1', { id: 'm1' }), { ok: true })
+  engine.close()
+})
+
+test("a message's events reach only the phone that wrote it, by its own id", async () => {
+  const { engine } = setup()
+  const a = client(engine)
+  const b = client(engine)
+  await settle()
+  assert.deepEqual(await engine.send(a.me, 't1', { text: 'mine', id: 'm1' }), { state: 'sent', id: 'm1' })
+  assert.deepEqual(a.events.filter((e) => ['sent', 'sending'].includes(e.type)).map((e) => [e.type, e.id]), [['sent', 'm1'], ['sending', 'm1']])
+  assert.equal(b.events.filter((e) => ['held', 'sent', 'sending', 'matched', 'cancelled'].includes(e.type)).length, 0)
+  engine.close()
+})
+
+test('a message held while its author left during the send is dropped, never typed', async () => {
+  const { engine, hc, timers, writes } = setup({ view: 'claude-draft' })
+  const a = client(engine)
+  await settle()
+  const sending = engine.send(a.me, 't1', { text: 'left mid-send', id: 'm1' })
+  a.handle.close() // gone before the send has read the screen and held it
+  assert.equal((await sending).state, 'held')
+  const back = client(engine)
+  assert.deepEqual(back.handle.held(), [])
+  hc.screens.t1 = screen('claude-idle')
+  for (const h of timers.intervals) await h.fn()
+  await settle()
+  assert.equal(writes().length, 0)
+  engine.close()
+})
+
+test('a Retry after a reconnect (same device, new connection) is the same message: typed once', async () => {
+  const { engine, writes } = setup()
+  const first = { device: 'phone-a' }
+  const h1 = engine.watch('t1', first, () => {})
+  await settle()
+  assert.deepEqual(await engine.send(first, 't1', { text: 'once', id: 'm1' }), { state: 'sent', id: 'm1' })
+  h1.close()
+  const again = { device: 'phone-a' } // the phone reconnected: a new connection, the same paired key
+  engine.watch('t1', again, () => {})
+  assert.deepEqual(await engine.send(again, 't1', { text: 'once', id: 'm1' }), { state: 'sent', id: 'm1' })
+  assert.equal(writes().length, 1)
+  engine.close()
+})
+
+test('two devices using the same id have two messages', async () => {
+  const { engine, writes } = setup()
+  const a = { device: 'phone-a' }
+  const b = { device: 'phone-b' }
+  engine.watch('t1', a, () => {})
+  engine.watch('t1', b, () => {})
+  await settle()
+  await engine.send(a, 't1', { text: 'from a', id: 'm1' })
+  await engine.send(b, 't1', { text: 'from b', id: 'm1' })
+  assert.deepEqual(writes().map((c) => c.params.text), ['from a', 'from b'])
+  engine.close()
+})
+
+test('a device that reconnects does not get back a held message its old connection took away', async () => {
+  const { engine, hc, timers, writes } = setup({ view: 'claude-draft' })
+  const first = { device: 'phone-a' }
+  const h1 = engine.watch('t1', first, () => {})
+  await settle()
+  assert.equal((await engine.send(first, 't1', { text: 'held', id: 'm1' })).why, 'draft')
+  h1.close() // left: dropped
+  const again = { device: 'phone-a' }
+  const h2 = engine.watch('t1', again, () => {})
+  assert.deepEqual(h2.held(), [])
+  hc.screens.t1 = screen('claude-idle')
+  for (const h of timers.intervals) await h.fn()
+  await settle()
+  assert.equal(writes().length, 0, 'never typed by itself')
+  assert.equal((await engine.send(again, 't1', { text: 'held', id: 'm1' })).state, 'sent', 'the person retries: typed once')
+  assert.equal(writes().length, 1)
   engine.close()
 })

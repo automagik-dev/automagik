@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { workerClick, workerTabName, keptSteps, openWorkerTab, rowWorker } from "../mods/am-sidebar/workerTab.js";
+import { workerClick, workerTabName, keptSteps, openWorkerTab, rowWorker, tabSteps, workerSpace } from "../mods/am-sidebar/workerTab.js";
 import { helpersOf, visibleRows, buildTree, liveFrom, knownBots } from "../mods/am-sidebar/rows.js";
 import { parseBots } from "../mods/am-sidebar/model.js";
 
@@ -120,6 +120,33 @@ test("keptSteps: the bot tab's index is read again; a pane kept in another space
   const unknown = keptSteps(plan, { pane: "p7", terminal: "t7", tab: "tb-new" }, spaceRows());
   assert.equal(unknown.label, null);
   assert.deepEqual(unknown.steps.map(([c]) => c), ["tab.rename", "agent.focus"]);
+});
+
+test("tabSteps: a worker's tab goes right after its bot's and takes its name, never focused; its bot's own tab is left alone", () => {
+  const plan = { space: "sp1", tab: "tb2", name: "feat/login" };
+  const spaces = [{ id: "sp0", tabs: [{ id: "tb0", index: 1 }] }, { id: "sp1", tabs: [...tabs(), { id: "tb9", index: 4 }] }];
+  assert.deepEqual(tabSteps(plan, { tab: "tb9" }, spaces), [["tab.move", { id: "tb9", index: 3 }], ["tab.rename", { id: "tb9", name: "feat/login" }]]);
+  // In the bot's own tab: nothing. In another space (tab.move stays in one), or a bot with no tab: renamed only.
+  assert.deepEqual(tabSteps(plan, { tab: "tb2" }, spaces), []);
+  assert.deepEqual(tabSteps(plan, { tab: "tb0" }, spaces), [["tab.rename", { id: "tb0", name: "feat/login" }]]);
+  assert.deepEqual(tabSteps({ ...plan, tab: null }, { tab: "tb9" }, spaces), [["tab.rename", { id: "tb9", name: "feat/login" }]]);
+  assert.deepEqual(tabSteps(plan, { tab: null }, spaces), []);
+});
+
+test("workerSpace: the space showing the bot's pane; else its label while the window has that space; a gone space, no label", () => {
+  const win = [{ id: "sp1", machine: null, tabs: [{ id: "tb1", panes: [{ terminal: "t2" }] }] },
+    { id: "sp2", machine: null, tabs: [{ id: "tb2", panes: [{ terminal: "t1" }] }] },
+    { id: "vps/sp3", machine: "vps", tabs: [{ id: "vps/tb3", panes: [{ terminal: "t5" }] }] }];
+  // No window to ask: the label stands, as start's windowPlace does.
+  assert.equal(workerSpace("sp1", null, "t1"), "sp1");
+  // The bot's pane moved to sp2: its stale sp1 label loses to where the window shows it.
+  assert.equal(workerSpace("sp1", win, "t1"), "sp2");
+  // Its pane isn't shown: the label while sp1 is open, null once its space is gone.
+  assert.equal(workerSpace("sp1", win, "t9"), "sp1");
+  assert.equal(workerSpace("sp-gone", win, "t9"), null);
+  assert.equal(workerSpace(null, win, "t9"), null);
+  // Another machine's space never takes a worker of this computer.
+  assert.equal(workerSpace(null, win, "t5"), null);
 });
 
 test("helpersOf and visibleRows: a worker row carries its branch, task id and its bot's terminal", () => {

@@ -6,7 +6,7 @@
 // Files go through readTextFile/writeTextFile, folders through exec.
 
 import { spaces, exec, readTextFile, writeTextFile, watchFolder, shared, setShared, home, appHome, hc, terminals, notify } from "herdr";
-import { BOT_LABEL, BOTS_PATH, PROJECTS_FILE, projectOf, paneKeyOf, parseBots, checkBots, listedProjects } from "./model.js";
+import { BOT_LABEL, BOTS_PATH, PROJECTS_FILE, projectOf, paneKeyOf, parseBots, checkBots, listedProjects, writeFolderOf } from "./model.js";
 import { relabel, relabelPlan, relabelWarning } from "./launchArgs.js";
 import { TimedOut, discover, machineGate } from "./discover.js";
 import { writeRemoteText } from "./remoteFile.js";
@@ -291,10 +291,13 @@ const remoteIo = { hc, exec: (command, args, on) => exec(command, args, { on }) 
  * After an edit, the labels of the changed bots' live local panes follow (relabelLocal),
  * without the save waiting for them: resolves with { relabel }, that work's promise.
  * Another machine's panes are left as they are.
+ * `dir` (this machine only): the folder written, when the edit was made from a worktree of the
+ * project (editFolderOf; RFC 0014 Q16, #234). `expected` is then the text at `dir`, and
+ * `before` the text the edit started from (the key's, where `dir` had no file yet).
  */
-export async function writeBots(projectKey, file, expected, machine = null) {
+export async function writeBots(projectKey, file, expected, machine = null, { dir = projectKey, before = expected } = {}) {
   if (expected === undefined) throw new Error("writeBots: pass the text the edit started from (null for a new file)");
-  const errors = checkBots(file, expected);
+  const errors = checkBots(file, before);
   if (errors.length) throw new Error(`Not saved: ${errors.join("; ")}`);
   if (machine) {
     await writeRemoteText(remoteIo, machine, under(projectKey, BOTS_PATH), `${JSON.stringify(file, null, 2)}\n`, expected);
@@ -304,15 +307,33 @@ export async function writeBots(projectKey, file, expected, machine = null) {
   }
   // writeTextFile isn't documented to make folders; Herdr's fs writes only in its home.
   if (expected === null) {
-    const dir = under(projectKey, ".herdr");
-    const r = await exec("mkdir", ["-p", dir]);
-    if (r.code !== 0) throw new Error(`Couldn't make ${dir}: ${r.stderr.trim()}`);
+    const herdr = under(dir, ".herdr");
+    const r = await exec("mkdir", ["-p", herdr]);
+    if (r.code !== 0) throw new Error(`Couldn't make ${herdr}: ${r.stderr.trim()}`);
   }
-  await writeTextFile(under(projectKey, BOTS_PATH), `${JSON.stringify(file, null, 2)}\n`, expected);
+  await writeTextFile(under(dir, BOTS_PATH), `${JSON.stringify(file, null, 2)}\n`, expected);
   keys.clear(); // a folder outside git may belong to this project now
   rememberProject(projectKey, null);
   // Not awaited: the save is done; the labels follow on their own (A16).
-  return { relabel: expected === null ? Promise.resolve({ done: [], failed: [], unchecked: [] }) : relabelLocal(expected, file) };
+  return { relabel: before === null ? Promise.resolve({ done: [], failed: [], unchecked: [] }) : relabelLocal(before, file) };
+}
+
+/**
+ * Where an edit made from `folder` (a space's) to project `key` is written: its git top level
+ * when that is a worktree of the project (model.js writeFolderOf), else the key. On another
+ * machine always the key, as before.
+ */
+export async function editFolderOf(folder, key, machine = null) {
+  if (machine || !folder) return key;
+  try { return (await writeFolderOf(folder, gitOn(null))) ?? key; } catch { return key; }
+}
+
+/**
+ * Whether `key`'s .herdr/bots.json (this machine) is there and untracked by git: a pull that
+ * brings a worktree's committed file stops on it (#234). False when git can't say.
+ */
+export async function untrackedIn(key) {
+  try { return ((await gitOn(null)(["status", "--porcelain", "--", BOTS_PATH], key)) ?? "").startsWith("??"); } catch { return false; }
 }
 
 /**

@@ -5,11 +5,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { autoCompactWindowFor, countCompacts, envWindow, format, tokens, until } from "../automagik-statusline.mjs";
+import { autoCompactWindowFor, countCompacts, envWindow, format, localSettingsRoot, tokens, until } from "../automagik-statusline.mjs";
 
 const here = (p) => fileURLToPath(new URL(p, import.meta.url));
 const fixture = (name) => JSON.parse(readFileSync(here(`fixtures/${name}.json`), "utf8"));
@@ -132,6 +132,53 @@ test("auto-compact window: Claude Code's sources and order (review cases A-E)", 
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("local settings: read at the repository root, the main checkout's root for a worktree", () => {
+  const dir = temp();
+  try {
+    // main/ is a checkout; wt/ a linked worktree of it (a .git file, relative gitdir, commondir);
+    // main/sub a submodule (a .git file, no commondir); bare.git a bare repository's worktree.
+    const main = join(dir, "main"), wt = join(dir, "wt"), sub = join(main, "sub"), bareWt = join(dir, "bare-wt");
+    mkdirSync(join(main, ".git/worktrees/wt"), { recursive: true });
+    mkdirSync(join(main, ".git/modules/sub"), { recursive: true });
+    mkdirSync(join(wt, "deep/er"), { recursive: true });
+    mkdirSync(sub, { recursive: true });
+    mkdirSync(join(dir, "bare.git/worktrees/b"), { recursive: true });
+    mkdirSync(bareWt);
+    writeFileSync(join(wt, ".git"), "gitdir: ../main/.git/worktrees/wt\n");
+    writeFileSync(join(main, ".git/worktrees/wt/commondir"), "../..\n");
+    writeFileSync(join(sub, ".git"), `gitdir: ${join(main, ".git/modules/sub")}\n`);
+    writeFileSync(join(bareWt, ".git"), `gitdir: ${join(dir, "bare.git/worktrees/b")}\n`);
+    writeFileSync(join(dir, "bare.git/worktrees/b/commondir"), "../..\n");
+    assert.equal(localSettingsRoot(main), main);
+    assert.equal(localSettingsRoot(join(main, "sub")), sub);
+    assert.equal(localSettingsRoot(wt), main);
+    assert.equal(localSettingsRoot(join(wt, "deep/er")), main);
+    // The cases where the file stays in the launch folder.
+    assert.equal(localSettingsRoot(dir), null); // no repository
+    assert.equal(localSettingsRoot(bareWt), null);
+    assert.equal(localSettingsRoot(wt, { os: "win32" }), null);
+    assert.equal(localSettingsRoot(wt, { home: main }), null);
+    assert.equal(localSettingsRoot(wt, { uid: process.getuid() + 1 }), null);
+    for (const bad of [undefined, "", 42]) assert.equal(localSettingsRoot(bad), null);
+
+    // autoCompactWindowFor in the worktree: the root's local file first, then one an older
+    // version left in the launch folder, then the launch folder's shared file.
+    const config = join(dir, "config");
+    mkdirSync(config); mkdirSync(join(main, ".claude")); mkdirSync(join(wt, ".claude"));
+    const window = (n) => JSON.stringify({ modelSettings: { "claude-opus-5-5": { autoCompactWindow: n } } });
+    const input = { model: { id: "claude-opus-5-5" }, workspace: { project_dir: wt } };
+    const env = { CLAUDE_CONFIG_DIR: config };
+    writeFileSync(join(wt, ".claude/settings.json"), window(500000));
+    assert.equal(autoCompactWindowFor(input, env), 500000);
+    writeFileSync(join(wt, ".claude/settings.local.json"), window(400000));
+    assert.equal(autoCompactWindowFor(input, env), 400000);
+    writeFileSync(join(main, ".claude/settings.local.json"), window(300000));
+    assert.equal(autoCompactWindowFor(input, env), 300000);
+    writeFileSync(join(main, ".claude/settings.local.json"), JSON.stringify({ autoCompactEnabled: false }));
+    assert.equal(autoCompactWindowFor(input, env), null);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("CLAUDE_CODE_AUTO_COMPACT_WINDOW reads counts and k/M, held to 100k-1M", () => {
   assert.deepEqual(["200000", "200k", " 1M ", "1.5M", "200", "0", "-5", "auto", "", undefined].map(envWindow),
     [200000, 200000, 1000000, 1000000, 100000, null, null, null, null, null]);
@@ -157,6 +204,23 @@ test("compacts: counted from compact_boundary records, then only from the append
     assert.equal(countCompacts(file, state), 3);
     // A shorter file (replaced or rewritten) is counted again from the start.
     writeFileSync(file, boundary(9));
+    assert.equal(countCompacts(file, state), 1);
+    // Rewritten in place (same inode) and grown past the cached offset: counted again from the
+    // start, not from the old offset. The same goes for a rewrite that keeps the size.
+    writeFileSync(file, `${boundary(1)}${boundary(2)}${boundary(3)}`);
+    assert.equal(countCompacts(file, state), 3);
+    const ino = statSync(file).ino;
+    const longer = `${JSON.stringify({ type: "user", message: { content: "x".repeat(600) } })}\n${boundary(4)}`;
+    writeFileSync(file, longer);
+    assert.equal(statSync(file).ino, ino);
+    assert.equal(countCompacts(file, state), 1);
+    writeFileSync(file, longer.replace('"subtype":"compact_boundary"', '"subtype":"compact_boundarY"'));
+    assert.equal(statSync(file).ino, ino);
+    assert.equal(countCompacts(file, state), 0);
+    // A cache entry from before the check (no hash) is counted again once.
+    writeFileSync(file, boundary(9));
+    const stale = { [file]: { ino: statSync(file).ino, size: 0, offset: 0, count: 5, at: Date.now() } };
+    writeFileSync(join(state, "statusline-compacts.json"), JSON.stringify(stale));
     assert.equal(countCompacts(file, state), 1);
     // A corrupt cache is rebuilt; a missing transcript has no count.
     writeFileSync(join(state, "statusline-compacts.json"), "garbage");
@@ -184,9 +248,29 @@ test("the command under a bare PATH, alone and wrapped by the limits logger", ()
     assert.equal(alone.stdout, expected);
     assert.equal(alone.stderr, "");
 
-    const wrapped = run([here("../claude-limits-statusline.mjs"), "--", `'${process.execPath}' '${statusline}'`], JSON.stringify(input));
+    const logger = here("../claude-limits-statusline.mjs");
+    const wrapped = run([logger, "--", process.execPath, statusline], JSON.stringify(input));
     assert.equal(wrapped.status, 0, wrapped.stderr);
     assert.equal(wrapped.stdout, expected);
+
+    // The settings.json form, run through a shell as Claude Code runs it: node X -- node Y.
+    const q = (s) => `'${s.replaceAll("'", "'\\''")}'`;
+    const settingsForm = `${q(process.execPath)} ${q(logger)} -- ${q(process.execPath)} ${q(statusline)}`;
+    const viaShell = spawnSync("/bin/sh", ["-c", settingsForm], { input: JSON.stringify(input), env, encoding: "utf8" });
+    assert.equal(viaShell.status, 0, viaShell.stderr);
+    assert.equal(viaShell.stdout, expected);
+
+    // Each word after -- stays one argument: no second shell splits "a b" or reads "$HOME".
+    const echo = "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>{console.log(JSON.stringify([process.argv.slice(1),s]));process.exit(3)})";
+    const args = run([logger, "--", process.execPath, "-e", echo, "a b", "$HOME", "it's"], "stdin");
+    assert.equal(args.status, 3, args.stderr);
+    assert.deepEqual(JSON.parse(args.stdout), [["a b", "$HOME", "it's"], "stdin"]);
+    // No command after --, or one that does not exist: the logger still exits quietly.
+    for (const tail of [[], ["--"], ["--", join(dir, "no such program")]]) {
+      const r = run([logger, ...tail], JSON.stringify(input));
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(r.stdout, "");
+    }
 
     for (const garbage of ["", "not json", "[]", "null"]) {
       const r = run([statusline], garbage);

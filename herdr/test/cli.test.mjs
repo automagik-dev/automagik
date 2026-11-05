@@ -58,7 +58,7 @@ function scene(t, { terminals = [], briefing = true, window = { down: true } } =
   writeFileSync(appState, JSON.stringify(window));
   writeFileSync(appLog, "");
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
-    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog };
+    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog, AUTOMAGIK_HERDR_TAB_WAIT_MS: "300" };
   delete env.HC_TERMINAL_ID;
   delete env.HERMES_HOME; // a runner's own hermes home must not decide the hermes tests
   const cli = (args, { cwd = project, input, env: extra = {} } = {}) => {
@@ -127,15 +127,133 @@ test("create: the first bot must be main; then the main bot is written with an i
   assert.match(twoMains.err, /already has a main bot, Genie/);
 });
 
-test("create from a worktree writes the main checkout's file (Decision 15); --project picks another folder", (t) => {
+// #234, RFC 0014 Q16: an edit made from a worktree is written in that worktree, so the main
+// checkout stays clean for the merge's git pull; reads (ls, the project key) stay on the main checkout.
+test("create and edit from a worktree write that worktree's file; the main checkout stays clean and is still what ls reads", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  git(s.project, "add", ".herdr/bots.json");
+  git(s.project, "commit", "-q", "-m", "bots");
+  const mainText = readFileSync(s.botsPath, "utf8");
+  const wt = join(s.root, "wt");
+  git(s.project, "worktree", "add", "-q", wt);
+  const wtPath = join(wt, ".herdr/bots.json");
+  const wtBots = () => JSON.parse(readFileSync(wtPath, "utf8")).bots;
+  // From the worktree's folder (a subfolder of it too): its file, the project still the main checkout.
+  mkdirSync(join(wt, "src"));
+  const r = s.cli(["create", "--name", "Scout", "--agent", "claude", "--lead", ID.cap, "--json"], { cwd: join(wt, "src") });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json().project, s.project);
+  assert.match(r.err, new RegExp(`saved in ${wtPath}.*read ${s.botsPath}`));
+  const scout = r.json().id;
+  assert.deepEqual(wtBots().map((b) => b.name), ["Genie", "Captain", "Dev", "Studio", "Scout"]);
+  assert.equal(readFileSync(s.botsPath, "utf8"), mainText, "the main checkout's file is untouched");
+  assert.equal(git(s.project, "status", "--porcelain"), "", "the main checkout stays clean for git pull");
+  // Reads stay on the main checkout: ls from the worktree shows its file, without Scout.
+  const ls = s.cli(["ls", "--json"], { cwd: wt }).json().projects[0];
+  assert.equal(ls.project, s.project);
+  assert.ok(!ls.bots.some((b) => b.id === scout));
+  // show and start read the main checkout, which hasn't Scout yet: the refusal names both files.
+  for (const cmd of ["show", "start"]) {
+    const no = s.cli([cmd, scout], { cwd: wt });
+    assert.equal(no.code, 1, `${cmd}: ${no.err}`);
+    assert.match(no.err, new RegExp(`No bot "${scout}" in ${s.botsPath}, which this command reads; it is in ${wtPath} \\(this worktree\\)`));
+  }
+  assert.equal(git(s.project, "status", "--porcelain"), "", "the main checkout stays clean");
+  // A second edit from the same worktree starts from (and checks) the worktree's file: Scout is kept.
+  const e = s.cli(["edit", scout, "--role", "scouting"], { cwd: wt });
+  assert.equal(e.code, 0, e.err);
+  const again = s.cli(["create", "--name", "Ranger", "--agent", "claude", "--lead", ID.cap], { cwd: wt });
+  assert.equal(again.code, 0, again.err);
+  assert.deepEqual(wtBots().map((b) => b.name), ["Genie", "Captain", "Dev", "Studio", "Scout", "Ranger"], "both worktree edits kept");
+  assert.equal(wtBots().find((b) => b.id === scout).role, "scouting");
+  // --project <worktree>, run from elsewhere: the worktree's file too.
+  const named = s.cli(["category", "add", "ops", "--title", "Ops", "--project", wt], { cwd: s.root });
+  assert.equal(named.code, 0, named.err);
+  assert.ok(JSON.parse(readFileSync(wtPath, "utf8")).categories.some((c) => c.title === "Ops"));
+  assert.equal(readFileSync(s.botsPath, "utf8"), mainText);
+  assert.equal(git(s.project, "status", "--porcelain"), "");
+  // From the main checkout: its own file, as before, with no note.
+  const home = s.cli(["edit", ID.dev, "--role", "builds"]);
+  assert.equal(home.code, 0, home.err);
+  assert.doesNotMatch(home.err, /saved in/);
+  assert.equal(s.bots().bots.find((b) => b.id === ID.dev).role, "builds");
+  assert.ok(!wtBots().some((b) => b.id === ID.dev && b.role === "builds"), "the worktree's file is left alone");
+});
+
+test("a worktree with no bots.json of its own: the first edit starts from the main checkout's, written whole in the worktree", (t) => {
   const s = scene(t);
   const wt = join(s.root, "wt");
   git(s.project, "worktree", "add", "-q", wt);
-  const r = s.cli(["create", "--name", "Genie", "--agent", "claude", "--json"], { cwd: wt });
+  s.seed(team()); // the main checkout's file, not committed: the worktree has none
+  const mainText = readFileSync(s.botsPath, "utf8");
+  const wtPath = join(wt, ".herdr/bots.json");
+  const r = s.cli(["create", "--name", "Scout", "--agent", "claude", "--lead", ID.cap, "--project", wt, "--json"]);
   assert.equal(r.code, 0, r.err);
   assert.equal(r.json().project, s.project);
-  assert.ok(existsSync(s.botsPath));
-  assert.equal(existsSync(join(wt, ".herdr/bots.json")), false);
+  const written = readFileSync(wtPath, "utf8");
+  assert.deepEqual(JSON.parse(written).bots.map((b) => b.name), ["Genie", "Captain", "Dev", "Studio", "Scout"]);
+  assert.deepEqual(JSON.parse(written).categories, team().categories);
+  assert.equal(written, `${JSON.stringify(JSON.parse(written), null, 2)}\n`, "the same format as any save");
+  assert.equal(readFileSync(s.botsPath, "utf8"), mainText);
+  // The main checkout's file was never committed: the note says its pull would stop on it.
+  assert.match(r.err, new RegExp(`${s.botsPath} isn't committed: commit or remove it before pulling, or git pull stops on it`));
+  // The second edit's guard checks the worktree's file (now there), not the main checkout's text.
+  const e = s.cli(["edit", r.json().id, "--role", "scouting"], { cwd: wt });
+  assert.equal(e.code, 0, e.err);
+  assert.equal(JSON.parse(readFileSync(wtPath, "utf8")).bots.find((b) => b.name === "Scout").role, "scouting");
+  assert.equal(readFileSync(s.botsPath, "utf8"), mainText);
+  // The worktree's change merged: as warned, git stops on the untracked file; removed first, it goes in.
+  git(wt, "add", ".herdr/bots.json");
+  git(wt, "commit", "-q", "-m", "bots");
+  assert.throws(() => execFileSync("git", ["merge", "-q", "wt"], { cwd: s.project, encoding: "utf8", stdio: "pipe" }),
+    (err) => /untracked working tree files would be overwritten/.test(String(err.stderr)));
+  rmSync(s.botsPath);
+  git(s.project, "merge", "-q", "wt");
+  assert.equal(git(s.project, "status", "--porcelain"), "");
+  assert.equal(JSON.parse(readFileSync(s.botsPath, "utf8")).bots.find((b) => b.name === "Scout").role, "scouting");
+  // Committed, the main checkout's file draws no warning.
+  const after = s.cli(["edit", r.json().id, "--role", "ranging"], { cwd: wt });
+  assert.equal(after.code, 0, after.err);
+  assert.match(after.err, /saved in /);
+  assert.doesNotMatch(after.err, /isn't committed/);
+});
+
+test("from a worktree branched before a bot was added: edit names both files, restart --save says why nothing was saved", (t) => {
+  const s = restartScene(t);
+  const wt = join(s.root, "wt");
+  git(s.project, "worktree", "add", "-q", wt);
+  // The worktree's own file, from before Genie: another main bot only.
+  const wtText = `${JSON.stringify({ version: 1, categories: [], bots: [bot(ID.plan, "main", { name: "Old" })] }, null, 2)}\n`;
+  mkdirSync(join(wt, ".herdr"));
+  writeFileSync(join(wt, ".herdr/bots.json"), wtText);
+  const mainText = readFileSync(s.botsPath, "utf8");
+  const e = s.cli(["edit", "Genie", "--role", "x"], { cwd: wt });
+  assert.equal(e.code, 1, e.err);
+  assert.match(e.err, new RegExp(`No bot "Genie" in ${join(wt, ".herdr/bots.json")}, this worktree's file, which edits change; ${s.botsPath} has it`));
+  const r = s.cli(["restart", "Genie", "--agent", "codex", "--save", "--force", "--json"], { cwd: wt });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json().saved, false);
+  assert.match(r.err, /--save: .*wt\/\.herdr\/bots\.json, this worktree's file, has no Genie \(b-aaaaaaaaaa\), so codex wasn't saved/);
+  assert.equal(readFileSync(join(wt, ".herdr/bots.json"), "utf8"), wtText);
+  assert.equal(readFileSync(s.botsPath, "utf8"), mainText);
+});
+
+test("rm of the last bot from a worktree with no bots.json of its own is refused, and nothing is written", (t) => {
+  const s = scene(t);
+  const wt = join(s.root, "wt");
+  git(s.project, "worktree", "add", "-q", wt);
+  s.seed({ version: 1, categories: [], bots: [bot(ID.main, "main", { name: "Genie" })] });
+  const mainText = readFileSync(s.botsPath, "utf8");
+  const r = s.cli(["rm", ID.main], { cwd: wt });
+  assert.equal(r.code, 1, r.err);
+  assert.match(r.err, /last bot and .*wt\/\.herdr\/bots\.json isn't there, so nothing was removed/);
+  assert.equal(existsSync(join(wt, ".herdr")), false);
+  assert.equal(readFileSync(s.botsPath, "utf8"), mainText);
+});
+
+test("outside git, --project names the folder written, as before", (t) => {
+  const s = scene(t);
   const other = join(s.root, "plain");
   mkdirSync(other);
   assert.equal(s.cli(["create", "--name", "Solo", "--agent", "claude", "--project", other]).code, 0);
@@ -523,7 +641,10 @@ test("start (#56) lands in the project's space, a project terminal's only when i
   // No space shows the project: never the caller's tab; a new space on the project is opened (#71).
   const none = startIn({ "herdr.space": "sp-caller", "herdr.tab": "tb-c" }, { projectSpace: false });
   assert.deepEqual([none.json().space, none.json().tab], ["sp-new1", null]);
-  assert.deepEqual(none.appCalls.map((c) => c.slice(0, 2)), [["ls"], ["do", "space.new"], ["ls"]]);
+  assert.deepEqual(none.appCalls.slice(0, 3).map((c) => c.slice(0, 2)), [["ls"], ["do", "space.new"], ["ls"]]);
+  // Then only looks at the window (for the bot's tab, to close the new space's spare shell's):
+  // this fake window never shows the bot, so nothing is closed.
+  assert.deepEqual([...new Set(none.appCalls.slice(3).map((c) => c[0]))], none.appCalls.length > 3 ? ["ls"] : []);
 });
 
 test("start a member: parent is its lead's live terminal, outliving it; else --no-parent; --space/--tab add placement labels", (t) => {
@@ -763,6 +884,42 @@ test("start with no space showing the project opens one on its folder and starts
   assert.equal(s2.cli(["start", "Genie", "--space", "sp7"]).code, 0);
   assert.deepEqual(s2.appCalls(), []);
 });
+
+test("start in a space it opened closes its lone shell tab only when ls counts one pane there and the shell is idle", (t) => {
+  // ls with a pane count per tab: the shell (t-sh1) alone in tb-new1, idle; Herdr shows the bot (t100) in tb-t100.
+  const s = scene(t, { window: { spaces: [], place: true, paneCounts: true } });
+  s.seed(team());
+  const r = s.cli(["start", "Genie", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual([r.json().space, r.json().tab], ["sp-new1", null]);
+  // Never `confirmed`: Herdr asks the person whenever it would.
+  assert.deepEqual(s.appCalls().filter((c) => c[0] === "do").map((c) => [c[1], JSON.parse(c[2])]),
+    [["space.new", { name: "proj", folder: s.project, machine: "" }], ["tab.close", { id: "tb-new1" }]]);
+  assert.deepEqual(s.windowNow().spaces.map((x) => [x.id, x.tabs.map((tb) => tb.id)]), [["sp-new1", ["tb-t100"]]]);
+  // The next bot starts in that space: nothing else is closed.
+  assert.equal(s.cli(["start", "Captain"]).code, 0);
+  assert.equal(s.appCalls().filter((c) => c[0] === "do").length, 2);
+  // Kept: Herdr's real ls shape (no pane count: a mod pane there can't be seen); a counted mod pane
+  // beside the shell; vim in front of the shell; and a bot Herdr doesn't show in time.
+  for (const extra of [{}, { paneCounts: true, modInSpare: true }, { paneCounts: true, shellBusy: true }]) {
+    const k = scene(t, { window: { spaces: [], place: true, ...extra } });
+    k.seed(team());
+    assert.equal(k.cli(["start", "Genie"]).code, 0);
+    assert.deepEqual(k.appCalls().filter((c) => c[0] === "do").map((c) => c[1]), ["space.new"], JSON.stringify(extra));
+    assert.deepEqual(k.windowNow().spaces[0].tabs.map((tb) => tb.id), ["tb-new1", "tb-t100"], JSON.stringify(extra));
+  }
+  const n = scene(t, { window: { spaces: [], paneCounts: true } });
+  n.seed(team());
+  assert.equal(n.cli(["start", "Genie"]).code, 0);
+  assert.deepEqual(n.appCalls().filter((c) => c[0] === "do").map((c) => c[1]), ["space.new"]);
+  assert.deepEqual(n.windowNow().spaces[0].tabs.map((tb) => tb.id), ["tb-new1"]);
+  // AUTOMAGIK_HERDR_TAB_WAIT_MS=0 turns it off: no wait for the bot's tab, nothing closed.
+  const off = scene(t, { window: { spaces: [], place: true, paneCounts: true } });
+  off.seed(team());
+  assert.equal(off.cli(["start", "Genie"], { env: { AUTOMAGIK_HERDR_TAB_WAIT_MS: "0" } }).code, 0);
+  assert.deepEqual(off.appCalls().map((c) => c.slice(0, 2)), [["ls"], ["do", "space.new"], ["ls"]]);
+});
+
 
 test("start refuses an old free-text model pin, naming the fix; a pane started under a minute ago counts as running", (t) => {
   const f = team();

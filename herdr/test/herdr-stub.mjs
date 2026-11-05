@@ -35,6 +35,8 @@ export const appHome = () => state.appHome;
 export function notify(n) { state.notes.push(n); return `n${state.notes.length}`; }
 
 export const spaces = () => state.spaces;
+// panes() rows ({ pane, terminal, tab }), as the test sets them (launch.js's spare shell tab).
+export const panes = () => state.panes ?? [];
 export const home = () => homedir();
 export const shared = (key) => state.shared.get(key);
 export function setShared(key, value) { state.setSharedCalls += 1; state.shared.set(key, value); return null; }

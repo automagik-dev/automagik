@@ -80,7 +80,8 @@ export function approvalRow(state, { turn, segment = 0 }) {
  * terminal.read, the transcript's open calls). Keys are pressed only when the row still matches.
  * @param {{ hc: any, address: string, rowId: string, choice: string, read(): Promise<any>,
  *   timers?: typeof realTimers, verifyMs?: number }} a
- * @returns {Promise<{ ok: true, pressed: 'done' | 'uncertain' } | { ok: false, reason: string }>}
+ * @returns {Promise<{ ok: true, pressed: 'done' | 'uncertain', sent: true } | { ok: false, reason: string, sent?: true }>}
+ *   sent: terminal.keys was called, whatever came back (a timeout may still have typed the key)
  */
 export async function answerApproval({ hc, address, rowId, choice, read, timers = realTimers, verifyMs = VERIFY_MS }) {
   let facts
@@ -94,21 +95,21 @@ export async function answerApproval({ hc, address, rowId, choice, read, timers 
   let typed
   try {
     typed = await hc.call('terminal.keys', { terminal: address, keys, caller: null })
-  } catch (e) { return { ok: false, reason: e?.kind ?? 'unavailable' } }
+  } catch (e) { return { ok: false, reason: e?.kind ?? 'unavailable', sent: true } }
   // herdr-core says when the key went in: not at that dialog's status and turn, it may have
   // answered something else.
   if ((typeof typed?.status === 'string' && typed.status !== 'blocked') ||
       (typeof typed?.turn === 'number' && typeof facts.status?.turn === 'number' && typed.turn !== facts.status.turn)) {
-    return { ok: true, pressed: 'uncertain' }
+    return { ok: true, pressed: 'uncertain', sent: true }
   }
   // herdr-core types the key after its quiet rule: see the dialog go, or say it is not known yet.
   const deadline = Date.now() + verifyMs
   for (;;) {
     let t
     try { t = await hc.call('terminal.get', { terminal: address }) } catch { break }
-    if (t?.status?.state !== 'blocked') return { ok: true, pressed: 'done' }
+    if (t?.status?.state !== 'blocked') return { ok: true, pressed: 'done', sent: true }
     if (Date.now() >= deadline) break
     await new Promise((r) => timers.setTimeout(r, 250))
   }
-  return { ok: true, pressed: 'uncertain' }
+  return { ok: true, pressed: 'uncertain', sent: true }
 }
