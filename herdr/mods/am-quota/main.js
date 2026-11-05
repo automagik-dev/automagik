@@ -35,6 +35,13 @@ const expand = (p) => (p.startsWith("~/") ? `${home()}${p.slice(1)}` : p);
 const slug = (s) => String(s ?? "").replace(/[^A-Za-z0-9_-]/g, "_");
 const wake = (context) => context.notify();
 const message = (err) => String(err?.message ?? err);
+/**
+ * Why a bot CLI run failed, as cli() gives it (#413): the --json \`error\` when it printed one (a
+ * restart whose new pane exited names its agent's own last line there), else stderr's last line.
+ * The refusal is the CLI's last word: warnings come before it, so never its first line.
+ */
+const refusal = (r) => (typeof r?.out?.error === "string" && r.out.error.trim()
+  ? r.out.error.trim() : String(r?.err ?? "").split("\n").map((l) => l.trim()).filter(Boolean).at(-1) ?? "");
 /** The platform the panel runs on: `security` exists on macOS only. */
 const platform = () => {
   try {
@@ -332,7 +339,7 @@ export default class AmQuota extends View {
         const r = await this.cli(["ls", "--all"]);
         if (this.switched[provider] !== s) return;
         if (!r) s.look = "no-cli";
-        else if (r.code !== 0 || !r.out) s.look = { error: r.err.split("\n")[0] || `automagik-herdr ls failed (exit ${r.code})` };
+        else if (r.code !== 0 || !r.out) s.look = { error: refusal(r) || `automagik-herdr ls failed (exit ${r.code})` };
         else s.look = staleBots(r.out, provider, s.at);
       } catch (err) {
         if (this.switched[provider] === s) s.look = { error: message(err) };
@@ -386,7 +393,7 @@ export default class AmQuota extends View {
         let why = null;
         try {
           const r = await this.cli(["restart", bot.id, "--project", bot.project]);
-          if (r?.code !== 0) why = (r?.err ?? "").split("\n")[0] || `exit ${r?.code ?? "?"}`;
+          if (r?.code !== 0) why = refusal(r) || `exit ${r?.code ?? "?"}`;
           else if (r.out?.mode === "fresh" && typeof r.out.note === "string" && r.out.note) fresh.push(`${bot.name}: ${r.out.note}`);
         } catch (err) {
           why = message(err);

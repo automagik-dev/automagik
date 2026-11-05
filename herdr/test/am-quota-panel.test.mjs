@@ -204,6 +204,44 @@ test("a refused restart is named, and the others still run", async () => {
   assert.match(text(root), /Restarted 2: every Codex bot is on the new account/);
 });
 
+test("a restart whose new pane exited names its agent's own cause, not the CLI's first stderr line (#413)", async () => {
+  const { view, cx, draw } = await panel();
+  view.tool = "codex";
+  view.switched.codex = { at: NOW, from: "ana@example.com · Pro", to: "bo@example.com · Pro",
+    look: { bots: [{ id: "a", name: "A", project: "/p" }], reliable: true } };
+  const cause = "Error: model provider juice is no longer configured (modelProviderNotConfigured)";
+  const error = `t100 exited before its agent was up; its agent said: "${cause}" (hc read t100 shows the rest); t5 still runs A, untouched.`;
+  state.exec = () => ({ code: 1, stdout: JSON.stringify({ error, terminal: "t100", cause }),
+    stderr: `automagik-herdr: A's pane moved to tab tb3.\nautomagik-herdr: ${error}\n` });
+  draw();
+  nodes.get("restart-codex").click(null, cx);
+  nodes.get("restart-codex").click(null, cx);
+  await cx.settle();
+  const root = draw();
+  assert.match(text(root), /Restarted 0 of 1\. Not restarted:/);
+  assert.ok(text(root).includes(`A: ${error}`), text(root));
+  assert.ok(!text(root).includes("moved to tab"), "a warning before the refusal is not the reason");
+});
+
+test("a busy bot's refusal (working, or with helpers) is shown as the CLI words it, past its warnings (#413)", async () => {
+  const { view, cx, draw } = await panel();
+  view.tool = "codex";
+  view.switched.codex = { at: NOW, from: "ana@example.com · Pro", to: "bo@example.com · Pro",
+    look: { bots: [{ id: "a", name: "A", project: "/p" }, { id: "b", name: "B", project: "/p" }], reliable: true } };
+  const working = "A is working in t5; restarting now would cut its turn in half. Wait until it is idle, or pass --force.";
+  const helpers = "t6 has a helper that ends with it: t7. Let it finish, pass --tree to restart it too (resumed, under the new pane), or pass --force to end it with the pane.";
+  state.exec = (_c, args) => ({ code: 1, stdout: "",
+    stderr: args.includes("a") ? `automagik-herdr: a warning first\nautomagik-herdr: ${working}\n` : `automagik-herdr: ${helpers}\n` });
+  draw();
+  nodes.get("restart-codex").click(null, cx);
+  nodes.get("restart-codex").click(null, cx);
+  await cx.settle();
+  const root = draw();
+  assert.ok(text(root).includes(`A: ${working}`), text(root));
+  assert.ok(text(root).includes(`B: ${helpers}`), text(root));
+  assert.ok(!text(root).includes("a warning first"));
+});
+
 test("a restart that started fresh says which bot and why (#328: no session id, a teammate in the folder)", async () => {
   const { view, cx, draw } = await panel();
   view.tool = "codex";

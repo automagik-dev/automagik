@@ -26,7 +26,7 @@ import { UNANSWERED, agentInForeground, attachRefusal, attachWords, detachWords,
 import { tabSteps, workerSpace, workerTabName } from "../workerTab.js";
 import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, confirmBindings, foldAttach, heldIn, machinesById, modeProblem, placeOf as placeOfRow, readAttach } from "../attach.js";
 import { interpreterPath } from "../agentPath.mjs";
-import { briefingFilePath, installHook, launchBriefingText, withExclude } from "../briefingText.mjs";
+import { briefingFilePath, installHook, launchBriefingText, screenTail, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
 import { agentKeyOfArgv, continuesAnywhere, briefingLaunch, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, ownPromptIn, resolveAgent, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
@@ -47,9 +47,12 @@ import { hooksNotice } from "../migrateHooks.mjs";
 import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
 import { fixNonVisual, readState, spacesOf } from "./state.mjs";
 
-/** A refusal or a usage mistake: printed on stderr, exit `code`. */
+/**
+ * A refusal or a usage mistake: printed on stderr, exit `code`. `detail`: fields a --json run
+ * also prints on stdout, beside `error` (the message), for a caller that shows them (#413).
+ */
 export class CliError extends Error {
-  constructor(message, code = 1) { super(message); this.code = code; }
+  constructor(message, code = 1, detail = null) { super(message); this.code = code; this.detail = detail; }
 }
 
 // ---- files and programs ----
@@ -1750,11 +1753,12 @@ async function restartOnMachine(opts, project, bot, entry) {
   if (old) {
     const up = await agentUp(seat.address);
     if (up.state !== "live") {
-      const ended = up.state === "ended" || (await hc(["kill", seat.address])).code === 0;
-      throw new CliError(up.state === "ended"
-        ? `${seat.address} exited before its agent was up (hc read ${seat.address} says why); ${old.address} still runs ${bot.name}, untouched.`
-          + (plan.mode === "resume" ? ` Try automagik-herdr restart ${bot.id} --machine ${machine} --project ${key} --fresh.` : "")
-        : `${seat.address} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${ended ? ", so it was ended" : ` and couldn't be ended (hc kill ${seat.address})`}; `
+      if (up.state === "ended") {
+        throw await exitedBefore(seat.address, `${old.address} still runs ${bot.name}, untouched.`
+          + (plan.mode === "resume" ? ` Try automagik-herdr restart ${bot.id} --machine ${machine} --project ${key} --fresh.` : ""));
+      }
+      const ended = (await hc(["kill", seat.address])).code === 0;
+      throw new CliError(`${seat.address} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${ended ? ", so it was ended" : ` and couldn't be ended (hc kill ${seat.address})`}; `
           + `${old.address} still runs ${bot.name}, untouched.`);
     }
     const created = Number.isSafeInteger(up.get?.created_ms) ? up.get.created_ms : seat.created_ms;
@@ -1996,6 +2000,46 @@ async function agentUp(terminal, ms = RESTART_WAIT_MS) {
   }
 }
 
+// A line that names a failure: an error word, or a code in brackets as codex gives one
+// ("model provider juice is no longer configured (modelProviderNotConfigured)").
+const FAILURE_LINE = /\b(error|fatal|failed|failure|panic|denied|invalid|unauthori[sz]ed|refused|cannot|can't|not configured|no longer)\b|\([a-z]+[A-Z][A-Za-z]*\)/i;
+// A line with nothing to say: box drawing, rules, a bare shell prompt.
+const EMPTY_LINE = /^[\s\u2500-\u257f\u2580-\u259f\-_=*•·.:>❯›$%#]*$/;
+
+/**
+ * The agent's own last word on a screen (`hc read`'s text), #413: of its last lines with
+ * something on them, the last one that names a failure, else the last one; null for none.
+ */
+export function causeLine(text) {
+  const lines = screenTail(text, 40).split("\n").map((l) => l.trim()).filter((l) => l && !EMPTY_LINE.test(l));
+  const line = lines.findLast((l) => FAILURE_LINE.test(l)) ?? lines.at(-1);
+  if (!line) return null;
+  return line.length > 300 ? `${line.slice(0, 299)}…` : line;
+}
+
+/** The last line `terminal`'s agent left on its screen (causeLine), or null when it can't be read. */
+async function endedCause(terminal) {
+  try {
+    const r = await hc(["read", terminal, "--lines", "40", "--json"]);
+    if (r.code !== 0) return null;
+    let text = r.stdout;
+    try { const j = JSON.parse(r.stdout); if (typeof j?.text === "string") text = j.text; } catch { /* plain text */ }
+    return causeLine(text);
+  } catch { return null; }
+}
+
+/** Why `terminal` ended before its agent was up: { text, cause }, the text naming the agent's last line (endedCause) when it left one. */
+async function exitedWhy(terminal) {
+  const cause = await endedCause(terminal);
+  return { cause, text: `${terminal} exited before its agent was up${cause ? `; its agent said: "${cause}" (hc read ${terminal} shows the rest)` : ` (hc read ${terminal} says why)`}` };
+}
+
+/** A replacement that exited before its agent was up: the refusal; --json prints the cause beside the replacement `terminal`. */
+async function exitedBefore(terminal, rest) {
+  const { cause, text } = await exitedWhy(terminal);
+  return new CliError(`${text}; ${rest}`, 1, { terminal, cause });
+}
+
 /** The workers ledger's rows ([] when it can't be read). */
 function workerLedgerRows() {
   try { return readLedger(readText(ledgerPath(appHome())) ?? ""); } catch { return []; }
@@ -2194,7 +2238,7 @@ function byHand(p, parent) {
  */
 async function rerunHelpers(plans, parent, say) {
   const out = plans.map((p) => ({ name: p.name, replaced: p.replaced, terminal: null, bot: p.binding?.bot ?? null, agent: p.agent ?? null,
-    mode: p.mode ?? null, session: p.session ?? null, up: false, note: p.note ?? null, error: null, by_hand: null, still_running: false }));
+    mode: p.mode ?? null, session: p.session ?? null, up: false, note: p.note ?? null, error: null, cause: null, by_hand: null, still_running: false }));
   for (const [i, p] of plans.entries()) {
     const who = `${p.replaced}${p.name && p.name !== p.replaced ? ` (${p.name})` : ""}`;
     const failed = (why) => {
@@ -2219,9 +2263,14 @@ async function rerunHelpers(plans, parent, say) {
     if (r.code !== 0 || !address) { failed(`hc run failed (${(r.stderr || r.stdout).trim()})`); continue; }
     const up = await agentUp(address);
     if (up.state !== "live") {
-      const killed = up.state === "ended" || (await hc(["kill", address])).code === 0;
-      failed(up.state === "ended" ? `${address} exited before its agent was up (hc read ${address} says why)`
-        : `${address} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${killed ? ", so it was ended" : ` and couldn't be ended (hc kill ${address})`}`);
+      if (up.state === "ended") {
+        const why = await exitedWhy(address);
+        out[i].cause = why.cause;
+        failed(why.text);
+        continue;
+      }
+      const killed = (await hc(["kill", address])).code === 0;
+      failed(`${address} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${killed ? ", so it was ended" : ` and couldn't be ended (hc kill ${address})`}`);
       continue;
     }
     out[i].terminal = address;
@@ -2447,11 +2496,12 @@ async function cmdRestart(opts, [ref]) {
     const up = await agentUp(seat.terminal);
     if (up.state !== "live") {
       // An abandoned replacement is ended (no seat row was written for it); the old pane stays.
-      const ended = up.state === "ended" || (await hc(["kill", seat.terminal])).code === 0;
-      throw new CliError(up.state === "ended"
-        ? `${seat.terminal} exited before its agent was up (hc read ${seat.terminal} says why); ${old.address} still runs ${bot.name}, untouched.`
-          + (plan.mode === "resume" ? ` Try automagik-herdr restart ${bot.id} --fresh.` : "")
-        : `${seat.terminal} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${ended ? ", so it was ended" : ` and couldn't be ended (hc kill ${seat.terminal})`}; `
+      if (up.state === "ended") {
+        throw await exitedBefore(seat.terminal, `${old.address} still runs ${bot.name}, untouched.`
+          + (plan.mode === "resume" ? ` Try automagik-herdr restart ${bot.id} --fresh.` : ""));
+      }
+      const ended = (await hc(["kill", seat.terminal])).code === 0;
+      throw new CliError(`${seat.terminal} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${ended ? ", so it was ended" : ` and couldn't be ended (hc kill ${seat.terminal})`}; `
           + `${old.address} still runs ${bot.name}, untouched.`);
     }
     // Up: the ledger moves the bot to the new terminal, under its lock.
@@ -3493,6 +3543,7 @@ export async function main(argv = process.argv.slice(2)) {
   } catch (e) {
     const message = e instanceof CliError ? e.message : `${e?.stack ?? e}`;
     process.stderr.write(`automagik-herdr: ${message}\n`);
+    if (opts.json && e instanceof CliError && e.detail) process.stdout.write(`${JSON.stringify({ error: message, ...e.detail }, null, 2)}\n`);
     return e instanceof CliError ? e.code : 1;
   }
 }

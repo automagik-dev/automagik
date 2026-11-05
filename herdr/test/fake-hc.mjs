@@ -209,7 +209,9 @@ switch (words[0]) {
       argv: launch, template: template?.name ?? null,
       pid: 9000 + n, foreground: { argv: shell ? ["zsh"] : argv, cwd, pid: 5000 + n }, // state.noStatus: programs that report no status to hc (hermes): status null.
       status: (state.noStatus ?? []).includes(program) ? null : { app: program === "claude" ? "claude-code" : program, state: "working" },
-      ...(runAs === "flaky" ? { exitAfterGets: 1 } : {}) });
+      ...(runAs === "flaky" ? { exitAfterGets: 1 } : {}),
+      // state.runScreen: what the new pane's screen holds (hc read), its agent's last words, say.
+      ...(typeof state.runScreen === "string" ? { screen: state.runScreen } : {}) });
     // state.onRunWrite: { path, text }: a file edit that lands while this run happens.
     if (state.onRunWrite) writeFileSync(state.onRunWrite.path, state.onRunWrite.text);
     save();

@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { checkBots, parseBots } from "../mods/am-sidebar/model.js";
-import { writeBotsFile, findBot, CliError, listProject } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
+import { writeBotsFile, findBot, CliError, listProject, causeLine } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { ledgerPath, readLedger } from "../mods/am-sidebar/workers.js";
 import { withoutBriefing } from "../mods/am-sidebar/models.js";
 import { restartAnswer } from "../mods/am-sidebar/restart.js";
@@ -1206,13 +1206,13 @@ const ledgerOf = (s) => readLedger(existsSync(ledgerPath(s.app)) ? readFileSync(
 const attachOf = (s) => readRows(existsSync(attachFile(s.app)) ? readFileSync(attachFile(s.app), "utf8") : "").rows;
 
 /** Genie's live pane t5 in the project, placed in sp9/tb3, with a Claude session and a squad. */
-function restartScene(t, { status = "idle", extra = [], session = SID, runAs } = {}) {
+function restartScene(t, { status = "idle", extra = [], session = SID, runAs, runScreen } = {}) {
   const s = scene(t);
   s.seed(team());
   const old = term("t5", { bot: ID.main, cwd: s.project, status });
   old.foreground.cwd = s.project;
   old.labels = { ...old.labels, role: "main", "herdr.space": "sp9", "herdr.tab": "tb3", squad: "core", ...(session ? { "agent.session": session } : {}) };
-  writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [old, ...extra], next: 100, ...(runAs ? { runAs } : {}) }));
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [old, ...extra], next: 100, ...(runAs ? { runAs } : {}), ...(runScreen ? { runScreen } : {}) }));
   return s;
 }
 const at = (calls, word, target) => calls.findIndex((c) => c[0] === word && (target === undefined || c[1] === target));
@@ -1309,6 +1309,43 @@ test("restart keeps the old pane when the new one never brings its agent up, exi
   assert.equal(ledgerOf(s3).some((x) => x.terminal === "t100"), false);
   assert.equal(attachOf(s3).some((x) => x.terminal === "t100"), false, "no attach row for the replacement that exited");
   assert.equal(foldRows(attachOf(s3)).byBot.get(ID.main).terminal, "t5");
+});
+
+// #413: what codex leaves on its screen when a thread's model provider is gone.
+const CODEX_GONE = "Error: model provider juice is no longer configured (modelProviderNotConfigured)";
+const CODEX_SCREEN = `$ codex resume 019a\n\x1b[31m${CODEX_GONE}\x1b[0m\n\n\u2500\u2500\u2500\u2500\n% \n`;
+
+test("causeLine: the agent's last line that names a failure, past prompts, rules and colour codes", () => {
+  assert.equal(causeLine(CODEX_SCREEN), CODEX_GONE);
+  assert.equal(causeLine("starting\nno conversation found\n$ "), "no conversation found", "no failure word: the last line");
+  assert.equal(causeLine("Error: bad flag\nRun codex --help for usage\n"), "Error: bad flag");
+  assert.equal(causeLine("\n  \n% \n"), null);
+  assert.equal(causeLine(""), null);
+  assert.equal(causeLine(`error ${"x".repeat(400)}`).length, 300);
+});
+
+test("restart that exits before its agent is up names the agent's own last line, in the error and in --json (#413)", (t) => {
+  const s = restartScene(t, { runAs: "exit", runScreen: CODEX_SCREEN });
+  const r = s.cli(["restart", "Genie"]);
+  assert.equal(r.code, 1);
+  assert.ok(r.err.includes(`t100 exited before its agent was up; its agent said: "${CODEX_GONE}" (hc read t100 shows the rest); t5 still runs Genie, untouched.`), r.err);
+  assert.equal(at(s.calls(), "kill"), -1);
+  const s2 = restartScene(t, { runAs: "exit", runScreen: CODEX_SCREEN });
+  const j = s2.cli(["restart", "Genie", "--json"]);
+  assert.equal(j.code, 1);
+  assert.deepEqual([j.json().cause, j.json().terminal], [CODEX_GONE, "t100"]);
+  assert.match(j.json().error, /^t100 exited before its agent was up; its agent said: .*modelProviderNotConfigured/);
+  assert.equal(s2.hcState().terminals.find((x) => x.address === "t5").state, "live", "the old pane still runs");
+  // Nothing on the screen: the old wording, and a null cause.
+  const s3 = restartScene(t, { runAs: "exit" });
+  const k = s3.cli(["restart", "Genie", "--json"]);
+  assert.match(k.err, /t100 exited before its agent was up \(hc read t100 says why\); t5 still runs Genie/);
+  assert.equal(k.json().cause, null);
+  // A refusal carries no detail: stderr only, stdout empty as before.
+  const s4 = restartScene(t, { status: "working" });
+  const w = s4.cli(["restart", "Genie", "--json"]);
+  assert.equal(w.code, 1);
+  assert.equal(w.out, "");
 });
 
 test("restart with no session id known: claude --continue, with a warning; --fresh starts a new conversation", (t) => {
