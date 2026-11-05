@@ -44,6 +44,7 @@ const REDACTION_COPIES = ['unfold-events-dsh/src/client/redact.js', 'unfold-even
 const BLOCKS: [string, string, string[]][] = [
   // [the declaration, its source, its copies]
   ['const SECRET_KEY =', 'unfold-mind-dsh/src/redact.js', ['unfold-events-dsh/src/client/redact.js', 'unfold-events-dsh/src/window.js', 'unfold-settings-dsh/src/redact.js']],
+  ['function laterLine(_, nl, indent, before, name, sep, props, tail, run, br, indicator, body, prefix, q, close) {', 'unfold-mind-dsh/src/redact.js', ['unfold-events-dsh/src/client/redact.js', 'unfold-events-dsh/src/window.js', 'unfold-settings-dsh/src/redact.js']],
   ['const SECRET_TEXT = [', 'unfold-mind-dsh/src/redact.js', ['unfold-events-dsh/src/client/redact.js', 'unfold-events-dsh/src/window.js', 'unfold-settings-dsh/src/redact.js']],
   ['const SECRET_VALUES = [', 'unfold-mind-dsh/src/redact.js', ['unfold-events-dsh/src/client/redact.js']],
   ...['const INVISIBLE_GATE =', 'const INVISIBLE =', 'const INVISIBLE_NAME =', 'const NAME_STEM =', 'export function nameText(s) {', 'export function redactText(s) {', "export function redact(value, key = '') {"].map(
@@ -56,6 +57,8 @@ const BLOCKS: [string, string, string[]][] = [
   ['const ESCAPED_END =', 'unfold-events-dsh/src/window.js', ['unfold-mind-dsh/src/mind.js']],
   ['const KEY_LINE_OPEN =', 'unfold-events-dsh/src/window.js', ['unfold-mind-dsh/src/mind.js']],
   ['const PROPERTY_LINE =', 'unfold-events-dsh/src/window.js', ['unfold-mind-dsh/src/mind.js']],
+  ['const INDICATOR_LINE =', 'unfold-events-dsh/src/window.js', ['unfold-mind-dsh/src/mind.js']],
+  ['const SKIPPED_LINE =', 'unfold-events-dsh/src/window.js', ['unfold-mind-dsh/src/mind.js']],
   ['function openKeyLine(raw, max) {', 'unfold-events-dsh/src/window.js', ['unfold-mind-dsh/src/mind.js']],
 ];
 

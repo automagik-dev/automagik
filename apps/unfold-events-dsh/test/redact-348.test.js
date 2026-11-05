@@ -131,18 +131,35 @@ test('served: a blank run past the 16 KiB bound between a key line and its block
   }
 })
 
-// #396, the table's `continuation` rows (unfold-mind-dsh's test reads them the same way): a
-// credential name with no value on its line continues to a strictly more indented next line; the
-// first more indented line with a value is the scalar, hidden and remembered, the key line and the
-// properties kept as written. The rows hold placeholders, filled here from pieces, so no
-// credential-shaped text is committed.
-const FILL = { '{name}': ['pass', 'word'].join(''), '{camel}': ['api', 'Key'].join(''), '{value}': ['hunter', 2].join('') }
-const fill = (s) => s.replace(/\{(?:name|camel|value)\}/g, (k) => FILL[k])
+// #396 and #410, the table's `continuation` rows (one table, read the same way by the Mind, window
+// and settings copies): a credential key line that ends at its colon, or at up to two anchors and
+// tags, a comment after them or not, continues on a later line. Blank and comment lines are
+// skipped, and so are lines of anchors and tags indented under the key; then the first line strictly
+// more indented is the value (hidden with its continued lines, or a block indicator, whose lines are
+// hidden), a more indented mapping line is a child key, and a line at the key's indent or less is a
+// sibling. The key line and each blank, comment, anchor and tag line are kept as written. The rows
+// hold placeholders, filled here from pieces, so no credential-shaped text is committed.
+const FILL = { '{name}': ['pass', 'word'].join(''), '{camel}': ['api', 'Key'].join(''), '{parent}': ['sec', 'ret'].join(''), '{value}': ['hunter', 2].join('') }
+const fill = (s) => s.replace(/\{(?:name|camel|parent|value)\}/g, (k) => FILL[k])
 const SECRET = FILL['{value}']
 const CONTINUED = TABLE.continuation.map(([what, input, want]) => [what, fill(input), fill(want)])
 const CONTINUED_HIDDEN = CONTINUED.filter(([, input, want]) => input.includes(SECRET) && !want.includes(SECRET))
-const GUARDS = CONTINUED.filter(([what]) => what.startsWith('guard:'))
+// The rows that keep the value (a sibling, a child with no credential name, a comment line that
+// names a key): it is served, and never remembered.
+const KEPT = CONTINUED.filter(([, , want]) => want.includes(SECRET))
+// A block indicator on a later line: its lines are not remembered, as under one on the key's line.
+const LATER_BLOCK = /^[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}[|>][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*$/m
+// The name a row's key line holds, served again after a cut.
 const nameOf = (input) => (input.includes(FILL['{camel}']) ? FILL['{camel}'] : FILL['{name}'])
+// Where a cut can land before the value: the end of each line before it (a CRLF's CR), and right
+// before the value. A blank run there keeps each line as it reads: a key line or a line under it
+// gains trailing blanks, and a blank line stays blank.
+const cutsOf = (input) => {
+  const at = input.indexOf(SECRET)
+  const cuts = [at]
+  for (let i = 0; i < at; i++) if ((input[i] === '\r' || input[i] === '\n') && input[i - 1] !== '\r') cuts.push(i)
+  return cuts
+}
 
 for (const [what, input, want] of CONTINUED) {
   test(`continuation: ${what}`, () => {
@@ -151,16 +168,16 @@ for (const [what, input, want] of CONTINUED) {
   })
 }
 
-test('continuation: the browser copy remembers a hidden value, and no anchor, tag or guard value', () => {
+test('continuation: the browser copy remembers a hidden value, and no anchor, tag, indicator or kept value', () => {
   for (const [what, input] of CONTINUED_HIDDEN) {
     const kept = clientSecretsIn(`${input} `)
-    assert.ok(kept.some((v) => v.includes(SECRET)), what)
     assert.ok(!kept.some((v) => /^[&!|>]/.test(v)), what)
+    if (!LATER_BLOCK.test(input)) assert.ok(kept.some((v) => v.includes(SECRET)), what)
   }
-  for (const [what, input] of GUARDS) assert.ok(!clientSecretsIn(`${input} `).some((v) => v.includes(SECRET)), what)
+  for (const [what, input] of KEPT) assert.ok(!clientSecretsIn(`${input} `).some((v) => v.includes(SECRET)), what)
 })
 
-test('served: a continued value stays hidden in the window, whole and a character at a time', () => {
+test('served: a value on a later line stays hidden in the window, whole and a character at a time; a kept one is served', () => {
   for (const [what, input] of CONTINUED_HIDDEN) {
     const whole = rig()
     whole.push(`${input}\nand goes on`)
@@ -169,22 +186,33 @@ test('served: a continued value stays hidden in the window, whole and a characte
     for (const ch of `${input}\nand goes on`) split.push(ch)
     assert.ok(!split.served().includes(SECRET), `${what}, a character at a time`)
   }
+  for (const [what, input] of KEPT) {
+    const whole = rig()
+    whole.push(`${input}\nand goes on`)
+    assert.ok(whole.served().includes(SECRET), what)
+    const split = rig()
+    for (const ch of `${input}\nand goes on`) split.push(ch)
+    assert.ok(split.served().includes(SECRET), `${what}, a character at a time`)
+  }
 })
 
-// A blank run past the 16 KiB bound right before the value: the cut lands between the key and its
-// value, so the key line and its properties are kept and the value that arrives next is hidden.
-// Inside a quoted value the cut withholds the rest of the value up to its closing quote, its key
-// dropped with it, as for a quoted value on its key's line.
-test('served: the 16 KiB bound cut between a continued key and its value keeps the key and hides the value', () => {
+// A blank run past the 16 KiB bound at each place a cut can land before the value (the end of the
+// key line, of each blank, comment, anchor, tag or indicator line under it, and right before the
+// value): the key line and the lines under it that hold anchors, tags or an indicator are kept, and
+// the value that arrives next, a character at a time, is hidden. Inside a quoted value the cut
+// withholds the rest of the value up to its closing quote, its key dropped with it, as for a quoted
+// value on its key's line.
+test('served: the 16 KiB bound cut after a key line, in the lines under it or before its value keeps the key and hides the value', () => {
   for (const [what, input] of CONTINUED_HIDDEN) {
-    const at = input.indexOf(SECRET)
-    const w = new EventWindow(catalog, { limit: 20 })
-    const seen = []
-    w.onChange((change, payload) => seen.push(JSON.stringify(payload)))
-    const push = (text) => w.push({ v: 2, id: `g:${++seq}`, producer: 'g', seq, t_ns: seq, source: 'guest', kind: 'agent_delta', response_id: 'rK', text })
-    push(`${input.slice(0, at)}${' '.repeat(17_000)}`)
-    for (const ch of `${input.slice(at)}\nand goes on`) push(ch)
-    assert.ok(![...seen, JSON.stringify(w.rows)].join('\n').includes(SECRET), what)
-    if (input[at - 1] !== '"') assert.ok(w.rows.at(-1).text.includes(nameOf(input)), `${what}: the key is still served`)
+    for (const at of cutsOf(input)) {
+      const w = new EventWindow(catalog, { limit: 20 })
+      const seen = []
+      w.onChange((change, payload) => seen.push(JSON.stringify(payload)))
+      const push = (text) => w.push({ v: 2, id: `g:${++seq}`, producer: 'g', seq, t_ns: seq, source: 'guest', kind: 'agent_delta', response_id: 'rK', text })
+      push(`${input.slice(0, at)}${' '.repeat(17_000)}`)
+      for (const ch of `${input.slice(at)}\nand goes on`) push(ch)
+      assert.ok(![...seen, JSON.stringify(w.rows)].join('\n').includes(SECRET), `${what}, cut at ${at}`)
+      if (input[at - 1] !== '"') assert.ok(w.rows.at(-1).text.includes(nameOf(input)), `${what}, cut at ${at}: the key is still served`)
+    }
   }
 })

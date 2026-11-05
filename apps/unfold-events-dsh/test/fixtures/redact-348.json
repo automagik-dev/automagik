@@ -537,132 +537,392 @@
  ],
  "continuation": [
   [
-   "shape a: an anchor ends the key line, the value on the next line",
+   "L10: an anchor ends the key line, a blank line, then the value",
+   "{name}: &a\n\n  {value}",
+   "{name}: &a\n\n  [redacted]"
+  ],
+  [
+   "L11: a bare key line, an anchor line, a blank line, then the value",
+   "{name}:\n  &a\n\n  {value}",
+   "{name}:\n  &a\n\n  [redacted]"
+  ],
+  [
+   "L12: a bare key line, a comment at the top, then the value",
+   "{name}:\n# note\n  {value}",
+   "{name}:\n# note\n  [redacted]"
+  ],
+  [
+   "L13: a bare key line, an indented comment, then the value",
+   "{name}:\n  # note\n  {value}",
+   "{name}:\n  # note\n  [redacted]"
+  ],
+  [
+   "L14: an anchor ends the key line, a comment at the top, then the value",
+   "{name}: &a\n# note\n  {value}",
+   "{name}: &a\n# note\n  [redacted]"
+  ],
+  [
+   "L14, camelCase: an anchor ends the key line, a comment at the top, then the value",
+   "{camel}: &a\n# note\n  {value}",
+   "{camel}: &a\n# note\n  [redacted]"
+  ],
+  [
+   "L15: a comment ends the key line, then the value",
+   "{name}: # note\n  {value}",
+   "{name}: # note\n  [redacted]"
+  ],
+  [
+   "L16: an anchor and a comment end the key line, then the value",
+   "{name}: &a # note\n  {value}",
+   "{name}: &a # note\n  [redacted]"
+  ],
+  [
+   "L35: a tag and a comment end the key line, then the value",
+   "{name}: !!str # note\n  {value}",
+   "{name}: !!str # note\n  [redacted]"
+  ],
+  [
+   "L36: an anchor, a tag and a comment end the key line, then the value",
+   "{name}: &a !!str # n\n  {value}",
+   "{name}: &a !!str # n\n  [redacted]"
+  ],
+  [
+   "L40: spaces, then a comment end the key line, then the value",
+   "{name}:   # c\n  {value}",
+   "{name}:   # c\n  [redacted]"
+  ],
+  [
+   "L17: a bare key line, a blank line, then an anchor and the value",
+   "{name}:\n\n  &a {value}",
+   "{name}:\n\n  &a [redacted]"
+  ],
+  [
+   "L18: a bare key line, a blank line, a comment at the top, then the value",
+   "{name}:\n\n# note\n  {value}",
+   "{name}:\n\n# note\n  [redacted]"
+  ],
+  [
+   "L37: a bare key line, a blank line, a comment, then an anchor and the value",
+   "{name}:\n\n# c\n  &a {value}",
+   "{name}:\n\n# c\n  &a [redacted]"
+  ],
+  [
+   "L38: a bare key line, a comment, then an anchor and the value",
+   "{name}:\n# c\n  &a {value}",
+   "{name}:\n# c\n  &a [redacted]"
+  ],
+  [
+   "L33: a bare key line, a comment, then a quoted value",
+   "{name}:\n# note\n  \"{value}\"",
+   "{name}:\n# note\n  \"[redacted]\""
+  ],
+  [
+   "L19: a bare key line, then a block indicator and its lines",
+   "{name}:\n  |\n    {value}",
+   "{name}:\n  |\n    [redacted]"
+  ],
+  [
+   "L19, camelCase: a bare key line, then a block indicator and its lines",
+   "{camel}:\n  |\n    {value}",
+   "{camel}:\n  |\n    [redacted]"
+  ],
+  [
+   "L20: a bare key line, then an anchor, a block indicator and its lines",
+   "{name}:\n  &a |\n    {value}",
+   "{name}:\n  &a |\n    [redacted]"
+  ],
+  [
+   "L21: a comment ends the key line, then a block indicator and its lines",
+   "{name}: # note\n  |\n    {value}",
+   "{name}: # note\n  |\n    [redacted]"
+  ],
+  [
+   "L22: an anchor and a comment end the key line, then a block indicator and its lines",
+   "{name}: &a # note\n  |\n    {value}",
+   "{name}: &a # note\n  |\n    [redacted]"
+  ],
+  [
+   "L46: a bare key line, then a folded indicator and its lines",
+   "{name}:\n  >\n    {value}",
+   "{name}:\n  >\n    [redacted]"
+  ],
+  [
+   "L47: a bare key line, then a strip indicator and its lines",
+   "{name}:\n  |-\n    {value}",
+   "{name}:\n  |-\n    [redacted]"
+  ],
+  [
+   "L34: an anchor ends the key line, a blank line, then a block indicator and its lines",
+   "{name}: &a\n\n  |\n    {value}",
+   "{name}: &a\n\n  |\n    [redacted]"
+  ],
+  [
+   "L39: a bare key line, a blank line, a comment, then a block indicator and its lines",
+   "{name}:\n\n# c\n  |\n    {value}",
+   "{name}:\n\n# c\n  |\n    [redacted]"
+  ],
+  [
+   "L48: an anchor ends the key line, a blank line, then a block of two lines and a sibling",
+   "{name}: &a\n\n  |\n    {value}\n    {value} again\nnext: shown",
+   "{name}: &a\n\n  |\n    [redacted]\nnext: shown"
+  ],
+  [
+   "L49: a tag ends the key line, a blank line, then a block indicator and its lines",
+   "{name}: !!str\n\n  |\n    {value}",
+   "{name}: !!str\n\n  |\n    [redacted]"
+  ],
+  [
+   "L29: an anchor ends the key line, a comment, then the value, CRLF",
+   "{name}: &a\r\n# note\r\n  {value}",
+   "{name}: &a\r\n# note\r\n  [redacted]"
+  ],
+  [
+   "L41: an anchor ends the key line, a blank line, then the value, CRLF",
+   "{name}: &a\r\n\r\n  {value}",
+   "{name}: &a\r\n\r\n  [redacted]"
+  ],
+  [
+   "L42: an anchor ends the key line, a comment, then the value, lone CR",
+   "{name}: &a\r# c\r  {value}",
+   "{name}: &a\r# c\r  [redacted]"
+  ],
+  [
+   "L42, camelCase: an anchor ends the key line, a comment, then the value, lone CR",
+   "{camel}: &a\r# c\r  {value}",
+   "{camel}: &a\r# c\r  [redacted]"
+  ],
+  [
+   "L44: a nested key line ends in an anchor, a blank line, then the value deeper",
+   "config:\n  {name}: &a\n\n    {value}",
+   "config:\n  {name}: &a\n\n    [redacted]"
+  ],
+  [
+   "L45: a list item key line ends in an anchor, a comment, then the value",
+   "- {name}: &a\n# c\n  {value}",
+   "- {name}: &a\n# c\n  [redacted]"
+  ],
+  [
+   "L50: a parent anchor, then a credential child: only the child value is hidden",
+   "{parent}: &d\n  {name}: {value}",
+   "{parent}: &d\n  {name}: [redacted]"
+  ],
+  [
+   "L51: a parent map tag, then a credential child: only the child value is hidden",
+   "{parent}: !!map\n  {name}: {value}",
+   "{parent}: !!map\n  {name}: [redacted]"
+  ],
+  [
+   "L53: a bare parent, then a credential child: only the child value is hidden",
+   "{parent}:\n  {name}: {value}",
+   "{parent}:\n  {name}: [redacted]"
+  ],
+  [
+   "G19: a parent anchor, then a plain child: the child line is kept",
+   "{parent}: &d\n  user: {value}",
+   "{parent}: &d\n  user: {value}"
+  ],
+  [
+   "G05: a comment line names the key, then an indented line",
+   "# {name}:\n  {value}",
+   "# {name}:\n  {value}"
+  ],
+  [
+   "G09: a comment line names the key and an anchor, then an indented line",
+   "# {name}: &a\n  {value}",
+   "# {name}: &a\n  {value}"
+  ],
+  [
+   "G13: a bare key line, a blank line, then a sibling at the same indent",
+   "{name}:\n\nnext: {value}",
+   "{name}:\n\nnext: {value}"
+  ],
+  [
+   "G11: a comment ends the key line, then a sibling at the same indent",
+   "{name}: # note\nnext: {value}",
+   "{name}: # note\nnext: {value}"
+  ],
+  [
+   "G12: a bare key line, a comment, then a sibling at the same indent",
+   "{name}:\n# note\nnext: {value}",
+   "{name}:\n# note\nnext: {value}"
+  ],
+  [
+   "G16: an indented key line, a comment at the top, then a sibling at the same indent",
+   "  {name}:\n# c\n  next: {value}",
+   "  {name}:\n# c\n  next: {value}"
+  ],
+  [
+   "G01: a plain name and an anchor, then an indented line",
+   "name: &a\n  {value}",
+   "name: &a\n  {value}"
+  ],
+  [
+   "G02: a plain name, then an indented line",
+   "name:\n  {value}",
+   "name:\n  {value}"
+  ],
+  [
+   "G03: an anchor ends the key line, then a sibling: the anchor is hidden, the sibling kept",
+   "{name}: &a\nnext: {value}",
+   "{name}: [redacted]\nnext: {value}"
+  ],
+  [
+   "G04: an indented key line ends in an anchor, then a sibling at the same indent",
+   "  {name}: &a\n  next: {value}",
+   "  {name}: [redacted]\n  next: {value}"
+  ],
+  [
+   "G06: a nested key line ends in an anchor, then a nested sibling",
+   "config:\n  {name}: &a\n  user: {value}",
+   "config:\n  {name}: [redacted]\n  user: {value}"
+  ],
+  [
+   "G08: a plain name with a block indicator on its line",
+   "notes: |\n  {value}",
+   "notes: |\n  {value}"
+  ],
+  [
+   "G17: a plain name, then a block indicator and its lines",
+   "notes:\n  |\n    {value}",
+   "notes:\n  |\n    {value}"
+  ],
+  [
+   "G18: an anchor ends the key line, then a sibling with a quoted value",
+   "{name}: &a\nnext: \"{value}\"",
+   "{name}: [redacted]\nnext: \"{value}\""
+  ],
+  [
+   "G07: a bare key line, then indented prose: hidden whole, on purpose",
+   "{name}:\n  {value} is a word",
+   "{name}:\n  [redacted]"
+  ],
+  [
+   "earlier shape a: an anchor ends the key line, the value on the next line",
    "{name}: &a\n  {value}",
    "{name}: &a\n  [redacted]"
   ],
   [
-   "shape a: a tag ends the key line, the value on the next line",
+   "earlier shape a: a tag ends the key line, the value on the next line",
    "{name}: !!str\n  {value}",
    "{name}: !!str\n  [redacted]"
   ],
   [
-   "shape a: an anchor and a tag end the key line, the value on the next line",
+   "earlier shape a: an anchor and a tag end the key line, the value on the next line",
    "{name}: &a !!str\n  {value}",
    "{name}: &a !!str\n  [redacted]"
   ],
   [
-   "shape a: an anchor under a camelCase name",
+   "earlier shape a: an anchor under a camelCase name",
    "{camel}: &a\n  {value}",
    "{camel}: &a\n  [redacted]"
   ],
   [
-   "shape a: an anchor under a nested name, the value four deep",
+   "earlier shape a: an anchor under a nested name, the value four deep",
    "config:\n  {name}: &a\n    {value}\nnext: shown",
    "config:\n  {name}: &a\n    [redacted]\nnext: shown"
   ],
   [
-   "shape a: an anchor under a list item",
+   "earlier shape a: an anchor under a list item",
    "- {name}: &a\n    {value}",
    "- {name}: &a\n    [redacted]"
   ],
   [
-   "shape a: an anchor, CRLF",
+   "earlier shape a: an anchor, CRLF",
    "{name}: &a\r\n  {value}\r\nnext: shown",
    "{name}: &a\r\n  [redacted]\r\nnext: shown"
   ],
   [
-   "shape a: an anchor, then a quoted value",
+   "earlier shape a: an anchor, then a quoted value",
    "{name}: &a\n  \"{value} and more\"",
    "{name}: &a\n  \"[redacted]\""
   ],
   [
-   "shape b: a bare name, then an anchor and the value",
+   "earlier shape b: a bare name, then an anchor and the value",
    "{name}:\n  &a {value}",
    "{name}:\n  &a [redacted]"
   ],
   [
-   "shape b: a bare name, then a tag and the value",
+   "earlier shape b: a bare name, then a tag and the value",
    "{name}:\n  !!str {value}",
    "{name}:\n  !!str [redacted]"
   ],
   [
-   "shape b: a bare camelCase name, then an anchor and the value",
+   "earlier shape b: a bare camelCase name, then an anchor and the value",
    "{camel}:\n  &a {value}",
    "{camel}:\n  &a [redacted]"
   ],
   [
-   "chain: a bare name, an anchor line, then the value",
+   "earlier chain: a bare name, an anchor line, then the value",
    "{name}:\n  &a\n  {value}",
    "{name}:\n  &a\n  [redacted]"
   ],
   [
-   "chain: an anchor, an anchor line, then the value",
+   "earlier chain: an anchor, an anchor line, then the value",
    "{name}: &a\n  &b\n  {value}",
    "{name}: &a\n  &b\n  [redacted]"
   ],
   [
-   "chain: a bare name, a tag line, then the value",
+   "earlier chain: a bare name, a tag line, then the value",
    "{name}:\n  !!str\n  {value}",
    "{name}:\n  !!str\n  [redacted]"
   ],
   [
-   "chain: an anchor, then a tag and the value",
+   "earlier chain: an anchor, then a tag and the value",
    "{name}: &a\n  !!str {value}",
    "{name}: &a\n  !!str [redacted]"
   ],
   [
-   "chain: a bare name, then an anchor, a tag and the value",
+   "earlier chain: a bare name, then an anchor, a tag and the value",
    "{name}:\n  &a !!str {value}",
    "{name}:\n  &a !!str [redacted]"
   ],
   [
-   "regression: a bare name, the plain value on the next line",
+   "earlier regression: a bare name, the plain value on the next line",
    "{name}:\n  {value}",
    "{name}:\n  [redacted]"
   ],
   [
-   "guard: an anchor, the value at the same indent",
+   "earlier guard: an anchor, the value at the same indent",
    "{name}: &a\n{value}",
    "{name}: [redacted]\n{value}"
   ],
   [
-   "guard: an anchor, the value less indented",
+   "earlier guard: an anchor, the value less indented",
    "  {name}: &a\n{value}",
    "  {name}: [redacted]\n{value}"
   ],
   [
-   "guard: a nested anchor, the value at the same indent",
+   "earlier guard: a nested anchor, the value at the same indent",
    "config:\n  {name}: &a\n  {value}",
    "config:\n  {name}: [redacted]\n  {value}"
   ],
   [
-   "guard: a bare name, an anchor and the value at the same indent",
+   "earlier guard: a bare name, an anchor and the value at the same indent",
    "{name}:\n&a {value}",
-   "{name}:\n[redacted] {value}"
+   "{name}:\n&a {value}"
   ],
   [
-   "guard: an anchor line, then the value at the key indent",
+   "earlier guard: an anchor line, then the value at the key indent",
    "{name}: &a\n  &b\n{value}",
    "{name}: [redacted]\n  &b\n{value}"
   ],
   [
-   "guard: an anchor, then a sibling key",
+   "earlier guard: an anchor, then a sibling key",
    "config:\n  {name}: &a\n  user: bob",
    "config:\n  {name}: [redacted]\n  user: bob"
   ],
   [
-   "guard: indented prose under a plain name",
+   "earlier guard: indented prose under a plain name",
    "notes:\n  {value} is a word",
    "notes:\n  {value} is a word"
   ],
   [
-   "guard: an anchor, then indented prose under a plain name",
+   "earlier guard: an anchor, then indented prose under a plain name",
    "notes: &a\n  {value} is a word",
    "notes: &a\n  {value} is a word"
   ],
   [
-   "guard: a plain name, then an anchor and prose",
+   "earlier guard: a plain name, then an anchor and prose",
    "notes:\n  &a {value} is a word",
    "notes:\n  &a {value} is a word"
   ]

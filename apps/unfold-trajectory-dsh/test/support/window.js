@@ -284,6 +284,15 @@ const REDACTED = '[redacted]'
 // after a start (1+ body characters) is hidden whole, since the next delta may complete a key. The
 // cost: a benign run at the very end of a text ("...uses sk-learn") is hidden until text follows it,
 // and in a static string for good.
+// The replacement for the later-line rules in SECRET_TEXT (#396): the value on a later line hidden,
+// or a block indicator's lines hidden under it, or, for a sibling or the end of the text, an anchor
+// or tag left with no value on the key line hidden. Everything else is kept as written.
+function laterLine(_, nl, indent, before, name, sep, props, tail, run, br, indicator, body, prefix, q, close) {
+  const head = `${nl}${indent}${before}${name}${sep}`
+  if (indicator !== undefined) return `${head}${props}${tail}${run}${br}${indicator}${/\S/.test(body) ? `${/^\r?\n|^\r/.exec(body)[0]}${/[\r\n]([ \t]*)\S/.exec(body)[1]}${REDACTED}` : body}`
+  if (prefix !== undefined) return `${head}${props}${tail}${run}${br}${prefix}${q ? `${q}${REDACTED}${close}` : REDACTED}`
+  return `${head}${props.replace(/^([ \t]+)[\s\S]+$/, `$1${REDACTED}`)}${tail}${run}`
+}
 // Each rule is [pattern, replacement, gate]: a rule with a gate runs only on a text the gate finds
 // something in, a literal its pattern cannot match without, so a text skips the rules it cannot meet.
 const SECRET_TEXT = [
@@ -306,15 +315,21 @@ const SECRET_TEXT = [
   // LF one and keeps its CR.
   [/(^|\n)(?=[^\n]*:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$))(?=([ \t]*))\2([^\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))([ \t]*:[ \t]*)(?:[&!][^\s"'`]*[ \t]+){0,2}([>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?)(?=\n|$)((?:\n(?:\2[ \t]+[^\n]*|[ \t]*\r?(?=\n|$)))*)/gi, (_, nl, indent, before, name, sep, indicator, block) => `${nl}${indent}${before}${name}${sep}${indicator}${/\S/.test(block) ? `\n${indent}  ${REDACTED}${block.endsWith('\r') ? '\r' : ''}` : block}`, /:[ \t]*[&!>|]/],
   [/(^|\n)(?=[^\n]*:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$))(?=([ \t]*))\2([^\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))([ \t]*:[ \t]*)(?:[&!][^\s"'`]*[ \t]+){0,2}([>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?)(?=\n|$)((?:\n(?:\2[ \t]+[^\n]*|[ \t]*\r?(?=\n|$)))*)/g, (_, nl, indent, before, name, sep, indicator, block) => `${nl}${indent}${before}${name}${sep}${indicator}${/\S/.test(block) ? `\n${indent}  ${REDACTED}${block.endsWith('\r') ? '\r' : ''}` : block}`, /:[ \t]*[&!>|]/],
-  // A credential name with no value on its line continues to the next line when that line is
-  // strictly more indented than the key line (#396): the key line ends at its colon or at up to
-  // two anchors and tags (`&a`, `!!str`), the value line may start with up to two, and lines of
-  // anchors and tags alone, each more indented, may stand between them. The first more indented
-  // line with a value holds the scalar, which is hidden; the key line and every anchor and tag
-  // stay where they were written. A line at the key's indent or less, a sibling key, a comment
-  // or a block indicator is not a value, and a name with no credential stem is never read.
-  [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))(["']?[ \t]*:(?<=(?:^|\n)([ \t]*)(?:[^ \t\n][^\n]*)?)(?:[ \t]+[&!][^\s"'`]*){0,2}[ \t]*\r?(?:\n\3[ \t]+[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?[ \t]*\r?)*\n\3[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}(?![&!#]|[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$)))(?:(["'`])(?:(?!\4)[^\\]|\\[\s\S]|\\$)*(\4|$)|(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+|(?!Bearer\b|Basic\b|\[redacted\])[^\s"',}]+)/gi, (_, name, sep, indent, q, close, scheme) => (q ? `${name}${sep}${q}${REDACTED}${close}` : scheme ? `${name}${sep}${scheme} ${REDACTED}` : `${name}${sep}${REDACTED}`), /:[ \t]*(?:[&!][^\s"'`]*[ \t]*){0,2}\r?\n[ \t]/],
-  [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))(["']?[ \t]*:(?<=(?:^|\n)([ \t]*)(?:[^ \t\n][^\n]*)?)(?:[ \t]+[&!][^\s"'`]*){0,2}[ \t]*\r?(?:\n\3[ \t]+[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?[ \t]*\r?)*\n\3[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}(?![&!#]|[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$)))(?:(["'`])(?:(?!\4)[^\\]|\\[\s\S]|\\$)*(\4|$)|(Bearer|bearer|BEARER|Basic|basic|BASIC)\s+[A-Za-z0-9._~+/=-]+|(?!(?:Bearer|bearer|BEARER|Basic|basic|BASIC)\b|\[redacted\])[^\s"',}]+)/g, (_, name, sep, indent, q, close, scheme) => (q ? `${name}${sep}${q}${REDACTED}${close}` : scheme ? `${name}${sep}${scheme} ${REDACTED}` : `${name}${sep}${REDACTED}`), /:[ \t]*(?:[&!][^\s"'`]*[ \t]*){0,2}\r?\n[ \t]/],
+  // A credential key line that ends at its colon, or at up to two anchors and tags (`&a`, `!!str`),
+  // a comment after them or not, continues on a later line (#396, #410). Blank lines and comment lines
+  // are skipped, and so are lines of anchors and tags alone indented under the key. Then the first
+  // line strictly more indented than the key line is its value, hidden with the plain lines that
+  // continue it (a quoted one up to its closing quote), or a block indicator (`|`, `>-`), whose
+  // lines are hidden. A more indented mapping line (a name and a colon, quoted or not) is a child
+  // key, never the value: it is left to the name rules, which hide only a credential child's value.
+  // A line at the key's indent or less is a sibling: nothing is hidden or remembered from it, and an
+  // anchor or tag with no value on the key line is hidden, as at the end of the text. A comment is
+  // never a value, a comment line that names a credential starts nothing, and the key line and each
+  // blank, comment, anchor and tag line stay as written. A line ends at \n, \r\n or a lone \r. Each
+  // line is read forward from its start, its indent taken whole (a lookahead and its backreference),
+  // so a key line costs one pass over it and the lines under it.
+  [/(^|(?:\r?\n|\r(?!\n)))(?=[^\r\n]*:(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:[\r\n]|$))(?=([ \t]*))\2([^\r\n#]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))(["']?[ \t]*:)((?:[ \t]+[&!][^\s"'`]*){0,2})((?:[ \t]+#[^\r\n]*)?[ \t]*)((?:(?:\r?\n|\r(?!\n))(?:[ \t]*(?:#[^\r\n]*)?|\2[ \t]+[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?(?:[ \t]+#[^\r\n]*)?[ \t]*)(?=[\r\n]|$))*)(?:((?:\r?\n|\r(?!\n)))(?:(\2[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*)(?=[\r\n]|$)((?:(?:\r?\n|\r(?!\n))(?:\2[ \t]+[^\r\n]*|[ \t]*(?=[\r\n]|$)))*)|(\2[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}(?![ \t&!#\r\n]|[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*(?=[\r\n]|$)|(?:"[^"\r\n]*"|'[^'\r\n]*'|(?:[^\r\n: \t]|[ \t]+(?=[^\r\n: \t#]))+)[ \t]*:(?:[ \t]|(?=[\r\n]|$)))(?:(?:Bearer|Basic)[ \t]+(?=[A-Za-z0-9._~+/=-]))?)(?:(["'`])(?:(?!\13)[^\\]|\\[\s\S]|\\$)*(\13|$)|(?:[^ \t\r\n]|[ \t]+(?![ \t#\r\n]|$))+(?:(?:(?:\r?\n|\r(?!\n))[ \t]*(?=[\r\n]))*(?:\r?\n|\r(?!\n))\2[ \t]+(?![ \t#\r\n])[^\r\n]*)*))|(?=(?:\r?\n|\r(?!\n))(?!\2[ \t])[ \t]*[^\s#]|$))/gi, laterLine, /:[ \t]*(?:[&!#][^\r\n]*)?(?:[\r\n]|$)/],
+  [/(^|(?:\r?\n|\r(?!\n)))(?=[^\r\n]*:(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:[\r\n]|$))(?=([ \t]*))\2([^\r\n#]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))(["']?[ \t]*:)((?:[ \t]+[&!][^\s"'`]*){0,2})((?:[ \t]+#[^\r\n]*)?[ \t]*)((?:(?:\r?\n|\r(?!\n))(?:[ \t]*(?:#[^\r\n]*)?|\2[ \t]+[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?(?:[ \t]+#[^\r\n]*)?[ \t]*)(?=[\r\n]|$))*)(?:((?:\r?\n|\r(?!\n)))(?:(\2[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*)(?=[\r\n]|$)((?:(?:\r?\n|\r(?!\n))(?:\2[ \t]+[^\r\n]*|[ \t]*(?=[\r\n]|$)))*)|(\2[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}(?![ \t&!#\r\n]|[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*(?=[\r\n]|$)|(?:"[^"\r\n]*"|'[^'\r\n]*'|(?:[^\r\n: \t]|[ \t]+(?=[^\r\n: \t#]))+)[ \t]*:(?:[ \t]|(?=[\r\n]|$)))(?:(?:Bearer|bearer|BEARER|Basic|basic|BASIC)[ \t]+(?=[A-Za-z0-9._~+/=-]))?)(?:(["'`])(?:(?!\13)[^\\]|\\[\s\S]|\\$)*(\13|$)|(?:[^ \t\r\n]|[ \t]+(?![ \t#\r\n]|$))+(?:(?:(?:\r?\n|\r(?!\n))[ \t]*(?=[\r\n]))*(?:\r?\n|\r(?!\n))\2[ \t]+(?![ \t#\r\n])[^\r\n]*)*))|(?=(?:\r?\n|\r(?!\n))(?!\2[ \t])[ \t]*[^\s#]|$))/g, laterLine, /:[ \t]*(?:[&!#][^\r\n]*)?(?:[\r\n]|$)/],
   // `name: value` / `name=value`, in JSON too. A quoted value ("…", '…' or `…`; spaces and escapes
   // included) runs to its unescaped closing quote, or to the end while open. After a name, an
   // authorization scheme in any case (`authorization: bearer x`) keeps its word and hides what
@@ -334,12 +349,16 @@ const SECRET_TEXT = [
   // indicator is invalid YAML, and these rules do not match it, so it is left as written, no anchor
   // or tag is hidden as its value and nothing on it is remembered; the block rules do not read it
   // either.
-  [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))(["']?\s*[:=]\s*)(?!(?:[&!][^\s"'`]*[ \t]+){3})(?!(?:[&!][^\s"'`]*[ \t]+)*[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$))(?:(?<=:[ \t]*)(?:[&!][^\s"'`]*[ \t]+){1,2})?(?:(["'`])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+|(?![>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$))(?!Bearer\b|Basic\b|\[redacted\])(?![&!][^\s"'`]*(?:\s+[&!][^\s"'`]*)*\s+(?:(?:Bearer|Basic)\s+)?["'`]?\[redacted\])[^\s"',}]+)/gi, (_, name, sep, q, close, scheme) => (q ? `${name}${sep}${q}${REDACTED}${close}` : scheme ? `${name}${sep}${scheme} ${REDACTED}` : `${name}${sep}${REDACTED}`), /[:=]/],
+  // A key line that ends at its colon, or at its anchors and tags, or at a comment, is the later-line
+  // rule's above, never these rules': here a name with no value on its line reads no later line, and
+  // a comment is not a value. A quoted name with nothing after its colon (`"password":`) still reads
+  // the next line, as JSON may break there.
+  [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))((?:["']?\s*=|\s*:(?!(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:[\r\n]|$))|["']\s*:(?!(?=[ \t]+[&!#])(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:[\r\n]|$)))\s*)(?!(?:[&!][^\s"'`]*[ \t]+){3})(?!(?:[&!][^\s"'`]*[ \t]+)*[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$))(?:(?<=:[ \t]*)(?:[&!][^\s"'`]*[ \t]+){1,2})?(?:(["'`])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+|(?![>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$))(?!Bearer\b|Basic\b|\[redacted\])[^\s"',}]+)/gi, (_, name, sep, q, close, scheme) => (q ? `${name}${sep}${q}${REDACTED}${close}` : scheme ? `${name}${sep}${scheme} ${REDACTED}` : `${name}${sep}${REDACTED}`), /[:=]/],
   // The same names in camelCase or PascalCase (accessToken, ClientSecret, dbPassword, DbPass,
   // apiKey, authToken), case sensitive and whole-token, so accessLevel, MaxTokens, passRate and
   // PassengerCount stay words.
   // A name is a key only with its value, so a firstPass in prose stays a word.
-  [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))(["']?\s*[:=]\s*)(?!(?:[&!][^\s"'`]*[ \t]+){3})(?!(?:[&!][^\s"'`]*[ \t]+)*[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$))(?:(?<=:[ \t]*)(?:[&!][^\s"'`]*[ \t]+){1,2})?(?:(["'`])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(Bearer|bearer|BEARER|Basic|basic|BASIC)\s+[A-Za-z0-9._~+/=-]+|(?![>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$))(?!(?:Bearer|bearer|BEARER|Basic|basic|BASIC)\b|\[redacted\])(?![&!][^\s"'`]*(?:\s+[&!][^\s"'`]*)*\s+(?:(?:Bearer|bearer|BEARER|Basic|basic|BASIC)\s+)?["'`]?\[redacted\])[^\s"',}]+)/g, (_, name, sep, q, close, scheme) => (q ? `${name}${sep}${q}${REDACTED}${close}` : scheme ? `${name}${sep}${scheme} ${REDACTED}` : `${name}${sep}${REDACTED}`), /Token|Secret|Pass|Key|Authorization/],
+  [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))((?:["']?\s*=|\s*:(?!(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:[\r\n]|$))|["']\s*:(?!(?=[ \t]+[&!#])(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:[\r\n]|$)))\s*)(?!(?:[&!][^\s"'`]*[ \t]+){3})(?!(?:[&!][^\s"'`]*[ \t]+)*[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$))(?:(?<=:[ \t]*)(?:[&!][^\s"'`]*[ \t]+){1,2})?(?:(["'`])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(Bearer|bearer|BEARER|Basic|basic|BASIC)\s+[A-Za-z0-9._~+/=-]+|(?![>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$))(?!(?:Bearer|bearer|BEARER|Basic|basic|BASIC)\b|\[redacted\])[^\s"',}]+)/g, (_, name, sep, q, close, scheme) => (q ? `${name}${sep}${q}${REDACTED}${close}` : scheme ? `${name}${sep}${scheme} ${REDACTED}` : `${name}${sep}${REDACTED}`), /Token|Secret|Pass|Key|Authorization/],
   // JSON inside a JSON string (`{\"password\": \"…\"}`): the value runs to its escaped closing
   // quote, its own escapes doubled, or to a bare quote that ends the outer string.
   [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))(\\"\s*:\s*)\\"((?:[^\\"]|\\[^\\"]|\\\\(?:\\[\s\S]|\\$|[^\\]|$)|\\$)*)(\\"|"|$)/gi, (_, name, sep, value, close) => `${name}${sep}\\"${REDACTED}${close}`, /\\"/],
@@ -422,64 +441,84 @@ function shownTail(raw) {
 // A credential keyword or assignment right before a cut would leave its value orphaned.
 // Tested on the text before the cut with its trailing whitespace removed, so a long blank run
 // between a keyword and its value cannot hide the keyword. Anchors and tags after a colon count on
-// the colon's line, as in SECRET_TEXT, and on the lines of anchors and tags alone below a key line
-// (a value continued on a more indented line, #396).
-const CONTEXT_BEFORE = /(?:\b(?:Bearer|Basic)|[:=]["']?|:[ \t]*(?:[&!][^\s"'`]*[ \t]+)?[&!][^\s"'`]*|:[ \t]*(?:[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?)?(?:[ \t]*\r?\n[ \t]+[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?)+)$/i
-const contextBefore = (raw, cut) => CONTEXT_BEFORE.test(raw.slice(0, cut).trimEnd().slice(-256))
+// the colon's line only, as in SECRET_TEXT. A key line whose value comes on a later line (#396),
+// then the blank, comment, anchor and tag lines or the block indicator under it, counts too: when
+// the text before the cut ends on such a line, the cut is read as openKeyLine reads one.
+const CONTEXT_BEFORE = /(?:\b(?:Bearer|Basic)|[:=]["']?|:[ \t]*(?:[&!][^\s"'`]*[ \t]+)?[&!][^\s"'`]*)$/i
+const LATER_LINE_BEFORE = /(?:^|[\r\n])[ \t]*[#&!>|][^\r\n]*$|:(?:[ \t]+[&!][^\s"'`]*){0,2}[ \t]+#[^\r\n]*$/
+function contextBefore(raw, cut) {
+  const before = raw.slice(0, cut).trimEnd()
+  return CONTEXT_BEFORE.test(before.slice(-64)) || (LATER_LINE_BEFORE.test(before.slice(-256)) && openKeyLine(`${before}\n`, RAW_MAX) !== null)
+}
 
 // A key line still waiting for its value or block indicator (`password:`, `password: &a`,
-// `password: &a !!str`), then a blank run on that line. When a cut lands in the run, the line is
-// kept with the run cut to one space, so the indicator and a block's lines that arrive next are
-// read under their key; the bare last word (`&a`) would lose it.
-// A key line continued on the lines below it (#396) is kept the same way: it ends at its colon or
-// its anchors and tags, lines of anchors and tags alone may follow, each more indented, and the last
-// line is a blank run, or a line of anchors and tags then a blank run. The key line and those lines
-// are kept, each line below the key indented one more than the key, so the value that arrives next
-// is still read under its key.
-const KEY_LINE_OPEN = /:[ \t]*(?:[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)*)?$/
-const PROPERTY_LINE = /^[ \t]+[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?$/
+// `password: &a !!str`, a comment after them or not), then a blank run on that line. When a cut
+// lands in the run, the line is kept with the run cut to one space, so the indicator and a block's
+// lines that arrive next are read under their key; the bare last word (`&a`) would lose it.
+// A key line whose value comes on a later line (#396) is kept the same way when the cut lands in
+// the lines under it: blank lines, comment lines, lines of anchors and tags alone and a block
+// indicator line, the last two more indented than the key, then the line the cut is in (blank, a
+// comment, anchors and tags or an indicator, then a blank run). The key line is kept, then its
+// anchor, tag and indicator lines, each indented one more than the key; the blank and comment lines
+// between are dropped, as they never hold the value, and the line the cut is in is kept as it reads
+// (a blank run cut to the key's indent and one more), so the value that arrives next is still read
+// under its key. A line ends at \n, \r\n or a lone \r; up to 64 lines and 4 KiB above it are read.
+const KEY_LINE_OPEN = /:[ \t]*(?:[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)*)?(?:[ \t]+#[^\r\n]*)?$/
+const PROPERTY_LINE = /^[ \t]+[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?(?:[ \t]+#[^\r\n]*)?$/
+const INDICATOR_LINE = /^[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?$/
+const SKIPPED_LINE = /^[ \t]*(?:#[^\r\n]*)?$/
 function openKeyLine(raw, max) {
-  let at = raw.lastIndexOf('\n')
-  const last = raw.slice(at + 1)
+  let end = raw.length
+  while (end > 0 && raw[end - 1] !== '\n' && raw[end - 1] !== '\r') end--
+  const last = raw.slice(end)
   const line = last.trimEnd()
   if (line.length < max && KEY_LINE_OPEN.test(line.slice(-256))) return `${line} `
-  if (at < 0 || (line && !PROPERTY_LINE.test(line.slice(-256)))) return null
-  const below = line ? [line] : []
-  while (at >= 0 && below.length <= 8) {
-    const from = raw.lastIndexOf('\n', at - 1)
-    const above = raw.slice(from + 1, at).trimEnd()
-    at = from
-    if (PROPERTY_LINE.test(above.slice(-256))) {
-      below.unshift(above)
+  const under = (l) => PROPERTY_LINE.test(l.slice(-256)) || INDICATOR_LINE.test(l.slice(-256))
+  if (end === 0 || (line && !SKIPPED_LINE.test(line) && !under(line))) return null
+  const start = Math.max(0, end - 4096)
+  const lines = raw.slice(start, end).split(/\r\n|\r|\n/)
+  lines.pop() // the empty text after the last line break
+  const kept = []
+  for (let i = lines.length - 1; i >= 0 && lines.length - i <= 64; i--) {
+    const above = lines[i].trimEnd()
+    if (SKIPPED_LINE.test(above)) continue
+    if (under(above)) {
+      kept.unshift(above)
       continue
     }
+    if (i === 0 && start > 0) return null // cut by the 4 KiB read: not a whole line
     const indent = /^[ \t]*/.exec(above)[0]
     if (above.length >= max / 2 || !KEY_LINE_OPEN.test(above.slice(-256))) return null
-    if (!below.every((l) => l.startsWith(indent) && /^[ \t]/.test(l.slice(indent.length)))) return null
-    const lines = [above, ...below.map((l) => `${indent} ${l.trimStart()}`)]
-    const kept = line ? `${lines.join('\n')} ` : `${lines.join('\n')}\n${last.slice(0, indent.length + 1)}`
-    return kept.length < max ? kept : null
+    const deeper = (l) => l.startsWith(indent) && /^[ \t]/.test(l.slice(indent.length))
+    if (!kept.every(deeper) || (line && !SKIPPED_LINE.test(line) && !deeper(line))) return null
+    const cutLine = !line ? last.slice(0, indent.length + 1) : SKIPPED_LINE.test(line) ? `${line} ` : `${indent} ${line.trimStart()} `
+    const out = [above, ...kept.map((l) => `${indent} ${l.trimStart()}`), cutLine].join('\n')
+    return out.length < max ? out : null
   }
   return null
 }
 
 // Where a quoted credential value opens (the quoted forms of SECRET_TEXT): a trim never cuts
 // inside one, since whitespace within quotes is not a boundary, and only an unescaped
-// quote ends one. Each match ends at its opening quote.
+// quote ends one. Each match ends at its opening quote; a value on a later line (#396) is matched
+// from the start of its key line.
 const QUOTED_SECRET = [
   /\b[A-Z0-9_]+=(?<=(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=)(["'`])/g,
   /(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization)["']?\s*[:=]\s*(?!(?:[&!][^\s"'`]*[ \t]+){3})(?:(?<=:[ \t]*)(?:[&!][^\s"'`]*[ \t]+){1,2})?(["'`])/gi, // any prefix
   /(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key)["']?\s*[:=]\s*(?!(?:[&!][^\s"'`]*[ \t]+){3})(?:(?<=:[ \t]*)(?:[&!][^\s"'`]*[ \t]+){1,2})?(["'`])/g, // camelCase
-  /(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization)["']?[ \t]*:(?<=(?:^|\n)([ \t]*)(?:[^ \t\n][^\n]*)?)(?:[ \t]+[&!][^\s"'`]*){0,2}[ \t]*\r?(?:\n\1[ \t]+[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?[ \t]*\r?)*\n\1[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}(?![&!#]|[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$))(["'`])/gi, // continued on a more indented line (#396)
-  /(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key)["']?[ \t]*:(?<=(?:^|\n)([ \t]*)(?:[^ \t\n][^\n]*)?)(?:[ \t]+[&!][^\s"'`]*){0,2}[ \t]*\r?(?:\n\1[ \t]+[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?[ \t]*\r?)*\n\1[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}(?![&!#]|[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$))(["'`])/g, // continued, camelCase
+  /(?:^|(?<=[\r\n]))(?=[^\r\n]*:(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:[\r\n]|$))(?=([ \t]*))\1[^\r\n#]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization)["']?[ \t]*:(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:(?:\r?\n|\r(?!\n))(?:[ \t]*(?:#[^\r\n]*)?|\1[ \t]+[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?(?:[ \t]+#[^\r\n]*)?[ \t]*)(?=[\r\n]|$))*(?:\r?\n|\r(?!\n))\1[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}(?![ \t&!#\r\n]|[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*(?=[\r\n]|$)|(?:"[^"\r\n]*"|'[^'\r\n]*'|(?:[^\r\n: \t]|[ \t]+(?=[^\r\n: \t#]))+)[ \t]*:(?:[ \t]|(?=[\r\n]|$)))(["'`])/gi, // on a later line (#396)
+  /(?:^|(?<=[\r\n]))(?=[^\r\n]*:(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:[\r\n]|$))(?=([ \t]*))\1[^\r\n#]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key)["']?[ \t]*:(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:(?:\r?\n|\r(?!\n))(?:[ \t]*(?:#[^\r\n]*)?|\1[ \t]+[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?(?:[ \t]+#[^\r\n]*)?[ \t]*)(?=[\r\n]|$))*(?:\r?\n|\r(?!\n))\1[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}(?![ \t&!#\r\n]|[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*(?=[\r\n]|$)|(?:"[^"\r\n]*"|'[^'\r\n]*'|(?:[^\r\n: \t]|[ \t]+(?=[^\r\n: \t#]))+)[ \t]*:(?:[ \t]|(?=[\r\n]|$)))(["'`])/g, // on a later line, camelCase
 ]
 
 // Where a YAML block scalar under a credential name opens (`password: |`, anchors and tags before
 // its indicator and a comment after it included, LF or CRLF, then its indented lines), as in
-// SECRET_TEXT: a cut lands before it or after it, never inside.
+// SECRET_TEXT: a cut lands before it or after it, never inside. An indicator on a later line, under
+// the key line and its blank, comment, anchor and tag lines (#396), opens one too.
 const YAML_SECRET = [
   /(^|\n)(?=[^\n]*:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$))(?=([ \t]*))\2([^\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))([ \t]*:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?)(?=\n|$)((?:\n(?:\2[ \t]+[^\n]*|[ \t]*\r?(?=\n|$)))*)/gi,
   /(^|\n)(?=[^\n]*:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$))(?=([ \t]*))\2([^\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))([ \t]*:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?)(?=\n|$)((?:\n(?:\2[ \t]+[^\n]*|[ \t]*\r?(?=\n|$)))*)/g,
+  /(^|(?:\r?\n|\r(?!\n)))(?=[^\r\n]*:(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:[\r\n]|$))(?=([ \t]*))\2([^\r\n#]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))(["']?[ \t]*:(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:(?:\r?\n|\r(?!\n))(?:[ \t]*(?:#[^\r\n]*)?|\2[ \t]+[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?(?:[ \t]+#[^\r\n]*)?[ \t]*)(?=[\r\n]|$))*(?:\r?\n|\r(?!\n))\2[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*)(?=[\r\n]|$)((?:(?:\r?\n|\r(?!\n))(?:\2[ \t]+[^\r\n]*|[ \t]*(?=[\r\n]|$)))*)/gi,
+  /(^|(?:\r?\n|\r(?!\n)))(?=[^\r\n]*:(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:[\r\n]|$))(?=([ \t]*))\2([^\r\n#]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))(["']?[ \t]*:(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:(?:\r?\n|\r(?!\n))(?:[ \t]*(?:#[^\r\n]*)?|\2[ \t]+[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?(?:[ \t]+#[^\r\n]*)?[ \t]*)(?=[\r\n]|$))*(?:\r?\n|\r(?!\n))\2[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*)(?=[\r\n]|$)((?:(?:\r?\n|\r(?!\n))(?:\2[ \t]+[^\r\n]*|[ \t]*(?=[\r\n]|$)))*)/g,
 ]
 
 // Where JSON inside a JSON string opens a credential value (`{\"password\": \"`), as in SECRET_TEXT,
@@ -529,12 +568,13 @@ function quotedSpans(raw) {
       spans.push({ start: m.index, open, end: ESCAPED_END.lastIndex, closed, quote: '"', escaped: false, keep: closed ? undefined : `${raw.slice(m.index, open)}${'\\'.repeat(run % 4)}` })
     }
   }
-  if (/:[ \t]*[&!>|]/.test(raw)) for (const re of YAML_SECRET) {
+  if (/:[ \t]*[&!>|]|[\r\n][ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}[>|]/.test(raw)) for (const re of YAML_SECRET) {
     for (const m of raw.matchAll(re)) {
       const start = m.index + m[1].length
       const end = m.index + m[0].length
-      // An open block keeps its key line and a fresh block line, so the rest arrives under its key.
-      const keep = `${raw.slice(start, end - m[6].length)}\n${raw.endsWith('\n') ? '' : `${m[2]} `}`
+      // An open block keeps its key line (for an indicator on a later line, the lines down to it), its
+      // blank run dropped, and a fresh block line, so the rest arrives under its key.
+      const keep = `${raw.slice(start, end - m[6].length).trimEnd()}\n${raw.endsWith('\n') ? '' : `${m[2]} `}`
       spans.push({ start, end, closed: end < raw.length, quote: null, escaped: false, keep })
     }
   }

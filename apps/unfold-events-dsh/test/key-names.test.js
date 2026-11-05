@@ -89,6 +89,18 @@ const ADVERSARIAL = {
   'names with invisibles mid-line': 'a pass\u200bword: '.repeat(4_400),
   'anchors after a name': 'password: & '.repeat(6_700),
   'tags after a name, no value': 'password: !!str'.repeat(5_300),
+  // Key lines whose value comes on a later line (#396, #410): each read once, forward from its line.
+  'key lines with comments': 'password: &a # c\n'.repeat(5_000),
+  'bare key lines': 'password:\n'.repeat(8_000),
+  'a key line, a comment run, then a child': `password:\n${'# c\n'.repeat(20_000)}  user: x`,
+  'a key line, an anchor run, then a sibling': `password:\n${'  &a\n'.repeat(16_000)}next: x`,
+  'comment lines naming keys': '# password: &a\n'.repeat(6_000),
+  'a key line, then a value with a space run': `password:\n  x${' '.repeat(80_000)}#`,
+  'a key line, then a long word run': `password:\n  ${'a '.repeat(40_000)}`,
+  'key lines ending at a lone CR': 'password: &a\r'.repeat(8_000),
+  'a key line, then a CRLF blank run': `password:${'\r\n'.repeat(40_000)}x`,
+  'parents and children': 'secret: &d\n  user: x\n'.repeat(4_000),
+  'open quotes under key lines': 'password:\n  "x\n'.repeat(5_000),
 }
 const YAML_LINES = Array.from({ length: 400 }, (_, i) => `    ${PHRASE} ${i}\n`) // more than either keep
 // A bare value is one unbroken run (only its first word would be hidden), so it never takes the
