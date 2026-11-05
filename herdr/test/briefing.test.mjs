@@ -286,11 +286,14 @@ else if (a[0] === "label" && fx.terminals[a[1]]) {
   require("fs").renameSync(tmp, process.env.FAKE_HC);
   out({ address: t.address, labels: t.labels });
 }
-else { process.stderr.write("not_found"); process.exit(1); }
+else { process.stderr.write(JSON.stringify({ error: { kind: "not_found", message: "no such terminal" } })); process.exit(3); }
 };
 // fx.slow: addresses or label values whose calls hang (a machine that doesn't answer). Each hung
 // call logs "hung" when it starts and "answered" if it is ever let finish (FAKE_HC + ".slow").
-const slow = (fx.slow ?? []).some((x) => a.includes(x) || a.some((y) => y.endsWith("=" + x)));
+const names = (list) => (list ?? []).some((x) => a.includes(x) || a.some((y) => y.endsWith("=" + x)));
+// fx.fail: the same, for calls that fail at once (exit 1, not hc's not_found): a run that broke.
+if (names(fx.fail)) { process.stderr.write("fake hc: this call failed"); process.exit(1); }
+const slow = names(fx.slow);
 const log = (what) => require("fs").appendFileSync(process.env.FAKE_HC + ".slow", what + " " + a.join(" ") + "\\n");
 if (slow) { log("hung"); setTimeout(() => { log("answered"); answer(); }, Number(process.env.FAKE_HC_HANG_MS)); } else answer();
 `;
@@ -584,6 +587,36 @@ test("briefing.mjs: a member whose machine doesn't answer shows unreachable, and
   assert.match(stdout, /Solo \(bot b-ffffffffff, Docs\): unreachable \(hc gave no answer in time\)\./);
   assert.match(stdout, /Captain \(bot b-bbbbbbbbbb, Squad lead\): unreachable/);
   assert.ok(stdout.trimEnd().endsWith("</herdr-bot>"));
+});
+
+test("briefing.mjs: a read that fails at once shows unreachable, never not running; hc's not_found still is (#345)", async (t) => {
+  const { root, main, brief } = await scratch(t);
+  const fxPath = join(root, "hc.json");
+  const fx = JSON.parse(readFileSync(fxPath, "utf8"));
+  const as = async (fail) => {
+    writeFileSync(fxPath, JSON.stringify({ ...fx, fail }));
+    const r = await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: main });
+    assert.equal(r.stderr, "");
+    assert.match(r.stdout, /Solo \(bot b-ffffffffff, Docs\): finished \(done\) at t4\./, "the other reads still count");
+    return r.stdout;
+  };
+  // The captain's label query fails fast (no time budget runs out): not "not running".
+  const ls = await as([ID.cap]);
+  assert.match(ls, /Captain \(bot b-bbbbbbbbbb, Squad lead\): unreachable/);
+  assert.doesNotMatch(ls, /Captain[^\n]*not running/);
+  // Its newest pane's hc get fails: unreachable, not its older pane t7.
+  const get = await as(["t2"]);
+  assert.match(get, /Captain \(bot b-bbbbbbbbbb, Squad lead\): unreachable/);
+  assert.doesNotMatch(get, /Captain[^\n]*(not running|at t7)/);
+  // A pane hc answers not_found for (the ledger's binding outlived it) still reads as not running.
+  for (const x of Object.values(fx.terminals)) x.state = "live";
+  const ledger = join(root, "app", "automagik-herdr", "attach.jsonl");
+  mkdirSync(dirname(ledger), { recursive: true });
+  const row = (bot, terminal, created) => JSON.stringify({ v: 1, event: "attach", bot, project: main, terminal, core: "fakecore",
+    created_ms: created, machine: null, at: "2026-11-02T00:00:00.000Z", by: "attach" });
+  writeFileSync(ledger, `${row(ID.main, "t1", 1000)}\n${row(ID.cap, "t40", 5000)}\n${row(ID.solo, "t4", 1000)}\n`);
+  chmodSync(ledger, 0o600);
+  assert.match(await as([]), /Captain \(bot b-bbbbbbbbbb, Squad lead\): not running\./);
 });
 
 test("briefing.mjs: the main bot, from a worktree session, reads the main checkout's file and its team", async (t) => {

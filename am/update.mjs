@@ -870,16 +870,18 @@ function rollbackLocked({ modsDir, rename = renameSync, log = () => {}, binDir =
  * The rename migration after the folders (Group 6a): layouts and keys.json follow the folders
  * the record says were renamed, each rewritten file backed up into backup/layouts-<date>/ with a
  * journal the record lists (`migrated=`). A failure is a warning: the folders are already in place.
- * Returns migrateHome's `{ done, skipped, journal }`, or null when it failed.
+ * A drop-in it holds back (Herdr's block placed more than once, #387) is said on every run.
+ * Returns migrateHome's `{ done, skipped, journal }` and `held`, or null when it failed.
  */
 export function migrateRefs({ modsDir, log = () => {}, warnings = [] }) {
   const home = dirname(resolve(modsDir));
   try {
     const p = migrationPlan(home);
+    for (const h of p.held) log(`left: ${h.item} (${h.reason})`);
     if (!pending(p)) {
       const kept = p.left.length ? `; ${p.left.length} reference(s) stay as they are (--adopt takes the mods you kept)` : "";
       log(`rename migration: nothing to migrate${kept}`);
-      return { done: [], skipped: p.left, journal: null };
+      return { done: [], skipped: p.left, journal: null, held: p.held };
     }
     if (p.shared.length) log(`shared keys move to am.* when their mod next loads: ${p.shared.map(([o]) => o).join(", ")}`);
     // The journal goes into the record before the first rewrite, so a rollback reverts whatever
@@ -892,7 +894,7 @@ export function migrateRefs({ modsDir, log = () => {}, warnings = [] }) {
     const r = applyMigration(p, { backupDir: join(backupOf(modsDir), backupName(modsDir, "layouts")), onJournal });
     for (const line of r.done) log(line);
     for (const s of r.skipped) log(`left: ${s.item} (${s.reason})`);
-    return r;
+    return { ...r, held: p.held };
   } catch (error) {
     warnings.push(`layouts and keys were not migrated to the new names (${error.message}); the backups so far are in ${backupOf(modsDir)}`);
     return null;
@@ -1217,10 +1219,11 @@ async function downloadAndApply(found, { fetch, modsDir, log, binDir, window }) 
  * install.sh's same-version rerun: checks the installed pack against the release tarball
  * (verifyInstall), reinstalls each missing or damaged folder (applyUpdate's repair: the damaged
  * copy to backup/, the kept set untouched), puts back a missing automagik layout (placeLayout), then
- * runs `herdr-app check` on every pack mod. `{ version, repaired, layout, checkFailed, checked, changed }`
+ * runs `herdr-app check` on every pack mod and the rename migration (migrateRefs, with its #387
+ * drop-ins). `{ version, repaired, layout, checkFailed, checked, changed, migration }`
  * (`checked` false: herdr-app is not on PATH, so no mod was checked);
  * `changed` is false only when every file matched the release and no folder or layout was put
- * back (the layout's reference copy and the record are rewritten as on every install).
+ * back or rewritten (the layout's reference copy and the record are rewritten as on every install).
  */
 export async function repairInstall({ tgzPath, version, modsDir = defaultModsDir(), log = () => {}, herdrApp = "herdr-app", window = false }) {
   const found = await verifyInstall({ tgzPath, version, modsDir });
@@ -1237,11 +1240,14 @@ export async function repairInstall({ tgzPath, version, modsDir = defaultModsDir
     const layout = placeLayout({ modsDir, tgzDir, record, log });
     // A mod switched off (in mods-disabled/, not mods/) has no folder here to check.
     const { failed: checkFailed, checked } = checkMods({ modsDir, mods: toCheck(modsDir, record.mods), log, herdrApp });
-    const changed = Boolean(repaired) || layout === "added" || layout === "replaced";
     const warnings = repaired?.warnings ?? [];
+    // The person's layouts too, as on an install: one edited since (or kept) that still places
+    // Herdr's workspace-status gets am-status (#387); a second run finds nothing to do.
+    const migration = migrateRefs({ modsDir, log, warnings });
+    const changed = Boolean(repaired) || layout === "added" || layout === "replaced" || Boolean(migration?.journal);
     // The hooks too, so a rerun moves those of a project opened (or listed) since the install.
     const hooks = moveHooks({ modsDir, log, warnings, window });
-    return { version, repaired: found.repair, layout, checkFailed, checked, changed, hooks, warnings };
+    return { version, repaired: found.repair, layout, checkFailed, checked, changed, migration, hooks, warnings };
   } finally {
     rmSync(tgzDir, { recursive: true, force: true });
   }

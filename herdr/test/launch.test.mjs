@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { state } from "./use-stubs.mjs";
-import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, isClaude, newest, attachRefusal, parseCommand, shellIdle, spareTab, unwrapKeep } from "../mods/am-sidebar/launchArgs.js";
+import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, isClaude, newest, attachRefusal, parseCommand, freshSpare, shellIdle, spareTab, unwrapKeep } from "../mods/am-sidebar/launchArgs.js";
 const { startBot, attachBot, liveTerminalOf, botOfTerminal } = await import("../mods/am-sidebar/launch.js");
 import { briefingFilePath } from "../mods/am-sidebar/briefingText.mjs";
 
@@ -83,6 +83,15 @@ test("spareTab: a new space's shell tab is closed only once the bot shows in a t
   assert.equal(spareTab(spare, [{ id: "t5", terminals: ["t-sh"] }, bot], "t100", true), null);
   assert.equal(spareTab(spare, [{ id: "t5", terminals: ["t-sh"], count: null }, bot], "t100", true), null);
   assert.equal(spareTab(spare, [{ id: "t5", terminals: ["t-sh", "t100"] }], "t100", true), null);
+  // A fresh spare (seen right after this start's own space.new as its one tab, that shell alone):
+  // no count is enough; a count that says more still keeps it, and so does a second terminal.
+  const fresh = { ...spare, fresh: true };
+  assert.equal(spareTab(fresh, [{ id: "t5", terminals: ["t-sh"] }, bot], "t100", true), "t5");
+  assert.equal(spareTab(fresh, [{ id: "t5", terminals: ["t-sh"], count: null }, bot], "t100", true), "t5");
+  assert.equal(spareTab(fresh, [{ id: "t5", terminals: ["t-sh"], count: 2 }, bot], "t100", true), null);
+  assert.equal(spareTab(fresh, [{ id: "t5", terminals: ["t-sh", "t9"] }, bot], "t100", true), null);
+  assert.equal(spareTab(fresh, [{ id: "t5", terminals: ["t-sh"] }], "t100", true), null);
+  assert.equal(spareTab(fresh, [{ id: "t5", terminals: ["t-sh"] }, bot], "t100", false), null);
   // Something other than the shell in front, or not known: kept.
   assert.equal(spareTab(spare, [shell, bot], "t100", false), null);
   assert.equal(spareTab(spare, [shell, bot], "t100"), null);
@@ -92,20 +101,41 @@ test("spareTab: a new space's shell tab is closed only once the bot shows in a t
   assert.equal(spareTab(null, [shell, bot], "t100", true), null);
 });
 
-test("shellIdle: the terminal's own process in front, a bare shell; a script, a command, another pid or no answer is not idle", () => {
-  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["-zsh"] } }), true);
-  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["/bin/bash", "-i"] } }), true);
-  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, name: "zsh" } }), true);
+test("shellIdle: the terminal's own process in front, a bare shell with no child; a script, a command, a job, another pid or no answer is not idle", () => {
+  // A plain prompt: the shell in front, no process of its own (pgrep -P: none).
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["-zsh"] } }, []), true);
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["/bin/bash", "-i"] } }, []), true);
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, name: "zsh" } }, []), true);
+  // At its prompt with a job left running (`sleep 99 &`): the shell is in front, but not idle.
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["-zsh"] } }, ["4242"]), false);
+  // Its children unknown (pgrep missing or failing, never asked): never idle.
+  for (const unknown of [undefined, null, "", 0]) assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["-zsh"] } }, unknown), false, String(unknown));
   // Another process in front: vim, or a shell's child (bash deploy.sh run from it).
-  assert.equal(shellIdle({ pid: 7, foreground: { pid: 8, argv: ["vim", "notes.md"] } }), false);
-  assert.equal(shellIdle({ pid: 7, foreground: { pid: 8, argv: ["bash", "deploy.sh"] } }), false);
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 8, argv: ["vim", "notes.md"] } }, []), false);
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 8, argv: ["bash", "deploy.sh"] } }, []), false);
   // The terminal's own process, but running a script or a command string.
-  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["bash", "deploy.sh"] } }), false);
-  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["sh", "-c", "\"$@\"; exec \"${SHELL:-sh}\" -i", "sh", "make"] } }), false);
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["bash", "deploy.sh"] } }, []), false);
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["sh", "-c", "\"$@\"; exec \"${SHELL:-sh}\" -i", "sh", "make"] } }, []), false);
   // No pids to compare, or no answer.
-  assert.equal(shellIdle({ foreground: { argv: ["-zsh"] } }), false);
-  assert.equal(shellIdle(null), false);
-  assert.equal(shellIdle({}), false);
+  assert.equal(shellIdle({ foreground: { argv: ["-zsh"] } }, []), false);
+  assert.equal(shellIdle(null, []), false);
+  assert.equal(shellIdle({}, []), false);
+});
+
+test("freshSpare: space.new's shell is fresh only while the space is that one tab with that shell alone", () => {
+  const made = { id: "s5", tabs: [{ id: "t5", panes: [{ pane: "p5", terminal: "t-sh" }] }] };
+  assert.deepEqual(freshSpare(made, "t-sh"), { space: "s5", tab: "t5", terminal: "t-sh", fresh: true });
+  // Another tab there already, or a second terminal beside the shell: a spare, but not fresh.
+  assert.equal(freshSpare({ ...made, tabs: [...made.tabs, { id: "t6", panes: [] }] }, "t-sh").fresh, false);
+  assert.equal(freshSpare({ id: "s5", tabs: [{ id: "t5", panes: [{ terminal: "t-sh" }, { terminal: "t9" }] }] }, "t-sh").fresh, false);
+  // A linked machine's ids, compared as the caller says.
+  const vm = { id: "s7", tabs: [{ id: "t7", panes: [{ terminal: "vm/t-sh" }] }] };
+  assert.equal(freshSpare(vm, "t-sh"), null);
+  assert.deepEqual(freshSpare(vm, "t-sh", (a, b) => a.split("/").pop() === b), { space: "s7", tab: "t7", terminal: "t-sh", fresh: true });
+  // Not shown there, or nothing printed: none.
+  assert.equal(freshSpare(made, "t-other"), null);
+  assert.equal(freshSpare(made, undefined), null);
+  assert.equal(freshSpare(null, "t-sh"), null);
 });
 
 test("names: slugged to hc's alphabet, suffixed when taken", () => {
@@ -286,7 +316,7 @@ test("startBot: the space it opened keeps no lone shell tab: closed once the bot
     }
   };
   assert.deepEqual(await startBot(w.main, ID.main, { sleep }), { terminal: "t100" });
-  // Never `confirmed`: Herdr asks the person whenever it would.
+  // Never `confirmed`: Herdr asks the person only before closing a space's last tab.
   assert.deepEqual(state.runs, [["space.new", { name: "proj", folder: w.main, machine: "" }], ["tab.close", { id: "t5" }]]);
   // A bot that never shows (within waitMs) leaves the shell's tab be: the space keeps a tab.
   state.spaces = [];

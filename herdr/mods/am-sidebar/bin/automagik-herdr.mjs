@@ -22,7 +22,7 @@ import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMN
   parseBots, plannedOf, projectKeyOf, projectOf, withListedProject, writeFolderOf } from "../model.js";
 import { UNANSWERED, agentInForeground, attachRefusal, attachWords, detachWords, hcName, isClaude, leadIdOf, leadPane, newest,
   paneLabels, paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWarning, relabelWords, rowsOf, spaceOnly, spacePlace,
-  shellIdle, spareTab, startArgs, startRefusal, unwrapKeep } from "../launchArgs.js";
+  freshSpare, shellIdle, spareTab, startArgs, startRefusal, unwrapKeep } from "../launchArgs.js";
 import { tabSteps, workerSpace, workerTabName } from "../workerTab.js";
 import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, confirmBindings, foldAttach, heldIn, machinesById, modeProblem, placeOf as placeOfRow, readAttach } from "../attach.js";
 import { interpreterPath } from "../agentPath.mjs";
@@ -1449,9 +1449,9 @@ async function windowPlace(key, labelled = null, seen = null) {
   }
   const place = first || (typeof out.space === "string" ? { space: out.space, tab: null, from: null } : null);
   // The space is this start's: its first tab holds only the shell space.new started, closed
-  // once the bot shows in a tab of its own there (launchSeat, spareTab).
-  const shell = ours && place?.space === ours.id ? ours.tabs.find((t) => t.panes.some((p) => p.terminal === out.terminal)) : null;
-  return shell && typeof out.terminal === "string" ? { ...place, spare: { space: ours.id, tab: shell.id, terminal: out.terminal } } : place;
+  // once the bot shows in a tab of its own there (launchSeat, closeSpare).
+  const spare = ours && place?.space === ours.id ? freshSpare(ours, out.terminal) : null;
+  return spare ? { ...place, spare } : place;
 }
 
 /**
@@ -1466,19 +1466,37 @@ const TAB_WAIT_MS = (() => {
 const TAB_STEP_MS = 200;
 
 /**
- * Waits for the window to show `terminal` (a terminal of this computer) in a pane: the window's
- * spaces then, with each tab's `index` (its position, from 1, as tab.move counts) and
- * `terminals`, and the space and tab showing it: { spaces, space, tab }. Null when no window
- * answers, or the pane hasn't shown after TAB_WAIT_MS.
+ * `pgrep <args>` on this computer as pgrep exited: { code, stdout, stderr }, its own; null when
+ * it never exited by itself (not run, killed, past its 15 s): what it would have said is unknown.
  */
-async function windowShows(terminal, ms = TAB_WAIT_MS) {
+const pgrepHere = (args) => new Promise((done) => {
+  try {
+    execFile("pgrep", args, { timeout: 15000 }, (err, stdout, stderr) => {
+      if (!err) return done({ code: 0, stdout, stderr });
+      done(typeof err.code === "number" ? { code: err.code, stdout: stdout ?? "", stderr: stderr ?? "" } : null);
+    });
+  } catch { done(null); }
+});
+
+/** A terminal id without the machine name a linked machine's may come with (`vm/t5` -> `t5`). */
+const bareId = (t) => (typeof t === "string" ? t.slice(t.indexOf("/") + 1) : t);
+
+/**
+ * Waits for the window to show `terminal` (a terminal of this computer, or of `machine` in that
+ * machine's spaces) in a pane: the window's spaces then, with each tab's `index` (its
+ * position, from 1, as tab.move counts) and `terminals` (a machine's as bare ids, bareId), and
+ * the space and tab showing it: { spaces, space, tab }. Null when no window answers, or the pane
+ * hasn't shown after TAB_WAIT_MS.
+ */
+async function windowShows(terminal, ms = TAB_WAIT_MS, machine = null) {
   const until = Date.now() + ms;
+  const id = machine ? bareId : (t) => t;
   for (;;) {
     const read = await windowRead();
     if (!read) return null;
-    const spaces = read.map((s) => ({ ...s, tabs: s.tabs.map((t, i) => ({ ...t, index: i + 1, terminals: t.panes.map((p) => p.terminal),
+    const spaces = read.map((s) => ({ ...s, tabs: s.tabs.map((t, i) => ({ ...t, index: i + 1, terminals: t.panes.map((p) => id(p.terminal)),
       count: t.paneCount })) }));
-    for (const space of spaces.filter((x) => !x.machine)) {
+    for (const space of spaces.filter((x) => (machine ? x.machine === machine : !x.machine))) {
       const tab = space.tabs.find((t) => t.terminals.includes(terminal));
       if (tab) return { spaces, space, tab };
     }
@@ -1532,8 +1550,9 @@ async function agentThere(machine, argv, name) {
 
 /**
  * Where a start on `machine` goes in Herdr's window: a space of that machine showing the
- * project (its folder, or one keying to it there), else a new one (space.new on that machine);
- * null with no window to ask.
+ * project (its folder, or one keying to it there), else a new one (space.new on that machine),
+ * with its `spare` shell (freshSpare, its terminal as a bare id) for closeSpare once the bot
+ * shows there; null with no window to ask.
  */
 async function windowPlaceOn(machine, key) {
   const find = async () => {
@@ -1556,7 +1575,14 @@ async function windowPlaceOn(machine, key) {
   if (r.code !== 0) return null;
   let out = {};
   try { out = JSON.parse(r.stdout) ?? {}; } catch { /* found in ls instead */ }
-  return (await find()).hit ?? (typeof out.space === "string" ? { space: out.space, tab: null, from: null } : null);
+  const now = await find();
+  const place = now.hit ?? (typeof out.space === "string" ? { space: out.space, tab: null, from: null } : null);
+  // The space is this start's when it is the one found: its shell's tab, as windowPlace's.
+  const shell = typeof out.terminal === "string" ? bareId(out.terminal) : null;
+  const ours = shell && now.spaces?.find((s) => s.id === place?.space && s.machine === machine
+    && (s.id === out.space || s.tabs.some((t) => t.panes.some((p) => bareId(p.terminal) === shell))));
+  const spare = ours ? freshSpare(ours, shell, (a, b) => bareId(a) === b) : null;
+  return spare ? { ...place, spare } : place;
 }
 
 /**
@@ -1615,7 +1641,7 @@ async function seatOnMachine(project, bot, over = {}) {
     return { address, terminal: address.slice(address.indexOf("/") + 1), created_ms: get.created_ms, machine, core: m.id, argv, labels, place, warnings };
   };
   if (over.replacing) return run();
-  return underLedger(async ({ machines, heldBy, holds, write }) => {
+  const seat = await underLedger(async ({ machines, heldBy, holds, write }) => {
     const mine = await holds(heldBy(bot.id, m.id));
     if (mine && mine.binding.project === key) return { running: addressOf(mine.binding, machines) };
     const seat = await run();
@@ -1627,6 +1653,12 @@ async function seatOnMachine(project, bot, over = {}) {
     }
     return seat;
   });
+  // A space this start made: its spare shell's tab closed once the bot shows there (closeSpare).
+  if (!seat.running && place?.spare && TAB_WAIT_MS > 0) {
+    const why = await closeSpare(place.spare, seat.terminal, machine);
+    if (why) seat.warnings.push(why);
+  }
+  return seat;
 }
 
 const seatOnJson = (bot, seat) => ({ id: bot.id, terminal: seat.terminal, machine: seat.machine, argv: seat.argv, labels: seat.labels,
@@ -1892,17 +1924,37 @@ async function launchSeat(project, bot, over = {}) {
 }
 
 /**
- * Closes the spare shell's tab of a space this start made (windowPlace's `spare`) once the
- * window shows the bot's pane (`terminal`) in another tab there: never before, so the space
- * always keeps a tab, and only while that tab holds the shell alone, one pane, with nothing
- * but the shell itself in front (spareTab, shellIdle). Never `confirmed`: should Herdr see
- * anything worth asking about, the person is asked. Null, or a warning when the close failed.
+ * The child processes of the shell `get` names (`pgrep -P` its pid, on `machine` through hc
+ * for a linked one's): their pids, [] for none, or null when that can't be told (no pid, no
+ * pgrep, an error, the machine not answering), and shellIdle then never counts it idle. None
+ * only as pgrep itself says it: it exited 1 with nothing on stdout or stderr. Here pgrep runs
+ * through pgrepHere, never runProgram, which gives code 1 and its own message on stderr for a
+ * pgrep it couldn't run (EACCES) or killed at its timeout as well as for every failed exit.
  */
-async function closeSpare(spare, terminal) {
-  const shown = await windowShows(terminal);
+async function shellChildren(get, machine = null) {
+  if (!Number.isSafeInteger(get?.pid) || get.pid <= 0) return null;
+  const args = ["-P", String(get.pid)];
+  const r = machine ? await remoteIo.exec("pgrep", args, machine) : await pgrepHere(args);
+  if (!r) return null;
+  const pids = (r.stdout ?? "").split(/\s+/).filter(Boolean);
+  if (r.code === 1 && !pids.length && !(r.stderr ?? "").trim()) return [];
+  return r.code === 0 && pids.length && pids.every((x) => /^\d+$/.test(x)) ? pids : null;
+}
+
+/**
+ * Closes the spare shell's tab of a space this start made (windowPlace's or windowPlaceOn's
+ * `spare`) once the window shows the bot's pane (`terminal`; on `machine`, a linked one's) in
+ * another tab there: never before, so the space always keeps a tab, and only while that tab
+ * holds the shell alone with nothing but the shell itself in front and no job of its own
+ * running (spareTab, shellIdle, shellChildren). Never `confirmed`: Herdr asks the person only
+ * before closing a space's last tab, which this never is. Null, or a warning when it failed.
+ */
+async function closeSpare(spare, terminal, machine = null) {
+  const shown = await windowShows(terminal, TAB_WAIT_MS, machine);
   if (!shown || shown.space.id !== spare.space) return null;
   if (!spareTab(spare, shown.space.tabs, terminal, true)) return null;
-  const idle = shellIdle(await hcGet(spare.terminal).catch(() => null));
+  const get = await hcGet(machine ? `${machine}/${spare.terminal}` : spare.terminal).catch(() => null);
+  const idle = shellIdle(get, await shellChildren(get, machine));
   const tab = spareTab(spare, shown.space.tabs, terminal, idle);
   if (!tab) return null;
   const why = await windowDo("tab.close", { id: tab });

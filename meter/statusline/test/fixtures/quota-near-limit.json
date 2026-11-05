@@ -2,6 +2,7 @@
   "session_id": "00000000-0000-4000-8000-000000000003",
   "transcript_path": "/home/user/.claude/projects/-home-user-code-my-app/00000000-0000-4000-8000-000000000003.jsonl",
   "cwd": "/home/user/code/my-app",
+  "effort": { "level": "xhigh" },
   "model": { "id": "claude-opus-5-5", "display_name": "Opus 5.5" },
   "workspace": { "current_dir": "/home/user/code/my-app", "project_dir": "/home/user/code/my-app", "added_dirs": [] },
   "version": "2.1.318",

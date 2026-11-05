@@ -56,6 +56,19 @@ export const PATH_RENAMES = Object.freeze([
   ["data/mod-manager", "data/am-mods", "mod-manager"],
 ]);
 
+/**
+ * Herdr's own mods the pack ships a drop-in for (#387): Herdr's block → the pack's mod that does
+ * its job and more. Never a rename: Herdr keeps its mod, keys.json never follows, and only a
+ * layout that shows the pack (it names am-sidebar, or it is the pack's automagik.json, kept when
+ * the person edited it, D8) gets the pack's in its place, and only while that mod is installed
+ * and on, the layout places Herdr's exactly once and does not place the pack's already.
+ */
+export const DROP_INS = Object.freeze({ "workspace-status": "am-status" });
+/** What each drop-in adds, for the line that says a layout got it. */
+export const DROP_IN_GAINS = Object.freeze({ "am-status": "the status bar with the Automagik Herdr version, its update check and the auto-update switch" });
+/** The mod whose block makes a layout one that shows the pack. */
+const SIDEBAR = "am-sidebar";
+
 /** The old name `table` maps to `name` (RENAMES, SHARED_RENAMES), or undefined: the one place old names live. */
 export const renamedFrom = (table, name) => Object.keys(table).find((old) => table[old] === name);
 
@@ -144,18 +157,24 @@ const isNode = (n) => n !== null && typeof n === "object" && !Array.isArray(n);
  * A parsed layout with `content.mod` and the root's `terminal_menu` moved onto `active`'s names.
  * Returns `{ layout, edits, left }` (edits: `{pointer, id, field, before, after}`; left: `{mod, ref}`
  * for each old name met but not rewritten), or null when the structure is not a layout (a root object whose
- * `children`, where present, are arrays of objects).
+ * `children`, where present, are arrays of objects). `dropIns` (DROP_INS' entries whose mod is
+ * installed and on) then swap Herdr's block for the pack's in a layout that shows the pack (`pack`:
+ * it is the pack's automagik.json); those edits carry `dropIn: true`. `held` lists `{from, to, count}`
+ * for a drop-in left out because the layout places Herdr's block more than once (which one is
+ * the person's to say), so the install and the update can say why the pack's is missing.
  */
-export function rewriteLayout(parsed, active) {
+export function rewriteLayout(parsed, active, { dropIns = {}, pack = false } = {}) {
   if (!isNode(parsed)) return null;
   const layout = JSON.parse(JSON.stringify(parsed));
   const edits = [];
   const left = new Map();
+  const blocks = [];
   const visit = (node, pointer) => {
     if (!isNode(node)) return false;
     if (node.children !== undefined && !Array.isArray(node.children)) return false;
     const mod = isNode(node.content) ? node.content.mod : undefined;
     if (typeof mod === "string") {
+      blocks.push({ node, pointer });
       if (own(RENAMES, mod) && own(active, mod)) {
         node.content.mod = own(active, mod);
         edits.push({ pointer: `${pointer}/content/mod`, id: node.id ?? null, field: "content.mod", before: mod, after: own(active, mod) });
@@ -171,7 +190,18 @@ export function rewriteLayout(parsed, active) {
       edits.push({ pointer: "/terminal_menu", id: layout.id ?? null, field: "terminal_menu", before: menu, after: own(active, menu) });
     } else if (oldModOf(menu)) left.set(menu, oldModOf(menu));
   }
-  return { layout, edits, left: [...left].map(([ref, mod]) => ({ mod, ref })) };
+  const placing = (mod) => blocks.filter((b) => b.node.content.mod === mod);
+  const held = [];
+  if (pack || placing(SIDEBAR).length) {
+    for (const [from, to] of Object.entries(DROP_INS)) {
+      const at = placing(from);
+      if (own(dropIns, from) !== to || at.length === 0 || placing(to).length) continue;
+      if (at.length > 1) { held.push({ from, to, count: at.length }); continue; }
+      at[0].node.content.mod = to;
+      edits.push({ pointer: `${at[0].pointer}/content/mod`, id: at[0].node.id ?? null, field: "content.mod", before: from, after: to, dropIn: true });
+    }
+  }
+  return { layout, edits, held, left: [...left].map(([ref, mod]) => ({ mod, ref })) };
 }
 
 /**

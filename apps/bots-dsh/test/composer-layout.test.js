@@ -4,7 +4,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { runInNewContext } from 'node:vm'
 import { build } from 'esbuild'
-import { STAGE_CSS } from '../src/client/stage.js'
+import { CONVERSATION_MARK, STAGE_CSS } from '../src/client/stage.js'
 
 // Requires the dev/harness dependency install; reads its supported DSH InputBar CSS,
 // not a second layout model. This does not inspect or modify the installed GUI.
@@ -26,10 +26,11 @@ const executablePath = process.env.CHROME_BIN ?? (process.platform === 'darwin'
   ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : '/usr/bin/chromium')
 
 // This is a layout fixture, NOT an end-to-end replacement for the shell's editor.
-// Bot mode installs CONVERSATION_CSS and ComposerPlus; a native wish installs neither.
+// Bot mode's conversation group marks the page and installs CONVERSATION_CSS and ComposerPlus;
+// a native wish mounts no conversation group, so it has none of the three.
 function fixture(bot, running, stage = STAGE_CSS, hero = false) {
   const cls = name => `${prefix}_${name}`
-  return `<style>
+  return `${bot ? `<html ${CONVERSATION_MARK}>` : ''}<style>
     :root{--dsh-composer-card-max-width:748px;--dsh-composer-text-max-height:240px;--dsw-font-family:Arial}
     *{box-sizing:border-box}body{margin:0}main{height:600px;display:flex;flex-direction:column;justify-content:flex-end;padding:16px}
     ${hostCss}\n${bot ? botCss : ''}\n${stage}
@@ -49,13 +50,16 @@ function fixture(bot, running, stage = STAGE_CSS, hero = false) {
 }
 
 // dev before #88: the same six rules without the marker.
-const UNSCOPED = STAGE_CSS.replaceAll(':has(.bt-plus)', '')
+const MARKED = `html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card]`
+const UNSCOPED = STAGE_CSS.replaceAll(MARKED, 'html body [data-composer-card][data-composer-card]')
 
-test('all six structural stage rules require the Bot composer ownership marker', () => {
+test('all six structural stage rules require the Bot conversation group marker', () => {
+  assert.equal(CONVERSATION_MARK, 'data-bt-conversation')
   assert.notEqual(UNSCOPED, STAGE_CSS)
-  const structural = STAGE_CSS.split('\n').filter(rule => rule.startsWith('html body [data-composer-card][data-composer-card]'))
+  const structural = STAGE_CSS.split('\n').filter(rule => /^html(\[[^\]]+\])? body \[data-composer-card\]\[data-composer-card\]/.test(rule))
   assert.equal(structural.length, 6)
-  for (const rule of structural) assert.ok(rule.startsWith('html body [data-composer-card][data-composer-card]:has(.bt-plus)'), rule)
+  for (const rule of structural) assert.ok(rule.startsWith(MARKED), rule)
+  assert.doesNotMatch(STAGE_CSS, /:has\(\.bt-plus\)/, 'no structural rule waits for the "+" inside the card (#322)')
   assert.match(STAGE_CSS, /html body \[data-composer-card\]\{background:/, 'cosmetics remain available to native sessions')
 })
 

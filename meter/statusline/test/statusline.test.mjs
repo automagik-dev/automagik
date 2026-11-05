@@ -1,68 +1,284 @@
 // The status line's formatter against fixture stdin objects (shaped after a real Claude Code
-// 2.1.318 statusline input), its settings lookup and compact counter in temp folders, and the
-// command end to end under a bare PATH, alone and wrapped by the limits logger.
-//   node --test meter/statusline/test/*.test.mjs
+// 2.1.318 statusline input), its run-out estimate, limits-log tail, bot lookup and settings lookup
+// in temp folders, and the command end to end under a bare PATH, alone and wrapped by the limits
+// logger.
+//   node --test 'meter/statusline/test/*.test.mjs'
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { autoCompactWindowFor, countCompacts, envWindow, format, localSettingsRoot, tokens, until } from "../automagik-statusline.mjs";
+import { WHOIS_TIMEOUT, autoCompactWindowFor, bar, botName, envWindow, format, localSettingsRoot, readLimitsTail, runOut, tokens, until } from "../automagik-statusline.mjs";
 
 const here = (p) => fileURLToPath(new URL(p, import.meta.url));
 const fixture = (name) => JSON.parse(readFileSync(here(`fixtures/${name}.json`), "utf8"));
 const NOW = 1_793_800_000_000;
 const plain = { now: NOW, autoCompactWindow: 500_000, color: false };
 const temp = () => mkdtempSync(join(tmpdir(), "meter-statusline-"));
+const iso = (s) => new Date(s * 1000).toISOString();
 
-test("fixtures: fresh session, 40% with 2 compacts, quota near its limit", () => {
-  assert.equal(format(fixture("fresh-session"), { ...plain, compacts: 0 }),
-    "Opus 5.5 · my-app | ctx 0% 0/1M · 500k to compact");
-  assert.equal(format(fixture("forty-percent-two-compacts"), { ...plain, compacts: 2 }),
-    "Opus 5.5 · api | ctx 40% 400k/1M · 100k to compact · 2 compacts | 5h 24% ↺2h14m · 7d 58% ↺4d2h");
-  assert.equal(format(fixture("quota-near-limit"), { ...plain, compacts: 1 }),
-    "Opus 5.5 · my-app | ctx 47% 472k/1M · 29k to compact · 1 compact | 5h 94% ↺59m · 7d 91% ↺1d1h");
+test("fixtures (NO_COLOR): fresh session, mid session with quota, outside Herdr, near the limits", () => {
+  assert.equal(format(fixture("fresh-session"), plain),
+    "🧠 Opus 5.5 ⚡medium  ┃  📁 my-app  ┃  💬 Context ▱▱▱▱▱▱▱▱▱▱ 0/1M");
+  assert.equal(format(fixture("mid-session-quota"), { ...plain, bot: "Meter Captain" }),
+    "🤖 Meter Captain  🧠 Opus 5.5 ⚡high  ┃  📁 api  ┃  💬 Context ▰▰▰▰▱▱▱▱▱▱ 400k/1M"
+    + "  ┃  Quota 5h ▰▱▱▱▱ 24%  Resets 2h14m  ┃  Quota 7d ▰▰▱▱▱ 31%  Resets 4d2h");
+  // Outside a Herdr pane there is no bot: the line starts at the model.
+  assert.equal(format(fixture("mid-session-quota"), plain),
+    "🧠 Opus 5.5 ⚡high  ┃  📁 api  ┃  💬 Context ▰▰▰▰▱▱▱▱▱▱ 400k/1M"
+    + "  ┃  Quota 5h ▰▱▱▱▱ 24%  Resets 2h14m  ┃  Quota 7d ▰▰▱▱▱ 31%  Resets 4d2h");
+  // Near the limits, no log: 94% after 4h01m of the 5h window runs out in 16m, before its reset
+  // in 59m; 91% after 5d22h of the 7d window in 13h47m, before 1d1h.
+  assert.equal(format(fixture("quota-near-limit"), { ...plain, bot: "Meter Captain" }),
+    "🤖 Meter Captain  🧠 Opus 5.5 ⚡xhigh  ┃  📁 my-app  ┃  💬 Context ▰▰▰▰▰▱▱▱▱▱ 472k/1M"
+    + "  ┃  Quota 5h ▰▰▰▰▰ 94%  Left 16m  Resets 59m  ┃  Quota 7d ▰▰▰▰▰ 91%  Left 13h47m  Resets 1d1h");
 });
 
-test("colour: yellow from 70%, red from 90%, context judged against the compact window", () => {
-  const line = format(fixture("quota-near-limit"), { now: NOW, autoCompactWindow: 500_000, compacts: 1 });
-  assert.match(line, /\x1b\[31mctx 47% 472k\/1M\x1b\[0m/); // 94% of the 500k compact window
-  assert.match(line, /\x1b\[31m5h 94%\x1b\[0m/);
-  assert.match(line, /\x1b\[31m7d 91%\x1b\[0m/);
-  const forty = format(fixture("forty-percent-two-compacts"), { now: NOW, autoCompactWindow: 500_000 });
-  assert.match(forty, /\x1b\[33mctx 40%/); // 80% of the compact window
-  assert.doesNotMatch(forty, /\x1b\[3[13]m5h/);
+test("colour: green under 70, yellow from 70, red from 90; Left in red; context against the compact window", () => {
+  const E = (c) => `\x1b[${c}m`, R = E(0), dim = (s) => `${E(2)}${s}${R}`, red = (s) => `${E(31)}${s}${R}`;
+  const sep = dim("  ┃  ");
+  assert.equal(format(fixture("quota-near-limit"), { now: NOW, autoCompactWindow: 500_000, bot: "Meter Captain" }),
+    `🤖 ${E(36)}${E(1)}Meter Captain${R}  🧠 ${E(1)}Opus 5.5${R} ⚡xhigh${sep}📁 my-app${sep}`
+    + `💬 ${dim("Context")} ${red("▰▰▰▰▰▱▱▱▱▱")} ${red("472k")}${dim("/1M")}${sep}` // 94% of the 500k window
+    + `${dim("Quota 5h")} ${red("▰▰▰▰▰")} ${red("94%")}  ${dim("Left")} ${red("16m")}  ${dim("Resets")} 59m${sep}`
+    + `${dim("Quota 7d")} ${red("▰▰▰▰▰")} ${red("91%")}  ${dim("Left")} ${red("13h47m")}  ${dim("Resets")} 1d1h`);
+  // 400k is 80% of a 500k compact window (yellow) though the bar is 40% of the context window.
+  const mid = format(fixture("mid-session-quota"), { now: NOW, autoCompactWindow: 500_000 });
+  assert.ok(mid.includes(`${E(33)}▰▰▰▰▱▱▱▱▱▱${R} ${E(33)}400k${R}`), mid);
+  assert.ok(mid.includes(`${E(32)}▰▱▱▱▱${R} ${E(32)}24%${R}`), mid);
+  // No compact window: measured against the context window, 40%: green.
+  assert.ok(format(fixture("mid-session-quota"), { now: NOW }).includes(`${E(32)}▰▰▰▰▱▱▱▱▱▱${R}`));
+  const at = (p) => format({ rate_limits: { five_hour: { used_percentage: p } } }, { now: NOW });
+  assert.equal([69.4, 70, 89, 90].map((p) => at(p).match(/\x1b\[3(\d)m\d+%/)[1]).join(), "2,3,3,1");
 });
 
 test("a narrow terminal gets two lines: the quota moves to the second", () => {
-  const line = format(fixture("forty-percent-two-compacts"), { ...plain, compacts: 2, columns: 80 });
-  assert.equal(line, "Opus 5.5 · api | ctx 40% 400k/1M · 100k to compact · 2 compacts\n5h 24% ↺2h14m · 7d 58% ↺4d2h");
-  assert.equal(format(fixture("forty-percent-two-compacts"), { ...plain, compacts: 2, columns: 200 }).includes("\n"), false);
+  assert.equal(format(fixture("mid-session-quota"), { ...plain, columns: 120 }),
+    "🧠 Opus 5.5 ⚡high  ┃  📁 api  ┃  💬 Context ▰▰▰▰▱▱▱▱▱▱ 400k/1M\n"
+    + "Quota 5h ▰▱▱▱▱ 24%  Resets 2h14m  ┃  Quota 7d ▰▰▱▱▱ 31%  Resets 4d2h");
+  assert.equal(format(fixture("mid-session-quota"), { ...plain, columns: 200 }).includes("\n"), false);
 });
 
-test("missing fields: it prints what it has and never throws", () => {
-  for (const input of [null, undefined, "text", 42, [], {}, { model: null, context_window: null, rate_limits: null }]) {
+test("missing fields drop their segment, and it never throws", () => {
+  for (const input of [null, undefined, "text", 42, [], {}, { model: null, context_window: null, rate_limits: null, effort: "high" }]) {
     assert.equal(typeof format(input, plain), "string");
   }
   assert.equal(format({}, plain), "");
-  // No auto-compact window: no distance, no guessed default.
-  assert.equal(format(fixture("forty-percent-two-compacts"), { now: NOW, color: false }),
-    "Opus 5.5 · api | ctx 40% 400k/1M | 5h 24% ↺2h14m · 7d 58% ↺4d2h");
+  // No effort (a model without the setting): no effort word.
+  const { effort, ...noEffort } = fixture("fresh-session");
+  assert.equal(effort.level, "medium");
+  assert.equal(format(noEffort, plain), "🧠 Opus 5.5  ┃  📁 my-app  ┃  💬 Context ▱▱▱▱▱▱▱▱▱▱ 0/1M");
   // One window only, as Claude Code sends once the other has reset; a passed reset shows no timer.
   const real = { model: { id: "claude-opus-5-5", display_name: "Opus 5.5" }, rate_limits: { seven_day: { used_percentage: 58, resets_at: 1_793_700_000 } } };
-  assert.equal(format(real, plain), "Opus 5.5 | 7d 58%");
-  // Percentage worked out from current_usage when the totals are absent.
+  assert.equal(format(real, plain), "🧠 Opus 5.5  ┃  Quota 7d ▰▰▰▱▱ 58%");
+  // Tokens worked out from current_usage when the totals are absent; from the % when only it is there.
   const usage = { context_window: { context_window_size: 200_000, current_usage: { input_tokens: 10, cache_creation_input_tokens: 990, cache_read_input_tokens: 49_000 } } };
-  assert.equal(format(usage, { ...plain, autoCompactWindow: null }), "ctx 25% 50k/200k");
-  assert.equal(format({ context_window: { total_input_tokens: 520_000, context_window_size: 1_000_000, used_percentage: 52 } }, plain), "ctx 52% 520k/1M · compact due");
+  assert.equal(format(usage, plain), "💬 Context ▰▰▰▱▱▱▱▱▱▱ 50k/200k");
+  assert.equal(format({ context_window: { context_window_size: 1_000_000, used_percentage: 52 } }, plain), "💬 Context ▰▰▰▰▰▱▱▱▱▱ 520k/1M");
+  assert.equal(format({ context_window: { used_percentage: 52 } }, plain), "💬 Context ▰▰▰▰▰▱▱▱▱▱ 52%");
+  // Text from stdin or bots.json is printed without its control characters.
+  assert.equal(format({ model: { display_name: "Opus\x1b[2J 5.5\n" }, workspace: { current_dir: "/x/a\x07b" } }, { ...plain, bot: "\x1b]0;t\x07Bot" }),
+    "🤖 ]0;tBot  🧠 Opus[2J 5.5  ┃  📁 ab");
 });
 
-test("tokens and reset times read short", () => {
+test("tokens, times and bars read short", () => {
   assert.deepEqual([0, 999, 1000, 78_400, 999_400, 1_000_000, 1_250_000].map(tokens), ["0", "999", "1k", "78k", "999k", "1M", "1.3M"]);
   assert.deepEqual([null, -5, 0, 30, 2700, 3600, 7_840, 86_400, 353_600].map(until), [null, null, null, "1m", "45m", "1h00m", "2h11m", "1d0h", "4d2h"]);
+  assert.deepEqual([[0, 10], [4, 10], [5, 10], [40, 10], [100, 10], [140, 5], [-3, 5], [null, 5], [94, 5]].map(([p, n]) => bar(p, n)),
+    ["▱▱▱▱▱▱▱▱▱▱", "▱▱▱▱▱▱▱▱▱▱", "▰▱▱▱▱▱▱▱▱▱", "▰▰▰▰▱▱▱▱▱▱", "▰▰▰▰▰▰▰▰▰▰", "▰▰▰▰▰", "▱▱▱▱▱", "▱▱▱▱▱", "▰▰▰▰▰"]);
+});
+
+test("Left: the rise over the time the log covers, idle gaps left out; else since the window started", () => {
+  const t = NOW / 1000, reset = t + 3600; // a 5h window started 4h ago, 1h to its reset
+  const w = (used) => ({ used_percentage: used, resets_at: reset });
+  const row = (ago, used, resetsAt = reset) => ({ ts: iso(t - ago), five_hour: { used_percentage: used, resets_at: resetsAt } });
+  // Readings every 5 minutes (the logger's heartbeat), from `from` seconds ago to `to`.
+  const every5 = (from, to, at, make = row) => Array.from({ length: (from - to) / 300 + 1 }, (_, n) => make(from - n * 300, at(from - n * 300)));
+  const left = (...a) => { const s = runOut(...a); return s == null ? null : Math.round(s); };
+  // 1% a minute over the last 70 minutes: at 70%, 30% left runs out in 30 minutes.
+  const steady = every5(4200, 0, (ago) => 70 - ago / 60);
+  assert.equal(left("five_hour", w(70), NOW, steady), 1800);
+  // A stale stdin reading changes nothing: the log's highest reading is the current used %.
+  assert.equal(left("five_hour", w(50), NOW, steady), 1800);
+  // 0.1% a minute runs out after the reset: no Left. No rise at all: no Left, though the
+  // window's average would give one.
+  assert.equal(left("five_hour", w(70), NOW, every5(4200, 0, (ago) => 70 - ago / 600)), null);
+  assert.equal(left("five_hour", w(90), NOW, every5(4200, 0, () => 90)), null);
+  // An idle gap counts neither its time nor a rise across it: a reading at 20% 50 minutes ago,
+  // nothing, then 1% a minute over the last 20 minutes (less the 5 settling minutes after the
+  // gap): 20% left in 20 minutes.
+  assert.equal(left("five_hour", w(80), NOW, [row(3000, 20), ...every5(1200, 0, (ago) => 80 - ago / 60)]), 1200);
+  // A lone reading 10 minutes old covers too little to measure: no Left.
+  assert.equal(left("five_hour", w(90), NOW, [row(600, 10)]), null);
+  // No reading of the window in the lookback: the average since the window started, 90% in 4h,
+  // 10% left in 1600 s. Readings of another window (an older reset), from the future or
+  // malformed are none.
+  assert.equal(left("five_hour", w(90), NOW, []), 1600);
+  const ignored = [row(2400, 10, reset - 18000), row(-60, 10), { ts: "x", five_hour: { used_percentage: 10, resets_at: reset } }, null, 5];
+  assert.equal(left("five_hour", w(90), NOW, ignored), 1600);
+
+  // The 7d window looks back 6h. 2% in 6h at 90%: 10% left in 30h (1d6h).
+  const reset7 = t + 2 * 86400, w7 = { used_percentage: 90, resets_at: reset7 };
+  const row7 = (ago, used) => ({ ts: iso(t - ago), seven_day: { used_percentage: used, resets_at: reset7 } });
+  // A resumed session logs its value from before the resume (54%) with a fresh ts, a second
+  // before its current one: the shape of the owner's log. It changes nothing.
+  assert.equal(left("seven_day", w7, NOW, [...every5(25200, 0, (ago) => 90 - ago / 10800, row7), row7(17999, 54)]), 108_000);
+  assert.equal(until(108_000), "1d6h");
+  // The log starts with that resumed session 5h ago: the 5 settling minutes keep its stale first
+  // reading out; 2% in 5h, 10% left in 25h (1d1h), not 1h24m.
+  const resumed = [row7(18000, 54), row7(17999, 88), ...every5(17700, 0, (ago) => 88 + 2 * (18000 - ago) / 18000, row7)];
+  assert.equal(left("seven_day", w7, NOW, resumed), 90_000);
+  // A gap: one reading 11.5h ago (80%), idle, then 2% an hour over the last 100 minutes (95
+  // covered, past the 90-minute floor): 10% left in 5h. b65c385e started the rate at the old
+  // reading and counted the idle hours: 11h30m.
+  const gap = [row7(41_400, 80), ...every5(6000, 0, (ago) => 90 - 2 * ago / 3600, row7)];
+  assert.equal(left("seven_day", w7, NOW, gap), 18_000);
+  assert.equal(until(18_000), "5h00m");
+
+  // Nothing to show: a reset that passed, a full window (stdin or log), an unknown window, a
+  // fresh window.
+  assert.equal(runOut("five_hour", { used_percentage: 50, resets_at: t - 1 }, NOW, []), null);
+  assert.equal(runOut("five_hour", w(100), NOW, []), null);
+  assert.equal(runOut("five_hour", w(90), NOW, [row(600, 100)]), null);
+  assert.equal(runOut("one_day", w(90), NOW, []), null);
+  assert.equal(runOut("five_hour", { used_percentage: 90, resets_at: t + 18000 - 300 }, NOW, []), null);
+  // format() shows the log's rate.
+  const input = { rate_limits: { five_hour: w(70) } };
+  assert.equal(format(input, { ...plain, limits: steady }), "Quota 5h ▰▰▰▰▱ 70%  Left 30m  Resets 1h00m");
+  assert.equal(format(input, plain), "Quota 5h ▰▰▰▰▱ 70%  Resets 1h00m");
+});
+
+test("Left on the owner's log shape after an overnight gap: none until 90 minutes are covered", () => {
+  // The 7d window on the owner's log, 2026-11-05: a last reading at 78% at 03:15Z, nothing for
+  // 8h24m, then readings from 11:39Z at 79%, whole-percent steps at the minutes below after it
+  // (the real step times), about 3.2% an hour. Readings every 5 minutes and at each step.
+  const resume = NOW / 1000 - 3 * 3600, reset7 = resume + 3 * 86400;
+  const steps = [[0, 79], [19, 80], [55, 81], [74, 82], [87, 83], [100, 84], [115, 85], [125, 86]];
+  const at = (s) => steps.filter(([m]) => m * 60 <= s).at(-1)[1];
+  const row7 = (ts, used) => ({ ts: iso(ts), seven_day: { used_percentage: used, resets_at: reset7 } });
+  const rowsTill = (s) => [row7(resume - 30_240, 78),
+    ...[...new Set([...Array.from({ length: Math.floor(s / 300) + 1 }, (_, n) => n * 300), ...steps.map(([m]) => m * 60).filter((x) => x <= s)])]
+      .sort((a, b) => a - b).map((x) => row7(resume + x, at(x)))];
+  const leftAt = (min) => {
+    const s = min * 60;
+    return runOut("seven_day", { used_percentage: at(s), resets_at: reset7 }, (resume + s) * 1000, rowsTill(s));
+  };
+  // Under 90 minutes covered (5 of them settling after the gap): no Left. ca8b3822 measured
+  // from 15 minutes on, and at 53 minutes, flat at 80% since minute 19, showed 16h00m (the real
+  // log: 6h09m at 12:04Z climbing to 15h29m at 12:32Z, then halving).
+  for (let min = 10; min <= 94; min += 1) assert.equal(leftAt(min), null, `minute ${min}`);
+  // From 95 minutes on, the pace the log covers: within 4.5 to 2.5% an hour, never 15h.
+  for (let min = 95; min <= 130; min += 1) {
+    const s = leftAt(min), used = at(min * 60);
+    assert.ok(s != null && s >= ((100 - used) / 4.5) * 3600 && s <= ((100 - used) / 2.5) * 3600, `minute ${min}: ${s}`);
+  }
+  assert.equal(until(leftAt(101)), "5h08m"); // 84%: 5% in 96 covered minutes
+});
+
+test("the limits log: only its last 256 KiB, a cut first line and bad lines skipped", () => {
+  const dir = temp();
+  try {
+    assert.deepEqual(readLimitsTail(dir), []);
+    const log = join(dir, "claude-limits.jsonl");
+    writeFileSync(log, `${JSON.stringify({ ts: "a" })}\nnot json\n[1]\n\n${JSON.stringify({ ts: "b" })}\n{"ts":"half`);
+    assert.deepEqual(readLimitsTail(dir), [{ ts: "a" }, { ts: "b" }]);
+    const line = (n) => `${JSON.stringify({ ts: String(n), pad: "x".repeat(90) })}\n`;
+    const lines = Array.from({ length: 4000 }, (_, n) => line(n)).join(""); // about 450 KiB
+    writeFileSync(log, lines);
+    const rows = readLimitsTail(dir);
+    assert.equal(rows.at(-1).ts, "3999");
+    assert.ok(rows.length < 2700 && rows.length > 2000, String(rows.length));
+    assert.equal(Buffer.byteLength(rows.map((r) => line(Number(r.ts))).join("")) <= 256 << 10, true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+/** A fake automagik-herdr: answers whois from a table (an object: printed as JSON; a string: run as sh), counts its calls. */
+function fakeHerdr(dir, answers) {
+  const calls = join(dir, "calls");
+  const launcher = join(dir, "automagik-herdr");
+  const cases = Object.entries(answers).map(([term, out]) => `  ${term}) ${typeof out === "string" ? out : `printf '%s' '${JSON.stringify(out)}'`} ;;`).join("\n");
+  writeFileSync(launcher, `#!/bin/sh\necho "$*" >> '${calls}'\n[ "$1 $2" = "whois --json" ] || exit 2\ncase $3 in\n${cases}\n  *) exit 1 ;;\nesac\n`);
+  return { launcher, calls: () => { try { return readFileSync(calls, "utf8").trim().split("\n").filter(Boolean).length; } catch { return 0; } } };
+}
+
+test("bot name: whois in a Herdr pane, the name from the project's bots.json, cached 10 minutes", () => {
+  const dir = temp();
+  try {
+    const project = join(dir, "project"), state = join(dir, "state");
+    mkdirSync(join(project, ".herdr"), { recursive: true });
+    writeFileSync(join(project, ".herdr/bots.json"), JSON.stringify({ version: 1, bots: [{ id: "b-one", name: "Meter Captain" }, { id: "b-esc", name: "Bad\x1b[2J" }] }));
+    const one = JSON.stringify({ terminal: "t6", bot: "b-one", project });
+    const herdr = fakeHerdr(dir, {
+      t1: { terminal: "t1", core: "c", created_ms: 1, bot: "b-one", project, since: "x" },
+      t2: { terminal: "t2", core: "c", created_ms: 1, bot: null },
+      t3: { terminal: "t3", bot: "b-esc", project },
+      t4: { terminal: "t4", bot: "b-one", project: "project" }, // not an absolute path
+      t5: { terminal: "t5", bot: "b-gone", project },
+      t6: `sleep 1; printf '%s' '${one}'`, // answers in 1 s: inside the bound
+      t8: `trap '' TERM; exec sleep 4`, // hangs, deaf to SIGTERM
+    });
+    const opts = { dir: state, launcher: herdr.launcher, now: NOW };
+    // Outside Herdr: nothing is asked.
+    assert.equal(botName({}, opts), null);
+    assert.equal(herdr.calls(), 0);
+    assert.equal(botName({ HC_TERMINAL_ID: "t1" }, opts), "Meter Captain");
+    assert.equal(herdr.calls(), 1);
+    // Cached, misses too, for 10 minutes; then asked again.
+    assert.equal(botName({ HC_TERMINAL_ID: "t1" }, { ...opts, now: NOW + 599_000 }), "Meter Captain");
+    assert.equal(botName({ HC_TERMINAL_ID: "t2" }, opts), null);
+    assert.equal(botName({ HC_TERMINAL_ID: "t2" }, opts), null);
+    assert.equal(herdr.calls(), 2);
+    assert.equal(botName({ HC_TERMINAL_ID: "t1" }, { ...opts, now: NOW + 600_000 }), "Meter Captain");
+    assert.equal(herdr.calls(), 3);
+    // Another socket (another Herdr core) is another terminal.
+    assert.equal(botName({ HC_TERMINAL_ID: "t1", HC_TERMINAL_SOCKET: "/other.sock" }, opts), "Meter Captain");
+    assert.equal(herdr.calls(), 4);
+    assert.equal(botName({ HC_TERMINAL_ID: "t3" }, opts), "Bad[2J");
+    for (const term of ["t4", "t5", "t9"]) assert.equal(botName({ HC_TERMINAL_ID: term }, opts), null, term);
+    // The bound is 1.5 s: a whois answering in 1 s is waited for; one that hangs, even deaf to
+    // SIGTERM, is killed (SIGKILL) at the bound, well before its 4 s, and cached like a miss.
+    assert.equal(WHOIS_TIMEOUT, 1500);
+    assert.equal(botName({ HC_TERMINAL_ID: "t6" }, opts), "Meter Captain");
+    const started = Date.now();
+    assert.equal(botName({ HC_TERMINAL_ID: "t8" }, opts), null);
+    const took = Date.now() - started;
+    assert.ok(took >= 1400 && took < 3000, `whois took ${took} ms`);
+    const before = herdr.calls();
+    assert.equal(botName({ HC_TERMINAL_ID: "t8" }, opts), null);
+    assert.equal(herdr.calls(), before);
+    // No launcher, or a corrupt cache: no bot, no throw.
+    assert.equal(botName({ HC_TERMINAL_ID: "t7" }, { ...opts, launcher: join(dir, "missing") }), null);
+    writeFileSync(join(state, "statusline-bots.json"), "garbage");
+    assert.equal(botName({ HC_TERMINAL_ID: "t1" }, opts), "Meter Captain");
+    const cache = JSON.parse(readFileSync(join(state, "statusline-bots.json"), "utf8"));
+    assert.deepEqual(cache["#t1"], { name: "Meter Captain", at: NOW });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("bot name: 24 panes keep their entries, one whois each in 10 minutes; expired ones drop", () => {
+  const dir = temp();
+  try {
+    const project = join(dir, "project"), state = join(dir, "state");
+    const terms = Array.from({ length: 24 }, (_, n) => `t${100 + n}`);
+    mkdirSync(join(project, ".herdr"), { recursive: true });
+    writeFileSync(join(project, ".herdr/bots.json"), JSON.stringify({ bots: terms.map((term) => ({ id: `b-${term}`, name: `Bot ${term}` })) }));
+    const herdr = fakeHerdr(dir, Object.fromEntries(terms.map((term) => [term, { terminal: term, bot: `b-${term}`, project }])));
+    // Five renders of every pane, interleaved, over 9 minutes: 24 whois runs, not 120.
+    for (let round = 0; round < 5; round++) {
+      for (const [n, term] of terms.entries()) {
+        const now = NOW + round * 135_000 + n * 1000;
+        assert.equal(botName({ HC_TERMINAL_ID: term }, { dir: state, launcher: herdr.launcher, now }), `Bot ${term}`);
+      }
+    }
+    assert.equal(herdr.calls(), 24);
+    assert.equal(Object.keys(JSON.parse(readFileSync(join(state, "statusline-bots.json"), "utf8"))).length, 24);
+    // 11 minutes on, every entry has expired: one pane asks again and the file keeps only it.
+    assert.equal(botName({ HC_TERMINAL_ID: "t100" }, { dir: state, launcher: herdr.launcher, now: NOW + 660_000 + 23_000 }), "Bot t100");
+    assert.equal(herdr.calls(), 25);
+    assert.deepEqual(Object.keys(JSON.parse(readFileSync(join(state, "statusline-bots.json"), "utf8"))), ["#t100"]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("auto-compact window: the model's entry in user settings, the project overriding, off when disabled", () => {
@@ -185,95 +401,43 @@ test("CLAUDE_CODE_AUTO_COMPACT_WINDOW reads counts and k/M, held to 100k-1M", ()
     [200000, 200000, 1000000, 1000000, 100000, null, null, null, null, null]);
 });
 
-test("compacts: counted from compact_boundary records, then only from the appended bytes", () => {
-  const dir = temp();
-  try {
-    const file = join(dir, "t.jsonl"), state = join(dir, "state");
-    const boundary = (n) => JSON.stringify({ type: "system", subtype: "compact_boundary", content: "Conversation compacted", compactMetadata: { trigger: "auto", preTokens: n } }) + "\n";
-    // The words inside a message are escaped JSON: they are no record and are not counted.
-    const quoted = JSON.stringify({ type: "user", message: { content: 'grep \'"subtype":"compact_boundary"\' t.jsonl' } }) + "\n";
-    writeFileSync(file, `{"type":"user"}\n${boundary(1)}${quoted}${boundary(2)}`);
-    assert.equal(countCompacts(file, state), 2);
-    assert.equal(countCompacts(file, state), 2); // unchanged: served from the cache
-    const cached = JSON.parse(readFileSync(join(state, "statusline-compacts.json"), "utf8"))[file];
-    assert.equal(cached.offset, cached.size);
-    // A record half written when the status line runs is counted once it is complete.
-    const third = boundary(3);
-    appendFileSync(file, third.slice(0, 20));
-    assert.equal(countCompacts(file, state), 2);
-    appendFileSync(file, third.slice(20));
-    assert.equal(countCompacts(file, state), 3);
-    // A shorter file (replaced or rewritten) is counted again from the start.
-    writeFileSync(file, boundary(9));
-    assert.equal(countCompacts(file, state), 1);
-    // Rewritten in place (same inode) and grown past the cached offset: counted again from the
-    // start, not from the old offset. The same goes for a rewrite that keeps the size.
-    writeFileSync(file, `${boundary(1)}${boundary(2)}${boundary(3)}`);
-    assert.equal(countCompacts(file, state), 3);
-    const ino = statSync(file).ino;
-    const longer = `${JSON.stringify({ type: "user", message: { content: "x".repeat(600) } })}\n${boundary(4)}`;
-    writeFileSync(file, longer);
-    assert.equal(statSync(file).ino, ino);
-    assert.equal(countCompacts(file, state), 1);
-    writeFileSync(file, longer.replace('"subtype":"compact_boundary"', '"subtype":"compact_boundarY"'));
-    assert.equal(statSync(file).ino, ino);
-    assert.equal(countCompacts(file, state), 0);
-    // A cache entry from before the check (no hash) is counted again once.
-    writeFileSync(file, boundary(9));
-    const stale = { [file]: { ino: statSync(file).ino, size: 0, offset: 0, count: 5, at: Date.now() } };
-    writeFileSync(join(state, "statusline-compacts.json"), JSON.stringify(stale));
-    assert.equal(countCompacts(file, state), 1);
-    // A negative or non-integer cached offset or count (a corrupt or hand-edited cache) is not
-    // trusted: the file is counted again from the start and the entry is rewritten. Each entry
-    // carries the hash the counter computes for those bytes, so the hash check alone would keep it.
-    const bytes = readFileSync(file), size = bytes.length, fileIno = statSync(file).ino;
-    const hashOf = (from, to) => createHash("sha256").update(bytes.subarray(from, to)).digest("hex").slice(0, 16);
-    const cacheWith = (entry) => writeFileSync(join(state, "statusline-compacts.json"),
-      JSON.stringify({ [file]: { ino: fileIno, at: Date.now(), ...entry } }));
-    // The hash is the counter's own: a sound entry with it is served from the cache as it is.
-    cacheWith({ size, offset: size, count: 5, hash: hashOf(0, size) });
-    assert.equal(countCompacts(file, state), 5);
-    const bad = [
-      { offset: -5, count: 5, hash: hashOf(0, 0) },
-      { offset: -1, count: 5, hash: hashOf(0, 0) },
-      { offset: 1.5, count: 5, hash: hashOf(0, 1) }, // seen() reads the 1 whole byte before 1.5
-      { offset: "0", count: 5, hash: hashOf(0, 0) },
-      { offset: null, count: 5, hash: hashOf(0, 0) },
-      { size, offset: size, count: -3, hash: hashOf(0, size) },
-      { size, offset: size, count: 2.5, hash: hashOf(0, size) },
-    ];
-    for (const entry of bad) {
-      cacheWith(entry);
-      assert.equal(countCompacts(file, state), 1, JSON.stringify(entry));
-      const saved = JSON.parse(readFileSync(join(state, "statusline-compacts.json"), "utf8"))[file];
-      assert.equal(saved.offset, size);
-      assert.equal(saved.count, 1);
-    }
-    // A corrupt cache is rebuilt; a missing transcript has no count.
-    writeFileSync(join(state, "statusline-compacts.json"), "garbage");
-    assert.equal(countCompacts(file, state), 1);
-    assert.equal(countCompacts(join(dir, "missing.jsonl"), state), null);
-    assert.equal(countCompacts(undefined, state), null);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
-});
-
 test("the command under a bare PATH, alone and wrapped by the limits logger", () => {
   const dir = temp();
   try {
-    const config = join(dir, "config"), state = join(dir, "state"), transcript = join(dir, "t.jsonl");
+    const config = join(dir, "config"), state = join(dir, "state"), project = join(dir, "project");
     mkdirSync(config);
     writeFileSync(join(config, "settings.json"), JSON.stringify({ modelSettings: { "claude-opus-5-5": { autoCompactWindow: 500000 } } }));
-    writeFileSync(transcript, `${JSON.stringify({ type: "system", subtype: "compact_boundary" })}\n`.repeat(2));
-    const input = { ...fixture("forty-percent-two-compacts"), transcript_path: transcript, rate_limits: undefined };
+    // The bot lookup's launcher where install.sh links it: ~/.local/bin/automagik-herdr.
+    mkdirSync(join(project, ".herdr"), { recursive: true });
+    writeFileSync(join(project, ".herdr/bots.json"), JSON.stringify({ bots: [{ id: "b-one", name: "Meter Captain" }] }));
+    mkdirSync(join(dir, ".local/bin"), { recursive: true });
+    const herdr = fakeHerdr(join(dir, ".local/bin"), { t1: { terminal: "t1", bot: "b-one", project } });
+    const input = { ...fixture("mid-session-quota"), rate_limits: undefined };
     const env = { PATH: "/usr/bin:/bin", HOME: dir, CLAUDE_CONFIG_DIR: config, METER_STATE_DIR: state, NO_COLOR: "1", COLUMNS: "200" };
-    const run = (args, stdin) => spawnSync(process.execPath, args, { input: stdin, env, encoding: "utf8" });
+    const run = (args, stdin, extra = {}) => spawnSync(process.execPath, args, { input: stdin, env: { ...env, ...extra }, encoding: "utf8" });
     const statusline = here("../automagik-statusline.mjs");
-    const expected = "Opus 5.5 · api | ctx 40% 400k/1M · 100k to compact · 2 compacts\n";
+    const expected = "🧠 Opus 5.5 ⚡high  ┃  📁 api  ┃  💬 Context ▰▰▰▰▱▱▱▱▱▱ 400k/1M\n";
 
+    // Outside Herdr: no bot, and the launcher is not run.
     const alone = run([statusline], JSON.stringify(input));
     assert.equal(alone.status, 0, alone.stderr);
     assert.equal(alone.stdout, expected);
     assert.equal(alone.stderr, "");
+    assert.equal(herdr.calls(), 0);
+
+    // In a Herdr pane: the bot's name, asked once, then from the cache.
+    for (let n = 0; n < 2; n++) {
+      const inPane = run([statusline], JSON.stringify(input), { HC_TERMINAL_ID: "t1" });
+      assert.equal(inPane.status, 0, inPane.stderr);
+      assert.equal(inPane.stdout, `🤖 Meter Captain  ${expected}`);
+    }
+    assert.equal(herdr.calls(), 1);
+
+    // Colours on without NO_COLOR: 400k of the 500k compact window is yellow.
+    const { NO_COLOR, ...colourEnv } = env;
+    const coloured = spawnSync(process.execPath, [statusline], { input: JSON.stringify(input), env: colourEnv, encoding: "utf8" });
+    assert.equal(NO_COLOR, "1");
+    assert.match(coloured.stdout, /\x1b\[33m▰▰▰▰▱▱▱▱▱▱\x1b\[0m \x1b\[33m400k\x1b\[0m\x1b\[2m\/1M\x1b\[0m/);
 
     const logger = here("../claude-limits-statusline.mjs");
     const wrapped = run([logger, "--", process.execPath, statusline], JSON.stringify(input));
