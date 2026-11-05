@@ -3650,7 +3650,6 @@ function SecretHead({ bot, title, detail, name, onClose }) {
   );
 }
 function GitHubSteps({ bot, work }) {
-  const field = (key, params) => (0, import_react9.createElement)("li", null, t(key, params));
   return (0, import_react9.createElement)(
     "div",
     { className: "bt-secret-steps", role: "note" },
@@ -3658,15 +3657,15 @@ function GitHubSteps({ bot, work }) {
       "ol",
       null,
       (0, import_react9.createElement)("li", null, (0, import_react9.createElement)("a", { href: githubTokenUrl(work), target: "_blank", rel: "noopener noreferrer" }, t("Open GitHub's new fine-grained token page."))),
-      field("Under “{field}”, choose “{value}”.", { field: GITHUB_FIELDS.expiration, value: GITHUB_FIELDS.days }),
-      field("Under “{field}”, choose “{value}” and pick the ones {bot} works on.", { field: GITHUB_FIELDS.repositoryAccess, value: GITHUB_FIELDS.onlySelected, bot: bot.name }),
+      (0, import_react9.createElement)("li", null, t("Under “{field}”, choose “{value}”.", { field: GITHUB_FIELDS.expiration, value: GITHUB_FIELDS.days })),
+      (0, import_react9.createElement)("li", null, t("Under “{field}”, choose “{value}” and pick the ones {bot} works on.", { field: GITHUB_FIELDS.repositoryAccess, value: GITHUB_FIELDS.onlySelected, bot: bot.name })),
       (0, import_react9.createElement)(
         "li",
         null,
         t("Under “{field}”, set only these:", { field: GITHUB_FIELDS.permissions }),
         (0, import_react9.createElement)("ul", null, githubPermissions(work).map((entry) => (0, import_react9.createElement)("li", { key: entry.name }, (0, import_react9.createElement)("code", null, `${entry.label}: ${entry.access}`))))
       ),
-      field("Click “{button}”, copy it and paste it below.", { button: GITHUB_FIELDS.generate })
+      (0, import_react9.createElement)("li", null, t("Click “{button}”, copy it and paste it below.", { button: GITHUB_FIELDS.generate }))
     )
   );
 }

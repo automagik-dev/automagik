@@ -84,15 +84,14 @@ function SecretHead({ bot, title, detail, name, onClose }) {
 // pre-filled with the expiration and the permissions of the declared work, and the fields to
 // check there. GitHub's field names stay as GitHub shows them; the sentences are translated.
 export function GitHubSteps({ bot, work }) {
-  const field = (key, params) => h('li', null, t(key, params))
   return h('div', { className: 'bt-secret-steps', role: 'note' },
     h('ol', null,
       h('li', null, h('a', { href: githubTokenUrl(work), target: '_blank', rel: 'noopener noreferrer' }, t("Open GitHub's new fine-grained token page."))),
-      field('Under “{field}”, choose “{value}”.', { field: GITHUB_FIELDS.expiration, value: GITHUB_FIELDS.days }),
-      field('Under “{field}”, choose “{value}” and pick the ones {bot} works on.', { field: GITHUB_FIELDS.repositoryAccess, value: GITHUB_FIELDS.onlySelected, bot: bot.name }),
+      h('li', null, t('Under “{field}”, choose “{value}”.', { field: GITHUB_FIELDS.expiration, value: GITHUB_FIELDS.days })),
+      h('li', null, t('Under “{field}”, choose “{value}” and pick the ones {bot} works on.', { field: GITHUB_FIELDS.repositoryAccess, value: GITHUB_FIELDS.onlySelected, bot: bot.name })),
       h('li', null, t('Under “{field}”, set only these:', { field: GITHUB_FIELDS.permissions }),
         h('ul', null, githubPermissions(work).map(entry => h('li', { key: entry.name }, h('code', null, `${entry.label}: ${entry.access}`))))),
-      field('Click “{button}”, copy it and paste it below.', { button: GITHUB_FIELDS.generate })))
+      h('li', null, t('Click “{button}”, copy it and paste it below.', { button: GITHUB_FIELDS.generate }))))
 }
 
 export function SecretCard({ sessionId, bot, request, roster, actions, inline = false }) {
