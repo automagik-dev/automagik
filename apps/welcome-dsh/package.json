@@ -24,12 +24,14 @@
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
     "src/host/",
     "client.js",
+    "locale/",
     "cordis.patch.yml",
     "README.md",
     "LICENSE",

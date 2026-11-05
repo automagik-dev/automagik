@@ -8962,6 +8962,379 @@ __export(index_exports, {
 });
 module.exports = __toCommonJS(index_exports);
 
+// src/client/i18n.js
+var NAMESPACE = "welcome.team";
+var PT_BR = {
+  // Installs and their errors
+  "The install was cancelled.": "A instalação foi cancelada.",
+  "Omni's installer stopped (exit code {code}). What it printed is above.": "O instalador do Omni parou (código de saída {code}). A saída está acima.",
+  // A found Omni, and where Omni comes from
+  "Your Omni on this Mac": "Seu Omni neste Mac",
+  "Your Omni on this computer": "Seu Omni neste computador",
+  "Omni on this Mac": "Omni neste Mac",
+  "Omni on this computer": "Omni neste computador",
+  "port {port}": "porta {port}",
+  "saved in your Omni CLI": "salvo na sua CLI do Omni",
+  "Not answering right now.": "Não está respondendo agora.",
+  "Needs an update first; Connect Omni, next, does it.": "Precisa de uma atualização antes; Connect Omni, o próximo passo, cuida disso.",
+  "Sign-in from devices is off on it.": "O login por dispositivos está desligado nesse Omni.",
+  "Channel": "Canal",
+  "Use {omni}": "Usar {omni}",
+  "Connect {omni}": "Conectar {omni}",
+  "Already on this Mac": "Já está neste Mac",
+  "Already on this computer": "Já está neste computador",
+  "Saved in your Omni CLI": "Salvo na sua CLI do Omni",
+  "Run Omni on this Mac": "Rodar o Omni neste Mac",
+  "Run Omni on this computer": "Rodar o Omni neste computador",
+  "A private Omni of its own, set up for you": "Um Omni privado, só seu, configurado para você",
+  "An Omni somewhere else": "Um Omni em outro lugar",
+  "On a server, or the link Omni sent you": "Em um servidor, ou o link que o Omni enviou para você",
+  "Where your Omni is": "Onde está seu Omni",
+  "Connecting…": "Conectando…",
+  "Where is your Omni?": "Onde está seu Omni?",
+  "Connect": "Conectar",
+  "That link is cut short. Copy the whole link Omni sent you.": "Esse link está cortado. Copie o link inteiro que o Omni enviou.",
+  "Its claim link: Omni opens it in your browser to make it yours.": "É o link de reivindicação: o Omni abre no seu navegador para que passe a ser seu.",
+  "Its address, or paste the link Omni sent you on WhatsApp.": "O endereço, ou cole o link que o Omni enviou no WhatsApp.",
+  "Back to the choices": "Voltar às opções",
+  // An Omni nobody owns yet, and a sign-in from the phone
+  "{host} has no owner yet": "{host} ainda não pertence a ninguém",
+  "Make it yours on its server, then paste the link it prints below:": "Torne esse Omni seu no servidor e cole abaixo o link que aparecer:",
+  "Copied": "Copiado",
+  "Copy": "Copiar",
+  "Or {link}, click Claim this Omni, then connect its address again.": "Ou {link}, clique em Claim this Omni e conecte o endereço de novo.",
+  "open its claim page": "abra a página de reivindicação",
+  "Or open the claim link from its server log in your browser, then connect its address again.": "Ou abra no navegador o link de reivindicação do log do servidor e conecte o endereço de novo.",
+  "The link it printed": "O link que apareceu",
+  "Open WhatsApp": "Abrir o WhatsApp",
+  "Approve": "Aprovar",
+  "Cancel": "Cancelar",
+  "No WhatsApp on that Omni? Run {command} on its server.": "Sem WhatsApp nesse Omni? Rode {command} no servidor desse Omni.",
+  "That Omni cannot approve this app from here. Connect Omni, next, can use its API key.": "Esse Omni não consegue aprovar este app daqui. Connect Omni, o próximo passo, pode usar a chave de API.",
+  "The sign-in was denied.": "O login foi negado.",
+  "The code expired. Try again for a new one.": "O código expirou. Tente de novo para receber outro.",
+  "That is not a link your Omni sends. It looks like https://your-omni/api/login/app?grant=…": "Esse não é um link que seu Omni envia. O formato é https://your-omni/api/login/app?grant=…",
+  // What a Bot type starts with: the welcome's rows and the host's
+  "Reading what it starts with…": "Lendo com o que começa…",
+  "None": "Nenhum",
+  "Installs when Omni powers on": "Instala quando você liga o Omni",
+  "Installed": "Instalado",
+  "What this Bot is for: always on": "É para isso que este Bot existe: sempre ligado",
+  "Always on": "Sempre ligado",
+  "{label} for this Bot": "{label} para este Bot",
+  "What it starts with": "Com o que começa",
+  "Model": "Modelo",
+  "Your DSH default": "O padrão do seu DSH",
+  "You pick it in Omni's first chat": "Você escolhe no primeiro chat do Omni",
+  "{ref} · you confirm it in Omni's first chat": "{ref} · você confirma no primeiro chat do Omni",
+  "Thinking": "Raciocínio",
+  "The model's default": "O padrão do modelo",
+  "Plugins": "Plugins",
+  "Bot team": "Equipe de Bots",
+  "Bots, their chats, memory and settings": "Bots, com chats, memória e configurações",
+  "Omni channels": "Canais do Omni",
+  "Your channels and the chats on them": "Seus canais e os chats de cada um",
+  "Omni canvases": "Canvases do Omni",
+  "Live views drawn in the chat": "Visualizações ao vivo desenhadas no chat",
+  "channels": "canais",
+  "canvases": "canvases",
+  "Tools": "Ferramentas",
+  "Read channels and chats": "Ler canais e chats",
+  "Send, react and delete": "Enviar, reagir e apagar",
+  "Asks you before it writes to a person": "Pergunta a você antes de escrever para uma pessoa",
+  "Connect a channel": "Conectar um canal",
+  "Shows the QR code to scan": "Mostra o QR code para escanear",
+  "Any Omni operation": "Qualquer operação do Omni",
+  "Finds and runs the rest of Omni's API": "Encontra e executa o resto da API do Omni",
+  "Live canvases": "Canvases ao vivo",
+  "Shell and files": "Shell e arquivos",
+  "DSH's own tools; one-off work goes to Tasks": "As ferramentas do próprio DSH; trabalho avulso vai para Tasks",
+  "Skills": "Skills",
+  "None preloaded. Skills you add to DSH, or teach Omni later, show here.": "Nenhuma pré-carregada. As skills que você adicionar ao DSH, ou ensinar ao Omni depois, aparecem aqui.",
+  "Setup": "Configuração",
+  "Folder": "Pasta",
+  "Its own, in your team workspace": "Própria, no espaço de trabalho da sua equipe",
+  "Permissions": "Permissões",
+  "DSH's default": "Padrão do DSH",
+  "{preset} (DSH's default)": "{preset} (padrão do DSH)",
+  "Genie": "Genie",
+  "Installs when Genie powers on": "Instala quando você liga o Genie",
+  "A Task per wish": "Uma Task por desejo",
+  "Under Genie, with its report in Genie's chat": "Sob o Genie, com o relatório no chat do Genie",
+  "Shell, files and git": "Shell, arquivos e git",
+  "In the wish's own copy of the project": "Na cópia do projeto só desse desejo",
+  "Unfold": "Unfold",
+  "The Unfold Bot, Unfold inside DSH": "O Bot Unfold, Unfold dentro do DSH",
+  "Unfold bridge": "Ponte Unfold",
+  "Unfold watches this DSH": "Unfold acompanha este DSH",
+  "Unfold session": "Sessão Unfold",
+  "Unfold's own session, in DSH": "A sessão própria de Unfold, no DSH",
+  "Unfold events and stream": "Eventos e fluxo de Unfold",
+  "What Unfold did, as it happens": "O que Unfold fez, enquanto acontece",
+  "Unfold Mind": "Unfold Mind",
+  "What Unfold is thinking": "O que Unfold está pensando",
+  "Unfold capabilities, settings and trajectory": "Capacidades, configurações e trajetória de Unfold",
+  "What Unfold can do, its settings, each run step by step": "O que Unfold sabe fazer, as configurações e cada execução passo a passo",
+  "Comes with this DSH": "Vem com este DSH",
+  "Installs when Unfold powers on": "Instala quando você liga Unfold",
+  "Leads": "Lidera",
+  "Your Main Bot here": "Seu Bot principal aqui",
+  "Joins your team beside your Main Bot": "Entra na sua equipe ao lado do seu Bot principal",
+  // The boxes: status lines, lights, what shows inside
+  "Powered off": "Energia desligada",
+  "Powered off · not on your team": "Energia desligada · fora da sua equipe",
+  "Installing {title} · {at} of {count}": "Instalando {title} · {at} de {count}",
+  "Installing Omni…": "Instalando o Omni…",
+  "Found an Omni": "Um Omni encontrado",
+  "Found {count} Omnis": "{count} Omnis encontrados",
+  "Found Omnis, none ready to connect": "Omnis encontrados, nenhum pronto para conectar",
+  "Connected to {origin}": "Conectado a {origin}",
+  "Connected": "Conectado",
+  "Waking up…": "Acordando…",
+  "Starting Omni in this DSH…": "Iniciando o Omni neste DSH…",
+  "Looking for a connection…": "Procurando uma conexão…",
+  "Where should Omni live?": "Onde o Omni deve morar?",
+  "Approve this device on your phone": "Aprove este dispositivo no seu celular",
+  "Downloading Bun for Omni…": "Baixando o Bun para o Omni…",
+  "Setting up your Omni…": "Configurando seu Omni…",
+  "Installed · restart DSH to start it": "Instalação concluída · reinicie o DSH para começar",
+  "Could not install Omni": "Não foi possível instalar o Omni",
+  "Installing Genie…": "Instalando o Genie…",
+  "Starting Genie in this DSH…": "Iniciando o Genie neste DSH…",
+  "Ready for a wish": "À espera de um desejo",
+  "Could not install Genie": "Não foi possível instalar o Genie",
+  "Installing Unfold…": "Instalando Unfold…",
+  "Starting Unfold in this DSH…": "Iniciando Unfold neste DSH…",
+  "On your team": "Na sua equipe",
+  "Could not install Unfold": "Não foi possível instalar Unfold",
+  "power": "energia",
+  "plugins": "plugins",
+  "link": "conexão",
+  "team": "equipe",
+  "The Omni plugins": "Os plugins do Omni",
+  "Power {name} off": "Desligar {name}",
+  "Power {name} on": "Ligar {name}",
+  "What Omni's installer printed": "A saída do instalador do Omni",
+  "What went wrong is above. Power Omni on to try again.": "O que deu errado está acima. Ligue o Omni para tentar de novo.",
+  "In your menu": "No seu menu",
+  "Restart DSH, then power Omni on again.": "Reinicie o DSH e ligue o Omni de novo.",
+  "Add the Omni plugins on DSH's Plugins page.": "Adicione os plugins do Omni na página Plugins do DSH.",
+  "What the Genie install printed": "A saída da instalação do Genie",
+  "Restart DSH, then power Genie on again.": "Reinicie o DSH e ligue o Genie de novo.",
+  "Add @automagik/genie-dsh on DSH's Plugins page.": "Adicione @automagik/genie-dsh na página Plugins do DSH.",
+  "What went wrong is above. Power Genie on to try again.": "O que deu errado está acima. Ligue o Genie para tentar de novo.",
+  "Restart DSH, then power Unfold on again.": "Reinicie o DSH e ligue Unfold de novo.",
+  "Add @automagik/unfold-bot-dsh on DSH's Plugins page.": "Adicione @automagik/unfold-bot-dsh na página Plugins do DSH.",
+  "Genie is ready for wishes. For its skills too, like /wish, install its command line once, in a terminal:": "Genie já recebe desejos. Para ter também as skills, como /wish, instale a linha de comando do Genie uma vez, num terminal:",
+  // The cards
+  "Remove": "Remover",
+  "Every chat on every channel, answered by your team.": "Cada chat em cada canal, respondido pela sua equipe.",
+  "Give it a wish, get one delivery.": "Faça um desejo, receba uma entrega.",
+  "Unfold itself, working inside DSH.": "Unfold em pessoa, trabalhando dentro do DSH.",
+  // The speech bubble
+  "{name} here! Omni is asleep. Click its power button to bring it along.": "{name} aqui! O Omni está dormindo. Clique no botão de energia para trazer o Omni junto.",
+  "Omni is waking up…": "O Omni está acordando…",
+  "Bringing Omni into this DSH. One moment.": "Trazendo o Omni para este DSH. Um momento.",
+  "Omni is starting up…": "O Omni está iniciando…",
+  "Omni is looking for a connection…": "O Omni está procurando uma conexão…",
+  "Omni found where your channels live!": "O Omni encontrou onde seus canais moram!",
+  "No Omni here yet. Tell Omni where yours lives.": "Ainda não tem Omni aqui. Diga ao Omni onde o seu mora.",
+  "Approve this device, and Omni connects.": "Aprove este dispositivo e o Omni se conecta.",
+  "Omni is moving in. This takes a few minutes the first time.": "O Omni está se mudando. Da primeira vez, isso leva alguns minutos.",
+  "Omni is connected to {origin}!": "O Omni está conectado a {origin}!",
+  "Omni is connected!": "O Omni está conectado!",
+  "Omni is installed. Restart DSH to wake it.": "O Omni está instalado. Reinicie o DSH para acordar o Omni.",
+  "Omni could not be installed here.": "Não foi possível instalar o Omni aqui.",
+  "Unfold is waking up…": "Unfold está acordando…",
+  "Bringing Unfold into this DSH. One moment.": "Trazendo Unfold para este DSH. Um momento.",
+  "Unfold is starting up…": "Unfold está iniciando…",
+  "Unfold is on your team.": "Unfold está na sua equipe.",
+  "Unfold is installed. Restart DSH to wake it.": "A instalação de Unfold terminou. Reinicie o DSH para acordar Unfold.",
+  "Unfold could not be installed here.": "Não foi possível instalar Unfold aqui.",
+  "Genie is waking up…": "O Genie está acordando…",
+  "Bringing Genie into this DSH. One moment.": "Trazendo o Genie para este DSH. Um momento.",
+  "Genie is starting up…": "O Genie está iniciando…",
+  "Genie is on your team. Give it a wish once you are in!": "O Genie está na sua equipe. Faça um desejo assim que entrar!",
+  "Genie is installed. Restart DSH to wake it.": "A instalação do Genie terminou. Reinicie o DSH para acordar o Genie.",
+  "Genie could not be installed here.": "Não foi possível instalar o Genie aqui.",
+  // The step itself
+  "Your companion": "Sua companhia",
+  "Grow your team": "Aumente sua equipe",
+  "{name} leads. Who comes along?": "{name} lidera. Quem vem junto?",
+  "Bringing them in…": "Trazendo a equipe…",
+  "Omni is moving in…": "O Omni está se mudando…",
+  "Omni is waking…": "O Omni está acordando…",
+  "Genie is waking…": "O Genie está acordando…",
+  "Unfold is waking…": "Unfold está acordando…",
+  "Continue with just {name}": "Continuar só com {name}",
+  "Continue with {who}": "Continuar com {who}",
+  " and ": " e ",
+  // Claude Code and Codex (acp-agents.js), in Connect AI and in Settings
+  "Coding agents": "Agentes de código",
+  "Claude Code and Codex run on this computer with your own sign-in, and show up in DSH's model picker.": "O Claude Code e o Codex rodam neste computador com o seu próprio login e aparecem no seletor de modelos do DSH.",
+  "Claude Code and Codex": "Claude Code e Codex",
+  "Use the coding agents you already have as models in DSH. Each runs your own CLI, with your own sign-in and settings.": "Use os agentes de código que você já tem como modelos no DSH. Cada um roda a sua própria CLI, com o seu login e as suas configurações.",
+  "Looking at what this computer has…": "Vendo o que este computador tem…",
+  "The ACP agents plugin is not running in this DSH.": "O plugin de agentes ACP não está rodando neste DSH.",
+  "Your own {cli} CLI, as a model in DSH": "Sua própria CLI {cli}, como modelo no DSH",
+  "Not installed": "Não instalado",
+  "Off": "Desligado",
+  "Setting up": "Configurando",
+  "Needs a retry": "Precisa tentar de novo",
+  "Restart needed": "Precisa reiniciar",
+  "Ready": "Pronto",
+  "The {cli} CLI is not on this computer. Install it, sign in, then check again.": "A CLI {cli} não está neste computador. Instale, faça login e verifique de novo.",
+  "Install {name}": "Instalar o {name}",
+  "Found the {cli} CLI on this computer.": "A CLI {cli} está neste computador.",
+  "Signed in to {name}.": "Login feito no {name}.",
+  "Not signed in. Run {command} in a terminal, then check again.": "Sem login. Rode {command} em um terminal e verifique de novo.",
+  "Off. Turn it on to use {name} as a model in DSH.": "Desligado. Ligue para usar o {name} como modelo no DSH.",
+  "Installing its connector in the background. This takes a minute or two.": "Instalando o conector em segundo plano. Leva um ou dois minutos.",
+  "The connector did not install: {error}": "O conector não foi instalado: {error}",
+  "The connector did not install.": "O conector não foi instalado.",
+  "Connector ready (version {version}).": "Conector pronto (versão {version}).",
+  "Connector ready.": "Conector pronto.",
+  "Restart DSH to see {name} in the model picker.": "Reinicie o DSH para ver o {name} no seletor de modelos.",
+  "Ready: pick {name} in the model picker.": "Pronto: escolha o {name} no seletor de modelos.",
+  "Retry": "Tentar de novo",
+  "Check again": "Verificar de novo",
+  // The step rail (stage.js), and what the welcome says when DSH does not answer (api.js)
+  "Your team": "Sua equipe",
+  "Connect Omni": "Conectar o Omni",
+  "Connect AI": "Conectar IA",
+  "Setup steps": "Passos da configuração",
+  "Could not reach DSH. Check that it is still running.": "Não foi possível falar com o DSH. Verifique se o DSH ainda está rodando.",
+  "DSH answered HTTP {status}": "O DSH respondeu HTTP {status}",
+  "Request failed": "A solicitação falhou",
+  // Create your companion (companion.js, companion-art.js)
+  "Create your companion": "Crie sua companhia",
+  "I'm {name}! Ready when you are.": "Sou {name}! Quando quiser, é só seguir.",
+  "Oh, that's me! What's my name?": "Ah, sou eu! Qual é o meu nome?",
+  "Hi! I'm going to be yours. What should I look like?": "Oi! Vou ser a sua companhia. Qual vai ser a minha aparência?",
+  "Your companion runs your team: it talks with you, hands work to the others and keeps an eye on everything. Make it yours.": "Sua companhia comanda a sua equipe: conversa com você, passa trabalho para o resto da equipe e fica de olho em tudo. Deixe com a sua cara.",
+  "How to make it": "Como criar",
+  "Describe it": "Descrever",
+  "Pick one": "Escolher",
+  "What does it look like?": "Qual é a aparência?",
+  "a sleepy cyan fox with a lantern tail": "uma raposa ciano sonolenta com uma lanterna na cauda",
+  "a tiny robot made of moonlight": "um robozinho feito de luar",
+  "a round jellyfish that wears headphones": "uma água-viva redonda de fones de ouvido",
+  "Drawing…": "Desenhando…",
+  "Draw again": "Desenhar de novo",
+  "Bring it to life": "Dar vida",
+  "Drawn with your ChatGPT plan (gpt-image-2)": "Desenhado com o seu plano do ChatGPT (gpt-image-2)",
+  "Drawn with your OpenAI key (gpt-image-1)": "Desenhado com a sua chave da OpenAI (gpt-image-1)",
+  "Drawing a companion needs ChatGPT or an OpenAI key. Connect one in the AI step, then come back from Settings. For now, pick one.": "Para desenhar uma companhia, é preciso o ChatGPT ou uma chave da OpenAI. Conecte um dos dois no passo de IA e volte por Configurações. Por enquanto, escolha um personagem.",
+  "Character": "Personagem",
+  "Color": "Cor",
+  "Its name": "Nome",
+  "Hatching…": "Nascendo…",
+  "Hatch {name}": "Fazer {name} nascer",
+  "Hatch": "Fazer nascer",
+  "{name}, your companion": "{name}, sua companhia",
+  // Connect AI (connect-ai.js)
+  "Turn on your AIs": "Ligue suas IAs",
+  "Turn on everything you have. More brains, more {name}.": "Ligue tudo o que você tiver. Mais cérebros, mais {name}.",
+  "Now give me a brain. Turn on every AI you have; you can change it any time.": "Agora me dê um cérebro. Ligue todas as IAs que você tiver; dá para mudar quando quiser.",
+  "Found on this computer": "Encontradas neste computador",
+  "Add another": "Adicionar outra",
+  "Your AIs": "Suas IAs",
+  "Personal use under the vendor's terms": "Uso pessoal nos termos de cada fornecedor",
+  "Subscriptions: {terms}.": "Assinaturas: {terms}.",
+  "Show {count} more": "Mostrar mais {count}",
+  "Every other provider DSH knows is in ": "Todos os outros provedores que o DSH conhece estão em ",
+  "Settings → Models": "Configurações → Modelos",
+  "Skip for now": "Pular por enquanto",
+  "{count} on": "Ligadas: {count}",
+  "Turn on at least one": "Ligue pelo menos uma",
+  "Continue →": "Continuar →",
+  "Continue": "Continuar",
+  "Paste your {name} key": "Cole sua chave de {name}",
+  "{name} key": "Chave de {name}",
+  "Turning on…": "Ligando…",
+  "Turn on": "Ligar",
+  "It stays on this computer, in DSH's own credential store.": "Fica neste computador, no cofre de credenciais do próprio DSH.",
+  "Get a {name} key": "Obter uma chave de {name}",
+  "Starting the {name} sign-in…": "Iniciando o login no {name}…",
+  "The sign-in did not finish: {error}": "O login não terminou: {error}",
+  "The sign-in was cancelled. Nothing was turned on.": "O login foi cancelado. Nada foi ligado.",
+  "The sign-in stopped before it finished. Flip the switch to start again.": "O login parou antes de terminar. Clique no botão de ligar para começar de novo.",
+  "Copy code": "Copiar código",
+  "Sign in with {name}": "Entrar com {name}",
+  "Finish signing in on their page…": "Termine o login na página do provedor…",
+  "Gateway address": "Endereço do gateway",
+  "Gateway key": "Chave do gateway",
+  "Omni lists the gateway's models with your key and keeps the key in DSH's credential store.": "O Omni lista os modelos do gateway com a sua chave e guarda a chave no cofre de credenciais do DSH.",
+  "How to connect {name}": "Como conectar {name}",
+  "Sign in to {name}": "Entrar no {name}",
+  "With your plan, in the browser": "Com o seu plano, no navegador",
+  "Use an API key": "Usar uma chave de API",
+  "Billed per use": "Cobrado por uso",
+  "This DSH offers no {name} sign-in.": "Este DSH não oferece login no {name}.",
+  "Ollama is not running on this computer. Start it, then flip this again.": "O Ollama não está rodando neste computador. Inicie o Ollama e clique de novo no botão de ligar.",
+  "Also connected through {via}; Omni uses {name} here.": "Também conectado por {via}; aqui o Omni usa {name}.",
+  " Its models are hidden.": " Os modelos dessa conexão estão ocultos.",
+  "Use only this {name}": "Usar só este {name}",
+  // What the host says about each AI (src/host/ais.js keeps it English; aiText reads it here)
+  "Your Claude Pro or Max plan, or an Anthropic API key": "Seu plano Claude Pro ou Max, ou uma chave de API da Anthropic",
+  "Your ChatGPT Plus or Pro plan, through Codex": "Seu plano ChatGPT Plus ou Pro, pelo Codex",
+  "With your API key, or your DeepSeek account": "Com a sua chave de API, ou a sua conta DeepSeek",
+  "Your Kimi Code plan": "Seu plano Kimi Code",
+  "Your Copilot plan": "Seu plano do Copilot",
+  "SuperGrok or X Premium, or an xAI key": "SuperGrok ou X Premium, ou uma chave da xAI",
+  "With an API key, billed per use": "Com uma chave de API, cobrada por uso",
+  "One key, hundreds of models": "Uma chave, centenas de modelos",
+  "GLM models, with an API key": "Modelos GLM, com uma chave de API",
+  "Kimi models, with an API key": "Modelos Kimi, com uma chave de API",
+  "An OpenCode Zen key": "Uma chave do OpenCode Zen",
+  "Your own gateway": "Seu próprio gateway",
+  "Models running on this computer": "Modelos rodando neste computador",
+  "Signed in to {name}": "Login feito no {name}",
+  "{ref} found": "{ref} encontrada",
+  "Key saved": "Chave salva",
+  "Gateway saved": "Gateway salvo",
+  "Running on this computer": "Rodando neste computador",
+  "Signed in": "Login feito",
+  "{count} accounts": "{count} contas",
+  // The subscriptions only dsh-subscriptions brings (subscriptions.js); vendor and plan names stay
+  "Your JetBrains AI plan": "Seu plano do JetBrains AI",
+  "Your Cursor plan": "Seu plano do Cursor",
+  "Cursor session token": "Token de sessão do Cursor",
+  "Kiro token": "Token do Kiro",
+  "GLM API key": "Chave de API do GLM",
+  "DashScope API key": "Chave de API do DashScope",
+  "Sourcegraph access token": "Token de acesso do Sourcegraph",
+  "Replit token": "Token do Replit",
+  "Could not reach the subscriptions plugin.": "Não foi possível falar com o plugin de assinaturas.",
+  "The code expired before the sign-in finished. Go back and start again.": "O código expirou antes de o login terminar. Volte e comece de novo.",
+  "Open {name}, sign in, and enter this code:": "Abra o {name}, faça login e digite este código:",
+  "Open {name} to sign in": "Abrir o {name} para fazer login",
+  "Waiting for you to finish signing in…": "Esperando você terminar o login…",
+  "Sign in on their page; this finishes on its own. If it ends on a page that does not load, paste its address here.": "Faça login na página do provedor; isto termina por conta própria. Se acabar numa página que não carrega, cole aqui o endereço dessa página.",
+  "Sign in on their page, then paste the address it ends on here.": "Faça login na página do provedor e cole aqui o endereço da página final.",
+  "Copy your {what} from ": "Copie o valor “{what}” em ",
+  " and paste it here. It stays in DSH's credential store on this computer.": " e cole aqui. Fica no cofre de credenciais do DSH, neste computador.",
+  "The address you landed on": "O endereço da página final",
+  "Back": "Voltar"
+};
+var EN = Object.fromEntries(Object.keys(PT_BR).map((key) => [key, key]));
+var fill = (text, params) => params ? text.replace(/\{(\w+)\}/g, (match, name) => name in params ? String(params[name]) : match) : text;
+var bound = null;
+function installLocale(locale) {
+  if (!locale || typeof locale.register !== "function" || typeof locale.bind !== "function") return () => {
+  };
+  const off = locale.register(NAMESPACE, { en: EN, "pt-BR": PT_BR });
+  const mine = locale.bind(NAMESPACE);
+  bound = mine;
+  return () => {
+    if (bound === mine) bound = null;
+    if (typeof off === "function") off();
+  };
+}
+function t(key, params) {
+  return bound ? bound(key, params) : fill(key, params);
+}
+
 // src/client/api.js
 var ROUTE = "api/omni-ai";
 var OMNI_UI = "api/omni-ui";
@@ -8977,11 +9350,11 @@ async function callRoute(route, endpoint, payload) {
       body: JSON.stringify({ endpoint, payload: payload ?? null })
     });
   } catch {
-    throw Object.assign(new Error("Could not reach DSH. Check that it is still running."), { code: "NETWORK" });
+    throw Object.assign(new Error(t("Could not reach DSH. Check that it is still running.")), { code: "NETWORK" });
   }
-  if (!response.ok) throw Object.assign(new Error(`DSH answered HTTP ${response.status}`), { code: `HTTP_${response.status}` });
+  if (!response.ok) throw Object.assign(new Error(t("DSH answered HTTP {status}", { status: response.status })), { code: `HTTP_${response.status}` });
   const result = await response.json();
-  if (!result.ok) throw Object.assign(new Error(result.error?.message ?? "Request failed"), { code: result.error?.code ?? "omni-ai/error" });
+  if (!result.ok) throw Object.assign(new Error(result.error?.message ?? t("Request failed")), { code: result.error?.code ?? "omni-ai/error" });
   return result.value;
 }
 
@@ -9363,7 +9736,7 @@ function useCompanion() {
 }
 function Hero({ look, hatching }) {
   const cls = `oai-hero${hatching ? " oai-hatch" : ""}`;
-  if (look?.src) return (0, import_react.createElement)("div", { className: cls }, (0, import_react.createElement)("img", { className: "oai-hero-img", src: look.src, alt: look.name ? `${look.name}, your companion` : "Your companion" }));
+  if (look?.src) return (0, import_react.createElement)("div", { className: cls }, (0, import_react.createElement)("img", { className: "oai-hero-img", src: look.src, alt: look.name ? t("{name}, your companion", { name: look.name }) : t("Your companion") }));
   if (look?.shape) return (0, import_react.createElement)("div", { className: cls, dangerouslySetInnerHTML: { __html: characterSvg(look.shape, look.color, 132) } });
   if (look?.unfold) return (0, import_react.createElement)("div", { className: cls, dangerouslySetInnerHTML: { __html: unfoldHero() } });
   return (0, import_react.createElement)("div", { className: cls, dangerouslySetInnerHTML: { __html: omniHero() } });
@@ -9476,12 +9849,12 @@ function Rail({ at: at2 }) {
   const here = steps.findIndex(([id]) => id === at2);
   return (0, import_react2.createElement)(
     "ol",
-    { className: "oai-rail", "aria-label": "Setup steps" },
+    { className: "oai-rail", "aria-label": t("Setup steps") },
     steps.map(([id, label], index) => (0, import_react2.createElement)("li", {
       key: id,
       className: index < here ? "oai-done" : index === here ? "oai-on" : "",
       "aria-current": index === here ? "step" : void 0
-    }, label))
+    }, t(label)))
   );
 }
 var SHOWING = /* @__PURE__ */ Symbol.for("automagik.omni.onboarding-showing");
@@ -9614,37 +9987,37 @@ function CompanionStep(props) {
       setSaving(false);
     }
   };
-  const speech = look ? nameOk ? `I'm ${name.trim()}! Ready when you are.` : "Oh, that's me! What's my name?" : "Hi! I'm going to be yours. What should I look like?";
+  const speech = look ? nameOk ? t("I'm {name}! Ready when you are.", { name: name.trim() }) : t("Oh, that's me! What's my name?") : t("Hi! I'm going to be yours. What should I look like?");
   const hero = look ? (0, import_react3.createElement)(Hero, { look, hatching }) : (0, import_react3.createElement)(Egg);
   return (0, import_react3.createElement)(
     Stage,
-    { title: "Create your companion", speech, at: "omni-companion", glitching, hero },
-    (0, import_react3.createElement)("p", { className: "oai-lede" }, "Your companion runs your team: it talks with you, hands work to the others and keeps an eye on everything. Make it yours."),
+    { title: t("Create your companion"), speech, at: "omni-companion", glitching, hero },
+    (0, import_react3.createElement)("p", { className: "oai-lede" }, t("Your companion runs your team: it talks with you, hands work to the others and keeps an eye on everything. Make it yours.")),
     (0, import_react3.createElement)(
       "div",
-      { className: "oai-seg", role: "tablist", "aria-label": "How to make it" },
-      (0, import_react3.createElement)("button", { type: "button", role: "tab", "aria-selected": mode === "describe", onClick: () => setMode("describe") }, "Describe it"),
-      (0, import_react3.createElement)("button", { type: "button", role: "tab", "aria-selected": mode === "pick", onClick: () => setMode("pick") }, "Pick one")
+      { className: "oai-seg", role: "tablist", "aria-label": t("How to make it") },
+      (0, import_react3.createElement)("button", { type: "button", role: "tab", "aria-selected": mode === "describe", onClick: () => setMode("describe") }, t("Describe it")),
+      (0, import_react3.createElement)("button", { type: "button", role: "tab", "aria-selected": mode === "pick", onClick: () => setMode("pick") }, t("Pick one"))
     ),
     mode === "describe" ? (0, import_react3.createElement)(
       "div",
       { className: "oai-describe" },
-      (0, import_react3.createElement)("label", { htmlFor: "oai-desc" }, "What does it look like?"),
-      (0, import_react3.createElement)("textarea", { id: "oai-desc", rows: 2, value: description, placeholder: IDEAS[0], onChange: (event) => setDescription(event.target.value), disabled: drawing }),
-      (0, import_react3.createElement)("div", { className: "oai-chips" }, IDEAS.map((idea) => (0, import_react3.createElement)("button", { key: idea, type: "button", className: "oai-chip", onClick: () => setDescription(idea) }, idea))),
+      (0, import_react3.createElement)("label", { htmlFor: "oai-desc" }, t("What does it look like?")),
+      (0, import_react3.createElement)("textarea", { id: "oai-desc", rows: 2, value: description, placeholder: t(IDEAS[0]), onChange: (event) => setDescription(event.target.value), disabled: drawing }),
+      (0, import_react3.createElement)("div", { className: "oai-chips" }, IDEAS.map((idea) => (0, import_react3.createElement)("button", { key: idea, type: "button", className: "oai-chip", onClick: () => setDescription(t(idea)) }, t(idea)))),
       generating ? (0, import_react3.createElement)(
         "div",
         { className: "oai-row" },
-        (0, import_react3.createElement)("button", { type: "button", className: "oai-primary", disabled: drawing || description.trim().length < 3 || !generating.ready, onClick: draw }, drawing ? "Drawing…" : image ? "Draw again" : "Bring it to life"),
-        (0, import_react3.createElement)("span", { className: "oai-muted" }, generating.kind === "chatgpt" ? "Drawn with your ChatGPT plan (gpt-image-2)" : "Drawn with your OpenAI key (gpt-image-1)")
-      ) : (0, import_react3.createElement)("p", { className: "oai-note" }, "Drawing a companion needs ChatGPT or an OpenAI key. Connect one in the AI step, then come back from Settings. For now, pick one."),
+        (0, import_react3.createElement)("button", { type: "button", className: "oai-primary", disabled: drawing || description.trim().length < 3 || !generating.ready, onClick: draw }, drawing ? t("Drawing…") : image ? t("Draw again") : t("Bring it to life")),
+        (0, import_react3.createElement)("span", { className: "oai-muted" }, generating.kind === "chatgpt" ? t("Drawn with your ChatGPT plan (gpt-image-2)") : t("Drawn with your OpenAI key (gpt-image-1)"))
+      ) : (0, import_react3.createElement)("p", { className: "oai-note" }, t("Drawing a companion needs ChatGPT or an OpenAI key. Connect one in the AI step, then come back from Settings. For now, pick one.")),
       drawing ? (0, import_react3.createElement)("div", { className: "oai-drawing", "aria-hidden": "true" }) : null
     ) : (0, import_react3.createElement)(
       "div",
       { className: "oai-pick" },
       (0, import_react3.createElement)(
         "div",
-        { className: "oai-shapes", role: "radiogroup", "aria-label": "Character" },
+        { className: "oai-shapes", role: "radiogroup", "aria-label": t("Character") },
         SHAPES2.map((id) => (0, import_react3.createElement)("button", {
           key: id,
           type: "button",
@@ -9661,14 +10034,14 @@ function CompanionStep(props) {
       ),
       (0, import_react3.createElement)(
         "div",
-        { className: "oai-swatches", role: "radiogroup", "aria-label": "Color" },
+        { className: "oai-swatches", role: "radiogroup", "aria-label": t("Color") },
         COLORS.map((id) => (0, import_react3.createElement)("button", { key: id, type: "button", role: "radio", "aria-checked": color === id, "aria-label": id, className: "oai-swatch", style: { background: swatchOf(id) }, onClick: () => setColor(id) }))
       )
     ),
     (0, import_react3.createElement)(
       "div",
       { className: "oai-name" },
-      (0, import_react3.createElement)("label", { htmlFor: "oai-name" }, "Its name"),
+      (0, import_react3.createElement)("label", { htmlFor: "oai-name" }, t("Its name")),
       (0, import_react3.createElement)(
         "div",
         { className: "oai-row" },
@@ -9682,7 +10055,7 @@ function CompanionStep(props) {
     (0, import_react3.createElement)(
       "div",
       { className: "oai-actions" },
-      (0, import_react3.createElement)("button", { type: "button", className: "oai-primary oai-big", disabled: !ready, onClick: hatch }, saving ? "Hatching…" : nameOk ? `Hatch ${name.trim()}` : "Hatch")
+      (0, import_react3.createElement)("button", { type: "button", className: "oai-primary oai-big", disabled: !ready, onClick: hatch }, saving ? t("Hatching…") : nameOk ? t("Hatch {name}", { name: name.trim() }) : t("Hatch"))
     )
   );
 }
@@ -10063,261 +10436,6 @@ var TERMINAL_CSS = xterm_default + `
 .oai-mini-term{margin:8px 0 0;width:100%;text-align:left}
 .oai-mini-term .oai-term-screen{min-height:0;padding:8px 10px}
 `;
-
-// src/client/i18n.js
-var NAMESPACE = "welcome.team";
-var PT_BR = {
-  // Installs and their errors
-  "The install was cancelled.": "A instalação foi cancelada.",
-  "Omni's installer stopped (exit code {code}). What it printed is above.": "O instalador do Omni parou (código de saída {code}). A saída está acima.",
-  // A found Omni, and where Omni comes from
-  "Your Omni on this Mac": "Seu Omni neste Mac",
-  "Your Omni on this computer": "Seu Omni neste computador",
-  "Omni on this Mac": "Omni neste Mac",
-  "Omni on this computer": "Omni neste computador",
-  "port {port}": "porta {port}",
-  "saved in your Omni CLI": "salvo na sua CLI do Omni",
-  "Not answering right now.": "Não está respondendo agora.",
-  "Needs an update first; Connect Omni, next, does it.": "Precisa de uma atualização antes; Connect Omni, o próximo passo, cuida disso.",
-  "Sign-in from devices is off on it.": "O login por dispositivos está desligado nesse Omni.",
-  "Channel": "Canal",
-  "Use {omni}": "Usar {omni}",
-  "Connect {omni}": "Conectar {omni}",
-  "Already on this Mac": "Já está neste Mac",
-  "Already on this computer": "Já está neste computador",
-  "Saved in your Omni CLI": "Salvo na sua CLI do Omni",
-  "Run Omni on this Mac": "Rodar o Omni neste Mac",
-  "Run Omni on this computer": "Rodar o Omni neste computador",
-  "A private Omni of its own, set up for you": "Um Omni privado, só seu, configurado para você",
-  "An Omni somewhere else": "Um Omni em outro lugar",
-  "On a server, or the link Omni sent you": "Em um servidor, ou o link que o Omni enviou para você",
-  "Where your Omni is": "Onde está seu Omni",
-  "Connecting…": "Conectando…",
-  "Where is your Omni?": "Onde está seu Omni?",
-  "Connect": "Conectar",
-  "That link is cut short. Copy the whole link Omni sent you.": "Esse link está cortado. Copie o link inteiro que o Omni enviou.",
-  "Its claim link: Omni opens it in your browser to make it yours.": "É o link de reivindicação: o Omni abre no seu navegador para que passe a ser seu.",
-  "Its address, or paste the link Omni sent you on WhatsApp.": "O endereço, ou cole o link que o Omni enviou no WhatsApp.",
-  "Back to the choices": "Voltar às opções",
-  // An Omni nobody owns yet, and a sign-in from the phone
-  "{host} has no owner yet": "{host} ainda não pertence a ninguém",
-  "Make it yours on its server, then paste the link it prints below:": "Torne esse Omni seu no servidor e cole abaixo o link que aparecer:",
-  "Copied": "Copiado",
-  "Copy": "Copiar",
-  "Or {link}, click Claim this Omni, then connect its address again.": "Ou {link}, clique em Claim this Omni e conecte o endereço de novo.",
-  "open its claim page": "abra a página de reivindicação",
-  "Or open the claim link from its server log in your browser, then connect its address again.": "Ou abra no navegador o link de reivindicação do log do servidor e conecte o endereço de novo.",
-  "The link it printed": "O link que apareceu",
-  "Open WhatsApp": "Abrir o WhatsApp",
-  "Approve": "Aprovar",
-  "Cancel": "Cancelar",
-  "No WhatsApp on that Omni? Run {command} on its server.": "Sem WhatsApp nesse Omni? Rode {command} no servidor desse Omni.",
-  "That Omni cannot approve this app from here. Connect Omni, next, can use its API key.": "Esse Omni não consegue aprovar este app daqui. Connect Omni, o próximo passo, pode usar a chave de API.",
-  "The sign-in was denied.": "O login foi negado.",
-  "The code expired. Try again for a new one.": "O código expirou. Tente de novo para receber outro.",
-  "That is not a link your Omni sends. It looks like https://your-omni/api/login/app?grant=…": "Esse não é um link que seu Omni envia. O formato é https://your-omni/api/login/app?grant=…",
-  // What a Bot type starts with: the welcome's rows and the host's
-  "Reading what it starts with…": "Lendo com o que começa…",
-  "None": "Nenhum",
-  "Installs when Omni powers on": "Instala quando você liga o Omni",
-  "Installed": "Instalado",
-  "What this Bot is for: always on": "É para isso que este Bot existe: sempre ligado",
-  "Always on": "Sempre ligado",
-  "{label} for this Bot": "{label} para este Bot",
-  "What it starts with": "Com o que começa",
-  "Model": "Modelo",
-  "Your DSH default": "O padrão do seu DSH",
-  "You pick it in Omni's first chat": "Você escolhe no primeiro chat do Omni",
-  "{ref} · you confirm it in Omni's first chat": "{ref} · você confirma no primeiro chat do Omni",
-  "Thinking": "Raciocínio",
-  "The model's default": "O padrão do modelo",
-  "Plugins": "Plugins",
-  "Bot team": "Equipe de Bots",
-  "Bots, their chats, memory and settings": "Bots, com chats, memória e configurações",
-  "Omni channels": "Canais do Omni",
-  "Your channels and the chats on them": "Seus canais e os chats de cada um",
-  "Omni canvases": "Canvases do Omni",
-  "Live views drawn in the chat": "Visualizações ao vivo desenhadas no chat",
-  "channels": "canais",
-  "canvases": "canvases",
-  "Tools": "Ferramentas",
-  "Read channels and chats": "Ler canais e chats",
-  "Send, react and delete": "Enviar, reagir e apagar",
-  "Asks you before it writes to a person": "Pergunta a você antes de escrever para uma pessoa",
-  "Connect a channel": "Conectar um canal",
-  "Shows the QR code to scan": "Mostra o QR code para escanear",
-  "Any Omni operation": "Qualquer operação do Omni",
-  "Finds and runs the rest of Omni's API": "Encontra e executa o resto da API do Omni",
-  "Live canvases": "Canvases ao vivo",
-  "Shell and files": "Shell e arquivos",
-  "DSH's own tools; one-off work goes to Tasks": "As ferramentas do próprio DSH; trabalho avulso vai para Tasks",
-  "Skills": "Skills",
-  "None preloaded. Skills you add to DSH, or teach Omni later, show here.": "Nenhuma pré-carregada. As skills que você adicionar ao DSH, ou ensinar ao Omni depois, aparecem aqui.",
-  "Setup": "Configuração",
-  "Folder": "Pasta",
-  "Its own, in your team workspace": "Própria, no espaço de trabalho da sua equipe",
-  "Permissions": "Permissões",
-  "DSH's default": "Padrão do DSH",
-  "{preset} (DSH's default)": "{preset} (padrão do DSH)",
-  "Genie": "Genie",
-  "Installs when Genie powers on": "Instala quando você liga o Genie",
-  "A Task per wish": "Uma Task por desejo",
-  "Under Genie, with its report in Genie's chat": "Sob o Genie, com o relatório no chat do Genie",
-  "Shell, files and git": "Shell, arquivos e git",
-  "In the wish's own copy of the project": "Na cópia do projeto só desse desejo",
-  "Unfold": "Unfold",
-  "The Unfold Bot, Unfold inside DSH": "O Bot Unfold, Unfold dentro do DSH",
-  "Unfold bridge": "Ponte Unfold",
-  "Unfold watches this DSH": "Unfold acompanha este DSH",
-  "Unfold session": "Sessão Unfold",
-  "Unfold's own session, in DSH": "A sessão própria de Unfold, no DSH",
-  "Unfold events and stream": "Eventos e fluxo de Unfold",
-  "What Unfold did, as it happens": "O que Unfold fez, enquanto acontece",
-  "Unfold Mind": "Unfold Mind",
-  "What Unfold is thinking": "O que Unfold está pensando",
-  "Unfold capabilities, settings and trajectory": "Capacidades, configurações e trajetória de Unfold",
-  "What Unfold can do, its settings, each run step by step": "O que Unfold sabe fazer, as configurações e cada execução passo a passo",
-  "Comes with this DSH": "Vem com este DSH",
-  "Installs when Unfold powers on": "Instala quando você liga Unfold",
-  "Leads": "Lidera",
-  "Your Main Bot here": "Seu Bot principal aqui",
-  "Joins your team beside your Main Bot": "Entra na sua equipe ao lado do seu Bot principal",
-  // The boxes: status lines, lights, what shows inside
-  "Powered off": "Energia desligada",
-  "Powered off · not on your team": "Energia desligada · fora da sua equipe",
-  "Installing {title} · {at} of {count}": "Instalando {title} · {at} de {count}",
-  "Installing Omni…": "Instalando o Omni…",
-  "Found an Omni": "Um Omni encontrado",
-  "Found {count} Omnis": "{count} Omnis encontrados",
-  "Found Omnis, none ready to connect": "Omnis encontrados, nenhum pronto para conectar",
-  "Connected to {origin}": "Conectado a {origin}",
-  "Connected": "Conectado",
-  "Waking up…": "Acordando…",
-  "Starting Omni in this DSH…": "Iniciando o Omni neste DSH…",
-  "Looking for a connection…": "Procurando uma conexão…",
-  "Where should Omni live?": "Onde o Omni deve morar?",
-  "Approve this device on your phone": "Aprove este dispositivo no seu celular",
-  "Downloading Bun for Omni…": "Baixando o Bun para o Omni…",
-  "Setting up your Omni…": "Configurando seu Omni…",
-  "Installed · restart DSH to start it": "Instalação concluída · reinicie o DSH para começar",
-  "Could not install Omni": "Não foi possível instalar o Omni",
-  "Installing Genie…": "Instalando o Genie…",
-  "Starting Genie in this DSH…": "Iniciando o Genie neste DSH…",
-  "Ready for a wish": "À espera de um desejo",
-  "Could not install Genie": "Não foi possível instalar o Genie",
-  "Installing Unfold…": "Instalando Unfold…",
-  "Starting Unfold in this DSH…": "Iniciando Unfold neste DSH…",
-  "On your team": "Na sua equipe",
-  "Could not install Unfold": "Não foi possível instalar Unfold",
-  "power": "energia",
-  "plugins": "plugins",
-  "link": "conexão",
-  "team": "equipe",
-  "The Omni plugins": "Os plugins do Omni",
-  "Power {name} off": "Desligar {name}",
-  "Power {name} on": "Ligar {name}",
-  "What Omni's installer printed": "A saída do instalador do Omni",
-  "What went wrong is above. Power Omni on to try again.": "O que deu errado está acima. Ligue o Omni para tentar de novo.",
-  "In your menu": "No seu menu",
-  "Restart DSH, then power Omni on again.": "Reinicie o DSH e ligue o Omni de novo.",
-  "Add the Omni plugins on DSH's Plugins page.": "Adicione os plugins do Omni na página Plugins do DSH.",
-  "What the Genie install printed": "A saída da instalação do Genie",
-  "Restart DSH, then power Genie on again.": "Reinicie o DSH e ligue o Genie de novo.",
-  "Add @automagik/genie-dsh on DSH's Plugins page.": "Adicione @automagik/genie-dsh na página Plugins do DSH.",
-  "What went wrong is above. Power Genie on to try again.": "O que deu errado está acima. Ligue o Genie para tentar de novo.",
-  "Restart DSH, then power Unfold on again.": "Reinicie o DSH e ligue Unfold de novo.",
-  "Add @automagik/unfold-bot-dsh on DSH's Plugins page.": "Adicione @automagik/unfold-bot-dsh na página Plugins do DSH.",
-  "Genie is ready for wishes. For its skills too, like /wish, install its command line once, in a terminal:": "Genie já recebe desejos. Para ter também as skills, como /wish, instale a linha de comando do Genie uma vez, num terminal:",
-  // The cards
-  "Remove": "Remover",
-  "Every chat on every channel, answered by your team.": "Cada chat em cada canal, respondido pela sua equipe.",
-  "Give it a wish, get one delivery.": "Faça um desejo, receba uma entrega.",
-  "Unfold itself, working inside DSH.": "Unfold em pessoa, trabalhando dentro do DSH.",
-  // The speech bubble
-  "{name} here! Omni is asleep. Click its power button to bring it along.": "{name} aqui! O Omni está dormindo. Clique no botão de energia para trazer o Omni junto.",
-  "Omni is waking up…": "O Omni está acordando…",
-  "Bringing Omni into this DSH. One moment.": "Trazendo o Omni para este DSH. Um momento.",
-  "Omni is starting up…": "O Omni está iniciando…",
-  "Omni is looking for a connection…": "O Omni está procurando uma conexão…",
-  "Omni found where your channels live!": "O Omni encontrou onde seus canais moram!",
-  "No Omni here yet. Tell Omni where yours lives.": "Ainda não tem Omni aqui. Diga ao Omni onde o seu mora.",
-  "Approve this device, and Omni connects.": "Aprove este dispositivo e o Omni se conecta.",
-  "Omni is moving in. This takes a few minutes the first time.": "O Omni está se mudando. Da primeira vez, isso leva alguns minutos.",
-  "Omni is connected to {origin}!": "O Omni está conectado a {origin}!",
-  "Omni is connected!": "O Omni está conectado!",
-  "Omni is installed. Restart DSH to wake it.": "O Omni está instalado. Reinicie o DSH para acordar o Omni.",
-  "Omni could not be installed here.": "Não foi possível instalar o Omni aqui.",
-  "Unfold is waking up…": "Unfold está acordando…",
-  "Bringing Unfold into this DSH. One moment.": "Trazendo Unfold para este DSH. Um momento.",
-  "Unfold is starting up…": "Unfold está iniciando…",
-  "Unfold is on your team.": "Unfold está na sua equipe.",
-  "Unfold is installed. Restart DSH to wake it.": "A instalação de Unfold terminou. Reinicie o DSH para acordar Unfold.",
-  "Unfold could not be installed here.": "Não foi possível instalar Unfold aqui.",
-  "Genie is waking up…": "O Genie está acordando…",
-  "Bringing Genie into this DSH. One moment.": "Trazendo o Genie para este DSH. Um momento.",
-  "Genie is starting up…": "O Genie está iniciando…",
-  "Genie is on your team. Give it a wish once you are in!": "O Genie está na sua equipe. Faça um desejo assim que entrar!",
-  "Genie is installed. Restart DSH to wake it.": "A instalação do Genie terminou. Reinicie o DSH para acordar o Genie.",
-  "Genie could not be installed here.": "Não foi possível instalar o Genie aqui.",
-  // The step itself
-  "Your companion": "Sua companhia",
-  "Grow your team": "Aumente sua equipe",
-  "{name} leads. Who comes along?": "{name} lidera. Quem vem junto?",
-  "Bringing them in…": "Trazendo a equipe…",
-  "Omni is moving in…": "O Omni está se mudando…",
-  "Omni is waking…": "O Omni está acordando…",
-  "Genie is waking…": "O Genie está acordando…",
-  "Unfold is waking…": "Unfold está acordando…",
-  "Continue with just {name}": "Continuar só com {name}",
-  "Continue with {who}": "Continuar com {who}",
-  " and ": " e ",
-  // Claude Code and Codex (acp-agents.js), in Connect AI and in Settings
-  "Coding agents": "Agentes de código",
-  "Claude Code and Codex run on this computer with your own sign-in, and show up in DSH's model picker.": "O Claude Code e o Codex rodam neste computador com o seu próprio login e aparecem no seletor de modelos do DSH.",
-  "Claude Code and Codex": "Claude Code e Codex",
-  "Use the coding agents you already have as models in DSH. Each runs your own CLI, with your own sign-in and settings.": "Use os agentes de código que você já tem como modelos no DSH. Cada um roda a sua própria CLI, com o seu login e as suas configurações.",
-  "Looking at what this computer has…": "Vendo o que este computador tem…",
-  "The ACP agents plugin is not running in this DSH.": "O plugin de agentes ACP não está rodando neste DSH.",
-  "Your own {cli} CLI, as a model in DSH": "Sua própria CLI {cli}, como modelo no DSH",
-  "Not installed": "Não instalado",
-  "Off": "Desligado",
-  "Setting up": "Configurando",
-  "Needs a retry": "Precisa tentar de novo",
-  "Restart needed": "Precisa reiniciar",
-  "Ready": "Pronto",
-  "The {cli} CLI is not on this computer. Install it, sign in, then check again.": "A CLI {cli} não está neste computador. Instale, faça login e verifique de novo.",
-  "Install {name}": "Instalar o {name}",
-  "Found the {cli} CLI on this computer.": "A CLI {cli} está neste computador.",
-  "Signed in to {name}.": "Login feito no {name}.",
-  "Not signed in. Run {command} in a terminal, then check again.": "Sem login. Rode {command} em um terminal e verifique de novo.",
-  "Off. Turn it on to use {name} as a model in DSH.": "Desligado. Ligue para usar o {name} como modelo no DSH.",
-  "Installing its connector in the background. This takes a minute or two.": "Instalando o conector em segundo plano. Leva um ou dois minutos.",
-  "The connector did not install: {error}": "O conector não foi instalado: {error}",
-  "The connector did not install.": "O conector não foi instalado.",
-  "Connector ready (version {version}).": "Conector pronto (versão {version}).",
-  "Connector ready.": "Conector pronto.",
-  "Restart DSH to see {name} in the model picker.": "Reinicie o DSH para ver o {name} no seletor de modelos.",
-  "Ready: pick {name} in the model picker.": "Pronto: escolha o {name} no seletor de modelos.",
-  "Retry": "Tentar de novo",
-  "Check again": "Verificar de novo"
-};
-var EN = Object.fromEntries(Object.keys(PT_BR).map((key) => [key, key]));
-var fill = (text, params) => params ? text.replace(/\{(\w+)\}/g, (match, name) => name in params ? String(params[name]) : match) : text;
-var bound = null;
-function installLocale(locale) {
-  if (!locale || typeof locale.register !== "function" || typeof locale.bind !== "function") return () => {
-  };
-  const off = locale.register(NAMESPACE, { en: EN, "pt-BR": PT_BR });
-  const mine = locale.bind(NAMESPACE);
-  bound = mine;
-  return () => {
-    if (bound === mine) bound = null;
-    if (typeof off === "function") off();
-  };
-}
-function t(key, params) {
-  return bound ? bound(key, params) : fill(key, params);
-}
 
 // src/client/team.js
 var import_react5 = require("react");
@@ -11455,7 +11573,7 @@ async function request(path, init) {
   try {
     response = await fetch(`${BASE}/${path}`, { credentials: "same-origin", ...init });
   } catch {
-    throw new Error("Could not reach the subscriptions plugin.");
+    throw new Error(t("Could not reach the subscriptions plugin."));
   }
   const body = await response.json().catch(() => ({}));
   if (!response.ok || body.ok === false) throw new Error(body?.error?.message ?? `HTTP ${response.status}`);
@@ -11505,7 +11623,7 @@ function SubscriptionSignIn({ tile, onBack, onSaved, glitch }) {
               const out = await post("oauth/device/poll", { state: device.state });
               if (out.status === "authorized") return done();
               if (!live) return;
-              if (out.status === "expired") return setProblem("The code expired before the sign-in finished. Go back and start again.");
+              if (out.status === "expired") return setProblem(t("The code expired before the sign-in finished. Go back and start again."));
               setProblem(null);
             } catch (error) {
               if (!live) return;
@@ -11556,22 +11674,22 @@ function SubscriptionSignIn({ tile, onBack, onSaved, glitch }) {
   return (0, import_react6.createElement)(
     "div",
     { className: "oai-signin" },
-    !step && !problem ? (0, import_react6.createElement)("p", { className: "oai-muted" }, `Starting the ${tile.name} sign-in…`) : null,
-    step?.code ? (0, import_react6.createElement)("p", null, `Open ${tile.name}, sign in, and enter this code:`) : null,
+    !step && !problem ? (0, import_react6.createElement)("p", { className: "oai-muted" }, t("Starting the {name} sign-in…", { name: tile.name })) : null,
+    step?.code ? (0, import_react6.createElement)("p", null, t("Open {name}, sign in, and enter this code:", { name: tile.name })) : null,
     step?.code ? (0, import_react6.createElement)("div", { className: "oai-code" }, (0, import_react6.createElement)("code", null, step.code)) : null,
-    step?.url && tile.kind !== "token" ? (0, import_react6.createElement)("a", { className: "oai-primary oai-button", href: step.url, target: "_blank", rel: "noreferrer" }, `Open ${tile.name} to sign in`) : null,
-    tile.kind === "device" && step ? (0, import_react6.createElement)("p", { className: "oai-muted oai-waiting" }, "Waiting for you to finish signing in…") : null,
-    tile.kind === "browser" && step ? (0, import_react6.createElement)("p", { className: "oai-muted" }, step.autoCatch ? "Sign in on their page; this finishes on its own. If it ends on a page that does not load, paste its address here." : "Sign in on their page, then paste the address it ends on here.") : null,
-    tile.kind === "token" && step ? (0, import_react6.createElement)("p", null, `Copy your ${tile.what} from `, (0, import_react6.createElement)("a", { className: "oai-link", href: tile.where, target: "_blank", rel: "noreferrer" }, tile.name), " and paste it here. It stays in DSH's credential store on this computer.") : null,
+    step?.url && tile.kind !== "token" ? (0, import_react6.createElement)("a", { className: "oai-primary oai-button", href: step.url, target: "_blank", rel: "noreferrer" }, t("Open {name} to sign in", { name: tile.name })) : null,
+    tile.kind === "device" && step ? (0, import_react6.createElement)("p", { className: "oai-muted oai-waiting" }, t("Waiting for you to finish signing in…")) : null,
+    tile.kind === "browser" && step ? (0, import_react6.createElement)("p", { className: "oai-muted" }, step.autoCatch ? t("Sign in on their page; this finishes on its own. If it ends on a page that does not load, paste its address here.") : t("Sign in on their page, then paste the address it ends on here.")) : null,
+    tile.kind === "token" && step ? (0, import_react6.createElement)("p", null, t("Copy your {what} from ", { what: t(tile.what) }), (0, import_react6.createElement)("a", { className: "oai-link", href: tile.where, target: "_blank", rel: "noreferrer" }, tile.name), t(" and paste it here. It stays in DSH's credential store on this computer.")) : null,
     step && tile.kind !== "device" ? (0, import_react6.createElement)(
       "form",
       { onSubmit: submit },
-      (0, import_react6.createElement)("label", { htmlFor: "oai-sub-value" }, tile.kind === "token" ? tile.what : "The address you landed on"),
+      (0, import_react6.createElement)("label", { htmlFor: "oai-sub-value" }, tile.kind === "token" ? t(tile.what) : t("The address you landed on")),
       (0, import_react6.createElement)("input", { id: "oai-sub-value", type: tile.kind === "token" ? "password" : "text", required: true, autoComplete: "off", spellCheck: false, value, onChange: (e) => setValue(e.target.value) }),
-      (0, import_react6.createElement)("button", { type: "submit", className: tile.kind === "token" ? "oai-primary" : "", disabled: busy }, busy ? "Connecting…" : "Connect")
+      (0, import_react6.createElement)("button", { type: "submit", className: tile.kind === "token" ? "oai-primary" : "", disabled: busy }, busy ? t("Connecting…") : t("Connect"))
     ) : null,
     problem ? (0, import_react6.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null,
-    (0, import_react6.createElement)("button", { type: "button", className: "oai-quiet", onClick: onBack }, "Back")
+    (0, import_react6.createElement)("button", { type: "button", className: "oai-quiet", onClick: onBack }, t("Back"))
   );
 }
 
@@ -11774,6 +11892,21 @@ function sections(rows) {
   return { found, others };
 }
 var onCount = (rows) => rows.filter((row) => row.on).length;
+var AI_ROWS = [
+  [/^Signed in to (.+)$/, (name) => t("Signed in to {name}", { name })],
+  [/^(\S+) found$/, (ref) => t("{ref} found", { ref })],
+  [/^(\d+) accounts$/, (count) => t("{count} accounts", { count })]
+];
+function aiText(text) {
+  if (typeof text !== "string") return text;
+  return text.split(" · ").map((part) => {
+    for (const [pattern, of] of AI_ROWS) {
+      const match = pattern.exec(part);
+      if (match) return of(match[1]);
+    }
+    return t(part);
+  }).join(" · ");
+}
 function flipAction(row) {
   if (row.on) return "off";
   return row.ready ? "on" : "setup";
@@ -11801,10 +11934,10 @@ function KeyForm({ row, provider, onSaved }) {
     (0, import_react8.createElement)(
       "div",
       { className: "oai-field" },
-      (0, import_react8.createElement)("input", { type: "password", required: true, autoComplete: "off", spellCheck: false, autoFocus: true, placeholder: `Paste your ${row.name} key`, "aria-label": `${row.name} key`, value: apiKey, onChange: (e) => setApiKey(e.target.value) }),
-      (0, import_react8.createElement)("button", { type: "submit", className: "oai-primary", disabled: busy }, busy ? "Turning on…" : "Turn on")
+      (0, import_react8.createElement)("input", { type: "password", required: true, autoComplete: "off", spellCheck: false, autoFocus: true, placeholder: t("Paste your {name} key", { name: row.name }), "aria-label": t("{name} key", { name: row.name }), value: apiKey, onChange: (e) => setApiKey(e.target.value) }),
+      (0, import_react8.createElement)("button", { type: "submit", className: "oai-primary", disabled: busy }, busy ? t("Turning on…") : t("Turn on"))
     ),
-    (0, import_react8.createElement)("p", { className: "oai-muted" }, "It stays on this computer, in DSH's own credential store.", row.keyUrl ? [" ", (0, import_react8.createElement)("a", { key: "k", className: "oai-link", href: row.keyUrl, target: "_blank", rel: "noreferrer" }, `Get a ${row.name} key`)] : null),
+    (0, import_react8.createElement)("p", { className: "oai-muted" }, t("It stays on this computer, in DSH's own credential store."), row.keyUrl ? [" ", (0, import_react8.createElement)("a", { key: "k", className: "oai-link", href: row.keyUrl, target: "_blank", rel: "noreferrer" }, t("Get a {name} key", { name: row.name }))] : null),
     problem ? (0, import_react8.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null
   );
 }
@@ -11850,19 +11983,23 @@ function SignIn({ row, provider, onSaved, onCancel }) {
   const notice = attempt?.notice;
   const prompt = attempt?.prompt;
   const ended = attempt && ["cancelled", "failed", "none"].includes(attempt.status);
-  const endedText = { failed: `The sign-in did not finish: ${attempt?.error}`, cancelled: "The sign-in was cancelled. Nothing was turned on.", none: "The sign-in stopped before it finished. Flip the switch to start again." };
+  const endedText = {
+    failed: () => t("The sign-in did not finish: {error}", { error: attempt?.error }),
+    cancelled: () => t("The sign-in was cancelled. Nothing was turned on."),
+    none: () => t("The sign-in stopped before it finished. Flip the switch to start again.")
+  };
   return (0, import_react8.createElement)(
     "div",
     { className: "oai-signin" },
-    !attempt && !problem ? (0, import_react8.createElement)("p", { className: "oai-muted" }, `Starting the ${row.name} sign-in…`) : null,
+    !attempt && !problem ? (0, import_react8.createElement)("p", { className: "oai-muted" }, t("Starting the {name} sign-in…", { name: row.name })) : null,
     notice?.message ? (0, import_react8.createElement)("p", null, notice.message) : null,
     notice?.code ? (0, import_react8.createElement)(
       "div",
       { className: "oai-code" },
       (0, import_react8.createElement)("code", null, notice.code),
-      (0, import_react8.createElement)("button", { type: "button", className: "oai-ghost", onClick: () => navigator.clipboard?.writeText(notice.code).then(() => setCopied(true)) }, copied ? "Copied" : "Copy code")
+      (0, import_react8.createElement)("button", { type: "button", className: "oai-ghost", onClick: () => navigator.clipboard?.writeText(notice.code).then(() => setCopied(true)) }, copied ? t("Copied") : t("Copy code"))
     ) : null,
-    notice?.url ? (0, import_react8.createElement)("a", { className: "oai-primary oai-button", href: notice.url, target: "_blank", rel: "noreferrer" }, `Sign in with ${row.name}`) : null,
+    notice?.url ? (0, import_react8.createElement)("a", { className: "oai-primary oai-button", href: notice.url, target: "_blank", rel: "noreferrer" }, t("Sign in with {name}", { name: row.name })) : null,
     prompt?.kind === "select" ? (0, import_react8.createElement)(
       "div",
       { className: "oai-choices", role: "group", "aria-label": prompt.message },
@@ -11877,12 +12014,12 @@ function SignIn({ row, provider, onSaved, onCancel }) {
       } },
       (0, import_react8.createElement)("label", { htmlFor: `oai-answer-${row.id}` }, prompt.message),
       (0, import_react8.createElement)("input", { id: `oai-answer-${row.id}`, type: prompt.kind === "secret" ? "password" : "text", required: true, autoComplete: "off", spellCheck: false, autoFocus: true, placeholder: prompt.placeholder, value: answer, onChange: (e) => setAnswer(e.target.value) }),
-      (0, import_react8.createElement)("button", { type: "submit", className: "oai-primary" }, "Continue")
+      (0, import_react8.createElement)("button", { type: "submit", className: "oai-primary" }, t("Continue"))
     ) : null,
-    attempt?.status === "running" && !prompt ? (0, import_react8.createElement)("p", { className: "oai-muted oai-waiting" }, "Finish signing in on their page…") : null,
-    ended ? (0, import_react8.createElement)("p", { className: "oai-error", role: "alert" }, endedText[attempt.status]) : null,
+    attempt?.status === "running" && !prompt ? (0, import_react8.createElement)("p", { className: "oai-muted oai-waiting" }, t("Finish signing in on their page…")) : null,
+    ended ? (0, import_react8.createElement)("p", { className: "oai-error", role: "alert" }, endedText[attempt.status]()) : null,
     problem ? (0, import_react8.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null,
-    !ended && !problem ? (0, import_react8.createElement)("button", { type: "button", className: "oai-quiet", onClick: cancel }, "Cancel") : null
+    !ended && !problem ? (0, import_react8.createElement)("button", { type: "button", className: "oai-quiet", onClick: cancel }, t("Cancel")) : null
   );
 }
 function CliproxyForm({ onSaved }) {
@@ -11906,14 +12043,14 @@ function CliproxyForm({ onSaved }) {
   return (0, import_react8.createElement)(
     "form",
     { onSubmit: submit, className: "oai-setup-form" },
-    (0, import_react8.createElement)("input", { type: "url", required: true, placeholder: "http://localhost:8317/v1", "aria-label": "Gateway address", autoComplete: "off", value: baseURL, onChange: (e) => setBaseURL(e.target.value) }),
+    (0, import_react8.createElement)("input", { type: "url", required: true, placeholder: "http://localhost:8317/v1", "aria-label": t("Gateway address"), autoComplete: "off", value: baseURL, onChange: (e) => setBaseURL(e.target.value) }),
     (0, import_react8.createElement)(
       "div",
       { className: "oai-field" },
-      (0, import_react8.createElement)("input", { type: "password", required: true, placeholder: "Gateway key", "aria-label": "Gateway key", autoComplete: "off", spellCheck: false, value: apiKey, onChange: (e) => setApiKey(e.target.value) }),
-      (0, import_react8.createElement)("button", { type: "submit", className: "oai-primary", disabled: busy }, busy ? "Turning on…" : "Turn on")
+      (0, import_react8.createElement)("input", { type: "password", required: true, placeholder: t("Gateway key"), "aria-label": t("Gateway key"), autoComplete: "off", spellCheck: false, value: apiKey, onChange: (e) => setApiKey(e.target.value) }),
+      (0, import_react8.createElement)("button", { type: "submit", className: "oai-primary", disabled: busy }, busy ? t("Turning on…") : t("Turn on"))
     ),
-    (0, import_react8.createElement)("p", { className: "oai-muted" }, "Omni lists the gateway's models with your key and keeps the key in DSH's credential store."),
+    (0, import_react8.createElement)("p", { className: "oai-muted" }, t("Omni lists the gateway's models with your key and keeps the key in DSH's credential store.")),
     problem ? (0, import_react8.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null
   );
 }
@@ -11923,9 +12060,9 @@ function SignInOrKey({ row, provider, onSaved, onClose }) {
   if (way === "key") return (0, import_react8.createElement)(KeyForm, { row, provider, onSaved });
   return (0, import_react8.createElement)(
     "div",
-    { className: "oai-choices", role: "group", "aria-label": `How to connect ${row.name}` },
-    (0, import_react8.createElement)("button", { type: "button", onClick: () => setWay("signin") }, (0, import_react8.createElement)("strong", null, `Sign in to ${row.name}`), (0, import_react8.createElement)("span", null, "With your plan, in the browser")),
-    (0, import_react8.createElement)("button", { type: "button", onClick: () => setWay("key") }, (0, import_react8.createElement)("strong", null, "Use an API key"), (0, import_react8.createElement)("span", null, "Billed per use"))
+    { className: "oai-choices", role: "group", "aria-label": t("How to connect {name}", { name: row.name }) },
+    (0, import_react8.createElement)("button", { type: "button", onClick: () => setWay("signin") }, (0, import_react8.createElement)("strong", null, t("Sign in to {name}", { name: row.name })), (0, import_react8.createElement)("span", null, t("With your plan, in the browser"))),
+    (0, import_react8.createElement)("button", { type: "button", onClick: () => setWay("key") }, (0, import_react8.createElement)("strong", null, t("Use an API key")), (0, import_react8.createElement)("span", null, t("Billed per use")))
   );
 }
 function Setup({ row, onSaved, onClose }) {
@@ -11934,10 +12071,10 @@ function Setup({ row, onSaved, onClose }) {
     if (row.signIn && row.keyUrl) return (0, import_react8.createElement)(SignInOrKey, { row, provider: providerOf(row), onSaved, onClose });
     if (row.signIn) return (0, import_react8.createElement)(SignIn, { row, provider: providerOf(row), onSaved, onCancel: onClose });
     if (row.keyUrl) return (0, import_react8.createElement)(KeyForm, { row, provider: providerOf(row), onSaved });
-    return (0, import_react8.createElement)("p", null, `This DSH offers no ${row.name} sign-in.`);
+    return (0, import_react8.createElement)("p", null, t("This DSH offers no {name} sign-in.", { name: row.name }));
   }
   if (row.kind === "gateway") return (0, import_react8.createElement)(CliproxyForm, { onSaved });
-  if (row.kind === "local") return (0, import_react8.createElement)("p", { className: "oai-muted" }, "Ollama is not running on this computer. Start it, then flip this again.");
+  if (row.kind === "local") return (0, import_react8.createElement)("p", { className: "oai-muted" }, t("Ollama is not running on this computer. Start it, then flip this again."));
   if (row.kind === "subscription") return (0, import_react8.createElement)(SubscriptionSignIn, { tile: row.tile, onBack: onClose, onSaved, glitch: () => {
   } });
   return null;
@@ -11953,10 +12090,10 @@ function Duplicates({ row, onDedupe }) {
     row.duplicates.map((duplicate) => (0, import_react8.createElement)(
       "p",
       { key: `${duplicate.via}:${duplicate.provider}`, className: "oai-muted" },
-      `Also connected through ${duplicate.via}; Omni uses ${row.name} here.`,
-      duplicate.hidden ? " Its models are hidden." : null
+      t("Also connected through {via}; Omni uses {name} here.", { via: duplicate.via, name: row.name }),
+      duplicate.hidden ? t(" Its models are hidden.") : null
     )),
-    shown.length && row.on ? (0, import_react8.createElement)("button", { type: "button", className: "oai-ghost", onClick: onDedupe }, `Use only this ${row.name}`) : null
+    shown.length && row.on ? (0, import_react8.createElement)("button", { type: "button", className: "oai-ghost", onClick: onDedupe }, t("Use only this {name}", { name: row.name })) : null
   );
 }
 function Row({ row, open, busy, problem, onFlip, onSaved, onClose, onDedupe }) {
@@ -11972,9 +12109,9 @@ function Row({ row, open, busy, problem, onFlip, onSaved, onClose, onDedupe }) {
         "div",
         { className: "oai-ai-what" },
         (0, import_react8.createElement)("strong", null, row.name),
-        (0, import_react8.createElement)("span", null, row.detail ? `${row.via} · ${row.detail}` : row.via)
+        (0, import_react8.createElement)("span", null, aiText(row.detail ? `${row.via} · ${row.detail}` : row.via))
       ),
-      row.found ? (0, import_react8.createElement)("em", { className: "oai-found" }, row.found) : null,
+      row.found ? (0, import_react8.createElement)("em", { className: "oai-found" }, aiText(row.found)) : null,
       (0, import_react8.createElement)("button", { type: "button", role: "switch", className: "oai-switch", "aria-checked": row.on ? "true" : "false", "aria-label": row.name, disabled: busy, onClick: onFlip })
     ),
     open && !row.on ? (0, import_react8.createElement)("div", { className: "oai-ai-setup" }, (0, import_react8.createElement)(Setup, { row, onSaved, onClose })) : null,
@@ -12006,7 +12143,6 @@ function ConnectAiStep(props) {
     if (state) glitch();
   }, [state, glitch]);
   if (!state) return null;
-  const all = rows === null ? null : [...rows, ...subscriptionRows(subs)];
   const say = (id, message) => setProblems((previous) => ({ ...previous, [id]: message }));
   const flip = async (row) => {
     const action = flipAction(row);
@@ -12042,46 +12178,64 @@ function ConnectAiStep(props) {
       say(row.id, error.message);
     }
   };
+  return (0, import_react8.createElement)(ConnectAiView, {
+    state,
+    rows,
+    subscriptions: subs,
+    acp,
+    open,
+    showAll,
+    glitching,
+    rowProps: (row) => ({ busy: busy !== null, problem: problems[row.id], onFlip: () => flip(row), onSaved: saved(row), onClose: () => setOpen(null), onDedupe: dedupe(row) }),
+    onShowAll: () => setShowAll(true),
+    onSkip: () => finish2(),
+    onModels: () => finish2("models"),
+    onContinue: () => proceed()
+  });
+}
+function ConnectAiView({ state, rows, subscriptions, acp, open, showAll, glitching, rowProps, onShowAll, onSkip, onModels, onContinue }) {
+  const all = rows === null ? null : [...rows, ...subscriptionRows(subscriptions)];
   const count = all ? onCount(all) : 0;
   const { found, others } = sections(all ?? []);
   const visible = showAll ? others : others.slice(0, FIRST_OTHERS);
-  const rowOf = (row) => (0, import_react8.createElement)(Row, { key: row.id, row, open: open === row.id, busy: busy !== null, problem: problems[row.id], onFlip: () => flip(row), onSaved: saved(row), onClose: () => setOpen(null), onDedupe: dedupe(row) });
+  const rowOf = (row) => (0, import_react8.createElement)(Row, { key: row.id, row, open: open === row.id, ...rowProps(row) });
+  const another = found.length ? t("Add another") : t("Your AIs");
   return (0, import_react8.createElement)(
     Stage,
     {
-      title: "Turn on your AIs",
-      speech: count > 0 ? `Turn on everything you have. More brains, more ${state.companionName ?? "Omni"}.` : "Now give me a brain. Turn on every AI you have; you can change it any time.",
+      title: t("Turn on your AIs"),
+      speech: count > 0 ? t("Turn on everything you have. More brains, more {name}.", { name: state.companionName ?? "Omni" }) : t("Now give me a brain. Turn on every AI you have; you can change it any time."),
       at: "omni-connect-ai",
       glitching
     },
-    all === null ? (0, import_react8.createElement)("p", { className: "oai-muted" }, "Looking at what this computer has…") : [
+    all === null ? (0, import_react8.createElement)("p", { className: "oai-muted" }, t("Looking at what this computer has…")) : [
       found.length ? (0, import_react8.createElement)(
         "section",
-        { key: "found", className: "oai-group", "aria-label": "Found on this computer" },
-        (0, import_react8.createElement)("h2", null, "Found on this computer"),
+        { key: "found", className: "oai-group", "aria-label": t("Found on this computer") },
+        (0, import_react8.createElement)("h2", null, t("Found on this computer")),
         (0, import_react8.createElement)("div", { className: "oai-list" }, found.map(rowOf))
       ) : null,
       (0, import_react8.createElement)(AcpAgents, { key: "acp", acp }),
       (0, import_react8.createElement)(
         "section",
-        { key: "others", className: "oai-group", "aria-label": found.length ? "Add another" : "Your AIs" },
-        (0, import_react8.createElement)("h2", null, found.length ? "Add another" : "Your AIs"),
-        (0, import_react8.createElement)("p", { className: "oai-terms oai-muted" }, `Subscriptions: ${VENDOR_TERMS.toLowerCase()}.`),
+        { key: "others", className: "oai-group", "aria-label": another },
+        (0, import_react8.createElement)("h2", null, another),
+        (0, import_react8.createElement)("p", { className: "oai-terms oai-muted" }, t("Subscriptions: {terms}.", { terms: t(VENDOR_TERMS).toLowerCase() })),
         (0, import_react8.createElement)(
           "div",
           { className: "oai-list" },
           visible.map(rowOf),
-          !showAll && others.length > FIRST_OTHERS ? (0, import_react8.createElement)("button", { type: "button", className: "oai-more", onClick: () => setShowAll(true) }, `Show ${others.length - FIRST_OTHERS} more`) : null
+          !showAll && others.length > FIRST_OTHERS ? (0, import_react8.createElement)("button", { type: "button", className: "oai-more", onClick: onShowAll }, t("Show {count} more", { count: others.length - FIRST_OTHERS })) : null
         )
       ),
-      (0, import_react8.createElement)("p", { key: "more", className: "oai-muted oai-every" }, "Every other provider DSH knows is in ", (0, import_react8.createElement)("button", { type: "button", className: "oai-inline", onClick: () => finish2("models") }, "Settings → Models"), ".")
+      (0, import_react8.createElement)("p", { key: "more", className: "oai-muted oai-every" }, t("Every other provider DSH knows is in "), (0, import_react8.createElement)("button", { type: "button", className: "oai-inline", onClick: onModels }, t("Settings → Models")), ".")
     ],
     (0, import_react8.createElement)(
       "div",
       { className: "oai-actions" },
-      (0, import_react8.createElement)("button", { type: "button", className: "oai-quiet", onClick: () => finish2() }, "Skip for now"),
-      (0, import_react8.createElement)("span", { className: "oai-count" }, count > 0 ? `${count} on` : "Turn on at least one"),
-      (0, import_react8.createElement)("button", { type: "button", className: "oai-primary", disabled: count === 0, onClick: () => proceed() }, count > 0 ? "Continue →" : "Continue")
+      (0, import_react8.createElement)("button", { type: "button", className: "oai-quiet", onClick: onSkip }, t("Skip for now")),
+      (0, import_react8.createElement)("span", { className: "oai-count" }, count > 0 ? t("{count} on", { count }) : t("Turn on at least one")),
+      (0, import_react8.createElement)("button", { type: "button", className: "oai-primary", disabled: count === 0, onClick: onContinue }, count > 0 ? t("Continue →") : t("Continue"))
     )
   );
 }

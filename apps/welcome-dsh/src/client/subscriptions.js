@@ -1,10 +1,12 @@
 import { createElement as h, useEffect, useState } from 'react'
+import { t } from './i18n.js'
 
 // The subscriptions only the dsh-subscriptions plugin (@goodandready/dsh-subscriptions)
 // brings: its own sign-in routes, called from this page (same origin, so they accept it).
 // The ones another row covers (ChatGPT, Kimi, Copilot and Grok through DSH's own sign-ins,
 // Claude through pi-ai's anthropic route) are not offered here: one way to reach each AI.
-// Every sign-in takes the provider's next free account slot, so accounts add up.
+// Every sign-in takes the provider's next free account slot, so accounts add up. A tile's name
+// stays as the vendor writes it; its note and token name read in the DSH language (i18n.js).
 const BASE = 'dsh-subscriptions'
 
 export const SUBSCRIPTION_TILES = [
@@ -23,7 +25,7 @@ async function request(path, init) {
   try {
     response = await fetch(`${BASE}/${path}`, { credentials: 'same-origin', ...init })
   } catch {
-    throw new Error('Could not reach the subscriptions plugin.')
+    throw new Error(t('Could not reach the subscriptions plugin.'))
   }
   const body = await response.json().catch(() => ({}))
   if (!response.ok || body.ok === false) throw new Error(body?.error?.message ?? `HTTP ${response.status}`)
@@ -85,7 +87,7 @@ export function SubscriptionSignIn({ tile, onBack, onSaved, glitch }) {
               const out = await post('oauth/device/poll', { state: device.state })
               if (out.status === 'authorized') return done()
               if (!live) return
-              if (out.status === 'expired') return setProblem('The code expired before the sign-in finished. Go back and start again.')
+              if (out.status === 'expired') return setProblem(t('The code expired before the sign-in finished. Go back and start again.'))
               setProblem(null)
             } catch (error) {
               if (!live) return
@@ -138,17 +140,17 @@ export function SubscriptionSignIn({ tile, onBack, onSaved, glitch }) {
   }
 
   return h('div', { className: 'oai-signin' },
-    !step && !problem ? h('p', { className: 'oai-muted' }, `Starting the ${tile.name} sign-in…`) : null,
-    step?.code ? h('p', null, `Open ${tile.name}, sign in, and enter this code:`) : null,
+    !step && !problem ? h('p', { className: 'oai-muted' }, t('Starting the {name} sign-in…', { name: tile.name })) : null,
+    step?.code ? h('p', null, t('Open {name}, sign in, and enter this code:', { name: tile.name })) : null,
     step?.code ? h('div', { className: 'oai-code' }, h('code', null, step.code)) : null,
-    step?.url && tile.kind !== 'token' ? h('a', { className: 'oai-primary oai-button', href: step.url, target: '_blank', rel: 'noreferrer' }, `Open ${tile.name} to sign in`) : null,
-    tile.kind === 'device' && step ? h('p', { className: 'oai-muted oai-waiting' }, 'Waiting for you to finish signing in…') : null,
-    tile.kind === 'browser' && step ? h('p', { className: 'oai-muted' }, step.autoCatch ? 'Sign in on their page; this finishes on its own. If it ends on a page that does not load, paste its address here.' : 'Sign in on their page, then paste the address it ends on here.') : null,
-    tile.kind === 'token' && step ? h('p', null, `Copy your ${tile.what} from `, h('a', { className: 'oai-link', href: tile.where, target: '_blank', rel: 'noreferrer' }, tile.name), ' and paste it here. It stays in DSH\'s credential store on this computer.') : null,
+    step?.url && tile.kind !== 'token' ? h('a', { className: 'oai-primary oai-button', href: step.url, target: '_blank', rel: 'noreferrer' }, t('Open {name} to sign in', { name: tile.name })) : null,
+    tile.kind === 'device' && step ? h('p', { className: 'oai-muted oai-waiting' }, t('Waiting for you to finish signing in…')) : null,
+    tile.kind === 'browser' && step ? h('p', { className: 'oai-muted' }, step.autoCatch ? t('Sign in on their page; this finishes on its own. If it ends on a page that does not load, paste its address here.') : t('Sign in on their page, then paste the address it ends on here.')) : null,
+    tile.kind === 'token' && step ? h('p', null, t('Copy your {what} from ', { what: t(tile.what) }), h('a', { className: 'oai-link', href: tile.where, target: '_blank', rel: 'noreferrer' }, tile.name), t(' and paste it here. It stays in DSH\'s credential store on this computer.')) : null,
     step && tile.kind !== 'device' ? h('form', { onSubmit: submit },
-      h('label', { htmlFor: 'oai-sub-value' }, tile.kind === 'token' ? tile.what : 'The address you landed on'),
+      h('label', { htmlFor: 'oai-sub-value' }, tile.kind === 'token' ? t(tile.what) : t('The address you landed on')),
       h('input', { id: 'oai-sub-value', type: tile.kind === 'token' ? 'password' : 'text', required: true, autoComplete: 'off', spellCheck: false, value, onChange: e => setValue(e.target.value) }),
-      h('button', { type: 'submit', className: tile.kind === 'token' ? 'oai-primary' : '', disabled: busy }, busy ? 'Connecting…' : 'Connect')) : null,
+      h('button', { type: 'submit', className: tile.kind === 'token' ? 'oai-primary' : '', disabled: busy }, busy ? t('Connecting…') : t('Connect'))) : null,
     problem ? h('p', { className: 'oai-error', role: 'alert' }, problem) : null,
-    h('button', { type: 'button', className: 'oai-quiet', onClick: onBack }, 'Back'))
+    h('button', { type: 'button', className: 'oai-quiet', onClick: onBack }, t('Back')))
 }

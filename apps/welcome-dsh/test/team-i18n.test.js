@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import { build } from 'esbuild'
 import { OMNI_PLUGINS, OMNI_TOOLS } from '../src/host/bot-types.js'
+import { fakeLocale } from './fake-locale.js'
 
 const PLUGIN = dirname(dirname(fileURLToPath(import.meta.url)))
 
@@ -44,44 +45,6 @@ function findAll(node, match, out = []) {
 }
 const textOf = node => (Array.isArray(node) ? node.map(textOf).join('') : node && typeof node === 'object' ? textOf(node.children) : node === null || node === undefined || node === false ? '' : String(node))
 const byClass = name => node => String(node?.props?.className ?? '').split(' ').includes(name)
-
-// DSH's locale service as a language pack meets it: en and zh, a language added with its
-// fallback, one dictionary per namespace and language, and a lookup that falls back to English,
-// then to the key.
-function fakeLocale() {
-  const catalog = new Map([['en', { id: 'en' }], ['zh', { id: 'zh', fallback: 'en' }]])
-  const dicts = new Map()
-  let active = 'en'
-  const calls = []
-  const chain = () => {
-    const out = []
-    for (let at = catalog.get(active.toLowerCase()); at; at = at.fallback ? catalog.get(at.fallback.toLowerCase()) : undefined) out.push(at.id)
-    return out
-  }
-  return {
-    calls,
-    getLocale: () => ({ active }),
-    addLanguage({ id, fallback }) { catalog.set(id.toLowerCase(), { id, fallback }) },
-    setLocale(id) { active = catalog.get(id.toLowerCase()).id },
-    register(ns, dictionaries) {
-      calls.push([ns, Object.keys(dictionaries)])
-      for (const locale of Object.keys(dictionaries)) {
-        const slot = `${ns}\u0000${locale.toLowerCase()}`
-        if (dicts.has(slot)) throw new Error(`locale namespace "${ns}" already has locale "${locale}"`)
-      }
-      for (const [locale, dict] of Object.entries(dictionaries)) dicts.set(`${ns}\u0000${locale.toLowerCase()}`, dict)
-      return () => { for (const locale of Object.keys(dictionaries)) dicts.delete(`${ns}\u0000${locale.toLowerCase()}`) }
-    },
-    bind: ns => (key, params) => {
-      let text = key
-      for (const id of chain()) {
-        const found = dicts.get(`${ns}\u0000${id.toLowerCase()}`)?.[key]
-        if (found !== undefined) { text = found; break }
-      }
-      return params ? text.replace(/\{(\w+)\}/g, (match, name) => (name in params ? String(params[name]) : match)) : text
-    },
-  }
-}
 
 // The team step's copy, rendered: Unfold's and Genie's cards, Omni's statuses and choices, the button.
 function sample() {
@@ -165,8 +128,11 @@ test('under a pt-BR locale, the team step renders in Brazilian Portuguese', () =
 })
 
 // Every literal the team step passes to t() has its Portuguese text, with the same placeholders.
-// The team step and the Claude Code and Codex rows share the namespace.
-const source = ['team.js', 'acp-agents.js'].map(file => readFileSync(new URL(`../src/client/${file}`, import.meta.url), 'utf8')).join('\n')
+// The team step, the Claude Code and Codex rows and the rest of the welcome share the namespace
+// (welcome-flow-i18n.test.js renders the rest).
+const read = file => readFileSync(new URL(`../src/client/${file}`, import.meta.url), 'utf8')
+const FLOW = ['connect-ai.js', 'subscriptions.js', 'companion.js', 'companion-art.js', 'stage.js', 'api.js']
+const source = ['team.js', 'acp-agents.js', ...FLOW].map(read).join('\n')
 const keysOf = text => [...text.matchAll(/\bt\(\s*(['"`])((?:\\.|(?!\1).)*)\1/g)].map(match => match[2].replace(/\\(['"`\\])/g, '$1'))
 const placeholders = text => [...text.matchAll(/\{(\w+)\}/g)].map(match => match[1]).sort().join(',')
 
@@ -237,6 +203,10 @@ test('the pt-BR dictionary holds no key the team step no longer uses', () => {
   for (const row of omniTypeRows()) used.add(row)
   for (const id of ['power', 'plugins', 'link', 'team']) used.add(id)
   used.add('Comes with this DSH')
+  // The rest of the welcome looks some keys up from data: the rail's labels, the companion's
+  // ideas, the subscription tiles, and what src/host/ais.js says about each AI.
+  const quoted = text => [...text.matchAll(/'((?:\\'|[^'\n])*)'/g)].map(match => match[1].replace(/\\'/g, "'"))
+  for (const text of [...FLOW.map(read), readFileSync(new URL('../src/host/ais.js', import.meta.url), 'utf8')]) for (const literal of quoted(text)) used.add(literal)
   assert.deepEqual(Object.keys(team.PT_BR).filter(key => !used.has(key)), [])
 })
 
