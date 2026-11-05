@@ -534,5 +534,137 @@
    "password:",
    "|"
   ]
+ ],
+ "continuation": [
+  [
+   "shape a: an anchor ends the key line, the value on the next line",
+   "{name}: &a\n  {value}",
+   "{name}: &a\n  [redacted]"
+  ],
+  [
+   "shape a: a tag ends the key line, the value on the next line",
+   "{name}: !!str\n  {value}",
+   "{name}: !!str\n  [redacted]"
+  ],
+  [
+   "shape a: an anchor and a tag end the key line, the value on the next line",
+   "{name}: &a !!str\n  {value}",
+   "{name}: &a !!str\n  [redacted]"
+  ],
+  [
+   "shape a: an anchor under a camelCase name",
+   "{camel}: &a\n  {value}",
+   "{camel}: &a\n  [redacted]"
+  ],
+  [
+   "shape a: an anchor under a nested name, the value four deep",
+   "config:\n  {name}: &a\n    {value}\nnext: shown",
+   "config:\n  {name}: &a\n    [redacted]\nnext: shown"
+  ],
+  [
+   "shape a: an anchor under a list item",
+   "- {name}: &a\n    {value}",
+   "- {name}: &a\n    [redacted]"
+  ],
+  [
+   "shape a: an anchor, CRLF",
+   "{name}: &a\r\n  {value}\r\nnext: shown",
+   "{name}: &a\r\n  [redacted]\r\nnext: shown"
+  ],
+  [
+   "shape a: an anchor, then a quoted value",
+   "{name}: &a\n  \"{value} and more\"",
+   "{name}: &a\n  \"[redacted]\""
+  ],
+  [
+   "shape b: a bare name, then an anchor and the value",
+   "{name}:\n  &a {value}",
+   "{name}:\n  &a [redacted]"
+  ],
+  [
+   "shape b: a bare name, then a tag and the value",
+   "{name}:\n  !!str {value}",
+   "{name}:\n  !!str [redacted]"
+  ],
+  [
+   "shape b: a bare camelCase name, then an anchor and the value",
+   "{camel}:\n  &a {value}",
+   "{camel}:\n  &a [redacted]"
+  ],
+  [
+   "chain: a bare name, an anchor line, then the value",
+   "{name}:\n  &a\n  {value}",
+   "{name}:\n  &a\n  [redacted]"
+  ],
+  [
+   "chain: an anchor, an anchor line, then the value",
+   "{name}: &a\n  &b\n  {value}",
+   "{name}: &a\n  &b\n  [redacted]"
+  ],
+  [
+   "chain: a bare name, a tag line, then the value",
+   "{name}:\n  !!str\n  {value}",
+   "{name}:\n  !!str\n  [redacted]"
+  ],
+  [
+   "chain: an anchor, then a tag and the value",
+   "{name}: &a\n  !!str {value}",
+   "{name}: &a\n  !!str [redacted]"
+  ],
+  [
+   "chain: a bare name, then an anchor, a tag and the value",
+   "{name}:\n  &a !!str {value}",
+   "{name}:\n  &a !!str [redacted]"
+  ],
+  [
+   "regression: a bare name, the plain value on the next line",
+   "{name}:\n  {value}",
+   "{name}:\n  [redacted]"
+  ],
+  [
+   "guard: an anchor, the value at the same indent",
+   "{name}: &a\n{value}",
+   "{name}: [redacted]\n{value}"
+  ],
+  [
+   "guard: an anchor, the value less indented",
+   "  {name}: &a\n{value}",
+   "  {name}: [redacted]\n{value}"
+  ],
+  [
+   "guard: a nested anchor, the value at the same indent",
+   "config:\n  {name}: &a\n  {value}",
+   "config:\n  {name}: [redacted]\n  {value}"
+  ],
+  [
+   "guard: a bare name, an anchor and the value at the same indent",
+   "{name}:\n&a {value}",
+   "{name}:\n[redacted] {value}"
+  ],
+  [
+   "guard: an anchor line, then the value at the key indent",
+   "{name}: &a\n  &b\n{value}",
+   "{name}: [redacted]\n  &b\n{value}"
+  ],
+  [
+   "guard: an anchor, then a sibling key",
+   "config:\n  {name}: &a\n  user: bob",
+   "config:\n  {name}: [redacted]\n  user: bob"
+  ],
+  [
+   "guard: indented prose under a plain name",
+   "notes:\n  {value} is a word",
+   "notes:\n  {value} is a word"
+  ],
+  [
+   "guard: an anchor, then indented prose under a plain name",
+   "notes: &a\n  {value} is a word",
+   "notes: &a\n  {value} is a word"
+  ],
+  [
+   "guard: a plain name, then an anchor and prose",
+   "notes:\n  &a {value} is a word",
+   "notes:\n  &a {value} is a word"
+  ]
  ]
 }

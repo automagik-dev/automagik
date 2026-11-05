@@ -130,3 +130,61 @@ test('served: a blank run past the 16 KiB bound between a key line and its block
     assert.match(r.served(), /next: shown/, what)
   }
 })
+
+// #396, the table's `continuation` rows (unfold-mind-dsh's test reads them the same way): a
+// credential name with no value on its line continues to a strictly more indented next line; the
+// first more indented line with a value is the scalar, hidden and remembered, the key line and the
+// properties kept as written. The rows hold placeholders, filled here from pieces, so no
+// credential-shaped text is committed.
+const FILL = { '{name}': ['pass', 'word'].join(''), '{camel}': ['api', 'Key'].join(''), '{value}': ['hunter', 2].join('') }
+const fill = (s) => s.replace(/\{(?:name|camel|value)\}/g, (k) => FILL[k])
+const SECRET = FILL['{value}']
+const CONTINUED = TABLE.continuation.map(([what, input, want]) => [what, fill(input), fill(want)])
+const CONTINUED_HIDDEN = CONTINUED.filter(([, input, want]) => input.includes(SECRET) && !want.includes(SECRET))
+const GUARDS = CONTINUED.filter(([what]) => what.startsWith('guard:'))
+const nameOf = (input) => (input.includes(FILL['{camel}']) ? FILL['{camel}'] : FILL['{name}'])
+
+for (const [what, input, want] of CONTINUED) {
+  test(`continuation: ${what}`, () => {
+    assert.equal(redactText(input), want, 'window')
+    assert.equal(clientRedactText(input), want, 'browser copy')
+  })
+}
+
+test('continuation: the browser copy remembers a hidden value, and no anchor, tag or guard value', () => {
+  for (const [what, input] of CONTINUED_HIDDEN) {
+    const kept = clientSecretsIn(`${input} `)
+    assert.ok(kept.some((v) => v.includes(SECRET)), what)
+    assert.ok(!kept.some((v) => /^[&!|>]/.test(v)), what)
+  }
+  for (const [what, input] of GUARDS) assert.ok(!clientSecretsIn(`${input} `).some((v) => v.includes(SECRET)), what)
+})
+
+test('served: a continued value stays hidden in the window, whole and a character at a time', () => {
+  for (const [what, input] of CONTINUED_HIDDEN) {
+    const whole = rig()
+    whole.push(`${input}\nand goes on`)
+    assert.ok(!whole.served().includes(SECRET), what)
+    const split = rig()
+    for (const ch of `${input}\nand goes on`) split.push(ch)
+    assert.ok(!split.served().includes(SECRET), `${what}, a character at a time`)
+  }
+})
+
+// A blank run past the 16 KiB bound right before the value: the cut lands between the key and its
+// value, so the key line and its properties are kept and the value that arrives next is hidden.
+// Inside a quoted value the cut withholds the rest of the value up to its closing quote, its key
+// dropped with it, as for a quoted value on its key's line.
+test('served: the 16 KiB bound cut between a continued key and its value keeps the key and hides the value', () => {
+  for (const [what, input] of CONTINUED_HIDDEN) {
+    const at = input.indexOf(SECRET)
+    const w = new EventWindow(catalog, { limit: 20 })
+    const seen = []
+    w.onChange((change, payload) => seen.push(JSON.stringify(payload)))
+    const push = (text) => w.push({ v: 2, id: `g:${++seq}`, producer: 'g', seq, t_ns: seq, source: 'guest', kind: 'agent_delta', response_id: 'rK', text })
+    push(`${input.slice(0, at)}${' '.repeat(17_000)}`)
+    for (const ch of `${input.slice(at)}\nand goes on`) push(ch)
+    assert.ok(![...seen, JSON.stringify(w.rows)].join('\n').includes(SECRET), what)
+    if (input[at - 1] !== '"') assert.ok(w.rows.at(-1).text.includes(nameOf(input)), `${what}: the key is still served`)
+  }
+})

@@ -54,6 +54,9 @@ const BLOCKS: [string, string, string[]][] = [
   ['const YAML_SECRET = [', 'unfold-events-dsh/src/window.js', ['unfold-mind-dsh/src/mind.js']],
   ['const ESCAPED_SECRET = [', 'unfold-events-dsh/src/window.js', ['unfold-mind-dsh/src/mind.js']],
   ['const ESCAPED_END =', 'unfold-events-dsh/src/window.js', ['unfold-mind-dsh/src/mind.js']],
+  ['const KEY_LINE_OPEN =', 'unfold-events-dsh/src/window.js', ['unfold-mind-dsh/src/mind.js']],
+  ['const PROPERTY_LINE =', 'unfold-events-dsh/src/window.js', ['unfold-mind-dsh/src/mind.js']],
+  ['function openKeyLine(raw, max) {', 'unfold-events-dsh/src/window.js', ['unfold-mind-dsh/src/mind.js']],
 ];
 
 /** The block `declaration` opens in `file`: one line, or through the `]` that closes its list or the `}` that closes its function. */

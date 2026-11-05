@@ -725,10 +725,36 @@ function keptTail(full) {
 // `password: &a !!str`), then a blank run on that line, as in unfold-events-dsh's window: kept with
 // the run cut to one space, so the indicator and a block's lines that arrive next are read under
 // their key.
+// A key line continued on the lines below it (#396) is kept the same way: it ends at its colon or
+// its anchors and tags, lines of anchors and tags alone may follow, each more indented, and the last
+// line is a blank run, or a line of anchors and tags then a blank run. The key line and those lines
+// are kept, each line below the key indented one more than the key, so the value that arrives next
+// is still read under its key.
 const KEY_LINE_OPEN = /:[ \t]*(?:[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)*)?$/
+const PROPERTY_LINE = /^[ \t]+[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?$/
 function openKeyLine(raw, max) {
-  const line = raw.slice(raw.lastIndexOf('\n') + 1).trimEnd()
-  return line.length < max && KEY_LINE_OPEN.test(line.slice(-256)) ? `${line} ` : null
+  let at = raw.lastIndexOf('\n')
+  const last = raw.slice(at + 1)
+  const line = last.trimEnd()
+  if (line.length < max && KEY_LINE_OPEN.test(line.slice(-256))) return `${line} `
+  if (at < 0 || (line && !PROPERTY_LINE.test(line.slice(-256)))) return null
+  const below = line ? [line] : []
+  while (at >= 0 && below.length <= 8) {
+    const from = raw.lastIndexOf('\n', at - 1)
+    const above = raw.slice(from + 1, at).trimEnd()
+    at = from
+    if (PROPERTY_LINE.test(above.slice(-256))) {
+      below.unshift(above)
+      continue
+    }
+    const indent = /^[ \t]*/.exec(above)[0]
+    if (above.length >= max / 2 || !KEY_LINE_OPEN.test(above.slice(-256))) return null
+    if (!below.every((l) => l.startsWith(indent) && /^[ \t]/.test(l.slice(indent.length)))) return null
+    const lines = [above, ...below.map((l) => `${indent} ${l.trimStart()}`)]
+    const kept = line ? `${lines.join('\n')} ` : `${lines.join('\n')}\n${last.slice(0, indent.length + 1)}`
+    return kept.length < max ? kept : null
+  }
+  return null
 }
 
 // Where a quoted credential value opens (the quoted forms of redact.js's text rules), as in
@@ -737,6 +763,8 @@ const QUOTED_SECRET = [
   /\b[A-Z0-9_]+=(?<=(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=)(["'`])/g,
   /(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization)["']?\s*[:=]\s*(?!(?:[&!][^\s"'`]*[ \t]+){3})(?:(?<=:[ \t]*)(?:[&!][^\s"'`]*[ \t]+){1,2})?(["'`])/gi, // any prefix
   /(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key)["']?\s*[:=]\s*(?!(?:[&!][^\s"'`]*[ \t]+){3})(?:(?<=:[ \t]*)(?:[&!][^\s"'`]*[ \t]+){1,2})?(["'`])/g, // camelCase
+  /(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization)["']?[ \t]*:(?<=(?:^|\n)([ \t]*)(?:[^ \t\n][^\n]*)?)(?:[ \t]+[&!][^\s"'`]*){0,2}[ \t]*\r?(?:\n\1[ \t]+[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?[ \t]*\r?)*\n\1[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}(?![&!#]|[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$))(["'`])/gi, // continued on a more indented line (#396)
+  /(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key)["']?[ \t]*:(?<=(?:^|\n)([ \t]*)(?:[^ \t\n][^\n]*)?)(?:[ \t]+[&!][^\s"'`]*){0,2}[ \t]*\r?(?:\n\1[ \t]+[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?[ \t]*\r?)*\n\1[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}(?![&!#]|[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$))(["'`])/g, // continued, camelCase
 ]
 
 // Where a YAML block scalar under a credential name opens (`password: |`, anchors and tags before
@@ -765,7 +793,7 @@ function quotedSpans(raw) {
   for (const re of QUOTED_SECRET) {
     for (const m of raw.matchAll(re)) {
       const open = m.index + m[0].length
-      const { close, escaped } = closingQuote(raw, open, m[1])
+      const { close, escaped } = closingQuote(raw, open, m[0].slice(-1)) // the match ends at its opening quote
       spans.push({ start: m.index, open, end: close < 0 ? raw.length : close + 1, closed: close >= 0, escaped })
     }
   }

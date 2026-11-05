@@ -106,3 +106,60 @@ test('served: a blank run past the 4096 keep between a key line and its block in
     assert.match(r.served(), /next: shown/, what)
   }
 })
+
+// #396, the table's `continuation` rows: a credential name with no value on its line continues to
+// the next line when that line is strictly more indented. Anchors and tags may end the key line,
+// start the value line, or stand on lines of their own between them; the first more indented line
+// with a value is the scalar, hidden and remembered, and the key line and the properties stay
+// where they were written. A value at the same or a lower indent, a sibling key and indented prose
+// under a plain name are not hidden. The rows hold placeholders, filled here from pieces, so no
+// credential-shaped text is committed.
+const FILL = { '{name}': ['pass', 'word'].join(''), '{camel}': ['api', 'Key'].join(''), '{value}': ['hunter', 2].join('') }
+const fill = (s) => s.replace(/\{(?:name|camel|value)\}/g, (k) => FILL[k])
+const SECRET = FILL['{value}']
+const CONTINUED = TABLE.continuation.map(([what, input, want]) => [what, fill(input), fill(want)])
+const CONTINUED_HIDDEN = CONTINUED.filter(([, input, want]) => input.includes(SECRET) && !want.includes(SECRET))
+const GUARDS = CONTINUED.filter(([what]) => what.startsWith('guard:'))
+// The name the row's key line holds, served again after a cut.
+const nameOf = (input) => (input.includes(FILL['{camel}']) ? FILL['{camel}'] : FILL['{name}'])
+
+for (const [what, input, want] of CONTINUED) test(`continuation: ${what}`, () => assert.equal(redactText(input), want))
+
+test('continuation: a hidden value is remembered, and no anchor, tag or guard value is', () => {
+  for (const [what, input] of CONTINUED_HIDDEN) {
+    const kept = secretsIn(`${input} `)
+    assert.ok(kept.some((v) => v.includes(SECRET)), what)
+    assert.ok(!kept.some((v) => /^[&!|>]/.test(v)), what)
+  }
+  for (const [what, input] of GUARDS) assert.ok(!secretsIn(`${input} `).some((v) => v.includes(SECRET)), what)
+})
+
+test('served: a continued value stays hidden in the stream, whole and a character at a time', () => {
+  for (const [what, input] of CONTINUED_HIDDEN) {
+    const whole = journal()
+    whole.send(`${input}\nand goes on`)
+    assert.ok(!whole.served().includes(SECRET), what)
+    const split = journal()
+    for (const ch of `${input}\nand goes on`) split.send(ch)
+    assert.ok(!split.served().includes(SECRET), `${what}, a character at a time`)
+  }
+})
+
+// A blank run past the 4096 keep right before the value (inside its quotes for a quoted one): the
+// cut lands between the key and its value, so the key line and its properties are kept and the
+// value that arrives next is hidden.
+test('served: a cut between a continued key and its value keeps the key and hides the value', () => {
+  for (const [what, input] of CONTINUED_HIDDEN) {
+    const at = input.indexOf(SECRET)
+    const mind = new MindStream({ now: () => 1 })
+    mind.life = 'lifeZ'
+    let seq = 0
+    const send = (text) => mind.agentd({ v: 2, id: `g:${++seq}`, producer: 'g', seq, t_ns: seq, source: 'guest', kind: 'agent_delta', response_id: 'rK', text }, { via: 'agentd journal', file: '/j', offset: seq })
+    mind.agentd({ v: 2, id: 'g:0', producer: 'g', seq: 0, t_ns: 0, source: 'guest', kind: 'response_started', response_id: 'rK' }, { via: 'agentd journal', file: '/j', offset: 0 })
+    send(`${input.slice(0, at)}${' '.repeat(17_000)}`)
+    for (const ch of `${input.slice(at)}\nand goes on`) send(ch)
+    const served = [JSON.stringify(mind.snapshot()), ...mind.rows.map((x) => JSON.stringify(mind.detail(x.id, loadDefinitions())))].join('\n')
+    assert.ok(!served.includes(SECRET), what)
+    assert.ok(mind.rows.at(-1).text.includes(nameOf(input)), `${what}: the key is still served`)
+  }
+})

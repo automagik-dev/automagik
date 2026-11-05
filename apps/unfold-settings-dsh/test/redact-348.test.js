@@ -13,3 +13,10 @@ const TABLE = JSON.parse(readFileSync(new URL('./fixtures/redact-348.json', impo
 
 for (const [what, input, want] of TABLE.text) test(`text: ${what}`, () => assert.equal(redactText(input), want))
 for (const [what, input, want] of TABLE.object) test(`object: ${what}`, () => assert.deepEqual(redact(input), want))
+
+// #396, the table's `continuation` rows (unfold-mind-dsh's test reads them the same way): a
+// credential name with no value on its line continues to a strictly more indented next line. The
+// rows hold placeholders, filled here from pieces, so no credential-shaped text is committed.
+const FILL = { '{name}': ['pass', 'word'].join(''), '{camel}': ['api', 'Key'].join(''), '{value}': ['hunter', 2].join('') }
+const fill = (s) => s.replace(/\{(?:name|camel|value)\}/g, (k) => FILL[k])
+for (const [what, input, want] of TABLE.continuation) test(`continuation: ${what}`, () => assert.equal(redactText(fill(input)), fill(want)))
