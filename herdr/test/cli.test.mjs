@@ -1312,7 +1312,7 @@ test("restart keeps the old pane when the new one never brings its agent up, exi
 });
 
 // #413: what codex leaves on its screen when a thread's model provider is gone.
-const CODEX_GONE = "Error: model provider juice is no longer configured (modelProviderNotConfigured)";
+const CODEX_GONE = "Error: model provider example-proxy is no longer configured (modelProviderNotConfigured)";
 const CODEX_SCREEN = `$ codex resume 019a\n\x1b[31m${CODEX_GONE}\x1b[0m\n\n\u2500\u2500\u2500\u2500\n% \n`;
 
 test("causeLine: the agent's last line that names a failure, past prompts, rules and colour codes", () => {

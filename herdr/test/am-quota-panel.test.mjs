@@ -209,7 +209,7 @@ test("a restart whose new pane exited names its agent's own cause, not the CLI's
   view.tool = "codex";
   view.switched.codex = { at: NOW, from: "ana@example.com · Pro", to: "bo@example.com · Pro",
     look: { bots: [{ id: "a", name: "A", project: "/p" }], reliable: true } };
-  const cause = "Error: model provider juice is no longer configured (modelProviderNotConfigured)";
+  const cause = "Error: model provider example-proxy is no longer configured (modelProviderNotConfigured)";
   const error = `t100 exited before its agent was up; its agent said: "${cause}" (hc read t100 shows the rest); t5 still runs A, untouched.`;
   state.exec = () => ({ code: 1, stdout: JSON.stringify({ error, terminal: "t100", cause }),
     stderr: `automagik-herdr: A's pane moved to tab tb3.\nautomagik-herdr: ${error}\n` });

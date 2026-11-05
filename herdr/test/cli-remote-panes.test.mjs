@@ -351,7 +351,7 @@ test("restart --machine resumes by id when the pane carries a session (--resume 
 
 test("restart --machine #413: codex can't resume a thread whose model provider is gone: one new pane there on a new thread, the old id in the note", (t) => {
   const thread = "0f3c2a4e-1b2d-4c5e-9f60-718293a4b5c6";
-  const gone = "Error: model provider juice is no longer configured (modelProviderNotConfigured)";
+  const gone = "Error: model provider example-proxy is no longer configured (modelProviderNotConfigured)";
   const s = scene(t, { terminals: [{ address: "vm/t9", name: null, state: "live", created_ms: 1700000000009, parent: null,
     labels: { "agent.session": thread }, foreground: { argv: ["codex", "resume", thread], name: "codex" }, status: { state: "idle", app: "codex" } }] });
   const file = join(s.project, ".herdr/bots.json");

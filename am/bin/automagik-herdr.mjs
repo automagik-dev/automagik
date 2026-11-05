@@ -2018,7 +2018,7 @@ async function agentUp(terminal, ms = RESTART_WAIT_MS) {
 }
 
 // A line that names a failure: an error word, or a code in brackets as codex gives one
-// ("model provider juice is no longer configured (modelProviderNotConfigured)").
+// ("model provider example-proxy is no longer configured (modelProviderNotConfigured)").
 const FAILURE_WORD = /\b(error|fatal|failed|failure|panic|denied|invalid|unauthori[sz]ed|refused|cannot|can't|not configured|no longer)\b/i;
 const FAILURE_CODE = /\([a-z]+[A-Z][A-Za-z]*\)/; // camelCase only: never "(quit)" or "(default)"
 const failureLine = (l) => FAILURE_WORD.test(l) || FAILURE_CODE.test(l);
@@ -2061,7 +2061,7 @@ async function exitedWhy(terminal) {
 const busyRefusal = (refusal, old) => new CliError(refusal, 1, { refused: old?.status?.state === "working" ? "working" : "helpers", terminal: old.address });
 
 // Codex refusing a thread whose model provider is no longer in its config (#413: threads begun
-// on a provider since removed, Juice say): that thread can't be resumed, only left behind.
+// on a provider since removed from the config): that thread can't be resumed, only left behind.
 const PROVIDER_GONE = /modelProviderNotConfigured|\bno longer configured\b/i;
 
 /**
