@@ -7,7 +7,7 @@
 // said since. DSH keeps the Session, its history and the sidebar.
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
-import { LlmAdapter, isAgentLoopRequest } from '@deepseek-ai/dsh-llm'
+import { LlmAdapter, boundContextSummary, createUserMessage, isAgentLoopRequest } from '@deepseek-ai/dsh-llm'
 import { AgentRun, valuesOf } from './acp.js'
 import { DEFAULT_MODEL } from './catalog.js'
 import { callArguments, levelOf, mirrorTool, TOOL_NAME } from './tool.js'
@@ -65,12 +65,29 @@ class Blocks {
 
 const textOf = content => (typeof content === 'string' ? content : (content ?? []).filter(block => block?.type === 'text').map(block => block.text).join('\n'))
 
+/** The source kind of the row that says a new agent session does not see the chat before it. */
+export const NOTICE_KIND = 'acp-session'
+
+/**
+ * The chat row that says the agent is a new session and has not seen the chat's earlier
+ * messages: a user-role notice DSH draws as a one-line row outside the reply, never reply text.
+ * @param {string} name the agent's name
+ */
+export function freshSessionNotice(name) {
+  const summary = `A new ${name} session: it does not see this chat's earlier messages`
+  return createUserMessage({
+    content: [{ type: 'text', text: `[${summary}.]` }],
+    source: { kind: NOTICE_KIND, form: 'notice', summary: boundContextSummary(summary) },
+  })
+}
+
 // What the person said this turn: the user messages after the last assistant or tool one.
-// DSH's own context notes (its tool and file policies) are for its own loop, not the agent's.
+// DSH's own context notes (its tool and file policies) are for its own loop, not the agent's,
+// and the new-session notice is for the person.
 export function promptOf(messages) {
   let start = messages.length
   while (start > 0 && messages[start - 1].role === 'user') start--
-  const turn = messages.slice(start)
+  const turn = messages.slice(start).filter(message => message.source?.kind !== NOTICE_KIND)
   const own = turn.filter(message => message.source?.kind === 'user')
   const text = (own.length > 0 ? own : turn).map(message => textOf(message.content)).filter(Boolean).join('\n\n')
   return [{ type: 'text', text }]
@@ -239,8 +256,15 @@ export class AcpAdapter extends LlmAdapter {
       } catch (error) {
         return yield finish('error', `${agent.name} would not take DSH's permission level: ${error?.message ?? error}`)
       }
+      // A new agent session in a chat that already has answers says so once, in a row of its
+      // own before the reply (bots-dsh's fallback.js writes its notice the same way). The
+      // prompt below was read before it, and promptOf leaves it out of later ones.
       if (fresh && options.messages.some(message => message.role === 'assistant')) {
-        yield* blocks.add('text', `(A new ${agent.name} session: it does not see this chat's earlier messages.)\n\n`)
+        try {
+          dshAgent?.session?.append?.('user/message', freshSessionNotice(agent.name), { surfaceOp: 'append' })
+        } catch (error) {
+          try { this.ctx.logger?.warn?.(`acp-dsh: the new-session notice was not written: ${error?.message ?? error}`) } catch {}
+        }
       }
       live.open = true
       live.run.prompt(promptOf(options.messages)).catch(() => {})
