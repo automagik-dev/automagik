@@ -507,14 +507,16 @@ export function layoutNeeds(tree) {
   return { blocks, menu };
 }
 
-// Before a mod goes off: what the shown layout (`name`, `tree`) loses. `refuse` when a block names
-// it, since off would drop the whole layout; `note` when it is only the right-click menu.
-export function layoutGuard({ name, tree, mod }) {
+// Before a mod goes off or out of mods/ (`then`: what the person does after switching, "turn it
+// off", "remove it", "uninstall it"): what the shown layout (`name`, `tree`) loses. `refuse` when a
+// block names it, since that would drop the whole layout; `note` when it is only the right-click
+// menu. am-sidebar/release.js carries a copy for `am uninstall` (test/am-mods-list.test.mjs).
+export function layoutGuard({ name, tree, mod, then = "turn it off" }) {
   const { blocks, menu } = layoutNeeds(tree);
   const layout = name ? `the ${name} layout` : "the shown layout";
   if (blocks.has(mod)) {
     return { refuse: `${mod} stays on: ${layout} shows it, and Herdr drops a layout whose mod is off`
-      + ` (plain Herdr instead). Switch layouts first (ctrl-shift-l), then turn it off` };
+      + ` (plain Herdr instead). Switch layouts first (ctrl-shift-l), then ${then}` };
   }
   if (menu === mod) return { note: `${layout}'s right-click menu: Herdr's own menu shows instead` };
   return null;

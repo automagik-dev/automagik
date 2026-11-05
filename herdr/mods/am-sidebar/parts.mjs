@@ -15,6 +15,8 @@
 //                      (moved to mods-disabled/, as the mod manager does); an update keeps it off.
 //                      The sidebar refuses while the CLI link or the briefing entry point still runs
 //                      code in its folder (sidebarCarries), and stops refusing once am's copies do.
+//                      Any of them refuses while a block of the layout Herdr shows names it (Herdr
+//                      would drop that layout for plain Herdr; guardLayout, #414).
 //   herdr.layout       install: the pack, then the automagik layout put back if it was removed.
 //                      uninstall: the layout removed while it is the pack's copy (layout=removed).
 // Never written: Herdr's shared.json or data/, Pocket Link (mods/pocket-link) or its LaunchAgent,
@@ -30,7 +32,9 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import { stableBriefingPath, ENTRY_SOURCE } from "./briefingText.mjs";
 import { CLI_LINK, hooksRunning, knownProjects, ledgerFolders, removeHooks } from "./migrateHooks.mjs";
-import { OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker } from "./release.js";
+import {
+  OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker, layoutGuard, layoutNeeds,
+} from "./release.js";
 import { appHomeOf, binDirOf, markerOf, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeMarker } from "./update.mjs";
 
 export const NODE_MIN = "22.7.0";
@@ -267,6 +271,50 @@ export function install(ctx, part, source) {
 
 // ---- uninstall ----
 
+/**
+ * The layout Herdr shows, read as install.sh's shown_layout reads it ("layout" in `herdr-app
+ * status`), and its tree from <app home>/layouts/<name>.json: `{ name, tree, why }`. `tree` is null
+ * and `why` says so when Herdr gives no layout (no herdr-app, Herdr not running) or its file is not
+ * there or unreadable.
+ */
+export function shownLayout(ctx) {
+  const r = ctx.exec("herdr-app", ["status"], { env: ctx.env, timeout: 10_000 });
+  const name = r.code === 0 ? (/"layout"\s*:\s*"([^"/]+)"/.exec(r.stdout)?.[1] ?? null) : null;
+  if (!name) return { name: null, tree: null, why: r.missing ? "no herdr-app" : "herdr-app status gave no layout: is Herdr running?" };
+  const file = join(ctx.appHome, "layouts", `${name}.json`);
+  if (!isFile(file)) return { name, tree: null, why: `Herdr shows ${name}, and ${file} is not there` };
+  try {
+    return { name, tree: JSON.parse(readFileSync(file, "utf8")), why: null };
+  } catch (e) {
+    return { name, tree: null, why: `${file} is unreadable (${e.message})` };
+  }
+}
+
+/**
+ * Before a pack mod goes off (#414), as the mod manager's off and remove (#305): refused while a block
+ * of the shown layout names it, since Herdr would drop that layout and show plain Herdr; its
+ * right-click menu's mod goes, with a note. When the shown layout cannot be read (shownLayout's
+ * `why`), the mod goes off as the mod manager's does without a layout (fail open), never silently:
+ * each layout in layouts/ whose blocks name it is listed, with what to do if Herdr shows it.
+ */
+function guardLayout(ctx, mod) {
+  const shown = shownLayout(ctx);
+  if (shown.tree) {
+    const guard = layoutGuard({ name: shown.name, tree: shown.tree, mod, then: "uninstall it" });
+    if (guard?.refuse) throw new Error(guard.refuse);
+    if (guard?.note) ctx.log(`${mod} was ${guard.note}`);
+    return;
+  }
+  const dir = join(ctx.appHome, "layouts");
+  const naming = (isDir(dir) ? readdirSync(dir) : []).filter((f) => f.endsWith(".json")).sort().filter((f) => {
+    try { return layoutNeeds(JSON.parse(readFileSync(join(dir, f), "utf8"))).blocks.has(mod); } catch { return false; }
+  }).map((f) => f.slice(0, -".json".length));
+  if (!naming.length) return;
+  ctx.log(`switching ${mod} off without knowing the layout Herdr shows (${shown.why}): ${naming.join(", ")} `
+    + `show${naming.length === 1 ? "s" : ""} it, and Herdr drops a layout whose mod is off (plain Herdr instead). `
+    + `Showing one? Switch layouts (ctrl-shift-l), or \`am install herdr.${mod}\` switches it back on`);
+}
+
 /** A mod switched off: mods/<m> → mods-disabled/<m>, where Herdr never looks and an update keeps it. */
 function switchOff(ctx, part) {
   const record = readMarker(ctx.modsDir);
@@ -277,6 +325,7 @@ function switchOff(ctx, part) {
   if (isLink(live)) return { ok: true, changed: false, detail: `mods/${part.mod} is a link (a checkout?): left alone` };
   if (exists(live)) {
     if (exists(off)) throw new Error(`${off} is in the way: move it, then uninstall again`);
+    guardLayout(ctx, part.mod);
     mkdirSync(ctx.offDir, { recursive: true });
     renameSync(live, off);
     ctx.log(`switched ${part.mod} off (mods/ → mods-disabled/): an update keeps it off; \`am install ${part.id}\` switches it back on`);
