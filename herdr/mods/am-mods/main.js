@@ -578,11 +578,19 @@ export default class ModManager extends View {
       cx.notify();
       return;
     }
+    // Off only: a mod the shown layout's blocks name stays on, or Herdr drops the layout (#305).
+    // Turning one on is never blocked.
+    const guard = mod.enabled ? core.layoutGuard({ name: shared("layout"), tree: layout(), mod: mod.name }) : null;
+    if (guard?.refuse) {
+      this.message = guard.refuse;
+      cx.notify();
+      return;
+    }
     cx.spawn(async (cx) => {
       try {
         await core.setEnabled(io, { appHome: appHome(), name: mod.name, enabled: !mod.enabled });
         this.message = mod.enabled
-          ? `${mod.name} off · its folder moved to ${core.OFF_DIR}/`
+          ? `${mod.name} off · its folder moved to ${core.OFF_DIR}/${guard?.note ? ` · it was ${guard.note}` : ""}`
           : `${mod.name} on`;
         await this.reloadMods();
       } catch (e) {
