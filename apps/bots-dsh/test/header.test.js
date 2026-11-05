@@ -177,6 +177,16 @@ test('Details toggles the current Bot or group, never a plain or native wish thr
   assert.equal(focused, 2, 'the trigger takes focus before toggling, so closing can return it')
 })
 
+// Issue #337: the pill's arrow reads data-expanded, so aria-expanded stays on the Details
+// button alone, and the memory notice still hides the arrow.
+test('the pill arrow is styled from data-expanded, never from aria-expanded', () => {
+  const css = readFileSync(fileURLToPath(new URL('../src/client/styles.js', import.meta.url)), 'utf8')
+  assert.doesNotMatch(css, /\.bt-pill\[aria-expanded/, 'no pill selector reads aria-expanded')
+  assert.match(css, /\.bt-pill:hover \.bt-pill-go,\.bt-pill:focus-visible \.bt-pill-go,\.bt-pill\[data-expanded=true\] \.bt-pill-go\{width:18px;margin-left:0;opacity:1;filter:none;transform:none\}/)
+  assert.match(css, /\.bt-pill\[data-expanded=true\] \.bt-pill-go svg\{transform:rotate\(180deg\)\}/)
+  assert.match(css, /\.bt-pill\[data-memory=updated\]:is\(:hover,:focus-visible,\[data-expanded=true\]\) \.bt-pill-go\{width:0;margin-left:-8px;opacity:0;filter:blur\(6px\);transform:translateX\(-6px\)\}/)
+})
+
 const byClassAll = (node, className, found = []) => {
   if (node === null || typeof node !== 'object') return found
   if (node.props?.className === className) found.push(node)
