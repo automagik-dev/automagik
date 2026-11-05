@@ -1954,8 +1954,8 @@ function workerLedgerRows() {
  * bots a restart with no session id must not take it from: [{ address, name, ended }]. Over-
  * counting is safe (the restart then starts fresh and says why), so all three count: the live
  * panes on this computer running that agent there (a bot's, or one started by hand: hc ls), the
- * bound bots there by the attach ledger (`view`), and each other bot whose last seat row in the
- * workers ledger (`ledger`) put it there on that agent, its pane since ended or not. `old`:
+ * bound bots there by the attach ledger (`view`), and each other bot any of whose seat rows in the
+ * workers ledger (`ledger`) put it there on that agent, its pane since ended or moved or not. `old`:
  * the pane being replaced (never counted); `anywhere`: the agent's id-less resume isn't
  * limited to one folder (models.js continuesAnywhere), so any folder counts.
  */
@@ -1979,11 +1979,14 @@ async function sharersOf({ view, cwd, botId, file, agentKey, ledger = [], old, a
     if (get.labels?.[BOT_LABEL] === botId || !runs(get) || !here(get.foreground?.cwd ?? get.cwd)) continue;
     add(get.address, nameOf(get.labels?.[BOT_LABEL]) ?? "a pane");
   }
-  const lastSeat = new Map();
-  for (const r of ledger) if (r?.event === "start" && r.kind === "seat" && typeof r.botId === "string" && r.botId !== botId) lastSeat.set(r.botId, r);
-  for (const r of lastSeat.values()) {
-    if (r.agent === agentKey && here(r.worktree)) add(r.terminal, nameOf(r.botId), !(view.live.get(r.botId)?.binding.terminal === r.terminal));
+  // Every seat row counts, not only each bot's last (#341): a bot re-seated in a worktree or a
+  // clone still left its conversation here. Each bot is named once, by its latest pane here.
+  const seatedHere = new Map();
+  for (const r of ledger) {
+    if (r?.event === "start" && r.kind === "seat" && typeof r.botId === "string" && r.botId !== botId
+      && r.agent === agentKey && here(r.worktree)) seatedHere.set(r.botId, r);
   }
+  for (const r of seatedHere.values()) add(r.terminal, nameOf(r.botId), !(view.live.get(r.botId)?.binding.terminal === r.terminal));
   return [...out.values()];
 }
 
