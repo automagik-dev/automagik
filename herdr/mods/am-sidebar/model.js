@@ -332,6 +332,17 @@ export async function projectOf(folder, git, exists) {
   return { key: start, own: start };
 }
 
+/**
+ * Where an edit made from `folder` is written (RFC 0014 Q16, #234): its git top level, so an
+ * edit from a worktree lands in that worktree and a main checkout's in itself; null outside
+ * git (the caller writes the project key, as before). Reads stay on projectOf's `key`.
+ * `git` as projectOf's.
+ */
+export async function writeFolderOf(folder, git) {
+  const top = (await git(["rev-parse", "--show-toplevel"], trimSlash(folder)))?.trim();
+  return top ? trimSlash(top) : null;
+}
+
 /** The walk-up key of a folder seen in passing (projectOf's `key`). */
 export async function projectKeyOf(folder, git, exists) {
   return (await projectOf(folder, git, exists)).key;

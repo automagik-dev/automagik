@@ -19,7 +19,7 @@ import { parseArgs } from "node:util";
 
 import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMNI_LOOK, applyBotEdit, checkBots,
   CATEGORY_ID, PROJECTS_FILE, RANKS, defaultLook, descendantsOf, effectiveLead, listedProjects, mainBotOf, newBotId, newCategoryId,
-  parseBots, plannedOf, projectKeyOf, projectOf, withListedProject } from "../model.js";
+  parseBots, plannedOf, projectKeyOf, projectOf, withListedProject, writeFolderOf } from "../model.js";
 import { UNANSWERED, agentInForeground, attachRefusal, attachWords, detachWords, hcName, isClaude, leadIdOf, leadPane, newest,
   paneLabels, paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWarning, relabelWords, rowsOf, spaceOnly, spacePlace,
   startArgs, startRefusal, unwrapKeep } from "../launchArgs.js";
@@ -185,19 +185,27 @@ function launchPath(program, cwd = null) {
 
 const EMPTY = () => ({ version: 1, categories: [], bots: [] });
 
-/** A project's definitions: { key, machine: null, text (null: no file), raw, file, warnings }. */
-export function loadProject(key) {
-  return projectFrom(key, null, readText(under(key, BOTS_PATH)));
+/**
+ * A project's definitions: { key, machine: null, dir, text (null: no file), expected, raw,
+ * file, warnings }. `dir` is where an edit is written (key unless given): an edit made from a
+ * worktree is written in that worktree, reads stay on the key (RFC 0014 Q16, #234). With a
+ * `dir` other than the key, the edit starts from dir's file, or the key's where dir has none;
+ * `expected` is the text at dir (the write's snapshot), `text` the one the edit started from.
+ */
+export function loadProject(key, dir = key) {
+  const text = readText(under(key === dir ? key : dir, BOTS_PATH));
+  if (dir === key || text !== null) return projectFrom(key, null, text, dir);
+  return { ...projectFrom(key, null, readText(under(key, BOTS_PATH))), dir, expected: null };
 }
 
-function projectFrom(key, machine, text) {
-  if (text === null) return { key, machine, text, raw: EMPTY(), file: EMPTY(), warnings: [] };
+function projectFrom(key, machine, text, dir = key) {
+  if (text === null) return { key, machine, dir, text, expected: text, raw: EMPTY(), file: EMPTY(), warnings: [] };
   let parsedFile;
-  try { parsedFile = parseBots(text); } catch (e) { throw new CliError(`${fileName({ key, machine })}: ${e?.message ?? e}`); }
-  return { key, machine, text, raw: parsedFile.raw, file: parsedFile.file, warnings: parsedFile.warnings };
+  try { parsedFile = parseBots(text); } catch (e) { throw new CliError(`${fileName({ key, machine, dir })}: ${e?.message ?? e}`); }
+  return { key, machine, dir, text, expected: text, raw: parsedFile.raw, file: parsedFile.file, warnings: parsedFile.warnings };
 }
-/** A project's file, named for people: `<key>/.herdr/bots.json`, `… on <machine>` for a linked one's. */
-const fileName = ({ key, machine }) => `${under(key, BOTS_PATH)}${machine ? ` on ${machine}` : ""}`;
+/** A project's file, named for people: `<dir>/.herdr/bots.json`, `… on <machine>` for a linked one's. */
+const fileName = ({ key, machine, dir = key }) => `${under(dir, BOTS_PATH)}${machine ? ` on ${machine}` : ""}`;
 
 // ---- a project on a linked machine (--machine M --project DIR; automagik#206) ----
 
@@ -301,8 +309,21 @@ async function writeRemoteBots(project, raw) {
  */
 async function saveProject(project, raw, { list = true } = {}) {
   if (project.machine) return writeRemoteBots(project, raw);
-  writeBotsFile(project.key, raw, project.text);
+  writeBotsFile(project.dir, raw, project.expected, fsIo, project.text);
   if (list) listProject(project.key);
+  if (project.dir !== project.key) report([worktreeNote(project, await untrackedIn(project.key))]);
+}
+/**
+ * Said after an edit written in a worktree: where it went, what the readers show meanwhile, and,
+ * when the main checkout's file was never committed, that its pull would stop on it (git won't
+ * overwrite an untracked file with the merged one).
+ */
+const worktreeNote = ({ key, dir }, untracked = false) => `saved in ${under(dir, BOTS_PATH)} (this worktree); ls, `
+  + `whois and the sidebar read ${under(key, BOTS_PATH)} until that change is merged there.`
+  + (untracked ? ` ${under(key, BOTS_PATH)} isn't committed: commit or remove it before pulling, or git pull stops on it.` : "");
+/** Whether `key`'s .herdr/bots.json is there and untracked by git (`git status` says ??). */
+async function untrackedIn(key) {
+  return ((await git(["status", "--porcelain", "--", BOTS_PATH], key)) ?? "").startsWith("??");
 }
 
 const fsIo = {
@@ -322,13 +343,14 @@ const fsIo = {
  * checkBots, and the file must still hold `expected`, the text the edit started from (null:
  * no file yet), else nothing is written. A new file gets its `.herdr/` folder first and is
  * created exclusively; an existing one is replaced whole (written beside, then renamed).
- * `raw === null` deletes the file (the project's last bot removed).
+ * `raw === null` deletes the file (the project's last bot removed). `before`, for checkBots, is
+ * the text the edit started from when that isn't the file written (a worktree's first edit).
  */
-export function writeBotsFile(key, raw, expected, io = fsIo) {
+export function writeBotsFile(key, raw, expected, io = fsIo, before = expected) {
   if (expected === undefined) throw new Error("writeBotsFile: pass the text the edit started from (null for a new file)");
   const path = under(key, BOTS_PATH);
   if (raw !== null) {
-    const errors = checkBots(raw, expected);
+    const errors = checkBots(raw, before);
     if (errors.length) throw new CliError(`Not saved: ${errors.join("; ")}`);
   }
   let now;
@@ -436,6 +458,31 @@ export function findBot(file, ref) {
     if (hits.length > 1) throw new CliError(`${hits.length} bots are named "${ref}" (${hits.map((b) => b.id).join(", ")}); use the id.`);
   }
   throw new CliError(`No bot "${ref}" in this project.`);
+}
+
+/**
+ * findBot in a project's file, for a command run from `opts`' folder. When the bot isn't
+ * there but is in the other file of a worktree edit (RFC 0014 Q16: edits are written in the
+ * worktree, reads stay on the main checkout), the refusal names both files and why.
+ */
+async function botIn(project, ref, opts) {
+  try { return findBot(project.file, ref); } catch (e) {
+    if (!(e instanceof CliError) || !e.message.startsWith("No bot ") || project.machine) throw e;
+    const editing = project.dir !== project.key;
+    const dir = editing ? project.dir : await writeDirOf(opts, project.key).catch(() => project.key);
+    if (dir === project.key) throw e;
+    let other = null;
+    try { other = editing ? loadProject(project.key) : projectFrom(project.key, null, readText(under(dir, BOTS_PATH)), dir); } catch { throw e; }
+    let found = null;
+    try { found = other.text === null ? null : findBot(other.file, ref); } catch { /* not there either */ }
+    if (!found) throw e;
+    const main = under(project.key, BOTS_PATH), wt = under(dir, BOTS_PATH);
+    throw new CliError(editing
+      ? `No bot "${ref}" in ${wt}, this worktree's file, which edits change; ${main} has it. Update this worktree from `
+        + `the main checkout's branch first, or run the edit in ${project.key}.`
+      : `No bot "${ref}" in ${main}, which this command reads; it is in ${wt} (this worktree) and shows here once that `
+        + `change is merged into ${project.key}.`);
+  }
 }
 
 function findCategory(file, ref) {
@@ -1067,6 +1114,22 @@ async function projectFor(opts) {
   if (opts.machine !== undefined) return loadRemoteProject(await remoteKeyOf(opts), opts.machine);
   return loadProject(await commandKeyOf(opts));
 }
+/**
+ * Where this command's edit is written (RFC 0014 Q16, #234): the git top level of the folder
+ * it was run in or named with --project (a worktree's own folder), else the project key (a
+ * main checkout's top level is its key; outside git the key, as before). A linked machine's:
+ * its key, as before.
+ */
+async function writeDirOf(opts, key) {
+  if (opts.machine !== undefined) return key;
+  return (await writeFolderOf(resolvePath(opts.project ?? process.cwd()), git)) ?? key;
+}
+/** projectFor for a command that edits the file: read from, and written to, writeDirOf's folder. */
+async function editProjectFor(opts) {
+  if (opts.machine !== undefined) return projectFor(opts);
+  const key = await commandKeyOf(opts);
+  return loadProject(key, await writeDirOf(opts, key));
+}
 // The commands that take --machine: the definitions ones (and meter's own --machine).
 const ON_MACHINE = new Set(["ls", "show", "create", "edit", "rm", "category", "start", "restart", "attach", "detach", "whois", "meter", "doc"]);
 // A project's place in --json answers: `machine` only for a linked machine's.
@@ -1134,7 +1197,7 @@ const workerText = (w) => (w ? ["template", "agent", "model", "effort"].filter((
 
 async function cmdShow(opts, [ref]) {
   const project = await projectFor(opts);
-  const bot = findBot(project.file, ref);
+  const bot = await botIn(project, ref, opts);
   const { view, hcError } = await viewOrError();
   const info = { ...describe(project, bot, view, hcError), instructions: bot.instructions };
   if (opts.json) return info;
@@ -1179,7 +1242,7 @@ async function relabelAfter(beforeFile, afterRaw) {
 }
 
 async function cmdCreate(opts) {
-  const project = await projectFor(opts);
+  const project = await editProjectFor(opts);
   const id = newBotId();
   const entry = entryFrom(opts, { id, kind: mainBotOf(project.file) ? "member" : "main" }, project, { creating: true });
   const raw = applyBotEdit(project.raw, entry);
@@ -1190,8 +1253,8 @@ async function cmdCreate(opts) {
 }
 
 async function cmdEdit(opts, [ref]) {
-  const project = await projectFor(opts);
-  const bot = findBot(project.file, ref);
+  const project = await editProjectFor(opts);
+  const bot = await botIn(project, ref, opts);
   const stored = project.raw.bots.find((b) => b?.id === bot.id);
   const entry = entryFrom(opts, stored, project, { creating: false });
   const raw = applyBotEdit(project.raw, entry);
@@ -1201,9 +1264,9 @@ async function cmdEdit(opts, [ref]) {
 }
 
 async function cmdRm(opts, [ref]) {
-  const project = await projectFor(opts);
+  const project = await editProjectFor(opts);
   const { file } = project;
-  const bot = findBot(file, ref);
+  const bot = await botIn(project, ref, opts);
   // Its pane by the ledger, read before the write (the import, on a first run, needs the bot
   // still defined). hc missing or failing only drops the note.
   let holders = [];
@@ -1226,6 +1289,11 @@ async function cmdRm(opts, [ref]) {
   // Only an empty list deletes the file; anything else must pass checkBots (a file left
   // with members and no main bot is refused, never deleted).
   const last = raw.bots.length === 0;
+  // A worktree with no file of its own holds nothing to delete: its edit would only show the key's.
+  if (last && project.expected === null) {
+    throw new CliError(`${bot.name} is the project's last bot and ${fileName(project)} isn't there, so nothing was removed; `
+      + `remove it from ${project.key}.`);
+  }
   await saveProject(project, last ? null : raw, { list: false });
   if (!last && !project.machine) await relabelAfter(file, raw); // its lead may stop being a captain
   const notes = [];
@@ -1236,7 +1304,8 @@ async function cmdRm(opts, [ref]) {
 }
 
 async function cmdCategory(opts, [verb, ...rest]) {
-  const project = await projectFor(opts);
+  // Listing reads the project's file; the other verbs edit, in writeDirOf's folder.
+  const project = verb === "ls" || verb === undefined ? await projectFor(opts) : await editProjectFor(opts);
   const raw = JSON.parse(JSON.stringify(project.raw));
   raw.categories = Array.isArray(raw.categories) ? raw.categories : [];
   const save = async () => {
@@ -1381,7 +1450,7 @@ async function cmdStart(opts, [ref]) {
   const project = await projectFor(opts);
   const { file, key } = project;
   if (project.text === null) throw new CliError(`No ${BOTS_PATH} in ${key}.`);
-  const bot = findBot(file, ref);
+  const bot = await botIn(project, ref, opts);
   const why = startRefusal(file, bot.id);
   if (why) throw new CliError(why);
   // launch.js checks the folder Start launches in against the project (attachRefusal on
@@ -2153,7 +2222,7 @@ async function cmdRestart(opts, [ref]) {
   const project = await projectFor(opts);
   const { file, key } = project;
   if (project.text === null) throw new CliError(`No ${BOTS_PATH} in ${key}.`);
-  const bot = findBot(file, ref);
+  const bot = await botIn(project, ref, opts);
   const why = startRefusal(file, bot.id);
   if (why) throw new CliError(why);
   // A swap's agent and model are checked as an edit checks them (entryFrom); a new agent
@@ -2303,11 +2372,16 @@ async function cmdRestart(opts, [ref]) {
   }
   let saved = false;
   if (opts.save) {
-    const now = loadProject(key);
+    // Written where the command runs (writeDirOf: a worktree's own file, #234).
+    const now = loadProject(key, await writeDirOf(opts, key));
     const stored = now.raw.bots.find((b) => b?.id === bot.id);
     if (stored) {
-      writeBotsFile(key, applyBotEdit(now.raw, { ...stored, agent: entry.agent, ...(entry.model ? { model: entry.model } : { model: undefined }) }), now.text);
+      await saveProject(now, applyBotEdit(now.raw, { ...stored, agent: entry.agent, ...(entry.model ? { model: entry.model } : { model: undefined }) }), { list: false });
       saved = true;
+    } else {
+      // A worktree branched before the bot was added: its file has no entry to change.
+      say(`--save: ${fileName(now)}, this worktree's file, has no ${bot.name} (${bot.id}), so ${plan.agent} wasn't saved; `
+        + `update this worktree from the main checkout's branch, or restart with --save in ${key}.`);
     }
   }
   const what = old ? `${seat.terminal} replaces ${old.address}, ${restartText(plan, resumeId)}` : `${bot.name} wasn't running; started in ${seat.terminal}${swap ? ` on ${plan.agent}` : ""}`;
@@ -2370,7 +2444,7 @@ async function cmdAttach(opts, [ref, terminal]) {
   const project = await projectFor(opts);
   const { file, key } = project;
   const at = await terminalPlace(terminal, project);
-  const bot = findBot(file, ref);
+  const bot = await botIn(project, ref, opts);
   if (bot.planned) throw new CliError(`${bot.name} is planned (wave ${bot.planned.wave}); clear "planned" before attaching it.`);
   const get = await hcGet(at.address);
   if (!get || get.state !== "live") throw new CliError(`${at.address} isn't a live terminal.`);
@@ -2544,7 +2618,7 @@ async function cmdHistory(opts, [ref]) {
 
 async function cmdBrief(opts, [ref]) {
   const project = await projectFor(opts);
-  const bot = findBot(project.file, ref);
+  const bot = await botIn(project, ref, opts);
   if (bot.planned) {
     if (opts.json) return { id: bot.id, briefing: null, reason: "planned bots get no briefing" };
     process.stderr.write(`automagik-herdr: ${bot.name} is planned; planned bots get no briefing.\n`);
