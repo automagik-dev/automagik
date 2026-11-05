@@ -15,8 +15,11 @@ const TABLE = JSON.parse(readFileSync(new URL('./fixtures/redact-348.json', impo
 const VALUE = /hunter2/
 // The rows whose value the redaction hides.
 const HIDDEN = TABLE.text.filter(([, input, want]) => VALUE.test(input) && !VALUE.test(want))
-// A block scalar's key line: a name, its colon, up to two anchors or tags, then an indicator.
-const BLOCK = /:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[|>][-+0-9]*[ \t]*$/m
+// A block scalar's key line: a name, its colon, up to two anchors or tags, then an indicator, a
+// comment and a CR.
+const BLOCK = /:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[|>][-+0-9]*(?:[ \t]+#[^\r\n]*)?[ \t]*\r?$/m
+// The rows whose anchor or tag has no value on its line: the next line's key is never the value.
+const NEXT_LINE = TABLE.text.filter(([what]) => what.startsWith('next line:'))
 
 for (const [what, input, want] of TABLE.text) test(`text: ${what}`, () => assert.equal(redactText(input), want))
 for (const [what, input, want] of TABLE.object) test(`object: ${what}`, () => assert.deepEqual(redact(input), want))
@@ -71,5 +74,29 @@ test('served: a block scalar under an anchor or tag longer than the 4096 keep, a
     assert.doesNotMatch(r.served(), VALUE, head)
     r.send('next: shown')
     assert.match(r.served(), /next: shown/, head)
+  }
+})
+
+test('an anchor or tag with no value on its line never makes the next line\'s key a remembered value', () => {
+  for (const [what, input] of NEXT_LINE) {
+    assert.deepEqual(secretsIn(`${input} `).filter((v) => /username|bob/.test(v)), [], what)
+    const r = journal()
+    r.send(`${input}\n`)
+    r.send('later username: carol')
+    assert.match(r.served(), /later username: carol/, what)
+  }
+})
+
+// A key line, then a blank run longer than the 4096 keep before its indicator: the cut lands in the
+// run, and the key line is kept, so the block's lines that arrive next are hidden under it.
+test('served: a blank run past the 4096 keep between a key line and its block indicator keeps the block hidden', () => {
+  for (const [what, head, indicator] of TABLE.blank_run) {
+    const r = journal()
+    r.send(`config:\n  ${head}${' '.repeat(17_000)}`)
+    r.send(`${indicator}\n`)
+    for (const line of BLOCK_LINES.slice(0, 5)) r.send(line)
+    assert.doesNotMatch(r.served(), VALUE, what)
+    r.send('next: shown')
+    assert.match(r.served(), /next: shown/, what)
   }
 })

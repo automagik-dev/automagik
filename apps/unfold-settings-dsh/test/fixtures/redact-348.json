@@ -197,6 +197,66 @@
    "type: !<tag:yaml.org,2002:str> |\n  hunter2\nnext: shown"
   ],
   [
+   "next line: an anchor with no value, then the next key",
+   "password: &a\nusername: bob",
+   "password: [redacted]\nusername: bob"
+  ],
+  [
+   "next line: a null tag with no value, then the next key",
+   "password: !!null\nusername: bob",
+   "password: [redacted]\nusername: bob"
+  ],
+  [
+   "next line: an anchor under a camelCase name, then the next key",
+   "apiKey: &a\nusername: bob",
+   "apiKey: [redacted]\nusername: bob"
+  ],
+  [
+   "next line: a null tag under a camelCase name, then the next key",
+   "apiKey: !!null\nusername: bob",
+   "apiKey: [redacted]\nusername: bob"
+  ],
+  [
+   "invalid YAML: three anchors and tags before a block indicator, left as written",
+   "password: &a !!str !x |\n  hunter2\nnext: shown",
+   "password: &a !!str !x |\n  hunter2\nnext: shown"
+  ],
+  [
+   "invalid YAML: four anchors and tags before a block indicator, left as written",
+   "password: &a !!str !x &b >\n  hunter2\nnext: shown",
+   "password: &a !!str !x &b >\n  hunter2\nnext: shown"
+  ],
+  [
+   "a comment after a block indicator",
+   "password: | # note\n  hunter2\nnext: shown",
+   "password: | # note\n  [redacted]\nnext: shown"
+  ],
+  [
+   "a comment after a folded indicator",
+   "password: > # note\n  hunter2\nnext: shown",
+   "password: > # note\n  [redacted]\nnext: shown"
+  ],
+  [
+   "an anchor, then a comment after a strip indicator",
+   "password: &a |- # note\n  hunter2\nnext: shown",
+   "password: |- # note\n  [redacted]\nnext: shown"
+  ],
+  [
+   "a CRLF block under an anchor",
+   "password: &a |\r\n  hunter2\r\n\r\n  hunter2 again\r\nnext: shown",
+   "password: |\r\n  [redacted]\r\nnext: shown"
+  ],
+  [
+   "a CRLF folded block under an anchor",
+   "password: &a >\r\n  hunter2\r\nnext: shown",
+   "password: >\r\n  [redacted]\r\nnext: shown"
+  ],
+  [
+   "a CRLF block under a tag, with a comment",
+   "dbPassword: !!str | # note\r\n  hunter2\r\nnext: shown",
+   "dbPassword: | # note\r\n  [redacted]\r\nnext: shown"
+  ],
+  [
    "BOM, word joiner, soft hyphen, bidi mark, DEL",
    "p\ufeffa\u2060s\u00ads\u202ew\u007ford: hunter2",
    "password: [redacted]"
@@ -396,6 +456,33 @@
    {
     "by\u200bpass": "on"
    }
+  ]
+ ],
+ "blank_run": [
+  [
+   "an anchor, a blank run, then a block indicator",
+   "password: &a",
+   "|"
+  ],
+  [
+   "a tag, a blank run, then a strip folded indicator",
+   "password: !!str",
+   ">-"
+  ],
+  [
+   "an anchor and a tag, a blank run, then a block indicator",
+   "password: &a !!str",
+   "|"
+  ],
+  [
+   "an anchor under a camelCase name, a blank run, then a comment",
+   "dbPassword: &a",
+   "| # note"
+  ],
+  [
+   "control: a bare colon, a blank run, then a block indicator",
+   "password:",
+   "|"
   ]
  ]
 }

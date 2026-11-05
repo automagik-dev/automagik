@@ -16,8 +16,11 @@ const TABLE = JSON.parse(readFileSync(new URL('./fixtures/redact-348.json', impo
 const VALUE = /hunter2/
 // The rows whose value the redaction hides.
 const HIDDEN = TABLE.text.filter(([, input, want]) => VALUE.test(input) && !VALUE.test(want))
-// A block scalar's key line: a name, its colon, up to two anchors or tags, then an indicator.
-const BLOCK = /:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[|>][-+0-9]*[ \t]*$/m
+// A block scalar's key line: a name, its colon, up to two anchors or tags, then an indicator, a
+// comment and a CR.
+const BLOCK = /:[ \t]*(?:[&!][^\s"'`]*[ \t]+){0,2}[|>][-+0-9]*(?:[ \t]+#[^\r\n]*)?[ \t]*\r?$/m
+// The rows whose anchor or tag has no value on its line: the next line's key is never the value.
+const NEXT_LINE = TABLE.text.filter(([what]) => what.startsWith('next line:'))
 
 for (const [what, input, want] of TABLE.text) {
   test(`text: ${what}`, () => {
@@ -101,5 +104,23 @@ test('served: a block scalar under an anchor or tag longer than the 16 KiB bound
     assert.doesNotMatch(r.served(), VALUE, head)
     r.push('next: shown')
     assert.match(r.served(), /next: shown/, head)
+  }
+})
+
+test('the browser copy never remembers the next line\'s key under an anchor or tag with no value', () => {
+  for (const [what, input] of NEXT_LINE) assert.deepEqual(clientSecretsIn(`${input} `).filter((v) => /username|bob/.test(v)), [], what)
+})
+
+// A key line, then a blank run longer than the 16 KiB bound before its indicator: the cut lands in
+// the run, and the key line is kept, so the block's lines that arrive next are hidden under it.
+test('served: a blank run past the 16 KiB bound between a key line and its block indicator keeps the block hidden', () => {
+  for (const [what, head, indicator] of TABLE.blank_run) {
+    const r = rig()
+    r.push(`config:\n  ${head}${' '.repeat(17_000)}`)
+    r.push(`${indicator}\n`)
+    for (const line of BLOCK_LINES.slice(0, 5)) r.push(line)
+    assert.doesNotMatch(r.served(), VALUE, what)
+    r.push('next: shown')
+    assert.match(r.served(), /next: shown/, what)
   }
 })
