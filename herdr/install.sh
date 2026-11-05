@@ -283,6 +283,54 @@ mods_said() {
   printf '%s' "$said"
 }
 
+# Before --uninstall moves anything (#420), as `am uninstall herdr.pack` does: refused while a
+# block ("mod": "<m>") of the layout Herdr shows names a pack mod in mods/ ($1, the record's
+# list), since Herdr would drop that layout and show plain Herdr. With no layout to read (no
+# herdr-app, Herdr not running, a name with a path, no such file) it goes on, naming each layout
+# whose blocks name one ($2: the pack's own layout file when this run removes it, left out).
+layout_guard() {
+  shown=$(shown_layout)
+  why=
+  case $shown in
+    '') why="no layout from herdr-app status: no herdr-app, or Herdr is not running" ;;
+    */*|.|..) why="Herdr shows the layout \"$shown\", a name with a path, so no file in $APP_HOME/layouts was read" ;;
+    *) [ -f "$APP_HOME/layouts/$shown.json" ] || why="Herdr shows $shown, and $APP_HOME/layouts/$shown.json is not there" ;;
+  esac
+  set -f
+  IFS=,
+  on=
+  for m in $1; do
+    case $m in ''|pocket-link|*[!a-z0-9-]*) continue ;; esac
+    if [ -d "$MODS/$m" ] && [ ! -L "$MODS/$m" ]; then on="${on:+$on,}$m"; fi
+  done
+  named=
+  if [ -z "$why" ]; then
+    for m in $on; do
+      if grep -q "\"mod\"[[:space:]]*:[[:space:]]*\"$m\"" "$APP_HOME/layouts/$shown.json"; then named="${named:+$named, }$m"; fi
+    done
+  fi
+  unset IFS
+  set +f
+  if [ -n "$named" ]; then
+    fail "the pack stays: the $shown layout shows $named, and Herdr drops a layout whose mod is gone (plain Herdr instead). Switch layouts first (ctrl-shift-l), then uninstall the pack."
+  fi
+  [ -n "$why" ] && [ -n "$on" ] || return 0
+  for f in "$APP_HOME"/layouts/*.json; do
+    if [ ! -f "$f" ] || [ "$f" = "$2" ]; then continue; fi
+    has=
+    set -f
+    IFS=,
+    for m in $on; do
+      if grep -q "\"mod\"[[:space:]]*:[[:space:]]*\"$m\"" "$f"; then has="${has:+$has, }$m"; fi
+    done
+    unset IFS
+    set +f
+    [ -n "$has" ] || continue
+    name=${f##*/}
+    say "Uninstalling the pack without knowing the layout Herdr shows ($why): your layout ${name%.json} ($f) shows $has, and Herdr drops a layout whose mod is gone (plain Herdr instead). Showing it? Switch layouts (ctrl-shift-l), or run this installer again to put the pack back."
+  done
+}
+
 switch_hint() {
   [ "$HINT" = yes ] || return 0
   say "To show the Automagik sidebar, switch Herdr to the automagik layout; the sidebar appears after this:"
@@ -302,7 +350,11 @@ uninstall() {
   fi
   # The automagik layout goes only when this script added it and it is still the pack's own
   # (cmp): an edited one, or one copied by hand, stays.
-  if [ "$(mark_get layout)" = added ] && [ -f "$LAYOUT" ] && [ -f "$ref" ] && cmp -s "$LAYOUT" "$ref"; then
+  drop=
+  if [ "$(mark_get layout)" = added ] && [ -f "$LAYOUT" ] && [ -f "$ref" ] && cmp -s "$LAYOUT" "$ref"; then drop=$LAYOUT; fi
+  # Nothing moves while the shown layout's blocks name a pack mod (#420).
+  layout_guard "$mods" "$drop"
+  if [ -n "$drop" ]; then
     rm -f "$LAYOUT"
     say "Removed the automagik layout ($LAYOUT). If Herdr shows it, switch back: herdr-app do layout.switch '{\"name\":\"main\"}'"
   fi

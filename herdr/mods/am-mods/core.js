@@ -522,6 +522,17 @@ export function layoutGuard({ name, tree, mod, then = "turn it off" }) {
   return null;
 }
 
+// Before a package's remove (#420): uninstall() moves its own layouts (`layouts`, the record's file
+// names) aside, so the one Herdr shows (`name`) would vanish from the screen. `refuse` for that one,
+// else null.
+export function packageLayoutGuard({ name, layouts }) {
+  if (typeof name !== "string" || !name) return null;
+  const own = (layouts ?? []).find((l) => typeof l === "string" && l.toLowerCase() === `${name.toLowerCase()}.json`);
+  if (!own) return null;
+  return { refuse: `the ${name} layout is this package's (layouts/${own}) and Herdr shows it: removing the package takes it away`
+    + ` (plain Herdr instead). Switch layouts first (ctrl-shift-l), then remove it` };
+}
+
 // GitHub search for the topic, as herdr.dev lists Community. `gh api` carries the person's login
 // (30 searches a minute instead of 10); without `gh`, `anonymous(url)` fetches the same URL.
 export async function searchMarket(io, { query = "", sort = "stars", page = 1, perPage = 50 }, anonymous) {

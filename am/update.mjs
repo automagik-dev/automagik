@@ -52,8 +52,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
   AUTO_FILE, CATALOG_URL, OFF_BY_DEFAULT, OLD_PACK_NAME, PACK_CATALOG_URLS, PACK_KEYS, PACK_KEYS_FILE, PACK_LAYOUT, PACK_NAME, POCKET_LINK, POINTER_SIG_URL,
-  POINTER_URL, TIMEOUT_MS, V020_LAYOUT_SHA256, autoHold, formatAuto, formatMarker, packOfPointer, parseAuto, parseMarker, parseSums, pickUpdate,
-  updatesOff,
+  POINTER_URL, TIMEOUT_MS, V020_LAYOUT_SHA256, autoHold, formatAuto, formatMarker, layoutNeeds, packOfPointer, parseAuto, parseMarker, parseSums,
+  pickUpdate, updatesOff,
 } from "./release.js";
 import { ABSORBED, RENAMES, editTarget, own, renamedFrom } from "./migrate.js";
 import { apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration } from "./migrateHome.mjs";
@@ -480,8 +480,10 @@ function carryV1(modsDir, record, log) {
  * and mod.json, plain files and folders only, and its VERSION must be `version`. Per folder:
  * not there → installed; listed in the ownership record → replaced (the old copy into the kept
  * set, its private paths carried over); anyone else's → left alone, or with `adopt` moved to
- * backup/ and replaced. A link is never replaced. Returns `{ version, mods, installed, replaced,
- * left, adopted, retired, prev }` and rewrites the record.
+ * backup/ and replaced. A link is never replaced. A folder the record lists that the release no
+ * longer ships is retired into the kept set, or held in mods/ while a layout's block names it (#420).
+ * Returns `{ version, mods, installed, replaced, left, adopted, retired, held, prev }` and rewrites
+ * the record.
  */
 /**
  * Unpacks a release tarball into `staging` (an empty folder) and checks it is a plain pack: only
@@ -564,6 +566,16 @@ export async function verifyInstall({ tgzPath, version, modsDir = defaultModsDir
   }
 }
 
+/** The layouts in <app home>/layouts/ (names, sorted) whose blocks name `mod` (release.js layoutNeeds); an unreadable one names none. */
+function layoutsShowing(modsDir, mod) {
+  const dir = join(dirname(resolve(modsDir)), "layouts");
+  let names = [];
+  try { names = readdirSync(dir).filter((n) => n.endsWith(".json")).sort(); } catch { return []; }
+  return names.filter((n) => {
+    try { return isFile(join(dir, n)) && layoutNeeds(JSON.parse(readFileSync(join(dir, n), "utf8"))).blocks.has(mod); } catch { return false; }
+  }).map((n) => n.slice(0, -".json".length));
+}
+
 export async function applyUpdate({ tgzPath, version, sequence = null, modsDir = defaultModsDir(), adopt = false, repair = null, log = () => {}, rename = renameSync }) {
   if (typeof version !== "string" || version === "") throw new Error("applyUpdate needs the release's version");
   const state = stateDirOf(modsDir);
@@ -587,7 +599,7 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     };
     const owned = new Set(before?.mods ?? []);
     const kept = readSet(modsDir);
-    const plan = { installed: [], replaced: [], renamed: [], left: [], adopted: [], retired: [], repaired: [], off: [], installedOff: [] };
+    const plan = { installed: [], replaced: [], renamed: [], left: [], adopted: [], retired: [], held: [], repaired: [], off: [], installedOff: [] };
     const keptOff = [];
     const leftOff = [];       // a mods-disabled/ folder the record doesn't own, where an off-by-default mod would go
     const keptBackOff = [];   // a kept copy that was off when kept, put back off
@@ -697,11 +709,21 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
       if (adopt) adoptFolder(m);
       else plan.left.push(m);
     }
-    // A folder the record lists that this release no longer ships leaves mods/ with the set.
+    // A folder the record lists that this release no longer ships leaves mods/ with the set, unless
+    // a layout's block names it (#420): Herdr would drop that layout for plain Herdr on the next
+    // launch. Then it stays in mods/, still the record's, and an update after the layout changes
+    // retires it. A rename's old folder leaves anyway (migrateRefs moves the layout onto the new
+    // name), and so does one switched off (a layout naming it shows plain Herdr already).
     for (const m of repair ? [] : owned) {
       if (folders.includes(m) || !packFolder(m)) continue;
       const at = placeOf(modsDir, m);
       if (!at) continue;
+      const showing = at === join(modsDir, m) && !folders.includes(own(RENAMES, m)) ? layoutsShowing(modsDir, m) : [];
+      if (showing.length) {
+        plan.held.push({ mod: m, layouts: showing });
+        record.mods.push(m);
+        continue;
+      }
       moves.push([at, join(next, m)]);
       plan.retired.push(m);
       if (at !== join(modsDir, m)) keptOff.push(m);
@@ -724,6 +746,11 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     if (before?.v1) { try { carryV1(modsDir, record, log); writeMarker(modsDir, record); } catch (error) { warnings.push(`v0.2's kept copies stay where they were (${error.message})`); } }
     if (keep.length) keepLayout(modsDir, next, warnings);
     keepSet(modsDir, next, keep, before, old, rename, warnings, keptOff);
+    for (const h of plan.held) {
+      const which = h.layouts.length === 1 ? `the ${h.layouts[0]} layout shows it` : `the layouts ${h.layouts.join(", ")} show it`;
+      log(`kept mods/${h.mod}: ${version} no longer ships it, but ${which}, and Herdr drops a layout whose mod is gone `
+        + `(plain Herdr instead). Take its block out of the layout (or switch layouts); the next update retires it`);
+    }
     for (const m of plan.off) log(`updated mods-disabled/${m}: it stays off`);
     for (const m of plan.installedOff) log(`installed mods-disabled/${m}: it ships off; turn it on in the Mods panel`);
     for (const m of keptBackOff) log(`installed mods-disabled/${m}: it was off when it was kept, so it stays off`);

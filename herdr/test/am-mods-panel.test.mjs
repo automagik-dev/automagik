@@ -232,3 +232,30 @@ test("x with no layout to read (layout() gives nothing) removes as before", asyn
   assert.ok(!on("am-footer"));
   assert.equal(view.message, "removed: am-footer");
 });
+
+// #420: a package's remove moves its own layouts aside (core.uninstall), so one Herdr shows is
+// refused before the question, as a block's mod is; once another layout shows, it goes as before.
+test("x on a package whose own layout Herdr shows is refused before the question; the layout stays", async (t) => {
+  const s = scratch(t);
+  write(join(s.appHome, "layouts", "scratchy.json"), JSON.stringify({ id: "root", children: [{ id: "p", content: { mod: "pane" } }] }));
+  state.shared.set("am.mods.installed", [{ source: "someone/scratch", prefix: "", sha: "abcdef1234", mods: ["scratch"], layouts: ["scratchy.json"], keys: [] }]);
+  ui.layout = { id: "root", children: [{ id: "p", content: { mod: "pane" } }] };
+  state.shared.set("layout", "scratchy");
+  const cx = makeCx();
+  const view = new ModManager();
+  view.init({}, cx);
+  await cx.settle();
+  assert.ok(view.mods.find((m) => m.name === "scratch")?.record, "scratch is the package's");
+  await removeKey(view, cx, "scratch");
+  assert.equal(view.confirm, null, "no y/n question");
+  assert.match(view.message, /^the scratchy layout is this package's \(layouts\/scratchy\.json\) and Herdr shows it: .*Switch layouts first \(ctrl-shift-l\), then remove it$/);
+  assert.ok(existsSync(join(s.appHome, "layouts", "scratchy.json")) && existsSync(join(s.appHome, "mods", "scratch", "mod.json")));
+  // Another layout shown: the package goes, its layout with it.
+  state.shared.set("layout", "automagik");
+  ui.layout = STOCK_LAYOUT;
+  await removeKey(view, cx, "scratch");
+  assert.match(view.confirm?.text ?? "", /^remove scratch and the keys it added\? \(y\/n\)$/);
+  await key(view, cx, "y");
+  await cx.settle();
+  assert.ok(!existsSync(join(s.appHome, "layouts", "scratchy.json")) && !existsSync(join(s.appHome, "mods", "scratch")));
+});

@@ -11,12 +11,16 @@
 //                      0012, D34). uninstall: the whole pack, as install.sh --uninstall does, plus the
 //                      briefing hooks, the hooks' entry point, the pack's keys and its command link.
 //                      The folders go to the kept set (<app home>/automagik-herdr/.prev) unless --purge.
+//                      Refused, with nothing changed, while a block of the layout Herdr shows names a
+//                      pack mod (guardLayouts, #420).
 //   herdr.am-<mod>     install: the pack, then the mod switched back on. uninstall: switched off
 //                      (moved to mods-disabled/, as the mod manager does); an update keeps it off.
 //                      The sidebar refuses while the CLI link or the briefing entry point still runs
 //                      code in its folder (sidebarCarries), and stops refusing once am's copies do.
 //                      Any of them refuses while a block of the layout Herdr shows names it (Herdr
-//                      would drop that layout for plain Herdr; guardLayout, #414).
+//                      would drop that layout for plain Herdr; guardLayouts, #414). A fork swapping
+//                      in (RFC 0012 `replaces`: am sets AM_REPLACED_BY to the fork's mod folder,
+//                      installed first) is not refused: that block names the fork instead (#420).
 //   herdr.layout       install: the pack, then the automagik layout put back if it was removed.
 //                      uninstall: the layout removed while it is the pack's copy (layout=removed).
 // Never written: Herdr's shared.json or data/, Pocket Link (mods/pocket-link) or its LaunchAgent,
@@ -32,6 +36,7 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import { stableBriefingPath, ENTRY_SOURCE } from "./briefingText.mjs";
 import { CLI_LINK, hooksRunning, knownProjects, ledgerFolders, removeHooks } from "./migrateHooks.mjs";
+import { inPlace } from "./migrateHome.mjs";
 import {
   OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker, layoutGuard, layoutNeeds,
 } from "./release.js";
@@ -57,7 +62,7 @@ export function runCommand(cmd, args, { env, cwd, timeout = 120_000 } = {}) {
 
 /**
  * Where everything is, from the environment am runs the entry with (AM_HOME, AM_PART_DIR,
- * AM_VERSION, AM_ARTIFACT, AM_JSON; HERDR_APP_HOME and HOME as the pack reads them). `exec` runs
+ * AM_VERSION, AM_ARTIFACT, AM_JSON, AM_REPLACED_BY; HERDR_APP_HOME and HOME as the pack reads them). `exec` runs
  * a program (runCommand's shape); tests pass their own, and an app home of their own.
  */
 export function contextOf({ env = process.env, exec = runCommand, log = (line) => process.stderr.write(`${line}\n`), platform = process.platform,
@@ -274,13 +279,16 @@ export function install(ctx, part, source) {
 /**
  * The layout Herdr shows, read as install.sh's shown_layout reads it ("layout" in `herdr-app
  * status`), and its tree from <app home>/layouts/<name>.json: `{ name, tree, why }`. `tree` is null
- * and `why` says so when Herdr gives no layout (no herdr-app, Herdr not running) or its file is not
- * there or unreadable.
+ * and `why` says so when Herdr gives no layout (no herdr-app, Herdr not running), a name that is
+ * not a plain file name in layouts/ (a path: never read, #420), or its file is not there or unreadable.
  */
 export function shownLayout(ctx) {
   const r = ctx.exec("herdr-app", ["status"], { env: ctx.env, timeout: 10_000 });
-  const name = r.code === 0 ? (/"layout"\s*:\s*"([^"/]+)"/.exec(r.stdout)?.[1] ?? null) : null;
+  const name = r.code === 0 ? (/"layout"\s*:\s*"([^"]*)"/.exec(r.stdout)?.[1] ?? null) : null;
   if (!name) return { name: null, tree: null, why: r.missing ? "no herdr-app" : "herdr-app status gave no layout: is Herdr running?" };
+  if (!/^[^/\\]+$/.test(name) || name === "." || name === "..") {
+    return { name, tree: null, why: `Herdr shows the layout "${name}", a name with a path, so no file in ${join(ctx.appHome, "layouts")} was read` };
+  }
   const file = join(ctx.appHome, "layouts", `${name}.json`);
   if (!isFile(file)) return { name, tree: null, why: `Herdr shows ${name}, and ${file} is not there` };
   try {
@@ -290,29 +298,100 @@ export function shownLayout(ctx) {
   }
 }
 
+/** The layouts in layouts/ (names, sorted) whose blocks name one of `mods`, `skip` (file names) left out. */
+function layoutsNaming(ctx, mods, skip = []) {
+  const dir = join(ctx.appHome, "layouts");
+  return (isDir(dir) ? readdirSync(dir) : []).filter((f) => f.endsWith(".json") && !skip.includes(f)).sort().flatMap((f) => {
+    let blocks;
+    try { blocks = layoutNeeds(JSON.parse(readFileSync(join(dir, f), "utf8"))).blocks; } catch { return []; }
+    const named = mods.filter((m) => blocks.has(m));
+    return named.length ? [{ name: f.slice(0, -".json".length), mods: named }] : [];
+  });
+}
+
 /**
- * Before a pack mod goes off (#414), as the mod manager's off and remove (#305): refused while a block
- * of the shown layout names it, since Herdr would drop that layout and show plain Herdr; its
+ * Before pack mods leave mods/ (#414, #420), as the mod manager's off and remove (#305): refused while
+ * a block of the shown layout names one, since Herdr would drop that layout and show plain Herdr; a
  * right-click menu's mod goes, with a note. When the shown layout cannot be read (shownLayout's
- * `why`), the mod goes off as the mod manager's does without a layout (fail open), never silently:
- * each layout in layouts/ whose blocks name it is listed, with what to do if Herdr shows it.
+ * `why`), the mods go as the mod manager's do without a layout (fail open), never silently: each
+ * layout in layouts/ whose blocks name one is listed, with what to do if Herdr shows it. `pack`:
+ * the whole pack (`am uninstall herdr.pack`), `skip` leaving out the pack's own layout file when
+ * this uninstall removes it; else the one mod switched off (`am uninstall herdr.<mod>`).
  */
-function guardLayout(ctx, mod) {
-  const shown = shownLayout(ctx);
+function guardLayouts(ctx, mods, { pack = false, skip = [], shown = shownLayout(ctx) } = {}) {
+  if (!mods.length) return;
   if (shown.tree) {
-    const guard = layoutGuard({ name: shown.name, tree: shown.tree, mod, then: "uninstall it" });
-    if (guard?.refuse) throw new Error(guard.refuse);
-    if (guard?.note) ctx.log(`${mod} was ${guard.note}`);
+    const guards = mods.map((mod) => ({ mod, ...layoutGuard({ name: shown.name, tree: shown.tree, mod, then: pack ? "uninstall the pack" : "uninstall it" }) }));
+    const refused = guards.filter((g) => g.refuse);
+    const also = refused.slice(1).map((g) => g.mod);
+    if (refused.length) throw new Error(`${refused[0].refuse}${also.length ? ` (its blocks name ${also.join(", ")} too)` : ""}`);
+    for (const g of guards) if (g.note) ctx.log(`${g.mod} was ${g.note}`);
     return;
   }
-  const dir = join(ctx.appHome, "layouts");
-  const naming = (isDir(dir) ? readdirSync(dir) : []).filter((f) => f.endsWith(".json")).sort().filter((f) => {
-    try { return layoutNeeds(JSON.parse(readFileSync(join(dir, f), "utf8"))).blocks.has(mod); } catch { return false; }
-  }).map((f) => f.slice(0, -".json".length));
+  const naming = layoutsNaming(ctx, mods, skip);
   if (!naming.length) return;
-  ctx.log(`switching ${mod} off without knowing the layout Herdr shows (${shown.why}): ${naming.join(", ")} `
-    + `show${naming.length === 1 ? "s" : ""} it, and Herdr drops a layout whose mod is off (plain Herdr instead). `
-    + `Showing one? Switch layouts (ctrl-shift-l), or \`am install herdr.${mod}\` switches it back on`);
+  const what = pack ? "uninstalling the pack" : `switching ${mods[0]} off`;
+  const list = pack ? naming.map((l) => `${l.name} (${l.mods.join(", ")})`) : naming.map((l) => l.name);
+  const back = pack ? "`am install herdr.pack` puts the pack back" : `\`am install herdr.${mods[0]}\` switches it back on`;
+  ctx.log(`${what} without knowing the layout Herdr shows (${shown.why}): ${list.join(", ")} `
+    + `show${naming.length === 1 ? "s" : ""} ${pack ? "the pack's mods" : "it"}, and Herdr drops a layout whose mod is ${pack ? "gone" : "off"} (plain Herdr instead). `
+    + `Showing one? Switch layouts (ctrl-shift-l), or ${back}`);
+}
+
+/**
+ * The fork am swaps in for a pack member (RFC 0012 `replaces`; am's runner sets AM_REPLACED_BY to the
+ * fork's mod folder, installed first): its name, or null. A name that is no mod folder is refused.
+ */
+function replacedBy(ctx, part) {
+  const fork = ctx.env.AM_REPLACED_BY;
+  if (fork === undefined || fork === "") return null;
+  if (!packFolder(fork) || fork === part.mod) throw new Error(`AM_REPLACED_BY=${fork} names no other mod folder: nothing switched off`);
+  if (!isDir(join(ctx.modsDir, fork)) || !isFile(join(ctx.modsDir, fork, "main.js"))) {
+    throw new Error(`${fork} replaces ${part.mod}, but mods/${fork} is not installed: install it first, then switch ${part.mod} off`);
+  }
+  return fork;
+}
+
+/**
+ * A fork swapping in (#420): the shown layout's block naming the member names the fork instead, so
+ * the layout keeps working once the member is off, edited where it stands (migrateHome inPlace, as
+ * #387's drop-ins: the rest of the file stays byte for byte) after its original is kept in
+ * <app home>/automagik-herdr/fork-swaps/. Refused, with nothing changed, when the edit cannot be
+ * made exactly (more than one block names the member, or a link). Herdr's own menu note as off's.
+ */
+function swapForFork(ctx, part, fork) {
+  const shown = shownLayout(ctx);
+  if (!shown.tree) {
+    const naming = layoutsNaming(ctx, [part.mod]).map((l) => l.name);
+    if (naming.length) {
+      ctx.log(`switching ${part.mod} off for ${fork} without knowing the layout Herdr shows (${shown.why}): ${naming.join(", ")} `
+        + `show${naming.length === 1 ? "s" : ""} ${part.mod}; in one Herdr shows, name ${fork} in its block, or switch layouts (ctrl-shift-l)`);
+    }
+    return;
+  }
+  const guard = layoutGuard({ name: shown.name, tree: shown.tree, mod: part.mod, then: "uninstall it" });
+  if (guard?.note) ctx.log(`${part.mod} was ${guard.note}`);
+  if (!guard?.refuse) return;
+  const file = join(ctx.appHome, "layouts", `${shown.name}.json`);
+  const want = JSON.parse(JSON.stringify(shown.tree));
+  let blocks = 0;
+  const walk = (node) => {
+    if (!node || typeof node !== "object") return;
+    if (node.content?.mod === part.mod) { node.content.mod = fork; blocks++; }
+    for (const value of Object.values(node)) walk(value);
+  };
+  walk(want);
+  const text = blocks === 1 && !isLink(file) ? inPlace(readFileSync(file, "utf8"), [{ before: part.mod, after: fork }], want) : null;
+  if (text === null) {
+    throw new Error(`${guard.refuse}: ${fork} replaces it, but ${file} ${blocks === 1 ? "could not be edited exactly" : `has ${blocks} blocks naming it`}; `
+      + `name ${fork} in it by hand, or switch layouts first`);
+  }
+  const keep = join(stateDirOf(ctx.modsDir), "fork-swaps");
+  mkdirSync(keep, { recursive: true });
+  const kept = fresh(keep, `${shown.name}.json.`);
+  cpSync(file, kept);
+  writeFileSync(file, text);
+  ctx.log(`swapped ${part.mod} for ${fork} in ${file}, so the ${shown.name} layout keeps working; the original is ${kept}`);
 }
 
 /** A mod switched off: mods/<m> → mods-disabled/<m>, where Herdr never looks and an update keeps it. */
@@ -325,7 +404,9 @@ function switchOff(ctx, part) {
   if (isLink(live)) return { ok: true, changed: false, detail: `mods/${part.mod} is a link (a checkout?): left alone` };
   if (exists(live)) {
     if (exists(off)) throw new Error(`${off} is in the way: move it, then uninstall again`);
-    guardLayout(ctx, part.mod);
+    const fork = replacedBy(ctx, part);
+    if (fork) swapForFork(ctx, part, fork);
+    else guardLayouts(ctx, [part.mod]);
     mkdirSync(ctx.offDir, { recursive: true });
     renameSync(live, off);
     ctx.log(`switched ${part.mod} off (mods/ → mods-disabled/): an update keeps it off; \`am install ${part.id}\` switches it back on`);
@@ -373,7 +454,12 @@ function uninstallPack(ctx, { purge }) {
   const ownEntry = packEntry(ctx);
 
   const live = join(ctx.appHome, PACK_LAYOUT), ref = join(state, "automagik.json");
-  if (record.layout === "added" && isFile(live) && !isLink(live) && isFile(ref) && readFileSync(live).equals(readFileSync(ref))) {
+  const dropLayout = record.layout === "added" && isFile(live) && !isLink(live) && isFile(ref) && readFileSync(live).equals(readFileSync(ref));
+  // Before anything leaves (#420): refused while the shown layout's blocks name a pack mod in mods/.
+  guardLayouts(ctx, record.mods.filter((m) => packFolder(m) && exists(join(ctx.modsDir, m)) && !isLink(join(ctx.modsDir, m))), {
+    pack: true, skip: dropLayout ? [basename(PACK_LAYOUT)] : [],
+  });
+  if (dropLayout) {
     rmSync(live);
     lines.push(`removed ${live}; if Herdr shows it, switch back: herdr-app do layout.switch '{"name":"main"}'`);
   }

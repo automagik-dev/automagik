@@ -1478,3 +1478,49 @@ test("overtaken (under the lock): the version installed since the check, or a re
     assert.equal(overtaken(h.mods, update).current, "0.3.0", "never a downgrade");
   } finally { h.done(); }
 });
+
+// #420: a mod the release no longer ships stays in mods/ while a layout's block names it (Herdr
+// would drop that layout for plain Herdr on the next launch), said, and still the record's; the
+// update after the layout changes retires it. A rename's old folder leaves anyway (the migration
+// moves the layout onto the new name).
+test("a retired mod a layout's block names is held in mods/ and said; once no layout names it, it retires", async () => {
+  const { home, mods } = appHome("0.1.0", ["am-sidebar", "old-mod"]);
+  const t = tarball("0.2.0");
+  try {
+    mkdirSync(join(home, "layouts"));
+    const mine = join(home, "layouts", "mine.json");
+    writeFileSync(mine, JSON.stringify({ id: "root", children: [{ id: "o", content: { mod: "old-mod" } }, { id: "p", content: { mod: "pane" } }] }));
+    writeFileSync(join(home, "layouts", "broken.json"), "{");
+    const logs = [];
+    const held = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods, log: (l) => logs.push(l) });
+    assert.deepEqual([held.retired, held.held], [[], [{ mod: "old-mod", layouts: ["mine"] }]]);
+    assert.ok(existsSync(join(mods, "old-mod", "main.js")), "held in mods/");
+    assert.ok(readMarker(mods).mods.includes("old-mod"), "still the record's");
+    assert.ok(logs.some((l) => /^kept mods\/old-mod: 0\.2\.0 no longer ships it, but the mine layout shows it, and Herdr drops a layout whose mod is gone/.test(l)), logs.join("\n"));
+    // The layout changed: the next update retires it into the kept set.
+    writeFileSync(mine, JSON.stringify({ id: "root", children: [{ id: "p", content: { mod: "pane" } }] }));
+    const later = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
+    assert.deepEqual([later.retired, later.held], [["old-mod"], []]);
+    assert.equal(existsSync(join(mods, "old-mod")), false);
+    assert.ok(existsSync(join(kept(mods, "old-mod"), "main.js")));
+    assert.ok(!readMarker(mods).mods.includes("old-mod"));
+  } finally {
+    rmSync(t.src, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a renamed mod's old folder a layout names still leaves: the migration moves the layout onto the new name", async () => {
+  const { home, mods } = appHome("0.1.0", ["am-sidebar", "auto-tabs"]);
+  const t = tarball("0.2.0");
+  try {
+    mkdirSync(join(home, "layouts"));
+    writeFileSync(join(home, "layouts", "mine.json"), JSON.stringify({ id: "root", children: [{ id: "s", content: { mod: "auto-tabs" } }] }));
+    const r = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
+    assert.deepEqual([r.retired, r.held, r.renamed], [["auto-tabs"], [], [["auto-tabs", "am-tabs"]]]);
+    assert.equal(existsSync(join(mods, "auto-tabs")), false);
+  } finally {
+    rmSync(t.src, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});

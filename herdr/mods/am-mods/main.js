@@ -235,8 +235,11 @@ export default class ModManager extends View {
 
   // What the shown layout says about removing `mod` (every mod of its package that is on, as off
   // asks of one, #305, #414): the first refusal, else the notes. No layout to read: nothing to guard.
+  // A package whose own layout is the one shown is refused first: its remove moves that layout aside (#420).
   removeGuard(mod) {
     const tree = layout(), name = shared("layout");
+    const own = mod.record ? core.packageLayoutGuard({ name, layouts: mod.record.layouts }) : null;
+    if (own) return own;
     const guards = (mod.record ? mod.record.mods : [mod.name])
       .filter((m) => this.mods.some((x) => x.name === m && x.enabled))
       .map((m) => ({ m, ...core.layoutGuard({ name, tree, mod: m, then: "remove it" }) }));
