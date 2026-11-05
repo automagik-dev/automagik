@@ -42,8 +42,9 @@ test("liveFrom: label + live + agent in front; newest holder wins and is flagged
   ];
   const live = liveFrom(terms, knownBots([{ key: KEY, file }]));
   assert.deepEqual(Object.keys(live).sort(), ["b-captaincap", "b-devdevdevd", "b-mainmainma", "b-pmpmpmpmpm"]);
-  assert.deepEqual({ ...live["b-captaincap"], program: undefined }, { terminal: "t3", duplicate: true, parent: null, status: "idle", status_ms: NOW - 1000, program: undefined, argv: null });
+  assert.deepEqual({ ...live["b-captaincap"], program: undefined }, { terminal: "t3", duplicate: true, parent: null, status: "idle", status_ms: NOW - 1000, program: undefined, argv: null, panes: ["t3", "t2"] });
   assert.equal(live["b-mainmainma"].duplicate, false);
+  assert.ok(!("panes" in live["b-mainmainma"]), "one holder: the entry is as before");
   assert.equal(live["b-devdevdevd"].terminal, "box/t4");
   // No filter: any label counts.
   assert.ok(liveFrom(terms)["b-unknownbot"]);
@@ -611,7 +612,7 @@ const devAt = (address, parent) => T(address, { labels: { bot: "b-devdevdevd" },
 
 test("#231: a live pane whose hc parent is not its lead's pane is marked with both addresses", () => {
   const { dev } = markOf([T("t1", { labels: { bot: "b-mainmainma" } }), captainAt("t2"), devAt("t3", "t1")]);
-  assert.deepEqual(dev.parentMark, { parent: "t1", leadPane: "t2", lead: "b-captaincap", leadName: "captaincap" });
+  assert.deepEqual(dev.parentMark, { parent: "t1", leadPanes: ["t2"], lead: "b-captaincap", leadName: "captaincap" });
   assert.equal(dev.members.length, 0, "membership is the file's lead, never the hc parent");
   // A dead parent (the dogfooding case: t19s -> t19q, gone) is marked the same way.
   assert.equal(markOf([captainAt("t2"), devAt("t3", "t19q")]).dev.parentMark.parent, "t19q");
@@ -636,15 +637,31 @@ test("#231: a remote pane compares on its own machine, a bare parent id being th
   const box = [{ key: KEY, machine: "box", file, spaces: ["s1"] }];
   for (const parent of ["t2", "box/t2"]) assert.ok(!("parentMark" in markOf([captainAt("box/t2"), devAt("box/t3", parent)], box).dev), parent);
   assert.deepEqual(markOf([captainAt("box/t2"), devAt("box/t3", "t9")], box).dev.parentMark,
-    { parent: "box/t9", leadPane: "box/t2", lead: "b-captaincap", leadName: "captaincap" });
+    { parent: "box/t9", leadPanes: ["box/t2"], lead: "b-captaincap", leadName: "captaincap" });
   // The same id on another machine is another pane.
   assert.equal(markOf([captainAt("t2"), devAt("box/t3", "t2")]).dev.parentMark.parent, "box/t2");
 });
 
 test("#231: the mark's tooltip names the hc parent, then the lead's pane and name", () => {
-  assert.equal(parentMarkText({ parent: "box/t9", leadPane: "box/t2", lead: "b-captaincap", leadName: "Captain" }),
+  assert.equal(parentMarkText({ parent: "box/t9", leadPanes: ["box/t2"], lead: "b-captaincap", leadName: "Captain" }),
     "Its hc parent is box/t9, not its lead's pane box/t2 (Captain)");
-  assert.equal(parentMarkText({ parent: "t1", leadPane: "t2", lead: "b-x", leadName: null }), "Its hc parent is t1, not its lead's pane t2");
+  assert.equal(parentMarkText({ parent: "t1", leadPanes: ["t2"], lead: "b-x", leadName: null }), "Its hc parent is t1, not its lead's pane t2");
+  assert.equal(parentMarkText({ parent: "t9", leadPanes: ["t5", "t2"], lead: "b-x", leadName: "Captain" }),
+    "Its hc parent is t9, not its lead's panes t5, t2 (Captain)");
   assert.equal(parentMarkOf({ terminal: "t3", parent: "t2" }, { terminal: "t2" }), null);
   assert.equal(parentMarkOf({ terminal: "t3", parent: "t2" }, null), null);
+});
+
+test("#231: a lead with two live panes: a parent that is either is no mark; a third terminal is, naming both", () => {
+  const older = T("t2", { labels: { bot: "b-captaincap" }, created_ms: 10 }), newer = T("t5", { labels: { bot: "b-captaincap" }, created_ms: 20 });
+  for (const parent of ["t2", "t5"]) assert.ok(!("parentMark" in markOf([older, newer, devAt("t3", parent)]).dev), parent);
+  const { dev, cap } = markOf([older, newer, devAt("t3", "t9")]);
+  assert.equal(cap.live.terminal, "t5", "the sidebar shows the newest");
+  assert.deepEqual(dev.parentMark, { parent: "t9", leadPanes: ["t5", "t2"], lead: "b-captaincap", leadName: "captaincap" });
+  assert.equal(parentMarkText(dev.parentMark), "Its hc parent is t9, not its lead's panes t5, t2 (captaincap)");
+  // On a remote machine too: a bare parent id is that machine's, matched against every pane.
+  const box = [{ key: KEY, machine: "box", file, spaces: ["s1"] }];
+  const remote = (parent) => markOf([{ ...older, address: "box/t2" }, { ...newer, address: "box/t5" }, devAt("box/t3", parent)], box).dev;
+  assert.ok(!("parentMark" in remote("t2")));
+  assert.deepEqual(remote("t9").parentMark.leadPanes, ["box/t5", "box/t2"]);
 });

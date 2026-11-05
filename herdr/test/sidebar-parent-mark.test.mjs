@@ -62,6 +62,13 @@ test("#231 render: no mark when the parent is absent or the lead's pane, or the 
   assert.deepEqual(render([pane("t1", "b-mainmainma"), pane("t3", "b-devdevdevd", "t9")]).marks, {});
 });
 
+test("#231 render: a lead with two live panes: the older pane as parent is no mark; a third terminal is, naming both", () => {
+  const two = (parent) => [pane("t1", "b-mainmainma"), { ...pane("t2", "b-captaincap", "t1"), created_ms: 1 }, { ...pane("t5", "b-captaincap", "t1"), created_ms: 2 },
+    pane("t3", "b-devdevdevd", parent)];
+  assert.deepEqual(render(two("t2")).marks, {});
+  assert.deepEqual(render(two("t9")).marks, { "parent-b-devdevdevd": "Its hc parent is t9, not its lead's panes t5, t2 (Captain)" });
+});
+
 test("#231 render: a remote project compares on its machine", () => {
   const box = (a) => `box/${a}`;
   assert.deepEqual(render([pane(box("t1"), "b-mainmainma"), pane(box("t2"), "b-captaincap", "t1"), pane(box("t3"), "b-devdevdevd", "t2")], "box").marks, {});

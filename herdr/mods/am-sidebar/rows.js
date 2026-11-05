@@ -32,7 +32,8 @@ const agentInFront = (t, readArgv) => rowIsAgent(t) === true
  * `created_ms` counts, flagged `duplicate`. `argv`: the pane's foreground command line when
  * the row carries it (`foreground.argv`), else what `argvOf(address, created_ms)` gives (the
  * command line the view read with `hc get` for that very pane: see argvReader), else null. `parent`: the hc parent of that terminal (null:
- * none), where its click opens a tab. By project and id (paneCounts): `keyOf(row)` gives a
+ * none), where its click opens a tab. `panes`, only with several holders: every holder's
+ * address, the counted one first (the parent mark compares with all of them). By project and id (paneCounts): `keyOf(row)` gives a
  * pane's project key or null; a pane with one is at liveKey(id, its projectId), the newest of
  * that project's panes and those with none; a bot's panes with none at its bare id. Read it
  * with liveOf.
@@ -55,6 +56,7 @@ export function liveFrom(terminals, known = null, argvOf = () => null, keyOf = (
       terminal: addressOf(pick), duplicate: rows.length > 1, parent: pick.parent ?? null, status: pick.status ?? null,
       status_ms: typeof pick.status_ms === "number" ? pick.status_ms : null, program: pick.program ?? null,
       argv: Array.isArray(pick.foreground?.argv) ? pick.foreground.argv : readArgv(pick),
+      ...(rows.length > 1 ? { panes: [addressOf(pick), ...rows.filter((r) => r !== pick).map(addressOf)] } : {}),
     };
   };
   // A project's holders are its own panes and the panes with no project (paneCounts).
@@ -82,21 +84,22 @@ const onMachine = (a, machine) => (machine && !a.includes("/") ? `${machine}/${a
 
 /**
  * The parent mark (automagik#231): `own`, a bot's live pane (liveOf), reports through an hc
- * parent that is neither absent nor `leadPane`, its lead's live pane (liveOf: the newest when
- * the lead has several). Returns { parent, leadPane, lead, leadName } with both addresses on
- * their machine, or null: no parent, the lead's pane, or a lead with no live pane (nothing to
- * compare with). Membership never follows the hc parent (buildTree); this only shows it.
+ * parent that is neither absent nor any of its lead's live panes (`leadLive`, the lead's
+ * liveOf entry: its `panes` when it has several, else its `terminal`). Returns { parent,
+ * leadPanes, lead, leadName }, every address on its machine, or null: no parent, one of the
+ * lead's panes, or a lead with no live pane (nothing to compare with). Membership never
+ * follows the hc parent (buildTree); this only shows it.
  */
-export function parentMarkOf(own, leadPane, lead = null, leadName = null) {
-  if (typeof own?.parent !== "string" || !own.parent || typeof leadPane?.terminal !== "string") return null;
+export function parentMarkOf(own, leadLive, lead = null, leadName = null) {
+  if (typeof own?.parent !== "string" || !own.parent || typeof leadLive?.terminal !== "string") return null;
   const parent = onMachine(own.parent, machineOfAddress(own.terminal));
-  const theirs = leadPane.terminal;
-  return parent === theirs ? null : { parent, leadPane: theirs, lead, leadName };
+  const leadPanes = Array.isArray(leadLive.panes) && leadLive.panes.length ? leadLive.panes : [leadLive.terminal];
+  return leadPanes.includes(parent) ? null : { parent, leadPanes, lead, leadName };
 }
 
-/** The parent mark's tooltip: both addresses, the hc parent first. */
-export const parentMarkText = (m) =>
-  `Its hc parent is ${m.parent}, not its lead's pane ${m.leadPane}${m.leadName ? ` (${m.leadName})` : ""}`;
+/** The parent mark's tooltip: the hc parent, then every live pane of the lead. */
+export const parentMarkText = (m) => `Its hc parent is ${m.parent}, not its lead's ${m.leadPanes.length > 1 ? "panes" : "pane"} `
+  + `${m.leadPanes.join(", ")}${m.leadName ? ` (${m.leadName})` : ""}`;
 // A pane's project id (projectId: its address's machine and the key `keyOf(row)` gives), or
 // null when keyOf gives none.
 const paneProject = (t, keyOf) => {
