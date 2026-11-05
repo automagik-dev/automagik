@@ -1752,6 +1752,11 @@ test("restart #413: codex can't resume a thread whose model provider is gone: on
   assert.equal(r2.json().cause, other);
   assert.equal(runs(s2).length, 1);
   assert.equal(at(s2.calls(), "kill"), -1);
+  // The phrase without codex's code is another failure: no fresh start.
+  const s4 = codexBot([{ runAs: "exit", screen: "Error: model provider example-proxy is no longer configured\n" }]);
+  const r4 = s4.cli(["restart", "Captain", "--json"]);
+  assert.equal(r4.code, 1);
+  assert.equal(runs(s4).length, 1);
   // The new thread failing too: its own cause, t6 still untouched.
   const s3 = codexBot([{ runAs: "exit", screen: CODEX_SCREEN }, { runAs: "exit", screen: "Error: not logged in\n" }]);
   const r3 = s3.cli(["restart", "Captain", "--json"]);

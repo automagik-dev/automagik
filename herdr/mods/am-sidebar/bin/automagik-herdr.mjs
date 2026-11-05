@@ -2062,11 +2062,13 @@ const busyRefusal = (refusal, old) => new CliError(refusal, 1, { refused: old?.s
 
 // Codex refusing a thread whose model provider is no longer in its config (#413: threads begun
 // on a provider since removed from the config): that thread can't be resumed, only left behind.
-const PROVIDER_GONE = /modelProviderNotConfigured|\bno longer configured\b/i;
+// Its own error code only, never a bare "no longer configured" another failure might print.
+const PROVIDER_GONE = /\bmodelProviderNotConfigured\b/;
 
 /**
  * Whether a resume that exited (its agent's last line `cause`) is codex unable to resume the
- * thread at all (PROVIDER_GONE), the one failure a restart answers by starting fresh (#413).
+ * thread at all (PROVIDER_GONE: codex's modelProviderNotConfigured), the one failure a restart
+ * answers by starting fresh (#413).
  */
 const providerGone = (plan, cause) => plan.mode === "resume" && plan.agent === "codex" && PROVIDER_GONE.test(cause ?? "");
 /** The note a restart that left such a thread behind carries: the old thread and what codex said. */
