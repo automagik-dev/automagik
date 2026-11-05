@@ -802,6 +802,12 @@ const ZH = {
   'This page is not on HTTPS: the key crosses the network unencrypted.': '这个页面不是 HTTPS：密钥会以明文经过网络。',
   'Let {bot} use {name}?': '允许 {bot} 使用 {name}？',
   '{name} needs a key': '{name} 需要一个密钥',
+  // The steps of a GitHub token card (#316); GitHub's own field names fill the slots.
+  "Open GitHub's new fine-grained token page.": '打开 GitHub 新建细粒度令牌的页面。',
+  'Under “{field}”, choose “{value}”.': '在“{field}”中选择“{value}”。',
+  'Under “{field}”, choose “{value}” and pick the ones {bot} works on.': '在“{field}”中选择“{value}”，并选出 {bot} 要处理的仓库。',
+  'Under “{field}”, set only these:': '在“{field}”中只设置这些：',
+  'Click “{button}”, copy it and paste it below.': '点击“{button}”，复制令牌并粘贴到下方。',
   'Saved for {scope}': '已保存，可用范围：{scope}',
   'Value of {name}': '{name} 的值',
   "{bot} never sees the value. It reaches {bot}'s shell as ": '{bot} 永远看不到这个值。它会作为下面的环境变量进入 {bot} 的 shell：',

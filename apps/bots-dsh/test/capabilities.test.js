@@ -173,7 +173,7 @@ test('capability tool descriptions and attach results explain approval', async t
     { name: 'blocked' },
     { agent: { id: 'worker' } },
   )
-  assert.ok(attached.endsWith(' The user must allow blocked in Omni settings before it can work.'))
+  assert.ok(attached.endsWith(' The user must allow blocked before it can work: in Settings > Capabilities > Allow (name it in exactly these words).'))
 })
 
 test('read-only secret reload does not requeue capability reconciliation', async t => {

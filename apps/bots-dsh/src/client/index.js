@@ -55,6 +55,7 @@ import { rememberOpen, takeReopen } from './reopen.js'
 import { noteLeft, setUnread, sharedMap, toggleReaction } from './shared-map.js'
 import { freePriority, groupsFor, readMode, surfaceGroups, writeMode } from './surface.js'
 import { addStrings, dateLocale, hostText, installLocale, language, t } from './i18n.js'
+import { allowPlace } from './places.js'
 import { noteClientError, quietly } from './diagnostics.js'
 import { RIGHTBAR_ATTRIBUTES, columnOpened, createSwitchWindow, drawerOpened, rightColumnOpen } from './right-panel.js'
 import { ErrorToast, FEEDBACK_CSS } from './feedback.js'
@@ -198,7 +199,7 @@ export function apply(ctx) {
   const pull = async () => {
     const order = ++pulls
     const known = roster.getSnapshot()
-    const value = await call('state', { since: known.revision, models: known.modelsKey ?? '', locale: language() })
+    const value = await call('state', { since: known.revision, models: known.modelsKey ?? '', locale: language(), allowPlace: allowPlace() })
     if (order < applied) return
     applied = order
     const nextActivity = JSON.stringify(value.activity ?? {})

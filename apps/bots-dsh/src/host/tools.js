@@ -845,7 +845,7 @@ export function install(rt) {
       try {
         const item = await rt.capabilitySave(args, { botId: self })
         const approval = item.kind === 'mcp' && item.transport === 'stdio' && !item.approved
-          ? ' The user must allow this MCP server in Omni settings before it can work.'
+          ? ` The user must allow this MCP server before it can work: in ${rt.allowPlace()} (name it in exactly these words).`
           : ''
         return `Saved ${item.name}. Bots with it attached use the change from their next message.${approval}`
       } catch (error) { return error.message }
@@ -887,7 +887,7 @@ export function install(rt) {
             : attached ? [attached] : []
           const approvals = members
             .filter(item => item.kind === 'mcp' && item.transport === 'stdio' && item.approved !== true)
-            .map(item => ` The user must allow ${item.name} in Omni settings before it can work.`)
+            .map(item => ` The user must allow ${item.name} before it can work: in ${rt.allowPlace()} (name it in exactly these words).`)
             .join('')
           return `${verb} ${args.name} ${args.bot ? `to ${result.bot}` : 'to yourself'}. Changes apply from ${result.bot}'s next message.${endpoint === 'attach' ? approvals : ''}`
         } catch (error) { return error.message }

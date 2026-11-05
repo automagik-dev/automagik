@@ -31,3 +31,22 @@ test('the request to the Main Bot keeps the references and asks instead of guess
   assert.match(request, /\$DSH_SECRET_<NAME>: keep those references/)
   assert.match(request, /<<<\nnpx -y thing\n>>>$/)
 })
+
+// #316: "allow it in settings" names the real place, in the words of the user's interface.
+test('the request names where to allow the server, from the interface\'s own strings', async () => {
+  const { installLocale } = await import('../src/client/i18n.js')
+  const { allowPlace } = await import('../src/client/places.js')
+  const { PT_BR, ptBrLocale } = await import('./fixtures/pt-br-locale.js')
+  const english = mcpRequest('npx -y thing')
+  assert.equal(allowPlace(), 'Settings > Capabilities > Allow')
+  assert.match(english, /If I must allow it, tell me to do it in Settings > Capabilities > Allow, in exactly those words\./)
+  const off = installLocale(ptBrLocale())
+  try {
+    const place = allowPlace()
+    assert.equal(place, `${PT_BR.Settings} > ${PT_BR.Capabilities} > ${PT_BR.Allow}`)
+    assert.match(place, /Recursos > Permitir$/)
+    assert.notEqual(place, 'Settings > Capabilities > Allow')
+    assert.match(mcpRequest('npx -y thing'), /do it in Configurações > Recursos > Permitir, in exactly those words/)
+  } finally { off() }
+  assert.equal(allowPlace(), 'Settings > Capabilities > Allow')
+})
