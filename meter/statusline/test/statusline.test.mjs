@@ -10,7 +10,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { autoCompactWindowFor, bar, botName, envWindow, format, localSettingsRoot, readLimitsTail, runOut, tokens, until } from "../automagik-statusline.mjs";
+import { WHOIS_TIMEOUT, autoCompactWindowFor, bar, botName, envWindow, format, localSettingsRoot, readLimitsTail, runOut, tokens, until } from "../automagik-statusline.mjs";
 
 const here = (p) => fileURLToPath(new URL(p, import.meta.url));
 const fixture = (name) => JSON.parse(readFileSync(here(`fixtures/${name}.json`), "utf8"));
@@ -94,33 +94,50 @@ test("Left: the rate from the limits log, same window, in the lookback; else sin
   const t = NOW / 1000, reset = t + 3600; // a 5h window started 4h ago, 1h to its reset
   const w = (used) => ({ used_percentage: used, resets_at: reset });
   const row = (ago, used, resetsAt = reset) => ({ ts: iso(t - ago), five_hour: { used_percentage: used, resets_at: resetsAt } });
-  // From the log: 10% → 50% in the last 40 min runs out in 50 min, before the reset.
-  assert.equal(Math.round(runOut("five_hour", w(50), NOW, [row(2400, 10), row(600, 40)])), 3000);
-  // 30% → 50%: 100 min, after the reset: no Left.
-  assert.equal(runOut("five_hour", w(50), NOW, [row(2400, 30)]), null);
-  // No rise over the last 30 min: no Left, though the window's average would give one.
-  assert.equal(runOut("five_hour", w(90), NOW, [row(1800, 90)]), null);
-  // The average since the window started: 90% in 4h, 10% left in 27 min.
-  assert.equal(Math.round(runOut("five_hour", w(90), NOW, [])), 1600);
-  // Readings that do not count: another window (an older reset), older than the lookback (1h for
-  // 5h), too recent to measure (under a quarter of it), from the future, or malformed.
-  const ignored = [row(2400, 10, reset - 18000), row(4000, 10), row(600, 10), row(-60, 10), { ts: "x", five_hour: { used_percentage: 10, resets_at: reset } }, null, 5];
-  assert.equal(Math.round(runOut("five_hour", w(90), NOW, ignored)), 1600);
-  // The 7d window looks back 6h.
-  const reset7 = t + 86400, w7 = { used_percentage: 80, resets_at: reset7 };
+  const left = (...a) => { const s = runOut(...a); return s == null ? null : Math.round(s); };
+  // The log reaches back past the 1h lookback: from its last reading before it, 10% → 70% in
+  // 4000 s, 30% left runs out in 2000 s, before the reset.
+  assert.equal(left("five_hour", w(70), NOW, [row(4000, 10), row(600, 45)]), 2000);
+  // The stdin reading can be a stale one too: the log's highest reading is the current used %.
+  assert.equal(left("five_hour", w(50), NOW, [row(4000, 10), row(60, 70)]), 2000);
+  // 60% → 70% in 4000 s runs out after the reset: no Left.
+  assert.equal(left("five_hour", w(70), NOW, [row(4000, 60), row(600, 66)]), null);
+  // No rise over the lookback: no Left, though the window's average would give one.
+  assert.equal(left("five_hour", w(90), NOW, [row(4000, 90)]), null);
+  // The average since the window started: 90% in 4h, 10% left in 1600 s.
+  assert.equal(left("five_hour", w(90), NOW, []), 1600);
+  // Readings that do not count: another window (an older reset), from the future, malformed;
+  // one only 10 minutes old measures too little (under a quarter of the lookback).
+  const ignored = [row(2400, 10, reset - 18000), row(-60, 10), { ts: "x", five_hour: { used_percentage: 10, resets_at: reset } }, null, 5, row(600, 10)];
+  assert.equal(left("five_hour", w(90), NOW, ignored), 1600);
+
+  // The 7d window looks back 6h. A resumed session logs its value from before the resume (54%)
+  // with a fresh ts, a second before its own current one: the shape of the owner's log.
+  const reset7 = t + 2 * 86400, w7 = { used_percentage: 90, resets_at: reset7 };
   const row7 = (ago, used) => ({ ts: iso(t - ago), seven_day: { used_percentage: used, resets_at: reset7 } });
-  assert.equal(Math.round(runOut("seven_day", w7, NOW, [row7(5 * 3600, 60)])), 18000); // 20% in 5h: 20% more in 5h
-  // 7h old is past its lookback: the average (80% in 6d), which runs out after the reset.
-  assert.equal(runOut("seven_day", w7, NOW, [row7(7 * 3600, 40)]), null);
-  // Nothing to show: a reset that passed, a full window, an unknown window, a fresh window.
+  const resumed = [row7(5 * 3600, 54), row7(5 * 3600 - 1, 88), row7(3600, 89.5)];
+  // Reaching back 7h: 88% → 90% in 7h, 10% left in 35h (1d11h). Taking the stale 54% as the
+  // start, as cdd4e4b9 did, made it 5000 s (1h24m).
+  assert.equal(left("seven_day", w7, NOW, [row7(7 * 3600, 88), ...resumed]), 126_000);
+  assert.equal(until(126_000), "1d11h");
+  // Not reaching back: the start is 5 minutes after the first reading, by when the session's
+  // current 88% is in: 2% in 17700 s, 10% left in 88500 s (1d0h), not 1h24m.
+  assert.equal(left("seven_day", w7, NOW, resumed), 88_500);
+  // A gap: the only reading before the lookback is 3 days old, too old to start from (it would
+  // give 10h18m); one reading an hour old measures too little: the window's average.
+  assert.equal(left("seven_day", w7, NOW, [row7(3 * 86400, 20), row7(3600, 89)]), left("seven_day", w7, NOW, []));
+
+  // Nothing to show: a reset that passed, a full window (stdin or log), an unknown window, a
+  // fresh window.
   assert.equal(runOut("five_hour", { used_percentage: 50, resets_at: t - 1 }, NOW, []), null);
   assert.equal(runOut("five_hour", w(100), NOW, []), null);
+  assert.equal(runOut("five_hour", w(90), NOW, [row(600, 100)]), null);
   assert.equal(runOut("one_day", w(90), NOW, []), null);
   assert.equal(runOut("five_hour", { used_percentage: 90, resets_at: t + 18000 - 300 }, NOW, []), null);
   // format() shows the log's rate.
-  const input = { rate_limits: { five_hour: w(50) } };
-  assert.equal(format(input, { ...plain, limits: [row(2400, 10)] }), "Quota 5h ▰▰▰▱▱ 50%  Left 50m  Resets 1h00m");
-  assert.equal(format(input, plain), "Quota 5h ▰▰▰▱▱ 50%  Resets 1h00m");
+  const input = { rate_limits: { five_hour: w(70) } };
+  assert.equal(format(input, { ...plain, limits: [row(4000, 10)] }), "Quota 5h ▰▰▰▰▱ 70%  Left 34m  Resets 1h00m");
+  assert.equal(format(input, plain), "Quota 5h ▰▰▰▰▱ 70%  Resets 1h00m");
 });
 
 test("the limits log: only its last 256 KiB, a cut first line and bad lines skipped", () => {
@@ -140,11 +157,11 @@ test("the limits log: only its last 256 KiB, a cut first line and bad lines skip
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-/** A fake automagik-herdr: answers whois from a table, counts its calls, `slow` sleeps first. */
+/** A fake automagik-herdr: answers whois from a table (an object: printed as JSON; a string: run as sh), counts its calls. */
 function fakeHerdr(dir, answers) {
   const calls = join(dir, "calls");
   const launcher = join(dir, "automagik-herdr");
-  const cases = Object.entries(answers).map(([term, out]) => `  ${term}) ${out === "slow" ? "exec sleep 3" : `printf '%s' '${JSON.stringify(out)}'`} ;;`).join("\n");
+  const cases = Object.entries(answers).map(([term, out]) => `  ${term}) ${typeof out === "string" ? out : `printf '%s' '${JSON.stringify(out)}'`} ;;`).join("\n");
   writeFileSync(launcher, `#!/bin/sh\necho "$*" >> '${calls}'\n[ "$1 $2" = "whois --json" ] || exit 2\ncase $3 in\n${cases}\n  *) exit 1 ;;\nesac\n`);
   return { launcher, calls: () => { try { return readFileSync(calls, "utf8").trim().split("\n").filter(Boolean).length; } catch { return 0; } } };
 }
@@ -155,13 +172,15 @@ test("bot name: whois in a Herdr pane, the name from the project's bots.json, ca
     const project = join(dir, "project"), state = join(dir, "state");
     mkdirSync(join(project, ".herdr"), { recursive: true });
     writeFileSync(join(project, ".herdr/bots.json"), JSON.stringify({ version: 1, bots: [{ id: "b-one", name: "Meter Captain" }, { id: "b-esc", name: "Bad\x1b[2J" }] }));
+    const one = JSON.stringify({ terminal: "t6", bot: "b-one", project });
     const herdr = fakeHerdr(dir, {
       t1: { terminal: "t1", core: "c", created_ms: 1, bot: "b-one", project, since: "x" },
       t2: { terminal: "t2", core: "c", created_ms: 1, bot: null },
       t3: { terminal: "t3", bot: "b-esc", project },
       t4: { terminal: "t4", bot: "b-one", project: "project" }, // not an absolute path
       t5: { terminal: "t5", bot: "b-gone", project },
-      t6: "slow",
+      t6: `sleep 1; printf '%s' '${one}'`, // answers in 1 s: inside the bound
+      t8: `trap '' TERM; exec sleep 4`, // hangs, deaf to SIGTERM
     });
     const opts = { dir: state, launcher: herdr.launcher, now: NOW };
     // Outside Herdr: nothing is asked.
@@ -181,10 +200,16 @@ test("bot name: whois in a Herdr pane, the name from the project's bots.json, ca
     assert.equal(herdr.calls(), 4);
     assert.equal(botName({ HC_TERMINAL_ID: "t3" }, opts), "Bad[2J");
     for (const term of ["t4", "t5", "t9"]) assert.equal(botName({ HC_TERMINAL_ID: term }, opts), null, term);
-    // A whois that does not answer in time is no bot, cached like a miss.
-    assert.equal(botName({ HC_TERMINAL_ID: "t6" }, { ...opts, timeout: 300 }), null);
+    // The bound is 1.5 s: a whois answering in 1 s is waited for; one that hangs, even deaf to
+    // SIGTERM, is killed (SIGKILL) at the bound, well before its 4 s, and cached like a miss.
+    assert.equal(WHOIS_TIMEOUT, 1500);
+    assert.equal(botName({ HC_TERMINAL_ID: "t6" }, opts), "Meter Captain");
+    const started = Date.now();
+    assert.equal(botName({ HC_TERMINAL_ID: "t8" }, opts), null);
+    const took = Date.now() - started;
+    assert.ok(took >= 1400 && took < 3000, `whois took ${took} ms`);
     const before = herdr.calls();
-    assert.equal(botName({ HC_TERMINAL_ID: "t6" }, { ...opts, timeout: 300 }), null);
+    assert.equal(botName({ HC_TERMINAL_ID: "t8" }, opts), null);
     assert.equal(herdr.calls(), before);
     // No launcher, or a corrupt cache: no bot, no throw.
     assert.equal(botName({ HC_TERMINAL_ID: "t7" }, { ...opts, launcher: join(dir, "missing") }), null);
@@ -192,6 +217,30 @@ test("bot name: whois in a Herdr pane, the name from the project's bots.json, ca
     assert.equal(botName({ HC_TERMINAL_ID: "t1" }, opts), "Meter Captain");
     const cache = JSON.parse(readFileSync(join(state, "statusline-bots.json"), "utf8"));
     assert.deepEqual(cache["#t1"], { name: "Meter Captain", at: NOW });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("bot name: 24 panes keep their entries, one whois each in 10 minutes; expired ones drop", () => {
+  const dir = temp();
+  try {
+    const project = join(dir, "project"), state = join(dir, "state");
+    const terms = Array.from({ length: 24 }, (_, n) => `t${100 + n}`);
+    mkdirSync(join(project, ".herdr"), { recursive: true });
+    writeFileSync(join(project, ".herdr/bots.json"), JSON.stringify({ bots: terms.map((term) => ({ id: `b-${term}`, name: `Bot ${term}` })) }));
+    const herdr = fakeHerdr(dir, Object.fromEntries(terms.map((term) => [term, { terminal: term, bot: `b-${term}`, project }])));
+    // Five renders of every pane, interleaved, over 9 minutes: 24 whois runs, not 120.
+    for (let round = 0; round < 5; round++) {
+      for (const [n, term] of terms.entries()) {
+        const now = NOW + round * 135_000 + n * 1000;
+        assert.equal(botName({ HC_TERMINAL_ID: term }, { dir: state, launcher: herdr.launcher, now }), `Bot ${term}`);
+      }
+    }
+    assert.equal(herdr.calls(), 24);
+    assert.equal(Object.keys(JSON.parse(readFileSync(join(state, "statusline-bots.json"), "utf8"))).length, 24);
+    // 11 minutes on, every entry has expired: one pane asks again and the file keeps only it.
+    assert.equal(botName({ HC_TERMINAL_ID: "t100" }, { dir: state, launcher: herdr.launcher, now: NOW + 660_000 + 23_000 }), "Bot t100");
+    assert.equal(herdr.calls(), 25);
+    assert.deepEqual(Object.keys(JSON.parse(readFileSync(join(state, "statusline-bots.json"), "utf8"))), ["#t100"]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

@@ -9,7 +9,8 @@
 // - 🤖: the bot this Herdr pane plays (HC_TERMINAL_ID set): `automagik-herdr whois --json`, run
 //   by its absolute path (~/.local/bin/automagik-herdr, a sh launcher that finds its own node),
 //   then the name in <project>/.herdr/bots.json. Cached 10 minutes per terminal in the Meter
-//   state folder (statusline-bots.json), a miss included; whois gets 1.5 s. No pane, no bot.
+//   state folder (statusline-bots.json), a miss included, every live pane kept; whois gets 1.5 s,
+//   then SIGKILL. No pane, no bot.
 // - ⚡: effort.level from stdin. Claude Code sends none when the model has no effort setting.
 // - Context: a 10-cell bar of the context window used, then the tokens used and the window. Its
 //   colour is measured against the auto-compact window, found the way Claude Code finds it
@@ -30,7 +31,8 @@
 //   resets, and before that, in red, "Left": when the window runs out at the current rate, shown
 //   only when that comes before the reset. The rate is the rise over the last hour (5h) or six
 //   hours (7d) in the limits logger's log (claude-limits.jsonl, its last 256 KiB only, readings
-//   of the same window), else the used % over the time since the window started.
+//   of the same window), the used % at a time being the highest reading up to it (a resumed
+//   session logs a stale lower one); else the used % over the time since the window started.
 // - Green under 70%, yellow from 70%, red from 90%. NO_COLOR turns the colours off.
 //
 // Node, no dependencies, never throws: a field it cannot read drops its segment. Run it with
@@ -44,9 +46,11 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const GREEN = "\x1b[32m", YELLOW = "\x1b[33m", RED = "\x1b[31m", CYAN = "\x1b[36m", BOLD = "\x1b[1m", DIM = "\x1b[2m", RESET = "\x1b[0m";
-const KEEP = 16;
+const BOTS_KEEP = 512;
+const SETTLE = 300;
 const TAIL = 256 << 10;
 const BOT_TTL = 10 * 60 * 1000;
+export const WHOIS_TIMEOUT = 1500;
 // Each quota window: its length and how far back the log's rate looks (seconds).
 const WINDOWS = { five_hour: { label: "Quota 5h", span: 5 * 3600, look: 3600 }, seven_day: { label: "Quota 7d", span: 7 * 86400, look: 6 * 3600 } };
 
@@ -82,30 +86,45 @@ export function bar(pct, cells) {
 /**
  * Seconds until a quota window runs out at the current rate, or null when it does not run out
  * before it resets. `key` is five_hour or seven_day, `w` its stdin reading, `now` in ms, `rows`
- * the limits log's readings. The rate is the rise since the oldest reading of this same window
- * (same resets_at) within the lookback, when that reading is at least a quarter of the lookback
- * old; a measured rise of nothing means no run-out. Without one, the rate is the used % over the
- * time since the window started (once it is 10 minutes old).
+ * the limits log's readings.
+ *
+ * The log is no single series: each session logs the reading it last saw, so a resumed session
+ * logs its value from before the resume (lower than the truth, with a fresh ts) until its first
+ * reply, and sessions side by side alternate between neighbouring values. Used % never falls
+ * within a window, so the used % at a time is the highest reading of this same window (same
+ * resets_at) up to it, and a stale low reading changes nothing. The rate is the rise from a
+ * start to now. The start is the last reading at or before the lookback's start, when it is no
+ * older than two lookbacks; else (the log does not reach back, or a gap with no readings) 5
+ * minutes after the first reading inside the lookback, time for a stale first reading to be
+ * overtaken. A start less than a quarter of the lookback ago measures nothing; a measured rise of
+ * nothing means no run-out. With no measure, the rate is the used % over the time since the
+ * window started (once it is 10 minutes old).
  */
 export function runOut(key, w, now, rows) {
   const spec = WINDOWS[key];
   const used = num(w?.used_percentage), reset = num(w?.resets_at), t = num(now) / 1000;
-  if (!spec || used == null || reset == null || !(reset > t) || used >= 100) return null;
-  let oldest = null;
+  if (!spec || used == null || reset == null || !(reset > t)) return null;
+  const pts = [];
   for (const r of Array.isArray(rows) ? rows : []) {
     const x = r?.[key], ts = typeof r?.ts === "string" ? Date.parse(r.ts) / 1000 : NaN;
-    if (!isObject(x) || num(x.used_percentage) == null || x.resets_at !== reset) continue;
-    if (!(ts >= t - spec.look && ts <= t)) continue;
-    if (!oldest || ts < oldest[0]) oldest = [ts, x.used_percentage];
+    if (isObject(x) && num(x.used_percentage) != null && x.resets_at === reset && ts <= t) pts.push([ts, x.used_percentage]);
   }
+  const current = Math.max(used, ...pts.map(([, v]) => v));
+  if (current >= 100) return null;
   let rate = null; // % per second
-  if (oldest && t - oldest[0] >= spec.look / 4) rate = Math.max(0, used - oldest[1]) / (t - oldest[0]);
-  else {
+  const edge = t - spec.look;
+  const before = Math.max(...pts.filter(([ts]) => ts <= edge).map(([ts]) => ts));
+  const inside = Math.min(...pts.filter(([ts]) => ts > edge).map(([ts]) => ts));
+  const start = before >= t - 2 * spec.look ? before : inside + SETTLE;
+  if (Number.isFinite(start) && t - start >= spec.look / 4) {
+    const atStart = Math.max(...pts.filter(([ts]) => ts <= start).map(([, v]) => v));
+    rate = Math.max(0, current - atStart) / (t - start);
+  } else {
     const elapsed = t - (reset - spec.span);
-    if (elapsed > 600 && used > 0) rate = used / elapsed;
+    if (elapsed > 600 && current > 0) rate = current / elapsed;
   }
   if (!(rate > 0)) return null;
-  const left = (100 - used) / rate;
+  const left = (100 - current) / rate;
   return left < reset - t ? left : null;
 }
 
@@ -307,11 +326,12 @@ export function readLimitsTail(dir = stateDir()) {
 /**
  * The name of the bot this Herdr pane plays, or null outside a pane (no HC_TERMINAL_ID) or when
  * it plays none. Asks `automagik-herdr whois --json <terminal>` (the launcher at its absolute
- * path, run with /bin/sh, `timeout` ms), then reads the name from <project>/.herdr/bots.json.
- * The answer, a miss or a failure included, is cached for 10 minutes per terminal in
- * statusline-bots.json. Never throws.
+ * path, run with /bin/sh, killed with SIGKILL after `timeout` ms), then reads the name from
+ * <project>/.herdr/bots.json. The answer, a miss or a failure included, is cached for 10 minutes
+ * per terminal in statusline-bots.json; only expired entries are dropped (and, past 512 live
+ * terminals, the oldest), so every live pane keeps its entry. Never throws.
  */
-export function botName(env = process.env, { dir = stateDir(env), home = homedir(), launcher = join(home, ".local/bin/automagik-herdr"), now = Date.now(), timeout = 1500 } = {}) {
+export function botName(env = process.env, { dir = stateDir(env), home = homedir(), launcher = join(home, ".local/bin/automagik-herdr"), now = Date.now(), timeout = WHOIS_TIMEOUT } = {}) {
   try {
     const terminal = clean(env.HC_TERMINAL_ID);
     if (!terminal) return null;
@@ -325,7 +345,7 @@ export function botName(env = process.env, { dir = stateDir(env), home = homedir
     try {
       if (existsSync(launcher)) {
         const out = execFileSync("/bin/sh", [launcher, "whois", "--json", terminal], {
-          encoding: "utf8", timeout, stdio: ["ignore", "pipe", "ignore"],
+          encoding: "utf8", timeout, killSignal: "SIGKILL", stdio: ["ignore", "pipe", "ignore"],
           env: { ...env, PATH: [join(home, ".local/bin"), env.PATH, "/usr/bin:/bin"].filter(Boolean).join(":") },
         });
         const who = JSON.parse(out);
@@ -337,17 +357,17 @@ export function botName(env = process.env, { dir = stateDir(env), home = homedir
       }
     } catch { /* no answer: cached as none */ }
     entries[key] = { name, at: now };
-    save(cacheFile, dir, entries);
+    const live = Object.entries(entries).filter(([, e]) => isObject(e) && num(e.at) != null && e.at <= now && now - e.at < BOT_TTL);
+    save(cacheFile, dir, Object.fromEntries(live.sort(([, a], [, b]) => b.at - a.at).slice(0, BOTS_KEEP)));
     return name || null;
   } catch { return null; }
 }
 
 function save(cacheFile, dir, entries) {
   try {
-    const kept = Object.fromEntries(Object.entries(entries).sort(([, a], [, b]) => (b?.at ?? 0) - (a?.at ?? 0)).slice(0, KEEP));
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const tmp = `${cacheFile}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(kept), { mode: 0o600 });
+    writeFileSync(tmp, JSON.stringify(entries), { mode: 0o600 });
     renameSync(tmp, cacheFile);
   } catch { /* asked again next turn */ }
 }

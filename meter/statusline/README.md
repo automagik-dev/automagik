@@ -14,8 +14,9 @@ Each segment is left out when its field is missing. Separators and labels are di
 - `🤖`: the bot this Herdr pane plays, only in a Herdr pane (`HC_TERMINAL_ID` set):
   `automagik-herdr whois --json <terminal>`, run as `/bin/sh ~/.local/bin/automagik-herdr` (the
   launcher finds its own node, so a bare PATH is fine), then the bot's name in
-  `<project>/.herdr/bots.json`. whois gets 1.5 s; the answer, a miss included, is cached 10 minutes
-  per terminal in the Meter state folder (`statusline-bots.json`).
+  `<project>/.herdr/bots.json`. whois gets 1.5 s, then SIGKILL; the answer, a miss included, is
+  cached 10 minutes per terminal in the Meter state folder (`statusline-bots.json`). Only expired
+  entries are dropped, so every live pane keeps its own (past 512 live terminals, the oldest go).
 - `🧠` and `⚡`: the model and `effort.level`
   ([statusline](https://code.claude.com/docs/en/statusline)); Claude Code sends no effort when the
   model has no effort setting, and then no effort word is shown.
@@ -41,10 +42,16 @@ Each segment is left out when its field is missing. Separators and labels are di
   the window resets. Claude Code drops a window once it resets, and sends none before the
   session's first reply.
 - `Left`, in red: when the window runs out at the current rate, shown only when that comes before
-  the reset. The rate is the rise since the oldest reading of the same window (same `resets_at`)
-  in the limits log within the last hour (5h) or six hours (7d), once that reading is at least a
-  quarter of that old; a measured rise of nothing shows no `Left`. Without such a reading, the
-  rate is the used % over the time since the window started. Only the log's last 256 KiB is read.
+  the reset. The rate comes from the limits log's readings of the same window (same `resets_at`);
+  only the log's last 256 KiB is read. Each session logs the value it last saw, so a resumed
+  session logs a stale lower one with a fresh time, and sessions side by side alternate between
+  neighbouring values. Used % never falls within a window, so the used % at a time is the highest
+  reading up to it. The rate is the rise from a start to now. The start is the last reading at or
+  before the lookback's start (1 h for 5h, 6 h for 7d), when it is no older than two lookbacks;
+  else (the log does not reach back, or a gap) 5 minutes after the first reading inside the
+  lookback. A start less than a quarter of the lookback ago measures nothing, and a measured rise
+  of nothing shows no `Left`. With no measure, the rate is the used % over the time since the
+  window started.
 
 | File | What it is |
 | - | - |
