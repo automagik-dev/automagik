@@ -15,6 +15,7 @@ import { apply as applyTeam } from '../index.js'
 import { createRuntime as createUnfold } from '../../unfold-bot-dsh/index.js'
 import { fakeControl, preload } from '../../unfold-session-dsh/test/fake-control.js'
 import { fakeContext } from './fake-ctx.js'
+import { until } from './until.js'
 
 // Unfold's session plugin resolves its DSH peers from the harness this plugin's tests use.
 const session = new URL('../../unfold-session-dsh/', import.meta.url).href
@@ -30,13 +31,6 @@ const { apply: applySession } = await import('../../unfold-session-dsh/index.js'
 const ROOT = 'unfold-root'
 const EMPTY = { version: 1, mainBotIds: [], workspaceId: 'w1', bots: {}, rooms: {}, agents: {}, exchanges: [], exchangeTurns: {}, questions: {}, prefs: {}, revision: 0 }
 const settle = (ms = 20) => new Promise(resolve => setTimeout(resolve, ms))
-const until = async (check, ms = 3000) => {
-  for (const end = Date.now() + ms; !check();) {
-    if (Date.now() > end) return false
-    await settle(10)
-  }
-  return true
-}
 
 // A DSH stand-in for the three plugins. Each Session is a live agent whose turns run every
 // agent/pre-step listener in DSH's order (a prepended listener runs before those registered
@@ -329,7 +323,7 @@ test('the Unfold Bot\'s group Session is not pinned: it still moves to a fresh p
   // The group Session works somewhere other than the team workspace it belongs in.
   env.agentOf('gu').session.header.cwd = env.unfoldFolder
   env.agentOf('gu').followup(createUserMessage({ content: [{ type: 'text', text: 'In the group' }], source: { kind: 'user', rpcId: 'group-1' } }))
-  assert.ok(await until(() => rt.roomOf('r1').sessions[ROOT] !== 'gu'), 'the group Session moved on')
+  await until(() => rt.roomOf('r1').sessions[ROOT] !== 'gu', { label: 'the group Session moved on' })
   assert.equal(rt.roomOf('r1').segments[ROOT][0].sessionId, 'gu')
   assert.equal(rt.chatOf(ROOT), ROOT, 'the own chat stays')
   assert.deepEqual(env.unarchived, [], 'nothing to put back')

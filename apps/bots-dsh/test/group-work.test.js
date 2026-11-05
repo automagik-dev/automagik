@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { apply } from '../index.js'
 import { fakeAttachments, fakeContext } from './fake-ctx.js'
+import { immediate, until } from './until.js'
 import { MESSAGE_INLINE_MAX, ROOM_STEP_GAP_MS, ROOM_WORK_GRACE_MS } from '../src/host/constants.js'
 
 // Omni, the admin of group 'r1', speaks there from 'ga'; Writer from 'gb'; Tester from 'gc'.
@@ -111,11 +112,7 @@ async function start(t, room, services, extraRooms) {
   return { home, ctx, agentOf, emit, tool, call, begin, finish, round, say, takePost }
 }
 
-const settle = async (check) => {
-  const until = Date.now() + 3000
-  while (!check() && Date.now() < until) await new Promise(resolve => setImmediate(resolve))
-  assert.ok(check(), 'condition not reached')
-}
+const settle = check => until(check, { poll: immediate })
 const text = message => message.content.map(block => block.text ?? '').join('\n')
 const kinds = result => result.replies.map(reply => [reply.kind ?? 'message', reply.name])
 

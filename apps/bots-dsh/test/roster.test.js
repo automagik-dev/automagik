@@ -8,6 +8,7 @@ import { test } from 'node:test'
 import { format } from 'node:util'
 import { apply } from '../index.js'
 import { fakeContext } from './fake-ctx.js'
+import { until } from './until.js'
 
 // Enough of the dsh services for the roster to make Sessions; kickoff messages are dropped.
 function start(team, { models = [], reasoning = {}, archiveError, config = {}, selection } = {}) {
@@ -71,15 +72,6 @@ function start(team, { models = [], reasoning = {}, archiveError, config = {}, s
 }
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
-// A greeting goes out after the team is saved, which can take longer than one settle() on a
-// busy machine.
-const until = async (check) => {
-  const end = Date.now() + 2000
-  while (!check()) {
-    if (Date.now() > end) throw new Error('until: the condition did not hold within 2 s')
-    await settle()
-  }
-}
 
 test('the first Main Bot waits for the user to pick a model, then greets', async (t) => {
   const { call, stop, sent, selected } = start(undefined, { models: ['deepseek-v4-flash', 'deepseek-v4-pro'] })
