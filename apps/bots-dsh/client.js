@@ -8189,6 +8189,8 @@ html body :is(.bt-state,.bt-token){border:1px solid var(--st-line);background:va
 html body .bt-state[aria-pressed=true]{background:var(--st-lilac);color:var(--st-lilac-ink)}
 html body [class*="_composerStack"] [data-composer-card][data-composer-card]{max-width:min(760px,100%)!important;margin-inline:auto!important}
 html body [class*="_composerStack"] [data-queue-dock]{max-width:calc(760px - 2*var(--dsh-composer-dock-inset,8px))!important}
+html body [class*="_composerStack"] :is([data-goal-bar],[data-goal-bar]>*,[data-testid="todo-panel"],[data-composer-dock]:has(.bt-btw),.bt-btw-dock){max-width:calc(760px - 4*var(--dsh-composer-dock-inset,8px))}
+html body [class*="_composerStack"] [data-composer-dock]:has(.bt-btw){width:calc(100% - 4*var(--dsh-composer-dock-inset,8px))}
 html body [data-composer-card]{background:var(--st-raised)!important;border:1px solid var(--st-line)!important;border-radius:18px!important;box-shadow:var(--st-hollow)!important}
 html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card]{flex-wrap:wrap!important;row-gap:6px!important;padding:10px 10px 8px 12px!important;border-radius:18px!important;min-height:0!important}
 html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card]>[data-input-scroll]{order:0!important;flex:1 1 100%!important;padding:2px 4px 4px!important}
@@ -11057,8 +11059,10 @@ body:not([data-bt-advanced]) [class*="_flowItem"][data-chat-flow-kind="turn-tail
 [class*="_root"]:has(> [data-composer-card]){padding:0 11px 13px 16px!important}
 /* DSH centres its queued-message dock on the stack with a 16px clearance each side; the card
    above sits in that 16/11 root, so the dock follows it: the card's width less the two insets,
-   moved onto the card's axis (#91). */
+   moved onto the card's axis (#91). The goal bar and the todo panel sit in the stack too, four
+   insets narrower than the card, so they follow it the same way (issue 363). */
 [class*="_composerStack"]:has([class*="_root"]>[data-composer-card]) [data-queue-dock]{width:calc(100% - 27px - 2*var(--dsh-composer-dock-inset,8px));translate:2.5px 0}
+[class*="_composerStack"]:has([class*="_root"]>[data-composer-card]) :is([data-goal-bar],[data-testid="todo-panel"]){width:calc(100% - 27px - 4*var(--dsh-composer-dock-inset,8px));translate:2.5px 0}
 [class*="_root"]:has(> [data-composer-card])>[data-composer-card]{max-width:min(992px,100%)!important}
 [data-composer-card]>[class*="_row"]{display:contents!important}
 [data-composer-card] [class*="_tools"]{order:1!important;flex:none!important;align-self:flex-end!important;margin:0!important}
