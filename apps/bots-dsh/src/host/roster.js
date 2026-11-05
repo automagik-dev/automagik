@@ -762,9 +762,10 @@ export function install(rt) {
     }
     let archived
     try {
+      await rt.releaseBot(id, sessions)
+      // #376: only once its Sessions are released, so a failed release keeps its memory.
       // Before the Bot and its group Sessions leave the state, which the archive reads.
       archived = rt.archiveBotMemory(id)
-      await rt.releaseBot(id, sessions)
     } catch (error) {
       deleting.delete(id)
       await putBack(id, left)

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -269,6 +269,56 @@ test('a deletion whose release fails keeps the Bot\'s cards and side chats, and 
   for (const file of files) assert.equal(existsSync(file), false, `${file} is removed`)
   assert.deepEqual([saved().rooms.r1.members, saved().rooms.r1.admin], [['a', 'b'], null])
   assert.equal(saved().bots.c, undefined)
+})
+
+// #376: the memory archive started before releaseBot, so a failed release moved the
+// memory of a Bot that stays. Each archive started is kept, to wait for it.
+function ownMemory(t, rt, home) {
+  const dir = join(home, 'memory', 'bots', 'c')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'MEMORY.md'), '# Memory\n\n- Kept fact\n\n## Index\n')
+  const archiveBotMemory = rt.archiveBotMemory
+  const started = []
+  rt.archiveBotMemory = (...args) => {
+    const run = archiveBotMemory(...args)
+    started.push(run)
+    return run
+  }
+  t.after(() => { rt.archiveBotMemory = archiveBotMemory })
+  const archive = join(home, 'memory', 'archive')
+  const entries = () => (existsSync(archive) ? readdirSync(archive) : [])
+  return { dir, started, entries }
+}
+
+test('a deletion whose release fails keeps the Bot\'s memory out of the archive', async (t) => {
+  const { rt, home, stop } = await start(LEADS)
+  t.after(stop)
+  const memory = ownMemory(t, rt, home)
+  assert.equal(existsSync(memory.dir), true)
+  const release = failing(t, rt, 'releaseBot')
+  const deleting = rt.deleteBot('c')
+  await release.entered
+  release.fail(new Error('release failed'))
+  await assert.rejects(deleting, /release failed/)
+  await Promise.all(memory.started)
+  assert.equal(memory.started.length, 0, 'no archive was started')
+  assert.equal(existsSync(memory.dir), true, 'its memory is kept')
+  assert.deepEqual(memory.entries(), [])
+  assert.ok(rt.botOf('c'))
+})
+
+test('a deletion whose release succeeds archives the Bot\'s memory once', async (t) => {
+  const { rt, home, stop } = await start(LEADS)
+  t.after(stop)
+  const memory = ownMemory(t, rt, home)
+  await rt.deleteBot('c')
+  await Promise.all(memory.started)
+  assert.equal(memory.started.length, 1)
+  assert.equal(existsSync(memory.dir), false)
+  const entries = memory.entries()
+  assert.equal(entries.length, 1)
+  assert.match(entries[0], /^c-\d{4}-/)
+  assert.match(readFileSync(join(home, 'memory', 'archive', entries[0], 'MEMORY.md'), 'utf8'), /Kept fact/)
 })
 
 // #376: a save in the window wrote the group without the Bot, and the restore was memory only.
