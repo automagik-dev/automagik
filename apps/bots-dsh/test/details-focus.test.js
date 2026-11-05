@@ -328,3 +328,50 @@ test('a multi-part Bot\'s memory pill follows its Bot id, not the part', async (
   assert.deepEqual(opened, ['bot'], 'the pill opens the Bot\'s memory')
   assert.deepEqual(toggled, [], 'and never toggles the details')
 })
+
+// Issue #337: the memory notice reuses the pill, which used to copy the Details state into
+// its own aria-expanded. Only the Details button may expose it; the pill's arrow reads
+// data-expanded instead.
+test('only the Details button exposes aria-expanded; the memory pill carries data-expanded for its arrow', async (t) => {
+  const { document, root, HeaderPill, createSource, indexRoster } = mount(t)
+  const h = React.createElement
+  const team = indexRoster({ bots: [{ id: 'bot', name: 'Omni', sessionId: 'bot' }], rooms: [] })
+  const shown = { ...roster, ...team, memory: true }
+  const news = { bot: { seen: Date.now(), at: Date.now() } }
+  const opened = []
+  const actions = new Proxy({ beginVisit() {}, endVisit() {}, openMemory: id => opened.push(id) },
+    { get: (known, name) => known[name] ?? (() => {}) })
+  for (const [view, expanded] of [['details', 'true'], ['chat', 'false']]) {
+    const ui = createSource({ visits: {}, details: 'bot', view, renaming: false, tab: null })
+    const useUi = select => React.useSyncExternalStore(ui.subscribe, () => select(ui.getSnapshot()))
+    await act(() => root.render(h(HeaderPill, {
+      sessionId: 'bot', useRoster: hook(shown), useSessions: hook({ byId: {} }), useSessionStatus: hook(new Map()),
+      useSession: hook({}), useActivity: hook({}), useMemoryNews: hook(news), useTurnClock: hook({}), useUi,
+      useLive: hook({}), useWork: hook({}), actions,
+    })))
+    const headerNode = document.querySelector('.bt-head')
+    assert.ok(headerNode, `${view}: the real header renders`)
+    const pill = headerNode.querySelector('.bt-pill[data-memory="updated"]')
+    assert.ok(pill, `${view}: the memory notice shows`)
+    const details = headerNode.querySelector('.bt-head-details[data-details-subject="bot"]')
+    assert.ok(details, `${view}: the Details button shows beside it`)
+    const exposed = [...headerNode.querySelectorAll('[aria-expanded]')]
+    const names = exposed.map(node => node.className).join(', ')
+    assert.equal(exposed.length, 1,
+      `${view}: exactly one header element carries aria-expanded, not ${names}`)
+    assert.ok(exposed[0] === details, `${view}: and it is the Details button`)
+    assert.equal(details.tagName, 'BUTTON',
+      `${view}: the expanded control is the real Details button`)
+    assert.equal(details.getAttribute('aria-expanded'), expanded)
+    assert.equal(details.getAttribute('aria-controls'), 'bt-conversation-panel')
+    assert.equal(headerNode.hasAttribute('aria-expanded'), false,
+      `${view}: the header itself exposes no expanded state`)
+    assert.equal(pill.tagName, 'BUTTON', `${view}: the memory pill is the button beside it`)
+    assert.equal(pill.hasAttribute('aria-expanded'), false, `${view}: the memory pill exposes no expanded state`)
+    assert.equal(pill.hasAttribute('aria-controls'), false, `${view}: the memory pill controls no pane`)
+    assert.equal(pill.getAttribute('data-expanded'), expanded, `${view}: the pill's arrow still reads the Details state`)
+    assert.match(pill.getAttribute('aria-label'), /^Memory updated\. Open Omni/)
+  }
+  await act(() => document.querySelector('[data-memory="updated"]').click())
+  assert.deepEqual(opened, ['bot'], 'the memory pill still opens the memory')
+})
