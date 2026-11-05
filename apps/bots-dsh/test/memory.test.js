@@ -986,6 +986,32 @@ test('a second edit of an entry an earlier change edited never edits another ent
   await staleEntryReview(t, { op: 'edit', entry: 1, text: 'The user prefers black coffee' }, /^memory review of Writer left out a change \(edit, 29 chars\): The entry the change names has changed since it was read; the text it had \(24 chars\) is only part of another entry now\./)
 })
 
+// The freeze holds a change to the entry it was read from: a second change on
+// another entry of the same numbered list still applies.
+test('a second change to a different entry of the same review still applies', async (t) => {
+  const seeded = mkdtempSync(join(tmpdir(), 'ds-bot-memory-'))
+  const dir = join(seeded, 'memory', 'bots', 'b2')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'MEMORY.md'), '# Memory\n\n## Index\n- [[drinks]]\n')
+  writeFileSync(join(dir, 'drinks.md'), '# drinks\n\n- The user likes green tea\n- The user likes green tea with milk\n')
+  const answer = JSON.stringify({ changes: [
+    { op: 'edit', entry: 1, text: 'The user prefers oolong' },
+    { op: 'edit', entry: 2, text: 'The user likes green tea with lemon' },
+  ] })
+  const { ctx, home, call, read, journal, requests, stop } = start({ home: seeded, replies: [answer], config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  await settle()
+  assert.deepEqual(parseMemory(read('bots', 'b2', 'drinks.md')).entries.map(entry => entry.text), ['The user prefers oolong', 'The user likes green tea with lemon'])
+  assert.deepEqual(journal().map(record => record.op), ['replace', 'replace'])
+  assert.deepEqual(warnings(home, 'left out a change'), [])
+  assert.deepEqual(warnings(home, 'memory review of chat:b2 failed'), [])
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  assert.equal(requests.length, 1)
+})
+
 test('an answer with a malformed change, an unlisted entry, or a bad topic changes nothing, and is asked for once more', async (t) => {
   for (const bad of [{ op: 'add' }, { op: 'remove', entry: 7 }, { op: 'add', text: 'The user writes C++', topic: 'C++' }]) {
     const answer = JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }, bad] })
