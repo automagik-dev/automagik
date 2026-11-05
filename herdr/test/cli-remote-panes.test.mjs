@@ -348,3 +348,27 @@ test("restart --machine resumes by id when the pane carries a session (--resume 
   assert.match(forced.err, /Hedge \(vm\/t9\) also runs Hermes/);
   assert.equal(s2.calls().filter((c) => c[0] === "run").length, 0);
 });
+
+test("restart --machine #413: codex can't resume a thread whose model provider is gone: one new pane there on a new thread, the old id in the note", (t) => {
+  const thread = "0f3c2a4e-1b2d-4c5e-9f60-718293a4b5c6";
+  const gone = "Error: model provider juice is no longer configured (modelProviderNotConfigured)";
+  const s = scene(t, { terminals: [{ address: "vm/t9", name: null, state: "live", created_ms: 1700000000009, parent: null,
+    labels: { "agent.session": thread }, foreground: { argv: ["codex", "resume", thread], name: "codex" }, status: { state: "idle", app: "codex" } }] });
+  const file = join(s.project, ".herdr/bots.json");
+  writeFileSync(file, readFileSync(file, "utf8").replace(/"agent": "claude"/, '"agent": "codex"'));
+  writeFileSync(join(s.root, "vm-bin", "codex"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  assert.equal(s.cli(["attach", "Hedge", "vm/t9", ...s.on]).code, 0);
+  s.setState((st) => { st.runQueue = [{ runAs: "exit", screen: `${gone}\n$ ` }]; });
+  const r = s.cli(["restart", "Hedge", ...s.on, "--force", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const runs = s.calls().filter((c) => c[0] === "run");
+  assert.equal(runs.length, 2);
+  assert.deepEqual(runs[0].slice(-2), ["resume", thread], "it tried the thread first");
+  assert.ok(!runs[1].includes("resume"), "then a new thread");
+  const out = r.json();
+  assert.deepEqual([out.mode, out.terminal, out.replaced], ["fresh", "t101", "t9"]);
+  assert.equal(out.note, `codex can't resume thread ${thread} (vm/t100 said "${gone}"), so it starts on a new one`);
+  assert.ok(out.warnings.some((w) => w.includes(`thread ${thread}`)));
+  assert.equal(s.hcState().terminals.find((x) => x.address === "vm/t101").labels["agent.session"], undefined);
+  assert.ok(s.calls().some((c) => c[0] === "kill" && c[1] === "vm/t9"), "the old pane ends once the new one is up");
+});

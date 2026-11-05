@@ -1719,15 +1719,16 @@ async function restartOnMachine(opts, project, bot, entry) {
   if (!run?.length) throw new CliError(`${bot.name}'s coding agent "${agentKey}" isn't one Herdr can start.`);
   // The old pane's agent.session label, as restartPlan reads it for the agent.
   const label = old?.labels?.[SESSION_LABEL] ?? null;
-  const plan = restartPlan({
+  const planned = {
     bot, run, runningAgent: old ? agentKeyOfArgv(unwrapKeep(old.foreground?.argv), agentTable()) : null, session: label,
     fresh: opts.fresh || !old, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
-  });
+  };
+  let plan = restartPlan(planned);
   let cwd = key;
   const oldCwd = old?.foreground?.cwd ?? old?.cwd ?? null;
   if (oldCwd && oldCwd !== key) { try { if ((await remoteProjectOf(machine, oldCwd)).key === key) cwd = oldCwd; } catch { /* the project's */ } }
   // A session counts only when the command really resumes it by id (--resume <id> in its argv).
-  const session = plan.mode === "resume" && plan.resume[0] === "--resume" && plan.argv.includes(plan.resume[1]) ? plan.resume[1] : null;
+  let session = plan.mode === "resume" && plan.resume[0] === "--resume" && plan.argv.includes(plan.resume[1]) ? plan.resume[1] : null;
   // With no session id, a resume takes the workspace's latest conversation, which may be one
   // someone started there by hand: refused unless --force, and even then while any other live
   // pane on that machine runs the same agent in that folder (bot or not: hc ls, not the ledger).
@@ -1745,13 +1746,29 @@ async function restartOnMachine(opts, project, bot, entry) {
     const refusal = continueRefusal({ name: bot.name, old, cwd, sharers, agent: agentTable()[plan.agent]?.name ?? plan.agent });
     if (refusal) throw new CliError(refusal);
   }
-  const seat = await seatOnMachine(project, bot, { agent: plan.agent, argv: plan.argv, cwd, place: old ? placementFrom([old]) : undefined,
+  let seat = await seatOnMachine(project, bot, { agent: plan.agent, argv: plan.argv, cwd, place: old ? placementFrom([old]) : undefined,
     carry: { ...carriedLabels(old), ...(session ? { [SESSION_LABEL]: session } : {}) }, replacing: Boolean(old) });
   if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
   const warnings = [...seat.warnings];
   report(warnings);
   if (old) {
-    const up = await agentUp(seat.address);
+    let up = await agentUp(seat.address);
+    // Codex can't resume the thread at all (#413): one new pane on a new thread, as cmdRestart does.
+    const gone = up.state === "ended" ? await endedCause(seat.address) : null;
+    if (providerGone(plan, gone)) {
+      const thread = plan.resume[0] === "resume" && plan.resume[1] && plan.resume[1] !== "--last" ? plan.resume[1] : null;
+      const note = providerGoneNote(thread, seat.address, gone);
+      plan = { ...restartPlan({ ...planned, fresh: true }), note };
+      session = null;
+      warnings.push(`${bot.name} starts on a new conversation: ${note}.`);
+      report([warnings.at(-1)]);
+      const again = await seatOnMachine(project, bot, { agent: plan.agent, argv: plan.argv, cwd, place: placementFrom([old]), carry: carriedLabels(old), replacing: true });
+      if (again.running) throw new CliError(`${bot.name} is running in ${again.running} now, so no new pane was started; ${old.address} still runs it, untouched.`);
+      warnings.push(...again.warnings);
+      report(again.warnings);
+      seat = again;
+      up = await agentUp(seat.address);
+    }
     if (up.state !== "live") {
       if (up.state === "ended") {
         throw await exitedBefore(seat.address, `${old.address} still runs ${bot.name}, untouched.`
@@ -2033,6 +2050,19 @@ async function exitedWhy(terminal) {
   const cause = await endedCause(terminal);
   return { cause, text: `${terminal} exited before its agent was up${cause ? `; its agent said: "${cause}" (hc read ${terminal} shows the rest)` : ` (hc read ${terminal} says why)`}` };
 }
+
+// Codex refusing a thread whose model provider is no longer in its config (#413: threads begun
+// on a provider since removed, Juice say): that thread can't be resumed, only left behind.
+const PROVIDER_GONE = /modelProviderNotConfigured|\bno longer configured\b/i;
+
+/**
+ * Whether a resume that exited (its agent's last line `cause`) is codex unable to resume the
+ * thread at all (PROVIDER_GONE), the one failure a restart answers by starting fresh (#413).
+ */
+const providerGone = (plan, cause) => plan.mode === "resume" && plan.agent === "codex" && PROVIDER_GONE.test(cause ?? "");
+/** The note a restart that left such a thread behind carries: the old thread and what codex said. */
+const providerGoneNote = (thread, terminal, cause) =>
+  `codex can't resume ${thread ? `thread ${thread}` : "the folder's latest thread"} (${terminal} said "${cause}"), so it starts on a new one`;
 
 /** A replacement that exited before its agent was up: the refusal; --json prints the cause beside the replacement `terminal`. */
 async function exitedBefore(terminal, rest) {
@@ -2456,7 +2486,7 @@ async function cmdRestart(opts, [ref]) {
       + `or pick a folder whose slug is the same.`);
   }
   const place = opts.space ? { space: opts.space, tab: opts.tab ?? null, from: null } : (old ? placementFrom([old]) ?? undefined : undefined);
-  const resumeId = plan.mode === "resume" && resumesById(plan.agent) ? sessionFor(plan.agent, known?.session) : null;
+  let resumeId = plan.mode === "resume" && resumesById(plan.agent) ? sessionFor(plan.agent, known?.session) : null;
   // With no id, a resume takes the folder's latest conversation (--continue, codex resume
   // --last), for every agent: beside another bot on that agent there, a new conversation, and
   // why (#328: an omp --continue picked up a teammate's). Alone there, the resume as before.
@@ -2477,7 +2507,7 @@ async function cmdRestart(opts, [ref]) {
   if (tree.length) plans = await treeIdle(old, tree, (w) => early.push(w), { force: opts.force });
   // A resumed session keeps its label on the new pane, so the next restart resumes it too.
   const carry = { ...carriedLabels(old), ...(resumeId ? { [SESSION_LABEL]: resumeId } : {}) };
-  const seat = await launchSeat(project, bot, { agent: plan.agent, model: plan.model, argv: plan.argv, cwd, place, carry, replacing: old ? held.binding : null });
+  let seat = await launchSeat(project, bot, { agent: plan.agent, model: plan.model, argv: plan.argv, cwd, place, carry, replacing: old ? held.binding : null });
   if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
   const warnings = seat.hook.warnings;
   const say = (w) => { warnings.push(w); report([w]); };
@@ -2493,7 +2523,21 @@ async function cmdRestart(opts, [ref]) {
   let oldEnded = false;
   if (old) {
     // The old pane ends only once the new one has kept its agent up: the space is never left empty.
-    const up = await agentUp(seat.terminal);
+    let up = await agentUp(seat.terminal);
+    // Codex can't resume the thread at all (its model provider is gone, #413): one new pane on a
+    // new thread, the old one named in the note; any other failure stays a failure.
+    const gone = up.state === "ended" ? await endedCause(seat.terminal) : null;
+    if (providerGone(plan, gone)) {
+      const note = providerGoneNote(resumeId, seat.terminal, gone);
+      plan = { ...restartPlan({ ...planned, fresh: true }), note };
+      resumeId = null;
+      say(`${bot.name} starts on a new conversation: ${note}.`);
+      const again = await launchSeat(project, bot, { agent: plan.agent, model: plan.model, argv: plan.argv, cwd, place, carry: carriedLabels(old), replacing: held.binding });
+      if (again.running) throw new CliError(`${bot.name} is running in ${again.running} now, so no new pane was started; ${old.address} still runs it, untouched.`);
+      for (const w of again.hook.warnings) say(w);
+      seat = again;
+      up = await agentUp(seat.terminal);
+    }
     if (up.state !== "live") {
       // An abandoned replacement is ended (no seat row was written for it); the old pane stays.
       if (up.state === "ended") {

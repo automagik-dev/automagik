@@ -1708,6 +1708,44 @@ function captainScene(t, { agent = "omp", over = {}, extra = [] } = {}) {
 }
 const runs = (s) => s.calls().filter((c) => c[0] === "run");
 
+test("restart #413: codex can't resume a thread whose model provider is gone: one new pane on a new thread, the old id in the note", (t) => {
+  const codexBot = (runQueue) => {
+    const s = captainScene(t, { agent: "codex", over: { foreground: { argv: ["codex", "resume", SID], cwd: "/p" }, argv: ["codex", "resume", SID],
+      labels: { bot: ID.cap, "agent.session": SID } } });
+    const st = s.hcState();
+    writeFileSync(join(s.root, "hc.json"), JSON.stringify({ ...st, runQueue }));
+    return s;
+  };
+  const s = codexBot([{ runAs: "exit", screen: CODEX_SCREEN }]);
+  const r = s.cli(["restart", "Captain", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const [first, second] = runs(s);
+  assert.deepEqual(plain(agentWords(first)).slice(-2), ["resume", SID], "it tried the thread first");
+  assert.deepEqual(plain(agentWords(second)), ["codex"], "then a new thread");
+  const j = r.json();
+  assert.deepEqual([j.mode, j.terminal, j.replaced, j.session], ["fresh", "t101", "t6", null]);
+  assert.equal(j.note, `codex can't resume thread ${SID} (t100 said "${CODEX_GONE}"), so it starts on a new one`);
+  assert.ok(j.warnings.some((w) => w.includes(`thread ${SID}`)), "the sidebar's warnings say it too");
+  assert.equal(s.hcState().terminals.find((x) => x.address === "t101").labels["agent.session"], undefined, "the dead thread's id isn't carried on");
+  assert.ok(at(s.calls(), "kill", "t6") > at(s.calls(), "run"), "t6 ends once t101 is up");
+  assert.equal(foldRows(attachOf(s)).byBot.get(ID.cap).terminal, "t101");
+  // Any other resume failure is still a failure, with its own cause: one try, t6 untouched.
+  const other = "Error: no rollout found for thread id " + SID;
+  const s2 = codexBot([{ runAs: "exit", screen: `${other}\n% ` }]);
+  const r2 = s2.cli(["restart", "Captain", "--json"]);
+  assert.equal(r2.code, 1);
+  assert.equal(r2.json().cause, other);
+  assert.equal(runs(s2).length, 1);
+  assert.equal(at(s2.calls(), "kill"), -1);
+  // The new thread failing too: its own cause, t6 still untouched.
+  const s3 = codexBot([{ runAs: "exit", screen: CODEX_SCREEN }, { runAs: "exit", screen: "Error: not logged in\n" }]);
+  const r3 = s3.cli(["restart", "Captain", "--json"]);
+  assert.equal(r3.code, 1);
+  assert.deepEqual([r3.json().terminal, r3.json().cause], ["t101", "Error: not logged in"]);
+  assert.equal(at(s3.calls(), "kill"), -1);
+  assert.equal(s3.hcState().terminals.find((x) => x.address === "t6").state, "live");
+});
+
 test("restart #213: an omp bot from a template, in a worktree, comes back in that folder on the template's command, resumed", (t) => {
   const s0 = scene(t);
   const wt = join(s0.root, "proj.worktrees", "rust-cap");

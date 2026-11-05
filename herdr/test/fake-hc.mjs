@@ -196,7 +196,10 @@ switch (words[0]) {
     // state.runAs: "shell" (the agent never comes in front), "exit" (it ends at once) or
     // "flaky" (its agent is in front for one hc get, then it exits); state.runAsFor[name]: the
     // same, for the run of that name only.
-    const runAs = state.runAsFor?.[name] ?? state.runAs;
+    // state.runQueue: [{ runAs, screen }], one taken per run first (a first try exits, the next stays up).
+    const queued = Array.isArray(state.runQueue) && state.runQueue.length ? state.runQueue.shift() : null;
+    const runAs = queued ? queued.runAs : state.runAsFor?.[name] ?? state.runAs;
+    const runScreen = queued ? queued.screen : state.runScreen;
     const shell = runAs === "shell";
     // state.workingOnRun: terminals whose agent starts a turn when this run happens (once).
     for (const a of state.workingOnRun ?? []) { const w = find(a); if (w) w.status = { ...(w.status ?? {}), state: "working" }; }
@@ -211,7 +214,7 @@ switch (words[0]) {
       status: (state.noStatus ?? []).includes(program) ? null : { app: program === "claude" ? "claude-code" : program, state: "working" },
       ...(runAs === "flaky" ? { exitAfterGets: 1 } : {}),
       // state.runScreen: what the new pane's screen holds (hc read), its agent's last words, say.
-      ...(typeof state.runScreen === "string" ? { screen: state.runScreen } : {}) });
+      ...(typeof runScreen === "string" ? { screen: runScreen } : {}) });
     // state.onRunWrite: { path, text }: a file edit that lands while this run happens.
     if (state.onRunWrite) writeFileSync(state.onRunWrite.path, state.onRunWrite.text);
     save();
