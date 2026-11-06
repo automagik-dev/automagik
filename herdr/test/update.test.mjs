@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -606,7 +606,12 @@ test("relinkCli: our link follows the pack's entry (the wrapper, or the .mjs bef
   const wrapper = join(bin, "automagik-herdr"), mjs = join(bin, "automagik-herdr.mjs");
   mkdirSync(bin);
   writeFileSync(mjs, "#!/usr/bin/env node\n");
-  const point = (to) => { rmSync(link, { force: true }); symlinkSync(to, link); };
+  // unlinkSync for a link: Node 24.9's rmSync leaves a dangling one in place.
+  const point = (to) => {
+    if (lstatSync(link, { throwIfNoEntry: false })?.isSymbolicLink()) unlinkSync(link);
+    else rmSync(link, { force: true });
+    symlinkSync(to, link);
+  };
   // A pack from before the wrapper: a link to the .mjs is already right; one to a missing wrapper is repointed.
   point(mjs);
   assert.equal(relinkCli({ modsDir: mods, binDir }), null);
@@ -623,7 +628,7 @@ test("relinkCli: our link follows the pack's entry (the wrapper, or the .mjs bef
   point("/somewhere/else/automagik-herdr.mjs");
   assert.equal(relinkCli({ modsDir: mods, binDir }), null);
   assert.equal(readlinkSync(link), "/somewhere/else/automagik-herdr.mjs");
-  rmSync(link);
+  unlinkSync(link); // dangling: see point()
   writeFileSync(link, "mine\n");
   assert.equal(relinkCli({ modsDir: mods, binDir }), null);
   assert.equal(readFileSync(link, "utf8"), "mine\n");
