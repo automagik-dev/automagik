@@ -241,9 +241,29 @@ machine through herdr-core (`hc file edit` with the text read, an exclusive crea
 file), so an edit made there since the form opened is refused, never overwritten. Its panes run
 there (`hc run --on`, addressed `machine/tN`) and show in this window, in a space of that
 machine on the project. The command a bot starts with is built here, from Herdr's agent table
-and your `programs.json`. What happened isn't shown for those bots yet, and a Claude bot there
-starts without its per-turn briefing until automagik-herdr is installed on that machine. A
-machine that isn't answering shows its bots as last seen, dimmed, and its menu says so.
+and your `programs.json`. A bot there gets the briefing a local start gives, written on that
+machine through herdr-core, in its app home: a Claude bot's briefing file and, once
+automagik-herdr is installed there, its per-turn hook in that project's
+`.claude/settings.local.json` (until then it starts with a warning and no hook); an omp, pi or grok
+bot gets the briefing as text. Codex and Hermes bots start there without it, since their own
+config, which may hold a prompt the briefing would replace, is only read on this computer. What
+happened isn't shown for those bots yet. A machine that isn't answering shows its bots as last
+seen, dimmed, and its menu says so.
+
+A project there can carry a pane-env file, `<project>/.herdr/pane-env` on that machine, for its
+bots' panes only: other panes there never read it. It takes two keys, one per line:
+
+```text
+PATH_PREPEND=/opt/node-22/bin:/opt/tools/bin
+HERDR_APP_HOME=/srv/bots/herdr-app
+```
+
+`PATH_PREPEND` puts those folders first on the PATH the agent is checked and started with (a
+chosen Node, say). `HERDR_APP_HOME` is the app home the pane gets (`HERDR_APP_HOME=` in its
+`/usr/bin/env` words) and the one its briefing file and hook use; without it, that machine's
+`~/.config/herdr-app`. Every folder is absolute; blank lines and `#` comments are skipped. Another
+key, a relative folder or a line that isn't `KEY=value` leaves the whole file out with one
+warning, and the bot starts as it would without it. With no file, nothing changes.
 
 Start and Restart there can take minutes when the machine answers slowly (every question to it
 has its own bound; the CLI's worst case is about 6 min for a start and 9.5 min for a restart), so

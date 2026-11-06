@@ -25,10 +25,10 @@ import { UNANSWERED, agentInForeground, attachRefusal, attachWords, detachWords,
   freshSpare, shellIdle, spareTab, startArgs, startRefusal, unwrapKeep } from "../launchArgs.js";
 import { tabSteps, workerSpace, workerTabName } from "../workerTab.js";
 import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, confirmBindings, foldAttach, heldIn, machinesById, modeProblem, placeOf as placeOfRow, readAttach } from "../attach.js";
-import { agentOnMachine, interpreterPath } from "../agentPath.mjs";
-import { briefingFilePath, installHook, launchBriefingText, screenTail, withExclude } from "../briefingText.mjs";
+import { PANE_ENV_PATH, agentOnMachine, interpreterPath, paneEnvOf } from "../agentPath.mjs";
+import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBriefingPath, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
-import { agentKeyOfArgv, continuesAnywhere, briefingLaunch, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, ownPromptIn, resolveAgent, resumesById,
+import { agentKeyOfArgv, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, ownPromptIn, resolveAgent, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKTREES_EXCLUDE,
   SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, sessionRow, parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
@@ -1707,13 +1707,14 @@ function tooLate(bot, machine, key, need, space = null) {
 /**
  * The agent `argv` starts, looked for on `machine` under the PATH its pane will get
  * (agentOnMachine: the login shell's, asked once, plus hc's, hc's first when it finds the agent,
- * and the user bin folders), so a check that passes is a launch that finds it: refused when it
+ * and the user bin folders; `prepend`'s folders first, a project's pane-env PATH_PREPEND), so a
+ * check that passes is a launch that finds it: refused when it
  * isn't there, when the interpreter its #! line names isn't, or when the machine doesn't answer.
  * Resolves { path, warnings }: the PATH seatOnMachine starts it with.
  */
-async function agentThere(machine, argv, name) {
+async function agentThere(machine, argv, name, prepend = null) {
   const exec = (command, args, opts) => remoteIo.exec(command, args, machine, opts);
-  const seen = await agentOnMachine(exec, argv[0], { wait: AGENT_WAIT_S });
+  const seen = await agentOnMachine(exec, argv[0], { wait: AGENT_WAIT_S, prepend });
   const quiet = seen.login === "timed out" ? `${machine}'s login shell didn't answer within ${AGENT_WAIT_S} s`
     : seen.login === false ? `${machine}'s login shell gave no PATH` : null;
   if (seen.state === "away") throw new CliError(`${machine} can't be reached: ${hcSaid(seen.why)}`);
@@ -1726,6 +1727,93 @@ async function agentThere(machine, argv, name) {
       + `it would fail with "env: ${seen.interpreter}: No such file or directory". Put ${seen.interpreter} on the PATH of ${machine}'s login shell${quiet ? ` (${quiet})` : ""}.`);
   }
   return { path: seen.path, warnings: quiet ? [`${quiet}, so ${name} starts with the PATH hc runs programs with there and its user bin folders.`] : [] };
+}
+
+/**
+ * A project's pane-env on `machine` (agentPath.mjs paneEnvOf: PATH_PREPEND, HERDR_APP_HOME), read
+ * there through hc: { prepend, appHome, warnings }. No file: nothing, so the start is as before
+ * #582. A file it refuses, or one that can't be read, is one warning and nothing: the start goes on.
+ */
+async function paneEnvOn(machine, key) {
+  const path = under(key, PANE_ENV_PATH);
+  const none = (why) => ({ prepend: null, appHome: null,
+    warnings: [`${path} on ${machine} was left out (${why}): the pane starts as it would without it.`] });
+  let text;
+  try { text = await readRemoteText(remoteIo, machine, path); } catch (e) { return none(e?.message ?? String(e)); }
+  const env = paneEnvOf(text);
+  return env.error ? none(env.error) : { prepend: env.prepend, appHome: env.appHome, warnings: [] };
+}
+
+/** That machine's default app home, ~/.config/herdr-app by its own $HOME, or null when it gives none. */
+async function appHomeOn(machine) {
+  const r = await remoteIo.exec("sh", ["-c", 'printf %s "$HOME"'], machine, { timeout: AGENT_WAIT_S });
+  const home = r.code === 0 ? r.stdout : "";
+  // eslint-disable-next-line no-control-regex
+  return home.startsWith("/") && !/[\x00-\x1f\x7f]/.test(home) ? `${home.replace(/\/+$/, "")}/.config/herdr-app` : null;
+}
+
+// A file of the pack's own on `machine` (a briefing), written there through hc by remoteFile.js's
+// compare-and-swap; a new one's folder is made first under umask 077, as briefedLaunch's (0700).
+const PRIVATE_DIR_SH = 'umask 077 && mkdir -p -- "$1"';
+async function ownFileOn(machine, path, text) {
+  const before = await readRemoteText(remoteIo, machine, path);
+  if (before === text) return;
+  if (before === null) {
+    const r = await remoteIo.exec("sh", ["-c", PRIVATE_DIR_SH, "sh", dirname(path)], machine, { timeout: AGENT_WAIT_S });
+    if (r.code !== 0) throw new Error(`couldn't make ${dirname(path)}: ${hcSaid(r.stderr || r.stdout) || `exit ${r.code}`}`);
+  }
+  await writeRemoteText(remoteIo, machine, path, text, before);
+}
+
+/**
+ * briefedLaunch on a linked machine (#582): `argv` with the bot's launch briefing put in as the
+ * agent takes it (models.js BRIEFING: its file, its text or its environment), a file written on
+ * `machine` through hc under `boxHome`, that machine's app home. An agent whose briefing yields
+ * to its own config file (BRIEFING's ownConfig: codex, hermes) starts as it is, since only this
+ * computer's config is read. Never throws: { argv, env, warnings }.
+ */
+async function briefedOn(machine, project, bot, agentKey, argv, boxHome) {
+  const way = briefingWay(agentKey);
+  const agents = agentTable();
+  if (!way || briefingOwnConfig(agentKey) || agentKeyOfArgv(argv, agents) !== agentKey) return { argv, env: {}, warnings: [] };
+  const text = launchBriefingText({ self: bot, file: project.file });
+  const warnings = [];
+  let launch = null;
+  if (way === "file") {
+    const path = boxHome ? briefingFilePath(boxHome, project.key, bot.id) : null;
+    try {
+      if (!path) throw new Error(`${machine} gave no home folder for its app home`);
+      await ownFileOn(machine, path, `${text}\n`);
+      launch = briefingLaunch(agentKey, { path });
+    } catch (e) {
+      warnings.push(`${bot.name} starts on ${machine} without its briefing in its system prompt (${path ?? "its briefing file"}: ${e?.message ?? e}).`);
+    }
+  } else {
+    launch = briefingLaunch(agentKey, { text });
+  }
+  return { argv: withBriefing(agentKey, argv, launch, agents), env: launch?.env ?? {}, warnings };
+}
+
+// installHook's io on a linked machine: git and the files there, through hc (remoteFile.js).
+const hookIoOn = (machine) => ({
+  git: (args, cwd) => remoteIo.exec("git", args, machine, { cwd, timeout: AGENT_WAIT_S }),
+  read: (path) => readRemoteText(remoteIo, machine, path),
+  write: (path, text, before) => writeRemoteText(remoteIo, machine, path, text, before),
+  mkdir: async () => {}, // writeRemoteText's create makes the folders there (mkdir -p)
+});
+
+/**
+ * writeBriefingHook on a linked machine (#582): the per-turn hook in `folder`'s
+ * .claude/settings.local.json there, running the briefing entry under `boxHome`, that machine's
+ * app home. No entry there (the pack isn't installed on it): nothing written, and noHookThere's
+ * warning. Never throws: { written, warnings }.
+ */
+async function briefingHookOn(machine, bot, folder, boxHome) {
+  const io = hookIoOn(machine);
+  let entry = null;
+  try { entry = boxHome ? await io.read(stableBriefingPath(boxHome)) : null; } catch { entry = null; }
+  if (entry === null) return { written: false, warnings: [noHookThere(bot, machine)] };
+  return installHook(bot.name, folder, boxHome, io);
 }
 
 /**
@@ -1767,12 +1855,15 @@ async function windowPlaceOn(machine, key) {
 
 /**
  * A bot's pane on the project's linked machine: `hc run --on` with Start's labels and the PATH
- * agentThere checked the agent under, as /usr/bin/env PATH=<it> (hc run has no --env; --no-parent: no
+ * agentThere checked the agent under (the project's pane-env PATH_PREPEND first), as /usr/bin/env
+ * PATH=<it>, and HERDR_APP_HOME=<pane-env's> when it sets one (hc run has no --env; --no-parent: no
  * lead as its hc parent there yet, and never the calling terminal), placed in the window on that machine's space. `over`: argv, cwd, place (the old
  * pane's, a restart), carry (labels kept), replacing (a restart: no "already running" check
- * and no attach row here; restartOnMachine writes them once the new pane is up). A Claude bot
- * gets no briefing hook there yet (noHookThere). Never sends keys to any pane. Resolves
- * { address, terminal (bare), created_ms, machine, core, argv, labels, place, warnings }, or
+ * and no attach row here; restartOnMachine writes them once the new pane is up). The briefing is
+ * the local start's (#582): in the command (briefedOn) and, for an agent that takes it, the
+ * per-turn hook in that project there (briefingHookOn), both in that machine's app home. Never
+ * sends keys to any pane. Resolves { address, terminal (bare), created_ms, machine, core, argv,
+ * labels, place, hookWritten, warnings }, or
  * { running } when the ledger names a pane for the bot by the time its lock is taken.
  */
 async function seatOnMachine(project, bot, over = {}) {
@@ -1786,8 +1877,18 @@ async function seatOnMachine(project, bot, over = {}) {
       + `Pick one with automagik-herdr edit ${bot.id} --model <model> --machine ${machine} --project ${key}, or clear it with --no-model.`);
   }
   // Herdr's table as this computer has it (programs.json applied): the Mac builds the command.
-  const argv = over.argv ?? [...agent.run, ...modelArgs(bot.agent, bot.model)];
-  const there = await agentThere(machine, argv, agent.name ?? agentKey);
+  const command = over.argv ?? [...agent.run, ...modelArgs(bot.agent, bot.model)];
+  const paneEnv = await paneEnvOn(machine, key);
+  const there = await agentThere(machine, command, agent.name ?? agentKey, paneEnv.prepend);
+  // The briefing there, as a local start has it (#582), in that machine's app home: pane-env's
+  // HERDR_APP_HOME, else its ~/.config/herdr-app (asked only when a file or the hook needs it).
+  const needsHome = !paneEnv.appHome && !briefingOwnConfig(agentKey) && (briefingWay(agentKey) === "file" || briefingHook(agentKey));
+  const boxHome = paneEnv.appHome ?? (needsHome ? await appHomeOn(machine) : null);
+  const briefed = await briefedOn(machine, project, bot, agentKey, command, boxHome);
+  const argv = briefed.argv;
+  // The hook goes in before the session starts, so Claude Code reads it at startup.
+  const hook = briefingHook(agentKey) ? await briefingHookOn(machine, bot, over.cwd ?? key, boxHome) : { written: false, warnings: [] };
+  const env = { ...(paneEnv.appHome ? { HERDR_APP_HOME: paneEnv.appHome } : {}), ...briefed.env };
   const carry = over.carry ?? {};
   const labels = { ...paneLabels(file, bot.id, carry, null), ...carry };
   const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
@@ -1799,9 +1900,9 @@ async function seatOnMachine(project, bot, over = {}) {
   const name = hcName(bot.name, bot.id, taken);
   const args = startArgs({ botId: bot.id, name, cwd: over.cwd ?? key, space: place?.space, tab: place?.tab,
     // No hc parent: hc run's default is the terminal it is started from, and the pane would end with it.
-    parent: ["--no-parent"], argv, labels, path: there.path });
+    parent: ["--no-parent"], argv, labels, path: there.path, env });
   args.splice(1, 0, "--on", machine);
-  const warnings = [...there.warnings, ...(agentKey === "claude" ? [noHookThere(bot, machine)] : [])];
+  const warnings = [...paneEnv.warnings, ...there.warnings, ...briefed.warnings, ...hook.warnings];
   const run = async () => {
     if (deadlineLeft() < DEADLINE_MARGIN_MS) throw tooLate(bot, machine, key, DEADLINE_MARGIN_MS, place?.spare ? place.space : null);
     const r = await hc(args, callBound());
@@ -1825,7 +1926,8 @@ async function seatOnMachine(project, bot, over = {}) {
       throw new CliError(`${address} started, but hc get gave no created_ms, so it could have no attach row; `
         + (killed ? "it was ended." : `it couldn't be ended: end it with hc kill ${address}.`));
     }
-    return { address, terminal: address.slice(address.indexOf("/") + 1), created_ms: get.created_ms, machine, core: m.id, argv, labels, place, warnings };
+    return { address, terminal: address.slice(address.indexOf("/") + 1), created_ms: get.created_ms, machine, core: m.id, argv, labels, place,
+      hookWritten: hook.written, warnings };
   };
   if (over.replacing) return run();
   const seat = await underLedger(async ({ machines, heldBy, holds, write }) => {
@@ -1851,7 +1953,7 @@ async function seatOnMachine(project, bot, over = {}) {
 }
 
 const seatOnJson = (bot, seat) => ({ id: bot.id, terminal: seat.terminal, machine: seat.machine, argv: seat.argv, labels: seat.labels,
-  space: seat.place?.space ?? null, tab: seat.place?.tab ?? null, hookWritten: false, warnings: seat.warnings });
+  space: seat.place?.space ?? null, tab: seat.place?.tab ?? null, hookWritten: seat.hookWritten ?? false, warnings: seat.warnings });
 
 /** start --machine: the bot's pane there (seatOnMachine); one that runs already is reported. */
 async function startOnMachine(opts, project, bot) {

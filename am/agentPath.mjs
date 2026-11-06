@@ -216,22 +216,22 @@ export function loginPathOf(text, marker) {
 }
 
 /**
- * Run as `sh -c AGENT_PATH_SH sh <agent> <login PATH or nothing>`. The PATH a pane there gets:
- * the login shell's, then what hc's own PATH adds (nothing that works today is lost), or the
+ * Run as `sh -c AGENT_PATH_SH sh <agent> <login PATH or nothing> [<folders first>]`. The PATH a
+ * pane there gets: the folders first (a project's pane-env PATH_PREPEND, #582; none: nothing), then the login shell's, then what hc's own PATH adds (nothing that works today is lost), or the
  * other way round when hc's own PATH finds the agent as a file, so a machine that works keeps
  * the same agent and interpreter (#436); then the user bin folders that exist (a profile that
  * didn't answer, or doesn't add them), /usr/bin and /bin, and last the folders of the agent's
  * real file (npm's <prefix>/bin holds its node). Prints that PATH, the agent's absolute file and
- * its first line; exit 3 when no such file. Both words are data here: neither is ever evaluated.
+ * its first line; exit 3 when no such file. The words are data here: none is ever evaluated.
  */
-export const AGENT_PATH_SH = `agent=$1 path= first=$2 rest=$PATH
+export const AGENT_PATH_SH = `agent=$1 path= first=$2 rest=$PATH pre=$3
 case $(command -v "$agent" 2>/dev/null) in /*) first=$PATH rest=$2 ;; esac
 add() {
   case $1 in /*) ;; *) return ;; esac
   case ":$path:" in *":$1:"*) ;; *) path=\${path:+$path:}$1 ;; esac
 }
 set -f; IFS=:
-for d in $first $rest; do add "$d"; done
+for d in $pre $first $rest; do add "$d"; done
 unset IFS; set +f
 for d in "$HOME/.local/bin" "$HOME/.bun/bin" /usr/bin /bin; do [ -d "$d" ] && add "$d"; done
 PATH=$path; export PATH
@@ -243,7 +243,8 @@ case $real in */lib/node_modules/*) d=\${real%/lib/node_modules/*}/bin; [ -d "$d
 printf '%s\\n%s\\n%s\\n' "$path" "$file" "$(head -c 256 "$real" 2>/dev/null | head -n 1)"`;
 
 /**
- * Finds `program` on a linked machine, as a pane there will: `exec(command, args, { timeout })`
+ * Finds `program` on a linked machine, as a pane there will (`prepend`: colon-separated absolute
+ * folders put first, paneEnvOf's; null: none): `exec(command, args, { timeout })`
  * runs one program there (hc exec) and resolves { code, stdout, stderr }, code -1 for no answer.
  * Resolves { state: "found", path, file, login } (path: the PATH to start it with; login: whether
  * the login shell answered, "timed out" when it was too slow), { state: "missing", login },
@@ -251,7 +252,7 @@ printf '%s\\n%s\\n%s\\n' "$path" "$file" "$(head -c 256 "$real" 2>/dev/null | he
  * PATH, so env would fail in the pane) or { state: "away", why }. A login shell that is slow, broken
  * or silent is not a failure: the rest still answers. A machine that doesn't answer is.
  */
-export async function agentOnMachine(exec, program, { wait = 10 } = {}) {
+export async function agentOnMachine(exec, program, { wait = 10, prepend = null } = {}) {
   const marker = `am-path-${randomBytes(8).toString("hex")}`;
   const asked = await exec("sh", ["-c", LOGIN_PATH_SH, "sh", loginPathAsk(marker)], { timeout: wait });
   const timedOut = asked.code === -1 && /^timed out/.test(asked.stderr ?? "");
@@ -259,7 +260,7 @@ export async function agentOnMachine(exec, program, { wait = 10 } = {}) {
   if (asked.code === -1 && !timedOut && asked.stderr) return { state: "away", why: asked.stderr };
   const path = loginPathOf(asked.stdout, marker);
   const login = path !== null ? true : timedOut ? "timed out" : false;
-  const seen = await exec("sh", ["-c", AGENT_PATH_SH, "sh", program, path ?? ""], { timeout: wait });
+  const seen = await exec("sh", ["-c", AGENT_PATH_SH, "sh", program, path ?? "", ...(prepend ? [prepend] : [])], { timeout: wait });
   if (seen.code === -1) return { state: "away", why: seen.stderr };
   if (seen.code !== 0) return { state: "missing", login };
   const [runPath, file, first] = seen.stdout.split("\n");
@@ -270,4 +271,43 @@ export async function agentOnMachine(exec, program, { wait = 10 } = {}) {
     if (r.code !== 0) return { state: "no-interpreter", file, interpreter, login };
   }
   return { state: "found", path: runPath, file, login };
+}
+
+// ---- a project's pane environment on a linked machine (#582) ----
+
+/** The file, under a project's folder on that machine: KEY=value lines, read there through hc. */
+export const PANE_ENV_PATH = ".herdr/pane-env";
+const PANE_ENV_KEYS = ["PATH_PREPEND", "HERDR_APP_HOME"];
+const folder = (d) => d.replace(/\/+$/, "") || "/";
+const shown = (text) => (text.length > 60 ? `${text.slice(0, 57)}...` : text);
+
+/**
+ * A pane-env file's text: { prepend, appHome, error }. Its lines are KEY=value, the KEY one of
+ * PATH_PREPEND (colon-separated absolute folders, put first on the pane's PATH) and HERDR_APP_HOME
+ * (one absolute folder: the app home the pane and its briefing use there); blank lines and
+ * # comments are skipped. Anything else (another key, a key twice, a relative or empty folder, a
+ * control character, a line that isn't KEY=value) refuses the whole file: { prepend: null,
+ * appHome: null, error: "line N: why" }, and the start goes on as it would without it. No file
+ * (null) is { prepend: null, appHome: null, error: null }. The values are data: never evaluated.
+ */
+export function paneEnvOf(text) {
+  const got = {};
+  const lines = typeof text === "string" ? text.split("\n") : [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i].replace(/\r$/, "");
+    const refuse = (why) => ({ prepend: null, appHome: null, error: `line ${i + 1}: ${why}` });
+    if (!line.trim() || line.trimStart().startsWith("#")) continue;
+    // eslint-disable-next-line no-control-regex
+    if (/[\x00-\x1f\x7f]/.test(line)) return refuse("a control character");
+    const eq = line.indexOf("=");
+    if (eq < 1) return refuse(`"${shown(line)}" isn't KEY=value`);
+    const key = line.slice(0, eq), value = line.slice(eq + 1);
+    if (!PANE_ENV_KEYS.includes(key)) return refuse(`${shown(key)} isn't a key pane-env takes (${PANE_ENV_KEYS.join(", ")})`);
+    if (key in got) return refuse(`${key} is set twice`);
+    const dirs = key === "PATH_PREPEND" ? value.split(":") : [value];
+    const bad = dirs.find((d) => !d.startsWith("/"));
+    if (bad !== undefined) return refuse(`${key}: "${shown(bad)}" isn't an absolute folder`);
+    got[key] = [...new Set(dirs.map(folder))].join(":");
+  }
+  return { prepend: got.PATH_PREPEND ?? null, appHome: got.HERDR_APP_HOME ?? null, error: null };
 }

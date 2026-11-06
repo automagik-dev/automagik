@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -179,14 +179,127 @@ test("start --machine: an agent not installed there is refused before anything r
   assert.equal(s.calls().filter((c) => c[0] === "run").length, 1);
 });
 
-test("start --machine of a Claude bot: started with a warning and no briefing hook anywhere (part b2 installs it)", (t) => {
+// ---- the briefing there (#582): written on that machine, in its app home, through hc ----
+
+/** The words hc run starts there: after `--`, the `/usr/bin/env` words, then the agent's. */
+const startedWith = (s) => { const run = s.calls().find((c) => c[0] === "run"); return run.slice(run.indexOf("--") + 1); };
+const agentPart = (argv) => (argv[0] === "/usr/bin/env" ? argv.slice(argv.findIndex((w, i) => i > 0 && !/^[A-Z_]+=/.test(w))) : argv);
+/** The pack's briefing entry and script in an app home on vm, as an install there puts them. */
+const packAt = (dir) => {
+  for (const f of ["automagik-herdr/briefing.mjs", "mods/am-sidebar/briefing.mjs"]) {
+    mkdirSync(join(dir, f, ".."), { recursive: true });
+    writeFileSync(join(dir, f), "// stand-in\n");
+  }
+};
+const vmApp = (s) => join(s.root, "vm/.config/herdr-app");
+const briefedIn = (dir) => (existsSync(join(dir, "automagik-herdr/briefings")) ? readdirSync(join(dir, "automagik-herdr/briefings")) : []);
+const hookOf = (s) => JSON.parse(readFileSync(join(s.project, ".claude/settings.local.json"), "utf8")).hooks.UserPromptSubmit[0].hooks[0].command;
+
+test("start --machine of a Claude bot with no briefing entry there: its briefing file there, no hook, the noHookThere warning, started", (t) => {
   const s = scene(t);
   const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
   assert.equal(r.code, 0, r.err);
   assert.match(r.err, /Hedge runs on vm without its per-turn briefing/);
   assert.match(r.json().warnings.join(" "), /automagik-herdr machine install vm/);
+  assert.equal(r.json().hookWritten, false);
   assert.equal(existsSync(join(s.project, ".claude")), false, "no hook there pointing at a missing briefing.mjs");
   assert.equal(existsSync(join(s.home, ".claude")), false);
+  // The system prompt still has it: the file in vm's own app home ($HOME/.config/herdr-app there).
+  const words = agentPart(startedWith(s));
+  assert.deepEqual(words.slice(0, 2), ["claude", "--append-system-prompt-file"]);
+  assert.ok(words[2].startsWith(`${vmApp(s)}/automagik-herdr/briefings/`), words[2]);
+  assert.match(readFileSync(words[2], "utf8"), /^<herdr-bot>\n[^]*You are Hedge/);
+  assert.deepEqual(briefedIn(s.app), [], "never this computer's app home");
+});
+
+test("start --machine of a Claude bot: the briefing file and the per-turn hook in that project, both pointing at vm's app home", (t) => {
+  const s = scene(t);
+  packAt(vmApp(s));
+  const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.json().warnings, []);
+  assert.equal(r.json().hookWritten, true);
+  const words = agentPart(startedWith(s));
+  assert.deepEqual(words.slice(0, 2), ["claude", "--append-system-prompt-file"]);
+  assert.ok(words[2].startsWith(`${vmApp(s)}/automagik-herdr/briefings/`) && existsSync(words[2]), words[2]);
+  // The hook runs the stable entry of vm's app home, written there through hc file ops.
+  assert.match(hookOf(s), new RegExp(`${vmApp(s)}/automagik-herdr/briefing\\.mjs`));
+  assert.match(readFileSync(join(s.project, ".git/info/exclude"), "utf8"), /\*\*\/\.claude\/settings\.local\.json/);
+  assert.ok(s.calls().some((c) => c[0] === "file" && c[1] === "edit" && c.at(-1) === join(s.project, ".git/info/exclude")));
+  // Nothing on this computer: its app home, home and the CLI's own folder stay as they were.
+  assert.deepEqual(briefedIn(s.app), []);
+  assert.equal(existsSync(join(s.home, ".claude")), false);
+  assert.equal(existsSync(join(s.root, ".claude")), false);
+  // A second start there (after the first pane ends) finds the hook in place: written once.
+  assert.equal(s.cli(["detach", "Hedge", ...s.on]).code, 0);
+  const again = s.cli(["start", "Hedge", ...s.on, "--json"]);
+  assert.equal(again.code, 0, again.err);
+  assert.equal(again.json().hookWritten, false);
+  assert.equal(JSON.parse(readFileSync(join(s.project, ".claude/settings.local.json"), "utf8")).hooks.UserPromptSubmit.length, 1);
+});
+
+test("start --machine of an omp bot: the briefing as its --append-system-prompt text; no file and no hook there", (t) => {
+  const s = scene(t);
+  packAt(vmApp(s));
+  const file = join(s.project, ".herdr/bots.json");
+  writeFileSync(file, readFileSync(file, "utf8").replace(/"agent": "claude"/, '"agent": "omp"'));
+  exe(join(s.root, "vm-bin", "omp"), "#!/bin/sh\nexit 0\n");
+  const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.json().warnings, []);
+  const words = agentPart(startedWith(s));
+  assert.equal(words[0], "omp");
+  assert.match(words[1], /^--append-system-prompt=<herdr-bot>\n[^]*You are Hedge/);
+  assert.equal(words.filter((w) => w.includes("<herdr-bot>")).length, 1);
+  assert.deepEqual(briefedIn(vmApp(s)), []);
+  assert.equal(existsSync(join(s.project, ".claude")), false);
+});
+
+test("start --machine with a pane-env there: PATH_PREPEND first (its node runs the agent) and HERDR_APP_HOME in the env words and the briefing", (t) => {
+  const s = scene(t);
+  const own = join(s.root, "vm/srv/bots-app"), node = join(s.root, "vm/opt/node-22/bin");
+  packAt(own);
+  // claude there is a node script whose node only the prepended folder has.
+  exe(join(s.root, "vm-bin", "claude"), "#!/usr/bin/env fakenode\n");
+  mkdirSync(node, { recursive: true });
+  exe(join(node, "fakenode"), "#!/bin/sh\necho agent ran\n");
+  const refused = s.cli(["start", "Hedge", ...s.on]);
+  assert.equal(refused.code, 1, "without the pane-env, no node there: refused");
+  assert.match(refused.err, /runs under fakenode, which isn't on the PATH a pane on vm gets/);
+  writeFileSync(join(s.project, ".herdr/pane-env"), `PATH_PREPEND=${node}\nHERDR_APP_HOME=${own}/\n`);
+  const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.json().warnings, []);
+  const argv = startedWith(s);
+  assert.equal(argv[0], "/usr/bin/env");
+  assert.ok(argv[1].startsWith(`PATH=${node}:`), argv[1]);
+  assert.ok(argv[1].includes(join(s.root, "vm-bin")), "what hc's own PATH reached stays reachable");
+  assert.equal(argv[2], `HERDR_APP_HOME=${own}`);
+  assert.deepEqual(argv.slice(3, 5), ["claude", "--append-system-prompt-file"]);
+  assert.ok(argv[5].startsWith(`${own}/automagik-herdr/briefings/`) && existsSync(argv[5]), argv[5]);
+  assert.match(hookOf(s), new RegExp(`${own}/automagik-herdr/briefing\\.mjs`));
+  assert.deepEqual(briefedIn(vmApp(s)), [], "the default app home there is left alone");
+  const ran = spawnSync(argv[0], argv.slice(1), { env: {}, encoding: "utf8" });
+  assert.equal(ran.stdout, "agent ran\n", "the pane runs the agent under the chosen node");
+});
+
+test("start --machine with a pane-env that has another key or a relative path: one warning, started as without it", (t) => {
+  for (const [text, why] of [["PATH_PREPEND=/opt/node-22/bin\nNODE_OPTIONS=--require=/tmp/x.js\n", /line 2: NODE_OPTIONS isn't a key pane-env takes/],
+    ["PATH_PREPEND=opt/node-22/bin\n", /line 1: PATH_PREPEND: "opt\/node-22\/bin" isn't an absolute folder/],
+    ["HERDR_APP_HOME=srv/app\n", /HERDR_APP_HOME: "srv\/app" isn't an absolute folder/]]) {
+    const s = scene(t);
+    writeFileSync(join(s.project, ".herdr/pane-env"), text);
+    const r = s.cli(["start", "Atlas", ...s.on, "--json"]);
+    assert.equal(r.code, 0, r.err);
+    const warnings = r.json().warnings;
+    assert.equal(warnings.length, 1, warnings.join("\n"));
+    assert.match(warnings[0], new RegExp(`^${s.project}/\\.herdr/pane-env on vm was left out \\(`));
+    assert.match(warnings[0], why);
+    assert.match(warnings[0], /the pane starts as it would without it\.$/);
+    const argv = startedWith(s);
+    assert.deepEqual([argv[0], argv.slice(2)], ["/usr/bin/env", ["hermes", "--tui"]], argv.join(" "));
+    assert.equal(argv[1].includes("/opt/node-22/bin"), false);
+  }
 });
 
 test("attach --machine vm/t8 as it is: labels only, the row's terminal is t8; whois keeps its shape, no '/' in it", (t) => {

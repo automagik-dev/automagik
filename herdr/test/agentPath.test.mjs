@@ -7,7 +7,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentOnMachine, besideDirs, envInterpreter, interpreterPath, loginPathAsk, loginPathOf, safe } from "../mods/am-sidebar/agentPath.mjs";
+import { agentOnMachine, besideDirs, envInterpreter, interpreterPath, loginPathAsk, loginPathOf, paneEnvOf, safe } from "../mods/am-sidebar/agentPath.mjs";
 import { workerArgs } from "../mods/am-sidebar/workers.js";
 import { withoutBriefing } from "../mods/am-sidebar/models.js";
 import { readJsonLines } from "./log-lines.mjs";
@@ -445,4 +445,55 @@ test("agentOnMachine: no answer is away, a timed-out login shell is not, and the
   assert.equal((await agentOnMachine(service(s, { exit: "1" }), "omp")).login, false);
   runtime(join(s.env.HOME, ".bun/bin/bun"), "1.2.3");
   assert.equal((await agentOnMachine(service(s), "omp")).state, "found");
+});
+
+// ---- a project's pane-env on a linked machine (#582): two keys, absolute folders, all or nothing ----
+
+test("paneEnvOf: PATH_PREPEND and HERDR_APP_HOME, absolute folders; blank lines and # comments skipped; no file is nothing", () => {
+  const none = { prepend: null, appHome: null, error: null };
+  assert.deepEqual(paneEnvOf(null), none);
+  assert.deepEqual(paneEnvOf(""), none);
+  assert.deepEqual(paneEnvOf("PATH_PREPEND=/opt/node-22/bin:/opt/tools/bin\nHERDR_APP_HOME=/srv/bots/herdr-app/\n"),
+    { prepend: "/opt/node-22/bin:/opt/tools/bin", appHome: "/srv/bots/herdr-app", error: null });
+  assert.deepEqual(paneEnvOf("# our team's runtime\r\n\r\nPATH_PREPEND=/opt/node-22/bin/\r\n"), { prepend: "/opt/node-22/bin", appHome: null, error: null });
+  assert.deepEqual(paneEnvOf("HERDR_APP_HOME=/srv/a b"), { prepend: null, appHome: "/srv/a b", error: null }, "a space is data: one argv word");
+});
+
+test("paneEnvOf: another key, a relative path, a key twice or a line that isn't KEY=value refuses the whole file, with why", () => {
+  const refused = (text, why) => {
+    const got = paneEnvOf(text);
+    assert.deepEqual([got.prepend, got.appHome], [null, null], text);
+    assert.match(got.error, why, text);
+  };
+  refused("PATH_PREPEND=/opt/node-22/bin\nLD_PRELOAD=/tmp/x.so\n", /line 2: LD_PRELOAD isn't a key pane-env takes \(PATH_PREPEND, HERDR_APP_HOME\)/);
+  refused("PATH=/opt/node-22/bin", /PATH isn't a key/);
+  refused("PATH_PREPEND=/opt/node-22/bin:node_modules/.bin", /line 1: PATH_PREPEND: "node_modules\/\.bin" isn't an absolute folder/);
+  refused("PATH_PREPEND=", /PATH_PREPEND: "" isn't an absolute folder/);
+  refused("PATH_PREPEND=/a::/b", /PATH_PREPEND: "" isn't an absolute folder/);
+  refused("HERDR_APP_HOME=~/herdr-app", /line 1: HERDR_APP_HOME: "~\/herdr-app" isn't an absolute folder/);
+  refused("HERDR_APP_HOME=/a\nHERDR_APP_HOME=/b", /line 2: HERDR_APP_HOME is set twice/);
+  refused("export PATH_PREPEND=/a", /export PATH_PREPEND isn't a key/);
+  refused("PATH_PREPEND /a", /line 1: "PATH_PREPEND \/a" isn't KEY=value/);
+  refused("HERDR_APP_HOME=/a\u0007", /line 1: a control character/);
+  refused(`${"X".repeat(500)}`, /isn't KEY=value/);
+  assert.ok(paneEnvOf("X".repeat(500)).error.length < 200, "a long line is cut short in the warning");
+});
+
+test("agentOnMachine: PATH_PREPEND's folders come first, so the agent and its interpreter are found there; none given, as before", async (t) => {
+  const s = scratch(t);
+  const pre = join(s.root, "pre-bin"), hc = join(s.root, "hc-bin");
+  exe(join(hc, "claude"), "#!/usr/bin/env fakenode\n");
+  exe(join(hc, "fakenode"), "#!/bin/sh\necho hc node\n");
+  exe(join(pre, "fakenode"), "#!/bin/sh\necho chosen node\n");
+  const before = await agentOnMachine(service(s, { hc }), "claude");
+  assert.deepEqual(before, await agentOnMachine(service(s, { hc }), "claude", { prepend: null }), "no prepend: the same answer");
+  assert.equal(runs(before.path, "claude").stdout, "hc node\n");
+  const got = await agentOnMachine(service(s, { hc }), "claude", { prepend: `${pre}:/usr/bin` });
+  assert.deepEqual(got.path.split(":").slice(0, 3), [pre, "/usr/bin", hc]);
+  assert.equal(got.state, "found");
+  assert.equal(runs(got.path, "claude").stdout, "chosen node\n");
+  // Only there: the interpreter check runs on that PATH, so a node only the prepend has is enough.
+  rmSync(join(hc, "fakenode"));
+  assert.equal((await agentOnMachine(service(s, { hc }), "claude")).state, "no-interpreter");
+  assert.equal((await agentOnMachine(service(s, { hc }), "claude", { prepend: pre })).state, "found");
 });
