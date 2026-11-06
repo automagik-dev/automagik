@@ -3533,11 +3533,14 @@ async function excludeWorktrees(key) {
 }
 
 /**
- * How long a worker call waits for its worktree's lock (saying so after LOCK_NOTE_AFTER). A
- * call that waited stays under a bot shell tool's 120 s limit: 75 s, then hc ls (15 s), the
- * worker check's hc gets (WORKER_GET_TIMEOUT, at once) and hc run (15 s). A hold that runs a
- * fetch and git worktree add (60 s each) may outlast it: the waiting call is then refused, with
- * the holder named, and nothing made.
+ * How long a worker call waits for its locks in all (saying so after LOCK_NOTE_AFTER): a task's
+ * name lock, then its worktree's, from one deadline. On the common path a call that waited stays
+ * under a bot shell tool's 120 s limit: 75 s, then hc ls (15 s), the worker check's hc gets
+ * (WORKER_GET_TIMEOUT, at once) and hc run (15 s). That is not a bound: more rows than one batch
+ * of gets, the git calls under the lock (15 s each), a fetch and git worktree add (60 s each)
+ * when the waiter makes the worktree itself, and pidOf and the tab setup after it can each run to
+ * their own timeouts. A hold that outlasts the wait refuses the waiting call, with the holder
+ * named, and nothing made.
  */
 const WORKER_LOCK_WAIT = 75_000;
 /** How long the worker check waits for each `hc get` of a live terminal in the worktree. */
@@ -3549,6 +3552,16 @@ const WORKER_GET_TIMEOUT = 5000;
 export function worktreeLock(lockDir, worktree) {
   const real = nativeDir(worktree) ?? resolvePath(worktree);
   return `${lockDir}/worktree-${createHash("sha256").update(real).digest("hex").slice(0, 16)}.lock`;
+}
+/**
+ * The lock a task's worker takes before its worktree's (#538): one per terminal name
+ * (`<id>-<role>`), in `lockDir`. Two calls for one task on two branches take two worktree
+ * locks, so without it both pass the name check before either hc run, and the second makes its
+ * worktree and hook before hc refuses the name. Always taken first, never while a worktree lock
+ * is held, so the two never wait on each other.
+ */
+export function taskLock(lockDir, name) {
+  return `${lockDir}/task-${createHash("sha256").update(name).digest("hex").slice(0, 16)}.lock`;
 }
 
 /**
@@ -3571,7 +3584,8 @@ async function workersIn(worktree, ls) {
     try {
       return { address: r.address, labels: (await hcLookup(r.address, { timeout: WORKER_GET_TIMEOUT }))?.labels };
     } catch (e) {
-      throw new CliError(`${r.address} is live in ${worktree}, but whether it's a worker can't be told: ${e?.message ?? e}. Not started.`);
+      throw new CliError(`${r.address} is live in ${worktree}, but whether it's a worker can't be told: ${e?.message ?? e}. Not started. `
+        + `Try again, or check it with hc get ${r.address}.`);
     }
   }));
   return found.filter((w) => w.labels?.[WORKER_OF_LABEL]);
@@ -3742,8 +3756,11 @@ async function cmdWorker(opts, rest) {
   let worktree = planned;
   let base = null;
   // Held across a fetch and git worktree add (60 s each) and the hc calls, so a second call on
-  // this worktree waits for the first's start rather than failing; kept fresh while held.
-  const started = await withLockAsync(worktreeLock(lockDir, planned), async () => {
+  // this worktree waits for the first's start rather than failing; kept fresh while held. A
+  // task's worker takes its name's lock first (taskLock), so a second call for the task on
+  // another branch waits too, then is refused by the name check with nothing made (#538).
+  const deadline = Date.now() + WORKER_LOCK_WAIT;
+  const inWorktree = () => withLockAsync(worktreeLock(lockDir, planned), async () => {
     const ls = await hcJson(["ls"]);
     // A task's worker is named exactly <id>-<role>: a live holder of that name is refused, never suffixed.
     // This computer's terminals only (hc names are unique per core), as workersIn sees them.
@@ -3798,7 +3815,10 @@ async function cmdWorker(opts, rest) {
     try { address = JSON.parse(r.stdout).address ?? null; } catch { address = null; }
     if (!address) throw new CliError(`hc run gave no terminal address: ${r.stdout.trim()}`);
     return { address, name };
-  }, { wait: WORKER_LOCK_WAIT, what: `the worker lock on ${place.worktree}` }).catch((e) => { throw e instanceof CliError ? e : new CliError(e?.message ?? String(e)); });
+  }, { wait: Math.max(0, deadline - Date.now()), what: `the worker lock on ${place.worktree}` });
+  const started = await (taskName ? withLockAsync(taskLock(lockDir, taskName), inWorktree,
+    { wait: WORKER_LOCK_WAIT, what: `the task name ${taskName}` }) : inWorktree())
+    .catch((e) => { throw e instanceof CliError ? e : new CliError(e?.message ?? String(e)); });
   const terminal = started.address;
   // The ledger row first, as launchSeat writes its rows before anything waits on the window.
   const pid = await pidOf(terminal);

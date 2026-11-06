@@ -1472,9 +1472,41 @@ test("worker #536: an hc get that fails for a live terminal in the worktree refu
   writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
   const r = s.cli(["worker", "go", "--worktree", wt]);
   assert.equal(r.code, 1);
-  assert.match(r.err, /t70 is live in .*feat-get, but whether it's a worker can't be told: hc get t70 failed: hc: server error reading t70\. Not started\./);
+  assert.match(r.err, /t70 is live in .*feat-get, but whether it's a worker can't be told: hc get t70 failed: hc: server error reading t70\. Not started\. Try again, or check it with hc get t70\.\n$/);
   assert.equal(s.runs().length, 0);
   assert.equal(existsSync(join(wt, ".claude/settings.local.json")), false, "no hook written");
+});
+
+test("worker #538: one --task on two branches at once: one starts; the other waits, is refused by name and makes nothing", async (t) => {
+  const { taskLock } = await import("../mods/am-sidebar/bin/automagik-herdr.mjs");
+  const s = scene(t);
+  assert.equal(s.cli(["worker", "warm", "--branch", "feat/warm"]).code, 0, "the attach ledger written first");
+  const before = s.runs().length;
+  // hc run answers (and its worker shows in hc ls) after 1 s: both calls' hc ls would answer
+  // before either run, so only the task's name lock keeps the second from passing the check.
+  exe(join(s.root, "bin/hc"), `#!/bin/sh\nif [ "$1" = run ]; then sleep 1; fi\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
+  const branches = ["fix/gl-231-a", "fix/gl-231-b"];
+  const both = await Promise.all([s.cliAsync(["worker", "go", "--task", "gl-231", "--branch", branches[0]]),
+    s.cliAsync(["worker", "go", "--task", "gl-231", "--branch", branches[1]], { from: "t4" })]);
+  const why = both.map((r) => r.err).join("\n");
+  assert.deepEqual(both.map((r) => r.code).sort(), [0, 1], why);
+  const runs = s.runs().slice(before);
+  assert.equal(runs.length, 1, why);
+  assert.equal(runs[0][runs[0].indexOf("--name") + 1], "gl-231-dev");
+  const won = both.findIndex((r) => r.code === 0);
+  const lost = 1 - won;
+  const address = both[won].out.split("\n")[0];
+  assert.match(both[lost].err, new RegExp(`gl-231-dev is taken by a live terminal: ${reEsc(address)}\\. A task's worker is named exactly <id>-<role>`));
+  const folder = (b) => join(s.project, ".claude/worktrees", b.replace(/\//g, "-"));
+  assert.equal(existsSync(folder(branches[won])), true);
+  assert.equal(existsSync(folder(branches[lost])), false, "no worktree made");
+  assert.equal(existsSync(join(folder(branches[lost]), ".claude/settings.local.json")), false, "no hook written");
+  assert.equal(git(s.project, "branch", "--list", branches[lost]), "", "no branch made");
+  // One lock per name, in the worktree locks' folder; let go once the start is done.
+  const lockDir = join(s.app, "automagik-herdr");
+  assert.match(taskLock(lockDir, "gl-231-dev"), new RegExp(`^${reEsc(lockDir)}/task-[0-9a-f]{16}\\.lock$`));
+  assert.notEqual(taskLock(lockDir, "gl-231-dev"), taskLock(lockDir, "gl-231-review"));
+  assert.equal(existsSync(taskLock(lockDir, "gl-231-dev")), false, "dropped after the start");
 });
 
 test("staleLimit #536: AUTOMAGIK_HERDR_LOCK_STALE_MS clamped to 100 ms..60 s; unset or not a number is 10 s", async () => {
