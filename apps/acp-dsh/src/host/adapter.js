@@ -224,6 +224,19 @@ export class AcpAdapter extends LlmAdapter {
     return this.dshTools() === true && this.backchannel !== undefined
   }
 
+  /**
+   * The kill switch flipped off: end every live agent session and its bridge. The DSH Session
+   * keeps its transcript; the next turn starts a fresh agent session without the bridge, so a
+   * credential minted while `dshTools` was on cannot keep reaching DSH tools.
+   */
+  endSessions() {
+    for (const live of this.live.values()) {
+      live.run?.dispose()
+      if (live.bridge !== undefined) this.backchannel?.revoke(live.bridge)
+    }
+    this.live.clear()
+  }
+
   /** The `session/new` server entry for one bridge: the adapter spawns it with this env only. */
   bridgeServer(record) {
     return {

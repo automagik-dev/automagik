@@ -106,6 +106,15 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     backchannel,
     redactor: redact,
   })
+  // The kill switch is live: any change of `dshTools` ends the agent sessions and revokes their
+  // bridges, so a credential minted while it was on cannot keep calling DSH tools and a Session
+  // started with the bridge never runs on the old tool set. The next turn starts afresh.
+  let toolsOn = dshToolsOn(config.dshTools)
+  const syncTools = () => {
+    const next = dshToolsOn(config.dshTools)
+    if (toolsOn !== next) adapter.endSessions()
+    toolsOn = next
+  }
   const clis = new Map()
   const signIns = new Map()
   let registration
@@ -398,7 +407,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   const crossing = crossed(agents, ctx, redact, () => dshToolsOn(config.dshTools))
   ctx.on?.('llm/stream', crossing)
   // A switch flipped in the settings: offer or withdraw the agent now, and install what it needs.
-  ctx.on?.('loader/volatile-update', () => reconcile())
+  ctx.on?.('loader/volatile-update', () => { syncTools(); reconcile() })
   // A model selection that moves a Session off its agent: its boundary row, and the agent
   // session (and bridge) belonging to the old route ends (RFC 0003, amendment, "Live switching").
   ctx.on?.('session/event', (session, event) => adapter.noteEvent(session, event))

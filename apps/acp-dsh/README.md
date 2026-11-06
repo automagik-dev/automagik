@@ -71,7 +71,9 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
 - **The Session's level, as the agent's own mode.** Before each prompt the agent's ACP session
   mode follows the Session: Manual is Claude Code's `default` mode, whatever default mode its
   own settings name; Codex runs in the sandbox that matches DSH's. Auto is Claude Code's `auto`
-  and Codex's `agent`. Full access lets every call through, as it does DSH's own tools. An agent
+  and Codex's `agent`; it is the preset's identity, never just its sandbox and ask, so a custom
+  preset with the same knobs keeps Manual (and the bridge's own approval). Full access lets every
+  call through, as it does DSH's own tools. An agent
   that does not offer the strict mode fails the turn instead of running in its own default.
 - **Claude Code keeps the person's own settings.** It loads their Claude Code settings (user,
   project and local) and asks DSH only for what those leave as "ask". A call their allow rules,
@@ -97,9 +99,11 @@ restart, and a connector that lands puts its model in the picker the same way
 and live switching above. An explicit `false` is the kill switch: the 2026-11-03 behaviour, where
 each agent keeps its own tools and its own approvals. The key is public and stays writable through
 DSH's settings service or the profile patch, but it is hidden from settings forms (`.hidden()`):
-it is a rollback lever, not a preference. A running Session keeps the transcript it has when it is
-turned off. Turning it on by default moves Claude Bots once per team to `acp-claude` (the Bot
-team's README, "Claude on ACP"); the bridge probe in `bridge()` still gates the move.
+it is a rollback lever, not a preference. Flipping it either way ends the running agent sessions
+and revokes their bridges at once; the DSH Session keeps its transcript and the next turn starts
+afresh under the new setting. Turning it on by default moves Claude Bots once per team to
+`acp-claude` (the Bot team's README, "Claude on ACP"); the bridge probe in `bridge()` still gates
+the move.
 
 `sideModel` (`{ provider, model }`, default `deepseek-official/deepseek-flash`, live) is the
 model that writes a Session's title on an agent's chat when DSH's default model is an agent

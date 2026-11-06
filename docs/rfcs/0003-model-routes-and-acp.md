@@ -439,7 +439,10 @@ the desktop trial passes. Two consequences stated for the owner: the move does n
 the Claude CLI is signed in, so an installed-but-signed-out Claude still moves the Bots and
 their turns fail until sign-in; and a Session on Auto whose reviewer route is the default side
 model (`deepseek-official/deepseek-flash`) needs a DeepSeek key, because a reviewer that cannot
-be reached fails closed (`AUTO_REVIEW_FAILED`) and the call does not run. Codex is proposed to
+be reached fails closed (`AUTO_REVIEW_FAILED`) and the call does not run. Auto is the preset's
+identity, never its `ask` + `danger-full-access` bundle: a custom preset with the same knobs has
+no reviewer, so the bridge keeps its own approval. Flipping the setting ends the running agent
+sessions and revokes their bridges at once; the Session keeps its transcript. Codex is proposed to
 stay out of the default bridge until its adapter can drop its own tools: today `acp-codex` runs
 two tool sets (`dshTools` on keeps its built-in tools too), so a Codex Session is not part of
 the default's promise.

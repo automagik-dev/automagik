@@ -958,6 +958,7 @@ function bridgeWiring() {
   session.append('turn/start', { turn: 1 })
   session.append('step/start', { turn: 1, step: 0 })
   const asked = []
+  const listeners = new Map()
   const agent = { session, ctx: { tools: { register: () => () => {} } } }
   const definitions = bridgeTools()
   const ctx = {
@@ -976,13 +977,17 @@ function bridgeWiring() {
       if (name === 'agentPresets') return { presetForSession: () => 'standard' }
       return undefined
     },
-    on: () => () => {},
+    on: (name, listener) => {
+      listeners.set(name, [...(listeners.get(name) ?? []), listener])
+      return () => {}
+    },
+    emit: (name) => (listeners.get(name) ?? []).forEach(listener => listener()),
     effect: () => {},
     logger: { warn: () => {}, info: () => {} },
   }
   const registered = {}
   ctx.llm.registerAdapter = (providers, adapter) => { for (const id of providers) registered[id] = adapter; return () => {} }
-  return { ctx, registered, asked, agent, session }
+  return { ctx, registered, asked, agent, session, emit: ctx.emit }
 }
 
 test('the plugin wiring hands the bridge to a Session by default (dshTools unset)', async () => {
@@ -999,32 +1004,34 @@ test('the plugin wiring hands the bridge to a Session by default (dshTools unset
   }
 })
 
-test('the kill switch is live: false is the old path, true restores crossings', async () => {
+test('the kill switch is live: false ends the bridge now, true brings it back', async () => {
   const w = bridgeWiring()
   let on = true
   apply(w.ctx, { fakeAgent: FAKE, claude: false, codex: false, dshTools: { get: () => on } })
   const adapter = w.registered['acp-fake']
-  const boundary = () => w.session.snapshotEvents()
-    .filter(event => event.type === 'user/message' && event.data.source?.kind === BOUNDARY_KIND)
   try {
     const ask = text => [{
       role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }],
     }]
     const first = await step(adapter, ask('bridge bash'))
     assert.match(textIn(first), /The bridge said: ran bash/)
-    assert.equal(w.asked.length, 1)
-    // False is the kill switch: a model selection no longer crosses, so the agent session (and
-    // its bridge) is kept, exactly as on 2026-11-03.
+    assert.equal(adapter.backchannel.records.size, 1)
+    // False is the kill switch: the plugin ends the agent session and revokes its bridge when
+    // the live setting changes, so no credential minted while on can keep calling DSH tools.
     on = false
-    const away = { type: 'model/selection', data: { provider: 'deepseek-official' } }
-    adapter.noteEvent(w.session, away)
-    assert.equal(adapter.live.size, 1)
-    assert.equal(boundary().length, 0)
-    // On again: the same switch, still live, crosses.
-    on = true
-    adapter.noteEvent(w.session, away)
+    w.emit('loader/volatile-update')
     assert.equal(adapter.live.size, 0)
-    assert.equal(boundary().length, 1)
+    assert.equal(adapter.backchannel.records.size, 0)
+    // The next turn is the old path, in a fresh agent session with no bridge.
+    const second = await step(adapter, ask('plain'))
+    assert.match(textIn(second), /turn 1: you said "plain"/)
+    assert.equal(adapter.live.get('s1').bridge, undefined)
+    // On again: the next turn gets the bridge back.
+    on = true
+    w.emit('loader/volatile-update')
+    const third = await step(adapter, ask('bridge bash'))
+    assert.match(textIn(third), /The bridge said: ran bash/)
+    assert.equal(adapter.backchannel.records.size, 1)
   } finally {
     adapter.dispose()
   }

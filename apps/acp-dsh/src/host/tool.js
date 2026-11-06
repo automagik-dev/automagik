@@ -163,17 +163,28 @@ export function levelOf(approval, session, sandboxPolicy, permissionPresets) {
     sandbox = sandboxOf(session, sandboxPolicy)
     preset = permissionPresets?.current?.(session)
   } catch {}
-  // A host without DSH's permission-preset service (or one whose read throws) still has the
-  // Session's committed row. Auto's identity must survive that read: under a delegated child's
-  // `never` policy it would otherwise look like Full access and bypass the review it promises.
-  if (preset === undefined) preset = presetOf(session)
-  // DSH's real presets (dsh-permission-presets): Full access is `never` with no sandbox, Auto is
-  // `ask` with no sandbox (AUTO_PRESET_SPEC), and Manual is the stock `ask` + workspace-write.
-  // A Session's Auto row wins over the effective policy: dsh-subagent pins a child to `never` so
-  // its reviewer's denials stay final, and reading only that policy would report the child as
-  // full access, bypassing the Auto review the row promises.
+  // Auto is the identity the review gate reads (dsh-experimental-auto-review checks
+  // `permissionPresets.current(session) !== AUTO_PRESET`), never the knob bundle: a custom
+  // preset with Auto's `ask` + `danger-full-access` has no reviewer, so the bridge must keep its
+  // own ask. Without the permission-preset service no identity exists (and no Auto gate can be
+  // installed), so the Session's Auto row may only stop it reading Full — it cannot claim Auto.
+  if (preset === undefined) {
+    const auto = presetOf(session) === 'auto'
+    const full = !auto && policy === 'never' && sandbox === 'danger-full-access'
+    return { sandbox, policy, full, auto: false }
+  }
+  // DSH's real presets (dsh-permission-presets): Full access is `never` with no sandbox, Manual
+  // is the stock `ask` + workspace-write. A Session's Auto row wins over the effective policy:
+  // dsh-subagent pins a child to `never` so its reviewer's denials stay final, and reading only
+  // that policy would report the child as full access, bypassing the Auto review the row
+  // promises.
   if (preset === 'auto') return { sandbox, policy, full: false, auto: true }
-  return { sandbox, policy, full: policy === 'never' && sandbox === 'danger-full-access', auto: policy === 'ask' && sandbox === 'danger-full-access' }
+  return {
+    sandbox,
+    policy,
+    full: policy === 'never' && sandbox === 'danger-full-access',
+    auto: false,
+  }
 }
 
 // Full access (no approval prompts, no sandbox) lets the agent's calls through as it lets DSH's
