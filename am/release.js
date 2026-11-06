@@ -284,6 +284,12 @@ export const noticeText = (update) =>
  * waits for a newer one. The mod, update.mjs and the CLI all read it through parseAuto.
  */
 export const AUTO_FILE = "auto-update.json";
+/**
+ * Beside the record: `{ version, held }`, the mods the last install held for a layout (#420), for the
+ * new build's notice. update.mjs writes it after the swap, since the build that asked for the install
+ * usually never hears back (updateCheck.js), and removes it when an install holds nothing.
+ */
+export const HELD_FILE = "held-mods.json";
 
 /** The setting as `{ on, skip }`: on unless the file says `"auto": false`; skip a version or null. */
 export function parseAuto(text) {

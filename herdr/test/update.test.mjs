@@ -1497,10 +1497,13 @@ test("a retired mod a layout's block names is held in mods/ and said; once no la
     assert.ok(existsSync(join(mods, "old-mod", "main.js")), "held in mods/");
     assert.ok(readMarker(mods).mods.includes("old-mod"), "still the record's");
     assert.ok(logs.some((l) => /^Kept mods\/old-mod: 0\.2\.0 no longer ships it, but the mine layout shows it, and Herdr drops a layout whose mod is gone/.test(l)), logs.join("\n"));
+    const note = join(home, "automagik-herdr", "held-mods.json");
+    assert.deepEqual(JSON.parse(readFileSync(note, "utf8")), { version: "0.2.0", held: [{ mod: "old-mod", layouts: ["mine"] }] }, "the file the new build reads");
     // The layout changed: the next update retires it into the kept set.
     writeFileSync(mine, JSON.stringify({ id: "root", children: [{ id: "p", content: { mod: "pane" } }] }));
     const later = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
     assert.deepEqual([later.retired, later.held], [["old-mod"], []]);
+    assert.equal(existsSync(note), false, "an install that holds nothing leaves no old note");
     assert.equal(existsSync(join(mods, "old-mod")), false);
     assert.ok(existsSync(join(kept(mods, "old-mod"), "main.js")));
     assert.ok(!readMarker(mods).mods.includes("old-mod"));
@@ -1538,6 +1541,7 @@ test("a held mod survives a repair and a rollback: still in mods/, still the rec
     assert.deepEqual(held.held, [{ mod: "old-mod", layouts: ["mine"] }]);
     await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods, repair: ["am-sidebar"] });
     assert.deepEqual(readMarker(mods).mods.sort(), ["am-sidebar", "old-mod"], "a repair keeps it on the record");
+    assert.ok(existsSync(join(home, "automagik-herdr", "held-mods.json")), "and leaves the install's note");
     const back = rollback({ modsDir: mods });
     assert.equal(back.version, "0.1.0");
     assert.ok(existsSync(join(mods, "old-mod", "main.js")), "a rollback leaves the layout its mod");

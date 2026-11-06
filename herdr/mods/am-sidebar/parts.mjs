@@ -35,7 +35,7 @@ import { randomBytes } from "node:crypto";
 import { stableBriefingPath, ENTRY_SOURCE } from "./briefingText.mjs";
 import { CLI_LINK, hooksRunning, knownProjects, ledgerFolders, removeHooks } from "./migrateHooks.mjs";
 import {
-  OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker, layoutGuard, layoutNeeds,
+  HELD_FILE, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker, layoutGuard, layoutNeeds,
 } from "./release.js";
 import { appHomeOf, binDirOf, markerOf, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeMarker } from "./update.mjs";
 
@@ -323,7 +323,9 @@ function guardLayouts(ctx, mods, { pack = false, skip = [] } = {}) {
     const refused = guards.filter((g) => g.refuse);
     const also = refused.slice(1).map((g) => g.mod);
     if (refused.length) {
-      throw new Error(`${refused[0].refuse}${also.length ? ` (its blocks name ${also.join(", ")} too)` : ""}; from a terminal: herdr-app do layout.switch '{"name":"main"}'`);
+      // The command names main, so it does nothing while main is the layout in the way.
+      const command = shown.name === "main" ? "" : `; from a terminal: herdr-app do layout.switch '{"name":"main"}'`;
+      throw new Error(`${refused[0].refuse}${also.length ? ` (its blocks name ${also.join(", ")} too)` : ""}${command}`);
     }
     for (const g of guards) if (g.note) ctx.log(`${g.mod} was ${g.note}`);
     return;
@@ -461,7 +463,7 @@ function uninstallPack(ctx, { purge }) {
   lines.push(...unlinkCommands(ctx));
   rmSync(markerOf(ctx.modsDir), { force: true });
   // The hooks journal is the pack's only while the entry point is; the layout reference always is.
-  if (purge) for (const f of [...(ownEntry ? ["hooks-journal.json"] : []), "automagik.json"]) rmSync(join(state, f), { force: true });
+  if (purge) for (const f of [...(ownEntry ? ["hooks-journal.json"] : []), "automagik.json", HELD_FILE]) rmSync(join(state, f), { force: true });
   if (record.usagemeter || Object.keys(record.usagemeterOn).length) {
     lines.push("left usagemeter where it is (~/.local/bin/usagemeter, and linked machines): it is its own part");
   }

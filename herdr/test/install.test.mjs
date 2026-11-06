@@ -1762,3 +1762,39 @@ test("--uninstall doesn't wait for a herdr-app status that never answers", (t) =
   assert.ok(Date.now() - began < 20_000, "well under the fake's 30 s");
   assert.equal(existsSync(s.pack), false);
 });
+
+test("the --uninstall refusal leaves out the layout.switch command while main is the layout in the way", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  writeFileSync(join(s.appHome, "layouts", "main.json"), JSON.stringify({ id: "root", children: [{ id: "spaces", content: { mod: "am-sidebar" } }] }, null, 2));
+  s.addHerdrApp();
+  s.show("main");
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Switch layouts first \(ctrl-shift-l\), then uninstall the pack\./);
+  assert.doesNotMatch(r.err, /layout\.switch/);
+});
+
+test("the status bound leaves no sleep behind after an answer", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  writeFileSync(join(s.appHome, "layouts", "mine.json"), "{\"id\":\"root\"}\n");
+  s.addHerdrApp();
+  s.show("mine");
+  // An answer slow enough that the watchdog's sleep has started.
+  const app = join(s.bin, "herdr-app");
+  writeFileSync(app, readFileSync(app, "utf8").replace("#!/bin/sh\n", "#!/bin/sh\n/bin/sleep 0.5\n"));
+  // A sleep that logs its pid, and a bound long enough that a left one is still running below.
+  const pids = join(s.root, "sleep-pids");
+  writeFileSync(join(s.bin, "sleep"), `#!/bin/sh\necho $$ >> "${pids}"\nexec /bin/sleep "$@"\n`);
+  chmodSync(join(s.bin, "sleep"), 0o755);
+  s.extraEnv.AUTOMAGIK_HERDR_STATUS_SECONDS = "60";
+  assert.equal(s.run("--uninstall").code, 0);
+  const left = readFileSync(pids, "utf8").split("\n").filter(Boolean).map(Number).filter((pid) => {
+    try { process.kill(pid, 0); return true; } catch { return false; }
+  });
+  for (const pid of left) process.kill(pid);
+  assert.deepEqual(left, [], "no sleep still running");
+});

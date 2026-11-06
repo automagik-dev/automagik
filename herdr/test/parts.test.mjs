@@ -604,3 +604,12 @@ test("uninstall of the pack: a switched-off mod the shown layout names doesn't r
   assert.equal(uninstall(m.ctx(), P("herdr.pack")).changed, true);
   assert.ok(!existsSync(join(m.mods, "am-sidebar")));
 });
+
+test("the refusal leaves out the layout.switch command while main is the layout in the way", (t) => {
+  const m = machine(t);
+  install(m.ctx(), P("herdr.pack"), packSource);
+  writeFileSync(join(m.app, "layouts", "main.json"), JSON.stringify({ id: "root", children: [{ id: "s", content: { mod: "am-sidebar" } }] }));
+  showing(m, "main");
+  assert.throws(() => uninstall(m.ctx(), P("herdr.pack")), (e) => /^am-sidebar stays on: the main layout shows it, .*then uninstall the pack$/.test(e.message));
+  assert.ok(existsSync(join(m.mods, "am-sidebar", "main.js")));
+});

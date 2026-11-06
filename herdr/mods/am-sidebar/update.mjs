@@ -51,7 +51,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
-  AUTO_FILE, CATALOG_URL, OFF_BY_DEFAULT, OLD_PACK_NAME, PACK_CATALOG_URLS, PACK_KEYS, PACK_KEYS_FILE, PACK_LAYOUT, PACK_NAME, POCKET_LINK, POINTER_SIG_URL,
+  AUTO_FILE, CATALOG_URL, HELD_FILE, OFF_BY_DEFAULT, OLD_PACK_NAME, PACK_CATALOG_URLS, PACK_KEYS, PACK_KEYS_FILE, PACK_LAYOUT, PACK_NAME, POCKET_LINK, POINTER_SIG_URL,
   POINTER_URL, TIMEOUT_MS, V020_LAYOUT_SHA256, autoHold, formatAuto, formatMarker, heldModLine, layoutNeeds, packOfPointer, parseAuto, parseMarker, parseSums,
   pickUpdate, updatesOff,
 } from "./release.js";
@@ -101,6 +101,15 @@ const twinOf = (name) => (Object.hasOwn(RENAMES, name) ? RENAMES[name] : Object.
 /** The version a pack folder carries in its VERSION file (UNRELEASED when it has none). */
 export function readVersion(packDir) {
   try { return readFileSync(join(packDir, "VERSION"), "utf8").trim() || UNRELEASED; } catch { return UNRELEASED; }
+}
+
+/** release.js HELD_FILE: this install's held mods, or no file when it holds none, so an old note never outlives its release. */
+function saveHeld(modsDir, version, held) {
+  const file = join(stateDirOf(modsDir), HELD_FILE);
+  if (held.length === 0) { rmSync(file, { force: true }); return; }
+  const tmp = `${file}.${process.pid}`;
+  writeFileSync(tmp, JSON.stringify({ version, held }));
+  renameSync(tmp, file);
 }
 
 /** The pack's auto-update setting and rollback skip (release.js AUTO_FILE), beside the record. */
@@ -758,6 +767,8 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     let recorded = true;
     try { writeMarker(modsDir, record); } catch (error) { recorded = false; warnings.push(`the ownership record could not be written (${error.message})`); }
     if (before?.v1) { try { carryV1(modsDir, record, log); writeMarker(modsDir, record); } catch (error) { warnings.push(`v0.2's kept copies stay where they were (${error.message})`); } }
+    // Only a note: failing to save it is said here, never a failed install (exit 4 reads as one).
+    if (!repair) { try { saveHeld(modsDir, version, plan.held); } catch (error) { log(`warning: the note about held mods was not saved (${error.message})`); } }
     if (keep.length) keepLayout(modsDir, next, warnings);
     keepSet(modsDir, next, keep, before, old, rename, warnings, keptOff);
     for (const h of plan.held) log(heldModLine(h, version));

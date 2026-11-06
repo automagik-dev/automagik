@@ -215,12 +215,20 @@ shown_layout() {
   herdr-app status </dev/null >"$st" 2>/dev/null &
   asked=$!
   # Nothing of the watchdog's stays on stdout: callers read this function through $(…), which would
-  # wait for its sleep.
-  (sleep "$STATUS_SECONDS"; kill "$asked" 2>/dev/null) >/dev/null 2>&1 &
+  # wait for its sleep. Stopped, it stops its sleep too, so no run leaves one behind.
+  (
+    nap=
+    trap '[ -z "$nap" ] || { kill "$nap"; wait "$nap"; }; exit 0' TERM
+    sleep "$STATUS_SECONDS" &
+    nap=$!
+    wait "$nap" || true
+    kill "$asked" 2>/dev/null
+  ) >/dev/null 2>&1 &
   watchdog=$!
   rc=0
   wait "$asked" || rc=$?
   kill "$watchdog" 2>/dev/null || true
+  wait "$watchdog" 2>/dev/null || true
   if [ "$rc" = 0 ]; then sed -n 's/.*"layout"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$st" | head -n 1; fi
   rm -f "$st"
 }
@@ -325,7 +333,10 @@ layout_guard() {
   unset IFS
   set +f
   if [ -n "$named" ]; then
-    fail "the pack stays: the $shown layout shows $named, and Herdr drops a layout whose mod is gone (plain Herdr instead). Switch layouts first (ctrl-shift-l, or herdr-app do layout.switch '{\"name\":\"main\"}'), then uninstall the pack."
+    # The command names main, so it does nothing while main is the layout in the way.
+    how="ctrl-shift-l, or herdr-app do layout.switch '{\"name\":\"main\"}'"
+    if [ "$shown" = main ]; then how=ctrl-shift-l; fi
+    fail "the pack stays: the $shown layout shows $named, and Herdr drops a layout whose mod is gone (plain Herdr instead). Switch layouts first ($how), then uninstall the pack."
   fi
   [ -n "$why" ] && [ -n "$on" ] || return 0
   for f in "$APP_HOME"/layouts/*.json; do
