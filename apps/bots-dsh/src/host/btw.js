@@ -70,9 +70,19 @@ const anchorProjection = {
 
 // `session.eventAt` is closed to new callers. The registry folds the log;
 // this reads the fold. Absent means the capability is not loaded.
+//
+// dsh 0.2.2 acquires a unit asynchronously: register() returns a thenable handle, and the
+// registry's own stateOf(session, key) is deprecated (it warns, then reads whatever the unit
+// folded so far). The handle is kept for the life of the host and every read goes through it.
+let anchorHandle
+
 function registerAnchor(ctx) {
   const register = (projections) => {
-    if (typeof projections?.register === 'function') projections.register(anchorProjection)
+    if (typeof projections?.register !== 'function') return
+    Promise.resolve(projections.register(anchorProjection)).then(
+      (handle) => { anchorHandle = handle },
+      (error) => ctx.logger?.warn?.('ds-bot: the anchor projection was not registered: %s', error),
+    )
   }
   if (typeof ctx.inject === 'function') {
     ctx.inject(['sessionProjections'], (projectionCtx) => { register(projectionCtx.sessionProjections) })
@@ -82,7 +92,9 @@ function registerAnchor(ctx) {
 }
 
 function anchorState(session, projections) {
-  if (typeof projections?.stateOf !== 'function' || session == null) return undefined
+  if (session == null) return undefined
+  if (typeof anchorHandle?.stateOf === 'function') return anchorHandle.stateOf(session)
+  if (typeof projections?.stateOf !== 'function') return undefined
   return projections.stateOf(session, ANCHOR_KEY)
 }
 
