@@ -69,6 +69,9 @@ function scene(t, { terminals = [], briefing = true, window = { down: true } } =
     const r = spawnSync(RUNTIME, [CLI, ...args], { cwd, env: { ...env, ...extra }, input, encoding: "utf8" });
     return { code: r.status, out: r.stdout, err: r.stderr, json: () => JSON.parse(r.stdout) };
   };
+  const cliAsync = (args, { env: extra = {} } = {}) => new Promise((resolve) => {
+    execFile(RUNTIME, [CLI, ...args], { cwd: project, env: { ...env, ...extra }, encoding: "utf8" }, (e, out, err) => resolve({ code: e ? e.code : 0, out, err }));
+  });
   const calls = () => readJsonLines(logPath);
   const hcState = () => JSON.parse(readFileSync(statePath, "utf8"));
   const appCalls = () => readJsonLines(appLog);
@@ -76,7 +79,7 @@ function scene(t, { terminals = [], briefing = true, window = { down: true } } =
   const botsPath = join(project, ".herdr/bots.json");
   const bots = () => JSON.parse(readFileSync(botsPath, "utf8"));
   const seed = (file) => { mkdirSync(join(project, ".herdr"), { recursive: true }); writeFileSync(botsPath, `${JSON.stringify(file, null, 2)}\n`); };
-  return { root, project, app, home, cli, calls, hcState, appCalls, windowNow, bots, botsPath, seed };
+  return { root, project, app, home, cli, cliAsync, calls, hcState, appCalls, windowNow, bots, botsPath, seed };
 }
 
 const bot = (id, kind, extra = {}) => ({ id, name: `Bot ${id.slice(2, 4)}`, kind, look: { character: "star", colour: "blue" }, role: "r", instructions: "i", agent: "claude", ...extra });
@@ -2767,4 +2770,18 @@ test("import gives a seat already playing its bot its lost labels back, with no 
   assert.equal(readFileSync(ledgerPath(s.app), "utf8"), workersBefore, "no workers-ledger row");
   assert.match(s.cli(["import", "--from-hc"]).out, /Nothing to do: every seat already plays its bot\./);
   assert.deepEqual(paneMoves(s), []);
+});
+
+test("start #225/#223: the ledger lock stays fresh across a slow hc run, so two starts at once start the bot once", async (t) => {
+  const s = scene(t);
+  s.seed(team());
+  // hc run answers after 0.6 s, past a 400 ms stale limit: a lock not kept fresh is taken over by
+  // the waiting start, which finds no binding yet and starts the bot again. Short, so the
+  // waiting start's 3 s ledger-lock wait has room under load.
+  exe(join(s.root, "bin/hc"), `#!/bin/sh\nif [ "$1" = run ]; then sleep 0.6; fi\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
+  const env = { AUTOMAGIK_HERDR_LOCK_STALE_MS: "400" };
+  const both = await Promise.all([s.cliAsync(["start", "Genie"], { env }), s.cliAsync(["start", "Genie"], { env })]);
+  assert.equal(s.calls().filter((c) => c[0] === "run").length, 1, both.map((r) => r.err).join("\n"));
+  assert.deepEqual(both.map((r) => r.code), [0, 0], both.map((r) => r.err).join("\n"));
+  assert.ok(both.some((r) => /Genie is already running in t100\./.test(r.out)), both.map((r) => r.out).join("\n"));
 });
