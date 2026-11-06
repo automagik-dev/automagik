@@ -127,6 +127,18 @@ export function briefingText({ self, file, members = [], lead, helpers = [] }) {
 export const liveLine = (botId) => `Live status and latest reports of your team and lead: run \`automagik-herdr brief ${botId}\`.`;
 
 /**
+ * How a bot launched with its briefing gets restarted (#428): Claude Code's /restart refuses a
+ * session started with --append-system-prompt-file, so the person restarts it through Herdr.
+ * Only in the launch briefing: a pane attached while running was not started that way.
+ */
+export const restartLine = (botId) => "You cannot restart yourself from inside this session: Herdr started it "
+  + "with this briefing in its launch flags, and Claude Code's /restart refuses such a session, so never offer "
+  + "/restart or your agent's own restart. When the person asks you to restart (a new version, another account "
+  + `or model), tell them to run \`automagik-herdr restart ${botId}\` or use Restart in your bot's menu in the `
+  + "Herdr sidebar. In pt-BR: \"Não consigo me reiniciar de dentro desta sessão (o /restart do Claude Code "
+  + `não funciona aqui). Rode \`automagik-herdr restart ${botId}\` ou use Restart no menu do bot na barra lateral do Herdr.\"`;
+
+/**
  * The briefing a bot starts with, its agent's system prompt (≤ BRIEFING_LIMIT): who it is, its
  * role and instructions, how it works, its lead and its team as .herdr/bots.json names them.
  * Nothing that changes while it runs (a status, an address, a report): for those it runs
@@ -144,7 +156,7 @@ export function launchBriefingText({ self, file }) {
     `Role: ${self.role || "(none given)"}`,
   ];
   if (shown.trim()) lines.push("Instructions:", shown.trim());
-  lines.push(WORKER_LINE, liveLine(self.id));
+  lines.push(WORKER_LINE, liveLine(self.id), restartLine(self.id));
   const leadId = self.kind === "member" ? effectiveLead(file, self.id).lead : "";
   const lead = leadId ? file.bots.find((b) => b.id === leadId) : null;
   if (lead) {

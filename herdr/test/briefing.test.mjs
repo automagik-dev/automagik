@@ -882,6 +882,10 @@ test("launch text: who, role, instructions, how it works, lead and team by id; n
   assert.match(text, /Instructions:\nReview every PR\./);
   assert.match(text, /automagik-herdr worker/);
   assert.match(text, /run `automagik-herdr brief b-bbbbbbbbbb`/, "the live state is one command away");
+  // #428: a restart goes through Herdr, never Claude Code's /restart, in English and pt-BR.
+  assert.match(text, /never offer \/restart.*run `automagik-herdr restart b-bbbbbbbbbb` or use Restart in your bot's menu/s);
+  assert.match(text, /In pt-BR: .*Rode `automagik-herdr restart b-bbbbbbbbbb` ou use Restart no menu do bot/s);
+  assert.doesNotMatch(briefingText({ self: byId(f, ID.cap), file: f }), /automagik-herdr restart/, "an attached pane can /restart");
   assert.match(text, /Your lead: Genie \(bot b-aaaaaaaaaa\).*hc ls --label bot=b-aaaaaaaaaa/s);
   assert.match(text, /- Dev \(bot b-cccccccccc/);
   assert.doesNotMatch(text, /Studio|idle|working|not running|untrusted-report|helpers/, "planned bots and live state stay out");

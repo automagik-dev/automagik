@@ -199,7 +199,9 @@ a place in a team, and keeps that team in front of every agent and of you.
   once, never again each turn. Its team's live state, each member's status and latest report,
   is `automagik-herdr brief <bot>`. A Claude pane attached while running gets the briefing
   once, from its hook, on its first turn and again after an edit or a compaction. An edit to a
-  bot's instructions reaches it at its next `automagik-herdr restart`.
+  bot's instructions reaches it at its next `automagik-herdr restart`. Claude Code's `/restart`
+  refuses a session started with that briefing (`--append-system-prompt-file`), so the briefing
+  tells the bot to point you to `automagik-herdr restart <bot>` or the bot's Restart instead.
 - **Typed notes when blocked.** A member started under its lead's pane makes herdr-core type
   its `blocked`, `error` and exit notes into the lead's pane, so the lead wakes up.
 - **Any harness.** Bots run Claude Code, Codex, Antigravity, Kimi, Oh My Pi or any agent Herdr
