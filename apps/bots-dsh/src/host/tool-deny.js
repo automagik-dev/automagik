@@ -102,11 +102,13 @@ export function install(rt) {
   }
 
   // The Bot a Session speaks for: its own chat (a Session keyed by the Bot's id, indexed or
-  // not yet), a group Session, a task run, or an earlier part of either.
+  // not yet), a group Session, an earlier part of either, or a task run. `start_task` records
+  // its Session in `state.tasks` only, which the store's `selfOf` does not read, so a task is
+  // resolved here from the record the task run wrote.
   const botOfSession = (sessionId) => {
     const direct = rt.botOf(sessionId)
     if (direct !== undefined) return direct
-    const owner = rt.selfOf(sessionId)
+    const owner = rt.selfOf(sessionId) ?? rt.state?.tasks?.[sessionId]?.from
     return owner === undefined ? undefined : rt.botOf(owner)
   }
 
@@ -145,6 +147,8 @@ export function install(rt) {
       schedule(sessionId, agent)
       return
     }
+    // A tool registered after this Session started is not in `served`: the executor guard
+    // below still refuses it, and the next resolve re-applies this list.
     const deny = wanted.filter(name => served.has(name))
     const missing = wanted.filter(name => !served.has(name))
     if (missing.length > 0) {
@@ -167,10 +171,14 @@ export function install(rt) {
    * list is lifted and re-applied, an emptied one gives every tool back.
    * @param {object} bot - the Bot record (its `denyTools` is read live).
    */
-  async function applyToolDeny(bot) {
+  async function applyToolDeny(bot, extra = []) {
     if (bot === undefined) return
-    const sessions = new Set(rt.sessionsOfBot(bot.id))
+    const sessions = new Set([...rt.sessionsOfBot(bot.id), ...extra])
     for (const part of bot.segments ?? []) sessions.add(part.sessionId)
+    // A group keeps its earlier parts under the room, beside the Bot's own history.
+    for (const room of Object.values(rt.state?.rooms ?? {})) {
+      for (const part of room.segments?.[bot.id] ?? []) sessions.add(part.sessionId)
+    }
     await Promise.all([...sessions].map(async (sessionId) => {
       try {
         const agent = await rt.resolveAgent(sessionId)
@@ -179,6 +187,39 @@ export function install(rt) {
         rt.warn('ds-bot: the tool deny list of %s not applied to Session %s: %s', bot.name, sessionId, error?.message ?? error)
       }
     }))
+  }
+
+  /**
+   * The names in `names` this DSH does not serve, read from a Session's own tool surface.
+   * An empty list means the Session could not be resolved yet, which is not a verdict.
+   * @param {string} sessionId - the Session whose Bot asked for the list.
+   * @param {string[]} names - the cleaned deny list.
+   */
+  async function unknownDenyTools(sessionId, names) {
+    if (!Array.isArray(names) || names.length === 0) return []
+    let agent
+    try {
+      agent = await rt.resolveAgent(sessionId)
+    } catch {
+      return []
+    }
+    const live = agent?.agent ?? agent
+    let served
+    try {
+      served = new Set(ctx.tools.schemas(live).map(schema => schema.name))
+    } catch {
+      return []
+    }
+    if (served.size === 0) return []
+    return names.filter(name => !served.has(name))
+  }
+
+  // Refuse a save that names a tool this DSH does not serve: for a hard read-only list, a
+  // typo must fail loudly rather than leave the tool the person meant to remove on the Bot.
+  async function assertDenyTools(sessionId, names) {
+    const unknown = await unknownDenyTools(sessionId, names)
+    if (unknown.length === 0) return
+    throw refusal(`${unknown.join(', ')} ${unknown.length === 1 ? 'is not a tool' : 'are not tools'} this DSH serves. denyTools takes exact tool names, case-sensitive: use the name the tool shows in this Bot's surface, or leave it out.`)
   }
 
   // A Session resolving its agent, saved earlier included: the same moment the team tools
@@ -200,5 +241,5 @@ export function install(rt) {
   })
 
   // Retries stop on a Session that leaves the team, so a lift is not attempted on a gone agent.
-  Object.assign(rt, { applyToolDeny, cleanDenyTools })
+  Object.assign(rt, { applyToolDeny, cleanDenyTools, unknownDenyTools, assertDenyTools })
 }

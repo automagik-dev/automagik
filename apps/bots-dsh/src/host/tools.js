@@ -29,13 +29,14 @@ const AVATAR_PARAM = {
   description: 'Profile picture: a local image path (a relative path starts in your working folder) or a data URL. PNG, JPEG, WebP, or GIF; square, 256x256 recommended, up to 120 KB. Images are not resized.',
 }
 const WORKING_DIRECTORY_TOOL = 'working_directory'
-// The tools a Bot never gets: absent from its surface on every Session it speaks from, and
-// refused by the executor if a call reaches it anyway. Names this DSH does not serve are
-// ignored with a warning, so a list written for another profile still applies here.
+// The tools a Bot never gets: absent from its surface on every Session it speaks from — its
+// chat, group Sessions, earlier parts, task runs — and refused by the executor if a call
+// reaches it anyway. A name this DSH does not serve refuses the save, so a typo cannot leave
+// the tool the person meant to remove on the Bot.
 const DENY_TOOLS_PARAM = {
   type: 'array',
   items: { type: 'string' },
-  description: 'Tools this Bot never gets, by exact name (for example omni_send, bash, write): a hard read-only list enforced on every Session of the Bot, not an instruction. It is the Bot\'s own setting, so only the Main Bot may set it for another Bot.',
+  description: 'Tools this Bot never gets, by exact name and case (for example omni_send, bash, write): a hard read-only list enforced on every Session of the Bot, not an instruction. A name this DSH does not serve refuses the save. An empty list clears it. It is the Bot\'s own setting, so only the Main Bot may set it for another Bot.',
 }
 
 export function install(rt) {
@@ -373,8 +374,8 @@ export function install(rt) {
       model: { type: 'string', description: 'Move the Bot to another model, as provider/model or a model id' },
       effort: { type: 'string', description: 'Thinking level for the Bot\'s model, as list_bot_models shows; an empty string returns to the model\'s default' },
       work_dir: { ...WORK_DIR_PARAM, description: `${WORK_DIR_PARAM.description}; an empty string returns it to the team workspace` },
-      deny_tools: { ...DENY_TOOLS_PARAM, description: `${DENY_TOOLS_PARAM.description} An empty list or null clears it.` },
-      denyTools: { ...DENY_TOOLS_PARAM, description: `${DENY_TOOLS_PARAM.description} An empty list or null clears it.` },
+      deny_tools: { ...DENY_TOOLS_PARAM, description: `${DENY_TOOLS_PARAM.description} An empty list clears it.` },
+      denyTools: { ...DENY_TOOLS_PARAM, description: `${DENY_TOOLS_PARAM.description} An empty list clears it.` },
     },
     output,
     async execute(args, exec) {

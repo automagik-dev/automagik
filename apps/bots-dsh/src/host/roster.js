@@ -225,6 +225,9 @@ export function install(rt) {
     // A host adapter may already own a configured root Session. Adopt it without creating
     // another Session or moving its workspace; this option is internal, not a user payload.
     const id = existingSessionId ?? await createSession(cleanName, { dir })
+    // Checked against the Session's own tool surface, before the Bot record exists: a name
+    // this DSH does not serve refuses the create (the catch below archives the Session).
+    if (denyTools) await rt.assertDenyTools(id, denyTools)
     if (existingSessionId !== undefined) {
       const agent = await rt.resolveAgent(id)
       if (agent?.session?.id !== id) throw refusal('The existing Session could not be resolved')
@@ -360,8 +363,10 @@ export function install(rt) {
       throw refusal(`Only the user can set what ${bot.name} may do in the browser`)
     }
     const browserGrants = patch.browserGrants === undefined ? undefined : cleanBrowserGrants(patch.browserGrants)
-    // The tool deny list is checked with the rest, before anything is written.
+    // The tool deny list is checked with the rest, before anything is written: a name this
+    // DSH does not serve refuses the update, so a typo cannot quietly weaken the list.
     const denyTools = cleanDenyTools(patch.denyTools)
+    if (denyTools !== undefined && denyTools !== null) await rt.assertDenyTools(rt.chatOf(bot.id), denyTools)
     // Checked first, so a folder, model or level that does not pass leaves the rest
     // unchanged too.
     const role = patch.role === undefined ? undefined : cleanRole(patch.role)
