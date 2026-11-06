@@ -102,9 +102,9 @@ const REFERENCE_TEXT = (() => {
 // The window runs redactText over every delta on top of its own row work, so it costs a multiple of
 // the reference: 1.89-1.96x measured here (Node 22.23.2) and 2.32-2.50x on the Ryzen numbers (26.24
 // ms against 10.5-11.3 ms, Node 24.9.0/24.22.2). WINDOW_MARGIN sits above both, and a 2x regression
-// of the window path fails on either (3.8x here, 4.6-5.0x on Ryzen); the absolute backstop caps a
-// run whose reference reads too low. A quadratic rule at 80k characters is 6.4e9 steps, seconds of
-// CPU, far past either.
+// of the window path fails on either (3.8x here, 4.6-5.0x on Ryzen); the absolute backstop caps how
+// far a reference that reads high can widen the bound. A quadratic rule at 80k characters is 6.4e9
+// steps, seconds of CPU, far past either.
 const WINDOW_MARGIN = 3.5
 const WINDOW_BACKSTOP_MS = 200
 
@@ -122,6 +122,8 @@ test('a seeded fuzz of 200 mixed texts up to 80k characters stays fast on every 
   const [windowPath, windowRun] = PATHS[PATHS.length - 1]
   const textPaths = PATHS.slice(0, -1)
   const referenceMs = fixedWork(() => redactText(REFERENCE_TEXT))
+  // A zero sample would make the bound zero and pass a window that measured nothing.
+  assert.ok(referenceMs > 0, `reference sample is ${referenceMs} ms of CPU`)
   const bound = Math.min(WINDOW_MARGIN * referenceMs, WINDOW_BACKSTOP_MS)
   const margin = `${WINDOW_MARGIN} x reference ${referenceMs.toFixed(1)} ms`
   for (const [shape, text] of cases) {
