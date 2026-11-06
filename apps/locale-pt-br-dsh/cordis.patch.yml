@@ -1,6 +1,7 @@
-# Mounts the pt-BR language pack; the browser half is discovered through the package's dsh.client
-# manifest and ./client export. Installed into someone's own DSH, this patch adds that row and
-# changes nothing of theirs: the language is one more choice in Settings › General › Language.
+# Mounts the Portuguese pack; the browser half is discovered through the package's dsh.client
+# manifest and ./client export. The pack adds no language: DSH 0.2.2 lists Português itself, and
+# the pack registers the Bot team's omni-ui strings under it. Installed into someone's own DSH, this
+# patch adds that row and changes nothing of theirs.
 - insert:
     - id: locale-pt-br
       name: '@automagik/locale-pt-br-dsh'

@@ -1,7 +1,0 @@
-{
-  "hint.plan": "descreva sua tarefa para gerar um plano",
-  "placeholder.plan": "descreva sua tarefa para gerar um plano",
-  "row.input": "ENTRADA",
-  "row.output": "SAÍDA",
-  "tool.title.queryRuntime": "Consultar o runtime"
-}
