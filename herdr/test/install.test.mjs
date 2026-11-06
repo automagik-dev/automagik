@@ -1880,3 +1880,29 @@ test("--uninstall whose updater's pack-out fails falls back to the shell path an
   assert.equal(existsSync(s.pack), false);
   assert.ok(existsSync(join(s.state, ".prev", "am-sidebar", "VERSION")));
 });
+
+test("--uninstall is refused while Herdr shows the pack's layout, even when every mod it names is a link (#450)", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  const layout = join(s.appHome, "layouts", "automagik.json");
+  // Each mod the layout's blocks name becomes a link to a checkout outside the app home.
+  const named = [...readFileSync(layout, "utf8").matchAll(/"mod"\s*:\s*"([a-z0-9-]+)"/g)].map((m) => m[1])
+    .filter((m, i, all) => all.indexOf(m) === i && existsSync(join(s.mods, m)));
+  assert.ok(named.length > 0, "the pack's layout names its mods");
+  for (const m of named) {
+    const to = join(s.root, "checkout", m);
+    mkdirSync(dirname(to), { recursive: true });
+    cpSync(join(s.mods, m), to, { recursive: true });
+    rmSync(join(s.mods, m), { recursive: true });
+    symlinkSync(to, join(s.mods, m));
+  }
+  s.addHerdrApp();
+  s.show("automagik");
+  const before = readFileSync(layout);
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 1);
+  assert.match(r.err, /the automagik layout is this package's \(layouts\/automagik\.json\) and Herdr shows it: removing the package takes it away \(plain Herdr instead\)\. Switch layouts first \(ctrl-shift-l, or herdr-app do layout\.switch '\{"name":"main"\}'\), then uninstall the pack\./);
+  assert.deepEqual(readFileSync(layout), before, "the layout keeps its bytes");
+  assert.ok(existsSync(join(s.state, "installed-by-install.sh")), "the record stays");
+});
