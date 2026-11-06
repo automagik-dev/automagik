@@ -37,7 +37,7 @@ import { CLI_LINK, hooksRunning, knownProjects, ledgerFolders, removeHooks } fro
 import {
   HELD_FILE, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker,
 } from "./release.js";
-import { change, switchCommand } from "./layoutSafe.mjs";
+import { change, linkedModsLine, switchCommand } from "./layoutSafe.mjs";
 import { appHomeOf, binDirOf, markerOf, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeMarker } from "./update.mjs";
 
 export const NODE_MIN = "22.7.0";
@@ -373,6 +373,10 @@ function uninstallPack(ctx, { purge }) {
   const record = readMarker(ctx.modsDir);
   if (!record) return { ok: true, changed: false, detail: "the pack is not installed: nothing to do" };
   if (record.v1) throw new Error("this pack was installed by v0.2's installer: run install.sh --uninstall");
+  // A linked mods/ (#494) refuses before anything, as install.sh --uninstall does: change() refuses
+  // only an op in mods/, and with every pack mod switched off the first batch has none, so the
+  // layout and folders would go before an adopted folder's put-back into mods/ is refused.
+  if (isLink(ctx.modsDir)) throw new Error(linkedModsLine(resolve(ctx.modsDir), readlinkSync(ctx.modsDir)));
   const state = stateDirOf(ctx.modsDir);
   const prev = prevSetOf(ctx.modsDir);
   const lines = [];

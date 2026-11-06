@@ -258,3 +258,11 @@ test("a package's remove and its update through a linked mods/ are refused with 
   mkdirSync(join(plain, "mods"));
   assert.equal(await core.linkedModsRefusal(io, plain), null);
 });
+
+test("switching a mod back on through a linked mods/ is refused with why; it stays in mods-disabled/ (#494 review)", async (t) => {
+  const h = linkedHome(t);
+  write(join(h.appHome, "mods-disabled", "offmod", "mod.json"), "{}");
+  await assert.rejects(core.setEnabled(io, { appHome: h.appHome, name: "offmod", enabled: true }), (e) => e.message === linkedLine(join(h.appHome, "mods"), h.ext));
+  assert.ok(existsSync(join(h.appHome, "mods-disabled", "offmod", "mod.json")), "still off, where it was");
+  assert.deepEqual(readdirSync(h.ext), ["scratch"], "nothing went into the linked mods/");
+});

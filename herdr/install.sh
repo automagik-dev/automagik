@@ -943,7 +943,7 @@ install() {
       rc=0
     elif [ "$rc" != 0 ] && [ "$rc" != 3 ] && [ "$rc" != 4 ]; then
       why=$(printf '%s' "$out" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p' | head -n 1)
-      fail "could not check the installed pack: ${why:-$out $(cat "$TMP/log")}"
+      fail "the installed pack $VERSION was left as it is (not checked or repaired): ${why:-$out $(cat "$TMP/log")}"
     else
       sed -e '/^notice: /d' -e 's/^/  /' "$TMP/log"
       sed -n 's/^notice: //p' "$TMP/log" >"$TMP/notice"

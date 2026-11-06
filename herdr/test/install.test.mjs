@@ -1954,6 +1954,23 @@ test("--uninstall is refused while Herdr shows the pack's layout, even when ever
   assert.ok(existsSync(join(s.state, "installed-by-install.sh")), "the record stays");
 });
 
+test("#494: a same-version rerun with a linked mods/ leaves the pack as it is and says why, not as a failed check", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  const ext = join(s.root, "their-mods");
+  cpSync(s.mods, ext, { recursive: true, verbatimSymlinks: true });
+  rmSync(s.mods, { recursive: true });
+  symlinkSync(ext, s.mods);
+  const before = readdirSync(ext, { recursive: true }).map(String).sort();
+  const r = s.run("--yes");
+  assert.equal(r.code, 1, r.out);
+  assert.ok(r.err.includes(`automagik-herdr install: the installed pack 9.9.0 was left as it is (not checked or repaired): mods/ (${s.mods}) is a link to ${ext}, `
+    + "your own folder, not one this install made: nothing is moved through it, and the folders in it stay as they are. Put that folder in the link's place (a plain mods/), then run this again"), r.err);
+  assert.doesNotMatch(r.err, /could not check/);
+  assert.deepEqual(readdirSync(ext, { recursive: true }).map(String).sort(), before, "nothing in the linked mods/ changed");
+});
+
 test("#494: --uninstall with a linked mods/ refuses before anything, saying why, Node or not: nothing moves, the record and the link stay", (t) => {
   for (const node of [true, false]) {
     const s = scratch(t);

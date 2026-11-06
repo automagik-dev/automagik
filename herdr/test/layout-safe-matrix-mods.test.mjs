@@ -68,7 +68,7 @@ const LAYOUT = { id: "root", children: [{ id: "p", content: { mod: "scratch" } }
  * scratchy.json, which Herdr shows), in `shape`, and its source: a git repository whose head ships
  * the mod and, with `layout`, the layout too. Links point into `ext`, outside the app home.
  */
-function machine(t, shape, { layout, mod = "scratch" }) {
+function machine(t, shape, { layout, mod = "scratch", off = false }) {
   // Nothing readable: the layout file is cut off after its last block (its text names the mod).
   const BODY = shape === NOTHING ? `${JSON.stringify(LAYOUT)},` : JSON.stringify(LAYOUT);
   const root = realpathSync(mkdtempSync(join(tmpdir(), "am-layout-safe-mods-")));
@@ -96,6 +96,8 @@ function machine(t, shape, { layout, mod = "scratch" }) {
     symlinkSync(join(ext, "scratchy.json"), join(appHome, "layouts", "scratchy.json"));
   } else write(join(appHome, "layouts", "scratchy.json"), BODY);
   write(join(appHome, "installed.json"), "{}");
+  // A mod of the person's switched off (mods-disabled/, beside mods/ and never the link), for switch on.
+  if (off) write(join(appHome, "mods-disabled", "offmod", "mod.json"), "{}");
   write(join(bin, "herdr-app"), "#!/bin/sh\nexit 0\n");
   chmodSync(join(bin, "herdr-app"), 0o755);
   const path = process.env.PATH;
@@ -178,6 +180,19 @@ const ROUTES = {
     const asked = Boolean(view.confirm);
     if (asked) { view.onKey({ key: "y", key_char: "y" }, cx); await cx.settle(); }
     return { said: view.message ?? "", stopped: !asked };
+  }],
+  // A switched-off mod of the person's turned back on from the panel (mods-disabled/ → mods/). It is
+  // listed even with mods/ a link, so the move is reachable (#494's review).
+  "switch on": [{ layout: true, off: true }, async (m) => {
+    const cx = makeCx();
+    const view = new ModManager();
+    view.init({}, cx);
+    await cx.settle();
+    const mod = view.mods.find((x) => x.name === "offmod");
+    assert.ok(mod, "a switched-off mod is listed");
+    view.toggle(mod, cx);
+    await cx.settle();
+    return { said: view.message ?? "", stopped: existsSync(join(m.appHome, "mods-disabled", "offmod")) };
   }],
 };
 

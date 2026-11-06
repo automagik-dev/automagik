@@ -517,6 +517,10 @@ export async function setEnabled(io, { appHome, name, enabled }) {
   if (!name || /\//.test(name)) throw new Error(`not a mod name: ${name}`);
   // Off means "moved to mods-disabled/", which would strand a pairing key that lives in .state/.
   if (isPocketLink(name)) throw new Error(POCKET_LINK_REFUSAL);
+  // On or off, the move goes in or out of mods/: never through a linked one (#494). A switched-off
+  // mod is still listed (mods-disabled/ is not the link), so this is reachable from the panel.
+  const linked = await linkedModsRefusal(io, appHome);
+  if (linked) throw new Error(linked);
   const to = enabled ? "mods" : OFF_DIR;
   await run(io, "mkdir", ["-p", `${appHome}/${to}`]);
   await run(io, "mv", [`${appHome}/${onOff(!enabled)}/${name}`, `${appHome}/${to}/${name}`]);
