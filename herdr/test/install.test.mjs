@@ -1954,7 +1954,7 @@ test("--uninstall is refused while Herdr shows the pack's layout, even when ever
   assert.ok(existsSync(join(s.state, "installed-by-install.sh")), "the record stays");
 });
 
-test("#494: a same-version rerun with a linked mods/ leaves the pack as it is and says why, not as a failed check", (t) => {
+test("#494: a same-version rerun with a linked mods/: up to date, nothing written; a file to repair, left as it is with why, not as a failed check", (t) => {
   const s = scratch(t);
   s.publish("9.9.0");
   assert.equal(s.run("--yes").code, 0);
@@ -1962,9 +1962,20 @@ test("#494: a same-version rerun with a linked mods/ leaves the pack as it is an
   cpSync(s.mods, ext, { recursive: true, verbatimSymlinks: true });
   rmSync(s.mods, { recursive: true });
   symlinkSync(ext, s.mods);
-  const before = readdirSync(ext, { recursive: true }).map(String).sort();
+  // Every file matches the release: only read through the link, nothing to write, so it goes on.
+  const files = () => readdirSync(ext, { recursive: true }).map(String).sort();
+  const listed = files();
+  const same = s.run("--yes");
+  assert.equal(same.code, 0, same.err);
+  assert.match(same.out, /already up to date/);
+  assert.deepEqual(files(), listed);
+  // One file differs: the repair would write it through the link, so the pack is left as it is.
+  const damaged = join(ext, "am-tabs", "main.js");
+  writeFileSync(damaged, "// damaged\n");
+  const before = files();
   const r = s.run("--yes");
   assert.equal(r.code, 1, r.out);
+  assert.equal(readFileSync(damaged, "utf8"), "// damaged\n", "nothing written through the link");
   assert.ok(r.err.includes(`automagik-herdr install: the installed pack 9.9.0 was left as it is (not checked or repaired): mods/ (${s.mods}) is a link to ${ext}, `
     + "your own folder, not one this install made: nothing is moved through it, and the folders in it stay as they are. Put that folder in the link's place (a plain mods/), then run this again"), r.err);
   assert.doesNotMatch(r.err, /could not check/);
