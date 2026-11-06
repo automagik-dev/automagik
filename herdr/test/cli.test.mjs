@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { checkBots, parseBots } from "../mods/am-sidebar/model.js";
-import { writeBotsFile, findBot, CliError, listProject } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
+import { writeBotsFile, findBot, CliError, listProject, causeLine } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { ledgerPath, readLedger } from "../mods/am-sidebar/workers.js";
 import { withoutBriefing } from "../mods/am-sidebar/models.js";
 import { restartAnswer } from "../mods/am-sidebar/restart.js";
@@ -1207,13 +1207,13 @@ const ledgerOf = (s) => readLedger(existsSync(ledgerPath(s.app)) ? readFileSync(
 const attachOf = (s) => readRows(existsSync(attachFile(s.app)) ? readFileSync(attachFile(s.app), "utf8") : "").rows;
 
 /** Genie's live pane t5 in the project, placed in sp9/tb3, with a Claude session and a squad. */
-function restartScene(t, { status = "idle", extra = [], session = SID, runAs } = {}) {
+function restartScene(t, { status = "idle", extra = [], session = SID, runAs, runScreen } = {}) {
   const s = scene(t);
   s.seed(team());
   const old = term("t5", { bot: ID.main, cwd: s.project, status });
   old.foreground.cwd = s.project;
   old.labels = { ...old.labels, role: "main", "herdr.space": "sp9", "herdr.tab": "tb3", squad: "core", ...(session ? { "agent.session": session } : {}) };
-  writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [old, ...extra], next: 100, ...(runAs ? { runAs } : {}) }));
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [old, ...extra], next: 100, ...(runAs ? { runAs } : {}), ...(runScreen ? { runScreen } : {}) }));
   return s;
 }
 const at = (calls, word, target) => calls.findIndex((c) => c[0] === word && (target === undefined || c[1] === target));
@@ -1310,6 +1310,58 @@ test("restart keeps the old pane when the new one never brings its agent up, exi
   assert.equal(ledgerOf(s3).some((x) => x.terminal === "t100"), false);
   assert.equal(attachOf(s3).some((x) => x.terminal === "t100"), false, "no attach row for the replacement that exited");
   assert.equal(foldRows(attachOf(s3)).byBot.get(ID.main).terminal, "t5");
+});
+
+// #413: what codex leaves on its screen when a thread's model provider is gone.
+const CODEX_GONE = "Error: model provider example-proxy is no longer configured (modelProviderNotConfigured)";
+const CODEX_SCREEN = `$ codex resume 019a\n\x1b[31m${CODEX_GONE}\x1b[0m\n\n\u2500\u2500\u2500\u2500\n% \n`;
+
+test("causeLine: the agent's last line that names a failure, past prompts, rules and colour codes", () => {
+  assert.equal(causeLine(CODEX_SCREEN), CODEX_GONE);
+  assert.equal(causeLine("starting\nno conversation found\n$ "), "no conversation found", "no failure word: the last line");
+  assert.equal(causeLine("Error: bad flag\nRun codex --help for usage\n"), "Error: bad flag");
+  assert.equal(causeLine("Error: bad flag\n(quit)\n"), "Error: bad flag", "a word in brackets is no failure code");
+  assert.equal(causeLine("\n  \n% \n"), null);
+  assert.equal(causeLine(""), null);
+  assert.equal(causeLine(`error ${"x".repeat(400)}`).length, 300);
+});
+
+test("restart that exits before its agent is up names the agent's own last line, in the error and in --json (#413)", (t) => {
+  const s = restartScene(t, { runAs: "exit", runScreen: CODEX_SCREEN });
+  const r = s.cli(["restart", "Genie"]);
+  assert.equal(r.code, 1);
+  assert.ok(r.err.includes(`t100 exited before its agent was up; its agent said: "${CODEX_GONE}" (hc read t100 shows the rest); t5 still runs Genie, untouched.`), r.err);
+  assert.equal(at(s.calls(), "kill"), -1);
+  const s2 = restartScene(t, { runAs: "exit", runScreen: CODEX_SCREEN });
+  const j = s2.cli(["restart", "Genie", "--json"]);
+  assert.equal(j.code, 1);
+  assert.deepEqual([j.json().cause, j.json().terminal], [CODEX_GONE, "t100"]);
+  assert.match(j.json().error, /^t100 exited before its agent was up; its agent said: .*modelProviderNotConfigured/);
+  assert.equal(s2.hcState().terminals.find((x) => x.address === "t5").state, "live", "the old pane still runs");
+  // Nothing on the screen: the old wording, and a null cause.
+  const s3 = restartScene(t, { runAs: "exit" });
+  const k = s3.cli(["restart", "Genie", "--json"]);
+  assert.match(k.err, /t100 exited before its agent was up \(hc read t100 says why\); t5 still runs Genie/);
+  assert.equal(k.json().cause, null);
+  // Another failure carries no detail: stderr only, stdout empty as before.
+  const n = s3.cli(["restart", "Nobody", "--json"]);
+  assert.notEqual(n.code, 0);
+  assert.equal(n.out, "");
+});
+
+test("restart --json: a busy refusal says it is one, working or helpers, with the pane to wait on (#413)", (t) => {
+  const s = restartScene(t, { status: "working" });
+  const w = s.cli(["restart", "Genie", "--json"]);
+  assert.equal(w.code, 1);
+  assert.deepEqual(w.json(), { error: "Genie is working in t5; restarting now would cut its turn in half. Wait until it is idle, or pass --force.",
+    refused: "working", terminal: "t5" });
+  const worker = { ...term("t7", { argv: ["codex"], app: "codex", parent: "t5" }), die_with_parent: true };
+  const s2 = restartScene(t, { extra: [worker] });
+  const h = s2.cli(["restart", "Genie", "--json"]);
+  assert.equal(h.code, 1);
+  assert.deepEqual([h.json().refused, h.json().terminal], ["helpers", "t5"]);
+  assert.match(h.json().error, /^t5 has a helper that ends with it: t7./);
+  assert.equal(runCall(s2.calls()), undefined, "nothing started");
 });
 
 test("restart with no session id known: claude --continue, with a warning; --fresh starts a new conversation", (t) => {
@@ -1672,6 +1724,49 @@ function captainScene(t, { agent = "omp", over = {}, extra = [] } = {}) {
 }
 const runs = (s) => s.calls().filter((c) => c[0] === "run");
 
+test("restart #413: codex can't resume a thread whose model provider is gone: one new pane on a new thread, the old id in the note", (t) => {
+  const codexBot = (runQueue) => {
+    const s = captainScene(t, { agent: "codex", over: { foreground: { argv: ["codex", "resume", SID], cwd: "/p" }, argv: ["codex", "resume", SID],
+      labels: { bot: ID.cap, "agent.session": SID } } });
+    const st = s.hcState();
+    writeFileSync(join(s.root, "hc.json"), JSON.stringify({ ...st, runQueue }));
+    return s;
+  };
+  const s = codexBot([{ runAs: "exit", screen: CODEX_SCREEN }]);
+  const r = s.cli(["restart", "Captain", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const [first, second] = runs(s);
+  assert.deepEqual(plain(agentWords(first)).slice(-2), ["resume", SID], "it tried the thread first");
+  assert.deepEqual(plain(agentWords(second)), ["codex"], "then a new thread");
+  const j = r.json();
+  assert.deepEqual([j.mode, j.terminal, j.replaced, j.session], ["fresh", "t101", "t6", null]);
+  assert.equal(j.note, `codex can't resume thread ${SID} (t100 said "${CODEX_GONE}"), so it starts on a new one`);
+  assert.ok(j.warnings.some((w) => w.includes(`thread ${SID}`)), "the sidebar's warnings say it too");
+  assert.equal(s.hcState().terminals.find((x) => x.address === "t101").labels["agent.session"], undefined, "the dead thread's id isn't carried on");
+  assert.ok(at(s.calls(), "kill", "t6") > at(s.calls(), "run"), "t6 ends once t101 is up");
+  assert.equal(foldRows(attachOf(s)).byBot.get(ID.cap).terminal, "t101");
+  // Any other resume failure is still a failure, with its own cause: one try, t6 untouched.
+  const other = "Error: no rollout found for thread id " + SID;
+  const s2 = codexBot([{ runAs: "exit", screen: `${other}\n% ` }]);
+  const r2 = s2.cli(["restart", "Captain", "--json"]);
+  assert.equal(r2.code, 1);
+  assert.equal(r2.json().cause, other);
+  assert.equal(runs(s2).length, 1);
+  assert.equal(at(s2.calls(), "kill"), -1);
+  // The phrase without codex's code is another failure: no fresh start.
+  const s4 = codexBot([{ runAs: "exit", screen: "Error: model provider example-proxy is no longer configured\n" }]);
+  const r4 = s4.cli(["restart", "Captain", "--json"]);
+  assert.equal(r4.code, 1);
+  assert.equal(runs(s4).length, 1);
+  // The new thread failing too: its own cause, t6 still untouched.
+  const s3 = codexBot([{ runAs: "exit", screen: CODEX_SCREEN }, { runAs: "exit", screen: "Error: not logged in\n" }]);
+  const r3 = s3.cli(["restart", "Captain", "--json"]);
+  assert.equal(r3.code, 1);
+  assert.deepEqual([r3.json().terminal, r3.json().cause], ["t101", "Error: not logged in"]);
+  assert.equal(at(s3.calls(), "kill"), -1);
+  assert.equal(s3.hcState().terminals.find((x) => x.address === "t6").state, "live");
+});
+
 test("restart #213: an omp bot from a template, in a worktree, comes back in that folder on the template's command, resumed", (t) => {
   const s0 = scene(t);
   const wt = join(s0.root, "proj.worktrees", "rust-cap");
@@ -1820,6 +1915,40 @@ test("restart --tree: the helpers that end with the bot run again under its new 
   assert.ok(lines.includes(`automagik-herdr: Genie's helper fix-213-dev: t101 replaces t7, resuming its last conversation (--continue).`), text.err);
   assert.ok(lines.includes(`automagik-herdr: Genie's helper rev-1: t102 replaces t8, resuming session ${SID2} (--resume=${SID2}).`), text.err);
   assert.equal(text.code, 0);
+});
+
+test("restart --tree #413: refused before anything starts while a pane waits for an answer or an agent reports no status; --force still goes", (t) => {
+  const asking = treeScene(t, { workerStatus: "blocked" }).s;
+  const r = asking.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /t7 is waiting for an answer\. Nothing was started: answer it first, or pass --force to end it\./);
+  assert.equal(runCall(asking.calls()), undefined);
+  assert.equal(at(asking.calls(), "kill"), -1);
+  const bot = treeScene(t).s;
+  const held = bot.hcState();
+  held.terminals.find((x) => x.address === "t5").status = { app: "claude-code", state: "blocked" };
+  writeFileSync(join(bot.root, "hc.json"), JSON.stringify(held));
+  assert.match(bot.cli(["restart", "Genie", "--tree"]).err, /t5 is waiting for an answer\./);
+  assert.equal(runCall(bot.calls()), undefined);
+  const plainHelper = treeScene(t).s;
+  const st = plainHelper.hcState();
+  st.terminals.find((x) => x.address === "t8").status = null;
+  writeFileSync(join(plainHelper.root, "hc.json"), JSON.stringify(st));
+  const w = plainHelper.cli(["restart", "Genie", "--tree"]);
+  assert.equal(w.code, 1);
+  assert.match(w.err, /t8 doesn't tell hc whether it is busy, so --tree can't tell whether it has finished\. Nothing was started\. Look at it first, then pass --force to restart anyway\./);
+  assert.equal(runCall(plainHelper.calls()), undefined);
+  assert.equal(asking.cli(["restart", "Genie", "--tree", "--force"]).code, 0, "--force is the hand-run way past it");
+});
+
+test("restart --tree #413: a plain program reporting no status, a dev server say, passes as before and runs again", (t) => {
+  const s = treeScene(t).s;
+  const st = s.hcState();
+  st.terminals.push({ ...term("t11", { argv: ["npm", "run", "dev"], app: "x", cwd: s.project, parent: "t5" }), status: null, die_with_parent: true, name: "dev", argv: ["sh", "-c", "npm run dev"] });
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.doesNotMatch(r.err, /doesn't tell hc/);
+  assert.ok(r.json().helpers.some((h) => h.replaced === "t11" && h.terminal), r.err);
 });
 
 test("restart --tree waits, before anything starts, for helpers and the old pane to be idle: a turn's note types into the old pane only then; still mid-turn after the wait refuses", (t) => {

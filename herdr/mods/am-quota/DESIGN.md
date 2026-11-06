@@ -149,7 +149,29 @@ are added there, never on the Mac; the panel is a personal tool for people who r
   tool whose pane started (`ls --all --json`'s `since`) before the switch; one running bot with no
   start time makes the split unreliable, so then all of that tool's running bots are listed and the
   banner says so. Restart is a second press within five seconds, then `automagik-herdr restart
-  <bot> --project <key>` per bot, sequentially, never `--force`; a refusal is shown per bot. The
+  <bot> --project <key>` per bot, sequentially, never `--force`, each with exec's `timeout` at
+  300 s (the default 30 s ends a restart mid-way); a refusal is shown per bot: the
+  --json `error` (a new pane that exited names its agent's last line, `cause`), else stderr's
+  last line, never its first (warnings come first). A busy refusal (--json `refused`: working or
+  helpers, and the `terminal`) lists the bot as busy; `plain` takes any clause naming a flag out of
+  CLI text, because the panel never offers one. Working waits for the Restart when idle press;
+  helpers needs none (the owner's rule). Both go through `whenReady`: each look re-reads `hc get` of the
+  pane and `hc ls` plus `hc get` of the helpers that end with it. The look decides, not how a wait
+  ended. Pane done, idle or in error and helpers done, idle or reporting no status: one restart,
+  `--tree` when it has helpers. A status-less helper may be a plain program or an agent mid-turn;
+  only the CLI knows, and `treeIdle` refuses the agent. Only exit 3 or not_found from `hc get` is
+  gone; any other failure stops with why, because a pane hc can't read may still run. Something working: `hc wait <that pane> --timeout 450` through
+  `exec(…, { timeout: 480000 })` (`hc()` stops at 30 s; `exec` allows 10 min where Herdr has the
+  option, and released Herdr ignores it, so each wait is cut at 30 s), one at a time, at most four
+  plus one per helper and never past 30 minutes. Anything else: no restart, listed with why. It
+  says what it waited, never promises a time. `--tree` runs with `exec`'s timeout at 600 s (about 13
+  helpers at worst) and the CLI's own turn wait at 10 s, a race guard only; it exits 1 with a new
+  `terminal` when a helper wasn't run again, which counts as restarted. On released Herdr `exec`
+  ends that CLI at 30 s, which can be after the old pane ended, so there `--tree` runs only with two
+  helpers or fewer (an estimate: about 8 s plus 7 s per helper, never measured). `exec("true", [],
+  { timeout: "probe" })` tells them apart: a Herdr with the option refuses it, one without runs
+  it, and any other answer counts as without. A kill anyway says it may have stopped part-way and
+  what to check. Canceled by a press, held in the panel's memory only. The
   CLI is run as the sidebar runs it (`env HERDR_APP_HOME=… sh <sidebar>/bin/run.sh …`); with no
   sidebar mod there is no CLI and the banner gives the command instead.
 
