@@ -143,10 +143,15 @@ function json(path) {
   try { return JSON.parse(text); } catch { return null; }
 }
 
-/** The tui profile's record of the dsh-TUI this installer added, or null (the person's own). */
+/**
+ * The tui profile's record of the dsh-TUI this installer added, or null (the person's own).
+ * Keyed on the package and the version recorded at install time, never the current pin: a
+ * record from an older release is still this installer's after a pin bump.
+ */
 export function ownershipOf(profile) {
   const record = json(join(profile, RECORD_FILE));
-  return record?.package === DSH_TUI.package && record?.version === DSH_TUI.version ? record : null;
+  return record?.package === DSH_TUI.package && typeof record.version === "string" && /^\d+\.\d+\.\d+/.test(record.version)
+    ? record : null;
 }
 
 /** Forget the installer's ownership record in `profile` (the tui profile only). */
@@ -303,6 +308,18 @@ export async function installDshTui(options = {}) {
   }
   const before = profileState(dshHome);
   const ownedBefore = ownershipOf(profile);
+  const recordBefore = read(join(profile, RECORD_FILE));
+  // Ownership is the package and the version recorded at install time, never the current pin:
+  // a pack-owned 0.18.0 is still the pack's after the constant moves to 0.19.0.
+  const staleRecord = ownedBefore !== null && before.pin !== null
+    && before.pin !== ownedBefore.version && before.pin !== DSH_TUI.version;
+  if (staleRecord) dropRecord(profile);
+  const owns = before.pin === null
+    || (ownedBefore !== null && !staleRecord && (before.pin === ownedBefore.version || before.pin === DSH_TUI.version));
+  // A pin the person chose is not replaced. Only the pack's own older pin is updated.
+  if (before.pin !== null && before.pin !== DSH_TUI.version && !owns) {
+    return { status: "failed", changed: false, detail: `the ${PROFILE} profile already pins ${DSH_TUI.package} ${before.pin}, not ${DSH_TUI.version}, and this installer did not add it: left it. Remove it yourself (\`dsh plugin --profile ${PROFILE} remove ${DSH_TUI.package}\`) or pin ${DSH_TUI.version} to let the pack manage it.`, lines: [] };
+  }
   const desktopBefore = desktopFingerprint(dshHome);
   let result;
   try {
@@ -330,16 +347,10 @@ export async function installDshTui(options = {}) {
     return { status: "failed", changed: false, detail: `the install changed ${changedDesktop.join(", ")} under ${dshHome}; this installer never writes the desktop profile, its settings or DSH's credentials, so check them.`, lines: [] };
   }
 
-  // Who added the pin: only an install that found the dependency absent (or had recorded its
-  // own earlier install) owns it. A pin the person added is theirs: no record, no uninstall, and
-  // pnpm's release-age exclusion is left as it is.
-  const staleRecord = ownedBefore !== null && before.pin !== DSH_TUI.version;
-  if (staleRecord) dropRecord(profile);
-  const owns = before.pin === null || (ownedBefore !== null && !staleRecord && before.pin === DSH_TUI.version);
-  const recordBefore = read(join(profile, RECORD_FILE));
-  if (owns) {
-    writeAtomic(join(profile, RECORD_FILE), `${JSON.stringify({ package: DSH_TUI.package, version: DSH_TUI.version, integrity: DSH_TUI.integrity }, null, 2)}\n`, 0o600);
-  }
+  // The record follows the version this install set, so a later uninstall still knows it is ours.
+  const recordText = `${JSON.stringify({ package: DSH_TUI.package, version: DSH_TUI.version, integrity: DSH_TUI.integrity }, null, 2)}\n`;
+  const recordChanged = owns && recordBefore !== recordText;
+  if (recordChanged) writeAtomic(join(profile, RECORD_FILE), recordText, 0o600);
   let workspace = state.workspace ?? "";
   const published = "publishedAt" in options ? options.publishedAt : await registryPublishedAt();
   const aged = typeof published === "string" && Number.isFinite(Date.parse(published))
@@ -372,7 +383,7 @@ export async function installDshTui(options = {}) {
   if (had.length && !aged && owns) lines.splice(2, 0, `The ${PROFILE} profile excludes ${PIN} from pnpm's release-age gate (exact version only).`);
   if (aged && had.includes(PIN) && owns) lines.splice(2, 0, `Removed the release-age exception for ${PIN}: it is older than the profile's minimumReleaseAge now.`);
   if (!owns) lines.splice(2, 0, `The ${PROFILE} profile already had dsh-TUI${before.pin ? ` ${before.pin}` : ""} (not added by this installer): uninstall leaves it.`);
-  return { status: "installed", changed: before.pin !== DSH_TUI.version || before.integrity !== DSH_TUI.integrity || priorShim !== SHIM_TEXT || scoped.changed || guideBefore === null || (owns && recordBefore === null), lines, detail: lines[0] };
+  return { status: "installed", changed: before.pin !== DSH_TUI.version || before.integrity !== DSH_TUI.integrity || priorShim !== SHIM_TEXT || scoped.changed || guideBefore === null || recordChanged || staleRecord, lines, detail: lines[0] };
 }
 
 /**
@@ -475,6 +486,7 @@ export function doctorDshTui({ env = process.env, panePath } = {}) {
   const dshHome = dshHomeOf(env);
   const state = profileState(dshHome);
   const record = ownershipOf(state.dir);
+  const owned = record !== null && state.pin === record.version;
   const shim = shimPathOf(env);
   const shimPresent = present(shim);
   const shimText = read(shim);
@@ -494,7 +506,7 @@ export function doctorDshTui({ env = process.env, panePath } = {}) {
   else if (state.pin === null) add("dsh-tui-profile", !ours, `not installed: ${state.dir}/package.json does not list ${DSH_TUI.package}`, installLine);
   else if (state.pin !== DSH_TUI.version || state.installed !== DSH_TUI.version) add("dsh-tui-profile", false, `${state.dir} pins ${state.pin}, but node_modules has ${state.installed ?? "nothing"}; the pin is ${DSH_TUI.version}`, installLine);
   else if (state.integrity !== DSH_TUI.integrity) add("dsh-tui-profile", false, `${state.dir}'s lockfile records ${state.integrity ?? "no integrity"}, not the pinned ${DSH_TUI.integrity}`, installLine);
-  else add("dsh-tui-profile", true, `${state.dir}: ${PIN}, integrity ok${record ? " (added by this installer)" : " (not added by this installer; uninstall leaves it)"}`);
+  else add("dsh-tui-profile", true, `${state.dir}: ${PIN}, integrity ok${owned ? " (added by this installer)" : " (not added by this installer; uninstall leaves it)"}`);
 
   if (!shimPresent) add("dsh-tui-shim", state.pin === null, `not installed: ${shim} is missing`, installLine);
   else if (shimText === null) add("dsh-tui-shim", false, `${shim} exists but is unreadable (a dangling link?)`, `rm ${shim} && ${installLine}`);
@@ -526,6 +538,7 @@ export function dshTuiPresence({ env = process.env } = {}) {
   const dshHome = dshHomeOf(env);
   const state = profileState(dshHome);
   const record = ownershipOf(state.dir);
+  const owned = record !== null && state.pin === record.version;
   const shim = shimPathOf(env);
   const shimText = read(shim);
   return {

@@ -138,14 +138,16 @@ automagik-herdr dsh-tui uninstall # the plugin and the shim away; sessions and s
 ```
 
 - **DSH first.** It assumes `dsh` is on PATH (DSH Desktop, or `npm install -g @deepseek-ai/dsh`).
-  With none, install prints one line saying how to get it and changes nothing. Herdr **0.1.13 or
-  later** is what ships the built-in `dsh-tui` program entry this shim lights up.
+  With none, install prints one line saying how to get it and changes nothing. **herdr-app
+  v0.1.13 or later** is what ships the built-in `dsh-tui` program entry this shim lights up.
 - **The exact pin.** `@deepseek-harness-tui/dsh-tui` **0.19.0**, built for DSH 0.2.2-rc.1. The
   profile's `package.json` pins the exact version and its `pnpm-lock.yaml` must record the
   registry integrity this pack carries (`sha512-4TAP…`); an install that lands on another
   version or integrity fails and takes back what it added. The install records that *it* added
   the pin in `~/.dsh/profiles/tui/.automagik-herdr-dsh-tui.json`; a pin already there is the
-  person's, and uninstall leaves it.
+  person's, and uninstall leaves it. A different version the person chose is never replaced: the
+  install refuses and says how to remove it or pin the pack's version. The record names the
+  package and the version it set, so a pack-owned older pin is still the pack's after a bump.
 - **Its own profile.** `dsh plugin --profile tui add …` writes `<DSH_HOME>/profiles/tui` only
   (DSH's home is `~/.dsh` unless `DSH_HOME` says otherwise). The reserved `desktop` profile, its
   settings and `~/.dsh/.credentials.yaml` are never written; the install checks their fingerprints

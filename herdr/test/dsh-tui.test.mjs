@@ -81,6 +81,21 @@ exec "${process.execPath}" "${helper}" "$@"
   return { root, home, bin, env, calls, runShim, cli, dsh: join(bin, "dsh") };
 }
 
+/** A tui profile as an earlier install (or the person) left it; `record` marks it the pack's. */
+function seedProfile(s, { version = DSH_TUI.version, record = false } = {}) {
+  const profile = join(s.home, ".dsh", "profiles", "tui");
+  const dir = join(profile, "node_modules", "@deepseek-harness-tui", "dsh-tui");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(profile, "package.json"), JSON.stringify({ dependencies: { [DSH_TUI.package]: version } }) + "\n");
+  writeFileSync(join(profile, "pnpm-workspace.yaml"), `minimumReleaseAgeExclude:\n  - '${DSH_TUI.package}@${version}'\n`);
+  writeFileSync(join(profile, "pnpm-lock.yaml"), `packages:\n\n  '${DSH_TUI.package}@${version}':\n    resolution: {integrity: ${DSH_TUI.integrity}}\n\n`);
+  writeFileSync(join(dir, "package.json"), `{"version":"${version}"}\n`);
+  if (record) {
+    writeFileSync(join(profile, RECORD_FILE), JSON.stringify({ package: DSH_TUI.package, version, integrity: DSH_TUI.integrity }) + "\n");
+  }
+  return profile;
+}
+
 test("install pins exactly 0.19.0 with its integrity into the tui profile only", async (t) => {
   const s = scene(t);
   const r = await installDshTui({ env: s.env, publishedAt: PUBLISHED, now: () => Date.parse("2026-11-06T10:00:00Z") });
@@ -244,15 +259,43 @@ test("the CLI command installs, reports doctor JSON and uninstalls", async (t) =
   assert.equal(existsSync(join(s.home, ".local", "bin", SHIM)), false);
 });
 
+test("a pack-owned pin from an earlier release is still the pack's after a pin bump", async (t) => {
+  const s = scene(t);
+  const profile = seedProfile(s, { version: "0.18.0", record: true });
+  assert.equal(ownershipOf(profile).version, "0.18.0", "the record is read by package, not the current pin");
+  const installed = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  assert.equal(installed.status, "installed", installed.detail);
+  assert.equal(JSON.parse(readFileSync(join(profile, RECORD_FILE), "utf8")).version, DSH_TUI.version, "the record follows the version the install set");
+  const r = uninstallDshTui({ env: s.env });
+  assert.equal(r.status, "removed");
+  assert.ok(s.calls().includes(`plugin --profile tui remove ${DSH_TUI.package}`));
+  assert.deepEqual(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies, {});
+  assert.equal(existsSync(join(profile, RECORD_FILE)), false);
+});
+
+test("a pack-owned old pin uninstalls even when the current pin has moved on", (t) => {
+  const s = scene(t);
+  const profile = seedProfile(s, { version: "0.18.0", record: true });
+  const r = uninstallDshTui({ env: s.env });
+  assert.equal(r.status, "removed");
+  assert.ok(s.calls().includes(`plugin --profile tui remove ${DSH_TUI.package}`));
+  assert.deepEqual(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies, {});
+});
+
+test("a different version the person pinned is refused, never replaced", async (t) => {
+  const s = scene(t);
+  const profile = seedProfile(s, { version: "0.18.0" });
+  const r = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  assert.equal(r.status, "failed");
+  assert.match(r.detail, /already pins .*0\.18\.0/);
+  assert.deepEqual(s.calls(), []);
+  assert.equal(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies[DSH_TUI.package], "0.18.0");
+  assert.equal(existsSync(join(profile, RECORD_FILE)), false);
+});
+
 test("a pin the person added is not the installer's, so uninstall leaves it", async (t) => {
   const s = scene(t);
-  const profile = join(s.home, ".dsh", "profiles", "tui");
-  const dir = join(profile, "node_modules", "@deepseek-harness-tui", "dsh-tui");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(profile, "package.json"), JSON.stringify({ dependencies: { [DSH_TUI.package]: DSH_TUI.version } }) + "\n");
-  writeFileSync(join(profile, "pnpm-workspace.yaml"), `minimumReleaseAgeExclude:\n  - '${PIN}'\n`);
-  writeFileSync(join(profile, "pnpm-lock.yaml"), `packages:\n\n  '${PIN}':\n    resolution: {integrity: ${DSH_TUI.integrity}}\n\n`);
-  writeFileSync(join(dir, "package.json"), `{"version":"${DSH_TUI.version}"}\n`);
+  const profile = seedProfile(s, { version: DSH_TUI.version });
   const installed = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
   assert.equal(installed.status, "installed", installed.detail);
   assert.equal(ownershipOf(profile), null);
