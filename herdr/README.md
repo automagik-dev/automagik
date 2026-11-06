@@ -138,11 +138,14 @@ automagik-herdr dsh-tui uninstall # the plugin and the shim away; sessions and s
 ```
 
 - **DSH first.** It assumes `dsh` is on PATH (DSH Desktop, or `npm install -g @deepseek-ai/dsh`).
-  With none, install prints one line saying how to get it and changes nothing.
+  With none, install prints one line saying how to get it and changes nothing. Herdr **0.1.13 or
+  later** is what ships the built-in `dsh-tui` program entry this shim lights up.
 - **The exact pin.** `@deepseek-harness-tui/dsh-tui` **0.19.0**, built for DSH 0.2.2-rc.1. The
   profile's `package.json` pins the exact version and its `pnpm-lock.yaml` must record the
   registry integrity this pack carries (`sha512-4TAP…`); an install that lands on another
-  version or integrity fails and takes back what it added.
+  version or integrity fails and takes back what it added. The install records that *it* added
+  the pin in `~/.dsh/profiles/tui/.automagik-herdr-dsh-tui.json`; a pin already there is the
+  person's, and uninstall leaves it.
 - **Its own profile.** `dsh plugin --profile tui add …` writes `<DSH_HOME>/profiles/tui` only
   (DSH's home is `~/.dsh` unless `DSH_HOME` says otherwise). The reserved `desktop` profile, its
   settings and `~/.dsh/.credentials.yaml` are never written; the install checks their fingerprints
@@ -151,22 +154,31 @@ automagik-herdr dsh-tui uninstall # the plugin and the shim away; sessions and s
   version published hours ago, so the profile's `pnpm-workspace.yaml` carries
   `minimumReleaseAgeExclude` for exactly `@deepseek-harness-tui/dsh-tui@0.19.0` — never the bare
   package name. Once that version is older than the profile's threshold, install/update removes
-  that exact entry; uninstall removes it too. Other packages' entries are left alone.
-- **The shim.** `~/.local/bin/dsh-tui` is a shell script whose one command is
-  `exec dsh --profile tui "$@"`. The long form matters: dsh-TUI reads the profile name from the
-  app's arguments, and the short `dsh tui` leaves only `tui` there. Herdr's built-in `dsh-tui`
-  program entry (its `programs.json`) checks that the first word resolves on PATH, so the built-in
-  DSH menu entry works with no per-user `programs.json`. Add `~/.local/bin` to PATH if it isn't.
+  that exact entry; uninstall removes it only for a pin this installer added. Other packages'
+  entries are left alone.
+- **The shim.** `~/.local/bin/dsh-tui` is a shell script that checks `dsh` is on PATH (a clear
+  line and exit 127 when it isn't) and then runs `exec dsh --profile tui -- "$@"`. The long form
+  matters: dsh-TUI reads the profile name from the app's arguments, and the short `dsh tui` leaves
+  only `tui` there; `--` keeps an app argument that looks like a launcher flag (`--resume`,
+  `--help`) away from `dsh`. Herdr's built-in `dsh-tui` program entry (its `programs.json`) checks
+  that the first word resolves on its PATH, so the built-in DSH menu entry works with no per-user
+  `programs.json`.
+- **PATH.** The doctor checks `~/.local/bin` on the PATH Herdr **panes** get (an interactive login
+  shell's, the way herdr-core starts a program) and names the file to edit for that shell
+  (`~/.zshrc`, `~/.bash_profile`, `~/.config/fish/config.fish`, `~/.profile`). Herdr's `+` menu
+  checks its own PATH; restart Herdr after changing the file so its dot sees the shim too.
 - **First launch.** Sign in in dsh-TUI with `/model` → **DeepSeek Account**, or `/auth`; a key
   already in DSH's credential store or `DEEPSEEK_API_KEY` in the environment works too. No key is
   stored by this installer and no BWS launcher ships. The four-step first-run guide is marked
   done once (`~/.dsh-tui/onboarding.json`); `/setup` opens it later.
-- **Sessions.** They land in `~/.dsh` and appear in DSH Desktop's history after Desktop is quit
-  and reopened: Desktop has no live refresh. One writer per session applies: don't continue the
-  same session from Desktop and dsh-TUI at once.
-- **Uninstall.** `dsh plugin --profile tui remove` takes the plugin out and the shim follows;
-  `--uninstall` of the pack does the same while its command is still in place. Sessions,
-  `~/.dsh-tui` state and the `tui` profile stay.
+- **Sessions.** They land in DSH's home (usually `~/.dsh`) and appear in DSH Desktop's history
+  after Desktop is quit and reopened: Desktop has no live refresh. One writer per session applies:
+  don't continue the same session from Desktop and dsh-TUI at once.
+- **Uninstall.** `dsh plugin --profile tui remove` takes out the pin this installer added, the
+  release-age entry that came with it, and the shim (only when it is the pack's). A pin the person
+  added, a foreign shim, a dangling link and DSH's sessions are left alone. `--uninstall` of the
+  pack does the same while its command is still in place. `~/.dsh-tui` state and the `tui` profile
+  stay.
 
 ### From v0.2 to v0.4.x
 
@@ -575,6 +587,11 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
   terminal in the worktree that `hc get` doesn't answer for within 5 s. The lock is kept
   fresh while held, so a slow `hc` never lets a second call take it. A second call waits up
   to 75 s for it, saying on stderr after 3 s which lock it waits for and its holder's pid.
+  A `--task` worker first takes a lock for its name (`task-<hash of its name>.lock`, the
+  same 75 s in all): a second call for that task on another branch waits for the first's
+  start, then is refused by the name check before it makes a worktree or a hook. A call
+  waiting for a lock keeps refreshing the one it holds, and a refusal for a wait that ran out
+  names the task or worktree it waited for.
 - **Warnings:** `worker` prints the bots file's warnings about the calling bot on stderr
   first (a bad `worker` field is dropped, and its defaults with it); `--json` lists them.
 - **What runs:** `--agent`, `--model` and `--effort` for this task, else the bot's `worker`

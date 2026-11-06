@@ -26,6 +26,7 @@ import { isDeepStrictEqual } from "node:util";
 import { ENTRY_SOURCE, OURS, directHookCommand, hookCommand, legacyHookCommand, scriptOf, stableBriefingPath } from "./briefingText.mjs";
 import { PATH_RENAMES, SHARED_RENAMES, renamedFrom } from "./migrate.js";
 import { PROJECTS_FILE, listedProjects } from "./model.js";
+import { removePath } from "./layoutSafe.mjs";
 import { OLD_PACK_NAME, PACK_NAME } from "./release.js";
 
 export const HOOKS_JOURNAL = "hooks-journal.json";
@@ -611,6 +612,6 @@ export function relink({ binDir, modsDir, owned }) {
   if (!want || to === cli(want)) return null;
   const tmp = join(binDir, `.${CLI_LINK}.am-tmp-${process.pid}-${randomBytes(4).toString("hex")}`);
   symlinkSync(cli(want), tmp);
-  try { renameSync(tmp, link); } catch (error) { rmSync(tmp, { force: true }); throw error; }
+  try { renameSync(tmp, link); } catch (error) { removePath(tmp, { force: true }); throw error; }
   return `linked ${link} to ${cli(want)}`;
 }

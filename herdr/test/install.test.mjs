@@ -2103,7 +2103,8 @@ test("--yes installs the opt-in dsh-TUI into its own tui profile; --uninstall re
   assert.match(r.out, /dsh-TUI 0\.19\.0 is installed in the tui profile|installed dsh-TUI 0\.19\.0/);
   assert.deepEqual(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies, { "@deepseek-harness-tui/dsh-tui": "0.19.0" });
   assert.match(readFileSync(join(profile, "pnpm-workspace.yaml"), "utf8"), /'@deepseek-harness-tui\/dsh-tui@0\.19\.0'/);
-  assert.match(readFileSync(shim, "utf8"), /^exec dsh --profile tui "\$@"$/m);
+  assert.match(readFileSync(shim, "utf8"), /^exec dsh --profile tui -- "\$@"$/m);
+  assert.match(readFileSync(shim, "utf8"), /is not on PATH/);
   assert.deepEqual(dsh.calls(), ["plugin --profile tui add @deepseek-harness-tui/dsh-tui@0.19.0 --save-exact"]);
   assert.equal(readFileSync(join(s.home, ".dsh", "profiles", "desktop", "package.json"), "utf8"), "{\"name\":\"desktop\"}\n");
   assert.equal(readFileSync(join(s.home, ".dsh", ".credentials.yaml"), "utf8"), "keep: me\n");
@@ -2115,6 +2116,39 @@ test("--yes installs the opt-in dsh-TUI into its own tui profile; --uninstall re
   assert.deepEqual(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies, {});
   assert.ok(dsh.calls().includes("plugin --profile tui remove @deepseek-harness-tui/dsh-tui"));
   assert.equal(readFileSync(join(s.home, ".dsh", ".credentials.yaml"), "utf8"), "keep: me\n");
+});
+
+test("--uninstall's fallback removes only this installer's dsh-tui shim, by the CLI's predicate", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  fakeDsh(s);
+  assert.equal(s.run("--yes", "--no-usagemeter").code, 0);
+  const shim = join(s.home, ".local", "bin", "dsh-tui");
+  const other = join(s.root, "other-command");
+  writeFileSync(other, "#!/bin/sh\nexit 0\n");
+  rmSync(s.link);
+  symlinkSync(other, s.link);
+  const r = s.run("--uninstall", "--yes", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /Removed .*dsh-tui; the tui DSH profile was left as it is/);
+  assert.equal(existsSync(shim), false);
+});
+
+test("--uninstall's fallback leaves a foreign dsh-tui shim, even one naming Automagik Herdr", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  fakeDsh(s);
+  assert.equal(s.run("--yes", "--no-usagemeter").code, 0);
+  const shim = join(s.home, ".local", "bin", "dsh-tui");
+  writeFileSync(shim, "#!/bin/sh\n# Automagik Herdr\n# not the pack's shim\nexec my-dsh \"$@\"\n");
+  const other = join(s.root, "other-command");
+  writeFileSync(other, "#!/bin/sh\nexit 0\n");
+  rmSync(s.link);
+  symlinkSync(other, s.link);
+  const r = s.run("--uninstall", "--yes", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /Left .*dsh-tui: it is not this installer's/);
+  assert.match(readFileSync(shim, "utf8"), /not the pack's shim/);
 });
 
 test("no dsh: --yes installs the pack and prints one honest dsh-TUI skip line", (t) => {

@@ -37,7 +37,7 @@ import { CLI_LINK, hooksRunning, knownProjects, ledgerFolders, removeHooks } fro
 import {
   HELD_FILE, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker,
 } from "./release.js";
-import { change, switchCommand } from "./layoutSafe.mjs";
+import { change, removePath, switchCommand } from "./layoutSafe.mjs";
 import { appHomeOf, binDirOf, markerOf, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeMarker } from "./update.mjs";
 import { dshTuiPresence } from "./dshTui.mjs";
 
@@ -217,7 +217,7 @@ function linkCommand(ctx, name, entries, ours) {
   chmodSync(target, statSync(target).mode | 0o111);
   mkdirSync(ctx.binDir, { recursive: true });
   const tmp = join(ctx.binDir, `.${name}.am-tmp-${process.pid}`);
-  rmSync(tmp, { force: true });
+  removePath(tmp, { force: true }); // a leftover tmp link may dangle: unlinked, never followed (#550)
   symlinkSync(target, tmp);
   renameSync(tmp, link);
   return { link, done: true, changed: true };
@@ -592,11 +592,11 @@ export function doctor(ctx, part) {
     // DSH as a Herdr agent (dsh-TUI, #561) is opt-in, so its absence is a note, never a broken pack.
     // The dedicated `automagik-herdr dsh-tui doctor` carries the fix commands.
     const dsh = dshTuiPresence({ env: ctx.env });
-    note("dsh-tui", dsh.dsh ? `dsh is ${dsh.dsh}` : "dsh is not on PATH: dsh-TUI is skipped (install DSH Desktop or @deepseek-ai/dsh)");
+    note("dsh-tui", dsh.dsh ? `dsh is ${dsh.dsh}` : "dsh is not on this process's PATH: dsh-TUI is skipped (install DSH Desktop or @deepseek-ai/dsh)");
     note("dsh-tui-profile", dsh.profile
-      ? `the tui profile is there${dsh.pinned ? " (pinned to the pack's dsh-TUI)" : " (not the pack's pin)"}`
+      ? `the tui profile is there${dsh.pinned ? " (pinned to the pack's dsh-TUI)" : " (not the pack's pin)"}${dsh.owned ? " (added by this installer)" : " (not added by this installer)"}`
       : "not installed (opt-in: `automagik-herdr dsh-tui install`)");
-    note("dsh-tui-shim", dsh.shimOurs ? `${dsh.shim} (exec dsh --profile tui "$@")`
+    note("dsh-tui-shim", dsh.shimOurs ? `${dsh.shim} (exec dsh --profile tui -- "$@")`
       : dsh.shimExists ? `${dsh.shim} is not this installer's`
         : dsh.profile ? `${dsh.shim} is missing: \`automagik-herdr dsh-tui install\` adds it` : "not installed");
   }

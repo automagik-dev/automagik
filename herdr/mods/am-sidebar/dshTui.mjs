@@ -22,9 +22,10 @@
 // Apache-2.0.
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { removePath } from "./layoutSafe.mjs";
 
 /** The one version this pack installs, and the npm registry's integrity for its tarball. */
 export const DSH_TUI = Object.freeze({
@@ -43,8 +44,15 @@ export const SHIM_MARK = "# Automagik Herdr's dsh-tui shim";
 export const SHIM_TEXT = `#!/bin/sh
 ${SHIM_MARK} (installed by \`automagik-herdr dsh-tui install\`).
 # The long --profile form is deliberate: dsh-TUI reads the profile name from the app's arguments.
-exec dsh --profile tui "$@"
+# \`--\` keeps an app argument that looks like a launcher flag (--resume, --help) away from dsh.
+if ! command -v dsh >/dev/null 2>&1; then
+  echo "dsh-tui: DSH (dsh) is not on PATH. Install DSH Desktop or 'npm install -g @deepseek-ai/dsh'." >&2
+  exit 127
+fi
+exec dsh --profile tui -- "$@"
 `;
+/** The ownership record the installer leaves in the tui profile (never pnpm's files). */
+export const RECORD_FILE = ".automagik-herdr-dsh-tui.json";
 /** The one honest line a machine with no DSH gets, and nothing else. */
 export const SKIP = "DSH is not installed (no dsh on PATH): skipped dsh-TUI. Install DSH Desktop or `npm install -g @deepseek-ai/dsh`, then run `automagik-herdr dsh-tui install`.";
 
@@ -56,6 +64,43 @@ const lastLine = (text) => String(text ?? "").trim().split(/\r?\n/).filter(Boole
 const executable = (path) => {
   try { if (!statSync(path).isFile()) return false; accessSync(path, constants.X_OK); return true; } catch { return false; }
 };
+/** Whether anything, a dangling link included, is at `path` (readFileSync would call a dangling link absent). */
+const present = (path) => {
+  try { lstatSync(path); return true; } catch { return false; }
+};
+
+/** The person's login shell, or /bin/sh; an absolute, running one only. */
+export function loginShellOf(env = process.env) {
+  const shell = env.SHELL;
+  return typeof shell === "string" && isAbsolute(shell) && executable(shell) ? shell : "/bin/sh";
+}
+/** The file a person edits to change their PATH, for the shell Herdr panes start in. */
+export function shellConfigOf(shell, platform = process.platform) {
+  const name = basename(String(shell ?? ""));
+  if (name === "zsh") return "~/.zshrc";
+  if (name === "fish") return "~/.config/fish/config.fish";
+  if (name === "bash") return platform === "darwin" ? "~/.bash_profile" : "~/.bashrc";
+  return "~/.profile";
+}
+/**
+ * The PATH Herdr panes actually get: an interactive login shell's, the way herdr-core starts a
+ * program (#453's launchPath starts from this CLI's, which is not the pane's). The shell's startup
+ * files may print anything, so the answer is read between markers. No answer (too slow, a broken
+ * shell): this process's PATH, and `login: false` says so.
+ */
+export function panePathOf({ env = process.env, timeout = 5000 } = {}) {
+  const shell = loginShellOf(env);
+  const marker = `__AM_HDR_PATH_${process.pid}_${randomBytes(3).toString("hex")}__`;
+  let stdout = "";
+  try {
+    const r = spawnSync(shell, ["-ilc", `printf '${marker}'; printenv PATH; printf ':${marker}'`],
+      { env, timeout, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    stdout = r.stdout ?? "";
+  } catch { /* no answer */ }
+  const start = stdout.lastIndexOf(marker), end = stdout.lastIndexOf(`:${marker}`);
+  const path = start >= 0 && end > start ? stdout.slice(start + marker.length, end) : "";
+  return { shell, config: shellConfigOf(shell), path: path || String(env.PATH ?? ""), login: Boolean(path) };
+}
 
 /** DSH's home: $DSH_HOME, else ~/.dsh (the store DSH Desktop and the CLI share). */
 export const dshHomeOf = (env = process.env) => resolve(env.DSH_HOME?.trim() ? env.DSH_HOME.trim() : join(env.HOME || homedir(), ".dsh"));
@@ -81,7 +126,7 @@ export function findDsh(env = process.env) {
 
 /** Whether a file at the shim's path is this installer's, by its marker and its exec line. */
 export function shimIsOurs(text) {
-  return typeof text === "string" && text.includes(SHIM_MARK) && /^exec dsh --profile tui "\$@"$/m.test(text);
+  return typeof text === "string" && text.includes(SHIM_MARK) && /^exec dsh --profile tui -- "\$@"$/m.test(text);
 }
 
 function writeAtomic(path, text, mode) {
@@ -96,6 +141,17 @@ function json(path) {
   const text = read(path);
   if (text === null) return null;
   try { return JSON.parse(text); } catch { return null; }
+}
+
+/** The tui profile's record of the dsh-TUI this installer added, or null (the person's own). */
+export function ownershipOf(profile) {
+  const record = json(join(profile, RECORD_FILE));
+  return record?.package === DSH_TUI.package && record?.version === DSH_TUI.version ? record : null;
+}
+
+/** Forget the installer's ownership record in `profile` (the tui profile only). */
+function dropRecord(profile) {
+  removePath(join(profile, RECORD_FILE), { force: true });
 }
 
 /** The exact exclusions in a profile's pnpm-workspace.yaml, read-only. */
@@ -221,7 +277,7 @@ export function runDsh(dsh, args, { env, cwd, timeout = 600_000 } = {}) {
 const tempCwd = () => mkdtempSync(join(tmpdir(), "am-dsh-tui-"));
 const withTemp = (fn) => {
   const cwd = tempCwd();
-  try { return fn(cwd); } finally { rmSync(cwd, { recursive: true, force: true }); }
+  try { return fn(cwd); } finally { removePath(cwd, { recursive: true, force: true }); }
 };
 
 /** Whether `binDir` is on PATH, for the shim Herdr's built-in entry looks up. */
@@ -241,10 +297,12 @@ export async function installDshTui(options = {}) {
   const binDir = binDirOf(env);
   const shim = join(binDir, SHIM);
   const priorShim = read(shim);
-  if (priorShim !== null && !shimIsOurs(priorShim)) {
-    return { status: "failed", changed: false, detail: `${shim} exists and is not this installer's: left alone. Remove it, or make it exec dsh --profile tui, then run this again.`, lines: [] };
+  const shimPresent = present(shim);
+  if (shimPresent && !shimIsOurs(priorShim)) {
+    return { status: "failed", changed: false, detail: `${shim} exists and is not this installer's${priorShim === null ? " (a dangling link or unreadable file)" : ""}: left alone. Remove it, or make it exec dsh --profile tui -- "$@", then run this again.`, lines: [] };
   }
   const before = profileState(dshHome);
+  const ownedBefore = ownershipOf(profile);
   const desktopBefore = desktopFingerprint(dshHome);
   let result;
   try {
@@ -272,14 +330,23 @@ export async function installDshTui(options = {}) {
     return { status: "failed", changed: false, detail: `the install changed ${changedDesktop.join(", ")} under ${dshHome}; this installer never writes the desktop profile, its settings or DSH's credentials, so check them.`, lines: [] };
   }
 
-  // The release-age exclusion: exactly this pin while pnpm needed it, none once it has aged out.
+  // Who added the pin: only an install that found the dependency absent (or had recorded its
+  // own earlier install) owns it. A pin the person added is theirs: no record, no uninstall, and
+  // pnpm's release-age exclusion is left as it is.
+  const staleRecord = ownedBefore !== null && before.pin !== DSH_TUI.version;
+  if (staleRecord) dropRecord(profile);
+  const owns = before.pin === null || (ownedBefore !== null && !staleRecord && before.pin === DSH_TUI.version);
+  const recordBefore = read(join(profile, RECORD_FILE));
+  if (owns) {
+    writeAtomic(join(profile, RECORD_FILE), `${JSON.stringify({ package: DSH_TUI.package, version: DSH_TUI.version, integrity: DSH_TUI.integrity }, null, 2)}\n`, 0o600);
+  }
   let workspace = state.workspace ?? "";
   const published = "publishedAt" in options ? options.publishedAt : await registryPublishedAt();
   const aged = typeof published === "string" && Number.isFinite(Date.parse(published))
     && (now() - Date.parse(published)) / 60000 >= minimumReleaseAge(workspace);
   const kept = aged ? [] : [PIN];
   const had = releaseAgeEntries(workspace).filter((entry) => packageOfEntry(entry) === DSH_TUI.package);
-  const scoped = scopeReleaseAge(workspace, kept);
+  const scoped = owns ? scopeReleaseAge(workspace, kept) : { text: workspace, changed: false };
   if (scoped.changed) {
     writeAtomic(join(profile, "pnpm-workspace.yaml"), scoped.text, 0o644);
     workspace = scoped.text;
@@ -302,9 +369,10 @@ export async function installDshTui(options = {}) {
     `Sessions go to ${dshHome}; DSH Desktop shows them after you quit and reopen it (no live refresh).`,
     "The desktop profile, its settings and DSH's credentials are untouched.",
   ];
-  if (had.length && !aged) lines.splice(2, 0, `The ${PROFILE} profile excludes ${PIN} from pnpm's release-age gate (exact version only).`);
-  if (aged && had.includes(PIN)) lines.splice(2, 0, `Removed the release-age exception for ${PIN}: it is older than the profile's minimumReleaseAge now.`);
-  return { status: "installed", changed: before.pin !== DSH_TUI.version || before.integrity !== DSH_TUI.integrity || priorShim !== SHIM_TEXT || scoped.changed || guideBefore === null, lines, detail: lines[0] };
+  if (had.length && !aged && owns) lines.splice(2, 0, `The ${PROFILE} profile excludes ${PIN} from pnpm's release-age gate (exact version only).`);
+  if (aged && had.includes(PIN) && owns) lines.splice(2, 0, `Removed the release-age exception for ${PIN}: it is older than the profile's minimumReleaseAge now.`);
+  if (!owns) lines.splice(2, 0, `The ${PROFILE} profile already had dsh-TUI${before.pin ? ` ${before.pin}` : ""} (not added by this installer): uninstall leaves it.`);
+  return { status: "installed", changed: before.pin !== DSH_TUI.version || before.integrity !== DSH_TUI.integrity || priorShim !== SHIM_TEXT || scoped.changed || guideBefore === null || (owns && recordBefore === null), lines, detail: lines[0] };
 }
 
 /**
@@ -318,16 +386,24 @@ export function uninstallDshTui(options = {}) {
   const profile = profileDirOf(dshHome);
   const state = profileState(dshHome);
   const shim = shimPathOf(env);
+  const shimPresent = present(shim);
   const shimText = read(shim);
+  const record = ownershipOf(profile);
+  const owns = record !== null && state.pin === record.version;
   const lines = [];
   let failed = false;
+  let changed = false;
   const desktopBefore = desktopFingerprint(dshHome);
 
-  if (state.pin === null && shimText === null) {
-    return { status: "absent", changed: false, detail: "dsh-TUI is not installed; nothing to remove.", lines: ["dsh-TUI is not installed; nothing to remove."] };
+  if (state.pin === null && !shimPresent) {
+    if (record) { dropRecord(profile); changed = true; }
+    return { status: "absent", changed, detail: "dsh-TUI is not installed; nothing to remove.", lines: ["dsh-TUI is not installed; nothing to remove."] };
   }
   if (state.pin !== null) {
-    if (!dsh) {
+    if (!owns) {
+      lines.push(`Left ${DSH_TUI.package} in the ${PROFILE} profile (${state.pin}): this installer did not add it.`);
+      if (record) { dropRecord(profile); changed = true; }
+    } else if (!dsh) {
       failed = true;
       lines.push(`dsh is not on PATH, so ${DSH_TUI.package} could not be removed from the ${PROFILE} profile; install DSH and run this again.`);
     } else {
@@ -340,26 +416,39 @@ export function uninstallDshTui(options = {}) {
       if (result.code !== 0) {
         failed = true;
         lines.push(`dsh plugin --profile ${PROFILE} remove ${DSH_TUI.package} failed: ${lastLine(result.stderr || result.stdout) || `exit ${result.code}`}`);
-      } else lines.push(`Removed ${DSH_TUI.package} from the ${PROFILE} profile.`);
+      } else {
+        lines.push(`Removed ${DSH_TUI.package} from the ${PROFILE} profile.`);
+        changed = true;
+        dropRecord(profile);
+      }
     }
-  } else lines.push(`The ${PROFILE} profile does not have ${DSH_TUI.package}.`);
+  } else {
+    lines.push(`The ${PROFILE} profile does not have ${DSH_TUI.package}.`);
+    if (record) { dropRecord(profile); changed = true; }
+  }
 
-  const workspace = read(join(profile, "pnpm-workspace.yaml"));
-  if (workspace !== null) {
-    const ours = releaseAgeEntries(workspace).filter((entry) => packageOfEntry(entry) === DSH_TUI.package);
-    if (ours.length) {
-      const scoped = scopeReleaseAge(workspace, []);
-      if (scoped.changed) {
-        writeAtomic(join(profile, "pnpm-workspace.yaml"), scoped.text, 0o644);
-        lines.push(`Removed the ${PROFILE} profile's release-age exception for ${DSH_TUI.package}.`);
+  // The release-age entry is ours only when the pin was: a person's own install keeps its entry.
+  if (owns) {
+    const workspace = read(join(profile, "pnpm-workspace.yaml"));
+    if (workspace !== null) {
+      const ours = releaseAgeEntries(workspace).filter((entry) => packageOfEntry(entry) === DSH_TUI.package);
+      if (ours.length) {
+        const scoped = scopeReleaseAge(workspace, []);
+        if (scoped.changed) {
+          writeAtomic(join(profile, "pnpm-workspace.yaml"), scoped.text, 0o644);
+          changed = true;
+          lines.push(`Removed the ${PROFILE} profile's release-age exception for ${DSH_TUI.package}.`);
+        }
       }
     }
   }
 
-  if (shimText === null) lines.push(`No ${SHIM} shim at ${shim}.`);
+  if (!shimPresent) lines.push(`No ${SHIM} shim at ${shim}.`);
+  else if (shimText === null) lines.push(`Left ${shim}: it exists but is unreadable (a dangling link or a file this user cannot read).`);
   else if (!shimIsOurs(shimText)) lines.push(`Left ${shim}: it is not this installer's.`);
   else {
-    rmSync(shim, { force: true });
+    removePath(shim, { force: true });
+    changed = true;
     lines.push(`Removed the ${SHIM} shim (${shim}).`);
   }
 
@@ -369,7 +458,7 @@ export function uninstallDshTui(options = {}) {
     lines.push(`The uninstall changed ${changedDesktop.join(", ")} under ${dshHome}; this installer never writes the desktop profile, its settings or DSH's credentials, so check them.`);
   }
   lines.push(`Kept: DSH sessions (${dshHome}), dsh-TUI's own state (~/.dsh-tui) and the tui profile.`);
-  return { status: failed ? "failed" : "removed", changed: true, detail: lines[0], lines };
+  return { status: failed ? "failed" : changed ? "removed" : "absent", changed, detail: lines[0], lines };
 }
 
 /**
@@ -377,37 +466,47 @@ export function uninstallDshTui(options = {}) {
  * the pinned one. Read-only. `{ code, checks }`: 0 healthy or installed, 1 broken, 2 not
  * installed or no dsh (not applicable).
  */
-export function doctorDshTui({ env = process.env } = {}) {
+export function doctorDshTui({ env = process.env, panePath } = {}) {
   const checks = [];
   const add = (check, ok, detail, fix = null) => checks.push({ check, ok, detail, fix: ok ? null : fix });
-  const dsh = findDsh(env);
+  const shell = loginShellOf(env);
+  const pane = panePath ? { shell, config: shellConfigOf(shell), login: true, ...panePath } : panePathOf({ env });
+  const dsh = findDsh({ ...env, PATH: pane.path });
   const dshHome = dshHomeOf(env);
   const state = profileState(dshHome);
+  const record = ownershipOf(state.dir);
   const shim = shimPathOf(env);
+  const shimPresent = present(shim);
   const shimText = read(shim);
   const ours = shimText !== null && shimIsOurs(shimText);
   const pinned = state.pin === DSH_TUI.version && state.integrity === DSH_TUI.integrity && state.installed === DSH_TUI.version;
-  const installed = state.pin !== null || ours;
+  const installed = state.pin !== null || shimPresent;
   const installLine = "automagik-herdr dsh-tui install";
 
+  const processDsh = dsh ?? findDsh(env);
   add("dsh", Boolean(dsh) || !installed,
-    dsh ? dsh : "not found on PATH: dsh-TUI is skipped (install DSH Desktop or `npm install -g @deepseek-ai/dsh`)",
-    "install DSH Desktop or `npm install -g @deepseek-ai/dsh`");
+    dsh ? dsh
+      : processDsh ? `${processDsh} is on this process's PATH, not on the PATH Herdr panes get (${pane.login ? `login shell ${pane.shell}` : "no login shell answer"}); add ${dirname(processDsh)} to ${pane.config}`
+        : `not found on the PATH Herdr panes get (${pane.login ? `login shell ${pane.shell}` : "no login shell answer; this process's PATH"}): dsh-TUI is skipped`,
+    processDsh && !dsh ? `echo 'export PATH="${dirname(processDsh)}:$PATH"' >> ${pane.config}` : "install DSH Desktop or `npm install -g @deepseek-ai/dsh`");
 
   if (!state.exists) add("dsh-tui-profile", !ours, `not installed: ${state.dir} is missing`, installLine);
   else if (state.pin === null) add("dsh-tui-profile", !ours, `not installed: ${state.dir}/package.json does not list ${DSH_TUI.package}`, installLine);
   else if (state.pin !== DSH_TUI.version || state.installed !== DSH_TUI.version) add("dsh-tui-profile", false, `${state.dir} pins ${state.pin}, but node_modules has ${state.installed ?? "nothing"}; the pin is ${DSH_TUI.version}`, installLine);
   else if (state.integrity !== DSH_TUI.integrity) add("dsh-tui-profile", false, `${state.dir}'s lockfile records ${state.integrity ?? "no integrity"}, not the pinned ${DSH_TUI.integrity}`, installLine);
-  else add("dsh-tui-profile", true, `${state.dir}: ${PIN}, integrity ok`);
+  else add("dsh-tui-profile", true, `${state.dir}: ${PIN}, integrity ok${record ? " (added by this installer)" : " (not added by this installer; uninstall leaves it)"}`);
 
-  if (shimText === null) add("dsh-tui-shim", state.pin === null, `not installed: ${shim} is missing`, installLine);
+  if (!shimPresent) add("dsh-tui-shim", state.pin === null, `not installed: ${shim} is missing`, installLine);
+  else if (shimText === null) add("dsh-tui-shim", false, `${shim} exists but is unreadable (a dangling link?)`, `rm ${shim} && ${installLine}`);
   else if (!ours) add("dsh-tui-shim", false, `${shim} exists and is not this installer's`, `rm ${shim} && ${installLine}`);
   else if (!executable(shim)) add("dsh-tui-shim", false, `${shim} is not executable`, `chmod 755 ${shim}`);
-  else add("dsh-tui-shim", true, `${shim} (exec dsh --profile tui "$@")`);
+  else add("dsh-tui-shim", true, `${shim} (exec dsh --profile tui -- "$@")`);
 
   const binDir = binDirOf(env);
-  add("dsh-tui-path", onPath(env, binDir), onPath(env, binDir) ? `${binDir} is on PATH` : `${binDir} is not on PATH: Herdr's built-in menu entry finds the shim only when it is`,
-    `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`);
+  const onPanePath = String(pane.path ?? "").split(delimiter).includes(binDir);
+  add("dsh-tui-path", onPanePath,
+    `${binDir} is ${onPanePath ? "" : "not "}on the PATH Herdr panes get (${pane.login ? `login shell ${pane.shell}` : "this process; no login shell answer"})${onPanePath ? "" : "; Herdr's + menu checks its own PATH too, so restart Herdr after adding it"}`,
+    `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ${pane.config}`);
 
   const guide = read(join(env.HOME || homedir(), ".dsh-tui", "onboarding.json"));
   add("dsh-tui-guide", true, guide === null ? "not marked: the first-run guide opens once (/setup opens it later)" : "marked done");
@@ -421,6 +520,7 @@ export function doctorDshTui({ env = process.env } = {}) {
 export function dshTuiPresence({ env = process.env } = {}) {
   const dshHome = dshHomeOf(env);
   const state = profileState(dshHome);
+  const record = ownershipOf(state.dir);
   const shim = shimPathOf(env);
   const shimText = read(shim);
   return {
@@ -428,8 +528,9 @@ export function dshTuiPresence({ env = process.env } = {}) {
     profile: state.pin !== null,
     profileDir: state.dir,
     pinned: state.pin === DSH_TUI.version && state.integrity === DSH_TUI.integrity && state.installed === DSH_TUI.version,
+    owned: record !== null && state.pin === record.version,
     shim,
-    shimExists: shimText !== null,
+    shimExists: present(shim),
     shimOurs: shimText !== null && shimIsOurs(shimText),
     guide: existsSync(join(env.HOME || homedir(), ".dsh-tui", "onboarding.json")),
   };

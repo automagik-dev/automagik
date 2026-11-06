@@ -1,7 +1,8 @@
 // The one door, checked statically (refs #431, #448, #450): a folder leaves mods/ and a file leaves
 // layouts/ only through mods/am-sidebar/layoutSafe.mjs change(). Every .js and .mjs under herdr/mods
 // (Pocket Link left out: it owns its folder) and am/ (its tests left out) is scanned for rmSync,
-// renameSync, unlinkSync, cpSync, rmdirSync, fs.promises' rm, rename, unlink and cp, a bare
+// renameSync, unlinkSync, cpSync, rmdirSync, layoutSafe.mjs removePath (#550: rmSync that never
+// follows a link), fs.promises' rm, rename, unlink and cp, a bare
 // rm/rename/unlink call (an injected one), and a program run through Herdr's io or an exec (`rm`,
 // `mv`, `cp`, a `find` that deletes: mods/am-mods moves its folders that way, inside Herdr). A call outside
 // layoutSafe.mjs fails unless ALLOWLIST names it, with its reason: its target is never under mods/
@@ -18,7 +19,7 @@ const REPO = fileURLToPath(new URL("../..", import.meta.url));
 const DOOR = "herdr/mods/am-sidebar/layoutSafe.mjs";
 
 const CALL = new RegExp([
-  String.raw`\b(?:rmSync|renameSync|unlinkSync|cpSync|rmdirSync)\s*\(`,
+  String.raw`\b(?:rmSync|renameSync|unlinkSync|cpSync|rmdirSync|removePath)\s*\(`,
   String.raw`\b(?:fs|fsp|promises)\s*\.\s*(?:rm|rename|unlink|cp|rmdir)\s*\(`,
   String.raw`(?<![\w.$])(?:rm|rename|unlink)\s*\(`,
   String.raw`\b(?:run\s*\(\s*io\s*,|(?:io\.)?exec\s*\()\s*["'\`](?:rm|mv|cp|find|rmdir|unlink)["'\`]`,
@@ -97,7 +98,7 @@ export const ALLOWLIST = [
   ["herdr/mods/am-sidebar/update.mjs", "cpSync(join(modsDir, h.mod), join(next, h.mod), { recursive: true, verbatimSymlinks: true })", 1, "a held mod copied INTO the new kept set (.prev-next-), read from mods/ and never written there"],
   ["herdr/mods/am-sidebar/update.mjs", "cpSync(layoutRefOf(modsDir), join(dir, KEPT_LAYOUT))", 1, "the layout reference copied into a kept set; it reads the state folder's copy, never layouts/"],
   ["herdr/mods/am-sidebar/update.mjs", "cpSync(src, dst, { recursive: true, verbatimSymlinks: true })", 1, "carryPrivate: a private path copied into a staged folder or the kept set, never into mods/"],
-  ["herdr/mods/am-sidebar/update.mjs", "rmSync(dst, { recursive: true, force: true })", 1, "carryPrivate: a private path copied into a staged folder or the kept set, never into mods/"],
+  ["herdr/mods/am-sidebar/update.mjs", "removePath(dst, { recursive: true, force: true })", 1, "carryPrivate: a private path copied into a staged folder or the kept set, never into mods/"],
   ["herdr/mods/am-sidebar/update.mjs", "rename(next, prevSetOf(modsDir))", 1, "the pack's state folder (<app home>/automagik-herdr: the record, held.json, the kept set .prev, its .prev-next-/.prev-old- neighbours), beside mods/, never in it"],
   ["herdr/mods/am-sidebar/update.mjs", "renameSync(`${path}.tmp`, path)", 1, "writeMarker: the ownership record in the state folder"],
   ["herdr/mods/am-sidebar/update.mjs", "renameSync(aside, lock)", 1, "the update lock (<app home>/automagik-herdr/update.lock) and its aside/gone names, in the state folder"],
@@ -113,7 +114,7 @@ export const ALLOWLIST = [
   ["herdr/mods/am-sidebar/update.mjs", "renameSync(tmp, file)", 1, "saveHeld: held.json in the state folder"],
   ["herdr/mods/am-sidebar/update.mjs", "rmSync(file, { force: true })", 1, "saveHeld: held.json in the state folder"],
   ["herdr/mods/am-sidebar/update.mjs", "renameSync(tmp, link)", 1, "the command link in the bin folder (~/.local/bin/automagik-herdr) and its temp link"],
-  ["herdr/mods/am-sidebar/update.mjs", "rmSync(tmp, { force: true })", 2, "the command link in the bin folder (~/.local/bin/automagik-herdr) and its temp link"],
+  ["herdr/mods/am-sidebar/update.mjs", "removePath(tmp, { force: true })", 2, "the command link in the bin folder (~/.local/bin/automagik-herdr) and its temp link"],
   ["herdr/mods/am-sidebar/update.mjs", "rmSync(dir, { recursive: true, force: true })", 1, "a staging folder or temp file it made itself (mkdtemp in tmpdir, or staging-/tgz folders in the state folder)"],
   ["herdr/mods/am-sidebar/update.mjs", "rmSync(next, { recursive: true, force: true })", 2, "the pack's state folder (<app home>/automagik-herdr: the record, held.json, the kept set .prev, its .prev-next-/.prev-old- neighbours), beside mods/, never in it"],
   ["herdr/mods/am-sidebar/update.mjs", "rmSync(old, { recursive: true, force: true })", 1, "the pack's state folder (<app home>/automagik-herdr: the record, held.json, the kept set .prev, its .prev-next-/.prev-old- neighbours), beside mods/, never in it"],
@@ -129,7 +130,7 @@ export const ALLOWLIST = [
   ["herdr/mods/am-sidebar/parts.mjs", "rmSync(markerOf(ctx.modsDir), { force: true })", 1, "the ownership record in the state folder"],
   ["herdr/mods/am-sidebar/parts.mjs", "rmSync(stableBriefingPath(ctx.appHome))", 1, "the briefing's files under <app home>/automagik-herdr/ (briefed/, seen ledgers, its entry point)"],
   ["herdr/mods/am-sidebar/parts.mjs", "renameSync(tmp, link)", 1, "the command link in the bin folder (~/.local/bin/automagik-herdr) and its temp link"],
-  ["herdr/mods/am-sidebar/parts.mjs", "rmSync(tmp, { force: true })", 1, "the command link in the bin folder (~/.local/bin/automagik-herdr) and its temp link"],
+  ["herdr/mods/am-sidebar/parts.mjs", "removePath(tmp, { force: true })", 1, "the command link in the bin folder (~/.local/bin/automagik-herdr) and its temp link"],
   ["herdr/mods/am-sidebar/parts.mjs", "unlinkSync(link)", 1, "the command link in the bin folder (~/.local/bin/automagik-herdr) and its temp link"],
   ["herdr/mods/am-sidebar/parts.mjs", "rmSync(tmp, { recursive: true, force: true })", 1, "packSource: the temp folder (mkdtemp in tmpdir) a checkout is packed into"],
   ["herdr/mods/am-sidebar/migrateHome.mjs", "cpSync(f.file, keys ? join(backupDir, \"keys.json\") : join(backupDir, \"layouts\", basename(f.file)), { force: false, errorOnExist: true })", 1, "the migration's backup folder (<app home>/automagik-herdr/backup/<date>): its copies and journal; it reads layouts/, never writes there"],
@@ -137,7 +138,8 @@ export const ALLOWLIST = [
   ["herdr/mods/am-sidebar/migrateHome.mjs", "renameSync(journalPath, join(backupDir, REVERTED))", 1, "the migration's backup folder (<app home>/automagik-herdr/backup/<date>): its copies and journal"],
   ["herdr/mods/am-sidebar/migrateHooks.mjs", "renameSync(tmp, link)", 1, "an agent's settings file in a project (.claude/settings.json and the like) or the CLI link, never mods/ or layouts/"],
   ["herdr/mods/am-sidebar/migrateHooks.mjs", "renameSync(tmp, path)", 1, "an agent's settings file in a project (.claude/settings.json and the like) or the CLI link, never mods/ or layouts/"],
-  ["herdr/mods/am-sidebar/migrateHooks.mjs", "rmSync(tmp, { force: true })", 2, "an agent's settings file in a project (.claude/settings.json and the like) or the CLI link, never mods/ or layouts/"],
+  ["herdr/mods/am-sidebar/migrateHooks.mjs", "rmSync(tmp, { force: true })", 1, "an agent's settings file in a project (.claude/settings.json and the like), never mods/ or layouts/"],
+  ["herdr/mods/am-sidebar/migrateHooks.mjs", "removePath(tmp, { force: true })", 1, "the CLI link's temp link in the bin folder (~/.local/bin), never mods/ or layouts/"],
   ["herdr/mods/am-sidebar/briefing.mjs", "renameSync(tmp, path)", 1, "the briefing's files under <app home>/automagik-herdr/ (briefed/, seen ledgers, its entry point)"],
   ["herdr/mods/am-sidebar/briefingEntry.mjs", "renameSync(tmp, path)", 1, "the briefing's files under <app home>/automagik-herdr/ (briefed/, seen ledgers, its entry point)"],
   ["herdr/mods/am-sidebar/briefingEntry.mjs", "rmSync(path, { force: true })", 1, "the briefing's files under <app home>/automagik-herdr/ (briefed/, seen ledgers, its entry point)"],
@@ -157,18 +159,20 @@ export const ALLOWLIST = [
   ["am/lib/self.mjs", "renameSync(staging, join(store, name))", 1, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home"],
   ["am/lib/self.mjs", "renameSync(tmp, join(store, \"record.json\"))", 1, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home"],
   ["am/lib/self.mjs", "renameSync(tmp, join(store, name))", 1, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home"],
-  ["am/lib/self.mjs", "rmSync(join(store, \"previous\"), { force: true })", 1, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home"],
-  ["am/lib/self.mjs", "rmSync(link, { force: true })", 1, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home (and am's own command link)"],
+  ["am/lib/self.mjs", "removePath(join(store, \"previous\"), { force: true })", 1, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home"],
+  ["am/lib/self.mjs", "removePath(link, { force: true })", 1, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home (and am's own command link)"],
   ["am/lib/self.mjs", "rmSync(staging, { recursive: true, force: true })", 1, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home"],
-  ["am/lib/self.mjs", "rmSync(store, { recursive: true, force: true })", 1, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home"],
+  ["am/lib/self.mjs", "removePath(store, { recursive: true, force: true })", 1, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home"],
   ["am/lib/self.mjs", "rmSync(work, { recursive: true, force: true })", 1, "a temp folder am unpacks a release into (mkdtemp in tmpdir)"],
   ["am/lib/self.mjs", "renameSync(tmp, link)", 2, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home (and am's own command link)"],
   ["am/lib/self.mjs", "renameSync(tmp, path)", 2, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home (and the briefing entry point am places)"],
-  ["am/lib/self.mjs", "rmSync(join(store, name), { recursive: true, force: true })", 2, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home"],
-  ["am/lib/self.mjs", "rmSync(path, { force: true })", 3, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home (and the briefing entry point am places)"],
+  ["am/lib/self.mjs", "removePath(join(store, name), { recursive: true, force: true })", 2, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home"],
+  ["am/lib/self.mjs", "rmSync(path, { force: true })", 1, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home: the store lock it made"],
+  ["am/lib/self.mjs", "removePath(path, { force: true })", 2, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home (and the briefing entry point am places)"],
   ["herdr/mods/am-sidebar/dshTui.mjs", "renameSync(temp, path)", 1, "writeAtomic: dsh-TUI's shim in ~/.local/bin, DSH's tui profile files under ~/.dsh (or $DSH_HOME) and dsh-TUI's ~/.dsh-tui state: never mods/ or layouts/"],
-  ["herdr/mods/am-sidebar/dshTui.mjs", "rmSync(cwd, { recursive: true, force: true })", 1, "a temp folder the dsh plugin run works in (mkdtemp in tmpdir)"],
-  ["herdr/mods/am-sidebar/dshTui.mjs", "rmSync(shim, { force: true })", 1, "the dsh-tui shim in ~/.local/bin: never mods/ or layouts/"],
+  ["herdr/mods/am-sidebar/dshTui.mjs", "removePath(cwd, { recursive: true, force: true })", 1, "a temp folder the dsh plugin run works in (mkdtemp in tmpdir)"],
+  ["herdr/mods/am-sidebar/dshTui.mjs", "removePath(shim, { force: true })", 1, "the dsh-tui shim in ~/.local/bin: never mods/ or layouts/"],
+  ["herdr/mods/am-sidebar/dshTui.mjs", "removePath(join(profile, RECORD_FILE), { force: true })", 1, "the installer's own ownership record in the tui profile: never mods/ or layouts/"],
 ];
 
 test("every rm, rename, unlink and cp outside layoutSafe.mjs is one the allowlist names", () => {
@@ -207,6 +211,9 @@ test("the scan sees the calls it is for", () => {
   // mods/am-mods's io: moveAside's mv and removeLocal's rm of a link, both into mods/ or layouts/.
   const io = scan().filter((f) => f.file === "herdr/mods/am-mods/core.js").map((f) => f.call);
   assert.ok(io.includes('run(io, "mv", [path, to])') && io.includes('run(io, "rm", [where])'), io.join("\n"));
+  // layoutSafe.mjs removePath (#550) is scanned like rmSync: relinkCli's temp link, and am's copy of it.
+  assert.ok(scan().some((f) => f.file === "herdr/mods/am-sidebar/update.mjs" && f.call === "removePath(tmp, { force: true })"));
+  assert.ok(scan().some((f) => f.file === "am/update.mjs" && f.call === "removePath(tmp, { force: true })"));
   // A find that only lists is not a call; one that deletes is.
   assert.ok(!scan().some((f) => f.file === "herdr/mods/am-footer/contributions.js"));
   assert.ok(scan().some((f) => f.file === "herdr/mods/am-mods/main.js" && f.call.startsWith('exec("find"')));

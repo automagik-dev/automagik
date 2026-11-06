@@ -758,7 +758,14 @@ dsh_tui_step() {
   printf '%s\n' "$dsh_out" | sed 's/^/  /'
 }
 # --uninstall: the plugin and the shim go through the command that put them there, while the pack
-# and its link are still in place. A pack from before this command leaves DSH alone and says how.
+# and its link are still in place. A pack from before this command removes its own shim, nothing
+# else; the predicate is the CLI's shimIsOurs (the marker and the exec line), not any mention of
+# Automagik Herdr.
+dsh_shim_is_ours() {
+  [ -f "$1" ] || return 1
+  grep -Fq "# Automagik Herdr's dsh-tui shim" "$1" 2>/dev/null || return 1
+  grep -Fqx 'exec dsh --profile tui -- "$@"' "$1" 2>/dev/null
+}
 dsh_tui_uninstall() {
   if link_ours && [ -f "$PACK/bin/automagik-herdr.mjs" ] && grep -q 'dsh-tui install' "$PACK/bin/automagik-herdr.mjs" 2>/dev/null; then
     dsh_rc=0
@@ -770,8 +777,12 @@ dsh_tui_uninstall() {
     printf '%s\n' "$dsh_out" | sed 's/^/  /'
     return 0
   fi
-  if [ -f "$BIN_DIR/dsh-tui" ] && grep -q 'Automagik Herdr' "$BIN_DIR/dsh-tui" 2>/dev/null; then
-    rm -f "$BIN_DIR/dsh-tui" && say "Removed $BIN_DIR/dsh-tui; the tui DSH profile was left as it is (no installed dsh-tui command to run)."
+  if [ -e "$BIN_DIR/dsh-tui" ] || [ -L "$BIN_DIR/dsh-tui" ]; then
+    if dsh_shim_is_ours "$BIN_DIR/dsh-tui"; then
+      rm -f "$BIN_DIR/dsh-tui" && say "Removed $BIN_DIR/dsh-tui; the tui DSH profile was left as it is (no installed dsh-tui command to run)."
+    else
+      say "Left $BIN_DIR/dsh-tui: it is not this installer's (or it is a dangling link)."
+    fi
   fi
   return 0
 }

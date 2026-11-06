@@ -5,13 +5,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
-  DSH_TUI, PIN, SHIM, SHIM_TEXT, SKIP, desktopFingerprint, doctorDshTui, findDsh, installDshTui, lockIntegrity,
-  packageOfEntry, profileState, releaseAgeEntries, scopeReleaseAge, shimIsOurs, uninstallDshTui,
+  DSH_TUI, PIN, RECORD_FILE, SHIM, SHIM_TEXT, SKIP, desktopFingerprint, doctorDshTui, findDsh, installDshTui, lockIntegrity,
+  ownershipOf, packageOfEntry, panePathOf, profileState, releaseAgeEntries, scopeReleaseAge, shimIsOurs, uninstallDshTui,
 } from "../mods/am-sidebar/dshTui.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
@@ -35,6 +35,8 @@ function scene(t, { dsh = true, config = {} } = {}) {
   writeFileSync(join(home, ".dsh", "profiles", "desktop", "package.json"), "{\"name\":\"dsh-profile-desktop\"}\n");
   writeFileSync(join(home, ".dsh", "profiles", "desktop", "cordis.patch.yml"), "[]\n");
   writeFileSync(join(home, ".dsh", ".credentials.yaml"), "keep: me\n");
+  // The login shell a Herdr pane starts in: its login PATH must reach ~/.local/bin (the shim).
+  writeFileSync(join(home, ".profile"), 'export PATH="$HOME/.local/bin:$PATH"\n');
   const cfgPath = join(root, "dsh.json");
   writeFileSync(cfgPath, JSON.stringify(config));
   const helper = join(root, "fake-dsh.cjs");
@@ -70,7 +72,7 @@ exec "${process.execPath}" "${helper}" "$@"
 `);
   }
   const env = {
-    HOME: home, PATH: `${bin}:${join(home, ".local", "bin")}:/usr/bin:/bin`,
+    HOME: home, SHELL: "/bin/sh", PATH: `${bin}:${join(home, ".local", "bin")}:/usr/bin:/bin`,
     DSH_LOG: log, DSH_FAKE: cfgPath, AUTOMAGIK_HERDR_DSH_TUI_PUBLISHED: PUBLISHED,
   };
   const calls = () => readFileSync(log, "utf8").split("\n").filter(Boolean);
@@ -92,6 +94,7 @@ test("install pins exactly 0.19.0 with its integrity into the tui profile only",
   assert.equal(readFileSync(join(s.home, ".local", "bin", SHIM), "utf8"), SHIM_TEXT);
   assert.ok(statSync(join(s.home, ".local", "bin", SHIM)).mode & 0o111, "the shim is executable");
   assert.deepEqual(JSON.parse(readFileSync(join(s.home, ".dsh-tui", "onboarding.json"), "utf8")), { completed: true, version: 1 });
+  assert.equal(JSON.parse(readFileSync(join(state.dir, RECORD_FILE), "utf8")).version, DSH_TUI.version, "the installer records that it added the pin");
 });
 
 test("a lockfile integrity that is not the pin fails, removes what it added, and writes no shim", async (t) => {
@@ -125,9 +128,12 @@ test("the shim runs the long --profile tui form and forwards the app's arguments
   writeFileSync(shimLog, "");
   const r = s.runShim(["--resume", "abc"], { DSH_LOG: shimLog });
   assert.equal(r.status, 0, r.stderr);
-  assert.deepEqual(readFileSync(shimLog, "utf8").split("\n").filter(Boolean), ["--profile tui --resume abc"]);
+  assert.deepEqual(readFileSync(shimLog, "utf8").split("\n").filter(Boolean), ["--profile tui -- --resume abc"]);
   assert.equal(spawnSync("sh", ["-n", join(s.home, ".local", "bin", SHIM)], { encoding: "utf8" }).status, 0);
-  assert.match(readFileSync(join(s.home, ".local", "bin", SHIM), "utf8"), /^exec dsh --profile tui "\$@"$/m);
+  assert.match(readFileSync(join(s.home, ".local", "bin", SHIM), "utf8"), /^exec dsh --profile tui -- "\$@"$/m);
+  const missing = s.runShim([], { PATH: "/usr/bin:/bin" });
+  assert.equal(missing.status, 127);
+  assert.match(missing.stderr, /DSH \(dsh\) is not on PATH/);
 });
 
 test("doctor states dsh, the tui profile and the shim honestly, before and after install", async (t) => {
@@ -135,7 +141,7 @@ test("doctor states dsh, the tui profile and the shim honestly, before and after
   const none = doctorDshTui({ env: missing.env });
   assert.equal(none.code, 2, "no dsh: not applicable");
   assert.equal(none.checks.find((c) => c.check === "dsh").ok, true);
-  assert.match(none.checks.find((c) => c.check === "dsh").detail, /not found on PATH/);
+  assert.match(none.checks.find((c) => c.check === "dsh").detail, /not found on the PATH Herdr panes get/);
   assert.match(none.checks.find((c) => c.check === "dsh-tui-profile").detail, /not installed/);
   assert.match(none.checks.find((c) => c.check === "dsh-tui-shim").detail, /not installed/);
 
@@ -147,7 +153,14 @@ test("doctor states dsh, the tui profile and the shim honestly, before and after
   const after = doctorDshTui({ env: s.env });
   assert.equal(after.code, 0, JSON.stringify(after.checks));
   assert.ok(after.checks.every((c) => c.ok), JSON.stringify(after.checks));
-  assert.match(after.checks.find((c) => c.check === "dsh-tui-profile").detail, /integrity ok/);
+  assert.match(after.checks.find((c) => c.check === "dsh-tui-profile").detail, /integrity ok.*added by this installer/);
+  const pane = panePathOf({ env: s.env });
+  assert.equal(pane.config, "~/.profile");
+  assert.ok(pane.path.split(":").includes(join(s.home, ".local", "bin")), pane.path);
+  const off = doctorDshTui({ env: s.env, panePath: { path: "/usr/bin:/bin", shell: "/bin/zsh", config: "~/.zshrc", login: true } });
+  const offPath = off.checks.find((c) => c.check === "dsh-tui-path");
+  assert.equal(offPath.ok, false);
+  assert.match(offPath.fix, /\$PATH"' >> ~\/\.zshrc$/);
 
   rmSync(join(s.home, ".local", "bin", SHIM));
   const half = doctorDshTui({ env: s.env });
@@ -164,6 +177,7 @@ test("uninstall removes the plugin and the shim, and leaves a foreign shim alone
   assert.equal(existsSync(join(s.home, ".local", "bin", SHIM)), false);
   assert.deepEqual(JSON.parse(readFileSync(join(s.home, ".dsh", "profiles", "tui", "package.json"), "utf8")).dependencies, {});
   assert.deepEqual(releaseAgeEntries(readFileSync(join(s.home, ".dsh", "profiles", "tui", "pnpm-workspace.yaml"), "utf8")), []);
+  assert.equal(existsSync(join(s.home, ".dsh", "profiles", "tui", RECORD_FILE)), false, "the ownership record goes too");
   assert.equal(readFileSync(join(s.home, ".dsh", ".credentials.yaml"), "utf8"), "keep: me\n", "credentials stay");
 
   const foreign = scene(t);
@@ -226,8 +240,49 @@ test("the CLI command installs, reports doctor JSON and uninstalls", async (t) =
   assert.equal(existsSync(join(s.home, ".local", "bin", SHIM)), false);
 });
 
+test("a pin the person added is not the installer's, so uninstall leaves it", async (t) => {
+  const s = scene(t);
+  const profile = join(s.home, ".dsh", "profiles", "tui");
+  const dir = join(profile, "node_modules", "@deepseek-harness-tui", "dsh-tui");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(profile, "package.json"), JSON.stringify({ dependencies: { [DSH_TUI.package]: DSH_TUI.version } }) + "\n");
+  writeFileSync(join(profile, "pnpm-workspace.yaml"), `minimumReleaseAgeExclude:\n  - '${PIN}'\n`);
+  writeFileSync(join(profile, "pnpm-lock.yaml"), `packages:\n\n  '${PIN}':\n    resolution: {integrity: ${DSH_TUI.integrity}}\n\n`);
+  writeFileSync(join(dir, "package.json"), `{"version":"${DSH_TUI.version}"}\n`);
+  const installed = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  assert.equal(installed.status, "installed", installed.detail);
+  assert.equal(ownershipOf(profile), null);
+  assert.equal(existsSync(join(profile, RECORD_FILE)), false);
+  assert.match(installed.lines.join("\n"), /already had dsh-TUI/);
+  const r = uninstallDshTui({ env: s.env });
+  assert.equal(r.status, "removed");
+  assert.equal(s.calls().filter((line) => line.includes("remove")).length, 0, "no dsh plugin remove for a pin it did not add");
+  assert.equal(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies[DSH_TUI.package], DSH_TUI.version);
+  assert.deepEqual(releaseAgeEntries(readFileSync(join(profile, "pnpm-workspace.yaml"), "utf8")), [PIN]);
+  assert.match(r.lines.join("\n"), /did not add it/);
+  assert.equal(existsSync(join(s.home, ".local", "bin", SHIM)), false);
+});
+
+test("a dangling shim is present but broken; install refuses and uninstall leaves it", async (t) => {
+  const s = scene(t);
+  const shim = join(s.home, ".local", "bin", SHIM);
+  mkdirSync(dirname(shim), { recursive: true });
+  symlinkSync(join(s.root, "missing-dsh-tui"), shim);
+  const r = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  assert.equal(r.status, "failed");
+  assert.match(r.detail, /dangling link/);
+  assert.ok(lstatSync(shim).isSymbolicLink());
+  assert.deepEqual(s.calls(), []);
+  const d = doctorDshTui({ env: s.env });
+  assert.equal(d.checks.find((c) => c.check === "dsh-tui-shim").ok, false);
+  assert.match(d.checks.find((c) => c.check === "dsh-tui-shim").detail, /unreadable/);
+  const u = uninstallDshTui({ env: s.env });
+  assert.match(u.lines.join("\n"), /dangling link/);
+  assert.ok(lstatSync(shim).isSymbolicLink());
+});
+
 test("shimIsOurs accepts only the marked long-form shim", () => {
   assert.equal(shimIsOurs(SHIM_TEXT), true);
-  assert.equal(shimIsOurs("#!/bin/sh\nexec dsh --profile tui \"$@\"\n"), false);
-  assert.equal(shimIsOurs("#!/bin/sh\nexec dsh-tui --profile tui \"$@\"\n"), false);
+  assert.equal(shimIsOurs("#!/bin/sh\nexec dsh --profile tui \"$@\"\n"), false, "no -- separator");
+  assert.equal(shimIsOurs("#!/bin/sh\nexec dsh-tui --profile tui -- \"$@\"\n"), false);
 });
