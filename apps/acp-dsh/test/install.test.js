@@ -172,13 +172,20 @@ test("DSH's level becomes each agent's own mode: Manual, Auto, full access", () 
   const level = (policy, sandbox) => levelOf({ effectivePolicy: () => policy }, { snapshotEvents: () => [{ type: 'sandbox/mode', data: { mode: sandbox } }] })
   const claude = AGENTS['acp-claude'].modeFor
   const codex = AGENTS['acp-codex'].modeFor
+  // DSH's real presets: Manual is a workspace sandbox with asks; Auto is full access's sandbox
+  // with asks (answered by auto-review); Full access is that sandbox with none.
   assert.deepEqual(claude(level('ask', 'workspace-write')), ['default'])
-  assert.deepEqual(claude(level('never', 'workspace-write')), ['auto', 'default'])
+  assert.deepEqual(claude(level('ask', 'danger-full-access')), ['auto', 'default'])
   assert.deepEqual(claude(level('never', 'danger-full-access')), ['bypassPermissions', 'default'])
   assert.deepEqual(codex(level('ask', 'read-only')), ['read-only'])
   assert.deepEqual(codex(level('ask', 'workspace-write')), ['workspace-write'])
-  assert.deepEqual(codex(level('never', 'workspace-write')), ['agent', 'workspace-write'])
+  assert.deepEqual(codex(level('ask', 'danger-full-access')), ['agent', 'workspace-write'])
   assert.deepEqual(codex(level('never', 'danger-full-access')), ['agent-full-access', 'workspace-write'])
+  // The classification itself, so a fixture cannot drift back to a made-up Auto.
+  assert.deepEqual(level('ask', 'workspace-write'), { sandbox: 'workspace-write', policy: 'ask', full: false, auto: false })
+  assert.deepEqual(level('never', 'workspace-write'), { sandbox: 'workspace-write', policy: 'never', full: false, auto: false })
+  assert.deepEqual(level('ask', 'danger-full-access'), { sandbox: 'danger-full-access', policy: 'ask', full: false, auto: true })
+  assert.deepEqual(level('never', 'danger-full-access'), { sandbox: 'danger-full-access', policy: 'never', full: true, auto: false })
 })
 
 test("the Session's sandbox is the one DSH's sandbox-policy service resolves, deployment default included", () => {

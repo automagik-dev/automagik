@@ -115,6 +115,7 @@ const implementation = {
     return { sessionId, ...(OFFERS ? { configOptions: configOptions(session) } : {}) }
   },
   async unstable_forkSession(params) {
+    if (process.env.FAKE_ACP_FORK_FAIL === '1') throw RequestError.invalidParams(undefined, 'fork refused')
     const source = sessions.get(params.sessionId)
     if (source === undefined) throw RequestError.invalidParams(undefined, `Unknown session: ${params.sessionId}`)
     const sessionId = `fake-${++created}`

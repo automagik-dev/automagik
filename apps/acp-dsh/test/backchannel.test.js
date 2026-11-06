@@ -189,9 +189,10 @@ test('each level gates a bridge call as DSH gates its own tools: Manual asks, Au
   assert.equal(manual.asked.length, 1)
   assert.equal(manual.body.isError, false)
   assert.deepEqual(manual.executed.map(entry => entry.name), ['bash'])
-  // Auto: asking is forbidden, so the call goes to the pipeline (the pre-execute waterfall is
-  // where auto-review gates) and still runs under the workspace sandbox.
-  const auto = await runAt({ sandbox: 'workspace-write', policy: 'never' })
+  // Auto as DSH's real preset defines it (danger-full-access + ask): the bridge cannot be
+  // reviewed out-of-band, so it routes the call through the pipeline without asking, and the
+  // call still runs (stated limit: auto-review does not see bridge calls).
+  const auto = await runAt({ sandbox: 'danger-full-access', policy: 'ask' })
   assert.equal(auto.asked.length, 0)
   assert.equal(auto.body.isError, false)
   assert.deepEqual(auto.executed.map(entry => entry.name), ['bash'])

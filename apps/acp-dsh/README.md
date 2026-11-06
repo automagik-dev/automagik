@@ -43,7 +43,11 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   own MCP servers load beside the bridge with their own tools and sign-ins. A tool-list change
   (a preset or level change) is announced on `acp-claude` and arrives through `session/fork`
   plus `session/close` on `acp-codex`; a bridge that never lists its tools fails the turn
-  (`acp_bridge_missing`) before the prompt. A Session that moves between providers carries its
+  (`acp_bridge_missing`) before the prompt. **Auto:** DSH's Auto preset is full access's sandbox
+  with asks answered by auto-review, but auto-review reads the call from the model surface and a
+  bridge call is out-of-band, so the bridge does not raise its own dialog there and routes the
+  call through the pipeline; auto-review does not see bridge calls on an Auto Session. Manual
+  asks (one dialog), Full access does not. A Session that moves between providers carries its
   transcript, redacted, and each crossing writes a provider-boundary row.
 - **Only the chat reaches the agent.** DSH's side requests on an ACP route never become
   prompts. At the `llm/stream` waterfall a Session title (`purpose: session-title`) goes to a

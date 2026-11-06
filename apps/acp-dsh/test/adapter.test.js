@@ -646,6 +646,28 @@ test('a preset change on an agent that ignores list_changed refreshes by fork, c
   }
 })
 
+test('a fork that fails after the session moved revokes both credentials and ends the run', async () => {
+  const h = dshHost({ env: { FAKE_ACP_FORK_FAIL: '1' }, spec: { refresh: 'fork' } })
+  try {
+    const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'bridge bash' }] }]
+    const first = await step(h.adapter, messages)
+    assert.match(textIn(first), /turn 1/)
+    // A changed tool set triggers the fork, which the agent refuses.
+    h.definitions.push({ name: 'extra', description: 'Extra', parameters: { type: 'object', properties: {} } })
+    const second = await step(h.adapter, messages)
+    assert.equal(second.at(-1).reason.kind, 'error')
+    assert.match(second.at(-1).reason.failure.message, /would not refresh its DSH tools/)
+    // No half state: the run is gone, every credential revoked, and the next turn starts clean.
+    assert.equal(h.adapter.live.size, 0)
+    assert.equal(h.backchannel.records.size, 0)
+    const third = await step(h.adapter, messages)
+    assert.match(textIn(third), /turn 1/)
+    assert.equal(h.backchannel.records.size, 1)
+  } finally {
+    h.close()
+  }
+})
+
 test('a Session moving to an agent carries its transcript redacted, and each crossing writes a row', async () => {
   const h = dshHost({ redactor: text => text.replaceAll('hunter2', '[secret:TOKEN]') })
   try {

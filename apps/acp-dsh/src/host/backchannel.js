@@ -374,10 +374,12 @@ export class Backchannel {
     // DSH's approval, server-side: the credential cannot approve, and no agent rule reaches it.
     const approval = this.ctx?.get?.('approval')
     const level = levelOf(approval, session, this.ctx?.get?.('sandboxPolicy'))
-    // Full access never asks. Auto (DSH's `never` policy over a workspace sandbox) forbids asking
-    // and rejects any ask without prompting, so the bridge must not ask there either: the call
-    // goes straight to the pipeline, whose pre-execute waterfall is where Auto review gates it,
-    // and the sandbox still bounds the body. Every other level asks here (Manual included).
+    // Full access never asks. Auto (DSH's `danger-full-access` sandbox with `ask`, answered by
+    // auto-review) cannot review this call: auto-review reads the pending tool call from the
+    // model surface, and a bridge call is out-of-band (no assistant block), so its answerer fails
+    // closed. The bridge therefore does not ask there and routes the call through the pipeline;
+    // **limit:** auto-review does not see bridge calls on an Auto Session (stated in README/PR).
+    // Manual and every other asking level raise the one DSH dialog here.
     if (!level.full && !level.auto) {
       let outcome = 'unavailable'
       try {
