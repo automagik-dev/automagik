@@ -44,18 +44,21 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   (a preset or level change) is announced on `acp-claude` and arrives through `session/fork`
   plus `session/close` on `acp-codex`; a bridge that never lists its tools fails the turn
   (`acp_bridge_missing`) before the prompt. **Auto:** DSH's Auto preset is full access's sandbox
-  with asks answered by auto-review, but auto-review reads the call from the model surface and a
-  bridge call is out-of-band, so the bridge does not raise its own dialog there and routes the
-  call through the pipeline. There auto-review fails closed and refuses it with
-  `AUTO_REVIEW_FAILED`: the call does not run silently. (A later delivery designs the reviewer
-  block and side-model route that make Auto usable; until then an Auto Bot's bridge calls are
-  refused.) Manual asks (one dialog), Full access does not. A Session that moves between providers
-  carries its transcript, redacted, and each crossing writes a provider-boundary row.
+  with asks answered by auto-review. A bridge call adds one marked, tool-only assistant block
+  for the reviewer, removes it from the surface once the call settles, and never replays it to
+  another provider; the reviewer sees the bridge tool, its redacted arguments and its schema
+  before the body runs. A denial is `AUTO_REVIEW_DENIED`, a failed reviewer refuses with
+  `AUTO_REVIEW_FAILED`, a review past its deadline is `AUTO_REVIEW_TIMEOUT`, and the call never
+  runs. The reviewer goes to the same non-agent side model as a Session title. Manual asks (one
+  dialog), Full access does not. A Session that moves between providers carries its transcript
+  redacted at each crossing — the replay out to an agent, and the transcript handed back to a
+  native provider — and each crossing writes a provider-boundary row the chat shows.
 - **Only the chat reaches the agent.** DSH's side requests on an ACP route never become
   prompts. At the `llm/stream` waterfall a Session title (`purpose: session-title`) goes to a
   model that answers on its own, without the agent's effort. That is DSH's default model
   (`agentDefaultModel`) when it is not an agent; else `sideModel` below, DeepSeek Flash by
-  default. Every other side request on an ACP route, a compaction summary included, is refused
+  default. Auto review (`purpose: auto-review`) takes the same route, with its messages redacted
+  first. Every other side request on an ACP route, a compaction summary included, is refused
   (`UNSUPPORTED`): it would carry the agent's whole chat to another provider, and the agent
   manages its own context. Sessions on any other route are left alone.
 - **Host only.** No browser half, so the plugin cannot stop the web UI from loading. With no
@@ -104,7 +107,7 @@ A settings page reads the agents through this host service; the plugin stays hos
 | `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl }, connector: { state, version?, error?, updating? }, signedIn?, model: { provider, id, name, listed }, restartNeeded }`. `state` is `off`, `no-cli`, `installing`, `failed` (with the last install error) or `ready`. Spawns nothing. |
 | `refresh()` | Looks for the CLIs again (one installed after DSH started is offered now), then asks each CLI whether it is signed in (`claude auth status --json`, of which only `loggedIn` is read; `codex login status`, by its exit code). No agent turn. |
 | `retry(id)` | Starts the connector's install again, and answers at once. |
-| `bridge()` | `{ on, probesPass }`: whether `dshTools` is on, and whether this build's delivery-4/6 bridge probes pass (they are the tests in `test/backchannel.test.js` and `test/adapter.test.js`). The Bot team reads it before its one-time move of Claude Bots onto `acp-claude`; no move while it says off. |
+| `bridge()` | `{ on, probesPass }`: whether `dshTools` is on, and whether a real probe on this machine passes — the per-session bridge gets a fresh credential, answers MCP `initialize` and `tools/list`, and lists at least one tool. The answer is cached per installed adapter version; a missing adapter or a failed probe says no. The Bot team reads it before its one-time move of Claude Bots onto `acp-claude`, so no Bot moves onto a route whose bridge cannot work. |
 
 The switches are not the service's: a page writes them in the `acp-dsh` settings entry
 through DSH's settings service (the welcome does, `src/host/acp.js` there).

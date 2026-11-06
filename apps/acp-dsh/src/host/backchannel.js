@@ -13,14 +13,19 @@
 // list.
 import { randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
-import { createToolResultMessage } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage, createDeveloperMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
 import { appendPluginRecord } from '@deepseek-ai/dsh-session'
+import { SYNTHETIC_KIND } from './names.js'
 import { levelOf, TOOL_NAME } from './tool.js'
 
 /** How long a bridge's long-poll waits before answering "nothing changed". */
 export const WAIT_MS = 20_000
 const MAX_BODY = 16 * 1024 * 1024
 const OUTPUT_LIMIT = 20_000
+// A reviewer that never answers must not hold the bridge's call forever. Auto only.
+const REVIEW_TIMEOUT_MS = 120_000
+// Events that can change the Session's level while a review is pending.
+const LEVEL_EVENTS = new Set(['permission/preset', 'sandbox/mode', 'approval/policy'])
 
 // Tools that only write files: a Session in DSH's read-only sandbox cannot run them, so they
 // are not offered. Shell tools stay (read-only commands are legitimate; the sandbox denies the
@@ -67,13 +72,15 @@ export function offeredTools(ctx, agent) {
     }))
 }
 
-/** A stable fingerprint of what the bridge would list: preset, level and every tool's schema. */
+/** A stable fingerprint of what the bridge would list: preset, level (Auto and Full included) and every tool's schema. */
 export function signatureOf(ctx, agent) {
   const level = levelOf(ctx?.get?.('approval'), agent?.session, ctx?.get?.('sandboxPolicy'), ctx?.get?.('permissionPresets'))
   return JSON.stringify({
     preset: presetOf(ctx, agent?.session),
     sandbox: level.sandbox ?? null,
     approval: level.policy ?? null,
+    auto: level.auto === true,
+    full: level.full === true,
     tools: offeredTools(ctx, agent).map((tool) => [tool.name, tool.description, tool.inputSchema]),
   })
 }
@@ -105,6 +112,51 @@ export function positionOf(ctx, session) {
 }
 
 /**
+ * The step a call can open in, if one is still open. Auto review requires it: its snapshot
+ * reads the pending call's `turn`/`step` from the step the Session log has not closed.
+ * @returns {{ turn: number, step: number } | undefined}
+ */
+export function openStepOf(session) {
+  const events = session?.snapshotEvents?.() ?? []
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]
+    if (event?.type === 'turn/start' || event?.type === 'turn/end' || event?.type === 'step/end') return undefined
+    if (event?.type === 'step/start' && typeof event.data?.step === 'number') {
+      return { turn: event.data.turn, step: event.data.step }
+    }
+  }
+  return undefined
+}
+
+/**
+ * What Auto review needs before it can read a bridge call: an open step, the Session's route,
+ * and exactly one complete schema for the call in the request header. Missing any of them is a
+ * refusal, never a call that runs unreviewed.
+ * @returns {{ step: { turn: number, step: number }, provider: string, model: string } | { error: { code: string, text: string } }}
+ */
+export function reviewRouteOf(session, name) {
+  const step = openStepOf(session)
+  if (step === undefined) return { error: { code: 'AUTO_REVIEW_NO_STEP', text: 'Auto review cannot see this call: the Session has no open step.' } }
+  let header
+  try {
+    header = session?.requestHeader?.()
+  } catch {
+    header = undefined
+  }
+  const provider = header?.config?.provider
+  const model = header?.config?.model
+  if (typeof provider !== 'string' || provider === '' || typeof model !== 'string' || model === '') {
+    return { error: { code: 'AUTO_REVIEW_NO_ROUTE', text: 'Auto review cannot see this call: the Session has no request route.' } }
+  }
+  const schemas = (Array.isArray(header.tools) ? header.tools : []).filter(tool => tool?.name === name)
+  const schema = schemas[0]
+  if (schemas.length !== 1 || typeof schema?.description !== 'string' || schema.parameters === null || typeof schema.parameters !== 'object' || Array.isArray(schema.parameters)) {
+    return { error: { code: 'AUTO_REVIEW_NO_SCHEMA', text: `Auto review cannot see this call: the request header has no single complete schema for ${name}.` } }
+  }
+  return { step, provider, model }
+}
+
+/**
  * The `acp_toolset_drift` record: a plugin record (replay-safe, outside DSH's released event
  * schemas) naming the structured call that should have been an MCP name. A reader that does not
  * know it retains and skips it.
@@ -126,11 +178,12 @@ export function recordDrift(session, data) {
  */
 export class Backchannel {
   /**
-   * @param {{ ctx: any, log?: (message: string) => void }} options
+   * @param {{ ctx: any, log?: (message: string) => void, reviewTimeoutMs?: number }} options
    */
-  constructor({ ctx, log = () => {} }) {
+  constructor({ ctx, log = () => {}, reviewTimeoutMs = REVIEW_TIMEOUT_MS }) {
     this.ctx = ctx
     this.log = log
+    this.reviewTimeoutMs = reviewTimeoutMs
     this.records = new Map()
     this.closed = false
   }
@@ -339,6 +392,7 @@ export class Backchannel {
    */
   async call(record, { name, arguments: args, callId }) {
     const error = (text) => ({ content: [{ type: 'text', text }], isError: true })
+    const unavailable = (code, text) => ({ ...error(text), error: { name: 'AutoReviewUnavailableError', code } })
     // A revoked bridge (or one whose session ended) may not even write a row.
     if (record.closed || record.abort.signal.aborted) return { revoked: true }
     const session = record.agent?.session
@@ -347,11 +401,62 @@ export class Backchannel {
     const offered = offeredTools(this.ctx, record.agent)
     if (!offered.some((tool) => tool.name === name)) return error(`Tool "${name}" is not offered to this Session.`)
     const id = callId ?? `bridge_${randomBytes(8).toString('hex')}`
-    const { turn, step } = positionOf(this.ctx, session)
+    const raw = JSON.stringify(args ?? {})
+    const approval = this.ctx?.get?.('approval')
+    const level = levelOf(approval, session, this.ctx?.get?.('sandboxPolicy'), this.ctx?.get?.('permissionPresets'))
+    // Auto review reads the pending call from the model surface and the Session log. A bridge
+    // call is out-of-band, so it gets the one synthetic assistant block the reviewer reads,
+    // with the same turn/step, id, name and raw arguments the tool/call row carries. The block
+    // is marked synthetic and replaced once the call settles: it is for that review only and
+    // never crosses to a provider (switch.js also skips it).
+    let review
+    if (level.auto) {
+      review = reviewRouteOf(session, name)
+      if (review.error !== undefined) return unavailable(review.error.code, review.error.text)
+    }
+    const { turn, step } = review?.step ?? positionOf(this.ctx, session)
+    let syntheticSeq
+    if (review !== undefined) {
+      try {
+        syntheticSeq = session.append('assistant/message', {
+          turn,
+          step,
+          stream: [],
+          message: createAssistantMessage({
+            content: [{ type: 'tool-call', id, name, arguments: raw }],
+            source: { provider: review.provider, model: review.model, bridge: true, synthetic: SYNTHETIC_KIND },
+          }),
+        }, { surfaceOp: 'append' }).seq
+      } catch (cause) {
+        return unavailable('AUTO_REVIEW_FAILED', `Auto review could not see this call: ${cause?.message ?? cause}`)
+      }
+    }
+    // The synthetic block is for the review only. Replace it with an empty developer message:
+    // it derives to no model message, so no later request or crossing sees the fake call.
+    const hideSynthetic = () => {
+      if (syntheticSeq === undefined) return
+      const seq = syntheticSeq
+      syntheticSeq = undefined
+      try {
+        session.append('developer/message', {
+          turn,
+          step,
+          message: createDeveloperMessage({ content: [], source: { kind: SYNTHETIC_KIND } }),
+        }, { surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq }, sourceEventSeqs: [seq] })
+      } catch (cause) {
+        this.log(`the synthetic bridge block was not removed: ${cause?.message ?? cause}`)
+      }
+    }
     let callSeq
     try {
-      callSeq = session.append('tool/call', { turn, step, callId: id, name, arguments: JSON.stringify(args ?? {}) }).seq
+      callSeq = session.append('tool/call', { turn, step, callId: id, name, arguments: raw }).seq
     } catch (cause) {
+      // Auto cannot review a call that has no row: close the synthetic block and refuse. A
+      // Manual or Full call keeps the old log-and-go behaviour, where DSH has no Auto gate.
+      if (review !== undefined) {
+        hideSynthetic()
+        return unavailable('AUTO_REVIEW_FAILED', `Auto review could not record this call: ${cause?.message ?? cause}`)
+      }
       this.log(`bridge call row failed: ${cause?.message ?? cause}`)
     }
     const settle = (content, isError, info) => {
@@ -369,64 +474,146 @@ export class Backchannel {
       return {
         content: [{ type: 'text', text: text.length > OUTPUT_LIMIT ? `${text.slice(0, OUTPUT_LIMIT)}…` : text }],
         isError,
+        ...(info === undefined ? {} : { error: info }),
       }
     }
-    // DSH's approval, server-side: the credential cannot approve, and no agent rule reaches it.
-    const approval = this.ctx?.get?.('approval')
-    const level = levelOf(approval, session, this.ctx?.get?.('sandboxPolicy'), this.ctx?.get?.('permissionPresets'))
-    // Full access never asks. Auto (DSH's `danger-full-access` sandbox with `ask`, answered by
-    // auto-review) cannot review this call: auto-review reads the pending tool call from the
-    // model surface, and a bridge call is out-of-band (no assistant block), so its answerer fails
-    // closed. The bridge therefore does not ask there and routes the call through the pipeline;
-    // **limit:** auto-review does not see bridge calls on an Auto Session (stated in README/PR).
-    // Manual and every other asking level raise the one DSH dialog here.
-    if (!level.full && !level.auto) {
-      let outcome = 'unavailable'
+    let controller
+    let unwatch
+    let unwatchPre
+    let timer
+    let timedOut = false
+    let levelChanged = false
+    try {
+      // Manual and every other asking level raise the one DSH dialog here. Auto does not: the
+      // pipeline's pre-execute is auto-review's gate, and its ask (if any) is the one dialog.
+      if (!level.full && !level.auto) {
+        let outcome = 'unavailable'
+        try {
+          outcome = await approval.request({
+            agent: record.agent,
+            toolName: name,
+            callId: id,
+            reason: `${record.name}: ${name}`,
+            displayReason: { en: `${record.name} wants to run ${name}` },
+            signal: record.abort.signal,
+          })
+        } catch (cause) {
+          outcome = 'unavailable'
+          this.log(`approval for ${name} failed: ${cause?.message ?? cause}`)
+        }
+        if (outcome !== 'allowed-once') {
+          // A revocation during the ask wins over a late grant: the credential is gone, so the
+          // call is refused rather than answered with a dialog outcome. Its `tool/call` row was
+          // already written, so the row is closed as an error (never left unanswered).
+          if (record.closed || record.abort.signal.aborted) {
+            settle([{ type: 'text', text: `The bridge was revoked before ${name} ran.` }], true, { name: 'BridgeRevokedError', code: 'BRIDGE_REVOKED' })
+            return { revoked: true }
+          }
+          const why = outcome === 'rejected' ? 'The person rejected' : 'DSH could not approve'
+          const text = `${why} ${name}.`
+          return settle([{ type: 'text', text }], true, { name: 'ApprovalDeniedError', code: outcome.toUpperCase() })
+        }
+      }
+      // The ask may have been answered after the bridge was revoked (a grant that lost its
+      // session): nothing may execute then. Checked again after any await, immediately before
+      // dispatch, because the signal alone lets a tool body that ignores it run anyway.
+      if (record.closed || record.abort.signal.aborted) {
+        settle([{ type: 'text', text: `The bridge was revoked before ${name} ran.` }], true, { name: 'BridgeRevokedError', code: 'BRIDGE_REVOKED' })
+        return { revoked: true }
+      }
+      if (level.auto) {
+        // A level that stopped being Auto before dispatch would let this call run unreviewed.
+        // The subscription below also watches while the review is pending; this re-check covers
+        // a host that composes no session/event listeners.
+        let now
+        try {
+          now = levelOf(approval, session, this.ctx?.get?.('sandboxPolicy'), this.ctx?.get?.('permissionPresets'))
+        } catch {
+          now = { auto: false }
+        }
+        if (now.auto !== true) levelChanged = true
+      }
+      // The timeout and the level watcher cover the review and approval phase, not the body.
+      // The pipeline reaches its tools/execute waterfall only after the pre-execute gate and any
+      // approval ask have settled; disarming there, immediately around the body, keeps a long
+      // allowed body out of the deadline and covers a level change while the ask is pending.
+      if (!levelChanged && level.auto && typeof this.ctx?.on === 'function') {
+        controller = new AbortController()
+        timer = setTimeout(() => {
+          timedOut = true
+          controller.abort(new Error('Auto review timed out'))
+        }, this.reviewTimeoutMs)
+        timer.unref?.()
+        unwatch = this.ctx.on('session/event', (eventSession, event) => {
+          if (eventSession !== session || !LEVEL_EVENTS.has(event?.type)) return
+          let now
+          try {
+            now = levelOf(approval, session, this.ctx?.get?.('sandboxPolicy'), this.ctx?.get?.('permissionPresets'))
+          } catch {
+            now = { auto: false }
+          }
+          if (now.auto !== true) {
+            levelChanged = true
+            controller.abort(new Error('the level changed during Auto review'))
+          }
+        })
+        unwatchPre = this.ctx.on('tools/execute', (exec, next) => {
+          if (exec?.callId !== id || exec.parent !== undefined || exec.agent !== record.agent) return next()
+          if (timer !== undefined) {
+            clearTimeout(timer)
+            timer = undefined
+          }
+          unwatch?.()
+          unwatch = undefined
+          return next()
+        })
+      }
+      if (levelChanged) {
+        return settle([{ type: 'text', text: `Auto review cannot finish ${name}: the permission level changed.` }], true, { name: 'AutoReviewUnavailableError', code: 'AUTO_REVIEW_LEVEL_CHANGED' })
+      }
+      const signal = controller === undefined ? record.abort.signal : AbortSignal.any([record.abort.signal, controller.signal])
+      let settled
       try {
-        outcome = await approval.request({
+        settled = await tools.execute({
+          calls: [{ id, name, arguments: raw }],
           agent: record.agent,
-          toolName: name,
-          callId: id,
-          reason: `${record.name}: ${name}`,
-          displayReason: { en: `${record.name} wants to run ${name}` },
-          signal: record.abort.signal,
+          signal,
         })
       } catch (cause) {
-        outcome = 'unavailable'
-        this.log(`approval for ${name} failed: ${cause?.message ?? cause}`)
-      }
-      if (outcome !== 'allowed-once') {
-        // A revocation during the ask wins over a late grant: the credential is gone, so the
-        // call is refused rather than answered with a dialog outcome. Its `tool/call` row was
-        // already written, so the row is closed as an error (never left unanswered).
         if (record.closed || record.abort.signal.aborted) {
           settle([{ type: 'text', text: `The bridge was revoked before ${name} ran.` }], true, { name: 'BridgeRevokedError', code: 'BRIDGE_REVOKED' })
           return { revoked: true }
         }
-        const why = outcome === 'rejected' ? 'The person rejected' : 'DSH could not approve'
-        const text = `${why} ${name}.`
-        return settle([{ type: 'text', text }], true, { name: 'ApprovalDeniedError', code: outcome.toUpperCase() })
+        if (timedOut) {
+          return settle([{ type: 'text', text: `Auto review timed out before ${name} ran.` }], true, { name: 'AutoReviewTimeoutError', code: 'AUTO_REVIEW_TIMEOUT' })
+        }
+        if (levelChanged) {
+          return settle([{ type: 'text', text: `Auto review cannot finish ${name}: the permission level changed.` }], true, { name: 'AutoReviewUnavailableError', code: 'AUTO_REVIEW_LEVEL_CHANGED' })
+        }
+        const text = `Error: ${cause?.message ?? cause}`
+        return settle([{ type: 'text', text }], true, { name: cause?.name ?? 'Error', code: cause?.code })
       }
-    }
-    // The ask may have been answered after the bridge was revoked (a grant that lost its
-    // session): nothing may execute then. Checked again after any await, immediately before
-    // dispatch, because the signal alone lets a tool body that ignores it run anyway.
-    if (record.closed || record.abort.signal.aborted) {
-      settle([{ type: 'text', text: `The bridge was revoked before ${name} ran.` }], true, { name: 'BridgeRevokedError', code: 'BRIDGE_REVOKED' })
-      return { revoked: true }
-    }
-    try {
-      const settled = await tools.execute({
-        calls: [{ id, name, arguments: JSON.stringify(args ?? {}) }],
-        agent: record.agent,
-        signal: record.abort.signal,
-      })
+      // A revocation, a timeout or a level change during the review wins over its result: the
+      // body must not be reported as executed under a level or credential that no longer holds.
+      if (record.closed || record.abort.signal.aborted) {
+        settle([{ type: 'text', text: `The bridge was revoked before ${name} ran.` }], true, { name: 'BridgeRevokedError', code: 'BRIDGE_REVOKED' })
+        return { revoked: true }
+      }
+      if (timedOut) {
+        return settle([{ type: 'text', text: `Auto review timed out before ${name} ran.` }], true, { name: 'AutoReviewTimeoutError', code: 'AUTO_REVIEW_TIMEOUT' })
+      }
+      if (levelChanged) {
+        return settle([{ type: 'text', text: `Auto review cannot finish ${name}: the permission level changed.` }], true, { name: 'AutoReviewUnavailableError', code: 'AUTO_REVIEW_LEVEL_CHANGED' })
+      }
       const result = settled?.results?.[0]?.result
       if (result === undefined) return settle([{ type: 'text', text: 'The tool returned no result.' }], true)
-      return settle(result.content ?? [], result.isError === true, result.isError ? result.error : undefined)
-    } catch (cause) {
-      const text = `Error: ${cause?.message ?? cause}`
-      return settle([{ type: 'text', text }], true, { name: cause?.name ?? 'Error', code: cause?.code })
+      const info = result.isError === true ? (result.error?.info ?? (typeof result.error?.code === 'string' ? result.error : undefined)) : undefined
+      return settle(result.content ?? [], result.isError === true, info)
+    } finally {
+      clearTimeout(timer)
+      unwatch?.()
+      unwatchPre?.()
+      hideSynthetic()
     }
   }
 
