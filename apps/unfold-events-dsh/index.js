@@ -156,11 +156,17 @@ export function apply(ctx, config) {
   }
 
   // Registered, not driven: nothing appends unfold/event to a DSH Session until a session adapter exists.
-  // dsh 0.2.2 acquires the unit asynchronously (register returns a thenable disposer).
+  // dsh 0.2.2 acquires the unit asynchronously: await the registration so a refusal is reported.
+  // No local handle is kept (nothing reads this unit); the registry retains it through the
+  // plugin's fiber, which disposes it on unload.
   ctx.inject(['sessionProjections'], (sctx) => {
-    Promise.resolve(sctx.sessionProjections.register(projectionDefinition({ catalog }))).catch(
-      (error) => ctx.logger?.warn?.('unfold-events: the aggregates projection was not registered: %s', error),
-    )
+    void (async () => {
+      try {
+        await sctx.sessionProjections.register(projectionDefinition({ catalog }))
+      } catch (error) {
+        ctx.logger?.warn?.('unfold-events: the aggregates projection was not registered: %s', error)
+      }
+    })()
   })
 
   // A bare webServer route under /api would shadow Connection's /api prefix and skip its
