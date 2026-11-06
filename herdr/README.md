@@ -38,7 +38,9 @@ you already use stays yours), points the mod manager at the pack's catalog (`her
 On a machine where Herdr has never opened, the installer leaves `keys.json` absent so
 Herdr can create its native shortcuts, including terminal copy/paste. Open Herdr once,
 then rerun the installer to add the pack's free shortcuts. The Mods button in the footer
-works before its shortcut is added. Existing key files and personal bindings are preserved.
+works before its shortcut is added. Existing key files and personal bindings are preserved;
+a `keys.json` that is a link (your own file) is left as it is, and the installer names the
+pack's shortcuts for you to add there.
 
 **What a release contains.** From v0.5.0, every release is one pack: `automagik-herdr-pack-<v>.tgz`
 holds nine mod folders and one layout, and nothing else:

@@ -1087,9 +1087,34 @@ export function preflightKeys(appHome) {
   }
 }
 
+/**
+ * keys.json rewritten as `keys`: written beside it under a fresh name, created exclusively (never
+ * through a planted file or link), then renamed over it through layoutSafe.mjs change(), as
+ * migrateHome.mjs writes it; a leftover is removed with removePath (never followed).
+ */
+export function writeKeys(appHome, keys) {
+  const path = join(appHome, "keys.json");
+  const tmp = `${path}.am-tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
+  writeFileSync(tmp, `${JSON.stringify(keys, null, 2)}\n`, { flag: "wx" });
+  try {
+    const r = change(appHome, [{ op: "replace", from: tmp, to: path }]);
+    if (r.refused) throw new Error(r.refused);
+  } catch (error) {
+    removePath(tmp, { force: true });
+    throw error;
+  }
+}
+
 /** Merge free pack shortcuts only after Herdr has initialized its native key file. */
 export function mergePackKeys(appHome, log = () => {}) {
   const keysPath = join(appHome, "keys.json");
+  // A linked keys.json is the person's own file (dotfiles): left as it is, as parts.mjs dropKeys
+  // and migrateHome.mjs leave it, never written through.
+  if (isLink(keysPath)) {
+    const wanted = Object.entries(PACK_KEYS).flatMap(([section, entries]) => Object.entries(entries).map(([key, action]) => `${key} → ${action} (${section})`));
+    log(`keys.json (${keysPath}) is a link, your own file: left as it is; add ${wanted.join(", ")} there yourself.`);
+    return 0;
+  }
   // Herdr creates its default bindings only when this file is absent. A pack-only
   // file here would suppress terminal paste and every other native shortcut.
   if (!existsSync(keysPath)) {
@@ -1105,7 +1130,7 @@ export function mergePackKeys(appHome, log = () => {}) {
       else if (current !== action) log(`key = ${key} stays ${current} (${section})`);
     }
   }
-  if (added) writeFileSync(keysPath, JSON.stringify(mine, null, 2) + "\n");
+  if (added) writeKeys(appHome, mine);
   return added;
 }
 

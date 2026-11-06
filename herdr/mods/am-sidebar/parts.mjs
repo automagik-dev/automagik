@@ -38,7 +38,7 @@ import {
   HELD_FILE, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker,
 } from "./release.js";
 import { change, linkedModsLine, removePath, switchCommand } from "./layoutSafe.mjs";
-import { appHomeOf, binDirOf, markerOf, mergePackKeys, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeMarker } from "./update.mjs";
+import { appHomeOf, binDirOf, markerOf, mergePackKeys, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeKeys, writeMarker } from "./update.mjs";
 import { dshTuiPresence } from "./dshTui.mjs";
 
 export const NODE_MIN = "22.7.0";
@@ -174,7 +174,7 @@ function dropKeys(ctx) {
   for (const [section, entries] of Object.entries(PACK_KEYS)) {
     for (const [key, action] of Object.entries(entries)) if (keys[section]?.[key] === action) { delete keys[section][key]; dropped += 1; }
   }
-  if (dropped) writeFileSync(path, `${JSON.stringify(keys, null, 2)}\n`);
+  if (dropped) writeKeys(ctx.appHome, keys);
   return dropped;
 }
 
